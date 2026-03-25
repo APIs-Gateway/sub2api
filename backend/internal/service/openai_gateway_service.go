@@ -4142,14 +4142,16 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		CacheReadTokens:     result.Usage.CacheReadInputTokens,
 	}
 
-	// Get rate multiplier
-	multiplier := s.cfg.Default.RateMultiplier
+	// 用户计费倍率 = 账号用户倍率 × 用户专属倍率（默认1.0）
+	multiplier := account.BillingRateMultiplier() // 账号用户倍率，默认 1.0
 	if apiKey.GroupID != nil && apiKey.Group != nil {
 		resolver := s.userGroupRateResolver
 		if resolver == nil {
 			resolver = newUserGroupRateResolver(nil, nil, resolveUserGroupRateCacheTTL(s.cfg), nil, "service.openai_gateway")
 		}
-		multiplier = resolver.Resolve(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
+		// 传 1.0 作为默认值：只有用户专属倍率生效，无专属倍率时不额外乘
+		userSpecificRate := resolver.Resolve(ctx, user.ID, *apiKey.GroupID, 1.0)
+		multiplier *= userSpecificRate
 	}
 
 	billingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
@@ -4174,7 +4176,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// Create usage log
 	durationMs := int(result.Duration.Milliseconds())
-	accountRateMultiplier := account.BillingRateMultiplier()
+	// 账号计费倍率已废弃，配额追踪使用原始成本
+	var accountRateMultiplier float64 = 1.0
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
 	usageLog := &UsageLog{
 		UserID:                user.ID,

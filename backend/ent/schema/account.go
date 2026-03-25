@@ -104,8 +104,8 @@ func (Account) Fields() []ent.Field {
 		field.Int("priority").
 			Default(50),
 
-		// rate_multiplier: 账号计费倍率（>=0，允许 0 表示该账号计费为 0）
-		// 仅影响账号维度计费口径，不影响用户/API Key 扣费（分组倍率）
+		// rate_multiplier: 用户计费倍率（>=0，允许 0 表示免费）
+		// 用户通过该账号的请求按此倍率计费，默认 1.0
 		field.Float("rate_multiplier").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(1.0),

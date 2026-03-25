@@ -26,7 +26,7 @@ type Account struct {
 	ProxyID     *int64
 	Concurrency int
 	Priority    int
-	// RateMultiplier 账号计费倍率（>=0，允许 0 表示该账号计费为 0）。
+	// RateMultiplier 用户计费倍率（>=0，允许 0 表示免费）。
 	// 使用指针用于兼容旧版本调度缓存（Redis）中缺字段的情况：nil 表示按 1.0 处理。
 	RateMultiplier     *float64
 	LoadFactor         *int // 调度负载因子；nil 表示使用 Concurrency
@@ -76,9 +76,9 @@ func (a *Account) IsActive() bool {
 	return a.Status == StatusActive
 }
 
-// BillingRateMultiplier 返回账号计费倍率。
+// BillingRateMultiplier 返回用户计费倍率。
 // - nil 表示未配置/旧缓存缺字段，按 1.0 处理
-// - 允许 0，表示该账号计费为 0
+// - 允许 0，表示免费
 // - 负数属于非法数据，出于安全考虑按 1.0 处理
 func (a *Account) BillingRateMultiplier() float64 {
 	if a == nil || a.RateMultiplier == nil {

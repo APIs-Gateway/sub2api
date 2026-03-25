@@ -7519,14 +7519,12 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		cacheTTLOverridden = (result.Usage.CacheCreation5mTokens + result.Usage.CacheCreation1hTokens) > 0
 	}
 
-	// 获取费率倍数（优先级：用户专属 > 分组默认 > 系统默认）
-	multiplier := 1.0
-	if s.cfg != nil {
-		multiplier = s.cfg.Default.RateMultiplier
-	}
+	// 用户计费倍率 = 账号用户倍率 × 用户专属倍率（默认1.0）
+	multiplier := account.BillingRateMultiplier() // 账号用户倍率，默认 1.0
 	if apiKey.GroupID != nil && apiKey.Group != nil {
-		groupDefault := apiKey.Group.RateMultiplier
-		multiplier = s.getUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
+		// 传 1.0 作为默认值：只有用户专属倍率生效，无专属倍率时不额外乘
+		userSpecificRate := s.getUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, 1.0)
+		multiplier *= userSpecificRate
 	}
 
 	var cost *CostBreakdown
@@ -7596,7 +7594,8 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 	if strings.TrimSpace(result.MediaType) != "" {
 		mediaType = &result.MediaType
 	}
-	accountRateMultiplier := account.BillingRateMultiplier()
+	// 账号计费倍率已废弃，配额追踪使用原始成本
+	var accountRateMultiplier float64 = 1.0
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
 	usageLog := &UsageLog{
 		UserID:                user.ID,
@@ -7724,14 +7723,12 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 		cacheTTLOverridden = (result.Usage.CacheCreation5mTokens + result.Usage.CacheCreation1hTokens) > 0
 	}
 
-	// 获取费率倍数（优先级：用户专属 > 分组默认 > 系统默认）
-	multiplier := 1.0
-	if s.cfg != nil {
-		multiplier = s.cfg.Default.RateMultiplier
-	}
+	// 用户计费倍率 = 账号用户倍率 × 用户专属倍率（默认1.0）
+	multiplier := account.BillingRateMultiplier() // 账号用户倍率，默认 1.0
 	if apiKey.GroupID != nil && apiKey.Group != nil {
-		groupDefault := apiKey.Group.RateMultiplier
-		multiplier = s.getUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
+		// 传 1.0 作为默认值：只有用户专属倍率生效，无专属倍率时不额外乘
+		userSpecificRate := s.getUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, 1.0)
+		multiplier *= userSpecificRate
 	}
 
 	var cost *CostBreakdown
@@ -7780,7 +7777,8 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 	if result.ImageSize != "" {
 		imageSize = &result.ImageSize
 	}
-	accountRateMultiplier := account.BillingRateMultiplier()
+	// 账号计费倍率已废弃，配额追踪使用原始成本
+	var accountRateMultiplier float64 = 1.0
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
 	usageLog := &UsageLog{
 		UserID:                user.ID,
