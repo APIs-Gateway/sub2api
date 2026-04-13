@@ -12,6 +12,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/tidwall/gjson"
 )
 
 // RateLimitService 处理限流和过载状态管理
@@ -141,14 +142,40 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 
 	switch statusCode {
 	case 400:
-		// 只有当错误信息包含 "organization has been disabled" 时才禁用
+		// "organization has been disabled" → 永久禁用
 		if strings.Contains(strings.ToLower(upstreamMsg), "organization has been disabled") {
 			msg := "Organization disabled (400): " + upstreamMsg
+			s.handleAuthError(ctx, account, msg)
+			shouldDisable = true
+		} else if account.Platform == PlatformAnthropic && strings.Contains(strings.ToLower(upstreamMsg), "credit balance") {
+			// Anthropic API key 余额不足（语义等同 402），停止调度
+			msg := "Credit balance exhausted (400): " + upstreamMsg
 			s.handleAuthError(ctx, account, msg)
 			shouldDisable = true
 		}
 		// 其他 400 错误（如参数问题）不处理，不禁用账号
 	case 401:
+		// OpenAI: token_invalidated / token_revoked 表示 token 被永久作废（非过期），直接标记 error
+		openai401Code := extractUpstreamErrorCode(responseBody)
+		if account.Platform == PlatformOpenAI && (openai401Code == "token_invalidated" || openai401Code == "token_revoked") {
+			msg := "Token revoked (401): account authentication permanently revoked"
+			if upstreamMsg != "" {
+				msg = "Token revoked (401): " + upstreamMsg
+			}
+			s.handleAuthError(ctx, account, msg)
+			shouldDisable = true
+			break
+		}
+		// OpenAI: {"detail":"Unauthorized"} 表示 token 完全无效（非标准 OpenAI 错误格式），直接标记 error
+		if account.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail").String() == "Unauthorized" {
+			msg := "Unauthorized (401): account authentication failed permanently"
+			if upstreamMsg != "" {
+				msg = "Unauthorized (401): " + upstreamMsg
+			}
+			s.handleAuthError(ctx, account, msg)
+			shouldDisable = true
+			break
+		}
 		// OAuth 账号在 401 错误时临时不可调度（给 token 刷新窗口）；非 OAuth 账号保持原有 SetError 行为。
 		// Antigravity 除外：其 401 由 applyErrorPolicy 的 temp_unschedulable_rules 自行控制。
 		if account.Type == AccountTypeOAuth && account.Platform != PlatformAntigravity {
@@ -192,6 +219,13 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			shouldDisable = true
 		}
 	case 402:
+		// OpenAI: deactivated_workspace 表示工作区已停用，直接标记 error
+		if account.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace" {
+			msg := "Workspace deactivated (402): workspace has been deactivated"
+			s.handleAuthError(ctx, account, msg)
+			shouldDisable = true
+			break
+		}
 		// 支付要求：余额不足或计费问题，停止调度
 		msg := "Payment required (402): insufficient balance or billing issue"
 		if upstreamMsg != "" {

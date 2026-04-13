@@ -1,6 +1,10 @@
 package dto
 
-import "time"
+import (
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/domain"
+)
 
 type User struct {
 	ID            int64     `json:"id"`
@@ -26,9 +30,7 @@ type AdminUser struct {
 	Notes string `json:"notes"`
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]rateMultiplier
-	GroupRates            map[int64]float64 `json:"group_rates,omitempty"`
-	SoraStorageQuotaBytes int64             `json:"sora_storage_quota_bytes"`
-	SoraStorageUsedBytes  int64             `json:"sora_storage_used_bytes"`
+	GroupRates map[int64]float64 `json:"group_rates,omitempty"`
 }
 
 type APIKey struct {
@@ -84,23 +86,18 @@ type Group struct {
 	ImagePrice2K *float64 `json:"image_price_2k"`
 	ImagePrice4K *float64 `json:"image_price_4k"`
 
-	// Sora 按次计费配置
-	SoraImagePrice360          *float64 `json:"sora_image_price_360"`
-	SoraImagePrice540          *float64 `json:"sora_image_price_540"`
-	SoraVideoPricePerRequest   *float64 `json:"sora_video_price_per_request"`
-	SoraVideoPricePerRequestHD *float64 `json:"sora_video_price_per_request_hd"`
-
 	// Claude Code 客户端限制
 	ClaudeCodeOnly  bool   `json:"claude_code_only"`
 	FallbackGroupID *int64 `json:"fallback_group_id"`
 	// 无效请求兜底分组
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request"`
 
-	// Sora 存储配额
-	SoraStorageQuotaBytes int64 `json:"sora_storage_quota_bytes"`
-
 	// OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch"`
+
+	// 账号过滤控制（仅 OpenAI/Antigravity 平台有效）
+	RequireOAuthOnly  bool `json:"require_oauth_only"`
+	RequirePrivacySet bool `json:"require_privacy_set"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -119,7 +116,8 @@ type AdminGroup struct {
 	MCPXMLInject bool `json:"mcp_xml_inject"`
 
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
-	DefaultMappedModel string `json:"default_mapped_model"`
+	DefaultMappedModel          string                                   `json:"default_mapped_model"`
+	MessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
 
 	// 支持的模型系列（仅 antigravity 平台使用）
 	SupportedModelScopes    []string       `json:"supported_model_scopes"`
@@ -185,7 +183,8 @@ type Account struct {
 
 	// TLS指纹伪装（仅 Anthropic OAuth/SetupToken 账号有效）
 	// 从 extra 字段提取，方便前端显示和编辑
-	EnableTLSFingerprint *bool `json:"enable_tls_fingerprint,omitempty"`
+	EnableTLSFingerprint    *bool  `json:"enable_tls_fingerprint,omitempty"`
+	TLSFingerprintProfileID *int64 `json:"tls_fingerprint_profile_id,omitempty"`
 
 	// 会话ID伪装（仅 Anthropic OAuth/SetupToken 账号有效）
 	// 启用后将在15分钟内固定 metadata.user_id 中的 session ID
@@ -196,6 +195,10 @@ type Account struct {
 	// 启用后将所有 cache creation tokens 归入指定的 TTL 类型计费
 	CacheTTLOverrideEnabled *bool   `json:"cache_ttl_override_enabled,omitempty"`
 	CacheTTLOverrideTarget  *string `json:"cache_ttl_override_target,omitempty"`
+
+	// 自定义 Base URL 中继转发（仅 Anthropic OAuth/SetupToken 账号有效）
+	CustomBaseURLEnabled *bool   `json:"custom_base_url_enabled,omitempty"`
+	CustomBaseURL        *string `json:"custom_base_url,omitempty"`
 
 	// API Key 账号配额限制
 	QuotaLimit       *float64 `json:"quota_limit,omitempty"`
@@ -381,6 +384,9 @@ type UsageLog struct {
 	// Cache TTL Override 标记
 	CacheTTLOverridden bool `json:"cache_ttl_overridden"`
 
+	// BillingMode 计费模式：token/image
+	BillingMode *string `json:"billing_mode,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 
 	User         *User             `json:"user,omitempty"`
@@ -396,6 +402,13 @@ type AdminUsageLog struct {
 	// UpstreamModel is the actual model sent to the upstream provider after mapping.
 	// Omitted when no mapping was applied (requested model was used as-is).
 	UpstreamModel *string `json:"upstream_model,omitempty"`
+
+	// ChannelID 渠道 ID
+	ChannelID *int64 `json:"channel_id,omitempty"`
+	// ModelMappingChain 模型映射链，如 "a→b→c"
+	ModelMappingChain *string `json:"model_mapping_chain,omitempty"`
+	// BillingTier 计费层级标签（per_request/image 模式）
+	BillingTier *string `json:"billing_tier,omitempty"`
 
 	// AccountRateMultiplier 账号计费倍率快照（nil 表示按 1.0 处理）
 	AccountRateMultiplier *float64 `json:"account_rate_multiplier"`

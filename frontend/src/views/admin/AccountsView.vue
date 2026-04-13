@@ -73,6 +73,16 @@
                 <span class="hidden md:inline">{{ t('admin.errorPassthrough.title') }}</span>
               </button>
 
+              <!-- TLS Fingerprint Profiles -->
+              <button
+                @click="showTLSFingerprintProfiles = true"
+                class="btn btn-secondary"
+                :title="t('admin.tlsFingerprintProfiles.title')"
+              >
+                <Icon name="lock" size="md" class="mr-1.5" />
+                <span class="hidden md:inline">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
+              </button>
+
               <!-- Column Settings Dropdown -->
               <div class="relative" ref="columnDropdownRef">
                 <button
@@ -138,6 +148,8 @@
           :data="accounts"
           :loading="loading"
           row-key="id"
+          :server-side-sort="true"
+          @sort="handleSort"
           default-sort-key="name"
           default-sort-order="asc"
           :sort-storage-key="ACCOUNT_SORT_STORAGE_KEY"
@@ -172,7 +184,7 @@
           </template>
           <template #cell-platform_type="{ row }">
             <div class="flex flex-wrap items-center gap-1">
-              <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" />
+              <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
               <span
                 v-if="getAntigravityTierLabel(row)"
                 :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
@@ -276,7 +288,7 @@
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal :show="showBulkEdit" :account-ids="selIds" :selected-platforms="selPlatforms" :selected-types="selTypes" :proxies="proxies" :groups="groups" @close="showBulkEdit = false" @updated="handleBulkUpdated" />
@@ -289,6 +301,7 @@
       </label>
     </ConfirmDialog>
     <ErrorPassthroughRulesModal :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
+    <TLSFingerprintProfilesModal :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
   </AppLayout>
 </template>
 
@@ -326,6 +339,7 @@ import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
+import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel } from '@/types'
@@ -366,6 +380,7 @@ const showReAuth = ref(false)
 const showTest = ref(false)
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
+const showTLSFingerprintProfiles = ref(false)
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -388,6 +403,37 @@ const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 
 // Sorting settings
 const ACCOUNT_SORT_STORAGE_KEY = 'account-table-sort'
+type AccountSortOrder = 'asc' | 'desc'
+type AccountSortState = {
+  sort_by: string
+  sort_order: AccountSortOrder
+}
+const ACCOUNT_SORTABLE_KEYS = new Set([
+  'name',
+  'status',
+  'schedulable',
+  'priority',
+  'rate_multiplier',
+  'last_used_at',
+  'expires_at'
+])
+const loadInitialAccountSortState = (): AccountSortState => {
+  const fallback: AccountSortState = { sort_by: 'name', sort_order: 'asc' }
+  try {
+    const raw = localStorage.getItem(ACCOUNT_SORT_STORAGE_KEY)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as { key?: string; order?: string }
+    const key = typeof parsed.key === 'string' ? parsed.key : ''
+    if (!ACCOUNT_SORTABLE_KEYS.has(key)) return fallback
+    return {
+      sort_by: key,
+      sort_order: parsed.order === 'desc' ? 'desc' : 'asc'
+    }
+  } catch {
+    return fallback
+  }
+}
+const sortState = reactive<AccountSortState>(loadInitialAccountSortState())
 
 // Auto refresh settings
 const showAutoRefreshDropdown = ref(false)
@@ -581,7 +627,16 @@ const {
   handlePageSizeChange: baseHandlePageSizeChange
 } = useTableLoader<Account, any>({
   fetchFn: adminAPI.accounts.list,
-  initialParams: { platform: '', type: '', status: '', privacy_mode: '', group: '', search: '' }
+  initialParams: {
+    platform: '',
+    type: '',
+    status: '',
+    privacy_mode: '',
+    group: '',
+    search: '',
+    sort_by: sortState.sort_by,
+    sort_order: sortState.sort_order
+  }
 })
 
 const {
@@ -656,6 +711,19 @@ const handlePageSizeChange = (size: number) => {
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = true
   baseHandlePageSizeChange(size)
+}
+
+const handleSort = (key: string, order: AccountSortOrder) => {
+  sortState.sort_by = key
+  sortState.sort_order = order
+  const requestParams = params as any
+  requestParams.sort_by = key
+  requestParams.sort_order = order
+  pagination.page = 1
+  hasPendingListSync.value = false
+  resetAutoRefreshCache()
+  pendingTodayStatsRefresh.value = true
+  load()
 }
 
 watch(loading, (isLoading, wasLoading) => {
@@ -761,6 +829,8 @@ const refreshAccountsIncrementally = async () => {
         privacy_mode?: string
         group?: string
         search?: string
+        sort_by?: string
+        sort_order?: AccountSortOrder
 
       },
       { etag: autoRefreshETag.value }
@@ -1090,19 +1160,58 @@ const handleBulkToggleSchedulable = async (schedulable: boolean) => {
 }
 const handleBulkUpdated = () => { showBulkEdit.value = false; clearSelection(); reload() }
 const handleDataImported = () => { showImportData.value = false; reload() }
+const ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE = 'ungrouped'
+const ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE = '__unset__'
+const buildAccountQueryFilters = () => ({
+  platform: params.platform || '',
+  type: params.type || '',
+  status: params.status || '',
+  group: params.group || '',
+  privacy_mode: params.privacy_mode || '',
+  search: params.search || '',
+  sort_by: sortState.sort_by,
+  sort_order: sortState.sort_order
+})
 const accountMatchesCurrentFilters = (account: Account) => {
-  if (params.platform && account.platform !== params.platform) return false
-  if (params.type && account.type !== params.type) return false
-  if (params.status) {
-    if (params.status === 'rate_limited') {
-      if (!account.rate_limit_reset_at) return false
-      const resetAt = new Date(account.rate_limit_reset_at).getTime()
-      if (!Number.isFinite(resetAt) || resetAt <= Date.now()) return false
-    } else if (account.status !== params.status) {
+  const filters = buildAccountQueryFilters()
+  if (filters.platform && account.platform !== filters.platform) return false
+  if (filters.type && account.type !== filters.type) return false
+  if (filters.status) {
+    const now = Date.now()
+    const rateLimitResetAt = account.rate_limit_reset_at ? new Date(account.rate_limit_reset_at).getTime() : Number.NaN
+    const isRateLimited = Number.isFinite(rateLimitResetAt) && rateLimitResetAt > now
+    const tempUnschedUntil = account.temp_unschedulable_until ? new Date(account.temp_unschedulable_until).getTime() : Number.NaN
+    const isTempUnschedulable = Number.isFinite(tempUnschedUntil) && tempUnschedUntil > now
+
+    if (filters.status === 'active') {
+      if (account.status !== 'active' || isRateLimited || isTempUnschedulable || !account.schedulable) return false
+    } else if (filters.status === 'rate_limited') {
+      if (account.status !== 'active' || !isRateLimited || isTempUnschedulable) return false
+    } else if (filters.status === 'temp_unschedulable') {
+      if (account.status !== 'active' || !isTempUnschedulable) return false
+    } else if (filters.status === 'unschedulable') {
+      if (account.status !== 'active' || account.schedulable || isRateLimited || isTempUnschedulable) return false
+    } else if (account.status !== filters.status) {
       return false
     }
   }
-  const search = String(params.search || '').trim().toLowerCase()
+  if (filters.group) {
+    const groupIds = account.group_ids ?? account.groups?.map((group) => group.id) ?? []
+    if (filters.group === ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE) {
+      if (groupIds.length > 0) return false
+    } else if (!groupIds.includes(Number(filters.group))) {
+      return false
+    }
+  }
+  const privacyMode = typeof account.extra?.privacy_mode === 'string' ? account.extra.privacy_mode : ''
+  if (filters.privacy_mode) {
+    if (filters.privacy_mode === ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE) {
+      if (privacyMode.trim() !== '') return false
+    } else if (privacyMode !== filters.privacy_mode) {
+      return false
+    }
+  }
+  const search = String(filters.search || '').trim().toLowerCase()
   if (search && !account.name.toLowerCase().includes(search)) return false
   return true
 }
@@ -1168,12 +1277,7 @@ const handleExportData = async () => {
         ? { ids: selIds.value, includeProxies: includeProxyOnExport.value }
         : {
             includeProxies: includeProxyOnExport.value,
-            filters: {
-              platform: params.platform,
-              type: params.type,
-              status: params.status,
-              search: params.search
-            }
+            filters: buildAccountQueryFilters()
           }
     )
     const timestamp = formatExportTimestamp()
@@ -1239,6 +1343,17 @@ const handleResetQuota = async (a: Account) => {
     appStore.showSuccess(t('common.success'))
   } catch (error) {
     console.error('Failed to reset quota:', error)
+  }
+}
+const handleSetPrivacy = async (a: Account) => {
+  try {
+    const updated = await adminAPI.accounts.setPrivacy(a.id)
+    patchAccountInList(updated)
+    enterAutoRefreshSilentWindow()
+    appStore.showSuccess(t('common.success'))
+  } catch (error: any) {
+    console.error('Failed to set privacy:', error)
+    appStore.showError(error?.response?.data?.message || t('admin.accounts.privacyFailed'))
   }
 }
 const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }

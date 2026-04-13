@@ -35,9 +35,9 @@ func NewRedeemHandler(adminService service.AdminService, redeemService *service.
 type GenerateRedeemCodesRequest struct {
 	Count        int     `json:"count" binding:"required,min=1,max=100"`
 	Type         string  `json:"type" binding:"required,oneof=balance concurrency subscription invitation"`
-	Value        float64 `json:"value" binding:"min=0"`
-	GroupID      *int64  `json:"group_id"`                                    // 订阅类型必填
-	ValidityDays int     `json:"validity_days" binding:"omitempty,max=36500"` // 订阅类型使用，默认30天，最大100年
+	Value        float64 `json:"value"`
+	GroupID      *int64  `json:"group_id"`      // 订阅类型必填
+	ValidityDays int     `json:"validity_days"` // 订阅类型使用，正数增加/负数退款扣减
 }
 
 // CreateAndRedeemCodeRequest represents creating a fixed code and redeeming it for a target user.
@@ -45,10 +45,10 @@ type GenerateRedeemCodesRequest struct {
 type CreateAndRedeemCodeRequest struct {
 	Code         string  `json:"code" binding:"required,min=3,max=128"`
 	Type         string  `json:"type" binding:"omitempty,oneof=balance concurrency subscription invitation"` // 不传时默认 balance（向后兼容）
-	Value        float64 `json:"value" binding:"required,gt=0"`
+	Value        float64 `json:"value" binding:"required"`
 	UserID       int64   `json:"user_id" binding:"required,gt=0"`
-	GroupID      *int64  `json:"group_id"`                                    // subscription 类型必填
-	ValidityDays int     `json:"validity_days" binding:"omitempty,max=36500"` // subscription 类型必填，>0
+	GroupID      *int64  `json:"group_id"`      // subscription 类型必填
+	ValidityDays int     `json:"validity_days"` // subscription 类型：正数增加，负数退款扣减
 	Notes        string  `json:"notes"`
 }
 
@@ -59,13 +59,15 @@ func (h *RedeemHandler) List(c *gin.Context) {
 	codeType := c.Query("type")
 	status := c.Query("status")
 	search := c.Query("search")
+	sortBy := c.DefaultQuery("sort_by", "id")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
 	// 标准化和验证 search 参数
 	search = strings.TrimSpace(search)
 	if len(search) > 100 {
 		search = search[:100]
 	}
 
-	codes, total, err := h.adminService.ListRedeemCodes(c.Request.Context(), page, pageSize, codeType, status, search)
+	codes, total, err := h.adminService.ListRedeemCodes(c.Request.Context(), page, pageSize, codeType, status, search, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -150,8 +152,8 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 			response.BadRequest(c, "group_id is required for subscription type")
 			return
 		}
-		if req.ValidityDays <= 0 {
-			response.BadRequest(c, "validity_days must be greater than 0 for subscription type")
+		if req.ValidityDays == 0 {
+			response.BadRequest(c, "validity_days must not be zero for subscription type")
 			return
 		}
 	}
@@ -300,9 +302,15 @@ func (h *RedeemHandler) GetStats(c *gin.Context) {
 func (h *RedeemHandler) Export(c *gin.Context) {
 	codeType := c.Query("type")
 	status := c.Query("status")
+	search := strings.TrimSpace(c.Query("search"))
+	sortBy := c.DefaultQuery("sort_by", "id")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
+	if len(search) > 100 {
+		search = search[:100]
+	}
 
 	// Get all codes without pagination (use large page size)
-	codes, _, err := h.adminService.ListRedeemCodes(c.Request.Context(), 1, 10000, codeType, status, "")
+	codes, _, err := h.adminService.ListRedeemCodes(c.Request.Context(), 1, 10000, codeType, status, search, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

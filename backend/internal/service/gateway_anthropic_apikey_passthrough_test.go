@@ -15,6 +15,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -60,7 +61,7 @@ func (u *anthropicHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, a
 	return u.resp, nil
 }
 
-func (u *anthropicHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, enableTLSFingerprint bool) (*http.Response, error) {
+func (u *anthropicHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
@@ -175,13 +176,13 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 
 	require.Equal(t, "claude-3-haiku-20240307", gjson.GetBytes(upstream.lastBody, "model").String(), "透传模式应应用账号级模型映射")
 
-	require.Equal(t, "upstream-anthropic-key", upstream.lastReq.Header.Get("x-api-key"))
-	require.Empty(t, upstream.lastReq.Header.Get("authorization"))
-	require.Empty(t, upstream.lastReq.Header.Get("x-goog-api-key"))
-	require.Empty(t, upstream.lastReq.Header.Get("cookie"))
-	require.Equal(t, "2023-06-01", upstream.lastReq.Header.Get("anthropic-version"))
-	require.Equal(t, "interleaved-thinking-2025-05-14", upstream.lastReq.Header.Get("anthropic-beta"))
-	require.Empty(t, upstream.lastReq.Header.Get("x-stainless-lang"), "API Key 透传不应注入 OAuth 指纹头")
+	require.Equal(t, "upstream-anthropic-key", getHeaderRaw(upstream.lastReq.Header, "x-api-key"))
+	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "authorization"))
+	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "x-goog-api-key"))
+	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "cookie"))
+	require.Equal(t, "2023-06-01", getHeaderRaw(upstream.lastReq.Header, "anthropic-version"))
+	require.Equal(t, "interleaved-thinking-2025-05-14", getHeaderRaw(upstream.lastReq.Header, "anthropic-beta"))
+	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "x-stainless-lang"), "API Key 透传不应注入 OAuth 指纹头")
 
 	require.Contains(t, rec.Body.String(), `"cached_tokens":7`)
 	require.NotContains(t, rec.Body.String(), `"cache_read_input_tokens":7`, "透传输出不应被网关改写")
@@ -257,9 +258,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBo
 	require.NoError(t, err)
 
 	require.Equal(t, "claude-3-opus-20240229", gjson.GetBytes(upstream.lastBody, "model").String(), "count_tokens 透传模式应应用账号级模型映射")
-	require.Equal(t, "upstream-anthropic-key", upstream.lastReq.Header.Get("x-api-key"))
-	require.Empty(t, upstream.lastReq.Header.Get("authorization"))
-	require.Empty(t, upstream.lastReq.Header.Get("cookie"))
+	require.Equal(t, "upstream-anthropic-key", getHeaderRaw(upstream.lastReq.Header, "x-api-key"))
+	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "authorization"))
+	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "cookie"))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.JSONEq(t, upstreamRespBody, rec.Body.String())
 	require.Empty(t, rec.Header().Get("Set-Cookie"))
@@ -684,8 +685,8 @@ func TestGatewayService_AnthropicOAuth_NotAffectedByAPIKeyPassthroughToggle(t *t
 
 	req, err := svc.buildUpstreamRequest(context.Background(), c, account, []byte(`{"model":"claude-3-7-sonnet-20250219"}`), "oauth-token", "oauth", "claude-3-7-sonnet-20250219", true, false)
 	require.NoError(t, err)
-	require.Equal(t, "Bearer oauth-token", req.Header.Get("authorization"))
-	require.Contains(t, req.Header.Get("anthropic-beta"), claude.BetaOAuth, "OAuth 链路仍应按原逻辑补齐 oauth beta")
+	require.Equal(t, "Bearer oauth-token", getHeaderRaw(req.Header, "authorization"))
+	require.Contains(t, getHeaderRaw(req.Header, "anthropic-beta"), claude.BetaOAuth, "OAuth 链路仍应按原逻辑补齐 oauth beta")
 }
 
 func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(t *testing.T) {
@@ -755,12 +756,21 @@ func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.NotNil(t, upstream.lastReq)
-			require.Equal(t, "Bearer oauth-token", upstream.lastReq.Header.Get("authorization"))
-			require.Contains(t, upstream.lastReq.Header.Get("anthropic-beta"), claude.BetaOAuth)
+			require.Equal(t, "Bearer oauth-token", getHeaderRaw(upstream.lastReq.Header, "authorization"))
+			require.Contains(t, getHeaderRaw(upstream.lastReq.Header, "anthropic-beta"), claude.BetaOAuth)
 
 			system := gjson.GetBytes(upstream.lastBody, "system")
 			require.True(t, system.Exists())
-			require.Contains(t, system.Raw, "x-anthropic-billing-header keep")
+			require.True(t, system.IsArray(), "system should be an array")
+			require.Equal(t, claudeCodeSystemPrompt, system.Array()[0].Get("text").String())
+			require.Equal(t, "ephemeral", system.Array()[0].Get("cache_control.type").String())
+
+			// 原始 system prompt 应迁移至 messages 中
+			messages := gjson.GetBytes(upstream.lastBody, "messages")
+			require.True(t, messages.IsArray())
+			firstMsg := messages.Array()[0]
+			require.Equal(t, "user", firstMsg.Get("role").String())
+			require.Contains(t, firstMsg.Get("content.0.text").String(), "x-anthropic-billing-header keep")
 		})
 	}
 }
