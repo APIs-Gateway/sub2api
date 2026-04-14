@@ -4440,17 +4440,16 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		ImageOutputTokens:   result.Usage.ImageOutputTokens,
 	}
 
-	// Get rate multiplier
-	multiplier := 1.0
-	if s.cfg != nil {
-		multiplier = s.cfg.Default.RateMultiplier
-	}
+	// 用户计费倍率 = 账号用户倍率 × 用户专属倍率（默认1.0）
+	multiplier := account.BillingRateMultiplier() // 账号用户倍率，默认 1.0
 	if apiKey.GroupID != nil && apiKey.Group != nil {
 		resolver := s.userGroupRateResolver
 		if resolver == nil {
 			resolver = newUserGroupRateResolver(nil, nil, resolveUserGroupRateCacheTTL(s.cfg), nil, "service.openai_gateway")
 		}
-		multiplier = resolver.Resolve(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
+		// 传 1.0 作为默认值：只有用户专属倍率生效，无专属倍率时不额外乘
+		userSpecificRate := resolver.Resolve(ctx, user.ID, *apiKey.GroupID, 1.0)
+		multiplier *= userSpecificRate
 	}
 
 	var cost *CostBreakdown
