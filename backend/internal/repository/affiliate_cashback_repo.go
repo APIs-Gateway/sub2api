@@ -1,0 +1,297 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+
+	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+)
+
+func (r *affiliateRepository) ListCashbackFaceValues(ctx context.Context) ([]service.AffiliateCashbackFaceValue, error) {
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, `
+SELECT redeem_value::double precision,
+       cashback_base_amount::double precision,
+       created_at,
+       updated_at
+FROM affiliate_cashback_face_values
+ORDER BY redeem_value ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list affiliate cashback face values: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []service.AffiliateCashbackFaceValue
+	for rows.Next() {
+		var item service.AffiliateCashbackFaceValue
+		if err := rows.Scan(&item.RedeemValue, &item.CashbackBaseAmount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (r *affiliateRepository) ReplaceCashbackFaceValues(ctx context.Context, entries []service.AffiliateCashbackFaceValue) error {
+	return r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		if _, err := txClient.ExecContext(txCtx, `DELETE FROM affiliate_cashback_face_values`); err != nil {
+			return fmt.Errorf("clear affiliate cashback face values: %w", err)
+		}
+		for _, entry := range entries {
+			if _, err := txClient.ExecContext(txCtx, `
+INSERT INTO affiliate_cashback_face_values (redeem_value, cashback_base_amount, created_at, updated_at)
+VALUES ($1, $2, NOW(), NOW())`, entry.RedeemValue, entry.CashbackBaseAmount); err != nil {
+				return fmt.Errorf("insert affiliate cashback face value: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+func (r *affiliateRepository) GetCashbackBaseAmount(ctx context.Context, redeemValue float64) (float64, bool, error) {
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, `
+SELECT cashback_base_amount::double precision
+FROM affiliate_cashback_face_values
+WHERE redeem_value = $1
+LIMIT 1`, redeemValue)
+	if err != nil {
+		return 0, false, fmt.Errorf("get affiliate cashback base amount: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return 0, false, rows.Err()
+	}
+	var amount float64
+	if err := rows.Scan(&amount); err != nil {
+		return 0, false, err
+	}
+	return amount, true, rows.Err()
+}
+
+func (r *affiliateRepository) ApplyRedeemCashback(ctx context.Context, inviterID, inviteeUserID, redeemCodeID int64, redeemCode string, redeemValue, baseAmount, ratePercent, cashbackAmount float64) (bool, error) {
+	var applied bool
+	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		rows, err := txClient.QueryContext(txCtx, `
+WITH inserted AS (
+	INSERT INTO user_affiliate_ledger (
+		user_id,
+		action,
+		amount,
+		source_user_id,
+		source_redeem_code_id,
+		source_redeem_code_value,
+		cashback_base_amount,
+		cashback_rate_percent,
+		created_at,
+		updated_at
+	)
+	VALUES ($1, 'cashback', $2, $3, $4, $5, $6, $7, NOW(), NOW())
+	ON CONFLICT DO NOTHING
+	RETURNING id
+),
+updated_user AS (
+	UPDATE users
+	SET balance = balance + $2,
+	    updated_at = NOW()
+	WHERE id = $1
+	  AND EXISTS (SELECT 1 FROM inserted)
+	RETURNING balance::double precision
+),
+updated_affiliate AS (
+	UPDATE user_affiliates
+	SET aff_history_quota = aff_history_quota + $2,
+	    updated_at = NOW()
+	WHERE user_id = $1
+	  AND EXISTS (SELECT 1 FROM inserted)
+	RETURNING aff_history_quota::double precision
+)
+UPDATE user_affiliate_ledger ledger
+SET balance_after = (SELECT balance FROM updated_user),
+    aff_history_quota_after = (SELECT aff_history_quota FROM updated_affiliate),
+    updated_at = NOW()
+WHERE ledger.id = (SELECT id FROM inserted)
+RETURNING ledger.id`, inviterID, cashbackAmount, inviteeUserID, redeemCodeID, redeemValue, baseAmount, ratePercent)
+		if err != nil {
+			return fmt.Errorf("apply affiliate redeem cashback: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		applied = rows.Next()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
+}
+
+func (r *affiliateRepository) ListUserCashbackRecords(ctx context.Context, userID int64, limit int) ([]service.AffiliateCashbackRecord, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, cashbackRecordsSelectSQL()+`
+WHERE l.action = 'cashback' AND l.user_id = $1
+ORDER BY l.created_at DESC
+LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list user affiliate cashback records: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanCashbackRecords(rows)
+}
+
+func (r *affiliateRepository) GetUserCashbackTotal(ctx context.Context, userID int64) (float64, error) {
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, `
+SELECT COALESCE(SUM(amount), 0)::double precision
+FROM user_affiliate_ledger
+WHERE action = 'cashback' AND user_id = $1`, userID)
+	if err != nil {
+		return 0, fmt.Errorf("get user affiliate cashback total: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var total float64
+	if rows.Next() {
+		if err := rows.Scan(&total); err != nil {
+			return 0, err
+		}
+	}
+	return total, rows.Err()
+}
+
+func (r *affiliateRepository) ListCashbackRecords(ctx context.Context, filter service.AffiliateRecordFilter) ([]service.AffiliateCashbackRecord, int64, error) {
+	client := clientFromContext(ctx, r.client)
+	where, args := buildCashbackRecordWhere(filter)
+	countRows, err := client.QueryContext(ctx, `SELECT COUNT(*) FROM user_affiliate_ledger l
+JOIN users inviter ON inviter.id = l.user_id
+JOIN users invitee ON invitee.id = l.source_user_id
+LEFT JOIN redeem_codes rc ON rc.id = l.source_redeem_code_id `+where, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count affiliate cashback records: %w", err)
+	}
+	var total int64
+	if countRows.Next() {
+		if err := countRows.Scan(&total); err != nil {
+			_ = countRows.Close()
+			return nil, 0, err
+		}
+	}
+	if err := countRows.Close(); err != nil {
+		return nil, 0, err
+	}
+	sortBy := "l.created_at"
+	switch filter.SortBy {
+	case "cashback_amount":
+		sortBy = "l.amount"
+	case "redeem_value":
+		sortBy = "l.source_redeem_code_value"
+	case "cashback_base_amount":
+		sortBy = "l.cashback_base_amount"
+	case "cashback_rate_percent":
+		sortBy = "l.cashback_rate_percent"
+	}
+	sortOrder := "DESC"
+	if !filter.SortDesc {
+		sortOrder = "ASC"
+	}
+	offset := (filter.Page - 1) * filter.PageSize
+	queryArgs := append(args, filter.PageSize, offset)
+	rows, err := client.QueryContext(ctx, cashbackRecordsSelectSQL()+where+fmt.Sprintf(`
+ORDER BY %s %s
+LIMIT $%d OFFSET $%d`, sortBy, sortOrder, len(args)+1, len(args)+2), queryArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list affiliate cashback records: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	records, err := scanCashbackRecords(rows)
+	return records, total, err
+}
+
+func cashbackRecordsSelectSQL() string {
+	return `
+SELECT l.id,
+       l.user_id,
+       COALESCE(inviter.email, ''),
+       COALESCE(inviter.username, ''),
+       COALESCE(l.source_user_id, 0),
+       COALESCE(invitee.email, ''),
+       COALESCE(invitee.username, ''),
+       l.source_redeem_code_id,
+       COALESCE(rc.code, ''),
+       COALESCE(l.source_redeem_code_value, 0)::double precision,
+       COALESCE(l.cashback_base_amount, 0)::double precision,
+       COALESCE(l.cashback_rate_percent, 0)::double precision,
+       l.amount::double precision,
+       l.balance_after,
+       l.created_at
+FROM user_affiliate_ledger l
+JOIN users inviter ON inviter.id = l.user_id
+LEFT JOIN users invitee ON invitee.id = l.source_user_id
+LEFT JOIN redeem_codes rc ON rc.id = l.source_redeem_code_id
+`
+}
+
+func buildCashbackRecordWhere(filter service.AffiliateRecordFilter) (string, []any) {
+	clauses := []string{"l.action = 'cashback'"}
+	args := make([]any, 0)
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		args = append(args, "%"+strings.ToLower(search)+"%")
+		idx := len(args)
+		clauses = append(clauses, fmt.Sprintf(`(
+LOWER(inviter.email) LIKE $%d OR LOWER(inviter.username) LIKE $%d OR
+LOWER(invitee.email) LIKE $%d OR LOWER(invitee.username) LIKE $%d OR
+LOWER(COALESCE(rc.code, '')) LIKE $%d
+)`, idx, idx, idx, idx, idx))
+	}
+	if filter.StartAt != nil {
+		args = append(args, *filter.StartAt)
+		clauses = append(clauses, fmt.Sprintf("l.created_at >= $%d", len(args)))
+	}
+	if filter.EndAt != nil {
+		args = append(args, *filter.EndAt)
+		clauses = append(clauses, fmt.Sprintf("l.created_at <= $%d", len(args)))
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func scanCashbackRecords(rows *sql.Rows) ([]service.AffiliateCashbackRecord, error) {
+	out := make([]service.AffiliateCashbackRecord, 0)
+	for rows.Next() {
+		var item service.AffiliateCashbackRecord
+		var redeemCodeID sql.NullInt64
+		var balanceAfter sql.NullFloat64
+		if err := rows.Scan(
+			&item.LedgerID,
+			&item.InviterID,
+			&item.InviterEmail,
+			&item.InviterUsername,
+			&item.InviteeID,
+			&item.InviteeEmail,
+			&item.InviteeUsername,
+			&redeemCodeID,
+			&item.RedeemCode,
+			&item.RedeemValue,
+			&item.CashbackBaseAmount,
+			&item.CashbackRatePercent,
+			&item.CashbackAmount,
+			&balanceAfter,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if redeemCodeID.Valid {
+			item.RedeemCodeID = &redeemCodeID.Int64
+		}
+		if balanceAfter.Valid {
+			item.InviterBalanceAfter = &balanceAfter.Float64
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}

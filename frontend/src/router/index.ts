@@ -231,13 +231,13 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/affiliate',
     name: 'Affiliate',
-    component: () => import('@/views/user/AffiliateView.vue'),
+    component: () => import('@/views/user/InviteCashbackView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
       title: 'Affiliate',
-      titleKey: 'affiliate.title',
-      descriptionKey: 'affiliate.description'
+      titleKey: 'inviteCashback.title',
+      descriptionKey: 'inviteCashback.description'
     }
   },
   {
@@ -575,7 +575,19 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/affiliates',
-    redirect: '/admin/affiliates/invites'
+    redirect: '/admin/affiliates/cashback'
+  },
+  {
+    path: '/admin/affiliates/cashback',
+    name: 'AdminAffiliateCashback',
+    component: () => import('@/views/admin/affiliates/AdminAffiliateCashbackView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Invite Cashback',
+      titleKey: 'nav.affiliateCashback',
+      descriptionKey: 'admin.affiliates.cashback.description'
+    }
   },
   {
     path: '/admin/affiliates/invites',

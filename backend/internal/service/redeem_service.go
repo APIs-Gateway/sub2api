@@ -448,6 +448,11 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		if err := s.userRepo.UpdateBalance(txCtx, userID, amount); err != nil {
 			return nil, fmt.Errorf("update user balance: %w", err)
 		}
+		if amount > 0 && s.affiliateService != nil && txCtx.Value(ctxKeySkipRedeemAffiliate{}) == nil {
+			if _, err := s.affiliateService.AccrueCashbackForRedeem(txCtx, userID, redeemCode); err != nil {
+				return nil, fmt.Errorf("accrue affiliate cashback: %w", err)
+			}
+		}
 
 	case RedeemTypeConcurrency:
 		delta := int(redeemCode.Value)
@@ -493,11 +498,6 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 
 	// 事务提交成功后失效缓存
 	s.invalidateRedeemCaches(ctx, userID, redeemCode)
-
-	// 余额类正数兑换码触发邀请返利（best-effort，失败不影响兑换结果）
-	if redeemCode.Type == RedeemTypeBalance && redeemCode.Value > 0 {
-		s.tryAccrueAffiliateRebateForRedeem(ctx, userID, redeemCode.Value)
-	}
 
 	// 重新获取更新后的兑换码
 	redeemCode, err = s.redeemRepo.GetByID(ctx, redeemCode.ID)

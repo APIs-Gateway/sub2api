@@ -496,6 +496,11 @@ export interface ValidateInvitationCodeResponse {
   error_code?: string
 }
 
+export interface ValidateAffiliateCodeResponse {
+  valid: boolean
+  error_code?: string
+}
+
 /**
  * Validate invitation code (public endpoint, no auth required)
  * @param code - Invitation code to validate
@@ -503,6 +508,11 @@ export interface ValidateInvitationCodeResponse {
  */
 export async function validateInvitationCode(code: string): Promise<ValidateInvitationCodeResponse> {
   const { data } = await apiClient.post<ValidateInvitationCodeResponse>('/auth/validate-invitation-code', { code })
+  return data
+}
+
+export async function validateAffiliateCode(code: string): Promise<ValidateAffiliateCodeResponse> {
+  const { data } = await apiClient.post<ValidateAffiliateCodeResponse>('/auth/validate-affiliate-code', { code })
   return data
 }
 
@@ -677,6 +687,7 @@ export const authAPI = {
   sendPendingOAuthVerifyCode,
   validatePromoCode,
   validateInvitationCode,
+  validateAffiliateCode,
   forgotPassword,
   resetPassword,
   refreshToken,

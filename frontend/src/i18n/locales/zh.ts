@@ -353,6 +353,7 @@ export default {
     redeem: '兑换',
     affiliate: '邀请返利',
     affiliateManagement: '邀请返利',
+    affiliateCashback: '邀请管理',
     affiliateInviteRecords: '邀请记录',
     affiliateRebateRecords: '返利记录',
     affiliateTransferRecords: '提取记录',
@@ -466,6 +467,12 @@ export default {
     invitationCodeInvalid: '邀请码无效或已被使用',
     invitationCodeValidating: '正在验证邀请码...',
     invitationCodeInvalidCannotRegister: '邀请码无效，请检查后重试',
+    affiliateCodeLabel: '邀请人邀请码',
+    affiliateCodePlaceholder: '请输入邀请人邀请码（可选）',
+    affiliateCodeValid: '邀请人邀请码有效',
+    affiliateCodeInvalid: '错误邀请码，请输入正确的邀请码',
+    affiliateCodeValidating: '正在验证邀请人邀请码...',
+    affiliateCodeInvalidCannotRegister: '错误邀请码，请输入正确的邀请码',
     oauthOrContinue: '或使用其他继续',
     linuxdo: {
       signIn: '使用 Linux.do 登录',
@@ -1088,6 +1095,34 @@ export default {
       line2: '被邀请用户充值后，你可获得 {rate} 的返利额度。',
       line3: '返利额度可随时转入账户余额。',
       line4: '新产生的返利需要经过冻结期后才能提现。'
+    }
+  },
+
+  inviteCashback: {
+    title: '邀请返现',
+    description: '邀请好友注册，好友兑换余额码后按比例返现到你的余额',
+    loadFailed: '加载邀请返现数据失败',
+    copied: '已复制',
+    stats: {
+      rate: '当前返现比例',
+      invited: '邀请人数',
+      total: '累计返现',
+      status: '返现状态'
+    },
+    share: {
+      title: '我的邀请',
+      code: '我的邀请码',
+      link: '邀请链接'
+    },
+    records: {
+      title: '返现记录',
+      empty: '暂无返现记录',
+      invitee: '被邀请人',
+      redeemValue: '兑换码面值',
+      baseAmount: '计算金额',
+      rate: '比例',
+      amount: '返现金额',
+      time: '返现时间'
     }
   },
 
@@ -1726,6 +1761,17 @@ export default {
     },
 
     affiliates: {
+      cashback: {
+        description: '配置兑换码面值对应金额和实时返现比例',
+        enabled: '启用邀请返现',
+        rate: '返现比例 (%)',
+        faceValues: '兑换码面值映射',
+        redeemValue: '兑换码面值',
+        baseAmount: '计算金额',
+        amount: '返现金额',
+        redeemCode: '兑换码',
+        noFaceValues: '暂无面值映射。未配置面值不会产生返现。'
+      },
       invitesDescription: '查看全站邀请关系和被邀请用户累计返利',
       rebatesDescription: '查看每一笔产生返利的充值订单',
       transfersDescription: '查看返利额度转入账户余额的提取流水',

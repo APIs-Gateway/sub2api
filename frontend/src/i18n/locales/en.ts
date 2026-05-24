@@ -353,6 +353,7 @@ export default {
     redeem: 'Redeem',
     affiliate: 'Affiliate Rebates',
     affiliateManagement: 'Affiliate Rebates',
+    affiliateCashback: 'Invite Management',
     affiliateInviteRecords: 'Invite Records',
     affiliateRebateRecords: 'Rebate Records',
     affiliateTransferRecords: 'Transfer Records',
@@ -467,6 +468,12 @@ export default {
     invitationCodeInvalid: 'Invalid or used invitation code',
     invitationCodeValidating: 'Validating invitation code...',
     invitationCodeInvalidCannotRegister: 'Invalid invitation code. Please check and try again',
+    affiliateCodeLabel: 'Inviter Code',
+    affiliateCodePlaceholder: 'Enter inviter code (optional)',
+    affiliateCodeValid: 'Inviter code is valid',
+    affiliateCodeInvalid: 'Invalid invite code. Please enter a correct code.',
+    affiliateCodeValidating: 'Validating inviter code...',
+    affiliateCodeInvalidCannotRegister: 'Invalid invite code. Please enter a correct code.',
     oauthOrContinue: 'or continue with others',
     linuxdo: {
       signIn: 'Continue with Linux.do',
@@ -1084,6 +1091,34 @@ export default {
       line2: 'When invitees recharge, you receive {rate} of the recharge as rebate quota.',
       line3: 'Transfer rebate quota to balance at any time.',
       line4: 'Newly earned rebates may have a waiting period before they can be transferred.'
+    }
+  },
+
+  inviteCashback: {
+    title: 'Invite Cashback',
+    description: 'Invite friends and receive cashback in your balance when they redeem balance codes',
+    loadFailed: 'Failed to load invite cashback data',
+    copied: 'Copied',
+    stats: {
+      rate: 'Current Cashback Rate',
+      invited: 'Invited Users',
+      total: 'Total Cashback',
+      status: 'Cashback Status'
+    },
+    share: {
+      title: 'My Invite',
+      code: 'My Invite Code',
+      link: 'Invite Link'
+    },
+    records: {
+      title: 'Cashback Records',
+      empty: 'No cashback records yet',
+      invitee: 'Invitee',
+      redeemValue: 'Redeem Code Value',
+      baseAmount: 'Base Amount',
+      rate: 'Rate',
+      amount: 'Cashback',
+      time: 'Cashback Time'
     }
   },
 
@@ -1705,6 +1740,17 @@ export default {
     },
 
     affiliates: {
+      cashback: {
+        description: 'Configure redeem-code value mappings and the real-time cashback rate',
+        enabled: 'Enable Invite Cashback',
+        rate: 'Cashback Rate (%)',
+        faceValues: 'Redeem Code Value Mapping',
+        redeemValue: 'Redeem Code Value',
+        baseAmount: 'Base Amount',
+        amount: 'Cashback Amount',
+        redeemCode: 'Redeem Code',
+        noFaceValues: 'No value mappings yet. Unmapped values will not generate cashback.'
+      },
       invitesDescription: 'View site-wide inviter and invitee relationships',
       rebatesDescription: 'View recharge orders that generated affiliate rebates',
       transfersDescription: 'View affiliate quota transfers into account balance',

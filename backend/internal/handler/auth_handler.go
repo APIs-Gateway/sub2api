@@ -517,6 +517,34 @@ type ValidateInvitationCodeResponse struct {
 	ErrorCode string `json:"error_code,omitempty"`
 }
 
+type ValidateAffiliateCodeRequest struct {
+	Code string `json:"code" binding:"required"`
+}
+
+type ValidateAffiliateCodeResponse struct {
+	Valid     bool   `json:"valid"`
+	ErrorCode string `json:"error_code,omitempty"`
+}
+
+// ValidateAffiliateCode validates an optional signup affiliate invite code.
+// POST /api/v1/auth/validate-affiliate-code
+func (h *AuthHandler) ValidateAffiliateCode(c *gin.Context) {
+	var req ValidateAffiliateCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if h.authService == nil || h.authService.AffiliateService() == nil {
+		response.Success(c, ValidateAffiliateCodeResponse{Valid: false, ErrorCode: "AFFILIATE_CODE_INVALID"})
+		return
+	}
+	if err := h.authService.AffiliateService().ValidateInviteCodeForSignup(c.Request.Context(), req.Code); err != nil {
+		response.Success(c, ValidateAffiliateCodeResponse{Valid: false, ErrorCode: "AFFILIATE_CODE_INVALID"})
+		return
+	}
+	response.Success(c, ValidateAffiliateCodeResponse{Valid: true})
+}
+
 // ValidateInvitationCode 验证邀请码（公开接口，注册前调用）
 // POST /api/v1/auth/validate-invitation-code
 func (h *AuthHandler) ValidateInvitationCode(c *gin.Context) {

@@ -20,12 +20,62 @@ type AffiliateHandler struct {
 	adminService     service.AdminService
 }
 
+type UpdateCashbackSettingsRequest struct {
+	Enabled     bool                                 `json:"enabled"`
+	RatePercent float64                              `json:"rate_percent"`
+	FaceValues  []service.AffiliateCashbackFaceValue `json:"face_values"`
+}
+
 // NewAffiliateHandler creates a new admin affiliate handler.
 func NewAffiliateHandler(affiliateService *service.AffiliateService, adminService service.AdminService) *AffiliateHandler {
 	return &AffiliateHandler{
 		affiliateService: affiliateService,
 		adminService:     adminService,
 	}
+}
+
+// GetCashbackSettings returns real-time invite cashback settings.
+// GET /api/v1/admin/affiliates/cashback/settings
+func (h *AffiliateHandler) GetCashbackSettings(c *gin.Context) {
+	settings, err := h.affiliateService.AdminGetCashbackSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, settings)
+}
+
+// UpdateCashbackSettings updates real-time invite cashback settings.
+// PUT /api/v1/admin/affiliates/cashback/settings
+func (h *AffiliateHandler) UpdateCashbackSettings(c *gin.Context) {
+	var req UpdateCashbackSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	settings, err := h.affiliateService.AdminUpdateCashbackSettings(c.Request.Context(), service.AffiliateCashbackSettingsInput{
+		Enabled:     req.Enabled,
+		RatePercent: req.RatePercent,
+		FaceValues:  req.FaceValues,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, settings)
+}
+
+// ListCashbackRecords returns redeem-code invite cashback records.
+// GET /api/v1/admin/affiliates/cashback/records
+func (h *AffiliateHandler) ListCashbackRecords(c *gin.Context) {
+	page, pageSize := response.ParsePagination(c)
+	filter := parseAffiliateRecordFilter(c, page, pageSize)
+	items, total, err := h.affiliateService.AdminListCashbackRecords(c.Request.Context(), filter)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Paginated(c, items, total, filter.Page, filter.PageSize)
 }
 
 // ListUsers returns paginated users with custom affiliate settings.
