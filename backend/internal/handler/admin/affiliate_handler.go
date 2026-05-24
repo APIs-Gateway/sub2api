@@ -21,9 +21,9 @@ type AffiliateHandler struct {
 }
 
 type UpdateCashbackSettingsRequest struct {
-	Enabled     bool                                 `json:"enabled"`
-	RatePercent float64                              `json:"rate_percent"`
-	FaceValues  []service.AffiliateCashbackFaceValue `json:"face_values"`
+	Enabled              bool                                           `json:"enabled"`
+	RatePercent          float64                                        `json:"rate_percent"`
+	SubscriptionMappings []service.AffiliateCashbackSubscriptionMapping `json:"subscription_mappings"`
 }
 
 // NewAffiliateHandler creates a new admin affiliate handler.
@@ -54,9 +54,9 @@ func (h *AffiliateHandler) UpdateCashbackSettings(c *gin.Context) {
 		return
 	}
 	settings, err := h.affiliateService.AdminUpdateCashbackSettings(c.Request.Context(), service.AffiliateCashbackSettingsInput{
-		Enabled:     req.Enabled,
-		RatePercent: req.RatePercent,
-		FaceValues:  req.FaceValues,
+		Enabled:              req.Enabled,
+		RatePercent:          req.RatePercent,
+		SubscriptionMappings: req.SubscriptionMappings,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

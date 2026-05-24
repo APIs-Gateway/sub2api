@@ -63,6 +63,8 @@
               <thead>
                 <tr class="border-b border-gray-200 text-gray-500 dark:border-dark-700 dark:text-dark-400">
                   <th class="px-3 py-2 font-medium">{{ t('inviteCashback.records.invitee') }}</th>
+                  <th class="px-3 py-2 font-medium">{{ t('inviteCashback.records.redeemType') }}</th>
+                  <th class="px-3 py-2 font-medium">{{ t('inviteCashback.records.subscriptionItem') }}</th>
                   <th class="px-3 py-2 font-medium">{{ t('inviteCashback.records.redeemValue') }}</th>
                   <th class="px-3 py-2 font-medium">{{ t('inviteCashback.records.baseAmount') }}</th>
                   <th class="px-3 py-2 font-medium">{{ t('inviteCashback.records.rate') }}</th>
@@ -73,6 +75,8 @@
               <tbody>
                 <tr v-for="item in detail.records" :key="item.ledger_id" class="border-b border-gray-100 last:border-b-0 dark:border-dark-800">
                   <td class="px-3 py-3 text-gray-900 dark:text-white">{{ item.invitee_email || item.invitee_username || '-' }}</td>
+                  <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ item.redeem_code_type || '-' }}</td>
+                  <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ item.validity_days ? `${item.validity_days} 天 (${item.subscription_group || '-'})` : '-' }}</td>
                   <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ formatCurrency(item.redeem_value) }}</td>
                   <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ formatCurrency(item.cashback_base_amount) }}</td>
                   <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ formatPercent(item.cashback_rate_percent) }}</td>

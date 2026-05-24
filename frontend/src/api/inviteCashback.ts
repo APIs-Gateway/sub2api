@@ -10,7 +10,11 @@ export interface InviteCashbackRecord {
   invitee_username: string
   redeem_code_id?: number | null
   redeem_code?: string
+  redeem_code_type: string
   redeem_value: number
+  subscription_group_id?: number | null
+  subscription_group?: string
+  validity_days?: number | null
   cashback_base_amount: number
   cashback_rate_percent: number
   cashback_amount: number

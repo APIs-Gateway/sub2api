@@ -1118,6 +1118,8 @@ export default {
       title: '返现记录',
       empty: '暂无返现记录',
       invitee: '被邀请人',
+      redeemType: '兑换码类型',
+      subscriptionItem: '订阅条目',
       redeemValue: '兑换码面值',
       baseAmount: '计算金额',
       rate: '比例',
@@ -1762,15 +1764,18 @@ export default {
 
     affiliates: {
       cashback: {
-        description: '配置兑换码面值对应金额和实时返现比例',
+        description: '余额兑换码按兑换金额直接返现；订阅兑换码按订阅条目单独配置返现基数',
         enabled: '启用邀请返现',
         rate: '返现比例 (%)',
-        faceValues: '兑换码面值映射',
-        redeemValue: '兑换码面值',
+        faceValues: '订阅返现面值映射',
+        balanceHint: '余额类型兑换码不需要单独配置面值，系统会直接按兑换金额乘返现比例计算。',
+        redeemType: '兑换码类型',
+        subscriptionItem: '订阅条目',
+        redeemValue: '兑换金额 / 原始面值',
         baseAmount: '计算金额',
         amount: '返现金额',
         redeemCode: '兑换码',
-        noFaceValues: '暂无面值映射。未配置面值不会产生返现。'
+        noFaceValues: '暂无可配置的订阅条目。未配置的订阅兑换码不会产生返现。'
       },
       invitesDescription: '查看全站邀请关系和被邀请用户累计返利',
       rebatesDescription: '查看每一笔产生返利的充值订单',

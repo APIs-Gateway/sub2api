@@ -22,28 +22,25 @@
         <div class="mt-6">
           <div class="mb-3 flex items-center justify-between">
             <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.affiliates.cashback.faceValues') }}</h3>
-            <button class="btn btn-secondary btn-sm" @click="addFaceValue">
-              <Icon name="plus" size="sm" />
-              <span>{{ t('common.add') }}</span>
-            </button>
           </div>
+          <p class="mb-4 text-sm text-gray-500 dark:text-dark-400">
+            {{ t('admin.affiliates.cashback.balanceHint') }}
+          </p>
           <div class="space-y-3">
-            <div v-for="(row, index) in form.face_values" :key="index" class="grid gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-700 sm:grid-cols-[1fr_1fr_auto]">
+            <div v-for="(row, index) in form.subscription_mappings" :key="`${row.group_id}-${row.validity_days}-${index}`" class="grid gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-700 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
               <div>
-                <label class="input-label">{{ t('admin.affiliates.cashback.redeemValue') }}</label>
-                <input v-model.number="row.redeem_value" type="number" min="0" step="0.00000001" class="input" />
+                <label class="input-label">{{ t('admin.affiliates.cashback.subscriptionItem') }}</label>
+                <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-200">
+                  <div class="font-medium">{{ row.display_name }}</div>
+                  <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ row.platform }} · #{{ row.group_id }}</div>
+                </div>
               </div>
               <div>
                 <label class="input-label">{{ t('admin.affiliates.cashback.baseAmount') }}</label>
                 <input v-model.number="row.cashback_base_amount" type="number" min="0" step="0.00000001" class="input" />
               </div>
-              <div class="flex items-end">
-                <button class="btn btn-danger btn-sm w-full sm:w-auto" @click="removeFaceValue(index)">
-                  {{ t('common.delete') }}
-                </button>
-              </div>
             </div>
-            <div v-if="form.face_values.length === 0" class="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-400">
+            <div v-if="form.subscription_mappings.length === 0" class="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-400">
               {{ t('admin.affiliates.cashback.noFaceValues') }}
             </div>
           </div>
@@ -63,6 +60,8 @@
         <DataTable :columns="columns" :data="records" :loading="loadingRecords" :server-side-sort="true" @sort="handleSort">
           <template #cell-inviter="{ row }">{{ row.inviter_email || row.inviter_username || '-' }}</template>
           <template #cell-invitee="{ row }">{{ row.invitee_email || row.invitee_username || '-' }}</template>
+          <template #cell-redeem_code_type="{ row }">{{ row.redeem_code_type || '-' }}</template>
+          <template #cell-subscription_item="{ row }">{{ row.validity_days ? `${row.validity_days} 天 (${row.subscription_group || '-'})` : '-' }}</template>
           <template #cell-redeem_value="{ row }">{{ formatCurrency(row.redeem_value) }}</template>
           <template #cell-cashback_base_amount="{ row }">{{ formatCurrency(row.cashback_base_amount) }}</template>
           <template #cell-cashback_rate_percent="{ row }">{{ formatPercent(row.cashback_rate_percent) }}</template>
@@ -103,7 +102,7 @@ const appStore = useAppStore()
 const saving = ref(false)
 const loadingRecords = ref(false)
 const records = ref<InviteCashbackRecord[]>([])
-const form = reactive({ enabled: false, rate_percent: 20, face_values: [] as CashbackFaceValue[] })
+const form = reactive({ enabled: false, rate_percent: 20, subscription_mappings: [] as CashbackFaceValue[] })
 const filters = reactive({ search: '', sort_by: 'created_at', sort_order: 'desc' as 'asc' | 'desc' })
 const pagination = reactive({ page: 1, page_size: 20, total: 0 })
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -111,6 +110,8 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null
 const columns = computed<Column[]>(() => [
   { key: 'inviter', label: t('admin.affiliates.records.inviter'), sortable: true },
   { key: 'invitee', label: t('admin.affiliates.records.invitee'), sortable: true },
+  { key: 'redeem_code_type', label: t('admin.affiliates.cashback.redeemType'), sortable: true },
+  { key: 'subscription_item', label: t('admin.affiliates.cashback.subscriptionItem') },
   { key: 'redeem_code', label: t('admin.affiliates.cashback.redeemCode') },
   { key: 'redeem_value', label: t('admin.affiliates.cashback.redeemValue'), sortable: true },
   { key: 'cashback_base_amount', label: t('admin.affiliates.cashback.baseAmount'), sortable: true },
@@ -130,7 +131,7 @@ async function loadSettings() {
     const data = await getCashbackSettings()
     form.enabled = data.enabled
     form.rate_percent = data.rate_percent
-    form.face_values = [...(data.face_values || [])]
+    form.subscription_mappings = [...(data.subscription_mappings || [])]
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('common.error')))
   }
@@ -142,30 +143,27 @@ async function saveSettings() {
     const data = await updateCashbackSettings({
       enabled: form.enabled,
       rate_percent: Math.min(100, Math.max(0, Number(form.rate_percent) || 0)),
-      face_values: form.face_values
+      subscription_mappings: form.subscription_mappings
         .map((row) => ({
-          redeem_value: Number(row.redeem_value) || 0,
+          group_id: Number(row.group_id) || 0,
+          group_name: row.group_name,
+          group_description: row.group_description,
+          platform: row.platform,
+          validity_days: Number(row.validity_days) || 0,
+          display_name: row.display_name,
           cashback_base_amount: Number(row.cashback_base_amount) || 0,
         }))
-        .filter((row) => row.redeem_value > 0 && row.cashback_base_amount > 0),
+        .filter((row) => row.group_id > 0 && row.validity_days > 0 && row.cashback_base_amount > 0),
     })
     form.enabled = data.enabled
     form.rate_percent = data.rate_percent
-    form.face_values = [...(data.face_values || [])]
+    form.subscription_mappings = [...(data.subscription_mappings || [])]
     appStore.showSuccess(t('common.saved'))
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('common.error')))
   } finally {
     saving.value = false
   }
-}
-
-function addFaceValue() {
-  form.face_values.push({ redeem_value: 0, cashback_base_amount: 0 })
-}
-
-function removeFaceValue(index: number) {
-  form.face_values.splice(index, 1)
 }
 
 async function loadRecords() {

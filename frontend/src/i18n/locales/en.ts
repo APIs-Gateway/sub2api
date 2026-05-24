@@ -1114,6 +1114,8 @@ export default {
       title: 'Cashback Records',
       empty: 'No cashback records yet',
       invitee: 'Invitee',
+      redeemType: 'Redeem Type',
+      subscriptionItem: 'Subscription Item',
       redeemValue: 'Redeem Code Value',
       baseAmount: 'Base Amount',
       rate: 'Rate',
@@ -1741,15 +1743,18 @@ export default {
 
     affiliates: {
       cashback: {
-        description: 'Configure redeem-code value mappings and the real-time cashback rate',
+        description: 'Balance redeem codes are calculated directly from the redeemed amount; subscription redeem codes use per-item cashback base amounts',
         enabled: 'Enable Invite Cashback',
         rate: 'Cashback Rate (%)',
-        faceValues: 'Redeem Code Value Mapping',
-        redeemValue: 'Redeem Code Value',
+        faceValues: 'Subscription Cashback Mapping',
+        balanceHint: 'Balance-type redeem codes do not need a separate mapping. Cashback is calculated directly from the redeemed amount and the current rate.',
+        redeemType: 'Redeem Type',
+        subscriptionItem: 'Subscription Item',
+        redeemValue: 'Redeemed Amount / Raw Value',
         baseAmount: 'Base Amount',
         amount: 'Cashback Amount',
         redeemCode: 'Redeem Code',
-        noFaceValues: 'No value mappings yet. Unmapped values will not generate cashback.'
+        noFaceValues: 'No configurable subscription items yet. Unmapped subscription redeem codes will not generate cashback.'
       },
       invitesDescription: 'View site-wide inviter and invitee relationships',
       rebatesDescription: 'View recharge orders that generated affiliate rebates',

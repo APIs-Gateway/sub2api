@@ -25,16 +25,28 @@ type AffiliateCashbackFaceValue struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+type AffiliateCashbackSubscriptionMapping struct {
+	GroupID            int64     `json:"group_id"`
+	GroupName          string    `json:"group_name"`
+	GroupDescription   string    `json:"group_description,omitempty"`
+	Platform           string    `json:"platform"`
+	ValidityDays       int       `json:"validity_days"`
+	DisplayName        string    `json:"display_name"`
+	CashbackBaseAmount float64   `json:"cashback_base_amount"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
 type AffiliateCashbackSettings struct {
-	Enabled     bool                         `json:"enabled"`
-	RatePercent float64                      `json:"rate_percent"`
-	FaceValues  []AffiliateCashbackFaceValue `json:"face_values"`
+	Enabled              bool                                   `json:"enabled"`
+	RatePercent          float64                                `json:"rate_percent"`
+	SubscriptionMappings []AffiliateCashbackSubscriptionMapping `json:"subscription_mappings"`
 }
 
 type AffiliateCashbackSettingsInput struct {
-	Enabled     bool                         `json:"enabled"`
-	RatePercent float64                      `json:"rate_percent"`
-	FaceValues  []AffiliateCashbackFaceValue `json:"face_values"`
+	Enabled              bool                                   `json:"enabled"`
+	RatePercent          float64                                `json:"rate_percent"`
+	SubscriptionMappings []AffiliateCashbackSubscriptionMapping `json:"subscription_mappings"`
 }
 
 type AffiliateCashbackRecord struct {
@@ -47,7 +59,11 @@ type AffiliateCashbackRecord struct {
 	InviteeUsername     string    `json:"invitee_username"`
 	RedeemCodeID        *int64    `json:"redeem_code_id,omitempty"`
 	RedeemCode          string    `json:"redeem_code,omitempty"`
+	RedeemCodeType      string    `json:"redeem_code_type"`
 	RedeemValue         float64   `json:"redeem_value"`
+	SubscriptionGroupID *int64    `json:"subscription_group_id,omitempty"`
+	SubscriptionGroup   string    `json:"subscription_group,omitempty"`
+	ValidityDays        *int      `json:"validity_days,omitempty"`
 	CashbackBaseAmount  float64   `json:"cashback_base_amount"`
 	CashbackRatePercent float64   `json:"cashback_rate_percent"`
 	CashbackAmount      float64   `json:"cashback_amount"`
@@ -68,13 +84,28 @@ type UserInviteCashbackDetail struct {
 }
 
 type AffiliateCashbackRepository interface {
-	ListCashbackFaceValues(ctx context.Context) ([]AffiliateCashbackFaceValue, error)
-	ReplaceCashbackFaceValues(ctx context.Context, entries []AffiliateCashbackFaceValue) error
-	GetCashbackBaseAmount(ctx context.Context, redeemValue float64) (float64, bool, error)
-	ApplyRedeemCashback(ctx context.Context, inviterID, inviteeUserID, redeemCodeID int64, redeemCode string, redeemValue, baseAmount, ratePercent, cashbackAmount float64) (bool, error)
+	ListCashbackSubscriptionMappings(ctx context.Context) ([]AffiliateCashbackSubscriptionMapping, error)
+	ReplaceCashbackSubscriptionMappings(ctx context.Context, entries []AffiliateCashbackSubscriptionMapping) error
+	GetSubscriptionCashbackBaseAmount(ctx context.Context, groupID int64, validityDays int) (float64, bool, error)
+	ApplyRedeemCashback(ctx context.Context, input AffiliateRedeemCashbackInput) (bool, error)
 	ListCashbackRecords(ctx context.Context, filter AffiliateRecordFilter) ([]AffiliateCashbackRecord, int64, error)
 	ListUserCashbackRecords(ctx context.Context, userID int64, limit int) ([]AffiliateCashbackRecord, error)
 	GetUserCashbackTotal(ctx context.Context, userID int64) (float64, error)
+}
+
+type AffiliateRedeemCashbackInput struct {
+	InviterID            int64
+	InviteeUserID        int64
+	RedeemCodeID         int64
+	RedeemCode           string
+	RedeemCodeType       string
+	RedeemValue          float64
+	SubscriptionGroupID  *int64
+	SubscriptionGroup    string
+	SubscriptionValidity *int
+	BaseAmount           float64
+	RatePercent          float64
+	CashbackAmount       float64
 }
 
 func (s *SettingService) IsAffiliateCashbackEnabled(ctx context.Context) bool {
@@ -108,8 +139,8 @@ func (s *SettingService) UpdateAffiliateCashbackSettings(ctx context.Context, re
 		return nil, infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate cashback settings unavailable")
 	}
 	rate := clampAffiliateRebateRate(input.RatePercent)
-	normalized := normalizeCashbackFaceValues(input.FaceValues)
-	if err := repo.ReplaceCashbackFaceValues(ctx, normalized); err != nil {
+	normalized := normalizeSubscriptionCashbackMappings(input.SubscriptionMappings)
+	if err := repo.ReplaceCashbackSubscriptionMappings(ctx, normalized); err != nil {
 		return nil, err
 	}
 	if err := s.settingRepo.SetMultiple(ctx, map[string]string{
@@ -125,29 +156,33 @@ func (s *SettingService) GetAffiliateCashbackSettings(ctx context.Context, repo 
 	if s == nil || repo == nil {
 		return nil, infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate cashback settings unavailable")
 	}
-	entries, err := repo.ListCashbackFaceValues(ctx)
+	entries, err := repo.ListCashbackSubscriptionMappings(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return &AffiliateCashbackSettings{
-		Enabled:     s.IsAffiliateCashbackEnabled(ctx),
-		RatePercent: s.GetAffiliateCashbackRatePercent(ctx),
-		FaceValues:  entries,
+		Enabled:              s.IsAffiliateCashbackEnabled(ctx),
+		RatePercent:          s.GetAffiliateCashbackRatePercent(ctx),
+		SubscriptionMappings: entries,
 	}, nil
 }
 
-func normalizeCashbackFaceValues(entries []AffiliateCashbackFaceValue) []AffiliateCashbackFaceValue {
-	out := make([]AffiliateCashbackFaceValue, 0, len(entries))
+func normalizeSubscriptionCashbackMappings(entries []AffiliateCashbackSubscriptionMapping) []AffiliateCashbackSubscriptionMapping {
+	out := make([]AffiliateCashbackSubscriptionMapping, 0, len(entries))
 	seen := make(map[string]int, len(entries))
 	for _, entry := range entries {
-		redeemValue := roundTo(entry.RedeemValue, 8)
 		baseAmount := roundTo(entry.CashbackBaseAmount, 8)
-		if redeemValue <= 0 || baseAmount <= 0 || math.IsNaN(redeemValue) || math.IsNaN(baseAmount) || math.IsInf(redeemValue, 0) || math.IsInf(baseAmount, 0) {
+		if entry.GroupID <= 0 || entry.ValidityDays <= 0 || baseAmount <= 0 || math.IsNaN(baseAmount) || math.IsInf(baseAmount, 0) {
 			continue
 		}
-		key := strconv.FormatFloat(redeemValue, 'f', 8, 64)
-		normalized := AffiliateCashbackFaceValue{
-			RedeemValue:        redeemValue,
+		key := strconv.FormatInt(entry.GroupID, 10) + ":" + strconv.Itoa(entry.ValidityDays)
+		normalized := AffiliateCashbackSubscriptionMapping{
+			GroupID:            entry.GroupID,
+			GroupName:          entry.GroupName,
+			GroupDescription:   entry.GroupDescription,
+			Platform:           entry.Platform,
+			ValidityDays:       entry.ValidityDays,
+			DisplayName:        entry.DisplayName,
 			CashbackBaseAmount: baseAmount,
 		}
 		if idx, ok := seen[key]; ok {
@@ -232,7 +267,7 @@ func (s *AffiliateService) AccrueCashbackForRedeem(ctx context.Context, inviteeU
 	if s == nil || s.repo == nil || inviteeUserID <= 0 || redeemCode == nil || redeemCode.ID <= 0 {
 		return 0, nil
 	}
-	if redeemCode.Type != RedeemTypeBalance || redeemCode.Value <= 0 {
+	if redeemCode.Type != RedeemTypeBalance && redeemCode.Type != RedeemTypeSubscription {
 		return 0, nil
 	}
 	if s.settingService == nil || !s.settingService.IsAffiliateCashbackEnabled(ctx) {
@@ -249,16 +284,52 @@ func (s *AffiliateService) AccrueCashbackForRedeem(ctx context.Context, inviteeU
 	if inviteeSummary.InviterID == nil || *inviteeSummary.InviterID <= 0 {
 		return 0, nil
 	}
-	baseAmount, found, err := cashbackRepo.GetCashbackBaseAmount(ctx, redeemCode.Value)
-	if err != nil || !found || baseAmount <= 0 {
-		return 0, err
+
+	baseAmount := 0.0
+	var found bool
+	switch redeemCode.Type {
+	case RedeemTypeBalance:
+		if redeemCode.Value <= 0 {
+			return 0, nil
+		}
+		baseAmount = roundTo(redeemCode.Value, 8)
+		found = true
+	case RedeemTypeSubscription:
+		if redeemCode.GroupID == nil || redeemCode.ValidityDays <= 0 {
+			return 0, nil
+		}
+		baseAmount, found, err = cashbackRepo.GetSubscriptionCashbackBaseAmount(ctx, *redeemCode.GroupID, redeemCode.ValidityDays)
+		if err != nil || !found || baseAmount <= 0 {
+			return 0, err
+		}
 	}
 	rate := s.settingService.GetAffiliateCashbackRatePercent(ctx)
 	cashbackAmount := roundTo(baseAmount*(rate/100), 8)
 	if cashbackAmount <= 0 {
 		return 0, nil
 	}
-	applied, err := cashbackRepo.ApplyRedeemCashback(ctx, *inviteeSummary.InviterID, inviteeUserID, redeemCode.ID, redeemCode.Code, redeemCode.Value, baseAmount, rate, cashbackAmount)
+	var subscriptionGroupName string
+	if redeemCode.Group != nil {
+		subscriptionGroupName = strings.TrimSpace(redeemCode.Group.Name)
+	}
+	input := AffiliateRedeemCashbackInput{
+		InviterID:      *inviteeSummary.InviterID,
+		InviteeUserID:  inviteeUserID,
+		RedeemCodeID:   redeemCode.ID,
+		RedeemCode:     redeemCode.Code,
+		RedeemCodeType: redeemCode.Type,
+		RedeemValue:    redeemCode.Value,
+		BaseAmount:     baseAmount,
+		RatePercent:    rate,
+		CashbackAmount: cashbackAmount,
+	}
+	if redeemCode.Type == RedeemTypeSubscription && redeemCode.GroupID != nil {
+		input.SubscriptionGroupID = redeemCode.GroupID
+		input.SubscriptionGroup = subscriptionGroupName
+		validityDays := redeemCode.ValidityDays
+		input.SubscriptionValidity = &validityDays
+	}
+	applied, err := cashbackRepo.ApplyRedeemCashback(ctx, input)
 	if err != nil || !applied {
 		return 0, err
 	}

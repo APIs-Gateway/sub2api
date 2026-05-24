@@ -4,7 +4,12 @@ import type { InviteCashbackRecord } from '@/api/inviteCashback'
 import type { ListAffiliateRecordsParams } from './affiliates'
 
 export interface CashbackFaceValue {
-  redeem_value: number
+  group_id: number
+  group_name: string
+  group_description?: string
+  platform: string
+  validity_days: number
+  display_name: string
   cashback_base_amount: number
   created_at?: string
   updated_at?: string
@@ -13,7 +18,7 @@ export interface CashbackFaceValue {
 export interface CashbackSettings {
   enabled: boolean
   rate_percent: number
-  face_values: CashbackFaceValue[]
+  subscription_mappings: CashbackFaceValue[]
 }
 
 export async function getCashbackSettings(): Promise<CashbackSettings> {
