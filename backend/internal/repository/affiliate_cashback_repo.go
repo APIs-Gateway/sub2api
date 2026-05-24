@@ -55,8 +55,16 @@ ORDER BY g.name ASC, mr.validity_days ASC`)
 	var out []service.AffiliateCashbackSubscriptionMapping
 	for rows.Next() {
 		var item service.AffiliateCashbackSubscriptionMapping
-		if err := rows.Scan(&item.GroupID, &item.GroupName, &item.GroupDescription, &item.Platform, &item.ValidityDays, &item.CashbackBaseAmount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		var createdAt sql.NullTime
+		var updatedAt sql.NullTime
+		if err := rows.Scan(&item.GroupID, &item.GroupName, &item.GroupDescription, &item.Platform, &item.ValidityDays, &item.CashbackBaseAmount, &createdAt, &updatedAt); err != nil {
 			return nil, err
+		}
+		if createdAt.Valid {
+			item.CreatedAt = &createdAt.Time
+		}
+		if updatedAt.Valid {
+			item.UpdatedAt = &updatedAt.Time
 		}
 		item.DisplayName = fmt.Sprintf("%d 天 (%s)", item.ValidityDays, item.GroupName)
 		out = append(out, item)

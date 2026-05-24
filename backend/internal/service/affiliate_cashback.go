@@ -26,15 +26,15 @@ type AffiliateCashbackFaceValue struct {
 }
 
 type AffiliateCashbackSubscriptionMapping struct {
-	GroupID            int64     `json:"group_id"`
-	GroupName          string    `json:"group_name"`
-	GroupDescription   string    `json:"group_description,omitempty"`
-	Platform           string    `json:"platform"`
-	ValidityDays       int       `json:"validity_days"`
-	DisplayName        string    `json:"display_name"`
-	CashbackBaseAmount float64   `json:"cashback_base_amount"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	GroupID            int64      `json:"group_id"`
+	GroupName          string     `json:"group_name"`
+	GroupDescription   string     `json:"group_description,omitempty"`
+	Platform           string     `json:"platform"`
+	ValidityDays       int        `json:"validity_days"`
+	DisplayName        string     `json:"display_name"`
+	CashbackBaseAmount float64    `json:"cashback_base_amount"`
+	CreatedAt          *time.Time `json:"created_at,omitempty"`
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
 }
 
 type AffiliateCashbackSettings struct {
