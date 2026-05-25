@@ -448,11 +448,6 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		if err := s.userRepo.UpdateBalance(txCtx, userID, amount); err != nil {
 			return nil, fmt.Errorf("update user balance: %w", err)
 		}
-		if amount > 0 && s.affiliateService != nil && txCtx.Value(ctxKeySkipRedeemAffiliate{}) == nil {
-			if _, err := s.affiliateService.AccrueCashbackForRedeem(txCtx, userID, redeemCode); err != nil {
-				return nil, fmt.Errorf("accrue affiliate cashback: %w", err)
-			}
-		}
 
 	case RedeemTypeConcurrency:
 		delta := int(redeemCode.Value)
@@ -474,6 +469,7 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		} else {
 			if validityDays == 0 {
 				validityDays = 30
+				redeemCode.ValidityDays = validityDays
 			}
 			_, _, err := s.subscriptionService.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{
 				UserID:       userID,
@@ -489,6 +485,12 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 
 	default:
 		return nil, fmt.Errorf("unsupported redeem type: %s", redeemCode.Type)
+	}
+
+	if shouldAccrueAffiliateCashbackForRedeem(redeemCode) && s.affiliateService != nil && txCtx.Value(ctxKeySkipRedeemAffiliate{}) == nil {
+		if _, err := s.affiliateService.AccrueCashbackForRedeem(txCtx, userID, redeemCode); err != nil {
+			return nil, fmt.Errorf("accrue affiliate cashback: %w", err)
+		}
 	}
 
 	// 提交事务
