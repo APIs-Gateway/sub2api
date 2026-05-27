@@ -1,7 +1,7 @@
 <template>
-  <AdminAffiliateRecordsTable type="rebates" />
+  <AdminAffiliateCashbackView :show-settings="false" />
 </template>
 
 <script setup lang="ts">
-import AdminAffiliateRecordsTable from './AdminAffiliateRecordsTable.vue'
+import AdminAffiliateCashbackView from './AdminAffiliateCashbackView.vue'
 </script>

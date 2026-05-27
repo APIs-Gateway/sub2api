@@ -355,7 +355,7 @@ export default {
     affiliateManagement: '邀请返利',
     affiliateCashback: '邀请管理',
     affiliateInviteRecords: '邀请记录',
-    affiliateRebateRecords: '返利记录',
+    affiliateRebateRecords: '返现记录',
     affiliateTransferRecords: '提取记录',
     profile: '个人资料',
     users: '用户管理',
@@ -1778,7 +1778,7 @@ export default {
         noFaceValues: '暂无可配置的订阅条目。未配置的订阅兑换码不会产生返现。'
       },
       invitesDescription: '查看全站邀请关系和被邀请用户累计返利',
-      rebatesDescription: '查看每一笔产生返利的充值订单',
+      rebatesDescription: '查看被邀请人兑换后产生的返现记录',
       transfersDescription: '查看返利额度转入账户余额的提取流水',
       errors: {
         loadFailed: '加载邀请返利记录失败'

@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <div class="card p-6">
+      <div v-if="props.showSettings" class="card p-6">
         <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div class="grid gap-4 sm:grid-cols-2 lg:flex lg:items-end">
             <label class="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2 dark:border-dark-700">
@@ -96,6 +96,12 @@ import { formatCurrency, formatDateTime } from '@/utils/format'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { getCashbackSettings, updateCashbackSettings, listCashbackRecords, type CashbackFaceValue } from '@/api/admin/inviteCashback'
 import type { InviteCashbackRecord } from '@/api/inviteCashback'
+
+const props = withDefaults(defineProps<{
+  showSettings?: boolean
+}>(), {
+  showSettings: true,
+})
 
 const { t } = useI18n()
 const appStore = useAppStore()

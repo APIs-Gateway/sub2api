@@ -355,7 +355,7 @@ export default {
     affiliateManagement: 'Affiliate Rebates',
     affiliateCashback: 'Invite Management',
     affiliateInviteRecords: 'Invite Records',
-    affiliateRebateRecords: 'Rebate Records',
+    affiliateRebateRecords: 'Cashback Records',
     affiliateTransferRecords: 'Transfer Records',
     profile: 'Profile',
     users: 'Users',
@@ -1757,7 +1757,7 @@ export default {
         noFaceValues: 'No configurable subscription items yet. Unmapped subscription redeem codes will not generate cashback.'
       },
       invitesDescription: 'View site-wide inviter and invitee relationships',
-      rebatesDescription: 'View recharge orders that generated affiliate rebates',
+      rebatesDescription: 'View cashback records generated after invitees redeem codes',
       transfersDescription: 'View affiliate quota transfers into account balance',
       errors: {
         loadFailed: 'Failed to load affiliate records'
