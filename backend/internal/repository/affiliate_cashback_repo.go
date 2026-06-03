@@ -129,7 +129,7 @@ WITH inserted AS (
 		created_at,
 		updated_at
 	)
-	VALUES ($1, 'cashback', $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+		VALUES ($1, 'cashback', $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
 	ON CONFLICT DO NOTHING
 	RETURNING id
 ),

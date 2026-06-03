@@ -39,6 +39,120 @@ func querySingleInt(t *testing.T, ctx context.Context, client *dbent.Client, que
 	return value
 }
 
+func TestAffiliateRepository_ApplyRedeemCashback_InsertsLedgerAndSnapshots(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	txCtx := dbent.NewTxContext(ctx, tx)
+	client := tx.Client()
+
+	affiliateRepo := NewAffiliateRepository(client, integrationDB)
+	cashbackRepo, ok := affiliateRepo.(service.AffiliateCashbackRepository)
+	require.True(t, ok, "affiliate repo must support redeem cashback")
+
+	inviter := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("cashback-inviter-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Role:         service.RoleUser,
+		Status:       service.StatusActive,
+		Balance:      7.5,
+		Concurrency:  5,
+	})
+	invitee := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("cashback-invitee-%d@example.com", time.Now().UnixNano()+1),
+		PasswordHash: "hash",
+		Role:         service.RoleUser,
+		Status:       service.StatusActive,
+		Concurrency:  5,
+	})
+	code := mustCreateRedeemCode(t, client, &service.RedeemCode{
+		Code:   fmt.Sprintf("CASHBACK-%d", time.Now().UnixNano()),
+		Type:   service.RedeemTypeBalance,
+		Value:  100,
+		Status: service.StatusUsed,
+	})
+
+	_, err := affiliateRepo.EnsureUserAffiliate(txCtx, inviter.ID)
+	require.NoError(t, err)
+
+	input := service.AffiliateRedeemCashbackInput{
+		InviterID:      inviter.ID,
+		InviteeUserID:  invitee.ID,
+		RedeemCodeID:   code.ID,
+		RedeemCodeType: service.RedeemTypeBalance,
+		RedeemValue:    code.Value,
+		BaseAmount:     100,
+		RatePercent:    20,
+		CashbackAmount: 20,
+	}
+	applied, err := cashbackRepo.ApplyRedeemCashback(txCtx, input)
+	require.NoError(t, err)
+	require.True(t, applied)
+
+	rows, err := client.QueryContext(txCtx, `
+SELECT action,
+       amount::double precision,
+       source_user_id,
+       source_redeem_code_id,
+       source_redeem_code_type,
+       source_redeem_code_value::double precision,
+       cashback_base_amount::double precision,
+       cashback_rate_percent::double precision,
+       balance_after::double precision,
+       aff_history_quota_after::double precision
+FROM user_affiliate_ledger
+WHERE user_id = $1 AND source_redeem_code_id = $2`, inviter.ID, code.ID)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	require.True(t, rows.Next(), "expected cashback ledger row")
+
+	var (
+		action         string
+		amount         float64
+		sourceUserID   int64
+		sourceCodeID   int64
+		sourceCodeType string
+		redeemValue    float64
+		baseAmount     float64
+		ratePercent    float64
+		balanceAfter   float64
+		historyAfter   float64
+	)
+	require.NoError(t, rows.Scan(
+		&action,
+		&amount,
+		&sourceUserID,
+		&sourceCodeID,
+		&sourceCodeType,
+		&redeemValue,
+		&baseAmount,
+		&ratePercent,
+		&balanceAfter,
+		&historyAfter,
+	))
+	require.NoError(t, rows.Err())
+	require.Equal(t, "cashback", action)
+	require.InDelta(t, 20.0, amount, 1e-9)
+	require.Equal(t, invitee.ID, sourceUserID)
+	require.Equal(t, code.ID, sourceCodeID)
+	require.Equal(t, service.RedeemTypeBalance, sourceCodeType)
+	require.InDelta(t, 100.0, redeemValue, 1e-9)
+	require.InDelta(t, 100.0, baseAmount, 1e-9)
+	require.InDelta(t, 20.0, ratePercent, 1e-9)
+	require.InDelta(t, 27.5, balanceAfter, 1e-9)
+	require.InDelta(t, 20.0, historyAfter, 1e-9)
+
+	appliedAgain, err := cashbackRepo.ApplyRedeemCashback(txCtx, input)
+	require.NoError(t, err)
+	require.False(t, appliedAgain)
+
+	ledgerCount := querySingleInt(t, txCtx, client,
+		"SELECT COUNT(*) FROM user_affiliate_ledger WHERE user_id = $1 AND source_redeem_code_id = $2", inviter.ID, code.ID)
+	require.Equal(t, 1, ledgerCount)
+	persistedBalance := querySingleFloat(t, txCtx, client,
+		"SELECT balance::double precision FROM users WHERE id = $1", inviter.ID)
+	require.InDelta(t, 27.5, persistedBalance, 1e-9)
+}
+
 func TestAffiliateRepository_TransferQuotaToBalance_UsesClaimedQuotaBeforeClear(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
