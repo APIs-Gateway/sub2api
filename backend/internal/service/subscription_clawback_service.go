@@ -2,9 +2,22 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+)
+
+const (
+	// subscriptionClawbackLeaderLockKey gates the periodic daily clawback so that
+	// only one instance moves money per cycle in a multi-replica deployment;
+	// otherwise N replicas would each clawback the same shortfall.
+	subscriptionClawbackLeaderLockKey = "subscription:clawback:leader"
+	// subscriptionClawbackLeaderLockTTL must exceed runOnce's worst-case runtime
+	// (its 5m context timeout) so the lock never expires mid-run.
+	subscriptionClawbackLeaderLockTTL = 6 * time.Minute
 )
 
 // SubscriptionClawbackService 周期性执行 burn-down 订阅的「每日清扣」。
@@ -24,6 +37,10 @@ type SubscriptionClawbackService struct {
 	stopCh       chan struct{}
 	stopOnce     sync.Once
 	wg           sync.WaitGroup
+
+	lockCache  LeaderLockCache
+	db         *sql.DB
+	instanceID string
 }
 
 func NewSubscriptionClawbackService(userSubRepo UserSubscriptionRepository, billingCache *BillingCacheService, interval time.Duration) *SubscriptionClawbackService {
@@ -36,7 +53,19 @@ func NewSubscriptionClawbackService(userSubRepo UserSubscriptionRepository, bill
 		interval:     interval,
 		batchSize:    200,
 		stopCh:       make(chan struct{}),
+		instanceID:   uuid.NewString(),
 	}
+}
+
+// SetLeaderLock injects the leader-lock cache and DB used to elect a single
+// instance for the periodic daily clawback. When both are nil the job runs
+// ungated (single-instance / test behavior).
+func (s *SubscriptionClawbackService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if s == nil {
+		return
+	}
+	s.lockCache = lockCache
+	s.db = db
 }
 
 func (s *SubscriptionClawbackService) Start() {
@@ -72,6 +101,16 @@ func (s *SubscriptionClawbackService) Stop() {
 }
 
 func (s *SubscriptionClawbackService) runOnce() {
+	// Multi-instance guard: only the leader performs the daily clawback per cycle,
+	// otherwise every replica would clawback the same shortfall N×.
+	lockCtx, lockCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	release, ok := tryAcquireSingletonLeaderLock(lockCtx, s.lockCache, s.db, subscriptionClawbackLeaderLockKey, s.instanceID, subscriptionClawbackLeaderLockTTL)
+	lockCancel()
+	if !ok {
+		return
+	}
+	defer release()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
