@@ -14,7 +14,7 @@ import (
 )
 
 // TestUserRepository_DeleteUser_AtomicWithAPIKeys 复现 AdminService.DeleteUser 的事务编排场景：
-// 把"删 API Key"(apiKeyRepo.Delete) 与"删 User"(userRepo.Delete) 放进同一个外部事务时，
+// 把"删 API Key"(apiKeyRepo.DeleteWithAudit) 与"删 User"(userRepo.Delete) 放进同一个外部事务时，
 // userRepo.Delete 必须复用 context 中的事务，而不是用 base client 自起一个独立事务并提前提交。
 //
 // 用例用"回滚外层事务"来模拟 commit 失败 / 中止：
@@ -39,6 +39,7 @@ func TestUserRepository_DeleteUser_AtomicWithAPIKeys(t *testing.T) {
 
 	t.Cleanup(func() {
 		// testEntClient 的写入不会自动回滚，best-effort 清理避免污染共享库。
+		_, _ = integrationDB.Exec(`DELETE FROM deleted_api_key_audits WHERE user_id = $1`, user.ID)
 		_, _ = integrationDB.Exec(`DELETE FROM api_keys WHERE user_id = $1`, user.ID)
 		_, _ = integrationDB.Exec(`DELETE FROM users WHERE id = $1`, user.ID)
 	})
@@ -50,8 +51,8 @@ func TestUserRepository_DeleteUser_AtomicWithAPIKeys(t *testing.T) {
 	require.NoError(t, err, "begin outer tx")
 	opCtx := dbent.NewTxContext(ctx, tx)
 
-	require.NoError(t, apiKeyRepo.Delete(opCtx, key1.ID))
-	require.NoError(t, apiKeyRepo.Delete(opCtx, key2.ID))
+	require.NoError(t, apiKeyRepo.DeleteWithAudit(opCtx, key1.ID))
+	require.NoError(t, apiKeyRepo.DeleteWithAudit(opCtx, key2.ID))
 	require.NoError(t, userRepo.Delete(opCtx, user.ID))
 
 	require.NoError(t, tx.Rollback(), "rollback outer tx (模拟 commit 失败/中止)")
@@ -65,13 +66,18 @@ func TestUserRepository_DeleteUser_AtomicWithAPIKeys(t *testing.T) {
 	require.NoError(t, err, "ListByUserID")
 	require.Len(t, keys, 2, "回滚后 2 个 API Key 必须仍为 active")
 
+	var auditCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deleted_api_key_audits WHERE user_id = $1`, user.ID).Scan(&auditCount))
+	require.Zero(t, auditCount, "回滚后不应有已提交的审计行")
+
 	// --- Case 2: 外层事务提交 → 删 Key 与删 User 一起生效 ---
 	tx2, err := client.Tx(ctx)
 	require.NoError(t, err, "begin outer tx #2")
 	opCtx2 := dbent.NewTxContext(ctx, tx2)
 
-	require.NoError(t, apiKeyRepo.Delete(opCtx2, key1.ID))
-	require.NoError(t, apiKeyRepo.Delete(opCtx2, key2.ID))
+	require.NoError(t, apiKeyRepo.DeleteWithAudit(opCtx2, key1.ID))
+	require.NoError(t, apiKeyRepo.DeleteWithAudit(opCtx2, key2.ID))
 	require.NoError(t, userRepo.Delete(opCtx2, user.ID))
 
 	require.NoError(t, tx2.Commit(), "commit outer tx")
@@ -82,4 +88,8 @@ func TestUserRepository_DeleteUser_AtomicWithAPIKeys(t *testing.T) {
 	keysAfter, _, err := apiKeyRepo.ListByUserID(ctx, user.ID, listParams, service.APIKeyListFilters{})
 	require.NoError(t, err, "ListByUserID")
 	require.Empty(t, keysAfter, "提交后 API Key 应全部被软删除")
+
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deleted_api_key_audits WHERE user_id = $1`, user.ID).Scan(&auditCount))
+	require.Equal(t, 2, auditCount, "提交后应为每个被删 Key 写入一行审计")
 }
