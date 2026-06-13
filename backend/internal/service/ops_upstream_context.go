@@ -35,8 +35,9 @@ const (
 	// Client-side configuration denials should remain visible in ops_error_logs,
 	// but should be excluded from SLA/error-rate calculations.
 	OpsClientBusinessLimitedKey                 = "ops_client_business_limited"
-	OpsClientBusinessLimitedReasonKey           = "ops_client_business_limited_reason"
-	OpsClientBusinessLimitedReasonIPRestriction = "api_key_ip_restriction"
+	OpsClientBusinessLimitedReasonKey                    = "ops_client_business_limited_reason"
+	OpsClientBusinessLimitedReasonIPRestriction          = "api_key_ip_restriction"
+	OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable = "api_key_group_unavailable"
 )
 
 func SetOpsLatencyMs(c *gin.Context, key string, value int64) {
