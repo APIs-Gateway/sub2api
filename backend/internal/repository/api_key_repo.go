@@ -282,10 +282,12 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey) erro
 }
 
 func (r *apiKeyRepository) Delete(ctx context.Context, id int64) error {
+	// 复用调用方事务（若 ctx 携带），保证与 userRepo.Delete 等放进同一外部事务时可原子回滚。
+	client := clientFromContext(ctx, r.client)
 	// 存在唯一键约束 生成tombstone key 用来释放原key，长度远小于 128，满足 schema 限制
 	tombstoneKey := fmt.Sprintf("__deleted__%d__%d", id, time.Now().UnixNano())
 	// 显式软删除：避免依赖 Hook 行为，确保 deleted_at 一定被设置。
-	affected, err := r.client.APIKey.Update().
+	affected, err := client.APIKey.Update().
 		Where(apikey.IDEQ(id), apikey.DeletedAtIsNil()).
 		SetKey(tombstoneKey).
 		SetDeletedAt(time.Now()).
@@ -297,7 +299,7 @@ func (r *apiKeyRepository) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if affected == 0 {
-		exists, err := r.client.APIKey.Query().
+		exists, err := client.APIKey.Query().
 			Where(apikey.IDEQ(id)).
 			Exist(mixins.SkipSoftDelete(ctx))
 		if err != nil {
