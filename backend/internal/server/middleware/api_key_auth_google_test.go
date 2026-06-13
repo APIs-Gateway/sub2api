@@ -186,6 +186,24 @@ func (f fakeGoogleSubscriptionRepo) IncrementUsage(ctx context.Context, id int64
 func (f fakeGoogleSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	return 0, errors.New("not implemented")
 }
+func (f fakeGoogleSubscriptionRepo) ListActiveBurndownIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
+	return nil, nil
+}
+func (f fakeGoogleSubscriptionRepo) ClawbackSubscription(ctx context.Context, subID int64, now time.Time) (float64, error) {
+	return 0, nil
+}
+func (f fakeGoogleSubscriptionRepo) ForfeitExpiredSubscriptions(ctx context.Context, now time.Time, limit int) ([]int64, error) {
+	return nil, nil
+}
+func (f fakeGoogleSubscriptionRepo) CloseSubscriptionWithReclaim(ctx context.Context, subID int64, now time.Time, deleteRow bool) (int64, float64, error) {
+	return 0, 0, nil
+}
+func (f fakeGoogleSubscriptionRepo) ShortenSubscriptionWithReclaim(ctx context.Context, subID int64, reduceDays int, newExpiresAt, now time.Time) (int64, float64, error) {
+	return 0, 0, nil
+}
+func (f fakeGoogleSubscriptionRepo) GrantSubscriptionDays(ctx context.Context, subID int64, addDays int, newExpiresAt, now time.Time) (int64, float64, error) {
+	return 0, 0, nil
+}
 
 type googleErrorResponse struct {
 	Error struct {
@@ -606,7 +624,7 @@ func TestApiKeyAuthWithSubscriptionGoogle_TouchesLastUsedInStandardMode(t *testi
 	require.Equal(t, 1, touchCalls)
 }
 
-func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionLimitExceededReturns429(t *testing.T) {
+func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionGroupAllowedByBalance(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	limit := 1.0
@@ -669,7 +687,7 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionLimitExceededReturns429(t 
 		resetDaily:     func(ctx context.Context, id int64, start time.Time) error { return nil },
 		resetWeekly:    func(ctx context.Context, id int64, start time.Time) error { return nil },
 		resetMonthly:   func(ctx context.Context, id int64, start time.Time) error { return nil },
-	}, nil, nil, &config.Config{RunMode: config.RunModeStandard})
+	}, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
 
 	r := gin.New()
 	r.Use(APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, &config.Config{RunMode: config.RunModeStandard}))
@@ -680,10 +698,7 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionLimitExceededReturns429(t 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusTooManyRequests, rec.Code)
-	var resp googleErrorResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Equal(t, http.StatusTooManyRequests, resp.Error.Code)
-	require.Equal(t, "RESOURCE_EXHAUSTED", resp.Error.Status)
-	require.Contains(t, resp.Error.Message, "daily usage limit exceeded")
+	// burn-down 模型：Gemini 原生端点也改为纯余额放行，不再按订阅日限额返回 429。
+	// 用户余额 10 > 0 → 放行。
+	require.Equal(t, http.StatusOK, rec.Code)
 }

@@ -125,6 +125,24 @@ func (userSubRepoNoop) IncrementUsage(context.Context, int64, float64) error {
 func (userSubRepoNoop) BatchUpdateExpiredStatus(context.Context) (int64, error) {
 	panic("unexpected BatchUpdateExpiredStatus call")
 }
+func (userSubRepoNoop) ListActiveBurndownIDs(context.Context, int64, int) ([]int64, error) {
+	return nil, nil
+}
+func (userSubRepoNoop) ClawbackSubscription(context.Context, int64, time.Time) (float64, error) {
+	return 0, nil
+}
+func (userSubRepoNoop) ForfeitExpiredSubscriptions(context.Context, time.Time, int) ([]int64, error) {
+	return nil, nil
+}
+func (userSubRepoNoop) CloseSubscriptionWithReclaim(context.Context, int64, time.Time, bool) (int64, float64, error) {
+	return 0, 0, nil
+}
+func (userSubRepoNoop) ShortenSubscriptionWithReclaim(context.Context, int64, int, time.Time, time.Time) (int64, float64, error) {
+	return 0, 0, nil
+}
+func (userSubRepoNoop) GrantSubscriptionDays(context.Context, int64, int, time.Time, time.Time) (int64, float64, error) {
+	return 0, 0, nil
+}
 
 type subscriptionUserSubRepoStub struct {
 	userSubRepoNoop
@@ -217,7 +235,8 @@ func (s *subscriptionUserSubRepoStub) Update(_ context.Context, sub *UserSubscri
 	return nil
 }
 
-func TestAssignSubscriptionReuseWhenSemanticsMatch(t *testing.T) {
+// burn-down 模型：每次分配都新建一张独立订阅卡（叠加），不再幂等复用已有订阅。
+func TestAssignSubscriptionAlwaysCreatesNewCard(t *testing.T) {
 	start := time.Date(2026, 2, 20, 10, 0, 0, 0, time.UTC)
 	groupRepo := &subscriptionGroupRepoStub{
 		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription},
@@ -232,7 +251,7 @@ func TestAssignSubscriptionReuseWhenSemanticsMatch(t *testing.T) {
 		Notes:     "init",
 	})
 
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
 	sub, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       1001,
 		GroupID:      1,
@@ -240,11 +259,13 @@ func TestAssignSubscriptionReuseWhenSemanticsMatch(t *testing.T) {
 		Notes:        "init",
 	})
 	require.NoError(t, err)
-	require.Equal(t, int64(10), sub.ID)
-	require.Equal(t, 0, subRepo.createCalls, "reuse should not create new subscription")
+	require.NotNil(t, sub)
+	require.NotEqual(t, int64(10), sub.ID, "应新建独立卡，而非复用已有订阅")
+	require.Equal(t, 1, subRepo.createCalls, "每次分配都新建一张卡")
 }
 
-func TestAssignSubscriptionConflictWhenSemanticsMismatch(t *testing.T) {
+// burn-down 模型：语义不一致不再报冲突，直接新建一张叠加卡。
+func TestAssignSubscriptionStacksRegardlessOfExisting(t *testing.T) {
 	start := time.Date(2026, 2, 20, 10, 0, 0, 0, time.UTC)
 	groupRepo := &subscriptionGroupRepoStub{
 		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription},
@@ -259,25 +280,25 @@ func TestAssignSubscriptionConflictWhenSemanticsMismatch(t *testing.T) {
 		Notes:     "old-note",
 	})
 
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil)
-	_, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
+	sub, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       2001,
 		GroupID:      1,
 		ValidityDays: 30,
 		Notes:        "new-note",
 	})
-	require.Error(t, err)
-	require.Equal(t, "SUBSCRIPTION_ASSIGN_CONFLICT", infraerrorsReason(err))
-	require.Equal(t, 0, subRepo.createCalls, "conflict should not create or mutate existing subscription")
+	require.NoError(t, err)
+	require.NotNil(t, sub)
+	require.Equal(t, 1, subRepo.createCalls, "不再冲突，直接新建一张叠加卡")
 }
 
-func TestBulkAssignSubscriptionCreatedReusedAndConflict(t *testing.T) {
+// burn-down 模型：批量分配每个用户都新建一张卡（无 reused/conflict）。
+func TestBulkAssignSubscriptionAllCreated(t *testing.T) {
 	start := time.Date(2026, 2, 20, 10, 0, 0, 0, time.UTC)
 	groupRepo := &subscriptionGroupRepoStub{
 		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription},
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
-	// user 1: 语义一致，可 reused
 	subRepo.seed(&UserSubscription{
 		ID:        21,
 		UserID:    1,
@@ -286,7 +307,6 @@ func TestBulkAssignSubscriptionCreatedReusedAndConflict(t *testing.T) {
 		ExpiresAt: start.AddDate(0, 0, 30),
 		Notes:     "same-note",
 	})
-	// user 3: 语义冲突（有效期不一致），应 failed
 	subRepo.seed(&UserSubscription{
 		ID:        23,
 		UserID:    3,
@@ -296,7 +316,7 @@ func TestBulkAssignSubscriptionCreatedReusedAndConflict(t *testing.T) {
 		Notes:     "same-note",
 	})
 
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
 	result, err := svc.BulkAssignSubscription(context.Background(), &BulkAssignSubscriptionInput{
 		UserIDs:      []int64{1, 2, 3},
 		GroupID:      1,
@@ -305,14 +325,14 @@ func TestBulkAssignSubscriptionCreatedReusedAndConflict(t *testing.T) {
 		Notes:        "same-note",
 	})
 	require.NoError(t, err)
-	require.Equal(t, 2, result.SuccessCount)
-	require.Equal(t, 1, result.CreatedCount)
-	require.Equal(t, 1, result.ReusedCount)
-	require.Equal(t, 1, result.FailedCount)
-	require.Equal(t, "reused", result.Statuses[1])
+	require.Equal(t, 3, result.SuccessCount)
+	require.Equal(t, 3, result.CreatedCount)
+	require.Equal(t, 0, result.ReusedCount)
+	require.Equal(t, 0, result.FailedCount)
+	require.Equal(t, "created", result.Statuses[1])
 	require.Equal(t, "created", result.Statuses[2])
-	require.Equal(t, "failed", result.Statuses[3])
-	require.Equal(t, 1, subRepo.createCalls)
+	require.Equal(t, "created", result.Statuses[3])
+	require.Equal(t, 3, subRepo.createCalls)
 }
 
 func TestAssignSubscriptionKeepsWorkingWhenIdempotencyStoreUnavailable(t *testing.T) {
@@ -325,7 +345,7 @@ func TestAssignSubscriptionKeepsWorkingWhenIdempotencyStoreUnavailable(t *testin
 		SetDefaultIdempotencyCoordinator(nil)
 	})
 
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
 	sub, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       9001,
 		GroupID:      1,
@@ -387,7 +407,7 @@ func TestAssignSubscriptionGroupTypeValidation(t *testing.T) {
 		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeStandard},
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
 
 	_, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       1,
@@ -400,8 +420,4 @@ func TestAssignSubscriptionGroupTypeValidation(t *testing.T) {
 
 func strconvFormatInt(v int64) string {
 	return strconv.FormatInt(v, 10)
-}
-
-func infraerrorsReason(err error) string {
-	return infraerrors.Reason(err)
 }

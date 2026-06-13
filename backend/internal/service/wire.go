@@ -153,10 +153,18 @@ func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpirySe
 }
 
 // ProvideSubscriptionExpiryService creates and starts SubscriptionExpiryService.
-func ProvideSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, settingRepo SettingRepository, notificationEmailService *NotificationEmailService) *SubscriptionExpiryService {
+func ProvideSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, settingRepo SettingRepository, notificationEmailService *NotificationEmailService, billingCache *BillingCacheService) *SubscriptionExpiryService {
 	svc := NewSubscriptionExpiryService(userSubRepo, time.Minute)
 	svc.SetSettingRepository(settingRepo)
 	svc.SetNotificationEmailService(notificationEmailService)
+	svc.SetBillingCacheService(billingCache)
+	svc.Start()
+	return svc
+}
+
+// ProvideSubscriptionClawbackService creates and starts SubscriptionClawbackService（每日清扣）。
+func ProvideSubscriptionClawbackService(userSubRepo UserSubscriptionRepository, billingCache *BillingCacheService) *SubscriptionClawbackService {
+	svc := NewSubscriptionClawbackService(userSubRepo, billingCache, time.Minute)
 	svc.Start()
 	return svc
 }
@@ -502,6 +510,7 @@ var ProviderSet = wire.NewSet(
 	ProvideTokenRefreshService,
 	ProvideAccountExpiryService,
 	ProvideSubscriptionExpiryService,
+	ProvideSubscriptionClawbackService,
 	ProvideTimingWheelService,
 	ProvideDashboardAggregationService,
 	ProvideUsageCleanupService,

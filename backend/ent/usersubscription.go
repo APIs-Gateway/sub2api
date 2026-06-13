@@ -47,6 +47,18 @@ type UserSubscription struct {
 	WeeklyUsageUsd float64 `json:"weekly_usage_usd,omitempty"`
 	// MonthlyUsageUsd holds the value of the "monthly_usage_usd" field.
 	MonthlyUsageUsd float64 `json:"monthly_usage_usd,omitempty"`
+	// GrantedTotalUsd holds the value of the "granted_total_usd" field.
+	GrantedTotalUsd float64 `json:"granted_total_usd,omitempty"`
+	// DailyAmountUsd holds the value of the "daily_amount_usd" field.
+	DailyAmountUsd float64 `json:"daily_amount_usd,omitempty"`
+	// ConsumedUsd holds the value of the "consumed_usd" field.
+	ConsumedUsd float64 `json:"consumed_usd,omitempty"`
+	// ClawedUsd holds the value of the "clawed_usd" field.
+	ClawedUsd float64 `json:"clawed_usd,omitempty"`
+	// LastClawbackDay holds the value of the "last_clawback_day" field.
+	LastClawbackDay int `json:"last_clawback_day,omitempty"`
+	// ActivatedAt holds the value of the "activated_at" field.
+	ActivatedAt *time.Time `json:"activated_at,omitempty"`
 	// AssignedBy holds the value of the "assigned_by" field.
 	AssignedBy *int64 `json:"assigned_by,omitempty"`
 	// AssignedAt holds the value of the "assigned_at" field.
@@ -121,13 +133,13 @@ func (*UserSubscription) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd:
+		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldGrantedTotalUsd, usersubscription.FieldDailyAmountUsd, usersubscription.FieldConsumedUsd, usersubscription.FieldClawedUsd:
 			values[i] = new(sql.NullFloat64)
-		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldAssignedBy:
+		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldLastClawbackDay, usersubscription.FieldAssignedBy:
 			values[i] = new(sql.NullInt64)
 		case usersubscription.FieldStatus, usersubscription.FieldNotes:
 			values[i] = new(sql.NullString)
-		case usersubscription.FieldCreatedAt, usersubscription.FieldUpdatedAt, usersubscription.FieldDeletedAt, usersubscription.FieldStartsAt, usersubscription.FieldExpiresAt, usersubscription.FieldDailyWindowStart, usersubscription.FieldWeeklyWindowStart, usersubscription.FieldMonthlyWindowStart, usersubscription.FieldAssignedAt:
+		case usersubscription.FieldCreatedAt, usersubscription.FieldUpdatedAt, usersubscription.FieldDeletedAt, usersubscription.FieldStartsAt, usersubscription.FieldExpiresAt, usersubscription.FieldDailyWindowStart, usersubscription.FieldWeeklyWindowStart, usersubscription.FieldMonthlyWindowStart, usersubscription.FieldActivatedAt, usersubscription.FieldAssignedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -237,6 +249,43 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field monthly_usage_usd", values[i])
 			} else if value.Valid {
 				_m.MonthlyUsageUsd = value.Float64
+			}
+		case usersubscription.FieldGrantedTotalUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field granted_total_usd", values[i])
+			} else if value.Valid {
+				_m.GrantedTotalUsd = value.Float64
+			}
+		case usersubscription.FieldDailyAmountUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field daily_amount_usd", values[i])
+			} else if value.Valid {
+				_m.DailyAmountUsd = value.Float64
+			}
+		case usersubscription.FieldConsumedUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field consumed_usd", values[i])
+			} else if value.Valid {
+				_m.ConsumedUsd = value.Float64
+			}
+		case usersubscription.FieldClawedUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field clawed_usd", values[i])
+			} else if value.Valid {
+				_m.ClawedUsd = value.Float64
+			}
+		case usersubscription.FieldLastClawbackDay:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field last_clawback_day", values[i])
+			} else if value.Valid {
+				_m.LastClawbackDay = int(value.Int64)
+			}
+		case usersubscription.FieldActivatedAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field activated_at", values[i])
+			} else if value.Valid {
+				_m.ActivatedAt = new(time.Time)
+				*_m.ActivatedAt = value.Time
 			}
 		case usersubscription.FieldAssignedBy:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -363,6 +412,26 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("monthly_usage_usd=")
 	builder.WriteString(fmt.Sprintf("%v", _m.MonthlyUsageUsd))
+	builder.WriteString(", ")
+	builder.WriteString("granted_total_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.GrantedTotalUsd))
+	builder.WriteString(", ")
+	builder.WriteString("daily_amount_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.DailyAmountUsd))
+	builder.WriteString(", ")
+	builder.WriteString("consumed_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ConsumedUsd))
+	builder.WriteString(", ")
+	builder.WriteString("clawed_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ClawedUsd))
+	builder.WriteString(", ")
+	builder.WriteString("last_clawback_day=")
+	builder.WriteString(fmt.Sprintf("%v", _m.LastClawbackDay))
+	builder.WriteString(", ")
+	if v := _m.ActivatedAt; v != nil {
+		builder.WriteString("activated_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
 	builder.WriteString(", ")
 	if v := _m.AssignedBy; v != nil {
 		builder.WriteString("assigned_by=")

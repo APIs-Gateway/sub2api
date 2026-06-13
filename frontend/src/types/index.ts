@@ -1521,6 +1521,14 @@ export interface UserSubscription {
   daily_window_start: string | null
   weekly_window_start: string | null
   monthly_window_start: string | null
+  // Burn-down 计费模型字段（开通即把整期额度打入余额）
+  granted_total_usd?: number // 发放总额 G = D×天数
+  daily_amount_usd?: number // 每日额度 D
+  consumed_usd?: number // 累计消费
+  clawed_usd?: number // 累计被清扣
+  remaining_usd?: number // 剩余订阅余额
+  consumption_day?: number // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
+  activated_at?: string | null
   created_at: string
   updated_at: string
   expires_at: string | null
@@ -1550,6 +1558,20 @@ export interface SubscriptionProgress {
   } | null
   expires_at: string | null
   days_remaining: number | null
+  // Burn-down 计费模型进度（新模型）：开通即把整期额度打入余额，按消费进度天展示。
+  burndown?: BurndownProgress | null
+}
+
+// BurndownProgress burn-down 订阅进度。
+export interface BurndownProgress {
+  granted_total_usd: number // 发放总额 G = D×天数
+  daily_amount_usd: number // 每日额度 D
+  consumed_usd: number // 累计消费
+  clawed_usd: number // 累计被清扣
+  remaining_usd: number // 剩余订阅余额
+  consumption_day: number // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
+  calendar_day: number // 自激活起经过的日历天 N（东八区）
+  total_days: number // 总天数 = G/D
 }
 
 export interface AssignSubscriptionRequest {

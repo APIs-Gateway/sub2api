@@ -6,11 +6,10 @@ import (
 	"testing"
 )
 
-// TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier locks in the fix
-// that subscription-mode billing honours the group (and any user-specific) rate
-// multiplier — i.e. cmd.SubscriptionCost tracks ActualCost (= TotalCost *
-// RateMultiplier), not raw TotalCost.
-func TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier(t *testing.T) {
+// TestBuildUsageBillingCommand_AlwaysBillsBalanceWithRateMultiplier 锁定 burn-down 模型：
+// 所有计费统一进 BalanceCost（= ActualCost = TotalCost × RateMultiplier），SubscriptionCost 恒为 0；
+// 订阅优先归集由计费仓储在事务内完成。免费（multiplier 0）不扣费。
+func TestBuildUsageBillingCommand_AlwaysBillsBalanceWithRateMultiplier(t *testing.T) {
 	t.Parallel()
 
 	groupID := int64(7)
@@ -25,23 +24,23 @@ func TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier(t *testing.T
 		wantBalance    float64
 	}{
 		{
-			name:           "subscription with 2x multiplier consumes 2x quota",
+			name:           "subscription group with 2x multiplier bills 2x to balance",
 			totalCost:      1.0,
 			actualCost:     2.0,
 			isSubscription: true,
-			wantSub:        2.0,
-			wantBalance:    0,
+			wantSub:        0,
+			wantBalance:    2.0,
 		},
 		{
-			name:           "subscription with 0.5x multiplier consumes 0.5x quota",
+			name:           "subscription group with 0.5x multiplier bills 0.5x to balance",
 			totalCost:      1.0,
 			actualCost:     0.5,
 			isSubscription: true,
-			wantSub:        0.5,
-			wantBalance:    0,
+			wantSub:        0,
+			wantBalance:    0.5,
 		},
 		{
-			name:           "free subscription (multiplier 0) consumes no quota",
+			name:           "free request (multiplier 0) bills nothing",
 			totalCost:      1.0,
 			actualCost:     0,
 			isSubscription: true,
@@ -49,7 +48,7 @@ func TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier(t *testing.T
 			wantBalance:    0,
 		},
 		{
-			name:           "balance billing keeps using ActualCost (regression)",
+			name:           "balance billing uses ActualCost",
 			totalCost:      1.0,
 			actualCost:     2.0,
 			isSubscription: false,

@@ -106,13 +106,13 @@ func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *s
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
-	if cmd.SubscriptionCost > 0 && cmd.SubscriptionID != nil {
-		if err := incrementUsageBillingSubscription(ctx, tx, *cmd.SubscriptionID, cmd.SubscriptionCost); err != nil {
+	// burn-down 模型：本次消费全额从 users.balance 扣除（余额 = 充值剩余 + Σ订阅剩余）。
+	// 先按「订阅优先、按激活先后」把消费归集到各订阅卡的 consumed_usd（锁 subs），
+	// 再扣余额（锁 users）。锁顺序 subs→users 与清扣/到期事务保持一致，避免死锁。
+	if cmd.BalanceCost > 0 {
+		if err := allocateUsageBillingSubscriptions(ctx, tx, cmd.UserID, cmd.BalanceCost); err != nil {
 			return err
 		}
-	}
-
-	if cmd.BalanceCost > 0 {
 		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
 		if err != nil {
 			return err
@@ -145,32 +145,77 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	return nil
 }
 
-func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64) error {
-	const updateSQL = `
-		UPDATE user_subscriptions us
-		SET
-			daily_usage_usd = us.daily_usage_usd + $1,
-			weekly_usage_usd = us.weekly_usage_usd + $1,
-			monthly_usage_usd = us.monthly_usage_usd + $1,
-			updated_at = NOW()
-		FROM groups g
-		WHERE us.id = $2
-			AND us.deleted_at IS NULL
-			AND us.group_id = g.id
-			AND g.deleted_at IS NULL
-	`
-	res, err := tx.ExecContext(ctx, updateSQL, costUSD, subscriptionID)
-	if err != nil {
-		return err
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected > 0 {
+// allocateUsageBillingSubscriptions 按「订阅优先、按激活先后（先激活的卡先扣）」把本次消费 cost
+// 归集到该用户各活跃订阅卡的 consumed_usd。每张卡最多消费其 remaining，超出所有订阅的部分
+// 由充值余额承担（无需额外记账）。consumed_usd 仅用于每日清扣判定与进度展示，
+// 实际可用额度始终以 users.balance 为准。
+//
+// 锁定顺序：SELECT ... FOR UPDATE 按 (activated_at, id) 确定序锁定订阅行，
+// 与每日清扣 / 到期作废事务一致，避免交叉死锁。
+func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID int64, cost float64) error {
+	if cost <= 0 {
 		return nil
 	}
-	return service.ErrSubscriptionNotFound
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, (granted_total_usd - consumed_usd - clawed_usd) AS remaining
+		FROM user_subscriptions
+		WHERE user_id = $1
+			AND status = 'active'
+			AND deleted_at IS NULL
+			AND expires_at > NOW()
+			AND (granted_total_usd - consumed_usd - clawed_usd) > 0
+		ORDER BY activated_at ASC NULLS FIRST, id ASC
+		FOR UPDATE
+	`, userID)
+	if err != nil {
+		return err
+	}
+
+	type subRemaining struct {
+		id        int64
+		remaining float64
+	}
+	var subs []subRemaining
+	for rows.Next() {
+		var s subRemaining
+		if err := rows.Scan(&s.id, &s.remaining); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		subs = append(subs, s)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	// pq 驱动：同一连接上必须先耗尽并关闭 rows，才能执行后续 UPDATE。
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	remaining := cost
+	for _, s := range subs {
+		if remaining <= 0 {
+			break
+		}
+		alloc := s.remaining
+		if alloc > remaining {
+			alloc = remaining
+		}
+		if alloc <= 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE user_subscriptions
+			SET consumed_usd = consumed_usd + $1, updated_at = NOW()
+			WHERE id = $2
+		`, alloc, s.id); err != nil {
+			return err
+		}
+		remaining -= alloc
+	}
+	return nil
 }
 
 func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, error) {

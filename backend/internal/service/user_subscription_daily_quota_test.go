@@ -20,31 +20,25 @@ func (r *dailyResetTrackingUserSubRepo) ResetDailyUsage(context.Context, int64, 
 	return nil
 }
 
-func TestAssignOrExtendSubscription_ExpiredDailyCardStartsNewOneTimeQuota(t *testing.T) {
+// burn-down 模型：AssignOrExtendSubscription 始终新建一张独立卡（不再续期已有订阅）。
+func TestAssignOrExtendSubscription_AlwaysCreatesNewActiveCard(t *testing.T) {
 	groupRepo := &subscriptionGroupRepoStub{
 		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription},
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
 	oldStart := time.Now().AddDate(0, 0, -3)
-	oldWindowStart := startOfDay(oldStart)
 	subRepo.seed(&UserSubscription{
-		ID:                 100,
-		UserID:             200,
-		GroupID:            1,
-		StartsAt:           oldStart,
-		ExpiresAt:          oldStart.AddDate(0, 0, 1),
-		Status:             SubscriptionStatusExpired,
-		DailyWindowStart:   &oldWindowStart,
-		WeeklyWindowStart:  &oldWindowStart,
-		MonthlyWindowStart: &oldWindowStart,
-		DailyUsageUSD:      10,
-		WeeklyUsageUSD:     20,
-		MonthlyUsageUSD:    30,
-		Notes:              "old",
+		ID:        100,
+		UserID:    200,
+		GroupID:   1,
+		StartsAt:  oldStart,
+		ExpiresAt: oldStart.AddDate(0, 0, 1),
+		Status:    SubscriptionStatusExpired,
+		Notes:     "old",
 	})
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
 
-	renewed, reused, err := svc.AssignOrExtendSubscription(context.Background(), &AssignSubscriptionInput{
+	created, reused, err := svc.AssignOrExtendSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       200,
 		GroupID:      1,
 		ValidityDays: 1,
@@ -52,17 +46,13 @@ func TestAssignOrExtendSubscription_ExpiredDailyCardStartsNewOneTimeQuota(t *tes
 	})
 
 	require.NoError(t, err)
-	require.True(t, reused)
-	require.True(t, renewed.HasOneTimeDailyQuota(), "过期后重新购买 1 日卡仍应被识别为一次性日额度")
-	require.Equal(t, SubscriptionStatusActive, renewed.Status)
-	require.True(t, renewed.StartsAt.After(oldStart), "重新购买过期订阅时应重置当前周期 StartsAt")
-	require.False(t, renewed.ExpiresAt.After(renewed.StartsAt.AddDate(0, 0, 1)))
-	require.NotNil(t, renewed.DailyWindowStart)
-	require.Equal(t, startOfDay(renewed.StartsAt), *renewed.DailyWindowStart)
-	require.Equal(t, 0.0, renewed.DailyUsageUSD)
-	require.Equal(t, 0.0, renewed.WeeklyUsageUSD)
-	require.Equal(t, 0.0, renewed.MonthlyUsageUSD)
-	require.Equal(t, "old\nnew", renewed.Notes)
+	require.False(t, reused, "始终新建独立卡，不再续期")
+	require.NotNil(t, created)
+	require.NotEqual(t, int64(100), created.ID, "应新建一张卡而非复用过期订阅")
+	require.Equal(t, SubscriptionStatusActive, created.Status)
+	require.True(t, created.StartsAt.After(oldStart), "新卡 StartsAt 应为当前时间")
+	require.True(t, created.HasOneTimeDailyQuota(), "1 日卡仍应被识别为一次性日额度")
+	require.Equal(t, "new", created.Notes, "新卡只带本次 notes，不再追加旧 notes")
 }
 
 func TestUserSubscriptionNeedsDailyReset_DailyCardKeepsOneTimeQuota(t *testing.T) {
@@ -112,7 +102,7 @@ func TestCheckAndResetWindows_DailyCardDoesNotResetDailyUsage(t *testing.T) {
 	startsAt := now.Add(-23 * time.Hour)
 	dailyWindowStart := now.Add(-25 * time.Hour)
 	repo := &dailyResetTrackingUserSubRepo{}
-	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil)
 	sub := &UserSubscription{
 		ID:               1,
 		UserID:           10,
@@ -135,7 +125,7 @@ func TestCheckAndResetWindows_MultiDaySubscriptionStillResetsDailyUsage(t *testi
 	startsAt := now.Add(-48 * time.Hour)
 	dailyWindowStart := now.Add(-25 * time.Hour)
 	repo := &dailyResetTrackingUserSubRepo{}
-	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil)
 	sub := &UserSubscription{
 		ID:               1,
 		UserID:           10,
@@ -168,7 +158,7 @@ func TestValidateAndCheckLimits_DailyCardDoesNotAllowSecondQuotaAfterMidnight(t 
 		SubscriptionType: SubscriptionTypeSubscription,
 		DailyLimitUSD:    &dailyLimit,
 	}
-	svc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil, nil)
 
 	needsMaintenance, err := svc.ValidateAndCheckLimits(sub, group)
 

@@ -54,7 +54,7 @@ func (r *resetQuotaUserSubRepoStub) ResetMonthlyUsage(_ context.Context, _ int64
 }
 
 func newResetQuotaSvc(stub *resetQuotaUserSubRepoStub) *SubscriptionService {
-	return NewSubscriptionService(groupRepoNoop{}, stub, nil, nil, nil)
+	return NewSubscriptionService(groupRepoNoop{}, stub, nil, nil, nil, nil)
 }
 
 func TestAdminResetQuota_ResetBoth(t *testing.T) {

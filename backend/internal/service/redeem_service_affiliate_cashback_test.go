@@ -201,7 +201,7 @@ func TestRedeemService_RedeemSubscriptionAccruesAffiliateCashback(t *testing.T) 
 	groupRepo := repository.NewGroupRepository(client, db)
 	userSubRepo := repository.NewUserSubscriptionRepository(client)
 	redeemRepo := repository.NewRedeemCodeRepository(client)
-	subscriptionService := service.NewSubscriptionService(groupRepo, userSubRepo, nil, client, nil)
+	subscriptionService := service.NewSubscriptionService(groupRepo, userSubRepo, userRepo, nil, client, nil)
 
 	inviter, err := client.User.Create().
 		SetEmail("inviter@example.com").

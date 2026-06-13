@@ -35,6 +35,12 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 		SetDailyUsageUsd(sub.DailyUsageUSD).
 		SetWeeklyUsageUsd(sub.WeeklyUsageUSD).
 		SetMonthlyUsageUsd(sub.MonthlyUsageUSD).
+		SetGrantedTotalUsd(sub.GrantedTotalUSD).
+		SetDailyAmountUsd(sub.DailyAmountUSD).
+		SetConsumedUsd(sub.ConsumedUSD).
+		SetClawedUsd(sub.ClawedUSD).
+		SetLastClawbackDay(sub.LastClawbackDay).
+		SetNillableActivatedAt(sub.ActivatedAt).
 		SetNillableAssignedBy(sub.AssignedBy)
 
 	if sub.StartsAt.IsZero() {
@@ -74,10 +80,13 @@ func (r *userSubscriptionRepository) GetByID(ctx context.Context, id int64) (*se
 
 func (r *userSubscriptionRepository) GetByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
+	// burn-down 模型支持叠加多卡：同一 (user, group) 可能有多张订阅，
+	// 取最新创建的一张（按 created_at 降序），避免 Only() 在多行时报错。
 	m, err := client.UserSubscription.Query().
 		Where(usersubscription.UserIDEQ(userID), usersubscription.GroupIDEQ(groupID)).
 		WithGroup().
-		Only(ctx)
+		Order(dbent.Desc(usersubscription.FieldCreatedAt)).
+		First(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 	}
@@ -86,6 +95,7 @@ func (r *userSubscriptionRepository) GetByUserIDAndGroupID(ctx context.Context, 
 
 func (r *userSubscriptionRepository) GetActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
+	// 叠加多卡时取最新创建的有效订阅。
 	m, err := client.UserSubscription.Query().
 		Where(
 			usersubscription.UserIDEQ(userID),
@@ -94,7 +104,8 @@ func (r *userSubscriptionRepository) GetActiveByUserIDAndGroupID(ctx context.Con
 			usersubscription.ExpiresAtGT(time.Now()),
 		).
 		WithGroup().
-		Only(ctx)
+		Order(dbent.Desc(usersubscription.FieldCreatedAt)).
+		First(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 	}
@@ -373,6 +384,336 @@ func (r *userSubscriptionRepository) IncrementUsage(ctx context.Context, id int6
 	return service.ErrSubscriptionNotFound
 }
 
+// ListActiveBurndownIDs 返回需要参与每日清扣的活跃订阅 ID。
+func (r *userSubscriptionRepository) ListActiveBurndownIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	client := clientFromContext(ctx, r.client)
+	ids, err := client.UserSubscription.Query().
+		Where(
+			usersubscription.StatusEQ(service.SubscriptionStatusActive),
+			usersubscription.ExpiresAtGT(time.Now()),
+			usersubscription.DailyAmountUsdGT(0),
+			usersubscription.IDGT(afterID),
+		).
+		Order(dbent.Asc(usersubscription.FieldID)).
+		Limit(limit).
+		IDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// ClawbackSubscription 对单张订阅做每日清扣（行级 FOR UPDATE 内重算，避免与计费扣减竞态）。
+func (r *userSubscriptionRepository) ClawbackSubscription(ctx context.Context, subID int64, now time.Time) (float64, error) {
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	m, err := tx.UserSubscription.Query().
+		Where(
+			usersubscription.IDEQ(subID),
+			usersubscription.StatusEQ(service.SubscriptionStatusActive),
+			usersubscription.ExpiresAtGT(now),
+		).
+		ForUpdate().
+		Only(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			// 已过期/已删除/状态变更：本轮跳过，由到期作废流程处理。
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	sub := userSubscriptionEntityToService(m)
+	n := sub.CalendarDayAt(now)
+	// 幂等游标：同一日历天只对账一次。
+	if n <= sub.LastClawbackDay {
+		committed = true
+		return 0, tx.Commit()
+	}
+	shortfall := sub.ClawbackShortfallAt(now)
+
+	upd := tx.UserSubscription.UpdateOneID(subID).SetLastClawbackDay(n)
+	if shortfall > 0 {
+		upd = upd.AddClawedUsd(shortfall)
+	}
+	if _, err := upd.Save(ctx); err != nil {
+		return 0, err
+	}
+	if shortfall > 0 {
+		// 清扣额 ≤ 本卡剩余，永不动用户充值余额。
+		if _, err := tx.User.UpdateOneID(sub.UserID).AddBalance(-shortfall).Save(ctx); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	committed = true
+	return shortfall, nil
+}
+
+// ForfeitExpiredSubscriptions 处理已到期的活跃订阅：标记 expired 并作废剩余订阅余额。
+func (r *userSubscriptionRepository) ForfeitExpiredSubscriptions(ctx context.Context, now time.Time, limit int) ([]int64, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	client := clientFromContext(ctx, r.client)
+
+	affectedUserIDs := make([]int64, 0)
+	// 每处理一条即把状态置为 expired，故按 id 升序重复取批直到取空。
+	// maxBatches 兜底，避免极端数据量下单次运行过久；剩余的下一轮继续处理。
+	const maxBatches = 100
+	for b := 0; b < maxBatches; b++ {
+		ids, err := client.UserSubscription.Query().
+			Where(
+				usersubscription.StatusEQ(service.SubscriptionStatusActive),
+				usersubscription.ExpiresAtLTE(now),
+			).
+			Order(dbent.Asc(usersubscription.FieldID)).
+			Limit(limit).
+			IDs(ctx)
+		if err != nil {
+			return affectedUserIDs, err
+		}
+		if len(ids) == 0 {
+			break
+		}
+		for _, id := range ids {
+			userID, forfeited, ferr := r.forfeitOneExpired(ctx, id, now)
+			if ferr != nil {
+				return affectedUserIDs, ferr
+			}
+			if forfeited > 0 && userID > 0 {
+				affectedUserIDs = append(affectedUserIDs, userID)
+			}
+		}
+		if len(ids) < limit {
+			break
+		}
+	}
+	return affectedUserIDs, nil
+}
+
+func (r *userSubscriptionRepository) forfeitOneExpired(ctx context.Context, subID int64, now time.Time) (int64, float64, error) {
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	m, err := tx.UserSubscription.Query().
+		Where(
+			usersubscription.IDEQ(subID),
+			usersubscription.StatusEQ(service.SubscriptionStatusActive),
+			usersubscription.ExpiresAtLTE(now),
+		).
+		ForUpdate().
+		Only(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return 0, 0, nil
+		}
+		return 0, 0, err
+	}
+
+	sub := userSubscriptionEntityToService(m)
+	remaining := sub.RemainingUSD()
+
+	upd := tx.UserSubscription.UpdateOneID(subID).SetStatus(service.SubscriptionStatusExpired)
+	if remaining > 0 {
+		upd = upd.AddClawedUsd(remaining)
+	}
+	if _, err := upd.Save(ctx); err != nil {
+		return 0, 0, err
+	}
+	if remaining > 0 {
+		if _, err := tx.User.UpdateOneID(sub.UserID).AddBalance(-remaining).Save(ctx); err != nil {
+			return 0, 0, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	committed = true
+	return sub.UserID, remaining, nil
+}
+
+// reclaimTx 在「有 ambient ent 事务则复用、否则自开」的事务里执行 fn。
+// 复用时不提交/回滚（交由外层事务所有者，如兑换码流程）；自开时负责提交与回滚。
+// 这样既能被后台/管理端（无外层事务）直接调用，也能在兑换码外层事务内安全调用，
+// 避免在同一连接上嵌套开启新事务导致死锁。
+func (r *userSubscriptionRepository) reclaimTx(ctx context.Context, fn func(tx *dbent.Tx) error) error {
+	if ambient := dbent.TxFromContext(ctx); ambient != nil {
+		return fn(ambient)
+	}
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// CloseSubscriptionWithReclaim 见接口注释。
+func (r *userSubscriptionRepository) CloseSubscriptionWithReclaim(ctx context.Context, subID int64, now time.Time, deleteRow bool) (int64, float64, error) {
+	var userID int64
+	var reclaimed float64
+	err := r.reclaimTx(ctx, func(tx *dbent.Tx) error {
+		m, err := tx.UserSubscription.Query().
+			Where(usersubscription.IDEQ(subID)).
+			ForUpdate().
+			Only(ctx)
+		if err != nil {
+			if dbent.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		sub := userSubscriptionEntityToService(m)
+		userID = sub.UserID
+		reclaimed = sub.RemainingUSD()
+
+		if deleteRow {
+			if _, err := tx.UserSubscription.Delete().Where(usersubscription.IDEQ(subID)).Exec(ctx); err != nil {
+				return err
+			}
+		} else {
+			upd := tx.UserSubscription.UpdateOneID(subID).
+				SetStatus(service.SubscriptionStatusExpired).
+				SetExpiresAt(now)
+			if reclaimed > 0 {
+				upd = upd.AddClawedUsd(reclaimed)
+			}
+			if _, err := upd.Save(ctx); err != nil {
+				return err
+			}
+		}
+		if reclaimed > 0 {
+			if _, err := tx.User.UpdateOneID(sub.UserID).AddBalance(-reclaimed).Save(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return userID, reclaimed, nil
+}
+
+// ShortenSubscriptionWithReclaim 见接口注释。
+func (r *userSubscriptionRepository) ShortenSubscriptionWithReclaim(ctx context.Context, subID int64, reduceDays int, newExpiresAt, now time.Time) (int64, float64, error) {
+	var userID int64
+	var reclaimed float64
+	err := r.reclaimTx(ctx, func(tx *dbent.Tx) error {
+		m, err := tx.UserSubscription.Query().
+			Where(usersubscription.IDEQ(subID)).
+			ForUpdate().
+			Only(ctx)
+		if err != nil {
+			if dbent.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		sub := userSubscriptionEntityToService(m)
+		userID = sub.UserID
+
+		remaining := sub.RemainingUSD()
+		maxReclaim := float64(reduceDays) * sub.DailyAmountUSD
+		reclaimed = maxReclaim
+		if reclaimed > remaining {
+			reclaimed = remaining
+		}
+		if reclaimed < 0 {
+			reclaimed = 0
+		}
+
+		upd := tx.UserSubscription.UpdateOneID(subID).SetExpiresAt(newExpiresAt)
+		if reclaimed > 0 {
+			upd = upd.AddGrantedTotalUsd(-reclaimed)
+		}
+		if _, err := upd.Save(ctx); err != nil {
+			return err
+		}
+		if reclaimed > 0 {
+			if _, err := tx.User.UpdateOneID(sub.UserID).AddBalance(-reclaimed).Save(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return userID, reclaimed, nil
+}
+
+// GrantSubscriptionDays 见接口注释。
+func (r *userSubscriptionRepository) GrantSubscriptionDays(ctx context.Context, subID int64, addDays int, newExpiresAt, now time.Time) (int64, float64, error) {
+	var userID int64
+	var granted float64
+	err := r.reclaimTx(ctx, func(tx *dbent.Tx) error {
+		m, err := tx.UserSubscription.Query().
+			Where(usersubscription.IDEQ(subID)).
+			ForUpdate().
+			Only(ctx)
+		if err != nil {
+			if dbent.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		sub := userSubscriptionEntityToService(m)
+		userID = sub.UserID
+
+		granted = float64(addDays) * sub.DailyAmountUSD
+		if granted < 0 {
+			granted = 0
+		}
+
+		upd := tx.UserSubscription.UpdateOneID(subID).SetExpiresAt(newExpiresAt)
+		if granted > 0 {
+			upd = upd.AddGrantedTotalUsd(granted)
+		}
+		if _, err := upd.Save(ctx); err != nil {
+			return err
+		}
+		if granted > 0 {
+			if _, err := tx.User.UpdateOneID(sub.UserID).AddBalance(granted).Save(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return userID, granted, nil
+}
+
 func (r *userSubscriptionRepository) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	client := clientFromContext(ctx, r.client)
 	n, err := client.UserSubscription.Update().
@@ -442,6 +783,12 @@ func userSubscriptionEntityToService(m *dbent.UserSubscription) *service.UserSub
 		DailyUsageUSD:      m.DailyUsageUsd,
 		WeeklyUsageUSD:     m.WeeklyUsageUsd,
 		MonthlyUsageUSD:    m.MonthlyUsageUsd,
+		GrantedTotalUSD:    m.GrantedTotalUsd,
+		DailyAmountUSD:     m.DailyAmountUsd,
+		ConsumedUSD:        m.ConsumedUsd,
+		ClawedUSD:          m.ClawedUsd,
+		LastClawbackDay:    m.LastClawbackDay,
+		ActivatedAt:        m.ActivatedAt,
 		AssignedBy:         m.AssignedBy,
 		AssignedAt:         m.AssignedAt,
 		Notes:              derefString(m.Notes),

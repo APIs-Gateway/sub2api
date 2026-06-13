@@ -189,6 +189,90 @@ func (_c *UserSubscriptionCreate) SetNillableMonthlyUsageUsd(v *float64) *UserSu
 	return _c
 }
 
+// SetGrantedTotalUsd sets the "granted_total_usd" field.
+func (_c *UserSubscriptionCreate) SetGrantedTotalUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetGrantedTotalUsd(v)
+	return _c
+}
+
+// SetNillableGrantedTotalUsd sets the "granted_total_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableGrantedTotalUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetGrantedTotalUsd(*v)
+	}
+	return _c
+}
+
+// SetDailyAmountUsd sets the "daily_amount_usd" field.
+func (_c *UserSubscriptionCreate) SetDailyAmountUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetDailyAmountUsd(v)
+	return _c
+}
+
+// SetNillableDailyAmountUsd sets the "daily_amount_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableDailyAmountUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetDailyAmountUsd(*v)
+	}
+	return _c
+}
+
+// SetConsumedUsd sets the "consumed_usd" field.
+func (_c *UserSubscriptionCreate) SetConsumedUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetConsumedUsd(v)
+	return _c
+}
+
+// SetNillableConsumedUsd sets the "consumed_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableConsumedUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetConsumedUsd(*v)
+	}
+	return _c
+}
+
+// SetClawedUsd sets the "clawed_usd" field.
+func (_c *UserSubscriptionCreate) SetClawedUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetClawedUsd(v)
+	return _c
+}
+
+// SetNillableClawedUsd sets the "clawed_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableClawedUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetClawedUsd(*v)
+	}
+	return _c
+}
+
+// SetLastClawbackDay sets the "last_clawback_day" field.
+func (_c *UserSubscriptionCreate) SetLastClawbackDay(v int) *UserSubscriptionCreate {
+	_c.mutation.SetLastClawbackDay(v)
+	return _c
+}
+
+// SetNillableLastClawbackDay sets the "last_clawback_day" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableLastClawbackDay(v *int) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetLastClawbackDay(*v)
+	}
+	return _c
+}
+
+// SetActivatedAt sets the "activated_at" field.
+func (_c *UserSubscriptionCreate) SetActivatedAt(v time.Time) *UserSubscriptionCreate {
+	_c.mutation.SetActivatedAt(v)
+	return _c
+}
+
+// SetNillableActivatedAt sets the "activated_at" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableActivatedAt(v *time.Time) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetActivatedAt(*v)
+	}
+	return _c
+}
+
 // SetAssignedBy sets the "assigned_by" field.
 func (_c *UserSubscriptionCreate) SetAssignedBy(v int64) *UserSubscriptionCreate {
 	_c.mutation.SetAssignedBy(v)
@@ -342,6 +426,26 @@ func (_c *UserSubscriptionCreate) defaults() error {
 		v := usersubscription.DefaultMonthlyUsageUsd
 		_c.mutation.SetMonthlyUsageUsd(v)
 	}
+	if _, ok := _c.mutation.GrantedTotalUsd(); !ok {
+		v := usersubscription.DefaultGrantedTotalUsd
+		_c.mutation.SetGrantedTotalUsd(v)
+	}
+	if _, ok := _c.mutation.DailyAmountUsd(); !ok {
+		v := usersubscription.DefaultDailyAmountUsd
+		_c.mutation.SetDailyAmountUsd(v)
+	}
+	if _, ok := _c.mutation.ConsumedUsd(); !ok {
+		v := usersubscription.DefaultConsumedUsd
+		_c.mutation.SetConsumedUsd(v)
+	}
+	if _, ok := _c.mutation.ClawedUsd(); !ok {
+		v := usersubscription.DefaultClawedUsd
+		_c.mutation.SetClawedUsd(v)
+	}
+	if _, ok := _c.mutation.LastClawbackDay(); !ok {
+		v := usersubscription.DefaultLastClawbackDay
+		_c.mutation.SetLastClawbackDay(v)
+	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		if usersubscription.DefaultAssignedAt == nil {
 			return fmt.Errorf("ent: uninitialized usersubscription.DefaultAssignedAt (forgotten import ent/runtime?)")
@@ -388,6 +492,21 @@ func (_c *UserSubscriptionCreate) check() error {
 	}
 	if _, ok := _c.mutation.MonthlyUsageUsd(); !ok {
 		return &ValidationError{Name: "monthly_usage_usd", err: errors.New(`ent: missing required field "UserSubscription.monthly_usage_usd"`)}
+	}
+	if _, ok := _c.mutation.GrantedTotalUsd(); !ok {
+		return &ValidationError{Name: "granted_total_usd", err: errors.New(`ent: missing required field "UserSubscription.granted_total_usd"`)}
+	}
+	if _, ok := _c.mutation.DailyAmountUsd(); !ok {
+		return &ValidationError{Name: "daily_amount_usd", err: errors.New(`ent: missing required field "UserSubscription.daily_amount_usd"`)}
+	}
+	if _, ok := _c.mutation.ConsumedUsd(); !ok {
+		return &ValidationError{Name: "consumed_usd", err: errors.New(`ent: missing required field "UserSubscription.consumed_usd"`)}
+	}
+	if _, ok := _c.mutation.ClawedUsd(); !ok {
+		return &ValidationError{Name: "clawed_usd", err: errors.New(`ent: missing required field "UserSubscription.clawed_usd"`)}
+	}
+	if _, ok := _c.mutation.LastClawbackDay(); !ok {
+		return &ValidationError{Name: "last_clawback_day", err: errors.New(`ent: missing required field "UserSubscription.last_clawback_day"`)}
 	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		return &ValidationError{Name: "assigned_at", err: errors.New(`ent: missing required field "UserSubscription.assigned_at"`)}
@@ -472,6 +591,30 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 	if value, ok := _c.mutation.MonthlyUsageUsd(); ok {
 		_spec.SetField(usersubscription.FieldMonthlyUsageUsd, field.TypeFloat64, value)
 		_node.MonthlyUsageUsd = value
+	}
+	if value, ok := _c.mutation.GrantedTotalUsd(); ok {
+		_spec.SetField(usersubscription.FieldGrantedTotalUsd, field.TypeFloat64, value)
+		_node.GrantedTotalUsd = value
+	}
+	if value, ok := _c.mutation.DailyAmountUsd(); ok {
+		_spec.SetField(usersubscription.FieldDailyAmountUsd, field.TypeFloat64, value)
+		_node.DailyAmountUsd = value
+	}
+	if value, ok := _c.mutation.ConsumedUsd(); ok {
+		_spec.SetField(usersubscription.FieldConsumedUsd, field.TypeFloat64, value)
+		_node.ConsumedUsd = value
+	}
+	if value, ok := _c.mutation.ClawedUsd(); ok {
+		_spec.SetField(usersubscription.FieldClawedUsd, field.TypeFloat64, value)
+		_node.ClawedUsd = value
+	}
+	if value, ok := _c.mutation.LastClawbackDay(); ok {
+		_spec.SetField(usersubscription.FieldLastClawbackDay, field.TypeInt, value)
+		_node.LastClawbackDay = value
+	}
+	if value, ok := _c.mutation.ActivatedAt(); ok {
+		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
+		_node.ActivatedAt = &value
 	}
 	if value, ok := _c.mutation.AssignedAt(); ok {
 		_spec.SetField(usersubscription.FieldAssignedAt, field.TypeTime, value)
@@ -798,6 +941,114 @@ func (u *UserSubscriptionUpsert) AddMonthlyUsageUsd(v float64) *UserSubscription
 	return u
 }
 
+// SetGrantedTotalUsd sets the "granted_total_usd" field.
+func (u *UserSubscriptionUpsert) SetGrantedTotalUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldGrantedTotalUsd, v)
+	return u
+}
+
+// UpdateGrantedTotalUsd sets the "granted_total_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateGrantedTotalUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldGrantedTotalUsd)
+	return u
+}
+
+// AddGrantedTotalUsd adds v to the "granted_total_usd" field.
+func (u *UserSubscriptionUpsert) AddGrantedTotalUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldGrantedTotalUsd, v)
+	return u
+}
+
+// SetDailyAmountUsd sets the "daily_amount_usd" field.
+func (u *UserSubscriptionUpsert) SetDailyAmountUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldDailyAmountUsd, v)
+	return u
+}
+
+// UpdateDailyAmountUsd sets the "daily_amount_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateDailyAmountUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldDailyAmountUsd)
+	return u
+}
+
+// AddDailyAmountUsd adds v to the "daily_amount_usd" field.
+func (u *UserSubscriptionUpsert) AddDailyAmountUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldDailyAmountUsd, v)
+	return u
+}
+
+// SetConsumedUsd sets the "consumed_usd" field.
+func (u *UserSubscriptionUpsert) SetConsumedUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldConsumedUsd, v)
+	return u
+}
+
+// UpdateConsumedUsd sets the "consumed_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateConsumedUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldConsumedUsd)
+	return u
+}
+
+// AddConsumedUsd adds v to the "consumed_usd" field.
+func (u *UserSubscriptionUpsert) AddConsumedUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldConsumedUsd, v)
+	return u
+}
+
+// SetClawedUsd sets the "clawed_usd" field.
+func (u *UserSubscriptionUpsert) SetClawedUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldClawedUsd, v)
+	return u
+}
+
+// UpdateClawedUsd sets the "clawed_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateClawedUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldClawedUsd)
+	return u
+}
+
+// AddClawedUsd adds v to the "clawed_usd" field.
+func (u *UserSubscriptionUpsert) AddClawedUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldClawedUsd, v)
+	return u
+}
+
+// SetLastClawbackDay sets the "last_clawback_day" field.
+func (u *UserSubscriptionUpsert) SetLastClawbackDay(v int) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldLastClawbackDay, v)
+	return u
+}
+
+// UpdateLastClawbackDay sets the "last_clawback_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateLastClawbackDay() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldLastClawbackDay)
+	return u
+}
+
+// AddLastClawbackDay adds v to the "last_clawback_day" field.
+func (u *UserSubscriptionUpsert) AddLastClawbackDay(v int) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldLastClawbackDay, v)
+	return u
+}
+
+// SetActivatedAt sets the "activated_at" field.
+func (u *UserSubscriptionUpsert) SetActivatedAt(v time.Time) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldActivatedAt, v)
+	return u
+}
+
+// UpdateActivatedAt sets the "activated_at" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateActivatedAt() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldActivatedAt)
+	return u
+}
+
+// ClearActivatedAt clears the value of the "activated_at" field.
+func (u *UserSubscriptionUpsert) ClearActivatedAt() *UserSubscriptionUpsert {
+	u.SetNull(usersubscription.FieldActivatedAt)
+	return u
+}
+
 // SetAssignedBy sets the "assigned_by" field.
 func (u *UserSubscriptionUpsert) SetAssignedBy(v int64) *UserSubscriptionUpsert {
 	u.Set(usersubscription.FieldAssignedBy, v)
@@ -1119,6 +1370,132 @@ func (u *UserSubscriptionUpsertOne) AddMonthlyUsageUsd(v float64) *UserSubscript
 func (u *UserSubscriptionUpsertOne) UpdateMonthlyUsageUsd() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateMonthlyUsageUsd()
+	})
+}
+
+// SetGrantedTotalUsd sets the "granted_total_usd" field.
+func (u *UserSubscriptionUpsertOne) SetGrantedTotalUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetGrantedTotalUsd(v)
+	})
+}
+
+// AddGrantedTotalUsd adds v to the "granted_total_usd" field.
+func (u *UserSubscriptionUpsertOne) AddGrantedTotalUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddGrantedTotalUsd(v)
+	})
+}
+
+// UpdateGrantedTotalUsd sets the "granted_total_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateGrantedTotalUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateGrantedTotalUsd()
+	})
+}
+
+// SetDailyAmountUsd sets the "daily_amount_usd" field.
+func (u *UserSubscriptionUpsertOne) SetDailyAmountUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetDailyAmountUsd(v)
+	})
+}
+
+// AddDailyAmountUsd adds v to the "daily_amount_usd" field.
+func (u *UserSubscriptionUpsertOne) AddDailyAmountUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddDailyAmountUsd(v)
+	})
+}
+
+// UpdateDailyAmountUsd sets the "daily_amount_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateDailyAmountUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateDailyAmountUsd()
+	})
+}
+
+// SetConsumedUsd sets the "consumed_usd" field.
+func (u *UserSubscriptionUpsertOne) SetConsumedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetConsumedUsd(v)
+	})
+}
+
+// AddConsumedUsd adds v to the "consumed_usd" field.
+func (u *UserSubscriptionUpsertOne) AddConsumedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddConsumedUsd(v)
+	})
+}
+
+// UpdateConsumedUsd sets the "consumed_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateConsumedUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateConsumedUsd()
+	})
+}
+
+// SetClawedUsd sets the "clawed_usd" field.
+func (u *UserSubscriptionUpsertOne) SetClawedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetClawedUsd(v)
+	})
+}
+
+// AddClawedUsd adds v to the "clawed_usd" field.
+func (u *UserSubscriptionUpsertOne) AddClawedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddClawedUsd(v)
+	})
+}
+
+// UpdateClawedUsd sets the "clawed_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateClawedUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateClawedUsd()
+	})
+}
+
+// SetLastClawbackDay sets the "last_clawback_day" field.
+func (u *UserSubscriptionUpsertOne) SetLastClawbackDay(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetLastClawbackDay(v)
+	})
+}
+
+// AddLastClawbackDay adds v to the "last_clawback_day" field.
+func (u *UserSubscriptionUpsertOne) AddLastClawbackDay(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddLastClawbackDay(v)
+	})
+}
+
+// UpdateLastClawbackDay sets the "last_clawback_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateLastClawbackDay() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateLastClawbackDay()
+	})
+}
+
+// SetActivatedAt sets the "activated_at" field.
+func (u *UserSubscriptionUpsertOne) SetActivatedAt(v time.Time) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetActivatedAt(v)
+	})
+}
+
+// UpdateActivatedAt sets the "activated_at" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateActivatedAt() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateActivatedAt()
+	})
+}
+
+// ClearActivatedAt clears the value of the "activated_at" field.
+func (u *UserSubscriptionUpsertOne) ClearActivatedAt() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.ClearActivatedAt()
 	})
 }
 
@@ -1617,6 +1994,132 @@ func (u *UserSubscriptionUpsertBulk) AddMonthlyUsageUsd(v float64) *UserSubscrip
 func (u *UserSubscriptionUpsertBulk) UpdateMonthlyUsageUsd() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateMonthlyUsageUsd()
+	})
+}
+
+// SetGrantedTotalUsd sets the "granted_total_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetGrantedTotalUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetGrantedTotalUsd(v)
+	})
+}
+
+// AddGrantedTotalUsd adds v to the "granted_total_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddGrantedTotalUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddGrantedTotalUsd(v)
+	})
+}
+
+// UpdateGrantedTotalUsd sets the "granted_total_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateGrantedTotalUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateGrantedTotalUsd()
+	})
+}
+
+// SetDailyAmountUsd sets the "daily_amount_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetDailyAmountUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetDailyAmountUsd(v)
+	})
+}
+
+// AddDailyAmountUsd adds v to the "daily_amount_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddDailyAmountUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddDailyAmountUsd(v)
+	})
+}
+
+// UpdateDailyAmountUsd sets the "daily_amount_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateDailyAmountUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateDailyAmountUsd()
+	})
+}
+
+// SetConsumedUsd sets the "consumed_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetConsumedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetConsumedUsd(v)
+	})
+}
+
+// AddConsumedUsd adds v to the "consumed_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddConsumedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddConsumedUsd(v)
+	})
+}
+
+// UpdateConsumedUsd sets the "consumed_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateConsumedUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateConsumedUsd()
+	})
+}
+
+// SetClawedUsd sets the "clawed_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetClawedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetClawedUsd(v)
+	})
+}
+
+// AddClawedUsd adds v to the "clawed_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddClawedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddClawedUsd(v)
+	})
+}
+
+// UpdateClawedUsd sets the "clawed_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateClawedUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateClawedUsd()
+	})
+}
+
+// SetLastClawbackDay sets the "last_clawback_day" field.
+func (u *UserSubscriptionUpsertBulk) SetLastClawbackDay(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetLastClawbackDay(v)
+	})
+}
+
+// AddLastClawbackDay adds v to the "last_clawback_day" field.
+func (u *UserSubscriptionUpsertBulk) AddLastClawbackDay(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddLastClawbackDay(v)
+	})
+}
+
+// UpdateLastClawbackDay sets the "last_clawback_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateLastClawbackDay() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateLastClawbackDay()
+	})
+}
+
+// SetActivatedAt sets the "activated_at" field.
+func (u *UserSubscriptionUpsertBulk) SetActivatedAt(v time.Time) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetActivatedAt(v)
+	})
+}
+
+// UpdateActivatedAt sets the "activated_at" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateActivatedAt() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateActivatedAt()
+	})
+}
+
+// ClearActivatedAt clears the value of the "activated_at" field.
+func (u *UserSubscriptionUpsertBulk) ClearActivatedAt() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.ClearActivatedAt()
 	})
 }
 

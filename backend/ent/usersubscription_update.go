@@ -250,6 +250,131 @@ func (_u *UserSubscriptionUpdate) AddMonthlyUsageUsd(v float64) *UserSubscriptio
 	return _u
 }
 
+// SetGrantedTotalUsd sets the "granted_total_usd" field.
+func (_u *UserSubscriptionUpdate) SetGrantedTotalUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetGrantedTotalUsd()
+	_u.mutation.SetGrantedTotalUsd(v)
+	return _u
+}
+
+// SetNillableGrantedTotalUsd sets the "granted_total_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableGrantedTotalUsd(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetGrantedTotalUsd(*v)
+	}
+	return _u
+}
+
+// AddGrantedTotalUsd adds value to the "granted_total_usd" field.
+func (_u *UserSubscriptionUpdate) AddGrantedTotalUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddGrantedTotalUsd(v)
+	return _u
+}
+
+// SetDailyAmountUsd sets the "daily_amount_usd" field.
+func (_u *UserSubscriptionUpdate) SetDailyAmountUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetDailyAmountUsd()
+	_u.mutation.SetDailyAmountUsd(v)
+	return _u
+}
+
+// SetNillableDailyAmountUsd sets the "daily_amount_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableDailyAmountUsd(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetDailyAmountUsd(*v)
+	}
+	return _u
+}
+
+// AddDailyAmountUsd adds value to the "daily_amount_usd" field.
+func (_u *UserSubscriptionUpdate) AddDailyAmountUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddDailyAmountUsd(v)
+	return _u
+}
+
+// SetConsumedUsd sets the "consumed_usd" field.
+func (_u *UserSubscriptionUpdate) SetConsumedUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetConsumedUsd()
+	_u.mutation.SetConsumedUsd(v)
+	return _u
+}
+
+// SetNillableConsumedUsd sets the "consumed_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableConsumedUsd(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetConsumedUsd(*v)
+	}
+	return _u
+}
+
+// AddConsumedUsd adds value to the "consumed_usd" field.
+func (_u *UserSubscriptionUpdate) AddConsumedUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddConsumedUsd(v)
+	return _u
+}
+
+// SetClawedUsd sets the "clawed_usd" field.
+func (_u *UserSubscriptionUpdate) SetClawedUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetClawedUsd()
+	_u.mutation.SetClawedUsd(v)
+	return _u
+}
+
+// SetNillableClawedUsd sets the "clawed_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableClawedUsd(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetClawedUsd(*v)
+	}
+	return _u
+}
+
+// AddClawedUsd adds value to the "clawed_usd" field.
+func (_u *UserSubscriptionUpdate) AddClawedUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddClawedUsd(v)
+	return _u
+}
+
+// SetLastClawbackDay sets the "last_clawback_day" field.
+func (_u *UserSubscriptionUpdate) SetLastClawbackDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetLastClawbackDay()
+	_u.mutation.SetLastClawbackDay(v)
+	return _u
+}
+
+// SetNillableLastClawbackDay sets the "last_clawback_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableLastClawbackDay(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetLastClawbackDay(*v)
+	}
+	return _u
+}
+
+// AddLastClawbackDay adds value to the "last_clawback_day" field.
+func (_u *UserSubscriptionUpdate) AddLastClawbackDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddLastClawbackDay(v)
+	return _u
+}
+
+// SetActivatedAt sets the "activated_at" field.
+func (_u *UserSubscriptionUpdate) SetActivatedAt(v time.Time) *UserSubscriptionUpdate {
+	_u.mutation.SetActivatedAt(v)
+	return _u
+}
+
+// SetNillableActivatedAt sets the "activated_at" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableActivatedAt(v *time.Time) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetActivatedAt(*v)
+	}
+	return _u
+}
+
+// ClearActivatedAt clears the value of the "activated_at" field.
+func (_u *UserSubscriptionUpdate) ClearActivatedAt() *UserSubscriptionUpdate {
+	_u.mutation.ClearActivatedAt()
+	return _u
+}
+
 // SetAssignedBy sets the "assigned_by" field.
 func (_u *UserSubscriptionUpdate) SetAssignedBy(v int64) *UserSubscriptionUpdate {
 	_u.mutation.SetAssignedBy(v)
@@ -515,6 +640,42 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if value, ok := _u.mutation.AddedMonthlyUsageUsd(); ok {
 		_spec.AddField(usersubscription.FieldMonthlyUsageUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.GrantedTotalUsd(); ok {
+		_spec.SetField(usersubscription.FieldGrantedTotalUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedGrantedTotalUsd(); ok {
+		_spec.AddField(usersubscription.FieldGrantedTotalUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.DailyAmountUsd(); ok {
+		_spec.SetField(usersubscription.FieldDailyAmountUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedDailyAmountUsd(); ok {
+		_spec.AddField(usersubscription.FieldDailyAmountUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.ConsumedUsd(); ok {
+		_spec.SetField(usersubscription.FieldConsumedUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedConsumedUsd(); ok {
+		_spec.AddField(usersubscription.FieldConsumedUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.ClawedUsd(); ok {
+		_spec.SetField(usersubscription.FieldClawedUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedClawedUsd(); ok {
+		_spec.AddField(usersubscription.FieldClawedUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.LastClawbackDay(); ok {
+		_spec.SetField(usersubscription.FieldLastClawbackDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedLastClawbackDay(); ok {
+		_spec.AddField(usersubscription.FieldLastClawbackDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.ActivatedAt(); ok {
+		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
+	}
+	if _u.mutation.ActivatedAtCleared() {
+		_spec.ClearField(usersubscription.FieldActivatedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.AssignedAt(); ok {
 		_spec.SetField(usersubscription.FieldAssignedAt, field.TypeTime, value)
@@ -896,6 +1057,131 @@ func (_u *UserSubscriptionUpdateOne) AddMonthlyUsageUsd(v float64) *UserSubscrip
 	return _u
 }
 
+// SetGrantedTotalUsd sets the "granted_total_usd" field.
+func (_u *UserSubscriptionUpdateOne) SetGrantedTotalUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetGrantedTotalUsd()
+	_u.mutation.SetGrantedTotalUsd(v)
+	return _u
+}
+
+// SetNillableGrantedTotalUsd sets the "granted_total_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableGrantedTotalUsd(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetGrantedTotalUsd(*v)
+	}
+	return _u
+}
+
+// AddGrantedTotalUsd adds value to the "granted_total_usd" field.
+func (_u *UserSubscriptionUpdateOne) AddGrantedTotalUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddGrantedTotalUsd(v)
+	return _u
+}
+
+// SetDailyAmountUsd sets the "daily_amount_usd" field.
+func (_u *UserSubscriptionUpdateOne) SetDailyAmountUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetDailyAmountUsd()
+	_u.mutation.SetDailyAmountUsd(v)
+	return _u
+}
+
+// SetNillableDailyAmountUsd sets the "daily_amount_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableDailyAmountUsd(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetDailyAmountUsd(*v)
+	}
+	return _u
+}
+
+// AddDailyAmountUsd adds value to the "daily_amount_usd" field.
+func (_u *UserSubscriptionUpdateOne) AddDailyAmountUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddDailyAmountUsd(v)
+	return _u
+}
+
+// SetConsumedUsd sets the "consumed_usd" field.
+func (_u *UserSubscriptionUpdateOne) SetConsumedUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetConsumedUsd()
+	_u.mutation.SetConsumedUsd(v)
+	return _u
+}
+
+// SetNillableConsumedUsd sets the "consumed_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableConsumedUsd(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetConsumedUsd(*v)
+	}
+	return _u
+}
+
+// AddConsumedUsd adds value to the "consumed_usd" field.
+func (_u *UserSubscriptionUpdateOne) AddConsumedUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddConsumedUsd(v)
+	return _u
+}
+
+// SetClawedUsd sets the "clawed_usd" field.
+func (_u *UserSubscriptionUpdateOne) SetClawedUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetClawedUsd()
+	_u.mutation.SetClawedUsd(v)
+	return _u
+}
+
+// SetNillableClawedUsd sets the "clawed_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableClawedUsd(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetClawedUsd(*v)
+	}
+	return _u
+}
+
+// AddClawedUsd adds value to the "clawed_usd" field.
+func (_u *UserSubscriptionUpdateOne) AddClawedUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddClawedUsd(v)
+	return _u
+}
+
+// SetLastClawbackDay sets the "last_clawback_day" field.
+func (_u *UserSubscriptionUpdateOne) SetLastClawbackDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetLastClawbackDay()
+	_u.mutation.SetLastClawbackDay(v)
+	return _u
+}
+
+// SetNillableLastClawbackDay sets the "last_clawback_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableLastClawbackDay(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetLastClawbackDay(*v)
+	}
+	return _u
+}
+
+// AddLastClawbackDay adds value to the "last_clawback_day" field.
+func (_u *UserSubscriptionUpdateOne) AddLastClawbackDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddLastClawbackDay(v)
+	return _u
+}
+
+// SetActivatedAt sets the "activated_at" field.
+func (_u *UserSubscriptionUpdateOne) SetActivatedAt(v time.Time) *UserSubscriptionUpdateOne {
+	_u.mutation.SetActivatedAt(v)
+	return _u
+}
+
+// SetNillableActivatedAt sets the "activated_at" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableActivatedAt(v *time.Time) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetActivatedAt(*v)
+	}
+	return _u
+}
+
+// ClearActivatedAt clears the value of the "activated_at" field.
+func (_u *UserSubscriptionUpdateOne) ClearActivatedAt() *UserSubscriptionUpdateOne {
+	_u.mutation.ClearActivatedAt()
+	return _u
+}
+
 // SetAssignedBy sets the "assigned_by" field.
 func (_u *UserSubscriptionUpdateOne) SetAssignedBy(v int64) *UserSubscriptionUpdateOne {
 	_u.mutation.SetAssignedBy(v)
@@ -1191,6 +1477,42 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 	}
 	if value, ok := _u.mutation.AddedMonthlyUsageUsd(); ok {
 		_spec.AddField(usersubscription.FieldMonthlyUsageUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.GrantedTotalUsd(); ok {
+		_spec.SetField(usersubscription.FieldGrantedTotalUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedGrantedTotalUsd(); ok {
+		_spec.AddField(usersubscription.FieldGrantedTotalUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.DailyAmountUsd(); ok {
+		_spec.SetField(usersubscription.FieldDailyAmountUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedDailyAmountUsd(); ok {
+		_spec.AddField(usersubscription.FieldDailyAmountUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.ConsumedUsd(); ok {
+		_spec.SetField(usersubscription.FieldConsumedUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedConsumedUsd(); ok {
+		_spec.AddField(usersubscription.FieldConsumedUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.ClawedUsd(); ok {
+		_spec.SetField(usersubscription.FieldClawedUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedClawedUsd(); ok {
+		_spec.AddField(usersubscription.FieldClawedUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.LastClawbackDay(); ok {
+		_spec.SetField(usersubscription.FieldLastClawbackDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedLastClawbackDay(); ok {
+		_spec.AddField(usersubscription.FieldLastClawbackDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.ActivatedAt(); ok {
+		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
+	}
+	if _u.mutation.ActivatedAtCleared() {
+		_spec.ClearField(usersubscription.FieldActivatedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.AssignedAt(); ok {
 		_spec.SetField(usersubscription.FieldAssignedAt, field.TypeTime, value)

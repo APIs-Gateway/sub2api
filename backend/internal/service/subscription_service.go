@@ -43,6 +43,7 @@ var (
 type SubscriptionService struct {
 	groupRepo           GroupRepository
 	userSubRepo         UserSubscriptionRepository
+	userRepo            UserRepository
 	billingCacheService *BillingCacheService
 	entClient           *dbent.Client
 
@@ -56,10 +57,11 @@ type SubscriptionService struct {
 }
 
 // NewSubscriptionService 创建订阅服务
-func NewSubscriptionService(groupRepo GroupRepository, userSubRepo UserSubscriptionRepository, billingCacheService *BillingCacheService, entClient *dbent.Client, cfg *config.Config) *SubscriptionService {
+func NewSubscriptionService(groupRepo GroupRepository, userSubRepo UserSubscriptionRepository, userRepo UserRepository, billingCacheService *BillingCacheService, entClient *dbent.Client, cfg *config.Config) *SubscriptionService {
 	svc := &SubscriptionService{
 		groupRepo:           groupRepo,
 		userSubRepo:         userSubRepo,
+		userRepo:            userRepo,
 		billingCacheService: billingCacheService,
 		entClient:           entClient,
 	}
@@ -176,61 +178,8 @@ func (s *SubscriptionService) AssignOrExtendSubscription(ctx context.Context, in
 		return nil, false, ErrGroupNotSubscriptionType
 	}
 
-	// 查询是否已有订阅
-	existingSub, err := s.userSubRepo.GetByUserIDAndGroupID(ctx, input.UserID, input.GroupID)
-	if err != nil {
-		// 不存在记录是正常情况，其他错误需要返回
-		existingSub = nil
-	}
-
-	validityDays := input.ValidityDays
-	if validityDays <= 0 {
-		validityDays = 30
-	}
-	if validityDays > MaxValidityDays {
-		validityDays = MaxValidityDays
-	}
-
-	// 已有订阅，执行续期（在事务中完成所有更新）
-	if existingSub != nil {
-		now := time.Now()
-		var newExpiresAt time.Time
-
-		isExpired := !existingSub.ExpiresAt.After(now)
-		if !isExpired {
-			// 未过期：从当前过期时间累加
-			newExpiresAt = existingSub.ExpiresAt.AddDate(0, 0, validityDays)
-		} else {
-			// 已过期：从当前时间开始计算
-			newExpiresAt = now.AddDate(0, 0, validityDays)
-		}
-
-		// 确保不超过最大过期时间
-		if newExpiresAt.After(MaxExpiresAt) {
-			newExpiresAt = MaxExpiresAt
-		}
-
-		if err := s.updateExistingSubscriptionTerm(ctx, existingSub, input.Notes, now, newExpiresAt, isExpired); err != nil {
-			return nil, false, err
-		}
-
-		// 失效订阅缓存
-		s.InvalidateSubCache(input.UserID, input.GroupID)
-		if s.billingCacheService != nil {
-			userID, groupID := input.UserID, input.GroupID
-			go func() {
-				cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
-			}()
-		}
-
-		// 返回更新后的订阅
-		sub, err := s.userSubRepo.GetByID(ctx, existingSub.ID)
-		return sub, true, err // true 表示是续期
-	}
-
-	// 没有订阅，创建新订阅
+	// burn-down 模型：每次开通/兑换都新建一张独立订阅卡（支持叠加），不再续期已有订阅。
+	// 透支与每日清扣按每张卡各自的 burn-down 账户独立核算。
 	sub, err := s.createSubscription(ctx, input)
 	if err != nil {
 		return nil, false, err
@@ -247,51 +196,17 @@ func (s *SubscriptionService) AssignOrExtendSubscription(ctx context.Context, in
 		}()
 	}
 
-	return sub, false, nil // false 表示是新建
-}
-
-func (s *SubscriptionService) updateExistingSubscriptionTerm(
-	ctx context.Context,
-	existingSub *UserSubscription,
-	notes string,
-	startsAt time.Time,
-	newExpiresAt time.Time,
-	isExpired bool,
-) error {
-	return s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
-		if isExpired {
-			renewed := renewedSubscriptionTerm(existingSub, notes, startsAt, newExpiresAt)
-			if err := s.userSubRepo.Update(txCtx, renewed); err != nil {
-				return fmt.Errorf("renew expired subscription: %w", err)
-			}
-			return nil
-		}
-
-		// 更新过期时间
-		if err := s.userSubRepo.ExtendExpiry(txCtx, existingSub.ID, newExpiresAt); err != nil {
-			return fmt.Errorf("extend subscription: %w", err)
-		}
-
-		// 如果订阅被暂停，恢复为 active 状态
-		if existingSub.Status != SubscriptionStatusActive {
-			if err := s.userSubRepo.UpdateStatus(txCtx, existingSub.ID, SubscriptionStatusActive); err != nil {
-				return fmt.Errorf("update subscription status: %w", err)
-			}
-		}
-
-		// 追加备注
-		if notes != "" {
-			if err := s.userSubRepo.UpdateNotes(txCtx, existingSub.ID, appendSubscriptionNotes(existingSub.Notes, notes)); err != nil {
-				return fmt.Errorf("update subscription notes: %w", err)
-			}
-		}
-
-		return nil
-	})
+	return sub, false, nil // 始终为新建
 }
 
 func (s *SubscriptionService) withSubscriptionUpdateTx(ctx context.Context, fn func(context.Context) error) error {
 	if s.entClient == nil {
+		return fn(ctx)
+	}
+
+	// 已处于外层事务中（如兑换码流程在自己的 tx 内调用本服务）时，直接复用该事务，
+	// 否则会在同一连接上嵌套开启新事务，导致死锁（尤其 SQLite 单写者）。
+	if dbent.TxFromContext(ctx) != nil {
 		return fn(ctx)
 	}
 
@@ -312,32 +227,6 @@ func (s *SubscriptionService) withSubscriptionUpdateTx(ctx context.Context, fn f
 	return nil
 }
 
-func renewedSubscriptionTerm(existingSub *UserSubscription, notes string, startsAt, expiresAt time.Time) *UserSubscription {
-	renewed := *existingSub
-	windowStart := startOfDay(startsAt)
-	renewed.StartsAt = startsAt
-	renewed.ExpiresAt = expiresAt
-	renewed.Status = SubscriptionStatusActive
-	renewed.DailyWindowStart = &windowStart
-	renewed.WeeklyWindowStart = &windowStart
-	renewed.MonthlyWindowStart = &windowStart
-	renewed.DailyUsageUSD = 0
-	renewed.WeeklyUsageUSD = 0
-	renewed.MonthlyUsageUSD = 0
-	renewed.Notes = appendSubscriptionNotes(existingSub.Notes, notes)
-	return &renewed
-}
-
-func appendSubscriptionNotes(existingNotes, newNotes string) string {
-	if newNotes == "" {
-		return existingNotes
-	}
-	if existingNotes == "" {
-		return newNotes
-	}
-	return existingNotes + "\n" + newNotes
-}
-
 // createSubscription 创建新订阅（内部方法）
 func (s *SubscriptionService) createSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, error) {
 	validityDays := input.ValidityDays
@@ -348,34 +237,76 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 		validityDays = MaxValidityDays
 	}
 
+	// burn-down 模型：取套餐每日额度 D，一次性发放总额 G = D × days。
+	var dailyAmount float64
+	if group, err := s.groupRepo.GetByID(ctx, input.GroupID); err == nil && group != nil && group.DailyLimitUSD != nil {
+		dailyAmount = *group.DailyLimitUSD
+	}
+	grantedTotal := dailyAmount * float64(validityDays)
+
 	now := time.Now()
 	expiresAt := now.AddDate(0, 0, validityDays)
 	if expiresAt.After(MaxExpiresAt) {
 		expiresAt = MaxExpiresAt
 	}
 
+	activatedAt := now
 	sub := &UserSubscription{
-		UserID:     input.UserID,
-		GroupID:    input.GroupID,
-		StartsAt:   now,
-		ExpiresAt:  expiresAt,
-		Status:     SubscriptionStatusActive,
-		AssignedAt: now,
-		Notes:      input.Notes,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		UserID:          input.UserID,
+		GroupID:         input.GroupID,
+		StartsAt:        now,
+		ExpiresAt:       expiresAt,
+		Status:          SubscriptionStatusActive,
+		GrantedTotalUSD: grantedTotal,
+		DailyAmountUSD:  dailyAmount,
+		ConsumedUSD:     0,
+		ClawedUSD:       0,
+		LastClawbackDay: 0,
+		ActivatedAt:     &activatedAt,
+		AssignedAt:      now,
+		Notes:           input.Notes,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	// 只有当 AssignedBy > 0 时才设置（0 表示系统分配，如兑换码）
 	if input.AssignedBy > 0 {
 		sub.AssignedBy = &input.AssignedBy
 	}
 
-	if err := s.userSubRepo.Create(ctx, sub); err != nil {
+	// 同一事务内创建订阅并把 G 一次性打入用户余额。
+	// 使用 DeductBalance(负数) 实现「只加余额、不计入 total_recharged」，
+	// 与每日清扣 / 到期作废的扣减保持同一账本，避免污染充值统计与返佣计算。
+	if err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
+		if err := s.userSubRepo.Create(txCtx, sub); err != nil {
+			return err
+		}
+		if grantedTotal > 0 && s.userRepo != nil {
+			if err := s.userRepo.DeductBalance(txCtx, input.UserID, -grantedTotal); err != nil {
+				return fmt.Errorf("credit subscription balance: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 
+	// 开通即时改变可用余额，失效余额缓存
+	s.invalidateUserBalanceCacheAsync(input.UserID)
+
 	// 重新获取完整订阅信息（包含关联）
 	return s.userSubRepo.GetByID(ctx, sub.ID)
+}
+
+// invalidateUserBalanceCacheAsync 异步失效用户余额缓存（与现有订阅缓存失效模式一致）。
+func (s *SubscriptionService) invalidateUserBalanceCacheAsync(userID int64) {
+	if s.billingCacheService == nil {
+		return
+	}
+	go func() {
+		cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.billingCacheService.InvalidateUserBalance(cacheCtx, userID)
+	}()
 }
 
 // BulkAssignSubscriptionInput 批量分配订阅输入
@@ -444,24 +375,7 @@ func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, i
 		return nil, false, ErrGroupNotSubscriptionType
 	}
 
-	// 检查是否已存在订阅；若已存在，则按幂等成功返回现有订阅
-	exists, err := s.userSubRepo.ExistsByUserIDAndGroupID(ctx, input.UserID, input.GroupID)
-	if err != nil {
-		return nil, false, err
-	}
-	if exists {
-		sub, getErr := s.userSubRepo.GetByUserIDAndGroupID(ctx, input.UserID, input.GroupID)
-		if getErr != nil {
-			return nil, false, getErr
-		}
-		if conflictReason, conflict := detectAssignSemanticConflict(sub, input); conflict {
-			return nil, false, ErrSubscriptionAssignConflict.WithMetadata(map[string]string{
-				"conflict_reason": conflictReason,
-			})
-		}
-		return sub, true, nil
-	}
-
+	// burn-down 模型：每次分配都新建一张独立订阅卡（支持叠加），不做幂等复用。
 	sub, err := s.createSubscription(ctx, input)
 	if err != nil {
 		return nil, false, err
@@ -524,7 +438,8 @@ func (s *SubscriptionService) RevokeSubscription(ctx context.Context, subscripti
 		return err
 	}
 
-	if err := s.userSubRepo.Delete(ctx, subscriptionID); err != nil {
+	// burn-down 模型：撤销时回收该卡未花的发放余额（行级 FOR UPDATE 内重算），再删除该行。
+	if _, _, err := s.userSubRepo.CloseSubscriptionWithReclaim(ctx, subscriptionID, time.Now(), true); err != nil {
 		return err
 	}
 
@@ -538,6 +453,8 @@ func (s *SubscriptionService) RevokeSubscription(ctx context.Context, subscripti
 			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
 		}()
 	}
+	// 回收改变了用户余额，失效余额缓存
+	s.invalidateUserBalanceCacheAsync(sub.UserID)
 
 	return nil
 }
@@ -584,8 +501,24 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 		return nil, ErrAdjustWouldExpire
 	}
 
-	if err := s.userSubRepo.ExtendExpiry(ctx, subscriptionID, newExpiresAt); err != nil {
-		return nil, err
+	// burn-down 模型：调整天数的同时按 D 调整发放额度与用户余额，保持
+	// 不变量 balance == 充值剩余 + Σ活跃卡 remaining。
+	//   days<0：缩短并回收 min(remaining, |days|×D)；
+	//   days>0：延长并增发 days×D（也使退款回滚能把扣减时回收的钱重新发放）；
+	//   days==0：仅同步过期时间（一般不会发生）。
+	switch {
+	case days < 0:
+		if _, _, err := s.userSubRepo.ShortenSubscriptionWithReclaim(ctx, subscriptionID, -days, newExpiresAt, now); err != nil {
+			return nil, err
+		}
+	case days > 0:
+		if _, _, err := s.userSubRepo.GrantSubscriptionDays(ctx, subscriptionID, days, newExpiresAt, now); err != nil {
+			return nil, err
+		}
+	default:
+		if err := s.userSubRepo.ExtendExpiry(ctx, subscriptionID, newExpiresAt); err != nil {
+			return nil, err
+		}
 	}
 
 	// 如果订阅已过期，恢复为active状态
@@ -605,6 +538,8 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
 		}()
 	}
+	// 额度/余额已变动，失效余额缓存
+	s.invalidateUserBalanceCacheAsync(sub.UserID)
 
 	return s.userSubRepo.GetByID(ctx, subscriptionID)
 }
@@ -955,6 +890,20 @@ type SubscriptionProgress struct {
 	Daily         *UsageWindowProgress `json:"daily,omitempty"`
 	Weekly        *UsageWindowProgress `json:"weekly,omitempty"`
 	Monthly       *UsageWindowProgress `json:"monthly,omitempty"`
+	// Burndown 为 burn-down 计费模型的进度视图（新模型）。
+	Burndown *BurndownProgress `json:"burndown,omitempty"`
+}
+
+// BurndownProgress burn-down 订阅进度：展示「消费进度天 / 日历天」、剩余订阅余额等。
+type BurndownProgress struct {
+	GrantedTotalUSD float64 `json:"granted_total_usd"` // 发放总额 G = D×天数
+	DailyAmountUSD  float64 `json:"daily_amount_usd"`  // 每日额度 D
+	ConsumedUSD     float64 `json:"consumed_usd"`      // 累计消费
+	ClawedUSD       float64 `json:"clawed_usd"`        // 累计被清扣
+	RemainingUSD    float64 `json:"remaining_usd"`     // 剩余订阅余额
+	ConsumptionDay  float64 `json:"consumption_day"`   // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
+	CalendarDay     int     `json:"calendar_day"`      // 自激活起经过的日历天 N（Asia/Shanghai）
+	TotalDays       int     `json:"total_days"`        // 总天数 = G/D
 }
 
 // UsageWindowProgress 使用窗口进度
@@ -993,6 +942,21 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 		GroupName:     group.Name,
 		ExpiresAt:     sub.ExpiresAt,
 		ExpiresInDays: sub.DaysRemaining(),
+	}
+
+	// burn-down 进度视图（新模型）：开通即发放总额，按消费进度天/日历天展示。
+	if sub.GrantedTotalUSD > 0 || sub.DailyAmountUSD > 0 {
+		now := time.Now()
+		progress.Burndown = &BurndownProgress{
+			GrantedTotalUSD: sub.GrantedTotalUSD,
+			DailyAmountUSD:  sub.DailyAmountUSD,
+			ConsumedUSD:     sub.ConsumedUSD,
+			ClawedUSD:       sub.ClawedUSD,
+			RemainingUSD:    sub.RemainingUSD(),
+			ConsumptionDay:  sub.ConsumptionDay(),
+			CalendarDay:     sub.CalendarDayAt(now),
+			TotalDays:       sub.TotalDays(),
+		}
 	}
 
 	// 日进度

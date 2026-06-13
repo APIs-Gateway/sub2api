@@ -43,6 +43,18 @@ const (
 	FieldWeeklyUsageUsd = "weekly_usage_usd"
 	// FieldMonthlyUsageUsd holds the string denoting the monthly_usage_usd field in the database.
 	FieldMonthlyUsageUsd = "monthly_usage_usd"
+	// FieldGrantedTotalUsd holds the string denoting the granted_total_usd field in the database.
+	FieldGrantedTotalUsd = "granted_total_usd"
+	// FieldDailyAmountUsd holds the string denoting the daily_amount_usd field in the database.
+	FieldDailyAmountUsd = "daily_amount_usd"
+	// FieldConsumedUsd holds the string denoting the consumed_usd field in the database.
+	FieldConsumedUsd = "consumed_usd"
+	// FieldClawedUsd holds the string denoting the clawed_usd field in the database.
+	FieldClawedUsd = "clawed_usd"
+	// FieldLastClawbackDay holds the string denoting the last_clawback_day field in the database.
+	FieldLastClawbackDay = "last_clawback_day"
+	// FieldActivatedAt holds the string denoting the activated_at field in the database.
+	FieldActivatedAt = "activated_at"
 	// FieldAssignedBy holds the string denoting the assigned_by field in the database.
 	FieldAssignedBy = "assigned_by"
 	// FieldAssignedAt holds the string denoting the assigned_at field in the database.
@@ -106,6 +118,12 @@ var Columns = []string{
 	FieldDailyUsageUsd,
 	FieldWeeklyUsageUsd,
 	FieldMonthlyUsageUsd,
+	FieldGrantedTotalUsd,
+	FieldDailyAmountUsd,
+	FieldConsumedUsd,
+	FieldClawedUsd,
+	FieldLastClawbackDay,
+	FieldActivatedAt,
 	FieldAssignedBy,
 	FieldAssignedAt,
 	FieldNotes,
@@ -145,6 +163,16 @@ var (
 	DefaultWeeklyUsageUsd float64
 	// DefaultMonthlyUsageUsd holds the default value on creation for the "monthly_usage_usd" field.
 	DefaultMonthlyUsageUsd float64
+	// DefaultGrantedTotalUsd holds the default value on creation for the "granted_total_usd" field.
+	DefaultGrantedTotalUsd float64
+	// DefaultDailyAmountUsd holds the default value on creation for the "daily_amount_usd" field.
+	DefaultDailyAmountUsd float64
+	// DefaultConsumedUsd holds the default value on creation for the "consumed_usd" field.
+	DefaultConsumedUsd float64
+	// DefaultClawedUsd holds the default value on creation for the "clawed_usd" field.
+	DefaultClawedUsd float64
+	// DefaultLastClawbackDay holds the default value on creation for the "last_clawback_day" field.
+	DefaultLastClawbackDay int
 	// DefaultAssignedAt holds the default value on creation for the "assigned_at" field.
 	DefaultAssignedAt func() time.Time
 )
@@ -225,6 +253,36 @@ func ByWeeklyUsageUsd(opts ...sql.OrderTermOption) OrderOption {
 // ByMonthlyUsageUsd orders the results by the monthly_usage_usd field.
 func ByMonthlyUsageUsd(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldMonthlyUsageUsd, opts...).ToFunc()
+}
+
+// ByGrantedTotalUsd orders the results by the granted_total_usd field.
+func ByGrantedTotalUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldGrantedTotalUsd, opts...).ToFunc()
+}
+
+// ByDailyAmountUsd orders the results by the daily_amount_usd field.
+func ByDailyAmountUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDailyAmountUsd, opts...).ToFunc()
+}
+
+// ByConsumedUsd orders the results by the consumed_usd field.
+func ByConsumedUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldConsumedUsd, opts...).ToFunc()
+}
+
+// ByClawedUsd orders the results by the clawed_usd field.
+func ByClawedUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldClawedUsd, opts...).ToFunc()
+}
+
+// ByLastClawbackDay orders the results by the last_clawback_day field.
+func ByLastClawbackDay(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLastClawbackDay, opts...).ToFunc()
+}
+
+// ByActivatedAt orders the results by the activated_at field.
+func ByActivatedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldActivatedAt, opts...).ToFunc()
 }
 
 // ByAssignedBy orders the results by the assigned_by field.

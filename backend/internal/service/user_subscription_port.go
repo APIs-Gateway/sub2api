@@ -32,4 +32,28 @@ type UserSubscriptionRepository interface {
 	IncrementUsage(ctx context.Context, id int64, costUSD float64) error
 
 	BatchUpdateExpiredStatus(ctx context.Context) (int64, error)
+
+	// ===== Burn-down 计费模型 =====
+	// ListActiveBurndownIDs 返回需要参与每日清扣的活跃订阅 ID（id > afterID，按 id 升序，最多 limit 条）。
+	ListActiveBurndownIDs(ctx context.Context, afterID int64, limit int) ([]int64, error)
+	// ClawbackSubscription 对单张订阅做每日清扣（行级 FOR UPDATE 内重算）：
+	// 若已进入新的日历天且消费落后于 N×D，则把差额从该卡剩余池与用户余额一并扣除。返回本次清扣金额。
+	ClawbackSubscription(ctx context.Context, subID int64, now time.Time) (float64, error)
+	// ForfeitExpiredSubscriptions 处理已到期的活跃订阅：标记 expired 并把剩余订阅余额作废（同时扣减用户余额）。
+	// 每次最多处理 limit 条，返回余额被扣减的用户 ID 列表（供失效余额缓存）。
+	ForfeitExpiredSubscriptions(ctx context.Context, now time.Time, limit int) ([]int64, error)
+
+	// CloseSubscriptionWithReclaim 关闭一张订阅并回收其未花的发放余额（行级 FOR UPDATE 内重算）：
+	// 把 remaining = granted-consumed-clawed 从该卡剩余池与用户余额一并扣除。
+	// deleteRow=true 删除该行（撤销）；false 则置 status=expired、expires_at=now 并累加 clawed（整卡取消）。
+	// 返回被扣减的用户 ID 与回收金额（找不到/已关闭则返回 0,0,nil）。
+	CloseSubscriptionWithReclaim(ctx context.Context, subID int64, now time.Time, deleteRow bool) (userID int64, reclaimed float64, err error)
+	// ShortenSubscriptionWithReclaim 缩短订阅天数并回收对应未花额度：
+	// reclaimed = min(remaining, reduceDays×D)，granted_total -= reclaimed（保持 remaining 与总天数一致），
+	// expires_at = newExpiresAt，同时从用户余额扣除 reclaimed。返回用户 ID 与回收金额。
+	ShortenSubscriptionWithReclaim(ctx context.Context, subID int64, reduceDays int, newExpiresAt, now time.Time) (userID int64, reclaimed float64, err error)
+	// GrantSubscriptionDays 延长订阅天数并按 D 增发额度：
+	// granted = addDays×D，granted_total += granted，expires_at = newExpiresAt，同时给用户余额增发 granted。
+	// 用于退款回滚 / 管理端增发，与 ShortenSubscriptionWithReclaim 对称。返回用户 ID 与增发金额。
+	GrantSubscriptionDays(ctx context.Context, subID int64, addDays int, newExpiresAt, now time.Time) (userID int64, granted float64, err error)
 }

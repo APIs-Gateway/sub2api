@@ -539,6 +539,13 @@ func (s *RedeemService) invalidateRedeemCaches(ctx context.Context, userID int64
 		if s.billingCacheService == nil {
 			return
 		}
+		// burn-down 模型：开通发放 / 缩短取消回收都会改变 users.balance，
+		// 须在事务提交后失效余额缓存（提交前失效在外层兑换事务里是 racy 的）。
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.billingCacheService.InvalidateUserBalance(cacheCtx, userID)
+		}()
 		if redeemCode.GroupID != nil {
 			groupID := *redeemCode.GroupID
 			go func() {
@@ -658,18 +665,14 @@ func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID, 
 	notes := fmt.Sprintf("通过兑换码 %s 退款扣减 %d 天", code, reduceDays)
 
 	if remaining <= reduceDays {
-		// 剩余天数不足，直接取消订阅
-		if err := s.subscriptionService.userSubRepo.UpdateStatus(ctx, sub.ID, SubscriptionStatusExpired); err != nil {
+		// 剩余天数不足，整卡取消：置 expired + 回收未花的发放余额（burn-down）。
+		if _, _, err := s.subscriptionService.userSubRepo.CloseSubscriptionWithReclaim(ctx, sub.ID, now, false); err != nil {
 			return fmt.Errorf("cancel subscription: %w", err)
 		}
-		// 设置过期时间为当前时间
-		if err := s.subscriptionService.userSubRepo.ExtendExpiry(ctx, sub.ID, now); err != nil {
-			return fmt.Errorf("set subscription expiry: %w", err)
-		}
 	} else {
-		// 缩短天数
+		// 缩短天数并回收对应未花额度（burn-down）。
 		newExpiresAt := sub.ExpiresAt.AddDate(0, 0, -reduceDays)
-		if err := s.subscriptionService.userSubRepo.ExtendExpiry(ctx, sub.ID, newExpiresAt); err != nil {
+		if _, _, err := s.subscriptionService.userSubRepo.ShortenSubscriptionWithReclaim(ctx, sub.ID, reduceDays, newExpiresAt, now); err != nil {
 			return fmt.Errorf("reduce subscription: %w", err)
 		}
 	}

@@ -69,6 +69,30 @@ func (UserSubscription) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
 			Default(0),
 
+		// Burn-down 计费模型字段：开通时一次性把 G=D×days 打入用户余额，
+		// 每张订阅作为独立 burn-down 账户，消费/清扣按本卡 consumed/clawed 核算。
+		// remaining = granted_total_usd - consumed_usd - clawed_usd
+		field.Float("granted_total_usd").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
+			Default(0),
+		field.Float("daily_amount_usd").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
+			Default(0),
+		field.Float("consumed_usd").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
+			Default(0),
+		field.Float("clawed_usd").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
+			Default(0),
+		field.Int("last_clawback_day").
+			Default(0),
+		// 清扣时钟起点（按 Asia/Shanghai 从此算第 N 个日历天）。
+		// 为 nil 时回退到 starts_at；存量回填时设为 NOW() 以对剩余期重新计时。
+		field.Time("activated_at").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+
 		field.Int64("assigned_by").
 			Optional().
 			Nillable(),

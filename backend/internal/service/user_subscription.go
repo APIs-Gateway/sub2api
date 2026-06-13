@@ -19,6 +19,14 @@ type UserSubscription struct {
 	WeeklyUsageUSD  float64
 	MonthlyUsageUSD float64
 
+	// Burn-down 计费模型字段
+	GrantedTotalUSD float64    // G = D × days，开通时一次性发放总额
+	DailyAmountUSD  float64    // D，开通时对 group.daily_limit_usd 的快照
+	ConsumedUSD     float64    // 本卡累计消费（单调递增）
+	ClawedUSD       float64    // 本卡累计被清扣（单调递增）
+	LastClawbackDay int        // 已对账到的最高日历天 N
+	ActivatedAt     *time.Time // 清扣时钟起点；nil 时回退 StartsAt
+
 	AssignedBy *int64
 	AssignedAt time.Time
 	Notes      string
@@ -139,4 +147,88 @@ func (s *UserSubscription) CheckAllLimits(group *Group, additionalCost float64) 
 	weekly = s.CheckWeeklyLimit(group, additionalCost)
 	monthly = s.CheckMonthlyLimit(group, additionalCost)
 	return
+}
+
+// ===== Burn-down 计费模型 =====
+
+// shanghaiLoc 是清扣/进度计算使用的时区（东八区）。
+var shanghaiLoc = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		// 退回固定 UTC+8，避免缺少 tzdata 时 panic
+		return time.FixedZone("CST", 8*3600)
+	}
+	return loc
+}()
+
+// RemainingUSD 返回本卡当前剩余可用额度 = 发放 - 已消费 - 已清扣。
+func (s *UserSubscription) RemainingUSD() float64 {
+	r := s.GrantedTotalUSD - s.ConsumedUSD - s.ClawedUSD
+	if r < 0 {
+		return 0
+	}
+	return r
+}
+
+// ClawbackClock 返回清扣时钟起点：优先 ActivatedAt，否则回退 StartsAt。
+func (s *UserSubscription) ClawbackClock() time.Time {
+	if s.ActivatedAt != nil && !s.ActivatedAt.IsZero() {
+		return *s.ActivatedAt
+	}
+	return s.StartsAt
+}
+
+// TotalDays 返回本卡的总天数 = round(G / D)。D 为 0 时返回 0。
+func (s *UserSubscription) TotalDays() int {
+	if s.DailyAmountUSD <= 0 {
+		return 0
+	}
+	return int((s.GrantedTotalUSD / s.DailyAmountUSD) + 0.5)
+}
+
+// startOfShanghaiDay 返回 t 所在的东八区当日 0 点。
+func startOfShanghaiDay(t time.Time) time.Time {
+	t = t.In(shanghaiLoc)
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, shanghaiLoc)
+}
+
+// CalendarDayAt 返回截至 now、自激活起经过的东八区零点数 N（激活当天为 0），上限为 TotalDays。
+func (s *UserSubscription) CalendarDayAt(now time.Time) int {
+	start := startOfShanghaiDay(s.ClawbackClock())
+	cur := startOfShanghaiDay(now)
+	n := int(cur.Sub(start).Hours()/24 + 0.5)
+	if n < 0 {
+		n = 0
+	}
+	if days := s.TotalDays(); days > 0 && n > days {
+		n = days
+	}
+	return n
+}
+
+// ConsumptionDay 返回消费进度天 = 累计消费 / D（可超过日历天，表示已透支到第几天）。
+func (s *UserSubscription) ConsumptionDay() float64 {
+	if s.DailyAmountUSD <= 0 {
+		return 0
+	}
+	return s.ConsumedUSD / s.DailyAmountUSD
+}
+
+// ClawbackFloorAt 返回截至日历天 N 时本卡剩余池子的下限 floor = max(0, G - N×D)。
+func (s *UserSubscription) ClawbackFloorAt(now time.Time) float64 {
+	n := s.CalendarDayAt(now)
+	floor := s.GrantedTotalUSD - float64(n)*s.DailyAmountUSD
+	if floor < 0 {
+		return 0
+	}
+	return floor
+}
+
+// ClawbackShortfallAt 返回截至 now 应清扣的金额 = max(0, remaining - floor)。
+func (s *UserSubscription) ClawbackShortfallAt(now time.Time) float64 {
+	shortfall := s.RemainingUSD() - s.ClawbackFloorAt(now)
+	if shortfall < 0 {
+		return 0
+	}
+	return shortfall
 }

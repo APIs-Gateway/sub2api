@@ -8104,14 +8104,10 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		}
 	}
 
-	// Record subscription / balance cost using ActualCost so the group (and any
-	// user-specific) rate multiplier consumes subscription quota at the expected
-	// speed. TotalCost remains the raw (pre-multiplier) value; downstream guards
-	// on "> 0" still correctly skip free subscriptions (RateMultiplier == 0).
-	if p.IsSubscriptionBill && p.Subscription != nil && p.Cost.TotalCost > 0 {
-		cmd.SubscriptionID = &p.Subscription.ID
-		cmd.SubscriptionCost = p.Cost.ActualCost
-	} else if p.Cost.ActualCost > 0 {
+	// burn-down 模型：所有计费统一从 users.balance 扣除（余额 = 充值剩余 + Σ订阅剩余）。
+	// 订阅优先归集由计费仓储在事务内用 SQL 完成（见 allocateUsageBillingSubscriptions），
+	// 因此这里始终设置 BalanceCost，不再区分订阅/余额，避免遗留订阅上下文导致漏扣。
+	if p.Cost.ActualCost > 0 {
 		cmd.BalanceCost = p.Cost.ActualCost
 	}
 

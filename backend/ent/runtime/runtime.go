@@ -2034,8 +2034,28 @@ func init() {
 	usersubscriptionDescMonthlyUsageUsd := usersubscriptionFields[10].Descriptor()
 	// usersubscription.DefaultMonthlyUsageUsd holds the default value on creation for the monthly_usage_usd field.
 	usersubscription.DefaultMonthlyUsageUsd = usersubscriptionDescMonthlyUsageUsd.Default.(float64)
+	// usersubscriptionDescGrantedTotalUsd is the schema descriptor for granted_total_usd field.
+	usersubscriptionDescGrantedTotalUsd := usersubscriptionFields[11].Descriptor()
+	// usersubscription.DefaultGrantedTotalUsd holds the default value on creation for the granted_total_usd field.
+	usersubscription.DefaultGrantedTotalUsd = usersubscriptionDescGrantedTotalUsd.Default.(float64)
+	// usersubscriptionDescDailyAmountUsd is the schema descriptor for daily_amount_usd field.
+	usersubscriptionDescDailyAmountUsd := usersubscriptionFields[12].Descriptor()
+	// usersubscription.DefaultDailyAmountUsd holds the default value on creation for the daily_amount_usd field.
+	usersubscription.DefaultDailyAmountUsd = usersubscriptionDescDailyAmountUsd.Default.(float64)
+	// usersubscriptionDescConsumedUsd is the schema descriptor for consumed_usd field.
+	usersubscriptionDescConsumedUsd := usersubscriptionFields[13].Descriptor()
+	// usersubscription.DefaultConsumedUsd holds the default value on creation for the consumed_usd field.
+	usersubscription.DefaultConsumedUsd = usersubscriptionDescConsumedUsd.Default.(float64)
+	// usersubscriptionDescClawedUsd is the schema descriptor for clawed_usd field.
+	usersubscriptionDescClawedUsd := usersubscriptionFields[14].Descriptor()
+	// usersubscription.DefaultClawedUsd holds the default value on creation for the clawed_usd field.
+	usersubscription.DefaultClawedUsd = usersubscriptionDescClawedUsd.Default.(float64)
+	// usersubscriptionDescLastClawbackDay is the schema descriptor for last_clawback_day field.
+	usersubscriptionDescLastClawbackDay := usersubscriptionFields[15].Descriptor()
+	// usersubscription.DefaultLastClawbackDay holds the default value on creation for the last_clawback_day field.
+	usersubscription.DefaultLastClawbackDay = usersubscriptionDescLastClawbackDay.Default.(int)
 	// usersubscriptionDescAssignedAt is the schema descriptor for assigned_at field.
-	usersubscriptionDescAssignedAt := usersubscriptionFields[12].Descriptor()
+	usersubscriptionDescAssignedAt := usersubscriptionFields[18].Descriptor()
 	// usersubscription.DefaultAssignedAt holds the default value on creation for the assigned_at field.
 	usersubscription.DefaultAssignedAt = usersubscriptionDescAssignedAt.Default.(func() time.Time)
 }

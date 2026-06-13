@@ -94,8 +94,46 @@
               }}</span>
             </div>
 
+            <!-- Burn-down 订阅进度（新模型）：开通即把整期额度打入余额，按消费进度天展示 -->
+            <div v-if="subscription.daily_amount_usd" class="space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">消费进度</span>
+                <span class="text-sm text-gray-500 dark:text-dark-400">
+                  已用到第 {{ Math.floor(subscription.consumption_day || 0) }} /
+                  {{ burndownTotalDays(subscription) }} 天
+                </span>
+              </div>
+              <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div
+                  class="absolute inset-y-0 left-0 rounded-full bg-primary-500 transition-all duration-300"
+                  :style="{
+                    width: getProgressWidth(subscription.consumed_usd, subscription.granted_total_usd)
+                  }"
+                ></div>
+              </div>
+              <div
+                class="flex items-center justify-between text-xs text-gray-500 dark:text-dark-400"
+              >
+                <span
+                  >剩余订阅余额 ${{ (subscription.remaining_usd || 0).toFixed(2) }} / ${{
+                    (subscription.granted_total_usd || 0).toFixed(2)
+                  }}</span
+                >
+                <span v-if="(subscription.clawed_usd || 0) > 0"
+                  >已清扣 ${{ (subscription.clawed_usd || 0).toFixed(2) }}</span
+                >
+              </div>
+              <p class="text-xs text-gray-400 dark:text-dark-500">
+                每日额度 ${{ (subscription.daily_amount_usd || 0).toFixed(2) }}，可提前透支后续天额度；当天未用完部分次日
+                0 点（东八区）清扣作废
+              </p>
+            </div>
+
             <!-- Daily Usage -->
-            <div v-if="subscription.group?.daily_limit_usd" class="space-y-2">
+            <div
+              v-if="subscription.group?.daily_limit_usd && !subscription.daily_amount_usd"
+              class="space-y-2"
+            >
               <div class="flex items-center justify-between">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
                   {{ t('userSubscriptions.daily') }}
@@ -132,7 +170,10 @@
             </div>
 
             <!-- Weekly Usage -->
-            <div v-if="subscription.group?.weekly_limit_usd" class="space-y-2">
+            <div
+              v-if="subscription.group?.weekly_limit_usd && !subscription.daily_amount_usd"
+              class="space-y-2"
+            >
               <div class="flex items-center justify-between">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
                   {{ t('userSubscriptions.weekly') }}
@@ -173,7 +214,10 @@
             </div>
 
             <!-- Monthly Usage -->
-            <div v-if="subscription.group?.monthly_limit_usd" class="space-y-2">
+            <div
+              v-if="subscription.group?.monthly_limit_usd && !subscription.daily_amount_usd"
+              class="space-y-2"
+            >
               <div class="flex items-center justify-between">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
                   {{ t('userSubscriptions.monthly') }}
@@ -216,6 +260,7 @@
             <!-- No limits configured - Unlimited badge -->
             <div
               v-if="
+                !subscription.daily_amount_usd &&
                 !subscription.group?.daily_limit_usd &&
                 !subscription.group?.weekly_limit_usd &&
                 !subscription.group?.monthly_limit_usd
@@ -287,6 +332,12 @@ function getProgressWidth(used: number | undefined, limit: number | null | undef
   if (!limit || limit === 0) return '0%'
   const percentage = Math.min(((used || 0) / limit) * 100, 100)
   return `${percentage}%`
+}
+
+// burndownTotalDays 返回 burn-down 订阅的总天数 = 发放总额 / 每日额度。
+function burndownTotalDays(sub: UserSubscription): number {
+  if (!sub.daily_amount_usd || sub.daily_amount_usd <= 0) return 0
+  return Math.round((sub.granted_total_usd || 0) / sub.daily_amount_usd)
 }
 
 function getProgressBarClass(used: number | undefined, limit: number | null | undefined): string {

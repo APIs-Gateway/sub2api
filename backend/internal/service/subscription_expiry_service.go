@@ -17,6 +17,7 @@ type SubscriptionExpiryService struct {
 	userSubRepo              UserSubscriptionRepository
 	settingRepo              SettingRepository
 	notificationEmailService *NotificationEmailService
+	billingCache             *BillingCacheService
 	interval                 time.Duration
 	stopCh                   chan struct{}
 	stopOnce                 sync.Once
@@ -37,6 +38,10 @@ func (s *SubscriptionExpiryService) SetSettingRepository(settingRepo SettingRepo
 
 func (s *SubscriptionExpiryService) SetNotificationEmailService(notificationEmailService *NotificationEmailService) {
 	s.notificationEmailService = notificationEmailService
+}
+
+func (s *SubscriptionExpiryService) SetBillingCacheService(billingCache *BillingCacheService) {
+	s.billingCache = billingCache
 }
 
 func (s *SubscriptionExpiryService) Start() {
@@ -75,13 +80,22 @@ func (s *SubscriptionExpiryService) runOnce() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	updated, err := s.userSubRepo.BatchUpdateExpiredStatus(ctx)
+	// burn-down 模型：到期时标记 expired 并把剩余订阅余额作废（同时扣减用户余额）。
+	// ForfeitExpiredSubscriptions 内部分批排空所有已到期的活跃订阅。
+	now := time.Now()
+	affected, err := s.userSubRepo.ForfeitExpiredSubscriptions(ctx, now, 200)
 	if err != nil {
-		log.Printf("[SubscriptionExpiry] Update expired subscriptions failed: %v", err)
-		return
-	}
-	if updated > 0 {
-		log.Printf("[SubscriptionExpiry] Updated %d expired subscriptions", updated)
+		log.Printf("[SubscriptionExpiry] Forfeit expired subscriptions failed: %v", err)
+	} else {
+		// 失效被扣减用户的余额缓存
+		if s.billingCache != nil {
+			for _, uid := range affected {
+				_ = s.billingCache.InvalidateUserBalance(ctx, uid)
+			}
+		}
+		if len(affected) > 0 {
+			log.Printf("[SubscriptionExpiry] Forfeited remaining balance for %d expired subscriptions (with balance)", len(affected))
+		}
 	}
 	s.sendExpiryReminders(ctx)
 }
