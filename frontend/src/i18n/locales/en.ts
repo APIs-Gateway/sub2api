@@ -6723,7 +6723,7 @@ export default {
     failedToLoad: 'Failed to load subscriptions',
     overdraft: {
       label: 'Max overdraft days',
-      placeholder: 'Empty = unlimited',
+      placeholder: 'Unlimited',
       hint: 'Limit how many days ahead this card can be spent: cumulative usage is capped at (elapsed days + N) × daily amount. Empty = unlimited; 0 = only today\'s accrual.',
       saved: 'Overdraft limit saved',
       failed: 'Failed to save overdraft limit',

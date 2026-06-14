@@ -6876,7 +6876,7 @@ export default {
     failedToLoad: '加载订阅失败',
     overdraft: {
       label: '最多透支天数',
-      placeholder: '留空 = 不限制',
+      placeholder: '无限制',
       hint: '限制本卡最多可提前消费几天：累计消费最多到 (已过天数 + N) × 每日额度。留空 = 不限制，0 = 仅可用当天额度。',
       saved: '已保存透支上限',
       failed: '保存透支上限失败',
