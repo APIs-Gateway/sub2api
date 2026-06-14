@@ -752,7 +752,7 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionGroupAllowedByBalance(t *t
 		resetDaily:     func(ctx context.Context, id int64, start time.Time) error { return nil },
 		resetWeekly:    func(ctx context.Context, id int64, start time.Time) error { return nil },
 		resetMonthly:   func(ctx context.Context, id int64, start time.Time) error { return nil },
-	}, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
+	}, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
 
 	r := gin.New()
 	r.Use(APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, &config.Config{RunMode: config.RunModeStandard}))
@@ -766,4 +766,8 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionGroupAllowedByBalance(t *t
 	// burn-down 模型：Gemini 原生端点也改为纯余额放行，不再按订阅日限额返回 429。
 	// 用户余额 10 > 0 → 放行。
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func (f fakeGoogleSubscriptionRepo) SetOverdraftDays(context.Context, int64, int64, *int) (bool, error) {
+	return false, nil
 }

@@ -95,7 +95,7 @@ func (r *userRepository) Create(ctx context.Context, userIn *service.User) error
 		SetNillableLastLoginAt(userIn.LastLoginAt).
 		SetNillableLastActiveAt(userIn.LastActiveAt).
 		SetRpmLimit(userIn.RPMLimit).
-		SetNillableMaxOverdraftDays(userIn.MaxOverdraftDays).
+		SetSubscriptionOverdraftGuard(userIn.SubscriptionOverdraftGuard).
 		Save(txCtx)
 	if err != nil {
 		return translatePersistenceError(err, nil, service.ErrEmailExists)
@@ -253,11 +253,7 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User) error
 	if userIn.BalanceNotifyThreshold == nil {
 		updateOp = updateOp.ClearBalanceNotifyThreshold()
 	}
-	if userIn.MaxOverdraftDays != nil {
-		updateOp = updateOp.SetMaxOverdraftDays(*userIn.MaxOverdraftDays)
-	} else {
-		updateOp = updateOp.ClearMaxOverdraftDays()
-	}
+	updateOp = updateOp.SetSubscriptionOverdraftGuard(userIn.SubscriptionOverdraftGuard)
 	updated, err := updateOp.Save(txCtx)
 	if err != nil {
 		return translatePersistenceError(err, service.ErrUserNotFound, service.ErrEmailExists)
@@ -768,6 +764,18 @@ func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount flo
 		Save(ctx)
 	if err != nil {
 		return err
+	}
+	if n == 0 {
+		return service.ErrUserNotFound
+	}
+	return nil
+}
+
+func (r *userRepository) MarkSubscriptionOverdraftGuard(ctx context.Context, id int64) error {
+	client := clientFromContext(ctx, r.client)
+	n, err := client.User.Update().Where(dbuser.IDEQ(id)).SetSubscriptionOverdraftGuard(true).Save(ctx)
+	if err != nil {
+		return translatePersistenceError(err, service.ErrUserNotFound, nil)
 	}
 	if n == 0 {
 		return service.ErrUserNotFound

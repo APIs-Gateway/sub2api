@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 13 // v13: include user max_overdraft_days for subscription overdraft gate
+const apiKeyAuthSnapshotVersion = 14 // v14: subscription_overdraft_guard (per-subscription overdraft gate trigger)
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -235,7 +235,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			BalanceNotifyExtraEmails:   apiKey.User.BalanceNotifyExtraEmails,
 			TotalRecharged:             apiKey.User.TotalRecharged,
 			RPMLimit:                   apiKey.User.RPMLimit,
-			MaxOverdraftDays:           apiKey.User.MaxOverdraftDays,
+			SubscriptionOverdraftGuard: apiKey.User.SubscriptionOverdraftGuard,
 		},
 	}
 
@@ -316,7 +316,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			BalanceNotifyExtraEmails:   snapshot.User.BalanceNotifyExtraEmails,
 			TotalRecharged:             snapshot.User.TotalRecharged,
 			RPMLimit:                   snapshot.User.RPMLimit,
-			MaxOverdraftDays:           snapshot.User.MaxOverdraftDays,
+			SubscriptionOverdraftGuard: snapshot.User.SubscriptionOverdraftGuard,
 			UserGroupRPMOverride:       snapshot.User.UserGroupRPMOverride,
 		},
 	}

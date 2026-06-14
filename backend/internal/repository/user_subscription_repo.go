@@ -149,6 +149,22 @@ func (r *userSubscriptionRepository) Delete(ctx context.Context, id int64) error
 	return err
 }
 
+func (r *userSubscriptionRepository) SetOverdraftDays(ctx context.Context, userID, subID int64, days *int) (bool, error) {
+	client := clientFromContext(ctx, r.client)
+	upd := client.UserSubscription.Update().
+		Where(usersubscription.IDEQ(subID), usersubscription.UserIDEQ(userID))
+	if days != nil {
+		upd = upd.SetMaxOverdraftDays(*days)
+	} else {
+		upd = upd.ClearMaxOverdraftDays()
+	}
+	affected, err := upd.Save(ctx)
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
 func (r *userSubscriptionRepository) ListByUserID(ctx context.Context, userID int64) ([]service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
 	subs, err := client.UserSubscription.Query().
@@ -788,6 +804,7 @@ func userSubscriptionEntityToService(m *dbent.UserSubscription) *service.UserSub
 		ConsumedUSD:        m.ConsumedUsd,
 		ClawedUSD:          m.ClawedUsd,
 		LastClawbackDay:    m.LastClawbackDay,
+		MaxOverdraftDays:   m.MaxOverdraftDays,
 		ActivatedAt:        m.ActivatedAt,
 		AssignedBy:         m.AssignedBy,
 		AssignedAt:         m.AssignedAt,

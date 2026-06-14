@@ -61,8 +61,8 @@ const (
 	FieldTotalRecharged = "total_recharged"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
 	FieldRpmLimit = "rpm_limit"
-	// FieldMaxOverdraftDays holds the string denoting the max_overdraft_days field in the database.
-	FieldMaxOverdraftDays = "max_overdraft_days"
+	// FieldSubscriptionOverdraftGuard holds the string denoting the subscription_overdraft_guard field in the database.
+	FieldSubscriptionOverdraftGuard = "subscription_overdraft_guard"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
 	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
@@ -217,7 +217,7 @@ var Columns = []string{
 	FieldBalanceNotifyExtraEmails,
 	FieldTotalRecharged,
 	FieldRpmLimit,
-	FieldMaxOverdraftDays,
+	FieldSubscriptionOverdraftGuard,
 }
 
 var (
@@ -288,6 +288,8 @@ var (
 	DefaultTotalRecharged float64
 	// DefaultRpmLimit holds the default value on creation for the "rpm_limit" field.
 	DefaultRpmLimit int
+	// DefaultSubscriptionOverdraftGuard holds the default value on creation for the "subscription_overdraft_guard" field.
+	DefaultSubscriptionOverdraftGuard bool
 )
 
 // OrderOption defines the ordering options for the User queries.
@@ -413,9 +415,9 @@ func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRpmLimit, opts...).ToFunc()
 }
 
-// ByMaxOverdraftDays orders the results by the max_overdraft_days field.
-func ByMaxOverdraftDays(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldMaxOverdraftDays, opts...).ToFunc()
+// BySubscriptionOverdraftGuard orders the results by the subscription_overdraft_guard field.
+func BySubscriptionOverdraftGuard(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSubscriptionOverdraftGuard, opts...).ToFunc()
 }
 
 // ByAPIKeysCount orders the results by api_keys count.

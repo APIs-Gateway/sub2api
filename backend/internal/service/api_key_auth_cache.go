@@ -49,8 +49,8 @@ type APIKeyAuthUserSnapshot struct {
 	// RPMLimit 用户级每分钟请求数上限（0 = 不限制）；用于 billing_cache_service.checkRPM 兜底判断。
 	RPMLimit int `json:"rpm_limit"`
 
-	// MaxOverdraftDays burn-down 订阅「最多往后透支天数」；nil = 不限制。用于准入透支闸门。
-	MaxOverdraftDays *int `json:"max_overdraft_days,omitempty"`
+	// SubscriptionOverdraftGuard 该用户是否给任意订阅卡设过透支上限；准入闸门的廉价触发位。
+	SubscriptionOverdraftGuard bool `json:"subscription_overdraft_guard,omitempty"`
 
 	// UserGroupRPMOverride 该 API Key 对应的 (user, group) 专属 RPM 覆盖值。
 	// nil = 无 override（回退到 group/user 级）；0 = 不限流；>0 = 专属上限。

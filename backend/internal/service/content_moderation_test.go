@@ -1789,3 +1789,7 @@ func TestContentModerationUnbanUser_ActiveUserOnlyInvalidatesAuthCache(t *testin
 func contentModerationIntPtr(v int) *int {
 	return &v
 }
+
+func (r *contentModerationTestUserRepo) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+	return nil
+}

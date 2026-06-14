@@ -57,6 +57,8 @@ type UserSubscription struct {
 	ClawedUsd float64 `json:"clawed_usd,omitempty"`
 	// LastClawbackDay holds the value of the "last_clawback_day" field.
 	LastClawbackDay int `json:"last_clawback_day,omitempty"`
+	// MaxOverdraftDays holds the value of the "max_overdraft_days" field.
+	MaxOverdraftDays *int `json:"max_overdraft_days,omitempty"`
 	// ActivatedAt holds the value of the "activated_at" field.
 	ActivatedAt *time.Time `json:"activated_at,omitempty"`
 	// AssignedBy holds the value of the "assigned_by" field.
@@ -135,7 +137,7 @@ func (*UserSubscription) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldGrantedTotalUsd, usersubscription.FieldDailyAmountUsd, usersubscription.FieldConsumedUsd, usersubscription.FieldClawedUsd:
 			values[i] = new(sql.NullFloat64)
-		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldLastClawbackDay, usersubscription.FieldAssignedBy:
+		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldLastClawbackDay, usersubscription.FieldMaxOverdraftDays, usersubscription.FieldAssignedBy:
 			values[i] = new(sql.NullInt64)
 		case usersubscription.FieldStatus, usersubscription.FieldNotes:
 			values[i] = new(sql.NullString)
@@ -279,6 +281,13 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field last_clawback_day", values[i])
 			} else if value.Valid {
 				_m.LastClawbackDay = int(value.Int64)
+			}
+		case usersubscription.FieldMaxOverdraftDays:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field max_overdraft_days", values[i])
+			} else if value.Valid {
+				_m.MaxOverdraftDays = new(int)
+				*_m.MaxOverdraftDays = int(value.Int64)
 			}
 		case usersubscription.FieldActivatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -427,6 +436,11 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("last_clawback_day=")
 	builder.WriteString(fmt.Sprintf("%v", _m.LastClawbackDay))
+	builder.WriteString(", ")
+	if v := _m.MaxOverdraftDays; v != nil {
+		builder.WriteString("max_overdraft_days=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
 	builder.WriteString(", ")
 	if v := _m.ActivatedAt; v != nil {
 		builder.WriteString("activated_at=")

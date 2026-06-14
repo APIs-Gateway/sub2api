@@ -355,6 +355,33 @@ func (_u *UserSubscriptionUpdate) AddLastClawbackDay(v int) *UserSubscriptionUpd
 	return _u
 }
 
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (_u *UserSubscriptionUpdate) SetMaxOverdraftDays(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetMaxOverdraftDays()
+	_u.mutation.SetMaxOverdraftDays(v)
+	return _u
+}
+
+// SetNillableMaxOverdraftDays sets the "max_overdraft_days" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableMaxOverdraftDays(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetMaxOverdraftDays(*v)
+	}
+	return _u
+}
+
+// AddMaxOverdraftDays adds value to the "max_overdraft_days" field.
+func (_u *UserSubscriptionUpdate) AddMaxOverdraftDays(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddMaxOverdraftDays(v)
+	return _u
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (_u *UserSubscriptionUpdate) ClearMaxOverdraftDays() *UserSubscriptionUpdate {
+	_u.mutation.ClearMaxOverdraftDays()
+	return _u
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_u *UserSubscriptionUpdate) SetActivatedAt(v time.Time) *UserSubscriptionUpdate {
 	_u.mutation.SetActivatedAt(v)
@@ -670,6 +697,15 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if value, ok := _u.mutation.AddedLastClawbackDay(); ok {
 		_spec.AddField(usersubscription.FieldLastClawbackDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.MaxOverdraftDays(); ok {
+		_spec.SetField(usersubscription.FieldMaxOverdraftDays, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedMaxOverdraftDays(); ok {
+		_spec.AddField(usersubscription.FieldMaxOverdraftDays, field.TypeInt, value)
+	}
+	if _u.mutation.MaxOverdraftDaysCleared() {
+		_spec.ClearField(usersubscription.FieldMaxOverdraftDays, field.TypeInt)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1162,6 +1198,33 @@ func (_u *UserSubscriptionUpdateOne) AddLastClawbackDay(v int) *UserSubscription
 	return _u
 }
 
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (_u *UserSubscriptionUpdateOne) SetMaxOverdraftDays(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetMaxOverdraftDays()
+	_u.mutation.SetMaxOverdraftDays(v)
+	return _u
+}
+
+// SetNillableMaxOverdraftDays sets the "max_overdraft_days" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableMaxOverdraftDays(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetMaxOverdraftDays(*v)
+	}
+	return _u
+}
+
+// AddMaxOverdraftDays adds value to the "max_overdraft_days" field.
+func (_u *UserSubscriptionUpdateOne) AddMaxOverdraftDays(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddMaxOverdraftDays(v)
+	return _u
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (_u *UserSubscriptionUpdateOne) ClearMaxOverdraftDays() *UserSubscriptionUpdateOne {
+	_u.mutation.ClearMaxOverdraftDays()
+	return _u
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_u *UserSubscriptionUpdateOne) SetActivatedAt(v time.Time) *UserSubscriptionUpdateOne {
 	_u.mutation.SetActivatedAt(v)
@@ -1507,6 +1570,15 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 	}
 	if value, ok := _u.mutation.AddedLastClawbackDay(); ok {
 		_spec.AddField(usersubscription.FieldLastClawbackDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.MaxOverdraftDays(); ok {
+		_spec.SetField(usersubscription.FieldMaxOverdraftDays, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedMaxOverdraftDays(); ok {
+		_spec.AddField(usersubscription.FieldMaxOverdraftDays, field.TypeInt, value)
+	}
+	if _u.mutation.MaxOverdraftDaysCleared() {
+		_spec.ClearField(usersubscription.FieldMaxOverdraftDays, field.TypeInt)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)

@@ -251,7 +251,7 @@ func TestAssignSubscriptionAlwaysCreatesNewCard(t *testing.T) {
 		Notes:     "init",
 	})
 
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil)
 	sub, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       1001,
 		GroupID:      1,
@@ -280,7 +280,7 @@ func TestAssignSubscriptionStacksRegardlessOfExisting(t *testing.T) {
 		Notes:     "old-note",
 	})
 
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil)
 	sub, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       2001,
 		GroupID:      1,
@@ -316,7 +316,7 @@ func TestBulkAssignSubscriptionAllCreated(t *testing.T) {
 		Notes:     "same-note",
 	})
 
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil)
 	result, err := svc.BulkAssignSubscription(context.Background(), &BulkAssignSubscriptionInput{
 		UserIDs:      []int64{1, 2, 3},
 		GroupID:      1,
@@ -345,7 +345,7 @@ func TestAssignSubscriptionKeepsWorkingWhenIdempotencyStoreUnavailable(t *testin
 		SetDefaultIdempotencyCoordinator(nil)
 	})
 
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil)
 	sub, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       9001,
 		GroupID:      1,
@@ -407,7 +407,7 @@ func TestAssignSubscriptionGroupTypeValidation(t *testing.T) {
 		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeStandard},
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil)
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil)
 
 	_, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       1,
@@ -420,4 +420,8 @@ func TestAssignSubscriptionGroupTypeValidation(t *testing.T) {
 
 func strconvFormatInt(v int64) string {
 	return strconv.FormatInt(v, 10)
+}
+
+func (userSubRepoNoop) SetOverdraftDays(context.Context, int64, int64, *int) (bool, error) {
+	return false, nil
 }

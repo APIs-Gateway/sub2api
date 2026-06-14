@@ -150,6 +150,11 @@ func LastClawbackDay(v int) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldLastClawbackDay, v))
 }
 
+// MaxOverdraftDays applies equality check predicate on the "max_overdraft_days" field. It's identical to MaxOverdraftDaysEQ.
+func MaxOverdraftDays(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldMaxOverdraftDays, v))
+}
+
 // ActivatedAt applies equality check predicate on the "activated_at" field. It's identical to ActivatedAtEQ.
 func ActivatedAt(v time.Time) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldActivatedAt, v))
@@ -953,6 +958,56 @@ func LastClawbackDayLT(v int) predicate.UserSubscription {
 // LastClawbackDayLTE applies the LTE predicate on the "last_clawback_day" field.
 func LastClawbackDayLTE(v int) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldLTE(FieldLastClawbackDay, v))
+}
+
+// MaxOverdraftDaysEQ applies the EQ predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysNEQ applies the NEQ predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysNEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysIn applies the In predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldMaxOverdraftDays, vs...))
+}
+
+// MaxOverdraftDaysNotIn applies the NotIn predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysNotIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldMaxOverdraftDays, vs...))
+}
+
+// MaxOverdraftDaysGT applies the GT predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysGT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysGTE applies the GTE predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysGTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysLT applies the LT predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysLT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysLTE applies the LTE predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysLTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysIsNil applies the IsNil predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysIsNil() predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIsNull(FieldMaxOverdraftDays))
+}
+
+// MaxOverdraftDaysNotNil applies the NotNil predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysNotNil() predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotNull(FieldMaxOverdraftDays))
 }
 
 // ActivatedAtEQ applies the EQ predicate on the "activated_at" field.

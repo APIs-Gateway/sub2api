@@ -1884,6 +1884,10 @@ func init() {
 	userDescRpmLimit := userFields[19].Descriptor()
 	// user.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
 	user.DefaultRpmLimit = userDescRpmLimit.Default.(int)
+	// userDescSubscriptionOverdraftGuard is the schema descriptor for subscription_overdraft_guard field.
+	userDescSubscriptionOverdraftGuard := userFields[20].Descriptor()
+	// user.DefaultSubscriptionOverdraftGuard holds the default value on creation for the subscription_overdraft_guard field.
+	user.DefaultSubscriptionOverdraftGuard = userDescSubscriptionOverdraftGuard.Default.(bool)
 	userallowedgroupFields := schema.UserAllowedGroup{}.Fields()
 	_ = userallowedgroupFields
 	// userallowedgroupDescCreatedAt is the schema descriptor for created_at field.
@@ -2120,7 +2124,7 @@ func init() {
 	// usersubscription.DefaultLastClawbackDay holds the default value on creation for the last_clawback_day field.
 	usersubscription.DefaultLastClawbackDay = usersubscriptionDescLastClawbackDay.Default.(int)
 	// usersubscriptionDescAssignedAt is the schema descriptor for assigned_at field.
-	usersubscriptionDescAssignedAt := usersubscriptionFields[18].Descriptor()
+	usersubscriptionDescAssignedAt := usersubscriptionFields[19].Descriptor()
 	// usersubscription.DefaultAssignedAt holds the default value on creation for the assigned_at field.
 	usersubscription.DefaultAssignedAt = usersubscriptionDescAssignedAt.Default.(func() time.Time)
 }

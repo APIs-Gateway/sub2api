@@ -20,12 +20,13 @@ type UserSubscription struct {
 	MonthlyUsageUSD float64
 
 	// Burn-down 计费模型字段
-	GrantedTotalUSD float64    // G = D × days，开通时一次性发放总额
-	DailyAmountUSD  float64    // D，开通时对 group.daily_limit_usd 的快照
-	ConsumedUSD     float64    // 本卡累计消费（单调递增）
-	ClawedUSD       float64    // 本卡累计被清扣（单调递增）
-	LastClawbackDay int        // 已对账到的最高日历天 N
-	ActivatedAt     *time.Time // 清扣时钟起点；nil 时回退 StartsAt
+	GrantedTotalUSD  float64    // G = D × days，开通时一次性发放总额
+	DailyAmountUSD   float64    // D，开通时对 group.daily_limit_usd 的快照
+	ConsumedUSD      float64    // 本卡累计消费（单调递增）
+	ClawedUSD        float64    // 本卡累计被清扣（单调递增）
+	LastClawbackDay  int        // 已对账到的最高日历天 N
+	MaxOverdraftDays *int       // 本卡最多往后透支天数；nil = 不限制（用户在「我的订阅」自助设置）
+	ActivatedAt      *time.Time // 清扣时钟起点；nil 时回退 StartsAt
 
 	AssignedBy *int64
 	AssignedAt time.Time

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"strconv"
+
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -117,6 +119,34 @@ func (h *SubscriptionHandler) GetProgress(c *gin.Context) {
 	}
 
 	response.Success(c, result)
+}
+
+// SetOverdraftDays lets the current user set the max overdraft days on ONE of their own
+// subscription cards. PUT /api/v1/subscriptions/:id/overdraft
+// body: { "max_overdraft_days": <int|null> } — null/omitted/negative = clear (unlimited), >=0 = set (0 = only today's accrual).
+func (h *SubscriptionHandler) SetOverdraftDays(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	subID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || subID <= 0 {
+		response.BadRequest(c, "invalid subscription id")
+		return
+	}
+	var req struct {
+		MaxOverdraftDays *int `json:"max_overdraft_days"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	if err := h.subscriptionService.SetSubscriptionOverdraftDays(c.Request.Context(), subject.UserID, subID, req.MaxOverdraftDays); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": subID})
 }
 
 // GetSummary handles getting a summary of current user's subscription status

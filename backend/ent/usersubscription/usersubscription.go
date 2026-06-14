@@ -53,6 +53,8 @@ const (
 	FieldClawedUsd = "clawed_usd"
 	// FieldLastClawbackDay holds the string denoting the last_clawback_day field in the database.
 	FieldLastClawbackDay = "last_clawback_day"
+	// FieldMaxOverdraftDays holds the string denoting the max_overdraft_days field in the database.
+	FieldMaxOverdraftDays = "max_overdraft_days"
 	// FieldActivatedAt holds the string denoting the activated_at field in the database.
 	FieldActivatedAt = "activated_at"
 	// FieldAssignedBy holds the string denoting the assigned_by field in the database.
@@ -123,6 +125,7 @@ var Columns = []string{
 	FieldConsumedUsd,
 	FieldClawedUsd,
 	FieldLastClawbackDay,
+	FieldMaxOverdraftDays,
 	FieldActivatedAt,
 	FieldAssignedBy,
 	FieldAssignedAt,
@@ -278,6 +281,11 @@ func ByClawedUsd(opts ...sql.OrderTermOption) OrderOption {
 // ByLastClawbackDay orders the results by the last_clawback_day field.
 func ByLastClawbackDay(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldLastClawbackDay, opts...).ToFunc()
+}
+
+// ByMaxOverdraftDays orders the results by the max_overdraft_days field.
+func ByMaxOverdraftDays(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMaxOverdraftDays, opts...).ToFunc()
 }
 
 // ByActivatedAt orders the results by the activated_at field.

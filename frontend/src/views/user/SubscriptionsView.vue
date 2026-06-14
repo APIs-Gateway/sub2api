@@ -127,6 +127,32 @@
                 每日额度 ${{ (subscription.daily_amount_usd || 0).toFixed(2) }}，可提前透支后续天额度；当天未用完部分次日
                 0 点（东八区）清扣作废
               </p>
+
+              <!-- 自助：本卡最多往后透支天数 -->
+              <div class="flex flex-wrap items-center gap-2 pt-1">
+                <span class="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                  {{ t('userSubscriptions.overdraft.label') }}
+                </span>
+                <input
+                  v-model="overdraftEdit[subscription.id]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  class="input w-24"
+                  :placeholder="t('userSubscriptions.overdraft.placeholder')"
+                />
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  :disabled="savingOverdraft === subscription.id"
+                  @click="saveOverdraft(subscription)"
+                >
+                  {{ t('common.save') }}
+                </button>
+                <span class="w-full text-xs text-gray-400 dark:text-dark-500">
+                  {{ t('userSubscriptions.overdraft.hint') }}
+                </span>
+              </div>
             </div>
 
             <!-- Daily Usage -->
@@ -287,7 +313,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
@@ -316,10 +342,17 @@ const appStore = useAppStore()
 const subscriptions = ref<UserSubscription[]>([])
 const loading = ref(true)
 
+// 每张卡「最多透支天数」的可编辑值（空串 = 不限制）。
+const overdraftEdit = reactive<Record<number, number | string>>({})
+const savingOverdraft = ref<number | null>(null)
+
 async function loadSubscriptions() {
   try {
     loading.value = true
     subscriptions.value = await subscriptionsAPI.getMySubscriptions()
+    for (const s of subscriptions.value) {
+      overdraftEdit[s.id] = s.max_overdraft_days == null ? '' : s.max_overdraft_days
+    }
   } catch (error) {
     console.error('Failed to load subscriptions:', error)
     appStore.showError(t('userSubscriptions.failedToLoad'))
@@ -332,6 +365,32 @@ function getProgressWidth(used: number | undefined, limit: number | null | undef
   if (!limit || limit === 0) return '0%'
   const percentage = Math.min(((used || 0) / limit) * 100, 100)
   return `${percentage}%`
+}
+
+// saveOverdraft 用户自助保存本卡「最多透支天数」（空 = 不限制）。
+async function saveOverdraft(sub: UserSubscription) {
+  const raw = overdraftEdit[sub.id]
+  let days: number | null
+  if (raw === '' || raw === null || raw === undefined) {
+    days = null
+  } else {
+    const n = Number(raw)
+    if (Number.isNaN(n) || n < 0) {
+      appStore.showError(t('userSubscriptions.overdraft.invalid'))
+      return
+    }
+    days = Math.floor(n)
+  }
+  try {
+    savingOverdraft.value = sub.id
+    await subscriptionsAPI.setOverdraftDays(sub.id, days)
+    appStore.showSuccess(t('userSubscriptions.overdraft.saved'))
+    await loadSubscriptions()
+  } catch (e: any) {
+    appStore.showError(e.response?.data?.message || t('userSubscriptions.overdraft.failed'))
+  } finally {
+    savingOverdraft.value = null
+  }
 }
 
 // burndownTotalDays 返回 burn-down 订阅的总天数 = 发放总额 / 每日额度。

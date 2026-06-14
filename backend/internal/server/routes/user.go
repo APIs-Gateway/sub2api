@@ -115,6 +115,8 @@ func RegisterUserRoutes(
 			subscriptions.GET("/active", h.Subscription.GetActive)
 			subscriptions.GET("/progress", h.Subscription.GetProgress)
 			subscriptions.GET("/summary", h.Subscription.GetSummary)
+			// 用户自助：设置自己某张订阅卡的「最多透支天数」
+			subscriptions.PUT("/:id/overdraft", h.Subscription.SetOverdraftDays)
 		}
 
 		// 渠道监控（用户只读）

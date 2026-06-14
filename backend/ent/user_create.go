@@ -340,16 +340,16 @@ func (_c *UserCreate) SetNillableRpmLimit(v *int) *UserCreate {
 	return _c
 }
 
-// SetMaxOverdraftDays sets the "max_overdraft_days" field.
-func (_c *UserCreate) SetMaxOverdraftDays(v int) *UserCreate {
-	_c.mutation.SetMaxOverdraftDays(v)
+// SetSubscriptionOverdraftGuard sets the "subscription_overdraft_guard" field.
+func (_c *UserCreate) SetSubscriptionOverdraftGuard(v bool) *UserCreate {
+	_c.mutation.SetSubscriptionOverdraftGuard(v)
 	return _c
 }
 
-// SetNillableMaxOverdraftDays sets the "max_overdraft_days" field if the given value is not nil.
-func (_c *UserCreate) SetNillableMaxOverdraftDays(v *int) *UserCreate {
+// SetNillableSubscriptionOverdraftGuard sets the "subscription_overdraft_guard" field if the given value is not nil.
+func (_c *UserCreate) SetNillableSubscriptionOverdraftGuard(v *bool) *UserCreate {
 	if v != nil {
-		_c.SetMaxOverdraftDays(*v)
+		_c.SetSubscriptionOverdraftGuard(*v)
 	}
 	return _c
 }
@@ -652,6 +652,10 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultRpmLimit
 		_c.mutation.SetRpmLimit(v)
 	}
+	if _, ok := _c.mutation.SubscriptionOverdraftGuard(); !ok {
+		v := user.DefaultSubscriptionOverdraftGuard
+		_c.mutation.SetSubscriptionOverdraftGuard(v)
+	}
 	return nil
 }
 
@@ -737,6 +741,9 @@ func (_c *UserCreate) check() error {
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "User.rpm_limit"`)}
+	}
+	if _, ok := _c.mutation.SubscriptionOverdraftGuard(); !ok {
+		return &ValidationError{Name: "subscription_overdraft_guard", err: errors.New(`ent: missing required field "User.subscription_overdraft_guard"`)}
 	}
 	return nil
 }
@@ -857,9 +864,9 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 		_spec.SetField(user.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
 	}
-	if value, ok := _c.mutation.MaxOverdraftDays(); ok {
-		_spec.SetField(user.FieldMaxOverdraftDays, field.TypeInt, value)
-		_node.MaxOverdraftDays = &value
+	if value, ok := _c.mutation.SubscriptionOverdraftGuard(); ok {
+		_spec.SetField(user.FieldSubscriptionOverdraftGuard, field.TypeBool, value)
+		_node.SubscriptionOverdraftGuard = value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1455,27 +1462,15 @@ func (u *UserUpsert) AddRpmLimit(v int) *UserUpsert {
 	return u
 }
 
-// SetMaxOverdraftDays sets the "max_overdraft_days" field.
-func (u *UserUpsert) SetMaxOverdraftDays(v int) *UserUpsert {
-	u.Set(user.FieldMaxOverdraftDays, v)
+// SetSubscriptionOverdraftGuard sets the "subscription_overdraft_guard" field.
+func (u *UserUpsert) SetSubscriptionOverdraftGuard(v bool) *UserUpsert {
+	u.Set(user.FieldSubscriptionOverdraftGuard, v)
 	return u
 }
 
-// UpdateMaxOverdraftDays sets the "max_overdraft_days" field to the value that was provided on create.
-func (u *UserUpsert) UpdateMaxOverdraftDays() *UserUpsert {
-	u.SetExcluded(user.FieldMaxOverdraftDays)
-	return u
-}
-
-// AddMaxOverdraftDays adds v to the "max_overdraft_days" field.
-func (u *UserUpsert) AddMaxOverdraftDays(v int) *UserUpsert {
-	u.Add(user.FieldMaxOverdraftDays, v)
-	return u
-}
-
-// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
-func (u *UserUpsert) ClearMaxOverdraftDays() *UserUpsert {
-	u.SetNull(user.FieldMaxOverdraftDays)
+// UpdateSubscriptionOverdraftGuard sets the "subscription_overdraft_guard" field to the value that was provided on create.
+func (u *UserUpsert) UpdateSubscriptionOverdraftGuard() *UserUpsert {
+	u.SetExcluded(user.FieldSubscriptionOverdraftGuard)
 	return u
 }
 
@@ -1909,31 +1904,17 @@ func (u *UserUpsertOne) UpdateRpmLimit() *UserUpsertOne {
 	})
 }
 
-// SetMaxOverdraftDays sets the "max_overdraft_days" field.
-func (u *UserUpsertOne) SetMaxOverdraftDays(v int) *UserUpsertOne {
+// SetSubscriptionOverdraftGuard sets the "subscription_overdraft_guard" field.
+func (u *UserUpsertOne) SetSubscriptionOverdraftGuard(v bool) *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
-		s.SetMaxOverdraftDays(v)
+		s.SetSubscriptionOverdraftGuard(v)
 	})
 }
 
-// AddMaxOverdraftDays adds v to the "max_overdraft_days" field.
-func (u *UserUpsertOne) AddMaxOverdraftDays(v int) *UserUpsertOne {
+// UpdateSubscriptionOverdraftGuard sets the "subscription_overdraft_guard" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateSubscriptionOverdraftGuard() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
-		s.AddMaxOverdraftDays(v)
-	})
-}
-
-// UpdateMaxOverdraftDays sets the "max_overdraft_days" field to the value that was provided on create.
-func (u *UserUpsertOne) UpdateMaxOverdraftDays() *UserUpsertOne {
-	return u.Update(func(s *UserUpsert) {
-		s.UpdateMaxOverdraftDays()
-	})
-}
-
-// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
-func (u *UserUpsertOne) ClearMaxOverdraftDays() *UserUpsertOne {
-	return u.Update(func(s *UserUpsert) {
-		s.ClearMaxOverdraftDays()
+		s.UpdateSubscriptionOverdraftGuard()
 	})
 }
 
@@ -2533,31 +2514,17 @@ func (u *UserUpsertBulk) UpdateRpmLimit() *UserUpsertBulk {
 	})
 }
 
-// SetMaxOverdraftDays sets the "max_overdraft_days" field.
-func (u *UserUpsertBulk) SetMaxOverdraftDays(v int) *UserUpsertBulk {
+// SetSubscriptionOverdraftGuard sets the "subscription_overdraft_guard" field.
+func (u *UserUpsertBulk) SetSubscriptionOverdraftGuard(v bool) *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
-		s.SetMaxOverdraftDays(v)
+		s.SetSubscriptionOverdraftGuard(v)
 	})
 }
 
-// AddMaxOverdraftDays adds v to the "max_overdraft_days" field.
-func (u *UserUpsertBulk) AddMaxOverdraftDays(v int) *UserUpsertBulk {
+// UpdateSubscriptionOverdraftGuard sets the "subscription_overdraft_guard" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateSubscriptionOverdraftGuard() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
-		s.AddMaxOverdraftDays(v)
-	})
-}
-
-// UpdateMaxOverdraftDays sets the "max_overdraft_days" field to the value that was provided on create.
-func (u *UserUpsertBulk) UpdateMaxOverdraftDays() *UserUpsertBulk {
-	return u.Update(func(s *UserUpsert) {
-		s.UpdateMaxOverdraftDays()
-	})
-}
-
-// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
-func (u *UserUpsertBulk) ClearMaxOverdraftDays() *UserUpsertBulk {
-	return u.Update(func(s *UserUpsert) {
-		s.ClearMaxOverdraftDays()
+		s.UpdateSubscriptionOverdraftGuard()
 	})
 }
 

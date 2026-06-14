@@ -259,6 +259,20 @@ func (_c *UserSubscriptionCreate) SetNillableLastClawbackDay(v *int) *UserSubscr
 	return _c
 }
 
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (_c *UserSubscriptionCreate) SetMaxOverdraftDays(v int) *UserSubscriptionCreate {
+	_c.mutation.SetMaxOverdraftDays(v)
+	return _c
+}
+
+// SetNillableMaxOverdraftDays sets the "max_overdraft_days" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableMaxOverdraftDays(v *int) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetMaxOverdraftDays(*v)
+	}
+	return _c
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_c *UserSubscriptionCreate) SetActivatedAt(v time.Time) *UserSubscriptionCreate {
 	_c.mutation.SetActivatedAt(v)
@@ -611,6 +625,10 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 	if value, ok := _c.mutation.LastClawbackDay(); ok {
 		_spec.SetField(usersubscription.FieldLastClawbackDay, field.TypeInt, value)
 		_node.LastClawbackDay = value
+	}
+	if value, ok := _c.mutation.MaxOverdraftDays(); ok {
+		_spec.SetField(usersubscription.FieldMaxOverdraftDays, field.TypeInt, value)
+		_node.MaxOverdraftDays = &value
 	}
 	if value, ok := _c.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1028,6 +1046,30 @@ func (u *UserSubscriptionUpsert) UpdateLastClawbackDay() *UserSubscriptionUpsert
 // AddLastClawbackDay adds v to the "last_clawback_day" field.
 func (u *UserSubscriptionUpsert) AddLastClawbackDay(v int) *UserSubscriptionUpsert {
 	u.Add(usersubscription.FieldLastClawbackDay, v)
+	return u
+}
+
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (u *UserSubscriptionUpsert) SetMaxOverdraftDays(v int) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldMaxOverdraftDays, v)
+	return u
+}
+
+// UpdateMaxOverdraftDays sets the "max_overdraft_days" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateMaxOverdraftDays() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldMaxOverdraftDays)
+	return u
+}
+
+// AddMaxOverdraftDays adds v to the "max_overdraft_days" field.
+func (u *UserSubscriptionUpsert) AddMaxOverdraftDays(v int) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldMaxOverdraftDays, v)
+	return u
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (u *UserSubscriptionUpsert) ClearMaxOverdraftDays() *UserSubscriptionUpsert {
+	u.SetNull(usersubscription.FieldMaxOverdraftDays)
 	return u
 }
 
@@ -1475,6 +1517,34 @@ func (u *UserSubscriptionUpsertOne) AddLastClawbackDay(v int) *UserSubscriptionU
 func (u *UserSubscriptionUpsertOne) UpdateLastClawbackDay() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateLastClawbackDay()
+	})
+}
+
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (u *UserSubscriptionUpsertOne) SetMaxOverdraftDays(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetMaxOverdraftDays(v)
+	})
+}
+
+// AddMaxOverdraftDays adds v to the "max_overdraft_days" field.
+func (u *UserSubscriptionUpsertOne) AddMaxOverdraftDays(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddMaxOverdraftDays(v)
+	})
+}
+
+// UpdateMaxOverdraftDays sets the "max_overdraft_days" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateMaxOverdraftDays() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateMaxOverdraftDays()
+	})
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (u *UserSubscriptionUpsertOne) ClearMaxOverdraftDays() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.ClearMaxOverdraftDays()
 	})
 }
 
@@ -2099,6 +2169,34 @@ func (u *UserSubscriptionUpsertBulk) AddLastClawbackDay(v int) *UserSubscription
 func (u *UserSubscriptionUpsertBulk) UpdateLastClawbackDay() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateLastClawbackDay()
+	})
+}
+
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (u *UserSubscriptionUpsertBulk) SetMaxOverdraftDays(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetMaxOverdraftDays(v)
+	})
+}
+
+// AddMaxOverdraftDays adds v to the "max_overdraft_days" field.
+func (u *UserSubscriptionUpsertBulk) AddMaxOverdraftDays(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddMaxOverdraftDays(v)
+	})
+}
+
+// UpdateMaxOverdraftDays sets the "max_overdraft_days" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateMaxOverdraftDays() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateMaxOverdraftDays()
+	})
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (u *UserSubscriptionUpsertBulk) ClearMaxOverdraftDays() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.ClearMaxOverdraftDays()
 	})
 }
 

@@ -88,7 +88,6 @@ export interface User {
   balance: number // User balance for API usage
   concurrency: number // Allowed concurrent requests
   rpm_limit?: number // User-level RPM cap (0 = unlimited); effective as fallback when group has no rpm_limit
-  max_overdraft_days?: number | null // burn-down subscription max overdraft days; null = unlimited
   status: 'active' | 'disabled' // Account status
   allowed_groups: number[] | null // Allowed group IDs (null = all non-exclusive groups)
   balance_notify_enabled: boolean
@@ -1540,8 +1539,6 @@ export interface UpdateUserRequest {
   concurrency?: number
   status?: 'active' | 'disabled'
   allowed_groups?: number[] | null
-  // burn-down 订阅最多透支天数；-1 = 清除为不限制；>=0 = 设置上限。
-  max_overdraft_days?: number | null
   // 用户专属分组倍率配置 (group_id -> rate_multiplier | null)
   // null 表示删除该分组的专属倍率
   group_rates?: Record<number, number | null>
@@ -1573,6 +1570,7 @@ export interface UserSubscription {
   clawed_usd?: number // 累计被清扣
   remaining_usd?: number // 剩余订阅余额
   consumption_day?: number // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
+  max_overdraft_days?: number | null // 本卡最多往后透支天数；null = 不限制（用户在「我的订阅」自助设置）
   activated_at?: string | null
   created_at: string
   updated_at: string

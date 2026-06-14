@@ -30,7 +30,6 @@ func UserFromServiceShallow(u *service.User) *User {
 		BalanceNotifyExtraEmails:   NotifyEmailEntriesFromService(u.BalanceNotifyExtraEmails),
 		TotalRecharged:             u.TotalRecharged,
 		RPMLimit:                   u.RPMLimit,
-		MaxOverdraftDays:           u.MaxOverdraftDays,
 		DeletedAt:                  u.DeletedAt,
 	}
 }
@@ -756,6 +755,7 @@ func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscrip
 		ClawedUSD:          sub.ClawedUSD,
 		RemainingUSD:       sub.RemainingUSD(),
 		ConsumptionDay:     sub.ConsumptionDay(),
+		MaxOverdraftDays:   sub.MaxOverdraftDays,
 		ActivatedAt:        sub.ActivatedAt,
 		CreatedAt:          sub.CreatedAt,
 		UpdatedAt:          sub.UpdatedAt,

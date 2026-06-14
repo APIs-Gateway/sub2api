@@ -24,6 +24,9 @@ type UserSubscriptionRepository interface {
 	ExtendExpiry(ctx context.Context, subscriptionID int64, newExpiresAt time.Time) error
 	UpdateStatus(ctx context.Context, subscriptionID int64, status string) error
 	UpdateNotes(ctx context.Context, subscriptionID int64, notes string) error
+	// SetOverdraftDays 设置某张订阅卡的「最多透支天数」（按 owner 作用域更新，days=nil 清除为不限制）。
+	// 返回是否命中（属于该用户的现存卡）；未命中 → false（不存在或非本人）。
+	SetOverdraftDays(ctx context.Context, userID, subID int64, days *int) (bool, error)
 
 	ActivateWindows(ctx context.Context, id int64, start time.Time) error
 	ResetDailyUsage(ctx context.Context, id int64, newWindowStart time.Time) error

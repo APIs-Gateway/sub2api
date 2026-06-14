@@ -41,11 +41,12 @@ var (
 
 // SubscriptionService 订阅服务
 type SubscriptionService struct {
-	groupRepo           GroupRepository
-	userSubRepo         UserSubscriptionRepository
-	userRepo            UserRepository
-	billingCacheService *BillingCacheService
-	entClient           *dbent.Client
+	groupRepo            GroupRepository
+	userSubRepo          UserSubscriptionRepository
+	userRepo             UserRepository
+	billingCacheService  *BillingCacheService
+	authCacheInvalidator APIKeyAuthCacheInvalidator
+	entClient            *dbent.Client
 
 	// L1 缓存：加速中间件热路径的订阅查询
 	subCacheL1     *ristretto.Cache
@@ -57,13 +58,14 @@ type SubscriptionService struct {
 }
 
 // NewSubscriptionService 创建订阅服务
-func NewSubscriptionService(groupRepo GroupRepository, userSubRepo UserSubscriptionRepository, userRepo UserRepository, billingCacheService *BillingCacheService, entClient *dbent.Client, cfg *config.Config) *SubscriptionService {
+func NewSubscriptionService(groupRepo GroupRepository, userSubRepo UserSubscriptionRepository, userRepo UserRepository, billingCacheService *BillingCacheService, authCacheInvalidator APIKeyAuthCacheInvalidator, entClient *dbent.Client, cfg *config.Config) *SubscriptionService {
 	svc := &SubscriptionService{
-		groupRepo:           groupRepo,
-		userSubRepo:         userSubRepo,
-		userRepo:            userRepo,
-		billingCacheService: billingCacheService,
-		entClient:           entClient,
+		groupRepo:            groupRepo,
+		userSubRepo:          userSubRepo,
+		userRepo:             userRepo,
+		billingCacheService:  billingCacheService,
+		authCacheInvalidator: authCacheInvalidator,
+		entClient:            entClient,
 	}
 	svc.initSubCache(cfg)
 	svc.initMaintenanceQueue(cfg)
@@ -598,6 +600,31 @@ func (s *SubscriptionService) ListUserSubscriptions(ctx context.Context, userID 
 	normalizeExpiredWindows(subs)
 	normalizeSubscriptionStatus(subs)
 	return subs, nil
+}
+
+// SetSubscriptionOverdraftDays 用户自助设置自己某张订阅卡的「最多往后透支天数」。
+// days = nil 或负数 → 清除为不限制；>=0 → 设置该上限（0 = 仅当天额度）。仅能操作属于自己的卡。
+func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, userID, subID int64, days *int) error {
+	norm := normalizeOverdraftDays(days) // nil/负数 → nil；>=0 → 拷贝
+	ok, err := s.userSubRepo.SetOverdraftDays(ctx, userID, subID, norm)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrSubscriptionNotFound
+	}
+	// 设了非空上限 → 置 guard，让准入闸门对该用户生效（只置真）。
+	if norm != nil && s.userRepo != nil {
+		if err := s.userRepo.MarkSubscriptionOverdraftGuard(ctx, userID); err != nil {
+			log.Printf("[Subscription] mark overdraft guard failed user=%d: %v", userID, err)
+		}
+	}
+	// 失效 auth 快照（闸门读 guard）+ 余额缓存（闸门读 balance）。
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
+	}
+	s.invalidateUserBalanceCacheAsync(userID)
+	return nil
 }
 
 // ListActiveUserSubscriptions 获取用户的所有有效订阅

@@ -1906,10 +1906,7 @@ export default {
       form: {
         rpmLimit: 'Requests Per Minute (RPM)',
         rpmLimitPlaceholder: '0 = unlimited',
-        rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.',
-        maxOverdraftDays: 'Max Subscription Overdraft Days',
-        maxOverdraftDaysPlaceholder: 'Leave empty = unlimited',
-        maxOverdraftDaysHint: 'How many days a burn-down subscription may be spent ahead: cumulative usage is capped at (elapsed days + N) × daily amount. Empty = unlimited (default); 0 = only the amount accrued through today.'
+        rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.'
       },
       columns: {
         user: 'User',
@@ -6724,6 +6721,14 @@ export default {
     noActiveSubscriptionsDesc:
       "You don't have any active subscriptions. Contact administrator to get one.",
     failedToLoad: 'Failed to load subscriptions',
+    overdraft: {
+      label: 'Max overdraft days',
+      placeholder: 'Empty = unlimited',
+      hint: 'Limit how many days ahead this card can be spent: cumulative usage is capped at (elapsed days + N) × daily amount. Empty = unlimited; 0 = only today\'s accrual.',
+      saved: 'Overdraft limit saved',
+      failed: 'Failed to save overdraft limit',
+      invalid: 'Enter 0 or a positive integer (leave empty for unlimited)'
+    },
     status: {
       active: 'Active',
       expired: 'Expired',

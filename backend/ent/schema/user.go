@@ -113,11 +113,11 @@ func (User) Fields() []ent.Field {
 		field.Int("rpm_limit").
 			Default(0),
 
-		// burn-down 订阅「最多往后透支天数」：某订阅卡累计被扣最多到 (已过天数+N)×D。
-		// nil = 不限制（默认，维持一次性发放后可立即花光的现状）。
-		field.Int("max_overdraft_days").
-			Optional().
-			Nillable(),
+		// subscription_overdraft_guard 标记该用户是否给「任意订阅卡」设过透支上限。
+		// 仅作准入闸门的廉价触发位（只置真不自动清，stale-true 只多一次查询、安全）；
+		// 真正的透支天数按订阅卡存于 user_subscriptions.max_overdraft_days。
+		field.Bool("subscription_overdraft_guard").
+			Default(false),
 	}
 }
 

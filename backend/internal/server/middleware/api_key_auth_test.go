@@ -61,7 +61,7 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 		// burn-down 模型：订阅分组请求改为纯余额放行，不再加载订阅或做窗口维护。
 		cfg := &config.Config{RunMode: config.RunModeStandard}
 		apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
-		subscriptionService := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{}, nil, nil, nil, cfg)
+		subscriptionService := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{}, nil, nil, nil, nil, cfg)
 		t.Cleanup(subscriptionService.Stop)
 
 		router := newAuthTestRouter(apiKeyService, subscriptionService, cfg)
@@ -78,7 +78,7 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 	t.Run("simple_mode_bypasses_quota_check", func(t *testing.T) {
 		cfg := &config.Config{RunMode: config.RunModeSimple}
 		apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
-		subscriptionService := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{}, nil, nil, nil, cfg)
+		subscriptionService := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{}, nil, nil, nil, nil, cfg)
 		router := newAuthTestRouter(apiKeyService, subscriptionService, cfg)
 
 		w := httptest.NewRecorder()
@@ -92,7 +92,7 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 	t.Run("simple_mode_accepts_lowercase_bearer", func(t *testing.T) {
 		cfg := &config.Config{RunMode: config.RunModeSimple}
 		apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
-		subscriptionService := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{}, nil, nil, nil, cfg)
+		subscriptionService := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{}, nil, nil, nil, nil, cfg)
 		router := newAuthTestRouter(apiKeyService, subscriptionService, cfg)
 
 		w := httptest.NewRecorder()
@@ -123,7 +123,7 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 			},
 		}
 		apiKeyService = service.NewAPIKeyService(zeroRepo, nil, nil, nil, nil, nil, cfg)
-		subscriptionService := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{}, nil, nil, nil, cfg)
+		subscriptionService := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{}, nil, nil, nil, nil, cfg)
 		router := newAuthTestRouter(apiKeyService, subscriptionService, cfg)
 
 		w := httptest.NewRecorder()
@@ -1130,4 +1130,8 @@ func (r *stubUserSubscriptionRepo) ShortenSubscriptionWithReclaim(ctx context.Co
 }
 func (r *stubUserSubscriptionRepo) GrantSubscriptionDays(ctx context.Context, subID int64, addDays int, newExpiresAt, now time.Time) (int64, float64, error) {
 	return 0, 0, nil
+}
+
+func (r *stubUserSubscriptionRepo) SetOverdraftDays(context.Context, int64, int64, *int) (bool, error) {
+	return false, nil
 }

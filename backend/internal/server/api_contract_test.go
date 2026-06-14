@@ -1279,7 +1279,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	usageRepo := newStubUsageLogRepo()
 	usageService := service.NewUsageService(usageRepo, userRepo, nil, nil)
 
-	subscriptionService := service.NewSubscriptionService(groupRepo, userSubRepo, nil, nil, nil, cfg)
+	subscriptionService := service.NewSubscriptionService(groupRepo, userSubRepo, nil, nil, nil, nil, cfg)
 	subscriptionHandler := handler.NewSubscriptionHandler(subscriptionService)
 
 	redeemService := service.NewRedeemService(redeemRepo, userRepo, subscriptionService, nil, nil, nil, nil, nil)
@@ -2649,3 +2649,11 @@ var (
 	_ service.UsageLogRepository         = (*stubUsageLogRepo)(nil)
 	_ service.SettingRepository          = (*stubSettingRepo)(nil)
 )
+
+func (r *stubUserSubscriptionRepo) SetOverdraftDays(context.Context, int64, int64, *int) (bool, error) {
+	return false, nil
+}
+
+func (r *stubUserRepo) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+	return nil
+}

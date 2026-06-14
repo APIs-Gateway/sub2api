@@ -180,3 +180,7 @@ func TestSubscriptionExpiryService_ExpiryReminderSettingReadErrorFailsClosed(t *
 
 	require.False(t, svc.expiryReminderEnabled(context.Background()))
 }
+
+func (r *subscriptionExpiryRepoStub) SetOverdraftDays(context.Context, int64, int64, *int) (bool, error) {
+	return false, nil
+}

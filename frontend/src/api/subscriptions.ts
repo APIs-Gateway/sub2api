@@ -67,10 +67,24 @@ export async function getSubscriptionProgress(
   return response.data
 }
 
+/**
+ * Set the max overdraft days on one of the current user's own subscription cards.
+ * days = null → clear (unlimited); >=0 → set (0 = only today's accrual).
+ */
+export async function setOverdraftDays(
+  subscriptionId: number,
+  days: number | null
+): Promise<void> {
+  await apiClient.put(`/subscriptions/${subscriptionId}/overdraft`, {
+    max_overdraft_days: days,
+  })
+}
+
 export default {
   getMySubscriptions,
   getActiveSubscriptions,
   getSubscriptionsProgress,
   getSubscriptionSummary,
-  getSubscriptionProgress
+  getSubscriptionProgress,
+  setOverdraftDays
 }
