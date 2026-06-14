@@ -411,6 +411,33 @@ func (_u *UserUpdate) AddRpmLimit(v int) *UserUpdate {
 	return _u
 }
 
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (_u *UserUpdate) SetMaxOverdraftDays(v int) *UserUpdate {
+	_u.mutation.ResetMaxOverdraftDays()
+	_u.mutation.SetMaxOverdraftDays(v)
+	return _u
+}
+
+// SetNillableMaxOverdraftDays sets the "max_overdraft_days" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableMaxOverdraftDays(v *int) *UserUpdate {
+	if v != nil {
+		_u.SetMaxOverdraftDays(*v)
+	}
+	return _u
+}
+
+// AddMaxOverdraftDays adds value to the "max_overdraft_days" field.
+func (_u *UserUpdate) AddMaxOverdraftDays(v int) *UserUpdate {
+	_u.mutation.AddMaxOverdraftDays(v)
+	return _u
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (_u *UserUpdate) ClearMaxOverdraftDays() *UserUpdate {
+	_u.mutation.ClearMaxOverdraftDays()
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *UserUpdate) AddAPIKeyIDs(ids ...int64) *UserUpdate {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -1071,6 +1098,15 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(user.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.MaxOverdraftDays(); ok {
+		_spec.SetField(user.FieldMaxOverdraftDays, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedMaxOverdraftDays(); ok {
+		_spec.AddField(user.FieldMaxOverdraftDays, field.TypeInt, value)
+	}
+	if _u.mutation.MaxOverdraftDaysCleared() {
+		_spec.ClearField(user.FieldMaxOverdraftDays, field.TypeInt)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -2060,6 +2096,33 @@ func (_u *UserUpdateOne) AddRpmLimit(v int) *UserUpdateOne {
 	return _u
 }
 
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (_u *UserUpdateOne) SetMaxOverdraftDays(v int) *UserUpdateOne {
+	_u.mutation.ResetMaxOverdraftDays()
+	_u.mutation.SetMaxOverdraftDays(v)
+	return _u
+}
+
+// SetNillableMaxOverdraftDays sets the "max_overdraft_days" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableMaxOverdraftDays(v *int) *UserUpdateOne {
+	if v != nil {
+		_u.SetMaxOverdraftDays(*v)
+	}
+	return _u
+}
+
+// AddMaxOverdraftDays adds value to the "max_overdraft_days" field.
+func (_u *UserUpdateOne) AddMaxOverdraftDays(v int) *UserUpdateOne {
+	_u.mutation.AddMaxOverdraftDays(v)
+	return _u
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (_u *UserUpdateOne) ClearMaxOverdraftDays() *UserUpdateOne {
+	_u.mutation.ClearMaxOverdraftDays()
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *UserUpdateOne) AddAPIKeyIDs(ids ...int64) *UserUpdateOne {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -2750,6 +2813,15 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(user.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.MaxOverdraftDays(); ok {
+		_spec.SetField(user.FieldMaxOverdraftDays, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedMaxOverdraftDays(); ok {
+		_spec.AddField(user.FieldMaxOverdraftDays, field.TypeInt, value)
+	}
+	if _u.mutation.MaxOverdraftDaysCleared() {
+		_spec.ClearField(user.FieldMaxOverdraftDays, field.TypeInt)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{

@@ -232,3 +232,33 @@ func (s *UserSubscription) ClawbackShortfallAt(now time.Time) float64 {
 	}
 	return shortfall
 }
+
+// SpendableNowAt 返回在「最多往后透支 overdraftDays 天」约束下，本卡当前可被扣费的额度。
+// 模型仍一次性把 G 发到 users.balance，本函数只用于「准入闸门」估算：
+//
+//	chargeCap    = (CalendarDayAt(now) + overdraftDays) × D   // 截至当前允许累计被扣到的上限
+//	spendableNow = clamp(0, min(remaining, chargeCap − consumed))
+//
+// D=0（legacy/standard 卡）时 chargeCap=0、remaining=0，返回 0，无副作用。
+func (s *UserSubscription) SpendableNowAt(now time.Time, overdraftDays int) float64 {
+	remaining := s.RemainingUSD()
+	chargeCap := (float64(s.CalendarDayAt(now)) + float64(overdraftDays)) * s.DailyAmountUSD
+	avail := chargeCap - s.ConsumedUSD
+	if avail < 0 {
+		avail = 0
+	}
+	if avail > remaining {
+		avail = remaining
+	}
+	return avail
+}
+
+// LockedAt 返回因「最多透支 overdraftDays 天」约束而暂不可用、但仍计入 users.balance 的本卡金额。
+// = remaining − SpendableNowAt。准入闸门用「balance − Σ locked」作为有效可花额度。
+func (s *UserSubscription) LockedAt(now time.Time, overdraftDays int) float64 {
+	locked := s.RemainingUSD() - s.SpendableNowAt(now, overdraftDays)
+	if locked < 0 {
+		return 0
+	}
+	return locked
+}

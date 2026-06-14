@@ -49,6 +49,18 @@
         />
         <p class="input-hint">{{ t('admin.users.form.rpmLimitHint') }}</p>
       </div>
+      <div>
+        <label class="input-label">{{ t('admin.users.form.maxOverdraftDays') }}</label>
+        <input
+          v-model.number="form.max_overdraft_days"
+          type="number"
+          min="0"
+          step="1"
+          class="input"
+          :placeholder="t('admin.users.form.maxOverdraftDaysPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.users.form.maxOverdraftDaysHint') }}</p>
+      </div>
       <UserAttributeForm v-model="form.customAttributes" :user-id="user?.id" />
     </form>
     <template #footer>
@@ -78,11 +90,11 @@ const emit = defineEmits(['close', 'success'])
 const { t } = useI18n(); const appStore = useAppStore(); const { copyToClipboard } = useClipboard()
 
 const submitting = ref(false); const passwordCopied = ref(false)
-const form = reactive({ email: '', password: '', username: '', notes: '', concurrency: 1, rpm_limit: 0, customAttributes: {} as UserAttributeValuesMap })
+const form = reactive({ email: '', password: '', username: '', notes: '', concurrency: 1, rpm_limit: 0, max_overdraft_days: null as number | null, customAttributes: {} as UserAttributeValuesMap })
 
 watch(() => props.user, (u) => {
   if (u) {
-    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, customAttributes: {} })
+    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, max_overdraft_days: u.max_overdraft_days ?? null, customAttributes: {} })
     passwordCopied.value = false
   }
 }, { immediate: true })
@@ -110,6 +122,9 @@ const handleUpdateUser = async () => {
   submitting.value = true
   try {
     const data: any = { email: form.email, username: form.username, notes: form.notes, concurrency: form.concurrency, rpm_limit: form.rpm_limit }
+    // 留空 = 不限制(发送 -1 让后端清除为 NULL);填正整数 = 设置上限。
+    const mod = form.max_overdraft_days
+    data.max_overdraft_days = (mod === null || mod === undefined || (mod as any) === '' || (typeof mod === 'number' && Number.isNaN(mod))) ? -1 : mod
     if (form.password.trim()) data.password = form.password.trim()
     await adminAPI.users.update(props.user.id, data)
     if (Object.keys(form.customAttributes).length > 0) await adminAPI.userAttributes.updateUserAttributeValues(props.user.id, form.customAttributes)

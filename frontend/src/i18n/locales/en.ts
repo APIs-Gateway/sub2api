@@ -1906,7 +1906,10 @@ export default {
       form: {
         rpmLimit: 'Requests Per Minute (RPM)',
         rpmLimitPlaceholder: '0 = unlimited',
-        rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.'
+        rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.',
+        maxOverdraftDays: 'Max Subscription Overdraft Days',
+        maxOverdraftDaysPlaceholder: 'Leave empty = unlimited',
+        maxOverdraftDaysHint: 'How many days a burn-down subscription may be spent ahead: cumulative usage is capped at (elapsed days + N) × daily amount. Empty = unlimited (default); 0 = only the amount accrued through today.'
       },
       columns: {
         user: 'User',

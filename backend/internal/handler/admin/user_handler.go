@@ -56,6 +56,8 @@ type CreateUserRequest struct {
 	Concurrency   int      `json:"concurrency"`
 	RPMLimit      int      `json:"rpm_limit"`
 	AllowedGroups []int64  `json:"allowed_groups"`
+	// MaxOverdraftDays burn-down 订阅最多透支天数;省略/null = 不限制(默认)。
+	MaxOverdraftDays *int `json:"max_overdraft_days"`
 }
 
 // UpdateUserRequest represents admin update user request
@@ -70,6 +72,8 @@ type UpdateUserRequest struct {
 	RPMLimit      *int     `json:"rpm_limit"`
 	Status        string   `json:"status" binding:"omitempty,oneof=active disabled"`
 	AllowedGroups *[]int64 `json:"allowed_groups"`
+	// MaxOverdraftDays burn-down 订阅最多透支天数;nil=不改;负数=清除为不限制;>=0=设置上限。
+	MaxOverdraftDays *int `json:"max_overdraft_days"`
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64 `json:"group_rates"`
@@ -268,10 +272,11 @@ func (h *UserHandler) Create(c *gin.Context) {
 		Password:      req.Password,
 		Username:      req.Username,
 		Notes:         req.Notes,
-		Balance:       req.Balance,
-		Concurrency:   req.Concurrency,
-		RPMLimit:      req.RPMLimit,
-		AllowedGroups: req.AllowedGroups,
+		Balance:          req.Balance,
+		Concurrency:      req.Concurrency,
+		RPMLimit:         req.RPMLimit,
+		MaxOverdraftDays: req.MaxOverdraftDays,
+		AllowedGroups:    req.AllowedGroups,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -303,11 +308,12 @@ func (h *UserHandler) Update(c *gin.Context) {
 		Username:      req.Username,
 		Notes:         req.Notes,
 		Balance:       req.Balance,
-		Concurrency:   req.Concurrency,
-		RPMLimit:      req.RPMLimit,
-		Status:        req.Status,
-		AllowedGroups: req.AllowedGroups,
-		GroupRates:    req.GroupRates,
+		Concurrency:      req.Concurrency,
+		RPMLimit:         req.RPMLimit,
+		MaxOverdraftDays: req.MaxOverdraftDays,
+		Status:           req.Status,
+		AllowedGroups:    req.AllowedGroups,
+		GroupRates:       req.GroupRates,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

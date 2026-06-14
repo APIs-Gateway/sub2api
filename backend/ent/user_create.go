@@ -340,6 +340,20 @@ func (_c *UserCreate) SetNillableRpmLimit(v *int) *UserCreate {
 	return _c
 }
 
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (_c *UserCreate) SetMaxOverdraftDays(v int) *UserCreate {
+	_c.mutation.SetMaxOverdraftDays(v)
+	return _c
+}
+
+// SetNillableMaxOverdraftDays sets the "max_overdraft_days" field if the given value is not nil.
+func (_c *UserCreate) SetNillableMaxOverdraftDays(v *int) *UserCreate {
+	if v != nil {
+		_c.SetMaxOverdraftDays(*v)
+	}
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *UserCreate) AddAPIKeyIDs(ids ...int64) *UserCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -842,6 +856,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(user.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
+	}
+	if value, ok := _c.mutation.MaxOverdraftDays(); ok {
+		_spec.SetField(user.FieldMaxOverdraftDays, field.TypeInt, value)
+		_node.MaxOverdraftDays = &value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1437,6 +1455,30 @@ func (u *UserUpsert) AddRpmLimit(v int) *UserUpsert {
 	return u
 }
 
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (u *UserUpsert) SetMaxOverdraftDays(v int) *UserUpsert {
+	u.Set(user.FieldMaxOverdraftDays, v)
+	return u
+}
+
+// UpdateMaxOverdraftDays sets the "max_overdraft_days" field to the value that was provided on create.
+func (u *UserUpsert) UpdateMaxOverdraftDays() *UserUpsert {
+	u.SetExcluded(user.FieldMaxOverdraftDays)
+	return u
+}
+
+// AddMaxOverdraftDays adds v to the "max_overdraft_days" field.
+func (u *UserUpsert) AddMaxOverdraftDays(v int) *UserUpsert {
+	u.Add(user.FieldMaxOverdraftDays, v)
+	return u
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (u *UserUpsert) ClearMaxOverdraftDays() *UserUpsert {
+	u.SetNull(user.FieldMaxOverdraftDays)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1864,6 +1906,34 @@ func (u *UserUpsertOne) AddRpmLimit(v int) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateRpmLimit() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (u *UserUpsertOne) SetMaxOverdraftDays(v int) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetMaxOverdraftDays(v)
+	})
+}
+
+// AddMaxOverdraftDays adds v to the "max_overdraft_days" field.
+func (u *UserUpsertOne) AddMaxOverdraftDays(v int) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.AddMaxOverdraftDays(v)
+	})
+}
+
+// UpdateMaxOverdraftDays sets the "max_overdraft_days" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateMaxOverdraftDays() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateMaxOverdraftDays()
+	})
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (u *UserUpsertOne) ClearMaxOverdraftDays() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearMaxOverdraftDays()
 	})
 }
 
@@ -2460,6 +2530,34 @@ func (u *UserUpsertBulk) AddRpmLimit(v int) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateRpmLimit() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (u *UserUpsertBulk) SetMaxOverdraftDays(v int) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetMaxOverdraftDays(v)
+	})
+}
+
+// AddMaxOverdraftDays adds v to the "max_overdraft_days" field.
+func (u *UserUpsertBulk) AddMaxOverdraftDays(v int) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.AddMaxOverdraftDays(v)
+	})
+}
+
+// UpdateMaxOverdraftDays sets the "max_overdraft_days" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateMaxOverdraftDays() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateMaxOverdraftDays()
+	})
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (u *UserUpsertBulk) ClearMaxOverdraftDays() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearMaxOverdraftDays()
 	})
 }
 

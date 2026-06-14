@@ -20,6 +20,9 @@ var (
 	ErrRedeemCodeUsed      = infraerrors.Conflict("REDEEM_CODE_USED", "redeem code already used")
 	ErrRedeemCodeExpired   = infraerrors.Conflict("REDEEM_CODE_EXPIRED", "redeem code expired")
 	ErrInsufficientBalance = infraerrors.BadRequest("INSUFFICIENT_BALANCE", "insufficient balance")
+	// ErrSubscriptionOverdraftLimit 在用户配置了「最多往后透支 N 天」且已超出该上限时返回。
+	// 余额里仍含订阅发放额，但被透支闸门暂时锁定；日历推进后每日额度会自动解锁。
+	ErrSubscriptionOverdraftLimit = infraerrors.BadRequest("SUBSCRIPTION_OVERDRAFT_LIMIT", "subscription overdraft limit reached; daily allowance will unlock over time")
 	ErrRedeemRateLimited   = infraerrors.TooManyRequests("REDEEM_RATE_LIMITED", "too many failed attempts, please try again later")
 	ErrRedeemCodeLocked    = infraerrors.Conflict("REDEEM_CODE_LOCKED", "redeem code is being processed, please try again")
 )

@@ -61,6 +61,8 @@ const (
 	FieldTotalRecharged = "total_recharged"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
 	FieldRpmLimit = "rpm_limit"
+	// FieldMaxOverdraftDays holds the string denoting the max_overdraft_days field in the database.
+	FieldMaxOverdraftDays = "max_overdraft_days"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
 	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
@@ -215,6 +217,7 @@ var Columns = []string{
 	FieldBalanceNotifyExtraEmails,
 	FieldTotalRecharged,
 	FieldRpmLimit,
+	FieldMaxOverdraftDays,
 }
 
 var (
@@ -408,6 +411,11 @@ func ByTotalRecharged(opts ...sql.OrderTermOption) OrderOption {
 // ByRpmLimit orders the results by the rpm_limit field.
 func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRpmLimit, opts...).ToFunc()
+}
+
+// ByMaxOverdraftDays orders the results by the max_overdraft_days field.
+func ByMaxOverdraftDays(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMaxOverdraftDays, opts...).ToFunc()
 }
 
 // ByAPIKeysCount orders the results by api_keys count.

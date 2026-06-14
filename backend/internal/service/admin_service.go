@@ -139,6 +139,8 @@ type CreateUserInput struct {
 	Concurrency   int
 	RPMLimit      int
 	AllowedGroups []int64
+	// MaxOverdraftDays burn-down 订阅最多透支天数；nil = 不限制（默认）。
+	MaxOverdraftDays *int
 }
 
 type UpdateUserInput struct {
@@ -151,6 +153,9 @@ type UpdateUserInput struct {
 	RPMLimit      *int     // 使用指针区分"未提供"和"设置为0"
 	Status        string
 	AllowedGroups *[]int64 // 使用指针区分"未提供"和"设置为空数组"
+	// MaxOverdraftDays burn-down 订阅最多透支天数。
+	// nil = 未提供不改动；负数(<0) = 清除为不限制(NULL)；>=0 = 设置该上限(0=仅当天额度)。
+	MaxOverdraftDays *int
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64
@@ -706,11 +711,12 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 		Username:      input.Username,
 		Notes:         input.Notes,
 		Role:          RoleUser, // Always create as regular user, never admin
-		Balance:       balance,
-		Concurrency:   input.Concurrency,
-		RPMLimit:      input.RPMLimit,
-		Status:        StatusActive,
-		AllowedGroups: input.AllowedGroups,
+		Balance:          balance,
+		Concurrency:      input.Concurrency,
+		RPMLimit:         input.RPMLimit,
+		MaxOverdraftDays: normalizeOverdraftDays(input.MaxOverdraftDays),
+		Status:           StatusActive,
+		AllowedGroups:    input.AllowedGroups,
 	}
 	if err := user.SetPassword(input.Password); err != nil {
 		return nil, err
@@ -763,6 +769,7 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	oldStatus := user.Status
 	oldRole := user.Role
 	oldRPMLimit := user.RPMLimit
+	oldMaxOverdraftDays := user.MaxOverdraftDays
 	oldAllowedGroups := append([]int64(nil), user.AllowedGroups...)
 
 	if input.Email != "" {
@@ -793,6 +800,11 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		user.RPMLimit = *input.RPMLimit
 	}
 
+	// MaxOverdraftDays:nil=未提供不改;负数=清除为不限制(NULL);>=0=设置上限。
+	if input.MaxOverdraftDays != nil {
+		user.MaxOverdraftDays = normalizeOverdraftDays(input.MaxOverdraftDays)
+	}
+
 	if input.AllowedGroups != nil {
 		user.AllowedGroups = *input.AllowedGroups
 	}
@@ -811,7 +823,7 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	if s.authCacheInvalidator != nil {
 		// RPMLimit 直接参与 billing_cache_service.checkRPM 的三级级联，
 		// allowed_groups 参与 API Key 专属分组授权判断；不失效缓存会让修改在一个 L2 TTL 内失去效果。
-		if user.Concurrency != oldConcurrency || user.Status != oldStatus || user.Role != oldRole || user.RPMLimit != oldRPMLimit || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
+		if user.Concurrency != oldConcurrency || user.Status != oldStatus || user.Role != oldRole || user.RPMLimit != oldRPMLimit || !sameIntPtr(user.MaxOverdraftDays, oldMaxOverdraftDays) || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
 			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, user.ID)
 		}
 	}
@@ -858,6 +870,24 @@ func sameInt64Set(a, b []int64) bool {
 		counts[v]--
 	}
 	return true
+}
+
+// normalizeOverdraftDays 规整「最多透支天数」入参为存储值：
+// nil 或负数 → nil（不限制）；>=0 → 拷贝原值。
+func normalizeOverdraftDays(in *int) *int {
+	if in == nil || *in < 0 {
+		return nil
+	}
+	v := *in
+	return &v
+}
+
+// sameIntPtr 比较两个 *int 是否表示相同值（含 nil==nil）。
+func sameIntPtr(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func (s *adminServiceImpl) DeleteUser(ctx context.Context, id int64) error {

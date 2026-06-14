@@ -38619,6 +38619,8 @@ type UserMutation struct {
 	addtotal_recharged            *float64
 	rpm_limit                     *int
 	addrpm_limit                  *int
+	max_overdraft_days            *int
+	addmax_overdraft_days         *int
 	clearedFields                 map[string]struct{}
 	api_keys                      map[int64]struct{}
 	removedapi_keys               map[int64]struct{}
@@ -39769,6 +39771,76 @@ func (m *UserMutation) ResetRpmLimit() {
 	m.addrpm_limit = nil
 }
 
+// SetMaxOverdraftDays sets the "max_overdraft_days" field.
+func (m *UserMutation) SetMaxOverdraftDays(i int) {
+	m.max_overdraft_days = &i
+	m.addmax_overdraft_days = nil
+}
+
+// MaxOverdraftDays returns the value of the "max_overdraft_days" field in the mutation.
+func (m *UserMutation) MaxOverdraftDays() (r int, exists bool) {
+	v := m.max_overdraft_days
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMaxOverdraftDays returns the old "max_overdraft_days" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldMaxOverdraftDays(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMaxOverdraftDays is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMaxOverdraftDays requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMaxOverdraftDays: %w", err)
+	}
+	return oldValue.MaxOverdraftDays, nil
+}
+
+// AddMaxOverdraftDays adds i to the "max_overdraft_days" field.
+func (m *UserMutation) AddMaxOverdraftDays(i int) {
+	if m.addmax_overdraft_days != nil {
+		*m.addmax_overdraft_days += i
+	} else {
+		m.addmax_overdraft_days = &i
+	}
+}
+
+// AddedMaxOverdraftDays returns the value that was added to the "max_overdraft_days" field in this mutation.
+func (m *UserMutation) AddedMaxOverdraftDays() (r int, exists bool) {
+	v := m.addmax_overdraft_days
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
+func (m *UserMutation) ClearMaxOverdraftDays() {
+	m.max_overdraft_days = nil
+	m.addmax_overdraft_days = nil
+	m.clearedFields[user.FieldMaxOverdraftDays] = struct{}{}
+}
+
+// MaxOverdraftDaysCleared returns if the "max_overdraft_days" field was cleared in this mutation.
+func (m *UserMutation) MaxOverdraftDaysCleared() bool {
+	_, ok := m.clearedFields[user.FieldMaxOverdraftDays]
+	return ok
+}
+
+// ResetMaxOverdraftDays resets all changes to the "max_overdraft_days" field.
+func (m *UserMutation) ResetMaxOverdraftDays() {
+	m.max_overdraft_days = nil
+	m.addmax_overdraft_days = nil
+	delete(m.clearedFields, user.FieldMaxOverdraftDays)
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by ids.
 func (m *UserMutation) AddAPIKeyIDs(ids ...int64) {
 	if m.api_keys == nil {
@@ -40505,7 +40577,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 23)
+	fields := make([]string, 0, 24)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -40575,6 +40647,9 @@ func (m *UserMutation) Fields() []string {
 	if m.rpm_limit != nil {
 		fields = append(fields, user.FieldRpmLimit)
 	}
+	if m.max_overdraft_days != nil {
+		fields = append(fields, user.FieldMaxOverdraftDays)
+	}
 	return fields
 }
 
@@ -40629,6 +40704,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.TotalRecharged()
 	case user.FieldRpmLimit:
 		return m.RpmLimit()
+	case user.FieldMaxOverdraftDays:
+		return m.MaxOverdraftDays()
 	}
 	return nil, false
 }
@@ -40684,6 +40761,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldTotalRecharged(ctx)
 	case user.FieldRpmLimit:
 		return m.OldRpmLimit(ctx)
+	case user.FieldMaxOverdraftDays:
+		return m.OldMaxOverdraftDays(ctx)
 	}
 	return nil, fmt.Errorf("unknown User field %s", name)
 }
@@ -40854,6 +40933,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRpmLimit(v)
 		return nil
+	case user.FieldMaxOverdraftDays:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMaxOverdraftDays(v)
+		return nil
 	}
 	return fmt.Errorf("unknown User field %s", name)
 }
@@ -40877,6 +40963,9 @@ func (m *UserMutation) AddedFields() []string {
 	if m.addrpm_limit != nil {
 		fields = append(fields, user.FieldRpmLimit)
 	}
+	if m.addmax_overdraft_days != nil {
+		fields = append(fields, user.FieldMaxOverdraftDays)
+	}
 	return fields
 }
 
@@ -40895,6 +40984,8 @@ func (m *UserMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedTotalRecharged()
 	case user.FieldRpmLimit:
 		return m.AddedRpmLimit()
+	case user.FieldMaxOverdraftDays:
+		return m.AddedMaxOverdraftDays()
 	}
 	return nil, false
 }
@@ -40939,6 +41030,13 @@ func (m *UserMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddRpmLimit(v)
 		return nil
+	case user.FieldMaxOverdraftDays:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddMaxOverdraftDays(v)
+		return nil
 	}
 	return fmt.Errorf("unknown User numeric field %s", name)
 }
@@ -40964,6 +41062,9 @@ func (m *UserMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(user.FieldBalanceNotifyThreshold) {
 		fields = append(fields, user.FieldBalanceNotifyThreshold)
+	}
+	if m.FieldCleared(user.FieldMaxOverdraftDays) {
+		fields = append(fields, user.FieldMaxOverdraftDays)
 	}
 	return fields
 }
@@ -40996,6 +41097,9 @@ func (m *UserMutation) ClearField(name string) error {
 		return nil
 	case user.FieldBalanceNotifyThreshold:
 		m.ClearBalanceNotifyThreshold()
+		return nil
+	case user.FieldMaxOverdraftDays:
+		m.ClearMaxOverdraftDays()
 		return nil
 	}
 	return fmt.Errorf("unknown User nullable field %s", name)
@@ -41073,6 +41177,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldRpmLimit:
 		m.ResetRpmLimit()
+		return nil
+	case user.FieldMaxOverdraftDays:
+		m.ResetMaxOverdraftDays()
 		return nil
 	}
 	return fmt.Errorf("unknown User field %s", name)

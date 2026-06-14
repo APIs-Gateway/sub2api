@@ -112,6 +112,12 @@ func (User) Fields() []ent.Field {
 		// 用户级每分钟请求数上限（0 = 不限制）。仅当所在分组未设置 rpm_limit 时作为兜底生效。
 		field.Int("rpm_limit").
 			Default(0),
+
+		// burn-down 订阅「最多往后透支天数」：某订阅卡累计被扣最多到 (已过天数+N)×D。
+		// nil = 不限制（默认，维持一次性发放后可立即花光的现状）。
+		field.Int("max_overdraft_days").
+			Optional().
+			Nillable(),
 	}
 }
 

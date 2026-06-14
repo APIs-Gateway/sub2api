@@ -170,6 +170,11 @@ func RpmLimit(v int) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldRpmLimit, v))
 }
 
+// MaxOverdraftDays applies equality check predicate on the "max_overdraft_days" field. It's identical to MaxOverdraftDaysEQ.
+func MaxOverdraftDays(v int) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldMaxOverdraftDays, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldCreatedAt, v))
@@ -1338,6 +1343,56 @@ func RpmLimitLT(v int) predicate.User {
 // RpmLimitLTE applies the LTE predicate on the "rpm_limit" field.
 func RpmLimitLTE(v int) predicate.User {
 	return predicate.User(sql.FieldLTE(FieldRpmLimit, v))
+}
+
+// MaxOverdraftDaysEQ applies the EQ predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysEQ(v int) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysNEQ applies the NEQ predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysNEQ(v int) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysIn applies the In predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysIn(vs ...int) predicate.User {
+	return predicate.User(sql.FieldIn(FieldMaxOverdraftDays, vs...))
+}
+
+// MaxOverdraftDaysNotIn applies the NotIn predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysNotIn(vs ...int) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldMaxOverdraftDays, vs...))
+}
+
+// MaxOverdraftDaysGT applies the GT predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysGT(v int) predicate.User {
+	return predicate.User(sql.FieldGT(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysGTE applies the GTE predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysGTE(v int) predicate.User {
+	return predicate.User(sql.FieldGTE(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysLT applies the LT predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysLT(v int) predicate.User {
+	return predicate.User(sql.FieldLT(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysLTE applies the LTE predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysLTE(v int) predicate.User {
+	return predicate.User(sql.FieldLTE(FieldMaxOverdraftDays, v))
+}
+
+// MaxOverdraftDaysIsNil applies the IsNil predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysIsNil() predicate.User {
+	return predicate.User(sql.FieldIsNull(FieldMaxOverdraftDays))
+}
+
+// MaxOverdraftDaysNotNil applies the NotNil predicate on the "max_overdraft_days" field.
+func MaxOverdraftDaysNotNil() predicate.User {
+	return predicate.User(sql.FieldNotNull(FieldMaxOverdraftDays))
 }
 
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.

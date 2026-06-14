@@ -95,6 +95,7 @@ func (r *userRepository) Create(ctx context.Context, userIn *service.User) error
 		SetNillableLastLoginAt(userIn.LastLoginAt).
 		SetNillableLastActiveAt(userIn.LastActiveAt).
 		SetRpmLimit(userIn.RPMLimit).
+		SetNillableMaxOverdraftDays(userIn.MaxOverdraftDays).
 		Save(txCtx)
 	if err != nil {
 		return translatePersistenceError(err, nil, service.ErrEmailExists)
@@ -251,6 +252,11 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User) error
 	}
 	if userIn.BalanceNotifyThreshold == nil {
 		updateOp = updateOp.ClearBalanceNotifyThreshold()
+	}
+	if userIn.MaxOverdraftDays != nil {
+		updateOp = updateOp.SetMaxOverdraftDays(*userIn.MaxOverdraftDays)
+	} else {
+		updateOp = updateOp.ClearMaxOverdraftDays()
 	}
 	updated, err := updateOp.Save(txCtx)
 	if err != nil {

@@ -722,7 +722,7 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 			return err
 		}
 	} else {
-		if err := s.checkBalanceEligibility(ctx, user.ID); err != nil {
+		if err := s.checkBalanceEligibility(ctx, user); err != nil {
 			return err
 		}
 	}
@@ -834,17 +834,31 @@ func (s *BillingCacheService) checkRPM(ctx context.Context, user *User, group *G
 }
 
 // checkBalanceEligibility 检查余额模式资格
-func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64) error {
-	balance, err := s.GetUserBalance(ctx, userID)
+func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user *User) error {
+	balance, err := s.GetUserBalance(ctx, user.ID)
 	if err != nil {
 		if s.circuitBreaker != nil {
 			s.circuitBreaker.OnFailure(err)
 		}
-		logger.LegacyPrintf("service.billing_cache", "ALERT: billing balance check failed for user %d: %v", userID, err)
+		logger.LegacyPrintf("service.billing_cache", "ALERT: billing balance check failed for user %d: %v", user.ID, err)
 		return ErrBillingServiceUnavailable.WithCause(err)
 	}
 	if s.circuitBreaker != nil {
 		s.circuitBreaker.OnSuccess()
+	}
+
+	// 透支闸门：用户配置了「最多往后透支 N 天」时，有效可花 = balance − Σ(活跃 burn-down 卡被锁定额度)。
+	// 未配置（nil）= 维持现状无限透支，仅查 balance>0，零额外开销。
+	if user.MaxOverdraftDays != nil {
+		locked, lerr := s.lockedSubscriptionBalance(ctx, user.ID, *user.MaxOverdraftDays)
+		if lerr != nil {
+			// 加载活跃卡失败：fail-open 退回原始余额检查，避免因瞬时 DB 抖动误挡正常用户。
+			logger.LegacyPrintf("service.billing_cache", "Warning: overdraft gate lookup failed for user %d: %v (fallback to raw balance)", user.ID, lerr)
+		} else if balance-locked <= 0 {
+			return ErrSubscriptionOverdraftLimit
+		} else {
+			return nil
+		}
 	}
 
 	if balance <= 0 {
@@ -852,6 +866,24 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 	}
 
 	return nil
+}
+
+// lockedSubscriptionBalance 汇总用户全部活跃 burn-down 卡在「最多透支 overdraftDays 天」约束下
+// 暂不可用、但仍计入 users.balance 的金额。
+func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, userID int64, overdraftDays int) (float64, error) {
+	if s.subRepo == nil {
+		return 0, nil
+	}
+	subs, err := s.subRepo.ListActiveByUserID(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now()
+	var locked float64
+	for i := range subs {
+		locked += subs[i].LockedAt(now, overdraftDays)
+	}
+	return locked, nil
 }
 
 // checkSubscriptionEligibility 检查订阅模式资格

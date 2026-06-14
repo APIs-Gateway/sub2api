@@ -47,6 +47,18 @@
         />
         <p class="input-hint">{{ t('admin.users.form.rpmLimitHint') }}</p>
       </div>
+      <div>
+        <label class="input-label">{{ t('admin.users.form.maxOverdraftDays') }}</label>
+        <input
+          v-model.number="form.max_overdraft_days"
+          type="number"
+          min="0"
+          step="1"
+          class="input"
+          :placeholder="t('admin.users.form.maxOverdraftDaysPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.users.form.maxOverdraftDaysHint') }}</p>
+      </div>
     </form>
     <template #footer>
       <div class="flex justify-end gap-3">
@@ -69,24 +81,29 @@ import Icon from '@/components/icons/Icon.vue'
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits(['close', 'success']); const { t } = useI18n()
 
-const form = reactive({ email: '', password: '', username: '', notes: '', balance: '', concurrency: 1, rpm_limit: 0 })
+const form = reactive({ email: '', password: '', username: '', notes: '', balance: '', concurrency: 1, rpm_limit: 0, max_overdraft_days: null as number | null })
 
 const { loading, submit } = useForm({
   form,
   submitFn: async (data) => {
-    const { balance: rawBalance, ...rest } = data
+    const { balance: rawBalance, max_overdraft_days: rawOverdraft, ...rest } = data
     const balance = String(rawBalance).trim()
-    const payload: typeof rest & { balance?: number } = { ...rest }
+    const payload: typeof rest & { balance?: number; max_overdraft_days?: number | null } = { ...rest }
     if (balance !== '') {
       payload.balance = Number(balance)
     }
+    // 留空 = 不限制(发送 null);填正整数 = 设置上限。
+    payload.max_overdraft_days =
+      rawOverdraft === null || rawOverdraft === undefined || (rawOverdraft as any) === '' || (typeof rawOverdraft === 'number' && Number.isNaN(rawOverdraft))
+        ? null
+        : rawOverdraft
     await adminAPI.users.create(payload)
     emit('success'); emit('close')
   },
   successMsg: t('admin.users.userCreated')
 })
 
-watch(() => props.show, (v) => { if(v) Object.assign(form, { email: '', password: '', username: '', notes: '', balance: '', concurrency: 1, rpm_limit: 0 }) })
+watch(() => props.show, (v) => { if(v) Object.assign(form, { email: '', password: '', username: '', notes: '', balance: '', concurrency: 1, rpm_limit: 0, max_overdraft_days: null }) })
 
 const generateRandomPassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*'
