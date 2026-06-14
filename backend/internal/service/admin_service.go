@@ -2390,17 +2390,9 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		if group.Status != StatusActive {
 			return nil, infraerrors.BadRequest("GROUP_NOT_ACTIVE", "target group is not active")
 		}
-		// 订阅类型分组：用户须持有该分组的有效订阅才可绑定
+		// burn-down 模型下订阅金额已发放到余额、通过标准渠道消费，订阅型分组不再可绑定到 API Key
 		if group.IsSubscriptionType() {
-			if s.userSubRepo == nil {
-				return nil, infraerrors.InternalServer("SUBSCRIPTION_REPOSITORY_UNAVAILABLE", "subscription repository is not configured")
-			}
-			if _, err := s.userSubRepo.GetActiveByUserIDAndGroupID(ctx, apiKey.UserID, *groupID); err != nil {
-				if errors.Is(err, ErrSubscriptionNotFound) {
-					return nil, infraerrors.BadRequest("SUBSCRIPTION_REQUIRED", "user does not have an active subscription for this group")
-				}
-				return nil, err
-			}
+			return nil, infraerrors.BadRequest("GROUP_IS_SUBSCRIPTION", "subscription groups cannot be bound to API keys")
 		}
 
 		gid := *groupID
