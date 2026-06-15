@@ -66,6 +66,11 @@ func (ChannelMonitorRequestTemplate) Fields() []ent.Field {
 		// 用 map[string]any 以便前端传任意结构（含嵌套）。
 		field.JSON("body_override", map[string]any{}).
 			Optional(),
+		// response_format: 'json' | 'sse'，语义同 ChannelMonitor.response_format。
+		// 应用到监控时随快照一起拷贝。
+		field.String("response_format").
+			Default("json").
+			MaxLen(10),
 	}
 }
 

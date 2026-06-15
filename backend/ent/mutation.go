@@ -8877,6 +8877,7 @@ type ChannelMonitorMutation struct {
 	extra_headers           *map[string]string
 	body_override_mode      *string
 	body_override           *map[string]interface{}
+	response_format         *string
 	clearedFields           map[string]struct{}
 	history                 map[int64]struct{}
 	removedhistory          map[int64]struct{}
@@ -9744,6 +9745,42 @@ func (m *ChannelMonitorMutation) ResetBodyOverride() {
 	delete(m.clearedFields, channelmonitor.FieldBodyOverride)
 }
 
+// SetResponseFormat sets the "response_format" field.
+func (m *ChannelMonitorMutation) SetResponseFormat(s string) {
+	m.response_format = &s
+}
+
+// ResponseFormat returns the value of the "response_format" field in the mutation.
+func (m *ChannelMonitorMutation) ResponseFormat() (r string, exists bool) {
+	v := m.response_format
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldResponseFormat returns the old "response_format" field's value of the ChannelMonitor entity.
+// If the ChannelMonitor object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorMutation) OldResponseFormat(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldResponseFormat is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldResponseFormat requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldResponseFormat: %w", err)
+	}
+	return oldValue.ResponseFormat, nil
+}
+
+// ResetResponseFormat resets all changes to the "response_format" field.
+func (m *ChannelMonitorMutation) ResetResponseFormat() {
+	m.response_format = nil
+}
+
 // AddHistoryIDs adds the "history" edge to the ChannelMonitorHistory entity by ids.
 func (m *ChannelMonitorMutation) AddHistoryIDs(ids ...int64) {
 	if m.history == nil {
@@ -9926,7 +9963,7 @@ func (m *ChannelMonitorMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ChannelMonitorMutation) Fields() []string {
-	fields := make([]string, 0, 18)
+	fields := make([]string, 0, 19)
 	if m.created_at != nil {
 		fields = append(fields, channelmonitor.FieldCreatedAt)
 	}
@@ -9981,6 +10018,9 @@ func (m *ChannelMonitorMutation) Fields() []string {
 	if m.body_override != nil {
 		fields = append(fields, channelmonitor.FieldBodyOverride)
 	}
+	if m.response_format != nil {
+		fields = append(fields, channelmonitor.FieldResponseFormat)
+	}
 	return fields
 }
 
@@ -10025,6 +10065,8 @@ func (m *ChannelMonitorMutation) Field(name string) (ent.Value, bool) {
 		return m.BodyOverrideMode()
 	case channelmonitor.FieldBodyOverride:
 		return m.BodyOverride()
+	case channelmonitor.FieldResponseFormat:
+		return m.ResponseFormat()
 	}
 	return nil, false
 }
@@ -10070,6 +10112,8 @@ func (m *ChannelMonitorMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldBodyOverrideMode(ctx)
 	case channelmonitor.FieldBodyOverride:
 		return m.OldBodyOverride(ctx)
+	case channelmonitor.FieldResponseFormat:
+		return m.OldResponseFormat(ctx)
 	}
 	return nil, fmt.Errorf("unknown ChannelMonitor field %s", name)
 }
@@ -10204,6 +10248,13 @@ func (m *ChannelMonitorMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetBodyOverride(v)
+		return nil
+	case channelmonitor.FieldResponseFormat:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetResponseFormat(v)
 		return nil
 	}
 	return fmt.Errorf("unknown ChannelMonitor field %s", name)
@@ -10361,6 +10412,9 @@ func (m *ChannelMonitorMutation) ResetField(name string) error {
 		return nil
 	case channelmonitor.FieldBodyOverride:
 		m.ResetBodyOverride()
+		return nil
+	case channelmonitor.FieldResponseFormat:
+		m.ResetResponseFormat()
 		return nil
 	}
 	return fmt.Errorf("unknown ChannelMonitor field %s", name)
@@ -12759,6 +12813,7 @@ type ChannelMonitorRequestTemplateMutation struct {
 	extra_headers      *map[string]string
 	body_override_mode *string
 	body_override      *map[string]interface{}
+	response_format    *string
 	clearedFields      map[string]struct{}
 	monitors           map[int64]struct{}
 	removedmonitors    map[int64]struct{}
@@ -13216,6 +13271,42 @@ func (m *ChannelMonitorRequestTemplateMutation) ResetBodyOverride() {
 	delete(m.clearedFields, channelmonitorrequesttemplate.FieldBodyOverride)
 }
 
+// SetResponseFormat sets the "response_format" field.
+func (m *ChannelMonitorRequestTemplateMutation) SetResponseFormat(s string) {
+	m.response_format = &s
+}
+
+// ResponseFormat returns the value of the "response_format" field in the mutation.
+func (m *ChannelMonitorRequestTemplateMutation) ResponseFormat() (r string, exists bool) {
+	v := m.response_format
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldResponseFormat returns the old "response_format" field's value of the ChannelMonitorRequestTemplate entity.
+// If the ChannelMonitorRequestTemplate object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorRequestTemplateMutation) OldResponseFormat(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldResponseFormat is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldResponseFormat requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldResponseFormat: %w", err)
+	}
+	return oldValue.ResponseFormat, nil
+}
+
+// ResetResponseFormat resets all changes to the "response_format" field.
+func (m *ChannelMonitorRequestTemplateMutation) ResetResponseFormat() {
+	m.response_format = nil
+}
+
 // AddMonitorIDs adds the "monitors" edge to the ChannelMonitor entity by ids.
 func (m *ChannelMonitorRequestTemplateMutation) AddMonitorIDs(ids ...int64) {
 	if m.monitors == nil {
@@ -13304,7 +13395,7 @@ func (m *ChannelMonitorRequestTemplateMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ChannelMonitorRequestTemplateMutation) Fields() []string {
-	fields := make([]string, 0, 9)
+	fields := make([]string, 0, 10)
 	if m.created_at != nil {
 		fields = append(fields, channelmonitorrequesttemplate.FieldCreatedAt)
 	}
@@ -13332,6 +13423,9 @@ func (m *ChannelMonitorRequestTemplateMutation) Fields() []string {
 	if m.body_override != nil {
 		fields = append(fields, channelmonitorrequesttemplate.FieldBodyOverride)
 	}
+	if m.response_format != nil {
+		fields = append(fields, channelmonitorrequesttemplate.FieldResponseFormat)
+	}
 	return fields
 }
 
@@ -13358,6 +13452,8 @@ func (m *ChannelMonitorRequestTemplateMutation) Field(name string) (ent.Value, b
 		return m.BodyOverrideMode()
 	case channelmonitorrequesttemplate.FieldBodyOverride:
 		return m.BodyOverride()
+	case channelmonitorrequesttemplate.FieldResponseFormat:
+		return m.ResponseFormat()
 	}
 	return nil, false
 }
@@ -13385,6 +13481,8 @@ func (m *ChannelMonitorRequestTemplateMutation) OldField(ctx context.Context, na
 		return m.OldBodyOverrideMode(ctx)
 	case channelmonitorrequesttemplate.FieldBodyOverride:
 		return m.OldBodyOverride(ctx)
+	case channelmonitorrequesttemplate.FieldResponseFormat:
+		return m.OldResponseFormat(ctx)
 	}
 	return nil, fmt.Errorf("unknown ChannelMonitorRequestTemplate field %s", name)
 }
@@ -13456,6 +13554,13 @@ func (m *ChannelMonitorRequestTemplateMutation) SetField(name string, value ent.
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetBodyOverride(v)
+		return nil
+	case channelmonitorrequesttemplate.FieldResponseFormat:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetResponseFormat(v)
 		return nil
 	}
 	return fmt.Errorf("unknown ChannelMonitorRequestTemplate field %s", name)
@@ -13547,6 +13652,9 @@ func (m *ChannelMonitorRequestTemplateMutation) ResetField(name string) error {
 		return nil
 	case channelmonitorrequesttemplate.FieldBodyOverride:
 		m.ResetBodyOverride()
+		return nil
+	case channelmonitorrequesttemplate.FieldResponseFormat:
+		m.ResetResponseFormat()
 		return nil
 	}
 	return fmt.Errorf("unknown ChannelMonitorRequestTemplate field %s", name)

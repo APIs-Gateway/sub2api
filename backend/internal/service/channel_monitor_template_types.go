@@ -17,6 +17,7 @@ type ChannelMonitorRequestTemplate struct {
 	ExtraHeaders     map[string]string
 	BodyOverrideMode string
 	BodyOverride     map[string]any
+	ResponseFormat   string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -36,6 +37,7 @@ type ChannelMonitorRequestTemplateCreateParams struct {
 	ExtraHeaders     map[string]string
 	BodyOverrideMode string
 	BodyOverride     map[string]any
+	ResponseFormat   string
 }
 
 // ChannelMonitorRequestTemplateUpdateParams 更新参数（指针字段 = 不修改）。
@@ -47,6 +49,7 @@ type ChannelMonitorRequestTemplateUpdateParams struct {
 	ExtraHeaders     *map[string]string
 	BodyOverrideMode *string
 	BodyOverride     *map[string]any
+	ResponseFormat   *string
 }
 
 // 模板相关错误（命名与现有 ErrChannelMonitor* 风格保持一致）。

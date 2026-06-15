@@ -53,6 +53,9 @@ const (
 	providerAnthropicPath = "/v1/messages"
 	// providerGeminiPathTemplate Gemini generateContent 路径模板（含 model 占位）。
 	providerGeminiPathTemplate = "/v1beta/models/%s:generateContent"
+	// providerGeminiStreamPathTemplate Gemini SSE 流式路径模板（含 model 占位）。
+	// SSE 模式下用 streamGenerateContent + alt=sse，让上游按 SSE 事件流返回。
+	providerGeminiStreamPathTemplate = "/v1beta/models/%s:streamGenerateContent?alt=sse"
 
 	// MonitorProviderOpenAI / Anthropic / Gemini provider 字符串常量（也是 ent enum 的实际值）。
 	MonitorProviderOpenAI    = "openai"
@@ -116,6 +119,9 @@ var (
 	)
 	ErrChannelMonitorInvalidAPIMode = infraerrors.BadRequest(
 		"CHANNEL_MONITOR_INVALID_API_MODE", "api_mode must be chat_completions or responses; responses is only supported for openai",
+	)
+	ErrChannelMonitorInvalidResponseFormat = infraerrors.BadRequest(
+		"CHANNEL_MONITOR_INVALID_RESPONSE_FORMAT", "response_format must be json or sse",
 	)
 	ErrChannelMonitorInvalidRequestBody = infraerrors.BadRequest(
 		"CHANNEL_MONITOR_INVALID_REQUEST_BODY", "openai replace-mode body_override must include non-empty messages for chat_completions or non-empty instructions and input for responses",

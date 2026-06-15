@@ -539,6 +539,12 @@ func init() {
 	channelmonitor.DefaultBodyOverrideMode = channelmonitorDescBodyOverrideMode.Default.(string)
 	// channelmonitor.BodyOverrideModeValidator is a validator for the "body_override_mode" field. It is called by the builders before save.
 	channelmonitor.BodyOverrideModeValidator = channelmonitorDescBodyOverrideMode.Validators[0].(func(string) error)
+	// channelmonitorDescResponseFormat is the schema descriptor for response_format field.
+	channelmonitorDescResponseFormat := channelmonitorFields[16].Descriptor()
+	// channelmonitor.DefaultResponseFormat holds the default value on creation for the response_format field.
+	channelmonitor.DefaultResponseFormat = channelmonitorDescResponseFormat.Default.(string)
+	// channelmonitor.ResponseFormatValidator is a validator for the "response_format" field. It is called by the builders before save.
+	channelmonitor.ResponseFormatValidator = channelmonitorDescResponseFormat.Validators[0].(func(string) error)
 	channelmonitordailyrollupFields := schema.ChannelMonitorDailyRollup{}.Fields()
 	_ = channelmonitordailyrollupFields
 	// channelmonitordailyrollupDescModel is the schema descriptor for model field.
@@ -690,6 +696,12 @@ func init() {
 	channelmonitorrequesttemplate.DefaultBodyOverrideMode = channelmonitorrequesttemplateDescBodyOverrideMode.Default.(string)
 	// channelmonitorrequesttemplate.BodyOverrideModeValidator is a validator for the "body_override_mode" field. It is called by the builders before save.
 	channelmonitorrequesttemplate.BodyOverrideModeValidator = channelmonitorrequesttemplateDescBodyOverrideMode.Validators[0].(func(string) error)
+	// channelmonitorrequesttemplateDescResponseFormat is the schema descriptor for response_format field.
+	channelmonitorrequesttemplateDescResponseFormat := channelmonitorrequesttemplateFields[7].Descriptor()
+	// channelmonitorrequesttemplate.DefaultResponseFormat holds the default value on creation for the response_format field.
+	channelmonitorrequesttemplate.DefaultResponseFormat = channelmonitorrequesttemplateDescResponseFormat.Default.(string)
+	// channelmonitorrequesttemplate.ResponseFormatValidator is a validator for the "response_format" field. It is called by the builders before save.
+	channelmonitorrequesttemplate.ResponseFormatValidator = channelmonitorrequesttemplateDescResponseFormat.Validators[0].(func(string) error)
 	errorpassthroughruleMixin := schema.ErrorPassthroughRule{}.Mixin()
 	errorpassthroughruleMixinFields0 := errorpassthroughruleMixin[0].Fields()
 	_ = errorpassthroughruleMixinFields0

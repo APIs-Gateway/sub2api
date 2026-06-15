@@ -1246,8 +1246,9 @@ func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 		payload["store"] = false
 	}
 
-	// All accounts require instructions for Responses API
-	payload["instructions"] = openai.DefaultInstructions
+	// Responses API 接受空 instructions；连接测试只验证连通性，
+	// 不再注入庞大的 Codex base prompt（一大段），改为空字符串即可。
+	payload["instructions"] = ""
 
 	return payload
 }

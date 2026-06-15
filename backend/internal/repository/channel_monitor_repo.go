@@ -47,7 +47,8 @@ func (r *channelMonitorRepository) Create(ctx context.Context, m *service.Channe
 		SetIntervalSeconds(m.IntervalSeconds).
 		SetCreatedBy(m.CreatedBy).
 		SetExtraHeaders(emptyHeadersIfNilRepo(m.ExtraHeaders)).
-		SetBodyOverrideMode(defaultBodyModeRepo(m.BodyOverrideMode))
+		SetBodyOverrideMode(defaultBodyModeRepo(m.BodyOverrideMode)).
+		SetResponseFormat(defaultResponseFormatRepo(m.ResponseFormat))
 	if m.TemplateID != nil {
 		builder = builder.SetTemplateID(*m.TemplateID)
 	}
@@ -89,7 +90,8 @@ func (r *channelMonitorRepository) Update(ctx context.Context, m *service.Channe
 		SetEnabled(m.Enabled).
 		SetIntervalSeconds(m.IntervalSeconds).
 		SetExtraHeaders(emptyHeadersIfNilRepo(m.ExtraHeaders)).
-		SetBodyOverrideMode(defaultBodyModeRepo(m.BodyOverrideMode))
+		SetBodyOverrideMode(defaultBodyModeRepo(m.BodyOverrideMode)).
+		SetResponseFormat(defaultResponseFormatRepo(m.ResponseFormat))
 	if m.TemplateID != nil {
 		updater = updater.SetTemplateID(*m.TemplateID)
 	} else {
@@ -725,6 +727,7 @@ func entToServiceMonitor(row *dbent.ChannelMonitor) *service.ChannelMonitor {
 		ExtraHeaders:     headers,
 		BodyOverrideMode: row.BodyOverrideMode,
 		BodyOverride:     row.BodyOverride,
+		ResponseFormat:   defaultResponseFormatRepo(row.ResponseFormat),
 	}
 	if row.TemplateID != nil {
 		id := *row.TemplateID
@@ -755,6 +758,14 @@ func defaultAPIModeRepo(apiMode string) string {
 		return "chat_completions"
 	}
 	return apiMode
+}
+
+// defaultResponseFormatRepo 空串归一为 json（同上不循环 import service）。
+func defaultResponseFormatRepo(rf string) string {
+	if rf == "" {
+		return "json"
+	}
+	return rf
 }
 
 func emptySliceIfNil(in []string) []string {

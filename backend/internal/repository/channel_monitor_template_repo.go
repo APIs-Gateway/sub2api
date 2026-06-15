@@ -33,7 +33,8 @@ func (r *channelMonitorRequestTemplateRepository) Create(ctx context.Context, t 
 		SetAPIMode(defaultAPIModeRepo(t.APIMode)).
 		SetDescription(t.Description).
 		SetExtraHeaders(emptyHeadersIfNilRepo(t.ExtraHeaders)).
-		SetBodyOverrideMode(defaultBodyModeRepo(t.BodyOverrideMode))
+		SetBodyOverrideMode(defaultBodyModeRepo(t.BodyOverrideMode)).
+		SetResponseFormat(defaultResponseFormatRepo(t.ResponseFormat))
 	if t.BodyOverride != nil {
 		builder = builder.SetBodyOverride(t.BodyOverride)
 	}
@@ -65,7 +66,8 @@ func (r *channelMonitorRequestTemplateRepository) Update(ctx context.Context, t 
 		SetAPIMode(defaultAPIModeRepo(t.APIMode)).
 		SetDescription(t.Description).
 		SetExtraHeaders(emptyHeadersIfNilRepo(t.ExtraHeaders)).
-		SetBodyOverrideMode(defaultBodyModeRepo(t.BodyOverrideMode))
+		SetBodyOverrideMode(defaultBodyModeRepo(t.BodyOverrideMode)).
+		SetResponseFormat(defaultResponseFormatRepo(t.ResponseFormat))
 	if t.BodyOverride != nil {
 		updater = updater.SetBodyOverride(t.BodyOverride)
 	} else {
@@ -132,7 +134,8 @@ func (r *channelMonitorRequestTemplateRepository) ApplyToMonitors(ctx context.Co
 		).
 		SetAPIMode(defaultAPIModeRepo(tpl.APIMode)).
 		SetExtraHeaders(emptyHeadersIfNilRepo(tpl.ExtraHeaders)).
-		SetBodyOverrideMode(defaultBodyModeRepo(tpl.BodyOverrideMode))
+		SetBodyOverrideMode(defaultBodyModeRepo(tpl.BodyOverrideMode)).
+		SetResponseFormat(defaultResponseFormatRepo(tpl.ResponseFormat))
 	if tpl.BodyOverride != nil {
 		updater = updater.SetBodyOverride(tpl.BodyOverride)
 	} else {
@@ -199,6 +202,7 @@ func entToServiceTemplate(row *dbent.ChannelMonitorRequestTemplate) *service.Cha
 		ExtraHeaders:     headers,
 		BodyOverrideMode: row.BodyOverrideMode,
 		BodyOverride:     row.BodyOverride,
+		ResponseFormat:   defaultResponseFormatRepo(row.ResponseFormat),
 		CreatedAt:        row.CreatedAt,
 		UpdatedAt:        row.UpdatedAt,
 	}

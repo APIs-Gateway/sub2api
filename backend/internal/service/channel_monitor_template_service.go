@@ -84,6 +84,7 @@ func (s *ChannelMonitorRequestTemplateService) Create(ctx context.Context, p Cha
 		ExtraHeaders:     emptyHeadersIfNil(p.ExtraHeaders),
 		BodyOverrideMode: defaultBodyMode(p.BodyOverrideMode),
 		BodyOverride:     p.BodyOverride,
+		ResponseFormat:   defaultResponseFormat(p.ResponseFormat),
 	}
 	if err := s.repo.Create(ctx, t); err != nil {
 		return nil, fmt.Errorf("create template: %w", err)
@@ -158,6 +159,9 @@ func validateTemplateCreateParams(p ChannelMonitorRequestTemplateCreateParams) e
 	if err := validateAPIMode(p.Provider, p.APIMode); err != nil {
 		return ErrChannelMonitorTemplateInvalidAPIMode
 	}
+	if err := validateResponseFormat(p.ResponseFormat); err != nil {
+		return err
+	}
 	if err := validateBodyModeForProtocol(p.Provider, p.APIMode, p.BodyOverrideMode, p.BodyOverride); err != nil {
 		return err
 	}
@@ -178,6 +182,12 @@ func applyTemplateUpdate(existing *ChannelMonitorRequestTemplate, p ChannelMonit
 	}
 	if p.Description != nil {
 		existing.Description = strings.TrimSpace(*p.Description)
+	}
+	if p.ResponseFormat != nil {
+		if err := validateResponseFormat(*p.ResponseFormat); err != nil {
+			return err
+		}
+		existing.ResponseFormat = defaultResponseFormat(*p.ResponseFormat)
 	}
 	newAPIMode := defaultAPIMode(existing.APIMode)
 	if p.APIMode != nil {

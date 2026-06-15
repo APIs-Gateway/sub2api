@@ -122,3 +122,21 @@ func defaultAPIMode(apiMode string) string {
 	}
 	return strings.TrimSpace(apiMode)
 }
+
+// defaultResponseFormat 空串归一为 json，保证历史数据与旧客户端兼容。
+func defaultResponseFormat(rf string) string {
+	if strings.TrimSpace(rf) == "" {
+		return MonitorResponseFormatJSON
+	}
+	return strings.TrimSpace(rf)
+}
+
+// validateResponseFormat 校验 response_format，空串视为合法（归一为 json）。
+func validateResponseFormat(rf string) error {
+	switch defaultResponseFormat(rf) {
+	case MonitorResponseFormatJSON, MonitorResponseFormatSSE:
+		return nil
+	default:
+		return ErrChannelMonitorInvalidResponseFormat
+	}
+}

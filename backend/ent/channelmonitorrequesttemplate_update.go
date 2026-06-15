@@ -129,6 +129,20 @@ func (_u *ChannelMonitorRequestTemplateUpdate) ClearBodyOverride() *ChannelMonit
 	return _u
 }
 
+// SetResponseFormat sets the "response_format" field.
+func (_u *ChannelMonitorRequestTemplateUpdate) SetResponseFormat(v string) *ChannelMonitorRequestTemplateUpdate {
+	_u.mutation.SetResponseFormat(v)
+	return _u
+}
+
+// SetNillableResponseFormat sets the "response_format" field if the given value is not nil.
+func (_u *ChannelMonitorRequestTemplateUpdate) SetNillableResponseFormat(v *string) *ChannelMonitorRequestTemplateUpdate {
+	if v != nil {
+		_u.SetResponseFormat(*v)
+	}
+	return _u
+}
+
 // AddMonitorIDs adds the "monitors" edge to the ChannelMonitor entity by IDs.
 func (_u *ChannelMonitorRequestTemplateUpdate) AddMonitorIDs(ids ...int64) *ChannelMonitorRequestTemplateUpdate {
 	_u.mutation.AddMonitorIDs(ids...)
@@ -233,6 +247,11 @@ func (_u *ChannelMonitorRequestTemplateUpdate) check() error {
 			return &ValidationError{Name: "body_override_mode", err: fmt.Errorf(`ent: validator failed for field "ChannelMonitorRequestTemplate.body_override_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.ResponseFormat(); ok {
+		if err := channelmonitorrequesttemplate.ResponseFormatValidator(v); err != nil {
+			return &ValidationError{Name: "response_format", err: fmt.Errorf(`ent: validator failed for field "ChannelMonitorRequestTemplate.response_format": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -277,6 +296,9 @@ func (_u *ChannelMonitorRequestTemplateUpdate) sqlSave(ctx context.Context) (_no
 	}
 	if _u.mutation.BodyOverrideCleared() {
 		_spec.ClearField(channelmonitorrequesttemplate.FieldBodyOverride, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.ResponseFormat(); ok {
+		_spec.SetField(channelmonitorrequesttemplate.FieldResponseFormat, field.TypeString, value)
 	}
 	if _u.mutation.MonitorsCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -443,6 +465,20 @@ func (_u *ChannelMonitorRequestTemplateUpdateOne) ClearBodyOverride() *ChannelMo
 	return _u
 }
 
+// SetResponseFormat sets the "response_format" field.
+func (_u *ChannelMonitorRequestTemplateUpdateOne) SetResponseFormat(v string) *ChannelMonitorRequestTemplateUpdateOne {
+	_u.mutation.SetResponseFormat(v)
+	return _u
+}
+
+// SetNillableResponseFormat sets the "response_format" field if the given value is not nil.
+func (_u *ChannelMonitorRequestTemplateUpdateOne) SetNillableResponseFormat(v *string) *ChannelMonitorRequestTemplateUpdateOne {
+	if v != nil {
+		_u.SetResponseFormat(*v)
+	}
+	return _u
+}
+
 // AddMonitorIDs adds the "monitors" edge to the ChannelMonitor entity by IDs.
 func (_u *ChannelMonitorRequestTemplateUpdateOne) AddMonitorIDs(ids ...int64) *ChannelMonitorRequestTemplateUpdateOne {
 	_u.mutation.AddMonitorIDs(ids...)
@@ -560,6 +596,11 @@ func (_u *ChannelMonitorRequestTemplateUpdateOne) check() error {
 			return &ValidationError{Name: "body_override_mode", err: fmt.Errorf(`ent: validator failed for field "ChannelMonitorRequestTemplate.body_override_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.ResponseFormat(); ok {
+		if err := channelmonitorrequesttemplate.ResponseFormatValidator(v); err != nil {
+			return &ValidationError{Name: "response_format", err: fmt.Errorf(`ent: validator failed for field "ChannelMonitorRequestTemplate.response_format": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -621,6 +662,9 @@ func (_u *ChannelMonitorRequestTemplateUpdateOne) sqlSave(ctx context.Context) (
 	}
 	if _u.mutation.BodyOverrideCleared() {
 		_spec.ClearField(channelmonitorrequesttemplate.FieldBodyOverride, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.ResponseFormat(); ok {
+		_spec.SetField(channelmonitorrequesttemplate.FieldResponseFormat, field.TypeString, value)
 	}
 	if _u.mutation.MonitorsCleared() {
 		edge := &sqlgraph.EdgeSpec{

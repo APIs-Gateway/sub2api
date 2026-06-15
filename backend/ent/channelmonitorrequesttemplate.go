@@ -36,6 +36,8 @@ type ChannelMonitorRequestTemplate struct {
 	BodyOverrideMode string `json:"body_override_mode,omitempty"`
 	// BodyOverride holds the value of the "body_override" field.
 	BodyOverride map[string]interface{} `json:"body_override,omitempty"`
+	// ResponseFormat holds the value of the "response_format" field.
+	ResponseFormat string `json:"response_format,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ChannelMonitorRequestTemplateQuery when eager-loading is set.
 	Edges        ChannelMonitorRequestTemplateEdges `json:"edges"`
@@ -69,7 +71,7 @@ func (*ChannelMonitorRequestTemplate) scanValues(columns []string) ([]any, error
 			values[i] = new([]byte)
 		case channelmonitorrequesttemplate.FieldID:
 			values[i] = new(sql.NullInt64)
-		case channelmonitorrequesttemplate.FieldName, channelmonitorrequesttemplate.FieldProvider, channelmonitorrequesttemplate.FieldAPIMode, channelmonitorrequesttemplate.FieldDescription, channelmonitorrequesttemplate.FieldBodyOverrideMode:
+		case channelmonitorrequesttemplate.FieldName, channelmonitorrequesttemplate.FieldProvider, channelmonitorrequesttemplate.FieldAPIMode, channelmonitorrequesttemplate.FieldDescription, channelmonitorrequesttemplate.FieldBodyOverrideMode, channelmonitorrequesttemplate.FieldResponseFormat:
 			values[i] = new(sql.NullString)
 		case channelmonitorrequesttemplate.FieldCreatedAt, channelmonitorrequesttemplate.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -152,6 +154,12 @@ func (_m *ChannelMonitorRequestTemplate) assignValues(columns []string, values [
 					return fmt.Errorf("unmarshal field body_override: %w", err)
 				}
 			}
+		case channelmonitorrequesttemplate.FieldResponseFormat:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field response_format", values[i])
+			} else if value.Valid {
+				_m.ResponseFormat = value.String
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -219,6 +227,9 @@ func (_m *ChannelMonitorRequestTemplate) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("body_override=")
 	builder.WriteString(fmt.Sprintf("%v", _m.BodyOverride))
+	builder.WriteString(", ")
+	builder.WriteString("response_format=")
+	builder.WriteString(_m.ResponseFormat)
 	builder.WriteByte(')')
 	return builder.String()
 }

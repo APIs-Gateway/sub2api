@@ -26,6 +26,16 @@ const (
 	MonitorAPIModeResponses       = "responses"
 )
 
+// MonitorResponseFormat 描述如何解析上游响应以判定可用性。
+//
+//   - json  默认；把响应当作单个 JSON 文档，用 adapter.textPath 抽取文本
+//   - sse   把响应当作 SSE 事件流逐行聚合文本（与「测试账号连接」一致），
+//     用于 stream:true 返回事件流、单次 JSON 抽取得到空文本的场景
+const (
+	MonitorResponseFormatJSON = "json"
+	MonitorResponseFormatSSE  = "sse"
+)
+
 // ChannelMonitor 渠道监控配置（service 层模型，不直接暴露 ent 类型）。
 type ChannelMonitor struct {
 	ID              int64
@@ -49,6 +59,7 @@ type ChannelMonitor struct {
 	ExtraHeaders     map[string]string // 与 adapter 默认 headers 合并，用户优先
 	BodyOverrideMode string            // off / merge / replace
 	BodyOverride     map[string]any    // 仅 mode != off 时使用
+	ResponseFormat   string            // json（默认）/ sse
 
 	// APIKeyDecryptFailed 表示 APIKey 字段无法解密（密钥不一致或损坏）。
 	// 此时 APIKey 为空字符串，runner / RunCheck 必须跳过该监控并提示重填。
@@ -81,6 +92,7 @@ type ChannelMonitorCreateParams struct {
 	ExtraHeaders     map[string]string
 	BodyOverrideMode string
 	BodyOverride     map[string]any
+	ResponseFormat   string
 }
 
 // ChannelMonitorUpdateParams 更新参数（指针字段表示"未提供则不更新"）。
@@ -103,6 +115,7 @@ type ChannelMonitorUpdateParams struct {
 	ExtraHeaders     *map[string]string
 	BodyOverrideMode *string
 	BodyOverride     *map[string]any
+	ResponseFormat   *string
 }
 
 // CheckResult 单个模型一次检测的结果。

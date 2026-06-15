@@ -86,6 +86,13 @@ func (ChannelMonitor) Fields() []ent.Field {
 		// body_override: 同 ChannelMonitorRequestTemplate.body_override
 		field.JSON("body_override", map[string]any{}).
 			Optional(),
+		// response_format: 'json' | 'sse'
+		//   json - 默认；把上游响应当作单个 JSON 文档，用 adapter.textPath 抽取文本
+		//   sse  - 把上游响应当作 SSE 事件流逐行聚合文本（与「测试账号连接」一致），
+		//          适用于 stream:true 返回事件流、单次 JSON 抽取会得到空文本的场景
+		field.String("response_format").
+			Default("json").
+			MaxLen(10),
 	}
 }
 

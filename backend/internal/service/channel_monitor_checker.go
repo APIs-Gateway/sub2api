@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -49,6 +50,10 @@ type CheckOptions struct {
 	// BodyOverride 在 merge 模式下做浅合并（key 命中黑名单时静默丢弃），
 	// 在 replace 模式下直接当作完整 body。
 	BodyOverride map[string]any
+	// ResponseFormat: json | sse。
+	// json（默认）按 adapter.textPath 单次 JSON 抽取；sse 把响应当作 SSE 事件流逐行聚合文本
+	// （与「测试账号连接」一致），用于 stream:true 返回事件流、JSON 抽取得到空文本的场景。
+	ResponseFormat string
 }
 
 // runCheckForModel 对单个 (provider, model) 做一次完整检测。
@@ -124,6 +129,14 @@ func bodyOverrideMode(opts *CheckOptions) string {
 		return MonitorBodyOverrideModeOff
 	}
 	return opts.BodyOverrideMode
+}
+
+// responseFormatOf 归一取 opts.ResponseFormat，nil opts / 空串都视为 json。
+func responseFormatOf(opts *CheckOptions) string {
+	if opts == nil || opts.ResponseFormat == "" {
+		return MonitorResponseFormatJSON
+	}
+	return opts.ResponseFormat
 }
 
 // pingEndpointOrigin 对 endpoint 的 origin (scheme://host) 发起 HEAD 请求，返回耗时。
@@ -271,20 +284,145 @@ func callProvider(ctx context.Context, provider, endpoint, apiKey, model, prompt
 	if !ok {
 		return "", "", 0, fmt.Errorf("unsupported provider %q", provider)
 	}
+	respFormat := responseFormatOf(opts)
 	body, err := buildRequestBody(adapter, provider, apiMode, model, prompt, opts)
 	if err != nil {
 		return "", "", 0, err
 	}
 	headers := mergeHeaders(adapter.buildHeaders(apiKey), opts)
-	full := joinURL(endpoint, adapter.buildPath(model))
+	full := joinURL(endpoint, monitorRequestPath(adapter, provider, model, respFormat))
 	respBytes, status, err := postRawJSON(ctx, full, body, headers)
 	if err != nil {
 		return "", "", status, err
+	}
+	// SSE 模式：把响应当作事件流逐行聚合文本（与「测试账号连接」一致）。
+	if respFormat == MonitorResponseFormatSSE {
+		return extractSSEText(provider, apiMode, respBytes), string(respBytes), status, nil
 	}
 	if provider == MonitorProviderOpenAI && apiMode == MonitorAPIModeResponses {
 		return extractOpenAIResponsesText(respBytes), string(respBytes), status, nil
 	}
 	return gjson.GetBytes(respBytes, adapter.textPath).String(), string(respBytes), status, nil
+}
+
+// monitorRequestPath 返回请求路径。SSE 模式下 Gemini 需切到 streamGenerateContent + alt=sse；
+// 其它 provider 的流式由 body 里的 stream:true 控制，路径不变。
+func monitorRequestPath(adapter providerAdapter, provider, model, respFormat string) string {
+	if respFormat == MonitorResponseFormatSSE && provider == MonitorProviderGemini {
+		return fmt.Sprintf(providerGeminiStreamPathTemplate, model)
+	}
+	return adapter.buildPath(model)
+}
+
+// extractSSEText 把 SSE 事件流逐行聚合成最终文本，仅聚合文本、不向客户端转发事件。
+// 解析逻辑与 account_test_service.go 的 processClaudeStream / processOpenAI*Stream /
+// processGeminiStream 对齐。单行 JSON 解析失败会被跳过（容忍心跳 / 截断行）；
+// 遇到 data:[DONE] 提前结束。respBytes 已被 postRawJSON 按 monitorResponseMaxBytes 截断，
+// challenge 响应很小，直接对缓冲后的字节按行解析即可。
+func extractSSEText(provider, apiMode string, respBytes []byte) string {
+	reader := bufio.NewReader(bytes.NewReader(respBytes))
+	var sb strings.Builder
+	for {
+		line, err := reader.ReadString('\n')
+		if trimmed := strings.TrimSpace(line); trimmed != "" && sseDataPrefix.MatchString(trimmed) {
+			jsonStr := sseDataPrefix.ReplaceAllString(trimmed, "")
+			if jsonStr == "[DONE]" {
+				break
+			}
+			appendSSEDelta(&sb, provider, apiMode, jsonStr)
+		}
+		if err != nil {
+			break
+		}
+	}
+	return sb.String()
+}
+
+// appendSSEDelta 解析单个 SSE data 行的 JSON，按 provider/apiMode 取出文本增量写入 sb。
+func appendSSEDelta(sb *strings.Builder, provider, apiMode, jsonStr string) {
+	var data map[string]any
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return
+	}
+	switch {
+	case provider == MonitorProviderAnthropic:
+		// content_block_delta -> delta.text
+		if t, _ := data["type"].(string); t == "content_block_delta" {
+			if delta, ok := data["delta"].(map[string]any); ok {
+				if text, ok := delta["text"].(string); ok {
+					sb.WriteString(text)
+				}
+			}
+		}
+	case provider == MonitorProviderOpenAI && apiMode == MonitorAPIModeResponses:
+		// Responses API: response.output_text.delta -> delta(string)
+		if t, _ := data["type"].(string); t == "response.output_text.delta" {
+			if delta, ok := data["delta"].(string); ok {
+				sb.WriteString(delta)
+			}
+		}
+	case provider == MonitorProviderOpenAI:
+		appendOpenAIChatSSEDelta(sb, data)
+	case provider == MonitorProviderGemini:
+		appendGeminiSSEDelta(sb, data)
+	}
+}
+
+// appendOpenAIChatSSEDelta 取 Chat Completions 流的 choices[].delta.content（兜底 message.content）。
+func appendOpenAIChatSSEDelta(sb *strings.Builder, data map[string]any) {
+	choices, ok := data["choices"].([]any)
+	if !ok {
+		return
+	}
+	for _, cv := range choices {
+		choice, ok := cv.(map[string]any)
+		if !ok {
+			continue
+		}
+		if delta, ok := choice["delta"].(map[string]any); ok {
+			if text, ok := delta["content"].(string); ok {
+				sb.WriteString(text)
+			}
+		}
+		if message, ok := choice["message"].(map[string]any); ok {
+			if text, ok := message["content"].(string); ok {
+				sb.WriteString(text)
+			}
+		}
+	}
+}
+
+// appendGeminiSSEDelta 取 Gemini 流的 candidates[].content.parts[].text。
+// 兼容 AI Studio {candidates:[...]} 与 Gemini CLI {response:{candidates:[...]}} 两种包裹。
+func appendGeminiSSEDelta(sb *strings.Builder, data map[string]any) {
+	if resp, ok := data["response"].(map[string]any); ok && resp != nil {
+		data = resp
+	}
+	candidates, ok := data["candidates"].([]any)
+	if !ok {
+		return
+	}
+	for _, cv := range candidates {
+		candidate, ok := cv.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := candidate["content"].(map[string]any)
+		if !ok {
+			continue
+		}
+		parts, ok := content["parts"].([]any)
+		if !ok {
+			continue
+		}
+		for _, pv := range parts {
+			if part, ok := pv.(map[string]any); ok {
+				if text, ok := part["text"].(string); ok {
+					sb.WriteString(text)
+				}
+			}
+		}
+	}
 }
 
 // extractOpenAIResponsesText 聚合 Responses API 的最终 assistant 文本。
@@ -377,7 +515,11 @@ func buildRequestBody(adapter providerAdapter, provider, apiMode, model, prompt 
 	if err != nil {
 		return nil, fmt.Errorf("marshal default body: %w", err)
 	}
-	if mode != MonitorBodyOverrideModeMerge || opts == nil || len(opts.BodyOverride) == 0 {
+
+	sse := responseFormatOf(opts) == MonitorResponseFormatSSE
+	isMerge := mode == MonitorBodyOverrideModeMerge && opts != nil && len(opts.BodyOverride) > 0
+	// 既不需要 merge，也不需要为 SSE 注入 stream，直接用默认 body。
+	if !isMerge && !sse {
 		return defaultBody, nil
 	}
 
@@ -385,18 +527,34 @@ func buildRequestBody(adapter providerAdapter, provider, apiMode, model, prompt 
 	if err := json.Unmarshal(defaultBody, &defaultMap); err != nil {
 		return nil, fmt.Errorf("unmarshal default body for merge: %w", err)
 	}
-	deny := bodyMergeKeyDenyList[bodyMergeDenyKey(provider, apiMode)]
-	for k, v := range opts.BodyOverride {
-		if deny[k] {
-			continue
+	if isMerge {
+		deny := bodyMergeKeyDenyList[bodyMergeDenyKey(provider, apiMode)]
+		for k, v := range opts.BodyOverride {
+			if deny[k] {
+				continue
+			}
+			defaultMap[k] = v
 		}
-		defaultMap[k] = v
+	}
+	// SSE 模式：在 merge 之后强制把上游切到流式（OpenAI/Anthropic 用 body 的 stream:true；
+	// Gemini 由 URL :streamGenerateContent 控制，body 不注入避免被上游拒绝未知字段）。
+	if sse {
+		injectStreamFlag(defaultMap, provider)
 	}
 	merged, err := json.Marshal(defaultMap)
 	if err != nil {
 		return nil, fmt.Errorf("marshal merged body: %w", err)
 	}
 	return merged, nil
+}
+
+// injectStreamFlag 给 OpenAI/Anthropic 的 body 注入 stream:true。
+// Gemini 的流式靠 URL（:streamGenerateContent?alt=sse），body 不需要 stream 字段。
+func injectStreamFlag(bodyMap map[string]any, provider string) {
+	if provider == MonitorProviderGemini {
+		return
+	}
+	bodyMap["stream"] = true
 }
 
 // bodyMergeKeyDenyList 在 merge 模式下，禁止用户覆盖这些 provider-specific 的关键字段。

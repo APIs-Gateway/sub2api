@@ -50,6 +50,7 @@ type channelMonitorCreateRequest struct {
 	ExtraHeaders     map[string]string `json:"extra_headers"`
 	BodyOverrideMode string            `json:"body_override_mode" binding:"omitempty,oneof=off merge replace"`
 	BodyOverride     map[string]any    `json:"body_override"`
+	ResponseFormat   string            `json:"response_format" binding:"omitempty,oneof=json sse"`
 }
 
 type channelMonitorUpdateRequest struct {
@@ -68,6 +69,7 @@ type channelMonitorUpdateRequest struct {
 	ExtraHeaders     *map[string]string `json:"extra_headers"`
 	BodyOverrideMode *string            `json:"body_override_mode" binding:"omitempty,oneof=off merge replace"`
 	BodyOverride     *map[string]any    `json:"body_override"`
+	ResponseFormat   *string            `json:"response_format" binding:"omitempty,oneof=json sse"`
 }
 
 type channelMonitorResponse struct {
@@ -96,6 +98,7 @@ type channelMonitorResponse struct {
 	ExtraHeaders     map[string]string `json:"extra_headers"`
 	BodyOverrideMode string            `json:"body_override_mode"`
 	BodyOverride     map[string]any    `json:"body_override"`
+	ResponseFormat   string            `json:"response_format"`
 }
 
 type channelMonitorCheckResultResponse struct {
@@ -157,6 +160,7 @@ func channelMonitorToResponse(m *service.ChannelMonitor) *channelMonitorResponse
 		ExtraHeaders:        headers,
 		BodyOverrideMode:    m.BodyOverrideMode,
 		BodyOverride:        m.BodyOverride,
+		ResponseFormat:      m.ResponseFormat,
 		// PrimaryStatus / PrimaryLatencyMs / Availability7d 由 List handler 在批量聚合后填充。
 	}
 	if m.LastCheckedAt != nil {
@@ -320,6 +324,7 @@ func (h *ChannelMonitorHandler) Create(c *gin.Context) {
 		ExtraHeaders:     req.ExtraHeaders,
 		BodyOverrideMode: req.BodyOverrideMode,
 		BodyOverride:     req.BodyOverride,
+		ResponseFormat:   req.ResponseFormat,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -356,6 +361,7 @@ func (h *ChannelMonitorHandler) Update(c *gin.Context) {
 		ExtraHeaders:     req.ExtraHeaders,
 		BodyOverrideMode: req.BodyOverrideMode,
 		BodyOverride:     req.BodyOverride,
+		ResponseFormat:   req.ResponseFormat,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

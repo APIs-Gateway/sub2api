@@ -85,6 +85,11 @@ func BodyOverrideMode(v string) predicate.ChannelMonitorRequestTemplate {
 	return predicate.ChannelMonitorRequestTemplate(sql.FieldEQ(FieldBodyOverrideMode, v))
 }
 
+// ResponseFormat applies equality check predicate on the "response_format" field. It's identical to ResponseFormatEQ.
+func ResponseFormat(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldEQ(FieldResponseFormat, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.ChannelMonitorRequestTemplate {
 	return predicate.ChannelMonitorRequestTemplate(sql.FieldEQ(FieldCreatedAt, v))
@@ -463,6 +468,71 @@ func BodyOverrideIsNil() predicate.ChannelMonitorRequestTemplate {
 // BodyOverrideNotNil applies the NotNil predicate on the "body_override" field.
 func BodyOverrideNotNil() predicate.ChannelMonitorRequestTemplate {
 	return predicate.ChannelMonitorRequestTemplate(sql.FieldNotNull(FieldBodyOverride))
+}
+
+// ResponseFormatEQ applies the EQ predicate on the "response_format" field.
+func ResponseFormatEQ(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldEQ(FieldResponseFormat, v))
+}
+
+// ResponseFormatNEQ applies the NEQ predicate on the "response_format" field.
+func ResponseFormatNEQ(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldNEQ(FieldResponseFormat, v))
+}
+
+// ResponseFormatIn applies the In predicate on the "response_format" field.
+func ResponseFormatIn(vs ...string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldIn(FieldResponseFormat, vs...))
+}
+
+// ResponseFormatNotIn applies the NotIn predicate on the "response_format" field.
+func ResponseFormatNotIn(vs ...string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldNotIn(FieldResponseFormat, vs...))
+}
+
+// ResponseFormatGT applies the GT predicate on the "response_format" field.
+func ResponseFormatGT(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldGT(FieldResponseFormat, v))
+}
+
+// ResponseFormatGTE applies the GTE predicate on the "response_format" field.
+func ResponseFormatGTE(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldGTE(FieldResponseFormat, v))
+}
+
+// ResponseFormatLT applies the LT predicate on the "response_format" field.
+func ResponseFormatLT(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldLT(FieldResponseFormat, v))
+}
+
+// ResponseFormatLTE applies the LTE predicate on the "response_format" field.
+func ResponseFormatLTE(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldLTE(FieldResponseFormat, v))
+}
+
+// ResponseFormatContains applies the Contains predicate on the "response_format" field.
+func ResponseFormatContains(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldContains(FieldResponseFormat, v))
+}
+
+// ResponseFormatHasPrefix applies the HasPrefix predicate on the "response_format" field.
+func ResponseFormatHasPrefix(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldHasPrefix(FieldResponseFormat, v))
+}
+
+// ResponseFormatHasSuffix applies the HasSuffix predicate on the "response_format" field.
+func ResponseFormatHasSuffix(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldHasSuffix(FieldResponseFormat, v))
+}
+
+// ResponseFormatEqualFold applies the EqualFold predicate on the "response_format" field.
+func ResponseFormatEqualFold(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldEqualFold(FieldResponseFormat, v))
+}
+
+// ResponseFormatContainsFold applies the ContainsFold predicate on the "response_format" field.
+func ResponseFormatContainsFold(v string) predicate.ChannelMonitorRequestTemplate {
+	return predicate.ChannelMonitorRequestTemplate(sql.FieldContainsFold(FieldResponseFormat, v))
 }
 
 // HasMonitors applies the HasEdge predicate on the "monitors" edge.

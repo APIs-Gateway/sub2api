@@ -38,7 +38,8 @@ func openaiResponsesProbePayload(modelID string) []byte {
 				},
 			},
 		},
-		"instructions": openai.DefaultInstructions,
+		// 仅探测端点连通性，不注入庞大的 Codex base prompt（一大段），空字符串即可。
+		"instructions": "",
 		"stream":       false,
 	})
 	return body

@@ -32,6 +32,7 @@ type channelMonitorTemplateCreateRequest struct {
 	ExtraHeaders     map[string]string `json:"extra_headers"`
 	BodyOverrideMode string            `json:"body_override_mode" binding:"omitempty,oneof=off merge replace"`
 	BodyOverride     map[string]any    `json:"body_override"`
+	ResponseFormat   string            `json:"response_format" binding:"omitempty,oneof=json sse"`
 }
 
 type channelMonitorTemplateUpdateRequest struct {
@@ -41,6 +42,7 @@ type channelMonitorTemplateUpdateRequest struct {
 	ExtraHeaders     *map[string]string `json:"extra_headers"`
 	BodyOverrideMode *string            `json:"body_override_mode" binding:"omitempty,oneof=off merge replace"`
 	BodyOverride     *map[string]any    `json:"body_override"`
+	ResponseFormat   *string            `json:"response_format" binding:"omitempty,oneof=json sse"`
 }
 
 type channelMonitorTemplateResponse struct {
@@ -52,6 +54,7 @@ type channelMonitorTemplateResponse struct {
 	ExtraHeaders       map[string]string `json:"extra_headers"`
 	BodyOverrideMode   string            `json:"body_override_mode"`
 	BodyOverride       map[string]any    `json:"body_override"`
+	ResponseFormat     string            `json:"response_format"`
 	CreatedAt          string            `json:"created_at"`
 	UpdatedAt          string            `json:"updated_at"`
 	AssociatedMonitors int64             `json:"associated_monitors"`
@@ -75,6 +78,7 @@ func (h *ChannelMonitorRequestTemplateHandler) toResponse(c *gin.Context, t *ser
 		ExtraHeaders:       headers,
 		BodyOverrideMode:   t.BodyOverrideMode,
 		BodyOverride:       t.BodyOverride,
+		ResponseFormat:     t.ResponseFormat,
 		CreatedAt:          t.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:          t.UpdatedAt.UTC().Format(time.RFC3339),
 		AssociatedMonitors: count,
@@ -139,6 +143,7 @@ func (h *ChannelMonitorRequestTemplateHandler) Create(c *gin.Context) {
 		ExtraHeaders:     req.ExtraHeaders,
 		BodyOverrideMode: req.BodyOverrideMode,
 		BodyOverride:     req.BodyOverride,
+		ResponseFormat:   req.ResponseFormat,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -165,6 +170,7 @@ func (h *ChannelMonitorRequestTemplateHandler) Update(c *gin.Context) {
 		ExtraHeaders:     req.ExtraHeaders,
 		BodyOverrideMode: req.BodyOverrideMode,
 		BodyOverride:     req.BodyOverride,
+		ResponseFormat:   req.ResponseFormat,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

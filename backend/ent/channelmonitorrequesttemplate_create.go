@@ -117,6 +117,20 @@ func (_c *ChannelMonitorRequestTemplateCreate) SetBodyOverride(v map[string]inte
 	return _c
 }
 
+// SetResponseFormat sets the "response_format" field.
+func (_c *ChannelMonitorRequestTemplateCreate) SetResponseFormat(v string) *ChannelMonitorRequestTemplateCreate {
+	_c.mutation.SetResponseFormat(v)
+	return _c
+}
+
+// SetNillableResponseFormat sets the "response_format" field if the given value is not nil.
+func (_c *ChannelMonitorRequestTemplateCreate) SetNillableResponseFormat(v *string) *ChannelMonitorRequestTemplateCreate {
+	if v != nil {
+		_c.SetResponseFormat(*v)
+	}
+	return _c
+}
+
 // AddMonitorIDs adds the "monitors" edge to the ChannelMonitor entity by IDs.
 func (_c *ChannelMonitorRequestTemplateCreate) AddMonitorIDs(ids ...int64) *ChannelMonitorRequestTemplateCreate {
 	_c.mutation.AddMonitorIDs(ids...)
@@ -191,6 +205,10 @@ func (_c *ChannelMonitorRequestTemplateCreate) defaults() {
 		v := channelmonitorrequesttemplate.DefaultBodyOverrideMode
 		_c.mutation.SetBodyOverrideMode(v)
 	}
+	if _, ok := _c.mutation.ResponseFormat(); !ok {
+		v := channelmonitorrequesttemplate.DefaultResponseFormat
+		_c.mutation.SetResponseFormat(v)
+	}
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -239,6 +257,14 @@ func (_c *ChannelMonitorRequestTemplateCreate) check() error {
 	if v, ok := _c.mutation.BodyOverrideMode(); ok {
 		if err := channelmonitorrequesttemplate.BodyOverrideModeValidator(v); err != nil {
 			return &ValidationError{Name: "body_override_mode", err: fmt.Errorf(`ent: validator failed for field "ChannelMonitorRequestTemplate.body_override_mode": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.ResponseFormat(); !ok {
+		return &ValidationError{Name: "response_format", err: errors.New(`ent: missing required field "ChannelMonitorRequestTemplate.response_format"`)}
+	}
+	if v, ok := _c.mutation.ResponseFormat(); ok {
+		if err := channelmonitorrequesttemplate.ResponseFormatValidator(v); err != nil {
+			return &ValidationError{Name: "response_format", err: fmt.Errorf(`ent: validator failed for field "ChannelMonitorRequestTemplate.response_format": %w`, err)}
 		}
 	}
 	return nil
@@ -303,6 +329,10 @@ func (_c *ChannelMonitorRequestTemplateCreate) createSpec() (*ChannelMonitorRequ
 	if value, ok := _c.mutation.BodyOverride(); ok {
 		_spec.SetField(channelmonitorrequesttemplate.FieldBodyOverride, field.TypeJSON, value)
 		_node.BodyOverride = value
+	}
+	if value, ok := _c.mutation.ResponseFormat(); ok {
+		_spec.SetField(channelmonitorrequesttemplate.FieldResponseFormat, field.TypeString, value)
+		_node.ResponseFormat = value
 	}
 	if nodes := _c.mutation.MonitorsIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -480,6 +510,18 @@ func (u *ChannelMonitorRequestTemplateUpsert) ClearBodyOverride() *ChannelMonito
 	return u
 }
 
+// SetResponseFormat sets the "response_format" field.
+func (u *ChannelMonitorRequestTemplateUpsert) SetResponseFormat(v string) *ChannelMonitorRequestTemplateUpsert {
+	u.Set(channelmonitorrequesttemplate.FieldResponseFormat, v)
+	return u
+}
+
+// UpdateResponseFormat sets the "response_format" field to the value that was provided on create.
+func (u *ChannelMonitorRequestTemplateUpsert) UpdateResponseFormat() *ChannelMonitorRequestTemplateUpsert {
+	u.SetExcluded(channelmonitorrequesttemplate.FieldResponseFormat)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -648,6 +690,20 @@ func (u *ChannelMonitorRequestTemplateUpsertOne) UpdateBodyOverride() *ChannelMo
 func (u *ChannelMonitorRequestTemplateUpsertOne) ClearBodyOverride() *ChannelMonitorRequestTemplateUpsertOne {
 	return u.Update(func(s *ChannelMonitorRequestTemplateUpsert) {
 		s.ClearBodyOverride()
+	})
+}
+
+// SetResponseFormat sets the "response_format" field.
+func (u *ChannelMonitorRequestTemplateUpsertOne) SetResponseFormat(v string) *ChannelMonitorRequestTemplateUpsertOne {
+	return u.Update(func(s *ChannelMonitorRequestTemplateUpsert) {
+		s.SetResponseFormat(v)
+	})
+}
+
+// UpdateResponseFormat sets the "response_format" field to the value that was provided on create.
+func (u *ChannelMonitorRequestTemplateUpsertOne) UpdateResponseFormat() *ChannelMonitorRequestTemplateUpsertOne {
+	return u.Update(func(s *ChannelMonitorRequestTemplateUpsert) {
+		s.UpdateResponseFormat()
 	})
 }
 
@@ -985,6 +1041,20 @@ func (u *ChannelMonitorRequestTemplateUpsertBulk) UpdateBodyOverride() *ChannelM
 func (u *ChannelMonitorRequestTemplateUpsertBulk) ClearBodyOverride() *ChannelMonitorRequestTemplateUpsertBulk {
 	return u.Update(func(s *ChannelMonitorRequestTemplateUpsert) {
 		s.ClearBodyOverride()
+	})
+}
+
+// SetResponseFormat sets the "response_format" field.
+func (u *ChannelMonitorRequestTemplateUpsertBulk) SetResponseFormat(v string) *ChannelMonitorRequestTemplateUpsertBulk {
+	return u.Update(func(s *ChannelMonitorRequestTemplateUpsert) {
+		s.SetResponseFormat(v)
+	})
+}
+
+// UpdateResponseFormat sets the "response_format" field to the value that was provided on create.
+func (u *ChannelMonitorRequestTemplateUpsertBulk) UpdateResponseFormat() *ChannelMonitorRequestTemplateUpsertBulk {
+	return u.Update(func(s *ChannelMonitorRequestTemplateUpsert) {
+		s.UpdateResponseFormat()
 	})
 }
 

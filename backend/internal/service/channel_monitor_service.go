@@ -133,6 +133,7 @@ func (s *ChannelMonitorService) Create(ctx context.Context, p ChannelMonitorCrea
 		ExtraHeaders:     emptyHeadersIfNil(p.ExtraHeaders),
 		BodyOverrideMode: defaultBodyMode(p.BodyOverrideMode),
 		BodyOverride:     p.BodyOverride,
+		ResponseFormat:   defaultResponseFormat(p.ResponseFormat),
 	}
 	if err := s.repo.Create(ctx, m); err != nil {
 		return nil, fmt.Errorf("create channel monitor: %w", err)
@@ -152,6 +153,9 @@ func validateCreateParams(p ChannelMonitorCreateParams) error {
 		return err
 	}
 	if err := validateAPIMode(p.Provider, p.APIMode); err != nil {
+		return err
+	}
+	if err := validateResponseFormat(p.ResponseFormat); err != nil {
 		return err
 	}
 	if err := validateInterval(p.IntervalSeconds); err != nil {
@@ -306,6 +310,7 @@ func (s *ChannelMonitorService) runChecksConcurrent(ctx context.Context, m *Chan
 		ExtraHeaders:     m.ExtraHeaders,
 		BodyOverrideMode: m.BodyOverrideMode,
 		BodyOverride:     m.BodyOverride,
+		ResponseFormat:   m.ResponseFormat,
 	}
 
 	var eg errgroup.Group
@@ -534,6 +539,12 @@ func applyMonitorAdvancedUpdate(existing *ChannelMonitor, p ChannelMonitorUpdate
 	}
 	if err := validateAPIMode(existing.Provider, newAPIMode); err != nil {
 		return err
+	}
+	if p.ResponseFormat != nil {
+		if err := validateResponseFormat(*p.ResponseFormat); err != nil {
+			return err
+		}
+		existing.ResponseFormat = defaultResponseFormat(*p.ResponseFormat)
 	}
 	// BodyOverrideMode / BodyOverride 联合校验，和模板一致。
 	newMode := existing.BodyOverrideMode
