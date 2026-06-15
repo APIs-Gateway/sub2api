@@ -179,9 +179,11 @@
         :extra-headers="form.extra_headers"
         :body-override-mode="form.body_override_mode"
         :body-override="form.body_override"
+        :response-format="form.response_format"
         @update:extra-headers="form.extra_headers = $event"
         @update:body-override-mode="form.body_override_mode = $event"
         @update:body-override="form.body_override = $event"
+        @update:response-format="form.response_format = $event"
       />
     </div>
 
@@ -236,6 +238,7 @@ import type {
   APIMode,
   BodyOverrideMode,
   Provider,
+  ResponseFormat,
 } from '@/api/admin/channelMonitor'
 import type { ChannelMonitorTemplate } from '@/api/admin/channelMonitorTemplate'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -250,6 +253,7 @@ import {
   PROVIDER_GEMINI,
   API_MODE_CHAT_COMPLETIONS,
   API_MODE_RESPONSES,
+  RESPONSE_FORMAT_JSON,
 } from '@/constants/channelMonitor'
 
 const props = defineProps<{ show: boolean }>()
@@ -297,6 +301,7 @@ interface TemplateForm {
   extra_headers: Record<string, string>
   body_override_mode: BodyOverrideMode
   body_override: Record<string, unknown> | null
+  response_format: ResponseFormat
 }
 
 const editing = ref<null | 'new' | number>(null) // null = list view; 'new' = create; <id> = edit
@@ -313,6 +318,7 @@ function emptyForm(provider: Provider): TemplateForm {
     extra_headers: {},
     body_override_mode: 'off',
     body_override: null,
+    response_format: RESPONSE_FORMAT_JSON,
   }
 }
 
@@ -325,6 +331,7 @@ function loadForm(tpl: ChannelMonitorTemplate) {
   form.extra_headers = { ...(tpl.extra_headers || {}) }
   form.body_override_mode = tpl.body_override_mode
   form.body_override = tpl.body_override ? { ...tpl.body_override } : null
+  form.response_format = tpl.response_format || RESPONSE_FORMAT_JSON
 }
 
 function openCreateForm() {
@@ -383,6 +390,7 @@ async function handleSubmit() {
         extra_headers: form.extra_headers,
         body_override_mode: form.body_override_mode,
         body_override: form.body_override,
+        response_format: form.response_format,
       })
       appStore.showSuccess(t('admin.channelMonitor.template.createSuccess'))
     } else if (typeof editing.value === 'number') {
@@ -393,6 +401,7 @@ async function handleSubmit() {
         extra_headers: form.extra_headers,
         body_override_mode: form.body_override_mode,
         body_override: form.body_override,
+        response_format: form.response_format,
       })
       appStore.showSuccess(t('admin.channelMonitor.template.updateSuccess'))
     }

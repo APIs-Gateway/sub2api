@@ -9,6 +9,7 @@ export type Provider = 'openai' | 'anthropic' | 'gemini'
 export type MonitorStatus = 'operational' | 'degraded' | 'failed' | 'error'
 export type BodyOverrideMode = 'off' | 'merge' | 'replace'
 export type APIMode = 'chat_completions' | 'responses'
+export type ResponseFormat = 'json' | 'sse'
 
 export interface ChannelMonitor {
   id: number
@@ -45,6 +46,8 @@ export interface ChannelMonitor {
   extra_headers: Record<string, string>
   body_override_mode: BodyOverrideMode
   body_override: Record<string, unknown> | null
+  /** Response parsing mode: 'json' (single JSON doc) or 'sse' (aggregate SSE stream text). */
+  response_format: ResponseFormat
 }
 
 export interface ExtraModelStatus {
@@ -84,6 +87,7 @@ export interface CreateParams {
   extra_headers?: Record<string, string>
   body_override_mode?: BodyOverrideMode
   body_override?: Record<string, unknown> | null
+  response_format?: ResponseFormat
 }
 
 // Update request: api_key 空串 = 不修改；clear_template=true 时把 template_id 置空

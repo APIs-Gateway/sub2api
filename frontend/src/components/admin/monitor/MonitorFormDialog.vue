@@ -138,9 +138,11 @@
             :extra-headers="form.extra_headers"
             :body-override-mode="form.body_override_mode"
             :body-override="form.body_override"
+            :response-format="form.response_format"
             @update:extra-headers="form.extra_headers = $event"
             @update:body-override-mode="form.body_override_mode = $event"
             @update:body-override="form.body_override = $event"
+            @update:response-format="form.response_format = $event"
           />
         </div>
       </details>
@@ -190,6 +192,7 @@ import type {
   CreateParams,
   APIMode,
   Provider,
+  ResponseFormat,
   UpdateParams,
 } from '@/api/admin/channelMonitor'
 import type { ChannelMonitorTemplate } from '@/api/admin/channelMonitorTemplate'
@@ -209,6 +212,7 @@ import {
   PROVIDER_GEMINI,
   API_MODE_CHAT_COMPLETIONS,
   API_MODE_RESPONSES,
+  RESPONSE_FORMAT_JSON,
   DEFAULT_INTERVAL_SECONDS,
 } from '@/constants/channelMonitor'
 
@@ -260,6 +264,7 @@ interface MonitorForm {
   extra_headers: Record<string, string>
   body_override_mode: BodyOverrideMode
   body_override: Record<string, unknown> | null
+  response_format: ResponseFormat
 }
 
 const form = reactive<MonitorForm>({
@@ -277,6 +282,7 @@ const form = reactive<MonitorForm>({
   extra_headers: {},
   body_override_mode: 'off',
   body_override: null,
+  response_format: RESPONSE_FORMAT_JSON,
 })
 
 let suppressFormWatchers = false
@@ -331,6 +337,7 @@ const templateSelectValue = computed<string>({
       form.extra_headers = { ...(tpl.extra_headers || {}) }
       form.body_override_mode = tpl.body_override_mode
       form.body_override = tpl.body_override ? { ...tpl.body_override } : null
+      form.response_format = tpl.response_format || RESPONSE_FORMAT_JSON
       suppressFormWatchers = false
     }
   },
@@ -374,6 +381,7 @@ function clearRequestSnapshot() {
   form.extra_headers = {}
   form.body_override_mode = 'off'
   form.body_override = null
+  form.response_format = RESPONSE_FORMAT_JSON
 }
 
 interface ProviderOption {
@@ -424,6 +432,7 @@ function resetForm() {
   form.extra_headers = {}
   form.body_override_mode = 'off'
   form.body_override = null
+  form.response_format = RESPONSE_FORMAT_JSON
   suppressFormWatchers = false
 }
 
@@ -443,6 +452,7 @@ function loadFromMonitor(m: ChannelMonitor) {
   form.extra_headers = { ...(m.extra_headers || {}) }
   form.body_override_mode = m.body_override_mode || 'off'
   form.body_override = m.body_override ? { ...m.body_override } : null
+  form.response_format = m.response_format || RESPONSE_FORMAT_JSON
   suppressFormWatchers = false
 }
 
@@ -508,6 +518,7 @@ function buildPayload(): CreateParams {
     extra_headers: form.extra_headers,
     body_override_mode: form.body_override_mode,
     body_override: form.body_override,
+    response_format: form.response_format,
   }
 }
 

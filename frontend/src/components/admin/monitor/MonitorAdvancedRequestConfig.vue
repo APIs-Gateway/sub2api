@@ -1,5 +1,23 @@
 <template>
   <div class="space-y-4">
+    <!-- Response parsing mode (json | sse) -->
+    <div>
+      <label class="input-label">{{ t('admin.channelMonitor.advanced.responseFormat') }}</label>
+      <div class="grid grid-cols-2 gap-3">
+        <button
+          v-for="opt in responseFormatOptions"
+          :key="opt.value"
+          type="button"
+          class="rounded-lg border-2 px-3 py-2 text-sm font-medium transition-colors"
+          :class="responseFormatButtonClass(opt.value)"
+          @click="updateResponseFormat(opt.value)"
+        >
+          {{ opt.label }}
+        </button>
+      </div>
+      <p class="mt-1 text-xs text-gray-400">{{ responseFormatHint }}</p>
+    </div>
+
     <!-- Headers key-value rows -->
     <div>
       <label class="input-label">{{ t('admin.channelMonitor.advanced.headers') }}</label>
@@ -106,10 +124,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { APIMode, BodyOverrideMode, Provider } from '@/api/admin/channelMonitor'
+import type { APIMode, BodyOverrideMode, Provider, ResponseFormat } from '@/api/admin/channelMonitor'
 import {
   API_MODE_RESPONSES,
   PROVIDER_OPENAI,
+  RESPONSE_FORMAT_JSON,
+  RESPONSE_FORMAT_SSE,
 } from '@/constants/channelMonitor'
 
 const props = defineProps<{
@@ -118,13 +138,39 @@ const props = defineProps<{
   extraHeaders: Record<string, string>
   bodyOverrideMode: BodyOverrideMode
   bodyOverride: Record<string, unknown> | null
+  responseFormat: ResponseFormat
 }>()
 
 const emit = defineEmits<{
   (e: 'update:extraHeaders', value: Record<string, string>): void
   (e: 'update:bodyOverrideMode', value: BodyOverrideMode): void
   (e: 'update:bodyOverride', value: Record<string, unknown> | null): void
+  (e: 'update:responseFormat', value: ResponseFormat): void
 }>()
+
+// ---- Response format (json | sse) ----
+const responseFormatOptions = computed<{ value: ResponseFormat; label: string }[]>(() => [
+  { value: RESPONSE_FORMAT_JSON, label: t('admin.channelMonitor.advanced.responseFormatJson') },
+  { value: RESPONSE_FORMAT_SSE, label: t('admin.channelMonitor.advanced.responseFormatSse') },
+])
+
+function responseFormatButtonClass(value: ResponseFormat): string {
+  const active = props.responseFormat === value
+  if (active) {
+    return 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300 dark:border-primary-400'
+  }
+  return 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
+}
+
+const responseFormatHint = computed(() =>
+  props.responseFormat === RESPONSE_FORMAT_SSE
+    ? t('admin.channelMonitor.advanced.responseFormatHintSse')
+    : t('admin.channelMonitor.advanced.responseFormatHintJson'),
+)
+
+function updateResponseFormat(value: ResponseFormat) {
+  emit('update:responseFormat', value)
+}
 
 const { t } = useI18n()
 
