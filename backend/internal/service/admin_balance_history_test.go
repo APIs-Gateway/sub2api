@@ -84,3 +84,9 @@ func TestMergeBalanceHistoryCodesPaginatesAfterCombiningSources(t *testing.T) {
 	require.Equal(t, RedeemTypeConcurrency, got[0].Type)
 	require.Equal(t, int64(-4), got[1].ID)
 }
+
+func TestAffiliateBalanceHistoryActionsIncludeDirectCashback(t *testing.T) {
+	t.Parallel()
+
+	require.ElementsMatch(t, []string{"transfer", "cashback"}, affiliateBalanceHistoryActions())
+}

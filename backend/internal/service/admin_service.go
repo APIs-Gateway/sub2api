@@ -1269,6 +1269,7 @@ func (s *adminServiceImpl) listAffiliateBalanceHistory(ctx context.Context, user
 	if s == nil || s.entClient == nil || userID <= 0 {
 		return nil, 0, nil
 	}
+	actions := affiliateBalanceHistoryActions()
 
 	rows, err := s.entClient.QueryContext(ctx, `
 SELECT id,
@@ -1276,10 +1277,10 @@ SELECT id,
        created_at
 FROM user_affiliate_ledger
 WHERE user_id = $1
-  AND action = 'transfer'
+  AND action IN ($4, $5)
 ORDER BY created_at DESC, id DESC
 OFFSET $2
-LIMIT $3`, userID, params.Offset(), params.Limit())
+LIMIT $3`, userID, params.Offset(), params.Limit(), actions[0], actions[1])
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1318,11 +1319,12 @@ LIMIT $3`, userID, params.Offset(), params.Limit())
 }
 
 func countAffiliateBalanceHistory(ctx context.Context, client *dbent.Client, userID int64) (int64, error) {
+	actions := affiliateBalanceHistoryActions()
 	rows, err := client.QueryContext(ctx, `
 SELECT COUNT(*)
 FROM user_affiliate_ledger
 WHERE user_id = $1
-  AND action = 'transfer'`, userID)
+  AND action IN ($2, $3)`, userID, actions[0], actions[1])
 	if err != nil {
 		return 0, err
 	}
@@ -1341,6 +1343,10 @@ WHERE user_id = $1
 		return 0, nil
 	}
 	return total.Int64, nil
+}
+
+func affiliateBalanceHistoryActions() []string {
+	return []string{"transfer", "cashback"}
 }
 
 func mergeBalanceHistoryCodes(redeemCodes, affiliateCodes []RedeemCode, params pagination.PaginationParams) []RedeemCode {
