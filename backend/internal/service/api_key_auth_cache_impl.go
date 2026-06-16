@@ -236,6 +236,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			TotalRecharged:             apiKey.User.TotalRecharged,
 			RPMLimit:                   apiKey.User.RPMLimit,
 			SubscriptionOverdraftGuard: apiKey.User.SubscriptionOverdraftGuard,
+			StablePriorityEnabled:      apiKey.User.StablePriorityEnabled,
 		},
 	}
 
@@ -268,6 +269,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			ClaudeCodeOnly:                  apiKey.Group.ClaudeCodeOnly,
 			FallbackGroupID:                 apiKey.Group.FallbackGroupID,
 			FallbackGroupIDOnInvalidRequest: apiKey.Group.FallbackGroupIDOnInvalidRequest,
+			StablePriorityFallbackGroupID:   apiKey.Group.StablePriorityFallbackGroupID,
 			ModelRouting:                    apiKey.Group.ModelRouting,
 			ModelRoutingEnabled:             apiKey.Group.ModelRoutingEnabled,
 			MCPXMLInject:                    apiKey.Group.MCPXMLInject,
@@ -318,6 +320,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			RPMLimit:                   snapshot.User.RPMLimit,
 			SubscriptionOverdraftGuard: snapshot.User.SubscriptionOverdraftGuard,
 			UserGroupRPMOverride:       snapshot.User.UserGroupRPMOverride,
+			StablePriorityEnabled:      snapshot.User.StablePriorityEnabled,
 		},
 	}
 	if snapshot.Group != nil {
@@ -342,6 +345,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			ClaudeCodeOnly:                  snapshot.Group.ClaudeCodeOnly,
 			FallbackGroupID:                 snapshot.Group.FallbackGroupID,
 			FallbackGroupIDOnInvalidRequest: snapshot.Group.FallbackGroupIDOnInvalidRequest,
+			StablePriorityFallbackGroupID:   snapshot.Group.StablePriorityFallbackGroupID,
 			ModelRouting:                    snapshot.Group.ModelRouting,
 			ModelRoutingEnabled:             snapshot.Group.ModelRoutingEnabled,
 			MCPXMLInject:                    snapshot.Group.MCPXMLInject,

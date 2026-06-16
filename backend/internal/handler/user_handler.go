@@ -81,6 +81,7 @@ type UpdateProfileRequest struct {
 	AvatarURL              *string  `json:"avatar_url"`
 	BalanceNotifyEnabled   *bool    `json:"balance_notify_enabled"`
 	BalanceNotifyThreshold *float64 `json:"balance_notify_threshold"`
+	StablePriorityEnabled  *bool    `json:"stable_priority_enabled"`
 }
 
 type userProfileResponse struct {
@@ -178,6 +179,7 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		AvatarURL:              req.AvatarURL,
 		BalanceNotifyEnabled:   req.BalanceNotifyEnabled,
 		BalanceNotifyThreshold: req.BalanceNotifyThreshold,
+		StablePriorityEnabled:  req.StablePriorityEnabled,
 	}
 	updatedUser, err := h.userService.UpdateProfile(c.Request.Context(), subject.UserID, svcReq)
 	if err != nil {

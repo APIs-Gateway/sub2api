@@ -51,6 +51,8 @@ type APIKeyAuthUserSnapshot struct {
 
 	// SubscriptionOverdraftGuard 该用户是否给任意订阅卡设过透支上限；准入闸门的廉价触发位。
 	SubscriptionOverdraftGuard bool `json:"subscription_overdraft_guard,omitempty"`
+	// StablePriorityEnabled 稳定优先用户级全局开关；用于 openai 调度跨分组兜底判断。
+	StablePriorityEnabled bool `json:"stable_priority_enabled"`
 
 	// UserGroupRPMOverride 该 API Key 对应的 (user, group) 专属 RPM 覆盖值。
 	// nil = 无 override（回退到 group/user 级）；0 = 不限流；>0 = 专属上限。
@@ -78,6 +80,7 @@ type APIKeyAuthGroupSnapshot struct {
 	ClaudeCodeOnly                  bool     `json:"claude_code_only"`
 	FallbackGroupID                 *int64   `json:"fallback_group_id,omitempty"`
 	FallbackGroupIDOnInvalidRequest *int64   `json:"fallback_group_id_on_invalid_request,omitempty"`
+	StablePriorityFallbackGroupID   *int64   `json:"stable_priority_fallback_group_id,omitempty"`
 
 	// Model routing is used by gateway account selection, so it must be part of auth cache snapshot.
 	// Only anthropic groups use these fields; others may leave them empty.

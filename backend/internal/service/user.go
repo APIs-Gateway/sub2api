@@ -50,6 +50,10 @@ type User struct {
 	BalanceNotifyExtraEmails   []NotifyEmailEntry
 	TotalRecharged             float64
 
+	// StablePriorityEnabled 稳定优先：所在组渠道全挂时跨分组逐档兜底（廉价→中等→稳定）。
+	// 用户级全局自助开关，对该用户所有"配了兜底链"的组生效。
+	StablePriorityEnabled bool
+
 	// RPMLimit 用户级每分钟请求数上限（0 = 不限制）。仅在所用分组未设置 rpm_limit
 	// 且该 (用户, 分组) 无 rpm_override 时作为全局兜底生效，计数键 rpm:u:{userID}:{min}。
 	RPMLimit int

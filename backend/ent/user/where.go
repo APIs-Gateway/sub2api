@@ -175,6 +175,11 @@ func SubscriptionOverdraftGuard(v bool) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldSubscriptionOverdraftGuard, v))
 }
 
+// StablePriorityEnabled applies equality check predicate on the "stable_priority_enabled" field. It's identical to StablePriorityEnabledEQ.
+func StablePriorityEnabled(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldStablePriorityEnabled, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldCreatedAt, v))
@@ -1353,6 +1358,16 @@ func SubscriptionOverdraftGuardEQ(v bool) predicate.User {
 // SubscriptionOverdraftGuardNEQ applies the NEQ predicate on the "subscription_overdraft_guard" field.
 func SubscriptionOverdraftGuardNEQ(v bool) predicate.User {
 	return predicate.User(sql.FieldNEQ(FieldSubscriptionOverdraftGuard, v))
+}
+
+// StablePriorityEnabledEQ applies the EQ predicate on the "stable_priority_enabled" field.
+func StablePriorityEnabledEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldStablePriorityEnabled, v))
+}
+
+// StablePriorityEnabledNEQ applies the NEQ predicate on the "stable_priority_enabled" field.
+func StablePriorityEnabledNEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldStablePriorityEnabled, v))
 }
 
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.

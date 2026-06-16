@@ -63,6 +63,8 @@ const (
 	FieldRpmLimit = "rpm_limit"
 	// FieldSubscriptionOverdraftGuard holds the string denoting the subscription_overdraft_guard field in the database.
 	FieldSubscriptionOverdraftGuard = "subscription_overdraft_guard"
+	// FieldStablePriorityEnabled holds the string denoting the stable_priority_enabled field in the database.
+	FieldStablePriorityEnabled = "stable_priority_enabled"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
 	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
@@ -218,6 +220,7 @@ var Columns = []string{
 	FieldTotalRecharged,
 	FieldRpmLimit,
 	FieldSubscriptionOverdraftGuard,
+	FieldStablePriorityEnabled,
 }
 
 var (
@@ -290,6 +293,8 @@ var (
 	DefaultRpmLimit int
 	// DefaultSubscriptionOverdraftGuard holds the default value on creation for the "subscription_overdraft_guard" field.
 	DefaultSubscriptionOverdraftGuard bool
+	// DefaultStablePriorityEnabled holds the default value on creation for the "stable_priority_enabled" field.
+	DefaultStablePriorityEnabled bool
 )
 
 // OrderOption defines the ordering options for the User queries.
@@ -418,6 +423,11 @@ func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 // BySubscriptionOverdraftGuard orders the results by the subscription_overdraft_guard field.
 func BySubscriptionOverdraftGuard(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSubscriptionOverdraftGuard, opts...).ToFunc()
+}
+
+// ByStablePriorityEnabled orders the results by the stable_priority_enabled field.
+func ByStablePriorityEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldStablePriorityEnabled, opts...).ToFunc()
 }
 
 // ByAPIKeysCount orders the results by api_keys count.

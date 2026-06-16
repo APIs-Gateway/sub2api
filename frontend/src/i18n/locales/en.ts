@@ -1343,6 +1343,12 @@ export default {
       unverified: 'Unverified',
       verified: 'Verified',
     },
+    stablePriority: {
+      title: 'Stable Priority',
+      description: 'When enabled, if every channel in your group becomes unavailable, requests automatically fail over up the tier chain to a more reliable higher-rate group, then switch back once the lower-rate group recovers.',
+      enabled: 'Enable stable priority',
+      billingHint: 'Note: during fallback you are billed from your balance at the actual higher-rate group rate, which may cost more than your original group.',
+    },
     avatar: {
       title: 'Profile Avatar',
       description: 'Upload an avatar image. Static uploads are compressed to 20KB before saving.',
@@ -2309,6 +2315,11 @@ export default {
         fallbackGroup: 'Fallback Group',
         fallbackHint: 'Non-Claude Code requests will use this group. Leave empty to reject directly.',
         noFallback: 'No Fallback (Reject)'
+      },
+      stablePriority: {
+        fallbackGroup: 'Stable Priority Fallback Group',
+        fallbackHint: 'When every channel in this group is unavailable, requests from stable-priority users fail over to this group. Chain groups tier by tier for a multi-tier fallback, or point higher tiers back to lower ones to form a mutual-backup ring — any tier that goes down is temporarily routed to another healthy group on the ring and switches back on recovery. Leave empty to opt this group out.',
+        noFallback: 'No Fallback'
       },
       openaiMessages: {
         title: 'OpenAI Messages Dispatch',

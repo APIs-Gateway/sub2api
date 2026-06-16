@@ -118,6 +118,11 @@ func (User) Fields() []ent.Field {
 		// 真正的透支天数按订阅卡存于 user_subscriptions.max_overdraft_days。
 		field.Bool("subscription_overdraft_guard").
 			Default(false),
+
+		// 稳定优先：所在组渠道全挂时跨分组逐档兜底（廉价→中等→稳定），默认关闭。
+		field.Bool("stable_priority_enabled").
+			Default(false).
+			Comment("稳定优先：所在组渠道全挂时跨分组逐档兜底"),
 	}
 }
 

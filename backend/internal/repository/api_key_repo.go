@@ -160,6 +160,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				user.FieldLastActiveAt,
 				user.FieldRpmLimit,
 				user.FieldSubscriptionOverdraftGuard,
+				user.FieldStablePriorityEnabled,
 			)
 			q.WithAllowedGroups(func(gq *dbent.GroupQuery) {
 				gq.Select(group.FieldID)
@@ -186,6 +187,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldClaudeCodeOnly,
 				group.FieldFallbackGroupID,
 				group.FieldFallbackGroupIDOnInvalidRequest,
+				group.FieldStablePriorityFallbackGroupID,
 				group.FieldModelRoutingEnabled,
 				group.FieldModelRouting,
 				group.FieldMcpXMLInject,
@@ -768,6 +770,7 @@ func userEntityToService(u *dbent.User) *service.User {
 		TotalRecharged:             u.TotalRecharged,
 		RPMLimit:                   u.RpmLimit,
 		SubscriptionOverdraftGuard: u.SubscriptionOverdraftGuard,
+		StablePriorityEnabled:      u.StablePriorityEnabled,
 		CreatedAt:                  u.CreatedAt,
 		UpdatedAt:                  u.UpdatedAt,
 		DeletedAt:                  u.DeletedAt,
@@ -806,6 +809,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		ClaudeCodeOnly:                  g.ClaudeCodeOnly,
 		FallbackGroupID:                 g.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: g.FallbackGroupIDOnInvalidRequest,
+		StablePriorityFallbackGroupID:   g.StablePriorityFallbackGroupID,
 		ModelRouting:                    g.ModelRouting,
 		ModelRoutingEnabled:             g.ModelRoutingEnabled,
 		MCPXMLInject:                    g.McpXMLInject,

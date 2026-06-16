@@ -65,6 +65,8 @@ type User struct {
 	RpmLimit int `json:"rpm_limit,omitempty"`
 	// SubscriptionOverdraftGuard holds the value of the "subscription_overdraft_guard" field.
 	SubscriptionOverdraftGuard bool `json:"subscription_overdraft_guard,omitempty"`
+	// 稳定优先：所在组渠道全挂时跨分组逐档兜底
+	StablePriorityEnabled bool `json:"stable_priority_enabled,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the UserQuery when eager-loading is set.
 	Edges        UserEdges `json:"edges"`
@@ -237,7 +239,7 @@ func (*User) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case user.FieldTotpEnabled, user.FieldBalanceNotifyEnabled, user.FieldSubscriptionOverdraftGuard:
+		case user.FieldTotpEnabled, user.FieldBalanceNotifyEnabled, user.FieldSubscriptionOverdraftGuard, user.FieldStablePriorityEnabled:
 			values[i] = new(sql.NullBool)
 		case user.FieldBalance, user.FieldBalanceNotifyThreshold, user.FieldTotalRecharged:
 			values[i] = new(sql.NullFloat64)
@@ -417,6 +419,12 @@ func (_m *User) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field subscription_overdraft_guard", values[i])
 			} else if value.Valid {
 				_m.SubscriptionOverdraftGuard = value.Bool
+			}
+		case user.FieldStablePriorityEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field stable_priority_enabled", values[i])
+			} else if value.Valid {
+				_m.StablePriorityEnabled = value.Bool
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
@@ -607,6 +615,9 @@ func (_m *User) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("subscription_overdraft_guard=")
 	builder.WriteString(fmt.Sprintf("%v", _m.SubscriptionOverdraftGuard))
+	builder.WriteString(", ")
+	builder.WriteString("stable_priority_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.StablePriorityEnabled))
 	builder.WriteByte(')')
 	return builder.String()
 }

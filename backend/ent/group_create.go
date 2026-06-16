@@ -343,6 +343,20 @@ func (_c *GroupCreate) SetNillableFallbackGroupIDOnInvalidRequest(v *int64) *Gro
 	return _c
 }
 
+// SetStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field.
+func (_c *GroupCreate) SetStablePriorityFallbackGroupID(v int64) *GroupCreate {
+	_c.mutation.SetStablePriorityFallbackGroupID(v)
+	return _c
+}
+
+// SetNillableStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableStablePriorityFallbackGroupID(v *int64) *GroupCreate {
+	if v != nil {
+		_c.SetStablePriorityFallbackGroupID(*v)
+	}
+	return _c
+}
+
 // SetModelRouting sets the "model_routing" field.
 func (_c *GroupCreate) SetModelRouting(v map[string][]int64) *GroupCreate {
 	_c.mutation.SetModelRouting(v)
@@ -941,6 +955,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldFallbackGroupIDOnInvalidRequest, field.TypeInt64, value)
 		_node.FallbackGroupIDOnInvalidRequest = &value
 	}
+	if value, ok := _c.mutation.StablePriorityFallbackGroupID(); ok {
+		_spec.SetField(group.FieldStablePriorityFallbackGroupID, field.TypeInt64, value)
+		_node.StablePriorityFallbackGroupID = &value
+	}
 	if value, ok := _c.mutation.ModelRouting(); ok {
 		_spec.SetField(group.FieldModelRouting, field.TypeJSON, value)
 		_node.ModelRouting = value
@@ -1532,6 +1550,30 @@ func (u *GroupUpsert) AddFallbackGroupIDOnInvalidRequest(v int64) *GroupUpsert {
 // ClearFallbackGroupIDOnInvalidRequest clears the value of the "fallback_group_id_on_invalid_request" field.
 func (u *GroupUpsert) ClearFallbackGroupIDOnInvalidRequest() *GroupUpsert {
 	u.SetNull(group.FieldFallbackGroupIDOnInvalidRequest)
+	return u
+}
+
+// SetStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field.
+func (u *GroupUpsert) SetStablePriorityFallbackGroupID(v int64) *GroupUpsert {
+	u.Set(group.FieldStablePriorityFallbackGroupID, v)
+	return u
+}
+
+// UpdateStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateStablePriorityFallbackGroupID() *GroupUpsert {
+	u.SetExcluded(group.FieldStablePriorityFallbackGroupID)
+	return u
+}
+
+// AddStablePriorityFallbackGroupID adds v to the "stable_priority_fallback_group_id" field.
+func (u *GroupUpsert) AddStablePriorityFallbackGroupID(v int64) *GroupUpsert {
+	u.Add(group.FieldStablePriorityFallbackGroupID, v)
+	return u
+}
+
+// ClearStablePriorityFallbackGroupID clears the value of the "stable_priority_fallback_group_id" field.
+func (u *GroupUpsert) ClearStablePriorityFallbackGroupID() *GroupUpsert {
+	u.SetNull(group.FieldStablePriorityFallbackGroupID)
 	return u
 }
 
@@ -2194,6 +2236,34 @@ func (u *GroupUpsertOne) UpdateFallbackGroupIDOnInvalidRequest() *GroupUpsertOne
 func (u *GroupUpsertOne) ClearFallbackGroupIDOnInvalidRequest() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearFallbackGroupIDOnInvalidRequest()
+	})
+}
+
+// SetStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field.
+func (u *GroupUpsertOne) SetStablePriorityFallbackGroupID(v int64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetStablePriorityFallbackGroupID(v)
+	})
+}
+
+// AddStablePriorityFallbackGroupID adds v to the "stable_priority_fallback_group_id" field.
+func (u *GroupUpsertOne) AddStablePriorityFallbackGroupID(v int64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddStablePriorityFallbackGroupID(v)
+	})
+}
+
+// UpdateStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateStablePriorityFallbackGroupID() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateStablePriorityFallbackGroupID()
+	})
+}
+
+// ClearStablePriorityFallbackGroupID clears the value of the "stable_priority_fallback_group_id" field.
+func (u *GroupUpsertOne) ClearStablePriorityFallbackGroupID() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearStablePriorityFallbackGroupID()
 	})
 }
 
@@ -3049,6 +3119,34 @@ func (u *GroupUpsertBulk) UpdateFallbackGroupIDOnInvalidRequest() *GroupUpsertBu
 func (u *GroupUpsertBulk) ClearFallbackGroupIDOnInvalidRequest() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearFallbackGroupIDOnInvalidRequest()
+	})
+}
+
+// SetStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field.
+func (u *GroupUpsertBulk) SetStablePriorityFallbackGroupID(v int64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetStablePriorityFallbackGroupID(v)
+	})
+}
+
+// AddStablePriorityFallbackGroupID adds v to the "stable_priority_fallback_group_id" field.
+func (u *GroupUpsertBulk) AddStablePriorityFallbackGroupID(v int64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddStablePriorityFallbackGroupID(v)
+	})
+}
+
+// UpdateStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateStablePriorityFallbackGroupID() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateStablePriorityFallbackGroupID()
+	})
+}
+
+// ClearStablePriorityFallbackGroupID clears the value of the "stable_priority_fallback_group_id" field.
+func (u *GroupUpsertBulk) ClearStablePriorityFallbackGroupID() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearStablePriorityFallbackGroupID()
 	})
 }
 
