@@ -86,7 +86,7 @@ func (s *OpenAIGatewayService) climbStableChain(
 // 复用 listSchedulableAccounts（与选择同源的 IsSchedulable 过滤），channel-monitor 开不开都可用。
 func (s *OpenAIGatewayService) homeGroupHealthy(ctx context.Context, homeID int64) bool {
 	id := homeID
-	accounts, err := s.listSchedulableAccounts(ctx, &id)
+	accounts, err := s.listSchedulableAccounts(ctx, &id, PlatformOpenAI)
 	if err != nil {
 		return false
 	}
@@ -130,14 +130,19 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerStable(
 	requireCompact bool,
 	useUpstreamTokenCost bool,
 	intent StablePriorityIntent,
+	platformOverride ...string,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	platform := PlatformOpenAI
+	if len(platformOverride) > 0 {
+		platform = normalizeOpenAICompatiblePlatform(platformOverride[0])
+	}
 	original := func() (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-		return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, useUpstreamTokenCost)
+		return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, useUpstreamTokenCost, platform)
 	}
 
 	// 快速旁路：未启用 / 无状态存储 / 无 home / 未配兜底链（用快照上已带的指针判断，
 	// 避免 normal 健康路径上的额外 DB 查询）→ 原始行为。
-	if !intent.Enabled || s.stableStore == nil || groupID == nil || homeGroup == nil ||
+	if platform != PlatformOpenAI || !intent.Enabled || s.stableStore == nil || groupID == nil || homeGroup == nil ||
 		homeGroup.Platform != PlatformOpenAI || homeGroup.StablePriorityFallbackGroupID == nil {
 		return original()
 	}
@@ -153,7 +158,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerStable(
 		if gid != homeID {
 			prevID = ""
 		}
-		return s.selectAccountWithScheduler(ctx, &id, prevID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, useUpstreamTokenCost)
+		return s.selectAccountWithScheduler(ctx, &id, prevID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, useUpstreamTokenCost, platform)
 	}
 
 	if state.InFallback() {

@@ -673,8 +673,8 @@ func (s *SchedulerSnapshotService) rebuildByGroupIDs(ctx context.Context, groupI
 	return s.rebuildBuckets(ctx, buckets, reason)
 }
 
-func schedulerSnapshotPlatforms() [4]string {
-	return [4]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity}
+func schedulerSnapshotPlatforms() [5]string {
+	return [5]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok}
 }
 
 func schedulerBucketsForGroup(groupID int64) []SchedulerBucket {
