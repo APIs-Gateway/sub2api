@@ -104,6 +104,11 @@ func annotateStableServed(dec *OpenAIAccountScheduleDecision, state string, fall
 	if served != nil {
 		dec.StableServedGroupID = served.ID
 		dec.StableServedRateMultiplier = served.RateMultiplier
+		dec.StableServedImageRateIndependent = served.ImageRateIndependent
+		dec.StableServedImageRateMultiplier = served.ImageRateMultiplier
+		dec.StableServedImagePrice1K = served.ImagePrice1K
+		dec.StableServedImagePrice2K = served.ImagePrice2K
+		dec.StableServedImagePrice4K = served.ImagePrice4K
 	} else {
 		dec.StableServedGroupID = homeID
 	}

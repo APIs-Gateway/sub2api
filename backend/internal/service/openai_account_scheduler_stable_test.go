@@ -131,6 +131,59 @@ func TestResolveStableChain_RingFromTopTier(t *testing.T) {
 	require.Equal(t, []int64{1, 2}, chainIDs(svc.resolveStableChain(context.Background(), g3)))
 }
 
+func TestResolveImageRateMultiplierFromFields(t *testing.T) {
+	cases := []struct {
+		name        string
+		independent bool
+		imageMult   float64
+		effective   float64
+		want        float64
+	}{
+		{"independent positive overrides effective", true, 1.5, 3.0, 1.5},
+		{"independent negative means free", true, -1, 3.0, 0},
+		{"not independent falls back to effective", false, 1.5, 3.0, 3.0},
+		{"independent zero", true, 0, 3.0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, resolveImageRateMultiplierFromFields(tc.independent, tc.imageMult, tc.effective))
+		})
+	}
+}
+
+func TestAnnotateStableServed_CarriesServedImageRate(t *testing.T) {
+	p1k, p2k, p4k := 0.5, 0.8, 1.2
+	served := &Group{
+		ID:                   2,
+		Platform:             PlatformOpenAI,
+		Status:               StatusActive,
+		RateMultiplier:       3.0,
+		ImageRateIndependent: true,
+		ImageRateMultiplier:  2.5,
+		ImagePrice1K:         &p1k,
+		ImagePrice2K:         &p2k,
+		ImagePrice4K:         &p4k,
+	}
+	// 兜底服务：决策须携带 served 组的费率、image 费率策略与图片基础单价（方案 Y）。
+	var fallbackDec OpenAIAccountScheduleDecision
+	annotateStableServed(&fallbackDec, StablePriorityModeFallback, true, served, 1)
+	require.Equal(t, int64(2), fallbackDec.StableServedGroupID)
+	require.Equal(t, 3.0, fallbackDec.StableServedRateMultiplier)
+	require.True(t, fallbackDec.StableServedImageRateIndependent)
+	require.Equal(t, 2.5, fallbackDec.StableServedImageRateMultiplier)
+	require.Equal(t, &p1k, fallbackDec.StableServedImagePrice1K)
+	require.Equal(t, &p2k, fallbackDec.StableServedImagePrice2K)
+	require.Equal(t, &p4k, fallbackDec.StableServedImagePrice4K)
+
+	// home（served=nil）：用 homeID，image 字段保持零值/nil，计费走 home 组策略。
+	var homeDec OpenAIAccountScheduleDecision
+	annotateStableServed(&homeDec, StablePriorityModeNormal, false, nil, 1)
+	require.Equal(t, int64(1), homeDec.StableServedGroupID)
+	require.False(t, homeDec.StableServedImageRateIndependent)
+	require.Zero(t, homeDec.StableServedImageRateMultiplier)
+	require.Nil(t, homeDec.StableServedImagePrice1K)
+}
+
 func TestValidateStablePriorityFallbackGroup_AllowsRing(t *testing.T) {
 	ring := &groupRepoStubForFallbackCycle{groups: map[int64]*Group{
 		1: openaiGroup(1, ptrI64(2)),

@@ -66,6 +66,14 @@ type OpenAIAccountScheduleDecision struct {
 	StablePriorityReverted     bool    // 本次触发了切回 home 组
 	StableServedGroupID        int64   // 实际服务的档位组 ID（0 表示未知/home）
 	StableServedRateMultiplier float64 // 实际服务档位组的计费倍率（方案 Y：>0 时按此向用户计费）
+
+	// 实际服务档位组的 image 费率策略（方案 Y：兜底时图像计费须按服务组而非 home 组）。
+	StableServedImageRateIndependent bool
+	StableServedImageRateMultiplier  float64
+	// 实际服务档位组的图片基础单价（方案 Y：兜底时图片成本须按服务组单价）。
+	StableServedImagePrice1K *float64
+	StableServedImagePrice2K *float64
+	StableServedImagePrice4K *float64
 }
 
 type OpenAIAccountSchedulerMetricsSnapshot struct {
