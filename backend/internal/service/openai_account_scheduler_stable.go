@@ -66,7 +66,7 @@ func (s *OpenAIGatewayService) resolveStableChain(ctx context.Context, home *Gro
 func (s *OpenAIGatewayService) climbStableChain(
 	chain []*Group,
 	selectFor func(groupID int64) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error),
-) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error, *Group) {
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *Group, error) {
 	var (
 		lastSel *AccountSelectionResult
 		lastDec OpenAIAccountScheduleDecision
@@ -75,11 +75,11 @@ func (s *OpenAIGatewayService) climbStableChain(
 	for _, g := range chain {
 		sel, dec, err := selectFor(g.ID)
 		if !openAIHomeExhausted(sel, err) {
-			return sel, dec, err, g
+			return sel, dec, g, err
 		}
 		lastSel, lastDec, lastErr = sel, dec, err
 	}
-	return lastSel, lastDec, lastErr, nil
+	return lastSel, lastDec, nil, lastErr
 }
 
 // homeGroupHealthy 判断 home(廉价)组当前是否有可调度的 openai 渠道。
@@ -179,7 +179,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerStable(
 			}
 		}
 		// 维持兜底：从 G1 起逐档爬（跳过 home）。
-		served, sdec, serr, sg := s.climbStableChain(chain, selectFor)
+		served, sdec, sg, serr := s.climbStableChain(chain, selectFor)
 		if sg != nil {
 			annotateStableServed(&sdec, StablePriorityModeFallback, true, sg, homeID)
 			return served, sdec, serr
@@ -202,7 +202,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerStable(
 		annotateStableServed(&dec, StablePriorityModeNormal, false, nil, homeID)
 		return sel, dec, err
 	}
-	served, sdec, serr, sg := s.climbStableChain(chain, selectFor)
+	served, sdec, sg, serr := s.climbStableChain(chain, selectFor)
 	if sg != nil {
 		_, _ = s.stableStore.TryEnterFallback(ctx, homeID, nowNano)
 		annotateStableServed(&sdec, StablePriorityModeFallback, true, sg, homeID)
