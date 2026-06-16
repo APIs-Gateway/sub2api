@@ -31,6 +31,9 @@ type User struct {
 	// RPMLimit 用户级每分钟请求数上限（0 = 不限制），仅在所用分组未设置 rpm_limit 时作为兜底生效。
 	RPMLimit int `json:"rpm_limit"`
 
+	// StablePriorityEnabled 稳定优先：所在组渠道全挂时跨分组逐档兜底。
+	StablePriorityEnabled bool `json:"stable_priority_enabled"`
+
 	APIKeys       []APIKey           `json:"api_keys,omitempty"`
 	Subscriptions []UserSubscription `json:"subscriptions,omitempty"`
 }
@@ -108,6 +111,8 @@ type Group struct {
 	FallbackGroupID *int64 `json:"fallback_group_id"`
 	// 无效请求兜底分组
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request"`
+	// 稳定优先下一档兜底目标分组（仅 openai 平台）
+	StablePriorityFallbackGroupID *int64 `json:"stable_priority_fallback_group_id"`
 
 	// OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch"`

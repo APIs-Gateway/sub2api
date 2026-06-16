@@ -200,6 +200,8 @@ type CreateGroupInput struct {
 	FallbackGroupID      *int64 // 降级分组 ID
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
+	// 稳定优先下一档兜底目标分组 ID（构成多档链，仅 openai 平台使用）
+	StablePriorityFallbackGroupID *int64
 	// 模型路由配置（仅 anthropic 平台使用）
 	ModelRouting        map[string][]int64
 	ModelRoutingEnabled bool // 是否启用模型路由
@@ -240,6 +242,9 @@ type UpdateGroupInput struct {
 	FallbackGroupID      *int64 // 降级分组 ID
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
+	// 稳定优先下一档兜底目标分组 ID（构成多档链，仅 openai 平台使用）。
+	// nil = 不修改；指向 0（或 <=0）= 清除。
+	StablePriorityFallbackGroupID *int64
 	// 模型路由配置（仅 anthropic 平台使用）
 	ModelRouting        map[string][]int64
 	ModelRoutingEnabled *bool // 是否启用模型路由
@@ -1628,6 +1633,17 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		}
 	}
 
+	// 校验稳定优先兜底目标分组（仅 openai）
+	stablePriorityFallback := input.StablePriorityFallbackGroupID
+	if stablePriorityFallback != nil && *stablePriorityFallback <= 0 {
+		stablePriorityFallback = nil
+	}
+	if stablePriorityFallback != nil {
+		if err := s.validateStablePriorityFallbackGroup(ctx, 0, *stablePriorityFallback, platform); err != nil {
+			return nil, err
+		}
+	}
+
 	// MCPXMLInject：默认为 true，仅当显式传入 false 时关闭
 	mcpXMLInject := true
 	if input.MCPXMLInject != nil {
@@ -1686,6 +1702,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		ClaudeCodeOnly:                  input.ClaudeCodeOnly,
 		FallbackGroupID:                 input.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: fallbackOnInvalidRequest,
+		StablePriorityFallbackGroupID:   stablePriorityFallback,
 		ModelRouting:                    input.ModelRouting,
 		MCPXMLInject:                    mcpXMLInject,
 		SupportedModelScopes:            input.SupportedModelScopes,
@@ -1785,6 +1802,49 @@ func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGro
 		}
 		nextID = *fallbackGroup.FallbackGroupID
 	}
+}
+
+// validateStablePriorityFallbackGroup 校验稳定优先兜底目标分组。
+//
+// 与 Claude Code 降级链（validateFallbackGroup）不同：稳定优先**允许成环**——
+// 廉价↔中等↔稳定 互为兜底，使任意档位挂掉时都能临时路由到环上其它正常分组。
+// 环在运行时由 resolveStableChain 的 visited 集合安全终止，故此处遇到回到已访问节点
+// （含回到当前分组）即视为环闭合、合法终止；仅校验整条可达链均为 openai 且存在，
+// 并以 StablePriorityMaxChainDepth 限制遍历长度。直接指向自己仍视为非法（无意义）。
+// currentGroupID 为当前分组 ID（新建时为 0）；platform 为当前分组平台。
+func (s *adminServiceImpl) validateStablePriorityFallbackGroup(ctx context.Context, currentGroupID, fallbackGroupID int64, platform string) error {
+	if platform != PlatformOpenAI {
+		return fmt.Errorf("stable priority fallback only supported for openai groups")
+	}
+	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
+		return fmt.Errorf("cannot set self as stable priority fallback group")
+	}
+
+	visited := map[int64]struct{}{}
+	nextID := fallbackGroupID
+	for depth := 0; depth < StablePriorityMaxChainDepth; depth++ {
+		if _, seen := visited[nextID]; seen {
+			return nil // 环闭合，合法
+		}
+		visited[nextID] = struct{}{}
+		if currentGroupID > 0 && nextID == currentGroupID {
+			return nil // 环回到当前分组，合法
+		}
+
+		fallbackGroup, err := s.groupRepo.GetByIDLite(ctx, nextID)
+		if err != nil {
+			return fmt.Errorf("stable priority fallback group not found: %w", err)
+		}
+		if fallbackGroup.Platform != PlatformOpenAI {
+			return fmt.Errorf("stable priority fallback group must be an openai group")
+		}
+
+		if fallbackGroup.StablePriorityFallbackGroupID == nil {
+			return nil
+		}
+		nextID = *fallbackGroup.StablePriorityFallbackGroupID
+	}
+	return nil // 达到深度上限即停止校验（运行时同样受 MaxChainDepth 截断）
 }
 
 // validateFallbackGroupOnInvalidRequest 校验无效请求兜底分组的有效性
@@ -1908,6 +1968,18 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		}
 	}
 	group.FallbackGroupIDOnInvalidRequest = fallbackOnInvalidRequest
+
+	// 稳定优先兜底目标分组（仅 openai）。nil = 不修改；<=0 = 清除。
+	if input.StablePriorityFallbackGroupID != nil {
+		if *input.StablePriorityFallbackGroupID > 0 {
+			if err := s.validateStablePriorityFallbackGroup(ctx, id, *input.StablePriorityFallbackGroupID, group.Platform); err != nil {
+				return nil, err
+			}
+			group.StablePriorityFallbackGroupID = input.StablePriorityFallbackGroupID
+		} else {
+			group.StablePriorityFallbackGroupID = nil
+		}
+	}
 
 	// 模型路由配置
 	if input.ModelRouting != nil {

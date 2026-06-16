@@ -170,6 +170,11 @@ func FallbackGroupIDOnInvalidRequest(v int64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFallbackGroupIDOnInvalidRequest, v))
 }
 
+// StablePriorityFallbackGroupID applies equality check predicate on the "stable_priority_fallback_group_id" field. It's identical to StablePriorityFallbackGroupIDEQ.
+func StablePriorityFallbackGroupID(v int64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldStablePriorityFallbackGroupID, v))
+}
+
 // ModelRoutingEnabled applies equality check predicate on the "model_routing_enabled" field. It's identical to ModelRoutingEnabledEQ.
 func ModelRoutingEnabled(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldModelRoutingEnabled, v))
@@ -1233,6 +1238,56 @@ func FallbackGroupIDOnInvalidRequestIsNil() predicate.Group {
 // FallbackGroupIDOnInvalidRequestNotNil applies the NotNil predicate on the "fallback_group_id_on_invalid_request" field.
 func FallbackGroupIDOnInvalidRequestNotNil() predicate.Group {
 	return predicate.Group(sql.FieldNotNull(FieldFallbackGroupIDOnInvalidRequest))
+}
+
+// StablePriorityFallbackGroupIDEQ applies the EQ predicate on the "stable_priority_fallback_group_id" field.
+func StablePriorityFallbackGroupIDEQ(v int64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldStablePriorityFallbackGroupID, v))
+}
+
+// StablePriorityFallbackGroupIDNEQ applies the NEQ predicate on the "stable_priority_fallback_group_id" field.
+func StablePriorityFallbackGroupIDNEQ(v int64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldStablePriorityFallbackGroupID, v))
+}
+
+// StablePriorityFallbackGroupIDIn applies the In predicate on the "stable_priority_fallback_group_id" field.
+func StablePriorityFallbackGroupIDIn(vs ...int64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldStablePriorityFallbackGroupID, vs...))
+}
+
+// StablePriorityFallbackGroupIDNotIn applies the NotIn predicate on the "stable_priority_fallback_group_id" field.
+func StablePriorityFallbackGroupIDNotIn(vs ...int64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldStablePriorityFallbackGroupID, vs...))
+}
+
+// StablePriorityFallbackGroupIDGT applies the GT predicate on the "stable_priority_fallback_group_id" field.
+func StablePriorityFallbackGroupIDGT(v int64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldStablePriorityFallbackGroupID, v))
+}
+
+// StablePriorityFallbackGroupIDGTE applies the GTE predicate on the "stable_priority_fallback_group_id" field.
+func StablePriorityFallbackGroupIDGTE(v int64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldStablePriorityFallbackGroupID, v))
+}
+
+// StablePriorityFallbackGroupIDLT applies the LT predicate on the "stable_priority_fallback_group_id" field.
+func StablePriorityFallbackGroupIDLT(v int64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldStablePriorityFallbackGroupID, v))
+}
+
+// StablePriorityFallbackGroupIDLTE applies the LTE predicate on the "stable_priority_fallback_group_id" field.
+func StablePriorityFallbackGroupIDLTE(v int64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldStablePriorityFallbackGroupID, v))
+}
+
+// StablePriorityFallbackGroupIDIsNil applies the IsNil predicate on the "stable_priority_fallback_group_id" field.
+func StablePriorityFallbackGroupIDIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldStablePriorityFallbackGroupID))
+}
+
+// StablePriorityFallbackGroupIDNotNil applies the NotNil predicate on the "stable_priority_fallback_group_id" field.
+func StablePriorityFallbackGroupIDNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldStablePriorityFallbackGroupID))
 }
 
 // ModelRoutingIsNil applies the IsNil predicate on the "model_routing" field.

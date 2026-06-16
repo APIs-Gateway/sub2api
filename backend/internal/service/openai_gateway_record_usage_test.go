@@ -155,6 +155,8 @@ func newOpenAIRecordUsageServiceForTest(usageRepo UsageLogRepository, userRepo U
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
 	)
 	svc.userGroupRateResolver = newUserGroupRateResolver(
 		rateRepo,
@@ -1405,6 +1407,111 @@ func TestOpenAIGatewayServiceRecordUsage_OutputImageSizeWinsBeforeBillingAndPers
 	require.Equal(t, map[string]int{ImageBillingSize4K: 1}, usageRepo.lastLog.ImageSizeBreakdown)
 	require.InDelta(t, 0.44, usageRepo.lastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.44, usageRepo.lastLog.ActualCost, 1e-12)
+}
+
+// 稳定优先兜底（方案 Y）：home 组与 served 组图片单价不同时，图片成本须按实际服务的 served 组单价计费。
+func TestOpenAIGatewayServiceRecordUsage_StableFallbackImageUsesServedGroupPricing(t *testing.T) {
+	homeImagePrice1K := 0.1
+	servedImagePrice1K := 0.5
+	homeGroupID := int64(1301)
+	servedGroupID := int64(1302)
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:  "resp_stable_fallback_image",
+			Model:      "gpt-image-2",
+			ImageCount: 1,
+			ImageSize:  "1K",
+			Duration:   time.Second,
+		},
+		APIKey: &APIKey{
+			ID:      11301,
+			GroupID: i64p(homeGroupID),
+			Group: &Group{
+				ID:             homeGroupID,
+				RateMultiplier: 1.0,
+				ImagePrice1K:   &homeImagePrice1K,
+			},
+		},
+		User:    &User{ID: 21301},
+		Account: &Account{ID: 31301},
+		// 兜底到 served 组：图片须按 served 组单价(0.5)而非 home 组(0.1)。
+		StableServedGroupID:        servedGroupID,
+		StableServedRateMultiplier: 1.0,
+		StableServedImagePrice1K:   &servedImagePrice1K,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, 1, usageRepo.lastLog.ImageCount)
+	// 1 张 * served 单价 0.5 * 倍率 1.0 = 0.5（若误用 home 单价则为 0.1）。
+	require.InDelta(t, 0.5, usageRepo.lastLog.TotalCost, 1e-12)
+	require.InDelta(t, 0.5, usageRepo.lastLog.ActualCost, 1e-12)
+}
+
+// 稳定优先兜底（方案 Y）：home 组与 served 组配置不同的账号统计定价规则时，
+// AccountStatsCost 须按实际服务的 served 组渠道/规则计算。
+func TestOpenAIGatewayServiceRecordUsage_StableFallbackAccountStatsUsesServedGroup(t *testing.T) {
+	homeGroupID := int64(1401)
+	servedGroupID := int64(1402)
+	homeInputPrice := 0.001
+	servedInputPrice := 0.005
+
+	homeChannel := &Channel{
+		ID:     1,
+		Status: StatusActive,
+		AccountStatsPricingRules: []AccountStatsPricingRule{{
+			GroupIDs: []int64{homeGroupID},
+			Pricing:  []ChannelModelPricing{{Models: []string{"gpt-5.1"}, InputPrice: &homeInputPrice}},
+		}},
+	}
+	servedChannel := &Channel{
+		ID:     2,
+		Status: StatusActive,
+		AccountStatsPricingRules: []AccountStatsPricingRule{{
+			GroupIDs: []int64{servedGroupID},
+			Pricing:  []ChannelModelPricing{{Models: []string{"gpt-5.1"}, InputPrice: &servedInputPrice}},
+		}},
+	}
+	cache := newEmptyChannelCache()
+	cache.channelByGroupID[homeGroupID] = homeChannel
+	cache.channelByGroupID[servedGroupID] = servedChannel
+	cache.groupPlatform[homeGroupID] = "openai"
+	cache.groupPlatform[servedGroupID] = "openai"
+	cache.loadedAt = time.Now()
+	cs := &ChannelService{}
+	cs.cache.Store(cache)
+
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.channelService = cs
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:     "resp_stable_fallback_account_stats",
+			Model:         "gpt-5.1",
+			UpstreamModel: "gpt-5.1",
+			Usage:         OpenAIUsage{InputTokens: 100},
+			Duration:      time.Second,
+		},
+		APIKey: &APIKey{
+			ID:      11401,
+			GroupID: i64p(homeGroupID),
+			Group:   &Group{ID: homeGroupID, RateMultiplier: 1.0},
+		},
+		User:    &User{ID: 21401},
+		Account: &Account{ID: 31401},
+		// 兜底到 served 组：账号统计成本须按 served 组规则（100*0.005=0.5），而非 home 组（100*0.001=0.1）。
+		StableServedGroupID:        servedGroupID,
+		StableServedRateMultiplier: 1.0,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.NotNil(t, usageRepo.lastLog.AccountStatsCost)
+	require.InDelta(t, 0.5, *usageRepo.lastLog.AccountStatsCost, 1e-12)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_ImageUsesPerImageBillingEvenWithUsageTokens(t *testing.T) {

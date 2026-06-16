@@ -343,6 +343,8 @@ type OpenAIGatewayService struct {
 	channelService        *ChannelService
 	balanceNotifyService  *BalanceNotifyService
 	settingService        *SettingService
+	stableStore           StablePriorityStateStore
+	groupRepo             GroupRepository
 
 	openaiWSPoolOnce              sync.Once
 	openaiWSStateStoreOnce        sync.Once
@@ -387,6 +389,8 @@ func NewOpenAIGatewayService(
 	channelService *ChannelService,
 	balanceNotifyService *BalanceNotifyService,
 	settingService *SettingService,
+	stableStore StablePriorityStateStore,
+	groupRepo GroupRepository,
 ) *OpenAIGatewayService {
 	svc := &OpenAIGatewayService{
 		accountRepo:         accountRepo,
@@ -418,6 +422,8 @@ func NewOpenAIGatewayService(
 		channelService:        channelService,
 		balanceNotifyService:  balanceNotifyService,
 		settingService:        settingService,
+		stableStore:           stableStore,
+		groupRepo:             groupRepo,
 		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
 		codexSnapshotThrottle: newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
 	}
@@ -5422,6 +5428,19 @@ type OpenAIRecordUsageInput struct {
 	RequestPayloadHash string
 	APIKeyService      APIKeyQuotaUpdater
 	ChannelUsageFields
+
+	// 稳定优先方案 Y：兜底到高倍率档位组时，按实际服务组的倍率向用户计费。
+	// StableServedGroupID>0 且 != apiKey.GroupID 且 StableServedRateMultiplier>0 时生效；
+	// 否则按 apiKey 所属（home）组正常计费。
+	StableServedGroupID        int64
+	StableServedRateMultiplier float64
+	// 兜底服务组的 image 费率策略，随 StableServedGroupID 一起生效（方案 Y 图像计费）。
+	StableServedImageRateIndependent bool
+	StableServedImageRateMultiplier  float64
+	// 兜底服务组的图片基础单价，随 StableServedGroupID 一起生效（方案 Y 图片成本）。
+	StableServedImagePrice1K *float64
+	StableServedImagePrice2K *float64
+	StableServedImagePrice4K *float64
 }
 
 // RecordUsage records usage and deducts balance
@@ -5464,14 +5483,42 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if s.cfg != nil {
 		multiplier = s.cfg.Default.RateMultiplier
 	}
+	// 方案 Y：稳定优先兜底时整体按"实际服务的档位组"计费——倍率、渠道定价、图片单价/倍率都用服务组。
+	// billingAPIKey 是仅用于成本计算的影子 key（其 Group 指向服务组），其余逻辑仍用原 apiKey。
+	billingAPIKey := apiKey
+	servedFromFallback := apiKey.GroupID != nil && apiKey.Group != nil &&
+		input.StableServedGroupID > 0 && input.StableServedGroupID != *apiKey.GroupID && input.StableServedRateMultiplier > 0
+	if servedFromFallback {
+		effectiveGroup := *apiKey.Group
+		effectiveGroup.ID = input.StableServedGroupID
+		effectiveGroup.RateMultiplier = input.StableServedRateMultiplier
+		effectiveGroup.ImageRateIndependent = input.StableServedImageRateIndependent
+		effectiveGroup.ImageRateMultiplier = input.StableServedImageRateMultiplier
+		effectiveGroup.ImagePrice1K = input.StableServedImagePrice1K
+		effectiveGroup.ImagePrice2K = input.StableServedImagePrice2K
+		effectiveGroup.ImagePrice4K = input.StableServedImagePrice4K
+		servedID := input.StableServedGroupID
+		keyCopy := *apiKey
+		keyCopy.GroupID = &servedID
+		keyCopy.Group = &effectiveGroup
+		billingAPIKey = &keyCopy
+	}
 	if apiKey.GroupID != nil && apiKey.Group != nil {
 		resolver := s.userGroupRateResolver
 		if resolver == nil {
 			resolver = newUserGroupRateResolver(nil, nil, resolveUserGroupRateCacheTTL(s.cfg), nil, "service.openai_gateway")
 		}
-		multiplier = resolver.Resolve(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
+		billingGroupID := *apiKey.GroupID
+		billingGroupRate := apiKey.Group.RateMultiplier
+		// 方案 Y：稳定优先兜底时，按实际服务的高倍率档位组计费（含该组的 per-user override）。
+		if servedFromFallback {
+			billingGroupID = input.StableServedGroupID
+			billingGroupRate = input.StableServedRateMultiplier
+		}
+		multiplier = resolver.Resolve(ctx, user.ID, billingGroupID, billingGroupRate)
 	}
-	imageMultiplier := resolveImageRateMultiplier(apiKey, multiplier)
+	// 图像倍率/单价随影子 key 走服务组（resolveImageRateMultiplier 内部读 billingAPIKey.Group）。
+	imageMultiplier := resolveImageRateMultiplier(billingAPIKey, multiplier)
 
 	var cost *CostBreakdown
 	var err error
@@ -5497,7 +5544,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if result.ServiceTier != nil {
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
 	}
-	cost, err = s.calculateOpenAIRecordUsageCost(ctx, result, apiKey, billingModels, multiplier, imageMultiplier, tokens, serviceTier)
+	cost, err = s.calculateOpenAIRecordUsageCost(ctx, result, billingAPIKey, billingModels, multiplier, imageMultiplier, tokens, serviceTier)
 	if err != nil {
 		if !isUsagePricingUnavailableError(err) {
 			return err
@@ -5608,10 +5655,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.SubscriptionID = &subscription.ID
 	}
 
-	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
-	if apiKey.GroupID != nil {
+	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）。
+	// 账号统计成本反映账号实际所在/服务组的渠道与定价规则；稳定优先兜底时须用 served 组（与 billingAPIKey 同口径）。
+	if billingAPIKey.GroupID != nil {
 		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
-			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
+			account.ID, *billingAPIKey.GroupID, result.UpstreamModel, result.Model,
 			tokens, cost.TotalCost,
 		)
 	}

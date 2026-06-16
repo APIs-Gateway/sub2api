@@ -14887,6 +14887,8 @@ type GroupMutation struct {
 	addfallback_group_id                    *int64
 	fallback_group_id_on_invalid_request    *int64
 	addfallback_group_id_on_invalid_request *int64
+	stable_priority_fallback_group_id       *int64
+	addstable_priority_fallback_group_id    *int64
 	model_routing                           *map[string][]int64
 	model_routing_enabled                   *bool
 	mcp_xml_inject                          *bool
@@ -16209,6 +16211,76 @@ func (m *GroupMutation) ResetFallbackGroupIDOnInvalidRequest() {
 	delete(m.clearedFields, group.FieldFallbackGroupIDOnInvalidRequest)
 }
 
+// SetStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field.
+func (m *GroupMutation) SetStablePriorityFallbackGroupID(i int64) {
+	m.stable_priority_fallback_group_id = &i
+	m.addstable_priority_fallback_group_id = nil
+}
+
+// StablePriorityFallbackGroupID returns the value of the "stable_priority_fallback_group_id" field in the mutation.
+func (m *GroupMutation) StablePriorityFallbackGroupID() (r int64, exists bool) {
+	v := m.stable_priority_fallback_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStablePriorityFallbackGroupID returns the old "stable_priority_fallback_group_id" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldStablePriorityFallbackGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStablePriorityFallbackGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStablePriorityFallbackGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStablePriorityFallbackGroupID: %w", err)
+	}
+	return oldValue.StablePriorityFallbackGroupID, nil
+}
+
+// AddStablePriorityFallbackGroupID adds i to the "stable_priority_fallback_group_id" field.
+func (m *GroupMutation) AddStablePriorityFallbackGroupID(i int64) {
+	if m.addstable_priority_fallback_group_id != nil {
+		*m.addstable_priority_fallback_group_id += i
+	} else {
+		m.addstable_priority_fallback_group_id = &i
+	}
+}
+
+// AddedStablePriorityFallbackGroupID returns the value that was added to the "stable_priority_fallback_group_id" field in this mutation.
+func (m *GroupMutation) AddedStablePriorityFallbackGroupID() (r int64, exists bool) {
+	v := m.addstable_priority_fallback_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearStablePriorityFallbackGroupID clears the value of the "stable_priority_fallback_group_id" field.
+func (m *GroupMutation) ClearStablePriorityFallbackGroupID() {
+	m.stable_priority_fallback_group_id = nil
+	m.addstable_priority_fallback_group_id = nil
+	m.clearedFields[group.FieldStablePriorityFallbackGroupID] = struct{}{}
+}
+
+// StablePriorityFallbackGroupIDCleared returns if the "stable_priority_fallback_group_id" field was cleared in this mutation.
+func (m *GroupMutation) StablePriorityFallbackGroupIDCleared() bool {
+	_, ok := m.clearedFields[group.FieldStablePriorityFallbackGroupID]
+	return ok
+}
+
+// ResetStablePriorityFallbackGroupID resets all changes to the "stable_priority_fallback_group_id" field.
+func (m *GroupMutation) ResetStablePriorityFallbackGroupID() {
+	m.stable_priority_fallback_group_id = nil
+	m.addstable_priority_fallback_group_id = nil
+	delete(m.clearedFields, group.FieldStablePriorityFallbackGroupID)
+}
+
 // SetModelRouting sets the "model_routing" field.
 func (m *GroupMutation) SetModelRouting(value map[string][]int64) {
 	m.model_routing = &value
@@ -17031,7 +17103,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 34)
+	fields := make([]string, 0, 35)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -17100,6 +17172,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.fallback_group_id_on_invalid_request != nil {
 		fields = append(fields, group.FieldFallbackGroupIDOnInvalidRequest)
+	}
+	if m.stable_priority_fallback_group_id != nil {
+		fields = append(fields, group.FieldStablePriorityFallbackGroupID)
 	}
 	if m.model_routing != nil {
 		fields = append(fields, group.FieldModelRouting)
@@ -17188,6 +17263,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.FallbackGroupID()
 	case group.FieldFallbackGroupIDOnInvalidRequest:
 		return m.FallbackGroupIDOnInvalidRequest()
+	case group.FieldStablePriorityFallbackGroupID:
+		return m.StablePriorityFallbackGroupID()
 	case group.FieldModelRouting:
 		return m.ModelRouting()
 	case group.FieldModelRoutingEnabled:
@@ -17265,6 +17342,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldFallbackGroupID(ctx)
 	case group.FieldFallbackGroupIDOnInvalidRequest:
 		return m.OldFallbackGroupIDOnInvalidRequest(ctx)
+	case group.FieldStablePriorityFallbackGroupID:
+		return m.OldStablePriorityFallbackGroupID(ctx)
 	case group.FieldModelRouting:
 		return m.OldModelRouting(ctx)
 	case group.FieldModelRoutingEnabled:
@@ -17457,6 +17536,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetFallbackGroupIDOnInvalidRequest(v)
 		return nil
+	case group.FieldStablePriorityFallbackGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStablePriorityFallbackGroupID(v)
+		return nil
 	case group.FieldModelRouting:
 		v, ok := value.(map[string][]int64)
 		if !ok {
@@ -17575,6 +17661,9 @@ func (m *GroupMutation) AddedFields() []string {
 	if m.addfallback_group_id_on_invalid_request != nil {
 		fields = append(fields, group.FieldFallbackGroupIDOnInvalidRequest)
 	}
+	if m.addstable_priority_fallback_group_id != nil {
+		fields = append(fields, group.FieldStablePriorityFallbackGroupID)
+	}
 	if m.addsort_order != nil {
 		fields = append(fields, group.FieldSortOrder)
 	}
@@ -17611,6 +17700,8 @@ func (m *GroupMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedFallbackGroupID()
 	case group.FieldFallbackGroupIDOnInvalidRequest:
 		return m.AddedFallbackGroupIDOnInvalidRequest()
+	case group.FieldStablePriorityFallbackGroupID:
+		return m.AddedStablePriorityFallbackGroupID()
 	case group.FieldSortOrder:
 		return m.AddedSortOrder()
 	case group.FieldRpmLimit:
@@ -17701,6 +17792,13 @@ func (m *GroupMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddFallbackGroupIDOnInvalidRequest(v)
 		return nil
+	case group.FieldStablePriorityFallbackGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddStablePriorityFallbackGroupID(v)
+		return nil
 	case group.FieldSortOrder:
 		v, ok := value.(int)
 		if !ok {
@@ -17753,6 +17851,9 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldFallbackGroupIDOnInvalidRequest) {
 		fields = append(fields, group.FieldFallbackGroupIDOnInvalidRequest)
 	}
+	if m.FieldCleared(group.FieldStablePriorityFallbackGroupID) {
+		fields = append(fields, group.FieldStablePriorityFallbackGroupID)
+	}
 	if m.FieldCleared(group.FieldModelRouting) {
 		fields = append(fields, group.FieldModelRouting)
 	}
@@ -17799,6 +17900,9 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldFallbackGroupIDOnInvalidRequest:
 		m.ClearFallbackGroupIDOnInvalidRequest()
+		return nil
+	case group.FieldStablePriorityFallbackGroupID:
+		m.ClearStablePriorityFallbackGroupID()
 		return nil
 	case group.FieldModelRouting:
 		m.ClearModelRouting()
@@ -17879,6 +17983,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldFallbackGroupIDOnInvalidRequest:
 		m.ResetFallbackGroupIDOnInvalidRequest()
+		return nil
+	case group.FieldStablePriorityFallbackGroupID:
+		m.ResetStablePriorityFallbackGroupID()
 		return nil
 	case group.FieldModelRouting:
 		m.ResetModelRouting()
@@ -38123,6 +38230,7 @@ type UserMutation struct {
 	addtotal_recharged            *float64
 	rpm_limit                     *int
 	addrpm_limit                  *int
+	stable_priority_enabled       *bool
 	clearedFields                 map[string]struct{}
 	api_keys                      map[int64]struct{}
 	removedapi_keys               map[int64]struct{}
@@ -39270,6 +39378,42 @@ func (m *UserMutation) ResetRpmLimit() {
 	m.addrpm_limit = nil
 }
 
+// SetStablePriorityEnabled sets the "stable_priority_enabled" field.
+func (m *UserMutation) SetStablePriorityEnabled(b bool) {
+	m.stable_priority_enabled = &b
+}
+
+// StablePriorityEnabled returns the value of the "stable_priority_enabled" field in the mutation.
+func (m *UserMutation) StablePriorityEnabled() (r bool, exists bool) {
+	v := m.stable_priority_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStablePriorityEnabled returns the old "stable_priority_enabled" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldStablePriorityEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStablePriorityEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStablePriorityEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStablePriorityEnabled: %w", err)
+	}
+	return oldValue.StablePriorityEnabled, nil
+}
+
+// ResetStablePriorityEnabled resets all changes to the "stable_priority_enabled" field.
+func (m *UserMutation) ResetStablePriorityEnabled() {
+	m.stable_priority_enabled = nil
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by ids.
 func (m *UserMutation) AddAPIKeyIDs(ids ...int64) {
 	if m.api_keys == nil {
@@ -39952,7 +40096,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 23)
+	fields := make([]string, 0, 24)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -40022,6 +40166,9 @@ func (m *UserMutation) Fields() []string {
 	if m.rpm_limit != nil {
 		fields = append(fields, user.FieldRpmLimit)
 	}
+	if m.stable_priority_enabled != nil {
+		fields = append(fields, user.FieldStablePriorityEnabled)
+	}
 	return fields
 }
 
@@ -40076,6 +40223,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.TotalRecharged()
 	case user.FieldRpmLimit:
 		return m.RpmLimit()
+	case user.FieldStablePriorityEnabled:
+		return m.StablePriorityEnabled()
 	}
 	return nil, false
 }
@@ -40131,6 +40280,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldTotalRecharged(ctx)
 	case user.FieldRpmLimit:
 		return m.OldRpmLimit(ctx)
+	case user.FieldStablePriorityEnabled:
+		return m.OldStablePriorityEnabled(ctx)
 	}
 	return nil, fmt.Errorf("unknown User field %s", name)
 }
@@ -40300,6 +40451,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRpmLimit(v)
+		return nil
+	case user.FieldStablePriorityEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStablePriorityEnabled(v)
 		return nil
 	}
 	return fmt.Errorf("unknown User field %s", name)
@@ -40520,6 +40678,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldRpmLimit:
 		m.ResetRpmLimit()
+		return nil
+	case user.FieldStablePriorityEnabled:
+		m.ResetStablePriorityEnabled()
 		return nil
 	}
 	return fmt.Errorf("unknown User field %s", name)

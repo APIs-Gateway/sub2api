@@ -1283,6 +1283,12 @@ export default {
       unverified: '未验证',
       verified: '已验证',
     },
+    stablePriority: {
+      title: '稳定优先',
+      description: '开启后，当你所用分组的渠道全部不可用时，请求会自动跨分组逐档兜底到更稳定的高倍率分组；低倍率分组恢复稳定后自动切回。',
+      enabled: '启用稳定优先',
+      billingHint: '注意：兜底期间将按实际服务的高倍率分组费率从你的余额计费，费用可能高于原分组。',
+    },
     avatar: {
       title: '资料头像',
       description: '仅支持上传头像图片；静态图片会自动压缩到 20KB 以内后再保存。',
@@ -2277,6 +2283,11 @@ export default {
         fallbackGroup: '降级分组',
         fallbackHint: '非 Claude Code 请求将使用此分组，留空则直接拒绝',
         noFallback: '不降级（直接拒绝）'
+      },
+      stablePriority: {
+        fallbackGroup: '稳定优先兜底分组',
+        fallbackHint: '当本组所有渠道不可用时，开启稳定优先的用户请求将兜底到此分组；可逐档串联形成多档兜底链，也可让高档位回指低档位形成互备环——任意档位挂掉都会临时路由到环上其它正常分组，恢复后自动切回。留空表示本组不参与兜底。',
+        noFallback: '不兜底'
       },
       openaiMessages: {
         title: 'OpenAI Messages 调度配置',

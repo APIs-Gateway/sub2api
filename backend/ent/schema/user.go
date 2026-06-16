@@ -112,6 +112,11 @@ func (User) Fields() []ent.Field {
 		// 用户级每分钟请求数上限（0 = 不限制）。仅当所在分组未设置 rpm_limit 时作为兜底生效。
 		field.Int("rpm_limit").
 			Default(0),
+
+		// 稳定优先：所在组渠道全挂时跨分组逐档兜底（廉价→中等→稳定），默认关闭。
+		field.Bool("stable_priority_enabled").
+			Default(false).
+			Comment("稳定优先：所在组渠道全挂时跨分组逐档兜底"),
 	}
 }
 

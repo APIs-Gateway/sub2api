@@ -473,6 +473,33 @@ func (_u *GroupUpdate) ClearFallbackGroupIDOnInvalidRequest() *GroupUpdate {
 	return _u
 }
 
+// SetStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field.
+func (_u *GroupUpdate) SetStablePriorityFallbackGroupID(v int64) *GroupUpdate {
+	_u.mutation.ResetStablePriorityFallbackGroupID()
+	_u.mutation.SetStablePriorityFallbackGroupID(v)
+	return _u
+}
+
+// SetNillableStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableStablePriorityFallbackGroupID(v *int64) *GroupUpdate {
+	if v != nil {
+		_u.SetStablePriorityFallbackGroupID(*v)
+	}
+	return _u
+}
+
+// AddStablePriorityFallbackGroupID adds value to the "stable_priority_fallback_group_id" field.
+func (_u *GroupUpdate) AddStablePriorityFallbackGroupID(v int64) *GroupUpdate {
+	_u.mutation.AddStablePriorityFallbackGroupID(v)
+	return _u
+}
+
+// ClearStablePriorityFallbackGroupID clears the value of the "stable_priority_fallback_group_id" field.
+func (_u *GroupUpdate) ClearStablePriorityFallbackGroupID() *GroupUpdate {
+	_u.mutation.ClearStablePriorityFallbackGroupID()
+	return _u
+}
+
 // SetModelRouting sets the "model_routing" field.
 func (_u *GroupUpdate) SetModelRouting(v map[string][]int64) *GroupUpdate {
 	_u.mutation.SetModelRouting(v)
@@ -1070,6 +1097,15 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.FallbackGroupIDOnInvalidRequestCleared() {
 		_spec.ClearField(group.FieldFallbackGroupIDOnInvalidRequest, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.StablePriorityFallbackGroupID(); ok {
+		_spec.SetField(group.FieldStablePriorityFallbackGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedStablePriorityFallbackGroupID(); ok {
+		_spec.AddField(group.FieldStablePriorityFallbackGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.StablePriorityFallbackGroupIDCleared() {
+		_spec.ClearField(group.FieldStablePriorityFallbackGroupID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.ModelRouting(); ok {
 		_spec.SetField(group.FieldModelRouting, field.TypeJSON, value)
@@ -1869,6 +1905,33 @@ func (_u *GroupUpdateOne) ClearFallbackGroupIDOnInvalidRequest() *GroupUpdateOne
 	return _u
 }
 
+// SetStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field.
+func (_u *GroupUpdateOne) SetStablePriorityFallbackGroupID(v int64) *GroupUpdateOne {
+	_u.mutation.ResetStablePriorityFallbackGroupID()
+	_u.mutation.SetStablePriorityFallbackGroupID(v)
+	return _u
+}
+
+// SetNillableStablePriorityFallbackGroupID sets the "stable_priority_fallback_group_id" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableStablePriorityFallbackGroupID(v *int64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetStablePriorityFallbackGroupID(*v)
+	}
+	return _u
+}
+
+// AddStablePriorityFallbackGroupID adds value to the "stable_priority_fallback_group_id" field.
+func (_u *GroupUpdateOne) AddStablePriorityFallbackGroupID(v int64) *GroupUpdateOne {
+	_u.mutation.AddStablePriorityFallbackGroupID(v)
+	return _u
+}
+
+// ClearStablePriorityFallbackGroupID clears the value of the "stable_priority_fallback_group_id" field.
+func (_u *GroupUpdateOne) ClearStablePriorityFallbackGroupID() *GroupUpdateOne {
+	_u.mutation.ClearStablePriorityFallbackGroupID()
+	return _u
+}
+
 // SetModelRouting sets the "model_routing" field.
 func (_u *GroupUpdateOne) SetModelRouting(v map[string][]int64) *GroupUpdateOne {
 	_u.mutation.SetModelRouting(v)
@@ -2496,6 +2559,15 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if _u.mutation.FallbackGroupIDOnInvalidRequestCleared() {
 		_spec.ClearField(group.FieldFallbackGroupIDOnInvalidRequest, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.StablePriorityFallbackGroupID(); ok {
+		_spec.SetField(group.FieldStablePriorityFallbackGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedStablePriorityFallbackGroupID(); ok {
+		_spec.AddField(group.FieldStablePriorityFallbackGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.StablePriorityFallbackGroupIDCleared() {
+		_spec.ClearField(group.FieldStablePriorityFallbackGroupID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.ModelRouting(); ok {
 		_spec.SetField(group.FieldModelRouting, field.TypeJSON, value)

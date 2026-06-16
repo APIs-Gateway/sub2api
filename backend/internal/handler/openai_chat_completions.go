@@ -127,8 +127,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	for {
 		reqLog.Debug("openai_chat_completions.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
+		stableIntent := service.StablePriorityIntent{Enabled: apiKey.User != nil && apiKey.User.StablePriorityEnabled}
+		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerStable(
 			c.Request.Context(),
+			apiKey.Group,
 			apiKey.GroupID,
 			"",
 			sessionHash,
@@ -136,6 +138,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			failedAccountIDs,
 			service.OpenAIUpstreamTransportAny,
 			false,
+			stableIntent,
 		)
 		if err != nil {
 			reqLog.Warn("openai_chat_completions.account_select_failed",
@@ -163,10 +166,33 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		account := selection.Account
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_chat_completions.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
-		_ = scheduleDecision
+		if scheduleDecision.StablePriorityFallback || scheduleDecision.StablePriorityReverted {
+			reqLog.Info("openai_chat_completions.stable_priority",
+				zap.Bool("fallback", scheduleDecision.StablePriorityFallback),
+				zap.Bool("reverted", scheduleDecision.StablePriorityReverted),
+				zap.String("state", scheduleDecision.StablePriorityState),
+				zap.Int64p("home_group", apiKey.GroupID),
+				zap.Int64("served_group", scheduleDecision.StableServedGroupID),
+				zap.Int64("account_id", account.ID),
+			)
+		}
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		// 稳定优先兜底到 served 组时，须统一按"实际服务组"处理：
+		//  1) 粘性会话绑定的 groupID 须与调度器读取侧一致，否则后续请求换命名空间、粘性失效、在兜底账号间抖动；
+		//  2) 渠道映射须按 served 组重算，否则转发体与计费模型字段会沿用 home 组映射而出错。
+		stickyGroupID := apiKey.GroupID
+		effectiveMapping := channelMapping
+		homeGroupID := int64(0)
+		if apiKey.GroupID != nil {
+			homeGroupID = *apiKey.GroupID
+		}
+		if served := scheduleDecision.StableServedGroupID; served > 0 && served != homeGroupID {
+			servedGroupID := served
+			stickyGroupID = &servedGroupID
+			effectiveMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), &servedGroupID, reqModel)
+		}
+		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, stickyGroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if !acquired {
 			return
 		}
@@ -175,8 +201,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		forwardStart := time.Now()
 
 		forwardBody := body
-		if channelMapping.Mapped {
-			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
+		if effectiveMapping.Mapped {
+			forwardBody = h.gatewayService.ReplaceModelInBody(body, effectiveMapping.MappedModel)
 		}
 		writerSizeBeforeForward := c.Writer.Size()
 		result, err := func() (*service.OpenAIForwardResult, error) {
@@ -272,20 +298,35 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		clientIP := ip.GetClientIP(c)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := resolveRawCCUpstreamEndpoint(c, account)
+		// 稳定优先方案 Y：兜底时按实际服务档位组倍率计费（normal 态为 0，不影响正常计费）。
+		stableServedGroupID := scheduleDecision.StableServedGroupID
+		stableServedRate := scheduleDecision.StableServedRateMultiplier
+		stableServedImageIndependent := scheduleDecision.StableServedImageRateIndependent
+		stableServedImageRate := scheduleDecision.StableServedImageRateMultiplier
+		stableServedImagePrice1K := scheduleDecision.StableServedImagePrice1K
+		stableServedImagePrice2K := scheduleDecision.StableServedImagePrice2K
+		stableServedImagePrice4K := scheduleDecision.StableServedImagePrice4K
 
 		h.submitOpenAIUsageRecordTask(result, func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-				Result:             result,
-				APIKey:             apiKey,
-				User:               apiKey.User,
-				Account:            account,
-				Subscription:       subscription,
-				InboundEndpoint:    inboundEndpoint,
-				UpstreamEndpoint:   upstreamEndpoint,
-				UserAgent:          userAgent,
-				IPAddress:          clientIP,
-				APIKeyService:      h.apiKeyService,
-				ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
+				Result:                           result,
+				APIKey:                           apiKey,
+				User:                             apiKey.User,
+				Account:                          account,
+				Subscription:                     subscription,
+				InboundEndpoint:                  inboundEndpoint,
+				UpstreamEndpoint:                 upstreamEndpoint,
+				UserAgent:                        userAgent,
+				IPAddress:                        clientIP,
+				APIKeyService:                    h.apiKeyService,
+				ChannelUsageFields:               effectiveMapping.ToUsageFields(reqModel, result.UpstreamModel),
+				StableServedGroupID:              stableServedGroupID,
+				StableServedRateMultiplier:       stableServedRate,
+				StableServedImageRateIndependent: stableServedImageIndependent,
+				StableServedImageRateMultiplier:  stableServedImageRate,
+				StableServedImagePrice1K:         stableServedImagePrice1K,
+				StableServedImagePrice2K:         stableServedImagePrice2K,
+				StableServedImagePrice4K:         stableServedImagePrice4K,
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.chat_completions"),
