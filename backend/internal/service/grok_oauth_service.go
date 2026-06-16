@@ -118,7 +118,10 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 	if state == "" {
 		state = strings.TrimSpace(parsed.State)
 	}
-	if state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(session.State)) != 1 {
+	if state == "" {
+		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_STATE_REQUIRED", "oauth state is required")
+	}
+	if subtle.ConstantTimeCompare([]byte(state), []byte(session.State)) != 1 {
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_INVALID_STATE", "invalid oauth state")
 	}
 	// redirect_uri 与授权会话绑定：客户端传入的值必须与 session 一致，交换时始终用 session 记录的值。
@@ -136,6 +139,9 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 		}
 	}
 
+	// OAuth session 一次性：参数校验通过、真正向 xAI 发起 code 交换后，无论成败都作废，
+	// 防止同一 session/code 被反复重放（upstream f29ccc7df；校验失败不消耗 session，与上游后续语义一致）。
+	defer s.sessionStore.Delete(input.SessionID)
 	tokenResp, err := s.oauthClient.ExchangeCode(ctx, code, session.CodeVerifier, session.RedirectURI, proxyURL, session.ClientID)
 	if err != nil {
 		return nil, err
@@ -143,7 +149,6 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 	if err := validateGrokTokenResponse(tokenResp); err != nil {
 		return nil, err
 	}
-	s.sessionStore.Delete(input.SessionID)
 	return s.tokenInfoFromResponse(tokenResp, session.ClientID, nil), nil
 }
 

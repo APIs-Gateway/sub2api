@@ -44,7 +44,7 @@ func TestGrokOAuthServiceExchangeCodeRequiresState(t *testing.T) {
 		Code:      "authorization-code",
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "GROK_OAUTH_INVALID_STATE")
+	require.Contains(t, err.Error(), "GROK_OAUTH_STATE_REQUIRED")
 
 	authURL, err = service.GenerateAuthURL(context.Background(), nil, "")
 	require.NoError(t, err)
@@ -253,4 +253,83 @@ func TestGrokOAuthServiceRefreshTokenPreservesOriginalRefreshTokenWhenNotRotated
 	require.Equal(t, "new-access-token", info.AccessToken)
 	require.Equal(t, "original-refresh-token", info.RefreshToken)
 	require.Equal(t, "client-id", info.ClientID)
+}
+
+func TestGrokOAuthServiceExchangeCodeRequiresStateForCallbackURLAndConsumesSession(t *testing.T) {
+	client := &grokOAuthClientStub{}
+	svc := NewGrokOAuthService(nil, client)
+	defer svc.Stop()
+
+	auth, err := svc.GenerateAuthURL(context.Background(), nil, "")
+	require.NoError(t, err)
+
+	_, err = svc.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
+		SessionID: auth.SessionID,
+		Code:      "http://127.0.0.1:56121/callback?code=code-without-state",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "GROK_OAUTH_STATE_REQUIRED")
+	require.Zero(t, client.exchangeCalls)
+
+	_, err = svc.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
+		SessionID: auth.SessionID,
+		Code:      "code-with-state",
+		State:     auth.State,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "GROK_OAUTH_SESSION_NOT_FOUND")
+	require.Zero(t, client.exchangeCalls)
+}
+
+type grokOAuthExchangeCountingClient struct {
+	exchangeCalls int
+	exchangeErr   error
+}
+
+func (c *grokOAuthExchangeCountingClient) ExchangeCode(context.Context, string, string, string, string, string) (*xai.TokenResponse, error) {
+	c.exchangeCalls++
+	if c.exchangeErr != nil {
+		return nil, c.exchangeErr
+	}
+	return &xai.TokenResponse{AccessToken: "access-token"}, nil
+}
+
+func (c *grokOAuthExchangeCountingClient) RefreshToken(context.Context, string, string, string) (*xai.TokenResponse, error) {
+	return &xai.TokenResponse{AccessToken: "refreshed-token"}, nil
+}
+
+// 回调 URL 里缺 state 必须拒绝且不向 xAI 发起交换；一旦真正发起过交换（无论成败），
+// session 即作废，不能用同一 session 重放（upstream f29ccc7df）。
+func TestGrokOAuthServiceExchangeCodeRequiresStateForCallbackURLAndConsumesSession(t *testing.T) {
+	client := &grokOAuthExchangeCountingClient{exchangeErr: errors.New("upstream exchange failed")}
+	svc := NewGrokOAuthService(nil, client)
+	defer svc.Stop()
+
+	auth, err := svc.GenerateAuthURL(context.Background(), nil, "")
+	require.NoError(t, err)
+
+	_, err = svc.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
+		SessionID: auth.SessionID,
+		Code:      "http://127.0.0.1:56121/callback?code=code-without-state",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "GROK_OAUTH_STATE_REQUIRED")
+	require.Zero(t, client.exchangeCalls)
+
+	_, err = svc.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
+		SessionID: auth.SessionID,
+		Code:      "code-with-state",
+		State:     auth.State,
+	})
+	require.Error(t, err)
+	require.Equal(t, 1, client.exchangeCalls)
+
+	_, err = svc.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
+		SessionID: auth.SessionID,
+		Code:      "code-with-state",
+		State:     auth.State,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "GROK_OAUTH_SESSION_NOT_FOUND")
+	require.Equal(t, 1, client.exchangeCalls)
 }
