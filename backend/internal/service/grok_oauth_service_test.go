@@ -228,3 +228,29 @@ func TestGrokOAuthServiceRejectsEmptyUpstreamTokenResponse(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "GROK_OAUTH_INVALID_TOKEN_RESPONSE")
 }
+
+type grokOAuthRefreshResponseStub struct {
+	grokOAuthClientStub
+	refreshResponse *xai.TokenResponse
+}
+
+func (s *grokOAuthRefreshResponseStub) RefreshToken(context.Context, string, string, string) (*xai.TokenResponse, error) {
+	return s.refreshResponse, nil
+}
+
+func TestGrokOAuthServiceRefreshTokenPreservesOriginalRefreshTokenWhenNotRotated(t *testing.T) {
+	svc := NewGrokOAuthService(nil, &grokOAuthRefreshResponseStub{
+		refreshResponse: &xai.TokenResponse{
+			AccessToken: "new-access-token",
+			TokenType:   "Bearer",
+			ExpiresIn:   3600,
+		},
+	})
+	defer svc.Stop()
+
+	info, err := svc.RefreshToken(context.Background(), "original-refresh-token", "", "client-id")
+	require.NoError(t, err)
+	require.Equal(t, "new-access-token", info.AccessToken)
+	require.Equal(t, "original-refresh-token", info.RefreshToken)
+	require.Equal(t, "client-id", info.ClientID)
+}

@@ -159,7 +159,11 @@ func (s *GrokOAuthService) RefreshToken(ctx context.Context, refreshToken, proxy
 	if err := validateGrokTokenResponse(tokenResp); err != nil {
 		return nil, err
 	}
-	return s.tokenInfoFromResponse(tokenResp, clientID, nil), nil
+	tokenInfo := s.tokenInfoFromResponse(tokenResp, clientID, nil)
+	if tokenInfo.RefreshToken == "" {
+		tokenInfo.RefreshToken = refreshToken
+	}
+	return tokenInfo, nil
 }
 
 // validateGrokTokenResponse 拒绝缺少 access_token 的上游 token 响应，避免把空凭证写进账号。
