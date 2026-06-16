@@ -2986,6 +2986,13 @@ export default {
       monthly: 'Monthly',
       noLimits: 'No limits configured',
       unlimited: 'Unlimited',
+      burndown: {
+        consumptionProgress: 'Consumption',
+        usedToDay: 'Day {day} / {total}',
+        remainingBalance: 'Remaining',
+        dailyAmount: 'Daily',
+        clawed: 'Clawed back'
+      },
       resetNow: 'Resetting soon',
       windowNotActive: 'Window not active',
       resetInMinutes: 'Resets in {minutes}m',
