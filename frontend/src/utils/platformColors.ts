@@ -5,7 +5,7 @@
  * instead of defining their own color mappings.
  */
 
-export type Platform = 'anthropic' | 'openai' | 'antigravity' | 'gemini'
+export type Platform = 'anthropic' | 'openai' | 'antigravity' | 'gemini' | 'grok'
 
 // Quiet Ledger：去彩虹。四个平台统一中性处理，仅靠 platformLabel() 文字区分；
 // 黏土仅作克制点缀（强调条/折扣）。下列每个映射对所有平台返回同一中性值，
@@ -32,63 +32,63 @@ const NEUTRAL = {
 }
 
 const BADGE: Record<Platform, string> = {
-  anthropic: NEUTRAL.badge, openai: NEUTRAL.badge, antigravity: NEUTRAL.badge, gemini: NEUTRAL.badge,
+  anthropic: NEUTRAL.badge, openai: NEUTRAL.badge, antigravity: NEUTRAL.badge, gemini: NEUTRAL.badge, grok: NEUTRAL.badge,
 }
 const BADGE_DEFAULT = NEUTRAL.badge
 
 const BADGE_LIGHT: Record<Platform, string> = {
-  anthropic: NEUTRAL.badgeLight, openai: NEUTRAL.badgeLight, antigravity: NEUTRAL.badgeLight, gemini: NEUTRAL.badgeLight,
+  anthropic: NEUTRAL.badgeLight, openai: NEUTRAL.badgeLight, antigravity: NEUTRAL.badgeLight, gemini: NEUTRAL.badgeLight, grok: NEUTRAL.badgeLight,
 }
 
 const BORDER: Record<Platform, string> = {
-  anthropic: NEUTRAL.border, openai: NEUTRAL.border, antigravity: NEUTRAL.border, gemini: NEUTRAL.border,
+  anthropic: NEUTRAL.border, openai: NEUTRAL.border, antigravity: NEUTRAL.border, gemini: NEUTRAL.border, grok: NEUTRAL.border,
 }
 const BORDER_DEFAULT = NEUTRAL.border
 
 const ACCENT_BAR: Record<Platform, string> = {
-  anthropic: NEUTRAL.accentBar, openai: NEUTRAL.accentBar, antigravity: NEUTRAL.accentBar, gemini: NEUTRAL.accentBar,
+  anthropic: NEUTRAL.accentBar, openai: NEUTRAL.accentBar, antigravity: NEUTRAL.accentBar, gemini: NEUTRAL.accentBar, grok: NEUTRAL.accentBar,
 }
 const ACCENT_BAR_DEFAULT = NEUTRAL.accentBar
 
 const TEXT: Record<Platform, string> = {
-  anthropic: NEUTRAL.text, openai: NEUTRAL.text, antigravity: NEUTRAL.text, gemini: NEUTRAL.text,
+  anthropic: NEUTRAL.text, openai: NEUTRAL.text, antigravity: NEUTRAL.text, gemini: NEUTRAL.text, grok: NEUTRAL.text,
 }
 const TEXT_DEFAULT = NEUTRAL.text
 
 const ICON: Record<Platform, string> = {
-  anthropic: NEUTRAL.icon, openai: NEUTRAL.icon, antigravity: NEUTRAL.icon, gemini: NEUTRAL.icon,
+  anthropic: NEUTRAL.icon, openai: NEUTRAL.icon, antigravity: NEUTRAL.icon, gemini: NEUTRAL.icon, grok: NEUTRAL.icon,
 }
 const ICON_DEFAULT = NEUTRAL.icon
 
 const BUTTON: Record<Platform, string> = {
-  anthropic: NEUTRAL.button, openai: NEUTRAL.button, antigravity: NEUTRAL.button, gemini: NEUTRAL.button,
+  anthropic: NEUTRAL.button, openai: NEUTRAL.button, antigravity: NEUTRAL.button, gemini: NEUTRAL.button, grok: NEUTRAL.button,
 }
 const BUTTON_DEFAULT = NEUTRAL.button
 
 const DISCOUNT: Record<Platform, string> = {
-  anthropic: NEUTRAL.discount, openai: NEUTRAL.discount, antigravity: NEUTRAL.discount, gemini: NEUTRAL.discount,
+  anthropic: NEUTRAL.discount, openai: NEUTRAL.discount, antigravity: NEUTRAL.discount, gemini: NEUTRAL.discount, grok: NEUTRAL.discount,
 }
 const DISCOUNT_DEFAULT = NEUTRAL.discount
 
 const GRADIENT: Record<Platform, string> = {
-  anthropic: NEUTRAL.gradient, openai: NEUTRAL.gradient, antigravity: NEUTRAL.gradient, gemini: NEUTRAL.gradient,
+  anthropic: NEUTRAL.gradient, openai: NEUTRAL.gradient, antigravity: NEUTRAL.gradient, gemini: NEUTRAL.gradient, grok: NEUTRAL.gradient,
 }
 const GRADIENT_DEFAULT = NEUTRAL.gradient
 
 const GRADIENT_TEXT: Record<Platform, string> = {
-  anthropic: NEUTRAL.gradientText, openai: NEUTRAL.gradientText, antigravity: NEUTRAL.gradientText, gemini: NEUTRAL.gradientText,
+  anthropic: NEUTRAL.gradientText, openai: NEUTRAL.gradientText, antigravity: NEUTRAL.gradientText, gemini: NEUTRAL.gradientText, grok: NEUTRAL.gradientText,
 }
 const GRADIENT_TEXT_DEFAULT = NEUTRAL.gradientText
 
 const GRADIENT_SUBTEXT: Record<Platform, string> = {
-  anthropic: NEUTRAL.gradientSubtext, openai: NEUTRAL.gradientSubtext, antigravity: NEUTRAL.gradientSubtext, gemini: NEUTRAL.gradientSubtext,
+  anthropic: NEUTRAL.gradientSubtext, openai: NEUTRAL.gradientSubtext, antigravity: NEUTRAL.gradientSubtext, gemini: NEUTRAL.gradientSubtext, grok: NEUTRAL.gradientSubtext,
 }
 const GRADIENT_SUBTEXT_DEFAULT = NEUTRAL.gradientSubtext
 
 // ── Public API ──────────────────────────────────────────────────────
 
 function isPlatform(p: string): p is Platform {
-  return p === 'anthropic' || p === 'openai' || p === 'antigravity' || p === 'gemini'
+  return p === 'anthropic' || p === 'openai' || p === 'antigravity' || p === 'gemini' || p === 'grok'
 }
 
 export function platformBadgeClass(p: string): string {
@@ -141,6 +141,7 @@ export function platformLabel(p: string): string {
     case 'openai': return 'OpenAI'
     case 'antigravity': return 'Antigravity'
     case 'gemini': return 'Gemini'
+    case 'grok': return 'Grok'
     default: return p || 'API'
   }
 }

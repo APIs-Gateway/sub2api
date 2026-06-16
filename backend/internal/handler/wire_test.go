@@ -11,6 +11,7 @@ func TestProvideAdminHandlersIncludesPromptAuditHandler(t *testing.T) {
 	promptAudit := securityaudit.NewPromptEventAdminHandler(nil)
 	adminHandlers := ProvideAdminHandlers(
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, // grokOAuthHandler
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, promptAudit,
 		nil,
