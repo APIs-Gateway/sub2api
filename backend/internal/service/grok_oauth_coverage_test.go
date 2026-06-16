@@ -17,7 +17,7 @@ type grokOAuthErrorClient struct {
 	refreshErr  error
 }
 
-func (c grokOAuthErrorClient) ExchangeCode(context.Context, string, string, string, string, string, string) (*xai.TokenResponse, error) {
+func (c grokOAuthErrorClient) ExchangeCode(context.Context, string, string, string, string, string) (*xai.TokenResponse, error) {
 	if c.exchangeErr != nil {
 		return nil, c.exchangeErr
 	}

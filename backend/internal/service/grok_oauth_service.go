@@ -136,7 +136,7 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 		}
 	}
 
-	tokenResp, err := s.oauthClient.ExchangeCode(ctx, code, session.CodeVerifier, session.CodeChallenge, session.RedirectURI, proxyURL, session.ClientID)
+	tokenResp, err := s.oauthClient.ExchangeCode(ctx, code, session.CodeVerifier, session.RedirectURI, proxyURL, session.ClientID)
 	if err != nil {
 		return nil, err
 	}

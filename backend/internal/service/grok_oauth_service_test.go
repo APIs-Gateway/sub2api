@@ -14,7 +14,7 @@ import (
 
 type grokOAuthClientStub struct{}
 
-func (grokOAuthClientStub) ExchangeCode(context.Context, string, string, string, string, string, string) (*xai.TokenResponse, error) {
+func (grokOAuthClientStub) ExchangeCode(context.Context, string, string, string, string, string) (*xai.TokenResponse, error) {
 	return &xai.TokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token", ExpiresIn: 3600}, nil
 }
 
@@ -142,7 +142,7 @@ type grokOAuthRedirectCaptureClient struct {
 	exchangeRedirectURI string
 }
 
-func (c *grokOAuthRedirectCaptureClient) ExchangeCode(_ context.Context, _, _, _, redirectURI, _, _ string) (*xai.TokenResponse, error) {
+func (c *grokOAuthRedirectCaptureClient) ExchangeCode(_ context.Context, _, _, redirectURI, _, _ string) (*xai.TokenResponse, error) {
 	c.exchangeCalls++
 	c.exchangeRedirectURI = redirectURI
 	return &xai.TokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token", ExpiresIn: 3600}, nil
@@ -197,7 +197,7 @@ func TestGrokOAuthServiceExchangeCodeBindsRedirectURIToSession(t *testing.T) {
 
 type grokOAuthEmptyTokenClient struct{}
 
-func (grokOAuthEmptyTokenClient) ExchangeCode(context.Context, string, string, string, string, string, string) (*xai.TokenResponse, error) {
+func (grokOAuthEmptyTokenClient) ExchangeCode(context.Context, string, string, string, string, string) (*xai.TokenResponse, error) {
 	return &xai.TokenResponse{}, nil
 }
 

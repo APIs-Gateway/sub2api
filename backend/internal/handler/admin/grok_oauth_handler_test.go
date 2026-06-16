@@ -19,7 +19,7 @@ import (
 
 type grokOAuthHandlerClientStub struct{}
 
-func (grokOAuthHandlerClientStub) ExchangeCode(context.Context, string, string, string, string, string, string) (*xai.TokenResponse, error) {
+func (grokOAuthHandlerClientStub) ExchangeCode(context.Context, string, string, string, string, string) (*xai.TokenResponse, error) {
 	return &xai.TokenResponse{
 		AccessToken:  "access-token",
 		RefreshToken: "refresh-token",
