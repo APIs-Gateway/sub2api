@@ -59,6 +59,13 @@ type OpenAIAccountScheduleDecision struct {
 	LoadSkew            float64
 	SelectedAccountID   int64
 	SelectedAccountType string
+
+	// 稳定优先（跨分组兜底）相关，由 SelectAccountWithSchedulerStable 协调器填充。
+	StablePriorityState        string  // normal | fallback（决策时的状态）
+	StablePriorityFallback     bool    // 本次走了兜底（高倍率）组
+	StablePriorityReverted     bool    // 本次触发了切回 home 组
+	StableServedGroupID        int64   // 实际服务的档位组 ID（0 表示未知/home）
+	StableServedRateMultiplier float64 // 实际服务档位组的计费倍率（方案 Y：>0 时按此向用户计费）
 }
 
 type OpenAIAccountSchedulerMetricsSnapshot struct {

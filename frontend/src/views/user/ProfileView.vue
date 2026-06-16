@@ -43,6 +43,11 @@
         :user-email="user.email"
       />
 
+      <ProfileStablePriorityCard
+        v-if="user"
+        :enabled="user.stable_priority_enabled ?? false"
+      />
+
       <ProfileTotpCard />
     </div>
   </AppLayout>
@@ -56,6 +61,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import ProfileBalanceNotifyCard from '@/components/user/profile/ProfileBalanceNotifyCard.vue'
 import ProfileInfoCard from '@/components/user/profile/ProfileInfoCard.vue'
 import ProfilePasswordForm from '@/components/user/profile/ProfilePasswordForm.vue'
+import ProfileStablePriorityCard from '@/components/user/profile/ProfileStablePriorityCard.vue'
 import ProfileTotpCard from '@/components/user/profile/ProfileTotpCard.vue'
 import { isWeChatWebOAuthEnabled } from '@/api/auth'
 import { useAppStore } from '@/stores/app'

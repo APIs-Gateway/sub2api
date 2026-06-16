@@ -343,6 +343,8 @@ type OpenAIGatewayService struct {
 	channelService        *ChannelService
 	balanceNotifyService  *BalanceNotifyService
 	settingService        *SettingService
+	stableStore           StablePriorityStateStore
+	groupRepo             GroupRepository
 
 	openaiWSPoolOnce              sync.Once
 	openaiWSStateStoreOnce        sync.Once
@@ -387,6 +389,8 @@ func NewOpenAIGatewayService(
 	channelService *ChannelService,
 	balanceNotifyService *BalanceNotifyService,
 	settingService *SettingService,
+	stableStore StablePriorityStateStore,
+	groupRepo GroupRepository,
 ) *OpenAIGatewayService {
 	svc := &OpenAIGatewayService{
 		accountRepo:         accountRepo,
@@ -418,6 +422,8 @@ func NewOpenAIGatewayService(
 		channelService:        channelService,
 		balanceNotifyService:  balanceNotifyService,
 		settingService:        settingService,
+		stableStore:           stableStore,
+		groupRepo:             groupRepo,
 		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
 		codexSnapshotThrottle: newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
 	}
@@ -5422,6 +5428,12 @@ type OpenAIRecordUsageInput struct {
 	RequestPayloadHash string
 	APIKeyService      APIKeyQuotaUpdater
 	ChannelUsageFields
+
+	// 稳定优先方案 Y：兜底到高倍率档位组时，按实际服务组的倍率向用户计费。
+	// StableServedGroupID>0 且 != apiKey.GroupID 且 StableServedRateMultiplier>0 时生效；
+	// 否则按 apiKey 所属（home）组正常计费。
+	StableServedGroupID        int64
+	StableServedRateMultiplier float64
 }
 
 // RecordUsage records usage and deducts balance
@@ -5469,7 +5481,14 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		if resolver == nil {
 			resolver = newUserGroupRateResolver(nil, nil, resolveUserGroupRateCacheTTL(s.cfg), nil, "service.openai_gateway")
 		}
-		multiplier = resolver.Resolve(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
+		billingGroupID := *apiKey.GroupID
+		billingGroupRate := apiKey.Group.RateMultiplier
+		// 方案 Y：稳定优先兜底时，按实际服务的高倍率档位组计费（含该组的 per-user override）。
+		if input.StableServedGroupID > 0 && input.StableServedGroupID != billingGroupID && input.StableServedRateMultiplier > 0 {
+			billingGroupID = input.StableServedGroupID
+			billingGroupRate = input.StableServedRateMultiplier
+		}
+		multiplier = resolver.Resolve(ctx, user.ID, billingGroupID, billingGroupRate)
 	}
 	imageMultiplier := resolveImageRateMultiplier(apiKey, multiplier)
 

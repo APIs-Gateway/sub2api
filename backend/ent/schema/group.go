@@ -110,6 +110,12 @@ func (Group) Fields() []ent.Field {
 			Nillable().
 			Comment("无效请求兜底使用的分组 ID"),
 
+		// 稳定优先兜底链 (added by migration 142)
+		field.Int64("stable_priority_fallback_group_id").
+			Optional().
+			Nillable().
+			Comment("稳定优先下一档兜底目标分组ID（构成多档链），仅 openai 平台生效"),
+
 		// 模型路由配置 (added by migration 040)
 		field.JSON("model_routing", map[string][]int64{}).
 			Optional().
