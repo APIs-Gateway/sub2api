@@ -70,6 +70,11 @@ func (RedeemCode) Fields() []ent.Field {
 		field.Int64("group_id").
 			Optional().
 			Nillable(),
+		// plan_id：订阅型兑换码关联的套餐（取代仅靠 group_id 推导）。
+		// 照搬 group_id 范式：可空 + DB 侧 ON DELETE SET NULL。
+		field.Int64("plan_id").
+			Optional().
+			Nillable(),
 		field.Int("validity_days").
 			Default(30),
 	}
@@ -85,6 +90,11 @@ func (RedeemCode) Edges() []ent.Edge {
 			Ref("redeem_codes").
 			Field("group_id").
 			Unique(),
+		// plan：订阅型兑换码关联的套餐（可空边 → 生成 ON DELETE SET NULL，与迁移 155 一致）。
+		edge.From("plan", SubscriptionPlan.Type).
+			Ref("redeem_codes").
+			Field("plan_id").
+			Unique(),
 	}
 }
 
@@ -94,6 +104,7 @@ func (RedeemCode) Indexes() []ent.Index {
 		index.Fields("status"),
 		index.Fields("used_by"),
 		index.Fields("group_id"),
+		index.Fields("plan_id"),
 		index.Fields("expires_at"),
 	}
 }

@@ -37,6 +37,11 @@ func (UserSubscription) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("user_id"),
 		field.Int64("group_id"),
+		// plan_id：订阅来源套餐（burn-down 一等关联）。可空：存量按 group 直接分配、
+		// 或所挂 group 无对应 plan 的卡为 NULL。Phase 1 起新发放写入；group_id 暂保留照写。
+		field.Int64("plan_id").
+			Optional().
+			Nillable(),
 
 		field.Time("starts_at").
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
@@ -123,6 +128,11 @@ func (UserSubscription) Edges() []ent.Edge {
 			Field("group_id").
 			Unique().
 			Required(),
+		// plan：订阅来源套餐（可空边 → 生成 ON DELETE SET NULL，与迁移 155 一致）。
+		edge.From("plan", SubscriptionPlan.Type).
+			Ref("subscriptions").
+			Field("plan_id").
+			Unique(),
 		edge.From("assigned_by_user", User.Type).
 			Ref("assigned_subscriptions").
 			Field("assigned_by").
@@ -140,6 +150,7 @@ func (UserSubscription) Indexes() []ent.Index {
 		// 活跃订阅查询复合索引（线上由 SQL 迁移创建部分索引，schema 仅用于模型可读性对齐）
 		index.Fields("user_id", "status", "expires_at"),
 		index.Fields("assigned_by"),
+		index.Fields("plan_id"),
 		// 唯一约束通过部分索引实现（WHERE deleted_at IS NULL），支持软删除后重新订阅
 		// 见迁移文件 016_soft_delete_partial_unique_indexes.sql
 		index.Fields("user_id", "group_id"),

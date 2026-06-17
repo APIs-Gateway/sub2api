@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 )
 
@@ -57,6 +58,16 @@ func IDLTE(id int64) predicate.SubscriptionPlan {
 // GroupID applies equality check predicate on the "group_id" field. It's identical to GroupIDEQ.
 func GroupID(v int64) predicate.SubscriptionPlan {
 	return predicate.SubscriptionPlan(sql.FieldEQ(FieldGroupID, v))
+}
+
+// DailyAmountUsd applies equality check predicate on the "daily_amount_usd" field. It's identical to DailyAmountUsdEQ.
+func DailyAmountUsd(v float64) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldEQ(FieldDailyAmountUsd, v))
+}
+
+// Platform applies equality check predicate on the "platform" field. It's identical to PlatformEQ.
+func Platform(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldEQ(FieldPlatform, v))
 }
 
 // Name applies equality check predicate on the "name" field. It's identical to NameEQ.
@@ -157,6 +168,111 @@ func GroupIDLT(v int64) predicate.SubscriptionPlan {
 // GroupIDLTE applies the LTE predicate on the "group_id" field.
 func GroupIDLTE(v int64) predicate.SubscriptionPlan {
 	return predicate.SubscriptionPlan(sql.FieldLTE(FieldGroupID, v))
+}
+
+// DailyAmountUsdEQ applies the EQ predicate on the "daily_amount_usd" field.
+func DailyAmountUsdEQ(v float64) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldEQ(FieldDailyAmountUsd, v))
+}
+
+// DailyAmountUsdNEQ applies the NEQ predicate on the "daily_amount_usd" field.
+func DailyAmountUsdNEQ(v float64) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldNEQ(FieldDailyAmountUsd, v))
+}
+
+// DailyAmountUsdIn applies the In predicate on the "daily_amount_usd" field.
+func DailyAmountUsdIn(vs ...float64) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldIn(FieldDailyAmountUsd, vs...))
+}
+
+// DailyAmountUsdNotIn applies the NotIn predicate on the "daily_amount_usd" field.
+func DailyAmountUsdNotIn(vs ...float64) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldNotIn(FieldDailyAmountUsd, vs...))
+}
+
+// DailyAmountUsdGT applies the GT predicate on the "daily_amount_usd" field.
+func DailyAmountUsdGT(v float64) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldGT(FieldDailyAmountUsd, v))
+}
+
+// DailyAmountUsdGTE applies the GTE predicate on the "daily_amount_usd" field.
+func DailyAmountUsdGTE(v float64) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldGTE(FieldDailyAmountUsd, v))
+}
+
+// DailyAmountUsdLT applies the LT predicate on the "daily_amount_usd" field.
+func DailyAmountUsdLT(v float64) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldLT(FieldDailyAmountUsd, v))
+}
+
+// DailyAmountUsdLTE applies the LTE predicate on the "daily_amount_usd" field.
+func DailyAmountUsdLTE(v float64) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldLTE(FieldDailyAmountUsd, v))
+}
+
+// PlatformEQ applies the EQ predicate on the "platform" field.
+func PlatformEQ(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldEQ(FieldPlatform, v))
+}
+
+// PlatformNEQ applies the NEQ predicate on the "platform" field.
+func PlatformNEQ(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldNEQ(FieldPlatform, v))
+}
+
+// PlatformIn applies the In predicate on the "platform" field.
+func PlatformIn(vs ...string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldIn(FieldPlatform, vs...))
+}
+
+// PlatformNotIn applies the NotIn predicate on the "platform" field.
+func PlatformNotIn(vs ...string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldNotIn(FieldPlatform, vs...))
+}
+
+// PlatformGT applies the GT predicate on the "platform" field.
+func PlatformGT(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldGT(FieldPlatform, v))
+}
+
+// PlatformGTE applies the GTE predicate on the "platform" field.
+func PlatformGTE(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldGTE(FieldPlatform, v))
+}
+
+// PlatformLT applies the LT predicate on the "platform" field.
+func PlatformLT(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldLT(FieldPlatform, v))
+}
+
+// PlatformLTE applies the LTE predicate on the "platform" field.
+func PlatformLTE(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldLTE(FieldPlatform, v))
+}
+
+// PlatformContains applies the Contains predicate on the "platform" field.
+func PlatformContains(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldContains(FieldPlatform, v))
+}
+
+// PlatformHasPrefix applies the HasPrefix predicate on the "platform" field.
+func PlatformHasPrefix(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldHasPrefix(FieldPlatform, v))
+}
+
+// PlatformHasSuffix applies the HasSuffix predicate on the "platform" field.
+func PlatformHasSuffix(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldHasSuffix(FieldPlatform, v))
+}
+
+// PlatformEqualFold applies the EqualFold predicate on the "platform" field.
+func PlatformEqualFold(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldEqualFold(FieldPlatform, v))
+}
+
+// PlatformContainsFold applies the ContainsFold predicate on the "platform" field.
+func PlatformContainsFold(v string) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldContainsFold(FieldPlatform, v))
 }
 
 // NameEQ applies the EQ predicate on the "name" field.
@@ -742,6 +858,52 @@ func UpdatedAtLT(v time.Time) predicate.SubscriptionPlan {
 // UpdatedAtLTE applies the LTE predicate on the "updated_at" field.
 func UpdatedAtLTE(v time.Time) predicate.SubscriptionPlan {
 	return predicate.SubscriptionPlan(sql.FieldLTE(FieldUpdatedAt, v))
+}
+
+// HasSubscriptions applies the HasEdge predicate on the "subscriptions" edge.
+func HasSubscriptions() predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, SubscriptionsTable, SubscriptionsColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasSubscriptionsWith applies the HasEdge predicate on the "subscriptions" edge with a given conditions (other predicates).
+func HasSubscriptionsWith(preds ...predicate.UserSubscription) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(func(s *sql.Selector) {
+		step := newSubscriptionsStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasRedeemCodes applies the HasEdge predicate on the "redeem_codes" edge.
+func HasRedeemCodes() predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, RedeemCodesTable, RedeemCodesColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasRedeemCodesWith applies the HasEdge predicate on the "redeem_codes" edge with a given conditions (other predicates).
+func HasRedeemCodesWith(preds ...predicate.RedeemCode) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(func(s *sql.Selector) {
+		step := newRedeemCodesStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
 }
 
 // And groups predicates with the AND operator between them.

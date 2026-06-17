@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 )
 
@@ -27,6 +28,7 @@ type RedeemCodeQuery struct {
 	predicates []predicate.RedeemCode
 	withUser   *UserQuery
 	withGroup  *GroupQuery
+	withPlan   *SubscriptionPlanQuery
 	modifiers  []func(*sql.Selector)
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
@@ -101,6 +103,28 @@ func (_q *RedeemCodeQuery) QueryGroup() *GroupQuery {
 			sqlgraph.From(redeemcode.Table, redeemcode.FieldID, selector),
 			sqlgraph.To(group.Table, group.FieldID),
 			sqlgraph.Edge(sqlgraph.M2O, true, redeemcode.GroupTable, redeemcode.GroupColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QueryPlan chains the current query on the "plan" edge.
+func (_q *RedeemCodeQuery) QueryPlan() *SubscriptionPlanQuery {
+	query := (&SubscriptionPlanClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(redeemcode.Table, redeemcode.FieldID, selector),
+			sqlgraph.To(subscriptionplan.Table, subscriptionplan.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, redeemcode.PlanTable, redeemcode.PlanColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -302,6 +326,7 @@ func (_q *RedeemCodeQuery) Clone() *RedeemCodeQuery {
 		predicates: append([]predicate.RedeemCode{}, _q.predicates...),
 		withUser:   _q.withUser.Clone(),
 		withGroup:  _q.withGroup.Clone(),
+		withPlan:   _q.withPlan.Clone(),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
@@ -327,6 +352,17 @@ func (_q *RedeemCodeQuery) WithGroup(opts ...func(*GroupQuery)) *RedeemCodeQuery
 		opt(query)
 	}
 	_q.withGroup = query
+	return _q
+}
+
+// WithPlan tells the query-builder to eager-load the nodes that are connected to
+// the "plan" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *RedeemCodeQuery) WithPlan(opts ...func(*SubscriptionPlanQuery)) *RedeemCodeQuery {
+	query := (&SubscriptionPlanClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withPlan = query
 	return _q
 }
 
@@ -408,9 +444,10 @@ func (_q *RedeemCodeQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*R
 	var (
 		nodes       = []*RedeemCode{}
 		_spec       = _q.querySpec()
-		loadedTypes = [2]bool{
+		loadedTypes = [3]bool{
 			_q.withUser != nil,
 			_q.withGroup != nil,
+			_q.withPlan != nil,
 		}
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
@@ -443,6 +480,12 @@ func (_q *RedeemCodeQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*R
 	if query := _q.withGroup; query != nil {
 		if err := _q.loadGroup(ctx, query, nodes, nil,
 			func(n *RedeemCode, e *Group) { n.Edges.Group = e }); err != nil {
+			return nil, err
+		}
+	}
+	if query := _q.withPlan; query != nil {
+		if err := _q.loadPlan(ctx, query, nodes, nil,
+			func(n *RedeemCode, e *SubscriptionPlan) { n.Edges.Plan = e }); err != nil {
 			return nil, err
 		}
 	}
@@ -513,6 +556,38 @@ func (_q *RedeemCodeQuery) loadGroup(ctx context.Context, query *GroupQuery, nod
 	}
 	return nil
 }
+func (_q *RedeemCodeQuery) loadPlan(ctx context.Context, query *SubscriptionPlanQuery, nodes []*RedeemCode, init func(*RedeemCode), assign func(*RedeemCode, *SubscriptionPlan)) error {
+	ids := make([]int64, 0, len(nodes))
+	nodeids := make(map[int64][]*RedeemCode)
+	for i := range nodes {
+		if nodes[i].PlanID == nil {
+			continue
+		}
+		fk := *nodes[i].PlanID
+		if _, ok := nodeids[fk]; !ok {
+			ids = append(ids, fk)
+		}
+		nodeids[fk] = append(nodeids[fk], nodes[i])
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	query.Where(subscriptionplan.IDIn(ids...))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		nodes, ok := nodeids[n.ID]
+		if !ok {
+			return fmt.Errorf(`unexpected foreign-key "plan_id" returned %v`, n.ID)
+		}
+		for i := range nodes {
+			assign(nodes[i], n)
+		}
+	}
+	return nil
+}
 
 func (_q *RedeemCodeQuery) sqlCount(ctx context.Context) (int, error) {
 	_spec := _q.querySpec()
@@ -547,6 +622,9 @@ func (_q *RedeemCodeQuery) querySpec() *sqlgraph.QuerySpec {
 		}
 		if _q.withGroup != nil {
 			_spec.Node.AddColumnOnce(redeemcode.FieldGroupID)
+		}
+		if _q.withPlan != nil {
+			_spec.Node.AddColumnOnce(redeemcode.FieldPlanID)
 		}
 	}
 	if ps := _q.predicates; len(ps) > 0 {
