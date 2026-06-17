@@ -68,3 +68,61 @@ func TestSubscriptionOverdraftHelpers(t *testing.T) {
 		})
 	}
 }
+
+// TestEffectiveOverdraftDaysAt 校验施加全局上限后的有效透支天数：
+//   - 未自设卡按 adminCap；自设卡取 min(卡值, adminCap)（用户只能更严，不能比上限更松）。
+//   - adminCap=0 即「不允许预支」（最严，非无限）。
+//   - 已超额老用户：取「已透支天数」作下限，避免把额度压成负值；其当前可花≈0~不到 1 日额度，
+//     随日历天推进 floor 自然下降、回到上限内（绝不无限透支）。
+func TestEffectiveOverdraftDaysAt(t *testing.T) {
+	loc := shanghaiLoc
+	activated := time.Date(2026, 6, 1, 10, 0, 0, 0, loc) // $10/天
+	day2 := activated.AddDate(0, 0, 2)                   // N=2
+
+	intPtr := func(v int) *int { return &v }
+	newSub := func(consumed float64, maxDays *int) *UserSubscription {
+		a := activated
+		return &UserSubscription{
+			StartsAt:         activated,
+			ActivatedAt:      &a,
+			GrantedTotalUSD:  300,
+			DailyAmountUSD:   10,
+			ConsumedUSD:      consumed,
+			MaxOverdraftDays: maxDays,
+		}
+	}
+
+	cases := []struct {
+		name     string
+		sub      *UserSubscription
+		adminCap int
+		want     int
+	}{
+		// 未超额（consumed=0，floor=0）：未自设 → 取 cap。
+		{"nullcard_cap1", newSub(0, nil), 1, 1},
+		{"nullcard_cap0_strict", newSub(0, nil), 0, 0},    // cap=0 = 不允许预支
+		{"nullcard_capNeg_clamp0", newSub(0, nil), -1, 0}, // 负值夹到 0
+		// 自设卡：取 min(卡值, cap)。
+		{"card0_cap5", newSub(0, intPtr(0)), 5, 0}, // 用户自设更严
+		{"card3_cap10", newSub(0, intPtr(3)), 10, 3},
+		{"card10_cap3_clamp", newSub(0, intPtr(10)), 3, 3}, // 卡值超 cap → 被 cap 夹住
+		// 已超额老用户豁免（floor = ceil(consumed/D) - N）。
+		{"over_consumed80_cap1", newSub(80, nil), 1, 6},   // 80/10-2=6 > cap1 → 6
+		{"over_consumed50_cap0", newSub(50, nil), 0, 3},   // cap0 也豁免到 floor=3
+		{"within_consumed20_cap5", newSub(20, nil), 5, 5}, // 2-2=0，floor 不触发 → cap
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.sub.EffectiveOverdraftDaysAt(day2, tc.adminCap); got != tc.want {
+				t.Fatalf("EffectiveOverdraftDaysAt(cap=%d)=%d want %d", tc.adminCap, got, tc.want)
+			}
+		})
+	}
+
+	// D=0（legacy/standard 卡）：无预支概念，floor 恒 0 → 取 cap，不 panic。
+	zero := &UserSubscription{StartsAt: activated, ActivatedAt: &activated, DailyAmountUSD: 0}
+	if got := zero.EffectiveOverdraftDaysAt(day2, 5); got != 5 {
+		t.Fatalf("zero-daily EffectiveOverdraftDaysAt=%d want 5", got)
+	}
+}

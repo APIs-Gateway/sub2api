@@ -262,7 +262,7 @@ const (
 	SettingKeyDefaultBalance       = "default_balance"        // 新用户默认余额
 	SettingKeyDefaultSubscriptions = "default_subscriptions"  // 新用户默认订阅列表（JSON）
 	SettingKeyDefaultUserRPMLimit  = "default_user_rpm_limit" // 新用户默认 RPM 限制（0 = 不限制）
-	SettingKeyMaxOverdraftDaysCap  = "max_overdraft_days_cap" // 管理员设置的最多透支天数全局上限（0 = 不限制）
+	SettingKeyMaxOverdraftDaysCap  = "max_overdraft_days_cap" // 用户透支天数硬上限（0 = 不允许预支，默认 1；管理员豁免）
 
 	// 第三方认证来源默认授予配置
 	SettingKeyAuthSourceDefaultEmailBalance             = "auth_source_default_email_balance"
