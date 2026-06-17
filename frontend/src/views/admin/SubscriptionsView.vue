@@ -213,8 +213,63 @@
 
           <template #cell-usage="{ row }">
             <div class="min-w-[280px] space-y-2">
-              <!-- Daily Usage -->
-              <div v-if="row.group?.daily_limit_usd" class="usage-row">
+              <!-- Burn-down 余额模型：开通即把整期额度打入余额，按消费进度展示 -->
+              <div v-if="row.daily_amount_usd" class="usage-row">
+                <div class="flex items-center gap-2">
+                  <span
+                    class="flex-shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400"
+                  >
+                    {{ t('admin.subscriptions.burndown.consumptionProgress') }}
+                  </span>
+                  <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                    <div
+                      class="h-1.5 rounded-full bg-primary-500 transition-all"
+                      :style="{
+                        width: getProgressWidth(row.consumed_usd, row.granted_total_usd)
+                      }"
+                    ></div>
+                  </div>
+                  <span class="usage-amount">
+                    ${{ (row.consumed_usd || 0).toFixed(2) }}
+                    <span class="text-gray-400">/</span>
+                    ${{ (row.granted_total_usd || 0).toFixed(2) }}
+                  </span>
+                </div>
+                <div
+                  class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-gray-500 dark:text-dark-400"
+                >
+                  <span>{{
+                    t('admin.subscriptions.burndown.usedToDay', {
+                      day: Math.floor(row.consumption_day || 0),
+                      total: burndownTotalDays(row)
+                    })
+                  }}</span>
+                  <span>
+                    {{ t('admin.subscriptions.burndown.remainingBalance') }}
+                    <span class="tabular-nums text-gray-600 dark:text-gray-300"
+                      >${{ (row.remaining_usd || 0).toFixed(2) }}</span
+                    >
+                  </span>
+                  <span
+                    >{{ t('admin.subscriptions.burndown.dailyAmount') }} ${{
+                      (row.daily_amount_usd || 0).toFixed(2)
+                    }}</span
+                  >
+                  <span
+                    v-if="(row.clawed_usd || 0) > 0"
+                    class="text-orange-600 dark:text-orange-400"
+                    >{{ t('admin.subscriptions.burndown.clawed') }} ${{
+                      (row.clawed_usd || 0).toFixed(2)
+                    }}</span
+                  >
+                </div>
+              </div>
+
+              <!-- Daily Usage（legacy 配额模型）-->
+              <div
+                v-if="row.group?.daily_limit_usd && !row.daily_amount_usd"
+                class="usage-row"
+              >
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.daily') }}</span>
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -250,8 +305,11 @@
                 </div>
               </div>
 
-              <!-- Weekly Usage -->
-              <div v-if="row.group?.weekly_limit_usd" class="usage-row">
+              <!-- Weekly Usage（legacy 配额模型）-->
+              <div
+                v-if="row.group?.weekly_limit_usd && !row.daily_amount_usd"
+                class="usage-row"
+              >
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.weekly') }}</span>
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -287,8 +345,11 @@
                 </div>
               </div>
 
-              <!-- Monthly Usage -->
-              <div v-if="row.group?.monthly_limit_usd" class="usage-row">
+              <!-- Monthly Usage（legacy 配额模型）-->
+              <div
+                v-if="row.group?.monthly_limit_usd && !row.daily_amount_usd"
+                class="usage-row"
+              >
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.monthly') }}</span>
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -324,9 +385,10 @@
                 </div>
               </div>
 
-              <!-- No Limits - Unlimited badge -->
+              <!-- No Limits - Unlimited badge（仅 legacy 配额模型且无任何限额时）-->
               <div
                 v-if="
+                  !row.daily_amount_usd &&
                   !row.group?.daily_limit_usd &&
                   !row.group?.weekly_limit_usd &&
                   !row.group?.monthly_limit_usd
@@ -1303,6 +1365,13 @@ const getProgressWidth = (used: number | null | undefined, limit: number | null)
   const usedValue = used ?? 0
   const percentage = Math.min((usedValue / limit) * 100, 100)
   return `${percentage}%`
+}
+
+// Burn-down 余额模型：本卡总天数 = round(发放总额 / 每日额度)。
+const burndownTotalDays = (sub: UserSubscription): number => {
+  const daily = sub.daily_amount_usd || 0
+  if (daily <= 0) return 0
+  return Math.round((sub.granted_total_usd || 0) / daily)
 }
 
 const getProgressClass = (used: number | null | undefined, limit: number | null): string => {
