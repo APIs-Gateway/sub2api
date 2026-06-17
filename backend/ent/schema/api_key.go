@@ -115,6 +115,11 @@ func (APIKey) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			Comment("Start time of the current 7d rate limit window"),
+
+		// 稳定优先：每把 API Key 独立的开关；与用户级 users.stable_priority_enabled 取「或」生效。
+		field.Bool("stable_priority_enabled").
+			Default(false).
+			Comment("per-key 稳定优先开关；与 users.stable_priority_enabled 取或生效"),
 	}
 }
 

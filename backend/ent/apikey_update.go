@@ -438,6 +438,20 @@ func (_u *APIKeyUpdate) ClearWindow7dStart() *APIKeyUpdate {
 	return _u
 }
 
+// SetStablePriorityEnabled sets the "stable_priority_enabled" field.
+func (_u *APIKeyUpdate) SetStablePriorityEnabled(v bool) *APIKeyUpdate {
+	_u.mutation.SetStablePriorityEnabled(v)
+	return _u
+}
+
+// SetNillableStablePriorityEnabled sets the "stable_priority_enabled" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableStablePriorityEnabled(v *bool) *APIKeyUpdate {
+	if v != nil {
+		_u.SetStablePriorityEnabled(*v)
+	}
+	return _u
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_u *APIKeyUpdate) SetUser(v *User) *APIKeyUpdate {
 	return _u.SetUserID(v.ID)
@@ -695,6 +709,9 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.Window7dStartCleared() {
 		_spec.ClearField(apikey.FieldWindow7dStart, field.TypeTime)
+	}
+	if value, ok := _u.mutation.StablePriorityEnabled(); ok {
+		_spec.SetField(apikey.FieldStablePriorityEnabled, field.TypeBool, value)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1225,6 +1242,20 @@ func (_u *APIKeyUpdateOne) ClearWindow7dStart() *APIKeyUpdateOne {
 	return _u
 }
 
+// SetStablePriorityEnabled sets the "stable_priority_enabled" field.
+func (_u *APIKeyUpdateOne) SetStablePriorityEnabled(v bool) *APIKeyUpdateOne {
+	_u.mutation.SetStablePriorityEnabled(v)
+	return _u
+}
+
+// SetNillableStablePriorityEnabled sets the "stable_priority_enabled" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableStablePriorityEnabled(v *bool) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetStablePriorityEnabled(*v)
+	}
+	return _u
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_u *APIKeyUpdateOne) SetUser(v *User) *APIKeyUpdateOne {
 	return _u.SetUserID(v.ID)
@@ -1512,6 +1543,9 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if _u.mutation.Window7dStartCleared() {
 		_spec.ClearField(apikey.FieldWindow7dStart, field.TypeTime)
+	}
+	if value, ok := _u.mutation.StablePriorityEnabled(); ok {
+		_spec.SetField(apikey.FieldStablePriorityEnabled, field.TypeBool, value)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{

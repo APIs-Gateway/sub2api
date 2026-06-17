@@ -752,7 +752,7 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionGroupAllowedByBalance(t *t
 		resetDaily:     func(ctx context.Context, id int64, start time.Time) error { return nil },
 		resetWeekly:    func(ctx context.Context, id int64, start time.Time) error { return nil },
 		resetMonthly:   func(ctx context.Context, id int64, start time.Time) error { return nil },
-	}, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
+	}, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
 
 	r := gin.New()
 	r.Use(APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, &config.Config{RunMode: config.RunModeStandard}))

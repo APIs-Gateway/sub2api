@@ -592,6 +592,7 @@ export interface ApiKey {
   reset_5h_at: string | null
   reset_1d_at: string | null
   reset_7d_at: string | null
+  stable_priority_enabled: boolean // per-key 稳定优先开关
 }
 
 export interface CreateApiKeyRequest {
@@ -605,6 +606,7 @@ export interface CreateApiKeyRequest {
   rate_limit_5h?: number
   rate_limit_1d?: number
   rate_limit_7d?: number
+  stable_priority_enabled?: boolean // per-key 稳定优先开关
 }
 
 export interface UpdateApiKeyRequest {
@@ -620,6 +622,7 @@ export interface UpdateApiKeyRequest {
   rate_limit_1d?: number
   rate_limit_7d?: number
   reset_rate_limit_usage?: boolean
+  stable_priority_enabled?: boolean // per-key 稳定优先开关（不传 = 不变）
 }
 
 export interface CreateGroupRequest {

@@ -307,6 +307,20 @@ func (_c *APIKeyCreate) SetNillableWindow7dStart(v *time.Time) *APIKeyCreate {
 	return _c
 }
 
+// SetStablePriorityEnabled sets the "stable_priority_enabled" field.
+func (_c *APIKeyCreate) SetStablePriorityEnabled(v bool) *APIKeyCreate {
+	_c.mutation.SetStablePriorityEnabled(v)
+	return _c
+}
+
+// SetNillableStablePriorityEnabled sets the "stable_priority_enabled" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableStablePriorityEnabled(v *bool) *APIKeyCreate {
+	if v != nil {
+		_c.SetStablePriorityEnabled(*v)
+	}
+	return _c
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_c *APIKeyCreate) SetUser(v *User) *APIKeyCreate {
 	return _c.SetUserID(v.ID)
@@ -419,6 +433,10 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultUsage7d
 		_c.mutation.SetUsage7d(v)
 	}
+	if _, ok := _c.mutation.StablePriorityEnabled(); !ok {
+		v := apikey.DefaultStablePriorityEnabled
+		_c.mutation.SetStablePriorityEnabled(v)
+	}
 	return nil
 }
 
@@ -480,6 +498,9 @@ func (_c *APIKeyCreate) check() error {
 	}
 	if _, ok := _c.mutation.Usage7d(); !ok {
 		return &ValidationError{Name: "usage_7d", err: errors.New(`ent: missing required field "APIKey.usage_7d"`)}
+	}
+	if _, ok := _c.mutation.StablePriorityEnabled(); !ok {
+		return &ValidationError{Name: "stable_priority_enabled", err: errors.New(`ent: missing required field "APIKey.stable_priority_enabled"`)}
 	}
 	if len(_c.mutation.UserIDs()) == 0 {
 		return &ValidationError{Name: "user", err: errors.New(`ent: missing required edge "APIKey.user"`)}
@@ -594,6 +615,10 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Window7dStart(); ok {
 		_spec.SetField(apikey.FieldWindow7dStart, field.TypeTime, value)
 		_node.Window7dStart = &value
+	}
+	if value, ok := _c.mutation.StablePriorityEnabled(); ok {
+		_spec.SetField(apikey.FieldStablePriorityEnabled, field.TypeBool, value)
+		_node.StablePriorityEnabled = value
 	}
 	if nodes := _c.mutation.UserIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1060,6 +1085,18 @@ func (u *APIKeyUpsert) UpdateWindow7dStart() *APIKeyUpsert {
 // ClearWindow7dStart clears the value of the "window_7d_start" field.
 func (u *APIKeyUpsert) ClearWindow7dStart() *APIKeyUpsert {
 	u.SetNull(apikey.FieldWindow7dStart)
+	return u
+}
+
+// SetStablePriorityEnabled sets the "stable_priority_enabled" field.
+func (u *APIKeyUpsert) SetStablePriorityEnabled(v bool) *APIKeyUpsert {
+	u.Set(apikey.FieldStablePriorityEnabled, v)
+	return u
+}
+
+// UpdateStablePriorityEnabled sets the "stable_priority_enabled" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateStablePriorityEnabled() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldStablePriorityEnabled)
 	return u
 }
 
@@ -1532,6 +1569,20 @@ func (u *APIKeyUpsertOne) UpdateWindow7dStart() *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) ClearWindow7dStart() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearWindow7dStart()
+	})
+}
+
+// SetStablePriorityEnabled sets the "stable_priority_enabled" field.
+func (u *APIKeyUpsertOne) SetStablePriorityEnabled(v bool) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetStablePriorityEnabled(v)
+	})
+}
+
+// UpdateStablePriorityEnabled sets the "stable_priority_enabled" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateStablePriorityEnabled() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateStablePriorityEnabled()
 	})
 }
 
@@ -2170,6 +2221,20 @@ func (u *APIKeyUpsertBulk) UpdateWindow7dStart() *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) ClearWindow7dStart() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearWindow7dStart()
+	})
+}
+
+// SetStablePriorityEnabled sets the "stable_priority_enabled" field.
+func (u *APIKeyUpsertBulk) SetStablePriorityEnabled(v bool) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetStablePriorityEnabled(v)
+	})
+}
+
+// UpdateStablePriorityEnabled sets the "stable_priority_enabled" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateStablePriorityEnabled() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateStablePriorityEnabled()
 	})
 }
 

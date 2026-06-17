@@ -160,6 +160,11 @@ func Window7dStart(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldWindow7dStart, v))
 }
 
+// StablePriorityEnabled applies equality check predicate on the "stable_priority_enabled" field. It's identical to StablePriorityEnabledEQ.
+func StablePriorityEnabled(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldStablePriorityEnabled, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldCreatedAt, v))
@@ -1123,6 +1128,16 @@ func Window7dStartIsNil() predicate.APIKey {
 // Window7dStartNotNil applies the NotNil predicate on the "window_7d_start" field.
 func Window7dStartNotNil() predicate.APIKey {
 	return predicate.APIKey(sql.FieldNotNull(FieldWindow7dStart))
+}
+
+// StablePriorityEnabledEQ applies the EQ predicate on the "stable_priority_enabled" field.
+func StablePriorityEnabledEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldStablePriorityEnabled, v))
+}
+
+// StablePriorityEnabledNEQ applies the NEQ predicate on the "stable_priority_enabled" field.
+func StablePriorityEnabledNEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldStablePriorityEnabled, v))
 }
 
 // HasUser applies the HasEdge predicate on the "user" edge.

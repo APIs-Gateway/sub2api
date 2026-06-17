@@ -61,6 +61,8 @@ const (
 	FieldWindow1dStart = "window_1d_start"
 	// FieldWindow7dStart holds the string denoting the window_7d_start field in the database.
 	FieldWindow7dStart = "window_7d_start"
+	// FieldStablePriorityEnabled holds the string denoting the stable_priority_enabled field in the database.
+	FieldStablePriorityEnabled = "stable_priority_enabled"
 	// EdgeUser holds the string denoting the user edge name in mutations.
 	EdgeUser = "user"
 	// EdgeGroup holds the string denoting the group edge name in mutations.
@@ -118,6 +120,7 @@ var Columns = []string{
 	FieldWindow5hStart,
 	FieldWindow1dStart,
 	FieldWindow7dStart,
+	FieldStablePriorityEnabled,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -168,6 +171,8 @@ var (
 	DefaultUsage1d float64
 	// DefaultUsage7d holds the default value on creation for the "usage_7d" field.
 	DefaultUsage7d float64
+	// DefaultStablePriorityEnabled holds the default value on creation for the "stable_priority_enabled" field.
+	DefaultStablePriorityEnabled bool
 )
 
 // OrderOption defines the ordering options for the APIKey queries.
@@ -281,6 +286,11 @@ func ByWindow1dStart(opts ...sql.OrderTermOption) OrderOption {
 // ByWindow7dStart orders the results by the window_7d_start field.
 func ByWindow7dStart(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldWindow7dStart, opts...).ToFunc()
+}
+
+// ByStablePriorityEnabled orders the results by the stable_priority_enabled field.
+func ByStablePriorityEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldStablePriorityEnabled, opts...).ToFunc()
 }
 
 // ByUserField orders the results by user field.

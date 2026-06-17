@@ -143,6 +143,7 @@ type SystemSettings struct {
 	CustomEndpoints             string // JSON array of custom endpoints
 
 	DefaultConcurrency           int
+	MaxOverdraftDaysCap          int
 	DefaultBalance               float64
 	RiskControlEnabled           bool
 	CyberSessionBlockEnabled     bool

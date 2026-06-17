@@ -47,6 +47,7 @@ type SubscriptionService struct {
 	billingCacheService  *BillingCacheService
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	entClient            *dbent.Client
+	settingService       *SettingService
 
 	// L1 缓存：加速中间件热路径的订阅查询
 	subCacheL1     *ristretto.Cache
@@ -58,7 +59,7 @@ type SubscriptionService struct {
 }
 
 // NewSubscriptionService 创建订阅服务
-func NewSubscriptionService(groupRepo GroupRepository, userSubRepo UserSubscriptionRepository, userRepo UserRepository, billingCacheService *BillingCacheService, authCacheInvalidator APIKeyAuthCacheInvalidator, entClient *dbent.Client, cfg *config.Config) *SubscriptionService {
+func NewSubscriptionService(groupRepo GroupRepository, userSubRepo UserSubscriptionRepository, userRepo UserRepository, billingCacheService *BillingCacheService, authCacheInvalidator APIKeyAuthCacheInvalidator, entClient *dbent.Client, settingService *SettingService, cfg *config.Config) *SubscriptionService {
 	svc := &SubscriptionService{
 		groupRepo:            groupRepo,
 		userSubRepo:          userSubRepo,
@@ -66,6 +67,7 @@ func NewSubscriptionService(groupRepo GroupRepository, userSubRepo UserSubscript
 		billingCacheService:  billingCacheService,
 		authCacheInvalidator: authCacheInvalidator,
 		entClient:            entClient,
+		settingService:       settingService,
 	}
 	svc.initSubCache(cfg)
 	svc.initMaintenanceQueue(cfg)
@@ -606,6 +608,12 @@ func (s *SubscriptionService) ListUserSubscriptions(ctx context.Context, userID 
 // days = nil 或负数 → 清除为不限制；>=0 → 设置该上限（0 = 仅当天额度）。仅能操作属于自己的卡。
 func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, userID, subID int64, days *int) error {
 	norm := normalizeOverdraftDays(days) // nil/负数 → nil；>=0 → 拷贝
+	// 管理员设置了全局上限时，用户自助设置不得超过它（0 = 不限制）。
+	if norm != nil && s.settingService != nil {
+		if capDays := s.settingService.GetMaxOverdraftDaysCap(ctx); capDays > 0 && *norm > capDays {
+			return infraerrors.BadRequest("OVERDRAFT_DAYS_EXCEEDS_CAP", fmt.Sprintf("最多透支天数不能超过管理员设置的上限 %d 天", capDays))
+		}
+	}
 	ok, err := s.userSubRepo.SetOverdraftDays(ctx, userID, subID, norm)
 	if err != nil {
 		return err

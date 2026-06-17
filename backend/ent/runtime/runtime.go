@@ -141,6 +141,10 @@ func init() {
 	apikeyDescUsage7d := apikeyFields[16].Descriptor()
 	// apikey.DefaultUsage7d holds the default value on creation for the usage_7d field.
 	apikey.DefaultUsage7d = apikeyDescUsage7d.Default.(float64)
+	// apikeyDescStablePriorityEnabled is the schema descriptor for stable_priority_enabled field.
+	apikeyDescStablePriorityEnabled := apikeyFields[20].Descriptor()
+	// apikey.DefaultStablePriorityEnabled holds the default value on creation for the stable_priority_enabled field.
+	apikey.DefaultStablePriorityEnabled = apikeyDescStablePriorityEnabled.Default.(bool)
 	accountMixin := schema.Account{}.Mixin()
 	accountMixinHooks1 := accountMixin[1].Hooks()
 	account.Hooks[0] = accountMixinHooks1[0]

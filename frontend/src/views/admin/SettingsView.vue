@@ -3109,6 +3109,23 @@
                   <label
                     class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
                   >
+                    {{ t("admin.settings.defaults.maxOverdraftDaysCap") }}
+                  </label>
+                  <input
+                    v-model.number="form.max_overdraft_days_cap"
+                    type="number"
+                    min="0"
+                    class="input"
+                    placeholder="0"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.defaults.maxOverdraftDaysCapHint") }}
+                  </p>
+                </div>
+                <div>
+                  <label
+                    class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
                     {{ t("admin.settings.defaults.defaultUserRpmLimit") }}
                   </label>
                   <input
@@ -7659,6 +7676,7 @@ const form = reactive<SettingsForm>({
   affiliate_rebate_duration_days: 0,
   affiliate_rebate_per_invitee_cap: 0,
   default_concurrency: 1,
+  max_overdraft_days_cap: 0,
   default_subscriptions: [],
   force_email_on_third_party_signup: false,
   default_user_rpm_limit: 0,
@@ -8825,6 +8843,7 @@ async function saveSettings() {
       affiliate_rebate_duration_days: Math.max(0, Math.min(3650, Math.floor(Number(form.affiliate_rebate_duration_days) || 0))),
       affiliate_rebate_per_invitee_cap: Math.max(0, Number(form.affiliate_rebate_per_invitee_cap) || 0),
       default_concurrency: form.default_concurrency,
+      max_overdraft_days_cap: Math.max(0, Math.floor(Number(form.max_overdraft_days_cap) || 0)),
       default_subscriptions: normalizedDefaultSubscriptions,
       force_email_on_third_party_signup: form.force_email_on_third_party_signup,
       default_user_rpm_limit: form.default_user_rpm_limit,

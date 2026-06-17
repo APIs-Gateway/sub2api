@@ -81,6 +81,9 @@ type APIKey struct {
 	Reset1dAt     *time.Time `json:"reset_1d_at,omitempty"`
 	Reset7dAt     *time.Time `json:"reset_7d_at,omitempty"`
 
+	// StablePriorityEnabled per-key 稳定优先开关
+	StablePriorityEnabled bool `json:"stable_priority_enabled"`
+
 	User  *User  `json:"user,omitempty"`
 	Group *Group `json:"group,omitempty"`
 }

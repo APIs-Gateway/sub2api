@@ -26,6 +26,9 @@ type APIKeyAuthSnapshot struct {
 	RateLimit5h float64 `json:"rate_limit_5h"`
 	RateLimit1d float64 `json:"rate_limit_1d"`
 	RateLimit7d float64 `json:"rate_limit_7d"`
+
+	// StablePriorityEnabled per-key 稳定优先开关；调度时与 User.StablePriorityEnabled 取或生效。
+	StablePriorityEnabled bool `json:"stable_priority_enabled"`
 }
 
 // APIKeyAuthUserSnapshot 用户快照

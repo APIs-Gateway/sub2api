@@ -42,6 +42,9 @@ type CreateAPIKeyRequest struct {
 	RateLimit5h *float64 `json:"rate_limit_5h"`
 	RateLimit1d *float64 `json:"rate_limit_1d"`
 	RateLimit7d *float64 `json:"rate_limit_7d"`
+
+	// 稳定优先 per-key 开关
+	StablePriorityEnabled bool `json:"stable_priority_enabled"`
 }
 
 // UpdateAPIKeyRequest represents the update API key request payload
@@ -60,6 +63,9 @@ type UpdateAPIKeyRequest struct {
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
 	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // 重置限速用量
+
+	// 稳定优先 per-key 开关（nil = 不变）
+	StablePriorityEnabled *bool `json:"stable_priority_enabled"`
 }
 
 // List handles listing user's API keys with pagination
@@ -160,6 +166,8 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		IPWhitelist:   req.IPWhitelist,
 		IPBlacklist:   req.IPBlacklist,
 		ExpiresInDays: req.ExpiresInDays,
+
+		StablePriorityEnabled: req.StablePriorityEnabled,
 	}
 	if req.Quota != nil {
 		svcReq.Quota = *req.Quota
@@ -213,6 +221,8 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		RateLimit1d:         req.RateLimit1d,
 		RateLimit7d:         req.RateLimit7d,
 		ResetRateLimitUsage: req.ResetRateLimitUsage,
+
+		StablePriorityEnabled: req.StablePriorityEnabled,
 	}
 	if req.Name != "" {
 		svcReq.Name = &req.Name
