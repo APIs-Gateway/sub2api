@@ -108,6 +108,7 @@ type BillingCacheService struct {
 	cfg                   *config.Config
 	circuitBreaker        *billingCircuitBreaker
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	settingService        *SettingService
 
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
@@ -133,6 +134,7 @@ func NewBillingCacheService(
 	userGroupRateRepo UserGroupRateRepository,
 	cfg *config.Config,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	settingService *SettingService,
 ) *BillingCacheService {
 	svc := &BillingCacheService{
 		cache:                 cache,
@@ -143,6 +145,7 @@ func NewBillingCacheService(
 		userGroupRateRepo:     userGroupRateRepo,
 		cfg:                   cfg,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
+		settingService:        settingService,
 	}
 	svc.circuitBreaker = newBillingCircuitBreaker(cfg.Billing.CircuitBreaker)
 	svc.startCacheWriteWorkers()
@@ -847,17 +850,23 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 		s.circuitBreaker.OnSuccess()
 	}
 
-	// 透支闸门：用户给任意订阅卡设过透支上限时（guard=true），
-	// 有效可花 = balance − Σ(各活跃 burn-down 卡按各自 N 锁定的额度)。
-	// guard=false（默认）= 维持现状无限透支，仅查 balance>0，零额外开销。
-	if user.SubscriptionOverdraftGuard {
-		locked, lerr := s.lockedSubscriptionBalance(ctx, user.ID)
+	// 透支闸门（硬上限）：非管理员用户的订阅预支天数受全局上限约束（默认 1 天，管理员可调）；
+	// 非管理员绝不允许无限透支。管理员豁免。
+	// 有效可花 = balance − Σ(各活跃 burn-down 卡按 min(卡值,上限)、且豁免老用户 锁定的额度)。
+	// locked==0（无活跃订阅卡 / 未超额）时回落到普通 balance>0 检查，对纯余额用户零语义变化。
+	if !user.IsAdmin() {
+		adminCap := defaultMaxOverdraftDaysCap
+		if s.settingService != nil {
+			adminCap = s.settingService.GetMaxOverdraftDaysCapCached(ctx)
+		}
+		locked, lerr := s.lockedSubscriptionBalance(ctx, user.ID, adminCap)
 		if lerr != nil {
 			// 加载活跃卡失败：fail-open 退回原始余额检查，避免因瞬时 DB 抖动误挡正常用户。
 			logger.LegacyPrintf("service.billing_cache", "Warning: overdraft gate lookup failed for user %d: %v (fallback to raw balance)", user.ID, lerr)
-		} else if balance-locked <= 0 {
-			return ErrSubscriptionOverdraftLimit
-		} else {
+		} else if locked > 0 {
+			if balance-locked <= 0 {
+				return ErrSubscriptionOverdraftLimit
+			}
 			return nil
 		}
 	}
@@ -869,9 +878,10 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 	return nil
 }
 
-// lockedSubscriptionBalance 汇总用户全部活跃 burn-down 卡，按「每张卡各自的 max_overdraft_days」
-// 计算暂不可用、但仍计入 users.balance 的金额（nil 的卡不限制，贡献 0）。
-func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, userID int64) (float64, error) {
+// lockedSubscriptionBalance 汇总用户全部活跃 burn-down 卡，按「施加全局上限 adminCap 后的有效透支天数」
+// 计算暂不可用、但仍计入 users.balance 的金额。每张卡有效天数 = EffectiveOverdraftDaysAt(now, adminCap)：
+// 取 min(卡自设值, adminCap)，未设则取 adminCap，并对已超额老用户豁免（不低于已透支天数）。
+func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, userID int64, adminCap int) (float64, error) {
 	if s.subRepo == nil {
 		return 0, nil
 	}
@@ -882,10 +892,8 @@ func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, use
 	now := time.Now()
 	var locked float64
 	for i := range subs {
-		if subs[i].MaxOverdraftDays == nil {
-			continue // 该卡不限制
-		}
-		locked += subs[i].LockedAt(now, *subs[i].MaxOverdraftDays)
+		days := subs[i].EffectiveOverdraftDaysAt(now, adminCap)
+		locked += subs[i].LockedAt(now, days)
 	}
 	return locked, nil
 }

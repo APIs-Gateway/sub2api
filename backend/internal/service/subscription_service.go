@@ -610,8 +610,8 @@ func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, 
 	norm := normalizeOverdraftDays(days) // nil/负数 → nil；>=0 → 拷贝
 	// 管理员设置了全局上限时，用户自助设置不得超过它（0 = 不限制）。
 	if norm != nil && s.settingService != nil {
-		if capDays := s.settingService.GetMaxOverdraftDaysCap(ctx); capDays > 0 && *norm > capDays {
-			return infraerrors.BadRequest("OVERDRAFT_DAYS_EXCEEDS_CAP", fmt.Sprintf("最多透支天数不能超过管理员设置的上限 %d 天", capDays))
+		if capDays := s.settingService.GetMaxOverdraftDaysCap(ctx); *norm > capDays {
+			return infraerrors.BadRequest("OVERDRAFT_DAYS_EXCEEDS_CAP", fmt.Sprintf("最多透支天数不能超过上限 %d 天", capDays))
 		}
 	}
 	ok, err := s.userSubRepo.SetOverdraftDays(ctx, userID, subID, norm)

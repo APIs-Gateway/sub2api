@@ -5923,7 +5923,7 @@ export default {
         defaultConcurrency: '默认并发数',
         defaultConcurrencyHint: '新用户的最大并发请求数',
         maxOverdraftDaysCap: '最多透支天数上限',
-        maxOverdraftDaysCapHint: '限制用户为每张订阅卡可设置的最多透支天数；0 = 不限制',
+        maxOverdraftDaysCapHint: '用户最多可预支的透支天数；0 = 不允许预支。',
         defaultUserRpmLimit: '默认用户 RPM 限制',
         defaultUserRpmLimitHint: '新用户默认每分钟最大请求数，0 = 不限制；仅作用于新用户创建时初始化',
         defaultSubscriptions: '默认订阅列表',

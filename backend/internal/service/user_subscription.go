@@ -1,6 +1,9 @@
 package service
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 type UserSubscription struct {
 	ID      int64
@@ -262,4 +265,34 @@ func (s *UserSubscription) LockedAt(now time.Time, overdraftDays int) float64 {
 		return 0
 	}
 	return locked
+}
+
+// overdraftDaysConsumedAheadAt 本卡已消费超出「当前日历天累计额度 N×D」的天数（向上取整，≥0）。
+// 用于老用户豁免：施加全局上限时不把有效天数压到此值以下，避免对已超额用户突然锁死。
+func (s *UserSubscription) overdraftDaysConsumedAheadAt(now time.Time) int {
+	if s.DailyAmountUSD <= 0 {
+		return 0
+	}
+	ahead := s.ConsumedUSD/s.DailyAmountUSD - float64(s.CalendarDayAt(now))
+	if ahead <= 0 {
+		return 0
+	}
+	return int(math.Ceil(ahead))
+}
+
+// EffectiveOverdraftDaysAt 施加非管理员全局透支上限 adminCap 后、本卡的有效透支天数。
+//   - 卡自设值存在时取 min(卡值, adminCap)（用户只能更严，不能比上限更松）；未设则取 adminCap。
+//   - 老用户豁免：结果不低于「已透支天数」，已超额用户维持现状、不被突然锁死，随日历天推进自然收敛。
+func (s *UserSubscription) EffectiveOverdraftDaysAt(now time.Time, adminCap int) int {
+	limit := adminCap
+	if s.MaxOverdraftDays != nil && *s.MaxOverdraftDays < limit {
+		limit = *s.MaxOverdraftDays
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	if floor := s.overdraftDaysConsumedAheadAt(now); floor > limit {
+		limit = floor
+	}
+	return limit
 }

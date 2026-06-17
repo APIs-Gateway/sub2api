@@ -2120,6 +2120,11 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		value:     settings.BackendModeEnabled,
 		expiresAt: time.Now().Add(backendModeCacheTTL).UnixNano(),
 	})
+	maxOverdraftDaysCapSF.Forget("max_overdraft_days_cap")
+	maxOverdraftDaysCapCache.Store(&cachedMaxOverdraftDaysCap{
+		value:     settings.MaxOverdraftDaysCap,
+		expiresAt: time.Now().Add(maxOverdraftDaysCapCacheTTL).UnixNano(),
+	})
 	gatewayForwardingSF.Forget("gateway_forwarding")
 	gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
 		fingerprintUnification:           settings.EnableFingerprintUnification,
@@ -2631,16 +2636,72 @@ func (s *SettingService) GetDefaultConcurrency(ctx context.Context) int {
 	return s.cfg.Default.UserConcurrency
 }
 
-// GetMaxOverdraftDaysCap 获取管理员设置的最多透支天数全局上限（0 = 不限制）。
+// defaultMaxOverdraftDaysCap 管理员未配置时的开箱默认透支上限（天）。
+// 语义：非管理员用户的硬性透支天数天花板；0 = 完全不能预支。绝不为「无限」。
+const defaultMaxOverdraftDaysCap = 1
+
+const (
+	maxOverdraftDaysCapCacheTTL  = 60 * time.Second
+	maxOverdraftDaysCapErrorTTL  = 5 * time.Second
+	maxOverdraftDaysCapDBTimeout = 5 * time.Second
+)
+
+type cachedMaxOverdraftDaysCap struct {
+	value     int
+	expiresAt int64 // unix nano
+}
+
+var maxOverdraftDaysCapCache atomic.Value // *cachedMaxOverdraftDaysCap
+var maxOverdraftDaysCapSF singleflight.Group
+
+// GetMaxOverdraftDaysCap 读取非管理员透支天数硬上限（未配置时回退默认 1；0 为合法的最严值）。
 func (s *SettingService) GetMaxOverdraftDaysCap(ctx context.Context) int {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyMaxOverdraftDaysCap)
 	if err != nil {
-		return 0
+		return defaultMaxOverdraftDaysCap
 	}
-	if v, err := strconv.Atoi(value); err == nil && v > 0 {
+	if v, err := strconv.Atoi(value); err == nil && v >= 0 {
 		return v
 	}
-	return 0
+	return defaultMaxOverdraftDaysCap
+}
+
+// GetMaxOverdraftDaysCapCached 进程内缓存版（60s TTL），用于计费闸门热路径。
+func (s *SettingService) GetMaxOverdraftDaysCapCached(ctx context.Context) int {
+	if cached, ok := maxOverdraftDaysCapCache.Load().(*cachedMaxOverdraftDaysCap); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.value
+		}
+	}
+	result, _, _ := maxOverdraftDaysCapSF.Do("max_overdraft_days_cap", func() (any, error) {
+		if cached, ok := maxOverdraftDaysCapCache.Load().(*cachedMaxOverdraftDaysCap); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.value, nil
+			}
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), maxOverdraftDaysCapDBTimeout)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyMaxOverdraftDaysCap)
+		if err != nil {
+			ttl := maxOverdraftDaysCapCacheTTL
+			if !errors.Is(err, ErrSettingNotFound) {
+				slog.Warn("failed to get max_overdraft_days_cap setting", "error", err)
+				ttl = maxOverdraftDaysCapErrorTTL
+			}
+			maxOverdraftDaysCapCache.Store(&cachedMaxOverdraftDaysCap{value: defaultMaxOverdraftDaysCap, expiresAt: time.Now().Add(ttl).UnixNano()})
+			return defaultMaxOverdraftDaysCap, nil
+		}
+		capVal, perr := strconv.Atoi(value)
+		if perr != nil || capVal < 0 {
+			capVal = defaultMaxOverdraftDaysCap
+		}
+		maxOverdraftDaysCapCache.Store(&cachedMaxOverdraftDaysCap{value: capVal, expiresAt: time.Now().Add(maxOverdraftDaysCapCacheTTL).UnixNano()})
+		return capVal, nil
+	})
+	if v, ok := result.(int); ok {
+		return v
+	}
+	return defaultMaxOverdraftDaysCap
 }
 
 // GetDefaultBalance 获取默认余额
@@ -2878,7 +2939,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOIDCConnectUserInfoIDPath:                 "",
 		SettingKeyOIDCConnectUserInfoUsernamePath:           "",
 		SettingKeyDefaultConcurrency:                        strconv.Itoa(s.cfg.Default.UserConcurrency),
-		SettingKeyMaxOverdraftDaysCap:                       "0",
+		SettingKeyMaxOverdraftDaysCap:                       strconv.Itoa(defaultMaxOverdraftDaysCap),
 		SettingKeyDefaultBalance:                            strconv.FormatFloat(s.cfg.Default.UserBalance, 'f', 8, 64),
 		SettingKeyAffiliateRebateRate:                       strconv.FormatFloat(AffiliateRebateRateDefault, 'f', 8, 64),
 		SettingKeyAffiliateRebateFreezeHours:                strconv.Itoa(AffiliateRebateFreezeHoursDefault),
@@ -3050,6 +3111,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	if capDays, err := strconv.Atoi(settings[SettingKeyMaxOverdraftDaysCap]); err == nil && capDays >= 0 {
 		result.MaxOverdraftDaysCap = capDays
+	} else {
+		result.MaxOverdraftDaysCap = defaultMaxOverdraftDaysCap
 	}
 
 	if rpm, err := strconv.Atoi(settings[SettingKeyDefaultUserRPMLimit]); err == nil && rpm >= 0 {

@@ -5766,7 +5766,7 @@ export default {
         defaultConcurrency: 'Default Concurrency',
         defaultConcurrencyHint: 'Maximum concurrent requests for new users',
         maxOverdraftDaysCap: 'Max Overdraft Days Cap',
-        maxOverdraftDaysCapHint: 'Upper bound on the overdraft days a user can set per subscription card; 0 = unlimited',
+        maxOverdraftDaysCapHint: 'Maximum overdraft (advance) days for users; 0 = no overdraft.',
         defaultUserRpmLimit: 'Default User RPM Limit',
         defaultUserRpmLimitHint: 'Default max requests per minute for new users; 0 = unlimited. Only applied at new user creation.',
         defaultSubscriptions: 'Default Subscriptions',
