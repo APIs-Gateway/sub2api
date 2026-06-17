@@ -7,6 +7,7 @@ import (
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/schema"
+	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
 )
@@ -31,6 +32,15 @@ func (SubscriptionPlan) Annotations() []schema.Annotation {
 func (SubscriptionPlan) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("group_id"),
+		// daily_amount_usd：套餐每日发放额度 D（burn-down 模型 source of truth）。
+		// 取代开通时从 group.daily_limit_usd 推导；迁移 155 从所挂 group 回填。
+		field.Float("daily_amount_usd").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
+			Default(0),
+		// platform：仅用于展示/筛选（取代当前从 group 派生 platform）；不构成路由或权限约束。
+		field.String("platform").
+			MaxLen(50).
+			Default(""),
 		field.String("name").
 			MaxLen(100).
 			NotEmpty(),
@@ -73,5 +83,14 @@ func (SubscriptionPlan) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("group_id"),
 		index.Fields("for_sale"),
+	}
+}
+
+// Edges 声明套餐的反向关联，使生成的 ent migrate schema 与 SQL 迁移里
+// user_subscriptions.plan_id / redeem_codes.plan_id 的外键保持一致（可空边 → ON DELETE SET NULL）。
+func (SubscriptionPlan) Edges() []ent.Edge {
+	return []ent.Edge{
+		edge.To("subscriptions", UserSubscription.Type),
+		edge.To("redeem_codes", RedeemCode.Type),
 	}
 }

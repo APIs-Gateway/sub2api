@@ -11,7 +11,9 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
+	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 )
 
 // SubscriptionPlanCreate is the builder for creating a SubscriptionPlan entity.
@@ -25,6 +27,34 @@ type SubscriptionPlanCreate struct {
 // SetGroupID sets the "group_id" field.
 func (_c *SubscriptionPlanCreate) SetGroupID(v int64) *SubscriptionPlanCreate {
 	_c.mutation.SetGroupID(v)
+	return _c
+}
+
+// SetDailyAmountUsd sets the "daily_amount_usd" field.
+func (_c *SubscriptionPlanCreate) SetDailyAmountUsd(v float64) *SubscriptionPlanCreate {
+	_c.mutation.SetDailyAmountUsd(v)
+	return _c
+}
+
+// SetNillableDailyAmountUsd sets the "daily_amount_usd" field if the given value is not nil.
+func (_c *SubscriptionPlanCreate) SetNillableDailyAmountUsd(v *float64) *SubscriptionPlanCreate {
+	if v != nil {
+		_c.SetDailyAmountUsd(*v)
+	}
+	return _c
+}
+
+// SetPlatform sets the "platform" field.
+func (_c *SubscriptionPlanCreate) SetPlatform(v string) *SubscriptionPlanCreate {
+	_c.mutation.SetPlatform(v)
+	return _c
+}
+
+// SetNillablePlatform sets the "platform" field if the given value is not nil.
+func (_c *SubscriptionPlanCreate) SetNillablePlatform(v *string) *SubscriptionPlanCreate {
+	if v != nil {
+		_c.SetPlatform(*v)
+	}
 	return _c
 }
 
@@ -180,6 +210,36 @@ func (_c *SubscriptionPlanCreate) SetNillableUpdatedAt(v *time.Time) *Subscripti
 	return _c
 }
 
+// AddSubscriptionIDs adds the "subscriptions" edge to the UserSubscription entity by IDs.
+func (_c *SubscriptionPlanCreate) AddSubscriptionIDs(ids ...int64) *SubscriptionPlanCreate {
+	_c.mutation.AddSubscriptionIDs(ids...)
+	return _c
+}
+
+// AddSubscriptions adds the "subscriptions" edges to the UserSubscription entity.
+func (_c *SubscriptionPlanCreate) AddSubscriptions(v ...*UserSubscription) *SubscriptionPlanCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddSubscriptionIDs(ids...)
+}
+
+// AddRedeemCodeIDs adds the "redeem_codes" edge to the RedeemCode entity by IDs.
+func (_c *SubscriptionPlanCreate) AddRedeemCodeIDs(ids ...int64) *SubscriptionPlanCreate {
+	_c.mutation.AddRedeemCodeIDs(ids...)
+	return _c
+}
+
+// AddRedeemCodes adds the "redeem_codes" edges to the RedeemCode entity.
+func (_c *SubscriptionPlanCreate) AddRedeemCodes(v ...*RedeemCode) *SubscriptionPlanCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddRedeemCodeIDs(ids...)
+}
+
 // Mutation returns the SubscriptionPlanMutation object of the builder.
 func (_c *SubscriptionPlanCreate) Mutation() *SubscriptionPlanMutation {
 	return _c.mutation
@@ -215,6 +275,14 @@ func (_c *SubscriptionPlanCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *SubscriptionPlanCreate) defaults() {
+	if _, ok := _c.mutation.DailyAmountUsd(); !ok {
+		v := subscriptionplan.DefaultDailyAmountUsd
+		_c.mutation.SetDailyAmountUsd(v)
+	}
+	if _, ok := _c.mutation.Platform(); !ok {
+		v := subscriptionplan.DefaultPlatform
+		_c.mutation.SetPlatform(v)
+	}
 	if _, ok := _c.mutation.Description(); !ok {
 		v := subscriptionplan.DefaultDescription
 		_c.mutation.SetDescription(v)
@@ -257,6 +325,17 @@ func (_c *SubscriptionPlanCreate) defaults() {
 func (_c *SubscriptionPlanCreate) check() error {
 	if _, ok := _c.mutation.GroupID(); !ok {
 		return &ValidationError{Name: "group_id", err: errors.New(`ent: missing required field "SubscriptionPlan.group_id"`)}
+	}
+	if _, ok := _c.mutation.DailyAmountUsd(); !ok {
+		return &ValidationError{Name: "daily_amount_usd", err: errors.New(`ent: missing required field "SubscriptionPlan.daily_amount_usd"`)}
+	}
+	if _, ok := _c.mutation.Platform(); !ok {
+		return &ValidationError{Name: "platform", err: errors.New(`ent: missing required field "SubscriptionPlan.platform"`)}
+	}
+	if v, ok := _c.mutation.Platform(); ok {
+		if err := subscriptionplan.PlatformValidator(v); err != nil {
+			return &ValidationError{Name: "platform", err: fmt.Errorf(`ent: validator failed for field "SubscriptionPlan.platform": %w`, err)}
+		}
 	}
 	if _, ok := _c.mutation.Name(); !ok {
 		return &ValidationError{Name: "name", err: errors.New(`ent: missing required field "SubscriptionPlan.name"`)}
@@ -337,6 +416,14 @@ func (_c *SubscriptionPlanCreate) createSpec() (*SubscriptionPlan, *sqlgraph.Cre
 		_spec.SetField(subscriptionplan.FieldGroupID, field.TypeInt64, value)
 		_node.GroupID = value
 	}
+	if value, ok := _c.mutation.DailyAmountUsd(); ok {
+		_spec.SetField(subscriptionplan.FieldDailyAmountUsd, field.TypeFloat64, value)
+		_node.DailyAmountUsd = value
+	}
+	if value, ok := _c.mutation.Platform(); ok {
+		_spec.SetField(subscriptionplan.FieldPlatform, field.TypeString, value)
+		_node.Platform = value
+	}
 	if value, ok := _c.mutation.Name(); ok {
 		_spec.SetField(subscriptionplan.FieldName, field.TypeString, value)
 		_node.Name = value
@@ -384,6 +471,38 @@ func (_c *SubscriptionPlanCreate) createSpec() (*SubscriptionPlan, *sqlgraph.Cre
 	if value, ok := _c.mutation.UpdatedAt(); ok {
 		_spec.SetField(subscriptionplan.FieldUpdatedAt, field.TypeTime, value)
 		_node.UpdatedAt = value
+	}
+	if nodes := _c.mutation.SubscriptionsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   subscriptionplan.SubscriptionsTable,
+			Columns: []string{subscriptionplan.SubscriptionsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.RedeemCodesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   subscriptionplan.RedeemCodesTable,
+			Columns: []string{subscriptionplan.RedeemCodesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(redeemcode.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
 	}
 	return _node, _spec
 }
@@ -452,6 +571,36 @@ func (u *SubscriptionPlanUpsert) UpdateGroupID() *SubscriptionPlanUpsert {
 // AddGroupID adds v to the "group_id" field.
 func (u *SubscriptionPlanUpsert) AddGroupID(v int64) *SubscriptionPlanUpsert {
 	u.Add(subscriptionplan.FieldGroupID, v)
+	return u
+}
+
+// SetDailyAmountUsd sets the "daily_amount_usd" field.
+func (u *SubscriptionPlanUpsert) SetDailyAmountUsd(v float64) *SubscriptionPlanUpsert {
+	u.Set(subscriptionplan.FieldDailyAmountUsd, v)
+	return u
+}
+
+// UpdateDailyAmountUsd sets the "daily_amount_usd" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsert) UpdateDailyAmountUsd() *SubscriptionPlanUpsert {
+	u.SetExcluded(subscriptionplan.FieldDailyAmountUsd)
+	return u
+}
+
+// AddDailyAmountUsd adds v to the "daily_amount_usd" field.
+func (u *SubscriptionPlanUpsert) AddDailyAmountUsd(v float64) *SubscriptionPlanUpsert {
+	u.Add(subscriptionplan.FieldDailyAmountUsd, v)
+	return u
+}
+
+// SetPlatform sets the "platform" field.
+func (u *SubscriptionPlanUpsert) SetPlatform(v string) *SubscriptionPlanUpsert {
+	u.Set(subscriptionplan.FieldPlatform, v)
+	return u
+}
+
+// UpdatePlatform sets the "platform" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsert) UpdatePlatform() *SubscriptionPlanUpsert {
+	u.SetExcluded(subscriptionplan.FieldPlatform)
 	return u
 }
 
@@ -680,6 +829,41 @@ func (u *SubscriptionPlanUpsertOne) AddGroupID(v int64) *SubscriptionPlanUpsertO
 func (u *SubscriptionPlanUpsertOne) UpdateGroupID() *SubscriptionPlanUpsertOne {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
 		s.UpdateGroupID()
+	})
+}
+
+// SetDailyAmountUsd sets the "daily_amount_usd" field.
+func (u *SubscriptionPlanUpsertOne) SetDailyAmountUsd(v float64) *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.SetDailyAmountUsd(v)
+	})
+}
+
+// AddDailyAmountUsd adds v to the "daily_amount_usd" field.
+func (u *SubscriptionPlanUpsertOne) AddDailyAmountUsd(v float64) *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.AddDailyAmountUsd(v)
+	})
+}
+
+// UpdateDailyAmountUsd sets the "daily_amount_usd" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsertOne) UpdateDailyAmountUsd() *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.UpdateDailyAmountUsd()
+	})
+}
+
+// SetPlatform sets the "platform" field.
+func (u *SubscriptionPlanUpsertOne) SetPlatform(v string) *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.SetPlatform(v)
+	})
+}
+
+// UpdatePlatform sets the "platform" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsertOne) UpdatePlatform() *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.UpdatePlatform()
 	})
 }
 
@@ -1101,6 +1285,41 @@ func (u *SubscriptionPlanUpsertBulk) AddGroupID(v int64) *SubscriptionPlanUpsert
 func (u *SubscriptionPlanUpsertBulk) UpdateGroupID() *SubscriptionPlanUpsertBulk {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
 		s.UpdateGroupID()
+	})
+}
+
+// SetDailyAmountUsd sets the "daily_amount_usd" field.
+func (u *SubscriptionPlanUpsertBulk) SetDailyAmountUsd(v float64) *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.SetDailyAmountUsd(v)
+	})
+}
+
+// AddDailyAmountUsd adds v to the "daily_amount_usd" field.
+func (u *SubscriptionPlanUpsertBulk) AddDailyAmountUsd(v float64) *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.AddDailyAmountUsd(v)
+	})
+}
+
+// UpdateDailyAmountUsd sets the "daily_amount_usd" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsertBulk) UpdateDailyAmountUsd() *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.UpdateDailyAmountUsd()
+	})
+}
+
+// SetPlatform sets the "platform" field.
+func (u *SubscriptionPlanUpsertBulk) SetPlatform(v string) *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.SetPlatform(v)
+	})
+}
+
+// UpdatePlatform sets the "platform" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsertBulk) UpdatePlatform() *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.UpdatePlatform()
 	})
 }
 

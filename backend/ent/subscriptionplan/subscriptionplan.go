@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/dialect/sql/sqlgraph"
 )
 
 const (
@@ -15,6 +16,10 @@ const (
 	FieldID = "id"
 	// FieldGroupID holds the string denoting the group_id field in the database.
 	FieldGroupID = "group_id"
+	// FieldDailyAmountUsd holds the string denoting the daily_amount_usd field in the database.
+	FieldDailyAmountUsd = "daily_amount_usd"
+	// FieldPlatform holds the string denoting the platform field in the database.
+	FieldPlatform = "platform"
 	// FieldName holds the string denoting the name field in the database.
 	FieldName = "name"
 	// FieldDescription holds the string denoting the description field in the database.
@@ -39,14 +44,34 @@ const (
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
+	// EdgeSubscriptions holds the string denoting the subscriptions edge name in mutations.
+	EdgeSubscriptions = "subscriptions"
+	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
+	EdgeRedeemCodes = "redeem_codes"
 	// Table holds the table name of the subscriptionplan in the database.
 	Table = "subscription_plans"
+	// SubscriptionsTable is the table that holds the subscriptions relation/edge.
+	SubscriptionsTable = "user_subscriptions"
+	// SubscriptionsInverseTable is the table name for the UserSubscription entity.
+	// It exists in this package in order to avoid circular dependency with the "usersubscription" package.
+	SubscriptionsInverseTable = "user_subscriptions"
+	// SubscriptionsColumn is the table column denoting the subscriptions relation/edge.
+	SubscriptionsColumn = "plan_id"
+	// RedeemCodesTable is the table that holds the redeem_codes relation/edge.
+	RedeemCodesTable = "redeem_codes"
+	// RedeemCodesInverseTable is the table name for the RedeemCode entity.
+	// It exists in this package in order to avoid circular dependency with the "redeemcode" package.
+	RedeemCodesInverseTable = "redeem_codes"
+	// RedeemCodesColumn is the table column denoting the redeem_codes relation/edge.
+	RedeemCodesColumn = "plan_id"
 )
 
 // Columns holds all SQL columns for subscriptionplan fields.
 var Columns = []string{
 	FieldID,
 	FieldGroupID,
+	FieldDailyAmountUsd,
+	FieldPlatform,
 	FieldName,
 	FieldDescription,
 	FieldPrice,
@@ -72,6 +97,12 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultDailyAmountUsd holds the default value on creation for the "daily_amount_usd" field.
+	DefaultDailyAmountUsd float64
+	// DefaultPlatform holds the default value on creation for the "platform" field.
+	DefaultPlatform string
+	// PlatformValidator is a validator for the "platform" field. It is called by the builders before save.
+	PlatformValidator func(string) error
 	// NameValidator is a validator for the "name" field. It is called by the builders before save.
 	NameValidator func(string) error
 	// DefaultDescription holds the default value on creation for the "description" field.
@@ -111,6 +142,16 @@ func ByID(opts ...sql.OrderTermOption) OrderOption {
 // ByGroupID orders the results by the group_id field.
 func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldGroupID, opts...).ToFunc()
+}
+
+// ByDailyAmountUsd orders the results by the daily_amount_usd field.
+func ByDailyAmountUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDailyAmountUsd, opts...).ToFunc()
+}
+
+// ByPlatform orders the results by the platform field.
+func ByPlatform(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPlatform, opts...).ToFunc()
 }
 
 // ByName orders the results by the name field.
@@ -171,4 +212,46 @@ func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByUpdatedAt orders the results by the updated_at field.
 func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpdatedAt, opts...).ToFunc()
+}
+
+// BySubscriptionsCount orders the results by subscriptions count.
+func BySubscriptionsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newSubscriptionsStep(), opts...)
+	}
+}
+
+// BySubscriptions orders the results by subscriptions terms.
+func BySubscriptions(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newSubscriptionsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
+// ByRedeemCodesCount orders the results by redeem_codes count.
+func ByRedeemCodesCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newRedeemCodesStep(), opts...)
+	}
+}
+
+// ByRedeemCodes orders the results by redeem_codes terms.
+func ByRedeemCodes(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newRedeemCodesStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+func newSubscriptionsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(SubscriptionsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, SubscriptionsTable, SubscriptionsColumn),
+	)
+}
+func newRedeemCodesStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(RedeemCodesInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, RedeemCodesTable, RedeemCodesColumn),
+	)
 }

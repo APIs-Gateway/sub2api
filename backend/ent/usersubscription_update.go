@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
@@ -82,6 +83,26 @@ func (_u *UserSubscriptionUpdate) SetNillableGroupID(v *int64) *UserSubscription
 	if v != nil {
 		_u.SetGroupID(*v)
 	}
+	return _u
+}
+
+// SetPlanID sets the "plan_id" field.
+func (_u *UserSubscriptionUpdate) SetPlanID(v int64) *UserSubscriptionUpdate {
+	_u.mutation.SetPlanID(v)
+	return _u
+}
+
+// SetNillablePlanID sets the "plan_id" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillablePlanID(v *int64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetPlanID(*v)
+	}
+	return _u
+}
+
+// ClearPlanID clears the value of the "plan_id" field.
+func (_u *UserSubscriptionUpdate) ClearPlanID() *UserSubscriptionUpdate {
+	_u.mutation.ClearPlanID()
 	return _u
 }
 
@@ -466,6 +487,11 @@ func (_u *UserSubscriptionUpdate) SetGroup(v *Group) *UserSubscriptionUpdate {
 	return _u.SetGroupID(v.ID)
 }
 
+// SetPlan sets the "plan" edge to the SubscriptionPlan entity.
+func (_u *UserSubscriptionUpdate) SetPlan(v *SubscriptionPlan) *UserSubscriptionUpdate {
+	return _u.SetPlanID(v.ID)
+}
+
 // SetAssignedByUserID sets the "assigned_by_user" edge to the User entity by ID.
 func (_u *UserSubscriptionUpdate) SetAssignedByUserID(id int64) *UserSubscriptionUpdate {
 	_u.mutation.SetAssignedByUserID(id)
@@ -514,6 +540,12 @@ func (_u *UserSubscriptionUpdate) ClearUser() *UserSubscriptionUpdate {
 // ClearGroup clears the "group" edge to the Group entity.
 func (_u *UserSubscriptionUpdate) ClearGroup() *UserSubscriptionUpdate {
 	_u.mutation.ClearGroup()
+	return _u
+}
+
+// ClearPlan clears the "plan" edge to the SubscriptionPlan entity.
+func (_u *UserSubscriptionUpdate) ClearPlan() *UserSubscriptionUpdate {
+	_u.mutation.ClearPlan()
 	return _u
 }
 
@@ -780,6 +812,35 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 		}
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
+	if _u.mutation.PlanCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   usersubscription.PlanTable,
+			Columns: []string{usersubscription.PlanColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplan.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.PlanIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   usersubscription.PlanTable,
+			Columns: []string{usersubscription.PlanColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplan.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
 	if _u.mutation.AssignedByUserCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
@@ -925,6 +986,26 @@ func (_u *UserSubscriptionUpdateOne) SetNillableGroupID(v *int64) *UserSubscript
 	if v != nil {
 		_u.SetGroupID(*v)
 	}
+	return _u
+}
+
+// SetPlanID sets the "plan_id" field.
+func (_u *UserSubscriptionUpdateOne) SetPlanID(v int64) *UserSubscriptionUpdateOne {
+	_u.mutation.SetPlanID(v)
+	return _u
+}
+
+// SetNillablePlanID sets the "plan_id" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillablePlanID(v *int64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetPlanID(*v)
+	}
+	return _u
+}
+
+// ClearPlanID clears the value of the "plan_id" field.
+func (_u *UserSubscriptionUpdateOne) ClearPlanID() *UserSubscriptionUpdateOne {
+	_u.mutation.ClearPlanID()
 	return _u
 }
 
@@ -1309,6 +1390,11 @@ func (_u *UserSubscriptionUpdateOne) SetGroup(v *Group) *UserSubscriptionUpdateO
 	return _u.SetGroupID(v.ID)
 }
 
+// SetPlan sets the "plan" edge to the SubscriptionPlan entity.
+func (_u *UserSubscriptionUpdateOne) SetPlan(v *SubscriptionPlan) *UserSubscriptionUpdateOne {
+	return _u.SetPlanID(v.ID)
+}
+
 // SetAssignedByUserID sets the "assigned_by_user" edge to the User entity by ID.
 func (_u *UserSubscriptionUpdateOne) SetAssignedByUserID(id int64) *UserSubscriptionUpdateOne {
 	_u.mutation.SetAssignedByUserID(id)
@@ -1357,6 +1443,12 @@ func (_u *UserSubscriptionUpdateOne) ClearUser() *UserSubscriptionUpdateOne {
 // ClearGroup clears the "group" edge to the Group entity.
 func (_u *UserSubscriptionUpdateOne) ClearGroup() *UserSubscriptionUpdateOne {
 	_u.mutation.ClearGroup()
+	return _u
+}
+
+// ClearPlan clears the "plan" edge to the SubscriptionPlan entity.
+func (_u *UserSubscriptionUpdateOne) ClearPlan() *UserSubscriptionUpdateOne {
+	_u.mutation.ClearPlan()
 	return _u
 }
 
@@ -1646,6 +1738,35 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.PlanCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   usersubscription.PlanTable,
+			Columns: []string{usersubscription.PlanColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplan.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.PlanIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   usersubscription.PlanTable,
+			Columns: []string{usersubscription.PlanColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplan.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
