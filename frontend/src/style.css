@@ -291,7 +291,8 @@
 
   /* ============ 表格样式 ============ */
   .table-container {
-    @apply overflow-x-auto rounded-xl border border-gray-200 dark:border-dark-700;
+    /* 去盒化：靠表头发丝线与行分隔组织信息，不再整体套边框盒子 */
+    @apply overflow-x-auto;
   }
 
   .table {
@@ -300,8 +301,7 @@
 
   .table th {
     @apply px-4 py-3 text-left font-medium;
-    @apply text-gray-600 dark:text-dark-300;
-    @apply bg-gray-50 dark:bg-dark-800/50;
+    @apply text-gray-500 dark:text-dark-400;
     @apply border-b border-gray-200 dark:border-dark-700;
   }
 
@@ -554,9 +554,11 @@
   }
 
   .sidebar-link-active {
-    @apply bg-primary-50 dark:bg-primary-900/20;
-    @apply text-primary-600 dark:text-primary-400;
-    @apply hover:bg-primary-100 dark:hover:bg-primary-900/30;
+    /* Anthropic 风：安静的中性高亮 + 左侧 2px 陶土轨道指示，不再用整块彩色填充 */
+    @apply bg-gray-100 text-gray-900 dark:bg-dark-800 dark:text-white;
+    @apply font-semibold;
+    @apply hover:bg-gray-100 dark:hover:bg-dark-800;
+    box-shadow: inset 2px 0 0 0 theme('colors.primary.500');
   }
 
   .sidebar-section {

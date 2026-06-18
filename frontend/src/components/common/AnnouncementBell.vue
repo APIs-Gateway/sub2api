@@ -4,7 +4,7 @@
     <button
       @click="openModal"
       class="relative flex h-9 w-9 items-center justify-center rounded-lg text-gray-600 transition-all hover:bg-gray-100 hover:scale-105 dark:text-gray-400 dark:hover:bg-dark-800"
-      :class="{ 'text-blue-600 dark:text-blue-400': unreadCount > 0 }"
+      :class="{ 'text-primary-600 dark:text-primary-400': unreadCount > 0 }"
       :aria-label="t('announcements.title')"
     >
       <Icon name="bell" size="md" />
@@ -23,7 +23,7 @@
       <Transition name="modal-fade">
         <div
           v-if="isModalOpen"
-          class="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-gradient-to-br from-black/70 via-black/60 to-black/70 p-4 pt-[8vh] backdrop-blur-md"
+          class="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-[8vh] backdrop-blur-sm"
           @click="closeModal"
         >
           <div
@@ -31,11 +31,11 @@
             @click.stop
           >
             <!-- Header with Gradient -->
-            <div class="relative overflow-hidden border-b border-gray-100/80 bg-gradient-to-br from-blue-50/50 to-indigo-50/30 px-6 py-5 dark:border-dark-700/50 dark:from-blue-900/10 dark:to-indigo-900/5">
+            <div class="relative overflow-hidden border-b border-gray-100/80 px-6 py-5 dark:border-dark-700/50">
               <div class="relative z-10 flex items-start justify-between">
                 <div>
                   <div class="flex items-center gap-2">
-                    <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30">
+                    <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-900 dark:bg-gray-100 dark:text-gray-900 text-white">
                       <Icon name="bell" size="sm" />
                     </div>
                     <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -43,7 +43,7 @@
                     </h2>
                   </div>
                   <p v-if="unreadCount > 0" class="mt-2 text-sm text-gray-600 dark:text-gray-400">
-                    <span class="font-medium text-blue-600 dark:text-blue-400">{{ unreadCount }}</span>
+                    <span class="font-medium text-primary-600 dark:text-primary-400">{{ unreadCount }}</span>
                     {{ t('announcements.unread') }}
                   </p>
                 </div>
@@ -52,7 +52,7 @@
                     v-if="unreadCount > 0"
                     @click="markAllAsRead"
                     :disabled="loading"
-                    class="rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow-lg shadow-blue-500/30 transition-all hover:bg-blue-700 hover:shadow-xl disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
+                    class="rounded-lg bg-gray-900 px-4 py-2 text-xs font-medium text-white transition-all hover:bg-gray-800 disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
                   >
                     {{ t('announcements.markAllRead') }}
                   </button>
@@ -66,7 +66,7 @@
                 </div>
               </div>
               <!-- Decorative gradient -->
-              <div class="absolute right-0 top-0 h-full w-48 bg-gradient-to-l from-indigo-100/20 to-transparent dark:from-indigo-900/10"></div>
+              <div class="absolute right-0 top-0 h-full w-48 "></div>
             </div>
 
             <!-- Body -->
@@ -74,8 +74,8 @@
               <!-- Loading -->
               <div v-if="loading" class="flex items-center justify-center py-16">
                 <div class="relative">
-                  <div class="h-12 w-12 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-dark-600 dark:border-t-blue-400"></div>
-                  <div class="absolute inset-0 h-12 w-12 animate-pulse rounded-full border-4 border-blue-400/30"></div>
+                  <div class="h-12 w-12 animate-spin rounded-full border-4 border-gray-200 border-t-gray-900 dark:border-dark-600 dark:border-t-gray-100"></div>
+                  <div class="absolute inset-0 h-12 w-12 animate-pulse rounded-full border-4 border-gray-300/40 dark:border-dark-600"></div>
                 </div>
               </div>
 
@@ -85,7 +85,7 @@
                   v-for="item in announcements"
                   :key="item.id"
                   class="group relative flex items-center gap-4 border-b border-gray-100 px-6 py-4 transition-all hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-700/30"
-                  :class="{ 'bg-blue-50/30 dark:bg-blue-900/5': !item.read_at }"
+                  :class="{ 'bg-gray-50 dark:bg-dark-700/30': !item.read_at }"
                   style="min-height: 72px"
                   @click="openDetail(item)"
                 >
@@ -93,10 +93,10 @@
                   <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center">
                     <div
                       v-if="!item.read_at"
-                      class="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30"
+                      class="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gray-900 dark:bg-gray-100 dark:text-gray-900 text-white"
                     >
                       <!-- Pulse ring -->
-                      <span class="absolute inline-flex h-full w-full animate-ping rounded-xl bg-blue-400 opacity-75"></span>
+                      <span class="absolute inline-flex h-full w-full animate-ping rounded-xl bg-gray-400 opacity-75"></span>
                       <!-- Icon -->
                       <svg class="relative z-10 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -124,11 +124,11 @@
                         </time>
                         <span
                           v-if="!item.read_at"
-                          class="inline-flex items-center gap-1 rounded-md bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                          class="inline-flex items-center gap-1 rounded-md bg-primary-100 px-1.5 py-0.5 text-xs font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-400"
                         >
                           <span class="relative flex h-1.5 w-1.5">
-                            <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-500 opacity-75"></span>
-                            <span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-blue-600"></span>
+                            <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary-500 opacity-75"></span>
+                            <span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary-600"></span>
                           </span>
                           {{ t('announcements.unread') }}
                         </span>
@@ -152,7 +152,7 @@
                   <!-- Unread indicator bar -->
                   <div
                     v-if="!item.read_at"
-                    class="absolute left-0 top-0 h-full w-1 bg-gradient-to-b from-blue-500 to-indigo-600"
+                    class="absolute left-0 top-0 h-full w-1 bg-primary-500"
                   ></div>
                 </div>
               </div>
@@ -160,7 +160,7 @@
               <!-- Empty State -->
               <div v-else class="flex flex-col items-center justify-center py-16">
                 <div class="relative mb-4">
-                  <div class="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-gray-100 to-gray-200 dark:from-dark-700 dark:to-dark-600">
+                  <div class="flex h-20 w-20 items-center justify-center rounded-full bg-gray-100 dark:bg-dark-700">
                     <Icon name="inbox" size="xl" class="text-gray-400 dark:text-gray-500" />
                   </div>
                   <div class="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-green-500 text-white">
@@ -183,7 +183,7 @@
       <Transition name="modal-fade">
         <div
           v-if="detailModalOpen && selectedAnnouncement"
-          class="fixed inset-0 z-[110] flex items-start justify-center overflow-y-auto bg-gradient-to-br from-black/70 via-black/60 to-black/70 p-4 pt-[6vh] backdrop-blur-md"
+          class="fixed inset-0 z-[110] flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-[6vh] backdrop-blur-sm"
           @click="closeDetail"
         >
           <div
@@ -191,28 +191,28 @@
             @click.stop
           >
             <!-- Header with Decorative Elements -->
-            <div class="relative overflow-hidden border-b border-gray-100 bg-gradient-to-br from-blue-50/80 via-indigo-50/50 to-purple-50/30 px-8 py-6 dark:border-dark-700 dark:from-blue-900/20 dark:via-indigo-900/10 dark:to-purple-900/5">
+            <div class="relative overflow-hidden border-b border-gray-100 px-8 py-6 dark:border-dark-700">
               <!-- Decorative background elements -->
-              <div class="absolute right-0 top-0 h-full w-64 bg-gradient-to-l from-indigo-100/30 to-transparent dark:from-indigo-900/20"></div>
-              <div class="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-gradient-to-br from-blue-400/20 to-indigo-500/20 blur-3xl"></div>
-              <div class="absolute -left-4 -bottom-4 h-24 w-24 rounded-full bg-gradient-to-tr from-purple-400/20 to-pink-500/20 blur-2xl"></div>
+              <div class="absolute right-0 top-0 h-full w-64 "></div>
+              <div class="absolute -right-8 -top-8 h-32 w-32 rounded-full "></div>
+              <div class="absolute -left-4 -bottom-4 h-24 w-24 rounded-full "></div>
 
               <div class="relative z-10 flex items-start justify-between gap-4">
                 <div class="flex-1 min-w-0">
                   <!-- Icon and Category -->
                   <div class="mb-3 flex items-center gap-2">
-                    <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30">
+                    <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-900 dark:bg-gray-100 dark:text-gray-900 text-white">
                       <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     </div>
                     <div class="flex items-center gap-2">
-                      <span class="rounded-lg bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                      <span class="rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 dark:bg-dark-700 dark:text-gray-300">
                         {{ t('announcements.title') }}
                       </span>
                       <span
                         v-if="!selectedAnnouncement.read_at"
-                        class="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 px-2.5 py-1 text-xs font-medium text-white shadow-lg shadow-blue-500/30"
+                        class="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-2.5 py-1 text-xs font-medium text-white"
                       >
                         <span class="relative flex h-2 w-2">
                           <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75"></span>
@@ -262,7 +262,7 @@
               <!-- Content with decorative border -->
               <div class="relative">
                 <!-- Decorative left border -->
-                <div class="absolute left-0 top-0 bottom-0 w-1 rounded-full bg-gradient-to-b from-blue-500 via-indigo-500 to-purple-500"></div>
+                <div class="absolute left-0 top-0 bottom-0 w-1 rounded-full bg-primary-500"></div>
 
                 <div class="pl-6">
                   <div
@@ -292,7 +292,7 @@
                   <button
                     v-if="!selectedAnnouncement.read_at"
                     @click="markAsReadAndClose(selectedAnnouncement.id)"
-                    class="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-blue-500/30 transition-all hover:shadow-xl hover:scale-105"
+                    class="rounded-xl bg-gray-900 dark:bg-gray-100 dark:text-gray-900 px-5 py-2.5 text-sm font-medium text-white transition-all hover:shadow-xl hover:scale-105"
                   >
                     <span class="flex items-center gap-2">
                       <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -500,7 +500,7 @@ watch(
 }
 
 .markdown-body a {
-  @apply font-medium text-blue-600 underline decoration-blue-600/30 decoration-2 underline-offset-2 transition-all hover:decoration-blue-600 dark:text-blue-400 dark:decoration-blue-400/30 dark:hover:decoration-blue-400;
+  @apply font-medium text-primary-600 underline decoration-primary-600/30 decoration-2 underline-offset-2 transition-all hover:decoration-primary-600 dark:text-primary-400 dark:decoration-primary-400/30 dark:hover:decoration-primary-400;
 }
 
 .markdown-body ul,
@@ -522,16 +522,16 @@ watch(
 }
 
 .markdown-body li::marker {
-  @apply text-blue-600 dark:text-blue-400;
+  @apply text-primary-600 dark:text-primary-400;
 }
 
 .markdown-body blockquote {
-  @apply relative my-5 border-l-4 border-blue-500 bg-blue-50/50 py-3 pl-5 pr-4 italic text-gray-700 dark:border-blue-400 dark:bg-blue-900/10 dark:text-gray-300;
+  @apply relative my-5 border-l-4 border-primary-500 bg-primary-50/50 py-3 pl-5 pr-4 italic text-gray-700 dark:border-primary-400 dark:bg-primary-900/10 dark:text-gray-300;
 }
 
 .markdown-body blockquote::before {
   content: '"';
-  @apply absolute -left-1 top-0 text-5xl font-serif text-blue-500/20 dark:text-blue-400/20;
+  @apply absolute -left-1 top-0 text-5xl font-serif text-primary-500/20 dark:text-primary-400/20;
 }
 
 .markdown-body code {
@@ -569,7 +569,7 @@ watch(
 }
 
 .markdown-body th {
-  @apply bg-gradient-to-br from-blue-50 to-indigo-50 font-semibold text-gray-900 dark:from-blue-900/20 dark:to-indigo-900/10 dark:text-white;
+  @apply bg-gray-50 font-semibold text-gray-900 dark:bg-dark-700 dark:text-white;
 }
 
 .markdown-body tbody tr {
