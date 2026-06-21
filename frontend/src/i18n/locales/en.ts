@@ -392,7 +392,7 @@ export default {
     users: 'Users',
     groups: 'Groups',
     channels: 'Channels',
-    availableChannels: 'Available Channels',
+    availableChannels: 'Pricing & Billing',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
     proxies: 'Proxies',
@@ -709,7 +709,8 @@ export default {
 
   // Groups (shared)
   groups: {
-    subscription: 'Sub'
+    subscription: 'Sub',
+    rateMultiplierTip: 'The "Nx rate" is how fast this group burns your balance relative to official pricing: a higher number means a more stable pool but also more balance consumed for the same usage. It is the billing coefficient, not the final price. See the group description for your effective fraction of official pricing after the plan discount.'
   },
 
   // API Keys
@@ -746,6 +747,12 @@ export default {
     namePlaceholder: 'My API Key',
     groupLabel: 'Group',
     selectGroup: 'Select a group',
+    billing: {
+      title: 'How billing works',
+      intro: 'This site bills by usage, deducted from your balance (USD) in real time. A monthly plan gives you a large "official-price quota" for a low price — for example, ¥39 grants $2700 of quota, with models charged at official prices.',
+      rate: 'The "Nx rate" on the right of each group is how fast that pool burns your balance relative to official pricing: a higher number means a more stable pool but also more balance consumed for the same usage. It is the billing coefficient, not your final cost.',
+      effective: 'The "0.X rate" in the group description is your effective fraction of official pricing after the plan discount. For example, "full-power pro" is a 6x rate, which works out to about 0.25 of official pricing under a plan.'
+    },
     statusLabel: 'Status',
     selectStatus: 'Select status',
     saving: 'Saving...',
@@ -1086,11 +1093,22 @@ export default {
   },
 
   // Available Channels (user-facing)
+  billingRules: {
+    title: 'Billing rules',
+    intro: 'This site bills by usage, deducted in real time from your balance (USD) or plan quota.',
+    formulaLabel: 'Amount charged',
+    formula: 'official model price × usage × group rate',
+    modelPriceHere: 'Official model price: same as the provider. See each model below (click a model name for input / output / cache prices).',
+    modelPriceLink: 'Official model price: same as the provider. Check input / output / cache prices for each model on the "Pricing & Billing" page.',
+    rate: 'Group rate (Nx): how fast your chosen group consumes balance relative to official pricing. A higher number means a more stable pool but more consumed for the same usage.',
+    plan: 'Monthly plan: a low price gets you a large "official-price quota" (for example, ¥39 grants $2700 of quota); with a plan your effective price drops to a fraction of official pricing — the "0.X" shown in each group description.'
+  },
+
   availableChannels: {
-    title: 'Available Channels',
-    description: 'Channels you can access, along with their supported models and pricing',
-    searchPlaceholder: 'Search channels or models...',
-    empty: 'No available channels',
+    title: 'Pricing & Billing',
+    description: 'Model prices and billing rules; see the models you can use, their unit prices, and each group rate',
+    searchPlaceholder: 'Search models or lines...',
+    empty: 'No available lines',
     noModels: 'No models configured',
     noPricing: 'Pricing not configured',
     exclusive: 'Exclusive',
@@ -1098,7 +1116,7 @@ export default {
     exclusiveTooltip: 'Exclusive groups granted to you by an admin',
     publicTooltip: 'Groups open to all users',
     columns: {
-      name: 'Channel',
+      name: 'Line',
       description: 'Description',
       platform: 'Platform',
       groups: 'Your Accessible Groups',

@@ -392,7 +392,7 @@ export default {
     users: '用户管理',
     groups: '分组管理',
     channels: '渠道管理',
-    availableChannels: '可用渠道',
+    availableChannels: '价格与计费',
     subscriptions: '订阅管理',
     accounts: '账号管理',
     proxies: 'IP管理',
@@ -708,7 +708,8 @@ export default {
 
   // Groups (shared)
   groups: {
-    subscription: '订阅'
+    subscription: '订阅',
+    rateMultiplierTip: '「Nx 倍率」是该分组相对官方价的扣额度速度：数字越大、池子越稳定，同样的用量扣得也越多；它是系统扣费的系数，不是最终价格。叠加套餐折扣后你实际相当于官方价几折，见分组描述。'
   },
 
   // API Keys
@@ -745,6 +746,12 @@ export default {
     namePlaceholder: '我的 API 密钥',
     groupLabel: '分组',
     selectGroup: '选择分组',
+    billing: {
+      title: '计费怎么算？',
+      intro: '本站按量从余额（USD）实时扣费。开通月套餐后，你会用很低的价格拿到一大笔「官方价额度」——例如 ¥39 得到 $2700 额度，模型按官方价计费。',
+      rate: '分组右侧的「Nx 倍率」是这个池子相对官方价的扣额度速度：数字越大、池子越稳定，同样的用量扣得也越多。它是系统扣费用的系数，不是你最终掏的钱。',
+      effective: '分组描述里的「0.X 倍率」才是叠加套餐折扣后、你实际相当于官方价的几折。例如「满血 pro」是 6x 倍率，叠加套餐后约为官方价的 0.25。'
+    },
     statusLabel: '状态',
     selectStatus: '选择状态',
     saving: '保存中...',
@@ -1090,11 +1097,22 @@ export default {
   },
 
   // Available Channels (user-facing)
+  billingRules: {
+    title: '计费规则',
+    intro: '本站按量计费，实时从你的余额（USD）或套餐额度中扣除。',
+    formulaLabel: '实际扣费',
+    formula: '模型官方价 × 本次用量 × 分组倍率',
+    modelPriceHere: '模型官方价：与官方计价一致，见下方各模型（点模型名查看输入 / 输出 / 缓存单价）。',
+    modelPriceLink: '模型官方价：与官方计价一致，可在「价格与计费」页查看每个模型的输入 / 输出 / 缓存单价。',
+    rate: '分组倍率（Nx）：你所选分组相对官方价的消耗倍数，数字越大、池子越稳定，同样用量扣得也越多。',
+    plan: '月套餐：用很低的价格换一大笔「官方价额度」（例如 ¥39 得到 $2700 额度）；叠加套餐后你实际相当于官方价的「0.X」，即各分组描述里标注的折扣。'
+  },
+
   availableChannels: {
-    title: '可用渠道',
-    description: '查看您可访问的渠道与其支持的模型、定价',
-    searchPlaceholder: '搜索渠道或模型...',
-    empty: '暂无可用渠道',
+    title: '价格与计费',
+    description: '模型价格与计费规则；查看你可用的模型、单价与各分组倍率',
+    searchPlaceholder: '搜索模型或线路...',
+    empty: '暂无可用线路',
     noModels: '未配置模型',
     noPricing: '未配置定价',
     exclusive: '专属',
@@ -1102,7 +1120,7 @@ export default {
     exclusiveTooltip: '管理员授权给你的专属分组',
     publicTooltip: '对所有用户公开的分组',
     columns: {
-      name: '渠道名',
+      name: '线路',
       description: '描述',
       platform: '平台',
       groups: '我可访问的分组',

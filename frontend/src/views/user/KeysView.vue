@@ -391,7 +391,17 @@
         </div>
 
         <div>
-          <label class="input-label">{{ t('keys.groupLabel') }}</label>
+          <label class="input-label inline-flex items-center">
+            {{ t('keys.groupLabel') }}
+            <HelpTooltip trigger="click" width-class="w-80">
+              <div class="space-y-1.5 text-left">
+                <p class="font-semibold text-white">{{ t('keys.billing.title') }}</p>
+                <p>{{ t('keys.billing.intro') }}</p>
+                <p>{{ t('keys.billing.rate') }}</p>
+                <p>{{ t('keys.billing.effective') }}</p>
+              </div>
+            </HelpTooltip>
+          </label>
           <Select
             v-model="formData.group_id"
             :options="groupOptions"
@@ -1033,6 +1043,7 @@ import KeyOnboardingModal from '@/components/user/KeyOnboardingModal.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+	import HelpTooltip from '@/components/common/HelpTooltip.vue'
 	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
