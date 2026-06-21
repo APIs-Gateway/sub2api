@@ -1114,6 +1114,8 @@ export default {
     searchPlaceholder: '搜索模型或线路...',
     tierLabel: '档位',
     buyPlans: '查看套餐',
+    payHint: '实付 = 模型单价 ×',
+    effectiveTitle: '本档位实付（× {rate}）',
     tiersTitle: '按量档位',
     tiersHint: '倍率越高的池子越稳定、同样用量扣得也越多；点模型名查看官方单价。',
     plansTitle: '月套餐',

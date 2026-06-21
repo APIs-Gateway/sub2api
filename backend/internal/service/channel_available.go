@@ -124,7 +124,7 @@ func (s *ChannelService) fillGlobalPricingFallback(models []SupportedModel) {
 		if lp == nil {
 			continue
 		}
-		models[i].Pricing = synthesizePricingFromLiteLLM(lp, models[i].Pricing)
+		models[i].Pricing = synthesizePricingFromLiteLLM(lp, models[i].Pricing, models[i].Name)
 	}
 }
 
@@ -159,7 +159,7 @@ func pricingNeedsFallback(p *ChannelModelPricing) bool {
 //  3. 默认 token
 //
 // LiteLLM 中字段 0 视为未配置，不带入展示。
-func synthesizePricingFromLiteLLM(lp *LiteLLMModelPricing, existing *ChannelModelPricing) *ChannelModelPricing {
+func synthesizePricingFromLiteLLM(lp *LiteLLMModelPricing, existing *ChannelModelPricing, modelName string) *ChannelModelPricing {
 	if lp == nil {
 		return existing
 	}
@@ -188,6 +188,75 @@ func synthesizePricingFromLiteLLM(lp *LiteLLMModelPricing, existing *ChannelMode
 		CacheWritePrice:  nonZeroPtr(lp.CacheCreationInputTokenCost),
 		CacheReadPrice:   nonZeroPtr(lp.CacheReadInputTokenCost),
 		ImageOutputPrice: nonZeroPtr(lp.OutputCostPerImageToken),
+		Intervals:        longContextDisplayIntervals(lp, modelName),
+	}
+}
+
+// openAILongContextTier 按模型名返回官方长上下文分档参数（阈值 + 输入/输出倍率）。
+// 目录定价(pricingData)常缺该信息——它仅在 billing 按模型名硬编码——故用 matchOpenAIModel
+// 的家族口径补齐：gpt-5.4 / gpt-5.5（非 mini / nano）走 openAIGPT54FallbackPricing 的长上下文，
+// 与 billing_service 一致。其余模型返回 ok=false。
+func openAILongContextTier(model string) (threshold int, inMult, outMult float64, ok bool) {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if strings.HasPrefix(m, "gpt-5.4-mini") || strings.HasPrefix(m, "gpt-5.4-nano") {
+		return 0, 0, 0, false
+	}
+	if strings.HasPrefix(m, "gpt-5.4") || strings.HasPrefix(m, "gpt-5.5") {
+		lp := openAIGPT54FallbackPricing
+		if lp.LongContextInputTokenThreshold > 0 {
+			return lp.LongContextInputTokenThreshold, lp.LongContextInputCostMultiplier, lp.LongContextOutputCostMultiplier, true
+		}
+	}
+	return 0, 0, 0, false
+}
+
+// longContextDisplayIntervals 把官方长上下文分档（阈值 + 倍率）合成成两段展示用 interval：
+// (0, 阈值] 用基准价，(阈值, ∞] 用基准 × 官方长上下文倍率。优先用 LiteLLM 自带的分档字段，
+// 缺失时按模型名补（openAILongContextTier）。
+//
+// 仅用于「价格与计费」页展示官方阶梯定价；实际计费走 billing_service 的独立长上下文
+// 逻辑（按整次会话 token 判定），二者口径一致。无阈值 / 无基准价时返回 nil。
+func longContextDisplayIntervals(lp *LiteLLMModelPricing, modelName string) []PricingInterval {
+	threshold := lp.LongContextInputTokenThreshold
+	inMult := lp.LongContextInputCostMultiplier
+	outMult := lp.LongContextOutputCostMultiplier
+	if threshold <= 0 {
+		if t, im, om, ok := openAILongContextTier(modelName); ok {
+			threshold, inMult, outMult = t, im, om
+		}
+	}
+	if threshold <= 0 {
+		return nil
+	}
+	if inMult <= 0 {
+		inMult = 1
+	}
+	if outMult <= 0 {
+		outMult = 1
+	}
+	if inMult == 1 && outMult == 1 {
+		return nil
+	}
+	baseIn := lp.InputCostPerToken
+	baseOut := lp.OutputCostPerToken
+	if baseIn == 0 && baseOut == 0 {
+		return nil
+	}
+	return []PricingInterval{
+		{
+			MinTokens:   0,
+			MaxTokens:   &threshold,
+			InputPrice:  nonZeroPtr(baseIn),
+			OutputPrice: nonZeroPtr(baseOut),
+			SortOrder:   0,
+		},
+		{
+			MinTokens:   threshold,
+			MaxTokens:   nil,
+			InputPrice:  nonZeroPtr(baseIn * inMult),
+			OutputPrice: nonZeroPtr(baseOut * outMult),
+			SortOrder:   1,
+		},
 	}
 }
 
