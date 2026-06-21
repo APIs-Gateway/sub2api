@@ -9002,6 +9002,14 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		deps.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(p.APIKey.ID, p.Cost.ActualCost)
 	}
 
+	// burn-down「用完即失效」：本次把额度扣到 0 的订阅卡已在扣费事务内即时标记 expired；
+	// 失效对应 (user, group) 订阅缓存，让准入闸门与「我的订阅」立即反映卡已失效（失败由 TTL 自愈）。
+	if p.User != nil {
+		for _, gid := range result.DepletedSubscriptionGroupIDs {
+			_ = deps.billingCacheService.InvalidateSubscription(ctx, p.User.ID, gid)
+		}
+	}
+
 	deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 
 	// Platform quota 累加：仅在 standard（余额）模式生效；订阅模式豁免；仅对有 limit 的用户写

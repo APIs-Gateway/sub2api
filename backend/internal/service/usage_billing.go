@@ -116,6 +116,10 @@ type UsageBillingApplyResult struct {
 	APIKeyQuotaExhausted bool
 	NewBalance           *float64           // post-deduction balance (nil = no balance deduction)
 	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
+	// DepletedSubscriptionGroupIDs 本次扣费把哪些订阅卡的剩余额度扣到 0（burn-down 用完），
+	// 并已在同一事务内即时标记为 expired（用完即失效，不必等到期日）。调用方据此失效对应
+	// (user, group) 的订阅缓存，让"我的订阅 / active 列表"立即反映。
+	DepletedSubscriptionGroupIDs []int64
 }
 
 type UsageBillingRepository interface {

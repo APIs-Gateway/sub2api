@@ -174,6 +174,13 @@ func (s *UserSubscription) RemainingUSD() float64 {
 	return r
 }
 
+// IsDepleted 报告本卡 burn-down 余额是否已耗尽（剩余 ≤ ~0）。耗尽的卡会在扣费事务中被即时
+// 标记 expired（用完即失效），不再等到时间到期。仅对 burn-down 卡（G>0）成立；legacy/standard
+// 卡（G=0）不参与 burn-down 额度，永远返回 false。
+func (s *UserSubscription) IsDepleted() bool {
+	return s.GrantedTotalUSD > 0 && s.GrantedTotalUSD-s.ConsumedUSD-s.ClawedUSD <= 1e-7
+}
+
 // ClawbackClock 返回清扣时钟起点：优先 ActivatedAt，否则回退 StartsAt。
 func (s *UserSubscription) ClawbackClock() time.Time {
 	if s.ActivatedAt != nil && !s.ActivatedAt.IsZero() {

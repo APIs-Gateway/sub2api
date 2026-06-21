@@ -110,9 +110,11 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	// 先按「订阅优先、按激活先后」把消费归集到各订阅卡的 consumed_usd（锁 subs），
 	// 再扣余额（锁 users）。锁顺序 subs→users 与清扣/到期事务保持一致，避免死锁。
 	if cmd.BalanceCost > 0 {
-		if err := allocateUsageBillingSubscriptions(ctx, tx, cmd.UserID, cmd.BalanceCost); err != nil {
+		depletedGroupIDs, err := allocateUsageBillingSubscriptions(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		if err != nil {
 			return err
 		}
+		result.DepletedSubscriptionGroupIDs = depletedGroupIDs
 		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
 		if err != nil {
 			return err
@@ -152,9 +154,13 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 //
 // 锁定顺序：SELECT ... FOR UPDATE 按 (activated_at, id) 确定序锁定订阅行，
 // 与每日清扣 / 到期作废事务一致，避免交叉死锁。
-func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID int64, cost float64) error {
+// subscriptionDepletionEpsilon 判定 burn-down 卡「剩余被扣到 0」的容差（granted/consumed/clawed
+// 为 numeric(20,10)，浮点尾差用此阈值吸收）。低于此值即视为用完。
+const subscriptionDepletionEpsilon = 1e-7
+
+func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID int64, cost float64) ([]int64, error) {
 	if cost <= 0 {
-		return nil
+		return nil, nil
 	}
 
 	rows, err := tx.QueryContext(ctx, `
@@ -169,7 +175,7 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 		FOR UPDATE
 	`, userID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	type subRemaining struct {
@@ -181,20 +187,21 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 		var s subRemaining
 		if err := rows.Scan(&s.id, &s.remaining); err != nil {
 			_ = rows.Close()
-			return err
+			return nil, err
 		}
 		subs = append(subs, s)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return err
+		return nil, err
 	}
 	// pq 驱动：同一连接上必须先耗尽并关闭 rows，才能执行后续 UPDATE。
 	if err := rows.Close(); err != nil {
-		return err
+		return nil, err
 	}
 
 	remaining := cost
+	var depletedGroupIDs []int64
 	for _, s := range subs {
 		if remaining <= 0 {
 			break
@@ -206,16 +213,29 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 		if alloc <= 0 {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `
+		// 扣减 consumed_usd；若本次把本卡剩余（granted-consumed-clawed）扣到 ~0，则同一条 UPDATE
+		// 即时把本卡标记为 expired（burn-down「用完即失效」，不必等到期日）。RETURNING 回报扣后
+		// 是否已 expired 及其 group_id，供调用方失效订阅缓存。行已 FOR UPDATE 锁定，无并发竞争。
+		var nowExpired bool
+		var groupID int64
+		if err := tx.QueryRowContext(ctx, `
 			UPDATE user_subscriptions
-			SET consumed_usd = consumed_usd + $1, updated_at = NOW()
+			SET consumed_usd = consumed_usd + $1,
+				status = CASE
+					WHEN (granted_total_usd - consumed_usd - clawed_usd - $1) <= $3
+					THEN 'expired' ELSE status END,
+				updated_at = NOW()
 			WHERE id = $2
-		`, alloc, s.id); err != nil {
-			return err
+			RETURNING status = 'expired', group_id
+		`, alloc, s.id, subscriptionDepletionEpsilon).Scan(&nowExpired, &groupID); err != nil {
+			return nil, err
+		}
+		if nowExpired {
+			depletedGroupIDs = append(depletedGroupIDs, groupID)
 		}
 		remaining -= alloc
 	}
-	return nil
+	return depletedGroupIDs, nil
 }
 
 func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, error) {
