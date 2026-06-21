@@ -19,6 +19,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/emailcanon"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/imroc/req/v3"
 	"golang.org/x/sync/singleflight"
@@ -1742,6 +1743,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	// 注册设置
 	updates[SettingKeyRegistrationEnabled] = strconv.FormatBool(settings.RegistrationEnabled)
 	updates[SettingKeyEmailVerifyEnabled] = strconv.FormatBool(settings.EmailVerifyEnabled)
+	updates[SettingKeyGmailAliasFilterEnabled] = strconv.FormatBool(settings.GmailAliasFilterEnabled)
 	registrationEmailSuffixWhitelistJSON, err := json.Marshal(settings.RegistrationEmailSuffixWhitelist)
 	if err != nil {
 		return nil, fmt.Errorf("marshal registration email suffix whitelist: %w", err)
@@ -2107,6 +2109,9 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		return
 	}
 
+	// 同步 Gmail 别名过滤开关到 emailcanon 进程内标志（repository 归一化收口读它，避免热路径查 DB）。
+	emailcanon.SetEnabled(settings.GmailAliasFilterEnabled)
+
 	// 先使 inflight singleflight 失效，再刷新缓存，缩小旧值覆盖新值的竞态窗口
 	versionBoundsSF.Forget("version_bounds")
 	versionBoundsCache.Store(&cachedVersionBounds{
@@ -2470,6 +2475,16 @@ func (s *SettingService) IsEmailVerifyEnabled(ctx context.Context) bool {
 		return false
 	}
 	return value == "true"
+}
+
+// IsGmailAliasFilterEnabled 检查是否开启 Gmail 别名过滤（默认启用：键缺失或非 "false" 即视为开）。
+// 启动装配时据此调 emailcanon.SetEnabled 预热进程内标志；运行期变更走 refreshCachedSettings。
+func (s *SettingService) IsGmailAliasFilterEnabled(ctx context.Context) bool {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyGmailAliasFilterEnabled)
+	if err != nil {
+		return true // 读取失败按默认启用，与 parseSettings 的 != "false" 一致
+	}
+	return value != "false"
 }
 
 // GetRegistrationEmailSuffixWhitelist returns normalized registration email suffix whitelist.
@@ -2982,6 +2997,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result := &SystemSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
 		EmailVerifyEnabled:               emailVerifyEnabled,
+		GmailAliasFilterEnabled:          settings[SettingKeyGmailAliasFilterEnabled] != "false", // 默认启用
 		RegistrationEmailSuffixWhitelist: ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
 		PromoCodeEnabled:                 settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
 		PasswordResetEnabled:             emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",

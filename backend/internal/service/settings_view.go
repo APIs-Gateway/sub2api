@@ -14,6 +14,7 @@ func firstNonEmpty(values ...string) string {
 type SystemSettings struct {
 	RegistrationEnabled              bool
 	EmailVerifyEnabled               bool
+	GmailAliasFilterEnabled          bool // 是否过滤 Gmail 别名（去本地部分的「.」与「+后缀」、googlemail→gmail）做查重/落库归一化
 	RegistrationEmailSuffixWhitelist []string
 	PromoCodeEnabled                 bool
 	PasswordResetEnabled             bool
