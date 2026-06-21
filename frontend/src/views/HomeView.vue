@@ -12,22 +12,18 @@
     <div v-else v-html="homeContent"></div>
   </div>
 
-  <!-- Default Home Page — Anthropic-inspired minimal -->
-  <div v-else class="landing relative flex min-h-screen flex-col">
-    <!-- Soft warm background accent -->
-    <div class="pointer-events-none absolute inset-0 overflow-hidden">
-      <div class="accent-glow absolute -top-32 right-[-8rem] h-[34rem] w-[34rem]"></div>
-    </div>
-
+  <!-- Default Home Page — Quiet Ledger: 编辑式、单张纸、发丝线、无光晕/无假终端 -->
+  <div v-else class="landing flex min-h-screen flex-col">
     <!-- Header -->
-    <header class="relative z-20 px-6 py-5 md:px-10">
+    <header class="px-6 py-5 md:px-10">
       <nav class="mx-auto flex max-w-5xl items-center justify-between">
         <!-- Logo + Name -->
         <div class="flex items-center gap-2.5">
-          <div class="h-8 w-8 overflow-hidden rounded-lg">
-            <img :src="siteLogo || '/logo.png'" alt="Logo" class="h-full w-full object-contain" />
+          <div class="flex h-8 w-8 items-center justify-center overflow-hidden">
+            <img v-if="siteLogo" :src="siteLogo" alt="Logo" class="h-full w-full rounded-md object-contain" />
+            <BrandMark v-else class="h-6 w-6" />
           </div>
-          <span class="text-[15px] font-semibold tracking-tight text-ink">{{ siteName }}</span>
+          <span class="font-display text-[17px] font-semibold tracking-tight text-ink">{{ siteName }}</span>
         </div>
 
         <!-- Nav Actions -->
@@ -57,10 +53,10 @@
           <router-link
             v-if="isAuthenticated"
             :to="dashboardPath"
-            class="ml-1 inline-flex items-center gap-2 rounded-lg bg-ink py-1 pl-1 pr-3 text-paper transition-opacity hover:opacity-90"
+            class="ml-1 inline-flex items-center gap-2 rounded-md bg-ink py-1 pl-1 pr-3 text-paper transition-opacity hover:opacity-90"
           >
             <span
-              class="flex h-6 w-6 items-center justify-center rounded-full bg-clay text-[11px] font-semibold text-white"
+              class="flex h-6 w-6 items-center justify-center rounded-md bg-clay text-[11px] font-semibold text-white"
             >
               {{ userInitial }}
             </span>
@@ -69,7 +65,7 @@
           <router-link
             v-else
             to="/login"
-            class="ml-1 inline-flex items-center rounded-lg bg-ink px-4 py-1.5 text-[13px] font-medium text-paper transition-opacity hover:opacity-90"
+            class="ml-1 inline-flex items-center rounded-md bg-ink px-4 py-1.5 text-[13px] font-medium text-paper transition-opacity hover:opacity-90"
           >
             {{ t('home.login') }}
           </router-link>
@@ -77,115 +73,91 @@
       </nav>
     </header>
 
-    <!-- Hero — editorial, left-aligned, asymmetric -->
-    <main class="relative z-10 flex-1 px-6 md:px-10">
-      <section
-        class="mx-auto grid max-w-5xl items-center gap-12 pb-16 pt-16 md:pt-24 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16"
-      >
-        <!-- Left: copy -->
-        <div class="text-left">
-          <p class="mb-5 text-[13px] font-medium uppercase tracking-[0.14em] text-clay">
-            {{ t('home.providers.description') }}
-          </p>
-          <h1
-            class="font-display text-4xl font-semibold leading-[1.08] tracking-tight text-ink sm:text-5xl lg:text-[3.75rem]"
+    <!-- Hero — left-set editorial thesis on a wide measure -->
+    <main class="flex-1 px-6 md:px-10">
+      <section class="mx-auto max-w-5xl pb-20 pt-20 md:pt-28">
+        <p class="mb-6 text-[13px] font-medium text-clay">
+          {{ t('home.providers.description') }}
+        </p>
+        <h1
+          class="max-w-3xl font-display text-4xl font-semibold leading-[1.06] tracking-tight text-ink sm:text-5xl lg:text-[4rem]"
+        >
+          {{ heroTitle }}
+        </h1>
+        <p class="mt-7 max-w-xl text-lg leading-relaxed text-muted">
+          {{ heroDesc }}
+        </p>
+
+        <div class="mt-9 flex flex-wrap items-center gap-x-7 gap-y-3">
+          <router-link
+            :to="isAuthenticated ? dashboardPath : '/login'"
+            class="inline-flex items-center gap-2 rounded-md bg-ink px-6 py-3 text-[15px] font-medium text-paper transition-opacity hover:opacity-90"
           >
-            {{ heroTitle }}
-          </h1>
-          <p class="mt-6 max-w-lg text-lg leading-relaxed text-muted">
-            {{ heroDesc }}
+            {{ isAuthenticated ? t('home.goToDashboard') : t('home.getStarted') }}
+            <Icon name="arrowRight" size="md" :stroke-width="2" />
+          </router-link>
+          <a
+            v-if="docUrl"
+            :href="docUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="link-clay text-[15px] font-medium"
+          >
+            {{ t('home.docs') }} →
+          </a>
+        </div>
+
+        <!-- Signature: 一行 mono 端点（OpenAI 兼容），代替假终端卡 -->
+        <div class="mt-12 max-w-xl border-t border-line pt-5">
+          <p class="font-mono text-[13px] leading-relaxed text-faint">
+            <span class="text-clay">POST</span> /v1/chat/completions
+            <span class="ml-2 text-faint">{{ '// OpenAI 兼容 · 一个密钥即用' }}</span>
           </p>
-
-          <div class="mt-9 flex flex-wrap items-center gap-3">
-            <router-link
-              :to="isAuthenticated ? dashboardPath : '/login'"
-              class="inline-flex items-center gap-2 rounded-xl bg-ink px-7 py-3 text-base font-medium text-paper shadow-sm transition-all hover:-translate-y-0.5 hover:opacity-90"
-            >
-              {{ isAuthenticated ? t('home.goToDashboard') : t('home.getStarted') }}
-              <Icon name="arrowRight" size="md" :stroke-width="2" />
-            </router-link>
-            <a
-              v-if="docUrl"
-              :href="docUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="inline-flex items-center gap-2 rounded-xl border border-line px-7 py-3 text-base font-medium text-ink transition-colors hover:bg-ink/[0.04]"
-            >
-              {{ t('home.docs') }}
-            </a>
-          </div>
-
-          <!-- Supported models, inline -->
-          <div class="mt-9 flex flex-wrap items-center gap-2">
+          <div class="mt-4 flex flex-wrap items-center gap-2">
             <span
               v-for="model in models"
               :key="model"
-              class="rounded-lg border border-line bg-card px-3 py-1 text-[13px] font-medium text-ink/75"
+              class="rounded-md border border-line px-2.5 py-1 font-mono text-[12px] text-ink/70"
             >
               {{ model }}
             </span>
           </div>
         </div>
-
-        <!-- Right: signature — a real API call -->
-        <div class="code-card overflow-hidden rounded-xl border border-line">
-          <div class="flex items-center gap-2 border-b border-line px-4 py-2.5">
-            <span class="code-dot"></span><span class="code-dot"></span><span class="code-dot"></span>
-            <span class="ml-2 font-mono text-xs text-faint">quickstart.py</span>
-          </div>
-          <pre class="code-body overflow-x-auto px-5 py-4 text-[13px] leading-[1.75]"><code><span class="tok-kw">from</span> openai <span class="tok-kw">import</span> OpenAI
-
-client = <span class="tok-fn">OpenAI</span>(
-  base_url=<span class="tok-str">"https://api.your-site.com/v1"</span>,
-  api_key=<span class="tok-str">"sk-..."</span>,
-)
-
-resp = client.chat.completions.<span class="tok-fn">create</span>(
-  model=<span class="tok-str">"gpt-5.5"</span>,
-  messages=[{<span class="tok-str">"role"</span>: <span class="tok-str">"user"</span>,
-             <span class="tok-str">"content"</span>: <span class="tok-str">"你好"</span>}],
-)
-<span class="tok-cmt"># 一个密钥，立即开始</span></code></pre>
-        </div>
       </section>
 
-      <!-- Feature row -->
-      <section class="mx-auto max-w-5xl border-t border-line py-16 md:py-20">
-        <div class="grid gap-10 md:grid-cols-3">
-          <div v-for="(f, i) in featureList" :key="i" class="text-left">
-            <div class="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-clay/10 text-clay">
-              <Icon :name="f.icon" size="md" />
-            </div>
-            <h3 class="font-display text-xl font-semibold text-ink">{{ f.title }}</h3>
-            <p class="mt-2 text-[15px] leading-relaxed text-muted">{{ f.desc }}</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- Bottom CTA — editorial horizontal -->
-      <section class="mx-auto max-w-5xl pb-24">
+      <!-- Editorial numbered list — replaces the icon-tile triptych -->
+      <section class="mx-auto max-w-5xl border-t border-line">
         <div
-          class="cta-band flex flex-col items-start justify-between gap-6 rounded-2xl px-8 py-10 md:flex-row md:items-center md:px-12"
+          v-for="(f, i) in featureList"
+          :key="i"
+          class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 border-b border-line py-8 md:grid-cols-[5rem_1fr] md:py-10"
         >
-          <div class="text-left">
-            <h2 class="font-display text-2xl font-semibold tracking-tight text-ink md:text-3xl">
-              {{ t('home.cta.title') }}
-            </h2>
-            <p class="mt-2 max-w-md text-base text-muted">{{ t('home.cta.description') }}</p>
+          <span class="font-mono text-sm text-clay">{{ String(i + 1).padStart(2, '0') }}</span>
+          <div>
+            <h3 class="font-display text-xl font-semibold text-ink md:text-2xl">{{ f.title }}</h3>
+            <p class="mt-2 max-w-xl text-[15px] leading-relaxed text-muted">{{ f.desc }}</p>
           </div>
-          <router-link
-            :to="isAuthenticated ? dashboardPath : '/register'"
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl bg-ink px-7 py-3 text-base font-medium text-paper transition-all hover:-translate-y-0.5"
-          >
-            {{ isAuthenticated ? t('home.goToDashboard') : t('home.cta.button') }}
-            <Icon name="arrowRight" size="md" :stroke-width="2" />
-          </router-link>
         </div>
+      </section>
+
+      <!-- Closing — plain ruled end-matter, no tinted band -->
+      <section class="mx-auto max-w-5xl py-20 md:py-24">
+        <h2 class="font-display text-2xl font-semibold tracking-tight text-ink md:text-3xl">
+          {{ t('home.cta.title') }}
+        </h2>
+        <p class="mt-3 max-w-md text-base text-muted">{{ t('home.cta.description') }}</p>
+        <router-link
+          :to="isAuthenticated ? dashboardPath : '/register'"
+          class="mt-6 inline-flex items-center gap-2 rounded-md bg-ink px-6 py-3 text-[15px] font-medium text-paper transition-opacity hover:opacity-90"
+        >
+          {{ isAuthenticated ? t('home.goToDashboard') : t('home.cta.button') }}
+          <Icon name="arrowRight" size="md" :stroke-width="2" />
+        </router-link>
       </section>
     </main>
 
     <!-- Footer -->
-    <footer class="relative z-10 border-t border-line px-6 py-8 md:px-10">
+    <footer class="border-t border-line px-6 py-8 md:px-10">
       <div
         class="mx-auto flex max-w-5xl flex-col items-center justify-between gap-3 text-center sm:flex-row sm:text-left"
       >
@@ -210,6 +182,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
+import BrandMark from '@/components/common/BrandMark.vue'
 
 const { t } = useI18n()
 
@@ -284,7 +257,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* ===== Anthropic-inspired warm minimal palette ===== */
+/* ===== Quiet Ledger 暖中性调色板（落地页自带变量，与全站主题一致） ===== */
 .landing {
   --paper: #faf9f5; /* page background (ivory) */
   --card: #ffffff;
@@ -294,11 +267,9 @@ onMounted(() => {
   --line: #e7e2d6; /* hairline borders */
   --clay: #cc785c; /* Anthropic book cloth accent */
   --clay-dark: #b5634a;
-  --tok-str: #6f8159; /* code string token */
 
   background-color: var(--paper);
   color: var(--ink);
-  font-feature-settings: 'ss01';
 }
 
 :global(.dark .landing) {
@@ -310,7 +281,6 @@ onMounted(() => {
   --line: #34312b;
   --clay: #db7c57;
   --clay-dark: #c96b48;
-  --tok-str: #9bb07e;
 }
 
 /* Display serif for headings — Fraunces (近 Tiempos 编辑感), 中文回退宋体 */
@@ -336,74 +306,24 @@ onMounted(() => {
 .bg-ink {
   background-color: var(--ink);
 }
-.bg-paper {
-  background-color: var(--paper);
-}
-.bg-card {
-  background-color: var(--card);
-}
 .bg-clay {
   background-color: var(--clay);
 }
-.hover\:bg-clay-dark:hover {
-  background-color: var(--clay-dark);
-}
 .text-clay {
   color: var(--clay);
-}
-.bg-clay\/10 {
-  background-color: color-mix(in srgb, var(--clay) 12%, transparent);
 }
 .border-line {
   border-color: var(--line);
 }
 
-/* Soft warm glow behind hero */
-.accent-glow {
-  background: radial-gradient(
-    circle at center,
-    color-mix(in srgb, var(--clay) 18%, transparent) 0%,
-    transparent 65%
-  );
-  filter: blur(40px);
-  opacity: 0.7;
-}
-
-/* Bottom CTA band */
-.cta-band {
-  background: color-mix(in srgb, var(--clay) 7%, var(--card));
-  border: 1px solid var(--line);
-}
-
-/* Signature code card */
-.code-card {
-  background-color: var(--card);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-}
-.code-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 9999px;
-  background-color: var(--line);
-}
-.code-body {
-  font-family: ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, monospace;
-  color: color-mix(in srgb, var(--ink) 82%, transparent);
-  font-feature-settings: normal;
-}
-.code-body .tok-kw {
+/* Clay text link with hover underline (rationed accent) */
+.link-clay {
   color: var(--clay);
+  transition: opacity 0.15s ease;
 }
-.code-body .tok-str {
-  color: var(--tok-str);
-}
-.code-body .tok-fn {
-  color: var(--ink);
-  font-weight: 600;
-}
-.code-body .tok-cmt {
-  color: var(--faint);
-  font-style: italic;
+.link-clay:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* Header icon buttons */
@@ -412,7 +332,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   padding: 0.5rem;
-  border-radius: 0.625rem;
+  border-radius: 0.375rem;
   color: var(--faint);
   transition: all 0.15s ease;
 }
