@@ -1110,6 +1110,7 @@ export default {
     searchPlaceholder: 'Search models or lines...',
     tierLabel: 'Tiers',
     buyPlans: 'View plans',
+    payHint: 'Pay = unit price ×',
     tiersTitle: 'Pay-as-you-go tiers',
     tiersHint: 'A higher rate means a more stable pool but more balance consumed for the same usage; click a model name for its official price.',
     plansTitle: 'Monthly plans',
