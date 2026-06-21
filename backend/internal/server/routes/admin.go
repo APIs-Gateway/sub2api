@@ -467,6 +467,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// 每日签到配置
 		adminSettings.GET("/checkin", h.Admin.Setting.GetCheckinSettings)
 		adminSettings.PUT("/checkin", h.Admin.Setting.UpdateCheckinSettings)
+		// 公益 key 单 IP 每日额度上限
+		adminSettings.GET("/public-benefit", h.Admin.Setting.GetPublicBenefitSettings)
+		adminSettings.PUT("/public-benefit", h.Admin.Setting.UpdatePublicBenefitSettings)
 		// Web Search 模拟配置
 		adminSettings.GET("/web-search-emulation", h.Admin.Setting.GetWebSearchEmulationConfig)
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)

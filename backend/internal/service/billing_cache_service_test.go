@@ -34,6 +34,14 @@ func (b *billingCacheWorkerStub) InvalidateUserBalance(ctx context.Context, user
 	return nil
 }
 
+func (b *billingCacheWorkerStub) IncrPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string, amount float64, ttlSeconds int) (float64, error) {
+	return 0, nil
+}
+
+func (b *billingCacheWorkerStub) GetPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string) (float64, error) {
+	return 0, nil
+}
+
 func (b *billingCacheWorkerStub) GetSubscriptionCache(ctx context.Context, userID, groupID int64) (*SubscriptionCacheData, error) {
 	return nil, errors.New("not implemented")
 }

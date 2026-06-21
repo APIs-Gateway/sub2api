@@ -8959,6 +8959,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
 		postUsageBilling(ctx, p, deps)
+		recordPublicBenefitIPSpend(ctx, deps, p, usageLog)
 		return true, nil
 	}
 
@@ -8982,7 +8983,21 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	}
 
 	finalizePostUsageBilling(billingCtx, p, deps, result)
+	recordPublicBenefitIPSpend(billingCtx, deps, p, usageLog)
 	return true, nil
+}
+
+// recordPublicBenefitIPSpend 计费成功后，累加公益 key（hvoy/hovy）请求在该 IP 当日的消费。
+// 两个网关（Anthropic recordUsageCore / OpenAI RecordUsage）都经 applyUsageBilling，故此处单点覆盖。
+// 非公益 key / 无 IP / 无成本 时内部直接跳过；best-effort，不影响主计费。
+func recordPublicBenefitIPSpend(ctx context.Context, deps *billingDeps, p *postUsageBillingParams, usageLog *UsageLog) {
+	if deps == nil || deps.billingCacheService == nil || p == nil || p.APIKey == nil || p.Cost == nil {
+		return
+	}
+	if usageLog == nil || usageLog.IPAddress == nil || *usageLog.IPAddress == "" {
+		return
+	}
+	deps.billingCacheService.AddPublicBenefitIPSpend(ctx, p.APIKey, *usageLog.IPAddress, p.Cost.ActualCost)
 }
 
 func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {

@@ -167,6 +167,38 @@ func (c *billingCache) DeductUserBalance(ctx context.Context, userID int64, amou
 	return nil
 }
 
+// pubBenefitIPSpendKey 公益 key 单 IP 当日消费计数器 redis key。
+func pubBenefitIPSpendKey(dateKey, clientIP string) string {
+	return fmt.Sprintf("pbkey:ipspend:%s:%s", dateKey, clientIP)
+}
+
+func (c *billingCache) IncrPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string, amount float64, ttlSeconds int) (float64, error) {
+	key := pubBenefitIPSpendKey(dateKey, clientIP)
+	pipe := c.rdb.Pipeline()
+	incr := pipe.IncrByFloat(ctx, key, amount)
+	pipe.Expire(ctx, key, time.Duration(ttlSeconds)*time.Second)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, err
+	}
+	return incr.Val(), nil
+}
+
+func (c *billingCache) GetPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string) (float64, error) {
+	key := pubBenefitIPSpendKey(dateKey, clientIP)
+	val, err := c.rdb.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	f, parseErr := strconv.ParseFloat(val, 64)
+	if parseErr != nil {
+		return 0, nil
+	}
+	return f, nil
+}
+
 func (c *billingCache) InvalidateUserBalance(ctx context.Context, userID int64) error {
 	key := billingBalanceKey(userID)
 	return c.rdb.Del(ctx, key).Err()

@@ -445,6 +445,14 @@ func (s *billingCacheStub) InvalidateUserBalance(ctx context.Context, userID int
 	panic("unexpected InvalidateUserBalance call")
 }
 
+func (s *billingCacheStub) IncrPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string, amount float64, ttlSeconds int) (float64, error) {
+	return 0, nil
+}
+
+func (s *billingCacheStub) GetPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string) (float64, error) {
+	return 0, nil
+}
+
 func (s *billingCacheStub) GetSubscriptionCache(ctx context.Context, userID, groupID int64) (*SubscriptionCacheData, error) {
 	panic("unexpected GetSubscriptionCache call")
 }

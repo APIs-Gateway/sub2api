@@ -15,8 +15,8 @@ import (
 )
 
 // NewAPIKeyAuthMiddleware 创建 API Key 认证中间件
-func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) APIKeyAuthMiddleware {
-	return APIKeyAuthMiddleware(apiKeyAuthWithSubscription(apiKeyService, subscriptionService, cfg))
+func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, billingCacheService *service.BillingCacheService, cfg *config.Config) APIKeyAuthMiddleware {
+	return APIKeyAuthMiddleware(apiKeyAuthWithSubscription(apiKeyService, subscriptionService, billingCacheService, cfg))
 }
 
 // apiKeyAuthWithSubscription API Key认证中间件（支持订阅验证）
@@ -26,7 +26,7 @@ func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionS
 //   - 计费执行（Billing Enforcement）：过期/配额/订阅/余额检查 —— skipBilling 时整块跳过
 //
 // /v1/usage 端点只需鉴权，不需要计费执行（允许过期/配额耗尽的 Key 查询自身用量）。
-func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
+func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, billingCacheService *service.BillingCacheService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// ── 1. 提取 API Key ──────────────────────────────────────────
 
@@ -176,6 +176,20 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			if apiKey.User.Balance <= 0 {
 				AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
 				return
+			}
+
+			// 公益 key（hvoy/hovy）单 IP 每自然日消费上限：超额则返回 200 + 文案，
+			// 不计费、不转发上游（仅作用于公益 key 名单内的 key；非公益 key 直接放行）。
+			if billingCacheService != nil {
+				capClientIP := ip.GetTrustedClientIP(c)
+				if cfg.TrustForwardedIPForAPIKeyACL() {
+					capClientIP = ip.GetClientIP(c)
+				}
+				if exceeded, msg := billingCacheService.PublicBenefitIPCapExceeded(c.Request.Context(), apiKey, capClientIP); exceeded {
+					c.String(200, msg)
+					c.Abort()
+					return
+				}
 			}
 		}
 

@@ -3793,3 +3793,46 @@ func (h *SettingHandler) UpdateCheckinSettings(c *gin.Context) {
 	}
 	response.Success(c, h.settingService.GetCheckinConfig(c.Request.Context()))
 }
+
+// publicBenefitSettingsResponse 公益 key 上限配置（key_names 以逗号分隔字符串呈现，便于表单编辑）。
+type publicBenefitSettingsResponse struct {
+	Enabled     bool    `json:"enabled"`
+	DailyCapUSD float64 `json:"daily_cap_usd"`
+	KeyNames    string  `json:"key_names"`
+	Message     string  `json:"message"`
+}
+
+func publicBenefitConfigToResponse(cfg service.PublicBenefitConfig) publicBenefitSettingsResponse {
+	return publicBenefitSettingsResponse{
+		Enabled:     cfg.Enabled,
+		DailyCapUSD: cfg.DailyCapUSD,
+		KeyNames:    strings.Join(cfg.KeyNames, ","),
+		Message:     cfg.Message,
+	}
+}
+
+// GetPublicBenefitSettings 返回公益 key 单 IP 每日上限配置（管理员）。
+func (h *SettingHandler) GetPublicBenefitSettings(c *gin.Context) {
+	cfg := h.settingService.GetPublicBenefitConfig(c.Request.Context())
+	response.Success(c, publicBenefitConfigToResponse(cfg))
+}
+
+// UpdatePublicBenefitSettings 更新公益 key 单 IP 每日上限配置（管理员）。
+func (h *SettingHandler) UpdatePublicBenefitSettings(c *gin.Context) {
+	var req publicBenefitSettingsResponse
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	cfg := service.PublicBenefitConfig{
+		Enabled:     req.Enabled,
+		DailyCapUSD: req.DailyCapUSD,
+		KeyNames:    strings.Split(req.KeyNames, ","), // UpdatePublicBenefitConfig 内部会归一化（小写/去重/去空）
+		Message:     req.Message,
+	}
+	if err := h.settingService.UpdatePublicBenefitConfig(c.Request.Context(), cfg); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, publicBenefitConfigToResponse(h.settingService.GetPublicBenefitConfig(c.Request.Context())))
+}

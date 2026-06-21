@@ -111,6 +111,11 @@ type BillingCacheService struct {
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	settingService        *SettingService
 
+	// 公益 key 配置的进程内短缓存（避免热路径每请求读 DB）
+	pbMu       sync.RWMutex
+	pbCfg      PublicBenefitConfig
+	pbLoadedAt int64 // unix nano；0 表示未加载
+
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
 	cacheWriteStopOnce sync.Once
