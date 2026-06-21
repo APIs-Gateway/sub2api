@@ -402,6 +402,16 @@ onMounted(() => {
 .text-ink {
   color: var(--ink);
 }
+/* 弱化 ink（ink 非 Tailwind 颜色，/NN 透明度修饰符不生效，这里显式补齐） */
+.text-ink\/70 {
+  color: color-mix(in srgb, var(--ink) 70%, transparent);
+}
+.text-ink\/80 {
+  color: color-mix(in srgb, var(--ink) 80%, transparent);
+}
+.text-ink\/85 {
+  color: color-mix(in srgb, var(--ink) 85%, transparent);
+}
 .text-muted {
   color: var(--muted);
 }
