@@ -43,6 +43,14 @@ const (
 	CheckinSpendPerExtraDefault = 0.0   // 每满$X消费额外签到一次；0=不开放额外签到
 )
 
+// Public-benefit key（公益 key）单 IP 每日额度上限 默认值
+const (
+	PublicBenefitIPCapEnabledDefault  = true        // 默认开启（仅作用于公益 key 名单内的 key）
+	PublicBenefitIPDailyCapUSDDefault = 10.0        // 单 IP 每自然日消费上限（USD）
+	PublicBenefitKeyNamesDefault      = "hvoy,hovy" // 公益 key 名单（逗号分隔，精确匹配 api_keys.name）
+	PublicBenefitIPCapMessageDefault  = "今日您的公益 API 使用额度已满。觉得好用的话，可点击 https://codex.hiyo.top 购买我们的日卡 / 月卡套餐，月卡低至 0.04 倍率。"
+)
+
 // Platform constants
 const (
 	PlatformAnthropic   = domain.PlatformAnthropic
@@ -147,6 +155,10 @@ const (
 	SettingKeyCheckinAmountMin                 = "checkin_amount_min"                  // 签到随机奖励下限（USD）
 	SettingKeyCheckinAmountMax                 = "checkin_amount_max"                  // 签到随机奖励上限（USD）
 	SettingKeyCheckinSpendPerExtra             = "checkin_spend_per_extra"             // 每满$X消费解锁一次额外签到（0=不开放）
+	SettingKeyPublicBenefitIPCapEnabled        = "public_benefit_ip_cap_enabled"       // 公益 key 单 IP 每日额度上限总开关
+	SettingKeyPublicBenefitIPDailyCapUSD       = "public_benefit_ip_daily_cap_usd"     // 公益 key 单 IP 每自然日上限（USD）
+	SettingKeyPublicBenefitKeyNames            = "public_benefit_key_names"            // 公益 key 名单（逗号分隔，精确匹配 name）
+	SettingKeyPublicBenefitIPCapMessage        = "public_benefit_ip_cap_message"       // 超额返回文案（HTTP 200）
 	SettingKeyRiskControlEnabled               = "risk_control_enabled"                // 是否启用风控中心入口与审计链路
 	SettingKeyContentModerationConfig          = "content_moderation_config"           // 内容审计配置（JSON）
 	SettingKeyCyberSessionBlockEnabled         = "cyber_session_block_enabled"         // cyber 命中后会话级自动屏蔽总开关(默认关)

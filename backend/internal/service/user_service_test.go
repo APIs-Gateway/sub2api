@@ -287,6 +287,14 @@ type mockBillingCache struct {
 func (m *mockBillingCache) GetUserBalance(context.Context, int64) (float64, error)  { return 0, nil }
 func (m *mockBillingCache) SetUserBalance(context.Context, int64, float64) error    { return nil }
 func (m *mockBillingCache) DeductUserBalance(context.Context, int64, float64) error { return nil }
+func (m *mockBillingCache) IncrPublicBenefitIPSpend(_ context.Context, dateKey, clientIP string, amount float64, ttlSeconds int) (float64, error) {
+	return 0, nil
+}
+
+func (m *mockBillingCache) GetPublicBenefitIPSpend(_ context.Context, dateKey, clientIP string) (float64, error) {
+	return 0, nil
+}
+
 func (m *mockBillingCache) InvalidateUserBalance(_ context.Context, userID int64) error {
 	m.invalidateCallCount.Add(1)
 	m.mu.Lock()

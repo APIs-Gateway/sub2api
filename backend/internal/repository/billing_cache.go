@@ -167,6 +167,54 @@ func (c *billingCache) DeductUserBalance(ctx context.Context, userID int64, amou
 	return nil
 }
 
+// pubBenefitIPSpendKey 公益 key 单 IP 当日消费计数器 redis key。
+func pubBenefitIPSpendKey(dateKey, clientIP string) string {
+	return fmt.Sprintf("pbkey:ipspend:%s:%s", dateKey, clientIP)
+}
+
+// incrPublicBenefitIPSpendScript 原子地 INCRBYFLOAT + EXPIRE，避免「计数已加但 TTL 未设」窗口
+// （与本文件 updateSubUsageScript 等计数器保持一致的原子写法）。
+var incrPublicBenefitIPSpendScript = redis.NewScript(`
+	local v = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1])
+	redis.call('EXPIRE', KEYS[1], ARGV[2])
+	return v
+`)
+
+func (c *billingCache) IncrPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string, amount float64, ttlSeconds int) (float64, error) {
+	key := pubBenefitIPSpendKey(dateKey, clientIP)
+	res, err := incrPublicBenefitIPSpendScript.Run(ctx, c.rdb, []string{key}, amount, ttlSeconds).Result()
+	if err != nil {
+		return 0, err
+	}
+	// INCRBYFLOAT 返回 bulk string（如 "10.5"）。
+	switch v := res.(type) {
+	case string:
+		f, _ := strconv.ParseFloat(v, 64)
+		return f, nil
+	case []byte:
+		f, _ := strconv.ParseFloat(string(v), 64)
+		return f, nil
+	default:
+		return 0, nil
+	}
+}
+
+func (c *billingCache) GetPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string) (float64, error) {
+	key := pubBenefitIPSpendKey(dateKey, clientIP)
+	val, err := c.rdb.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	f, parseErr := strconv.ParseFloat(val, 64)
+	if parseErr != nil {
+		return 0, nil
+	}
+	return f, nil
+}
+
 func (c *billingCache) InvalidateUserBalance(ctx context.Context, userID int64) error {
 	key := billingBalanceKey(userID)
 	return c.rdb.Del(ctx, key).Err()

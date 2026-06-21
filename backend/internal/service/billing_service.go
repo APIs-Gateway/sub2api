@@ -61,6 +61,10 @@ type BillingCache interface {
 	DeductUserBalance(ctx context.Context, userID int64, amount float64) error
 	InvalidateUserBalance(ctx context.Context, userID int64) error
 
+	// Public-benefit key per-IP daily spend (best-effort counter; dateKey = 自然日 YYYYMMDD)
+	IncrPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string, amount float64, ttlSeconds int) (float64, error)
+	GetPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string) (float64, error)
+
 	// Subscription operations
 	GetSubscriptionCache(ctx context.Context, userID, groupID int64) (*SubscriptionCacheData, error)
 	SetSubscriptionCache(ctx context.Context, userID, groupID int64, data *SubscriptionCacheData) error
