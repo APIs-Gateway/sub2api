@@ -10,11 +10,14 @@ export default {
     login: 'Login',
     getStarted: 'Get Started',
     goToDashboard: 'Go to Dashboard',
-    // User-focused value proposition
-    heroSubtitle: 'One Key, All AI Models',
-    heroDescription: 'No need to manage multiple subscriptions. Access Claude, GPT, Gemini and more with a single API key',
+    // Hero title & description (Anthropic-minimal style, OpenAI positioning)
+    heroTitle: 'Powerful AI, made simple',
+    heroDesc: 'A fast, reliable, pay-as-you-go API for powerful AI models. Sign up, grab a key, and start building.',
+    // Legacy fields kept for compatibility
+    heroSubtitle: 'One key for powerful AI models',
+    heroDescription: 'A fast, reliable, pay-as-you-go API for powerful AI models',
     tags: {
-      subscriptionToApi: 'Subscription to API',
+      subscriptionToApi: 'Fast & Reliable',
       stickySession: 'Session Persistence',
       realtimeBilling: 'Pay As You Go'
     },
@@ -46,12 +49,12 @@ export default {
       subtitle: 'Three simple steps to stress-free AI access'
     },
     features: {
-      unifiedGateway: 'One-Click Access',
-      unifiedGatewayDesc: 'Get a single API key to call all connected AI models. No separate applications needed.',
-      multiAccount: 'Always Reliable',
-      multiAccountDesc: 'Smart routing across multiple upstream accounts with automatic failover. Say goodbye to errors.',
-      balanceQuota: 'Pay What You Use',
-      balanceQuotaDesc: 'Usage-based billing with quota limits. Full visibility into team consumption.'
+      unifiedGateway: 'Fast & Reliable',
+      unifiedGatewayDesc: 'High-availability infrastructure with smart routing — low latency, high success rate.',
+      multiAccount: 'Simple to Integrate',
+      multiAccountDesc: 'Compatible with popular OpenAI SDKs. Grab one key and start calling.',
+      balanceQuota: 'Pay As You Go',
+      balanceQuotaDesc: 'Pay only for what you use, with real-time usage and quota visibility.'
     },
     // Comparison section
     comparison: {
@@ -90,9 +93,9 @@ export default {
       }
     },
     providers: {
-      title: 'Supported AI Models',
-      description: 'One API, Multiple Choices',
-      supported: 'Supported',
+      title: 'Supported models',
+      description: 'Powered by OpenAI models',
+      supported: 'Available',
       soon: 'Soon',
       claude: 'Claude',
       gemini: 'Gemini',
@@ -114,7 +117,7 @@ export default {
   keyUsage: {
     title: 'API Key Usage',
     subtitle: 'Enter your API Key to view real-time spending and usage status',
-    placeholder: 'sk-ant-mirror-xxxxxxxxxxxx',
+    placeholder: 'sk-xxxxxxxxxxxxxxxxxxxx',
     query: 'Query',
     querying: 'Querying...',
     privacyNote: 'Your Key is processed locally in the browser and will not be stored',

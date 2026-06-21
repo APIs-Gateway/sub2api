@@ -10,11 +10,14 @@ export default {
     login: '登录',
     getStarted: '立即开始',
     goToDashboard: '进入控制台',
-    // 新增：面向用户的价值主张
-    heroSubtitle: '一个密钥，畅用多个 AI 模型',
-    heroDescription: '无需管理多个订阅账号，一站式接入 Claude、GPT、Gemini 等主流 AI 服务',
+    // Hero 主标题与描述（Anthropic 极简风，OpenAI 定位）
+    heroTitle: '强大的 AI 能力，触手可及',
+    heroDesc: '稳定、快速、按量计费的大模型 API 服务。注册即可获取密钥，立即开始调用。',
+    // 旧字段保留兼容
+    heroSubtitle: '一个密钥，畅用强大的 AI 模型',
+    heroDescription: '稳定、快速、按量计费的大模型 API 服务',
     tags: {
-      subscriptionToApi: '订阅转 API',
+      subscriptionToApi: '极速稳定',
       stickySession: '会话保持',
       realtimeBilling: '按量计费'
     },
@@ -46,12 +49,12 @@ export default {
       subtitle: '简单三步，开始省心使用 AI'
     },
     features: {
-      unifiedGateway: '一键接入',
-      unifiedGatewayDesc: '获取一个 API 密钥，即可调用所有已接入的 AI 模型，无需分别申请。',
-      multiAccount: '稳定可靠',
-      multiAccountDesc: '智能调度多个上游账号，自动切换和负载均衡，告别频繁报错。',
-      balanceQuota: '用多少付多少',
-      balanceQuotaDesc: '按实际使用量计费，支持设置配额上限，团队用量一目了然。'
+      unifiedGateway: '极速稳定',
+      unifiedGatewayDesc: '高可用架构与智能调度，低延迟、高成功率，稳定可靠。',
+      multiAccount: '简单接入',
+      multiAccountDesc: '兼容主流 OpenAI SDK，获取一个密钥即可开始调用。',
+      balanceQuota: '按量计费',
+      balanceQuotaDesc: '用多少付多少，实时查看用量与额度，清晰可控。'
     },
     // 优势对比
     comparison: {
@@ -90,9 +93,9 @@ export default {
       }
     },
     providers: {
-      title: '已支持的 AI 模型',
-      description: '一个 API，多种选择',
-      supported: '已支持',
+      title: '支持的模型',
+      description: '基于 OpenAI 模型构建',
+      supported: '可用',
       soon: '即将推出',
       claude: 'Claude',
       gemini: 'Gemini',
@@ -114,7 +117,7 @@ export default {
   keyUsage: {
     title: 'API Key 用量查询',
     subtitle: '输入您的 API Key 以查看实时消费金额与使用状态',
-    placeholder: 'sk-ant-mirror-xxxxxxxxxxxx',
+    placeholder: 'sk-xxxxxxxxxxxxxxxxxxxx',
     query: '查询',
     querying: '查询中...',
     privacyNote: '您的 Key 仅在浏览器本地处理，不会被存储',

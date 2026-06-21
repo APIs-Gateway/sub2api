@@ -4,6 +4,15 @@ import App from './App.vue'
 import router from './router'
 import i18n, { initI18n } from './i18n'
 import { useAppStore } from '@/stores/app'
+// Self-hosted brand fonts (offline / China-safe, no Google CDN)
+import '@fontsource-variable/fraunces' // 衬线标题 Latin (近 Tiempos/Anthropic 编辑感)
+import '@fontsource-variable/space-grotesk' // 无衬线正文/UI Latin (方头怪趣，近 Styrene)
+// 中文字体 (按需权重；CJK 按 unicode-range 分片，浏览器只取用到的子集)
+import '@fontsource/noto-sans-sc/400.css' // 正文中文
+import '@fontsource/noto-sans-sc/500.css'
+import '@fontsource/noto-sans-sc/700.css'
+import '@fontsource/noto-serif-sc/600.css' // 标题中文 (宋体衬线)
+import '@fontsource/noto-serif-sc/700.css'
 import './style.css'
 
 function initThemeClass() {

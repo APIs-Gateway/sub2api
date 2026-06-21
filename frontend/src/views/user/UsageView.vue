@@ -4,36 +4,32 @@
       <template #actions>
         <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <!-- Total Requests -->
-          <div class="card p-4">
-          <div class="flex items-center gap-3">
-            <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30">
-              <Icon name="document" size="md" class="text-blue-600 dark:text-blue-400" />
-            </div>
-            <div>
+          <div class="card p-5">
+            <div class="mb-3 flex items-start justify-between">
               <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
                 {{ t('usage.totalRequests') }}
               </p>
-              <p class="text-xl font-bold text-gray-900 dark:text-white">
-                {{ usageStats?.total_requests?.toLocaleString() || '0' }}
-              </p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('usage.inSelectedRange') }}
-              </p>
+              <Icon name="document" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
             </div>
+            <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
+              {{ usageStats?.total_requests?.toLocaleString() || '0' }}
+            </p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('usage.inSelectedRange') }}
+            </p>
           </div>
-        </div>
 
         <!-- Total Tokens -->
-        <div class="card p-4">
-          <div class="flex items-center gap-3">
-            <div class="rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30">
-              <Icon name="cube" size="md" class="text-amber-600 dark:text-amber-400" />
-            </div>
-            <div class="min-w-0 flex-1">
+        <div class="card p-5">
+          <div>
+            <div class="mb-3 flex items-start justify-between">
               <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
                 {{ t('usage.totalTokens') }}
               </p>
-              <p class="text-xl font-bold text-gray-900 dark:text-white">
+              <Icon name="cube" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
                 {{ formatTokens(usageStats?.total_tokens || 0) }}
               </p>
               <p class="text-xs text-gray-500 dark:text-gray-400">
@@ -60,43 +56,35 @@
         </div>
 
         <!-- Total Cost -->
-        <div class="card p-4">
-          <div class="flex items-center gap-3">
-            <div class="rounded-lg bg-green-100 p-2 dark:bg-green-900/30">
-              <Icon name="dollar" size="md" class="text-green-600 dark:text-green-400" />
-            </div>
-            <div class="min-w-0 flex-1">
-              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                {{ t('usage.totalCost') }}
-              </p>
-              <p class="text-xl font-bold text-green-600 dark:text-green-400">
-                ${{ (usageStats?.total_actual_cost || 0).toFixed(4) }}
-              </p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('usage.actualCost') }} /
-                <span class="line-through">${{ (usageStats?.total_cost || 0).toFixed(4) }}</span>
-                {{ t('usage.standardCost') }}
-              </p>
-            </div>
+        <div class="card p-5">
+          <div class="mb-3 flex items-start justify-between">
+            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('usage.totalCost') }}
+            </p>
+            <Icon name="dollar" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
           </div>
+          <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
+            ${{ (usageStats?.total_actual_cost || 0).toFixed(4) }}
+          </p>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('usage.actualCost') }} /
+            <span class="line-through">${{ (usageStats?.total_cost || 0).toFixed(4) }}</span>
+            {{ t('usage.standardCost') }}
+          </p>
         </div>
 
         <!-- Average Duration -->
-        <div class="card p-4">
-          <div class="flex items-center gap-3">
-            <div class="rounded-lg bg-purple-100 p-2 dark:bg-purple-900/30">
-              <Icon name="clock" size="md" class="text-purple-600 dark:text-purple-400" />
-            </div>
-            <div>
-              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                {{ t('usage.avgDuration') }}
-              </p>
-              <p class="text-xl font-bold text-gray-900 dark:text-white">
-                {{ formatDuration(usageStats?.average_duration_ms || 0) }}
-              </p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.perRequest') }}</p>
-            </div>
+        <div class="card p-5">
+          <div class="mb-3 flex items-start justify-between">
+            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('usage.avgDuration') }}
+            </p>
+            <Icon name="clock" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
           </div>
+          <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
+            {{ formatDuration(usageStats?.average_duration_ms || 0) }}
+          </p>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('usage.perRequest') }}</p>
         </div>
         </div>
       </template>
