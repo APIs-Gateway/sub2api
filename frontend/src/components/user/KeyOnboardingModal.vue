@@ -42,9 +42,33 @@
         </button>
       </div>
 
+      <!-- ===== CC Switch（推荐） ===== -->
+      <div v-if="active === 'ccswitch'" class="space-y-4">
+        <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.ccsIntro }}</p>
+        <!-- 支持导入的客户端 -->
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs text-gray-500 dark:text-dark-400">{{ tx.ccsSupports }}</span>
+          <span
+            v-for="c in ccsClients"
+            :key="c"
+            class="rounded-md border border-gray-200 px-2 py-0.5 text-xs font-medium text-gray-700 dark:border-dark-700 dark:text-gray-300"
+          >{{ c }}</span>
+        </div>
+        <button class="btn btn-primary" @click="openDeeplink">
+          {{ tx.ccsImport }}
+        </button>
+        <p class="text-xs text-gray-500 dark:text-dark-400">{{ tx.ccsHint }}</p>
+        <CodeBlock :label="tx.ccsManualLink" :code="deeplink" :copied="copiedId === 'deeplink'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(deeplink, 'deeplink')" />
+      </div>
+
       <!-- ===== Claude Code ===== -->
-      <div v-if="active === 'claude'" class="space-y-4">
+      <div v-else-if="active === 'claude'" class="space-y-4">
         <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.claudeIntro }}</p>
+        <ol class="space-y-1.5 text-sm text-gray-700 dark:text-gray-300">
+          <li v-for="(s, i) in tx.claudeSteps" :key="i" class="flex gap-2">
+            <span class="font-mono text-xs text-clay-num">{{ String(i + 1).padStart(2, '0') }}</span><span>{{ s }}</span>
+          </li>
+        </ol>
         <CodeBlock :label="tx.envVars" :code="claudeEnv" :copied="copiedId === 'claudeEnv'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(claudeEnv, 'claudeEnv')" />
         <CodeBlock :label="'~/.claude/settings.json'" :code="claudeJson" :copied="copiedId === 'claudeJson'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(claudeJson, 'claudeJson')" />
         <p class="text-xs text-gray-500 dark:text-dark-400">{{ tx.claudeHint }}</p>
@@ -52,20 +76,17 @@
 
       <!-- ===== Codex / OpenAI SDK ===== -->
       <div v-else-if="active === 'openai'" class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.openaiIntro }}</p>
+        <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.codexIntro }}</p>
+        <ol class="space-y-1.5 text-sm text-gray-700 dark:text-gray-300">
+          <li v-for="(s, i) in tx.codexSteps" :key="i" class="flex gap-2">
+            <span class="font-mono text-xs text-clay-num">{{ String(i + 1).padStart(2, '0') }}</span><span>{{ s }}</span>
+          </li>
+        </ol>
+        <CodeBlock label="~/.codex/config.toml" :code="codexToml" :copied="copiedId === 'codexToml'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(codexToml, 'codexToml')" />
         <CodeBlock :label="tx.envVars" :code="openaiEnv" :copied="copiedId === 'openaiEnv'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(openaiEnv, 'openaiEnv')" />
+        <p class="pt-1 text-xs font-medium text-gray-600 dark:text-dark-400">{{ tx.genericSdk }}</p>
         <CodeBlock label="Python" :code="openaiPy" :copied="copiedId === 'openaiPy'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(openaiPy, 'openaiPy')" />
         <CodeBlock label="curl" :code="openaiCurl" :copied="copiedId === 'openaiCurl'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(openaiCurl, 'openaiCurl')" />
-      </div>
-
-      <!-- ===== CC Switch 一键导入 ===== -->
-      <div v-else-if="active === 'ccswitch'" class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.ccsIntro }}</p>
-        <button class="btn btn-primary" @click="openDeeplink">
-          {{ tx.ccsImport }}
-        </button>
-        <p class="text-xs text-gray-500 dark:text-dark-400">{{ tx.ccsHint }}</p>
-        <CodeBlock :label="tx.ccsManualLink" :code="deeplink" :copied="copiedId === 'deeplink'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(deeplink, 'deeplink')" />
       </div>
 
       <!-- ===== 一键脚本 ===== -->
@@ -151,22 +172,39 @@ const TXT = {
     endpoint: 'API 端点',
     copy: '复制',
     copied: '已复制',
-    intro: '用这个密钥与端点生成本地配置或导入链接，选择你的客户端即可。',
+    intro: '推荐用 CC Switch 一键导入，自动完成各客户端配置；也可手动配置或用脚本。',
     recommended: '推荐',
     envVars: '环境变量',
-    claudeIntro: '将以下环境变量写入终端，或保存到 ~/.claude/settings.json，重启 Claude Code 后生效。',
-    claudeHint: '提示：使用 settings.json 无需每次设置环境变量；修改后需重启客户端。',
-    openaiIntro: '兼容主流 OpenAI SDK。设置 base_url 与 api_key 即可调用。',
-    ccsIntro: '已安装 CC Switch 时，点击下方按钮自动导入该密钥与端点。',
+    genericSdk: '通用 OpenAI SDK（任意兼容客户端）',
+    // CC Switch
+    ccsIntro: 'CC Switch 是客户端配置管理器：点击下方按钮即可把本密钥与端点一键导入，自动写好配置，最省心。',
+    ccsSupports: '支持导入：',
     ccsImport: '导入到 CC Switch',
-    ccsHint: '若未弹出 CC Switch，说明尚未安装或未关联协议；可复制下方链接手动导入。',
+    ccsHint: '若未弹出 CC Switch，说明尚未安装或未关联协议；先安装 CC Switch，或复制下方链接手动导入。',
     ccsManualLink: '导入链接',
+    // Claude Code
+    claudeIntro: 'Claude Code 是 Anthropic 官方命令行客户端。配置好端点与密钥后即可使用：',
+    claudeSteps: [
+      '把下面的环境变量写入终端，或保存到 ~/.claude/settings.json。',
+      '重启终端 / 客户端，让配置生效。',
+      '在项目目录运行 claude 开始对话。',
+    ],
+    claudeHint: '提示：settings.json 方式无需每次设置环境变量；修改后需重启客户端。',
+    // Codex / OpenAI
+    codexIntro: 'Codex CLI 推荐用 CC Switch 一键导入（见上面的「CC Switch」标签）。若要手动配置，写入 ~/.codex/config.toml 并设置密钥环境变量：',
+    codexSteps: [
+      '把下面内容写入 ~/.codex/config.toml（自定义模型供应商指向本端点）。',
+      '设置环境变量 OPENAI_API_KEY 为你的密钥。',
+      '重启终端后运行 codex 即可。',
+    ],
+    // 脚本
     scriptIntro: '复制下面这段脚本到终端执行，自动写入本地配置（脚本完全可见、不联网下载）。',
     scriptHint: '执行后重启客户端即可。脚本仅写入本地配置文件，可先通读再运行。',
+    // 手动
     manualIntro: '以上方式都不行？用下面的原始值手动填写客户端配置，并对照排障清单。',
     troubleshootTitle: '排障清单',
     troubleshoot: [
-      '确认 base_url 完整且无多余斜杠，按客户端要求决定是否带 /v1。',
+      '确认 base_url 完整且无多余斜杠，OpenAI 系客户端通常需要带 /v1。',
       '确认密钥完整复制（以 sk- 开头），无空格或换行。',
       '修改环境变量或配置文件后，需重启客户端使其生效。',
       '检查本地网络 / 代理是否能访问该端点。',
@@ -182,22 +220,34 @@ const TXT = {
     endpoint: 'API endpoint',
     copy: 'Copy',
     copied: 'Copied',
-    intro: 'Use this key and endpoint to generate local config or an import link — pick your client below.',
+    intro: 'Recommended: import via CC Switch for automatic per-client setup — or configure manually / via script.',
     recommended: 'Recommended',
     envVars: 'Environment variables',
-    claudeIntro: 'Set the environment variables below, or save them to ~/.claude/settings.json, then restart Claude Code.',
-    claudeHint: 'Tip: settings.json avoids exporting env vars each time; restart the client after editing.',
-    openaiIntro: 'Compatible with standard OpenAI SDKs. Set base_url and api_key to start.',
-    ccsIntro: 'With CC Switch installed, click below to import this key and endpoint automatically.',
+    genericSdk: 'Generic OpenAI SDK (any compatible client)',
+    ccsIntro: 'CC Switch is a client config manager: click below to import this key and endpoint in one click — it writes the config for you. Easiest option.',
+    ccsSupports: 'Imports into:',
     ccsImport: 'Import to CC Switch',
-    ccsHint: 'If CC Switch did not open, it may not be installed or the protocol is unregistered — copy the link below to import manually.',
+    ccsHint: 'If CC Switch did not open, it may not be installed or the protocol is unregistered — install CC Switch, or copy the link below to import manually.',
     ccsManualLink: 'Import link',
+    claudeIntro: 'Claude Code is Anthropic’s official CLI. After pointing it at the endpoint and key:',
+    claudeSteps: [
+      'Set the env vars below, or save them to ~/.claude/settings.json.',
+      'Restart your terminal / client so the config takes effect.',
+      'Run claude in your project to start.',
+    ],
+    claudeHint: 'Tip: settings.json avoids exporting env vars each time; restart the client after editing.',
+    codexIntro: 'For Codex CLI we recommend CC Switch (see the “CC Switch” tab). To configure manually, write ~/.codex/config.toml and set the key env var:',
+    codexSteps: [
+      'Write the block below to ~/.codex/config.toml (a custom model provider pointing at this endpoint).',
+      'Set the OPENAI_API_KEY env var to your key.',
+      'Restart your terminal, then run codex.',
+    ],
     scriptIntro: 'Copy this script into your terminal to write the local config (fully visible, no network download).',
     scriptHint: 'Restart your client afterwards. The script only writes a local config file — read it before running.',
     manualIntro: 'None of the above worked? Fill your client config manually with the raw values and follow the checklist.',
     troubleshootTitle: 'Troubleshooting',
     troubleshoot: [
-      'Confirm base_url is complete with no trailing slash; include /v1 only if your client requires it.',
+      'Confirm base_url is complete with no trailing slash; OpenAI-style clients usually need /v1.',
       'Confirm the key is copied in full (starts with sk-), no spaces or line breaks.',
       'Restart the client after changing env vars or config files.',
       'Check that your local network / proxy can reach the endpoint.',
@@ -214,8 +264,16 @@ const base = computed(() => (props.baseUrl || '').replace(/\/+$/, ''))
 const openaiBase = computed(() => `${base.value}/v1`)
 const fullKey = computed(() => props.apiKey?.key || '')
 const platform = computed(() => props.apiKey?.group?.platform || 'anthropic')
-const isOpenAI = computed(() => platform.value === 'openai')
-const recommended = computed(() => (isOpenAI.value ? 'openai' : 'claude'))
+
+// CC Switch 为推荐方式
+const recommended = 'ccswitch'
+const ccsClients = ['Claude Code', 'Codex', 'OpenClaw', 'Hermes']
+
+// 供应商 id（用于 config.toml 的表名，需为安全标识符）
+const providerId = computed(() => {
+  const raw = (props.siteName || 'sub2api').toLowerCase().replace(/[^a-z0-9_]/g, '')
+  return raw || 'sub2api'
+})
 
 const maskedKey = computed(() => {
   const k = fullKey.value
@@ -224,18 +282,18 @@ const maskedKey = computed(() => {
 })
 
 const methods = computed(() => [
-  { id: 'claude', label: 'Claude Code' },
-  { id: 'openai', label: isZh.value ? 'Codex / OpenAI SDK' : 'Codex / OpenAI SDK' },
   { id: 'ccswitch', label: 'CC Switch' },
+  { id: 'claude', label: 'Claude Code' },
+  { id: 'openai', label: 'Codex / OpenAI SDK' },
   { id: 'script', label: isZh.value ? '一键脚本' : 'Script' },
   { id: 'manual', label: isZh.value ? '手动 / 排障' : 'Manual' },
 ])
 
-const active = ref<string>('claude')
+const active = ref<string>('ccswitch')
 watch(
   () => props.show,
   (v) => {
-    if (v) active.value = recommended.value
+    if (v) active.value = recommended
   },
   { immediate: true }
 )
@@ -246,6 +304,10 @@ const claudeEnv = computed(
 )
 const claudeJson = computed(
   () => `{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${base.value}",\n    "ANTHROPIC_AUTH_TOKEN": "${fullKey.value}"\n  }\n}`
+)
+const codexToml = computed(
+  () =>
+    `model = "gpt-5.5"\nmodel_provider = "${providerId.value}"\n\n[model_providers.${providerId.value}]\nname = "${(props.siteName || 'sub2api').trim() || 'sub2api'}"\nbase_url = "${openaiBase.value}"\nwire_api = "chat"`
 )
 const openaiEnv = computed(
   () => `export OPENAI_BASE_URL="${openaiBase.value}"\nexport OPENAI_API_KEY="${fullKey.value}"`
@@ -260,8 +322,8 @@ const openaiCurl = computed(
 )
 
 const script = computed(() => {
-  if (isOpenAI.value) {
-    return `# 写入 shell 配置（按需改成 ~/.bashrc）\ncat >> ~/.zshrc <<'EOF'\nexport OPENAI_BASE_URL="${openaiBase.value}"\nexport OPENAI_API_KEY="${fullKey.value}"\nEOF\nsource ~/.zshrc\necho "✓ OpenAI 端点已配置"`
+  if (platform.value === 'openai') {
+    return `# 写入 Codex 配置 + 密钥环境变量\nmkdir -p ~/.codex\ncat > ~/.codex/config.toml <<'EOF'\nmodel = "gpt-5.5"\nmodel_provider = "${providerId.value}"\n\n[model_providers.${providerId.value}]\nname = "${(props.siteName || 'sub2api').trim() || 'sub2api'}"\nbase_url = "${openaiBase.value}"\nwire_api = "chat"\nEOF\ncat >> ~/.zshrc <<'EOF'\nexport OPENAI_API_KEY="${fullKey.value}"\nEOF\nsource ~/.zshrc\necho "✓ Codex 已配置，运行 codex 开始"`
   }
   return `mkdir -p ~/.claude\ncat > ~/.claude/settings.json <<'EOF'\n{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${base.value}",\n    "ANTHROPIC_AUTH_TOKEN": "${fullKey.value}"\n  }\n}\nEOF\necho "✓ Claude Code 已配置完成，请重启客户端"`
 })
@@ -370,5 +432,8 @@ const CodeBlock = defineComponent({
 :global(.dark) .copy-btn:hover {
   background-color: theme('colors.dark.800');
   color: #fff;
+}
+.text-clay-num {
+  color: theme('colors.primary.500');
 }
 </style>
