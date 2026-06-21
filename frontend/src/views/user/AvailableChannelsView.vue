@@ -34,7 +34,7 @@
           :class="[
             'flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors',
             selectedGroup && selectedGroup.id === g.id
-              ? 'border-primary-400 bg-primary-50 text-primary-700 dark:border-primary-500/50 dark:bg-primary-500/10 dark:text-primary-300'
+              ? 'border-gray-400 bg-gray-100 font-semibold text-gray-900 dark:border-dark-500 dark:bg-dark-700 dark:text-white'
               : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300 dark:hover:bg-dark-700',
           ]"
         >

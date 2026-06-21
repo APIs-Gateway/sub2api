@@ -1,10 +1,10 @@
 <template>
   <div
-    class="rounded-xl border border-primary-200 bg-primary-50/60 p-4 dark:border-primary-500/30 dark:bg-primary-500/5"
+    class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/50"
   >
     <div class="flex items-start gap-3">
       <div
-        class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-600 dark:bg-primary-500/20 dark:text-primary-400"
+        class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-400"
       >
         <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path
@@ -20,23 +20,23 @@
         <p class="text-xs leading-relaxed text-gray-600 dark:text-gray-300">{{ t('billingRules.intro') }}</p>
 
         <div
-          class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-white/70 px-3 py-2 dark:bg-dark-800/50"
+          class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-white px-3 py-2 dark:bg-dark-900/40"
         >
           <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('billingRules.formulaLabel') }}</span>
-          <span class="text-xs font-semibold text-primary-700 dark:text-primary-300">= {{ t('billingRules.formula') }}</span>
+          <span class="text-xs font-semibold text-gray-800 dark:text-gray-200">= {{ t('billingRules.formula') }}</span>
         </div>
 
         <ul class="space-y-1 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
           <li class="flex gap-1.5">
-            <span class="select-none text-primary-500">•</span>
+            <span class="select-none text-gray-400 dark:text-gray-500">•</span>
             <span>{{ modelsBelow ? t('billingRules.modelPriceHere') : t('billingRules.modelPriceLink') }}</span>
           </li>
           <li class="flex gap-1.5">
-            <span class="select-none text-primary-500">•</span>
+            <span class="select-none text-gray-400 dark:text-gray-500">•</span>
             <span>{{ t('billingRules.rate') }}</span>
           </li>
           <li class="flex gap-1.5">
-            <span class="select-none text-primary-500">•</span>
+            <span class="select-none text-gray-400 dark:text-gray-500">•</span>
             <span>{{ t('billingRules.plan') }}</span>
           </li>
         </ul>

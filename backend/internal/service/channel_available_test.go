@@ -209,7 +209,7 @@ func TestSynthesizePricingFromLiteLLM_TokenMode(t *testing.T) {
 		CacheCreationInputTokenCost: 3.75e-6,
 		CacheReadInputTokenCost:     3e-7,
 	}
-	got := synthesizePricingFromLiteLLM(lp, nil)
+	got := synthesizePricingFromLiteLLM(lp, nil, "")
 	require.NotNil(t, got)
 	require.Equal(t, BillingModeToken, got.BillingMode)
 	require.NotNil(t, got.InputPrice)
@@ -223,7 +223,7 @@ func TestSynthesizePricingFromLiteLLM_ImageGenerationMode(t *testing.T) {
 		Mode:                    "image_generation",
 		OutputCostPerImageToken: 4e-5,
 	}
-	got := synthesizePricingFromLiteLLM(lp, nil)
+	got := synthesizePricingFromLiteLLM(lp, nil, "")
 	require.NotNil(t, got)
 	require.Equal(t, BillingModeImage, got.BillingMode)
 	require.Nil(t, got.PerRequestPrice)
@@ -239,11 +239,35 @@ func TestSynthesizePricingFromLiteLLM_RespectsExistingChannelMode(t *testing.T) 
 		OutputCostPerImage: 0.04,
 	}
 	existing := &ChannelModelPricing{BillingMode: BillingModePerRequest}
-	got := synthesizePricingFromLiteLLM(lp, existing)
+	got := synthesizePricingFromLiteLLM(lp, existing, "")
 	require.NotNil(t, got)
 	require.Equal(t, BillingModePerRequest, got.BillingMode)
 	require.NotNil(t, got.PerRequestPrice)
 	require.InDelta(t, 0.04, *got.PerRequestPrice, 1e-12)
+}
+
+func TestSynthesizePricingFromLiteLLM_LongContextTier(t *testing.T) {
+	// gpt-5.4：目录定价缺长上下文，按模型名补出两段官方阶梯（(0,272k] 基准 / (272k,∞] ×2/×1.5）。
+	lp := &LiteLLMModelPricing{
+		Mode:               "chat",
+		InputCostPerToken:  2.5e-6,
+		OutputCostPerToken: 1.5e-5,
+	}
+	got := synthesizePricingFromLiteLLM(lp, nil, "gpt-5.4")
+	require.NotNil(t, got)
+	require.Len(t, got.Intervals, 2)
+	require.Equal(t, 0, got.Intervals[0].MinTokens)
+	require.NotNil(t, got.Intervals[0].MaxTokens)
+	require.Equal(t, 272000, *got.Intervals[0].MaxTokens)
+	require.InDelta(t, 2.5e-6, *got.Intervals[0].InputPrice, 1e-12)
+	require.Equal(t, 272000, got.Intervals[1].MinTokens)
+	require.Nil(t, got.Intervals[1].MaxTokens)
+	require.InDelta(t, 5e-6, *got.Intervals[1].InputPrice, 1e-12)   // 2.5 × 2
+	require.InDelta(t, 2.25e-5, *got.Intervals[1].OutputPrice, 1e-12) // 15 × 1.5
+
+	// mini 不应有长上下文阶梯。
+	mini := synthesizePricingFromLiteLLM(lp, nil, "gpt-5.4-mini")
+	require.Empty(t, mini.Intervals)
 }
 
 func TestFillGlobalPricingFallback_NilPricing(t *testing.T) {
