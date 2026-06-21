@@ -1108,6 +1108,8 @@ export default {
     title: 'Pricing & Billing',
     description: 'Model prices and billing rules; see the models you can use, their unit prices, and each group rate',
     searchPlaceholder: 'Search models or lines...',
+    tierLabel: 'Tiers',
+    buyPlans: 'View plans',
     tiersTitle: 'Pay-as-you-go tiers',
     tiersHint: 'A higher rate means a more stable pool but more balance consumed for the same usage; click a model name for its official price.',
     plansTitle: 'Monthly plans',

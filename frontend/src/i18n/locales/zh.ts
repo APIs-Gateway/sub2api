@@ -1112,6 +1112,8 @@ export default {
     title: '价格与计费',
     description: '模型价格与计费规则；查看你可用的模型、单价与各分组倍率',
     searchPlaceholder: '搜索模型或线路...',
+    tierLabel: '档位',
+    buyPlans: '查看套餐',
     tiersTitle: '按量档位',
     tiersHint: '倍率越高的池子越稳定、同样用量扣得也越多；点模型名查看官方单价。',
     plansTitle: '月套餐',
