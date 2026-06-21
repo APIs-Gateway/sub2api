@@ -140,13 +140,13 @@
                     min="0"
                     step="1"
                     class="input w-24"
-                    :disabled="isOverdraftExhausted(subscription) && subscription.max_overdraft_days == null"
+                    :disabled="isOverdraftExhausted(subscription)"
                     :placeholder="t('userSubscriptions.overdraft.placeholder')"
                   />
                   <button
                     type="button"
                     class="btn btn-secondary"
-                    :disabled="savingOverdraft === subscription.id || (isOverdraftExhausted(subscription) && subscription.max_overdraft_days == null)"
+                    :disabled="savingOverdraft === subscription.id || isOverdraftExhausted(subscription)"
                     @click="saveOverdraft(subscription)"
                   >
                     {{ t('common.save') }}
@@ -365,7 +365,7 @@ async function loadSubscriptions() {
     loading.value = true
     subscriptions.value = await subscriptionsAPI.getMySubscriptions()
     for (const s of subscriptions.value) {
-      overdraftEdit[s.id] = s.max_overdraft_days == null ? '' : s.max_overdraft_days
+      overdraftEdit[s.id] = isOverdraftExhausted(s) || s.max_overdraft_days == null ? '' : s.max_overdraft_days
     }
   } catch (error) {
     console.error('Failed to load subscriptions:', error)
