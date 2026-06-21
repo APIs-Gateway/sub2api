@@ -39,6 +39,9 @@
             >
               <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
             </button>
+            <button @click="showDisplaySettings = true" class="btn btn-secondary">
+              {{ t('admin.channels.display.entry') }}
+            </button>
             <button @click="openCreateDialog" class="btn btn-primary">
               <Icon name="plus" size="md" class="mr-2" />
               {{ t('admin.channels.createChannel', 'Create Channel') }}
@@ -621,6 +624,8 @@
       @confirm="confirmDelete"
       @cancel="showDeleteDialog = false"
     />
+
+    <PricingDisplaySettingsModal v-model:show="showDisplaySettings" />
   </AppLayout>
 </template>
 
@@ -648,11 +653,15 @@ import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import PricingEntryCard from '@/components/admin/channel/PricingEntryCard.vue'
+import PricingDisplaySettingsModal from '@/components/admin/channel/PricingDisplaySettingsModal.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+
+// 「对外展示设置」弹窗:配置用户「价格与计费」页展示哪些分组 / 模型
+const showDisplaySettings = ref(false)
 
 // Web Search global enabled state (loaded once on mount)
 const webSearchGlobalEnabled = ref(false)

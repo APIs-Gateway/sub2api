@@ -3161,6 +3161,50 @@ func (h *SettingHandler) UpdateOverloadCooldownSettings(c *gin.Context) {
 	})
 }
 
+// PricingDisplaySettingsResponse 价格页对外展示设置(展示哪些分组 / 模型;空=全部展示)。
+type PricingDisplaySettingsResponse struct {
+	GroupIDs []int64  `json:"group_ids"`
+	Models   []string `json:"models"`
+}
+
+func normalizePricingDisplayResponse(in PricingDisplaySettingsResponse) PricingDisplaySettingsResponse {
+	if in.GroupIDs == nil {
+		in.GroupIDs = []int64{}
+	}
+	if in.Models == nil {
+		in.Models = []string{}
+	}
+	return in
+}
+
+// GetPricingDisplaySettings 获取用户「价格与计费」页对外展示的分组 / 模型。
+// GET /api/v1/admin/settings/pricing-display
+func (h *SettingHandler) GetPricingDisplaySettings(c *gin.Context) {
+	s := h.settingService.GetPricingDisplaySettings(c.Request.Context())
+	response.Success(c, normalizePricingDisplayResponse(PricingDisplaySettingsResponse{
+		GroupIDs: s.GroupIDs,
+		Models:   s.Models,
+	}))
+}
+
+// UpdatePricingDisplaySettings 保存价格页对外展示设置。
+// PUT /api/v1/admin/settings/pricing-display
+func (h *SettingHandler) UpdatePricingDisplaySettings(c *gin.Context) {
+	var req PricingDisplaySettingsResponse
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := h.settingService.SetPricingDisplaySettings(c.Request.Context(), service.PricingDisplaySettings{
+		GroupIDs: req.GroupIDs,
+		Models:   req.Models,
+	}); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, normalizePricingDisplayResponse(req))
+}
+
 // GetRateLimit429CooldownSettings 获取429默认回避配置
 // GET /api/v1/admin/settings/rate-limit-429-cooldown
 func (h *SettingHandler) GetRateLimit429CooldownSettings(c *gin.Context) {

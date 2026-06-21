@@ -488,3 +488,9 @@ const AdminAPIKeyPrefix = "admin-"
 // SettingKeyAllowUserViewErrorRequests controls whether end users can view
 // their own failed requests on the usage page. Default false (opt-in).
 const SettingKeyAllowUserViewErrorRequests = "allow_user_view_error_requests"
+
+// SettingKeyPricingVisibleGroupIDs / SettingKeyPricingVisibleModels control which
+// groups / models are surfaced on the user-facing「价格与计费」(available channels)
+// page. Both stored as JSON arrays; empty / unset means "show all" (backward compatible).
+const SettingKeyPricingVisibleGroupIDs = "pricing_visible_group_ids"
+const SettingKeyPricingVisibleModels = "pricing_visible_models"

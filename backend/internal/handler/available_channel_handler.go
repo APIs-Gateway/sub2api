@@ -59,6 +59,7 @@ type userAvailableGroup struct {
 	SubscriptionType string  `json:"subscription_type"`
 	RateMultiplier   float64 `json:"rate_multiplier"`
 	IsExclusive      bool    `json:"is_exclusive"`
+	Description      string  `json:"description"`
 }
 
 // userSupportedModelPricing 用户可见的定价字段白名单。
@@ -137,6 +138,23 @@ func (h *AvailableChannelHandler) List(c *gin.Context) {
 		allowedGroupIDs[userGroups[i].ID] = struct{}{}
 	}
 
+	// 管理员在「价格配置 > 对外展示设置」勾选的展示分组 / 模型;为空表示全部展示。
+	display := h.settingService.GetPricingDisplaySettings(c.Request.Context())
+	var visibleGroupIDs map[int64]struct{}
+	if len(display.GroupIDs) > 0 {
+		visibleGroupIDs = make(map[int64]struct{}, len(display.GroupIDs))
+		for _, id := range display.GroupIDs {
+			visibleGroupIDs[id] = struct{}{}
+		}
+	}
+	var visibleModels map[string]struct{}
+	if len(display.Models) > 0 {
+		visibleModels = make(map[string]struct{}, len(display.Models))
+		for _, m := range display.Models {
+			visibleModels[m] = struct{}{}
+		}
+	}
+
 	channels, err := h.channelService.ListAvailable(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -149,10 +167,16 @@ func (h *AvailableChannelHandler) List(c *gin.Context) {
 			continue
 		}
 		visibleGroups := filterUserVisibleGroups(ch.Groups, allowedGroupIDs)
+		if visibleGroupIDs != nil {
+			visibleGroups = filterGroupsByDisplay(visibleGroups, visibleGroupIDs)
+		}
 		if len(visibleGroups) == 0 {
 			continue
 		}
 		sections := buildPlatformSections(ch, visibleGroups)
+		if visibleModels != nil {
+			sections = filterSectionsByModels(sections, visibleModels)
+		}
 		if len(sections) == 0 {
 			continue
 		}
@@ -219,9 +243,44 @@ func filterUserVisibleGroups(
 			SubscriptionType: g.SubscriptionType,
 			RateMultiplier:   g.RateMultiplier,
 			IsExclusive:      g.IsExclusive,
+			Description:      g.Description,
 		})
 	}
 	return visible
+}
+
+// filterGroupsByDisplay 仅保留管理员勾选展示的分组(display 非 nil 时生效)。
+func filterGroupsByDisplay(
+	groups []userAvailableGroup,
+	display map[int64]struct{},
+) []userAvailableGroup {
+	out := make([]userAvailableGroup, 0, len(groups))
+	for _, g := range groups {
+		if _, ok := display[g.ID]; ok {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// filterSectionsByModels 按管理员勾选展示的模型过滤每个 section 的支持模型。
+// 分组本身仍展示(只是该平台下未勾选的模型不出现),保留 section。
+func filterSectionsByModels(
+	sections []userChannelPlatformSection,
+	display map[string]struct{},
+) []userChannelPlatformSection {
+	out := make([]userChannelPlatformSection, 0, len(sections))
+	for _, sec := range sections {
+		models := make([]userSupportedModel, 0, len(sec.SupportedModels))
+		for _, m := range sec.SupportedModels {
+			if _, ok := display[m.Name]; ok {
+				models = append(models, m)
+			}
+		}
+		sec.SupportedModels = models
+		out = append(out, sec)
+	}
+	return out
 }
 
 // toUserSupportedModels 将 service 层支持模型转换为用户 DTO（字段白名单）。
