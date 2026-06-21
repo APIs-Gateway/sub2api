@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/emailcanon"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/oauth"
@@ -737,7 +738,9 @@ func resolvePendingOAuthTargetUserID(ctx context.Context, client *dbent.Client, 
 }
 
 func userNormalizedEmailPredicate(email string) predicate.User {
-	normalized := strings.ToLower(strings.TrimSpace(email))
+	// 与 repository.normalizeEmailLookupValue 一致：经 emailcanon 归一化（含 Gmail 别名过滤），
+	// 让 OAuth 兼容匹配也把 Gmail 别名视作同一账号。
+	normalized := emailcanon.CanonicalizeEmail(email)
 	if normalized == "" {
 		return dbuser.EmailEQ(email)
 	}

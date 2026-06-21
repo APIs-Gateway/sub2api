@@ -5798,6 +5798,8 @@ export default {
         enableRegistrationHint: '允许新用户注册',
         emailVerification: '邮箱验证',
         emailVerificationHint: '新用户注册时需要验证邮箱',
+        gmailAliasFilter: 'Gmail 别名过滤',
+        gmailAliasFilterHint: '把 Gmail 别名（本地部分的「.」与「+后缀」会被忽略、googlemail.com 视同 gmail.com）归一化为同一规范地址，防止用同一邮箱重复注册薅订阅。仅作用于 gmail.com 与 googlemail.com',
         emailSuffixWhitelist: '邮箱域名白名单',
         emailSuffixWhitelistHint:
           "仅允许使用指定域名的邮箱注册账号（例如 {'@'}qq.com, {'@'}gmail.com, *.edu.cn）",
