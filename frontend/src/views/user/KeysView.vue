@@ -307,7 +307,16 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
+            <div class="flex items-center gap-1.5">
+              <!-- 一键接入（突出的主操作：扁平墨黑按钮） -->
+              <button
+                @click="openOnboarding(row)"
+                class="inline-flex items-center gap-1.5 rounded-md bg-gray-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+                :title="t('keys.quickConnect')"
+              >
+                <Icon name="bolt" size="sm" />
+                {{ t('keys.quickConnect') }}
+              </button>
               <!-- Use Key Button -->
               <button
                 @click="openUseKeyModal(row)"
@@ -950,6 +959,16 @@
       @close="closeUseKeyModal"
     />
 
+    <!-- 一键接入 Modal -->
+    <KeyOnboardingModal
+      :show="showOnboardingModal"
+      :api-key="onboardingKey"
+      :base-url="publicSettings?.api_base_url || ''"
+      :site-name="publicSettings?.site_name || ''"
+      :doc-url="publicSettings?.doc_url || ''"
+      @close="closeOnboarding"
+    />
+
     <!-- CCS Client Selection Dialog for Antigravity -->
     <BaseDialog
       :show="showCcsClientSelect"
@@ -1085,6 +1104,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Icon from '@/components/icons/Icon.vue'
 	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
+import KeyOnboardingModal from '@/components/user/KeyOnboardingModal.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
@@ -1163,6 +1183,8 @@ const showDeleteDialog = ref(false)
 const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showUseKeyModal = ref(false)
+const showOnboardingModal = ref(false)
+const onboardingKey = ref<ApiKey | null>(null)
 const showCcsClientSelect = ref(false)
 const pendingCcsRow = ref<ApiKey | null>(null)
 const selectedKey = ref<ApiKey | null>(null)
@@ -1389,6 +1411,16 @@ const openUseKeyModal = (key: ApiKey) => {
 const closeUseKeyModal = () => {
   showUseKeyModal.value = false
   selectedKey.value = null
+}
+
+const openOnboarding = (key: ApiKey) => {
+  onboardingKey.value = key
+  showOnboardingModal.value = true
+}
+
+const closeOnboarding = () => {
+  showOnboardingModal.value = false
+  onboardingKey.value = null
 }
 
 const handlePageChange = (page: number) => {

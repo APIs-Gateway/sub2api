@@ -770,6 +770,7 @@ export default {
     quota: 'Quota',
     lastUsedAt: 'Last Used',
     useKey: 'Use Key',
+    quickConnect: 'Quick connect',
     useKeyModal: {
       title: 'Use API Key',
       description:
