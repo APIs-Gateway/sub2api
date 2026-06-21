@@ -22,7 +22,7 @@
     <template v-else>
       <!-- 官方单价 -->
       <div class="space-y-1.5 text-sm">
-        <template v-if="model.pricing.billing_mode === BILLING_MODE_TOKEN">
+        <template v-if="isToken">
           <PricingRow :label="t('availableChannels.pricing.inputPrice')" :value="model.pricing.input_price" :unit="perMillionUnit" :scale="perMillionScale" />
           <PricingRow :label="t('availableChannels.pricing.outputPrice')" :value="model.pricing.output_price" :unit="perMillionUnit" :scale="perMillionScale" />
           <PricingRow v-if="show(model.pricing.cache_read_price)" :label="t('availableChannels.pricing.cacheReadPrice')" :value="model.pricing.cache_read_price" :unit="perMillionUnit" :scale="perMillionScale" />
@@ -44,31 +44,40 @@
         />
       </div>
 
-      <!-- 阶梯定价 -->
-      <div
-        v-if="model.pricing.intervals && model.pricing.intervals.length > 0"
-        class="mt-2 border-t border-gray-100 pt-2 dark:border-dark-700/70"
-      >
+      <!-- 官方阶梯定价 -->
+      <div v-if="hasIntervals" class="mt-2 border-t border-gray-100 pt-2 dark:border-dark-700/70">
         <div class="mb-1 text-[11px] font-medium text-gray-500 dark:text-gray-400">{{ t('availableChannels.pricing.intervals') }}</div>
         <div class="space-y-0.5">
-          <div v-for="(iv, idx) in model.pricing.intervals" :key="idx" class="flex justify-between text-[11px] text-gray-600 dark:text-gray-300">
+          <div v-for="(iv, idx) in model.pricing.intervals" :key="idx" class="flex justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
             <span class="text-gray-400">{{ iv.tier_label || formatRange(iv.min_tokens, iv.max_tokens) }}</span>
-            <span class="font-mono">{{ formatInterval(iv) }}</span>
+            <span class="font-mono">{{ intervalDisplay(iv, 1) }}</span>
           </div>
         </div>
       </div>
 
-      <!-- 本档位实付（× 倍率） -->
-      <div
-        v-if="showEffective"
-        class="mt-3 rounded-lg bg-primary-50 px-2.5 py-1.5 dark:bg-primary-500/10"
-      >
-        <div class="mb-0.5 text-[10px] font-medium text-primary-600 dark:text-primary-300">
+      <!-- 本档位实付（× 倍率），按计费模式逐项算 -->
+      <div v-if="showEffective" class="mt-3 rounded-lg bg-primary-50 px-2.5 py-2 dark:bg-primary-500/10">
+        <div class="mb-1 text-[10px] font-medium text-primary-600 dark:text-primary-300">
           {{ t('availableChannels.effectiveTitle', { rate: formatRate(rateMultiplier) }) }}
         </div>
-        <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-primary-700 dark:text-primary-300">
-          <span>{{ t('availableChannels.pricing.inputPrice') }} {{ effDisplay(model.pricing.input_price) }}</span>
-          <span>{{ t('availableChannels.pricing.outputPrice') }} {{ effDisplay(model.pricing.output_price) }}</span>
+
+        <!-- token + 阶梯：逐档实付 -->
+        <div v-if="isToken && hasIntervals" class="space-y-0.5">
+          <div v-for="(iv, idx) in model.pricing.intervals" :key="idx" class="flex justify-between gap-2 text-[11px] text-primary-700 dark:text-primary-300">
+            <span class="text-primary-500/70 dark:text-primary-400/70">{{ iv.tier_label || formatRange(iv.min_tokens, iv.max_tokens) }}</span>
+            <span class="font-mono">{{ intervalDisplay(iv, rateMultiplier) }}</span>
+          </div>
+        </div>
+
+        <!-- token 无阶梯：输入/输出实付 -->
+        <div v-else-if="isToken" class="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-primary-700 dark:text-primary-300">
+          <span>{{ t('availableChannels.pricing.inputPrice') }} {{ effPerMillion(model.pricing.input_price) }}</span>
+          <span>{{ t('availableChannels.pricing.outputPrice') }} {{ effPerMillion(model.pricing.output_price) }}</span>
+        </div>
+
+        <!-- 按次/按图实付 -->
+        <div v-else class="font-mono text-[11px] text-primary-700 dark:text-primary-300">
+          {{ effPerUnit }}
         </div>
       </div>
     </template>
@@ -89,7 +98,7 @@ import { platformBorderClass } from '@/utils/platformColors'
 const props = withDefaults(
   defineProps<{
     model: UserSupportedModel
-    /** 当前所选分组的倍率：用于展示「本档位实付」= 官方单价 × 倍率。 */
+    /** 当前所选分组倍率：实付 = 官方单价 × 倍率（含阶梯逐档）。 */
     rateMultiplier?: number
     platformHint?: string
     noPricingLabel?: string
@@ -108,6 +117,9 @@ const borderClass = computed(() =>
   platform.value ? platformBorderClass(platform.value) : 'border-gray-200 dark:border-dark-700',
 )
 
+const isToken = computed(() => props.model.pricing?.billing_mode === BILLING_MODE_TOKEN)
+const hasIntervals = computed(() => (props.model.pricing?.intervals?.length ?? 0) > 0)
+
 const billingModeLabel = computed(() => {
   switch (props.model.pricing?.billing_mode) {
     case BILLING_MODE_TOKEN:
@@ -121,21 +133,33 @@ const billingModeLabel = computed(() => {
   }
 })
 
-// 仅当 token 计费、倍率 != 1、且有输入或输出价时展示「本档位实付」。
-const showEffective = computed(
-  () =>
-    props.model.pricing?.billing_mode === BILLING_MODE_TOKEN &&
-    Math.abs(props.rateMultiplier - 1) > 1e-9 &&
-    (props.model.pricing.input_price != null || props.model.pricing.output_price != null),
-)
+// 倍率 != 1 且有定价时展示实付（含阶梯 / 按次 / 按图）。
+const showEffective = computed(() => Math.abs(props.rateMultiplier - 1) > 1e-9 && props.model.pricing != null)
+
+const effPerUnit = computed(() => {
+  const p = props.model.pricing
+  if (!p) return '-'
+  const v = p.billing_mode === BILLING_MODE_IMAGE ? p.image_output_price : p.per_request_price
+  return v == null ? '-' : `${formatScaled(v * props.rateMultiplier, 1)} ${perRequestUnit.value}`
+})
 
 function show(v: number | null | undefined): boolean {
   return v != null && v > 0
 }
 
-function effDisplay(v: number | null): string {
+function effPerMillion(v: number | null): string {
   if (v == null) return '-'
   return `${formatScaled(v * props.rateMultiplier, perMillionScale)} ${perMillionUnit.value}`
+}
+
+// mult=1 → 官方;mult=rateMultiplier → 本档实付。token 显示 输入/输出,按次/按图显示单值。
+function intervalDisplay(iv: UserPricingInterval, mult: number): string {
+  if (isToken.value) {
+    const i = formatScaled(iv.input_price == null ? null : iv.input_price * mult, perMillionScale)
+    const o = formatScaled(iv.output_price == null ? null : iv.output_price * mult, perMillionScale)
+    return `${i} / ${o}`
+  }
+  return formatScaled(iv.per_request_price == null ? null : iv.per_request_price * mult, 1)
 }
 
 function formatRate(r: number): string {
@@ -144,12 +168,5 @@ function formatRate(r: number): string {
 
 function formatRange(min: number, max: number | null): string {
   return `(${min}, ${max == null ? '∞' : max}]`
-}
-
-function formatInterval(iv: UserPricingInterval): string {
-  if (props.model.pricing?.billing_mode === BILLING_MODE_TOKEN) {
-    return `${formatScaled(iv.input_price, perMillionScale)} / ${formatScaled(iv.output_price, perMillionScale)}`
-  }
-  return formatScaled(iv.per_request_price, 1)
 }
 </script>
