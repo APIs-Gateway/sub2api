@@ -7,6 +7,7 @@ import { useAppStore } from '@/stores/app'
 // Self-hosted brand fonts (offline / China-safe, no Google CDN)
 import '@fontsource-variable/fraunces' // 衬线标题 Latin (近 Tiempos/Anthropic 编辑感)
 import '@fontsource-variable/space-grotesk' // 无衬线正文/UI Latin (方头怪趣，近 Styrene)
+import '@fontsource-variable/jetbrains-mono' // 等宽数据/账本 Latin (tabular + slashed-zero，承载全站数字)
 // 中文字体 (按需权重；CJK 按 unicode-range 分片，浏览器只取用到的子集)
 import '@fontsource/noto-sans-sc/400.css' // 正文中文
 import '@fontsource/noto-sans-sc/500.css'

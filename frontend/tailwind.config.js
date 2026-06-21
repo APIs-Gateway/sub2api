@@ -91,35 +91,35 @@ export default {
           'Times New Roman',
           'serif'
         ],
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
+        // 等宽（机器之声）：所有数据/费用/token/ID/时间戳走 JetBrains Mono，CJK 落 Noto Sans SC
+        mono: [
+          'JetBrains Mono Variable',
+          'JetBrains Mono',
+          'ui-monospace',
+          'SFMono-Regular',
+          'Menlo',
+          'Monaco',
+          'Consolas',
+          'Noto Sans SC',
+          'monospace'
+        ]
       },
       boxShadow: {
-        glass: '0 8px 32px rgba(0, 0, 0, 0.08)',
-        'glass-sm': '0 4px 16px rgba(0, 0, 0, 0.06)',
-        glow: '0 0 20px rgba(204, 120, 92, 0.25)',
-        'glow-lg': '0 0 40px rgba(204, 120, 92, 0.35)',
-        card: '0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06)',
-        'card-hover': '0 10px 40px rgba(0, 0, 0, 0.08)',
-        'inner-glow': 'inset 0 1px 0 rgba(255, 255, 255, 0.1)'
+        // 仅保留：发丝级"纸面"分层 + 唯一真浮层(模态)的极轻投影。玻璃/发光大投影已删除。
+        hairline: '0 1px 0 rgba(38, 36, 32, 0.06)',
+        overlay: '0 8px 30px rgba(38, 36, 32, 0.12)',
+        // 兼容残留引用（MonitorCard 等长尾，待 step 6 清扫）
+        card: '0 1px 3px rgba(38, 36, 32, 0.04), 0 1px 2px rgba(38, 36, 32, 0.06)',
+        'card-hover': '0 4px 16px rgba(38, 36, 32, 0.06)'
       },
       backgroundImage: {
-        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'gradient-primary': 'linear-gradient(135deg, #cc785c 0%, #b5634a 100%)',
-        'gradient-dark': 'linear-gradient(135deg, #262420 0%, #1c1b18 100%)',
-        'gradient-glass':
-          'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
-        'mesh-gradient':
-          'radial-gradient(at 40% 20%, rgba(204, 120, 92, 0.12) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(209, 141, 103, 0.08) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(204, 120, 92, 0.08) 0px, transparent 50%)'
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))'
       },
       animation: {
+        // 克制：仅淡入 + 一段短滑动；发光/微光/脉冲/缩放/右滑已删除。星标呼吸单独在组件内实现。
         'fade-in': 'fadeIn 0.3s ease-out',
         'slide-up': 'slideUp 0.3s ease-out',
-        'slide-down': 'slideDown 0.3s ease-out',
-        'slide-in-right': 'slideInRight 0.3s ease-out',
-        'scale-in': 'scaleIn 0.2s ease-out',
-        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        shimmer: 'shimmer 2s linear infinite',
-        glow: 'glow 2s ease-in-out infinite alternate'
+        'slide-down': 'slideDown 0.3s ease-out'
       },
       keyframes: {
         fadeIn: {
@@ -127,35 +127,13 @@ export default {
           '100%': { opacity: '1' }
         },
         slideUp: {
-          '0%': { opacity: '0', transform: 'translateY(10px)' },
+          '0%': { opacity: '0', transform: 'translateY(8px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' }
         },
         slideDown: {
-          '0%': { opacity: '0', transform: 'translateY(-10px)' },
+          '0%': { opacity: '0', transform: 'translateY(-8px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' }
-        },
-        slideInRight: {
-          '0%': { opacity: '0', transform: 'translateX(20px)' },
-          '100%': { opacity: '1', transform: 'translateX(0)' }
-        },
-        scaleIn: {
-          '0%': { opacity: '0', transform: 'scale(0.95)' },
-          '100%': { opacity: '1', transform: 'scale(1)' }
-        },
-        shimmer: {
-          '0%': { backgroundPosition: '-200% 0' },
-          '100%': { backgroundPosition: '200% 0' }
-        },
-        glow: {
-          '0%': { boxShadow: '0 0 20px rgba(204, 120, 92, 0.25)' },
-          '100%': { boxShadow: '0 0 30px rgba(204, 120, 92, 0.4)' }
         }
-      },
-      backdropBlur: {
-        xs: '2px'
-      },
-      borderRadius: {
-        '4xl': '2rem'
       }
     }
   },

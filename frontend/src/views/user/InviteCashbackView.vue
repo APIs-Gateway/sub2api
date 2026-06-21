@@ -2,26 +2,26 @@
   <AppLayout>
     <div class="space-y-6">
       <div v-if="loading" class="flex justify-center py-12">
-        <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"></div>
+        <div class="h-8 w-8 animate-spin rounded-full border-2 border-gray-400 border-t-transparent dark:border-dark-500"></div>
       </div>
 
       <template v-else-if="detail">
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div class="card p-5">
-            <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('inviteCashback.stats.rate') }}</p>
-            <p class="mt-2 text-2xl font-semibold text-primary-600 dark:text-primary-400">{{ formatPercent(detail.cashback_rate_percent) }}</p>
+            <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('inviteCashback.stats.rate') }}</p>
+            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ formatPercent(detail.cashback_rate_percent) }}</p>
           </div>
           <div class="card p-5">
-            <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('inviteCashback.stats.invited') }}</p>
-            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ detail.invited_count.toLocaleString() }}</p>
+            <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('inviteCashback.stats.invited') }}</p>
+            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ detail.invited_count.toLocaleString() }}</p>
           </div>
           <div class="card p-5">
-            <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('inviteCashback.stats.total') }}</p>
-            <p class="mt-2 text-2xl font-semibold text-emerald-600 dark:text-emerald-400">{{ formatCurrency(detail.total_cashback) }}</p>
+            <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('inviteCashback.stats.total') }}</p>
+            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ formatCurrency(detail.total_cashback) }}</p>
           </div>
           <div class="card p-5">
-            <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('inviteCashback.stats.status') }}</p>
-            <p class="mt-2 text-lg font-semibold" :class="detail.cashback_enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-dark-400'">
+            <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('inviteCashback.stats.status') }}</p>
+            <p class="mt-2 text-lg font-semibold" :class="detail.cashback_enabled ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-400'">
               {{ detail.cashback_enabled ? t('common.enabled') : t('common.disabled') }}
             </p>
           </div>
@@ -32,8 +32,8 @@
           <div class="mt-5 grid gap-4 md:grid-cols-2">
             <div class="space-y-2">
               <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('inviteCashback.share.code') }}</p>
-              <div class="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900">
-                <code class="flex-1 truncate text-sm font-semibold text-gray-900 dark:text-white">{{ detail.aff_code }}</code>
+              <div class="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900">
+                <code class="flex-1 truncate text-sm font-semibold font-mono text-gray-900 dark:text-white">{{ detail.aff_code }}</code>
                 <button class="btn btn-secondary btn-sm" @click="copyCode">
                   <Icon name="copy" size="sm" />
                   <span>{{ t('common.copy') }}</span>
@@ -42,8 +42,8 @@
             </div>
             <div class="space-y-2">
               <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('inviteCashback.share.link') }}</p>
-              <div class="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900">
-                <code class="flex-1 truncate text-sm text-gray-700 dark:text-gray-300">{{ inviteLink }}</code>
+              <div class="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900">
+                <code class="flex-1 truncate text-sm font-mono text-gray-700 dark:text-gray-300">{{ inviteLink }}</code>
                 <button class="btn btn-secondary btn-sm" @click="copyLink">
                   <Icon name="copy" size="sm" />
                   <span>{{ t('common.copy') }}</span>
@@ -55,13 +55,13 @@
 
         <div class="card p-6">
           <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('inviteCashback.records.title') }}</h3>
-          <div v-if="detail.records.length === 0" class="mt-4 rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-400">
+          <div v-if="detail.records.length === 0" class="mt-4 rounded-md border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600 dark:border-dark-700 dark:text-gray-400">
             {{ t('inviteCashback.records.empty') }}
           </div>
           <div v-else class="mt-4 overflow-x-auto">
             <table class="w-full min-w-[720px] text-left text-sm">
               <thead>
-                <tr class="border-b border-gray-200 text-gray-500 dark:border-dark-700 dark:text-dark-400">
+                <tr class="border-b border-gray-200 text-gray-600 dark:border-dark-700 dark:text-gray-400">
                   <th class="px-3 py-2 font-medium">{{ t('inviteCashback.records.invitee') }}</th>
                   <th class="px-3 py-2 font-medium">{{ t('inviteCashback.records.redeemType') }}</th>
                   <th class="px-3 py-2 font-medium">{{ t('inviteCashback.records.subscriptionItem') }}</th>
@@ -77,11 +77,11 @@
                   <td class="px-3 py-3 text-gray-900 dark:text-white">{{ item.invitee_email || item.invitee_username || '-' }}</td>
                   <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ item.redeem_code_type || '-' }}</td>
                   <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ item.validity_days ? `${item.validity_days} 天 (${item.subscription_group || '-'})` : '-' }}</td>
-                  <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ formatCurrency(item.redeem_value) }}</td>
-                  <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ formatCurrency(item.cashback_base_amount) }}</td>
-                  <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ formatPercent(item.cashback_rate_percent) }}</td>
-                  <td class="px-3 py-3 text-right font-medium text-emerald-600 dark:text-emerald-400">{{ formatCurrency(item.cashback_amount) }}</td>
-                  <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ formatDateTime(item.created_at) }}</td>
+                  <td class="px-3 py-3 font-mono tabular-nums text-gray-700 dark:text-gray-300">{{ formatCurrency(item.redeem_value) }}</td>
+                  <td class="px-3 py-3 font-mono tabular-nums text-gray-700 dark:text-gray-300">{{ formatCurrency(item.cashback_base_amount) }}</td>
+                  <td class="px-3 py-3 font-mono tabular-nums text-gray-700 dark:text-gray-300">{{ formatPercent(item.cashback_rate_percent) }}</td>
+                  <td class="px-3 py-3 text-right font-medium font-mono tabular-nums text-gray-900 dark:text-white">{{ formatCurrency(item.cashback_amount) }}</td>
+                  <td class="px-3 py-3 font-mono tabular-nums text-gray-700 dark:text-gray-300">{{ formatDateTime(item.created_at) }}</td>
                 </tr>
               </tbody>
             </table>

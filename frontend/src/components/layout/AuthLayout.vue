@@ -4,12 +4,16 @@
     <div class="relative z-10 w-full max-w-md">
       <!-- Logo/Brand -->
       <div class="mb-8 text-center">
-        <!-- Custom Logo or Default Logo -->
+        <!-- 品牌标记：自定义 logo 优先；否则黏土星芒 -->
         <template v-if="settingsLoaded">
-          <div
-            class="mb-4 inline-flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900"
-          >
-            <img :src="siteLogo || '/logo.png'" alt="Logo" class="h-full w-full object-contain" />
+          <div class="mb-4 inline-flex h-14 w-14 items-center justify-center">
+            <img
+              v-if="siteLogo"
+              :src="siteLogo"
+              alt="Logo"
+              class="h-14 w-14 rounded-2xl border border-gray-200 object-contain dark:border-dark-700"
+            />
+            <BrandMark v-else animated class="h-11 w-11" />
           </div>
           <h1 class="mb-2 font-serif text-3xl font-semibold text-gray-900 dark:text-white">
             {{ siteName }}
@@ -20,8 +24,8 @@
         </template>
       </div>
 
-      <!-- Card Container -->
-      <div class="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm dark:border-dark-700 dark:bg-dark-900">
+      <!-- Card Container：扁平发丝卡片，去胶囊圆角与阴影 -->
+      <div class="rounded-lg border border-gray-200 bg-white p-8 dark:border-dark-700 dark:bg-dark-900">
         <slot />
       </div>
 
@@ -42,6 +46,7 @@
 import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
+import BrandMark from '@/components/common/BrandMark.vue'
 
 const appStore = useAppStore()
 
@@ -57,8 +62,3 @@ onMounted(() => {
 })
 </script>
 
-<style scoped>
-.text-gradient {
-  @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
-}
-</style>

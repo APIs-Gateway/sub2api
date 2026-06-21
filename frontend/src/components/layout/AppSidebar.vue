@@ -8,11 +8,12 @@
   >
     <!-- Logo/Brand -->
     <div class="sidebar-header" :class="{ 'sidebar-header-collapsed': sidebarCollapsed }">
-      <!-- Custom Logo or Default Logo -->
-      <div class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl">
-        <img v-if="settingsLoaded" :src="siteLogo || '/logo.png'" alt="Logo" class="h-full w-full object-contain" />
+      <!-- 品牌标记：自定义 logo 优先；否则用黏土星芒（同时充当呼吸签名） -->
+      <div class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden">
+        <img v-if="settingsLoaded && siteLogo" :src="siteLogo" alt="Logo" class="h-full w-full rounded-md object-contain" />
+        <BrandMark v-else animated class="h-7 w-7" />
       </div>
-      <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
+      <div class="sidebar-brand flex items-baseline gap-1.5" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
         <span class="sidebar-brand-title font-serif text-lg font-bold text-gray-900 dark:text-white">
           {{ siteName }}
         </span>
@@ -146,7 +147,7 @@
         :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
         :title="sidebarCollapsed ? (isDark ? t('nav.lightMode') : t('nav.darkMode')) : undefined"
       >
-        <SunIcon v-if="isDark" class="h-5 w-5 flex-shrink-0 text-amber-500" />
+        <SunIcon v-if="isDark" class="h-5 w-5 flex-shrink-0" />
         <MoonIcon v-else class="h-5 w-5 flex-shrink-0" />
         <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{
           isDark ? t('nav.lightMode') : t('nav.darkMode')
@@ -163,6 +164,17 @@
         <ChevronDoubleLeftIcon v-if="!sidebarCollapsed" class="h-5 w-5 flex-shrink-0" />
         <ChevronDoubleRightIcon v-else class="h-5 w-5 flex-shrink-0" />
         <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ t('nav.collapse') }}</span>
+      </button>
+
+      <!-- 售后 Q 群（点击复制） -->
+      <button
+        v-if="!sidebarCollapsed"
+        @click="copyQQ"
+        class="mt-2 w-full rounded-md border-t border-gray-100 px-4 pb-1 pt-3 text-left transition-colors hover:bg-gray-100 dark:border-dark-800 dark:hover:bg-dark-800"
+        title="点击复制"
+      >
+        <span class="block text-xs text-gray-500 dark:text-dark-400">售后 Q 群</span>
+        <span class="block font-mono text-sm tabular-nums text-gray-700 dark:text-gray-300">{{ qqCopied ? '已复制 ✓' : QQ_GROUP }}</span>
       </button>
     </div>
   </aside>
@@ -184,6 +196,7 @@ import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
+import BrandMark from '@/components/common/BrandMark.vue'
 
 interface NavItem {
   path: string
@@ -222,6 +235,16 @@ function applyFeatureFlags(items: NavItem[]): NavItem[] {
 }
 
 const { t } = useI18n()
+
+// 售后 Q 群（点击复制）
+const QQ_GROUP = '921118537'
+const qqCopied = ref(false)
+function copyQQ() {
+  navigator.clipboard?.writeText(QQ_GROUP).then(() => {
+    qqCopied.value = true
+    setTimeout(() => (qqCopied.value = false), 1500)
+  })
+}
 
 const route = useRoute()
 const router = useRouter()

@@ -3,7 +3,7 @@
     <!-- Mini Progress Display -->
     <button
       @click="toggleTooltip"
-      class="flex cursor-pointer items-center gap-2 rounded-xl bg-gray-100 px-3 py-1.5 transition-colors hover:bg-gray-200 dark:bg-dark-800 dark:hover:bg-dark-700"
+      class="flex cursor-pointer items-center gap-2 rounded-md bg-gray-100 px-3 py-1.5 transition-colors hover:bg-gray-200 dark:bg-dark-800 dark:hover:bg-dark-700"
       :title="t('subscriptionProgress.viewDetails')"
     >
       <Icon name="creditCard" size="sm" class="text-gray-500 dark:text-gray-400" />
@@ -17,7 +17,7 @@
             :class="getProgressDotClass(sub)"
           ></div>
         </div>
-        <span class="text-xs font-medium text-gray-700 dark:text-gray-300">
+        <span class="font-mono text-xs font-medium tabular-nums text-gray-900 dark:text-white">
           {{ activeSubscriptions.length }}
         </span>
       </div>
@@ -27,13 +27,13 @@
     <transition name="dropdown">
       <div
         v-if="tooltipOpen"
-        class="absolute right-0 z-50 mt-2 w-[340px] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-dark-700 dark:bg-dark-800"
+        class="absolute right-0 z-50 mt-2 w-[340px] overflow-hidden rounded-md border border-gray-200 bg-white shadow-overlay dark:border-dark-700 dark:bg-dark-800"
       >
         <div class="border-b border-gray-100 p-3 dark:border-dark-700">
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
             {{ t('subscriptionProgress.title') }}
           </h3>
-          <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+          <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
             {{ t('subscriptionProgress.activeCount', { count: activeSubscriptions.length }) }}
           </p>
         </div>
@@ -50,7 +50,7 @@
               </span>
               <span
                 v-if="subscription.expires_at"
-                class="text-xs"
+                class="font-mono text-xs tabular-nums"
                 :class="getDaysRemainingClass(subscription.expires_at)"
               >
                 {{ formatDaysRemaining(subscription.expires_at) }}
@@ -64,8 +64,8 @@
                 v-if="isUnlimited(subscription)"
                 class="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 dark:border-dark-700 dark:bg-dark-800/40"
               >
-                <span class="text-lg text-emerald-600 dark:text-emerald-400">∞</span>
-                <span class="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                <span class="font-mono text-lg text-gray-700 dark:text-gray-300">∞</span>
+                <span class="text-xs font-medium text-gray-600 dark:text-gray-400">
                   {{ t('subscriptionProgress.unlimited') }}
                 </span>
               </div>
@@ -74,14 +74,14 @@
               <template v-else>
                 <!-- Burn-down 余额进度（新模型） -->
                 <div v-if="subscription.daily_amount_usd" class="flex items-center gap-2">
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">余额</span>
-                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-600 dark:text-gray-400">余额</span>
+                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-700">
                     <div
-                      class="h-1.5 rounded-full bg-emerald-500 transition-all"
+                      class="h-1.5 rounded-full bg-gray-900 transition-all dark:bg-gray-100"
                       :style="{ width: burndownRemainingWidth(subscription) }"
                     ></div>
                   </div>
-                  <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">
+                  <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
                     第{{ Math.floor(subscription.consumption_day || 0) }}天·剩${{
                       (subscription.remaining_usd || 0).toFixed(0)
                     }}
@@ -92,10 +92,10 @@
                   v-if="subscription.group?.daily_limit_usd && !subscription.daily_amount_usd"
                   class="flex items-center gap-2"
                 >
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
+                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-600 dark:text-gray-400">{{
                     t('subscriptionProgress.daily')
                   }}</span>
-                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-700">
                     <div
                       class="h-1.5 rounded-full transition-all"
                       :class="
@@ -112,7 +112,7 @@
                       }"
                     ></div>
                   </div>
-                  <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">
+                  <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
                     {{
                       formatUsage(subscription.daily_usage_usd, subscription.group?.daily_limit_usd)
                     }}
@@ -123,10 +123,10 @@
                   v-if="subscription.group?.weekly_limit_usd && !subscription.daily_amount_usd"
                   class="flex items-center gap-2"
                 >
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
+                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-600 dark:text-gray-400">{{
                     t('subscriptionProgress.weekly')
                   }}</span>
-                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-700">
                     <div
                       class="h-1.5 rounded-full transition-all"
                       :class="
@@ -143,7 +143,7 @@
                       }"
                     ></div>
                   </div>
-                  <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">
+                  <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
                     {{
                       formatUsage(subscription.weekly_usage_usd, subscription.group?.weekly_limit_usd)
                     }}
@@ -154,10 +154,10 @@
                   v-if="subscription.group?.monthly_limit_usd && !subscription.daily_amount_usd"
                   class="flex items-center gap-2"
                 >
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
+                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-600 dark:text-gray-400">{{
                     t('subscriptionProgress.monthly')
                   }}</span>
-                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-700">
                     <div
                       class="h-1.5 rounded-full transition-all"
                       :class="
@@ -174,7 +174,7 @@
                       }"
                     ></div>
                   </div>
-                  <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">
+                  <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
                     {{
                       formatUsage(
                         subscription.monthly_usage_usd,
@@ -192,7 +192,7 @@
           <router-link
             to="/subscriptions"
             @click="closeTooltip"
-            class="block w-full py-1 text-center text-xs text-primary-600 hover:underline dark:text-primary-400"
+            class="block w-full py-1 text-center text-xs text-gray-700 hover:underline dark:text-gray-300"
           >
             {{ t('subscriptionProgress.viewAll') }}
           </router-link>
@@ -252,22 +252,22 @@ function isUnlimited(sub: UserSubscription): boolean {
 }
 
 function getProgressDotClass(sub: UserSubscription): string {
-  // Unlimited subscriptions get a special color
+  // Unlimited subscriptions carry no color — neutral ink dot.
   if (isUnlimited(sub)) {
-    return 'bg-emerald-500'
+    return 'bg-gray-900 dark:bg-gray-100'
   }
   const maxPercentage = getMaxUsagePercentage(sub)
-  if (maxPercentage >= 90) return 'bg-red-500'
-  if (maxPercentage >= 70) return 'bg-orange-500'
-  return 'bg-green-500'
+  // Clay Signal only when over/near limit; otherwise neutral ink.
+  if (maxPercentage >= 90) return 'bg-primary-600'
+  return 'bg-gray-900 dark:bg-gray-100'
 }
 
 function getProgressBarClass(used: number | undefined, limit: number | null | undefined): string {
-  if (!limit || limit === 0) return 'bg-gray-400'
+  if (!limit || limit === 0) return 'bg-gray-300 dark:bg-dark-600'
   const percentage = ((used || 0) / limit) * 100
-  if (percentage >= 90) return 'bg-red-500'
-  if (percentage >= 70) return 'bg-orange-500'
-  return 'bg-green-500'
+  // Clay Signal only when over/near limit; otherwise neutral ink fill.
+  if (percentage >= 90) return 'bg-primary-600'
+  return 'bg-gray-900 dark:bg-gray-100'
 }
 
 function getProgressWidth(used: number | undefined, limit: number | null | undefined): string {
@@ -306,9 +306,9 @@ function getDaysRemainingClass(expiresAt: string): string {
   const expires = new Date(expiresAt)
   const diff = expires.getTime() - now.getTime()
   const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
-  if (days <= 3) return 'text-red-600 dark:text-red-400'
-  if (days <= 7) return 'text-orange-600 dark:text-orange-400'
-  return 'text-gray-500 dark:text-dark-400'
+  // Clay Signal only at true near-expiry; otherwise neutral ink figure.
+  if (days <= 3) return 'text-primary-700 dark:text-primary-400'
+  return 'text-gray-700 dark:text-gray-300'
 }
 
 function toggleTooltip() {

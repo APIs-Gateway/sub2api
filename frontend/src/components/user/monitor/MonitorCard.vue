@@ -1,14 +1,13 @@
 <template>
   <button
     type="button"
-    class="group text-left p-5 rounded-2xl min-h-[280px] w-full bg-white/70 backdrop-blur-xl border border-gray-200/80 shadow-card dark:bg-dark-800/60 dark:border-dark-700/70 hover:-translate-y-1 hover:shadow-card-hover dark:hover:border-primary-500/30 hover:border-gray-300 transition-all duration-300 ease-out flex flex-col"
+    class="group text-left p-5 rounded-md min-h-[280px] w-full bg-white border border-gray-200 dark:bg-dark-800 dark:border-dark-700 hover:border-gray-300 dark:hover:border-dark-600 transition-colors flex flex-col"
     @click="emit('click')"
   >
     <!-- Header: icon + name/model + status chip -->
     <div class="flex items-start gap-3">
       <span
-        class="w-9 h-9 rounded-xl ring-1 ring-black/5 dark:ring-white/10 grid place-items-center flex-shrink-0"
-        :class="[providerGradient(item.provider), providerTintClass]"
+        class="w-9 h-9 rounded-md border border-gray-200 dark:border-dark-700 grid place-items-center flex-shrink-0 text-gray-600 dark:text-gray-400"
       >
         <ProviderIcon :provider="item.provider" :size="20" />
       </span>
@@ -18,12 +17,11 @@
         </div>
         <div class="mt-0.5 flex items-center gap-1.5 min-w-0">
           <span
-            class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium flex-shrink-0"
-            :class="providerBadgeClass(item.provider)"
+            class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium flex-shrink-0 border border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300"
           >
             {{ providerLabel(item.provider) }}
           </span>
-          <span class="font-mono text-xs truncate text-gray-500 dark:text-gray-400">
+          <span class="font-mono tabular-nums text-xs truncate text-gray-600 dark:text-gray-400">
             {{ item.primary_model }}
           </span>
           <span
@@ -35,9 +33,13 @@
         </div>
       </div>
       <span
-        class="px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0"
-        :class="statusBadgeClass(item.primary_status)"
+        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium flex-shrink-0 border border-gray-200 dark:border-dark-700"
+        :class="statusIsSignal ? 'text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-gray-300'"
       >
+        <span
+          class="w-1.5 h-1.5 rounded-full"
+          :class="statusIsSignal ? 'bg-primary-600' : 'bg-gray-400 dark:bg-gray-500'"
+        ></span>
         {{ statusLabel(item.primary_status) }}
       </span>
     </div>
@@ -76,20 +78,12 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { UserMonitorView } from '@/api/channelMonitor'
-import {
-  useChannelMonitorFormat,
-  providerGradient,
-} from '@/composables/useChannelMonitorFormat'
+import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
+import { STATUS_FAILED, STATUS_ERROR } from '@/constants/channelMonitor'
 import ProviderIcon from './ProviderIcon.vue'
 import MonitorMetricPair from './MonitorMetricPair.vue'
 import MonitorAvailabilityRow from './MonitorAvailabilityRow.vue'
 import MonitorTimeline from './MonitorTimeline.vue'
-
-const PROVIDER_TINT: Record<string, string> = {
-  openai: 'text-emerald-600 dark:text-emerald-300',
-  anthropic: 'text-orange-600 dark:text-orange-300',
-  gemini: 'text-sky-600 dark:text-sky-300',
-}
 
 const props = defineProps<{
   item: UserMonitorView
@@ -105,14 +99,13 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const {
   statusLabel,
-  statusBadgeClass,
   providerLabel,
-  providerBadgeClass,
   formatLatency,
 } = useChannelMonitorFormat()
 
-const providerTintClass = computed(() =>
-  PROVIDER_TINT[props.item.provider] ?? 'text-gray-500 dark:text-gray-300'
+const statusIsSignal = computed(() =>
+  props.item.primary_status === STATUS_FAILED ||
+  props.item.primary_status === STATUS_ERROR
 )
 
 const availabilityLabel = computed(() => {

@@ -20,20 +20,25 @@ const props = defineProps<{
   label: string
 }>()
 
+// 反彩虹：状态靠"墨点(在)/淡点(关)/Signal(错)"承载，颜色不编码正常态——文字才是主语。
 const variantClass = computed(() => {
   switch (props.status) {
     case 'active':
     case 'success':
-      return 'bg-green-500'
+      // 正常/在线：实心墨点
+      return 'bg-gray-800 dark:bg-gray-200'
     case 'disabled':
     case 'inactive':
+      // 停用/离线：淡点（以"弱"示意，不着色）
+      return 'bg-gray-300 dark:bg-dark-600'
     case 'warning':
-      return 'bg-yellow-500'
+      return 'bg-gray-400 dark:bg-dark-500'
     case 'error':
     case 'danger':
-      return 'bg-red-500'
+      // 唯一语义色 Signal（黏土族）
+      return 'bg-primary-600'
     default:
-      return 'bg-gray-400'
+      return 'bg-gray-300 dark:bg-dark-600'
   }
 })
 </script>

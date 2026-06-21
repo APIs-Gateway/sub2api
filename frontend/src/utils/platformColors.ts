@@ -7,102 +7,83 @@
 
 export type Platform = 'anthropic' | 'openai' | 'antigravity' | 'gemini'
 
-// ── Badge (bg + text + border, for inline badges with border) ───────
+// Quiet Ledger：去彩虹。四个平台统一中性处理，仅靠 platformLabel() 文字区分；
+// 黏土仅作克制点缀（强调条/折扣）。下列每个映射对所有平台返回同一中性值，
+// 保留 Record 结构与公共 API 不变，调用方零改动。
+const NEUTRAL = {
+  // 发丝标签：透明底 + 灰描边 + 墨字
+  badge: 'bg-transparent text-gray-700 border-gray-200 dark:text-gray-300 dark:border-dark-700',
+  badgeLight: 'text-gray-700 dark:text-gray-300',
+  border: 'border-gray-200 dark:border-dark-700',
+  // 强调条：单一黏土（图表/强调是黏土的指定岗位），去渐变
+  accentBar: 'bg-primary-500',
+  // 价格/数据：墨色（机器之声由调用处的 font-mono 承载）
+  text: 'text-gray-900 dark:text-white',
+  // 勾选等图标：中性墨色
+  icon: 'text-gray-600 dark:text-gray-300',
+  // 按钮：扁平墨黑主按钮（与 .btn-primary 一致），绝不用平台色填充
+  button: 'bg-gray-900 text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white',
+  // 折扣：黏土点缀（克制的促销强调）
+  discount: 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400',
+  // 头部"渐变"：收为扁平墨黑横幅（深底浅字结构不变，去彩虹）
+  gradient: 'from-gray-900 to-gray-900 dark:from-dark-800 dark:to-dark-800',
+  gradientText: 'text-gray-100',
+  gradientSubtext: 'text-gray-400',
+}
+
 const BADGE: Record<Platform, string> = {
-  anthropic: 'bg-orange-500/10 text-orange-600 border-orange-500/30 dark:text-orange-400',
-  openai: 'bg-green-500/10 text-green-600 border-green-500/30 dark:text-green-400',
-  antigravity: 'bg-purple-500/10 text-purple-600 border-purple-500/30 dark:text-purple-400',
-  gemini: 'bg-blue-500/10 text-blue-600 border-blue-500/30 dark:text-blue-400',
+  anthropic: NEUTRAL.badge, openai: NEUTRAL.badge, antigravity: NEUTRAL.badge, gemini: NEUTRAL.badge,
 }
-const BADGE_DEFAULT = 'bg-slate-500/10 text-slate-600 border-slate-500/30 dark:text-slate-400'
+const BADGE_DEFAULT = NEUTRAL.badge
 
-// ── Light badge (softer bg, no border) ──────────────────────────────
 const BADGE_LIGHT: Record<Platform, string> = {
-  anthropic: 'bg-orange-500/10 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300',
-  openai: 'bg-green-500/10 text-green-600 dark:bg-green-500/10 dark:text-green-300',
-  antigravity: 'bg-purple-500/10 text-purple-600 dark:bg-purple-500/10 dark:text-purple-300',
-  gemini: 'bg-blue-500/10 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
+  anthropic: NEUTRAL.badgeLight, openai: NEUTRAL.badgeLight, antigravity: NEUTRAL.badgeLight, gemini: NEUTRAL.badgeLight,
 }
 
-// ── Border ──────────────────────────────────────────────────────────
 const BORDER: Record<Platform, string> = {
-  anthropic: 'border-orange-500/20 dark:border-orange-500/20',
-  openai: 'border-green-500/20 dark:border-green-500/20',
-  antigravity: 'border-purple-500/20 dark:border-purple-500/20',
-  gemini: 'border-blue-500/20 dark:border-blue-500/20',
+  anthropic: NEUTRAL.border, openai: NEUTRAL.border, antigravity: NEUTRAL.border, gemini: NEUTRAL.border,
 }
-const BORDER_DEFAULT = 'border-gray-200 dark:border-dark-700'
+const BORDER_DEFAULT = NEUTRAL.border
 
-// ── Accent bar (gradient) ───────────────────────────────────────────
 const ACCENT_BAR: Record<Platform, string> = {
-  anthropic: 'bg-gradient-to-r from-orange-400 to-orange-500',
-  openai: 'bg-gradient-to-r from-emerald-400 to-emerald-500',
-  antigravity: 'bg-gradient-to-r from-purple-400 to-purple-500',
-  gemini: 'bg-gradient-to-r from-blue-400 to-blue-500',
+  anthropic: NEUTRAL.accentBar, openai: NEUTRAL.accentBar, antigravity: NEUTRAL.accentBar, gemini: NEUTRAL.accentBar,
 }
-const ACCENT_BAR_DEFAULT = 'bg-gradient-to-r from-primary-400 to-primary-500'
+const ACCENT_BAR_DEFAULT = NEUTRAL.accentBar
 
-// ── Text (price, icon) ─────────────────────────────────────────────
 const TEXT: Record<Platform, string> = {
-  anthropic: 'text-orange-600 dark:text-orange-400',
-  openai: 'text-emerald-600 dark:text-emerald-400',
-  antigravity: 'text-purple-600 dark:text-purple-400',
-  gemini: 'text-blue-600 dark:text-blue-400',
+  anthropic: NEUTRAL.text, openai: NEUTRAL.text, antigravity: NEUTRAL.text, gemini: NEUTRAL.text,
 }
-const TEXT_DEFAULT = 'text-primary-600 dark:text-primary-400'
+const TEXT_DEFAULT = NEUTRAL.text
 
-// ── Icon (check mark etc.) ──────────────────────────────────────────
 const ICON: Record<Platform, string> = {
-  anthropic: 'text-orange-500 dark:text-orange-400',
-  openai: 'text-emerald-500 dark:text-emerald-400',
-  antigravity: 'text-purple-500 dark:text-purple-400',
-  gemini: 'text-blue-500 dark:text-blue-400',
+  anthropic: NEUTRAL.icon, openai: NEUTRAL.icon, antigravity: NEUTRAL.icon, gemini: NEUTRAL.icon,
 }
-const ICON_DEFAULT = 'text-primary-500 dark:text-primary-400'
+const ICON_DEFAULT = NEUTRAL.icon
 
-// ── Button (solid bg) ───────────────────────────────────────────────
 const BUTTON: Record<Platform, string> = {
-  anthropic: 'bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700 dark:bg-orange-500/80 dark:hover:bg-orange-500',
-  openai: 'bg-green-600 text-white hover:bg-green-700 active:bg-green-800 dark:bg-green-600/80 dark:hover:bg-green-600',
-  antigravity: 'bg-purple-500 text-white hover:bg-purple-600 active:bg-purple-700 dark:bg-purple-500/80 dark:hover:bg-purple-500',
-  gemini: 'bg-blue-500 text-white hover:bg-blue-600 active:bg-blue-700 dark:bg-blue-500/80 dark:hover:bg-blue-500',
+  anthropic: NEUTRAL.button, openai: NEUTRAL.button, antigravity: NEUTRAL.button, gemini: NEUTRAL.button,
 }
-const BUTTON_DEFAULT = 'bg-primary-500 text-white hover:bg-primary-600 dark:bg-primary-600 dark:hover:bg-primary-500'
+const BUTTON_DEFAULT = NEUTRAL.button
 
-// ── Discount badge ──────────────────────────────────────────────────
 const DISCOUNT: Record<Platform, string> = {
-  anthropic: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
-  openai: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-  antigravity: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
-  gemini: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  anthropic: NEUTRAL.discount, openai: NEUTRAL.discount, antigravity: NEUTRAL.discount, gemini: NEUTRAL.discount,
 }
-const DISCOUNT_DEFAULT = 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+const DISCOUNT_DEFAULT = NEUTRAL.discount
 
-// ── Header gradient (subscription confirm) ─────────────────────────
 const GRADIENT: Record<Platform, string> = {
-  anthropic: 'from-orange-500 to-orange-600',
-  openai: 'from-emerald-500 to-emerald-600',
-  antigravity: 'from-purple-500 to-purple-600',
-  gemini: 'from-blue-500 to-blue-600',
+  anthropic: NEUTRAL.gradient, openai: NEUTRAL.gradient, antigravity: NEUTRAL.gradient, gemini: NEUTRAL.gradient,
 }
-const GRADIENT_DEFAULT = 'from-primary-500 to-primary-600'
+const GRADIENT_DEFAULT = NEUTRAL.gradient
 
-// ── Header text (light text on gradient bg) ────────────────────────
 const GRADIENT_TEXT: Record<Platform, string> = {
-  anthropic: 'text-orange-100',
-  openai: 'text-emerald-100',
-  antigravity: 'text-purple-100',
-  gemini: 'text-blue-100',
+  anthropic: NEUTRAL.gradientText, openai: NEUTRAL.gradientText, antigravity: NEUTRAL.gradientText, gemini: NEUTRAL.gradientText,
 }
-const GRADIENT_TEXT_DEFAULT = 'text-primary-100'
+const GRADIENT_TEXT_DEFAULT = NEUTRAL.gradientText
 
 const GRADIENT_SUBTEXT: Record<Platform, string> = {
-  anthropic: 'text-orange-200',
-  openai: 'text-emerald-200',
-  antigravity: 'text-purple-200',
-  gemini: 'text-blue-200',
+  anthropic: NEUTRAL.gradientSubtext, openai: NEUTRAL.gradientSubtext, antigravity: NEUTRAL.gradientSubtext, gemini: NEUTRAL.gradientSubtext,
 }
-const GRADIENT_SUBTEXT_DEFAULT = 'text-primary-200'
+const GRADIENT_SUBTEXT_DEFAULT = NEUTRAL.gradientSubtext
 
 // ── Public API ──────────────────────────────────────────────────────
 
