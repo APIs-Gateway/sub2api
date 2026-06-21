@@ -16,6 +16,8 @@ export interface UserAvailableGroup {
   rate_multiplier: number
   /** true = 专属分组（小范围授权）；false = 公开分组。 */
   is_exclusive: boolean
+  /** 分组对外描述（如「0.25倍率，适合追求长上下文极致稳定」），价格页档位卡展示用。 */
+  description?: string
 }
 
 export interface UserPricingInterval {

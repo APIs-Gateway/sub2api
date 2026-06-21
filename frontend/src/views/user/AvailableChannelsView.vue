@@ -1,63 +1,63 @@
 <template>
   <AppLayout>
     <BillingRulesCard :models-below="true" class="mb-4" />
-    <TablePageLayout>
-      <template #filters>
-        <div class="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-          <div class="flex flex-1 flex-wrap items-center gap-3">
-            <div class="relative w-full sm:w-80">
-              <Icon
-                name="search"
-                size="md"
-                class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500"
-              />
-              <input
-                v-model="searchQuery"
-                type="text"
-                :placeholder="t('availableChannels.searchPlaceholder')"
-                class="input pl-10"
-              />
-            </div>
-          </div>
 
-          <div class="flex w-full flex-shrink-0 flex-wrap items-center justify-end gap-3 lg:w-auto">
-            <button
-              @click="loadChannels"
-              :disabled="loading"
-              class="btn btn-secondary"
-              :title="t('common.refresh', 'Refresh')"
-            >
-              <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-            </button>
-          </div>
-        </div>
-      </template>
-
-      <template #table>
-        <AvailableChannelsTable
-          :columns="columnLabels"
-          :rows="filteredChannels"
-          :loading="loading"
-          :user-group-rates="userGroupRates"
-          pricing-key-prefix="availableChannels.pricing"
-          :no-pricing-label="t('availableChannels.noPricing')"
-          :no-models-label="t('availableChannels.noModels')"
-          :empty-label="t('availableChannels.empty')"
+    <!-- Toolbar -->
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+      <div class="relative w-full sm:w-80">
+        <Icon name="search" size="md" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
+        <input
+          v-model="searchQuery"
+          type="text"
+          :placeholder="t('availableChannels.searchPlaceholder')"
+          class="input pl-10"
         />
-      </template>
-    </TablePageLayout>
+      </div>
+      <RouterLink to="/payment" class="btn btn-primary shrink-0">{{ t('availableChannels.buyPlans') }}</RouterLink>
+      <button @click="loadChannels" :disabled="loading" class="btn btn-secondary shrink-0" :title="t('common.refresh', 'Refresh')">
+        <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+      </button>
+    </div>
+
+    <div v-if="loading" class="flex justify-center py-16">
+      <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
+    </div>
+
+    <template v-else>
+      <div
+        v-if="modelCards.length > 0"
+        class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
+      >
+        <ModelPriceCard
+          v-for="c in modelCards"
+          :key="c.model.name"
+          :model="c.model"
+          :rates="c.rates"
+          :platform-hint="c.platform"
+          :no-pricing-label="t('availableChannels.noPricing')"
+        />
+      </div>
+
+      <div
+        v-else
+        class="rounded-xl border border-dashed border-gray-200 py-16 text-center dark:border-dark-700"
+      >
+        <Icon name="inbox" size="xl" class="mx-auto mb-3 h-12 w-12 text-gray-400" />
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('availableChannels.empty') }}</p>
+      </div>
+    </template>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { RouterLink } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
-import AvailableChannelsTable from '@/components/channels/AvailableChannelsTable.vue'
 import BillingRulesCard from '@/components/common/BillingRulesCard.vue'
-import userChannelsAPI, { type UserAvailableChannel } from '@/api/channels'
+import ModelPriceCard from '@/components/channels/ModelPriceCard.vue'
+import userChannelsAPI, { type UserAvailableChannel, type UserSupportedModel } from '@/api/channels'
 import userGroupsAPI from '@/api/groups'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -70,45 +70,43 @@ const userGroupRates = ref<Record<number, number>>({})
 const loading = ref(false)
 const searchQuery = ref('')
 
-const columnLabels = computed(() => ({
-  name: t('availableChannels.columns.name'),
-  description: t('availableChannels.columns.description'),
-  platform: t('availableChannels.columns.platform'),
-  groups: t('availableChannels.columns.groups'),
-  supportedModels: t('availableChannels.columns.supportedModels'),
-}))
+interface ModelCard {
+  model: UserSupportedModel
+  platform: string
+  rates: number[]
+}
 
-/**
- * 搜索过滤：
- * - 命中渠道名/描述 → 整个渠道（所有 platforms）都保留
- * - 否则按 platform/group/model 维度在 sections 里过滤，保留有匹配的 section
- * - 所有 sections 都不匹配时，渠道本身被过滤掉
- */
-const filteredChannels = computed(() => {
+// 一个模型一张卡：跨渠道/平台去重，价格取首个非空定价，倍率聚合所有提供该模型的分组（去重升序）。
+const modelCards = computed<ModelCard[]>(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return channels.value
-  return channels.value
-    .map((ch) => {
-      const nameHit = ch.name.toLowerCase().includes(q)
-      const descHit = (ch.description || '').toLowerCase().includes(q)
-      if (nameHit || descHit) return ch
-      const matchingSections = ch.platforms.filter(
-        (p) =>
-          p.platform.toLowerCase().includes(q) ||
-          p.groups.some((g) => g.name.toLowerCase().includes(q)) ||
-          p.supported_models.some((m) => m.name.toLowerCase().includes(q)),
-      )
-      if (matchingSections.length === 0) return null
-      return { ...ch, platforms: matchingSections }
-    })
-    .filter((ch): ch is UserAvailableChannel => ch !== null)
+  const map = new Map<string, { model: UserSupportedModel; rates: Set<number>; platform: string }>()
+  for (const ch of channels.value) {
+    for (const sec of ch.platforms) {
+      const secRates = sec.groups.map((g) => userGroupRates.value[g.id] ?? g.rate_multiplier)
+      for (const m of sec.supported_models) {
+        let e = map.get(m.name)
+        if (!e) {
+          e = { model: m, rates: new Set<number>(), platform: m.platform || sec.platform }
+          map.set(m.name, e)
+        } else if (!e.model.pricing && m.pricing) {
+          e.model = m // 优先保留带定价的条目
+        }
+        for (const r of secRates) e.rates.add(r)
+      }
+    }
+  }
+  let cards = Array.from(map.values()).map((e) => ({
+    model: e.model,
+    platform: e.platform,
+    rates: Array.from(e.rates).sort((a, b) => a - b),
+  }))
+  if (q) cards = cards.filter((c) => c.model.name.toLowerCase().includes(q))
+  return cards.sort((a, b) => a.model.name.localeCompare(b.model.name))
 })
 
 async function loadChannels() {
   loading.value = true
   try {
-    // 渠道列表和用户专属倍率并发拉取。专属倍率失败不阻塞渠道展示——
-    // 失败时只是无法渲染专属倍率角标，降级为仅显示默认倍率。
     const [list, rates] = await Promise.all([
       userChannelsAPI.getAvailable(),
       userGroupsAPI.getUserGroupRates().catch((err: unknown) => {

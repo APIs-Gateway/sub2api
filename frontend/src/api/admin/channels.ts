@@ -178,5 +178,33 @@ export async function syncPricingModels(platform: string): Promise<SyncPricingMo
   return data
 }
 
-const channelsAPI = { list, getById, create, update, remove, getModelDefaultPricing, syncPricingModels }
+/** 价格页对外展示设置:决定用户「价格与计费」页展示哪些分组 / 模型。空 = 全部展示。 */
+export interface PricingDisplaySettings {
+  group_ids: number[]
+  models: string[]
+}
+
+/** 读取价格页对外展示设置 */
+export async function getPricingDisplay(): Promise<PricingDisplaySettings> {
+  const { data } = await apiClient.get<PricingDisplaySettings>('/admin/settings/pricing-display')
+  return data
+}
+
+/** 保存价格页对外展示设置 */
+export async function updatePricingDisplay(payload: PricingDisplaySettings): Promise<PricingDisplaySettings> {
+  const { data } = await apiClient.put<PricingDisplaySettings>('/admin/settings/pricing-display', payload)
+  return data
+}
+
+const channelsAPI = {
+  list,
+  getById,
+  create,
+  update,
+  remove,
+  getModelDefaultPricing,
+  syncPricingModels,
+  getPricingDisplay,
+  updatePricingDisplay,
+}
 export default channelsAPI

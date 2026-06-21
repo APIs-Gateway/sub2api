@@ -438,6 +438,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		adminSettings.GET("", h.Admin.Setting.GetSettings)
 		adminSettings.PUT("", h.Admin.Setting.UpdateSettings)
+		// 价格页对外展示设置(展示哪些分组 / 模型),供「价格配置」页弹窗使用
+		adminSettings.GET("/pricing-display", h.Admin.Setting.GetPricingDisplaySettings)
+		adminSettings.PUT("/pricing-display", h.Admin.Setting.UpdatePricingDisplaySettings)
 		adminSettings.POST("/test-smtp", h.Admin.Setting.TestSMTPConnection)
 		adminSettings.POST("/send-test-email", h.Admin.Setting.SendTestEmail)
 		adminSettings.GET("/email-templates", h.Admin.Setting.ListEmailTemplates)
