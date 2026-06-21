@@ -67,3 +67,30 @@ func TestBurndownHelpers(t *testing.T) {
 		t.Fatalf("shortfall(all spent)=%v want 0", got)
 	}
 }
+
+// TestDayCardNoClawback 天卡（TotalDays<=1）整张卡只一天、到期由作废流程处理，
+// 日内绝不 clawback。防回归：深夜买的天卡曾按「日历午夜」计天，在次日 0 点被误扣光（user 762）。
+func TestDayCardNoClawback(t *testing.T) {
+	loc := shanghaiLoc
+	activated := time.Date(2026, 6, 21, 23, 55, 0, 0, loc) // 23:55 激活，G=D=30 → TotalDays=1
+	a := activated
+	sub := &UserSubscription{
+		StartsAt:        activated,
+		ActivatedAt:     &a,
+		GrantedTotalUSD: 30,
+		DailyAmountUSD:  30,
+		ConsumedUSD:     0,
+	}
+	if got := sub.TotalDays(); got != 1 {
+		t.Fatalf("TotalDays=%d want 1", got)
+	}
+	// 5 分钟后跨东八区午夜（CalendarDayAt=1）：旧逻辑会误扣 30，新逻辑必须为 0。
+	pastMidnight := time.Date(2026, 6, 22, 0, 0, 30, 0, loc)
+	if got := sub.ClawbackShortfallAt(pastMidnight); got != 0 {
+		t.Fatalf("day-card shortfall past midnight=%v want 0", got)
+	}
+	// 满 24h 后仍为 0（剩余由到期作废处理，而非日内 clawback）。
+	if got := sub.ClawbackShortfallAt(activated.AddDate(0, 0, 1)); got != 0 {
+		t.Fatalf("day-card shortfall next day=%v want 0", got)
+	}
+}
