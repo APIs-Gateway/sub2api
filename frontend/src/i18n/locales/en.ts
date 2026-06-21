@@ -1111,6 +1111,7 @@ export default {
     tierLabel: 'Tiers',
     buyPlans: 'View plans',
     payHint: 'Pay = unit price ×',
+    effectiveTitle: 'You pay here (× {rate})',
     tiersTitle: 'Pay-as-you-go tiers',
     tiersHint: 'A higher rate means a more stable pool but more balance consumed for the same usage; click a model name for its official price.',
     plansTitle: 'Monthly plans',

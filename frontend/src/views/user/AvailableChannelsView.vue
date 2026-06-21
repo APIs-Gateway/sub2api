@@ -51,11 +51,12 @@
       </p>
 
       <!-- 该分组的模型卡 -->
-      <div v-if="displayModels.length > 0" class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <div v-if="displayModels.length > 0" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <ModelPriceCard
           v-for="m in displayModels"
           :key="m.name"
           :model="m"
+          :rate-multiplier="selectedGroup?.rate ?? 1"
           :platform-hint="selectedGroup?.platform"
           :no-pricing-label="t('availableChannels.noPricing')"
         />
