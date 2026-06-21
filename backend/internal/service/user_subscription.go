@@ -243,7 +243,13 @@ func (s *UserSubscription) ClawbackFloorAt(now time.Time) float64 {
 }
 
 // ClawbackShortfallAt 返回截至 now 应清扣的金额 = max(0, remaining - floor)。
+//
+// 天卡（TotalDays<=1）整张卡只有一天、到期即由作废流程处理，日内不做 clawback：
+// 否则按「日历午夜」计天会把深夜买的卡在次日 0 点误扣光（如 23:55 买的天卡 5 分钟后清零）。
 func (s *UserSubscription) ClawbackShortfallAt(now time.Time) float64 {
+	if s.TotalDays() <= 1 {
+		return 0
+	}
 	shortfall := s.RemainingUSD() - s.ClawbackFloorAt(now)
 	if shortfall < 0 {
 		return 0
