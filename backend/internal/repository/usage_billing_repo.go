@@ -261,14 +261,23 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 			MaxOverdraftDays:    s.maxOverdraftDays,
 			TotalOverdraftCount: s.totalOverdraftCount,
 		}
-		usesOverdraft := s.maxOverdraftDays != nil && sub.CanEnableOverdraft() && sub.UsesOverdraftAt(now, alloc)
-		closeOverdraft := usesOverdraft && s.totalOverdraftCount+1 >= service.MaxSubscriptionOverdraftUses
+		// 透支按「消费前沿领先解锁进度的天数」计量（非请求数）：仅在本卡已开启透支且未达上限时
+		// 计算 reached，对 total_overdraft_count 取 GREATEST 累计其历史最大领先天数。reached 达到 5
+		// 天即关闭本卡透支（max_overdraft_days→NULL）。同一天内多个越线小请求触及同一天，不会重复累计。
+		overdraftDaysReached := 0
+		if s.maxOverdraftDays != nil && sub.CanEnableOverdraft() {
+			overdraftDaysReached = sub.OverdraftDaysReachedAt(now, alloc)
+			if overdraftDaysReached > service.MaxSubscriptionOverdraftUses {
+				overdraftDaysReached = service.MaxSubscriptionOverdraftUses
+			}
+		}
+		closeOverdraft := overdraftDaysReached >= service.MaxSubscriptionOverdraftUses
 		var nowExpired bool
 		var groupID int64
 		if err := tx.QueryRowContext(ctx, `
 			UPDATE user_subscriptions
 			SET consumed_usd = consumed_usd + $1,
-				total_overdraft_count = CASE WHEN $4 THEN total_overdraft_count + 1 ELSE total_overdraft_count END,
+				total_overdraft_count = GREATEST(total_overdraft_count, $4),
 				max_overdraft_days = CASE WHEN $5 THEN NULL ELSE max_overdraft_days END,
 				status = CASE
 					WHEN (granted_total_usd - consumed_usd - clawed_usd - $1) <= $3
@@ -276,7 +285,7 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 				updated_at = NOW()
 			WHERE id = $2
 			RETURNING status = 'expired', group_id
-		`, alloc, s.id, subscriptionDepletionEpsilon, usesOverdraft, closeOverdraft).Scan(&nowExpired, &groupID); err != nil {
+		`, alloc, s.id, subscriptionDepletionEpsilon, overdraftDaysReached, closeOverdraft).Scan(&nowExpired, &groupID); err != nil {
 			return nil, err
 		}
 		if nowExpired {

@@ -162,7 +162,7 @@
                 <p class="text-xs text-gray-400 dark:text-dark-500">
                   {{
                     isOverdraftExhausted(subscription)
-                      ? t('userSubscriptions.overdraft.exhausted')
+                      ? t('userSubscriptions.overdraft.exhausted', { max: overdraftMax(subscription) })
                       : t('userSubscriptions.overdraft.hint', { max: overdraftMax(subscription) })
                   }}
                 </p>

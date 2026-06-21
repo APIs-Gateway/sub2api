@@ -110,3 +110,42 @@ func TestSubscriptionOverdraftUseHelpers(t *testing.T) {
 		t.Fatal("card at max overdraft uses should not be enableable")
 	}
 }
+
+// TestSubscriptionOverdraftDaysReached 校验「按往后预支天数计量」：消费前沿领先解锁线几天，
+// 同一天内多个越线小请求触及同一天 → 只占 1 天，不会按请求数瞬间烧光配额（493 的根因）。
+func TestSubscriptionOverdraftDaysReached(t *testing.T) {
+	loc := shanghaiLoc
+	activated := time.Date(2026, 6, 1, 10, 0, 0, 0, loc) // $60/天
+	day0 := activated
+	day2 := activated.AddDate(0, 0, 2)
+
+	newSub := func(consumed float64) *UserSubscription {
+		a := activated
+		return &UserSubscription{StartsAt: activated, ActivatedAt: &a, GrantedTotalUSD: 1800, DailyAmountUSD: 60, ConsumedUSD: consumed}
+	}
+
+	cases := []struct {
+		name     string
+		sub      *UserSubscription
+		now      time.Time
+		amount   float64
+		wantDays int
+	}{
+		// 493 的真实场景：day0 已花 $61.60，再分摊 $0 → 前沿落在 day1，仅领先 1 天（旧实现会按请求计成 5）。
+		{"day0_493_over_by_1.6", newSub(61.60), day0, 0, 1},
+		{"day0_exact_one_day", newSub(0), day0, 60, 0},      // 恰好花满当天额度 → 不算透支
+		{"day0_one_cent_over", newSub(0), day0, 60.01, 1},   // 越线一点点 → 领先 1 天
+		{"day0_reach_day5", newSub(0), day0, 360, 5},        // day0 直接花到第 6 天额度 → 领先 5 天
+		{"day0_within_today", newSub(0), day0, 30, 0},       // 当天额度内 → 0
+		{"day2_reach_day5", newSub(0), day2, 360, 3},        // day2 解锁到 day2，花到 day5 → 领先 3 天
+		{"day2_within_unlocked", newSub(0), day2, 180, 0},   // day2 解锁 3 天=$180，恰好用满 → 0
+		{"zero_daily", &UserSubscription{StartsAt: activated, ActivatedAt: &activated, DailyAmountUSD: 0}, day0, 100, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.sub.OverdraftDaysReachedAt(tc.now, tc.amount); got != tc.wantDays {
+				t.Fatalf("OverdraftDaysReachedAt=%d want %d", got, tc.wantDays)
+			}
+		})
+	}
+}

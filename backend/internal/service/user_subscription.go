@@ -1,7 +1,14 @@
 package service
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
+// MaxSubscriptionOverdraftUses 是本卡累计可「往后预支」的天数硬上限：消费前沿最多领先每日解锁
+// 进度 5 天。达到后自动关闭本卡透支（max_overdraft_days→NULL），用户端不能再次开启。
+// 注意：计量单位是「天」（消费前沿领先解锁线的天数），不是「请求次数」——同一天内反复越线的
+// 多个小请求只占用 1 天，不会把额度瞬间烧光。
 const MaxSubscriptionOverdraftUses = 5
 
 type UserSubscription struct {
@@ -276,7 +283,7 @@ func (s *UserSubscription) LockedAt(now time.Time, overdraftDays int) float64 {
 	return locked
 }
 
-// CanEnableOverdraft 报告本卡是否仍允许开启透支功能。
+// CanEnableOverdraft 报告本卡是否仍允许开启透支功能（累计预支天数未达 5 天硬上限）。
 func (s *UserSubscription) CanEnableOverdraft() bool {
 	if s == nil {
 		return false
@@ -284,7 +291,7 @@ func (s *UserSubscription) CanEnableOverdraft() bool {
 	return s.TotalOverdraftCount < MaxSubscriptionOverdraftUses
 }
 
-// RemainingOverdraftUses 返回本卡剩余可透支请求次数。
+// RemainingOverdraftUses 返回本卡剩余可往后预支的天数（5 − 已累计预支天数）。
 func (s *UserSubscription) RemainingOverdraftUses() int {
 	if s == nil {
 		return 0
@@ -298,11 +305,37 @@ func (s *UserSubscription) RemainingOverdraftUses() int {
 
 // UsesOverdraftAt 报告本次从该卡分摊 amount 后，是否消费到了当天已解锁额度之外。
 // 当天已解锁额度 = (CalendarDayAt(now)+1)×D（与 SpendableNowAt 的「当天算一天」一致）；
-// 只要本请求的任意部分越过该值，即计 1 次透支。
+// 只要本请求的任意部分越过该值，即视为发生了透支（等价于 OverdraftDaysReachedAt>0）。
 func (s *UserSubscription) UsesOverdraftAt(now time.Time, amount float64) bool {
-	if s == nil || amount <= 0 || s.DailyAmountUSD <= 0 {
-		return false
+	return s.OverdraftDaysReachedAt(now, amount) > 0
+}
+
+// OverdraftDaysReachedAt 返回消费 amount 后「消费前沿领先每日解锁进度的天数」。
+//
+//	frontierDay = ceil((consumed+amount)/D) − 1   // 消费前沿触及的最高 0 索引天
+//	unlockedDay = CalendarDayAt(now)              // 今天已解锁到第 unlockedDay 天（含 day0..unlockedDay）
+//	reached     = max(0, frontierDay − unlockedDay)
+//
+// 用「领先几天」度量透支，而非请求次数：同一天内反复越线的多个小请求触及同一 frontierDay，
+// 因此 reached 不变——配合调用方对 total_overdraft_count 取 GREATEST(既有, reached) 累计，
+// 单调记录「消费前沿历史上最多领先解锁线几天」。达到 5 即触发关闭透支。
+// D=0（legacy/standard 卡）或 amount≤0 时返回 0，无副作用。
+func (s *UserSubscription) OverdraftDaysReachedAt(now time.Time, amount float64) int {
+	if s == nil || s.DailyAmountUSD <= 0 {
+		return 0
 	}
-	currentDayCap := (float64(s.CalendarDayAt(now)) + 1) * s.DailyAmountUSD
-	return s.ConsumedUSD+amount > currentDayCap+1e-9
+	total := s.ConsumedUSD + amount
+	if total <= 0 {
+		return 0
+	}
+	// −1e-9：吸收 numeric→float 尾差，避免「消费恰为整数天额度」被误判为多领先一天。
+	frontierDay := int(math.Ceil(total/s.DailyAmountUSD-1e-9)) - 1
+	if frontierDay < 0 {
+		frontierDay = 0
+	}
+	reached := frontierDay - s.CalendarDayAt(now)
+	if reached < 0 {
+		return 0
+	}
+	return reached
 }

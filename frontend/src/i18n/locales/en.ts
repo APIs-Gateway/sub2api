@@ -6801,9 +6801,9 @@ export default {
     overdraft: {
       label: 'Max overdraft days',
       placeholder: 'Off',
-      hint: 'Overdraft is off by default. Once enabled, this card supports {max} overdraft requests in total. Empty = off; 0 = only today\'s accrual.',
-      usage: 'Overdraft uses: {used} / {max} used, {remaining} remaining',
-      exhausted: 'Overdraft uses are exhausted. The system has turned overdraft off and users cannot enable it again.',
+      hint: 'Overdraft is off by default. Once enabled, this card can pre-spend up to {max} days ahead in total. Empty = off; 0 = only today\'s accrual.',
+      usage: 'Pre-spent: {used} / {max} days used, {remaining} remaining',
+      exhausted: 'You have pre-spent the full {max}-day allowance. The system has turned overdraft off and users cannot enable it again.',
       saved: 'Overdraft limit saved',
       failed: 'Failed to save overdraft limit',
       invalid: 'Enter 0 or a positive integer (leave empty to turn off)'
