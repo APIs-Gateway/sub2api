@@ -20,6 +20,7 @@ import (
 	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/userallowedgroup"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/emailcanon"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
@@ -83,7 +84,7 @@ func (r *userRepository) Create(ctx context.Context, userIn *service.User) error
 	}
 
 	created, err := txClient.User.Create().
-		SetEmail(userIn.Email).
+		SetEmail(emailcanon.CanonicalizeEmailForStorage(userIn.Email)).
 		SetUsername(userIn.Username).
 		SetNotes(userIn.Notes).
 		SetPasswordHash(userIn.PasswordHash).
@@ -227,7 +228,7 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User) error
 	oldEmail := existing.Email
 
 	updateOp := txClient.User.UpdateOneID(userIn.ID).
-		SetEmail(userIn.Email).
+		SetEmail(emailcanon.CanonicalizeEmailForStorage(userIn.Email)).
 		SetUsername(userIn.Username).
 		SetNotes(userIn.Notes).
 		SetPasswordHash(userIn.PasswordHash).
@@ -349,7 +350,7 @@ func replaceEmailAuthIdentityWithClient(ctx context.Context, client *dbent.Clien
 }
 
 func normalizeEmailAuthIdentitySubject(email string) string {
-	normalized := strings.ToLower(strings.TrimSpace(email))
+	normalized := emailcanon.CanonicalizeEmail(email)
 	if normalized == "" {
 		return ""
 	}
@@ -867,7 +868,9 @@ func userEmailLookupPredicate(email string) predicate.User {
 }
 
 func normalizeEmailLookupValue(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
+	// 经 emailcanon 归一化（含 Gmail 别名过滤，开关由 SettingService 同步）。关闭时退化为
+	// ToLower+TrimSpace，与历史一致。查重谓词据此匹配（落库也用同一归一化，保证两端一致）。
+	return emailcanon.CanonicalizeEmail(email)
 }
 
 func normalizedEmailUniquenessLockKey(email string) string {

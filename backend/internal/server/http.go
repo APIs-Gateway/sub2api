@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/emailcanon"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -57,6 +58,10 @@ func ProvideRouter(
 			log.Printf("Warning: server.trusted_proxies is empty in release mode; client IP trust chain is disabled")
 		}
 	}
+
+	// 启动预热 Gmail 别名过滤开关到 emailcanon 进程内标志（repository 归一化收口读它，热路径零 DB）。
+	// 运行期变更由 SettingService.refreshCachedSettings 同步。
+	emailcanon.SetEnabled(settingService.IsGmailAliasFilterEnabled(context.Background()))
 
 	// Wire up websearch Manager builder so it initializes on startup and rebuilds on config save.
 	settingService.SetWebSearchManagerBuilder(context.Background(), func(cfg *service.WebSearchEmulationConfig, proxyURLs map[int64]string) {

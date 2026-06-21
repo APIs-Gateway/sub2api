@@ -10,6 +10,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/emailcanon"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
@@ -138,7 +139,7 @@ func (s *AuthService) SendEmailIdentityBindCode(ctx context.Context, userID int6
 }
 
 func normalizeEmailForIdentityBinding(email string) (string, error) {
-	normalized := strings.ToLower(strings.TrimSpace(email))
+	normalized := emailcanon.CanonicalizeEmail(email)
 	if normalized == "" || len(normalized) > 255 {
 		return "", infraerrors.BadRequest("INVALID_EMAIL", "invalid email")
 	}
@@ -149,7 +150,7 @@ func normalizeEmailForIdentityBinding(email string) (string, error) {
 }
 
 func hasBindableEmailIdentitySubject(email string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(email))
+	normalized := emailcanon.CanonicalizeEmail(email)
 	return normalized != "" && !isReservedEmail(normalized)
 }
 

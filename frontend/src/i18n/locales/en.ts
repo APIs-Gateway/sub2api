@@ -5609,6 +5609,8 @@ export default {
         enableRegistrationHint: 'Allow new users to register',
         emailVerification: 'Email Verification',
         emailVerificationHint: 'Require email verification for new registrations',
+        gmailAliasFilter: 'Gmail Alias Filter',
+        gmailAliasFilterHint: 'Canonicalize Gmail aliases (e.g. f.o.o+tag@gmail.com, @googlemail.com) to the same address to block duplicate signups from one inbox. Applies to gmail.com / googlemail.com only',
         emailSuffixWhitelist: 'Email Domain Whitelist',
         emailSuffixWhitelistHint:
           "Only email addresses from the specified domains can register (for example, {'@'}qq.com, {'@'}gmail.com, *.edu.cn)",
