@@ -43,7 +43,7 @@
             :key="column.key"
             class="flex items-start justify-between gap-4"
           >
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">
+            <span class="text-xs font-medium tracking-wide text-gray-500 dark:text-dark-400">
               {{ column.label }}
             </span>
             <div class="text-right text-sm text-gray-900 dark:text-gray-100">
@@ -70,16 +70,17 @@
     }"
   >
     <table class="w-full min-w-max divide-y divide-gray-200 dark:divide-dark-700">
-      <thead class="table-header bg-gray-50 dark:bg-dark-800">
+      <thead class="table-header">
         <tr>
           <th
             v-for="(column, index) in columns"
             :key="column.key"
             scope="col"
             :class="[
-              'sticky-header-cell py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
+              'sticky-header-cell py-3 text-left text-xs font-medium tracking-wide',
+              sortKey === column.key ? 'text-primary-700 dark:text-primary-400' : 'text-gray-500 dark:text-dark-400',
               getAdaptivePaddingClass(),
-              { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700': column.sortable },
+              { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-800/60': column.sortable },
               getStickyColumnClass(column, index),
               column.class
             ]"
@@ -92,8 +93,8 @@
               :sort-order="sortOrder"
             >
               <div class="flex items-center space-x-1">
-                <span>{{ column.label }}</span>
-                <span v-if="column.sortable" class="text-gray-400 dark:text-dark-500">
+                <span :class="{ 'border-b-2 border-primary-500 pb-0.5': sortKey === column.key }">{{ column.label }}</span>
+                <span v-if="column.sortable" :class="sortKey === column.key ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-dark-500'">
                   <svg
                     v-if="sortKey === column.key"
                     class="h-4 w-4"
@@ -141,7 +142,7 @@
                   size="xl"
                   class="mb-4 h-12 w-12 text-gray-400 dark:text-dark-500"
                 />
-                <p class="text-lg font-medium text-gray-900 dark:text-gray-100">
+                <p class="font-serif text-lg text-gray-900 dark:text-gray-100">
                   {{ t('empty.noData') }}
                 </p>
               </div>
@@ -162,7 +163,7 @@
             :data-row-id="resolveRowKey(sortedData[virtualRow.index], virtualRow.index)"
             :data-index="virtualRow.index"
             :ref="measureElement"
-            class="hover:bg-gray-50 dark:hover:bg-dark-800"
+            class="hover:bg-gray-100 dark:hover:bg-dark-800/40"
           >
             <td
               v-for="(column, colIndex) in columns"
@@ -743,16 +744,18 @@ defineExpose({
   isolation: isolate;
 }
 
-/* 表头容器，确保在滚动时覆盖表体内容 */
+/* 表头容器：与卡面同色（白/暖炭），仅靠下方强发丝线分隔 */
 .table-wrapper .table-header {
   position: sticky;
   top: 0;
   z-index: 200;
-  background-color: rgb(249 250 251);
+  background-color: #ffffff;
+  box-shadow: inset 0 -1px 0 0 #d9d3c6; /* Hairline-Strong 底规 */
 }
 
 .dark .table-wrapper .table-header {
-  background-color: rgb(31 41 55);
+  background-color: #262420;
+  box-shadow: inset 0 -1px 0 0 #4f4940;
 }
 
 /* 表体保持在表头下方 */
@@ -766,11 +769,11 @@ defineExpose({
   position: sticky;
   top: 0;
   z-index: 210; /* 必须高于所有表体内容 */
-  background-color: rgb(249 250 251);
+  background-color: #ffffff;
 }
 
 .dark .sticky-header-cell {
-  background-color: rgb(31 41 55);
+  background-color: #262420;
 }
 
 /* Sticky 列基础样式 */
@@ -806,20 +809,20 @@ defineExpose({
 
 /* 表体 sticky 列背景 */
 tbody .sticky-col {
-  background-color: white;
+  background-color: #ffffff;
 }
 
 .dark tbody .sticky-col {
-  background-color: rgb(17 24 39);
+  background-color: #262420;
 }
 
-/* hover 状态保持 */
+/* hover 状态保持（Paper-Sunk 暖色） */
 tbody tr:hover .sticky-col {
-  background-color: rgb(249 250 251);
+  background-color: #f3f1ea;
 }
 
 .dark tbody tr:hover .sticky-col {
-  background-color: rgb(31 41 55);
+  background-color: #2c2823;
 }
 
 /* 阴影只在可滚动时显示 */

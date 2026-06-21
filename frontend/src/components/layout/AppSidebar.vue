@@ -9,13 +9,15 @@
     <!-- Logo/Brand -->
     <div class="sidebar-header" :class="{ 'sidebar-header-collapsed': sidebarCollapsed }">
       <!-- Custom Logo or Default Logo -->
-      <div class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl">
+      <div class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden rounded-md">
         <img v-if="settingsLoaded" :src="siteLogo || '/logo.png'" alt="Logo" class="h-full w-full object-contain" />
       </div>
-      <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
+      <div class="sidebar-brand flex items-baseline gap-1.5" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
         <span class="sidebar-brand-title font-serif text-lg font-bold text-gray-900 dark:text-white">
           {{ siteName }}
         </span>
+        <!-- 签名：唯一允许着色 + 动效的"活物"标记，平静呼吸 -->
+        <span class="brand-asterisk" aria-hidden="true">✳</span>
       </div>
     </div>
 
@@ -146,7 +148,7 @@
         :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
         :title="sidebarCollapsed ? (isDark ? t('nav.lightMode') : t('nav.darkMode')) : undefined"
       >
-        <SunIcon v-if="isDark" class="h-5 w-5 flex-shrink-0 text-amber-500" />
+        <SunIcon v-if="isDark" class="h-5 w-5 flex-shrink-0" />
         <MoonIcon v-else class="h-5 w-5 flex-shrink-0" />
         <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{
           isDark ? t('nav.lightMode') : t('nav.darkMode')
@@ -891,6 +893,32 @@ onMounted(() => {
 .sidebar-logo {
   flex: 0 0 2.25rem;
   min-width: 2.25rem;
+}
+
+/* 签名：唯一的"活物"标记——黏土星标平静呼吸（全站唯一允许的颜色+动效装饰） */
+.brand-asterisk {
+  color: theme('colors.primary.500');
+  font-size: 0.95rem;
+  line-height: 1;
+  flex: 0 0 auto;
+  animation: asterisk-breathe 4s ease-in-out infinite;
+}
+
+@keyframes asterisk-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-asterisk {
+    animation: none;
+    opacity: 0.8;
+  }
 }
 
 .sidebar-header-collapsed {
