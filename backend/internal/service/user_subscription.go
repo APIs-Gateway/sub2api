@@ -247,13 +247,15 @@ func (s *UserSubscription) ClawbackShortfallAt(now time.Time) float64 {
 // SpendableNowAt 返回在「最多往后透支 overdraftDays 天」约束下，本卡当前可被扣费的额度。
 // 模型仍一次性把 G 发到 users.balance，本函数只用于「准入闸门」估算：
 //
-//	chargeCap    = (CalendarDayAt(now) + overdraftDays) × D   // 截至当前允许累计被扣到的上限
+//	chargeCap    = (CalendarDayAt(now) + 1 + overdraftDays) × D   // 截至当前允许累计被扣到的上限
 //	spendableNow = clamp(0, min(remaining, chargeCap − consumed))
 //
+// 「+1」表示激活当天（N=0）即解锁 1 天额度（1×D）——「每天 D」的卡买当天就能用当天额度，
+// 1 天卡（仅 day0）也因此可用满 1×D，不会被锁成 0。透支天数仍在此基础上往后追加。
 // D=0（legacy/standard 卡）时 chargeCap=0、remaining=0，返回 0，无副作用。
 func (s *UserSubscription) SpendableNowAt(now time.Time, overdraftDays int) float64 {
 	remaining := s.RemainingUSD()
-	chargeCap := (float64(s.CalendarDayAt(now)) + float64(overdraftDays)) * s.DailyAmountUSD
+	chargeCap := (float64(s.CalendarDayAt(now)) + 1 + float64(overdraftDays)) * s.DailyAmountUSD
 	avail := chargeCap - s.ConsumedUSD
 	if avail < 0 {
 		avail = 0
@@ -295,11 +297,12 @@ func (s *UserSubscription) RemainingOverdraftUses() int {
 }
 
 // UsesOverdraftAt 报告本次从该卡分摊 amount 后，是否消费到了当天已解锁额度之外。
-// 只要本请求的任意部分越过 CalendarDayAt(now)*D，即计 1 次透支。
+// 当天已解锁额度 = (CalendarDayAt(now)+1)×D（与 SpendableNowAt 的「当天算一天」一致）；
+// 只要本请求的任意部分越过该值，即计 1 次透支。
 func (s *UserSubscription) UsesOverdraftAt(now time.Time, amount float64) bool {
 	if s == nil || amount <= 0 || s.DailyAmountUSD <= 0 {
 		return false
 	}
-	currentDayCap := float64(s.CalendarDayAt(now)) * s.DailyAmountUSD
+	currentDayCap := (float64(s.CalendarDayAt(now)) + 1) * s.DailyAmountUSD
 	return s.ConsumedUSD+amount > currentDayCap+1e-9
 }
