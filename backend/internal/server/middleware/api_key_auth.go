@@ -181,10 +181,10 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			// 公益 key（hvoy/hovy）单 IP 每自然日消费上限：超额则返回 200 + 文案，
 			// 不计费、不转发上游（仅作用于公益 key 名单内的 key；非公益 key 直接放行）。
 			if billingCacheService != nil {
-				capClientIP := ip.GetTrustedClientIP(c)
-				if cfg.TrustForwardedIPForAPIKeyACL() {
-					capClientIP = ip.GetClientIP(c)
-				}
+				// IP 口径必须与计费累加侧（usage_log.IPAddress，handler 一律用 ip.GetClientIP）
+				// 完全一致：公益限额是按【真实客户端 IP】计量，而非安全 ACL 决策，故不走
+				// trust_forwarded 开关。否则默认反代部署下预检读到固定反代 IP、计数恒 0，上限失效。
+				capClientIP := ip.GetClientIP(c)
 				if exceeded, msg := billingCacheService.PublicBenefitIPCapExceeded(c.Request.Context(), apiKey, capClientIP); exceeded {
 					c.String(200, msg)
 					c.Abort()

@@ -172,15 +172,31 @@ func pubBenefitIPSpendKey(dateKey, clientIP string) string {
 	return fmt.Sprintf("pbkey:ipspend:%s:%s", dateKey, clientIP)
 }
 
+// incrPublicBenefitIPSpendScript 原子地 INCRBYFLOAT + EXPIRE，避免「计数已加但 TTL 未设」窗口
+// （与本文件 updateSubUsageScript 等计数器保持一致的原子写法）。
+var incrPublicBenefitIPSpendScript = redis.NewScript(`
+	local v = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1])
+	redis.call('EXPIRE', KEYS[1], ARGV[2])
+	return v
+`)
+
 func (c *billingCache) IncrPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string, amount float64, ttlSeconds int) (float64, error) {
 	key := pubBenefitIPSpendKey(dateKey, clientIP)
-	pipe := c.rdb.Pipeline()
-	incr := pipe.IncrByFloat(ctx, key, amount)
-	pipe.Expire(ctx, key, time.Duration(ttlSeconds)*time.Second)
-	if _, err := pipe.Exec(ctx); err != nil {
+	res, err := incrPublicBenefitIPSpendScript.Run(ctx, c.rdb, []string{key}, amount, ttlSeconds).Result()
+	if err != nil {
 		return 0, err
 	}
-	return incr.Val(), nil
+	// INCRBYFLOAT 返回 bulk string（如 "10.5"）。
+	switch v := res.(type) {
+	case string:
+		f, _ := strconv.ParseFloat(v, 64)
+		return f, nil
+	case []byte:
+		f, _ := strconv.ParseFloat(string(v), 64)
+		return f, nil
+	default:
+		return 0, nil
+	}
 }
 
 func (c *billingCache) GetPublicBenefitIPSpend(ctx context.Context, dateKey, clientIP string) (float64, error) {
