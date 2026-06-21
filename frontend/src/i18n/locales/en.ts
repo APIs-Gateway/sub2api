@@ -5610,7 +5610,7 @@ export default {
         emailVerification: 'Email Verification',
         emailVerificationHint: 'Require email verification for new registrations',
         gmailAliasFilter: 'Gmail Alias Filter',
-        gmailAliasFilterHint: 'Canonicalize Gmail aliases (e.g. f.o.o+tag@gmail.com, @googlemail.com) to the same address to block duplicate signups from one inbox. Applies to gmail.com / googlemail.com only',
+        gmailAliasFilterHint: 'Canonicalize Gmail aliases (dots and +suffix in the local part are ignored, and googlemail.com is treated as gmail.com) to the same address, blocking duplicate signups from one inbox. Applies to gmail.com and googlemail.com only',
         emailSuffixWhitelist: 'Email Domain Whitelist',
         emailSuffixWhitelistHint:
           "Only email addresses from the specified domains can register (for example, {'@'}qq.com, {'@'}gmail.com, *.edu.cn)",
