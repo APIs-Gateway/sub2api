@@ -1217,6 +1217,41 @@ export async function updateRectifierSettings(
   return data;
 }
 
+// ==================== Check-in Settings ====================
+
+/**
+ * Daily check-in settings interface.
+ */
+export interface CheckinSettings {
+  enabled: boolean;
+  amount_min: number;
+  amount_max: number;
+  spend_per_extra: number;
+}
+
+/**
+ * Get daily check-in settings.
+ */
+export async function getCheckinSettings(): Promise<CheckinSettings> {
+  const { data } = await apiClient.get<CheckinSettings>(
+    "/admin/settings/checkin",
+  );
+  return data;
+}
+
+/**
+ * Update daily check-in settings.
+ */
+export async function updateCheckinSettings(
+  settings: CheckinSettings,
+): Promise<CheckinSettings> {
+  const { data } = await apiClient.put<CheckinSettings>(
+    "/admin/settings/checkin",
+    settings,
+  );
+  return data;
+}
+
 // ==================== OpenAI Fast Policy Settings ====================
 
 /**
@@ -1371,6 +1406,8 @@ export const settingsAPI = {
   updateRectifierSettings,
   getBetaPolicySettings,
   updateBetaPolicySettings,
+  getCheckinSettings,
+  updateCheckinSettings,
   getWebSearchEmulationConfig,
   updateWebSearchEmulationConfig,
   testWebSearchEmulation,

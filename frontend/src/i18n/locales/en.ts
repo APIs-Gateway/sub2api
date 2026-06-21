@@ -1121,6 +1121,21 @@ export default {
     }
   },
 
+  checkin: {
+    title: 'Daily check-in',
+    bonusBadge: '+{n} bonus',
+    rewardRange: 'Check in daily for a random ${min}–${max} bonus to your balance',
+    todaySpend: 'Today spent',
+    nextBonusHint: 'Spend ${amount} more to unlock the next bonus check-in',
+    claimDaily: 'Check in',
+    claimBonus: 'Claim bonus',
+    claiming: 'Claiming…',
+    doneToday: 'Done today',
+    doneSubtitle: 'Already checked in today — comes back after the daily reset',
+    claimedToast: 'Checked in — +${amount} added to your balance',
+    claimFailed: 'Check-in failed, please try again'
+  },
+
   affiliate: {
     title: 'Affiliate Rebates',
     description: 'Invite new users and convert your rebate quota into account balance',
@@ -5543,6 +5558,20 @@ export default {
           cyberSessionBlock: 'Cyber session auto-block',
           cyberSessionBlockHint: 'When enabled, sessions hit by upstream cyber_policy are blocked locally for the TTL and no longer forwarded. Only the offending session is blocked; other sessions on the same key are unaffected.',
           cyberSessionBlockTTL: 'Block TTL (seconds)',
+        },
+        checkin: {
+          title: 'Daily check-in',
+          description: 'Users can check in once per day for a random bonus to their balance, and unlock extra check-ins based on the day’s spend. Disabled by default.',
+          enabled: 'Enable daily check-in',
+          enabledHint: 'When off, the check-in bar on the user dashboard is hidden and users cannot check in.',
+          amountMin: 'Reward min ($)',
+          amountMax: 'Reward max ($)',
+          amountHint: 'Each check-in grants a random amount in this range to the user balance (USD). Min must not exceed max.',
+          spendPerExtra: 'Spend per extra check-in ($)',
+          spendPerExtraHint: 'For every $X of the day’s cumulative spend, the user unlocks one extra check-in; 0 = no extra check-ins. Extra count resets per Asia/Shanghai calendar day.',
+          save: 'Save check-in settings',
+          saved: 'Check-in settings saved',
+          saveFailed: 'Failed to save check-in settings'
         },
         affiliate: {
           title: 'Affiliate (Invite Rebate)',

@@ -1125,6 +1125,21 @@ export default {
     }
   },
 
+  checkin: {
+    title: '每日签到',
+    bonusBadge: '额外 {n} 次',
+    rewardRange: '每天签到领取 ${min}–${max} 随机奖励到余额',
+    todaySpend: '今日消费',
+    nextBonusHint: '再消费 ${amount} 解锁下一次额外签到',
+    claimDaily: '立即签到',
+    claimBonus: '领取额外签到',
+    claiming: '领取中…',
+    doneToday: '今日已签到',
+    doneSubtitle: '今日已签到，明日刷新后可再次签到',
+    claimedToast: '签到成功，+${amount} 已到账余额',
+    claimFailed: '签到失败，请稍后再试'
+  },
+
   affiliate: {
     title: '邀请返利',
     description: '邀请新用户注册，并将返利额度转入账户余额',
@@ -5703,6 +5718,20 @@ export default {
           cyberSessionBlock: 'cyber 会话自动屏蔽',
           cyberSessionBlockHint: '开启后,被上游网络安全策略(cyber_policy)拦截的会话将在 TTL 内被本地屏蔽,不再发往上游。仅屏蔽该会话,不影响同 Key 其他会话。',
           cyberSessionBlockTTL: '屏蔽时长(秒)',
+        },
+        checkin: {
+          title: '每日签到',
+          description: '用户每天可签到一次，领取随机金额到余额；并可按当日累计消费解锁额外签到。默认关闭。',
+          enabled: '启用每日签到',
+          enabledHint: '关闭后用户仪表盘的签到条隐藏，用户无法签到。',
+          amountMin: '单次奖励下限（$）',
+          amountMax: '单次奖励上限（$）',
+          amountHint: '每次签到在该区间内随机发放到用户余额（USD）。下限不大于上限。',
+          spendPerExtra: '每满消费额外签到（$）',
+          spendPerExtraHint: '用户当日累计消费每满该金额（USD）即解锁一次额外签到；0 = 不开放额外签到。额外次数按 Asia/Shanghai 自然日清零。',
+          save: '保存签到设置',
+          saved: '签到设置已保存',
+          saveFailed: '保存签到设置失败'
         },
         affiliate: {
           title: '邀请返利',

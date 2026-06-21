@@ -464,6 +464,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// Beta 策略配置
 		adminSettings.GET("/beta-policy", h.Admin.Setting.GetBetaPolicySettings)
 		adminSettings.PUT("/beta-policy", h.Admin.Setting.UpdateBetaPolicySettings)
+		// 每日签到配置
+		adminSettings.GET("/checkin", h.Admin.Setting.GetCheckinSettings)
+		adminSettings.PUT("/checkin", h.Admin.Setting.UpdateCheckinSettings)
 		// Web Search 模拟配置
 		adminSettings.GET("/web-search-emulation", h.Admin.Setting.GetWebSearchEmulationConfig)
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)

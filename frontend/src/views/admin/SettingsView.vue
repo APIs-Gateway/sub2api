@@ -5571,6 +5571,101 @@
           </div>
         </div>
 
+        <!-- 每日签到 feature card -->
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.checkin.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.checkin.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.checkin.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.checkin.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="checkinForm.enabled" />
+            </div>
+
+            <div v-if="checkinForm.enabled" class="space-y-6">
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label class="input-label">
+                    {{ t('admin.settings.features.checkin.amountMin') }}
+                  </label>
+                  <div class="relative">
+                    <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                    <input
+                      v-model.number="checkinForm.amount_min"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      class="input pl-7"
+                      placeholder="0.10"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label class="input-label">
+                    {{ t('admin.settings.features.checkin.amountMax') }}
+                  </label>
+                  <div class="relative">
+                    <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                    <input
+                      v-model.number="checkinForm.amount_max"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      class="input pl-7"
+                      placeholder="1.00"
+                    />
+                  </div>
+                </div>
+              </div>
+              <p class="text-xs text-gray-400">
+                {{ t('admin.settings.features.checkin.amountHint') }}
+              </p>
+
+              <div>
+                <label class="input-label">
+                  {{ t('admin.settings.features.checkin.spendPerExtra') }}
+                </label>
+                <div class="relative">
+                  <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                  <input
+                    v-model.number="checkinForm.spend_per_extra"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    class="input pl-7"
+                    placeholder="0"
+                  />
+                </div>
+                <p class="mt-1 text-xs text-gray-400">
+                  {{ t('admin.settings.features.checkin.spendPerExtraHint') }}
+                </p>
+              </div>
+            </div>
+
+            <div class="flex justify-end">
+              <button
+                class="btn btn-primary"
+                :disabled="checkinSaving"
+                @click="saveCheckinSettings"
+              >
+                {{ t('admin.settings.features.checkin.save') }}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Affiliate (邀请返利) feature card -->
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
@@ -7174,6 +7269,16 @@ const rectifierForm = reactive({
   thinking_budget_enabled: true,
   apikey_signature_enabled: false,
   apikey_signature_patterns: [] as string[],
+});
+
+// 每日签到状态
+const checkinLoading = ref(true);
+const checkinSaving = ref(false);
+const checkinForm = reactive({
+  enabled: false,
+  amount_min: 0,
+  amount_max: 0,
+  spend_per_extra: 0,
 });
 
 // Beta Policy 状态
@@ -9419,6 +9524,41 @@ async function saveRectifierSettings() {
   }
 }
 
+async function loadCheckinSettings() {
+  checkinLoading.value = true;
+  try {
+    const settings = await adminAPI.settings.getCheckinSettings();
+    Object.assign(checkinForm, settings);
+  } catch (_error: unknown) {
+    // Silent fail - settings will use defaults
+  } finally {
+    checkinLoading.value = false;
+  }
+}
+
+async function saveCheckinSettings() {
+  checkinSaving.value = true;
+  try {
+    const updated = await adminAPI.settings.updateCheckinSettings({
+      enabled: checkinForm.enabled,
+      amount_min: checkinForm.amount_min,
+      amount_max: checkinForm.amount_max,
+      spend_per_extra: checkinForm.spend_per_extra,
+    });
+    Object.assign(checkinForm, updated);
+    appStore.showSuccess(t("admin.settings.features.checkin.saved"));
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(
+        error,
+        t("admin.settings.features.checkin.saveFailed"),
+      ),
+    );
+  } finally {
+    checkinSaving.value = false;
+  }
+}
+
 const betaPolicyActionOptions = computed(() => [
   { value: "pass", label: t("admin.settings.betaPolicy.actionPass") },
   { value: "filter", label: t("admin.settings.betaPolicy.actionFilter") },
@@ -9956,6 +10096,7 @@ onMounted(() => {
   loadStreamTimeoutSettings();
   loadRectifierSettings();
   loadBetaPolicySettings();
+  loadCheckinSettings();
   loadProviders();
 });
 

@@ -35,6 +35,14 @@ const (
 	AffiliateRebatePerInviteeCapDefault = 0.0   // 0 = 无上限
 )
 
+// Check-in（每日签到）settings 默认值
+const (
+	CheckinEnabledDefault       = false // 签到功能默认关闭
+	CheckinAmountMinDefault     = 0.0   // 单次随机奖励下限（USD）
+	CheckinAmountMaxDefault     = 0.0   // 单次随机奖励上限（USD）
+	CheckinSpendPerExtraDefault = 0.0   // 每满$X消费额外签到一次；0=不开放额外签到
+)
+
 // Platform constants
 const (
 	PlatformAnthropic   = domain.PlatformAnthropic
@@ -135,6 +143,10 @@ const (
 	SettingKeyAffiliateRebateFreezeHours       = "affiliate_rebate_freeze_hours"       // 返利冻结期（小时，0=不冻结）
 	SettingKeyAffiliateRebateDurationDays      = "affiliate_rebate_duration_days"      // 返利有效期（天，0=永久）
 	SettingKeyAffiliateRebatePerInviteeCap     = "affiliate_rebate_per_invitee_cap"    // 单人返利上限（0=无上限）
+	SettingKeyCheckinEnabled                   = "checkin_enabled"                     // 每日签到功能总开关
+	SettingKeyCheckinAmountMin                 = "checkin_amount_min"                  // 签到随机奖励下限（USD）
+	SettingKeyCheckinAmountMax                 = "checkin_amount_max"                  // 签到随机奖励上限（USD）
+	SettingKeyCheckinSpendPerExtra             = "checkin_spend_per_extra"             // 每满$X消费解锁一次额外签到（0=不开放）
 	SettingKeyRiskControlEnabled               = "risk_control_enabled"                // 是否启用风控中心入口与审计链路
 	SettingKeyContentModerationConfig          = "content_moderation_config"           // 内容审计配置（JSON）
 	SettingKeyCyberSessionBlockEnabled         = "cyber_session_block_enabled"         // cyber 命中后会话级自动屏蔽总开关(默认关)
