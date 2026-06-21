@@ -163,7 +163,7 @@
             :data-row-id="resolveRowKey(sortedData[virtualRow.index], virtualRow.index)"
             :data-index="virtualRow.index"
             :ref="measureElement"
-            class="hover:bg-gray-100 dark:hover:bg-dark-800/40"
+            class="hover:bg-gray-100 dark:hover:bg-dark-800"
           >
             <td
               v-for="(column, colIndex) in columns"
@@ -807,22 +807,22 @@ defineExpose({
   z-index: 220; /* 高于普通表头单元格和表体固定列 */
 }
 
-/* 表体 sticky 列背景 */
+/* 表体 sticky 列背景（须与 tbody 同色，避免冻结列出现竖向接缝） */
 tbody .sticky-col {
   background-color: #ffffff;
 }
 
 .dark tbody .sticky-col {
-  background-color: #262420;
+  background-color: #1c1b18; /* = dark-900，与 tbody dark:bg-dark-900 一致 */
 }
 
-/* hover 状态保持（Paper-Sunk 暖色） */
+/* hover 状态保持（与整行 hover 同色：light=gray-100，dark=dark-800 不透明） */
 tbody tr:hover .sticky-col {
   background-color: #f3f1ea;
 }
 
 .dark tbody tr:hover .sticky-col {
-  background-color: #2c2823;
+  background-color: #262420; /* = dark-800，与整行 dark:hover:bg-dark-800 一致 */
 }
 
 /* 阴影只在可滚动时显示 */
