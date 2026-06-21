@@ -82,13 +82,23 @@
 
       <div class="flex-1" />
 
+      <!-- 叠加提示：已持有同分组有效订阅时，明确说明购买不续期、而是叠加一张独立卡 -->
+      <div
+        v-if="hasGroupSubscription"
+        class="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-snug text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+      >
+        <span class="font-semibold">{{ t('payment.planCard.repurchaseTitle') }}</span>
+        {{ t('payment.planCard.repurchaseNotice') }}
+        <span v-if="existingExpiry">{{ t('payment.planCard.currentExpiry', { date: existingExpiry }) }}</span>
+      </div>
+
       <!-- Subscribe Button -->
       <button
         type="button"
         :class="['w-full rounded-xl py-2.5 text-sm font-semibold transition-all active:scale-[0.98]', btnClass]"
         @click="emit('select', plan)"
       >
-        {{ isRenewal ? t('payment.renewNow') : t('payment.subscribeNow') }}
+        {{ t('payment.subscribeNow') }}
       </button>
     </div>
   </div>
@@ -115,8 +125,24 @@ const emit = defineEmits<{ select: [plan: SubscriptionPlan] }>()
 const { t } = useI18n()
 
 const platform = computed(() => props.plan.group_platform || '')
-const isRenewal = computed(() =>
+// 用户是否已持有该套餐所属分组的有效订阅。注意 subscription_plans.group_id 非唯一
+// （一个分组可有多个套餐），故按分组判断、提示文案也用「同分组」措辞，避免误称「同套餐」。
+const hasGroupSubscription = computed(() =>
   props.activeSubscriptions?.some(s => s.group_id === props.plan.group_id && s.status === 'active') ?? false
+)
+
+// 同分组有效订阅中到期最晚的一张，用于在叠加提示里展示当前到期时间。
+const existingSub = computed<UserSubscription | undefined>(() => {
+  const matches = (props.activeSubscriptions ?? []).filter(
+    s => s.group_id === props.plan.group_id && s.status === 'active',
+  )
+  if (matches.length === 0) return undefined
+  return matches.reduce((latest, s) =>
+    new Date(s.expires_at ?? 0).getTime() > new Date(latest.expires_at ?? 0).getTime() ? s : latest,
+  )
+})
+const existingExpiry = computed(() =>
+  existingSub.value?.expires_at ? new Date(existingSub.value.expires_at).toLocaleDateString() : '',
 )
 
 // Derived color classes from central config
