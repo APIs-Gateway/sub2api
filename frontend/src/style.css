@@ -73,6 +73,18 @@
   ::selection {
     @apply bg-primary-500/20 text-primary-900 dark:text-primary-100;
   }
+
+  /* 无障碍：尊重"减少动态"——淡入/滑动等装饰性动画对所有人统一收敛 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 @layer components {
@@ -236,7 +248,8 @@
   }
 
   .metric-label {
-    @apply text-xs font-medium text-gray-500 dark:text-dark-400;
+    /* gray-600 以满足 AA 对比度（gray-500 在暖纸上约 3:1 不达标） */
+    @apply text-xs font-medium text-gray-600 dark:text-dark-400;
   }
 
   .metric-value {
@@ -257,7 +270,7 @@
   }
 
   .stat-label {
-    @apply text-sm text-gray-500 dark:text-dark-400;
+    @apply text-sm text-gray-600 dark:text-dark-400;
   }
 
   .stat-trend {
@@ -554,10 +567,11 @@
   }
 
   .sidebar-section-title {
-    /* 报头式微标题：Fraunces 斜体、句首式、非全大写 */
+    /* 报头式微标题：Fraunces 衬线、句首式、非全大写。
+       不用 italic——Noto Serif SC 无真斜体，中文会渲染成难看的伪斜体。 */
     @apply mb-2 px-4;
-    @apply font-serif text-xs italic;
-    @apply text-gray-500 dark:text-dark-500;
+    @apply font-serif text-xs;
+    @apply text-gray-600 dark:text-dark-400;
   }
 
   /* ============ 页面头部 / 报头 ============ */
