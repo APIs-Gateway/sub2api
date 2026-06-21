@@ -165,6 +165,17 @@
         <ChevronDoubleRightIcon v-else class="h-5 w-5 flex-shrink-0" />
         <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ t('nav.collapse') }}</span>
       </button>
+
+      <!-- 售后 Q 群（点击复制） -->
+      <button
+        v-if="!sidebarCollapsed"
+        @click="copyQQ"
+        class="mt-2 w-full rounded-md border-t border-gray-100 px-4 pb-1 pt-3 text-left transition-colors hover:bg-gray-100 dark:border-dark-800 dark:hover:bg-dark-800"
+        title="点击复制"
+      >
+        <span class="block text-xs text-gray-500 dark:text-dark-400">售后 Q 群</span>
+        <span class="block font-mono text-sm tabular-nums text-gray-700 dark:text-gray-300">{{ qqCopied ? '已复制 ✓' : QQ_GROUP }}</span>
+      </button>
     </div>
   </aside>
 
@@ -224,6 +235,16 @@ function applyFeatureFlags(items: NavItem[]): NavItem[] {
 }
 
 const { t } = useI18n()
+
+// 售后 Q 群（点击复制）
+const QQ_GROUP = '921118537'
+const qqCopied = ref(false)
+function copyQQ() {
+  navigator.clipboard?.writeText(QQ_GROUP).then(() => {
+    qqCopied.value = true
+    setTimeout(() => (qqCopied.value = false), 1500)
+  })
+}
 
 const route = useRoute()
 const router = useRouter()
