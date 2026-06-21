@@ -178,15 +178,18 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				return
 			}
 
-			// 公益 key（hvoy/hovy）单 IP 每自然日消费上限：超额则返回 200 + 文案，
-			// 不计费、不转发上游（仅作用于公益 key 名单内的 key；非公益 key 直接放行）。
+			// 公益 key（hvoy/hovy）单 IP 每自然日消费上限：超额则按分组协议输出
+			// 标准 error 信封（429）+ 文案，不计费、不转发上游
+			// （仅作用于公益 key 名单内的 key；非公益 key 直接放行）。
 			if billingCacheService != nil {
 				// IP 口径必须与计费累加侧（usage_log.IPAddress，handler 一律用 ip.GetClientIP）
 				// 完全一致：公益限额是按【真实客户端 IP】计量，而非安全 ACL 决策，故不走
 				// trust_forwarded 开关。否则默认反代部署下预检读到固定反代 IP、计数恒 0，上限失效。
 				capClientIP := ip.GetClientIP(c)
 				if exceeded, msg := billingCacheService.PublicBenefitIPCapExceeded(c.Request.Context(), apiKey, capClientIP); exceeded {
-					c.String(200, msg)
+					// 归类为业务限流（非系统/上游错误），避免污染 ops_error_logs 的故障统计。
+					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+					writePublicBenefitCapError(c, apiKey, msg)
 					c.Abort()
 					return
 				}
@@ -206,6 +209,33 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		c.Next()
 	}
+}
+
+// writePublicBenefitCapError 在公益 key 命中单 IP 每日上限时，按调用方所属分组的
+// 协议格式输出标准 error 信封（HTTP 429）。
+//
+// 必须是结构化 error 而非裸文本：AI 编程客户端把 2xx 当成功响应、会按 JSON/SSE 解析
+// body，纯文本会解析失败而把提示文案丢掉；唯有标准 error.message 才能被各客户端原样
+// 展示给用户（引导其购买套餐）。OpenAI 分组用 {"error":{...}} 信封，其余（Anthropic
+// 及走本中间件的 antigravity 等）用 Anthropic {"type":"error","error":{...}} 信封——
+// 两者均含 error.message，主流客户端都能读取展示。
+func writePublicBenefitCapError(c *gin.Context, apiKey *service.APIKey, message string) {
+	platform := ""
+	if apiKey != nil && apiKey.Group != nil {
+		platform = apiKey.Group.Platform
+	}
+	if platform == service.PlatformOpenAI {
+		c.JSON(429, gin.H{"error": gin.H{
+			"type":    "insufficient_quota",
+			"code":    "public_benefit_daily_cap",
+			"message": message,
+		}})
+		return
+	}
+	c.JSON(429, gin.H{
+		"type":  "error",
+		"error": gin.H{"type": "rate_limit_error", "message": message},
+	})
 }
 
 // GetAPIKeyFromContext 从上下文中获取API key
