@@ -188,6 +188,51 @@ func synthesizePricingFromLiteLLM(lp *LiteLLMModelPricing, existing *ChannelMode
 		CacheWritePrice:  nonZeroPtr(lp.CacheCreationInputTokenCost),
 		CacheReadPrice:   nonZeroPtr(lp.CacheReadInputTokenCost),
 		ImageOutputPrice: nonZeroPtr(lp.OutputCostPerImageToken),
+		Intervals:        longContextDisplayIntervals(lp),
+	}
+}
+
+// longContextDisplayIntervals 把 LiteLLM 的官方长上下文分档（阈值 + 倍率）合成成两段
+// 展示用 interval：(0, 阈值] 用基准价，(阈值, ∞] 用基准 × 官方长上下文倍率。
+//
+// 仅用于「价格与计费」页展示官方阶梯定价；实际计费走 billing_service 的独立长上下文
+// 逻辑（按整次会话 token 判定），二者口径一致。无阈值 / 无基准价时返回 nil。
+func longContextDisplayIntervals(lp *LiteLLMModelPricing) []PricingInterval {
+	threshold := lp.LongContextInputTokenThreshold
+	if threshold <= 0 {
+		return nil
+	}
+	inMult := lp.LongContextInputCostMultiplier
+	outMult := lp.LongContextOutputCostMultiplier
+	if inMult <= 0 {
+		inMult = 1
+	}
+	if outMult <= 0 {
+		outMult = 1
+	}
+	if inMult == 1 && outMult == 1 {
+		return nil
+	}
+	baseIn := lp.InputCostPerToken
+	baseOut := lp.OutputCostPerToken
+	if baseIn == 0 && baseOut == 0 {
+		return nil
+	}
+	return []PricingInterval{
+		{
+			MinTokens:   0,
+			MaxTokens:   &threshold,
+			InputPrice:  nonZeroPtr(baseIn),
+			OutputPrice: nonZeroPtr(baseOut),
+			SortOrder:   0,
+		},
+		{
+			MinTokens:   threshold,
+			MaxTokens:   nil,
+			InputPrice:  nonZeroPtr(baseIn * inMult),
+			OutputPrice: nonZeroPtr(baseOut * outMult),
+			SortOrder:   1,
+		},
 	}
 }
 
