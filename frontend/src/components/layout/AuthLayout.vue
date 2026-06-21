@@ -24,8 +24,8 @@
         </template>
       </div>
 
-      <!-- Card Container -->
-      <div class="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm dark:border-dark-700 dark:bg-dark-900">
+      <!-- Card Container：扁平发丝卡片，去胶囊圆角与阴影 -->
+      <div class="rounded-lg border border-gray-200 bg-white p-8 dark:border-dark-700 dark:bg-dark-900">
         <slot />
       </div>
 
@@ -62,8 +62,3 @@ onMounted(() => {
 })
 </script>
 
-<style scoped>
-.text-gradient {
-  @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
-}
-</style>

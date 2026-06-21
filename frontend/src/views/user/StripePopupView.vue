@@ -1,26 +1,25 @@
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
+  <div class="flex min-h-screen items-center justify-center bg-gray-50 p-4 dark:bg-dark-900">
     <div
-      class="w-full max-w-md space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+      class="w-full max-w-md space-y-4 rounded-md border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-800"
     >
       <!-- Amount + Order ID -->
       <div v-if="amount" class="text-center">
-        <p class="text-3xl font-bold" :style="{ color: methodColor }">¥{{ amount }}</p>
-        <p v-if="orderId" class="mt-1 text-sm text-gray-500 dark:text-slate-400">
-          {{ t('payment.orders.orderId') }}: {{ orderId }}
+        <p class="font-mono tabular-nums text-3xl font-bold text-gray-900 dark:text-white">¥{{ amount }}</p>
+        <p v-if="orderId" class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+          {{ t('payment.orders.orderId') }}: <span class="font-mono tabular-nums">{{ orderId }}</span>
         </p>
       </div>
 
       <!-- Error -->
       <div v-if="error" class="space-y-3">
         <div
-          class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-700 dark:bg-red-900/30 dark:text-red-400"
+          class="rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700 dark:border-primary-700/50 dark:bg-primary-900/20 dark:text-primary-400"
         >
           {{ error }}
         </div>
         <button
-          class="w-full text-sm underline dark:text-blue-400 dark:hover:text-blue-300"
-          :style="{ color: methodColor }"
+          class="w-full text-sm text-gray-700 underline hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
           @click="closeWindow"
         >
           {{ t('common.close') }}
@@ -29,11 +28,10 @@
 
       <!-- Success -->
       <div v-else-if="success" class="space-y-3 py-4 text-center">
-        <div class="text-5xl text-green-600 dark:text-green-400">✓</div>
-        <p class="text-sm text-gray-500 dark:text-slate-400">{{ t('payment.result.success') }}</p>
+        <div class="text-5xl text-gray-900 dark:text-white">✓</div>
+        <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('payment.result.success') }}</p>
         <button
-          class="text-sm underline dark:text-blue-400 dark:hover:text-blue-300"
-          :style="{ color: methodColor }"
+          class="text-sm text-gray-700 underline hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
           @click="closeWindow"
         >
           {{ t('common.close') }}
@@ -43,17 +41,16 @@
       <!-- Loading / Redirecting -->
       <div v-else class="flex items-center justify-center py-8">
         <div
-          class="h-8 w-8 animate-spin rounded-full border-2 border-t-transparent"
-          :style="{ borderColor: methodColor, borderTopColor: 'transparent' }"
+          class="h-8 w-8 animate-spin rounded-full border-2 border-gray-400 border-t-transparent dark:border-gray-500"
         />
-        <span class="ml-3 text-sm text-gray-500 dark:text-slate-400">{{ hint }}</span>
+        <span class="ml-3 text-sm text-gray-600 dark:text-gray-400">{{ hint }}</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { extractI18nErrorMessage } from '@/utils/apiError'
@@ -63,20 +60,12 @@ interface StripeWithWechatPay {
   confirmWechatPayPayment(clientSecret: string, options: Record<string, unknown>): Promise<{ error?: { message?: string }; paymentIntent?: { status: string } }>
 }
 
-const METHOD_COLORS: Record<string, string> = {
-  alipay: '#00AEEF',
-  wechat_pay: '#07C160',
-}
-const DEFAULT_METHOD_COLOR = '#635bff'
-
 const { t } = useI18n()
 const route = useRoute()
 
 const orderId = String(route.query.order_id || '')
 const method = String(route.query.method || 'alipay')
 const amount = String(route.query.amount || '')
-
-const methodColor = computed(() => METHOD_COLORS[method] || DEFAULT_METHOD_COLOR)
 
 const error = ref('')
 const success = ref(false)

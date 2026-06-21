@@ -65,11 +65,11 @@
               </code>
               <button
                 @click="copyToClipboard(value, row.id)"
-                class="rounded-lg p-1 transition-colors hover:bg-gray-100 dark:hover:bg-dark-700"
+                class="rounded-md p-1 transition-colors hover:bg-gray-100 dark:hover:bg-dark-800"
                 :class="
                   copiedKeyId === row.id
-                    ? 'text-green-500'
-                    : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+                    ? 'text-gray-900 dark:text-white'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
                 "
                 :title="copiedKeyId === row.id ? t('keys.copied') : t('keys.copyToClipboard')"
               >
@@ -91,7 +91,7 @@
                 v-if="row.ip_whitelist?.length > 0 || row.ip_blacklist?.length > 0"
                 name="shield"
                 size="sm"
-                class="text-blue-500"
+                class="text-gray-500 dark:text-gray-400"
                 :title="t('keys.ipRestrictionEnabled')"
               />
             </div>
@@ -102,7 +102,7 @@
               <button
                 :ref="(el) => setGroupButtonRef(row.id, el)"
                 @click="openGroupSelector(row)"
-                class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
+                class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors duration-200 hover:bg-gray-100 dark:hover:bg-dark-800"
                 :title="t('keys.clickToChangeGroup')"
               >
                 <GroupBadge
@@ -116,7 +116,7 @@
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
                 }}</span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
+                <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
                 <svg
                   class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
                   fill="none"
@@ -137,37 +137,35 @@
           <template #cell-usage="{ row }">
             <div class="text-sm">
               <div class="flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
+                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.today') }}:</span>
+                <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
                   ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}
                 </span>
               </div>
               <div class="mt-0.5 flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
+                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.total') }}:</span>
+                <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
                   ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}
                 </span>
               </div>
               <!-- Quota progress (if quota is set) -->
               <div v-if="row.quota > 0" class="mt-1.5">
                 <div class="flex items-center gap-1.5">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('keys.quota') }}:</span>
+                  <span class="text-gray-600 dark:text-gray-400">{{ t('keys.quota') }}:</span>
                   <span :class="[
-                    'font-medium',
-                    row.quota_used >= row.quota ? 'text-red-500' :
-                    row.quota_used >= row.quota * 0.8 ? 'text-yellow-500' :
+                    'font-mono tabular-nums font-medium',
+                    row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-900 dark:text-white'
                   ]">
                     ${{ row.quota_used?.toFixed(2) || '0.00' }} / ${{ row.quota?.toFixed(2) }}
                   </span>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
-                      row.quota_used >= row.quota ? 'bg-red-500' :
-                      row.quota_used >= row.quota * 0.8 ? 'bg-yellow-500' :
-                      'bg-primary-500'
+                      'h-full rounded-md transition-all',
+                      row.quota_used >= row.quota ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
                     ]"
                     :style="{ width: Math.min((row.quota_used / row.quota) * 100, 100) + '%' }"
                   />
@@ -181,84 +179,78 @@
               <!-- 5h window -->
               <div v-if="row.rate_limit_5h > 0">
                 <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">5h</span>
+                  <span class="text-gray-600 dark:text-gray-400">5h</span>
                   <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_5h >= row.rate_limit_5h ? 'text-red-500' :
-                    row.usage_5h >= row.rate_limit_5h * 0.8 ? 'text-yellow-500' :
+                    'font-mono font-medium tabular-nums',
+                    row.usage_5h >= row.rate_limit_5h ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
                     ${{ row.usage_5h?.toFixed(2) || '0.00' }}/${{ row.rate_limit_5h?.toFixed(2) }}
                   </span>
                 </div>
-                <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
-                      row.usage_5h >= row.rate_limit_5h ? 'bg-red-500' :
-                      row.usage_5h >= row.rate_limit_5h * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
+                      'h-full rounded-md transition-all',
+                      row.usage_5h >= row.rate_limit_5h ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
                     ]"
                     :style="{ width: Math.min((row.usage_5h / row.rate_limit_5h) * 100, 100) + '%' }"
                   />
                 </div>
-                <div v-if="row.reset_5h_at && formatResetTime(row.reset_5h_at)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                <div v-if="row.reset_5h_at && formatResetTime(row.reset_5h_at)" class="text-[10px] text-gray-600 dark:text-gray-400 tabular-nums">
                   ⟳ {{ formatResetTime(row.reset_5h_at) }}
                 </div>
               </div>
               <!-- 1d window -->
               <div v-if="row.rate_limit_1d > 0">
                 <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">1d</span>
+                  <span class="text-gray-600 dark:text-gray-400">1d</span>
                   <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_1d >= row.rate_limit_1d ? 'text-red-500' :
-                    row.usage_1d >= row.rate_limit_1d * 0.8 ? 'text-yellow-500' :
+                    'font-mono font-medium tabular-nums',
+                    row.usage_1d >= row.rate_limit_1d ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
                     ${{ row.usage_1d?.toFixed(2) || '0.00' }}/${{ row.rate_limit_1d?.toFixed(2) }}
                   </span>
                 </div>
-                <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
-                      row.usage_1d >= row.rate_limit_1d ? 'bg-red-500' :
-                      row.usage_1d >= row.rate_limit_1d * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
+                      'h-full rounded-md transition-all',
+                      row.usage_1d >= row.rate_limit_1d ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
                     ]"
                     :style="{ width: Math.min((row.usage_1d / row.rate_limit_1d) * 100, 100) + '%' }"
                   />
                 </div>
-                <div v-if="row.reset_1d_at && formatResetTime(row.reset_1d_at)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                <div v-if="row.reset_1d_at && formatResetTime(row.reset_1d_at)" class="text-[10px] text-gray-600 dark:text-gray-400 tabular-nums">
                   ⟳ {{ formatResetTime(row.reset_1d_at) }}
                 </div>
               </div>
               <!-- 7d window -->
               <div v-if="row.rate_limit_7d > 0">
                 <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">7d</span>
+                  <span class="text-gray-600 dark:text-gray-400">7d</span>
                   <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_7d >= row.rate_limit_7d ? 'text-red-500' :
-                    row.usage_7d >= row.rate_limit_7d * 0.8 ? 'text-yellow-500' :
+                    'font-mono font-medium tabular-nums',
+                    row.usage_7d >= row.rate_limit_7d ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
                     ${{ row.usage_7d?.toFixed(2) || '0.00' }}/${{ row.rate_limit_7d?.toFixed(2) }}
                   </span>
                 </div>
-                <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
-                      row.usage_7d >= row.rate_limit_7d ? 'bg-red-500' :
-                      row.usage_7d >= row.rate_limit_7d * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
+                      'h-full rounded-md transition-all',
+                      row.usage_7d >= row.rate_limit_7d ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
                     ]"
                     :style="{ width: Math.min((row.usage_7d / row.rate_limit_7d) * 100, 100) + '%' }"
                   />
                 </div>
-                <div v-if="row.reset_7d_at && formatResetTime(row.reset_7d_at)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                <div v-if="row.reset_7d_at && formatResetTime(row.reset_7d_at)" class="text-[10px] text-gray-600 dark:text-gray-400 tabular-nums">
                   ⟳ {{ formatResetTime(row.reset_7d_at) }}
                 </div>
               </div>
@@ -266,7 +258,7 @@
               <button
                 v-if="row.usage_5h > 0 || row.usage_1d > 0 || row.usage_7d > 0"
                 @click.stop="confirmResetRateLimitFromTable(row)"
-                class="mt-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+                class="mt-0.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
                 :title="t('keys.resetRateLimitUsage')"
               >
                 <Icon name="refresh" size="xs" />
@@ -279,7 +271,7 @@
           <template #cell-expires_at="{ value }">
             <span v-if="value" :class="[
               'text-sm',
-              new Date(value) < new Date() ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'
+              new Date(value) < new Date() ? 'text-primary-700 dark:text-primary-400' : 'text-gray-600 dark:text-gray-400'
             ]">
               {{ formatDateTime(value) }}
             </span>
@@ -288,25 +280,30 @@
 
           <template #cell-status="{ value }">
             <span :class="[
-              'badge',
-              value === 'active' ? 'badge-success' :
-              value === 'quota_exhausted' ? 'badge-warning' :
-              value === 'expired' ? 'badge-danger' :
-              'badge-gray'
+              'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium',
+              value === 'quota_exhausted' || value === 'expired'
+                ? 'border-primary-200 text-primary-700 dark:border-primary-500/40 dark:text-primary-400'
+                : 'border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300'
             ]">
+              <span :class="[
+                'h-1.5 w-1.5 rounded-full',
+                value === 'quota_exhausted' || value === 'expired'
+                  ? 'bg-primary-600'
+                  : value === 'active' ? 'bg-gray-900 dark:bg-gray-100' : 'bg-gray-300 dark:bg-dark-600'
+              ]" />
               {{ t('keys.status.' + value) }}
             </span>
           </template>
 
           <template #cell-last_used_at="{ value }">
-            <span v-if="value" class="text-sm text-gray-500 dark:text-dark-400">
+            <span v-if="value" class="text-sm text-gray-600 dark:text-gray-400">
               {{ formatDateTime(value) }}
             </span>
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
+            <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatDateTime(value) }}</span>
           </template>
 
           <template #cell-actions="{ row }">
@@ -314,7 +311,7 @@
               <!-- Use Key Button -->
               <button
                 @click="openUseKeyModal(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400"
+                class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
               >
                 <Icon name="terminal" size="sm" />
                 <span class="text-xs">{{ t('keys.useKey') }}</span>
@@ -323,7 +320,7 @@
               <button
                 v-if="!publicSettings?.hide_ccs_import_button"
                 @click="importToCcswitch(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+                class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
               >
                 <Icon name="upload" size="sm" />
                 <span class="text-xs">{{ t('keys.importToCcSwitch') }}</span>
@@ -332,10 +329,7 @@
               <button
                 @click="toggleKeyStatus(row)"
                 :class="[
-                  'flex flex-col items-center gap-0.5 rounded-lg p-1.5 transition-colors',
-                  row.status === 'active'
-                    ? 'text-gray-500 hover:bg-yellow-50 hover:text-yellow-600 dark:hover:bg-yellow-900/20 dark:hover:text-yellow-400'
-                    : 'text-gray-500 hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400'
+                  'flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white'
                 ]"
               >
                 <Icon v-if="row.status === 'active'" name="ban" size="sm" />
@@ -345,7 +339,7 @@
               <!-- Edit Button -->
               <button
                 @click="editKey(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+                class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
               >
                 <Icon name="edit" size="sm" />
                 <span class="text-xs">{{ t('common.edit') }}</span>
@@ -353,7 +347,7 @@
               <!-- Delete Button -->
               <button
                 @click="confirmDelete(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-700 dark:text-gray-400 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
               >
                 <Icon name="trash" size="sm" />
                 <span class="text-xs">{{ t('common.delete') }}</span>
@@ -465,9 +459,9 @@
               type="text"
               class="input font-mono"
               :placeholder="t('keys.customKeyPlaceholder')"
-              :class="{ 'border-red-500 dark:border-red-500': customKeyError }"
+              :class="{ 'border-primary-600 dark:border-primary-500': customKeyError }"
             />
-            <p v-if="customKeyError" class="mt-1 text-sm text-red-500">{{ customKeyError }}</p>
+            <p v-if="customKeyError" class="mt-1 text-sm text-primary-700 dark:text-primary-400">{{ customKeyError }}</p>
             <p v-else class="input-hint">{{ t('keys.customKeyHint') }}</p>
           </div>
         </div>
@@ -571,12 +565,12 @@
             <div v-if="showEditModal && selectedKey && selectedKey.quota > 0">
               <label class="input-label">{{ t('keys.quotaUsed') }}</label>
               <div class="flex items-center gap-2">
-                <div class="flex-1 rounded-lg bg-gray-100 px-3 py-2 dark:bg-dark-700">
-                  <span class="font-medium text-gray-900 dark:text-white">
+                <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800">
+                  <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
                     ${{ selectedKey.quota_used?.toFixed(4) || '0.0000' }}
                   </span>
                   <span class="mx-2 text-gray-400">/</span>
-                  <span class="text-gray-500 dark:text-gray-400">
+                  <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
                     ${{ selectedKey.quota?.toFixed(2) || '0.00' }}
                   </span>
                 </div>
@@ -633,28 +627,26 @@
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_5h > 0" class="mt-2">
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 rounded-lg bg-gray-100 px-3 py-2 dark:bg-dark-700 text-sm">
+                  <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
                     <span :class="[
-                      'font-medium',
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'text-red-500' :
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'text-yellow-500' :
+                      'font-mono tabular-nums font-medium',
+                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
                       ${{ selectedKey.usage_5h?.toFixed(4) || '0.0000' }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
-                    <span class="text-gray-500 dark:text-gray-400">
+                    <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
                       ${{ selectedKey.rate_limit_5h?.toFixed(2) || '0.00' }}
                     </span>
                   </div>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'bg-red-500' :
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
+                      'h-full rounded-md transition-all',
+                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
                     ]"
                     :style="{ width: Math.min((selectedKey.usage_5h / selectedKey.rate_limit_5h) * 100, 100) + '%' }"
                   />
@@ -679,28 +671,26 @@
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_1d > 0" class="mt-2">
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 rounded-lg bg-gray-100 px-3 py-2 dark:bg-dark-700 text-sm">
+                  <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
                     <span :class="[
-                      'font-medium',
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'text-red-500' :
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'text-yellow-500' :
+                      'font-mono tabular-nums font-medium',
+                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
                       ${{ selectedKey.usage_1d?.toFixed(4) || '0.0000' }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
-                    <span class="text-gray-500 dark:text-gray-400">
+                    <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
                       ${{ selectedKey.rate_limit_1d?.toFixed(2) || '0.00' }}
                     </span>
                   </div>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'bg-red-500' :
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
+                      'h-full rounded-md transition-all',
+                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
                     ]"
                     :style="{ width: Math.min((selectedKey.usage_1d / selectedKey.rate_limit_1d) * 100, 100) + '%' }"
                   />
@@ -725,28 +715,26 @@
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_7d > 0" class="mt-2">
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 rounded-lg bg-gray-100 px-3 py-2 dark:bg-dark-700 text-sm">
+                  <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
                     <span :class="[
-                      'font-medium',
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'text-red-500' :
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'text-yellow-500' :
+                      'font-mono tabular-nums font-medium',
+                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
                       ${{ selectedKey.usage_7d?.toFixed(4) || '0.0000' }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
-                    <span class="text-gray-500 dark:text-gray-400">
+                    <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
                       ${{ selectedKey.rate_limit_7d?.toFixed(2) || '0.00' }}
                     </span>
                   </div>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'bg-red-500' :
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
+                      'h-full rounded-md transition-all',
+                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
                     ]"
                     :style="{ width: Math.min((selectedKey.usage_7d / selectedKey.rate_limit_7d) * 100, 100) + '%' }"
                   />
@@ -790,7 +778,7 @@
           <p class="input-hint -mt-1">{{ t('keys.stablePriority.description') }}</p>
           <div
             v-if="formData.stable_priority_enabled"
-            class="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400"
+            class="flex items-start gap-2 rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-xs text-primary-700 dark:border-primary-500/40 dark:bg-primary-500/10 dark:text-primary-400"
           >
             <svg class="mt-0.5 h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
@@ -829,7 +817,7 @@
                 type="button"
                 @click="setExpirationDays(parseInt(days))"
                 :class="[
-                  'rounded-lg px-3 py-1.5 text-sm transition-colors',
+                  'rounded-md px-3 py-1.5 text-sm transition-colors',
                   formData.expiration_preset === days
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600'
@@ -841,7 +829,7 @@
                 type="button"
                 @click="formData.expiration_preset = 'custom'"
                 :class="[
-                  'rounded-lg px-3 py-1.5 text-sm transition-colors',
+                  'rounded-md px-3 py-1.5 text-sm transition-colors',
                   formData.expiration_preset === 'custom'
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600'
@@ -976,7 +964,7 @@
 	        <div class="grid grid-cols-2 gap-3">
 	          <button
 	            @click="handleCcsClientSelect('claude')"
-	            class="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-gray-200 dark:border-dark-600 hover:border-primary-500 dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-all"
+	            class="flex flex-col items-center gap-2 p-4 rounded-md border border-gray-200 dark:border-dark-700 hover:border-gray-400 dark:hover:border-dark-500 hover:bg-gray-100 dark:hover:bg-dark-800 transition-colors"
 	          >
 	            <Icon name="terminal" size="xl" class="text-gray-600 dark:text-gray-400" />
 	            <span class="font-medium text-gray-900 dark:text-white">{{
@@ -988,7 +976,7 @@
 	          </button>
 	          <button
 	            @click="handleCcsClientSelect('gemini')"
-	            class="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-gray-200 dark:border-dark-600 hover:border-primary-500 dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-all"
+	            class="flex flex-col items-center gap-2 p-4 rounded-md border border-gray-200 dark:border-dark-700 hover:border-gray-400 dark:hover:border-dark-500 hover:bg-gray-100 dark:hover:bg-dark-800 transition-colors"
 	          >
 	            <Icon name="sparkles" size="xl" class="text-gray-600 dark:text-gray-400" />
 	            <span class="font-medium text-gray-900 dark:text-white">{{
@@ -1014,7 +1002,7 @@
       <div
         v-if="groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
-        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max min-w-[380px] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 dark:bg-dark-800 dark:ring-white/10"
+        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max min-w-[380px] overflow-hidden rounded-md bg-white shadow-overlay ring-1 ring-black/5 duration-200 dark:bg-dark-800 dark:ring-white/10"
         style="pointer-events: auto !important;"
         :style="{
           top: dropdownPosition.top !== undefined ? dropdownPosition.top + 'px' : undefined,
@@ -1031,7 +1019,7 @@
             <input
               v-model="groupSearchQuery"
               type="text"
-              class="w-full rounded-lg border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300 dark:border-dark-600 dark:bg-dark-700 dark:text-white dark:placeholder-gray-500 dark:focus:border-primary-600 dark:focus:ring-primary-600"
+              class="w-full rounded-md border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300 dark:border-dark-600 dark:bg-dark-700 dark:text-white dark:placeholder-gray-500 dark:focus:border-primary-600 dark:focus:ring-primary-600"
               :placeholder="t('keys.searchGroup')"
               @click.stop
             />
@@ -1044,7 +1032,7 @@
             :key="option.value ?? 'null'"
             @click="changeGroup(selectedKeyForGroup!, option.value)"
             :class="[
-              'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
+              'flex w-full items-center justify-between rounded-md px-3 py-2.5 text-sm transition-colors',
               'border-b border-gray-100 last:border-0 dark:border-dark-700',
               selectedKeyForGroup?.group_id === option.value ||
               (!selectedKeyForGroup?.group_id && option.value === null)
