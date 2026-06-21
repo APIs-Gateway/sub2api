@@ -53,14 +53,10 @@
           <router-link
             v-if="isAuthenticated"
             :to="dashboardPath"
-            class="ml-1 inline-flex items-center gap-2 rounded-md bg-ink py-1 pl-1 pr-3 text-paper transition-opacity hover:opacity-90"
+            class="ml-1 inline-flex items-center gap-1.5 rounded-md bg-ink px-4 py-1.5 text-[13px] font-medium text-paper transition-opacity hover:opacity-90"
           >
-            <span
-              class="flex h-6 w-6 items-center justify-center rounded-md bg-clay text-[11px] font-semibold text-white"
-            >
-              {{ userInitial }}
-            </span>
-            <span class="text-[13px] font-medium">{{ t('home.dashboard') }}</span>
+            {{ t('home.dashboard') }}
+            <Icon name="arrowRight" size="sm" :stroke-width="2" />
           </router-link>
           <router-link
             v-else
@@ -340,12 +336,6 @@ const isDark = ref(document.documentElement.classList.contains('dark'))
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 const isAdmin = computed(() => authStore.isAdmin)
 const dashboardPath = computed(() => (isAdmin.value ? '/admin/dashboard' : '/dashboard'))
-const userInitial = computed(() => {
-  const user = authStore.user
-  if (!user || !user.email) return ''
-  return user.email.charAt(0).toUpperCase()
-})
-
 // Current year for footer
 const currentYear = computed(() => new Date().getFullYear())
 
@@ -423,9 +413,6 @@ onMounted(() => {
 }
 .bg-ink {
   background-color: var(--ink);
-}
-.bg-clay {
-  background-color: var(--clay);
 }
 .text-clay {
   color: var(--clay);
