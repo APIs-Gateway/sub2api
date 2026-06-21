@@ -234,6 +234,8 @@ func (s *SubscriptionService) withSubscriptionUpdateTx(ctx context.Context, fn f
 
 // createSubscription 创建新订阅（内部方法）
 func (s *SubscriptionService) createSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, error) {
+	s.clearSubscriptionLockCache(input.UserID)
+
 	validityDays := input.ValidityDays
 	if validityDays <= 0 {
 		validityDays = 30
@@ -294,6 +296,7 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 	}); err != nil {
 		return nil, err
 	}
+	s.clearSubscriptionLockCache(input.UserID)
 
 	// 开通即时改变可用余额，失效余额缓存
 	s.invalidateUserBalanceCacheAsync(input.UserID)
@@ -307,11 +310,19 @@ func (s *SubscriptionService) invalidateUserBalanceCacheAsync(userID int64) {
 	if s.billingCacheService == nil {
 		return
 	}
+	s.billingCacheService.clearNoSubscriptionLockCache(userID)
 	go func() {
 		cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.billingCacheService.InvalidateUserBalance(cacheCtx, userID)
 	}()
+}
+
+func (s *SubscriptionService) clearSubscriptionLockCache(userID int64) {
+	if s.billingCacheService == nil {
+		return
+	}
+	s.billingCacheService.clearNoSubscriptionLockCache(userID)
 }
 
 // BulkAssignSubscriptionInput 批量分配订阅输入
@@ -442,11 +453,13 @@ func (s *SubscriptionService) RevokeSubscription(ctx context.Context, subscripti
 	if err != nil {
 		return err
 	}
+	s.clearSubscriptionLockCache(sub.UserID)
 
 	// burn-down 模型：撤销时回收该卡未花的发放余额（行级 FOR UPDATE 内重算），再删除该行。
 	if _, _, err := s.userSubRepo.CloseSubscriptionWithReclaim(ctx, subscriptionID, time.Now(), true); err != nil {
 		return err
 	}
+	s.clearSubscriptionLockCache(sub.UserID)
 
 	// 失效订阅缓存
 	s.InvalidateSubCache(sub.UserID, sub.GroupID)
@@ -470,6 +483,7 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 	if err != nil {
 		return nil, ErrSubscriptionNotFound
 	}
+	s.clearSubscriptionLockCache(sub.UserID)
 
 	// 限制调整天数范围
 	if days > MaxValidityDays {
@@ -532,6 +546,7 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 			return nil, err
 		}
 	}
+	s.clearSubscriptionLockCache(sub.UserID)
 
 	// 失效订阅缓存
 	s.InvalidateSubCache(sub.UserID, sub.GroupID)
@@ -609,6 +624,7 @@ func (s *SubscriptionService) ListUserSubscriptions(ctx context.Context, userID 
 // days = nil 或负数 → 关闭透支；>=0 → 开启并设置透支深度（0 = 仅当天额度）。仅能操作属于自己的卡。
 func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, userID, subID int64, days *int) error {
 	norm := normalizeOverdraftDays(days) // nil/负数 → nil；>=0 → 拷贝
+	s.clearSubscriptionLockCache(userID)
 	if norm != nil {
 		sub, err := s.userSubRepo.GetByID(ctx, subID)
 		if err != nil {
@@ -628,6 +644,7 @@ func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, 
 	if !ok {
 		return ErrSubscriptionNotFound
 	}
+	s.clearSubscriptionLockCache(userID)
 	// 设了非空上限 → 置 guard，让准入闸门对该用户生效（只置真）。
 	if norm != nil && s.userRepo != nil {
 		if err := s.userRepo.MarkSubscriptionOverdraftGuard(ctx, userID); err != nil {

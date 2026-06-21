@@ -78,6 +78,7 @@ const (
 	cacheWriteTimeout         = 2 * time.Second // 单个写入操作超时
 	cacheWriteDropLogInterval = 5 * time.Second // 丢弃日志节流间隔
 	balanceLoadTimeout        = 3 * time.Second
+	noSubscriptionLockTTL     = 5 * time.Second
 )
 
 // cacheWriteTask 缓存写入任务
@@ -117,6 +118,7 @@ type BillingCacheService struct {
 	stopped            atomic.Bool
 	balanceLoadSF      singleflight.Group
 	quotaLoadSF        singleflight.Group
+	noSubLockUntil     sync.Map // map[int64]int64, unix nano deadline for users with no locked subscription balance
 	// 丢弃日志节流计数器（减少高负载下日志噪音）
 	cacheWriteDropFullCount     uint64
 	cacheWriteDropFullLastLog   int64
@@ -395,6 +397,7 @@ func (s *BillingCacheService) QueueDeductBalance(userID int64, amount float64) {
 
 // InvalidateUserBalance 失效用户余额缓存
 func (s *BillingCacheService) InvalidateUserBalance(ctx context.Context, userID int64) error {
+	s.clearNoSubscriptionLockCache(userID)
 	if s.cache == nil {
 		return nil
 	}
@@ -884,6 +887,9 @@ func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, use
 	if s.subRepo == nil {
 		return 0, 0, false, nil
 	}
+	if s.hasNoSubscriptionLockCached(userID) {
+		return 0, 0, false, nil
+	}
 	subs, err := s.subRepo.ListActiveByUserID(ctx, userID)
 	if err != nil {
 		return 0, 0, false, err
@@ -904,7 +910,40 @@ func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, use
 		}
 		limitLocked += cardLimitLocked
 	}
+	if currentLocked <= 0 {
+		s.setNoSubscriptionLockCache(userID)
+	}
 	return currentLocked, limitLocked, canOverdraft, nil
+}
+
+func (s *BillingCacheService) hasNoSubscriptionLockCached(userID int64) bool {
+	if userID <= 0 {
+		return false
+	}
+	v, ok := s.noSubLockUntil.Load(userID)
+	if !ok {
+		return false
+	}
+	deadline, ok := v.(int64)
+	if !ok || time.Now().UnixNano() >= deadline {
+		s.noSubLockUntil.Delete(userID)
+		return false
+	}
+	return true
+}
+
+func (s *BillingCacheService) setNoSubscriptionLockCache(userID int64) {
+	if userID <= 0 {
+		return
+	}
+	s.noSubLockUntil.Store(userID, time.Now().Add(noSubscriptionLockTTL).UnixNano())
+}
+
+func (s *BillingCacheService) clearNoSubscriptionLockCache(userID int64) {
+	if userID <= 0 {
+		return
+	}
+	s.noSubLockUntil.Delete(userID)
 }
 
 // checkSubscriptionEligibility 检查订阅模式资格

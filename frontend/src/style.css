@@ -68,25 +68,25 @@
   .btn {
     @apply inline-flex items-center justify-center gap-2;
     @apply rounded-lg px-4 py-2.5 text-sm font-medium;
-    @apply transition-all duration-200 ease-out;
-    @apply focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:ring-offset-2;
-    @apply disabled:transform-none disabled:cursor-not-allowed disabled:opacity-50;
-    @apply active:scale-[0.98];
+    @apply transition-colors duration-150;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/15 focus-visible:ring-offset-1 dark:focus-visible:ring-white/20;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-primary {
-    /* Anthropic 风：主按钮暖黑扁平，陶土色只作点缀 */
-    @apply bg-gray-900 text-white shadow-sm;
+    /* Anthropic 风：主按钮暖黑扁平，无阴影、无弹跳 */
+    @apply bg-gray-900 text-white;
     @apply hover:bg-gray-800;
     @apply dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white;
   }
 
   .btn-secondary {
+    /* Anthropic 风：次按钮仅发丝描边，不带阴影 */
     @apply bg-white dark:bg-dark-800;
     @apply text-gray-700 dark:text-gray-200;
-    @apply border border-gray-200 dark:border-dark-600;
-    @apply shadow-sm hover:bg-gray-50 dark:hover:bg-dark-700;
-    @apply hover:border-gray-300 dark:hover:border-dark-500;
+    @apply border border-gray-300 dark:border-dark-600;
+    @apply hover:bg-gray-50 dark:hover:bg-dark-700;
+    @apply hover:border-gray-400 dark:hover:border-dark-500;
   }
 
   .btn-ghost {
@@ -95,17 +95,17 @@
   }
 
   .btn-danger {
-    @apply bg-red-600 text-white shadow-sm;
+    @apply bg-red-600 text-white;
     @apply hover:bg-red-700;
   }
 
   .btn-success {
-    @apply bg-emerald-600 text-white shadow-sm;
+    @apply bg-emerald-600 text-white;
     @apply hover:bg-emerald-700;
   }
 
   .btn-warning {
-    @apply bg-amber-500 text-white shadow-sm;
+    @apply bg-amber-500 text-white;
     @apply hover:bg-amber-600;
   }
 
@@ -160,8 +160,8 @@
     @apply border border-gray-200 dark:border-dark-600;
     @apply text-gray-900 dark:text-gray-100;
     @apply placeholder:text-gray-400 dark:placeholder:text-dark-400;
-    @apply transition-all duration-200;
-    @apply focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30;
+    @apply transition-colors duration-150;
+    @apply focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900/10 dark:focus:border-dark-500 dark:focus:ring-white/10;
     @apply disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-dark-900;
   }
 
@@ -323,7 +323,7 @@
   /* ============ 徽章样式 ============ */
   .badge {
     @apply inline-flex items-center gap-1;
-    @apply rounded-full px-2.5 py-0.5 text-xs font-medium;
+    @apply rounded-md px-2 py-0.5 text-xs font-medium;
   }
 
   .badge-primary {
@@ -354,9 +354,9 @@
   .dropdown {
     @apply absolute z-50;
     @apply bg-white dark:bg-dark-800;
-    @apply rounded-xl;
+    @apply rounded-lg;
     @apply border border-gray-200 dark:border-dark-700;
-    @apply shadow-lg;
+    @apply shadow-md;
     @apply py-1;
     @apply origin-top-right animate-scale-in;
   }
@@ -620,21 +620,19 @@
 
   /* ============ 标签页 ============ */
   .tabs {
-    @apply flex gap-1 p-1;
-    @apply rounded-xl bg-gray-100 dark:bg-dark-800;
+    @apply flex gap-6 border-b border-gray-200 dark:border-dark-700;
   }
 
   .tab {
-    @apply rounded-lg px-4 py-2 text-sm font-medium;
-    @apply text-gray-600 dark:text-dark-400;
-    @apply transition-all duration-200;
+    /* Anthropic 风：下划线 tab，靠底部指示条而非分段胶囊 */
+    @apply -mb-px border-b-2 border-transparent px-1 pb-2.5 pt-1 text-sm font-medium;
+    @apply text-gray-500 dark:text-dark-400;
+    @apply transition-colors duration-150;
     @apply hover:text-gray-900 dark:hover:text-white;
   }
 
   .tab-active {
-    @apply bg-white dark:bg-dark-700;
-    @apply text-gray-900 dark:text-white;
-    @apply shadow-sm;
+    @apply border-gray-900 text-gray-900 dark:border-white dark:text-white;
   }
 
   /* ============ 进度条 ============ */
