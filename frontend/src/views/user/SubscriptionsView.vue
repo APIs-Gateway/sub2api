@@ -129,29 +129,43 @@
               </p>
 
               <!-- 自助：本卡最多往后透支天数 -->
-              <div class="flex flex-wrap items-center gap-2 pt-1">
-                <span class="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                  {{ t('userSubscriptions.overdraft.label') }}
-                </span>
-                <input
-                  v-model="overdraftEdit[subscription.id]"
-                  type="number"
-                  min="0"
-                  step="1"
-                  class="input w-24"
-                  :placeholder="t('userSubscriptions.overdraft.placeholder')"
-                />
-                <button
-                  type="button"
-                  class="btn btn-secondary"
-                  :disabled="savingOverdraft === subscription.id"
-                  @click="saveOverdraft(subscription)"
-                >
-                  {{ t('common.save') }}
-                </button>
-                <span class="w-full text-xs text-gray-400 dark:text-dark-500">
-                  {{ t('userSubscriptions.overdraft.hint') }}
-                </span>
+              <div class="space-y-2 pt-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                    {{ t('userSubscriptions.overdraft.label') }}
+                  </span>
+                  <input
+                    v-model="overdraftEdit[subscription.id]"
+                    type="number"
+                    min="0"
+                    step="1"
+                    class="input w-24"
+                    :disabled="isOverdraftExhausted(subscription) && subscription.max_overdraft_days == null"
+                    :placeholder="t('userSubscriptions.overdraft.placeholder')"
+                  />
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    :disabled="savingOverdraft === subscription.id || (isOverdraftExhausted(subscription) && subscription.max_overdraft_days == null)"
+                    @click="saveOverdraft(subscription)"
+                  >
+                    {{ t('common.save') }}
+                  </button>
+                  <span class="text-xs text-gray-500 dark:text-dark-400">
+                    {{ t('userSubscriptions.overdraft.usage', {
+                      used: overdraftUsed(subscription),
+                      max: overdraftMax(subscription),
+                      remaining: overdraftRemaining(subscription)
+                    }) }}
+                  </span>
+                </div>
+                <p class="text-xs text-gray-400 dark:text-dark-500">
+                  {{
+                    isOverdraftExhausted(subscription)
+                      ? t('userSubscriptions.overdraft.exhausted')
+                      : t('userSubscriptions.overdraft.hint', { max: overdraftMax(subscription) })
+                  }}
+                </p>
               </div>
             </div>
 
@@ -342,7 +356,7 @@ const appStore = useAppStore()
 const subscriptions = ref<UserSubscription[]>([])
 const loading = ref(true)
 
-// 每张卡「最多透支天数」的可编辑值（空串 = 不限制）。
+// 每张卡「最多透支天数」的可编辑值（空串 = 关闭透支）。
 const overdraftEdit = reactive<Record<number, number | string>>({})
 const savingOverdraft = ref<number | null>(null)
 
@@ -367,7 +381,25 @@ function getProgressWidth(used: number | undefined, limit: number | null | undef
   return `${percentage}%`
 }
 
-// saveOverdraft 用户自助保存本卡「最多透支天数」（空 = 不限制）。
+function overdraftMax(sub: UserSubscription): number {
+  return sub.max_overdraft_uses ?? 5
+}
+
+function overdraftUsed(sub: UserSubscription): number {
+  return Math.max(0, sub.total_overdraft_count ?? 0)
+}
+
+function overdraftRemaining(sub: UserSubscription): number {
+  const fromAPI = sub.remaining_overdraft_uses
+  if (typeof fromAPI === 'number') return Math.max(0, fromAPI)
+  return Math.max(0, overdraftMax(sub) - overdraftUsed(sub))
+}
+
+function isOverdraftExhausted(sub: UserSubscription): boolean {
+  return sub.can_enable_overdraft === false || overdraftRemaining(sub) <= 0
+}
+
+// saveOverdraft 用户自助保存本卡「最多透支天数」（空 = 关闭透支）。
 async function saveOverdraft(sub: UserSubscription) {
   const raw = overdraftEdit[sub.id]
   let days: number | null
@@ -380,6 +412,10 @@ async function saveOverdraft(sub: UserSubscription) {
       return
     }
     days = Math.floor(n)
+  }
+  if (days !== null && isOverdraftExhausted(sub)) {
+    appStore.showError(t('userSubscriptions.overdraft.exhausted'))
+    return
   }
   try {
     savingOverdraft.value = sub.id

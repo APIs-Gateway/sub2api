@@ -25,18 +25,19 @@ var MaxExpiresAt = time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC)
 const MaxValidityDays = 36500
 
 var (
-	ErrSubscriptionNotFound       = infraerrors.NotFound("SUBSCRIPTION_NOT_FOUND", "subscription not found")
-	ErrSubscriptionExpired        = infraerrors.Forbidden("SUBSCRIPTION_EXPIRED", "subscription has expired")
-	ErrSubscriptionSuspended      = infraerrors.Forbidden("SUBSCRIPTION_SUSPENDED", "subscription is suspended")
-	ErrSubscriptionAlreadyExists  = infraerrors.Conflict("SUBSCRIPTION_ALREADY_EXISTS", "subscription already exists for this user and group")
-	ErrSubscriptionAssignConflict = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
-	ErrGroupNotSubscriptionType   = infraerrors.BadRequest("GROUP_NOT_SUBSCRIPTION_TYPE", "group is not a subscription type")
-	ErrInvalidInput               = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
-	ErrDailyLimitExceeded         = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")
-	ErrWeeklyLimitExceeded        = infraerrors.TooManyRequests("WEEKLY_LIMIT_EXCEEDED", "weekly usage limit exceeded")
-	ErrMonthlyLimitExceeded       = infraerrors.TooManyRequests("MONTHLY_LIMIT_EXCEEDED", "monthly usage limit exceeded")
-	ErrSubscriptionNilInput       = infraerrors.BadRequest("SUBSCRIPTION_NIL_INPUT", "subscription input cannot be nil")
-	ErrAdjustWouldExpire          = infraerrors.BadRequest("ADJUST_WOULD_EXPIRE", "adjustment would result in expired subscription (remaining days must be > 0)")
+	ErrSubscriptionNotFound               = infraerrors.NotFound("SUBSCRIPTION_NOT_FOUND", "subscription not found")
+	ErrSubscriptionExpired                = infraerrors.Forbidden("SUBSCRIPTION_EXPIRED", "subscription has expired")
+	ErrSubscriptionSuspended              = infraerrors.Forbidden("SUBSCRIPTION_SUSPENDED", "subscription is suspended")
+	ErrSubscriptionAlreadyExists          = infraerrors.Conflict("SUBSCRIPTION_ALREADY_EXISTS", "subscription already exists for this user and group")
+	ErrSubscriptionAssignConflict         = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
+	ErrGroupNotSubscriptionType           = infraerrors.BadRequest("GROUP_NOT_SUBSCRIPTION_TYPE", "group is not a subscription type")
+	ErrInvalidInput                       = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
+	ErrDailyLimitExceeded                 = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")
+	ErrWeeklyLimitExceeded                = infraerrors.TooManyRequests("WEEKLY_LIMIT_EXCEEDED", "weekly usage limit exceeded")
+	ErrMonthlyLimitExceeded               = infraerrors.TooManyRequests("MONTHLY_LIMIT_EXCEEDED", "monthly usage limit exceeded")
+	ErrSubscriptionNilInput               = infraerrors.BadRequest("SUBSCRIPTION_NIL_INPUT", "subscription input cannot be nil")
+	ErrAdjustWouldExpire                  = infraerrors.BadRequest("ADJUST_WOULD_EXPIRE", "adjustment would result in expired subscription (remaining days must be > 0)")
+	ErrSubscriptionOverdraftUsesExhausted = infraerrors.BadRequest("SUBSCRIPTION_OVERDRAFT_USES_EXHAUSTED", "subscription overdraft uses exhausted")
 )
 
 // SubscriptionService 订阅服务
@@ -605,13 +606,19 @@ func (s *SubscriptionService) ListUserSubscriptions(ctx context.Context, userID 
 }
 
 // SetSubscriptionOverdraftDays 用户自助设置自己某张订阅卡的「最多往后透支天数」。
-// days = nil 或负数 → 清除为不限制；>=0 → 设置该上限（0 = 仅当天额度）。仅能操作属于自己的卡。
+// days = nil 或负数 → 关闭透支；>=0 → 开启并设置透支深度（0 = 仅当天额度）。仅能操作属于自己的卡。
 func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, userID, subID int64, days *int) error {
 	norm := normalizeOverdraftDays(days) // nil/负数 → nil；>=0 → 拷贝
-	// 管理员设置了全局上限时，用户自助设置不得超过它（0 = 不限制）。
-	if norm != nil && s.settingService != nil {
-		if capDays := s.settingService.GetMaxOverdraftDaysCap(ctx); *norm > capDays {
-			return infraerrors.BadRequest("OVERDRAFT_DAYS_EXCEEDS_CAP", fmt.Sprintf("最多透支天数不能超过上限 %d 天", capDays))
+	if norm != nil {
+		sub, err := s.userSubRepo.GetByID(ctx, subID)
+		if err != nil {
+			return err
+		}
+		if sub == nil || sub.UserID != userID {
+			return ErrSubscriptionNotFound
+		}
+		if !sub.CanEnableOverdraft() {
+			return ErrSubscriptionOverdraftUsesExhausted
 		}
 	}
 	ok, err := s.userSubRepo.SetOverdraftDays(ctx, userID, subID, norm)

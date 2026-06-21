@@ -288,6 +288,20 @@ func (_c *UserSubscriptionCreate) SetNillableMaxOverdraftDays(v *int) *UserSubsc
 	return _c
 }
 
+// SetTotalOverdraftCount sets the "total_overdraft_count" field.
+func (_c *UserSubscriptionCreate) SetTotalOverdraftCount(v int) *UserSubscriptionCreate {
+	_c.mutation.SetTotalOverdraftCount(v)
+	return _c
+}
+
+// SetNillableTotalOverdraftCount sets the "total_overdraft_count" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableTotalOverdraftCount(v *int) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetTotalOverdraftCount(*v)
+	}
+	return _c
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_c *UserSubscriptionCreate) SetActivatedAt(v time.Time) *UserSubscriptionCreate {
 	_c.mutation.SetActivatedAt(v)
@@ -480,6 +494,10 @@ func (_c *UserSubscriptionCreate) defaults() error {
 		v := usersubscription.DefaultLastClawbackDay
 		_c.mutation.SetLastClawbackDay(v)
 	}
+	if _, ok := _c.mutation.TotalOverdraftCount(); !ok {
+		v := usersubscription.DefaultTotalOverdraftCount
+		_c.mutation.SetTotalOverdraftCount(v)
+	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		if usersubscription.DefaultAssignedAt == nil {
 			return fmt.Errorf("ent: uninitialized usersubscription.DefaultAssignedAt (forgotten import ent/runtime?)")
@@ -541,6 +559,9 @@ func (_c *UserSubscriptionCreate) check() error {
 	}
 	if _, ok := _c.mutation.LastClawbackDay(); !ok {
 		return &ValidationError{Name: "last_clawback_day", err: errors.New(`ent: missing required field "UserSubscription.last_clawback_day"`)}
+	}
+	if _, ok := _c.mutation.TotalOverdraftCount(); !ok {
+		return &ValidationError{Name: "total_overdraft_count", err: errors.New(`ent: missing required field "UserSubscription.total_overdraft_count"`)}
 	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		return &ValidationError{Name: "assigned_at", err: errors.New(`ent: missing required field "UserSubscription.assigned_at"`)}
@@ -649,6 +670,10 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 	if value, ok := _c.mutation.MaxOverdraftDays(); ok {
 		_spec.SetField(usersubscription.FieldMaxOverdraftDays, field.TypeInt, value)
 		_node.MaxOverdraftDays = &value
+	}
+	if value, ok := _c.mutation.TotalOverdraftCount(); ok {
+		_spec.SetField(usersubscription.FieldTotalOverdraftCount, field.TypeInt, value)
+		_node.TotalOverdraftCount = value
 	}
 	if value, ok := _c.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1125,6 +1150,24 @@ func (u *UserSubscriptionUpsert) AddMaxOverdraftDays(v int) *UserSubscriptionUps
 // ClearMaxOverdraftDays clears the value of the "max_overdraft_days" field.
 func (u *UserSubscriptionUpsert) ClearMaxOverdraftDays() *UserSubscriptionUpsert {
 	u.SetNull(usersubscription.FieldMaxOverdraftDays)
+	return u
+}
+
+// SetTotalOverdraftCount sets the "total_overdraft_count" field.
+func (u *UserSubscriptionUpsert) SetTotalOverdraftCount(v int) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldTotalOverdraftCount, v)
+	return u
+}
+
+// UpdateTotalOverdraftCount sets the "total_overdraft_count" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateTotalOverdraftCount() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldTotalOverdraftCount)
+	return u
+}
+
+// AddTotalOverdraftCount adds v to the "total_overdraft_count" field.
+func (u *UserSubscriptionUpsert) AddTotalOverdraftCount(v int) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldTotalOverdraftCount, v)
 	return u
 }
 
@@ -1621,6 +1664,27 @@ func (u *UserSubscriptionUpsertOne) UpdateMaxOverdraftDays() *UserSubscriptionUp
 func (u *UserSubscriptionUpsertOne) ClearMaxOverdraftDays() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.ClearMaxOverdraftDays()
+	})
+}
+
+// SetTotalOverdraftCount sets the "total_overdraft_count" field.
+func (u *UserSubscriptionUpsertOne) SetTotalOverdraftCount(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetTotalOverdraftCount(v)
+	})
+}
+
+// AddTotalOverdraftCount adds v to the "total_overdraft_count" field.
+func (u *UserSubscriptionUpsertOne) AddTotalOverdraftCount(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddTotalOverdraftCount(v)
+	})
+}
+
+// UpdateTotalOverdraftCount sets the "total_overdraft_count" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateTotalOverdraftCount() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateTotalOverdraftCount()
 	})
 }
 
@@ -2294,6 +2358,27 @@ func (u *UserSubscriptionUpsertBulk) UpdateMaxOverdraftDays() *UserSubscriptionU
 func (u *UserSubscriptionUpsertBulk) ClearMaxOverdraftDays() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.ClearMaxOverdraftDays()
+	})
+}
+
+// SetTotalOverdraftCount sets the "total_overdraft_count" field.
+func (u *UserSubscriptionUpsertBulk) SetTotalOverdraftCount(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetTotalOverdraftCount(v)
+	})
+}
+
+// AddTotalOverdraftCount adds v to the "total_overdraft_count" field.
+func (u *UserSubscriptionUpsertBulk) AddTotalOverdraftCount(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddTotalOverdraftCount(v)
+	})
+}
+
+// UpdateTotalOverdraftCount sets the "total_overdraft_count" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateTotalOverdraftCount() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateTotalOverdraftCount()
 	})
 }
 

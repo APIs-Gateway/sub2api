@@ -160,6 +160,11 @@ func MaxOverdraftDays(v int) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldMaxOverdraftDays, v))
 }
 
+// TotalOverdraftCount applies equality check predicate on the "total_overdraft_count" field. It's identical to TotalOverdraftCountEQ.
+func TotalOverdraftCount(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldTotalOverdraftCount, v))
+}
+
 // ActivatedAt applies equality check predicate on the "activated_at" field. It's identical to ActivatedAtEQ.
 func ActivatedAt(v time.Time) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldActivatedAt, v))
@@ -1043,6 +1048,46 @@ func MaxOverdraftDaysIsNil() predicate.UserSubscription {
 // MaxOverdraftDaysNotNil applies the NotNil predicate on the "max_overdraft_days" field.
 func MaxOverdraftDaysNotNil() predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldNotNull(FieldMaxOverdraftDays))
+}
+
+// TotalOverdraftCountEQ applies the EQ predicate on the "total_overdraft_count" field.
+func TotalOverdraftCountEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldTotalOverdraftCount, v))
+}
+
+// TotalOverdraftCountNEQ applies the NEQ predicate on the "total_overdraft_count" field.
+func TotalOverdraftCountNEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldTotalOverdraftCount, v))
+}
+
+// TotalOverdraftCountIn applies the In predicate on the "total_overdraft_count" field.
+func TotalOverdraftCountIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldTotalOverdraftCount, vs...))
+}
+
+// TotalOverdraftCountNotIn applies the NotIn predicate on the "total_overdraft_count" field.
+func TotalOverdraftCountNotIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldTotalOverdraftCount, vs...))
+}
+
+// TotalOverdraftCountGT applies the GT predicate on the "total_overdraft_count" field.
+func TotalOverdraftCountGT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldTotalOverdraftCount, v))
+}
+
+// TotalOverdraftCountGTE applies the GTE predicate on the "total_overdraft_count" field.
+func TotalOverdraftCountGTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldTotalOverdraftCount, v))
+}
+
+// TotalOverdraftCountLT applies the LT predicate on the "total_overdraft_count" field.
+func TotalOverdraftCountLT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldTotalOverdraftCount, v))
+}
+
+// TotalOverdraftCountLTE applies the LTE predicate on the "total_overdraft_count" field.
+func TotalOverdraftCountLTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldTotalOverdraftCount, v))
 }
 
 // ActivatedAtEQ applies the EQ predicate on the "activated_at" field.

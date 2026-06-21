@@ -92,10 +92,13 @@ func (UserSubscription) Fields() []ent.Field {
 		field.Int("last_clawback_day").
 			Default(0),
 		// 本卡「最多往后透支天数」：累计被扣最多到 (已过天数+N)×D，由用户在「我的订阅」自助设置。
-		// nil = 该卡不限制（默认）。
+		// nil = 透支关闭。
 		field.Int("max_overdraft_days").
 			Optional().
 			Nillable(),
+		// 本卡累计透支请求次数：实际消费到当天已解锁额度之外的请求计 1 次。
+		field.Int("total_overdraft_count").
+			Default(0),
 		// 清扣时钟起点（按 Asia/Shanghai 从此算第 N 个日历天）。
 		// 为 nil 时回退到 starts_at；存量回填时设为 NOW() 以对剩余期重新计时。
 		field.Time("activated_at").

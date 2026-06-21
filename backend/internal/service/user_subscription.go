@@ -1,9 +1,8 @@
 package service
 
-import (
-	"math"
-	"time"
-)
+import "time"
+
+const MaxSubscriptionOverdraftUses = 5
 
 type UserSubscription struct {
 	ID      int64
@@ -23,13 +22,14 @@ type UserSubscription struct {
 	MonthlyUsageUSD float64
 
 	// Burn-down 计费模型字段
-	GrantedTotalUSD  float64    // G = D × days，开通时一次性发放总额
-	DailyAmountUSD   float64    // D，开通时对 group.daily_limit_usd 的快照
-	ConsumedUSD      float64    // 本卡累计消费（单调递增）
-	ClawedUSD        float64    // 本卡累计被清扣（单调递增）
-	LastClawbackDay  int        // 已对账到的最高日历天 N
-	MaxOverdraftDays *int       // 本卡用户自设的最多往后透支天数；nil = 未自设（回退全局上限）；用户在「我的订阅」自助设置
-	ActivatedAt      *time.Time // 清扣时钟起点；nil 时回退 StartsAt
+	GrantedTotalUSD     float64    // G = D × days，开通时一次性发放总额
+	DailyAmountUSD      float64    // D，开通时对 group.daily_limit_usd 的快照
+	ConsumedUSD         float64    // 本卡累计消费（单调递增）
+	ClawedUSD           float64    // 本卡累计被清扣（单调递增）
+	LastClawbackDay     int        // 已对账到的最高日历天 N
+	MaxOverdraftDays    *int       // 本卡用户自设的最多往后透支天数；nil = 透支关闭；用户在「我的订阅」自助设置
+	TotalOverdraftCount int        // 本卡累计透支请求次数；达到 MaxSubscriptionOverdraftUses 后自动关闭透支
+	ActivatedAt         *time.Time // 清扣时钟起点；nil 时回退 StartsAt
 
 	AssignedBy *int64
 	AssignedAt time.Time
@@ -274,35 +274,32 @@ func (s *UserSubscription) LockedAt(now time.Time, overdraftDays int) float64 {
 	return locked
 }
 
-// overdraftDaysConsumedAheadAt 本卡已消费超出「当前日历天累计额度 N×D」的天数（向上取整，≥0）。
-// 作为施加全局上限时的下限，避免把已超额卡的有效天数压到「已消费位置」以下、导致可用额度变负。
-func (s *UserSubscription) overdraftDaysConsumedAheadAt(now time.Time) int {
-	if s.DailyAmountUSD <= 0 {
-		return 0
+// CanEnableOverdraft 报告本卡是否仍允许开启透支功能。
+func (s *UserSubscription) CanEnableOverdraft() bool {
+	if s == nil {
+		return false
 	}
-	ahead := s.ConsumedUSD/s.DailyAmountUSD - float64(s.CalendarDayAt(now))
-	if ahead <= 0 {
-		return 0
-	}
-	return int(math.Ceil(ahead))
+	return s.TotalOverdraftCount < MaxSubscriptionOverdraftUses
 }
 
-// EffectiveOverdraftDaysAt 施加非管理员全局透支上限 adminCap 后、本卡的有效透支天数。
-//   - 卡自设值存在时取 min(卡值, adminCap)（用户只能更严，不能比上限更松）；未设则取 adminCap。
-//   - adminCap=0 即「不允许预支」（最严，绝非无限）。
-//   - 已超额老用户：结果不低于「已透支天数」floor，避免把可用额度压成负值；其当前可花≈0（保留不到
-//     1 日的过冲额度），并随日历天推进 floor 自然下降、回到上限内。硬上限下已超额者仍被限制到接近当前
-//     位置、不能继续透支——这是「绝不无限透支」的代价，不是回退到无限。
-func (s *UserSubscription) EffectiveOverdraftDaysAt(now time.Time, adminCap int) int {
-	limit := adminCap
-	if s.MaxOverdraftDays != nil && *s.MaxOverdraftDays < limit {
-		limit = *s.MaxOverdraftDays
+// RemainingOverdraftUses 返回本卡剩余可透支请求次数。
+func (s *UserSubscription) RemainingOverdraftUses() int {
+	if s == nil {
+		return 0
 	}
-	if limit < 0 {
-		limit = 0
+	remaining := MaxSubscriptionOverdraftUses - s.TotalOverdraftCount
+	if remaining < 0 {
+		return 0
 	}
-	if floor := s.overdraftDaysConsumedAheadAt(now); floor > limit {
-		limit = floor
+	return remaining
+}
+
+// UsesOverdraftAt 报告本次从该卡分摊 amount 后，是否消费到了当天已解锁额度之外。
+// 只要本请求的任意部分越过 CalendarDayAt(now)*D，即计 1 次透支。
+func (s *UserSubscription) UsesOverdraftAt(now time.Time, amount float64) bool {
+	if s == nil || amount <= 0 || s.DailyAmountUSD <= 0 {
+		return false
 	}
-	return limit
+	currentDayCap := float64(s.CalendarDayAt(now)) * s.DailyAmountUSD
+	return s.ConsumedUSD+amount > currentDayCap+1e-9
 }

@@ -5765,8 +5765,6 @@ export default {
           'Rebate percentage credited to inviter after recharge (0-100%, e.g. 10 means 10%)',
         defaultConcurrency: 'Default Concurrency',
         defaultConcurrencyHint: 'Maximum concurrent requests for new users',
-        maxOverdraftDaysCap: 'Max Overdraft Days Cap',
-        maxOverdraftDaysCapHint: 'Maximum overdraft (advance) days for users; 0 = no overdraft.',
         defaultUserRpmLimit: 'Default User RPM Limit',
         defaultUserRpmLimitHint: 'Default max requests per minute for new users; 0 = unlimited. Only applied at new user creation.',
         defaultSubscriptions: 'Default Subscriptions',
@@ -6799,11 +6797,13 @@ export default {
     failedToLoad: 'Failed to load subscriptions',
     overdraft: {
       label: 'Max overdraft days',
-      placeholder: 'Unlimited',
-      hint: 'Limit how many days ahead this card can be spent: cumulative usage is capped at (elapsed days + N) × daily amount. Empty = unlimited; 0 = only today\'s accrual.',
+      placeholder: 'Off',
+      hint: 'Overdraft is off by default. Once enabled, this card supports {max} overdraft requests in total. Empty = off; 0 = only today\'s accrual.',
+      usage: 'Overdraft uses: {used} / {max} used, {remaining} remaining',
+      exhausted: 'Overdraft uses are exhausted. The system has turned overdraft off and users cannot enable it again.',
       saved: 'Overdraft limit saved',
       failed: 'Failed to save overdraft limit',
-      invalid: 'Enter 0 or a positive integer (leave empty for unlimited)'
+      invalid: 'Enter 0 or a positive integer (leave empty to turn off)'
     },
     status: {
       active: 'Active',

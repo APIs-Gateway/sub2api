@@ -57,6 +57,8 @@ const (
 	FieldLastClawbackDay = "last_clawback_day"
 	// FieldMaxOverdraftDays holds the string denoting the max_overdraft_days field in the database.
 	FieldMaxOverdraftDays = "max_overdraft_days"
+	// FieldTotalOverdraftCount holds the string denoting the total_overdraft_count field in the database.
+	FieldTotalOverdraftCount = "total_overdraft_count"
 	// FieldActivatedAt holds the string denoting the activated_at field in the database.
 	FieldActivatedAt = "activated_at"
 	// FieldAssignedBy holds the string denoting the assigned_by field in the database.
@@ -138,6 +140,7 @@ var Columns = []string{
 	FieldClawedUsd,
 	FieldLastClawbackDay,
 	FieldMaxOverdraftDays,
+	FieldTotalOverdraftCount,
 	FieldActivatedAt,
 	FieldAssignedBy,
 	FieldAssignedAt,
@@ -188,6 +191,8 @@ var (
 	DefaultClawedUsd float64
 	// DefaultLastClawbackDay holds the default value on creation for the "last_clawback_day" field.
 	DefaultLastClawbackDay int
+	// DefaultTotalOverdraftCount holds the default value on creation for the "total_overdraft_count" field.
+	DefaultTotalOverdraftCount int
 	// DefaultAssignedAt holds the default value on creation for the "assigned_at" field.
 	DefaultAssignedAt func() time.Time
 )
@@ -303,6 +308,11 @@ func ByLastClawbackDay(opts ...sql.OrderTermOption) OrderOption {
 // ByMaxOverdraftDays orders the results by the max_overdraft_days field.
 func ByMaxOverdraftDays(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldMaxOverdraftDays, opts...).ToFunc()
+}
+
+// ByTotalOverdraftCount orders the results by the total_overdraft_count field.
+func ByTotalOverdraftCount(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTotalOverdraftCount, opts...).ToFunc()
 }
 
 // ByActivatedAt orders the results by the activated_at field.

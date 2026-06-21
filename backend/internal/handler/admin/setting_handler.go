@@ -226,7 +226,6 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		CustomMenuItems:                        dto.ParseCustomMenuItems(settings.CustomMenuItems),
 		CustomEndpoints:                        dto.ParseCustomEndpoints(settings.CustomEndpoints),
 		DefaultConcurrency:                     settings.DefaultConcurrency,
-		MaxOverdraftDaysCap:                    settings.MaxOverdraftDaysCap,
 		DefaultBalance:                         settings.DefaultBalance,
 		RiskControlEnabled:                     settings.RiskControlEnabled,
 		CyberSessionBlockEnabled:               settings.CyberSessionBlockEnabled,
@@ -515,7 +514,6 @@ type UpdateSettingsRequest struct {
 
 	// 默认配置
 	DefaultConcurrency                        int                               `json:"default_concurrency"`
-	MaxOverdraftDaysCap                       int                               `json:"max_overdraft_days_cap"`
 	DefaultBalance                            float64                           `json:"default_balance"`
 	AffiliateRebateRate                       *float64                          `json:"affiliate_rebate_rate"`
 	AffiliateRebateFreezeHours                *int                              `json:"affiliate_rebate_freeze_hours"`
@@ -701,9 +699,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	// 验证参数
 	if req.DefaultConcurrency < 1 {
 		req.DefaultConcurrency = 1
-	}
-	if req.MaxOverdraftDaysCap < 0 {
-		req.MaxOverdraftDaysCap = 0
 	}
 	if req.DefaultBalance < 0 {
 		req.DefaultBalance = 0
@@ -1600,7 +1595,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CustomMenuItems:                        customMenuJSON,
 		CustomEndpoints:                        customEndpointsJSON,
 		DefaultConcurrency:                     req.DefaultConcurrency,
-		MaxOverdraftDaysCap:                    req.MaxOverdraftDaysCap,
 		DefaultBalance:                         req.DefaultBalance,
 		AffiliateRebateRate:                    affiliateRebateRate,
 		AffiliateRebateFreezeHours:             affiliateRebateFreezeHours,
@@ -2074,7 +2068,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CustomMenuItems:                        dto.ParseCustomMenuItems(updatedSettings.CustomMenuItems),
 		CustomEndpoints:                        dto.ParseCustomEndpoints(updatedSettings.CustomEndpoints),
 		DefaultConcurrency:                     updatedSettings.DefaultConcurrency,
-		MaxOverdraftDaysCap:                    updatedSettings.MaxOverdraftDaysCap,
 		DefaultBalance:                         updatedSettings.DefaultBalance,
 		AffiliateRebateRate:                    updatedSettings.AffiliateRebateRate,
 		AffiliateRebateFreezeHours:             updatedSettings.AffiliateRebateFreezeHours,
@@ -2477,9 +2470,6 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.DefaultConcurrency != after.DefaultConcurrency {
 		changed = append(changed, "default_concurrency")
-	}
-	if before.MaxOverdraftDaysCap != after.MaxOverdraftDaysCap {
-		changed = append(changed, "max_overdraft_days_cap")
 	}
 	if before.DefaultBalance != after.DefaultBalance {
 		changed = append(changed, "default_balance")

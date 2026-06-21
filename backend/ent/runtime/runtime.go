@@ -2159,8 +2159,12 @@ func init() {
 	usersubscriptionDescLastClawbackDay := usersubscriptionFields[16].Descriptor()
 	// usersubscription.DefaultLastClawbackDay holds the default value on creation for the last_clawback_day field.
 	usersubscription.DefaultLastClawbackDay = usersubscriptionDescLastClawbackDay.Default.(int)
+	// usersubscriptionDescTotalOverdraftCount is the schema descriptor for total_overdraft_count field.
+	usersubscriptionDescTotalOverdraftCount := usersubscriptionFields[18].Descriptor()
+	// usersubscription.DefaultTotalOverdraftCount holds the default value on creation for the total_overdraft_count field.
+	usersubscription.DefaultTotalOverdraftCount = usersubscriptionDescTotalOverdraftCount.Default.(int)
 	// usersubscriptionDescAssignedAt is the schema descriptor for assigned_at field.
-	usersubscriptionDescAssignedAt := usersubscriptionFields[20].Descriptor()
+	usersubscriptionDescAssignedAt := usersubscriptionFields[21].Descriptor()
 	// usersubscription.DefaultAssignedAt holds the default value on creation for the assigned_at field.
 	usersubscription.DefaultAssignedAt = usersubscriptionDescAssignedAt.Default.(func() time.Time)
 }

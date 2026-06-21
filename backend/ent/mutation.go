@@ -46015,54 +46015,56 @@ func (m *UserPlatformQuotaMutation) ResetEdge(name string) error {
 // UserSubscriptionMutation represents an operation that mutates the UserSubscription nodes in the graph.
 type UserSubscriptionMutation struct {
 	config
-	op                      Op
-	typ                     string
-	id                      *int64
-	created_at              *time.Time
-	updated_at              *time.Time
-	deleted_at              *time.Time
-	starts_at               *time.Time
-	expires_at              *time.Time
-	status                  *string
-	daily_window_start      *time.Time
-	weekly_window_start     *time.Time
-	monthly_window_start    *time.Time
-	daily_usage_usd         *float64
-	adddaily_usage_usd      *float64
-	weekly_usage_usd        *float64
-	addweekly_usage_usd     *float64
-	monthly_usage_usd       *float64
-	addmonthly_usage_usd    *float64
-	granted_total_usd       *float64
-	addgranted_total_usd    *float64
-	daily_amount_usd        *float64
-	adddaily_amount_usd     *float64
-	consumed_usd            *float64
-	addconsumed_usd         *float64
-	clawed_usd              *float64
-	addclawed_usd           *float64
-	last_clawback_day       *int
-	addlast_clawback_day    *int
-	max_overdraft_days      *int
-	addmax_overdraft_days   *int
-	activated_at            *time.Time
-	assigned_at             *time.Time
-	notes                   *string
-	clearedFields           map[string]struct{}
-	user                    *int64
-	cleareduser             bool
-	group                   *int64
-	clearedgroup            bool
-	plan                    *int64
-	clearedplan             bool
-	assigned_by_user        *int64
-	clearedassigned_by_user bool
-	usage_logs              map[int64]struct{}
-	removedusage_logs       map[int64]struct{}
-	clearedusage_logs       bool
-	done                    bool
-	oldValue                func(context.Context) (*UserSubscription, error)
-	predicates              []predicate.UserSubscription
+	op                       Op
+	typ                      string
+	id                       *int64
+	created_at               *time.Time
+	updated_at               *time.Time
+	deleted_at               *time.Time
+	starts_at                *time.Time
+	expires_at               *time.Time
+	status                   *string
+	daily_window_start       *time.Time
+	weekly_window_start      *time.Time
+	monthly_window_start     *time.Time
+	daily_usage_usd          *float64
+	adddaily_usage_usd       *float64
+	weekly_usage_usd         *float64
+	addweekly_usage_usd      *float64
+	monthly_usage_usd        *float64
+	addmonthly_usage_usd     *float64
+	granted_total_usd        *float64
+	addgranted_total_usd     *float64
+	daily_amount_usd         *float64
+	adddaily_amount_usd      *float64
+	consumed_usd             *float64
+	addconsumed_usd          *float64
+	clawed_usd               *float64
+	addclawed_usd            *float64
+	last_clawback_day        *int
+	addlast_clawback_day     *int
+	max_overdraft_days       *int
+	addmax_overdraft_days    *int
+	total_overdraft_count    *int
+	addtotal_overdraft_count *int
+	activated_at             *time.Time
+	assigned_at              *time.Time
+	notes                    *string
+	clearedFields            map[string]struct{}
+	user                     *int64
+	cleareduser              bool
+	group                    *int64
+	clearedgroup             bool
+	plan                     *int64
+	clearedplan              bool
+	assigned_by_user         *int64
+	clearedassigned_by_user  bool
+	usage_logs               map[int64]struct{}
+	removedusage_logs        map[int64]struct{}
+	clearedusage_logs        bool
+	done                     bool
+	oldValue                 func(context.Context) (*UserSubscription, error)
+	predicates               []predicate.UserSubscription
 }
 
 var _ ent.Mutation = (*UserSubscriptionMutation)(nil)
@@ -47178,6 +47180,62 @@ func (m *UserSubscriptionMutation) ResetMaxOverdraftDays() {
 	delete(m.clearedFields, usersubscription.FieldMaxOverdraftDays)
 }
 
+// SetTotalOverdraftCount sets the "total_overdraft_count" field.
+func (m *UserSubscriptionMutation) SetTotalOverdraftCount(i int) {
+	m.total_overdraft_count = &i
+	m.addtotal_overdraft_count = nil
+}
+
+// TotalOverdraftCount returns the value of the "total_overdraft_count" field in the mutation.
+func (m *UserSubscriptionMutation) TotalOverdraftCount() (r int, exists bool) {
+	v := m.total_overdraft_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTotalOverdraftCount returns the old "total_overdraft_count" field's value of the UserSubscription entity.
+// If the UserSubscription object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserSubscriptionMutation) OldTotalOverdraftCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTotalOverdraftCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTotalOverdraftCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTotalOverdraftCount: %w", err)
+	}
+	return oldValue.TotalOverdraftCount, nil
+}
+
+// AddTotalOverdraftCount adds i to the "total_overdraft_count" field.
+func (m *UserSubscriptionMutation) AddTotalOverdraftCount(i int) {
+	if m.addtotal_overdraft_count != nil {
+		*m.addtotal_overdraft_count += i
+	} else {
+		m.addtotal_overdraft_count = &i
+	}
+}
+
+// AddedTotalOverdraftCount returns the value that was added to the "total_overdraft_count" field in this mutation.
+func (m *UserSubscriptionMutation) AddedTotalOverdraftCount() (r int, exists bool) {
+	v := m.addtotal_overdraft_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTotalOverdraftCount resets all changes to the "total_overdraft_count" field.
+func (m *UserSubscriptionMutation) ResetTotalOverdraftCount() {
+	m.total_overdraft_count = nil
+	m.addtotal_overdraft_count = nil
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (m *UserSubscriptionMutation) SetActivatedAt(t time.Time) {
 	m.activated_at = &t
@@ -47570,7 +47628,7 @@ func (m *UserSubscriptionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserSubscriptionMutation) Fields() []string {
-	fields := make([]string, 0, 25)
+	fields := make([]string, 0, 26)
 	if m.created_at != nil {
 		fields = append(fields, usersubscription.FieldCreatedAt)
 	}
@@ -47634,6 +47692,9 @@ func (m *UserSubscriptionMutation) Fields() []string {
 	if m.max_overdraft_days != nil {
 		fields = append(fields, usersubscription.FieldMaxOverdraftDays)
 	}
+	if m.total_overdraft_count != nil {
+		fields = append(fields, usersubscription.FieldTotalOverdraftCount)
+	}
 	if m.activated_at != nil {
 		fields = append(fields, usersubscription.FieldActivatedAt)
 	}
@@ -47696,6 +47757,8 @@ func (m *UserSubscriptionMutation) Field(name string) (ent.Value, bool) {
 		return m.LastClawbackDay()
 	case usersubscription.FieldMaxOverdraftDays:
 		return m.MaxOverdraftDays()
+	case usersubscription.FieldTotalOverdraftCount:
+		return m.TotalOverdraftCount()
 	case usersubscription.FieldActivatedAt:
 		return m.ActivatedAt()
 	case usersubscription.FieldAssignedBy:
@@ -47755,6 +47818,8 @@ func (m *UserSubscriptionMutation) OldField(ctx context.Context, name string) (e
 		return m.OldLastClawbackDay(ctx)
 	case usersubscription.FieldMaxOverdraftDays:
 		return m.OldMaxOverdraftDays(ctx)
+	case usersubscription.FieldTotalOverdraftCount:
+		return m.OldTotalOverdraftCount(ctx)
 	case usersubscription.FieldActivatedAt:
 		return m.OldActivatedAt(ctx)
 	case usersubscription.FieldAssignedBy:
@@ -47919,6 +47984,13 @@ func (m *UserSubscriptionMutation) SetField(name string, value ent.Value) error 
 		}
 		m.SetMaxOverdraftDays(v)
 		return nil
+	case usersubscription.FieldTotalOverdraftCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTotalOverdraftCount(v)
+		return nil
 	case usersubscription.FieldActivatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -47982,6 +48054,9 @@ func (m *UserSubscriptionMutation) AddedFields() []string {
 	if m.addmax_overdraft_days != nil {
 		fields = append(fields, usersubscription.FieldMaxOverdraftDays)
 	}
+	if m.addtotal_overdraft_count != nil {
+		fields = append(fields, usersubscription.FieldTotalOverdraftCount)
+	}
 	return fields
 }
 
@@ -48008,6 +48083,8 @@ func (m *UserSubscriptionMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedLastClawbackDay()
 	case usersubscription.FieldMaxOverdraftDays:
 		return m.AddedMaxOverdraftDays()
+	case usersubscription.FieldTotalOverdraftCount:
+		return m.AddedTotalOverdraftCount()
 	}
 	return nil, false
 }
@@ -48079,6 +48156,13 @@ func (m *UserSubscriptionMutation) AddField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddMaxOverdraftDays(v)
+		return nil
+	case usersubscription.FieldTotalOverdraftCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTotalOverdraftCount(v)
 		return nil
 	}
 	return fmt.Errorf("unknown UserSubscription numeric field %s", name)
@@ -48226,6 +48310,9 @@ func (m *UserSubscriptionMutation) ResetField(name string) error {
 		return nil
 	case usersubscription.FieldMaxOverdraftDays:
 		m.ResetMaxOverdraftDays()
+		return nil
+	case usersubscription.FieldTotalOverdraftCount:
+		m.ResetTotalOverdraftCount()
 		return nil
 	case usersubscription.FieldActivatedAt:
 		m.ResetActivatedAt()

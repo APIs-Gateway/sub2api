@@ -590,14 +590,18 @@ type UserSubscription struct {
 	MonthlyUsageUSD float64 `json:"monthly_usage_usd"`
 
 	// Burn-down 计费模型字段（开通即把整期额度打入余额，按消费进度天展示）。
-	GrantedTotalUSD  float64    `json:"granted_total_usd"`
-	DailyAmountUSD   float64    `json:"daily_amount_usd"`
-	ConsumedUSD      float64    `json:"consumed_usd"`
-	ClawedUSD        float64    `json:"clawed_usd"`
-	RemainingUSD     float64    `json:"remaining_usd"`
-	ConsumptionDay   float64    `json:"consumption_day"`              // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
-	MaxOverdraftDays *int       `json:"max_overdraft_days,omitempty"` // 本卡用户自设透支天数；nil = 未自设（回退全局上限）
-	ActivatedAt      *time.Time `json:"activated_at,omitempty"`
+	GrantedTotalUSD        float64    `json:"granted_total_usd"`
+	DailyAmountUSD         float64    `json:"daily_amount_usd"`
+	ConsumedUSD            float64    `json:"consumed_usd"`
+	ClawedUSD              float64    `json:"clawed_usd"`
+	RemainingUSD           float64    `json:"remaining_usd"`
+	ConsumptionDay         float64    `json:"consumption_day"`              // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
+	MaxOverdraftDays       *int       `json:"max_overdraft_days,omitempty"` // 本卡用户自设透支天数；nil = 透支关闭
+	MaxOverdraftUses       int        `json:"max_overdraft_uses"`
+	TotalOverdraftCount    int        `json:"total_overdraft_count"`
+	RemainingOverdraftUses int        `json:"remaining_overdraft_uses"`
+	CanEnableOverdraft     bool       `json:"can_enable_overdraft"`
+	ActivatedAt            *time.Time `json:"activated_at,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

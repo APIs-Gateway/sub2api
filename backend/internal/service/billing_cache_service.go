@@ -850,21 +850,19 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 		s.circuitBreaker.OnSuccess()
 	}
 
-	// 透支闸门（硬上限）：非管理员用户的订阅预支天数受全局上限约束（默认 1 天，管理员可调）；
-	// 非管理员绝不允许无限透支。管理员豁免。
-	// 有效可花 = balance − Σ(各活跃 burn-down 卡按 min(卡值,上限)、且豁免老用户 锁定的额度)。
-	// locked==0（无活跃订阅卡 / 未超额）时回落到普通 balance>0 检查，对纯余额用户零语义变化。
+	// 透支闸门：非管理员用户默认不允许消费到当天已解锁订阅额度之外。
+	// 只有用户显式开启了本卡透支、且本卡累计透支次数未满 5 次时，才允许继续发起一个透支请求。
+	// 管理员豁免。
 	if !user.IsAdmin() {
-		adminCap := defaultMaxOverdraftDaysCap
-		if s.settingService != nil {
-			adminCap = s.settingService.GetMaxOverdraftDaysCapCached(ctx)
-		}
-		locked, lerr := s.lockedSubscriptionBalance(ctx, user.ID, adminCap)
+		currentLocked, limitLocked, canOverdraft, lerr := s.lockedSubscriptionBalance(ctx, user.ID)
 		if lerr != nil {
 			// 加载活跃卡失败：fail-open 退回原始余额检查，避免因瞬时 DB 抖动误挡正常用户。
 			logger.LegacyPrintf("service.billing_cache", "Warning: overdraft gate lookup failed for user %d: %v (fallback to raw balance)", user.ID, lerr)
-		} else if locked > 0 {
-			if balance-locked <= 0 {
+		} else if currentLocked > 0 {
+			if balance-currentLocked <= 0 {
+				if canOverdraft && balance-limitLocked > 0 {
+					return nil
+				}
 				return ErrSubscriptionOverdraftLimit
 			}
 			return nil
@@ -878,24 +876,35 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 	return nil
 }
 
-// lockedSubscriptionBalance 汇总用户全部活跃 burn-down 卡，按「施加全局上限 adminCap 后的有效透支天数」
-// 计算暂不可用、但仍计入 users.balance 的金额。每张卡有效天数 = EffectiveOverdraftDaysAt(now, adminCap)：
-// 取 min(卡自设值, adminCap)，未设则取 adminCap，并对已超额老用户豁免（不低于已透支天数）。
-func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, userID int64, adminCap int) (float64, error) {
+// lockedSubscriptionBalance 汇总用户全部活跃 burn-down 卡：
+//   - currentLocked：当天尚未解锁、但仍计入 users.balance 的未来额度。
+//   - limitLocked：施加每卡 max_overdraft_days 后仍不可用的额度；未开启透支或次数用尽的卡按 0 天透支计算。
+//   - canOverdraft：至少一张卡已开启透支、仍有累计透支次数余量，且可提前消费后续天额度。
+func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, userID int64) (float64, float64, bool, error) {
 	if s.subRepo == nil {
-		return 0, nil
+		return 0, 0, false, nil
 	}
 	subs, err := s.subRepo.ListActiveByUserID(ctx, userID)
 	if err != nil {
-		return 0, err
+		return 0, 0, false, err
 	}
 	now := time.Now()
-	var locked float64
+	var currentLocked float64
+	var limitLocked float64
+	var canOverdraft bool
 	for i := range subs {
-		days := subs[i].EffectiveOverdraftDaysAt(now, adminCap)
-		locked += subs[i].LockedAt(now, days)
+		cardLocked := subs[i].LockedAt(now, 0)
+		currentLocked += cardLocked
+		cardLimitLocked := cardLocked
+		if subs[i].MaxOverdraftDays != nil && subs[i].CanEnableOverdraft() {
+			cardLimitLocked = subs[i].LockedAt(now, *subs[i].MaxOverdraftDays)
+			if cardLocked > cardLimitLocked {
+				canOverdraft = true
+			}
+		}
+		limitLocked += cardLimitLocked
 	}
-	return locked, nil
+	return currentLocked, limitLocked, canOverdraft, nil
 }
 
 // checkSubscriptionEligibility 检查订阅模式资格

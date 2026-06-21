@@ -123,7 +123,7 @@ func (h *SubscriptionHandler) GetProgress(c *gin.Context) {
 
 // SetOverdraftDays lets the current user set the max overdraft days on ONE of their own
 // subscription cards. PUT /api/v1/subscriptions/:id/overdraft
-// body: { "max_overdraft_days": <int|null> } — null/omitted/negative = clear (unlimited), >=0 = set (0 = only today's accrual).
+// body: { "max_overdraft_days": <int|null> } — null/omitted/negative = off, >=0 = on (0 = only today's accrual).
 func (h *SubscriptionHandler) SetOverdraftDays(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {

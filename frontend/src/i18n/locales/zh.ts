@@ -5922,8 +5922,6 @@ export default {
         affiliateRebateRateHint: '充值后返给邀请人的比例（0-100%，例如填写 10 表示返利 10%）',
         defaultConcurrency: '默认并发数',
         defaultConcurrencyHint: '新用户的最大并发请求数',
-        maxOverdraftDaysCap: '最多透支天数上限',
-        maxOverdraftDaysCapHint: '用户最多可预支的透支天数；0 = 不允许预支。',
         defaultUserRpmLimit: '默认用户 RPM 限制',
         defaultUserRpmLimitHint: '新用户默认每分钟最大请求数，0 = 不限制；仅作用于新用户创建时初始化',
         defaultSubscriptions: '默认订阅列表',
@@ -6952,11 +6950,13 @@ export default {
     failedToLoad: '加载订阅失败',
     overdraft: {
       label: '最多透支天数',
-      placeholder: '无限制',
-      hint: '限制本卡最多可提前消费几天：累计消费最多到 (已过天数 + N) × 每日额度。留空 = 不限制，0 = 仅可用当天额度。',
+      placeholder: '关闭',
+      hint: '默认不支持透支。开启后本卡一共支持 {max} 次透支；留空 = 关闭，0 = 仅可用当天额度。',
+      usage: '透支次数：已用 {used} / {max}，剩余 {remaining} 次',
+      exhausted: '透支次数已用完，系统已自动关闭透支功能，用户端不能再次开启。',
       saved: '已保存透支上限',
       failed: '保存透支上限失败',
-      invalid: '请输入 0 或正整数（留空表示不限制）'
+      invalid: '请输入 0 或正整数（留空表示关闭）'
     },
     status: {
       active: '有效',

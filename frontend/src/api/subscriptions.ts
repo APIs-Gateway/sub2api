@@ -69,7 +69,7 @@ export async function getSubscriptionProgress(
 
 /**
  * Set the max overdraft days on one of the current user's own subscription cards.
- * days = null → clear (unlimited); >=0 → set (0 = only today's accrual).
+ * days = null → turn off overdraft; >=0 → turn on (0 = only today's accrual).
  */
 export async function setOverdraftDays(
   subscriptionId: number,

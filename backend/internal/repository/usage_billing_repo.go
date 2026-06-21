@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -164,7 +165,9 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 	}
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, (granted_total_usd - consumed_usd - clawed_usd) AS remaining
+		SELECT id, group_id, starts_at, activated_at, granted_total_usd, daily_amount_usd,
+			consumed_usd, clawed_usd, max_overdraft_days, total_overdraft_count,
+			(granted_total_usd - consumed_usd - clawed_usd) AS remaining
 		FROM user_subscriptions
 		WHERE user_id = $1
 			AND status = 'active'
@@ -179,15 +182,46 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 	}
 
 	type subRemaining struct {
-		id        int64
-		remaining float64
+		id                  int64
+		groupID             int64
+		startsAt            time.Time
+		activatedAt         *time.Time
+		grantedTotalUSD     float64
+		dailyAmountUSD      float64
+		consumedUSD         float64
+		clawedUSD           float64
+		maxOverdraftDays    *int
+		totalOverdraftCount int
+		remaining           float64
 	}
 	var subs []subRemaining
 	for rows.Next() {
 		var s subRemaining
-		if err := rows.Scan(&s.id, &s.remaining); err != nil {
+		var activatedAt sql.NullTime
+		var maxOverdraftDays sql.NullInt64
+		if err := rows.Scan(
+			&s.id,
+			&s.groupID,
+			&s.startsAt,
+			&activatedAt,
+			&s.grantedTotalUSD,
+			&s.dailyAmountUSD,
+			&s.consumedUSD,
+			&s.clawedUSD,
+			&maxOverdraftDays,
+			&s.totalOverdraftCount,
+			&s.remaining,
+		); err != nil {
 			_ = rows.Close()
 			return nil, err
+		}
+		if activatedAt.Valid {
+			t := activatedAt.Time
+			s.activatedAt = &t
+		}
+		if maxOverdraftDays.Valid {
+			days := int(maxOverdraftDays.Int64)
+			s.maxOverdraftDays = &days
 		}
 		subs = append(subs, s)
 	}
@@ -202,6 +236,7 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 
 	remaining := cost
 	var depletedGroupIDs []int64
+	now := time.Now()
 	for _, s := range subs {
 		if remaining <= 0 {
 			break
@@ -216,18 +251,32 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 		// 扣减 consumed_usd；若本次把本卡剩余（granted-consumed-clawed）扣到 ~0，则同一条 UPDATE
 		// 即时把本卡标记为 expired（burn-down「用完即失效」，不必等到期日）。RETURNING 回报扣后
 		// 是否已 expired 及其 group_id，供调用方失效订阅缓存。行已 FOR UPDATE 锁定，无并发竞争。
+		sub := &service.UserSubscription{
+			StartsAt:            s.startsAt,
+			ActivatedAt:         s.activatedAt,
+			GrantedTotalUSD:     s.grantedTotalUSD,
+			DailyAmountUSD:      s.dailyAmountUSD,
+			ConsumedUSD:         s.consumedUSD,
+			ClawedUSD:           s.clawedUSD,
+			MaxOverdraftDays:    s.maxOverdraftDays,
+			TotalOverdraftCount: s.totalOverdraftCount,
+		}
+		usesOverdraft := s.maxOverdraftDays != nil && sub.CanEnableOverdraft() && sub.UsesOverdraftAt(now, alloc)
+		closeOverdraft := usesOverdraft && s.totalOverdraftCount+1 >= service.MaxSubscriptionOverdraftUses
 		var nowExpired bool
 		var groupID int64
 		if err := tx.QueryRowContext(ctx, `
 			UPDATE user_subscriptions
 			SET consumed_usd = consumed_usd + $1,
+				total_overdraft_count = CASE WHEN $4 THEN total_overdraft_count + 1 ELSE total_overdraft_count END,
+				max_overdraft_days = CASE WHEN $5 THEN NULL ELSE max_overdraft_days END,
 				status = CASE
 					WHEN (granted_total_usd - consumed_usd - clawed_usd - $1) <= $3
 					THEN 'expired' ELSE status END,
 				updated_at = NOW()
 			WHERE id = $2
 			RETURNING status = 'expired', group_id
-		`, alloc, s.id, subscriptionDepletionEpsilon).Scan(&nowExpired, &groupID); err != nil {
+		`, alloc, s.id, subscriptionDepletionEpsilon, usesOverdraft, closeOverdraft).Scan(&nowExpired, &groupID); err != nil {
 			return nil, err
 		}
 		if nowExpired {

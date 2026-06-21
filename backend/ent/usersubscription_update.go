@@ -403,6 +403,27 @@ func (_u *UserSubscriptionUpdate) ClearMaxOverdraftDays() *UserSubscriptionUpdat
 	return _u
 }
 
+// SetTotalOverdraftCount sets the "total_overdraft_count" field.
+func (_u *UserSubscriptionUpdate) SetTotalOverdraftCount(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetTotalOverdraftCount()
+	_u.mutation.SetTotalOverdraftCount(v)
+	return _u
+}
+
+// SetNillableTotalOverdraftCount sets the "total_overdraft_count" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableTotalOverdraftCount(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetTotalOverdraftCount(*v)
+	}
+	return _u
+}
+
+// AddTotalOverdraftCount adds value to the "total_overdraft_count" field.
+func (_u *UserSubscriptionUpdate) AddTotalOverdraftCount(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddTotalOverdraftCount(v)
+	return _u
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_u *UserSubscriptionUpdate) SetActivatedAt(v time.Time) *UserSubscriptionUpdate {
 	_u.mutation.SetActivatedAt(v)
@@ -738,6 +759,12 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if _u.mutation.MaxOverdraftDaysCleared() {
 		_spec.ClearField(usersubscription.FieldMaxOverdraftDays, field.TypeInt)
+	}
+	if value, ok := _u.mutation.TotalOverdraftCount(); ok {
+		_spec.SetField(usersubscription.FieldTotalOverdraftCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedTotalOverdraftCount(); ok {
+		_spec.AddField(usersubscription.FieldTotalOverdraftCount, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1306,6 +1333,27 @@ func (_u *UserSubscriptionUpdateOne) ClearMaxOverdraftDays() *UserSubscriptionUp
 	return _u
 }
 
+// SetTotalOverdraftCount sets the "total_overdraft_count" field.
+func (_u *UserSubscriptionUpdateOne) SetTotalOverdraftCount(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetTotalOverdraftCount()
+	_u.mutation.SetTotalOverdraftCount(v)
+	return _u
+}
+
+// SetNillableTotalOverdraftCount sets the "total_overdraft_count" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableTotalOverdraftCount(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetTotalOverdraftCount(*v)
+	}
+	return _u
+}
+
+// AddTotalOverdraftCount adds value to the "total_overdraft_count" field.
+func (_u *UserSubscriptionUpdateOne) AddTotalOverdraftCount(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddTotalOverdraftCount(v)
+	return _u
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_u *UserSubscriptionUpdateOne) SetActivatedAt(v time.Time) *UserSubscriptionUpdateOne {
 	_u.mutation.SetActivatedAt(v)
@@ -1671,6 +1719,12 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 	}
 	if _u.mutation.MaxOverdraftDaysCleared() {
 		_spec.ClearField(usersubscription.FieldMaxOverdraftDays, field.TypeInt)
+	}
+	if value, ok := _u.mutation.TotalOverdraftCount(); ok {
+		_spec.SetField(usersubscription.FieldTotalOverdraftCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedTotalOverdraftCount(); ok {
+		_spec.AddField(usersubscription.FieldTotalOverdraftCount, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
