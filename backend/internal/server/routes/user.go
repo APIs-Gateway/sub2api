@@ -125,5 +125,12 @@ func RegisterUserRoutes(
 			monitors.GET("", h.ChannelMonitor.List)
 			monitors.GET("/:id/status", h.ChannelMonitor.GetStatus)
 		}
+
+		// 每日签到
+		checkin := authenticated.Group("/checkin")
+		{
+			checkin.GET("", h.Checkin.GetStatus)
+			checkin.POST("", h.Checkin.Claim)
+		}
 	}
 }

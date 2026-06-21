@@ -3752,3 +3752,37 @@ func equalPlatformQuotaSettings(before, after map[string]*service.DefaultPlatfor
 	}
 	return true
 }
+
+// checkinSettingsRequest 是签到配置的更新请求体。
+type checkinSettingsRequest struct {
+	Enabled       bool    `json:"enabled"`
+	AmountMin     float64 `json:"amount_min"`
+	AmountMax     float64 `json:"amount_max"`
+	SpendPerExtra float64 `json:"spend_per_extra"`
+}
+
+// GetCheckinSettings 返回当前签到配置（管理员）。
+func (h *SettingHandler) GetCheckinSettings(c *gin.Context) {
+	cfg := h.settingService.GetCheckinConfig(c.Request.Context())
+	response.Success(c, cfg)
+}
+
+// UpdateCheckinSettings 更新签到配置（管理员）。
+func (h *SettingHandler) UpdateCheckinSettings(c *gin.Context) {
+	var req checkinSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	cfg := service.CheckinConfig{
+		Enabled:       req.Enabled,
+		AmountMin:     req.AmountMin,
+		AmountMax:     req.AmountMax,
+		SpendPerExtra: req.SpendPerExtra,
+	}
+	if err := h.settingService.UpdateCheckinConfig(c.Request.Context(), cfg); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, h.settingService.GetCheckinConfig(c.Request.Context()))
+}

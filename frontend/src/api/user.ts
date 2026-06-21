@@ -195,6 +195,44 @@ export async function getMyPlatformQuotas(): Promise<PlatformQuotasResponse> {
   return data
 }
 
+/** 每日签到状态。 */
+export interface CheckinStatus {
+  enabled: boolean
+  amount_min: number
+  amount_max: number
+  daily_claimed: boolean
+  daily_available: boolean
+  bonus_available: number
+  bonus_earned_today: number
+  bonus_claimed_today: number
+  spend_per_extra: number
+  today_spend: number
+  spend_to_next_bonus: number
+  can_claim: boolean
+  next_reset_at: string
+}
+
+/** 一次签到领取的结果。 */
+export interface CheckinClaimResult {
+  type: 'daily' | 'bonus'
+  amount: number
+  status: CheckinStatus | null
+}
+
+/** 获取当前用户签到状态。 */
+export async function getCheckinStatus(): Promise<CheckinStatus> {
+  const { data } = await apiClient.get<CheckinStatus>('/checkin')
+  return data
+}
+
+/** 领取一次签到（优先基础签到，否则一次额外签到）。turnstileToken 在站点开启 Turnstile 时必填。 */
+export async function claimCheckin(turnstileToken?: string): Promise<CheckinClaimResult> {
+  const { data } = await apiClient.post<CheckinClaimResult>('/checkin', {
+    turnstile_token: turnstileToken
+  })
+  return data
+}
+
 export const userAPI = {
   getProfile,
   updateProfile,
@@ -211,6 +249,8 @@ export const userAPI = {
   getAffiliateDetail,
   transferAffiliateQuota,
   getMyPlatformQuotas,
+  getCheckinStatus,
+  claimCheckin,
 }
 
 export default userAPI
