@@ -1073,7 +1073,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 			HTML: notificationEmailCard("#4f46e5", "Email verification code", `
 <p>Hello {{recipient_name}},</p>
 <p>Your verification code is:</p>
-<p style="font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center;">{{verification_code}}</p>
+<div class="code">{{verification_code}}</div>
 <p>This code expires in <strong>{{expires_in_minutes}}</strong> minutes.</p>
 <p>If you did not request this code, please ignore this email.</p>`),
 		},
@@ -1082,7 +1082,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 			HTML: notificationEmailCard("#4f46e5", "邮箱验证码", `
 <p>{{recipient_name}}，您好：</p>
 <p>您的验证码是：</p>
-<p style="font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center;">{{verification_code}}</p>
+<div class="code">{{verification_code}}</div>
 <p>验证码将在 <strong>{{expires_in_minutes}}</strong> 分钟后失效。</p>
 <p>如果不是您本人操作，请忽略此邮件。</p>`),
 		},
@@ -1116,7 +1116,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 <p>Hello {{recipient_name}},</p>
 <p>You are adding this address as an extra notification email.</p>
 <p>Your verification code is:</p>
-<p style="font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center;">{{verification_code}}</p>
+<div class="code">{{verification_code}}</div>
 <p>This code expires in <strong>{{expires_in_minutes}}</strong> minutes.</p>
 <p>If you did not request this code, please ignore this email.</p>`),
 		},
@@ -1125,7 +1125,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 			HTML: notificationEmailCard("#0ea5e9", "通知邮箱验证", `
 <p>{{recipient_name}}，您好：</p>
 <p>您正在添加额外的通知邮箱，请输入以下验证码完成验证。</p>
-<p style="font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center;">{{verification_code}}</p>
+<div class="code">{{verification_code}}</div>
 <p>验证码将在 <strong>{{expires_in_minutes}}</strong> 分钟后失效。</p>
 <p>如果不是您本人操作，请忽略此邮件。</p>`),
 		},
@@ -1365,20 +1365,27 @@ func notificationEmailCard(accent, title, content string) string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body { margin: 0; padding: 24px; background: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #18181b; }
-    .container { max-width: 640px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(15, 23, 42, 0.10); }
-    .header { background: ` + accent + `; color: #ffffff; padding: 28px 32px; }
-    .header h1 { margin: 0; font-size: 24px; line-height: 1.25; }
-    .content { padding: 32px; font-size: 15px; line-height: 1.7; }
-    .button { display: inline-block; margin-top: 12px; padding: 11px 18px; border-radius: 8px; background: ` + accent + `; color: #ffffff; text-decoration: none; font-weight: 600; }
-    .muted { color: #71717a; font-size: 13px; }
-    .footer { padding: 18px 32px; background: #fafafa; color: #a1a1aa; font-size: 12px; }
+    body { margin: 0; padding: 40px 16px; background: #f0eee6; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #191917; -webkit-font-smoothing: antialiased; }
+    .container { max-width: 560px; margin: 0 auto; background: #ffffff; border: 1px solid #e4ded2; border-radius: 10px; overflow: hidden; }
+    .accent { height: 3px; background: ` + accent + `; }
+    .body { padding: 36px 40px 32px; }
+    .body h1 { margin: 0 0 22px; font-family: Georgia, "Times New Roman", serif; font-size: 23px; font-weight: 600; line-height: 1.3; color: #191917; }
+    .body p { margin: 0 0 14px; font-size: 15px; line-height: 1.75; color: #33312c; }
+    .body strong { color: #191917; }
+    .button { display: inline-block; margin: 6px 0; padding: 11px 22px; border-radius: 8px; background: #191917; color: #ffffff !important; text-decoration: none; font-weight: 600; font-size: 14px; }
+    .code { margin: 22px 0; padding: 18px; text-align: center; background: #f5f3ec; border: 1px solid #e4ded2; border-radius: 8px; font-size: 30px; font-weight: 700; letter-spacing: 10px; color: #191917; font-variant-numeric: tabular-nums; }
+    .muted { color: #8c877d; font-size: 13px; }
+    .muted a { color: #8c877d; }
+    .footer { padding: 18px 40px; border-top: 1px solid #efeadf; background: #ffffff; color: #a8a39a; font-size: 12px; }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="header"><h1>` + title + `</h1></div>
-    <div class="content">` + content + `</div>
+    <div class="accent"></div>
+    <div class="body">
+      <h1>` + title + `</h1>
+      ` + content + `
+    </div>
     <div class="footer">This email was sent by {{site_name}}. Please do not reply directly.</div>
   </div>
 </body>
