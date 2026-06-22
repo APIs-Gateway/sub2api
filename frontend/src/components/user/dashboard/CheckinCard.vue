@@ -18,14 +18,13 @@
 
       <!-- 右：进度 + 领取按钮 -->
       <div class="flex items-center gap-4">
-        <!-- 当日活跃度未达标：展示 Token 进度，提示需活跃使用 -->
+        <!-- 当日活跃度未达标：只做笼统提示，不暴露具体计算口径。 -->
         <div v-if="notActive" class="hidden text-right sm:block">
-          <p class="font-mono text-xs text-gray-500 dark:text-gray-400">
-            {{ t('checkin.todayTokens') }}
-            <span class="text-gray-700 dark:text-gray-300">{{ formatTokens(status.today_tokens) }}</span>
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('checkin.activityNotMet') }}
           </p>
           <p class="text-[11px] text-gray-400 dark:text-gray-500">
-            {{ t('checkin.tokensNeededHint', { amount: formatTokens(status.min_tokens) }) }}
+            {{ t('checkin.activityHint') }}
           </p>
         </div>
         <div v-else-if="status.spend_per_extra > 0" class="hidden text-right sm:block">
@@ -94,17 +93,6 @@ const claimDisabled = computed(
 )
 
 const formatUsd = (v: number) => (Number.isFinite(v) ? v : 0).toFixed(2)
-
-// formatTokens 把 Token 数格式化为紧凑可读形式（1_500_000 → 1.5M，2_000 → 2K）。
-const formatTokens = (v: number) => {
-  const n = Number.isFinite(v) ? Math.max(0, v) : 0
-  if (n >= 1_000_000) {
-    const m = n / 1_000_000
-    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`
-  }
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`
-  return `${n}`
-}
 
 // notActive：基础签到被"当日活跃度门槛"拦住（未领、当日 Token 未达标、且无其他可领项）。
 const notActive = computed(() => {
