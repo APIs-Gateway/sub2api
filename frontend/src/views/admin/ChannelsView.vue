@@ -281,14 +281,33 @@
             v-show="section.enabled && activeTab === section.platform"
             class="space-y-4"
           >
+            <!-- 平台 Tab 内二级子导航：把分组/定价/映射/高级分区，告别长滚动 -->
+            <div class="flex flex-wrap gap-1 border-b border-gray-100 pb-2 dark:border-dark-700">
+              <button
+                v-for="sec in platformSubSections"
+                :key="sec.key"
+                type="button"
+                @click="platformSection = sec.key"
+                :class="[
+                  'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                  platformSection === sec.key
+                    ? 'bg-gray-100 text-gray-900 dark:bg-dark-700 dark:text-white'
+                    : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-dark-700/50',
+                ]"
+              >
+                {{ t(sec.labelKey) }}
+              </button>
+            </div>
+
             <!-- Groups -->
-            <div>
+            <div v-show="platformSection === 'groups'">
               <label class="input-label text-xs">
                 {{ t('admin.channels.form.groups', 'Associated Groups') }} <span class="text-red-500">*</span>
                 <span v-if="section.group_ids.length > 0" class="ml-1 font-normal text-gray-400">
                   ({{ t('admin.channels.form.selectedCount', { count: section.group_ids.length }, `已选 ${section.group_ids.length} 个`) }})
                 </span>
               </label>
+              <p class="mb-1 text-[11px] text-gray-400 dark:text-gray-500">{{ t('admin.channels.form.groupRateHint') }}</p>
               <div class="max-h-40 overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-2 dark:border-dark-600 dark:bg-dark-900">
                 <div v-if="groupsLoading" class="py-2 text-center text-xs text-gray-500">
                   {{ t('common.loading', 'Loading...') }}
@@ -328,7 +347,7 @@
             </div>
 
             <!-- Web Search Emulation (Anthropic only, hidden when global disabled) -->
-            <div v-if="section.platform === 'anthropic' && webSearchGlobalEnabled" class="border-t border-gray-200 pt-3 dark:border-dark-600">
+            <div v-show="platformSection === 'advanced'" v-if="section.platform === 'anthropic' && webSearchGlobalEnabled" class="border-t border-gray-200 pt-3 dark:border-dark-600">
               <div class="flex items-center justify-between">
                 <div>
                   <label class="text-xs font-medium text-gray-700 dark:text-gray-300">
@@ -343,7 +362,7 @@
             </div>
 
             <!-- Codex Image Generation Bridge (OpenAI only) -->
-            <div v-if="section.platform === 'openai'" class="border-t border-gray-200 pt-3 dark:border-dark-600">
+            <div v-show="platformSection === 'advanced'" v-if="section.platform === 'openai'" class="border-t border-gray-200 pt-3 dark:border-dark-600">
               <div class="flex items-center justify-between gap-4">
                 <div>
                   <label class="text-xs font-medium text-gray-700 dark:text-gray-300">
@@ -358,7 +377,7 @@
             </div>
 
             <!-- Bedrock CC Compatibility (Anthropic only) -->
-            <div v-if="section.platform === 'anthropic'" class="border-t border-gray-200 pt-3 dark:border-dark-600">
+            <div v-show="platformSection === 'advanced'" v-if="section.platform === 'anthropic'" class="border-t border-gray-200 pt-3 dark:border-dark-600">
               <div class="flex items-center justify-between gap-4">
                 <div>
                   <label class="text-xs font-medium text-gray-700 dark:text-gray-300">
@@ -373,13 +392,14 @@
             </div>
 
             <!-- Model Mapping -->
-            <div>
+            <div v-show="platformSection === 'mapping'">
               <div class="mb-1 flex items-center justify-between">
                 <label class="input-label text-xs mb-0">{{ t('admin.channels.form.modelMapping', 'Model Mapping') }}</label>
                 <button type="button" @click="addMappingEntry(sIdx)" class="text-xs text-primary-600 hover:text-primary-700">
                   + {{ t('common.add', 'Add') }}
                 </button>
               </div>
+              <p class="mb-1 text-[11px] text-gray-400 dark:text-gray-500">{{ t('admin.channels.form.wildcardHint') }}</p>
               <div
                 v-if="Object.keys(section.model_mapping).length === 0"
                 class="rounded border border-dashed border-gray-300 p-2 text-center text-xs text-gray-400 dark:border-dark-500"
@@ -421,7 +441,7 @@
             </div>
 
             <!-- Model Pricing -->
-            <div>
+            <div v-show="platformSection === 'pricing'">
               <div class="mb-1 flex items-center justify-between">
                 <label class="input-label text-xs mb-0">{{ t('admin.channels.form.modelPricing', 'Model Pricing') }}</label>
                 <div class="flex items-center gap-2">
@@ -456,8 +476,8 @@
               </div>
             </div>
 
-            <!-- Account Stats Pricing Rules (per-platform, always visible) -->
-            <div class="mt-4 border-t border-gray-200 pt-4 dark:border-dark-700 space-y-3">
+            <!-- Account Stats Pricing Rules (per-platform) -->
+            <div v-show="platformSection === 'advanced'" class="mt-4 border-t border-gray-200 pt-4 dark:border-dark-700 space-y-3">
               <div class="flex items-center justify-between">
                 <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
                   {{ t('admin.channels.form.accountStatsPricingRules') }}
@@ -662,6 +682,15 @@ const appStore = useAppStore()
 
 // 「对外展示设置」弹窗:配置用户「价格与计费」页展示哪些分组 / 模型
 const showDisplaySettings = ref(false)
+
+// 渠道编辑弹窗:平台 Tab 内的二级分区(分组 / 模型定价 / 模型映射 / 高级),避免长滚动
+const platformSection = ref('groups')
+const platformSubSections = [
+  { key: 'groups', labelKey: 'admin.channels.form.secGroups' },
+  { key: 'pricing', labelKey: 'admin.channels.form.secPricing' },
+  { key: 'mapping', labelKey: 'admin.channels.form.secMapping' },
+  { key: 'advanced', labelKey: 'admin.channels.form.secAdvanced' },
+]
 
 // Web Search global enabled state (loaded once on mount)
 const webSearchGlobalEnabled = ref(false)
