@@ -1227,6 +1227,8 @@ export interface CheckinSettings {
   amount_min: number;
   amount_max: number;
   spend_per_extra: number;
+  /** 基础签到所需当日最低 Token 用量；0=不设门槛。 */
+  min_tokens: number;
 }
 
 /**

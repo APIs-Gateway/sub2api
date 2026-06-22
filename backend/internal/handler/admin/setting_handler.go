@@ -3810,6 +3810,7 @@ type checkinSettingsRequest struct {
 	AmountMin     float64 `json:"amount_min"`
 	AmountMax     float64 `json:"amount_max"`
 	SpendPerExtra float64 `json:"spend_per_extra"`
+	MinTokens     int64   `json:"min_tokens"`
 }
 
 // GetCheckinSettings 返回当前签到配置（管理员）。
@@ -3830,6 +3831,7 @@ func (h *SettingHandler) UpdateCheckinSettings(c *gin.Context) {
 		AmountMin:     req.AmountMin,
 		AmountMax:     req.AmountMax,
 		SpendPerExtra: req.SpendPerExtra,
+		MinTokens:     req.MinTokens,
 	}
 	if err := h.settingService.UpdateCheckinConfig(c.Request.Context(), cfg); err != nil {
 		response.ErrorFrom(c, err)

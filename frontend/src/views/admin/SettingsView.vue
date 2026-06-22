@@ -5652,6 +5652,23 @@
                   {{ t('admin.settings.features.checkin.spendPerExtraHint') }}
                 </p>
               </div>
+
+              <div>
+                <label class="input-label">
+                  {{ t('admin.settings.features.checkin.minTokens') }}
+                </label>
+                <input
+                  v-model.number="checkinForm.min_tokens"
+                  type="number"
+                  step="100000"
+                  min="0"
+                  class="input"
+                  placeholder="1000000"
+                />
+                <p class="mt-1 text-xs text-gray-400">
+                  {{ t('admin.settings.features.checkin.minTokensHint') }}
+                </p>
+              </div>
             </div>
 
             <div class="flex justify-end">
@@ -7279,6 +7296,7 @@ const checkinForm = reactive({
   amount_min: 0,
   amount_max: 0,
   spend_per_extra: 0,
+  min_tokens: 1000000,
 });
 
 // Beta Policy 状态
@@ -9544,6 +9562,7 @@ async function saveCheckinSettings() {
       amount_min: checkinForm.amount_min,
       amount_max: checkinForm.amount_max,
       spend_per_extra: checkinForm.spend_per_extra,
+      min_tokens: checkinForm.min_tokens,
     });
     Object.assign(checkinForm, updated);
     appStore.showSuccess(t("admin.settings.features.checkin.saved"));

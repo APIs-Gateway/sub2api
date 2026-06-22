@@ -16,9 +16,19 @@
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ subtitle }}</p>
       </div>
 
-      <!-- 右：消费进度 + 领取按钮 -->
+      <!-- 右：进度 + 领取按钮 -->
       <div class="flex items-center gap-4">
-        <div v-if="status.spend_per_extra > 0" class="hidden text-right sm:block">
+        <!-- 当日活跃度未达标：展示 Token 进度，提示需活跃使用 -->
+        <div v-if="notActive" class="hidden text-right sm:block">
+          <p class="font-mono text-xs text-gray-500 dark:text-gray-400">
+            {{ t('checkin.todayTokens') }}
+            <span class="text-gray-700 dark:text-gray-300">{{ formatTokens(status.today_tokens) }}</span>
+          </p>
+          <p class="text-[11px] text-gray-400 dark:text-gray-500">
+            {{ t('checkin.tokensNeededHint', { amount: formatTokens(status.min_tokens) }) }}
+          </p>
+        </div>
+        <div v-else-if="status.spend_per_extra > 0" class="hidden text-right sm:block">
           <p class="font-mono text-xs text-gray-500 dark:text-gray-400">
             {{ t('checkin.todaySpend') }}
             <span class="text-gray-700 dark:text-gray-300">${{ formatUsd(status.today_spend) }}</span>
@@ -34,6 +44,7 @@
         >
           <span v-if="claiming">{{ t('checkin.claiming') }}</span>
           <span v-else-if="status.can_claim">{{ claimLabel }}</span>
+          <span v-else-if="notActive">{{ t('checkin.notActiveButton') }}</span>
           <span v-else>{{ t('checkin.doneToday') }}</span>
         </button>
       </div>
@@ -84,6 +95,23 @@ const claimDisabled = computed(
 
 const formatUsd = (v: number) => (Number.isFinite(v) ? v : 0).toFixed(2)
 
+// formatTokens 把 Token 数格式化为紧凑可读形式（1_500_000 → 1.5M，2_000 → 2K）。
+const formatTokens = (v: number) => {
+  const n = Number.isFinite(v) ? Math.max(0, v) : 0
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000
+    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`
+  }
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`
+  return `${n}`
+}
+
+// notActive：基础签到被"当日活跃度门槛"拦住（未领、当日 Token 未达标、且无其他可领项）。
+const notActive = computed(() => {
+  const s = status.value
+  return !!s && !s.can_claim && !s.daily_claimed && !s.tokens_met && s.min_tokens > 0
+})
+
 const subtitle = computed(() => {
   const s = status.value
   if (!s) return ''
@@ -92,6 +120,9 @@ const subtitle = computed(() => {
       min: formatUsd(s.amount_min),
       max: formatUsd(s.amount_max)
     })
+  }
+  if (notActive.value) {
+    return t('checkin.notActiveEnough')
   }
   return t('checkin.doneSubtitle')
 })

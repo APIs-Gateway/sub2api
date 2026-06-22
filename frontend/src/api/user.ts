@@ -210,6 +210,12 @@ export interface CheckinStatus {
   spend_to_next_bonus: number
   can_claim: boolean
   next_reset_at: string
+  /** 基础签到所需当日最低 Token 用量；0=不设门槛。 */
+  min_tokens: number
+  /** 用户当日已用 Token（input+output+cache 合计）。 */
+  today_tokens: number
+  /** 当日 Token 用量是否已达到基础签到门槛。 */
+  tokens_met: boolean
 }
 
 /** 一次签到领取的结果。 */

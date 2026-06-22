@@ -10,14 +10,14 @@ func TestCheckinEarnedBonus(t *testing.T) {
 		spend, perExtra float64
 		want            int
 	}{
-		{0.3, 0.1, 3},   // 浮点边界：0.3/0.1=2.9999… 必须算作 3
-		{0.0, 0.1, 0},   // 未消费
-		{0.1, 0.1, 1},   // 恰好一档
-		{0.29, 0.1, 2},  // 未到第 3 档
-		{1.0, 0.5, 2},   // 精确可表示
-		{2.5, 2.5, 1},   // 恰好一档
-		{5.0, 0.0, 0},   // perExtra=0 不开放
-		{-1.0, 0.1, 0},  // 负消费
+		{0.3, 0.1, 3},  // 浮点边界：0.3/0.1=2.9999… 必须算作 3
+		{0.0, 0.1, 0},  // 未消费
+		{0.1, 0.1, 1},  // 恰好一档
+		{0.29, 0.1, 2}, // 未到第 3 档
+		{1.0, 0.5, 2},  // 精确可表示
+		{2.5, 2.5, 1},  // 恰好一档
+		{5.0, 0.0, 0},  // perExtra=0 不开放
+		{-1.0, 0.1, 0}, // 负消费
 		{9.9999, 0.1, 99},
 	}
 	for _, c := range cases {
@@ -61,14 +61,37 @@ func TestCheckinTodayShanghai(t *testing.T) {
 }
 
 func TestCheckinConfigNormalize(t *testing.T) {
-	c := CheckinConfig{AmountMin: -1, AmountMax: -2, SpendPerExtra: -5}
+	c := CheckinConfig{AmountMin: -1, AmountMax: -2, SpendPerExtra: -5, MinTokens: -100}
 	c.normalize()
 	if c.AmountMin != 0 || c.AmountMax != 0 || c.SpendPerExtra != 0 {
 		t.Errorf("negative values not clamped: %+v", c)
+	}
+	if c.MinTokens != 0 {
+		t.Errorf("negative MinTokens not clamped: %+v", c)
 	}
 	c = CheckinConfig{AmountMin: 1.0, AmountMax: 0.5}
 	c.normalize()
 	if c.AmountMax < c.AmountMin {
 		t.Errorf("max<min not corrected: %+v", c)
+	}
+}
+
+func TestParseInt64Default(t *testing.T) {
+	cases := []struct {
+		raw  string
+		def  int64
+		want int64
+	}{
+		{"1000000", 0, 1000000},
+		{"  500000 ", 0, 500000},  // 容忍前后空白
+		{"", 1000000, 1000000},    // 空串回退默认
+		{"abc", 1000000, 1000000}, // 非法回退默认
+		{"0", 1000000, 0},         // 显式 0 不回退
+		{"-5", 1000000, -5},       // 解析层不做钳制（由 normalize 负责）
+	}
+	for _, c := range cases {
+		if got := parseInt64Default(c.raw, c.def); got != c.want {
+			t.Errorf("parseInt64Default(%q, %d) = %d, want %d", c.raw, c.def, got, c.want)
+		}
 	}
 }
