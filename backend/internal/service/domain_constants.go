@@ -49,6 +49,9 @@ const (
 	PublicBenefitIPDailyCapUSDDefault = 10.0        // 单 IP 每自然日消费上限（USD）
 	PublicBenefitKeyNamesDefault      = "hvoy,hovy" // 公益 key 名单（逗号分隔，精确匹配 api_keys.name）
 	PublicBenefitIPCapMessageDefault  = "今日您的公益 API 使用额度已满。觉得好用的话，可点击 https://codex.hiyo.top 购买我们的日卡 / 月卡套餐，月卡低至 0.04 倍率。"
+	// IP 白名单（逗号分隔）：命中的 IP 豁免单 IP 每日上限，且不累加。用于运营商 CGN/NAT
+	// 共享出口等多用户共用一个 IP 的场景，避免连坐误封。默认含已知的电信 IPv6 CGN 出口。
+	PublicBenefitIPWhitelistDefault = "240d:c000:f06f:ab00:236:8350:42d2:0"
 )
 
 // Platform constants
@@ -159,6 +162,7 @@ const (
 	SettingKeyPublicBenefitIPDailyCapUSD       = "public_benefit_ip_daily_cap_usd"     // 公益 key 单 IP 每自然日上限（USD）
 	SettingKeyPublicBenefitKeyNames            = "public_benefit_key_names"            // 公益 key 名单（逗号分隔，精确匹配 name）
 	SettingKeyPublicBenefitIPCapMessage        = "public_benefit_ip_cap_message"       // 超额返回文案（HTTP 200）
+	SettingKeyPublicBenefitIPWhitelist         = "public_benefit_ip_whitelist"         // 公益 IP 上限白名单（逗号分隔，命中豁免且不累加）
 	SettingKeyRiskControlEnabled               = "risk_control_enabled"                // 是否启用风控中心入口与审计链路
 	SettingKeyContentModerationConfig          = "content_moderation_config"           // 内容审计配置（JSON）
 	SettingKeyCyberSessionBlockEnabled         = "cyber_session_block_enabled"         // cyber 命中后会话级自动屏蔽总开关(默认关)

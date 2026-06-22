@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ type PublicBenefitConfig struct {
 	DailyCapUSD float64  `json:"daily_cap_usd"` // 单 IP 每自然日消费上限（USD），<=0 视为不限制
 	KeyNames    []string `json:"key_names"`     // 公益 key 名单（小写、去重）
 	Message     string   `json:"message"`       // 超额时返回的文案（HTTP 200）
+	IPWhitelist []string `json:"ip_whitelist"`  // 豁免 IP 名单（规范化后）：命中则不计上限、不累加（应对 CGN/NAT 共享出口连坐）
 }
 
 // matchesKeyName 判断给定 key 名是否属于公益 key 名单（大小写不敏感）。
@@ -47,6 +49,46 @@ func parsePublicBenefitKeyNames(raw string) []string {
 	return out
 }
 
+// normalizePublicBenefitIP 规范化 IP 字符串（合法 IP 走 net.IP 规范表示，便于跨 IPv6
+// 压缩/大小写表示比较；非法字符串原样去空白返回，回退精确匹配）。
+func normalizePublicBenefitIP(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if ip := net.ParseIP(raw); ip != nil {
+		return ip.String()
+	}
+	return raw
+}
+
+// parsePublicBenefitIPWhitelist 解析逗号分隔的 IP 白名单为规范化去重切片。
+func parsePublicBenefitIPWhitelist(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, p := range parts {
+		p = normalizePublicBenefitIP(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
+// ipWhitelisted 判断 clientIP 是否在白名单内（按规范化 IP 比较，回退字符串精确匹配）。
+func (c PublicBenefitConfig) ipWhitelisted(clientIP string) bool {
+	if len(c.IPWhitelist) == 0 {
+		return false
+	}
+	norm := normalizePublicBenefitIP(clientIP)
+	for _, w := range c.IPWhitelist {
+		if w == norm {
+			return true
+		}
+	}
+	return false
+}
+
 // GetPublicBenefitConfig 读取公益 key 上限配置（缺失键回退默认）。
 func (s *SettingService) GetPublicBenefitConfig(ctx context.Context) PublicBenefitConfig {
 	vals, err := s.settingRepo.GetMultiple(ctx, []string{
@@ -54,6 +96,7 @@ func (s *SettingService) GetPublicBenefitConfig(ctx context.Context) PublicBenef
 		SettingKeyPublicBenefitIPDailyCapUSD,
 		SettingKeyPublicBenefitKeyNames,
 		SettingKeyPublicBenefitIPCapMessage,
+		SettingKeyPublicBenefitIPWhitelist,
 	})
 	if err != nil || vals == nil {
 		vals = map[string]string{}
@@ -74,11 +117,17 @@ func (s *SettingService) GetPublicBenefitConfig(ctx context.Context) PublicBenef
 	if strings.TrimSpace(msg) == "" {
 		msg = PublicBenefitIPCapMessageDefault
 	}
+	// 白名单：仅当该键从未设置时回退默认（含已知 CGN 出口）；用户保存过则尊重其值（含显式清空）。
+	whitelistRaw, ok := vals[SettingKeyPublicBenefitIPWhitelist]
+	if !ok {
+		whitelistRaw = PublicBenefitIPWhitelistDefault
+	}
 	return PublicBenefitConfig{
 		Enabled:     enabled,
 		DailyCapUSD: cap,
 		KeyNames:    parsePublicBenefitKeyNames(namesRaw),
 		Message:     msg,
+		IPWhitelist: parsePublicBenefitIPWhitelist(whitelistRaw),
 	}
 }
 
@@ -92,11 +141,13 @@ func (s *SettingService) UpdatePublicBenefitConfig(ctx context.Context, cfg Publ
 	if msg == "" {
 		msg = PublicBenefitIPCapMessageDefault
 	}
+	whitelist := strings.Join(parsePublicBenefitIPWhitelist(strings.Join(cfg.IPWhitelist, ",")), ",")
 	updates := map[string]string{
 		SettingKeyPublicBenefitIPCapEnabled:  strconv.FormatBool(cfg.Enabled),
 		SettingKeyPublicBenefitIPDailyCapUSD: strconv.FormatFloat(cfg.DailyCapUSD, 'f', 4, 64),
 		SettingKeyPublicBenefitKeyNames:      names,
 		SettingKeyPublicBenefitIPCapMessage:  msg,
+		SettingKeyPublicBenefitIPWhitelist:   whitelist,
 	}
 	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 		return err
@@ -155,6 +206,9 @@ func (s *BillingCacheService) PublicBenefitIPCapExceeded(ctx context.Context, ap
 	if !cfg.Enabled || cfg.DailyCapUSD <= 0 || !cfg.matchesKeyName(apiKey.Name) {
 		return false, ""
 	}
+	if cfg.ipWhitelisted(clientIP) {
+		return false, "" // 白名单 IP（CGN/NAT 共享出口等）豁免上限，不连坐
+	}
 	spent, err := s.cache.GetPublicBenefitIPSpend(ctx, publicBenefitDateKey(), clientIP)
 	if err != nil {
 		return false, "" // fail-open：Redis 故障不拦正常请求
@@ -173,6 +227,9 @@ func (s *BillingCacheService) AddPublicBenefitIPSpend(ctx context.Context, apiKe
 	cfg := s.publicBenefitConfig(ctx)
 	if !cfg.Enabled || !cfg.matchesKeyName(apiKey.Name) {
 		return
+	}
+	if cfg.ipWhitelisted(clientIP) {
+		return // 白名单 IP 不累加，避免解封后又涨到上限
 	}
 	cctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

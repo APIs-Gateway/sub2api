@@ -3844,6 +3844,7 @@ type publicBenefitSettingsResponse struct {
 	DailyCapUSD float64 `json:"daily_cap_usd"`
 	KeyNames    string  `json:"key_names"`
 	Message     string  `json:"message"`
+	IPWhitelist string  `json:"ip_whitelist"` // 豁免 IP（逗号分隔字符串，便于表单编辑）
 }
 
 func publicBenefitConfigToResponse(cfg service.PublicBenefitConfig) publicBenefitSettingsResponse {
@@ -3852,6 +3853,7 @@ func publicBenefitConfigToResponse(cfg service.PublicBenefitConfig) publicBenefi
 		DailyCapUSD: cfg.DailyCapUSD,
 		KeyNames:    strings.Join(cfg.KeyNames, ","),
 		Message:     cfg.Message,
+		IPWhitelist: strings.Join(cfg.IPWhitelist, ","),
 	}
 }
 
@@ -3873,6 +3875,7 @@ func (h *SettingHandler) UpdatePublicBenefitSettings(c *gin.Context) {
 		DailyCapUSD: req.DailyCapUSD,
 		KeyNames:    strings.Split(req.KeyNames, ","), // UpdatePublicBenefitConfig 内部会归一化（小写/去重/去空）
 		Message:     req.Message,
+		IPWhitelist: strings.Split(req.IPWhitelist, ","), // 内部会规范化 IP + 去重去空
 	}
 	if err := h.settingService.UpdatePublicBenefitConfig(c.Request.Context(), cfg); err != nil {
 		response.ErrorFrom(c, err)
