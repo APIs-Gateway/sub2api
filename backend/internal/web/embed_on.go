@@ -97,8 +97,24 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 			cleanPath = "index.html"
 		}
 
-		// For index.html or SPA routes, serve with injected settings
-		if cleanPath == "index.html" || !s.fileExists(cleanPath) {
+		// index.html itself always gets the injected HTML shell.
+		if cleanPath == "index.html" {
+			s.serveIndexHTML(c)
+			return
+		}
+
+		// Unknown path: SPA navigation routes (extensionless) fall back to the
+		// index.html shell; a missing static asset (under assets/ or with a file
+		// extension) must return 404 instead. Serving the HTML shell under a
+		// .js/.css URL causes "Expected a JavaScript module but got text/html"
+		// MIME errors for stale chunk references and lets CDNs cache HTML under
+		// asset URLs, breaking the page for every user on that edge.
+		if !s.fileExists(cleanPath) {
+			if looksLikeStaticAsset(cleanPath) {
+				c.Status(http.StatusNotFound)
+				c.Abort()
+				return
+			}
 			s.serveIndexHTML(c)
 			return
 		}
@@ -112,6 +128,21 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 		s.fileServer.ServeHTTP(c.Writer, c.Request)
 		c.Abort()
 	}
+}
+
+// looksLikeStaticAsset reports whether a missing path should return 404 (static
+// asset) rather than fall back to the index.html shell (SPA navigation route).
+// Hashed build output lives under assets/; any path whose final segment has a
+// file extension (e.g. .js, .css, .png, .map) is also treated as a static asset.
+func looksLikeStaticAsset(cleanPath string) bool {
+	if strings.HasPrefix(cleanPath, "assets/") {
+		return true
+	}
+	base := cleanPath
+	if i := strings.LastIndexByte(base, '/'); i >= 0 {
+		base = base[i+1:]
+	}
+	return strings.IndexByte(base, '.') >= 0
 }
 
 func (s *FrontendServer) fileExists(path string) bool {

@@ -27,7 +27,7 @@ func TestInjectSiteTitle(t *testing.T) {
 
 		result := injectSiteTitle(html, settingsJSON)
 
-		assert.Contains(t, string(result), "<title>MyCustomSite - AI API Gateway</title>")
+		assert.Contains(t, string(result), "<title>MyCustomSite - Codex订阅站</title>")
 		assert.NotContains(t, string(result), "Sub2API")
 	})
 
@@ -88,7 +88,7 @@ func TestInjectSiteTitle(t *testing.T) {
 		assert.Contains(t, string(result), `<meta charset="UTF-8">`)
 		assert.Contains(t, string(result), `<script src="app.js"></script>`)
 		assert.Contains(t, string(result), `<div id="app"></div>`)
-		assert.Contains(t, string(result), "<title>TestSite - AI API Gateway</title>")
+		assert.Contains(t, string(result), "<title>TestSite - Codex订阅站</title>")
 	})
 }
 
@@ -541,6 +541,67 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "image/png")
 	})
+
+	t.Run("returns_404_for_missing_static_assets", func(t *testing.T) {
+		provider := &mockSettingsProvider{
+			settings: map[string]string{"test": "value"},
+		}
+
+		server, err := NewFrontendServer(provider)
+		require.NoError(t, err)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set(middleware.CSPNonceKey, "test-nonce")
+			c.Next()
+		})
+		router.Use(server.Middleware())
+
+		// A stale/non-existent hashed chunk must 404, NOT fall back to the
+		// index.html shell. Serving HTML under a .js/.css URL is what triggers
+		// "Expected a JavaScript module but got text/html" and lets CDNs cache
+		// HTML under asset URLs.
+		missingAssets := []string{
+			"/assets/DashboardView-DEADBEEF.js",
+			"/assets/index-NOPE.css",
+			"/old-chunk.js",
+		}
+
+		for _, path := range missingAssets {
+			t.Run(path, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				router.ServeHTTP(w, req)
+
+				assert.Equal(t, http.StatusNotFound, w.Code)
+				assert.NotContains(t, w.Body.String(), "<!doctype html>")
+			})
+		}
+	})
+}
+
+func TestLooksLikeStaticAsset(t *testing.T) {
+	staticPaths := []string{
+		"assets/index-DhhzrWii.js",
+		"assets/DashboardView-D8zDhfNo.js",
+		"logo.png",
+		"favicon.svg",
+		"manifest.webmanifest",
+		"nested/dir/file.map",
+	}
+	for _, p := range staticPaths {
+		assert.True(t, looksLikeStaticAsset(p), "expected %q to be a static asset", p)
+	}
+
+	spaPaths := []string{
+		"dashboard",
+		"users/123",
+		"settings/profile",
+		"available-channels",
+	}
+	for _, p := range spaPaths {
+		assert.False(t, looksLikeStaticAsset(p), "expected %q to be an SPA route", p)
+	}
 }
 
 func TestNewFrontendServer(t *testing.T) {
