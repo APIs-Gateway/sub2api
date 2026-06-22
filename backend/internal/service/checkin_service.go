@@ -18,6 +18,8 @@ var (
 	ErrCheckinAlreadyClaimed = errors.New("checkin already claimed today")
 	// ErrCheckinNoBonus 表示当前没有可领取的额外签到（消费未达阈值或已领完）。
 	ErrCheckinNoBonus = errors.New("no bonus checkin available")
+	// ErrCheckinNotActiveEnough 表示当日 Token 用量未达到基础签到门槛（本日不够活跃）。
+	ErrCheckinNotActiveEnough = errors.New("not active enough today")
 )
 
 // checkinZone 固定为 Asia/Shanghai（UTC+8，中国无夏令时，等价于固定时区，
@@ -33,6 +35,7 @@ type CheckinConfig struct {
 	AmountMin     float64 `json:"amount_min"`      // 单次随机奖励下限（USD）
 	AmountMax     float64 `json:"amount_max"`      // 单次随机奖励上限（USD）
 	SpendPerExtra float64 `json:"spend_per_extra"` // 每累计消费满该金额（USD）解锁一次额外签到；0=不开放额外签到
+	MinTokens     int64   `json:"min_tokens"`      // 基础签到所需"当日"最低 Token 用量（input+output+cache 合计）；<=0=不设门槛
 }
 
 func (c *CheckinConfig) normalize() {
@@ -48,6 +51,9 @@ func (c *CheckinConfig) normalize() {
 	if c.SpendPerExtra < 0 {
 		c.SpendPerExtra = 0
 	}
+	if c.MinTokens < 0 {
+		c.MinTokens = 0
+	}
 }
 
 // GetCheckinConfig 读取签到配置（缺失键回退默认值，并 normalize）。
@@ -57,6 +63,7 @@ func (s *SettingService) GetCheckinConfig(ctx context.Context) CheckinConfig {
 		SettingKeyCheckinAmountMin,
 		SettingKeyCheckinAmountMax,
 		SettingKeyCheckinSpendPerExtra,
+		SettingKeyCheckinMinTokens,
 	})
 	if err != nil || vals == nil {
 		vals = map[string]string{}
@@ -66,6 +73,7 @@ func (s *SettingService) GetCheckinConfig(ctx context.Context) CheckinConfig {
 		AmountMin:     parseFloatDefault(vals[SettingKeyCheckinAmountMin], CheckinAmountMinDefault),
 		AmountMax:     parseFloatDefault(vals[SettingKeyCheckinAmountMax], CheckinAmountMaxDefault),
 		SpendPerExtra: parseFloatDefault(vals[SettingKeyCheckinSpendPerExtra], CheckinSpendPerExtraDefault),
+		MinTokens:     parseInt64Default(vals[SettingKeyCheckinMinTokens], CheckinMinTokensDefault),
 	}
 	cfg.normalize()
 	return cfg
@@ -79,6 +87,7 @@ func (s *SettingService) UpdateCheckinConfig(ctx context.Context, cfg CheckinCon
 		SettingKeyCheckinAmountMin:     strconv.FormatFloat(cfg.AmountMin, 'f', 4, 64),
 		SettingKeyCheckinAmountMax:     strconv.FormatFloat(cfg.AmountMax, 'f', 4, 64),
 		SettingKeyCheckinSpendPerExtra: strconv.FormatFloat(cfg.SpendPerExtra, 'f', 4, 64),
+		SettingKeyCheckinMinTokens:     strconv.FormatInt(cfg.MinTokens, 10),
 	}
 	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 		return err
@@ -92,6 +101,14 @@ func (s *SettingService) UpdateCheckinConfig(ctx context.Context, cfg CheckinCon
 func parseFloatDefault(raw string, def float64) float64 {
 	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return def
+	}
+	return v
+}
+
+func parseInt64Default(raw string, def int64) int64 {
+	v, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
 		return def
 	}
 	return v
@@ -154,6 +171,9 @@ type CheckinStatus struct {
 	SpendToNextBonus  float64 `json:"spend_to_next_bonus"`
 	CanClaim          bool    `json:"can_claim"`
 	NextResetAt       string  `json:"next_reset_at"`
+	MinTokens         int64   `json:"min_tokens"`   // 基础签到所需当日最低 Token 用量；0=不设门槛
+	TodayTokens       int64   `json:"today_tokens"` // 用户当日已用 Token（input+output+cache）
+	TokensMet         bool    `json:"tokens_met"`   // 当日 Token 用量是否已达到基础签到门槛
 }
 
 // CheckinClaimResult 是一次领取的结果，附带刷新后的状态。
@@ -183,10 +203,15 @@ func (s *CheckinService) GetStatus(ctx context.Context, userID int64) (*CheckinS
 		return nil, err
 	}
 	st.DailyClaimed = hasDaily
-	st.DailyAvailable = !hasDaily
 
-	spend := s.todaySpend(ctx, userID, dayStart)
+	spend, tokens := s.todayUsage(ctx, userID, dayStart)
 	st.TodaySpend = checkinRound4(spend)
+
+	// 基础签到活跃度门槛：当日 Token 用量需达到 MinTokens（0=不限制）。
+	st.MinTokens = cfg.MinTokens
+	st.TodayTokens = tokens
+	st.TokensMet = cfg.MinTokens <= 0 || tokens >= cfg.MinTokens
+	st.DailyAvailable = !hasDaily && st.TokensMet
 
 	if cfg.SpendPerExtra > 0 {
 		earned := checkinEarnedBonus(spend, cfg.SpendPerExtra)
@@ -210,7 +235,7 @@ func (s *CheckinService) GetStatus(ctx context.Context, userID int64) (*CheckinS
 	return st, nil
 }
 
-// Claim 领取下一个可用签到：优先基础签到，否则一次额外签到。
+// Claim 领取下一个可用签到：优先基础签到（需当日活跃度达标），否则一次额外签到。
 func (s *CheckinService) Claim(ctx context.Context, userID int64) (*CheckinClaimResult, error) {
 	cfg := s.settings.GetCheckinConfig(ctx)
 	if !cfg.Enabled {
@@ -222,38 +247,47 @@ func (s *CheckinService) Claim(ctx context.Context, userID int64) (*CheckinClaim
 	if err != nil {
 		return nil, err
 	}
+	spend, tokens := s.todayUsage(ctx, userID, dayStart)
+	tokensMet := cfg.MinTokens <= 0 || tokens >= cfg.MinTokens
 
 	amount := checkinRandomAmount(cfg)
-	var ctype string
-	if !hasDaily {
-		ctype = "daily"
+
+	// 1) 基础签到：当日未领 且 当日 Token 用量达到门槛。
+	if !hasDaily && tokensMet {
 		if err := s.repo.ClaimDaily(ctx, userID, date, amount); err != nil {
 			return nil, err
 		}
-	} else {
-		if cfg.SpendPerExtra <= 0 {
-			return nil, ErrCheckinNoBonus
-		}
-		earned := checkinEarnedBonus(s.todaySpend(ctx, userID, dayStart), cfg.SpendPerExtra)
-		if earned <= 0 {
-			return nil, ErrCheckinNoBonus
-		}
-		claimed, err := s.repo.CountBonusOnDate(ctx, userID, date)
-		if err != nil {
-			return nil, err
-		}
-		if claimed >= earned {
-			return nil, ErrCheckinNoBonus
-		}
-		ctype = "bonus"
-		// maxBonus=earned：repo 在锁内复核，绝不超过当前应得数。
-		if err := s.repo.ClaimBonus(ctx, userID, date, amount, earned); err != nil {
-			return nil, err
+		return s.finishClaim(ctx, userID, "daily", amount)
+	}
+
+	// 2) 额外签到：按当日消费解锁（不受活跃度门槛限制）。
+	if cfg.SpendPerExtra > 0 {
+		earned := checkinEarnedBonus(spend, cfg.SpendPerExtra)
+		if earned > 0 {
+			claimed, err := s.repo.CountBonusOnDate(ctx, userID, date)
+			if err != nil {
+				return nil, err
+			}
+			if claimed < earned {
+				// maxBonus=earned：repo 在锁内复核，绝不超过当前应得数。
+				if err := s.repo.ClaimBonus(ctx, userID, date, amount, earned); err != nil {
+					return nil, err
+				}
+				return s.finishClaim(ctx, userID, "bonus", amount)
+			}
 		}
 	}
 
-	s.invalidateBalanceCaches(ctx, userID)
+	// 3) 无可领：区分"当日活跃度不足"（基础签到被门槛拦住）与"已领完/无额外"。
+	if !hasDaily && !tokensMet {
+		return nil, ErrCheckinNotActiveEnough
+	}
+	return nil, ErrCheckinNoBonus
+}
 
+// finishClaim 在一次成功领取后失效余额缓存并返回携带最新状态的结果。
+func (s *CheckinService) finishClaim(ctx context.Context, userID int64, ctype string, amount float64) (*CheckinClaimResult, error) {
+	s.invalidateBalanceCaches(ctx, userID)
 	status, statusErr := s.GetStatus(ctx, userID)
 	if statusErr != nil {
 		status = nil
@@ -261,15 +295,19 @@ func (s *CheckinService) Claim(ctx context.Context, userID int64) (*CheckinClaim
 	return &CheckinClaimResult{Type: ctype, Amount: amount, Status: status}, nil
 }
 
-func (s *CheckinService) todaySpend(ctx context.Context, userID int64, dayStart time.Time) float64 {
+// todayUsage 返回用户当日（dayStart 至今）累计消费（USD）与 Token 用量（input+output+cache 合计）。
+func (s *CheckinService) todayUsage(ctx context.Context, userID int64, dayStart time.Time) (spend float64, tokens int64) {
 	stats, err := s.usage.GetUserStatsAggregated(ctx, userID, dayStart, checkinNow())
 	if err != nil || stats == nil {
-		return 0
+		return 0, 0
 	}
-	if stats.TotalActualCost < 0 {
-		return 0
+	if stats.TotalActualCost > 0 {
+		spend = stats.TotalActualCost
 	}
-	return stats.TotalActualCost
+	if stats.TotalTokens > 0 {
+		tokens = stats.TotalTokens
+	}
+	return spend, tokens
 }
 
 func (s *CheckinService) invalidateBalanceCaches(ctx context.Context, userID int64) {

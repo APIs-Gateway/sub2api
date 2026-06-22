@@ -69,6 +69,8 @@ func (h *CheckinHandler) Claim(c *gin.Context) {
 			response.BadRequest(c, "CHECKIN_ALREADY_CLAIMED")
 		case errors.Is(err, service.ErrCheckinNoBonus):
 			response.BadRequest(c, "CHECKIN_NO_BONUS")
+		case errors.Is(err, service.ErrCheckinNotActiveEnough):
+			response.BadRequest(c, "CHECKIN_NOT_ACTIVE_ENOUGH")
 		default:
 			response.ErrorFrom(c, err)
 		}

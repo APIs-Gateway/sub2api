@@ -37,10 +37,11 @@ const (
 
 // Check-in（每日签到）settings 默认值
 const (
-	CheckinEnabledDefault       = false // 签到功能默认关闭
-	CheckinAmountMinDefault     = 0.0   // 单次随机奖励下限（USD）
-	CheckinAmountMaxDefault     = 0.0   // 单次随机奖励上限（USD）
-	CheckinSpendPerExtraDefault = 0.0   // 每满$X消费额外签到一次；0=不开放额外签到
+	CheckinEnabledDefault       = false            // 签到功能默认关闭
+	CheckinAmountMinDefault     = 0.0              // 单次随机奖励下限（USD）
+	CheckinAmountMaxDefault     = 0.0              // 单次随机奖励上限（USD）
+	CheckinSpendPerExtraDefault = 0.0              // 每满$X消费额外签到一次；0=不开放额外签到
+	CheckinMinTokensDefault     = int64(1_000_000) // 基础签到所需"当日"最低 Token 用量（input+output+cache 合计）；0=不设门槛
 )
 
 // Public-benefit key（公益 key）单 IP 每日额度上限 默认值
@@ -158,6 +159,7 @@ const (
 	SettingKeyCheckinAmountMin                 = "checkin_amount_min"                  // 签到随机奖励下限（USD）
 	SettingKeyCheckinAmountMax                 = "checkin_amount_max"                  // 签到随机奖励上限（USD）
 	SettingKeyCheckinSpendPerExtra             = "checkin_spend_per_extra"             // 每满$X消费解锁一次额外签到（0=不开放）
+	SettingKeyCheckinMinTokens                 = "checkin_min_tokens"                  // 基础签到所需当日最低 Token 用量（0=不限制）
 	SettingKeyPublicBenefitIPCapEnabled        = "public_benefit_ip_cap_enabled"       // 公益 key 单 IP 每日额度上限总开关
 	SettingKeyPublicBenefitIPDailyCapUSD       = "public_benefit_ip_daily_cap_usd"     // 公益 key 单 IP 每自然日上限（USD）
 	SettingKeyPublicBenefitKeyNames            = "public_benefit_key_names"            // 公益 key 名单（逗号分隔，精确匹配 name）

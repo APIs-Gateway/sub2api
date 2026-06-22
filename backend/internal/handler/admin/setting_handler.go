@@ -3810,6 +3810,9 @@ type checkinSettingsRequest struct {
 	AmountMin     float64 `json:"amount_min"`
 	AmountMax     float64 `json:"amount_max"`
 	SpendPerExtra float64 `json:"spend_per_extra"`
+	// MinTokens 用指针区分"未传"与"显式 0"：未传时保留当前已配置门槛，
+	// 避免旧客户端/脚本漏传该字段把 Token 门槛意外清零；显式 0 才表示关闭门槛。
+	MinTokens *int64 `json:"min_tokens"`
 }
 
 // GetCheckinSettings 返回当前签到配置（管理员）。
@@ -3830,6 +3833,12 @@ func (h *SettingHandler) UpdateCheckinSettings(c *gin.Context) {
 		AmountMin:     req.AmountMin,
 		AmountMax:     req.AmountMax,
 		SpendPerExtra: req.SpendPerExtra,
+	}
+	if req.MinTokens != nil {
+		cfg.MinTokens = *req.MinTokens
+	} else {
+		// 字段缺省：保留当前已配置门槛（从未设置则回退默认 1M），不清零。
+		cfg.MinTokens = h.settingService.GetCheckinConfig(c.Request.Context()).MinTokens
 	}
 	if err := h.settingService.UpdateCheckinConfig(c.Request.Context(), cfg); err != nil {
 		response.ErrorFrom(c, err)
