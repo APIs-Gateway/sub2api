@@ -6895,6 +6895,9 @@ export default {
       expired: 'Expired',
       revoked: 'Revoked'
     },
+    sectionActive: 'Active',
+    sectionEnded: 'Ended',
+    noActiveNow: 'No active subscriptions right now',
     usage: 'Usage',
     expires: 'Expires',
     noExpiration: 'No expiration',

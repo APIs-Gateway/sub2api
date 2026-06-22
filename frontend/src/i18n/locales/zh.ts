@@ -7048,6 +7048,9 @@ export default {
       expired: '已过期',
       revoked: '已撤销'
     },
+    sectionActive: '生效中',
+    sectionEnded: '已结束',
+    noActiveNow: '当前没有生效中的订阅',
     usage: '用量',
     expires: '到期时间',
     noExpiration: '无到期时间',
