@@ -862,18 +862,12 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 	// 只有用户显式开启了本卡透支、且本卡累计透支次数未满 5 次时，才允许继续发起一个透支请求。
 	// 管理员豁免。
 	if !user.IsAdmin() {
-		currentLocked, limitLocked, canOverdraft, lerr := s.lockedSubscriptionBalance(ctx, user.ID)
+		currentLocked, limitLocked, subscriptionRemaining, canOverdraft, lerr := s.lockedSubscriptionBalance(ctx, user.ID)
 		if lerr != nil {
 			// 加载活跃卡失败：fail-open 退回原始余额检查，避免因瞬时 DB 抖动误挡正常用户。
 			logger.LegacyPrintf("service.billing_cache", "Warning: overdraft gate lookup failed for user %d: %v (fallback to raw balance)", user.ID, lerr)
 		} else if currentLocked > 0 {
-			if balance-currentLocked <= 0 {
-				if canOverdraft && balance-limitLocked > 0 {
-					return nil
-				}
-				return ErrSubscriptionOverdraftLimit
-			}
-			return nil
+			return subscriptionOverdraftGate(balance, currentLocked, limitLocked, subscriptionRemaining, canOverdraft)
 		}
 	}
 
@@ -887,23 +881,35 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 // lockedSubscriptionBalance 汇总用户全部活跃 burn-down 卡：
 //   - currentLocked：当天尚未解锁、但仍计入 users.balance 的未来额度。
 //   - limitLocked：施加每卡 max_overdraft_days 后仍不可用的额度；未开启透支或次数用尽的卡按 0 天透支计算。
+//   - subscriptionRemaining：全部活跃卡 remaining 合计（= G−consumed−clawed），用于把闸门判断
+//     约束在「订阅卡支撑的余额」上，排除充值/签到等非订阅余额的虚高。
 //   - canOverdraft：至少一张卡已开启透支、仍有累计透支次数余量，且可提前消费后续天额度。
-func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, userID int64) (float64, float64, bool, error) {
+func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, userID int64) (currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool, err error) {
 	if s.subRepo == nil {
-		return 0, 0, false, nil
+		return 0, 0, 0, false, nil
 	}
 	if s.hasNoSubscriptionLockCached(userID) {
-		return 0, 0, false, nil
+		return 0, 0, 0, false, nil
 	}
 	subs, err := s.subRepo.ListActiveByUserID(ctx, userID)
 	if err != nil {
-		return 0, 0, false, err
+		return 0, 0, 0, false, err
 	}
-	now := time.Now()
-	var currentLocked float64
-	var limitLocked float64
-	var canOverdraft bool
+	currentLocked, limitLocked, subscriptionRemaining, canOverdraft = aggregateSubscriptionLocks(subs, time.Now())
+	if currentLocked <= 0 {
+		s.setNoSubscriptionLockCache(userID)
+	}
+	return currentLocked, limitLocked, subscriptionRemaining, canOverdraft, nil
+}
+
+// aggregateSubscriptionLocks 汇总活跃 burn-down 卡的闸门量（纯函数，便于单测）：
+//   - currentLocked：按 0 天透支锁定（今日已解锁额度之外）的额度合计。
+//   - limitLocked：施加每卡 max_overdraft_days 后仍锁定的额度合计；未开启透支或次数用尽的卡按 0 天透支算。
+//   - subscriptionRemaining：全部活跃卡 remaining 合计。
+//   - canOverdraft：至少一张卡开启透支且其透支额度尚能放宽锁定。
+func aggregateSubscriptionLocks(subs []UserSubscription, now time.Time) (currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool) {
 	for i := range subs {
+		subscriptionRemaining += subs[i].RemainingUSD()
 		cardLocked := subs[i].LockedAt(now, 0)
 		currentLocked += cardLocked
 		cardLimitLocked := cardLocked
@@ -915,10 +921,32 @@ func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, use
 		}
 		limitLocked += cardLimitLocked
 	}
+	return
+}
+
+// subscriptionOverdraftGate 是订阅透支准入闸门的纯判定（便于单测）。
+//
+// 关键：用 subBalance = min(balance, 订阅卡 remaining 合计) 而非用户总余额参与判断。
+// 排除充值/签到等非订阅余额造成的虚高——否则任意一点非订阅余额都会让 balance−locked
+// 恒为正、闸门永不触发；而扣费始终先扣订阅卡 remaining（allocateUsageBillingSubscriptions），
+// 那部分非订阅余额并不会被先消费，故不应让它放宽订阅透支约束。
+// 仅在 currentLocked>0（存在被锁定的订阅额度）时由调用方启用。
+func subscriptionOverdraftGate(balance, currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool) error {
 	if currentLocked <= 0 {
-		s.setNoSubscriptionLockCache(userID)
+		return nil
 	}
-	return currentLocked, limitLocked, canOverdraft, nil
+	subBalance := balance
+	if subscriptionRemaining < subBalance {
+		subBalance = subscriptionRemaining
+	}
+	if subBalance-currentLocked <= 0 {
+		// 当天已解锁额度已花尽：仅当本卡开启透支且仍在 max_overdraft_days 额度内才放行一个透支请求。
+		if canOverdraft && subBalance-limitLocked > 0 {
+			return nil
+		}
+		return ErrSubscriptionOverdraftLimit
+	}
+	return nil
 }
 
 func (s *BillingCacheService) hasNoSubscriptionLockCached(userID int64) bool {

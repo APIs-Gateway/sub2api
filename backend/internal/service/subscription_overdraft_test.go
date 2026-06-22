@@ -111,6 +111,58 @@ func TestSubscriptionOverdraftUseHelpers(t *testing.T) {
 	}
 }
 
+// TestSubscriptionOverdraftGate 校验透支准入闸门：用「订阅卡支撑的余额」（min(balance, Σremaining)）
+// 而非用户总余额参与判断，防止充值/签到等非订阅余额把闸门架空。
+// 回归 user 280：balance = remaining + 13.84（开卡前的旧余额），卡当天与 max_overdraft 额度都已花尽，
+// 旧实现因 balance−locked 恒为正而永久放行（整张卡被无限速烧穿）；修复后应被 ErrSubscriptionOverdraftLimit 拦截。
+func TestSubscriptionOverdraftGate(t *testing.T) {
+	loc := shanghaiLoc
+	activated := time.Date(2026, 6, 22, 13, 0, 0, 0, loc) // 当天 day0，$60/天 × 30 = $1800
+	day0 := activated
+	one := 1
+
+	// 复刻 user 280 的卡形态：G=1800, D=60，可调 consumed / max_overdraft_days / 已用透支次数。
+	card := func(consumed float64, maxDays *int, count int) UserSubscription {
+		a := activated
+		return UserSubscription{
+			StartsAt: activated, ActivatedAt: &a,
+			GrantedTotalUSD: 1800, DailyAmountUSD: 60,
+			ConsumedUSD: consumed, MaxOverdraftDays: maxDays, TotalOverdraftCount: count,
+		}
+	}
+	// 用与 lockedSubscriptionBalance 完全相同的聚合逻辑算闸门量，再喂给闸门纯函数（端到端覆盖聚合+判定）。
+	gate := func(subs []UserSubscription, extra float64) error {
+		cl, ll, rem, co := aggregateSubscriptionLocks(subs, day0)
+		return subscriptionOverdraftGate(rem+extra, cl, ll, rem, co)
+	}
+
+	t.Run("extra_balance_must_not_bypass_gate", func(t *testing.T) {
+		// 消费 166.75：当天解锁 60、透 1 天=120 都已花尽（前沿到第 2 天）。
+		subs := []UserSubscription{card(166.75, &one, 2)}
+		if err := gate(subs, 13.84); err != ErrSubscriptionOverdraftLimit {
+			t.Fatalf("balance=remaining+13.84 且额度花尽时应被拦截，got %v", err)
+		}
+	})
+	t.Run("today_unlock_available_passes", func(t *testing.T) {
+		// 当天还能花 60 → 放行。
+		if err := gate([]UserSubscription{card(0, &one, 0)}, 13.84); err != nil {
+			t.Fatalf("当天解锁额度可用时应放行，got %v", err)
+		}
+	})
+	t.Run("within_overdraft_allowance_passes", func(t *testing.T) {
+		// 当天 60 花尽，但仍在 max_overdraft_days=1 额度内 → 放行。
+		if err := gate([]UserSubscription{card(60, &one, 0)}, 13.84); err != nil {
+			t.Fatalf("仍在 max_overdraft_days 额度内应放行，got %v", err)
+		}
+	})
+	t.Run("overdraft_off_blocks_after_today", func(t *testing.T) {
+		// 未开透支，当天 60 花尽 → 拦截（即使有非订阅余额）。
+		if err := gate([]UserSubscription{card(60, nil, 0)}, 13.84); err != ErrSubscriptionOverdraftLimit {
+			t.Fatalf("未开透支且当天额度花尽应被拦，got %v", err)
+		}
+	})
+}
+
 // TestSubscriptionOverdraftDaysReached 校验「按往后预支天数计量」：消费前沿领先解锁线几天，
 // 同一天内多个越线小请求触及同一天 → 只占 1 天，不会按请求数瞬间烧光配额（493 的根因）。
 func TestSubscriptionOverdraftDaysReached(t *testing.T) {
@@ -133,12 +185,12 @@ func TestSubscriptionOverdraftDaysReached(t *testing.T) {
 	}{
 		// 493 的真实场景：day0 已花 $61.60，再分摊 $0 → 前沿落在 day1，仅领先 1 天（旧实现会按请求计成 5）。
 		{"day0_493_over_by_1.6", newSub(61.60), day0, 0, 1},
-		{"day0_exact_one_day", newSub(0), day0, 60, 0},      // 恰好花满当天额度 → 不算透支
-		{"day0_one_cent_over", newSub(0), day0, 60.01, 1},   // 越线一点点 → 领先 1 天
-		{"day0_reach_day5", newSub(0), day0, 360, 5},        // day0 直接花到第 6 天额度 → 领先 5 天
-		{"day0_within_today", newSub(0), day0, 30, 0},       // 当天额度内 → 0
-		{"day2_reach_day5", newSub(0), day2, 360, 3},        // day2 解锁到 day2，花到 day5 → 领先 3 天
-		{"day2_within_unlocked", newSub(0), day2, 180, 0},   // day2 解锁 3 天=$180，恰好用满 → 0
+		{"day0_exact_one_day", newSub(0), day0, 60, 0},    // 恰好花满当天额度 → 不算透支
+		{"day0_one_cent_over", newSub(0), day0, 60.01, 1}, // 越线一点点 → 领先 1 天
+		{"day0_reach_day5", newSub(0), day0, 360, 5},      // day0 直接花到第 6 天额度 → 领先 5 天
+		{"day0_within_today", newSub(0), day0, 30, 0},     // 当天额度内 → 0
+		{"day2_reach_day5", newSub(0), day2, 360, 3},      // day2 解锁到 day2，花到 day5 → 领先 3 天
+		{"day2_within_unlocked", newSub(0), day2, 180, 0}, // day2 解锁 3 天=$180，恰好用满 → 0
 		{"zero_daily", &UserSubscription{StartsAt: activated, ActivatedAt: &activated, DailyAmountUSD: 0}, day0, 100, 0},
 	}
 	for _, tc := range cases {
