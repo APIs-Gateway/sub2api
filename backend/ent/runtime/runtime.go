@@ -2163,8 +2163,16 @@ func init() {
 	usersubscriptionDescTotalOverdraftCount := usersubscriptionFields[18].Descriptor()
 	// usersubscription.DefaultTotalOverdraftCount holds the default value on creation for the total_overdraft_count field.
 	usersubscription.DefaultTotalOverdraftCount = usersubscriptionDescTotalOverdraftCount.Default.(int)
+	// usersubscriptionDescDailySpentUsd is the schema descriptor for daily_spent_usd field.
+	usersubscriptionDescDailySpentUsd := usersubscriptionFields[19].Descriptor()
+	// usersubscription.DefaultDailySpentUsd holds the default value on creation for the daily_spent_usd field.
+	usersubscription.DefaultDailySpentUsd = usersubscriptionDescDailySpentUsd.Default.(float64)
+	// usersubscriptionDescDailySpentDay is the schema descriptor for daily_spent_day field.
+	usersubscriptionDescDailySpentDay := usersubscriptionFields[20].Descriptor()
+	// usersubscription.DefaultDailySpentDay holds the default value on creation for the daily_spent_day field.
+	usersubscription.DefaultDailySpentDay = usersubscriptionDescDailySpentDay.Default.(int)
 	// usersubscriptionDescAssignedAt is the schema descriptor for assigned_at field.
-	usersubscriptionDescAssignedAt := usersubscriptionFields[21].Descriptor()
+	usersubscriptionDescAssignedAt := usersubscriptionFields[23].Descriptor()
 	// usersubscription.DefaultAssignedAt holds the default value on creation for the assigned_at field.
 	usersubscription.DefaultAssignedAt = usersubscriptionDescAssignedAt.Default.(func() time.Time)
 }

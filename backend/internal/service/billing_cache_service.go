@@ -913,8 +913,10 @@ func aggregateSubscriptionLocks(subs []UserSubscription, now time.Time) (current
 		cardLocked := subs[i].LockedAt(now, 0)
 		currentLocked += cardLocked
 		cardLimitLocked := cardLocked
-		if subs[i].MaxOverdraftDays != nil && subs[i].CanEnableOverdraft() {
-			cardLimitLocked = subs[i].LockedAt(now, *subs[i].MaxOverdraftDays)
+		// 用 EffectiveOverdraftDaysAt（min(配置, 生命周期剩余预支天数)），与扣费分摊同口径，
+		// 避免「配置 max_overdraft_days=5 但预支额度只剩 1 天」时仍按 6D 放行。
+		if effOD := subs[i].EffectiveOverdraftDaysAt(now); effOD > 0 {
+			cardLimitLocked = subs[i].LockedAt(now, effOD)
 			if cardLocked > cardLimitLocked {
 				canOverdraft = true
 			}
@@ -926,13 +928,18 @@ func aggregateSubscriptionLocks(subs []UserSubscription, now time.Time) (current
 
 // subscriptionOverdraftGate 是订阅透支准入闸门的纯判定（便于单测）。
 //
-// 关键：用 subBalance = min(balance, 订阅卡 remaining 合计) 而非用户总余额参与判断。
-// 排除充值/签到等非订阅余额造成的虚高——否则任意一点非订阅余额都会让 balance−locked
-// 恒为正、闸门永不触发；而扣费始终先扣订阅卡 remaining（allocateUsageBillingSubscriptions），
-// 那部分非订阅余额并不会被先消费，故不应让它放宽订阅透支约束。
-// 仅在 currentLocked>0（存在被锁定的订阅额度）时由调用方启用。
+// 充值(非订阅)余额 = balance − Σ订阅remaining：这是用户自己充的钱，不受订阅「每日限速」约束，
+// 可随时兜底消费——故 >0 即放行。扣费侧(allocateUsageBillingSubscriptions)会把超过今日订阅额度的
+// 部分优先记到充值余额、不烧订阅卡的锁定额度，因此放行不会绕开 burn-down 限速(回归 user 280：
+// 卡的锁定未来额度不会被无限速烧穿)。
+// 仅当充值余额耗尽(balance ≤ Σ订阅remaining)时，才回到「订阅当日额度 + 透支」的限速判定；
+// 此时 subBalance = balance(≤ Σremaining)。仅在 currentLocked>0 时由调用方启用。
 func subscriptionOverdraftGate(balance, currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool) error {
 	if currentLocked <= 0 {
+		return nil
+	}
+	// 有充值(非订阅)余额 → 放行(由充值余额承担，不动卡的锁定额度)。
+	if balance-subscriptionRemaining > 0 {
 		return nil
 	}
 	subBalance := balance

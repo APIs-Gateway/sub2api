@@ -806,6 +806,8 @@ func userSubscriptionEntityToService(m *dbent.UserSubscription) *service.UserSub
 		LastClawbackDay:     m.LastClawbackDay,
 		MaxOverdraftDays:    m.MaxOverdraftDays,
 		TotalOverdraftCount: m.TotalOverdraftCount,
+		DailySpentUSD:       m.DailySpentUsd,
+		DailySpentDay:       m.DailySpentDay,
 		ActivatedAt:         m.ActivatedAt,
 		AssignedBy:          m.AssignedBy,
 		AssignedAt:          m.AssignedAt,

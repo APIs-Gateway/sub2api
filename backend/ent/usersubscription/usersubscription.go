@@ -59,6 +59,10 @@ const (
 	FieldMaxOverdraftDays = "max_overdraft_days"
 	// FieldTotalOverdraftCount holds the string denoting the total_overdraft_count field in the database.
 	FieldTotalOverdraftCount = "total_overdraft_count"
+	// FieldDailySpentUsd holds the string denoting the daily_spent_usd field in the database.
+	FieldDailySpentUsd = "daily_spent_usd"
+	// FieldDailySpentDay holds the string denoting the daily_spent_day field in the database.
+	FieldDailySpentDay = "daily_spent_day"
 	// FieldActivatedAt holds the string denoting the activated_at field in the database.
 	FieldActivatedAt = "activated_at"
 	// FieldAssignedBy holds the string denoting the assigned_by field in the database.
@@ -141,6 +145,8 @@ var Columns = []string{
 	FieldLastClawbackDay,
 	FieldMaxOverdraftDays,
 	FieldTotalOverdraftCount,
+	FieldDailySpentUsd,
+	FieldDailySpentDay,
 	FieldActivatedAt,
 	FieldAssignedBy,
 	FieldAssignedAt,
@@ -193,6 +199,10 @@ var (
 	DefaultLastClawbackDay int
 	// DefaultTotalOverdraftCount holds the default value on creation for the "total_overdraft_count" field.
 	DefaultTotalOverdraftCount int
+	// DefaultDailySpentUsd holds the default value on creation for the "daily_spent_usd" field.
+	DefaultDailySpentUsd float64
+	// DefaultDailySpentDay holds the default value on creation for the "daily_spent_day" field.
+	DefaultDailySpentDay int
 	// DefaultAssignedAt holds the default value on creation for the "assigned_at" field.
 	DefaultAssignedAt func() time.Time
 )
@@ -313,6 +323,16 @@ func ByMaxOverdraftDays(opts ...sql.OrderTermOption) OrderOption {
 // ByTotalOverdraftCount orders the results by the total_overdraft_count field.
 func ByTotalOverdraftCount(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldTotalOverdraftCount, opts...).ToFunc()
+}
+
+// ByDailySpentUsd orders the results by the daily_spent_usd field.
+func ByDailySpentUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDailySpentUsd, opts...).ToFunc()
+}
+
+// ByDailySpentDay orders the results by the daily_spent_day field.
+func ByDailySpentDay(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDailySpentDay, opts...).ToFunc()
 }
 
 // ByActivatedAt orders the results by the activated_at field.

@@ -302,6 +302,34 @@ func (_c *UserSubscriptionCreate) SetNillableTotalOverdraftCount(v *int) *UserSu
 	return _c
 }
 
+// SetDailySpentUsd sets the "daily_spent_usd" field.
+func (_c *UserSubscriptionCreate) SetDailySpentUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetDailySpentUsd(v)
+	return _c
+}
+
+// SetNillableDailySpentUsd sets the "daily_spent_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableDailySpentUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetDailySpentUsd(*v)
+	}
+	return _c
+}
+
+// SetDailySpentDay sets the "daily_spent_day" field.
+func (_c *UserSubscriptionCreate) SetDailySpentDay(v int) *UserSubscriptionCreate {
+	_c.mutation.SetDailySpentDay(v)
+	return _c
+}
+
+// SetNillableDailySpentDay sets the "daily_spent_day" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableDailySpentDay(v *int) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetDailySpentDay(*v)
+	}
+	return _c
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_c *UserSubscriptionCreate) SetActivatedAt(v time.Time) *UserSubscriptionCreate {
 	_c.mutation.SetActivatedAt(v)
@@ -498,6 +526,14 @@ func (_c *UserSubscriptionCreate) defaults() error {
 		v := usersubscription.DefaultTotalOverdraftCount
 		_c.mutation.SetTotalOverdraftCount(v)
 	}
+	if _, ok := _c.mutation.DailySpentUsd(); !ok {
+		v := usersubscription.DefaultDailySpentUsd
+		_c.mutation.SetDailySpentUsd(v)
+	}
+	if _, ok := _c.mutation.DailySpentDay(); !ok {
+		v := usersubscription.DefaultDailySpentDay
+		_c.mutation.SetDailySpentDay(v)
+	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		if usersubscription.DefaultAssignedAt == nil {
 			return fmt.Errorf("ent: uninitialized usersubscription.DefaultAssignedAt (forgotten import ent/runtime?)")
@@ -562,6 +598,12 @@ func (_c *UserSubscriptionCreate) check() error {
 	}
 	if _, ok := _c.mutation.TotalOverdraftCount(); !ok {
 		return &ValidationError{Name: "total_overdraft_count", err: errors.New(`ent: missing required field "UserSubscription.total_overdraft_count"`)}
+	}
+	if _, ok := _c.mutation.DailySpentUsd(); !ok {
+		return &ValidationError{Name: "daily_spent_usd", err: errors.New(`ent: missing required field "UserSubscription.daily_spent_usd"`)}
+	}
+	if _, ok := _c.mutation.DailySpentDay(); !ok {
+		return &ValidationError{Name: "daily_spent_day", err: errors.New(`ent: missing required field "UserSubscription.daily_spent_day"`)}
 	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		return &ValidationError{Name: "assigned_at", err: errors.New(`ent: missing required field "UserSubscription.assigned_at"`)}
@@ -674,6 +716,14 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 	if value, ok := _c.mutation.TotalOverdraftCount(); ok {
 		_spec.SetField(usersubscription.FieldTotalOverdraftCount, field.TypeInt, value)
 		_node.TotalOverdraftCount = value
+	}
+	if value, ok := _c.mutation.DailySpentUsd(); ok {
+		_spec.SetField(usersubscription.FieldDailySpentUsd, field.TypeFloat64, value)
+		_node.DailySpentUsd = value
+	}
+	if value, ok := _c.mutation.DailySpentDay(); ok {
+		_spec.SetField(usersubscription.FieldDailySpentDay, field.TypeInt, value)
+		_node.DailySpentDay = value
 	}
 	if value, ok := _c.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1168,6 +1218,42 @@ func (u *UserSubscriptionUpsert) UpdateTotalOverdraftCount() *UserSubscriptionUp
 // AddTotalOverdraftCount adds v to the "total_overdraft_count" field.
 func (u *UserSubscriptionUpsert) AddTotalOverdraftCount(v int) *UserSubscriptionUpsert {
 	u.Add(usersubscription.FieldTotalOverdraftCount, v)
+	return u
+}
+
+// SetDailySpentUsd sets the "daily_spent_usd" field.
+func (u *UserSubscriptionUpsert) SetDailySpentUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldDailySpentUsd, v)
+	return u
+}
+
+// UpdateDailySpentUsd sets the "daily_spent_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateDailySpentUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldDailySpentUsd)
+	return u
+}
+
+// AddDailySpentUsd adds v to the "daily_spent_usd" field.
+func (u *UserSubscriptionUpsert) AddDailySpentUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldDailySpentUsd, v)
+	return u
+}
+
+// SetDailySpentDay sets the "daily_spent_day" field.
+func (u *UserSubscriptionUpsert) SetDailySpentDay(v int) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldDailySpentDay, v)
+	return u
+}
+
+// UpdateDailySpentDay sets the "daily_spent_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateDailySpentDay() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldDailySpentDay)
+	return u
+}
+
+// AddDailySpentDay adds v to the "daily_spent_day" field.
+func (u *UserSubscriptionUpsert) AddDailySpentDay(v int) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldDailySpentDay, v)
 	return u
 }
 
@@ -1685,6 +1771,48 @@ func (u *UserSubscriptionUpsertOne) AddTotalOverdraftCount(v int) *UserSubscript
 func (u *UserSubscriptionUpsertOne) UpdateTotalOverdraftCount() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateTotalOverdraftCount()
+	})
+}
+
+// SetDailySpentUsd sets the "daily_spent_usd" field.
+func (u *UserSubscriptionUpsertOne) SetDailySpentUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetDailySpentUsd(v)
+	})
+}
+
+// AddDailySpentUsd adds v to the "daily_spent_usd" field.
+func (u *UserSubscriptionUpsertOne) AddDailySpentUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddDailySpentUsd(v)
+	})
+}
+
+// UpdateDailySpentUsd sets the "daily_spent_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateDailySpentUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateDailySpentUsd()
+	})
+}
+
+// SetDailySpentDay sets the "daily_spent_day" field.
+func (u *UserSubscriptionUpsertOne) SetDailySpentDay(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetDailySpentDay(v)
+	})
+}
+
+// AddDailySpentDay adds v to the "daily_spent_day" field.
+func (u *UserSubscriptionUpsertOne) AddDailySpentDay(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddDailySpentDay(v)
+	})
+}
+
+// UpdateDailySpentDay sets the "daily_spent_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateDailySpentDay() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateDailySpentDay()
 	})
 }
 
@@ -2379,6 +2507,48 @@ func (u *UserSubscriptionUpsertBulk) AddTotalOverdraftCount(v int) *UserSubscrip
 func (u *UserSubscriptionUpsertBulk) UpdateTotalOverdraftCount() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateTotalOverdraftCount()
+	})
+}
+
+// SetDailySpentUsd sets the "daily_spent_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetDailySpentUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetDailySpentUsd(v)
+	})
+}
+
+// AddDailySpentUsd adds v to the "daily_spent_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddDailySpentUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddDailySpentUsd(v)
+	})
+}
+
+// UpdateDailySpentUsd sets the "daily_spent_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateDailySpentUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateDailySpentUsd()
+	})
+}
+
+// SetDailySpentDay sets the "daily_spent_day" field.
+func (u *UserSubscriptionUpsertBulk) SetDailySpentDay(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetDailySpentDay(v)
+	})
+}
+
+// AddDailySpentDay adds v to the "daily_spent_day" field.
+func (u *UserSubscriptionUpsertBulk) AddDailySpentDay(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddDailySpentDay(v)
+	})
+}
+
+// UpdateDailySpentDay sets the "daily_spent_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateDailySpentDay() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateDailySpentDay()
 	})
 }
 

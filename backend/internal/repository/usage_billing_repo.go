@@ -167,6 +167,7 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, group_id, starts_at, activated_at, granted_total_usd, daily_amount_usd,
 			consumed_usd, clawed_usd, max_overdraft_days, total_overdraft_count,
+			daily_spent_usd, daily_spent_day,
 			(granted_total_usd - consumed_usd - clawed_usd) AS remaining
 		FROM user_subscriptions
 		WHERE user_id = $1
@@ -192,6 +193,8 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 		clawedUSD           float64
 		maxOverdraftDays    *int
 		totalOverdraftCount int
+		dailySpentUSD       float64
+		dailySpentDay       int
 		remaining           float64
 	}
 	var subs []subRemaining
@@ -210,6 +213,8 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 			&s.clawedUSD,
 			&maxOverdraftDays,
 			&s.totalOverdraftCount,
+			&s.dailySpentUSD,
+			&s.dailySpentDay,
 			&s.remaining,
 		); err != nil {
 			_ = rows.Close()
@@ -234,50 +239,119 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 		return nil, err
 	}
 
-	remaining := cost
-	var depletedGroupIDs []int64
 	now := time.Now()
-	for _, s := range subs {
-		if remaining <= 0 {
+	var depletedGroupIDs []int64
+
+	// 物化每卡 service 模型,以复用 per-day 口径(SpendableNowAt / EffectiveOverdraftDaysAt)。
+	type allocState struct {
+		s     *subRemaining
+		sub   *service.UserSubscription
+		pass1 float64 // 计入透支额度内的分摊(用于 total_overdraft_count 的 delta)
+		total float64 // 本卡总分摊(pass1 + slippage 超调)
+	}
+	states := make([]allocState, len(subs))
+	var sumRemaining float64 // Σ活跃订阅卡 remaining,用于推算充值(非订阅)余额 = balance − sumRemaining
+	for i := range subs {
+		s := &subs[i]
+		sumRemaining += s.remaining
+		states[i] = allocState{
+			s: s,
+			sub: &service.UserSubscription{
+				StartsAt:            s.startsAt,
+				ActivatedAt:         s.activatedAt,
+				GrantedTotalUSD:     s.grantedTotalUSD,
+				DailyAmountUSD:      s.dailyAmountUSD,
+				ConsumedUSD:         s.consumedUSD,
+				ClawedUSD:           s.clawedUSD,
+				MaxOverdraftDays:    s.maxOverdraftDays,
+				TotalOverdraftCount: s.totalOverdraftCount,
+				DailySpentUSD:       s.dailySpentUSD,
+				DailySpentDay:       s.dailySpentDay,
+			},
+		}
+	}
+
+	// Pass 1:按激活先后,在各卡「今日可花」额度内分摊(尊重每卡每日限速 D + 生命周期剩余预支额度)。
+	// 与准入闸门 aggregateSubscriptionLocks 同口径,避免「老卡今日已限速却被先扣、新卡反而不动」。
+	remainingCost := cost
+	for i := range states {
+		if remainingCost <= 0 {
 			break
 		}
-		alloc := s.remaining
-		if alloc > remaining {
-			alloc = remaining
+		capAmt := states[i].sub.SpendableNowAt(now, states[i].sub.EffectiveOverdraftDaysAt(now))
+		a := capAmt
+		if a > remainingCost {
+			a = remainingCost
 		}
-		if alloc <= 0 {
+		if a <= 0 {
 			continue
 		}
-		// 扣减 consumed_usd；若本次把本卡剩余（granted-consumed-clawed）扣到 ~0，则同一条 UPDATE
-		// 即时把本卡标记为 expired（burn-down「用完即失效」，不必等到期日）。RETURNING 回报扣后
-		// 是否已 expired 及其 group_id，供调用方失效订阅缓存。行已 FOR UPDATE 锁定，无并发竞争。
-		sub := &service.UserSubscription{
-			StartsAt:            s.startsAt,
-			ActivatedAt:         s.activatedAt,
-			GrantedTotalUSD:     s.grantedTotalUSD,
-			DailyAmountUSD:      s.dailyAmountUSD,
-			ConsumedUSD:         s.consumedUSD,
-			ClawedUSD:           s.clawedUSD,
-			MaxOverdraftDays:    s.maxOverdraftDays,
-			TotalOverdraftCount: s.totalOverdraftCount,
-		}
-		// 透支按「消费前沿领先解锁进度的天数」计量（非请求数）：仅在本卡已开启透支且未达上限时
-		// 计算 reached，对 total_overdraft_count 取 GREATEST 累计其历史最大领先天数。reached 达到 5
-		// 天即关闭本卡透支（max_overdraft_days→NULL）。同一天内多个越线小请求触及同一天，不会重复累计。
-		overdraftDaysReached := 0
-		if s.maxOverdraftDays != nil && sub.CanEnableOverdraft() {
-			overdraftDaysReached = sub.OverdraftDaysReachedAt(now, alloc)
-			if overdraftDaysReached > service.MaxSubscriptionOverdraftUses {
-				overdraftDaysReached = service.MaxSubscriptionOverdraftUses
+		states[i].pass1 += a
+		states[i].total += a
+		remainingCost -= a
+	}
+	// 溢出处理:单笔成本超过所有卡「今日可花」之和时——
+	// (1) 先由「充值(非订阅)余额 = balance − Σ订阅remaining」承担,不动订阅卡的锁定额度
+	//     (用户自己充的钱不受订阅每日限速;deductUsageBillingBalance 会从总余额如实扣减);
+	// (2) 充值也不够,才 slippage 下探各卡 remaining(保 balance≥Σremaining 不变量;
+	//     这部分突破今日限速、属不可控尾差,不计入透支)。
+	if remainingCost > 0 {
+		var balance float64
+		// FOR UPDATE 锁 users 行:锁顺序 subs→users,与清扣/到期事务一致;稍后 deductUsageBillingBalance 同锁。
+		if err := tx.QueryRowContext(ctx, `SELECT balance FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, userID).Scan(&balance); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, service.ErrUserNotFound
 			}
+			return nil, err
 		}
-		closeOverdraft := overdraftDaysReached >= service.MaxSubscriptionOverdraftUses
+		if recharge := balance - sumRemaining; recharge > 0 {
+			absorb := recharge
+			if absorb > remainingCost {
+				absorb = remainingCost
+			}
+			remainingCost -= absorb // 由充值余额承担,不归属任何订阅卡
+		}
+		for i := range states {
+			if remainingCost <= 0 {
+				break
+			}
+			room := states[i].s.remaining - states[i].total
+			a := room
+			if a > remainingCost {
+				a = remainingCost
+			}
+			if a <= 0 {
+				continue
+			}
+			states[i].total += a
+			remainingCost -= a
+		}
+	}
+
+	// 落库:每卡一次 UPDATE。daily_spent_usd 记当天总分摊(惰性按日历天归零、不跨天结转);
+	// 透支 delta 仅按 pass1(透支额度内)计、且仅开透支时累加,达上限即关闭透支;
+	// 若本次把本卡剩余扣到 ~0,同一条 UPDATE 即时标记 expired(用完即失效)。行已 FOR UPDATE 锁定。
+	for i := range states {
+		st := &states[i]
+		if st.total <= 0 {
+			continue
+		}
+		n := st.sub.CalendarDayAt(now)
+		newDailySpent := st.sub.DailySpentAt(now) + st.total
+		overdraftDelta := 0
+		if st.s.maxOverdraftDays != nil && st.sub.CanEnableOverdraft() {
+			overdraftDelta = st.sub.OverdraftDaysDeltaAt(now, st.pass1)
+		}
+		closeOverdraft := st.s.maxOverdraftDays != nil &&
+			st.s.totalOverdraftCount+overdraftDelta >= service.MaxSubscriptionOverdraftUses
 		var nowExpired bool
 		var groupID int64
 		if err := tx.QueryRowContext(ctx, `
 			UPDATE user_subscriptions
 			SET consumed_usd = consumed_usd + $1,
-				total_overdraft_count = GREATEST(total_overdraft_count, $4),
+				daily_spent_usd = $6,
+				daily_spent_day = $7,
+				total_overdraft_count = LEAST($8, total_overdraft_count + $4),
 				max_overdraft_days = CASE WHEN $5 THEN NULL ELSE max_overdraft_days END,
 				status = CASE
 					WHEN (granted_total_usd - consumed_usd - clawed_usd - $1) <= $3
@@ -285,13 +359,13 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 				updated_at = NOW()
 			WHERE id = $2
 			RETURNING status = 'expired', group_id
-		`, alloc, s.id, subscriptionDepletionEpsilon, overdraftDaysReached, closeOverdraft).Scan(&nowExpired, &groupID); err != nil {
+		`, st.total, st.s.id, subscriptionDepletionEpsilon, overdraftDelta, closeOverdraft,
+			newDailySpent, n, service.MaxSubscriptionOverdraftUses).Scan(&nowExpired, &groupID); err != nil {
 			return nil, err
 		}
 		if nowExpired {
 			depletedGroupIDs = append(depletedGroupIDs, groupID)
 		}
-		remaining -= alloc
 	}
 	return depletedGroupIDs, nil
 }

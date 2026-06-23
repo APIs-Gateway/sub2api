@@ -64,6 +64,10 @@ type UserSubscription struct {
 	MaxOverdraftDays *int `json:"max_overdraft_days,omitempty"`
 	// TotalOverdraftCount holds the value of the "total_overdraft_count" field.
 	TotalOverdraftCount int `json:"total_overdraft_count,omitempty"`
+	// DailySpentUsd holds the value of the "daily_spent_usd" field.
+	DailySpentUsd float64 `json:"daily_spent_usd,omitempty"`
+	// DailySpentDay holds the value of the "daily_spent_day" field.
+	DailySpentDay int `json:"daily_spent_day,omitempty"`
 	// ActivatedAt holds the value of the "activated_at" field.
 	ActivatedAt *time.Time `json:"activated_at,omitempty"`
 	// AssignedBy holds the value of the "assigned_by" field.
@@ -153,9 +157,9 @@ func (*UserSubscription) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldGrantedTotalUsd, usersubscription.FieldDailyAmountUsd, usersubscription.FieldConsumedUsd, usersubscription.FieldClawedUsd:
+		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldGrantedTotalUsd, usersubscription.FieldDailyAmountUsd, usersubscription.FieldConsumedUsd, usersubscription.FieldClawedUsd, usersubscription.FieldDailySpentUsd:
 			values[i] = new(sql.NullFloat64)
-		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldPlanID, usersubscription.FieldLastClawbackDay, usersubscription.FieldMaxOverdraftDays, usersubscription.FieldTotalOverdraftCount, usersubscription.FieldAssignedBy:
+		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldPlanID, usersubscription.FieldLastClawbackDay, usersubscription.FieldMaxOverdraftDays, usersubscription.FieldTotalOverdraftCount, usersubscription.FieldDailySpentDay, usersubscription.FieldAssignedBy:
 			values[i] = new(sql.NullInt64)
 		case usersubscription.FieldStatus, usersubscription.FieldNotes:
 			values[i] = new(sql.NullString)
@@ -319,6 +323,18 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field total_overdraft_count", values[i])
 			} else if value.Valid {
 				_m.TotalOverdraftCount = int(value.Int64)
+			}
+		case usersubscription.FieldDailySpentUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field daily_spent_usd", values[i])
+			} else if value.Valid {
+				_m.DailySpentUsd = value.Float64
+			}
+		case usersubscription.FieldDailySpentDay:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field daily_spent_day", values[i])
+			} else if value.Valid {
+				_m.DailySpentDay = int(value.Int64)
 			}
 		case usersubscription.FieldActivatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -485,6 +501,12 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("total_overdraft_count=")
 	builder.WriteString(fmt.Sprintf("%v", _m.TotalOverdraftCount))
+	builder.WriteString(", ")
+	builder.WriteString("daily_spent_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.DailySpentUsd))
+	builder.WriteString(", ")
+	builder.WriteString("daily_spent_day=")
+	builder.WriteString(fmt.Sprintf("%v", _m.DailySpentDay))
 	builder.WriteString(", ")
 	if v := _m.ActivatedAt; v != nil {
 		builder.WriteString("activated_at=")

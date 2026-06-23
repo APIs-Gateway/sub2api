@@ -96,9 +96,18 @@ func (UserSubscription) Fields() []ent.Field {
 		field.Int("max_overdraft_days").
 			Optional().
 			Nillable(),
-		// 本卡累计透支请求次数：实际消费到当天已解锁额度之外的请求计 1 次。
+		// 本卡累计预支天数（求和、封顶 MaxSubscriptionOverdraftUses）：每天突破当日 D 的天数累加，
+		// 达上限后自动关闭本卡透支（max_overdraft_days→NULL）。
 		field.Int("total_overdraft_count").
 			Default(0),
+		// 本卡当前 burn-down 日内已消费额度，配合 daily_spent_day 实现「每日限速 D、不跨天结转、透支前移周期」。
+		field.Float("daily_spent_usd").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
+			Default(0),
+		// daily_spent_usd 对应的日历天 N（自激活起跨过的东八区午夜数）。读写时若 ≠ 当前 N 即视为 0（惰性重置）。
+		// 默认 -1 表示「未初始化」——任何真实日历天 N≥0 都不等于它，避免与「day0 已消费 0」混淆。
+		field.Int("daily_spent_day").
+			Default(-1),
 		// 清扣时钟起点（按 Asia/Shanghai 从此算第 N 个日历天）。
 		// 为 nil 时回退到 starts_at；存量回填时设为 NOW() 以对剩余期重新计时。
 		field.Time("activated_at").

@@ -424,6 +424,48 @@ func (_u *UserSubscriptionUpdate) AddTotalOverdraftCount(v int) *UserSubscriptio
 	return _u
 }
 
+// SetDailySpentUsd sets the "daily_spent_usd" field.
+func (_u *UserSubscriptionUpdate) SetDailySpentUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetDailySpentUsd()
+	_u.mutation.SetDailySpentUsd(v)
+	return _u
+}
+
+// SetNillableDailySpentUsd sets the "daily_spent_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableDailySpentUsd(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetDailySpentUsd(*v)
+	}
+	return _u
+}
+
+// AddDailySpentUsd adds value to the "daily_spent_usd" field.
+func (_u *UserSubscriptionUpdate) AddDailySpentUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddDailySpentUsd(v)
+	return _u
+}
+
+// SetDailySpentDay sets the "daily_spent_day" field.
+func (_u *UserSubscriptionUpdate) SetDailySpentDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetDailySpentDay()
+	_u.mutation.SetDailySpentDay(v)
+	return _u
+}
+
+// SetNillableDailySpentDay sets the "daily_spent_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableDailySpentDay(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetDailySpentDay(*v)
+	}
+	return _u
+}
+
+// AddDailySpentDay adds value to the "daily_spent_day" field.
+func (_u *UserSubscriptionUpdate) AddDailySpentDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddDailySpentDay(v)
+	return _u
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_u *UserSubscriptionUpdate) SetActivatedAt(v time.Time) *UserSubscriptionUpdate {
 	_u.mutation.SetActivatedAt(v)
@@ -765,6 +807,18 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if value, ok := _u.mutation.AddedTotalOverdraftCount(); ok {
 		_spec.AddField(usersubscription.FieldTotalOverdraftCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.DailySpentUsd(); ok {
+		_spec.SetField(usersubscription.FieldDailySpentUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedDailySpentUsd(); ok {
+		_spec.AddField(usersubscription.FieldDailySpentUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.DailySpentDay(); ok {
+		_spec.SetField(usersubscription.FieldDailySpentDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedDailySpentDay(); ok {
+		_spec.AddField(usersubscription.FieldDailySpentDay, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1354,6 +1408,48 @@ func (_u *UserSubscriptionUpdateOne) AddTotalOverdraftCount(v int) *UserSubscrip
 	return _u
 }
 
+// SetDailySpentUsd sets the "daily_spent_usd" field.
+func (_u *UserSubscriptionUpdateOne) SetDailySpentUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetDailySpentUsd()
+	_u.mutation.SetDailySpentUsd(v)
+	return _u
+}
+
+// SetNillableDailySpentUsd sets the "daily_spent_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableDailySpentUsd(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetDailySpentUsd(*v)
+	}
+	return _u
+}
+
+// AddDailySpentUsd adds value to the "daily_spent_usd" field.
+func (_u *UserSubscriptionUpdateOne) AddDailySpentUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddDailySpentUsd(v)
+	return _u
+}
+
+// SetDailySpentDay sets the "daily_spent_day" field.
+func (_u *UserSubscriptionUpdateOne) SetDailySpentDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetDailySpentDay()
+	_u.mutation.SetDailySpentDay(v)
+	return _u
+}
+
+// SetNillableDailySpentDay sets the "daily_spent_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableDailySpentDay(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetDailySpentDay(*v)
+	}
+	return _u
+}
+
+// AddDailySpentDay adds value to the "daily_spent_day" field.
+func (_u *UserSubscriptionUpdateOne) AddDailySpentDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddDailySpentDay(v)
+	return _u
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_u *UserSubscriptionUpdateOne) SetActivatedAt(v time.Time) *UserSubscriptionUpdateOne {
 	_u.mutation.SetActivatedAt(v)
@@ -1725,6 +1821,18 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 	}
 	if value, ok := _u.mutation.AddedTotalOverdraftCount(); ok {
 		_spec.AddField(usersubscription.FieldTotalOverdraftCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.DailySpentUsd(); ok {
+		_spec.SetField(usersubscription.FieldDailySpentUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedDailySpentUsd(); ok {
+		_spec.AddField(usersubscription.FieldDailySpentUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.DailySpentDay(); ok {
+		_spec.SetField(usersubscription.FieldDailySpentDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedDailySpentDay(); ok {
+		_spec.AddField(usersubscription.FieldDailySpentDay, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)

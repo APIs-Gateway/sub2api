@@ -46047,6 +46047,10 @@ type UserSubscriptionMutation struct {
 	addmax_overdraft_days    *int
 	total_overdraft_count    *int
 	addtotal_overdraft_count *int
+	daily_spent_usd          *float64
+	adddaily_spent_usd       *float64
+	daily_spent_day          *int
+	adddaily_spent_day       *int
 	activated_at             *time.Time
 	assigned_at              *time.Time
 	notes                    *string
@@ -47236,6 +47240,118 @@ func (m *UserSubscriptionMutation) ResetTotalOverdraftCount() {
 	m.addtotal_overdraft_count = nil
 }
 
+// SetDailySpentUsd sets the "daily_spent_usd" field.
+func (m *UserSubscriptionMutation) SetDailySpentUsd(f float64) {
+	m.daily_spent_usd = &f
+	m.adddaily_spent_usd = nil
+}
+
+// DailySpentUsd returns the value of the "daily_spent_usd" field in the mutation.
+func (m *UserSubscriptionMutation) DailySpentUsd() (r float64, exists bool) {
+	v := m.daily_spent_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDailySpentUsd returns the old "daily_spent_usd" field's value of the UserSubscription entity.
+// If the UserSubscription object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserSubscriptionMutation) OldDailySpentUsd(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDailySpentUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDailySpentUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDailySpentUsd: %w", err)
+	}
+	return oldValue.DailySpentUsd, nil
+}
+
+// AddDailySpentUsd adds f to the "daily_spent_usd" field.
+func (m *UserSubscriptionMutation) AddDailySpentUsd(f float64) {
+	if m.adddaily_spent_usd != nil {
+		*m.adddaily_spent_usd += f
+	} else {
+		m.adddaily_spent_usd = &f
+	}
+}
+
+// AddedDailySpentUsd returns the value that was added to the "daily_spent_usd" field in this mutation.
+func (m *UserSubscriptionMutation) AddedDailySpentUsd() (r float64, exists bool) {
+	v := m.adddaily_spent_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetDailySpentUsd resets all changes to the "daily_spent_usd" field.
+func (m *UserSubscriptionMutation) ResetDailySpentUsd() {
+	m.daily_spent_usd = nil
+	m.adddaily_spent_usd = nil
+}
+
+// SetDailySpentDay sets the "daily_spent_day" field.
+func (m *UserSubscriptionMutation) SetDailySpentDay(i int) {
+	m.daily_spent_day = &i
+	m.adddaily_spent_day = nil
+}
+
+// DailySpentDay returns the value of the "daily_spent_day" field in the mutation.
+func (m *UserSubscriptionMutation) DailySpentDay() (r int, exists bool) {
+	v := m.daily_spent_day
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDailySpentDay returns the old "daily_spent_day" field's value of the UserSubscription entity.
+// If the UserSubscription object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserSubscriptionMutation) OldDailySpentDay(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDailySpentDay is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDailySpentDay requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDailySpentDay: %w", err)
+	}
+	return oldValue.DailySpentDay, nil
+}
+
+// AddDailySpentDay adds i to the "daily_spent_day" field.
+func (m *UserSubscriptionMutation) AddDailySpentDay(i int) {
+	if m.adddaily_spent_day != nil {
+		*m.adddaily_spent_day += i
+	} else {
+		m.adddaily_spent_day = &i
+	}
+}
+
+// AddedDailySpentDay returns the value that was added to the "daily_spent_day" field in this mutation.
+func (m *UserSubscriptionMutation) AddedDailySpentDay() (r int, exists bool) {
+	v := m.adddaily_spent_day
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetDailySpentDay resets all changes to the "daily_spent_day" field.
+func (m *UserSubscriptionMutation) ResetDailySpentDay() {
+	m.daily_spent_day = nil
+	m.adddaily_spent_day = nil
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (m *UserSubscriptionMutation) SetActivatedAt(t time.Time) {
 	m.activated_at = &t
@@ -47628,7 +47744,7 @@ func (m *UserSubscriptionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserSubscriptionMutation) Fields() []string {
-	fields := make([]string, 0, 26)
+	fields := make([]string, 0, 28)
 	if m.created_at != nil {
 		fields = append(fields, usersubscription.FieldCreatedAt)
 	}
@@ -47695,6 +47811,12 @@ func (m *UserSubscriptionMutation) Fields() []string {
 	if m.total_overdraft_count != nil {
 		fields = append(fields, usersubscription.FieldTotalOverdraftCount)
 	}
+	if m.daily_spent_usd != nil {
+		fields = append(fields, usersubscription.FieldDailySpentUsd)
+	}
+	if m.daily_spent_day != nil {
+		fields = append(fields, usersubscription.FieldDailySpentDay)
+	}
 	if m.activated_at != nil {
 		fields = append(fields, usersubscription.FieldActivatedAt)
 	}
@@ -47759,6 +47881,10 @@ func (m *UserSubscriptionMutation) Field(name string) (ent.Value, bool) {
 		return m.MaxOverdraftDays()
 	case usersubscription.FieldTotalOverdraftCount:
 		return m.TotalOverdraftCount()
+	case usersubscription.FieldDailySpentUsd:
+		return m.DailySpentUsd()
+	case usersubscription.FieldDailySpentDay:
+		return m.DailySpentDay()
 	case usersubscription.FieldActivatedAt:
 		return m.ActivatedAt()
 	case usersubscription.FieldAssignedBy:
@@ -47820,6 +47946,10 @@ func (m *UserSubscriptionMutation) OldField(ctx context.Context, name string) (e
 		return m.OldMaxOverdraftDays(ctx)
 	case usersubscription.FieldTotalOverdraftCount:
 		return m.OldTotalOverdraftCount(ctx)
+	case usersubscription.FieldDailySpentUsd:
+		return m.OldDailySpentUsd(ctx)
+	case usersubscription.FieldDailySpentDay:
+		return m.OldDailySpentDay(ctx)
 	case usersubscription.FieldActivatedAt:
 		return m.OldActivatedAt(ctx)
 	case usersubscription.FieldAssignedBy:
@@ -47991,6 +48121,20 @@ func (m *UserSubscriptionMutation) SetField(name string, value ent.Value) error 
 		}
 		m.SetTotalOverdraftCount(v)
 		return nil
+	case usersubscription.FieldDailySpentUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDailySpentUsd(v)
+		return nil
+	case usersubscription.FieldDailySpentDay:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDailySpentDay(v)
+		return nil
 	case usersubscription.FieldActivatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -48057,6 +48201,12 @@ func (m *UserSubscriptionMutation) AddedFields() []string {
 	if m.addtotal_overdraft_count != nil {
 		fields = append(fields, usersubscription.FieldTotalOverdraftCount)
 	}
+	if m.adddaily_spent_usd != nil {
+		fields = append(fields, usersubscription.FieldDailySpentUsd)
+	}
+	if m.adddaily_spent_day != nil {
+		fields = append(fields, usersubscription.FieldDailySpentDay)
+	}
 	return fields
 }
 
@@ -48085,6 +48235,10 @@ func (m *UserSubscriptionMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedMaxOverdraftDays()
 	case usersubscription.FieldTotalOverdraftCount:
 		return m.AddedTotalOverdraftCount()
+	case usersubscription.FieldDailySpentUsd:
+		return m.AddedDailySpentUsd()
+	case usersubscription.FieldDailySpentDay:
+		return m.AddedDailySpentDay()
 	}
 	return nil, false
 }
@@ -48163,6 +48317,20 @@ func (m *UserSubscriptionMutation) AddField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddTotalOverdraftCount(v)
+		return nil
+	case usersubscription.FieldDailySpentUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDailySpentUsd(v)
+		return nil
+	case usersubscription.FieldDailySpentDay:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDailySpentDay(v)
 		return nil
 	}
 	return fmt.Errorf("unknown UserSubscription numeric field %s", name)
@@ -48313,6 +48481,12 @@ func (m *UserSubscriptionMutation) ResetField(name string) error {
 		return nil
 	case usersubscription.FieldTotalOverdraftCount:
 		m.ResetTotalOverdraftCount()
+		return nil
+	case usersubscription.FieldDailySpentUsd:
+		m.ResetDailySpentUsd()
+		return nil
+	case usersubscription.FieldDailySpentDay:
+		m.ResetDailySpentDay()
 		return nil
 	case usersubscription.FieldActivatedAt:
 		m.ResetActivatedAt()

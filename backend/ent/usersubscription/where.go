@@ -165,6 +165,16 @@ func TotalOverdraftCount(v int) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldTotalOverdraftCount, v))
 }
 
+// DailySpentUsd applies equality check predicate on the "daily_spent_usd" field. It's identical to DailySpentUsdEQ.
+func DailySpentUsd(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldDailySpentUsd, v))
+}
+
+// DailySpentDay applies equality check predicate on the "daily_spent_day" field. It's identical to DailySpentDayEQ.
+func DailySpentDay(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldDailySpentDay, v))
+}
+
 // ActivatedAt applies equality check predicate on the "activated_at" field. It's identical to ActivatedAtEQ.
 func ActivatedAt(v time.Time) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldActivatedAt, v))
@@ -1088,6 +1098,86 @@ func TotalOverdraftCountLT(v int) predicate.UserSubscription {
 // TotalOverdraftCountLTE applies the LTE predicate on the "total_overdraft_count" field.
 func TotalOverdraftCountLTE(v int) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldLTE(FieldTotalOverdraftCount, v))
+}
+
+// DailySpentUsdEQ applies the EQ predicate on the "daily_spent_usd" field.
+func DailySpentUsdEQ(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldDailySpentUsd, v))
+}
+
+// DailySpentUsdNEQ applies the NEQ predicate on the "daily_spent_usd" field.
+func DailySpentUsdNEQ(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldDailySpentUsd, v))
+}
+
+// DailySpentUsdIn applies the In predicate on the "daily_spent_usd" field.
+func DailySpentUsdIn(vs ...float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldDailySpentUsd, vs...))
+}
+
+// DailySpentUsdNotIn applies the NotIn predicate on the "daily_spent_usd" field.
+func DailySpentUsdNotIn(vs ...float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldDailySpentUsd, vs...))
+}
+
+// DailySpentUsdGT applies the GT predicate on the "daily_spent_usd" field.
+func DailySpentUsdGT(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldDailySpentUsd, v))
+}
+
+// DailySpentUsdGTE applies the GTE predicate on the "daily_spent_usd" field.
+func DailySpentUsdGTE(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldDailySpentUsd, v))
+}
+
+// DailySpentUsdLT applies the LT predicate on the "daily_spent_usd" field.
+func DailySpentUsdLT(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldDailySpentUsd, v))
+}
+
+// DailySpentUsdLTE applies the LTE predicate on the "daily_spent_usd" field.
+func DailySpentUsdLTE(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldDailySpentUsd, v))
+}
+
+// DailySpentDayEQ applies the EQ predicate on the "daily_spent_day" field.
+func DailySpentDayEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldDailySpentDay, v))
+}
+
+// DailySpentDayNEQ applies the NEQ predicate on the "daily_spent_day" field.
+func DailySpentDayNEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldDailySpentDay, v))
+}
+
+// DailySpentDayIn applies the In predicate on the "daily_spent_day" field.
+func DailySpentDayIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldDailySpentDay, vs...))
+}
+
+// DailySpentDayNotIn applies the NotIn predicate on the "daily_spent_day" field.
+func DailySpentDayNotIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldDailySpentDay, vs...))
+}
+
+// DailySpentDayGT applies the GT predicate on the "daily_spent_day" field.
+func DailySpentDayGT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldDailySpentDay, v))
+}
+
+// DailySpentDayGTE applies the GTE predicate on the "daily_spent_day" field.
+func DailySpentDayGTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldDailySpentDay, v))
+}
+
+// DailySpentDayLT applies the LT predicate on the "daily_spent_day" field.
+func DailySpentDayLT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldDailySpentDay, v))
+}
+
+// DailySpentDayLTE applies the LTE predicate on the "daily_spent_day" field.
+func DailySpentDayLTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldDailySpentDay, v))
 }
 
 // ActivatedAtEQ applies the EQ predicate on the "activated_at" field.

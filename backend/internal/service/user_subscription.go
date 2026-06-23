@@ -5,10 +5,11 @@ import (
 	"time"
 )
 
-// MaxSubscriptionOverdraftUses 是本卡累计可「往后预支」的天数硬上限：消费前沿最多领先每日解锁
-// 进度 5 天。达到后自动关闭本卡透支（max_overdraft_days→NULL），用户端不能再次开启。
-// 注意：计量单位是「天」（消费前沿领先解锁线的天数），不是「请求次数」——同一天内反复越线的
-// 多个小请求只占用 1 天，不会把额度瞬间烧光。
+// MaxSubscriptionOverdraftUses 是本卡累计可「往后预支」的天数硬上限。
+// 透支 = 把后续天的额度提前花掉（计费周期前移），单日最多突破到 (1+可预支天数)×D；
+// 每天突破当日 D 的天数累加进 total_overdraft_count（求和），累计达到本上限后自动关闭本卡透支
+// （max_overdraft_days→NULL），用户端不能再次开启。
+// 注意：计量单位是「天」，且同一天内多笔只按当天达到的最高预支天数计，不会按请求数瞬间烧光。
 const MaxSubscriptionOverdraftUses = 5
 
 type UserSubscription struct {
@@ -35,7 +36,9 @@ type UserSubscription struct {
 	ClawedUSD           float64    // 本卡累计被清扣（单调递增）
 	LastClawbackDay     int        // 已对账到的最高日历天 N
 	MaxOverdraftDays    *int       // 本卡用户自设的最多往后透支天数；nil = 透支关闭；用户在「我的订阅」自助设置
-	TotalOverdraftCount int        // 本卡累计透支请求次数；达到 MaxSubscriptionOverdraftUses 后自动关闭透支
+	TotalOverdraftCount int        // 本卡累计预支天数（求和、封顶 MaxSubscriptionOverdraftUses）；达上限后自动关闭透支
+	DailySpentUSD       float64    // 当前 burn-down 日内已消费额度（配合 DailySpentDay 实现每日限速、不跨天结转）
+	DailySpentDay       int        // DailySpentUSD 对应的日历天 N；读写时若 ≠ 当前 N 即视为 0（惰性重置）
 	ActivatedAt         *time.Time // 清扣时钟起点；nil 时回退 StartsAt
 
 	AssignedBy *int64
@@ -257,19 +260,37 @@ func (s *UserSubscription) ClawbackShortfallAt(now time.Time) float64 {
 	return shortfall
 }
 
+// DailySpentAt 返回截至 now、本卡在「当前日历天」内已消费的额度。
+// 采用惰性重置：仅当 DailySpentDay 等于当前日历天 N 时其值有效，否则视为 0
+// （新的一天 daily_spent 自动归零，不跨天结转）。
+func (s *UserSubscription) DailySpentAt(now time.Time) float64 {
+	if s == nil {
+		return 0
+	}
+	if s.DailySpentDay == s.CalendarDayAt(now) {
+		if s.DailySpentUSD < 0 {
+			return 0
+		}
+		return s.DailySpentUSD
+	}
+	return 0
+}
+
 // SpendableNowAt 返回在「最多往后透支 overdraftDays 天」约束下，本卡当前可被扣费的额度。
-// 模型仍一次性把 G 发到 users.balance，本函数只用于「准入闸门」估算：
+// 模型：整张卡 G 一次性进 users.balance，但每个日历天最多消费 D（每日限速）；透支允许某天突破到
+// (1+overdraftDays)×D，相当于把后续天的额度提前花（计费周期前移）。本函数为「准入闸门」估算：
 //
-//	chargeCap    = (CalendarDayAt(now) + 1 + overdraftDays) × D   // 截至当前允许累计被扣到的上限
-//	spendableNow = clamp(0, min(remaining, chargeCap − consumed))
+//	spendableNow = clamp(0, min(remaining, (1 + overdraftDays) × D − dailySpent(now)))
 //
-// 「+1」表示激活当天（N=0）即解锁 1 天额度（1×D）——「每天 D」的卡买当天就能用当天额度，
-// 1 天卡（仅 day0）也因此可用满 1×D，不会被锁成 0。透支天数仍在此基础上往后追加。
-// D=0（legacy/standard 卡）时 chargeCap=0、remaining=0，返回 0，无副作用。
+// 与旧的「累计式 (N+1+OD)×D − consumed」不同：不再按累计消费扣减，故**透支之后的次日照常解锁 D、
+// 不锁死、无还债**；超前消费只是让卡更早用完。dailySpent 按日历天惰性归零，故不跨天结转。
+// D=0（legacy/standard 卡）时返回 0，无副作用。
 func (s *UserSubscription) SpendableNowAt(now time.Time, overdraftDays int) float64 {
+	if s == nil || s.DailyAmountUSD <= 0 {
+		return 0
+	}
 	remaining := s.RemainingUSD()
-	chargeCap := (float64(s.CalendarDayAt(now)) + 1 + float64(overdraftDays)) * s.DailyAmountUSD
-	avail := chargeCap - s.ConsumedUSD
+	avail := float64(1+overdraftDays)*s.DailyAmountUSD - s.DailySpentAt(now)
 	if avail < 0 {
 		avail = 0
 	}
@@ -309,39 +330,68 @@ func (s *UserSubscription) RemainingOverdraftUses() int {
 	return remaining
 }
 
-// UsesOverdraftAt 报告本次从该卡分摊 amount 后，是否消费到了当天已解锁额度之外。
-// 当天已解锁额度 = (CalendarDayAt(now)+1)×D（与 SpendableNowAt 的「当天算一天」一致）；
-// 只要本请求的任意部分越过该值，即视为发生了透支（等价于 OverdraftDaysReachedAt>0）。
-func (s *UserSubscription) UsesOverdraftAt(now time.Time, amount float64) bool {
-	return s.OverdraftDaysReachedAt(now, amount) > 0
+// EffectiveOverdraftDaysAt 返回本卡当前「今日实际可预支天数」，准入闸门与扣费分摊须用同一口径。
+//
+//	effOD = clamp(0, min(用户设置 max_overdraft_days, 生命周期剩余预支额度 + 今日已预支天数))
+//
+// 取 min(配置, 剩余预支) 确保不超 5 天硬上限（修复闸门按配置 6D 放行、实际却已无额度的越权）；
+// 而「+ 今日已预支天数」是把当天已计入 TotalOverdraftCount 的预支加回——否则当日额度会随当天消费
+// 自我收缩，导致 5 天预算在单日内分多笔时用不满。未开透支或 D=0 时返回 0。
+func (s *UserSubscription) EffectiveOverdraftDaysAt(now time.Time) int {
+	if s == nil || s.MaxOverdraftDays == nil || s.DailyAmountUSD <= 0 {
+		return 0
+	}
+	preToday := preSpendDays(s.DailySpentAt(now), s.DailyAmountUSD)
+	budget := MaxSubscriptionOverdraftUses - s.TotalOverdraftCount + preToday
+	d := *s.MaxOverdraftDays
+	if d > budget {
+		d = budget
+	}
+	if d < 0 {
+		d = 0
+	}
+	return d
 }
 
-// OverdraftDaysReachedAt 返回消费 amount 后「消费前沿领先每日解锁进度的天数」。
+// UsesOverdraftAt 报告本次从该卡分摊 amount 后，当天用量是否突破了当日额度 D（即发生了预支）。
+// 等价于 OverdraftDaysDeltaAt(now, amount) > 0。
+func (s *UserSubscription) UsesOverdraftAt(now time.Time, amount float64) bool {
+	return s.OverdraftDaysDeltaAt(now, amount) > 0
+}
+
+// preSpendDays 返回「当天用量 used 突破当日额度 D 之后、额外预支了几天」。
 //
-//	frontierDay = ceil((consumed+amount)/D) − 1   // 消费前沿触及的最高 0 索引天
-//	unlockedDay = CalendarDayAt(now)              // 今天已解锁到第 unlockedDay 天（含 day0..unlockedDay）
-//	reached     = max(0, frontierDay − unlockedDay)
+//	preSpend = max(0, ceil(used/D) − 1)   // used≤D→0；D<used≤2D→1；…
 //
-// 用「领先几天」度量透支，而非请求次数：同一天内反复越线的多个小请求触及同一 frontierDay，
-// 因此 reached 不变——配合调用方对 total_overdraft_count 取 GREATEST(既有, reached) 累计，
-// 单调记录「消费前沿历史上最多领先解锁线几天」。达到 5 即触发关闭透支。
-// D=0（legacy/standard 卡）或 amount≤0 时返回 0，无副作用。
-func (s *UserSubscription) OverdraftDaysReachedAt(now time.Time, amount float64) int {
-	if s == nil || s.DailyAmountUSD <= 0 {
+// −1e-9 吸收 numeric→float 尾差，使「恰好用满整数天额度」不被误判为多预支一天。
+func preSpendDays(used, daily float64) int {
+	if used <= 0 || daily <= 0 {
 		return 0
 	}
-	total := s.ConsumedUSD + amount
-	if total <= 0 {
+	n := int(math.Ceil(used/daily-1e-9)) - 1
+	if n < 0 {
 		return 0
 	}
-	// −1e-9：吸收 numeric→float 尾差，避免「消费恰为整数天额度」被误判为多领先一天。
-	frontierDay := int(math.Ceil(total/s.DailyAmountUSD-1e-9)) - 1
-	if frontierDay < 0 {
-		frontierDay = 0
-	}
-	reached := frontierDay - s.CalendarDayAt(now)
-	if reached < 0 {
+	return n
+}
+
+// OverdraftDaysDeltaAt 返回本次分摊 amount 后「当天新增的预支天数」。
+//
+//	before = ⌈dailySpent(now)/D⌉−1 的预支天数      // 本次之前当天已预支的天数
+//	after  = ⌈(dailySpent(now)+amount)/D⌉−1 的预支天数
+//	delta  = max(0, after − before)
+//
+// 仅统计「本笔把当天用量推到更靠后的天」所新增的天数：同一天内多笔小请求触及同一天只算一次。
+// 调用方对 total_overdraft_count 做「+delta（封顶上限）」累加。D=0 或 amount≤0 时返回 0。
+func (s *UserSubscription) OverdraftDaysDeltaAt(now time.Time, amount float64) int {
+	if s == nil || s.DailyAmountUSD <= 0 || amount <= 0 {
 		return 0
 	}
-	return reached
+	before := s.DailySpentAt(now)
+	after := before + amount
+	delta := preSpendDays(after, s.DailyAmountUSD) - preSpendDays(before, s.DailyAmountUSD)
+	if delta < 0 {
+		return 0
+	}
+	return delta
 }

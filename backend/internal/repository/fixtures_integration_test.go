@@ -393,7 +393,23 @@ func mustCreateSubscription(t *testing.T, client *dbent.Client, s *service.UserS
 		SetNotes(s.Notes).
 		SetDailyUsageUsd(s.DailyUsageUSD).
 		SetWeeklyUsageUsd(s.WeeklyUsageUSD).
-		SetMonthlyUsageUsd(s.MonthlyUsageUSD)
+		SetMonthlyUsageUsd(s.MonthlyUsageUSD).
+		// Burn-down 字段（默认 0/nil，与建表默认一致；按需在测试中设置）
+		SetGrantedTotalUsd(s.GrantedTotalUSD).
+		SetDailyAmountUsd(s.DailyAmountUSD).
+		SetConsumedUsd(s.ConsumedUSD).
+		SetClawedUsd(s.ClawedUSD).
+		SetLastClawbackDay(s.LastClawbackDay).
+		SetTotalOverdraftCount(s.TotalOverdraftCount).
+		SetDailySpentUsd(s.DailySpentUSD).
+		SetDailySpentDay(s.DailySpentDay)
+
+	if s.MaxOverdraftDays != nil {
+		create.SetMaxOverdraftDays(*s.MaxOverdraftDays)
+	}
+	if s.ActivatedAt != nil {
+		create.SetActivatedAt(*s.ActivatedAt)
+	}
 
 	if s.AssignedBy != nil {
 		create.SetAssignedBy(*s.AssignedBy)
