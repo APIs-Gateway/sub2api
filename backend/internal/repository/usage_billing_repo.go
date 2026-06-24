@@ -107,20 +107,24 @@ func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *s
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
-	// burn-down 模型：本次消费全额从 users.balance 扣除（余额 = 充值剩余 + Σ订阅剩余）。
-	// 先按「订阅优先、按激活先后」把消费归集到各订阅卡的 consumed_usd（锁 subs），
-	// 再扣余额（锁 users）。锁顺序 subs→users 与清扣/到期事务保持一致，避免死锁。
-	if cmd.BalanceCost > 0 {
-		depletedGroupIDs, err := allocateUsageBillingSubscriptions(ctx, tx, cmd.UserID, cmd.BalanceCost)
+	// per-day 结算：按瀑布把官方成本结算到「用户唯一生效卡 + 钱包」（套餐 1:1 → 钱包正余额×倍率
+	// → 透支借未来天 → 钱包负数）。锁序 user→card，整套副作用同 tx，dedup 覆盖整笔。
+	// OfficialCost = 官方价；legacy/测试只传 BalanceCost 时回退（官方=BalanceCost、倍率1，无卡即纯钱包，
+	// 等价旧 deductUsageBillingBalance）。
+	officialCost, multiplier := cmd.OfficialCost, cmd.RateMultiplier
+	if officialCost <= 0 && cmd.BalanceCost > 0 {
+		officialCost, multiplier = cmd.BalanceCost, 1
+	}
+	if officialCost > 0 {
+		settleRes, err := settlePerDaySubscription(ctx, tx, cmd.UserID, officialCost, multiplier, time.Now())
 		if err != nil {
 			return err
 		}
-		result.DepletedSubscriptionGroupIDs = depletedGroupIDs
-		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
-		if err != nil {
-			return err
+		result.NewBalance = &settleRes.newBalance
+		result.WalletDebit = &settleRes.walletDebit
+		if settleRes.expiredGroupID != nil {
+			result.DepletedSubscriptionGroupIDs = []int64{*settleRes.expiredGroupID}
 		}
-		result.NewBalance = &newBalance
 	}
 
 	if cmd.APIKeyQuotaCost > 0 {
@@ -148,6 +152,122 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	return nil
 }
 
+// perDaySettleResult 是 per-day 结算的落库结果（供上层重建旧余额、失效缓存）。
+type perDaySettleResult struct {
+	newBalance     float64 // 结算后钱包余额
+	walletDebit    float64 // 本次从钱包实扣的售价货币额（钱包正余额 + 钱包负数兜底；套餐 1:1 部分不计）
+	expiredGroupID *int64  // 本次把卡惰性标记为 expired 时其 group_id（供失效订阅缓存）；否则 nil
+}
+
+// settlePerDaySubscription 按 per-day 瀑布把一笔请求的官方成本结算到「用户唯一生效卡 + 钱包」。
+// 锁序固定 user→card（与购买/续费/转套餐一致，防死锁）。无生效卡 → 纯钱包标准计费（官方价×倍率）。
+// 整套副作用（套餐扣减、钱包扣减、透支 expire_day−1+用户级月度计数、钱包负数）在本事务内原子完成；
+// dedup（claimUsageBillingKey）与本函数同 tx，重放整笔跳过。瀑布逻辑复用 service.Settle（已穷尽单测）。
+func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, officialCost, multiplier float64, now time.Time) (*perDaySettleResult, error) {
+	today := service.EastDayNumber(now)
+	monthKey := service.EastMonthKey(now)
+
+	// 1) 锁 user 行（balance + 用户级月度透支计数）。
+	var balance float64
+	var monthCount int
+	var monthStr string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT balance, monthly_overdraft_count, monthly_overdraft_month
+		FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE
+	`, userID).Scan(&balance, &monthCount, &monthStr); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrUserNotFound
+		}
+		return nil, err
+	}
+
+	// 2) 锁该用户唯一生效卡（status='active'，expire_day 最晚兜底）；可能无卡。
+	//    过期是惰性的（卡可能 status='active' 而 today>expire_day），不在 SQL 过滤 expire_day，
+	//    由引擎 ResetIfNewDay 惰性置 0 + 标 expired。
+	var (
+		cardID    int64
+		groupID   int64
+		dAmount   float64
+		todayRem  float64
+		todayDay  int
+		startDay  int
+		expireDay int
+		odOn      bool
+		hasCard   bool
+	)
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, group_id, daily_amount_usd, today_remaining, today_day, start_day, expire_day, overdraft_on
+		FROM user_subscriptions
+		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
+		ORDER BY expire_day DESC, id DESC
+		LIMIT 1
+		FOR UPDATE
+	`, userID).Scan(&cardID, &groupID, &dAmount, &todayRem, &todayDay, &startDay, &expireDay, &odOn)
+	switch {
+	case err == nil:
+		hasCard = true
+	case errors.Is(err, sql.ErrNoRows):
+		hasCard = false
+	default:
+		return nil, err
+	}
+
+	// 3) 跑引擎（无卡时用零值卡：ResetIfNewDay 会把它标过期、套餐层贡献 0 → 纯钱包）。
+	wallet := service.WalletState{Balance: balance, MonthlyOverdraftCount: monthCount, MonthlyOverdraftMonth: monthStr}
+	var card service.PerDayCard
+	if hasCard {
+		card = service.PerDayCard{
+			DailyAmountUSD: dAmount,
+			TodayRemaining: todayRem,
+			TodayDay:       todayDay,
+			StartDay:       startDay,
+			ExpireDay:      expireDay,
+			OverdraftOn:    odOn,
+		}
+	}
+	service.Settle(&card, &wallet, officialCost, multiplier, today, monthKey)
+
+	out := &perDaySettleResult{}
+
+	// 4) 回写卡（仅有卡时）：today_remaining/today_day/expire_day + 惰性过期。
+	if hasCard {
+		var nowExpired bool
+		var gid int64
+		if err := tx.QueryRowContext(ctx, `
+			UPDATE user_subscriptions
+			SET today_remaining = $1, today_day = $2, expire_day = $3,
+				status = CASE WHEN $4 THEN 'expired' ELSE status END,
+				updated_at = NOW()
+			WHERE id = $5
+			RETURNING status = 'expired', group_id
+		`, card.TodayRemaining, card.TodayDay, card.ExpireDay, card.Expired, cardID).Scan(&nowExpired, &gid); err != nil {
+			return nil, err
+		}
+		if nowExpired { // 本次刚由 active→expired（加载时为 active），失效订阅缓存
+			g := gid
+			out.expiredGroupID = &g
+		}
+	}
+
+	// 5) 回写 user：balance + 月度透支计数（含惰性按月重置；同 tx 内原子）。
+	if err := tx.QueryRowContext(ctx, `
+		UPDATE users
+		SET balance = $1, monthly_overdraft_count = $2, monthly_overdraft_month = $3, updated_at = NOW()
+		WHERE id = $4 AND deleted_at IS NULL
+		RETURNING balance
+	`, wallet.Balance, wallet.MonthlyOverdraftCount, wallet.MonthlyOverdraftMonth, userID).Scan(&out.newBalance); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrUserNotFound
+		}
+		return nil, err
+	}
+	out.walletDebit = balance - wallet.Balance
+	return out, nil
+}
+
+// Deprecated: burn-down 结算，已被 settlePerDaySubscription 取代、无调用方。
+// 保留以兼容旧 burn-down 集成测试的编译，待 P8（退役清扣 + burn-down 残留清理）一并删除。
+//
 // allocateUsageBillingSubscriptions 按「订阅优先、按激活先后（先激活的卡先扣）」把本次消费 cost
 // 归集到该用户各活跃订阅卡的 consumed_usd。每张卡最多消费其 remaining，超出所有订阅的部分
 // 由充值余额承担（无需额外记账）。consumed_usd 仅用于每日清扣判定与进度展示，

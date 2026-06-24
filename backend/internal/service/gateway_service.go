@@ -8930,11 +8930,20 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		}
 	}
 
-	// burn-down 模型：所有计费统一从 users.balance 扣除（余额 = 充值剩余 + Σ订阅剩余）。
-	// 订阅优先归集由计费仓储在事务内用 SQL 完成（见 allocateUsageBillingSubscriptions），
-	// 因此这里始终设置 BalanceCost，不再区分订阅/余额，避免遗留订阅上下文导致漏扣。
+	// 计费统一进入仓储事务（见 settlePerDaySubscription）：
+	// - BalanceCost = ActualCost（含倍率），保留供 legacy 兜底路径与 fingerprint 兼容。
+	// - per-day 结算用 OfficialCost（官方价，套餐 1:1）+ RateMultiplier（钱包层倍率）。
+	// rate_multiplier=0（免费组）→ ActualCost=0 → 不设 OfficialCost → 不触发结算（套餐也不扣）。
 	if p.Cost.ActualCost > 0 {
 		cmd.BalanceCost = p.Cost.ActualCost
+		if p.Cost.TotalCost > 0 {
+			cmd.OfficialCost = p.Cost.TotalCost
+			cmd.RateMultiplier = p.Cost.ActualCost / p.Cost.TotalCost
+		} else {
+			// TotalCost==0 但 ActualCost>0（理论不应发生）：保底按官方=ActualCost、倍率 1。
+			cmd.OfficialCost = p.Cost.ActualCost
+			cmd.RateMultiplier = 1
+		}
 	}
 
 	if p.shouldDeductAPIKeyQuota() {
@@ -9005,12 +9014,15 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		return
 	}
 
+	// per-day：缓存钱包余额按「真实钱包实扣」WalletDebit 回写（套餐 1:1 覆盖的部分不动钱包）。
+	// 套餐余额一侧（today_remaining）的缓存回写属准入缓存改造范围（P4c），此处只保钱包侧一致。
+	walletDebit := resolveWalletDebit(p, result)
 	if p.IsSubscriptionBill {
 		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil {
 			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
 		}
-	} else if p.Cost.ActualCost > 0 && p.User != nil {
-		deps.billingCacheService.QueueDeductBalance(p.User.ID, p.Cost.ActualCost)
+	} else if walletDebit != 0 && p.User != nil {
+		deps.billingCacheService.QueueDeductBalance(p.User.ID, walletDebit)
 	}
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
@@ -9087,25 +9099,41 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 	}
 
 	oldBalance := resolveOldBalance(p, result)
+	walletDebit := resolveWalletDebit(p, result)
 	slog.Debug("notifyBalanceLow: calling CheckBalanceAfterDeduction",
 		"user_id", p.User.ID,
 		"old_balance", oldBalance,
-		"cost", p.Cost.ActualCost,
+		"wallet_debit", walletDebit,
 		"notify_enabled", p.User.BalanceNotifyEnabled,
 		"threshold", p.User.BalanceNotifyThreshold,
 		"result_has_new_balance", result != nil && result.NewBalance != nil,
 	)
-	deps.balanceNotifyService.CheckBalanceAfterDeduction(context.Background(), p.User, oldBalance, p.Cost.ActualCost)
+	deps.balanceNotifyService.CheckBalanceAfterDeduction(context.Background(), p.User, oldBalance, walletDebit)
 }
 
 // resolveOldBalance returns the pre-deduction balance.
-// Prefers the DB transaction result (newBalance + cost) over snapshot.
+// Prefers the DB transaction result (newBalance + 真实钱包实扣) over snapshot.
+// per-day 模型下钱包实扣 = WalletDebit（套餐 1:1 覆盖的部分不动钱包），与旧的「扣 ActualCost」不同；
+// 缺 WalletDebit（legacy 兜底）时回退 ActualCost。
 func resolveOldBalance(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
 	if result != nil && result.NewBalance != nil {
-		return *result.NewBalance + p.Cost.ActualCost
+		debit := p.Cost.ActualCost
+		if result.WalletDebit != nil {
+			debit = *result.WalletDebit
+		}
+		return *result.NewBalance + debit
 	}
 	// Legacy fallback: snapshot balance from request context
 	return p.User.Balance
+}
+
+// resolveWalletDebit 返回本次真实从钱包扣减的售价货币额（用于余额提醒/缓存回写）。
+// per-day 结算返回 WalletDebit；缺失时回退 ActualCost（legacy/degraded）。
+func resolveWalletDebit(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
+	if result != nil && result.WalletDebit != nil {
+		return *result.WalletDebit
+	}
+	return p.Cost.ActualCost
 }
 
 // notifyAccountQuota sends account quota threshold notification after increment.

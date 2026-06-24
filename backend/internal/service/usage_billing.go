@@ -39,6 +39,13 @@ type UsageBillingCommand struct {
 	APIKeyQuotaCost     float64
 	APIKeyRateLimitCost float64
 	AccountQuotaCost    float64
+
+	// Per-day 结算输入（per-day redesign）：
+	// OfficialCost = 官方价（未乘倍率，= CostBreakdown.TotalCost）；套餐余额按它 1:1 扣。
+	// RateMultiplier = 钱包计费倍率（= ActualCost/TotalCost）；仅钱包正/负余额层乘它。
+	// 二者用于 settlePerDaySubscription 瀑布；OfficialCost>0 触发 per-day 结算。
+	OfficialCost   float64
+	RateMultiplier float64
 }
 
 func (c *UsageBillingCommand) Normalize() {
@@ -114,8 +121,12 @@ type AccountQuotaState struct {
 type UsageBillingApplyResult struct {
 	Applied              bool
 	APIKeyQuotaExhausted bool
-	NewBalance           *float64           // post-deduction balance (nil = no balance deduction)
+	NewBalance           *float64           // post-settlement wallet balance (nil = no settlement)
 	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
+	// WalletDebit 本次结算从钱包（users.balance）实际扣减的「售价货币」额（套餐余额 1:1 部分不计入）。
+	// = 钱包正余额扣（官方×倍率）+ 钱包负数兜底扣。供余额提醒按真实扣减重建旧余额、缓存按真实变化回写。
+	// nil = 未发生 per-day 结算。
+	WalletDebit *float64
 	// DepletedSubscriptionGroupIDs 本次扣费把哪些订阅卡的剩余额度扣到 0（burn-down 用完），
 	// 并已在同一事务内即时标记为 expired（用完即失效，不必等到期日）。调用方据此失效对应
 	// (user, group) 的订阅缓存，让"我的订阅 / active 列表"立即反映。
