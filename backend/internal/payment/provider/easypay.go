@@ -218,18 +218,40 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 		Status      *int    `json:"status"`
 		Money       *string `json:"money"`
 		TradeNo     *string `json:"trade_no"`
+		OutTradeNo  *string `json:"out_trade_no"`
 	}
 	var resp struct {
-		Code        int              `json:"code"`
+		Code        *int             `json:"code"`
 		Msg         string           `json:"msg"`
 		TradeStatus *string          `json:"trade_status"`
 		Status      *int             `json:"status"`
 		Money       *string          `json:"money"`
 		TradeNo     *string          `json:"trade_no"`
+		OutTradeNo  *string          `json:"out_trade_no"`
 		Data        easyPayQueryData `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("easypay parse query: %w", err)
+	}
+	if resp.Code != nil && *resp.Code != easypayCodeSuccess {
+		return &payment.QueryOrderResponse{
+			TradeNo:  tradeNo,
+			Status:   payment.ProviderStatusPending,
+			Metadata: e.MerchantIdentityMetadata(),
+		}, nil
+	}
+	responseOutTradeNo := ""
+	if resp.OutTradeNo != nil {
+		responseOutTradeNo = strings.TrimSpace(*resp.OutTradeNo)
+	} else if resp.Data.OutTradeNo != nil {
+		responseOutTradeNo = strings.TrimSpace(*resp.Data.OutTradeNo)
+	}
+	if responseOutTradeNo != "" && responseOutTradeNo != strings.TrimSpace(tradeNo) {
+		return &payment.QueryOrderResponse{
+			TradeNo:  tradeNo,
+			Status:   payment.ProviderStatusPending,
+			Metadata: e.MerchantIdentityMetadata(),
+		}, nil
 	}
 	status := payment.ProviderStatusPending
 	if resp.TradeStatus != nil {

@@ -38,14 +38,19 @@ func (s *PaymentService) HandlePaymentNotification(ctx context.Context, n *payme
 		// Fallback only for true legacy "sub2_N" DB-ID payloads when the
 		// current out_trade_no lookup genuinely did not find an order.
 		if oid, ok := parseLegacyPaymentOrderID(n.OrderID, err); ok {
-			return s.confirmPayment(ctx, oid, n.TradeNo, n.Amount, pk, n.Metadata)
+			order, getErr := s.entClient.PaymentOrder.Get(ctx, oid)
+			if getErr != nil {
+				slog.Error("legacy payment order not found", "orderID", oid, "error", getErr)
+				return nil
+			}
+			return s.handlePaymentNotificationForOrder(ctx, order, n, pk)
 		}
 		if dbent.IsNotFound(err) {
 			return fmt.Errorf("%w: out_trade_no=%s", ErrOrderNotFound, n.OrderID)
 		}
 		return fmt.Errorf("lookup order failed for out_trade_no %s: %w", n.OrderID, err)
 	}
-	return s.confirmPayment(ctx, order.ID, n.TradeNo, n.Amount, pk, n.Metadata)
+	return s.handlePaymentNotificationForOrder(ctx, order, n, pk)
 }
 
 func parseLegacyPaymentOrderID(orderID string, lookupErr error) (int64, bool) {
@@ -65,6 +70,92 @@ func parseLegacyPaymentOrderID(orderID string, lookupErr error) (int64, bool) {
 		return 0, false
 	}
 	return oid, true
+}
+
+func (s *PaymentService) handlePaymentNotificationForOrder(ctx context.Context, o *dbent.PaymentOrder, n *payment.PaymentNotification, pk string) error {
+	if o == nil {
+		return fmt.Errorf("payment order is missing")
+	}
+	verified, err := s.confirmNotificationAgainstUpstreamIfNeeded(ctx, o, n, pk)
+	if err != nil {
+		return err
+	}
+	if verified != nil {
+		n = verified
+	}
+	return s.confirmPayment(ctx, o.ID, n.TradeNo, n.Amount, pk, n.Metadata)
+}
+
+func (s *PaymentService) confirmNotificationAgainstUpstreamIfNeeded(ctx context.Context, o *dbent.PaymentOrder, n *payment.PaymentNotification, pk string) (*payment.PaymentNotification, error) {
+	if !paymentNotificationRequiresUpstreamConfirmation(pk) {
+		return nil, nil
+	}
+	prov, err := s.getOrderProvider(ctx, o)
+	if err != nil {
+		return nil, fmt.Errorf("load provider for payment confirmation: %w", err)
+	}
+	queryRef := paymentOrderQueryReference(o, prov)
+	if queryRef == "" {
+		return nil, fmt.Errorf("payment confirmation query reference is missing")
+	}
+	resp, err := prov.QueryOrder(ctx, queryRef)
+	if err != nil {
+		return nil, fmt.Errorf("query upstream before confirming payment: %w", err)
+	}
+	if resp == nil || resp.Status != payment.ProviderStatusPaid {
+		status := ""
+		if resp != nil {
+			status = resp.Status
+		}
+		s.writeAuditLog(ctx, o.ID, "PAYMENT_UPSTREAM_NOT_PAID", pk, map[string]any{
+			"queryRef": queryRef,
+			"status":   status,
+			"tradeNo":  n.TradeNo,
+		})
+		return nil, fmt.Errorf("upstream payment is not paid")
+	}
+	if !isValidProviderAmount(resp.Amount) {
+		s.writeAuditLog(ctx, o.ID, "PAYMENT_UPSTREAM_INVALID_AMOUNT", pk, map[string]any{
+			"expected": o.PayAmount,
+			"paid":     resp.Amount,
+			"tradeNo":  resp.TradeNo,
+			"queryRef": queryRef,
+		})
+		return nil, fmt.Errorf("invalid upstream paid amount: %v", resp.Amount)
+	}
+	if math.Abs(resp.Amount-o.PayAmount) > paymentAmountToleranceForCurrency(PaymentOrderCurrency(o)) {
+		s.writeAuditLog(ctx, o.ID, "PAYMENT_UPSTREAM_AMOUNT_MISMATCH", pk, map[string]any{
+			"expected": o.PayAmount,
+			"paid":     resp.Amount,
+			"tradeNo":  resp.TradeNo,
+			"queryRef": queryRef,
+		})
+		return nil, fmt.Errorf("upstream amount mismatch: expected %s, got %s", strconv.FormatFloat(o.PayAmount, 'f', -1, 64), strconv.FormatFloat(resp.Amount, 'f', -1, 64))
+	}
+	if err := validateProviderSnapshotMetadata(o, prov.ProviderKey(), resp.Metadata); err != nil {
+		s.writeAuditLog(ctx, o.ID, "PAYMENT_UPSTREAM_METADATA_MISMATCH", pk, map[string]any{
+			"detail":   err.Error(),
+			"tradeNo":  resp.TradeNo,
+			"queryRef": queryRef,
+		})
+		return nil, err
+	}
+	tradeNo := strings.TrimSpace(resp.TradeNo)
+	if tradeNo == "" {
+		tradeNo = strings.TrimSpace(n.TradeNo)
+	}
+	return &payment.PaymentNotification{
+		TradeNo:  tradeNo,
+		OrderID:  n.OrderID,
+		Amount:   resp.Amount,
+		Status:   n.Status,
+		RawData:  n.RawData,
+		Metadata: resp.Metadata,
+	}, nil
+}
+
+func paymentNotificationRequiresUpstreamConfirmation(providerKey string) bool {
+	return strings.EqualFold(strings.TrimSpace(providerKey), payment.TypeEasyPay)
 }
 
 func (s *PaymentService) confirmPayment(ctx context.Context, oid int64, tradeNo string, paid float64, pk string, metadata map[string]string) error {

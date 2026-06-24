@@ -57,6 +57,25 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			wantAmount:  3.21,
 		},
 		{
+			name:        "kyren order response with matching out trade no is paid",
+			body:        `{"code":1,"msg":"查询订单号成功！","trade_no":"K202605260001","out_trade_no":"order-123","type":"alipay","pid":"10001","addtime":"2026-05-26 10:30:00","endtime":"2026-05-26 10:31:12","name":"AI credits","money":"9.99","status":1,"param":"account_123","buyer":""}`,
+			wantStatus:  payment.ProviderStatusPaid,
+			wantTradeNo: "K202605260001",
+			wantAmount:  9.99,
+		},
+		{
+			name:        "mismatched out trade no cannot become paid",
+			body:        `{"code":1,"trade_status":"TRADE_SUCCESS","status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"other-order"}`,
+			wantStatus:  payment.ProviderStatusPending,
+			wantTradeNo: orderID,
+		},
+		{
+			name:        "nested mismatched out trade no cannot become paid",
+			body:        `{"code":1,"data":{"trade_status":"TRADE_SUCCESS","status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"other-order"}}`,
+			wantStatus:  payment.ProviderStatusPending,
+			wantTradeNo: orderID,
+		},
+		{
 			name:        "legacy numeric non paid status is pending",
 			body:        `{"code":1,"status":0,"money":"3.21"}`,
 			wantStatus:  payment.ProviderStatusPending,
@@ -66,6 +85,18 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 		{
 			name:        "query failure with missing status is pending",
 			body:        `{"code":0,"msg":"订单不存在"}`,
+			wantStatus:  payment.ProviderStatusPending,
+			wantTradeNo: orderID,
+		},
+		{
+			name:        "explicit failed code ignores trade success fields",
+			body:        `{"code":0,"trade_status":"TRADE_SUCCESS","status":1,"money":"12.34","trade_no":"gateway-123"}`,
+			wantStatus:  payment.ProviderStatusPending,
+			wantTradeNo: orderID,
+		},
+		{
+			name:        "explicit failed code ignores legacy paid status",
+			body:        `{"code":0,"status":1,"money":"3.21"}`,
 			wantStatus:  payment.ProviderStatusPending,
 			wantTradeNo: orderID,
 		},
