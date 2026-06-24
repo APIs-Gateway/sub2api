@@ -30,6 +30,10 @@ func (r *subscriptionExpiryRepoStub) GetActiveByUserIDAndGroupID(context.Context
 	return nil, ErrSubscriptionNotFound
 }
 
+func (r *subscriptionExpiryRepoStub) GetActiveByUserID(context.Context, int64) (*UserSubscription, error) {
+	return nil, ErrSubscriptionNotFound
+}
+
 func (r *subscriptionExpiryRepoStub) Update(context.Context, *UserSubscription) error {
 	return nil
 }

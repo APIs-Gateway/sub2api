@@ -126,6 +126,13 @@ func (f fakeGoogleSubscriptionRepo) GetActiveByUserIDAndGroupID(ctx context.Cont
 	}
 	return nil, errors.New("not implemented")
 }
+
+func (f fakeGoogleSubscriptionRepo) GetActiveByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	if f.getActive != nil {
+		return f.getActive(ctx, userID, 0)
+	}
+	return nil, errors.New("not implemented")
+}
 func (f fakeGoogleSubscriptionRepo) Update(ctx context.Context, sub *service.UserSubscription) error {
 	return errors.New("not implemented")
 }

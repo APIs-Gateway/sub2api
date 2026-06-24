@@ -41,6 +41,13 @@ type UserSubscription struct {
 	DailySpentDay       int        // DailySpentUSD 对应的日历天 N；读写时若 ≠ 当前 N 即视为 0（惰性重置）
 	ActivatedAt         *time.Time // 清扣时钟起点；nil 时回退 StartsAt
 
+	// Per-day 每日额度模型字段（per-day redesign，逐步取代上方 burn-down 窗口）
+	TodayRemaining float64 // 今日剩余套餐额度（官方刀，1:1，永不为负）
+	TodayDay       int     // TodayRemaining 所属东八区绝对自然日序号；-1=未初始化
+	StartDay       int     // 激活当天的东八区绝对自然日序号
+	ExpireDay      int     // 最后发放 D 的东八区绝对自然日序号（含）；每透支 −1
+	OverdraftOn    bool    // 本卡是否开启透支（上限按用户级月度计）
+
 	AssignedBy *int64
 	AssignedAt time.Time
 	Notes      string

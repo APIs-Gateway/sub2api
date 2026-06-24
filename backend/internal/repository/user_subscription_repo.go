@@ -40,6 +40,11 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 		SetConsumedUsd(sub.ConsumedUSD).
 		SetClawedUsd(sub.ClawedUSD).
 		SetLastClawbackDay(sub.LastClawbackDay).
+		SetTodayRemaining(sub.TodayRemaining).
+		SetTodayDay(sub.TodayDay).
+		SetStartDay(sub.StartDay).
+		SetExpireDay(sub.ExpireDay).
+		SetOverdraftOn(sub.OverdraftOn).
 		SetNillableActivatedAt(sub.ActivatedAt).
 		SetNillableAssignedBy(sub.AssignedBy)
 
@@ -105,6 +110,25 @@ func (r *userSubscriptionRepository) GetActiveByUserIDAndGroupID(ctx context.Con
 		).
 		WithGroup().
 		Order(dbent.Desc(usersubscription.FieldCreatedAt)).
+		First(ctx)
+	if err != nil {
+		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	}
+	return userSubscriptionEntityToService(m), nil
+}
+
+func (r *userSubscriptionRepository) GetActiveByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	client := clientFromContext(ctx, r.client)
+	// per-day 单卡模式：不按 group 匹配，取该用户 status='active' 的卡。
+	// 过期是惰性的（卡可能 status='active' 而 today>expire_day），故不在 SQL 里按 expire_day 过滤；
+	// 真正的过期判定由调用方按东八区自然日惰性处理。多张时取 expire_day 最晚的一张作兜底。
+	m, err := client.UserSubscription.Query().
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.StatusEQ(service.SubscriptionStatusActive),
+		).
+		WithGroup().
+		Order(dbent.Desc(usersubscription.FieldExpireDay), dbent.Desc(usersubscription.FieldCreatedAt)).
 		First(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
@@ -808,6 +832,11 @@ func userSubscriptionEntityToService(m *dbent.UserSubscription) *service.UserSub
 		TotalOverdraftCount: m.TotalOverdraftCount,
 		DailySpentUSD:       m.DailySpentUsd,
 		DailySpentDay:       m.DailySpentDay,
+		TodayRemaining:      m.TodayRemaining,
+		TodayDay:            m.TodayDay,
+		StartDay:            m.StartDay,
+		ExpireDay:           m.ExpireDay,
+		OverdraftOn:         m.OverdraftOn,
 		ActivatedAt:         m.ActivatedAt,
 		AssignedBy:          m.AssignedBy,
 		AssignedAt:          m.AssignedAt,

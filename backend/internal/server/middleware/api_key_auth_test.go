@@ -1145,6 +1145,13 @@ func (r *stubUserSubscriptionRepo) GetActiveByUserIDAndGroupID(ctx context.Conte
 	return nil, errors.New("not implemented")
 }
 
+func (r *stubUserSubscriptionRepo) GetActiveByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	if r.getActive != nil {
+		return r.getActive(ctx, userID, 0)
+	}
+	return nil, errors.New("not implemented")
+}
+
 func (r *stubUserSubscriptionRepo) Update(ctx context.Context, sub *service.UserSubscription) error {
 	return errors.New("not implemented")
 }

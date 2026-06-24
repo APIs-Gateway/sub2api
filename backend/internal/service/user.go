@@ -62,6 +62,10 @@ type User struct {
 	// 仅作准入闸门的廉价触发位；真正的天数按卡存于 UserSubscription.MaxOverdraftDays。
 	SubscriptionOverdraftGuard bool
 
+	// Per-day 透支：用户级月度计数（per-day redesign，取代 per-card TotalOverdraftCount）。
+	MonthlyOverdraftCount int    // 当前自然月已透支次数（名下多卡共享）
+	MonthlyOverdraftMonth string // 上一计数所属东八区月份 YYYYMM；惰性按月重置
+
 	// UserGroupRPMOverride 来自 auth cache snapshot 的 (user, group) RPM 覆盖值。
 	// nil = 该 API Key 对应的 (user, group) 无 override；非 nil 时 checkRPM 直接使用，
 	// 避免每请求查 DB。字段不持久化到数据库。

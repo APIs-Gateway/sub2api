@@ -278,6 +278,17 @@ func (s *userSubRepoStubForGroupUpdate) GetActiveByUserIDAndGroupID(_ context.Co
 	return &clone, nil
 }
 
+func (s *userSubRepoStubForGroupUpdate) GetActiveByUserID(_ context.Context, userID int64) (*UserSubscription, error) {
+	if s.getActiveErr != nil {
+		return nil, s.getActiveErr
+	}
+	if s.getActiveSub == nil {
+		return nil, ErrSubscriptionNotFound
+	}
+	clone := *s.getActiveSub
+	return &clone, nil
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

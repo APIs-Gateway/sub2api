@@ -197,6 +197,34 @@ func (c *PerDayCard) TodaySpentFromPackage(today int) float64 {
 	return spent
 }
 
+// ToPerDayCard 把订阅卡模型投影成 per-day 引擎所需的最小状态。
+func (s *UserSubscription) ToPerDayCard() PerDayCard {
+	if s == nil {
+		return PerDayCard{}
+	}
+	return PerDayCard{
+		DailyAmountUSD: s.DailyAmountUSD,
+		TodayRemaining: s.TodayRemaining,
+		TodayDay:       s.TodayDay,
+		StartDay:       s.StartDay,
+		ExpireDay:      s.ExpireDay,
+		OverdraftOn:    s.OverdraftOn,
+		Expired:        s.Status == SubscriptionStatusExpired,
+	}
+}
+
+// ToWalletState 把用户模型投影成 per-day 引擎所需的钱包/月度透支状态。
+func (u *User) ToWalletState() WalletState {
+	if u == nil {
+		return WalletState{}
+	}
+	return WalletState{
+		Balance:               u.Balance,
+		MonthlyOverdraftCount: u.MonthlyOverdraftCount,
+		MonthlyOverdraftMonth: u.MonthlyOverdraftMonth,
+	}
+}
+
 // RefundableDays 返回可退/剩余服务天数 = max(0, expire_day − today)。
 // 今天已开始服务、不计入可退；expire_day 已含「已用天 + 透支借走天」的扣减（每透支 expire_day−1）。
 func (c *PerDayCard) RefundableDays(today int) int {
