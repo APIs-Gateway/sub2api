@@ -136,6 +136,12 @@ func (r *userSubscriptionRepository) GetActiveByUserID(ctx context.Context, user
 	return userSubscriptionEntityToService(m), nil
 }
 
+// Update 写订阅「元数据」（状态/到期/窗口/notes 等）。
+// 注意：burn-down 计费字段（consumed/clawed/daily_spent）与 per-day 热字段
+// （today_remaining/today_day/expire_day）**不在此写**——它们由结算/清扣的专用原子 SQL 在
+// FOR UPDATE 事务内增量更新。切勿复用本方法回写结算结果：本方法按内存快照整行覆盖，会把
+// 并发结算刚扣减的 today_remaining / 透支前移的 expire_day 用 stale 值覆盖回去。P4b 结算走
+// 专用写路径（见 settlePerDay*）。start_day 创建后不可变、overdraft_on 走 SetOverdraftDays。
 func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.UserSubscription) error {
 	if sub == nil {
 		return service.ErrSubscriptionNilInput
@@ -177,10 +183,13 @@ func (r *userSubscriptionRepository) SetOverdraftDays(ctx context.Context, userI
 	client := clientFromContext(ctx, r.client)
 	upd := client.UserSubscription.Update().
 		Where(usersubscription.IDEQ(subID), usersubscription.UserIDEQ(userID))
+	// 同步写 per-day 透支开关 overdraft_on：days!=nil 即开启、nil 即关闭。
+	// 旧 max_overdraft_days 的「天数」上限在 per-day 模型已无意义（上限改用户级月度），
+	// 但开/关语义沿用此入口，桥接旧 UI 到新 CanOverdraft（否则新模型透支恒 false）。
 	if days != nil {
-		upd = upd.SetMaxOverdraftDays(*days)
+		upd = upd.SetMaxOverdraftDays(*days).SetOverdraftOn(true)
 	} else {
-		upd = upd.ClearMaxOverdraftDays()
+		upd = upd.ClearMaxOverdraftDays().SetOverdraftOn(false)
 	}
 	affected, err := upd.Save(ctx)
 	if err != nil {

@@ -257,6 +257,12 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 		expiresAt = MaxExpiresAt
 	}
 
+	// per-day 字段：新卡即按 per-day 模型初始化（与上方 burn-down 字段并存，切换后即生效）。
+	// start_day/expire_day 为东八区绝对自然日序号；expire_day = 最后发放日（含）= start+T−1；
+	// 当天即发放 D（today_remaining=D、today_day=start_day）。切换前 burn-down 不读这些字段，纯加性。
+	startDay := EastDayNumber(now)
+	expireDay := startDay + validityDays - 1
+
 	activatedAt := now
 	sub := &UserSubscription{
 		UserID:          input.UserID,
@@ -269,6 +275,11 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 		ConsumedUSD:     0,
 		ClawedUSD:       0,
 		LastClawbackDay: 0,
+		TodayRemaining:  dailyAmount,
+		TodayDay:        startDay,
+		StartDay:        startDay,
+		ExpireDay:       expireDay,
+		OverdraftOn:     false,
 		ActivatedAt:     &activatedAt,
 		AssignedAt:      now,
 		Notes:           input.Notes,
