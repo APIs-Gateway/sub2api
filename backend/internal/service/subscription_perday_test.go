@@ -124,23 +124,41 @@ func TestAdmit_RejectOnlyWhenAllExhausted(t *testing.T) {
 	// 全不可用 → 拒绝
 	c := &PerDayCard{DailyAmountUSD: 10, TodayRemaining: 0, TodayDay: today, ExpireDay: today, OverdraftOn: true} // expire==today 无未来天
 	w := &WalletState{Balance: 0, MonthlyOverdraftMonth: "202606"}
-	if Admit(c, w, today) {
+	if Admit(c, w, today, "202606") {
 		t.Fatal("三来源全不可用应拒绝")
 	}
 	// 套餐有余额 → 放行
 	c2 := &PerDayCard{DailyAmountUSD: 10, TodayRemaining: 1, TodayDay: today, ExpireDay: today}
-	if !Admit(c2, &WalletState{Balance: 0}, today) {
+	if !Admit(c2, &WalletState{Balance: 0, MonthlyOverdraftMonth: "202606"}, today, "202606") {
 		t.Fatal("套餐>0 应放行")
 	}
 	// 钱包>0 → 放行
 	c3 := &PerDayCard{DailyAmountUSD: 10, TodayRemaining: 0, TodayDay: today, ExpireDay: today}
-	if !Admit(c3, &WalletState{Balance: 0.01}, today) {
+	if !Admit(c3, &WalletState{Balance: 0.01, MonthlyOverdraftMonth: "202606"}, today, "202606") {
 		t.Fatal("钱包>0 应放行")
 	}
 	// 可透支（有未来天）→ 放行
 	c4 := &PerDayCard{DailyAmountUSD: 10, TodayRemaining: 0, TodayDay: today, ExpireDay: today + 5, OverdraftOn: true}
-	if !Admit(c4, &WalletState{Balance: 0, MonthlyOverdraftMonth: "202606"}, today) {
+	if !Admit(c4, &WalletState{Balance: 0, MonthlyOverdraftMonth: "202606"}, today, "202606") {
 		t.Fatal("可透支应放行")
+	}
+}
+
+// 跨月：上月透支已满 + 套餐/钱包皆空，仅透支可用时，Admit 必须先惰性重置月度计数再判，否则误拒。
+func TestAdmit_CrossMonthOverdraftReset(t *testing.T) {
+	today := 100
+	c := &PerDayCard{DailyAmountUSD: 10, TodayRemaining: 0, TodayDay: today, ExpireDay: today + 10, OverdraftOn: true}
+	w := &WalletState{Balance: 0, MonthlyOverdraftCount: 5, MonthlyOverdraftMonth: "202606"}
+	// 同月已满 → 拒绝
+	if Admit(c, w, today, "202606") {
+		t.Fatal("本月透支已满且无其他来源应拒绝")
+	}
+	// 次月第一笔：Admit 须惰性重置月度计数 → 仅透支可用也应放行
+	if !Admit(c, w, today, "202607") {
+		t.Fatal("跨月后仅透支可用应放行")
+	}
+	if w.MonthlyOverdraftCount != 0 || w.MonthlyOverdraftMonth != "202607" {
+		t.Fatalf("Admit 应已惰性重置月度计数: %+v", w)
 	}
 }
 

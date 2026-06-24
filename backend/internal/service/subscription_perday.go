@@ -97,15 +97,19 @@ func canOverdraft(c *PerDayCard, w *WalletState, today int) bool {
 		c.ExpireDay > today
 }
 
-// CanOverdraft 导出版（供准入闸/展示用）。调用前应已 ResetIfNewDay。
+// CanOverdraft 导出版（供准入闸/展示用）。调用前必须已 ResetIfNewDay(today) 且
+// ResetMonthIfNeeded(monthKey)——否则跨月的 stale MonthlyOverdraftCount 会误判。
 func CanOverdraft(c *PerDayCard, w *WalletState, today int) bool {
 	return canOverdraft(c, w, today)
 }
 
 // Admit 准入（请求前）：套餐余额>0 或 钱包>0 或 可透支 —— 三者任一可用即放行。
-// 会先按 today 惰性覆盖（调用方需把覆盖结果写回）。流式请求必须先放行，放行后只结算不拒绝。
-func Admit(c *PerDayCard, w *WalletState, today int) bool {
+// 与 Settle 对称地先做两个惰性重置：按 today 覆盖套餐余额、按 monthKey 重置透支月度计数
+// （否则跨月后「仅透支可用」会被上个月的 stale count 误拒，而真正会重置的 Settle 在准入
+// 失败后根本进不去）。调用方需把覆盖/重置结果写回。流式请求必须先放行，放行后只结算不拒绝。
+func Admit(c *PerDayCard, w *WalletState, today int, monthKey string) bool {
 	c.ResetIfNewDay(today)
+	w.ResetMonthIfNeeded(monthKey)
 	return c.TodayRemaining > 0 || w.Balance > 0 || canOverdraft(c, w, today)
 }
 
