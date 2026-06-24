@@ -386,6 +386,20 @@ func (_c *UserSubscriptionCreate) SetNillableExpireDay(v *int) *UserSubscription
 	return _c
 }
 
+// SetOverdraftOn sets the "overdraft_on" field.
+func (_c *UserSubscriptionCreate) SetOverdraftOn(v bool) *UserSubscriptionCreate {
+	_c.mutation.SetOverdraftOn(v)
+	return _c
+}
+
+// SetNillableOverdraftOn sets the "overdraft_on" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableOverdraftOn(v *bool) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetOverdraftOn(*v)
+	}
+	return _c
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_c *UserSubscriptionCreate) SetActivatedAt(v time.Time) *UserSubscriptionCreate {
 	_c.mutation.SetActivatedAt(v)
@@ -606,6 +620,10 @@ func (_c *UserSubscriptionCreate) defaults() error {
 		v := usersubscription.DefaultExpireDay
 		_c.mutation.SetExpireDay(v)
 	}
+	if _, ok := _c.mutation.OverdraftOn(); !ok {
+		v := usersubscription.DefaultOverdraftOn
+		_c.mutation.SetOverdraftOn(v)
+	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		if usersubscription.DefaultAssignedAt == nil {
 			return fmt.Errorf("ent: uninitialized usersubscription.DefaultAssignedAt (forgotten import ent/runtime?)")
@@ -688,6 +706,9 @@ func (_c *UserSubscriptionCreate) check() error {
 	}
 	if _, ok := _c.mutation.ExpireDay(); !ok {
 		return &ValidationError{Name: "expire_day", err: errors.New(`ent: missing required field "UserSubscription.expire_day"`)}
+	}
+	if _, ok := _c.mutation.OverdraftOn(); !ok {
+		return &ValidationError{Name: "overdraft_on", err: errors.New(`ent: missing required field "UserSubscription.overdraft_on"`)}
 	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		return &ValidationError{Name: "assigned_at", err: errors.New(`ent: missing required field "UserSubscription.assigned_at"`)}
@@ -824,6 +845,10 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 	if value, ok := _c.mutation.ExpireDay(); ok {
 		_spec.SetField(usersubscription.FieldExpireDay, field.TypeInt, value)
 		_node.ExpireDay = value
+	}
+	if value, ok := _c.mutation.OverdraftOn(); ok {
+		_spec.SetField(usersubscription.FieldOverdraftOn, field.TypeBool, value)
+		_node.OverdraftOn = value
 	}
 	if value, ok := _c.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1426,6 +1451,18 @@ func (u *UserSubscriptionUpsert) UpdateExpireDay() *UserSubscriptionUpsert {
 // AddExpireDay adds v to the "expire_day" field.
 func (u *UserSubscriptionUpsert) AddExpireDay(v int) *UserSubscriptionUpsert {
 	u.Add(usersubscription.FieldExpireDay, v)
+	return u
+}
+
+// SetOverdraftOn sets the "overdraft_on" field.
+func (u *UserSubscriptionUpsert) SetOverdraftOn(v bool) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldOverdraftOn, v)
+	return u
+}
+
+// UpdateOverdraftOn sets the "overdraft_on" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateOverdraftOn() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldOverdraftOn)
 	return u
 }
 
@@ -2069,6 +2106,20 @@ func (u *UserSubscriptionUpsertOne) AddExpireDay(v int) *UserSubscriptionUpsertO
 func (u *UserSubscriptionUpsertOne) UpdateExpireDay() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateExpireDay()
+	})
+}
+
+// SetOverdraftOn sets the "overdraft_on" field.
+func (u *UserSubscriptionUpsertOne) SetOverdraftOn(v bool) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetOverdraftOn(v)
+	})
+}
+
+// UpdateOverdraftOn sets the "overdraft_on" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateOverdraftOn() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateOverdraftOn()
 	})
 }
 
@@ -2889,6 +2940,20 @@ func (u *UserSubscriptionUpsertBulk) AddExpireDay(v int) *UserSubscriptionUpsert
 func (u *UserSubscriptionUpsertBulk) UpdateExpireDay() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateExpireDay()
+	})
+}
+
+// SetOverdraftOn sets the "overdraft_on" field.
+func (u *UserSubscriptionUpsertBulk) SetOverdraftOn(v bool) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetOverdraftOn(v)
+	})
+}
+
+// UpdateOverdraftOn sets the "overdraft_on" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateOverdraftOn() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateOverdraftOn()
 	})
 }
 

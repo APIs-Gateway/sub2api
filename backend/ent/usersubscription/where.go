@@ -195,6 +195,11 @@ func ExpireDay(v int) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldExpireDay, v))
 }
 
+// OverdraftOn applies equality check predicate on the "overdraft_on" field. It's identical to OverdraftOnEQ.
+func OverdraftOn(v bool) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldOverdraftOn, v))
+}
+
 // ActivatedAt applies equality check predicate on the "activated_at" field. It's identical to ActivatedAtEQ.
 func ActivatedAt(v time.Time) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldActivatedAt, v))
@@ -1358,6 +1363,16 @@ func ExpireDayLT(v int) predicate.UserSubscription {
 // ExpireDayLTE applies the LTE predicate on the "expire_day" field.
 func ExpireDayLTE(v int) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldLTE(FieldExpireDay, v))
+}
+
+// OverdraftOnEQ applies the EQ predicate on the "overdraft_on" field.
+func OverdraftOnEQ(v bool) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldOverdraftOn, v))
+}
+
+// OverdraftOnNEQ applies the NEQ predicate on the "overdraft_on" field.
+func OverdraftOnNEQ(v bool) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldOverdraftOn, v))
 }
 
 // ActivatedAtEQ applies the EQ predicate on the "activated_at" field.

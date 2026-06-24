@@ -46200,6 +46200,7 @@ type UserSubscriptionMutation struct {
 	addstart_day             *int
 	expire_day               *int
 	addexpire_day            *int
+	overdraft_on             *bool
 	activated_at             *time.Time
 	assigned_at              *time.Time
 	notes                    *string
@@ -47725,6 +47726,42 @@ func (m *UserSubscriptionMutation) ResetExpireDay() {
 	m.addexpire_day = nil
 }
 
+// SetOverdraftOn sets the "overdraft_on" field.
+func (m *UserSubscriptionMutation) SetOverdraftOn(b bool) {
+	m.overdraft_on = &b
+}
+
+// OverdraftOn returns the value of the "overdraft_on" field in the mutation.
+func (m *UserSubscriptionMutation) OverdraftOn() (r bool, exists bool) {
+	v := m.overdraft_on
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOverdraftOn returns the old "overdraft_on" field's value of the UserSubscription entity.
+// If the UserSubscription object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserSubscriptionMutation) OldOverdraftOn(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOverdraftOn is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOverdraftOn requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOverdraftOn: %w", err)
+	}
+	return oldValue.OverdraftOn, nil
+}
+
+// ResetOverdraftOn resets all changes to the "overdraft_on" field.
+func (m *UserSubscriptionMutation) ResetOverdraftOn() {
+	m.overdraft_on = nil
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (m *UserSubscriptionMutation) SetActivatedAt(t time.Time) {
 	m.activated_at = &t
@@ -48117,7 +48154,7 @@ func (m *UserSubscriptionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserSubscriptionMutation) Fields() []string {
-	fields := make([]string, 0, 32)
+	fields := make([]string, 0, 33)
 	if m.created_at != nil {
 		fields = append(fields, usersubscription.FieldCreatedAt)
 	}
@@ -48202,6 +48239,9 @@ func (m *UserSubscriptionMutation) Fields() []string {
 	if m.expire_day != nil {
 		fields = append(fields, usersubscription.FieldExpireDay)
 	}
+	if m.overdraft_on != nil {
+		fields = append(fields, usersubscription.FieldOverdraftOn)
+	}
 	if m.activated_at != nil {
 		fields = append(fields, usersubscription.FieldActivatedAt)
 	}
@@ -48278,6 +48318,8 @@ func (m *UserSubscriptionMutation) Field(name string) (ent.Value, bool) {
 		return m.StartDay()
 	case usersubscription.FieldExpireDay:
 		return m.ExpireDay()
+	case usersubscription.FieldOverdraftOn:
+		return m.OverdraftOn()
 	case usersubscription.FieldActivatedAt:
 		return m.ActivatedAt()
 	case usersubscription.FieldAssignedBy:
@@ -48351,6 +48393,8 @@ func (m *UserSubscriptionMutation) OldField(ctx context.Context, name string) (e
 		return m.OldStartDay(ctx)
 	case usersubscription.FieldExpireDay:
 		return m.OldExpireDay(ctx)
+	case usersubscription.FieldOverdraftOn:
+		return m.OldOverdraftOn(ctx)
 	case usersubscription.FieldActivatedAt:
 		return m.OldActivatedAt(ctx)
 	case usersubscription.FieldAssignedBy:
@@ -48563,6 +48607,13 @@ func (m *UserSubscriptionMutation) SetField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetExpireDay(v)
+		return nil
+	case usersubscription.FieldOverdraftOn:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOverdraftOn(v)
 		return nil
 	case usersubscription.FieldActivatedAt:
 		v, ok := value.(time.Time)
@@ -48976,6 +49027,9 @@ func (m *UserSubscriptionMutation) ResetField(name string) error {
 		return nil
 	case usersubscription.FieldExpireDay:
 		m.ResetExpireDay()
+		return nil
+	case usersubscription.FieldOverdraftOn:
+		m.ResetOverdraftOn()
 		return nil
 	case usersubscription.FieldActivatedAt:
 		m.ResetActivatedAt()

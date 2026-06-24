@@ -550,6 +550,20 @@ func (_u *UserSubscriptionUpdate) AddExpireDay(v int) *UserSubscriptionUpdate {
 	return _u
 }
 
+// SetOverdraftOn sets the "overdraft_on" field.
+func (_u *UserSubscriptionUpdate) SetOverdraftOn(v bool) *UserSubscriptionUpdate {
+	_u.mutation.SetOverdraftOn(v)
+	return _u
+}
+
+// SetNillableOverdraftOn sets the "overdraft_on" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableOverdraftOn(v *bool) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetOverdraftOn(*v)
+	}
+	return _u
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_u *UserSubscriptionUpdate) SetActivatedAt(v time.Time) *UserSubscriptionUpdate {
 	_u.mutation.SetActivatedAt(v)
@@ -927,6 +941,9 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if value, ok := _u.mutation.AddedExpireDay(); ok {
 		_spec.AddField(usersubscription.FieldExpireDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.OverdraftOn(); ok {
+		_spec.SetField(usersubscription.FieldOverdraftOn, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1642,6 +1659,20 @@ func (_u *UserSubscriptionUpdateOne) AddExpireDay(v int) *UserSubscriptionUpdate
 	return _u
 }
 
+// SetOverdraftOn sets the "overdraft_on" field.
+func (_u *UserSubscriptionUpdateOne) SetOverdraftOn(v bool) *UserSubscriptionUpdateOne {
+	_u.mutation.SetOverdraftOn(v)
+	return _u
+}
+
+// SetNillableOverdraftOn sets the "overdraft_on" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableOverdraftOn(v *bool) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetOverdraftOn(*v)
+	}
+	return _u
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_u *UserSubscriptionUpdateOne) SetActivatedAt(v time.Time) *UserSubscriptionUpdateOne {
 	_u.mutation.SetActivatedAt(v)
@@ -2049,6 +2080,9 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 	}
 	if value, ok := _u.mutation.AddedExpireDay(); ok {
 		_spec.AddField(usersubscription.FieldExpireDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.OverdraftOn(); ok {
+		_spec.SetField(usersubscription.FieldOverdraftOn, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)

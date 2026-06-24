@@ -2197,8 +2197,12 @@ func init() {
 	usersubscriptionDescExpireDay := usersubscriptionFields[24].Descriptor()
 	// usersubscription.DefaultExpireDay holds the default value on creation for the expire_day field.
 	usersubscription.DefaultExpireDay = usersubscriptionDescExpireDay.Default.(int)
+	// usersubscriptionDescOverdraftOn is the schema descriptor for overdraft_on field.
+	usersubscriptionDescOverdraftOn := usersubscriptionFields[25].Descriptor()
+	// usersubscription.DefaultOverdraftOn holds the default value on creation for the overdraft_on field.
+	usersubscription.DefaultOverdraftOn = usersubscriptionDescOverdraftOn.Default.(bool)
 	// usersubscriptionDescAssignedAt is the schema descriptor for assigned_at field.
-	usersubscriptionDescAssignedAt := usersubscriptionFields[27].Descriptor()
+	usersubscriptionDescAssignedAt := usersubscriptionFields[28].Descriptor()
 	// usersubscription.DefaultAssignedAt holds the default value on creation for the assigned_at field.
 	usersubscription.DefaultAssignedAt = usersubscriptionDescAssignedAt.Default.(func() time.Time)
 }

@@ -76,6 +76,8 @@ type UserSubscription struct {
 	StartDay int `json:"start_day,omitempty"`
 	// ExpireDay holds the value of the "expire_day" field.
 	ExpireDay int `json:"expire_day,omitempty"`
+	// OverdraftOn holds the value of the "overdraft_on" field.
+	OverdraftOn bool `json:"overdraft_on,omitempty"`
 	// ActivatedAt holds the value of the "activated_at" field.
 	ActivatedAt *time.Time `json:"activated_at,omitempty"`
 	// AssignedBy holds the value of the "assigned_by" field.
@@ -165,6 +167,8 @@ func (*UserSubscription) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case usersubscription.FieldOverdraftOn:
+			values[i] = new(sql.NullBool)
 		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldGrantedTotalUsd, usersubscription.FieldDailyAmountUsd, usersubscription.FieldConsumedUsd, usersubscription.FieldClawedUsd, usersubscription.FieldDailySpentUsd, usersubscription.FieldTodayRemaining:
 			values[i] = new(sql.NullFloat64)
 		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldPlanID, usersubscription.FieldLastClawbackDay, usersubscription.FieldMaxOverdraftDays, usersubscription.FieldTotalOverdraftCount, usersubscription.FieldDailySpentDay, usersubscription.FieldTodayDay, usersubscription.FieldStartDay, usersubscription.FieldExpireDay, usersubscription.FieldAssignedBy:
@@ -368,6 +372,12 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ExpireDay = int(value.Int64)
 			}
+		case usersubscription.FieldOverdraftOn:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field overdraft_on", values[i])
+			} else if value.Valid {
+				_m.OverdraftOn = value.Bool
+			}
 		case usersubscription.FieldActivatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field activated_at", values[i])
@@ -551,6 +561,9 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("expire_day=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ExpireDay))
+	builder.WriteString(", ")
+	builder.WriteString("overdraft_on=")
+	builder.WriteString(fmt.Sprintf("%v", _m.OverdraftOn))
 	builder.WriteString(", ")
 	if v := _m.ActivatedAt; v != nil {
 		builder.WriteString("activated_at=")

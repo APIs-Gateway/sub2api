@@ -71,6 +71,8 @@ const (
 	FieldStartDay = "start_day"
 	// FieldExpireDay holds the string denoting the expire_day field in the database.
 	FieldExpireDay = "expire_day"
+	// FieldOverdraftOn holds the string denoting the overdraft_on field in the database.
+	FieldOverdraftOn = "overdraft_on"
 	// FieldActivatedAt holds the string denoting the activated_at field in the database.
 	FieldActivatedAt = "activated_at"
 	// FieldAssignedBy holds the string denoting the assigned_by field in the database.
@@ -159,6 +161,7 @@ var Columns = []string{
 	FieldTodayDay,
 	FieldStartDay,
 	FieldExpireDay,
+	FieldOverdraftOn,
 	FieldActivatedAt,
 	FieldAssignedBy,
 	FieldAssignedAt,
@@ -223,6 +226,8 @@ var (
 	DefaultStartDay int
 	// DefaultExpireDay holds the default value on creation for the "expire_day" field.
 	DefaultExpireDay int
+	// DefaultOverdraftOn holds the default value on creation for the "overdraft_on" field.
+	DefaultOverdraftOn bool
 	// DefaultAssignedAt holds the default value on creation for the "assigned_at" field.
 	DefaultAssignedAt func() time.Time
 )
@@ -373,6 +378,11 @@ func ByStartDay(opts ...sql.OrderTermOption) OrderOption {
 // ByExpireDay orders the results by the expire_day field.
 func ByExpireDay(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldExpireDay, opts...).ToFunc()
+}
+
+// ByOverdraftOn orders the results by the overdraft_on field.
+func ByOverdraftOn(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldOverdraftOn, opts...).ToFunc()
 }
 
 // ByActivatedAt orders the results by the activated_at field.

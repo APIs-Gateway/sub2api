@@ -128,6 +128,11 @@ func (UserSubscription) Fields() []ent.Field {
 		// 最后发放 D 的东八区自然日序号（含）；无透支时 = start_day+T−1，每透支 −1。
 		field.Int("expire_day").
 			Default(0),
+		// 本卡是否开启透支（per-day 模型的 per-card 开关，取代旧 max_overdraft_days 的 nil/非nil 语义）。
+		// 透支上限改为用户级月度（users.monthly_overdraft_count，默认 5）；本字段只管「开/关」。
+		// 用户在「我的订阅」自助开启；转套餐/续费产生的新卡默认关闭（保守，需重新开启）。
+		field.Bool("overdraft_on").
+			Default(false),
 
 		// 清扣时钟起点（按 Asia/Shanghai 从此算第 N 个日历天）。
 		// 为 nil 时回退到 starts_at；存量回填时设为 NOW() 以对剩余期重新计时。
