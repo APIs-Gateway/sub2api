@@ -330,6 +330,62 @@ func (_c *UserSubscriptionCreate) SetNillableDailySpentDay(v *int) *UserSubscrip
 	return _c
 }
 
+// SetTodayRemaining sets the "today_remaining" field.
+func (_c *UserSubscriptionCreate) SetTodayRemaining(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetTodayRemaining(v)
+	return _c
+}
+
+// SetNillableTodayRemaining sets the "today_remaining" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableTodayRemaining(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetTodayRemaining(*v)
+	}
+	return _c
+}
+
+// SetTodayDay sets the "today_day" field.
+func (_c *UserSubscriptionCreate) SetTodayDay(v int) *UserSubscriptionCreate {
+	_c.mutation.SetTodayDay(v)
+	return _c
+}
+
+// SetNillableTodayDay sets the "today_day" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableTodayDay(v *int) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetTodayDay(*v)
+	}
+	return _c
+}
+
+// SetStartDay sets the "start_day" field.
+func (_c *UserSubscriptionCreate) SetStartDay(v int) *UserSubscriptionCreate {
+	_c.mutation.SetStartDay(v)
+	return _c
+}
+
+// SetNillableStartDay sets the "start_day" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableStartDay(v *int) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetStartDay(*v)
+	}
+	return _c
+}
+
+// SetExpireDay sets the "expire_day" field.
+func (_c *UserSubscriptionCreate) SetExpireDay(v int) *UserSubscriptionCreate {
+	_c.mutation.SetExpireDay(v)
+	return _c
+}
+
+// SetNillableExpireDay sets the "expire_day" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableExpireDay(v *int) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetExpireDay(*v)
+	}
+	return _c
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_c *UserSubscriptionCreate) SetActivatedAt(v time.Time) *UserSubscriptionCreate {
 	_c.mutation.SetActivatedAt(v)
@@ -534,6 +590,22 @@ func (_c *UserSubscriptionCreate) defaults() error {
 		v := usersubscription.DefaultDailySpentDay
 		_c.mutation.SetDailySpentDay(v)
 	}
+	if _, ok := _c.mutation.TodayRemaining(); !ok {
+		v := usersubscription.DefaultTodayRemaining
+		_c.mutation.SetTodayRemaining(v)
+	}
+	if _, ok := _c.mutation.TodayDay(); !ok {
+		v := usersubscription.DefaultTodayDay
+		_c.mutation.SetTodayDay(v)
+	}
+	if _, ok := _c.mutation.StartDay(); !ok {
+		v := usersubscription.DefaultStartDay
+		_c.mutation.SetStartDay(v)
+	}
+	if _, ok := _c.mutation.ExpireDay(); !ok {
+		v := usersubscription.DefaultExpireDay
+		_c.mutation.SetExpireDay(v)
+	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		if usersubscription.DefaultAssignedAt == nil {
 			return fmt.Errorf("ent: uninitialized usersubscription.DefaultAssignedAt (forgotten import ent/runtime?)")
@@ -604,6 +676,18 @@ func (_c *UserSubscriptionCreate) check() error {
 	}
 	if _, ok := _c.mutation.DailySpentDay(); !ok {
 		return &ValidationError{Name: "daily_spent_day", err: errors.New(`ent: missing required field "UserSubscription.daily_spent_day"`)}
+	}
+	if _, ok := _c.mutation.TodayRemaining(); !ok {
+		return &ValidationError{Name: "today_remaining", err: errors.New(`ent: missing required field "UserSubscription.today_remaining"`)}
+	}
+	if _, ok := _c.mutation.TodayDay(); !ok {
+		return &ValidationError{Name: "today_day", err: errors.New(`ent: missing required field "UserSubscription.today_day"`)}
+	}
+	if _, ok := _c.mutation.StartDay(); !ok {
+		return &ValidationError{Name: "start_day", err: errors.New(`ent: missing required field "UserSubscription.start_day"`)}
+	}
+	if _, ok := _c.mutation.ExpireDay(); !ok {
+		return &ValidationError{Name: "expire_day", err: errors.New(`ent: missing required field "UserSubscription.expire_day"`)}
 	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		return &ValidationError{Name: "assigned_at", err: errors.New(`ent: missing required field "UserSubscription.assigned_at"`)}
@@ -724,6 +808,22 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 	if value, ok := _c.mutation.DailySpentDay(); ok {
 		_spec.SetField(usersubscription.FieldDailySpentDay, field.TypeInt, value)
 		_node.DailySpentDay = value
+	}
+	if value, ok := _c.mutation.TodayRemaining(); ok {
+		_spec.SetField(usersubscription.FieldTodayRemaining, field.TypeFloat64, value)
+		_node.TodayRemaining = value
+	}
+	if value, ok := _c.mutation.TodayDay(); ok {
+		_spec.SetField(usersubscription.FieldTodayDay, field.TypeInt, value)
+		_node.TodayDay = value
+	}
+	if value, ok := _c.mutation.StartDay(); ok {
+		_spec.SetField(usersubscription.FieldStartDay, field.TypeInt, value)
+		_node.StartDay = value
+	}
+	if value, ok := _c.mutation.ExpireDay(); ok {
+		_spec.SetField(usersubscription.FieldExpireDay, field.TypeInt, value)
+		_node.ExpireDay = value
 	}
 	if value, ok := _c.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1254,6 +1354,78 @@ func (u *UserSubscriptionUpsert) UpdateDailySpentDay() *UserSubscriptionUpsert {
 // AddDailySpentDay adds v to the "daily_spent_day" field.
 func (u *UserSubscriptionUpsert) AddDailySpentDay(v int) *UserSubscriptionUpsert {
 	u.Add(usersubscription.FieldDailySpentDay, v)
+	return u
+}
+
+// SetTodayRemaining sets the "today_remaining" field.
+func (u *UserSubscriptionUpsert) SetTodayRemaining(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldTodayRemaining, v)
+	return u
+}
+
+// UpdateTodayRemaining sets the "today_remaining" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateTodayRemaining() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldTodayRemaining)
+	return u
+}
+
+// AddTodayRemaining adds v to the "today_remaining" field.
+func (u *UserSubscriptionUpsert) AddTodayRemaining(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldTodayRemaining, v)
+	return u
+}
+
+// SetTodayDay sets the "today_day" field.
+func (u *UserSubscriptionUpsert) SetTodayDay(v int) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldTodayDay, v)
+	return u
+}
+
+// UpdateTodayDay sets the "today_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateTodayDay() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldTodayDay)
+	return u
+}
+
+// AddTodayDay adds v to the "today_day" field.
+func (u *UserSubscriptionUpsert) AddTodayDay(v int) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldTodayDay, v)
+	return u
+}
+
+// SetStartDay sets the "start_day" field.
+func (u *UserSubscriptionUpsert) SetStartDay(v int) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldStartDay, v)
+	return u
+}
+
+// UpdateStartDay sets the "start_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateStartDay() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldStartDay)
+	return u
+}
+
+// AddStartDay adds v to the "start_day" field.
+func (u *UserSubscriptionUpsert) AddStartDay(v int) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldStartDay, v)
+	return u
+}
+
+// SetExpireDay sets the "expire_day" field.
+func (u *UserSubscriptionUpsert) SetExpireDay(v int) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldExpireDay, v)
+	return u
+}
+
+// UpdateExpireDay sets the "expire_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateExpireDay() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldExpireDay)
+	return u
+}
+
+// AddExpireDay adds v to the "expire_day" field.
+func (u *UserSubscriptionUpsert) AddExpireDay(v int) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldExpireDay, v)
 	return u
 }
 
@@ -1813,6 +1985,90 @@ func (u *UserSubscriptionUpsertOne) AddDailySpentDay(v int) *UserSubscriptionUps
 func (u *UserSubscriptionUpsertOne) UpdateDailySpentDay() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateDailySpentDay()
+	})
+}
+
+// SetTodayRemaining sets the "today_remaining" field.
+func (u *UserSubscriptionUpsertOne) SetTodayRemaining(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetTodayRemaining(v)
+	})
+}
+
+// AddTodayRemaining adds v to the "today_remaining" field.
+func (u *UserSubscriptionUpsertOne) AddTodayRemaining(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddTodayRemaining(v)
+	})
+}
+
+// UpdateTodayRemaining sets the "today_remaining" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateTodayRemaining() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateTodayRemaining()
+	})
+}
+
+// SetTodayDay sets the "today_day" field.
+func (u *UserSubscriptionUpsertOne) SetTodayDay(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetTodayDay(v)
+	})
+}
+
+// AddTodayDay adds v to the "today_day" field.
+func (u *UserSubscriptionUpsertOne) AddTodayDay(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddTodayDay(v)
+	})
+}
+
+// UpdateTodayDay sets the "today_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateTodayDay() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateTodayDay()
+	})
+}
+
+// SetStartDay sets the "start_day" field.
+func (u *UserSubscriptionUpsertOne) SetStartDay(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetStartDay(v)
+	})
+}
+
+// AddStartDay adds v to the "start_day" field.
+func (u *UserSubscriptionUpsertOne) AddStartDay(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddStartDay(v)
+	})
+}
+
+// UpdateStartDay sets the "start_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateStartDay() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateStartDay()
+	})
+}
+
+// SetExpireDay sets the "expire_day" field.
+func (u *UserSubscriptionUpsertOne) SetExpireDay(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetExpireDay(v)
+	})
+}
+
+// AddExpireDay adds v to the "expire_day" field.
+func (u *UserSubscriptionUpsertOne) AddExpireDay(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddExpireDay(v)
+	})
+}
+
+// UpdateExpireDay sets the "expire_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateExpireDay() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateExpireDay()
 	})
 }
 
@@ -2549,6 +2805,90 @@ func (u *UserSubscriptionUpsertBulk) AddDailySpentDay(v int) *UserSubscriptionUp
 func (u *UserSubscriptionUpsertBulk) UpdateDailySpentDay() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateDailySpentDay()
+	})
+}
+
+// SetTodayRemaining sets the "today_remaining" field.
+func (u *UserSubscriptionUpsertBulk) SetTodayRemaining(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetTodayRemaining(v)
+	})
+}
+
+// AddTodayRemaining adds v to the "today_remaining" field.
+func (u *UserSubscriptionUpsertBulk) AddTodayRemaining(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddTodayRemaining(v)
+	})
+}
+
+// UpdateTodayRemaining sets the "today_remaining" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateTodayRemaining() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateTodayRemaining()
+	})
+}
+
+// SetTodayDay sets the "today_day" field.
+func (u *UserSubscriptionUpsertBulk) SetTodayDay(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetTodayDay(v)
+	})
+}
+
+// AddTodayDay adds v to the "today_day" field.
+func (u *UserSubscriptionUpsertBulk) AddTodayDay(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddTodayDay(v)
+	})
+}
+
+// UpdateTodayDay sets the "today_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateTodayDay() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateTodayDay()
+	})
+}
+
+// SetStartDay sets the "start_day" field.
+func (u *UserSubscriptionUpsertBulk) SetStartDay(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetStartDay(v)
+	})
+}
+
+// AddStartDay adds v to the "start_day" field.
+func (u *UserSubscriptionUpsertBulk) AddStartDay(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddStartDay(v)
+	})
+}
+
+// UpdateStartDay sets the "start_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateStartDay() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateStartDay()
+	})
+}
+
+// SetExpireDay sets the "expire_day" field.
+func (u *UserSubscriptionUpsertBulk) SetExpireDay(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetExpireDay(v)
+	})
+}
+
+// AddExpireDay adds v to the "expire_day" field.
+func (u *UserSubscriptionUpsertBulk) AddExpireDay(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddExpireDay(v)
+	})
+}
+
+// UpdateExpireDay sets the "expire_day" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateExpireDay() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateExpireDay()
 	})
 }
 

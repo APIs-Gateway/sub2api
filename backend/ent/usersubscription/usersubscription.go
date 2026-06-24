@@ -63,6 +63,14 @@ const (
 	FieldDailySpentUsd = "daily_spent_usd"
 	// FieldDailySpentDay holds the string denoting the daily_spent_day field in the database.
 	FieldDailySpentDay = "daily_spent_day"
+	// FieldTodayRemaining holds the string denoting the today_remaining field in the database.
+	FieldTodayRemaining = "today_remaining"
+	// FieldTodayDay holds the string denoting the today_day field in the database.
+	FieldTodayDay = "today_day"
+	// FieldStartDay holds the string denoting the start_day field in the database.
+	FieldStartDay = "start_day"
+	// FieldExpireDay holds the string denoting the expire_day field in the database.
+	FieldExpireDay = "expire_day"
 	// FieldActivatedAt holds the string denoting the activated_at field in the database.
 	FieldActivatedAt = "activated_at"
 	// FieldAssignedBy holds the string denoting the assigned_by field in the database.
@@ -147,6 +155,10 @@ var Columns = []string{
 	FieldTotalOverdraftCount,
 	FieldDailySpentUsd,
 	FieldDailySpentDay,
+	FieldTodayRemaining,
+	FieldTodayDay,
+	FieldStartDay,
+	FieldExpireDay,
 	FieldActivatedAt,
 	FieldAssignedBy,
 	FieldAssignedAt,
@@ -203,6 +215,14 @@ var (
 	DefaultDailySpentUsd float64
 	// DefaultDailySpentDay holds the default value on creation for the "daily_spent_day" field.
 	DefaultDailySpentDay int
+	// DefaultTodayRemaining holds the default value on creation for the "today_remaining" field.
+	DefaultTodayRemaining float64
+	// DefaultTodayDay holds the default value on creation for the "today_day" field.
+	DefaultTodayDay int
+	// DefaultStartDay holds the default value on creation for the "start_day" field.
+	DefaultStartDay int
+	// DefaultExpireDay holds the default value on creation for the "expire_day" field.
+	DefaultExpireDay int
 	// DefaultAssignedAt holds the default value on creation for the "assigned_at" field.
 	DefaultAssignedAt func() time.Time
 )
@@ -333,6 +353,26 @@ func ByDailySpentUsd(opts ...sql.OrderTermOption) OrderOption {
 // ByDailySpentDay orders the results by the daily_spent_day field.
 func ByDailySpentDay(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldDailySpentDay, opts...).ToFunc()
+}
+
+// ByTodayRemaining orders the results by the today_remaining field.
+func ByTodayRemaining(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTodayRemaining, opts...).ToFunc()
+}
+
+// ByTodayDay orders the results by the today_day field.
+func ByTodayDay(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTodayDay, opts...).ToFunc()
+}
+
+// ByStartDay orders the results by the start_day field.
+func ByStartDay(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldStartDay, opts...).ToFunc()
+}
+
+// ByExpireDay orders the results by the expire_day field.
+func ByExpireDay(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldExpireDay, opts...).ToFunc()
 }
 
 // ByActivatedAt orders the results by the activated_at field.

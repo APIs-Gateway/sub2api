@@ -466,6 +466,90 @@ func (_u *UserSubscriptionUpdate) AddDailySpentDay(v int) *UserSubscriptionUpdat
 	return _u
 }
 
+// SetTodayRemaining sets the "today_remaining" field.
+func (_u *UserSubscriptionUpdate) SetTodayRemaining(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetTodayRemaining()
+	_u.mutation.SetTodayRemaining(v)
+	return _u
+}
+
+// SetNillableTodayRemaining sets the "today_remaining" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableTodayRemaining(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetTodayRemaining(*v)
+	}
+	return _u
+}
+
+// AddTodayRemaining adds value to the "today_remaining" field.
+func (_u *UserSubscriptionUpdate) AddTodayRemaining(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddTodayRemaining(v)
+	return _u
+}
+
+// SetTodayDay sets the "today_day" field.
+func (_u *UserSubscriptionUpdate) SetTodayDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetTodayDay()
+	_u.mutation.SetTodayDay(v)
+	return _u
+}
+
+// SetNillableTodayDay sets the "today_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableTodayDay(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetTodayDay(*v)
+	}
+	return _u
+}
+
+// AddTodayDay adds value to the "today_day" field.
+func (_u *UserSubscriptionUpdate) AddTodayDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddTodayDay(v)
+	return _u
+}
+
+// SetStartDay sets the "start_day" field.
+func (_u *UserSubscriptionUpdate) SetStartDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetStartDay()
+	_u.mutation.SetStartDay(v)
+	return _u
+}
+
+// SetNillableStartDay sets the "start_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableStartDay(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetStartDay(*v)
+	}
+	return _u
+}
+
+// AddStartDay adds value to the "start_day" field.
+func (_u *UserSubscriptionUpdate) AddStartDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddStartDay(v)
+	return _u
+}
+
+// SetExpireDay sets the "expire_day" field.
+func (_u *UserSubscriptionUpdate) SetExpireDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetExpireDay()
+	_u.mutation.SetExpireDay(v)
+	return _u
+}
+
+// SetNillableExpireDay sets the "expire_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableExpireDay(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetExpireDay(*v)
+	}
+	return _u
+}
+
+// AddExpireDay adds value to the "expire_day" field.
+func (_u *UserSubscriptionUpdate) AddExpireDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddExpireDay(v)
+	return _u
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_u *UserSubscriptionUpdate) SetActivatedAt(v time.Time) *UserSubscriptionUpdate {
 	_u.mutation.SetActivatedAt(v)
@@ -819,6 +903,30 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if value, ok := _u.mutation.AddedDailySpentDay(); ok {
 		_spec.AddField(usersubscription.FieldDailySpentDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.TodayRemaining(); ok {
+		_spec.SetField(usersubscription.FieldTodayRemaining, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTodayRemaining(); ok {
+		_spec.AddField(usersubscription.FieldTodayRemaining, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.TodayDay(); ok {
+		_spec.SetField(usersubscription.FieldTodayDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedTodayDay(); ok {
+		_spec.AddField(usersubscription.FieldTodayDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.StartDay(); ok {
+		_spec.SetField(usersubscription.FieldStartDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedStartDay(); ok {
+		_spec.AddField(usersubscription.FieldStartDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.ExpireDay(); ok {
+		_spec.SetField(usersubscription.FieldExpireDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedExpireDay(); ok {
+		_spec.AddField(usersubscription.FieldExpireDay, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1450,6 +1558,90 @@ func (_u *UserSubscriptionUpdateOne) AddDailySpentDay(v int) *UserSubscriptionUp
 	return _u
 }
 
+// SetTodayRemaining sets the "today_remaining" field.
+func (_u *UserSubscriptionUpdateOne) SetTodayRemaining(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetTodayRemaining()
+	_u.mutation.SetTodayRemaining(v)
+	return _u
+}
+
+// SetNillableTodayRemaining sets the "today_remaining" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableTodayRemaining(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetTodayRemaining(*v)
+	}
+	return _u
+}
+
+// AddTodayRemaining adds value to the "today_remaining" field.
+func (_u *UserSubscriptionUpdateOne) AddTodayRemaining(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddTodayRemaining(v)
+	return _u
+}
+
+// SetTodayDay sets the "today_day" field.
+func (_u *UserSubscriptionUpdateOne) SetTodayDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetTodayDay()
+	_u.mutation.SetTodayDay(v)
+	return _u
+}
+
+// SetNillableTodayDay sets the "today_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableTodayDay(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetTodayDay(*v)
+	}
+	return _u
+}
+
+// AddTodayDay adds value to the "today_day" field.
+func (_u *UserSubscriptionUpdateOne) AddTodayDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddTodayDay(v)
+	return _u
+}
+
+// SetStartDay sets the "start_day" field.
+func (_u *UserSubscriptionUpdateOne) SetStartDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetStartDay()
+	_u.mutation.SetStartDay(v)
+	return _u
+}
+
+// SetNillableStartDay sets the "start_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableStartDay(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetStartDay(*v)
+	}
+	return _u
+}
+
+// AddStartDay adds value to the "start_day" field.
+func (_u *UserSubscriptionUpdateOne) AddStartDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddStartDay(v)
+	return _u
+}
+
+// SetExpireDay sets the "expire_day" field.
+func (_u *UserSubscriptionUpdateOne) SetExpireDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetExpireDay()
+	_u.mutation.SetExpireDay(v)
+	return _u
+}
+
+// SetNillableExpireDay sets the "expire_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableExpireDay(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetExpireDay(*v)
+	}
+	return _u
+}
+
+// AddExpireDay adds value to the "expire_day" field.
+func (_u *UserSubscriptionUpdateOne) AddExpireDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddExpireDay(v)
+	return _u
+}
+
 // SetActivatedAt sets the "activated_at" field.
 func (_u *UserSubscriptionUpdateOne) SetActivatedAt(v time.Time) *UserSubscriptionUpdateOne {
 	_u.mutation.SetActivatedAt(v)
@@ -1833,6 +2025,30 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 	}
 	if value, ok := _u.mutation.AddedDailySpentDay(); ok {
 		_spec.AddField(usersubscription.FieldDailySpentDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.TodayRemaining(); ok {
+		_spec.SetField(usersubscription.FieldTodayRemaining, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTodayRemaining(); ok {
+		_spec.AddField(usersubscription.FieldTodayRemaining, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.TodayDay(); ok {
+		_spec.SetField(usersubscription.FieldTodayDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedTodayDay(); ok {
+		_spec.AddField(usersubscription.FieldTodayDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.StartDay(); ok {
+		_spec.SetField(usersubscription.FieldStartDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedStartDay(); ok {
+		_spec.AddField(usersubscription.FieldStartDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.ExpireDay(); ok {
+		_spec.SetField(usersubscription.FieldExpireDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedExpireDay(); ok {
+		_spec.AddField(usersubscription.FieldExpireDay, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)

@@ -175,6 +175,26 @@ func DailySpentDay(v int) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldDailySpentDay, v))
 }
 
+// TodayRemaining applies equality check predicate on the "today_remaining" field. It's identical to TodayRemainingEQ.
+func TodayRemaining(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldTodayRemaining, v))
+}
+
+// TodayDay applies equality check predicate on the "today_day" field. It's identical to TodayDayEQ.
+func TodayDay(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldTodayDay, v))
+}
+
+// StartDay applies equality check predicate on the "start_day" field. It's identical to StartDayEQ.
+func StartDay(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldStartDay, v))
+}
+
+// ExpireDay applies equality check predicate on the "expire_day" field. It's identical to ExpireDayEQ.
+func ExpireDay(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldExpireDay, v))
+}
+
 // ActivatedAt applies equality check predicate on the "activated_at" field. It's identical to ActivatedAtEQ.
 func ActivatedAt(v time.Time) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldActivatedAt, v))
@@ -1178,6 +1198,166 @@ func DailySpentDayLT(v int) predicate.UserSubscription {
 // DailySpentDayLTE applies the LTE predicate on the "daily_spent_day" field.
 func DailySpentDayLTE(v int) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldLTE(FieldDailySpentDay, v))
+}
+
+// TodayRemainingEQ applies the EQ predicate on the "today_remaining" field.
+func TodayRemainingEQ(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldTodayRemaining, v))
+}
+
+// TodayRemainingNEQ applies the NEQ predicate on the "today_remaining" field.
+func TodayRemainingNEQ(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldTodayRemaining, v))
+}
+
+// TodayRemainingIn applies the In predicate on the "today_remaining" field.
+func TodayRemainingIn(vs ...float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldTodayRemaining, vs...))
+}
+
+// TodayRemainingNotIn applies the NotIn predicate on the "today_remaining" field.
+func TodayRemainingNotIn(vs ...float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldTodayRemaining, vs...))
+}
+
+// TodayRemainingGT applies the GT predicate on the "today_remaining" field.
+func TodayRemainingGT(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldTodayRemaining, v))
+}
+
+// TodayRemainingGTE applies the GTE predicate on the "today_remaining" field.
+func TodayRemainingGTE(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldTodayRemaining, v))
+}
+
+// TodayRemainingLT applies the LT predicate on the "today_remaining" field.
+func TodayRemainingLT(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldTodayRemaining, v))
+}
+
+// TodayRemainingLTE applies the LTE predicate on the "today_remaining" field.
+func TodayRemainingLTE(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldTodayRemaining, v))
+}
+
+// TodayDayEQ applies the EQ predicate on the "today_day" field.
+func TodayDayEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldTodayDay, v))
+}
+
+// TodayDayNEQ applies the NEQ predicate on the "today_day" field.
+func TodayDayNEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldTodayDay, v))
+}
+
+// TodayDayIn applies the In predicate on the "today_day" field.
+func TodayDayIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldTodayDay, vs...))
+}
+
+// TodayDayNotIn applies the NotIn predicate on the "today_day" field.
+func TodayDayNotIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldTodayDay, vs...))
+}
+
+// TodayDayGT applies the GT predicate on the "today_day" field.
+func TodayDayGT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldTodayDay, v))
+}
+
+// TodayDayGTE applies the GTE predicate on the "today_day" field.
+func TodayDayGTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldTodayDay, v))
+}
+
+// TodayDayLT applies the LT predicate on the "today_day" field.
+func TodayDayLT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldTodayDay, v))
+}
+
+// TodayDayLTE applies the LTE predicate on the "today_day" field.
+func TodayDayLTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldTodayDay, v))
+}
+
+// StartDayEQ applies the EQ predicate on the "start_day" field.
+func StartDayEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldStartDay, v))
+}
+
+// StartDayNEQ applies the NEQ predicate on the "start_day" field.
+func StartDayNEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldStartDay, v))
+}
+
+// StartDayIn applies the In predicate on the "start_day" field.
+func StartDayIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldStartDay, vs...))
+}
+
+// StartDayNotIn applies the NotIn predicate on the "start_day" field.
+func StartDayNotIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldStartDay, vs...))
+}
+
+// StartDayGT applies the GT predicate on the "start_day" field.
+func StartDayGT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldStartDay, v))
+}
+
+// StartDayGTE applies the GTE predicate on the "start_day" field.
+func StartDayGTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldStartDay, v))
+}
+
+// StartDayLT applies the LT predicate on the "start_day" field.
+func StartDayLT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldStartDay, v))
+}
+
+// StartDayLTE applies the LTE predicate on the "start_day" field.
+func StartDayLTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldStartDay, v))
+}
+
+// ExpireDayEQ applies the EQ predicate on the "expire_day" field.
+func ExpireDayEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldExpireDay, v))
+}
+
+// ExpireDayNEQ applies the NEQ predicate on the "expire_day" field.
+func ExpireDayNEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldExpireDay, v))
+}
+
+// ExpireDayIn applies the In predicate on the "expire_day" field.
+func ExpireDayIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldExpireDay, vs...))
+}
+
+// ExpireDayNotIn applies the NotIn predicate on the "expire_day" field.
+func ExpireDayNotIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldExpireDay, vs...))
+}
+
+// ExpireDayGT applies the GT predicate on the "expire_day" field.
+func ExpireDayGT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldExpireDay, v))
+}
+
+// ExpireDayGTE applies the GTE predicate on the "expire_day" field.
+func ExpireDayGTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldExpireDay, v))
+}
+
+// ExpireDayLT applies the LT predicate on the "expire_day" field.
+func ExpireDayLT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldExpireDay, v))
+}
+
+// ExpireDayLTE applies the LTE predicate on the "expire_day" field.
+func ExpireDayLTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldExpireDay, v))
 }
 
 // ActivatedAtEQ applies the EQ predicate on the "activated_at" field.

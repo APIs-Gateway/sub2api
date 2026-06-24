@@ -108,6 +108,27 @@ func (UserSubscription) Fields() []ent.Field {
 		// 默认 -1 表示「未初始化」——任何真实日历天 N≥0 都不等于它，避免与「day0 已消费 0」混淆。
 		field.Int("daily_spent_day").
 			Default(-1),
+
+		// ── Per-day 每日额度模型字段（per-day redesign，加性引入；逐步取代上方 burn-down 窗口）──
+		// 套餐余额只存 today_remaining（今日剩余，官方刀，1:1 扣减、永不为负）+ today_day（它属于
+		// 哪个东八区自然日序号）。跨天且 today ≤ expire_day 才惰性覆盖成 D；today > expire_day 置 0
+		// 并标 expired。无发放/撤回/清扣动作、零后台任务。服务区间用绝对自然日序号 [start_day, expire_day]：
+		// expire_day = 最后发放 D 的自然日（含），每透支一次 expire_day−=1；today > expire_day 即到期。
+		// start_day/expire_day/today_day 同为「东八区绝对日序号」= floor((unix+8h)/86400)，
+		// 可直接做 expire_day−today 等算术（与上方 daily_spent_day 的「相对激活天数」口径不同）。
+		field.Float("today_remaining").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
+			Default(0),
+		// today_remaining 对应的东八区自然日序号；读写时 ≠ 当前日即惰性覆盖。-1=未初始化。
+		field.Int("today_day").
+			Default(-1),
+		// 激活当天的东八区自然日序号。
+		field.Int("start_day").
+			Default(0),
+		// 最后发放 D 的东八区自然日序号（含）；无透支时 = start_day+T−1，每透支 −1。
+		field.Int("expire_day").
+			Default(0),
+
 		// 清扣时钟起点（按 Asia/Shanghai 从此算第 N 个日历天）。
 		// 为 nil 时回退到 starts_at；存量回填时设为 NOW() 以对剩余期重新计时。
 		field.Time("activated_at").

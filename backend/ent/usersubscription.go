@@ -68,6 +68,14 @@ type UserSubscription struct {
 	DailySpentUsd float64 `json:"daily_spent_usd,omitempty"`
 	// DailySpentDay holds the value of the "daily_spent_day" field.
 	DailySpentDay int `json:"daily_spent_day,omitempty"`
+	// TodayRemaining holds the value of the "today_remaining" field.
+	TodayRemaining float64 `json:"today_remaining,omitempty"`
+	// TodayDay holds the value of the "today_day" field.
+	TodayDay int `json:"today_day,omitempty"`
+	// StartDay holds the value of the "start_day" field.
+	StartDay int `json:"start_day,omitempty"`
+	// ExpireDay holds the value of the "expire_day" field.
+	ExpireDay int `json:"expire_day,omitempty"`
 	// ActivatedAt holds the value of the "activated_at" field.
 	ActivatedAt *time.Time `json:"activated_at,omitempty"`
 	// AssignedBy holds the value of the "assigned_by" field.
@@ -157,9 +165,9 @@ func (*UserSubscription) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldGrantedTotalUsd, usersubscription.FieldDailyAmountUsd, usersubscription.FieldConsumedUsd, usersubscription.FieldClawedUsd, usersubscription.FieldDailySpentUsd:
+		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldGrantedTotalUsd, usersubscription.FieldDailyAmountUsd, usersubscription.FieldConsumedUsd, usersubscription.FieldClawedUsd, usersubscription.FieldDailySpentUsd, usersubscription.FieldTodayRemaining:
 			values[i] = new(sql.NullFloat64)
-		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldPlanID, usersubscription.FieldLastClawbackDay, usersubscription.FieldMaxOverdraftDays, usersubscription.FieldTotalOverdraftCount, usersubscription.FieldDailySpentDay, usersubscription.FieldAssignedBy:
+		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldPlanID, usersubscription.FieldLastClawbackDay, usersubscription.FieldMaxOverdraftDays, usersubscription.FieldTotalOverdraftCount, usersubscription.FieldDailySpentDay, usersubscription.FieldTodayDay, usersubscription.FieldStartDay, usersubscription.FieldExpireDay, usersubscription.FieldAssignedBy:
 			values[i] = new(sql.NullInt64)
 		case usersubscription.FieldStatus, usersubscription.FieldNotes:
 			values[i] = new(sql.NullString)
@@ -336,6 +344,30 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.DailySpentDay = int(value.Int64)
 			}
+		case usersubscription.FieldTodayRemaining:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field today_remaining", values[i])
+			} else if value.Valid {
+				_m.TodayRemaining = value.Float64
+			}
+		case usersubscription.FieldTodayDay:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field today_day", values[i])
+			} else if value.Valid {
+				_m.TodayDay = int(value.Int64)
+			}
+		case usersubscription.FieldStartDay:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field start_day", values[i])
+			} else if value.Valid {
+				_m.StartDay = int(value.Int64)
+			}
+		case usersubscription.FieldExpireDay:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field expire_day", values[i])
+			} else if value.Valid {
+				_m.ExpireDay = int(value.Int64)
+			}
 		case usersubscription.FieldActivatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field activated_at", values[i])
@@ -507,6 +539,18 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("daily_spent_day=")
 	builder.WriteString(fmt.Sprintf("%v", _m.DailySpentDay))
+	builder.WriteString(", ")
+	builder.WriteString("today_remaining=")
+	builder.WriteString(fmt.Sprintf("%v", _m.TodayRemaining))
+	builder.WriteString(", ")
+	builder.WriteString("today_day=")
+	builder.WriteString(fmt.Sprintf("%v", _m.TodayDay))
+	builder.WriteString(", ")
+	builder.WriteString("start_day=")
+	builder.WriteString(fmt.Sprintf("%v", _m.StartDay))
+	builder.WriteString(", ")
+	builder.WriteString("expire_day=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ExpireDay))
 	builder.WriteString(", ")
 	if v := _m.ActivatedAt; v != nil {
 		builder.WriteString("activated_at=")

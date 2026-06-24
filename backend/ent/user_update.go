@@ -425,6 +425,41 @@ func (_u *UserUpdate) SetNillableSubscriptionOverdraftGuard(v *bool) *UserUpdate
 	return _u
 }
 
+// SetMonthlyOverdraftCount sets the "monthly_overdraft_count" field.
+func (_u *UserUpdate) SetMonthlyOverdraftCount(v int) *UserUpdate {
+	_u.mutation.ResetMonthlyOverdraftCount()
+	_u.mutation.SetMonthlyOverdraftCount(v)
+	return _u
+}
+
+// SetNillableMonthlyOverdraftCount sets the "monthly_overdraft_count" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableMonthlyOverdraftCount(v *int) *UserUpdate {
+	if v != nil {
+		_u.SetMonthlyOverdraftCount(*v)
+	}
+	return _u
+}
+
+// AddMonthlyOverdraftCount adds value to the "monthly_overdraft_count" field.
+func (_u *UserUpdate) AddMonthlyOverdraftCount(v int) *UserUpdate {
+	_u.mutation.AddMonthlyOverdraftCount(v)
+	return _u
+}
+
+// SetMonthlyOverdraftMonth sets the "monthly_overdraft_month" field.
+func (_u *UserUpdate) SetMonthlyOverdraftMonth(v string) *UserUpdate {
+	_u.mutation.SetMonthlyOverdraftMonth(v)
+	return _u
+}
+
+// SetNillableMonthlyOverdraftMonth sets the "monthly_overdraft_month" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableMonthlyOverdraftMonth(v *string) *UserUpdate {
+	if v != nil {
+		_u.SetMonthlyOverdraftMonth(*v)
+	}
+	return _u
+}
+
 // SetStablePriorityEnabled sets the "stable_priority_enabled" field.
 func (_u *UserUpdate) SetStablePriorityEnabled(v bool) *UserUpdate {
 	_u.mutation.SetStablePriorityEnabled(v)
@@ -986,6 +1021,11 @@ func (_u *UserUpdate) check() error {
 			return &ValidationError{Name: "signup_source", err: fmt.Errorf(`ent: validator failed for field "User.signup_source": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.MonthlyOverdraftMonth(); ok {
+		if err := user.MonthlyOverdraftMonthValidator(v); err != nil {
+			return &ValidationError{Name: "monthly_overdraft_month", err: fmt.Errorf(`ent: validator failed for field "User.monthly_overdraft_month": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -1102,6 +1142,15 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.SubscriptionOverdraftGuard(); ok {
 		_spec.SetField(user.FieldSubscriptionOverdraftGuard, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.MonthlyOverdraftCount(); ok {
+		_spec.SetField(user.FieldMonthlyOverdraftCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedMonthlyOverdraftCount(); ok {
+		_spec.AddField(user.FieldMonthlyOverdraftCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.MonthlyOverdraftMonth(); ok {
+		_spec.SetField(user.FieldMonthlyOverdraftMonth, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.StablePriorityEnabled(); ok {
 		_spec.SetField(user.FieldStablePriorityEnabled, field.TypeBool, value)
@@ -2108,6 +2157,41 @@ func (_u *UserUpdateOne) SetNillableSubscriptionOverdraftGuard(v *bool) *UserUpd
 	return _u
 }
 
+// SetMonthlyOverdraftCount sets the "monthly_overdraft_count" field.
+func (_u *UserUpdateOne) SetMonthlyOverdraftCount(v int) *UserUpdateOne {
+	_u.mutation.ResetMonthlyOverdraftCount()
+	_u.mutation.SetMonthlyOverdraftCount(v)
+	return _u
+}
+
+// SetNillableMonthlyOverdraftCount sets the "monthly_overdraft_count" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableMonthlyOverdraftCount(v *int) *UserUpdateOne {
+	if v != nil {
+		_u.SetMonthlyOverdraftCount(*v)
+	}
+	return _u
+}
+
+// AddMonthlyOverdraftCount adds value to the "monthly_overdraft_count" field.
+func (_u *UserUpdateOne) AddMonthlyOverdraftCount(v int) *UserUpdateOne {
+	_u.mutation.AddMonthlyOverdraftCount(v)
+	return _u
+}
+
+// SetMonthlyOverdraftMonth sets the "monthly_overdraft_month" field.
+func (_u *UserUpdateOne) SetMonthlyOverdraftMonth(v string) *UserUpdateOne {
+	_u.mutation.SetMonthlyOverdraftMonth(v)
+	return _u
+}
+
+// SetNillableMonthlyOverdraftMonth sets the "monthly_overdraft_month" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableMonthlyOverdraftMonth(v *string) *UserUpdateOne {
+	if v != nil {
+		_u.SetMonthlyOverdraftMonth(*v)
+	}
+	return _u
+}
+
 // SetStablePriorityEnabled sets the "stable_priority_enabled" field.
 func (_u *UserUpdateOne) SetStablePriorityEnabled(v bool) *UserUpdateOne {
 	_u.mutation.SetStablePriorityEnabled(v)
@@ -2682,6 +2766,11 @@ func (_u *UserUpdateOne) check() error {
 			return &ValidationError{Name: "signup_source", err: fmt.Errorf(`ent: validator failed for field "User.signup_source": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.MonthlyOverdraftMonth(); ok {
+		if err := user.MonthlyOverdraftMonthValidator(v); err != nil {
+			return &ValidationError{Name: "monthly_overdraft_month", err: fmt.Errorf(`ent: validator failed for field "User.monthly_overdraft_month": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -2815,6 +2904,15 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.SubscriptionOverdraftGuard(); ok {
 		_spec.SetField(user.FieldSubscriptionOverdraftGuard, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.MonthlyOverdraftCount(); ok {
+		_spec.SetField(user.FieldMonthlyOverdraftCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedMonthlyOverdraftCount(); ok {
+		_spec.AddField(user.FieldMonthlyOverdraftCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.MonthlyOverdraftMonth(); ok {
+		_spec.SetField(user.FieldMonthlyOverdraftMonth, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.StablePriorityEnabled(); ok {
 		_spec.SetField(user.FieldStablePriorityEnabled, field.TypeBool, value)

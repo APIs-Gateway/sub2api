@@ -119,6 +119,17 @@ func (User) Fields() []ent.Field {
 		field.Bool("subscription_overdraft_guard").
 			Default(false),
 
+		// ── Per-day 透支：用户级月度计数（per-day redesign）────────────────────────
+		// 透支按「用户 / 自然月」计（非按卡）：名下多张卡共享同一月度计数。
+		// monthly_overdraft_month = 东八区 YYYYMM；惰性按月重置（模式同卡的 daily_spent_day）。
+		// monthly_overdraft_count 达上限（默认 5）当月禁止透支，次月 1 号（东八区）自动重置。
+		// 取代原 per-card user_subscriptions.total_overdraft_count。
+		field.Int("monthly_overdraft_count").
+			Default(0),
+		field.String("monthly_overdraft_month").
+			MaxLen(6).
+			Default(""),
+
 		// 稳定优先：所在组渠道全挂时跨分组逐档兜底（廉价→中等→稳定），默认关闭。
 		field.Bool("stable_priority_enabled").
 			Default(false).
