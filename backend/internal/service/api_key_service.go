@@ -321,15 +321,9 @@ func (s *APIKeyService) incrementAPIKeyErrorCount(ctx context.Context, userID in
 	_ = s.cache.IncrementCreateAttemptCount(ctx, userID)
 }
 
-// canUserBindGroup 检查用户是否可以绑定指定分组
-// burn-down 模型下订阅金额已发放到余额、通过标准渠道消费，订阅型分组不再可作为渠道绑定
-// 对于标准类型分组：使用原有的 AllowedGroups 和 IsExclusive 逻辑
+// canUserBindGroup 检查用户是否可以绑定指定分组。
+// per-day：分组仅管路由、不再有「订阅型分组」概念，绑定一律走标准 AllowedGroups/IsExclusive 逻辑。
 func (s *APIKeyService) canUserBindGroup(ctx context.Context, user *User, group *Group) bool {
-	// 订阅类型分组：一律不可绑定
-	if group.IsSubscriptionType() {
-		return false
-	}
-	// 标准类型分组：使用原有逻辑
 	return user.CanBindGroup(group.ID, group.IsExclusive)
 }
 
@@ -777,13 +771,8 @@ func (s *APIKeyService) GetAvailableGroups(ctx context.Context, userID int64) ([
 	return availableGroups, nil
 }
 
-// canUserBindGroupInternal 内部方法，检查用户是否可以绑定分组
+// canUserBindGroupInternal 内部方法，检查用户是否可以绑定分组（per-day：仅标准 AllowedGroups/IsExclusive 逻辑）。
 func (s *APIKeyService) canUserBindGroupInternal(user *User, group *Group) bool {
-	// 订阅类型分组：一律不可绑定
-	if group.IsSubscriptionType() {
-		return false
-	}
-	// 标准类型分组：使用原有逻辑
 	return user.CanBindGroup(group.ID, group.IsExclusive)
 }
 
