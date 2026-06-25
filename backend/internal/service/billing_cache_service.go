@@ -726,24 +726,17 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 		return ErrBillingServiceUnavailable
 	}
 
-	// 判断计费模式
-	isSubscriptionMode := group != nil && group.IsSubscriptionType() && subscription != nil
-
-	if isSubscriptionMode {
-		if err := s.checkSubscriptionEligibility(ctx, user.ID, group, subscription); err != nil {
-			return err
-		}
-	} else {
-		if err := s.checkBalanceEligibility(ctx, user); err != nil {
-			return err
-		}
+	// per-day：准入统一走 checkBalanceEligibility（Admit：套餐余额 || 钱包 || 可透支），
+	// 不再按 group.IsSubscriptionType() 分流到旧 group 日/周/月限额检查（checkSubscriptionEligibility，
+	// 已与 per-day 结算口径不一致）。这样「准入与结算共用 per-day 引擎」对所有请求成立。
+	// subscription 参数（生产恒 nil）保留以兼容签名，待 P5 删 IsSubscriptionType 时一并清理。
+	if err := s.checkBalanceEligibility(ctx, user); err != nil {
+		return err
 	}
 
-	// user × platform quota 仅在 standard（余额）模式生效；订阅模式豁免
-	if !isSubscriptionMode {
-		if err := s.checkUserPlatformQuotaEligibility(ctx, user.ID, platform); err != nil {
-			return err
-		}
+	// user × platform quota：per-day 不再有「订阅模式豁免」分流，统一检查（与现状 prod 一致）。
+	if err := s.checkUserPlatformQuotaEligibility(ctx, user.ID, platform); err != nil {
+		return err
 	}
 
 	// Check API Key rate limits (applies to both billing modes)

@@ -78,11 +78,9 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			return
 		}
 
-		// burn-down 模型：纯余额模式访问（与主中间件一致），不再按分组校验订阅限额。
-		if apiKey.User.Balance <= 0 {
-			abortWithGoogleError(c, 403, "Insufficient account balance")
-			return
-		}
+		// per-day：不再按 user.Balance<=0 早拒（与主中间件一致）。套餐额度在卡的 today_remaining、
+		// 不在钱包，准入由 handler 的 CheckBillingEligibility（per-day Admit）权威判定，否则
+		// 「钱包 0 + 有今日套餐额度」用户会被误拒、Admit 不可达。
 
 		c.Set(string(ContextKeyAPIKey), apiKey)
 		c.Set(string(ContextKeyUser), AuthSubject{
