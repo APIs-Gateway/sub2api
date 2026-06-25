@@ -229,6 +229,7 @@ func TestRedeemService_RedeemSubscriptionAccruesAffiliateCashback(t *testing.T) 
 		SetRateMultiplier(1).
 		SetStatus(service.StatusActive).
 		SetSubscriptionType(service.SubscriptionTypeSubscription).
+		SetDailyLimitUsd(10). // per-day：提供有效 D（D 走输入/group 回退，须 > 0）
 		Save(ctx)
 	require.NoError(t, err)
 

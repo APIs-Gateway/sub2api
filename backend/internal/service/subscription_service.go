@@ -30,6 +30,7 @@ var (
 	ErrSubscriptionSuspended              = infraerrors.Forbidden("SUBSCRIPTION_SUSPENDED", "subscription is suspended")
 	ErrSubscriptionAlreadyExists          = infraerrors.Conflict("SUBSCRIPTION_ALREADY_EXISTS", "subscription already exists for this user and group")
 	ErrSubscriptionAssignConflict         = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
+	ErrInvalidDailyAmount                 = infraerrors.BadRequest("INVALID_DAILY_AMOUNT", "subscription daily amount must be positive (provide daily_amount_usd, or a group with daily_limit_usd > 0)")
 	ErrInvalidInput                       = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
 	ErrDailyLimitExceeded                 = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")
 	ErrWeeklyLimitExceeded                = infraerrors.TooManyRequests("WEEKLY_LIMIT_EXCEEDED", "weekly usage limit exceeded")
@@ -174,12 +175,14 @@ func (s *SubscriptionService) AssignSubscription(ctx context.Context, input *Ass
 //
 // 如果没有订阅：创建新订阅
 func (s *SubscriptionService) AssignOrExtendSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error) {
-	// per-day：订阅与 group 解耦，不再要求「订阅型分组」。group 仅作历史快照（卡的 group_id），
-	// 校验其存在即可（GroupID>0 时）；每日额度 D 由 input.DailyAmountUSD 提供（订单快照/plan）。
-	if input.GroupID > 0 {
-		if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
-			return nil, false, fmt.Errorf("group not found: %w", err)
-		}
+	// per-day：订阅与 group 解耦，不再要求「订阅型分组」；group 仅作历史快照（卡的 group_id）。
+	// 过渡期 schema 仍要求 user_subscriptions.group_id NOT NULL（FK），故现阶段仍需有效 group——
+	// 待 P5e 把 group_id 改 nullable/历史快照后再放开 GroupID==0。
+	if input.GroupID <= 0 {
+		return nil, false, infraerrors.BadRequest("INVALID_INPUT", "group_id is required")
+	}
+	if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
+		return nil, false, fmt.Errorf("group not found: %w", err)
 	}
 
 	// per-day：每次开通新建一张 per-day 卡（单卡模式由购买入口保证至多一张 active）。
@@ -231,6 +234,21 @@ func (s *SubscriptionService) withSubscriptionUpdateTx(ctx context.Context, fn f
 }
 
 // createSubscription 创建新订阅（内部方法）
+// resolveAssignDailyAmount 决定新卡的每日额度 D：input.DailyAmountUSD>0 优先（来自订单冻结快照/plan）；
+// 否则回退所挂 group 的 daily_limit_usd（须 > 0）——存量/管理端按 group 直接分配的兼容路径。
+// 二者都拿不到正数则返回 BadRequest，绝不建 D=0 的 active 卡。
+func (s *SubscriptionService) resolveAssignDailyAmount(ctx context.Context, input *AssignSubscriptionInput) (float64, error) {
+	if input.DailyAmountUSD > 0 {
+		return input.DailyAmountUSD, nil
+	}
+	if input.GroupID > 0 {
+		if group, err := s.groupRepo.GetByID(ctx, input.GroupID); err == nil && group != nil && group.DailyLimitUSD != nil && *group.DailyLimitUSD > 0 {
+			return *group.DailyLimitUSD, nil
+		}
+	}
+	return 0, ErrInvalidDailyAmount
+}
+
 func (s *SubscriptionService) createSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, error) {
 	s.clearSubscriptionLockCache(input.UserID)
 
@@ -242,13 +260,10 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 		validityDays = MaxValidityDays
 	}
 
-	// per-day：每日额度 D 优先取输入（来自订单冻结快照 / 兑换码 plan，与 group 解耦）；
-	// 缺省时回退所挂 group 的 daily_limit_usd（存量/管理端按 group 直接分配的兼容路径）。
-	dailyAmount := input.DailyAmountUSD
-	if dailyAmount <= 0 && input.GroupID > 0 {
-		if group, err := s.groupRepo.GetByID(ctx, input.GroupID); err == nil && group != nil && group.DailyLimitUSD != nil {
-			dailyAmount = *group.DailyLimitUSD
-		}
+	// per-day：每日额度 D 必须 > 0，绝不建 0-D 的 active 卡（否则今日额度恒 0、卡形同废卡）。
+	dailyAmount, err := s.resolveAssignDailyAmount(ctx, input)
+	if err != nil {
+		return nil, err
 	}
 	grantedTotal := dailyAmount * float64(validityDays)
 
@@ -388,11 +403,13 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 }
 
 func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error) {
-	// per-day：订阅与 group 解耦，不再要求「订阅型分组」；group 仅作历史快照，校验存在即可。
-	if input.GroupID > 0 {
-		if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
-			return nil, false, fmt.Errorf("group not found: %w", err)
-		}
+	// per-day：订阅与 group 解耦，不再要求「订阅型分组」；group 仅作历史快照。过渡期 schema 仍要求
+	// group_id NOT NULL（FK），故现阶段仍需有效 group（待 P5e 改 nullable 后放开 GroupID==0）。
+	if input.GroupID <= 0 {
+		return nil, false, infraerrors.BadRequest("INVALID_INPUT", "group_id is required")
+	}
+	if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
+		return nil, false, fmt.Errorf("group not found: %w", err)
 	}
 
 	// per-day：每次分配新建一张 per-day 卡（单卡模式由入口保证至多一张 active）。

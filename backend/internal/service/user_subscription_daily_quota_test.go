@@ -23,7 +23,7 @@ func (r *dailyResetTrackingUserSubRepo) ResetDailyUsage(context.Context, int64, 
 // burn-down 模型：AssignOrExtendSubscription 始终新建一张独立卡（不再续期已有订阅）。
 func TestAssignOrExtendSubscription_AlwaysCreatesNewActiveCard(t *testing.T) {
 	groupRepo := &subscriptionGroupRepoStub{
-		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription},
+		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription, DailyLimitUSD: ptrFloat64(10)},
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
 	oldStart := time.Now().AddDate(0, 0, -3)
