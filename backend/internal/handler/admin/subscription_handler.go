@@ -40,10 +40,12 @@ func NewSubscriptionHandler(subscriptionService *service.SubscriptionService) *S
 
 // AssignSubscriptionRequest represents assign subscription request
 type AssignSubscriptionRequest struct {
-	UserID       int64  `json:"user_id" binding:"required"`
-	GroupID      int64  `json:"group_id" binding:"required"`
-	ValidityDays int    `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
-	Notes        string `json:"notes"`
+	UserID       int64 `json:"user_id" binding:"required"`
+	GroupID      int64 `json:"group_id" binding:"required"`
+	ValidityDays int   `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
+	// DailyAmountUSD per-day 每日额度 D；省略/0 时回退所挂 group 的 daily_limit_usd。
+	DailyAmountUSD float64 `json:"daily_amount_usd" binding:"omitempty,min=0"`
+	Notes          string  `json:"notes"`
 }
 
 // BulkAssignSubscriptionRequest represents bulk assign subscription request
@@ -51,7 +53,9 @@ type BulkAssignSubscriptionRequest struct {
 	UserIDs      []int64 `json:"user_ids" binding:"required,min=1"`
 	GroupID      int64   `json:"group_id" binding:"required"`
 	ValidityDays int     `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
-	Notes        string  `json:"notes"`
+	// DailyAmountUSD per-day 每日额度 D；省略/0 时回退所挂 group 的 daily_limit_usd。
+	DailyAmountUSD float64 `json:"daily_amount_usd" binding:"omitempty,min=0"`
+	Notes          string  `json:"notes"`
 }
 
 // AdjustSubscriptionRequest represents adjust subscription request (extend or shorten)
@@ -145,11 +149,12 @@ func (h *SubscriptionHandler) Assign(c *gin.Context) {
 	adminID := getAdminIDFromContext(c)
 
 	subscription, err := h.subscriptionService.AssignSubscription(c.Request.Context(), &service.AssignSubscriptionInput{
-		UserID:       req.UserID,
-		GroupID:      req.GroupID,
-		ValidityDays: req.ValidityDays,
-		AssignedBy:   adminID,
-		Notes:        req.Notes,
+		UserID:         req.UserID,
+		GroupID:        req.GroupID,
+		ValidityDays:   req.ValidityDays,
+		DailyAmountUSD: req.DailyAmountUSD,
+		AssignedBy:     adminID,
+		Notes:          req.Notes,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -172,11 +177,12 @@ func (h *SubscriptionHandler) BulkAssign(c *gin.Context) {
 	adminID := getAdminIDFromContext(c)
 
 	result, err := h.subscriptionService.BulkAssignSubscription(c.Request.Context(), &service.BulkAssignSubscriptionInput{
-		UserIDs:      req.UserIDs,
-		GroupID:      req.GroupID,
-		ValidityDays: req.ValidityDays,
-		AssignedBy:   adminID,
-		Notes:        req.Notes,
+		UserIDs:        req.UserIDs,
+		GroupID:        req.GroupID,
+		ValidityDays:   req.ValidityDays,
+		DailyAmountUSD: req.DailyAmountUSD,
+		AssignedBy:     adminID,
+		Notes:          req.Notes,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

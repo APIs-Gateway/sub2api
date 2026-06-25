@@ -348,11 +348,12 @@ func (s *SubscriptionService) clearSubscriptionLockCache(userID int64) {
 
 // BulkAssignSubscriptionInput 批量分配订阅输入
 type BulkAssignSubscriptionInput struct {
-	UserIDs      []int64
-	GroupID      int64
-	ValidityDays int
-	AssignedBy   int64
-	Notes        string
+	UserIDs        []int64
+	GroupID        int64
+	ValidityDays   int
+	DailyAmountUSD float64 // per-day：每日额度 D；0 时回退 group.daily_limit_usd
+	AssignedBy     int64
+	Notes          string
 }
 
 // BulkAssignResult 批量分配结果
@@ -376,11 +377,12 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 
 	for _, userID := range input.UserIDs {
 		sub, reused, err := s.assignSubscriptionWithReuse(ctx, &AssignSubscriptionInput{
-			UserID:       userID,
-			GroupID:      input.GroupID,
-			ValidityDays: input.ValidityDays,
-			AssignedBy:   input.AssignedBy,
-			Notes:        input.Notes,
+			UserID:         userID,
+			GroupID:        input.GroupID,
+			ValidityDays:   input.ValidityDays,
+			DailyAmountUSD: input.DailyAmountUSD,
+			AssignedBy:     input.AssignedBy,
+			Notes:          input.Notes,
 		})
 		if err != nil {
 			result.FailedCount++
