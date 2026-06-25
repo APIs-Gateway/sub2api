@@ -46,6 +46,18 @@ func ExpireDayToExpiresAt(expireDay int) time.Time {
 	return EastDayStart(expireDay + 1)
 }
 
+// MaxExpireDay 返回 expire_day 的上限（东八区自然日序号）= MaxExpiresAt 对应的最后服务日。
+func MaxExpireDay() int { return EastDayNumber(MaxExpiresAt) - 1 }
+
+// ClampExpireDay 把 expire_day 夹到 ≤ MaxExpireDay()，防止建卡/续费/延长写出超过 MaxExpiresAt
+// 的有效期（凡算出新 expire_day 处都过一遍，避免「超长有效期」从不同入口复现）。
+func ClampExpireDay(expireDay int) int {
+	if max := MaxExpireDay(); expireDay > max {
+		return max
+	}
+	return expireDay
+}
+
 // EastMonthKey 返回 t 的东八区月份键 YYYYMM。
 func EastMonthKey(t time.Time) string {
 	t = t.In(shanghaiLoc)

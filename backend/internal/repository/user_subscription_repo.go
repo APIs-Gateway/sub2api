@@ -732,7 +732,8 @@ func (r *userSubscriptionRepository) GrantSubscriptionDays(ctx context.Context, 
 		if base < today-1 {
 			base = today - 1
 		}
-		newExpireDay := base + addDays
+		// clamp 到上限：延长近上限的卡不得写出超过 MaxExpiresAt 的 expire_day（与 createSubscription 同口径）。
+		newExpireDay := service.ClampExpireDay(base + addDays)
 		// expires_at 从 expire_day 派生，与自然日口径一致（忽略入参 newExpiresAt 的时间戳偏差）。
 		if _, err := tx.UserSubscription.UpdateOneID(subID).
 			SetExpiresAt(service.ExpireDayToExpiresAt(newExpireDay)).

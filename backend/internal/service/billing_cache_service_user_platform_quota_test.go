@@ -489,12 +489,11 @@ func TestIncrementUserPlatformQuotaUsage_GuardsAgainstEmpty(t *testing.T) {
 	}
 }
 
-// ── C-NEW-2: 订阅模式豁免 user×platform quota 检查 ──────────────────────────
-// 通过直接调用 checkUserPlatformQuotaEligibility 验证：
-// 1. standard 模式下 limit=0 → 拦截
-// 2. 订阅模式豁免通过 isSubscriptionMode 守卫体现 — 逻辑已在 CheckBillingEligibility 里加 !isSubscriptionMode 条件
-// 此处用单元测试直接验证底层 checkUserPlatformQuotaEligibility 的行为（quota 超限确实拦截），
-// 而 subscription bypass 逻辑则在 CheckBillingEligibility 中通过条件判断保证，不绕过 sub eligibility 内部复杂依赖。
+// ── user×platform quota 检查（per-day：不再有「订阅模式豁免」）──────────────────
+// per-day 重构后 CheckBillingEligibility 移除了 isSubscriptionMode 分流：所有请求统一走
+// checkBalanceEligibility(Admit) 后照常检查 platform quota。旧 C-NEW-2「订阅模式豁免 platform
+// quota」契约已失效，见 TestCheckBillingEligibility_SubscriptionGroup_StillAppliesPlatformQuota。
+// 这里直接验证底层 checkUserPlatformQuotaEligibility 的拦截行为（limit=0 → 拦截）。
 
 // fakeZeroQuotaCache 模拟 cache 命中且 daily limit=0（quota 耗尽）。
 type fakeZeroQuotaCache struct {

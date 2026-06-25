@@ -40,6 +40,25 @@ func TestExpireDayToExpiresAt_Invariant(t *testing.T) {
 	}
 }
 
+// ClampExpireDay 必须把超过上限的 expire_day 夹到 MaxExpireDay，且派生的 expires_at 不超过 MaxExpiresAt
+// （覆盖「近上限卡再延长」入口，防超长有效期复现）。
+func TestClampExpireDay(t *testing.T) {
+	max := MaxExpireDay()
+	if got := ClampExpireDay(max - 100); got != max-100 {
+		t.Fatalf("正常值应不变: ClampExpireDay(max-100)=%d want %d", got, max-100)
+	}
+	if got := ClampExpireDay(max); got != max {
+		t.Fatalf("恰好上限应不变: got %d want %d", got, max)
+	}
+	if got := ClampExpireDay(max + 5000); got != max {
+		t.Fatalf("超上限应夹到 max: got %d want %d", got, max)
+	}
+	// clamp 后派生的 expires_at 不得超过 MaxExpiresAt。
+	if ExpireDayToExpiresAt(ClampExpireDay(max + 5000)).After(MaxExpiresAt) {
+		t.Fatalf("clamp 后 expires_at 仍超过 MaxExpiresAt")
+	}
+}
+
 func TestEastMonthKey(t *testing.T) {
 	loc := shanghaiLoc
 	if k := EastMonthKey(time.Date(2026, 6, 30, 23, 59, 0, 0, loc)); k != "202606" {
