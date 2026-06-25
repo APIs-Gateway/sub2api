@@ -739,7 +739,7 @@ func TestAdminService_CreateGroup_InvalidRequestFallbackRejectsUnsupportedPlatfo
 	require.Nil(t, repo.created)
 }
 
-func TestAdminService_CreateGroup_InvalidRequestFallbackRejectsSubscription(t *testing.T) {
+func TestAdminService_CreateGroup_InvalidRequestFallbackAllowsSubscriptionType(t *testing.T) {
 	fallbackID := int64(10)
 	repo := &groupRepoStubForInvalidRequestFallback{
 		groups: map[int64]*Group{
@@ -895,7 +895,7 @@ func TestAdminService_UpdateGroup_InvalidRequestFallbackPlatformMismatch(t *test
 	require.Nil(t, repo.updated)
 }
 
-func TestAdminService_UpdateGroup_InvalidRequestFallbackSubscriptionMismatch(t *testing.T) {
+func TestAdminService_UpdateGroup_InvalidRequestFallbackAllowsSubscriptionType(t *testing.T) {
 	fallbackID := int64(10)
 	existing := &Group{
 		ID:                              1,
@@ -951,7 +951,7 @@ func TestAdminService_UpdateGroup_InvalidRequestFallbackClearsOnZero(t *testing.
 	require.Nil(t, repo.updated.FallbackGroupIDOnInvalidRequest)
 }
 
-func TestAdminService_UpdateGroup_InvalidRequestFallbackRejectsFallbackGroup(t *testing.T) {
+func TestAdminService_UpdateGroup_InvalidRequestFallbackAllowsSubscriptionFallbackGroup(t *testing.T) {
 	fallbackID := int64(10)
 	existing := &Group{
 		ID:               1,
