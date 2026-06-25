@@ -101,32 +101,43 @@ func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.
 		Key:     "sk-usage-billing-sub-" + uuid.NewString(),
 		Name:    "billing-sub",
 	})
+	now := time.Now()
+	startDay := service.EastDayNumber(now)
 	subscription := mustCreateSubscription(t, client, &service.UserSubscription{
-		UserID:  user.ID,
-		GroupID: group.ID,
+		UserID:         user.ID,
+		GroupID:        group.ID,
+		DailyAmountUSD: 10,
+		TodayRemaining: 10,
+		TodayDay:       startDay,
+		StartDay:       startDay,
+		ExpireDay:      startDay + 9,
+		ExpiresAt:      service.ExpireDayToExpiresAt(startDay + 9),
 	})
 
 	requestID := uuid.NewString()
 	cmd := &service.UsageBillingCommand{
-		RequestID:        requestID,
-		APIKeyID:         apiKey.ID,
-		UserID:           user.ID,
-		AccountID:        0,
-		SubscriptionID:   &subscription.ID,
-		SubscriptionCost: 2.5,
+		RequestID:      requestID,
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		AccountID:      0,
+		SubscriptionID: &subscription.ID,
+		OfficialCost:   2.5,
+		RateMultiplier: 1,
 	}
 
 	result1, err := repo.Apply(ctx, cmd)
 	require.NoError(t, err)
 	require.True(t, result1.Applied)
+	require.NotNil(t, result1.WalletDebit)
+	require.InDelta(t, 0, *result1.WalletDebit, 0.000001)
 
 	result2, err := repo.Apply(ctx, cmd)
 	require.NoError(t, err)
 	require.False(t, result2.Applied)
 
-	var dailyUsage float64
-	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT daily_usage_usd FROM user_subscriptions WHERE id = $1", subscription.ID).Scan(&dailyUsage))
-	require.InDelta(t, 2.5, dailyUsage, 0.000001)
+	var todayRemaining float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT today_remaining FROM user_subscriptions WHERE id = $1", subscription.ID).Scan(&todayRemaining))
+	require.InDelta(t, 7.5, todayRemaining, 0.000001)
 }
 
 func TestUsageBillingRepositoryApply_RequestFingerprintConflict(t *testing.T) {
@@ -420,6 +431,9 @@ func TestUsageBillingRepositoryApply_PerDayPackageThenWallet(t *testing.T) {
 	require.InDelta(t, 100, *res.NewBalance, 1e-6, "balance 200 − 50×2")
 	require.NotNil(t, res.WalletDebit)
 	require.InDelta(t, 100, *res.WalletDebit, 1e-6, "钱包实扣 = 50×2")
+	// 有生效卡 → 返回卡 ID（上层据此把 usage_log 标 subscription + 写 subscription_id）。
+	require.NotNil(t, res.SubscriptionID, "有卡应返回 SubscriptionID")
+	require.Equal(t, sub.ID, *res.SubscriptionID)
 
 	var todayRem float64
 	var status string
@@ -487,4 +501,5 @@ func TestUsageBillingRepositoryApply_PerDayNoCardWalletOnly(t *testing.T) {
 	require.InDelta(t, -6, *res.NewBalance, 1e-6, "无卡：10 − 8×2 = −6（钱包可负）")
 	require.NotNil(t, res.WalletDebit)
 	require.InDelta(t, 16, *res.WalletDebit, 1e-6)
+	require.Nil(t, res.SubscriptionID, "无卡 → 不标 subscription")
 }

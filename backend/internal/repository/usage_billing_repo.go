@@ -123,6 +123,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		result.NewBalance = &settleRes.newBalance
 		result.WalletDebit = &settleRes.walletDebit
 		result.OverdraftApplied = settleRes.overdraftApplied
+		result.SubscriptionID = settleRes.subscriptionID
 		if settleRes.expiredGroupID != nil {
 			result.DepletedSubscriptionGroupIDs = []int64{*settleRes.expiredGroupID}
 		}
@@ -159,6 +160,7 @@ type perDaySettleResult struct {
 	walletDebit      float64 // 本次从钱包实扣的售价货币额（钱包正余额 + 钱包负数兜底；套餐 1:1 部分不计）
 	expiredGroupID   *int64  // 本次把卡惰性标记为 expired 时其 group_id（供失效订阅缓存）；否则 nil
 	overdraftApplied bool    // 本次发生透支（改了用户月度计数）；供上层失效鉴权快照
+	subscriptionID   *int64  // 本次结算所用的用户生效卡 ID（有卡即填）；供 usage_log 标 subscription 计费
 }
 
 // settlePerDaySubscription 按 per-day 瀑布把一笔请求的官方成本结算到「用户唯一生效卡 + 钱包」。
@@ -230,6 +232,10 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 	res := service.Settle(&card, &wallet, officialCost, multiplier, today, monthKey)
 
 	out := &perDaySettleResult{overdraftApplied: res.OverdraftDays > 0}
+	if hasCard {
+		id := cardID
+		out.subscriptionID = &id
+	}
 
 	// 4) 回写卡（仅有卡时）：today_remaining/today_day/expire_day + 惰性过期。
 	if hasCard {

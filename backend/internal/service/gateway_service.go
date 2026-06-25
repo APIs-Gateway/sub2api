@@ -8845,7 +8845,7 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		}
 	}
 
-	// Platform quota 累加（legacy 兜底路径）：仅对 standard（余额）模式生效；订阅模式豁免；仅对有 limit 的用户写
+	// Platform quota 累加（legacy 兜底路径）：per-day 下统一适用、不再豁免订阅；仅对有 limit 的用户写
 	//   - HasUserPlatformQuotaLimit 守卫:与正常路径对齐，无 limit 公司跳过
 	//   - 新增 Redis 同步写:enforcement 走 Redis，legacy 路径也必须同步写，否则 preflight 看不到消费
 	//   - flusher_enabled=false（降级）:保留原有同步直写 DB
@@ -8988,6 +8988,14 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		return false, nil
 	}
 
+	// 计费识别落库（per-day）：结算实际扣了用户生效卡 → 把 usage_log 标为 subscription 计费 + 写
+	// subscription_id，使日志口径与实际扣卡一致（生产 middleware 不注入 subscription，故以结算结果为准，
+	// 而非 isSubscriptionBilling 标签）。usageLog 指针即调用方稍后 writeUsageLogBestEffort 写的同一对象。
+	if result.SubscriptionID != nil && usageLog != nil {
+		usageLog.SubscriptionID = result.SubscriptionID
+		usageLog.BillingType = BillingTypeSubscription
+	}
+
 	// 透支改了 users.monthly_overdraft_count → 失效该用户全部 key 的鉴权快照，
 	// 让后续准入读到最新月度计数，避免用缓存里的旧（偏低）计数继续放行已满额用户。
 	if result.OverdraftApplied && p.User != nil {
@@ -9047,7 +9055,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 
-	// Platform quota 累加：仅在 standard（余额）模式生效；订阅模式豁免；仅对有 limit 的用户写
+	// Platform quota 累加：per-day 下统一适用、不再豁免订阅（与 P4c 准入口径一致）；仅对有 limit 的用户写
 	// Redis 同步写 + DB 异步持久化（flag=false 降级）或 flusher 异步刷（flag=true）:
 	//   - HasUserPlatformQuotaLimit 守卫:无 limit 的公司跳过,避免无效写入 + 浪费 Redis 容量
 	//   - Redis 同步:确保下次 preflight 立即看到最新 usage,把 TOCTOU 超支窗口

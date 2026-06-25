@@ -134,6 +134,9 @@ type UsageBillingApplyResult struct {
 	// OverdraftApplied 本次结算发生了透支（改了 users.monthly_overdraft_count）。
 	// 上层据此失效该用户鉴权快照，让准入读到最新月度透支计数（否则缓存计数偏低、误放行已满额用户）。
 	OverdraftApplied bool
+	// SubscriptionID 本次结算所用的用户生效卡 ID（有卡即填，否则 nil）。
+	// 上层据此把 usage_log 标为 subscription 计费 + 写 subscription_id，使日志口径与实际扣卡一致。
+	SubscriptionID *int64
 	// DepletedSubscriptionGroupIDs 本次扣费把哪些订阅卡的剩余额度扣到 0（burn-down 用完），
 	// 并已在同一事务内即时标记为 expired（用完即失效，不必等到期日）。调用方据此失效对应
 	// (user, group) 的订阅缓存，让"我的订阅 / active 列表"立即反映。
