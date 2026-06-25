@@ -50,17 +50,16 @@ type UserSubscriptionRepository interface {
 	// 每次最多处理 limit 条，返回余额被扣减的用户 ID 列表（供失效余额缓存）。
 	ForfeitExpiredSubscriptions(ctx context.Context, now time.Time, limit int) ([]int64, error)
 
-	// CloseSubscriptionWithReclaim 关闭一张订阅并回收其未花的发放余额（行级 FOR UPDATE 内重算）：
-	// 把 remaining = granted-consumed-clawed 从该卡剩余池与用户余额一并扣除。
-	// deleteRow=true 删除该行（撤销）；false 则置 status=expired、expires_at=now 并累加 clawed（整卡取消）。
-	// 返回被扣减的用户 ID 与回收金额（找不到/已关闭则返回 0,0,nil）。
+	// CloseSubscriptionWithReclaim 关闭一张订阅（行级 FOR UPDATE 内）。per-day：卡价值在
+	// today_remaining、不在钱包，**不回收 users.balance**（主动退款另走 payment_refund）。
+	// deleteRow=true 删除该行（撤销）；false 则立即过期（status=expired、today_remaining=0、
+	// expire_day<today）。reclaimed 恒为 0（保留返回签名）。找不到返回 0,0,nil。
 	CloseSubscriptionWithReclaim(ctx context.Context, subID int64, now time.Time, deleteRow bool) (userID int64, reclaimed float64, err error)
-	// ShortenSubscriptionWithReclaim 缩短订阅天数并回收对应未花额度：
-	// reclaimed = min(remaining, reduceDays×D)，granted_total -= reclaimed（保持 remaining 与总天数一致），
-	// expires_at = newExpiresAt，同时从用户余额扣除 reclaimed。返回用户 ID 与回收金额。
+	// ShortenSubscriptionWithReclaim 缩短订阅。per-day：expire_day −= reduceDays（下限 today−1），
+	// expires_at 从 expire_day 派生，**不动 users.balance**。reclaimed 恒为 0（保留返回签名）。
 	ShortenSubscriptionWithReclaim(ctx context.Context, subID int64, reduceDays int, newExpiresAt, now time.Time) (userID int64, reclaimed float64, err error)
-	// GrantSubscriptionDays 延长订阅天数并按 D 增发额度：
-	// granted = addDays×D，granted_total += granted，expires_at = newExpiresAt，同时给用户余额增发 granted。
-	// 用于退款回滚 / 管理端增发，与 ShortenSubscriptionWithReclaim 对称。返回用户 ID 与增发金额。
+	// GrantSubscriptionDays 延长订阅。per-day：expire_day = clamp(max(原, today−1) + addDays)，
+	// expires_at 从 expire_day 派生，**不增发 users.balance**。granted 恒为 0（保留返回签名）。
+	// 入参 newExpiresAt 仅历史签名，实际 expires_at 按 expire_day 派生。
 	GrantSubscriptionDays(ctx context.Context, subID int64, addDays int, newExpiresAt, now time.Time) (userID int64, granted float64, err error)
 }

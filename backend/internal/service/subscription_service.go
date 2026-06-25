@@ -525,10 +525,9 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 		return nil, ErrAdjustWouldExpire
 	}
 
-	// burn-down 模型：调整天数的同时按 D 调整发放额度与用户余额，保持
-	// 不变量 balance == 充值剩余 + Σ活跃卡 remaining。
-	//   days<0：缩短并回收 min(remaining, |days|×D)；
-	//   days>0：延长并增发 days×D（也使退款回滚能把扣减时回收的钱重新发放）；
+	// per-day：仅调整卡的 expire_day（服务窗口），**不动 users.balance**（卡价值在 today_remaining）。
+	//   days<0：缩短 → expire_day −= |days|（下限 today−1）；
+	//   days>0：延长 → expire_day = clamp(max(原, today−1) + days)（按续费口径并夹到上限）；
 	//   days==0：仅同步过期时间（一般不会发生）。
 	switch {
 	case days < 0:
