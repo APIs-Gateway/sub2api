@@ -2079,11 +2079,9 @@ func (s *adminServiceImpl) validateStablePriorityFallbackGroup(ctx context.Conte
 // platform/subscriptionType: 当前分组的有效平台/订阅类型
 // fallbackGroupID: 兜底分组 ID
 func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Context, currentGroupID int64, platform, subscriptionType string, fallbackGroupID int64) error {
+	// per-day：分组仅管路由、无「订阅型分组」概念，不再限制订阅组设/作 fallback（subscriptionType 入参已弃用）。
 	if platform != PlatformAnthropic && platform != PlatformAntigravity {
 		return fmt.Errorf("invalid request fallback only supported for anthropic or antigravity groups")
-	}
-	if subscriptionType == SubscriptionTypeSubscription {
-		return fmt.Errorf("subscription groups cannot set invalid request fallback")
 	}
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
 		return fmt.Errorf("cannot set self as invalid request fallback group")
@@ -2095,9 +2093,6 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 	}
 	if fallbackGroup.Platform != PlatformAnthropic {
 		return fmt.Errorf("fallback group must be anthropic platform")
-	}
-	if fallbackGroup.SubscriptionType == SubscriptionTypeSubscription {
-		return fmt.Errorf("fallback group cannot be subscription type")
 	}
 	if fallbackGroup.FallbackGroupIDOnInvalidRequest != nil {
 		return fmt.Errorf("fallback group cannot have invalid request fallback configured")

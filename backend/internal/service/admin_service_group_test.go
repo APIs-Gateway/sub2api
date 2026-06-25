@@ -748,6 +748,7 @@ func TestAdminService_CreateGroup_InvalidRequestFallbackRejectsSubscription(t *t
 	}
 	svc := &adminServiceImpl{groupRepo: repo}
 
+	// per-day：subscription_type 不再限制设置 fallback（取代旧「订阅组不能设 fallback」契约）。
 	_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
 		Name:                            "g1",
 		Platform:                        PlatformAnthropic,
@@ -755,9 +756,8 @@ func TestAdminService_CreateGroup_InvalidRequestFallbackRejectsSubscription(t *t
 		SubscriptionType:                SubscriptionTypeSubscription,
 		FallbackGroupIDOnInvalidRequest: &fallbackID,
 	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "subscription groups cannot set invalid request fallback")
-	require.Nil(t, repo.created)
+	require.NoError(t, err)
+	require.NotNil(t, repo.created)
 }
 
 func TestAdminService_CreateGroup_InvalidRequestFallbackRejectsFallbackGroup(t *testing.T) {
@@ -775,11 +775,6 @@ func TestAdminService_CreateGroup_InvalidRequestFallbackRejectsFallbackGroup(t *
 			name:        "antigravity_target",
 			fallback:    &Group{ID: 10, Platform: PlatformAntigravity, SubscriptionType: SubscriptionTypeStandard},
 			wantMessage: "fallback group must be anthropic platform",
-		},
-		{
-			name:        "subscription_group",
-			fallback:    &Group{ID: 10, Platform: PlatformAnthropic, SubscriptionType: SubscriptionTypeSubscription},
-			wantMessage: "fallback group cannot be subscription type",
 		},
 		{
 			name: "nested_fallback",
@@ -918,12 +913,13 @@ func TestAdminService_UpdateGroup_InvalidRequestFallbackSubscriptionMismatch(t *
 	}
 	svc := &adminServiceImpl{groupRepo: repo}
 
-	_, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
+	// per-day：subscription_type 不再限制设置/保留 fallback（取代旧「订阅组不能设 fallback」契约）。
+	group, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
 		SubscriptionType: SubscriptionTypeSubscription,
 	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "subscription groups cannot set invalid request fallback")
-	require.Nil(t, repo.updated)
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.updated)
 }
 
 func TestAdminService_UpdateGroup_InvalidRequestFallbackClearsOnZero(t *testing.T) {
@@ -972,12 +968,13 @@ func TestAdminService_UpdateGroup_InvalidRequestFallbackRejectsFallbackGroup(t *
 	}
 	svc := &adminServiceImpl{groupRepo: repo}
 
-	_, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
+	// per-day：fallback 组可为任意 anthropic 路由组，不再因 subscription_type 被拒。
+	group, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
 		FallbackGroupIDOnInvalidRequest: &fallbackID,
 	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "fallback group cannot be subscription type")
-	require.Nil(t, repo.updated)
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.updated)
 }
 
 func TestAdminService_UpdateGroup_InvalidRequestFallbackSetSuccess(t *testing.T) {
