@@ -503,3 +503,42 @@ func TestUsageBillingRepositoryApply_PerDayNoCardWalletOnly(t *testing.T) {
 	require.InDelta(t, 16, *res.WalletDebit, 1e-6)
 	require.Nil(t, res.SubscriptionID, "无卡 → 不标 subscription")
 }
+
+// 过期但 status='active' 的卡（到期任务未扫到）：本次费用其实走钱包、卡被惰性标 expired，
+// **不应**标 subscription（SubscriptionID=nil），否则账本/日志分裂。
+func TestUsageBillingRepositoryApply_PerDayStaleActiveCardNotSubscription(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user, apiKey := perDayBillingFixture(t, client, 100) // 钱包足够
+	now := time.Now()
+	startDay := service.EastDayNumber(now)
+	sub := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:         user.ID,
+		GroupID:        *apiKey.GroupID,
+		DailyAmountUSD: 10,
+		TodayRemaining: 10,            // 残留值，会被惰性覆盖为 0
+		TodayDay:       startDay - 2,  // 旧值，触发惰性重置
+		StartDay:       startDay - 11, // 11 天前激活
+		ExpireDay:      startDay - 1,  // 已过期（today > expire_day）
+		Status:         service.SubscriptionStatusActive,
+		ExpiresAt:      now.Add(-1 * time.Hour), // 时间戳也已过，但到期任务未扫到 → status 仍 active
+	})
+
+	// 官方成本 4、倍率 2：卡已过期 → 套餐 0、不可透支 → 全走钱包 4×2=8。
+	res, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID: uuid.NewString(), APIKeyID: apiKey.ID, UserID: user.ID,
+		OfficialCost: 4, RateMultiplier: 2,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.WalletDebit)
+	require.InDelta(t, 8, *res.WalletDebit, 1e-6, "费用走钱包")
+	require.Nil(t, res.SubscriptionID, "过期 active 卡本次未扣卡侧额度 → 不标 subscription")
+
+	// 卡被惰性标 expired。
+	var status string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT status FROM user_subscriptions WHERE id=$1`, sub.ID).Scan(&status))
+	require.Equal(t, "expired", status, "过期卡应被惰性标 expired")
+}

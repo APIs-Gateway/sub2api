@@ -232,7 +232,10 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 	res := service.Settle(&card, &wallet, officialCost, multiplier, today, monthKey)
 
 	out := &perDaySettleResult{overdraftApplied: res.OverdraftDays > 0}
-	if hasCard {
+	// 仅在本次**实际从卡侧扣了额度**（套餐余额或透支，TotalOfficial=SubPay+OverdraftPay）时才标
+	// subscription——否则过期但 status='active' 的卡（expire_day<today、本次费用其实走钱包，卡只是
+	// 被惰性标 expired）会被误标 subscription，账本/日志再次分裂。
+	if hasCard && res.TotalOfficial() > 0 {
 		id := cardID
 		out.subscriptionID = &id
 	}
