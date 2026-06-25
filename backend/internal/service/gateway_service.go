@@ -9014,14 +9014,11 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		return
 	}
 
-	// per-day：缓存钱包余额按「真实钱包实扣」WalletDebit 回写（套餐 1:1 覆盖的部分不动钱包）。
-	// 套餐余额一侧（today_remaining）的缓存回写属准入缓存改造范围（P4c），此处只保钱包侧一致。
+	// per-day：钱包缓存按「真实钱包实扣」WalletDebit 回写（套餐 1:1 覆盖部分不动钱包）。
+	// 由 WalletDebit 驱动、不再被 IsSubscriptionBill 旧分支挡住——订阅请求套餐不足走钱包正/负余额时
+	// 同样如实回写，避免缓存高于 DB。套餐余额一侧（today_remaining）缓存属准入缓存改造范围（P4c）。
 	walletDebit := resolveWalletDebit(p, result)
-	if p.IsSubscriptionBill {
-		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil {
-			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
-		}
-	} else if walletDebit != 0 && p.User != nil {
+	if walletDebit != 0 && p.User != nil {
 		deps.billingCacheService.QueueDeductBalance(p.User.ID, walletDebit)
 	}
 
@@ -9088,10 +9085,12 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 			slog.Error("panic in notifyBalanceLow", "recover", r)
 		}
 	}()
-	if p.IsSubscriptionBill || p.Cost.ActualCost <= 0 || p.User == nil || deps.balanceNotifyService == nil {
+	// per-day：按「真实钱包实扣」决定是否检查低余额通知——套餐 1:1 覆盖（walletDebit=0）不触发；
+	// 订阅请求套餐不足走钱包时同样要通知（不再被 IsSubscriptionBill 挡住）。
+	walletDebit := resolveWalletDebit(p, result)
+	if walletDebit <= 0 || p.User == nil || deps.balanceNotifyService == nil {
 		slog.Debug("notifyBalanceLow: skipped",
-			"is_subscription", p.IsSubscriptionBill,
-			"actual_cost", p.Cost.ActualCost,
+			"wallet_debit", walletDebit,
 			"user_nil", p.User == nil,
 			"service_nil", deps.balanceNotifyService == nil,
 		)
@@ -9099,7 +9098,6 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 	}
 
 	oldBalance := resolveOldBalance(p, result)
-	walletDebit := resolveWalletDebit(p, result)
 	slog.Debug("notifyBalanceLow: calling CheckBalanceAfterDeduction",
 		"user_id", p.User.ID,
 		"old_balance", oldBalance,

@@ -291,19 +291,12 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 		sub.AssignedBy = &input.AssignedBy
 	}
 
-	// 同一事务内创建订阅并把 G 一次性打入用户余额。
-	// 使用 DeductBalance(负数) 实现「只加余额、不计入 total_recharged」，
-	// 与每日清扣 / 到期作废的扣减保持同一账本，避免污染充值统计与返佣计算。
+	// per-day 模型：套餐额度只存在卡的 today_remaining（每日发 D），**不再把 G 打进 users.balance**。
+	// 否则套餐额度会同时存在于 today_remaining 与钱包，用户当天花完 D 后还能用这笔总额走钱包层、
+	// 绕过 per-day 限速/透支（见 settlePerDaySubscription：balance 已是纯钱包）。GrantedTotalUSD 仅
+	// 作历史/展示，不进账本。存量旧卡的 G 已在 balance 里，由上线前一次性「balance 解混」迁移取出。
 	if err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
-		if err := s.userSubRepo.Create(txCtx, sub); err != nil {
-			return err
-		}
-		if grantedTotal > 0 && s.userRepo != nil {
-			if err := s.userRepo.DeductBalance(txCtx, input.UserID, -grantedTotal); err != nil {
-				return fmt.Errorf("credit subscription balance: %w", err)
-			}
-		}
-		return nil
+		return s.userSubRepo.Create(txCtx, sub)
 	}); err != nil {
 		return nil, err
 	}

@@ -68,26 +68,12 @@ func (s *SubscriptionClawbackService) SetLeaderLock(lockCache LeaderLockCache, d
 	s.db = db
 }
 
+// Start 已退役为 no-op：per-day 重构后 burn-down「每日清扣」不再运行。
+// P4b 起结算改为 per-day 瀑布、不再维护 consumed_usd/clawed_usd，若清扣继续按 stale 账本运行会
+// 异步误扣 users.balance（现已是纯钱包），与新账本冲突。service/wiring/runOnce 等待 P8 连同
+// repo 清扣方法（ListActiveBurndownIDs/ClawbackSubscription）一并删除。
 func (s *SubscriptionClawbackService) Start() {
-	if s == nil || s.userSubRepo == nil || s.interval <= 0 {
-		return
-	}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		ticker := time.NewTicker(s.interval)
-		defer ticker.Stop()
-
-		s.runOnce()
-		for {
-			select {
-			case <-ticker.C:
-				s.runOnce()
-			case <-s.stopCh:
-				return
-			}
-		}
-	}()
+	// no-op（清扣退役）
 }
 
 func (s *SubscriptionClawbackService) Stop() {
