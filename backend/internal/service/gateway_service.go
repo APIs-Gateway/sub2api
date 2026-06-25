@@ -8742,6 +8742,9 @@ type APIKeyQuotaUpdater interface {
 
 type apiKeyAuthCacheInvalidator interface {
 	InvalidateAuthCacheByKey(ctx context.Context, key string)
+	// InvalidateAuthCacheByUserID 失效该用户全部 key 的鉴权快照——透支改了 users.monthly_overdraft_count
+	// 后须失效，否则准入读到的是缓存里的旧计数、会继续放行已用满本月透支的用户。
+	InvalidateAuthCacheByUserID(ctx context.Context, userID int64)
 }
 
 type usageLogBestEffortWriter interface {
@@ -8983,6 +8986,14 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	if result == nil || !result.Applied {
 		deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 		return false, nil
+	}
+
+	// 透支改了 users.monthly_overdraft_count → 失效该用户全部 key 的鉴权快照，
+	// 让后续准入读到最新月度计数，避免用缓存里的旧（偏低）计数继续放行已满额用户。
+	if result.OverdraftApplied && p.User != nil {
+		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok {
+			invalidator.InvalidateAuthCacheByUserID(billingCtx, p.User.ID)
+		}
 	}
 
 	if result.APIKeyQuotaExhausted {

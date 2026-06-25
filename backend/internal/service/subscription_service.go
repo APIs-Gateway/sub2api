@@ -252,16 +252,18 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 	grantedTotal := dailyAmount * float64(validityDays)
 
 	now := time.Now()
-	expiresAt := now.AddDate(0, 0, validityDays)
-	if expiresAt.After(MaxExpiresAt) {
-		expiresAt = MaxExpiresAt
-	}
 
 	// per-day 字段：新卡即按 per-day 模型初始化（与上方 burn-down 字段并存，切换后即生效）。
 	// start_day/expire_day 为东八区绝对自然日序号；expire_day = 最后发放日（含）= start+T−1；
 	// 当天即发放 D（today_remaining=D、today_day=start_day）。切换前 burn-down 不读这些字段，纯加性。
 	startDay := EastDayNumber(now)
 	expireDay := startDay + validityDays - 1
+
+	// expires_at 从 expire_day 派生（次日 0 点），与自然日口径一致，供按 expires_at 判过期的旧路径。
+	expiresAt := ExpireDayToExpiresAt(expireDay)
+	if expiresAt.After(MaxExpiresAt) {
+		expiresAt = MaxExpiresAt
+	}
 
 	activatedAt := now
 	sub := &UserSubscription{

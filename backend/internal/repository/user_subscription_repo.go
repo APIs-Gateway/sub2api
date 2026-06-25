@@ -541,11 +541,11 @@ func (r *userSubscriptionRepository) ForfeitExpiredSubscriptions(ctx context.Con
 			break
 		}
 		for _, id := range ids {
-			userID, forfeited, ferr := r.forfeitOneExpired(ctx, id, now)
+			userID, expired, ferr := r.forfeitOneExpired(ctx, id, now)
 			if ferr != nil {
 				return affectedUserIDs, ferr
 			}
-			if forfeited > 0 && userID > 0 {
+			if expired && userID > 0 {
 				affectedUserIDs = append(affectedUserIDs, userID)
 			}
 		}
@@ -556,10 +556,14 @@ func (r *userSubscriptionRepository) ForfeitExpiredSubscriptions(ctx context.Con
 	return affectedUserIDs, nil
 }
 
-func (r *userSubscriptionRepository) forfeitOneExpired(ctx context.Context, subID int64, now time.Time) (int64, float64, error) {
+// forfeitOneExpired 把一张已到期（expires_at ≤ now）的 active 卡标记为 expired。
+// per-day：只标 status=expired + today_remaining=0，**不动 users.balance**——卡价值在 today_remaining、
+// 不在钱包（旧 burn-down 在此 AddBalance(-remaining) 会对每张到期卡凭空扣钱包，现 balance 已是纯钱包）。
+// 返回 (userID, expired)；expired=true 表示本次确有一张卡转 expired（供上层失效订阅缓存）。
+func (r *userSubscriptionRepository) forfeitOneExpired(ctx context.Context, subID int64, now time.Time) (int64, bool, error) {
 	tx, err := r.client.Tx(ctx)
 	if err != nil {
-		return 0, 0, err
+		return 0, false, err
 	}
 	committed := false
 	defer func() {
@@ -578,32 +582,24 @@ func (r *userSubscriptionRepository) forfeitOneExpired(ctx context.Context, subI
 		Only(ctx)
 	if err != nil {
 		if dbent.IsNotFound(err) {
-			return 0, 0, nil
+			return 0, false, nil
 		}
-		return 0, 0, err
+		return 0, false, err
 	}
 
 	sub := userSubscriptionEntityToService(m)
-	remaining := sub.RemainingUSD()
-
-	upd := tx.UserSubscription.UpdateOneID(subID).SetStatus(service.SubscriptionStatusExpired)
-	if remaining > 0 {
-		upd = upd.AddClawedUsd(remaining)
-	}
-	if _, err := upd.Save(ctx); err != nil {
-		return 0, 0, err
-	}
-	if remaining > 0 {
-		if _, err := tx.User.UpdateOneID(sub.UserID).AddBalance(-remaining).Save(ctx); err != nil {
-			return 0, 0, err
-		}
+	if _, err := tx.UserSubscription.UpdateOneID(subID).
+		SetStatus(service.SubscriptionStatusExpired).
+		SetTodayRemaining(0).
+		Save(ctx); err != nil {
+		return 0, false, err
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, 0, err
+		return 0, false, err
 	}
 	committed = true
-	return sub.UserID, remaining, nil
+	return sub.UserID, true, nil
 }
 
 // reclaimTx 在「有 ambient ent 事务则复用、否则自开」的事务里执行 fn。
@@ -694,8 +690,9 @@ func (r *userSubscriptionRepository) ShortenSubscriptionWithReclaim(ctx context.
 		if floor := service.EastDayNumber(now) - 1; newExpireDay < floor {
 			newExpireDay = floor
 		}
+		// expires_at 从 expire_day 派生，与自然日口径一致（忽略入参 newExpiresAt 的时间戳偏差）。
 		if _, err := tx.UserSubscription.UpdateOneID(subID).
-			SetExpiresAt(newExpiresAt).
+			SetExpiresAt(service.ExpireDayToExpiresAt(newExpireDay)).
 			SetExpireDay(newExpireDay).
 			Save(ctx); err != nil {
 			return err
@@ -736,8 +733,9 @@ func (r *userSubscriptionRepository) GrantSubscriptionDays(ctx context.Context, 
 			base = today - 1
 		}
 		newExpireDay := base + addDays
+		// expires_at 从 expire_day 派生，与自然日口径一致（忽略入参 newExpiresAt 的时间戳偏差）。
 		if _, err := tx.UserSubscription.UpdateOneID(subID).
-			SetExpiresAt(newExpiresAt).
+			SetExpiresAt(service.ExpireDayToExpiresAt(newExpireDay)).
 			SetExpireDay(newExpireDay).
 			Save(ctx); err != nil {
 			return err

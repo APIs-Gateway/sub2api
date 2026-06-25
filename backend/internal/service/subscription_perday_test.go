@@ -24,6 +24,22 @@ func TestEastDayNumber_NaturalDayBoundary(t *testing.T) {
 	}
 }
 
+// ExpireDayToExpiresAt 必须与自然日口径一致：
+// today ≤ expire_day（active）⟺ now < expires_at；today > expire_day（expired）⟺ now ≥ expires_at。
+func TestExpireDayToExpiresAt_Invariant(t *testing.T) {
+	for _, d := range []int{0, 1, 20000, 21000} {
+		exp := ExpireDayToExpiresAt(d)
+		// expires_at 当刻即「次日 0 点」= 自然日 d+1 的起点。
+		if got := EastDayNumber(exp); got != d+1 {
+			t.Fatalf("ExpireDayToExpiresAt(%d) 落在日 %d，应为 %d", d, got, d+1)
+		}
+		// 到期日 d 当天最后一刻仍属 active：now=expires_at−1ns → 自然日 = d（≤ expire_day）。
+		if got := EastDayNumber(exp.Add(-time.Nanosecond)); got != d {
+			t.Fatalf("到期日当天末刻自然日=%d，应为 %d（仍 active）", got, d)
+		}
+	}
+}
+
 func TestEastMonthKey(t *testing.T) {
 	loc := shanghaiLoc
 	if k := EastMonthKey(time.Date(2026, 6, 30, 23, 59, 0, 0, loc)); k != "202606" {

@@ -122,6 +122,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		}
 		result.NewBalance = &settleRes.newBalance
 		result.WalletDebit = &settleRes.walletDebit
+		result.OverdraftApplied = settleRes.overdraftApplied
 		if settleRes.expiredGroupID != nil {
 			result.DepletedSubscriptionGroupIDs = []int64{*settleRes.expiredGroupID}
 		}
@@ -154,9 +155,10 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 
 // perDaySettleResult 是 per-day 结算的落库结果（供上层重建旧余额、失效缓存）。
 type perDaySettleResult struct {
-	newBalance     float64 // 结算后钱包余额
-	walletDebit    float64 // 本次从钱包实扣的售价货币额（钱包正余额 + 钱包负数兜底；套餐 1:1 部分不计）
-	expiredGroupID *int64  // 本次把卡惰性标记为 expired 时其 group_id（供失效订阅缓存）；否则 nil
+	newBalance       float64 // 结算后钱包余额
+	walletDebit      float64 // 本次从钱包实扣的售价货币额（钱包正余额 + 钱包负数兜底；套餐 1:1 部分不计）
+	expiredGroupID   *int64  // 本次把卡惰性标记为 expired 时其 group_id（供失效订阅缓存）；否则 nil
+	overdraftApplied bool    // 本次发生透支（改了用户月度计数）；供上层失效鉴权快照
 }
 
 // settlePerDaySubscription 按 per-day 瀑布把一笔请求的官方成本结算到「用户唯一生效卡 + 钱包」。
@@ -225,22 +227,25 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 			OverdraftOn:    odOn,
 		}
 	}
-	service.Settle(&card, &wallet, officialCost, multiplier, today, monthKey)
+	res := service.Settle(&card, &wallet, officialCost, multiplier, today, monthKey)
 
-	out := &perDaySettleResult{}
+	out := &perDaySettleResult{overdraftApplied: res.OverdraftDays > 0}
 
 	// 4) 回写卡（仅有卡时）：today_remaining/today_day/expire_day + 惰性过期。
 	if hasCard {
 		var nowExpired bool
 		var gid int64
+		// expires_at 始终从 expire_day 派生（透支会改 expire_day），让按 expires_at 判过期的
+		// 旧路径与自然日口径一致；见 service.ExpireDayToExpiresAt。
 		if err := tx.QueryRowContext(ctx, `
 			UPDATE user_subscriptions
-			SET today_remaining = $1, today_day = $2, expire_day = $3,
+			SET today_remaining = $1, today_day = $2, expire_day = $3, expires_at = $6,
 				status = CASE WHEN $4 THEN 'expired' ELSE status END,
 				updated_at = NOW()
 			WHERE id = $5
 			RETURNING status = 'expired', group_id
-		`, card.TodayRemaining, card.TodayDay, card.ExpireDay, card.Expired, cardID).Scan(&nowExpired, &gid); err != nil {
+		`, card.TodayRemaining, card.TodayDay, card.ExpireDay, card.Expired, cardID,
+			service.ExpireDayToExpiresAt(card.ExpireDay)).Scan(&nowExpired, &gid); err != nil {
 			return nil, err
 		}
 		if nowExpired { // 本次刚由 active→expired（加载时为 active），失效订阅缓存

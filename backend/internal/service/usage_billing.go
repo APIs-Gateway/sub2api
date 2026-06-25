@@ -131,6 +131,9 @@ type UsageBillingApplyResult struct {
 	// = 钱包正余额扣（官方×倍率）+ 钱包负数兜底扣。供余额提醒按真实扣减重建旧余额、缓存按真实变化回写。
 	// nil = 未发生 per-day 结算。
 	WalletDebit *float64
+	// OverdraftApplied 本次结算发生了透支（改了 users.monthly_overdraft_count）。
+	// 上层据此失效该用户鉴权快照，让准入读到最新月度透支计数（否则缓存计数偏低、误放行已满额用户）。
+	OverdraftApplied bool
 	// DepletedSubscriptionGroupIDs 本次扣费把哪些订阅卡的剩余额度扣到 0（burn-down 用完），
 	// 并已在同一事务内即时标记为 expired（用完即失效，不必等到期日）。调用方据此失效对应
 	// (user, group) 的订阅缓存，让"我的订阅 / active 列表"立即反映。

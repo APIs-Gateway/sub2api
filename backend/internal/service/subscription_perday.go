@@ -31,6 +31,21 @@ func EastDayNumber(t time.Time) int {
 // TodayEastDayNumber 返回当前东八区自然日序号。
 func TodayEastDayNumber() int { return EastDayNumber(time.Now()) }
 
+// EastDayStart 返回东八区自然日序号 day 的当日 0 点时间戳。
+func EastDayStart(day int) time.Time {
+	return time.Unix(int64(day)*86400-east8OffsetSeconds, 0).In(shanghaiLoc)
+}
+
+// ExpireDayToExpiresAt 把 expire_day（最后服务日，含）换算成 expires_at 时间戳 = 次日 0 点
+// （卡服务到 expire_day 当日结束）。per-day 以 expire_day 为唯一真相源，但大量旧路径仍按
+// expires_at 判 active/expired（GetActiveByUserIDAndGroupID/BatchUpdateExpiredStatus 等），
+// 故凡写 expire_day 处都用本函数同步 expires_at，使两套口径一致：
+//
+//	today > expire_day  ⟺  now ≥ ExpireDayToExpiresAt(expire_day)
+func ExpireDayToExpiresAt(expireDay int) time.Time {
+	return EastDayStart(expireDay + 1)
+}
+
 // EastMonthKey 返回 t 的东八区月份键 YYYYMM。
 func EastMonthKey(t time.Time) string {
 	t = t.In(shanghaiLoc)
