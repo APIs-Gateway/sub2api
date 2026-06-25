@@ -54,6 +54,10 @@ type APIKeyAuthUserSnapshot struct {
 
 	// SubscriptionOverdraftGuard 该用户是否给任意订阅卡设过透支上限；准入闸门的廉价触发位。
 	SubscriptionOverdraftGuard bool `json:"subscription_overdraft_guard,omitempty"`
+	// MonthlyOverdraftCount/Month per-day 用户级月度透支计数；准入 Admit 用其判断本月是否还能透支。
+	// 必须随快照保存/恢复，否则缓存命中后归零 → 准入误判可透支、月度透支闸失效（结算仍按 DB 真实值封顶）。
+	MonthlyOverdraftCount int    `json:"monthly_overdraft_count,omitempty"`
+	MonthlyOverdraftMonth string `json:"monthly_overdraft_month,omitempty"`
 	// StablePriorityEnabled 稳定优先用户级全局开关；用于 openai 调度跨分组兜底判断。
 	StablePriorityEnabled bool `json:"stable_priority_enabled"`
 

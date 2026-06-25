@@ -642,25 +642,22 @@ func (r *userSubscriptionRepository) CloseSubscriptionWithReclaim(ctx context.Co
 		}
 		sub := userSubscriptionEntityToService(m)
 		userID = sub.UserID
-		reclaimed = sub.RemainingUSD()
+		// per-day：卡价值在 today_remaining、不在 balance，关闭不回收钱包（reclaimed=0）。
+		// 主动退款另走 payment_refund（按剩余天数退到钱包），不在此处动余额。
+		reclaimed = 0
 
 		if deleteRow {
 			if _, err := tx.UserSubscription.Delete().Where(usersubscription.IDEQ(subID)).Exec(ctx); err != nil {
 				return err
 			}
 		} else {
-			upd := tx.UserSubscription.UpdateOneID(subID).
+			// 立即过期：status=expired + today_remaining=0 + expire_day<today（与惰性过期判定一致）。
+			if _, err := tx.UserSubscription.UpdateOneID(subID).
 				SetStatus(service.SubscriptionStatusExpired).
-				SetExpiresAt(now)
-			if reclaimed > 0 {
-				upd = upd.AddClawedUsd(reclaimed)
-			}
-			if _, err := upd.Save(ctx); err != nil {
-				return err
-			}
-		}
-		if reclaimed > 0 {
-			if _, err := tx.User.UpdateOneID(sub.UserID).AddBalance(-reclaimed).Save(ctx); err != nil {
+				SetExpiresAt(now).
+				SetTodayRemaining(0).
+				SetExpireDay(service.EastDayNumber(now) - 1).
+				Save(ctx); err != nil {
 				return err
 			}
 		}
@@ -689,28 +686,19 @@ func (r *userSubscriptionRepository) ShortenSubscriptionWithReclaim(ctx context.
 		}
 		sub := userSubscriptionEntityToService(m)
 		userID = sub.UserID
+		// per-day：缩短只改 expire_day（服务窗口），不回收钱包（reclaimed=0）。
+		reclaimed = 0
 
-		remaining := sub.RemainingUSD()
-		maxReclaim := float64(reduceDays) * sub.DailyAmountUSD
-		reclaimed = maxReclaim
-		if reclaimed > remaining {
-			reclaimed = remaining
+		// expire_day −= reduceDays；下限 today−1（立即过期）。上层 ExtendSubscription 已校验不会缩到过期。
+		newExpireDay := sub.ExpireDay - reduceDays
+		if floor := service.EastDayNumber(now) - 1; newExpireDay < floor {
+			newExpireDay = floor
 		}
-		if reclaimed < 0 {
-			reclaimed = 0
-		}
-
-		upd := tx.UserSubscription.UpdateOneID(subID).SetExpiresAt(newExpiresAt)
-		if reclaimed > 0 {
-			upd = upd.AddGrantedTotalUsd(-reclaimed)
-		}
-		if _, err := upd.Save(ctx); err != nil {
+		if _, err := tx.UserSubscription.UpdateOneID(subID).
+			SetExpiresAt(newExpiresAt).
+			SetExpireDay(newExpireDay).
+			Save(ctx); err != nil {
 			return err
-		}
-		if reclaimed > 0 {
-			if _, err := tx.User.UpdateOneID(sub.UserID).AddBalance(-reclaimed).Save(ctx); err != nil {
-				return err
-			}
 		}
 		return nil
 	})
@@ -737,23 +725,22 @@ func (r *userSubscriptionRepository) GrantSubscriptionDays(ctx context.Context, 
 		}
 		sub := userSubscriptionEntityToService(m)
 		userID = sub.UserID
+		// per-day：延长只改 expire_day，不增发钱包（granted=0）。
+		granted = 0
 
-		granted = float64(addDays) * sub.DailyAmountUSD
-		if granted < 0 {
-			granted = 0
+		// 续费/延长口径：expire_day = max(原expire_day, today−1) + addDays
+		//（未到期从原到期日顺延；已到期从今天起算，中间断档天不补）。
+		today := service.EastDayNumber(now)
+		base := sub.ExpireDay
+		if base < today-1 {
+			base = today - 1
 		}
-
-		upd := tx.UserSubscription.UpdateOneID(subID).SetExpiresAt(newExpiresAt)
-		if granted > 0 {
-			upd = upd.AddGrantedTotalUsd(granted)
-		}
-		if _, err := upd.Save(ctx); err != nil {
+		newExpireDay := base + addDays
+		if _, err := tx.UserSubscription.UpdateOneID(subID).
+			SetExpiresAt(newExpiresAt).
+			SetExpireDay(newExpireDay).
+			Save(ctx); err != nil {
 			return err
-		}
-		if granted > 0 {
-			if _, err := tx.User.UpdateOneID(sub.UserID).AddBalance(granted).Save(ctx); err != nil {
-				return err
-			}
 		}
 		return nil
 	})
