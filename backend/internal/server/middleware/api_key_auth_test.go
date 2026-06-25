@@ -104,10 +104,11 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("standard_mode_blocks_when_balance_depleted", func(t *testing.T) {
-		// burn-down 模型：纯余额门禁——余额 <= 0 时拦截（订阅额度耗尽体现为余额为 0）。
+	t.Run("standard_mode_zero_balance_passes_middleware", func(t *testing.T) {
+		// per-day：中间件不再按 user.Balance<=0 早拒（套餐额度在卡 today_remaining、不在钱包）。
+		// 0 余额请求放行到 handler，余额/准入由 handler 的 CheckBillingEligibility(per-day Admit) 判定。
+		// 本测试路由无 handler 级准入，故 0 余额请求应放行（200），而非中间件 403。
 		cfg := &config.Config{RunMode: config.RunModeStandard}
-		apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
 
 		zeroBalanceUser := *user
 		zeroBalanceUser.Balance = 0
@@ -123,7 +124,7 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 				return &clone, nil
 			},
 		}
-		apiKeyService = service.NewAPIKeyService(zeroRepo, nil, nil, nil, nil, nil, cfg)
+		apiKeyService := service.NewAPIKeyService(zeroRepo, nil, nil, nil, nil, nil, cfg)
 		subscriptionService := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{}, nil, nil, nil, nil, nil, cfg)
 		router := newAuthTestRouter(apiKeyService, subscriptionService, cfg)
 
@@ -132,8 +133,7 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 		req.Header.Set("x-api-key", zeroKey.Key)
 		router.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusForbidden, w.Code)
-		require.Contains(t, w.Body.String(), "INSUFFICIENT_BALANCE")
+		require.Equal(t, http.StatusOK, w.Code)
 	})
 }
 

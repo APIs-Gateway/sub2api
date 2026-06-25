@@ -258,12 +258,14 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 	// 当天即发放 D（today_remaining=D、today_day=start_day）。切换前 burn-down 不读这些字段，纯加性。
 	startDay := EastDayNumber(now)
 	expireDay := startDay + validityDays - 1
-
+	// 超长有效期：先把 expire_day 夹到 MaxExpiresAt 对应的最后服务日，再派生 expires_at——
+	// 否则只 clamp expiresAt 会让 expire_day 与 expires_at 再次分裂（per-day/退款看 expire_day、
+	// 旧 active/到期路径看 expires_at）。
+	if maxExpireDay := EastDayNumber(MaxExpiresAt) - 1; expireDay > maxExpireDay {
+		expireDay = maxExpireDay
+	}
 	// expires_at 从 expire_day 派生（次日 0 点），与自然日口径一致，供按 expires_at 判过期的旧路径。
 	expiresAt := ExpireDayToExpiresAt(expireDay)
-	if expiresAt.After(MaxExpiresAt) {
-		expiresAt = MaxExpiresAt
-	}
 
 	activatedAt := now
 	sub := &UserSubscription{
