@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -844,7 +845,9 @@ func (s *BillingCacheService) checkRPM(ctx context.Context, user *User, group *G
 	return nil
 }
 
-// checkBalanceEligibility 检查余额模式资格
+// checkBalanceEligibility 准入资格（per-day 口径）：套餐余额（惰性发 D）|| 钱包 || 可透支，
+// 三者任一可用即放行，全不可用才拒。无生效卡 → 纯钱包标准计费：balance>0 即放行。
+// 与 settlePerDaySubscription 同口径（Admit/Settle 共用引擎），放行后只结算不拒绝（流式必须先放行）。
 func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user *User) error {
 	balance, err := s.GetUserBalance(ctx, user.ID)
 	if err != nil {
@@ -858,23 +861,35 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 		s.circuitBreaker.OnSuccess()
 	}
 
-	// 透支闸门：非管理员用户默认不允许消费到当天已解锁订阅额度之外。
-	// 只有用户显式开启了本卡透支、且本卡累计透支次数未满 5 次时，才允许继续发起一个透支请求。
-	// 管理员豁免。
-	if !user.IsAdmin() {
-		currentLocked, limitLocked, subscriptionRemaining, canOverdraft, lerr := s.lockedSubscriptionBalance(ctx, user.ID)
-		if lerr != nil {
-			// 加载活跃卡失败：fail-open 退回原始余额检查，避免因瞬时 DB 抖动误挡正常用户。
-			logger.LegacyPrintf("service.billing_cache", "Warning: overdraft gate lookup failed for user %d: %v (fallback to raw balance)", user.ID, lerr)
-		} else if currentLocked > 0 {
-			return subscriptionOverdraftGate(balance, currentLocked, limitLocked, subscriptionRemaining, canOverdraft)
+	// 加载用户唯一生效卡（per-day 单卡，不按 group）；无卡（缓存命中或查无）→ 纯钱包。
+	// 复用 noSubLockUntil 缓存避免无卡用户每请求查 DB；购买/续费会 clear、卡到期下次查无即重置。
+	if s.subRepo != nil && !s.hasNoSubscriptionLockCached(user.ID) {
+		card, cerr := s.subRepo.GetActiveByUserID(ctx, user.ID)
+		switch {
+		case cerr == nil && card != nil:
+			now := time.Now()
+			pdc := card.ToPerDayCard()
+			wallet := WalletState{
+				Balance:               balance,
+				MonthlyOverdraftCount: user.MonthlyOverdraftCount,
+				MonthlyOverdraftMonth: user.MonthlyOverdraftMonth,
+			}
+			// Admit 内部按 today 惰性覆盖套餐余额、按 monthKey 惰性重置月度透支（均作用于本地副本，不落库）。
+			if Admit(&pdc, &wallet, EastDayNumber(now), EastMonthKey(now)) {
+				return nil
+			}
+			return ErrInsufficientBalance
+		case errors.Is(cerr, ErrSubscriptionNotFound):
+			s.setNoSubscriptionLockCache(user.ID) // 无卡：缓存，后续走纯钱包
+		case cerr != nil:
+			// 加载失败 fail-open：退回纯余额检查，避免 DB 抖动误挡正常用户。
+			logger.LegacyPrintf("service.billing_cache", "Warning: active card lookup failed for user %d: %v (fallback to raw balance)", user.ID, cerr)
 		}
 	}
 
 	if balance <= 0 {
 		return ErrInsufficientBalance
 	}
-
 	return nil
 }
 
