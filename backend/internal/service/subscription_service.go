@@ -30,7 +30,6 @@ var (
 	ErrSubscriptionSuspended              = infraerrors.Forbidden("SUBSCRIPTION_SUSPENDED", "subscription is suspended")
 	ErrSubscriptionAlreadyExists          = infraerrors.Conflict("SUBSCRIPTION_ALREADY_EXISTS", "subscription already exists for this user and group")
 	ErrSubscriptionAssignConflict         = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
-	ErrGroupNotSubscriptionType           = infraerrors.BadRequest("GROUP_NOT_SUBSCRIPTION_TYPE", "group is not a subscription type")
 	ErrInvalidInput                       = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
 	ErrDailyLimitExceeded                 = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")
 	ErrWeeklyLimitExceeded                = infraerrors.TooManyRequests("WEEKLY_LIMIT_EXCEEDED", "weekly usage limit exceeded")
@@ -151,11 +150,12 @@ func (s *SubscriptionService) InvalidateSubCache(userID, groupID int64) {
 
 // AssignSubscriptionInput 分配订阅输入
 type AssignSubscriptionInput struct {
-	UserID       int64
-	GroupID      int64
-	ValidityDays int
-	AssignedBy   int64
-	Notes        string
+	UserID         int64
+	GroupID        int64
+	ValidityDays   int
+	DailyAmountUSD float64 // per-day：每日额度 D（来自订单快照/plan）；0 时回退 group.daily_limit_usd
+	AssignedBy     int64
+	Notes          string
 }
 
 // AssignSubscription 分配订阅给用户（不允许重复分配）
@@ -174,17 +174,15 @@ func (s *SubscriptionService) AssignSubscription(ctx context.Context, input *Ass
 //
 // 如果没有订阅：创建新订阅
 func (s *SubscriptionService) AssignOrExtendSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error) {
-	// 检查分组是否存在且为订阅类型
-	group, err := s.groupRepo.GetByID(ctx, input.GroupID)
-	if err != nil {
-		return nil, false, fmt.Errorf("group not found: %w", err)
-	}
-	if !group.IsSubscriptionType() {
-		return nil, false, ErrGroupNotSubscriptionType
+	// per-day：订阅与 group 解耦，不再要求「订阅型分组」。group 仅作历史快照（卡的 group_id），
+	// 校验其存在即可（GroupID>0 时）；每日额度 D 由 input.DailyAmountUSD 提供（订单快照/plan）。
+	if input.GroupID > 0 {
+		if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
+			return nil, false, fmt.Errorf("group not found: %w", err)
+		}
 	}
 
-	// burn-down 模型：每次开通/兑换都新建一张独立订阅卡（支持叠加），不再续期已有订阅。
-	// 透支与每日清扣按每张卡各自的 burn-down 账户独立核算。
+	// per-day：每次开通新建一张 per-day 卡（单卡模式由购买入口保证至多一张 active）。
 	sub, err := s.createSubscription(ctx, input)
 	if err != nil {
 		return nil, false, err
@@ -244,10 +242,13 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 		validityDays = MaxValidityDays
 	}
 
-	// burn-down 模型：取套餐每日额度 D，一次性发放总额 G = D × days。
-	var dailyAmount float64
-	if group, err := s.groupRepo.GetByID(ctx, input.GroupID); err == nil && group != nil && group.DailyLimitUSD != nil {
-		dailyAmount = *group.DailyLimitUSD
+	// per-day：每日额度 D 优先取输入（来自订单冻结快照 / 兑换码 plan，与 group 解耦）；
+	// 缺省时回退所挂 group 的 daily_limit_usd（存量/管理端按 group 直接分配的兼容路径）。
+	dailyAmount := input.DailyAmountUSD
+	if dailyAmount <= 0 && input.GroupID > 0 {
+		if group, err := s.groupRepo.GetByID(ctx, input.GroupID); err == nil && group != nil && group.DailyLimitUSD != nil {
+			dailyAmount = *group.DailyLimitUSD
+		}
 	}
 	grantedTotal := dailyAmount * float64(validityDays)
 
@@ -387,16 +388,14 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 }
 
 func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error) {
-	// 检查分组是否存在且为订阅类型
-	group, err := s.groupRepo.GetByID(ctx, input.GroupID)
-	if err != nil {
-		return nil, false, fmt.Errorf("group not found: %w", err)
-	}
-	if !group.IsSubscriptionType() {
-		return nil, false, ErrGroupNotSubscriptionType
+	// per-day：订阅与 group 解耦，不再要求「订阅型分组」；group 仅作历史快照，校验存在即可。
+	if input.GroupID > 0 {
+		if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
+			return nil, false, fmt.Errorf("group not found: %w", err)
+		}
 	}
 
-	// burn-down 模型：每次分配都新建一张独立订阅卡（支持叠加），不做幂等复用。
+	// per-day：每次分配新建一张 per-day 卡（单卡模式由入口保证至多一张 active）。
 	sub, err := s.createSubscription(ctx, input)
 	if err != nil {
 		return nil, false, err

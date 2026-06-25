@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
@@ -405,20 +404,24 @@ func TestDetectAssignSemanticConflictCases(t *testing.T) {
 	require.Equal(t, "notes_mismatch", reason)
 }
 
-func TestAssignSubscriptionGroupTypeValidation(t *testing.T) {
+// per-day：订阅与 group 解耦，AssignSubscription 不再校验「订阅型分组」，任意存在的 group 都可分配；
+// 每日额度 D 由 input.DailyAmountUSD 提供（取代旧的从 group 类型/限额推导）。
+func TestAssignSubscription_GroupTypeNotValidated(t *testing.T) {
 	groupRepo := &subscriptionGroupRepoStub{
 		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeStandard},
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
 	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil, nil)
 
-	_, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
-		UserID:       1,
-		GroupID:      1,
-		ValidityDays: 30,
+	sub, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
+		UserID:         1,
+		GroupID:        1,
+		ValidityDays:   30,
+		DailyAmountUSD: 10,
 	})
-	require.Error(t, err)
-	require.Equal(t, infraerrors.Code(ErrGroupNotSubscriptionType), infraerrors.Code(err))
+	require.NoError(t, err)
+	require.NotNil(t, sub)
+	require.InDelta(t, 10, sub.DailyAmountUSD, 1e-9, "D 取自 input.DailyAmountUSD")
 }
 
 func strconvFormatInt(v int64) string {
