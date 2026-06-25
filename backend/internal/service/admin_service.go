@@ -2463,17 +2463,14 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		if group.Status != StatusActive {
 			return nil, infraerrors.BadRequest("GROUP_NOT_ACTIVE", "target group is not active")
 		}
-		// burn-down 模型下订阅金额已发放到余额、通过标准渠道消费，订阅型分组不再可绑定到 API Key
-		if group.IsSubscriptionType() {
-			return nil, infraerrors.BadRequest("GROUP_IS_SUBSCRIPTION", "subscription groups cannot be bound to API keys")
-		}
+		// per-day：分组仅管路由、无「订阅型分组」概念，可绑定任意路由分组到 API Key。
 
 		gid := *groupID
 		apiKey.GroupID = &gid
 		apiKey.Group = group
 
-		// 专属标准分组：使用事务保证「添加分组权限」与「更新 API Key」的原子性
-		if group.IsExclusive && !group.IsSubscriptionType() {
+		// 专属分组：使用事务保证「添加分组权限」与「更新 API Key」的原子性
+		if group.IsExclusive {
 			opCtx := ctx
 			var tx *dbent.Tx
 			if s.entClient == nil {
@@ -2569,9 +2566,7 @@ func (s *adminServiceImpl) ReplaceUserGroup(ctx context.Context, userID, oldGrou
 	if !newGroup.IsExclusive {
 		return nil, infraerrors.BadRequest("GROUP_NOT_EXCLUSIVE", "target group is not exclusive")
 	}
-	if newGroup.IsSubscriptionType() {
-		return nil, infraerrors.BadRequest("GROUP_IS_SUBSCRIPTION", "subscription groups are not supported for replacement")
-	}
+	// per-day：分组仅管路由、无「订阅型分组」概念，不再因订阅类型拒绝替换。
 
 	// 事务保证原子性
 	if s.entClient == nil {
