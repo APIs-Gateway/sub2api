@@ -460,6 +460,27 @@ func (_u *UserUpdate) SetNillableMonthlyOverdraftMonth(v *string) *UserUpdate {
 	return _u
 }
 
+// SetLastChangePlanDay sets the "last_change_plan_day" field.
+func (_u *UserUpdate) SetLastChangePlanDay(v int) *UserUpdate {
+	_u.mutation.ResetLastChangePlanDay()
+	_u.mutation.SetLastChangePlanDay(v)
+	return _u
+}
+
+// SetNillableLastChangePlanDay sets the "last_change_plan_day" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableLastChangePlanDay(v *int) *UserUpdate {
+	if v != nil {
+		_u.SetLastChangePlanDay(*v)
+	}
+	return _u
+}
+
+// AddLastChangePlanDay adds value to the "last_change_plan_day" field.
+func (_u *UserUpdate) AddLastChangePlanDay(v int) *UserUpdate {
+	_u.mutation.AddLastChangePlanDay(v)
+	return _u
+}
+
 // SetStablePriorityEnabled sets the "stable_priority_enabled" field.
 func (_u *UserUpdate) SetStablePriorityEnabled(v bool) *UserUpdate {
 	_u.mutation.SetStablePriorityEnabled(v)
@@ -1151,6 +1172,12 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.MonthlyOverdraftMonth(); ok {
 		_spec.SetField(user.FieldMonthlyOverdraftMonth, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.LastChangePlanDay(); ok {
+		_spec.SetField(user.FieldLastChangePlanDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedLastChangePlanDay(); ok {
+		_spec.AddField(user.FieldLastChangePlanDay, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.StablePriorityEnabled(); ok {
 		_spec.SetField(user.FieldStablePriorityEnabled, field.TypeBool, value)
@@ -2192,6 +2219,27 @@ func (_u *UserUpdateOne) SetNillableMonthlyOverdraftMonth(v *string) *UserUpdate
 	return _u
 }
 
+// SetLastChangePlanDay sets the "last_change_plan_day" field.
+func (_u *UserUpdateOne) SetLastChangePlanDay(v int) *UserUpdateOne {
+	_u.mutation.ResetLastChangePlanDay()
+	_u.mutation.SetLastChangePlanDay(v)
+	return _u
+}
+
+// SetNillableLastChangePlanDay sets the "last_change_plan_day" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableLastChangePlanDay(v *int) *UserUpdateOne {
+	if v != nil {
+		_u.SetLastChangePlanDay(*v)
+	}
+	return _u
+}
+
+// AddLastChangePlanDay adds value to the "last_change_plan_day" field.
+func (_u *UserUpdateOne) AddLastChangePlanDay(v int) *UserUpdateOne {
+	_u.mutation.AddLastChangePlanDay(v)
+	return _u
+}
+
 // SetStablePriorityEnabled sets the "stable_priority_enabled" field.
 func (_u *UserUpdateOne) SetStablePriorityEnabled(v bool) *UserUpdateOne {
 	_u.mutation.SetStablePriorityEnabled(v)
@@ -2913,6 +2961,12 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.MonthlyOverdraftMonth(); ok {
 		_spec.SetField(user.FieldMonthlyOverdraftMonth, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.LastChangePlanDay(); ok {
+		_spec.SetField(user.FieldLastChangePlanDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedLastChangePlanDay(); ok {
+		_spec.AddField(user.FieldLastChangePlanDay, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.StablePriorityEnabled(); ok {
 		_spec.SetField(user.FieldStablePriorityEnabled, field.TypeBool, value)

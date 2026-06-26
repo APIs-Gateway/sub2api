@@ -382,6 +382,20 @@ func (_c *UserCreate) SetNillableMonthlyOverdraftMonth(v *string) *UserCreate {
 	return _c
 }
 
+// SetLastChangePlanDay sets the "last_change_plan_day" field.
+func (_c *UserCreate) SetLastChangePlanDay(v int) *UserCreate {
+	_c.mutation.SetLastChangePlanDay(v)
+	return _c
+}
+
+// SetNillableLastChangePlanDay sets the "last_change_plan_day" field if the given value is not nil.
+func (_c *UserCreate) SetNillableLastChangePlanDay(v *int) *UserCreate {
+	if v != nil {
+		_c.SetLastChangePlanDay(*v)
+	}
+	return _c
+}
+
 // SetStablePriorityEnabled sets the "stable_priority_enabled" field.
 func (_c *UserCreate) SetStablePriorityEnabled(v bool) *UserCreate {
 	_c.mutation.SetStablePriorityEnabled(v)
@@ -706,6 +720,10 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultMonthlyOverdraftMonth
 		_c.mutation.SetMonthlyOverdraftMonth(v)
 	}
+	if _, ok := _c.mutation.LastChangePlanDay(); !ok {
+		v := user.DefaultLastChangePlanDay
+		_c.mutation.SetLastChangePlanDay(v)
+	}
 	if _, ok := _c.mutation.StablePriorityEnabled(); !ok {
 		v := user.DefaultStablePriorityEnabled
 		_c.mutation.SetStablePriorityEnabled(v)
@@ -809,6 +827,9 @@ func (_c *UserCreate) check() error {
 		if err := user.MonthlyOverdraftMonthValidator(v); err != nil {
 			return &ValidationError{Name: "monthly_overdraft_month", err: fmt.Errorf(`ent: validator failed for field "User.monthly_overdraft_month": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.LastChangePlanDay(); !ok {
+		return &ValidationError{Name: "last_change_plan_day", err: errors.New(`ent: missing required field "User.last_change_plan_day"`)}
 	}
 	if _, ok := _c.mutation.StablePriorityEnabled(); !ok {
 		return &ValidationError{Name: "stable_priority_enabled", err: errors.New(`ent: missing required field "User.stable_priority_enabled"`)}
@@ -943,6 +964,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.MonthlyOverdraftMonth(); ok {
 		_spec.SetField(user.FieldMonthlyOverdraftMonth, field.TypeString, value)
 		_node.MonthlyOverdraftMonth = value
+	}
+	if value, ok := _c.mutation.LastChangePlanDay(); ok {
+		_spec.SetField(user.FieldLastChangePlanDay, field.TypeInt, value)
+		_node.LastChangePlanDay = value
 	}
 	if value, ok := _c.mutation.StablePriorityEnabled(); ok {
 		_spec.SetField(user.FieldStablePriorityEnabled, field.TypeBool, value)
@@ -1584,6 +1609,24 @@ func (u *UserUpsert) UpdateMonthlyOverdraftMonth() *UserUpsert {
 	return u
 }
 
+// SetLastChangePlanDay sets the "last_change_plan_day" field.
+func (u *UserUpsert) SetLastChangePlanDay(v int) *UserUpsert {
+	u.Set(user.FieldLastChangePlanDay, v)
+	return u
+}
+
+// UpdateLastChangePlanDay sets the "last_change_plan_day" field to the value that was provided on create.
+func (u *UserUpsert) UpdateLastChangePlanDay() *UserUpsert {
+	u.SetExcluded(user.FieldLastChangePlanDay)
+	return u
+}
+
+// AddLastChangePlanDay adds v to the "last_change_plan_day" field.
+func (u *UserUpsert) AddLastChangePlanDay(v int) *UserUpsert {
+	u.Add(user.FieldLastChangePlanDay, v)
+	return u
+}
+
 // SetStablePriorityEnabled sets the "stable_priority_enabled" field.
 func (u *UserUpsert) SetStablePriorityEnabled(v bool) *UserUpsert {
 	u.Set(user.FieldStablePriorityEnabled, v)
@@ -2072,6 +2115,27 @@ func (u *UserUpsertOne) SetMonthlyOverdraftMonth(v string) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateMonthlyOverdraftMonth() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateMonthlyOverdraftMonth()
+	})
+}
+
+// SetLastChangePlanDay sets the "last_change_plan_day" field.
+func (u *UserUpsertOne) SetLastChangePlanDay(v int) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetLastChangePlanDay(v)
+	})
+}
+
+// AddLastChangePlanDay adds v to the "last_change_plan_day" field.
+func (u *UserUpsertOne) AddLastChangePlanDay(v int) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.AddLastChangePlanDay(v)
+	})
+}
+
+// UpdateLastChangePlanDay sets the "last_change_plan_day" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateLastChangePlanDay() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateLastChangePlanDay()
 	})
 }
 
@@ -2731,6 +2795,27 @@ func (u *UserUpsertBulk) SetMonthlyOverdraftMonth(v string) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateMonthlyOverdraftMonth() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateMonthlyOverdraftMonth()
+	})
+}
+
+// SetLastChangePlanDay sets the "last_change_plan_day" field.
+func (u *UserUpsertBulk) SetLastChangePlanDay(v int) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetLastChangePlanDay(v)
+	})
+}
+
+// AddLastChangePlanDay adds v to the "last_change_plan_day" field.
+func (u *UserUpsertBulk) AddLastChangePlanDay(v int) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.AddLastChangePlanDay(v)
+	})
+}
+
+// UpdateLastChangePlanDay sets the "last_change_plan_day" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateLastChangePlanDay() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateLastChangePlanDay()
 	})
 }
 

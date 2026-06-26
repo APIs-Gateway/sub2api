@@ -185,6 +185,11 @@ func MonthlyOverdraftMonth(v string) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldMonthlyOverdraftMonth, v))
 }
 
+// LastChangePlanDay applies equality check predicate on the "last_change_plan_day" field. It's identical to LastChangePlanDayEQ.
+func LastChangePlanDay(v int) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldLastChangePlanDay, v))
+}
+
 // StablePriorityEnabled applies equality check predicate on the "stable_priority_enabled" field. It's identical to StablePriorityEnabledEQ.
 func StablePriorityEnabled(v bool) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldStablePriorityEnabled, v))
@@ -1473,6 +1478,46 @@ func MonthlyOverdraftMonthEqualFold(v string) predicate.User {
 // MonthlyOverdraftMonthContainsFold applies the ContainsFold predicate on the "monthly_overdraft_month" field.
 func MonthlyOverdraftMonthContainsFold(v string) predicate.User {
 	return predicate.User(sql.FieldContainsFold(FieldMonthlyOverdraftMonth, v))
+}
+
+// LastChangePlanDayEQ applies the EQ predicate on the "last_change_plan_day" field.
+func LastChangePlanDayEQ(v int) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldLastChangePlanDay, v))
+}
+
+// LastChangePlanDayNEQ applies the NEQ predicate on the "last_change_plan_day" field.
+func LastChangePlanDayNEQ(v int) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldLastChangePlanDay, v))
+}
+
+// LastChangePlanDayIn applies the In predicate on the "last_change_plan_day" field.
+func LastChangePlanDayIn(vs ...int) predicate.User {
+	return predicate.User(sql.FieldIn(FieldLastChangePlanDay, vs...))
+}
+
+// LastChangePlanDayNotIn applies the NotIn predicate on the "last_change_plan_day" field.
+func LastChangePlanDayNotIn(vs ...int) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldLastChangePlanDay, vs...))
+}
+
+// LastChangePlanDayGT applies the GT predicate on the "last_change_plan_day" field.
+func LastChangePlanDayGT(v int) predicate.User {
+	return predicate.User(sql.FieldGT(FieldLastChangePlanDay, v))
+}
+
+// LastChangePlanDayGTE applies the GTE predicate on the "last_change_plan_day" field.
+func LastChangePlanDayGTE(v int) predicate.User {
+	return predicate.User(sql.FieldGTE(FieldLastChangePlanDay, v))
+}
+
+// LastChangePlanDayLT applies the LT predicate on the "last_change_plan_day" field.
+func LastChangePlanDayLT(v int) predicate.User {
+	return predicate.User(sql.FieldLT(FieldLastChangePlanDay, v))
+}
+
+// LastChangePlanDayLTE applies the LTE predicate on the "last_change_plan_day" field.
+func LastChangePlanDayLTE(v int) predicate.User {
+	return predicate.User(sql.FieldLTE(FieldLastChangePlanDay, v))
 }
 
 // StablePriorityEnabledEQ applies the EQ predicate on the "stable_priority_enabled" field.

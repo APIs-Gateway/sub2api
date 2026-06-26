@@ -39415,6 +39415,8 @@ type UserMutation struct {
 	monthly_overdraft_count       *int
 	addmonthly_overdraft_count    *int
 	monthly_overdraft_month       *string
+	last_change_plan_day          *int
+	addlast_change_plan_day       *int
 	stable_priority_enabled       *bool
 	clearedFields                 map[string]struct{}
 	api_keys                      map[int64]struct{}
@@ -40694,6 +40696,62 @@ func (m *UserMutation) ResetMonthlyOverdraftMonth() {
 	m.monthly_overdraft_month = nil
 }
 
+// SetLastChangePlanDay sets the "last_change_plan_day" field.
+func (m *UserMutation) SetLastChangePlanDay(i int) {
+	m.last_change_plan_day = &i
+	m.addlast_change_plan_day = nil
+}
+
+// LastChangePlanDay returns the value of the "last_change_plan_day" field in the mutation.
+func (m *UserMutation) LastChangePlanDay() (r int, exists bool) {
+	v := m.last_change_plan_day
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastChangePlanDay returns the old "last_change_plan_day" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldLastChangePlanDay(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastChangePlanDay is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastChangePlanDay requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastChangePlanDay: %w", err)
+	}
+	return oldValue.LastChangePlanDay, nil
+}
+
+// AddLastChangePlanDay adds i to the "last_change_plan_day" field.
+func (m *UserMutation) AddLastChangePlanDay(i int) {
+	if m.addlast_change_plan_day != nil {
+		*m.addlast_change_plan_day += i
+	} else {
+		m.addlast_change_plan_day = &i
+	}
+}
+
+// AddedLastChangePlanDay returns the value that was added to the "last_change_plan_day" field in this mutation.
+func (m *UserMutation) AddedLastChangePlanDay() (r int, exists bool) {
+	v := m.addlast_change_plan_day
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetLastChangePlanDay resets all changes to the "last_change_plan_day" field.
+func (m *UserMutation) ResetLastChangePlanDay() {
+	m.last_change_plan_day = nil
+	m.addlast_change_plan_day = nil
+}
+
 // SetStablePriorityEnabled sets the "stable_priority_enabled" field.
 func (m *UserMutation) SetStablePriorityEnabled(b bool) {
 	m.stable_priority_enabled = &b
@@ -41466,7 +41524,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 27)
+	fields := make([]string, 0, 28)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -41545,6 +41603,9 @@ func (m *UserMutation) Fields() []string {
 	if m.monthly_overdraft_month != nil {
 		fields = append(fields, user.FieldMonthlyOverdraftMonth)
 	}
+	if m.last_change_plan_day != nil {
+		fields = append(fields, user.FieldLastChangePlanDay)
+	}
 	if m.stable_priority_enabled != nil {
 		fields = append(fields, user.FieldStablePriorityEnabled)
 	}
@@ -41608,6 +41669,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.MonthlyOverdraftCount()
 	case user.FieldMonthlyOverdraftMonth:
 		return m.MonthlyOverdraftMonth()
+	case user.FieldLastChangePlanDay:
+		return m.LastChangePlanDay()
 	case user.FieldStablePriorityEnabled:
 		return m.StablePriorityEnabled()
 	}
@@ -41671,6 +41734,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldMonthlyOverdraftCount(ctx)
 	case user.FieldMonthlyOverdraftMonth:
 		return m.OldMonthlyOverdraftMonth(ctx)
+	case user.FieldLastChangePlanDay:
+		return m.OldLastChangePlanDay(ctx)
 	case user.FieldStablePriorityEnabled:
 		return m.OldStablePriorityEnabled(ctx)
 	}
@@ -41864,6 +41929,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetMonthlyOverdraftMonth(v)
 		return nil
+	case user.FieldLastChangePlanDay:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastChangePlanDay(v)
+		return nil
 	case user.FieldStablePriorityEnabled:
 		v, ok := value.(bool)
 		if !ok {
@@ -41897,6 +41969,9 @@ func (m *UserMutation) AddedFields() []string {
 	if m.addmonthly_overdraft_count != nil {
 		fields = append(fields, user.FieldMonthlyOverdraftCount)
 	}
+	if m.addlast_change_plan_day != nil {
+		fields = append(fields, user.FieldLastChangePlanDay)
+	}
 	return fields
 }
 
@@ -41917,6 +41992,8 @@ func (m *UserMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedRpmLimit()
 	case user.FieldMonthlyOverdraftCount:
 		return m.AddedMonthlyOverdraftCount()
+	case user.FieldLastChangePlanDay:
+		return m.AddedLastChangePlanDay()
 	}
 	return nil, false
 }
@@ -41967,6 +42044,13 @@ func (m *UserMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddMonthlyOverdraftCount(v)
+		return nil
+	case user.FieldLastChangePlanDay:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddLastChangePlanDay(v)
 		return nil
 	}
 	return fmt.Errorf("unknown User numeric field %s", name)
@@ -42111,6 +42195,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldMonthlyOverdraftMonth:
 		m.ResetMonthlyOverdraftMonth()
+		return nil
+	case user.FieldLastChangePlanDay:
+		m.ResetLastChangePlanDay()
 		return nil
 	case user.FieldStablePriorityEnabled:
 		m.ResetStablePriorityEnabled()

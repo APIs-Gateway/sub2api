@@ -1930,8 +1930,12 @@ func init() {
 	user.DefaultMonthlyOverdraftMonth = userDescMonthlyOverdraftMonth.Default.(string)
 	// user.MonthlyOverdraftMonthValidator is a validator for the "monthly_overdraft_month" field. It is called by the builders before save.
 	user.MonthlyOverdraftMonthValidator = userDescMonthlyOverdraftMonth.Validators[0].(func(string) error)
+	// userDescLastChangePlanDay is the schema descriptor for last_change_plan_day field.
+	userDescLastChangePlanDay := userFields[23].Descriptor()
+	// user.DefaultLastChangePlanDay holds the default value on creation for the last_change_plan_day field.
+	user.DefaultLastChangePlanDay = userDescLastChangePlanDay.Default.(int)
 	// userDescStablePriorityEnabled is the schema descriptor for stable_priority_enabled field.
-	userDescStablePriorityEnabled := userFields[23].Descriptor()
+	userDescStablePriorityEnabled := userFields[24].Descriptor()
 	// user.DefaultStablePriorityEnabled holds the default value on creation for the stable_priority_enabled field.
 	user.DefaultStablePriorityEnabled = userDescStablePriorityEnabled.Default.(bool)
 	userallowedgroupFields := schema.UserAllowedGroup{}.Fields()

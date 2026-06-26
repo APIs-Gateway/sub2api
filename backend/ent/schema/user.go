@@ -130,6 +130,13 @@ func (User) Fields() []ent.Field {
 			MaxLen(6).
 			Default(""),
 
+		// ── Per-day 转套餐：每用户每自然日最多转 1 次（规格第 7 节）──────────────────
+		// 存上一次转套餐所在东八区绝对自然日序号（同 start_day/expire_day/today_day 口径，
+		// 见 EastDayNumber）；0 = 从未转过。判定：当前 today == last_change_plan_day 则禁止再转；
+		// 无需显式重置——次日 today 自然 ≠ 该值，限制自动解除。
+		field.Int("last_change_plan_day").
+			Default(0),
+
 		// 稳定优先：所在组渠道全挂时跨分组逐档兜底（廉价→中等→稳定），默认关闭。
 		field.Bool("stable_priority_enabled").
 			Default(false).

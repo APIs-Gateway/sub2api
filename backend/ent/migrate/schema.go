@@ -1520,6 +1520,7 @@ var (
 		{Name: "subscription_overdraft_guard", Type: field.TypeBool, Default: false},
 		{Name: "monthly_overdraft_count", Type: field.TypeInt, Default: 0},
 		{Name: "monthly_overdraft_month", Type: field.TypeString, Size: 6, Default: ""},
+		{Name: "last_change_plan_day", Type: field.TypeInt, Default: 0},
 		{Name: "stable_priority_enabled", Type: field.TypeBool, Default: false},
 	}
 	// UsersTable holds the schema information for the "users" table.
