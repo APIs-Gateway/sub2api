@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -472,8 +471,9 @@ func (w *Wxpay) Refund(ctx context.Context, req payment.RefundRequest) (*payment
 	rs := refunddomestic.RefundsApiService{Client: c}
 	cur := wxpayCurrency
 	res, _, err := rs.Create(ctx, refunddomestic.CreateRequest{
-		OutTradeNo:  core.String(req.OrderID),
-		OutRefundNo: core.String(fmt.Sprintf("%s-refund-%d", req.OrderID, time.Now().UnixNano())),
+		OutTradeNo: core.String(req.OrderID),
+		// 确定性幂等键：退款重试不得换值，否则微信按 out_refund_no 新值再退一次→双重退款。
+		OutRefundNo: core.String(payment.DeterministicRefundNo(req.OrderID, req.Amount)),
 		Reason:      core.String(req.Reason),
 		Amount:      &refunddomestic.AmountReq{Refund: core.Int64(rf), Total: core.Int64(tf), Currency: &cur},
 	})
