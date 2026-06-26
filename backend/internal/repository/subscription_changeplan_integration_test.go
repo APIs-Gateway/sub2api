@@ -99,6 +99,43 @@ func TestSubscriptionServiceChangePlan_UpgradeSettlesDiffAndSwapsCardPostgres(t 
 	require.Equal(t, "CHANGE_PLAN_DAILY_LIMIT", infraerrors.Reason(err))
 }
 
+// 惰性过期的「假 active」卡（status=active 但 expire_day<today）应被同事务内关闭，转套餐据此
+// 视为「无生效卡」→ ErrNoActiveSubscription（应购买新卡，而非按 V=0 全价换新）。
+func TestSubscriptionServiceChangePlan_StaleActiveTreatedAsNonePostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	svc := makeSubscriptionService(t)
+	today := service.TodayEastDayNumber()
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:   fmt.Sprintf("changeplan-stale-%s@example.com", uuid.NewString()),
+		Balance: 100000,
+	})
+	group := mustCreateGroup(t, client, &service.Group{Name: "changeplan-stale-" + uuid.NewString()})
+	old := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  10,
+		GrantedTotalUSD: 300,
+		TodayRemaining:  10,
+		TodayDay:        today - 1,
+		StartDay:        today - 31,
+		ExpireDay:       today - 1, // 昨天就该过期，但 status 仍 active
+		ExpiresAt:       service.ExpireDayToExpiresAt(today - 1),
+		Status:          service.SubscriptionStatusActive,
+	})
+	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
+
+	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	require.Error(t, err)
+	require.Equal(t, "NO_ACTIVE_SUBSCRIPTION", infraerrors.Reason(err))
+
+	subRepo := NewUserSubscriptionRepository(client)
+	gotOld, err := subRepo.GetByID(ctx, old.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.SubscriptionStatusExpired, gotOld.Status, "假 active 卡应被惰性关闭")
+}
+
 func TestSubscriptionServiceChangePlan_NoActiveCardPostgres(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)

@@ -9,6 +9,7 @@ import (
 	"entgo.io/ent/dialect"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
@@ -78,6 +79,23 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 		// 每自然日最多转 1 次。
 		if u.LastChangePlanDay == today {
 			return ErrChangePlanDailyLimit
+		}
+
+		// 先惰性关掉「假 active」卡（expire_day<today 但 status 仍 active），与购买/续费的规格 §207
+		// 步骤① 对齐。否则对已过期卡执行转套餐会按 V=0 全价"换新"；正确语义是已无生效卡 → 应购买新卡，
+		// 故关掉假 active 后 GetActiveByUserID 返回空 → ErrNoActiveSubscription。
+		if _, err := client.UserSubscription.Update().
+			Where(
+				usersubscription.UserIDEQ(userID),
+				usersubscription.StatusEQ(SubscriptionStatusActive),
+				usersubscription.DeletedAtIsNil(),
+				usersubscription.ExpireDayLT(today),
+			).
+			SetStatus(SubscriptionStatusExpired).
+			SetTodayRemaining(0).
+			SetUpdatedAt(time.Now()).
+			Save(txCtx); err != nil {
+			return err
 		}
 
 		// 当前生效卡（per-day 单卡）。
