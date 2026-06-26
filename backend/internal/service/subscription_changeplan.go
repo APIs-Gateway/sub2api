@@ -54,10 +54,19 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 	cfg := DefaultSubscriptionPricingConfig()
 	dNew := newPlan.DailyAmountUsd
 	tNew := psComputeValidityDays(newPlan.ValidityDays, newPlan.ValidityUnit)
+	// 防御：存量脏 plan 或直接 DB 写入可能给出 validity_days<=0 → tNew<=0 → P_新=0、expire_day=today-1
+	// 的废卡（甚至给用户退差价）。入口校验 tNew>0 并夹到上限（与 createSubscription 同口径）。
+	if tNew <= 0 {
+		return nil, infraerrors.BadRequest("PLAN_VALIDITY_INVALID", "target plan validity days must be positive")
+	}
+	if tNew > MaxValidityDays {
+		tNew = MaxValidityDays
+	}
 	today := TodayEastDayNumber()
 	now := time.Now()
 
 	var result *ChangePlanResult
+	var oldGroupID int64
 	if err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
 		tx := dbent.TxFromContext(txCtx)
 		client := tx.Client()
@@ -107,15 +116,25 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 			return err
 		}
 
+		oldGroupID = oldSub.GroupID
+
 		// 折价测算：先惰性跨天，取准确的旧卡今日已用与剩余天数。
 		oldCard := oldSub.ToPerDayCard()
 		oldCard.ResetIfNewDay(today)
-		tOld := oldSub.TotalDays()
-		pOld := cfg.Price(oldSub.DailyAmountUSD, tOld)
-		quote := QuoteChangePlan(cfg, pOld, oldCard.RefundableDays(today), tOld, dNew, tNew, oldCard.TodaySpentFromPackage(today), today)
+		refundable := oldCard.RefundableDays(today)
+
+		// 旧卡剩余价值 V 用 renew-stable 形式直接算：
+		//   V = P_旧 × refundable / T_旧 = cfg.Price(D_旧,T_旧) × refundable / T_旧 = cfg.Price(D_旧, refundable)
+		// T_旧 代数消去——避免依赖脆弱的 TotalDays()=round(G/D)：续费会增大 G 使 T_旧 变成累计天数、
+		// 进而 V 被低估、用户转套餐被多收差价。直接按公式价折剩余天数即可（与 §7 P=D×T×u(D) 一致）。
+		oldRemainingValue := cfg.Price(oldSub.DailyAmountUSD, refundable)
+		newPlanPrice := cfg.Price(dNew, tNew)
+		diff := newPlanPrice - oldRemainingValue
+		newCardTodayBalance := ChangePlanNewCardTodayBalance(dNew, oldCard.TodaySpentFromPackage(today))
+		newExpireDay := ClampExpireDay(today + tNew - 1)
 
 		// 补差价需余额足额，不静默扣成负数（欠费）。
-		if quote.Diff > 0 && u.Balance < quote.Diff {
+		if diff > 0 && u.Balance < diff {
 			return ErrInsufficientBalanceForChangePlan
 		}
 
@@ -131,16 +150,16 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 			UserID:          userID,
 			GroupID:         newPlan.GroupID,
 			StartsAt:        now,
-			ExpiresAt:       ExpireDayToExpiresAt(quote.NewCardExpireDay),
+			ExpiresAt:       ExpireDayToExpiresAt(newExpireDay),
 			Status:          SubscriptionStatusActive,
 			GrantedTotalUSD: dNew * float64(tNew),
 			DailyAmountUSD:  dNew,
 			DailySpentUSD:   0,
 			DailySpentDay:   today,
-			TodayRemaining:  quote.NewCardTodayBalance,
+			TodayRemaining:  newCardTodayBalance,
 			TodayDay:        today,
 			StartDay:        today,
-			ExpireDay:       quote.NewCardExpireDay,
+			ExpireDay:       newExpireDay,
 			OverdraftOn:     false,
 			ActivatedAt:     &activatedAt,
 			AssignedAt:      now,
@@ -155,7 +174,7 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 		// 差额落账 + 限频戳一次写：AddBalance(-Diff)（Diff>0 扣补差价 / <0 退差价 / 0 不动），
 		// 同时记 last_change_plan_day=today。
 		if _, err := client.User.UpdateOneID(userID).
-			AddBalance(-quote.Diff).
+			AddBalance(-diff).
 			SetLastChangePlanDay(today).
 			Save(txCtx); err != nil {
 			return fmt.Errorf("settle change-plan diff: %w", err)
@@ -164,11 +183,11 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 		result = &ChangePlanResult{
 			OldSubscriptionID:   oldSub.ID,
 			NewSubscriptionID:   newSub.ID,
-			OldRemainingValue:   quote.OldRemainingValue,
-			NewPlanPrice:        quote.NewPlanPrice,
-			Diff:                quote.Diff,
-			NewCardTodayBalance: quote.NewCardTodayBalance,
-			NewExpireDay:        quote.NewCardExpireDay,
+			OldRemainingValue:   oldRemainingValue,
+			NewPlanPrice:        newPlanPrice,
+			Diff:                diff,
+			NewCardTodayBalance: newCardTodayBalance,
+			NewExpireDay:        newExpireDay,
 		}
 		return nil
 	}); err != nil {
@@ -178,5 +197,10 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 	s.clearSubscriptionLockCache(userID)
 	s.invalidateUserBalanceCacheAsync(userID)
 	s.InvalidateSubCache(userID, newPlan.GroupID)
+	// 旧卡所属 group 的订阅缓存也要失效，否则 /v1/usage、通知、GetSubscriptionStatus(user, oldGroup)
+	// 等路径短时间内仍可能看到旧组 active。
+	if oldGroupID != 0 && oldGroupID != newPlan.GroupID {
+		s.InvalidateSubCache(userID, oldGroupID)
+	}
 	return result, nil
 }

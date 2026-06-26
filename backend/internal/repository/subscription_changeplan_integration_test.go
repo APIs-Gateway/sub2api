@@ -64,11 +64,12 @@ func TestSubscriptionServiceChangePlan_UpgradeSettlesDiffAndSwapsCardPostgres(t 
 	require.NoError(t, err)
 	require.NotNil(t, res)
 
-	// 期望值用同一纯测算复算（验证服务喂了正确入参）。
-	wantQuote := service.QuoteChangePlan(cfg, cfg.Price(10, 30), 29, 30, 20, 30, 0, today)
-	require.InDelta(t, wantQuote.Diff, res.Diff, 1e-6)
+	// 期望值用 renew-stable 直算复核：V = cfg.Price(D_旧, refundable)（剩 29 天）；Diff = P_新 − V。
+	wantV := cfg.Price(10, 29)
+	wantDiff := cfg.Price(20, 30) - wantV
+	require.InDelta(t, wantV, res.OldRemainingValue, 1e-6)
+	require.InDelta(t, wantDiff, res.Diff, 1e-6)
 	require.Greater(t, res.Diff, 0.0, "升档应补差价")
-	require.InDelta(t, wantQuote.OldRemainingValue, res.OldRemainingValue, 1e-6)
 
 	// 旧卡已关。
 	subRepo := NewUserSubscriptionRepository(client)
