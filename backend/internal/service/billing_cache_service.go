@@ -937,9 +937,9 @@ func aggregateSubscriptionLocks(subs []UserSubscription, now time.Time) (current
 // subscriptionOverdraftGate 是订阅透支准入闸门的纯判定（便于单测）。
 //
 // 充值(非订阅)余额 = balance − Σ订阅remaining：这是用户自己充的钱，不受订阅「每日限速」约束，
-// 可随时兜底消费——故 >0 即放行。扣费侧(allocateUsageBillingSubscriptions)会把超过今日订阅额度的
-// 部分优先记到充值余额、不烧订阅卡的锁定额度，因此放行不会绕开 burn-down 限速(回归 user 280：
-// 卡的锁定未来额度不会被无限速烧穿)。
+// 可随时兜底消费——故 >0 即放行。扣费侧(settlePerDaySubscription)的结算瀑布会把超过今日订阅额度的
+// 部分落到钱包(充值余额)、不烧订阅卡未来日的额度，因此放行不会绕开 per-day 限速(卡的未来日额度
+// 不会被无限速烧穿)。
 // 仅当充值余额耗尽(balance ≤ Σ订阅remaining)时，才回到「订阅当日额度 + 透支」的限速判定；
 // 此时 subBalance = balance(≤ Σremaining)。仅在 currentLocked>0 时由调用方启用。
 func subscriptionOverdraftGate(balance, currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool) error {
