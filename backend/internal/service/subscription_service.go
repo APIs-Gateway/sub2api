@@ -420,6 +420,17 @@ func (s *SubscriptionService) clearSubscriptionLockCache(userID int64) {
 	s.billingCacheService.clearNoSubscriptionLockCache(userID)
 }
 
+func (s *SubscriptionService) invalidateSubscriptionCacheAsync(userID, groupID int64) {
+	if s.billingCacheService == nil || userID <= 0 || groupID <= 0 {
+		return
+	}
+	go func() {
+		cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+	}()
+}
+
 // BulkAssignSubscriptionInput 批量分配订阅输入
 type BulkAssignSubscriptionInput struct {
 	UserIDs        []int64

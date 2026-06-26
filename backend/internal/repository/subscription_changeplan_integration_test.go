@@ -6,11 +6,14 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -189,4 +192,138 @@ func TestSubscriptionServiceChangePlan_InsufficientBalancePostgres(t *testing.T)
 	gotUser, err := client.User.Get(ctx, user.ID)
 	require.NoError(t, err)
 	require.InDelta(t, 1, gotUser.Balance, 1e-9)
+}
+
+// 规格第 8.11：转套餐当天已用额度要从新卡当天余额扣掉，防止同一天重复领取 D。
+func TestSubscriptionServiceChangePlan_TodaySpentReducesNewCardBalancePostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	svc := makeSubscriptionService(t)
+	today := service.TodayEastDayNumber()
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:   fmt.Sprintf("changeplan-spent-%s@example.com", uuid.NewString()),
+		Balance: 100000,
+	})
+	group := mustCreateGroup(t, client, &service.Group{Name: "changeplan-spent-" + uuid.NewString()})
+	mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  10,
+		GrantedTotalUSD: 300,
+		TodayRemaining:  2, // 今天已从套餐花掉 8
+		TodayDay:        today,
+		StartDay:        today,
+		ExpireDay:       today + 29,
+		ExpiresAt:       service.ExpireDayToExpiresAt(today + 29),
+		Status:          service.SubscriptionStatusActive,
+	})
+	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
+
+	res, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 12, res.NewCardTodayBalance, 1e-9, "D_new=20 减旧卡今日已用 8")
+
+	gotNew, err := NewUserSubscriptionRepository(client).GetByID(ctx, res.NewSubscriptionID)
+	require.NoError(t, err)
+	require.InDelta(t, 12, gotNew.TodayRemaining, 1e-9)
+	require.Equal(t, today, gotNew.TodayDay)
+}
+
+// 脏套餐 validity_days<=0 必须在事务副作用前拒绝，不能关旧卡、不能扣/退余额、不能开废卡。
+func TestSubscriptionServiceChangePlan_InvalidValidityRollsBackPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	svc := makeSubscriptionService(t)
+	today := service.TodayEastDayNumber()
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:   fmt.Sprintf("changeplan-bad-validity-%s@example.com", uuid.NewString()),
+		Balance: 100000,
+	})
+	group := mustCreateGroup(t, client, &service.Group{Name: "changeplan-bad-validity-" + uuid.NewString()})
+	old := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  10,
+		GrantedTotalUSD: 300,
+		TodayRemaining:  10,
+		TodayDay:        today,
+		StartDay:        today,
+		ExpireDay:       today + 29,
+		ExpiresAt:       service.ExpireDayToExpiresAt(today + 29),
+		Status:          service.SubscriptionStatusActive,
+	})
+	badPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
+	_, err := client.SubscriptionPlan.UpdateOneID(badPlan.ID).SetValidityDays(0).Save(ctx)
+	require.NoError(t, err)
+
+	_, err = svc.ChangeSubscriptionPlan(ctx, user.ID, badPlan.ID)
+	require.Error(t, err)
+	require.Equal(t, "PLAN_VALIDITY_INVALID", infraerrors.Reason(err))
+
+	gotOld, err := NewUserSubscriptionRepository(client).GetByID(ctx, old.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.SubscriptionStatusActive, gotOld.Status)
+	require.Equal(t, today+29, gotOld.ExpireDay)
+	require.Equal(t, 1, countUserSubscriptionsByStatus(t, user.ID, service.SubscriptionStatusActive))
+	gotUser, err := client.User.Get(ctx, user.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 100000, gotUser.Balance, 1e-9)
+}
+
+// 假 active 卡被惰性关闭后，即使业务返回无生效卡，也必须提交关闭动作并清 Redis 订阅缓存。
+func TestSubscriptionServiceChangePlan_StaleActiveInvalidatesRedisSubscriptionCachePostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	rdb := testRedis(t)
+	cache := NewBillingCache(rdb)
+	billingCacheSvc := service.NewBillingCacheService(cache, NewUserRepository(client, integrationDB), NewUserSubscriptionRepository(client), nil, nil, nil, &config.Config{}, nil, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+	svc := service.NewSubscriptionService(
+		NewGroupRepository(client, integrationDB),
+		NewUserSubscriptionRepository(client),
+		nil,
+		billingCacheSvc,
+		nil,
+		client,
+		nil,
+		nil,
+	)
+	today := service.TodayEastDayNumber()
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:   fmt.Sprintf("changeplan-stale-cache-%s@example.com", uuid.NewString()),
+		Balance: 100000,
+	})
+	group := mustCreateGroup(t, client, &service.Group{Name: "changeplan-stale-cache-" + uuid.NewString()})
+	mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  10,
+		GrantedTotalUSD: 300,
+		TodayRemaining:  10,
+		TodayDay:        today - 1,
+		StartDay:        today - 31,
+		ExpireDay:       today - 1,
+		ExpiresAt:       service.ExpireDayToExpiresAt(today - 1),
+		Status:          service.SubscriptionStatusActive,
+	})
+	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
+
+	require.NoError(t, cache.SetSubscriptionCache(ctx, user.ID, group.ID, &service.SubscriptionCacheData{
+		Status:     service.SubscriptionStatusActive,
+		ExpiresAt:  time.Now().Add(time.Hour),
+		Version:    1,
+		DailyUsage: 1,
+	}))
+
+	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	require.Error(t, err)
+	require.Equal(t, "NO_ACTIVE_SUBSCRIPTION", infraerrors.Reason(err))
+
+	require.Eventually(t, func() bool {
+		_, cerr := cache.GetSubscriptionCache(ctx, user.ID, group.ID)
+		return cerr == redis.Nil
+	}, 2*time.Second, 20*time.Millisecond, "Redis 订阅缓存应随假 active 关闭一起失效")
 }

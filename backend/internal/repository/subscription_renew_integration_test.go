@@ -6,10 +6,13 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -160,4 +163,99 @@ func TestSubscriptionServiceRenew_NoActiveCardPostgres(t *testing.T) {
 	_, err := svc.RenewSubscription(ctx, user.ID, plan.ID)
 	require.Error(t, err)
 	require.Equal(t, "NO_ACTIVE_SUBSCRIPTION", infraerrors.Reason(err))
+}
+
+// 脏套餐 validity_days<=0 必须拒绝且不扣余额、不延长卡。
+func TestSubscriptionServiceRenew_InvalidValidityRollsBackPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	svc := makeSubscriptionService(t)
+	today := service.TodayEastDayNumber()
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:   fmt.Sprintf("renew-bad-validity-%s@example.com", uuid.NewString()),
+		Balance: 100000,
+	})
+	group := mustCreateGroup(t, client, &service.Group{Name: "renew-bad-validity-" + uuid.NewString()})
+	card := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  10,
+		GrantedTotalUSD: 300,
+		TodayRemaining:  10,
+		TodayDay:        today,
+		StartDay:        today,
+		ExpireDay:       today + 10,
+		ExpiresAt:       service.ExpireDayToExpiresAt(today + 10),
+		Status:          service.SubscriptionStatusActive,
+	})
+	plan := mustCreateChangePlanPlan(t, client, group.ID, 10, 30)
+	_, err := client.SubscriptionPlan.UpdateOneID(plan.ID).SetValidityDays(0).Save(ctx)
+	require.NoError(t, err)
+
+	_, err = svc.RenewSubscription(ctx, user.ID, plan.ID)
+	require.Error(t, err)
+	require.Equal(t, "PLAN_VALIDITY_INVALID", infraerrors.Reason(err))
+
+	got, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
+	require.NoError(t, err)
+	require.Equal(t, today+10, got.ExpireDay)
+	gotUser, err := client.User.Get(ctx, user.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 100000, gotUser.Balance, 1e-9)
+}
+
+// 续费会改变 expire_day/expires_at，必须清掉 Redis 订阅缓存，避免服务层短时间读旧 expires_at。
+func TestSubscriptionServiceRenew_InvalidatesRedisSubscriptionCachePostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	rdb := testRedis(t)
+	cache := NewBillingCache(rdb)
+	billingCacheSvc := service.NewBillingCacheService(cache, NewUserRepository(client, integrationDB), NewUserSubscriptionRepository(client), nil, nil, nil, &config.Config{}, nil, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+	svc := service.NewSubscriptionService(
+		NewGroupRepository(client, integrationDB),
+		NewUserSubscriptionRepository(client),
+		nil,
+		billingCacheSvc,
+		nil,
+		client,
+		nil,
+		nil,
+	)
+	today := service.TodayEastDayNumber()
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:   fmt.Sprintf("renew-cache-%s@example.com", uuid.NewString()),
+		Balance: 100000,
+	})
+	group := mustCreateGroup(t, client, &service.Group{Name: "renew-cache-" + uuid.NewString()})
+	mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  10,
+		GrantedTotalUSD: 300,
+		TodayRemaining:  10,
+		TodayDay:        today,
+		StartDay:        today,
+		ExpireDay:       today + 10,
+		ExpiresAt:       service.ExpireDayToExpiresAt(today + 10),
+		Status:          service.SubscriptionStatusActive,
+	})
+	plan := mustCreateChangePlanPlan(t, client, group.ID, 10, 30)
+
+	require.NoError(t, cache.SetSubscriptionCache(ctx, user.ID, group.ID, &service.SubscriptionCacheData{
+		Status:     service.SubscriptionStatusActive,
+		ExpiresAt:  service.ExpireDayToExpiresAt(today + 10),
+		Version:    1,
+		DailyUsage: 1,
+	}))
+
+	_, err := svc.RenewSubscription(ctx, user.ID, plan.ID)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		_, cerr := cache.GetSubscriptionCache(ctx, user.ID, group.ID)
+		return cerr == redis.Nil
+	}, 2*time.Second, 20*time.Millisecond, "Redis 订阅缓存应随续费失效")
 }

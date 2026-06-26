@@ -115,5 +115,6 @@ func (s *SubscriptionService) RenewSubscription(ctx context.Context, userID, pla
 	s.clearSubscriptionLockCache(userID)
 	s.invalidateUserBalanceCacheAsync(userID)
 	s.InvalidateSubCache(userID, oldGroupID)
+	s.invalidateSubscriptionCacheAsync(userID, oldGroupID)
 	return result, nil
 }
