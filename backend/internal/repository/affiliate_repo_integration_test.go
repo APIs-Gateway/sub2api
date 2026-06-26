@@ -102,7 +102,6 @@ SELECT action,
 FROM user_affiliate_ledger
 WHERE user_id = $1 AND source_redeem_code_id = $2`, inviter.ID, code.ID)
 	require.NoError(t, err)
-	defer func() { _ = rows.Close() }()
 	require.True(t, rows.Next(), "expected cashback ledger row")
 
 	var (
@@ -130,6 +129,7 @@ WHERE user_id = $1 AND source_redeem_code_id = $2`, inviter.ID, code.ID)
 		&historyAfter,
 	))
 	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
 	require.Equal(t, "cashback", action)
 	require.InDelta(t, 20.0, amount, 1e-9)
 	require.Equal(t, invitee.ID, sourceUserID)

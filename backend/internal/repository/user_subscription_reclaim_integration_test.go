@@ -222,6 +222,25 @@ func TestGrantSubscriptionDays_NearMaxClampsExpireDay(t *testing.T) {
 	require.False(t, gotSub.ExpiresAt.After(service.MaxExpiresAt), "expires_at 不得超过 MaxExpiresAt")
 }
 
+// 旧入口 ExtendExpiry 也必须同步 expire_day，不得只改 expires_at。
+func TestExtendExpiry_SyncsExpireDay(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUserSubscriptionRepository(client).(*userSubscriptionRepository)
+
+	u := reclaimSeedUser(t, client, 100)
+	g := reclaimSeedGroup(t, client)
+	sub := reclaimSeedSub(t, client, u.ID, g.ID, 10)
+
+	newExpiresAt := service.ExpireDayToExpiresAt(sub.ExpireDay + 5)
+	require.NoError(t, repo.ExtendExpiry(ctx, sub.ID, newExpiresAt))
+
+	gotSub, err := client.UserSubscription.Get(ctx, sub.ID)
+	require.NoError(t, err)
+	require.Equal(t, sub.ExpireDay+5, gotSub.ExpireDay)
+	require.Equal(t, newExpiresAt.Unix(), gotSub.ExpiresAt.Unix())
+}
+
 // D=0 的卡 Close：本就不动余额，状态置 expired。
 func TestReclaim_ZeroDailyAmountIsBalanceSafe(t *testing.T) {
 	ctx := context.Background()

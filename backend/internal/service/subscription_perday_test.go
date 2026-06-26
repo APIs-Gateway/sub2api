@@ -275,6 +275,23 @@ func TestTodaySpentFromPackage(t *testing.T) {
 	}
 }
 
+func TestSettle_TracksTodaySpentAcrossOverdraft(t *testing.T) {
+	c := &PerDayCard{DailyAmountUSD: 10, TodayRemaining: 0, TodayDay: 100, ExpireDay: 105, OverdraftOn: true}
+	w := &WalletState{Balance: 0, MonthlyOverdraftMonth: "202606"}
+
+	r := Settle(c, w, 12, 1.0, 100, "202606")
+
+	if r.OverdraftDays != 2 || !feq(r.OverdraftPay, 12) {
+		t.Fatalf("应透支两天并扣 12 官方刀: r=%+v", r)
+	}
+	if !feq(c.TodayRemaining, 8) {
+		t.Fatalf("第二个借天未用完应留 8，got %v", c.TodayRemaining)
+	}
+	if !feq(c.TodaySpentFromPackage(100), 12) {
+		t.Fatalf("今日套餐侧实际已用应为 12，不能由 D-remaining 误算成 2: card=%+v", c)
+	}
+}
+
 // ── 场景 12：退款/转套餐剩余天数含透支借天（RefundableDays）─────────────────────
 func TestRefundableDays_ContainsOverdraftBorrow(t *testing.T) {
 	// 买 T=30、start=100、expire=129；今天 109（已用 10 天，含今天）

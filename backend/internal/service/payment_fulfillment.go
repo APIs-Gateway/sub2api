@@ -542,9 +542,14 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 		return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
 	}
 	orderNote := fmt.Sprintf("payment order %d", o.ID)
-	_, _, err = s.subscriptionSvc.AssignOrExtendSubscription(ctx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, AssignedBy: 0, Notes: orderNote})
+	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(ctx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, AssignedBy: 0, Notes: orderNote})
 	if err != nil {
 		return fmt.Errorf("assign subscription: %w", err)
+	}
+	if sub != nil {
+		if err := s.writeSubscriptionIDToOrderSnapshot(ctx, o, sub.ID); err != nil {
+			return fmt.Errorf("write subscription snapshot id: %w", err)
+		}
 	}
 	return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
 }

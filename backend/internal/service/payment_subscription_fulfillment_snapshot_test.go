@@ -44,6 +44,9 @@ func TestExecuteSubscriptionFulfillment_UsesFrozenSnapshotWhenGroupInactive(t *t
 	order, err := client.PaymentOrder.Get(ctx, orderID)
 	require.NoError(t, err)
 	require.Equal(t, OrderStatusCompleted, order.Status)
+	subID, ok := readSubscriptionSnapshotSubscriptionID(order)
+	require.True(t, ok)
+	require.Equal(t, sub.ID, subID)
 }
 
 func TestExecuteSubscriptionFulfillment_InvalidSnapshotDoesNotFallbackToGroup(t *testing.T) {

@@ -112,49 +112,28 @@ LIMIT 1`, groupID, validityDays)
 func (r *affiliateRepository) ApplyRedeemCashback(ctx context.Context, input service.AffiliateRedeemCashbackInput) (bool, error) {
 	var applied bool
 	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
-		rows, err := txClient.QueryContext(txCtx, `
+		inserted, err := scanInt64(txCtx, txClient, `
 WITH inserted AS (
-	INSERT INTO user_affiliate_ledger (
-		user_id,
-		action,
-		amount,
-		source_user_id,
-		source_redeem_code_id,
-		source_redeem_code_type,
-		source_redeem_code_value,
-		source_subscription_group_id,
-		source_subscription_validity_days,
-		cashback_base_amount,
-		cashback_rate_percent,
-		created_at,
-		updated_at
-	)
-		VALUES ($1, 'cashback', $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-	ON CONFLICT DO NOTHING
-	RETURNING id
-),
-updated_user AS (
-	UPDATE users
-	SET balance = balance + $2,
-	    updated_at = NOW()
-	WHERE id = $1
-	  AND EXISTS (SELECT 1 FROM inserted)
-	RETURNING balance::double precision
-),
-updated_affiliate AS (
-	UPDATE user_affiliates
-	SET aff_history_quota = aff_history_quota + $2,
-	    updated_at = NOW()
-	WHERE user_id = $1
-	  AND EXISTS (SELECT 1 FROM inserted)
-	RETURNING aff_history_quota::double precision
+INSERT INTO user_affiliate_ledger (
+	user_id,
+	action,
+	amount,
+	source_user_id,
+	source_redeem_code_id,
+	source_redeem_code_type,
+	source_redeem_code_value,
+	source_subscription_group_id,
+	source_subscription_validity_days,
+	cashback_base_amount,
+	cashback_rate_percent,
+	created_at,
+	updated_at
 )
-UPDATE user_affiliate_ledger ledger
-SET balance_after = (SELECT balance FROM updated_user),
-    aff_history_quota_after = (SELECT aff_history_quota FROM updated_affiliate),
-    updated_at = NOW()
-WHERE ledger.id = (SELECT id FROM inserted)
-RETURNING ledger.id`,
+VALUES ($1, 'cashback', $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+ON CONFLICT DO NOTHING
+RETURNING 1
+)
+SELECT COUNT(*) FROM inserted`,
 			input.InviterID,
 			input.CashbackAmount,
 			input.InviteeUserID,
@@ -169,11 +148,61 @@ RETURNING ledger.id`,
 		if err != nil {
 			return fmt.Errorf("apply affiliate redeem cashback: %w", err)
 		}
-		defer func() { _ = rows.Close() }()
-		applied = rows.Next()
-		if err := rows.Err(); err != nil {
-			return err
+		if inserted == 0 {
+			applied = false
+			return nil
 		}
+
+		balanceAfter, ok, err := scanFloat64(txCtx, txClient, `
+UPDATE users
+SET balance = balance + $1,
+    updated_at = NOW()
+WHERE id = $2
+RETURNING balance::double precision`,
+			input.CashbackAmount, input.InviterID)
+		if err != nil {
+			return fmt.Errorf("update affiliate cashback balance: %w", err)
+		}
+		if !ok {
+			return service.ErrUserNotFound
+		}
+
+		historyAfter, ok, err := scanFloat64(txCtx, txClient, `
+UPDATE user_affiliates
+SET aff_history_quota = aff_history_quota + $1,
+    updated_at = NOW()
+WHERE user_id = $2
+RETURNING aff_history_quota::double precision`,
+			input.CashbackAmount, input.InviterID)
+		if err != nil {
+			return fmt.Errorf("update affiliate cashback history: %w", err)
+		}
+		if !ok {
+			return service.ErrAffiliateProfileNotFound
+		}
+
+		updatedSnapshots, err := scanInt64(txCtx, txClient, `
+WITH updated AS (
+UPDATE user_affiliate_ledger
+SET balance_after = $1,
+    aff_history_quota_after = $2,
+    updated_at = NOW()
+WHERE action = 'cashback'
+  AND user_id = $3
+  AND source_redeem_code_id = $4
+  AND source_user_id = $5
+RETURNING 1
+)
+SELECT COUNT(*) FROM updated`,
+			balanceAfter, historyAfter, input.InviterID, input.RedeemCodeID, input.InviteeUserID)
+		if err != nil {
+			return fmt.Errorf("update affiliate cashback ledger snapshots: %w", err)
+		}
+		if updatedSnapshots == 0 {
+			return fmt.Errorf("update affiliate cashback ledger snapshots: no ledger row updated")
+		}
+
+		applied = true
 		return nil
 	})
 	if err != nil {

@@ -100,11 +100,14 @@ func (UserSubscription) Fields() []ent.Field {
 		// 达上限后自动关闭本卡透支（max_overdraft_days→NULL）。
 		field.Int("total_overdraft_count").
 			Default(0),
-		// 本卡当前 burn-down 日内已消费额度，配合 daily_spent_day 实现「每日限速 D、不跨天结转、透支前移周期」。
+		// 本卡当前日内已从套餐侧实际扣掉的官方刀。旧 burn-down 用它做日内消费额；
+		// per-day 热路径用它记录当天套餐余额+透支实际扣额，供转套餐防当天双领。
 		field.Float("daily_spent_usd").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
 			Default(0),
-		// daily_spent_usd 对应的日历天 N（自激活起跨过的东八区午夜数）。读写时若 ≠ 当前 N 即视为 0（惰性重置）。
+		// daily_spent_usd 对应日期。旧 burn-down 口径为自激活起的日历天 N；
+		// per-day 热路径口径为东八区绝对自然日序号（与 today_day 同口径）。
+		// 读写时若 ≠ 当前日期即视为 0（惰性重置）。
 		// 默认 -1 表示「未初始化」——任何真实日历天 N≥0 都不等于它，避免与「day0 已消费 0」混淆。
 		field.Int("daily_spent_day").
 			Default(-1),

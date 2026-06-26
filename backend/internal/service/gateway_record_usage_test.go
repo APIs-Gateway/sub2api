@@ -142,8 +142,8 @@ func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(
 	require.Equal(t, payloadHash, billingRepo.lastCmd.RequestPayloadHash)
 }
 
-// per-day：结算实际扣了用户生效卡（result.SubscriptionID 非空）→ usage_log 标 subscription 计费
-// 且写 subscription_id，使日志口径与实际扣卡一致（即使 group 为 standard、middleware 未注入 subscription）。
+// per-day：结算命中用户有效订阅卡（result.SubscriptionID 非空）→ usage_log 标 subscription 计费
+// 且写 subscription_id（即使 group 为 standard、middleware 未注入 subscription）。
 func TestGatewayServiceRecordUsage_MarksSubscriptionWhenSettlementChargedCard(t *testing.T) {
 	cardID := int64(999)
 	usageRepo := &openAIRecordUsageBestEffortLogRepoStub{}
@@ -163,7 +163,7 @@ func TestGatewayServiceRecordUsage_MarksSubscriptionWhenSettlementChargedCard(t 
 	})
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, BillingTypeSubscription, usageRepo.lastLog.BillingType, "结算扣卡 → usage_log 标 subscription")
+	require.Equal(t, BillingTypeSubscription, usageRepo.lastLog.BillingType, "结算命中有效卡 → usage_log 标 subscription")
 	require.NotNil(t, usageRepo.lastLog.SubscriptionID)
 	require.Equal(t, cardID, *usageRepo.lastLog.SubscriptionID)
 }

@@ -20,8 +20,8 @@ func (r *dailyResetTrackingUserSubRepo) ResetDailyUsage(context.Context, int64, 
 	return nil
 }
 
-// burn-down 模型：AssignOrExtendSubscription 始终新建一张独立卡（不再续期已有订阅）。
-func TestAssignOrExtendSubscription_AlwaysCreatesNewActiveCard(t *testing.T) {
+// per-day 模型：历史 expired 卡不复用；新购买会创建一张新的 active 卡。
+func TestAssignOrExtendSubscription_CreatesNewCardAfterExpiredHistoricalCard(t *testing.T) {
 	groupRepo := &subscriptionGroupRepoStub{
 		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription, DailyLimitUSD: ptrFloat64(10)},
 	}
@@ -46,7 +46,7 @@ func TestAssignOrExtendSubscription_AlwaysCreatesNewActiveCard(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.False(t, reused, "始终新建独立卡，不再续期")
+	require.False(t, reused, "过期历史卡不复用")
 	require.NotNil(t, created)
 	require.NotEqual(t, int64(100), created.ID, "应新建一张卡而非复用过期订阅")
 	require.Equal(t, SubscriptionStatusActive, created.Status)

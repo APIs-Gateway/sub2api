@@ -26,6 +26,12 @@ func (s *UserSubscriptionRepoSuite) SetupTest() {
 	tx := testEntTx(s.T())
 	s.client = tx.Client()
 	s.repo = NewUserSubscriptionRepository(s.client).(*userSubscriptionRepository)
+
+	// The package also has integration tests that intentionally use the global
+	// client and commit rows. Hide those rows inside this suite's transaction so
+	// list/count/expiry assertions only see data created by the current test.
+	_, err := s.client.ExecContext(s.ctx, "DELETE FROM user_subscriptions")
+	s.Require().NoError(err, "isolate user subscriptions")
 }
 
 func TestUserSubscriptionRepoSuite(t *testing.T) {

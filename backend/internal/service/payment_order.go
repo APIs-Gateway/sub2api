@@ -51,6 +51,11 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if s.notificationEmailService != nil {
 		s.notificationEmailService.RememberRecipientLocale(ctx, req.UserID, user.Email, req.Locale)
 	}
+	if plan != nil {
+		if err := s.ensureCanCreateSubscriptionOrder(ctx, req.UserID); err != nil {
+			return nil, err
+		}
+	}
 	orderAmount := req.Amount
 	limitAmount := req.Amount
 	if plan != nil {
@@ -152,12 +157,44 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 	return plan, nil
 }
 
+func (s *PaymentService) ensureCanCreateSubscriptionOrder(ctx context.Context, userID int64) error {
+	if s.subscriptionSvc == nil {
+		return fmt.Errorf("subscription service not configured")
+	}
+	if s.entClient == nil {
+		return fmt.Errorf("ent client not configured")
+	}
+	tx, err := s.entClient.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin subscription admission transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	txCtx := dbent.NewTxContext(ctx, tx)
+	if err := s.subscriptionSvc.enforceSingleActiveSubscription(txCtx, userID, TodayEastDayNumber()); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit subscription admission transaction: %w", err)
+	}
+	return nil
+}
+
 func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderRequest, user *User, plan *dbent.SubscriptionPlan, cfg *PaymentConfig, orderAmount, limitAmount, feeRate, payAmount float64, sel *payment.InstanceSelection) (*dbent.PaymentOrder, error) {
 	tx, err := s.entClient.Tx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	txCtx := dbent.NewTxContext(ctx, tx)
+	if plan != nil {
+		if s.subscriptionSvc == nil {
+			return nil, fmt.Errorf("subscription service not configured")
+		}
+		if err := s.subscriptionSvc.enforceSingleActiveSubscription(txCtx, req.UserID, TodayEastDayNumber()); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.checkPendingLimit(ctx, tx, req.UserID, cfg.MaxPendingOrders); err != nil {
 		return nil, err
 	}
@@ -374,6 +411,61 @@ func readSubscriptionSnapshotDT(order *dbent.PaymentOrder) (dailyAmount float64,
 	return d, days, true, nil
 }
 
+func readSubscriptionSnapshotSubscriptionID(order *dbent.PaymentOrder) (int64, bool) {
+	if order == nil || order.ProviderSnapshot == nil {
+		return 0, false
+	}
+	raw, exists := order.ProviderSnapshot[subscriptionSnapshotKey]
+	if !exists {
+		return 0, false
+	}
+	sub, ok := raw.(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	return snapshotInt64(sub["subscription_id"])
+}
+
+func withSubscriptionIDInSnapshot(snapshot map[string]any, subscriptionID int64) (map[string]any, bool) {
+	if subscriptionID <= 0 || snapshot == nil {
+		return nil, false
+	}
+	raw, exists := snapshot[subscriptionSnapshotKey]
+	if !exists {
+		return nil, false
+	}
+	sub, ok := raw.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	next := make(map[string]any, len(snapshot))
+	for k, v := range snapshot {
+		next[k] = v
+	}
+	nextSub := make(map[string]any, len(sub)+1)
+	for k, v := range sub {
+		nextSub[k] = v
+	}
+	nextSub["subscription_id"] = subscriptionID
+	next[subscriptionSnapshotKey] = nextSub
+	return next, true
+}
+
+func (s *PaymentService) writeSubscriptionIDToOrderSnapshot(ctx context.Context, order *dbent.PaymentOrder, subscriptionID int64) error {
+	if s == nil || s.entClient == nil || order == nil {
+		return nil
+	}
+	snapshot, ok := withSubscriptionIDInSnapshot(order.ProviderSnapshot, subscriptionID)
+	if !ok {
+		return nil
+	}
+	if _, err := s.entClient.PaymentOrder.UpdateOneID(order.ID).SetProviderSnapshot(snapshot).Save(ctx); err != nil {
+		return err
+	}
+	order.ProviderSnapshot = snapshot
+	return nil
+}
+
 func snapshotFloat64(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
@@ -386,6 +478,28 @@ func snapshotFloat64(v any) (float64, bool) {
 		return float64(n), true
 	case int32:
 		return float64(n), true
+	default:
+		return 0, false
+	}
+}
+
+func snapshotInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, n > 0
+	case int:
+		return int64(n), n > 0
+	case int32:
+		return int64(n), n > 0
+	case float64:
+		i := int64(n)
+		return i, n > 0 && float64(i) == n
+	case float32:
+		i := int64(n)
+		return i, n > 0 && float32(i) == n
+	case string:
+		i, err := strconv.ParseInt(strings.TrimSpace(n), 10, 64)
+		return i, err == nil && i > 0
 	default:
 		return 0, false
 	}

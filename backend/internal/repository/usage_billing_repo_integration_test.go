@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -485,6 +486,53 @@ func TestUsageBillingRepositoryApply_PerDayOverdraftBorrowsDay(t *testing.T) {
 	require.Equal(t, 1, monthCount, "用户级月度透支计数 +1")
 }
 
+func TestUsageBillingRepositoryApply_PerDayTracksPackageSpentAcrossOverdraft(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user, apiKey := perDayBillingFixture(t, client, 0)
+	today := service.TodayEastDayNumber()
+	sub := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:         user.ID,
+		GroupID:        *apiKey.GroupID,
+		DailyAmountUSD: 10,
+		TodayRemaining: 0,
+		TodayDay:       today,
+		DailySpentUSD:  10,
+		DailySpentDay:  today,
+		StartDay:       today,
+		ExpireDay:      today + 5,
+		OverdraftOn:    true,
+		ExpiresAt:      service.ExpireDayToExpiresAt(today + 5),
+	})
+
+	res, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:      uuid.NewString(),
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		OfficialCost:   12,
+		RateMultiplier: 1,
+	})
+	require.NoError(t, err)
+	require.True(t, res.OverdraftApplied)
+	require.NotNil(t, res.SubscriptionID)
+
+	var todayRemaining float64
+	var dailySpent float64
+	var dailySpentDay int
+	var expireDay int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT today_remaining, daily_spent_usd, daily_spent_day, expire_day
+		FROM user_subscriptions
+		WHERE id = $1
+	`, sub.ID).Scan(&todayRemaining, &dailySpent, &dailySpentDay, &expireDay))
+	require.InDelta(t, 8, todayRemaining, 1e-6, "第二个借天未用完的 8 应留在今天")
+	require.InDelta(t, 22, dailySpent, 1e-6, "今日套餐侧实际已扣 = 原 10 + 本次透支 12")
+	require.Equal(t, today, dailySpentDay)
+	require.Equal(t, today+3, expireDay, "12 官方刀需要借 2 个未来天")
+}
+
 // 无生效卡：纯钱包标准计费（官方价×倍率），钱包可扣负。
 func TestUsageBillingRepositoryApply_PerDayNoCardWalletOnly(t *testing.T) {
 	ctx := context.Background()
@@ -534,11 +582,263 @@ func TestUsageBillingRepositoryApply_PerDayStaleActiveCardNotSubscription(t *tes
 	require.NoError(t, err)
 	require.NotNil(t, res.WalletDebit)
 	require.InDelta(t, 8, *res.WalletDebit, 1e-6, "费用走钱包")
-	require.Nil(t, res.SubscriptionID, "过期 active 卡本次未扣卡侧额度 → 不标 subscription")
+	require.Nil(t, res.SubscriptionID, "过期假 active 卡不属于有效订阅卡 → 不标 subscription")
 
 	// 卡被惰性标 expired。
 	var status string
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
 		`SELECT status FROM user_subscriptions WHERE id=$1`, sub.ID).Scan(&status))
 	require.Equal(t, "expired", status, "过期卡应被惰性标 expired")
+}
+
+// 有未过期有效卡时，即使当天套餐余额已为 0、透支关闭、费用全由钱包层支付，
+// 也仍属于「有卡 → 套餐瀑布」请求，应返回 SubscriptionID 供 usage_log 标 subscription。
+func TestUsageBillingRepositoryApply_PerDayActiveCardWalletOnlyStillSubscription(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user, apiKey := perDayBillingFixture(t, client, 100)
+	now := time.Now()
+	startDay := service.EastDayNumber(now)
+	sub := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:         user.ID,
+		GroupID:        *apiKey.GroupID,
+		DailyAmountUSD: 10,
+		TodayRemaining: 0,
+		TodayDay:       startDay,
+		StartDay:       startDay,
+		ExpireDay:      startDay + 5,
+		OverdraftOn:    false,
+		ExpiresAt:      service.ExpireDayToExpiresAt(startDay + 5),
+	})
+
+	res, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:      uuid.NewString(),
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		OfficialCost:   4,
+		RateMultiplier: 2,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.SubscriptionID, "有有效卡即订阅计费识别，即使本次全走钱包层")
+	require.Equal(t, sub.ID, *res.SubscriptionID)
+	require.NotNil(t, res.WalletDebit)
+	require.InDelta(t, 8, *res.WalletDebit, 1e-6)
+
+	var balance, todayRem float64
+	var status string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT balance FROM users WHERE id=$1`, user.ID).Scan(&balance))
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT today_remaining, status FROM user_subscriptions WHERE id=$1`, sub.ID).Scan(&todayRem, &status))
+	require.InDelta(t, 92, balance, 1e-6)
+	require.InDelta(t, 0, todayRem, 1e-6)
+	require.Equal(t, "active", status)
+}
+
+// 同一 request_id 重放必须跳过整笔 settle 副作用：不能重复扣钱包、不能重复借未来天、不能重复累加月度透支。
+func TestUsageBillingRepositoryApply_PerDayDedupSkipsOverdraftAndWalletSideEffects(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user, apiKey := perDayBillingFixture(t, client, 10)
+	now := time.Now()
+	startDay := service.EastDayNumber(now)
+	sub := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:         user.ID,
+		GroupID:        *apiKey.GroupID,
+		DailyAmountUSD: 100,
+		TodayRemaining: 0,
+		TodayDay:       startDay,
+		StartDay:       startDay,
+		ExpireDay:      startDay + 1,
+		OverdraftOn:    true,
+		ExpiresAt:      service.ExpireDayToExpiresAt(startDay + 1),
+	})
+
+	requestID := uuid.NewString()
+	cmd := &service.UsageBillingCommand{
+		RequestID:      requestID,
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		OfficialCost:   160,
+		RateMultiplier: 2,
+	}
+	res1, err := repo.Apply(ctx, cmd)
+	require.NoError(t, err)
+	require.True(t, res1.Applied)
+	require.True(t, res1.OverdraftApplied)
+
+	res2, err := repo.Apply(ctx, cmd)
+	require.NoError(t, err)
+	require.False(t, res2.Applied)
+
+	var balance float64
+	var monthCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT balance, monthly_overdraft_count FROM users WHERE id=$1`, user.ID).Scan(&balance, &monthCount))
+	require.InDelta(t, -110, balance, 1e-6, "首笔：钱包正余额10覆盖5官方，透支100，剩55官方×2落钱包负数；重放不能再扣")
+	require.Equal(t, 1, monthCount, "重放不能重复月度透支计数")
+
+	var expireDay int
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT expire_day FROM user_subscriptions WHERE id=$1`, sub.ID).Scan(&expireDay))
+	require.Equal(t, startDay, expireDay, "重放不能重复 expire_day−1")
+}
+
+// 并发流式结算同时打到同一用户时，FOR UPDATE 锁必须保证月度透支最多 5 次，后续缺口落钱包负数。
+func TestUsageBillingRepositoryApply_PerDayConcurrentOverdraftCapsMonthlyLimit(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user, apiKey := perDayBillingFixture(t, client, 0)
+	now := time.Now()
+	startDay := service.EastDayNumber(now)
+	sub := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:         user.ID,
+		GroupID:        *apiKey.GroupID,
+		DailyAmountUSD: 1,
+		TodayRemaining: 0,
+		TodayDay:       startDay,
+		StartDay:       startDay,
+		ExpireDay:      startDay + 20,
+		OverdraftOn:    true,
+		ExpiresAt:      service.ExpireDayToExpiresAt(startDay + 20),
+	})
+
+	const requests = 10
+	start := make(chan struct{})
+	errs := make(chan error, requests)
+	var wg sync.WaitGroup
+	for i := 0; i < requests; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, err := repo.Apply(ctx, &service.UsageBillingCommand{
+				RequestID:      fmt.Sprintf("perday-concurrent-overdraft-%s-%02d", uuid.NewString(), i),
+				APIKeyID:       apiKey.ID,
+				UserID:         user.ID,
+				OfficialCost:   1,
+				RateMultiplier: 1,
+			})
+			errs <- err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	var balance float64
+	var monthCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT balance, monthly_overdraft_count FROM users WHERE id=$1`, user.ID).Scan(&balance, &monthCount))
+	require.Equal(t, service.MaxMonthlyOverdraftUses, monthCount, "并发不能突破每月 5 次透支")
+	require.InDelta(t, -5, balance, 1e-6, "10 笔中 5 笔透支，剩余 5 笔缺口落钱包负数")
+
+	var expireDay int
+	var todayRemaining float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT expire_day, today_remaining FROM user_subscriptions WHERE id=$1`, sub.ID).Scan(&expireDay, &todayRemaining))
+	require.Equal(t, startDay+15, expireDay, "只允许借走 5 个未来天")
+	require.InDelta(t, 0, todayRemaining, 1e-6, "每笔成本等于 D，借来的当天额度应刚好用完")
+}
+
+// 跨月时旧月度透支计数必须惰性重置，否则上月用满 5 次会在新月误把可透支请求打到钱包负数。
+func TestUsageBillingRepositoryApply_PerDayOverdraftResetsStaleMonthCount(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user, apiKey := perDayBillingFixture(t, client, 0)
+	_, err := integrationDB.ExecContext(ctx,
+		`UPDATE users SET monthly_overdraft_count = $1, monthly_overdraft_month = $2 WHERE id = $3`,
+		service.MaxMonthlyOverdraftUses, "200001", user.ID)
+	require.NoError(t, err)
+
+	now := time.Now()
+	startDay := service.EastDayNumber(now)
+	sub := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:         user.ID,
+		GroupID:        *apiKey.GroupID,
+		DailyAmountUSD: 10,
+		TodayRemaining: 0,
+		TodayDay:       startDay,
+		StartDay:       startDay,
+		ExpireDay:      startDay + 3,
+		OverdraftOn:    true,
+		ExpiresAt:      service.ExpireDayToExpiresAt(startDay + 3),
+	})
+
+	res, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:      uuid.NewString(),
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		OfficialCost:   10,
+		RateMultiplier: 1,
+	})
+	require.NoError(t, err)
+	require.True(t, res.OverdraftApplied)
+
+	var balance float64
+	var monthCount int
+	var month string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT balance, monthly_overdraft_count, monthly_overdraft_month FROM users WHERE id=$1`, user.ID).Scan(&balance, &monthCount, &month))
+	require.InDelta(t, 0, balance, 1e-6)
+	require.Equal(t, 1, monthCount, "新月应先清零再记录本次透支")
+	require.Equal(t, service.EastMonthKey(now), month)
+
+	var expireDay int
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT expire_day FROM user_subscriptions WHERE id=$1`, sub.ID).Scan(&expireDay))
+	require.Equal(t, startDay+2, expireDay)
+}
+
+// 跨东八区自然日且卡仍有效时，真实 DB 回写必须把 today_remaining 惰性覆盖为 D 后再扣。
+func TestUsageBillingRepositoryApply_PerDayResetsRemainingOnNewValidDay(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user, apiKey := perDayBillingFixture(t, client, 0)
+	now := time.Now()
+	today := service.EastDayNumber(now)
+	sub := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:         user.ID,
+		GroupID:        *apiKey.GroupID,
+		DailyAmountUSD: 10,
+		TodayRemaining: 3,
+		TodayDay:       today - 1,
+		StartDay:       today - 1,
+		ExpireDay:      today + 2,
+		ExpiresAt:      service.ExpireDayToExpiresAt(today + 2),
+	})
+
+	res, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:      uuid.NewString(),
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		OfficialCost:   4,
+		RateMultiplier: 2,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.SubscriptionID)
+	require.NotNil(t, res.NewBalance)
+
+	var todayRem float64
+	var todayDay int
+	var balance float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT today_remaining, today_day FROM user_subscriptions WHERE id=$1`, sub.ID).Scan(&todayRem, &todayDay))
+	require.InDelta(t, 6, todayRem, 1e-6, "先跨天覆盖为 D=10，再扣 4")
+	require.Equal(t, today, todayDay)
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT balance FROM users WHERE id=$1`, user.ID).Scan(&balance))
+	require.InDelta(t, 0, balance, 1e-6, "套餐足够时钱包不应被倍率扣费")
 }

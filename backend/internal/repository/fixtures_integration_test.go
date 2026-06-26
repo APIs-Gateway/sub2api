@@ -404,6 +404,15 @@ func mustCreateSubscription(t *testing.T, client *dbent.Client, s *service.UserS
 		SetDailySpentUsd(s.DailySpentUSD).
 		SetDailySpentDay(s.DailySpentDay)
 
+	if s.TodayRemaining != 0 || s.TodayDay != 0 || s.StartDay != 0 || s.ExpireDay != 0 || s.OverdraftOn {
+		create.
+			SetTodayRemaining(s.TodayRemaining).
+			SetTodayDay(s.TodayDay).
+			SetStartDay(s.StartDay).
+			SetExpireDay(s.ExpireDay).
+			SetOverdraftOn(s.OverdraftOn)
+	}
+
 	if s.MaxOverdraftDays != nil {
 		create.SetMaxOverdraftDays(*s.MaxOverdraftDays)
 	}

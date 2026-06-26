@@ -8988,9 +8988,10 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		return false, nil
 	}
 
-	// 计费识别落库（per-day）：结算实际扣了用户生效卡 → 把 usage_log 标为 subscription 计费 + 写
-	// subscription_id，使日志口径与实际扣卡一致（生产 middleware 不注入 subscription，故以结算结果为准，
-	// 而非 isSubscriptionBilling 标签）。usageLog 指针即调用方稍后 writeUsageLogBestEffort 写的同一对象。
+	// 计费识别落库（per-day）：结算命中用户有效订阅卡 → 把 usage_log 标为 subscription 计费 + 写
+	// subscription_id（有效卡即订阅瀑布请求，即使本次套餐余额为 0、费用全由钱包层支付）。生产
+	// middleware 不注入 subscription，故以结算结果为准，而非 isSubscriptionBilling 标签。
+	// usageLog 指针即调用方稍后 writeUsageLogBestEffort 写的同一对象。
 	if result.SubscriptionID != nil && usageLog != nil {
 		usageLog.SubscriptionID = result.SubscriptionID
 		usageLog.BillingType = BillingTypeSubscription

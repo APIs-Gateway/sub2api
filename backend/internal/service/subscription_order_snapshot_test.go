@@ -31,6 +31,12 @@ func TestSubscriptionOrderSnapshot_FreezeAndRead(t *testing.T) {
 	require.True(t, present)
 	require.InDelta(t, 10, d, 1e-9)
 	require.Equal(t, 30, days)
+	withID, ok := withSubscriptionIDInSnapshot(order.ProviderSnapshot, 123)
+	require.True(t, ok)
+	order.ProviderSnapshot = withID
+	subID, ok := readSubscriptionSnapshotSubscriptionID(order)
+	require.True(t, ok)
+	require.Equal(t, int64(123), subID)
 
 	// 老订单（无 subscription 快照）→ ok=false，调用方走 group 回退。
 	_, _, present, err = readSubscriptionSnapshotDT(&dbent.PaymentOrder{})

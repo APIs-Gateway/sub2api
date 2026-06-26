@@ -40,6 +40,8 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 		SetConsumedUsd(sub.ConsumedUSD).
 		SetClawedUsd(sub.ClawedUSD).
 		SetLastClawbackDay(sub.LastClawbackDay).
+		SetDailySpentUsd(sub.DailySpentUSD).
+		SetDailySpentDay(sub.DailySpentDay).
 		SetTodayRemaining(sub.TodayRemaining).
 		SetTodayDay(sub.TodayDay).
 		SetStartDay(sub.StartDay).
@@ -137,8 +139,8 @@ func (r *userSubscriptionRepository) GetActiveByUserID(ctx context.Context, user
 }
 
 // Update 写订阅「元数据」（状态/到期/窗口/notes 等）。
-// 注意：burn-down 计费字段（consumed/clawed/daily_spent）与 per-day 热字段
-// （today_remaining/today_day/expire_day）**不在此写**——它们由结算/清扣的专用原子 SQL 在
+// 注意：burn-down 计费字段（consumed/clawed）与 per-day 热字段
+// （today_remaining/today_day/expire_day/daily_spent_usd/daily_spent_day）**不在此写**——它们由结算/清扣的专用原子 SQL 在
 // FOR UPDATE 事务内增量更新。切勿复用本方法回写结算结果：本方法按内存快照整行覆盖，会把
 // 并发结算刚扣减的 today_remaining / 透支前移的 expire_day 用 stale 值覆盖回去。P4b 结算走
 // 专用写路径（见 settlePerDay*）。start_day 创建后不可变、overdraft_on 走 SetOverdraftDays。
@@ -339,6 +341,7 @@ func (r *userSubscriptionRepository) ExtendExpiry(ctx context.Context, subscript
 	client := clientFromContext(ctx, r.client)
 	_, err := client.UserSubscription.UpdateOneID(subscriptionID).
 		SetExpiresAt(newExpiresAt).
+		SetExpireDay(service.ExpiresAtToExpireDay(newExpiresAt)).
 		Save(ctx)
 	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 }

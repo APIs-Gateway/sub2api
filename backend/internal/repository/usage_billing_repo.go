@@ -189,24 +189,26 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 	//    过期是惰性的（卡可能 status='active' 而 today>expire_day），不在 SQL 过滤 expire_day，
 	//    由引擎 ResetIfNewDay 惰性置 0 + 标 expired。
 	var (
-		cardID    int64
-		groupID   int64
-		dAmount   float64
-		todayRem  float64
-		todayDay  int
-		startDay  int
-		expireDay int
-		odOn      bool
-		hasCard   bool
+		cardID        int64
+		groupID       int64
+		dAmount       float64
+		todayRem      float64
+		todayDay      int
+		dailySpent    float64
+		dailySpentDay int
+		startDay      int
+		expireDay     int
+		odOn          bool
+		hasCard       bool
 	)
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, group_id, daily_amount_usd, today_remaining, today_day, start_day, expire_day, overdraft_on
+		SELECT id, group_id, daily_amount_usd, today_remaining, today_day, daily_spent_usd, daily_spent_day, start_day, expire_day, overdraft_on
 		FROM user_subscriptions
 		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
 		ORDER BY expire_day DESC, id DESC
 		LIMIT 1
 		FOR UPDATE
-	`, userID).Scan(&cardID, &groupID, &dAmount, &todayRem, &todayDay, &startDay, &expireDay, &odOn)
+	`, userID).Scan(&cardID, &groupID, &dAmount, &todayRem, &todayDay, &dailySpent, &dailySpentDay, &startDay, &expireDay, &odOn)
 	switch {
 	case err == nil:
 		hasCard = true
@@ -224,6 +226,8 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 			DailyAmountUSD: dAmount,
 			TodayRemaining: todayRem,
 			TodayDay:       todayDay,
+			DailySpentUSD:  dailySpent,
+			DailySpentDay:  dailySpentDay,
 			StartDay:       startDay,
 			ExpireDay:      expireDay,
 			OverdraftOn:    odOn,
@@ -232,10 +236,10 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 	res := service.Settle(&card, &wallet, officialCost, multiplier, today, monthKey)
 
 	out := &perDaySettleResult{overdraftApplied: res.OverdraftDays > 0}
-	// 仅在本次**实际从卡侧扣了额度**（套餐余额或透支，TotalOfficial=SubPay+OverdraftPay）时才标
-	// subscription——否则过期但 status='active' 的卡（expire_day<today、本次费用其实走钱包，卡只是
-	// 被惰性标 expired）会被误标 subscription，账本/日志再次分裂。
-	if hasCard && res.TotalOfficial() > 0 {
+	// 规格口径：计费识别 = 用户存在生效中的订阅卡。即使本次套餐余额为 0、费用全由钱包层支付，
+	// 也仍是「有卡 → 套餐瀑布」请求，应标 subscription。过期但 status='active' 的假 active
+	// 会在 ResetIfNewDay 中置 Expired，不应标 subscription。
+	if hasCard && !card.Expired && card.DailyAmountUSD > 0 {
 		id := cardID
 		out.subscriptionID = &id
 	}
@@ -248,12 +252,13 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 		// 旧路径与自然日口径一致；见 service.ExpireDayToExpiresAt。
 		if err := tx.QueryRowContext(ctx, `
 			UPDATE user_subscriptions
-			SET today_remaining = $1, today_day = $2, expire_day = $3, expires_at = $6,
+			SET today_remaining = $1, today_day = $2, expire_day = $3,
+				daily_spent_usd = $6, daily_spent_day = $7, expires_at = $8,
 				status = CASE WHEN $4 THEN 'expired' ELSE status END,
 				updated_at = NOW()
 			WHERE id = $5
 			RETURNING status = 'expired', group_id
-		`, card.TodayRemaining, card.TodayDay, card.ExpireDay, card.Expired, cardID,
+		`, card.TodayRemaining, card.TodayDay, card.ExpireDay, card.Expired, cardID, card.DailySpentUSD, card.DailySpentDay,
 			service.ExpireDayToExpiresAt(card.ExpireDay)).Scan(&nowExpired, &gid); err != nil {
 			return nil, err
 		}

@@ -9,7 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"entgo.io/ent/dialect"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -29,6 +32,7 @@ var (
 	ErrSubscriptionExpired                = infraerrors.Forbidden("SUBSCRIPTION_EXPIRED", "subscription has expired")
 	ErrSubscriptionSuspended              = infraerrors.Forbidden("SUBSCRIPTION_SUSPENDED", "subscription is suspended")
 	ErrSubscriptionAlreadyExists          = infraerrors.Conflict("SUBSCRIPTION_ALREADY_EXISTS", "subscription already exists for this user and group")
+	ErrActiveSubscriptionExists           = infraerrors.Conflict("ACTIVE_SUBSCRIPTION_EXISTS", "active subscription already exists; renew, refund, or change plan instead")
 	ErrSubscriptionAssignConflict         = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
 	ErrInvalidDailyAmount                 = infraerrors.BadRequest("INVALID_DAILY_AMOUNT", "subscription daily amount must be positive (provide daily_amount_usd, or a group with daily_limit_usd > 0)")
 	ErrInvalidInput                       = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
@@ -297,6 +301,8 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 		ConsumedUSD:     0,
 		ClawedUSD:       0,
 		LastClawbackDay: 0,
+		DailySpentUSD:   0,
+		DailySpentDay:   startDay,
 		TodayRemaining:  dailyAmount,
 		TodayDay:        startDay,
 		StartDay:        startDay,
@@ -318,6 +324,9 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 	// 绕过 per-day 限速/透支（见 settlePerDaySubscription：balance 已是纯钱包）。GrantedTotalUSD 仅
 	// 作历史/展示，不进账本。存量旧卡的 G 已在 balance 里，由上线前一次性「balance 解混」迁移取出。
 	if err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
+		if err := s.enforceSingleActiveSubscription(txCtx, input.UserID, startDay); err != nil {
+			return err
+		}
 		return s.userSubRepo.Create(txCtx, sub)
 	}); err != nil {
 		return nil, err
@@ -329,6 +338,61 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 
 	// 重新获取完整订阅信息（包含关联）
 	return s.userSubRepo.GetByID(ctx, sub.ID)
+}
+
+func (s *SubscriptionService) enforceSingleActiveSubscription(ctx context.Context, userID int64, today int) error {
+	tx := dbent.TxFromContext(ctx)
+	if tx == nil {
+		return nil
+	}
+	client := tx.Client()
+	lockRows := client.Driver() != nil && client.Driver().Dialect() == dialect.Postgres
+
+	userQuery := client.User.Query().
+		Where(user.IDEQ(userID), user.DeletedAtIsNil())
+	if lockRows {
+		userQuery = userQuery.ForUpdate()
+	}
+	if _, err := userQuery.OnlyID(ctx); err != nil {
+		if dbent.IsNotFound(err) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+
+	if _, err := client.UserSubscription.Update().
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.StatusEQ(SubscriptionStatusActive),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.ExpireDayLT(today),
+		).
+		SetStatus(SubscriptionStatusExpired).
+		SetTodayRemaining(0).
+		SetUpdatedAt(time.Now()).
+		Save(ctx); err != nil {
+		return err
+	}
+
+	activeQuery := client.UserSubscription.Query().
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.StatusEQ(SubscriptionStatusActive),
+			usersubscription.DeletedAtIsNil(),
+		).
+		Order(
+			dbent.Desc(usersubscription.FieldExpireDay),
+			dbent.Desc(usersubscription.FieldID),
+		)
+	if lockRows {
+		activeQuery = activeQuery.ForUpdate()
+	}
+	if _, err := activeQuery.OnlyID(ctx); err == nil {
+		return ErrActiveSubscriptionExists
+	} else if !dbent.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 // invalidateUserBalanceCacheAsync 异步失效用户余额缓存（与现有订阅缓存失效模式一致）。
@@ -515,6 +579,114 @@ func (s *SubscriptionService) RevokeSubscription(ctx context.Context, subscripti
 	return nil
 }
 
+// closeSubscriptionForRefund closes a card for a subscription refund without
+// deleting its row, so a gateway refund failure can restore it.
+func (s *SubscriptionService) closeSubscriptionForRefund(ctx context.Context, subscriptionID int64) error {
+	sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
+	if err != nil {
+		return err
+	}
+	s.clearSubscriptionLockCache(sub.UserID)
+
+	if _, _, err := s.userSubRepo.CloseSubscriptionWithReclaim(ctx, subscriptionID, time.Now(), false); err != nil {
+		return err
+	}
+	s.clearSubscriptionLockCache(sub.UserID)
+
+	s.InvalidateSubCache(sub.UserID, sub.GroupID)
+	if s.billingCacheService != nil {
+		userID, groupID := sub.UserID, sub.GroupID
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+		}()
+	}
+	s.invalidateUserBalanceCacheAsync(sub.UserID)
+	return nil
+}
+
+// restoreSubscriptionForRefund restores the exact card state captured before a
+// refund deduction. It is intentionally narrower than ExtendSubscription:
+// refund rollback must restore today's package balance as well as expire_day.
+func (s *SubscriptionService) restoreSubscriptionForRefund(ctx context.Context, subscriptionID int64, expireDay int, todayRemaining float64, todayDay int) error {
+	if expireDay <= 0 {
+		return infraerrors.BadRequest("INVALID_EXPIRE_DAY", "subscription expire_day must be positive")
+	}
+	if todayRemaining < 0 {
+		todayRemaining = 0
+	}
+
+	if s.entClient == nil {
+		sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
+		if err != nil {
+			return err
+		}
+		sub.Status = SubscriptionStatusActive
+		sub.ExpireDay = ClampExpireDay(expireDay)
+		sub.ExpiresAt = ExpireDayToExpiresAt(sub.ExpireDay)
+		sub.TodayRemaining = todayRemaining
+		sub.TodayDay = todayDay
+		if err := s.userSubRepo.Update(ctx, sub); err != nil {
+			return err
+		}
+		s.clearSubscriptionLockCache(sub.UserID)
+		s.InvalidateSubCache(sub.UserID, sub.GroupID)
+		s.invalidateUserBalanceCacheAsync(sub.UserID)
+		return nil
+	}
+
+	var userID, groupID int64
+	newExpireDay := ClampExpireDay(expireDay)
+	err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
+		tx := dbent.TxFromContext(txCtx)
+		client := s.entClient
+		if tx != nil {
+			client = tx.Client()
+		}
+
+		query := client.UserSubscription.Query().
+			Where(usersubscription.IDEQ(subscriptionID))
+		if client.Driver() != nil && client.Driver().Dialect() == dialect.Postgres {
+			query = query.ForUpdate()
+		}
+		sub, err := query.Only(txCtx)
+		if err != nil {
+			if dbent.IsNotFound(err) {
+				return ErrSubscriptionNotFound
+			}
+			return err
+		}
+		userID = sub.UserID
+		groupID = sub.GroupID
+
+		_, err = client.UserSubscription.UpdateOneID(subscriptionID).
+			SetStatus(SubscriptionStatusActive).
+			SetExpireDay(newExpireDay).
+			SetExpiresAt(ExpireDayToExpiresAt(newExpireDay)).
+			SetTodayRemaining(todayRemaining).
+			SetTodayDay(todayDay).
+			SetUpdatedAt(time.Now()).
+			Save(txCtx)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	s.clearSubscriptionLockCache(userID)
+	s.InvalidateSubCache(userID, groupID)
+	if s.billingCacheService != nil {
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+		}()
+	}
+	s.invalidateUserBalanceCacheAsync(userID)
+	return nil
+}
+
 // ExtendSubscription 调整订阅时长（正数延长，负数缩短）
 func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscriptionID int64, days int) (*UserSubscription, error) {
 	sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
@@ -604,6 +776,11 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 // GetByID 根据ID获取订阅
 func (s *SubscriptionService) GetByID(ctx context.Context, id int64) (*UserSubscription, error) {
 	return s.userSubRepo.GetByID(ctx, id)
+}
+
+// GetActiveUserSubscription 获取用户唯一生效订阅卡（per-day 单卡模式，不按 group 匹配）。
+func (s *SubscriptionService) GetActiveUserSubscription(ctx context.Context, userID int64) (*UserSubscription, error) {
+	return s.userSubRepo.GetActiveByUserID(ctx, userID)
 }
 
 // GetActiveSubscription 获取用户对特定分组的有效订阅

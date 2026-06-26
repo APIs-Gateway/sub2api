@@ -46,6 +46,12 @@ func ExpireDayToExpiresAt(expireDay int) time.Time {
 	return EastDayStart(expireDay + 1)
 }
 
+// ExpiresAtToExpireDay 把 expires_at 反推成 expire_day（最后服务日，含）。
+// 仅适用于 per-day 规范化后的边界：`ExpireDayToExpiresAt(day)` 的逆变换。
+func ExpiresAtToExpireDay(expiresAt time.Time) int {
+	return EastDayNumber(expiresAt) - 1
+}
+
 // MaxExpireDay 返回 expire_day 的上限（东八区自然日序号）= MaxExpiresAt 对应的最后服务日。
 func MaxExpireDay() int { return EastDayNumber(MaxExpiresAt) - 1 }
 
@@ -72,6 +78,8 @@ type PerDayCard struct {
 	DailyAmountUSD float64 // D，每日额度（官方刀/天）
 	TodayRemaining float64 // 今日剩余（官方刀，1:1，永不为负）
 	TodayDay       int     // today_remaining 所属东八区日序号；-1=未初始化
+	DailySpentUSD  float64 // 今日套餐侧已实际扣掉的官方刀（含透支借天后扣掉的额度）
+	DailySpentDay  int     // daily_spent_usd 所属东八区日序号；与 today_day 同口径
 	StartDay       int     // 激活日（东八区日序号）
 	ExpireDay      int     // 最后发放 D 的东八区日序号（含）；每透支 −1
 	OverdraftOn    bool    // 本卡是否开启透支
@@ -91,6 +99,10 @@ type WalletState struct {
 //   - today >  expire_day：已过期 → today_remaining = 0、标记 expired，绝不再发额度
 //     （防过期卡跨天被重置出额度）。
 func (c *PerDayCard) ResetIfNewDay(today int) bool {
+	if c.DailySpentDay != today {
+		c.DailySpentUSD = 0
+		c.DailySpentDay = today
+	}
 	if c.TodayDay == today {
 		return false
 	}
@@ -175,6 +187,7 @@ func Settle(c *PerDayCard, w *WalletState, cost, multiplier float64, today int, 
 		c.TodayRemaining -= subPay
 		C -= subPay
 		res.SubPay = subPay
+		c.DailySpentUSD += subPay
 	}
 
 	// 2) 钱包正余额（×倍率）：只用钱包正数部分
@@ -200,6 +213,7 @@ func Settle(c *PerDayCard, w *WalletState, cost, multiplier float64, today int, 
 		C -= use
 		c.TodayRemaining += c.DailyAmountUSD - use // 借来未用完的部分留作当日后续
 		res.OverdraftPay += use
+		c.DailySpentUSD += use
 	}
 
 	// 4) 最终缺口 → 钱包负数（套餐余额绝不为负；钱包负数不随次日清零）
@@ -211,9 +225,16 @@ func Settle(c *PerDayCard, w *WalletState, cost, multiplier float64, today int, 
 	return res
 }
 
-// TodaySpentFromPackage 返回本卡今天已从套餐余额扣掉的官方成本（= D − today_remaining，下限 0）。
+// TodaySpentFromPackage 返回本卡今天已从套餐余额扣掉的官方成本。
 // 转套餐当天「新卡套餐余额 = max(0, D_新 − 旧卡今日已用)」时用它。调用前应已 ResetIfNewDay(today)。
+// per-day 热路径维护 DailySpentUSD；若读取到旧数据（DailySpentDay 未对齐），退化为 D − today_remaining。
 func (c *PerDayCard) TodaySpentFromPackage(today int) float64 {
+	if c.DailySpentDay == today {
+		if c.DailySpentUSD < 0 {
+			return 0
+		}
+		return c.DailySpentUSD
+	}
 	if c.TodayDay != today {
 		return 0
 	}
@@ -233,6 +254,8 @@ func (s *UserSubscription) ToPerDayCard() PerDayCard {
 		DailyAmountUSD: s.DailyAmountUSD,
 		TodayRemaining: s.TodayRemaining,
 		TodayDay:       s.TodayDay,
+		DailySpentUSD:  s.DailySpentUSD,
+		DailySpentDay:  s.DailySpentDay,
 		StartDay:       s.StartDay,
 		ExpireDay:      s.ExpireDay,
 		OverdraftOn:    s.OverdraftOn,

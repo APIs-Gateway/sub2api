@@ -37,8 +37,8 @@ type UserSubscription struct {
 	LastClawbackDay     int        // 已对账到的最高日历天 N
 	MaxOverdraftDays    *int       // 本卡用户自设的最多往后透支天数；nil = 透支关闭；用户在「我的订阅」自助设置
 	TotalOverdraftCount int        // 本卡累计预支天数（求和、封顶 MaxSubscriptionOverdraftUses）；达上限后自动关闭透支
-	DailySpentUSD       float64    // 当前 burn-down 日内已消费额度（配合 DailySpentDay 实现每日限速、不跨天结转）
-	DailySpentDay       int        // DailySpentUSD 对应的日历天 N；读写时若 ≠ 当前 N 即视为 0（惰性重置）
+	DailySpentUSD       float64    // 当前日内套餐侧已实际扣掉的官方刀（per-day 用于转套餐防双领）
+	DailySpentDay       int        // per-day 为东八区绝对自然日序号；旧 burn-down 为自激活起日历天 N
 	ActivatedAt         *time.Time // 清扣时钟起点；nil 时回退 StartsAt
 
 	// Per-day 每日额度模型字段（per-day redesign，逐步取代上方 burn-down 窗口）
