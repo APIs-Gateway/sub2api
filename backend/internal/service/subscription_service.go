@@ -36,6 +36,8 @@ var (
 	ErrNoActiveSubscription               = infraerrors.NotFound("NO_ACTIVE_SUBSCRIPTION", "no active subscription to change")
 	ErrChangePlanDailyLimit               = infraerrors.TooManyRequests("CHANGE_PLAN_DAILY_LIMIT", "plan can be changed at most once per natural day")
 	ErrInsufficientBalanceForChangePlan   = infraerrors.BadRequest("INSUFFICIENT_BALANCE_FOR_CHANGE_PLAN", "balance is insufficient to cover the change-plan price difference")
+	ErrRenewPlanMismatch                  = infraerrors.BadRequest("RENEW_PLAN_MISMATCH", "renewal plan must keep the same daily amount as the current card; use change plan to switch tier")
+	ErrInsufficientBalanceForRenew        = infraerrors.BadRequest("INSUFFICIENT_BALANCE_FOR_RENEW", "balance is insufficient to cover the renewal price")
 	ErrSubscriptionAssignConflict         = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
 	ErrInvalidDailyAmount                 = infraerrors.BadRequest("INVALID_DAILY_AMOUNT", "subscription daily amount must be positive (provide daily_amount_usd, or a group with daily_limit_usd > 0)")
 	ErrInvalidInput                       = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
