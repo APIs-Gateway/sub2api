@@ -174,10 +174,40 @@ func (s *PaymentService) ensureCanCreateSubscriptionOrder(ctx context.Context, u
 	if err := s.subscriptionSvc.enforceSingleActiveSubscription(txCtx, userID, TodayEastDayNumber()); err != nil {
 		return err
 	}
+	pending, err := s.hasPendingSubscriptionOrder(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	if pending {
+		return errPendingSubscriptionOrder()
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit subscription admission transaction: %w", err)
 	}
 	return nil
+}
+
+// errPendingSubscriptionOrder 是用户已有未完成订阅订单时的拒绝错误（单卡模式不允许并存第二张 pending 订阅单）。
+func errPendingSubscriptionOrder() error {
+	return infraerrors.Conflict("PENDING_SUBSCRIPTION_ORDER", "you already have a pending subscription order; complete or cancel it first")
+}
+
+// hasPendingSubscriptionOrder 判断用户是否已有 pending 订阅订单。per-day 单卡模式下卡在【履约时】
+// 才创建，故"无 active 卡"不足以放行第二单——必须在同一用户锁内拒绝第二张 pending 订阅单，否则
+// 并发/连点双单都过准入、都付款，第二单履约会撞 ErrActiveSubscriptionExists 而 markFailed
+// （已付款却无法开卡、无自动退款）。本查询须与 enforceSingleActiveSubscription 处于同一事务内
+// （后者已 FOR UPDATE 锁住 user 行），以串行化同一用户的并发下单。
+func (s *PaymentService) hasPendingSubscriptionOrder(ctx context.Context, tx *dbent.Tx, userID int64) (bool, error) {
+	exist, err := tx.PaymentOrder.Query().
+		Where(
+			paymentorder.UserIDEQ(userID),
+			paymentorder.StatusEQ(OrderStatusPending),
+			paymentorder.OrderTypeEQ(payment.OrderTypeSubscription),
+		).Exist(ctx)
+	if err != nil {
+		return false, fmt.Errorf("check pending subscription order: %w", err)
+	}
+	return exist, nil
 }
 
 func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderRequest, user *User, plan *dbent.SubscriptionPlan, cfg *PaymentConfig, orderAmount, limitAmount, feeRate, payAmount float64, sel *payment.InstanceSelection) (*dbent.PaymentOrder, error) {
@@ -193,6 +223,15 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		}
 		if err := s.subscriptionSvc.enforceSingleActiveSubscription(txCtx, req.UserID, TodayEastDayNumber()); err != nil {
 			return nil, err
+		}
+		// 权威拦截（user 行已 FOR UPDATE 锁）：禁止并存第二张 pending 订阅单，杜绝并发双单都付款、
+		// 第二单履约撞 ErrActiveSubscriptionExists→已付款无法开卡。
+		pending, err := s.hasPendingSubscriptionOrder(ctx, tx, req.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if pending {
+			return nil, errPendingSubscriptionOrder()
 		}
 	}
 	if err := s.checkPendingLimit(ctx, tx, req.UserID, cfg.MaxPendingOrders); err != nil {
