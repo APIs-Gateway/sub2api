@@ -66,6 +66,8 @@ type OpenAIImagesRequest struct {
 	ExplicitModel      bool
 	Prompt             string
 	Stream             bool
+	StreamExplicit     bool // 客户端是否在请求体里显式给了 stream 字段（区分「省略」与「显式 false」）
+	StreamDefaulted    bool // 本次 stream=true 是网关默认补的（客户端省略），用于决定是否向上游注入 stream/partial_images
 	N                  int
 	Size               string
 	ExplicitSize       bool
@@ -220,6 +222,9 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 	}
 	req.SizeTier = normalizeOpenAIImageSizeTier(req.Size)
 	req.RequiredCapability = classifyOpenAIImagesCapability(req)
+	// 放在能力分类「之后」：默认补的 stream 不参与 Basic/Native 判定，路由口径与改动前完全一致，
+	// 仅改变响应是否流式 + 是否向上游注入 stream/partial_images。
+	applyOpenAIImagesStreamDefault(req)
 	return req, nil
 }
 
@@ -235,6 +240,7 @@ func parseOpenAIImagesJSONRequest(body []byte, req *OpenAIImagesRequest) error {
 			return fmt.Errorf("invalid stream field type")
 		}
 		req.Stream = streamResult.Bool()
+		req.StreamExplicit = true
 	}
 
 	if nResult := gjson.GetBytes(body, "n"); nResult.Exists() {
@@ -385,6 +391,7 @@ func parseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ope
 				return fmt.Errorf("invalid stream field value")
 			}
 			req.Stream = parsed
+			req.StreamExplicit = true
 		case "n":
 			n, err := strconv.Atoi(value)
 			if err != nil || n <= 0 {
@@ -452,6 +459,25 @@ func applyOpenAIImagesDefaults(req *OpenAIImagesRequest) {
 		return
 	}
 	req.Model = "gpt-image-2"
+}
+
+// openAIImagesDefaultPartialImages 是「省略 stream 时默认流式」补的 partial_images 数量。
+// >=1 才能让上游在生成早期就吐出首个 partial image（首字节早到 → 不触发 Cloudflare ~100s 524）。
+const openAIImagesDefaultPartialImages = 2
+
+// applyOpenAIImagesStreamDefault：客户端未显式给 stream 字段时，把图片请求默认改成流式，
+// 并补一个 partial_images 让首字节尽早到达。客户端显式 stream:false / stream:true 一律尊重、不改。
+// 仅作用于图片接口（generations/edits）。partial_images 已显式给则不覆盖。
+func applyOpenAIImagesStreamDefault(req *OpenAIImagesRequest) {
+	if req == nil || req.StreamExplicit {
+		return
+	}
+	req.Stream = true
+	req.StreamDefaulted = true
+	if req.PartialImages == nil {
+		v := openAIImagesDefaultPartialImages
+		req.PartialImages = &v
+	}
 }
 
 func isOpenAIImageGenerationModel(model string) bool {
@@ -587,6 +613,15 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	forwardBody, forwardContentType, err := rewriteOpenAIImagesModel(body, parsed.ContentType, upstreamModel)
 	if err != nil {
 		return nil, err
+	}
+	// 「省略 stream → 默认流式」时：客户端原始体里没有 stream/partial_images，需向上游请求体注入，
+	// 否则上游不会流式、首字节晚到仍会被 CF ~100s 掐断。仅这种网关默认补流的情况注入；
+	// 客户端显式 stream 的请求按其原样转发，不动。
+	if parsed.StreamDefaulted {
+		forwardBody, forwardContentType, err = injectOpenAIImagesStreamFields(forwardBody, forwardContentType, parsed.PartialImages)
+		if err != nil {
+			return nil, err
+		}
 	}
 	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, parsed.Stream)
 	defer releaseUpstreamCtx()
@@ -851,6 +886,92 @@ func cloneMultipartHeader(src textproto.MIMEHeader) textproto.MIMEHeader {
 		dst[key] = copied
 	}
 	return dst
+}
+
+// injectOpenAIImagesStreamFields 往「将转发给上游」的图片请求体里注入 stream=true 与 partial_images，
+// 用于「客户端省略 stream → 网关默认补流式」的情况。已存在的字段不覆盖。
+// 同时支持 JSON（generations）与 multipart/form-data（edits 上传）。
+func injectOpenAIImagesStreamFields(body []byte, contentType string, partialImages *int) ([]byte, string, error) {
+	mediaType, _, mediaErr := mime.ParseMediaType(contentType)
+	if mediaErr == nil && strings.EqualFold(mediaType, "multipart/form-data") {
+		return injectOpenAIImagesStreamMultipart(body, contentType, partialImages)
+	}
+	out := body
+	var err error
+	if !gjson.GetBytes(out, "stream").Exists() {
+		if out, err = sjson.SetBytes(out, "stream", true); err != nil {
+			return nil, "", fmt.Errorf("inject image stream field: %w", err)
+		}
+	}
+	if partialImages != nil && !gjson.GetBytes(out, "partial_images").Exists() {
+		if out, err = sjson.SetBytes(out, "partial_images", *partialImages); err != nil {
+			return nil, "", fmt.Errorf("inject image partial_images field: %w", err)
+		}
+	}
+	return out, contentType, nil
+}
+
+// injectOpenAIImagesStreamMultipart 重建 multipart 表单，补上缺失的 stream / partial_images 文本字段。
+func injectOpenAIImagesStreamMultipart(body []byte, contentType string, partialImages *int) ([]byte, string, error) {
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, "", fmt.Errorf("parse multipart content-type: %w", err)
+	}
+	boundary := strings.TrimSpace(params["boundary"])
+	if boundary == "" {
+		return nil, "", fmt.Errorf("multipart boundary is required")
+	}
+
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	var buffer bytes.Buffer
+	writer := multipart.NewWriter(&buffer)
+	streamSeen := false
+	partialSeen := false
+
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("read multipart body: %w", err)
+		}
+		formName := strings.TrimSpace(part.FormName())
+		if part.FileName() == "" {
+			switch formName {
+			case "stream":
+				streamSeen = true
+			case "partial_images":
+				partialSeen = true
+			}
+		}
+		partHeader := cloneMultipartHeader(part.Header)
+		target, err := writer.CreatePart(partHeader)
+		if err != nil {
+			_ = part.Close()
+			return nil, "", fmt.Errorf("create multipart part: %w", err)
+		}
+		if _, err := io.Copy(target, part); err != nil {
+			_ = part.Close()
+			return nil, "", fmt.Errorf("copy multipart part: %w", err)
+		}
+		_ = part.Close()
+	}
+
+	if !streamSeen {
+		if err := writer.WriteField("stream", "true"); err != nil {
+			return nil, "", fmt.Errorf("append multipart stream field: %w", err)
+		}
+	}
+	if partialImages != nil && !partialSeen {
+		if err := writer.WriteField("partial_images", strconv.Itoa(*partialImages)); err != nil {
+			return nil, "", fmt.Errorf("append multipart partial_images field: %w", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", fmt.Errorf("finalize multipart body: %w", err)
+	}
+	return buffer.Bytes(), writer.FormDataContentType(), nil
 }
 
 func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(resp *http.Response, c *gin.Context) (OpenAIUsage, int, []string, error) {

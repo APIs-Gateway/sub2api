@@ -298,7 +298,76 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_PromptOnlyDefaultsRemainBa
 	require.NoError(t, err)
 	require.NotNil(t, parsed)
 	require.Equal(t, "gpt-image-2", parsed.Model)
+	// 能力分类仍按原始请求口径（prompt-only = Basic），路由不变。
 	require.Equal(t, OpenAIImagesCapabilityBasic, parsed.RequiredCapability)
+	// 省略 stream → 网关默认补流式 + partial_images（绕开 CF ~100s）。
+	require.True(t, parsed.Stream)
+	require.True(t, parsed.StreamDefaulted)
+	require.False(t, parsed.StreamExplicit)
+	require.NotNil(t, parsed.PartialImages)
+	require.Equal(t, openAIImagesDefaultPartialImages, *parsed.PartialImages)
+}
+
+func TestOpenAIGatewayServiceParseOpenAIImagesRequest_ExplicitStreamFalseRespected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"prompt":"draw a cat","stream":false}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	// 客户端显式 stream:false 必须被尊重，不默认补流。
+	require.False(t, parsed.Stream)
+	require.True(t, parsed.StreamExplicit)
+	require.False(t, parsed.StreamDefaulted)
+	require.Nil(t, parsed.PartialImages)
+}
+
+func TestInjectOpenAIImagesStreamFields_JSON(t *testing.T) {
+	pi := openAIImagesDefaultPartialImages
+	out, ct, err := injectOpenAIImagesStreamFields([]byte(`{"model":"gpt-image-2","prompt":"x"}`), "application/json", &pi)
+	require.NoError(t, err)
+	require.Equal(t, "application/json", ct)
+	require.True(t, gjson.GetBytes(out, "stream").Bool())
+	require.Equal(t, int64(openAIImagesDefaultPartialImages), gjson.GetBytes(out, "partial_images").Int())
+
+	// 已有 stream / partial_images 不覆盖。
+	pi2 := 9
+	out2, _, err := injectOpenAIImagesStreamFields([]byte(`{"stream":false,"partial_images":1}`), "application/json", &pi2)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(out2, "stream").Bool())
+	require.Equal(t, int64(1), gjson.GetBytes(out2, "partial_images").Int())
+}
+
+func TestInjectOpenAIImagesStreamFields_Multipart(t *testing.T) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	require.NoError(t, w.WriteField("model", "gpt-image-2"))
+	require.NoError(t, w.WriteField("prompt", "edit it"))
+	fw, err := w.CreateFormFile("image", "a.png")
+	require.NoError(t, err)
+	_, _ = fw.Write([]byte("PNGDATA"))
+	require.NoError(t, w.Close())
+
+	pi := openAIImagesDefaultPartialImages
+	out, ct, err := injectOpenAIImagesStreamFields(buf.Bytes(), w.FormDataContentType(), &pi)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(ct, "multipart/form-data"))
+	require.Contains(t, string(out), `name="stream"`)
+	require.Contains(t, string(out), `name="partial_images"`)
+
+	// 重新解析：stream 补上、原 model/上传文件保留。
+	parsedReq := &OpenAIImagesRequest{Endpoint: "/v1/images/edits", N: 1}
+	require.NoError(t, parseOpenAIImagesMultipartRequest(out, ct, parsedReq))
+	require.True(t, parsedReq.Stream)
+	require.Equal(t, "gpt-image-2", parsedReq.Model)
+	require.Len(t, parsedReq.Uploads, 1)
 }
 
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_ExplicitSizeRequiresNativeCapability(t *testing.T) {
@@ -578,7 +647,7 @@ func findOpenAIImageTestSSEEvent(events []openAIImageTestSSEEvent, name string) 
 
 func TestOpenAIGatewayServiceForwardImages_OAuthPassesNAndReturnsAllImages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","size":"1024x1024","quality":"high","n":3}`)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","size":"1024x1024","quality":"high","n":3,"stream":false}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -716,7 +785,7 @@ func TestOpenAIGatewayServiceForwardImages_OAuthUpstreamHTTPErrorSurfacesRealErr
 
 func TestOpenAIGatewayServiceForwardImages_OAuthNonStreamModerationBlockedReturnsClientError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	body := []byte(`{"model":"gpt-image-2","prompt":"draw blocked image","response_format":"b64_json"}`)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw blocked image","response_format":"b64_json","stream":false}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -1119,6 +1188,114 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyStreamMultilineSSEDataBillsImag
 	require.Equal(t, 8, result.Usage.ImageOutputTokens)
 }
 
+// 省略 stream 时：API key 路径应默认补流式，并向上游请求体注入 stream:true + partial_images，客户端收到 SSE。
+func TestOpenAIGatewayServiceForwardImages_APIKeyOmittedStreamDefaultsToStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","response_format":"b64_json"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{},
+		httpUpstream: &httpUpstreamRecorder{
+			resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header: http.Header{
+					"Content-Type": []string{"text/event-stream"},
+					"X-Request-Id": []string{"req_img_omit_apikey"},
+				},
+				Body: io.NopCloser(strings.NewReader(
+					"data: {\"type\":\"image_generation.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":18,\"output_tokens_details\":{\"image_tokens\":8}},\"b64_json\":\"ZmluYWw=\",\"output_format\":\"png\"}\n\n" +
+						"data: [DONE]\n\n",
+				)),
+			},
+		},
+	}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	require.True(t, parsed.Stream)
+	require.True(t, parsed.StreamDefaulted)
+
+	account := &Account{
+		ID:          9,
+		Name:        "openai-apikey",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "test-api-key"},
+	}
+
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Stream)
+
+	upstream, ok := svc.httpUpstream.(*httpUpstreamRecorder)
+	require.True(t, ok)
+	require.NotNil(t, upstream.lastBody)
+	// 注入到上游请求体：stream:true + partial_images。
+	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+	require.Equal(t, int64(openAIImagesDefaultPartialImages), gjson.GetBytes(upstream.lastBody, "partial_images").Int())
+	// 客户端收到 SSE。
+	require.Contains(t, rec.Header().Get("Content-Type"), "event-stream")
+}
+
+// 省略 stream 时：OAuth 路径（上游 Responses API 本就一直流式）应把响应以 SSE 回给客户端，而非缓冲成 JSON。
+func TestOpenAIGatewayServiceForwardImages_OAuthOmittedStreamDefaultsToStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","response_format":"url"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	require.True(t, parsed.Stream)
+	require.True(t, parsed.StreamDefaulted)
+
+	svc.httpUpstream = &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"text/event-stream"},
+				"X-Request-Id": []string{"req_img_omit_oauth"},
+			},
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"type\":\"response.created\",\"response\":{\"created_at\":1710000001,\"tools\":[{\"type\":\"image_generation\",\"model\":\"gpt-image-2\",\"output_format\":\"png\",\"size\":\"1024x1024\"}]}}\n\n" +
+					"data: {\"type\":\"response.image_generation_call.partial_image\",\"partial_image_b64\":\"cGFydGlhbA==\",\"partial_image_index\":0,\"output_format\":\"png\"}\n\n" +
+					"data: {\"type\":\"response.completed\",\"response\":{\"created_at\":1710000001,\"usage\":{\"input_tokens\":5,\"output_tokens\":9,\"output_tokens_details\":{\"image_tokens\":4}},\"tool_usage\":{\"image_gen\":{\"images\":1}},\"output\":[{\"type\":\"image_generation_call\",\"result\":\"ZmluYWw=\",\"output_format\":\"png\"}]}}\n\n" +
+					"data: [DONE]\n\n",
+			)),
+		},
+	}
+
+	account := &Account{
+		ID:       3,
+		Name:     "openai-oauth",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token-123",
+		},
+	}
+
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Stream)
+	require.Contains(t, rec.Header().Get("Content-Type"), "event-stream")
+	events := parseOpenAIImageTestSSEEvents(rec.Body.String())
+	_, ok := findOpenAIImageTestSSEEvent(events, "image_generation.partial_image")
+	require.True(t, ok)
+}
+
 func TestExtractOpenAIImagesBillableCountFromJSONBytes_CompletedEvent(t *testing.T) {
 	body := []byte(`{"type":"image_generation.completed","b64_json":"ZmluYWw=","usage":{"input_tokens":10,"output_tokens":18}}`)
 
@@ -1327,6 +1504,7 @@ func TestOpenAIGatewayServiceForwardImages_OAuthEditsMultipartUsesResponsesAPI(t
 	require.NoError(t, writer.WriteField("input_fidelity", "high"))
 	require.NoError(t, writer.WriteField("output_format", "webp"))
 	require.NoError(t, writer.WriteField("quality", "high"))
+	require.NoError(t, writer.WriteField("stream", "false"))
 
 	imageHeader := make(textproto.MIMEHeader)
 	imageHeader.Set("Content-Disposition", `form-data; name="image"; filename="source.png"`)
