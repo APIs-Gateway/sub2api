@@ -117,6 +117,9 @@ func RegisterUserRoutes(
 			subscriptions.GET("/summary", h.Subscription.GetSummary)
 			// 用户自助：设置自己某张订阅卡的「最多透支天数」
 			subscriptions.PUT("/:id/overdraft", h.Subscription.SetOverdraftDays)
+			// 用户自助生命周期：续费（同档延长）/ 转套餐（折旧抵新、多退少补），均从其他余额扣费。
+			subscriptions.POST("/renew", h.Subscription.Renew)
+			subscriptions.POST("/change-plan", h.Subscription.ChangePlan)
 		}
 
 		// 渠道监控（用户只读）

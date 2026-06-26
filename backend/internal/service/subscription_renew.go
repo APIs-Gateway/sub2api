@@ -14,10 +14,10 @@ import (
 
 // RenewResult 续费结果（规格第 5 节）。
 type RenewResult struct {
-	SubscriptionID int64
-	AddedDays      int     // 本次续的自然天数 T'
-	Price          float64 // 续费价 = cfg.Price(D, T')
-	NewExpireDay   int     // 续后 expire_day = max(原, today−1) + T'（夹上限）
+	SubscriptionID int64   `json:"subscription_id"`
+	AddedDays      int     `json:"added_days"`     // 本次续的自然天数 T'
+	Price          float64 `json:"price"`          // 续费价 = cfg.Price(D, T')
+	NewExpireDay   int     `json:"new_expire_day"` // 续后 expire_day = max(原, today−1) + T'（夹上限）
 }
 
 // RenewSubscription 续费当前生效卡（规格第 5 节）：同套餐续 T' 天、D 不变，只延长发放期、不叠加额度

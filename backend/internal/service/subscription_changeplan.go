@@ -15,13 +15,13 @@ import (
 
 // ChangePlanResult 转套餐结果（规格第 7 节）。
 type ChangePlanResult struct {
-	OldSubscriptionID   int64
-	NewSubscriptionID   int64
-	OldRemainingValue   float64 // V = P_旧 × 剩余服务天数 / T_旧
-	NewPlanPrice        float64 // P_新 = D_新 × T_新 × u(D_新)
-	Diff                float64 // P_新 − V：>0 已从余额扣的补差价；<0 已退进余额的差价；0 持平
-	NewCardTodayBalance float64 // 新卡当天套餐余额 = max(0, D_新 − 旧卡今日已用)
-	NewExpireDay        int
+	OldSubscriptionID   int64   `json:"old_subscription_id"`
+	NewSubscriptionID   int64   `json:"new_subscription_id"`
+	OldRemainingValue   float64 `json:"old_remaining_value"`    // V = P_旧 × 剩余服务天数 / T_旧
+	NewPlanPrice        float64 `json:"new_plan_price"`         // P_新 = D_新 × T_新 × u(D_新)
+	Diff                float64 `json:"diff"`                   // P_新 − V：>0 已从余额扣的补差价；<0 已退进余额的差价；0 持平
+	NewCardTodayBalance float64 `json:"new_card_today_balance"` // 新卡当天套餐余额 = max(0, D_新 − 旧卡今日已用)
+	NewExpireDay        int     `json:"new_expire_day"`
 }
 
 // ChangeSubscriptionPlan 把用户当前生效卡转成另一档套餐（规格第 7 节）：旧卡按剩余服务天数折出
