@@ -298,7 +298,76 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_PromptOnlyDefaultsRemainBa
 	require.NoError(t, err)
 	require.NotNil(t, parsed)
 	require.Equal(t, "gpt-image-2", parsed.Model)
+	// 能力分类仍按原始请求口径（prompt-only = Basic），路由不变。
 	require.Equal(t, OpenAIImagesCapabilityBasic, parsed.RequiredCapability)
+	// 省略 stream → 网关默认补流式 + partial_images（绕开 CF ~100s）。
+	require.True(t, parsed.Stream)
+	require.True(t, parsed.StreamDefaulted)
+	require.False(t, parsed.StreamExplicit)
+	require.NotNil(t, parsed.PartialImages)
+	require.Equal(t, openAIImagesDefaultPartialImages, *parsed.PartialImages)
+}
+
+func TestOpenAIGatewayServiceParseOpenAIImagesRequest_ExplicitStreamFalseRespected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"prompt":"draw a cat","stream":false}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	// 客户端显式 stream:false 必须被尊重，不默认补流。
+	require.False(t, parsed.Stream)
+	require.True(t, parsed.StreamExplicit)
+	require.False(t, parsed.StreamDefaulted)
+	require.Nil(t, parsed.PartialImages)
+}
+
+func TestInjectOpenAIImagesStreamFields_JSON(t *testing.T) {
+	pi := openAIImagesDefaultPartialImages
+	out, ct, err := injectOpenAIImagesStreamFields([]byte(`{"model":"gpt-image-2","prompt":"x"}`), "application/json", &pi)
+	require.NoError(t, err)
+	require.Equal(t, "application/json", ct)
+	require.True(t, gjson.GetBytes(out, "stream").Bool())
+	require.Equal(t, int64(openAIImagesDefaultPartialImages), gjson.GetBytes(out, "partial_images").Int())
+
+	// 已有 stream / partial_images 不覆盖。
+	pi2 := 9
+	out2, _, err := injectOpenAIImagesStreamFields([]byte(`{"stream":false,"partial_images":1}`), "application/json", &pi2)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(out2, "stream").Bool())
+	require.Equal(t, int64(1), gjson.GetBytes(out2, "partial_images").Int())
+}
+
+func TestInjectOpenAIImagesStreamFields_Multipart(t *testing.T) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	require.NoError(t, w.WriteField("model", "gpt-image-2"))
+	require.NoError(t, w.WriteField("prompt", "edit it"))
+	fw, err := w.CreateFormFile("image", "a.png")
+	require.NoError(t, err)
+	_, _ = fw.Write([]byte("PNGDATA"))
+	require.NoError(t, w.Close())
+
+	pi := openAIImagesDefaultPartialImages
+	out, ct, err := injectOpenAIImagesStreamFields(buf.Bytes(), w.FormDataContentType(), &pi)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(ct, "multipart/form-data"))
+	require.Contains(t, string(out), `name="stream"`)
+	require.Contains(t, string(out), `name="partial_images"`)
+
+	// 重新解析：stream 补上、原 model/上传文件保留。
+	parsedReq := &OpenAIImagesRequest{Endpoint: "/v1/images/edits", N: 1}
+	require.NoError(t, parseOpenAIImagesMultipartRequest(out, ct, parsedReq))
+	require.True(t, parsedReq.Stream)
+	require.Equal(t, "gpt-image-2", parsedReq.Model)
+	require.Len(t, parsedReq.Uploads, 1)
 }
 
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_ExplicitSizeRequiresNativeCapability(t *testing.T) {
