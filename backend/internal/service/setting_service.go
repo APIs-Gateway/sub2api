@@ -2207,19 +2207,14 @@ func (s *SettingService) validateDefaultSubscriptionGroups(ctx context.Context, 
 			continue
 		}
 
-		group, err := s.defaultSubGroupReader.GetByID(ctx, item.GroupID)
-		if err != nil {
+		// per-day：默认订阅分组与 group 类型解耦，group 仅作路由；此处只校验分组存在。
+		if _, err := s.defaultSubGroupReader.GetByID(ctx, item.GroupID); err != nil {
 			if errors.Is(err, ErrGroupNotFound) {
 				return ErrDefaultSubGroupInvalid.WithMetadata(map[string]string{
 					"group_id": strconv.FormatInt(item.GroupID, 10),
 				})
 			}
 			return fmt.Errorf("get default subscription group %d: %w", item.GroupID, err)
-		}
-		if !group.IsSubscriptionType() {
-			return ErrDefaultSubGroupInvalid.WithMetadata(map[string]string{
-				"group_id": strconv.FormatInt(item.GroupID, 10),
-			})
 		}
 	}
 

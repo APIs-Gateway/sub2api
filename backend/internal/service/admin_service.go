@@ -3324,13 +3324,15 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		if input.GroupID == nil {
 			return nil, errors.New("group_id is required for subscription type")
 		}
-		// 验证分组存在且为订阅类型
+		// per-day：订阅与 group 类型解耦，group 仅作路由快照；但兑换码发卡的每日额度 D
+		// 经 group.daily_limit_usd 回退取值（见 resolveAssignDailyAmount），故要求该值 > 0，
+		// 否则兑换时才会以 INVALID_DAILY_AMOUNT 失败，体验差。
 		group, err := s.groupRepo.GetByID(ctx, *input.GroupID)
 		if err != nil {
 			return nil, fmt.Errorf("group not found: %w", err)
 		}
-		if !group.IsSubscriptionType() {
-			return nil, errors.New("group must be subscription type")
+		if group.DailyLimitUSD == nil || *group.DailyLimitUSD <= 0 {
+			return nil, errors.New("group must define a positive daily_limit_usd to back a subscription")
 		}
 	}
 
