@@ -111,6 +111,48 @@ func TestChangePlan_Calculators(t *testing.T) {
 	}
 }
 
+// QuoteChangePlan 组合测算（规格第 7 节）：多退少补 + 新卡发放参数。
+func TestQuoteChangePlan(t *testing.T) {
+	cfg := DefaultSubscriptionPricingConfig()
+	const today = 1000
+	// 旧卡：P=300、T=30、剩 20 天、今天已用 4（D_旧=10、today_remaining=6）。
+	q := QuoteChangePlan(cfg, 300, 20, 30 /*dNew*/, 12 /*tNew*/, 30 /*oldTodaySpent*/, 4, today)
+
+	// V 与退款同口径：300×20/30 = 200。
+	if !lcApprox(q.OldRemainingValue, 200) {
+		t.Fatalf("V=%v want 200", q.OldRemainingValue)
+	}
+	// P_新 = cfg.Price(12,30)；Diff = P_新 − V。
+	wantPNew := cfg.Price(12, 30)
+	if !lcApprox(q.NewPlanPrice, wantPNew) {
+		t.Fatalf("P_新=%v want %v", q.NewPlanPrice, wantPNew)
+	}
+	if !lcApprox(q.Diff, wantPNew-200) {
+		t.Fatalf("Diff=%v want %v", q.Diff, wantPNew-200)
+	}
+	// 新卡当天余额 = max(0, 12−4) = 8（防套利：今天已领的 4 不再重复发）。
+	if !lcApprox(q.NewCardTodayBalance, 8) {
+		t.Fatalf("新卡当天余额=%v want 8", q.NewCardTodayBalance)
+	}
+	// 新卡 expire_day = today + 30 − 1 = 1029。
+	if q.NewCardExpireDay != today+29 {
+		t.Fatalf("新卡 expire_day=%d want %d", q.NewCardExpireDay, today+29)
+	}
+}
+
+// 旧卡被透支借光天数（remaining=0）→ V=0，转套餐 = 全额买新套餐（Diff = P_新）。
+func TestQuoteChangePlan_OldDepleted(t *testing.T) {
+	cfg := DefaultSubscriptionPricingConfig()
+	const today = 1000
+	q := QuoteChangePlan(cfg, 300 /*oldRefundableDays*/, 0, 30, 10, 30, 0, today)
+	if q.OldRemainingValue != 0 {
+		t.Fatalf("借光 V 应为 0，got %v", q.OldRemainingValue)
+	}
+	if !lcApprox(q.Diff, cfg.Price(10, 30)) {
+		t.Fatalf("Diff 应= 全额 P_新=%v，got %v", cfg.Price(10, 30), q.Diff)
+	}
+}
+
 // TodaySpentFromPackage 作为「旧卡今日已用」喂给转套餐新卡当天余额：闭环校验。
 func TestChangePlan_TodaySpentFeedsNewCard(t *testing.T) {
 	const today = 1000

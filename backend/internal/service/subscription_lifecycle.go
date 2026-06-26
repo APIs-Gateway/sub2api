@@ -62,3 +62,30 @@ func ChangePlanNewCardTodayBalance(dNew, oldTodaySpent float64) float64 {
 	}
 	return v
 }
+
+// ChangePlanQuote 转套餐的完整资金/发卡测算（规格第 7 节），纯计算、无副作用，供服务层落账时直接取用。
+type ChangePlanQuote struct {
+	OldRemainingValue   float64 // V = P_旧 × max(0, expire_day_旧−today) / T_旧（旧卡折剩余价值，已含已用+透支借天扣减）
+	NewPlanPrice        float64 // P_新 = D_新 × T_新 × u(D_新)
+	Diff                float64 // P_新 − V：>0 需补差价（从其他余额扣或发起支付）；<0 应退差价（进其他余额）
+	NewCardTodayBalance float64 // max(0, D_新 − 旧卡今日已用)（防套利；次日起按 D_新 发放）
+	NewCardExpireDay    int     // today + T_新 − 1，夹到 MaxExpireDay()（新卡 start_day=today）
+}
+
+// QuoteChangePlan 用旧卡的剩余天数/原价/原天数与新套餐 D_新/T_新，测算转套餐的多退少补与新卡发放参数。
+//
+//	oldRefundableDays 用旧卡 (*PerDayCard).RefundableDays(today) 取（含透支借天扣减）；
+//	oldTodaySpent     用旧卡 (*PerDayCard).TodaySpentFromPackage(today) 取。
+//
+// 仅做纯测算；旧卡关闭、新卡落库、差额补扣/退、发起支付等副作用由服务层按规格第 7 节处理。
+func QuoteChangePlan(cfg SubscriptionPricingConfig, oldPrice float64, oldRefundableDays, oldT int, dNew float64, tNew int, oldTodaySpent float64, today int) ChangePlanQuote {
+	v := ChangePlanRemainingValue(oldPrice, oldRefundableDays, oldT)
+	pNew := cfg.Price(dNew, tNew)
+	return ChangePlanQuote{
+		OldRemainingValue:   v,
+		NewPlanPrice:        pNew,
+		Diff:                pNew - v,
+		NewCardTodayBalance: ChangePlanNewCardTodayBalance(dNew, oldTodaySpent),
+		NewCardExpireDay:    ClampExpireDay(today + tNew - 1),
+	}
+}
