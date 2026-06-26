@@ -242,7 +242,12 @@ func (s *SubscriptionService) resolveAssignDailyAmount(ctx context.Context, inpu
 		return input.DailyAmountUSD, nil
 	}
 	if input.GroupID > 0 {
-		if group, err := s.groupRepo.GetByID(ctx, input.GroupID); err == nil && group != nil && group.DailyLimitUSD != nil && *group.DailyLimitUSD > 0 {
+		group, err := s.groupRepo.GetByID(ctx, input.GroupID)
+		if err != nil {
+			// 不要把 DB 抖动等内部错误吞成 INVALID_DAILY_AMOUNT，返回原始错误。
+			return 0, fmt.Errorf("resolve daily amount: group lookup: %w", err)
+		}
+		if group != nil && group.DailyLimitUSD != nil && *group.DailyLimitUSD > 0 {
 			return *group.DailyLimitUSD, nil
 		}
 	}
@@ -373,6 +378,16 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 		Subscriptions: make([]UserSubscription, 0),
 		Errors:        make([]string, 0),
 		Statuses:      make(map[int64]string),
+	}
+
+	// 请求级预校验：group 与每日额度 D 对整批是同一份参数（input.GroupID / input.DailyAmountUSD
+	// 或同一 group 回退）。这类公共参数错误应循环前直接返回（handler 转 400），不要吞成每个用户
+	// failed 再被 success 包装，导致前端误判请求成功。
+	if input.GroupID <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_INPUT", "group_id is required")
+	}
+	if _, err := s.resolveAssignDailyAmount(ctx, &AssignSubscriptionInput{GroupID: input.GroupID, DailyAmountUSD: input.DailyAmountUSD}); err != nil {
+		return nil, err
 	}
 
 	for _, userID := range input.UserIDs {

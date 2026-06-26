@@ -476,6 +476,27 @@ func TestBulkAssignSubscription_PropagatesDailyAmount(t *testing.T) {
 	require.InDelta(t, 450, any.GrantedTotalUSD, 1e-9, "granted_total = 15×30")
 }
 
+// Bulk 请求级参数错误（无 D 且 group 无 daily_limit 回退）应循环前直接返回错误（handler 转 400），
+// 不吞成每用户 failed 再被 success 包装。
+func TestBulkAssignSubscription_RequestLevelDailyAmountError(t *testing.T) {
+	groupRepo := &subscriptionGroupRepoStub{
+		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription}, // 无 DailyLimitUSD
+	}
+	subRepo := newSubscriptionUserSubRepoStub()
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil, nil)
+
+	result, err := svc.BulkAssignSubscription(context.Background(), &BulkAssignSubscriptionInput{
+		UserIDs:      []int64{101, 102},
+		GroupID:      1,
+		ValidityDays: 30,
+		// 无 DailyAmountUSD
+	})
+	require.Error(t, err)
+	require.Equal(t, infraerrors.Code(ErrInvalidDailyAmount), infraerrors.Code(err))
+	require.Nil(t, result, "请求级错误应返回 nil result，而非 partial-success")
+	require.Equal(t, 0, subRepo.createCalls, "循环前预校验失败 → 不建任何卡")
+}
+
 func strconvFormatInt(v int64) string {
 	return strconv.FormatInt(v, 10)
 }
