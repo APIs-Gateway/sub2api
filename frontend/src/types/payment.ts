@@ -107,6 +107,8 @@ export interface SubscriptionPlan {
   group_platform?: string
   group_name?: string
   rate_multiplier?: number
+  /** per-day 每日额度 D（source of truth；展示用此值，而非 group 的 daily_limit_usd） */
+  daily_amount_usd?: number | null
   daily_limit_usd?: number | null
   weekly_limit_usd?: number | null
   monthly_limit_usd?: number | null

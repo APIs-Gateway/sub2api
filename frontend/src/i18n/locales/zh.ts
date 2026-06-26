@@ -7406,6 +7406,7 @@ export default {
     planCard: {
       rate: '倍率',
       dailyLimit: '日限额',
+      dailyAmount: '每日额度',
       weeklyLimit: '周限额',
       monthlyLimit: '月限额',
       quota: '配额',
@@ -7492,6 +7493,8 @@ export default {
       deleteChannel: '删除渠道',
       deleteChannelConfirm: '确定要删除此渠道吗？',
       planName: '套餐名称',
+      dailyAmount: '每日额度（USD）',
+      dailyAmountRequired: '每日额度必须大于 0',
       planDescription: '套餐描述',
       createPlan: '创建套餐',
       editPlan: '编辑套餐',

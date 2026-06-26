@@ -123,7 +123,11 @@ func (s *PaymentConfigService) ListPlans(ctx context.Context) ([]*dbent.Subscrip
 }
 
 func (s *PaymentConfigService) ListPlansForSale(ctx context.Context) ([]*dbent.SubscriptionPlan, error) {
-	return s.entClient.SubscriptionPlan.Query().Where(subscriptionplan.ForSaleEQ(true)).Order(subscriptionplan.BySortOrder()).All(ctx)
+	// per-day：只售 D>0 的套餐。存量迁移155 可能回填出 D=0 且 for_sale=true 的脏数据，
+	// 这类套餐下单会被 validateSubOrder 拒，故不应出现在用户侧列表/结账页。
+	return s.entClient.SubscriptionPlan.Query().
+		Where(subscriptionplan.ForSaleEQ(true), subscriptionplan.DailyAmountUsdGT(0)).
+		Order(subscriptionplan.BySortOrder()).All(ctx)
 }
 
 func (s *PaymentConfigService) CreatePlan(ctx context.Context, req CreatePlanRequest) (*dbent.SubscriptionPlan, error) {

@@ -7226,6 +7226,7 @@ export default {
     planCard: {
       rate: 'Rate',
       dailyLimit: 'Daily',
+      dailyAmount: 'Daily Amount',
       weeklyLimit: 'Weekly',
       monthlyLimit: 'Monthly',
       quota: 'Quota',
@@ -7313,6 +7314,8 @@ export default {
       deleteChannel: 'Delete Channel',
       deleteChannelConfirm: 'Are you sure you want to delete this channel?',
       planName: 'Plan Name',
+      dailyAmount: 'Daily Amount (USD)',
+      dailyAmountRequired: 'Daily amount must be greater than 0',
       planDescription: 'Plan Description',
       createPlan: 'Create Plan',
       editPlan: 'Edit Plan',

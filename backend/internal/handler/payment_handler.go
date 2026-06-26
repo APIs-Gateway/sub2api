@@ -54,26 +54,28 @@ func (h *PaymentHandler) GetPlans(c *gin.Context) {
 	}
 	// Enrich plans with group platform for frontend color coding
 	type planWithPlatform struct {
-		ID            int64    `json:"id"`
-		GroupID       int64    `json:"group_id"`
-		GroupPlatform string   `json:"group_platform"`
-		Name          string   `json:"name"`
-		Description   string   `json:"description"`
-		Price         float64  `json:"price"`
-		OriginalPrice *float64 `json:"original_price,omitempty"`
-		ValidityDays  int      `json:"validity_days"`
-		ValidityUnit  string   `json:"validity_unit"`
-		Features      string   `json:"features"`
-		ProductName   string   `json:"product_name"`
-		ForSale       bool     `json:"for_sale"`
-		SortOrder     int      `json:"sort_order"`
+		ID             int64    `json:"id"`
+		GroupID        int64    `json:"group_id"`
+		GroupPlatform  string   `json:"group_platform"`
+		DailyAmountUSD float64  `json:"daily_amount_usd"`
+		Name           string   `json:"name"`
+		Description    string   `json:"description"`
+		Price          float64  `json:"price"`
+		OriginalPrice  *float64 `json:"original_price,omitempty"`
+		ValidityDays   int      `json:"validity_days"`
+		ValidityUnit   string   `json:"validity_unit"`
+		Features       string   `json:"features"`
+		ProductName    string   `json:"product_name"`
+		ForSale        bool     `json:"for_sale"`
+		SortOrder      int      `json:"sort_order"`
 	}
 	platformMap := h.configService.GetGroupPlatformMap(c.Request.Context(), plans)
 	result := make([]planWithPlatform, 0, len(plans))
 	for _, p := range plans {
 		result = append(result, planWithPlatform{
 			ID: int64(p.ID), GroupID: p.GroupID, GroupPlatform: platformMap[p.GroupID],
-			Name: p.Name, Description: p.Description, Price: p.Price, OriginalPrice: p.OriginalPrice,
+			DailyAmountUSD: p.DailyAmountUsd,
+			Name:           p.Name, Description: p.Description, Price: p.Price, OriginalPrice: p.OriginalPrice,
 			ValidityDays: p.ValidityDays, ValidityUnit: p.ValidityUnit, Features: p.Features,
 			ProductName: p.ProductName, ForSale: p.ForSale, SortOrder: p.SortOrder,
 		})
@@ -121,6 +123,7 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		planList = append(planList, checkoutPlan{
 			ID: int64(p.ID), GroupID: p.GroupID,
 			GroupPlatform: gi.Platform, GroupName: gi.Name,
+			DailyAmountUSD: p.DailyAmountUsd,
 			RateMultiplier: gi.RateMultiplier, DailyLimitUSD: gi.DailyLimitUSD,
 			WeeklyLimitUSD: gi.WeeklyLimitUSD, MonthlyLimitUSD: gi.MonthlyLimitUSD,
 			ModelScopes: gi.ModelScopes,
@@ -164,6 +167,7 @@ type checkoutPlan struct {
 	GroupID         int64    `json:"group_id"`
 	GroupPlatform   string   `json:"group_platform"`
 	GroupName       string   `json:"group_name"`
+	DailyAmountUSD  float64  `json:"daily_amount_usd"`
 	RateMultiplier  float64  `json:"rate_multiplier"`
 	DailyLimitUSD   *float64 `json:"daily_limit_usd"`
 	WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`
