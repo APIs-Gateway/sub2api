@@ -516,6 +516,14 @@ func (s *PaymentService) ExecuteSubscriptionFulfillment(ctx context.Context, oid
 func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error {
 	gid := *o.SubscriptionGroupID
 	days := *o.SubscriptionDays
+	// per-day：严格按订单**冻结快照**发卡（D/T 不按回调时的当前公式/group 配置重算）；
+	// 无快照的老订单回退 subscription_days + group.daily_limit_usd 兼容路径（dailyAmount=0 时
+	// createSubscription 会回退 group）。
+	var dailyAmount float64
+	if d, t, ok := readSubscriptionSnapshotDT(o); ok {
+		dailyAmount = d
+		days = t
+	}
 	g, err := s.groupRepo.GetByID(ctx, gid)
 	if err != nil || g.Status != payment.EntityStatusActive {
 		return fmt.Errorf("group %d no longer exists or inactive", gid)
@@ -527,7 +535,7 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 		return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
 	}
 	orderNote := fmt.Sprintf("payment order %d", o.ID)
-	_, _, err = s.subscriptionSvc.AssignOrExtendSubscription(ctx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, AssignedBy: 0, Notes: orderNote})
+	_, _, err = s.subscriptionSvc.AssignOrExtendSubscription(ctx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, AssignedBy: 0, Notes: orderNote})
 	if err != nil {
 		return fmt.Errorf("assign subscription: %w", err)
 	}

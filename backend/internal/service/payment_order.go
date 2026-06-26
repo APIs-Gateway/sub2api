@@ -137,12 +137,11 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 	if err != nil || !plan.ForSale {
 		return nil, infraerrors.NotFound("PLAN_NOT_AVAILABLE", "plan not found or not for sale")
 	}
+	// per-day：套餐与 group 解耦，不再校验「订阅型分组」。但卡仍带 group_id（历史快照/路由），
+	// 故校验所挂 group 存在且 active（保证下单冻结的 subscription_group_id 可用）。
 	group, err := s.groupRepo.GetByID(ctx, plan.GroupID)
 	if err != nil || group.Status != payment.EntityStatusActive {
 		return nil, infraerrors.NotFound("GROUP_NOT_FOUND", "subscription group is no longer available")
-	}
-	if !group.IsSubscriptionType() {
-		return nil, infraerrors.BadRequest("GROUP_TYPE_MISMATCH", "group is not a subscription type")
 	}
 	return plan, nil
 }
@@ -169,6 +168,13 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		return nil, err
 	}
 	providerSnapshot := buildPaymentOrderProviderSnapshot(sel, req)
+	// 订阅订单：把定价 D/T/u/price/formula_version 冻结进快照，回调严格按此发卡、不重算。
+	if plan != nil {
+		if providerSnapshot == nil {
+			providerSnapshot = map[string]any{"schema_version": 2}
+		}
+		providerSnapshot[subscriptionSnapshotKey] = buildSubscriptionOrderSnapshot(plan, providerSnapshot)
+	}
 	selectedInstanceID := ""
 	selectedProviderKey := ""
 	if sel != nil {
@@ -308,6 +314,49 @@ func buildPaymentOrderProviderSnapshot(sel *payment.InstanceSelection, req Creat
 		return nil
 	}
 	return snapshot
+}
+
+// subscriptionSnapshotKey 是 provider_snapshot 里冻结订阅定价快照的子键。
+const subscriptionSnapshotKey = "subscription"
+
+// buildSubscriptionOrderSnapshot 在下单时把订阅定价**冻结**进订单快照（D/T/u/price/formula_version/
+// currency）。支付回调严格按此快照发卡，绝不按回调时的当前公式/配置重算（防下单后管理员改价/范围
+// 导致发出与用户当时所付不一致的卡）。currency 复用基础快照里的值（缺省站点本币）。
+func buildSubscriptionOrderSnapshot(plan *dbent.SubscriptionPlan, base map[string]any) map[string]any {
+	d := plan.DailyAmountUsd
+	t := psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit)
+	currency := payment.DefaultPaymentCurrency
+	if base != nil {
+		if c, ok := base["currency"].(string); ok && strings.TrimSpace(c) != "" {
+			currency = c
+		}
+	}
+	return map[string]any{
+		"daily_amount_usd": d,
+		"validity_days":    t,
+		"unit_price":       DefaultSubscriptionPricingConfig().UnitPrice(d),
+		"price":            plan.Price,
+		"formula_version":  SubscriptionFormulaVersion,
+		"currency":         currency,
+	}
+}
+
+// readSubscriptionSnapshotDT 从订单冻结快照读出每日额度 D 与有效天数 T（JSON 数值回读为 float64）。
+// ok=false 表示无该快照（老订单）——调用方回退到 subscription_days + group 兼容路径。
+func readSubscriptionSnapshotDT(order *dbent.PaymentOrder) (dailyAmount float64, validityDays int, ok bool) {
+	if order == nil || order.ProviderSnapshot == nil {
+		return 0, 0, false
+	}
+	sub, ok := order.ProviderSnapshot[subscriptionSnapshotKey].(map[string]any)
+	if !ok {
+		return 0, 0, false
+	}
+	d, dOK := sub["daily_amount_usd"].(float64)
+	tf, tOK := sub["validity_days"].(float64)
+	if !dOK || !tOK || d <= 0 || tf <= 0 {
+		return 0, 0, false
+	}
+	return d, int(tf), true
 }
 
 func paymentOrderSnapshotWxpayAppID(sel *payment.InstanceSelection, req CreateOrderRequest) string {
