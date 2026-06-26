@@ -137,6 +137,12 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 	if err != nil || !plan.ForSale {
 		return nil, infraerrors.NotFound("PLAN_NOT_AVAILABLE", "plan not found or not for sale")
 	}
+	// per-day：下单期 fail-fast——套餐每日额度 D 必须为正。否则下单冻结的快照 D=0 会在履约时被判
+	// 坏快照而失败（已付款却无法履约、无自动退款）。存量套餐（迁移 155 从无 daily_limit 的 group
+	// 回填）可能 D=0 且仍在售，故必须在收款前拦截，而非等到履约。
+	if plan.DailyAmountUsd <= 0 {
+		return nil, infraerrors.BadRequest("PLAN_DAILY_AMOUNT_INVALID", "plan daily amount is invalid")
+	}
 	// per-day：套餐与 group 解耦，不再校验「订阅型分组」。但卡仍带 group_id（历史快照/路由），
 	// 故校验所挂 group 存在且 active（保证下单冻结的 subscription_group_id 可用）。
 	group, err := s.groupRepo.GetByID(ctx, plan.GroupID)
@@ -342,21 +348,47 @@ func buildSubscriptionOrderSnapshot(plan *dbent.SubscriptionPlan, base map[strin
 }
 
 // readSubscriptionSnapshotDT 从订单冻结快照读出每日额度 D 与有效天数 T（JSON 数值回读为 float64）。
-// ok=false 表示无该快照（老订单）——调用方回退到 subscription_days + group 兼容路径。
-func readSubscriptionSnapshotDT(order *dbent.PaymentOrder) (dailyAmount float64, validityDays int, ok bool) {
+// present=false 表示无该快照（老订单）——调用方回退到 subscription_days + group 兼容路径；
+// present=true 且 err!=nil 表示新订单快照损坏，必须失败，不能按回调时 group 配置重算。
+func readSubscriptionSnapshotDT(order *dbent.PaymentOrder) (dailyAmount float64, validityDays int, present bool, err error) {
 	if order == nil || order.ProviderSnapshot == nil {
-		return 0, 0, false
+		return 0, 0, false, nil
 	}
-	sub, ok := order.ProviderSnapshot[subscriptionSnapshotKey].(map[string]any)
+	raw, exists := order.ProviderSnapshot[subscriptionSnapshotKey]
+	if !exists {
+		return 0, 0, false, nil
+	}
+	sub, ok := raw.(map[string]any)
 	if !ok {
-		return 0, 0, false
+		return 0, 0, true, fmt.Errorf("invalid subscription snapshot: expected object")
 	}
-	d, dOK := sub["daily_amount_usd"].(float64)
-	tf, tOK := sub["validity_days"].(float64)
+	d, dOK := snapshotFloat64(sub["daily_amount_usd"])
+	tf, tOK := snapshotFloat64(sub["validity_days"])
 	if !dOK || !tOK || d <= 0 || tf <= 0 {
-		return 0, 0, false
+		return 0, 0, true, fmt.Errorf("invalid subscription snapshot: invalid D/T")
 	}
-	return d, int(tf), true
+	days := int(tf)
+	if float64(days) != tf {
+		return 0, 0, true, fmt.Errorf("invalid subscription snapshot: validity_days must be integer")
+	}
+	return d, days, true, nil
+}
+
+func snapshotFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	default:
+		return 0, false
+	}
 }
 
 func paymentOrderSnapshotWxpayAppID(sel *payment.InstanceSelection, req CreateOrderRequest) string {

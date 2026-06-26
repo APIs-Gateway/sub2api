@@ -520,12 +520,19 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 	// 无快照的老订单回退 subscription_days + group.daily_limit_usd 兼容路径（dailyAmount=0 时
 	// createSubscription 会回退 group）。
 	var dailyAmount float64
-	if d, t, ok := readSubscriptionSnapshotDT(o); ok {
+	d, t, hasSnapshot, snapErr := readSubscriptionSnapshotDT(o)
+	if snapErr != nil {
+		return snapErr
+	}
+	if hasSnapshot {
 		dailyAmount = d
 		days = t
 	}
 	g, err := s.groupRepo.GetByID(ctx, gid)
-	if err != nil || g.Status != payment.EntityStatusActive {
+	if err != nil || g == nil {
+		return fmt.Errorf("group %d no longer exists", gid)
+	}
+	if !hasSnapshot && g.Status != payment.EntityStatusActive {
 		return fmt.Errorf("group %d no longer exists or inactive", gid)
 	}
 	// Idempotency: check audit log to see if subscription was already assigned.

@@ -12,12 +12,15 @@ import (
 )
 
 // validatePlanRequired checks that all required fields for a plan are provided.
-func validatePlanRequired(name string, groupID int64, price float64, validityDays int, validityUnit string, originalPrice *float64) error {
+func validatePlanRequired(name string, groupID int64, dailyAmountUSD, price float64, validityDays int, validityUnit string, originalPrice *float64) error {
 	if strings.TrimSpace(name) == "" {
 		return infraerrors.BadRequest("PLAN_NAME_REQUIRED", "plan name is required")
 	}
 	if groupID <= 0 {
 		return infraerrors.BadRequest("PLAN_GROUP_REQUIRED", "group is required")
+	}
+	if dailyAmountUSD <= 0 {
+		return infraerrors.BadRequest("PLAN_DAILY_AMOUNT_INVALID", "daily amount must be > 0")
 	}
 	if price <= 0 {
 		return infraerrors.BadRequest("PLAN_PRICE_INVALID", "price must be > 0")
@@ -41,6 +44,9 @@ func validatePlanPatch(req UpdatePlanRequest) error {
 	}
 	if req.GroupID != nil && *req.GroupID <= 0 {
 		return infraerrors.BadRequest("PLAN_GROUP_REQUIRED", "group is required")
+	}
+	if req.DailyAmountUSD != nil && *req.DailyAmountUSD <= 0 {
+		return infraerrors.BadRequest("PLAN_DAILY_AMOUNT_INVALID", "daily amount must be > 0")
 	}
 	if req.Price != nil && *req.Price <= 0 {
 		return infraerrors.BadRequest("PLAN_PRICE_INVALID", "price must be > 0")
@@ -121,11 +127,12 @@ func (s *PaymentConfigService) ListPlansForSale(ctx context.Context) ([]*dbent.S
 }
 
 func (s *PaymentConfigService) CreatePlan(ctx context.Context, req CreatePlanRequest) (*dbent.SubscriptionPlan, error) {
-	if err := validatePlanRequired(req.Name, req.GroupID, req.Price, req.ValidityDays, req.ValidityUnit, req.OriginalPrice); err != nil {
+	if err := validatePlanRequired(req.Name, req.GroupID, req.DailyAmountUSD, req.Price, req.ValidityDays, req.ValidityUnit, req.OriginalPrice); err != nil {
 		return nil, err
 	}
 	b := s.entClient.SubscriptionPlan.Create().
 		SetGroupID(req.GroupID).SetName(req.Name).SetDescription(req.Description).
+		SetDailyAmountUsd(req.DailyAmountUSD).
 		SetPrice(req.Price).SetValidityDays(req.ValidityDays).SetValidityUnit(req.ValidityUnit).
 		SetFeatures(req.Features).SetProductName(req.ProductName).
 		SetForSale(req.ForSale).SetSortOrder(req.SortOrder)
@@ -142,6 +149,18 @@ func (s *PaymentConfigService) UpdatePlan(ctx context.Context, id int64, req Upd
 	if err := validatePlanPatch(req); err != nil {
 		return nil, err
 	}
+	// per-day 纵深防御：把套餐改为在售时，「生效后」的每日额度 D 必须为正，否则会上架一个
+	// 下单即冻结 D=0 坏快照、付款后必失败的套餐。本次未改 D 时需查当前值（validatePlanPatch
+	// 仅在 req.DailyAmountUSD!=nil 时校验，挡不住存量 D=0 套餐被仅传 ForSale=true 翻牌）。
+	if req.ForSale != nil && *req.ForSale && req.DailyAmountUSD == nil {
+		cur, err := s.entClient.SubscriptionPlan.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if cur.DailyAmountUsd <= 0 {
+			return nil, infraerrors.BadRequest("PLAN_DAILY_AMOUNT_INVALID", "cannot put a plan on sale with non-positive daily amount; set daily_amount_usd > 0 first")
+		}
+	}
 	u := s.entClient.SubscriptionPlan.UpdateOneID(id)
 	if req.GroupID != nil {
 		u.SetGroupID(*req.GroupID)
@@ -151,6 +170,9 @@ func (s *PaymentConfigService) UpdatePlan(ctx context.Context, id int64, req Upd
 	}
 	if req.Description != nil {
 		u.SetDescription(*req.Description)
+	}
+	if req.DailyAmountUSD != nil {
+		u.SetDailyAmountUsd(*req.DailyAmountUSD)
 	}
 	if req.Price != nil {
 		u.SetPrice(*req.Price)
