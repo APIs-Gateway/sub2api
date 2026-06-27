@@ -292,6 +292,9 @@ func TestUsageLogRepositoryCreateBestEffort_QueueFullReturnsDropped(t *testing.T
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := newUsageLogRepositoryWithSQL(client, integrationDB)
+	// 先 no-op 消费 Once：ensureBestEffortBatcher 现统一走 Once.Do（修了双重检查锁 data race），
+	// 不消费 Once 的话它会用新空 channel + 真实消费者 goroutine 覆盖下方注入的「满队列」，破坏本用例。
+	repo.bestEffortBatchOnce.Do(func() {})
 	repo.bestEffortBatchCh = make(chan usageLogBestEffortRequest, 1)
 	repo.bestEffortBatchCh <- usageLogBestEffortRequest{}
 
@@ -349,6 +352,8 @@ func TestUsageLogRepositoryCreate_BatchPathQueueFullMarksNotPersisted(t *testing
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := newUsageLogRepositoryWithSQL(client, integrationDB)
+	// 先 no-op 消费 Once（同 BestEffort：ensureCreateBatcher 现统一走 Once.Do），避免覆盖注入的满队列。
+	repo.createBatchOnce.Do(func() {})
 	repo.createBatchCh = make(chan usageLogCreateRequest, 1)
 	repo.createBatchCh <- usageLogCreateRequest{}
 
@@ -377,6 +382,8 @@ func TestUsageLogRepositoryCreate_BatchPathQueueFullMarksNotPersisted(t *testing
 func TestUsageLogRepositoryCreate_BatchPathCanceledAfterQueueMarksNotPersisted(t *testing.T) {
 	client := testEntClient(t)
 	repo := newUsageLogRepositoryWithSQL(client, integrationDB)
+	// 先 no-op 消费 Once（同上），让 createBatched 用本测试注入的 channel、不被真实消费者排空。
+	repo.createBatchOnce.Do(func() {})
 	repo.createBatchCh = make(chan usageLogCreateRequest, 1)
 
 	user := mustCreateUser(t, client, &service.User{Email: fmt.Sprintf("usage-cancel-queued-%d@example.com", time.Now().UnixNano())})
