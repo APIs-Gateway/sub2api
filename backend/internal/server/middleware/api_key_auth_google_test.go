@@ -133,6 +133,9 @@ func (f fakeGoogleSubscriptionRepo) GetActiveByUserID(ctx context.Context, userI
 	}
 	return nil, errors.New("not implemented")
 }
+func (f fakeGoogleSubscriptionRepo) GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return f.GetActiveByUserID(ctx, userID)
+}
 func (f fakeGoogleSubscriptionRepo) Update(ctx context.Context, sub *service.UserSubscription) error {
 	return errors.New("not implemented")
 }

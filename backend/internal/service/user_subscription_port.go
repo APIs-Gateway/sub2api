@@ -12,10 +12,12 @@ type UserSubscriptionRepository interface {
 	GetByID(ctx context.Context, id int64) (*UserSubscription, error)
 	GetByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*UserSubscription, error)
 	GetActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*UserSubscription, error)
-	// GetActiveByUserID 返回用户「唯一生效订阅卡」（per-day 单卡模式，不按 group 匹配）。
-	// 取 status='active' 中 expire_day 最晚的一张作兜底（理论至多一张）；过期判定（today>expire_day）
-	// 由调用方按自然日惰性处理。无卡返回 ErrSubscriptionNotFound（调用方据此走纯钱包标准计费）。
+	// GetActiveByUserID 返回用户「唯一生效订阅卡」（三窗口单卡模式，不按 group 匹配）。
+	// 生效口径为 status='active' 且 now < expires_at。无卡返回 ErrSubscriptionNotFound（调用方据此走纯钱包标准计费）。
 	GetActiveByUserID(ctx context.Context, userID int64) (*UserSubscription, error)
+	// GetLatestActiveStatusByUserID 返回最近一张 status='active' 的卡，允许 expires_at 已过期。
+	// 仅供续费复活惰性过期卡使用；准入/结算不得使用此方法。
+	GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*UserSubscription, error)
 	Update(ctx context.Context, sub *UserSubscription) error
 	Delete(ctx context.Context, id int64) error
 

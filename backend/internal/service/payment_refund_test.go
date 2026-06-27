@@ -214,6 +214,10 @@ func (r *refundUserSubRepoStub) GetActiveByUserID(_ context.Context, userID int6
 	return &cp, nil
 }
 
+func (r *refundUserSubRepoStub) GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*UserSubscription, error) {
+	return r.GetActiveByUserID(ctx, userID)
+}
+
 func (r *refundUserSubRepoStub) GetByID(_ context.Context, id int64) (*UserSubscription, error) {
 	sub := r.byID[id]
 	if sub == nil {

@@ -124,16 +124,36 @@ func (r *userSubscriptionRepository) GetActiveByUserIDAndGroupID(ctx context.Con
 
 func (r *userSubscriptionRepository) GetActiveByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
-	// per-day 单卡模式：不按 group 匹配，取该用户 status='active' 的卡。
-	// 过期是惰性的（卡可能 status='active' 而 today>expire_day），故不在 SQL 里按 expire_day 过滤；
-	// 真正的过期判定由调用方按东八区自然日惰性处理。多张时取 expire_day 最晚的一张作兜底。
+	// 三窗口单卡模式：不按 group 匹配，取该用户唯一生效卡。
+	// 生效口径以 expires_at 为准（status='active' 且 now < expires_at）；expire_day 是 per-day
+	// 过渡字段，不能参与三窗口选卡，否则 stale active 卡会盖过真实生效卡。
 	m, err := client.UserSubscription.Query().
 		Where(
 			usersubscription.UserIDEQ(userID),
 			usersubscription.StatusEQ(service.SubscriptionStatusActive),
+			usersubscription.ExpiresAtGT(time.Now()),
 		).
 		WithGroup().
-		Order(dbent.Desc(usersubscription.FieldExpireDay), dbent.Desc(usersubscription.FieldCreatedAt)).
+		Order(dbent.Desc(usersubscription.FieldExpiresAt), dbent.Desc(usersubscription.FieldCreatedAt)).
+		First(ctx)
+	if err != nil {
+		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	}
+	return userSubscriptionEntityToService(m), nil
+}
+
+func (r *userSubscriptionRepository) GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	client := clientFromContext(ctx, r.client)
+	// 续费专用：允许拿到惰性过期但 status 仍 active 的最近一张卡，让 RenewSubscription
+	// 按规格从今天起算复活。准入/结算必须使用 GetActiveByUserID 的严格 expires_at 口径。
+	m, err := client.UserSubscription.Query().
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.StatusEQ(service.SubscriptionStatusActive),
+			usersubscription.DeletedAtIsNil(),
+		).
+		WithGroup().
+		Order(dbent.Desc(usersubscription.FieldExpiresAt), dbent.Desc(usersubscription.FieldCreatedAt)).
 		First(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
@@ -147,6 +167,7 @@ func (r *userSubscriptionRepository) GetActiveByUserID(ctx context.Context, user
 // FOR UPDATE 事务内增量更新。切勿复用本方法回写结算结果：本方法按内存快照整行覆盖，会把
 // 并发结算刚扣减的 today_remaining / 透支前移的 expire_day 用 stale 值覆盖回去。P4b 结算走
 // 专用写路径（见 settlePerDay*）。start_day 创建后不可变、overdraft_on 走 SetOverdraftDays。
+// 三窗口限额字段使用 SetNillable*：nil 表示不变，不会清空列；若后续支持把某窗口改成“不限”，需走 Clear* 专用路径。
 func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.UserSubscription) error {
 	if sub == nil {
 		return service.ErrSubscriptionNilInput

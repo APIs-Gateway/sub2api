@@ -73,7 +73,7 @@ func TestSubWindow_ResetWindows_NaturalBoundaries(t *testing.T) {
 	})
 }
 
-// ── SubRemaining：三窗口剩余最小值；不限=+Inf；clamp≥0 ─────────────────────────
+// ── SubRemaining：三窗口剩余最小值；全空卡不覆盖；已配置窗口以外视为不限 ─────────────
 func TestSubWindow_SubRemaining(t *testing.T) {
 	t.Run("daily is the binding window", func(t *testing.T) {
 		c := &SubWindow{DailyLimitUSD: 10, WeeklyLimitUSD: 70, MonthlyLimitUSD: 300,
@@ -252,10 +252,10 @@ func TestManualOverdraftWindow(t *testing.T) {
 
 	t.Run("success refreshes daily window and borrows one day", func(t *testing.T) {
 		c := activeCard(10)
-		c.DailyUsageUSD = 10                              // 日上限已满
-		c.WeeklyUsageUSD = 50                             // 周/月用量不应被透支清掉
+		c.DailyUsageUSD = 10  // 日上限已满
+		c.WeeklyUsageUSD = 50 // 周/月用量不应被透支清掉
 		c.MonthlyUsageUSD = 200
-		c.ExpiresAt = ExpireDayToExpiresAt(today + 5)     // 最后服务日 today+5
+		c.ExpiresAt = ExpireDayToExpiresAt(today + 5) // 最后服务日 today+5
 		w := &WalletState{MonthlyOverdraftCount: 0, MonthlyOverdraftMonth: CurrentEastMonthKey()}
 		if err := ManualOverdraftWindow(c, w, now); err != nil {
 			t.Fatalf("unexpected err: %v", err)

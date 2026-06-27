@@ -10,6 +10,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/suite"
 )
@@ -109,6 +110,194 @@ func (s *UserSubscriptionRepoSuite) TestCreate() {
 	s.Require().NoError(err, "GetByID")
 	s.Require().Equal(sub.UserID, got.UserID)
 	s.Require().Equal(sub.GroupID, got.GroupID)
+}
+
+func (s *UserSubscriptionRepoSuite) TestCreateUpdateAndMapCardWindowLimitsPostgres() {
+	user := s.mustCreateUser("sub-card-limits@test.com", service.RoleUser)
+	group := s.mustCreateGroup("g-card-limits")
+	daily, weekly, monthly := 10.0, 70.0, 300.0
+	now := time.Now()
+	dayStart := timezone.StartOfDay(now)
+	weekStart := timezone.StartOfWeek(now)
+	monthStart := timezone.StartOfMonth(now)
+
+	sub := &service.UserSubscription{
+		UserID:             user.ID,
+		GroupID:            group.ID,
+		Status:             service.SubscriptionStatusActive,
+		StartsAt:           now.Add(-time.Hour),
+		ExpiresAt:          now.Add(24 * time.Hour),
+		DailyWindowStart:   &dayStart,
+		WeeklyWindowStart:  &weekStart,
+		MonthlyWindowStart: &monthStart,
+		DailyLimitUSD:      &daily,
+		WeeklyLimitUSD:     &weekly,
+		MonthlyLimitUSD:    &monthly,
+		DailyUsageUSD:      1.25,
+		WeeklyUsageUSD:     2.5,
+		MonthlyUsageUSD:    3.75,
+	}
+
+	s.Require().NoError(s.repo.Create(s.ctx, sub))
+	got, err := s.repo.GetByID(s.ctx, sub.ID)
+	s.Require().NoError(err)
+	s.Require().NotNil(got.DailyLimitUSD)
+	s.Require().NotNil(got.WeeklyLimitUSD)
+	s.Require().NotNil(got.MonthlyLimitUSD)
+	s.Require().InDelta(daily, *got.DailyLimitUSD, 1e-9)
+	s.Require().InDelta(weekly, *got.WeeklyLimitUSD, 1e-9)
+	s.Require().InDelta(monthly, *got.MonthlyLimitUSD, 1e-9)
+
+	newDaily, newWeekly, newMonthly := 12.0, 84.0, 360.0
+	got.DailyLimitUSD = &newDaily
+	got.WeeklyLimitUSD = &newWeekly
+	got.MonthlyLimitUSD = &newMonthly
+	got.DailyUsageUSD = 4.5
+	s.Require().NoError(s.repo.Update(s.ctx, got))
+
+	updated, err := s.repo.GetByID(s.ctx, sub.ID)
+	s.Require().NoError(err)
+	s.Require().NotNil(updated.DailyLimitUSD)
+	s.Require().NotNil(updated.WeeklyLimitUSD)
+	s.Require().NotNil(updated.MonthlyLimitUSD)
+	s.Require().InDelta(newDaily, *updated.DailyLimitUSD, 1e-9)
+	s.Require().InDelta(newWeekly, *updated.WeeklyLimitUSD, 1e-9)
+	s.Require().InDelta(newMonthly, *updated.MonthlyLimitUSD, 1e-9)
+	s.Require().InDelta(4.5, updated.DailyUsageUSD, 1e-9)
+
+	card := updated.ToSubWindow()
+	wallet := &service.WalletState{Balance: 100}
+	res := service.SettleWindow(&card, wallet, 10, 2, time.Now())
+	s.Require().Greater(res.SubCover, 0.0, "configured DB card should cover through subscription")
+	s.Require().Less(res.SubCover, 10.0, "cost above remaining subscription should partly fall through")
+	s.Require().Less(wallet.Balance, 100.0, "cost above remaining subscription should fall through to wallet")
+}
+
+func (s *UserSubscriptionRepoSuite) TestUnconfiguredCardFallsBackToWalletAfterRealDBRead() {
+	user := s.mustCreateUser("sub-unconfigured-card@test.com", service.RoleUser)
+	group := s.mustCreateGroup("g-unconfigured-card")
+	sub := s.mustCreateSubscription(user.ID, group.ID, func(c *dbent.UserSubscriptionCreate) {
+		c.SetDailyUsageUsd(0).
+			SetWeeklyUsageUsd(0).
+			SetMonthlyUsageUsd(0)
+	})
+
+	got, err := s.repo.GetByID(s.ctx, sub.ID)
+	s.Require().NoError(err)
+	s.Require().Nil(got.DailyLimitUSD)
+	s.Require().Nil(got.WeeklyLimitUSD)
+	s.Require().Nil(got.MonthlyLimitUSD)
+
+	card := got.ToSubWindow()
+	wallet := &service.WalletState{Balance: 100}
+	res := service.SettleWindow(&card, wallet, 5, 2, time.Now())
+	s.Require().Zero(res.SubCover, "all NULL limits from Postgres must not grant unlimited subscription coverage")
+	s.Require().InDelta(10, res.WalletPay, 1e-9)
+	s.Require().InDelta(90, wallet.Balance, 1e-9)
+	s.Require().Zero(card.DailyUsageUSD)
+	s.Require().Zero(card.WeeklyUsageUSD)
+	s.Require().Zero(card.MonthlyUsageUSD)
+}
+
+func (s *UserSubscriptionRepoSuite) TestPartiallyConfiguredCardUsesConfiguredWindowOnlyPostgres() {
+	user := s.mustCreateUser("sub-weekly-only-card@test.com", service.RoleUser)
+	group := s.mustCreateGroup("g-weekly-only-card")
+	weekly := 70.0
+	now := time.Now()
+	dayStart := timezone.StartOfDay(now)
+	weekStart := timezone.StartOfWeek(now)
+	monthStart := timezone.StartOfMonth(now)
+
+	sub := &service.UserSubscription{
+		UserID:             user.ID,
+		GroupID:            group.ID,
+		Status:             service.SubscriptionStatusActive,
+		StartsAt:           now.Add(-time.Hour),
+		ExpiresAt:          now.Add(24 * time.Hour),
+		DailyWindowStart:   &dayStart,
+		WeeklyWindowStart:  &weekStart,
+		MonthlyWindowStart: &monthStart,
+		WeeklyLimitUSD:     &weekly,
+		WeeklyUsageUSD:     65,
+	}
+	s.Require().NoError(s.repo.Create(s.ctx, sub))
+
+	got, err := s.repo.GetByID(s.ctx, sub.ID)
+	s.Require().NoError(err)
+	s.Require().Nil(got.DailyLimitUSD)
+	s.Require().NotNil(got.WeeklyLimitUSD)
+	s.Require().Nil(got.MonthlyLimitUSD)
+
+	card := got.ToSubWindow()
+	wallet := &service.WalletState{Balance: 100}
+	res := service.SettleWindow(&card, wallet, 8, 2, now)
+	s.Require().InDelta(5, res.SubCover, 1e-9, "weekly remaining should be the binding configured window")
+	s.Require().InDelta(6, res.WalletPay, 1e-9, "official cost above weekly remaining should fall through to wallet at multiplier")
+	s.Require().InDelta(94, wallet.Balance, 1e-9)
+	s.Require().InDelta(5, card.DailyUsageUSD, 1e-9, "unconfigured daily window is unlimited but still accrues covered usage")
+	s.Require().InDelta(70, card.WeeklyUsageUSD, 1e-9)
+	s.Require().InDelta(5, card.MonthlyUsageUSD, 1e-9, "unconfigured monthly window is unlimited but still accrues covered usage")
+}
+
+func (s *UserSubscriptionRepoSuite) TestUpdateNilCardWindowLimitsDoesNotClearExistingPostgres() {
+	user := s.mustCreateUser("sub-nil-limit-update@test.com", service.RoleUser)
+	group := s.mustCreateGroup("g-nil-limit-update")
+	daily, weekly, monthly := 8.0, 56.0, 240.0
+
+	sub := &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		Status:          service.SubscriptionStatusActive,
+		StartsAt:        time.Now().Add(-time.Hour),
+		ExpiresAt:       time.Now().Add(24 * time.Hour),
+		DailyLimitUSD:   &daily,
+		WeeklyLimitUSD:  &weekly,
+		MonthlyLimitUSD: &monthly,
+	}
+	s.Require().NoError(s.repo.Create(s.ctx, sub))
+
+	got, err := s.repo.GetByID(s.ctx, sub.ID)
+	s.Require().NoError(err)
+	got.DailyLimitUSD = nil
+	got.WeeklyLimitUSD = nil
+	got.MonthlyLimitUSD = nil
+	got.Notes = "update-with-nil-limits"
+	s.Require().NoError(s.repo.Update(s.ctx, got))
+
+	updated, err := s.repo.GetByID(s.ctx, sub.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("update-with-nil-limits", updated.Notes)
+	s.Require().NotNil(updated.DailyLimitUSD)
+	s.Require().NotNil(updated.WeeklyLimitUSD)
+	s.Require().NotNil(updated.MonthlyLimitUSD)
+	s.Require().InDelta(daily, *updated.DailyLimitUSD, 1e-9)
+	s.Require().InDelta(weekly, *updated.WeeklyLimitUSD, 1e-9)
+	s.Require().InDelta(monthly, *updated.MonthlyLimitUSD, 1e-9)
+}
+
+func (s *UserSubscriptionRepoSuite) TestGetActiveByUserIDIgnoresExpiredActiveCardsByExpiresAtPostgres() {
+	user := s.mustCreateUser("sub-active-by-expires-at@test.com", service.RoleUser)
+	group := s.mustCreateGroup("g-active-by-expires-at")
+	now := time.Now()
+	daily := 10.0
+
+	expired := s.mustCreateSubscription(user.ID, group.ID, func(c *dbent.UserSubscriptionCreate) {
+		c.SetStatus(service.SubscriptionStatusActive).
+			SetExpiresAt(now.Add(-time.Hour)).
+			SetExpireDay(service.EastDayNumber(now) + 100).
+			SetDailyLimitUsd(daily)
+	})
+	active := s.mustCreateSubscription(user.ID, group.ID, func(c *dbent.UserSubscriptionCreate) {
+		c.SetStatus(service.SubscriptionStatusActive).
+			SetExpiresAt(now.Add(24 * time.Hour)).
+			SetExpireDay(service.EastDayNumber(now)).
+			SetDailyLimitUsd(daily)
+	})
+
+	got, err := s.repo.GetActiveByUserID(s.ctx, user.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(active.ID, got.ID, "three-window active card selection must use expires_at, not stale expire_day")
+	s.Require().NotEqual(expired.ID, got.ID)
 }
 
 func (s *UserSubscriptionRepoSuite) TestGetByID_WithPreloads() {

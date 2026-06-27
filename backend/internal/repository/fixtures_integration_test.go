@@ -394,6 +394,9 @@ func mustCreateSubscription(t *testing.T, client *dbent.Client, s *service.UserS
 		SetDailyUsageUsd(s.DailyUsageUSD).
 		SetWeeklyUsageUsd(s.WeeklyUsageUSD).
 		SetMonthlyUsageUsd(s.MonthlyUsageUSD).
+		SetNillableDailyLimitUsd(s.DailyLimitUSD).
+		SetNillableWeeklyLimitUsd(s.WeeklyLimitUSD).
+		SetNillableMonthlyLimitUsd(s.MonthlyLimitUSD).
 		// Burn-down 字段（默认 0/nil，与建表默认一致；按需在测试中设置）
 		SetGrantedTotalUsd(s.GrantedTotalUSD).
 		SetDailyAmountUsd(s.DailyAmountUSD).

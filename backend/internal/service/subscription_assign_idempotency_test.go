@@ -82,6 +82,9 @@ func (userSubRepoNoop) GetActiveByUserIDAndGroupID(context.Context, int64, int64
 func (userSubRepoNoop) GetActiveByUserID(context.Context, int64) (*UserSubscription, error) {
 	panic("unexpected GetActiveByUserID call")
 }
+func (userSubRepoNoop) GetLatestActiveStatusByUserID(context.Context, int64) (*UserSubscription, error) {
+	panic("unexpected GetLatestActiveStatusByUserID call")
+}
 func (userSubRepoNoop) Update(context.Context, *UserSubscription) error {
 	panic("unexpected Update call")
 }

@@ -289,6 +289,10 @@ func (s *userSubRepoStubForGroupUpdate) GetActiveByUserID(_ context.Context, use
 	return &clone, nil
 }
 
+func (s *userSubRepoStubForGroupUpdate) GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*UserSubscription, error) {
+	return s.GetActiveByUserID(ctx, userID)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

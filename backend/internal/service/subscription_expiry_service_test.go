@@ -34,6 +34,10 @@ func (r *subscriptionExpiryRepoStub) GetActiveByUserID(context.Context, int64) (
 	return nil, ErrSubscriptionNotFound
 }
 
+func (r *subscriptionExpiryRepoStub) GetLatestActiveStatusByUserID(context.Context, int64) (*UserSubscription, error) {
+	return nil, ErrSubscriptionNotFound
+}
+
 func (r *subscriptionExpiryRepoStub) Update(context.Context, *UserSubscription) error {
 	return nil
 }

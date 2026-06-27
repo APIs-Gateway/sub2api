@@ -75,9 +75,9 @@ func (s *SubscriptionService) RenewSubscription(ctx context.Context, userID, pla
 		today := TodayEastDayNumber()
 		now := time.Now()
 
-		// 当前生效卡。续费可作用于「惰性过期但 status 仍 active」的卡（GrantSubscriptionDays 会从今天
-		// 起算），故此处不预先关假 active；仅当确无 active 卡时拒（应购买）。
-		oldSub, err := s.userSubRepo.GetActiveByUserID(txCtx, userID)
+		// 续费可作用于「惰性过期但 status 仍 active」的最近卡（GrantSubscriptionDays 会从今天
+		// 起算），故不能使用准入/结算专用的严格 GetActiveByUserID；仅当确无 active-status 卡时拒（应购买）。
+		oldSub, err := s.userSubRepo.GetLatestActiveStatusByUserID(txCtx, userID)
 		if err != nil {
 			if errors.Is(err, ErrSubscriptionNotFound) {
 				return ErrNoActiveSubscription
