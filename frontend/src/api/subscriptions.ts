@@ -116,6 +116,45 @@ export async function changeSubscriptionPlan(planId: number): Promise<ChangePlan
   return response.data
 }
 
+/** 自定义购买区间（每日额度 D / 有效天数 T / 单价 u 的允许范围）；购买页据此设滑块/校验。 */
+export interface SubscriptionPricingBounds {
+  d_min: number
+  d_max: number
+  u_min: number
+  u_max: number
+  t_min: number
+  t_max: number
+}
+
+/** 自定义购买报价：按 D+T 算售价 + 派生周/月封顶（金额由后端公式决定，前端只展示）。 */
+export interface SubscriptionQuote {
+  daily_amount_usd: number
+  validity_days: number
+  unit_price: number
+  price: number
+  weekly_cap_usd: number
+  monthly_cap_usd: number
+  formula_version: number
+}
+
+/** 取自定义购买区间（滑块范围）。 */
+export async function getSubscriptionPricing(): Promise<SubscriptionPricingBounds> {
+  const response = await apiClient.get<SubscriptionPricingBounds>('/subscriptions/pricing')
+  return response.data
+}
+
+/** 实时报价：D + T → 售价 P=D×T×u(D) + 派生周/月封顶。校验失败抛 INVALID_SUBSCRIPTION_PARAMS。 */
+export async function quoteSubscription(
+  dailyAmountUsd: number,
+  validityDays: number
+): Promise<SubscriptionQuote> {
+  const response = await apiClient.post<SubscriptionQuote>('/subscriptions/quote', {
+    daily_amount_usd: dailyAmountUsd,
+    validity_days: validityDays,
+  })
+  return response.data
+}
+
 export default {
   getMySubscriptions,
   getActiveSubscriptions,
@@ -123,6 +162,8 @@ export default {
   getSubscriptionSummary,
   getSubscriptionProgress,
   borrowOverdraftDay,
+  getSubscriptionPricing,
+  quoteSubscription,
   renewSubscription,
   changeSubscriptionPlan
 }

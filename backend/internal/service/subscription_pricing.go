@@ -104,3 +104,20 @@ func (c SubscriptionPricingConfig) Quote(d float64, t int) (SubscriptionPriceQuo
 		FormulaVersion: SubscriptionFormulaVersion,
 	}, nil
 }
+
+// DeriveWindowCaps 由每日额度 D 与有效期 T 派生「周封顶 W / 月封顶 M」（规格第 2 节默认）：
+//
+//	W = 7 × D       （一周 7 天的日额度之和，作为周窗口上限）
+//	M = min(T,30) × D（不足 30 天的卡按实际天数封顶，避免月封顶超过整期可用额度）
+//
+// W/M 是「连透支也不能突破」的硬上限，开卡时写进卡的 weekly_limit_usd / monthly_limit_usd。
+// 用 decimal 乘，避免 7×1.1 这类浮点尾差。
+func DeriveWindowCaps(d float64, t int) (weekly, monthly float64) {
+	days := t
+	if days > 30 {
+		days = 30
+	}
+	weekly = decimal.NewFromFloat(d).Mul(decimal.NewFromInt(7)).InexactFloat64()
+	monthly = decimal.NewFromFloat(d).Mul(decimal.NewFromInt(int64(days))).InexactFloat64()
+	return weekly, monthly
+}

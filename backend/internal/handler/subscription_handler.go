@@ -149,6 +149,32 @@ func (h *SubscriptionHandler) SetOverdraftDays(c *gin.Context) {
 	response.Success(c, gin.H{"id": subID})
 }
 
+// PricingBounds 返回自定义购买区间（每日额度 D / 有效天数 T / 单价 u 的允许范围），供购买页设滑块/校验。
+// GET /api/v1/subscriptions/pricing
+func (h *SubscriptionHandler) PricingBounds(c *gin.Context) {
+	response.Success(c, h.subscriptionService.PricingBounds())
+}
+
+// Quote 自定义购买实时报价（规格第 2/3 节）：按 D+T 算 售价 P=D×T×u(D) + 派生周/月封顶。
+// 金额完全由后端公式决定、不信前端（下单走同一公式冻结进订单快照）。
+// POST /api/v1/subscriptions/quote  body: { daily_amount_usd, validity_days }
+func (h *SubscriptionHandler) Quote(c *gin.Context) {
+	var req struct {
+		DailyAmountUSD float64 `json:"daily_amount_usd"`
+		ValidityDays   int     `json:"validity_days"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	res, err := h.subscriptionService.QuoteSubscription(req.DailyAmountUSD, req.ValidityDays)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, res)
+}
+
 // Overdraft 用户手动透支「借一天」（规格第 8 节）：清空今日已用额度（刷新当日额度）+ expires_at 提前 1 天
 // + 用户级月度计数 +1。仅解日上限，周/月封顶仍生效；每用户每自然月最多 5 次。
 // POST /api/v1/subscriptions/overdraft
