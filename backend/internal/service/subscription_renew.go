@@ -20,32 +20,27 @@ type RenewResult struct {
 	NewExpireDay   int     `json:"new_expire_day"` // 续后 expire_day = max(原, today−1) + T'（夹上限）
 }
 
-// RenewSubscription 续费当前生效卡（规格第 5 节）：同套餐续 T' 天、D 不变，只延长发放期、不叠加额度
-// （额度每天发）。价格按续费时的公式价 cfg.Price(D, T') 重算，从其他余额扣（余额不足则拒；超余额的
-// 「发起支付」路径属后续）。
+// RenewSubscription 续费当前生效卡（规格第 5 节）：同 D 续 T' 天，只延长发放期、不叠加额度（额度每天发）。
+// 统一 D+T-based（无固定套餐）：不再依赖 plan，D 直接取自当前卡（custom 无 group 卡与套餐卡同走此路）；
+// 调用方只传续费天数 T'（须整月、在 [TMin,TMax]）。价格按续费时公式价 cfg.Price(card.D, T') 重算，从余额扣
+// （不足则拒；超余额的「发起支付」路径属后续）。
 //
 // expire_day = max(原 expire_day, today−1) + T'：未到期从原到期日顺延（无缝）；已到期从今天起算 T' 天
-// （中间断档不补）。复用 GrantSubscriptionDays（其内部即此口径并夹 MaxExpireDay）。换档（D 不同）应走转套餐。
-func (s *SubscriptionService) RenewSubscription(ctx context.Context, userID, planID int64) (*RenewResult, error) {
+// （中间断档不补）。复用 GrantSubscriptionDays（其内部即此口径并夹 MaxExpireDay）。
+func (s *SubscriptionService) RenewSubscription(ctx context.Context, userID int64, validityDays int) (*RenewResult, error) {
 	if s.entClient == nil {
 		return nil, fmt.Errorf("ent client not configured")
 	}
-	if userID <= 0 || planID <= 0 {
-		return nil, infraerrors.BadRequest("INVALID_INPUT", "user and plan are required")
-	}
-
-	plan, err := s.entClient.SubscriptionPlan.Get(ctx, planID)
-	if err != nil || !plan.ForSale {
-		return nil, infraerrors.NotFound("PLAN_NOT_AVAILABLE", "plan not found or not for sale")
-	}
-	if plan.DailyAmountUsd <= 0 {
-		return nil, infraerrors.BadRequest("PLAN_DAILY_AMOUNT_INVALID", "plan daily amount is invalid")
+	if userID <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_INPUT", "user is required")
 	}
 	cfg := DefaultSubscriptionPricingConfig()
-	addDays := psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit)
-	if addDays <= 0 {
-		return nil, infraerrors.BadRequest("PLAN_VALIDITY_INVALID", "plan validity days must be positive")
+	// 续费天数 T' 须整月（TStep 倍数）且在 [TMin,TMax]；D 取自当前卡（沿用历史值，不在此校验区间）。
+	if validityDays < cfg.TMin || validityDays > cfg.TMax || (cfg.TStep > 0 && validityDays%cfg.TStep != 0) {
+		return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION_PARAMS",
+			fmt.Sprintf("续费天数须为 %d 的整数倍且在 [%d,%d]", cfg.TStep, cfg.TMin, cfg.TMax))
 	}
+	addDays := validityDays
 	if addDays > MaxValidityDays {
 		addDays = MaxValidityDays
 	}
@@ -86,11 +81,7 @@ func (s *SubscriptionService) RenewSubscription(ctx context.Context, userID, pla
 		}
 		oldGroupID = oldSub.GroupID
 
-		// 续费 = 同套餐续、D 不变；D 不同应走转套餐。
-		if d := plan.DailyAmountUsd - oldSub.DailyAmountUSD; d > 1e-9 || d < -1e-9 {
-			return ErrRenewPlanMismatch
-		}
-
+		// 续费 = 同 D 续 T'：D 取自当前卡，天然不变（无需 plan 校验，custom 卡亦可续）。
 		price := cfg.Price(oldSub.DailyAmountUSD, addDays)
 		if u.Balance < price {
 			return ErrInsufficientBalanceForRenew

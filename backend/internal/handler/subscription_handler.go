@@ -290,12 +290,18 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 	response.Success(c, summary)
 }
 
-// changePlanRequestBody 续费/转套餐请求体：目标套餐 ID。
-type changePlanRequestBody struct {
-	PlanID int64 `json:"plan_id" binding:"required,gt=0"`
+// renewRequestBody 续费请求体（统一 D+T-based）：只传续费天数 T'（D 取自当前卡）。
+type renewRequestBody struct {
+	ValidityDays int `json:"validity_days" binding:"required,gt=0"`
 }
 
-// Renew 续费当前生效卡（规格第 5 节）：同套餐续 T'、D 不变，从其他余额扣续费价。用户自助。
+// changePlanRequestBody 转套餐请求体（统一 D+T-based）：目标档新 D + 新 T（无固定套餐）。
+type changePlanRequestBody struct {
+	DailyAmountUSD float64 `json:"daily_amount_usd" binding:"required,gt=0"`
+	ValidityDays   int     `json:"validity_days" binding:"required,gt=0"`
+}
+
+// Renew 续费当前生效卡（规格第 5 节）：同 D 续 T'，从其他余额扣续费价。用户自助。
 // POST /api/v1/subscriptions/renew
 func (h *SubscriptionHandler) Renew(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
@@ -303,12 +309,12 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 		response.Unauthorized(c, "User not found in context")
 		return
 	}
-	var req changePlanRequestBody
+	var req renewRequestBody
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "invalid request: "+err.Error())
 		return
 	}
-	res, err := h.subscriptionService.RenewSubscription(c.Request.Context(), subject.UserID, req.PlanID)
+	res, err := h.subscriptionService.RenewSubscription(c.Request.Context(), subject.UserID, req.ValidityDays)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -316,7 +322,7 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 	response.Success(c, res)
 }
 
-// ChangePlan 转套餐（规格第 7 节）：旧卡折剩余价值抵新套餐，多退少补；每自然日最多 1 次。用户自助。
+// ChangePlan 转套餐（规格第 7 节）：旧卡折剩余价值抵新档，多退少补；每自然日最多 1 次。用户自助。
 // POST /api/v1/subscriptions/change-plan
 func (h *SubscriptionHandler) ChangePlan(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
@@ -329,7 +335,7 @@ func (h *SubscriptionHandler) ChangePlan(c *gin.Context) {
 		response.BadRequest(c, "invalid request: "+err.Error())
 		return
 	}
-	res, err := h.subscriptionService.ChangeSubscriptionPlan(c.Request.Context(), subject.UserID, req.PlanID)
+	res, err := h.subscriptionService.ChangeSubscriptionPlan(c.Request.Context(), subject.UserID, req.DailyAmountUSD, req.ValidityDays)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

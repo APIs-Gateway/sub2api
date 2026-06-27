@@ -31,37 +31,26 @@ type ChangePlanResult struct {
 // P_旧/T_旧 取自卡本身（公式价 cfg.Price(D_旧, T_旧)、T_旧 = TotalDays()=round(G/D)），与 §7 公式
 // P=D×T×u(D) 一致，无需反查购买订单。整个流程在单事务内原子完成：FOR UPDATE 锁 user 行 → 限频判定
 // → 折价测算 → 关旧卡 → 开新卡 → 差额落账（AddBalance(-Diff)）+ 限频戳，任一步失败全回滚。
-func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID, newPlanID int64) (*ChangePlanResult, error) {
+func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID int64, newDailyAmount float64, newValidityDays int) (*ChangePlanResult, error) {
 	if s.entClient == nil {
 		return nil, fmt.Errorf("ent client not configured")
 	}
-	if userID <= 0 || newPlanID <= 0 {
-		return nil, infraerrors.BadRequest("INVALID_INPUT", "user and target plan are required")
+	if userID <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_INPUT", "user is required")
 	}
 
-	// 目标套餐校验（与下单口径一致：ForSale + D>0 + 所挂 group 存在且 active）。
-	newPlan, err := s.entClient.SubscriptionPlan.Get(ctx, newPlanID)
-	if err != nil || !newPlan.ForSale {
-		return nil, infraerrors.NotFound("PLAN_NOT_AVAILABLE", "target plan not found or not for sale")
+	// 统一 D+T-based（无固定套餐）：目标档由调用方传新 D+T，走 QuoteSubscription 权威校验（D 区间 + T 整月）
+	// 并产出成交价 P_新 与派生周/月封顶——口径与自定义购买完全同源。新卡为无 group 自定义卡（groupID=0）。
+	quote, err := s.QuoteSubscription(newDailyAmount, newValidityDays)
+	if err != nil {
+		return nil, err
 	}
-	if newPlan.DailyAmountUsd <= 0 {
-		return nil, infraerrors.BadRequest("PLAN_DAILY_AMOUNT_INVALID", "target plan daily amount is invalid")
-	}
-	if grp, gerr := s.groupRepo.GetByID(ctx, newPlan.GroupID); gerr != nil || grp == nil || grp.Status != StatusActive {
-		return nil, infraerrors.NotFound("GROUP_NOT_FOUND", "target subscription group is no longer available")
-	}
-
 	cfg := DefaultSubscriptionPricingConfig()
-	dNew := newPlan.DailyAmountUsd
-	tNew := psComputeValidityDays(newPlan.ValidityDays, newPlan.ValidityUnit)
-	// 防御：存量脏 plan 或直接 DB 写入可能给出 validity_days<=0 → tNew<=0 → P_新=0、expire_day=today-1
-	// 的废卡（甚至给用户退差价）。入口校验 tNew>0 并夹到上限（与 createSubscription 同口径）。
-	if tNew <= 0 {
-		return nil, infraerrors.BadRequest("PLAN_VALIDITY_INVALID", "target plan validity days must be positive")
-	}
-	if tNew > MaxValidityDays {
-		tNew = MaxValidityDays
-	}
+	dNew := quote.DailyAmountUSD
+	tNew := quote.ValidityDays
+	newPlanPrice := quote.Price
+	weeklyLimit := quote.WeeklyCapUSD
+	monthlyLimit := quote.MonthlyCapUSD
 
 	var result *ChangePlanResult
 	var oldGroupID int64
@@ -157,7 +146,6 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 		// T_旧 代数消去——避免依赖脆弱的 TotalDays()=round(G/D)：续费会增大 G 使 T_旧 变成累计天数、
 		// 进而 V 被低估、用户转套餐被多收差价。直接按公式价折剩余天数即可（与 §7 P=D×T×u(D) 一致）。
 		oldRemainingValue := cfg.Price(oldSub.DailyAmountUSD, refundable)
-		newPlanPrice := cfg.Price(dNew, tNew)
 		diff := newPlanPrice - oldRemainingValue
 		newCardTodayBalance := ChangePlanNewCardTodayBalance(dNew, oldTodaySpent)
 		newExpireDay := ClampExpireDay(today + tNew - 1)
@@ -174,12 +162,11 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 
 		// 开新卡：start_day=today、expire_day=today+T_新−1、today_remaining=max(0,D_新−旧卡今日已用)；
 		// 三窗口模型下，限额挂卡且新卡继承旧卡当前 usage/window_start，避免当天/本周/本月换档后
-		// 重新领取已用额度（spec §7）。不写 users.balance。
+		// 重新领取已用额度（spec §7）。新卡为无 group 自定义卡（groupID=0，限额读卡级）。不写 users.balance。
 		activatedAt := now
-		weeklyLimit, monthlyLimit := DeriveWindowCaps(dNew, tNew)
 		newSub := &UserSubscription{
 			UserID:             userID,
-			GroupID:            newPlan.GroupID,
+			GroupID:            0,
 			StartsAt:           now,
 			ExpiresAt:          ExpireDayToExpiresAt(newExpireDay),
 			Status:             SubscriptionStatusActive,
@@ -203,7 +190,7 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 			MonthlyWindowStart: oldSub.MonthlyWindowStart,
 			ActivatedAt:        &activatedAt,
 			AssignedAt:         now,
-			Notes:              fmt.Sprintf("转套餐 → plan %d", newPlanID),
+			Notes:              fmt.Sprintf("转套餐 → D=%.4f T=%d", dNew, tNew),
 			CreatedAt:          now,
 			UpdatedAt:          now,
 		}
@@ -245,11 +232,12 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 
 	s.clearSubscriptionLockCache(userID)
 	s.invalidateUserBalanceCacheAsync(userID)
-	s.InvalidateSubCache(userID, newPlan.GroupID)
-	s.invalidateSubscriptionCacheAsync(userID, newPlan.GroupID)
+	// 新卡为无 group 自定义卡（groupID=0），失效其缓存键。
+	s.InvalidateSubCache(userID, 0)
+	s.invalidateSubscriptionCacheAsync(userID, 0)
 	// 旧卡所属 group 的订阅缓存也要失效，否则 /v1/usage、通知、GetSubscriptionStatus(user, oldGroup)
 	// 等路径短时间内仍可能看到旧组 active。
-	if oldGroupID != 0 && oldGroupID != newPlan.GroupID {
+	if oldGroupID != 0 {
 		s.InvalidateSubCache(userID, oldGroupID)
 		s.invalidateSubscriptionCacheAsync(userID, oldGroupID)
 	}

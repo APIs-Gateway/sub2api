@@ -42,10 +42,8 @@ func TestSubscriptionLifecycleHTTP_RenewPostgres(t *testing.T) {
 		ExpiresAt:       service.ExpireDayToExpiresAt(today + 10),
 		Status:          service.SubscriptionStatusActive,
 	})
-	plan := mustCreateChangePlanPlan(t, client, group.ID, 10, 30)
-
 	router := subscriptionLifecycleRouter(t, user.ID)
-	rec := performLifecycleRequest(t, router, http.MethodPost, "/api/v1/subscriptions/renew", map[string]any{"plan_id": plan.ID})
+	rec := performLifecycleRequest(t, router, http.MethodPost, "/api/v1/subscriptions/renew", map[string]any{"validity_days": 30})
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	env := decodeLifecycleEnvelope(t, rec)
@@ -91,7 +89,7 @@ func TestSubscriptionLifecycleHTTP_ChangePlanPostgres(t *testing.T) {
 	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
 
 	router := subscriptionLifecycleRouter(t, user.ID)
-	rec := performLifecycleRequest(t, router, http.MethodPost, "/api/v1/subscriptions/change-plan", map[string]any{"plan_id": newPlan.ID})
+	rec := performLifecycleRequest(t, router, http.MethodPost, "/api/v1/subscriptions/change-plan", map[string]any{"daily_amount_usd": newPlan.DailyAmountUsd, "validity_days": newPlan.ValidityDays})
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	env := decodeLifecycleEnvelope(t, rec)
@@ -117,7 +115,7 @@ func TestSubscriptionLifecycleHTTP_ChangePlanPostgres(t *testing.T) {
 
 func TestSubscriptionLifecycleHTTP_RejectsMissingAuthAndInvalidPlanID(t *testing.T) {
 	routerNoAuth := subscriptionLifecycleRouter(t, 0)
-	rec := performLifecycleRequest(t, routerNoAuth, http.MethodPost, "/api/v1/subscriptions/renew", map[string]any{"plan_id": 1})
+	rec := performLifecycleRequest(t, routerNoAuth, http.MethodPost, "/api/v1/subscriptions/renew", map[string]any{"validity_days": 30})
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 
 	user := mustCreateUser(t, testEntClient(t), &service.User{
@@ -130,9 +128,10 @@ func TestSubscriptionLifecycleHTTP_RejectsMissingAuthAndInvalidPlanID(t *testing
 		body map[string]any
 		path string
 	}{
-		{name: "renew missing plan", body: map[string]any{}, path: "/api/v1/subscriptions/renew"},
-		{name: "renew zero plan", body: map[string]any{"plan_id": 0}, path: "/api/v1/subscriptions/renew"},
-		{name: "change negative plan", body: map[string]any{"plan_id": -1}, path: "/api/v1/subscriptions/change-plan"},
+		{name: "renew missing validity", body: map[string]any{}, path: "/api/v1/subscriptions/renew"},
+		{name: "renew zero validity", body: map[string]any{"validity_days": 0}, path: "/api/v1/subscriptions/renew"},
+		{name: "change missing fields", body: map[string]any{}, path: "/api/v1/subscriptions/change-plan"},
+		{name: "change negative validity", body: map[string]any{"daily_amount_usd": 20, "validity_days": -1}, path: "/api/v1/subscriptions/change-plan"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := performLifecycleRequest(t, router, http.MethodPost, tc.path, tc.body)

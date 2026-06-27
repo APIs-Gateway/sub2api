@@ -78,7 +78,7 @@ func TestSubscriptionServiceChangePlan_UpgradeSettlesDiffAndSwapsCardPostgres(t 
 	// 升档到 D=20、T=30。
 	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
 
-	res, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	res, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.DailyAmountUsd, newPlan.ValidityDays)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 
@@ -128,7 +128,7 @@ func TestSubscriptionServiceChangePlan_UpgradeSettlesDiffAndSwapsCardPostgres(t 
 
 	// 同一自然日第二次转 → 拒。
 	newPlan2 := mustCreateChangePlanPlan(t, client, group.ID, 15, 30)
-	_, err = svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan2.ID)
+	_, err = svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan2.DailyAmountUsd, newPlan2.ValidityDays)
 	require.Error(t, err)
 	require.Equal(t, "CHANGE_PLAN_DAILY_LIMIT", infraerrors.Reason(err))
 }
@@ -160,7 +160,7 @@ func TestSubscriptionServiceChangePlan_StaleActiveTreatedAsNonePostgres(t *testi
 	})
 	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
 
-	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.DailyAmountUsd, newPlan.ValidityDays)
 	require.Error(t, err)
 	require.Equal(t, "NO_ACTIVE_SUBSCRIPTION", infraerrors.Reason(err))
 
@@ -179,7 +179,7 @@ func TestSubscriptionServiceChangePlan_NoActiveCardPostgres(t *testing.T) {
 	group := mustCreateGroup(t, client, &service.Group{Name: "changeplan-none-" + uuid.NewString()})
 	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 10, 30)
 
-	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.DailyAmountUsd, newPlan.ValidityDays)
 	require.Error(t, err)
 	require.Equal(t, "NO_ACTIVE_SUBSCRIPTION", infraerrors.Reason(err))
 }
@@ -210,7 +210,7 @@ func TestSubscriptionServiceChangePlan_InsufficientBalancePostgres(t *testing.T)
 	})
 	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 50, 90) // 远贵
 
-	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.DailyAmountUsd, newPlan.ValidityDays)
 	require.Error(t, err)
 	require.Equal(t, "INSUFFICIENT_BALANCE_FOR_CHANGE_PLAN", infraerrors.Reason(err))
 
@@ -250,7 +250,7 @@ func TestSubscriptionServiceChangePlan_TodaySpentReducesNewCardBalancePostgres(t
 	})
 	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
 
-	res, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	res, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.DailyAmountUsd, newPlan.ValidityDays)
 	require.NoError(t, err)
 	require.InDelta(t, 12, res.NewCardTodayBalance, 1e-9, "D_new=20 减旧卡今日已用 8")
 
@@ -309,7 +309,7 @@ func TestSubscriptionServiceChangePlan_NewCardBillsThroughThreeWindowsPostgres(t
 	})
 	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
 
-	res, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	res, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.DailyAmountUsd, newPlan.ValidityDays)
 	require.NoError(t, err)
 	balanceAfterChange := 100000 - res.Diff
 
@@ -338,7 +338,7 @@ func TestSubscriptionServiceChangePlan_NewCardBillsThroughThreeWindowsPostgres(t
 	require.InDelta(t, balanceAfterChange, gotUser.Balance, 1e-6)
 }
 
-// 脏套餐 validity_days<=0 必须在事务副作用前拒绝，不能关旧卡、不能扣/退余额、不能开废卡。
+// 目标 T 非整月（45 不是 30 的倍数）必须在事务副作用前拒绝，不能关旧卡、不能扣/退余额、不能开废卡。
 func TestSubscriptionServiceChangePlan_InvalidValidityRollsBackPostgres(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -362,13 +362,10 @@ func TestSubscriptionServiceChangePlan_InvalidValidityRollsBackPostgres(t *testi
 		ExpiresAt:       service.ExpireDayToExpiresAt(today + 29),
 		Status:          service.SubscriptionStatusActive,
 	})
-	badPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
-	_, err := client.SubscriptionPlan.UpdateOneID(badPlan.ID).SetValidityDays(0).Save(ctx)
-	require.NoError(t, err)
 
-	_, err = svc.ChangeSubscriptionPlan(ctx, user.ID, badPlan.ID)
+	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, 20, 45) // 45 非整月
 	require.Error(t, err)
-	require.Equal(t, "PLAN_VALIDITY_INVALID", infraerrors.Reason(err))
+	require.Equal(t, "INVALID_SUBSCRIPTION_PARAMS", infraerrors.Reason(err))
 
 	gotOld, err := NewUserSubscriptionRepository(client).GetByID(ctx, old.ID)
 	require.NoError(t, err)
@@ -426,7 +423,7 @@ func TestSubscriptionServiceChangePlan_StaleActiveInvalidatesRedisSubscriptionCa
 		DailyUsage: 1,
 	}))
 
-	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	_, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.DailyAmountUsd, newPlan.ValidityDays)
 	require.Error(t, err)
 	require.Equal(t, "NO_ACTIVE_SUBSCRIPTION", infraerrors.Reason(err))
 
