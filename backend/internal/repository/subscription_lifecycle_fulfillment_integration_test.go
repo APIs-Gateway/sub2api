@@ -281,6 +281,7 @@ func TestPaymentSubscriptionWebhook_CustomOrderBuildsThreeWindowCardPostgres(t *
 		SetRechargeCode("PAY-WEBHOOK-" + uuid.NewString()).
 		SetOutTradeNo(outTradeNo).
 		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo(""). // PENDING 单尚无上游交易号（与真实 CreateOrder 一致：必须显式 set，空串合法）
 		SetOrderType(payment.OrderTypeSubscription).
 		SetSubscriptionDays(validityDays).
 		SetProviderSnapshot(map[string]any{

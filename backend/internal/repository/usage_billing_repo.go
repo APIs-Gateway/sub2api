@@ -193,7 +193,6 @@ func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, off
 	//    由引擎按 expires_at 置 JustExpired，回写时翻 status。
 	var (
 		cardID    int64
-		groupID   int64
 		dLimit    sql.NullFloat64
 		wLimit    sql.NullFloat64
 		mLimit    sql.NullFloat64
@@ -207,8 +206,10 @@ func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, off
 		status    string
 		hasCard   bool
 	)
+	// 不 SELECT group_id：自定义/转套餐卡 group_id 为 NULL，且结算本不需要 group（限额读卡级）；
+	// 误扫进 int64 会因 NULL 报 "converting NULL to int64 is unsupported" 使无 group 卡计费整笔失败（资损）。
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, group_id,
+		SELECT id,
 		       daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
 		       daily_usage_usd, weekly_usage_usd, monthly_usage_usd,
 		       daily_window_start, weekly_window_start, monthly_window_start,
@@ -218,7 +219,7 @@ func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, off
 		ORDER BY expires_at DESC, id DESC
 		LIMIT 1
 		FOR UPDATE
-	`, userID).Scan(&cardID, &groupID, &dLimit, &wLimit, &mLimit,
+	`, userID).Scan(&cardID, &dLimit, &wLimit, &mLimit,
 		&dUsage, &wUsage, &mUsage, &dWin, &wWin, &mWin, &expiresAt, &status)
 	switch {
 	case err == nil:
@@ -264,7 +265,7 @@ func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, off
 	// 3) 回写卡（仅有卡时）：三窗口 usage/window_start + 惰性过期。结算不改 expires_at / 限额。
 	if hasCard && card != nil {
 		var nowExpired bool
-		var gid int64
+		var gid sql.NullInt64 // 自定义/转套餐卡 group_id 为 NULL → 用 NullInt64 防 scan 崩
 		if err := tx.QueryRowContext(ctx, `
 			UPDATE user_subscriptions
 			SET daily_usage_usd = $1, weekly_usage_usd = $2, monthly_usage_usd = $3,
@@ -278,8 +279,10 @@ func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, off
 			card.JustExpired, cardID).Scan(&nowExpired, &gid); err != nil {
 			return nil, err
 		}
-		if nowExpired { // 本次刚由 active→expired（加载时为 active），失效订阅缓存
-			g := gid
+		// 本次刚由 active→expired（加载时为 active）→ 失效订阅缓存；无 group 自定义卡（gid 为 NULL）
+		// 无 (user,group) 组缓存需失效，跳过即可（用户级缓存由上层 SubscriptionID 路径处理）。
+		if nowExpired && gid.Valid {
+			g := gid.Int64
 			out.expiredGroupID = &g
 		}
 	}

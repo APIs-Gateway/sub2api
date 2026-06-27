@@ -385,7 +385,6 @@ func mustCreateSubscription(t *testing.T, client *dbent.Client, s *service.UserS
 
 	create := client.UserSubscription.Create().
 		SetUserID(s.UserID).
-		SetGroupID(s.GroupID).
 		SetStartsAt(s.StartsAt).
 		SetExpiresAt(s.ExpiresAt).
 		SetStatus(s.Status).
@@ -409,6 +408,12 @@ func mustCreateSubscription(t *testing.T, client *dbent.Client, s *service.UserS
 		SetTotalOverdraftCount(s.TotalOverdraftCount).
 		SetDailySpentUsd(s.DailySpentUSD).
 		SetDailySpentDay(s.DailySpentDay)
+
+	// domain GroupID=0 = 无 group 自定义卡 → group_id 留 NULL（迁移164 已可空 + FK SET NULL）；
+	// 直接 SetGroupID(0) 会撞 FK（groups 无 id=0），与生产 repo 的 nil↔0 映射对齐。
+	if s.GroupID > 0 {
+		create.SetGroupID(s.GroupID)
+	}
 
 	if s.TodayRemaining != 0 || s.TodayDay != 0 || s.StartDay != 0 || s.ExpireDay != 0 || s.OverdraftOn {
 		create.

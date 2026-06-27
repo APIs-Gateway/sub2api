@@ -224,7 +224,7 @@ func TestUsageBillingRepositoryApply_SubscriptionFallsThroughToWalletAndDeduplic
 	require.NotNil(t, result1.SubscriptionID)
 	require.Equal(t, subscription.ID, *result1.SubscriptionID)
 	require.NotNil(t, result1.WalletDebit)
-	require.InDelta(t, 6, *result1.WalletDebit, 0.000001, "订阅剩余 2 官方刀覆盖，剩余 3 官方刀按 2x 扣钱包")
+	require.InDelta(t, 3, *result1.WalletDebit, 0.000001, "订阅剩余 2 官方刀覆盖，剩余 3 官方刀按 1:1 扣钱包（倍率不参与扣费）")
 
 	result2, err := repo.Apply(ctx, cmd)
 	require.NoError(t, err)
@@ -239,7 +239,7 @@ func TestUsageBillingRepositoryApply_SubscriptionFallsThroughToWalletAndDeduplic
 	require.InDelta(t, 3, dailyUsage, 0.000001)
 	require.InDelta(t, 3, weeklyUsage, 0.000001)
 	require.InDelta(t, 3, monthlyUsage, 0.000001)
-	require.InDelta(t, 94, balance, 0.000001)
+	require.InDelta(t, 97, balance, 0.000001) // 100 − 3（1:1，倍率不参与）
 }
 
 func TestUsageBillingRepositoryApply_UnconfiguredSubscriptionFallsThroughToWalletPostgres(t *testing.T) {
@@ -297,7 +297,7 @@ func TestUsageBillingRepositoryApply_UnconfiguredSubscriptionFallsThroughToWalle
 	require.NotNil(t, result.SubscriptionID, "有生效卡的请求仍应按 subscription 口径记日志，即使未配置限额导致覆盖为 0")
 	require.Equal(t, subscription.ID, *result.SubscriptionID)
 	require.NotNil(t, result.WalletDebit)
-	require.InDelta(t, 8, *result.WalletDebit, 0.000001, "三限额全 NULL 的脏卡必须完全回落钱包，不能免费覆盖")
+	require.InDelta(t, 4, *result.WalletDebit, 0.000001, "三限额全 NULL 的脏卡必须完全回落钱包（1:1，倍率不参与），不能免费覆盖")
 
 	var dailyUsage, weeklyUsage, monthlyUsage, balance float64
 	var dailyLimit, weeklyLimit, monthlyLimit *float64
@@ -313,7 +313,7 @@ func TestUsageBillingRepositoryApply_UnconfiguredSubscriptionFallsThroughToWalle
 	require.Nil(t, dailyLimit)
 	require.Nil(t, weeklyLimit)
 	require.Nil(t, monthlyLimit)
-	require.InDelta(t, 12, balance, 0.000001)
+	require.InDelta(t, 16, balance, 0.000001) // 20 − 4（1:1，倍率不参与）
 }
 
 func TestUsageBillingRepositoryApply_ExpiredActiveCardIsClosedAndWalletBilledPostgres(t *testing.T) {
@@ -375,7 +375,7 @@ func TestUsageBillingRepositoryApply_ExpiredActiveCardIsClosedAndWalletBilledPos
 	require.True(t, result.Applied)
 	require.Nil(t, result.SubscriptionID, "假 active 过期卡不能再标 subscription 计费")
 	require.NotNil(t, result.WalletDebit)
-	require.InDelta(t, 8, *result.WalletDebit, 0.000001)
+	require.InDelta(t, 4, *result.WalletDebit, 0.000001) // 过期卡不覆盖，4 官方刀 1:1 扣钱包
 
 	var status string
 	var dailyUsage, weeklyUsage, monthlyUsage, balance float64
@@ -388,7 +388,7 @@ func TestUsageBillingRepositoryApply_ExpiredActiveCardIsClosedAndWalletBilledPos
 	require.InDelta(t, 1, dailyUsage, 0.000001)
 	require.InDelta(t, 2, weeklyUsage, 0.000001)
 	require.InDelta(t, 3, monthlyUsage, 0.000001)
-	require.InDelta(t, 12, balance, 0.000001)
+	require.InDelta(t, 16, balance, 0.000001) // 20 − 4（1:1，倍率不参与）
 }
 
 func TestUsageBillingRepositoryApply_ConcurrentSameRequestOnlyAppliesOncePostgres(t *testing.T) {
@@ -488,7 +488,7 @@ func TestUsageBillingRepositoryApply_ConcurrentSameRequestOnlyAppliesOncePostgre
 	require.InDelta(t, 3, dailyUsage, 0.000001)
 	require.InDelta(t, 3, weeklyUsage, 0.000001)
 	require.InDelta(t, 3, monthlyUsage, 0.000001)
-	require.InDelta(t, 94, balance, 0.000001)
+	require.InDelta(t, 97, balance, 0.000001) // 100 − 3（订阅覆盖 2 + 钱包 1:1 扣 3，倍率不参与）
 
 	var dedupCount int
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_billing_dedup WHERE request_id = $1 AND api_key_id = $2", requestID, apiKey.ID).Scan(&dedupCount))
@@ -903,9 +903,9 @@ func TestUsageBillingRepositoryApply_PerDayNoCardWalletOnly(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res.NewBalance)
-	require.InDelta(t, -6, *res.NewBalance, 1e-6, "无卡：10 − 8×2 = −6（钱包可负）")
+	require.InDelta(t, 2, *res.NewBalance, 1e-6, "无卡：10 − 8 = 2（1:1，倍率不参与）")
 	require.NotNil(t, res.WalletDebit)
-	require.InDelta(t, 16, *res.WalletDebit, 1e-6)
+	require.InDelta(t, 8, *res.WalletDebit, 1e-6) // 1:1（倍率不参与扣费）
 	require.Nil(t, res.SubscriptionID, "无卡 → 不标 subscription")
 }
 
@@ -931,14 +931,14 @@ func TestUsageBillingRepositoryApply_PerDayStaleActiveCardNotSubscription(t *tes
 		ExpiresAt:      now.Add(-1 * time.Hour), // 时间戳也已过，但到期任务未扫到 → status 仍 active
 	})
 
-	// 官方成本 4、倍率 2：卡已过期 → 套餐 0、不可透支 → 全走钱包 4×2=8。
+	// 官方成本 4、倍率 2：卡已过期 → 套餐 0 → 全走钱包 4（1:1，倍率不参与扣费）。
 	res, err := repo.Apply(ctx, &service.UsageBillingCommand{
 		RequestID: uuid.NewString(), APIKeyID: apiKey.ID, UserID: user.ID,
 		OfficialCost: 4, RateMultiplier: 2,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res.WalletDebit)
-	require.InDelta(t, 8, *res.WalletDebit, 1e-6, "费用走钱包")
+	require.InDelta(t, 4, *res.WalletDebit, 1e-6, "费用走钱包（1:1，倍率不参与）")
 	require.Nil(t, res.SubscriptionID, "过期假 active 卡不属于有效订阅卡 → 不标 subscription")
 
 	// 卡被惰性标 expired。
@@ -981,7 +981,7 @@ func TestUsageBillingRepositoryApply_PerDayActiveCardWalletOnlyStillSubscription
 	require.NotNil(t, res.SubscriptionID, "有有效卡即订阅计费识别，即使本次全走钱包层")
 	require.Equal(t, sub.ID, *res.SubscriptionID)
 	require.NotNil(t, res.WalletDebit)
-	require.InDelta(t, 8, *res.WalletDebit, 1e-6)
+	require.InDelta(t, 4, *res.WalletDebit, 1e-6) // 1:1（倍率不参与扣费）
 
 	var balance, todayRem float64
 	var status string
@@ -989,7 +989,7 @@ func TestUsageBillingRepositoryApply_PerDayActiveCardWalletOnlyStillSubscription
 		`SELECT balance FROM users WHERE id=$1`, user.ID).Scan(&balance))
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
 		`SELECT today_remaining, status FROM user_subscriptions WHERE id=$1`, sub.ID).Scan(&todayRem, &status))
-	require.InDelta(t, 92, balance, 1e-6)
+	require.InDelta(t, 96, balance, 1e-6) // 100 − 4（1:1，倍率不参与）
 	require.InDelta(t, 0, todayRem, 1e-6)
 	require.Equal(t, "active", status)
 }

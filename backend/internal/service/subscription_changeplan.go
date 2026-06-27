@@ -67,6 +67,13 @@ func (s *SubscriptionService) QuoteChangePlanOrder(ctx context.Context, userID i
 	refundable := oldCard.RefundableDays(today)
 	oldRemainingValue := cfg.Price(oldSub.DailyAmountUSD, refundable)
 
+	diff := quote.Price - oldRemainingValue
+	// 禁止赔钱降档（本会话用户决策，覆盖 spec §7 旧的「降档退差」）：diff<0 = 新档价低于旧卡剩余
+	// 价值，换档会让用户净亏，报价层即拒（前端据此禁用/提示，order 层另有同码防御）。
+	if diff < 0 {
+		return nil, ErrChangePlanDowngradeNotAllowed
+	}
+
 	return &ChangePlanOrderQuote{
 		OldSubscriptionID: oldSub.ID,
 		DailyAmountUSD:    quote.DailyAmountUSD,
@@ -75,7 +82,7 @@ func (s *SubscriptionService) QuoteChangePlanOrder(ctx context.Context, userID i
 		MonthlyCapUSD:     quote.MonthlyCapUSD,
 		NewPlanPrice:      quote.Price,
 		OldRemainingValue: oldRemainingValue,
-		Diff:              quote.Price - oldRemainingValue,
+		Diff:              diff,
 		UnitPrice:         quote.UnitPrice,
 	}, nil
 }
