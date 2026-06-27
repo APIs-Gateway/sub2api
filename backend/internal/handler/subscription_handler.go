@@ -219,7 +219,7 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 
 // changePlanRequestBody 续费/转套餐请求体：目标套餐 ID。
 type changePlanRequestBody struct {
-	PlanID int64 `json:"plan_id"`
+	PlanID int64 `json:"plan_id" binding:"required,gt=0"`
 }
 
 // Renew 续费当前生效卡（规格第 5 节）：同套餐续 T'、D 不变，从其他余额扣续费价。用户自助。
