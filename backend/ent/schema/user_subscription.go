@@ -74,6 +74,23 @@ func (UserSubscription) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
 			Default(0),
 
+		// ── 三窗口限额（per-day → 三窗口 redesign）：限额从 group 搬到订阅卡自身，实现「订阅与分组解耦」。
+		// daily/weekly/monthly_limit_usd = D / W / M（官方刀）；NULL = 该窗口不限。
+		// 与上方 *_usage_usd 配对：三窗口 usage < limit 才由订阅覆盖（1:1、不乘倍率、不扣钱包），
+		// 撞某窗口上限则订阅不再覆盖该段、回落钱包（见 docs/billing-perday-redesign.md §4）。
+		field.Float("daily_limit_usd").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		field.Float("weekly_limit_usd").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		field.Float("monthly_limit_usd").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+
 		// Burn-down 计费模型字段：开通时一次性把 G=D×days 打入用户余额，
 		// 每张订阅作为独立 burn-down 账户，消费/清扣按本卡 consumed/clawed 核算。
 		// remaining = granted_total_usd - consumed_usd - clawed_usd
