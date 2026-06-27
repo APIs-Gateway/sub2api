@@ -49,8 +49,6 @@ func (s *SubscriptionService) RenewSubscription(ctx context.Context, userID, pla
 	if addDays > MaxValidityDays {
 		addDays = MaxValidityDays
 	}
-	today := TodayEastDayNumber()
-	now := time.Now()
 
 	var result *RenewResult
 	var oldGroupID int64
@@ -71,6 +69,11 @@ func (s *SubscriptionService) RenewSubscription(ctx context.Context, userID, pla
 			}
 			return err
 		}
+
+		// LOCK-005：取锁后再按当前时间算 today/now，避免阻塞在 FOR UPDATE 上跨东八区午夜用 stale today
+		// （会误判 expire_day 续期口径）。
+		today := TodayEastDayNumber()
+		now := time.Now()
 
 		// 当前生效卡。续费可作用于「惰性过期但 status 仍 active」的卡（GrantSubscriptionDays 会从今天
 		// 起算），故此处不预先关假 active；仅当确无 active 卡时拒（应购买）。

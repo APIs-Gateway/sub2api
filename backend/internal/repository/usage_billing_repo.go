@@ -116,7 +116,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		officialCost, multiplier = cmd.BalanceCost, 1
 	}
 	if officialCost > 0 {
-		settleRes, err := settlePerDaySubscription(ctx, tx, cmd.UserID, officialCost, multiplier, time.Now())
+		settleRes, err := settlePerDaySubscription(ctx, tx, cmd.UserID, officialCost, multiplier)
 		if err != nil {
 			return err
 		}
@@ -167,10 +167,7 @@ type perDaySettleResult struct {
 // 锁序固定 user→card（与购买/续费/转套餐一致，防死锁）。无生效卡 → 纯钱包标准计费（官方价×倍率）。
 // 整套副作用（套餐扣减、钱包扣减、透支 expire_day−1+用户级月度计数、钱包负数）在本事务内原子完成；
 // dedup（claimUsageBillingKey）与本函数同 tx，重放整笔跳过。瀑布逻辑复用 service.Settle（已穷尽单测）。
-func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, officialCost, multiplier float64, now time.Time) (*perDaySettleResult, error) {
-	today := service.EastDayNumber(now)
-	monthKey := service.EastMonthKey(now)
-
+func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, officialCost, multiplier float64) (*perDaySettleResult, error) {
 	// 1) 锁 user 行（balance + 用户级月度透支计数）。
 	var balance float64
 	var monthCount int
@@ -217,6 +214,13 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 	default:
 		return nil, err
 	}
+
+	// LOCK-005：今日/月份口径必须在【取锁之后】按当前时间重算。否则请求若阻塞在上面的
+	// FOR UPDATE 上跨过东八区自然日午夜，会用 stale today 喂进引擎 ResetIfNewDay：给已过期卡
+	// 误发一天额度、或破坏转套餐当天防双领。锁内重读保证与所持行状态同处一个自然日。
+	now := time.Now()
+	today := service.EastDayNumber(now)
+	monthKey := service.EastMonthKey(now)
 
 	// 3) 跑引擎（无卡时用零值卡：ResetIfNewDay 会把它标过期、套餐层贡献 0 → 纯钱包）。
 	wallet := service.WalletState{Balance: balance, MonthlyOverdraftCount: monthCount, MonthlyOverdraftMonth: monthStr}

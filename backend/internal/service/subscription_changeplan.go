@@ -62,8 +62,6 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 	if tNew > MaxValidityDays {
 		tNew = MaxValidityDays
 	}
-	today := TodayEastDayNumber()
-	now := time.Now()
 
 	var result *ChangePlanResult
 	var oldGroupID int64
@@ -86,6 +84,11 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 			}
 			return err
 		}
+
+		// LOCK-005：取锁后再按当前时间算 today/now，避免阻塞在 FOR UPDATE 上跨东八区午夜用 stale today
+		// （会误判限频/折价/expire 口径）。
+		today := TodayEastDayNumber()
+		now := time.Now()
 
 		// 每自然日最多转 1 次。
 		if u.LastChangePlanDay == today {
