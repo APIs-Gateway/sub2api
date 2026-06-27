@@ -190,11 +190,21 @@ func (s *SubscriptionExpiryService) sendExpiryReminderIfDue(ctx context.Context,
 		SourceID:       strconv.FormatInt(sub.ID, 10),
 		ReminderKey:    fmt.Sprintf("%dd", daysRemaining),
 		Variables: map[string]string{
-			"subscription_group": sub.Group.Name,
+			// 自定义订阅卡无 group 归属（group_id NULL → Group==nil），用占位名避免 nil 解引 panic。
+			"subscription_group": subscriptionGroupDisplayName(sub.Group),
 			"expiry_time":        sub.ExpiresAt.Format("2006-01-02 15:04"),
 			"days_remaining":     strconv.Itoa(daysRemaining),
 		},
 	}); err != nil {
 		log.Printf("[SubscriptionExpiry] Send expiry reminder failed: subscription=%d user=%d err=%v", sub.ID, sub.UserID, err)
 	}
+}
+
+// subscriptionGroupDisplayName 取订阅卡来源分组名用于通知展示。
+// 自定义 D+T 订阅卡无 group 归属（group_id NULL → Group==nil），返回中性占位名而非 panic。
+func subscriptionGroupDisplayName(g *Group) string {
+	if g == nil {
+		return "订阅"
+	}
+	return g.Name
 }

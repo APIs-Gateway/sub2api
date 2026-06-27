@@ -36,7 +36,13 @@ func (UserSubscription) Mixin() []ent.Mixin {
 func (UserSubscription) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("user_id"),
-		field.Int64("group_id"),
+		// group_id：订阅卡所属分组。可空（per-day→三窗口 redesign，P5e）：
+		//   - 历史「按 group 分配/兑换」的卡仍写其来源 group（仅作历史快照，不再构成权限约束）；
+		//   - 自定义 D+T 购买的卡无 group 归属，group_id 为 NULL。
+		// 限额改读卡级 *_limit_usd，订阅可在任意 group 下使用；domain 侧仍以 int64(0=无 group) 表示。
+		field.Int64("group_id").
+			Optional().
+			Nillable(),
 		// plan_id：订阅来源套餐（burn-down 一等关联）。可空：存量按 group 直接分配、
 		// 或所挂 group 无对应 plan 的卡为 NULL。Phase 1 起新发放写入；group_id 暂保留照写。
 		field.Int64("plan_id").
@@ -181,11 +187,12 @@ func (UserSubscription) Edges() []ent.Edge {
 			Field("user_id").
 			Unique().
 			Required(),
+		// group：可空边（P5e）→ 生成 ON DELETE SET NULL，与迁移 164 一致。
+		// 自定义订阅卡无 group 归属（group_id NULL）；删除 group 不再级联删卡，仅置空其历史快照。
 		edge.From("group", Group.Type).
 			Ref("subscriptions").
 			Field("group_id").
-			Unique().
-			Required(),
+			Unique(),
 		// plan：订阅来源套餐（可空边 → 生成 ON DELETE SET NULL，与迁移 155 一致）。
 		edge.From("plan", SubscriptionPlan.Type).
 			Ref("subscriptions").

@@ -688,7 +688,7 @@ func (s *SubscriptionService) restoreSubscriptionForRefund(ctx context.Context, 
 			return err
 		}
 		userID = sub.UserID
-		groupID = sub.GroupID
+		groupID = entGroupIDValue(sub.GroupID)
 
 		_, err = client.UserSubscription.UpdateOneID(subscriptionID).
 			SetStatus(SubscriptionStatusActive).

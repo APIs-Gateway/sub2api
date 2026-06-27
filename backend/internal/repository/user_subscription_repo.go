@@ -19,6 +19,24 @@ func NewUserSubscriptionRepository(client *dbent.Client) service.UserSubscriptio
 	return &userSubscriptionRepository{client: client}
 }
 
+// nullableGroupID 把 domain 的 group_id(0=无 group 的自定义订阅卡)映射为 ent 可空列写入值：
+// 0/负 → nil(写 NULL，自定义卡)，>0 → &g(历史按 group 分配的卡)。
+func nullableGroupID(g int64) *int64 {
+	if g <= 0 {
+		return nil
+	}
+	v := g
+	return &v
+}
+
+// groupIDValue 把 ent 可空 group_id(*int64) 映射回 domain int64：NULL → 0(无 group)。
+func groupIDValue(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
 func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.UserSubscription) error {
 	if sub == nil {
 		return service.ErrSubscriptionNilInput
@@ -27,7 +45,7 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 	client := clientFromContext(ctx, r.client)
 	builder := client.UserSubscription.Create().
 		SetUserID(sub.UserID).
-		SetGroupID(sub.GroupID).
+		SetNillableGroupID(nullableGroupID(sub.GroupID)).
 		SetExpiresAt(sub.ExpiresAt).
 		SetNillableDailyWindowStart(sub.DailyWindowStart).
 		SetNillableWeeklyWindowStart(sub.WeeklyWindowStart).
@@ -218,7 +236,7 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 	client := clientFromContext(ctx, r.client)
 	builder := client.UserSubscription.UpdateOneID(sub.ID).
 		SetUserID(sub.UserID).
-		SetGroupID(sub.GroupID).
+		SetNillableGroupID(nullableGroupID(sub.GroupID)).
 		SetStartsAt(sub.StartsAt).
 		SetExpiresAt(sub.ExpiresAt).
 		SetStatus(sub.Status).
@@ -880,7 +898,7 @@ func userSubscriptionEntityToService(m *dbent.UserSubscription) *service.UserSub
 	out := &service.UserSubscription{
 		ID:                  m.ID,
 		UserID:              m.UserID,
-		GroupID:             m.GroupID,
+		GroupID:             groupIDValue(m.GroupID),
 		StartsAt:            m.StartsAt,
 		ExpiresAt:           m.ExpiresAt,
 		Status:              m.Status,

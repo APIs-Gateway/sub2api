@@ -108,6 +108,8 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 
 	// user_subscriptions: deleted_at for soft delete support (migration 012)
 	requireColumn(t, tx, "user_subscriptions", "deleted_at", "timestamp with time zone", 0, true)
+	// group_id 自 migration 164 起可空（P5e：自定义 D+T 订阅卡无 group 归属）
+	requireColumn(t, tx, "user_subscriptions", "group_id", "bigint", 0, true)
 	requireNumericColumn(t, tx, "user_subscriptions", "daily_limit_usd", 20, 10, true)
 	requireNumericColumn(t, tx, "user_subscriptions", "weekly_limit_usd", 20, 10, true)
 	requireNumericColumn(t, tx, "user_subscriptions", "monthly_limit_usd", 20, 10, true)

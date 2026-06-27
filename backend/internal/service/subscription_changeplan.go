@@ -113,8 +113,8 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 			return err
 		}
 		for _, sub := range staleSubs {
-			if sub.GroupID != 0 {
-				staleGroupIDs[sub.GroupID] = struct{}{}
+			if gid := entGroupIDValue(sub.GroupID); gid != 0 {
+				staleGroupIDs[gid] = struct{}{}
 			}
 		}
 		if _, err := client.UserSubscription.Update().

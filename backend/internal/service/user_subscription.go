@@ -12,6 +12,15 @@ import (
 // 注意：计量单位是「天」，且同一天内多笔只按当天达到的最高预支天数计，不会按请求数瞬间烧光。
 const MaxSubscriptionOverdraftUses = 5
 
+// entGroupIDValue 把 ent 可空 group_id(*int64) 映射为 domain/业务侧 int64：
+// NULL（自定义 D+T 卡无 group 归属）→ 0。与 repository.groupIDValue 同语义，供 service 层直读 ent 实体时使用。
+func entGroupIDValue(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
 type UserSubscription struct {
 	ID      int64
 	UserID  int64
