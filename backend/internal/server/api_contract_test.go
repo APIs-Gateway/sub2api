@@ -2010,6 +2010,14 @@ func (stubUserSubscriptionRepo) GetActiveByUserID(ctx context.Context, userID in
 func (stubUserSubscriptionRepo) GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
+
+func (stubUserSubscriptionRepo) GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubUserSubscriptionRepo) ApplyManualOverdraft(ctx context.Context, sub *service.UserSubscription) error {
+	return errors.New("not implemented")
+}
 func (stubUserSubscriptionRepo) Update(ctx context.Context, sub *service.UserSubscription) error {
 	return errors.New("not implemented")
 }

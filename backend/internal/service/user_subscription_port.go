@@ -18,7 +18,12 @@ type UserSubscriptionRepository interface {
 	// GetLatestActiveStatusByUserID 返回最近一张 status='active' 的卡，允许 expires_at 已过期。
 	// 仅供续费复活惰性过期卡使用；准入/结算不得使用此方法。
 	GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*UserSubscription, error)
+	// GetLatestActiveStatusForUpdate 同上但加行级 FOR UPDATE，供手动透支在事务内锁卡行（与结算串行）。
+	GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*UserSubscription, error)
 	Update(ctx context.Context, sub *UserSubscription) error
+	// ApplyManualOverdraft 原子落库手动透支：三窗口用量/起点 + expires_at + expire_day（借天 −1，两者同步）。
+	// 须在持有该卡 FOR UPDATE 锁的事务内调用；不可用通用 Update（它不写 expire_day，会致两者分裂）。
+	ApplyManualOverdraft(ctx context.Context, sub *UserSubscription) error
 	Delete(ctx context.Context, id int64) error
 
 	ListByUserID(ctx context.Context, userID int64) ([]UserSubscription, error)

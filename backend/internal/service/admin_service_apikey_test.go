@@ -293,6 +293,14 @@ func (s *userSubRepoStubForGroupUpdate) GetLatestActiveStatusByUserID(ctx contex
 	return s.GetActiveByUserID(ctx, userID)
 }
 
+func (s *userSubRepoStubForGroupUpdate) GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*UserSubscription, error) {
+	return s.GetActiveByUserID(ctx, userID)
+}
+
+func (s *userSubRepoStubForGroupUpdate) ApplyManualOverdraft(ctx context.Context, sub *UserSubscription) error {
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

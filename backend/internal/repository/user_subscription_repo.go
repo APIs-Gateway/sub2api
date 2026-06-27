@@ -161,6 +161,48 @@ func (r *userSubscriptionRepository) GetLatestActiveStatusByUserID(ctx context.C
 	return userSubscriptionEntityToService(m), nil
 }
 
+// GetLatestActiveStatusForUpdate 同 GetLatestActiveStatusByUserID,但加行级 FOR UPDATE。
+// 供手动透支:在事务内锁住 active 卡行,与结算(亦锁卡行)串行化,避免「透支清零 daily_usage」
+// 与「结算自增 daily_usage」交错。卡是否「真生效」(now<expires_at)由引擎 active() 判定,这里只取
+// status='active' 的最近一张(口径同上,允许惰性过期的卡进引擎被拒)。仅在 Postgres 事务路径调用。
+func (r *userSubscriptionRepository) GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	client := clientFromContext(ctx, r.client)
+	m, err := client.UserSubscription.Query().
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.StatusEQ(service.SubscriptionStatusActive),
+			usersubscription.DeletedAtIsNil(),
+		).
+		Order(dbent.Desc(usersubscription.FieldExpiresAt), dbent.Desc(usersubscription.FieldCreatedAt)).
+		ForUpdate().
+		First(ctx)
+	if err != nil {
+		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	}
+	return userSubscriptionEntityToService(m), nil
+}
+
+// ApplyManualOverdraft 原子落库手动透支结果:三窗口用量/起点(引擎可能惰性重置过) + expires_at +
+// expire_day(借天 −1)。**不走通用 Update**(它刻意不写 expire_day,用本快照整行覆盖会让 expire_day
+// 与 expires_at 分裂,而准入排序/退款/转套餐多处仍读 expire_day)。调用方须已在事务内持有该卡 FOR UPDATE 锁。
+func (r *userSubscriptionRepository) ApplyManualOverdraft(ctx context.Context, sub *service.UserSubscription) error {
+	if sub == nil {
+		return service.ErrSubscriptionNilInput
+	}
+	client := clientFromContext(ctx, r.client)
+	_, err := client.UserSubscription.UpdateOneID(sub.ID).
+		SetDailyUsageUsd(sub.DailyUsageUSD).
+		SetWeeklyUsageUsd(sub.WeeklyUsageUSD).
+		SetMonthlyUsageUsd(sub.MonthlyUsageUSD).
+		SetNillableDailyWindowStart(sub.DailyWindowStart).
+		SetNillableWeeklyWindowStart(sub.WeeklyWindowStart).
+		SetNillableMonthlyWindowStart(sub.MonthlyWindowStart).
+		SetExpiresAt(sub.ExpiresAt).
+		SetExpireDay(sub.ExpireDay).
+		Save(ctx)
+	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+}
+
 // Update 写订阅「元数据」（状态/到期/窗口/notes 等）。
 // 注意：burn-down 计费字段（consumed/clawed）与 per-day 热字段
 // （today_remaining/today_day/expire_day/daily_spent_usd/daily_spent_day）**不在此写**——它们由结算/清扣的专用原子 SQL 在

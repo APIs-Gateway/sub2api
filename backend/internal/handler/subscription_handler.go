@@ -149,6 +149,29 @@ func (h *SubscriptionHandler) SetOverdraftDays(c *gin.Context) {
 	response.Success(c, gin.H{"id": subID})
 }
 
+// Overdraft 用户手动透支「借一天」（规格第 8 节）：清空今日已用额度（刷新当日额度）+ expires_at 提前 1 天
+// + 用户级月度计数 +1。仅解日上限，周/月封顶仍生效；每用户每自然月最多 5 次。
+// POST /api/v1/subscriptions/overdraft
+func (h *SubscriptionHandler) Overdraft(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	// idempotency_key 选填：当前不持久化去重，连点防护由服务端「借后 daily_usage=0 → 二次即
+	// OVERDRAFT_DAILY_NOT_EXHAUSTED」天然提供（见 ManualOverdraft 注释）。空 body 也允许。
+	var req struct {
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	res, err := h.subscriptionService.ManualOverdraft(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, res)
+}
+
 // GetSummary handles getting a summary of current user's subscription status
 // GET /api/v1/subscriptions/summary
 func (h *SubscriptionHandler) GetSummary(c *gin.Context) {

@@ -136,6 +136,14 @@ func (f fakeGoogleSubscriptionRepo) GetActiveByUserID(ctx context.Context, userI
 func (f fakeGoogleSubscriptionRepo) GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
 	return f.GetActiveByUserID(ctx, userID)
 }
+
+func (f fakeGoogleSubscriptionRepo) GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return f.GetActiveByUserID(ctx, userID)
+}
+
+func (f fakeGoogleSubscriptionRepo) ApplyManualOverdraft(ctx context.Context, sub *service.UserSubscription) error {
+	return nil
+}
 func (f fakeGoogleSubscriptionRepo) Update(ctx context.Context, sub *service.UserSubscription) error {
 	return errors.New("not implemented")
 }

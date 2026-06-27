@@ -115,8 +115,10 @@ func RegisterUserRoutes(
 			subscriptions.GET("/active", h.Subscription.GetActive)
 			subscriptions.GET("/progress", h.Subscription.GetProgress)
 			subscriptions.GET("/summary", h.Subscription.GetSummary)
-			// 用户自助：设置自己某张订阅卡的「最多透支天数」
+			// 用户自助：设置自己某张订阅卡的「最多透支天数」（旧 per-day 入口，待退役）
 			subscriptions.PUT("/:id/overdraft", h.Subscription.SetOverdraftDays)
+			// 用户自助手动透支「借一天」（三窗口模型，用户级、仅解日上限）：清 daily_usage + expires_at −1 + 月度计数++。
+			subscriptions.POST("/overdraft", h.Subscription.Overdraft)
 			// 用户自助生命周期：续费（同档延长）/ 转套餐（折旧抵新、多退少补），均从其他余额扣费。
 			subscriptions.POST("/renew", h.Subscription.Renew)
 			subscriptions.POST("/change-plan", h.Subscription.ChangePlan)
