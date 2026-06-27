@@ -122,6 +122,28 @@ func (s *SubscriptionService) ManualOverdraft(ctx context.Context, userID int64)
 	return result, nil
 }
 
+// MonthlyOverdraftRemaining 返回用户本月剩余可手动透支次数（惰性按东八区月重置后），供前端预置灰按钮。
+// 只读、不落库（真正的跨月归零落库在 ManualOverdraft 的锁内事务里）；entClient 未配或读不到则返回错误，
+// 调用方（handler）据此不填 DTO 字段，前端按 null 处理。
+func (s *SubscriptionService) MonthlyOverdraftRemaining(ctx context.Context, userID int64) (int, error) {
+	if s.entClient == nil {
+		return 0, fmt.Errorf("ent client not configured")
+	}
+	u, err := s.entClient.User.Get(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	count := u.MonthlyOverdraftCount
+	if u.MonthlyOverdraftMonth != CurrentEastMonthKey() {
+		count = 0 // 跨月：本月计数视为 0（惰性，不落库）
+	}
+	remaining := MaxMonthlyOverdraftUses - count
+	if remaining < 0 {
+		remaining = 0
+	}
+	return remaining, nil
+}
+
 // mapOverdraftErr 把引擎透支错误映射为带前端错误码的应用错误（前端据 code 本地化文案）。
 func mapOverdraftErr(err error) error {
 	switch {

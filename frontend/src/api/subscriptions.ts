@@ -67,16 +67,26 @@ export async function getSubscriptionProgress(
   return response.data
 }
 
+/** 手动透支「借一天」结果（对齐后端 service.ManualOverdraftResult）。 */
+export interface ManualOverdraftResult {
+  subscription_id: number
+  new_expires_at: string
+  new_expire_day: number
+  monthly_overdraft_remaining: number
+}
+
 /**
  * 手动透支「借一天」（三窗口模型，用户级、仅解日上限）。
  * 服务端在锁内：校验「有生效卡 + 当日额度撞满 + 本月<5 + 有未来天」→ daily_usage 清零 + expires_at −1 天 + 月度计数++。
- * 周/月封顶仍生效。idempotencyKey 防连点重复借天（同键重放幂等）。
- * 契约见 docs/billing-perday-redesign.md（#7 后端落地：POST /subscriptions/overdraft）。
+ * 周/月封顶仍生效。idempotencyKey 通过 Idempotency-Key 头传给后端做持久化去重：同键重放返回首次结果、
+ * 不重复借天/计数（POST /subscriptions/overdraft）。
  */
-export async function borrowOverdraftDay(idempotencyKey?: string): Promise<UserSubscription> {
-  const response = await apiClient.post<UserSubscription>('/subscriptions/overdraft', {
-    idempotency_key: idempotencyKey,
-  })
+export async function borrowOverdraftDay(idempotencyKey: string): Promise<ManualOverdraftResult> {
+  const response = await apiClient.post<ManualOverdraftResult>(
+    '/subscriptions/overdraft',
+    {},
+    { headers: { 'Idempotency-Key': idempotencyKey } }
+  )
   return response.data
 }
 

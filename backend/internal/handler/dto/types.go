@@ -594,6 +594,10 @@ type UserSubscription struct {
 	WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`
 	MonthlyLimitUSD *float64 `json:"monthly_limit_usd"`
 
+	// 用户级本月剩余手动透支次数（每自然月最多 5 次）；前端据此在已满时提前置灰透支按钮。
+	// nil（omitempty 省略）= 后端未提供，前端不前置拦截、交服务端兜底。由 List/active handler 按用户填充。
+	MonthlyOverdraftRemaining *int `json:"monthly_overdraft_remaining,omitempty"`
+
 	// Burn-down 计费模型字段（开通即把整期额度打入余额，按消费进度天展示）。
 	GrantedTotalUSD        float64    `json:"granted_total_usd"`
 	DailyAmountUSD         float64    `json:"daily_amount_usd"`

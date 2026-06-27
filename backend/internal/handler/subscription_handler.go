@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -63,7 +64,25 @@ func (h *SubscriptionHandler) List(c *gin.Context) {
 	for i := range subscriptions {
 		out = append(out, *dto.UserSubscriptionFromService(&subscriptions[i]))
 	}
+	h.stampMonthlyOverdraftRemaining(c.Request.Context(), subject.UserID, out)
 	response.Success(c, out)
+}
+
+// stampMonthlyOverdraftRemaining 给一批订阅 DTO 填「用户级本月剩余透支次数」（per-user，全卡同值），
+// 供前端在本月已满 5 次时提前置灰透支按钮。读不到（如未配 entClient / 出错）则不填，前端按 null
+// 处理（不前置拦截，交服务端兜底校验）。
+func (h *SubscriptionHandler) stampMonthlyOverdraftRemaining(ctx context.Context, userID int64, out []dto.UserSubscription) {
+	if len(out) == 0 {
+		return
+	}
+	remaining, err := h.subscriptionService.MonthlyOverdraftRemaining(ctx, userID)
+	if err != nil {
+		return
+	}
+	for i := range out {
+		r := remaining
+		out[i].MonthlyOverdraftRemaining = &r
+	}
 }
 
 // GetActive handles getting current user's active subscriptions
@@ -85,6 +104,7 @@ func (h *SubscriptionHandler) GetActive(c *gin.Context) {
 	for i := range subscriptions {
 		out = append(out, *dto.UserSubscriptionFromService(&subscriptions[i]))
 	}
+	h.stampMonthlyOverdraftRemaining(c.Request.Context(), subject.UserID, out)
 	response.Success(c, out)
 }
 
@@ -184,18 +204,28 @@ func (h *SubscriptionHandler) Overdraft(c *gin.Context) {
 		response.Unauthorized(c, "User not found in context")
 		return
 	}
-	// idempotency_key 选填：当前不持久化去重，连点防护由服务端「借后 daily_usage=0 → 二次即
-	// OVERDRAFT_DAILY_NOT_EXHAUSTED」天然提供（见 ManualOverdraft 注释）。空 body 也允许。
-	var req struct {
-		IdempotencyKey string `json:"idempotency_key"`
+	// 幂等（spec §并发与幂等）：持久化去重——同键重放返回首次结果，绝不重复 expires_at−1 /
+	// month_overdraft++（光靠「借后 daily_usage=0」只能挡瞬时连点，挡不住「首次成功→当日再次撞满
+	// →同键重放」二次借天，故必须落幂等记录）。
+	// key 来源兼容两路：优先 Idempotency-Key 头（标准）；缺失时回填 body.idempotency_key
+	// （前端历史契约），保证两条路径都进持久化去重。
+	if c.GetHeader("Idempotency-Key") == "" {
+		var body struct {
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if err := c.ShouldBindJSON(&body); err == nil && body.IdempotencyKey != "" {
+			c.Request.Header.Set("Idempotency-Key", body.IdempotencyKey)
+		}
 	}
-	_ = c.ShouldBindJSON(&req)
-	res, err := h.subscriptionService.ManualOverdraft(c.Request.Context(), subject.UserID)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, res)
+	executeUserIdempotentJSON(
+		c,
+		"user.subscriptions.overdraft",
+		gin.H{"user_id": subject.UserID},
+		service.DefaultWriteIdempotencyTTL(),
+		func(ctx context.Context) (any, error) {
+			return h.subscriptionService.ManualOverdraft(ctx, subject.UserID)
+		},
+	)
 }
 
 // GetSummary handles getting a summary of current user's subscription status
@@ -227,18 +257,19 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 			MonthlyUsedUSD: sub.MonthlyUsageUSD,
 		}
 
-		// Add group info if preloaded
+		// Add group name if preloaded（仅取名字；限额已不挂 group）。
 		if sub.Group != nil {
 			item.GroupName = sub.Group.Name
-			if sub.Group.DailyLimitUSD != nil {
-				item.DailyLimitUSD = *sub.Group.DailyLimitUSD
-			}
-			if sub.Group.WeeklyLimitUSD != nil {
-				item.WeeklyLimitUSD = *sub.Group.WeeklyLimitUSD
-			}
-			if sub.Group.MonthlyLimitUSD != nil {
-				item.MonthlyLimitUSD = *sub.Group.MonthlyLimitUSD
-			}
+		}
+		// 三窗口限额挂卡、不挂 group（新模型）：summary 也按卡级限额返回，避免回旧 group 值/空值。
+		if sub.DailyLimitUSD != nil {
+			item.DailyLimitUSD = *sub.DailyLimitUSD
+		}
+		if sub.WeeklyLimitUSD != nil {
+			item.WeeklyLimitUSD = *sub.WeeklyLimitUSD
+		}
+		if sub.MonthlyLimitUSD != nil {
+			item.MonthlyLimitUSD = *sub.MonthlyLimitUSD
 		}
 
 		// Format expiration time
