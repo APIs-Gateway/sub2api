@@ -1574,6 +1574,9 @@ export interface UserSubscription {
   daily_limit_usd?: number | null
   weekly_limit_usd?: number | null
   monthly_limit_usd?: number | null
+  // 用户级本月手动透支剩余次数（每自然月最多 5 次，东八区惰性重置）。
+  // 后端 #7/#8 提供：有值时前端据此置灰按钮，无值时不前置拦截、交服务端兜底校验。
+  monthly_overdraft_remaining?: number | null
   // Burn-down 计费模型字段（开通即把整期额度打入余额）
   granted_total_usd?: number // 发放总额 G = D×天数
   daily_amount_usd?: number // 每日额度 D

@@ -7033,15 +7033,24 @@ export default {
     noActiveSubscriptions: '暂无有效订阅',
     noActiveSubscriptionsDesc: '您没有任何有效订阅。请联系管理员获取订阅。',
     failedToLoad: '加载订阅失败',
-    overdraft: {
-      label: '最多透支天数',
-      placeholder: '关闭',
-      hint: '默认不支持透支。开启后本卡最多可往后预支 {max} 天额度；留空 = 关闭，0 = 仅可用当天额度。',
-      usage: '往后预支：已用 {used} / {max} 天，剩余 {remaining} 天',
-      exhausted: '已用满 {max} 天预支额度，系统已自动关闭透支功能，用户端不能再次开启。',
-      saved: '已保存透支上限',
-      failed: '保存透支上限失败',
-      invalid: '请输入 0 或正整数（留空表示关闭）'
+    overdraftBtn: {
+      label: '透支借一天',
+      remaining: '本月剩余 {n} 次',
+      confirmTitle: '透支借一天',
+      confirmMessage:
+        '将清空「今日已用额度」、立即恢复当日可用额度，代价是有效期提前 1 天。仅解日上限，周/月封顶仍然生效。每自然月最多 5 次。',
+      confirmOk: '确认透支',
+      success: '已透支：今日额度已刷新，有效期 −1 天',
+      disabledNotMaxed: '今日额度尚未用满，无需透支',
+      disabledNoFutureDay: '有效期不足，没有可借的未来天数',
+      disabledExhausted: '本月透支次数已用满（每月最多 5 次）',
+      errors: {
+        noActiveCard: '没有生效中的订阅，无法透支',
+        dailyNotExhausted: '今日额度尚未用满，无需透支',
+        monthlyLimit: '本月透支次数已用满（每月最多 5 次）',
+        noFutureDay: '有效期不足，没有可借的未来天数',
+        generic: '透支失败，请稍后重试'
+      }
     },
     status: {
       active: '有效',

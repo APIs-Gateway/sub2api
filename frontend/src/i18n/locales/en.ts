@@ -6880,15 +6880,24 @@ export default {
     noActiveSubscriptionsDesc:
       "You don't have any active subscriptions. Contact administrator to get one.",
     failedToLoad: 'Failed to load subscriptions',
-    overdraft: {
-      label: 'Max overdraft days',
-      placeholder: 'Off',
-      hint: 'Overdraft is off by default. Once enabled, this card can pre-spend up to {max} days ahead in total. Empty = off; 0 = only today\'s accrual.',
-      usage: 'Pre-spent: {used} / {max} days used, {remaining} remaining',
-      exhausted: 'You have pre-spent the full {max}-day allowance. The system has turned overdraft off and users cannot enable it again.',
-      saved: 'Overdraft limit saved',
-      failed: 'Failed to save overdraft limit',
-      invalid: 'Enter 0 or a positive integer (leave empty to turn off)'
+    overdraftBtn: {
+      label: 'Borrow a day',
+      remaining: '{n} left this month',
+      confirmTitle: 'Borrow a day (overdraft)',
+      confirmMessage:
+        "This clears today's used amount and restores today's allowance immediately, at the cost of bringing the expiry forward by 1 day. It only lifts the daily cap; weekly/monthly caps still apply. Up to 5 times per calendar month.",
+      confirmOk: 'Confirm overdraft',
+      success: "Overdraft applied: today's allowance refreshed, expiry −1 day",
+      disabledNotMaxed: "Today's allowance is not used up yet — no overdraft needed",
+      disabledNoFutureDay: 'Not enough validity left — no future day to borrow',
+      disabledExhausted: 'Monthly overdraft limit reached (up to 5 per month)',
+      errors: {
+        noActiveCard: 'No active subscription to overdraft against',
+        dailyNotExhausted: "Today's allowance is not used up yet — no overdraft needed",
+        monthlyLimit: 'Monthly overdraft limit reached (up to 5 per month)',
+        noFutureDay: 'Not enough validity left — no future day to borrow',
+        generic: 'Overdraft failed, please try again later'
+      }
     },
     status: {
       active: 'Active',

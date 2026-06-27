@@ -68,16 +68,16 @@ export async function getSubscriptionProgress(
 }
 
 /**
- * Set the max overdraft days on one of the current user's own subscription cards.
- * days = null → turn off overdraft; >=0 → turn on (0 = only today's accrual).
+ * 手动透支「借一天」（三窗口模型，用户级、仅解日上限）。
+ * 服务端在锁内：校验「有生效卡 + 当日额度撞满 + 本月<5 + 有未来天」→ daily_usage 清零 + expires_at −1 天 + 月度计数++。
+ * 周/月封顶仍生效。idempotencyKey 防连点重复借天（同键重放幂等）。
+ * 契约见 docs/billing-perday-redesign.md（#7 后端落地：POST /subscriptions/overdraft）。
  */
-export async function setOverdraftDays(
-  subscriptionId: number,
-  days: number | null
-): Promise<void> {
-  await apiClient.put(`/subscriptions/${subscriptionId}/overdraft`, {
-    max_overdraft_days: days,
+export async function borrowOverdraftDay(idempotencyKey?: string): Promise<UserSubscription> {
+  const response = await apiClient.post<UserSubscription>('/subscriptions/overdraft', {
+    idempotency_key: idempotencyKey,
   })
+  return response.data
 }
 
 /** 续费结果（同档延长发放期，从余额扣续费价）。 */
@@ -122,7 +122,7 @@ export default {
   getSubscriptionsProgress,
   getSubscriptionSummary,
   getSubscriptionProgress,
-  setOverdraftDays,
+  borrowOverdraftDay,
   renewSubscription,
   changeSubscriptionPlan
 }
