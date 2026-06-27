@@ -6,36 +6,27 @@ import (
 	"fmt"
 	"time"
 
-	"entgo.io/ent/dialect"
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/user"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
-// RenewResult 续费结果（规格第 5 节）。
-type RenewResult struct {
+// RenewOrderQuote 续费下单报价（只读，不改任何状态；规格第 5 节）：
+// D 取自用户唯一生效卡，续 T'(整月)天，价 = cfg.Price(D, T')（恒 >0，走法币网关收全价）。
+type RenewOrderQuote struct {
 	SubscriptionID int64   `json:"subscription_id"`
-	AddedDays      int     `json:"added_days"`     // 本次续的自然天数 T'
-	Price          float64 `json:"price"`          // 续费价 = cfg.Price(D, T')
-	NewExpireDay   int     `json:"new_expire_day"` // 续后 expire_day = max(原, today−1) + T'（夹上限）
+	DailyAmountUSD float64 `json:"daily_amount_usd"`
+	AddedDays      int     `json:"added_days"`
+	Price          float64 `json:"price"`
+	UnitPrice      float64 `json:"unit_price"`
+	GroupID        int64   `json:"group_id"`
 }
 
-// RenewSubscription 续费当前生效卡（规格第 5 节）：同 D 续 T' 天，只延长发放期、不叠加额度（额度每天发）。
-// 统一 D+T-based（无固定套餐）：不再依赖 plan，D 直接取自当前卡（custom 无 group 卡与套餐卡同走此路）；
-// 调用方只传续费天数 T'（须整月、在 [TMin,TMax]）。价格按续费时公式价 cfg.Price(card.D, T') 重算，从余额扣
-// （不足则拒；超余额的「发起支付」路径属后续）。
-//
-// expire_day = max(原 expire_day, today−1) + T'：未到期从原到期日顺延（无缝）；已到期从今天起算 T' 天
-// （中间断档不补）。复用 GrantSubscriptionDays（其内部即此口径并夹 MaxExpireDay）。
-func (s *SubscriptionService) RenewSubscription(ctx context.Context, userID int64, validityDays int) (*RenewResult, error) {
-	if s.entClient == nil {
-		return nil, fmt.Errorf("ent client not configured")
-	}
+// QuoteRenewOrder 解析续费下单的权威参数（不锁、不改状态）。无生效卡 → ErrNoActiveSubscription（应购买）。
+// 续费天数须整月（TStep 倍数）且在 [TMin,TMax]；D 取自当前卡（沿用历史值，不校验区间）。
+func (s *SubscriptionService) QuoteRenewOrder(ctx context.Context, userID int64, validityDays int) (*RenewOrderQuote, error) {
 	if userID <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_INPUT", "user is required")
 	}
 	cfg := DefaultSubscriptionPricingConfig()
-	// 续费天数 T' 须整月（TStep 倍数）且在 [TMin,TMax]；D 取自当前卡（沿用历史值，不在此校验区间）。
 	if validityDays < cfg.TMin || validityDays > cfg.TMax || (cfg.TStep > 0 && validityDays%cfg.TStep != 0) {
 		return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION_PARAMS",
 			fmt.Sprintf("续费天数须为 %d 的整数倍且在 [%d,%d]", cfg.TStep, cfg.TMin, cfg.TMax))
@@ -44,62 +35,53 @@ func (s *SubscriptionService) RenewSubscription(ctx context.Context, userID int6
 	if addDays > MaxValidityDays {
 		addDays = MaxValidityDays
 	}
+	// 续费可作用于「惰性过期但 status 仍 active」的最近卡（履约 GrantSubscriptionDays 会从今天起算）。
+	sub, err := s.userSubRepo.GetLatestActiveStatusByUserID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrSubscriptionNotFound) {
+			return nil, ErrNoActiveSubscription
+		}
+		return nil, err
+	}
+	return &RenewOrderQuote{
+		SubscriptionID: sub.ID,
+		DailyAmountUSD: sub.DailyAmountUSD,
+		AddedDays:      addDays,
+		Price:          cfg.Price(sub.DailyAmountUSD, addDays),
+		UnitPrice:      cfg.UnitPrice(sub.DailyAmountUSD),
+		GroupID:        sub.GroupID,
+	}, nil
+}
 
-	var result *RenewResult
-	var oldGroupID int64
+// ApplyRenewFromOrder 履约续费（法币支付成功后由 doSub 调用）：把目标卡有效期延长 addDays
+// （三窗口口径：只延 expires_at/expire_day，不动 D/W/M 与 usage/window_start）。**不扣任何余额**
+// （续费价已通过法币网关收取，见 docs/billing-perday-redesign.md §5）。幂等由 doSub 的
+// SUBSCRIPTION_SUCCESS 审计键保证。expire_day = max(原, today−1) + addDays（GrantSubscriptionDays 内即此口径并夹上限）。
+func (s *SubscriptionService) ApplyRenewFromOrder(ctx context.Context, subscriptionID int64, addDays int) (*UserSubscription, error) {
+	if s.entClient == nil {
+		return nil, fmt.Errorf("ent client not configured")
+	}
+	if subscriptionID <= 0 || addDays <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_INPUT", "subscription and positive addDays are required")
+	}
+	if addDays > MaxValidityDays {
+		addDays = MaxValidityDays
+	}
+
+	var userID, groupID int64
 	if err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
-		tx := dbent.TxFromContext(txCtx)
-		client := tx.Client()
-		lockRows := client.Driver() != nil && client.Driver().Dialect() == dialect.Postgres
-
-		// 锁 user 行：余额读写原子，并与下单/转套餐串行化。
-		uq := client.User.Query().Where(user.IDEQ(userID), user.DeletedAtIsNil())
-		if lockRows {
-			uq = uq.ForUpdate()
-		}
-		u, err := uq.Only(txCtx)
-		if err != nil {
-			if dbent.IsNotFound(err) {
-				return ErrUserNotFound
-			}
-			return err
-		}
-
-		// LOCK-005：取锁后再按当前时间算 today/now，避免阻塞在 FOR UPDATE 上跨东八区午夜用 stale today
-		// （会误判 expire_day 续期口径）。
-		today := TodayEastDayNumber()
 		now := time.Now()
-
-		// 续费可作用于「惰性过期但 status 仍 active」的最近卡（GrantSubscriptionDays 会从今天
-		// 起算），故不能使用准入/结算专用的严格 GetActiveByUserID；仅当确无 active-status 卡时拒（应购买）。
-		oldSub, err := s.userSubRepo.GetLatestActiveStatusByUserID(txCtx, userID)
+		sub, err := s.userSubRepo.GetByID(txCtx, subscriptionID)
 		if err != nil {
 			if errors.Is(err, ErrSubscriptionNotFound) {
-				return ErrNoActiveSubscription
+				return ErrSubscriptionNotFound
 			}
 			return err
 		}
-		oldGroupID = oldSub.GroupID
-
-		// 续费 = 同 D 续 T'：D 取自当前卡，天然不变（无需 plan 校验，custom 卡亦可续）。
-		price := cfg.Price(oldSub.DailyAmountUSD, addDays)
-		if u.Balance < price {
-			return ErrInsufficientBalanceForRenew
-		}
-
-		// 扣续费价（不静默欠费）+ 延长发放期。GrantSubscriptionDays 复用本 tx、内部即续费口径并夹上限。
-		if _, err := client.User.UpdateOneID(userID).AddBalance(-price).Save(txCtx); err != nil {
-			return fmt.Errorf("deduct renew price: %w", err)
-		}
-		if _, _, err := s.userSubRepo.GrantSubscriptionDays(txCtx, oldSub.ID, addDays, now, now); err != nil {
+		userID = sub.UserID
+		groupID = sub.GroupID
+		if _, _, err := s.userSubRepo.GrantSubscriptionDays(txCtx, subscriptionID, addDays, now, now); err != nil {
 			return fmt.Errorf("grant renew days: %w", err)
-		}
-
-		result = &RenewResult{
-			SubscriptionID: oldSub.ID,
-			AddedDays:      addDays,
-			Price:          price,
-			NewExpireDay:   RenewExpireDay(oldSub.ExpireDay, today, addDays),
 		}
 		return nil
 	}); err != nil {
@@ -108,7 +90,7 @@ func (s *SubscriptionService) RenewSubscription(ctx context.Context, userID int6
 
 	s.clearSubscriptionLockCache(userID)
 	s.invalidateUserBalanceCacheAsync(userID)
-	s.InvalidateSubCache(userID, oldGroupID)
-	s.invalidateSubscriptionCacheAsync(userID, oldGroupID)
-	return result, nil
+	s.InvalidateSubCache(userID, groupID)
+	s.invalidateSubscriptionCacheAsync(userID, groupID)
+	return s.userSubRepo.GetByID(ctx, subscriptionID)
 }

@@ -290,20 +290,22 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 	response.Success(c, summary)
 }
 
-// renewRequestBody 续费请求体（统一 D+T-based）：只传续费天数 T'（D 取自当前卡）。
+// renewRequestBody 续费报价请求体（统一 D+T-based）：只传续费天数 T'（D 取自当前卡）。
 type renewRequestBody struct {
 	ValidityDays int `json:"validity_days" binding:"required,gt=0"`
 }
 
-// changePlanRequestBody 转套餐请求体（统一 D+T-based）：目标档新 D + 新 T（无固定套餐）。
+// changePlanRequestBody 转套餐报价请求体（统一 D+T-based）：目标档新 D + 新 T（无固定套餐）。
 type changePlanRequestBody struct {
 	DailyAmountUSD float64 `json:"daily_amount_usd" binding:"required,gt=0"`
 	ValidityDays   int     `json:"validity_days" binding:"required,gt=0"`
 }
 
-// Renew 续费当前生效卡（规格第 5 节）：同 D 续 T'，从其他余额扣续费价。用户自助。
-// POST /api/v1/subscriptions/renew
-func (h *SubscriptionHandler) Renew(c *gin.Context) {
+// RenewQuote 续费报价（只读预览，规格第 5 节）：返回续费价等参数供前端展示。
+// **续费本身走法币支付网关**：前端拿到报价后下单走 POST /payment/orders
+// （order_type=subscription, subscription_intent=renew, validity_days），支付成功回调履约延长有效期。
+// POST /api/v1/subscriptions/renew/quote
+func (h *SubscriptionHandler) RenewQuote(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not found in context")
@@ -314,7 +316,7 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 		response.BadRequest(c, "invalid request: "+err.Error())
 		return
 	}
-	res, err := h.subscriptionService.RenewSubscription(c.Request.Context(), subject.UserID, req.ValidityDays)
+	res, err := h.subscriptionService.QuoteRenewOrder(c.Request.Context(), subject.UserID, req.ValidityDays)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -322,9 +324,12 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 	response.Success(c, res)
 }
 
-// ChangePlan 转套餐（规格第 7 节）：旧卡折剩余价值抵新档，多退少补；每自然日最多 1 次。用户自助。
-// POST /api/v1/subscriptions/change-plan
-func (h *SubscriptionHandler) ChangePlan(c *gin.Context) {
+// ChangePlanQuote 转套餐报价（只读预览，规格第 7 节）：返回新档价 P_新、旧卡剩余价值 V、差价 diff。
+// **补差价走法币支付网关**（仅 diff>0 可下单；diff≤0 禁止：降档赔钱/持平无差价）。前端拿到 diff>0 后下单走
+// POST /payment/orders（order_type=subscription, subscription_intent=change_plan, daily_amount_usd, validity_days），
+// 支付成功回调履约关旧开新。每自然日最多转 1 次（撞则报价即返回 CHANGE_PLAN_DAILY_LIMIT）。
+// POST /api/v1/subscriptions/change-plan/quote
+func (h *SubscriptionHandler) ChangePlanQuote(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not found in context")
@@ -335,7 +340,7 @@ func (h *SubscriptionHandler) ChangePlan(c *gin.Context) {
 		response.BadRequest(c, "invalid request: "+err.Error())
 		return
 	}
-	res, err := h.subscriptionService.ChangeSubscriptionPlan(c.Request.Context(), subject.UserID, req.DailyAmountUSD, req.ValidityDays)
+	res, err := h.subscriptionService.QuoteChangePlanOrder(c.Request.Context(), subject.UserID, req.DailyAmountUSD, req.ValidityDays)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

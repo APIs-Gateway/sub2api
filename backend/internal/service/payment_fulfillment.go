@@ -516,6 +516,12 @@ func (s *PaymentService) ExecuteSubscriptionFulfillment(ctx context.Context, oid
 }
 
 func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error {
+	// 生命周期意图分发（per-day redesign §5/§7）：renew=延长目标卡、change_plan=关旧开新；
+	// 二者参数(目标卡 ID + 新 D/T)由订单冻结快照提供，履约不重算。purchase(默认/老单)走下方建新卡逻辑。
+	if intent, targetSubID := readSubscriptionIntent(o); intent != SubscriptionIntentPurchase {
+		return s.doSubLifecycle(ctx, o, intent, targetSubID)
+	}
+
 	// 套餐单带 group（gid>0）；自定义单无 group（subscription_group_id NULL → gid=0，P5e）。
 	var gid int64
 	if o.SubscriptionGroupID != nil {
@@ -563,6 +569,57 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 	}
 	if sub != nil {
 		if err := s.writeSubscriptionIDToOrderSnapshot(ctx, o, sub.ID); err != nil {
+			return fmt.Errorf("write subscription snapshot id: %w", err)
+		}
+	}
+	return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
+}
+
+// doSubLifecycle 履约续费/转套餐订单（法币支付成功后）：按冻结快照的目标卡 ID + 新 D/T 执行，
+// 不扣余额（差价/续费价已由网关收取）。幂等沿用 SUBSCRIPTION_SUCCESS 审计键（重放整笔跳过）。
+func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrder, intent string, targetSubID int64) error {
+	d, t, hasSnapshot, snapErr := readSubscriptionSnapshotDT(o)
+	if snapErr != nil {
+		return snapErr
+	}
+	if !hasSnapshot {
+		return fmt.Errorf("lifecycle subscription order %d missing pricing snapshot", o.ID)
+	}
+	if targetSubID <= 0 {
+		return fmt.Errorf("lifecycle subscription order %d missing target subscription id", o.ID)
+	}
+	// 幂等：已发卡则跳过（防重放重复延长/重复换卡）。
+	if s.hasAuditLog(ctx, o.ID, "SUBSCRIPTION_SUCCESS") {
+		slog.Info("lifecycle subscription already applied for order, skipping", "orderID", o.ID, "intent", intent)
+		return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
+	}
+
+	var newSubID int64
+	switch intent {
+	case SubscriptionIntentRenew:
+		// 续费：t = 续费天数（快照 validity_days）；延长目标卡有效期，卡 ID 不变。
+		sub, err := s.subscriptionSvc.ApplyRenewFromOrder(ctx, targetSubID, t)
+		if err != nil {
+			return fmt.Errorf("apply renew: %w", err)
+		}
+		if sub != nil {
+			newSubID = sub.ID
+		}
+	case SubscriptionIntentChangePlan:
+		// 转套餐：d/t = 新档 D/T；关旧卡、开新卡（新卡 ID 不同）。
+		res, err := s.subscriptionSvc.ApplyChangePlanFromOrder(ctx, targetSubID, d, t)
+		if err != nil {
+			return fmt.Errorf("apply change plan: %w", err)
+		}
+		if res != nil {
+			newSubID = res.NewSubscriptionID
+		}
+	default:
+		return fmt.Errorf("unknown subscription intent %q for order %d", intent, o.ID)
+	}
+
+	if newSubID > 0 {
+		if err := s.writeSubscriptionIDToOrderSnapshot(ctx, o, newSubID); err != nil {
 			return fmt.Errorf("write subscription snapshot id: %w", err)
 		}
 	}

@@ -6,12 +6,79 @@ import (
 	"fmt"
 	"time"
 
-	"entgo.io/ent/dialect"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/user"
-	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
+
+// ChangePlanOrderQuote 转套餐下单报价（只读，不改状态；规格第 7 节）。
+// diff = P_新 − 旧卡剩余价值 V；diff<0=降档赔钱（调用方拒）、=0=持平（同步换卡）、>0=补差价（走网关）。
+type ChangePlanOrderQuote struct {
+	OldSubscriptionID int64   `json:"old_subscription_id"`
+	DailyAmountUSD    float64 `json:"daily_amount_usd"`     // D_新
+	ValidityDays      int     `json:"validity_days"`        // T_新
+	WeeklyCapUSD      float64 `json:"weekly_cap_usd"`       // 派生 W
+	MonthlyCapUSD     float64 `json:"monthly_cap_usd"`      // 派生 M
+	NewPlanPrice      float64 `json:"new_plan_price"`       // P_新 = D_新×T_新×u(D_新)
+	OldRemainingValue float64 `json:"old_remaining_value"`  // V = cfg.Price(D_旧, 旧卡剩余服务天数)
+	Diff              float64 `json:"diff"`                 // P_新 − V（>0 走网关补差价；≤0 报价拒）
+	UnitPrice         float64 `json:"unit_price"`           // u(D_新)
+}
+
+// QuoteChangePlanOrder 解析转套餐下单的权威参数（不锁、不改状态）。
+// 校验：新档 D/T 走 QuoteSubscription（区间+整月）；每自然日最多转 1 次（撞则 ErrChangePlanDailyLimit）；
+// 须有生效卡（否则 ErrNoActiveSubscription，应购买）。V 与退款同口径（含透支借天扣减）。
+func (s *SubscriptionService) QuoteChangePlanOrder(ctx context.Context, userID int64, newDailyAmount float64, newValidityDays int) (*ChangePlanOrderQuote, error) {
+	if userID <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_INPUT", "user is required")
+	}
+	quote, err := s.QuoteSubscription(newDailyAmount, newValidityDays)
+	if err != nil {
+		return nil, err
+	}
+	cfg := DefaultSubscriptionPricingConfig()
+	today := TodayEastDayNumber()
+
+	// 每自然日最多转 1 次（下单前置拦截，避免创建注定被履约拒的订单）。
+	if s.entClient != nil {
+		u, err := s.entClient.User.Query().Where(user.IDEQ(userID), user.DeletedAtIsNil()).Only(ctx)
+		if err != nil {
+			if dbent.IsNotFound(err) {
+				return nil, ErrUserNotFound
+			}
+			return nil, err
+		}
+		if u.LastChangePlanDay == today {
+			return nil, ErrChangePlanDailyLimit
+		}
+	}
+
+	oldSub, err := s.userSubRepo.GetActiveByUserID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrSubscriptionNotFound) {
+			return nil, ErrNoActiveSubscription
+		}
+		return nil, err
+	}
+
+	// 旧卡剩余价值 V（口径同退款，含透支借天扣减）：在卡副本上惰性跨天后取剩余天数。
+	oldCard := oldSub.ToPerDayCard()
+	oldCard.ResetIfNewDay(today)
+	refundable := oldCard.RefundableDays(today)
+	oldRemainingValue := cfg.Price(oldSub.DailyAmountUSD, refundable)
+
+	return &ChangePlanOrderQuote{
+		OldSubscriptionID: oldSub.ID,
+		DailyAmountUSD:    quote.DailyAmountUSD,
+		ValidityDays:      quote.ValidityDays,
+		WeeklyCapUSD:      quote.WeeklyCapUSD,
+		MonthlyCapUSD:     quote.MonthlyCapUSD,
+		NewPlanPrice:      quote.Price,
+		OldRemainingValue: oldRemainingValue,
+		Diff:              quote.Price - oldRemainingValue,
+		UnitPrice:         quote.UnitPrice,
+	}, nil
+}
 
 // ChangePlanResult 转套餐结果（规格第 7 节）。
 type ChangePlanResult struct {
@@ -24,145 +91,65 @@ type ChangePlanResult struct {
 	NewExpireDay        int     `json:"new_expire_day"`
 }
 
-// ChangeSubscriptionPlan 把用户当前生效卡转成另一档套餐（规格第 7 节）：旧卡按剩余服务天数折出
-// 剩余价值 V 抵扣新套餐，多退少补；关旧卡、立即开新卡；新卡当天套餐余额扣掉「旧卡今日已用」防套利；
-// 每自然日最多转 1 次。
+// ApplyChangePlanFromOrder 履约转套餐（法币支付成功后由 doSub 调用，规格第 7 节）：关旧卡、立即开新卡
+// （无 group 自定义卡 groupID=0，冻结 D_新/T_新，W/M 按 DeriveWindowCaps 派生），新卡三窗口用量**继承旧卡
+// 当前用量**（堵当天/周/月换档重领），stamp last_change_plan_day=today。**不扣余额、不算差价**——补差价已
+// 通过法币网关收取（见 docs/billing-perday-redesign.md §7）。幂等由 doSub 的 SUBSCRIPTION_SUCCESS 审计键保证。
 //
-// P_旧/T_旧 取自卡本身（公式价 cfg.Price(D_旧, T_旧)、T_旧 = TotalDays()=round(G/D)），与 §7 公式
-// P=D×T×u(D) 一致，无需反查购买订单。整个流程在单事务内原子完成：FOR UPDATE 锁 user 行 → 限频判定
-// → 折价测算 → 关旧卡 → 开新卡 → 差额落账（AddBalance(-Diff)）+ 限频戳，任一步失败全回滚。
-func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID int64, newDailyAmount float64, newValidityDays int) (*ChangePlanResult, error) {
+// 单事务内：GetByID 取目标卡 → FOR UPDATE 锁 user 行 + 清假 active(lockUserAndPruneStaleForLifecycle)
+// → 关旧卡 → 开新卡 → stamp last_change_plan_day，任一步失败全回滚。
+func (s *SubscriptionService) ApplyChangePlanFromOrder(ctx context.Context, oldSubscriptionID int64, newDailyAmount float64, newValidityDays int) (*ChangePlanResult, error) {
 	if s.entClient == nil {
 		return nil, fmt.Errorf("ent client not configured")
 	}
-	if userID <= 0 {
-		return nil, infraerrors.BadRequest("INVALID_INPUT", "user is required")
-	}
-
-	// 统一 D+T-based（无固定套餐）：目标档由调用方传新 D+T，走 QuoteSubscription 权威校验（D 区间 + T 整月）
-	// 并产出成交价 P_新 与派生周/月封顶——口径与自定义购买完全同源。新卡为无 group 自定义卡（groupID=0）。
-	quote, err := s.QuoteSubscription(newDailyAmount, newValidityDays)
-	if err != nil {
-		return nil, err
+	if oldSubscriptionID <= 0 || newDailyAmount <= 0 || newValidityDays <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_INPUT", "old subscription and positive new D/T are required")
 	}
 	cfg := DefaultSubscriptionPricingConfig()
-	dNew := quote.DailyAmountUSD
-	tNew := quote.ValidityDays
-	newPlanPrice := quote.Price
-	weeklyLimit := quote.WeeklyCapUSD
-	monthlyLimit := quote.MonthlyCapUSD
+	dNew := newDailyAmount
+	tNew := newValidityDays
+	newPlanPrice := cfg.Price(dNew, tNew)
+	weeklyLimit, monthlyLimit := DeriveWindowCaps(dNew, tNew)
 
 	var result *ChangePlanResult
-	var oldGroupID int64
-	staleGroupIDs := make(map[int64]struct{})
-	var noActiveAfterPrune bool
+	var userID, oldGroupID int64
 	if err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
-		tx := dbent.TxFromContext(txCtx)
-		client := tx.Client()
-		lockRows := client.Driver() != nil && client.Driver().Dialect() == dialect.Postgres
-
-		// 锁 user 行：限频判定 + 余额读写原子，并与下单/购买的 enforceSingleActiveSubscription 串行化。
-		uq := client.User.Query().Where(user.IDEQ(userID), user.DeletedAtIsNil())
-		if lockRows {
-			uq = uq.ForUpdate()
-		}
-		u, err := uq.Only(txCtx)
+		// 取目标卡（下单时冻结的当前生效卡 ID）。
+		oldSub, err := s.userSubRepo.GetByID(txCtx, oldSubscriptionID)
 		if err != nil {
-			if dbent.IsNotFound(err) {
-				return ErrUserNotFound
+			if errors.Is(err, ErrSubscriptionNotFound) {
+				return ErrSubscriptionNotFound
 			}
 			return err
 		}
+		userID = oldSub.UserID
+		oldGroupID = oldSub.GroupID
 
-		// LOCK-005：取锁后再按当前时间算 today/now，避免阻塞在 FOR UPDATE 上跨东八区午夜用 stale today
-		// （会误判限频/折价/expire 口径）。
+		// LOCK-005：取锁后再按当前时间算 today/now。
 		today := TodayEastDayNumber()
 		now := time.Now()
 
-		// 每自然日最多转 1 次。
-		if u.LastChangePlanDay == today {
-			return ErrChangePlanDailyLimit
-		}
-
-		// 先惰性关掉「假 active」卡（expire_day<today 但 status 仍 active），与购买/续费的规格 §207
-		// 步骤① 对齐。否则对已过期卡执行转套餐会按 V=0 全价"换新"；正确语义是已无生效卡 → 应购买新卡，
-		// 故关掉假 active 后 GetActiveByUserID 返回空 → ErrNoActiveSubscription。
-		staleQuery := client.UserSubscription.Query().
-			Where(
-				usersubscription.UserIDEQ(userID),
-				usersubscription.StatusEQ(SubscriptionStatusActive),
-				usersubscription.DeletedAtIsNil(),
-				usersubscription.ExpireDayLT(today),
-			)
-		if lockRows {
-			staleQuery = staleQuery.ForUpdate()
-		}
-		staleSubs, err := staleQuery.All(txCtx)
-		if err != nil {
-			return err
-		}
-		for _, sub := range staleSubs {
-			if gid := entGroupIDValue(sub.GroupID); gid != 0 {
-				staleGroupIDs[gid] = struct{}{}
-			}
-		}
-		if _, err := client.UserSubscription.Update().
-			Where(
-				usersubscription.UserIDEQ(userID),
-				usersubscription.StatusEQ(SubscriptionStatusActive),
-				usersubscription.DeletedAtIsNil(),
-				usersubscription.ExpireDayLT(today),
-			).
-			SetStatus(SubscriptionStatusExpired).
-			SetTodayRemaining(0).
-			SetUpdatedAt(time.Now()).
-			Save(txCtx); err != nil {
+		// 锁 user 行 + 清假 active 卡（与下单串行化；不报"已有卡"——转套餐本就要求有卡）。
+		if err := s.lockUserAndPruneStaleForLifecycle(txCtx, userID, today); err != nil {
 			return err
 		}
 
-		// 当前生效卡（per-day 单卡）。
-		oldSub, err := s.userSubRepo.GetActiveByUserID(txCtx, userID)
-		if err != nil {
-			if errors.Is(err, ErrSubscriptionNotFound) {
-				noActiveAfterPrune = true
-				return nil
-			}
-			return err
-		}
-
-		oldGroupID = oldSub.GroupID
-
-		// 折价测算：旧卡今日已用要先从原始快照读取。存量/迁移卡可能只有 today_remaining
-		// 已对齐今天、daily_spent_day 仍未对齐；若先 ResetIfNewDay，会把 daily_spent_usd 清 0，
-		// 导致转套餐当天重复领取 D。
+		// 折价测算（仅供结果展示/审计；差价已在网关收取，不在此扣）。
 		oldCard := oldSub.ToPerDayCard()
 		oldTodaySpent := oldCard.TodaySpentFromPackage(today)
-		// 再惰性跨天，取准确的剩余天数。
 		oldCard.ResetIfNewDay(today)
 		refundable := oldCard.RefundableDays(today)
-
-		// 旧卡剩余价值 V 用 renew-stable 形式直接算：
-		//   V = P_旧 × refundable / T_旧 = cfg.Price(D_旧,T_旧) × refundable / T_旧 = cfg.Price(D_旧, refundable)
-		// T_旧 代数消去——避免依赖脆弱的 TotalDays()=round(G/D)：续费会增大 G 使 T_旧 变成累计天数、
-		// 进而 V 被低估、用户转套餐被多收差价。直接按公式价折剩余天数即可（与 §7 P=D×T×u(D) 一致）。
 		oldRemainingValue := cfg.Price(oldSub.DailyAmountUSD, refundable)
-		diff := newPlanPrice - oldRemainingValue
 		newCardTodayBalance := ChangePlanNewCardTodayBalance(dNew, oldTodaySpent)
 		newExpireDay := ClampExpireDay(today + tNew - 1)
 
-		// 补差价需余额足额，不静默扣成负数（欠费）。
-		if diff > 0 && u.Balance < diff {
-			return ErrInsufficientBalanceForChangePlan
-		}
-
-		// 关旧卡（per-day：status=expired、today_remaining=0、expire_day=today−1；价值不回钱包，已折进差额）。
+		// 关旧卡（per-day：status=expired、today_remaining=0、expire_day=today−1；价值不回钱包）。
 		if _, _, err := s.userSubRepo.CloseSubscriptionWithReclaim(txCtx, oldSub.ID, now, false); err != nil {
 			return fmt.Errorf("close old subscription: %w", err)
 		}
 
-		// 开新卡：start_day=today、expire_day=today+T_新−1、today_remaining=max(0,D_新−旧卡今日已用)；
-		// 三窗口模型下，限额挂卡且新卡继承旧卡当前 usage/window_start，避免当天/本周/本月换档后
-		// 重新领取已用额度（spec §7）。新卡为无 group 自定义卡（groupID=0，限额读卡级）。不写 users.balance。
+		// 开新卡：限额挂卡、新卡继承旧卡当前三窗口 usage/window_start，避免当天/本周/本月换档后重领已用额度
+		// （spec §7）。新卡为无 group 自定义卡（groupID=0，限额读卡级）。不写 users.balance。
 		activatedAt := now
 		newSub := &UserSubscription{
 			UserID:             userID,
@@ -198,13 +185,10 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 			return fmt.Errorf("create new subscription: %w", err)
 		}
 
-		// 差额落账 + 限频戳一次写：AddBalance(-Diff)（Diff>0 扣补差价 / <0 退差价 / 0 不动），
-		// 同时记 last_change_plan_day=today。
-		if _, err := client.User.UpdateOneID(userID).
-			AddBalance(-diff).
-			SetLastChangePlanDay(today).
-			Save(txCtx); err != nil {
-			return fmt.Errorf("settle change-plan diff: %w", err)
+		// 限频戳（无余额变动；差价已网关收取）。
+		client := dbent.TxFromContext(txCtx).Client()
+		if _, err := client.User.UpdateOneID(userID).SetLastChangePlanDay(today).Save(txCtx); err != nil {
+			return fmt.Errorf("stamp change-plan day: %w", err)
 		}
 
 		result = &ChangePlanResult{
@@ -212,7 +196,7 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 			NewSubscriptionID:   newSub.ID,
 			OldRemainingValue:   oldRemainingValue,
 			NewPlanPrice:        newPlanPrice,
-			Diff:                diff,
+			Diff:                newPlanPrice - oldRemainingValue,
 			NewCardTodayBalance: newCardTodayBalance,
 			NewExpireDay:        newExpireDay,
 		}
@@ -220,23 +204,11 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 	}); err != nil {
 		return nil, err
 	}
-	if noActiveAfterPrune {
-		s.clearSubscriptionLockCache(userID)
-		s.invalidateUserBalanceCacheAsync(userID)
-		for groupID := range staleGroupIDs {
-			s.InvalidateSubCache(userID, groupID)
-			s.invalidateSubscriptionCacheAsync(userID, groupID)
-		}
-		return nil, ErrNoActiveSubscription
-	}
 
 	s.clearSubscriptionLockCache(userID)
 	s.invalidateUserBalanceCacheAsync(userID)
-	// 新卡为无 group 自定义卡（groupID=0），失效其缓存键。
 	s.InvalidateSubCache(userID, 0)
 	s.invalidateSubscriptionCacheAsync(userID, 0)
-	// 旧卡所属 group 的订阅缓存也要失效，否则 /v1/usage、通知、GetSubscriptionStatus(user, oldGroup)
-	// 等路径短时间内仍可能看到旧组 active。
 	if oldGroupID != 0 {
 		s.InvalidateSubCache(userID, oldGroupID)
 		s.invalidateSubscriptionCacheAsync(userID, oldGroupID)

@@ -122,9 +122,11 @@ func RegisterUserRoutes(
 			subscriptions.PUT("/:id/overdraft", h.Subscription.SetOverdraftDays)
 			// 用户自助手动透支「借一天」（三窗口模型，用户级、仅解日上限）：清 daily_usage + expires_at −1 + 月度计数++。
 			subscriptions.POST("/overdraft", h.Subscription.Overdraft)
-			// 用户自助生命周期：续费（同档延长）/ 转套餐（折旧抵新、多退少补），均从其他余额扣费。
-			subscriptions.POST("/renew", h.Subscription.Renew)
-			subscriptions.POST("/change-plan", h.Subscription.ChangePlan)
+			// 用户自助生命周期（per-day redesign §5/§7）：续费/转套餐**走法币支付网关**。
+			// 这两个端点只返回报价（续费价 / 转套餐差价）供前端预览；实际下单走 POST /payment/orders
+			// （order_type=subscription, subscription_intent=renew|change_plan），支付成功回调履约。
+			subscriptions.POST("/renew/quote", h.Subscription.RenewQuote)
+			subscriptions.POST("/change-plan/quote", h.Subscription.ChangePlanQuote)
 		}
 
 		// 渠道监控（用户只读）

@@ -225,6 +225,9 @@ type CreateOrderRequest struct {
 	// 后端按 u(D) 公式自算价、不信前端 amount。
 	DailyAmountUSD float64 `json:"daily_amount_usd"`
 	ValidityDays   int     `json:"validity_days"`
+	// 订阅生命周期意图（per-day redesign §5/§7）：空/"purchase"=购买建新卡；"renew"=续费当前卡（续 validity_days 天）；
+	// "change_plan"=转套餐（新 D=daily_amount_usd + 新 T=validity_days）。目标卡后端按用户唯一生效卡派生。
+	SubscriptionIntent string `json:"subscription_intent"`
 	// IsMobile lets the frontend declare its mobile status directly. When
 	// nil we fall back to User-Agent heuristics (which miss iPadOS / some
 	// embedded browsers that strip the "Mobile" keyword).
@@ -272,11 +275,12 @@ func (h *PaymentHandler) CreateOrder(c *gin.Context) {
 		SrcURL:          c.Request.Referer(),
 		ReturnURL:       req.ReturnURL,
 		PaymentSource:   req.PaymentSource,
-		OrderType:       req.OrderType,
-		PlanID:          req.PlanID,
-		DailyAmountUSD:  req.DailyAmountUSD,
-		ValidityDays:    req.ValidityDays,
-		Locale:          c.GetHeader("Accept-Language"),
+		OrderType:          req.OrderType,
+		PlanID:             req.PlanID,
+		DailyAmountUSD:     req.DailyAmountUSD,
+		ValidityDays:       req.ValidityDays,
+		SubscriptionIntent: req.SubscriptionIntent,
+		Locale:             c.GetHeader("Accept-Language"),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

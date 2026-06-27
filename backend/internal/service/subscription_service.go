@@ -36,9 +36,9 @@ var (
 	ErrActiveSubscriptionExists           = infraerrors.Conflict("ACTIVE_SUBSCRIPTION_EXISTS", "active subscription already exists; renew, refund, or change plan instead")
 	ErrNoActiveSubscription               = infraerrors.NotFound("NO_ACTIVE_SUBSCRIPTION", "no active subscription to change")
 	ErrChangePlanDailyLimit               = infraerrors.TooManyRequests("CHANGE_PLAN_DAILY_LIMIT", "plan can be changed at most once per natural day")
-	ErrInsufficientBalanceForChangePlan   = infraerrors.BadRequest("INSUFFICIENT_BALANCE_FOR_CHANGE_PLAN", "balance is insufficient to cover the change-plan price difference")
-	ErrRenewPlanMismatch                  = infraerrors.BadRequest("RENEW_PLAN_MISMATCH", "renewal plan must keep the same daily amount as the current card; use change plan to switch tier")
-	ErrInsufficientBalanceForRenew        = infraerrors.BadRequest("INSUFFICIENT_BALANCE_FOR_RENEW", "balance is insufficient to cover the renewal price")
+	// 转套餐降档赔钱（新档折价后 diff<0，即旧卡剩余价值 > 新档价）禁止——只允许持平/升档（diff≥0）。
+	// 见 docs/billing-perday-redesign.md §7：差价走法币网关补，不退款（产品决策：禁止赔钱降档）。
+	ErrChangePlanDowngradeNotAllowed = infraerrors.BadRequest("CHANGE_PLAN_DOWNGRADE_NOT_ALLOWED", "cannot change to a plan worth less than the current card's remaining value")
 	ErrSubscriptionAssignConflict         = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
 	ErrInvalidDailyAmount                 = infraerrors.BadRequest("INVALID_DAILY_AMOUNT", "subscription daily amount must be positive (provide daily_amount_usd, or a group with daily_limit_usd > 0)")
 	ErrInvalidInput                       = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
@@ -411,6 +411,43 @@ func (s *SubscriptionService) enforceSingleActiveSubscription(ctx context.Contex
 	if _, err := activeQuery.OnlyID(ctx); err == nil {
 		return ErrActiveSubscriptionExists
 	} else if !dbent.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+// lockUserAndPruneStaleForLifecycle 为续费/转套餐下单串行化：FOR UPDATE 锁 user 行 + 惰性关掉
+// 假 active 卡（status='active' 但 expire_day<today）。**与 enforceSingleActiveSubscription 不同**:
+// 不因「仍有生效卡」报错——续费/转套餐本就要求有生效卡。须在事务内调用（tx 来自 ctx）。
+func (s *SubscriptionService) lockUserAndPruneStaleForLifecycle(ctx context.Context, userID int64, today int) error {
+	tx := dbent.TxFromContext(ctx)
+	if tx == nil {
+		return nil
+	}
+	client := tx.Client()
+	lockRows := client.Driver() != nil && client.Driver().Dialect() == dialect.Postgres
+
+	userQuery := client.User.Query().Where(user.IDEQ(userID), user.DeletedAtIsNil())
+	if lockRows {
+		userQuery = userQuery.ForUpdate()
+	}
+	if _, err := userQuery.OnlyID(ctx); err != nil {
+		if dbent.IsNotFound(err) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	if _, err := client.UserSubscription.Update().
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.StatusEQ(SubscriptionStatusActive),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.ExpireDayLT(today),
+		).
+		SetStatus(SubscriptionStatusExpired).
+		SetTodayRemaining(0).
+		SetUpdatedAt(time.Now()).
+		Save(ctx); err != nil {
 		return err
 	}
 	return nil

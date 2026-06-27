@@ -56,7 +56,10 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if s.notificationEmailService != nil {
 		s.notificationEmailService.RememberRecipientLocale(ctx, req.UserID, user.Email, req.Locale)
 	}
-	if spec != nil {
+	if spec != nil && spec.intent != SubscriptionIntentRenew && spec.intent != SubscriptionIntentChangePlan {
+		// 仅购买（intent 空/"purchase"）需要「无生效卡 + 无 pending 订阅单」准入（会惰性杀掉假 active 卡）。
+		// renew/change_plan 反而要求当前有生效卡（已在报价时校验），绝不能杀卡——故跳过此闸，
+		// pending 订阅单的串行化由 createOrderInTx 内的 hasPendingSubscriptionOrder 兜底。
 		if err := s.ensureCanCreateSubscriptionOrder(ctx, req.UserID); err != nil {
 			return nil, err
 		}
@@ -64,9 +67,10 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	orderAmount := req.Amount
 	limitAmount := req.Amount
 	if spec != nil {
-		// 订阅单（套餐 / 自定义）成交价以后端权威 spec.price 为准，绝不信任前端 req.Amount。
-		orderAmount = spec.price
-		limitAmount = spec.price
+		// 订阅单（购买/续费/转套餐）实收以后端权威 spec.chargeAmount 为准（购买/续费=全价；转套餐=补差价），
+		// 绝不信任前端 req.Amount。
+		orderAmount = spec.chargeAmount
+		limitAmount = spec.chargeAmount
 	} else if req.OrderType == payment.OrderTypeBalance {
 		orderAmount = calculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
 	}
@@ -144,14 +148,30 @@ func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrder
 // 价格/额度/有效期/group 一律以此为准（绝不信任前端 req.Amount），并冻结进订单快照，履约严格按此发卡。
 type subscriptionOrderSpec struct {
 	plan         *dbent.SubscriptionPlan // 固定套餐单持有其套餐；自定义单为 nil
-	dailyAmount  float64                 // D（每日额度 / 日限额）
+	dailyAmount  float64                 // D（每日额度 / 日限额）；renew 取自目标卡，change_plan 为新档 D
 	validityDays int                     // T（有效天数）
 	groupID      int64                   // 来源 group；自定义单为 0（无 group 归属，P5e：group_id 可空）
 	unitPrice    float64                 // u(D)
-	price        float64                 // 权威成交价（plan.Price 或 quote.Price）
+	price        float64                 // 该卡的权威全价 P（plan.Price 或 quote.Price；change_plan=新档全价 P_新）
+	// 生命周期意图（per-day redesign §5/§7）：
+	intent      string  // purchase（默认）/ renew / change_plan
+	targetSubID int64   // renew/change_plan 的目标当前生效卡 ID（purchase=0）
+	// chargeAmount 实际向支付网关收取的金额：purchase/renew = price；change_plan = diff（P_新 − 旧卡剩余价值 V，恒 >0）。
+	chargeAmount float64
 }
 
 func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRequest) (*subscriptionOrderSpec, error) {
+	intent, ok := normalizeSubscriptionIntent(req.SubscriptionIntent)
+	if !ok {
+		return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION_INTENT", "unknown subscription intent")
+	}
+	switch intent {
+	case SubscriptionIntentRenew:
+		return s.validateSubRenewOrder(ctx, req)
+	case SubscriptionIntentChangePlan:
+		return s.validateSubChangePlanOrder(ctx, req)
+	}
+	// intent == purchase（默认）：购买新卡。
 	if req.PlanID == 0 {
 		// 自定义购买（无固定套餐，规格第 2/3 节）：用 D+T 直接定价，不依赖 plan。
 		if req.DailyAmountUSD > 0 && req.ValidityDays > 0 {
@@ -171,6 +191,8 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 				groupID:      0, // 自定义卡无 group 归属（P5e）；限额读卡级 *_limit_usd（见 createSubscription）。
 				unitPrice:    quote.UnitPrice,
 				price:        quote.Price,
+				intent:       SubscriptionIntentPurchase,
+				chargeAmount: quote.Price,
 			}, nil
 		}
 		return nil, infraerrors.BadRequest("INVALID_INPUT", "subscription order requires a plan")
@@ -198,6 +220,62 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 		groupID:      plan.GroupID,
 		unitPrice:    DefaultSubscriptionPricingConfig().UnitPrice(plan.DailyAmountUsd),
 		price:        plan.Price,
+		intent:       SubscriptionIntentPurchase,
+		chargeAmount: plan.Price,
+	}, nil
+}
+
+// validateSubRenewOrder 续费下单的权威解析：D 取自当前生效卡、续 T'(整月)天，价 cfg.Price(D,T')，
+// 实收=全价(>0)。目标卡由后端按用户唯一生效卡派生（不信前端）。无生效卡 → ErrNoActiveSubscription（应购买）。
+func (s *PaymentService) validateSubRenewOrder(ctx context.Context, req CreateOrderRequest) (*subscriptionOrderSpec, error) {
+	if s.subscriptionSvc == nil {
+		return nil, fmt.Errorf("subscription service not configured")
+	}
+	q, err := s.subscriptionSvc.QuoteRenewOrder(ctx, req.UserID, req.ValidityDays)
+	if err != nil {
+		return nil, err
+	}
+	return &subscriptionOrderSpec{
+		plan:         nil,
+		dailyAmount:  q.DailyAmountUSD,
+		validityDays: q.AddedDays,
+		groupID:      q.GroupID, // 沿用当前卡 group（仅订单记录用；履约只延长 expires_at、不建卡）
+		unitPrice:    q.UnitPrice,
+		price:        q.Price,
+		intent:       SubscriptionIntentRenew,
+		targetSubID:  q.SubscriptionID,
+		chargeAmount: q.Price,
+	}, nil
+}
+
+// validateSubChangePlanOrder 转套餐下单的权威解析：新档 D+T 走 QuoteSubscription，差价 diff = P_新 − 旧卡剩余价值 V。
+// diff<0(降档赔钱) → 拒（ErrChangePlanDowngradeNotAllowed）；diff==0 不该走网关（由 endpoint 同步换卡）→ 防御性拒。
+// diff>0 → 实收=diff，新卡参数(D/T,履约时派生 W/M)冻结进快照。
+func (s *PaymentService) validateSubChangePlanOrder(ctx context.Context, req CreateOrderRequest) (*subscriptionOrderSpec, error) {
+	if s.subscriptionSvc == nil {
+		return nil, fmt.Errorf("subscription service not configured")
+	}
+	q, err := s.subscriptionSvc.QuoteChangePlanOrder(ctx, req.UserID, req.DailyAmountUSD, req.ValidityDays)
+	if err != nil {
+		return nil, err
+	}
+	if q.Diff < 0 {
+		return nil, ErrChangePlanDowngradeNotAllowed
+	}
+	if q.Diff == 0 {
+		// 持平：无差价可收，网关无法收 $0；应由 endpoint 走同步换卡。到这里属调用方未分流，防御性拒。
+		return nil, infraerrors.BadRequest("CHANGE_PLAN_NO_PAYMENT_REQUIRED", "no payment difference; change plan should be applied synchronously")
+	}
+	return &subscriptionOrderSpec{
+		plan:         nil,
+		dailyAmount:  q.DailyAmountUSD,
+		validityDays: q.ValidityDays,
+		groupID:      0, // 新卡为无 group 自定义卡
+		unitPrice:    q.UnitPrice,
+		price:        q.NewPlanPrice, // 新卡全价 P_新（快照/审计）
+		intent:       SubscriptionIntentChangePlan,
+		targetSubID:  q.OldSubscriptionID,
+		chargeAmount: q.Diff, // 实收补差价
 	}, nil
 }
 
@@ -265,11 +343,20 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		if s.subscriptionSvc == nil {
 			return nil, fmt.Errorf("subscription service not configured")
 		}
-		if err := s.subscriptionSvc.enforceSingleActiveSubscription(txCtx, req.UserID, TodayEastDayNumber()); err != nil {
-			return nil, err
+		// 仅购买（intent 空/"purchase"）在收款前杀掉假 active 卡 + 拒「已有生效卡」（单卡模式）；
+		// renew/change_plan 必须保留当前生效卡,只 FOR UPDATE 锁 user 行 + 清假 active(不报已有卡),
+		// 与购买共用同一把用户锁串行化下单。
+		if spec.intent == SubscriptionIntentRenew || spec.intent == SubscriptionIntentChangePlan {
+			if err := s.subscriptionSvc.lockUserAndPruneStaleForLifecycle(txCtx, req.UserID, TodayEastDayNumber()); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := s.subscriptionSvc.enforceSingleActiveSubscription(txCtx, req.UserID, TodayEastDayNumber()); err != nil {
+				return nil, err
+			}
 		}
 		// 权威拦截（user 行已 FOR UPDATE 锁）：禁止并存第二张 pending 订阅单，杜绝并发双单都付款、
-		// 第二单履约撞 ErrActiveSubscriptionExists→已付款无法开卡。
+		// 第二单履约撞冲突→已付款无法履约。购买/续费/转套餐共用此串行化。
 		pending, err := s.hasPendingSubscriptionOrder(ctx, tx, req.UserID)
 		if err != nil {
 			return nil, err
@@ -453,6 +540,53 @@ func buildPaymentOrderProviderSnapshot(sel *payment.InstanceSelection, req Creat
 // subscriptionSnapshotKey 是 provider_snapshot 里冻结订阅定价快照的子键。
 const subscriptionSnapshotKey = "subscription"
 
+// 订阅订单意图（intent）：决定支付回调履约时对订阅卡做什么。
+// purchase=建新卡（默认/老订单兼容）；renew=延长目标卡有效期；change_plan=关旧卡开新卡。
+// 续费/转套餐与购买一样走法币支付网关（异步 下单→支付→履约），不扣钱包余额（见 docs/billing-perday-redesign.md §5/§7）。
+const (
+	SubscriptionIntentPurchase   = "purchase"
+	SubscriptionIntentRenew      = "renew"
+	SubscriptionIntentChangePlan = "change_plan"
+)
+
+// normalizeSubscriptionIntent 把入参意图归一化（空 → purchase）；非法值返回 ("", false)。
+func normalizeSubscriptionIntent(raw string) (string, bool) {
+	switch strings.TrimSpace(raw) {
+	case "", SubscriptionIntentPurchase:
+		return SubscriptionIntentPurchase, true
+	case SubscriptionIntentRenew:
+		return SubscriptionIntentRenew, true
+	case SubscriptionIntentChangePlan:
+		return SubscriptionIntentChangePlan, true
+	default:
+		return "", false
+	}
+}
+
+// readSubscriptionIntent 从订单冻结快照读出意图与目标卡 ID。
+// 无快照 / 无 intent 字段 → ("purchase", 0)（老订单兼容,默认购买建新卡）。
+func readSubscriptionIntent(order *dbent.PaymentOrder) (intent string, targetSubID int64) {
+	intent = SubscriptionIntentPurchase
+	if order == nil || order.ProviderSnapshot == nil {
+		return intent, 0
+	}
+	raw, exists := order.ProviderSnapshot[subscriptionSnapshotKey]
+	if !exists {
+		return intent, 0
+	}
+	sub, ok := raw.(map[string]any)
+	if !ok {
+		return intent, 0
+	}
+	if i, ok := sub["intent"].(string); ok {
+		if norm, valid := normalizeSubscriptionIntent(i); valid {
+			intent = norm
+		}
+	}
+	targetSubID, _ = snapshotInt64(sub["target_subscription_id"])
+	return intent, targetSubID
+}
+
 // buildSubscriptionOrderSnapshot 在下单时把订阅定价**冻结**进订单快照（D/T/u/price/formula_version/
 // currency）。支付回调严格按此快照发卡，绝不按回调时的当前公式/配置重算（防下单后管理员改价/范围
 // 导致发出与用户当时所付不一致的卡）。currency 复用基础快照里的值（缺省站点本币）。
@@ -463,14 +597,27 @@ func buildSubscriptionOrderSnapshot(spec *subscriptionOrderSpec, base map[string
 			currency = c
 		}
 	}
-	return map[string]any{
+	intent := spec.intent
+	if intent == "" {
+		intent = SubscriptionIntentPurchase
+	}
+	snap := map[string]any{
 		"daily_amount_usd": spec.dailyAmount,
 		"validity_days":    spec.validityDays,
 		"unit_price":       spec.unitPrice,
 		"price":            spec.price,
 		"formula_version":  SubscriptionFormulaVersion,
 		"currency":         currency,
+		"intent":           intent,
 	}
+	// renew/change_plan：冻结目标卡 ID + 实收金额（diff），履约据此延长/换卡。
+	if spec.targetSubID > 0 {
+		snap["target_subscription_id"] = spec.targetSubID
+	}
+	if intent != SubscriptionIntentPurchase {
+		snap["charge_amount"] = spec.chargeAmount
+	}
+	return snap
 }
 
 // readSubscriptionSnapshotDT 从订单冻结快照读出每日额度 D 与有效天数 T（JSON 数值回读为 float64）。
