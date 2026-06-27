@@ -15,60 +15,60 @@
 
     <template v-else-if="pricing">
       <!-- 每日额度 D -->
-      <div class="space-y-2">
-        <div class="flex items-center justify-between">
-          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {{ t('subscriptionPurchase.dailyAmount') }}
-            <span class="text-xs text-gray-500 dark:text-gray-400">({{ t('subscriptionPurchase.dailyAmountUnit') }})</span>
-          </label>
+      <div>
+        <label class="input-label">
+          {{ t('subscriptionPurchase.dailyAmount') }}
+          <span class="font-normal text-gray-500 dark:text-dark-400">({{ t('subscriptionPurchase.dailyAmountUnit') }})</span>
+        </label>
+        <div class="flex items-center gap-3">
+          <input
+            v-model.number="dailyAmount"
+            type="range"
+            :min="pricing.d_min"
+            :max="pricing.d_max"
+            step="0.5"
+            class="h-2 flex-1 accent-gray-900 dark:accent-gray-100"
+          />
           <input
             v-model.number="dailyAmount"
             type="number"
             :min="pricing.d_min"
             :max="pricing.d_max"
             step="0.5"
-            class="w-24 rounded-md border border-gray-300 bg-white px-2 py-1 text-right font-mono text-sm tabular-nums text-gray-900 focus:border-primary-500 focus:outline-none dark:border-dark-600 dark:bg-dark-700 dark:text-white"
+            class="input w-24 text-right font-mono tabular-nums"
             @change="clampInputs"
           />
         </div>
-        <input
-          v-model.number="dailyAmount"
-          type="range"
-          :min="pricing.d_min"
-          :max="pricing.d_max"
-          step="0.5"
-          class="w-full accent-gray-900 dark:accent-gray-100"
-        />
       </div>
 
       <!-- 有效期 T -->
-      <div class="space-y-2">
-        <div class="flex items-center justify-between">
-          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {{ t('subscriptionPurchase.validityDays') }}
-            <span class="text-xs text-gray-500 dark:text-gray-400">({{ t('subscriptionPurchase.days') }})</span>
-          </label>
+      <div>
+        <label class="input-label">
+          {{ t('subscriptionPurchase.validityDays') }}
+          <span class="font-normal text-gray-500 dark:text-dark-400">({{ t('subscriptionPurchase.days') }})</span>
+        </label>
+        <div class="flex items-center gap-3">
+          <input
+            v-model.number="validityDays"
+            type="range"
+            :min="pricing.t_min"
+            :max="pricing.t_max"
+            step="1"
+            class="h-2 flex-1 accent-gray-900 dark:accent-gray-100"
+          />
           <input
             v-model.number="validityDays"
             type="number"
             :min="pricing.t_min"
             :max="pricing.t_max"
             step="1"
-            class="w-24 rounded-md border border-gray-300 bg-white px-2 py-1 text-right font-mono text-sm tabular-nums text-gray-900 focus:border-primary-500 focus:outline-none dark:border-dark-600 dark:bg-dark-700 dark:text-white"
+            class="input w-24 text-right font-mono tabular-nums"
             @change="clampInputs"
           />
         </div>
-        <input
-          v-model.number="validityDays"
-          type="range"
-          :min="pricing.t_min"
-          :max="pricing.t_max"
-          step="1"
-          class="w-full accent-gray-900 dark:accent-gray-100"
-        />
       </div>
 
-      <p class="text-xs text-gray-500 dark:text-gray-400">
+      <p class="input-hint">
         {{
           t('subscriptionPurchase.rangeHint', {
             dMin: pricing.d_min,
@@ -84,6 +84,7 @@
         <div v-if="quoteError" class="text-sm text-primary-700 dark:text-primary-400">
           {{ t('subscriptionPurchase.quoteFailed') }}
         </div>
+        <!-- quoteError 用 primary（Signal）表错误，符合设计系统语义。 -->
         <template v-else>
           <div class="flex items-end justify-between">
             <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('subscriptionPurchase.price') }}</span>
@@ -112,7 +113,7 @@
 
       <button
         type="button"
-        class="w-full rounded-md bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+        class="btn btn-primary w-full"
         :disabled="quoting || quoteError || !quote"
         @click="onBuy"
       >

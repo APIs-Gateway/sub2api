@@ -48,29 +48,22 @@
           {{ t(`userSubscriptions.status.${subscription.status}`) }}
         </span>
         <div v-if="subscription.status === 'active'" class="flex items-center gap-2">
-          <!-- 手动透支「借一天」：仅在配了日额度时出现；条件不满足时置灰并以 title 说明原因。 -->
+          <!-- 手动透支「借一天」：仅在配了日额度时出现；条件不满足时置灰并以 title 说明原因。
+               中性次按钮（透支非错误，clay/primary 保留给 Signal）；代价提示交确认框。 -->
           <button
             v-if="showOverdraftButton"
             type="button"
             :disabled="!canOverdraft"
             :title="canOverdraft ? '' : overdraftDisabledReason"
-            class="rounded-md border border-primary-300 px-3 py-1.5 text-xs font-semibold text-primary-700 transition-colors hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-primary-900/50 dark:text-primary-300 dark:hover:bg-primary-900/20"
+            class="btn btn-secondary btn-sm"
             @click="openOverdraftConfirm"
           >
             {{ t('userSubscriptions.overdraftBtn.label') }}
           </button>
-          <button
-            type="button"
-            class="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
-            @click="openLifecycle('renew')"
-          >
+          <button type="button" class="btn btn-primary btn-sm" @click="openLifecycle('renew')">
             {{ t('payment.renewNow') }}
           </button>
-          <button
-            type="button"
-            class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-dark-600 dark:text-gray-200 dark:hover:bg-dark-700"
-            @click="openLifecycle('change')"
-          >
+          <button type="button" class="btn btn-secondary btn-sm" @click="openLifecycle('change')">
             {{ t('userSubscriptions.lifecycle.changeTitle') }}
           </button>
         </div>
