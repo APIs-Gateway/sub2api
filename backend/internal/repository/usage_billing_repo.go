@@ -107,16 +107,16 @@ func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *s
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
-	// per-day 结算：按瀑布把官方成本结算到「用户唯一生效卡 + 钱包」（套餐 1:1 → 钱包正余额×倍率
-	// → 透支借未来天 → 钱包负数）。锁序 user→card，整套副作用同 tx，dedup 覆盖整笔。
-	// OfficialCost = 官方价；legacy/测试只传 BalanceCost 时回退（官方=BalanceCost、倍率1，无卡即纯钱包，
-	// 等价旧 deductUsageBillingBalance）。
+	// 三窗口结算：按瀑布把官方成本结算到「用户唯一生效卡 + 钱包」（订阅覆盖 1:1 加三窗口 usage
+	// → 钱包正余额×倍率 → 钱包负数）。结算不含透支（透支走独立手动接口）。锁序 user→card，
+	// 整套副作用同 tx，dedup 覆盖整笔。OfficialCost = 官方价；legacy/测试只传 BalanceCost 时回退
+	// （官方=BalanceCost、倍率1，无卡即纯钱包，等价旧 deductUsageBillingBalance）。
 	officialCost, multiplier := cmd.OfficialCost, cmd.RateMultiplier
 	if officialCost <= 0 && cmd.BalanceCost > 0 {
 		officialCost, multiplier = cmd.BalanceCost, 1
 	}
 	if officialCost > 0 {
-		settleRes, err := settlePerDaySubscription(ctx, tx, cmd.UserID, officialCost, multiplier)
+		settleRes, err := settleSubscriptionWindow(ctx, tx, cmd.UserID, officialCost, multiplier)
 		if err != nil {
 			return err
 		}
@@ -154,21 +154,25 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	return nil
 }
 
-// perDaySettleResult 是 per-day 结算的落库结果（供上层重建旧余额、失效缓存）。
-type perDaySettleResult struct {
+// subSettleResult 是三窗口订阅结算的落库结果（供上层重建旧余额、失效缓存）。
+type subSettleResult struct {
 	newBalance       float64 // 结算后钱包余额
-	walletDebit      float64 // 本次从钱包实扣的售价货币额（钱包正余额 + 钱包负数兜底；套餐 1:1 部分不计）
+	walletDebit      float64 // 本次从钱包实扣的售价货币额（钱包正余额 + 钱包负数兜底；订阅覆盖 1:1 部分不计）
 	expiredGroupID   *int64  // 本次把卡惰性标记为 expired 时其 group_id（供失效订阅缓存）；否则 nil
-	overdraftApplied bool    // 本次发生透支（改了用户月度计数）；供上层失效鉴权快照
-	subscriptionID   *int64  // 本次结算所用的用户生效卡 ID（有卡即填）；供 usage_log 标 subscription 计费
+	overdraftApplied bool    // 三窗口结算不自动透支，恒 false（保留字段兼容上层；透支走独立手动接口）
+	subscriptionID   *int64  // 本次结算所用的用户生效卡 ID（有生效卡即填）；供 usage_log 标 subscription 计费
 }
 
-// settlePerDaySubscription 按 per-day 瀑布把一笔请求的官方成本结算到「用户唯一生效卡 + 钱包」。
+// settleSubscriptionWindow 按三窗口瀑布把一笔请求的官方成本结算到「用户唯一生效卡 + 钱包」。
 // 锁序固定 user→card（与购买/续费/转套餐一致，防死锁）。无生效卡 → 纯钱包标准计费（官方价×倍率）。
-// 整套副作用（套餐扣减、钱包扣减、透支 expire_day−1+用户级月度计数、钱包负数）在本事务内原子完成；
-// dedup（claimUsageBillingKey）与本函数同 tx，重放整笔跳过。瀑布逻辑复用 service.Settle（已穷尽单测）。
-func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, officialCost, multiplier float64) (*perDaySettleResult, error) {
-	// 1) 锁 user 行（balance + 用户级月度透支计数）。
+// 订阅覆盖（1:1，加三窗口 usage，只升） → 钱包正余额（×倍率） → 钱包负数兜底，整套副作用在本事务内
+// 原子完成；dedup（claimUsageBillingKey）与本函数同 tx，重放整笔跳过。**结算不含透支**（透支走独立
+// 手动接口，单独改 expires_at + 月度计数）。瀑布逻辑复用 service.SettleWindow（已穷尽单测）。
+//
+// ★安全闸（资损）：未配置/未回填卡（三限额全 NULL）经 SubRemaining 返回 0、订阅不覆盖、回落钱包，
+// 不会“免费 1:1 全覆盖”（见 service.SubWindow.SubRemaining）。
+func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, officialCost, multiplier float64) (*subSettleResult, error) {
+	// 1) 锁 user 行（balance）。月度透支计数本路径不改（透支走独立接口），但一并读出构造 WalletState。
 	var balance float64
 	var monthCount int
 	var monthStr string
@@ -182,30 +186,38 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 		return nil, err
 	}
 
-	// 2) 锁该用户唯一生效卡（status='active'，expire_day 最晚兜底）；可能无卡。
-	//    过期是惰性的（卡可能 status='active' 而 today>expire_day），不在 SQL 过滤 expire_day，
-	//    由引擎 ResetIfNewDay 惰性置 0 + 标 expired。
+	// 2) 锁该用户唯一生效卡（status='active'，expires_at 最晚兜底）；可能无卡。
+	//    过期是惰性的（卡可能 status='active' 而 now≥expires_at），不在 SQL 过滤 expires_at，
+	//    由引擎按 expires_at 置 JustExpired，回写时翻 status。
 	var (
-		cardID        int64
-		groupID       int64
-		dAmount       float64
-		todayRem      float64
-		todayDay      int
-		dailySpent    float64
-		dailySpentDay int
-		startDay      int
-		expireDay     int
-		odOn          bool
-		hasCard       bool
+		cardID    int64
+		groupID   int64
+		dLimit    sql.NullFloat64
+		wLimit    sql.NullFloat64
+		mLimit    sql.NullFloat64
+		dUsage    float64
+		wUsage    float64
+		mUsage    float64
+		dWin      sql.NullTime
+		wWin      sql.NullTime
+		mWin      sql.NullTime
+		expiresAt time.Time
+		status    string
+		hasCard   bool
 	)
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, group_id, daily_amount_usd, today_remaining, today_day, daily_spent_usd, daily_spent_day, start_day, expire_day, overdraft_on
+		SELECT id, group_id,
+		       daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
+		       daily_usage_usd, weekly_usage_usd, monthly_usage_usd,
+		       daily_window_start, weekly_window_start, monthly_window_start,
+		       expires_at, status
 		FROM user_subscriptions
 		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
-		ORDER BY expire_day DESC, id DESC
+		ORDER BY expires_at DESC, id DESC
 		LIMIT 1
 		FOR UPDATE
-	`, userID).Scan(&cardID, &groupID, &dAmount, &todayRem, &todayDay, &dailySpent, &dailySpentDay, &startDay, &expireDay, &odOn)
+	`, userID).Scan(&cardID, &groupID, &dLimit, &wLimit, &mLimit,
+		&dUsage, &wUsage, &mUsage, &dWin, &wWin, &mWin, &expiresAt, &status)
 	switch {
 	case err == nil:
 		hasCard = true
@@ -215,55 +227,53 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 		return nil, err
 	}
 
-	// LOCK-005：今日/月份口径必须在【取锁之后】按当前时间重算。否则请求若阻塞在上面的
-	// FOR UPDATE 上跨过东八区自然日午夜，会用 stale today 喂进引擎 ResetIfNewDay：给已过期卡
-	// 误发一天额度、或破坏转套餐当天防双领。锁内重读保证与所持行状态同处一个自然日。
+	// LOCK-005：now 必须在【取锁之后】按当前时间取，避免阻塞在 FOR UPDATE 上跨午夜后用 stale 时间
+	// 喂进窗口重置（误判自然日/周/月边界）。锁内取保证与所持行状态同处一个时刻。
 	now := time.Now()
-	today := service.EastDayNumber(now)
-	monthKey := service.EastMonthKey(now)
 
-	// 3) 跑引擎（无卡时用零值卡：ResetIfNewDay 会把它标过期、套餐层贡献 0 → 纯钱包）。
 	wallet := service.WalletState{Balance: balance, MonthlyOverdraftCount: monthCount, MonthlyOverdraftMonth: monthStr}
-	var card service.PerDayCard
+	var card *service.SubWindow
 	if hasCard {
-		card = service.PerDayCard{
-			DailyAmountUSD: dAmount,
-			TodayRemaining: todayRem,
-			TodayDay:       todayDay,
-			DailySpentUSD:  dailySpent,
-			DailySpentDay:  dailySpentDay,
-			StartDay:       startDay,
-			ExpireDay:      expireDay,
-			OverdraftOn:    odOn,
+		card = &service.SubWindow{
+			DailyLimitUSD:      nullFloatZero(dLimit),
+			WeeklyLimitUSD:     nullFloatZero(wLimit),
+			MonthlyLimitUSD:    nullFloatZero(mLimit),
+			DailyUsageUSD:      dUsage,
+			WeeklyUsageUSD:     wUsage,
+			MonthlyUsageUSD:    mUsage,
+			DailyWindowStart:   nullTimePtr(dWin),
+			WeeklyWindowStart:  nullTimePtr(wWin),
+			MonthlyWindowStart: nullTimePtr(mWin),
+			ExpiresAt:          expiresAt,
+			Status:             status,
 		}
 	}
-	res := service.Settle(&card, &wallet, officialCost, multiplier, today, monthKey)
+	service.SettleWindow(card, &wallet, officialCost, multiplier, now)
 
-	out := &perDaySettleResult{overdraftApplied: res.OverdraftDays > 0}
-	// 规格口径：计费识别 = 用户存在生效中的订阅卡。即使本次套餐余额为 0、费用全由钱包层支付，
-	// 也仍是「有卡 → 套餐瀑布」请求，应标 subscription。过期但 status='active' 的假 active
-	// 会在 ResetIfNewDay 中置 Expired，不应标 subscription。
-	if hasCard && !card.Expired && card.DailyAmountUSD > 0 {
+	out := &subSettleResult{}
+	// 计费识别 = 用户存在生效中的订阅卡。即使本次订阅覆盖为 0（撞窗口上限、全由钱包支付），
+	// 仍是「有生效卡」请求，应标 subscription。加载时 active 但 now≥expires_at 的假 active
+	// 会被 SettleWindow 置 JustExpired，不标 subscription。
+	if hasCard && card != nil && !card.JustExpired {
 		id := cardID
 		out.subscriptionID = &id
 	}
 
-	// 4) 回写卡（仅有卡时）：today_remaining/today_day/expire_day + 惰性过期。
-	if hasCard {
+	// 3) 回写卡（仅有卡时）：三窗口 usage/window_start + 惰性过期。结算不改 expires_at / 限额。
+	if hasCard && card != nil {
 		var nowExpired bool
 		var gid int64
-		// expires_at 始终从 expire_day 派生（透支会改 expire_day），让按 expires_at 判过期的
-		// 旧路径与自然日口径一致；见 service.ExpireDayToExpiresAt。
 		if err := tx.QueryRowContext(ctx, `
 			UPDATE user_subscriptions
-			SET today_remaining = $1, today_day = $2, expire_day = $3,
-				daily_spent_usd = $6, daily_spent_day = $7, expires_at = $8,
-				status = CASE WHEN $4 THEN 'expired' ELSE status END,
+			SET daily_usage_usd = $1, weekly_usage_usd = $2, monthly_usage_usd = $3,
+				daily_window_start = $4, weekly_window_start = $5, monthly_window_start = $6,
+				status = CASE WHEN $7 THEN 'expired' ELSE status END,
 				updated_at = NOW()
-			WHERE id = $5
+			WHERE id = $8
 			RETURNING status = 'expired', group_id
-		`, card.TodayRemaining, card.TodayDay, card.ExpireDay, card.Expired, cardID, card.DailySpentUSD, card.DailySpentDay,
-			service.ExpireDayToExpiresAt(card.ExpireDay)).Scan(&nowExpired, &gid); err != nil {
+		`, card.DailyUsageUSD, card.WeeklyUsageUSD, card.MonthlyUsageUSD,
+			card.DailyWindowStart, card.WeeklyWindowStart, card.MonthlyWindowStart,
+			card.JustExpired, cardID).Scan(&nowExpired, &gid); err != nil {
 			return nil, err
 		}
 		if nowExpired { // 本次刚由 active→expired（加载时为 active），失效订阅缓存
@@ -272,13 +282,13 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 		}
 	}
 
-	// 5) 回写 user：balance + 月度透支计数（含惰性按月重置；同 tx 内原子）。
+	// 4) 回写 user：balance（结算不改月度透支计数，故只写 balance）。
 	if err := tx.QueryRowContext(ctx, `
 		UPDATE users
-		SET balance = $1, monthly_overdraft_count = $2, monthly_overdraft_month = $3, updated_at = NOW()
-		WHERE id = $4 AND deleted_at IS NULL
+		SET balance = $1, updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL
 		RETURNING balance
-	`, wallet.Balance, wallet.MonthlyOverdraftCount, wallet.MonthlyOverdraftMonth, userID).Scan(&out.newBalance); err != nil {
+	`, wallet.Balance, userID).Scan(&out.newBalance); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, service.ErrUserNotFound
 		}
@@ -286,6 +296,23 @@ func settlePerDaySubscription(ctx context.Context, tx *sql.Tx, userID int64, off
 	}
 	out.walletDebit = balance - wallet.Balance
 	return out, nil
+}
+
+// nullFloatZero 把可空 decimal 列转 float64（NULL→0；三窗口引擎中 0 = 该窗口不限）。
+func nullFloatZero(v sql.NullFloat64) float64 {
+	if v.Valid {
+		return v.Float64
+	}
+	return 0
+}
+
+// nullTimePtr 把可空 timestamptz 列转 *time.Time（NULL→nil；窗口未激活）。
+func nullTimePtr(v sql.NullTime) *time.Time {
+	if v.Valid {
+		t := v.Time
+		return &t
+	}
+	return nil
 }
 
 func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, error) {

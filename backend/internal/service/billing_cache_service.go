@@ -854,9 +854,10 @@ func (s *BillingCacheService) checkRPM(ctx context.Context, user *User, group *G
 	return nil
 }
 
-// checkBalanceEligibility 准入资格（per-day 口径）：套餐余额（惰性发 D）|| 钱包 || 可透支，
-// 三者任一可用即放行，全不可用才拒。无生效卡 → 纯钱包标准计费：balance>0 即放行。
-// 与 settlePerDaySubscription 同口径（Admit/Settle 共用引擎），放行后只结算不拒绝（流式必须先放行）。
+// checkBalanceEligibility 准入资格（三窗口口径）：有生效卡 → 三窗口任一窗口仍有余量 || 钱包>0 即放行；
+// 撞上限且钱包≤0 才拒。无生效卡 → 纯钱包标准计费：balance>0 即放行。
+// 与 settleSubscriptionWindow 同口径（AdmitWindow/SettleWindow 共用引擎），放行后只结算不拒绝（流式必须先放行）。
+// 透支不参与准入（独立手动接口；借完体现在“日窗口又有余量”里）。
 func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user *User) error {
 	balance, err := s.GetUserBalance(ctx, user.ID)
 	if err != nil {
@@ -877,14 +878,14 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 		switch {
 		case cerr == nil && card != nil:
 			now := time.Now()
-			pdc := card.ToPerDayCard()
+			sw := card.ToSubWindow()
 			wallet := WalletState{
 				Balance:               balance,
 				MonthlyOverdraftCount: user.MonthlyOverdraftCount,
 				MonthlyOverdraftMonth: user.MonthlyOverdraftMonth,
 			}
-			// Admit 内部按 today 惰性覆盖套餐余额、按 monthKey 惰性重置月度透支（均作用于本地副本，不落库）。
-			if Admit(&pdc, &wallet, EastDayNumber(now), EastMonthKey(now)) {
+			// AdmitWindow：有生效卡看三窗口余量、撞上限/无卡看钱包（窗口惰性重置作用于本地副本，不落库）。
+			if AdmitWindow(&sw, &wallet, now) {
 				return nil
 			}
 			return ErrInsufficientBalance
