@@ -221,6 +221,10 @@ type CreateOrderRequest struct {
 	PaymentSource     string  `json:"payment_source"`
 	OrderType         string  `json:"order_type"`
 	PlanID            int64   `json:"plan_id"`
+	// 自定义订阅购买（无固定套餐，规格第 2/3 节）：每日额度 D + 有效期 T；与 plan_id 互斥，
+	// 后端按 u(D) 公式自算价、不信前端 amount。
+	DailyAmountUSD float64 `json:"daily_amount_usd"`
+	ValidityDays   int     `json:"validity_days"`
 	// IsMobile lets the frontend declare its mobile status directly. When
 	// nil we fall back to User-Agent heuristics (which miss iPadOS / some
 	// embedded browsers that strip the "Mobile" keyword).
@@ -270,6 +274,8 @@ func (h *PaymentHandler) CreateOrder(c *gin.Context) {
 		PaymentSource:   req.PaymentSource,
 		OrderType:       req.OrderType,
 		PlanID:          req.PlanID,
+		DailyAmountUSD:  req.DailyAmountUSD,
+		ValidityDays:    req.ValidityDays,
 		Locale:          c.GetHeader("Accept-Language"),
 	})
 	if err != nil {

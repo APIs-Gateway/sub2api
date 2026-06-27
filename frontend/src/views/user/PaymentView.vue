@@ -173,6 +173,10 @@
             </template>
             <!-- Plan list -->
             <template v-else>
+              <!-- 自定义购买（无固定套餐）：自填 D+T，实时报价。买按钮经 onCustomPurchase 下单。 -->
+              <div class="card p-6">
+                <SubscriptionPurchasePanel @purchase="onCustomPurchase" />
+              </div>
               <BillingRulesCard class="mb-4" />
               <div v-if="checkout.plans.length === 0" class="card py-16 text-center">
                 <Icon name="gift" size="xl" class="mx-auto mb-3 text-gray-300 dark:text-dark-600" />
@@ -260,6 +264,7 @@ import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderTy
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
+import SubscriptionPurchasePanel from '@/components/subscription/SubscriptionPurchasePanel.vue'
 import { METHOD_ORDER, getPaymentPopupFeatures } from '@/components/payment/providerConfig'
 import {
   PAYMENT_RECOVERY_STORAGE_KEY,
@@ -317,6 +322,9 @@ interface CreateOrderOptions {
   paymentType?: string
   isResume?: boolean
   mobileQrFallbackAttempted?: boolean
+  // 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T，与 planId 互斥。
+  dailyAmountUsd?: number
+  validityDays?: number
 }
 
 interface WeixinJSBridgeLike {
@@ -685,6 +693,19 @@ async function confirmSubscribe() {
   await createOrder(selectedPlan.value.price, 'subscription', selectedPlan.value.id)
 }
 
+// 自定义订阅购买（无固定套餐）：面板 @purchase 带 D/T + 后端报价，按报价价下单（金额由后端公式再算、不信前端）。
+async function onCustomPurchase(payload: {
+  dailyAmountUsd: number
+  validityDays: number
+  quote: { price: number }
+}) {
+  if (submitting.value) return
+  await createOrder(payload.quote.price, 'subscription', undefined, {
+    dailyAmountUsd: payload.dailyAmountUsd,
+    validityDays: payload.validityDays,
+  })
+}
+
 async function createOrder(orderAmount: number, orderType: OrderType, planId?: number, options: CreateOrderOptions = {}) {
   submitting.value = true
   errorMessage.value = ''
@@ -696,6 +717,8 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
       paymentType: requestType,
       orderType,
       planId,
+      dailyAmountUsd: options.dailyAmountUsd,
+      validityDays: options.validityDays,
       origin: typeof window !== 'undefined' ? window.location.origin : '',
       isMobile: isMobileDevice(),
       isWechatBrowser: typeof window !== 'undefined' && /MicroMessenger/i.test(window.navigator.userAgent),

@@ -160,6 +160,9 @@ export interface CreateOrderRequest {
   payment_type: string
   order_type: string
   plan_id?: number
+  // 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T；与 plan_id 互斥，后端按 u(D) 公式自算价。
+  daily_amount_usd?: number
+  validity_days?: number
   return_url?: string
   payment_source?: string
   openid?: string

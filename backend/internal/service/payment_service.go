@@ -83,7 +83,10 @@ type CreateOrderRequest struct {
 	PaymentSource   string
 	OrderType       string
 	PlanID          int64
-	Locale          string
+	// 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T；与 PlanID 互斥，后端按 u(D) 公式定价。
+	DailyAmountUSD float64
+	ValidityDays   int
+	Locale         string
 }
 
 type CreateOrderResponse struct {

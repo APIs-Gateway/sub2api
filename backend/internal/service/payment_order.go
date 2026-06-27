@@ -136,6 +136,23 @@ func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrder
 
 func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRequest) (*dbent.SubscriptionPlan, error) {
 	if req.PlanID == 0 {
+		// 自定义购买（无固定套餐，规格第 2/3 节）：用 D+T 直接定价，不依赖 plan。
+		if req.DailyAmountUSD > 0 && req.ValidityDays > 0 {
+			// 先按 u(D) 公式校验 D/T 是否在允许区间（越界返回 INVALID_SUBSCRIPTION_PARAMS）。
+			if s.subscriptionSvc == nil {
+				return nil, fmt.Errorf("subscription service not configured")
+			}
+			if _, err := s.subscriptionSvc.QuoteSubscription(req.DailyAmountUSD, req.ValidityDays); err != nil {
+				return nil, err
+			}
+			// 履约「无 group 三窗口建卡」依赖 group_id nullable 迁移（P5e/#8）：在它落地前，
+			// 这里**收款前**显式拒绝，严防"已付款却无法履约、无自动退款"的资损。下单/定价/快照口径已就绪，
+			// #8 放开后把本拒绝改为「按 Quote 冻结自定义快照 + 走 createOrderInTx 自定义分支」即通。
+			return nil, infraerrors.BadRequest(
+				"CUSTOM_SUBSCRIPTION_NOT_ENABLED",
+				"custom subscription purchase is not enabled yet",
+			)
+		}
 		return nil, infraerrors.BadRequest("INVALID_INPUT", "subscription order requires a plan")
 	}
 	plan, err := s.configService.GetPlan(ctx, req.PlanID)
