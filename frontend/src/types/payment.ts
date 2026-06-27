@@ -163,6 +163,9 @@ export interface CreateOrderRequest {
   // 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T；与 plan_id 互斥，后端按 u(D) 公式自算价。
   daily_amount_usd?: number
   validity_days?: number
+  // 订阅生命周期意图（per-day redesign §5/§7）：空/'purchase'=购买；'renew'=续费当前卡；
+  // 'change_plan'=转套餐。目标卡后端按用户唯一生效卡派生；价格/差价后端权威算。
+  subscription_intent?: string
   return_url?: string
   payment_source?: string
   openid?: string

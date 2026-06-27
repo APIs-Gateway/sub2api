@@ -90,38 +90,56 @@ export async function borrowOverdraftDay(idempotencyKey: string): Promise<Manual
   return response.data
 }
 
-/** 续费结果（同档延长发放期，从余额扣续费价）。 */
-export interface RenewResult {
+/**
+ * 续费报价（只读预览）。续费**走法币支付网关**：拿到报价后下单走 POST /payment/orders
+ * （order_type=subscription, subscription_intent=renew, validity_days），支付成功回调履约延长有效期。
+ */
+export interface RenewOrderQuote {
   subscription_id: number
+  daily_amount_usd: number
   added_days: number
+  /** 续费价 = cfg.Price(card.D, T')（恒 >0，走网关收全价）。 */
   price: number
-  new_expire_day: number
+  unit_price: number
+  group_id: number
 }
 
-/** 转套餐结果（旧卡折剩余价值抵新套餐，多退少补）。 */
-export interface ChangePlanResult {
+/**
+ * 转套餐报价（只读预览）。补差价**走法币支付网关**（仅 diff>0 可下单；diff≤0 报价即拒：降档赔钱/持平）。
+ * 拿到 diff>0 后下单走 POST /payment/orders（order_type=subscription, subscription_intent=change_plan,
+ * daily_amount_usd, validity_days），支付成功回调履约关旧开新。
+ */
+export interface ChangePlanOrderQuote {
   old_subscription_id: number
-  new_subscription_id: number
-  old_remaining_value: number
+  daily_amount_usd: number
+  validity_days: number
+  weekly_cap_usd: number
+  monthly_cap_usd: number
+  /** P_新 = D_新×T_新×u(D_新)。 */
   new_plan_price: number
-  /** P_新 − V：>0 已从余额扣的补差价；<0 已退进余额的差价；0 持平。 */
+  /** V = 旧卡按剩余服务天数折出的剩余价值。 */
+  old_remaining_value: number
+  /** P_新 − V：>0 走网关补差价；≤0 后端报价即拒（降档赔钱/持平无差价）。 */
   diff: number
-  new_card_today_balance: number
-  new_expire_day: number
+  unit_price: number
 }
 
-/** 续费当前生效卡：同套餐（相同每日额度）续 T' 天，从其他余额扣续费价。 */
-export async function renewSubscription(planId: number): Promise<RenewResult> {
-  const response = await apiClient.post<RenewResult>('/subscriptions/renew', {
-    plan_id: planId,
+/** 续费报价（统一 D+T）：同 D 续 T' 天（整月），返回续费价等供前端预览。POST /subscriptions/renew/quote */
+export async function renewQuote(validityDays: number): Promise<RenewOrderQuote> {
+  const response = await apiClient.post<RenewOrderQuote>('/subscriptions/renew/quote', {
+    validity_days: validityDays,
   })
   return response.data
 }
 
-/** 转套餐：旧卡按剩余天数折价抵扣新套餐，多退少补；每自然日最多一次。 */
-export async function changeSubscriptionPlan(planId: number): Promise<ChangePlanResult> {
-  const response = await apiClient.post<ChangePlanResult>('/subscriptions/change-plan', {
-    plan_id: planId,
+/** 转套餐报价（统一 D+T）：算新档价 P_新、旧卡剩余价值 V、差价 diff。POST /subscriptions/change-plan/quote */
+export async function changePlanQuote(
+  dailyAmountUsd: number,
+  validityDays: number
+): Promise<ChangePlanOrderQuote> {
+  const response = await apiClient.post<ChangePlanOrderQuote>('/subscriptions/change-plan/quote', {
+    daily_amount_usd: dailyAmountUsd,
+    validity_days: validityDays,
   })
   return response.data
 }
@@ -176,6 +194,6 @@ export default {
   borrowOverdraftDay,
   getSubscriptionPricing,
   quoteSubscription,
-  renewSubscription,
-  changeSubscriptionPlan
+  renewQuote,
+  changePlanQuote
 }

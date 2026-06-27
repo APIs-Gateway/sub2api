@@ -5,47 +5,95 @@
         {{ mode === 'renew' ? t('userSubscriptions.lifecycle.renewHint') : t('userSubscriptions.lifecycle.changeHint') }}
       </p>
 
-      <!-- Loading -->
+      <!-- Loading bounds -->
       <div v-if="loading" class="flex justify-center py-8">
-        <div class="h-6 w-6 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
+        <div class="h-6 w-6 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
       </div>
 
-      <!-- Empty -->
-      <p
-        v-else-if="selectablePlans.length === 0"
-        class="rounded-md border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400"
-      >
-        {{ t('userSubscriptions.lifecycle.noPlans') }}
-      </p>
+      <div v-else-if="loadError" class="rounded-md border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400">
+        {{ t('userSubscriptions.lifecycle.loadFailed') }}
+      </div>
 
-      <!-- Plan options -->
-      <div v-else class="space-y-2">
-        <button
-          v-for="plan in selectablePlans"
-          :key="plan.id"
-          type="button"
-          class="flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors"
-          :class="
-            selectedPlanId === plan.id
-              ? 'border-primary-500 bg-primary-50 dark:border-primary-400 dark:bg-primary-500/10'
-              : 'border-gray-200 hover:border-gray-300 dark:border-dark-700 dark:hover:border-dark-600'
-          "
-          @click="selectedPlanId = plan.id"
-        >
-          <div class="min-w-0">
-            <div class="truncate text-sm font-semibold text-gray-900 dark:text-white">{{ plan.name }}</div>
-            <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-              ${{ plan.daily_amount_usd ?? 0 }} {{ t('userSubscriptions.lifecycle.perDay') }} ·
-              {{ plan.validity_days }} {{ t('userSubscriptions.lifecycle.days') }}
-            </div>
+      <template v-else-if="bounds">
+        <!-- 每日额度 D -->
+        <div>
+          <label class="input-label">{{ t('userSubscriptions.lifecycle.dailyAmount') }}</label>
+          <!-- 续费：D 固定为当前卡，只读展示 -->
+          <div v-if="mode === 'renew'" class="input flex items-center justify-between bg-gray-50 dark:bg-dark-800/40">
+            <span class="font-mono tabular-nums">${{ dailyAmount }}</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.perDay') }}（{{ t('userSubscriptions.lifecycle.dFixed') }}）</span>
           </div>
-          <div class="ml-3 shrink-0 text-sm font-bold text-gray-900 dark:text-white">${{ plan.price }}</div>
-        </button>
-      </div>
+          <!-- 转套餐：D 可改 -->
+          <div v-else class="flex items-center gap-3">
+            <input
+              v-model.number="dailyAmount"
+              type="range"
+              :min="bounds.d_min"
+              :max="bounds.d_max"
+              step="0.5"
+              class="h-2 flex-1 accent-gray-900 dark:accent-gray-100"
+              @change="onParamChange"
+            />
+            <input
+              v-model.number="dailyAmount"
+              type="number"
+              :min="bounds.d_min"
+              :max="bounds.d_max"
+              step="0.5"
+              class="input w-24 text-right font-mono tabular-nums"
+              @change="clampDailyAndQuote"
+            />
+          </div>
+        </div>
 
-      <p v-if="mode === 'change' && selectedPlanId" class="text-xs text-gray-500 dark:text-gray-400">
-        {{ t('userSubscriptions.lifecycle.changeDiffNote') }}
-      </p>
+        <!-- 有效期 T（整月：30/60/90） -->
+        <div>
+          <label class="input-label">{{ t('userSubscriptions.lifecycle.validity') }}</label>
+          <div class="grid grid-cols-3 gap-2">
+            <button
+              v-for="opt in tOptions"
+              :key="opt"
+              type="button"
+              class="rounded-lg border px-3 py-2 text-sm transition-colors"
+              :class="
+                validityDays === opt
+                  ? 'border-gray-900 bg-gray-50 font-semibold text-gray-900 dark:border-gray-100 dark:bg-dark-800/60 dark:text-white'
+                  : 'border-gray-200 text-gray-600 hover:border-gray-300 dark:border-dark-700 dark:text-gray-300 dark:hover:border-dark-600'
+              "
+              @click="selectValidity(opt)"
+            >
+              {{ opt }} {{ t('userSubscriptions.lifecycle.days') }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 报价 -->
+        <div class="rounded-md border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/40">
+          <div v-if="quoting" class="text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</div>
+          <div v-else-if="quoteErrorMsg" class="text-sm text-primary-700 dark:text-primary-400">
+            {{ quoteErrorMsg }}
+          </div>
+          <template v-else-if="mode === 'renew' && renewQuoteData">
+            <div class="flex items-baseline justify-between">
+              <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.renewPrice') }}</span>
+              <span class="text-lg font-bold text-gray-900 dark:text-white">${{ renewQuoteData.price }}</span>
+            </div>
+          </template>
+          <template v-else-if="mode === 'change' && changeQuoteData">
+            <div class="flex items-baseline justify-between">
+              <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.changeDiff') }}</span>
+              <span class="text-lg font-bold text-gray-900 dark:text-white">${{ changeQuoteData.diff }}</span>
+            </div>
+            <div class="mt-1 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
+              <div>{{ t('userSubscriptions.lifecycle.newPlanPrice') }}: ${{ changeQuoteData.new_plan_price }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.oldRemainingValue') }}: ${{ changeQuoteData.old_remaining_value }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.caps', { weekly: changeQuoteData.weekly_cap_usd, monthly: changeQuoteData.monthly_cap_usd }) }}</div>
+            </div>
+          </template>
+        </div>
+
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.gatewayNote') }}</p>
+      </template>
     </div>
 
     <template #footer>
@@ -54,10 +102,10 @@
         <button
           type="button"
           class="btn btn-primary"
-          :disabled="submitting || !selectedPlanId"
+          :disabled="!canConfirm"
           @click="handleConfirm"
         >
-          {{ submitting ? t('common.saving') : t('userSubscriptions.lifecycle.confirm') }}
+          {{ t('userSubscriptions.lifecycle.goPay') }}
         </button>
       </div>
     </template>
@@ -68,10 +116,12 @@
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
-import { paymentAPI } from '@/api/payment'
-import subscriptionsAPI from '@/api/subscriptions'
+import subscriptionsAPI, {
+  type SubscriptionPricingBounds,
+  type RenewOrderQuote,
+  type ChangePlanOrderQuote
+} from '@/api/subscriptions'
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
-import type { SubscriptionPlan } from '@/types/payment'
 import type { UserSubscription } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 
@@ -83,16 +133,25 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  done: []
+  // 前往法币支付网关结账：父组件据此跳转 /payment（intent + D/T + 预估金额 charge）。
+  purchase: [payload: { intent: 'renew' | 'change_plan'; dailyAmountUsd: number; validityDays: number; charge: number }]
 }>()
 
 const { t } = useI18n()
 const appStore = useAppStore()
 
-const plans = ref<SubscriptionPlan[]>([])
+const bounds = ref<SubscriptionPricingBounds | null>(null)
 const loading = ref(false)
-const submitting = ref(false)
-const selectedPlanId = ref<number | null>(null)
+const loadError = ref(false)
+const dailyAmount = ref(0)
+const validityDays = ref(0)
+const renewQuoteData = ref<RenewOrderQuote | null>(null)
+const changeQuoteData = ref<ChangePlanOrderQuote | null>(null)
+const quoting = ref(false)
+const quoteErrorMsg = ref('')
+
+let quoteTimer: ReturnType<typeof setTimeout> | null = null
+let quoteSeq = 0
 
 const dialogTitle = computed(() =>
   props.mode === 'renew'
@@ -100,63 +159,117 @@ const dialogTitle = computed(() =>
     : t('userSubscriptions.lifecycle.changeTitle')
 )
 
-// 续费：仅相同每日额度 D 的在售套餐（同档续期）；转套餐：不同 D 的在售套餐（换档）。
-const selectablePlans = computed(() => {
-  const curD = props.subscription.daily_amount_usd ?? null
-  return plans.value.filter((p) => {
-    if (!p.for_sale || (p.daily_amount_usd ?? 0) <= 0) return false
-    const sameD = curD != null && (p.daily_amount_usd ?? 0) === curD
-    return props.mode === 'renew' ? sameD : !sameD
-  })
+// 有效期可选项 = [t_min, t_min+t_step, …, t_max]（默认 30/60/90，整月）。
+const tOptions = computed<number[]>(() => {
+  const b = bounds.value
+  if (!b) return []
+  const step = b.t_step > 0 ? b.t_step : 30
+  const out: number[] = []
+  for (let v = b.t_min; v <= b.t_max; v += step) out.push(v)
+  return out
 })
+
+// 续费：报价成功(price>0)即可去支付；转套餐：必须 diff>0（diff≤0 后端报价已拒，按钮禁用）。
+const canConfirm = computed(() => {
+  if (quoting.value || validityDays.value <= 0) return false
+  if (props.mode === 'renew') return renewQuoteData.value != null && renewQuoteData.value.price > 0
+  return changeQuoteData.value != null && changeQuoteData.value.diff > 0
+})
+
+function clamp(v: number, lo: number, hi: number): number {
+  if (Number.isNaN(v)) return lo
+  return Math.min(Math.max(v, lo), hi)
+}
+
+function clampDailyAndQuote() {
+  if (!bounds.value) return
+  dailyAmount.value = clamp(dailyAmount.value, bounds.value.d_min, bounds.value.d_max)
+  scheduleQuote()
+}
+
+function selectValidity(v: number) {
+  validityDays.value = v
+  scheduleQuote()
+}
+
+function onParamChange() {
+  scheduleQuote()
+}
+
+function scheduleQuote() {
+  if (quoteTimer) clearTimeout(quoteTimer)
+  quoteTimer = setTimeout(refreshQuote, 250)
+}
+
+async function refreshQuote() {
+  if (validityDays.value <= 0) return
+  if (props.mode === 'change' && dailyAmount.value <= 0) return
+  const seq = ++quoteSeq
+  quoting.value = true
+  quoteErrorMsg.value = ''
+  renewQuoteData.value = null
+  changeQuoteData.value = null
+  try {
+    if (props.mode === 'renew') {
+      const q = await subscriptionsAPI.renewQuote(validityDays.value)
+      if (seq !== quoteSeq) return
+      renewQuoteData.value = q
+    } else {
+      const q = await subscriptionsAPI.changePlanQuote(dailyAmount.value, validityDays.value)
+      if (seq !== quoteSeq) return
+      changeQuoteData.value = q
+    }
+  } catch (err: unknown) {
+    if (seq !== quoteSeq) return
+    // 把后端语义错误码（CHANGE_PLAN_DOWNGRADE_NOT_ALLOWED / CHANGE_PLAN_DAILY_LIMIT /
+    // NO_ACTIVE_SUBSCRIPTION / INVALID_SUBSCRIPTION_PARAMS 等）映射为友好本地化文案。
+    quoteErrorMsg.value = extractI18nErrorMessage(err, t, 'userSubscriptions.lifecycle.errors', t('userSubscriptions.lifecycle.quoteFailed'))
+  } finally {
+    if (seq === quoteSeq) quoting.value = false
+  }
+}
 
 watch(
   () => props.show,
   async (visible) => {
     if (!visible) return
-    selectedPlanId.value = null
-    if (plans.value.length === 0) {
+    renewQuoteData.value = null
+    changeQuoteData.value = null
+    quoteErrorMsg.value = ''
+    if (!bounds.value) {
       try {
         loading.value = true
-        const res = await paymentAPI.getPlans()
-        plans.value = res.data
+        loadError.value = false
+        bounds.value = await subscriptionsAPI.getSubscriptionPricing()
       } catch (err: unknown) {
+        loadError.value = true
         appStore.showError(extractApiErrorMessage(err, t('common.error')))
+        loading.value = false
+        return
       } finally {
         loading.value = false
       }
     }
+    const b = bounds.value
+    if (!b) return
+    // 续费：D 固定为当前卡；转套餐：默认取当前卡 D（夹到区间）便于在其上调整。
+    const cardD = props.subscription.daily_amount_usd ?? b.d_min
+    dailyAmount.value = props.mode === 'renew' ? cardD : clamp(cardD, b.d_min, b.d_max)
+    validityDays.value = b.t_min
+    await refreshQuote()
   }
 )
 
-async function handleConfirm() {
-  if (!selectedPlanId.value) return
-  submitting.value = true
-  try {
-    if (props.mode === 'renew') {
-      await subscriptionsAPI.renewSubscription(selectedPlanId.value)
-      appStore.showSuccess(t('userSubscriptions.lifecycle.renewSuccess'))
-    } else {
-      const res = await subscriptionsAPI.changeSubscriptionPlan(selectedPlanId.value)
-      const diff = res.diff
-      if (diff > 0) {
-        appStore.showSuccess(t('userSubscriptions.lifecycle.changeSuccessCharged', { amount: diff.toFixed(2) }))
-      } else if (diff < 0) {
-        appStore.showSuccess(t('userSubscriptions.lifecycle.changeSuccessRefunded', { amount: (-diff).toFixed(2) }))
-      } else {
-        appStore.showSuccess(t('userSubscriptions.lifecycle.changeSuccess'))
-      }
-    }
-    emit('done')
-    emit('close')
-  } catch (err: unknown) {
-    // 把后端语义错误码（NO_ACTIVE_SUBSCRIPTION/CHANGE_PLAN_DAILY_LIMIT/INSUFFICIENT_BALANCE_*/
-    // RENEW_PLAN_MISMATCH 等）映射为友好本地化文案，无对应 key 时回退原始消息。
-    appStore.showError(
-      extractI18nErrorMessage(err, t, 'userSubscriptions.lifecycle.errors', t('common.error'))
-    )
-  } finally {
-    submitting.value = false
+// 确认 → 不在此扣费/换卡，而是带「意图 + D/T + 预估金额」交给父组件跳转法币支付网关结账。
+function handleConfirm() {
+  if (!canConfirm.value) return
+  if (props.mode === 'renew') {
+    const q = renewQuoteData.value!
+    emit('purchase', { intent: 'renew', dailyAmountUsd: dailyAmount.value, validityDays: validityDays.value, charge: q.price })
+  } else {
+    const q = changeQuoteData.value!
+    emit('purchase', { intent: 'change_plan', dailyAmountUsd: dailyAmount.value, validityDays: validityDays.value, charge: q.diff })
   }
+  emit('close')
 }
 </script>

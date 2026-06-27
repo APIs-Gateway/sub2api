@@ -133,7 +133,7 @@
       :mode="lifecycleMode"
       :subscription="subscription"
       @close="showLifecycle = false"
-      @done="onLifecycleDone"
+      @purchase="onLifecyclePurchase"
     />
 
     <ConfirmDialog
@@ -158,6 +158,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import SubscriptionLifecycleDialog from '@/components/subscription/SubscriptionLifecycleDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import subscriptionsAPI from '@/api/subscriptions'
@@ -177,6 +178,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const router = useRouter()
 
 // 东八区常量：窗口/有效期边界一律按东八区自然日算（东八区无 DST，固定 +08:00）。
 const SH_TZ = 'Asia/Shanghai'
@@ -189,9 +191,20 @@ function openLifecycle(mode: 'renew' | 'change') {
   lifecycleMode.value = mode
   showLifecycle.value = true
 }
-function onLifecycleDone() {
+// 续费/转套餐改走法币支付网关：弹窗确认后带「意图 + D/T + 预估金额」跳到支付页结账（选支付方式 → 下单 → 跳 pay_url）。
+// 支付成功由后端回调履约（延长/换卡），不在此同步扣费。
+function onLifecyclePurchase(payload: { intent: 'renew' | 'change_plan'; dailyAmountUsd: number; validityDays: number; charge: number }) {
   showLifecycle.value = false
-  emit('saved')
+  router.push({
+    path: '/payment',
+    query: {
+      tab: 'subscription',
+      intent: payload.intent,
+      daily_amount_usd: String(payload.dailyAmountUsd),
+      validity_days: String(payload.validityDays),
+      charge: String(payload.charge),
+    },
+  })
 }
 
 // 三窗口用量 vs 限额（限额挂卡；limit 为 null/0 = 该窗口不限）。

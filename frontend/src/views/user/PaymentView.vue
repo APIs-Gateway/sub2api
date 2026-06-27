@@ -91,8 +91,66 @@
           </template>
           <!-- Subscribe Tab -->
           <template v-else-if="activeTab === 'subscription'">
+            <!-- 续费/转套餐结账（per-day redesign §5/§7）：从「我的订阅」带 D/T+意图跳来，走法币网关下单。 -->
+            <template v-if="lifecycleOrder">
+              <div class="card p-5">
+                <div class="mb-3 flex flex-wrap items-center gap-2">
+                  <h3 class="text-lg font-bold text-gray-900 dark:text-white">
+                    {{ lifecycleOrder.intent === 'renew' ? t('userSubscriptions.lifecycle.renewTitle') : t('userSubscriptions.lifecycle.changeTitle') }}
+                  </h3>
+                </div>
+                <div class="flex items-baseline gap-2">
+                  <span class="font-mono tabular-nums text-3xl font-bold text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(lifecycleOrder.amount) }}</span>
+                  <span class="text-sm text-gray-600 dark:text-gray-400">
+                    {{ lifecycleOrder.intent === 'renew' ? t('userSubscriptions.lifecycle.renewPrice') : t('userSubscriptions.lifecycle.changeDiff') }}
+                  </span>
+                </div>
+                <div class="mt-3 grid grid-cols-2 gap-3">
+                  <div>
+                    <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.dailyAmount') }}</span>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">${{ lifecycleOrder.dailyAmountUsd }}</div>
+                  </div>
+                  <div>
+                    <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.validity') }}</span>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">{{ lifecycleOrder.validityDays }} {{ t('userSubscriptions.lifecycle.days') }}</div>
+                  </div>
+                </div>
+                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.gatewayNote') }}</p>
+              </div>
+              <div v-if="enabledMethods.length >= 1" class="card p-6">
+                <PaymentMethodSelector
+                  :methods="subMethodOptions"
+                  :selected="selectedMethod"
+                  @select="selectedMethod = $event"
+                />
+              </div>
+              <div v-if="feeRate > 0 && lifecycleOrder.amount > 0" class="card p-6">
+                <div class="space-y-2 text-sm">
+                  <div class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">{{ t('payment.amountLabel') }}</span>
+                    <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(lifecycleOrder.amount) }}</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">{{ t('payment.fee') }} ({{ feeRate }}%)</span>
+                    <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(lifecycleFeeAmount) }}</span>
+                  </div>
+                  <div class="flex justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
+                    <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
+                    <span class="font-mono tabular-nums text-lg font-bold text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(lifecycleTotalAmount) }}</span>
+                  </div>
+                </div>
+              </div>
+              <button :class="['btn w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="!canSubmitLifecycle || submitting" @click="confirmLifecycle">
+                <span v-if="submitting" class="flex items-center justify-center gap-2">
+                  <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+                  {{ t('common.processing') }}
+                </span>
+                <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(feeRate > 0 ? lifecycleTotalAmount : lifecycleOrder.amount) }}</span>
+              </button>
+              <button class="btn btn-secondary w-full" @click="lifecycleOrder = null">{{ t('common.cancel') }}</button>
+            </template>
             <!-- Subscription confirm (inline, replaces plan list) -->
-            <template v-if="selectedPlan">
+            <template v-else-if="selectedPlan">
               <div class="card p-5">
                 <!-- Header: platform badge + plan name -->
                 <div class="mb-3 flex flex-wrap items-center gap-2">
@@ -325,6 +383,8 @@ interface CreateOrderOptions {
   // 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T，与 planId 互斥。
   dailyAmountUsd?: number
   validityDays?: number
+  // 订阅生命周期意图：'renew' / 'change_plan'（购买留空）。
+  subscriptionIntent?: string
 }
 
 interface WeixinJSBridgeLike {
@@ -643,6 +703,44 @@ const canSubmitSubscription = computed(() =>
     && selectedLimit.value?.available !== false
 )
 
+// 续费/转套餐结账（per-day redesign §5/§7）：从「我的订阅」弹窗带 D/T+意图+预估金额跳来，
+// 走与购买同一条法币网关下单链路（金额由后端按订单快照权威重算，前端 amount 仅展示）。
+const lifecycleOrder = ref<null | {
+  intent: 'renew' | 'change_plan'
+  dailyAmountUsd: number
+  validityDays: number
+  amount: number // 预估实收（续费=价，转套餐=差价）；后端权威重算。
+}>(null)
+
+const lifecycleFeeAmount = computed(() => {
+  const amt = lifecycleOrder.value?.amount ?? 0
+  if (feeRate.value <= 0 || amt <= 0) return 0
+  return Math.ceil(((amt * feeRate.value) / 100) * 100) / 100
+})
+
+const lifecycleTotalAmount = computed(() => {
+  const amt = lifecycleOrder.value?.amount ?? 0
+  if (feeRate.value <= 0 || amt <= 0) return amt
+  return Math.round((amt + lifecycleFeeAmount.value) * 100) / 100
+})
+
+const canSubmitLifecycle = computed(() =>
+  lifecycleOrder.value !== null
+    && amountFitsMethod(lifecycleOrder.value.amount, selectedMethod.value)
+    && selectedLimit.value?.available !== false
+)
+
+async function confirmLifecycle() {
+  const lo = lifecycleOrder.value
+  if (!lo || submitting.value) return
+  // order_type=subscription + subscription_intent；后端按用户唯一生效卡派生目标、权威算价并冻结快照。
+  await createOrder(lo.amount, 'subscription', undefined, {
+    dailyAmountUsd: lo.dailyAmountUsd,
+    validityDays: lo.validityDays,
+    subscriptionIntent: lo.intent,
+  })
+}
+
 // Auto-switch to first available method when current selection can't handle the amount
 watch(() => [validAmount.value, selectedMethod.value] as const, ([amt, method]) => {
   if (amt <= 0 || amountFitsMethod(amt, method)) return
@@ -733,6 +831,7 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
       planId,
       dailyAmountUsd: options.dailyAmountUsd,
       validityDays: options.validityDays,
+      subscriptionIntent: options.subscriptionIntent,
       origin: typeof window !== 'undefined' ? window.location.origin : '',
       isMobile: isMobileDevice(),
       isWechatBrowser: typeof window !== 'undefined' && /MicroMessenger/i.test(window.navigator.userAgent),
@@ -1098,6 +1197,20 @@ onMounted(async () => {
     await resumeWechatPaymentFromQuery()
     if (checkout.value.balance_disabled) {
       activeTab.value = 'subscription'
+    }
+    // 续费/转套餐结账导航（per-day redesign §5/§7）：
+    // ?tab=subscription&intent=renew|change_plan&daily_amount_usd=&validity_days=&charge=
+    const lifecycleIntent = typeof route.query.intent === 'string' ? route.query.intent : ''
+    if (lifecycleIntent === 'renew' || lifecycleIntent === 'change_plan') {
+      activeTab.value = 'subscription'
+      const d = Number(route.query.daily_amount_usd)
+      const tt = Number(route.query.validity_days)
+      const charge = Number(route.query.charge)
+      if (d > 0 && tt > 0 && Number.isFinite(charge) && charge > 0) {
+        lifecycleOrder.value = { intent: lifecycleIntent, dailyAmountUsd: d, validityDays: tt, amount: charge }
+        // 清掉 query，避免刷新/返回重复进入结账。
+        await router.replace({ path: route.path, query: { tab: 'subscription' } })
+      }
     }
     // Handle renewal navigation: ?tab=subscription&group=123
     if (route.query.tab === 'subscription') {
