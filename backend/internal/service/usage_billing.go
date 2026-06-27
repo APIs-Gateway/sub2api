@@ -40,10 +40,11 @@ type UsageBillingCommand struct {
 	APIKeyRateLimitCost float64
 	AccountQuotaCost    float64
 
-	// Per-day 结算输入（per-day redesign）：
-	// OfficialCost = 官方价（未乘倍率，= CostBreakdown.TotalCost）；套餐余额按它 1:1 扣。
-	// RateMultiplier = 钱包计费倍率（= ActualCost/TotalCost）；仅钱包正/负余额层乘它。
-	// 二者用于 settlePerDaySubscription 瀑布；OfficialCost>0 触发 per-day 结算。
+	// 三窗口结算输入（per-day redesign）：
+	// OfficialCost = 官方价（= CostBreakdown.TotalCost）；订阅与钱包余额地位等价、都按它 1:1 扣
+	// （倍率不参与扣费，见 docs/billing-perday-redesign.md §4）。OfficialCost>0 触发三窗口结算。
+	// RateMultiplier = 钱包计费倍率（= ActualCost/TotalCost）；**不再参与扣费**，仅留作 usage_log
+	// 展示/审计与幂等指纹分量（相同 ActualCost 但官方价/倍率拆分不同仍视为不同结算语义）。
 	OfficialCost   float64
 	RateMultiplier float64
 }
@@ -127,9 +128,9 @@ type UsageBillingApplyResult struct {
 	APIKeyQuotaExhausted bool
 	NewBalance           *float64           // post-settlement wallet balance (nil = no settlement)
 	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
-	// WalletDebit 本次结算从钱包（users.balance）实际扣减的「售价货币」额（套餐余额 1:1 部分不计入）。
-	// = 钱包正余额扣（官方×倍率）+ 钱包负数兜底扣。供余额提醒按真实扣减重建旧余额、缓存按真实变化回写。
-	// nil = 未发生 per-day 结算。
+	// WalletDebit 本次结算从钱包（users.balance）实际扣减的官方刀额（订阅覆盖 1:1 部分不计入）。
+	// = 钱包正余额扣（1:1）+ 钱包负数兜底扣（1:1）。供余额提醒按真实扣减重建旧余额、缓存按真实变化回写。
+	// nil = 未发生三窗口结算。
 	WalletDebit *float64
 	// OverdraftApplied 本次结算发生了透支（改了 users.monthly_overdraft_count）。
 	// 上层据此失效该用户鉴权快照，让准入读到最新月度透支计数（否则缓存计数偏低、误放行已满额用户）。

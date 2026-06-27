@@ -167,7 +167,7 @@ func (s *UserSubscriptionRepoSuite) TestCreateUpdateAndMapCardWindowLimitsPostgr
 
 	card := updated.ToSubWindow()
 	wallet := &service.WalletState{Balance: 100}
-	res := service.SettleWindow(&card, wallet, 10, 2, time.Now())
+	res := service.SettleWindow(&card, wallet, 10, time.Now())
 	s.Require().Greater(res.SubCover, 0.0, "configured DB card should cover through subscription")
 	s.Require().Less(res.SubCover, 10.0, "cost above remaining subscription should partly fall through")
 	s.Require().Less(wallet.Balance, 100.0, "cost above remaining subscription should fall through to wallet")
@@ -190,10 +190,10 @@ func (s *UserSubscriptionRepoSuite) TestUnconfiguredCardFallsBackToWalletAfterRe
 
 	card := got.ToSubWindow()
 	wallet := &service.WalletState{Balance: 100}
-	res := service.SettleWindow(&card, wallet, 5, 2, time.Now())
+	res := service.SettleWindow(&card, wallet, 5, time.Now())
 	s.Require().Zero(res.SubCover, "all NULL limits from Postgres must not grant unlimited subscription coverage")
-	s.Require().InDelta(10, res.WalletPay, 1e-9)
-	s.Require().InDelta(90, wallet.Balance, 1e-9)
+	s.Require().InDelta(5, res.WalletPay, 1e-9)
+	s.Require().InDelta(95, wallet.Balance, 1e-9)
 	s.Require().Zero(card.DailyUsageUSD)
 	s.Require().Zero(card.WeeklyUsageUSD)
 	s.Require().Zero(card.MonthlyUsageUSD)
@@ -230,10 +230,10 @@ func (s *UserSubscriptionRepoSuite) TestPartiallyConfiguredCardUsesConfiguredWin
 
 	card := got.ToSubWindow()
 	wallet := &service.WalletState{Balance: 100}
-	res := service.SettleWindow(&card, wallet, 8, 2, now)
+	res := service.SettleWindow(&card, wallet, 8, now)
 	s.Require().InDelta(5, res.SubCover, 1e-9, "weekly remaining should be the binding configured window")
-	s.Require().InDelta(6, res.WalletPay, 1e-9, "official cost above weekly remaining should fall through to wallet at multiplier")
-	s.Require().InDelta(94, wallet.Balance, 1e-9)
+	s.Require().InDelta(3, res.WalletPay, 1e-9, "official cost above weekly remaining should fall through to wallet 1:1")
+	s.Require().InDelta(97, wallet.Balance, 1e-9)
 	s.Require().InDelta(5, card.DailyUsageUSD, 1e-9, "unconfigured daily window is unlimited but still accrues covered usage")
 	s.Require().InDelta(70, card.WeeklyUsageUSD, 1e-9)
 	s.Require().InDelta(5, card.MonthlyUsageUSD, 1e-9, "unconfigured monthly window is unlimited but still accrues covered usage")
