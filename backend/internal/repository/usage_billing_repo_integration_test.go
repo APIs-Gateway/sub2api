@@ -458,7 +458,11 @@ func TestUsageBillingRepositoryApply_ConcurrentSameRequestOnlyAppliesOncePostgre
 		go func() {
 			defer wg.Done()
 			<-start
-			res, err := repo.Apply(ctx, cmd)
+			// 每 goroutine 用各自的 cmd 副本：生产每请求都新建 cmd（buildUsageBillingCommand），
+			// Apply→Normalize 会就地写 RequestID/RequestFingerprint，共享同一指针会 data race。
+			// 字段相同 → Normalize 算出同一指纹 → dedup（同 request_id+api_key_id）语义不变。
+			c := *cmd
+			res, err := repo.Apply(ctx, &c)
 			errs <- err
 			results <- res != nil && res.Applied
 		}()
