@@ -7064,7 +7064,18 @@ export default {
       renewSuccess: '续费成功',
       changeSuccess: '转套餐成功',
       changeSuccessCharged: '转套餐成功，已补差价 ${amount}',
-      changeSuccessRefunded: '转套餐成功，已退差价 ${amount}'
+      changeSuccessRefunded: '转套餐成功，已退差价 ${amount}',
+      errors: {
+        NO_ACTIVE_SUBSCRIPTION: '没有生效中的订阅，无法续费/转套餐，请先购买',
+        CHANGE_PLAN_DAILY_LIMIT: '今天已转过套餐（每自然日最多 1 次），请明天再试',
+        RENEW_PLAN_MISMATCH: '续费需选择相同每日额度的套餐；要换档请用「转套餐」',
+        INSUFFICIENT_BALANCE_FOR_RENEW: '余额不足以支付续费价，请先充值',
+        INSUFFICIENT_BALANCE_FOR_CHANGE_PLAN: '余额不足以支付转套餐差价，请先充值',
+        PLAN_NOT_AVAILABLE: '该套餐不可用或已下架',
+        PLAN_DAILY_AMOUNT_INVALID: '该套餐配置异常（每日额度无效），暂不可用',
+        PLAN_VALIDITY_INVALID: '该套餐配置异常（有效期无效），暂不可用',
+        GROUP_NOT_FOUND: '该套餐所属分组已不可用'
+      }
     },
     usage: '用量',
     expires: '到期时间',

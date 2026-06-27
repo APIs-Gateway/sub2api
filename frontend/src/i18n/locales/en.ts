@@ -6911,7 +6911,18 @@ export default {
       renewSuccess: 'Renewed successfully',
       changeSuccess: 'Plan changed successfully',
       changeSuccessCharged: 'Plan changed; charged the difference ${amount}',
-      changeSuccessRefunded: 'Plan changed; refunded the difference ${amount}'
+      changeSuccessRefunded: 'Plan changed; refunded the difference ${amount}',
+      errors: {
+        NO_ACTIVE_SUBSCRIPTION: 'No active subscription to renew or change; please purchase one first.',
+        CHANGE_PLAN_DAILY_LIMIT: 'You have already changed plan today (at most once per day); please try again tomorrow.',
+        RENEW_PLAN_MISMATCH: 'Renewal must keep the same daily amount; use Change Plan to switch tier.',
+        INSUFFICIENT_BALANCE_FOR_RENEW: 'Insufficient balance to cover the renewal price; please top up.',
+        INSUFFICIENT_BALANCE_FOR_CHANGE_PLAN: 'Insufficient balance to cover the change-plan difference; please top up.',
+        PLAN_NOT_AVAILABLE: 'This plan is unavailable or no longer for sale.',
+        PLAN_DAILY_AMOUNT_INVALID: 'This plan is misconfigured (invalid daily amount) and unavailable.',
+        PLAN_VALIDITY_INVALID: 'This plan is misconfigured (invalid validity) and unavailable.',
+        GROUP_NOT_FOUND: 'The group of this plan is no longer available.'
+      }
     },
     usage: 'Usage',
     expires: 'Expires',

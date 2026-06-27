@@ -70,7 +70,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { paymentAPI } from '@/api/payment'
 import subscriptionsAPI from '@/api/subscriptions'
-import { extractApiErrorMessage } from '@/utils/apiError'
+import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import type { SubscriptionPlan } from '@/types/payment'
 import type { UserSubscription } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -150,7 +150,11 @@ async function handleConfirm() {
     emit('done')
     emit('close')
   } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    // 把后端语义错误码（NO_ACTIVE_SUBSCRIPTION/CHANGE_PLAN_DAILY_LIMIT/INSUFFICIENT_BALANCE_*/
+    // RENEW_PLAN_MISMATCH 等）映射为友好本地化文案，无对应 key 时回退原始消息。
+    appStore.showError(
+      extractI18nErrorMessage(err, t, 'userSubscriptions.lifecycle.errors', t('common.error'))
+    )
   } finally {
     submitting.value = false
   }
