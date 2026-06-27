@@ -589,6 +589,11 @@ type UserSubscription struct {
 	WeeklyUsageUSD  float64 `json:"weekly_usage_usd"`
 	MonthlyUsageUSD float64 `json:"monthly_usage_usd"`
 
+	// 三窗口限额（限额挂卡、不挂 group）；nil = 该窗口不限。前端「日/周/月 用量 vs 限额」用卡级限额展示。
+	DailyLimitUSD   *float64 `json:"daily_limit_usd"`
+	WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`
+	MonthlyLimitUSD *float64 `json:"monthly_limit_usd"`
+
 	// Burn-down 计费模型字段（开通即把整期额度打入余额，按消费进度天展示）。
 	GrantedTotalUSD        float64    `json:"granted_total_usd"`
 	DailyAmountUSD         float64    `json:"daily_amount_usd"`

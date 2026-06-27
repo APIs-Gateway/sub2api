@@ -1,7 +1,6 @@
 package service
 
 import (
-	"math"
 	"os"
 	"testing"
 	"time"
@@ -90,10 +89,16 @@ func TestSubWindow_SubRemaining(t *testing.T) {
 			t.Fatalf("want 1, got %v", got)
 		}
 	})
-	t.Run("all unlimited returns +Inf", func(t *testing.T) {
+	t.Run("all limits null/0 = unconfigured card -> 0 coverage (safety guard)", func(t *testing.T) {
 		c := &SubWindow{}
-		if got := c.SubRemaining(); !math.IsInf(got, 1) {
-			t.Fatalf("want +Inf, got %v", got)
+		if got := c.SubRemaining(); got != 0 {
+			t.Fatalf("unconfigured card must contribute 0 coverage, got %v", got)
+		}
+	})
+	t.Run("only weekly configured: daily/monthly unlimited, weekly binds", func(t *testing.T) {
+		c := &SubWindow{WeeklyLimitUSD: 70, WeeklyUsageUSD: 65}
+		if got := c.SubRemaining(); !feq(got, 5) {
+			t.Fatalf("want 5 (weekly binds, others unlimited), got %v", got)
 		}
 	})
 	t.Run("usage over limit clamps to 0", func(t *testing.T) {
@@ -269,8 +274,19 @@ func TestManualOverdraftWindow(t *testing.T) {
 		}
 	})
 
+	t.Run("daily not exhausted -> rejected", func(t *testing.T) {
+		c := activeCard(10)
+		c.DailyUsageUSD = 5 // 未撞满
+		c.ExpiresAt = ExpireDayToExpiresAt(today + 5)
+		w := &WalletState{}
+		if err := ManualOverdraftWindow(c, w, now); err != ErrOverdraftDailyNotExhausted {
+			t.Fatalf("want ErrOverdraftDailyNotExhausted, got %v", err)
+		}
+	})
+
 	t.Run("monthly limit reached", func(t *testing.T) {
 		c := activeCard(10)
+		c.DailyUsageUSD = 10 // 撞满日额度以触达月度校验
 		c.ExpiresAt = ExpireDayToExpiresAt(today + 5)
 		w := &WalletState{MonthlyOverdraftCount: MaxMonthlyOverdraftUses, MonthlyOverdraftMonth: CurrentEastMonthKey()}
 		if err := ManualOverdraftWindow(c, w, now); err != ErrOverdraftMonthlyLimit {
@@ -280,6 +296,7 @@ func TestManualOverdraftWindow(t *testing.T) {
 
 	t.Run("no future day to borrow", func(t *testing.T) {
 		c := activeCard(10)
+		c.DailyUsageUSD = 10                      // 撞满日额度以触达"未来天"校验
 		c.ExpiresAt = ExpireDayToExpiresAt(today) // 最后服务日=今天，无未来天
 		w := &WalletState{}
 		if err := ManualOverdraftWindow(c, w, now); err != ErrOverdraftNoFutureDay {
@@ -289,6 +306,7 @@ func TestManualOverdraftWindow(t *testing.T) {
 
 	t.Run("not active", func(t *testing.T) {
 		c := activeCard(10)
+		c.DailyUsageUSD = 10
 		c.ExpiresAt = ExpireDayToExpiresAt(today - 3) // 已过期
 		w := &WalletState{}
 		if err := ManualOverdraftWindow(c, w, now); err != ErrOverdraftNoActiveCard {

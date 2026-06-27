@@ -72,21 +72,30 @@ func (c *SubWindow) ResetWindows(now time.Time) bool {
 	return changed
 }
 
-// SubRemaining 返回三窗口剩余的最小值（某窗口剩余 = limit − usage；limit<=0 视为不限 = +Inf）；clamp ≥0。
-// 调用前应已 ResetWindows(now)。全部不限时返回 +Inf（仅在 min(cost, rem) 中使用，等价于订阅全覆盖）。
+// SubRemaining 返回三窗口剩余的最小值（某窗口剩余 = limit − usage；limit<=0 视为该窗口不限）；clamp ≥0。
+// 调用前应已 ResetWindows(now)。
+//
+// 防御性安全闸（review #1/#2）：**三限额全为 NULL/0 的卡视为「未配置/未回填」→ 订阅不覆盖、返回 0**
+// （回落钱包），绝不解释成「无限 1:1 全覆盖」。正常订阅卡开通时必带 D>0；若某卡三限额全空（漏回填 /
+// 映射缺失 / 脏数据），此分支堵死「订阅免费覆盖所有官方成本、不扣钱包」的资损入口。
+// 只要至少配了一档（哪怕只配了 W 或 M），其余 NULL 档按「该窗口不限」处理（仍受已配档封顶，不会失控）。
 func (c *SubWindow) SubRemaining() float64 {
 	rem := math.Inf(1)
+	anyLimit := false
 	if c.DailyLimitUSD > 0 {
 		rem = math.Min(rem, c.DailyLimitUSD-c.DailyUsageUSD)
+		anyLimit = true
 	}
 	if c.WeeklyLimitUSD > 0 {
 		rem = math.Min(rem, c.WeeklyLimitUSD-c.WeeklyUsageUSD)
+		anyLimit = true
 	}
 	if c.MonthlyLimitUSD > 0 {
 		rem = math.Min(rem, c.MonthlyLimitUSD-c.MonthlyUsageUSD)
+		anyLimit = true
 	}
-	if math.IsInf(rem, 1) {
-		return rem
+	if !anyLimit {
+		return 0 // 未配置卡：订阅不覆盖
 	}
 	if rem < 0 {
 		return 0
@@ -174,18 +183,33 @@ func SettleWindow(c *SubWindow, w *WalletState, cost, multiplier float64, now ti
 
 // 手动透支错误（仅解“日上限”）。
 var (
-	ErrOverdraftNoActiveCard = errors.New("no active subscription card to overdraft")
-	ErrOverdraftMonthlyLimit = errors.New("monthly overdraft limit reached")
-	ErrOverdraftNoFutureDay  = errors.New("no future day left to borrow for overdraft")
+	ErrOverdraftNoActiveCard      = errors.New("no active subscription card to overdraft")
+	ErrOverdraftDailyNotExhausted = errors.New("daily limit not exhausted; overdraft not needed")
+	ErrOverdraftMonthlyLimit      = errors.New("monthly overdraft limit reached")
+	ErrOverdraftNoFutureDay       = errors.New("no future day left to borrow for overdraft")
 )
 
 // ManualOverdraftWindow 用户手动透支（仅解“日上限”）：daily_usage 清零（刷新当日额度）+ expires_at 提前 1 天
 // （借未来一天）+ 用户级月度计数 +1。周/月上限照样生效（本函数不动 weekly/monthly usage）。
 // 调用方须在事务内锁 user 行 + active 卡行，并在调用前 w.ResetMonthIfNeeded(monthKey) 惰性按月重置计数。
-// 校验：有生效卡 + 本月透支 < MaxMonthlyOverdraftUses + 仍有“未来一天”可借（最后服务日 > 今天）。
+//
+// 校验（顺序即错误优先级）：
+//  1. 有生效卡（active）；
+//  2. 当日额度已撞满（daily_limit>0 且 daily_usage≥daily_limit）——按钮语义是“今天 D 用完了想继续用”，
+//     未撞满则无需透支（不让用户白白损失一天有效期 + 一次月度额度）。先 ResetWindows 对齐自然日：
+//     新的一天 daily_usage 已自动归零→不算撞满→拒；
+//  3. 本月透支 < MaxMonthlyOverdraftUses；
+//  4. 仍有“未来一天”可借（最后服务日 > 今天）。
+//
+// 注意：撞日上限即可借，即便周/月窗口也撞上限也允许（透支只清日窗口、对 W/M 无效，用户借了也越不过 W/M，
+// 见 spec §8 场景 22）；不在此额外拦截。
 func ManualOverdraftWindow(c *SubWindow, w *WalletState, now time.Time) error {
 	if c == nil || !c.active(now) {
 		return ErrOverdraftNoActiveCard
+	}
+	c.ResetWindows(now) // 先按自然边界对齐（新的一天 daily_usage 已归零 → 不算撞满）
+	if !(c.DailyLimitUSD > 0 && c.DailyUsageUSD >= c.DailyLimitUSD) {
+		return ErrOverdraftDailyNotExhausted
 	}
 	if w.MonthlyOverdraftCount >= MaxMonthlyOverdraftUses {
 		return ErrOverdraftMonthlyLimit
@@ -195,8 +219,7 @@ func ManualOverdraftWindow(c *SubWindow, w *WalletState, now time.Time) error {
 	if lastServiceDay <= today {
 		return ErrOverdraftNoFutureDay
 	}
-	c.ResetWindows(now)                                   // 先对齐窗口（日窗口可能本就该按自然日重置）
-	c.DailyUsageUSD = 0                                   // 刷新当日额度（仅日窗口清零）
+	c.DailyUsageUSD = 0                                    // 刷新当日额度（仅日窗口清零）
 	c.ExpiresAt = ExpireDayToExpiresAt(lastServiceDay - 1) // 借未来一天：最后服务日 −1
 	w.MonthlyOverdraftCount++
 	return nil

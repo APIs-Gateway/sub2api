@@ -35,6 +35,9 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 		SetDailyUsageUsd(sub.DailyUsageUSD).
 		SetWeeklyUsageUsd(sub.WeeklyUsageUSD).
 		SetMonthlyUsageUsd(sub.MonthlyUsageUSD).
+		SetNillableDailyLimitUsd(sub.DailyLimitUSD).
+		SetNillableWeeklyLimitUsd(sub.WeeklyLimitUSD).
+		SetNillableMonthlyLimitUsd(sub.MonthlyLimitUSD).
 		SetGrantedTotalUsd(sub.GrantedTotalUSD).
 		SetDailyAmountUsd(sub.DailyAmountUSD).
 		SetConsumedUsd(sub.ConsumedUSD).
@@ -162,6 +165,9 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 		SetDailyUsageUsd(sub.DailyUsageUSD).
 		SetWeeklyUsageUsd(sub.WeeklyUsageUSD).
 		SetMonthlyUsageUsd(sub.MonthlyUsageUSD).
+		SetNillableDailyLimitUsd(sub.DailyLimitUSD).
+		SetNillableWeeklyLimitUsd(sub.WeeklyLimitUSD).
+		SetNillableMonthlyLimitUsd(sub.MonthlyLimitUSD).
 		SetNillableAssignedBy(sub.AssignedBy).
 		SetAssignedAt(sub.AssignedAt).
 		SetNotes(sub.Notes)
@@ -821,6 +827,9 @@ func userSubscriptionEntityToService(m *dbent.UserSubscription) *service.UserSub
 		DailyUsageUSD:       m.DailyUsageUsd,
 		WeeklyUsageUSD:      m.WeeklyUsageUsd,
 		MonthlyUsageUSD:     m.MonthlyUsageUsd,
+		DailyLimitUSD:       m.DailyLimitUsd,
+		WeeklyLimitUSD:      m.WeeklyLimitUsd,
+		MonthlyLimitUSD:     m.MonthlyLimitUsd,
 		GrantedTotalUSD:     m.GrantedTotalUsd,
 		DailyAmountUSD:      m.DailyAmountUsd,
 		ConsumedUSD:         m.ConsumedUsd,
