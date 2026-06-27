@@ -6949,6 +6949,26 @@ export default {
     usageOf: '{used} of {limit}'
   },
 
+  // Custom subscription purchase (no fixed plans: pick daily amount D + validity T, priced by volume u(D)).
+  subscriptionPurchase: {
+    title: 'Buy a subscription',
+    desc: 'Customize daily amount and validity; larger daily amounts get a lower unit price',
+    dailyAmount: 'Daily amount',
+    dailyAmountUnit: 'USD / day',
+    validityDays: 'Validity',
+    unitPrice: 'Unit price',
+    price: 'Total',
+    weeklyCap: 'Weekly cap',
+    monthlyCap: 'Monthly cap',
+    capHint: 'Weekly/monthly caps are derived from the daily amount; even manual overdraft cannot exceed them',
+    rangeHint: 'Daily {dMin}–{dMax}, validity {tMin}–{tMax} days',
+    buy: 'Buy',
+    quoting: 'Calculating…',
+    quoteFailed: 'Quote failed — adjust the daily amount or validity',
+    loadFailed: 'Failed to load pricing',
+    days: 'days'
+  },
+
   // Onboarding Tour
   onboarding: {
     restartTour: 'Restart Onboarding Tour',

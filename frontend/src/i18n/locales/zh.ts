@@ -7102,6 +7102,26 @@ export default {
     usageOf: '已用 {used} / {limit}'
   },
 
+  // 自定义订阅购买（无固定套餐：自填每日额度 D + 有效期 T，按量大优惠 u(D) 计价）。
+  subscriptionPurchase: {
+    title: '购买订阅',
+    desc: '自定义每日额度与有效期，量大单价更低',
+    dailyAmount: '每日额度',
+    dailyAmountUnit: 'USD / 天',
+    validityDays: '有效期',
+    unitPrice: '每刀单价',
+    price: '应付',
+    weeklyCap: '周封顶',
+    monthlyCap: '月封顶',
+    capHint: '周/月封顶按每日额度自动派生，连手动透支也不能突破',
+    rangeHint: '每日额度 {dMin}–{dMax}，有效期 {tMin}–{tMax} 天',
+    buy: '购买',
+    quoting: '计算中…',
+    quoteFailed: '报价失败，请调整每日额度或有效期',
+    loadFailed: '加载定价失败',
+    days: '天'
+  },
+
   // Onboarding Tour
   onboarding: {
     restartTour: '重新查看新手引导',
