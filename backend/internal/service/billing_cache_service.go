@@ -903,83 +903,10 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 	return nil
 }
 
-// lockedSubscriptionBalance 汇总用户全部活跃 burn-down 卡：
-//   - currentLocked：当天尚未解锁、但仍计入 users.balance 的未来额度。
-//   - limitLocked：施加每卡 max_overdraft_days 后仍不可用的额度；未开启透支或次数用尽的卡按 0 天透支计算。
-//   - subscriptionRemaining：全部活跃卡 remaining 合计（= G−consumed−clawed），用于把闸门判断
-//     约束在「订阅卡支撑的余额」上，排除充值/签到等非订阅余额的虚高。
-//   - canOverdraft：至少一张卡已开启透支、仍有累计透支次数余量，且可提前消费后续天额度。
-func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, userID int64) (currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool, err error) {
-	if s.subRepo == nil {
-		return 0, 0, 0, false, nil
-	}
-	if s.hasNoSubscriptionLockCached(userID) {
-		return 0, 0, 0, false, nil
-	}
-	subs, err := s.subRepo.ListActiveByUserID(ctx, userID)
-	if err != nil {
-		return 0, 0, 0, false, err
-	}
-	currentLocked, limitLocked, subscriptionRemaining, canOverdraft = aggregateSubscriptionLocks(subs, time.Now())
-	if currentLocked <= 0 {
-		s.setNoSubscriptionLockCache(userID)
-	}
-	return currentLocked, limitLocked, subscriptionRemaining, canOverdraft, nil
-}
-
-// aggregateSubscriptionLocks 汇总活跃 burn-down 卡的闸门量（纯函数，便于单测）：
-//   - currentLocked：按 0 天透支锁定（今日已解锁额度之外）的额度合计。
-//   - limitLocked：施加每卡 max_overdraft_days 后仍锁定的额度合计；未开启透支或次数用尽的卡按 0 天透支算。
-//   - subscriptionRemaining：全部活跃卡 remaining 合计。
-//   - canOverdraft：至少一张卡开启透支且其透支额度尚能放宽锁定。
-func aggregateSubscriptionLocks(subs []UserSubscription, now time.Time) (currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool) {
-	for i := range subs {
-		subscriptionRemaining += subs[i].RemainingUSD()
-		cardLocked := subs[i].LockedAt(now, 0)
-		currentLocked += cardLocked
-		cardLimitLocked := cardLocked
-		// 用 EffectiveOverdraftDaysAt（min(配置, 生命周期剩余预支天数)），与扣费分摊同口径，
-		// 避免「配置 max_overdraft_days=5 但预支额度只剩 1 天」时仍按 6D 放行。
-		if effOD := subs[i].EffectiveOverdraftDaysAt(now); effOD > 0 {
-			cardLimitLocked = subs[i].LockedAt(now, effOD)
-			if cardLocked > cardLimitLocked {
-				canOverdraft = true
-			}
-		}
-		limitLocked += cardLimitLocked
-	}
-	return
-}
-
-// subscriptionOverdraftGate 是订阅透支准入闸门的纯判定（便于单测）。
-//
-// 充值(非订阅)余额 = balance − Σ订阅remaining：这是用户自己充的钱，不受订阅「每日限速」约束，
-// 可随时兜底消费——故 >0 即放行。扣费侧(settlePerDaySubscription)的结算瀑布会把超过今日订阅额度的
-// 部分落到钱包(充值余额)、不烧订阅卡未来日的额度，因此放行不会绕开 per-day 限速(卡的未来日额度
-// 不会被无限速烧穿)。
-// 仅当充值余额耗尽(balance ≤ Σ订阅remaining)时，才回到「订阅当日额度 + 透支」的限速判定；
-// 此时 subBalance = balance(≤ Σremaining)。仅在 currentLocked>0 时由调用方启用。
-func subscriptionOverdraftGate(balance, currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool) error {
-	if currentLocked <= 0 {
-		return nil
-	}
-	// 有充值(非订阅)余额 → 放行(由充值余额承担，不动卡的锁定额度)。
-	if balance-subscriptionRemaining > 0 {
-		return nil
-	}
-	subBalance := balance
-	if subscriptionRemaining < subBalance {
-		subBalance = subscriptionRemaining
-	}
-	if subBalance-currentLocked <= 0 {
-		// 当天已解锁额度已花尽：仅当本卡开启透支且仍在 max_overdraft_days 额度内才放行一个透支请求。
-		if canOverdraft && subBalance-limitLocked > 0 {
-			return nil
-		}
-		return ErrSubscriptionOverdraftLimit
-	}
-	return nil
-}
+// 准入闸门已迁至三窗口引擎：checkBalanceEligibility 用 service.AdmitWindow（有生效卡看三窗口
+// SubRemaining、撞上限/无卡看钱包），不再走 per-day burn-down 的 locked/overdraft 估算。
+// 旧的 lockedSubscriptionBalance / aggregateSubscriptionLocks / subscriptionOverdraftGate 已随
+// per-day 重构退役删除（无生产调用方）。
 
 func (s *BillingCacheService) hasNoSubscriptionLockCached(userID int64) bool {
 	if userID <= 0 {
