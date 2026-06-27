@@ -1387,45 +1387,50 @@ func (h *GatewayHandler) usageQuotaLimited(c *gin.Context, ctx context.Context, 
 
 // usageUnrestricted 处理 unrestricted 模式的响应（向后兼容）
 func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, usageData gin.H, dailyUsage any, modelStats any) {
-	// 订阅模式
-	if apiKey.Group != nil && apiKey.Group.IsSubscriptionType() {
-		resp := gin.H{
-			"mode":     "unrestricted",
-			"isValid":  true,
-			"planName": apiKey.Group.Name,
-			"unit":     "USD",
-		}
-
-		// 订阅信息可能不在 context 中（/v1/usage 路径跳过了中间件的计费检查）
-		subscription, ok := middleware2.GetSubscriptionFromContext(c)
-		if ok {
-			remaining := h.calculateSubscriptionRemaining(apiKey.Group, subscription)
-			resp["remaining"] = remaining
-			resp["subscription"] = gin.H{
-				"daily_usage_usd":   subscription.DailyUsageUSD,
-				"weekly_usage_usd":  subscription.WeeklyUsageUSD,
-				"monthly_usage_usd": subscription.MonthlyUsageUSD,
-				"daily_limit_usd":   apiKey.Group.DailyLimitUSD,
-				"weekly_limit_usd":  apiKey.Group.WeeklyLimitUSD,
-				"monthly_limit_usd": apiKey.Group.MonthlyLimitUSD,
-				"expires_at":        subscription.ExpiresAt,
+	// per-day 订阅展示：订阅 = 用户有生效卡（与 group 类型无关）。展示今日剩余套餐额度 + 到期，
+	// 而非旧 burn-down 的周/月限额（旧逻辑靠 IsSubscriptionType + 中间件 context 订阅，后者在
+	// /v1/usage 路径恒为空、整块实为死代码）。
+	if card, _ := h.billingCacheService.GetActiveSubscriptionCard(ctx, subject.UserID); card != nil {
+		today := service.TodayEastDayNumber()
+		if card.Status == service.SubscriptionStatusActive && today <= card.ExpireDay {
+			// 跨天惰性：today_day 非今天 → 今天尚未扣过，今日剩余应视为满额 D。
+			todayRemaining := card.TodayRemaining
+			if card.TodayDay != today {
+				todayRemaining = card.DailyAmountUSD
 			}
+			planName := "订阅"
+			if apiKey.Group != nil && apiKey.Group.Name != "" {
+				planName = apiKey.Group.Name
+			}
+			resp := gin.H{
+				"mode":      "unrestricted",
+				"isValid":   true,
+				"planName":  planName,
+				"unit":      "USD",
+				"remaining": todayRemaining,
+				"subscription": gin.H{
+					"daily_amount_usd":    card.DailyAmountUSD,
+					"today_remaining_usd": todayRemaining,
+					"remaining_days":      card.ExpireDay - today + 1, // 含今天
+					"expires_at":          card.ExpiresAt,
+					"overdraft_on":        card.OverdraftOn,
+				},
+			}
+			if usageData != nil {
+				resp["usage"] = usageData
+			}
+			if dailyUsage != nil {
+				resp["daily_usage"] = dailyUsage
+			}
+			if modelStats != nil {
+				resp["model_stats"] = modelStats
+			}
+			c.JSON(http.StatusOK, resp)
+			return
 		}
-
-		if usageData != nil {
-			resp["usage"] = usageData
-		}
-		if dailyUsage != nil {
-			resp["daily_usage"] = dailyUsage
-		}
-		if modelStats != nil {
-			resp["model_stats"] = modelStats
-		}
-		c.JSON(http.StatusOK, resp)
-		return
 	}
 
-	// 余额模式
+	// 余额模式（无生效卡 / 卡已惰性过期）
 	latestUser, err := h.userService.GetByID(ctx, subject.UserID)
 	if err != nil {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get user info")
@@ -1450,55 +1455,6 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 		resp["model_stats"] = modelStats
 	}
 	c.JSON(http.StatusOK, resp)
-}
-
-// calculateSubscriptionRemaining 计算订阅剩余可用额度
-// 逻辑：
-// 1. 如果日/周/月任一限额达到100%，返回0
-// 2. 否则返回所有已配置周期中剩余额度的最小值
-func (h *GatewayHandler) calculateSubscriptionRemaining(group *service.Group, sub *service.UserSubscription) float64 {
-	var remainingValues []float64
-
-	// 检查日限额
-	if group.HasDailyLimit() {
-		remaining := *group.DailyLimitUSD - sub.DailyUsageUSD
-		if remaining <= 0 {
-			return 0
-		}
-		remainingValues = append(remainingValues, remaining)
-	}
-
-	// 检查周限额
-	if group.HasWeeklyLimit() {
-		remaining := *group.WeeklyLimitUSD - sub.WeeklyUsageUSD
-		if remaining <= 0 {
-			return 0
-		}
-		remainingValues = append(remainingValues, remaining)
-	}
-
-	// 检查月限额
-	if group.HasMonthlyLimit() {
-		remaining := *group.MonthlyLimitUSD - sub.MonthlyUsageUSD
-		if remaining <= 0 {
-			return 0
-		}
-		remainingValues = append(remainingValues, remaining)
-	}
-
-	// 如果没有配置任何限额，返回-1表示无限制
-	if len(remainingValues) == 0 {
-		return -1
-	}
-
-	// 返回最小值
-	min := remainingValues[0]
-	for _, v := range remainingValues[1:] {
-		if v < min {
-			min = v
-		}
-	}
-	return min
 }
 
 // handleConcurrencyError handles concurrency-related acquire errors.

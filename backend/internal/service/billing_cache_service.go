@@ -418,6 +418,22 @@ func (s *BillingCacheService) InvalidateUserBalance(ctx context.Context, userID 
 // 订阅缓存方法
 // ============================================
 
+// GetActiveSubscriptionCard 返回用户唯一生效订阅卡（per-day 单卡，不按 group）；无卡返回 (nil, nil)。
+// 仅用于展示（如 /v1/usage 订阅额度），不参与计费决策；过期是惰性的，调用方需按 today 判定是否仍生效。
+func (s *BillingCacheService) GetActiveSubscriptionCard(ctx context.Context, userID int64) (*UserSubscription, error) {
+	if s.subRepo == nil {
+		return nil, nil
+	}
+	card, err := s.subRepo.GetActiveByUserID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrSubscriptionNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return card, nil
+}
+
 // GetSubscriptionStatus 获取订阅状态（优先从缓存读取）
 func (s *BillingCacheService) GetSubscriptionStatus(ctx context.Context, userID, groupID int64) (*subscriptionCacheData, error) {
 	if s.cache == nil {
