@@ -53,7 +53,7 @@
             type="range"
             :min="pricing.t_min"
             :max="pricing.t_max"
-            step="1"
+            :step="tStep"
             class="h-2 flex-1 accent-gray-900 dark:accent-gray-100"
           />
           <input
@@ -61,7 +61,7 @@
             type="number"
             :min="pricing.t_min"
             :max="pricing.t_max"
-            step="1"
+            :step="tStep"
             class="input w-24 text-right font-mono tabular-nums"
             @change="clampInputs"
           />
@@ -74,7 +74,8 @@
             dMin: pricing.d_min,
             dMax: pricing.d_max,
             tMin: pricing.t_min,
-            tMax: pricing.t_max
+            tMax: pricing.t_max,
+            tStep: tStep
           })
         }}
       </p>
@@ -124,7 +125,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import subscriptionsAPI, {
   type SubscriptionPricingBounds,
@@ -149,16 +150,31 @@ const quoteError = ref(false)
 let quoteTimer: ReturnType<typeof setTimeout> | null = null
 let quoteSeq = 0 // 防抖 + 乱序保护：只采用最新一次请求的结果
 
+// 有效期步长：T 必须为该值整数倍（按整月购买）；后端缺省/旧响应回退 30。
+const tStep = computed(() => {
+  const s = pricing.value?.t_step
+  return s && s > 0 ? s : 30
+})
+
 function clamp(v: number, lo: number, hi: number): number {
   if (Number.isNaN(v)) return lo
   return Math.min(Math.max(v, lo), hi)
 }
 
-// 输入框失焦/回车时把越界值夹回允许范围（滑块本身已受 min/max 约束）。
+// 把 T 吸附到最近的整月（tStep 整数倍）后再夹回 [t_min, t_max]，与后端 ValidateCustom 的整月约束一致，
+// 避免提交 31/45 这类非整月值被后端 INVALID_SUBSCRIPTION_PARAMS 拒。
+function snapValidity(v: number): number {
+  if (!pricing.value) return v
+  const step = tStep.value
+  const snapped = step > 0 ? Math.round(v / step) * step : Math.round(v)
+  return clamp(snapped, pricing.value.t_min, pricing.value.t_max)
+}
+
+// 输入框失焦/回车时把越界值夹回允许范围（滑块本身已受 min/max/step 约束）。
 function clampInputs() {
   if (!pricing.value) return
   dailyAmount.value = clamp(dailyAmount.value, pricing.value.d_min, pricing.value.d_max)
-  validityDays.value = clamp(Math.round(validityDays.value), pricing.value.t_min, pricing.value.t_max)
+  validityDays.value = snapValidity(validityDays.value)
 }
 
 async function refreshQuote() {
@@ -197,9 +213,9 @@ onMounted(async () => {
   try {
     const bounds = await subscriptionsAPI.getSubscriptionPricing()
     pricing.value = bounds
-    // 合理默认：每日额度取区间内偏低档（贴近 d_min 的整数），有效期取最短可买（t_min）。
+    // 合理默认：每日额度取区间内偏低档（贴近 d_min 的整数），有效期取最短可买（t_min，吸附到整月）。
     dailyAmount.value = clamp(Math.max(bounds.d_min, 2), bounds.d_min, bounds.d_max)
-    validityDays.value = bounds.t_min
+    validityDays.value = snapValidity(bounds.t_min)
     await refreshQuote()
   } catch {
     loadError.value = true

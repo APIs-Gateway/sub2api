@@ -134,6 +134,8 @@ export interface SubscriptionPricingBounds {
   u_max: number
   t_min: number
   t_max: number
+  /** 有效天数步长：T 必须为该值整数倍（默认 30，即按整月购买 30/60/90…） */
+  t_step: number
 }
 
 /** 自定义购买报价：按 D+T 算售价 + 派生周/月封顶（金额由后端公式决定，前端只展示）。 */

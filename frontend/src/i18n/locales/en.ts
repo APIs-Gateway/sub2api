@@ -6961,7 +6961,7 @@ export default {
     weeklyCap: 'Weekly cap',
     monthlyCap: 'Monthly cap',
     capHint: 'Weekly/monthly caps are derived from the daily amount; even manual overdraft cannot exceed them',
-    rangeHint: 'Daily {dMin}–{dMax}, validity {tMin}–{tMax} days',
+    rangeHint: 'Daily {dMin}–{dMax}, validity {tMin}–{tMax} days (whole months only, multiples of {tStep})',
     buy: 'Buy',
     quoting: 'Calculating…',
     quoteFailed: 'Quote failed — adjust the daily amount or validity',

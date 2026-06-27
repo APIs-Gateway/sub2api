@@ -86,6 +86,8 @@ func TestSubscriptionPricing_ValidateCustom(t *testing.T) {
 		{51, 30},          // D 太大
 		{10, 29},          // T 太短（30 起买）
 		{10, 91},          // T 太长
+		{10, 45},          // T 非整月（在 [30,90] 内但非 30 的倍数）
+		{10, 75},          // 同上：75 也非整月
 		{math.NaN(), 30},  // 非法 D
 		{math.Inf(1), 30}, // 非法 D
 	}

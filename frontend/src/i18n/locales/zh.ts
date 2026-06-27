@@ -7114,7 +7114,7 @@ export default {
     weeklyCap: '周封顶',
     monthlyCap: '月封顶',
     capHint: '周/月封顶按每日额度自动派生，连手动透支也不能突破',
-    rangeHint: '每日额度 {dMin}–{dMax}，有效期 {tMin}–{tMax} 天',
+    rangeHint: '每日额度 {dMin}–{dMax}，有效期 {tMin}–{tMax} 天（按整月购买，须为 {tStep} 的倍数）',
     buy: '购买',
     quoting: '计算中…',
     quoteFailed: '报价失败，请调整每日额度或有效期',

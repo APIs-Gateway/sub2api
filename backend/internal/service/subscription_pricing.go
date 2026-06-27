@@ -28,19 +28,21 @@ type SubscriptionPricingConfig struct {
 	DMax float64 // 最大档每日额度
 	UMax float64 // 最小档单价（最贵）
 	UMin float64 // 最大档单价（最便宜）
-	TMin int     // 自定义最短天数（默认 30 天起买，挤掉短期大 D 套利空间）
-	TMax int     // 自定义最长天数
+	TMin  int // 自定义最短天数（默认 30 天起买，挤掉短期大 D 套利空间）
+	TMax  int // 自定义最长天数
+	TStep int // 自定义天数步长：T 必须为 TStep 的整数倍（默认 30，即只能按整月购买 30/60/90…）
 }
 
-// DefaultSubscriptionPricingConfig 规格默认值：D∈[1,50]、u∈[1.0,2.0]、T∈[30,90]。
+// DefaultSubscriptionPricingConfig 规格默认值：D∈[1,50]、u∈[1.0,2.0]、T∈[30,90] 且 T 为 30 的倍数。
 func DefaultSubscriptionPricingConfig() SubscriptionPricingConfig {
 	return SubscriptionPricingConfig{
-		DMin: 1,
-		DMax: 50,
-		UMax: 2.0,
-		UMin: 1.0,
-		TMin: 30,
-		TMax: 90,
+		DMin:  1,
+		DMax:  50,
+		UMax:  2.0,
+		UMin:  1.0,
+		TMin:  30,
+		TMax:  90,
+		TStep: 30,
 	}
 }
 
@@ -76,6 +78,10 @@ func (c SubscriptionPricingConfig) ValidateCustom(d float64, t int) error {
 	}
 	if t < c.TMin || t > c.TMax {
 		return fmt.Errorf("有效天数 T=%d 超出允许范围 [%d, %d]", t, c.TMin, c.TMax)
+	}
+	// T 必须按整月（TStep 的整数倍）购买，挤掉 31/45 这类非整月套利/凑价空间。
+	if c.TStep > 0 && t%c.TStep != 0 {
+		return fmt.Errorf("有效天数 T=%d 必须为 %d 的整数倍", t, c.TStep)
 	}
 	return nil
 }

@@ -72,7 +72,7 @@ func TestPricingBounds_MatchesDefaultConfig(t *testing.T) {
 	b := s.PricingBounds()
 	cfg := DefaultSubscriptionPricingConfig()
 	if b.DMin != cfg.DMin || b.DMax != cfg.DMax || b.TMin != cfg.TMin || b.TMax != cfg.TMax ||
-		b.UMin != cfg.UMin || b.UMax != cfg.UMax {
+		b.UMin != cfg.UMin || b.UMax != cfg.UMax || b.TStep != cfg.TStep {
 		t.Fatalf("bounds mismatch: %+v vs %+v", b, cfg)
 	}
 }
