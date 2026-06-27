@@ -176,7 +176,14 @@ func TestCreateOrderInTx_SubscriptionRejectsExistingActiveCardBeforeOrder(t *tes
 			Email:    user.Email,
 			Username: user.Username,
 		},
-		plan,
+		&subscriptionOrderSpec{
+			plan:         plan,
+			dailyAmount:  plan.DailyAmountUsd,
+			validityDays: psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit),
+			groupID:      plan.GroupID,
+			unitPrice:    DefaultSubscriptionPricingConfig().UnitPrice(plan.DailyAmountUsd),
+			price:        plan.Price,
+		},
 		&PaymentConfig{
 			MaxPendingOrders: 3,
 			OrderTimeoutMin:  30,

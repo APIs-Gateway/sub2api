@@ -496,7 +496,9 @@ func (s *PaymentService) ExecuteSubscriptionFulfillment(ctx context.Context, oid
 	if o.Status != OrderStatusPaid && o.Status != OrderStatusFailed {
 		return infraerrors.BadRequest("INVALID_STATUS", "order cannot fulfill in status "+o.Status)
 	}
-	if o.SubscriptionGroupID == nil || o.SubscriptionDays == nil {
+	// 套餐单带 subscription_group_id；自定义单无 group（P5e：可空），但二者都必有 subscription_days。
+	// 自定义单的 D/T 由 provider_snapshot 提供，doSub 内再深校验（无快照无 group 直接失败）。
+	if o.SubscriptionDays == nil {
 		return infraerrors.BadRequest("INVALID_STATUS", "missing subscription info")
 	}
 	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(oid), paymentorder.StatusIn(OrderStatusPaid, OrderStatusFailed)).SetStatus(OrderStatusRecharging).Save(ctx)
@@ -514,10 +516,17 @@ func (s *PaymentService) ExecuteSubscriptionFulfillment(ctx context.Context, oid
 }
 
 func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error {
-	gid := *o.SubscriptionGroupID
-	days := *o.SubscriptionDays
+	// 套餐单带 group（gid>0）；自定义单无 group（subscription_group_id NULL → gid=0，P5e）。
+	var gid int64
+	if o.SubscriptionGroupID != nil {
+		gid = *o.SubscriptionGroupID
+	}
+	days := 0
+	if o.SubscriptionDays != nil {
+		days = *o.SubscriptionDays
+	}
 	// per-day：严格按订单**冻结快照**发卡（D/T 不按回调时的当前公式/group 配置重算）；
-	// 无快照的老订单回退 subscription_days + group.daily_limit_usd 兼容路径（dailyAmount=0 时
+	// 无快照的老套餐单回退 subscription_days + group.daily_limit_usd 兼容路径（dailyAmount=0 时
 	// createSubscription 会回退 group）。
 	var dailyAmount float64
 	d, t, hasSnapshot, snapErr := readSubscriptionSnapshotDT(o)
@@ -528,12 +537,18 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 		dailyAmount = d
 		days = t
 	}
-	g, err := s.groupRepo.GetByID(ctx, gid)
-	if err != nil || g == nil {
-		return fmt.Errorf("group %d no longer exists", gid)
-	}
-	if !hasSnapshot && g.Status != payment.EntityStatusActive {
-		return fmt.Errorf("group %d no longer exists or inactive", gid)
+	if gid > 0 {
+		// 套餐/历史卡：校验来源 group 仍存在（无快照的老单还要求 active，保证可推导 D）。
+		g, err := s.groupRepo.GetByID(ctx, gid)
+		if err != nil || g == nil {
+			return fmt.Errorf("group %d no longer exists", gid)
+		}
+		if !hasSnapshot && g.Status != payment.EntityStatusActive {
+			return fmt.Errorf("group %d no longer exists or inactive", gid)
+		}
+	} else if !hasSnapshot {
+		// 自定义单（无 group）必须有冻结快照提供 D/T；无快照无 group 无从发卡，直接失败（已付款会 markFailed）。
+		return fmt.Errorf("custom subscription order %d missing pricing snapshot", o.ID)
 	}
 	// Idempotency: check audit log to see if subscription was already assigned.
 	// Prevents double-extension on retry after markCompleted fails.

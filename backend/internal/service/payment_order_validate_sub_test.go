@@ -39,5 +39,6 @@ func TestValidateSubOrder_RejectsZeroDailyAmountPlan(t *testing.T) {
 	require.NoError(t, err)
 	got, err := svc.validateSubOrder(ctx, CreateOrderRequest{PlanID: okPlan.ID})
 	require.NoError(t, err)
-	require.Equal(t, okPlan.ID, got.ID)
+	require.NotNil(t, got.plan)
+	require.Equal(t, okPlan.ID, got.plan.ID)
 }

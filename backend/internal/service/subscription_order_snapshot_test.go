@@ -13,7 +13,15 @@ import (
 func TestSubscriptionOrderSnapshot_FreezeAndRead(t *testing.T) {
 	plan := &dbent.SubscriptionPlan{DailyAmountUsd: 10, ValidityDays: 30, ValidityUnit: "day", Price: 545}
 	base := map[string]any{"currency": "CNY"}
-	snap := buildSubscriptionOrderSnapshot(plan, base)
+	spec := &subscriptionOrderSpec{
+		plan:         plan,
+		dailyAmount:  plan.DailyAmountUsd,
+		validityDays: psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit),
+		groupID:      plan.GroupID,
+		unitPrice:    DefaultSubscriptionPricingConfig().UnitPrice(plan.DailyAmountUsd),
+		price:        plan.Price,
+	}
+	snap := buildSubscriptionOrderSnapshot(spec, base)
 
 	require.Equal(t, 10.0, snap["daily_amount_usd"])
 	require.Equal(t, psComputeValidityDays(30, "day"), snap["validity_days"])

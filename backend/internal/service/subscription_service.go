@@ -185,14 +185,16 @@ func (s *SubscriptionService) AssignSubscription(ctx context.Context, input *Ass
 //
 // 如果没有订阅：创建新订阅
 func (s *SubscriptionService) AssignOrExtendSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error) {
-	// per-day：订阅与 group 解耦，不再要求「订阅型分组」；group 仅作历史快照（卡的 group_id）。
-	// 过渡期 schema 仍要求 user_subscriptions.group_id NOT NULL（FK），故现阶段仍需有效 group——
-	// 待 P5e 把 group_id 改 nullable/历史快照后再放开 GroupID==0。
-	if input.GroupID <= 0 {
-		return nil, false, infraerrors.BadRequest("INVALID_INPUT", "group_id is required")
-	}
-	if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
-		return nil, false, fmt.Errorf("group not found: %w", err)
+	// per-day→三窗口 redesign（P5e）：订阅与 group 解耦，限额读卡级 *_limit_usd，订阅可在任意 group 下使用。
+	//   - GroupID>0：历史按 group 分配/兑换/套餐单，仍校验来源 group 存在（写入卡作历史快照）。
+	//   - GroupID==0：自定义 D+T 购买的无 group 卡（group_id 现已可空），必须自带每日额度 D
+	//     （否则 resolveAssignDailyAmount 既无 D 又无 group 可回退 → ErrInvalidDailyAmount）。
+	if input.GroupID > 0 {
+		if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
+			return nil, false, fmt.Errorf("group not found: %w", err)
+		}
+	} else if input.DailyAmountUSD <= 0 {
+		return nil, false, infraerrors.BadRequest("INVALID_INPUT", "custom subscription requires daily_amount_usd")
 	}
 
 	// per-day：每次开通新建一张 per-day 卡（单卡模式由购买入口保证至多一张 active）。

@@ -34,9 +34,14 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if !cfg.Enabled {
 		return nil, infraerrors.Forbidden("PAYMENT_DISABLED", "payment system is disabled")
 	}
-	plan, err := s.validateOrderInput(ctx, req, cfg)
+	spec, err := s.validateOrderInput(ctx, req, cfg)
 	if err != nil {
 		return nil, err
+	}
+	// plan 仅供下游展示/计费用途（支付主题、provider 调用）；自定义订阅单 spec.plan 为 nil。
+	var plan *dbent.SubscriptionPlan
+	if spec != nil {
+		plan = spec.plan
 	}
 	if err := s.checkCancelRateLimit(ctx, req.UserID, cfg); err != nil {
 		return nil, err
@@ -51,16 +56,17 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if s.notificationEmailService != nil {
 		s.notificationEmailService.RememberRecipientLocale(ctx, req.UserID, user.Email, req.Locale)
 	}
-	if plan != nil {
+	if spec != nil {
 		if err := s.ensureCanCreateSubscriptionOrder(ctx, req.UserID); err != nil {
 			return nil, err
 		}
 	}
 	orderAmount := req.Amount
 	limitAmount := req.Amount
-	if plan != nil {
-		orderAmount = plan.Price
-		limitAmount = plan.Price
+	if spec != nil {
+		// 订阅单（套餐 / 自定义）成交价以后端权威 spec.price 为准，绝不信任前端 req.Amount。
+		orderAmount = spec.price
+		limitAmount = spec.price
 	} else if req.OrderType == payment.OrderTypeBalance {
 		orderAmount = calculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
 	}
@@ -103,7 +109,7 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if oauthResp != nil {
 		return oauthResp, nil
 	}
-	order, err := s.createOrderInTx(ctx, req, user, plan, cfg, orderAmount, limitAmount, feeRate, payAmount, sel)
+	order, err := s.createOrderInTx(ctx, req, user, spec, cfg, orderAmount, limitAmount, feeRate, payAmount, sel)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +123,7 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	return resp, nil
 }
 
-func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrderRequest, cfg *PaymentConfig) (*dbent.SubscriptionPlan, error) {
+func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrderRequest, cfg *PaymentConfig) (*subscriptionOrderSpec, error) {
 	if req.OrderType == payment.OrderTypeBalance && cfg.BalanceDisabled {
 		return nil, infraerrors.Forbidden("BALANCE_PAYMENT_DISABLED", "balance recharge has been disabled")
 	}
@@ -134,24 +140,38 @@ func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrder
 	return nil, nil
 }
 
-func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRequest) (*dbent.SubscriptionPlan, error) {
+// subscriptionOrderSpec 是订阅订单（固定套餐 / 自定义 D+T）在下单期解析出的**权威**参数。
+// 价格/额度/有效期/group 一律以此为准（绝不信任前端 req.Amount），并冻结进订单快照，履约严格按此发卡。
+type subscriptionOrderSpec struct {
+	plan         *dbent.SubscriptionPlan // 固定套餐单持有其套餐；自定义单为 nil
+	dailyAmount  float64                 // D（每日额度 / 日限额）
+	validityDays int                     // T（有效天数）
+	groupID      int64                   // 来源 group；自定义单为 0（无 group 归属，P5e：group_id 可空）
+	unitPrice    float64                 // u(D)
+	price        float64                 // 权威成交价（plan.Price 或 quote.Price）
+}
+
+func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRequest) (*subscriptionOrderSpec, error) {
 	if req.PlanID == 0 {
 		// 自定义购买（无固定套餐，规格第 2/3 节）：用 D+T 直接定价，不依赖 plan。
 		if req.DailyAmountUSD > 0 && req.ValidityDays > 0 {
-			// 先按 u(D) 公式校验 D/T 是否在允许区间（越界返回 INVALID_SUBSCRIPTION_PARAMS）。
 			if s.subscriptionSvc == nil {
 				return nil, fmt.Errorf("subscription service not configured")
 			}
-			if _, err := s.subscriptionSvc.QuoteSubscription(req.DailyAmountUSD, req.ValidityDays); err != nil {
+			// 按 u(D) 公式校验 D/T 区间并产出**权威**报价：成交价完全由后端公式决定，
+			// 绝不信任前端 req.Amount（否则客户端可篡改价格 → 资损）。越界返回 INVALID_SUBSCRIPTION_PARAMS。
+			quote, err := s.subscriptionSvc.QuoteSubscription(req.DailyAmountUSD, req.ValidityDays)
+			if err != nil {
 				return nil, err
 			}
-			// 履约「无 group 三窗口建卡」依赖 group_id nullable 迁移（P5e/#8）：在它落地前，
-			// 这里**收款前**显式拒绝，严防"已付款却无法履约、无自动退款"的资损。下单/定价/快照口径已就绪，
-			// #8 放开后把本拒绝改为「按 Quote 冻结自定义快照 + 走 createOrderInTx 自定义分支」即通。
-			return nil, infraerrors.BadRequest(
-				"CUSTOM_SUBSCRIPTION_NOT_ENABLED",
-				"custom subscription purchase is not enabled yet",
-			)
+			return &subscriptionOrderSpec{
+				plan:         nil,
+				dailyAmount:  quote.DailyAmountUSD,
+				validityDays: quote.ValidityDays,
+				groupID:      0, // 自定义卡无 group 归属（P5e）；限额读卡级 *_limit_usd（见 createSubscription）。
+				unitPrice:    quote.UnitPrice,
+				price:        quote.Price,
+			}, nil
 		}
 		return nil, infraerrors.BadRequest("INVALID_INPUT", "subscription order requires a plan")
 	}
@@ -165,13 +185,20 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 	if plan.DailyAmountUsd <= 0 {
 		return nil, infraerrors.BadRequest("PLAN_DAILY_AMOUNT_INVALID", "plan daily amount is invalid")
 	}
-	// per-day：套餐与 group 解耦，不再校验「订阅型分组」。但卡仍带 group_id（历史快照/路由），
+	// per-day：套餐与 group 解耦，不再校验「订阅型分组」。但套餐卡仍带 group_id（历史快照/路由），
 	// 故校验所挂 group 存在且 active（保证下单冻结的 subscription_group_id 可用）。
 	group, err := s.groupRepo.GetByID(ctx, plan.GroupID)
 	if err != nil || group.Status != payment.EntityStatusActive {
 		return nil, infraerrors.NotFound("GROUP_NOT_FOUND", "subscription group is no longer available")
 	}
-	return plan, nil
+	return &subscriptionOrderSpec{
+		plan:         plan,
+		dailyAmount:  plan.DailyAmountUsd,
+		validityDays: psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit),
+		groupID:      plan.GroupID,
+		unitPrice:    DefaultSubscriptionPricingConfig().UnitPrice(plan.DailyAmountUsd),
+		price:        plan.Price,
+	}, nil
 }
 
 func (s *PaymentService) ensureCanCreateSubscriptionOrder(ctx context.Context, userID int64) error {
@@ -227,14 +254,14 @@ func (s *PaymentService) hasPendingSubscriptionOrder(ctx context.Context, tx *db
 	return exist, nil
 }
 
-func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderRequest, user *User, plan *dbent.SubscriptionPlan, cfg *PaymentConfig, orderAmount, limitAmount, feeRate, payAmount float64, sel *payment.InstanceSelection) (*dbent.PaymentOrder, error) {
+func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderRequest, user *User, spec *subscriptionOrderSpec, cfg *PaymentConfig, orderAmount, limitAmount, feeRate, payAmount float64, sel *payment.InstanceSelection) (*dbent.PaymentOrder, error) {
 	tx, err := s.entClient.Tx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	txCtx := dbent.NewTxContext(ctx, tx)
-	if plan != nil {
+	if spec != nil {
 		if s.subscriptionSvc == nil {
 			return nil, fmt.Errorf("subscription service not configured")
 		}
@@ -267,12 +294,12 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		return nil, err
 	}
 	providerSnapshot := buildPaymentOrderProviderSnapshot(sel, req)
-	// 订阅订单：把定价 D/T/u/price/formula_version 冻结进快照，回调严格按此发卡、不重算。
-	if plan != nil {
+	// 订阅订单（套餐 / 自定义）：把权威定价 D/T/u/price/formula_version 冻结进快照，回调严格按此发卡、不重算。
+	if spec != nil {
 		if providerSnapshot == nil {
 			providerSnapshot = map[string]any{"schema_version": 2}
 		}
-		providerSnapshot[subscriptionSnapshotKey] = buildSubscriptionOrderSnapshot(plan, providerSnapshot)
+		providerSnapshot[subscriptionSnapshotKey] = buildSubscriptionOrderSnapshot(spec, providerSnapshot)
 	}
 	selectedInstanceID := ""
 	selectedProviderKey := ""
@@ -309,8 +336,16 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 	if providerSnapshot != nil {
 		b.SetProviderSnapshot(providerSnapshot)
 	}
-	if plan != nil {
-		b.SetPlanID(plan.ID).SetSubscriptionGroupID(plan.GroupID).SetSubscriptionDays(psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit))
+	if spec != nil {
+		// 有效天数对套餐/自定义单均必设（履约据此 + 快照发卡）；plan_id/group_id 仅套餐单有，
+		// 自定义单留空（无 group 归属，P5e：subscription_group_id 可空）。
+		b.SetSubscriptionDays(spec.validityDays)
+		if spec.plan != nil {
+			b.SetPlanID(spec.plan.ID)
+		}
+		if spec.groupID > 0 {
+			b.SetSubscriptionGroupID(spec.groupID)
+		}
 	}
 	order, err := b.Save(ctx)
 	if err != nil {
@@ -421,9 +456,7 @@ const subscriptionSnapshotKey = "subscription"
 // buildSubscriptionOrderSnapshot 在下单时把订阅定价**冻结**进订单快照（D/T/u/price/formula_version/
 // currency）。支付回调严格按此快照发卡，绝不按回调时的当前公式/配置重算（防下单后管理员改价/范围
 // 导致发出与用户当时所付不一致的卡）。currency 复用基础快照里的值（缺省站点本币）。
-func buildSubscriptionOrderSnapshot(plan *dbent.SubscriptionPlan, base map[string]any) map[string]any {
-	d := plan.DailyAmountUsd
-	t := psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit)
+func buildSubscriptionOrderSnapshot(spec *subscriptionOrderSpec, base map[string]any) map[string]any {
 	currency := payment.DefaultPaymentCurrency
 	if base != nil {
 		if c, ok := base["currency"].(string); ok && strings.TrimSpace(c) != "" {
@@ -431,10 +464,10 @@ func buildSubscriptionOrderSnapshot(plan *dbent.SubscriptionPlan, base map[strin
 		}
 	}
 	return map[string]any{
-		"daily_amount_usd": d,
-		"validity_days":    t,
-		"unit_price":       DefaultSubscriptionPricingConfig().UnitPrice(d),
-		"price":            plan.Price,
+		"daily_amount_usd": spec.dailyAmount,
+		"validity_days":    spec.validityDays,
+		"unit_price":       spec.unitPrice,
+		"price":            spec.price,
 		"formula_version":  SubscriptionFormulaVersion,
 		"currency":         currency,
 	}
