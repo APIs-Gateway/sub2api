@@ -32,6 +32,7 @@ const (
 	OrderStatusFailed            = "FAILED"
 	OrderStatusRefundRequested   = "REFUND_REQUESTED"
 	OrderStatusRefunding         = "REFUNDING"
+	OrderStatusRefundPending     = "REFUND_PENDING"
 	OrderStatusPartiallyRefunded = "PARTIALLY_REFUNDED"
 	OrderStatusRefunded          = "REFUNDED"
 	OrderStatusRefundFailed      = "REFUND_FAILED"

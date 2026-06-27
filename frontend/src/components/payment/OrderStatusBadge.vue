@@ -31,6 +31,7 @@ const statusMap: Record<OrderStatus, { key: string; tone: StatusTone }> = {
   FAILED: { key: 'payment.status.failed', tone: 'failed' },
   REFUND_REQUESTED: { key: 'payment.status.refund_requested', tone: 'refunding' },
   REFUNDING: { key: 'payment.status.refunding', tone: 'refunding' },
+  REFUND_PENDING: { key: 'payment.status.refund_pending', tone: 'refunding' },
   REFUNDED: { key: 'payment.status.refunded', tone: 'quiet' },
   PARTIALLY_REFUNDED: { key: 'payment.status.partially_refunded', tone: 'quiet' },
   REFUND_FAILED: { key: 'payment.status.refund_failed', tone: 'failed' },
