@@ -70,117 +70,25 @@
                 </span>
               </div>
 
-              <!-- Progress bars for limited subscriptions -->
+              <!-- Progress bars for limited subscriptions（限额挂卡，逐窗口展示已配置的 日/周/月） -->
               <template v-else>
-                <!-- Burn-down 余额进度（新模型） -->
-                <div v-if="subscription.daily_amount_usd" class="flex items-center gap-2">
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-600 dark:text-gray-400">余额</span>
-                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-700">
-                    <div
-                      class="h-1.5 rounded-full bg-gray-900 transition-all dark:bg-gray-100"
-                      :style="{ width: burndownRemainingWidth(subscription) }"
-                    ></div>
-                  </div>
-                  <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
-                    第{{ Math.floor(subscription.consumption_day || 0) }}天·剩${{
-                      (subscription.remaining_usd || 0).toFixed(0)
-                    }}
-                  </span>
-                </div>
-
                 <div
-                  v-if="subscription.group?.daily_limit_usd && !subscription.daily_amount_usd"
+                  v-for="w in windowsOf(subscription)"
+                  :key="w.key"
                   class="flex items-center gap-2"
                 >
                   <span class="w-8 flex-shrink-0 text-[10px] text-gray-600 dark:text-gray-400">{{
-                    t('subscriptionProgress.daily')
+                    w.label
                   }}</span>
                   <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-700">
                     <div
                       class="h-1.5 rounded-full transition-all"
-                      :class="
-                        getProgressBarClass(
-                          subscription.daily_usage_usd,
-                          subscription.group?.daily_limit_usd
-                        )
-                      "
-                      :style="{
-                        width: getProgressWidth(
-                          subscription.daily_usage_usd,
-                          subscription.group?.daily_limit_usd
-                        )
-                      }"
+                      :class="getProgressBarClass(w.used, w.limit)"
+                      :style="{ width: getProgressWidth(w.used, w.limit) }"
                     ></div>
                   </div>
                   <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
-                    {{
-                      formatUsage(subscription.daily_usage_usd, subscription.group?.daily_limit_usd)
-                    }}
-                  </span>
-                </div>
-
-                <div
-                  v-if="subscription.group?.weekly_limit_usd && !subscription.daily_amount_usd"
-                  class="flex items-center gap-2"
-                >
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-600 dark:text-gray-400">{{
-                    t('subscriptionProgress.weekly')
-                  }}</span>
-                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-700">
-                    <div
-                      class="h-1.5 rounded-full transition-all"
-                      :class="
-                        getProgressBarClass(
-                          subscription.weekly_usage_usd,
-                          subscription.group?.weekly_limit_usd
-                        )
-                      "
-                      :style="{
-                        width: getProgressWidth(
-                          subscription.weekly_usage_usd,
-                          subscription.group?.weekly_limit_usd
-                        )
-                      }"
-                    ></div>
-                  </div>
-                  <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
-                    {{
-                      formatUsage(subscription.weekly_usage_usd, subscription.group?.weekly_limit_usd)
-                    }}
-                  </span>
-                </div>
-
-                <div
-                  v-if="subscription.group?.monthly_limit_usd && !subscription.daily_amount_usd"
-                  class="flex items-center gap-2"
-                >
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-600 dark:text-gray-400">{{
-                    t('subscriptionProgress.monthly')
-                  }}</span>
-                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-700">
-                    <div
-                      class="h-1.5 rounded-full transition-all"
-                      :class="
-                        getProgressBarClass(
-                          subscription.monthly_usage_usd,
-                          subscription.group?.monthly_limit_usd
-                        )
-                      "
-                      :style="{
-                        width: getProgressWidth(
-                          subscription.monthly_usage_usd,
-                          subscription.group?.monthly_limit_usd
-                        )
-                      }"
-                    ></div>
-                  </div>
-                  <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
-                    {{
-                      formatUsage(
-                        subscription.monthly_usage_usd,
-                        subscription.group?.monthly_limit_usd
-                      )
-                    }}
+                    {{ formatUsage(w.used, w.limit) }}
                   </span>
                 </div>
               </template>
@@ -229,26 +137,40 @@ const displaySubscriptions = computed(() => {
   })
 })
 
+// windowsOf 返回该订阅已配置（limit>0）的三窗口（限额挂卡）。limit 为 null/0 = 该窗口不限，不展示进度条。
+function windowsOf(sub: UserSubscription) {
+  return [
+    {
+      key: 'daily',
+      label: t('subscriptionProgress.daily'),
+      used: sub.daily_usage_usd,
+      limit: sub.daily_limit_usd ?? null
+    },
+    {
+      key: 'weekly',
+      label: t('subscriptionProgress.weekly'),
+      used: sub.weekly_usage_usd,
+      limit: sub.weekly_limit_usd ?? null
+    },
+    {
+      key: 'monthly',
+      label: t('subscriptionProgress.monthly'),
+      used: sub.monthly_usage_usd,
+      limit: sub.monthly_limit_usd ?? null
+    }
+  ].filter((w) => w.limit != null && w.limit > 0)
+}
+
 function getMaxUsagePercentage(sub: UserSubscription): number {
   const percentages: number[] = []
-  if (sub.group?.daily_limit_usd) {
-    percentages.push(((sub.daily_usage_usd || 0) / sub.group.daily_limit_usd) * 100)
-  }
-  if (sub.group?.weekly_limit_usd) {
-    percentages.push(((sub.weekly_usage_usd || 0) / sub.group.weekly_limit_usd) * 100)
-  }
-  if (sub.group?.monthly_limit_usd) {
-    percentages.push(((sub.monthly_usage_usd || 0) / sub.group.monthly_limit_usd) * 100)
+  for (const w of windowsOf(sub)) {
+    percentages.push(((w.used || 0) / (w.limit as number)) * 100)
   }
   return percentages.length > 0 ? Math.max(...percentages) : 0
 }
 
 function isUnlimited(sub: UserSubscription): boolean {
-  return (
-    !sub.group?.daily_limit_usd &&
-    !sub.group?.weekly_limit_usd &&
-    !sub.group?.monthly_limit_usd
-  )
+  return windowsOf(sub).length === 0
 }
 
 function getProgressDotClass(sub: UserSubscription): string {
@@ -274,14 +196,6 @@ function getProgressWidth(used: number | undefined, limit: number | null | undef
   if (!limit || limit === 0) return '0%'
   const percentage = Math.min(((used || 0) / limit) * 100, 100)
   return `${percentage}%`
-}
-
-// burndownRemainingWidth 返回 burn-down 订阅剩余余额占发放总额的百分比宽度。
-function burndownRemainingWidth(sub: UserSubscription): string {
-  const granted = sub.granted_total_usd || 0
-  if (granted <= 0) return '0%'
-  const pct = Math.max(0, Math.min((sub.remaining_usd || 0) / granted, 1)) * 100
-  return `${pct}%`
 }
 
 function formatUsage(used: number | undefined, limit: number | null | undefined): string {

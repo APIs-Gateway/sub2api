@@ -1570,6 +1570,10 @@ export interface UserSubscription {
   daily_window_start: string | null
   weekly_window_start: string | null
   monthly_window_start: string | null
+  // 三窗口限额（限额挂卡、不挂 group）；null = 该窗口不限。配「用量 vs 限额」展示。
+  daily_limit_usd?: number | null
+  weekly_limit_usd?: number | null
+  monthly_limit_usd?: number | null
   // Burn-down 计费模型字段（开通即把整期额度打入余额）
   granted_total_usd?: number // 发放总额 G = D×天数
   daily_amount_usd?: number // 每日额度 D
