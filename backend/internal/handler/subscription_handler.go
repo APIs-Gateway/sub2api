@@ -2,9 +2,11 @@ package handler
 
 import (
 	"context"
+	"net/http"
 	"strconv"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -141,12 +143,10 @@ func (h *SubscriptionHandler) GetProgress(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// SetOverdraftDays lets the current user set the max overdraft days on ONE of their own
-// subscription cards. PUT /api/v1/subscriptions/:id/overdraft
-// body: { "max_overdraft_days": <int|null> } — null/omitted/negative = off, >=0 = on (0 = only today's accrual).
+// SetOverdraftDays is the retired per-day overdraft toggle. The three-window model uses
+// POST /api/v1/subscriptions/overdraft as an explicit user action; there is no on/off switch.
 func (h *SubscriptionHandler) SetOverdraftDays(c *gin.Context) {
-	subject, ok := middleware2.GetAuthSubjectFromContext(c)
-	if !ok {
+	if _, ok := middleware2.GetAuthSubjectFromContext(c); !ok {
 		response.Unauthorized(c, "User not found in context")
 		return
 	}
@@ -155,18 +155,11 @@ func (h *SubscriptionHandler) SetOverdraftDays(c *gin.Context) {
 		response.BadRequest(c, "invalid subscription id")
 		return
 	}
-	var req struct {
-		MaxOverdraftDays *int `json:"max_overdraft_days"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "invalid request: "+err.Error())
-		return
-	}
-	if err := h.subscriptionService.SetSubscriptionOverdraftDays(c.Request.Context(), subject.UserID, subID, req.MaxOverdraftDays); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, gin.H{"id": subID})
+	response.ErrorFrom(c, infraerrors.New(
+		http.StatusGone,
+		"SUBSCRIPTION_OVERDRAFT_TOGGLE_RETIRED",
+		"subscription overdraft toggle is retired; use POST /api/v1/subscriptions/overdraft when daily quota is exhausted",
+	))
 }
 
 // PricingBounds 返回自定义购买区间（每日额度 D / 有效天数 T / 单价 u 的允许范围），供购买页设滑块/校验。

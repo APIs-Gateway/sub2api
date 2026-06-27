@@ -173,28 +173,39 @@ func (s *SubscriptionService) ChangeSubscriptionPlan(ctx context.Context, userID
 		}
 
 		// 开新卡：start_day=today、expire_day=today+T_新−1、today_remaining=max(0,D_新−旧卡今日已用)；
-		// 次日起惰性重置为 D_新。不写 users.balance（per-day 额度只存 today_remaining）。
+		// 三窗口模型下，限额挂卡且新卡继承旧卡当前 usage/window_start，避免当天/本周/本月换档后
+		// 重新领取已用额度（spec §7）。不写 users.balance。
 		activatedAt := now
+		weeklyLimit, monthlyLimit := DeriveWindowCaps(dNew, tNew)
 		newSub := &UserSubscription{
-			UserID:          userID,
-			GroupID:         newPlan.GroupID,
-			StartsAt:        now,
-			ExpiresAt:       ExpireDayToExpiresAt(newExpireDay),
-			Status:          SubscriptionStatusActive,
-			GrantedTotalUSD: dNew * float64(tNew),
-			DailyAmountUSD:  dNew,
-			DailySpentUSD:   0,
-			DailySpentDay:   today,
-			TodayRemaining:  newCardTodayBalance,
-			TodayDay:        today,
-			StartDay:        today,
-			ExpireDay:       newExpireDay,
-			OverdraftOn:     false,
-			ActivatedAt:     &activatedAt,
-			AssignedAt:      now,
-			Notes:           fmt.Sprintf("转套餐 → plan %d", newPlanID),
-			CreatedAt:       now,
-			UpdatedAt:       now,
+			UserID:             userID,
+			GroupID:            newPlan.GroupID,
+			StartsAt:           now,
+			ExpiresAt:          ExpireDayToExpiresAt(newExpireDay),
+			Status:             SubscriptionStatusActive,
+			GrantedTotalUSD:    dNew * float64(tNew),
+			DailyAmountUSD:     dNew,
+			DailySpentUSD:      0,
+			DailySpentDay:      today,
+			TodayRemaining:     newCardTodayBalance,
+			TodayDay:           today,
+			StartDay:           today,
+			ExpireDay:          newExpireDay,
+			OverdraftOn:        false,
+			DailyLimitUSD:      &dNew,
+			WeeklyLimitUSD:     &weeklyLimit,
+			MonthlyLimitUSD:    &monthlyLimit,
+			DailyUsageUSD:      oldSub.DailyUsageUSD,
+			WeeklyUsageUSD:     oldSub.WeeklyUsageUSD,
+			MonthlyUsageUSD:    oldSub.MonthlyUsageUSD,
+			DailyWindowStart:   oldSub.DailyWindowStart,
+			WeeklyWindowStart:  oldSub.WeeklyWindowStart,
+			MonthlyWindowStart: oldSub.MonthlyWindowStart,
+			ActivatedAt:        &activatedAt,
+			AssignedAt:         now,
+			Notes:              fmt.Sprintf("转套餐 → plan %d", newPlanID),
+			CreatedAt:          now,
+			UpdatedAt:          now,
 		}
 		if err := s.userSubRepo.Create(txCtx, newSub); err != nil {
 			return fmt.Errorf("create new subscription: %w", err)

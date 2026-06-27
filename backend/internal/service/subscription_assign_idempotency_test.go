@@ -437,6 +437,15 @@ func TestAssignSubscription_GroupTypeNotValidated(t *testing.T) {
 	require.InDelta(t, 10, sub.DailyAmountUSD, 1e-9, "D 取自 input.DailyAmountUSD")
 	require.InDelta(t, 10, sub.TodayRemaining, 1e-9, "today_remaining = D")
 	require.InDelta(t, 300, sub.GrantedTotalUSD, 1e-9, "granted_total = D×T = 10×30")
+	require.NotNil(t, sub.DailyLimitUSD)
+	require.NotNil(t, sub.WeeklyLimitUSD)
+	require.NotNil(t, sub.MonthlyLimitUSD)
+	require.InDelta(t, 10, *sub.DailyLimitUSD, 1e-9)
+	require.InDelta(t, 70, *sub.WeeklyLimitUSD, 1e-9)
+	require.InDelta(t, 300, *sub.MonthlyLimitUSD, 1e-9)
+	require.NotNil(t, sub.DailyWindowStart)
+	require.NotNil(t, sub.WeeklyWindowStart)
+	require.NotNil(t, sub.MonthlyWindowStart)
 }
 
 // 无 input.DailyAmountUSD 且 group 无有效 daily_limit_usd → 报错，绝不建 D=0 的 active 卡。
@@ -485,6 +494,12 @@ func TestBulkAssignSubscription_PropagatesDailyAmount(t *testing.T) {
 	require.InDelta(t, 15, any.DailyAmountUSD, 1e-9)
 	require.InDelta(t, 15, any.TodayRemaining, 1e-9)
 	require.InDelta(t, 450, any.GrantedTotalUSD, 1e-9, "granted_total = 15×30")
+	require.NotNil(t, any.DailyLimitUSD)
+	require.NotNil(t, any.WeeklyLimitUSD)
+	require.NotNil(t, any.MonthlyLimitUSD)
+	require.InDelta(t, 15, *any.DailyLimitUSD, 1e-9)
+	require.InDelta(t, 105, *any.WeeklyLimitUSD, 1e-9)
+	require.InDelta(t, 450, *any.MonthlyLimitUSD, 1e-9)
 }
 
 // Bulk 请求级参数错误（无 D 且 group 无 daily_limit 回退）应循环前直接返回错误（handler 转 400），

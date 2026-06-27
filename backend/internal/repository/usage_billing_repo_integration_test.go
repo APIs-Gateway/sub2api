@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -104,15 +105,25 @@ func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.
 	})
 	now := time.Now()
 	startDay := service.EastDayNumber(now)
+	dayStart := timezone.StartOfDay(now)
+	weekStart := timezone.StartOfWeek(now)
+	monthStart := timezone.StartOfMonth(now)
+	daily, weekly, monthly := 10.0, 70.0, 300.0
 	subscription := mustCreateSubscription(t, client, &service.UserSubscription{
-		UserID:         user.ID,
-		GroupID:        group.ID,
-		DailyAmountUSD: 10,
-		TodayRemaining: 10,
-		TodayDay:       startDay,
-		StartDay:       startDay,
-		ExpireDay:      startDay + 9,
-		ExpiresAt:      service.ExpireDayToExpiresAt(startDay + 9),
+		UserID:             user.ID,
+		GroupID:            group.ID,
+		DailyAmountUSD:     10,
+		TodayRemaining:     10,
+		TodayDay:           startDay,
+		StartDay:           startDay,
+		ExpireDay:          startDay + 9,
+		ExpiresAt:          service.ExpireDayToExpiresAt(startDay + 9),
+		DailyLimitUSD:      &daily,
+		WeeklyLimitUSD:     &weekly,
+		MonthlyLimitUSD:    &monthly,
+		DailyWindowStart:   &dayStart,
+		WeeklyWindowStart:  &weekStart,
+		MonthlyWindowStart: &monthStart,
 	})
 
 	requestID := uuid.NewString()
@@ -131,14 +142,357 @@ func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.
 	require.True(t, result1.Applied)
 	require.NotNil(t, result1.WalletDebit)
 	require.InDelta(t, 0, *result1.WalletDebit, 0.000001)
+	require.NotNil(t, result1.SubscriptionID)
+	require.Equal(t, subscription.ID, *result1.SubscriptionID)
 
 	result2, err := repo.Apply(ctx, cmd)
 	require.NoError(t, err)
 	require.False(t, result2.Applied)
 
-	var todayRemaining float64
-	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT today_remaining FROM user_subscriptions WHERE id = $1", subscription.ID).Scan(&todayRemaining))
-	require.InDelta(t, 7.5, todayRemaining, 0.000001)
+	var dailyUsage, weeklyUsage, monthlyUsage, todayRemaining float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT daily_usage_usd, weekly_usage_usd, monthly_usage_usd, today_remaining
+		FROM user_subscriptions WHERE id = $1
+	`, subscription.ID).Scan(&dailyUsage, &weeklyUsage, &monthlyUsage, &todayRemaining))
+	require.InDelta(t, 2.5, dailyUsage, 0.000001)
+	require.InDelta(t, 2.5, weeklyUsage, 0.000001)
+	require.InDelta(t, 2.5, monthlyUsage, 0.000001)
+	require.InDelta(t, 10, todayRemaining, 0.000001, "三窗口结算不应再动 per-day pool 字段")
+}
+
+func TestUsageBillingRepositoryApply_SubscriptionFallsThroughToWalletAndDeduplicatesPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("usage-billing-sub-fallthrough-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Balance:      100,
+	})
+	group := mustCreateGroup(t, client, &service.Group{
+		Name:             "usage-billing-sub-fallthrough-" + uuid.NewString(),
+		Platform:         service.PlatformAnthropic,
+		SubscriptionType: service.SubscriptionTypeSubscription,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID:  user.ID,
+		GroupID: &group.ID,
+		Key:     "sk-usage-billing-sub-fallthrough-" + uuid.NewString(),
+		Name:    "billing-sub-fallthrough",
+	})
+	now := time.Now()
+	startDay := service.EastDayNumber(now)
+	dayStart := timezone.StartOfDay(now)
+	weekStart := timezone.StartOfWeek(now)
+	monthStart := timezone.StartOfMonth(now)
+	daily, weekly, monthly := 3.0, 70.0, 300.0
+	subscription := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:             user.ID,
+		GroupID:            group.ID,
+		DailyAmountUSD:     3,
+		TodayRemaining:     3,
+		TodayDay:           startDay,
+		StartDay:           startDay,
+		ExpireDay:          startDay + 9,
+		ExpiresAt:          service.ExpireDayToExpiresAt(startDay + 9),
+		DailyLimitUSD:      &daily,
+		WeeklyLimitUSD:     &weekly,
+		MonthlyLimitUSD:    &monthly,
+		DailyUsageUSD:      1,
+		WeeklyUsageUSD:     1,
+		MonthlyUsageUSD:    1,
+		DailyWindowStart:   &dayStart,
+		WeeklyWindowStart:  &weekStart,
+		MonthlyWindowStart: &monthStart,
+	})
+
+	requestID := uuid.NewString()
+	cmd := &service.UsageBillingCommand{
+		RequestID:      requestID,
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		AccountID:      0,
+		SubscriptionID: &subscription.ID,
+		OfficialCost:   5,
+		RateMultiplier: 2,
+	}
+
+	result1, err := repo.Apply(ctx, cmd)
+	require.NoError(t, err)
+	require.True(t, result1.Applied)
+	require.NotNil(t, result1.SubscriptionID)
+	require.Equal(t, subscription.ID, *result1.SubscriptionID)
+	require.NotNil(t, result1.WalletDebit)
+	require.InDelta(t, 6, *result1.WalletDebit, 0.000001, "订阅剩余 2 官方刀覆盖，剩余 3 官方刀按 2x 扣钱包")
+
+	result2, err := repo.Apply(ctx, cmd)
+	require.NoError(t, err)
+	require.False(t, result2.Applied)
+
+	var dailyUsage, weeklyUsage, monthlyUsage, balance float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT daily_usage_usd, weekly_usage_usd, monthly_usage_usd
+		FROM user_subscriptions WHERE id = $1
+	`, subscription.ID).Scan(&dailyUsage, &weeklyUsage, &monthlyUsage))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
+	require.InDelta(t, 3, dailyUsage, 0.000001)
+	require.InDelta(t, 3, weeklyUsage, 0.000001)
+	require.InDelta(t, 3, monthlyUsage, 0.000001)
+	require.InDelta(t, 94, balance, 0.000001)
+}
+
+func TestUsageBillingRepositoryApply_UnconfiguredSubscriptionFallsThroughToWalletPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("usage-billing-unconfigured-sub-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Balance:      20,
+	})
+	group := mustCreateGroup(t, client, &service.Group{
+		Name:     "usage-billing-unconfigured-sub-" + uuid.NewString(),
+		Platform: service.PlatformAnthropic,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID:  user.ID,
+		GroupID: &group.ID,
+		Key:     "sk-usage-billing-unconfigured-sub-" + uuid.NewString(),
+		Name:    "billing-unconfigured-sub",
+	})
+	now := time.Now()
+	startDay := service.EastDayNumber(now)
+	dayStart := timezone.StartOfDay(now)
+	weekStart := timezone.StartOfWeek(now)
+	monthStart := timezone.StartOfMonth(now)
+	subscription := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:             user.ID,
+		GroupID:            group.ID,
+		DailyAmountUSD:     10,
+		TodayRemaining:     10,
+		TodayDay:           startDay,
+		StartDay:           startDay,
+		ExpireDay:          startDay + 9,
+		ExpiresAt:          service.ExpireDayToExpiresAt(startDay + 9),
+		DailyUsageUSD:      1,
+		WeeklyUsageUSD:     2,
+		MonthlyUsageUSD:    3,
+		DailyWindowStart:   &dayStart,
+		WeeklyWindowStart:  &weekStart,
+		MonthlyWindowStart: &monthStart,
+	})
+
+	result, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:      uuid.NewString(),
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		SubscriptionID: &subscription.ID,
+		OfficialCost:   4,
+		RateMultiplier: 2,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.NotNil(t, result.SubscriptionID, "有生效卡的请求仍应按 subscription 口径记日志，即使未配置限额导致覆盖为 0")
+	require.Equal(t, subscription.ID, *result.SubscriptionID)
+	require.NotNil(t, result.WalletDebit)
+	require.InDelta(t, 8, *result.WalletDebit, 0.000001, "三限额全 NULL 的脏卡必须完全回落钱包，不能免费覆盖")
+
+	var dailyUsage, weeklyUsage, monthlyUsage, balance float64
+	var dailyLimit, weeklyLimit, monthlyLimit *float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT daily_usage_usd, weekly_usage_usd, monthly_usage_usd,
+		       daily_limit_usd, weekly_limit_usd, monthly_limit_usd
+		FROM user_subscriptions WHERE id = $1
+	`, subscription.ID).Scan(&dailyUsage, &weeklyUsage, &monthlyUsage, &dailyLimit, &weeklyLimit, &monthlyLimit))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
+	require.InDelta(t, 1, dailyUsage, 0.000001)
+	require.InDelta(t, 2, weeklyUsage, 0.000001)
+	require.InDelta(t, 3, monthlyUsage, 0.000001)
+	require.Nil(t, dailyLimit)
+	require.Nil(t, weeklyLimit)
+	require.Nil(t, monthlyLimit)
+	require.InDelta(t, 12, balance, 0.000001)
+}
+
+func TestUsageBillingRepositoryApply_ExpiredActiveCardIsClosedAndWalletBilledPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("usage-billing-expired-active-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Balance:      20,
+	})
+	group := mustCreateGroup(t, client, &service.Group{
+		Name:     "usage-billing-expired-active-" + uuid.NewString(),
+		Platform: service.PlatformAnthropic,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID:  user.ID,
+		GroupID: &group.ID,
+		Key:     "sk-usage-billing-expired-active-" + uuid.NewString(),
+		Name:    "billing-expired-active",
+	})
+	now := time.Now()
+	startDay := service.EastDayNumber(now)
+	dayStart := timezone.StartOfDay(now)
+	weekStart := timezone.StartOfWeek(now)
+	monthStart := timezone.StartOfMonth(now)
+	daily, weekly, monthly := 10.0, 70.0, 300.0
+	subscription := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:             user.ID,
+		GroupID:            group.ID,
+		DailyAmountUSD:     10,
+		TodayRemaining:     10,
+		TodayDay:           startDay - 2,
+		StartDay:           startDay - 10,
+		ExpireDay:          startDay - 1,
+		ExpiresAt:          service.ExpireDayToExpiresAt(startDay - 1),
+		Status:             service.SubscriptionStatusActive,
+		DailyLimitUSD:      &daily,
+		WeeklyLimitUSD:     &weekly,
+		MonthlyLimitUSD:    &monthly,
+		DailyUsageUSD:      1,
+		WeeklyUsageUSD:     2,
+		MonthlyUsageUSD:    3,
+		DailyWindowStart:   &dayStart,
+		WeeklyWindowStart:  &weekStart,
+		MonthlyWindowStart: &monthStart,
+	})
+
+	result, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:      uuid.NewString(),
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		SubscriptionID: &subscription.ID,
+		OfficialCost:   4,
+		RateMultiplier: 2,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.Nil(t, result.SubscriptionID, "假 active 过期卡不能再标 subscription 计费")
+	require.NotNil(t, result.WalletDebit)
+	require.InDelta(t, 8, *result.WalletDebit, 0.000001)
+
+	var status string
+	var dailyUsage, weeklyUsage, monthlyUsage, balance float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT status, daily_usage_usd, weekly_usage_usd, monthly_usage_usd
+		FROM user_subscriptions WHERE id = $1
+	`, subscription.ID).Scan(&status, &dailyUsage, &weeklyUsage, &monthlyUsage))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
+	require.Equal(t, service.SubscriptionStatusExpired, status)
+	require.InDelta(t, 1, dailyUsage, 0.000001)
+	require.InDelta(t, 2, weeklyUsage, 0.000001)
+	require.InDelta(t, 3, monthlyUsage, 0.000001)
+	require.InDelta(t, 12, balance, 0.000001)
+}
+
+func TestUsageBillingRepositoryApply_ConcurrentSameRequestOnlyAppliesOncePostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("usage-billing-sub-concurrent-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Balance:      100,
+	})
+	group := mustCreateGroup(t, client, &service.Group{
+		Name:             "usage-billing-sub-concurrent-" + uuid.NewString(),
+		Platform:         service.PlatformAnthropic,
+		SubscriptionType: service.SubscriptionTypeSubscription,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID:  user.ID,
+		GroupID: &group.ID,
+		Key:     "sk-usage-billing-sub-concurrent-" + uuid.NewString(),
+		Name:    "billing-sub-concurrent",
+	})
+	now := time.Now()
+	startDay := service.EastDayNumber(now)
+	dayStart := timezone.StartOfDay(now)
+	weekStart := timezone.StartOfWeek(now)
+	monthStart := timezone.StartOfMonth(now)
+	daily, weekly, monthly := 3.0, 70.0, 300.0
+	subscription := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:             user.ID,
+		GroupID:            group.ID,
+		DailyAmountUSD:     3,
+		TodayRemaining:     3,
+		TodayDay:           startDay,
+		StartDay:           startDay,
+		ExpireDay:          startDay + 9,
+		ExpiresAt:          service.ExpireDayToExpiresAt(startDay + 9),
+		DailyLimitUSD:      &daily,
+		WeeklyLimitUSD:     &weekly,
+		MonthlyLimitUSD:    &monthly,
+		DailyUsageUSD:      1,
+		WeeklyUsageUSD:     1,
+		MonthlyUsageUSD:    1,
+		DailyWindowStart:   &dayStart,
+		WeeklyWindowStart:  &weekStart,
+		MonthlyWindowStart: &monthStart,
+	})
+
+	requestID := uuid.NewString()
+	cmd := &service.UsageBillingCommand{
+		RequestID:      requestID,
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		SubscriptionID: &subscription.ID,
+		OfficialCost:   5,
+		RateMultiplier: 2,
+	}
+
+	const n = 8
+	start := make(chan struct{})
+	results := make(chan bool, n)
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			res, err := repo.Apply(ctx, cmd)
+			errs <- err
+			results <- res != nil && res.Applied
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(results)
+
+	applied := 0
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	for ok := range results {
+		if ok {
+			applied++
+		}
+	}
+	require.Equal(t, 1, applied, "same request_id/api_key_id must apply side effects once under concurrency")
+
+	var dailyUsage, weeklyUsage, monthlyUsage, balance float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT daily_usage_usd, weekly_usage_usd, monthly_usage_usd
+		FROM user_subscriptions WHERE id = $1
+	`, subscription.ID).Scan(&dailyUsage, &weeklyUsage, &monthlyUsage))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
+	require.InDelta(t, 3, dailyUsage, 0.000001)
+	require.InDelta(t, 3, weeklyUsage, 0.000001)
+	require.InDelta(t, 3, monthlyUsage, 0.000001)
+	require.InDelta(t, 94, balance, 0.000001)
+
+	var dedupCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_billing_dedup WHERE request_id = $1 AND api_key_id = $2", requestID, apiKey.ID).Scan(&dedupCount))
+	require.Equal(t, 1, dedupCount)
 }
 
 func TestUsageBillingRepositoryApply_RequestFingerprintConflict(t *testing.T) {
@@ -403,6 +757,7 @@ func perDayBillingFixture(t *testing.T, client *dbent.Client, balance float64) (
 
 // 套餐余额(1:1) → 钱包正余额(×倍率)：套餐先扣满 D，余额按官方×倍率扣，套餐永不为负。
 func TestUsageBillingRepositoryApply_PerDayPackageThenWallet(t *testing.T) {
+	t.Skip("legacy per-day pool contract retired by three-window billing; covered by TestUsageBillingRepositoryApply_SubscriptionFallsThroughToWalletAndDeduplicatesPostgres")
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := NewUsageBillingRepository(client, integrationDB)
@@ -446,6 +801,7 @@ func TestUsageBillingRepositoryApply_PerDayPackageThenWallet(t *testing.T) {
 
 // 透支：套餐+钱包皆空、开透支 → 借未来天（expire_day−1 + 用户级月度计数+1）按 1:1 扣。
 func TestUsageBillingRepositoryApply_PerDayOverdraftBorrowsDay(t *testing.T) {
+	t.Skip("legacy automatic per-day overdraft retired; manual overdraft is covered by subscription_overdraft_http_integration_test.go")
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := NewUsageBillingRepository(client, integrationDB)
@@ -487,6 +843,7 @@ func TestUsageBillingRepositoryApply_PerDayOverdraftBorrowsDay(t *testing.T) {
 }
 
 func TestUsageBillingRepositoryApply_PerDayTracksPackageSpentAcrossOverdraft(t *testing.T) {
+	t.Skip("legacy automatic per-day overdraft retired; three-window settlement never borrows days")
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := NewUsageBillingRepository(client, integrationDB)
@@ -639,6 +996,7 @@ func TestUsageBillingRepositoryApply_PerDayActiveCardWalletOnlyStillSubscription
 
 // 同一 request_id 重放必须跳过整笔 settle 副作用：不能重复扣钱包、不能重复借未来天、不能重复累加月度透支。
 func TestUsageBillingRepositoryApply_PerDayDedupSkipsOverdraftAndWalletSideEffects(t *testing.T) {
+	t.Skip("legacy automatic per-day overdraft retired; usage billing dedup is covered by three-window concurrent/dedup tests")
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := NewUsageBillingRepository(client, integrationDB)
@@ -690,6 +1048,7 @@ func TestUsageBillingRepositoryApply_PerDayDedupSkipsOverdraftAndWalletSideEffec
 
 // 并发流式结算同时打到同一用户时，FOR UPDATE 锁必须保证月度透支最多 5 次，后续缺口落钱包负数。
 func TestUsageBillingRepositoryApply_PerDayConcurrentOverdraftCapsMonthlyLimit(t *testing.T) {
+	t.Skip("legacy automatic per-day overdraft retired; manual overdraft concurrency is covered by subscription_overdraft_http_integration_test.go")
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := NewUsageBillingRepository(client, integrationDB)
@@ -752,6 +1111,7 @@ func TestUsageBillingRepositoryApply_PerDayConcurrentOverdraftCapsMonthlyLimit(t
 
 // 跨月时旧月度透支计数必须惰性重置，否则上月用满 5 次会在新月误把可透支请求打到钱包负数。
 func TestUsageBillingRepositoryApply_PerDayOverdraftResetsStaleMonthCount(t *testing.T) {
+	t.Skip("legacy automatic per-day overdraft retired; manual overdraft month reset lives in subscription_overdraft tests")
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := NewUsageBillingRepository(client, integrationDB)
@@ -803,6 +1163,7 @@ func TestUsageBillingRepositoryApply_PerDayOverdraftResetsStaleMonthCount(t *tes
 
 // 跨东八区自然日且卡仍有效时，真实 DB 回写必须把 today_remaining 惰性覆盖为 D 后再扣。
 func TestUsageBillingRepositoryApply_PerDayResetsRemainingOnNewValidDay(t *testing.T) {
+	t.Skip("legacy per-day pool contract retired; three-window reset is covered by window engine and usage billing three-window tests")
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := NewUsageBillingRepository(client, integrationDB)

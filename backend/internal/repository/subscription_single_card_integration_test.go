@@ -271,6 +271,18 @@ func TestSubscriptionServiceAssignOrExtend_ExpiresStaleActiveBeforeCreatePostgre
 	require.False(t, reused)
 	require.NotNil(t, created)
 	require.NotEqual(t, stale.ID, created.ID)
+	require.NotNil(t, created.DailyLimitUSD)
+	require.NotNil(t, created.WeeklyLimitUSD)
+	require.NotNil(t, created.MonthlyLimitUSD)
+	require.InDelta(t, 20, *created.DailyLimitUSD, 1e-9)
+	require.InDelta(t, 140, *created.WeeklyLimitUSD, 1e-9)
+	require.InDelta(t, 600, *created.MonthlyLimitUSD, 1e-9)
+	require.InDelta(t, 0, created.DailyUsageUSD, 1e-9)
+	require.InDelta(t, 0, created.WeeklyUsageUSD, 1e-9)
+	require.InDelta(t, 0, created.MonthlyUsageUSD, 1e-9)
+	require.NotNil(t, created.DailyWindowStart)
+	require.NotNil(t, created.WeeklyWindowStart)
+	require.NotNil(t, created.MonthlyWindowStart)
 	require.Equal(t, 1, countUserSubscriptionsByStatus(t, user.ID, service.SubscriptionStatusActive))
 	require.Equal(t, 1, countUserSubscriptionsByStatus(t, user.ID, service.SubscriptionStatusExpired))
 
@@ -278,6 +290,71 @@ func TestSubscriptionServiceAssignOrExtend_ExpiresStaleActiveBeforeCreatePostgre
 	require.NoError(t, err)
 	require.Equal(t, service.SubscriptionStatusExpired, gotStale.Status)
 	require.InDelta(t, 0, gotStale.TodayRemaining, 1e-9)
+}
+
+func TestPaymentSubscriptionFulfillment_CreatesThreeWindowCardAndBillsPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	paymentSvc := makePaymentServiceForSubscriptionIntegration(t)
+	billingRepo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:   fmt.Sprintf("single-card-fulfillment-window-%s@example.com", uuid.NewString()),
+		Balance: 1000,
+	})
+	group := mustCreateGroup(t, client, &service.Group{
+		Name:     "single-card-fulfillment-window-" + uuid.NewString(),
+		Platform: service.PlatformAnthropic,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID:  user.ID,
+		GroupID: &group.ID,
+		Key:     "sk-single-card-fulfillment-window-" + uuid.NewString(),
+		Name:    "single-card-fulfillment-window",
+	})
+	orderID := createPaidSubscriptionOrderForIntegration(t, client, user, group.ID, 12, 45)
+
+	require.NoError(t, paymentSvc.ExecuteSubscriptionFulfillment(ctx, orderID))
+	require.Equal(t, 1, countUserSubscriptionsByStatus(t, user.ID, service.SubscriptionStatusActive))
+
+	sub, err := NewUserSubscriptionRepository(client).GetActiveByUserID(ctx, user.ID)
+	require.NoError(t, err)
+	require.NotNil(t, sub.DailyLimitUSD)
+	require.NotNil(t, sub.WeeklyLimitUSD)
+	require.NotNil(t, sub.MonthlyLimitUSD)
+	require.InDelta(t, 12, *sub.DailyLimitUSD, 1e-9)
+	require.InDelta(t, 84, *sub.WeeklyLimitUSD, 1e-9)
+	require.InDelta(t, 360, *sub.MonthlyLimitUSD, 1e-9)
+	require.InDelta(t, 0, sub.DailyUsageUSD, 1e-9)
+	require.InDelta(t, 0, sub.WeeklyUsageUSD, 1e-9)
+	require.InDelta(t, 0, sub.MonthlyUsageUSD, 1e-9)
+	require.NotNil(t, sub.DailyWindowStart)
+	require.NotNil(t, sub.WeeklyWindowStart)
+	require.NotNil(t, sub.MonthlyWindowStart)
+
+	result, err := billingRepo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:      uuid.NewString(),
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		SubscriptionID: &sub.ID,
+		OfficialCost:   5,
+		RateMultiplier: 2,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.NotNil(t, result.SubscriptionID)
+	require.Equal(t, sub.ID, *result.SubscriptionID)
+	require.NotNil(t, result.WalletDebit)
+	require.InDelta(t, 0, *result.WalletDebit, 1e-9, "履约新卡必须带三窗口限额，首笔请求应由订阅覆盖")
+
+	gotSub, err := NewUserSubscriptionRepository(client).GetByID(ctx, sub.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 5, gotSub.DailyUsageUSD, 1e-9)
+	require.InDelta(t, 5, gotSub.WeeklyUsageUSD, 1e-9)
+	require.InDelta(t, 5, gotSub.MonthlyUsageUSD, 1e-9)
+	gotUser, err := client.User.Get(ctx, user.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 1000, gotUser.Balance, 1e-9)
 }
 
 func TestSubscriptionServiceAssignOrExtend_ConcurrentCreatesSingleActiveCardPostgres(t *testing.T) {

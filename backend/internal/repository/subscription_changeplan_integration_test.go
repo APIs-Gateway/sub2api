@@ -11,6 +11,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -45,19 +46,33 @@ func TestSubscriptionServiceChangePlan_UpgradeSettlesDiffAndSwapsCardPostgres(t 
 		Balance: 100000,
 	})
 	group := mustCreateGroup(t, client, &service.Group{Name: "changeplan-" + uuid.NewString()})
+	now := time.Now()
+	dayStart := timezone.StartOfDay(now)
+	weekStart := timezone.StartOfWeek(now)
+	monthStart := timezone.StartOfMonth(now)
+	oldDaily, oldWeekly, oldMonthly := 10.0, 70.0, 300.0
 
 	// 旧卡：D=10、T=30（G=300）、今日满额未用、剩 29 天。
 	old := mustCreateSubscription(t, client, &service.UserSubscription{
-		UserID:          user.ID,
-		GroupID:         group.ID,
-		DailyAmountUSD:  10,
-		GrantedTotalUSD: 300,
-		TodayRemaining:  10,
-		TodayDay:        today,
-		StartDay:        today,
-		ExpireDay:       today + 29,
-		ExpiresAt:       service.ExpireDayToExpiresAt(today + 29),
-		Status:          service.SubscriptionStatusActive,
+		UserID:             user.ID,
+		GroupID:            group.ID,
+		DailyAmountUSD:     10,
+		GrantedTotalUSD:    300,
+		TodayRemaining:     10,
+		TodayDay:           today,
+		StartDay:           today,
+		ExpireDay:          today + 29,
+		ExpiresAt:          service.ExpireDayToExpiresAt(today + 29),
+		Status:             service.SubscriptionStatusActive,
+		DailyLimitUSD:      &oldDaily,
+		WeeklyLimitUSD:     &oldWeekly,
+		MonthlyLimitUSD:    &oldMonthly,
+		DailyUsageUSD:      4,
+		WeeklyUsageUSD:     14,
+		MonthlyUsageUSD:    24,
+		DailyWindowStart:   &dayStart,
+		WeeklyWindowStart:  &weekStart,
+		MonthlyWindowStart: &monthStart,
 	})
 
 	// 升档到 D=20、T=30。
@@ -89,6 +104,21 @@ func TestSubscriptionServiceChangePlan_UpgradeSettlesDiffAndSwapsCardPostgres(t 
 	require.Equal(t, today, gotNew.StartDay)
 	require.Equal(t, today+29, gotNew.ExpireDay)
 	require.Equal(t, 1, countUserSubscriptionsByStatus(t, user.ID, service.SubscriptionStatusActive))
+	require.NotNil(t, gotNew.DailyLimitUSD)
+	require.NotNil(t, gotNew.WeeklyLimitUSD)
+	require.NotNil(t, gotNew.MonthlyLimitUSD)
+	require.InDelta(t, 20, *gotNew.DailyLimitUSD, 1e-9)
+	require.InDelta(t, 140, *gotNew.WeeklyLimitUSD, 1e-9)
+	require.InDelta(t, 600, *gotNew.MonthlyLimitUSD, 1e-9)
+	require.InDelta(t, 4, gotNew.DailyUsageUSD, 1e-9, "转套餐新卡必须继承旧卡日窗口 usage，防当天双领")
+	require.InDelta(t, 14, gotNew.WeeklyUsageUSD, 1e-9, "转套餐新卡必须继承旧卡周窗口 usage，防本周双领")
+	require.InDelta(t, 24, gotNew.MonthlyUsageUSD, 1e-9, "转套餐新卡必须继承旧卡月窗口 usage，防本月双领")
+	require.NotNil(t, gotNew.DailyWindowStart)
+	require.NotNil(t, gotNew.WeeklyWindowStart)
+	require.NotNil(t, gotNew.MonthlyWindowStart)
+	require.Equal(t, dayStart.Unix(), gotNew.DailyWindowStart.Unix())
+	require.Equal(t, weekStart.Unix(), gotNew.WeeklyWindowStart.Unix())
+	require.Equal(t, monthStart.Unix(), gotNew.MonthlyWindowStart.Unix())
 
 	// 余额扣了补差价；限频戳=today。
 	gotUser, err := client.User.Get(ctx, user.ID)
@@ -228,6 +258,84 @@ func TestSubscriptionServiceChangePlan_TodaySpentReducesNewCardBalancePostgres(t
 	require.NoError(t, err)
 	require.InDelta(t, 12, gotNew.TodayRemaining, 1e-9)
 	require.Equal(t, today, gotNew.TodayDay)
+}
+
+func TestSubscriptionServiceChangePlan_NewCardBillsThroughThreeWindowsPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	svc := makeSubscriptionService(t)
+	billingRepo := NewUsageBillingRepository(client, integrationDB)
+	today := service.TodayEastDayNumber()
+	now := time.Now()
+	dayStart := timezone.StartOfDay(now)
+	weekStart := timezone.StartOfWeek(now)
+	monthStart := timezone.StartOfMonth(now)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:   fmt.Sprintf("changeplan-window-bill-%s@example.com", uuid.NewString()),
+		Balance: 100000,
+	})
+	group := mustCreateGroup(t, client, &service.Group{
+		Name:     "changeplan-window-bill-" + uuid.NewString(),
+		Platform: service.PlatformAnthropic,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID:  user.ID,
+		GroupID: &group.ID,
+		Key:     "sk-changeplan-window-bill-" + uuid.NewString(),
+		Name:    "changeplan-window-bill",
+	})
+	oldDaily, oldWeekly, oldMonthly := 10.0, 70.0, 300.0
+	mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:             user.ID,
+		GroupID:            group.ID,
+		DailyAmountUSD:     10,
+		GrantedTotalUSD:    300,
+		TodayRemaining:     6,
+		TodayDay:           today,
+		StartDay:           today,
+		ExpireDay:          today + 29,
+		ExpiresAt:          service.ExpireDayToExpiresAt(today + 29),
+		Status:             service.SubscriptionStatusActive,
+		DailyLimitUSD:      &oldDaily,
+		WeeklyLimitUSD:     &oldWeekly,
+		MonthlyLimitUSD:    &oldMonthly,
+		DailyUsageUSD:      4,
+		WeeklyUsageUSD:     14,
+		MonthlyUsageUSD:    24,
+		DailyWindowStart:   &dayStart,
+		WeeklyWindowStart:  &weekStart,
+		MonthlyWindowStart: &monthStart,
+	})
+	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
+
+	res, err := svc.ChangeSubscriptionPlan(ctx, user.ID, newPlan.ID)
+	require.NoError(t, err)
+	balanceAfterChange := 100000 - res.Diff
+
+	applyRes, err := billingRepo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:      uuid.NewString(),
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		SubscriptionID: &res.NewSubscriptionID,
+		OfficialCost:   5,
+		RateMultiplier: 2,
+	})
+	require.NoError(t, err)
+	require.True(t, applyRes.Applied)
+	require.NotNil(t, applyRes.SubscriptionID)
+	require.Equal(t, res.NewSubscriptionID, *applyRes.SubscriptionID)
+	require.NotNil(t, applyRes.WalletDebit)
+	require.InDelta(t, 0, *applyRes.WalletDebit, 1e-9, "转套餐新卡应带三窗口限额，本次完全由订阅覆盖")
+
+	gotNew, err := NewUserSubscriptionRepository(client).GetByID(ctx, res.NewSubscriptionID)
+	require.NoError(t, err)
+	require.InDelta(t, 9, gotNew.DailyUsageUSD, 1e-9)
+	require.InDelta(t, 19, gotNew.WeeklyUsageUSD, 1e-9)
+	require.InDelta(t, 29, gotNew.MonthlyUsageUSD, 1e-9)
+	gotUser, err := client.User.Get(ctx, user.ID)
+	require.NoError(t, err)
+	require.InDelta(t, balanceAfterChange, gotUser.Balance, 1e-6)
 }
 
 // 脏套餐 validity_days<=0 必须在事务副作用前拒绝，不能关旧卡、不能扣/退余额、不能开废卡。

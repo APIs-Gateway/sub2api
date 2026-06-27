@@ -1387,17 +1387,14 @@ func (h *GatewayHandler) usageQuotaLimited(c *gin.Context, ctx context.Context, 
 
 // usageUnrestricted 处理 unrestricted 模式的响应（向后兼容）
 func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, usageData gin.H, dailyUsage any, modelStats any) {
-	// per-day 订阅展示：订阅 = 用户有生效卡（与 group 类型无关）。展示今日剩余套餐额度 + 到期，
-	// 而非旧 burn-down 的周/月限额（旧逻辑靠 IsSubscriptionType + 中间件 context 订阅，后者在
-	// /v1/usage 路径恒为空、整块实为死代码）。
+	// 三窗口订阅展示：订阅 = 用户有生效卡（与 group 类型无关）。展示卡级日/周/月 usage-vs-limit，
+	// 不再暴露旧 per-day today_remaining / overdraft_on 口径。
 	if card, _ := h.billingCacheService.GetActiveSubscriptionCard(ctx, subject.UserID); card != nil {
-		today := service.TodayEastDayNumber()
-		if card.Status == service.SubscriptionStatusActive && today <= card.ExpireDay {
-			// 跨天惰性：today_day 非今天 → 今天尚未扣过，今日剩余应视为满额 D。
-			todayRemaining := card.TodayRemaining
-			if card.TodayDay != today {
-				todayRemaining = card.DailyAmountUSD
-			}
+		now := timezone.Now()
+		if card.Status == service.SubscriptionStatusActive && now.Before(card.ExpiresAt) {
+			window := card.ToSubWindow()
+			window.ResetWindows(now)
+			remaining := window.SubRemaining()
 			planName := "订阅"
 			if apiKey.Group != nil && apiKey.Group.Name != "" {
 				planName = apiKey.Group.Name
@@ -1407,13 +1404,28 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 				"isValid":   true,
 				"planName":  planName,
 				"unit":      "USD",
-				"remaining": todayRemaining,
+				"remaining": remaining,
 				"subscription": gin.H{
-					"daily_amount_usd":    card.DailyAmountUSD,
-					"today_remaining_usd": todayRemaining,
-					"remaining_days":      card.ExpireDay - today + 1, // 含今天
-					"expires_at":          card.ExpiresAt,
-					"overdraft_on":        card.OverdraftOn,
+					"daily_limit_usd":      usageLimitValue(window.DailyLimitUSD),
+					"daily_usage_usd":      window.DailyUsageUSD,
+					"daily_remaining_usd":  usageRemainingValue(window.DailyLimitUSD, window.DailyUsageUSD),
+					"daily_window_start":   window.DailyWindowStart,
+					"daily_resets_at":      usageResetAt(window.DailyWindowStart, "daily"),
+					"weekly_limit_usd":     usageLimitValue(window.WeeklyLimitUSD),
+					"weekly_usage_usd":     window.WeeklyUsageUSD,
+					"weekly_remaining_usd": usageRemainingValue(window.WeeklyLimitUSD, window.WeeklyUsageUSD),
+					"weekly_window_start":  window.WeeklyWindowStart,
+					"weekly_resets_at":     usageResetAt(window.WeeklyWindowStart, "weekly"),
+					"monthly_limit_usd":    usageLimitValue(window.MonthlyLimitUSD),
+					"monthly_usage_usd":    window.MonthlyUsageUSD,
+					"monthly_remaining_usd": usageRemainingValue(
+						window.MonthlyLimitUSD,
+						window.MonthlyUsageUSD,
+					),
+					"monthly_window_start": window.MonthlyWindowStart,
+					"monthly_resets_at":    usageResetAt(window.MonthlyWindowStart, "monthly"),
+					"remaining_days":       service.RefundableDaysByExpiry(card.ExpiresAt, now) + 1,
+					"expires_at":           card.ExpiresAt,
 				},
 			}
 			if usageData != nil {
@@ -1455,6 +1467,36 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 		resp["model_stats"] = modelStats
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+func usageLimitValue(limit float64) any {
+	if limit <= 0 {
+		return nil
+	}
+	return limit
+}
+
+func usageRemainingValue(limit, used float64) any {
+	if limit <= 0 {
+		return nil
+	}
+	return math.Max(0, limit-used)
+}
+
+func usageResetAt(windowStart *time.Time, window string) any {
+	if windowStart == nil {
+		return nil
+	}
+	switch window {
+	case "daily":
+		return windowStart.Add(24 * time.Hour)
+	case "weekly":
+		return windowStart.Add(7 * 24 * time.Hour)
+	case "monthly":
+		return windowStart.AddDate(0, 1, 0)
+	default:
+		return nil
+	}
 }
 
 // handleConcurrencyError handles concurrency-related acquire errors.

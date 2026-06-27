@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/dgraph-io/ristretto"
 	"golang.org/x/sync/singleflight"
 )
@@ -295,29 +296,42 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 	expiresAt := ExpireDayToExpiresAt(expireDay)
 
 	activatedAt := now
+	weeklyLimit, monthlyLimit := DeriveWindowCaps(dailyAmount, validityDays)
+	dailyWindowStart := timezone.StartOfDay(now)
+	weeklyWindowStart := timezone.StartOfWeek(now)
+	monthlyWindowStart := timezone.StartOfMonth(now)
 	sub := &UserSubscription{
-		UserID:          input.UserID,
-		GroupID:         input.GroupID,
-		StartsAt:        now,
-		ExpiresAt:       expiresAt,
-		Status:          SubscriptionStatusActive,
-		GrantedTotalUSD: grantedTotal,
-		DailyAmountUSD:  dailyAmount,
-		ConsumedUSD:     0,
-		ClawedUSD:       0,
-		LastClawbackDay: 0,
-		DailySpentUSD:   0,
-		DailySpentDay:   startDay,
-		TodayRemaining:  dailyAmount,
-		TodayDay:        startDay,
-		StartDay:        startDay,
-		ExpireDay:       expireDay,
-		OverdraftOn:     false,
-		ActivatedAt:     &activatedAt,
-		AssignedAt:      now,
-		Notes:           input.Notes,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		UserID:             input.UserID,
+		GroupID:            input.GroupID,
+		StartsAt:           now,
+		ExpiresAt:          expiresAt,
+		Status:             SubscriptionStatusActive,
+		GrantedTotalUSD:    grantedTotal,
+		DailyAmountUSD:     dailyAmount,
+		ConsumedUSD:        0,
+		ClawedUSD:          0,
+		LastClawbackDay:    0,
+		DailySpentUSD:      0,
+		DailySpentDay:      startDay,
+		TodayRemaining:     dailyAmount,
+		TodayDay:           startDay,
+		StartDay:           startDay,
+		ExpireDay:          expireDay,
+		OverdraftOn:        false,
+		DailyLimitUSD:      &dailyAmount,
+		WeeklyLimitUSD:     &weeklyLimit,
+		MonthlyLimitUSD:    &monthlyLimit,
+		DailyUsageUSD:      0,
+		WeeklyUsageUSD:     0,
+		MonthlyUsageUSD:    0,
+		DailyWindowStart:   &dailyWindowStart,
+		WeeklyWindowStart:  &weeklyWindowStart,
+		MonthlyWindowStart: &monthlyWindowStart,
+		ActivatedAt:        &activatedAt,
+		AssignedAt:         now,
+		Notes:              input.Notes,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	// 只有当 AssignedBy > 0 时才设置（0 表示系统分配，如兑换码）
 	if input.AssignedBy > 0 {
@@ -1248,19 +1262,20 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 		}
 	}
 
-	// 日进度
-	if group.HasDailyLimit() && sub.DailyWindowStart != nil {
-		limit := *group.DailyLimitUSD
-		resetsAt := sub.DailyWindowStart.Add(24 * time.Hour)
-		if dailyResetTime := sub.DailyResetTime(); dailyResetTime != nil {
-			resetsAt = *dailyResetTime
-		}
+	window := sub.ToSubWindow()
+	now := time.Now()
+	window.ResetWindows(now)
+
+	// 日进度：限额挂卡，不再读取 group.daily_limit_usd。
+	if window.DailyLimitUSD > 0 && window.DailyWindowStart != nil {
+		limit := window.DailyLimitUSD
+		resetsAt := window.DailyWindowStart.Add(24 * time.Hour)
 		progress.Daily = &UsageWindowProgress{
 			LimitUSD:        limit,
-			UsedUSD:         sub.DailyUsageUSD,
-			RemainingUSD:    limit - sub.DailyUsageUSD,
-			Percentage:      (sub.DailyUsageUSD / limit) * 100,
-			WindowStart:     *sub.DailyWindowStart,
+			UsedUSD:         window.DailyUsageUSD,
+			RemainingUSD:    limit - window.DailyUsageUSD,
+			Percentage:      (window.DailyUsageUSD / limit) * 100,
+			WindowStart:     *window.DailyWindowStart,
 			ResetsAt:        resetsAt,
 			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
 		}
@@ -1275,16 +1290,16 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 		}
 	}
 
-	// 周进度
-	if group.HasWeeklyLimit() && sub.WeeklyWindowStart != nil {
-		limit := *group.WeeklyLimitUSD
-		resetsAt := sub.WeeklyWindowStart.Add(7 * 24 * time.Hour)
+	// 周进度：限额挂卡，不再读取 group.weekly_limit_usd。
+	if window.WeeklyLimitUSD > 0 && window.WeeklyWindowStart != nil {
+		limit := window.WeeklyLimitUSD
+		resetsAt := window.WeeklyWindowStart.Add(7 * 24 * time.Hour)
 		progress.Weekly = &UsageWindowProgress{
 			LimitUSD:        limit,
-			UsedUSD:         sub.WeeklyUsageUSD,
-			RemainingUSD:    limit - sub.WeeklyUsageUSD,
-			Percentage:      (sub.WeeklyUsageUSD / limit) * 100,
-			WindowStart:     *sub.WeeklyWindowStart,
+			UsedUSD:         window.WeeklyUsageUSD,
+			RemainingUSD:    limit - window.WeeklyUsageUSD,
+			Percentage:      (window.WeeklyUsageUSD / limit) * 100,
+			WindowStart:     *window.WeeklyWindowStart,
 			ResetsAt:        resetsAt,
 			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
 		}
@@ -1299,16 +1314,16 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 		}
 	}
 
-	// 月进度
-	if group.HasMonthlyLimit() && sub.MonthlyWindowStart != nil {
-		limit := *group.MonthlyLimitUSD
-		resetsAt := sub.MonthlyWindowStart.Add(30 * 24 * time.Hour)
+	// 月进度：限额挂卡，不再读取 group.monthly_limit_usd。
+	if window.MonthlyLimitUSD > 0 && window.MonthlyWindowStart != nil {
+		limit := window.MonthlyLimitUSD
+		resetsAt := window.MonthlyWindowStart.AddDate(0, 1, 0)
 		progress.Monthly = &UsageWindowProgress{
 			LimitUSD:        limit,
-			UsedUSD:         sub.MonthlyUsageUSD,
-			RemainingUSD:    limit - sub.MonthlyUsageUSD,
-			Percentage:      (sub.MonthlyUsageUSD / limit) * 100,
-			WindowStart:     *sub.MonthlyWindowStart,
+			UsedUSD:         window.MonthlyUsageUSD,
+			RemainingUSD:    limit - window.MonthlyUsageUSD,
+			Percentage:      (window.MonthlyUsageUSD / limit) * 100,
+			WindowStart:     *window.MonthlyWindowStart,
 			ResetsAt:        resetsAt,
 			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
 		}

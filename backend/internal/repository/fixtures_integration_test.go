@@ -391,6 +391,9 @@ func mustCreateSubscription(t *testing.T, client *dbent.Client, s *service.UserS
 		SetStatus(s.Status).
 		SetAssignedAt(s.AssignedAt).
 		SetNotes(s.Notes).
+		SetNillableDailyWindowStart(s.DailyWindowStart).
+		SetNillableWeeklyWindowStart(s.WeeklyWindowStart).
+		SetNillableMonthlyWindowStart(s.MonthlyWindowStart).
 		SetDailyUsageUsd(s.DailyUsageUSD).
 		SetWeeklyUsageUsd(s.WeeklyUsageUSD).
 		SetMonthlyUsageUsd(s.MonthlyUsageUSD).
