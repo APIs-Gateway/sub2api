@@ -7,6 +7,8 @@ export interface ParsedWechatResumeRoute {
   orderType: 'balance' | 'subscription'
   paymentType: string
   planId?: number
+  dailyAmountUsd?: number
+  validityDays?: number
   openid?: string
   wechatResumeToken?: string
 }
@@ -40,7 +42,11 @@ export function parseWechatResumeRoute(
   const paymentType = normalizeVisibleMethod(readQueryString(query, 'payment_type')) || 'wxpay'
   const planId = Number.parseInt(readQueryString(query, 'plan_id'), 10)
   const hasPlanId = Number.isFinite(planId) && planId > 0
-  const orderType = readQueryString(query, 'order_type') === 'subscription' || hasPlanId
+  const dailyAmountUsd = Number.parseFloat(readQueryString(query, 'daily_amount_usd'))
+  const hasDailyAmount = Number.isFinite(dailyAmountUsd) && dailyAmountUsd > 0
+  const validityDays = Number.parseInt(readQueryString(query, 'validity_days'), 10)
+  const hasValidityDays = Number.isFinite(validityDays) && validityDays > 0
+  const orderType = readQueryString(query, 'order_type') === 'subscription' || hasPlanId || (hasDailyAmount && hasValidityDays)
     ? 'subscription'
     : 'balance'
 
@@ -51,6 +57,8 @@ export function parseWechatResumeRoute(
       orderType,
       orderAmount: 0,
       planId: hasPlanId ? planId : undefined,
+      dailyAmountUsd: hasDailyAmount ? dailyAmountUsd : undefined,
+      validityDays: hasValidityDays ? validityDays : undefined,
     }
   }
 
@@ -72,6 +80,8 @@ export function parseWechatResumeRoute(
     orderType,
     orderAmount,
     planId: hasPlanId ? planId : undefined,
+    dailyAmountUsd: hasDailyAmount ? dailyAmountUsd : undefined,
+    validityDays: hasValidityDays ? validityDays : undefined,
   }
 }
 
@@ -86,5 +96,7 @@ export function stripWechatResumeQuery(query: LocationQuery): LocationQueryRaw {
   delete nextQuery.amount
   delete nextQuery.order_type
   delete nextQuery.plan_id
+  delete nextQuery.daily_amount_usd
+  delete nextQuery.validity_days
   return nextQuery
 }

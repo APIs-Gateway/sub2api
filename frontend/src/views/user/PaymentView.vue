@@ -429,7 +429,14 @@ async function redirectToPaymentResult(state: PaymentRecoverySnapshot): Promise<
 
 function buildWechatOAuthAuthorizeUrl(
   authorizeUrl: string,
-  context: { paymentType: string; orderType: OrderType; planId?: number; orderAmount: number },
+  context: {
+    paymentType: string
+    orderType: OrderType
+    planId?: number
+    orderAmount: number
+    dailyAmountUsd?: number
+    validityDays?: number
+  },
 ): string {
   const normalizedUrl = authorizeUrl.trim()
   if (!normalizedUrl || typeof window === 'undefined') {
@@ -449,6 +456,13 @@ function buildWechatOAuthAuthorizeUrl(
       redirectUrl.searchParams.set('plan_id', String(context.planId))
     } else {
       redirectUrl.searchParams.delete('plan_id')
+    }
+    if (context.dailyAmountUsd != null && context.validityDays != null) {
+      redirectUrl.searchParams.set('daily_amount_usd', String(context.dailyAmountUsd))
+      redirectUrl.searchParams.set('validity_days', String(context.validityDays))
+    } else {
+      redirectUrl.searchParams.delete('daily_amount_usd')
+      redirectUrl.searchParams.delete('validity_days')
     }
 
     if (context.orderAmount > 0) {
@@ -782,6 +796,8 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
         orderType,
         planId,
         orderAmount,
+        dailyAmountUsd: options.dailyAmountUsd,
+        validityDays: options.validityDays,
       })
       return
     }
@@ -1025,6 +1041,8 @@ async function resumeWechatPaymentFromQuery() {
       wechatResumeToken: resume.wechatResumeToken,
       paymentType: resume.paymentType,
       isResume: true,
+      dailyAmountUsd: resume.dailyAmountUsd,
+      validityDays: resume.validityDays,
     })
     return
   }
@@ -1034,6 +1052,8 @@ async function resumeWechatPaymentFromQuery() {
       openid: resume.openid,
       paymentType: resume.paymentType,
       isResume: true,
+      dailyAmountUsd: resume.dailyAmountUsd,
+      validityDays: resume.validityDays,
     })
   }
 }

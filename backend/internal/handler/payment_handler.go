@@ -320,6 +320,12 @@ func applyWeChatPaymentResumeClaims(req *CreateOrderRequest, claims *service.WeC
 	if claims.PlanID > 0 {
 		req.PlanID = claims.PlanID
 	}
+	if claims.DailyAmountUSD > 0 {
+		req.DailyAmountUSD = claims.DailyAmountUSD
+	}
+	if claims.ValidityDays > 0 {
+		req.ValidityDays = claims.ValidityDays
+	}
 	return nil
 }
 

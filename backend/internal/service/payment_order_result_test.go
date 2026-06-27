@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,34 @@ func TestBuildCreateOrderResponseDefaultsToOrderCreated(t *testing.T) {
 	}
 	if !resp.ExpiresAt.Equal(expiresAt) {
 		t.Fatalf("expires_at = %v, want %v", resp.ExpiresAt, expiresAt)
+	}
+}
+
+func TestBuildWeChatPaymentOAuthStartURLIncludesCustomSubscriptionDT(t *testing.T) {
+	t.Parallel()
+
+	got, err := buildWeChatPaymentOAuthStartURL(CreateOrderRequest{
+		PaymentType:    payment.TypeWxpay,
+		OrderType:      payment.OrderTypeSubscription,
+		Amount:         123.45,
+		DailyAmountUSD: 8.5,
+		ValidityDays:   60,
+		SrcURL:         "https://app.example.com/purchase?tab=subscription",
+	}, "snsapi_base")
+	if err != nil {
+		t.Fatalf("buildWeChatPaymentOAuthStartURL returned error: %v", err)
+	}
+
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse url: %v", err)
+	}
+	q := parsed.Query()
+	if q.Get("daily_amount_usd") != "8.5" || q.Get("validity_days") != "60" {
+		t.Fatalf("custom D/T missing from oauth start url: %s", got)
+	}
+	if q.Get("order_type") != payment.OrderTypeSubscription || q.Get("amount") != "123.45" {
+		t.Fatalf("payment context missing from oauth start url: %s", got)
 	}
 }
 

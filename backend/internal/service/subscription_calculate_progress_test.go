@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,7 +44,7 @@ func TestCalculateProgress_BasicFields(t *testing.T) {
 func TestCalculateProgress_DailyUsage(t *testing.T) {
 	svc := newTestSubscriptionService()
 	now := time.Now()
-	dailyStart := now.Add(-12 * time.Hour)
+	dailyStart := timezone.StartOfDay(now)
 
 	sub := &UserSubscription{
 		ID:               1,
@@ -96,8 +97,9 @@ func TestCalculateProgress_IgnoresLegacyGroupLimits(t *testing.T) {
 
 func TestCalculateProgress_DailyCardUsesNaturalWindowReset(t *testing.T) {
 	svc := newTestSubscriptionService()
-	startsAt := time.Now().Add(-12 * time.Hour)
-	dailyStart := time.Date(startsAt.Year(), startsAt.Month(), startsAt.Day(), 0, 0, 0, 0, startsAt.Location())
+	now := time.Now()
+	dailyStart := timezone.StartOfDay(now)
+	startsAt := dailyStart.Add(12 * time.Hour)
 	expiresAt := startsAt.Add(24 * time.Hour)
 
 	sub := &UserSubscription{
@@ -171,12 +173,13 @@ func TestCalculateProgress_MonthlyUsage(t *testing.T) {
 func TestCalculateProgress_OverLimit_ClampedTo100Percent(t *testing.T) {
 	svc := newTestSubscriptionService()
 	now := time.Now()
+	dailyStart := timezone.StartOfDay(now)
 
 	sub := &UserSubscription{
 		ID:               1,
 		ExpiresAt:        now.Add(10 * 24 * time.Hour),
 		DailyUsageUSD:    15.0, // 超过限额
-		DailyWindowStart: ptrTime(now.Add(-1 * time.Hour)),
+		DailyWindowStart: ptrTime(dailyStart),
 		DailyLimitUSD:    ptrFloat64(10.0),
 	}
 	group := &Group{
@@ -221,6 +224,9 @@ func TestCalculateProgress_NoWindowStart_NoProgress(t *testing.T) {
 func TestCalculateProgress_AllLimits(t *testing.T) {
 	svc := newTestSubscriptionService()
 	now := time.Now()
+	dailyStart := timezone.StartOfDay(now)
+	weeklyStart := timezone.StartOfWeek(now)
+	monthlyStart := timezone.StartOfMonth(now)
 
 	sub := &UserSubscription{
 		ID:                 1,
@@ -228,9 +234,9 @@ func TestCalculateProgress_AllLimits(t *testing.T) {
 		DailyUsageUSD:      5.0,
 		WeeklyUsageUSD:     20.0,
 		MonthlyUsageUSD:    60.0,
-		DailyWindowStart:   ptrTime(now.Add(-6 * time.Hour)),
-		WeeklyWindowStart:  ptrTime(now.Add(-3 * 24 * time.Hour)),
-		MonthlyWindowStart: ptrTime(now.Add(-15 * 24 * time.Hour)),
+		DailyWindowStart:   ptrTime(dailyStart),
+		WeeklyWindowStart:  ptrTime(weeklyStart),
+		MonthlyWindowStart: ptrTime(monthlyStart),
 		DailyLimitUSD:      ptrFloat64(10.0),
 		WeeklyLimitUSD:     ptrFloat64(50.0),
 		MonthlyLimitUSD:    ptrFloat64(100.0),

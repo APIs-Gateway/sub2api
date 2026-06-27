@@ -7,13 +7,13 @@ import (
 // SubscriptionPricingBounds 暴露给前端的自定义购买区间（滑块/输入框范围）。
 // 当前为 DefaultSubscriptionPricingConfig 的默认值；后续若支持管理员配置，仅需在此换源。
 type SubscriptionPricingBounds struct {
-	DMin float64 `json:"d_min"` // 每日额度下限
-	DMax float64 `json:"d_max"` // 每日额度上限
-	UMin float64 `json:"u_min"` // 最便宜单价（最大档）
-	UMax float64 `json:"u_max"` // 最贵单价（最小档）
-	TMin  int `json:"t_min"`  // 最短有效天数
-	TMax  int `json:"t_max"`  // 最长有效天数
-	TStep int `json:"t_step"` // 天数步长：T 必须为该值整数倍（默认 30，按整月购买）
+	DMin  float64 `json:"d_min"`  // 每日额度下限
+	DMax  float64 `json:"d_max"`  // 每日额度上限
+	UMin  float64 `json:"u_min"`  // 最便宜单价（最大档）
+	UMax  float64 `json:"u_max"`  // 最贵单价（最小档）
+	TMin  int     `json:"t_min"`  // 最短有效天数
+	TMax  int     `json:"t_max"`  // 最长有效天数
+	TStep int     `json:"t_step"` // 天数步长：T 必须为该值整数倍（默认 30，按整月购买）
 }
 
 // SubscriptionQuoteResult 自定义购买报价（实时预览与下单冻结同源）：D/T/u/售价 + 派生周/月封顶。

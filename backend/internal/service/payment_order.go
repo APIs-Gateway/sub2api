@@ -1001,6 +1001,12 @@ func buildWeChatPaymentOAuthStartURL(req CreateOrderRequest, scope string) (stri
 	if req.PlanID > 0 {
 		q.Set("plan_id", strconv.FormatInt(req.PlanID, 10))
 	}
+	if req.DailyAmountUSD > 0 {
+		q.Set("daily_amount_usd", strconv.FormatFloat(req.DailyAmountUSD, 'f', -1, 64))
+	}
+	if req.ValidityDays > 0 {
+		q.Set("validity_days", strconv.Itoa(req.ValidityDays))
+	}
 	if scope = strings.TrimSpace(scope); scope != "" {
 		q.Set("scope", scope)
 	}

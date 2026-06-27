@@ -357,6 +357,89 @@ func TestPaymentSubscriptionFulfillment_CreatesThreeWindowCardAndBillsPostgres(t
 	require.InDelta(t, 1000, gotUser.Balance, 1e-9)
 }
 
+func TestPaymentSubscriptionFulfillment_CustomOrderCreatesNoGroupThreeWindowCardPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	paymentSvc := makePaymentServiceForSubscriptionIntegration(t)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:   fmt.Sprintf("custom-sub-fulfillment-%s@example.com", uuid.NewString()),
+		Balance: 1000,
+	})
+
+	const dailyAmount = 7.5
+	const validityDays = 30
+	quote, err := service.DefaultSubscriptionPricingConfig().Quote(dailyAmount, validityDays)
+	require.NoError(t, err)
+	weeklyLimit, monthlyLimit := service.DeriveWindowCaps(dailyAmount, validityDays)
+
+	now := time.Now()
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(quote.Price).
+		SetPayAmount(quote.Price).
+		SetFeeRate(0).
+		SetRechargeCode("PAY-CUSTOM-" + uuid.NewString()).
+		SetOutTradeNo("custom_sub_" + uuid.NewString()).
+		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo("provider-" + uuid.NewString()).
+		SetOrderType(payment.OrderTypeSubscription).
+		SetSubscriptionDays(validityDays).
+		SetProviderSnapshot(map[string]any{
+			"subscription": map[string]any{
+				"daily_amount_usd": dailyAmount,
+				"validity_days":    float64(validityDays),
+				"unit_price":       quote.UnitPrice,
+				"price":            quote.Price,
+				"formula_version":  service.SubscriptionFormulaVersion,
+				"currency":         payment.DefaultPaymentCurrency,
+			},
+		}).
+		SetStatus(service.OrderStatusPaid).
+		SetPaidAt(now).
+		SetExpiresAt(now.Add(time.Hour)).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		Save(ctx)
+	require.NoError(t, err)
+	require.Nil(t, order.SubscriptionGroupID, "自定义订阅订单不应写 subscription_group_id")
+	require.Nil(t, order.PlanID, "自定义订阅订单不应写 plan_id")
+
+	require.NoError(t, paymentSvc.ExecuteSubscriptionFulfillment(ctx, order.ID))
+
+	gotOrder, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.OrderStatusCompleted, gotOrder.Status)
+
+	sub, err := NewUserSubscriptionRepository(client).GetActiveByUserID(ctx, user.ID)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, sub.GroupID, "无 group 自定义卡在 domain 层映射为 group_id=0")
+	require.NotNil(t, sub.DailyLimitUSD)
+	require.NotNil(t, sub.WeeklyLimitUSD)
+	require.NotNil(t, sub.MonthlyLimitUSD)
+	require.InDelta(t, dailyAmount, *sub.DailyLimitUSD, 1e-9)
+	require.InDelta(t, weeklyLimit, *sub.WeeklyLimitUSD, 1e-9)
+	require.InDelta(t, monthlyLimit, *sub.MonthlyLimitUSD, 1e-9)
+	require.InDelta(t, 0, sub.DailyUsageUSD, 1e-9)
+	require.InDelta(t, 0, sub.WeeklyUsageUSD, 1e-9)
+	require.InDelta(t, 0, sub.MonthlyUsageUSD, 1e-9)
+	require.NotNil(t, sub.DailyWindowStart)
+	require.NotNil(t, sub.WeeklyWindowStart)
+	require.NotNil(t, sub.MonthlyWindowStart)
+	require.Equal(t, service.SubscriptionStatusActive, sub.Status)
+
+	var rawGroupID *int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT group_id FROM user_subscriptions WHERE id = $1`, sub.ID).Scan(&rawGroupID))
+	require.Nil(t, rawGroupID, "DB 层 user_subscriptions.group_id 必须为 NULL")
+
+	gotUser, err := client.User.Get(ctx, user.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 1000, gotUser.Balance, 1e-9, "自定义订阅履约只建卡，不给钱包充值")
+}
+
 func TestSubscriptionServiceAssignOrExtend_ConcurrentCreatesSingleActiveCardPostgres(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)

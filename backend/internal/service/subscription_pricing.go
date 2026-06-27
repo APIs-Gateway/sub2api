@@ -24,13 +24,13 @@ const SubscriptionFormulaVersion = 1
 // SubscriptionPricingConfig 定价端点与自定义范围（规格第 3/10 节，均「可调」）。
 // 当前用默认值；后续可由管理员配置覆盖（下单时仍按订单冻结快照发卡，改配置不影响已下单）。
 type SubscriptionPricingConfig struct {
-	DMin float64 // 最小档每日额度（官方刀/天）
-	DMax float64 // 最大档每日额度
-	UMax float64 // 最小档单价（最贵）
-	UMin float64 // 最大档单价（最便宜）
-	TMin  int // 自定义最短天数（默认 30 天起买，挤掉短期大 D 套利空间）
-	TMax  int // 自定义最长天数
-	TStep int // 自定义天数步长：T 必须为 TStep 的整数倍（默认 30，即只能按整月购买 30/60/90…）
+	DMin  float64 // 最小档每日额度（官方刀/天）
+	DMax  float64 // 最大档每日额度
+	UMax  float64 // 最小档单价（最贵）
+	UMin  float64 // 最大档单价（最便宜）
+	TMin  int     // 自定义最短天数（默认 30 天起买，挤掉短期大 D 套利空间）
+	TMax  int     // 自定义最长天数
+	TStep int     // 自定义天数步长：T 必须为 TStep 的整数倍（默认 30，即只能按整月购买 30/60/90…）
 }
 
 // DefaultSubscriptionPricingConfig 规格默认值：D∈[1,50]、u∈[1.0,2.0]、T∈[30,90] 且 T 为 30 的倍数。
