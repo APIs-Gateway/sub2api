@@ -415,12 +415,19 @@ func TestAPIContracts(t *testing.T) {
 						"daily_usage_usd": 1.23,
 						"weekly_usage_usd": 2.34,
 						"monthly_usage_usd": 3.45,
+						"daily_limit_usd": null,
+						"weekly_limit_usd": null,
+						"monthly_limit_usd": null,
 						"granted_total_usd": 0,
 						"daily_amount_usd": 0,
 						"consumed_usd": 0,
 						"clawed_usd": 0,
 						"remaining_usd": 0,
 						"consumption_day": 0,
+						"max_overdraft_uses": 5,
+						"total_overdraft_count": 0,
+						"remaining_overdraft_uses": 5,
+						"can_enable_overdraft": true,
 						"created_at": "2025-01-02T03:04:05Z",
 						"updated_at": "2025-01-02T03:04:05Z"
 					}
@@ -1998,6 +2005,9 @@ func (stubUserSubscriptionRepo) GetActiveByUserIDAndGroupID(ctx context.Context,
 	return nil, errors.New("not implemented")
 }
 func (stubUserSubscriptionRepo) GetActiveByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return nil, errors.New("not implemented")
+}
+func (stubUserSubscriptionRepo) GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 func (stubUserSubscriptionRepo) Update(ctx context.Context, sub *service.UserSubscription) error {
