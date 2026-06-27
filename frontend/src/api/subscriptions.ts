@@ -80,11 +80,49 @@ export async function setOverdraftDays(
   })
 }
 
+/** 续费结果（同档延长发放期，从余额扣续费价）。 */
+export interface RenewResult {
+  subscription_id: number
+  added_days: number
+  price: number
+  new_expire_day: number
+}
+
+/** 转套餐结果（旧卡折剩余价值抵新套餐，多退少补）。 */
+export interface ChangePlanResult {
+  old_subscription_id: number
+  new_subscription_id: number
+  old_remaining_value: number
+  new_plan_price: number
+  /** P_新 − V：>0 已从余额扣的补差价；<0 已退进余额的差价；0 持平。 */
+  diff: number
+  new_card_today_balance: number
+  new_expire_day: number
+}
+
+/** 续费当前生效卡：同套餐（相同每日额度）续 T' 天，从其他余额扣续费价。 */
+export async function renewSubscription(planId: number): Promise<RenewResult> {
+  const response = await apiClient.post<RenewResult>('/subscriptions/renew', {
+    plan_id: planId,
+  })
+  return response.data
+}
+
+/** 转套餐：旧卡按剩余天数折价抵扣新套餐，多退少补；每自然日最多一次。 */
+export async function changeSubscriptionPlan(planId: number): Promise<ChangePlanResult> {
+  const response = await apiClient.post<ChangePlanResult>('/subscriptions/change-plan', {
+    plan_id: planId,
+  })
+  return response.data
+}
+
 export default {
   getMySubscriptions,
   getActiveSubscriptions,
   getSubscriptionsProgress,
   getSubscriptionSummary,
   getSubscriptionProgress,
-  setOverdraftDays
+  setOverdraftDays,
+  renewSubscription,
+  changeSubscriptionPlan
 }

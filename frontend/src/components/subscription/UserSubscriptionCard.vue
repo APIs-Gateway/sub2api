@@ -47,18 +47,22 @@
         >
           {{ t(`userSubscriptions.status.${subscription.status}`) }}
         </span>
-        <button
-          v-if="subscription.status === 'active'"
-          class="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
-          @click="
-            router.push({
-              path: '/purchase',
-              query: { tab: 'subscription', group: String(subscription.group_id) }
-            })
-          "
-        >
-          {{ t('payment.renewNow') }}
-        </button>
+        <div v-if="subscription.status === 'active'" class="flex items-center gap-2">
+          <button
+            type="button"
+            class="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+            @click="openLifecycle('renew')"
+          >
+            {{ t('payment.renewNow') }}
+          </button>
+          <button
+            type="button"
+            class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-dark-600 dark:text-gray-200 dark:hover:bg-dark-700"
+            @click="openLifecycle('change')"
+          >
+            {{ t('userSubscriptions.lifecycle.changeTitle') }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -314,15 +318,24 @@
         </div>
       </div>
     </div>
+
+    <SubscriptionLifecycleDialog
+      v-if="lifecycleMode"
+      :show="showLifecycle"
+      :mode="lifecycleMode"
+      :subscription="subscription"
+      @close="showLifecycle = false"
+      @done="onLifecycleDone"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import subscriptionsAPI from '@/api/subscriptions'
+import SubscriptionLifecycleDialog from '@/components/subscription/SubscriptionLifecycleDialog.vue'
 import type { UserSubscription } from '@/types'
 import { formatDateOnly } from '@/utils/format'
 import { platformBorderClass, platformBadgeClass, platformLabel } from '@/utils/platformColors'
@@ -341,12 +354,23 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const router = useRouter()
 const appStore = useAppStore()
 
 // 本卡「最多透支天数」的可编辑值（空串 = 关闭透支）。
 const overdraftEdit = ref<number | string>('')
 const saving = ref(false)
+
+// 续费 / 转套餐 生命周期对话框。
+const showLifecycle = ref(false)
+const lifecycleMode = ref<'renew' | 'change' | null>(null)
+function openLifecycle(mode: 'renew' | 'change') {
+  lifecycleMode.value = mode
+  showLifecycle.value = true
+}
+function onLifecycleDone() {
+  showLifecycle.value = false
+  emit('saved')
+}
 
 // 跟随传入卡片初始化编辑值：用满透支或未开启时显示为空（关闭）。
 watch(
