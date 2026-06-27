@@ -29,6 +29,12 @@ type UserSubscription struct {
 	WeeklyUsageUSD  float64
 	MonthlyUsageUSD float64
 
+	// 三窗口限额（per-day→三窗口 redesign，限额从 group 搬到订阅卡自身）；nil = 该窗口不限。
+	// 与上方 *_usage_usd 配对：三窗口 usage < limit 才由订阅 1:1 覆盖（见 subscription_window.go）。
+	DailyLimitUSD   *float64
+	WeeklyLimitUSD  *float64
+	MonthlyLimitUSD *float64
+
 	// Burn-down 计费模型字段
 	GrantedTotalUSD     float64    // G = D × days，开通时一次性发放总额
 	DailyAmountUSD      float64    // D，开通时对 group.daily_limit_usd 的快照
