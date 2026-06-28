@@ -15,6 +15,7 @@ import (
 // 3. X-Forwarded-For (取第一个非私有 IP)
 // 4. c.ClientIP() (Gin 内置方法)
 func GetClientIP(c *gin.Context) string {
+	// codecov-patch 验证用改动(测试 PR,验证 check 后即关闭、不合并)
 	// 1. Cloudflare
 	if ip := c.GetHeader("CF-Connecting-IP"); ip != "" {
 		return normalizeIP(ip)
