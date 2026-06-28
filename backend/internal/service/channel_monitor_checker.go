@@ -350,7 +350,7 @@ func appendSSEDelta(sb *strings.Builder, provider, apiMode, jsonStr string) {
 		if t, _ := data["type"].(string); t == "content_block_delta" {
 			if delta, ok := data["delta"].(map[string]any); ok {
 				if text, ok := delta["text"].(string); ok {
-					sb.WriteString(text)
+					_, _ = sb.WriteString(text)
 				}
 			}
 		}
@@ -358,7 +358,7 @@ func appendSSEDelta(sb *strings.Builder, provider, apiMode, jsonStr string) {
 		// Responses API: response.output_text.delta -> delta(string)
 		if t, _ := data["type"].(string); t == "response.output_text.delta" {
 			if delta, ok := data["delta"].(string); ok {
-				sb.WriteString(delta)
+				_, _ = sb.WriteString(delta)
 			}
 		}
 	case provider == MonitorProviderOpenAI:
@@ -381,12 +381,12 @@ func appendOpenAIChatSSEDelta(sb *strings.Builder, data map[string]any) {
 		}
 		if delta, ok := choice["delta"].(map[string]any); ok {
 			if text, ok := delta["content"].(string); ok {
-				sb.WriteString(text)
+				_, _ = sb.WriteString(text)
 			}
 		}
 		if message, ok := choice["message"].(map[string]any); ok {
 			if text, ok := message["content"].(string); ok {
-				sb.WriteString(text)
+				_, _ = sb.WriteString(text)
 			}
 		}
 	}
@@ -418,7 +418,7 @@ func appendGeminiSSEDelta(sb *strings.Builder, data map[string]any) {
 		for _, pv := range parts {
 			if part, ok := pv.(map[string]any); ok {
 				if text, ok := part["text"].(string); ok {
-					sb.WriteString(text)
+					_, _ = sb.WriteString(text)
 				}
 			}
 		}

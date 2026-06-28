@@ -262,7 +262,7 @@ func TestSynthesizePricingFromLiteLLM_LongContextTier(t *testing.T) {
 	require.InDelta(t, 2.5e-6, *got.Intervals[0].InputPrice, 1e-12)
 	require.Equal(t, 272000, got.Intervals[1].MinTokens)
 	require.Nil(t, got.Intervals[1].MaxTokens)
-	require.InDelta(t, 5e-6, *got.Intervals[1].InputPrice, 1e-12)   // 2.5 × 2
+	require.InDelta(t, 5e-6, *got.Intervals[1].InputPrice, 1e-12)     // 2.5 × 2
 	require.InDelta(t, 2.25e-5, *got.Intervals[1].OutputPrice, 1e-12) // 15 × 1.5
 
 	// mini 不应有长上下文阶梯。
