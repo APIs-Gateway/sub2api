@@ -105,6 +105,10 @@ type UpdatePaymentConfigRequest struct {
 	VisibleMethodWxpaySource   *string `json:"payment_visible_method_wxpay_source"`
 	VisibleMethodAlipayEnabled *bool   `json:"payment_visible_method_alipay_enabled"`
 	VisibleMethodWxpayEnabled  *bool   `json:"payment_visible_method_wxpay_enabled"`
+
+	// KyrenWebhookSecret 设置 Kyren 原生 webhook(order.refunded)的验签密钥。仅在非 nil 时写入,
+	// 避免被其它配置保存清空;为安全不在 GetConfig 回显原值。
+	KyrenWebhookSecret *string `json:"kyren_webhook_secret"`
 }
 
 // MethodLimits holds per-payment-type limits.
@@ -348,6 +352,10 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 		m[SettingEnabledPaymentTypes] = strings.Join(req.EnabledTypes, ",")
 	} else {
 		m[SettingEnabledPaymentTypes] = ""
+	}
+	// Kyren webhook 密钥:仅在显式提供时写入(其余字段是「nil→空串覆盖」语义,密钥不能跟随被清空)。
+	if req.KyrenWebhookSecret != nil {
+		m[SettingKyrenWebhookSecret] = strings.TrimSpace(*req.KyrenWebhookSecret)
 	}
 	return s.settingRepo.SetMultiple(ctx, m)
 }
