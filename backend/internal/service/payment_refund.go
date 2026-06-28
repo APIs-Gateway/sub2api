@@ -248,7 +248,11 @@ func (s *PaymentService) PrepareRefund(ctx context.Context, oid int64, amt float
 		rr = fmt.Sprintf("refund order:%d", o.ID)
 	}
 	p := &RefundPlan{OrderID: oid, Order: o, RefundAmount: amt, GatewayAmount: ga, Reason: rr, Force: force, DeductBalance: deduct, DeductionType: payment.DeductionTypeNone}
-	if deduct {
+	// 订阅订单退款必关卡(规格 §6/§8#20「退款即关卡,无条件」),不受 deduct_balance 开关控制:
+	// 关卡计划须始终构建(prepDeduct 对订阅单设 DeductionType=Subscription + 关卡/还原天数),
+	// 否则 deduct_balance=false 时 ExecuteRefund 的关卡门(DeductionType==Subscription)不成立、
+	// 而 gwRefund 仍无条件原路退法币 → 用户拿到现金退款却仍持 active 卡继续用(资损)。
+	if deduct || o.OrderType == payment.OrderTypeSubscription {
 		if er := s.prepDeduct(ctx, o, p, force); er != nil {
 			return nil, er, nil
 		}

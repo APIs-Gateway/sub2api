@@ -83,6 +83,15 @@ func (s *SubscriptionService) ApplyRenewFromOrder(ctx context.Context, subscript
 		if _, _, err := s.userSubRepo.GrantSubscriptionDays(txCtx, subscriptionID, addDays, now, now); err != nil {
 			return fmt.Errorf("grant renew days: %w", err)
 		}
+		// 复活惰性过期卡:续费允许作用于「status=active 但已惰性过期」的卡(见 QuoteRenewOrder),
+		// 而后台 SubscriptionExpiryService 可能在「下单→支付成功」窗口内把它翻成 expired。GrantSubscriptionDays
+		// 只延 expires_at/expire_day、不动 status,若不补复活则延期后 status 仍 expired → 准入/结算全过滤
+		// status=active → 用户付了钱却拿到一张不可见的死卡。与 admin ExtendSubscription 同口径,显式复活。
+		if sub.Status != SubscriptionStatusActive {
+			if err := s.userSubRepo.UpdateStatus(txCtx, subscriptionID, SubscriptionStatusActive); err != nil {
+				return fmt.Errorf("revive subscription status: %w", err)
+			}
+		}
 		return nil
 	}); err != nil {
 		return nil, err
