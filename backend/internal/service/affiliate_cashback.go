@@ -293,7 +293,6 @@ func (s *AffiliateService) AccrueCashbackForRedeem(ctx context.Context, inviteeU
 			return 0, nil
 		}
 		baseAmount = roundTo(redeemCode.Value, 8)
-		found = true
 	case RedeemTypeSubscription:
 		if redeemCode.GroupID == nil || redeemCode.ValidityDays <= 0 {
 			return 0, nil

@@ -20,11 +20,11 @@ func TestCanonicalizeEmail_Enabled(t *testing.T) {
 		{"a.b+c@outlook.com", "a.b+c@outlook.com"},
 		{"A.B@Example.COM", "a.b@example.com"},
 		// 退化/异常：原样（lower+trim）
-		{"+tag@gmail.com", "+tag@gmail.com"},   // 本地部分清空后退化
-		{"...@gmail.com", "...@gmail.com"},     // 全点退化
-		{"not-an-email", "not-an-email"},       // 无 @
-		{"trailing@", "trailing@"},             // 无域名
-		{"@gmail.com", "@gmail.com"},           // 无本地
+		{"+tag@gmail.com", "+tag@gmail.com"}, // 本地部分清空后退化
+		{"...@gmail.com", "...@gmail.com"},   // 全点退化
+		{"not-an-email", "not-an-email"},     // 无 @
+		{"trailing@", "trailing@"},           // 无域名
+		{"@gmail.com", "@gmail.com"},         // 无本地
 		{"", ""},
 	}
 	for _, c := range cases {
