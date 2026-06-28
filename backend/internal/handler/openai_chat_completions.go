@@ -321,6 +321,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		clientIP := ip.GetClientIP(c)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := resolveRawCCUpstreamEndpoint(c, account)
+		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		// 稳定优先方案 Y：兜底时按实际服务档位组倍率计费（normal 态为 0，不影响正常计费）。
 		stableServedGroupID := scheduleDecision.StableServedGroupID
 		stableServedRate := scheduleDecision.StableServedRateMultiplier
@@ -343,6 +344,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				UserAgent:                        userAgent,
 				IPAddress:                        clientIP,
 				APIKeyService:                    h.apiKeyService,
+				QuotaPlatform:                    quotaPlatform,
 				ChannelUsageFields:               effectiveMapping.ToUsageFields(reqModel, result.UpstreamModel),
 				CyberBlocked:                     cyberBlocked,
 				StableServedGroupID:              stableServedGroupID,
