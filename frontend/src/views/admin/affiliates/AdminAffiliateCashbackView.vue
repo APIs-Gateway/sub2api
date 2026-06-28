@@ -94,8 +94,7 @@ import type { Column } from '@/components/common/types'
 import { useAppStore } from '@/stores/app'
 import { formatCurrency, formatDateTime } from '@/utils/format'
 import { extractApiErrorMessage } from '@/utils/apiError'
-import { getCashbackSettings, updateCashbackSettings, listCashbackRecords, type CashbackFaceValue } from '@/api/admin/inviteCashback'
-import type { InviteCashbackRecord } from '@/api/inviteCashback'
+import { getCashbackSettings, updateCashbackSettings, listCashbackRecords, type CashbackFaceValue, type InviteCashbackRecord } from '@/api/admin/inviteCashback'
 
 const props = withDefaults(defineProps<{
   showSettings?: boolean

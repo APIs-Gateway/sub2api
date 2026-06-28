@@ -148,11 +148,6 @@ export interface UserAffiliateDetail {
   invitees: AffiliateInvitee[]
 }
 
-export interface AffiliateTransferResponse {
-  transferred_quota: number
-  balance: number
-}
-
 export interface SendVerifyCodeRequest {
   email: string
   turnstile_token?: string

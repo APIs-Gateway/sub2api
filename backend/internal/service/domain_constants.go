@@ -35,6 +35,24 @@ const (
 	AffiliateRebatePerInviteeCapDefault = 0.0   // 0 = 无上限
 )
 
+// Points（邀请返利积分制，issue #11）settings 默认值
+const (
+	PointsEnabledDefault            = false // 积分功能总开关默认关闭
+	PointsPegDefault                = 0.01  // 1 积分 = 0.01 balance 单位（100 积分 = 1 单位）
+	PointsPegMin                    = 0.0000001
+	PointsCashbackRateDefault       = 0.0 // 返积分比例默认 0（开功能后再配）
+	PointsCashbackRateMin           = 0.0
+	PointsCashbackRateMax           = 100.0
+	PointsFreezeHoursDefault        = 0   // 0 = 不冻结
+	PointsFreezeHoursMax            = 720 // 最大 30 天
+	PointsWithdrawEnabledDefault    = false
+	PointsWithdrawMinDefault        = 0   // 最低提现积分，0 = 不限制
+	PointsWithdrawFeePercentDefault = 0.0 // 提现手续费默认 0
+	PointsWithdrawFeePercentMax     = 100.0
+	PointsRedeemBalanceOnDefault    = true // 换余额默认开（功能总开关控）
+	PointsRedeemPlanOnDefault       = true // 换套餐默认开
+)
+
 // Check-in（每日签到）settings 默认值
 const (
 	CheckinEnabledDefault       = false            // 签到功能默认关闭
@@ -155,24 +173,34 @@ const (
 	SettingKeyAffiliateRebateFreezeHours       = "affiliate_rebate_freeze_hours"       // 返利冻结期（小时，0=不冻结）
 	SettingKeyAffiliateRebateDurationDays      = "affiliate_rebate_duration_days"      // 返利有效期（天，0=永久）
 	SettingKeyAffiliateRebatePerInviteeCap     = "affiliate_rebate_per_invitee_cap"    // 单人返利上限（0=无上限）
-	SettingKeyCheckinEnabled                   = "checkin_enabled"                     // 每日签到功能总开关
-	SettingKeyCheckinAmountMin                 = "checkin_amount_min"                  // 签到随机奖励下限（USD）
-	SettingKeyCheckinAmountMax                 = "checkin_amount_max"                  // 签到随机奖励上限（USD）
-	SettingKeyCheckinSpendPerExtra             = "checkin_spend_per_extra"             // 每满$X消费解锁一次额外签到（0=不开放）
-	SettingKeyCheckinMinTokens                 = "checkin_min_tokens"                  // 基础签到所需当日最低 Token 用量（0=不限制）
-	SettingKeyPublicBenefitIPCapEnabled        = "public_benefit_ip_cap_enabled"       // 公益 key 单 IP 每日额度上限总开关
-	SettingKeyPublicBenefitIPDailyCapUSD       = "public_benefit_ip_daily_cap_usd"     // 公益 key 单 IP 每自然日上限（USD）
-	SettingKeyPublicBenefitKeyNames            = "public_benefit_key_names"            // 公益 key 名单（逗号分隔，精确匹配 name）
-	SettingKeyPublicBenefitIPCapMessage        = "public_benefit_ip_cap_message"       // 超额返回文案（HTTP 200）
-	SettingKeyPublicBenefitIPWhitelist         = "public_benefit_ip_whitelist"         // 公益 IP 上限白名单（逗号分隔，命中豁免且不累加）
-	SettingKeyRiskControlEnabled               = "risk_control_enabled"                // 是否启用风控中心入口与审计链路
-	SettingKeyContentModerationConfig          = "content_moderation_config"           // 内容审计配置（JSON）
-	SettingKeyCyberSessionBlockEnabled         = "cyber_session_block_enabled"         // cyber 命中后会话级自动屏蔽总开关(默认关)
-	SettingKeyCyberSessionBlockTTLSeconds      = "cyber_session_block_ttl_seconds"     // 会话屏蔽 TTL 秒数(默认 3600)
-	SettingKeyLoginAgreementEnabled            = "login_agreement_enabled"             // 登录前是否要求同意条款
-	SettingKeyLoginAgreementMode               = "login_agreement_mode"                // 条款确认展示模式：modal / checkbox
-	SettingKeyLoginAgreementUpdatedAt          = "login_agreement_updated_at"          // 条款更新日期（展示用）
-	SettingKeyLoginAgreementDocuments          = "login_agreement_documents"           // 条款文档列表（JSON，Markdown 内容）
+	// 邀请返利积分制（issue #11）
+	SettingKeyPointsEnabled               = "points_enabled"                  // 积分功能总开关
+	SettingKeyPointsPeg                   = "points_peg"                      // 积分面值：1 积分 = ? balance 单位（默认 0.01）
+	SettingKeyPointsCashbackRate          = "points_cashback_rate"            // 返积分比例（百分比，0-100）
+	SettingKeyPointsFreezeHours           = "points_freeze_hours"             // 返积分冻结期（小时，0=不冻结）
+	SettingKeyPointsWithdrawEnabled       = "points_withdraw_enabled"         // 积分提现子开关
+	SettingKeyPointsWithdrawMin           = "points_withdraw_min"             // 最低提现积分
+	SettingKeyPointsWithdrawFeePercent    = "points_withdraw_fee_percent"     // 提现手续费（百分比，0-100）
+	SettingKeyPointsRedeemBalanceOn       = "points_redeem_balance_on"        // 积分换余额子开关
+	SettingKeyPointsRedeemPlanOn          = "points_redeem_plan_on"           // 积分换套餐子开关
+	SettingKeyCheckinEnabled              = "checkin_enabled"                 // 每日签到功能总开关
+	SettingKeyCheckinAmountMin            = "checkin_amount_min"              // 签到随机奖励下限（USD）
+	SettingKeyCheckinAmountMax            = "checkin_amount_max"              // 签到随机奖励上限（USD）
+	SettingKeyCheckinSpendPerExtra        = "checkin_spend_per_extra"         // 每满$X消费解锁一次额外签到（0=不开放）
+	SettingKeyCheckinMinTokens            = "checkin_min_tokens"              // 基础签到所需当日最低 Token 用量（0=不限制）
+	SettingKeyPublicBenefitIPCapEnabled   = "public_benefit_ip_cap_enabled"   // 公益 key 单 IP 每日额度上限总开关
+	SettingKeyPublicBenefitIPDailyCapUSD  = "public_benefit_ip_daily_cap_usd" // 公益 key 单 IP 每自然日上限（USD）
+	SettingKeyPublicBenefitKeyNames       = "public_benefit_key_names"        // 公益 key 名单（逗号分隔，精确匹配 name）
+	SettingKeyPublicBenefitIPCapMessage   = "public_benefit_ip_cap_message"   // 超额返回文案（HTTP 200）
+	SettingKeyPublicBenefitIPWhitelist    = "public_benefit_ip_whitelist"     // 公益 IP 上限白名单（逗号分隔，命中豁免且不累加）
+	SettingKeyRiskControlEnabled          = "risk_control_enabled"            // 是否启用风控中心入口与审计链路
+	SettingKeyContentModerationConfig     = "content_moderation_config"       // 内容审计配置（JSON）
+	SettingKeyCyberSessionBlockEnabled    = "cyber_session_block_enabled"     // cyber 命中后会话级自动屏蔽总开关(默认关)
+	SettingKeyCyberSessionBlockTTLSeconds = "cyber_session_block_ttl_seconds" // 会话屏蔽 TTL 秒数(默认 3600)
+	SettingKeyLoginAgreementEnabled       = "login_agreement_enabled"         // 登录前是否要求同意条款
+	SettingKeyLoginAgreementMode          = "login_agreement_mode"            // 条款确认展示模式：modal / checkbox
+	SettingKeyLoginAgreementUpdatedAt     = "login_agreement_updated_at"      // 条款更新日期（展示用）
+	SettingKeyLoginAgreementDocuments     = "login_agreement_documents"       // 条款文档列表（JSON，Markdown 内容）
 
 	// 邮件服务设置
 	SettingKeySMTPHost     = "smtp_host"      // SMTP服务器地址

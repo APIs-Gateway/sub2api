@@ -11,6 +11,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
 
@@ -143,6 +144,12 @@ type RedeemService struct {
 	entClient            *dbent.Client
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	affiliateService     *AffiliateService
+	pointsService        *PointsService
+}
+
+// SetPointsService 注入积分服务（方案 C：兑换码返积分）。用 setter 避免 wire 构造环。
+func (s *RedeemService) SetPointsService(pointsService *PointsService) {
+	s.pointsService = pointsService
 }
 
 // NewRedeemService 创建兑换码服务实例
@@ -488,11 +495,9 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		return nil, fmt.Errorf("unsupported redeem type: %s", redeemCode.Type)
 	}
 
-	if shouldAccrueAffiliateCashbackForRedeem(redeemCode) && s.affiliateService != nil && txCtx.Value(ctxKeySkipRedeemAffiliate{}) == nil {
-		if _, err := s.affiliateService.AccrueCashbackForRedeem(txCtx, userID, redeemCode); err != nil {
-			return nil, fmt.Errorf("accrue affiliate cashback: %w", err)
-		}
-	}
+	// 方案 C：兑换码返积分（替代旧 cashback→$）。改为「提交后、最佳努力非阻断」：
+	// 失败只记日志、绝不回滚已兑付的兑换码（与订单 earning 钩子一致）。skip 标记沿用旧语义
+	// （充值单经 redeem 兑付时由订单 earning 负责，避免双返）。
 
 	// 提交事务
 	if err := tx.Commit(); err != nil {
@@ -506,6 +511,12 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	redeemCode, err = s.redeemRepo.GetByID(ctx, redeemCode.ID)
 	if err != nil {
 		return nil, fmt.Errorf("get updated redeem code: %w", err)
+	}
+
+	if s.pointsService != nil && ctx.Value(ctxKeySkipRedeemAffiliate{}) == nil {
+		if _, err := s.pointsService.AccrueEarnForRedeem(ctx, userID, redeemCode); err != nil {
+			logger.LegacyPrintf("service.redeem", "[Redeem] points earn failed for user %d code %d: %v", userID, redeemCode.ID, err)
+		}
 	}
 
 	return redeemCode, nil

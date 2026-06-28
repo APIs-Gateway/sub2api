@@ -103,6 +103,22 @@ func RegisterAdminRoutes(
 
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
+
+		// 邀请返利积分制（issue #11）
+		registerPointsRoutes(admin, h)
+	}
+}
+
+// registerPointsRoutes 注册积分制后台路由：配置、提现审核队列、流水查询。
+func registerPointsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	points := admin.Group("/points")
+	{
+		points.GET("/settings", h.Admin.Points.GetSettings)
+		points.PUT("/settings", h.Admin.Points.UpdateSettings)
+		points.GET("/withdrawals", h.Admin.Points.ListWithdrawals)
+		points.POST("/withdrawals/:id/approve", h.Admin.Points.ApproveWithdrawal)
+		points.POST("/withdrawals/:id/reject", h.Admin.Points.RejectWithdrawal)
+		points.GET("/ledger", h.Admin.Points.ListLedger)
 	}
 }
 
@@ -664,7 +680,6 @@ func registerAffiliateRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		affiliates.GET("/cashback/records", h.Admin.Affiliate.ListCashbackRecords)
 		affiliates.GET("/invites", h.Admin.Affiliate.ListInviteRecords)
 		affiliates.GET("/rebates", h.Admin.Affiliate.ListRebateRecords)
-		affiliates.GET("/transfers", h.Admin.Affiliate.ListTransferRecords)
 
 		users := affiliates.Group("/users")
 		{

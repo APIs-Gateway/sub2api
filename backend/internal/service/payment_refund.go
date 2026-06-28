@@ -534,6 +534,8 @@ func (s *PaymentService) markRefundOk(ctx context.Context, p *RefundPlan) (*Refu
 		"balanceDeducted":   p.BalanceToDeduct,
 		"force":             p.Force,
 	})
+	// 邀请返利积分制（issue #11）clawback 唯一挂点：退款最终落单成功后，按实退比例撤回邀请人积分。
+	s.applyPointsClawbackForOrder(ctx, p.Order.ID, p.RefundAmount, p.Order.Amount)
 	return &RefundResult{
 		Success:         true,
 		BalanceDeducted: p.BalanceToDeduct,
@@ -542,6 +544,22 @@ func (s *PaymentService) markRefundOk(ctx context.Context, p *RefundPlan) (*Refu
 		RefundFeeRate:   p.RefundFeeRate,
 		RefundFeeAmount: p.RefundFeeAmount,
 	}, nil
+}
+
+// applyPointsClawbackForOrder 退款撤回积分（仅由 markRefundOk 调用）。**最佳努力非阻断**：自吞错误
+// （仅写审计），不影响退款落单。按实退比例 floor 撤、可转负、一单一撤幂等（详见 PointsService）。
+func (s *PaymentService) applyPointsClawbackForOrder(ctx context.Context, orderID int64, refundAmount, originalAmount float64) {
+	if s == nil || s.pointsService == nil || orderID <= 0 || originalAmount <= 0 {
+		return
+	}
+	clawed, err := s.pointsService.ClawbackForOrder(ctx, orderID, refundAmount, originalAmount)
+	if err != nil {
+		s.writeAuditLog(ctx, orderID, "POINTS_CLAWBACK_FAILED", "system", map[string]any{"error": err.Error()})
+		return
+	}
+	if clawed > 0 {
+		s.writeAuditLog(ctx, orderID, "POINTS_CLAWBACK_APPLIED", "system", map[string]any{"points": clawed, "refundAmount": refundAmount})
+	}
 }
 
 func (s *PaymentService) RollbackRefund(ctx context.Context, p *RefundPlan, gErr error) bool {

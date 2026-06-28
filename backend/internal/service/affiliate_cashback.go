@@ -87,25 +87,9 @@ type AffiliateCashbackRepository interface {
 	ListCashbackSubscriptionMappings(ctx context.Context) ([]AffiliateCashbackSubscriptionMapping, error)
 	ReplaceCashbackSubscriptionMappings(ctx context.Context, entries []AffiliateCashbackSubscriptionMapping) error
 	GetSubscriptionCashbackBaseAmount(ctx context.Context, groupID int64, validityDays int) (float64, bool, error)
-	ApplyRedeemCashback(ctx context.Context, input AffiliateRedeemCashbackInput) (bool, error)
 	ListCashbackRecords(ctx context.Context, filter AffiliateRecordFilter) ([]AffiliateCashbackRecord, int64, error)
 	ListUserCashbackRecords(ctx context.Context, userID int64, limit int) ([]AffiliateCashbackRecord, error)
 	GetUserCashbackTotal(ctx context.Context, userID int64) (float64, error)
-}
-
-type AffiliateRedeemCashbackInput struct {
-	InviterID            int64
-	InviteeUserID        int64
-	RedeemCodeID         int64
-	RedeemCode           string
-	RedeemCodeType       string
-	RedeemValue          float64
-	SubscriptionGroupID  *int64
-	SubscriptionGroup    string
-	SubscriptionValidity *int
-	BaseAmount           float64
-	RatePercent          float64
-	CashbackAmount       float64
 }
 
 func (s *SettingService) IsAffiliateCashbackEnabled(ctx context.Context) bool {
@@ -263,77 +247,17 @@ func (s *AffiliateService) BindInviterByCodeStrict(ctx context.Context, userID i
 	return nil
 }
 
-func (s *AffiliateService) AccrueCashbackForRedeem(ctx context.Context, inviteeUserID int64, redeemCode *RedeemCode) (float64, error) {
-	if s == nil || s.repo == nil || inviteeUserID <= 0 || redeemCode == nil || redeemCode.ID <= 0 {
-		return 0, nil
-	}
-	if redeemCode.Type != RedeemTypeBalance && redeemCode.Type != RedeemTypeSubscription {
-		return 0, nil
-	}
-	if s.settingService == nil || !s.settingService.IsAffiliateCashbackEnabled(ctx) {
-		return 0, nil
+// SubscriptionRebateBaseAmount 返回订阅兑换码的返利计价 base（官方价 balance 单位）。
+// 复用订阅返现 base 映射配置——方案 C 把 cashback 改为返积分后，此映射作为「订阅返利 base」被 points 继续复用。
+func (s *AffiliateService) SubscriptionRebateBaseAmount(ctx context.Context, groupID int64, validityDays int) (float64, bool, error) {
+	if s == nil || s.repo == nil {
+		return 0, false, nil
 	}
 	cashbackRepo, ok := s.repo.(AffiliateCashbackRepository)
 	if !ok {
-		return 0, infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate cashback repository unavailable")
+		return 0, false, nil
 	}
-	inviteeSummary, err := s.repo.EnsureUserAffiliate(ctx, inviteeUserID)
-	if err != nil {
-		return 0, err
-	}
-	if inviteeSummary.InviterID == nil || *inviteeSummary.InviterID <= 0 {
-		return 0, nil
-	}
-
-	baseAmount := 0.0
-	var found bool
-	switch redeemCode.Type {
-	case RedeemTypeBalance:
-		if redeemCode.Value <= 0 {
-			return 0, nil
-		}
-		baseAmount = roundTo(redeemCode.Value, 8)
-	case RedeemTypeSubscription:
-		if redeemCode.GroupID == nil || redeemCode.ValidityDays <= 0 {
-			return 0, nil
-		}
-		baseAmount, found, err = cashbackRepo.GetSubscriptionCashbackBaseAmount(ctx, *redeemCode.GroupID, redeemCode.ValidityDays)
-		if err != nil || !found || baseAmount <= 0 {
-			return 0, err
-		}
-	}
-	rate := s.settingService.GetAffiliateCashbackRatePercent(ctx)
-	cashbackAmount := roundTo(baseAmount*(rate/100), 8)
-	if cashbackAmount <= 0 {
-		return 0, nil
-	}
-	var subscriptionGroupName string
-	if redeemCode.Group != nil {
-		subscriptionGroupName = strings.TrimSpace(redeemCode.Group.Name)
-	}
-	input := AffiliateRedeemCashbackInput{
-		InviterID:      *inviteeSummary.InviterID,
-		InviteeUserID:  inviteeUserID,
-		RedeemCodeID:   redeemCode.ID,
-		RedeemCode:     redeemCode.Code,
-		RedeemCodeType: redeemCode.Type,
-		RedeemValue:    redeemCode.Value,
-		BaseAmount:     baseAmount,
-		RatePercent:    rate,
-		CashbackAmount: cashbackAmount,
-	}
-	if redeemCode.Type == RedeemTypeSubscription && redeemCode.GroupID != nil {
-		input.SubscriptionGroupID = redeemCode.GroupID
-		input.SubscriptionGroup = subscriptionGroupName
-		validityDays := redeemCode.ValidityDays
-		input.SubscriptionValidity = &validityDays
-	}
-	applied, err := cashbackRepo.ApplyRedeemCashback(ctx, input)
-	if err != nil || !applied {
-		return 0, err
-	}
-	s.invalidateAffiliateCaches(ctx, *inviteeSummary.InviterID)
-	return cashbackAmount, nil
+	return cashbackRepo.GetSubscriptionCashbackBaseAmount(ctx, groupID, validityDays)
 }
 
 func (s *AffiliateService) GetInviteCashbackDetail(ctx context.Context, userID int64) (*UserInviteCashbackDetail, error) {
