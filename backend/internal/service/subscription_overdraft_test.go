@@ -211,8 +211,9 @@ func TestSubscriptionOverdraftUseHelpers(t *testing.T) {
 	}
 }
 
-// TestSubscriptionOverdraftGate 校验透支准入闸门(per-day)：用 min(balance, Σremaining) 而非用户总余额，
-// 防止充值/签到余额架空闸门(回归 user 280)；并覆盖存量超支卡当天可用。
+// TestSubscriptionOverdraftGate 校验透支准入闸门(per-day)：今日额度从卡(subscriptionRemaining)算、
+// 不从钱包反推，故充值余额不会架空闸门(回归 user 280)、钱包账目漂移也不会误挡(回归 504);
+// 并覆盖存量超支卡当天可用。
 func TestSubscriptionOverdraftGate(t *testing.T) {
 	day0 := odActivated()
 	one := 1
@@ -224,12 +225,13 @@ func TestSubscriptionOverdraftGate(t *testing.T) {
 		s.TotalOverdraftCount = count
 		return *s
 	}
+	// extra = balance − Σremaining：>0 为充值(非订阅)余额；<0 模拟账目漂移(balance 漂到 remaining 以下)。
 	gate := func(subs []UserSubscription, extra float64) error {
 		cl, ll, rem, co := aggregateSubscriptionLocks(subs, day0)
 		return subscriptionOverdraftGate(rem+extra, cl, ll, rem, co)
 	}
 
-	// extra = 充值(非订阅)余额。下列订阅限速判定用 extra=0(无充值)以走到订阅逻辑。
+	// 下列订阅限速判定用 extra=0(无充值)以走到订阅逻辑。
 	t.Run("recharge_balance_funds_overflow", func(t *testing.T) {
 		// 当天 60 花尽、未开透支,但有 13.84 充值余额 → 放行(由充值承担,卡锁定额度不被烧)。
 		if err := gate([]UserSubscription{card(60, 60, nil, 0)}, 13.84); err != nil {
@@ -257,6 +259,28 @@ func TestSubscriptionOverdraftGate(t *testing.T) {
 		// 存量超支卡:剩余 28.24、今天未用 → currentLocked=0 → 放行(可用当天 D 覆盖那 28.24)。
 		if err := gate([]UserSubscription{card(1771.76, 0, nil, 0)}, 0); err != nil {
 			t.Fatalf("超支卡当天应可用其剩余，got %v", err)
+		}
+	})
+
+	// ── 账目漂移(balance < Σremaining)：今日额度判定不被钱包数额污染(回归 504) ──
+	t.Run("balance_drift_today_available_passes", func(t *testing.T) {
+		// 钱包漂到 remaining 以下 250,但今天一点没用、未开透支 → 今日额度(60)仍可用 → 放行。
+		// 旧实现用 subBalance=min(balance,rem) 会误判 subBalance−currentLocked<0 而拦截。
+		if err := gate([]UserSubscription{card(0, 0, nil, 0)}, -250); err != nil {
+			t.Fatalf("balance 漂移但今日额度可用时应放行(不被钱包数额污染)，got %v", err)
+		}
+	})
+	t.Run("balance_drift_today_exhausted_still_blocks", func(t *testing.T) {
+		// 漂移 + 今日额度真用尽 + 未开透支 → 仍应拦(不因漂移修复而放过真限速)。
+		if err := gate([]UserSubscription{card(60, 60, nil, 0)}, -250); err != ErrSubscriptionOverdraftLimit {
+			t.Fatalf("漂移但今日额度已用尽应被拦，got %v", err)
+		}
+	})
+	t.Run("empty_wallet_blocks_insufficient", func(t *testing.T) {
+		// balance≤0(钱包真空,极端漂移)→ 按余额不足挡,而非放行。
+		cl, ll, rem, co := aggregateSubscriptionLocks([]UserSubscription{card(0, 0, nil, 0)}, day0)
+		if err := subscriptionOverdraftGate(0, cl, ll, rem, co); err != ErrInsufficientBalance {
+			t.Fatalf("钱包真空应按余额不足挡，got %v", err)
 		}
 	})
 }
