@@ -194,14 +194,6 @@ func ProvideSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, se
 	return svc
 }
 
-// ProvideSubscriptionClawbackService creates and starts SubscriptionClawbackService（每日清扣）。
-func ProvideSubscriptionClawbackService(userSubRepo UserSubscriptionRepository, billingCache *BillingCacheService, lockCache LeaderLockCache, db *sql.DB) *SubscriptionClawbackService {
-	svc := NewSubscriptionClawbackService(userSubRepo, billingCache, time.Minute)
-	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
-	return svc
-}
-
 // ProvideTimingWheelService creates and starts TimingWheelService
 func ProvideTimingWheelService() (*TimingWheelService, error) {
 	svc, err := NewTimingWheelService()
@@ -589,7 +581,6 @@ var ProviderSet = wire.NewSet(
 	ProvideAccountExpiryService,
 	ProvideProxyExpiryService,
 	ProvideSubscriptionExpiryService,
-	ProvideSubscriptionClawbackService,
 	ProvideTimingWheelService,
 	ProvideDashboardAggregationService,
 	ProvideUsageCleanupService,

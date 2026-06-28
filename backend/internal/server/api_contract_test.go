@@ -2072,12 +2072,6 @@ func (stubUserSubscriptionRepo) IncrementUsage(ctx context.Context, id int64, co
 func (stubUserSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	return 0, errors.New("not implemented")
 }
-func (stubUserSubscriptionRepo) ListActiveBurndownIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
-	return nil, nil
-}
-func (stubUserSubscriptionRepo) ClawbackSubscription(ctx context.Context, subID int64, now time.Time) (float64, error) {
-	return 0, nil
-}
 func (stubUserSubscriptionRepo) ForfeitExpiredSubscriptions(ctx context.Context, now time.Time, limit int) ([]int64, error) {
 	return nil, nil
 }

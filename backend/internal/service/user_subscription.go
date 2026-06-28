@@ -1,7 +1,6 @@
 package service
 
 import (
-	"math"
 	"time"
 )
 
@@ -282,56 +281,6 @@ func (s *UserSubscription) ClawbackShortfallAt(now time.Time) float64 {
 	return shortfall
 }
 
-// DailySpentAt 返回截至 now、本卡在「当前日历天」内已消费的额度。
-// 采用惰性重置：仅当 DailySpentDay 等于当前日历天 N 时其值有效，否则视为 0
-// （新的一天 daily_spent 自动归零，不跨天结转）。
-func (s *UserSubscription) DailySpentAt(now time.Time) float64 {
-	if s == nil {
-		return 0
-	}
-	if s.DailySpentDay == s.CalendarDayAt(now) {
-		if s.DailySpentUSD < 0 {
-			return 0
-		}
-		return s.DailySpentUSD
-	}
-	return 0
-}
-
-// SpendableNowAt 返回在「最多往后透支 overdraftDays 天」约束下，本卡当前可被扣费的额度。
-// 模型：整张卡 G 一次性进 users.balance，但每个日历天最多消费 D（每日限速）；透支允许某天突破到
-// (1+overdraftDays)×D，相当于把后续天的额度提前花（计费周期前移）。本函数为「准入闸门」估算：
-//
-//	spendableNow = clamp(0, min(remaining, (1 + overdraftDays) × D − dailySpent(now)))
-//
-// 与旧的「累计式 (N+1+OD)×D − consumed」不同：不再按累计消费扣减，故**透支之后的次日照常解锁 D、
-// 不锁死、无还债**；超前消费只是让卡更早用完。dailySpent 按日历天惰性归零，故不跨天结转。
-// D=0（legacy/standard 卡）时返回 0，无副作用。
-func (s *UserSubscription) SpendableNowAt(now time.Time, overdraftDays int) float64 {
-	if s == nil || s.DailyAmountUSD <= 0 {
-		return 0
-	}
-	remaining := s.RemainingUSD()
-	avail := float64(1+overdraftDays)*s.DailyAmountUSD - s.DailySpentAt(now)
-	if avail < 0 {
-		avail = 0
-	}
-	if avail > remaining {
-		avail = remaining
-	}
-	return avail
-}
-
-// LockedAt 返回因「最多透支 overdraftDays 天」约束而暂不可用、但仍计入 users.balance 的本卡金额。
-// = remaining − SpendableNowAt。准入闸门用「balance − Σ locked」作为有效可花额度。
-func (s *UserSubscription) LockedAt(now time.Time, overdraftDays int) float64 {
-	locked := s.RemainingUSD() - s.SpendableNowAt(now, overdraftDays)
-	if locked < 0 {
-		return 0
-	}
-	return locked
-}
-
 // CanEnableOverdraft 报告本卡是否仍允许开启透支功能（累计预支天数未达 5 天硬上限）。
 func (s *UserSubscription) CanEnableOverdraft() bool {
 	if s == nil {
@@ -350,70 +299,4 @@ func (s *UserSubscription) RemainingOverdraftUses() int {
 		return 0
 	}
 	return remaining
-}
-
-// EffectiveOverdraftDaysAt 返回本卡当前「今日实际可预支天数」，准入闸门与扣费分摊须用同一口径。
-//
-//	effOD = clamp(0, min(用户设置 max_overdraft_days, 生命周期剩余预支额度 + 今日已预支天数))
-//
-// 取 min(配置, 剩余预支) 确保不超 5 天硬上限（修复闸门按配置 6D 放行、实际却已无额度的越权）；
-// 而「+ 今日已预支天数」是把当天已计入 TotalOverdraftCount 的预支加回——否则当日额度会随当天消费
-// 自我收缩，导致 5 天预算在单日内分多笔时用不满。未开透支或 D=0 时返回 0。
-func (s *UserSubscription) EffectiveOverdraftDaysAt(now time.Time) int {
-	if s == nil || s.MaxOverdraftDays == nil || s.DailyAmountUSD <= 0 {
-		return 0
-	}
-	preToday := preSpendDays(s.DailySpentAt(now), s.DailyAmountUSD)
-	budget := MaxSubscriptionOverdraftUses - s.TotalOverdraftCount + preToday
-	d := *s.MaxOverdraftDays
-	if d > budget {
-		d = budget
-	}
-	if d < 0 {
-		d = 0
-	}
-	return d
-}
-
-// UsesOverdraftAt 报告本次从该卡分摊 amount 后，当天用量是否突破了当日额度 D（即发生了预支）。
-// 等价于 OverdraftDaysDeltaAt(now, amount) > 0。
-func (s *UserSubscription) UsesOverdraftAt(now time.Time, amount float64) bool {
-	return s.OverdraftDaysDeltaAt(now, amount) > 0
-}
-
-// preSpendDays 返回「当天用量 used 突破当日额度 D 之后、额外预支了几天」。
-//
-//	preSpend = max(0, ceil(used/D) − 1)   // used≤D→0；D<used≤2D→1；…
-//
-// −1e-9 吸收 numeric→float 尾差，使「恰好用满整数天额度」不被误判为多预支一天。
-func preSpendDays(used, daily float64) int {
-	if used <= 0 || daily <= 0 {
-		return 0
-	}
-	n := int(math.Ceil(used/daily-1e-9)) - 1
-	if n < 0 {
-		return 0
-	}
-	return n
-}
-
-// OverdraftDaysDeltaAt 返回本次分摊 amount 后「当天新增的预支天数」。
-//
-//	before = ⌈dailySpent(now)/D⌉−1 的预支天数      // 本次之前当天已预支的天数
-//	after  = ⌈(dailySpent(now)+amount)/D⌉−1 的预支天数
-//	delta  = max(0, after − before)
-//
-// 仅统计「本笔把当天用量推到更靠后的天」所新增的天数：同一天内多笔小请求触及同一天只算一次。
-// 调用方对 total_overdraft_count 做「+delta（封顶上限）」累加。D=0 或 amount≤0 时返回 0。
-func (s *UserSubscription) OverdraftDaysDeltaAt(now time.Time, amount float64) int {
-	if s == nil || s.DailyAmountUSD <= 0 || amount <= 0 {
-		return 0
-	}
-	before := s.DailySpentAt(now)
-	after := before + amount
-	delta := preSpendDays(after, s.DailyAmountUSD) - preSpendDays(before, s.DailyAmountUSD)
-	if delta < 0 {
-		return 0
-	}
-	return delta
 }

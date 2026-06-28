@@ -47,12 +47,6 @@ type UserSubscriptionRepository interface {
 
 	BatchUpdateExpiredStatus(ctx context.Context) (int64, error)
 
-	// ===== Burn-down 计费模型 =====
-	// ListActiveBurndownIDs 返回需要参与每日清扣的活跃订阅 ID（id > afterID，按 id 升序，最多 limit 条）。
-	ListActiveBurndownIDs(ctx context.Context, afterID int64, limit int) ([]int64, error)
-	// ClawbackSubscription 对单张订阅做每日清扣（行级 FOR UPDATE 内重算）：
-	// 若已进入新的日历天且消费落后于 N×D，则把差额从该卡剩余池与用户余额一并扣除。返回本次清扣金额。
-	ClawbackSubscription(ctx context.Context, subID int64, now time.Time) (float64, error)
 	// ForfeitExpiredSubscriptions 处理已到期的活跃订阅：标记 expired 并把剩余订阅余额作废（同时扣减用户余额）。
 	// 每次最多处理 limit 条，返回余额被扣减的用户 ID 列表（供失效余额缓存）。
 	ForfeitExpiredSubscriptions(ctx context.Context, now time.Time, limit int) ([]int64, error)

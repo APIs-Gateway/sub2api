@@ -207,12 +207,6 @@ func (f fakeGoogleSubscriptionRepo) IncrementUsage(ctx context.Context, id int64
 func (f fakeGoogleSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	return 0, errors.New("not implemented")
 }
-func (f fakeGoogleSubscriptionRepo) ListActiveBurndownIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
-	return nil, nil
-}
-func (f fakeGoogleSubscriptionRepo) ClawbackSubscription(ctx context.Context, subID int64, now time.Time) (float64, error) {
-	return 0, nil
-}
 func (f fakeGoogleSubscriptionRepo) ForfeitExpiredSubscriptions(ctx context.Context, now time.Time, limit int) ([]int64, error) {
 	return nil, nil
 }

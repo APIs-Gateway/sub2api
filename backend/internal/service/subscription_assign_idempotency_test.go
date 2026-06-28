@@ -139,12 +139,6 @@ func (userSubRepoNoop) IncrementUsage(context.Context, int64, float64) error {
 func (userSubRepoNoop) BatchUpdateExpiredStatus(context.Context) (int64, error) {
 	panic("unexpected BatchUpdateExpiredStatus call")
 }
-func (userSubRepoNoop) ListActiveBurndownIDs(context.Context, int64, int) ([]int64, error) {
-	return nil, nil
-}
-func (userSubRepoNoop) ClawbackSubscription(context.Context, int64, time.Time) (float64, error) {
-	return 0, nil
-}
 func (userSubRepoNoop) ForfeitExpiredSubscriptions(context.Context, time.Time, int) ([]int64, error) {
 	return nil, nil
 }
