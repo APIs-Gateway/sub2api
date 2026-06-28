@@ -1,3 +1,11 @@
+# 等 backend + frontend 两个 upload 都到齐,再算 status / 发评论,
+# 避免 Codecov 抢在收齐前算出偏低的假 fail(实测:backend test job 一次 upload-coverage
+# 传 unit+integration = 1 个 upload,frontend-coverage = 1 个,共 2 个)。
+codecov:
+  notify:
+    wait_for_ci: true
+    after_n_builds: 2
+
 coverage:
   status:
     # 整个项目的总覆盖率:只报告、不挡合并(避免历史低覆盖拖死 PR)
@@ -14,6 +22,7 @@ comment:
   layout: "reach, diff, flags, files"
   behavior: default
   require_changes: false
+  after_n_builds: 2
 
 # 前后端分别打 flag,各自统计;某次只传到一边时沿用上次另一边的数据
 flags:
