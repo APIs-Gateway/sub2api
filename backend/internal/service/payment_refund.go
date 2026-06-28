@@ -206,6 +206,26 @@ func (s *PaymentService) PrepareRefund(ctx context.Context, oid int64, amt float
 	if !psSliceContains(ok, o.Status) {
 		return nil, nil, infraerrors.BadRequest("INVALID_STATUS", "order status does not allow refund")
 	}
+
+	// easypay/Kyren:网关退款 API(api.php?act=refund)官方不支持,退款须在 Kyren 控制台手动发起,
+	// 生效后由 order.refunded webhook 关卡/对账。后台「退款」按钮在此只把订单置「待退款」(REFUND_REQUESTED),
+	// 不调网关、不动卡(卡由 webhook 关),避免「点了退款→网关必失败→报错」的坏体验。幂等:已是待退款再点不变。
+	if o.ProviderKey != nil && *o.ProviderKey == payment.TypeEasyPay {
+		if _, err := s.entClient.PaymentOrder.Update().
+			Where(paymentorder.IDEQ(o.ID), paymentorder.StatusIn(OrderStatusCompleted, OrderStatusRefundFailed)).
+			SetStatus(OrderStatusRefundRequested).
+			Save(ctx); err != nil {
+			return nil, nil, fmt.Errorf("mark order %d refund-requested: %w", o.ID, err)
+		}
+		s.writeAuditLog(ctx, o.ID, "REFUND_REQUESTED_MANUAL", "admin", map[string]any{
+			"reason": strings.TrimSpace(reason), "provider": payment.TypeEasyPay,
+		})
+		return nil, &RefundResult{
+			Success:         true,
+			RefundRequested: true,
+			Message:         "订单已标记为待退款。请在 Kyren 控制台完成退款,退款生效后系统将通过 webhook 自动关卡并对账。",
+		}, nil
+	}
 	// Check provider instance allows admin refund
 	inst, instErr := s.getRefundOrderProviderInstance(ctx, o)
 	if instErr != nil {

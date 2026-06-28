@@ -109,6 +109,78 @@ func TestHandleKyrenRefundWebhook_PartialStillClosesCardPostgres(t *testing.T) {
 	require.Equal(t, service.OrderStatusRefunded, gotOrder2.Status)
 }
 
+// #4:easypay 订单的后台「退款」按钮 → 只置「待退款」(REFUND_REQUESTED),不调网关、不关卡。
+// 实退在 Kyren 控制台做,order.refunded webhook 回来才关卡(见上面的 webhook 测试)。
+func TestPrepareRefund_EasyPayMarksRefundRequestedNotGatewayPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	paySvc := makeRefundPaymentServiceForIntegration(t)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:    fmt.Sprintf("easypay-pending-%s@example.com", uuid.NewString()),
+		Username: "easypay-pending",
+	})
+	group := mustCreateGroup(t, client, &service.Group{Name: "easypay-pending-" + uuid.NewString()})
+	today := service.TodayEastDayNumber()
+	d := 10.0
+	w, m := service.DeriveWindowCaps(d, 30)
+	card := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  d,
+		DailyLimitUSD:   &d,
+		WeeklyLimitUSD:  &w,
+		MonthlyLimitUSD: &m,
+		TodayRemaining:  d,
+		TodayDay:        today,
+		StartDay:        today - 5,
+		ExpireDay:       today + 25,
+		ExpiresAt:       service.ExpireDayToExpiresAt(today + 25),
+		Status:          service.SubscriptionStatusActive,
+	})
+
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(300).
+		SetPayAmount(300).
+		SetFeeRate(0).
+		SetRechargeCode("EASYPAY-" + uuid.NewString()).
+		SetOutTradeNo("easypay_" + uuid.NewString()).
+		SetPaymentType(payment.TypeEasyPay).
+		SetPaymentTradeNo("trade-" + uuid.NewString()).
+		SetOrderType(payment.OrderTypeSubscription).
+		SetStatus(service.OrderStatusCompleted).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetPaidAt(time.Now()).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		SetProviderKey(payment.TypeEasyPay).
+		SetSubscriptionDays(30).
+		SetProviderSnapshot(map[string]any{
+			"schema_version": 2,
+			"provider_key":   payment.TypeEasyPay,
+			"subscription":   map[string]any{"daily_amount_usd": d, "validity_days": 30.0, "subscription_id": card.ID},
+		}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	plan, result, err := paySvc.PrepareRefund(ctx, order.ID, 0, "user asked", false, true)
+	require.NoError(t, err)
+	require.Nil(t, plan, "easypay 不产出退款计划(不走网关)")
+	require.NotNil(t, result)
+	require.True(t, result.RefundRequested, "easypay 退款应标记为待退款")
+
+	// 订单置 REFUND_REQUESTED;卡仍 active(webhook 回来才关)。
+	gotOrder, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.OrderStatusRefundRequested, gotOrder.Status)
+	gotCard, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.SubscriptionStatusActive, gotCard.Status, "待退款阶段不关卡(由 webhook 关)")
+}
+
 // 未知订单 → ErrOrderNotFound(handler 据此 ack 2xx 停止 Kyren 重推)。
 func TestHandleKyrenRefundWebhook_UnknownOrderPostgres(t *testing.T) {
 	ctx := context.Background()

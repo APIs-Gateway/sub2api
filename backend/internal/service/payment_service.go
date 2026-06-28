@@ -150,6 +150,10 @@ type RefundResult struct {
 	RequireForce    bool    `json:"require_force,omitempty"`
 	BalanceDeducted float64 `json:"balance_deducted,omitempty"`
 	SubDaysDeducted int     `json:"subscription_days_deducted,omitempty"`
+	// RefundRequested 表示订单被置为「待退款」而非即时退款(如 easypay/Kyren:网关退款 API 不支持,
+	// 需在 Kyren 控制台手动退款,生效后由 order.refunded webhook 关卡对账)。
+	RefundRequested bool   `json:"refund_requested,omitempty"`
+	Message         string `json:"message,omitempty"`
 }
 
 type DashboardStats struct {
