@@ -1,0 +1,40 @@
+coverage:
+  status:
+    # 整个项目的总覆盖率:只报告、不挡合并(避免历史低覆盖拖死 PR)
+    project:
+      default:
+        informational: true
+    # 本次 PR 改动的那些行:必须 ≥80% 才绿(逼新代码补测试)
+    patch:
+      default:
+        target: 80%
+        threshold: 0%
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+
+# 前后端分别打 flag,各自统计;某次只传到一边时沿用上次另一边的数据
+flags:
+  backend:
+    paths:
+      - backend/
+    carryforward: true
+  frontend:
+    paths:
+      - frontend/
+    carryforward: true
+
+# 生成代码 / 迁移 / 产物 / 测试文件本身不计入覆盖率
+ignore:
+  - "backend/ent/**"
+  - "backend/cmd/server/wire_gen.go"
+  - "backend/migrations/**"
+  - "backend/bin/**"
+  - "backend/**/*_test.go"
+  - "frontend/dist/**"
+  - "frontend/src/main.ts"
+  - "**/*.spec.ts"
+  - "**/*.test.ts"
+  - "**/*.d.ts"
