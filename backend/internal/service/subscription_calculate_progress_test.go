@@ -123,7 +123,9 @@ func TestCalculateProgress_DailyCardUsesNaturalWindowReset(t *testing.T) {
 func TestCalculateProgress_WeeklyUsage(t *testing.T) {
 	svc := newTestSubscriptionService()
 	now := time.Now()
-	weeklyStart := now.Add(-3 * 24 * time.Hour)
+	// 窗口起点取当前自然周起点:三窗口按自然周(StartOfWeek)重置,用 now-3天 会在周一附近跨自然周
+	// 边界→ResetWindows 把 usage 清零→断言随机日失败。对齐 daily/AllLimits 测试的自然边界写法。
+	weeklyStart := timezone.StartOfWeek(now)
 
 	sub := &UserSubscription{
 		ID:                1,
@@ -148,7 +150,8 @@ func TestCalculateProgress_WeeklyUsage(t *testing.T) {
 func TestCalculateProgress_MonthlyUsage(t *testing.T) {
 	svc := newTestSubscriptionService()
 	now := time.Now()
-	monthlyStart := now.Add(-15 * 24 * time.Hour)
+	// 同 weekly:取当前自然月起点,避免 now-15天 在月初跨自然月边界被 ResetWindows 清零。
+	monthlyStart := timezone.StartOfMonth(now)
 
 	sub := &UserSubscription{
 		ID:                 1,
