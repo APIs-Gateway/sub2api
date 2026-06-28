@@ -932,23 +932,32 @@ func aggregateSubscriptionLocks(subs []UserSubscription, now time.Time) (current
 // 可随时兜底消费——故 >0 即放行。扣费侧(allocateUsageBillingSubscriptions)会把超过今日订阅额度的
 // 部分优先记到充值余额、不烧订阅卡的锁定额度，因此放行不会绕开 burn-down 限速(回归 user 280：
 // 卡的锁定未来额度不会被无限速烧穿)。
-// 仅当充值余额耗尽(balance ≤ Σ订阅remaining)时，才回到「订阅当日额度 + 透支」的限速判定；
-// 此时 subBalance = balance(≤ Σremaining)。仅在 currentLocked>0 时由调用方启用。
+// 充值余额耗尽(balance ≤ Σ订阅remaining)时，回到「订阅当日额度 + 透支」的限速判定。
+// 仅在 currentLocked>0 时由调用方启用。
+//
+// 【今日额度从卡算、不从钱包反推】「今日可花」恒等于 subscriptionRemaining − currentLocked
+// （currentLocked = remaining − 今日已解锁额度），这是卡侧真相、与钱包数额无关。
+// 旧实现误用 subBalance = min(balance, remaining) 去比 currentLocked，等价于
+// (balance − Σremaining) + 今日额度：当账目漂移使 balance < Σremaining 时(本应满足不变量
+// balance == 充值余额 + Σremaining，但少数重度用户被某账目 bug 打破)，那个负缺口会吃穿今日真实
+// 额度，导致今日明明没花完(daily_spent < D)却误判 SUBSCRIPTION_OVERDRAFT_LIMIT。故此处直接用
+// subscriptionRemaining 参与限速判定；仅保留 balance>0 兜底(钱包真空才按余额不足挡)。
+// 对 balance ≥ Σremaining 的健康用户行为不变(subBalance 本就 = remaining)。
 func subscriptionOverdraftGate(balance, currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool) error {
 	if currentLocked <= 0 {
 		return nil
+	}
+	// 钱包真空 → 按余额不足挡（订阅用户正常应有 balance ≈ 充值余额 + Σremaining > 0）。
+	if balance <= 0 {
+		return ErrInsufficientBalance
 	}
 	// 有充值(非订阅)余额 → 放行(由充值余额承担，不动卡的锁定额度)。
 	if balance-subscriptionRemaining > 0 {
 		return nil
 	}
-	subBalance := balance
-	if subscriptionRemaining < subBalance {
-		subBalance = subscriptionRemaining
-	}
-	if subBalance-currentLocked <= 0 {
+	if subscriptionRemaining-currentLocked <= 0 {
 		// 当天已解锁额度已花尽：仅当本卡开启透支且仍在 max_overdraft_days 额度内才放行一个透支请求。
-		if canOverdraft && subBalance-limitLocked > 0 {
+		if canOverdraft && subscriptionRemaining-limitLocked > 0 {
 			return nil
 		}
 		return ErrSubscriptionOverdraftLimit

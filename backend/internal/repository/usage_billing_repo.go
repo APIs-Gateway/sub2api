@@ -159,6 +159,58 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 // 为 numeric(20,10)，浮点尾差用此阈值吸收）。低于此值即视为用完。
 const subscriptionDepletionEpsilon = 1e-7
 
+// planSubscriptionDailyAllocation 把本次消费 cost 在各卡「当日额度」内分摊（纯函数、可单测）：
+//
+//	轮 1：各卡按顺序用满其「当日正常额度」(SpendableNowAt overdraftDays=0)——一张到限额再用下一张，
+//	      实现多卡「叠加」语义；**绝不**在别的卡当日额度还没用时就先把某张卡烧进透支；
+//	轮 2：所有卡正常额度都用尽后，才按顺序动用各卡透支额度(SpendableNowAt effOD)。
+//
+// subs 的顺序即分摊优先级——调用方按「到期先后」排序，让快到期的短卡先烧、避免到期作废浪费
+// (回归 wzreee：月卡被透支、刚买的日卡却一口没动、次日作废)。
+// 返回每卡「当日额度内分摊额」(即计入透支 delta 的 pass1) 与未能在当日额度内分摊的剩余 cost
+// (交由调用方溢出处理：充值余额 → slippage 下探 remaining)。
+// 与准入闸门 aggregateSubscriptionLocks 同口径(currentLocked 用 SpendableNowAt(0))，
+// 故"闸门放行了就一定分摊得动"。
+func planSubscriptionDailyAllocation(subs []*service.UserSubscription, now time.Time, cost float64) (alloc []float64, remaining float64) {
+	alloc = make([]float64, len(subs))
+	remaining = cost
+	// 轮 1：各卡正常当日额度（不含透支）。
+	for i := range subs {
+		if remaining <= 0 {
+			break
+		}
+		a := subs[i].SpendableNowAt(now, 0) - alloc[i]
+		if a > remaining {
+			a = remaining
+		}
+		if a <= 0 {
+			continue
+		}
+		alloc[i] += a
+		remaining -= a
+	}
+	// 轮 2：仅当所有卡正常额度都用尽仍有剩余，才动用各卡透支额度。
+	for i := range subs {
+		if remaining <= 0 {
+			break
+		}
+		effOD := subs[i].EffectiveOverdraftDaysAt(now)
+		if effOD <= 0 {
+			continue
+		}
+		a := subs[i].SpendableNowAt(now, effOD) - alloc[i]
+		if a > remaining {
+			a = remaining
+		}
+		if a <= 0 {
+			continue
+		}
+		alloc[i] += a
+		remaining -= a
+	}
+	return alloc, remaining
+}
+
 func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID int64, cost float64) ([]int64, error) {
 	if cost <= 0 {
 		return nil, nil
@@ -175,7 +227,7 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 			AND deleted_at IS NULL
 			AND expires_at > NOW()
 			AND (granted_total_usd - consumed_usd - clawed_usd) > 0
-		ORDER BY activated_at ASC NULLS FIRST, id ASC
+		ORDER BY expires_at ASC, activated_at ASC NULLS FIRST, id ASC
 		FOR UPDATE
 	`, userID)
 	if err != nil {
@@ -271,24 +323,17 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID i
 		}
 	}
 
-	// Pass 1:按激活先后,在各卡「今日可花」额度内分摊(尊重每卡每日限速 D + 生命周期剩余预支额度)。
-	// 与准入闸门 aggregateSubscriptionLocks 同口径,避免「老卡今日已限速却被先扣、新卡反而不动」。
-	remainingCost := cost
+	// Pass 1(叠加语义):各卡先用满「当日正常额度」、一张到限额再用下一张,所有卡正常额度都用尽后
+	// 才动用透支(详见 planSubscriptionDailyAllocation)。SELECT 已按到期先后排序 → 短卡先烧不浪费。
+	// 修复「多卡时先把老卡烧进透支、新卡当日额度却闲置」(wzreee:月卡被透支、刚买的日卡一口没动)。
+	subModels := make([]*service.UserSubscription, len(states))
 	for i := range states {
-		if remainingCost <= 0 {
-			break
-		}
-		capAmt := states[i].sub.SpendableNowAt(now, states[i].sub.EffectiveOverdraftDaysAt(now))
-		a := capAmt
-		if a > remainingCost {
-			a = remainingCost
-		}
-		if a <= 0 {
-			continue
-		}
-		states[i].pass1 += a
-		states[i].total += a
-		remainingCost -= a
+		subModels[i] = states[i].sub
+	}
+	alloc, remainingCost := planSubscriptionDailyAllocation(subModels, now, cost)
+	for i := range states {
+		states[i].pass1 = alloc[i]
+		states[i].total = alloc[i]
 	}
 	// 溢出处理:单笔成本超过所有卡「今日可花」之和时——
 	// (1) 先由「充值(非订阅)余额 = balance − Σ订阅remaining」承担,不动订阅卡的锁定额度

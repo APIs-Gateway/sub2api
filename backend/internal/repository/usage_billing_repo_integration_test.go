@@ -580,6 +580,56 @@ func TestUsageBillingRepositoryApply_MultiCardRespectsPerCardDailyLimit(t *testi
 	require.InDelta(t, 100, newConsumed, 1e-6, "扣费应落到今日有额度的新卡")
 }
 
+// TestUsageBillingRepositoryApply_MultiCardExpirySoonestFirstNoPrematureOverdraft 校验「叠加」语义
+// (回归 wzreee/671):月卡(到期远、可透支) + 日卡(明天到期)同时活跃时,扣费应①先烧快到期的日卡、
+// ②各卡先用满当日正常额度、所有卡正常额度用尽才透支 —— 不应把月卡先烧进透支而日卡闲置作废。
+func TestUsageBillingRepositoryApply_MultiCardExpirySoonestFirstNoPrematureOverdraft(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email: fmt.Sprintf("ub-stack-%d@example.com", time.Now().UnixNano()), PasswordHash: "hash", Balance: 5000,
+	})
+	group := mustCreateGroup(t, client, &service.Group{
+		Name: "ub-stack-" + uuid.NewString(), Platform: service.PlatformAnthropic, SubscriptionType: service.SubscriptionTypeSubscription,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID: user.ID, GroupID: &group.ID, Key: "sk-stack-" + uuid.NewString(), Name: "stack",
+	})
+
+	now := time.Now()
+	five := 5
+	// 月卡:激活较早、到期远(+25d)、可透支。今日未用 → 当日额度 90。
+	monthlyActivated := now.Add(-2 * 24 * time.Hour)
+	monthly := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID: user.ID, GroupID: group.ID,
+		GrantedTotalUSD: 2700, DailyAmountUSD: 90,
+		MaxOverdraftDays: &five,
+		ActivatedAt:      &monthlyActivated, ExpiresAt: now.Add(25 * 24 * time.Hour),
+	})
+	// 日卡:今天激活、明天就到期(+1d)。当日额度 30、不可透支。
+	daily := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID: user.ID, GroupID: group.ID,
+		GrantedTotalUSD: 30, DailyAmountUSD: 30,
+		ActivatedAt: &now, ExpiresAt: now.Add(1 * 24 * time.Hour),
+	})
+
+	// 花 100(< 两卡当日正常额度合计 120):应日卡 30(先烧到期早的)+ 月卡 70,均在正常额度内、月卡不透支。
+	_, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID: uuid.NewString(), APIKeyID: apiKey.ID, UserID: user.ID, BalanceCost: 100,
+	})
+	require.NoError(t, err)
+
+	var dailyConsumed, monthlyConsumed float64
+	var monthlyTOC int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT consumed_usd FROM user_subscriptions WHERE id=$1`, daily.ID).Scan(&dailyConsumed))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT consumed_usd, total_overdraft_count FROM user_subscriptions WHERE id=$1`, monthly.ID).Scan(&monthlyConsumed, &monthlyTOC))
+	require.InDelta(t, 30, dailyConsumed, 1e-6, "应先烧到期最早的日卡到其当日限额 30")
+	require.InDelta(t, 70, monthlyConsumed, 1e-6, "余下 70 落月卡当日正常额度内")
+	require.Equal(t, 0, monthlyTOC, "两卡正常额度未用尽,月卡不应被提前烧进透支")
+}
+
 // TestUsageBillingRepositoryApply_DepletesAndExpires 校验把本卡剩余扣到 0 时即时置 expired,
 // 超出 remaining 的部分由余额承担。
 func TestUsageBillingRepositoryApply_DepletesAndExpires(t *testing.T) {
