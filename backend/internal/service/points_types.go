@@ -30,6 +30,7 @@ var (
 	ErrPointsWithdrawNotPending = infraerrors.Conflict("POINTS_WITHDRAW_NOT_PENDING", "withdrawal is not pending")
 	ErrPointsRedeemPlanDisabled = infraerrors.BadRequest("POINTS_REDEEM_PLAN_DISABLED", "points-to-plan redeem is not enabled")
 	ErrPointsPlanInvalid        = infraerrors.BadRequest("POINTS_PLAN_INVALID", "selected plan is not available for points redeem")
+	ErrPointsPlanDuplicate      = infraerrors.Conflict("POINTS_PLAN_DUPLICATE", "this points redemption was already processed")
 	ErrPointsRedeemBalanceOff   = infraerrors.BadRequest("POINTS_REDEEM_BALANCE_DISABLED", "points-to-balance redeem is not enabled")
 	ErrPointsWithdrawalNotFound = infraerrors.NotFound("POINTS_WITHDRAWAL_NOT_FOUND", "withdrawal not found")
 )
@@ -170,7 +171,8 @@ type PointsRepository interface {
 	// RedeemToBalance 扣积分 + 加钱包余额（平价），单事务。返回新余额。
 	RedeemToBalance(ctx context.Context, userID, points int64, balanceDelta, pegAt float64) (float64, error)
 	// DeductForPlan 仅扣积分写 to_plan 流水（在 service 事务内调用，发卡同事务）。available 不足返回 ErrPointsInsufficient。
-	DeductForPlan(ctx context.Context, userID, points int64, pegAt float64, note string) error
+	// idempotencyKey 非空时按 (user_id, idempotency_key) 幂等：命中既有 to_plan 行返回 ErrPointsPlanDuplicate。
+	DeductForPlan(ctx context.Context, userID, points int64, pegAt float64, note, idempotencyKey string) error
 	CreateWithdrawal(ctx context.Context, in CreateWithdrawalInput) (*PointsWithdrawal, error)
 	GetWithdrawal(ctx context.Context, id int64) (*PointsWithdrawal, error)
 	// ReviewWithdrawal approve→paid（不动账户）；reject→退回 available。状态机 + 幂等。

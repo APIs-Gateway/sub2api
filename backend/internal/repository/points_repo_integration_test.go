@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -583,4 +584,55 @@ func TestPointsRepo_NullRowScan_LedgerAndWithdrawal(t *testing.T) {
 	// 不存在的提现单 → ErrPointsWithdrawalNotFound。
 	_, err = repo.GetWithdrawal(ctx, 999999999)
 	require.True(t, errors.Is(err, service.ErrPointsWithdrawalNotFound))
+}
+
+// Bug 2（post-review）：换套餐幂等。DeductForPlan 带客户端幂等键，同 (user, key) 二次提交（如双击/
+// 网络重发）必须被拒（ErrPointsPlanDuplicate），且在调用方事务回滚下账户只扣一次——不二次扣分。
+// 模拟 RedeemToPlan 的事务编排：每次 DeductForPlan 包在 ent tx 里，重复命中即整事务回滚。
+func TestPointsRepo_DeductForPlan_Idempotent(t *testing.T) {
+	ctx := context.Background()
+	repo := newPointsRepo()
+	user := mustCreatePointsUser(t, "user")
+	invitee := mustCreatePointsUser(t, "user")
+	orderID := mustCreatePointsOrder(t, invitee, 100)
+
+	// 先给 user 充 1000 可用积分（freeze=0 直接进 available）。
+	_, err := repo.EarnPoints(ctx, service.EarnPointsInput{
+		InviterID: user.ID, SourceUserID: invitee.ID, SourceOrderID: orderID,
+		Points: 1000, FreezeHours: 0, PegAt: pointsTestPeg,
+	})
+	require.NoError(t, err)
+
+	// 模拟 RedeemToPlan 的事务编排：每次 DeductForPlan 包在 ent tx 里，重复命中即整事务回滚。
+	deductInTx := func(points int64, key string) error {
+		tx, txErr := integrationEntClient.Tx(ctx)
+		require.NoError(t, txErr)
+		txCtx := dbent.NewTxContext(ctx, tx)
+		if dErr := repo.DeductForPlan(txCtx, user.ID, points, pointsTestPeg, "buy plan", key); dErr != nil {
+			_ = tx.Rollback() // 重复命中 → 回滚，撤销本次扣分
+			return dErr
+		}
+		return tx.Commit()
+	}
+
+	keyA := "exch-" + pointsUniq()
+
+	// 首次：扣 300，成功。
+	require.NoError(t, deductInTx(300, keyA))
+	acct, err := repo.GetAccount(ctx, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(700), acct.Available, "首次扣 300 → 余 700")
+
+	// 同一幂等键二次提交：判重 → ErrPointsPlanDuplicate，事务回滚。
+	err = deductInTx(300, keyA)
+	require.True(t, errors.Is(err, service.ErrPointsPlanDuplicate), "同 key 重复必须判重")
+	acct, err = repo.GetAccount(ctx, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(700), acct.Available, "重复请求不得二次扣分（资损）")
+
+	// 不同幂等键 = 新意图：允许再次兑换。
+	require.NoError(t, deductInTx(200, "exch-"+pointsUniq()))
+	acct, err = repo.GetAccount(ctx, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(500), acct.Available, "不同 key 正常扣（700-200=500）")
 }

@@ -110,9 +110,10 @@ VALUES ($1, NOW(), NOW()) ON CONFLICT (user_id) DO NOTHING`, in.InviterID); err 
 		// 幂等插入 earn 流水（partial-unique on (user_id, <sourceCol>) WHERE kind='earn'）。
 		inserted, err := scanInt64(txCtx, txClient, fmt.Sprintf(`
 WITH ins AS (
-    INSERT INTO user_points_ledger (user_id, kind, points, peg_at, source_user_id, %s, frozen_until, created_at, updated_at)
+    INSERT INTO user_points_ledger (user_id, kind, points, peg_at, source_user_id, %s, frozen_until, frozen_remaining, created_at, updated_at)
     VALUES ($1, 'earn', $2, $3, $4, $5,
             CASE WHEN $6 > 0 THEN NOW() + make_interval(hours => $6) ELSE NULL END,
+            CASE WHEN $6 > 0 THEN $2::bigint ELSE 0::bigint END,
             NOW(), NOW())
     ON CONFLICT DO NOTHING
     RETURNING 1
@@ -156,9 +157,11 @@ func (r *pointsRepository) ClawbackByOrder(ctx context.Context, sourceOrderID in
 	}
 	var clawed int64
 	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
-		inviterID, earned, ok, err := scanTwoInt64(txCtx, txClient, `
-SELECT user_id, points FROM user_points_ledger
-WHERE source_order_id = $1 AND kind = 'earn' LIMIT 1`, sourceOrderID)
+		// 锁定来源 earn 行：取 earned + 该行仍冻结待解冻额（frozen_remaining）。
+		// FOR UPDATE 与 ThawDuePoints 的 to_thaw 锁序一致（earn 行 → 账户），杜绝竞态/死锁。
+		inviterID, earned, frozenRem, ok, err := scanThreeInt64(txCtx, txClient, `
+SELECT user_id, points, frozen_remaining FROM user_points_ledger
+WHERE source_order_id = $1 AND kind = 'earn' LIMIT 1 FOR UPDATE`, sourceOrderID)
 		if err != nil {
 			return fmt.Errorf("lookup earn ledger for clawback: %w", err)
 		}
@@ -198,9 +201,14 @@ ON CONFLICT (user_id) DO NOTHING`, inviterID); err != nil {
 			}
 			avail, frozen = 0, 0
 		}
-		// 优先扣 frozen 再扣 available（可转负）。
+		// 优先扣本来源 earn 行仍冻结的待解冻额（frozen_remaining），不足部分再扣 available（可转负）。
+		// 关键：以「来源行的 frozen_remaining」而非「账户聚合 frozen」为冻结消费上限——多条冻结行
+		// 共存时，撤回某一笔只能吃它自己的冻结额，绝不误伤其他行（否则 thaw 会串味）。
 		fromFrozen := claw
-		if frozen < fromFrozen {
+		if fromFrozen > frozenRem {
+			fromFrozen = frozenRem
+		}
+		if fromFrozen > frozen { // 防御：不变式下 frozenRem ≤ 账户 frozen
 			fromFrozen = frozen
 		}
 		if fromFrozen < 0 {
@@ -212,6 +220,14 @@ ON CONFLICT (user_id) DO NOTHING`, inviterID); err != nil {
 UPDATE user_points_accounts SET available = $1, frozen = $2, updated_at = NOW() WHERE user_id = $3`,
 			newAvail, newFrozen, inviterID); err != nil {
 			return fmt.Errorf("apply clawback to account: %w", err)
+		}
+		// 同步递减来源 earn 行的待解冻额，使其将来 thaw 不再复活被撤回的冻结积分。
+		if fromFrozen > 0 {
+			if _, err := txClient.ExecContext(txCtx, `
+UPDATE user_points_ledger SET frozen_remaining = frozen_remaining - $1, updated_at = NOW()
+WHERE source_order_id = $2 AND kind = 'earn'`, fromFrozen, sourceOrderID); err != nil {
+				return fmt.Errorf("reduce earn frozen_remaining on clawback: %w", err)
+			}
 		}
 		if _, err := txClient.ExecContext(txCtx, `
 UPDATE user_points_ledger SET available_after = $1, frozen_after = $2, updated_at = NOW()
@@ -228,13 +244,19 @@ WHERE user_id = $3 AND kind = 'clawback' AND source_order_id = $4`,
 func (r *pointsRepository) ThawDuePoints(ctx context.Context, userID int64) (int64, error) {
 	var thawed int64
 	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		// 只解冻「仍冻结待解冻」额（frozen_remaining），不是原始 points——被 clawback 消费掉的冻结
+		// 不得复活。先在 to_thaw 锁定并捕获旧 frozen_remaining，再清零，最后对旧值求和。
 		sum, err := scanInt64(txCtx, txClient, `
-WITH matured AS (
-    UPDATE user_points_ledger SET frozen_until = NULL, updated_at = NOW()
+WITH to_thaw AS (
+    SELECT id, frozen_remaining FROM user_points_ledger
     WHERE user_id = $1 AND kind = 'earn' AND frozen_until IS NOT NULL AND frozen_until <= NOW()
-    RETURNING points
+    FOR UPDATE
+), upd AS (
+    UPDATE user_points_ledger l
+       SET frozen_until = NULL, frozen_remaining = 0, updated_at = NOW()
+      FROM to_thaw t WHERE l.id = t.id
 )
-SELECT COALESCE(SUM(points), 0)::bigint FROM matured`, userID)
+SELECT COALESCE(SUM(frozen_remaining), 0)::bigint FROM to_thaw`, userID)
 		if err != nil {
 			return fmt.Errorf("mature frozen points: %w", err)
 		}
@@ -300,7 +322,7 @@ VALUES ($1, 'to_balance', $2, $3, $4, $5, NOW(), NOW())`, userID, -points, nulla
 	return newBalance, err
 }
 
-func (r *pointsRepository) DeductForPlan(ctx context.Context, userID, points int64, pegAt float64, note string) error {
+func (r *pointsRepository) DeductForPlan(ctx context.Context, userID, points int64, pegAt float64, note, idempotencyKey string) error {
 	if points <= 0 {
 		return service.ErrPointsAmountInvalid
 	}
@@ -315,9 +337,14 @@ WHERE user_id = $2 AND available >= $1 RETURNING available, frozen`, points, use
 	if !ok {
 		return service.ErrPointsInsufficient
 	}
+	// to_plan 台账行带幂等键：重复请求（同 user+key）命中 partial-unique → 整事务回滚、不二次扣分。
 	if _, err := client.ExecContext(ctx, `
-INSERT INTO user_points_ledger (user_id, kind, points, peg_at, available_after, frozen_after, note, created_at, updated_at)
-VALUES ($1, 'to_plan', $2, $3, $4, $5, $6, NOW(), NOW())`, userID, -points, nullablePegArg(pegAt), avail, frozen, note); err != nil {
+INSERT INTO user_points_ledger (user_id, kind, points, peg_at, available_after, frozen_after, note, idempotency_key, created_at, updated_at)
+VALUES ($1, 'to_plan', $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+		userID, -points, nullablePegArg(pegAt), avail, frozen, note, nullableStringArg(idempotencyKey)); err != nil {
+		if isUniqueConstraintViolation(err) {
+			return service.ErrPointsPlanDuplicate
+		}
 		return fmt.Errorf("insert to_plan ledger: %w", err)
 	}
 	return nil
@@ -664,6 +691,24 @@ func scanTwoInt64(ctx context.Context, client affiliateQueryExecer, query string
 	for rows.Next() {
 	}
 	return a, b, true, rows.Err()
+}
+
+// scanThreeInt64 执行返回三整数列的单行查询；found=false 表示无行。
+func scanThreeInt64(ctx context.Context, client affiliateQueryExecer, query string, args ...any) (a int64, b int64, c int64, found bool, err error) {
+	rows, qerr := client.QueryContext(ctx, query, args...)
+	if qerr != nil {
+		return 0, 0, 0, false, qerr
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return 0, 0, 0, false, rows.Err()
+	}
+	if serr := rows.Scan(&a, &b, &c); serr != nil {
+		return 0, 0, 0, false, serr
+	}
+	for rows.Next() {
+	}
+	return a, b, c, true, rows.Err()
 }
 
 func nullablePegArg(v float64) any {

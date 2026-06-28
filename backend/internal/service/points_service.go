@@ -289,6 +289,10 @@ func (s *PointsService) CreateWithdrawal(ctx context.Context, userID, points int
 	peg := s.peg(ctx)
 	feePercent := s.settingService.GetPointsWithdrawFeePercent(ctx)
 	gross, fee, net := ComputeWithdrawalAmounts(points, peg, feePercent)
+	// 应付为 0（peg 过小取整 / 手续费 100% 等 admin 配置）→ 拒，别凭空冻结用户积分换 0 打款。
+	if net <= 0 {
+		return nil, ErrPointsAmountInvalid
+	}
 	if _, err := s.repo.EnsureAccount(ctx, userID); err != nil {
 		return nil, err
 	}
@@ -309,7 +313,7 @@ func (s *PointsService) CreateWithdrawal(ctx context.Context, userID, points int
 
 // --- Spending ③ 换套餐（全额、直接开通、扣积分、单事务原子） ---
 
-func (s *PointsService) RedeemToPlan(ctx context.Context, userID, groupID int64, validityDays int) (*UserSubscription, error) {
+func (s *PointsService) RedeemToPlan(ctx context.Context, userID, groupID int64, validityDays int, idempotencyKey string) (*UserSubscription, error) {
 	if !s.IsEnabled(ctx) {
 		return nil, ErrPointsDisabled
 	}
@@ -357,7 +361,8 @@ func (s *PointsService) RedeemToPlan(ctx context.Context, userID, groupID int64,
 	txCtx := dbent.NewTxContext(ctx, tx)
 
 	note := fmt.Sprintf("points redeem plan group=%d days=%d price=%.4f", groupID, t, quote.Price)
-	if err := s.repo.DeductForPlan(txCtx, userID, need, peg, note); err != nil {
+	// 幂等键先于发卡：重复请求命中 to_plan partial-unique → ErrPointsPlanDuplicate → 回滚、不二次扣分/延卡。
+	if err := s.repo.DeductForPlan(txCtx, userID, need, peg, note, strings.TrimSpace(idempotencyKey)); err != nil {
 		return nil, err
 	}
 	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{
@@ -387,7 +392,17 @@ func (s *PointsService) AdminListWithdrawals(ctx context.Context, filter PointsW
 }
 
 func (s *PointsService) AdminReviewWithdrawal(ctx context.Context, id, adminID int64, approve bool, note, payoutProof string) (*PointsWithdrawal, error) {
-	return s.repo.ReviewWithdrawal(ctx, id, adminID, approve, strings.TrimSpace(note), strings.TrimSpace(payoutProof))
+	// review_note 列为 VARCHAR(255)；超长截断避免撞 DB 长度上限（payout_proof 为 TEXT，无需截断）。
+	return s.repo.ReviewWithdrawal(ctx, id, adminID, approve, truncateRunes(strings.TrimSpace(note), 255), strings.TrimSpace(payoutProof))
+}
+
+// truncateRunes 按 rune 截断到 max（避免切坏多字节字符）。
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
 }
 
 func (s *PointsService) AdminListLedger(ctx context.Context, filter PointsLedgerFilter) ([]PointsLedgerEntry, int64, error) {

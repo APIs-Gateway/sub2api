@@ -98,6 +98,8 @@ func (h *PointsHandler) RedeemBalance(c *gin.Context) {
 type pointsRedeemPlanRequest struct {
 	GroupID      int64 `json:"group_id" binding:"required"`
 	ValidityDays int   `json:"validity_days"`
+	// 幂等键（客户端每次兑换生成的 exchange_id）：防双击/重试/网络重发二次扣分。空则不去重。
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 // RedeemPlan POST /api/v1/user/points/redeem-plan
@@ -112,7 +114,7 @@ func (h *PointsHandler) RedeemPlan(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	sub, err := h.pointsService.RedeemToPlan(c.Request.Context(), subject.UserID, req.GroupID, req.ValidityDays)
+	sub, err := h.pointsService.RedeemToPlan(c.Request.Context(), subject.UserID, req.GroupID, req.ValidityDays, req.IdempotencyKey)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

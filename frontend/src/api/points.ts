@@ -112,10 +112,11 @@ export async function redeemPointsToBalance(points: number): Promise<{ balance: 
   return data
 }
 
-export async function redeemPointsToPlan(groupId: number, validityDays = 0): Promise<unknown> {
+export async function redeemPointsToPlan(groupId: number, validityDays = 0, idempotencyKey = ''): Promise<unknown> {
   const { data } = await apiClient.post('/user/points/redeem-plan', {
     group_id: groupId,
     validity_days: validityDays,
+    idempotency_key: idempotencyKey,
   })
   return data
 }

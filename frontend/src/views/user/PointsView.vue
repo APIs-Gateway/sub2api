@@ -234,6 +234,13 @@ function kindLabel(kind: string): string {
   return label === key ? kind : label
 }
 
+// 生成一次性兑换幂等键（exchange_id）；优先 crypto.randomUUID，环境不支持时回退。
+function newExchangeId(): string {
+  const c = typeof crypto !== 'undefined' ? crypto : undefined
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return `xid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 async function copy(text: string): Promise<void> {
   if (text) await copyToClipboard(text, t('points.invite.copied'))
 }
@@ -302,8 +309,10 @@ async function onWithdraw(): Promise<void> {
 async function onRedeemPlan(plan: PointsPlanOption): Promise<void> {
   if (!window.confirm(t('points.redeemPlan.confirm', { points: plan.points_price.toLocaleString(), plan: plan.name }))) return
   busy.value = true
+  // 幂等键：本次兑换生成一个，网络重发/重试复用同一 key → 后端按 (user, key) 去重，绝不二次扣分。
+  const idempotencyKey = newExchangeId()
   try {
-    await redeemPointsToPlan(plan.group_id, plan.validity_days)
+    await redeemPointsToPlan(plan.group_id, plan.validity_days, idempotencyKey)
     appStore.showSuccess(t('points.redeemPlan.success'))
     await refresh()
   } catch (error) {

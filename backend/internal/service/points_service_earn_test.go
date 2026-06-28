@@ -166,7 +166,7 @@ func (r *pointsEarnRepo) ThawDuePoints(ctx context.Context, userID int64) (int64
 func (r *pointsEarnRepo) RedeemToBalance(ctx context.Context, userID, points int64, balanceDelta, pegAt float64) (float64, error) {
 	panic("unexpected RedeemToBalance call")
 }
-func (r *pointsEarnRepo) DeductForPlan(ctx context.Context, userID, points int64, pegAt float64, note string) error {
+func (r *pointsEarnRepo) DeductForPlan(ctx context.Context, userID, points int64, pegAt float64, note, idempotencyKey string) error {
 	panic("unexpected DeductForPlan call")
 }
 func (r *pointsEarnRepo) CreateWithdrawal(ctx context.Context, in CreateWithdrawalInput) (*PointsWithdrawal, error) {
