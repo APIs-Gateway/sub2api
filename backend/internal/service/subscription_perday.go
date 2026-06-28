@@ -2,7 +2,6 @@ package service
 
 import (
 	"fmt"
-	"math"
 	"time"
 )
 
@@ -127,104 +126,6 @@ func (w *WalletState) ResetMonthIfNeeded(month string) bool {
 	return true
 }
 
-// canOverdraft 报告是否还能透支：本卡开了透支 + 本月未满 + 还有「未来天」可借（expire_day > today）。
-// 注意：D 必须 > 0，否则借天不产生额度（防 D=0 卡空耗月度次数）。
-func canOverdraft(c *PerDayCard, w *WalletState, today int) bool {
-	return c.OverdraftOn &&
-		c.DailyAmountUSD > 0 &&
-		w.MonthlyOverdraftCount < MaxMonthlyOverdraftUses &&
-		c.ExpireDay > today
-}
-
-// CanOverdraft 导出版（供准入闸/展示用）。调用前必须已 ResetIfNewDay(today) 且
-// ResetMonthIfNeeded(monthKey)——否则跨月的 stale MonthlyOverdraftCount 会误判。
-func CanOverdraft(c *PerDayCard, w *WalletState, today int) bool {
-	return canOverdraft(c, w, today)
-}
-
-// Admit 准入（请求前）：套餐余额>0 或 钱包>0 或 可透支 —— 三者任一可用即放行。
-// 与 Settle 对称地先做两个惰性重置：按 today 覆盖套餐余额、按 monthKey 重置透支月度计数
-// （否则跨月后「仅透支可用」会被上个月的 stale count 误拒，而真正会重置的 Settle 在准入
-// 失败后根本进不去）。调用方需把覆盖/重置结果写回。流式请求必须先放行，放行后只结算不拒绝。
-func Admit(c *PerDayCard, w *WalletState, today int, monthKey string) bool {
-	c.ResetIfNewDay(today)
-	w.ResetMonthIfNeeded(monthKey)
-	return c.TodayRemaining > 0 || w.Balance > 0 || canOverdraft(c, w, today)
-}
-
-// SettleResult 记录一次结算的扣费明细（用于落库/审计/测试断言）。
-type SettleResult struct {
-	SubPay        float64 // 从套餐余额(1:1)扣的官方刀
-	WalletPay     float64 // 从钱包正余额扣的「售价货币」额（= 官方刀×倍率）
-	OverdraftDays int     // 本次透支借走的天数（= expire_day 提前天数 = 月度计数增量）
-	OverdraftPay  float64 // 透支补发后从套餐余额(1:1)扣的官方刀
-	WalletNegPay  float64 // 最终缺口记入钱包负数的「售价货币」额（= 官方刀×倍率）
-}
-
-// TotalOfficial 返回本次实际从套餐侧（套餐余额+透支）扣的官方刀合计。
-func (r SettleResult) TotalOfficial() float64 { return r.SubPay + r.OverdraftPay }
-
-// Settle 按 per-day 瀑布结算单笔请求的官方成本 cost（multiplier=钱包计费倍率，仅对钱包生效）。
-// 固定顺序：套餐余额(1:1) → 钱包正余额(×倍率) → 透支(借未来天1:1) → 钱包负数(兜底缺口)。
-// 就地变更 c、w；不变量：c.TodayRemaining 永不为负，溢出全落 w.Balance（可负）。
-func Settle(c *PerDayCard, w *WalletState, cost, multiplier float64, today int, monthKey string) SettleResult {
-	if multiplier <= 0 {
-		multiplier = 1
-	}
-	var res SettleResult
-
-	c.ResetIfNewDay(today)
-	w.ResetMonthIfNeeded(monthKey)
-
-	C := cost
-	if C <= 0 {
-		return res
-	}
-
-	// 1) 套餐余额（1:1，最多扣到 0，永不为负）
-	if c.TodayRemaining > 0 {
-		subPay := math.Min(c.TodayRemaining, C)
-		c.TodayRemaining -= subPay
-		C -= subPay
-		res.SubPay = subPay
-		c.DailySpentUSD += subPay
-	}
-
-	// 2) 钱包正余额（×倍率）：只用钱包正数部分
-	if C > 0 && w.Balance > 0 {
-		payOfficial := math.Min(C, w.Balance/multiplier)
-		if payOfficial > 0 {
-			walletPay := payOfficial * multiplier
-			if walletPay > w.Balance { // 防浮点把 balance 扣成极小负
-				walletPay = w.Balance
-			}
-			w.Balance -= walletPay
-			C -= payOfficial
-			res.WalletPay = walletPay
-		}
-	}
-
-	// 3) 透支（1:1，借未来天）：expire_day−1 + 给套餐余额补发 D + 月度计数+1，循环至 C=0 或不可再借。
-	for C > 0 && canOverdraft(c, w, today) {
-		c.ExpireDay--
-		w.MonthlyOverdraftCount++
-		res.OverdraftDays++
-		use := math.Min(c.DailyAmountUSD, C)
-		C -= use
-		c.TodayRemaining += c.DailyAmountUSD - use // 借来未用完的部分留作当日后续
-		res.OverdraftPay += use
-		c.DailySpentUSD += use
-	}
-
-	// 4) 最终缺口 → 钱包负数（套餐余额绝不为负；钱包负数不随次日清零）
-	if C > 0 {
-		neg := C * multiplier
-		w.Balance -= neg
-		res.WalletNegPay = neg
-	}
-	return res
-}
-
 // TodaySpentFromPackage 返回本卡今天已从套餐余额扣掉的官方成本。
 // 转套餐当天「新卡套餐余额 = max(0, D_新 − 旧卡今日已用)」时用它。调用前应已 ResetIfNewDay(today)。
 // per-day 热路径维护 DailySpentUSD；若读取到旧数据（DailySpentDay 未对齐），退化为 D − today_remaining。
@@ -260,18 +161,6 @@ func (s *UserSubscription) ToPerDayCard() PerDayCard {
 		ExpireDay:      s.ExpireDay,
 		OverdraftOn:    s.OverdraftOn,
 		Expired:        s.Status == SubscriptionStatusExpired,
-	}
-}
-
-// ToWalletState 把用户模型投影成 per-day 引擎所需的钱包/月度透支状态。
-func (u *User) ToWalletState() WalletState {
-	if u == nil {
-		return WalletState{}
-	}
-	return WalletState{
-		Balance:               u.Balance,
-		MonthlyOverdraftCount: u.MonthlyOverdraftCount,
-		MonthlyOverdraftMonth: u.MonthlyOverdraftMonth,
 	}
 }
 
