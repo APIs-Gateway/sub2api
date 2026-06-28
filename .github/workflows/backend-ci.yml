@@ -33,6 +33,7 @@ jobs:
           files: backend/coverage-unit.out,backend/coverage-integration.out
           flags: backend
           token: ${{ secrets.CODECOV_TOKEN }}
+          slug: APIs-Gateway/sub2api
           fail_ci_if_error: false
 
   frontend:
@@ -103,4 +104,5 @@ jobs:
           files: frontend/coverage/lcov.info
           flags: frontend
           token: ${{ secrets.CODECOV_TOKEN }}
+          slug: APIs-Gateway/sub2api
           fail_ci_if_error: false
