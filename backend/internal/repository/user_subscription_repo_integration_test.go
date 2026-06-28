@@ -26,6 +26,12 @@ func (s *UserSubscriptionRepoSuite) SetupTest() {
 	tx := testEntTx(s.T())
 	s.client = tx.Client()
 	s.repo = NewUserSubscriptionRepository(s.client).(*userSubscriptionRepository)
+
+	// 同包另有集成测试用全局 client 直接提交行；PostgreSQL READ COMMITTED 下，本事务内的
+	// list/count SELECT 会看到那些已提交的行，污染数量断言。在本事务内先 DELETE（仅本事务可见、
+	// 回滚不影响真实数据），保证 list/count 断言只看到当前测试创建的数据。
+	_, err := s.client.ExecContext(s.ctx, "DELETE FROM user_subscriptions")
+	s.Require().NoError(err, "isolate user subscriptions")
 }
 
 func TestUserSubscriptionRepoSuite(t *testing.T) {

@@ -112,74 +112,106 @@ LIMIT 1`, groupID, validityDays)
 func (r *affiliateRepository) ApplyRedeemCashback(ctx context.Context, input service.AffiliateRedeemCashbackInput) (bool, error) {
 	var applied bool
 	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
-		rows, err := txClient.QueryContext(txCtx, `
-WITH inserted AS (
-	INSERT INTO user_affiliate_ledger (
-		user_id,
-		action,
-		amount,
-		source_user_id,
-		source_redeem_code_id,
-		source_redeem_code_type,
-		source_redeem_code_value,
-		source_subscription_group_id,
-		source_subscription_validity_days,
-		cashback_base_amount,
-		cashback_rate_percent,
-		created_at,
-		updated_at
-	)
-		VALUES ($1, 'cashback', $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-	ON CONFLICT DO NOTHING
-	RETURNING id
-),
-updated_user AS (
-	UPDATE users
-	SET balance = balance + $2,
-	    updated_at = NOW()
-	WHERE id = $1
-	  AND EXISTS (SELECT 1 FROM inserted)
-	RETURNING balance::double precision
-),
-updated_affiliate AS (
-	UPDATE user_affiliates
-	SET aff_history_quota = aff_history_quota + $2,
-	    updated_at = NOW()
-	WHERE user_id = $1
-	  AND EXISTS (SELECT 1 FROM inserted)
-	RETURNING aff_history_quota::double precision
-)
-UPDATE user_affiliate_ledger ledger
-SET balance_after = (SELECT balance FROM updated_user),
-    aff_history_quota_after = (SELECT aff_history_quota FROM updated_affiliate),
-    updated_at = NOW()
-WHERE ledger.id = (SELECT id FROM inserted)
-RETURNING ledger.id`,
-			input.InviterID,
-			input.CashbackAmount,
-			input.InviteeUserID,
-			input.RedeemCodeID,
-			input.RedeemCodeType,
-			input.RedeemValue,
-			nullableInt64Arg(input.SubscriptionGroupID),
-			nullableIntArg(input.SubscriptionValidity),
-			input.BaseAmount,
-			input.RatePercent,
-		)
+		// 1) 幂等插入返现流水行；ON CONFLICT DO NOTHING 保证重复返现（同 code/user/source）不重复入账。
+		//    注意：不能用单条 CTE「INSERT 再回填同表行」——PostgreSQL 中同一语句内 data-modifying CTE
+		//    刚插入的行对主查询不可见（只能经 RETURNING 取值），主 UPDATE 会匹配 0 行导致 applied 恒 false。
+		//    故拆为事务内分步执行。
+		ledgerID, err := scanInsertedLedgerID(txCtx, txClient, input)
 		if err != nil {
 			return fmt.Errorf("apply affiliate redeem cashback: %w", err)
 		}
-		defer func() { _ = rows.Close() }()
-		applied = rows.Next()
-		if err := rows.Err(); err != nil {
-			return err
+		// 冲突命中（重复返现）→ 未插入，幂等跳过，不动余额。
+		if ledgerID == 0 {
+			applied = false
+			return nil
 		}
+
+		// 2) 仅在真正插入后入账：加邀请人余额 + 历史返现额度，并取回更新后的快照值。
+		balanceAfter, err := scanUpdatedFloat(txCtx, txClient,
+			"UPDATE users SET balance = balance + $2, updated_at = NOW() WHERE id = $1 RETURNING balance::double precision",
+			input.InviterID, input.CashbackAmount)
+		if err != nil {
+			return fmt.Errorf("bump inviter balance: %w", err)
+		}
+		quotaAfter, err := scanUpdatedFloat(txCtx, txClient,
+			"UPDATE user_affiliates SET aff_history_quota = aff_history_quota + $2, updated_at = NOW() WHERE user_id = $1 RETURNING aff_history_quota::double precision",
+			input.InviterID, input.CashbackAmount)
+		if err != nil {
+			return fmt.Errorf("bump inviter aff_history_quota: %w", err)
+		}
+
+		// 3) 回填流水的快照列（在 ledger 行已提交进当前事务后，单独 UPDATE 可正常命中）。
+		if _, err := txClient.ExecContext(txCtx,
+			"UPDATE user_affiliate_ledger SET balance_after = $2, aff_history_quota_after = $3, updated_at = NOW() WHERE id = $1",
+			ledgerID, balanceAfter, quotaAfter); err != nil {
+			return fmt.Errorf("backfill cashback ledger snapshot: %w", err)
+		}
+		applied = true
 		return nil
 	})
 	if err != nil {
 		return false, err
 	}
 	return applied, nil
+}
+
+// scanInsertedLedgerID 幂等插入返现流水行，返回新行 id；ON CONFLICT 命中（重复返现）时返回 0。
+func scanInsertedLedgerID(ctx context.Context, txClient *dbent.Client, input service.AffiliateRedeemCashbackInput) (int64, error) {
+	rows, err := txClient.QueryContext(ctx, `
+INSERT INTO user_affiliate_ledger (
+	user_id, action, amount, source_user_id, source_redeem_code_id,
+	source_redeem_code_type, source_redeem_code_value, source_subscription_group_id,
+	source_subscription_validity_days, cashback_base_amount, cashback_rate_percent,
+	created_at, updated_at
+)
+	VALUES ($1, 'cashback', $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+ON CONFLICT DO NOTHING
+RETURNING id`,
+		input.InviterID,
+		input.CashbackAmount,
+		input.InviteeUserID,
+		input.RedeemCodeID,
+		input.RedeemCodeType,
+		input.RedeemValue,
+		nullableInt64Arg(input.SubscriptionGroupID),
+		nullableIntArg(input.SubscriptionValidity),
+		input.BaseAmount,
+		input.RatePercent,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	var id int64
+	if rows.Next() {
+		if err := rows.Scan(&id); err != nil {
+			return 0, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// scanUpdatedFloat 执行一条 RETURNING 单个 float 值的 UPDATE，返回该值；无匹配行时返回 0。
+// 每次调用用完即关 rows，避免同一事务连接残留未读结果导致后续查询阻塞。
+func scanUpdatedFloat(ctx context.Context, txClient *dbent.Client, query string, args ...any) (float64, error) {
+	rows, err := txClient.QueryContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	var v float64
+	if rows.Next() {
+		if err := rows.Scan(&v); err != nil {
+			return 0, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return v, nil
 }
 
 func (r *affiliateRepository) ListUserCashbackRecords(ctx context.Context, userID int64, limit int) ([]service.AffiliateCashbackRecord, error) {

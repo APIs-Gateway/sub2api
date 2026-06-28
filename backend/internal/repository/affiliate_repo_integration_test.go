@@ -102,7 +102,6 @@ SELECT action,
 FROM user_affiliate_ledger
 WHERE user_id = $1 AND source_redeem_code_id = $2`, inviter.ID, code.ID)
 	require.NoError(t, err)
-	defer func() { _ = rows.Close() }()
 	require.True(t, rows.Next(), "expected cashback ledger row")
 
 	var (
@@ -130,6 +129,9 @@ WHERE user_id = $1 AND source_redeem_code_id = $2`, inviter.ID, code.ID)
 		&historyAfter,
 	))
 	require.NoError(t, rows.Err())
+	// 显式关闭 rows，释放当前事务连接——否则后续在同一 tx 上的查询（下方幂等二次调用）
+	// 会因连接残留未读结果触发 pq "unexpected Parse response"。
+	require.NoError(t, rows.Close())
 	require.Equal(t, "cashback", action)
 	require.InDelta(t, 20.0, amount, 1e-9)
 	require.Equal(t, invitee.ID, sourceUserID)
