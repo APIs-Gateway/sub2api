@@ -16,8 +16,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func fptr(v float64) *float64 { return &v }
-
 // ── ResetWindows：东八区自然 日/周/月 边界惰性重置 ──────────────────────────────
 func TestSubWindow_ResetWindows_NaturalBoundaries(t *testing.T) {
 	now := time.Now()

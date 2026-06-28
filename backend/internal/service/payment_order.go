@@ -154,8 +154,8 @@ type subscriptionOrderSpec struct {
 	unitPrice    float64                 // u(D)
 	price        float64                 // 该卡的权威全价 P（plan.Price 或 quote.Price；change_plan=新档全价 P_新）
 	// 生命周期意图（per-day redesign §5/§7）：
-	intent      string  // purchase（默认）/ renew / change_plan
-	targetSubID int64   // renew/change_plan 的目标当前生效卡 ID（purchase=0）
+	intent      string // purchase（默认）/ renew / change_plan
+	targetSubID int64  // renew/change_plan 的目标当前生效卡 ID（purchase=0）
 	// chargeAmount 实际向支付网关收取的金额：purchase/renew = price；change_plan = diff（P_新 − 旧卡剩余价值 V，恒 >0）。
 	chargeAmount float64
 }

@@ -320,24 +320,6 @@ func nullTimePtr(v sql.NullTime) *time.Time {
 	return nil
 }
 
-func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, error) {
-	var newBalance float64
-	err := tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
-		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, service.ErrUserNotFound
-	}
-	if err != nil {
-		return 0, err
-	}
-	return newBalance, nil
-}
-
 func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {
 	var exhausted bool
 	err := tx.QueryRowContext(ctx, `

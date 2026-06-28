@@ -523,7 +523,6 @@ func (r *userSubscriptionRepository) IncrementUsage(ctx context.Context, id int6
 	return service.ErrSubscriptionNotFound
 }
 
-
 // ForfeitExpiredSubscriptions 处理已到期的活跃订阅：标记 expired 并作废剩余订阅余额。
 func (r *userSubscriptionRepository) ForfeitExpiredSubscriptions(ctx context.Context, now time.Time, limit int) ([]int64, error) {
 	if limit <= 0 {

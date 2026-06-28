@@ -15,14 +15,14 @@ import (
 // diff = P_新 − 旧卡剩余价值 V；diff<0=降档赔钱（调用方拒）、=0=持平（同步换卡）、>0=补差价（走网关）。
 type ChangePlanOrderQuote struct {
 	OldSubscriptionID int64   `json:"old_subscription_id"`
-	DailyAmountUSD    float64 `json:"daily_amount_usd"`     // D_新
-	ValidityDays      int     `json:"validity_days"`        // T_新
-	WeeklyCapUSD      float64 `json:"weekly_cap_usd"`       // 派生 W
-	MonthlyCapUSD     float64 `json:"monthly_cap_usd"`      // 派生 M
-	NewPlanPrice      float64 `json:"new_plan_price"`       // P_新 = D_新×T_新×u(D_新)
-	OldRemainingValue float64 `json:"old_remaining_value"`  // V = cfg.Price(D_旧, 旧卡剩余服务天数)
-	Diff              float64 `json:"diff"`                 // P_新 − V（>0 走网关补差价；≤0 报价拒）
-	UnitPrice         float64 `json:"unit_price"`           // u(D_新)
+	DailyAmountUSD    float64 `json:"daily_amount_usd"`    // D_新
+	ValidityDays      int     `json:"validity_days"`       // T_新
+	WeeklyCapUSD      float64 `json:"weekly_cap_usd"`      // 派生 W
+	MonthlyCapUSD     float64 `json:"monthly_cap_usd"`     // 派生 M
+	NewPlanPrice      float64 `json:"new_plan_price"`      // P_新 = D_新×T_新×u(D_新)
+	OldRemainingValue float64 `json:"old_remaining_value"` // V = cfg.Price(D_旧, 旧卡剩余服务天数)
+	Diff              float64 `json:"diff"`                // P_新 − V（>0 走网关补差价；≤0 报价拒）
+	UnitPrice         float64 `json:"unit_price"`          // u(D_新)
 }
 
 // QuoteChangePlanOrder 解析转套餐下单的权威参数（不锁、不改状态）。
