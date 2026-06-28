@@ -601,14 +601,19 @@ func buildSubscriptionOrderSnapshot(spec *subscriptionOrderSpec, base map[string
 	if intent == "" {
 		intent = SubscriptionIntentPurchase
 	}
+	// W/M 与 D/T/u/price 一并冻结进快照（spec §2：订单必须存 D/W/M/T/u/price/formula_version/currency）；
+	// 发卡读快照 W/M、不按履约时派生系数重算。派生系数当前为常量，冻结保证日后调系数不影响存量订单。
+	weeklyLimit, monthlyLimit := DeriveWindowCaps(spec.dailyAmount, spec.validityDays)
 	snap := map[string]any{
-		"daily_amount_usd": spec.dailyAmount,
-		"validity_days":    spec.validityDays,
-		"unit_price":       spec.unitPrice,
-		"price":            spec.price,
-		"formula_version":  SubscriptionFormulaVersion,
-		"currency":         currency,
-		"intent":           intent,
+		"daily_amount_usd":  spec.dailyAmount,
+		"weekly_limit_usd":  weeklyLimit,
+		"monthly_limit_usd": monthlyLimit,
+		"validity_days":     spec.validityDays,
+		"unit_price":        spec.unitPrice,
+		"price":             spec.price,
+		"formula_version":   SubscriptionFormulaVersion,
+		"currency":          currency,
+		"intent":            intent,
 	}
 	// renew/change_plan：冻结目标卡 ID + 实收金额（diff），履约据此延长/换卡。
 	if spec.targetSubID > 0 {
@@ -645,6 +650,28 @@ func readSubscriptionSnapshotDT(order *dbent.PaymentOrder) (dailyAmount float64,
 		return 0, 0, true, fmt.Errorf("invalid subscription snapshot: validity_days must be integer")
 	}
 	return d, days, true, nil
+}
+
+// readSubscriptionSnapshotWM 从订单冻结快照读出周/月封顶 W/M（spec §2 要求与 D/T 一并冻结）。
+// ok=false 表示老订单无 W/M 快照（回退到按 D/T 派生）；新订单两者俱在。任一缺失/非法 → ok=false。
+func readSubscriptionSnapshotWM(order *dbent.PaymentOrder) (weekly, monthly float64, ok bool) {
+	if order == nil || order.ProviderSnapshot == nil {
+		return 0, 0, false
+	}
+	raw, exists := order.ProviderSnapshot[subscriptionSnapshotKey]
+	if !exists {
+		return 0, 0, false
+	}
+	sub, isMap := raw.(map[string]any)
+	if !isMap {
+		return 0, 0, false
+	}
+	w, wOK := snapshotFloat64(sub["weekly_limit_usd"])
+	m, mOK := snapshotFloat64(sub["monthly_limit_usd"])
+	if !wOK || !mOK || w < 0 || m < 0 {
+		return 0, 0, false
+	}
+	return w, m, true
 }
 
 func readSubscriptionSnapshotSubscriptionID(order *dbent.PaymentOrder) (int64, bool) {

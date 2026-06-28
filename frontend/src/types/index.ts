@@ -1584,11 +1584,9 @@ export interface UserSubscription {
   clawed_usd?: number // 累计被清扣
   remaining_usd?: number // 剩余订阅余额
   consumption_day?: number // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
-  max_overdraft_days?: number | null // 本卡最多往后透支天数；null = 透支关闭（用户在「我的订阅」自助设置）
-  max_overdraft_uses?: number // 本卡最多累计透支次数，当前固定为 5
-  total_overdraft_count?: number // 本卡已累计透支请求次数
-  remaining_overdraft_uses?: number // 本卡剩余可透支请求次数
-  can_enable_overdraft?: boolean // 已用满透支次数后为 false
+  // 旧 per-card 透支开关字段（max_overdraft_days/max_overdraft_uses/total_overdraft_count/
+  // remaining_overdraft_uses/can_enable_overdraft）已退役：三窗口模型改用用户级月度透支
+  // （monthly_overdraft_remaining + POST /subscriptions/overdraft）。
   activated_at?: string | null
   created_at: string
   updated_at: string

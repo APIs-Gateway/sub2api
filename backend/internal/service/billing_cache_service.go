@@ -798,6 +798,18 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 			if AdmitWindow(&sw, &wallet, now) {
 				return activeCard, nil
 			}
+			// 拒绝。有生效卡 + 撞窗口上限 + 钱包≤0 → 回精确 *_LIMIT_EXCEEDED（spec §4/场景#4，
+			// 让前端提示手动透支/等窗口重置）；未配置限额的安全闸卡 / 无生效卡 → 通用余额不足。
+			if activeCard {
+				switch sw.ExceededLimitCode() { // AdmitWindow 已对 sw 本地副本 ResetWindows，可直接判窗口
+				case "DAILY":
+					return activeCard, ErrDailyLimitExceeded
+				case "WEEKLY":
+					return activeCard, ErrWeeklyLimitExceeded
+				case "MONTHLY":
+					return activeCard, ErrMonthlyLimitExceeded
+				}
+			}
 			return activeCard, ErrInsufficientBalance
 		case errors.Is(cerr, ErrSubscriptionNotFound):
 			s.setNoSubscriptionLockCache(user.ID) // 无卡：缓存，后续走纯钱包

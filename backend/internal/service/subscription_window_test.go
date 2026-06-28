@@ -316,6 +316,110 @@ func TestManualOverdraftWindow(t *testing.T) {
 	})
 }
 
+// ── ExceededLimitCode：撞上限窗口码，日>周>月 优先（准入回精确 *_LIMIT_EXCEEDED 用）─────
+func TestSubWindow_ExceededLimitCode(t *testing.T) {
+	t.Run("none exceeded -> empty", func(t *testing.T) {
+		c := &SubWindow{DailyLimitUSD: 10, DailyUsageUSD: 5, WeeklyLimitUSD: 70, MonthlyLimitUSD: 300}
+		if got := c.ExceededLimitCode(); got != "" {
+			t.Fatalf("want empty, got %q", got)
+		}
+	})
+	t.Run("daily hit -> DAILY", func(t *testing.T) {
+		c := &SubWindow{DailyLimitUSD: 10, DailyUsageUSD: 10, WeeklyLimitUSD: 70, WeeklyUsageUSD: 10}
+		if got := c.ExceededLimitCode(); got != "DAILY" {
+			t.Fatalf("want DAILY, got %q", got)
+		}
+	})
+	t.Run("daily and weekly both hit -> DAILY (priority, overdraftable)", func(t *testing.T) {
+		c := &SubWindow{DailyLimitUSD: 10, DailyUsageUSD: 10, WeeklyLimitUSD: 70, WeeklyUsageUSD: 70}
+		if got := c.ExceededLimitCode(); got != "DAILY" {
+			t.Fatalf("want DAILY (priority), got %q", got)
+		}
+	})
+	t.Run("weekly hit, daily room -> WEEKLY", func(t *testing.T) {
+		c := &SubWindow{DailyLimitUSD: 10, DailyUsageUSD: 2, WeeklyLimitUSD: 70, WeeklyUsageUSD: 70}
+		if got := c.ExceededLimitCode(); got != "WEEKLY" {
+			t.Fatalf("want WEEKLY, got %q", got)
+		}
+	})
+	t.Run("monthly hit, daily/weekly room -> MONTHLY", func(t *testing.T) {
+		c := &SubWindow{DailyLimitUSD: 10, DailyUsageUSD: 1, WeeklyLimitUSD: 70, WeeklyUsageUSD: 1, MonthlyLimitUSD: 300, MonthlyUsageUSD: 300}
+		if got := c.ExceededLimitCode(); got != "MONTHLY" {
+			t.Fatalf("want MONTHLY, got %q", got)
+		}
+	})
+	t.Run("unconfigured card (safety gate) -> empty (generic insufficient, not a limit code)", func(t *testing.T) {
+		c := &SubWindow{} // 三限额全 0 → SubRemaining 安全闸返回 0，但不是“撞上限”
+		if got := c.ExceededLimitCode(); got != "" {
+			t.Fatalf("unconfigured card should yield empty code, got %q", got)
+		}
+	})
+}
+
+// ── 流式中途钱包变负 → 后续请求准入被拒（spec §4 准入看 balance>0；负数不放行）─────────
+func TestAdmitWindow_NegativeWalletDenied(t *testing.T) {
+	now := time.Now()
+	t.Run("card hit limit + wallet negative -> deny", func(t *testing.T) {
+		c := activeCard(10)
+		c.DailyUsageUSD = 10 // sub_remaining 0
+		if AdmitWindow(c, &WalletState{Balance: -5}, now) {
+			t.Fatal("hit limit + negative wallet must deny")
+		}
+		// 且能给出精确窗口码供准入回 *_LIMIT_EXCEEDED（AdmitWindow 已 ResetWindows 本地副本）
+		if code := c.ExceededLimitCode(); code != "DAILY" {
+			t.Fatalf("want DAILY limit code, got %q", code)
+		}
+	})
+	t.Run("no card + wallet negative -> deny", func(t *testing.T) {
+		if AdmitWindow(nil, &WalletState{Balance: -0.01}, now) {
+			t.Fatal("no card + negative wallet must deny")
+		}
+	})
+	t.Run("card has subscription remaining -> admit even if wallet negative", func(t *testing.T) {
+		// 订阅还能覆盖时，钱包负不影响放行（两桶独立；spec §4 钱包负不锁订阅卡）
+		if !AdmitWindow(activeCard(10), &WalletState{Balance: -100}, now) {
+			t.Fatal("subscription remaining should admit regardless of negative wallet")
+		}
+	})
+}
+
+// ── §8 场景 22：撞周/月上限时透支无效 —— 透支只清日窗口，W/M 仍 binding，结算回落钱包 ─────
+func TestManualOverdraft_WeeklyStillBindingAfter(t *testing.T) {
+	now := time.Now()
+	today := EastDayNumber(now)
+	c := activeCard(10)
+	c.WeeklyLimitUSD = 70
+	c.MonthlyLimitUSD = 300
+	c.DailyUsageUSD = 10  // 日撞满
+	c.WeeklyUsageUSD = 70 // 周也撞满
+	c.MonthlyUsageUSD = 120
+	c.ExpiresAt = ExpireDayToExpiresAt(today + 5)
+	w := &WalletState{Balance: 100, MonthlyOverdraftMonth: CurrentEastMonthKey()}
+
+	// 透支成功（前置仅要求日撞满，即便周也满也允许借——见 spec §8 #22）
+	if err := ManualOverdraftWindow(c, w, now); err != nil {
+		t.Fatalf("overdraft should succeed (daily exhausted): %v", err)
+	}
+	if c.DailyUsageUSD != 0 {
+		t.Fatalf("daily should reset, got %v", c.DailyUsageUSD)
+	}
+	if c.WeeklyUsageUSD != 70 {
+		t.Fatalf("weekly must NOT be cleared by overdraft, got %v", c.WeeklyUsageUSD)
+	}
+	// 关键：透支清了日窗口，但周仍撞上限 → SubRemaining 仍为 0（周 binding），透支对 W 无效。
+	if rem := c.SubRemaining(); rem != 0 {
+		t.Fatalf("weekly still binding -> SubRemaining must be 0, got %v", rem)
+	}
+	// 结算：订阅覆盖 0（周封顶），全落钱包 1:1。
+	res := SettleWindow(c, w, 8, now)
+	if res.SubCover != 0 {
+		t.Fatalf("overdraft cannot bypass weekly cap; SubCover must be 0, got %v", res.SubCover)
+	}
+	if !feq(res.WalletPay, 8) || !feq(w.Balance, 92) {
+		t.Fatalf("should fall to wallet 1:1: walletPay=%v balance=%v", res.WalletPay, w.Balance)
+	}
+}
+
 // ── RefundableDaysByExpiry：max(0, 最后服务日 − 今天) ──────────────────────────
 func TestRefundableDaysByExpiry(t *testing.T) {
 	now := time.Now()

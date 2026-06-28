@@ -4,13 +4,6 @@ import (
 	"time"
 )
 
-// MaxSubscriptionOverdraftUses 是本卡累计可「往后预支」的天数硬上限。
-// 透支 = 把后续天的额度提前花掉（计费周期前移），单日最多突破到 (1+可预支天数)×D；
-// 每天突破当日 D 的天数累加进 total_overdraft_count（求和），累计达到本上限后自动关闭本卡透支
-// （max_overdraft_days→NULL），用户端不能再次开启。
-// 注意：计量单位是「天」，且同一天内多笔只按当天达到的最高预支天数计，不会按请求数瞬间烧光。
-const MaxSubscriptionOverdraftUses = 5
-
 // entGroupIDValue 把 ent 可空 group_id(*int64) 映射为 domain/业务侧 int64：
 // NULL（自定义 D+T 卡无 group 归属）→ 0。与 repository.groupIDValue 同语义，供 service 层直读 ent 实体时使用。
 func entGroupIDValue(p *int64) int64 {
@@ -49,8 +42,8 @@ type UserSubscription struct {
 	ConsumedUSD         float64    // 本卡累计消费（单调递增）
 	ClawedUSD           float64    // 本卡累计被清扣（单调递增）
 	LastClawbackDay     int        // 已对账到的最高日历天 N
-	MaxOverdraftDays    *int       // 本卡用户自设的最多往后透支天数；nil = 透支关闭；用户在「我的订阅」自助设置
-	TotalOverdraftCount int        // 本卡累计预支天数（求和、封顶 MaxSubscriptionOverdraftUses）；达上限后自动关闭透支
+	MaxOverdraftDays    *int       // 【已退役·留列待上线前 drop】旧 per-card 透支开关；三窗口模型改用用户级月度透支（users.monthly_overdraft_count + ManualOverdraftWindow）
+	TotalOverdraftCount int        // 【已退役·留列待上线前 drop】旧 per-card 累计预支天数；新模型按用户/自然月计
 	DailySpentUSD       float64    // 当前日内套餐侧已实际扣掉的官方刀（per-day 用于转套餐防双领）
 	DailySpentDay       int        // per-day 为东八区绝对自然日序号；旧 burn-down 为自激活起日历天 N
 	ActivatedAt         *time.Time // 清扣时钟起点；nil 时回退 StartsAt
@@ -279,24 +272,4 @@ func (s *UserSubscription) ClawbackShortfallAt(now time.Time) float64 {
 		return 0
 	}
 	return shortfall
-}
-
-// CanEnableOverdraft 报告本卡是否仍允许开启透支功能（累计预支天数未达 5 天硬上限）。
-func (s *UserSubscription) CanEnableOverdraft() bool {
-	if s == nil {
-		return false
-	}
-	return s.TotalOverdraftCount < MaxSubscriptionOverdraftUses
-}
-
-// RemainingOverdraftUses 返回本卡剩余可往后预支的天数（5 − 已累计预支天数）。
-func (s *UserSubscription) RemainingOverdraftUses() int {
-	if s == nil {
-		return 0
-	}
-	remaining := MaxSubscriptionOverdraftUses - s.TotalOverdraftCount
-	if remaining < 0 {
-		return 0
-	}
-	return remaining
 }

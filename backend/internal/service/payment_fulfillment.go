@@ -535,6 +535,7 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 	// 无快照的老套餐单回退 subscription_days + group.daily_limit_usd 兼容路径（dailyAmount=0 时
 	// createSubscription 会回退 group）。
 	var dailyAmount float64
+	var weeklyLimit, monthlyLimit float64
 	d, t, hasSnapshot, snapErr := readSubscriptionSnapshotDT(o)
 	if snapErr != nil {
 		return snapErr
@@ -542,6 +543,11 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 	if hasSnapshot {
 		dailyAmount = d
 		days = t
+		// W/M 同样按冻结快照发卡（spec §2）；老单无 W/M 快照 → 0，createSubscription 回退按 D/T 派生。
+		if w, m, wmOK := readSubscriptionSnapshotWM(o); wmOK {
+			weeklyLimit = w
+			monthlyLimit = m
+		}
 	}
 	if gid > 0 {
 		// 套餐/历史卡：校验来源 group 仍存在（无快照的老单还要求 active，保证可推导 D）。
@@ -563,7 +569,7 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 		return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
 	}
 	orderNote := fmt.Sprintf("payment order %d", o.ID)
-	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(ctx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, AssignedBy: 0, Notes: orderNote})
+	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(ctx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, WeeklyLimitUSD: weeklyLimit, MonthlyLimitUSD: monthlyLimit, AssignedBy: 0, Notes: orderNote})
 	if err != nil {
 		return fmt.Errorf("assign subscription: %w", err)
 	}

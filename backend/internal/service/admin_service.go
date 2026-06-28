@@ -865,16 +865,6 @@ func sameInt64Set(a, b []int64) bool {
 	return true
 }
 
-// normalizeOverdraftDays 规整「最多透支天数」入参为存储值：
-// nil 或负数 → nil（不限制）；>=0 → 拷贝原值。
-func normalizeOverdraftDays(in *int) *int {
-	if in == nil || *in < 0 {
-		return nil
-	}
-	v := *in
-	return &v
-}
-
 func (s *adminServiceImpl) DeleteUser(ctx context.Context, id int64) error {
 	// Protect admin users: cannot delete admin accounts
 	user, err := s.userRepo.GetByID(ctx, id)

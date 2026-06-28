@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
@@ -46,6 +47,39 @@ func TestValidateSubOrder_CustomQuoteAuthoritative(t *testing.T) {
 	require.InDelta(t, d, snap["daily_amount_usd"].(float64), 1e-9)
 	require.Equal(t, tt, snap["validity_days"])
 	require.Equal(t, SubscriptionFormulaVersion, snap["formula_version"])
+}
+
+// 订单快照必须把 W/M 与 D/T/u/price 一并冻结（spec §2：订单存 D/W/M/T/u/price/formula_version/currency），
+// 且能被 readSubscriptionSnapshotWM 原样读回——发卡按冻结值、不按履约时派生系数重算。
+func TestSubscriptionSnapshot_FreezesWeeklyMonthlyLimits(t *testing.T) {
+	sub := &SubscriptionService{}
+	svc := &PaymentService{subscriptionSvc: sub}
+	bounds := sub.PricingBounds()
+	d, tt := bounds.DMin, bounds.TMin
+
+	spec, err := svc.validateSubOrder(context.Background(), CreateOrderRequest{
+		DailyAmountUSD: d, ValidityDays: tt,
+	})
+	require.NoError(t, err)
+
+	wantW, wantM := DeriveWindowCaps(d, tt)
+	snap := buildSubscriptionOrderSnapshot(spec, map[string]any{"currency": "CNY"})
+	require.InDelta(t, wantW, snap["weekly_limit_usd"].(float64), 1e-9, "W 必须冻结进快照")
+	require.InDelta(t, wantM, snap["monthly_limit_usd"].(float64), 1e-9, "M 必须冻结进快照")
+
+	// 读回：新订单快照含 W/M。
+	order := &dbent.PaymentOrder{ProviderSnapshot: map[string]any{subscriptionSnapshotKey: snap}}
+	w, m, ok := readSubscriptionSnapshotWM(order)
+	require.True(t, ok, "新订单应能读回 W/M")
+	require.InDelta(t, wantW, w, 1e-9)
+	require.InDelta(t, wantM, m, 1e-9)
+
+	// 老订单（快照无 W/M）→ ok=false，调用方回退按 D/T 派生（向后兼容）。
+	legacy := &dbent.PaymentOrder{ProviderSnapshot: map[string]any{subscriptionSnapshotKey: map[string]any{
+		"daily_amount_usd": d, "validity_days": tt,
+	}}}
+	_, _, ok = readSubscriptionSnapshotWM(legacy)
+	require.False(t, ok, "老订单无 W/M 快照应回 ok=false")
 }
 
 // D/T 越界必须在收款前被拒（INVALID_SUBSCRIPTION_PARAMS），绝不生成无法履约的订单。

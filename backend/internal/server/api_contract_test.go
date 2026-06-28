@@ -424,10 +424,6 @@ func TestAPIContracts(t *testing.T) {
 						"clawed_usd": 0,
 						"remaining_usd": 0,
 						"consumption_day": 0,
-						"max_overdraft_uses": 5,
-						"total_overdraft_count": 0,
-						"remaining_overdraft_uses": 5,
-						"can_enable_overdraft": true,
 						"created_at": "2025-01-02T03:04:05Z",
 						"updated_at": "2025-01-02T03:04:05Z"
 					}

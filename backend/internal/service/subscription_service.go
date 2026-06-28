@@ -29,25 +29,24 @@ var MaxExpiresAt = time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC)
 const MaxValidityDays = 36500
 
 var (
-	ErrSubscriptionNotFound               = infraerrors.NotFound("SUBSCRIPTION_NOT_FOUND", "subscription not found")
-	ErrSubscriptionExpired                = infraerrors.Forbidden("SUBSCRIPTION_EXPIRED", "subscription has expired")
-	ErrSubscriptionSuspended              = infraerrors.Forbidden("SUBSCRIPTION_SUSPENDED", "subscription is suspended")
-	ErrSubscriptionAlreadyExists          = infraerrors.Conflict("SUBSCRIPTION_ALREADY_EXISTS", "subscription already exists for this user and group")
-	ErrActiveSubscriptionExists           = infraerrors.Conflict("ACTIVE_SUBSCRIPTION_EXISTS", "active subscription already exists; renew, refund, or change plan instead")
-	ErrNoActiveSubscription               = infraerrors.NotFound("NO_ACTIVE_SUBSCRIPTION", "no active subscription to change")
-	ErrChangePlanDailyLimit               = infraerrors.TooManyRequests("CHANGE_PLAN_DAILY_LIMIT", "plan can be changed at most once per natural day")
+	ErrSubscriptionNotFound      = infraerrors.NotFound("SUBSCRIPTION_NOT_FOUND", "subscription not found")
+	ErrSubscriptionExpired       = infraerrors.Forbidden("SUBSCRIPTION_EXPIRED", "subscription has expired")
+	ErrSubscriptionSuspended     = infraerrors.Forbidden("SUBSCRIPTION_SUSPENDED", "subscription is suspended")
+	ErrSubscriptionAlreadyExists = infraerrors.Conflict("SUBSCRIPTION_ALREADY_EXISTS", "subscription already exists for this user and group")
+	ErrActiveSubscriptionExists  = infraerrors.Conflict("ACTIVE_SUBSCRIPTION_EXISTS", "active subscription already exists; renew, refund, or change plan instead")
+	ErrNoActiveSubscription      = infraerrors.NotFound("NO_ACTIVE_SUBSCRIPTION", "no active subscription to change")
+	ErrChangePlanDailyLimit      = infraerrors.TooManyRequests("CHANGE_PLAN_DAILY_LIMIT", "plan can be changed at most once per natural day")
 	// 转套餐降档赔钱（新档折价后 diff<0，即旧卡剩余价值 > 新档价）禁止——只允许持平/升档（diff≥0）。
 	// 见 docs/billing-perday-redesign.md §7：差价走法币网关补，不退款（产品决策：禁止赔钱降档）。
 	ErrChangePlanDowngradeNotAllowed = infraerrors.BadRequest("CHANGE_PLAN_DOWNGRADE_NOT_ALLOWED", "cannot change to a plan worth less than the current card's remaining value")
-	ErrSubscriptionAssignConflict         = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
-	ErrInvalidDailyAmount                 = infraerrors.BadRequest("INVALID_DAILY_AMOUNT", "subscription daily amount must be positive (provide daily_amount_usd, or a group with daily_limit_usd > 0)")
-	ErrInvalidInput                       = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
-	ErrDailyLimitExceeded                 = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")
-	ErrWeeklyLimitExceeded                = infraerrors.TooManyRequests("WEEKLY_LIMIT_EXCEEDED", "weekly usage limit exceeded")
-	ErrMonthlyLimitExceeded               = infraerrors.TooManyRequests("MONTHLY_LIMIT_EXCEEDED", "monthly usage limit exceeded")
-	ErrSubscriptionNilInput               = infraerrors.BadRequest("SUBSCRIPTION_NIL_INPUT", "subscription input cannot be nil")
-	ErrAdjustWouldExpire                  = infraerrors.BadRequest("ADJUST_WOULD_EXPIRE", "adjustment would result in expired subscription (remaining days must be > 0)")
-	ErrSubscriptionOverdraftUsesExhausted = infraerrors.BadRequest("SUBSCRIPTION_OVERDRAFT_USES_EXHAUSTED", "subscription overdraft uses exhausted")
+	ErrSubscriptionAssignConflict    = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
+	ErrInvalidDailyAmount            = infraerrors.BadRequest("INVALID_DAILY_AMOUNT", "subscription daily amount must be positive (provide daily_amount_usd, or a group with daily_limit_usd > 0)")
+	ErrInvalidInput                  = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
+	ErrDailyLimitExceeded            = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")
+	ErrWeeklyLimitExceeded           = infraerrors.TooManyRequests("WEEKLY_LIMIT_EXCEEDED", "weekly usage limit exceeded")
+	ErrMonthlyLimitExceeded          = infraerrors.TooManyRequests("MONTHLY_LIMIT_EXCEEDED", "monthly usage limit exceeded")
+	ErrSubscriptionNilInput          = infraerrors.BadRequest("SUBSCRIPTION_NIL_INPUT", "subscription input cannot be nil")
+	ErrAdjustWouldExpire             = infraerrors.BadRequest("ADJUST_WOULD_EXPIRE", "adjustment would result in expired subscription (remaining days must be > 0)")
 )
 
 // SubscriptionService 订阅服务
@@ -165,8 +164,12 @@ type AssignSubscriptionInput struct {
 	GroupID        int64
 	ValidityDays   int
 	DailyAmountUSD float64 // per-day：每日额度 D（来自订单快照/plan）；0 时回退 group.daily_limit_usd
-	AssignedBy     int64
-	Notes          string
+	// 周/月封顶（来自订单**冻结快照**）；>0 则覆盖 DeriveWindowCaps(D,T) 的派生值——spec §2 要求
+	// W/M 与 D/T/u/price 一并冻结，发卡严格按快照、不按履约时派生系数重算。0（老单/直发）= 按 D/T 派生。
+	WeeklyLimitUSD  float64
+	MonthlyLimitUSD float64
+	AssignedBy      int64
+	Notes           string
 }
 
 // AssignSubscription 分配订阅给用户（不允许重复分配）
@@ -298,7 +301,15 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 	expiresAt := ExpireDayToExpiresAt(expireDay)
 
 	activatedAt := now
+	// 优先用订单冻结快照里的 W/M（spec §2：W/M 也冻结，发卡不按履约时派生系数重算）；
+	// 快照缺省（老单/直发/redeem）时回退按 D/T 派生（派生系数为常量，结果与下单时一致）。
 	weeklyLimit, monthlyLimit := DeriveWindowCaps(dailyAmount, validityDays)
+	if input.WeeklyLimitUSD > 0 {
+		weeklyLimit = input.WeeklyLimitUSD
+	}
+	if input.MonthlyLimitUSD > 0 {
+		monthlyLimit = input.MonthlyLimitUSD
+	}
 	dailyWindowStart := timezone.StartOfDay(now)
 	weeklyWindowStart := timezone.StartOfWeek(now)
 	monthlyWindowStart := timezone.StartOfMonth(now)
@@ -901,45 +912,6 @@ func (s *SubscriptionService) ListUserSubscriptions(ctx context.Context, userID 
 	normalizeExpiredWindows(subs)
 	normalizeSubscriptionStatus(subs)
 	return subs, nil
-}
-
-// SetSubscriptionOverdraftDays 用户自助设置自己某张订阅卡的「最多往后透支天数」。
-// days = nil 或负数 → 关闭透支；>=0 → 开启并设置透支深度（0 = 仅当天额度）。仅能操作属于自己的卡。
-func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, userID, subID int64, days *int) error {
-	norm := normalizeOverdraftDays(days) // nil/负数 → nil；>=0 → 拷贝
-	s.clearSubscriptionLockCache(userID)
-	if norm != nil {
-		sub, err := s.userSubRepo.GetByID(ctx, subID)
-		if err != nil {
-			return err
-		}
-		if sub == nil || sub.UserID != userID {
-			return ErrSubscriptionNotFound
-		}
-		if !sub.CanEnableOverdraft() {
-			return ErrSubscriptionOverdraftUsesExhausted
-		}
-	}
-	ok, err := s.userSubRepo.SetOverdraftDays(ctx, userID, subID, norm)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return ErrSubscriptionNotFound
-	}
-	s.clearSubscriptionLockCache(userID)
-	// 设了非空上限 → 置 guard，让准入闸门对该用户生效（只置真）。
-	if norm != nil && s.userRepo != nil {
-		if err := s.userRepo.MarkSubscriptionOverdraftGuard(ctx, userID); err != nil {
-			log.Printf("[Subscription] mark overdraft guard failed user=%d: %v", userID, err)
-		}
-	}
-	// 失效 auth 快照（闸门读 guard）+ 余额缓存（闸门读 balance）。
-	if s.authCacheInvalidator != nil {
-		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
-	}
-	s.invalidateUserBalanceCacheAsync(userID)
-	return nil
 }
 
 // ListActiveUserSubscriptions 获取用户的所有有效订阅

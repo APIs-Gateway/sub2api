@@ -103,6 +103,27 @@ func (c *SubWindow) SubRemaining() float64 {
 	return rem
 }
 
+// ExceededLimitCode 返回当前撞上限的窗口码（"DAILY"/"WEEKLY"/"MONTHLY"），按 日>周>月 优先级；
+// 无窗口撞上限（或未配置任何限额→安全闸卡）返回 ""。调用前应已 ResetWindows(now)。
+// 准入在「撞窗口上限 且 钱包≤0」拒绝时用它给出精确错误码（spec §4 / 场景#4：DAILY/WEEKLY/MONTHLY_LIMIT_EXCEEDED），
+// 让前端能提示「(撞日上限可)手动透支 / 等窗口重置」，而非笼统的「余额不足」。
+// 日优先：撞日上限可由手动透支解，应优先提示日；未配置限额的安全闸卡返回 ""（回落通用余额不足）。
+func (c *SubWindow) ExceededLimitCode() string {
+	if c == nil {
+		return ""
+	}
+	if c.DailyLimitUSD > 0 && c.DailyUsageUSD >= c.DailyLimitUSD {
+		return "DAILY"
+	}
+	if c.WeeklyLimitUSD > 0 && c.WeeklyUsageUSD >= c.WeeklyLimitUSD {
+		return "WEEKLY"
+	}
+	if c.MonthlyLimitUSD > 0 && c.MonthlyUsageUSD >= c.MonthlyLimitUSD {
+		return "MONTHLY"
+	}
+	return ""
+}
+
 // WindowSettleResult 记录一次三窗口结算的扣费明细（用于落库/审计/测试断言）。
 // 订阅余额与钱包余额地位等价：两者都按官方刀 1:1 抵扣，均不乘倍率（见 docs/billing-perday-redesign.md §4）。
 type WindowSettleResult struct {
