@@ -489,11 +489,10 @@ func TestIncrementUserPlatformQuotaUsage_GuardsAgainstEmpty(t *testing.T) {
 	}
 }
 
-// ── user×platform quota 检查（per-day：不再有「订阅模式豁免」）──────────────────
-// per-day 重构后 CheckBillingEligibility 移除了 isSubscriptionMode 分流：所有请求统一走
-// checkBalanceEligibility(Admit) 后照常检查 platform quota。旧 C-NEW-2「订阅模式豁免 platform
-// quota」契约已失效，见 TestCheckBillingEligibility_SubscriptionGroup_StillAppliesPlatformQuota。
-// 这里直接验证底层 checkUserPlatformQuotaEligibility 的拦截行为（limit=0 → 拦截）。
+// ── user×platform quota 检查（三窗口：订阅模式豁免）──────────────────
+// docs/billing-perday-redesign.md §4 恢复 upstream 口径：用户有生效订阅卡时豁免
+// user×platform quota；无卡用户继续受 platform quota 约束。这里同时守住底层 standard
+// 模式拦截行为（limit=0 → 拦截）。
 
 // fakeZeroQuotaCache 模拟 cache 命中且 daily limit=0（quota 耗尽）。
 type fakeZeroQuotaCache struct {
@@ -565,12 +564,10 @@ func TestCheckUserPlatformQuotaEligibility_StandardMode_BlocksWhenLimitZero(t *t
 	}
 }
 
-// TestCheckBillingEligibility_SubscriptionGroup_StillAppliesPlatformQuota 验证 per-day 后的新契约：
-// 准入不再按 group.IsSubscriptionType() 豁免 user×platform quota——所有请求统一走 per-day
-// checkBalanceEligibility(Admit) 后照常检查 platform quota。即「订阅分组」不再绕过 platform quota。
-// （取代旧 C-NEW-2「订阅模式绕过 platform quota」契约，该契约随 isSubscriptionMode 分流移除而失效。）
-func TestCheckBillingEligibility_SubscriptionGroup_StillAppliesPlatformQuota(t *testing.T) {
-	fake := &fakeZeroQuotaCache{} // GetUserBalance=1.0 过余额闸；GetUserPlatformQuotaCache limit=0 → 拦截
+// TestCheckBillingEligibility_ActiveSubscriptionBypassesPlatformQuota 验证三窗口订阅口径：
+// 是否订阅由“有生效卡”决定，与 group.IsSubscriptionType 无关；订阅模式跳过 user×platform quota。
+func TestCheckBillingEligibility_ActiveSubscriptionBypassesPlatformQuota(t *testing.T) {
+	fake := &fakeZeroQuotaCache{} // 若误查 platform quota，limit=0 会拦截
 	cfg := &config.Config{}
 	cfg.Billing.UserPlatformQuotaCacheTTLSeconds = 60
 	s := &BillingCacheService{
@@ -579,22 +576,19 @@ func TestCheckBillingEligibility_SubscriptionGroup_StillAppliesPlatformQuota(t *
 		userPlatformQuotaRepo: &fakeQuotaRepo{},
 	}
 
-	subGroup := &Group{
-		ID:               10,
-		SubscriptionType: "subscription",
-		Status:           "active",
+	group := &Group{
+		ID:     10,
+		Status: "active",
 	}
-	sub := &UserSubscription{Status: "active"}
+	sub := &UserSubscription{Status: "active", ExpiresAt: time.Now().Add(time.Hour)}
 	user := &User{ID: 42}
 
-	err := s.CheckBillingEligibility(context.Background(), user, nil, subGroup, sub, "anthropic")
-	// 新口径：订阅分组也要受 platform quota 约束（limit=0 → 当日额度耗尽）。
-	if !errors.Is(err, ErrUserPlatformDailyQuotaExhausted) {
-		t.Errorf("subscription group should NOT bypass user×platform quota, got: %v", err)
+	err := s.CheckBillingEligibility(context.Background(), user, nil, group, sub, "anthropic")
+	if err != nil {
+		t.Errorf("active subscription should bypass user×platform quota, got: %v", err)
 	}
-	// platform quota cache 必须被查询（不再豁免）。
-	if !fake.called {
-		t.Error("GetUserPlatformQuotaCache should be consulted even for subscription group (per-day)")
+	if fake.called {
+		t.Error("GetUserPlatformQuotaCache should NOT be consulted for active subscription mode")
 	}
 }
 
