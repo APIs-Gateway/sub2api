@@ -201,6 +201,18 @@ func (s *PaymentConfigService) IsPaymentEnabled(ctx context.Context) bool {
 	return val == "true"
 }
 
+// GetKyrenWebhookSecret 读取 Kyren 原生 webhook 验签密钥(空表示未配置 → 验签必失败)。
+func (s *PaymentConfigService) GetKyrenWebhookSecret(ctx context.Context) string {
+	if s == nil || s.settingRepo == nil {
+		return ""
+	}
+	val, err := s.settingRepo.GetValue(ctx, SettingKyrenWebhookSecret)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(val)
+}
+
 // GetPaymentConfig returns the full payment configuration.
 func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentConfig, error) {
 	keys := []string{

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -65,6 +66,64 @@ func (h *PaymentWebhookHandler) StripeWebhook(c *gin.Context) {
 // POST /api/v1/payment/webhook/airwallex
 func (h *PaymentWebhookHandler) AirwallexWebhook(c *gin.Context) {
 	h.handleNotify(c, payment.TypeAirwallex)
+}
+
+// KyrenRefundWebhook handles Kyren Pay native webhook events (currently order.refunded).
+// Kyren 的 api.php?act=refund 兼容端点不支持,退款在 Kyren 控制台发起,生效后由本端点接收并关卡/对账。
+// POST /api/v1/payment/webhook/kyren
+func (h *PaymentWebhookHandler) KyrenRefundWebhook(c *gin.Context) {
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxWebhookBodySize))
+	if err != nil {
+		slog.Error("[Kyren Webhook] failed to read body", "error", err)
+		c.String(http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	// 验签:必须在信任 body 之前完成(HMAC-SHA256 + 5min 防重放)。密钥取自全局 setting。
+	secret := h.paymentService.KyrenWebhookSecret(c.Request.Context())
+	sig := c.GetHeader("X-Kyren-Signature")
+	ts := c.GetHeader("X-Kyren-Timestamp")
+	if err := payment.VerifyKyrenWebhookSignature(body, sig, ts, secret, time.Now().UnixMilli()); err != nil {
+		slog.Warn("[Kyren Webhook] signature verify failed", "error", err)
+		c.String(http.StatusUnauthorized, "signature verify failed")
+		return
+	}
+
+	evt, err := payment.ParseKyrenWebhookEvent(body)
+	if err != nil {
+		slog.Warn("[Kyren Webhook] parse event failed", "error", err)
+		c.String(http.StatusBadRequest, "bad event")
+		return
+	}
+
+	// 目前只处理退款;其它事件(order.paid 等走 easypay notify 回调)直接 ack 200 忽略。
+	if evt.Type != payment.KyrenEventOrderRefunded {
+		c.String(http.StatusOK, "ignored")
+		return
+	}
+
+	data, err := evt.RefundData()
+	if err != nil {
+		slog.Warn("[Kyren Webhook] bad refund data", "eventID", evt.ID, "error", err)
+		c.String(http.StatusBadRequest, "bad refund data")
+		return
+	}
+
+	if err := h.paymentService.HandleKyrenRefundWebhook(c.Request.Context(), data, evt.ID); err != nil {
+		// 未知订单:ack 2xx 让 Kyren 停止重推(防外部误配端点指向我们时刷错误日志),仅 WARN 可追溯。
+		if errors.Is(err, service.ErrOrderNotFound) {
+			slog.Warn("[Kyren Webhook] unknown order, acking to stop retries",
+				"eventID", evt.ID, "orderID", data.OrderID, "refundID", data.RefundID)
+			c.String(http.StatusOK, "ok")
+			return
+		}
+		// 其它错误回 5xx → Kyren 重试(我们靠 evt_id 幂等去重,重试安全)。
+		slog.Error("[Kyren Webhook] handle refund failed", "eventID", evt.ID, "orderID", data.OrderID, "error", err)
+		c.String(http.StatusInternalServerError, "handle failed")
+		return
+	}
+
+	c.String(http.StatusOK, "ok")
 }
 
 // handleNotify is the shared logic for all provider webhook handlers.
