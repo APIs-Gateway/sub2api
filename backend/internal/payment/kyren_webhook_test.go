@@ -13,9 +13,9 @@ const kyrenTestSecret = "whsec_test_kyren_123"
 // signKyren 按 Kyren 官方算法生成合法签名头(测试辅助):sha256=hex(HMAC(ts + "." + body, secret))。
 func signKyren(body []byte, tsMs int64, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(strconv.FormatInt(tsMs, 10)))
-	mac.Write([]byte("."))
-	mac.Write(body)
+	_, _ = mac.Write([]byte(strconv.FormatInt(tsMs, 10)))
+	_, _ = mac.Write([]byte("."))
+	_, _ = mac.Write(body)
 	return kyrenSignaturePrefix + hex.EncodeToString(mac.Sum(nil))
 }
 

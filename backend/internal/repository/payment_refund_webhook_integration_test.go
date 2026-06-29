@@ -193,3 +193,55 @@ func TestHandleKyrenRefundWebhook_UnknownOrderPostgres(t *testing.T) {
 	err := paySvc.HandleKyrenRefundWebhook(ctx, data, "evt_unknown")
 	require.ErrorIs(t, err, service.ErrOrderNotFound)
 }
+
+// nil 载荷守卫。
+func TestHandleKyrenRefundWebhook_NilDataPostgres(t *testing.T) {
+	paySvc := makeRefundPaymentServiceForIntegration(t)
+	require.Error(t, paySvc.HandleKyrenRefundWebhook(context.Background(), nil, "evt_nil"))
+}
+
+// 防御性匹配:data.order_id 不中,但 metadata.out_trade_no 命中 → 仍能找到订单并处理(关卡)。
+func TestHandleKyrenRefundWebhook_MatchesViaMetadataPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	paySvc := makeRefundPaymentServiceForIntegration(t)
+
+	user := mustCreateUser(t, client, &service.User{Email: fmt.Sprintf("kyren-meta-%s@example.com", uuid.NewString()), Username: "kyren-meta"})
+	group := mustCreateGroup(t, client, &service.Group{Name: "kyren-meta-" + uuid.NewString()})
+	today := service.TodayEastDayNumber()
+	d := 10.0
+	w, m := service.DeriveWindowCaps(d, 30)
+	card := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID: user.ID, GroupID: group.ID, DailyAmountUSD: d,
+		DailyLimitUSD: &d, WeeklyLimitUSD: &w, MonthlyLimitUSD: &m,
+		TodayRemaining: d, TodayDay: today, StartDay: today - 5,
+		ExpireDay: today + 25, ExpiresAt: service.ExpireDayToExpiresAt(today + 25),
+		Status: service.SubscriptionStatusActive,
+	})
+	outTradeNo := "kyren_meta_" + uuid.NewString()
+	_, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).SetUserEmail(user.Email).SetUserName(user.Username).
+		SetAmount(300).SetPayAmount(300).SetFeeRate(0).
+		SetRechargeCode("KM-" + uuid.NewString()).SetOutTradeNo(outTradeNo).
+		SetPaymentType(payment.TypeEasyPay).SetPaymentTradeNo("trade-" + uuid.NewString()).
+		SetOrderType(payment.OrderTypeSubscription).SetStatus(service.OrderStatusCompleted).
+		SetExpiresAt(time.Now().Add(time.Hour)).SetPaidAt(time.Now()).
+		SetClientIP("127.0.0.1").SetSrcHost("api.example.com").SetProviderKey(payment.TypeEasyPay).
+		SetSubscriptionDays(30).
+		SetProviderSnapshot(map[string]any{
+			"schema_version": 2, "provider_key": payment.TypeEasyPay,
+			"subscription": map[string]any{"daily_amount_usd": d, "validity_days": 30.0, "subscription_id": card.ID},
+		}).Save(ctx)
+	require.NoError(t, err)
+
+	data := &payment.KyrenRefundData{
+		OrderID:      "kyren_native_id_mismatch", // 不中任何字段
+		RefundID:     "refund_meta",
+		RefundStatus: payment.KyrenRefundStatusFull,
+		Metadata:     map[string]string{"out_trade_no": outTradeNo}, // 经 metadata 命中
+	}
+	require.NoError(t, paySvc.HandleKyrenRefundWebhook(ctx, data, "evt_meta"))
+	got, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
+	require.NoError(t, err)
+	require.NotEqual(t, service.SubscriptionStatusActive, got.Status, "经 metadata 命中订单后应关卡")
+}

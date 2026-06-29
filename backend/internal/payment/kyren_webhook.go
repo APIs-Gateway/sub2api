@@ -85,9 +85,10 @@ func VerifyKyrenWebhookSignature(rawBody []byte, signatureHeader, timestampHeade
 	}
 
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(timestampHeader))
-	mac.Write([]byte("."))
-	mac.Write(rawBody)
+	// hash.Hash.Write 文档保证永不返回 error;显式忽略以过 errcheck。
+	_, _ = mac.Write([]byte(timestampHeader))
+	_, _ = mac.Write([]byte("."))
+	_, _ = mac.Write(rawBody)
 	expected := kyrenSignaturePrefix + hex.EncodeToString(mac.Sum(nil))
 
 	// 恒时比较(长度不同 hmac.Equal 直接 false,不泄露长度差异时序)。
