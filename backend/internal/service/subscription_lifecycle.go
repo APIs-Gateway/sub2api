@@ -28,9 +28,19 @@ func RenewExpireDay(curExpireDay, today, addDays int) int {
 // originalT ≤ 0 / refundableDays ≤ 0 / price ≤ 0 → 退款额 0（非法或无可退）。
 // 注意：本函数只算「按比例应退额」；退到何处（先填平钱包负债、余量进可用余额 / 原路退）由调用方按
 // 规格第 6 节处理。管理员 force 全额退也在调用方分支，不走本函数。
+//
+// 单笔订单口径：refundableDays 夹到 originalT。规格 §6 的等价式
+// 「refundable = T − 已用 − 透支借走」恒有 refundable ≤ T——但调用方常传整卡剩余天
+// (*PerDayCard).RefundableDays(today)=expire_day−today，续费叠加后整卡剩余天会 > 本单 T，
+// 不夹则退款额 > 本单售价 P → 撞 REFUND_AMOUNT_EXCEEDED 误挡(只能 force 全额退);
+// 同样口径下 ChangePlanRemainingValue 复用本函数,旧卡续费叠加会把剩余价值 V 算超 → 超额抵扣资损。
+// 一律按「单笔最多退它自己授予的 T 天」夹住,保证退款额/折价 ≤ 本单 P。
 func RefundAmount(price float64, refundableDays, originalT int) float64 {
 	if price <= 0 || refundableDays <= 0 || originalT <= 0 {
 		return 0
+	}
+	if refundableDays > originalT {
+		refundableDays = originalT
 	}
 	amt := price * float64(refundableDays) / float64(originalT)
 	if amt < 0 {

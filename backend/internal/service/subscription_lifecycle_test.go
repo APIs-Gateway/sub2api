@@ -87,6 +87,27 @@ func TestRefundAmount_Guards(t *testing.T) {
 	}
 }
 
+// 单笔订单口径(P1#10/#4):refundableDays > originalT(续费叠加后整卡剩余天超过本单 T)时
+// 夹到 originalT,退款额/折价 ≤ 本单 P,绝不超退/超抵。
+func TestRefundAmount_ClampToOriginalT(t *testing.T) {
+	// 续费叠加:整卡剩 55 天,但本单 T=30 → 夹到 30 → 退满本单 300(而非 300×55/30=550)。
+	if got := RefundAmount(300, 55, 30); !lcApprox(got, 300) {
+		t.Fatalf("refundable>T 应夹到 T、退满 P=300，got %v", got)
+	}
+	// refundable == T → 退满 P。
+	if got := RefundAmount(300, 30, 30); !lcApprox(got, 300) {
+		t.Fatalf("refundable==T 应退满 300，got %v", got)
+	}
+	// refundable < T → 不受夹影响,正常按比例。
+	if got := RefundAmount(300, 20, 30); !lcApprox(got, 200) {
+		t.Fatalf("refundable<T 应按比例 200，got %v", got)
+	}
+	// 同口径保护转套餐剩余价值 V:旧卡续费叠加剩 40 天但 T_旧=30 → V 夹到 P_旧=300。
+	if got := ChangePlanRemainingValue(300, 40, 30); !lcApprox(got, 300) {
+		t.Fatalf("V 应夹到 P_旧=300，got %v", got)
+	}
+}
+
 // 规格第 7 节转套餐：剩余价值 V 与退款同口径；新卡当天余额 = max(0, D_新 − 旧卡今日已用)。
 func TestChangePlan_Calculators(t *testing.T) {
 	// V：旧卡 P=300/T=30，剩 20 天 → 200；借光（剩 0 天）→ 0。
