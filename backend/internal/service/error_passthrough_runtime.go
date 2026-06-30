@@ -9,10 +9,10 @@ import (
 
 const errorPassthroughServiceContextKey = "error_passthrough_service"
 
-// isRequestShapedUpstream4xx 判定上游 4xx 是否属于「请求本身的问题」(换账号也救不了)。
+// IsRequestShapedUpstream4xx 判定上游 4xx 是否属于「请求本身的问题」(换账号也救不了)。
 // 这是 issue #16 Part B 的单一真相:既决定「默认透传哪些」,也(在 B3/A2)决定「归因到 client 的是哪些」。
 // 明确排除 401/403/407(鉴权)、402(计费)、429(限流)——那些是账号/上游侧,保留 502/429 语义。
-func isRequestShapedUpstream4xx(status int) bool {
+func IsRequestShapedUpstream4xx(status int) bool {
 	switch status {
 	case 400, 404, 408, 409, 413, 415, 416, 422:
 		return true
@@ -46,7 +46,7 @@ func MapUpstreamErrorDefault(upstreamStatus int) (status int, errType, msg strin
 	case 500, 502, 503, 504:
 		return http.StatusBadGateway, "upstream_error", "Upstream service temporarily unavailable", false
 	}
-	if isRequestShapedUpstream4xx(upstreamStatus) {
+	if IsRequestShapedUpstream4xx(upstreamStatus) {
 		// B2:透传真实状态码 + 上游报文(message 由调用方用 ExtractUpstreamErrorMessage 填)。
 		return upstreamStatus, upstreamErrTypeForStatus(upstreamStatus), "", true
 	}

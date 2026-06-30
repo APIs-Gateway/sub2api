@@ -5046,6 +5046,7 @@ export default {
         owner: {
           provider: 'Provider',
           client: 'Client',
+          clientViaUpstream: 'Client (upstream)',
           platform: 'Platform'
         },
         phase: {
