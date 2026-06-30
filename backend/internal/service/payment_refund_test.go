@@ -298,6 +298,47 @@ func (r *refundUserSubRepoStub) Update(_ context.Context, sub *UserSubscription)
 	return nil
 }
 
+// prepDeductBalanceUserRepoStub 嵌入 UserRepository 接口(仅覆盖 GetByID);prepDeduct 只调 GetByID。
+type prepDeductBalanceUserRepoStub struct {
+	UserRepository
+	user *User
+}
+
+func (s prepDeductBalanceUserRepoStub) GetByID(ctx context.Context, id int64) (*User, error) {
+	return s.user, nil
+}
+
+// P2#11:管理员充值单退款须复制用户侧「余额够才退」闸——已消费/透支的充值额不是可原路退的法币。
+func TestPrepDeductBalanceRefundClampsToRecoverable(t *testing.T) {
+	ctx := context.Background()
+	mk := func(balance float64) *PaymentService {
+		return &PaymentService{userRepo: prepDeductBalanceUserRepoStub{user: &User{ID: 1, Balance: balance}}}
+	}
+	o := &dbent.PaymentOrder{OrderType: payment.OrderTypeBalance, UserID: 1}
+
+	// 余额充足:全额可追回,deduct=退款额,不要求 force。
+	p := &RefundPlan{RefundAmount: 100}
+	require.Nil(t, mk(200).prepDeduct(ctx, o, p, false))
+	require.InDelta(t, 100, p.BalanceToDeduct, 1e-9)
+
+	// 余额不足(充值额已花掉一部分):非 force → RequireForce,不静默原路退多。
+	p2 := &RefundPlan{RefundAmount: 100}
+	res2 := mk(50).prepDeduct(ctx, o, p2, false)
+	require.NotNil(t, res2)
+	require.True(t, res2.RequireForce)
+	require.False(t, res2.Success)
+
+	// 余额不足 + force:只从钱包扣可追回部分(50)。
+	p3 := &RefundPlan{RefundAmount: 100}
+	require.Nil(t, mk(50).prepDeduct(ctx, o, p3, true))
+	require.InDelta(t, 50, p3.BalanceToDeduct, 1e-9)
+
+	// 余额为负(透支花超)+ force:可追回=0,扣减夹到 0,绝不为负(根治旧 min(amt,负余额)=负数)。
+	p4 := &RefundPlan{RefundAmount: 100}
+	require.Nil(t, mk(-20).prepDeduct(ctx, o, p4, true))
+	require.InDelta(t, 0, p4.BalanceToDeduct, 1e-9)
+}
+
 func TestPrepareRefundSubscriptionDefaultsToPerDayRefundAmount(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)

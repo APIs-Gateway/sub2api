@@ -359,7 +359,23 @@ func (s *PaymentService) prepDeduct(ctx context.Context, o *dbent.PaymentOrder, 
 		return nil
 	}
 	p.DeductionType = payment.DeductionTypeBalance
-	p.BalanceToDeduct = math.Min(p.RefundAmount, u.Balance)
+	// 充值余额一旦进钱包即为 token 额度、消费/透支掉的部分不是可原路退的法币(规格 §4 + 本会话用户决策:
+	// 充值不算可退法币、只退套餐)。钱包尚可追回额 recoverable = max(0, min(退款额, 当前余额));余额已不足
+	// 以全额追回(用户把充值额花了/透支为负)时,不静默原路退多 → 站点净亏已消费/欠费额(P2#11)。
+	// 非 force 直接拒(口径同用户侧 validateRefundRequest 的 BALANCE_NOT_ENOUGH),要求人工确认;
+	// force 仍只从钱包扣可追回部分(BalanceToDeduct 已夹到 recoverable,绝不为负)。
+	recoverable := u.Balance
+	if recoverable < 0 {
+		recoverable = 0
+	}
+	if recoverable < p.RefundAmount && !force {
+		return &RefundResult{
+			Success:      false,
+			Warning:      "wallet balance is insufficient to claw back this recharge in full; consumed/overdrawn credit is not refundable as fiat — use force to proceed",
+			RequireForce: true,
+		}
+	}
+	p.BalanceToDeduct = math.Min(p.RefundAmount, recoverable)
 	return nil
 }
 
