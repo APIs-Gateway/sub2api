@@ -722,7 +722,7 @@ func (s *PaymentService) writeSubscriptionIDToOrderSnapshot(ctx context.Context,
 	if !ok {
 		return nil
 	}
-	if _, err := s.entClient.PaymentOrder.UpdateOneID(order.ID).SetProviderSnapshot(snapshot).Save(ctx); err != nil {
+	if _, err := s.entClientForCtx(ctx).PaymentOrder.UpdateOneID(order.ID).SetProviderSnapshot(snapshot).Save(ctx); err != nil {
 		return err
 	}
 	order.ProviderSnapshot = snapshot

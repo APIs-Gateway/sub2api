@@ -163,6 +163,74 @@ func TestPaymentSubscriptionFulfillment_RenewIntentIdempotentOnReplayPostgres(t 
 	require.Equal(t, service.OrderStatusCompleted, gotOrder.Status)
 }
 
+// P2#6 回归:续费履约后订单被置 FAILED(模拟 markCompleted 状态更新瞬时报错的历史窗口——彼时
+// apply 已在自有事务提交、但 SUCCESS 审计未写 → 管理员重试会再 apply 一次 = 双倍延期资损),
+// 经管理员 RetryFulfillment 重试,不得二次延长有效期。我方修复:apply + 订单完成 + SUCCESS 审计
+// 三者同一事务原子提交,故任何「已 apply」的成功履约必带 SUCCESS 审计,重试见审计即跳过。
+func TestPaymentSubscriptionFulfillment_RenewNoDoubleApplyOnFailedRetryPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	paymentSvc := makePaymentServiceForSubscriptionIntegration(t)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email: fmt.Sprintf("lifecycle-renew-failretry-%s@example.com", uuid.NewString()),
+	})
+	group := mustCreateGroup(t, client, &service.Group{Name: "lifecycle-renew-failretry-" + uuid.NewString()})
+	today := service.TodayEastDayNumber()
+	dDaily := 11.0
+	wLimit, mLimit := service.DeriveWindowCaps(dDaily, 30)
+	originalExpireDay := today + 4
+	card := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  dDaily,
+		DailyLimitUSD:   &dDaily,
+		WeeklyLimitUSD:  &wLimit,
+		MonthlyLimitUSD: &mLimit,
+		TodayRemaining:  dDaily,
+		TodayDay:        today,
+		StartDay:        today - 3,
+		ExpireDay:       originalExpireDay,
+		ExpiresAt:       service.ExpireDayToExpiresAt(originalExpireDay),
+		Status:          service.SubscriptionStatusActive,
+	})
+
+	orderID := createPaidLifecycleOrderForIntegration(t, client, user, service.SubscriptionIntentRenew, card.ID, dDaily, 30, 110)
+	require.NoError(t, paymentSvc.ExecuteSubscriptionFulfillment(ctx, orderID))
+
+	afterFirst, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
+	require.NoError(t, err)
+	require.Equal(t, originalExpireDay+30, afterFirst.ExpireDay)
+
+	// 佐证原子性:成功履约后 SUCCESS 审计必与延期同时存在(同一事务提交)。
+	logs, err := paymentSvc.GetOrderAuditLogs(ctx, orderID)
+	require.NoError(t, err)
+	hasSuccess := false
+	for _, l := range logs {
+		if l.Action == "SUBSCRIPTION_SUCCESS" {
+			hasSuccess = true
+		}
+	}
+	require.True(t, hasSuccess, "apply 成功必带 SUBSCRIPTION_SUCCESS 审计(原子提交)")
+
+	// 模拟历史窗口:订单被 markFailed 置 FAILED(审计在我方修复下已随 apply 落库,故仍在)。
+	_, err = client.PaymentOrder.UpdateOneID(orderID).
+		SetStatus(service.OrderStatusFailed).SetFailedReason("simulated transient mark-completed error").Save(ctx)
+	require.NoError(t, err)
+
+	// 管理员手动重试(真实触发路径):FAILED→PAID→履约 → 见 SUCCESS 审计跳过,不再 apply。
+	require.NoError(t, paymentSvc.RetryFulfillment(ctx, orderID))
+
+	afterRetry, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
+	require.NoError(t, err)
+	require.Equal(t, originalExpireDay+30, afterRetry.ExpireDay, "FAILED→重试不得二次延长有效期")
+	require.Equal(t, 1, countUserSubscriptionsByStatus(t, user.ID, service.SubscriptionStatusActive))
+
+	gotOrder, err := client.PaymentOrder.Get(ctx, orderID)
+	require.NoError(t, err)
+	require.Equal(t, service.OrderStatusCompleted, gotOrder.Status)
+}
+
 // 转套餐履约（money-path）：关旧卡、开新卡（无 group 自定义卡），新卡限额 = 新 D/T 派生，
 // 三窗口 usage 继承旧卡（堵当天/周/月换档重领），stamp last_change_plan_day，不动余额。
 func TestPaymentSubscriptionFulfillment_ChangePlanIntentClosesOldOpensNewPostgres(t *testing.T) {
