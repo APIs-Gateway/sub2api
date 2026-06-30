@@ -952,8 +952,10 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, phase)
 		clauses = append(clauses, "e.error_phase = $"+itoa(len(args)))
 	}
+	ownerExplicit := false
 	if filter != nil {
 		if owner := strings.TrimSpace(strings.ToLower(filter.Owner)); owner != "" {
+			ownerExplicit = true
 			args = append(args, owner)
 			clauses = append(clauses, "LOWER(COALESCE(e.error_owner,'')) = $"+itoa(len(args)))
 		}
@@ -967,23 +969,34 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		clauses = append(clauses, "COALESCE(e.resolved,false) = $"+itoa(len(args)))
 	}
 
-	// View filter: errors vs excluded vs all.
-	// Excluded = business-limited errors (quota/concurrency/billing).
-	// Upstream 429/529 are included in errors view to match SLA calculation.
+	// View filter: errors vs client vs excluded vs all. 与 SLA 口径(docs/specs/ops-sla-attribution-part-a.md)同义:
+	//   errors   = 服务可归因故障:非 business-limited 且 error_owner<>'client'(与 error_count_sla 一致);
+	//   client   = 客户端自身请求错(overdraft / 426 / 本地客户端 400 等),不计入 SLA、单独可查;
+	//   excluded = business-limited(配额/并发/计费限速);
+	//   all      = 不过滤。
+	// Upstream 429/529 仍在 errors 视图(error_owner='provider'),与 SLA 计算一致。
+	// 显式 owner 过滤(ownerExplicit)时不再叠加 errors 视图的 client 排除,
+	// 否则 view=errors + owner=client 会得到 owner<>'client' AND owner='client' → 恒空。
 	view := ""
 	if filter != nil {
 		view = strings.ToLower(strings.TrimSpace(filter.View))
 	}
+	errorsViewClause := "COALESCE(e.is_business_limited,false) = false"
+	if !ownerExplicit {
+		errorsViewClause += " AND LOWER(COALESCE(e.error_owner,'')) <> 'client'"
+	}
 	switch view {
 	case "", "errors":
-		clauses = append(clauses, "COALESCE(e.is_business_limited,false) = false")
+		clauses = append(clauses, errorsViewClause)
+	case "client":
+		clauses = append(clauses, "LOWER(COALESCE(e.error_owner,'')) = 'client'")
 	case "excluded":
 		clauses = append(clauses, "COALESCE(e.is_business_limited,false) = true")
 	case "all":
 		// no-op
 	default:
 		// treat unknown as default 'errors'
-		clauses = append(clauses, "COALESCE(e.is_business_limited,false) = false")
+		clauses = append(clauses, errorsViewClause)
 	}
 	if len(filter.StatusCodes) > 0 {
 		args = append(args, pq.Array(filter.StatusCodes))

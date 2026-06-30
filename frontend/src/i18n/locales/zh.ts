@@ -5199,6 +5199,7 @@ export default {
         unresolved: '未解决',
         resolved: '已解决',
         viewErrors: '错误',
+        viewClient: '客户端',
         viewExcluded: '排除项',
         statusCodeOther: '其他',
         owner: {
