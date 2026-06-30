@@ -172,6 +172,13 @@ func TestPrepareRefund_EasyPayMarksRefundRequestedNotGatewayPostgres(t *testing.
 	require.NotNil(t, result)
 	require.True(t, result.RefundRequested, "easypay 退款应标记为待退款")
 
+	// 后台「待退款」给管理员看的建议应退额(P2#3):订单 $300/30天、卡剩 25 天 → 应退 $300×25/30=250;
+	// 1:1 故网关币种同为 250;剩余 25 天 / 原始 30 天。供管理员据此去 Kyren 控制台退款。
+	require.InDelta(t, 250.0, result.SuggestedRefundUSD, 1e-9, "建议应退 USD = 订单价×剩余天/原始天")
+	require.InDelta(t, 250.0, result.SuggestedRefundGateway, 1e-9, "1:1 网关币种应退额")
+	require.Equal(t, 25, result.RefundableDays)
+	require.Equal(t, 30, result.OriginalDays)
+
 	// 订单置 REFUND_REQUESTED;卡仍 active(webhook 回来才关)。
 	gotOrder, err := client.PaymentOrder.Get(ctx, order.ID)
 	require.NoError(t, err)

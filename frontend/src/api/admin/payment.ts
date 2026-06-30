@@ -13,6 +13,22 @@ import type {
 } from '@/types/payment'
 import type { BasePaginationResponse } from '@/types'
 
+/**
+ * 退款结果。easypay/Kyren 网关退款 API 不支持,后台只把订单标「待退款」(refund_requested=true)
+ * 并返回建议应退额(管理员据此去 Kyren 控制台退款);其余网关为即时退款。
+ */
+export interface AdminRefundResult {
+  success?: boolean
+  refund_requested?: boolean
+  message?: string
+  // 待退款时的建议应退额:订阅单按剩余服务天数比例折算。usd=系统口径,gateway=网关币种(管理员实退口径)。
+  suggested_refund_usd?: number
+  suggested_refund_gateway?: number
+  suggested_refund_currency?: string
+  refundable_days?: number
+  original_days?: number
+}
+
 /** Admin-facing payment config returned by GET /admin/payment/config */
 export interface AdminPaymentConfig {
   enabled: boolean
@@ -103,9 +119,9 @@ export const adminPaymentAPI = {
     return apiClient.post(`/admin/payment/orders/${id}/retry`)
   },
 
-  /** Process a refund */
+  /** Process a refund. easypay/Kyren 返回 refund_requested + message(含建议应退额,管理员据此去 Kyren 控制台退款)。 */
   refundOrder(id: number, data: { amount: number; reason: string; deduct_balance?: boolean; force?: boolean }) {
-    return apiClient.post(`/admin/payment/orders/${id}/refund`, data)
+    return apiClient.post<AdminRefundResult>(`/admin/payment/orders/${id}/refund`, data)
   },
 
   // ==================== Channels ====================

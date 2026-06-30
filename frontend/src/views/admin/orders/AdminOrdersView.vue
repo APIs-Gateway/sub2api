@@ -229,8 +229,10 @@ async function handleRefund(data: { amount: number; reason: string; deduct_balan
   if (!selectedOrder.value) return
   refundSubmitting.value = true
   try {
-    await adminPaymentAPI.refundOrder(selectedOrder.value.id, { amount: data.amount, reason: data.reason, deduct_balance: data.deduct_balance, force: data.force })
-    appStore.showSuccess(t('payment.admin.refundSuccess')); showRefundDialog.value = false; loadOrders()
+    const res = await adminPaymentAPI.refundOrder(selectedOrder.value.id, { amount: data.amount, reason: data.reason, deduct_balance: data.deduct_balance, force: data.force })
+    // easypay/Kyren 返回「待退款」+ 建议应退额提示(USD + 网关币种 + 剩余天数),直接展示给管理员据此去控制台退款;
+    // 其余网关为即时退款,显示通用成功。
+    appStore.showSuccess(res.data?.message || t('payment.admin.refundSuccess')); showRefundDialog.value = false; loadOrders()
   } catch (err: unknown) { appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error'))) }
   finally { refundSubmitting.value = false }
 }

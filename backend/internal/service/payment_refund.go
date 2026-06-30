@@ -217,14 +217,23 @@ func (s *PaymentService) PrepareRefund(ctx context.Context, oid int64, amt float
 			Save(ctx); err != nil {
 			return nil, nil, fmt.Errorf("mark order %d refund-requested: %w", o.ID, err)
 		}
+		// 算好【建议应退额】给管理员据此在 Kyren 控制台退款(订阅单按剩余天数比例,USD + 网关币种两口径)。
+		sug := s.suggestRefundForManual(ctx, o)
 		s.writeAuditLog(ctx, o.ID, "REFUND_REQUESTED_MANUAL", "admin", map[string]any{
 			"reason": strings.TrimSpace(reason), "provider": payment.TypeEasyPay,
+			"suggested_refund_usd":     sug.SuggestedRefundUSD,
+			"suggested_refund_gateway": sug.SuggestedRefundGateway,
+			"suggested_currency":       sug.SuggestedRefundCurrency,
+			"refundable_days":          sug.RefundableDays,
+			"original_days":            sug.OriginalDays,
 		})
-		return nil, &RefundResult{
-			Success:         true,
-			RefundRequested: true,
-			Message:         "订单已标记为待退款。请在 Kyren 控制台完成退款,退款生效后系统将通过 webhook 自动关卡并对账。",
-		}, nil
+		sug.Success = true
+		sug.RefundRequested = true
+		sug.Message = fmt.Sprintf(
+			"订单已标记为待退款。建议应退 %s %.2f(≈ $%.2f),请在 Kyren 控制台按此金额退款;退款生效后系统将通过 webhook 自动关卡并对账。",
+			sug.SuggestedRefundCurrency, sug.SuggestedRefundGateway, sug.SuggestedRefundUSD,
+		)
+		return nil, sug, nil
 	}
 	// Check provider instance allows admin refund
 	inst, instErr := s.getRefundOrderProviderInstance(ctx, o)
@@ -278,6 +287,34 @@ func (s *PaymentService) PrepareRefund(ctx context.Context, oid int64, amt float
 		}
 	}
 	return p, nil, nil
+}
+
+// suggestRefundForManual 给「待退款」(Kyren 人工退款)算建议应退额,两口径(USD + 网关币种)+ 剩余/原始天数。
+// 订阅单按剩余服务天数比例(已含透支扣减、夹到本单 T);充值单=订单全额。算不出(无卡/无快照)则回退订单全额。
+// 仅供管理员参考展示,不落任何扣减——真实退款在 Kyren 控制台、关卡由 order.refunded webhook 负责。
+func (s *PaymentService) suggestRefundForManual(ctx context.Context, o *dbent.PaymentOrder) *RefundResult {
+	currency := PaymentOrderCurrency(o)
+	r := &RefundResult{SuggestedRefundCurrency: currency}
+	usd := o.Amount
+	if o.OrderType == payment.OrderTypeSubscription {
+		if amt, err := s.calculateSubscriptionRefundAmount(ctx, o); err == nil && amt > 0 {
+			usd = amt
+		}
+		if origDays, err := subscriptionOrderOriginalDays(o); err == nil {
+			r.OriginalDays = origDays
+			if sub, err := s.subscriptionForRefund(ctx, o); err == nil && sub != nil {
+				card := sub.ToPerDayCard()
+				rd := card.RefundableDays(TodayEastDayNumber())
+				if rd > origDays {
+					rd = origDays
+				}
+				r.RefundableDays = rd
+			}
+		}
+	}
+	r.SuggestedRefundUSD = usd
+	r.SuggestedRefundGateway = calculateGatewayRefundAmount(o.Amount, o.PayAmount, usd, currency)
+	return r
 }
 
 func (s *PaymentService) calculateSubscriptionRefundAmount(ctx context.Context, o *dbent.PaymentOrder) (float64, error) {

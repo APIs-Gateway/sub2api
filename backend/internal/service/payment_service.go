@@ -154,6 +154,13 @@ type RefundResult struct {
 	// 需在 Kyren 控制台手动退款,生效后由 order.refunded webhook 关卡对账)。
 	RefundRequested bool   `json:"refund_requested,omitempty"`
 	Message         string `json:"message,omitempty"`
+	// 待退款时给管理员的【建议应退额】(供其据此在 Kyren 控制台退款):订阅单按剩余服务天数比例折算
+	// (已含透支借天扣减、夹到本单 T);USD=系统官方口径,Gateway=网关币种(管理员实退口径)。充值单=订单全额。
+	SuggestedRefundUSD      float64 `json:"suggested_refund_usd,omitempty"`
+	SuggestedRefundGateway  float64 `json:"suggested_refund_gateway,omitempty"`
+	SuggestedRefundCurrency string  `json:"suggested_refund_currency,omitempty"`
+	RefundableDays          int     `json:"refundable_days,omitempty"` // 剩余可退天数(订阅单)
+	OriginalDays            int     `json:"original_days,omitempty"`   // 本单原始有效天数 T(订阅单)
 }
 
 type DashboardStats struct {
