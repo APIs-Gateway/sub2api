@@ -4426,31 +4426,14 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 
 	MarkResponseCommitted(c)
 
-	// Return appropriate error response
-	var errType, errMsg string
-	var statusCode int
-
-	switch resp.StatusCode {
-	case 401:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream authentication failed, please contact administrator"
-	case 402:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream payment required: insufficient balance or billing issue"
-	case 403:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream access forbidden, please contact administrator"
-	case 429:
-		statusCode = http.StatusTooManyRequests
-		errType = "rate_limit_error"
-		errMsg = "Upstream rate limit exceeded, please retry later"
-	default:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream request failed"
+	// 默认映射:请求形 4xx 透传真实状态码 + 上游报文,其余保留 502/429(issue #16 Part B)。
+	// 此前 switch 从 401 起、400/404/422 落 default→502;现与 Anthropic 侧(gateway_service.go)对齐获得 4xx 透传。
+	statusCode, errType, errMsg, passthrough := MapUpstreamErrorDefault(resp.StatusCode)
+	if passthrough {
+		errMsg = upstreamMsg
+		if strings.TrimSpace(errMsg) == "" {
+			errMsg = "Upstream rejected the request"
+		}
 	}
 
 	c.JSON(statusCode, gin.H{
