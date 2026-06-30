@@ -207,3 +207,55 @@ func TestPaymentCreateOrder_ChangePlanDowngradeRejectedPostgres(t *testing.T) {
 	})
 	require.ErrorIs(t, err, service.ErrChangePlanDowngradeNotAllowed)
 }
+
+// 转套餐下单：补差价 diff 高于 0 但低于最低支付金额 → 在 validate 阶段干净拒
+// （CHARGE_BELOW_MIN_AMOUNT，P2#7），绝不建出注定卡死、又占满 pending 名额的小额单。
+// 用调高 cfg.MinAmount 模拟「diff < 网关/实例单笔下限」（无需精确凑 $0.01 的 diff）。
+func TestPaymentCreateOrder_ChangePlanChargeBelowMinRejectedPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	paymentSvc := makeCreateOrderPaymentServiceForSubscriptionIntegration(t)
+	// 把最低支付金额调到极高 → 任何正常升级的 diff 都落在下限以下。
+	require.NoError(t, NewSettingRepository(client).Set(ctx, service.SettingMinRechargeAmount, "100000"))
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:    fmt.Sprintf("create-change-belowmin-%s@example.com", uuid.NewString()),
+		Username: "create-change-belowmin",
+	})
+	group := mustCreateGroup(t, client, &service.Group{Name: "create-change-belowmin-" + uuid.NewString()})
+	today := service.TodayEastDayNumber()
+	dOld := 10.0
+	wOld, mOld := service.DeriveWindowCaps(dOld, 30)
+	mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  dOld,
+		DailyLimitUSD:   &dOld,
+		WeeklyLimitUSD:  &wOld,
+		MonthlyLimitUSD: &mOld,
+		TodayRemaining:  dOld,
+		TodayDay:        today,
+		StartDay:        today - 3,
+		ExpireDay:       today + 5, // 升档 diff>0,但远低于 100000 → 撞下限
+		ExpiresAt:       service.ExpireDayToExpiresAt(today + 5),
+		Status:          service.SubscriptionStatusActive,
+	})
+
+	_, err := paymentSvc.CreateOrder(ctx, service.CreateOrderRequest{
+		UserID:             user.ID,
+		OrderType:          payment.OrderTypeSubscription,
+		SubscriptionIntent: service.SubscriptionIntentChangePlan,
+		DailyAmountUSD:     20.0,
+		ValidityDays:       30,
+		PaymentType:        payment.TypeEasyPay,
+		ClientIP:           "127.0.0.1",
+		SrcHost:            "api.example.com",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "minimum", "应因低于最低支付金额被拒")
+
+	// validate 阶段拒单,绝不落库(不占 pending 订阅单名额)。
+	count, err := client.PaymentOrder.Query().Where(paymentorder.UserIDEQ(user.ID)).Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, count, "低于下限应在建单前拒,不留 pending 单挡死后续下单")
+}

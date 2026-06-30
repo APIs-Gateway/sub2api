@@ -132,7 +132,20 @@ func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrder
 		return nil, infraerrors.Forbidden("BALANCE_PAYMENT_DISABLED", "balance recharge has been disabled")
 	}
 	if req.OrderType == payment.OrderTypeSubscription {
-		return s.validateSubOrder(ctx, req)
+		spec, err := s.validateSubOrder(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		// 实收额下限（P2#7）：订阅单实际向网关收取的是 chargeAmount（purchase/renew=全价 P，
+		// change_plan=补差价 diff）。转套餐 diff 仅被拦了 <0 / ==0，可小到 $0.01 —— 低于网关/实例
+		// 单笔下限会被 load balancer 跳过、选不到 provider → 订单卡 pending，又占满「一张 pending
+		// 订阅单」名额挡死后续下单。这里用与充值同一配置下限 cfg.MinAmount（默认 $1）前置拦截，
+		// 给出清晰错误（前端引导选更大升级或等到期重购），不建出注定卡死的小额单。
+		if spec != nil && cfg.MinAmount > 0 && spec.chargeAmount > 0 && spec.chargeAmount < cfg.MinAmount {
+			return nil, infraerrors.BadRequest("CHARGE_BELOW_MIN_AMOUNT", "charge amount is below the minimum payable amount").
+				WithMetadata(map[string]string{"charge": fmt.Sprintf("%.2f", spec.chargeAmount), "min": fmt.Sprintf("%.2f", cfg.MinAmount)})
+		}
+		return spec, nil
 	}
 	if math.IsNaN(req.Amount) || math.IsInf(req.Amount, 0) || req.Amount <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_AMOUNT", "amount must be a positive number")
