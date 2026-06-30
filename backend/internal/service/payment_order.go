@@ -1194,6 +1194,9 @@ func buildWeChatPaymentOAuthStartURL(req CreateOrderRequest, scope string) (stri
 	if req.ValidityDays > 0 {
 		q.Set("validity_days", strconv.Itoa(req.ValidityDays))
 	}
+	if intent := strings.TrimSpace(req.SubscriptionIntent); intent != "" {
+		q.Set("subscription_intent", intent) // 续费/转套餐意图须随 OAuth 往返,否则 resume 退化为购买(P2#5)
+	}
 	if scope = strings.TrimSpace(scope); scope != "" {
 		q.Set("scope", scope)
 	}

@@ -330,6 +330,10 @@ func applyWeChatPaymentResumeClaims(req *CreateOrderRequest, claims *service.WeC
 	if claims.ValidityDays > 0 {
 		req.ValidityDays = claims.ValidityDays
 	}
+	// 续费/转套餐意图随 token 透传(P2#5):缺失则订阅单退化为购买。req 已带值时不覆盖。
+	if strings.TrimSpace(claims.SubscriptionIntent) != "" && strings.TrimSpace(req.SubscriptionIntent) == "" {
+		req.SubscriptionIntent = strings.TrimSpace(claims.SubscriptionIntent)
+	}
 	return nil
 }
 
