@@ -8292,6 +8292,8 @@
       confirmRefund: 'Confirm Refund',
       refundSuccess: 'Refund successful',
       refundFailed: 'Refund failed',
+      refundPending: 'Refund pending gateway confirmation',
+      queryRefundStatus: 'Query refund status',
       refundInfo: 'Refund Info',
       refundEnabled: 'Refund Enabled',
       allowUserRefund: 'Allow User Refund',

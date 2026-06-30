@@ -45,6 +45,10 @@
               <Icon name="refresh" size="sm" />
               {{ t('payment.admin.retryRefund') }}
             </button>
+            <button v-else-if="row.status === 'REFUND_PENDING'" :disabled="refundQueryingIds.has(row.id)" @click="handleQueryRefund(row)" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-orange-600 hover:bg-orange-50 disabled:opacity-60 dark:text-orange-400 dark:hover:bg-orange-900/20">
+              <Icon name="refresh" size="sm" :class="refundQueryingIds.has(row.id) ? 'animate-spin' : ''" />
+              {{ t('payment.admin.queryRefundStatus') }}
+            </button>
             <span v-else-if="isRefundSettled(row) && row.refund_amount" class="rounded-full bg-red-50 px-1.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-300">
               {{ t('payment.admin.alreadyRefunded') }} {{ row.order_type === 'balance' ? '$' : '¥' }}{{ row.refund_amount.toFixed(2) }}
             </span>
@@ -181,8 +185,9 @@ const refundSubmitting = ref(false)
 const refundRequireForce = ref(false)
 const refundWarning = ref('')
 const refundFeeRate = ref(0)
+const refundQueryingIds = ref(new Set<number>())
 const orderAuditLogs = ref<AuditLog[]>([])
-const refundOverviewStatuses = ['REFUND_REQUESTED', 'REFUNDING', 'PARTIALLY_REFUNDED', 'REFUNDED', 'REFUND_FAILED']
+const refundOverviewStatuses = ['REFUND_REQUESTED', 'REFUNDING', 'REFUND_PENDING', 'PARTIALLY_REFUNDED', 'REFUNDED', 'REFUND_FAILED']
 const isRefundOverview = computed(() => route.meta.refundOverview === true)
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -283,6 +288,10 @@ async function handleRefund(data: { amount: number; reason: string; deduct_balan
   refundSubmitting.value = true
   try {
     const res = await adminPaymentAPI.refundOrder(selectedOrder.value.id, { amount: data.amount, reason: data.reason, deduct_balance: data.deduct_balance, force: data.force })
+    if (res.data?.refund_pending) {
+      appStore.showSuccess(t('payment.admin.refundPending')); closeRefundDialog(); loadOrders()
+      return
+    }
     if (res.data?.success === false) {
       refundWarning.value = res.data.warning || res.data.message || t('payment.admin.refundFailed')
       refundRequireForce.value = Boolean(res.data.require_force)
@@ -292,6 +301,27 @@ async function handleRefund(data: { amount: number; reason: string; deduct_balan
     appStore.showSuccess(res.data?.message || t('payment.admin.refundSuccess')); closeRefundDialog(); loadOrders()
   } catch (err: unknown) { appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error'))) }
   finally { refundSubmitting.value = false }
+}
+
+async function handleQueryRefund(order: PaymentOrder) {
+  refundQueryingIds.value = new Set(refundQueryingIds.value).add(order.id)
+  try {
+    const res = await adminPaymentAPI.queryRefund(order.id)
+    if (res.data?.success) {
+      appStore.showSuccess(res.data.message || t('payment.admin.refundSuccess'))
+    } else if (res.data?.refund_pending) {
+      appStore.showSuccess(t('payment.admin.refundPending'))
+    } else {
+      appStore.showError(res.data?.warning || res.data?.message || t('payment.admin.refundFailed'))
+    }
+    loadOrders()
+  } catch (err: unknown) {
+    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+  } finally {
+    const next = new Set(refundQueryingIds.value)
+    next.delete(order.id)
+    refundQueryingIds.value = next
+  }
 }
 
 function formatDateTime(dateStr: string): string { return formatOrderDateTime(dateStr) }
