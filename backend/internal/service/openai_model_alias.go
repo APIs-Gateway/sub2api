@@ -71,6 +71,8 @@ func normalizeKnownOpenAICodexModel(model string) string {
 		return "gpt-5.6-terra"
 	case strings.Contains(normalized, "gpt-5.6-luna"):
 		return "gpt-5.6-luna"
+	case strings.Contains(normalized, "gpt-5.5-pro"):
+		return "gpt-5.5-pro"
 	case strings.Contains(normalized, "gpt-5.5"):
 		return "gpt-5.5"
 	case strings.Contains(normalized, "gpt-5.4-mini"):
