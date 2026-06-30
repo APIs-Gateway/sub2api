@@ -2,6 +2,8 @@ package service
 
 import (
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
 // entGroupIDValue 把 ent 可空 group_id(*int64) 映射为 domain/业务侧 int64：
@@ -108,17 +110,30 @@ func (s *UserSubscription) NeedsDailyResetAt(now time.Time) bool {
 }
 
 func (s *UserSubscription) NeedsWeeklyReset() bool {
+	return s.NeedsWeeklyResetAt(time.Now())
+}
+
+// NeedsWeeklyResetAt 周窗口是否该重置:窗口起点早于「当前自然周起点(东八区周一 0 点)」即过期。
+// P2#12:与计费侧 SubWindow.ResetWindows(timezone.StartOfWeek) 同口径——旧的 7×24h 滚动窗会与
+// 自然周边界错位 0–6 天,导致 /v1/usage 展示的「已用/重置时间」与实际计费不一致。
+func (s *UserSubscription) NeedsWeeklyResetAt(now time.Time) bool {
 	if s.WeeklyWindowStart == nil {
 		return false
 	}
-	return time.Since(*s.WeeklyWindowStart) >= 7*24*time.Hour
+	return s.WeeklyWindowStart.Before(timezone.StartOfWeek(now))
 }
 
 func (s *UserSubscription) NeedsMonthlyReset() bool {
+	return s.NeedsMonthlyResetAt(time.Now())
+}
+
+// NeedsMonthlyResetAt 月窗口是否该重置:窗口起点早于「当前自然月起点(东八区 1 号 0 点)」即过期。
+// P2#12:与计费侧 SubWindow.ResetWindows(timezone.StartOfMonth) 同口径(旧的 30×24h 滚动窗会错位)。
+func (s *UserSubscription) NeedsMonthlyResetAt(now time.Time) bool {
 	if s.MonthlyWindowStart == nil {
 		return false
 	}
-	return time.Since(*s.MonthlyWindowStart) >= 30*24*time.Hour
+	return s.MonthlyWindowStart.Before(timezone.StartOfMonth(now))
 }
 
 func (s *UserSubscription) DailyResetTime() *time.Time {
@@ -134,18 +149,28 @@ func (s *UserSubscription) DailyResetTime() *time.Time {
 }
 
 func (s *UserSubscription) WeeklyResetTime() *time.Time {
+	return s.WeeklyResetTimeAt(time.Now())
+}
+
+// WeeklyResetTimeAt 下次周重置 = 下一个自然周起点(东八区下周一 0 点)。P2#12:与计费自然周对齐(旧为 start+7d)。
+func (s *UserSubscription) WeeklyResetTimeAt(now time.Time) *time.Time {
 	if s.WeeklyWindowStart == nil {
 		return nil
 	}
-	t := s.WeeklyWindowStart.Add(7 * 24 * time.Hour)
+	t := timezone.StartOfWeek(now).AddDate(0, 0, 7)
 	return &t
 }
 
 func (s *UserSubscription) MonthlyResetTime() *time.Time {
+	return s.MonthlyResetTimeAt(time.Now())
+}
+
+// MonthlyResetTimeAt 下次月重置 = 下一个自然月起点(东八区下月 1 号 0 点)。P2#12:与计费自然月对齐(旧为 start+30d)。
+func (s *UserSubscription) MonthlyResetTimeAt(now time.Time) *time.Time {
 	if s.MonthlyWindowStart == nil {
 		return nil
 	}
-	t := s.MonthlyWindowStart.Add(30 * 24 * time.Hour)
+	t := timezone.StartOfMonth(now).AddDate(0, 1, 0)
 	return &t
 }
 
