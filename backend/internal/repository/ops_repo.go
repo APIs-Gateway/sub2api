@@ -970,26 +970,26 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	}
 
 	// View filter: errors vs client vs excluded vs all. 与 SLA 口径(docs/specs/ops-sla-attribution-part-a.md)同义:
-	//   errors   = 服务可归因故障:非 business-limited 且 error_owner<>'client'(与 error_count_sla 一致);
-	//   client   = 客户端自身请求错(overdraft / 426 / 本地客户端 400 等),不计入 SLA、单独可查;
+	//   errors   = 服务可归因故障:非 business-limited 且 error_owner NOT IN (client, client_via_upstream)(与 error_count_sla 一致);
+	//   client   = 客户端自身请求错:本地(overdraft / 426 / 400)+ 上游判定的请求形 4xx(client_via_upstream,issue #16 Part B/A2),不计入 SLA、单独可查;
 	//   excluded = business-limited(配额/并发/计费限速);
 	//   all      = 不过滤。
 	// Upstream 429/529 仍在 errors 视图(error_owner='provider'),与 SLA 计算一致。
 	// 显式 owner 过滤(ownerExplicit)时不再叠加 errors 视图的 client 排除,
-	// 否则 view=errors + owner=client 会得到 owner<>'client' AND owner='client' → 恒空。
+	// 否则 view=errors + owner=client 会得到 owner NOT IN(...) AND owner=client → 恒空。
 	view := ""
 	if filter != nil {
 		view = strings.ToLower(strings.TrimSpace(filter.View))
 	}
 	errorsViewClause := "COALESCE(e.is_business_limited,false) = false"
 	if !ownerExplicit {
-		errorsViewClause += " AND LOWER(COALESCE(e.error_owner,'')) <> 'client'"
+		errorsViewClause += " AND LOWER(COALESCE(e.error_owner,'')) NOT IN ('client', 'client_via_upstream')"
 	}
 	switch view {
 	case "", "errors":
 		clauses = append(clauses, errorsViewClause)
 	case "client":
-		clauses = append(clauses, "LOWER(COALESCE(e.error_owner,'')) = 'client'")
+		clauses = append(clauses, "LOWER(COALESCE(e.error_owner,'')) IN ('client', 'client_via_upstream')")
 	case "excluded":
 		clauses = append(clauses, "COALESCE(e.is_business_limited,false) = true")
 	case "all":

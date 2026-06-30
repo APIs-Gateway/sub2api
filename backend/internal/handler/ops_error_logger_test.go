@@ -669,6 +669,98 @@ func TestClassifyOpsClientBusinessLimitedMarkerExcludesCustomPolicyDenialFromSLA
 	require.Equal(t, "client_request", errorSource)
 }
 
+// TestClassifyOpsUpstreamRequestShaped4xxOwnedByClientViaUpstream 覆盖 issue #16 Part B/A2:
+// 上游「请求本身的问题」4xx 归 client_via_upstream(SLA 排除),账号/鉴权/限流/5xx 仍 provider(计入)。
+func TestClassifyOpsUpstreamRequestShaped4xxOwnedByClientViaUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		status    int
+		wantOwner string
+	}{
+		{http.StatusBadRequest, "client_via_upstream"},            // 400
+		{http.StatusNotFound, "client_via_upstream"},              // 404
+		{http.StatusConflict, "client_via_upstream"},              // 409
+		{http.StatusRequestEntityTooLarge, "client_via_upstream"}, // 413
+		{http.StatusUnprocessableEntity, "client_via_upstream"},   // 422
+		{http.StatusUnauthorized, "provider"},                     // 401 账号侧
+		{http.StatusForbidden, "provider"},                        // 403
+		{http.StatusTooManyRequests, "provider"},                  // 429
+		{http.StatusInternalServerError, "provider"},              // 500
+		{http.StatusServiceUnavailable, "provider"},               // 503
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		service.SetOpsUpstreamError(c, tc.status, "upstream rejected", "")
+		_, isBiz, owner, _ := classifyOpsErrorLog(c, "upstream_error", "upstream rejected", "", http.StatusBadGateway)
+		require.Equal(t, tc.wantOwner, owner, "upstream status %d", tc.status)
+		require.False(t, isBiz, "upstream %d should not be business-limited", tc.status)
+	}
+}
+
+// TestClassifyOpsUpstreamRequestShaped4xxStreamingStatus200 覆盖 issue #16 Part B 的 T4:
+// 流式已开始(对外 status=200,无法再改 HTTP 状态码)但上游记的是请求形 4xx 时,
+// 归因仍须据「真实上游状态码」判为 client_via_upstream,不受对外 200 影响。
+// 否则 SLA 口径(裸表用 status_code>=400)虽因 200<400 自然不计,但列表/owner 维度会错记成 provider。
+func TestClassifyOpsUpstreamRequestShaped4xxStreamingStatus200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	// 上游真实 422,但流式已开始 → 对外 status=200。
+	service.SetOpsUpstreamError(c, http.StatusUnprocessableEntity, "bad field foo", "")
+
+	phase, isBiz, owner, source := classifyOpsErrorLog(c, "upstream_error", "bad field foo", "", http.StatusOK)
+
+	require.Equal(t, "upstream", phase)
+	require.False(t, isBiz)
+	require.Equal(t, "client_via_upstream", owner, "对外 200 不应影响据上游状态码的归因")
+	require.Equal(t, "upstream_http", source)
+}
+
+// TestClassifyOpsRoutingCapacityBeatsUpstream4xxAttribution 锁定优先级:
+// 路由容量受限(无可用账号)即便恰好携带上游请求形 4xx 状态码,也保持 platform + business_limited,
+// A2 的 client_via_upstream 覆盖不得抢占 routing(否则容量限流会被错记成客户端请求错)。
+func TestClassifyOpsRoutingCapacityBeatsUpstream4xxAttribution(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	markOpsRoutingCapacityLimited(c)
+	service.SetOpsUpstreamError(c, http.StatusUnprocessableEntity, "no capacity", "")
+
+	phase, isBiz, owner, source := classifyOpsErrorLog(c, "upstream_error", "no capacity", "", http.StatusServiceUnavailable)
+
+	require.Equal(t, "routing", phase)
+	require.True(t, isBiz, "路由容量受限须计 business-limited(排除 SLA)")
+	require.Equal(t, "platform", owner, "routing 优先于 A2,不得重归 client_via_upstream")
+	require.Equal(t, "gateway", source)
+}
+
+// TestClassifyOpsUpstreamRequestShaped4xxExtraCodes 补齐请求形集合的其余成员(408/415/416)
+// 与集合外 4xx(405/451)的对照:集合外即便携带上游上下文也保持 provider(计入 SLA),
+// 与 service.IsRequestShapedUpstream4xx / MapUpstreamErrorDefault 的边界严格同源。
+func TestClassifyOpsUpstreamRequestShaped4xxExtraCodes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		status    int
+		wantOwner string
+	}{
+		{http.StatusRequestTimeout, "client_via_upstream"},               // 408
+		{http.StatusUnsupportedMediaType, "client_via_upstream"},         // 415
+		{http.StatusRequestedRangeNotSatisfiable, "client_via_upstream"}, // 416
+		{http.StatusMethodNotAllowed, "provider"},                        // 405 集合外
+		{http.StatusUnavailableForLegalReasons, "provider"},              // 451 集合外
+		{http.StatusGone, "provider"},                                    // 410 集合外
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		service.SetOpsUpstreamError(c, tc.status, "upstream rejected", "")
+		_, isBiz, owner, _ := classifyOpsErrorLog(c, "upstream_error", "upstream rejected", "", http.StatusBadGateway)
+		require.Equal(t, tc.wantOwner, owner, "upstream status %d", tc.status)
+		require.False(t, isBiz, "upstream %d should not be business-limited", tc.status)
+	}
+}
+
 func TestClassifyOpsOtherErrorsStillCountForSLA(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

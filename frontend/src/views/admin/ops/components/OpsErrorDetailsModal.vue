@@ -54,6 +54,7 @@ const ownerSelectOptions = computed(() => {
     { value: '', label: t('common.all') },
     { value: 'provider', label: t('admin.ops.errorDetails.owner.provider') || 'provider' },
     { value: 'client', label: t('admin.ops.errorDetails.owner.client') || 'client' },
+    { value: 'client_via_upstream', label: t('admin.ops.errorDetails.owner.clientViaUpstream') || 'client (upstream)' },
     { value: 'platform', label: t('admin.ops.errorDetails.owner.platform') || 'platform' }
   ]
 })

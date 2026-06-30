@@ -5205,6 +5205,7 @@ export default {
         owner: {
           provider: '服务商',
           client: '客户端',
+          clientViaUpstream: '客户端(上游判定)',
           platform: '平台'
         },
         phase: {
