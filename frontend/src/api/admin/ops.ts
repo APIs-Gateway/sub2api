@@ -1077,7 +1077,7 @@ export async function getOpenAITokenStats(
   return data
 }
 
-export type OpsErrorListView = 'errors' | 'excluded' | 'all'
+export type OpsErrorListView = 'errors' | 'client' | 'excluded' | 'all'
 
 export type OpsErrorListQueryParams = {
   page?: number

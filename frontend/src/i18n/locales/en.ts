@@ -5040,6 +5040,7 @@ export default {
         unresolved: 'Unresolved',
         resolved: 'Resolved',
         viewErrors: 'Errors',
+        viewClient: 'Client',
         viewExcluded: 'Excluded',
         statusCodeOther: 'Other',
         owner: {

@@ -427,6 +427,17 @@ func TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA(t *testing.T) {
 			wantPhase:   "request",
 		},
 		{
+			// SUBSCRIPTION_OVERDRAFT_LIMIT:每日额度限速、到点自动解锁(issue #16 Part A)。
+			// 原始 code 被 billingErrorDetails 压成 billing_error,ops 仅按 message 命中。
+			name:        "subscription overdraft daily allowance limit",
+			errType:     "billing_error",
+			message:     "subscription overdraft limit reached; daily allowance will unlock over time",
+			code:        "billing_error",
+			status:      http.StatusForbidden,
+			wantErrType: "billing_error",
+			wantPhase:   "request",
+		},
+		{
 			name:        "google insufficient account balance",
 			errType:     "api_error",
 			message:     "Insufficient account balance",

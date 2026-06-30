@@ -1301,6 +1301,9 @@ func isOpsLocalBusinessLimitError(code string, msg string) bool {
 		strings.Contains(msg, "query parameter api_key is deprecated") ||
 		strings.Contains(msg, "no active subscription found for this group") ||
 		strings.Contains(msg, "subscription is invalid or expired") ||
+		// SUBSCRIPTION_OVERDRAFT_LIMIT(redeem_service.go):每日额度限速、到点自动解锁,属业务限制非服务故障。
+		// ops 拿不到原始 code(billingErrorDetails 压成 billing_error),故按 message 命中。见 docs/specs/ops-sla-attribution-part-a.md。
+		strings.Contains(msg, "subscription overdraft limit reached") ||
 		strings.Contains(msg, opsErrInsufficientBalance) ||
 		strings.Contains(msg, "insufficient account balance") ||
 		strings.Contains(msg, "api key group platform is not gemini") ||
