@@ -300,14 +300,12 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 	if streamStarted {
 		return // Can't write error after stream started
 	}
-	statusCode := http.StatusBadGateway
-	if lastErr != nil && lastErr.StatusCode > 0 {
-		statusCode = lastErr.StatusCode
-	}
-	if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
-		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")
-		h.responsesErrorResponse(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage())
+	// 无具体上游错误(连失败状态码都没有)时,保留通用「账号穷尽」语义。
+	if lastErr == nil || lastErr.StatusCode <= 0 {
+		h.responsesErrorResponse(c, http.StatusBadGateway, "server_error", "All available accounts exhausted")
 		return
 	}
-	h.responsesErrorResponse(c, statusCode, "server_error", "All available accounts exhausted")
+	// 有上游错误 → 走共享策略(静默拒绝/透传规则/请求形 4xx 透传),不再各写一套。
+	status, errType, errMsg := service.ResolveUpstreamErrorResponse(c, service.PlatformAnthropic, lastErr.StatusCode, lastErr.ResponseBody)
+	h.responsesErrorResponse(c, status, errType, errMsg)
 }

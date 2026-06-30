@@ -36,7 +36,9 @@ func TestApplyErrorPassthroughRule_NoBoundService(t *testing.T) {
 	assert.Equal(t, "Upstream request failed", errMsg)
 }
 
-func TestGatewayHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
+// issue #16 Part B(B2):无规则时,上游请求形 4xx(422)默认透传真实状态码 + 上游报文,
+// 而非旧的「压成 502 + 通用文案」。
+func TestGatewayHandleErrorResponse_NoRulePassesThrough4xx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -52,17 +54,18 @@ func TestGatewayHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
 
 	_, err := svc.handleErrorResponse(context.Background(), resp, c, account)
 	require.Error(t, err)
-	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
 	errField, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "upstream_error", errField["type"])
-	assert.Equal(t, "Upstream request failed", errField["message"])
+	assert.Equal(t, "invalid_request_error", errField["type"])
+	assert.Equal(t, "Invalid schema for field messages", errField["message"])
 }
 
-func TestOpenAIHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
+// issue #16 Part B(B2):OpenAI 非-failover 此前 422 落 default→502;现与 Anthropic 侧对齐,透传 422。
+func TestOpenAIHandleErrorResponse_NoRulePassesThrough4xx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -78,14 +81,14 @@ func TestOpenAIHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
 
 	_, err := svc.handleErrorResponse(context.Background(), resp, c, account, nil)
 	require.Error(t, err)
-	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
 	errField, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "upstream_error", errField["type"])
-	assert.Equal(t, "Upstream request failed", errField["message"])
+	assert.Equal(t, "invalid_request_error", errField["type"])
+	assert.Equal(t, "Invalid schema for field messages", errField["message"])
 }
 
 func TestGeminiWriteGeminiMappedError_NoRuleKeepsDefault(t *testing.T) {
@@ -333,6 +336,115 @@ func TestGeminiWriteGeminiMappedError_SetsResponseCommitted(t *testing.T) {
 	err := svc.writeGeminiMappedError(c, account, http.StatusBadRequest, "req-99", body)
 	require.Error(t, err)
 	assert.True(t, IsResponseCommitted(c), "Gemini path must mark response committed")
+}
+
+// TestMapUpstreamErrorDefault 覆盖 issue #16 Part B 的默认映射矩阵:请求形 4xx 透传,其余保留 502/429/503。
+func TestMapUpstreamErrorDefault(t *testing.T) {
+	tests := []struct {
+		status      int
+		wantStatus  int
+		wantErrType string
+		wantPass    bool
+	}{
+		// 请求形 4xx(Q1 扩展集)→ 透传真实状态码
+		{400, 400, "invalid_request_error", true},
+		{404, 404, "not_found_error", true},
+		{408, 408, "invalid_request_error", true},
+		{409, 409, "invalid_request_error", true},
+		{413, 413, "invalid_request_error", true},
+		{415, 415, "invalid_request_error", true},
+		{416, 416, "invalid_request_error", true},
+		{422, 422, "invalid_request_error", true},
+		// 账号/鉴权/计费/限流/5xx/529 → 保留既有语义,不透传
+		{401, http.StatusBadGateway, "upstream_error", false},
+		{402, http.StatusBadGateway, "upstream_error", false},
+		{403, http.StatusBadGateway, "upstream_error", false},
+		{429, http.StatusTooManyRequests, "rate_limit_error", false},
+		{529, http.StatusServiceUnavailable, "overloaded_error", false},
+		{500, http.StatusBadGateway, "upstream_error", false},
+		{502, http.StatusBadGateway, "upstream_error", false},
+		{503, http.StatusBadGateway, "upstream_error", false},
+		{504, http.StatusBadGateway, "upstream_error", false},
+		// 集合外的 4xx(405/406/414/451)与未知码 → 不透传,保留 502
+		{405, http.StatusBadGateway, "upstream_error", false},
+		{406, http.StatusBadGateway, "upstream_error", false},
+		{414, http.StatusBadGateway, "upstream_error", false},
+		{451, http.StatusBadGateway, "upstream_error", false},
+		{418, http.StatusBadGateway, "upstream_error", false},
+	}
+	for _, tt := range tests {
+		gotStatus, gotErrType, _, gotPass := MapUpstreamErrorDefault(tt.status)
+		assert.Equal(t, tt.wantStatus, gotStatus, "status %d -> code", tt.status)
+		assert.Equal(t, tt.wantErrType, gotErrType, "status %d -> errType", tt.status)
+		assert.Equal(t, tt.wantPass, gotPass, "status %d -> passthrough", tt.status)
+	}
+}
+
+// TestResolveUpstreamErrorResponse 覆盖共享策略的四段式:静默拒绝/透传规则/请求形 4xx 透传/默认保留。
+func TestResolveUpstreamErrorResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		return c
+	}
+
+	t.Run("静默拒绝 → 502 + 客户端文案", func(t *testing.T) {
+		c := newCtx()
+		body := []byte(`{"error":{"code":"openai_silent_refusal","message":"empty stream"}}`)
+		status, errType, msg := ResolveUpstreamErrorResponse(c, PlatformOpenAI, http.StatusOK, body)
+		assert.Equal(t, http.StatusBadGateway, status)
+		assert.Equal(t, "upstream_error", errType)
+		assert.Equal(t, OpenAISilentRefusalClientMessage(), msg)
+	})
+
+	t.Run("请求形 4xx 默认透传真实状态码 + 上游报文", func(t *testing.T) {
+		c := newCtx()
+		body := []byte(`{"error":{"message":"bad field foo"}}`)
+		status, errType, msg := ResolveUpstreamErrorResponse(c, PlatformAnthropic, http.StatusUnprocessableEntity, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, status)
+		assert.Equal(t, "invalid_request_error", errType)
+		assert.Equal(t, "bad field foo", msg)
+		// 真实上游状态码须记入 context(A2 归因依赖)。
+		v, ok := c.Get(OpsUpstreamStatusCodeKey)
+		require.True(t, ok)
+		assert.Equal(t, http.StatusUnprocessableEntity, v)
+	})
+
+	t.Run("请求形 4xx 上游无 message → 兜底文案", func(t *testing.T) {
+		c := newCtx()
+		status, _, msg := ResolveUpstreamErrorResponse(c, PlatformAnthropic, http.StatusBadRequest, nil)
+		assert.Equal(t, http.StatusBadRequest, status)
+		assert.Equal(t, "Upstream rejected the request", msg)
+	})
+
+	t.Run("5xx 保留 502 语义", func(t *testing.T) {
+		c := newCtx()
+		status, errType, msg := ResolveUpstreamErrorResponse(c, PlatformAnthropic, http.StatusServiceUnavailable, []byte(`{"error":{"message":"upstream down"}}`))
+		assert.Equal(t, http.StatusBadGateway, status)
+		assert.Equal(t, "upstream_error", errType)
+		assert.Equal(t, "Upstream service temporarily unavailable", msg)
+	})
+
+	t.Run("429 保留限流语义", func(t *testing.T) {
+		c := newCtx()
+		status, errType, _ := ResolveUpstreamErrorResponse(c, PlatformAnthropic, http.StatusTooManyRequests, []byte(`{"error":{"message":"slow down"}}`))
+		assert.Equal(t, http.StatusTooManyRequests, status)
+		assert.Equal(t, "rate_limit_error", errType)
+	})
+
+	t.Run("透传规则命中覆盖默认", func(t *testing.T) {
+		c := newCtx()
+		ruleSvc := &ErrorPassthroughService{}
+		ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{
+			newNonFailoverPassthroughRule(http.StatusUnprocessableEntity, "invalid", http.StatusTeapot, "自定义文案"),
+		})
+		BindErrorPassthroughService(c, ruleSvc)
+		status, errType, msg := ResolveUpstreamErrorResponse(c, PlatformAnthropic, http.StatusUnprocessableEntity, []byte(`{"error":{"message":"invalid schema"}}`))
+		assert.Equal(t, http.StatusTeapot, status)
+		assert.Equal(t, "upstream_error", errType)
+		assert.Equal(t, "自定义文案", msg)
+	})
 }
 
 func newNonFailoverPassthroughRule(statusCode int, keyword string, respCode int, customMessage string) *model.ErrorPassthroughRule {
