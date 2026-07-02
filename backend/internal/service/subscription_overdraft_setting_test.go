@@ -17,6 +17,9 @@ type overdraftSettingRepoStub struct {
 	sub        *UserSubscription
 	activeSubs []UserSubscription
 	listErr    error
+	setErr     error
+	setOK      bool
+	setOKSet   bool
 	setDays    *int
 	setCalls   int
 }
@@ -40,7 +43,11 @@ func (r *overdraftSettingRepoStub) SetOverdraftDays(_ context.Context, userID, s
 		v := *days
 		r.setDays = &v
 	}
-	return true, nil
+	ok := true
+	if r.setOKSet {
+		ok = r.setOK
+	}
+	return ok, r.setErr
 }
 
 func (r *overdraftSettingRepoStub) ListActiveByUserID(_ context.Context, userID int64) ([]UserSubscription, error) {
@@ -59,12 +66,13 @@ func (r *overdraftSettingRepoStub) ListActiveByUserID(_ context.Context, userID 
 type overdraftSettingUserRepoStub struct {
 	*mockUserRepo
 
+	setErr      error
 	guardValues []bool
 }
 
 func (r *overdraftSettingUserRepoStub) SetSubscriptionOverdraftGuard(_ context.Context, _ int64, enabled bool) error {
 	r.guardValues = append(r.guardValues, enabled)
-	return nil
+	return r.setErr
 }
 
 func TestSetSubscriptionOverdraftDays_ValueDomain(t *testing.T) {
@@ -127,6 +135,106 @@ func TestSetSubscriptionOverdraftDays_ValueDomain(t *testing.T) {
 		repo, err := run(t, &v)
 		require.ErrorIs(t, err, ErrInvalidSubscriptionOverdraftDays)
 		require.Zero(t, repo.setCalls)
+	})
+
+	t.Run("enable_rejects_subscription_owned_by_another_user", func(t *testing.T) {
+		v := 1
+		repo := &overdraftSettingRepoStub{sub: &UserSubscription{
+			ID:          subID,
+			UserID:      userID + 1,
+			StartsAt:    now,
+			ActivatedAt: &now,
+			ExpiresAt:   now.AddDate(0, 0, 10),
+		}}
+		svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+
+		err := svc.SetSubscriptionOverdraftDays(context.Background(), userID, subID, &v)
+
+		require.ErrorIs(t, err, ErrSubscriptionNotFound)
+		require.Zero(t, repo.setCalls)
+	})
+
+	t.Run("enable_rejects_exhausted_overdraft_uses", func(t *testing.T) {
+		v := 1
+		repo := &overdraftSettingRepoStub{sub: &UserSubscription{
+			ID:                  subID,
+			UserID:              userID,
+			StartsAt:            now,
+			ActivatedAt:         &now,
+			ExpiresAt:           now.AddDate(0, 0, 10),
+			TotalOverdraftCount: MaxSubscriptionOverdraftUses,
+		}}
+		svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+
+		err := svc.SetSubscriptionOverdraftDays(context.Background(), userID, subID, &v)
+
+		require.ErrorIs(t, err, ErrSubscriptionOverdraftUsesExhausted)
+		require.Zero(t, repo.setCalls)
+	})
+
+	t.Run("set_overdraft_days_error_returns", func(t *testing.T) {
+		v := 1
+		setErr := errors.New("set overdraft days failed")
+		repo := &overdraftSettingRepoStub{
+			sub: &UserSubscription{
+				ID:          subID,
+				UserID:      userID,
+				StartsAt:    now,
+				ActivatedAt: &now,
+				ExpiresAt:   now.AddDate(0, 0, 10),
+			},
+			setErr: setErr,
+		}
+		svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+
+		err := svc.SetSubscriptionOverdraftDays(context.Background(), userID, subID, &v)
+
+		require.ErrorIs(t, err, setErr)
+		require.Equal(t, 1, repo.setCalls)
+	})
+
+	t.Run("set_overdraft_days_not_found_returns", func(t *testing.T) {
+		v := 1
+		repo := &overdraftSettingRepoStub{
+			sub: &UserSubscription{
+				ID:          subID,
+				UserID:      userID,
+				StartsAt:    now,
+				ActivatedAt: &now,
+				ExpiresAt:   now.AddDate(0, 0, 10),
+			},
+			setOK:    false,
+			setOKSet: true,
+		}
+		svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+
+		err := svc.SetSubscriptionOverdraftDays(context.Background(), userID, subID, &v)
+
+		require.ErrorIs(t, err, ErrSubscriptionNotFound)
+		require.Equal(t, 1, repo.setCalls)
+	})
+
+	t.Run("guard_update_error_still_invalidates_auth_cache", func(t *testing.T) {
+		v := 1
+		repo := &overdraftSettingRepoStub{sub: &UserSubscription{
+			ID:          subID,
+			UserID:      userID,
+			StartsAt:    now,
+			ActivatedAt: &now,
+			ExpiresAt:   now.AddDate(0, 0, 10),
+		}}
+		userRepo := &overdraftSettingUserRepoStub{
+			mockUserRepo: &mockUserRepo{},
+			setErr:       errors.New("set guard failed"),
+		}
+		invalidator := &authCacheInvalidatorStub{}
+		svc := NewSubscriptionService(groupRepoNoop{}, repo, userRepo, nil, invalidator, nil, nil, nil)
+
+		err := svc.SetSubscriptionOverdraftDays(context.Background(), userID, subID, &v)
+
+		require.NoError(t, err)
+		require.Equal(t, []bool{true}, userRepo.guardValues)
+		require.Equal(t, []int64{userID}, invalidator.userIDs)
 	})
 }
 
