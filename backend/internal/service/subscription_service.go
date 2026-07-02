@@ -38,6 +38,7 @@ var (
 	ErrSubscriptionNilInput               = infraerrors.BadRequest("SUBSCRIPTION_NIL_INPUT", "subscription input cannot be nil")
 	ErrAdjustWouldExpire                  = infraerrors.BadRequest("ADJUST_WOULD_EXPIRE", "adjustment would result in expired subscription (remaining days must be > 0)")
 	ErrSubscriptionOverdraftUsesExhausted = infraerrors.BadRequest("SUBSCRIPTION_OVERDRAFT_USES_EXHAUSTED", "subscription overdraft uses exhausted")
+	ErrInvalidSubscriptionOverdraftDays   = infraerrors.BadRequest("INVALID_SUBSCRIPTION_OVERDRAFT_DAYS", "subscription overdraft days must be between 1 and 5; use null or 0 to disable")
 )
 
 // SubscriptionService 订阅服务
@@ -621,10 +622,12 @@ func (s *SubscriptionService) ListUserSubscriptions(ctx context.Context, userID 
 }
 
 // SetSubscriptionOverdraftDays 用户自助设置自己某张订阅卡的「最多往后透支天数」。
-// days = nil 或负数 → 关闭透支；>=0 → 开启并设置透支深度（0 = 仅当天额度）。仅能操作属于自己的卡。
+// days = nil、0 或负数 → 关闭透支；1..5 → 开启并设置透支深度。仅能操作属于自己的卡。
 func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, userID, subID int64, days *int) error {
-	norm := normalizeOverdraftDays(days) // nil/负数 → nil；>=0 → 拷贝
-	s.clearSubscriptionLockCache(userID)
+	norm, err := normalizeOverdraftDays(days)
+	if err != nil {
+		return err
+	}
 	if norm != nil {
 		sub, err := s.userSubRepo.GetByID(ctx, subID)
 		if err != nil {
@@ -645,10 +648,17 @@ func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, 
 		return ErrSubscriptionNotFound
 	}
 	s.clearSubscriptionLockCache(userID)
-	// 设了非空上限 → 置 guard，让准入闸门对该用户生效（只置真）。
-	if norm != nil && s.userRepo != nil {
-		if err := s.userRepo.MarkSubscriptionOverdraftGuard(ctx, userID); err != nil {
-			log.Printf("[Subscription] mark overdraft guard failed user=%d: %v", userID, err)
+	if s.userRepo != nil {
+		guardEnabled := norm != nil
+		if norm == nil {
+			guardEnabled, err = s.hasEnabledSubscriptionOverdraft(ctx, userID)
+			if err != nil {
+				log.Printf("[Subscription] check overdraft guard failed user=%d: %v", userID, err)
+				guardEnabled = true
+			}
+		}
+		if err := s.userRepo.SetSubscriptionOverdraftGuard(ctx, userID, guardEnabled); err != nil {
+			log.Printf("[Subscription] set overdraft guard failed user=%d enabled=%t: %v", userID, guardEnabled, err)
 		}
 	}
 	// 失效 auth 快照（闸门读 guard）+ 余额缓存（闸门读 balance）。
@@ -657,6 +667,19 @@ func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, 
 	}
 	s.invalidateUserBalanceCacheAsync(userID)
 	return nil
+}
+
+func (s *SubscriptionService) hasEnabledSubscriptionOverdraft(ctx context.Context, userID int64) (bool, error) {
+	subs, err := s.userSubRepo.ListActiveByUserID(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	for i := range subs {
+		if subs[i].MaxOverdraftDays != nil && subs[i].CanEnableOverdraft() {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ListActiveUserSubscriptions 获取用户的所有有效订阅

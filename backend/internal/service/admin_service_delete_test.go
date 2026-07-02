@@ -733,6 +733,6 @@ func TestAdminService_BatchDeleteRedeemCodes_PartialFailures(t *testing.T) {
 	require.Equal(t, []int64{1, 2, 3}, repo.deletedIDs)
 }
 
-func (s *userRepoStub) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (s *userRepoStub) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }

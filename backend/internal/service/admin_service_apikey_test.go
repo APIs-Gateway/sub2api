@@ -518,6 +518,6 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_Unbind_NoAllowedGroupUpdate(t *te
 	require.False(t, got.AutoGrantedGroupAccess)
 }
 
-func (s *userRepoStubForGroupUpdate) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (s *userRepoStubForGroupUpdate) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }

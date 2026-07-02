@@ -196,6 +196,6 @@ func TestAdminService_UpdateUser_DoesNotReturnPartialSuccessFromEmailIdentityRes
 	require.Empty(t, repo.ensureCalls)
 }
 
-func (s *emailSyncRepoStub) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (s *emailSyncRepoStub) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }

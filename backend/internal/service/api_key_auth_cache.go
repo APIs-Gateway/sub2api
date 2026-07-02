@@ -52,7 +52,7 @@ type APIKeyAuthUserSnapshot struct {
 	// RPMLimit 用户级每分钟请求数上限（0 = 不限制）；用于 billing_cache_service.checkRPM 兜底判断。
 	RPMLimit int `json:"rpm_limit"`
 
-	// SubscriptionOverdraftGuard 该用户是否给任意订阅卡设过透支上限；准入闸门的廉价触发位。
+	// SubscriptionOverdraftGuard 该用户是否仍有任意订阅卡开启透支上限；准入闸门的廉价触发位。
 	SubscriptionOverdraftGuard bool `json:"subscription_overdraft_guard,omitempty"`
 	// StablePriorityEnabled 稳定优先用户级全局开关；用于 openai 调度跨分组兜底判断。
 	StablePriorityEnabled bool `json:"stable_priority_enabled"`
