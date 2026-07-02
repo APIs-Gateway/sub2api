@@ -141,8 +141,11 @@ const (
 )
 
 // CheckErrorPolicy 检查自定义错误码和临时不可调度规则。
-// 自定义错误码开启时覆盖后续所有逻辑（包括临时不可调度）。
+// 429 始终交给上游 429 滑窗逻辑判断，避免偶发限流被本地策略直接冷却或切号。
 func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte) ErrorPolicyResult {
+	if statusCode == http.StatusTooManyRequests {
+		return ErrorPolicyNone
+	}
 	if account.IsCustomErrorCodesEnabled() {
 		if account.ShouldHandleErrorCode(statusCode) {
 			return ErrorPolicyMatched
@@ -165,14 +168,14 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
 	// 池模式默认不标记本地账号状态；仅当用户显式配置自定义错误码时按本地策略处理。
-	if account.IsPoolMode() && !customErrorCodesEnabled {
+	if account.IsPoolMode() && !customErrorCodesEnabled && statusCode != http.StatusTooManyRequests {
 		slog.Info("pool_mode_error_skipped", "account_id", account.ID, "status_code", statusCode)
 		return false
 	}
 
 	// apikey 类型账号：检查自定义错误码配置
 	// 如果启用且错误码不在列表中，则不处理（不停止调度、不标记限流/过载）
-	if !account.ShouldHandleErrorCode(statusCode) {
+	if statusCode != http.StatusTooManyRequests && !account.ShouldHandleErrorCode(statusCode) {
 		slog.Info("account_error_code_skipped", "account_id", account.ID, "status_code", statusCode)
 		return false
 	}
@@ -187,6 +190,16 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// cooldown to a local temporary pause.
 	if statusCode == http.StatusTooManyRequests && account.Platform == PlatformAnthropic {
 		if s.persistAnthropicExhaustedWindowLimit(ctx, account, headers) {
+			recordUpstream429AndShouldSwitch(account.ID, true)
+			return false
+		}
+	}
+
+	// 429 temp-unschedulable/custom local rules must not bypass the sliding-window gate.
+	// Weak 429s without an upstream reset only cool or switch after the recent 429 ratio is high.
+	if statusCode == http.StatusTooManyRequests {
+		s.handle429(ctx, account, headers, responseBody)
+		if !ShouldSwitchAccountOn429(account.ID) {
 			return false
 		}
 	}
@@ -327,7 +340,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		)
 		shouldDisable = s.handle403(ctx, account, upstreamMsg, responseBody)
 	case 429:
-		s.handle429(ctx, account, headers, responseBody)
 		shouldDisable = false
 	case 529:
 		s.handle529(ctx, account)
@@ -886,6 +898,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		persistOpenAI429PlanType(ctx, s.accountRepo, account, responseBody)
 		s.persistOpenAICodexSnapshot(ctx, account, headers)
 		if resetAt := s.calculateOpenAI429ResetTime(headers); resetAt != nil {
+			recordUpstream429AndShouldSwitch(account.ID, true)
 			s.notifyAccountSchedulingBlocked(account, *resetAt, "429")
 			if err := s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt); err != nil {
 				slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
@@ -898,6 +911,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 
 	// 2. Anthropic 平台：尝试解析 per-window 头（5h / 7d），选择实际触发的窗口
 	if result := calculateAnthropic429ResetTime(headers); result != nil {
+		recordUpstream429AndShouldSwitch(account.ID, true)
 		s.notifyAccountSchedulingBlocked(account, result.resetAt, "429")
 		if err := s.accountRepo.SetRateLimited(ctx, account.ID, result.resetAt); err != nil {
 			slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
@@ -921,6 +935,19 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 	// 3. 尝试从响应头解析重置时间（Anthropic 聚合头，向后兼容）
 	resetTimestamp := headers.Get("anthropic-ratelimit-unified-reset")
 
+	if resetTimestamp == "" {
+		if resetAt := parseUpstreamRetryAfterResetTime(headers, time.Now()); resetAt != nil {
+			recordUpstream429AndShouldSwitch(account.ID, true)
+			s.notifyAccountSchedulingBlocked(account, *resetAt, "429")
+			if err := s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt); err != nil {
+				slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
+				return
+			}
+			slog.Info("account_rate_limited", "account_id", account.ID, "platform", account.Platform, "reset_at", *resetAt, "reset_in", time.Until(*resetAt).Truncate(time.Second), "source", "retry_after")
+			return
+		}
+	}
+
 	// 4. 如果响应头没有，尝试从响应体解析（OpenAI usage_limit_reached, Gemini）
 	if resetTimestamp == "" {
 		switch account.Platform {
@@ -928,6 +955,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			// 尝试解析 OpenAI 的 usage_limit_reached 错误
 			if resetAt := parseOpenAIRateLimitResetTime(responseBody); resetAt != nil {
 				resetTime := time.Unix(*resetAt, 0)
+				recordUpstream429AndShouldSwitch(account.ID, true)
 				s.notifyAccountSchedulingBlocked(account, resetTime, "429")
 				if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetTime); err != nil {
 					slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
@@ -940,6 +968,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			// 尝试解析 Gemini 格式（用于其他平台）
 			if resetAt := ParseGeminiRateLimitResetTime(responseBody); resetAt != nil {
 				resetTime := time.Unix(*resetAt, 0)
+				recordUpstream429AndShouldSwitch(account.ID, true)
 				s.notifyAccountSchedulingBlocked(account, resetTime, "429")
 				if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetTime); err != nil {
 					slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
@@ -951,8 +980,12 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		}
 
 		// Anthropic 平台：没有限流重置时间的 429 可能是非真实限流（如 Extra usage required），
-		// 不标记账号限流状态，直接透传错误给客户端
+		// 低比例时不标记账号；比例过高时仍使用短默认窗口降权，避免持续打到同一账号。
 		if account.Platform == PlatformAnthropic {
+			if recordUpstream429AndShouldSwitch(account.ID, false) {
+				s.apply429FallbackRateLimit(ctx, account, "anthropic_no_reset_time")
+				return
+			}
 			slog.Warn("rate_limit_429_no_reset_time_skipped",
 				"account_id", account.ID,
 				"platform", account.Platform,
@@ -961,6 +994,10 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		}
 
 		// 其他平台：没有重置时间，使用可配置的秒级默认回避，避免误伤长时间不可调度。
+		if !recordUpstream429AndShouldSwitch(account.ID, false) {
+			slog.Info("rate_limit_429_fallback_below_threshold", "account_id", account.ID, "platform", account.Platform, "reason", "no_reset_time")
+			return
+		}
 		s.apply429FallbackRateLimit(ctx, account, "no_reset_time")
 		return
 	}
@@ -969,6 +1006,10 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 	ts, err := strconv.ParseInt(resetTimestamp, 10, 64)
 	if err != nil {
 		slog.Warn("rate_limit_reset_parse_failed", "reset_timestamp", resetTimestamp, "error", err)
+		if !recordUpstream429AndShouldSwitch(account.ID, false) {
+			slog.Info("rate_limit_429_fallback_below_threshold", "account_id", account.ID, "platform", account.Platform, "reason", "reset_parse_failed")
+			return
+		}
 		s.apply429FallbackRateLimit(ctx, account, "reset_parse_failed")
 		return
 	}
@@ -976,6 +1017,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 	resetAt := time.Unix(ts, 0)
 
 	// 标记限流状态
+	recordUpstream429AndShouldSwitch(account.ID, true)
 	s.notifyAccountSchedulingBlocked(account, resetAt, "429")
 	if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetAt); err != nil {
 		slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
@@ -1085,6 +1127,27 @@ func calculateOpenAI429ResetTime(headers http.Header) *time.Time {
 
 func (s *RateLimitService) calculateOpenAI429ResetTime(headers http.Header) *time.Time {
 	return calculateOpenAI429ResetTime(headers)
+}
+
+func parseUpstreamRetryAfterResetTime(headers http.Header, now time.Time) *time.Time {
+	if headers == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(headers.Get("Retry-After"))
+	if raw == "" {
+		return nil
+	}
+	if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		if seconds <= 0 {
+			return nil
+		}
+		resetAt := now.Add(time.Duration(seconds) * time.Second)
+		return &resetAt
+	}
+	if resetAt, err := http.ParseTime(raw); err == nil && resetAt.After(now) {
+		return &resetAt
+	}
+	return nil
 }
 
 // anthropic429Result holds the parsed Anthropic 429 rate-limit information.

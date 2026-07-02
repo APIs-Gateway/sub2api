@@ -367,10 +367,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			truncateOpenAIWSLogValue(err.Error(), openAIWSLogValueMaxLen),
 		)
 		if statusCode == http.StatusTooManyRequests {
+			recordUpstream429Attempt(account.ID)
 			s.persistOpenAIWSRateLimitSignal(ctx, account, handshakeHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(err.Error()))
-			return &UpstreamFailoverError{
-				StatusCode:      http.StatusTooManyRequests,
-				ResponseHeaders: cloneHeader(handshakeHeaders),
+			if ShouldSwitchAccountOn429(account.ID) {
+				return &UpstreamFailoverError{
+					StatusCode:      http.StatusTooManyRequests,
+					ResponseHeaders: cloneHeader(handshakeHeaders),
+				}
 			}
 		}
 		return s.mapOpenAIWSPassthroughDialError(err, statusCode, handshakeHeaders)
@@ -481,6 +484,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			false,
 		)
 	}
+	recordUpstream429Attempt(account.ID)
 	upstreamFirstMessageSent = true
 
 	readNextClientFrame := func(readCtx context.Context, conn openaiwsv2.FrameConn) (coderws.MessageType, []byte, error) {
@@ -490,6 +494,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				return msgType, payload, readErr
 			}
 			if msgType == coderws.MessageText && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
+				recordUpstream429Attempt(account.ID)
 				return msgType, payload, nil
 			}
 			if writeErr := upstreamFrameConn.WriteFrame(readCtx, msgType, payload); writeErr != nil {
@@ -572,6 +577,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					truncateOpenAIWSLogValue(errTypeRaw, openAIWSLogValueMaxLen),
 					truncateOpenAIWSLogValue(errMsgRaw, openAIWSLogValueMaxLen),
 				)
+				if !ShouldSwitchAccountOn429(account.ID) {
+					return nil
+				}
 				return &UpstreamFailoverError{
 					StatusCode:      http.StatusTooManyRequests,
 					ResponseBody:    append([]byte(nil), payload...),

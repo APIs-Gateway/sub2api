@@ -192,7 +192,11 @@ func (s *AntigravityGatewayService) attemptCreditsOveragesRetry(
 		return &creditsOveragesRetryResult{handled: true}
 	}
 
+	recordUpstream429Attempt(p.account.ID)
 	creditsResp, err := p.httpUpstream.Do(creditsReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+	if err == nil && creditsResp != nil && creditsResp.StatusCode == http.StatusTooManyRequests {
+		recordUpstream429AndShouldSwitch(p.account.ID, false)
+	}
 	if err == nil && creditsResp != nil && creditsResp.StatusCode < 400 {
 		s.clearCreditsExhausted(p.ctx, p.account)
 		logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d credit_overages_success model=%s account=%d",

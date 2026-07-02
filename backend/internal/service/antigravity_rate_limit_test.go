@@ -209,6 +209,106 @@ func TestHandleUpstreamError_429_NonModelRateLimit(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
 
+func TestHandleUpstreamError_429_RetryAfterBypassesThreshold(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &stubAntigravityAccountRepo{}
+	svc := &AntigravityGatewayService{accountRepo: repo}
+	account := &Account{ID: 21, Name: "acc-21", Platform: PlatformAntigravity}
+	headers := http.Header{"Retry-After": []string{"7"}}
+	body := []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","message":"quota exceeded"}}`)
+
+	recordUpstream429Attempt(account.ID)
+	before := time.Now()
+	result := svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, headers, body, "claude-sonnet-4-5", 0, "", false)
+	after := time.Now()
+
+	require.Nil(t, result)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, int64(21), repo.modelRateLimitCalls[0].accountID)
+	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
+	require.WithinDuration(t, before.Add(7*time.Second), repo.modelRateLimitCalls[0].resetAt, time.Second)
+	require.True(t, repo.modelRateLimitCalls[0].resetAt.Before(after.Add(7*time.Second).Add(time.Second)))
+	require.True(t, ShouldSwitchAccountOn429(account.ID))
+}
+
+func TestHandleUpstreamError_429BelowThresholdSkipsModelLimit(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &stubAntigravityAccountRepo{}
+	svc := &AntigravityGatewayService{accountRepo: repo}
+	account := &Account{ID: 25, Name: "acc-25", Platform: PlatformAntigravity}
+	body := []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","message":"quota exceeded"}}`)
+
+	recordUpstream429Attempt(account.ID)
+	result := svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, http.Header{}, body, "claude-sonnet-4-5", 0, "", false)
+
+	require.Nil(t, result)
+	require.Empty(t, repo.modelRateLimitCalls)
+	require.False(t, ShouldSwitchAccountOn429(account.ID))
+}
+
+func TestCreditsOveragesRetry429RecordsHit(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &stubAntigravityAccountRepo{}
+	svc := &AntigravityGatewayService{accountRepo: repo}
+	account := &Account{ID: 24, Name: "acc-24", Platform: PlatformAntigravity}
+	upstream := &stubAntigravityUpstream{firstBase: "https://antigravity.example"}
+
+	result := svc.attemptCreditsOveragesRetry(antigravityRetryLoopParams{
+		ctx:          context.Background(),
+		prefix:       "[test]",
+		account:      account,
+		accessToken:  "token",
+		action:       "generateContent",
+		body:         []byte(`{"request":{"contents":[]}}`),
+		httpUpstream: upstream,
+	}, "https://antigravity.example", "claude-sonnet-4-5", 0, http.StatusTooManyRequests, nil)
+
+	require.NotNil(t, result)
+	require.True(t, result.handled)
+	require.Nil(t, result.resp)
+	attempts, hits := countUpstream429EventsForTest(account.ID)
+	require.Equal(t, 1, attempts)
+	require.Equal(t, 1, hits)
+	require.False(t, ShouldSwitchAccountOn429(account.ID))
+}
+
+func TestHandleUpstreamError_429CustomErrorCodeMissStillUsesThresholdPolicy(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &stubAntigravityAccountRepo{}
+	svc := &AntigravityGatewayService{accountRepo: repo}
+	account := &Account{
+		ID:       22,
+		Name:     "acc-22",
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"custom_error_codes_enabled": true,
+			"custom_error_codes":         []any{float64(500)},
+		},
+	}
+	headers := http.Header{"Retry-After": []string{"7"}}
+	body := []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","message":"quota exceeded"}}`)
+
+	recordUpstream429Attempt(account.ID)
+	result := svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, headers, body, "claude-sonnet-4-5", 0, "", false)
+
+	require.Nil(t, result)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, int64(22), repo.modelRateLimitCalls[0].accountID)
+	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
+	require.True(t, ShouldSwitchAccountOn429(account.ID))
+}
+
+func TestAntigravityShouldFailoverUpstreamError_429RequiresThreshold(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	svc := &AntigravityGatewayService{}
+	account := &Account{ID: 23, Platform: PlatformAntigravity}
+
+	require.False(t, svc.shouldFailoverUpstreamError(account, http.StatusTooManyRequests))
+	recordUpstream429AndShouldSwitch(account.ID, true)
+	require.True(t, svc.shouldFailoverUpstreamError(account, http.StatusTooManyRequests))
+	require.True(t, svc.shouldFailoverUpstreamError(account, http.StatusServiceUnavailable))
+}
+
 // TestHandleUpstreamError_429_NonModelRateLimit_UsesMappedModelKey 测试 429 非模型限流场景
 // 验证：requestedModel 会被映射到 Antigravity 最终模型（例如 claude-opus-4-6 -> claude-opus-4-6-thinking）
 func TestHandleUpstreamError_429_NonModelRateLimit_UsesMappedModelKey(t *testing.T) {

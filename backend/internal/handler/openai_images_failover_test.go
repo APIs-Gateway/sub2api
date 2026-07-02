@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -79,6 +80,44 @@ func (u *openAIImagesFailoverHTTPUpstream) Do(_ *http.Request, _ string, account
 }
 
 func (u *openAIImagesFailoverHTTPUpstream) calls() []int64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]int64(nil), u.accountIDs...)
+}
+
+type openAIImages429AccountRepo struct {
+	openAIImagesFailoverAccountRepo
+	rateLimitedIDs []int64
+}
+
+func (r *openAIImages429AccountRepo) SetRateLimited(_ context.Context, id int64, _ time.Time) error {
+	r.rateLimitedIDs = append(r.rateLimitedIDs, id)
+	return nil
+}
+
+type openAIImages429HTTPUpstream struct {
+	service.HTTPUpstream
+	mu         sync.Mutex
+	accountIDs []int64
+}
+
+func (u *openAIImages429HTTPUpstream) Do(_ *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
+	u.mu.Lock()
+	u.accountIDs = append(u.accountIDs, accountID)
+	u.mu.Unlock()
+	return &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+			"X-Request-Id": []string{"req_img_429"},
+		},
+		Body: io.NopCloser(bytes.NewBufferString(
+			`{"error":{"type":"rate_limit_error","message":"slow down"}}`,
+		)),
+	}, nil
+}
+
+func (u *openAIImages429HTTPUpstream) calls() []int64 {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return append([]int64(nil), u.accountIDs...)
@@ -186,4 +225,105 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 	require.Len(t, events, 2)
 	require.Equal(t, "failover", events[0].Kind)
 	require.Equal(t, "failover", events[1].Kind)
+}
+
+func TestOpenAIGatewayHandlerImages_Weak429DoesNotSwitchAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(3131)
+	accounts := []service.Account{
+		{
+			ID:          92001,
+			Name:        "image-account-429-a",
+			Platform:    service.PlatformOpenAI,
+			Type:        service.AccountTypeOAuth,
+			Status:      service.StatusActive,
+			Schedulable: true,
+			Concurrency: 0,
+			Priority:    0,
+			Credentials: map[string]any{"access_token": "token-1"},
+		},
+		{
+			ID:          92002,
+			Name:        "image-account-429-b",
+			Platform:    service.PlatformOpenAI,
+			Type:        service.AccountTypeOAuth,
+			Status:      service.StatusActive,
+			Schedulable: true,
+			Concurrency: 0,
+			Priority:    1,
+			Credentials: map[string]any{"access_token": "token-2"},
+		},
+	}
+	accountRepo := &openAIImages429AccountRepo{
+		openAIImagesFailoverAccountRepo: openAIImagesFailoverAccountRepo{accounts: accounts},
+	}
+	upstream := &openAIImages429HTTPUpstream{}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	rateLimitService := service.NewRateLimitService(accountRepo, nil, cfg, nil, nil)
+	gatewayService := service.NewOpenAIGatewayService(
+		accountRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		cfg,
+		nil,
+		nil,
+		nil,
+		rateLimitService,
+		nil,
+		upstream,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil, // stableStore
+		nil, // groupRepo
+	)
+	billingService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
+	t.Cleanup(billingService.Stop)
+	concurrencyService := service.NewConcurrencyService(nil)
+	handler := NewOpenAIGatewayHandler(
+		gatewayService,
+		concurrencyService,
+		billingService,
+		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
+		nil,
+		nil,
+		nil,
+		nil,
+		cfg,
+	)
+	handler.maxAccountSwitches = 10
+
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		ID:      100,
+		GroupID: &groupID,
+		Group: &service.Group{
+			ID:                   groupID,
+			AllowImageGeneration: true,
+		},
+		User: &service.User{ID: 101},
+	})
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 101, Concurrency: 0})
+
+	handler.Images(c)
+
+	require.Equal(t, []int64{92001}, upstream.calls())
+	require.Empty(t, accountRepo.rateLimitedIDs)
+	require.Equal(t, 0, gatewayService.SnapshotOpenAIAccountSchedulerMetrics().RuntimeStatsAccountCount)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Equal(t, "rate_limit_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+	require.Contains(t, gjson.GetBytes(rec.Body.Bytes(), "error.message").String(), "rate limit")
 }

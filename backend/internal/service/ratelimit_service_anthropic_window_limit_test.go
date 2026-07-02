@@ -31,6 +31,7 @@ func (r *anthropicWindowLimitRepo) SetTempUnschedulable(_ context.Context, _ int
 }
 
 func TestHandleUpstreamError_AnthropicWindowLimitPreemptsTempUnschedRule(t *testing.T) {
+	resetUpstream429TrackerForTest()
 	resetAt := time.Now().Add(3 * time.Hour).Truncate(time.Second)
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-utilization", "1.02")
@@ -65,4 +66,5 @@ func TestHandleUpstreamError_AnthropicWindowLimitPreemptsTempUnschedRule(t *test
 	require.Zero(t, repo.tempUnschedCalls, "official Anthropic window limits should not be shortened by local temp-unsched rules")
 	require.Equal(t, 1, repo.rateLimitCalls)
 	require.Equal(t, resetAt, repo.lastRateLimitReset)
+	require.True(t, ShouldSwitchAccountOn429(account.ID))
 }
