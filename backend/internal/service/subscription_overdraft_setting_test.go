@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -13,9 +14,11 @@ import (
 type overdraftSettingRepoStub struct {
 	userSubRepoNoop
 
-	sub      *UserSubscription
-	setDays  *int
-	setCalls int
+	sub        *UserSubscription
+	activeSubs []UserSubscription
+	listErr    error
+	setDays    *int
+	setCalls   int
 }
 
 func (r *overdraftSettingRepoStub) GetByID(_ context.Context, id int64) (*UserSubscription, error) {
@@ -38,6 +41,30 @@ func (r *overdraftSettingRepoStub) SetOverdraftDays(_ context.Context, userID, s
 		r.setDays = &v
 	}
 	return true, nil
+}
+
+func (r *overdraftSettingRepoStub) ListActiveByUserID(_ context.Context, userID int64) ([]UserSubscription, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	out := make([]UserSubscription, 0, len(r.activeSubs))
+	for _, sub := range r.activeSubs {
+		if sub.UserID == userID {
+			out = append(out, sub)
+		}
+	}
+	return out, nil
+}
+
+type overdraftSettingUserRepoStub struct {
+	*mockUserRepo
+
+	guardValues []bool
+}
+
+func (r *overdraftSettingUserRepoStub) SetSubscriptionOverdraftGuard(_ context.Context, _ int64, enabled bool) error {
+	r.guardValues = append(r.guardValues, enabled)
+	return nil
 }
 
 func TestSetSubscriptionOverdraftDays_ValueDomain(t *testing.T) {
@@ -101,4 +128,64 @@ func TestSetSubscriptionOverdraftDays_ValueDomain(t *testing.T) {
 		require.ErrorIs(t, err, ErrInvalidSubscriptionOverdraftDays)
 		require.Zero(t, repo.setCalls)
 	})
+}
+
+func TestSetSubscriptionOverdraftDays_UpdatesGuardFromRemainingEnabledCards(t *testing.T) {
+	userID := int64(10)
+	subID := int64(20)
+	otherID := int64(21)
+	now := time.Now()
+	one := 1
+
+	repo := &overdraftSettingRepoStub{sub: &UserSubscription{
+		ID:          subID,
+		UserID:      userID,
+		StartsAt:    now,
+		ActivatedAt: &now,
+		ExpiresAt:   now.AddDate(0, 0, 10),
+	}}
+	userRepo := &overdraftSettingUserRepoStub{mockUserRepo: &mockUserRepo{}}
+	svc := NewSubscriptionService(groupRepoNoop{}, repo, userRepo, nil, nil, nil, nil, nil)
+
+	err := svc.SetSubscriptionOverdraftDays(context.Background(), userID, subID, &one)
+	require.NoError(t, err)
+	require.Equal(t, []bool{true}, userRepo.guardValues)
+
+	repo.activeSubs = []UserSubscription{{
+		ID:                  otherID,
+		UserID:              userID,
+		MaxOverdraftDays:    &one,
+		TotalOverdraftCount: 0,
+	}}
+	err = svc.SetSubscriptionOverdraftDays(context.Background(), userID, subID, nil)
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, true}, userRepo.guardValues, "另一张卡仍开启透支时 guard 保持 true")
+
+	repo.activeSubs = nil
+	err = svc.SetSubscriptionOverdraftDays(context.Background(), userID, subID, nil)
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, true, false}, userRepo.guardValues, "最后一张开启透支的卡关闭后 guard=false")
+}
+
+func TestSetSubscriptionOverdraftDays_GuardCheckFailureFailsOpen(t *testing.T) {
+	userID := int64(10)
+	subID := int64(20)
+	now := time.Now()
+	repo := &overdraftSettingRepoStub{
+		sub: &UserSubscription{
+			ID:          subID,
+			UserID:      userID,
+			StartsAt:    now,
+			ActivatedAt: &now,
+			ExpiresAt:   now.AddDate(0, 0, 10),
+		},
+		listErr: errors.New("list active failed"),
+	}
+	userRepo := &overdraftSettingUserRepoStub{mockUserRepo: &mockUserRepo{}}
+	svc := NewSubscriptionService(groupRepoNoop{}, repo, userRepo, nil, nil, nil, nil, nil)
+
+	err := svc.SetSubscriptionOverdraftDays(context.Background(), userID, subID, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, []bool{true}, userRepo.guardValues, "无法确认是否还有开启卡时保持 guard=true，避免误放开")
 }
