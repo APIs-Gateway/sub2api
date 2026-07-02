@@ -773,9 +773,9 @@ func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount flo
 	return nil
 }
 
-func (r *userRepository) MarkSubscriptionOverdraftGuard(ctx context.Context, id int64) error {
+func (r *userRepository) SetSubscriptionOverdraftGuard(ctx context.Context, id int64, enabled bool) error {
 	client := clientFromContext(ctx, r.client)
-	n, err := client.User.Update().Where(dbuser.IDEQ(id)).SetSubscriptionOverdraftGuard(true).Save(ctx)
+	n, err := client.User.Update().Where(dbuser.IDEQ(id)).SetSubscriptionOverdraftGuard(enabled).Save(ctx)
 	if err != nil {
 		return translatePersistenceError(err, service.ErrUserNotFound, nil)
 	}

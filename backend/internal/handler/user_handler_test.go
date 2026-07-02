@@ -791,6 +791,6 @@ func TestUserHandlerStartIdentityBindingReturnsAuthorizeURL(t *testing.T) {
 	require.Contains(t, resp.Data.AuthorizeURL, "redirect=%2Fsettings%2Fprofile")
 }
 
-func (s *userHandlerRepoStub) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (s *userHandlerRepoStub) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }

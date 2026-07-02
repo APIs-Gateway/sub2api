@@ -1797,7 +1797,7 @@ func contentModerationIntPtr(v int) *int {
 	return &v
 }
 
-func (r *contentModerationTestUserRepo) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (r *contentModerationTestUserRepo) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }
 

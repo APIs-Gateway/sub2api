@@ -58,7 +58,7 @@ type User struct {
 	// 且该 (用户, 分组) 无 rpm_override 时作为全局兜底生效，计数键 rpm:u:{userID}:{min}。
 	RPMLimit int
 
-	// SubscriptionOverdraftGuard 标记该用户是否给任意订阅卡设过透支上限。
+	// SubscriptionOverdraftGuard 标记该用户是否仍有任意订阅卡开启透支上限。
 	// 仅作准入闸门的廉价触发位；真正的天数按卡存于 UserSubscription.MaxOverdraftDays。
 	SubscriptionOverdraftGuard bool
 

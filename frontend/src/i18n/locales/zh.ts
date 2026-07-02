@@ -7038,12 +7038,12 @@ export default {
     overdraft: {
       label: '最多透支天数',
       placeholder: '关闭',
-      hint: '默认不支持透支。开启后本卡最多可往后预支 {max} 天额度；留空 = 关闭，0 = 仅可用当天额度。',
+      hint: '默认不支持透支。开启后本卡最多可往后预支 {max} 天额度；留空或 0 = 关闭，1-{max} = 开启深度。',
       usage: '往后预支：已用 {used} / {max} 天，剩余 {remaining} 天',
       exhausted: '已用满 {max} 天预支额度，系统已自动关闭透支功能，用户端不能再次开启。',
       saved: '已保存透支上限',
       failed: '保存透支上限失败',
-      invalid: '请输入 0 或正整数（留空表示关闭）'
+      invalid: '请输入 0 到 {max} 的整数；留空或 0 表示关闭'
     },
     status: {
       active: '有效',

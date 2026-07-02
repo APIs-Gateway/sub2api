@@ -858,10 +858,10 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 		s.circuitBreaker.OnSuccess()
 	}
 
-	// 透支闸门：非管理员用户默认不允许消费到当天已解锁订阅额度之外。
-	// 只有用户显式开启了本卡透支、且本卡累计透支次数未满 5 次时，才允许继续发起一个透支请求。
+	// 透支闸门：仅对曾开启订阅透支的普通用户启用昂贵的订阅汇总。
+	// 未开启透支的用户走原始余额检查；开启后，只有本卡累计透支次数未满 5 次时，才允许继续发起一个透支请求。
 	// 管理员豁免。
-	if !user.IsAdmin() {
+	if !user.IsAdmin() && user.SubscriptionOverdraftGuard {
 		currentLocked, limitLocked, subscriptionRemaining, canOverdraft, lerr := s.lockedSubscriptionBalance(ctx, user.ID)
 		if lerr != nil {
 			// 加载活跃卡失败：fail-open 退回原始余额检查，避免因瞬时 DB 抖动误挡正常用户。

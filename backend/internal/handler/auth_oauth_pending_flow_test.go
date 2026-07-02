@@ -3370,6 +3370,6 @@ func (oauthPendingFlowTotpEncryptorStub) Decrypt(ciphertext string) (string, err
 	return ciphertext, nil
 }
 
-func (r *oauthPendingFlowUserRepo) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (r *oauthPendingFlowUserRepo) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }

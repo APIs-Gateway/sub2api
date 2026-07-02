@@ -139,6 +139,7 @@
               v-model="overdraftEdit"
               type="number"
               min="0"
+              :max="overdraftMax(subscription)"
               step="1"
               class="input w-24"
               :disabled="isOverdraftExhausted(subscription)"
@@ -386,7 +387,7 @@ function isOverdraftExhausted(sub: UserSubscription): boolean {
   return sub.can_enable_overdraft === false || overdraftRemaining(sub) <= 0
 }
 
-// saveOverdraft 用户自助保存本卡「最多透支天数」（空 = 关闭透支）。
+// saveOverdraft 用户自助保存本卡「最多透支天数」（空/0 = 关闭透支，1..5 = 开启）。
 async function saveOverdraft() {
   const sub = props.subscription
   const raw = overdraftEdit.value
@@ -395,11 +396,11 @@ async function saveOverdraft() {
     days = null
   } else {
     const n = Number(raw)
-    if (Number.isNaN(n) || n < 0) {
-      appStore.showError(t('userSubscriptions.overdraft.invalid'))
+    if (Number.isNaN(n) || !Number.isInteger(n) || n < 0 || n > overdraftMax(sub)) {
+      appStore.showError(t('userSubscriptions.overdraft.invalid', { max: overdraftMax(sub) }))
       return
     }
-    days = Math.floor(n)
+    days = n === 0 ? null : n
   }
   if (days !== null && isOverdraftExhausted(sub)) {
     appStore.showError(t('userSubscriptions.overdraft.exhausted'))

@@ -241,6 +241,6 @@ func (s *stubUserRepo) GetByIDIncludeDeleted(ctx context.Context, id int64) (*se
 	panic("unexpected GetByIDIncludeDeleted call")
 }
 
-func (s *stubUserRepo) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (s *stubUserRepo) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }

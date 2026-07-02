@@ -113,8 +113,8 @@ func (User) Fields() []ent.Field {
 		field.Int("rpm_limit").
 			Default(0),
 
-		// subscription_overdraft_guard 标记该用户是否给「任意订阅卡」设过透支上限。
-		// 仅作准入闸门的廉价触发位（只置真不自动清，stale-true 只多一次查询、安全）；
+		// subscription_overdraft_guard 标记该用户是否仍有「任意订阅卡」开启透支上限。
+		// 仅作准入闸门的廉价触发位；真正的透支天数按订阅卡存于 user_subscriptions.max_overdraft_days。
 		// 真正的透支天数按订阅卡存于 user_subscriptions.max_overdraft_days。
 		field.Bool("subscription_overdraft_guard").
 			Default(false),

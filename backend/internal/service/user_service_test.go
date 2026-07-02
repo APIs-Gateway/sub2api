@@ -892,6 +892,6 @@ func TestGetProfile_HydratesAvatarFromRepository(t *testing.T) {
 	require.Equal(t, "remote_url", user.AvatarSource)
 }
 
-func (m *mockUserRepo) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (m *mockUserRepo) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }

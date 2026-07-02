@@ -2678,6 +2678,6 @@ func (r *stubUserSubscriptionRepo) SetOverdraftDays(context.Context, int64, int6
 	return false, nil
 }
 
-func (r *stubUserRepo) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (r *stubUserRepo) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }

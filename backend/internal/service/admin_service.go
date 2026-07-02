@@ -865,14 +865,17 @@ func sameInt64Set(a, b []int64) bool {
 	return true
 }
 
-// normalizeOverdraftDays 规整「最多透支天数」入参为存储值：
-// nil 或负数 → nil（不限制）；>=0 → 拷贝原值。
-func normalizeOverdraftDays(in *int) *int {
-	if in == nil || *in < 0 {
-		return nil
+// normalizeOverdraftDays 规整「最多透支天数」入参为存储值。
+// nil、0 或负数 → nil（关闭透支）；1..MaxSubscriptionOverdraftUses → 拷贝原值；超上限直接拒绝。
+func normalizeOverdraftDays(in *int) (*int, error) {
+	if in == nil || *in <= 0 {
+		return nil, nil
+	}
+	if *in > MaxSubscriptionOverdraftUses {
+		return nil, ErrInvalidSubscriptionOverdraftDays
 	}
 	v := *in
-	return &v
+	return &v, nil
 }
 
 func (s *adminServiceImpl) DeleteUser(ctx context.Context, id int64) error {
