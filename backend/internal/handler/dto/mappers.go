@@ -739,6 +739,11 @@ func UserSubscriptionFromServiceAdmin(sub *service.UserSubscription) *AdminUserS
 }
 
 func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscription {
+	calendarDay := 0
+	if sub.GrantedTotalUSD > 0 || sub.DailyAmountUSD > 0 {
+		calendarDay = sub.CalendarDayAt(time.Now())
+	}
+
 	return UserSubscription{
 		ID:                     sub.ID,
 		UserID:                 sub.UserID,
@@ -758,6 +763,7 @@ func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscrip
 		ClawedUSD:              sub.ClawedUSD,
 		RemainingUSD:           sub.RemainingUSD(),
 		ConsumptionDay:         sub.ConsumptionDay(),
+		CalendarDay:            calendarDay,
 		MaxOverdraftDays:       sub.MaxOverdraftDays,
 		MaxOverdraftUses:       service.MaxSubscriptionOverdraftUses,
 		TotalOverdraftCount:    sub.TotalOverdraftCount,

@@ -1577,6 +1577,7 @@ export interface UserSubscription {
   clawed_usd?: number // 累计被清扣
   remaining_usd?: number // 剩余订阅余额
   consumption_day?: number // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
+  calendar_day?: number // 自激活起经过的东八区自然日数，用于订阅实际服务进度
   max_overdraft_days?: number | null // 本卡最多往后透支天数；null/0 = 透支关闭（用户在「我的订阅」自助设置）
   max_overdraft_uses?: number // 本卡最多累计透支次数，当前固定为 5
   total_overdraft_count?: number // 本卡已累计透支请求次数

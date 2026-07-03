@@ -78,14 +78,14 @@
         }}</span>
       </div>
 
-      <!-- Burn-down 订阅进度（新模型）：开通即把整期额度打入余额，按消费进度天展示 -->
+      <!-- Burn-down 订阅进度（新模型）：服务天数与额度消费进度分开展示 -->
       <div v-if="subscription.daily_amount_usd" class="space-y-2">
         <div class="flex items-center justify-between">
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">消费进度</span>
+          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">订阅进度</span>
           <span class="text-sm text-gray-600 dark:text-gray-400">
-            已用到第
+            已服务第
             <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{
-              Math.floor(subscription.consumption_day || 0)
+              burndownCalendarDay(subscription)
             }}</span>
             /
             <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{
@@ -102,7 +102,16 @@
             }"
           ></div>
         </div>
-        <div class="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
+        <div
+          class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-400"
+        >
+          <span>
+            已消费
+            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{
+              burndownConsumptionDay(subscription)
+            }}</span>
+            天额度
+          </span>
           <span
             >剩余订阅余额
             <span class="font-mono tabular-nums text-gray-900 dark:text-white"
@@ -422,6 +431,20 @@ async function saveOverdraft() {
 function burndownTotalDays(sub: UserSubscription): number {
   if (!sub.daily_amount_usd || sub.daily_amount_usd <= 0) return 0
   return Math.round((sub.granted_total_usd || 0) / sub.daily_amount_usd)
+}
+
+function burndownCalendarDay(sub: UserSubscription): number {
+  if (typeof sub.calendar_day === 'number' && Number.isFinite(sub.calendar_day)) {
+    return Math.max(0, Math.floor(sub.calendar_day))
+  }
+  return 0
+}
+
+function burndownConsumptionDay(sub: UserSubscription): number {
+  if (typeof sub.consumption_day === 'number' && Number.isFinite(sub.consumption_day)) {
+    return Math.max(0, Math.floor(sub.consumption_day))
+  }
+  return 0
 }
 
 function getProgressBarClass(used: number | undefined, limit: number | null | undefined): string {

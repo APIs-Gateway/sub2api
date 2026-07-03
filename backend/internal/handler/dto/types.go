@@ -596,6 +596,7 @@ type UserSubscription struct {
 	ClawedUSD              float64    `json:"clawed_usd"`
 	RemainingUSD           float64    `json:"remaining_usd"`
 	ConsumptionDay         float64    `json:"consumption_day"`              // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
+	CalendarDay            int        `json:"calendar_day"`                 // 自激活起经过的东八区自然日数，用于订阅实际服务进度
 	MaxOverdraftDays       *int       `json:"max_overdraft_days,omitempty"` // 本卡用户自设透支天数；nil = 透支关闭
 	MaxOverdraftUses       int        `json:"max_overdraft_uses"`
 	TotalOverdraftCount    int        `json:"total_overdraft_count"`

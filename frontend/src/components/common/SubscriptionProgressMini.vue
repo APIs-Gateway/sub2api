@@ -82,7 +82,7 @@
                     ></div>
                   </div>
                   <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
-                    第{{ Math.floor(subscription.consumption_day || 0) }}天·剩${{
+                    第{{ burndownCalendarDay(subscription) }}天·剩${{
                       (subscription.remaining_usd || 0).toFixed(0)
                     }}
                   </span>
@@ -282,6 +282,11 @@ function burndownRemainingWidth(sub: UserSubscription): string {
   if (granted <= 0) return '0%'
   const pct = Math.max(0, Math.min((sub.remaining_usd || 0) / granted, 1)) * 100
   return `${pct}%`
+}
+
+function burndownCalendarDay(sub: UserSubscription): number {
+  const day = sub.calendar_day
+  return typeof day === 'number' && Number.isFinite(day) ? Math.max(0, Math.floor(day)) : 0
 }
 
 function formatUsage(used: number | undefined, limit: number | null | undefined): string {
