@@ -135,6 +135,8 @@ docs/*
 !docs/legal/*.md
 !docs/notes/
 !docs/notes/*.md
+!docs/specs/
+!docs/specs/*.md
 .serena/
 .codex/
 frontend/coverage/

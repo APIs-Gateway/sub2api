@@ -125,6 +125,7 @@ func (s *GatewayService) ForwardAsResponses(
 	}
 
 	// 11. Send request
+	recordUpstream429Attempt(account.ID)
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		if resp != nil && resp.Body != nil {

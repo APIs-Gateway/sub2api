@@ -380,6 +380,49 @@ func TestMapUpstreamErrorDefault(t *testing.T) {
 	}
 }
 
+// TestGatewayFailoverStatusPolicyGuardsRequestShaped4xx locks the issue #19
+// boundary: malformed-client upstream 4xx must not trigger account switching.
+// 429 is intentionally excluded from this status-only guard: #19 treats it as
+// a sliding-window threshold decision, not an unconditional per-response switch.
+func TestGatewayFailoverStatusPolicyGuardsRequestShaped4xx(t *testing.T) {
+	tests := []struct {
+		name string
+		got  func(int) bool
+	}{
+		{
+			name: "anthropic gateway",
+			got:  (&GatewayService{}).shouldFailoverUpstreamError,
+		},
+		{
+			name: "openai gateway",
+			got:  (&OpenAIGatewayService{}).shouldFailoverUpstreamError,
+		},
+		{
+			name: "gemini compat",
+			got: func(status int) bool {
+				return (&GeminiMessagesCompatService{}).shouldFailoverGeminiUpstreamError(&Account{ID: 9101}, status)
+			},
+		},
+		{
+			name: "antigravity gateway",
+			got: func(status int) bool {
+				return (&AntigravityGatewayService{}).shouldFailoverUpstreamError(&Account{ID: 9102}, status)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, status := range []int{400, 404, 408, 409, 413, 415, 416, 422} {
+				assert.False(t, tt.got(status), "request-shaped upstream %d must not fail over", status)
+			}
+			for _, status := range []int{401, 403, 500, 502, 503, 504, 529} {
+				assert.True(t, tt.got(status), "provider/account upstream %d should fail over", status)
+			}
+		})
+	}
+}
+
 // TestResolveUpstreamErrorResponse 覆盖共享策略的四段式:静默拒绝/透传规则/请求形 4xx 透传/默认保留。
 func TestResolveUpstreamErrorResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)

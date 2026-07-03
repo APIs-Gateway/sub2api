@@ -247,6 +247,9 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 
 	// 情况2: retryDelay < 阈值（或 MODEL_CAPACITY_EXHAUSTED），智能重试
 	if shouldSmartRetry {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			recordUpstream429AndShouldSwitch(p.account.ID, false)
+		}
 		var lastRetryResp *http.Response
 		var lastRetryBody []byte
 
@@ -304,7 +307,11 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 				}
 			}
 
+			recordUpstream429Attempt(p.account.ID)
 			retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+			if retryErr == nil && retryResp != nil && retryResp.StatusCode == http.StatusTooManyRequests {
+				recordUpstream429AndShouldSwitch(p.account.ID, false)
+			}
 			if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
 				log.Printf("%s status=%d smart_retry_success attempt=%d/%d", p.prefix, retryResp.StatusCode, attempt, maxAttempts)
 				// 重试成功，清除 MODEL_CAPACITY_EXHAUSTED cooldown
@@ -479,7 +486,11 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 			break
 		}
 
+		recordUpstream429Attempt(p.account.ID)
 		retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+		if retryErr == nil && retryResp != nil && retryResp.StatusCode == http.StatusTooManyRequests {
+			recordUpstream429AndShouldSwitch(p.account.ID, false)
+		}
 		if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d single_account_503_retry_success attempt=%d/%d total_waited=%v",
 				p.prefix, retryResp.StatusCode, attempt, antigravitySingleAccountSmartRetryMaxAttempts, totalWaited)
@@ -617,6 +628,7 @@ urlFallbackLoop:
 				return nil, err
 			}
 
+			recordUpstream429Attempt(p.account.ID)
 			resp, err = p.httpUpstream.Do(upstreamReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 			if err == nil && resp == nil {
 				err = errors.New("upstream returned nil response")
@@ -698,6 +710,9 @@ urlFallbackLoop:
 
 					// 账户/模型配额限流，重试 3 次（指数退避）- 默认逻辑（非 OAuth 账号或解析失败）
 					if attempt < antigravityMaxRetries {
+						if resp.StatusCode == http.StatusTooManyRequests {
+							recordUpstream429AndShouldSwitch(p.account.ID, false)
+						}
 						upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
 						upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 						appendOpsUpstreamError(p.c, OpsUpstreamErrorEvent{
@@ -980,6 +995,9 @@ func (s *AntigravityGatewayService) handleAntigravityModelRateLimitBeforePolicy(
 	resetAt := time.Now().Add(rateLimitDuration)
 	if !s.setAntigravityModelRateLimits(p.ctx, p.accountRepo, p.account, modelName, p.prefix, statusCode, resetAt, false) {
 		return false
+	}
+	if statusCode == http.StatusTooManyRequests {
+		recordUpstream429AndShouldSwitch(p.account.ID, true)
 	}
 	s.clearStickySession(p.ctx, p.groupID, p.sessionHash)
 	logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d model_rate_limited_before_error_policy model=%s account=%d reset_in=%v",
@@ -1727,7 +1745,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				}
 			}
 
-			if s.shouldFailoverUpstreamError(resp.StatusCode) {
+			if s.shouldFailoverUpstreamError(account, resp.StatusCode) {
 				upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
 				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 				upstreamDetail := s.getUpstreamErrorDetail(respBody)
@@ -2263,6 +2281,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 				if err == nil {
 					fallbackReq, err := antigravity.NewAPIRequest(ctx, upstreamAction, accessToken, fallbackWrapped)
 					if err == nil {
+						recordUpstream429Attempt(account.ID)
 						fallbackResp, err := s.httpUpstream.Do(fallbackReq, proxyURL, account.ID, account.Concurrency)
 						if err == nil && fallbackResp.StatusCode < 400 {
 							_ = resp.Body.Close()
@@ -2420,7 +2439,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: unwrappedForOps, RetryableOnSameAccount: true}
 		}
 
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
+		if s.shouldFailoverUpstreamError(account, resp.StatusCode) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
 				AccountID:          account.ID,
@@ -2509,10 +2528,12 @@ handleSuccess:
 	}, nil
 }
 
-func (s *AntigravityGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
+func (s *AntigravityGatewayService) shouldFailoverUpstreamError(account *Account, statusCode int) bool {
 	switch statusCode {
-	case 401, 403, 429, 529:
+	case 401, 403, 529:
 		return true
+	case http.StatusTooManyRequests:
+		return account != nil && ShouldSwitchAccountOn429(account.ID)
 	default:
 		return statusCode >= 500
 	}
@@ -2889,6 +2910,9 @@ func (s *AntigravityGatewayService) setModelRateLimitAndClearSession(p *handleMo
 		p.prefix, p.statusCode, info.ModelName, p.account.ID, info.RetryDelay)
 
 	s.setAntigravityModelRateLimits(p.ctx, s.accountRepo, p.account, info.ModelName, p.prefix, p.statusCode, resetAt, false)
+	if p.statusCode == http.StatusTooManyRequests {
+		recordUpstream429AndShouldSwitch(p.account.ID, true)
+	}
 
 	// 清除粘性会话绑定
 	if p.cache != nil && p.sessionHash != "" {
@@ -2931,7 +2955,7 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 	groupID int64, sessionHash string, isStickySession bool,
 ) *handleModelRateLimitResult {
 	// 遵守自定义错误码策略：未命中则跳过所有限流处理
-	if !account.ShouldHandleErrorCode(statusCode) {
+	if statusCode != http.StatusTooManyRequests && !account.ShouldHandleErrorCode(statusCode) {
 		return nil
 	}
 	// 模型级限流处理（优先）
@@ -2963,7 +2987,17 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 		}
 
 		resetAt := ParseGeminiRateLimitResetTime(body)
+		if resetAt == nil {
+			if retryAfterResetAt := parseUpstreamRetryAfterResetTime(headers, time.Now()); retryAfterResetAt != nil {
+				ts := retryAfterResetAt.Unix()
+				resetAt = &ts
+			}
+		}
 		defaultDur := s.getDefaultRateLimitDuration()
+		if !recordUpstream429AndShouldSwitch(account.ID, resetAt != nil) {
+			logger.LegacyPrintf("service.antigravity_gateway", "%s status=429 below_threshold account=%d", prefix, account.ID)
+			return nil
+		}
 
 		// 尝试解析模型 key 并设置模型级限流
 		//
@@ -4325,6 +4359,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	}
 
 	// 发送请求
+	recordUpstream429Attempt(account.ID)
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		logger.LegacyPrintf("service.antigravity_gateway", "%s upstream request failed: %v", prefix, err)

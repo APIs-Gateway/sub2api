@@ -91,6 +91,14 @@ func (s *FailoverState) HandleFailoverError(
 		return FailoverContinue
 	}
 
+	if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(accountID) {
+		logger.FromContext(ctx).Warn("gateway.failover_429_below_threshold",
+			zap.Int64("account_id", accountID),
+			zap.Int("upstream_status", failoverErr.StatusCode),
+		)
+		return FailoverExhausted
+	}
+
 	// 同账号重试用尽，执行临时封禁
 	if failoverErr.RetryableOnSameAccount {
 		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)

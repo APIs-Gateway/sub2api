@@ -1183,6 +1183,10 @@ func (s *openAIWSFailoverHandlerAccountRepoStub) SetRateLimited(ctx context.Cont
 	return nil
 }
 
+func (s *openAIWSFailoverHandlerAccountRepoStub) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
+	return nil
+}
+
 type openAIWSUsageHandlerUsageLogRepoStub struct {
 	service.UsageLogRepository
 	created chan *service.UsageLog
@@ -1222,6 +1226,11 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 	secondHitCh := make(chan []byte, 1)
 
 	firstUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Strong cooldown signal: usage-limit events without reset headers stay
+		// on the current account until the 429 sliding-window threshold is hit.
+		w.Header().Set("x-codex-primary-used-percent", "100")
+		w.Header().Set("x-codex-primary-reset-after-seconds", "7200")
+		w.Header().Set("x-codex-primary-window-minutes", "10080")
 		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
 		if err != nil {
 			return

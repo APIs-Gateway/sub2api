@@ -137,6 +137,10 @@ type OpsUpstreamErrorEvent struct {
 	// Kind: http_error | request_error | retry_exhausted | failover
 	Kind string `json:"kind,omitempty"`
 
+	// FailoverRecovered is set when this upstream error was covered by a later
+	// successful attempt in the same client request.
+	FailoverRecovered bool `json:"failover_recovered"`
+
 	Message string `json:"message,omitempty"`
 	Detail  string `json:"detail,omitempty"`
 }
@@ -171,6 +175,30 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	c.Set(OpsUpstreamErrorsKey, existing)
 
 	checkSkipMonitoringForUpstreamEvent(c, &evCopy)
+}
+
+func MarkOpsUpstreamFailoverRecovered(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	v, ok := c.Get(OpsUpstreamErrorsKey)
+	if !ok {
+		return
+	}
+	events, ok := v.([]*OpsUpstreamErrorEvent)
+	if !ok {
+		return
+	}
+	for _, event := range events {
+		if event == nil {
+			continue
+		}
+		kind := strings.ToLower(strings.TrimSpace(event.Kind))
+		if kind == "failover" || strings.Contains(kind, "failover") {
+			event.FailoverRecovered = true
+		}
+	}
+	c.Set(OpsUpstreamErrorsKey, events)
 }
 
 // checkSkipMonitoringForUpstreamEvent checks whether the upstream error event

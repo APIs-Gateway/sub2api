@@ -5008,6 +5008,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		lastWireBody = wireBody
 
 		// 发送请求
+		recordUpstream429Attempt(account.ID)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
@@ -5086,6 +5087,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					retryReq, retryWireBody, buildErr := s.buildUpstreamRequest(retryCtx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 					releaseRetryCtx()
 					if buildErr == nil {
+						recordUpstream429Attempt(account.ID)
 						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 						if retryErr == nil {
 							if retryResp.StatusCode < 400 {
@@ -5127,6 +5129,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 									retryReq2, retryWireBody2, buildErr2 := s.buildUpstreamRequest(retryCtx2, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 									releaseRetryCtx2()
 									if buildErr2 == nil {
+										recordUpstream429Attempt(account.ID)
 										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, tlsProfile)
 										if retryErr2 == nil {
 											if retryResp2.StatusCode < 400 {
@@ -5206,6 +5209,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						budgetRetryReq, budgetWireBody, buildErr := s.buildUpstreamRequest(budgetRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 						releaseBudgetRetryCtx()
 						if buildErr == nil {
+							recordUpstream429Attempt(account.ID)
 							budgetRetryResp, retryErr := s.httpUpstream.DoWithTLS(budgetRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 							if retryErr == nil {
 								if budgetRetryResp.StatusCode < 400 {
@@ -5252,6 +5256,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 				respBody, _ := s.readUpstreamErrorBody(resp)
 				_ = resp.Body.Close()
+				s.handleRetryable429SideEffects(ctx, account, resp.StatusCode, resp.Header, respBody, reqModel)
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 					Platform:           account.Platform,
 					AccountID:          account.ID,
@@ -5575,6 +5580,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			input.Body = input.Parsed.Body.Bytes()
 		}
 
+		recordUpstream429Attempt(account.ID)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 		if err != nil {
 			if resp != nil && resp.Body != nil {
@@ -5621,6 +5627,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 
 				respBody, _ := s.readUpstreamErrorBody(resp)
 				_ = resp.Body.Close()
+				s.handleRetryable429SideEffects(ctx, account, resp.StatusCode, resp.Header, respBody, input.RequestModel)
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 					Platform:           account.Platform,
 					AccountID:          account.ID,
@@ -6428,6 +6435,7 @@ func (s *GatewayService) executeBedrockUpstream(
 			return nil, err
 		}
 
+		recordUpstream429Attempt(account.ID)
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, nil)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
@@ -6472,6 +6480,7 @@ func (s *GatewayService) executeBedrockUpstream(
 
 				respBody, _ := s.readUpstreamErrorBody(resp)
 				_ = resp.Body.Close()
+				s.handleRetryable429SideEffects(ctx, account, resp.StatusCode, resp.Header, respBody)
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 					Platform:           account.Platform,
 					AccountID:          account.ID,
@@ -7831,6 +7840,12 @@ func (s *GatewayService) handleRetryExhaustedSideEffects(ctx context.Context, re
 	body, _ := s.readUpstreamErrorBody(resp)
 	statusCode := resp.StatusCode
 
+	if statusCode == http.StatusTooManyRequests {
+		s.handleRetryable429SideEffects(ctx, account, statusCode, resp.Header, body)
+		logger.LegacyPrintf("service.gateway", "Account %d: recorded 429 after %d retries", account.ID, maxRetryAttempts)
+		return
+	}
+
 	// OAuth/Setup Token 账号的 403：标记账号异常
 	if account.IsOAuth() && statusCode == 403 {
 		s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, resp.Header, body)
@@ -7839,6 +7854,17 @@ func (s *GatewayService) handleRetryExhaustedSideEffects(ctx context.Context, re
 		// API Key 未配置错误码：不标记账号状态
 		logger.LegacyPrintf("service.gateway", "Account %d: upstream error %d after %d retries (not marking account)", account.ID, statusCode, maxRetryAttempts)
 	}
+}
+
+func (s *GatewayService) handleRetryable429SideEffects(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte, requestedModel ...string) {
+	if s == nil || s.rateLimitService == nil || account == nil || statusCode != http.StatusTooManyRequests {
+		return
+	}
+	if len(requestedModel) > 0 {
+		s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body, requestedModel[0])
+		return
+	}
+	s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
 }
 
 func (s *GatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account, requestedModel ...string) {
@@ -9859,6 +9885,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 	}
 
 	// 发送请求
+	recordUpstream429Attempt(account.ID)
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(err.Error()), "")
@@ -9886,6 +9913,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		filteredBody := FilterThinkingBlocksForRetry(body, reqModel)
 		retryReq, retryWireBody, buildErr := s.buildCountTokensRequest(ctx, c, account, filteredBody, token, tokenType, reqModel, shouldMimicClaudeCode)
 		if buildErr == nil {
+			recordUpstream429Attempt(account.ID)
 			retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 			if retryErr == nil {
 				if retryResp.StatusCode < 400 {
@@ -9983,6 +10011,7 @@ func (s *GatewayService) forwardCountTokensAnthropicAPIKeyPassthrough(ctx contex
 		proxyURL = account.Proxy.URL()
 	}
 
+	recordUpstream429Attempt(account.ID)
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(err.Error()), "")

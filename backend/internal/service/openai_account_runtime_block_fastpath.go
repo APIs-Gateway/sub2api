@@ -36,15 +36,13 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	defer cancel()
 
 	if isOpenAIImageRateLimitError(statusCode, responseBody) {
+		recordUpstream429AndShouldSwitch(account.ID, true)
 		if s != nil && s.rateLimitService != nil {
 			_ = s.rateLimitService.HandleOpenAIImageRateLimit(stateCtx, account, statusCode, headers, responseBody)
 		}
 		return false
 	}
 
-	if statusCode == http.StatusTooManyRequests {
-		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
-	}
 	if s == nil || account == nil || s.rateLimitService == nil {
 		return false
 	}
@@ -52,6 +50,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		return true
 	}
 	shouldDisable := s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody)
+	if statusCode == http.StatusTooManyRequests {
+		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
+	}
 	if shouldDisable {
 		s.BlockAccountScheduling(account, time.Time{}, "upstream_disable")
 	}
@@ -63,6 +64,9 @@ func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context
 		return
 	}
 	s.recordOpenAIOAuth429()
+	if !ShouldSwitchAccountOn429(account.ID) {
+		return
+	}
 
 	cooldownUntil := time.Now().Add(openAIOAuth429FallbackCooldown)
 	if s.rateLimitService != nil {

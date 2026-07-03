@@ -592,7 +592,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			if !hasUpstreamContext {
 				return
 			}
-
+			service.MarkOpsUpstreamFailoverRecovered(c)
 			apiKey := getOpsAPIKey(c)
 			clientRequestID, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
 
