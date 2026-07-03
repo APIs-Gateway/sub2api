@@ -7811,8 +7811,8 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, summary)
 	}
 
-	// 默认映射:请求形 4xx 透传真实状态码 + 上游报文,其余保留 502/429/503(issue #16 Part B)。
-	// 旧实现把 400 原始 body 直接 c.Data 透传;现统一并入合成信封(byte-exact 仍可经 PassthroughBody 规则)。
+	// 默认映射:请求形 4xx 保留真实状态码 + 安全文案,其余保留 502/429/503。
+	// 原始上游 body 不默认对外暴露;确需返回时必须经显式 PassthroughBody 规则并脱敏。
 	statusCode, errType, errMsg, passthrough := MapUpstreamErrorDefault(resp.StatusCode)
 	if passthrough {
 		errMsg = upstreamMsg
