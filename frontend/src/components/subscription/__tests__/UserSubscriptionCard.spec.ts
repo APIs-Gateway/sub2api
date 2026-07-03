@@ -56,6 +56,7 @@ function subscription(overrides: Partial<UserSubscription> = {}): UserSubscripti
     clawed_usd: 0,
     remaining_usd: 400,
     consumption_day: 1,
+    calendar_day: 1,
     max_overdraft_days: null,
     max_overdraft_uses: 5,
     total_overdraft_count: 1,
@@ -143,5 +144,34 @@ describe('UserSubscriptionCard overdraft setting', () => {
     await wrapper.get('button.btn-secondary').trigger('click')
 
     expect(subscriptionsAPI.setOverdraftDays).toHaveBeenCalledWith(42, 3)
+  })
+
+  it('renders calendar service day separately from overdraft consumption day', () => {
+    const wrapper = mountCard({
+      granted_total_usd: 300,
+      daily_amount_usd: 10,
+      consumed_usd: 50,
+      remaining_usd: 250,
+      consumption_day: 5,
+      calendar_day: 2
+    })
+
+    expect(wrapper.text()).toContain('已服务第 2 / 30 天')
+    expect(wrapper.text()).toContain('已消费 5 天额度')
+    expect(wrapper.text()).not.toContain('已用到第')
+  })
+
+  it('falls back to zero for invalid burndown day fields', () => {
+    const wrapper = mountCard({
+      granted_total_usd: 300,
+      daily_amount_usd: 10,
+      consumed_usd: 50,
+      remaining_usd: 250,
+      consumption_day: Number.NaN,
+      calendar_day: undefined
+    })
+
+    expect(wrapper.text()).toContain('已服务第 0 / 30 天')
+    expect(wrapper.text()).toContain('已消费 0 天额度')
   })
 })

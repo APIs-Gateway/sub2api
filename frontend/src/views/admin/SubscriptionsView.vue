@@ -239,9 +239,14 @@
                   class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-gray-500 dark:text-dark-400"
                 >
                   <span>{{
-                    t('admin.subscriptions.burndown.usedToDay', {
-                      day: Math.floor(row.consumption_day || 0),
+                    t('admin.subscriptions.burndown.servedToDay', {
+                      day: burndownCalendarDay(row),
                       total: burndownTotalDays(row)
+                    })
+                  }}</span>
+                  <span>{{
+                    t('admin.subscriptions.burndown.consumedDay', {
+                      day: burndownConsumptionDay(row)
                     })
                   }}</span>
                   <span>
@@ -1372,6 +1377,16 @@ const burndownTotalDays = (sub: UserSubscription): number => {
   const daily = sub.daily_amount_usd || 0
   if (daily <= 0) return 0
   return Math.round((sub.granted_total_usd || 0) / daily)
+}
+
+const burndownCalendarDay = (sub: UserSubscription): number => {
+  const day = sub.calendar_day
+  return typeof day === 'number' && Number.isFinite(day) ? Math.max(0, Math.floor(day)) : 0
+}
+
+const burndownConsumptionDay = (sub: UserSubscription): number => {
+  const day = sub.consumption_day
+  return typeof day === 'number' && Number.isFinite(day) ? Math.max(0, Math.floor(day)) : 0
 }
 
 const getProgressClass = (used: number | null | undefined, limit: number | null): string => {

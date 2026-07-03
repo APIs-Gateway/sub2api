@@ -3067,7 +3067,8 @@ export default {
       unlimited: 'Unlimited',
       burndown: {
         consumptionProgress: 'Consumption',
-        usedToDay: 'Day {day} / {total}',
+        servedToDay: 'Served day {day} / {total}',
+        consumedDay: '{day} quota days consumed',
         remainingBalance: 'Remaining',
         dailyAmount: 'Daily',
         clawed: 'Clawed back'

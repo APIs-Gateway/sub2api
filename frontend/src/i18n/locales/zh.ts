@@ -3144,7 +3144,8 @@ export default {
       unlimited: '无限制',
       burndown: {
         consumptionProgress: '消费进度',
-        usedToDay: '已用到第 {day} / {total} 天',
+        servedToDay: '已服务第 {day} / {total} 天',
+        consumedDay: '已消费 {day} 天额度',
         remainingBalance: '剩余余额',
         dailyAmount: '每日额度',
         clawed: '已清扣'
