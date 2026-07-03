@@ -4436,8 +4436,8 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 
 	MarkResponseCommitted(c)
 
-	// 默认映射:请求形 4xx 透传真实状态码 + 上游报文,其余保留 502/429(issue #16 Part B)。
-	// 此前 switch 从 401 起、400/404/422 落 default→502;现与 Anthropic 侧(gateway_service.go)对齐获得 4xx 透传。
+	// 默认映射:请求形 4xx 保留真实状态码 + 安全文案,其余保留 502/429。
+	// 原始上游 body 不默认对外暴露;确需返回时必须经显式 PassthroughBody 规则并脱敏。
 	statusCode, errType, errMsg, passthrough := MapUpstreamErrorDefault(resp.StatusCode)
 	if passthrough {
 		errMsg = upstreamMsg

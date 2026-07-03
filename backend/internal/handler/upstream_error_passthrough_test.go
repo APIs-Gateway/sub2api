@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// issue #16 Part B(B1+B2):所有 failover-exhausted 入口走共享 ResolveUpstreamErrorResponse,
-// 上游请求形 4xx(422)默认透传真实状态码 + 上游报文。本文件覆盖各薄入口的 reroute 行。
+// 所有 failover-exhausted 入口走共享 ResolveUpstreamErrorResponse:
+// 上游请求形 4xx(422)保留真实状态码,但默认返回安全文案。本文件覆盖各薄入口的 reroute 行。
 
 func newPassthroughTestCtx() (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
@@ -30,13 +30,13 @@ func failover422() *service.UpstreamFailoverError {
 	}
 }
 
-func TestHandleFailoverExhausted_PassesThroughUpstream4xx(t *testing.T) {
+func TestHandleFailoverExhausted_KeepsUpstream4xxStatus(t *testing.T) {
 	c, rec := newPassthroughTestCtx()
 	(&GatewayHandler{}).handleFailoverExhausted(c, failover422(), service.PlatformAnthropic, false)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-func TestHandleCCFailoverExhausted_PassesThroughUpstream4xx(t *testing.T) {
+func TestHandleCCFailoverExhausted_KeepsUpstream4xxStatusWithSafeMessage(t *testing.T) {
 	c, rec := newPassthroughTestCtx()
 	(&GatewayHandler{}).handleCCFailoverExhausted(c, failover422(), false)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
@@ -46,7 +46,7 @@ func TestHandleCCFailoverExhausted_PassesThroughUpstream4xx(t *testing.T) {
 	errField, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "invalid_request_error", errField["type"])
-	assert.Equal(t, "bad request foo", errField["message"])
+	assert.Equal(t, "Invalid request parameters, please check the request body and try again", errField["message"])
 }
 
 func TestHandleCCFailoverExhausted_NilErrKeepsExhaustedMessage(t *testing.T) {
@@ -55,25 +55,25 @@ func TestHandleCCFailoverExhausted_NilErrKeepsExhaustedMessage(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, rec.Code)
 }
 
-func TestHandleResponsesFailoverExhausted_PassesThroughUpstream4xx(t *testing.T) {
+func TestHandleResponsesFailoverExhausted_KeepsUpstream4xxStatus(t *testing.T) {
 	c, rec := newPassthroughTestCtx()
 	(&GatewayHandler{}).handleResponsesFailoverExhausted(c, failover422(), false)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-func TestHandleGeminiFailoverExhausted_PassesThroughUpstream4xx(t *testing.T) {
+func TestHandleGeminiFailoverExhausted_KeepsUpstream4xxStatus(t *testing.T) {
 	c, rec := newPassthroughTestCtx()
 	(&GatewayHandler{}).handleGeminiFailoverExhausted(c, failover422())
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-func TestOpenAIHandleFailoverExhausted_PassesThroughUpstream4xx(t *testing.T) {
+func TestOpenAIHandleFailoverExhausted_KeepsUpstream4xxStatus(t *testing.T) {
 	c, rec := newPassthroughTestCtx()
 	(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, failover422(), false)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-func TestHandleAnthropicFailoverExhausted_PassesThroughUpstream4xx(t *testing.T) {
+func TestHandleAnthropicFailoverExhausted_KeepsUpstream4xxStatus(t *testing.T) {
 	c, rec := newPassthroughTestCtx()
 	(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, failover422(), false)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
