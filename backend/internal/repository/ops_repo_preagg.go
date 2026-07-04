@@ -92,7 +92,10 @@ error_agg AS (
     CASE WHEN GROUPING(group_id) = 1 THEN NULL ELSE group_id END AS group_id,
     COUNT(*) FILTER (WHERE COALESCE(client_status_code, 0) >= 400) AS error_count_total,
     COUNT(*) FILTER (WHERE COALESCE(client_status_code, 0) >= 400 AND is_business_limited) AS business_limited_count,
-    COUNT(*) FILTER (WHERE COALESCE(client_status_code, 0) >= 400 AND NOT is_business_limited) AS error_count_sla,
+    -- SLA 失败 = 仅服务可归因(排除 error_owner IN client/client_via_upstream)。此口径复制在 6 处,须同步:
+    -- ops_repo_preagg.go / ops_repo_dashboard.go / ops_repo_trends.go(x2) / ops_metrics_collector.go / ops_repo.go(列表)。
+    -- client_via_upstream = 上游判定的客户端请求错(issue #16 Part B/A2)。详见 docs/specs/ops-sla-attribution-part-a.md。
+    COUNT(*) FILTER (WHERE COALESCE(client_status_code, 0) >= 400 AND NOT is_business_limited AND COALESCE(error_owner, '') NOT IN ('client', 'client_via_upstream')) AS error_count_sla,
     COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(effective_status_code, 0) NOT IN (429, 529)) AS upstream_error_count_excl_429_529,
     COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(effective_status_code, 0) = 429) AS upstream_429_count,
     COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(effective_status_code, 0) = 529) AS upstream_529_count

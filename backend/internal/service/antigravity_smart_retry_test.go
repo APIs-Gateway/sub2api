@@ -253,6 +253,69 @@ func TestHandleSmartRetry_ShortDelay_SmartRetrySuccess(t *testing.T) {
 	require.Len(t, upstream.calls, 1, "should have made one retry call")
 }
 
+func TestHandleSmartRetry_429ShortDelaySuccessRecordsOriginalHit(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	t.Cleanup(resetUpstream429TrackerForTest)
+
+	successResp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(`{"result":"ok"}`)),
+	}
+	upstream := &mockSmartRetryUpstream{
+		responses: []*http.Response{successResp},
+		errors:    []error{nil},
+	}
+
+	account := &Account{
+		ID:       91001,
+		Name:     "acc-429-hit",
+		Type:     AccountTypeOAuth,
+		Platform: PlatformAntigravity,
+	}
+
+	respBody := []byte(`{
+		"error": {
+			"status": "RESOURCE_EXHAUSTED",
+			"details": [
+				{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "claude-opus-4"}, "reason": "RATE_LIMIT_EXCEEDED"},
+				{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0.001s"}
+			]
+		}
+	}`)
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader(respBody)),
+	}
+
+	params := antigravityRetryLoopParams{
+		ctx:          context.Background(),
+		prefix:       "[test]",
+		account:      account,
+		accessToken:  "token",
+		action:       "generateContent",
+		body:         []byte(`{"input":"test"}`),
+		httpUpstream: upstream,
+		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
+			return nil
+		},
+	}
+
+	svc := &AntigravityGatewayService{}
+	result := svc.handleSmartRetry(params, resp, respBody, "https://ag-1.test", 0, []string{"https://ag-1.test"})
+
+	require.NotNil(t, result)
+	require.Equal(t, smartRetryActionBreakWithResp, result.action)
+	require.NotNil(t, result.resp)
+	require.Equal(t, http.StatusOK, result.resp.StatusCode)
+	require.Len(t, upstream.calls, 1)
+
+	attempts, hits := countUpstream429EventsForTest(account.ID)
+	require.Equal(t, 1, attempts, "retry request should be counted as a 429-exposed attempt")
+	require.Equal(t, 1, hits, "original 429 should be counted even when smart retry later succeeds")
+}
+
 // TestHandleSmartRetry_ShortDelay_SmartRetryFailed_ReturnsSwitchError 测试智能重试失败后返回 switchError
 func TestHandleSmartRetry_ShortDelay_SmartRetryFailed_ReturnsSwitchError(t *testing.T) {
 	// 智能重试后仍然返回 429（需要提供 1 个响应，因为智能重试最多 1 次）
@@ -608,6 +671,7 @@ func TestHandleSmartRetry_ExactlyAtThreshold_ReturnsSwitchError(t *testing.T) {
 
 // TestAntigravityRetryLoop_HandleSmartRetry_SwitchError_Propagates 测试 switchError 正确传播到上层
 func TestAntigravityRetryLoop_HandleSmartRetry_SwitchError_Propagates(t *testing.T) {
+	resetUpstream429TrackerForTest()
 	// 模拟 429 + 长延迟的响应
 	respBody := []byte(`{
 		"error": {

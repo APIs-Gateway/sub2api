@@ -70,6 +70,34 @@ func TestNewFailoverState(t *testing.T) {
 	})
 }
 
+func TestHandleFailoverError_429BelowThresholdDoesNotSwitch(t *testing.T) {
+	fs := NewFailoverState(3, false)
+	mock := &mockTempUnscheduler{}
+	failoverErr := newTestFailoverErr(429, false, false)
+
+	action := fs.HandleFailoverError(context.Background(), mock, 100, service.PlatformOpenAI, failoverErr)
+
+	require.Equal(t, FailoverExhausted, action)
+	require.Equal(t, failoverErr, fs.LastFailoverErr)
+	require.Empty(t, fs.FailedAccountIDs)
+	require.Zero(t, fs.SwitchCount)
+	require.Empty(t, mock.calls)
+}
+
+func TestHandleFailoverError_429BelowThresholdPreservesSameAccountRetry(t *testing.T) {
+	fs := NewFailoverState(3, false)
+	mock := &mockTempUnscheduler{}
+	failoverErr := newTestFailoverErr(429, true, false)
+
+	action := fs.HandleFailoverError(context.Background(), mock, 100, service.PlatformOpenAI, failoverErr)
+
+	require.Equal(t, FailoverContinue, action)
+	require.Equal(t, 1, fs.SameAccountRetryCount[100])
+	require.Empty(t, fs.FailedAccountIDs)
+	require.Zero(t, fs.SwitchCount)
+	require.Empty(t, mock.calls)
+}
+
 // ---------------------------------------------------------------------------
 // sleepWithContext 测试
 // ---------------------------------------------------------------------------

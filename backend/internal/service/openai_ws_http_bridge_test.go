@@ -47,6 +47,122 @@ func TestOpenAIWSHTTPBridgeDecisionKeepsSmallFramesOnWS(t *testing.T) {
 	require.False(t, svc.shouldBridgeOpenAIWSHTTP(1000, ""))
 }
 
+func TestOpenAIWSHTTPBridgeHTTP429RecordsThresholdHit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resetUpstream429TrackerForTest()
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"rate_limit_error","message":"slow down"}}`)),
+	}}
+	account := &Account{
+		ID:          73,
+		Name:        "api-key",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Status:      StatusActive,
+	}
+	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{*account}}}
+	svc := &OpenAIGatewayService{
+		cfg:              &config.Config{},
+		httpUpstream:     upstream,
+		rateLimitService: &RateLimitService{accountRepo: repo},
+		toolCorrector:    NewCodexToolCorrector(),
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+
+	var written [][]byte
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+		context.Background(),
+		c,
+		account,
+		"sk-test",
+		[]byte(`{"type":"response.create","model":"gpt-5","stream":true,"input":"hi"}`),
+		64,
+		"gpt-5",
+		"",
+		"",
+		"",
+		1,
+		func(message []byte) error {
+			written = append(written, append([]byte(nil), message...))
+			return nil
+		},
+	)
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Len(t, written, 1)
+	require.Equal(t, "error", gjson.GetBytes(written[0], "type").String())
+	attempts, hits := countUpstream429EventsForTest(account.ID)
+	require.Equal(t, 1, attempts)
+	require.Equal(t, 1, hits)
+	require.Empty(t, repo.rateLimitCalls)
+}
+
+func TestOpenAIWSHTTPBridgeHTTP429WithResetReturnsFailoverBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resetUpstream429TrackerForTest()
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+			"Retry-After":  []string{"30"},
+		},
+		Body: io.NopCloser(strings.NewReader(`{"error":{"type":"rate_limit_error","message":"slow down"}}`)),
+	}}
+	account := &Account{
+		ID:          74,
+		Name:        "api-key",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Status:      StatusActive,
+	}
+	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{*account}}}
+	svc := &OpenAIGatewayService{
+		cfg:              &config.Config{},
+		httpUpstream:     upstream,
+		rateLimitService: &RateLimitService{accountRepo: repo},
+		toolCorrector:    NewCodexToolCorrector(),
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+
+	var written [][]byte
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+		context.Background(),
+		c,
+		account,
+		"sk-test",
+		[]byte(`{"type":"response.create","model":"gpt-5","stream":true,"input":"hi"}`),
+		64,
+		"gpt-5",
+		"",
+		"",
+		"",
+		1,
+		func(message []byte) error {
+			written = append(written, append([]byte(nil), message...))
+			return nil
+		},
+	)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Nil(t, result)
+	require.Empty(t, written)
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.True(t, ShouldSwitchAccountOn429(account.ID))
+	require.Len(t, repo.rateLimitCalls, 1)
+}
+
 func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

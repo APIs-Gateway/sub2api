@@ -1585,6 +1585,7 @@ export interface UserSubscription {
   clawed_usd?: number // 累计被清扣
   remaining_usd?: number // 剩余订阅余额
   consumption_day?: number // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
+  calendar_day?: number // 自激活起经过的东八区自然日数，用于订阅实际服务进度
   // 旧 per-card 透支开关字段（max_overdraft_days/max_overdraft_uses/total_overdraft_count/
   // remaining_overdraft_uses/can_enable_overdraft）已退役：三窗口模型改用用户级月度透支
   // （monthly_overdraft_remaining + POST /subscriptions/overdraft）。

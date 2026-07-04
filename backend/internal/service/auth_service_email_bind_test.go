@@ -999,6 +999,6 @@ func cloneEmailBindUser(user *service.User) *service.User {
 	return &cloned
 }
 
-func (s *emailBindUserRepoStub) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (s *emailBindUserRepoStub) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }

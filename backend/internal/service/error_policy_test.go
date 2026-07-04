@@ -389,7 +389,7 @@ func TestApplyErrorPolicy(t *testing.T) {
 	}
 }
 
-func TestApplyErrorPolicy_GeminiRateLimitBypassesCustomSkip(t *testing.T) {
+func TestApplyErrorPolicy_GeminiRateLimitDefersTo429FlowWhenCustomCodesSkip(t *testing.T) {
 	repo := &stubAntigravityAccountRepo{}
 	cache := &stubSmartRetryCache{}
 	rlSvc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -425,22 +425,18 @@ func TestApplyErrorPolicy_GeminiRateLimitBypassesCustomSkip(t *testing.T) {
 		groupID:     42,
 		sessionHash: "gemini:sticky",
 		handleError: func(context.Context, string, *Account, int, http.Header, []byte, string, int64, string, bool) *handleModelRateLimitResult {
-			t.Fatal("model rate limit should be handled before custom error fallback")
+			t.Fatal("429 should bypass custom policy and continue to the dedicated 429 flow")
 			return nil
 		},
 	}
 
 	handled, outStatus, retErr := svc.applyErrorPolicy(p, http.StatusTooManyRequests, http.Header{}, body)
 
-	require.True(t, handled)
+	require.False(t, handled)
 	require.Equal(t, http.StatusTooManyRequests, outStatus)
 	require.NoError(t, retErr)
-	require.Len(t, repo.modelRateLimitCalls, 2)
-	require.Equal(t, "gemini-3-flash", repo.modelRateLimitCalls[0].modelKey)
-	require.Equal(t, antigravityGeminiModelRateLimitKey, repo.modelRateLimitCalls[1].modelKey)
-	require.Len(t, cache.deleteCalls, 1)
-	require.Equal(t, int64(42), cache.deleteCalls[0].groupID)
-	require.Equal(t, "gemini:sticky", cache.deleteCalls[0].sessionHash)
+	require.Empty(t, repo.modelRateLimitCalls)
+	require.Empty(t, cache.deleteCalls)
 }
 
 // ---------------------------------------------------------------------------

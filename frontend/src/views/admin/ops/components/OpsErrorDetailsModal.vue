@@ -33,7 +33,7 @@ const q = ref('')
 const statusCode = ref<number | 'other' | null>(null)
 const phase = ref<string>('')
 const errorOwner = ref<string>('')
-const viewMode = ref<'errors' | 'excluded' | 'all'>('errors')
+const viewMode = ref<'errors' | 'client' | 'excluded' | 'all'>('errors')
 
 
 const modalTitle = computed(() => {
@@ -54,6 +54,7 @@ const ownerSelectOptions = computed(() => {
     { value: '', label: t('common.all') },
     { value: 'provider', label: t('admin.ops.errorDetails.owner.provider') || 'provider' },
     { value: 'client', label: t('admin.ops.errorDetails.owner.client') || 'client' },
+    { value: 'client_via_upstream', label: t('admin.ops.errorDetails.owner.clientViaUpstream') || 'client (upstream)' },
     { value: 'platform', label: t('admin.ops.errorDetails.owner.platform') || 'platform' }
   ]
 })
@@ -62,6 +63,7 @@ const ownerSelectOptions = computed(() => {
 const viewModeSelectOptions = computed(() => {
   return [
     { value: 'errors', label: t('admin.ops.errorDetails.viewErrors') || 'errors' },
+    { value: 'client', label: t('admin.ops.errorDetails.viewClient') || 'client' },
     { value: 'excluded', label: t('admin.ops.errorDetails.viewExcluded') || 'excluded' },
     { value: 'all', label: t('common.all') }
   ]

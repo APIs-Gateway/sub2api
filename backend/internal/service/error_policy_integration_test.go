@@ -107,7 +107,7 @@ func TestRetryLoop_ErrorPolicy_CustomErrorCodes(t *testing.T) {
 			upstreamBody:      `{"error":"rate limited"}`,
 			customCodes:       []any{float64(429)},
 			expectHandleError: 1,
-			expectUpstream:    1,
+			expectUpstream:    3,
 			expectStatusCode:  429,
 		},
 		{
@@ -115,9 +115,9 @@ func TestRetryLoop_ErrorPolicy_CustomErrorCodes(t *testing.T) {
 			upstreamStatus:    429,
 			upstreamBody:      `{"error":"rate limited"}`,
 			customCodes:       []any{float64(500)},
-			expectHandleError: 0,
-			expectUpstream:    1,
-			expectStatusCode:  500,
+			expectHandleError: 1,
+			expectUpstream:    3,
+			expectStatusCode:  429,
 		},
 		{
 			name:              "500_in_custom_codes_matched",
@@ -141,6 +141,7 @@ func TestRetryLoop_ErrorPolicy_CustomErrorCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			resetUpstream429TrackerForTest()
 			saveAndSetBaseURLs(t)
 
 			upstream := &epFixedUpstream{statusCode: tt.upstreamStatus, body: tt.upstreamBody}
@@ -215,6 +216,7 @@ func TestRetryLoop_ErrorPolicy_TempUnschedulable(t *testing.T) {
 	}
 
 	t.Run("503_overloaded_matches_rule", func(t *testing.T) {
+		resetUpstream429TrackerForTest()
 		saveAndSetBaseURLs(t)
 
 		upstream := &epFixedUpstream{statusCode: 503, body: `overloaded`}
@@ -237,7 +239,8 @@ func TestRetryLoop_ErrorPolicy_TempUnschedulable(t *testing.T) {
 		require.Equal(t, 1, upstream.calls, "should not retry")
 	})
 
-	t.Run("429_rate_limited_keyword_matches_rule", func(t *testing.T) {
+	t.Run("429_rate_limited_keyword_waits_for_threshold", func(t *testing.T) {
+		resetUpstream429TrackerForTest()
 		saveAndSetBaseURLs(t)
 
 		upstream := &epFixedUpstream{statusCode: 429, body: `rate limited keyword`}
@@ -246,18 +249,21 @@ func TestRetryLoop_ErrorPolicy_TempUnschedulable(t *testing.T) {
 		svc := &AntigravityGatewayService{rateLimitService: rlSvc}
 
 		account := tempRulesAccount([]any{rateLimitRule})
+		var handleErrorCount int
 		p := newRetryParams(account, upstream, func(_ context.Context, _ string, _ *Account, _ int, _ http.Header, _ []byte, _ string, _ int64, _ string, _ bool) *handleModelRateLimitResult {
-			t.Error("handleError should not be called for temp unschedulable")
+			handleErrorCount++
 			return nil
 		})
 
 		result, err := svc.antigravityRetryLoop(p)
 
-		require.Nil(t, result)
-		var switchErr *AntigravityAccountSwitchError
-		require.ErrorAs(t, err, &switchErr)
-		require.Equal(t, account.ID, switchErr.OriginalAccountID)
-		require.Equal(t, 1, upstream.calls, "should not retry")
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.resp)
+		defer func() { _ = result.resp.Body.Close() }()
+		require.Equal(t, http.StatusTooManyRequests, result.resp.StatusCode)
+		require.Equal(t, 1, handleErrorCount, "retry exhaustion still reports the upstream 429")
+		require.Equal(t, 3, upstream.calls, "low-ratio 429 should use the default retry path")
 	})
 
 	t.Run("503_body_no_match_continues_default_retry", func(t *testing.T) {
@@ -400,11 +406,13 @@ func (r *epTrackingRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time
 // TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit
 //
 // 核心场景：自定义错误码设为 [599]（一个不会真正出现的错误码），
-// 当上游返回 429/500/503/401 时：
+// 当上游返回 500/503/401/403 时：
 //   - 返回给客户端的状态码必须是 500（而不是透传原始状态码）
+// 当上游返回 429 时：
+//   - 跳过 custom error code，本轮按上游 429 滑窗逻辑重试后返回 429。
 //   - 不调用 SetRateLimited（不进入限流状态）
 //   - 不调用 SetError（不停止调度）
-//   - 不调用 handleError
+//   - 低比例 429 不因 custom policy 触发账号冷却。
 // ---------------------------------------------------------------------------
 
 func TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit(t *testing.T) {
@@ -421,6 +429,7 @@ func TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit(t *testing.T) {
 			repo := &epTrackingRepo{}
 			rlSvc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 			svc := &AntigravityGatewayService{rateLimitService: rlSvc}
+			resetUpstream429TrackerForTest()
 
 			account := &Account{
 				ID:          500,
@@ -449,13 +458,18 @@ func TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit(t *testing.T) {
 			require.NotNil(t, result.resp, "response should not be nil")
 			defer func() { _ = result.resp.Body.Close() }()
 
-			// 状态码必须是 500（不透传原始状态码）
-			require.Equal(t, http.StatusInternalServerError, result.resp.StatusCode,
-				"skipped error should return 500, not %d", upstreamStatus)
+			wantStatus := http.StatusInternalServerError
+			wantHandleErrorCount := 0
+			wantUpstreamCalls := 1
+			if upstreamStatus == http.StatusTooManyRequests {
+				wantStatus = http.StatusTooManyRequests
+				wantHandleErrorCount = 1
+				wantUpstreamCalls = 3
+			}
+			require.Equal(t, wantStatus, result.resp.StatusCode)
 
-			// 不调用 handleError
-			require.Equal(t, 0, handleErrorCount,
-				"handleError should NOT be called for skipped errors")
+			require.Equal(t, wantHandleErrorCount, handleErrorCount,
+				"handleError call count")
 
 			// 不标记限流
 			require.Equal(t, 0, repo.rateLimitedCalls,
@@ -465,9 +479,8 @@ func TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit(t *testing.T) {
 			require.Equal(t, 0, repo.setErrCalls,
 				"SetError should NOT be called for skipped errors")
 
-			// 只调用一次上游（不重试）
-			require.Equal(t, 1, upstream.calls,
-				"should call upstream exactly once (no retry)")
+			require.Equal(t, wantUpstreamCalls, upstream.calls,
+				"unexpected upstream call count")
 		})
 	}
 }

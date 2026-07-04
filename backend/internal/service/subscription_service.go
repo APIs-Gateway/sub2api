@@ -43,6 +43,7 @@ var (
 	// 见 docs/billing-perday-redesign.md §7：差价走法币网关补，不退款（产品决策：禁止赔钱降档）。
 	ErrChangePlanDowngradeNotAllowed = infraerrors.BadRequest("CHANGE_PLAN_DOWNGRADE_NOT_ALLOWED", "cannot change to a plan worth less than the current card's remaining value")
 	ErrSubscriptionAssignConflict    = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
+	ErrGroupNotSubscriptionType      = infraerrors.BadRequest("GROUP_NOT_SUBSCRIPTION_TYPE", "group is not a subscription type")
 	ErrInvalidDailyAmount            = infraerrors.BadRequest("INVALID_DAILY_AMOUNT", "subscription daily amount must be positive (provide daily_amount_usd, or a group with daily_limit_usd > 0)")
 	ErrInvalidInput                  = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
 	ErrDailyLimitExceeded            = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")

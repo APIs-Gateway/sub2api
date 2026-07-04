@@ -152,7 +152,8 @@ func (s *PaymentService) RequestRefund(ctx context.Context, oid, uid int64, reas
 		return err
 	}
 	refundAmount := o.Amount
-	if o.OrderType == payment.OrderTypeBalance {
+	switch o.OrderType {
+	case payment.OrderTypeBalance:
 		u, err := s.userRepo.GetByID(ctx, o.UserID)
 		if err != nil {
 			return fmt.Errorf("get user: %w", err)
@@ -160,7 +161,7 @@ func (s *PaymentService) RequestRefund(ctx context.Context, oid, uid int64, reas
 		if u.Balance < o.Amount {
 			return infraerrors.BadRequest("BALANCE_NOT_ENOUGH", "refund amount exceeds balance")
 		}
-	} else if o.OrderType == payment.OrderTypeSubscription {
+	case payment.OrderTypeSubscription:
 		amount, calcErr := s.calculateSubscriptionRefundAmount(ctx, o)
 		if calcErr != nil {
 			return calcErr

@@ -592,7 +592,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			if !hasUpstreamContext {
 				return
 			}
-
+			service.MarkOpsUpstreamFailoverRecovered(c)
 			apiKey := getOpsAPIKey(c)
 			clientRequestID, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
 
@@ -1242,8 +1242,37 @@ func classifyOpsErrorLog(c *gin.Context, errType, message, code string, status i
 	localBusinessLimited := !upstreamError && classifyOpsIsBusinessLimited(errType, phase, code, status, message, localClientAuthError)
 	isBusinessLimited = routingCapacityLimited || (clientBusinessLimited && !upstreamError) || localBusinessLimited
 	errorOwner = classifyOpsErrorOwner(phase, message)
+	// A2(issue #16 Part B):上游「请求本身的问题」4xx(400/404/422 等,换账号也救不了)归
+	// client_via_upstream,而非笼统的 provider。否则透传真实状态码不会自动纠正归因,SLA 仍误计。
+	// 与 service.IsRequestShapedUpstream4xx 同源,保证「透传什么」与「归因到 client 的是什么」一致。
+	// 守卫:仅重归「真正由上游拒绝的畸形请求」;命中本地业务限制白名单的(平台能力/策略类 message,
+	// 如「token counting 不支持」)即便携带上游状态码也保持既有 provider 归因,不误判为客户端错。
+	if upstreamError && errorOwner == "provider" &&
+		service.IsRequestShapedUpstream4xx(opsUpstreamStatusCode(c)) &&
+		!isOpsLocalBusinessLimitError(code, msg) {
+		errorOwner = opsErrorOwnerClientViaUpstream
+	}
 	errorSource = classifyOpsErrorSource(phase, message)
 	return phase, isBusinessLimited, errorOwner, errorSource
+}
+
+// opsErrorOwnerClientViaUpstream:上游判定为客户端请求问题的归因值(区别于本地 client 错误)。
+const opsErrorOwnerClientViaUpstream = "client_via_upstream"
+
+// opsUpstreamStatusCode 读取 context 中记录的真实上游状态码(由 service.SetOpsUpstreamError 写入)。
+func opsUpstreamStatusCode(c *gin.Context) int {
+	if c == nil {
+		return 0
+	}
+	if v, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
+		switch code := v.(type) {
+		case int:
+			return code
+		case int64:
+			return int(code)
+		}
+	}
+	return 0
 }
 
 func classifyOpsIsBusinessLimited(errType, phase, code string, status int, message string, localClientAuthError ...bool) bool {
@@ -1301,6 +1330,9 @@ func isOpsLocalBusinessLimitError(code string, msg string) bool {
 		strings.Contains(msg, "query parameter api_key is deprecated") ||
 		strings.Contains(msg, "no active subscription found for this group") ||
 		strings.Contains(msg, "subscription is invalid or expired") ||
+		// SUBSCRIPTION_OVERDRAFT_LIMIT(redeem_service.go):每日额度限速、到点自动解锁,属业务限制非服务故障。
+		// ops 拿不到原始 code(billingErrorDetails 压成 billing_error),故按 message 命中。见 docs/specs/ops-sla-attribution-part-a.md。
+		strings.Contains(msg, "subscription overdraft limit reached") ||
 		strings.Contains(msg, opsErrInsufficientBalance) ||
 		strings.Contains(msg, "insufficient account balance") ||
 		strings.Contains(msg, "api key group platform is not gemini") ||

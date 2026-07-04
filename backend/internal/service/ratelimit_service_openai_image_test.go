@@ -61,6 +61,7 @@ func TestRateLimitService_HandleOpenAIImageRateLimit_DefaultsToOneMinute(t *test
 }
 
 func TestOpenAIGatewayService_HandleOpenAIAccountUpstreamError_ImageRateLimitDoesNotBlockWholeAccount(t *testing.T) {
+	resetUpstream429TrackerForTest()
 	repo := &modelNotFoundAccountRepoStub{}
 	svc := &OpenAIGatewayService{rateLimitService: &RateLimitService{accountRepo: repo}}
 	account := &Account{ID: 203, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
@@ -73,6 +74,7 @@ func TestOpenAIGatewayService_HandleOpenAIAccountUpstreamError_ImageRateLimitDoe
 	require.Equal(t, openAIImageGenerationRateLimitKey, repo.modelRateLimitCalls[0].scope)
 	_, wholeAccountBlocked := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
 	require.False(t, wholeAccountBlocked)
+	require.True(t, ShouldSwitchAccountOn429(account.ID))
 }
 
 func TestOpenAIGatewayServiceForwardImages_ImageRateLimitReturnsFailoverAndCoolsCapability(t *testing.T) {

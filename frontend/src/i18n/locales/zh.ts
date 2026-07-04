@@ -3144,7 +3144,8 @@ export default {
       unlimited: '无限制',
       burndown: {
         consumptionProgress: '消费进度',
-        usedToDay: '已用到第 {day} / {total} 天',
+        servedToDay: '已服务第 {day} / {total} 天',
+        consumedDay: '已消费 {day} 天额度',
         remainingBalance: '剩余余额',
         dailyAmount: '每日额度',
         clawed: '已清扣'
@@ -5199,11 +5200,13 @@ export default {
         unresolved: '未解决',
         resolved: '已解决',
         viewErrors: '错误',
+        viewClient: '客户端',
         viewExcluded: '排除项',
         statusCodeOther: '其他',
         owner: {
           provider: '服务商',
           client: '客户端',
+          clientViaUpstream: '客户端(上游判定)',
           platform: '平台'
         },
         phase: {

@@ -501,6 +501,7 @@ func TestAntigravityGatewayService_ForwardGemini_StickySessionForceCacheBilling(
 }
 
 func TestAntigravityGatewayService_ForwardGemini_ClearsStickySessionOnGeminiRateLimit(t *testing.T) {
+	resetUpstream429TrackerForTest()
 	gin.SetMode(gin.TestMode)
 	writer := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(writer)

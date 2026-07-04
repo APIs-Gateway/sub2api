@@ -3067,7 +3067,8 @@ export default {
       unlimited: 'Unlimited',
       burndown: {
         consumptionProgress: 'Consumption',
-        usedToDay: 'Day {day} / {total}',
+        servedToDay: 'Served day {day} / {total}',
+        consumedDay: '{day} quota days consumed',
         remainingBalance: 'Remaining',
         dailyAmount: 'Daily',
         clawed: 'Clawed back'
@@ -5040,11 +5041,13 @@ export default {
         unresolved: 'Unresolved',
         resolved: 'Resolved',
         viewErrors: 'Errors',
+        viewClient: 'Client',
         viewExcluded: 'Excluded',
         statusCodeOther: 'Other',
         owner: {
           provider: 'Provider',
           client: 'Client',
+          clientViaUpstream: 'Client (upstream)',
           platform: 'Platform'
         },
         phase: {

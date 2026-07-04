@@ -426,6 +426,7 @@ func TestAPIContracts(t *testing.T) {
 						"clawed_usd": 0,
 						"remaining_usd": 0,
 						"consumption_day": 0,
+						"calendar_day": 0,
 						"created_at": "2025-01-02T03:04:05Z",
 						"updated_at": "2025-01-02T03:04:05Z"
 					}
@@ -2699,6 +2700,6 @@ func (r *stubUserSubscriptionRepo) SetOverdraftDays(context.Context, int64, int6
 	return false, nil
 }
 
-func (r *stubUserRepo) MarkSubscriptionOverdraftGuard(context.Context, int64) error {
+func (r *stubUserRepo) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
 }

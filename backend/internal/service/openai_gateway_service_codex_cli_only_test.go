@@ -284,7 +284,8 @@ func TestOpenAIGatewayService_Forward_LogsInstructionsRequiredDetails(t *testing
 
 	_, err := svc.Forward(context.Background(), c, account, body)
 	require.Error(t, err)
-	require.Equal(t, http.StatusBadGateway, rec.Code)
+	// issue #16 Part B(B2):上游 400(请求形 4xx)默认透传真实状态码,而非旧的压成 502。
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, err.Error(), "upstream error: 400")
 
 	require.True(t, logSink.ContainsMessageAtLevel("OpenAI 上游返回 Instructions are required，已记录请求详情用于排查", "warn"))

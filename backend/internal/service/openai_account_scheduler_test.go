@@ -687,6 +687,18 @@ func TestOpenAIGatewayService_OpenAIAccountSchedulerMetrics_DisabledNoOp(t *test
 	require.Equal(t, OpenAIAccountSchedulerMetricsSnapshot{}, snapshot)
 }
 
+func TestOpenAIGatewayService_ReportScheduleFailureRecordsRuntimeStats(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		rateLimitService: newOpenAIAdvancedSchedulerRateLimitService("true"),
+	}
+
+	svc.ReportOpenAIAccountScheduleResult(9902, false, nil)
+
+	snapshot := svc.SnapshotOpenAIAccountSchedulerMetrics()
+	require.Equal(t, 1, snapshot.RuntimeStatsAccountCount)
+	require.Zero(t, snapshot.AccountSwitchTotal)
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyRateLimitedAccountFallsBackToFreshCandidate(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10101)

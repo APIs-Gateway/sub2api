@@ -52,7 +52,7 @@ type APIKeyAuthUserSnapshot struct {
 	// RPMLimit 用户级每分钟请求数上限（0 = 不限制）；用于 billing_cache_service.checkRPM 兜底判断。
 	RPMLimit int `json:"rpm_limit"`
 
-	// SubscriptionOverdraftGuard 该用户是否给任意订阅卡设过透支上限；准入闸门的廉价触发位。
+	// SubscriptionOverdraftGuard 该用户是否仍有任意订阅卡开启透支上限；准入闸门的廉价触发位。
 	SubscriptionOverdraftGuard bool `json:"subscription_overdraft_guard,omitempty"`
 	// MonthlyOverdraftCount/Month per-day 用户级月度透支计数；准入 Admit 用其判断本月是否还能透支。
 	// 必须随快照保存/恢复，否则缓存命中后归零 → 准入误判可透支、月度透支闸失效（结算仍按 DB 真实值封顶）。
