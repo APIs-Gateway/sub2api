@@ -86,6 +86,12 @@ func (_u *UserSubscriptionUpdate) SetNillableGroupID(v *int64) *UserSubscription
 	return _u
 }
 
+// ClearGroupID clears the value of the "group_id" field.
+func (_u *UserSubscriptionUpdate) ClearGroupID() *UserSubscriptionUpdate {
+	_u.mutation.ClearGroupID()
+	return _u
+}
+
 // SetPlanID sets the "plan_id" field.
 func (_u *UserSubscriptionUpdate) SetPlanID(v int64) *UserSubscriptionUpdate {
 	_u.mutation.SetPlanID(v)
@@ -268,6 +274,87 @@ func (_u *UserSubscriptionUpdate) SetNillableMonthlyUsageUsd(v *float64) *UserSu
 // AddMonthlyUsageUsd adds value to the "monthly_usage_usd" field.
 func (_u *UserSubscriptionUpdate) AddMonthlyUsageUsd(v float64) *UserSubscriptionUpdate {
 	_u.mutation.AddMonthlyUsageUsd(v)
+	return _u
+}
+
+// SetDailyLimitUsd sets the "daily_limit_usd" field.
+func (_u *UserSubscriptionUpdate) SetDailyLimitUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetDailyLimitUsd()
+	_u.mutation.SetDailyLimitUsd(v)
+	return _u
+}
+
+// SetNillableDailyLimitUsd sets the "daily_limit_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableDailyLimitUsd(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetDailyLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddDailyLimitUsd adds value to the "daily_limit_usd" field.
+func (_u *UserSubscriptionUpdate) AddDailyLimitUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddDailyLimitUsd(v)
+	return _u
+}
+
+// ClearDailyLimitUsd clears the value of the "daily_limit_usd" field.
+func (_u *UserSubscriptionUpdate) ClearDailyLimitUsd() *UserSubscriptionUpdate {
+	_u.mutation.ClearDailyLimitUsd()
+	return _u
+}
+
+// SetWeeklyLimitUsd sets the "weekly_limit_usd" field.
+func (_u *UserSubscriptionUpdate) SetWeeklyLimitUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetWeeklyLimitUsd()
+	_u.mutation.SetWeeklyLimitUsd(v)
+	return _u
+}
+
+// SetNillableWeeklyLimitUsd sets the "weekly_limit_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableWeeklyLimitUsd(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetWeeklyLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddWeeklyLimitUsd adds value to the "weekly_limit_usd" field.
+func (_u *UserSubscriptionUpdate) AddWeeklyLimitUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddWeeklyLimitUsd(v)
+	return _u
+}
+
+// ClearWeeklyLimitUsd clears the value of the "weekly_limit_usd" field.
+func (_u *UserSubscriptionUpdate) ClearWeeklyLimitUsd() *UserSubscriptionUpdate {
+	_u.mutation.ClearWeeklyLimitUsd()
+	return _u
+}
+
+// SetMonthlyLimitUsd sets the "monthly_limit_usd" field.
+func (_u *UserSubscriptionUpdate) SetMonthlyLimitUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetMonthlyLimitUsd()
+	_u.mutation.SetMonthlyLimitUsd(v)
+	return _u
+}
+
+// SetNillableMonthlyLimitUsd sets the "monthly_limit_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableMonthlyLimitUsd(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetMonthlyLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddMonthlyLimitUsd adds value to the "monthly_limit_usd" field.
+func (_u *UserSubscriptionUpdate) AddMonthlyLimitUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddMonthlyLimitUsd(v)
+	return _u
+}
+
+// ClearMonthlyLimitUsd clears the value of the "monthly_limit_usd" field.
+func (_u *UserSubscriptionUpdate) ClearMonthlyLimitUsd() *UserSubscriptionUpdate {
+	_u.mutation.ClearMonthlyLimitUsd()
 	return _u
 }
 
@@ -463,6 +550,104 @@ func (_u *UserSubscriptionUpdate) SetNillableDailySpentDay(v *int) *UserSubscrip
 // AddDailySpentDay adds value to the "daily_spent_day" field.
 func (_u *UserSubscriptionUpdate) AddDailySpentDay(v int) *UserSubscriptionUpdate {
 	_u.mutation.AddDailySpentDay(v)
+	return _u
+}
+
+// SetTodayRemaining sets the "today_remaining" field.
+func (_u *UserSubscriptionUpdate) SetTodayRemaining(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetTodayRemaining()
+	_u.mutation.SetTodayRemaining(v)
+	return _u
+}
+
+// SetNillableTodayRemaining sets the "today_remaining" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableTodayRemaining(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetTodayRemaining(*v)
+	}
+	return _u
+}
+
+// AddTodayRemaining adds value to the "today_remaining" field.
+func (_u *UserSubscriptionUpdate) AddTodayRemaining(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddTodayRemaining(v)
+	return _u
+}
+
+// SetTodayDay sets the "today_day" field.
+func (_u *UserSubscriptionUpdate) SetTodayDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetTodayDay()
+	_u.mutation.SetTodayDay(v)
+	return _u
+}
+
+// SetNillableTodayDay sets the "today_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableTodayDay(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetTodayDay(*v)
+	}
+	return _u
+}
+
+// AddTodayDay adds value to the "today_day" field.
+func (_u *UserSubscriptionUpdate) AddTodayDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddTodayDay(v)
+	return _u
+}
+
+// SetStartDay sets the "start_day" field.
+func (_u *UserSubscriptionUpdate) SetStartDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetStartDay()
+	_u.mutation.SetStartDay(v)
+	return _u
+}
+
+// SetNillableStartDay sets the "start_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableStartDay(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetStartDay(*v)
+	}
+	return _u
+}
+
+// AddStartDay adds value to the "start_day" field.
+func (_u *UserSubscriptionUpdate) AddStartDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddStartDay(v)
+	return _u
+}
+
+// SetExpireDay sets the "expire_day" field.
+func (_u *UserSubscriptionUpdate) SetExpireDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetExpireDay()
+	_u.mutation.SetExpireDay(v)
+	return _u
+}
+
+// SetNillableExpireDay sets the "expire_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableExpireDay(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetExpireDay(*v)
+	}
+	return _u
+}
+
+// AddExpireDay adds value to the "expire_day" field.
+func (_u *UserSubscriptionUpdate) AddExpireDay(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddExpireDay(v)
+	return _u
+}
+
+// SetOverdraftOn sets the "overdraft_on" field.
+func (_u *UserSubscriptionUpdate) SetOverdraftOn(v bool) *UserSubscriptionUpdate {
+	_u.mutation.SetOverdraftOn(v)
+	return _u
+}
+
+// SetNillableOverdraftOn sets the "overdraft_on" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableOverdraftOn(v *bool) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetOverdraftOn(*v)
+	}
 	return _u
 }
 
@@ -691,9 +876,6 @@ func (_u *UserSubscriptionUpdate) check() error {
 	if _u.mutation.UserCleared() && len(_u.mutation.UserIDs()) > 0 {
 		return errors.New(`ent: clearing a required unique edge "UserSubscription.user"`)
 	}
-	if _u.mutation.GroupCleared() && len(_u.mutation.GroupIDs()) > 0 {
-		return errors.New(`ent: clearing a required unique edge "UserSubscription.group"`)
-	}
 	return nil
 }
 
@@ -763,6 +945,33 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	if value, ok := _u.mutation.AddedMonthlyUsageUsd(); ok {
 		_spec.AddField(usersubscription.FieldMonthlyUsageUsd, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.DailyLimitUsd(); ok {
+		_spec.SetField(usersubscription.FieldDailyLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedDailyLimitUsd(); ok {
+		_spec.AddField(usersubscription.FieldDailyLimitUsd, field.TypeFloat64, value)
+	}
+	if _u.mutation.DailyLimitUsdCleared() {
+		_spec.ClearField(usersubscription.FieldDailyLimitUsd, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.WeeklyLimitUsd(); ok {
+		_spec.SetField(usersubscription.FieldWeeklyLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedWeeklyLimitUsd(); ok {
+		_spec.AddField(usersubscription.FieldWeeklyLimitUsd, field.TypeFloat64, value)
+	}
+	if _u.mutation.WeeklyLimitUsdCleared() {
+		_spec.ClearField(usersubscription.FieldWeeklyLimitUsd, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.MonthlyLimitUsd(); ok {
+		_spec.SetField(usersubscription.FieldMonthlyLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedMonthlyLimitUsd(); ok {
+		_spec.AddField(usersubscription.FieldMonthlyLimitUsd, field.TypeFloat64, value)
+	}
+	if _u.mutation.MonthlyLimitUsdCleared() {
+		_spec.ClearField(usersubscription.FieldMonthlyLimitUsd, field.TypeFloat64)
+	}
 	if value, ok := _u.mutation.GrantedTotalUsd(); ok {
 		_spec.SetField(usersubscription.FieldGrantedTotalUsd, field.TypeFloat64, value)
 	}
@@ -819,6 +1028,33 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if value, ok := _u.mutation.AddedDailySpentDay(); ok {
 		_spec.AddField(usersubscription.FieldDailySpentDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.TodayRemaining(); ok {
+		_spec.SetField(usersubscription.FieldTodayRemaining, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTodayRemaining(); ok {
+		_spec.AddField(usersubscription.FieldTodayRemaining, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.TodayDay(); ok {
+		_spec.SetField(usersubscription.FieldTodayDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedTodayDay(); ok {
+		_spec.AddField(usersubscription.FieldTodayDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.StartDay(); ok {
+		_spec.SetField(usersubscription.FieldStartDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedStartDay(); ok {
+		_spec.AddField(usersubscription.FieldStartDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.ExpireDay(); ok {
+		_spec.SetField(usersubscription.FieldExpireDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedExpireDay(); ok {
+		_spec.AddField(usersubscription.FieldExpireDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.OverdraftOn(); ok {
+		_spec.SetField(usersubscription.FieldOverdraftOn, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)
@@ -1070,6 +1306,12 @@ func (_u *UserSubscriptionUpdateOne) SetNillableGroupID(v *int64) *UserSubscript
 	return _u
 }
 
+// ClearGroupID clears the value of the "group_id" field.
+func (_u *UserSubscriptionUpdateOne) ClearGroupID() *UserSubscriptionUpdateOne {
+	_u.mutation.ClearGroupID()
+	return _u
+}
+
 // SetPlanID sets the "plan_id" field.
 func (_u *UserSubscriptionUpdateOne) SetPlanID(v int64) *UserSubscriptionUpdateOne {
 	_u.mutation.SetPlanID(v)
@@ -1252,6 +1494,87 @@ func (_u *UserSubscriptionUpdateOne) SetNillableMonthlyUsageUsd(v *float64) *Use
 // AddMonthlyUsageUsd adds value to the "monthly_usage_usd" field.
 func (_u *UserSubscriptionUpdateOne) AddMonthlyUsageUsd(v float64) *UserSubscriptionUpdateOne {
 	_u.mutation.AddMonthlyUsageUsd(v)
+	return _u
+}
+
+// SetDailyLimitUsd sets the "daily_limit_usd" field.
+func (_u *UserSubscriptionUpdateOne) SetDailyLimitUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetDailyLimitUsd()
+	_u.mutation.SetDailyLimitUsd(v)
+	return _u
+}
+
+// SetNillableDailyLimitUsd sets the "daily_limit_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableDailyLimitUsd(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetDailyLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddDailyLimitUsd adds value to the "daily_limit_usd" field.
+func (_u *UserSubscriptionUpdateOne) AddDailyLimitUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddDailyLimitUsd(v)
+	return _u
+}
+
+// ClearDailyLimitUsd clears the value of the "daily_limit_usd" field.
+func (_u *UserSubscriptionUpdateOne) ClearDailyLimitUsd() *UserSubscriptionUpdateOne {
+	_u.mutation.ClearDailyLimitUsd()
+	return _u
+}
+
+// SetWeeklyLimitUsd sets the "weekly_limit_usd" field.
+func (_u *UserSubscriptionUpdateOne) SetWeeklyLimitUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetWeeklyLimitUsd()
+	_u.mutation.SetWeeklyLimitUsd(v)
+	return _u
+}
+
+// SetNillableWeeklyLimitUsd sets the "weekly_limit_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableWeeklyLimitUsd(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetWeeklyLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddWeeklyLimitUsd adds value to the "weekly_limit_usd" field.
+func (_u *UserSubscriptionUpdateOne) AddWeeklyLimitUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddWeeklyLimitUsd(v)
+	return _u
+}
+
+// ClearWeeklyLimitUsd clears the value of the "weekly_limit_usd" field.
+func (_u *UserSubscriptionUpdateOne) ClearWeeklyLimitUsd() *UserSubscriptionUpdateOne {
+	_u.mutation.ClearWeeklyLimitUsd()
+	return _u
+}
+
+// SetMonthlyLimitUsd sets the "monthly_limit_usd" field.
+func (_u *UserSubscriptionUpdateOne) SetMonthlyLimitUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetMonthlyLimitUsd()
+	_u.mutation.SetMonthlyLimitUsd(v)
+	return _u
+}
+
+// SetNillableMonthlyLimitUsd sets the "monthly_limit_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableMonthlyLimitUsd(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetMonthlyLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddMonthlyLimitUsd adds value to the "monthly_limit_usd" field.
+func (_u *UserSubscriptionUpdateOne) AddMonthlyLimitUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddMonthlyLimitUsd(v)
+	return _u
+}
+
+// ClearMonthlyLimitUsd clears the value of the "monthly_limit_usd" field.
+func (_u *UserSubscriptionUpdateOne) ClearMonthlyLimitUsd() *UserSubscriptionUpdateOne {
+	_u.mutation.ClearMonthlyLimitUsd()
 	return _u
 }
 
@@ -1447,6 +1770,104 @@ func (_u *UserSubscriptionUpdateOne) SetNillableDailySpentDay(v *int) *UserSubsc
 // AddDailySpentDay adds value to the "daily_spent_day" field.
 func (_u *UserSubscriptionUpdateOne) AddDailySpentDay(v int) *UserSubscriptionUpdateOne {
 	_u.mutation.AddDailySpentDay(v)
+	return _u
+}
+
+// SetTodayRemaining sets the "today_remaining" field.
+func (_u *UserSubscriptionUpdateOne) SetTodayRemaining(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetTodayRemaining()
+	_u.mutation.SetTodayRemaining(v)
+	return _u
+}
+
+// SetNillableTodayRemaining sets the "today_remaining" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableTodayRemaining(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetTodayRemaining(*v)
+	}
+	return _u
+}
+
+// AddTodayRemaining adds value to the "today_remaining" field.
+func (_u *UserSubscriptionUpdateOne) AddTodayRemaining(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddTodayRemaining(v)
+	return _u
+}
+
+// SetTodayDay sets the "today_day" field.
+func (_u *UserSubscriptionUpdateOne) SetTodayDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetTodayDay()
+	_u.mutation.SetTodayDay(v)
+	return _u
+}
+
+// SetNillableTodayDay sets the "today_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableTodayDay(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetTodayDay(*v)
+	}
+	return _u
+}
+
+// AddTodayDay adds value to the "today_day" field.
+func (_u *UserSubscriptionUpdateOne) AddTodayDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddTodayDay(v)
+	return _u
+}
+
+// SetStartDay sets the "start_day" field.
+func (_u *UserSubscriptionUpdateOne) SetStartDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetStartDay()
+	_u.mutation.SetStartDay(v)
+	return _u
+}
+
+// SetNillableStartDay sets the "start_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableStartDay(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetStartDay(*v)
+	}
+	return _u
+}
+
+// AddStartDay adds value to the "start_day" field.
+func (_u *UserSubscriptionUpdateOne) AddStartDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddStartDay(v)
+	return _u
+}
+
+// SetExpireDay sets the "expire_day" field.
+func (_u *UserSubscriptionUpdateOne) SetExpireDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetExpireDay()
+	_u.mutation.SetExpireDay(v)
+	return _u
+}
+
+// SetNillableExpireDay sets the "expire_day" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableExpireDay(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetExpireDay(*v)
+	}
+	return _u
+}
+
+// AddExpireDay adds value to the "expire_day" field.
+func (_u *UserSubscriptionUpdateOne) AddExpireDay(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddExpireDay(v)
+	return _u
+}
+
+// SetOverdraftOn sets the "overdraft_on" field.
+func (_u *UserSubscriptionUpdateOne) SetOverdraftOn(v bool) *UserSubscriptionUpdateOne {
+	_u.mutation.SetOverdraftOn(v)
+	return _u
+}
+
+// SetNillableOverdraftOn sets the "overdraft_on" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableOverdraftOn(v *bool) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetOverdraftOn(*v)
+	}
 	return _u
 }
 
@@ -1688,9 +2109,6 @@ func (_u *UserSubscriptionUpdateOne) check() error {
 	if _u.mutation.UserCleared() && len(_u.mutation.UserIDs()) > 0 {
 		return errors.New(`ent: clearing a required unique edge "UserSubscription.user"`)
 	}
-	if _u.mutation.GroupCleared() && len(_u.mutation.GroupIDs()) > 0 {
-		return errors.New(`ent: clearing a required unique edge "UserSubscription.group"`)
-	}
 	return nil
 }
 
@@ -1777,6 +2195,33 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 	if value, ok := _u.mutation.AddedMonthlyUsageUsd(); ok {
 		_spec.AddField(usersubscription.FieldMonthlyUsageUsd, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.DailyLimitUsd(); ok {
+		_spec.SetField(usersubscription.FieldDailyLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedDailyLimitUsd(); ok {
+		_spec.AddField(usersubscription.FieldDailyLimitUsd, field.TypeFloat64, value)
+	}
+	if _u.mutation.DailyLimitUsdCleared() {
+		_spec.ClearField(usersubscription.FieldDailyLimitUsd, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.WeeklyLimitUsd(); ok {
+		_spec.SetField(usersubscription.FieldWeeklyLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedWeeklyLimitUsd(); ok {
+		_spec.AddField(usersubscription.FieldWeeklyLimitUsd, field.TypeFloat64, value)
+	}
+	if _u.mutation.WeeklyLimitUsdCleared() {
+		_spec.ClearField(usersubscription.FieldWeeklyLimitUsd, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.MonthlyLimitUsd(); ok {
+		_spec.SetField(usersubscription.FieldMonthlyLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedMonthlyLimitUsd(); ok {
+		_spec.AddField(usersubscription.FieldMonthlyLimitUsd, field.TypeFloat64, value)
+	}
+	if _u.mutation.MonthlyLimitUsdCleared() {
+		_spec.ClearField(usersubscription.FieldMonthlyLimitUsd, field.TypeFloat64)
+	}
 	if value, ok := _u.mutation.GrantedTotalUsd(); ok {
 		_spec.SetField(usersubscription.FieldGrantedTotalUsd, field.TypeFloat64, value)
 	}
@@ -1833,6 +2278,33 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 	}
 	if value, ok := _u.mutation.AddedDailySpentDay(); ok {
 		_spec.AddField(usersubscription.FieldDailySpentDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.TodayRemaining(); ok {
+		_spec.SetField(usersubscription.FieldTodayRemaining, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTodayRemaining(); ok {
+		_spec.AddField(usersubscription.FieldTodayRemaining, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.TodayDay(); ok {
+		_spec.SetField(usersubscription.FieldTodayDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedTodayDay(); ok {
+		_spec.AddField(usersubscription.FieldTodayDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.StartDay(); ok {
+		_spec.SetField(usersubscription.FieldStartDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedStartDay(); ok {
+		_spec.AddField(usersubscription.FieldStartDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.ExpireDay(); ok {
+		_spec.SetField(usersubscription.FieldExpireDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedExpireDay(); ok {
+		_spec.AddField(usersubscription.FieldExpireDay, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.OverdraftOn(); ok {
+		_spec.SetField(usersubscription.FieldOverdraftOn, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.ActivatedAt(); ok {
 		_spec.SetField(usersubscription.FieldActivatedAt, field.TypeTime, value)

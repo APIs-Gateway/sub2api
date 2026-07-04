@@ -14,27 +14,34 @@ import (
 )
 
 const (
-	SettingPaymentEnabled      = "payment_enabled"
-	SettingMinRechargeAmount   = "MIN_RECHARGE_AMOUNT"
-	SettingMaxRechargeAmount   = "MAX_RECHARGE_AMOUNT"
-	SettingDailyRechargeLimit  = "DAILY_RECHARGE_LIMIT"
-	SettingOrderTimeoutMinutes = "ORDER_TIMEOUT_MINUTES"
-	SettingMaxPendingOrders    = "MAX_PENDING_ORDERS"
-	SettingEnabledPaymentTypes = "ENABLED_PAYMENT_TYPES"
-	SettingLoadBalanceStrategy = "LOAD_BALANCE_STRATEGY"
-	SettingBalancePayDisabled  = "BALANCE_PAYMENT_DISABLED"
-	SettingBalanceRechargeMult = "BALANCE_RECHARGE_MULTIPLIER"
-	SettingRechargeFeeRate     = "RECHARGE_FEE_RATE"
-	SettingProductNamePrefix   = "PRODUCT_NAME_PREFIX"
-	SettingProductNameSuffix   = "PRODUCT_NAME_SUFFIX"
-	SettingHelpImageURL        = "PAYMENT_HELP_IMAGE_URL"
-	SettingHelpText            = "PAYMENT_HELP_TEXT"
-	SettingCancelRateLimitOn   = "CANCEL_RATE_LIMIT_ENABLED"
-	SettingCancelRateLimitMax  = "CANCEL_RATE_LIMIT_MAX"
-	SettingCancelWindowSize    = "CANCEL_RATE_LIMIT_WINDOW"
-	SettingCancelWindowUnit    = "CANCEL_RATE_LIMIT_UNIT"
-	SettingCancelWindowMode    = "CANCEL_RATE_LIMIT_WINDOW_MODE"
-	SettingAlipayForceQRCode   = "ALIPAY_FORCE_QRCODE"
+	SettingPaymentEnabled       = "payment_enabled"
+	SettingMinRechargeAmount    = "MIN_RECHARGE_AMOUNT"
+	SettingMaxRechargeAmount    = "MAX_RECHARGE_AMOUNT"
+	SettingDailyRechargeLimit   = "DAILY_RECHARGE_LIMIT"
+	SettingOrderTimeoutMinutes  = "ORDER_TIMEOUT_MINUTES"
+	SettingMaxPendingOrders     = "MAX_PENDING_ORDERS"
+	SettingEnabledPaymentTypes  = "ENABLED_PAYMENT_TYPES"
+	SettingLoadBalanceStrategy  = "LOAD_BALANCE_STRATEGY"
+	SettingBalancePayDisabled   = "BALANCE_PAYMENT_DISABLED"
+	SettingBalanceRechargeMult  = "BALANCE_RECHARGE_MULTIPLIER"
+	SettingSubscriptionPayMult  = "SUBSCRIPTION_PAYMENT_MULTIPLIER"
+	SettingRechargeFeeRate      = "RECHARGE_FEE_RATE"
+	SettingRefundFeeRate        = "REFUND_FEE_RATE"
+	SettingSubscriptionMinDaily = "SUBSCRIPTION_MIN_DAILY_AMOUNT"
+	SettingSubscriptionMaxDaily = "SUBSCRIPTION_MAX_DAILY_AMOUNT"
+	SettingSubscriptionMaxDays  = "SUBSCRIPTION_MAX_VALIDITY_DAYS"
+	SettingSubscriptionMinRatio = "SUBSCRIPTION_MIN_PLAN_RATIO"
+	SettingSubscriptionMaxRatio = "SUBSCRIPTION_MAX_PLAN_RATIO"
+	SettingProductNamePrefix    = "PRODUCT_NAME_PREFIX"
+	SettingProductNameSuffix    = "PRODUCT_NAME_SUFFIX"
+	SettingHelpImageURL         = "PAYMENT_HELP_IMAGE_URL"
+	SettingHelpText             = "PAYMENT_HELP_TEXT"
+	SettingCancelRateLimitOn    = "CANCEL_RATE_LIMIT_ENABLED"
+	SettingCancelRateLimitMax   = "CANCEL_RATE_LIMIT_MAX"
+	SettingCancelWindowSize     = "CANCEL_RATE_LIMIT_WINDOW"
+	SettingCancelWindowUnit     = "CANCEL_RATE_LIMIT_UNIT"
+	SettingCancelWindowMode     = "CANCEL_RATE_LIMIT_WINDOW_MODE"
+	SettingAlipayForceQRCode    = "ALIPAY_FORCE_QRCODE"
 )
 
 // Default values for payment configuration settings.
@@ -54,7 +61,14 @@ type PaymentConfig struct {
 	EnabledTypes              []string `json:"enabled_payment_types"`
 	BalanceDisabled           bool     `json:"balance_disabled"`
 	BalanceRechargeMultiplier float64  `json:"balance_recharge_multiplier"`
+	SubscriptionPayMultiplier float64  `json:"subscription_payment_multiplier"`
 	RechargeFeeRate           float64  `json:"recharge_fee_rate"`
+	RefundFeeRate             float64  `json:"refund_fee_rate"`
+	SubscriptionMinDaily      float64  `json:"subscription_min_daily_amount"`
+	SubscriptionMaxDaily      float64  `json:"subscription_max_daily_amount"`
+	SubscriptionMaxDays       int      `json:"subscription_max_validity_days"`
+	SubscriptionMinPlanRatio  float64  `json:"subscription_min_plan_ratio"`
+	SubscriptionMaxPlanRatio  float64  `json:"subscription_max_plan_ratio"`
 	LoadBalanceStrategy       string   `json:"load_balance_strategy"`
 	ProductNamePrefix         string   `json:"product_name_prefix"`
 	ProductNameSuffix         string   `json:"product_name_suffix"`
@@ -84,7 +98,14 @@ type UpdatePaymentConfigRequest struct {
 	EnabledTypes              []string `json:"enabled_payment_types"`
 	BalanceDisabled           *bool    `json:"balance_disabled"`
 	BalanceRechargeMultiplier *float64 `json:"balance_recharge_multiplier"`
+	SubscriptionPayMultiplier *float64 `json:"subscription_payment_multiplier"`
 	RechargeFeeRate           *float64 `json:"recharge_fee_rate"`
+	RefundFeeRate             *float64 `json:"refund_fee_rate"`
+	SubscriptionMinDaily      *float64 `json:"subscription_min_daily_amount"`
+	SubscriptionMaxDaily      *float64 `json:"subscription_max_daily_amount"`
+	SubscriptionMaxDays       *int     `json:"subscription_max_validity_days"`
+	SubscriptionMinPlanRatio  *float64 `json:"subscription_min_plan_ratio"`
+	SubscriptionMaxPlanRatio  *float64 `json:"subscription_max_plan_ratio"`
 	LoadBalanceStrategy       *string  `json:"load_balance_strategy"`
 	ProductNamePrefix         *string  `json:"product_name_prefix"`
 	ProductNameSuffix         *string  `json:"product_name_suffix"`
@@ -105,6 +126,10 @@ type UpdatePaymentConfigRequest struct {
 	VisibleMethodWxpaySource   *string `json:"payment_visible_method_wxpay_source"`
 	VisibleMethodAlipayEnabled *bool   `json:"payment_visible_method_alipay_enabled"`
 	VisibleMethodWxpayEnabled  *bool   `json:"payment_visible_method_wxpay_enabled"`
+
+	// KyrenWebhookSecret 设置 Kyren 原生 webhook(order.refunded)的验签密钥。仅在非 nil 时写入,
+	// 避免被其它配置保存清空;为安全不在 GetConfig 回显原值。
+	KyrenWebhookSecret *string `json:"kyren_webhook_secret"`
 }
 
 // MethodLimits holds per-payment-type limits.
@@ -150,31 +175,33 @@ type UpdateProviderInstanceRequest struct {
 	AllowUserRefund *bool             `json:"allow_user_refund"`
 }
 type CreatePlanRequest struct {
-	GroupID       int64    `json:"group_id"`
-	Name          string   `json:"name"`
-	Description   string   `json:"description"`
-	Price         float64  `json:"price"`
-	OriginalPrice *float64 `json:"original_price"`
-	ValidityDays  int      `json:"validity_days"`
-	ValidityUnit  string   `json:"validity_unit"`
-	Features      string   `json:"features"`
-	ProductName   string   `json:"product_name"`
-	ForSale       bool     `json:"for_sale"`
-	SortOrder     int      `json:"sort_order"`
+	GroupID        int64    `json:"group_id"`
+	Name           string   `json:"name"`
+	Description    string   `json:"description"`
+	DailyAmountUSD float64  `json:"daily_amount_usd"`
+	Price          float64  `json:"price"`
+	OriginalPrice  *float64 `json:"original_price"`
+	ValidityDays   int      `json:"validity_days"`
+	ValidityUnit   string   `json:"validity_unit"`
+	Features       string   `json:"features"`
+	ProductName    string   `json:"product_name"`
+	ForSale        bool     `json:"for_sale"`
+	SortOrder      int      `json:"sort_order"`
 }
 
 type UpdatePlanRequest struct {
-	GroupID       *int64   `json:"group_id"`
-	Name          *string  `json:"name"`
-	Description   *string  `json:"description"`
-	Price         *float64 `json:"price"`
-	OriginalPrice *float64 `json:"original_price"`
-	ValidityDays  *int     `json:"validity_days"`
-	ValidityUnit  *string  `json:"validity_unit"`
-	Features      *string  `json:"features"`
-	ProductName   *string  `json:"product_name"`
-	ForSale       *bool    `json:"for_sale"`
-	SortOrder     *int     `json:"sort_order"`
+	GroupID        *int64   `json:"group_id"`
+	Name           *string  `json:"name"`
+	Description    *string  `json:"description"`
+	DailyAmountUSD *float64 `json:"daily_amount_usd"`
+	Price          *float64 `json:"price"`
+	OriginalPrice  *float64 `json:"original_price"`
+	ValidityDays   *int     `json:"validity_days"`
+	ValidityUnit   *string  `json:"validity_unit"`
+	Features       *string  `json:"features"`
+	ProductName    *string  `json:"product_name"`
+	ForSale        *bool    `json:"for_sale"`
+	SortOrder      *int     `json:"sort_order"`
 }
 
 // PaymentConfigService manages payment configuration and CRUD for
@@ -199,12 +226,26 @@ func (s *PaymentConfigService) IsPaymentEnabled(ctx context.Context) bool {
 	return val == "true"
 }
 
+// GetKyrenWebhookSecret 读取 Kyren 原生 webhook 验签密钥(空表示未配置 → 验签必失败)。
+func (s *PaymentConfigService) GetKyrenWebhookSecret(ctx context.Context) string {
+	if s == nil || s.settingRepo == nil {
+		return ""
+	}
+	val, err := s.settingRepo.GetValue(ctx, SettingKyrenWebhookSecret)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(val)
+}
+
 // GetPaymentConfig returns the full payment configuration.
 func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentConfig, error) {
 	keys := []string{
 		SettingPaymentEnabled, SettingMinRechargeAmount, SettingMaxRechargeAmount,
 		SettingDailyRechargeLimit, SettingOrderTimeoutMinutes, SettingMaxPendingOrders,
-		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingRechargeFeeRate, SettingLoadBalanceStrategy,
+		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingSubscriptionPayMult, SettingRechargeFeeRate, SettingRefundFeeRate, SettingLoadBalanceStrategy,
+		SettingSubscriptionMinDaily, SettingSubscriptionMaxDaily, SettingSubscriptionMaxDays,
+		SettingSubscriptionMinRatio, SettingSubscriptionMaxRatio,
 		SettingProductNamePrefix, SettingProductNameSuffix,
 		SettingHelpImageURL, SettingHelpText,
 		SettingCancelRateLimitOn, SettingCancelRateLimitMax,
@@ -224,6 +265,7 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 }
 
 func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *PaymentConfig {
+	subPricing := subscriptionPricingConfigFromSettings(vals)
 	cfg := &PaymentConfig{
 		Enabled:                   vals[SettingPaymentEnabled] == "true",
 		MinAmount:                 pcParseFloat(vals[SettingMinRechargeAmount], 1),
@@ -233,7 +275,14 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 		MaxPendingOrders:          pcParseInt(vals[SettingMaxPendingOrders], defaultMaxPendingOrders),
 		BalanceDisabled:           vals[SettingBalancePayDisabled] == "true",
 		BalanceRechargeMultiplier: normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingBalanceRechargeMult], defaultBalanceRechargeMultiplier)),
+		SubscriptionPayMultiplier: normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingSubscriptionPayMult], defaultBalanceRechargeMultiplier)),
 		RechargeFeeRate:           pcParseFloat(vals[SettingRechargeFeeRate], 0),
+		RefundFeeRate:             pcParseFloat(vals[SettingRefundFeeRate], 0),
+		SubscriptionMinDaily:      subPricing.DMin,
+		SubscriptionMaxDaily:      subPricing.DMax,
+		SubscriptionMaxDays:       subPricing.TMax,
+		SubscriptionMinPlanRatio:  subPricing.UMax,
+		SubscriptionMaxPlanRatio:  subPricing.UMin,
 		LoadBalanceStrategy:       vals[SettingLoadBalanceStrategy],
 		ProductNamePrefix:         vals[SettingProductNamePrefix],
 		ProductNameSuffix:         vals[SettingProductNameSuffix],
@@ -294,14 +343,55 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 			return infraerrors.BadRequest("INVALID_BALANCE_RECHARGE_MULTIPLIER", "balance recharge multiplier must be greater than 0")
 		}
 	}
-	if req.RechargeFeeRate != nil {
-		v := *req.RechargeFeeRate
-		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 100 {
-			return infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate must be between 0 and 100")
+	if req.SubscriptionPayMultiplier != nil {
+		if math.IsNaN(*req.SubscriptionPayMultiplier) || math.IsInf(*req.SubscriptionPayMultiplier, 0) || *req.SubscriptionPayMultiplier <= 0 {
+			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_PAYMENT_MULTIPLIER", "subscription payment multiplier must be greater than 0")
 		}
-		// Enforce max 2 decimal places
-		if math.Round(v*100) != v*100 {
-			return infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate allows at most 2 decimal places")
+	}
+	if req.RechargeFeeRate != nil {
+		if err := validatePercentSetting(*req.RechargeFeeRate, "INVALID_RECHARGE_FEE_RATE", "recharge fee rate"); err != nil {
+			return err
+		}
+	}
+	if req.RefundFeeRate != nil {
+		if err := validatePercentSetting(*req.RefundFeeRate, "INVALID_REFUND_FEE_RATE", "refund fee rate"); err != nil {
+			return err
+		}
+	}
+	if req.SubscriptionMinDaily != nil {
+		v := *req.SubscriptionMinDaily
+		if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MIN_DAILY_AMOUNT", "subscription minimum daily amount must be greater than 0")
+		}
+		if math.Abs(math.Round(v/subscriptionDailyAmountStep)*subscriptionDailyAmountStep-v) > 1e-9 {
+			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MIN_DAILY_AMOUNT", "subscription minimum daily amount must be a multiple of 30")
+		}
+	}
+	if req.SubscriptionMaxDaily != nil {
+		v := *req.SubscriptionMaxDaily
+		if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MAX_DAILY_AMOUNT", "subscription maximum daily amount must be greater than 0")
+		}
+		if math.Abs(math.Round(v/subscriptionDailyAmountStep)*subscriptionDailyAmountStep-v) > 1e-9 {
+			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MAX_DAILY_AMOUNT", "subscription maximum daily amount must be a multiple of 30")
+		}
+	}
+	if req.SubscriptionMinDaily != nil && req.SubscriptionMaxDaily != nil && *req.SubscriptionMaxDaily < *req.SubscriptionMinDaily {
+		return infraerrors.BadRequest("INVALID_SUBSCRIPTION_DAILY_AMOUNT_RANGE", "subscription maximum daily amount must be greater than or equal to minimum daily amount")
+	}
+	if req.SubscriptionMaxDays != nil && *req.SubscriptionMaxDays < DefaultSubscriptionPricingConfig().TMin {
+		return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MAX_VALIDITY_DAYS", "subscription maximum validity days must be at least the minimum validity days")
+	}
+	if req.SubscriptionMinPlanRatio != nil {
+		v := *req.SubscriptionMinPlanRatio
+		if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MIN_PLAN_RATIO", "subscription minimum plan ratio must be greater than 0")
+		}
+	}
+	if req.SubscriptionMaxPlanRatio != nil {
+		v := *req.SubscriptionMaxPlanRatio
+		if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MAX_PLAN_RATIO", "subscription maximum plan ratio must be greater than 0")
 		}
 	}
 	m := map[string]string{
@@ -313,7 +403,14 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 		SettingMaxPendingOrders:                  formatPositiveInt(req.MaxPendingOrders),
 		SettingBalancePayDisabled:                formatBoolOrEmpty(req.BalanceDisabled),
 		SettingBalanceRechargeMult:               formatPositiveFloat(req.BalanceRechargeMultiplier),
+		SettingSubscriptionPayMult:               formatPositiveFloat(req.SubscriptionPayMultiplier),
 		SettingRechargeFeeRate:                   formatNonNegativeFloat(req.RechargeFeeRate),
+		SettingRefundFeeRate:                     formatNonNegativeFloat(req.RefundFeeRate),
+		SettingSubscriptionMinDaily:              formatPositiveFloat(req.SubscriptionMinDaily),
+		SettingSubscriptionMaxDaily:              formatPositiveFloat(req.SubscriptionMaxDaily),
+		SettingSubscriptionMaxDays:               formatPositiveInt(req.SubscriptionMaxDays),
+		SettingSubscriptionMinRatio:              formatPositiveFlexibleFloat(req.SubscriptionMinPlanRatio),
+		SettingSubscriptionMaxRatio:              formatPositiveFlexibleFloat(req.SubscriptionMaxPlanRatio),
 		SettingLoadBalanceStrategy:               derefStr(req.LoadBalanceStrategy),
 		SettingProductNamePrefix:                 derefStr(req.ProductNamePrefix),
 		SettingProductNameSuffix:                 derefStr(req.ProductNameSuffix),
@@ -335,6 +432,10 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	} else {
 		m[SettingEnabledPaymentTypes] = ""
 	}
+	// Kyren webhook 密钥:仅在显式提供时写入(其余字段是「nil→空串覆盖」语义,密钥不能跟随被清空)。
+	if req.KyrenWebhookSecret != nil {
+		m[SettingKyrenWebhookSecret] = strings.TrimSpace(*req.KyrenWebhookSecret)
+	}
 	return s.settingRepo.SetMultiple(ctx, m)
 }
 
@@ -352,11 +453,28 @@ func formatPositiveFloat(v *float64) string {
 	return strconv.FormatFloat(*v, 'f', 2, 64)
 }
 
+func formatPositiveFlexibleFloat(v *float64) string {
+	if v == nil || *v <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(*v, 'f', -1, 64)
+}
+
 func formatNonNegativeFloat(v *float64) string {
 	if v == nil || *v < 0 {
 		return ""
 	}
 	return strconv.FormatFloat(*v, 'f', 2, 64)
+}
+
+func validatePercentSetting(v float64, code, label string) error {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 100 {
+		return infraerrors.BadRequest(code, label+" must be between 0 and 100")
+	}
+	if math.Round(v*100) != v*100 {
+		return infraerrors.BadRequest(code, label+" allows at most 2 decimal places")
+	}
+	return nil
 }
 
 func formatPositiveInt(v *int) string {

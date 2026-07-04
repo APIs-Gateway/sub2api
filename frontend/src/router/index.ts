@@ -655,15 +655,7 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/orders/plans',
-    name: 'AdminPaymentPlans',
-    component: () => import('@/views/admin/orders/AdminPaymentPlansView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Subscription Plans',
-      titleKey: 'nav.paymentPlans',
-      requiresPayment: true
-    }
+    redirect: '/admin/orders'
   },
 
   // ==================== 404 Not Found ====================

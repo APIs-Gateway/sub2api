@@ -1920,8 +1920,22 @@ func init() {
 	userDescSubscriptionOverdraftGuard := userFields[20].Descriptor()
 	// user.DefaultSubscriptionOverdraftGuard holds the default value on creation for the subscription_overdraft_guard field.
 	user.DefaultSubscriptionOverdraftGuard = userDescSubscriptionOverdraftGuard.Default.(bool)
+	// userDescMonthlyOverdraftCount is the schema descriptor for monthly_overdraft_count field.
+	userDescMonthlyOverdraftCount := userFields[21].Descriptor()
+	// user.DefaultMonthlyOverdraftCount holds the default value on creation for the monthly_overdraft_count field.
+	user.DefaultMonthlyOverdraftCount = userDescMonthlyOverdraftCount.Default.(int)
+	// userDescMonthlyOverdraftMonth is the schema descriptor for monthly_overdraft_month field.
+	userDescMonthlyOverdraftMonth := userFields[22].Descriptor()
+	// user.DefaultMonthlyOverdraftMonth holds the default value on creation for the monthly_overdraft_month field.
+	user.DefaultMonthlyOverdraftMonth = userDescMonthlyOverdraftMonth.Default.(string)
+	// user.MonthlyOverdraftMonthValidator is a validator for the "monthly_overdraft_month" field. It is called by the builders before save.
+	user.MonthlyOverdraftMonthValidator = userDescMonthlyOverdraftMonth.Validators[0].(func(string) error)
+	// userDescLastChangePlanDay is the schema descriptor for last_change_plan_day field.
+	userDescLastChangePlanDay := userFields[23].Descriptor()
+	// user.DefaultLastChangePlanDay holds the default value on creation for the last_change_plan_day field.
+	user.DefaultLastChangePlanDay = userDescLastChangePlanDay.Default.(int)
 	// userDescStablePriorityEnabled is the schema descriptor for stable_priority_enabled field.
-	userDescStablePriorityEnabled := userFields[21].Descriptor()
+	userDescStablePriorityEnabled := userFields[24].Descriptor()
 	// user.DefaultStablePriorityEnabled holds the default value on creation for the stable_priority_enabled field.
 	user.DefaultStablePriorityEnabled = userDescStablePriorityEnabled.Default.(bool)
 	userallowedgroupFields := schema.UserAllowedGroup{}.Fields()
@@ -2140,39 +2154,59 @@ func init() {
 	// usersubscription.DefaultMonthlyUsageUsd holds the default value on creation for the monthly_usage_usd field.
 	usersubscription.DefaultMonthlyUsageUsd = usersubscriptionDescMonthlyUsageUsd.Default.(float64)
 	// usersubscriptionDescGrantedTotalUsd is the schema descriptor for granted_total_usd field.
-	usersubscriptionDescGrantedTotalUsd := usersubscriptionFields[12].Descriptor()
+	usersubscriptionDescGrantedTotalUsd := usersubscriptionFields[15].Descriptor()
 	// usersubscription.DefaultGrantedTotalUsd holds the default value on creation for the granted_total_usd field.
 	usersubscription.DefaultGrantedTotalUsd = usersubscriptionDescGrantedTotalUsd.Default.(float64)
 	// usersubscriptionDescDailyAmountUsd is the schema descriptor for daily_amount_usd field.
-	usersubscriptionDescDailyAmountUsd := usersubscriptionFields[13].Descriptor()
+	usersubscriptionDescDailyAmountUsd := usersubscriptionFields[16].Descriptor()
 	// usersubscription.DefaultDailyAmountUsd holds the default value on creation for the daily_amount_usd field.
 	usersubscription.DefaultDailyAmountUsd = usersubscriptionDescDailyAmountUsd.Default.(float64)
 	// usersubscriptionDescConsumedUsd is the schema descriptor for consumed_usd field.
-	usersubscriptionDescConsumedUsd := usersubscriptionFields[14].Descriptor()
+	usersubscriptionDescConsumedUsd := usersubscriptionFields[17].Descriptor()
 	// usersubscription.DefaultConsumedUsd holds the default value on creation for the consumed_usd field.
 	usersubscription.DefaultConsumedUsd = usersubscriptionDescConsumedUsd.Default.(float64)
 	// usersubscriptionDescClawedUsd is the schema descriptor for clawed_usd field.
-	usersubscriptionDescClawedUsd := usersubscriptionFields[15].Descriptor()
+	usersubscriptionDescClawedUsd := usersubscriptionFields[18].Descriptor()
 	// usersubscription.DefaultClawedUsd holds the default value on creation for the clawed_usd field.
 	usersubscription.DefaultClawedUsd = usersubscriptionDescClawedUsd.Default.(float64)
 	// usersubscriptionDescLastClawbackDay is the schema descriptor for last_clawback_day field.
-	usersubscriptionDescLastClawbackDay := usersubscriptionFields[16].Descriptor()
+	usersubscriptionDescLastClawbackDay := usersubscriptionFields[19].Descriptor()
 	// usersubscription.DefaultLastClawbackDay holds the default value on creation for the last_clawback_day field.
 	usersubscription.DefaultLastClawbackDay = usersubscriptionDescLastClawbackDay.Default.(int)
 	// usersubscriptionDescTotalOverdraftCount is the schema descriptor for total_overdraft_count field.
-	usersubscriptionDescTotalOverdraftCount := usersubscriptionFields[18].Descriptor()
+	usersubscriptionDescTotalOverdraftCount := usersubscriptionFields[21].Descriptor()
 	// usersubscription.DefaultTotalOverdraftCount holds the default value on creation for the total_overdraft_count field.
 	usersubscription.DefaultTotalOverdraftCount = usersubscriptionDescTotalOverdraftCount.Default.(int)
 	// usersubscriptionDescDailySpentUsd is the schema descriptor for daily_spent_usd field.
-	usersubscriptionDescDailySpentUsd := usersubscriptionFields[19].Descriptor()
+	usersubscriptionDescDailySpentUsd := usersubscriptionFields[22].Descriptor()
 	// usersubscription.DefaultDailySpentUsd holds the default value on creation for the daily_spent_usd field.
 	usersubscription.DefaultDailySpentUsd = usersubscriptionDescDailySpentUsd.Default.(float64)
 	// usersubscriptionDescDailySpentDay is the schema descriptor for daily_spent_day field.
-	usersubscriptionDescDailySpentDay := usersubscriptionFields[20].Descriptor()
+	usersubscriptionDescDailySpentDay := usersubscriptionFields[23].Descriptor()
 	// usersubscription.DefaultDailySpentDay holds the default value on creation for the daily_spent_day field.
 	usersubscription.DefaultDailySpentDay = usersubscriptionDescDailySpentDay.Default.(int)
+	// usersubscriptionDescTodayRemaining is the schema descriptor for today_remaining field.
+	usersubscriptionDescTodayRemaining := usersubscriptionFields[24].Descriptor()
+	// usersubscription.DefaultTodayRemaining holds the default value on creation for the today_remaining field.
+	usersubscription.DefaultTodayRemaining = usersubscriptionDescTodayRemaining.Default.(float64)
+	// usersubscriptionDescTodayDay is the schema descriptor for today_day field.
+	usersubscriptionDescTodayDay := usersubscriptionFields[25].Descriptor()
+	// usersubscription.DefaultTodayDay holds the default value on creation for the today_day field.
+	usersubscription.DefaultTodayDay = usersubscriptionDescTodayDay.Default.(int)
+	// usersubscriptionDescStartDay is the schema descriptor for start_day field.
+	usersubscriptionDescStartDay := usersubscriptionFields[26].Descriptor()
+	// usersubscription.DefaultStartDay holds the default value on creation for the start_day field.
+	usersubscription.DefaultStartDay = usersubscriptionDescStartDay.Default.(int)
+	// usersubscriptionDescExpireDay is the schema descriptor for expire_day field.
+	usersubscriptionDescExpireDay := usersubscriptionFields[27].Descriptor()
+	// usersubscription.DefaultExpireDay holds the default value on creation for the expire_day field.
+	usersubscription.DefaultExpireDay = usersubscriptionDescExpireDay.Default.(int)
+	// usersubscriptionDescOverdraftOn is the schema descriptor for overdraft_on field.
+	usersubscriptionDescOverdraftOn := usersubscriptionFields[28].Descriptor()
+	// usersubscription.DefaultOverdraftOn holds the default value on creation for the overdraft_on field.
+	usersubscription.DefaultOverdraftOn = usersubscriptionDescOverdraftOn.Default.(bool)
 	// usersubscriptionDescAssignedAt is the schema descriptor for assigned_at field.
-	usersubscriptionDescAssignedAt := usersubscriptionFields[23].Descriptor()
+	usersubscriptionDescAssignedAt := usersubscriptionFields[31].Descriptor()
 	// usersubscription.DefaultAssignedAt holds the default value on creation for the assigned_at field.
 	usersubscription.DefaultAssignedAt = usersubscriptionDescAssignedAt.Default.(func() time.Time)
 }

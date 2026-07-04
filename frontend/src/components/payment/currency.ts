@@ -5,7 +5,7 @@ export function normalizePaymentCurrency(currency?: string | null): string {
   return /^[A-Z]{3}$/.test(normalized) ? normalized : DEFAULT_PAYMENT_CURRENCY
 }
 
-function paymentCurrencyFractionDigits(currency: string): number {
+export function paymentCurrencyFractionDigits(currency: string): number {
   try {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',
@@ -14,6 +14,13 @@ function paymentCurrencyFractionDigits(currency: string): number {
   } catch {
     return 2
   }
+}
+
+export function ceilPaymentAmount(amount: number, currency?: string | null): number {
+  const normalized = normalizePaymentCurrency(currency)
+  const fractionDigits = paymentCurrencyFractionDigits(normalized)
+  const factor = 10 ** fractionDigits
+  return Math.ceil((Number.isFinite(amount) ? amount : 0) * factor - Number.EPSILON) / factor
 }
 
 export function formatPaymentAmount(amount: number, currency?: string | null, locale?: string): string {

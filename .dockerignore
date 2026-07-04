@@ -30,6 +30,8 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
+backend/bin/
+frontend/*.tsbuildinfo
 
 # Node modules (will be installed in container)
 frontend/node_modules/

@@ -115,8 +115,18 @@ func RegisterUserRoutes(
 			subscriptions.GET("/active", h.Subscription.GetActive)
 			subscriptions.GET("/progress", h.Subscription.GetProgress)
 			subscriptions.GET("/summary", h.Subscription.GetSummary)
-			// 用户自助：设置自己某张订阅卡的「最多透支天数」
+			// 自定义购买（无固定套餐）：定价区间 + 实时报价（D+T → 售价 + 派生周/月封顶）。
+			subscriptions.GET("/pricing", h.Subscription.PricingBounds)
+			subscriptions.POST("/quote", h.Subscription.Quote)
+			// 用户自助：设置自己某张订阅卡的「最多透支天数」（旧 per-day 入口，待退役）
 			subscriptions.PUT("/:id/overdraft", h.Subscription.SetOverdraftDays)
+			// 用户自助手动透支「借一天」（三窗口模型，用户级、仅解日上限）：清 daily_usage + expires_at −1 + 月度计数++。
+			subscriptions.POST("/overdraft", h.Subscription.Overdraft)
+			// 用户自助生命周期（per-day redesign §5/§7）：续费/转套餐**走法币支付网关**。
+			// 这两个端点只返回报价（续费价 / 转套餐差价）供前端预览；实际下单走 POST /payment/orders
+			// （order_type=subscription, subscription_intent=renew|change_plan），支付成功回调履约。
+			subscriptions.POST("/renew/quote", h.Subscription.RenewQuote)
+			subscriptions.POST("/change-plan/quote", h.Subscription.ChangePlanQuote)
 		}
 
 		// 渠道监控（用户只读）

@@ -422,8 +422,11 @@ func parseEasyPayRefundResponse(status int, body []byte) error {
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return fmt.Errorf("easypay refund non-JSON response (HTTP %d): %s", status, summary)
 	}
+	msg := strings.TrimSpace(resp.Msg)
+	if easyPayRefundMessageIndicatesFailure(msg) {
+		return fmt.Errorf("easypay refund failed (HTTP %d): %s", status, msg)
+	}
 	if !easyPayResponseCodeIsSuccess(resp.Code) {
-		msg := strings.TrimSpace(resp.Msg)
 		if msg == "" {
 			msg = summary
 		}
@@ -435,13 +438,29 @@ func parseEasyPayRefundResponse(status int, body []byte) error {
 func easyPayResponseCodeIsSuccess(code any) bool {
 	switch v := code.(type) {
 	case float64:
-		return int(v) == easypayCodeSuccess
+		n := int(v)
+		return n == easypayCodeSuccess || n == 0
 	case string:
 		n, err := strconv.Atoi(strings.TrimSpace(v))
-		return err == nil && n == easypayCodeSuccess
+		return err == nil && (n == easypayCodeSuccess || n == 0)
 	default:
 		return false
 	}
+}
+
+func easyPayRefundMessageIndicatesFailure(msg string) bool {
+	if msg == "" {
+		return false
+	}
+	lower := strings.ToLower(msg)
+	return strings.Contains(msg, "订单编号不存在") ||
+		strings.Contains(msg, "订单不存在") ||
+		strings.Contains(msg, "不存在") ||
+		strings.Contains(msg, "失败") ||
+		strings.Contains(lower, "order not found") ||
+		strings.Contains(lower, "not exist") ||
+		strings.Contains(lower, "fail") ||
+		strings.Contains(lower, "error")
 }
 
 func summarizeEasyPayResponse(body []byte) string {

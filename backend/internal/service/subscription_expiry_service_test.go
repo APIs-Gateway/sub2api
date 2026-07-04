@@ -30,6 +30,22 @@ func (r *subscriptionExpiryRepoStub) GetActiveByUserIDAndGroupID(context.Context
 	return nil, ErrSubscriptionNotFound
 }
 
+func (r *subscriptionExpiryRepoStub) GetActiveByUserID(context.Context, int64) (*UserSubscription, error) {
+	return nil, ErrSubscriptionNotFound
+}
+
+func (r *subscriptionExpiryRepoStub) GetLatestActiveStatusByUserID(context.Context, int64) (*UserSubscription, error) {
+	return nil, ErrSubscriptionNotFound
+}
+
+func (r *subscriptionExpiryRepoStub) GetLatestActiveStatusForUpdate(context.Context, int64) (*UserSubscription, error) {
+	return nil, ErrSubscriptionNotFound
+}
+
+func (r *subscriptionExpiryRepoStub) ApplyManualOverdraft(context.Context, *UserSubscription) error {
+	return nil
+}
+
 func (r *subscriptionExpiryRepoStub) Update(context.Context, *UserSubscription) error {
 	return nil
 }
@@ -92,12 +108,6 @@ func (r *subscriptionExpiryRepoStub) IncrementUsage(context.Context, int64, floa
 }
 
 func (r *subscriptionExpiryRepoStub) BatchUpdateExpiredStatus(context.Context) (int64, error) {
-	return 0, nil
-}
-func (r *subscriptionExpiryRepoStub) ListActiveBurndownIDs(context.Context, int64, int) ([]int64, error) {
-	return nil, nil
-}
-func (r *subscriptionExpiryRepoStub) ClawbackSubscription(context.Context, int64, time.Time) (float64, error) {
 	return 0, nil
 }
 func (r *subscriptionExpiryRepoStub) ForfeitExpiredSubscriptions(context.Context, time.Time, int) ([]int64, error) {

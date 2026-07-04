@@ -83,7 +83,15 @@ type CreateOrderRequest struct {
 	PaymentSource   string
 	OrderType       string
 	PlanID          int64
-	Locale          string
+	GroupID         int64
+	// 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T；与 PlanID 互斥，后端按 u(D) 公式定价。
+	DailyAmountUSD float64
+	ValidityDays   int
+	// 订阅生命周期意图（per-day redesign §5/§7）：空/"purchase"=购买建新卡；"renew"=续费延长当前卡；
+	// "change_plan"=转套餐（新 D+T 由 DailyAmountUSD/ValidityDays 给）。renew/change 的目标卡由后端按
+	// 用户唯一生效卡派生（不信前端），价格/差价后端权威算并冻结进订单快照。
+	SubscriptionIntent string
+	Locale             string
 }
 
 type CreateOrderResponse struct {
@@ -120,17 +128,24 @@ type OrderListParams struct {
 }
 
 type RefundPlan struct {
-	OrderID         int64
-	Order           *dbent.PaymentOrder
-	RefundAmount    float64
-	GatewayAmount   float64
-	Reason          string
-	Force           bool
-	DeductBalance   bool
-	DeductionType   string
-	BalanceToDeduct float64
-	SubDaysToDeduct int
-	SubscriptionID  int64
+	OrderID                    int64
+	Order                      *dbent.PaymentOrder
+	RefundAmount               float64
+	GatewayBaseAmount          float64
+	RefundFeeRate              float64
+	RefundFeeAmount            float64
+	GatewayAmount              float64
+	Reason                     string
+	Force                      bool
+	DeductBalance              bool
+	DeductionType              string
+	BalanceToDeduct            float64
+	SubDaysToDeduct            int
+	SubDaysToRestore           int
+	SubExpireDayToRestore      int
+	SubTodayRemainingToRestore float64
+	SubTodayDayToRestore       int
+	SubscriptionID             int64
 }
 
 type RefundResult struct {
@@ -139,6 +154,10 @@ type RefundResult struct {
 	RequireForce    bool    `json:"require_force,omitempty"`
 	BalanceDeducted float64 `json:"balance_deducted,omitempty"`
 	SubDaysDeducted int     `json:"subscription_days_deducted,omitempty"`
+	GatewayAmount   float64 `json:"gateway_amount,omitempty"`
+	RefundFeeRate   float64 `json:"refund_fee_rate,omitempty"`
+	RefundFeeAmount float64 `json:"refund_fee_amount,omitempty"`
+	Message         string  `json:"message,omitempty"`
 }
 
 type DashboardStats struct {

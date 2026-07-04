@@ -774,6 +774,8 @@ func userEntityToService(u *dbent.User) *service.User {
 		TotalRecharged:             u.TotalRecharged,
 		RPMLimit:                   u.RpmLimit,
 		SubscriptionOverdraftGuard: u.SubscriptionOverdraftGuard,
+		MonthlyOverdraftCount:      u.MonthlyOverdraftCount,
+		MonthlyOverdraftMonth:      u.MonthlyOverdraftMonth,
 		StablePriorityEnabled:      u.StablePriorityEnabled,
 		CreatedAt:                  u.CreatedAt,
 		UpdatedAt:                  u.UpdatedAt,

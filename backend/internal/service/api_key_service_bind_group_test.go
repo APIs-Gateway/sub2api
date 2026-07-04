@@ -9,19 +9,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// burn-down 模型下订阅型分组不再可作为渠道绑定到 API Key：
-// canUserBindGroup / canUserBindGroupInternal 对订阅型分组一律返回 false，
-// 标准型分组沿用原有的公开 / 专属（AllowedGroups）逻辑。
-func TestAPIKeyService_CanBindGroup_SubscriptionAlwaysRejected(t *testing.T) {
+// per-day：分组仅管路由、无「订阅型分组」禁绑/豁免概念。绑定一律按标准 AllowedGroups/IsExclusive
+// 逻辑，与历史 subscription_type 取值无关（取代旧「订阅型一律禁绑」契约）。
+func TestAPIKeyService_CanBindGroup_IgnoresSubscriptionType(t *testing.T) {
 	svc := &APIKeyService{}
 	ctx := context.Background()
 
-	subGroup := &Group{ID: 10, Status: StatusActive, IsExclusive: false, SubscriptionType: SubscriptionTypeSubscription}
-	// 即便专属分组已在 AllowedGroups 中，订阅型也应被拒绝。
-	user := &User{ID: 1, AllowedGroups: []int64{10}}
+	// 历史上标了 subscription_type 的非专属分组：per-day 当普通路由组 → 可绑定。
+	nonExclusive := &Group{ID: 10, Status: StatusActive, IsExclusive: false, SubscriptionType: SubscriptionTypeSubscription}
+	require.True(t, svc.canUserBindGroup(ctx, &User{ID: 1}, nonExclusive), "非专属组应可绑定，与 subscription_type 无关")
+	require.True(t, svc.canUserBindGroupInternal(&User{ID: 1}, nonExclusive))
 
-	require.False(t, svc.canUserBindGroup(ctx, user, subGroup), "subscription group must not be bindable")
-	require.False(t, svc.canUserBindGroupInternal(user, subGroup), "subscription group must be excluded from available list")
+	// 专属分组仍按 AllowedGroups 控制（与 subscription_type 无关）。
+	exclusive := &Group{ID: 11, Status: StatusActive, IsExclusive: true, SubscriptionType: SubscriptionTypeSubscription}
+	require.False(t, svc.canUserBindGroup(ctx, &User{ID: 1}, exclusive), "专属且未授权 → 禁绑")
+	require.True(t, svc.canUserBindGroup(ctx, &User{ID: 1, AllowedGroups: []int64{11}}, exclusive), "专属且已授权 → 可绑")
 }
 
 func TestAPIKeyService_CanBindGroup_StandardGroupUnchanged(t *testing.T) {

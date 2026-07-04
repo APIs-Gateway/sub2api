@@ -126,6 +126,24 @@ func (f fakeGoogleSubscriptionRepo) GetActiveByUserIDAndGroupID(ctx context.Cont
 	}
 	return nil, errors.New("not implemented")
 }
+
+func (f fakeGoogleSubscriptionRepo) GetActiveByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	if f.getActive != nil {
+		return f.getActive(ctx, userID, 0)
+	}
+	return nil, errors.New("not implemented")
+}
+func (f fakeGoogleSubscriptionRepo) GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return f.GetActiveByUserID(ctx, userID)
+}
+
+func (f fakeGoogleSubscriptionRepo) GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return f.GetActiveByUserID(ctx, userID)
+}
+
+func (f fakeGoogleSubscriptionRepo) ApplyManualOverdraft(ctx context.Context, sub *service.UserSubscription) error {
+	return nil
+}
 func (f fakeGoogleSubscriptionRepo) Update(ctx context.Context, sub *service.UserSubscription) error {
 	return errors.New("not implemented")
 }
@@ -188,12 +206,6 @@ func (f fakeGoogleSubscriptionRepo) IncrementUsage(ctx context.Context, id int64
 }
 func (f fakeGoogleSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	return 0, errors.New("not implemented")
-}
-func (f fakeGoogleSubscriptionRepo) ListActiveBurndownIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
-	return nil, nil
-}
-func (f fakeGoogleSubscriptionRepo) ClawbackSubscription(ctx context.Context, subID int64, now time.Time) (float64, error) {
-	return 0, nil
 }
 func (f fakeGoogleSubscriptionRepo) ForfeitExpiredSubscriptions(ctx context.Context, now time.Time, limit int) ([]int64, error) {
 	return nil, nil
@@ -514,7 +526,10 @@ func TestApiKeyAuthWithSubscriptionGoogle_DisabledKey(t *testing.T) {
 	require.Equal(t, "UNAUTHENTICATED", resp.Error.Status)
 }
 
-func TestApiKeyAuthWithSubscriptionGoogle_InsufficientBalance(t *testing.T) {
+// per-day：中间件不再按 user.Balance<=0 早拒——套餐额度在卡的 today_remaining、不在钱包，
+// 「钱包 0 + 有今日套餐额度」用户应放行；余额/准入由 handler 的 CheckBillingEligibility
+// (per-day Admit) 权威判定。故 0 余额请求应放行到 handler（200），而非中间件 403。
+func TestApiKeyAuthWithSubscriptionGoogle_ZeroBalancePassesToHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	r := gin.New()
@@ -540,12 +555,7 @@ func TestApiKeyAuthWithSubscriptionGoogle_InsufficientBalance(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	var resp googleErrorResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Equal(t, http.StatusForbidden, resp.Error.Code)
-	require.Equal(t, "Insufficient account balance", resp.Error.Message)
-	require.Equal(t, "PERMISSION_DENIED", resp.Error.Status)
+	require.Equal(t, http.StatusOK, rec.Code)
 }
 
 func TestApiKeyAuthWithSubscriptionGoogle_TouchesLastUsedOnSuccess(t *testing.T) {

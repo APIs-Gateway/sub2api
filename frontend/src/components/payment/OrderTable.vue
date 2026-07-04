@@ -1,10 +1,12 @@
 <template>
   <DataTable :columns="columns" :data="orders" :loading="loading">
     <template #cell-id="{ value }">
-      <span class="font-mono text-sm">#{{ value }}</span>
+      <span class="font-mono text-xs text-stone-500 dark:text-gray-400">#{{ value }}</span>
     </template>
     <template #cell-out_trade_no="{ value }">
-      <span class="text-sm text-gray-900 dark:text-white">{{ value }}</span>
+      <span class="block max-w-[18rem] truncate font-mono text-xs text-stone-700 dark:text-gray-300" :title="value">
+        {{ value }}
+      </span>
     </template>
     <template v-if="showUser" #cell-user_email="{ value, row }">
       <div class="text-sm">
@@ -13,18 +15,18 @@
       </div>
     </template>
     <template #cell-pay_amount="{ value, row }">
-      <div class="text-sm">
-        <span class="font-medium text-gray-900 dark:text-white">¥{{ value.toFixed(2) }}</span>
-        <span v-if="row.fee_rate > 0" class="ml-1 text-xs text-gray-400" :title="t('payment.orders.fee') + ': ' + row.fee_rate + '%'">
+      <div class="text-sm leading-snug">
+        <span class="font-mono font-medium tabular-nums text-stone-900 dark:text-gray-100">¥{{ value.toFixed(2) }}</span>
+        <span v-if="row.fee_rate > 0" class="ml-1 text-xs text-stone-400" :title="t('payment.orders.fee') + ': ' + row.fee_rate + '%'">
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
-        <div v-if="row.amount !== row.pay_amount" class="text-xs text-gray-500">
+        <div v-if="row.amount !== row.pay_amount" class="mt-0.5 text-xs text-stone-500 dark:text-gray-400">
           {{ t('payment.orders.creditedAmount') }}: {{ row.order_type === 'balance' ? '$' : '¥' }}{{ row.amount.toFixed(2) }}
         </div>
       </div>
     </template>
     <template #cell-payment_type="{ value }">
-      <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('payment.methods.' + value, value) }}</span>
+      <span class="text-sm text-stone-600 dark:text-gray-300">{{ t('payment.methods.' + value, value) }}</span>
     </template>
     <template #cell-status="{ value }">
       <OrderStatusBadge :status="value" />

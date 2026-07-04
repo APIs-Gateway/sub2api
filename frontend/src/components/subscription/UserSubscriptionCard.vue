@@ -1,8 +1,5 @@
 <template>
-  <div
-    class="overflow-hidden rounded-md border bg-white dark:bg-dark-800"
-    :class="platformBorderClass(subscription.group?.platform || '')"
-  >
+  <div class="overflow-hidden rounded-md border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
     <!-- Header -->
     <div class="flex items-center justify-between border-b border-gray-100 p-4 dark:border-dark-700">
       <div class="flex items-center gap-3">
@@ -13,24 +10,25 @@
           ]"
         />
         <div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <h3 class="font-semibold text-gray-900 dark:text-white">
-              {{ subscription.group?.name || `Group #${subscription.group_id}` }}
+              {{ planTitle }}
             </h3>
             <span
+              v-for="badge in planBadges"
+              :key="badge"
               :class="[
-                'rounded-md border px-2 py-0.5 text-[11px] font-medium',
-                platformBadgeClass(subscription.group?.platform || '')
+                'rounded-md border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-700 dark:border-dark-700 dark:text-gray-300'
               ]"
             >
-              {{ platformLabel(subscription.group?.platform || '') }}
+              {{ badge }}
             </span>
           </div>
           <p
-            v-if="subscription.group?.description"
+            v-if="planDescription"
             class="mt-0.5 text-xs text-gray-600 dark:text-gray-400"
           >
-            {{ subscription.group.description }}
+            {{ planDescription }}
           </p>
         </div>
       </div>
@@ -47,18 +45,26 @@
         >
           {{ t(`userSubscriptions.status.${subscription.status}`) }}
         </span>
-        <button
-          v-if="subscription.status === 'active'"
-          class="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
-          @click="
-            router.push({
-              path: '/purchase',
-              query: { tab: 'subscription', group: String(subscription.group_id) }
-            })
-          "
-        >
-          {{ t('payment.renewNow') }}
-        </button>
+        <div v-if="subscription.status === 'active'" class="flex items-center gap-2">
+          <!-- 手动透支「借一天」：仅在配了日额度时出现；条件不满足时置灰并以 title 说明原因。
+               中性次按钮（透支非错误，clay/primary 保留给 Signal）；代价提示交确认框。 -->
+          <button
+            v-if="showOverdraftButton"
+            type="button"
+            :disabled="!canOverdraft"
+            :title="canOverdraft ? '' : overdraftDisabledReason"
+            class="btn btn-secondary btn-sm"
+            @click="openOverdraftConfirm"
+          >
+            {{ t('userSubscriptions.overdraftBtn.label') }}
+          </button>
+          <button type="button" class="btn btn-primary btn-sm" @click="openLifecycle('renew')">
+            {{ t('payment.renewNow') }}
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" @click="openLifecycle('change')">
+            {{ t('userSubscriptions.lifecycle.changeTitle') }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -78,237 +84,31 @@
         }}</span>
       </div>
 
-      <!-- Burn-down 订阅进度（新模型）：服务天数与额度消费进度分开展示 -->
-      <div v-if="subscription.daily_amount_usd" class="space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">订阅进度</span>
-          <span class="text-sm text-gray-600 dark:text-gray-400">
-            已服务第
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{
-              burndownCalendarDay(subscription)
-            }}</span>
-            /
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{
-              burndownTotalDays(subscription)
-            }}</span>
-            天
-          </span>
-        </div>
-        <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-          <div
-            class="absolute inset-y-0 left-0 rounded-full bg-gray-900 transition-all duration-300 dark:bg-gray-100"
-            :style="{
-              width: getProgressWidth(subscription.consumed_usd, subscription.granted_total_usd)
-            }"
-          ></div>
-        </div>
-        <div
-          class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-400"
-        >
-          <span>
-            已消费
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{
-              burndownConsumptionDay(subscription)
-            }}</span>
-            天额度
-          </span>
-          <span
-            >剩余订阅余额
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white"
-              >${{ (subscription.remaining_usd || 0).toFixed(2) }}</span
-            >
-            /
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white"
-              >${{ (subscription.granted_total_usd || 0).toFixed(2) }}</span
-            ></span
-          >
-          <span v-if="(subscription.clawed_usd || 0) > 0"
-            >已清扣
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white"
-              >${{ (subscription.clawed_usd || 0).toFixed(2) }}</span
-            ></span
-          >
-        </div>
-        <p class="text-xs text-gray-600 dark:text-gray-400">
-          每日额度
-          <span class="font-mono tabular-nums text-gray-900 dark:text-white"
-            >${{ (subscription.daily_amount_usd || 0).toFixed(2) }}</span
-          >，可提前透支后续天额度；当天未用完部分次日 0 点（东八区）清扣作废
-        </p>
-
-        <!-- 自助：本卡最多往后透支天数（仅生效中可改） -->
-        <div v-if="subscription.status === 'active'" class="space-y-2 pt-1">
-          <div class="flex flex-wrap items-center gap-2">
-            <span
-              class="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap"
-            >
-              {{ t('userSubscriptions.overdraft.label') }}
-            </span>
-            <input
-              v-model="overdraftEdit"
-              type="number"
-              min="0"
-              :max="overdraftMax(subscription)"
-              step="1"
-              class="input w-24"
-              :disabled="isOverdraftExhausted(subscription)"
-              :placeholder="t('userSubscriptions.overdraft.placeholder')"
-            />
-            <button
-              type="button"
-              class="btn btn-secondary"
-              :disabled="saving || isOverdraftExhausted(subscription)"
-              @click="saveOverdraft"
-            >
-              {{ t('common.save') }}
-            </button>
-            <span class="text-xs text-gray-600 dark:text-gray-400">
-              {{
-                t('userSubscriptions.overdraft.usage', {
-                  used: overdraftUsed(subscription),
-                  max: overdraftMax(subscription),
-                  remaining: overdraftRemaining(subscription)
-                })
-              }}
+      <!-- 三窗口用量 vs 限额（限额挂卡，不挂 group）：只展示已配置（limit>0）的窗口，与迷你进度口径一致。 -->
+      <template v-if="hasAnyLimit">
+        <div v-for="w in configuredWindows" :key="w.key" class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ w.label }}</span>
+            <span class="font-mono tabular-nums text-sm text-gray-900 dark:text-white">
+              ${{ (w.used || 0).toFixed(2) }} / ${{ (w.limit ?? 0).toFixed(2) }}
             </span>
           </div>
-          <p class="text-xs text-gray-600 dark:text-gray-400">
-            {{
-              isOverdraftExhausted(subscription)
-                ? t('userSubscriptions.overdraft.exhausted', { max: overdraftMax(subscription) })
-                : t('userSubscriptions.overdraft.hint', { max: overdraftMax(subscription) })
-            }}
+          <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+            <div
+              class="absolute inset-y-0 left-0 rounded-full transition-all duration-300"
+              :class="getProgressBarClass(w.used, w.limit)"
+              :style="{ width: getProgressWidth(w.used, w.limit) }"
+            ></div>
+          </div>
+          <p v-if="w.resetsAt" class="text-xs text-gray-600 dark:text-gray-400">
+            {{ t('userSubscriptions.resetIn', { time: formatResetTime(w.resetsAt) }) }}
           </p>
         </div>
-      </div>
+      </template>
 
-      <!-- Daily Usage -->
+      <!-- 完全不限：卡上三窗口限额全空（未配置 / 不限额订阅）。 -->
       <div
-        v-if="subscription.group?.daily_limit_usd && !subscription.daily_amount_usd"
-        class="space-y-2"
-      >
-        <div class="flex items-center justify-between">
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {{ t('userSubscriptions.daily') }}
-          </span>
-          <span class="font-mono tabular-nums text-sm text-gray-900 dark:text-white">
-            ${{ (subscription.daily_usage_usd || 0).toFixed(2) }} / ${{
-              subscription.group.daily_limit_usd.toFixed(2)
-            }}
-          </span>
-        </div>
-        <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-          <div
-            class="absolute inset-y-0 left-0 rounded-full transition-all duration-300"
-            :class="
-              getProgressBarClass(subscription.daily_usage_usd, subscription.group.daily_limit_usd)
-            "
-            :style="{
-              width: getProgressWidth(
-                subscription.daily_usage_usd,
-                subscription.group.daily_limit_usd
-              )
-            }"
-          ></div>
-        </div>
-        <p v-if="subscription.daily_window_start" class="text-xs text-gray-600 dark:text-gray-400">
-          {{ formatDailyUsageWindow(subscription) }}
-        </p>
-      </div>
-
-      <!-- Weekly Usage -->
-      <div
-        v-if="subscription.group?.weekly_limit_usd && !subscription.daily_amount_usd"
-        class="space-y-2"
-      >
-        <div class="flex items-center justify-between">
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {{ t('userSubscriptions.weekly') }}
-          </span>
-          <span class="font-mono tabular-nums text-sm text-gray-900 dark:text-white">
-            ${{ (subscription.weekly_usage_usd || 0).toFixed(2) }} / ${{
-              subscription.group.weekly_limit_usd.toFixed(2)
-            }}
-          </span>
-        </div>
-        <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-          <div
-            class="absolute inset-y-0 left-0 rounded-full transition-all duration-300"
-            :class="
-              getProgressBarClass(
-                subscription.weekly_usage_usd,
-                subscription.group.weekly_limit_usd
-              )
-            "
-            :style="{
-              width: getProgressWidth(
-                subscription.weekly_usage_usd,
-                subscription.group.weekly_limit_usd
-              )
-            }"
-          ></div>
-        </div>
-        <p v-if="subscription.weekly_window_start" class="text-xs text-gray-600 dark:text-gray-400">
-          {{
-            t('userSubscriptions.resetIn', {
-              time: formatResetTime(subscription.weekly_window_start, 168)
-            })
-          }}
-        </p>
-      </div>
-
-      <!-- Monthly Usage -->
-      <div
-        v-if="subscription.group?.monthly_limit_usd && !subscription.daily_amount_usd"
-        class="space-y-2"
-      >
-        <div class="flex items-center justify-between">
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {{ t('userSubscriptions.monthly') }}
-          </span>
-          <span class="font-mono tabular-nums text-sm text-gray-900 dark:text-white">
-            ${{ (subscription.monthly_usage_usd || 0).toFixed(2) }} / ${{
-              subscription.group.monthly_limit_usd.toFixed(2)
-            }}
-          </span>
-        </div>
-        <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-          <div
-            class="absolute inset-y-0 left-0 rounded-full transition-all duration-300"
-            :class="
-              getProgressBarClass(
-                subscription.monthly_usage_usd,
-                subscription.group.monthly_limit_usd
-              )
-            "
-            :style="{
-              width: getProgressWidth(
-                subscription.monthly_usage_usd,
-                subscription.group.monthly_limit_usd
-              )
-            }"
-          ></div>
-        </div>
-        <p
-          v-if="subscription.monthly_window_start"
-          class="text-xs text-gray-600 dark:text-gray-400"
-        >
-          {{
-            t('userSubscriptions.resetIn', {
-              time: formatResetTime(subscription.monthly_window_start, 720)
-            })
-          }}
-        </p>
-      </div>
-
-      <!-- No limits configured - Unlimited badge -->
-      <div
-        v-if="
-          !subscription.daily_amount_usd &&
-          !subscription.group?.daily_limit_usd &&
-          !subscription.group?.weekly_limit_usd &&
-          !subscription.group?.monthly_limit_usd
-        "
+        v-else
         class="flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 py-6 dark:border-dark-700 dark:bg-dark-800/40"
       >
         <div class="flex items-center gap-3">
@@ -324,23 +124,46 @@
         </div>
       </div>
     </div>
+
+    <SubscriptionLifecycleDialog
+      v-if="lifecycleMode"
+      :show="showLifecycle"
+      :mode="lifecycleMode"
+      :subscription="subscription"
+      @close="showLifecycle = false"
+      @purchase="onLifecyclePurchase"
+    />
+
+    <ConfirmDialog
+      :show="showOverdraftConfirm"
+      :title="t('userSubscriptions.overdraftBtn.confirmTitle')"
+      :message="t('userSubscriptions.overdraftBtn.confirmMessage')"
+      :confirm-text="t('userSubscriptions.overdraftBtn.confirmOk')"
+      danger
+      @confirm="confirmOverdraft"
+      @cancel="showOverdraftConfirm = false"
+    >
+      <p
+        v-if="overdraftRemaining != null"
+        class="text-xs font-medium text-gray-500 dark:text-gray-400"
+      >
+        {{ t('userSubscriptions.overdraftBtn.remaining', { n: overdraftRemaining }) }}
+      </p>
+    </ConfirmDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useAppStore } from '@/stores/app'
+import SubscriptionLifecycleDialog from '@/components/subscription/SubscriptionLifecycleDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import subscriptionsAPI from '@/api/subscriptions'
+import { useAppStore } from '@/stores'
 import type { UserSubscription } from '@/types'
 import { formatDateOnly } from '@/utils/format'
-import { platformBorderClass, platformBadgeClass, platformLabel } from '@/utils/platformColors'
-import {
-  getRemainingDurationParts,
-  isOneTimeDailyQuota,
-  type RemainingDurationParts
-} from '@/utils/subscriptionQuota'
+import { getRemainingDurationParts, type RemainingDurationParts } from '@/utils/subscriptionQuota'
 
 const props = defineProps<{
   subscription: UserSubscription
@@ -351,100 +174,242 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const router = useRouter()
 const appStore = useAppStore()
+const router = useRouter()
 
-// 本卡「最多透支天数」的可编辑值（空串 = 关闭透支）。
-const overdraftEdit = ref<number | string>('')
-const saving = ref(false)
+// 东八区常量：窗口/有效期边界一律按东八区自然日算（东八区无 DST，固定 +08:00）。
+const SH_TZ = 'Asia/Shanghai'
+const SH_OFFSET_MS = 8 * 60 * 60 * 1000
 
-// 跟随传入卡片初始化编辑值：用满透支或未开启时显示为空（关闭）。
-watch(
-  () => props.subscription,
-  (sub) => {
-    overdraftEdit.value =
-      isOverdraftExhausted(sub) || sub.max_overdraft_days == null ? '' : sub.max_overdraft_days
-  },
-  { immediate: true }
+const dailyAmount = computed(() => props.subscription.daily_amount_usd ?? props.subscription.daily_limit_usd ?? 0)
+const planConcurrency = computed(() =>
+  dailyAmount.value > 0 ? Math.max(1, Math.ceil(dailyAmount.value / 10)) : 0
 )
+const planTitle = computed(() => {
+  if (dailyAmount.value > 0) return `${t('userSubscriptions.daily')} ${formatUSD(dailyAmount.value)}`
+  return t('userSubscriptions.unlimited')
+})
+const planBadges = computed(() => {
+  const badges: string[] = []
+  if (planConcurrency.value > 0) badges.push(`${t('payment.planCard.concurrency')} ${planConcurrency.value}`)
+  if (props.subscription.expires_at) {
+    const days = daysRemaining(props.subscription.expires_at)
+    if (days >= 0) badges.push(t('userSubscriptions.daysRemaining', { days }))
+  }
+  return badges
+})
+const planDescription = computed(() => {
+  const parts: string[] = []
+  if (props.subscription.weekly_limit_usd != null && props.subscription.weekly_limit_usd > 0) {
+    parts.push(`${t('userSubscriptions.weekly')} ${formatUSD(props.subscription.weekly_limit_usd)}`)
+  }
+  if (props.subscription.monthly_limit_usd != null && props.subscription.monthly_limit_usd > 0) {
+    parts.push(`${t('userSubscriptions.monthly')} ${formatUSD(props.subscription.monthly_limit_usd)}`)
+  }
+  if (parts.length === 0 && dailyAmount.value <= 0) parts.push(t('userSubscriptions.unlimitedDesc'))
+  return parts.join(' · ')
+})
+
+// 续费 / 转套餐 生命周期对话框。
+const showLifecycle = ref(false)
+const lifecycleMode = ref<'renew' | 'change' | null>(null)
+function openLifecycle(mode: 'renew' | 'change') {
+  lifecycleMode.value = mode
+  showLifecycle.value = true
+}
+// 续费/转套餐改走法币支付网关：弹窗确认后带「意图 + D/T + 预估金额」跳到支付页结账（选支付方式 → 下单 → 跳 pay_url）。
+// 支付成功由后端回调履约（延长/换卡），不在此同步扣费。
+function onLifecyclePurchase(payload: { intent: 'renew' | 'change_plan'; dailyAmountUsd: number; validityDays: number; charge: number }) {
+  showLifecycle.value = false
+  router.push({
+    path: '/payment',
+    query: {
+      tab: 'subscription',
+      intent: payload.intent,
+      daily_amount_usd: String(payload.dailyAmountUsd),
+      validity_days: String(payload.validityDays),
+      charge: String(payload.charge),
+    },
+  })
+}
+
+// 三窗口用量 vs 限额（限额挂卡；limit 为 null/0 = 该窗口不限）。
+// resetsAt = 下一个东八区自然窗口边界（日/周用固定时长精确，月按自然月，避免 720h 近似在 2 月 / 31 天月份算错）。
+const windows = computed(() => {
+  const s = props.subscription
+  const build = (
+    key: 'daily' | 'weekly' | 'monthly',
+    label: string,
+    used: number | undefined,
+    limit: number | null | undefined,
+    windowStart: string | null | undefined
+  ) => ({
+    key,
+    label,
+    used,
+    limit: limit ?? null,
+    resetsAt: windowStart ? nextWindowReset(windowStart, key) : null
+  })
+  return [
+    build(
+      'daily',
+      t('userSubscriptions.daily'),
+      s.daily_usage_usd,
+      s.daily_limit_usd,
+      s.daily_window_start
+    ),
+    build(
+      'weekly',
+      t('userSubscriptions.weekly'),
+      s.weekly_usage_usd,
+      s.weekly_limit_usd,
+      s.weekly_window_start
+    ),
+    build(
+      'monthly',
+      t('userSubscriptions.monthly'),
+      s.monthly_usage_usd,
+      s.monthly_limit_usd,
+      s.monthly_window_start
+    )
+  ]
+})
+// 与迷你进度统一口径：两处都只展示已配置（limit>0）的窗口，三窗口全空 → ∞ 不限额徽标。
+const configuredWindows = computed(() =>
+  windows.value.filter((w) => w.limit != null && w.limit > 0)
+)
+const hasAnyLimit = computed(() => configuredWindows.value.length > 0)
+
+// ─── 手动透支「借一天」（三窗口模型）─────────────────────────────────────────
+const showOverdraftConfirm = ref(false)
+const overdrafting = ref(false)
+const overdraftIdemKey = ref('')
+
+// 当日额度已撞满（先看后端惰性重置后的 daily_usage；无日限额则谈不上撞满）。
+const dailyMaxed = computed(() => {
+  const s = props.subscription
+  const limit = s.daily_limit_usd
+  return limit != null && limit > 0 && (s.daily_usage_usd || 0) >= limit
+})
+// 仍有可借的未来天：expires_at 晚于「今天结束」（东八区明日 00:00）。
+const hasFutureDay = computed(() => {
+  const exp = props.subscription.expires_at
+  return exp != null && new Date(exp).getTime() > endOfTodaySHms()
+})
+// 用户级本月透支剩余次数（后端 #7/#8 提供）；无值 = 不前置拦截，交服务端兜底。
+const overdraftRemaining = computed(() => props.subscription.monthly_overdraft_remaining ?? null)
+// 仅在「生效卡 + 配了日额度」时出现按钮（无日限额永远撞不满，透支无意义）。
+const showOverdraftButton = computed(() => {
+  const s = props.subscription
+  return s.status === 'active' && s.daily_limit_usd != null && s.daily_limit_usd > 0
+})
+const canOverdraft = computed(
+  () =>
+    showOverdraftButton.value &&
+    dailyMaxed.value &&
+    hasFutureDay.value &&
+    (overdraftRemaining.value == null || overdraftRemaining.value > 0)
+)
+const overdraftDisabledReason = computed(() => {
+  if (!dailyMaxed.value) return t('userSubscriptions.overdraftBtn.disabledNotMaxed')
+  if (!hasFutureDay.value) return t('userSubscriptions.overdraftBtn.disabledNoFutureDay')
+  if (overdraftRemaining.value != null && overdraftRemaining.value <= 0)
+    return t('userSubscriptions.overdraftBtn.disabledExhausted')
+  return ''
+})
+
+function openOverdraftConfirm() {
+  // 每次开确认框生成一把幂等键：确认按钮连点 / 重放都用同键，服务端去重防重复借天。
+  overdraftIdemKey.value =
+    globalThis.crypto?.randomUUID?.() ?? `od-${Date.now()}-${Math.round(Math.random() * 1e9)}`
+  showOverdraftConfirm.value = true
+}
+
+async function confirmOverdraft() {
+  if (overdrafting.value) return
+  overdrafting.value = true
+  try {
+    await subscriptionsAPI.borrowOverdraftDay(overdraftIdemKey.value)
+    appStore.showSuccess(t('userSubscriptions.overdraftBtn.success'))
+    showOverdraftConfirm.value = false
+    emit('saved')
+  } catch (e) {
+    appStore.showError(overdraftErrorMessage(e))
+  } finally {
+    overdrafting.value = false
+  }
+}
+
+// 把后端错误码映射为本地化文案；未知码回退到服务端 message,再回退到通用文案。
+function overdraftErrorMessage(e: unknown): string {
+  const err = e as {
+    response?: {
+      data?: { error?: { code?: string; message?: string }; code?: string; message?: string }
+    }
+  }
+  const data = err?.response?.data
+  const code = data?.error?.code ?? data?.code
+  const map: Record<string, string> = {
+    OVERDRAFT_NO_ACTIVE_CARD: t('userSubscriptions.overdraftBtn.errors.noActiveCard'),
+    OVERDRAFT_DAILY_NOT_EXHAUSTED: t('userSubscriptions.overdraftBtn.errors.dailyNotExhausted'),
+    OVERDRAFT_MONTHLY_LIMIT: t('userSubscriptions.overdraftBtn.errors.monthlyLimit'),
+    OVERDRAFT_NO_FUTURE_DAY: t('userSubscriptions.overdraftBtn.errors.noFutureDay')
+  }
+  if (code && map[code]) return map[code]
+  return data?.error?.message ?? data?.message ?? t('userSubscriptions.overdraftBtn.errors.generic')
+}
+
+// nextWindowReset 返回下一个东八区自然窗口重置时刻。
+// 日/周 = window_start + 固定时长（东八区无 DST，精确）；月 = 下个自然月 1 日 00:00(+08:00)。
+function nextWindowReset(windowStart: string, kind: 'daily' | 'weekly' | 'monthly'): Date {
+  const start = new Date(windowStart)
+  if (kind === 'monthly') {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: SH_TZ,
+      year: 'numeric',
+      month: 'numeric'
+    }).formatToParts(start)
+    const year = Number(parts.find((p) => p.type === 'year')?.value)
+    const month = Number(parts.find((p) => p.type === 'month')?.value) // 1-12（东八区当前月）
+    // Date.UTC 月份 0-indexed：传入 1-indexed 当前月 = 下个月 1 日（自动跨年）；东八区 00:00 = UTC −8h。
+    return new Date(Date.UTC(year, month, 1, 0, 0, 0) - SH_OFFSET_MS)
+  }
+  const hours = kind === 'weekly' ? 168 : 24
+  return new Date(start.getTime() + hours * 60 * 60 * 1000)
+}
+
+// endOfTodaySHms 返回「今天结束」= 东八区明日 00:00 的时间戳（ms）。
+function endOfTodaySHms(): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SH_TZ,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric'
+  }).formatToParts(new Date())
+  const year = Number(parts.find((p) => p.type === 'year')?.value)
+  const month = Number(parts.find((p) => p.type === 'month')?.value) // 1-12
+  const day = Number(parts.find((p) => p.type === 'day')?.value)
+  return Date.UTC(year, month - 1, day + 1, 0, 0, 0) - SH_OFFSET_MS
+}
 
 function platformAccentDotClass(_p: string): string {
   return 'bg-gray-400 dark:bg-dark-500'
+}
+
+function formatUSD(value: number): string {
+  const rounded = Math.round(value * 100) / 100
+  return `$${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(2)}`
+}
+
+function daysRemaining(expiresAt: string): number {
+  const diff = new Date(expiresAt).getTime() - Date.now()
+  return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
 }
 
 function getProgressWidth(used: number | undefined, limit: number | null | undefined): string {
   if (!limit || limit === 0) return '0%'
   const percentage = Math.min(((used || 0) / limit) * 100, 100)
   return `${percentage}%`
-}
-
-function overdraftMax(sub: UserSubscription): number {
-  return sub.max_overdraft_uses ?? 5
-}
-
-function overdraftUsed(sub: UserSubscription): number {
-  return Math.max(0, sub.total_overdraft_count ?? 0)
-}
-
-function overdraftRemaining(sub: UserSubscription): number {
-  const fromAPI = sub.remaining_overdraft_uses
-  if (typeof fromAPI === 'number') return Math.max(0, fromAPI)
-  return Math.max(0, overdraftMax(sub) - overdraftUsed(sub))
-}
-
-function isOverdraftExhausted(sub: UserSubscription): boolean {
-  return sub.can_enable_overdraft === false || overdraftRemaining(sub) <= 0
-}
-
-// saveOverdraft 用户自助保存本卡「最多透支天数」（空/0 = 关闭透支，1..5 = 开启）。
-async function saveOverdraft() {
-  const sub = props.subscription
-  const raw = overdraftEdit.value
-  let days: number | null
-  if (raw === '' || raw === null || raw === undefined) {
-    days = null
-  } else {
-    const n = Number(raw)
-    if (Number.isNaN(n) || !Number.isInteger(n) || n < 0 || n > overdraftMax(sub)) {
-      appStore.showError(t('userSubscriptions.overdraft.invalid', { max: overdraftMax(sub) }))
-      return
-    }
-    days = n === 0 ? null : n
-  }
-  if (days !== null && isOverdraftExhausted(sub)) {
-    appStore.showError(t('userSubscriptions.overdraft.exhausted'))
-    return
-  }
-  try {
-    saving.value = true
-    await subscriptionsAPI.setOverdraftDays(sub.id, days)
-    appStore.showSuccess(t('userSubscriptions.overdraft.saved'))
-    emit('saved')
-  } catch (e: any) {
-    appStore.showError(e.response?.data?.message || t('userSubscriptions.overdraft.failed'))
-  } finally {
-    saving.value = false
-  }
-}
-
-// burndownTotalDays 返回 burn-down 订阅的总天数 = 发放总额 / 每日额度。
-function burndownTotalDays(sub: UserSubscription): number {
-  if (!sub.daily_amount_usd || sub.daily_amount_usd <= 0) return 0
-  return Math.round((sub.granted_total_usd || 0) / sub.daily_amount_usd)
-}
-
-function burndownCalendarDay(sub: UserSubscription): number {
-  if (typeof sub.calendar_day === 'number' && Number.isFinite(sub.calendar_day)) {
-    return Math.max(0, Math.floor(sub.calendar_day))
-  }
-  return 0
-}
-
-function burndownConsumptionDay(sub: UserSubscription): number {
-  if (typeof sub.consumption_day === 'number' && Number.isFinite(sub.consumption_day)) {
-    return Math.max(0, Math.floor(sub.consumption_day))
-  }
-  return 0
 }
 
 function getProgressBarClass(used: number | undefined, limit: number | null | undefined): string {
@@ -499,25 +464,9 @@ function formatDurationParts(parts: RemainingDurationParts): string {
   return `${parts.minutes}m`
 }
 
-function formatDailyUsageWindow(subscription: UserSubscription): string {
-  if (isOneTimeDailyQuota(subscription) && subscription.expires_at) {
-    const parts = getRemainingDurationParts(subscription.expires_at)
-    if (!parts) return t('userSubscriptions.windowNotActive')
-    return t('userSubscriptions.quotaEndsIn', { time: formatDurationParts(parts) })
-  }
-
-  return t('userSubscriptions.resetIn', {
-    time: formatResetTime(subscription.daily_window_start, 24)
-  })
-}
-
-function formatResetTime(windowStart: string | null, windowHours: number): string {
-  if (!windowStart) return t('userSubscriptions.windowNotActive')
-
-  const start = new Date(windowStart)
-  const end = new Date(start.getTime() + windowHours * 60 * 60 * 1000)
-  const parts = getRemainingDurationParts(end)
-
+function formatResetTime(resetsAt: Date | null): string {
+  if (!resetsAt) return t('userSubscriptions.windowNotActive')
+  const parts = getRemainingDurationParts(resetsAt)
   return parts ? formatDurationParts(parts) : t('userSubscriptions.windowNotActive')
 }
 </script>

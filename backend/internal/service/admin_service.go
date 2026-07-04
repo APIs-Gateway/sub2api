@@ -865,19 +865,6 @@ func sameInt64Set(a, b []int64) bool {
 	return true
 }
 
-// normalizeOverdraftDays 规整「最多透支天数」入参为存储值。
-// nil、0 或负数 → nil（关闭透支）；1..MaxSubscriptionOverdraftUses → 拷贝原值；超上限直接拒绝。
-func normalizeOverdraftDays(in *int) (*int, error) {
-	if in == nil || *in <= 0 {
-		return nil, nil
-	}
-	if *in > MaxSubscriptionOverdraftUses {
-		return nil, ErrInvalidSubscriptionOverdraftDays
-	}
-	v := *in
-	return &v, nil
-}
-
 func (s *adminServiceImpl) DeleteUser(ctx context.Context, id int64) error {
 	// Protect admin users: cannot delete admin accounts
 	user, err := s.userRepo.GetByID(ctx, id)
@@ -2082,11 +2069,9 @@ func (s *adminServiceImpl) validateStablePriorityFallbackGroup(ctx context.Conte
 // platform/subscriptionType: 当前分组的有效平台/订阅类型
 // fallbackGroupID: 兜底分组 ID
 func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Context, currentGroupID int64, platform, subscriptionType string, fallbackGroupID int64) error {
+	// per-day：分组仅管路由、无「订阅型分组」概念，不再限制订阅组设/作 fallback（subscriptionType 入参已弃用）。
 	if platform != PlatformAnthropic && platform != PlatformAntigravity {
 		return fmt.Errorf("invalid request fallback only supported for anthropic or antigravity groups")
-	}
-	if subscriptionType == SubscriptionTypeSubscription {
-		return fmt.Errorf("subscription groups cannot set invalid request fallback")
 	}
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
 		return fmt.Errorf("cannot set self as invalid request fallback group")
@@ -2098,9 +2083,6 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 	}
 	if fallbackGroup.Platform != PlatformAnthropic {
 		return fmt.Errorf("fallback group must be anthropic platform")
-	}
-	if fallbackGroup.SubscriptionType == SubscriptionTypeSubscription {
-		return fmt.Errorf("fallback group cannot be subscription type")
 	}
 	if fallbackGroup.FallbackGroupIDOnInvalidRequest != nil {
 		return fmt.Errorf("fallback group cannot have invalid request fallback configured")
@@ -2471,17 +2453,14 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		if group.Status != StatusActive {
 			return nil, infraerrors.BadRequest("GROUP_NOT_ACTIVE", "target group is not active")
 		}
-		// burn-down 模型下订阅金额已发放到余额、通过标准渠道消费，订阅型分组不再可绑定到 API Key
-		if group.IsSubscriptionType() {
-			return nil, infraerrors.BadRequest("GROUP_IS_SUBSCRIPTION", "subscription groups cannot be bound to API keys")
-		}
+		// per-day：分组仅管路由、无「订阅型分组」概念，可绑定任意路由分组到 API Key。
 
 		gid := *groupID
 		apiKey.GroupID = &gid
 		apiKey.Group = group
 
-		// 专属标准分组：使用事务保证「添加分组权限」与「更新 API Key」的原子性
-		if group.IsExclusive && !group.IsSubscriptionType() {
+		// 专属分组：使用事务保证「添加分组权限」与「更新 API Key」的原子性
+		if group.IsExclusive {
 			opCtx := ctx
 			var tx *dbent.Tx
 			if s.entClient == nil {
@@ -2577,9 +2556,7 @@ func (s *adminServiceImpl) ReplaceUserGroup(ctx context.Context, userID, oldGrou
 	if !newGroup.IsExclusive {
 		return nil, infraerrors.BadRequest("GROUP_NOT_EXCLUSIVE", "target group is not exclusive")
 	}
-	if newGroup.IsSubscriptionType() {
-		return nil, infraerrors.BadRequest("GROUP_IS_SUBSCRIPTION", "subscription groups are not supported for replacement")
-	}
+	// per-day：分组仅管路由、无「订阅型分组」概念，不再因订阅类型拒绝替换。
 
 	// 事务保证原子性
 	if s.entClient == nil {
@@ -3337,13 +3314,15 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		if input.GroupID == nil {
 			return nil, errors.New("group_id is required for subscription type")
 		}
-		// 验证分组存在且为订阅类型
+		// per-day：订阅与 group 类型解耦，group 仅作路由快照；但兑换码发卡的每日额度 D
+		// 经 group.daily_limit_usd 回退取值（见 resolveAssignDailyAmount），故要求该值 > 0，
+		// 否则兑换时才会以 INVALID_DAILY_AMOUNT 失败，体验差。
 		group, err := s.groupRepo.GetByID(ctx, *input.GroupID)
 		if err != nil {
 			return nil, fmt.Errorf("group not found: %w", err)
 		}
-		if !group.IsSubscriptionType() {
-			return nil, errors.New("group must be subscription type")
+		if group.DailyLimitUSD == nil || *group.DailyLimitUSD <= 0 {
+			return nil, errors.New("group must define a positive daily_limit_usd to back a subscription")
 		}
 	}
 

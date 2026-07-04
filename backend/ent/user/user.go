@@ -63,6 +63,12 @@ const (
 	FieldRpmLimit = "rpm_limit"
 	// FieldSubscriptionOverdraftGuard holds the string denoting the subscription_overdraft_guard field in the database.
 	FieldSubscriptionOverdraftGuard = "subscription_overdraft_guard"
+	// FieldMonthlyOverdraftCount holds the string denoting the monthly_overdraft_count field in the database.
+	FieldMonthlyOverdraftCount = "monthly_overdraft_count"
+	// FieldMonthlyOverdraftMonth holds the string denoting the monthly_overdraft_month field in the database.
+	FieldMonthlyOverdraftMonth = "monthly_overdraft_month"
+	// FieldLastChangePlanDay holds the string denoting the last_change_plan_day field in the database.
+	FieldLastChangePlanDay = "last_change_plan_day"
 	// FieldStablePriorityEnabled holds the string denoting the stable_priority_enabled field in the database.
 	FieldStablePriorityEnabled = "stable_priority_enabled"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
@@ -220,6 +226,9 @@ var Columns = []string{
 	FieldTotalRecharged,
 	FieldRpmLimit,
 	FieldSubscriptionOverdraftGuard,
+	FieldMonthlyOverdraftCount,
+	FieldMonthlyOverdraftMonth,
+	FieldLastChangePlanDay,
 	FieldStablePriorityEnabled,
 }
 
@@ -293,6 +302,14 @@ var (
 	DefaultRpmLimit int
 	// DefaultSubscriptionOverdraftGuard holds the default value on creation for the "subscription_overdraft_guard" field.
 	DefaultSubscriptionOverdraftGuard bool
+	// DefaultMonthlyOverdraftCount holds the default value on creation for the "monthly_overdraft_count" field.
+	DefaultMonthlyOverdraftCount int
+	// DefaultMonthlyOverdraftMonth holds the default value on creation for the "monthly_overdraft_month" field.
+	DefaultMonthlyOverdraftMonth string
+	// MonthlyOverdraftMonthValidator is a validator for the "monthly_overdraft_month" field. It is called by the builders before save.
+	MonthlyOverdraftMonthValidator func(string) error
+	// DefaultLastChangePlanDay holds the default value on creation for the "last_change_plan_day" field.
+	DefaultLastChangePlanDay int
 	// DefaultStablePriorityEnabled holds the default value on creation for the "stable_priority_enabled" field.
 	DefaultStablePriorityEnabled bool
 )
@@ -423,6 +440,21 @@ func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 // BySubscriptionOverdraftGuard orders the results by the subscription_overdraft_guard field.
 func BySubscriptionOverdraftGuard(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSubscriptionOverdraftGuard, opts...).ToFunc()
+}
+
+// ByMonthlyOverdraftCount orders the results by the monthly_overdraft_count field.
+func ByMonthlyOverdraftCount(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMonthlyOverdraftCount, opts...).ToFunc()
+}
+
+// ByMonthlyOverdraftMonth orders the results by the monthly_overdraft_month field.
+func ByMonthlyOverdraftMonth(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMonthlyOverdraftMonth, opts...).ToFunc()
+}
+
+// ByLastChangePlanDay orders the results by the last_change_plan_day field.
+func ByLastChangePlanDay(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLastChangePlanDay, opts...).ToFunc()
 }
 
 // ByStablePriorityEnabled orders the results by the stable_priority_enabled field.

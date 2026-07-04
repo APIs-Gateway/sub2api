@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -38,22 +39,11 @@ var (
 	ErrUserPlatformMonthlyQuotaExhausted = infraerrors.TooManyRequests("USER_PLATFORM_MONTHLY_QUOTA_EXHAUSTED", "Monthly usage quota exhausted for this platform.")
 )
 
-// subscriptionCacheData 订阅缓存数据结构（内部使用）
-type subscriptionCacheData struct {
-	Status       string
-	ExpiresAt    time.Time
-	DailyUsage   float64
-	WeeklyUsage  float64
-	MonthlyUsage float64
-	Version      int64
-}
-
 // 缓存写入任务类型
 type cacheWriteKind int
 
 const (
 	cacheWriteSetBalance cacheWriteKind = iota
-	cacheWriteSetSubscription
 	cacheWriteUpdateSubscriptionUsage
 	cacheWriteDeductBalance
 	cacheWriteUpdateRateLimitUsage
@@ -83,13 +73,12 @@ const (
 
 // cacheWriteTask 缓存写入任务
 type cacheWriteTask struct {
-	kind             cacheWriteKind
-	userID           int64
-	groupID          int64
-	apiKeyID         int64
-	balance          float64
-	amount           float64
-	subscriptionData *subscriptionCacheData
+	kind     cacheWriteKind
+	userID   int64
+	groupID  int64
+	apiKeyID int64
+	balance  float64
+	amount   float64
 }
 
 // apiKeyRateLimitLoader defines the interface for loading rate limit data from DB.
@@ -225,8 +214,6 @@ func (s *BillingCacheService) cacheWriteWorker(ch <-chan cacheWriteTask) {
 		switch task.kind {
 		case cacheWriteSetBalance:
 			s.setBalanceCache(ctx, task.userID, task.balance)
-		case cacheWriteSetSubscription:
-			s.setSubscriptionCache(ctx, task.userID, task.groupID, task.subscriptionData)
 		case cacheWriteUpdateSubscriptionUsage:
 			if s.cache != nil {
 				if err := s.cache.UpdateSubscriptionUsage(ctx, task.userID, task.groupID, task.amount); err != nil {
@@ -255,8 +242,6 @@ func cacheWriteKindName(kind cacheWriteKind) string {
 	switch kind {
 	case cacheWriteSetBalance:
 		return "set_balance"
-	case cacheWriteSetSubscription:
-		return "set_subscription"
 	case cacheWriteUpdateSubscriptionUsage:
 		return "update_subscription_usage"
 	case cacheWriteDeductBalance:
@@ -417,82 +402,20 @@ func (s *BillingCacheService) InvalidateUserBalance(ctx context.Context, userID 
 // 订阅缓存方法
 // ============================================
 
-// GetSubscriptionStatus 获取订阅状态（优先从缓存读取）
-func (s *BillingCacheService) GetSubscriptionStatus(ctx context.Context, userID, groupID int64) (*subscriptionCacheData, error) {
-	if s.cache == nil {
-		return s.getSubscriptionFromDB(ctx, userID, groupID)
+// GetActiveSubscriptionCard 返回用户唯一生效订阅卡（per-day 单卡，不按 group）；无卡返回 (nil, nil)。
+// 仅用于展示（如 /v1/usage 订阅额度），不参与计费决策；过期是惰性的，调用方需按 today 判定是否仍生效。
+func (s *BillingCacheService) GetActiveSubscriptionCard(ctx context.Context, userID int64) (*UserSubscription, error) {
+	if s.subRepo == nil {
+		return nil, nil
 	}
-
-	// 尝试从缓存读取
-	cacheData, err := s.cache.GetSubscriptionCache(ctx, userID, groupID)
-	if err == nil && cacheData != nil {
-		return s.convertFromPortsData(cacheData), nil
-	}
-
-	// 缓存未命中，从数据库读取
-	data, err := s.getSubscriptionFromDB(ctx, userID, groupID)
+	card, err := s.subRepo.GetActiveByUserID(ctx, userID)
 	if err != nil {
+		if errors.Is(err, ErrSubscriptionNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
-
-	// 异步建立缓存
-	_ = s.enqueueCacheWrite(cacheWriteTask{
-		kind:             cacheWriteSetSubscription,
-		userID:           userID,
-		groupID:          groupID,
-		subscriptionData: data,
-	})
-
-	return data, nil
-}
-
-func (s *BillingCacheService) convertFromPortsData(data *SubscriptionCacheData) *subscriptionCacheData {
-	return &subscriptionCacheData{
-		Status:       data.Status,
-		ExpiresAt:    data.ExpiresAt,
-		DailyUsage:   data.DailyUsage,
-		WeeklyUsage:  data.WeeklyUsage,
-		MonthlyUsage: data.MonthlyUsage,
-		Version:      data.Version,
-	}
-}
-
-func (s *BillingCacheService) convertToPortsData(data *subscriptionCacheData) *SubscriptionCacheData {
-	return &SubscriptionCacheData{
-		Status:       data.Status,
-		ExpiresAt:    data.ExpiresAt,
-		DailyUsage:   data.DailyUsage,
-		WeeklyUsage:  data.WeeklyUsage,
-		MonthlyUsage: data.MonthlyUsage,
-		Version:      data.Version,
-	}
-}
-
-// getSubscriptionFromDB 从数据库获取订阅数据
-func (s *BillingCacheService) getSubscriptionFromDB(ctx context.Context, userID, groupID int64) (*subscriptionCacheData, error) {
-	sub, err := s.subRepo.GetActiveByUserIDAndGroupID(ctx, userID, groupID)
-	if err != nil {
-		return nil, fmt.Errorf("get subscription: %w", err)
-	}
-
-	return &subscriptionCacheData{
-		Status:       sub.Status,
-		ExpiresAt:    sub.ExpiresAt,
-		DailyUsage:   sub.DailyUsageUSD,
-		WeeklyUsage:  sub.WeeklyUsageUSD,
-		MonthlyUsage: sub.MonthlyUsageUSD,
-		Version:      sub.UpdatedAt.Unix(),
-	}, nil
-}
-
-// setSubscriptionCache 设置订阅缓存
-func (s *BillingCacheService) setSubscriptionCache(ctx context.Context, userID, groupID int64, data *subscriptionCacheData) {
-	if s.cache == nil || data == nil {
-		return
-	}
-	if err := s.cache.SetSubscriptionCache(ctx, userID, groupID, s.convertToPortsData(data)); err != nil {
-		logger.LegacyPrintf("service.billing_cache", "Warning: set subscription cache failed for user %d group %d: %v", userID, groupID, err)
-	}
+	return card, nil
 }
 
 // UpdateSubscriptionUsage 更新订阅用量缓存（同步调用）
@@ -725,21 +648,17 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 		return ErrBillingServiceUnavailable
 	}
 
-	// 判断计费模式
-	isSubscriptionMode := group != nil && group.IsSubscriptionType() && subscription != nil
-
-	if isSubscriptionMode {
-		if err := s.checkSubscriptionEligibility(ctx, user.ID, group, subscription); err != nil {
-			return err
-		}
-	} else {
-		if err := s.checkBalanceEligibility(ctx, user); err != nil {
-			return err
-		}
+	// 三窗口准入统一走 checkBalanceEligibility（Admit：订阅三窗口 || 钱包）。
+	// 订阅模式由“用户有生效订阅卡”决定，与 group/subscription_type 无关。
+	subscriptionMode := isActiveSubscriptionForBilling(subscription)
+	loadedSubscriptionMode, err := s.checkBalanceEligibility(ctx, user)
+	if err != nil {
+		return err
 	}
+	subscriptionMode = subscriptionMode || loadedSubscriptionMode
 
-	// user × platform quota 仅在 standard（余额）模式生效；订阅模式豁免
-	if !isSubscriptionMode {
+	// user × platform quota：订阅模式豁免（恢复 upstream 口径）；无卡用户继续受 platform quota 约束。
+	if !subscriptionMode {
 		if err := s.checkUserPlatformQuotaEligibility(ctx, user.ID, platform); err != nil {
 			return err
 		}
@@ -844,126 +763,79 @@ func (s *BillingCacheService) checkRPM(ctx context.Context, user *User, group *G
 	return nil
 }
 
-// checkBalanceEligibility 检查余额模式资格
-func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user *User) error {
+// checkBalanceEligibility 准入资格（三窗口口径）：有生效卡 → 三窗口任一窗口仍有余量 || 钱包>0 即放行；
+// 撞上限且钱包≤0 才拒。无生效卡 → 纯钱包标准计费：balance>0 即放行。
+// 与 settleSubscriptionWindow 同口径（AdmitWindow/SettleWindow 共用引擎），放行后只结算不拒绝（流式必须先放行）。
+// 透支不参与准入（独立手动接口；借完体现在“日窗口又有余量”里）。
+func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user *User) (bool, error) {
 	balance, err := s.GetUserBalance(ctx, user.ID)
 	if err != nil {
 		if s.circuitBreaker != nil {
 			s.circuitBreaker.OnFailure(err)
 		}
 		logger.LegacyPrintf("service.billing_cache", "ALERT: billing balance check failed for user %d: %v", user.ID, err)
-		return ErrBillingServiceUnavailable.WithCause(err)
+		return false, ErrBillingServiceUnavailable.WithCause(err)
 	}
 	if s.circuitBreaker != nil {
 		s.circuitBreaker.OnSuccess()
 	}
 
-	// 透支闸门：仅对曾开启订阅透支的普通用户启用昂贵的订阅汇总。
-	// 未开启透支的用户走原始余额检查；开启后，只有本卡累计透支次数未满 5 次时，才允许继续发起一个透支请求。
-	// 管理员豁免。
-	if !user.IsAdmin() && user.SubscriptionOverdraftGuard {
-		currentLocked, limitLocked, subscriptionRemaining, canOverdraft, lerr := s.lockedSubscriptionBalance(ctx, user.ID)
-		if lerr != nil {
-			// 加载活跃卡失败：fail-open 退回原始余额检查，避免因瞬时 DB 抖动误挡正常用户。
-			logger.LegacyPrintf("service.billing_cache", "Warning: overdraft gate lookup failed for user %d: %v (fallback to raw balance)", user.ID, lerr)
-		} else if currentLocked > 0 {
-			return subscriptionOverdraftGate(balance, currentLocked, limitLocked, subscriptionRemaining, canOverdraft)
-		}
-	}
-
-	if balance <= 0 {
-		return ErrInsufficientBalance
-	}
-
-	return nil
-}
-
-// lockedSubscriptionBalance 汇总用户全部活跃 burn-down 卡：
-//   - currentLocked：当天尚未解锁、但仍计入 users.balance 的未来额度。
-//   - limitLocked：施加每卡 max_overdraft_days 后仍不可用的额度；未开启透支或次数用尽的卡按 0 天透支计算。
-//   - subscriptionRemaining：全部活跃卡 remaining 合计（= G−consumed−clawed），用于把闸门判断
-//     约束在「订阅卡支撑的余额」上，排除充值/签到等非订阅余额的虚高。
-//   - canOverdraft：至少一张卡已开启透支、仍有累计透支次数余量，且可提前消费后续天额度。
-func (s *BillingCacheService) lockedSubscriptionBalance(ctx context.Context, userID int64) (currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool, err error) {
-	if s.subRepo == nil {
-		return 0, 0, 0, false, nil
-	}
-	if s.hasNoSubscriptionLockCached(userID) {
-		return 0, 0, 0, false, nil
-	}
-	subs, err := s.subRepo.ListActiveByUserID(ctx, userID)
-	if err != nil {
-		return 0, 0, 0, false, err
-	}
-	currentLocked, limitLocked, subscriptionRemaining, canOverdraft = aggregateSubscriptionLocks(subs, time.Now())
-	if currentLocked <= 0 {
-		s.setNoSubscriptionLockCache(userID)
-	}
-	return currentLocked, limitLocked, subscriptionRemaining, canOverdraft, nil
-}
-
-// aggregateSubscriptionLocks 汇总活跃 burn-down 卡的闸门量（纯函数，便于单测）：
-//   - currentLocked：按 0 天透支锁定（今日已解锁额度之外）的额度合计。
-//   - limitLocked：施加每卡 max_overdraft_days 后仍锁定的额度合计；未开启透支或次数用尽的卡按 0 天透支算。
-//   - subscriptionRemaining：全部活跃卡 remaining 合计。
-//   - canOverdraft：至少一张卡开启透支且其透支额度尚能放宽锁定。
-func aggregateSubscriptionLocks(subs []UserSubscription, now time.Time) (currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool) {
-	for i := range subs {
-		subscriptionRemaining += subs[i].RemainingUSD()
-		cardLocked := subs[i].LockedAt(now, 0)
-		currentLocked += cardLocked
-		cardLimitLocked := cardLocked
-		// 用 EffectiveOverdraftDaysAt（min(配置, 生命周期剩余预支天数)），与扣费分摊同口径，
-		// 避免「配置 max_overdraft_days=5 但预支额度只剩 1 天」时仍按 6D 放行。
-		if effOD := subs[i].EffectiveOverdraftDaysAt(now); effOD > 0 {
-			cardLimitLocked = subs[i].LockedAt(now, effOD)
-			if cardLocked > cardLimitLocked {
-				canOverdraft = true
+	// 加载用户唯一生效卡（per-day 单卡，不按 group）；无卡（缓存命中或查无）→ 纯钱包。
+	// 复用 noSubLockUntil 缓存避免无卡用户每请求查 DB；购买/续费会 clear、卡到期下次查无即重置。
+	if s.subRepo != nil && !s.hasNoSubscriptionLockCached(user.ID) {
+		card, cerr := s.subRepo.GetActiveByUserID(ctx, user.ID)
+		switch {
+		case cerr == nil && card != nil:
+			now := time.Now()
+			sw := card.ToSubWindow()
+			activeCard := sw.active(now)
+			wallet := WalletState{
+				Balance:               balance,
+				MonthlyOverdraftCount: user.MonthlyOverdraftCount,
+				MonthlyOverdraftMonth: user.MonthlyOverdraftMonth,
 			}
+			// AdmitWindow：有生效卡看三窗口余量、撞上限/无卡看钱包（窗口惰性重置作用于本地副本，不落库）。
+			if AdmitWindow(&sw, &wallet, now) {
+				return activeCard, nil
+			}
+			// 拒绝。有生效卡 + 撞窗口上限 + 钱包≤0 → 回精确 *_LIMIT_EXCEEDED（spec §4/场景#4，
+			// 让前端提示手动透支/等窗口重置）；未配置限额的安全闸卡 / 无生效卡 → 通用余额不足。
+			if activeCard {
+				switch sw.ExceededLimitCode() { // AdmitWindow 已对 sw 本地副本 ResetWindows，可直接判窗口
+				case "DAILY":
+					return activeCard, ErrDailyLimitExceeded
+				case "WEEKLY":
+					return activeCard, ErrWeeklyLimitExceeded
+				case "MONTHLY":
+					return activeCard, ErrMonthlyLimitExceeded
+				}
+			}
+			return activeCard, ErrInsufficientBalance
+		case errors.Is(cerr, ErrSubscriptionNotFound):
+			s.setNoSubscriptionLockCache(user.ID) // 无卡：缓存，后续走纯钱包
+		case cerr != nil:
+			// 加载失败 fail-open：退回纯余额检查，避免 DB 抖动误挡正常用户。
+			logger.LegacyPrintf("service.billing_cache", "Warning: active card lookup failed for user %d: %v (fallback to raw balance)", user.ID, cerr)
 		}
-		limitLocked += cardLimitLocked
 	}
-	return
+
+	if balance <= 0 {
+		return false, ErrInsufficientBalance
+	}
+	return false, nil
 }
 
-// subscriptionOverdraftGate 是订阅透支准入闸门的纯判定（便于单测）。
-//
-// 充值(非订阅)余额 = balance − Σ订阅remaining：这是用户自己充的钱，不受订阅「每日限速」约束，
-// 可随时兜底消费——故 >0 即放行。扣费侧(allocateUsageBillingSubscriptions)会把超过今日订阅额度的
-// 部分优先记到充值余额、不烧订阅卡的锁定额度，因此放行不会绕开 burn-down 限速(回归 user 280：
-// 卡的锁定未来额度不会被无限速烧穿)。
-// 充值余额耗尽(balance ≤ Σ订阅remaining)时，回到「订阅当日额度 + 透支」的限速判定。
-// 仅在 currentLocked>0 时由调用方启用。
-//
-// 【今日额度从卡算、不从钱包反推】「今日可花」恒等于 subscriptionRemaining − currentLocked
-// （currentLocked = remaining − 今日已解锁额度），这是卡侧真相、与钱包数额无关。
-// 旧实现误用 subBalance = min(balance, remaining) 去比 currentLocked，等价于
-// (balance − Σremaining) + 今日额度：当账目漂移使 balance < Σremaining 时(本应满足不变量
-// balance == 充值余额 + Σremaining，但少数重度用户被某账目 bug 打破)，那个负缺口会吃穿今日真实
-// 额度，导致今日明明没花完(daily_spent < D)却误判 SUBSCRIPTION_OVERDRAFT_LIMIT。故此处直接用
-// subscriptionRemaining 参与限速判定；仅保留 balance>0 兜底(钱包真空才按余额不足挡)。
-// 对 balance ≥ Σremaining 的健康用户行为不变(subBalance 本就 = remaining)。
-func subscriptionOverdraftGate(balance, currentLocked, limitLocked, subscriptionRemaining float64, canOverdraft bool) error {
-	if currentLocked <= 0 {
-		return nil
+func isActiveSubscriptionForBilling(subscription *UserSubscription) bool {
+	if subscription == nil {
+		return false
 	}
-	// 钱包真空 → 按余额不足挡（订阅用户正常应有 balance ≈ 充值余额 + Σremaining > 0）。
-	if balance <= 0 {
-		return ErrInsufficientBalance
-	}
-	// 有充值(非订阅)余额 → 放行(由充值余额承担，不动卡的锁定额度)。
-	if balance-subscriptionRemaining > 0 {
-		return nil
-	}
-	if subscriptionRemaining-currentLocked <= 0 {
-		// 当天已解锁额度已花尽：仅当本卡开启透支且仍在 max_overdraft_days 额度内才放行一个透支请求。
-		if canOverdraft && subscriptionRemaining-limitLocked > 0 {
-			return nil
-		}
-		return ErrSubscriptionOverdraftLimit
-	}
-	return nil
+	return subscription.Status == SubscriptionStatusActive && time.Now().Before(subscription.ExpiresAt)
 }
+
+// 准入闸门已迁至三窗口引擎：checkBalanceEligibility 用 service.AdmitWindow（有生效卡看三窗口
+// SubRemaining、撞上限/无卡看钱包），不再走 per-day burn-down 的 locked/overdraft 估算。
+// 旧的 lockedSubscriptionBalance / aggregateSubscriptionLocks / subscriptionOverdraftGate 已随
+// per-day 重构退役删除（无生产调用方）。
 
 func (s *BillingCacheService) hasNoSubscriptionLockCached(userID int64) bool {
 	if userID <= 0 {
@@ -993,47 +865,6 @@ func (s *BillingCacheService) clearNoSubscriptionLockCache(userID int64) {
 		return
 	}
 	s.noSubLockUntil.Delete(userID)
-}
-
-// checkSubscriptionEligibility 检查订阅模式资格
-func (s *BillingCacheService) checkSubscriptionEligibility(ctx context.Context, userID int64, group *Group, subscription *UserSubscription) error {
-	// 获取订阅缓存数据
-	subData, err := s.GetSubscriptionStatus(ctx, userID, group.ID)
-	if err != nil {
-		if s.circuitBreaker != nil {
-			s.circuitBreaker.OnFailure(err)
-		}
-		logger.LegacyPrintf("service.billing_cache", "ALERT: billing subscription check failed for user %d group %d: %v", userID, group.ID, err)
-		return ErrBillingServiceUnavailable.WithCause(err)
-	}
-	if s.circuitBreaker != nil {
-		s.circuitBreaker.OnSuccess()
-	}
-
-	// 检查订阅状态
-	if subData.Status != SubscriptionStatusActive {
-		return ErrSubscriptionInvalid
-	}
-
-	// 检查是否过期
-	if time.Now().After(subData.ExpiresAt) {
-		return ErrSubscriptionInvalid
-	}
-
-	// 检查限额（使用传入的Group限额配置）
-	if group.HasDailyLimit() && subData.DailyUsage >= *group.DailyLimitUSD {
-		return ErrDailyLimitExceeded
-	}
-
-	if group.HasWeeklyLimit() && subData.WeeklyUsage >= *group.WeeklyLimitUSD {
-		return ErrWeeklyLimitExceeded
-	}
-
-	if group.HasMonthlyLimit() && subData.MonthlyUsage >= *group.MonthlyLimitUSD {
-		return ErrMonthlyLimitExceeded
-	}
-
-	return nil
 }
 
 type billingCircuitBreakerState int

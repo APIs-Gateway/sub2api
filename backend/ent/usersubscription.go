@@ -29,7 +29,7 @@ type UserSubscription struct {
 	// UserID holds the value of the "user_id" field.
 	UserID int64 `json:"user_id,omitempty"`
 	// GroupID holds the value of the "group_id" field.
-	GroupID int64 `json:"group_id,omitempty"`
+	GroupID *int64 `json:"group_id,omitempty"`
 	// PlanID holds the value of the "plan_id" field.
 	PlanID *int64 `json:"plan_id,omitempty"`
 	// StartsAt holds the value of the "starts_at" field.
@@ -50,6 +50,12 @@ type UserSubscription struct {
 	WeeklyUsageUsd float64 `json:"weekly_usage_usd,omitempty"`
 	// MonthlyUsageUsd holds the value of the "monthly_usage_usd" field.
 	MonthlyUsageUsd float64 `json:"monthly_usage_usd,omitempty"`
+	// DailyLimitUsd holds the value of the "daily_limit_usd" field.
+	DailyLimitUsd *float64 `json:"daily_limit_usd,omitempty"`
+	// WeeklyLimitUsd holds the value of the "weekly_limit_usd" field.
+	WeeklyLimitUsd *float64 `json:"weekly_limit_usd,omitempty"`
+	// MonthlyLimitUsd holds the value of the "monthly_limit_usd" field.
+	MonthlyLimitUsd *float64 `json:"monthly_limit_usd,omitempty"`
 	// GrantedTotalUsd holds the value of the "granted_total_usd" field.
 	GrantedTotalUsd float64 `json:"granted_total_usd,omitempty"`
 	// DailyAmountUsd holds the value of the "daily_amount_usd" field.
@@ -68,6 +74,16 @@ type UserSubscription struct {
 	DailySpentUsd float64 `json:"daily_spent_usd,omitempty"`
 	// DailySpentDay holds the value of the "daily_spent_day" field.
 	DailySpentDay int `json:"daily_spent_day,omitempty"`
+	// TodayRemaining holds the value of the "today_remaining" field.
+	TodayRemaining float64 `json:"today_remaining,omitempty"`
+	// TodayDay holds the value of the "today_day" field.
+	TodayDay int `json:"today_day,omitempty"`
+	// StartDay holds the value of the "start_day" field.
+	StartDay int `json:"start_day,omitempty"`
+	// ExpireDay holds the value of the "expire_day" field.
+	ExpireDay int `json:"expire_day,omitempty"`
+	// OverdraftOn holds the value of the "overdraft_on" field.
+	OverdraftOn bool `json:"overdraft_on,omitempty"`
 	// ActivatedAt holds the value of the "activated_at" field.
 	ActivatedAt *time.Time `json:"activated_at,omitempty"`
 	// AssignedBy holds the value of the "assigned_by" field.
@@ -157,9 +173,11 @@ func (*UserSubscription) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldGrantedTotalUsd, usersubscription.FieldDailyAmountUsd, usersubscription.FieldConsumedUsd, usersubscription.FieldClawedUsd, usersubscription.FieldDailySpentUsd:
+		case usersubscription.FieldOverdraftOn:
+			values[i] = new(sql.NullBool)
+		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldDailyLimitUsd, usersubscription.FieldWeeklyLimitUsd, usersubscription.FieldMonthlyLimitUsd, usersubscription.FieldGrantedTotalUsd, usersubscription.FieldDailyAmountUsd, usersubscription.FieldConsumedUsd, usersubscription.FieldClawedUsd, usersubscription.FieldDailySpentUsd, usersubscription.FieldTodayRemaining:
 			values[i] = new(sql.NullFloat64)
-		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldPlanID, usersubscription.FieldLastClawbackDay, usersubscription.FieldMaxOverdraftDays, usersubscription.FieldTotalOverdraftCount, usersubscription.FieldDailySpentDay, usersubscription.FieldAssignedBy:
+		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldPlanID, usersubscription.FieldLastClawbackDay, usersubscription.FieldMaxOverdraftDays, usersubscription.FieldTotalOverdraftCount, usersubscription.FieldDailySpentDay, usersubscription.FieldTodayDay, usersubscription.FieldStartDay, usersubscription.FieldExpireDay, usersubscription.FieldAssignedBy:
 			values[i] = new(sql.NullInt64)
 		case usersubscription.FieldStatus, usersubscription.FieldNotes:
 			values[i] = new(sql.NullString)
@@ -215,7 +233,8 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field group_id", values[i])
 			} else if value.Valid {
-				_m.GroupID = value.Int64
+				_m.GroupID = new(int64)
+				*_m.GroupID = value.Int64
 			}
 		case usersubscription.FieldPlanID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -281,6 +300,27 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.MonthlyUsageUsd = value.Float64
 			}
+		case usersubscription.FieldDailyLimitUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field daily_limit_usd", values[i])
+			} else if value.Valid {
+				_m.DailyLimitUsd = new(float64)
+				*_m.DailyLimitUsd = value.Float64
+			}
+		case usersubscription.FieldWeeklyLimitUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field weekly_limit_usd", values[i])
+			} else if value.Valid {
+				_m.WeeklyLimitUsd = new(float64)
+				*_m.WeeklyLimitUsd = value.Float64
+			}
+		case usersubscription.FieldMonthlyLimitUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field monthly_limit_usd", values[i])
+			} else if value.Valid {
+				_m.MonthlyLimitUsd = new(float64)
+				*_m.MonthlyLimitUsd = value.Float64
+			}
 		case usersubscription.FieldGrantedTotalUsd:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
 				return fmt.Errorf("unexpected type %T for field granted_total_usd", values[i])
@@ -335,6 +375,36 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field daily_spent_day", values[i])
 			} else if value.Valid {
 				_m.DailySpentDay = int(value.Int64)
+			}
+		case usersubscription.FieldTodayRemaining:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field today_remaining", values[i])
+			} else if value.Valid {
+				_m.TodayRemaining = value.Float64
+			}
+		case usersubscription.FieldTodayDay:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field today_day", values[i])
+			} else if value.Valid {
+				_m.TodayDay = int(value.Int64)
+			}
+		case usersubscription.FieldStartDay:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field start_day", values[i])
+			} else if value.Valid {
+				_m.StartDay = int(value.Int64)
+			}
+		case usersubscription.FieldExpireDay:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field expire_day", values[i])
+			} else if value.Valid {
+				_m.ExpireDay = int(value.Int64)
+			}
+		case usersubscription.FieldOverdraftOn:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field overdraft_on", values[i])
+			} else if value.Valid {
+				_m.OverdraftOn = value.Bool
 			}
 		case usersubscription.FieldActivatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -438,8 +508,10 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString("user_id=")
 	builder.WriteString(fmt.Sprintf("%v", _m.UserID))
 	builder.WriteString(", ")
-	builder.WriteString("group_id=")
-	builder.WriteString(fmt.Sprintf("%v", _m.GroupID))
+	if v := _m.GroupID; v != nil {
+		builder.WriteString("group_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
 	builder.WriteString(", ")
 	if v := _m.PlanID; v != nil {
 		builder.WriteString("plan_id=")
@@ -479,6 +551,21 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString("monthly_usage_usd=")
 	builder.WriteString(fmt.Sprintf("%v", _m.MonthlyUsageUsd))
 	builder.WriteString(", ")
+	if v := _m.DailyLimitUsd; v != nil {
+		builder.WriteString("daily_limit_usd=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.WeeklyLimitUsd; v != nil {
+		builder.WriteString("weekly_limit_usd=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.MonthlyLimitUsd; v != nil {
+		builder.WriteString("monthly_limit_usd=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
 	builder.WriteString("granted_total_usd=")
 	builder.WriteString(fmt.Sprintf("%v", _m.GrantedTotalUsd))
 	builder.WriteString(", ")
@@ -507,6 +594,21 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("daily_spent_day=")
 	builder.WriteString(fmt.Sprintf("%v", _m.DailySpentDay))
+	builder.WriteString(", ")
+	builder.WriteString("today_remaining=")
+	builder.WriteString(fmt.Sprintf("%v", _m.TodayRemaining))
+	builder.WriteString(", ")
+	builder.WriteString("today_day=")
+	builder.WriteString(fmt.Sprintf("%v", _m.TodayDay))
+	builder.WriteString(", ")
+	builder.WriteString("start_day=")
+	builder.WriteString(fmt.Sprintf("%v", _m.StartDay))
+	builder.WriteString(", ")
+	builder.WriteString("expire_day=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ExpireDay))
+	builder.WriteString(", ")
+	builder.WriteString("overdraft_on=")
+	builder.WriteString(fmt.Sprintf("%v", _m.OverdraftOn))
 	builder.WriteString(", ")
 	if v := _m.ActivatedAt; v != nil {
 		builder.WriteString("activated_at=")

@@ -1,15 +1,27 @@
 <template>
   <AppLayout>
-    <div class="space-y-4">
+    <div class="space-y-5">
       <!-- Filters -->
-      <div class="card p-4">
+      <div class="rounded-md border border-stone-200 bg-white/80 p-3 dark:border-dark-700 dark:bg-dark-900">
         <div class="flex flex-wrap items-center gap-3">
           <Select v-model="currentFilter" :options="statusFilters" class="w-36" @change="fetchOrders" />
           <div class="flex flex-1 items-center justify-end gap-2">
-            <button @click="fetchOrders" :disabled="loading" class="btn btn-secondary" :title="t('common.refresh')">
-              <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+            <button
+              type="button"
+              @click="fetchOrders"
+              :disabled="loading"
+              class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-stone-200 text-stone-600 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-700 dark:text-gray-300 dark:hover:bg-dark-800"
+              :title="t('common.refresh')"
+            >
+              <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
             </button>
-            <button class="btn btn-primary" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
+            <button
+              type="button"
+              class="inline-flex h-10 items-center rounded-md border border-stone-900 bg-stone-900 px-4 text-sm font-medium text-white transition-colors hover:bg-stone-800 dark:border-gray-100 dark:bg-gray-100 dark:text-dark-900 dark:hover:bg-white"
+              @click="router.push('/purchase')"
+            >
+              {{ t('payment.result.backToRecharge') }}
+            </button>
           </div>
         </div>
       </div>
@@ -17,13 +29,23 @@
       <!-- Table -->
       <OrderTable :orders="orders" :loading="loading">
         <template #actions="{ row }">
-          <div class="flex items-center gap-2">
-            <button v-if="row.status === 'PENDING'" @click="handleCancel(row.id)" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-800">
-              <Icon name="x" size="sm" />
+          <div class="flex items-center gap-1">
+            <button
+              v-if="row.status === 'PENDING'"
+              type="button"
+              @click="handleCancel(row.id)"
+              class="inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-xs font-medium text-stone-600 transition-colors hover:border-stone-200 hover:bg-stone-50 dark:text-gray-300 dark:hover:border-dark-700 dark:hover:bg-dark-800"
+            >
+              <Icon name="x" size="xs" />
               <span>{{ t('payment.orders.cancel') }}</span>
             </button>
-            <button v-if="canRequestRefund(row)" @click="openRefundDialog(row)" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-800">
-              <Icon name="dollar" size="sm" />
+            <button
+              v-if="canRequestRefund(row)"
+              type="button"
+              @click="openRefundDialog(row)"
+              class="inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-xs font-medium text-stone-600 transition-colors hover:border-stone-200 hover:bg-stone-50 dark:text-gray-300 dark:hover:border-dark-700 dark:hover:bg-dark-800"
+            >
+              <Icon name="dollar" size="xs" />
               <span>{{ t('payment.orders.requestRefund') }}</span>
             </button>
           </div>
@@ -62,8 +84,25 @@
           </div>
           <div class="mt-2 flex justify-between text-sm">
             <span class="text-gray-600 dark:text-gray-400">{{ t('payment.orders.amount') }}</span>
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white">${{ refundTarget.amount.toFixed(2) }}</span>
+            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ refundOrderAmountText }}</span>
           </div>
+        </div>
+        <div class="rounded-md border border-gray-200 bg-white p-4 text-sm dark:border-dark-700 dark:bg-dark-900">
+          <div class="flex justify-between">
+            <span class="text-gray-600 dark:text-gray-400">{{ t('payment.refundGatewayBase') }}</span>
+            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ refundGatewayBaseText }}</span>
+          </div>
+          <div class="mt-2 flex justify-between">
+            <span class="text-gray-600 dark:text-gray-400">{{ t('payment.refundFee') }} ({{ refundFeeRate.toFixed(2) }}%)</span>
+            <span class="font-mono tabular-nums text-amber-700 dark:text-amber-300">{{ refundFeeText }}</span>
+          </div>
+          <div class="mt-2 flex justify-between font-medium">
+            <span class="text-gray-700 dark:text-gray-300">{{ t('payment.refundUserReceives') }}</span>
+            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ refundUserReceivesText }}</span>
+          </div>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ refundTarget.order_type === 'subscription' ? t('payment.subscriptionRefundNote') : t('payment.balanceRefundNote') }}
+          </p>
         </div>
         <div>
           <label class="input-label">{{ t('payment.refundReason') }}</label>
@@ -103,6 +142,7 @@ const loading = ref(false)
 const actionLoading = ref(false)
 const orders = ref<PaymentOrder[]>([])
 const refundEligibleProviders = ref<Set<string>>(new Set())
+const refundFeeRate = ref(0)
 const currentFilter = ref('')
 const cancelTargetId = ref<number | null>(null)
 const refundTarget = ref<PaymentOrder | null>(null)
@@ -116,6 +156,19 @@ const statusFilters = computed(() => [
   { value: 'FAILED', label: t('payment.status.failed') },
   { value: 'REFUNDED', label: t('payment.status.refunded') },
 ])
+
+const refundOrderAmountText = computed(() => {
+  if (!refundTarget.value) return ''
+  const symbol = refundTarget.value.order_type === 'balance' ? '$' : '¥'
+  return `${symbol}${refundTarget.value.amount.toFixed(2)}`
+})
+
+const refundGatewayBase = computed(() => roundCurrency(refundTarget.value?.pay_amount || refundTarget.value?.amount || 0))
+const refundFee = computed(() => roundCurrencyUp(refundGatewayBase.value * Math.min(Math.max(refundFeeRate.value, 0), 100) / 100))
+const refundUserReceives = computed(() => Math.max(0, roundCurrency(refundGatewayBase.value - refundFee.value)))
+const refundGatewayBaseText = computed(() => `¥${refundGatewayBase.value.toFixed(2)}`)
+const refundFeeText = computed(() => `¥${refundFee.value.toFixed(2)}`)
+const refundUserReceivesText = computed(() => `¥${refundUserReceives.value.toFixed(2)}`)
 
 async function fetchOrders() {
   loading.value = true
@@ -185,5 +238,24 @@ async function loadRefundEligibility() {
   } catch { /* ignore — default to hiding refund button */ }
 }
 
-onMounted(() => { fetchOrders(); loadRefundEligibility() })
+async function loadRefundFeeRate() {
+  try {
+    const res = await paymentAPI.getCheckoutInfo()
+    refundFeeRate.value = Number(res.data.refund_fee_rate) || 0
+  } catch {
+    refundFeeRate.value = 0
+  }
+}
+
+function roundCurrency(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.round(value * 100) / 100
+}
+
+function roundCurrencyUp(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.ceil(value * 100) / 100
+}
+
+onMounted(() => { fetchOrders(); loadRefundEligibility(); loadRefundFeeRate() })
 </script>

@@ -6,8 +6,10 @@ import (
 	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/payment"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,6 +111,95 @@ func TestCreateOrderInTx_WritesProviderSnapshot(t *testing.T) {
 	require.NotContains(t, order.ProviderSnapshot, "secretKey")
 	require.NotContains(t, order.ProviderSnapshot, "supported_types")
 	require.NotContains(t, order.ProviderSnapshot, "instance_name")
+}
+
+func TestCreateOrderInTx_SubscriptionRejectsExistingActiveCardBeforeOrder(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+
+	user, err := client.User.Create().
+		SetEmail("subscription-existing-card@example.com").
+		SetPasswordHash("hash").
+		SetUsername("subscription-existing-card").
+		Save(ctx)
+	require.NoError(t, err)
+
+	group, err := client.Group.Create().
+		SetName("subscription-existing-card-group").
+		SetPlatform(PlatformAnthropic).
+		SetStatus(payment.EntityStatusActive).
+		SetSubscriptionType(SubscriptionTypeStandard).
+		Save(ctx)
+	require.NoError(t, err)
+
+	today := TodayEastDayNumber()
+	_, err = client.UserSubscription.Create().
+		SetUserID(user.ID).
+		SetGroupID(group.ID).
+		SetStartsAt(time.Now()).
+		SetExpiresAt(ExpireDayToExpiresAt(today + 10)).
+		SetStatus(SubscriptionStatusActive).
+		SetAssignedAt(time.Now()).
+		SetDailyAmountUsd(10).
+		SetGrantedTotalUsd(300).
+		SetTodayRemaining(10).
+		SetTodayDay(today).
+		SetStartDay(today).
+		SetExpireDay(today + 10).
+		Save(ctx)
+	require.NoError(t, err)
+
+	plan, err := client.SubscriptionPlan.Create().
+		SetGroupID(group.ID).
+		SetName("subscription-existing-card-plan").
+		SetDailyAmountUsd(20).
+		SetPrice(545).
+		SetValidityDays(30).
+		SetValidityUnit("day").
+		SetForSale(true).
+		Save(ctx)
+	require.NoError(t, err)
+
+	subscriptionSvc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil, client, nil, nil)
+	svc := &PaymentService{entClient: client, subscriptionSvc: subscriptionSvc}
+	_, err = svc.createOrderInTx(
+		ctx,
+		CreateOrderRequest{
+			UserID:      user.ID,
+			PaymentType: payment.TypeAlipay,
+			OrderType:   payment.OrderTypeSubscription,
+			ClientIP:    "127.0.0.1",
+			SrcHost:     "app.example.com",
+		},
+		&User{
+			ID:       user.ID,
+			Email:    user.Email,
+			Username: user.Username,
+		},
+		&subscriptionOrderSpec{
+			plan:         plan,
+			dailyAmount:  plan.DailyAmountUsd,
+			validityDays: psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit),
+			groupID:      plan.GroupID,
+			unitPrice:    DefaultSubscriptionPricingConfig().UnitPrice(plan.DailyAmountUsd),
+			price:        plan.Price,
+		},
+		&PaymentConfig{
+			MaxPendingOrders: 3,
+			OrderTimeoutMin:  30,
+		},
+		545,
+		545,
+		0,
+		545,
+		&payment.InstanceSelection{InstanceID: "1", ProviderKey: payment.TypeAlipay},
+	)
+	require.Error(t, err)
+	require.Equal(t, "ACTIVE_SUBSCRIPTION_EXISTS", infraerrors.Reason(err))
+
+	count, err := client.PaymentOrder.Query().Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 0, count, "持卡用户新购应在创建订单前失败，不能生成待支付订单")
 }
 
 func TestBuildPaymentOrderProviderSnapshot_UsesWxpayJSAPIAppIDForOpenIDOrders(t *testing.T) {

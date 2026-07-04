@@ -107,20 +107,27 @@ func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *s
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
-	// burn-down 模型：本次消费全额从 users.balance 扣除（余额 = 充值剩余 + Σ订阅剩余）。
-	// 先按「订阅优先、按激活先后」把消费归集到各订阅卡的 consumed_usd（锁 subs），
-	// 再扣余额（锁 users）。锁顺序 subs→users 与清扣/到期事务保持一致，避免死锁。
-	if cmd.BalanceCost > 0 {
-		depletedGroupIDs, err := allocateUsageBillingSubscriptions(ctx, tx, cmd.UserID, cmd.BalanceCost)
+	// 三窗口结算：按瀑布把官方成本结算到「用户唯一生效卡 + 钱包」（订阅覆盖 1:1 加三窗口 usage
+	// → 钱包正余额 1:1 → 钱包负数 1:1）。订阅余额与钱包余额地位等价、均按官方刀 1:1 抵扣，倍率
+	// 不参与扣费（见 docs/billing-perday-redesign.md §4）。结算不含透支（透支走独立手动接口）。
+	// 锁序 user→card，整套副作用同 tx，dedup 覆盖整笔。OfficialCost = 官方价；legacy/测试只传
+	// BalanceCost 时回退（按它 1:1 扣，无卡即纯钱包，等价旧 deductUsageBillingBalance）。
+	officialCost := cmd.OfficialCost
+	if officialCost <= 0 && cmd.BalanceCost > 0 {
+		officialCost = cmd.BalanceCost
+	}
+	if officialCost > 0 {
+		settleRes, err := settleSubscriptionWindow(ctx, tx, cmd.UserID, officialCost)
 		if err != nil {
 			return err
 		}
-		result.DepletedSubscriptionGroupIDs = depletedGroupIDs
-		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
-		if err != nil {
-			return err
+		result.NewBalance = &settleRes.newBalance
+		result.WalletDebit = &settleRes.walletDebit
+		result.OverdraftApplied = settleRes.overdraftApplied
+		result.SubscriptionID = settleRes.subscriptionID
+		if settleRes.expiredGroupID != nil {
+			result.DepletedSubscriptionGroupIDs = []int64{*settleRes.expiredGroupID}
 		}
-		result.NewBalance = &newBalance
 	}
 
 	if cmd.APIKeyQuotaCost > 0 {
@@ -148,289 +155,169 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	return nil
 }
 
-// allocateUsageBillingSubscriptions 按「订阅优先、按激活先后（先激活的卡先扣）」把本次消费 cost
-// 归集到该用户各活跃订阅卡的 consumed_usd。每张卡最多消费其 remaining，超出所有订阅的部分
-// 由充值余额承担（无需额外记账）。consumed_usd 仅用于每日清扣判定与进度展示，
-// 实际可用额度始终以 users.balance 为准。
-//
-// 锁定顺序：SELECT ... FOR UPDATE 按 (activated_at, id) 确定序锁定订阅行，
-// 与每日清扣 / 到期作废事务一致，避免交叉死锁。
-// subscriptionDepletionEpsilon 判定 burn-down 卡「剩余被扣到 0」的容差（granted/consumed/clawed
-// 为 numeric(20,10)，浮点尾差用此阈值吸收）。低于此值即视为用完。
-const subscriptionDepletionEpsilon = 1e-7
-
-// planSubscriptionDailyAllocation 把本次消费 cost 在各卡「当日额度」内分摊（纯函数、可单测）：
-//
-//	轮 1：各卡按顺序用满其「当日正常额度」(SpendableNowAt overdraftDays=0)——一张到限额再用下一张，
-//	      实现多卡「叠加」语义；**绝不**在别的卡当日额度还没用时就先把某张卡烧进透支；
-//	轮 2：所有卡正常额度都用尽后，才按顺序动用各卡透支额度(SpendableNowAt effOD)。
-//
-// subs 的顺序即分摊优先级——调用方按「到期先后」排序，让快到期的短卡先烧、避免到期作废浪费
-// (回归 wzreee：月卡被透支、刚买的日卡却一口没动、次日作废)。
-// 返回每卡「当日额度内分摊额」(即计入透支 delta 的 pass1) 与未能在当日额度内分摊的剩余 cost
-// (交由调用方溢出处理：充值余额 → slippage 下探 remaining)。
-// 与准入闸门 aggregateSubscriptionLocks 同口径(currentLocked 用 SpendableNowAt(0))，
-// 故"闸门放行了就一定分摊得动"。
-func planSubscriptionDailyAllocation(subs []*service.UserSubscription, now time.Time, cost float64) (alloc []float64, remaining float64) {
-	alloc = make([]float64, len(subs))
-	remaining = cost
-	// 轮 1：各卡正常当日额度（不含透支）。
-	for i := range subs {
-		if remaining <= 0 {
-			break
-		}
-		a := subs[i].SpendableNowAt(now, 0) - alloc[i]
-		if a > remaining {
-			a = remaining
-		}
-		if a <= 0 {
-			continue
-		}
-		alloc[i] += a
-		remaining -= a
-	}
-	// 轮 2：仅当所有卡正常额度都用尽仍有剩余，才动用各卡透支额度。
-	for i := range subs {
-		if remaining <= 0 {
-			break
-		}
-		effOD := subs[i].EffectiveOverdraftDaysAt(now)
-		if effOD <= 0 {
-			continue
-		}
-		a := subs[i].SpendableNowAt(now, effOD) - alloc[i]
-		if a > remaining {
-			a = remaining
-		}
-		if a <= 0 {
-			continue
-		}
-		alloc[i] += a
-		remaining -= a
-	}
-	return alloc, remaining
+// subSettleResult 是三窗口订阅结算的落库结果（供上层重建旧余额、失效缓存）。
+type subSettleResult struct {
+	newBalance       float64 // 结算后钱包余额
+	walletDebit      float64 // 本次从钱包实扣的售价货币额（钱包正余额 + 钱包负数兜底；订阅覆盖 1:1 部分不计）
+	expiredGroupID   *int64  // 本次把卡惰性标记为 expired 时其 group_id（供失效订阅缓存）；否则 nil
+	overdraftApplied bool    // 三窗口结算不自动透支，恒 false（保留字段兼容上层；透支走独立手动接口）
+	subscriptionID   *int64  // 本次结算所用的用户生效卡 ID（有生效卡即填）；供 usage_log 标 subscription 计费
 }
 
-func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, userID int64, cost float64) ([]int64, error) {
-	if cost <= 0 {
-		return nil, nil
+// settleSubscriptionWindow 按三窗口瀑布把一笔请求的官方成本结算到「用户唯一生效卡 + 钱包」。
+// 锁序固定 user→card（与购买/续费/转套餐一致，防死锁）。无生效卡 → 纯钱包计费（官方价 1:1）。
+// 订阅覆盖（1:1，加三窗口 usage，只升） → 钱包正余额（1:1） → 钱包负数兜底（1:1），整套副作用在
+// 本事务内原子完成；dedup（claimUsageBillingKey）与本函数同 tx，重放整笔跳过。**结算不含透支**
+// （透支走独立手动接口，单独改 expires_at + 月度计数）。瀑布逻辑复用 service.SettleWindow（已穷尽单测）。
+// 订阅余额与钱包余额地位等价、均按官方刀 1:1 抵扣，倍率不参与扣费（见 docs/billing-perday-redesign.md §4）。
+//
+// ★安全闸（资损）：未配置/未回填卡（三限额全 NULL）经 SubRemaining 返回 0、订阅不覆盖、回落钱包，
+// 不会“免费 1:1 全覆盖”（见 service.SubWindow.SubRemaining）。
+func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, officialCost float64) (*subSettleResult, error) {
+	// 1) 锁 user 行（balance）。月度透支计数本路径不改（透支走独立接口），但一并读出构造 WalletState。
+	var balance float64
+	var monthCount int
+	var monthStr string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT balance, monthly_overdraft_count, monthly_overdraft_month
+		FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE
+	`, userID).Scan(&balance, &monthCount, &monthStr); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrUserNotFound
+		}
+		return nil, err
 	}
 
-	rows, err := tx.QueryContext(ctx, `
-		SELECT id, group_id, starts_at, activated_at, granted_total_usd, daily_amount_usd,
-			consumed_usd, clawed_usd, max_overdraft_days, total_overdraft_count,
-			daily_spent_usd, daily_spent_day,
-			(granted_total_usd - consumed_usd - clawed_usd) AS remaining
+	// 2) 锁该用户唯一生效卡（status='active'，expires_at 最晚兜底）；可能无卡。
+	//    过期是惰性的（卡可能 status='active' 而 now≥expires_at），不在 SQL 过滤 expires_at，
+	//    由引擎按 expires_at 置 JustExpired，回写时翻 status。
+	var (
+		cardID    int64
+		dLimit    sql.NullFloat64
+		wLimit    sql.NullFloat64
+		mLimit    sql.NullFloat64
+		dUsage    float64
+		wUsage    float64
+		mUsage    float64
+		dWin      sql.NullTime
+		wWin      sql.NullTime
+		mWin      sql.NullTime
+		expiresAt time.Time
+		status    string
+		hasCard   bool
+	)
+	// 不 SELECT group_id：自定义/转套餐卡 group_id 为 NULL，且结算本不需要 group（限额读卡级）；
+	// 误扫进 int64 会因 NULL 报 "converting NULL to int64 is unsupported" 使无 group 卡计费整笔失败（资损）。
+	err := tx.QueryRowContext(ctx, `
+		SELECT id,
+		       daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
+		       daily_usage_usd, weekly_usage_usd, monthly_usage_usd,
+		       daily_window_start, weekly_window_start, monthly_window_start,
+		       expires_at, status
 		FROM user_subscriptions
-		WHERE user_id = $1
-			AND status = 'active'
-			AND deleted_at IS NULL
-			AND expires_at > NOW()
-			AND (granted_total_usd - consumed_usd - clawed_usd) > 0
-		ORDER BY expires_at ASC, activated_at ASC NULLS FIRST, id ASC
+		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
+		ORDER BY expires_at DESC, id DESC
+		LIMIT 1
 		FOR UPDATE
-	`, userID)
-	if err != nil {
+	`, userID).Scan(&cardID, &dLimit, &wLimit, &mLimit,
+		&dUsage, &wUsage, &mUsage, &dWin, &wWin, &mWin, &expiresAt, &status)
+	switch {
+	case err == nil:
+		hasCard = true
+	case errors.Is(err, sql.ErrNoRows):
+		hasCard = false
+	default:
 		return nil, err
 	}
 
-	type subRemaining struct {
-		id                  int64
-		groupID             int64
-		startsAt            time.Time
-		activatedAt         *time.Time
-		grantedTotalUSD     float64
-		dailyAmountUSD      float64
-		consumedUSD         float64
-		clawedUSD           float64
-		maxOverdraftDays    *int
-		totalOverdraftCount int
-		dailySpentUSD       float64
-		dailySpentDay       int
-		remaining           float64
-	}
-	var subs []subRemaining
-	for rows.Next() {
-		var s subRemaining
-		var activatedAt sql.NullTime
-		var maxOverdraftDays sql.NullInt64
-		if err := rows.Scan(
-			&s.id,
-			&s.groupID,
-			&s.startsAt,
-			&activatedAt,
-			&s.grantedTotalUSD,
-			&s.dailyAmountUSD,
-			&s.consumedUSD,
-			&s.clawedUSD,
-			&maxOverdraftDays,
-			&s.totalOverdraftCount,
-			&s.dailySpentUSD,
-			&s.dailySpentDay,
-			&s.remaining,
-		); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		if activatedAt.Valid {
-			t := activatedAt.Time
-			s.activatedAt = &t
-		}
-		if maxOverdraftDays.Valid {
-			days := int(maxOverdraftDays.Int64)
-			s.maxOverdraftDays = &days
-		}
-		subs = append(subs, s)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	// pq 驱动：同一连接上必须先耗尽并关闭 rows，才能执行后续 UPDATE。
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-
+	// LOCK-005：now 必须在【取锁之后】按当前时间取，避免阻塞在 FOR UPDATE 上跨午夜后用 stale 时间
+	// 喂进窗口重置（误判自然日/周/月边界）。锁内取保证与所持行状态同处一个时刻。
 	now := time.Now()
-	var depletedGroupIDs []int64
 
-	// 物化每卡 service 模型,以复用 per-day 口径(SpendableNowAt / EffectiveOverdraftDaysAt)。
-	type allocState struct {
-		s     *subRemaining
-		sub   *service.UserSubscription
-		pass1 float64 // 计入透支额度内的分摊(用于 total_overdraft_count 的 delta)
-		total float64 // 本卡总分摊(pass1 + slippage 超调)
-	}
-	states := make([]allocState, len(subs))
-	var sumRemaining float64 // Σ活跃订阅卡 remaining,用于推算充值(非订阅)余额 = balance − sumRemaining
-	for i := range subs {
-		s := &subs[i]
-		sumRemaining += s.remaining
-		states[i] = allocState{
-			s: s,
-			sub: &service.UserSubscription{
-				StartsAt:            s.startsAt,
-				ActivatedAt:         s.activatedAt,
-				GrantedTotalUSD:     s.grantedTotalUSD,
-				DailyAmountUSD:      s.dailyAmountUSD,
-				ConsumedUSD:         s.consumedUSD,
-				ClawedUSD:           s.clawedUSD,
-				MaxOverdraftDays:    s.maxOverdraftDays,
-				TotalOverdraftCount: s.totalOverdraftCount,
-				DailySpentUSD:       s.dailySpentUSD,
-				DailySpentDay:       s.dailySpentDay,
-			},
+	wallet := service.WalletState{Balance: balance, MonthlyOverdraftCount: monthCount, MonthlyOverdraftMonth: monthStr}
+	var card *service.SubWindow
+	if hasCard {
+		card = &service.SubWindow{
+			DailyLimitUSD:      nullFloatZero(dLimit),
+			WeeklyLimitUSD:     nullFloatZero(wLimit),
+			MonthlyLimitUSD:    nullFloatZero(mLimit),
+			DailyUsageUSD:      dUsage,
+			WeeklyUsageUSD:     wUsage,
+			MonthlyUsageUSD:    mUsage,
+			DailyWindowStart:   nullTimePtr(dWin),
+			WeeklyWindowStart:  nullTimePtr(wWin),
+			MonthlyWindowStart: nullTimePtr(mWin),
+			ExpiresAt:          expiresAt,
+			Status:             status,
 		}
+	}
+	service.SettleWindow(card, &wallet, officialCost, now)
+
+	out := &subSettleResult{}
+	// 计费识别 = 用户存在生效中的订阅卡。即使本次订阅覆盖为 0（撞窗口上限、全由钱包支付），
+	// 仍是「有生效卡」请求，应标 subscription。加载时 active 但 now≥expires_at 的假 active
+	// 会被 SettleWindow 置 JustExpired，不标 subscription。
+	if hasCard && card != nil && !card.JustExpired {
+		id := cardID
+		out.subscriptionID = &id
 	}
 
-	// Pass 1(叠加语义):各卡先用满「当日正常额度」、一张到限额再用下一张,所有卡正常额度都用尽后
-	// 才动用透支(详见 planSubscriptionDailyAllocation)。SELECT 已按到期先后排序 → 短卡先烧不浪费。
-	// 修复「多卡时先把老卡烧进透支、新卡当日额度却闲置」(wzreee:月卡被透支、刚买的日卡一口没动)。
-	subModels := make([]*service.UserSubscription, len(states))
-	for i := range states {
-		subModels[i] = states[i].sub
-	}
-	alloc, remainingCost := planSubscriptionDailyAllocation(subModels, now, cost)
-	for i := range states {
-		states[i].pass1 = alloc[i]
-		states[i].total = alloc[i]
-	}
-	// 溢出处理:单笔成本超过所有卡「今日可花」之和时——
-	// (1) 先由「充值(非订阅)余额 = balance − Σ订阅remaining」承担,不动订阅卡的锁定额度
-	//     (用户自己充的钱不受订阅每日限速;deductUsageBillingBalance 会从总余额如实扣减);
-	// (2) 充值也不够,才 slippage 下探各卡 remaining(保 balance≥Σremaining 不变量;
-	//     这部分突破今日限速、属不可控尾差,不计入透支)。
-	if remainingCost > 0 {
-		var balance float64
-		// FOR UPDATE 锁 users 行:锁顺序 subs→users,与清扣/到期事务一致;稍后 deductUsageBillingBalance 同锁。
-		if err := tx.QueryRowContext(ctx, `SELECT balance FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, userID).Scan(&balance); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, service.ErrUserNotFound
-			}
-			return nil, err
-		}
-		if recharge := balance - sumRemaining; recharge > 0 {
-			absorb := recharge
-			if absorb > remainingCost {
-				absorb = remainingCost
-			}
-			remainingCost -= absorb // 由充值余额承担,不归属任何订阅卡
-		}
-		for i := range states {
-			if remainingCost <= 0 {
-				break
-			}
-			room := states[i].s.remaining - states[i].total
-			a := room
-			if a > remainingCost {
-				a = remainingCost
-			}
-			if a <= 0 {
-				continue
-			}
-			states[i].total += a
-			remainingCost -= a
-		}
-	}
-
-	// 落库:每卡一次 UPDATE。daily_spent_usd 记当天总分摊(惰性按日历天归零、不跨天结转);
-	// 透支 delta 仅按 pass1(透支额度内)计、且仅开透支时累加,达上限即关闭透支;
-	// 若本次把本卡剩余扣到 ~0,同一条 UPDATE 即时标记 expired(用完即失效)。行已 FOR UPDATE 锁定。
-	for i := range states {
-		st := &states[i]
-		if st.total <= 0 {
-			continue
-		}
-		n := st.sub.CalendarDayAt(now)
-		newDailySpent := st.sub.DailySpentAt(now) + st.total
-		overdraftDelta := 0
-		if st.s.maxOverdraftDays != nil && st.sub.CanEnableOverdraft() {
-			overdraftDelta = st.sub.OverdraftDaysDeltaAt(now, st.pass1)
-		}
-		closeOverdraft := st.s.maxOverdraftDays != nil &&
-			st.s.totalOverdraftCount+overdraftDelta >= service.MaxSubscriptionOverdraftUses
+	// 3) 回写卡（仅有卡时）：三窗口 usage/window_start + 惰性过期。结算不改 expires_at / 限额。
+	if hasCard && card != nil {
 		var nowExpired bool
-		var groupID int64
+		var gid sql.NullInt64 // 自定义/转套餐卡 group_id 为 NULL → 用 NullInt64 防 scan 崩
 		if err := tx.QueryRowContext(ctx, `
 			UPDATE user_subscriptions
-			SET consumed_usd = consumed_usd + $1,
-				daily_spent_usd = $6,
-				daily_spent_day = $7,
-				total_overdraft_count = LEAST($8, total_overdraft_count + $4),
-				max_overdraft_days = CASE WHEN $5 THEN NULL ELSE max_overdraft_days END,
-				status = CASE
-					WHEN (granted_total_usd - consumed_usd - clawed_usd - $1) <= $3
-					THEN 'expired' ELSE status END,
+			SET daily_usage_usd = $1, weekly_usage_usd = $2, monthly_usage_usd = $3,
+				daily_window_start = $4, weekly_window_start = $5, monthly_window_start = $6,
+				status = CASE WHEN $7 THEN 'expired' ELSE status END,
 				updated_at = NOW()
-			WHERE id = $2
+			WHERE id = $8
 			RETURNING status = 'expired', group_id
-		`, st.total, st.s.id, subscriptionDepletionEpsilon, overdraftDelta, closeOverdraft,
-			newDailySpent, n, service.MaxSubscriptionOverdraftUses).Scan(&nowExpired, &groupID); err != nil {
+		`, card.DailyUsageUSD, card.WeeklyUsageUSD, card.MonthlyUsageUSD,
+			card.DailyWindowStart, card.WeeklyWindowStart, card.MonthlyWindowStart,
+			card.JustExpired, cardID).Scan(&nowExpired, &gid); err != nil {
 			return nil, err
 		}
-		if nowExpired {
-			depletedGroupIDs = append(depletedGroupIDs, groupID)
+		// 本次刚由 active→expired（加载时为 active）→ 失效订阅缓存；无 group 自定义卡（gid 为 NULL）
+		// 无 (user,group) 组缓存需失效，跳过即可（用户级缓存由上层 SubscriptionID 路径处理）。
+		if nowExpired && gid.Valid {
+			g := gid.Int64
+			out.expiredGroupID = &g
 		}
 	}
-	return depletedGroupIDs, nil
-}
 
-func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, error) {
-	var newBalance float64
-	err := tx.QueryRowContext(ctx, `
+	// 4) 回写 user：balance（结算不改月度透支计数，故只写 balance）。
+	if err := tx.QueryRowContext(ctx, `
 		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
+		SET balance = $1, updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
 		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, service.ErrUserNotFound
+	`, wallet.Balance, userID).Scan(&out.newBalance); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrUserNotFound
+		}
+		return nil, err
 	}
-	if err != nil {
-		return 0, err
+	out.walletDebit = balance - wallet.Balance
+	return out, nil
+}
+
+// nullFloatZero 把可空 decimal 列转 float64（NULL→0；三窗口引擎中 0 = 该窗口不限）。
+func nullFloatZero(v sql.NullFloat64) float64 {
+	if v.Valid {
+		return v.Float64
 	}
-	return newBalance, nil
+	return 0
+}
+
+// nullTimePtr 把可空 timestamptz 列转 *time.Time（NULL→nil；窗口未激活）。
+func nullTimePtr(v sql.NullTime) *time.Time {
+	if v.Valid {
+		t := v.Time
+		return &t
+	}
+	return nil
 }
 
 func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {

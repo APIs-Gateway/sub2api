@@ -150,9 +150,19 @@ func buildTopUsers(orders []*dbent.PaymentOrder) []TopUserStat {
 
 // --- Audit Logs ---
 
+// entClientForCtx 返回与 ctx 绑定的 ent 客户端:ctx 处于事务中则用事务客户端(写入参与该事务、
+// 读到该事务内未提交的变更),否则用根客户端。让 writeAuditLog/hasAuditLog/写订单快照等在被外层
+// 事务包裹时自动加入事务(履约幂等键须与 apply 同事务原子提交,见 doSubLifecycle P2#6),tx 外行为不变。
+func (s *PaymentService) entClientForCtx(ctx context.Context) *dbent.Client {
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		return tx.Client()
+	}
+	return s.entClient
+}
+
 func (s *PaymentService) writeAuditLog(ctx context.Context, oid int64, action, op string, detail map[string]any) {
 	dj, _ := json.Marshal(detail)
-	_, err := s.entClient.PaymentAuditLog.Create().SetOrderID(strconv.FormatInt(oid, 10)).SetAction(action).SetDetail(string(dj)).SetOperator(op).Save(ctx)
+	_, err := s.entClientForCtx(ctx).PaymentAuditLog.Create().SetOrderID(strconv.FormatInt(oid, 10)).SetAction(action).SetDetail(string(dj)).SetOperator(op).Save(ctx)
 	if err != nil {
 		slog.Error("audit log failed", "orderID", oid, "action", action, "error", err)
 	}

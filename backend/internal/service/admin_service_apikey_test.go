@@ -278,6 +278,29 @@ func (s *userSubRepoStubForGroupUpdate) GetActiveByUserIDAndGroupID(_ context.Co
 	return &clone, nil
 }
 
+func (s *userSubRepoStubForGroupUpdate) GetActiveByUserID(_ context.Context, userID int64) (*UserSubscription, error) {
+	if s.getActiveErr != nil {
+		return nil, s.getActiveErr
+	}
+	if s.getActiveSub == nil {
+		return nil, ErrSubscriptionNotFound
+	}
+	clone := *s.getActiveSub
+	return &clone, nil
+}
+
+func (s *userSubRepoStubForGroupUpdate) GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*UserSubscription, error) {
+	return s.GetActiveByUserID(ctx, userID)
+}
+
+func (s *userSubRepoStubForGroupUpdate) GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*UserSubscription, error) {
+	return s.GetActiveByUserID(ctx, userID)
+}
+
+func (s *userSubRepoStubForGroupUpdate) ApplyManualOverdraft(ctx context.Context, sub *UserSubscription) error {
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -467,24 +490,22 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_NonExclusiveGroup_NoAllowedGroupU
 	require.False(t, got.AutoGrantedGroupAccess)
 }
 
-// burn-down 模型下订阅型分组不再可绑定到 API Key：无论用户是否持有有效订阅，
-// 管理员手动绑定都应被硬拒绝（GROUP_IS_SUBSCRIPTION），且不触达订阅仓储 / 不授予分组权限。
-func TestAdminService_AdminUpdateAPIKeyGroupID_SubscriptionGroup_AlwaysBlocked(t *testing.T) {
+// per-day：分组仅管路由、无「订阅型分组」禁绑概念。管理员绑定 historically-subscription 组按标准
+// AllowedGroups/IsExclusive 逻辑（取代旧「订阅型一律 GROUP_IS_SUBSCRIPTION 拒绝」契约）。
+// 非专属组 → 直接绑定成功、不触发 AddGroupToAllowedGroups。
+func TestAdminService_AdminUpdateAPIKeyGroupID_FormerSubscriptionGroupBindsLikeStandard(t *testing.T) {
 	existing := &APIKey{ID: 1, UserID: 42, Key: "sk-test", GroupID: nil}
 	apiKeyRepo := &apiKeyRepoStubForGroupUpdate{key: existing}
-	groupRepo := &groupRepoStubForGroupUpdate{group: &Group{ID: 10, Name: "Sub", Status: StatusActive, IsExclusive: true, SubscriptionType: SubscriptionTypeSubscription}}
+	groupRepo := &groupRepoStubForGroupUpdate{group: &Group{ID: 10, Name: "Sub", Status: StatusActive, IsExclusive: false, SubscriptionType: SubscriptionTypeSubscription}}
 	userRepo := &userRepoStubForGroupUpdate{}
-	// 即便存在有效订阅，也应被拒绝（订阅金额已发放到余额，订阅型分组不再作为渠道）。
-	userSubRepo := &userSubRepoStubForGroupUpdate{
-		getActiveSub: &UserSubscription{ID: 99, UserID: 42, GroupID: 10},
-	}
-	svc := &adminServiceImpl{apiKeyRepo: apiKeyRepo, groupRepo: groupRepo, userRepo: userRepo, userSubRepo: userSubRepo}
+	cache := &authCacheInvalidatorStub{}
+	svc := &adminServiceImpl{apiKeyRepo: apiKeyRepo, groupRepo: groupRepo, userRepo: userRepo, authCacheInvalidator: cache}
 
-	_, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, int64Ptr(10))
-	require.Error(t, err)
-	require.Equal(t, "GROUP_IS_SUBSCRIPTION", infraerrors.Reason(err))
-	require.False(t, userSubRepo.called)
-	require.False(t, userRepo.addGroupCalled)
+	got, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, int64Ptr(10))
+	require.NoError(t, err)
+	require.NotNil(t, got.APIKey.GroupID)
+	require.Equal(t, int64(10), *got.APIKey.GroupID)
+	require.False(t, userRepo.addGroupCalled, "非专属组不触发 AddGroupToAllowedGroups")
 }
 
 func TestAdminService_AdminUpdateAPIKeyGroupID_ExclusiveGroup_AllowedGroupAddFails_ReturnsError(t *testing.T) {

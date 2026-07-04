@@ -11,12 +11,18 @@ describe('parseWechatResumeRoute', () => {
       amount: '12.5',
       order_type: 'subscription',
       plan_id: '7',
+      group_id: '9',
+      daily_amount_usd: '8.5',
+      validity_days: '60',
     }, [], 88)).toEqual({
       wechatResumeToken: 'resume-token-123',
       paymentType: 'wxpay',
       orderType: 'subscription',
       orderAmount: 0,
       planId: 7,
+      groupId: 9,
+      dailyAmountUsd: 8.5,
+      validityDays: 60,
     })
   })
 
@@ -27,12 +33,18 @@ describe('parseWechatResumeRoute', () => {
       payment_type: 'wxpay',
       amount: '12.5',
       order_type: 'balance',
+      group_id: '9',
+      daily_amount_usd: '8.5',
+      validity_days: '60',
     }, [], 88)).toEqual({
       openid: 'openid-123',
       paymentType: 'wxpay',
-      orderType: 'balance',
+      orderType: 'subscription',
       orderAmount: 12.5,
       planId: undefined,
+      groupId: 9,
+      dailyAmountUsd: 8.5,
+      validityDays: 60,
     })
   })
 })
@@ -48,6 +60,9 @@ describe('stripWechatResumeQuery', () => {
       amount: '12.5',
       order_type: 'subscription',
       plan_id: '7',
+      group_id: '9',
+      daily_amount_usd: '8.5',
+      validity_days: '60',
       state: 'state-123',
       scope: 'snsapi_base',
     })).toEqual({

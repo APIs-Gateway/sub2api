@@ -489,12 +489,10 @@ func TestIncrementUserPlatformQuotaUsage_GuardsAgainstEmpty(t *testing.T) {
 	}
 }
 
-// ── C-NEW-2: 订阅模式豁免 user×platform quota 检查 ──────────────────────────
-// 通过直接调用 checkUserPlatformQuotaEligibility 验证：
-// 1. standard 模式下 limit=0 → 拦截
-// 2. 订阅模式豁免通过 isSubscriptionMode 守卫体现 — 逻辑已在 CheckBillingEligibility 里加 !isSubscriptionMode 条件
-// 此处用单元测试直接验证底层 checkUserPlatformQuotaEligibility 的行为（quota 超限确实拦截），
-// 而 subscription bypass 逻辑则在 CheckBillingEligibility 中通过条件判断保证，不绕过 sub eligibility 内部复杂依赖。
+// ── user×platform quota 检查（三窗口：订阅模式豁免）──────────────────
+// docs/billing-perday-redesign.md §4 恢复 upstream 口径：用户有生效订阅卡时豁免
+// user×platform quota；无卡用户继续受 platform quota 约束。这里同时守住底层 standard
+// 模式拦截行为（limit=0 → 拦截）。
 
 // fakeZeroQuotaCache 模拟 cache 命中且 daily limit=0（quota 耗尽）。
 type fakeZeroQuotaCache struct {
@@ -522,6 +520,12 @@ func (f *fakeZeroQuotaCache) DeleteUserPlatformQuotaCache(_ context.Context, _ i
 // 会触发"窗口过期 → SetCache 刷新"分支。fake 用 noop 避免 panic。
 func (f *fakeZeroQuotaCache) SetUserPlatformQuotaCache(_ context.Context, _ int64, _ string, _ *UserPlatformQuotaCacheEntry, _ time.Duration) error {
 	return nil
+}
+
+// GetUserBalance per-day 后准入统一走 checkBalanceEligibility（先查余额）；返回正余额让余额闸通过，
+// 以便继续验证 platform quota 分支（否则会在余额闸即返回）。
+func (f *fakeZeroQuotaCache) GetUserBalance(_ context.Context, _ int64) (float64, error) {
+	return 1.0, nil
 }
 
 // GetSubscriptionCache 返回有效订阅（active、未过期、usage 远低于 limit），
@@ -560,10 +564,10 @@ func TestCheckUserPlatformQuotaEligibility_StandardMode_BlocksWhenLimitZero(t *t
 	}
 }
 
-// TestCheckBillingEligibility_SubscriptionMode_BypassesPlatformQuota 验证（C-NEW-2）：
-// 订阅模式用户不受 user×platform quota 拦截，GetUserPlatformQuotaCache 不应被调用。
-func TestCheckBillingEligibility_SubscriptionMode_BypassesPlatformQuota(t *testing.T) {
-	fake := &fakeZeroQuotaCache{} // GetUserPlatformQuotaCache 返回 limit=0，若被调用则拦截
+// TestCheckBillingEligibility_ActiveSubscriptionBypassesPlatformQuota 验证三窗口订阅口径：
+// 是否订阅由“有生效卡”决定，与 group.IsSubscriptionType 无关；订阅模式跳过 user×platform quota。
+func TestCheckBillingEligibility_ActiveSubscriptionBypassesPlatformQuota(t *testing.T) {
+	fake := &fakeZeroQuotaCache{} // 若误查 platform quota，limit=0 会拦截
 	cfg := &config.Config{}
 	cfg.Billing.UserPlatformQuotaCacheTTLSeconds = 60
 	s := &BillingCacheService{
@@ -572,25 +576,19 @@ func TestCheckBillingEligibility_SubscriptionMode_BypassesPlatformQuota(t *testi
 		userPlatformQuotaRepo: &fakeQuotaRepo{},
 	}
 
-	subGroup := &Group{
-		ID:               10,
-		SubscriptionType: "subscription",
-		Status:           "active",
-		// 无 DailyLimitUSD → checkSubscriptionEligibility 不会因超限失败
+	group := &Group{
+		ID:     10,
+		Status: "active",
 	}
-	sub := &UserSubscription{Status: "active"}
+	sub := &UserSubscription{Status: "active", ExpiresAt: time.Now().Add(time.Hour)}
 	user := &User{ID: 42}
 
-	err := s.CheckBillingEligibility(context.Background(), user, nil, subGroup, sub, "anthropic")
-	// 订阅模式下不应收到任何 user×platform quota 错误
-	if errors.Is(err, ErrUserPlatformDailyQuotaExhausted) ||
-		errors.Is(err, ErrUserPlatformWeeklyQuotaExhausted) ||
-		errors.Is(err, ErrUserPlatformMonthlyQuotaExhausted) {
-		t.Errorf("subscription mode should bypass user×platform quota, got: %v", err)
+	err := s.CheckBillingEligibility(context.Background(), user, nil, group, sub, "anthropic")
+	if err != nil {
+		t.Errorf("active subscription should bypass user×platform quota, got: %v", err)
 	}
-	// GetUserPlatformQuotaCache 不应被调用
 	if fake.called {
-		t.Error("GetUserPlatformQuotaCache must NOT be called in subscription mode (C-NEW-2)")
+		t.Error("GetUserPlatformQuotaCache should NOT be consulted for active subscription mode")
 	}
 }
 

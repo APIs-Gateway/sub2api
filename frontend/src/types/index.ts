@@ -530,6 +530,7 @@ export interface Group {
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   require_oauth_only: boolean
   require_privacy_set: boolean
+  supported_model_scopes?: string[]
   created_at: string
   updated_at: string
 }
@@ -1570,6 +1571,13 @@ export interface UserSubscription {
   daily_window_start: string | null
   weekly_window_start: string | null
   monthly_window_start: string | null
+  // 三窗口限额（限额挂卡、不挂 group）；null = 该窗口不限。配「用量 vs 限额」展示。
+  daily_limit_usd?: number | null
+  weekly_limit_usd?: number | null
+  monthly_limit_usd?: number | null
+  // 用户级本月手动透支剩余次数（每自然月最多 5 次，东八区惰性重置）。
+  // 后端 #7/#8 提供：有值时前端据此置灰按钮，无值时不前置拦截、交服务端兜底校验。
+  monthly_overdraft_remaining?: number | null
   // Burn-down 计费模型字段（开通即把整期额度打入余额）
   granted_total_usd?: number // 发放总额 G = D×天数
   daily_amount_usd?: number // 每日额度 D
@@ -1578,17 +1586,20 @@ export interface UserSubscription {
   remaining_usd?: number // 剩余订阅余额
   consumption_day?: number // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
   calendar_day?: number // 自激活起经过的东八区自然日数，用于订阅实际服务进度
-  max_overdraft_days?: number | null // 本卡最多往后透支天数；null/0 = 透支关闭（用户在「我的订阅」自助设置）
-  max_overdraft_uses?: number // 本卡最多累计透支次数，当前固定为 5
-  total_overdraft_count?: number // 本卡已累计透支请求次数
-  remaining_overdraft_uses?: number // 本卡剩余可透支请求次数
-  can_enable_overdraft?: boolean // 已用满透支次数后为 false
+  // 旧 per-card 透支开关字段（max_overdraft_days/max_overdraft_uses/total_overdraft_count/
+  // remaining_overdraft_uses/can_enable_overdraft）已退役：三窗口模型改用用户级月度透支
+  // （monthly_overdraft_remaining + POST /subscriptions/overdraft）。
   activated_at?: string | null
   created_at: string
   updated_at: string
   expires_at: string | null
   user?: User
   group?: Group
+  refund_order_id?: number
+  refund_order_status?: string
+  refund_order_amount?: number
+  refund_order_pay_amount?: number
+  refundable_amount?: number
 }
 
 export interface SubscriptionProgress {

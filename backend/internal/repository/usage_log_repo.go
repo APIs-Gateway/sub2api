@@ -478,9 +478,12 @@ func (r *usageLogRepository) createBatched(ctx context.Context, log *service.Usa
 }
 
 func (r *usageLogRepository) ensureCreateBatcher() {
-	if r == nil || r.db == nil || r.createBatchCh != nil {
+	if r == nil || r.db == nil {
 		return
 	}
+	// 不要在此加 `r.createBatchCh != nil` 快路径:那是绕过 sync.Once 的无同步读,会与 Do 内的写
+	// 形成 data race(双重检查锁反模式)。sync.Once.Do 自带原子 done 快路径,直接走它即可,且
+	// Do 的 happens-before 保证 Do 返回后所有调用方都能看到已建好的 channel。
 	r.createBatchOnce.Do(func() {
 		r.createBatchCh = make(chan usageLogCreateRequest, usageLogCreateBatchQueueCap)
 		go r.runCreateBatcher(r.db)
@@ -488,9 +491,10 @@ func (r *usageLogRepository) ensureCreateBatcher() {
 }
 
 func (r *usageLogRepository) ensureBestEffortBatcher() {
-	if r == nil || r.db == nil || r.bestEffortBatchCh != nil {
+	if r == nil || r.db == nil {
 		return
 	}
+	// 同 ensureCreateBatcher:去掉无同步的 `!= nil` 快路径,统一走 sync.Once.Do 避免 data race。
 	r.bestEffortBatchOnce.Do(func() {
 		r.bestEffortBatchCh = make(chan usageLogBestEffortRequest, usageLogBestEffortBatchQueueCap)
 		go r.runBestEffortBatcher(r.db)

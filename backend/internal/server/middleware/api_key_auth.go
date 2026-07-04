@@ -172,11 +172,10 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				return
 			}
 
-			// 纯余额检查（充值余额 + 订阅发放余额的合计）
-			if apiKey.User.Balance <= 0 {
-				AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
-				return
-			}
+			// per-day：不再在中间件按 user.Balance<=0 早拒。新模型套餐额度在卡的 today_remaining、
+			// 不在 users.balance（已是纯钱包），「钱包 0 + 有今日套餐额度」的用户应放行。准入由各计费
+			// handler 调 BillingCacheService.CheckBillingEligibility（per-day Admit：套餐余额 || 钱包 ||
+			// 可透支）权威判定，此处不再做余额闸，避免 Admit 不可达。
 
 			// 公益 key（hvoy/hovy）单 IP 每自然日消费上限：超额则按分组协议输出
 			// 标准 error 信封（429）+ 文案，不计费、不转发上游
@@ -312,10 +311,8 @@ func validateAPIKeyGroupAllowed(apiKey *service.APIKey) bool {
 	if apiKey == nil || apiKey.GroupID == nil || apiKey.User == nil || apiKey.Group == nil {
 		return true
 	}
+	// per-day：分组仅管路由、无「订阅型分组」豁免，统一按标准 AllowedGroups/IsExclusive 校验。
 	group := apiKey.Group
-	if group.IsSubscriptionType() {
-		return true
-	}
 	return apiKey.User.CanBindGroup(group.ID, group.IsExclusive)
 }
 

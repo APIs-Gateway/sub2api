@@ -108,6 +108,11 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 
 	// user_subscriptions: deleted_at for soft delete support (migration 012)
 	requireColumn(t, tx, "user_subscriptions", "deleted_at", "timestamp with time zone", 0, true)
+	// group_id 自 migration 164 起可空（P5e：自定义 D+T 订阅卡无 group 归属）
+	requireColumn(t, tx, "user_subscriptions", "group_id", "bigint", 0, true)
+	requireNumericColumn(t, tx, "user_subscriptions", "daily_limit_usd", 20, 10, true)
+	requireNumericColumn(t, tx, "user_subscriptions", "weekly_limit_usd", 20, 10, true)
+	requireNumericColumn(t, tx, "user_subscriptions", "monthly_limit_usd", 20, 10, true)
 
 	// orphan_allowed_groups_audit table should exist (migration 013)
 	var orphanAuditRegclass sql.NullString
@@ -305,6 +310,41 @@ WHERE table_schema = 'public'
 		require.True(t, row.MaxLen.Valid, "expected maxLen for %s.%s", table, column)
 		require.Equal(t, int64(maxLen), row.MaxLen.Int64, "maxLen mismatch for %s.%s", table, column)
 	}
+
+	if nullable {
+		require.Equal(t, "YES", row.Nullable, "nullable mismatch for %s.%s", table, column)
+	} else {
+		require.Equal(t, "NO", row.Nullable, "nullable mismatch for %s.%s", table, column)
+	}
+}
+
+func requireNumericColumn(t *testing.T, tx *sql.Tx, table, column string, precision, scale int, nullable bool) {
+	t.Helper()
+
+	var row struct {
+		DataType  string
+		Precision sql.NullInt64
+		Scale     sql.NullInt64
+		Nullable  string
+	}
+
+	err := tx.QueryRowContext(context.Background(), `
+SELECT
+  data_type,
+  numeric_precision,
+  numeric_scale,
+  is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = $1
+  AND column_name = $2
+`, table, column).Scan(&row.DataType, &row.Precision, &row.Scale, &row.Nullable)
+	require.NoError(t, err, "query information_schema.columns for %s.%s", table, column)
+	require.Equal(t, "numeric", row.DataType, "data_type mismatch for %s.%s", table, column)
+	require.True(t, row.Precision.Valid, "expected numeric precision for %s.%s", table, column)
+	require.True(t, row.Scale.Valid, "expected numeric scale for %s.%s", table, column)
+	require.Equal(t, int64(precision), row.Precision.Int64, "numeric precision mismatch for %s.%s", table, column)
+	require.Equal(t, int64(scale), row.Scale.Int64, "numeric scale mismatch for %s.%s", table, column)
 
 	if nullable {
 		require.Equal(t, "YES", row.Nullable, "nullable mismatch for %s.%s", table, column)

@@ -175,6 +175,21 @@ func SubscriptionOverdraftGuard(v bool) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldSubscriptionOverdraftGuard, v))
 }
 
+// MonthlyOverdraftCount applies equality check predicate on the "monthly_overdraft_count" field. It's identical to MonthlyOverdraftCountEQ.
+func MonthlyOverdraftCount(v int) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldMonthlyOverdraftCount, v))
+}
+
+// MonthlyOverdraftMonth applies equality check predicate on the "monthly_overdraft_month" field. It's identical to MonthlyOverdraftMonthEQ.
+func MonthlyOverdraftMonth(v string) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldMonthlyOverdraftMonth, v))
+}
+
+// LastChangePlanDay applies equality check predicate on the "last_change_plan_day" field. It's identical to LastChangePlanDayEQ.
+func LastChangePlanDay(v int) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldLastChangePlanDay, v))
+}
+
 // StablePriorityEnabled applies equality check predicate on the "stable_priority_enabled" field. It's identical to StablePriorityEnabledEQ.
 func StablePriorityEnabled(v bool) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldStablePriorityEnabled, v))
@@ -1358,6 +1373,151 @@ func SubscriptionOverdraftGuardEQ(v bool) predicate.User {
 // SubscriptionOverdraftGuardNEQ applies the NEQ predicate on the "subscription_overdraft_guard" field.
 func SubscriptionOverdraftGuardNEQ(v bool) predicate.User {
 	return predicate.User(sql.FieldNEQ(FieldSubscriptionOverdraftGuard, v))
+}
+
+// MonthlyOverdraftCountEQ applies the EQ predicate on the "monthly_overdraft_count" field.
+func MonthlyOverdraftCountEQ(v int) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldMonthlyOverdraftCount, v))
+}
+
+// MonthlyOverdraftCountNEQ applies the NEQ predicate on the "monthly_overdraft_count" field.
+func MonthlyOverdraftCountNEQ(v int) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldMonthlyOverdraftCount, v))
+}
+
+// MonthlyOverdraftCountIn applies the In predicate on the "monthly_overdraft_count" field.
+func MonthlyOverdraftCountIn(vs ...int) predicate.User {
+	return predicate.User(sql.FieldIn(FieldMonthlyOverdraftCount, vs...))
+}
+
+// MonthlyOverdraftCountNotIn applies the NotIn predicate on the "monthly_overdraft_count" field.
+func MonthlyOverdraftCountNotIn(vs ...int) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldMonthlyOverdraftCount, vs...))
+}
+
+// MonthlyOverdraftCountGT applies the GT predicate on the "monthly_overdraft_count" field.
+func MonthlyOverdraftCountGT(v int) predicate.User {
+	return predicate.User(sql.FieldGT(FieldMonthlyOverdraftCount, v))
+}
+
+// MonthlyOverdraftCountGTE applies the GTE predicate on the "monthly_overdraft_count" field.
+func MonthlyOverdraftCountGTE(v int) predicate.User {
+	return predicate.User(sql.FieldGTE(FieldMonthlyOverdraftCount, v))
+}
+
+// MonthlyOverdraftCountLT applies the LT predicate on the "monthly_overdraft_count" field.
+func MonthlyOverdraftCountLT(v int) predicate.User {
+	return predicate.User(sql.FieldLT(FieldMonthlyOverdraftCount, v))
+}
+
+// MonthlyOverdraftCountLTE applies the LTE predicate on the "monthly_overdraft_count" field.
+func MonthlyOverdraftCountLTE(v int) predicate.User {
+	return predicate.User(sql.FieldLTE(FieldMonthlyOverdraftCount, v))
+}
+
+// MonthlyOverdraftMonthEQ applies the EQ predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthEQ(v string) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldMonthlyOverdraftMonth, v))
+}
+
+// MonthlyOverdraftMonthNEQ applies the NEQ predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthNEQ(v string) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldMonthlyOverdraftMonth, v))
+}
+
+// MonthlyOverdraftMonthIn applies the In predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthIn(vs ...string) predicate.User {
+	return predicate.User(sql.FieldIn(FieldMonthlyOverdraftMonth, vs...))
+}
+
+// MonthlyOverdraftMonthNotIn applies the NotIn predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthNotIn(vs ...string) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldMonthlyOverdraftMonth, vs...))
+}
+
+// MonthlyOverdraftMonthGT applies the GT predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthGT(v string) predicate.User {
+	return predicate.User(sql.FieldGT(FieldMonthlyOverdraftMonth, v))
+}
+
+// MonthlyOverdraftMonthGTE applies the GTE predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthGTE(v string) predicate.User {
+	return predicate.User(sql.FieldGTE(FieldMonthlyOverdraftMonth, v))
+}
+
+// MonthlyOverdraftMonthLT applies the LT predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthLT(v string) predicate.User {
+	return predicate.User(sql.FieldLT(FieldMonthlyOverdraftMonth, v))
+}
+
+// MonthlyOverdraftMonthLTE applies the LTE predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthLTE(v string) predicate.User {
+	return predicate.User(sql.FieldLTE(FieldMonthlyOverdraftMonth, v))
+}
+
+// MonthlyOverdraftMonthContains applies the Contains predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthContains(v string) predicate.User {
+	return predicate.User(sql.FieldContains(FieldMonthlyOverdraftMonth, v))
+}
+
+// MonthlyOverdraftMonthHasPrefix applies the HasPrefix predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthHasPrefix(v string) predicate.User {
+	return predicate.User(sql.FieldHasPrefix(FieldMonthlyOverdraftMonth, v))
+}
+
+// MonthlyOverdraftMonthHasSuffix applies the HasSuffix predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthHasSuffix(v string) predicate.User {
+	return predicate.User(sql.FieldHasSuffix(FieldMonthlyOverdraftMonth, v))
+}
+
+// MonthlyOverdraftMonthEqualFold applies the EqualFold predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthEqualFold(v string) predicate.User {
+	return predicate.User(sql.FieldEqualFold(FieldMonthlyOverdraftMonth, v))
+}
+
+// MonthlyOverdraftMonthContainsFold applies the ContainsFold predicate on the "monthly_overdraft_month" field.
+func MonthlyOverdraftMonthContainsFold(v string) predicate.User {
+	return predicate.User(sql.FieldContainsFold(FieldMonthlyOverdraftMonth, v))
+}
+
+// LastChangePlanDayEQ applies the EQ predicate on the "last_change_plan_day" field.
+func LastChangePlanDayEQ(v int) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldLastChangePlanDay, v))
+}
+
+// LastChangePlanDayNEQ applies the NEQ predicate on the "last_change_plan_day" field.
+func LastChangePlanDayNEQ(v int) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldLastChangePlanDay, v))
+}
+
+// LastChangePlanDayIn applies the In predicate on the "last_change_plan_day" field.
+func LastChangePlanDayIn(vs ...int) predicate.User {
+	return predicate.User(sql.FieldIn(FieldLastChangePlanDay, vs...))
+}
+
+// LastChangePlanDayNotIn applies the NotIn predicate on the "last_change_plan_day" field.
+func LastChangePlanDayNotIn(vs ...int) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldLastChangePlanDay, vs...))
+}
+
+// LastChangePlanDayGT applies the GT predicate on the "last_change_plan_day" field.
+func LastChangePlanDayGT(v int) predicate.User {
+	return predicate.User(sql.FieldGT(FieldLastChangePlanDay, v))
+}
+
+// LastChangePlanDayGTE applies the GTE predicate on the "last_change_plan_day" field.
+func LastChangePlanDayGTE(v int) predicate.User {
+	return predicate.User(sql.FieldGTE(FieldLastChangePlanDay, v))
+}
+
+// LastChangePlanDayLT applies the LT predicate on the "last_change_plan_day" field.
+func LastChangePlanDayLT(v int) predicate.User {
+	return predicate.User(sql.FieldLT(FieldLastChangePlanDay, v))
+}
+
+// LastChangePlanDayLTE applies the LTE predicate on the "last_change_plan_day" field.
+func LastChangePlanDayLTE(v int) predicate.User {
+	return predicate.User(sql.FieldLTE(FieldLastChangePlanDay, v))
 }
 
 // StablePriorityEnabledEQ applies the EQ predicate on the "stable_priority_enabled" field.

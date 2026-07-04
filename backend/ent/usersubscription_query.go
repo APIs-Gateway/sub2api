@@ -612,7 +612,10 @@ func (_q *UserSubscriptionQuery) loadGroup(ctx context.Context, query *GroupQuer
 	ids := make([]int64, 0, len(nodes))
 	nodeids := make(map[int64][]*UserSubscription)
 	for i := range nodes {
-		fk := nodes[i].GroupID
+		if nodes[i].GroupID == nil {
+			continue
+		}
+		fk := *nodes[i].GroupID
 		if _, ok := nodeids[fk]; !ok {
 			ids = append(ids, fk)
 		}

@@ -237,6 +237,8 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			TotalRecharged:             apiKey.User.TotalRecharged,
 			RPMLimit:                   apiKey.User.RPMLimit,
 			SubscriptionOverdraftGuard: apiKey.User.SubscriptionOverdraftGuard,
+			MonthlyOverdraftCount:      apiKey.User.MonthlyOverdraftCount,
+			MonthlyOverdraftMonth:      apiKey.User.MonthlyOverdraftMonth,
 			StablePriorityEnabled:      apiKey.User.StablePriorityEnabled,
 		},
 	}
@@ -321,6 +323,8 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			TotalRecharged:             snapshot.User.TotalRecharged,
 			RPMLimit:                   snapshot.User.RPMLimit,
 			SubscriptionOverdraftGuard: snapshot.User.SubscriptionOverdraftGuard,
+			MonthlyOverdraftCount:      snapshot.User.MonthlyOverdraftCount,
+			MonthlyOverdraftMonth:      snapshot.User.MonthlyOverdraftMonth,
 			UserGroupRPMOverride:       snapshot.User.UserGroupRPMOverride,
 			StablePriorityEnabled:      snapshot.User.StablePriorityEnabled,
 		},

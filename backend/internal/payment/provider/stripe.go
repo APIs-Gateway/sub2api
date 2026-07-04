@@ -230,6 +230,8 @@ func (s *Stripe) Refund(ctx context.Context, req payment.RefundRequest) (*paymen
 		Amount:        stripe.Int64(amountInMinorUnit),
 		Reason:        stripe.String(string(stripe.RefundReasonRequestedByCustomer)),
 	}
+	// 确定性幂等键：退款重试不得换值，否则 Stripe 允许对同一 PaymentIntent 再退一次→双重退款。
+	params.SetIdempotencyKey(payment.DeterministicRefundNo(req.OrderID, req.Amount))
 	params.Context = ctx
 
 	r, err := s.sc.V1Refunds.Create(ctx, params)

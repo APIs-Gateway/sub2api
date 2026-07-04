@@ -65,6 +65,12 @@ type User struct {
 	RpmLimit int `json:"rpm_limit,omitempty"`
 	// SubscriptionOverdraftGuard holds the value of the "subscription_overdraft_guard" field.
 	SubscriptionOverdraftGuard bool `json:"subscription_overdraft_guard,omitempty"`
+	// MonthlyOverdraftCount holds the value of the "monthly_overdraft_count" field.
+	MonthlyOverdraftCount int `json:"monthly_overdraft_count,omitempty"`
+	// MonthlyOverdraftMonth holds the value of the "monthly_overdraft_month" field.
+	MonthlyOverdraftMonth string `json:"monthly_overdraft_month,omitempty"`
+	// LastChangePlanDay holds the value of the "last_change_plan_day" field.
+	LastChangePlanDay int `json:"last_change_plan_day,omitempty"`
 	// 稳定优先：所在组渠道全挂时跨分组逐档兜底
 	StablePriorityEnabled bool `json:"stable_priority_enabled,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
@@ -243,9 +249,9 @@ func (*User) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case user.FieldBalance, user.FieldBalanceNotifyThreshold, user.FieldTotalRecharged:
 			values[i] = new(sql.NullFloat64)
-		case user.FieldID, user.FieldConcurrency, user.FieldRpmLimit:
+		case user.FieldID, user.FieldConcurrency, user.FieldRpmLimit, user.FieldMonthlyOverdraftCount, user.FieldLastChangePlanDay:
 			values[i] = new(sql.NullInt64)
-		case user.FieldEmail, user.FieldPasswordHash, user.FieldRole, user.FieldStatus, user.FieldUsername, user.FieldNotes, user.FieldTotpSecretEncrypted, user.FieldSignupSource, user.FieldBalanceNotifyThresholdType, user.FieldBalanceNotifyExtraEmails:
+		case user.FieldEmail, user.FieldPasswordHash, user.FieldRole, user.FieldStatus, user.FieldUsername, user.FieldNotes, user.FieldTotpSecretEncrypted, user.FieldSignupSource, user.FieldBalanceNotifyThresholdType, user.FieldBalanceNotifyExtraEmails, user.FieldMonthlyOverdraftMonth:
 			values[i] = new(sql.NullString)
 		case user.FieldCreatedAt, user.FieldUpdatedAt, user.FieldDeletedAt, user.FieldTotpEnabledAt, user.FieldLastLoginAt, user.FieldLastActiveAt:
 			values[i] = new(sql.NullTime)
@@ -419,6 +425,24 @@ func (_m *User) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field subscription_overdraft_guard", values[i])
 			} else if value.Valid {
 				_m.SubscriptionOverdraftGuard = value.Bool
+			}
+		case user.FieldMonthlyOverdraftCount:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field monthly_overdraft_count", values[i])
+			} else if value.Valid {
+				_m.MonthlyOverdraftCount = int(value.Int64)
+			}
+		case user.FieldMonthlyOverdraftMonth:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field monthly_overdraft_month", values[i])
+			} else if value.Valid {
+				_m.MonthlyOverdraftMonth = value.String
+			}
+		case user.FieldLastChangePlanDay:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field last_change_plan_day", values[i])
+			} else if value.Valid {
+				_m.LastChangePlanDay = int(value.Int64)
 			}
 		case user.FieldStablePriorityEnabled:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -615,6 +639,15 @@ func (_m *User) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("subscription_overdraft_guard=")
 	builder.WriteString(fmt.Sprintf("%v", _m.SubscriptionOverdraftGuard))
+	builder.WriteString(", ")
+	builder.WriteString("monthly_overdraft_count=")
+	builder.WriteString(fmt.Sprintf("%v", _m.MonthlyOverdraftCount))
+	builder.WriteString(", ")
+	builder.WriteString("monthly_overdraft_month=")
+	builder.WriteString(_m.MonthlyOverdraftMonth)
+	builder.WriteString(", ")
+	builder.WriteString("last_change_plan_day=")
+	builder.WriteString(fmt.Sprintf("%v", _m.LastChangePlanDay))
 	builder.WriteString(", ")
 	builder.WriteString("stable_priority_enabled=")
 	builder.WriteString(fmt.Sprintf("%v", _m.StablePriorityEnabled))

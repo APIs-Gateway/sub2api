@@ -54,26 +54,28 @@ func (h *PaymentHandler) GetPlans(c *gin.Context) {
 	}
 	// Enrich plans with group platform for frontend color coding
 	type planWithPlatform struct {
-		ID            int64    `json:"id"`
-		GroupID       int64    `json:"group_id"`
-		GroupPlatform string   `json:"group_platform"`
-		Name          string   `json:"name"`
-		Description   string   `json:"description"`
-		Price         float64  `json:"price"`
-		OriginalPrice *float64 `json:"original_price,omitempty"`
-		ValidityDays  int      `json:"validity_days"`
-		ValidityUnit  string   `json:"validity_unit"`
-		Features      string   `json:"features"`
-		ProductName   string   `json:"product_name"`
-		ForSale       bool     `json:"for_sale"`
-		SortOrder     int      `json:"sort_order"`
+		ID             int64    `json:"id"`
+		GroupID        int64    `json:"group_id"`
+		GroupPlatform  string   `json:"group_platform"`
+		DailyAmountUSD float64  `json:"daily_amount_usd"`
+		Name           string   `json:"name"`
+		Description    string   `json:"description"`
+		Price          float64  `json:"price"`
+		OriginalPrice  *float64 `json:"original_price,omitempty"`
+		ValidityDays   int      `json:"validity_days"`
+		ValidityUnit   string   `json:"validity_unit"`
+		Features       string   `json:"features"`
+		ProductName    string   `json:"product_name"`
+		ForSale        bool     `json:"for_sale"`
+		SortOrder      int      `json:"sort_order"`
 	}
 	platformMap := h.configService.GetGroupPlatformMap(c.Request.Context(), plans)
 	result := make([]planWithPlatform, 0, len(plans))
 	for _, p := range plans {
 		result = append(result, planWithPlatform{
 			ID: int64(p.ID), GroupID: p.GroupID, GroupPlatform: platformMap[p.GroupID],
-			Name: p.Name, Description: p.Description, Price: p.Price, OriginalPrice: p.OriginalPrice,
+			DailyAmountUSD: p.DailyAmountUsd,
+			Name:           p.Name, Description: p.Description, Price: p.Price, OriginalPrice: p.OriginalPrice,
 			ValidityDays: p.ValidityDays, ValidityUnit: p.ValidityUnit, Features: p.Features,
 			ProductName: p.ProductName, ForSale: p.ForSale, SortOrder: p.SortOrder,
 		})
@@ -112,6 +114,12 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		return
 	}
 
+	subscriptionGroups, err := h.configService.ListSubscriptionCheckoutGroups(ctx)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
 	// Fetch plans with group info
 	plans, _ := h.configService.ListPlansForSale(ctx)
 	groupInfo := h.configService.GetGroupInfoMap(ctx, plans)
@@ -121,6 +129,7 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		planList = append(planList, checkoutPlan{
 			ID: int64(p.ID), GroupID: p.GroupID,
 			GroupPlatform: gi.Platform, GroupName: gi.Name,
+			DailyAmountUSD: p.DailyAmountUsd,
 			RateMultiplier: gi.RateMultiplier, DailyLimitUSD: gi.DailyLimitUSD,
 			WeeklyLimitUSD: gi.WeeklyLimitUSD, MonthlyLimitUSD: gi.MonthlyLimitUSD,
 			ModelScopes: gi.ModelScopes,
@@ -135,9 +144,12 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		GlobalMin:                 limitsResp.GlobalMin,
 		GlobalMax:                 limitsResp.GlobalMax,
 		Plans:                     planList,
+		SubscriptionGroups:        subscriptionGroups,
 		BalanceDisabled:           cfg.BalanceDisabled,
 		BalanceRechargeMultiplier: cfg.BalanceRechargeMultiplier,
+		SubscriptionPayMultiplier: cfg.SubscriptionPayMultiplier,
 		RechargeFeeRate:           cfg.RechargeFeeRate,
+		RefundFeeRate:             cfg.RefundFeeRate,
 		HelpText:                  cfg.HelpText,
 		HelpImageURL:              cfg.HelpImageURL,
 		StripePublishableKey:      cfg.StripePublishableKey,
@@ -146,17 +158,20 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 }
 
 type checkoutInfoResponse struct {
-	Methods                   map[string]service.MethodLimits `json:"methods"`
-	GlobalMin                 float64                         `json:"global_min"`
-	GlobalMax                 float64                         `json:"global_max"`
-	Plans                     []checkoutPlan                  `json:"plans"`
-	BalanceDisabled           bool                            `json:"balance_disabled"`
-	BalanceRechargeMultiplier float64                         `json:"balance_recharge_multiplier"`
-	RechargeFeeRate           float64                         `json:"recharge_fee_rate"`
-	HelpText                  string                          `json:"help_text"`
-	HelpImageURL              string                          `json:"help_image_url"`
-	StripePublishableKey      string                          `json:"stripe_publishable_key"`
-	AlipayForceQRCode         bool                            `json:"alipay_force_qrcode"`
+	Methods                   map[string]service.MethodLimits     `json:"methods"`
+	GlobalMin                 float64                             `json:"global_min"`
+	GlobalMax                 float64                             `json:"global_max"`
+	Plans                     []checkoutPlan                      `json:"plans"`
+	SubscriptionGroups        []service.SubscriptionCheckoutGroup `json:"subscription_groups"`
+	BalanceDisabled           bool                                `json:"balance_disabled"`
+	BalanceRechargeMultiplier float64                             `json:"balance_recharge_multiplier"`
+	SubscriptionPayMultiplier float64                             `json:"subscription_payment_multiplier"`
+	RechargeFeeRate           float64                             `json:"recharge_fee_rate"`
+	RefundFeeRate             float64                             `json:"refund_fee_rate"`
+	HelpText                  string                              `json:"help_text"`
+	HelpImageURL              string                              `json:"help_image_url"`
+	StripePublishableKey      string                              `json:"stripe_publishable_key"`
+	AlipayForceQRCode         bool                                `json:"alipay_force_qrcode"`
 }
 
 type checkoutPlan struct {
@@ -164,6 +179,7 @@ type checkoutPlan struct {
 	GroupID         int64    `json:"group_id"`
 	GroupPlatform   string   `json:"group_platform"`
 	GroupName       string   `json:"group_name"`
+	DailyAmountUSD  float64  `json:"daily_amount_usd"`
 	RateMultiplier  float64  `json:"rate_multiplier"`
 	DailyLimitUSD   *float64 `json:"daily_limit_usd"`
 	WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`
@@ -217,6 +233,14 @@ type CreateOrderRequest struct {
 	PaymentSource     string  `json:"payment_source"`
 	OrderType         string  `json:"order_type"`
 	PlanID            int64   `json:"plan_id"`
+	GroupID           int64   `json:"group_id"`
+	// 自定义订阅购买（无固定套餐，规格第 2/3 节）：每日额度 D + 有效期 T；与 plan_id 互斥，
+	// 后端按 u(D) 公式自算价、不信前端 amount。
+	DailyAmountUSD float64 `json:"daily_amount_usd"`
+	ValidityDays   int     `json:"validity_days"`
+	// 订阅生命周期意图（per-day redesign §5/§7）：空/"purchase"=购买建新卡；"renew"=续费当前卡（续 validity_days 天）；
+	// "change_plan"=转套餐（新 D=daily_amount_usd + 新 T=validity_days）。目标卡后端按用户唯一生效卡派生。
+	SubscriptionIntent string `json:"subscription_intent"`
 	// IsMobile lets the frontend declare its mobile status directly. When
 	// nil we fall back to User-Agent heuristics (which miss iPadOS / some
 	// embedded browsers that strip the "Mobile" keyword).
@@ -253,20 +277,24 @@ func (h *PaymentHandler) CreateOrder(c *gin.Context) {
 		mobile = *req.IsMobile
 	}
 	result, err := h.paymentService.CreateOrder(c.Request.Context(), service.CreateOrderRequest{
-		UserID:          subject.UserID,
-		Amount:          req.Amount,
-		PaymentType:     req.PaymentType,
-		OpenID:          req.OpenID,
-		ClientIP:        c.ClientIP(),
-		IsMobile:        mobile,
-		IsWeChatBrowser: isWeChatBrowser(c),
-		SrcHost:         c.Request.Host,
-		SrcURL:          c.Request.Referer(),
-		ReturnURL:       req.ReturnURL,
-		PaymentSource:   req.PaymentSource,
-		OrderType:       req.OrderType,
-		PlanID:          req.PlanID,
-		Locale:          c.GetHeader("Accept-Language"),
+		UserID:             subject.UserID,
+		Amount:             req.Amount,
+		PaymentType:        req.PaymentType,
+		OpenID:             req.OpenID,
+		ClientIP:           c.ClientIP(),
+		IsMobile:           mobile,
+		IsWeChatBrowser:    isWeChatBrowser(c),
+		SrcHost:            c.Request.Host,
+		SrcURL:             c.Request.Referer(),
+		ReturnURL:          req.ReturnURL,
+		PaymentSource:      req.PaymentSource,
+		OrderType:          req.OrderType,
+		PlanID:             req.PlanID,
+		GroupID:            req.GroupID,
+		DailyAmountUSD:     req.DailyAmountUSD,
+		ValidityDays:       req.ValidityDays,
+		SubscriptionIntent: req.SubscriptionIntent,
+		Locale:             c.GetHeader("Accept-Language"),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -309,6 +337,19 @@ func applyWeChatPaymentResumeClaims(req *CreateOrderRequest, claims *service.WeC
 	}
 	if claims.PlanID > 0 {
 		req.PlanID = claims.PlanID
+	}
+	if claims.GroupID > 0 {
+		req.GroupID = claims.GroupID
+	}
+	if claims.DailyAmountUSD > 0 {
+		req.DailyAmountUSD = claims.DailyAmountUSD
+	}
+	if claims.ValidityDays > 0 {
+		req.ValidityDays = claims.ValidityDays
+	}
+	// 续费/转套餐意图随 token 透传(P2#5):缺失则订阅单退化为购买。req 已带值时不覆盖。
+	if strings.TrimSpace(claims.SubscriptionIntent) != "" && strings.TrimSpace(req.SubscriptionIntent) == "" {
+		req.SubscriptionIntent = strings.TrimSpace(claims.SubscriptionIntent)
 	}
 	return nil
 }

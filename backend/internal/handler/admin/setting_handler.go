@@ -284,7 +284,14 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PaymentEnabledTypes:                    paymentCfg.EnabledTypes,
 		PaymentBalanceDisabled:                 paymentCfg.BalanceDisabled,
 		PaymentBalanceRechargeMultiplier:       paymentCfg.BalanceRechargeMultiplier,
+		PaymentSubscriptionPayMultiplier:       paymentCfg.SubscriptionPayMultiplier,
 		PaymentRechargeFeeRate:                 paymentCfg.RechargeFeeRate,
+		PaymentRefundFeeRate:                   paymentCfg.RefundFeeRate,
+		PaymentSubscriptionMinDaily:            paymentCfg.SubscriptionMinDaily,
+		PaymentSubscriptionMaxDaily:            paymentCfg.SubscriptionMaxDaily,
+		PaymentSubscriptionMaxDays:             paymentCfg.SubscriptionMaxDays,
+		PaymentSubscriptionMinPlanRatio:        paymentCfg.SubscriptionMinPlanRatio,
+		PaymentSubscriptionMaxPlanRatio:        paymentCfg.SubscriptionMaxPlanRatio,
 		PaymentLoadBalanceStrat:                paymentCfg.LoadBalanceStrategy,
 		PaymentProductNamePrefix:               paymentCfg.ProductNamePrefix,
 		PaymentProductNameSuffix:               paymentCfg.ProductNameSuffix,
@@ -626,7 +633,14 @@ type UpdateSettingsRequest struct {
 	PaymentEnabledTypes              []string `json:"payment_enabled_types"`
 	PaymentBalanceDisabled           *bool    `json:"payment_balance_disabled"`
 	PaymentBalanceRechargeMultiplier *float64 `json:"payment_balance_recharge_multiplier"`
+	PaymentSubscriptionPayMultiplier *float64 `json:"payment_subscription_payment_multiplier"`
 	PaymentRechargeFeeRate           *float64 `json:"payment_recharge_fee_rate"`
+	PaymentRefundFeeRate             *float64 `json:"payment_refund_fee_rate"`
+	PaymentSubscriptionMinDaily      *float64 `json:"payment_subscription_min_daily_amount"`
+	PaymentSubscriptionMaxDaily      *float64 `json:"payment_subscription_max_daily_amount"`
+	PaymentSubscriptionMaxDays       *int     `json:"payment_subscription_max_validity_days"`
+	PaymentSubscriptionMinPlanRatio  *float64 `json:"payment_subscription_min_plan_ratio"`
+	PaymentSubscriptionMaxPlanRatio  *float64 `json:"payment_subscription_max_plan_ratio"`
 	PaymentLoadBalanceStrat          *string  `json:"payment_load_balance_strategy"`
 	PaymentProductNamePrefix         *string  `json:"payment_product_name_prefix"`
 	PaymentProductNameSuffix         *string  `json:"payment_product_name_suffix"`
@@ -1909,7 +1923,14 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			EnabledTypes:              req.PaymentEnabledTypes,
 			BalanceDisabled:           req.PaymentBalanceDisabled,
 			BalanceRechargeMultiplier: req.PaymentBalanceRechargeMultiplier,
+			SubscriptionPayMultiplier: req.PaymentSubscriptionPayMultiplier,
 			RechargeFeeRate:           req.PaymentRechargeFeeRate,
+			RefundFeeRate:             req.PaymentRefundFeeRate,
+			SubscriptionMinDaily:      req.PaymentSubscriptionMinDaily,
+			SubscriptionMaxDaily:      req.PaymentSubscriptionMaxDaily,
+			SubscriptionMaxDays:       req.PaymentSubscriptionMaxDays,
+			SubscriptionMinPlanRatio:  req.PaymentSubscriptionMinPlanRatio,
+			SubscriptionMaxPlanRatio:  req.PaymentSubscriptionMaxPlanRatio,
 			LoadBalanceStrategy:       req.PaymentLoadBalanceStrat,
 			ProductNamePrefix:         req.PaymentProductNamePrefix,
 			ProductNameSuffix:         req.PaymentProductNameSuffix,
@@ -2125,7 +2146,14 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentEnabledTypes:                    updatedPaymentCfg.EnabledTypes,
 		PaymentBalanceDisabled:                 updatedPaymentCfg.BalanceDisabled,
 		PaymentBalanceRechargeMultiplier:       updatedPaymentCfg.BalanceRechargeMultiplier,
+		PaymentSubscriptionPayMultiplier:       updatedPaymentCfg.SubscriptionPayMultiplier,
 		PaymentRechargeFeeRate:                 updatedPaymentCfg.RechargeFeeRate,
+		PaymentRefundFeeRate:                   updatedPaymentCfg.RefundFeeRate,
+		PaymentSubscriptionMinDaily:            updatedPaymentCfg.SubscriptionMinDaily,
+		PaymentSubscriptionMaxDaily:            updatedPaymentCfg.SubscriptionMaxDaily,
+		PaymentSubscriptionMaxDays:             updatedPaymentCfg.SubscriptionMaxDays,
+		PaymentSubscriptionMinPlanRatio:        updatedPaymentCfg.SubscriptionMinPlanRatio,
+		PaymentSubscriptionMaxPlanRatio:        updatedPaymentCfg.SubscriptionMaxPlanRatio,
 		PaymentLoadBalanceStrat:                updatedPaymentCfg.LoadBalanceStrategy,
 		PaymentProductNamePrefix:               updatedPaymentCfg.ProductNamePrefix,
 		PaymentProductNameSuffix:               updatedPaymentCfg.ProductNameSuffix,
@@ -2184,6 +2212,11 @@ func hasPaymentFields(req UpdateSettingsRequest) bool {
 		req.PaymentOrderTimeoutMin != nil || req.PaymentMaxPendingOrders != nil ||
 		req.PaymentEnabledTypes != nil || req.PaymentBalanceDisabled != nil ||
 		req.PaymentBalanceRechargeMultiplier != nil || req.PaymentRechargeFeeRate != nil ||
+		req.PaymentRefundFeeRate != nil ||
+		req.PaymentSubscriptionPayMultiplier != nil ||
+		req.PaymentSubscriptionMinDaily != nil || req.PaymentSubscriptionMaxDaily != nil ||
+		req.PaymentSubscriptionMaxDays != nil ||
+		req.PaymentSubscriptionMinPlanRatio != nil || req.PaymentSubscriptionMaxPlanRatio != nil ||
 		req.PaymentLoadBalanceStrat != nil || req.PaymentProductNamePrefix != nil ||
 		req.PaymentProductNameSuffix != nil || req.PaymentHelpImageURL != nil ||
 		req.PaymentHelpText != nil || req.PaymentCancelRateLimitEnabled != nil ||

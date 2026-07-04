@@ -496,7 +496,8 @@ func (s *PaymentService) ExecuteSubscriptionFulfillment(ctx context.Context, oid
 	if o.Status != OrderStatusPaid && o.Status != OrderStatusFailed {
 		return infraerrors.BadRequest("INVALID_STATUS", "order cannot fulfill in status "+o.Status)
 	}
-	if o.SubscriptionGroupID == nil || o.SubscriptionDays == nil {
+	// 订阅单带 subscription_group_id 和 subscription_days；D/T 由 provider_snapshot 提供，doSub 内再深校验。
+	if o.SubscriptionDays == nil {
 		return infraerrors.BadRequest("INVALID_STATUS", "missing subscription info")
 	}
 	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(oid), paymentorder.StatusIn(OrderStatusPaid, OrderStatusFailed)).SetStatus(OrderStatusRecharging).Save(ctx)
@@ -514,11 +515,51 @@ func (s *PaymentService) ExecuteSubscriptionFulfillment(ctx context.Context, oid
 }
 
 func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error {
-	gid := *o.SubscriptionGroupID
-	days := *o.SubscriptionDays
-	g, err := s.groupRepo.GetByID(ctx, gid)
-	if err != nil || g.Status != payment.EntityStatusActive {
-		return fmt.Errorf("group %d no longer exists or inactive", gid)
+	// 生命周期意图分发（per-day redesign §5/§7）：renew=延长目标卡、change_plan=关旧开新；
+	// 二者参数(目标卡 ID + 新 D/T)由订单冻结快照提供，履约不重算。purchase(默认/老单)走下方建新卡逻辑。
+	if intent, targetSubID := readSubscriptionIntent(o); intent != SubscriptionIntentPurchase {
+		return s.doSubLifecycle(ctx, o, intent, targetSubID)
+	}
+
+	// 订阅单应带 group（gid>0），用于发卡归属。
+	var gid int64
+	if o.SubscriptionGroupID != nil {
+		gid = *o.SubscriptionGroupID
+	}
+	days := 0
+	if o.SubscriptionDays != nil {
+		days = *o.SubscriptionDays
+	}
+	// per-day：严格按订单**冻结快照**发卡（D/T 不按回调时的当前公式/group 配置重算）；
+	// 无快照的老套餐单回退 subscription_days + group.daily_limit_usd 兼容路径（dailyAmount=0 时
+	// createSubscription 会回退 group）。
+	var dailyAmount float64
+	var weeklyLimit, monthlyLimit float64
+	d, t, hasSnapshot, snapErr := readSubscriptionSnapshotDT(o)
+	if snapErr != nil {
+		return snapErr
+	}
+	if hasSnapshot {
+		dailyAmount = d
+		days = t
+		// W/M 同样按冻结快照发卡（spec §2）；老单无 W/M 快照 → 0，createSubscription 回退按 D/T 派生。
+		if w, m, wmOK := readSubscriptionSnapshotWM(o); wmOK {
+			weeklyLimit = w
+			monthlyLimit = m
+		}
+	}
+	if gid > 0 {
+		// 套餐/历史卡：校验来源 group 仍存在（无快照的老单还要求 active，保证可推导 D）。
+		g, err := s.groupRepo.GetByID(ctx, gid)
+		if err != nil || g == nil {
+			return fmt.Errorf("group %d no longer exists", gid)
+		}
+		if !hasSnapshot && g.Status != payment.EntityStatusActive {
+			return fmt.Errorf("group %d no longer exists or inactive", gid)
+		}
+	} else if !hasSnapshot {
+		// 自定义单必须有冻结快照提供 D/T；无快照无从发卡，直接失败（已付款会 markFailed）。
+		return fmt.Errorf("custom subscription order %d missing pricing snapshot", o.ID)
 	}
 	// Idempotency: check audit log to see if subscription was already assigned.
 	// Prevents double-extension on retry after markCompleted fails.
@@ -527,16 +568,113 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 		return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
 	}
 	orderNote := fmt.Sprintf("payment order %d", o.ID)
-	_, _, err = s.subscriptionSvc.AssignOrExtendSubscription(ctx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, AssignedBy: 0, Notes: orderNote})
+	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(ctx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, WeeklyLimitUSD: weeklyLimit, MonthlyLimitUSD: monthlyLimit, AssignedBy: 0, Notes: orderNote})
 	if err != nil {
 		return fmt.Errorf("assign subscription: %w", err)
+	}
+	if sub != nil {
+		if err := s.writeSubscriptionIDToOrderSnapshot(ctx, o, sub.ID); err != nil {
+			return fmt.Errorf("write subscription snapshot id: %w", err)
+		}
 	}
 	return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
 }
 
+// doSubLifecycle 履约续费/转套餐订单（法币支付成功后）：按冻结快照的目标卡 ID + 新 D/T 执行，
+// 不扣余额（差价/续费价已由网关收取）。幂等沿用 SUBSCRIPTION_SUCCESS 审计键（重放整笔跳过）。
+func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrder, intent string, targetSubID int64) error {
+	d, t, hasSnapshot, snapErr := readSubscriptionSnapshotDT(o)
+	if snapErr != nil {
+		return snapErr
+	}
+	if !hasSnapshot {
+		return fmt.Errorf("lifecycle subscription order %d missing pricing snapshot", o.ID)
+	}
+	if targetSubID <= 0 {
+		return fmt.Errorf("lifecycle subscription order %d missing target subscription id", o.ID)
+	}
+	// 幂等快路：已发卡则只补完成状态（SUCCESS 审计已与 apply 同事务写入，见下）。
+	if s.hasAuditLog(ctx, o.ID, "SUBSCRIPTION_SUCCESS") {
+		slog.Info("lifecycle subscription already applied for order, skipping", "orderID", o.ID, "intent", intent)
+		return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
+	}
+
+	// 原子履约（P2#6 根治「续费双倍延期 / 转套餐重复建卡」）：apply + 订单置完成 + SUCCESS 审计键
+	// 必须在【同一事务】内提交。否则 apply 在自有事务先提交后、若 markCompleted 的状态更新瞬时报错
+	// → 订单被 markFailed 置 FAILED → 管理员重试时 SUCCESS 审计仍缺 → 再 apply 一次 = 双倍发放（资损）。
+	// 同事务后：崩溃在提交前 = 全回滚（重试干净重发）；提交成功 = apply 与幂等键同时落库（重试见键跳过）。
+	tx, err := s.entClient.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin lifecycle fulfill tx: %w", err)
+	}
+	txCtx := dbent.NewTxContext(ctx, tx)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var newSubID int64
+	switch intent {
+	case SubscriptionIntentRenew:
+		// 续费：t = 续费天数（快照 validity_days）；延长目标卡有效期，卡 ID 不变。
+		sub, applyErr := s.subscriptionSvc.ApplyRenewFromOrder(txCtx, targetSubID, t)
+		if applyErr != nil {
+			return fmt.Errorf("apply renew: %w", applyErr)
+		}
+		if sub != nil {
+			newSubID = sub.ID
+		}
+	case SubscriptionIntentChangePlan:
+		// 转套餐：d/t = 新档 D/T；关旧卡、开新卡（新卡 ID 不同）。
+		res, applyErr := s.subscriptionSvc.ApplyChangePlanFromOrder(txCtx, targetSubID, d, t)
+		if applyErr != nil {
+			return fmt.Errorf("apply change plan: %w", applyErr)
+		}
+		if res != nil {
+			newSubID = res.NewSubscriptionID
+		}
+	default:
+		return fmt.Errorf("unknown subscription intent %q for order %d", intent, o.ID)
+	}
+
+	// 同事务：回写 subscription_id 到订单快照 + 订单置完成 + SUCCESS 审计键（entClientForCtx 自动用事务客户端）。
+	if newSubID > 0 {
+		if err := s.writeSubscriptionIDToOrderSnapshot(txCtx, o, newSubID); err != nil {
+			return fmt.Errorf("write subscription snapshot id: %w", err)
+		}
+	}
+	c, err := s.entClientForCtx(txCtx).PaymentOrder.Update().
+		Where(paymentorder.IDEQ(o.ID), paymentorder.StatusEQ(OrderStatusRecharging)).
+		SetStatus(OrderStatusCompleted).SetCompletedAt(time.Now()).Save(txCtx)
+	if err != nil {
+		return fmt.Errorf("mark completed: %w", err)
+	}
+	if c == 0 {
+		// 订单已不在 recharging（被并发改动）→ 回滚 apply，避免与外层状态不一致。
+		return infraerrors.Conflict("CONFLICT", "order status changed during fulfillment")
+	}
+	s.writeAuditLog(txCtx, o.ID, "SUBSCRIPTION_SUCCESS", "system", map[string]any{
+		"rechargeCode":   o.RechargeCode,
+		"creditedAmount": o.Amount,
+		"payAmount":      o.PayAmount,
+		"intent":         intent,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit lifecycle fulfill: %w", err)
+	}
+	committed = true
+
+	// 提交后才发通知（best-effort，不影响履约原子性）。
+	s.dispatchPaymentFulfillmentNotification(o, "SUBSCRIPTION_SUCCESS")
+	return nil
+}
+
 func (s *PaymentService) hasAuditLog(ctx context.Context, orderID int64, action string) bool {
 	oid := strconv.FormatInt(orderID, 10)
-	c, _ := s.entClient.PaymentAuditLog.Query().
+	c, _ := s.entClientForCtx(ctx).PaymentAuditLog.Query().
 		Where(paymentauditlog.OrderIDEQ(oid), paymentauditlog.ActionEQ(action)).
 		Limit(1).Count(ctx)
 	return c > 0

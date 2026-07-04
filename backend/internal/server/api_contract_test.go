@@ -415,12 +415,11 @@ func TestAPIContracts(t *testing.T) {
 						"weekly_window_start": null,
 						"monthly_window_start": null,
 						"daily_usage_usd": 1.23,
-						"can_enable_overdraft": true,
-						"max_overdraft_uses": 5,
-						"remaining_overdraft_uses": 5,
-						"total_overdraft_count": 0,
 						"weekly_usage_usd": 2.34,
 						"monthly_usage_usd": 3.45,
+						"daily_limit_usd": null,
+						"weekly_limit_usd": null,
+						"monthly_limit_usd": null,
 						"granted_total_usd": 0,
 						"daily_amount_usd": 0,
 						"consumed_usd": 0,
@@ -880,7 +879,14 @@ func TestAPIContracts(t *testing.T) {
 					"payment_max_pending_orders": 0,
 					"payment_balance_disabled": false,
 					"payment_balance_recharge_multiplier": 0,
+					"payment_subscription_payment_multiplier": 0,
 					"payment_recharge_fee_rate": 0,
+					"payment_refund_fee_rate": 0,
+					"payment_subscription_min_daily_amount": 0,
+					"payment_subscription_max_daily_amount": 0,
+					"payment_subscription_max_validity_days": 0,
+					"payment_subscription_min_plan_ratio": 0,
+					"payment_subscription_max_plan_ratio": 0,
 					"payment_load_balance_strategy": "",
 					"payment_product_name_prefix": "",
 					"payment_product_name_suffix": "",
@@ -1123,7 +1129,14 @@ func TestAPIContracts(t *testing.T) {
 					"payment_enabled_types": null,
 					"payment_balance_disabled": false,
 					"payment_balance_recharge_multiplier": 0,
+					"payment_subscription_payment_multiplier": 0,
 					"payment_recharge_fee_rate": 0,
+					"payment_refund_fee_rate": 0,
+					"payment_subscription_min_daily_amount": 0,
+					"payment_subscription_max_daily_amount": 0,
+					"payment_subscription_max_validity_days": 0,
+					"payment_subscription_min_plan_ratio": 0,
+					"payment_subscription_max_plan_ratio": 0,
 					"payment_load_balance_strategy": "",
 					"payment_product_name_prefix": "",
 					"payment_product_name_suffix": "",
@@ -2006,6 +2019,20 @@ func (stubUserSubscriptionRepo) GetByUserIDAndGroupID(ctx context.Context, userI
 func (stubUserSubscriptionRepo) GetActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
+func (stubUserSubscriptionRepo) GetActiveByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return nil, errors.New("not implemented")
+}
+func (stubUserSubscriptionRepo) GetLatestActiveStatusByUserID(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubUserSubscriptionRepo) GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubUserSubscriptionRepo) ApplyManualOverdraft(ctx context.Context, sub *service.UserSubscription) error {
+	return errors.New("not implemented")
+}
 func (stubUserSubscriptionRepo) Update(ctx context.Context, sub *service.UserSubscription) error {
 	return errors.New("not implemented")
 }
@@ -2059,12 +2086,6 @@ func (stubUserSubscriptionRepo) IncrementUsage(ctx context.Context, id int64, co
 }
 func (stubUserSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	return 0, errors.New("not implemented")
-}
-func (stubUserSubscriptionRepo) ListActiveBurndownIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
-	return nil, nil
-}
-func (stubUserSubscriptionRepo) ClawbackSubscription(ctx context.Context, subID int64, now time.Time) (float64, error) {
-	return 0, nil
 }
 func (stubUserSubscriptionRepo) ForfeitExpiredSubscriptions(ctx context.Context, now time.Time, limit int) ([]int64, error) {
 	return nil, nil

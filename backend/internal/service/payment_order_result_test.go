@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,57 @@ func TestBuildCreateOrderResponseDefaultsToOrderCreated(t *testing.T) {
 	}
 	if !resp.ExpiresAt.Equal(expiresAt) {
 		t.Fatalf("expires_at = %v, want %v", resp.ExpiresAt, expiresAt)
+	}
+}
+
+func TestBuildWeChatPaymentOAuthStartURLIncludesCustomSubscriptionDT(t *testing.T) {
+	t.Parallel()
+
+	got, err := buildWeChatPaymentOAuthStartURL(CreateOrderRequest{
+		PaymentType:    payment.TypeWxpay,
+		OrderType:      payment.OrderTypeSubscription,
+		Amount:         123.45,
+		DailyAmountUSD: 8.5,
+		ValidityDays:   60,
+		SrcURL:         "https://app.example.com/purchase?tab=subscription",
+	}, "snsapi_base")
+	if err != nil {
+		t.Fatalf("buildWeChatPaymentOAuthStartURL returned error: %v", err)
+	}
+
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse url: %v", err)
+	}
+	q := parsed.Query()
+	if q.Get("daily_amount_usd") != "8.5" || q.Get("validity_days") != "60" {
+		t.Fatalf("custom D/T missing from oauth start url: %s", got)
+	}
+	if q.Get("order_type") != payment.OrderTypeSubscription || q.Get("amount") != "123.45" {
+		t.Fatalf("payment context missing from oauth start url: %s", got)
+	}
+}
+
+func TestPaymentRedirectPathFromURLNormalizesPaymentPaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{"", "/purchase"},
+		{"/payment", "/purchase"},
+		{"/payment?tab=subscription", "/purchase?tab=subscription"},
+		{"https://app.example.com/payment?tab=recharge", "/purchase?tab=recharge"},
+		{"https://app.example.com/orders?status=paid", "/orders?status=paid"},
+		{"://bad", "/purchase"},
+		{"//evil.example.com/payment", "/purchase"},
+	}
+
+	for _, tt := range tests {
+		if got := paymentRedirectPathFromURL(tt.raw); got != tt.want {
+			t.Fatalf("paymentRedirectPathFromURL(%q) = %q, want %q", tt.raw, got, tt.want)
+		}
 	}
 }
 
@@ -103,6 +155,14 @@ func TestValidateSelectedCreateOrderAmountCurrencyRejectsFractionalZeroDecimal(t
 	}
 	if appErr := infraerrors.FromError(err); appErr.Reason != "INVALID_AMOUNT" {
 		t.Fatalf("reason = %q, want INVALID_AMOUNT", appErr.Reason)
+	}
+}
+
+func TestValidateSelectedCreateOrderAmountCurrencyAllowsNilSelection(t *testing.T) {
+	t.Parallel()
+
+	if err := validateSelectedCreateOrderAmountCurrency("100.50", nil); err != nil {
+		t.Fatalf("nil selection should not validate provider currency: %v", err)
 	}
 }
 

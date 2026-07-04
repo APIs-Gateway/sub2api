@@ -45,6 +45,12 @@ const (
 	FieldWeeklyUsageUsd = "weekly_usage_usd"
 	// FieldMonthlyUsageUsd holds the string denoting the monthly_usage_usd field in the database.
 	FieldMonthlyUsageUsd = "monthly_usage_usd"
+	// FieldDailyLimitUsd holds the string denoting the daily_limit_usd field in the database.
+	FieldDailyLimitUsd = "daily_limit_usd"
+	// FieldWeeklyLimitUsd holds the string denoting the weekly_limit_usd field in the database.
+	FieldWeeklyLimitUsd = "weekly_limit_usd"
+	// FieldMonthlyLimitUsd holds the string denoting the monthly_limit_usd field in the database.
+	FieldMonthlyLimitUsd = "monthly_limit_usd"
 	// FieldGrantedTotalUsd holds the string denoting the granted_total_usd field in the database.
 	FieldGrantedTotalUsd = "granted_total_usd"
 	// FieldDailyAmountUsd holds the string denoting the daily_amount_usd field in the database.
@@ -63,6 +69,16 @@ const (
 	FieldDailySpentUsd = "daily_spent_usd"
 	// FieldDailySpentDay holds the string denoting the daily_spent_day field in the database.
 	FieldDailySpentDay = "daily_spent_day"
+	// FieldTodayRemaining holds the string denoting the today_remaining field in the database.
+	FieldTodayRemaining = "today_remaining"
+	// FieldTodayDay holds the string denoting the today_day field in the database.
+	FieldTodayDay = "today_day"
+	// FieldStartDay holds the string denoting the start_day field in the database.
+	FieldStartDay = "start_day"
+	// FieldExpireDay holds the string denoting the expire_day field in the database.
+	FieldExpireDay = "expire_day"
+	// FieldOverdraftOn holds the string denoting the overdraft_on field in the database.
+	FieldOverdraftOn = "overdraft_on"
 	// FieldActivatedAt holds the string denoting the activated_at field in the database.
 	FieldActivatedAt = "activated_at"
 	// FieldAssignedBy holds the string denoting the assigned_by field in the database.
@@ -138,6 +154,9 @@ var Columns = []string{
 	FieldDailyUsageUsd,
 	FieldWeeklyUsageUsd,
 	FieldMonthlyUsageUsd,
+	FieldDailyLimitUsd,
+	FieldWeeklyLimitUsd,
+	FieldMonthlyLimitUsd,
 	FieldGrantedTotalUsd,
 	FieldDailyAmountUsd,
 	FieldConsumedUsd,
@@ -147,6 +166,11 @@ var Columns = []string{
 	FieldTotalOverdraftCount,
 	FieldDailySpentUsd,
 	FieldDailySpentDay,
+	FieldTodayRemaining,
+	FieldTodayDay,
+	FieldStartDay,
+	FieldExpireDay,
+	FieldOverdraftOn,
 	FieldActivatedAt,
 	FieldAssignedBy,
 	FieldAssignedAt,
@@ -203,6 +227,16 @@ var (
 	DefaultDailySpentUsd float64
 	// DefaultDailySpentDay holds the default value on creation for the "daily_spent_day" field.
 	DefaultDailySpentDay int
+	// DefaultTodayRemaining holds the default value on creation for the "today_remaining" field.
+	DefaultTodayRemaining float64
+	// DefaultTodayDay holds the default value on creation for the "today_day" field.
+	DefaultTodayDay int
+	// DefaultStartDay holds the default value on creation for the "start_day" field.
+	DefaultStartDay int
+	// DefaultExpireDay holds the default value on creation for the "expire_day" field.
+	DefaultExpireDay int
+	// DefaultOverdraftOn holds the default value on creation for the "overdraft_on" field.
+	DefaultOverdraftOn bool
 	// DefaultAssignedAt holds the default value on creation for the "assigned_at" field.
 	DefaultAssignedAt func() time.Time
 )
@@ -290,6 +324,21 @@ func ByMonthlyUsageUsd(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldMonthlyUsageUsd, opts...).ToFunc()
 }
 
+// ByDailyLimitUsd orders the results by the daily_limit_usd field.
+func ByDailyLimitUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDailyLimitUsd, opts...).ToFunc()
+}
+
+// ByWeeklyLimitUsd orders the results by the weekly_limit_usd field.
+func ByWeeklyLimitUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldWeeklyLimitUsd, opts...).ToFunc()
+}
+
+// ByMonthlyLimitUsd orders the results by the monthly_limit_usd field.
+func ByMonthlyLimitUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMonthlyLimitUsd, opts...).ToFunc()
+}
+
 // ByGrantedTotalUsd orders the results by the granted_total_usd field.
 func ByGrantedTotalUsd(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldGrantedTotalUsd, opts...).ToFunc()
@@ -333,6 +382,31 @@ func ByDailySpentUsd(opts ...sql.OrderTermOption) OrderOption {
 // ByDailySpentDay orders the results by the daily_spent_day field.
 func ByDailySpentDay(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldDailySpentDay, opts...).ToFunc()
+}
+
+// ByTodayRemaining orders the results by the today_remaining field.
+func ByTodayRemaining(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTodayRemaining, opts...).ToFunc()
+}
+
+// ByTodayDay orders the results by the today_day field.
+func ByTodayDay(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTodayDay, opts...).ToFunc()
+}
+
+// ByStartDay orders the results by the start_day field.
+func ByStartDay(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldStartDay, opts...).ToFunc()
+}
+
+// ByExpireDay orders the results by the expire_day field.
+func ByExpireDay(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldExpireDay, opts...).ToFunc()
+}
+
+// ByOverdraftOn orders the results by the overdraft_on field.
+func ByOverdraftOn(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldOverdraftOn, opts...).ToFunc()
 }
 
 // ByActivatedAt orders the results by the activated_at field.

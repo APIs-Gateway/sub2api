@@ -55,16 +55,22 @@ type ResumeTokenClaims struct {
 }
 
 type WeChatPaymentResumeClaims struct {
-	TokenType   string `json:"tk,omitempty"`
-	OpenID      string `json:"openid"`
-	PaymentType string `json:"pt,omitempty"`
-	Amount      string `json:"amt,omitempty"`
-	OrderType   string `json:"ot,omitempty"`
-	PlanID      int64  `json:"pid,omitempty"`
-	RedirectTo  string `json:"rd,omitempty"`
-	Scope       string `json:"scp,omitempty"`
-	IssuedAt    int64  `json:"iat"`
-	ExpiresAt   int64  `json:"exp,omitempty"`
+	TokenType      string  `json:"tk,omitempty"`
+	OpenID         string  `json:"openid"`
+	PaymentType    string  `json:"pt,omitempty"`
+	Amount         string  `json:"amt,omitempty"`
+	OrderType      string  `json:"ot,omitempty"`
+	PlanID         int64   `json:"pid,omitempty"`
+	GroupID        int64   `json:"gid,omitempty"`
+	DailyAmountUSD float64 `json:"d,omitempty"`
+	ValidityDays   int     `json:"t,omitempty"`
+	// SubscriptionIntent 续费/转套餐意图(per-day §5/§7):丢失则微信内浏览器 OAuth resume 会把
+	// 续费/转套餐退化为「购买」(续费被「已有生效卡」拒、转套餐竞态下按全价新购),故须随 token 透传(P2#5)。
+	SubscriptionIntent string `json:"si,omitempty"`
+	RedirectTo         string `json:"rd,omitempty"`
+	Scope              string `json:"scp,omitempty"`
+	IssuedAt           int64  `json:"iat"`
+	ExpiresAt          int64  `json:"exp,omitempty"`
 }
 
 type PaymentResumeService struct {

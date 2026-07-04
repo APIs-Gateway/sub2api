@@ -48,7 +48,7 @@
       </div>
 
       <!-- Deduct Balance -->
-      <div>
+      <div v-if="order?.order_type === 'balance'">
         <div class="flex items-center gap-2">
           <input
             id="deduct-balance"
@@ -91,6 +91,13 @@
         </div>
       </div>
 
+      <div
+        v-if="order?.order_type === 'subscription'"
+        class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
+      >
+        {{ t('payment.admin.subscriptionRefundClosesCard') }}
+      </div>
+
       <!-- Refund Amount -->
       <div>
         <label class="input-label">{{ t('payment.admin.refundAmount') }}</label>
@@ -108,6 +115,25 @@
         </div>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
           {{ t('payment.admin.maxRefundable') }}: {{ order?.order_type === 'balance' ? '$' : '¥' }}{{ maxRefundable.toFixed(2) }}
+        </p>
+      </div>
+
+      <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-700">
+        <div class="mb-2 text-sm font-medium text-gray-900 dark:text-white">
+          {{ t('payment.admin.refundSettlementTitle') }}
+        </div>
+        <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundCreditAmount') }}</span>
+          <span class="text-right font-medium text-gray-900 dark:text-white">{{ creditAmountText }}</span>
+          <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundGatewayBase') }}</span>
+          <span class="text-right font-medium text-gray-900 dark:text-white">{{ gatewayBaseText }}</span>
+          <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundFee') }} ({{ refundFeeRate.toFixed(2) }}%)</span>
+          <span class="text-right font-medium text-amber-700 dark:text-amber-300">{{ refundFeeText }}</span>
+          <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundUserReceives') }}</span>
+          <span class="text-right font-semibold text-gray-900 dark:text-white">{{ userReceivesText }}</span>
+        </div>
+        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('payment.admin.refundFeeNote') }}
         </p>
       </div>
 
@@ -164,11 +190,12 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, computed, watch } from 'vue'
+import { reactive, computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { PaymentOrder } from '@/types/payment'
 import { formatOrderDateTime } from '@/components/payment/orderUtils'
+import { settingsAPI } from '@/api/admin/settings'
 
 const { t } = useI18n()
 
@@ -179,6 +206,7 @@ const props = defineProps<{
   userBalance?: number | null
   requireForce?: boolean
   warning?: string
+  suggestedAmount?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -192,6 +220,8 @@ const form = reactive({
   deduct_balance: true,
   force: false,
 })
+
+const refundFeeRate = ref(0)
 
 // In REFUND_REQUESTED status, refund_amount is the REQUESTED amount, not actually refunded.
 // Only PARTIALLY_REFUNDED / REFUNDED have real refund amounts.
@@ -212,17 +242,43 @@ const balanceInsufficient = computed(() => {
   return props.userBalance < props.order.amount
 })
 
+const gatewayBaseAmount = computed(() => {
+  if (!props.order || props.order.amount <= 0 || props.order.pay_amount <= 0 || form.amount <= 0) return 0
+  if (Math.abs(form.amount - props.order.amount) <= 0.01) return roundCurrency(props.order.pay_amount)
+  return roundCurrency((props.order.pay_amount * form.amount) / props.order.amount)
+})
+
+const refundFeeAmount = computed(() => {
+  const rate = Number.isFinite(refundFeeRate.value) ? Math.min(Math.max(refundFeeRate.value, 0), 100) : 0
+  if (gatewayBaseAmount.value <= 0 || rate <= 0) return 0
+  return roundCurrencyUp((gatewayBaseAmount.value * rate) / 100)
+})
+
+const userReceivesAmount = computed(() => Math.max(0, roundCurrency(gatewayBaseAmount.value - refundFeeAmount.value)))
+
+const creditAmountText = computed(() => {
+  if (!props.order) return ''
+  return `${props.order.order_type === 'balance' ? '$' : '¥'}${roundCurrency(form.amount).toFixed(2)}`
+})
+
+const gatewayBaseText = computed(() => `¥${gatewayBaseAmount.value.toFixed(2)}`)
+const refundFeeText = computed(() => `¥${refundFeeAmount.value.toFixed(2)}`)
+const userReceivesText = computed(() => `¥${userReceivesAmount.value.toFixed(2)}`)
+
 watch(() => props.show, (val) => {
   if (val && props.order) {
     // For REFUND_REQUESTED, pre-fill with the requested amount
     if (props.order.status === 'REFUND_REQUESTED' && props.order.refund_amount) {
       form.amount = props.order.refund_amount
+    } else if (props.suggestedAmount && props.suggestedAmount > 0) {
+      form.amount = Math.min(props.suggestedAmount, maxRefundable.value)
     } else {
       form.amount = maxRefundable.value
     }
     form.reason = props.order.refund_request_reason || ''
-    form.deduct_balance = true
+    form.deduct_balance = props.order.order_type === 'balance'
     form.force = false
+    loadRefundFeeRate()
   }
 })
 
@@ -234,5 +290,24 @@ function handleSubmit() {
   if (form.amount <= 0 || form.amount > maxRefundable.value) return
   if (props.requireForce && !form.force) return
   emit('confirm', { ...form })
+}
+
+async function loadRefundFeeRate() {
+  try {
+    const settings = await settingsAPI.getSettings()
+    refundFeeRate.value = Number(settings.payment_refund_fee_rate) || 0
+  } catch {
+    refundFeeRate.value = 0
+  }
+}
+
+function roundCurrency(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.round(value * 100) / 100
+}
+
+function roundCurrencyUp(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.ceil(value * 100) / 100
 }
 </script>

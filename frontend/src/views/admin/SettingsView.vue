@@ -6175,7 +6175,7 @@
                   </div>
                 </div>
                 <!-- Row 2: Balance toggle + amounts -->
-                <div class="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                <div class="grid grid-cols-2 gap-3 sm:grid-cols-6">
                   <div>
                     <label class="input-label">{{
                       t("admin.settings.payment.minAmount")
@@ -6189,7 +6189,7 @@
                           ) || 0
                       "
                       type="number"
-                      step="0.01"
+                      step="0.001"
                       min="0"
                       class="input"
                       :placeholder="t('admin.settings.payment.noLimit')"
@@ -6208,7 +6208,7 @@
                           ) || 0
                       "
                       type="number"
-                      step="0.01"
+                      step="0.001"
                       min="0"
                       class="input"
                       :placeholder="t('admin.settings.payment.noLimit')"
@@ -6272,6 +6272,31 @@
                   </div>
                   <div>
                     <label class="input-label">{{
+                      t("admin.settings.payment.subscriptionPaymentMultiplier")
+                    }}</label>
+                    <input
+                      :value="form.payment_subscription_payment_multiplier || ''"
+                      @input="
+                        form.payment_subscription_payment_multiplier =
+                          parseFloat(
+                            ($event.target as HTMLInputElement).value,
+                          ) || 1
+                      "
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      class="input"
+                    />
+                    <p class="mt-0.5 text-xs text-gray-400">
+                      {{
+                        t(
+                          "admin.settings.payment.subscriptionPaymentMultiplierHint",
+                        )
+                      }}
+                    </p>
+                  </div>
+                  <div>
+                    <label class="input-label">{{
                       t("admin.settings.payment.rechargeFeeRate")
                     }}</label>
                     <div class="relative">
@@ -6319,6 +6344,54 @@
                     </p>
                   </div>
                   <div>
+                    <label class="input-label">{{
+                      t("admin.settings.payment.refundFeeRate")
+                    }}</label>
+                    <div class="relative">
+                      <input
+                        :value="form.payment_refund_fee_rate ?? ''"
+                        @input="
+                          form.payment_refund_fee_rate = Math.min(
+                            100,
+                            Math.max(
+                              0,
+                              Math.round(
+                                parseFloat(
+                                  ($event.target as HTMLInputElement).value ||
+                                    '0',
+                                ) * 100,
+                              ) / 100,
+                            ),
+                          )
+                        "
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                        class="input pr-8"
+                      />
+                      <span
+                        class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400"
+                        >%</span
+                      >
+                    </div>
+                    <p class="mt-0.5 text-xs text-gray-400">
+                      {{ t("admin.settings.payment.refundFeeRateHint") }}
+                    </p>
+                    <p
+                      v-if="(Number(form.payment_refund_fee_rate) || 0) > 0"
+                      class="mt-1 text-xs font-medium text-amber-600 dark:text-amber-400"
+                    >
+                      {{
+                        t("admin.settings.payment.refundFeePreview", {
+                          fee: (
+                            Number(form.payment_refund_fee_rate) || 0
+                          ).toFixed(2),
+                        })
+                      }}
+                    </p>
+                  </div>
+                  <div>
                     <label class="input-label"
                       >{{ t("admin.settings.payment.orderTimeout") }}
                       <span class="text-red-500">*</span></label
@@ -6332,6 +6405,102 @@
                     <p class="mt-0.5 text-xs text-gray-400">
                       {{ t("admin.settings.payment.orderTimeoutHint") }}
                     </p>
+                  </div>
+                </div>
+                <!-- Row 3: Subscription pricing bounds -->
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-5">
+                  <div>
+                    <label class="input-label">{{
+                      t("admin.settings.payment.subscriptionMinDaily")
+                    }}</label>
+                    <input
+                      :value="form.payment_subscription_min_daily_amount || ''"
+                      @input="
+                        form.payment_subscription_min_daily_amount =
+                          parseFloat(
+                            ($event.target as HTMLInputElement).value,
+                          ) || 30
+                      "
+                      type="number"
+                      step="30"
+                      min="30"
+                      class="input"
+                    />
+                  </div>
+                  <div>
+                    <label class="input-label">{{
+                      t("admin.settings.payment.subscriptionMaxDaily")
+                    }}</label>
+                    <input
+                      :value="form.payment_subscription_max_daily_amount || ''"
+                      @input="
+                        form.payment_subscription_max_daily_amount =
+                          parseFloat(
+                            ($event.target as HTMLInputElement).value,
+                          ) || 510
+                      "
+                      type="number"
+                      step="30"
+                      min="30"
+                      class="input"
+                    />
+                  </div>
+                  <div>
+                    <label class="input-label">{{
+                      t("admin.settings.payment.subscriptionMaxValidityDays")
+                    }}</label>
+                    <input
+                      :value="form.payment_subscription_max_validity_days || ''"
+                      @input="
+                        form.payment_subscription_max_validity_days =
+                          parseInt(
+                            ($event.target as HTMLInputElement).value,
+                          ) || 360
+                      "
+                      type="number"
+                      step="30"
+                      min="30"
+                      class="input"
+                    />
+                    <p class="mt-0.5 text-xs text-gray-400">
+                      {{ t("admin.settings.payment.subscriptionPricingHint") }}
+                    </p>
+                  </div>
+                  <div>
+                    <label class="input-label">{{
+                      t("admin.settings.payment.subscriptionMinPlanRatio")
+                    }}</label>
+                    <input
+                      :value="form.payment_subscription_min_plan_ratio || ''"
+                      @input="
+                        form.payment_subscription_min_plan_ratio =
+                          parseFloat(
+                            ($event.target as HTMLInputElement).value,
+                          ) || 2
+                      "
+                      type="number"
+                      step="0.001"
+                      min="0.01"
+                      class="input"
+                    />
+                  </div>
+                  <div>
+                    <label class="input-label">{{
+                      t("admin.settings.payment.subscriptionMaxPlanRatio")
+                    }}</label>
+                    <input
+                      :value="form.payment_subscription_max_plan_ratio || ''"
+                      @input="
+                        form.payment_subscription_max_plan_ratio =
+                          parseFloat(
+                            ($event.target as HTMLInputElement).value,
+                          ) || 1
+                      "
+                      type="number"
+                      step="0.001"
+                      min="0.01"
+                      class="input"
+                    />
                   </div>
                 </div>
                 <!-- Row 3: Pending orders + load balance + cancel rate limit (all in one row) -->
@@ -7821,7 +7990,14 @@ const form = reactive<SettingsForm>({
   payment_order_timeout_minutes: 30,
   payment_balance_disabled: false,
   payment_balance_recharge_multiplier: 1,
+  payment_subscription_payment_multiplier: 1,
   payment_recharge_fee_rate: 0,
+  payment_refund_fee_rate: 0,
+  payment_subscription_min_daily_amount: 30,
+  payment_subscription_max_daily_amount: 510,
+  payment_subscription_max_validity_days: 360,
+  payment_subscription_min_plan_ratio: 2,
+  payment_subscription_max_plan_ratio: 1,
   payment_enabled_types: [],
   payment_help_image_url: "",
   payment_help_text: "",
@@ -9122,7 +9298,20 @@ async function saveSettings() {
       payment_balance_disabled: form.payment_balance_disabled,
       payment_balance_recharge_multiplier:
         Number(form.payment_balance_recharge_multiplier) || 1,
+      payment_subscription_payment_multiplier:
+        Number(form.payment_subscription_payment_multiplier) || 1,
       payment_recharge_fee_rate: Number(form.payment_recharge_fee_rate) || 0,
+      payment_refund_fee_rate: Number(form.payment_refund_fee_rate) || 0,
+      payment_subscription_min_daily_amount:
+        Number(form.payment_subscription_min_daily_amount) || 30,
+      payment_subscription_max_daily_amount:
+        Number(form.payment_subscription_max_daily_amount) || 510,
+      payment_subscription_max_validity_days:
+        Number(form.payment_subscription_max_validity_days) || 360,
+      payment_subscription_min_plan_ratio:
+        Number(form.payment_subscription_min_plan_ratio) || 2,
+      payment_subscription_max_plan_ratio:
+        Number(form.payment_subscription_max_plan_ratio) || 1,
       payment_enabled_types: form.payment_enabled_types,
       payment_load_balance_strategy: form.payment_load_balance_strategy,
       payment_product_name_prefix: form.payment_product_name_prefix,

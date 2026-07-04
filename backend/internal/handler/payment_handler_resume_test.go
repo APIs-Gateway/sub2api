@@ -34,11 +34,12 @@ func TestApplyWeChatPaymentResumeClaims(t *testing.T) {
 	}
 
 	err := applyWeChatPaymentResumeClaims(&req, &service.WeChatPaymentResumeClaims{
-		OpenID:      "openid-123",
-		PaymentType: payment.TypeWxpay,
-		Amount:      "12.50",
-		OrderType:   payment.OrderTypeSubscription,
-		PlanID:      7,
+		OpenID:             "openid-123",
+		PaymentType:        payment.TypeWxpay,
+		Amount:             "12.50",
+		OrderType:          payment.OrderTypeSubscription,
+		PlanID:             7,
+		SubscriptionIntent: service.SubscriptionIntentRenew,
 	})
 	if err != nil {
 		t.Fatalf("applyWeChatPaymentResumeClaims returned error: %v", err)
@@ -55,6 +56,28 @@ func TestApplyWeChatPaymentResumeClaims(t *testing.T) {
 	if req.PlanID != 7 {
 		t.Fatalf("plan_id = %d, want 7", req.PlanID)
 	}
+	// P2#5:续费/转套餐意图必须随 token 透传,否则 resume 退化为购买。
+	if req.SubscriptionIntent != service.SubscriptionIntentRenew {
+		t.Fatalf("subscription_intent = %q, want %q", req.SubscriptionIntent, service.SubscriptionIntentRenew)
+	}
+}
+
+// P2#5:微信支付 resume token 对 subscription_intent 的签发→解析往返,意图不丢。
+func TestWeChatPaymentResumeToken_CarriesSubscriptionIntent(t *testing.T) {
+	t.Parallel()
+	resumeSvc := service.NewPaymentResumeService([]byte("0123456789abcdef0123456789abcdef"))
+	token, err := resumeSvc.CreateWeChatPaymentResumeToken(service.WeChatPaymentResumeClaims{
+		OpenID:             "openid-xyz",
+		PaymentType:        payment.TypeWxpay,
+		OrderType:          payment.OrderTypeSubscription,
+		DailyAmountUSD:     20,
+		ValidityDays:       30,
+		SubscriptionIntent: service.SubscriptionIntentChangePlan,
+	})
+	require.NoError(t, err)
+	claims, err := resumeSvc.ParseWeChatPaymentResumeToken(token)
+	require.NoError(t, err)
+	require.Equal(t, service.SubscriptionIntentChangePlan, claims.SubscriptionIntent, "intent 须随 token 往返,不丢失")
 }
 
 func TestApplyWeChatPaymentResumeClaimsRejectsPaymentTypeMismatch(t *testing.T) {

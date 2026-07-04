@@ -4,15 +4,22 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"math/rand/v2"
 	"strconv"
 	"strings"
 	"time"
 
+	"entgo.io/ent/dialect"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
+	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/dgraph-io/ristretto"
 	"golang.org/x/sync/singleflight"
 )
@@ -25,20 +32,25 @@ var MaxExpiresAt = time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC)
 const MaxValidityDays = 36500
 
 var (
-	ErrSubscriptionNotFound               = infraerrors.NotFound("SUBSCRIPTION_NOT_FOUND", "subscription not found")
-	ErrSubscriptionExpired                = infraerrors.Forbidden("SUBSCRIPTION_EXPIRED", "subscription has expired")
-	ErrSubscriptionSuspended              = infraerrors.Forbidden("SUBSCRIPTION_SUSPENDED", "subscription is suspended")
-	ErrSubscriptionAlreadyExists          = infraerrors.Conflict("SUBSCRIPTION_ALREADY_EXISTS", "subscription already exists for this user and group")
-	ErrSubscriptionAssignConflict         = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
-	ErrGroupNotSubscriptionType           = infraerrors.BadRequest("GROUP_NOT_SUBSCRIPTION_TYPE", "group is not a subscription type")
-	ErrInvalidInput                       = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
-	ErrDailyLimitExceeded                 = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")
-	ErrWeeklyLimitExceeded                = infraerrors.TooManyRequests("WEEKLY_LIMIT_EXCEEDED", "weekly usage limit exceeded")
-	ErrMonthlyLimitExceeded               = infraerrors.TooManyRequests("MONTHLY_LIMIT_EXCEEDED", "monthly usage limit exceeded")
-	ErrSubscriptionNilInput               = infraerrors.BadRequest("SUBSCRIPTION_NIL_INPUT", "subscription input cannot be nil")
-	ErrAdjustWouldExpire                  = infraerrors.BadRequest("ADJUST_WOULD_EXPIRE", "adjustment would result in expired subscription (remaining days must be > 0)")
-	ErrSubscriptionOverdraftUsesExhausted = infraerrors.BadRequest("SUBSCRIPTION_OVERDRAFT_USES_EXHAUSTED", "subscription overdraft uses exhausted")
-	ErrInvalidSubscriptionOverdraftDays   = infraerrors.BadRequest("INVALID_SUBSCRIPTION_OVERDRAFT_DAYS", "subscription overdraft days must be between 1 and 5; use null or 0 to disable")
+	ErrSubscriptionNotFound      = infraerrors.NotFound("SUBSCRIPTION_NOT_FOUND", "subscription not found")
+	ErrSubscriptionExpired       = infraerrors.Forbidden("SUBSCRIPTION_EXPIRED", "subscription has expired")
+	ErrSubscriptionSuspended     = infraerrors.Forbidden("SUBSCRIPTION_SUSPENDED", "subscription is suspended")
+	ErrSubscriptionAlreadyExists = infraerrors.Conflict("SUBSCRIPTION_ALREADY_EXISTS", "subscription already exists for this user and group")
+	ErrActiveSubscriptionExists  = infraerrors.Conflict("ACTIVE_SUBSCRIPTION_EXISTS", "active subscription already exists; renew, refund, or change plan instead")
+	ErrNoActiveSubscription      = infraerrors.NotFound("NO_ACTIVE_SUBSCRIPTION", "no active subscription to change")
+	ErrChangePlanDailyLimit      = infraerrors.TooManyRequests("CHANGE_PLAN_DAILY_LIMIT", "plan can be changed at most once per natural day")
+	// 转套餐降档赔钱（新档折价后 diff<0，即旧卡剩余价值 > 新档价）禁止——只允许持平/升档（diff≥0）。
+	// 见 docs/billing-perday-redesign.md §7：差价走法币网关补，不退款（产品决策：禁止赔钱降档）。
+	ErrChangePlanDowngradeNotAllowed = infraerrors.BadRequest("CHANGE_PLAN_DOWNGRADE_NOT_ALLOWED", "cannot change to a plan worth less than the current card's remaining value")
+	ErrSubscriptionAssignConflict    = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with existing assignment semantics")
+	ErrGroupNotSubscriptionType      = infraerrors.BadRequest("GROUP_NOT_SUBSCRIPTION_TYPE", "group is not a subscription type")
+	ErrInvalidDailyAmount            = infraerrors.BadRequest("INVALID_DAILY_AMOUNT", "subscription daily amount must be positive (provide daily_amount_usd, or a group with daily_limit_usd > 0)")
+	ErrInvalidInput                  = infraerrors.BadRequest("INVALID_INPUT", "at least one of resetDaily, resetWeekly, or resetMonthly must be true")
+	ErrDailyLimitExceeded            = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")
+	ErrWeeklyLimitExceeded           = infraerrors.TooManyRequests("WEEKLY_LIMIT_EXCEEDED", "weekly usage limit exceeded")
+	ErrMonthlyLimitExceeded          = infraerrors.TooManyRequests("MONTHLY_LIMIT_EXCEEDED", "monthly usage limit exceeded")
+	ErrSubscriptionNilInput          = infraerrors.BadRequest("SUBSCRIPTION_NIL_INPUT", "subscription input cannot be nil")
+	ErrAdjustWouldExpire             = infraerrors.BadRequest("ADJUST_WOULD_EXPIRE", "adjustment would result in expired subscription (remaining days must be > 0)")
 )
 
 // SubscriptionService 订阅服务
@@ -152,11 +164,16 @@ func (s *SubscriptionService) InvalidateSubCache(userID, groupID int64) {
 
 // AssignSubscriptionInput 分配订阅输入
 type AssignSubscriptionInput struct {
-	UserID       int64
-	GroupID      int64
-	ValidityDays int
-	AssignedBy   int64
-	Notes        string
+	UserID         int64
+	GroupID        int64
+	ValidityDays   int
+	DailyAmountUSD float64 // per-day：每日额度 D（来自订单快照/plan）；0 时回退 group.daily_limit_usd
+	// 周/月封顶（来自订单**冻结快照**）；>0 则覆盖 DeriveWindowCaps(D,T) 的派生值——spec §2 要求
+	// W/M 与 D/T/u/price 一并冻结，发卡严格按快照、不按履约时派生系数重算。0（老单/直发）= 按 D/T 派生。
+	WeeklyLimitUSD  float64
+	MonthlyLimitUSD float64
+	AssignedBy      int64
+	Notes           string
 }
 
 // AssignSubscription 分配订阅给用户（不允许重复分配）
@@ -175,17 +192,19 @@ func (s *SubscriptionService) AssignSubscription(ctx context.Context, input *Ass
 //
 // 如果没有订阅：创建新订阅
 func (s *SubscriptionService) AssignOrExtendSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error) {
-	// 检查分组是否存在且为订阅类型
-	group, err := s.groupRepo.GetByID(ctx, input.GroupID)
-	if err != nil {
-		return nil, false, fmt.Errorf("group not found: %w", err)
-	}
-	if !group.IsSubscriptionType() {
-		return nil, false, ErrGroupNotSubscriptionType
+	// per-day→三窗口 redesign（P5e）：订阅与 group 解耦，限额读卡级 *_limit_usd，订阅可在任意 group 下使用。
+	//   - GroupID>0：历史按 group 分配/兑换/套餐单，仍校验来源 group 存在（写入卡作历史快照）。
+	//   - GroupID==0：自定义 D+T 购买的无 group 卡（group_id 现已可空），必须自带每日额度 D
+	//     （否则 resolveAssignDailyAmount 既无 D 又无 group 可回退 → ErrInvalidDailyAmount）。
+	if input.GroupID > 0 {
+		if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
+			return nil, false, fmt.Errorf("group not found: %w", err)
+		}
+	} else if input.DailyAmountUSD <= 0 {
+		return nil, false, infraerrors.BadRequest("INVALID_INPUT", "custom subscription requires daily_amount_usd")
 	}
 
-	// burn-down 模型：每次开通/兑换都新建一张独立订阅卡（支持叠加），不再续期已有订阅。
-	// 透支与每日清扣按每张卡各自的 burn-down 账户独立核算。
+	// per-day：每次开通新建一张 per-day 卡（单卡模式由购买入口保证至多一张 active）。
 	sub, err := s.createSubscription(ctx, input)
 	if err != nil {
 		return nil, false, err
@@ -234,6 +253,26 @@ func (s *SubscriptionService) withSubscriptionUpdateTx(ctx context.Context, fn f
 }
 
 // createSubscription 创建新订阅（内部方法）
+// resolveAssignDailyAmount 决定新卡的每日额度 D：input.DailyAmountUSD>0 优先（来自订单冻结快照/plan）；
+// 否则回退所挂 group 的 daily_limit_usd（须 > 0）——存量/管理端按 group 直接分配的兼容路径。
+// 二者都拿不到正数则返回 BadRequest，绝不建 D=0 的 active 卡。
+func (s *SubscriptionService) resolveAssignDailyAmount(ctx context.Context, input *AssignSubscriptionInput) (float64, error) {
+	if input.DailyAmountUSD > 0 {
+		return input.DailyAmountUSD, nil
+	}
+	if input.GroupID > 0 {
+		group, err := s.groupRepo.GetByID(ctx, input.GroupID)
+		if err != nil {
+			// 不要把 DB 抖动等内部错误吞成 INVALID_DAILY_AMOUNT，返回原始错误。
+			return 0, fmt.Errorf("resolve daily amount: group lookup: %w", err)
+		}
+		if group != nil && group.DailyLimitUSD != nil && *group.DailyLimitUSD > 0 {
+			return *group.DailyLimitUSD, nil
+		}
+	}
+	return 0, ErrInvalidDailyAmount
+}
+
 func (s *SubscriptionService) createSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, error) {
 	s.clearSubscriptionLockCache(input.UserID)
 
@@ -245,55 +284,89 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 		validityDays = MaxValidityDays
 	}
 
-	// burn-down 模型：取套餐每日额度 D，一次性发放总额 G = D × days。
-	var dailyAmount float64
-	if group, err := s.groupRepo.GetByID(ctx, input.GroupID); err == nil && group != nil && group.DailyLimitUSD != nil {
-		dailyAmount = *group.DailyLimitUSD
+	// per-day：每日额度 D 必须 > 0，绝不建 0-D 的 active 卡（否则今日额度恒 0、卡形同废卡）。
+	dailyAmount, err := s.resolveAssignDailyAmount(ctx, input)
+	if err != nil {
+		return nil, err
 	}
 	grantedTotal := dailyAmount * float64(validityDays)
 
 	now := time.Now()
-	expiresAt := now.AddDate(0, 0, validityDays)
-	if expiresAt.After(MaxExpiresAt) {
-		expiresAt = MaxExpiresAt
-	}
+
+	// per-day 字段：新卡即按 per-day 模型初始化（与上方 burn-down 字段并存，切换后即生效）。
+	// start_day/expire_day 为东八区绝对自然日序号；expire_day = 最后发放日（含）= start+T−1；
+	// 当天即发放 D（today_remaining=D、today_day=start_day）。切换前 burn-down 不读这些字段，纯加性。
+	startDay := EastDayNumber(now)
+	expireDay := startDay + validityDays - 1
+	// 超长有效期：先把 expire_day 夹到上限，再派生 expires_at——否则只 clamp expiresAt 会让
+	// expire_day 与 expires_at 再次分裂（per-day/退款看 expire_day、旧 active/到期路径看 expires_at）。
+	expireDay = ClampExpireDay(expireDay)
+	// expires_at 从 expire_day 派生（次日 0 点），与自然日口径一致，供按 expires_at 判过期的旧路径。
+	expiresAt := ExpireDayToExpiresAt(expireDay)
 
 	activatedAt := now
+	// 优先用订单冻结快照里的 W/M（spec §2：W/M 也冻结，发卡不按履约时派生系数重算）；
+	// 快照缺省（老单/直发/redeem）时回退按 D/T 派生（派生系数为常量，结果与下单时一致）。
+	weeklyLimit, monthlyLimit := DeriveWindowCaps(dailyAmount, validityDays)
+	if input.WeeklyLimitUSD > 0 {
+		weeklyLimit = input.WeeklyLimitUSD
+	}
+	if input.MonthlyLimitUSD > 0 {
+		monthlyLimit = input.MonthlyLimitUSD
+	}
+	dailyWindowStart := timezone.StartOfDay(now)
+	weeklyWindowStart := timezone.StartOfWeek(now)
+	monthlyWindowStart := timezone.StartOfMonth(now)
 	sub := &UserSubscription{
-		UserID:          input.UserID,
-		GroupID:         input.GroupID,
-		StartsAt:        now,
-		ExpiresAt:       expiresAt,
-		Status:          SubscriptionStatusActive,
-		GrantedTotalUSD: grantedTotal,
-		DailyAmountUSD:  dailyAmount,
-		ConsumedUSD:     0,
-		ClawedUSD:       0,
-		LastClawbackDay: 0,
-		ActivatedAt:     &activatedAt,
-		AssignedAt:      now,
-		Notes:           input.Notes,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		UserID:             input.UserID,
+		GroupID:            input.GroupID,
+		StartsAt:           now,
+		ExpiresAt:          expiresAt,
+		Status:             SubscriptionStatusActive,
+		GrantedTotalUSD:    grantedTotal,
+		DailyAmountUSD:     dailyAmount,
+		ConsumedUSD:        0,
+		ClawedUSD:          0,
+		LastClawbackDay:    0,
+		DailySpentUSD:      0,
+		DailySpentDay:      startDay,
+		TodayRemaining:     dailyAmount,
+		TodayDay:           startDay,
+		StartDay:           startDay,
+		ExpireDay:          expireDay,
+		OverdraftOn:        false,
+		DailyLimitUSD:      &dailyAmount,
+		WeeklyLimitUSD:     &weeklyLimit,
+		MonthlyLimitUSD:    &monthlyLimit,
+		DailyUsageUSD:      0,
+		WeeklyUsageUSD:     0,
+		MonthlyUsageUSD:    0,
+		DailyWindowStart:   &dailyWindowStart,
+		WeeklyWindowStart:  &weeklyWindowStart,
+		MonthlyWindowStart: &monthlyWindowStart,
+		ActivatedAt:        &activatedAt,
+		AssignedAt:         now,
+		Notes:              input.Notes,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	// 只有当 AssignedBy > 0 时才设置（0 表示系统分配，如兑换码）
 	if input.AssignedBy > 0 {
 		sub.AssignedBy = &input.AssignedBy
 	}
 
-	// 同一事务内创建订阅并把 G 一次性打入用户余额。
-	// 使用 DeductBalance(负数) 实现「只加余额、不计入 total_recharged」，
-	// 与每日清扣 / 到期作废的扣减保持同一账本，避免污染充值统计与返佣计算。
+	// per-day 模型：套餐额度只存在卡的 today_remaining（每日发 D），**不再把 G 打进 users.balance**。
+	// 否则套餐额度会同时存在于 today_remaining 与钱包，用户当天花完 D 后还能用这笔总额走钱包层、
+	// 绕过 per-day 限速/透支（见 settlePerDaySubscription：balance 已是纯钱包）。GrantedTotalUSD 仅
+	// 作历史/展示，不进账本。存量旧卡的 G 已在 balance 里，由上线前一次性「balance 解混」迁移取出。
 	if err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
+		if err := s.enforceSingleActiveSubscription(txCtx, input.UserID, startDay); err != nil {
+			return err
+		}
 		if err := s.userSubRepo.Create(txCtx, sub); err != nil {
 			return err
 		}
-		if grantedTotal > 0 && s.userRepo != nil {
-			if err := s.userRepo.DeductBalance(txCtx, input.UserID, -grantedTotal); err != nil {
-				return fmt.Errorf("credit subscription balance: %w", err)
-			}
-		}
-		return nil
+		return s.bumpUserConcurrencyForSubscription(txCtx, input.UserID, dailyAmount)
 	}); err != nil {
 		return nil, err
 	}
@@ -304,6 +377,126 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 
 	// 重新获取完整订阅信息（包含关联）
 	return s.userSubRepo.GetByID(ctx, sub.ID)
+}
+
+func subscriptionConcurrencyForDailyAmount(dailyAmount float64) int {
+	if dailyAmount <= 0 || math.IsNaN(dailyAmount) || math.IsInf(dailyAmount, 0) {
+		return 0
+	}
+	return int(math.Ceil(dailyAmount / 10))
+}
+
+func (s *SubscriptionService) bumpUserConcurrencyForSubscription(ctx context.Context, userID int64, dailyAmount float64) error {
+	target := subscriptionConcurrencyForDailyAmount(dailyAmount)
+	if target <= 0 || s.userRepo == nil {
+		return nil
+	}
+	u, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if u.Concurrency >= target {
+		return nil
+	}
+	if err := s.userRepo.UpdateConcurrency(ctx, userID, target-u.Concurrency); err != nil {
+		return err
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
+	}
+	return nil
+}
+
+func (s *SubscriptionService) enforceSingleActiveSubscription(ctx context.Context, userID int64, today int) error {
+	tx := dbent.TxFromContext(ctx)
+	if tx == nil {
+		return nil
+	}
+	client := tx.Client()
+	lockRows := client.Driver() != nil && client.Driver().Dialect() == dialect.Postgres
+
+	userQuery := client.User.Query().
+		Where(user.IDEQ(userID), user.DeletedAtIsNil())
+	if lockRows {
+		userQuery = userQuery.ForUpdate()
+	}
+	if _, err := userQuery.OnlyID(ctx); err != nil {
+		if dbent.IsNotFound(err) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+
+	if _, err := client.UserSubscription.Update().
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.StatusEQ(SubscriptionStatusActive),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.ExpireDayLT(today),
+		).
+		SetStatus(SubscriptionStatusExpired).
+		SetTodayRemaining(0).
+		SetUpdatedAt(time.Now()).
+		Save(ctx); err != nil {
+		return err
+	}
+
+	activeQuery := client.UserSubscription.Query().
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.StatusEQ(SubscriptionStatusActive),
+			usersubscription.DeletedAtIsNil(),
+		).
+		Order(
+			dbent.Desc(usersubscription.FieldExpireDay),
+			dbent.Desc(usersubscription.FieldID),
+		)
+	if lockRows {
+		activeQuery = activeQuery.ForUpdate()
+	}
+	if _, err := activeQuery.OnlyID(ctx); err == nil {
+		return ErrActiveSubscriptionExists
+	} else if !dbent.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+// lockUserAndPruneStaleForLifecycle 为续费/转套餐下单串行化：FOR UPDATE 锁 user 行 + 惰性关掉
+// 假 active 卡（status='active' 但 expire_day<today）。**与 enforceSingleActiveSubscription 不同**:
+// 不因「仍有生效卡」报错——续费/转套餐本就要求有生效卡。须在事务内调用（tx 来自 ctx）。
+func (s *SubscriptionService) lockUserAndPruneStaleForLifecycle(ctx context.Context, userID int64, today int) error {
+	tx := dbent.TxFromContext(ctx)
+	if tx == nil {
+		return nil
+	}
+	client := tx.Client()
+	lockRows := client.Driver() != nil && client.Driver().Dialect() == dialect.Postgres
+
+	userQuery := client.User.Query().Where(user.IDEQ(userID), user.DeletedAtIsNil())
+	if lockRows {
+		userQuery = userQuery.ForUpdate()
+	}
+	if _, err := userQuery.OnlyID(ctx); err != nil {
+		if dbent.IsNotFound(err) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	if _, err := client.UserSubscription.Update().
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.StatusEQ(SubscriptionStatusActive),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.ExpireDayLT(today),
+		).
+		SetStatus(SubscriptionStatusExpired).
+		SetTodayRemaining(0).
+		SetUpdatedAt(time.Now()).
+		Save(ctx); err != nil {
+		return err
+	}
+	return nil
 }
 
 // invalidateUserBalanceCacheAsync 异步失效用户余额缓存（与现有订阅缓存失效模式一致）。
@@ -326,13 +519,25 @@ func (s *SubscriptionService) clearSubscriptionLockCache(userID int64) {
 	s.billingCacheService.clearNoSubscriptionLockCache(userID)
 }
 
+func (s *SubscriptionService) invalidateSubscriptionCacheAsync(userID, groupID int64) {
+	if s.billingCacheService == nil || userID <= 0 || groupID <= 0 {
+		return
+	}
+	go func() {
+		cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+	}()
+}
+
 // BulkAssignSubscriptionInput 批量分配订阅输入
 type BulkAssignSubscriptionInput struct {
-	UserIDs      []int64
-	GroupID      int64
-	ValidityDays int
-	AssignedBy   int64
-	Notes        string
+	UserIDs        []int64
+	GroupID        int64
+	ValidityDays   int
+	DailyAmountUSD float64 // per-day：每日额度 D；0 时回退 group.daily_limit_usd
+	AssignedBy     int64
+	Notes          string
 }
 
 // BulkAssignResult 批量分配结果
@@ -354,13 +559,24 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 		Statuses:      make(map[int64]string),
 	}
 
+	// 请求级预校验：group 与每日额度 D 对整批是同一份参数（input.GroupID / input.DailyAmountUSD
+	// 或同一 group 回退）。这类公共参数错误应循环前直接返回（handler 转 400），不要吞成每个用户
+	// failed 再被 success 包装，导致前端误判请求成功。
+	if input.GroupID <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_INPUT", "group_id is required")
+	}
+	if _, err := s.resolveAssignDailyAmount(ctx, &AssignSubscriptionInput{GroupID: input.GroupID, DailyAmountUSD: input.DailyAmountUSD}); err != nil {
+		return nil, err
+	}
+
 	for _, userID := range input.UserIDs {
 		sub, reused, err := s.assignSubscriptionWithReuse(ctx, &AssignSubscriptionInput{
-			UserID:       userID,
-			GroupID:      input.GroupID,
-			ValidityDays: input.ValidityDays,
-			AssignedBy:   input.AssignedBy,
-			Notes:        input.Notes,
+			UserID:         userID,
+			GroupID:        input.GroupID,
+			ValidityDays:   input.ValidityDays,
+			DailyAmountUSD: input.DailyAmountUSD,
+			AssignedBy:     input.AssignedBy,
+			Notes:          input.Notes,
 		})
 		if err != nil {
 			result.FailedCount++
@@ -383,16 +599,16 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 }
 
 func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error) {
-	// 检查分组是否存在且为订阅类型
-	group, err := s.groupRepo.GetByID(ctx, input.GroupID)
-	if err != nil {
+	// per-day：订阅与 group 解耦，不再要求「订阅型分组」；group 仅作历史快照。过渡期 schema 仍要求
+	// group_id NOT NULL（FK），故现阶段仍需有效 group（待 P5e 改 nullable 后放开 GroupID==0）。
+	if input.GroupID <= 0 {
+		return nil, false, infraerrors.BadRequest("INVALID_INPUT", "group_id is required")
+	}
+	if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
 		return nil, false, fmt.Errorf("group not found: %w", err)
 	}
-	if !group.IsSubscriptionType() {
-		return nil, false, ErrGroupNotSubscriptionType
-	}
 
-	// burn-down 模型：每次分配都新建一张独立订阅卡（支持叠加），不做幂等复用。
+	// per-day：每次分配新建一张 per-day 卡（单卡模式由入口保证至多一张 active）。
 	sub, err := s.createSubscription(ctx, input)
 	if err != nil {
 		return nil, false, err
@@ -478,6 +694,114 @@ func (s *SubscriptionService) RevokeSubscription(ctx context.Context, subscripti
 	return nil
 }
 
+// closeSubscriptionForRefund closes a card for a subscription refund without
+// deleting its row, so a gateway refund failure can restore it.
+func (s *SubscriptionService) closeSubscriptionForRefund(ctx context.Context, subscriptionID int64) error {
+	sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
+	if err != nil {
+		return err
+	}
+	s.clearSubscriptionLockCache(sub.UserID)
+
+	if _, _, err := s.userSubRepo.CloseSubscriptionWithReclaim(ctx, subscriptionID, time.Now(), false); err != nil {
+		return err
+	}
+	s.clearSubscriptionLockCache(sub.UserID)
+
+	s.InvalidateSubCache(sub.UserID, sub.GroupID)
+	if s.billingCacheService != nil {
+		userID, groupID := sub.UserID, sub.GroupID
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+		}()
+	}
+	s.invalidateUserBalanceCacheAsync(sub.UserID)
+	return nil
+}
+
+// restoreSubscriptionForRefund restores the exact card state captured before a
+// refund deduction. It is intentionally narrower than ExtendSubscription:
+// refund rollback must restore today's package balance as well as expire_day.
+func (s *SubscriptionService) restoreSubscriptionForRefund(ctx context.Context, subscriptionID int64, expireDay int, todayRemaining float64, todayDay int) error {
+	if expireDay <= 0 {
+		return infraerrors.BadRequest("INVALID_EXPIRE_DAY", "subscription expire_day must be positive")
+	}
+	if todayRemaining < 0 {
+		todayRemaining = 0
+	}
+
+	if s.entClient == nil {
+		sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
+		if err != nil {
+			return err
+		}
+		sub.Status = SubscriptionStatusActive
+		sub.ExpireDay = ClampExpireDay(expireDay)
+		sub.ExpiresAt = ExpireDayToExpiresAt(sub.ExpireDay)
+		sub.TodayRemaining = todayRemaining
+		sub.TodayDay = todayDay
+		if err := s.userSubRepo.Update(ctx, sub); err != nil {
+			return err
+		}
+		s.clearSubscriptionLockCache(sub.UserID)
+		s.InvalidateSubCache(sub.UserID, sub.GroupID)
+		s.invalidateUserBalanceCacheAsync(sub.UserID)
+		return nil
+	}
+
+	var userID, groupID int64
+	newExpireDay := ClampExpireDay(expireDay)
+	err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
+		tx := dbent.TxFromContext(txCtx)
+		client := s.entClient
+		if tx != nil {
+			client = tx.Client()
+		}
+
+		query := client.UserSubscription.Query().
+			Where(usersubscription.IDEQ(subscriptionID))
+		if client.Driver() != nil && client.Driver().Dialect() == dialect.Postgres {
+			query = query.ForUpdate()
+		}
+		sub, err := query.Only(txCtx)
+		if err != nil {
+			if dbent.IsNotFound(err) {
+				return ErrSubscriptionNotFound
+			}
+			return err
+		}
+		userID = sub.UserID
+		groupID = entGroupIDValue(sub.GroupID)
+
+		_, err = client.UserSubscription.UpdateOneID(subscriptionID).
+			SetStatus(SubscriptionStatusActive).
+			SetExpireDay(newExpireDay).
+			SetExpiresAt(ExpireDayToExpiresAt(newExpireDay)).
+			SetTodayRemaining(todayRemaining).
+			SetTodayDay(todayDay).
+			SetUpdatedAt(time.Now()).
+			Save(txCtx)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	s.clearSubscriptionLockCache(userID)
+	s.InvalidateSubCache(userID, groupID)
+	if s.billingCacheService != nil {
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+		}()
+	}
+	s.invalidateUserBalanceCacheAsync(userID)
+	return nil
+}
+
 // ExtendSubscription 调整订阅时长（正数延长，负数缩短）
 func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscriptionID int64, days int) (*UserSubscription, error) {
 	sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
@@ -521,10 +845,9 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 		return nil, ErrAdjustWouldExpire
 	}
 
-	// burn-down 模型：调整天数的同时按 D 调整发放额度与用户余额，保持
-	// 不变量 balance == 充值剩余 + Σ活跃卡 remaining。
-	//   days<0：缩短并回收 min(remaining, |days|×D)；
-	//   days>0：延长并增发 days×D（也使退款回滚能把扣减时回收的钱重新发放）；
+	// per-day：仅调整卡的 expire_day（服务窗口），**不动 users.balance**（卡价值在 today_remaining）。
+	//   days<0：缩短 → expire_day −= |days|（下限 today−1）；
+	//   days>0：延长 → expire_day = clamp(max(原, today−1) + days)（按续费口径并夹到上限）；
 	//   days==0：仅同步过期时间（一般不会发生）。
 	switch {
 	case days < 0:
@@ -568,6 +891,11 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 // GetByID 根据ID获取订阅
 func (s *SubscriptionService) GetByID(ctx context.Context, id int64) (*UserSubscription, error) {
 	return s.userSubRepo.GetByID(ctx, id)
+}
+
+// GetActiveUserSubscription 获取用户唯一生效订阅卡（per-day 单卡模式，不按 group 匹配）。
+func (s *SubscriptionService) GetActiveUserSubscription(ctx context.Context, userID int64) (*UserSubscription, error) {
+	return s.userSubRepo.GetActiveByUserID(ctx, userID)
 }
 
 // GetActiveSubscription 获取用户对特定分组的有效订阅
@@ -621,67 +949,6 @@ func (s *SubscriptionService) ListUserSubscriptions(ctx context.Context, userID 
 	return subs, nil
 }
 
-// SetSubscriptionOverdraftDays 用户自助设置自己某张订阅卡的「最多往后透支天数」。
-// days = nil、0 或负数 → 关闭透支；1..5 → 开启并设置透支深度。仅能操作属于自己的卡。
-func (s *SubscriptionService) SetSubscriptionOverdraftDays(ctx context.Context, userID, subID int64, days *int) error {
-	norm, err := normalizeOverdraftDays(days)
-	if err != nil {
-		return err
-	}
-	if norm != nil {
-		sub, err := s.userSubRepo.GetByID(ctx, subID)
-		if err != nil {
-			return err
-		}
-		if sub == nil || sub.UserID != userID {
-			return ErrSubscriptionNotFound
-		}
-		if !sub.CanEnableOverdraft() {
-			return ErrSubscriptionOverdraftUsesExhausted
-		}
-	}
-	ok, err := s.userSubRepo.SetOverdraftDays(ctx, userID, subID, norm)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return ErrSubscriptionNotFound
-	}
-	s.clearSubscriptionLockCache(userID)
-	if s.userRepo != nil {
-		guardEnabled := norm != nil
-		if norm == nil {
-			guardEnabled, err = s.hasEnabledSubscriptionOverdraft(ctx, userID)
-			if err != nil {
-				log.Printf("[Subscription] check overdraft guard failed user=%d: %v", userID, err)
-				guardEnabled = true
-			}
-		}
-		if err := s.userRepo.SetSubscriptionOverdraftGuard(ctx, userID, guardEnabled); err != nil {
-			log.Printf("[Subscription] set overdraft guard failed user=%d enabled=%t: %v", userID, guardEnabled, err)
-		}
-	}
-	// 失效 auth 快照（闸门读 guard）+ 余额缓存（闸门读 balance）。
-	if s.authCacheInvalidator != nil {
-		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
-	}
-	s.invalidateUserBalanceCacheAsync(userID)
-	return nil
-}
-
-func (s *SubscriptionService) hasEnabledSubscriptionOverdraft(ctx context.Context, userID int64) (bool, error) {
-	subs, err := s.userSubRepo.ListActiveByUserID(ctx, userID)
-	if err != nil {
-		return false, err
-	}
-	for i := range subs {
-		if subs[i].MaxOverdraftDays != nil && subs[i].CanEnableOverdraft() {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // ListActiveUserSubscriptions 获取用户的所有有效订阅
 func (s *SubscriptionService) ListActiveUserSubscriptions(ctx context.Context, userID int64) ([]UserSubscription, error) {
 	subs, err := s.userSubRepo.ListActiveByUserID(ctx, userID)
@@ -701,6 +968,7 @@ func (s *SubscriptionService) ListGroupSubscriptions(ctx context.Context, groupI
 	}
 	normalizeExpiredWindows(subs)
 	normalizeSubscriptionStatus(subs)
+	s.attachRefundInfo(ctx, subs)
 	return subs, pag, nil
 }
 
@@ -713,7 +981,78 @@ func (s *SubscriptionService) List(ctx context.Context, page, pageSize int, user
 	}
 	normalizeExpiredWindows(subs)
 	normalizeSubscriptionStatus(subs)
+	s.attachRefundInfo(ctx, subs)
 	return subs, pag, nil
+}
+
+func (s *SubscriptionService) attachRefundInfo(ctx context.Context, subs []UserSubscription) {
+	if s == nil || s.entClient == nil || len(subs) == 0 {
+		return
+	}
+
+	userIDs := make([]int64, 0, len(subs))
+	subByID := make(map[int64]*UserSubscription, len(subs))
+	seenUsers := make(map[int64]struct{}, len(subs))
+	for i := range subs {
+		sub := &subs[i]
+		subByID[sub.ID] = sub
+		if _, ok := seenUsers[sub.UserID]; ok {
+			continue
+		}
+		seenUsers[sub.UserID] = struct{}{}
+		userIDs = append(userIDs, sub.UserID)
+	}
+	if len(userIDs) == 0 {
+		return
+	}
+
+	orders, err := s.entClient.PaymentOrder.Query().
+		Where(
+			paymentorder.UserIDIn(userIDs...),
+			paymentorder.OrderTypeEQ(payment.OrderTypeSubscription),
+			paymentorder.StatusIn(OrderStatusCompleted, OrderStatusRefundFailed),
+		).
+		Order(dbent.Desc(paymentorder.FieldID)).
+		All(ctx)
+	if err != nil {
+		return
+	}
+
+	today := TodayEastDayNumber()
+	for _, order := range orders {
+		subID, ok := readSubscriptionSnapshotSubscriptionID(order)
+		if !ok || subID <= 0 {
+			continue
+		}
+		sub := subByID[subID]
+		if sub == nil || sub.RefundOrderID != nil {
+			continue
+		}
+		originalDays, err := subscriptionOrderOriginalDays(order)
+		if err != nil {
+			continue
+		}
+		card := sub.ToPerDayCard()
+		refundable := RefundAmount(order.Amount, card.RefundableDays(today), originalDays)
+		if refundable <= 0 {
+			continue
+		}
+		orderID := order.ID
+		orderAmount := order.Amount
+		orderPay := order.PayAmount
+		refundableAmount := math.Ceil(refundable*100) / 100
+		sub.RefundOrderID = &orderID
+		sub.RefundOrderStatus = order.Status
+		sub.RefundOrderAmount = &orderAmount
+		sub.RefundOrderPay = &orderPay
+		sub.RefundableAmount = &refundableAmount
+	}
+}
+
+// PopulateAdminRefundInfo enriches admin subscription DTO sources with the latest refundable
+// paid subscription order. User-facing DTO mappers intentionally ignore these fields.
+func (s *SubscriptionService) PopulateAdminRefundInfo(ctx context.Context, subs []UserSubscription) {
+	s.attachRefundInfo(ctx, subs)
 }
 
 // normalizeExpiredWindows 将已过期窗口的数据清零（仅影响返回数据，不影响数据库）
@@ -1041,19 +1380,20 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 		}
 	}
 
-	// 日进度
-	if group.HasDailyLimit() && sub.DailyWindowStart != nil {
-		limit := *group.DailyLimitUSD
-		resetsAt := sub.DailyWindowStart.Add(24 * time.Hour)
-		if dailyResetTime := sub.DailyResetTime(); dailyResetTime != nil {
-			resetsAt = *dailyResetTime
-		}
+	window := sub.ToSubWindow()
+	now := time.Now()
+	window.ResetWindows(now)
+
+	// 日进度：限额挂卡，不再读取 group.daily_limit_usd。
+	if window.DailyLimitUSD > 0 && window.DailyWindowStart != nil {
+		limit := window.DailyLimitUSD
+		resetsAt := window.DailyWindowStart.Add(24 * time.Hour)
 		progress.Daily = &UsageWindowProgress{
 			LimitUSD:        limit,
-			UsedUSD:         sub.DailyUsageUSD,
-			RemainingUSD:    limit - sub.DailyUsageUSD,
-			Percentage:      (sub.DailyUsageUSD / limit) * 100,
-			WindowStart:     *sub.DailyWindowStart,
+			UsedUSD:         window.DailyUsageUSD,
+			RemainingUSD:    limit - window.DailyUsageUSD,
+			Percentage:      (window.DailyUsageUSD / limit) * 100,
+			WindowStart:     *window.DailyWindowStart,
 			ResetsAt:        resetsAt,
 			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
 		}
@@ -1068,16 +1408,16 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 		}
 	}
 
-	// 周进度
-	if group.HasWeeklyLimit() && sub.WeeklyWindowStart != nil {
-		limit := *group.WeeklyLimitUSD
-		resetsAt := sub.WeeklyWindowStart.Add(7 * 24 * time.Hour)
+	// 周进度：限额挂卡，不再读取 group.weekly_limit_usd。
+	if window.WeeklyLimitUSD > 0 && window.WeeklyWindowStart != nil {
+		limit := window.WeeklyLimitUSD
+		resetsAt := window.WeeklyWindowStart.Add(7 * 24 * time.Hour)
 		progress.Weekly = &UsageWindowProgress{
 			LimitUSD:        limit,
-			UsedUSD:         sub.WeeklyUsageUSD,
-			RemainingUSD:    limit - sub.WeeklyUsageUSD,
-			Percentage:      (sub.WeeklyUsageUSD / limit) * 100,
-			WindowStart:     *sub.WeeklyWindowStart,
+			UsedUSD:         window.WeeklyUsageUSD,
+			RemainingUSD:    limit - window.WeeklyUsageUSD,
+			Percentage:      (window.WeeklyUsageUSD / limit) * 100,
+			WindowStart:     *window.WeeklyWindowStart,
 			ResetsAt:        resetsAt,
 			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
 		}
@@ -1092,16 +1432,16 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 		}
 	}
 
-	// 月进度
-	if group.HasMonthlyLimit() && sub.MonthlyWindowStart != nil {
-		limit := *group.MonthlyLimitUSD
-		resetsAt := sub.MonthlyWindowStart.Add(30 * 24 * time.Hour)
+	// 月进度：限额挂卡，不再读取 group.monthly_limit_usd。
+	if window.MonthlyLimitUSD > 0 && window.MonthlyWindowStart != nil {
+		limit := window.MonthlyLimitUSD
+		resetsAt := window.MonthlyWindowStart.AddDate(0, 1, 0)
 		progress.Monthly = &UsageWindowProgress{
 			LimitUSD:        limit,
-			UsedUSD:         sub.MonthlyUsageUSD,
-			RemainingUSD:    limit - sub.MonthlyUsageUSD,
-			Percentage:      (sub.MonthlyUsageUSD / limit) * 100,
-			WindowStart:     *sub.MonthlyWindowStart,
+			UsedUSD:         window.MonthlyUsageUSD,
+			RemainingUSD:    limit - window.MonthlyUsageUSD,
+			Percentage:      (window.MonthlyUsageUSD / limit) * 100,
+			WindowStart:     *window.MonthlyWindowStart,
 			ResetsAt:        resetsAt,
 			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
 		}

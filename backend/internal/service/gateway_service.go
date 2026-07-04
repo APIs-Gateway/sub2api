@@ -8737,6 +8737,9 @@ type APIKeyQuotaUpdater interface {
 
 type apiKeyAuthCacheInvalidator interface {
 	InvalidateAuthCacheByKey(ctx context.Context, key string)
+	// InvalidateAuthCacheByUserID 失效该用户全部 key 的鉴权快照——透支改了 users.monthly_overdraft_count
+	// 后须失效，否则准入读到的是缓存里的旧计数、会继续放行已用满本月透支的用户。
+	InvalidateAuthCacheByUserID(ctx context.Context, userID int64)
 }
 
 type usageLogBestEffortWriter interface {
@@ -8837,13 +8840,13 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		}
 	}
 
-	// Platform quota 累加（legacy 兜底路径）：仅对 standard（余额）模式生效；订阅模式豁免；仅对有 limit 的用户写
+	// Platform quota 累加（legacy 兜底路径）：per-day 下统一适用、不再豁免订阅；仅对有 limit 的用户写
 	//   - HasUserPlatformQuotaLimit 守卫:与正常路径对齐，无 limit 公司跳过
 	//   - 新增 Redis 同步写:enforcement 走 Redis，legacy 路径也必须同步写，否则 preflight 看不到消费
 	//   - flusher_enabled=false（降级）:保留原有同步直写 DB
 	//   - flusher_enabled=true:跳过直写 DB，由 flusher 异步批量刷（markDirty 在 IncrementUserPlatformQuotaUsage 内部完成）
 	//   - 失败仅记 ALERT log + counter，不阻断主扣费流程
-	if !p.IsSubscriptionBill && p.Platform != "" && cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil {
+	if p.Platform != "" && cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil {
 		if deps.billingCacheService.HasUserPlatformQuotaLimit(billingCtx, p.User.ID, p.Platform) {
 			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, cost.ActualCost)
 			if deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled {
@@ -8925,11 +8928,20 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		}
 	}
 
-	// burn-down 模型：所有计费统一从 users.balance 扣除（余额 = 充值剩余 + Σ订阅剩余）。
-	// 订阅优先归集由计费仓储在事务内用 SQL 完成（见 allocateUsageBillingSubscriptions），
-	// 因此这里始终设置 BalanceCost，不再区分订阅/余额，避免遗留订阅上下文导致漏扣。
+	// 计费统一进入仓储事务（见 settlePerDaySubscription）：
+	// - BalanceCost = ActualCost（含倍率），保留供 legacy 兜底路径与 fingerprint 兼容。
+	// - per-day 结算用 OfficialCost（官方价，套餐 1:1）+ RateMultiplier（钱包层倍率）。
+	// rate_multiplier=0（免费组）→ ActualCost=0 → 不设 OfficialCost → 不触发结算（套餐也不扣）。
 	if p.Cost.ActualCost > 0 {
 		cmd.BalanceCost = p.Cost.ActualCost
+		if p.Cost.TotalCost > 0 {
+			cmd.OfficialCost = p.Cost.TotalCost
+			cmd.RateMultiplier = p.Cost.ActualCost / p.Cost.TotalCost
+		} else {
+			// TotalCost==0 但 ActualCost>0（理论不应发生）：保底按官方=ActualCost、倍率 1。
+			cmd.OfficialCost = p.Cost.ActualCost
+			cmd.RateMultiplier = 1
+		}
 	}
 
 	if p.shouldDeductAPIKeyQuota() {
@@ -8971,6 +8983,23 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		return false, nil
 	}
 
+	// 计费识别落库（per-day）：结算命中用户有效订阅卡 → 把 usage_log 标为 subscription 计费 + 写
+	// subscription_id（有效卡即订阅瀑布请求，即使本次套餐余额为 0、费用全由钱包层支付）。生产
+	// middleware 不注入 subscription，故以结算结果为准，而非 isSubscriptionBilling 标签。
+	// usageLog 指针即调用方稍后 writeUsageLogBestEffort 写的同一对象。
+	if result.SubscriptionID != nil && usageLog != nil {
+		usageLog.SubscriptionID = result.SubscriptionID
+		usageLog.BillingType = BillingTypeSubscription
+	}
+
+	// 透支改了 users.monthly_overdraft_count → 失效该用户全部 key 的鉴权快照，
+	// 让后续准入读到最新月度计数，避免用缓存里的旧（偏低）计数继续放行已满额用户。
+	if result.OverdraftApplied && p.User != nil {
+		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok {
+			invalidator.InvalidateAuthCacheByUserID(billingCtx, p.User.ID)
+		}
+	}
+
 	if result.APIKeyQuotaExhausted {
 		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
 			invalidator.InvalidateAuthCacheByKey(billingCtx, p.APIKey.Key)
@@ -9000,12 +9029,12 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		return
 	}
 
-	if p.IsSubscriptionBill {
-		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil {
-			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
-		}
-	} else if p.Cost.ActualCost > 0 && p.User != nil {
-		deps.billingCacheService.QueueDeductBalance(p.User.ID, p.Cost.ActualCost)
+	// per-day：钱包缓存按「真实钱包实扣」WalletDebit 回写（套餐 1:1 覆盖部分不动钱包）。
+	// 由 WalletDebit 驱动、不再被 IsSubscriptionBill 旧分支挡住——订阅请求套餐不足走钱包正/负余额时
+	// 同样如实回写，避免缓存高于 DB。套餐余额一侧（today_remaining）缓存属准入缓存改造范围（P4c）。
+	walletDebit := resolveWalletDebit(p, result)
+	if walletDebit != 0 && p.User != nil {
+		deps.billingCacheService.QueueDeductBalance(p.User.ID, walletDebit)
 	}
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
@@ -9022,14 +9051,14 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 
-	// Platform quota 累加：仅在 standard（余额）模式生效；订阅模式豁免；仅对有 limit 的用户写
+	// Platform quota 累加：per-day 下统一适用、不再豁免订阅（与 P4c 准入口径一致）；仅对有 limit 的用户写
 	// Redis 同步写 + DB 异步持久化（flag=false 降级）或 flusher 异步刷（flag=true）:
 	//   - HasUserPlatformQuotaLimit 守卫:无 limit 的公司跳过,避免无效写入 + 浪费 Redis 容量
 	//   - Redis 同步:确保下次 preflight 立即看到最新 usage,把 TOCTOU 超支窗口
 	//     限制在并发 in-flight 请求数量内（旧实现的异步入队会让超支无限累积直到 worker 处理）
 	//   - DB 异步(flusher_enabled=false):在独立 goroutine 中走 detached context,失败用 ALERT log 触发 oncall 对账
 	//   - flusher_enabled=true:不直写 DB,由 flusher 异步批量刷（markDirty 已在 IncrementUserPlatformQuotaUsage 内部完成）
-	if !p.IsSubscriptionBill && p.Platform != "" && p.Cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil {
+	if p.Platform != "" && p.Cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil {
 		if deps.billingCacheService.HasUserPlatformQuotaLimit(ctx, p.User.ID, p.Platform) {
 			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, p.Cost.ActualCost)
 			if deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled {
@@ -9071,10 +9100,12 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 			slog.Error("panic in notifyBalanceLow", "recover", r)
 		}
 	}()
-	if p.IsSubscriptionBill || p.Cost.ActualCost <= 0 || p.User == nil || deps.balanceNotifyService == nil {
+	// per-day：按「真实钱包实扣」决定是否检查低余额通知——套餐 1:1 覆盖（walletDebit=0）不触发；
+	// 订阅请求套餐不足走钱包时同样要通知（不再被 IsSubscriptionBill 挡住）。
+	walletDebit := resolveWalletDebit(p, result)
+	if walletDebit <= 0 || p.User == nil || deps.balanceNotifyService == nil {
 		slog.Debug("notifyBalanceLow: skipped",
-			"is_subscription", p.IsSubscriptionBill,
-			"actual_cost", p.Cost.ActualCost,
+			"wallet_debit", walletDebit,
 			"user_nil", p.User == nil,
 			"service_nil", deps.balanceNotifyService == nil,
 		)
@@ -9085,22 +9116,37 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 	slog.Debug("notifyBalanceLow: calling CheckBalanceAfterDeduction",
 		"user_id", p.User.ID,
 		"old_balance", oldBalance,
-		"cost", p.Cost.ActualCost,
+		"wallet_debit", walletDebit,
 		"notify_enabled", p.User.BalanceNotifyEnabled,
 		"threshold", p.User.BalanceNotifyThreshold,
 		"result_has_new_balance", result != nil && result.NewBalance != nil,
 	)
-	deps.balanceNotifyService.CheckBalanceAfterDeduction(context.Background(), p.User, oldBalance, p.Cost.ActualCost)
+	deps.balanceNotifyService.CheckBalanceAfterDeduction(context.Background(), p.User, oldBalance, walletDebit)
 }
 
 // resolveOldBalance returns the pre-deduction balance.
-// Prefers the DB transaction result (newBalance + cost) over snapshot.
+// Prefers the DB transaction result (newBalance + 真实钱包实扣) over snapshot.
+// per-day 模型下钱包实扣 = WalletDebit（套餐 1:1 覆盖的部分不动钱包），与旧的「扣 ActualCost」不同；
+// 缺 WalletDebit（legacy 兜底）时回退 ActualCost。
 func resolveOldBalance(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
 	if result != nil && result.NewBalance != nil {
-		return *result.NewBalance + p.Cost.ActualCost
+		debit := p.Cost.ActualCost
+		if result.WalletDebit != nil {
+			debit = *result.WalletDebit
+		}
+		return *result.NewBalance + debit
 	}
 	// Legacy fallback: snapshot balance from request context
 	return p.User.Balance
+}
+
+// resolveWalletDebit 返回本次真实从钱包扣减的售价货币额（用于余额提醒/缓存回写）。
+// per-day 结算返回 WalletDebit；缺失时回退 ActualCost（legacy/degraded）。
+func resolveWalletDebit(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
+	if result != nil && result.WalletDebit != nil {
+		return *result.WalletDebit
+	}
+	return p.Cost.ActualCost
 }
 
 // notifyAccountQuota sends account quota threshold notification after increment.
@@ -9354,8 +9400,10 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 计算费用
 	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, opts)
 
-	// 判断计费方式：订阅模式 vs 余额模式
-	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
+	// 计费识别（per-day）：是否订阅计费 = 用户有生效订阅卡，**与 group 类型无关**
+	// （取代旧 group.IsSubscriptionType()）。实际钱/额度走 per-day 瀑布，此 flag 仅用于
+	// usage_log 的 billing_type 标签。subscription 由上游加载（生产暂未注入→恒 balance 标签）。
+	isSubscriptionBilling := subscription != nil
 	billingType := BillingTypeBalance
 	if isSubscriptionBilling {
 		billingType = BillingTypeSubscription

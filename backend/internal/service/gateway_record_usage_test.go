@@ -142,6 +142,32 @@ func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(
 	require.Equal(t, payloadHash, billingRepo.lastCmd.RequestPayloadHash)
 }
 
+// per-day：结算命中用户有效订阅卡（result.SubscriptionID 非空）→ usage_log 标 subscription 计费
+// 且写 subscription_id（即使 group 为 standard、middleware 未注入 subscription）。
+func TestGatewayServiceRecordUsage_MarksSubscriptionWhenSettlementChargedCard(t *testing.T) {
+	cardID := int64(999)
+	usageRepo := &openAIRecordUsageBestEffortLogRepoStub{}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true, SubscriptionID: &cardID}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_sub_label",
+			Usage:     ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey:  &APIKey{ID: 501, Quota: 100},
+		User:    &User{ID: 601},
+		Account: &Account{ID: 701},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, BillingTypeSubscription, usageRepo.lastLog.BillingType, "结算命中有效卡 → usage_log 标 subscription")
+	require.NotNil(t, usageRepo.lastLog.SubscriptionID)
+	require.Equal(t, cardID, *usageRepo.lastLog.SubscriptionID)
+}
+
 func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}

@@ -213,7 +213,14 @@ type SystemSettings struct {
 	PaymentEnabledTypes              []string `json:"payment_enabled_types"`
 	PaymentBalanceDisabled           bool     `json:"payment_balance_disabled"`
 	PaymentBalanceRechargeMultiplier float64  `json:"payment_balance_recharge_multiplier"`
+	PaymentSubscriptionPayMultiplier float64  `json:"payment_subscription_payment_multiplier"`
 	PaymentRechargeFeeRate           float64  `json:"payment_recharge_fee_rate"`
+	PaymentRefundFeeRate             float64  `json:"payment_refund_fee_rate"`
+	PaymentSubscriptionMinDaily      float64  `json:"payment_subscription_min_daily_amount"`
+	PaymentSubscriptionMaxDaily      float64  `json:"payment_subscription_max_daily_amount"`
+	PaymentSubscriptionMaxDays       int      `json:"payment_subscription_max_validity_days"`
+	PaymentSubscriptionMinPlanRatio  float64  `json:"payment_subscription_min_plan_ratio"`
+	PaymentSubscriptionMaxPlanRatio  float64  `json:"payment_subscription_max_plan_ratio"`
 	PaymentLoadBalanceStrat          string   `json:"payment_load_balance_strategy"`
 	PaymentProductNamePrefix         string   `json:"payment_product_name_prefix"`
 	PaymentProductNameSuffix         string   `json:"payment_product_name_suffix"`

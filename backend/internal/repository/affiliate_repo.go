@@ -1207,5 +1207,34 @@ func scanInt64(ctx context.Context, client affiliateQueryExecer, query string, a
 	if err := rows.Scan(&v); err != nil {
 		return 0, err
 	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
 	return v, nil
+}
+
+func scanFloat64(ctx context.Context, client affiliateQueryExecer, query string, args ...any) (float64, bool, error) {
+	rows, err := client.QueryContext(ctx, query, args...)
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, false, err
+		}
+		return 0, false, nil
+	}
+	var v float64
+	if err := rows.Scan(&v); err != nil {
+		return 0, false, err
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		return 0, false, err
+	}
+	return v, true, nil
 }

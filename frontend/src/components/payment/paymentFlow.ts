@@ -77,6 +77,12 @@ export interface BuildCreateOrderPayloadInput {
   paymentType: string
   orderType: OrderType
   planId?: number
+  groupId?: number
+  /** 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T；后端按 u(D) 公式自算价、不信前端 amount。 */
+  dailyAmountUsd?: number
+  validityDays?: number
+  /** 订阅生命周期意图：'renew' / 'change_plan'（购买留空）。后端据此续费/转套餐而非建新卡。 */
+  subscriptionIntent?: string
   origin?: string
   isMobile: boolean
   isWechatBrowser: boolean
@@ -132,6 +138,19 @@ export function buildCreateOrderPayload(input: BuildCreateOrderPayloadInput): Cr
 
   if (input.planId) {
     payload.plan_id = input.planId
+  }
+  if (input.groupId) {
+    payload.group_id = input.groupId
+  }
+  // 自定义订阅：传 D+T，后端按公式定价并冻结订单快照（与 plan_id 互斥）。
+  if (input.dailyAmountUsd != null && input.validityDays != null) {
+    payload.daily_amount_usd = input.dailyAmountUsd
+    payload.validity_days = input.validityDays
+  }
+  // 续费/转套餐意图：后端据此续费(只用 validity_days)/转套餐(用 daily_amount_usd+validity_days)，不建新卡。
+  const intent = (input.subscriptionIntent || '').trim()
+  if (intent && intent !== 'purchase') {
+    payload.subscription_intent = intent
   }
   if (normalizedOrigin) {
     payload.return_url = `${normalizedOrigin}/payment/result`

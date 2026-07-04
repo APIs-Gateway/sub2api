@@ -91,8 +91,70 @@
           </template>
           <!-- Subscribe Tab -->
           <template v-else-if="activeTab === 'subscription'">
+            <!-- 续费/转套餐结账（per-day redesign §5/§7）：从「我的订阅」带 D/T+意图跳来，走法币网关下单。 -->
+            <template v-if="lifecycleOrder">
+              <div class="card p-5">
+                <div class="mb-3 flex flex-wrap items-center gap-2">
+                  <h3 class="text-lg font-bold text-gray-900 dark:text-white">
+                    {{ lifecycleOrder.intent === 'renew' ? t('userSubscriptions.lifecycle.renewTitle') : t('userSubscriptions.lifecycle.changeTitle') }}
+                  </h3>
+                </div>
+                <div class="flex items-baseline gap-2">
+                  <span class="font-mono tabular-nums text-3xl font-bold text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(lifecyclePaymentAmount) }}</span>
+                  <span class="text-sm text-gray-600 dark:text-gray-400">
+                    {{ lifecycleOrder.intent === 'renew' ? t('userSubscriptions.lifecycle.renewPrice') : t('userSubscriptions.lifecycle.changeDiff') }}
+                  </span>
+                </div>
+                <div class="mt-3 grid grid-cols-2 gap-3">
+                  <div>
+                    <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.dailyAmount') }}</span>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">${{ lifecycleOrder.dailyAmountUsd }}</div>
+                  </div>
+                  <div>
+                    <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.validity') }}</span>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">{{ lifecycleOrder.validityDays }} {{ t('userSubscriptions.lifecycle.days') }}</div>
+                  </div>
+                  <div>
+                    <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.concurrency') }}</span>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">{{ lifecycleConcurrency }}</div>
+                  </div>
+                </div>
+                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.gatewayNote') }}</p>
+              </div>
+              <div v-if="enabledMethods.length >= 1" class="card p-6">
+                <PaymentMethodSelector
+                  :methods="subMethodOptions"
+                  :selected="selectedMethod"
+                  @select="selectedMethod = $event"
+                />
+              </div>
+              <div v-if="feeRate > 0 && lifecyclePaymentAmount > 0" class="card p-6">
+                <div class="space-y-2 text-sm">
+                  <div class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">{{ t('payment.amountLabel') }}</span>
+                    <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(lifecyclePaymentAmount) }}</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">{{ t('payment.fee') }} ({{ feeRate }}%)</span>
+                    <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(lifecycleFeeAmount) }}</span>
+                  </div>
+                  <div class="flex justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
+                    <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
+                    <span class="font-mono tabular-nums text-lg font-bold text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(lifecycleTotalAmount) }}</span>
+                  </div>
+                </div>
+              </div>
+              <button :class="['btn w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="!canSubmitLifecycle || submitting" @click="confirmLifecycle">
+                <span v-if="submitting" class="flex items-center justify-center gap-2">
+                  <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+                  {{ t('common.processing') }}
+                </span>
+                <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(feeRate > 0 ? lifecycleTotalAmount : lifecyclePaymentAmount) }}</span>
+              </button>
+              <button class="btn btn-secondary w-full" @click="lifecycleOrder = null">{{ t('common.cancel') }}</button>
+            </template>
             <!-- Subscription confirm (inline, replaces plan list) -->
-            <template v-if="selectedPlan">
+            <template v-else-if="selectedPlan">
               <div class="card p-5">
                 <!-- Header: platform badge + plan name -->
                 <div class="mb-3 flex flex-wrap items-center gap-2">
@@ -104,9 +166,9 @@
                 <!-- Price -->
                 <div class="flex items-baseline gap-2">
                   <span v-if="selectedPlan.original_price" class="font-mono tabular-nums text-sm text-gray-500 line-through dark:text-gray-500">
-                    {{ formatSelectedPaymentAmount(selectedPlan.original_price) }}
+                    {{ formatSelectedPaymentAmount(selectedPlanOriginalPaymentAmount) }}
                   </span>
-                  <span class="font-mono tabular-nums text-3xl font-bold text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(selectedPlan.price) }}</span>
+                  <span class="font-mono tabular-nums text-3xl font-bold text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(selectedPlanPaymentAmount) }}</span>
                   <span class="text-sm text-gray-600 dark:text-gray-400">/ {{ planValiditySuffix }}</span>
                 </div>
                 <!-- Description -->
@@ -137,6 +199,10 @@
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.quota') }}</span>
                     <div class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('payment.planCard.unlimited') }}</div>
                   </div>
+                  <div v-if="selectedPlanConcurrency > 0">
+                    <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.concurrency') }}</span>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">{{ selectedPlanConcurrency }}</div>
+                  </div>
                 </div>
               </div>
               <div v-if="enabledMethods.length >= 1" class="card p-6">
@@ -146,11 +212,11 @@
                   @select="selectedMethod = $event"
                 />
               </div>
-              <div v-if="feeRate > 0 && selectedPlan.price > 0" class="card p-6">
+              <div v-if="feeRate > 0 && selectedPlanPaymentAmount > 0" class="card p-6">
                 <div class="space-y-2 text-sm">
                   <div class="flex justify-between">
                     <span class="text-gray-600 dark:text-gray-400">{{ t('payment.amountLabel') }}</span>
-                    <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(selectedPlan.price) }}</span>
+                    <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(selectedPlanPaymentAmount) }}</span>
                   </div>
                   <div class="flex justify-between">
                     <span class="text-gray-600 dark:text-gray-400">{{ t('payment.fee') }} ({{ feeRate }}%)</span>
@@ -167,43 +233,42 @@
                   <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
                   {{ t('common.processing') }}
                 </span>
-                <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(feeRate > 0 ? subTotalAmount : selectedPlan.price) }}</span>
+                <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(feeRate > 0 ? subTotalAmount : selectedPlanPaymentAmount) }}</span>
               </button>
               <button class="btn btn-secondary w-full" @click="selectedPlan = null">{{ t('common.cancel') }}</button>
             </template>
             <!-- Plan list -->
             <template v-else>
-              <BillingRulesCard class="mb-4" />
-              <div v-if="checkout.plans.length === 0" class="card py-16 text-center">
-                <Icon name="gift" size="xl" class="mx-auto mb-3 text-gray-300 dark:text-dark-600" />
-                <p class="text-gray-500 dark:text-gray-400">{{ t('payment.noPlans') }}</p>
-              </div>
-              <div v-else :class="planGridClass">
-                <SubscriptionPlanCard v-for="plan in checkout.plans" :key="plan.id" :plan="plan" :active-subscriptions="activeSubscriptions" @select="selectPlan" />
-              </div>
-              <!-- Active subscriptions (compact, below plan list) -->
-              <div v-if="activeSubscriptions.length > 0">
-                <p class="mb-2 text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('payment.activeSubscription') }}</p>
-                <div class="space-y-2">
-                  <div v-for="sub in activeSubscriptions" :key="sub.id"
-                    class="flex items-center gap-3 rounded-md border border-gray-200 bg-white px-3 py-2 dark:border-dark-700 dark:bg-dark-800">
-                    <div class="h-6 w-1 shrink-0 rounded-full bg-gray-300 dark:bg-dark-600" />
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-1.5">
-                        <span class="truncate text-xs font-semibold text-gray-900 dark:text-white">{{ sub.group?.name || t('payment.groupFallback', { id: sub.group_id }) }}</span>
-                        <span class="shrink-0 rounded-full border border-gray-200 px-1.5 py-0.5 text-[9px] font-medium text-gray-700 dark:border-dark-600 dark:text-gray-300">{{ platformLabel(sub.group?.platform || '') }}</span>
-                      </div>
-                      <div class="flex flex-wrap gap-x-3 text-[11px] text-gray-600 dark:text-gray-400">
-                        <span>{{ t('payment.planCard.rate') }}: <span class="font-mono tabular-nums">×{{ sub.group?.rate_multiplier ?? 1 }}</span></span>
-                        <span v-if="sub.group?.daily_limit_usd == null && sub.group?.weekly_limit_usd == null && sub.group?.monthly_limit_usd == null">{{ t('payment.planCard.quota') }}: {{ t('payment.planCard.unlimited') }}</span>
-                        <span v-if="sub.expires_at">{{ t('userSubscriptions.daysRemaining', { days: getDaysRemaining(sub.expires_at) }) }}</span>
-                        <span v-else>{{ t('userSubscriptions.noExpiration') }}</span>
-                      </div>
-                    </div>
-                    <span class="shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-700 dark:border-dark-600 dark:text-gray-300">{{ t('userSubscriptions.status.active') }}</span>
+              <div v-if="hasActiveSubscription" class="card p-6">
+                <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('payment.existingSubscriptionTitle') }}</h3>
+                    <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">{{ t('payment.existingSubscriptionDesc') }}</p>
                   </div>
+                  <button type="button" class="btn btn-primary shrink-0" @click="goToSubscriptions">
+                    {{ t('payment.changeExistingPlan') }}
+                  </button>
                 </div>
               </div>
+              <template v-else>
+                <!-- 自定义购买（无固定套餐）：自填 D+T，实时报价。买按钮经 onCustomPurchase 下单。 -->
+                <div v-if="enabledMethods.length >= 1" class="card p-6">
+                  <PaymentMethodSelector
+                    :methods="subscriptionMethodOptions"
+                    :selected="selectedMethod"
+                    @select="selectedMethod = $event"
+                  />
+                </div>
+                <div class="card p-6">
+                  <SubscriptionPurchasePanel
+                    :payment-currency="selectedCurrency"
+                    :subscription-payment-multiplier="subscriptionPaymentMultiplier"
+                    :locale="localeCode"
+                    @purchase="onCustomPurchase"
+                  />
+                </div>
+                <BillingRulesCard class="mb-4" />
+              </template>
             </template>
           </template>
         </template>
@@ -260,6 +325,7 @@ import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderTy
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
+import SubscriptionPurchasePanel from '@/components/subscription/SubscriptionPurchasePanel.vue'
 import { METHOD_ORDER, getPaymentPopupFeatures } from '@/components/payment/providerConfig'
 import {
   PAYMENT_RECOVERY_STORAGE_KEY,
@@ -276,8 +342,7 @@ import { platformBadgeClass, platformLabel } from '@/utils/platformColors'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import BillingRulesCard from '@/components/common/BillingRulesCard.vue'
 import PaymentStatusPanel from '@/components/payment/PaymentStatusPanel.vue'
-import Icon from '@/components/icons/Icon.vue'
-import { formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
+import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import type { PaymentMethodOption } from '@/components/payment/PaymentMethodSelector.vue'
 import { buildPaymentErrorToastMessage, describePaymentScenarioError } from './paymentUx'
 import { hasWechatResumeQuery, parseWechatResumeRoute, stripWechatResumeQuery } from './paymentWechatResume'
@@ -293,17 +358,13 @@ const appStore = useAppStore()
 
 const user = computed(() => authStore.user)
 const activeSubscriptions = computed(() => subscriptionStore.activeSubscriptions)
-
-function getDaysRemaining(expiresAt: string): number {
-  const diff = new Date(expiresAt).getTime() - Date.now()
-  return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
-}
+const hasActiveSubscription = computed(() => activeSubscriptions.value.length > 0)
 
 const loading = ref(true)
 const submitting = ref(false)
 const errorMessage = ref('')
 const errorHintMessage = ref('')
-const activeTab = ref<'recharge' | 'subscription'>('recharge')
+const activeTab = ref<'recharge' | 'subscription'>('subscription')
 const amount = ref<number | null>(null)
 const selectedMethod = ref('')
 const selectedPlan = ref<SubscriptionPlan | null>(null)
@@ -317,6 +378,12 @@ interface CreateOrderOptions {
   paymentType?: string
   isResume?: boolean
   mobileQrFallbackAttempted?: boolean
+  // 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T，与 planId 互斥。
+  groupId?: number
+  dailyAmountUsd?: number
+  validityDays?: number
+  // 订阅生命周期意图：'renew' / 'change_plan'（购买留空）。
+  subscriptionIntent?: string
 }
 
 interface WeixinJSBridgeLike {
@@ -421,7 +488,15 @@ async function redirectToPaymentResult(state: PaymentRecoverySnapshot): Promise<
 
 function buildWechatOAuthAuthorizeUrl(
   authorizeUrl: string,
-  context: { paymentType: string; orderType: OrderType; planId?: number; orderAmount: number },
+  context: {
+    paymentType: string
+    orderType: OrderType
+    planId?: number
+    groupId?: number
+    orderAmount: number
+    dailyAmountUsd?: number
+    validityDays?: number
+  },
 ): string {
   const normalizedUrl = authorizeUrl.trim()
   if (!normalizedUrl || typeof window === 'undefined') {
@@ -441,6 +516,18 @@ function buildWechatOAuthAuthorizeUrl(
       redirectUrl.searchParams.set('plan_id', String(context.planId))
     } else {
       redirectUrl.searchParams.delete('plan_id')
+    }
+    if (context.groupId) {
+      redirectUrl.searchParams.set('group_id', String(context.groupId))
+    } else {
+      redirectUrl.searchParams.delete('group_id')
+    }
+    if (context.dailyAmountUsd != null && context.validityDays != null) {
+      redirectUrl.searchParams.set('daily_amount_usd', String(context.dailyAmountUsd))
+      redirectUrl.searchParams.set('validity_days', String(context.validityDays))
+    } else {
+      redirectUrl.searchParams.delete('daily_amount_usd')
+      redirectUrl.searchParams.delete('validity_days')
     }
 
     if (context.orderAmount > 0) {
@@ -480,31 +567,29 @@ function onPaymentSettled() {
 // All checkout data from single API call
 const checkout = ref<CheckoutInfoResponse>({
   methods: {}, global_min: 0, global_max: 0,
-  plans: [], balance_disabled: false, balance_recharge_multiplier: 1, recharge_fee_rate: 0, help_text: '', help_image_url: '', stripe_publishable_key: '',
+  plans: [], subscription_groups: [], balance_disabled: false, balance_recharge_multiplier: 1, subscription_payment_multiplier: 1, recharge_fee_rate: 0, refund_fee_rate: 0, help_text: '', help_image_url: '', stripe_publishable_key: '',
 })
 
 const tabs = computed(() => {
   const result: { key: 'recharge' | 'subscription'; label: string }[] = []
-  if (!checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
   result.push({ key: 'subscription', label: t('payment.tabSubscribe') })
+  if (!checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
   return result
 })
 
 const visibleMethods = computed(() => getVisibleMethods(checkout.value.methods))
 const enabledMethods = computed(() => Object.keys(visibleMethods.value))
 const validAmount = computed(() => amount.value ?? 0)
+
 const balanceRechargeMultiplier = computed(() => {
   const multiplier = checkout.value.balance_recharge_multiplier
   return multiplier > 0 ? multiplier : 1
 })
-const creditedAmount = computed(() => Math.round((validAmount.value * balanceRechargeMultiplier.value) * 100) / 100)
-
-// Adaptive grid: center single card, 2-col for 2 plans, 3-col for 3+
-const planGridClass = computed(() => {
-  const n = checkout.value.plans.length
-  if (n <= 2) return 'grid grid-cols-1 gap-5 sm:grid-cols-2'
-  return 'grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3'
+const subscriptionPaymentMultiplier = computed(() => {
+  const multiplier = checkout.value.subscription_payment_multiplier
+  return multiplier > 0 ? multiplier : 1
 })
+const creditedAmount = computed(() => Math.round((validAmount.value * balanceRechargeMultiplier.value) * 100) / 100)
 
 // Check if an amount fits a method's [min, max]. 0 = no limit.
 function amountFitsMethod(amt: number, methodType: string): boolean {
@@ -544,6 +629,11 @@ const localeCode = computed(() => {
 
 function formatSelectedPaymentAmount(value: number): string {
   return formatPaymentAmount(value, selectedCurrency.value, localeCode.value)
+}
+
+function subscriptionValueToPaymentAmount(value: number): number {
+  if (value <= 0) return 0
+  return ceilPaymentAmount(value / subscriptionPaymentMultiplier.value, selectedCurrency.value)
 }
 
 const methodOptions = computed<PaymentMethodOption[]>(() =>
@@ -592,7 +682,7 @@ const canSubmit = computed(() =>
 
 // Subscription-specific: method options based on plan price
 const subMethodOptions = computed<PaymentMethodOption[]>(() => {
-  const planPrice = selectedPlan.value?.price ?? 0
+  const planPrice = selectedPlanPaymentAmount.value
   return enabledMethods.value.map((type) => {
     const ml = visibleMethods.value[type]
     return {
@@ -603,23 +693,92 @@ const subMethodOptions = computed<PaymentMethodOption[]>(() => {
   })
 })
 
+const subscriptionMethodOptions = computed<PaymentMethodOption[]>(() =>
+  enabledMethods.value.map((type) => {
+    const ml = visibleMethods.value[type]
+    return {
+      type,
+      fee_rate: ml?.fee_rate ?? 0,
+      available: ml?.available !== false,
+    }
+  })
+)
+
 const subFeeAmount = computed(() => {
-  const price = selectedPlan.value?.price ?? 0
+  const price = selectedPlanPaymentAmount.value
   if (feeRate.value <= 0 || price <= 0) return 0
   return Math.ceil(((price * feeRate.value) / 100) * 100) / 100
 })
 
+const selectedPlanPaymentAmount = computed(() =>
+  subscriptionValueToPaymentAmount(selectedPlan.value?.price ?? 0)
+)
+const selectedPlanOriginalPaymentAmount = computed(() =>
+  subscriptionValueToPaymentAmount(selectedPlan.value?.original_price ?? 0)
+)
+function concurrencyForDailyAmount(dailyAmount: number): number {
+  return dailyAmount > 0 ? Math.max(1, Math.ceil(dailyAmount / 10)) : 0
+}
+const selectedPlanConcurrency = computed(() =>
+  concurrencyForDailyAmount(selectedPlan.value?.daily_amount_usd ?? selectedPlan.value?.daily_limit_usd ?? 0)
+)
+
 const subTotalAmount = computed(() => {
-  const price = selectedPlan.value?.price ?? 0
+  const price = selectedPlanPaymentAmount.value
   if (feeRate.value <= 0 || price <= 0) return price
   return Math.round((price + subFeeAmount.value) * 100) / 100
 })
 
 const canSubmitSubscription = computed(() =>
   selectedPlan.value !== null
-    && amountFitsMethod(selectedPlan.value.price, selectedMethod.value)
+    && amountFitsMethod(selectedPlanPaymentAmount.value, selectedMethod.value)
     && selectedLimit.value?.available !== false
 )
+
+// 续费/转套餐结账（per-day redesign §5/§7）：从「我的订阅」弹窗带 D/T+意图+预估金额跳来，
+// 走与购买同一条法币网关下单链路（金额由后端按订单快照权威重算，前端 amount 仅展示）。
+const lifecycleOrder = ref<null | {
+  intent: 'renew' | 'change_plan'
+  dailyAmountUsd: number
+  validityDays: number
+  amount: number // 预估实收（续费=价，转套餐=差价）；后端权威重算。
+}>(null)
+
+const lifecycleFeeAmount = computed(() => {
+  const amt = lifecyclePaymentAmount.value
+  if (feeRate.value <= 0 || amt <= 0) return 0
+  return Math.ceil(((amt * feeRate.value) / 100) * 100) / 100
+})
+
+const lifecyclePaymentAmount = computed(() =>
+  subscriptionValueToPaymentAmount(lifecycleOrder.value?.amount ?? 0)
+)
+const lifecycleConcurrency = computed(() =>
+  concurrencyForDailyAmount(lifecycleOrder.value?.dailyAmountUsd ?? 0)
+)
+
+const lifecycleTotalAmount = computed(() => {
+  const amt = lifecyclePaymentAmount.value
+  if (feeRate.value <= 0 || amt <= 0) return amt
+  return Math.round((amt + lifecycleFeeAmount.value) * 100) / 100
+})
+
+const canSubmitLifecycle = computed(() =>
+  lifecycleOrder.value !== null
+    && amountFitsMethod(lifecyclePaymentAmount.value, selectedMethod.value)
+    && selectedLimit.value?.available !== false
+)
+
+async function confirmLifecycle() {
+  const lo = lifecycleOrder.value
+  if (!lo || submitting.value) return
+  // order_type=subscription + subscription_intent；后端按用户唯一生效卡派生目标、权威算价并冻结快照。
+  await createOrder(lo.amount, 'subscription', undefined, {
+    dailyAmountUsd: lo.dailyAmountUsd,
+    validityDays: lo.validityDays,
+    subscriptionIntent: lo.intent,
+  })
+}
 
 // Auto-switch to first available method when current selection can't handle the amount
 watch(() => [validAmount.value, selectedMethod.value] as const, ([amt, method]) => {
@@ -658,11 +817,6 @@ const planValiditySuffix = computed(() => {
   return `${selectedPlan.value.validity_days}${t('payment.days')}`
 })
 
-function selectPlan(plan: SubscriptionPlan) {
-  selectedPlan.value = plan
-  errorMessage.value = ''
-}
-
 function selectPlanFromModal(plan: SubscriptionPlan) {
   showRenewalModal.value = false
   renewGroupId.value = null
@@ -682,7 +836,32 @@ async function handleSubmitRecharge() {
 
 async function confirmSubscribe() {
   if (!selectedPlan.value || submitting.value) return
+  if (hasActiveSubscription.value) {
+    appStore.showError(t('payment.existingSubscriptionDesc'))
+    return
+  }
   await createOrder(selectedPlan.value.price, 'subscription', selectedPlan.value.id)
+}
+
+// 自定义订阅购买（无固定套餐）：面板 @purchase 带 D/T + 后端报价，按报价价下单（金额由后端公式再算、不信前端）。
+async function onCustomPurchase(payload: {
+  dailyAmountUsd: number
+  validityDays: number
+  quote: { price: number }
+}) {
+  if (submitting.value) return
+  if (hasActiveSubscription.value) {
+    appStore.showError(t('payment.existingSubscriptionDesc'))
+    return
+  }
+  await createOrder(payload.quote.price, 'subscription', undefined, {
+    dailyAmountUsd: payload.dailyAmountUsd,
+    validityDays: payload.validityDays,
+  })
+}
+
+function goToSubscriptions() {
+  router.push('/subscriptions')
 }
 
 async function createOrder(orderAmount: number, orderType: OrderType, planId?: number, options: CreateOrderOptions = {}) {
@@ -696,6 +875,10 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
       paymentType: requestType,
       orderType,
       planId,
+      groupId: options.groupId,
+      dailyAmountUsd: options.dailyAmountUsd,
+      validityDays: options.validityDays,
+      subscriptionIntent: options.subscriptionIntent,
       origin: typeof window !== 'undefined' ? window.location.origin : '',
       isMobile: isMobileDevice(),
       isWechatBrowser: typeof window !== 'undefined' && /MicroMessenger/i.test(window.navigator.userAgent),
@@ -758,7 +941,10 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
         paymentType: visibleMethod,
         orderType,
         planId,
+        groupId: options.groupId,
         orderAmount,
+        dailyAmountUsd: options.dailyAmountUsd,
+        validityDays: options.validityDays,
       })
       return
     }
@@ -799,6 +985,10 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
               orderAmount,
               orderType,
               planId,
+              groupId: options.groupId,
+              dailyAmountUsd: options.dailyAmountUsd,
+              validityDays: options.validityDays,
+              subscriptionIntent: options.subscriptionIntent,
               paymentType: visibleMethod,
               attempted: options.mobileQrFallbackAttempted === true,
             },
@@ -817,6 +1007,10 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
           orderAmount,
           orderType,
           planId,
+          groupId: options.groupId,
+          dailyAmountUsd: options.dailyAmountUsd,
+          validityDays: options.validityDays,
+          subscriptionIntent: options.subscriptionIntent,
           paymentType: visibleMethod,
           attempted: options.mobileQrFallbackAttempted === true,
         })
@@ -846,6 +1040,10 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
       orderAmount,
       orderType,
       planId,
+      groupId: options.groupId,
+      dailyAmountUsd: options.dailyAmountUsd,
+      validityDays: options.validityDays,
+      subscriptionIntent: options.subscriptionIntent,
       paymentType: requestType,
       attempted: options.mobileQrFallbackAttempted === true,
     })) {
@@ -873,6 +1071,10 @@ interface MobileQrFallbackContext {
   orderAmount: number
   orderType: OrderType
   planId?: number
+  groupId?: number
+  dailyAmountUsd?: number
+  validityDays?: number
+  subscriptionIntent?: string
   paymentType: string
   attempted: boolean
 }
@@ -922,6 +1124,10 @@ async function attemptMobileQrFallback(err: unknown, context: MobileQrFallbackCo
       paymentType: visibleMethod,
       orderType: context.orderType,
       planId: context.planId,
+      groupId: context.groupId,
+      dailyAmountUsd: context.dailyAmountUsd,
+      validityDays: context.validityDays,
+      subscriptionIntent: context.subscriptionIntent,
       origin: typeof window !== 'undefined' ? window.location.origin : '',
       isMobile: false,
       isWechatBrowser: false,
@@ -1002,6 +1208,9 @@ async function resumeWechatPaymentFromQuery() {
       wechatResumeToken: resume.wechatResumeToken,
       paymentType: resume.paymentType,
       isResume: true,
+      groupId: resume.groupId,
+      dailyAmountUsd: resume.dailyAmountUsd,
+      validityDays: resume.validityDays,
     })
     return
   }
@@ -1011,6 +1220,9 @@ async function resumeWechatPaymentFromQuery() {
       openid: resume.openid,
       paymentType: resume.paymentType,
       isResume: true,
+      groupId: resume.groupId,
+      dailyAmountUsd: resume.dailyAmountUsd,
+      validityDays: resume.validityDays,
     })
   }
 }
@@ -1055,6 +1267,20 @@ onMounted(async () => {
     await resumeWechatPaymentFromQuery()
     if (checkout.value.balance_disabled) {
       activeTab.value = 'subscription'
+    }
+    // 续费/转套餐结账导航（per-day redesign §5/§7）：
+    // ?tab=subscription&intent=renew|change_plan&daily_amount_usd=&validity_days=&charge=
+    const lifecycleIntent = typeof route.query.intent === 'string' ? route.query.intent : ''
+    if (lifecycleIntent === 'renew' || lifecycleIntent === 'change_plan') {
+      activeTab.value = 'subscription'
+      const d = Number(route.query.daily_amount_usd)
+      const tt = Number(route.query.validity_days)
+      const charge = Number(route.query.charge)
+      if (d > 0 && tt > 0 && Number.isFinite(charge) && charge > 0) {
+        lifecycleOrder.value = { intent: lifecycleIntent, dailyAmountUsd: d, validityDays: tt, amount: charge }
+        // 清掉 query，避免刷新/返回重复进入结账。
+        await router.replace({ path: route.path, query: { tab: 'subscription' } })
+      }
     }
     // Handle renewal navigation: ?tab=subscription&group=123
     if (route.query.tab === 'subscription') {

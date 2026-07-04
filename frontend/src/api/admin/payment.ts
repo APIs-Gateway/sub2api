@@ -13,6 +13,14 @@ import type {
 } from '@/types/payment'
 import type { BasePaginationResponse } from '@/types'
 
+/** Admin refund result. */
+export interface AdminRefundResult {
+  success?: boolean
+  message?: string
+  warning?: string
+  require_force?: boolean
+}
+
 /** Admin-facing payment config returned by GET /admin/payment/config */
 export interface AdminPaymentConfig {
   enabled: boolean
@@ -24,6 +32,9 @@ export interface AdminPaymentConfig {
   enabled_payment_types: string[]
   balance_disabled: boolean
   balance_recharge_multiplier: number
+  subscription_payment_multiplier: number
+  subscription_min_plan_ratio: number
+  subscription_max_plan_ratio: number
   load_balance_strategy: string
   product_name_prefix: string
   product_name_suffix: string
@@ -42,6 +53,9 @@ export interface UpdatePaymentConfigRequest {
   enabled_payment_types?: string[]
   balance_disabled?: boolean
   balance_recharge_multiplier?: number
+  subscription_payment_multiplier?: number
+  subscription_min_plan_ratio?: number
+  subscription_max_plan_ratio?: number
   load_balance_strategy?: string
   product_name_prefix?: string
   product_name_suffix?: string
@@ -103,9 +117,9 @@ export const adminPaymentAPI = {
     return apiClient.post(`/admin/payment/orders/${id}/retry`)
   },
 
-  /** Process a refund */
+  /** Process a refund. */
   refundOrder(id: number, data: { amount: number; reason: string; deduct_balance?: boolean; force?: boolean }) {
-    return apiClient.post(`/admin/payment/orders/${id}/refund`, data)
+    return apiClient.post<AdminRefundResult>(`/admin/payment/orders/${id}/refund`, data)
   },
 
   // ==================== Channels ====================

@@ -79,6 +79,20 @@ func (userSubRepoNoop) GetByUserIDAndGroupID(context.Context, int64, int64) (*Us
 func (userSubRepoNoop) GetActiveByUserIDAndGroupID(context.Context, int64, int64) (*UserSubscription, error) {
 	panic("unexpected GetActiveByUserIDAndGroupID call")
 }
+func (userSubRepoNoop) GetActiveByUserID(context.Context, int64) (*UserSubscription, error) {
+	panic("unexpected GetActiveByUserID call")
+}
+func (userSubRepoNoop) GetLatestActiveStatusByUserID(context.Context, int64) (*UserSubscription, error) {
+	panic("unexpected GetLatestActiveStatusByUserID call")
+}
+
+func (userSubRepoNoop) GetLatestActiveStatusForUpdate(context.Context, int64) (*UserSubscription, error) {
+	panic("unexpected GetLatestActiveStatusForUpdate call")
+}
+
+func (userSubRepoNoop) ApplyManualOverdraft(context.Context, *UserSubscription) error {
+	panic("unexpected ApplyManualOverdraft call")
+}
 func (userSubRepoNoop) Update(context.Context, *UserSubscription) error {
 	panic("unexpected Update call")
 }
@@ -124,12 +138,6 @@ func (userSubRepoNoop) IncrementUsage(context.Context, int64, float64) error {
 }
 func (userSubRepoNoop) BatchUpdateExpiredStatus(context.Context) (int64, error) {
 	panic("unexpected BatchUpdateExpiredStatus call")
-}
-func (userSubRepoNoop) ListActiveBurndownIDs(context.Context, int64, int) ([]int64, error) {
-	return nil, nil
-}
-func (userSubRepoNoop) ClawbackSubscription(context.Context, int64, time.Time) (float64, error) {
-	return 0, nil
 }
 func (userSubRepoNoop) ForfeitExpiredSubscriptions(context.Context, time.Time, int) ([]int64, error) {
 	return nil, nil
@@ -239,7 +247,7 @@ func (s *subscriptionUserSubRepoStub) Update(_ context.Context, sub *UserSubscri
 func TestAssignSubscriptionAlwaysCreatesNewCard(t *testing.T) {
 	start := time.Date(2026, 2, 20, 10, 0, 0, 0, time.UTC)
 	groupRepo := &subscriptionGroupRepoStub{
-		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription},
+		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription, DailyLimitUSD: ptrFloat64(10)},
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
 	subRepo.seed(&UserSubscription{
@@ -268,7 +276,7 @@ func TestAssignSubscriptionAlwaysCreatesNewCard(t *testing.T) {
 func TestAssignSubscriptionStacksRegardlessOfExisting(t *testing.T) {
 	start := time.Date(2026, 2, 20, 10, 0, 0, 0, time.UTC)
 	groupRepo := &subscriptionGroupRepoStub{
-		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription},
+		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription, DailyLimitUSD: ptrFloat64(10)},
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
 	subRepo.seed(&UserSubscription{
@@ -296,7 +304,7 @@ func TestAssignSubscriptionStacksRegardlessOfExisting(t *testing.T) {
 func TestBulkAssignSubscriptionAllCreated(t *testing.T) {
 	start := time.Date(2026, 2, 20, 10, 0, 0, 0, time.UTC)
 	groupRepo := &subscriptionGroupRepoStub{
-		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription},
+		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription, DailyLimitUSD: ptrFloat64(10)},
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
 	subRepo.seed(&UserSubscription{
@@ -337,7 +345,7 @@ func TestBulkAssignSubscriptionAllCreated(t *testing.T) {
 
 func TestAssignSubscriptionKeepsWorkingWhenIdempotencyStoreUnavailable(t *testing.T) {
 	groupRepo := &subscriptionGroupRepoStub{
-		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription},
+		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription, DailyLimitUSD: ptrFloat64(10)},
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
 	SetDefaultIdempotencyCoordinator(NewIdempotencyCoordinator(failingIdempotencyRepo{}, DefaultIdempotencyConfig()))
@@ -402,9 +410,42 @@ func TestDetectAssignSemanticConflictCases(t *testing.T) {
 	require.Equal(t, "notes_mismatch", reason)
 }
 
-func TestAssignSubscriptionGroupTypeValidation(t *testing.T) {
+// per-day：订阅与 group 解耦，AssignSubscription 不再校验「订阅型分组」，任意存在的 group 都可分配；
+// 每日额度 D 由 input.DailyAmountUSD 提供（取代旧的从 group 类型/限额推导）。
+func TestAssignSubscription_GroupTypeNotValidated(t *testing.T) {
 	groupRepo := &subscriptionGroupRepoStub{
 		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeStandard},
+	}
+	subRepo := newSubscriptionUserSubRepoStub()
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil, nil)
+
+	sub, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
+		UserID:         1,
+		GroupID:        1,
+		ValidityDays:   30,
+		DailyAmountUSD: 10,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, sub)
+	// D 取自 input.DailyAmountUSD，并传播到卡的 today_remaining / granted_total。
+	require.InDelta(t, 10, sub.DailyAmountUSD, 1e-9, "D 取自 input.DailyAmountUSD")
+	require.InDelta(t, 10, sub.TodayRemaining, 1e-9, "today_remaining = D")
+	require.InDelta(t, 300, sub.GrantedTotalUSD, 1e-9, "granted_total = D×T = 10×30")
+	require.NotNil(t, sub.DailyLimitUSD)
+	require.NotNil(t, sub.WeeklyLimitUSD)
+	require.NotNil(t, sub.MonthlyLimitUSD)
+	require.InDelta(t, 10, *sub.DailyLimitUSD, 1e-9)
+	require.InDelta(t, 70, *sub.WeeklyLimitUSD, 1e-9)
+	require.InDelta(t, 300, *sub.MonthlyLimitUSD, 1e-9)
+	require.NotNil(t, sub.DailyWindowStart)
+	require.NotNil(t, sub.WeeklyWindowStart)
+	require.NotNil(t, sub.MonthlyWindowStart)
+}
+
+// 无 input.DailyAmountUSD 且 group 无有效 daily_limit_usd → 报错，绝不建 D=0 的 active 卡。
+func TestAssignSubscription_NoDailyAmountNoGroupFallback_Errors(t *testing.T) {
+	groupRepo := &subscriptionGroupRepoStub{
+		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeStandard}, // 无 DailyLimitUSD
 	}
 	subRepo := newSubscriptionUserSubRepoStub()
 	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil, nil)
@@ -413,9 +454,67 @@ func TestAssignSubscriptionGroupTypeValidation(t *testing.T) {
 		UserID:       1,
 		GroupID:      1,
 		ValidityDays: 30,
+		// 无 DailyAmountUSD
 	})
 	require.Error(t, err)
-	require.Equal(t, infraerrors.Code(ErrGroupNotSubscriptionType), infraerrors.Code(err))
+	require.Equal(t, infraerrors.Code(ErrInvalidDailyAmount), infraerrors.Code(err))
+	require.Equal(t, 0, subRepo.createCalls, "不应建任何卡")
+}
+
+// Bulk 把 DailyAmountUSD 传播到每张卡：group 无 daily_limit 时仅靠 input.D 也能成功并落到卡字段。
+func TestBulkAssignSubscription_PropagatesDailyAmount(t *testing.T) {
+	groupRepo := &subscriptionGroupRepoStub{
+		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription}, // 无 DailyLimitUSD → D 只能来自 input
+	}
+	subRepo := newSubscriptionUserSubRepoStub()
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil, nil)
+
+	result, err := svc.BulkAssignSubscription(context.Background(), &BulkAssignSubscriptionInput{
+		UserIDs:        []int64{101, 102},
+		GroupID:        1,
+		ValidityDays:   30,
+		DailyAmountUSD: 15,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, result.SuccessCount, "D 走 input → 不再因无 group daily_limit 报错")
+	require.Equal(t, 2, subRepo.createCalls)
+	// 任取一张创建的卡，断言 D 传播到字段。
+	var any *UserSubscription
+	for _, sub := range subRepo.byID {
+		any = sub
+		break
+	}
+	require.NotNil(t, any)
+	require.InDelta(t, 15, any.DailyAmountUSD, 1e-9)
+	require.InDelta(t, 15, any.TodayRemaining, 1e-9)
+	require.InDelta(t, 450, any.GrantedTotalUSD, 1e-9, "granted_total = 15×30")
+	require.NotNil(t, any.DailyLimitUSD)
+	require.NotNil(t, any.WeeklyLimitUSD)
+	require.NotNil(t, any.MonthlyLimitUSD)
+	require.InDelta(t, 15, *any.DailyLimitUSD, 1e-9)
+	require.InDelta(t, 105, *any.WeeklyLimitUSD, 1e-9)
+	require.InDelta(t, 450, *any.MonthlyLimitUSD, 1e-9)
+}
+
+// Bulk 请求级参数错误（无 D 且 group 无 daily_limit 回退）应循环前直接返回错误（handler 转 400），
+// 不吞成每用户 failed 再被 success 包装。
+func TestBulkAssignSubscription_RequestLevelDailyAmountError(t *testing.T) {
+	groupRepo := &subscriptionGroupRepoStub{
+		group: &Group{ID: 1, SubscriptionType: SubscriptionTypeSubscription}, // 无 DailyLimitUSD
+	}
+	subRepo := newSubscriptionUserSubRepoStub()
+	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil, nil)
+
+	result, err := svc.BulkAssignSubscription(context.Background(), &BulkAssignSubscriptionInput{
+		UserIDs:      []int64{101, 102},
+		GroupID:      1,
+		ValidityDays: 30,
+		// 无 DailyAmountUSD
+	})
+	require.Error(t, err)
+	require.Equal(t, infraerrors.Code(ErrInvalidDailyAmount), infraerrors.Code(err))
+	require.Nil(t, result, "请求级错误应返回 nil result，而非 partial-success")
+	require.Equal(t, 0, subRepo.createCalls, "循环前预校验失败 → 不建任何卡")
 }
 
 func strconvFormatInt(v int64) string {

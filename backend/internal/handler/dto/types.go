@@ -589,20 +589,24 @@ type UserSubscription struct {
 	WeeklyUsageUSD  float64 `json:"weekly_usage_usd"`
 	MonthlyUsageUSD float64 `json:"monthly_usage_usd"`
 
+	// 三窗口限额（限额挂卡、不挂 group）；nil = 该窗口不限。前端「日/周/月 用量 vs 限额」用卡级限额展示。
+	DailyLimitUSD   *float64 `json:"daily_limit_usd"`
+	WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`
+	MonthlyLimitUSD *float64 `json:"monthly_limit_usd"`
+
+	// 用户级本月剩余手动透支次数（每自然月最多 5 次）；前端据此在已满时提前置灰透支按钮。
+	// nil（omitempty 省略）= 后端未提供，前端不前置拦截、交服务端兜底。由 List/active handler 按用户填充。
+	MonthlyOverdraftRemaining *int `json:"monthly_overdraft_remaining,omitempty"`
+
 	// Burn-down 计费模型字段（开通即把整期额度打入余额，按消费进度天展示）。
-	GrantedTotalUSD        float64    `json:"granted_total_usd"`
-	DailyAmountUSD         float64    `json:"daily_amount_usd"`
-	ConsumedUSD            float64    `json:"consumed_usd"`
-	ClawedUSD              float64    `json:"clawed_usd"`
-	RemainingUSD           float64    `json:"remaining_usd"`
-	ConsumptionDay         float64    `json:"consumption_day"`              // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
-	CalendarDay            int        `json:"calendar_day"`                 // 自激活起经过的东八区自然日数，用于订阅实际服务进度
-	MaxOverdraftDays       *int       `json:"max_overdraft_days,omitempty"` // 本卡用户自设透支天数；nil = 透支关闭
-	MaxOverdraftUses       int        `json:"max_overdraft_uses"`
-	TotalOverdraftCount    int        `json:"total_overdraft_count"`
-	RemainingOverdraftUses int        `json:"remaining_overdraft_uses"`
-	CanEnableOverdraft     bool       `json:"can_enable_overdraft"`
-	ActivatedAt            *time.Time `json:"activated_at,omitempty"`
+	GrantedTotalUSD float64    `json:"granted_total_usd"`
+	DailyAmountUSD  float64    `json:"daily_amount_usd"`
+	ConsumedUSD     float64    `json:"consumed_usd"`
+	ClawedUSD       float64    `json:"clawed_usd"`
+	RemainingUSD    float64    `json:"remaining_usd"`
+	ConsumptionDay  float64    `json:"consumption_day"` // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
+	CalendarDay     int        `json:"calendar_day"`    // 自激活起经过的东八区自然日数，用于订阅实际服务进度
+	ActivatedAt     *time.Time `json:"activated_at,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -621,6 +625,12 @@ type AdminUserSubscription struct {
 	Notes      string    `json:"notes"`
 
 	AssignedByUser *User `json:"assigned_by_user,omitempty"`
+
+	RefundOrderID     *int64   `json:"refund_order_id,omitempty"`
+	RefundOrderStatus string   `json:"refund_order_status,omitempty"`
+	RefundOrderAmount *float64 `json:"refund_order_amount,omitempty"`
+	RefundOrderPay    *float64 `json:"refund_order_pay_amount,omitempty"`
+	RefundableAmount  *float64 `json:"refundable_amount,omitempty"`
 }
 
 type BulkAssignResult struct {

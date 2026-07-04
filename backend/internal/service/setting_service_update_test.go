@@ -129,7 +129,8 @@ func TestSettingService_UpdateSettings_DefaultSubscriptions_ValidGroup(t *testin
 	}, got)
 }
 
-func TestSettingService_UpdateSettings_DefaultSubscriptions_RejectsNonSubscriptionGroup(t *testing.T) {
+// per-day：默认订阅分组与 group 类型解耦，标准分组也可作默认订阅分组（仅作路由），不再拒绝。
+func TestSettingService_UpdateSettings_DefaultSubscriptions_AllowsNonSubscriptionGroup(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	groupReader := &defaultSubGroupReaderStub{
 		byID: map[int64]*Group{
@@ -144,9 +145,14 @@ func TestSettingService_UpdateSettings_DefaultSubscriptions_RejectsNonSubscripti
 			{GroupID: 12, ValidityDays: 7},
 		},
 	})
-	require.Error(t, err)
-	require.Equal(t, "DEFAULT_SUBSCRIPTION_GROUP_INVALID", infraerrors.Reason(err))
-	require.Nil(t, repo.updates)
+	require.NoError(t, err)
+	require.Equal(t, []int64{12}, groupReader.calls)
+
+	raw, ok := repo.updates[SettingKeyDefaultSubscriptions]
+	require.True(t, ok)
+	var got []DefaultSubscriptionSetting
+	require.NoError(t, json.Unmarshal([]byte(raw), &got))
+	require.Equal(t, []DefaultSubscriptionSetting{{GroupID: 12, ValidityDays: 7}}, got)
 }
 
 func TestSettingService_UpdateSettings_DefaultSubscriptions_RejectsNotFoundGroup(t *testing.T) {
