@@ -530,6 +530,7 @@ export interface Group {
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   require_oauth_only: boolean
   require_privacy_set: boolean
+  supported_model_scopes?: string[]
   created_at: string
   updated_at: string
 }
@@ -1593,6 +1594,11 @@ export interface UserSubscription {
   expires_at: string | null
   user?: User
   group?: Group
+  refund_order_id?: number
+  refund_order_status?: string
+  refund_order_amount?: number
+  refund_order_pay_amount?: number
+  refundable_amount?: number
 }
 
 export interface SubscriptionProgress {

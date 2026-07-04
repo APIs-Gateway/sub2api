@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"math"
 	"testing"
 )
@@ -40,14 +41,14 @@ func TestQuoteSubscription_DerivesCapsAndValidates(t *testing.T) {
 	s := &SubscriptionService{}
 
 	// 合法 D/T → 报价含派生周/月封顶 + 公式版本。
-	q, err := s.QuoteSubscription(2, 30)
+	q, err := s.QuoteSubscription(context.Background(), 30, 30)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if q.DailyAmountUSD != 2 || q.ValidityDays != 30 {
+	if q.DailyAmountUSD != 30 || q.ValidityDays != 30 {
 		t.Fatalf("D/T mismatch: %+v", q)
 	}
-	if !approxEq(q.WeeklyCapUSD, 14) || !approxEq(q.MonthlyCapUSD, 60) {
+	if !approxEq(q.WeeklyCapUSD, 210) || !approxEq(q.MonthlyCapUSD, 900) {
 		t.Fatalf("caps mismatch: weekly=%v monthly=%v", q.WeeklyCapUSD, q.MonthlyCapUSD)
 	}
 	if q.Price <= 0 || q.UnitPrice <= 0 {
@@ -58,21 +59,46 @@ func TestQuoteSubscription_DerivesCapsAndValidates(t *testing.T) {
 	}
 
 	// 越界 D/T → 带码 BadRequest，不产报价。
-	if _, err := s.QuoteSubscription(0, 30); err == nil {
+	if _, err := s.QuoteSubscription(context.Background(), 0, 30); err == nil {
 		t.Fatal("expected error for D below min")
 	}
 	cfg := DefaultSubscriptionPricingConfig()
-	if _, err := s.QuoteSubscription(cfg.DMin, cfg.TMin-1); err == nil {
+	if _, err := s.QuoteSubscription(context.Background(), cfg.DMin, cfg.TMin-1); err == nil {
 		t.Fatal("expected error for T below min")
 	}
 }
 
 func TestPricingBounds_MatchesDefaultConfig(t *testing.T) {
 	s := &SubscriptionService{}
-	b := s.PricingBounds()
+	b := s.PricingBounds(context.Background())
 	cfg := DefaultSubscriptionPricingConfig()
 	if b.DMin != cfg.DMin || b.DMax != cfg.DMax || b.TMin != cfg.TMin || b.TMax != cfg.TMax ||
 		b.UMin != cfg.UMin || b.UMax != cfg.UMax || b.TStep != cfg.TStep {
 		t.Fatalf("bounds mismatch: %+v vs %+v", b, cfg)
+	}
+}
+
+func TestPricingBounds_UsesSettingsOverride(t *testing.T) {
+	repo := &settingRepoStub{values: map[string]string{
+		SettingSubscriptionMinDaily: "30",
+		SettingSubscriptionMaxDaily: "90",
+		SettingSubscriptionMaxDays:  "720",
+		SettingSubscriptionMinRatio: "2.50",
+		SettingSubscriptionMaxRatio: "1.25",
+	}}
+	s := &SubscriptionService{settingService: NewSettingService(repo, nil)}
+
+	b := s.PricingBounds(context.Background())
+	if b.DMin != 30 || b.DMax != 90 || b.TMax != 720 || b.UMax != 2.5 || b.UMin != 1.25 {
+		t.Fatalf("bounds = %+v, want D 30-90 TMax 720 ratios 2.5/1.25", b)
+	}
+
+	if _, err := s.QuoteSubscription(context.Background(), 10, 30); err == nil {
+		t.Fatal("expected D below configured min to be rejected")
+	}
+	if q, err := s.QuoteSubscription(context.Background(), 60, 30); err != nil {
+		t.Fatalf("expected configured max bounds to pass: %v", err)
+	} else if q.UnitPrice != 1.875 || q.Price != 3375 {
+		t.Fatalf("linear rounded quote = unit %v price %v, want 1.875/3375", q.UnitPrice, q.Price)
 	}
 }

@@ -165,7 +165,7 @@ func (h *SubscriptionHandler) SetOverdraftDays(c *gin.Context) {
 // PricingBounds 返回自定义购买区间（每日额度 D / 有效天数 T / 单价 u 的允许范围），供购买页设滑块/校验。
 // GET /api/v1/subscriptions/pricing
 func (h *SubscriptionHandler) PricingBounds(c *gin.Context) {
-	response.Success(c, h.subscriptionService.PricingBounds())
+	response.Success(c, h.subscriptionService.PricingBounds(c.Request.Context()))
 }
 
 // Quote 自定义购买实时报价（规格第 2/3 节）：按 D+T 算 售价 P=D×T×u(D) + 派生周/月封顶。
@@ -180,7 +180,7 @@ func (h *SubscriptionHandler) Quote(c *gin.Context) {
 		response.BadRequest(c, "invalid request: "+err.Error())
 		return
 	}
-	res, err := h.subscriptionService.QuoteSubscription(req.DailyAmountUSD, req.ValidityDays)
+	res, err := h.subscriptionService.QuoteSubscription(c.Request.Context(), req.DailyAmountUSD, req.ValidityDays)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

@@ -90,6 +90,14 @@ func TestParsePaymentConfig(t *testing.T) {
 		if cfg.MaxAmount != 0 {
 			t.Fatalf("expected MaxAmount=0 (no limit), got %v", cfg.MaxAmount)
 		}
+		if cfg.SubscriptionMinDaily != 30 || cfg.SubscriptionMaxDaily != 510 || cfg.SubscriptionMaxDays != 360 {
+			t.Fatalf("subscription pricing defaults = min %v max %v days %d, want 30/510/360",
+				cfg.SubscriptionMinDaily, cfg.SubscriptionMaxDaily, cfg.SubscriptionMaxDays)
+		}
+		if cfg.SubscriptionPayMultiplier != 1 || cfg.SubscriptionMinPlanRatio != 2 || cfg.SubscriptionMaxPlanRatio != 1 {
+			t.Fatalf("subscription multipliers defaults = pay %v min ratio %v max ratio %v, want 1/2/1",
+				cfg.SubscriptionPayMultiplier, cfg.SubscriptionMinPlanRatio, cfg.SubscriptionMaxPlanRatio)
+		}
 		if cfg.OrderTimeoutMin != 30 {
 			t.Fatalf("expected OrderTimeoutMin=30, got %v", cfg.OrderTimeoutMin)
 		}
@@ -107,17 +115,24 @@ func TestParsePaymentConfig(t *testing.T) {
 	t.Run("all values populated", func(t *testing.T) {
 		t.Parallel()
 		vals := map[string]string{
-			SettingPaymentEnabled:      "true",
-			SettingMinRechargeAmount:   "5.00",
-			SettingMaxRechargeAmount:   "1000.00",
-			SettingDailyRechargeLimit:  "5000.00",
-			SettingOrderTimeoutMinutes: "15",
-			SettingMaxPendingOrders:    "5",
-			SettingEnabledPaymentTypes: "alipay,wxpay,stripe",
-			SettingBalancePayDisabled:  "true",
-			SettingLoadBalanceStrategy: "least_amount",
-			SettingProductNamePrefix:   "PRE",
-			SettingProductNameSuffix:   "SUF",
+			SettingPaymentEnabled:       "true",
+			SettingMinRechargeAmount:    "5.00",
+			SettingMaxRechargeAmount:    "1000.00",
+			SettingDailyRechargeLimit:   "5000.00",
+			SettingOrderTimeoutMinutes:  "15",
+			SettingMaxPendingOrders:     "5",
+			SettingEnabledPaymentTypes:  "alipay,wxpay,stripe",
+			SettingBalancePayDisabled:   "true",
+			SettingSubscriptionPayMult:  "1.98",
+			SettingRefundFeeRate:        "1.25",
+			SettingLoadBalanceStrategy:  "least_amount",
+			SettingProductNamePrefix:    "PRE",
+			SettingProductNameSuffix:    "SUF",
+			SettingSubscriptionMinDaily: "30.00",
+			SettingSubscriptionMaxDaily: "90.00",
+			SettingSubscriptionMaxDays:  "720",
+			SettingSubscriptionMinRatio: "2.50",
+			SettingSubscriptionMaxRatio: "1.20",
 		}
 		cfg := svc.parsePaymentConfig(vals)
 
@@ -135,6 +150,9 @@ func TestParsePaymentConfig(t *testing.T) {
 		}
 		if cfg.OrderTimeoutMin != 15 {
 			t.Fatalf("OrderTimeoutMin = %v, want 15", cfg.OrderTimeoutMin)
+		}
+		if cfg.RefundFeeRate != 1.25 {
+			t.Fatalf("RefundFeeRate = %v, want 1.25", cfg.RefundFeeRate)
 		}
 		if cfg.MaxPendingOrders != 5 {
 			t.Fatalf("MaxPendingOrders = %v, want 5", cfg.MaxPendingOrders)
@@ -156,6 +174,14 @@ func TestParsePaymentConfig(t *testing.T) {
 		}
 		if cfg.ProductNameSuffix != "SUF" {
 			t.Fatalf("ProductNameSuffix = %q, want %q", cfg.ProductNameSuffix, "SUF")
+		}
+		if cfg.SubscriptionMinDaily != 30 || cfg.SubscriptionMaxDaily != 90 || cfg.SubscriptionMaxDays != 720 {
+			t.Fatalf("subscription pricing = min %v max %v days %d, want 30/90/720",
+				cfg.SubscriptionMinDaily, cfg.SubscriptionMaxDaily, cfg.SubscriptionMaxDays)
+		}
+		if cfg.SubscriptionPayMultiplier != 1.98 || cfg.SubscriptionMinPlanRatio != 2.5 || cfg.SubscriptionMaxPlanRatio != 1.2 {
+			t.Fatalf("subscription multipliers = pay %v min ratio %v max ratio %v, want 1.98/2.5/1.2",
+				cfg.SubscriptionPayMultiplier, cfg.SubscriptionMinPlanRatio, cfg.SubscriptionMaxPlanRatio)
 		}
 	})
 
@@ -429,6 +455,27 @@ func TestUpdatePaymentConfig_PersistsVisibleMethodRouting(t *testing.T) {
 	}
 	if repo.values[SettingPaymentVisibleMethodWxpaySource] != VisibleMethodSourceOfficialWechat {
 		t.Fatalf("wxpay source = %q, want %q", repo.values[SettingPaymentVisibleMethodWxpaySource], VisibleMethodSourceOfficialWechat)
+	}
+}
+
+func TestUpdatePaymentConfig_PreservesFineSubscriptionPlanRatios(t *testing.T) {
+	repo := &paymentConfigSettingRepoStub{values: map[string]string{}}
+	svc := &PaymentConfigService{settingRepo: repo}
+
+	minRatio := 0.055
+	maxRatio := 0.035
+	if err := svc.UpdatePaymentConfig(context.Background(), UpdatePaymentConfigRequest{
+		SubscriptionMinPlanRatio: &minRatio,
+		SubscriptionMaxPlanRatio: &maxRatio,
+	}); err != nil {
+		t.Fatalf("UpdatePaymentConfig returned error: %v", err)
+	}
+
+	if repo.values[SettingSubscriptionMinRatio] != "0.055" {
+		t.Fatalf("min ratio stored as %q, want 0.055", repo.values[SettingSubscriptionMinRatio])
+	}
+	if repo.values[SettingSubscriptionMaxRatio] != "0.035" {
+		t.Fatalf("max ratio stored as %q, want 0.035", repo.values[SettingSubscriptionMaxRatio])
 	}
 }
 

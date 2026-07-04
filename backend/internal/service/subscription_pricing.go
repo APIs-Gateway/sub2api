@@ -21,8 +21,11 @@ import (
 // 供日后审计/排查「这单是按哪版公式成交的」。改公式形态时 +1。
 const SubscriptionFormulaVersion = 1
 
+const subscriptionDailyAmountStep = 30.0
+const subscriptionUnitPriceScale int32 = 4
+
 // SubscriptionPricingConfig 定价端点与自定义范围（规格第 3/10 节，均「可调」）。
-// 当前用默认值；后续可由管理员配置覆盖（下单时仍按订单冻结快照发卡，改配置不影响已下单）。
+// 下单时按当前设置冻结快照，后续改配置不影响已下单订单。
 type SubscriptionPricingConfig struct {
 	DMin  float64 // 最小档每日额度（官方刀/天）
 	DMax  float64 // 最大档每日额度
@@ -33,17 +36,47 @@ type SubscriptionPricingConfig struct {
 	TStep int     // 自定义天数步长：T 必须为 TStep 的整数倍（默认 30，即只能按整月购买 30/60/90…）
 }
 
-// DefaultSubscriptionPricingConfig 规格默认值：D∈[1,50]、u∈[1.0,2.0]、T∈[30,90] 且 T 为 30 的倍数。
+// DefaultSubscriptionPricingConfig 规格默认值：D∈[30,510]、u∈[1.0,2.0]、T∈[30,360] 且 T 为 30 的倍数。
 func DefaultSubscriptionPricingConfig() SubscriptionPricingConfig {
 	return SubscriptionPricingConfig{
-		DMin:  1,
-		DMax:  50,
+		DMin:  30,
+		DMax:  510,
 		UMax:  2.0,
 		UMin:  1.0,
 		TMin:  30,
-		TMax:  90,
+		TMax:  360,
 		TStep: 30,
 	}
+}
+
+func subscriptionPricingConfigFromSettings(vals map[string]string) SubscriptionPricingConfig {
+	cfg := DefaultSubscriptionPricingConfig()
+	cfg.DMin = pcParseFloat(vals[SettingSubscriptionMinDaily], cfg.DMin)
+	cfg.DMax = pcParseFloat(vals[SettingSubscriptionMaxDaily], cfg.DMax)
+	cfg.TMax = pcParseInt(vals[SettingSubscriptionMaxDays], cfg.TMax)
+	cfg.UMax = pcParseFloat(vals[SettingSubscriptionMinRatio], cfg.UMax)
+	cfg.UMin = pcParseFloat(vals[SettingSubscriptionMaxRatio], cfg.UMin)
+	if math.IsNaN(cfg.DMin) || math.IsInf(cfg.DMin, 0) || cfg.DMin <= 0 {
+		cfg.DMin = DefaultSubscriptionPricingConfig().DMin
+	}
+	if math.IsNaN(cfg.DMax) || math.IsInf(cfg.DMax, 0) || cfg.DMax <= 0 {
+		cfg.DMax = DefaultSubscriptionPricingConfig().DMax
+	}
+	cfg.DMin = math.Ceil(cfg.DMin/subscriptionDailyAmountStep) * subscriptionDailyAmountStep
+	cfg.DMax = math.Floor(cfg.DMax/subscriptionDailyAmountStep) * subscriptionDailyAmountStep
+	if cfg.DMax < cfg.DMin {
+		cfg.DMax = cfg.DMin
+	}
+	if cfg.TMax < cfg.TMin {
+		cfg.TMax = cfg.TMin
+	}
+	if math.IsNaN(cfg.UMax) || math.IsInf(cfg.UMax, 0) || cfg.UMax <= 0 {
+		cfg.UMax = DefaultSubscriptionPricingConfig().UMax
+	}
+	if math.IsNaN(cfg.UMin) || math.IsInf(cfg.UMin, 0) || cfg.UMin <= 0 {
+		cfg.UMin = DefaultSubscriptionPricingConfig().UMin
+	}
+	return cfg
 }
 
 // UnitPrice 计算每刀额度单价 u(D)：随 D 线性递减，clamp 到 [UMin, UMax]。
@@ -58,23 +91,33 @@ func (c SubscriptionPricingConfig) UnitPrice(d float64) float64 {
 	}
 	// clamp 到 [min,max]，对 UMin<UMax（默认）与异常配置都容错。
 	lo, hi := math.Min(c.UMin, c.UMax), math.Max(c.UMin, c.UMax)
-	return math.Min(math.Max(u, lo), hi)
+	return ceilDecimal(math.Min(math.Max(u, lo), hi), subscriptionUnitPriceScale)
 }
 
-// Price 计算套餐售价 P = D × T × u(D)，按站点本币 2 位小数四舍五入。
+// Price 计算套餐售价 P = D × T × u(D)，单价按更细粒度冻结，最终金额按 2 位小数向上取整。
 func (c SubscriptionPricingConfig) Price(d float64, t int) float64 {
 	u := c.UnitPrice(d)
 	return decimal.NewFromFloat(d).
 		Mul(decimal.NewFromInt(int64(t))).
 		Mul(decimal.NewFromFloat(u)).
-		Round(2).
+		RoundUp(2).
 		InexactFloat64()
+}
+
+func ceilDecimal(v float64, places int32) float64 {
+	if places < 0 {
+		places = 0
+	}
+	return decimal.NewFromFloat(v).RoundUp(places).InexactFloat64()
 }
 
 // ValidateCustom 校验自定义 D、T 是否在允许范围（防滥用 + 防前端篡改价格）。
 func (c SubscriptionPricingConfig) ValidateCustom(d float64, t int) error {
 	if math.IsNaN(d) || math.IsInf(d, 0) || d < c.DMin || d > c.DMax {
 		return fmt.Errorf("每日额度 D=%v 超出允许范围 [%v, %v]", d, c.DMin, c.DMax)
+	}
+	if math.Abs(math.Round(d/subscriptionDailyAmountStep)*subscriptionDailyAmountStep-d) > 1e-9 {
+		return fmt.Errorf("每日额度 D=%v 必须为 %.0f 的整数倍", d, subscriptionDailyAmountStep)
 	}
 	if t < c.TMin || t > c.TMax {
 		return fmt.Errorf("有效天数 T=%d 超出允许范围 [%d, %d]", t, c.TMin, c.TMax)

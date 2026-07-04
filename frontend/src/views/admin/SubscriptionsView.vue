@@ -466,6 +466,14 @@
                 <Icon name="ban" size="sm" />
                 <span class="text-xs">{{ t('admin.subscriptions.revoke') }}</span>
               </button>
+              <button
+                v-if="canRefundSubscription(row)"
+                @click="openRefundDialog(row)"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+              >
+                <Icon name="dollar" size="sm" />
+                <span class="text-xs">{{ t('payment.admin.refund') }}</span>
+              </button>
             </div>
           </template>
 
@@ -717,6 +725,16 @@
       @confirm="confirmResetQuota"
       @cancel="showResetQuotaConfirm = false"
     />
+    <AdminRefundDialog
+      :show="showRefundDialog"
+      :order="selectedRefundOrder"
+      :submitting="refundSubmitting"
+      :require-force="refundRequireForce"
+      :warning="refundWarning"
+      :suggested-amount="selectedRefundSubscription?.refundable_amount"
+      @confirm="handleRefund"
+      @cancel="closeRefundDialog"
+    />
     <!-- Subscription Guide Modal -->
     <teleport to="body">
       <transition name="modal">
@@ -804,9 +822,12 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
+import { adminPaymentAPI } from '@/api/admin/payment'
 import type { UserSubscription, Group, GroupPlatform, SubscriptionType } from '@/types'
+import type { PaymentOrder } from '@/types/payment'
 import type { SimpleUser } from '@/api/admin/usage'
 import type { Column } from '@/components/common/types'
+import { extractI18nErrorMessage } from '@/utils/apiError'
 import { formatDateOnly } from '@/utils/format'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -820,6 +841,7 @@ import Select from '@/components/common/Select.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminRefundDialog from '@/components/admin/payment/AdminRefundDialog.vue'
 import { getRemainingDurationParts, isOneTimeDailyQuota, type RemainingDurationParts } from '@/utils/subscriptionQuota'
 
 const { t } = useI18n()
@@ -1003,11 +1025,17 @@ const showAssignModal = ref(false)
 const showExtendModal = ref(false)
 const showRevokeDialog = ref(false)
 const showResetQuotaConfirm = ref(false)
+const showRefundDialog = ref(false)
 const submitting = ref(false)
 const resettingSubscription = ref<UserSubscription | null>(null)
 const resettingQuota = ref(false)
 const extendingSubscription = ref<UserSubscription | null>(null)
 const revokingSubscription = ref<UserSubscription | null>(null)
+const selectedRefundSubscription = ref<UserSubscription | null>(null)
+const selectedRefundOrder = ref<PaymentOrder | null>(null)
+const refundSubmitting = ref(false)
+const refundRequireForce = ref(false)
+const refundWarning = ref('')
 
 const assignForm = reactive({
   user_id: null as number | null,
@@ -1343,6 +1371,66 @@ const confirmResetQuota = async () => {
     console.error('Error resetting quota:', error)
   } finally {
     resettingQuota.value = false
+  }
+}
+
+const canRefundSubscription = (subscription: UserSubscription): boolean => {
+  return Boolean(subscription.refund_order_id && (subscription.refundable_amount || 0) > 0)
+}
+
+const openRefundDialog = (subscription: UserSubscription) => {
+  if (!canRefundSubscription(subscription) || !subscription.refund_order_id) return
+  refundRequireForce.value = false
+  refundWarning.value = ''
+  selectedRefundSubscription.value = subscription
+  selectedRefundOrder.value = {
+    id: subscription.refund_order_id,
+    user_id: subscription.user_id,
+    amount: subscription.refund_order_amount || subscription.refundable_amount || 0,
+    pay_amount: subscription.refund_order_pay_amount || 0,
+    fee_rate: 0,
+    payment_type: '',
+    out_trade_no: '',
+    status: (subscription.refund_order_status || 'COMPLETED') as PaymentOrder['status'],
+    order_type: 'subscription',
+    created_at: '',
+    expires_at: '',
+    refund_amount: 0
+  }
+  showRefundDialog.value = true
+}
+
+const closeRefundDialog = () => {
+  showRefundDialog.value = false
+  selectedRefundSubscription.value = null
+  selectedRefundOrder.value = null
+  refundRequireForce.value = false
+  refundWarning.value = ''
+}
+
+async function handleRefund(data: { amount: number; reason: string; deduct_balance: boolean; force: boolean }) {
+  if (!selectedRefundOrder.value) return
+  refundSubmitting.value = true
+  try {
+    const res = await adminPaymentAPI.refundOrder(selectedRefundOrder.value.id, {
+      amount: data.amount,
+      reason: data.reason,
+      deduct_balance: false,
+      force: data.force
+    })
+    if (res.data?.success === false) {
+      refundWarning.value = res.data.warning || res.data.message || t('payment.admin.refundFailed')
+      refundRequireForce.value = Boolean(res.data.require_force)
+      appStore.showError(refundWarning.value)
+      return
+    }
+    appStore.showSuccess(res.data?.message || t('payment.admin.refundSuccess'))
+    closeRefundDialog()
+    await loadSubscriptions()
+  } catch (error: unknown) {
+    appStore.showError(extractI18nErrorMessage(error, t, 'payment.errors', t('common.error')))
+  } finally {
+    refundSubmitting.value = false
   }
 }
 

@@ -68,9 +68,8 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	limitAmount := req.Amount
 	if spec != nil {
 		// 订阅单（购买/续费/转套餐）实收以后端权威 spec.chargeAmount 为准（购买/续费=全价；转套餐=补差价），
-		// 绝不信任前端 req.Amount。
+		// 绝不信任前端 req.Amount；order.Amount 记录 USD 口径的套餐价值。
 		orderAmount = spec.chargeAmount
-		limitAmount = spec.chargeAmount
 	} else if req.OrderType == payment.OrderTypeBalance {
 		orderAmount = calculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
 	}
@@ -80,6 +79,14 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 		methodCurrency, err = s.configService.ValidateMethodCurrencyConsistency(ctx, req.PaymentType)
 		if err != nil {
 			return nil, err
+		}
+	}
+	if spec != nil {
+		// 订阅单实际向法币网关收取的是「套餐价值 / 订阅付款倍率」；该倍率与余额充值到账倍率分离。
+		limitAmount = calculateGatewayPaymentAmountForCreditedValue(spec.chargeAmount, cfg.SubscriptionPayMultiplier, methodCurrency)
+		if cfg.MinAmount > 0 && limitAmount > 0 && limitAmount < cfg.MinAmount {
+			return nil, infraerrors.BadRequest("CHARGE_BELOW_MIN_AMOUNT", "charge amount is below the minimum payable amount").
+				WithMetadata(map[string]string{"charge": fmt.Sprintf("%.2f", limitAmount), "min": fmt.Sprintf("%.2f", cfg.MinAmount)})
 		}
 	}
 	payAmountStr, payAmount, err := calculateCreateOrderPayAmount(limitAmount, feeRate, methodCurrency)
@@ -98,6 +105,9 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 		selectedCurrency = paymentProviderConfigCurrency(sel.ProviderKey, sel.Config)
 	}
 	if selectedCurrency != methodCurrency {
+		if spec != nil {
+			limitAmount = calculateGatewayPaymentAmountForCreditedValue(spec.chargeAmount, cfg.SubscriptionPayMultiplier, selectedCurrency)
+		}
 		payAmountStr, payAmount, err = calculateCreateOrderPayAmount(limitAmount, feeRate, selectedCurrency)
 		if err != nil {
 			return nil, err
@@ -136,15 +146,6 @@ func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrder
 		if err != nil {
 			return nil, err
 		}
-		// 实收额下限（P2#7）：订阅单实际向网关收取的是 chargeAmount（purchase/renew=全价 P，
-		// change_plan=补差价 diff）。转套餐 diff 仅被拦了 <0 / ==0，可小到 $0.01 —— 低于网关/实例
-		// 单笔下限会被 load balancer 跳过、选不到 provider → 订单卡 pending，又占满「一张 pending
-		// 订阅单」名额挡死后续下单。这里用与充值同一配置下限 cfg.MinAmount（默认 $1）前置拦截，
-		// 给出清晰错误（前端引导选更大升级或等到期重购），不建出注定卡死的小额单。
-		if spec != nil && cfg.MinAmount > 0 && spec.chargeAmount > 0 && spec.chargeAmount < cfg.MinAmount {
-			return nil, infraerrors.BadRequest("CHARGE_BELOW_MIN_AMOUNT", "charge amount is below the minimum payable amount").
-				WithMetadata(map[string]string{"charge": fmt.Sprintf("%.2f", spec.chargeAmount), "min": fmt.Sprintf("%.2f", cfg.MinAmount)})
-		}
 		return spec, nil
 	}
 	if math.IsNaN(req.Amount) || math.IsInf(req.Amount, 0) || req.Amount <= 0 {
@@ -163,13 +164,14 @@ type subscriptionOrderSpec struct {
 	plan         *dbent.SubscriptionPlan // 固定套餐单持有其套餐；自定义单为 nil
 	dailyAmount  float64                 // D（每日额度 / 日限额）；renew 取自目标卡，change_plan 为新档 D
 	validityDays int                     // T（有效天数）
-	groupID      int64                   // 来源 group；自定义单为 0（无 group 归属，P5e：group_id 可空）
+	groupID      int64                   // 来源 group；购买/续费/转套餐最终发卡归属
 	unitPrice    float64                 // u(D)
 	price        float64                 // 该卡的权威全价 P（plan.Price 或 quote.Price；change_plan=新档全价 P_新）
 	// 生命周期意图（per-day redesign §5/§7）：
 	intent      string // purchase（默认）/ renew / change_plan
 	targetSubID int64  // renew/change_plan 的目标当前生效卡 ID（purchase=0）
-	// chargeAmount 实际向支付网关收取的金额：purchase/renew = price；change_plan = diff（P_新 − 旧卡剩余价值 V，恒 >0）。
+	// chargeAmount 是 USD 口径的订阅成交价值：purchase/renew = price；change_plan = diff（P_新 − 旧卡剩余价值 V，恒 >0）。
+	// 实际网关收款金额会在 CreateOrder 中按 subscription_payment_multiplier 换算为支付币种金额。
 	chargeAmount float64
 }
 
@@ -191,9 +193,21 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 			if s.subscriptionSvc == nil {
 				return nil, fmt.Errorf("subscription service not configured")
 			}
+			// 自定义套餐是用户级 active card，全分组通用；group_id 只保留为兼容旧前端/旧恢复 token
+			// 的记录字段。新订单不传 group_id 时保持为空，履约会创建无 group 卡。
+			groupID := req.GroupID
+			if groupID > 0 {
+				if s.groupRepo == nil {
+					return nil, fmt.Errorf("group repository not configured")
+				}
+				group, err := s.groupRepo.GetByID(ctx, groupID)
+				if err != nil || group == nil || group.Status != payment.EntityStatusActive {
+					return nil, infraerrors.NotFound("GROUP_NOT_FOUND", "subscription group is no longer available")
+				}
+			}
 			// 按 u(D) 公式校验 D/T 区间并产出**权威**报价：成交价完全由后端公式决定，
 			// 绝不信任前端 req.Amount（否则客户端可篡改价格 → 资损）。越界返回 INVALID_SUBSCRIPTION_PARAMS。
-			quote, err := s.subscriptionSvc.QuoteSubscription(req.DailyAmountUSD, req.ValidityDays)
+			quote, err := s.subscriptionSvc.QuoteSubscription(ctx, req.DailyAmountUSD, req.ValidityDays)
 			if err != nil {
 				return nil, err
 			}
@@ -201,7 +215,7 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 				plan:         nil,
 				dailyAmount:  quote.DailyAmountUSD,
 				validityDays: quote.ValidityDays,
-				groupID:      0, // 自定义卡无 group 归属（P5e）；限额读卡级 *_limit_usd（见 createSubscription）。
+				groupID:      groupID,
 				unitPrice:    quote.UnitPrice,
 				price:        quote.Price,
 				intent:       SubscriptionIntentPurchase,
@@ -220,10 +234,13 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 	if plan.DailyAmountUsd <= 0 {
 		return nil, infraerrors.BadRequest("PLAN_DAILY_AMOUNT_INVALID", "plan daily amount is invalid")
 	}
+	if s.subscriptionSvc == nil {
+		return nil, fmt.Errorf("subscription service not configured")
+	}
 	// per-day：套餐与 group 解耦，不再校验「订阅型分组」。但套餐卡仍带 group_id（历史快照/路由），
 	// 故校验所挂 group 存在且 active（保证下单冻结的 subscription_group_id 可用）。
 	group, err := s.groupRepo.GetByID(ctx, plan.GroupID)
-	if err != nil || group.Status != payment.EntityStatusActive {
+	if err != nil || group == nil || group.Status != payment.EntityStatusActive {
 		return nil, infraerrors.NotFound("GROUP_NOT_FOUND", "subscription group is no longer available")
 	}
 	return &subscriptionOrderSpec{
@@ -231,7 +248,7 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 		dailyAmount:  plan.DailyAmountUsd,
 		validityDays: psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit),
 		groupID:      plan.GroupID,
-		unitPrice:    DefaultSubscriptionPricingConfig().UnitPrice(plan.DailyAmountUsd),
+		unitPrice:    s.subscriptionSvc.subscriptionPricingConfig(ctx).UnitPrice(plan.DailyAmountUsd),
 		price:        plan.Price,
 		intent:       SubscriptionIntentPurchase,
 		chargeAmount: plan.Price,
@@ -283,7 +300,7 @@ func (s *PaymentService) validateSubChangePlanOrder(ctx context.Context, req Cre
 		plan:         nil,
 		dailyAmount:  q.DailyAmountUSD,
 		validityDays: q.ValidityDays,
-		groupID:      0, // 新卡为无 group 自定义卡
+		groupID:      q.GroupID, // 沿用当前卡 group
 		unitPrice:    q.UnitPrice,
 		price:        q.NewPlanPrice, // 新卡全价 P_新（快照/审计）
 		intent:       SubscriptionIntentChangePlan,
@@ -437,8 +454,7 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		b.SetProviderSnapshot(providerSnapshot)
 	}
 	if spec != nil {
-		// 有效天数对套餐/自定义单均必设（履约据此 + 快照发卡）；plan_id/group_id 仅套餐单有，
-		// 自定义单留空（无 group 归属，P5e：subscription_group_id 可空）。
+		// 有效天数对套餐/自定义单均必设（履约据此 + 快照发卡）；group_id 记录本次发卡归属。
 		b.SetSubscriptionDays(spec.validityDays)
 		if spec.plan != nil {
 			b.SetPlanID(spec.plan.ID)
@@ -1187,6 +1203,9 @@ func buildWeChatPaymentOAuthStartURL(req CreateOrderRequest, scope string) (stri
 	}
 	if req.PlanID > 0 {
 		q.Set("plan_id", strconv.FormatInt(req.PlanID, 10))
+	}
+	if req.GroupID > 0 {
+		q.Set("group_id", strconv.FormatInt(req.GroupID, 10))
 	}
 	if req.DailyAmountUSD > 0 {
 		q.Set("daily_amount_usd", strconv.FormatFloat(req.DailyAmountUSD, 'f', -1, 64))

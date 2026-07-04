@@ -77,6 +77,7 @@ export interface BuildCreateOrderPayloadInput {
   paymentType: string
   orderType: OrderType
   planId?: number
+  groupId?: number
   /** 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T；后端按 u(D) 公式自算价、不信前端 amount。 */
   dailyAmountUsd?: number
   validityDays?: number
@@ -137,6 +138,9 @@ export function buildCreateOrderPayload(input: BuildCreateOrderPayloadInput): Cr
 
   if (input.planId) {
     payload.plan_id = input.planId
+  }
+  if (input.groupId) {
+    payload.group_id = input.groupId
   }
   // 自定义订阅：传 D+T，后端按公式定价并冻结订单快照（与 plan_id 互斥）。
   if (input.dailyAmountUsd != null && input.validityDays != null) {

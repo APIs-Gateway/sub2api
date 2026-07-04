@@ -1,8 +1,5 @@
 <template>
-  <div
-    class="overflow-hidden rounded-md border bg-white dark:bg-dark-800"
-    :class="platformBorderClass(subscription.group?.platform || '')"
-  >
+  <div class="overflow-hidden rounded-md border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
     <!-- Header -->
     <div class="flex items-center justify-between border-b border-gray-100 p-4 dark:border-dark-700">
       <div class="flex items-center gap-3">
@@ -13,24 +10,25 @@
           ]"
         />
         <div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <h3 class="font-semibold text-gray-900 dark:text-white">
-              {{ subscription.group?.name || `Group #${subscription.group_id}` }}
+              {{ planTitle }}
             </h3>
             <span
+              v-for="badge in planBadges"
+              :key="badge"
               :class="[
-                'rounded-md border px-2 py-0.5 text-[11px] font-medium',
-                platformBadgeClass(subscription.group?.platform || '')
+                'rounded-md border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-700 dark:border-dark-700 dark:text-gray-300'
               ]"
             >
-              {{ platformLabel(subscription.group?.platform || '') }}
+              {{ badge }}
             </span>
           </div>
           <p
-            v-if="subscription.group?.description"
+            v-if="planDescription"
             class="mt-0.5 text-xs text-gray-600 dark:text-gray-400"
           >
-            {{ subscription.group.description }}
+            {{ planDescription }}
           </p>
         </div>
       </div>
@@ -165,7 +163,6 @@ import subscriptionsAPI from '@/api/subscriptions'
 import { useAppStore } from '@/stores'
 import type { UserSubscription } from '@/types'
 import { formatDateOnly } from '@/utils/format'
-import { platformBorderClass, platformBadgeClass, platformLabel } from '@/utils/platformColors'
 import { getRemainingDurationParts, type RemainingDurationParts } from '@/utils/subscriptionQuota'
 
 const props = defineProps<{
@@ -183,6 +180,35 @@ const router = useRouter()
 // 东八区常量：窗口/有效期边界一律按东八区自然日算（东八区无 DST，固定 +08:00）。
 const SH_TZ = 'Asia/Shanghai'
 const SH_OFFSET_MS = 8 * 60 * 60 * 1000
+
+const dailyAmount = computed(() => props.subscription.daily_amount_usd ?? props.subscription.daily_limit_usd ?? 0)
+const planConcurrency = computed(() =>
+  dailyAmount.value > 0 ? Math.max(1, Math.ceil(dailyAmount.value / 10)) : 0
+)
+const planTitle = computed(() => {
+  if (dailyAmount.value > 0) return `${t('userSubscriptions.daily')} ${formatUSD(dailyAmount.value)}`
+  return t('userSubscriptions.unlimited')
+})
+const planBadges = computed(() => {
+  const badges: string[] = []
+  if (planConcurrency.value > 0) badges.push(`${t('payment.planCard.concurrency')} ${planConcurrency.value}`)
+  if (props.subscription.expires_at) {
+    const days = daysRemaining(props.subscription.expires_at)
+    if (days >= 0) badges.push(t('userSubscriptions.daysRemaining', { days }))
+  }
+  return badges
+})
+const planDescription = computed(() => {
+  const parts: string[] = []
+  if (props.subscription.weekly_limit_usd != null && props.subscription.weekly_limit_usd > 0) {
+    parts.push(`${t('userSubscriptions.weekly')} ${formatUSD(props.subscription.weekly_limit_usd)}`)
+  }
+  if (props.subscription.monthly_limit_usd != null && props.subscription.monthly_limit_usd > 0) {
+    parts.push(`${t('userSubscriptions.monthly')} ${formatUSD(props.subscription.monthly_limit_usd)}`)
+  }
+  if (parts.length === 0 && dailyAmount.value <= 0) parts.push(t('userSubscriptions.unlimitedDesc'))
+  return parts.join(' · ')
+})
 
 // 续费 / 转套餐 生命周期对话框。
 const showLifecycle = ref(false)
@@ -368,6 +394,16 @@ function endOfTodaySHms(): number {
 
 function platformAccentDotClass(_p: string): string {
   return 'bg-gray-400 dark:bg-dark-500'
+}
+
+function formatUSD(value: number): string {
+  const rounded = Math.round(value * 100) / 100
+  return `$${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(2)}`
+}
+
+function daysRemaining(expiresAt: string): number {
+  const diff = new Date(expiresAt).getTime() - Date.now()
+  return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
 }
 
 function getProgressWidth(used: number | undefined, limit: number | null | undefined): string {

@@ -28,18 +28,18 @@
             <input
               v-model.number="dailyAmount"
               type="range"
-              :min="bounds.d_min"
-              :max="bounds.d_max"
-              step="0.5"
+              :min="dailyAmountMin"
+              :max="dailyAmountMax"
+              :step="dailyAmountStep"
               class="h-2 flex-1 accent-gray-900 dark:accent-gray-100"
               @change="onParamChange"
             />
             <input
               v-model.number="dailyAmount"
               type="number"
-              :min="bounds.d_min"
-              :max="bounds.d_max"
-              step="0.5"
+              :min="dailyAmountMin"
+              :max="dailyAmountMax"
+              :step="dailyAmountStep"
               class="input w-24 text-right font-mono tabular-nums"
               @change="clampDailyAndQuote"
             />
@@ -152,6 +152,7 @@ const quoteErrorMsg = ref('')
 
 let quoteTimer: ReturnType<typeof setTimeout> | null = null
 let quoteSeq = 0
+const dailyAmountStep = 30
 
 const dialogTitle = computed(() =>
   props.mode === 'renew'
@@ -169,6 +170,16 @@ const tOptions = computed<number[]>(() => {
   return out
 })
 
+const dailyAmountMin = computed(() => {
+  if (!bounds.value) return dailyAmountStep
+  return Math.max(dailyAmountStep, Math.ceil(bounds.value.d_min / dailyAmountStep) * dailyAmountStep)
+})
+
+const dailyAmountMax = computed(() => {
+  if (!bounds.value) return dailyAmountStep
+  return Math.max(dailyAmountMin.value, Math.floor(bounds.value.d_max / dailyAmountStep) * dailyAmountStep)
+})
+
 // 续费：报价成功(price>0)即可去支付；转套餐：必须 diff>0（diff≤0 后端报价已拒，按钮禁用）。
 const canConfirm = computed(() => {
   if (quoting.value || validityDays.value <= 0) return false
@@ -183,7 +194,7 @@ function clamp(v: number, lo: number, hi: number): number {
 
 function clampDailyAndQuote() {
   if (!bounds.value) return
-  dailyAmount.value = clamp(dailyAmount.value, bounds.value.d_min, bounds.value.d_max)
+  dailyAmount.value = snapDailyAmount(dailyAmount.value)
   scheduleQuote()
 }
 
@@ -193,7 +204,15 @@ function selectValidity(v: number) {
 }
 
 function onParamChange() {
+  if (props.mode === 'change') {
+    dailyAmount.value = snapDailyAmount(dailyAmount.value)
+  }
   scheduleQuote()
+}
+
+function snapDailyAmount(v: number): number {
+  const snapped = Math.round(v / dailyAmountStep) * dailyAmountStep
+  return clamp(snapped, dailyAmountMin.value, dailyAmountMax.value)
 }
 
 function scheduleQuote() {
@@ -236,25 +255,23 @@ watch(
     renewQuoteData.value = null
     changeQuoteData.value = null
     quoteErrorMsg.value = ''
-    if (!bounds.value) {
-      try {
-        loading.value = true
-        loadError.value = false
-        bounds.value = await subscriptionsAPI.getSubscriptionPricing()
-      } catch (err: unknown) {
-        loadError.value = true
-        appStore.showError(extractApiErrorMessage(err, t('common.error')))
-        loading.value = false
-        return
-      } finally {
-        loading.value = false
-      }
+    try {
+      loading.value = true
+      loadError.value = false
+      bounds.value = await subscriptionsAPI.getSubscriptionPricing()
+    } catch (err: unknown) {
+      loadError.value = true
+      appStore.showError(extractApiErrorMessage(err, t('common.error')))
+      loading.value = false
+      return
+    } finally {
+      loading.value = false
     }
     const b = bounds.value
     if (!b) return
     // 续费：D 固定为当前卡；转套餐：默认取当前卡 D（夹到区间）便于在其上调整。
     const cardD = props.subscription.daily_amount_usd ?? b.d_min
-    dailyAmount.value = props.mode === 'renew' ? cardD : clamp(cardD, b.d_min, b.d_max)
+    dailyAmount.value = props.mode === 'renew' ? cardD : snapDailyAmount(cardD)
     validityDays.value = b.t_min
     await refreshQuote()
   }

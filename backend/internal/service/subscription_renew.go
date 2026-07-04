@@ -26,7 +26,7 @@ func (s *SubscriptionService) QuoteRenewOrder(ctx context.Context, userID int64,
 	if userID <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_INPUT", "user is required")
 	}
-	cfg := DefaultSubscriptionPricingConfig()
+	cfg := s.subscriptionPricingConfig(ctx)
 	if validityDays < cfg.TMin || validityDays > cfg.TMax || (cfg.TStep > 0 && validityDays%cfg.TStep != 0) {
 		return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION_PARAMS",
 			fmt.Sprintf("续费天数须为 %d 的整数倍且在 [%d,%d]", cfg.TStep, cfg.TMin, cfg.TMax))
@@ -91,6 +91,9 @@ func (s *SubscriptionService) ApplyRenewFromOrder(ctx context.Context, subscript
 			if err := s.userSubRepo.UpdateStatus(txCtx, subscriptionID, SubscriptionStatusActive); err != nil {
 				return fmt.Errorf("revive subscription status: %w", err)
 			}
+		}
+		if err := s.bumpUserConcurrencyForSubscription(txCtx, sub.UserID, sub.DailyAmountUSD); err != nil {
+			return fmt.Errorf("bump subscription concurrency: %w", err)
 		}
 		return nil
 	}); err != nil {

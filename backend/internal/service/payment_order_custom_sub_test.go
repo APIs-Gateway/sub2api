@@ -7,22 +7,25 @@ import (
 	"testing"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
 // 自定义 D+T 订阅单（无固定套餐，P5e 放开履约后）：validateSubOrder 必须产出**后端权威**报价，
 // 成交价完全由 u(D) 公式决定、绝不信任前端 req.Amount（否则客户端可篡改价格 → 资损）；
-// 自定义卡无 group 归属（groupID=0、plan=nil）。
+// 自定义卡是用户级套餐，全分组通用，默认不归属具体 group（plan=nil）。
 func TestValidateSubOrder_CustomQuoteAuthoritative(t *testing.T) {
 	ctx := context.Background()
 	sub := &SubscriptionService{}
-	svc := &PaymentService{subscriptionSvc: sub}
+	svc := &PaymentService{
+		subscriptionSvc: sub,
+	}
 
-	bounds := sub.PricingBounds()
+	bounds := sub.PricingBounds(ctx)
 	d := bounds.DMin
 	tt := bounds.TMin
-	quote, err := sub.QuoteSubscription(d, tt)
+	quote, err := sub.QuoteSubscription(ctx, d, tt)
 	require.NoError(t, err)
 	require.Greater(t, quote.Price, 0.0)
 
@@ -35,7 +38,7 @@ func TestValidateSubOrder_CustomQuoteAuthoritative(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Nil(t, spec.plan, "自定义单无固定套餐")
-	require.EqualValues(t, 0, spec.groupID, "自定义卡无 group 归属")
+	require.EqualValues(t, 0, spec.groupID, "自定义卡默认不绑定分组")
 	require.InDelta(t, d, spec.dailyAmount, 1e-9)
 	require.Equal(t, tt, spec.validityDays)
 	require.InDelta(t, quote.Price, spec.price, 1e-9, "成交价=后端权威报价，忽略前端 Amount")
@@ -52,9 +55,13 @@ func TestValidateSubOrder_CustomQuoteAuthoritative(t *testing.T) {
 // 订单快照必须把 W/M 与 D/T/u/price 一并冻结（spec §2：订单存 D/W/M/T/u/price/formula_version/currency），
 // 且能被 readSubscriptionSnapshotWM 原样读回——发卡按冻结值、不按履约时派生系数重算。
 func TestSubscriptionSnapshot_FreezesWeeklyMonthlyLimits(t *testing.T) {
+	ctx := context.Background()
 	sub := &SubscriptionService{}
-	svc := &PaymentService{subscriptionSvc: sub}
-	bounds := sub.PricingBounds()
+	svc := &PaymentService{
+		subscriptionSvc: sub,
+		groupRepo:       &subscriptionGroupRepoStub{group: &Group{ID: 1, Status: payment.EntityStatusActive}},
+	}
+	bounds := sub.PricingBounds(ctx)
 	d, tt := bounds.DMin, bounds.TMin
 
 	spec, err := svc.validateSubOrder(context.Background(), CreateOrderRequest{
@@ -86,11 +93,15 @@ func TestSubscriptionSnapshot_FreezesWeeklyMonthlyLimits(t *testing.T) {
 func TestValidateSubOrder_CustomRejectsOutOfRange(t *testing.T) {
 	ctx := context.Background()
 	sub := &SubscriptionService{}
-	svc := &PaymentService{subscriptionSvc: sub}
-	bounds := sub.PricingBounds()
+	svc := &PaymentService{
+		subscriptionSvc: sub,
+		groupRepo:       &subscriptionGroupRepoStub{group: &Group{ID: 1, Status: payment.EntityStatusActive}},
+	}
+	bounds := sub.PricingBounds(ctx)
 
 	_, err := svc.validateSubOrder(ctx, CreateOrderRequest{
 		PlanID:         0,
+		GroupID:        1,
 		DailyAmountUSD: bounds.DMax + 1000,
 		ValidityDays:   bounds.TMin,
 	})
@@ -101,4 +112,22 @@ func TestValidateSubOrder_CustomRejectsOutOfRange(t *testing.T) {
 	_, err = svc.validateSubOrder(ctx, CreateOrderRequest{PlanID: 0})
 	require.Error(t, err)
 	require.Equal(t, "INVALID_INPUT", infraerrors.Reason(err))
+}
+
+func TestValidateSubOrder_CustomAcceptsLegacyGroupID(t *testing.T) {
+	ctx := context.Background()
+	sub := &SubscriptionService{}
+	svc := &PaymentService{
+		subscriptionSvc: sub,
+		groupRepo:       &subscriptionGroupRepoStub{group: &Group{ID: 7, Status: payment.EntityStatusActive}},
+	}
+	bounds := sub.PricingBounds(ctx)
+
+	spec, err := svc.validateSubOrder(ctx, CreateOrderRequest{
+		GroupID:        7,
+		DailyAmountUSD: bounds.DMin,
+		ValidityDays:   bounds.TMin,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 7, spec.groupID)
 }

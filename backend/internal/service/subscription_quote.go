@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
@@ -27,9 +29,9 @@ type SubscriptionQuoteResult struct {
 	FormulaVersion int     `json:"formula_version"`  // 定价公式版本（下单时冻结进订单快照）
 }
 
-// PricingBounds 返回自定义购买区间（当前为默认配置）。
-func (s *SubscriptionService) PricingBounds() SubscriptionPricingBounds {
-	c := DefaultSubscriptionPricingConfig()
+// PricingBounds 返回自定义购买区间。
+func (s *SubscriptionService) PricingBounds(ctx context.Context) SubscriptionPricingBounds {
+	c := s.subscriptionPricingConfig(ctx)
 	return SubscriptionPricingBounds{
 		DMin: c.DMin, DMax: c.DMax,
 		UMin: c.UMin, UMax: c.UMax,
@@ -39,8 +41,8 @@ func (s *SubscriptionService) PricingBounds() SubscriptionPricingBounds {
 
 // QuoteSubscription 校验自定义 D/T 并产出报价（含派生周/月封顶）；金额完全由后端公式决定、不信前端。
 // 校验失败（D/T 超范围）返回带码 INVALID_SUBSCRIPTION_PARAMS 的 BadRequest。
-func (s *SubscriptionService) QuoteSubscription(d float64, t int) (*SubscriptionQuoteResult, error) {
-	cfg := DefaultSubscriptionPricingConfig()
+func (s *SubscriptionService) QuoteSubscription(ctx context.Context, d float64, t int) (*SubscriptionQuoteResult, error) {
+	cfg := s.subscriptionPricingConfig(ctx)
 	q, err := cfg.Quote(d, t)
 	if err != nil {
 		return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION_PARAMS", err.Error())
@@ -55,4 +57,21 @@ func (s *SubscriptionService) QuoteSubscription(d float64, t int) (*Subscription
 		MonthlyCapUSD:  monthly,
 		FormulaVersion: q.FormulaVersion,
 	}, nil
+}
+
+func (s *SubscriptionService) subscriptionPricingConfig(ctx context.Context) SubscriptionPricingConfig {
+	if s == nil || s.settingService == nil || s.settingService.settingRepo == nil {
+		return DefaultSubscriptionPricingConfig()
+	}
+	vals, err := s.settingService.settingRepo.GetMultiple(ctx, []string{
+		SettingSubscriptionMinDaily,
+		SettingSubscriptionMaxDaily,
+		SettingSubscriptionMaxDays,
+		SettingSubscriptionMinRatio,
+		SettingSubscriptionMaxRatio,
+	})
+	if err != nil {
+		return DefaultSubscriptionPricingConfig()
+	}
+	return subscriptionPricingConfigFromSettings(vals)
 }

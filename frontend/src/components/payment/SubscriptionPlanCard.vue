@@ -17,7 +17,7 @@
           <div class="flex items-center gap-2">
             <h3 class="truncate text-base font-bold text-gray-900 dark:text-white">{{ plan.name }}</h3>
             <span :class="['shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium', badgeLightClass]">
-              {{ pLabel }}
+              {{ capabilityLabel }}
             </span>
           </div>
           <p v-if="plan.description" class="mt-0.5 text-xs leading-relaxed text-gray-500 dark:text-dark-400 line-clamp-2">
@@ -26,12 +26,11 @@
         </div>
         <div class="shrink-0 text-right">
           <div class="flex items-baseline gap-1">
-            <span class="text-xs text-gray-400 dark:text-dark-500">$</span>
-            <span :class="['text-2xl font-extrabold tracking-tight', textClass]">{{ plan.price }}</span>
+            <span :class="['text-2xl font-extrabold tracking-tight', textClass]">{{ formattedPlanPrice }}</span>
           </div>
           <span class="text-[11px] text-gray-400 dark:text-dark-500">/ {{ validitySuffix }}</span>
           <div v-if="plan.original_price" class="mt-0.5 flex items-center justify-end gap-1.5">
-            <span class="text-xs text-gray-400 line-through dark:text-dark-500">${{ plan.original_price }}</span>
+            <span class="text-xs text-gray-400 line-through dark:text-dark-500">{{ formattedOriginalPrice }}</span>
             <span :class="['rounded px-1 py-0.5 text-[10px] font-semibold', discountClass]">{{ discountText }}</span>
           </div>
         </div>
@@ -46,6 +45,10 @@
         <div v-if="plan.daily_amount_usd != null && plan.daily_amount_usd > 0" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.dailyAmount') }}</span>
           <span class="font-medium text-gray-700 dark:text-gray-300">${{ plan.daily_amount_usd }}</span>
+        </div>
+        <div v-if="planConcurrency > 0" class="flex items-center justify-between">
+          <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.concurrency') }}</span>
+          <span class="font-medium text-gray-700 dark:text-gray-300">{{ planConcurrency }}</span>
         </div>
         <div v-if="plan.weekly_limit_usd != null" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.weeklyLimit') }}</span>
@@ -109,6 +112,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SubscriptionPlan } from '@/types/payment'
 import type { UserSubscription } from '@/types'
+import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import {
   platformAccentBarClass,
   platformBadgeLightClass,
@@ -120,7 +124,18 @@ import {
   platformLabel,
 } from '@/utils/platformColors'
 
-const props = defineProps<{ plan: SubscriptionPlan; activeSubscriptions?: UserSubscription[] }>()
+const props = withDefaults(defineProps<{
+  plan: SubscriptionPlan
+  activeSubscriptions?: UserSubscription[]
+  paymentCurrency?: string
+  subscriptionPaymentMultiplier?: number
+  locale?: string
+}>(), {
+  activeSubscriptions: () => [],
+  paymentCurrency: 'CNY',
+  subscriptionPaymentMultiplier: 1,
+  locale: undefined,
+})
 const emit = defineEmits<{ select: [plan: SubscriptionPlan] }>()
 const { t } = useI18n()
 
@@ -153,7 +168,24 @@ const textClass = computed(() => platformTextClass(platform.value))
 const iconClass = computed(() => platformIconClass(platform.value))
 const btnClass = computed(() => platformButtonClass(platform.value))
 const discountClass = computed(() => platformDiscountClass(platform.value))
-const pLabel = computed(() => platformLabel(platform.value))
+const capabilityLabel = computed(() =>
+  modelScopeLabels.value.length > 0 ? modelScopeLabels.value.join(' / ') : platformLabel(platform.value)
+)
+
+const paymentCurrency = computed(() => normalizePaymentCurrency(props.paymentCurrency))
+const subscriptionPaymentMultiplier = computed(() =>
+  props.subscriptionPaymentMultiplier > 0 ? props.subscriptionPaymentMultiplier : 1
+)
+function planValueToPaymentAmount(value: number): number {
+  if (value <= 0) return 0
+  return ceilPaymentAmount(value / subscriptionPaymentMultiplier.value, paymentCurrency.value)
+}
+const formattedPlanPrice = computed(() =>
+  formatPaymentAmount(planValueToPaymentAmount(props.plan.price), paymentCurrency.value, props.locale)
+)
+const formattedOriginalPrice = computed(() =>
+  formatPaymentAmount(planValueToPaymentAmount(props.plan.original_price || 0), paymentCurrency.value, props.locale)
+)
 
 const discountText = computed(() => {
   if (!props.plan.original_price || props.plan.original_price <= 0) return ''
@@ -165,6 +197,10 @@ const rateDisplay = computed(() => {
   const rate = props.plan.rate_multiplier ?? 1
   return `×${Number(rate.toPrecision(10))}`
 })
+const planConcurrency = computed(() => {
+  const dailyAmount = props.plan.daily_amount_usd ?? props.plan.daily_limit_usd ?? 0
+  return dailyAmount > 0 ? Math.max(1, Math.ceil(dailyAmount / 10)) : 0
+})
 
 const MODEL_SCOPE_LABELS: Record<string, string> = {
   claude: 'Claude',
@@ -173,7 +209,6 @@ const MODEL_SCOPE_LABELS: Record<string, string> = {
 }
 
 const modelScopeLabels = computed(() => {
-  if (platform.value !== 'antigravity') return []
   const scopes = props.plan.supported_model_scopes
   if (!scopes || scopes.length === 0) return []
   return scopes.map(s => MODEL_SCOPE_LABELS[s] || s)

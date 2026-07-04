@@ -624,6 +624,12 @@ type AdminUserSubscription struct {
 	Notes      string    `json:"notes"`
 
 	AssignedByUser *User `json:"assigned_by_user,omitempty"`
+
+	RefundOrderID     *int64   `json:"refund_order_id,omitempty"`
+	RefundOrderStatus string   `json:"refund_order_status,omitempty"`
+	RefundOrderAmount *float64 `json:"refund_order_amount,omitempty"`
+	RefundOrderPay    *float64 `json:"refund_order_pay_amount,omitempty"`
+	RefundableAmount  *float64 `json:"refundable_amount,omitempty"`
 }
 
 type BulkAssignResult struct {

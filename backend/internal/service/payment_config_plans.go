@@ -76,6 +76,16 @@ type PlanGroupInfo struct {
 	ModelScopes     []string `json:"supported_model_scopes"`
 }
 
+// SubscriptionCheckoutGroup is a user-facing group choice for custom subscription purchase.
+type SubscriptionCheckoutGroup struct {
+	ID             int64    `json:"id"`
+	Name           string   `json:"name"`
+	Description    string   `json:"description"`
+	Platform       string   `json:"platform"`
+	RateMultiplier float64  `json:"rate_multiplier"`
+	ModelScopes    []string `json:"supported_model_scopes"`
+}
+
 // GetGroupPlatformMap returns a map of group_id → platform for the given plans.
 func (s *PaymentConfigService) GetGroupPlatformMap(ctx context.Context, plans []*dbent.SubscriptionPlan) map[int64]string {
 	info := s.GetGroupInfoMap(ctx, plans)
@@ -128,6 +138,35 @@ func (s *PaymentConfigService) ListPlansForSale(ctx context.Context) ([]*dbent.S
 	return s.entClient.SubscriptionPlan.Query().
 		Where(subscriptionplan.ForSaleEQ(true), subscriptionplan.DailyAmountUsdGT(0)).
 		Order(subscriptionplan.BySortOrder()).All(ctx)
+}
+
+func (s *PaymentConfigService) ListSubscriptionCheckoutGroups(ctx context.Context) ([]SubscriptionCheckoutGroup, error) {
+	if s == nil || s.entClient == nil {
+		return nil, fmt.Errorf("payment config service not configured")
+	}
+	rows, err := s.entClient.Group.Query().
+		Where(group.StatusEQ(StatusActive)).
+		Order(group.BySortOrder(), group.ByID()).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SubscriptionCheckoutGroup, 0, len(rows))
+	for _, g := range rows {
+		description := ""
+		if g.Description != nil {
+			description = *g.Description
+		}
+		out = append(out, SubscriptionCheckoutGroup{
+			ID:             g.ID,
+			Name:           g.Name,
+			Description:    description,
+			Platform:       g.Platform,
+			RateMultiplier: g.RateMultiplier,
+			ModelScopes:    g.SupportedModelScopes,
+		})
+	}
+	return out, nil
 }
 
 func (s *PaymentConfigService) CreatePlan(ctx context.Context, req CreatePlanRequest) (*dbent.SubscriptionPlan, error) {

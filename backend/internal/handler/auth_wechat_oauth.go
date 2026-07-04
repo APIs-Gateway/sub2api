@@ -91,6 +91,7 @@ type wechatPaymentOAuthContext struct {
 	Amount             string  `json:"amount,omitempty"`
 	OrderType          string  `json:"order_type,omitempty"`
 	PlanID             int64   `json:"plan_id,omitempty"`
+	GroupID            int64   `json:"group_id,omitempty"`
 	DailyAmountUSD     float64 `json:"daily_amount_usd,omitempty"`
 	ValidityDays       int     `json:"validity_days,omitempty"`
 	SubscriptionIntent string  `json:"subscription_intent,omitempty"` // 续费/转套餐意图;丢失则 resume 退化为购买(P2#5)
@@ -360,6 +361,7 @@ func (h *AuthHandler) WeChatPaymentOAuthStart(c *gin.Context) {
 		Amount:             strings.TrimSpace(c.Query("amount")),
 		OrderType:          strings.TrimSpace(c.Query("order_type")),
 		PlanID:             parseWeChatPaymentPlanID(c.Query("plan_id")),
+		GroupID:            parseWeChatPaymentPlanID(c.Query("group_id")),
 		DailyAmountUSD:     parseWeChatPaymentDailyAmount(c.Query("daily_amount_usd")),
 		ValidityDays:       parseWeChatPaymentValidityDays(c.Query("validity_days")),
 		SubscriptionIntent: strings.TrimSpace(c.Query("subscription_intent")),
@@ -464,6 +466,7 @@ func (h *AuthHandler) WeChatPaymentOAuthCallback(c *gin.Context) {
 		Amount:             paymentContext.Amount,
 		OrderType:          paymentContext.OrderType,
 		PlanID:             paymentContext.PlanID,
+		GroupID:            paymentContext.GroupID,
 		DailyAmountUSD:     paymentContext.DailyAmountUSD,
 		ValidityDays:       paymentContext.ValidityDays,
 		SubscriptionIntent: paymentContext.SubscriptionIntent,

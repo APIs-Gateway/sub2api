@@ -39,51 +39,60 @@ func TestNormalizeEasyPayAPIBase(t *testing.T) {
 func TestEasyPayRefundNormalizesAPIBaseAndSendsOutTradeNoOnly(t *testing.T) {
 	t.Parallel()
 
-	var gotPath string
-	var gotQuery url.Values
-	var gotForm url.Values
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotQuery = r.URL.Query()
-		if err := r.ParseForm(); err != nil {
-			t.Errorf("ParseForm: %v", err)
-		}
-		gotForm = r.PostForm
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":1,"msg":"ok"}`))
-	}))
-	defer server.Close()
-
-	provider := newTestEasyPay(t, server.URL+"/mapi.php")
-	resp, err := provider.Refund(context.Background(), payment.RefundRequest{
-		TradeNo: "trade-123",
-		OrderID: "out-456",
-		Amount:  "1.50",
-	})
-	if err != nil {
-		t.Fatalf("Refund returned error: %v", err)
-	}
-	if resp == nil || resp.Status != payment.ProviderStatusSuccess {
-		t.Fatalf("Refund response = %+v, want success", resp)
-	}
-	if gotPath != "/api.php" {
-		t.Fatalf("refund path = %q, want /api.php", gotPath)
-	}
-	if gotQuery.Get("act") != "refund" {
-		t.Fatalf("refund act query = %q, want refund", gotQuery.Get("act"))
-	}
-	for key, want := range map[string]string{
-		"pid":          "pid-1",
-		"key":          "pkey-1",
-		"out_trade_no": "out-456",
-		"money":        "1.50",
+	for _, responseBody := range []string{
+		`{"code":1,"msg":"ok"}`,
+		`{"code":0,"msg":"退款成功"}`,
 	} {
-		if got := gotForm.Get(key); got != want {
-			t.Fatalf("form[%s] = %q, want %q (form=%v)", key, got, want, gotForm)
-		}
-	}
-	if got := gotForm.Get("trade_no"); got != "" {
-		t.Fatalf("form[trade_no] = %q, want empty (form=%v)", got, gotForm)
+		t.Run(responseBody, func(t *testing.T) {
+			t.Parallel()
+
+			var gotPath string
+			var gotQuery url.Values
+			var gotForm url.Values
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				gotQuery = r.URL.Query()
+				if err := r.ParseForm(); err != nil {
+					t.Errorf("ParseForm: %v", err)
+				}
+				gotForm = r.PostForm
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(responseBody))
+			}))
+			defer server.Close()
+
+			provider := newTestEasyPay(t, server.URL+"/mapi.php")
+			resp, err := provider.Refund(context.Background(), payment.RefundRequest{
+				TradeNo: "trade-123",
+				OrderID: "out-456",
+				Amount:  "1.50",
+			})
+			if err != nil {
+				t.Fatalf("Refund returned error: %v", err)
+			}
+			if resp == nil || resp.Status != payment.ProviderStatusSuccess {
+				t.Fatalf("Refund response = %+v, want success", resp)
+			}
+			if gotPath != "/api.php" {
+				t.Fatalf("refund path = %q, want /api.php", gotPath)
+			}
+			if gotQuery.Get("act") != "refund" {
+				t.Fatalf("refund act query = %q, want refund", gotQuery.Get("act"))
+			}
+			for key, want := range map[string]string{
+				"pid":          "pid-1",
+				"key":          "pkey-1",
+				"out_trade_no": "out-456",
+				"money":        "1.50",
+			} {
+				if got := gotForm.Get(key); got != want {
+					t.Fatalf("form[%s] = %q, want %q (form=%v)", key, got, want, gotForm)
+				}
+			}
+			if got := gotForm.Get("trade_no"); got != "" {
+				t.Fatalf("form[trade_no] = %q, want empty (form=%v)", got, gotForm)
+			}
+		})
 	}
 }
 

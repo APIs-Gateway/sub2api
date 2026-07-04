@@ -61,6 +61,7 @@ type WeChatPaymentResumeClaims struct {
 	Amount         string  `json:"amt,omitempty"`
 	OrderType      string  `json:"ot,omitempty"`
 	PlanID         int64   `json:"pid,omitempty"`
+	GroupID        int64   `json:"gid,omitempty"`
 	DailyAmountUSD float64 `json:"d,omitempty"`
 	ValidityDays   int     `json:"t,omitempty"`
 	// SubscriptionIntent 续费/转套餐意图(per-day §5/§7):丢失则微信内浏览器 OAuth resume 会把

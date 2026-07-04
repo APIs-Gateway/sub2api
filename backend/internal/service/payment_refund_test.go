@@ -420,6 +420,84 @@ func TestPrepareRefundSubscriptionDefaultsToPerDayRefundAmount(t *testing.T) {
 	require.Equal(t, today, plan.SubTodayDayToRestore)
 }
 
+func TestRequestRefundAllowsSubscriptionOrder(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	user, err := client.User.Create().
+		SetEmail("request-refund-subscription@example.com").
+		SetPasswordHash("hash").
+		SetUsername("request-refund-subscription-user").
+		Save(ctx)
+	require.NoError(t, err)
+	inst, err := client.PaymentProviderInstance.Create().
+		SetProviderKey(payment.TypeAlipay).
+		SetName("alipay-request-subscription-refund").
+		SetConfig("{}").
+		SetSupportedTypes("alipay").
+		SetEnabled(true).
+		SetAllowUserRefund(true).
+		SetRefundEnabled(true).
+		Save(ctx)
+	require.NoError(t, err)
+	instID := strconv.FormatInt(inst.ID, 10)
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(300).
+		SetPayAmount(300).
+		SetFeeRate(0).
+		SetRechargeCode("REQUEST-REFUND-SUBSCRIPTION").
+		SetOutTradeNo("sub2_request_refund_subscription").
+		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo("trade-request-subscription-refund").
+		SetOrderType(payment.OrderTypeSubscription).
+		SetStatus(OrderStatusCompleted).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetPaidAt(time.Now()).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		SetProviderInstanceID(instID).
+		SetProviderKey(payment.TypeAlipay).
+		SetSubscriptionDays(30).
+		SetProviderSnapshot(map[string]any{
+			"schema_version":       2,
+			"provider_instance_id": instID,
+			"provider_key":         payment.TypeAlipay,
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd": 10.0,
+				"validity_days":    30.0,
+			},
+		}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	today := TodayEastDayNumber()
+	repo := newRefundUserSubRepoStub(&UserSubscription{
+		ID:             43,
+		UserID:         user.ID,
+		GroupID:        7,
+		Status:         SubscriptionStatusActive,
+		DailyAmountUSD: 10,
+		TodayRemaining: 10,
+		TodayDay:       today,
+		StartDay:       today - 14,
+		ExpireDay:      today + 15,
+		ExpiresAt:      ExpireDayToExpiresAt(today + 15),
+	})
+	subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+	svc := &PaymentService{entClient: client, subscriptionSvc: subSvc}
+
+	require.NoError(t, svc.RequestRefund(ctx, order.ID, user.ID, "subscription refund request"))
+
+	updated, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRefundRequested, updated.Status)
+	require.InDelta(t, 150, updated.RefundAmount, 1e-9)
+	require.NotNil(t, updated.RefundRequestReason)
+	require.Equal(t, "subscription refund request", *updated.RefundRequestReason)
+}
+
 func TestPrepareRefundSubscriptionUsesSnapshotSubscriptionID(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)
@@ -610,6 +688,29 @@ func TestCalculateGatewayRefundAmountUsesCurrencyPrecision(t *testing.T) {
 	require.InDelta(t, 6.173, calculateGatewayRefundAmount(100, 12.345, 50, "KWD"), 1e-12)
 	require.InDelta(t, 12.345, calculateGatewayRefundAmount(100, 12.345, 100, "KWD"), 1e-12)
 	require.InDelta(t, 52, calculateGatewayRefundAmount(100, 103, 50, "JPY"), 1e-12)
+}
+
+func TestCalculateGatewayRefundBreakdownAppliesRefundFee(t *testing.T) {
+	base, fee, gateway := calculateGatewayRefundBreakdown(100, 100, 100, 0, "CNY")
+	require.InDelta(t, 100, base, 1e-12)
+	require.InDelta(t, 0, fee, 1e-12)
+	require.InDelta(t, 100, gateway, 1e-12)
+
+	base, fee, gateway = calculateGatewayRefundBreakdown(60, 118.78, 30, 1, "CNY")
+	require.InDelta(t, 59.39, base, 1e-12)
+	require.InDelta(t, 0.60, fee, 1e-12)
+	require.InDelta(t, 58.79, gateway, 1e-12)
+
+	base, fee, gateway = calculateGatewayRefundBreakdown(100, 100, 100, 100, "CNY")
+	require.InDelta(t, 100, base, 1e-12)
+	require.InDelta(t, 100, fee, 1e-12)
+	require.InDelta(t, 0, gateway, 1e-12)
+}
+
+func TestCalculateGatewayPaymentAmountForCreditedValueUsesMultiplierAndCurrencyPrecision(t *testing.T) {
+	require.InDelta(t, 59.99, calculateGatewayPaymentAmountForCreditedValue(118.78, 1.98, "CNY"), 1e-12)
+	require.InDelta(t, 60, calculateGatewayPaymentAmountForCreditedValue(118.78, 1.98, "JPY"), 1e-12)
+	require.InDelta(t, 118.78, calculateGatewayPaymentAmountForCreditedValue(118.78, 0, "CNY"), 1e-12)
 }
 
 func TestFormatGatewayRefundAmountUsesOrderCurrency(t *testing.T) {

@@ -114,6 +114,12 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		return
 	}
 
+	subscriptionGroups, err := h.configService.ListSubscriptionCheckoutGroups(ctx)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
 	// Fetch plans with group info
 	plans, _ := h.configService.ListPlansForSale(ctx)
 	groupInfo := h.configService.GetGroupInfoMap(ctx, plans)
@@ -138,9 +144,12 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		GlobalMin:                 limitsResp.GlobalMin,
 		GlobalMax:                 limitsResp.GlobalMax,
 		Plans:                     planList,
+		SubscriptionGroups:        subscriptionGroups,
 		BalanceDisabled:           cfg.BalanceDisabled,
 		BalanceRechargeMultiplier: cfg.BalanceRechargeMultiplier,
+		SubscriptionPayMultiplier: cfg.SubscriptionPayMultiplier,
 		RechargeFeeRate:           cfg.RechargeFeeRate,
+		RefundFeeRate:             cfg.RefundFeeRate,
 		HelpText:                  cfg.HelpText,
 		HelpImageURL:              cfg.HelpImageURL,
 		StripePublishableKey:      cfg.StripePublishableKey,
@@ -149,17 +158,20 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 }
 
 type checkoutInfoResponse struct {
-	Methods                   map[string]service.MethodLimits `json:"methods"`
-	GlobalMin                 float64                         `json:"global_min"`
-	GlobalMax                 float64                         `json:"global_max"`
-	Plans                     []checkoutPlan                  `json:"plans"`
-	BalanceDisabled           bool                            `json:"balance_disabled"`
-	BalanceRechargeMultiplier float64                         `json:"balance_recharge_multiplier"`
-	RechargeFeeRate           float64                         `json:"recharge_fee_rate"`
-	HelpText                  string                          `json:"help_text"`
-	HelpImageURL              string                          `json:"help_image_url"`
-	StripePublishableKey      string                          `json:"stripe_publishable_key"`
-	AlipayForceQRCode         bool                            `json:"alipay_force_qrcode"`
+	Methods                   map[string]service.MethodLimits     `json:"methods"`
+	GlobalMin                 float64                             `json:"global_min"`
+	GlobalMax                 float64                             `json:"global_max"`
+	Plans                     []checkoutPlan                      `json:"plans"`
+	SubscriptionGroups        []service.SubscriptionCheckoutGroup `json:"subscription_groups"`
+	BalanceDisabled           bool                                `json:"balance_disabled"`
+	BalanceRechargeMultiplier float64                             `json:"balance_recharge_multiplier"`
+	SubscriptionPayMultiplier float64                             `json:"subscription_payment_multiplier"`
+	RechargeFeeRate           float64                             `json:"recharge_fee_rate"`
+	RefundFeeRate             float64                             `json:"refund_fee_rate"`
+	HelpText                  string                              `json:"help_text"`
+	HelpImageURL              string                              `json:"help_image_url"`
+	StripePublishableKey      string                              `json:"stripe_publishable_key"`
+	AlipayForceQRCode         bool                                `json:"alipay_force_qrcode"`
 }
 
 type checkoutPlan struct {
@@ -221,6 +233,7 @@ type CreateOrderRequest struct {
 	PaymentSource     string  `json:"payment_source"`
 	OrderType         string  `json:"order_type"`
 	PlanID            int64   `json:"plan_id"`
+	GroupID           int64   `json:"group_id"`
 	// 自定义订阅购买（无固定套餐，规格第 2/3 节）：每日额度 D + 有效期 T；与 plan_id 互斥，
 	// 后端按 u(D) 公式自算价、不信前端 amount。
 	DailyAmountUSD float64 `json:"daily_amount_usd"`
@@ -277,6 +290,7 @@ func (h *PaymentHandler) CreateOrder(c *gin.Context) {
 		PaymentSource:      req.PaymentSource,
 		OrderType:          req.OrderType,
 		PlanID:             req.PlanID,
+		GroupID:            req.GroupID,
 		DailyAmountUSD:     req.DailyAmountUSD,
 		ValidityDays:       req.ValidityDays,
 		SubscriptionIntent: req.SubscriptionIntent,
@@ -323,6 +337,9 @@ func applyWeChatPaymentResumeClaims(req *CreateOrderRequest, claims *service.WeC
 	}
 	if claims.PlanID > 0 {
 		req.PlanID = claims.PlanID
+	}
+	if claims.GroupID > 0 {
+		req.GroupID = claims.GroupID
 	}
 	if claims.DailyAmountUSD > 0 {
 		req.DailyAmountUSD = claims.DailyAmountUSD

@@ -151,24 +151,36 @@ func (s *PaymentService) RequestRefund(ctx context.Context, oid, uid int64, reas
 	if err != nil {
 		return err
 	}
-	u, err := s.userRepo.GetByID(ctx, o.UserID)
-	if err != nil {
-		return fmt.Errorf("get user: %w", err)
-	}
-	if u.Balance < o.Amount {
-		return infraerrors.BadRequest("BALANCE_NOT_ENOUGH", "refund amount exceeds balance")
+	refundAmount := o.Amount
+	if o.OrderType == payment.OrderTypeBalance {
+		u, err := s.userRepo.GetByID(ctx, o.UserID)
+		if err != nil {
+			return fmt.Errorf("get user: %w", err)
+		}
+		if u.Balance < o.Amount {
+			return infraerrors.BadRequest("BALANCE_NOT_ENOUGH", "refund amount exceeds balance")
+		}
+	} else if o.OrderType == payment.OrderTypeSubscription {
+		amount, calcErr := s.calculateSubscriptionRefundAmount(ctx, o)
+		if calcErr != nil {
+			return calcErr
+		}
+		if amount <= 0 {
+			return infraerrors.BadRequest("NO_REFUNDABLE_DAYS", "subscription has no refundable days")
+		}
+		refundAmount = amount
 	}
 	nr := strings.TrimSpace(reason)
 	now := time.Now()
 	by := fmt.Sprintf("%d", uid)
-	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(oid), paymentorder.UserIDEQ(uid), paymentorder.StatusEQ(OrderStatusCompleted), paymentorder.OrderTypeEQ(payment.OrderTypeBalance)).SetStatus(OrderStatusRefundRequested).SetRefundRequestedAt(now).SetRefundRequestReason(nr).SetRefundRequestedBy(by).SetRefundAmount(o.Amount).Save(ctx)
+	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(oid), paymentorder.UserIDEQ(uid), paymentorder.StatusEQ(OrderStatusCompleted)).SetStatus(OrderStatusRefundRequested).SetRefundRequestedAt(now).SetRefundRequestReason(nr).SetRefundRequestedBy(by).SetRefundAmount(refundAmount).Save(ctx)
 	if err != nil {
 		return fmt.Errorf("update: %w", err)
 	}
 	if c == 0 {
 		return infraerrors.Conflict("CONFLICT", "order status changed")
 	}
-	s.writeAuditLog(ctx, oid, "REFUND_REQUESTED", fmt.Sprintf("user:%d", uid), map[string]any{"amount": o.Amount, "reason": nr})
+	s.writeAuditLog(ctx, oid, "REFUND_REQUESTED", fmt.Sprintf("user:%d", uid), map[string]any{"amount": refundAmount, "orderType": o.OrderType, "reason": nr})
 	return nil
 }
 
@@ -180,8 +192,8 @@ func (s *PaymentService) validateRefundRequest(ctx context.Context, oid, uid int
 	if o.UserID != uid {
 		return nil, infraerrors.Forbidden("FORBIDDEN", "no permission")
 	}
-	if o.OrderType != payment.OrderTypeBalance {
-		return nil, infraerrors.BadRequest("INVALID_ORDER_TYPE", "only balance orders can request refund")
+	if o.OrderType != payment.OrderTypeBalance && o.OrderType != payment.OrderTypeSubscription {
+		return nil, infraerrors.BadRequest("INVALID_ORDER_TYPE", "only balance and subscription orders can request refund")
 	}
 	if o.Status != OrderStatusCompleted {
 		return nil, infraerrors.BadRequest("INVALID_STATUS", "only completed orders can request refund")
@@ -207,34 +219,6 @@ func (s *PaymentService) PrepareRefund(ctx context.Context, oid int64, amt float
 		return nil, nil, infraerrors.BadRequest("INVALID_STATUS", "order status does not allow refund")
 	}
 
-	// easypay/Kyren:网关退款 API(api.php?act=refund)官方不支持,退款须在 Kyren 控制台手动发起,
-	// 生效后由 order.refunded webhook 关卡/对账。后台「退款」按钮在此只把订单置「待退款」(REFUND_REQUESTED),
-	// 不调网关、不动卡(卡由 webhook 关),避免「点了退款→网关必失败→报错」的坏体验。幂等:已是待退款再点不变。
-	if o.ProviderKey != nil && *o.ProviderKey == payment.TypeEasyPay {
-		if _, err := s.entClient.PaymentOrder.Update().
-			Where(paymentorder.IDEQ(o.ID), paymentorder.StatusIn(OrderStatusCompleted, OrderStatusRefundFailed)).
-			SetStatus(OrderStatusRefundRequested).
-			Save(ctx); err != nil {
-			return nil, nil, fmt.Errorf("mark order %d refund-requested: %w", o.ID, err)
-		}
-		// 算好【建议应退额】给管理员据此在 Kyren 控制台退款(订阅单按剩余天数比例,USD + 网关币种两口径)。
-		sug := s.suggestRefundForManual(ctx, o)
-		s.writeAuditLog(ctx, o.ID, "REFUND_REQUESTED_MANUAL", "admin", map[string]any{
-			"reason": strings.TrimSpace(reason), "provider": payment.TypeEasyPay,
-			"suggested_refund_usd":     sug.SuggestedRefundUSD,
-			"suggested_refund_gateway": sug.SuggestedRefundGateway,
-			"suggested_currency":       sug.SuggestedRefundCurrency,
-			"refundable_days":          sug.RefundableDays,
-			"original_days":            sug.OriginalDays,
-		})
-		sug.Success = true
-		sug.RefundRequested = true
-		sug.Message = fmt.Sprintf(
-			"订单已标记为待退款。建议应退 %s %.2f(≈ $%.2f),请在 Kyren 控制台按此金额退款;退款生效后系统将通过 webhook 自动关卡并对账。",
-			sug.SuggestedRefundCurrency, sug.SuggestedRefundGateway, sug.SuggestedRefundUSD,
-		)
-		return nil, sug, nil
-	}
 	// Check provider instance allows admin refund
 	inst, instErr := s.getRefundOrderProviderInstance(ctx, o)
 	if instErr != nil {
@@ -268,7 +252,8 @@ func (s *PaymentService) PrepareRefund(ctx context.Context, oid int64, amt float
 	if amt-o.Amount > paymentAmountToleranceForCurrency(orderCurrency) {
 		return nil, nil, infraerrors.BadRequest("REFUND_AMOUNT_EXCEEDED", "refund amount exceeds recharge")
 	}
-	ga := calculateGatewayRefundAmount(o.Amount, o.PayAmount, amt, orderCurrency)
+	refundFeeRate := s.refundFeeRate(ctx)
+	gatewayBase, refundFee, ga := calculateGatewayRefundBreakdown(o.Amount, o.PayAmount, amt, refundFeeRate, orderCurrency)
 	rr := strings.TrimSpace(reason)
 	if rr == "" && o.RefundRequestReason != nil {
 		rr = *o.RefundRequestReason
@@ -276,7 +261,19 @@ func (s *PaymentService) PrepareRefund(ctx context.Context, oid int64, amt float
 	if rr == "" {
 		rr = fmt.Sprintf("refund order:%d", o.ID)
 	}
-	p := &RefundPlan{OrderID: oid, Order: o, RefundAmount: amt, GatewayAmount: ga, Reason: rr, Force: force, DeductBalance: deduct, DeductionType: payment.DeductionTypeNone}
+	p := &RefundPlan{
+		OrderID:           oid,
+		Order:             o,
+		RefundAmount:      amt,
+		GatewayBaseAmount: gatewayBase,
+		RefundFeeRate:     refundFeeRate,
+		RefundFeeAmount:   refundFee,
+		GatewayAmount:     ga,
+		Reason:            rr,
+		Force:             force,
+		DeductBalance:     deduct,
+		DeductionType:     payment.DeductionTypeNone,
+	}
 	// 订阅订单退款必关卡(规格 §6/§8#20「退款即关卡,无条件」),不受 deduct_balance 开关控制:
 	// 关卡计划须始终构建(prepDeduct 对订阅单设 DeductionType=Subscription + 关卡/还原天数),
 	// 否则 deduct_balance=false 时 ExecuteRefund 的关卡门(DeductionType==Subscription)不成立、
@@ -289,32 +286,15 @@ func (s *PaymentService) PrepareRefund(ctx context.Context, oid int64, amt float
 	return p, nil, nil
 }
 
-// suggestRefundForManual 给「待退款」(Kyren 人工退款)算建议应退额,两口径(USD + 网关币种)+ 剩余/原始天数。
-// 订阅单按剩余服务天数比例(已含透支扣减、夹到本单 T);充值单=订单全额。算不出(无卡/无快照)则回退订单全额。
-// 仅供管理员参考展示,不落任何扣减——真实退款在 Kyren 控制台、关卡由 order.refunded webhook 负责。
-func (s *PaymentService) suggestRefundForManual(ctx context.Context, o *dbent.PaymentOrder) *RefundResult {
-	currency := PaymentOrderCurrency(o)
-	r := &RefundResult{SuggestedRefundCurrency: currency}
-	usd := o.Amount
-	if o.OrderType == payment.OrderTypeSubscription {
-		if amt, err := s.calculateSubscriptionRefundAmount(ctx, o); err == nil && amt > 0 {
-			usd = amt
-		}
-		if origDays, err := subscriptionOrderOriginalDays(o); err == nil {
-			r.OriginalDays = origDays
-			if sub, err := s.subscriptionForRefund(ctx, o); err == nil && sub != nil {
-				card := sub.ToPerDayCard()
-				rd := card.RefundableDays(TodayEastDayNumber())
-				if rd > origDays {
-					rd = origDays
-				}
-				r.RefundableDays = rd
-			}
-		}
+func (s *PaymentService) refundFeeRate(ctx context.Context) float64 {
+	if s == nil || s.configService == nil || s.configService.settingRepo == nil {
+		return 0
 	}
-	r.SuggestedRefundUSD = usd
-	r.SuggestedRefundGateway = calculateGatewayRefundAmount(o.Amount, o.PayAmount, usd, currency)
-	return r
+	cfg, err := s.configService.GetPaymentConfig(ctx)
+	if err != nil || cfg == nil {
+		return 0
+	}
+	return cfg.RefundFeeRate
 }
 
 func (s *PaymentService) calculateSubscriptionRefundAmount(ctx context.Context, o *dbent.PaymentOrder) (float64, error) {
@@ -520,13 +500,17 @@ func (s *PaymentService) getRefundProvider(ctx context.Context, o *dbent.Payment
 func (s *PaymentService) handleGwFail(ctx context.Context, p *RefundPlan, gErr error) (*RefundResult, error) {
 	if s.RollbackRefund(ctx, p, gErr) {
 		s.restoreStatus(ctx, p)
-		s.writeAuditLog(ctx, p.OrderID, "REFUND_GATEWAY_FAILED", "admin", map[string]any{"detail": psErrMsg(gErr)})
+		s.writeAuditLog(ctx, p.OrderID, refundAttemptAuditAction("REFUND_GATEWAY_FAILED"), "admin", map[string]any{"detail": psErrMsg(gErr)})
 		return &RefundResult{Success: false, Warning: "gateway failed: " + psErrMsg(gErr) + ", rolled back"}, nil
 	}
 	now := time.Now()
 	_, _ = s.entClient.PaymentOrder.UpdateOneID(p.OrderID).SetStatus(OrderStatusRefundFailed).SetFailedAt(now).SetFailedReason(psErrMsg(gErr)).Save(ctx)
 	s.writeAuditLog(ctx, p.OrderID, "REFUND_FAILED", "admin", map[string]any{"detail": psErrMsg(gErr)})
 	return nil, infraerrors.InternalServer("REFUND_FAILED", psErrMsg(gErr))
+}
+
+func refundAttemptAuditAction(prefix string) string {
+	return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano()%1_000_000_000)
 }
 
 func (s *PaymentService) markRefundOk(ctx context.Context, p *RefundPlan) (*RefundResult, error) {
@@ -539,8 +523,24 @@ func (s *PaymentService) markRefundOk(ctx context.Context, p *RefundPlan) (*Refu
 	if err != nil {
 		return nil, fmt.Errorf("mark refund: %w", err)
 	}
-	s.writeAuditLog(ctx, p.OrderID, "REFUND_SUCCESS", "admin", map[string]any{"refundAmount": p.RefundAmount, "reason": p.Reason, "balanceDeducted": p.BalanceToDeduct, "force": p.Force})
-	return &RefundResult{Success: true, BalanceDeducted: p.BalanceToDeduct, SubDaysDeducted: p.SubDaysToDeduct}, nil
+	s.writeAuditLog(ctx, p.OrderID, "REFUND_SUCCESS", "admin", map[string]any{
+		"refundAmount":      p.RefundAmount,
+		"gatewayBaseAmount": p.GatewayBaseAmount,
+		"gatewayAmount":     p.GatewayAmount,
+		"refundFeeRate":     p.RefundFeeRate,
+		"refundFeeAmount":   p.RefundFeeAmount,
+		"reason":            p.Reason,
+		"balanceDeducted":   p.BalanceToDeduct,
+		"force":             p.Force,
+	})
+	return &RefundResult{
+		Success:         true,
+		BalanceDeducted: p.BalanceToDeduct,
+		SubDaysDeducted: p.SubDaysToDeduct,
+		GatewayAmount:   p.GatewayAmount,
+		RefundFeeRate:   p.RefundFeeRate,
+		RefundFeeAmount: p.RefundFeeAmount,
+	}, nil
 }
 
 func (s *PaymentService) RollbackRefund(ctx context.Context, p *RefundPlan, gErr error) bool {

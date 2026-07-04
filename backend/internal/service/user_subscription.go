@@ -67,6 +67,13 @@ type UserSubscription struct {
 	User           *User
 	Group          *Group
 	AssignedByUser *User
+
+	// Admin-only refund affordance for paid subscription cards.
+	RefundOrderID     *int64
+	RefundOrderStatus string
+	RefundOrderAmount *float64
+	RefundOrderPay    *float64
+	RefundableAmount  *float64
 }
 
 func (s *UserSubscription) IsActive() bool {

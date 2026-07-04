@@ -36,7 +36,7 @@
             }}</span>
           </div>
 
-          <div v-if="activeSubscriptions.length" class="grid gap-6 lg:grid-cols-2">
+          <div v-if="activeSubscriptions.length" :class="activeSubscriptionsGridClass">
             <UserSubscriptionCard
               v-for="subscription in activeSubscriptions"
               :key="subscription.id"
@@ -74,7 +74,7 @@
             />
           </button>
 
-          <div v-show="showEnded" class="grid gap-6 opacity-80 lg:grid-cols-2">
+          <div v-show="showEnded" :class="endedSubscriptionsGridClass">
             <UserSubscriptionCard
               v-for="subscription in endedSubscriptions"
               :key="subscription.id"
@@ -113,6 +113,16 @@ const activeSubscriptions = computed(() =>
 // 已结束：已过期 / 已撤销，归到折叠分区。
 const endedSubscriptions = computed(() =>
   subscriptions.value.filter((s) => s.status === 'expired' || s.status === 'revoked')
+)
+
+const activeSubscriptionsGridClass = computed(() =>
+  activeSubscriptions.value.length === 1 ? 'grid gap-6' : 'grid gap-6 lg:grid-cols-2'
+)
+
+const endedSubscriptionsGridClass = computed(() =>
+  endedSubscriptions.value.length === 1
+    ? 'grid gap-6 opacity-80'
+    : 'grid gap-6 opacity-80 lg:grid-cols-2'
 )
 
 async function loadSubscriptions() {

@@ -15,6 +15,7 @@ import (
 // diff = P_新 − 旧卡剩余价值 V；diff<0=降档赔钱（调用方拒）、=0=持平（同步换卡）、>0=补差价（走网关）。
 type ChangePlanOrderQuote struct {
 	OldSubscriptionID int64   `json:"old_subscription_id"`
+	GroupID           int64   `json:"group_id"`            // 沿用当前生效卡的平台/分组
 	DailyAmountUSD    float64 `json:"daily_amount_usd"`    // D_新
 	ValidityDays      int     `json:"validity_days"`       // T_新
 	WeeklyCapUSD      float64 `json:"weekly_cap_usd"`      // 派生 W
@@ -32,11 +33,11 @@ func (s *SubscriptionService) QuoteChangePlanOrder(ctx context.Context, userID i
 	if userID <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_INPUT", "user is required")
 	}
-	quote, err := s.QuoteSubscription(newDailyAmount, newValidityDays)
+	quote, err := s.QuoteSubscription(ctx, newDailyAmount, newValidityDays)
 	if err != nil {
 		return nil, err
 	}
-	cfg := DefaultSubscriptionPricingConfig()
+	cfg := s.subscriptionPricingConfig(ctx)
 	today := TodayEastDayNumber()
 
 	// 每自然日最多转 1 次（下单前置拦截，避免创建注定被履约拒的订单）。
@@ -76,6 +77,7 @@ func (s *SubscriptionService) QuoteChangePlanOrder(ctx context.Context, userID i
 
 	return &ChangePlanOrderQuote{
 		OldSubscriptionID: oldSub.ID,
+		GroupID:           oldSub.GroupID,
 		DailyAmountUSD:    quote.DailyAmountUSD,
 		ValidityDays:      quote.ValidityDays,
 		WeeklyCapUSD:      quote.WeeklyCapUSD,
@@ -99,7 +101,7 @@ type ChangePlanResult struct {
 }
 
 // ApplyChangePlanFromOrder 履约转套餐（法币支付成功后由 doSub 调用，规格第 7 节）：关旧卡、立即开新卡
-// （无 group 自定义卡 groupID=0，冻结 D_新/T_新，W/M 按 DeriveWindowCaps 派生），新卡三窗口用量**继承旧卡
+// （沿用旧卡 groupID，冻结 D_新/T_新，W/M 按 DeriveWindowCaps 派生），新卡三窗口用量**继承旧卡
 // 当前用量**（堵当天/周/月换档重领），stamp last_change_plan_day=today。**不扣余额、不算差价**——补差价已
 // 通过法币网关收取（见 docs/billing-perday-redesign.md §7）。幂等由 doSub 的 SUBSCRIPTION_SUCCESS 审计键保证。
 //
@@ -112,7 +114,7 @@ func (s *SubscriptionService) ApplyChangePlanFromOrder(ctx context.Context, oldS
 	if oldSubscriptionID <= 0 || newDailyAmount <= 0 || newValidityDays <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_INPUT", "old subscription and positive new D/T are required")
 	}
-	cfg := DefaultSubscriptionPricingConfig()
+	cfg := s.subscriptionPricingConfig(ctx)
 	dNew := newDailyAmount
 	tNew := newValidityDays
 	newPlanPrice := cfg.Price(dNew, tNew)
@@ -156,11 +158,11 @@ func (s *SubscriptionService) ApplyChangePlanFromOrder(ctx context.Context, oldS
 		}
 
 		// 开新卡：限额挂卡、新卡继承旧卡当前三窗口 usage/window_start，避免当天/本周/本月换档后重领已用额度
-		// （spec §7）。新卡为无 group 自定义卡（groupID=0，限额读卡级）。不写 users.balance。
+		// （spec §7）。新卡沿用旧卡 groupID，限额读卡级。不写 users.balance。
 		activatedAt := now
 		newSub := &UserSubscription{
 			UserID:             userID,
-			GroupID:            0,
+			GroupID:            oldGroupID,
 			StartsAt:           now,
 			ExpiresAt:          ExpireDayToExpiresAt(newExpireDay),
 			Status:             SubscriptionStatusActive,
@@ -190,6 +192,9 @@ func (s *SubscriptionService) ApplyChangePlanFromOrder(ctx context.Context, oldS
 		}
 		if err := s.userSubRepo.Create(txCtx, newSub); err != nil {
 			return fmt.Errorf("create new subscription: %w", err)
+		}
+		if err := s.bumpUserConcurrencyForSubscription(txCtx, userID, dNew); err != nil {
+			return fmt.Errorf("bump subscription concurrency: %w", err)
 		}
 
 		// 限频戳（无余额变动；差价已网关收取）。

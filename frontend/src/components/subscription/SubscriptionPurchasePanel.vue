@@ -24,17 +24,17 @@
           <input
             v-model.number="dailyAmount"
             type="range"
-            :min="pricing.d_min"
-            :max="pricing.d_max"
-            step="0.5"
+            :min="dailyAmountMin"
+            :max="dailyAmountMax"
+            :step="dailyAmountStep"
             class="h-2 flex-1 accent-gray-900 dark:accent-gray-100"
           />
           <input
             v-model.number="dailyAmount"
             type="number"
-            :min="pricing.d_min"
-            :max="pricing.d_max"
-            step="0.5"
+            :min="dailyAmountMin"
+            :max="dailyAmountMax"
+            :step="dailyAmountStep"
             class="input w-24 text-right font-mono tabular-nums"
             @change="clampInputs"
           />
@@ -47,32 +47,31 @@
           {{ t('subscriptionPurchase.validityDays') }}
           <span class="font-normal text-gray-500 dark:text-dark-400">({{ t('subscriptionPurchase.days') }})</span>
         </label>
-        <div class="flex items-center gap-3">
-          <input
-            v-model.number="validityDays"
-            type="range"
-            :min="pricing.t_min"
-            :max="pricing.t_max"
-            :step="tStep"
-            class="h-2 flex-1 accent-gray-900 dark:accent-gray-100"
-          />
-          <input
-            v-model.number="validityDays"
-            type="number"
-            :min="pricing.t_min"
-            :max="pricing.t_max"
-            :step="tStep"
-            class="input w-24 text-right font-mono tabular-nums"
-            @change="clampInputs"
-          />
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <button
+            v-for="option in validityOptions"
+            :key="option.days"
+            type="button"
+            :disabled="option.disabled"
+            class="rounded-md border px-3 py-2 text-sm font-medium transition-colors"
+            :class="[
+              validityDays === option.days
+                ? 'border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-950'
+                : 'border-gray-200 bg-white text-gray-700 hover:border-gray-400 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-dark-500',
+              option.disabled ? 'cursor-not-allowed opacity-40' : ''
+            ]"
+            @click="validityDays = option.days"
+          >
+            {{ option.label }}
+          </button>
         </div>
       </div>
 
       <p class="input-hint">
         {{
           t('subscriptionPurchase.rangeHint', {
-            dMin: pricing.d_min,
-            dMax: pricing.d_max,
+            dMin: dailyAmountMin,
+            dMax: dailyAmountMax,
             tMin: pricing.t_min,
             tMax: pricing.t_max,
             tStep: tStep
@@ -91,13 +90,17 @@
             <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('subscriptionPurchase.price') }}</span>
             <span class="font-mono text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
               <span v-if="quoting" class="text-base text-gray-400">{{ t('subscriptionPurchase.quoting') }}</span>
-              <span v-else>${{ (quote?.price ?? 0).toFixed(2) }}</span>
+              <span v-else>{{ formattedPayableAmount }}</span>
             </span>
           </div>
-          <dl class="mt-3 grid grid-cols-3 gap-2 border-t border-gray-200 pt-3 text-center dark:border-dark-700">
+          <dl class="mt-3 grid grid-cols-2 gap-2 border-t border-gray-200 pt-3 text-center dark:border-dark-700 sm:grid-cols-4">
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.unitPrice') }}</dt>
-              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">×{{ (quote?.unit_price ?? 0).toFixed(2) }}</dd>
+              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">×{{ (quote?.unit_price ?? 0).toFixed(4) }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.concurrency') }}</dt>
+              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">{{ subscriptionConcurrency }}</dd>
             </div>
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.weeklyCap') }}</dt>
@@ -108,7 +111,6 @@
               <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">${{ (quote?.monthly_cap_usd ?? 0).toFixed(2) }}</dd>
             </div>
           </dl>
-          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.capHint') }}</p>
         </template>
       </div>
 
@@ -131,11 +133,22 @@ import subscriptionsAPI, {
   type SubscriptionPricingBounds,
   type SubscriptionQuote
 } from '@/api/subscriptions'
+import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 
 const emit = defineEmits<{
   // 购买意向：把校验过的 D/T 与当前报价交给父组件去走下单流程（订单创建/支付）。
   (e: 'purchase', payload: { dailyAmountUsd: number; validityDays: number; quote: SubscriptionQuote }): void
 }>()
+
+const props = withDefaults(defineProps<{
+  paymentCurrency?: string
+  subscriptionPaymentMultiplier?: number
+  locale?: string
+}>(), {
+  paymentCurrency: 'CNY',
+  subscriptionPaymentMultiplier: 1,
+  locale: undefined,
+})
 
 const { t } = useI18n()
 
@@ -149,12 +162,49 @@ const quoteError = ref(false)
 
 let quoteTimer: ReturnType<typeof setTimeout> | null = null
 let quoteSeq = 0 // 防抖 + 乱序保护：只采用最新一次请求的结果
+const dailyAmountStep = 30
+const concurrencyUnitUSD = 10
 
 // 有效期步长：T 必须为该值整数倍（按整月购买）；后端缺省/旧响应回退 30。
 const tStep = computed(() => {
   const s = pricing.value?.t_step
   return s && s > 0 ? s : 30
 })
+
+const paymentCurrency = computed(() => normalizePaymentCurrency(props.paymentCurrency))
+const subscriptionPaymentMultiplier = computed(() =>
+  props.subscriptionPaymentMultiplier > 0 ? props.subscriptionPaymentMultiplier : 1
+)
+const payableAmount = computed(() =>
+  ceilPaymentAmount((quote.value?.price ?? 0) / subscriptionPaymentMultiplier.value, paymentCurrency.value)
+)
+const formattedPayableAmount = computed(() =>
+  formatPaymentAmount(payableAmount.value, paymentCurrency.value, props.locale)
+)
+
+const validityOptions = computed(() => {
+  const options = [
+    { days: 30, label: t('subscriptionPurchase.validityMonth') },
+    { days: 90, label: t('subscriptionPurchase.validityQuarter') },
+    { days: 180, label: t('subscriptionPurchase.validityHalfYear') },
+    { days: 360, label: t('subscriptionPurchase.validityYear') },
+  ]
+  if (!pricing.value) return options.map(option => ({ ...option, disabled: true }))
+  return options.map(option => ({
+    ...option,
+    disabled: option.days < pricing.value!.t_min || option.days > pricing.value!.t_max || option.days % tStep.value !== 0,
+  }))
+})
+
+const dailyAmountMin = computed(() => {
+  if (!pricing.value) return dailyAmountStep
+  return Math.max(dailyAmountStep, Math.ceil(pricing.value.d_min / dailyAmountStep) * dailyAmountStep)
+})
+const dailyAmountMax = computed(() => {
+  if (!pricing.value) return dailyAmountStep
+  return Math.max(dailyAmountMin.value, Math.floor(pricing.value.d_max / dailyAmountStep) * dailyAmountStep)
+})
+const subscriptionConcurrency = computed(() => Math.max(1, Math.ceil(dailyAmount.value / concurrencyUnitUSD)))
 
 function clamp(v: number, lo: number, hi: number): number {
   if (Number.isNaN(v)) return lo
@@ -173,8 +223,14 @@ function snapValidity(v: number): number {
 // 输入框失焦/回车时把越界值夹回允许范围（滑块本身已受 min/max/step 约束）。
 function clampInputs() {
   if (!pricing.value) return
-  dailyAmount.value = clamp(dailyAmount.value, pricing.value.d_min, pricing.value.d_max)
+  dailyAmount.value = snapDailyAmount(dailyAmount.value)
   validityDays.value = snapValidity(validityDays.value)
+}
+
+function snapDailyAmount(v: number): number {
+  if (!pricing.value) return v
+  const snapped = Math.round(v / dailyAmountStep) * dailyAmountStep
+  return clamp(snapped, dailyAmountMin.value, dailyAmountMax.value)
 }
 
 async function refreshQuote() {
@@ -213,9 +269,9 @@ onMounted(async () => {
   try {
     const bounds = await subscriptionsAPI.getSubscriptionPricing()
     pricing.value = bounds
-    // 合理默认：每日额度取区间内偏低档（贴近 d_min 的整数），有效期取最短可买（t_min，吸附到整月）。
-    dailyAmount.value = clamp(Math.max(bounds.d_min, 2), bounds.d_min, bounds.d_max)
-    validityDays.value = snapValidity(bounds.t_min)
+    // 合理默认：每日额度从 30 刀档起，有效期默认单月；若后端区间不含 30 天则取可用的第一档。
+    dailyAmount.value = snapDailyAmount(dailyAmountMin.value)
+    validityDays.value = validityOptions.value.find(option => !option.disabled)?.days ?? snapValidity(bounds.t_min)
     await refreshQuote()
   } catch {
     loadError.value = true

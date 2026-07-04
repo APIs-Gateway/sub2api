@@ -357,6 +357,61 @@ func TestPaymentSubscriptionFulfillment_CreatesThreeWindowCardAndBillsPostgres(t
 	require.InDelta(t, 1000, gotUser.Balance, 1e-9)
 }
 
+func TestUsageBilling_ActiveSubscriptionCoversAnyAPIKeyGroupBeforeWalletPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	paymentSvc := makePaymentServiceForSubscriptionIntegration(t)
+	billingRepo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:   fmt.Sprintf("single-card-any-group-%s@example.com", uuid.NewString()),
+		Balance: 1000,
+	})
+	subGroup := mustCreateGroup(t, client, &service.Group{
+		Name:     "single-card-any-group-sub-" + uuid.NewString(),
+		Platform: service.PlatformAnthropic,
+	})
+	apiKeyGroup := mustCreateGroup(t, client, &service.Group{
+		Name:     "single-card-any-group-key-" + uuid.NewString(),
+		Platform: service.PlatformOpenAI,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID:  user.ID,
+		GroupID: &apiKeyGroup.ID,
+		Key:     "sk-single-card-any-group-" + uuid.NewString(),
+		Name:    "single-card-any-group",
+	})
+	orderID := createPaidSubscriptionOrderForIntegration(t, client, user, subGroup.ID, 30, 30)
+
+	require.NoError(t, paymentSvc.ExecuteSubscriptionFulfillment(ctx, orderID))
+	sub, err := NewUserSubscriptionRepository(client).GetActiveByUserID(ctx, user.ID)
+	require.NoError(t, err)
+	require.NotEqual(t, subGroup.ID, apiKeyGroup.ID)
+
+	result, err := billingRepo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:      uuid.NewString(),
+		APIKeyID:       apiKey.ID,
+		UserID:         user.ID,
+		OfficialCost:   5,
+		RateMultiplier: 2,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.NotNil(t, result.SubscriptionID)
+	require.Equal(t, sub.ID, *result.SubscriptionID)
+	require.NotNil(t, result.WalletDebit)
+	require.InDelta(t, 0, *result.WalletDebit, 1e-9, "套餐必须先于钱包覆盖任意分组请求")
+
+	gotSub, err := NewUserSubscriptionRepository(client).GetByID(ctx, sub.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 5, gotSub.DailyUsageUSD, 1e-9)
+	require.InDelta(t, 5, gotSub.WeeklyUsageUSD, 1e-9)
+	require.InDelta(t, 5, gotSub.MonthlyUsageUSD, 1e-9)
+	gotUser, err := client.User.Get(ctx, user.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 1000, gotUser.Balance, 1e-9)
+}
+
 func TestPaymentSubscriptionFulfillment_CustomOrderCreatesNoGroupThreeWindowCardPostgres(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -367,7 +422,7 @@ func TestPaymentSubscriptionFulfillment_CustomOrderCreatesNoGroupThreeWindowCard
 		Balance: 1000,
 	})
 
-	const dailyAmount = 7.5
+	const dailyAmount = 30.0
 	const validityDays = 30
 	quote, err := service.DefaultSubscriptionPricingConfig().Quote(dailyAmount, validityDays)
 	require.NoError(t, err)

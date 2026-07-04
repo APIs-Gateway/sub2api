@@ -33,6 +33,7 @@ export interface PaymentConfig {
   order_timeout_minutes: number
   balance_disabled: boolean
   balance_recharge_multiplier: number
+  subscription_payment_multiplier: number
   enabled_payment_types: PaymentType[]
   help_image_url: string
   help_text: string
@@ -63,14 +64,26 @@ export interface CheckoutInfoResponse {
   global_min: number
   global_max: number
   plans: SubscriptionPlan[]
+  subscription_groups: SubscriptionCheckoutGroup[]
   balance_disabled: boolean
   balance_recharge_multiplier: number
+  subscription_payment_multiplier: number
   recharge_fee_rate: number
+  refund_fee_rate: number
   help_text: string
   help_image_url: string
   stripe_publishable_key: string
   /** When true, Alipay payments on mobile always show the QR code instead of redirecting */
   alipay_force_qrcode?: boolean
+}
+
+export interface SubscriptionCheckoutGroup {
+  id: number
+  name: string
+  description?: string
+  platform: string
+  rate_multiplier: number
+  supported_model_scopes?: string[]
 }
 
 // ==================== Orders ====================
@@ -160,6 +173,7 @@ export interface CreateOrderRequest {
   payment_type: string
   order_type: string
   plan_id?: number
+  group_id?: number
   // 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T；与 plan_id 互斥，后端按 u(D) 公式自算价。
   daily_amount_usd?: number
   validity_days?: number

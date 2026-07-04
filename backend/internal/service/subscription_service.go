@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -11,9 +12,11 @@ import (
 
 	"entgo.io/ent/dialect"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -359,7 +362,10 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 		if err := s.enforceSingleActiveSubscription(txCtx, input.UserID, startDay); err != nil {
 			return err
 		}
-		return s.userSubRepo.Create(txCtx, sub)
+		if err := s.userSubRepo.Create(txCtx, sub); err != nil {
+			return err
+		}
+		return s.bumpUserConcurrencyForSubscription(txCtx, input.UserID, dailyAmount)
 	}); err != nil {
 		return nil, err
 	}
@@ -370,6 +376,34 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 
 	// 重新获取完整订阅信息（包含关联）
 	return s.userSubRepo.GetByID(ctx, sub.ID)
+}
+
+func subscriptionConcurrencyForDailyAmount(dailyAmount float64) int {
+	if dailyAmount <= 0 || math.IsNaN(dailyAmount) || math.IsInf(dailyAmount, 0) {
+		return 0
+	}
+	return int(math.Ceil(dailyAmount / 10))
+}
+
+func (s *SubscriptionService) bumpUserConcurrencyForSubscription(ctx context.Context, userID int64, dailyAmount float64) error {
+	target := subscriptionConcurrencyForDailyAmount(dailyAmount)
+	if target <= 0 || s.userRepo == nil {
+		return nil
+	}
+	u, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if u.Concurrency >= target {
+		return nil
+	}
+	if err := s.userRepo.UpdateConcurrency(ctx, userID, target-u.Concurrency); err != nil {
+		return err
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
+	}
+	return nil
 }
 
 func (s *SubscriptionService) enforceSingleActiveSubscription(ctx context.Context, userID int64, today int) error {
@@ -933,6 +967,7 @@ func (s *SubscriptionService) ListGroupSubscriptions(ctx context.Context, groupI
 	}
 	normalizeExpiredWindows(subs)
 	normalizeSubscriptionStatus(subs)
+	s.attachRefundInfo(ctx, subs)
 	return subs, pag, nil
 }
 
@@ -945,7 +980,78 @@ func (s *SubscriptionService) List(ctx context.Context, page, pageSize int, user
 	}
 	normalizeExpiredWindows(subs)
 	normalizeSubscriptionStatus(subs)
+	s.attachRefundInfo(ctx, subs)
 	return subs, pag, nil
+}
+
+func (s *SubscriptionService) attachRefundInfo(ctx context.Context, subs []UserSubscription) {
+	if s == nil || s.entClient == nil || len(subs) == 0 {
+		return
+	}
+
+	userIDs := make([]int64, 0, len(subs))
+	subByID := make(map[int64]*UserSubscription, len(subs))
+	seenUsers := make(map[int64]struct{}, len(subs))
+	for i := range subs {
+		sub := &subs[i]
+		subByID[sub.ID] = sub
+		if _, ok := seenUsers[sub.UserID]; ok {
+			continue
+		}
+		seenUsers[sub.UserID] = struct{}{}
+		userIDs = append(userIDs, sub.UserID)
+	}
+	if len(userIDs) == 0 {
+		return
+	}
+
+	orders, err := s.entClient.PaymentOrder.Query().
+		Where(
+			paymentorder.UserIDIn(userIDs...),
+			paymentorder.OrderTypeEQ(payment.OrderTypeSubscription),
+			paymentorder.StatusIn(OrderStatusCompleted, OrderStatusRefundFailed),
+		).
+		Order(dbent.Desc(paymentorder.FieldID)).
+		All(ctx)
+	if err != nil {
+		return
+	}
+
+	today := TodayEastDayNumber()
+	for _, order := range orders {
+		subID, ok := readSubscriptionSnapshotSubscriptionID(order)
+		if !ok || subID <= 0 {
+			continue
+		}
+		sub := subByID[subID]
+		if sub == nil || sub.RefundOrderID != nil {
+			continue
+		}
+		originalDays, err := subscriptionOrderOriginalDays(order)
+		if err != nil {
+			continue
+		}
+		card := sub.ToPerDayCard()
+		refundable := RefundAmount(order.Amount, card.RefundableDays(today), originalDays)
+		if refundable <= 0 {
+			continue
+		}
+		orderID := order.ID
+		orderAmount := order.Amount
+		orderPay := order.PayAmount
+		refundableAmount := math.Ceil(refundable*100) / 100
+		sub.RefundOrderID = &orderID
+		sub.RefundOrderStatus = order.Status
+		sub.RefundOrderAmount = &orderAmount
+		sub.RefundOrderPay = &orderPay
+		sub.RefundableAmount = &refundableAmount
+	}
+}
+
+// PopulateAdminRefundInfo enriches admin subscription DTO sources with the latest refundable
+// paid subscription order. User-facing DTO mappers intentionally ignore these fields.
+func (s *SubscriptionService) PopulateAdminRefundInfo(ctx context.Context, subs []UserSubscription) {
+	s.attachRefundInfo(ctx, subs)
 }
 
 // normalizeExpiredWindows 将已过期窗口的数据清零（仅影响返回数据，不影响数据库）

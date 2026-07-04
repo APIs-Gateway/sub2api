@@ -290,6 +290,8 @@ func (h *SubscriptionHandler) ListByGroup(c *gin.Context) {
 		return
 	}
 
+	h.subscriptionService.PopulateAdminRefundInfo(c.Request.Context(), subscriptions)
+
 	out := make([]dto.AdminUserSubscription, 0, len(subscriptions))
 	for i := range subscriptions {
 		out = append(out, *dto.UserSubscriptionFromServiceAdmin(&subscriptions[i]))

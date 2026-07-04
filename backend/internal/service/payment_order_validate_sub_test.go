@@ -18,7 +18,7 @@ func TestValidateSubOrder_RejectsZeroDailyAmountPlan(t *testing.T) {
 	client := newPaymentConfigServiceTestClient(t)
 	cfg := &PaymentConfigService{entClient: client}
 	groupRepo := &subscriptionGroupRepoStub{group: &Group{ID: 1, Status: payment.EntityStatusActive}}
-	svc := &PaymentService{configService: cfg, groupRepo: groupRepo}
+	svc := &PaymentService{configService: cfg, groupRepo: groupRepo, subscriptionSvc: &SubscriptionService{}}
 
 	// 经 ent 直接造一张 D=0 的在售套餐，绕过 CreatePlan 的 D>0 校验，模拟迁移155回填的存量脏数据。
 	zeroPlan, err := client.SubscriptionPlan.Create().

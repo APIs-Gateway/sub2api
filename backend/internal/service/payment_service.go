@@ -83,6 +83,7 @@ type CreateOrderRequest struct {
 	PaymentSource   string
 	OrderType       string
 	PlanID          int64
+	GroupID         int64
 	// 自定义订阅购买（无固定套餐）：每日额度 D + 有效期 T；与 PlanID 互斥，后端按 u(D) 公式定价。
 	DailyAmountUSD float64
 	ValidityDays   int
@@ -130,6 +131,9 @@ type RefundPlan struct {
 	OrderID                    int64
 	Order                      *dbent.PaymentOrder
 	RefundAmount               float64
+	GatewayBaseAmount          float64
+	RefundFeeRate              float64
+	RefundFeeAmount            float64
 	GatewayAmount              float64
 	Reason                     string
 	Force                      bool
@@ -150,17 +154,10 @@ type RefundResult struct {
 	RequireForce    bool    `json:"require_force,omitempty"`
 	BalanceDeducted float64 `json:"balance_deducted,omitempty"`
 	SubDaysDeducted int     `json:"subscription_days_deducted,omitempty"`
-	// RefundRequested 表示订单被置为「待退款」而非即时退款(如 easypay/Kyren:网关退款 API 不支持,
-	// 需在 Kyren 控制台手动退款,生效后由 order.refunded webhook 关卡对账)。
-	RefundRequested bool   `json:"refund_requested,omitempty"`
-	Message         string `json:"message,omitempty"`
-	// 待退款时给管理员的【建议应退额】(供其据此在 Kyren 控制台退款):订阅单按剩余服务天数比例折算
-	// (已含透支借天扣减、夹到本单 T);USD=系统官方口径,Gateway=网关币种(管理员实退口径)。充值单=订单全额。
-	SuggestedRefundUSD      float64 `json:"suggested_refund_usd,omitempty"`
-	SuggestedRefundGateway  float64 `json:"suggested_refund_gateway,omitempty"`
-	SuggestedRefundCurrency string  `json:"suggested_refund_currency,omitempty"`
-	RefundableDays          int     `json:"refundable_days,omitempty"` // 剩余可退天数(订阅单)
-	OriginalDays            int     `json:"original_days,omitempty"`   // 本单原始有效天数 T(订阅单)
+	GatewayAmount   float64 `json:"gateway_amount,omitempty"`
+	RefundFeeRate   float64 `json:"refund_fee_rate,omitempty"`
+	RefundFeeAmount float64 `json:"refund_fee_amount,omitempty"`
+	Message         string  `json:"message,omitempty"`
 }
 
 type DashboardStats struct {
