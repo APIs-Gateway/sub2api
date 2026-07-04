@@ -30,7 +30,8 @@ func TestCalculateProgress_BasicFields(t *testing.T) {
 		Name: "Premium",
 	}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	assert.Equal(t, int64(100), progress.ID)
 	assert.Equal(t, "Premium", progress.GroupName)
@@ -39,6 +40,32 @@ func TestCalculateProgress_BasicFields(t *testing.T) {
 	assert.Nil(t, progress.Daily, "无日限额时 Daily 应为 nil")
 	assert.Nil(t, progress.Weekly, "无周限额时 Weekly 应为 nil")
 	assert.Nil(t, progress.Monthly, "无月限额时 Monthly 应为 nil")
+}
+
+func TestCalculateProgress_NoGroupCard(t *testing.T) {
+	svc := newTestSubscriptionService()
+	now := time.Now()
+	dailyStart := timezone.StartOfDay(now)
+
+	sub := &UserSubscription{
+		ID:               101,
+		GroupID:          0,
+		ExpiresAt:        now.Add(7 * 24 * time.Hour),
+		DailyUsageUSD:    2,
+		DailyWindowStart: ptrTime(dailyStart),
+		DailyLimitUSD:    ptrFloat64(30),
+		DailyAmountUSD:   30,
+		GrantedTotalUSD:  210,
+	}
+
+	progress := svc.calculateProgress(sub)
+
+	assert.Equal(t, int64(101), progress.ID)
+	assert.Equal(t, "All groups", progress.GroupName)
+	require.NotNil(t, progress.Daily)
+	assert.Equal(t, 30.0, progress.Daily.LimitUSD)
+	require.NotNil(t, progress.Burndown)
+	assert.Equal(t, 30.0, progress.Burndown.DailyAmountUSD)
 }
 
 func TestCalculateProgress_DailyUsage(t *testing.T) {
@@ -57,7 +84,8 @@ func TestCalculateProgress_DailyUsage(t *testing.T) {
 		Name: "Pro",
 	}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	require.NotNil(t, progress.Daily, "有日限额和窗口时 Daily 不应为 nil")
 	assert.Equal(t, 10.0, progress.Daily.LimitUSD)
@@ -88,7 +116,8 @@ func TestCalculateProgress_IgnoresLegacyGroupLimits(t *testing.T) {
 		MonthlyLimitUSD: ptrFloat64(300.0),
 	}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	assert.Nil(t, progress.Daily, "三窗口限额必须来自订阅卡，不能回退 group.daily_limit_usd")
 	assert.Nil(t, progress.Weekly, "三窗口限额必须来自订阅卡，不能回退 group.weekly_limit_usd")
@@ -114,7 +143,8 @@ func TestCalculateProgress_DailyCardUsesNaturalWindowReset(t *testing.T) {
 		Name: "Daily",
 	}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	require.NotNil(t, progress.Daily, "日卡有日限额和窗口时 Daily 不应为 nil")
 	assert.Equal(t, dailyStart.Add(24*time.Hour), progress.Daily.ResetsAt, "三窗口日额度按自然日窗口重置")
@@ -138,7 +168,8 @@ func TestCalculateProgress_WeeklyUsage(t *testing.T) {
 		Name: "Pro",
 	}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	require.NotNil(t, progress.Weekly, "有周限额和窗口时 Weekly 不应为 nil")
 	assert.Equal(t, 50.0, progress.Weekly.LimitUSD)
@@ -164,7 +195,8 @@ func TestCalculateProgress_MonthlyUsage(t *testing.T) {
 		Name: "Enterprise",
 	}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	require.NotNil(t, progress.Monthly, "有月限额和窗口时 Monthly 不应为 nil")
 	assert.Equal(t, 100.0, progress.Monthly.LimitUSD)
@@ -189,7 +221,8 @@ func TestCalculateProgress_OverLimit_ClampedTo100Percent(t *testing.T) {
 		Name: "Pro",
 	}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	require.NotNil(t, progress.Daily)
 	assert.Equal(t, 100.0, progress.Daily.Percentage, "超额使用应被截断为 100%")
@@ -214,7 +247,8 @@ func TestCalculateProgress_NoWindowStart_NoProgress(t *testing.T) {
 		Name: "Pro",
 	}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	require.NotNil(t, progress.Daily, "展示层会惰性补齐当前自然日窗口")
 	require.NotNil(t, progress.Weekly, "展示层会惰性补齐当前自然周窗口")
@@ -248,7 +282,8 @@ func TestCalculateProgress_AllLimits(t *testing.T) {
 		Name: "Full",
 	}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	require.NotNil(t, progress.Daily)
 	require.NotNil(t, progress.Weekly)
@@ -268,7 +303,8 @@ func TestCalculateProgress_ExpiredSubscription(t *testing.T) {
 	}
 	group := &Group{Name: "Expired"}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	assert.Equal(t, 0, progress.ExpiresInDays, "过期订阅的剩余天数应为 0")
 }
@@ -289,7 +325,8 @@ func TestCalculateProgress_ResetsInSeconds_NotNegative(t *testing.T) {
 		Name: "Test",
 	}
 
-	progress := svc.calculateProgress(sub, group)
+	sub.Group = group
+	progress := svc.calculateProgress(sub)
 
 	require.NotNil(t, progress.Daily)
 	assert.GreaterOrEqual(t, progress.Daily.ResetsInSeconds, int64(0),

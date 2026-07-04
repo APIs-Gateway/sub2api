@@ -41,9 +41,9 @@ func NewSubscriptionHandler(subscriptionService *service.SubscriptionService) *S
 // AssignSubscriptionRequest represents assign subscription request
 type AssignSubscriptionRequest struct {
 	UserID       int64 `json:"user_id" binding:"required"`
-	GroupID      int64 `json:"group_id" binding:"required"`
+	GroupID      int64 `json:"group_id" binding:"omitempty,min=0"`
 	ValidityDays int   `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
-	// DailyAmountUSD per-day 每日额度 D；省略/0 时回退所挂 group 的 daily_limit_usd。
+	// DailyAmountUSD per-day 每日额度 D；无 group 的管理端分配必须提供。
 	DailyAmountUSD float64 `json:"daily_amount_usd" binding:"omitempty,min=0"`
 	Notes          string  `json:"notes"`
 }
@@ -51,9 +51,9 @@ type AssignSubscriptionRequest struct {
 // BulkAssignSubscriptionRequest represents bulk assign subscription request
 type BulkAssignSubscriptionRequest struct {
 	UserIDs      []int64 `json:"user_ids" binding:"required,min=1"`
-	GroupID      int64   `json:"group_id" binding:"required"`
+	GroupID      int64   `json:"group_id" binding:"omitempty,min=0"`
 	ValidityDays int     `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
-	// DailyAmountUSD per-day 每日额度 D；省略/0 时回退所挂 group 的 daily_limit_usd。
+	// DailyAmountUSD per-day 每日额度 D；无 group 的管理端分配必须提供。
 	DailyAmountUSD float64 `json:"daily_amount_usd" binding:"omitempty,min=0"`
 	Notes          string  `json:"notes"`
 }
@@ -68,26 +68,21 @@ type AdjustSubscriptionRequest struct {
 func (h *SubscriptionHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 
-	// Parse optional filters
-	var userID, groupID *int64
+	// Parse optional filters. Subscription cards are no longer grouped; group/platform
+	// filters are intentionally ignored on the main list to avoid hiding no-group cards.
+	var userID *int64
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
 			userID = &id
 		}
 	}
-	if groupIDStr := c.Query("group_id"); groupIDStr != "" {
-		if id, err := strconv.ParseInt(groupIDStr, 10, 64); err == nil {
-			groupID = &id
-		}
-	}
 	status := c.Query("status")
-	platform := c.Query("platform")
 
 	// Parse sorting parameters
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
 
-	subscriptions, pagination, err := h.subscriptionService.List(c.Request.Context(), page, pageSize, userID, groupID, status, platform, sortBy, sortOrder)
+	subscriptions, pagination, err := h.subscriptionService.List(c.Request.Context(), page, pageSize, userID, nil, status, "", sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

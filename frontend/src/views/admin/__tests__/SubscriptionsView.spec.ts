@@ -40,6 +40,30 @@ vi.mock('vue-i18n', async () => {
     ...actual,
     useI18n: () => ({
       t: (key: string, params?: Record<string, number>) => {
+        if (key === 'admin.subscriptions.plan.nameWithDays') {
+          return `订阅 ${params?.daily} / 天，共 ${params?.days} 天`
+        }
+        if (key === 'admin.subscriptions.plan.name') {
+          return `订阅 ${params?.daily} / 天`
+        }
+        if (key === 'admin.subscriptions.plan.dailyAmount') {
+          return '每日额度'
+        }
+        if (key === 'admin.subscriptions.plan.remaining') {
+          return '剩余'
+        }
+        if (key === 'admin.subscriptions.plan.total') {
+          return '总额'
+        }
+        if (key === 'admin.subscriptions.daily') {
+          return '每日'
+        }
+        if (key === 'admin.subscriptions.weekly') {
+          return '每周'
+        }
+        if (key === 'admin.subscriptions.monthly') {
+          return '每月'
+        }
         if (key === 'admin.subscriptions.burndown.servedToDay') {
           return `已服务第 ${params?.day} / ${params?.total} 天`
         }
@@ -56,8 +80,13 @@ const DataTableStub = {
   props: ['data'],
   template: `
     <div>
-      <div v-for="row in data" :key="row.id" data-test="usage-cell">
-        <slot name="cell-usage" :row="row" />
+      <div v-for="row in data" :key="row.id" data-test="subscription-row">
+        <div data-test="plan-cell">
+          <slot name="cell-plan" :row="row" />
+        </div>
+        <div data-test="usage-cell">
+          <slot name="cell-usage" :row="row" />
+        </div>
       </div>
     </div>
   `
@@ -162,5 +191,69 @@ describe('admin SubscriptionsView burn-down progress', () => {
     expect(text).toContain('已服务第 0 / 30 天')
     expect(text).toContain('已消费 0 天额度')
     expect(text).not.toContain('已用到第')
+  })
+
+  it('lists subscriptions without group or platform filters and renders plan details from card fields', async () => {
+    listSubscriptions.mockResolvedValue({
+      items: [
+        subscription({
+          id: 102,
+          group_id: null,
+          group: undefined,
+          daily_amount_usd: 0,
+          daily_limit_usd: 30,
+          weekly_limit_usd: 210,
+          monthly_limit_usd: 900,
+          daily_usage_usd: 12,
+          weekly_usage_usd: 40,
+          monthly_usage_usd: 80,
+          granted_total_usd: 0,
+          remaining_usd: null
+        })
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mount(SubscriptionsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          BaseDialog: true,
+          ConfirmDialog: true,
+          EmptyState: true,
+          Select: true,
+          GroupBadge: true,
+          GroupOptionItem: true,
+          Icon: true,
+          Teleport: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getAllGroups).not.toHaveBeenCalled()
+    expect(listSubscriptions).toHaveBeenCalledWith(
+      1,
+      expect.any(Number),
+      expect.not.objectContaining({
+        group_id: expect.anything(),
+        platform: expect.anything()
+      }),
+      expect.any(Object)
+    )
+    expect(wrapper.text()).toContain('订阅 30.00 / 天')
+    expect(wrapper.text()).toContain('每日额度 $30.00')
+    expect(wrapper.text()).toContain('$12.00')
+    expect(wrapper.text()).toContain('$210.00')
+    expect(wrapper.text()).toContain('$900.00')
   })
 })

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net/http"
 	"strconv"
 	"testing"
 	"time"
@@ -225,6 +226,35 @@ func (s *subscriptionUserSubRepoStub) GetByID(_ context.Context, id int64) (*Use
 	return &cp, nil
 }
 
+func (s *subscriptionUserSubRepoStub) GetActiveByUserID(_ context.Context, userID int64) (*UserSubscription, error) {
+	for _, sub := range s.byID {
+		if sub.UserID == userID && sub.Status == SubscriptionStatusActive {
+			cp := *sub
+			return &cp, nil
+		}
+	}
+	return nil, ErrSubscriptionNotFound
+}
+
+func (s *subscriptionUserSubRepoStub) ListActiveByUserID(_ context.Context, userID int64) ([]UserSubscription, error) {
+	out := make([]UserSubscription, 0)
+	for _, sub := range s.byID {
+		if sub.UserID == userID && sub.Status == SubscriptionStatusActive {
+			out = append(out, *sub)
+		}
+	}
+	return out, nil
+}
+
+func (s *subscriptionUserSubRepoStub) UpdateNotes(_ context.Context, id int64, notes string) error {
+	sub := s.byID[id]
+	if sub == nil {
+		return ErrSubscriptionNotFound
+	}
+	sub.Notes = notes
+	return nil
+}
+
 func (s *subscriptionUserSubRepoStub) Update(_ context.Context, sub *UserSubscription) error {
 	if sub == nil {
 		return ErrSubscriptionNilInput
@@ -442,6 +472,25 @@ func TestAssignSubscription_GroupTypeNotValidated(t *testing.T) {
 	require.NotNil(t, sub.MonthlyWindowStart)
 }
 
+// per-day：新管理端分配不再需要订阅分组；只要给出每日额度 D，就创建 group_id=NULL/0 的全分组通用卡。
+func TestAssignSubscription_NoGroupWithDailyAmount_CreatesCustomCard(t *testing.T) {
+	subRepo := newSubscriptionUserSubRepoStub()
+	svc := NewSubscriptionService(groupRepoNoop{}, subRepo, nil, nil, nil, nil, nil, nil)
+
+	sub, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
+		UserID:         1,
+		ValidityDays:   30,
+		DailyAmountUSD: 12.5,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, sub)
+	require.Equal(t, int64(0), sub.GroupID)
+	require.InDelta(t, 12.5, sub.DailyAmountUSD, 1e-9)
+	require.InDelta(t, 12.5, sub.TodayRemaining, 1e-9)
+	require.InDelta(t, 375, sub.GrantedTotalUSD, 1e-9)
+	require.Equal(t, 1, subRepo.createCalls)
+}
+
 // 无 input.DailyAmountUSD 且 group 无有效 daily_limit_usd → 报错，绝不建 D=0 的 active 卡。
 func TestAssignSubscription_NoDailyAmountNoGroupFallback_Errors(t *testing.T) {
 	groupRepo := &subscriptionGroupRepoStub{
@@ -459,6 +508,19 @@ func TestAssignSubscription_NoDailyAmountNoGroupFallback_Errors(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, infraerrors.Code(ErrInvalidDailyAmount), infraerrors.Code(err))
 	require.Equal(t, 0, subRepo.createCalls, "不应建任何卡")
+}
+
+func TestAssignSubscription_NoGroupNoDailyAmount_Errors(t *testing.T) {
+	subRepo := newSubscriptionUserSubRepoStub()
+	svc := NewSubscriptionService(groupRepoNoop{}, subRepo, nil, nil, nil, nil, nil, nil)
+
+	_, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
+		UserID:       1,
+		ValidityDays: 30,
+	})
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, infraerrors.Code(err))
+	require.Equal(t, 0, subRepo.createCalls, "无 group 且无 D 时不应建卡")
 }
 
 // Bulk 把 DailyAmountUSD 传播到每张卡：group 无 daily_limit 时仅靠 input.D 也能成功并落到卡字段。
@@ -494,6 +556,28 @@ func TestBulkAssignSubscription_PropagatesDailyAmount(t *testing.T) {
 	require.InDelta(t, 15, *any.DailyLimitUSD, 1e-9)
 	require.InDelta(t, 105, *any.WeeklyLimitUSD, 1e-9)
 	require.InDelta(t, 450, *any.MonthlyLimitUSD, 1e-9)
+}
+
+func TestBulkAssignSubscription_NoGroupWithDailyAmount_CreatesCustomCards(t *testing.T) {
+	subRepo := newSubscriptionUserSubRepoStub()
+	svc := NewSubscriptionService(groupRepoNoop{}, subRepo, nil, nil, nil, nil, nil, nil)
+
+	result, err := svc.BulkAssignSubscription(context.Background(), &BulkAssignSubscriptionInput{
+		UserIDs:        []int64{101, 102},
+		ValidityDays:   30,
+		DailyAmountUSD: 20,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, result.SuccessCount)
+	require.Equal(t, 2, result.CreatedCount)
+	require.Equal(t, 0, result.FailedCount)
+	require.Equal(t, 2, subRepo.createCalls)
+
+	for _, sub := range subRepo.byID {
+		require.Equal(t, int64(0), sub.GroupID)
+		require.InDelta(t, 20, sub.DailyAmountUSD, 1e-9)
+		require.InDelta(t, 600, sub.GrantedTotalUSD, 1e-9)
+	}
 }
 
 // Bulk 请求级参数错误（无 D 且 group 无 daily_limit 回退）应循环前直接返回错误（handler 转 400），

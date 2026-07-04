@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"entgo.io/ent/dialect"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
@@ -567,17 +568,53 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 		slog.Info("subscription already assigned for order, skipping", "orderID", o.ID, "groupID", gid)
 		return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
 	}
+
+	tx, err := s.entClient.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin subscription fulfill tx: %w", err)
+	}
+	txCtx := dbent.NewTxContext(ctx, tx)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	orderNote := fmt.Sprintf("payment order %d", o.ID)
-	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(ctx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, WeeklyLimitUSD: weeklyLimit, MonthlyLimitUSD: monthlyLimit, AssignedBy: 0, Notes: orderNote})
+	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, WeeklyLimitUSD: weeklyLimit, MonthlyLimitUSD: monthlyLimit, AssignedBy: 0, Notes: orderNote})
 	if err != nil {
 		return fmt.Errorf("assign subscription: %w", err)
 	}
 	if sub != nil {
-		if err := s.writeSubscriptionIDToOrderSnapshot(ctx, o, sub.ID); err != nil {
+		if err := s.writeSubscriptionIDToOrderSnapshot(txCtx, o, sub.ID); err != nil {
 			return fmt.Errorf("write subscription snapshot id: %w", err)
 		}
 	}
-	return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
+	c, err := s.entClientForCtx(txCtx).PaymentOrder.Update().
+		Where(paymentorder.IDEQ(o.ID), paymentorder.StatusEQ(OrderStatusRecharging)).
+		SetStatus(OrderStatusCompleted).SetCompletedAt(time.Now()).Save(txCtx)
+	if err != nil {
+		return fmt.Errorf("mark completed: %w", err)
+	}
+	if c == 0 {
+		return infraerrors.Conflict("CONFLICT", "order status changed during fulfillment")
+	}
+	s.writeAuditLog(txCtx, o.ID, "SUBSCRIPTION_SUCCESS", "system", map[string]any{
+		"rechargeCode":   o.RechargeCode,
+		"creditedAmount": o.Amount,
+		"payAmount":      o.PayAmount,
+	})
+	if err := s.applyAffiliateRebateForOrderInTx(txCtx, tx.Client(), o); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit subscription fulfill: %w", err)
+	}
+	committed = true
+
+	s.dispatchPaymentFulfillmentNotification(o, "SUBSCRIPTION_SUCCESS")
+	return nil
 }
 
 // doSubLifecycle 履约续费/转套餐订单（法币支付成功后）：按冻结快照的目标卡 ID + 新 D/T 执行，
@@ -661,6 +698,9 @@ func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrd
 		"payAmount":      o.PayAmount,
 		"intent":         intent,
 	})
+	if err := s.applyAffiliateRebateForOrderInTx(txCtx, tx.Client(), o); err != nil {
+		return err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit lifecycle fulfill: %w", err)
@@ -681,7 +721,8 @@ func (s *PaymentService) hasAuditLog(ctx context.Context, orderID int64, action 
 }
 
 func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *dbent.PaymentOrder) error {
-	if o == nil || o.OrderType != payment.OrderTypeBalance || o.Amount <= 0 {
+	_, ok := affiliateRebateBaseAmountForOrder(o)
+	if !ok {
 		return nil
 	}
 	if s.affiliateService == nil {
@@ -698,7 +739,38 @@ func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *db
 	defer func() { _ = tx.Rollback() }()
 
 	txCtx := dbent.NewTxContext(ctx, tx)
-	claimed, err := s.tryClaimAffiliateRebateAudit(txCtx, tx.Client(), o.ID, o.Amount)
+	if err := s.applyAffiliateRebateForOrderInTx(txCtx, tx.Client(), o); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func affiliateRebateBaseAmountForOrder(o *dbent.PaymentOrder) (float64, bool) {
+	if o == nil {
+		return 0, false
+	}
+	if o.OrderType != payment.OrderTypeBalance && o.OrderType != payment.OrderTypeSubscription {
+		return 0, false
+	}
+	if o.PayAmount > 0 {
+		return o.PayAmount, true
+	}
+	if o.Amount > 0 {
+		return o.Amount, true
+	}
+	return 0, false
+}
+
+func (s *PaymentService) applyAffiliateRebateForOrderInTx(ctx context.Context, client *dbent.Client, o *dbent.PaymentOrder) error {
+	baseAmount, ok := affiliateRebateBaseAmountForOrder(o)
+	if !ok {
+		return nil
+	}
+	if s.affiliateService == nil {
+		return nil
+	}
+
+	claimed, err := s.tryClaimAffiliateRebateAudit(ctx, client, o.ID, baseAmount)
 	if err != nil {
 		s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 			"error": err.Error(),
@@ -710,7 +782,7 @@ func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *db
 	}
 
 	sourceOrderID := o.ID
-	rebateAmount, err := s.affiliateService.AccrueInviteRebateForOrder(txCtx, o.UserID, o.Amount, &sourceOrderID)
+	rebateAmount, err := s.affiliateService.AccrueInviteRebateForOrder(ctx, o.UserID, baseAmount, &sourceOrderID)
 	if err != nil {
 		s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 			"error": err.Error(),
@@ -719,8 +791,9 @@ func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *db
 	}
 
 	if rebateAmount <= 0 {
-		if err := s.updateClaimedAffiliateRebateAudit(txCtx, tx.Client(), o.ID, "AFFILIATE_REBATE_SKIPPED", map[string]any{
-			"baseAmount": o.Amount,
+		if err := s.updateClaimedAffiliateRebateAudit(ctx, client, o.ID, "AFFILIATE_REBATE_SKIPPED", map[string]any{
+			"baseAmount": baseAmount,
+			"orderType":  o.OrderType,
 			"reason":     "no inviter bound or rebate amount <= 0",
 		}); err != nil {
 			s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
@@ -728,30 +801,18 @@ func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *db
 			})
 			return fmt.Errorf("update affiliate rebate skipped audit: %w", err)
 		}
-		if err := tx.Commit(); err != nil {
-			s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
-				"error": fmt.Sprintf("commit affiliate rebate tx: %v", err),
-			})
-			return fmt.Errorf("commit affiliate rebate tx: %w", err)
-		}
 		return nil
 	}
 
-	if err := s.updateClaimedAffiliateRebateAudit(txCtx, tx.Client(), o.ID, "AFFILIATE_REBATE_APPLIED", map[string]any{
-		"baseAmount":   o.Amount,
+	if err := s.updateClaimedAffiliateRebateAudit(ctx, client, o.ID, "AFFILIATE_REBATE_APPLIED", map[string]any{
+		"baseAmount":   baseAmount,
+		"orderType":    o.OrderType,
 		"rebateAmount": rebateAmount,
 	}); err != nil {
 		s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 			"error": err.Error(),
 		})
 		return fmt.Errorf("update affiliate rebate applied audit: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
-			"error": fmt.Sprintf("commit affiliate rebate tx: %v", err),
-		})
-		return fmt.Errorf("commit affiliate rebate tx: %w", err)
 	}
 	return nil
 }
@@ -765,17 +826,31 @@ func (s *PaymentService) tryClaimAffiliateRebateAudit(ctx context.Context, clien
 		"baseAmount": baseAmount,
 		"status":     "reserved",
 	})
-	rows, err := client.QueryContext(ctx, `
-INSERT INTO payment_audit_logs (order_id, action, detail, operator, created_at)
-SELECT $1::text, 'AFFILIATE_REBATE_APPLIED', $2::text, 'system', NOW()
-WHERE NOT EXISTS (
-	SELECT 1
+	query := `
+	INSERT INTO payment_audit_logs (order_id, action, detail, operator, created_at)
+	SELECT $1::text, 'AFFILIATE_REBATE_APPLIED', $2::text, 'system', NOW()
+	WHERE NOT EXISTS (
+		SELECT 1
 	FROM payment_audit_logs
-	WHERE order_id = $1::text
-	  AND action IN ('AFFILIATE_REBATE_APPLIED', 'AFFILIATE_REBATE_SKIPPED')
-)
-ON CONFLICT (order_id, action) DO NOTHING
-RETURNING id`, oid, string(detail))
+		WHERE order_id = $1::text
+		  AND action IN ('AFFILIATE_REBATE_APPLIED', 'AFFILIATE_REBATE_SKIPPED')
+	)
+	RETURNING id`
+	args := []any{oid, string(detail)}
+	if client.Driver() == nil || client.Driver().Dialect() != dialect.Postgres {
+		query = `
+	INSERT INTO payment_audit_logs (order_id, action, detail, operator, created_at)
+	SELECT ?, 'AFFILIATE_REBATE_APPLIED', ?, 'system', CURRENT_TIMESTAMP
+	WHERE NOT EXISTS (
+		SELECT 1
+		FROM payment_audit_logs
+		WHERE order_id = ?
+		  AND action IN ('AFFILIATE_REBATE_APPLIED', 'AFFILIATE_REBATE_SKIPPED')
+	)
+	RETURNING id`
+		args = []any{oid, string(detail), oid}
+	}
+	rows, err := client.QueryContext(ctx, query, args...)
 	if err != nil {
 		return false, err
 	}

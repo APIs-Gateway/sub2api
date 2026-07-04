@@ -58,8 +58,8 @@ export async function getById(id: number): Promise<RedeemCode> {
  * Generate new redeem codes
  * @param count - Number of codes to generate
  * @param type - Type of redeem code
- * @param value - Value of the code
- * @param groupId - Group ID (required for subscription type)
+ * @param value - Value of the code; for subscription codes this is daily amount USD
+ * @param groupId - Legacy subscription group ID
  * @param validityDays - Validity days (for subscription type)
  * @param expiresInDays - Days before the code itself expires
  * @returns Array of generated redeem codes
@@ -78,9 +78,9 @@ export async function generate(
     value
   }
 
-  // 订阅类型专用字段
+  // 订阅类型旧兼容字段：新订阅 CDK 不再需要 group_id
   if (type === 'subscription') {
-    payload.group_id = groupId
+    if (groupId != null) payload.group_id = groupId
     if (validityDays && validityDays > 0) {
       payload.validity_days = validityDays
     }

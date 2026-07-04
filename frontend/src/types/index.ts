@@ -1562,7 +1562,7 @@ export interface ChangePasswordRequest {
 export interface UserSubscription {
   id: number
   user_id: number
-  group_id: number
+  group_id: number | null
   status: 'active' | 'expired' | 'revoked'
   starts_at: string
   daily_usage_usd: number
@@ -1642,13 +1642,15 @@ export interface BurndownProgress {
 
 export interface AssignSubscriptionRequest {
   user_id: number
-  group_id: number
+  group_id?: number | null
+  daily_amount_usd?: number
   validity_days?: number
 }
 
 export interface BulkAssignSubscriptionRequest {
   user_ids: number[]
-  group_id: number
+  group_id?: number | null
+  daily_amount_usd?: number
   validity_days?: number
 }
 

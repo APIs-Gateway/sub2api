@@ -3053,7 +3053,7 @@ export default {
     // Subscriptions
     subscriptions: {
       title: 'Subscription Management',
-      description: 'Manage user subscriptions and quota limits',
+      description: 'Manage user subscription plans and quota',
       assignSubscription: 'Assign Subscription',
       adjustSubscription: 'Adjust Subscription',
       revokeSubscription: 'Revoke Subscription',
@@ -3091,7 +3091,7 @@ export default {
       },
       columns: {
         user: 'User',
-        group: 'Group',
+        plan: 'Plan',
         usage: 'Usage',
         expires: 'Expires',
         status: 'Status',
@@ -3099,13 +3099,20 @@ export default {
       },
       form: {
         user: 'User',
-        group: 'Subscription Group',
+        dailyAmount: 'Daily Amount (USD / day)',
         validityDays: 'Validity (Days)',
         adjustDays: 'Adjust by (Days)'
       },
+      plan: {
+        custom: 'Custom plan',
+        name: 'Daily ${daily}',
+        nameWithDays: 'Daily ${daily} / {days} days',
+        dailyAmount: 'Daily amount',
+        remaining: 'Remaining',
+        total: 'Total'
+      },
       selectUser: 'Select a user',
-      selectGroup: 'Select a subscription group',
-      groupHint: 'Only groups with subscription billing type are shown',
+      dailyAmountHint: 'Subscriptions are available across all groups; this sets the USD quota per day for this card',
       validityHint: 'Number of days the subscription will be valid',
       adjustingFor: 'Adjusting subscription for',
       currentExpiration: 'Current expiration',
@@ -3133,26 +3140,25 @@ export default {
       adjustWouldExpire: 'Remaining days after adjustment must be greater than 0',
       adjustOutOfRange: 'Adjustment days must be between -36500 and 36500',
       pleaseSelectUser: 'Please select a user',
-      pleaseSelectGroup: 'Please select a group',
+      dailyAmountRequired: 'Please enter a valid daily amount',
       validityDaysRequired: 'Please enter a valid number of days (at least 1)',
       revokeConfirm:
         "Are you sure you want to revoke the subscription for '{user}'? This action cannot be undone.",
       guide: {
         title: 'Subscription Management Guide',
-        subtitle: 'Subscription mode lets you assign time-based usage quotas to users, with daily/weekly/monthly limits. Follow these steps to get started.',
+        subtitle: 'Subscription plans are quota cards shared across all groups. Set the daily amount and validity period.',
         showGuide: 'Usage Guide',
         step1: {
-          title: 'Create a Subscription Group',
-          line1: 'Go to "Group Management" page, click "Create Group"',
-          line2: 'Set billing type to "Subscription", configure daily/weekly/monthly quota limits',
-          line3: 'Save the group and ensure its status is "Active"',
-          link: 'Go to Group Management'
+          title: 'Choose Plan Parameters',
+          line1: 'Daily amount controls how much USD quota the user can spend per day',
+          line2: 'Validity controls how many days the quota card can serve',
+          line3: 'Plans are shared across all groups, so no platform or group is required'
         },
         step2: {
           title: 'Assign Subscription to User',
           line1: 'Click the "Assign Subscription" button in the top right',
           line2: 'Search for a user by email and select them',
-          line3: 'Choose a subscription group, set validity days, then click "Assign"'
+          line3: 'Set the daily amount and validity days, then click "Assign"'
         },
         step3: {
           title: 'Manage Existing Subscriptions'
@@ -3165,7 +3171,7 @@ export default {
           revoke: 'Revoke',
           revokeDesc: 'Immediately terminate the subscription (irreversible)'
         },
-        tip: 'Tip: Only groups with billing type "Subscription" and status "Active" appear in the group dropdown. If no options are available, create one in Group Management first.'
+        tip: 'Tip: subscriptions are quota cards shared across all groups. Groups are only used for account pools and routing.'
       }
     },
 
@@ -4586,6 +4592,9 @@ export default {
       },
       selectGroup: 'Select Group',
       selectGroupPlaceholder: 'Choose a subscription group',
+      dailyAmount: 'Daily amount (USD / day)',
+      dailyAmountRequired: 'Please enter a valid daily amount',
+      subscriptionNoGroupHint: 'Subscription CDKs apply across all groups. If the user already has a subscription, the value is merged into the current plan instead of creating a second card.',
       validityDays: 'Validity Days',
       codeExpiry: 'Code Expiry',
       neverExpires: 'Never expires',

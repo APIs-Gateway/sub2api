@@ -36,9 +36,9 @@ func NewRedeemHandler(adminService service.AdminService, redeemService *service.
 type GenerateRedeemCodesRequest struct {
 	Count         int        `json:"count" binding:"required,min=1,max=100"`
 	Type          string     `json:"type" binding:"required,oneof=balance concurrency subscription invitation"`
-	Value         float64    `json:"value"`
-	GroupID       *int64     `json:"group_id"`      // 订阅类型必填
-	ValidityDays  int        `json:"validity_days"` // 订阅类型使用，正数增加/负数退款扣减
+	Value         float64    `json:"value"`         // subscription 类型表示每日额度 D
+	GroupID       *int64     `json:"group_id"`      // 订阅类型旧兼容字段；新订阅 CDK 不再需要分组
+	ValidityDays  int        `json:"validity_days"` // subscription 类型使用
 	ExpiresAt     *time.Time `json:"expires_at"`
 	ExpiresInDays *int       `json:"expires_in_days" binding:"omitempty,min=1,max=3650"`
 }
@@ -48,9 +48,9 @@ type GenerateRedeemCodesRequest struct {
 type CreateAndRedeemCodeRequest struct {
 	Code          string     `json:"code" binding:"required,min=3,max=128"`
 	Type          string     `json:"type" binding:"omitempty,oneof=balance concurrency subscription invitation"` // 不传时默认 balance（向后兼容）
-	Value         float64    `json:"value" binding:"required"`
+	Value         float64    `json:"value" binding:"required"`                                                   // subscription 类型表示每日额度 D
 	UserID        int64      `json:"user_id" binding:"required,gt=0"`
-	GroupID       *int64     `json:"group_id"`      // subscription 类型必填
+	GroupID       *int64     `json:"group_id"`      // subscription 类型旧兼容字段；新订阅 CDK 不再需要分组
 	ValidityDays  int        `json:"validity_days"` // subscription 类型：正数增加，负数退款扣减
 	Notes         string     `json:"notes"`
 	ExpiresAt     *time.Time `json:"expires_at"`
@@ -184,8 +184,8 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 	}
 
 	if req.Type == "subscription" {
-		if req.GroupID == nil {
-			response.BadRequest(c, "group_id is required for subscription type")
+		if req.Value <= 0 {
+			response.BadRequest(c, "value must be positive daily amount for subscription type")
 			return
 		}
 		if req.ValidityDays == 0 {

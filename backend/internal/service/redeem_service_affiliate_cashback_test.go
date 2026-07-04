@@ -291,7 +291,8 @@ func TestRedeemService_RedeemSubscriptionAccruesAffiliateCashback(t *testing.T) 
 	require.InDelta(t, 100, call.RatePercent, 1e-9)
 	require.InDelta(t, 90, call.CashbackAmount, 1e-9)
 
-	sub, err := userSubRepo.GetByUserIDAndGroupID(ctx, invitee.ID, group.ID)
+	sub, err := userSubRepo.GetActiveByUserID(ctx, invitee.ID)
 	require.NoError(t, err)
 	require.Equal(t, service.SubscriptionStatusActive, sub.Status)
+	require.Equal(t, int64(0), sub.GroupID)
 }

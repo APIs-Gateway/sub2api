@@ -3130,7 +3130,7 @@ export default {
     // Subscriptions Management
     subscriptions: {
       title: '订阅管理',
-      description: '管理用户订阅和配额限制',
+      description: '管理用户订阅套餐和额度',
       assignSubscription: '分配订阅',
       adjustSubscription: '调整订阅',
       revokeSubscription: '撤销订阅',
@@ -3168,7 +3168,7 @@ export default {
       },
       columns: {
         user: '用户',
-        group: '分组',
+        plan: '套餐',
         usage: '用量',
         expires: '到期时间',
         status: '状态',
@@ -3176,13 +3176,20 @@ export default {
       },
       form: {
         user: '用户',
-        group: '订阅分组',
+        dailyAmount: '每日额度（USD / 天）',
         validityDays: '有效期（天）',
         adjustDays: '调整天数'
       },
+      plan: {
+        custom: '自定义套餐',
+        name: '每日 ${daily}',
+        nameWithDays: '每日 ${daily} / {days} 天',
+        dailyAmount: '每日额度',
+        remaining: '剩余额度',
+        total: '总额度'
+      },
       selectUser: '选择用户',
-      selectGroup: '选择订阅分组',
-      groupHint: '仅显示订阅计费类型的分组',
+      dailyAmountHint: '订阅全分组通用；这里设置这张卡每天可用的美元额度',
       validityHint: '订阅的有效天数',
       adjustingFor: '为以下用户调整订阅',
       currentExpiration: '当前到期时间',
@@ -3210,25 +3217,24 @@ export default {
       adjustWouldExpire: '调整后剩余天数必须大于0',
       adjustOutOfRange: '调整天数必须在 -36500 到 36500 之间',
       pleaseSelectUser: '请选择用户',
-      pleaseSelectGroup: '请选择分组',
+      dailyAmountRequired: '请输入有效的每日额度',
       validityDaysRequired: '请输入有效的天数（至少1天）',
       revokeConfirm: "确定要撤销 '{user}' 的订阅吗？此操作无法撤销。",
       guide: {
         title: '订阅管理教程',
-        subtitle: '订阅模式允许你按时间周期为用户分配使用额度，支持日/周/月配额限制。按照以下步骤即可完成配置。',
+        subtitle: '订阅套餐是全分组通用的用户额度卡，只需要设置每日额度和有效期。',
         showGuide: '使用指南',
         step1: {
-          title: '创建订阅分组',
-          line1: '前往「分组管理」页面，点击「创建分组」',
-          line2: '将计费类型设为「订阅」，配置日/周/月额度限制',
-          line3: '保存分组，确保状态为「正常」',
-          link: '前往分组管理'
+          title: '确定套餐参数',
+          line1: '每日额度决定用户每天可用的美元额度',
+          line2: '有效期决定这张套餐卡可服务的天数',
+          line3: '套餐全分组通用，不需要选择平台或分组'
         },
         step2: {
           title: '分配订阅给用户',
           line1: '点击本页右上角「分配订阅」按钮',
           line2: '在弹窗中搜索用户邮箱并选择目标用户',
-          line3: '选择订阅分组、设置有效期天数，点击「分配」'
+          line3: '设置每日额度和有效期天数，点击「分配」'
         },
         step3: {
           title: '管理已有订阅'
@@ -3241,7 +3247,7 @@ export default {
           revoke: '撤销',
           revokeDesc: '立即终止该用户的订阅，不可恢复'
         },
-        tip: '提示：订阅分组下拉列表中只会显示计费类型为「订阅」且状态为「正常」的分组。如果没有可选项，请先到分组管理中创建。'
+        tip: '提示：订阅是全分组通用额度，不再绑定某个分组；分组只负责账号池和模型路由。'
       }
     },
 
@@ -4701,6 +4707,9 @@ export default {
       failedToCopy: '复制失败',
       selectGroup: '选择分组',
       selectGroupPlaceholder: '选择订阅分组',
+      dailyAmount: '每日额度（USD / 天）',
+      dailyAmountRequired: '请输入有效的每日额度',
+      subscriptionNoGroupHint: '订阅 CDK 全分组通用；用户已有订阅时会并入当前套餐，不会生成第二张卡。',
       validityDays: '有效天数',
       codeExpiry: '兑换码过期',
       neverExpires: '永不过期',

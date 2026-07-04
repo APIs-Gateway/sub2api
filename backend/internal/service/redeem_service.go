@@ -409,11 +409,6 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		return nil, ErrRedeemCodeUsed
 	}
 
-	// 验证兑换码类型的前置条件
-	if redeemCode.Type == RedeemTypeSubscription && redeemCode.GroupID == nil {
-		return nil, infraerrors.BadRequest("REDEEM_CODE_INVALID", "invalid subscription redeem code: missing group_id")
-	}
-
 	// 获取用户信息
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -465,7 +460,7 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		validityDays := redeemCode.ValidityDays
 		if validityDays < 0 {
 			// 负数天数：缩短订阅，减到 0 则取消订阅
-			if err := s.reduceOrCancelSubscription(txCtx, userID, *redeemCode.GroupID, -validityDays, redeemCode.Code); err != nil {
+			if err := s.reduceOrCancelSubscription(txCtx, userID, -validityDays, redeemCode.Code); err != nil {
 				return nil, fmt.Errorf("reduce or cancel subscription: %w", err)
 			}
 		} else {
@@ -473,15 +468,19 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 				validityDays = 30
 				redeemCode.ValidityDays = validityDays
 			}
-			_, _, err := s.subscriptionService.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{
-				UserID:       userID,
-				GroupID:      *redeemCode.GroupID,
-				ValidityDays: validityDays,
-				AssignedBy:   0, // 系统分配
-				Notes:        fmt.Sprintf("通过兑换码 %s 兑换", redeemCode.Code),
+			dailyAmount, err := resolveRedeemSubscriptionDailyAmount(txCtx, s.subscriptionService.groupRepo, redeemCode)
+			if err != nil {
+				return nil, err
+			}
+			_, _, err = s.subscriptionService.ApplyRedeemSubscription(txCtx, &RedeemSubscriptionInput{
+				UserID:         userID,
+				DailyAmountUSD: dailyAmount,
+				ValidityDays:   validityDays,
+				AssignedBy:     0, // 系统分配
+				Notes:          fmt.Sprintf("通过兑换码 %s 兑换：D=%.4f T=%d", redeemCode.Code, dailyAmount, validityDays),
 			})
 			if err != nil {
-				return nil, fmt.Errorf("assign or extend subscription: %w", err)
+				return nil, fmt.Errorf("apply redeem subscription: %w", err)
 			}
 		}
 
@@ -631,9 +630,9 @@ func (s *RedeemService) GetUserHistory(ctx context.Context, userID int64, limit 
 	return codes, nil
 }
 
-// reduceOrCancelSubscription 缩短订阅天数，剩余天数 <= 0 时取消订阅
-func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID, groupID int64, reduceDays int, code string) error {
-	sub, err := s.subscriptionService.userSubRepo.GetByUserIDAndGroupID(ctx, userID, groupID)
+// reduceOrCancelSubscription 缩短用户唯一订阅天数，剩余天数 <= 0 时取消订阅。
+func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID int64, reduceDays int, code string) error {
+	sub, err := s.subscriptionService.userSubRepo.GetActiveByUserID(ctx, userID)
 	if err != nil {
 		return ErrSubscriptionNotFound
 	}
@@ -670,7 +669,8 @@ func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID, 
 	}
 
 	// 失效缓存
-	s.subscriptionService.InvalidateSubCache(userID, groupID)
+	s.subscriptionService.InvalidateSubCache(userID, sub.GroupID)
+	s.subscriptionService.InvalidateSubCache(userID, 0)
 
 	return nil
 }
