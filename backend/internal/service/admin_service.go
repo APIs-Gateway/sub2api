@@ -424,9 +424,9 @@ type UpdateProxyInput struct {
 type GenerateRedeemCodesInput struct {
 	Count        int
 	Type         string
-	Value        float64
-	GroupID      *int64 // 订阅类型专用：关联的分组ID
-	ValidityDays int    // 订阅类型专用：有效天数
+	Value        float64 // balance=充值金额；subscription=每日额度 D
+	GroupID      *int64  // 订阅类型旧兼容字段；新订阅 CDK 不再需要分组
+	ValidityDays int     // 订阅类型专用：有效天数
 	ExpiresAt    *time.Time
 }
 
@@ -3309,20 +3309,12 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		return nil, ErrRedeemCodeExpired
 	}
 
-	// 如果是订阅类型，验证必须有 GroupID
 	if input.Type == RedeemTypeSubscription {
-		if input.GroupID == nil {
-			return nil, errors.New("group_id is required for subscription type")
+		if input.ValidityDays <= 0 {
+			return nil, errors.New("validity_days must be positive for subscription type")
 		}
-		// per-day：订阅与 group 类型解耦，group 仅作路由快照；但兑换码发卡的每日额度 D
-		// 经 group.daily_limit_usd 回退取值（见 resolveAssignDailyAmount），故要求该值 > 0，
-		// 否则兑换时才会以 INVALID_DAILY_AMOUNT 失败，体验差。
-		group, err := s.groupRepo.GetByID(ctx, *input.GroupID)
-		if err != nil {
-			return nil, fmt.Errorf("group not found: %w", err)
-		}
-		if group.DailyLimitUSD == nil || *group.DailyLimitUSD <= 0 {
-			return nil, errors.New("group must define a positive daily_limit_usd to back a subscription")
+		if input.Value <= 0 {
+			return nil, errors.New("daily amount value must be positive for subscription type")
 		}
 	}
 

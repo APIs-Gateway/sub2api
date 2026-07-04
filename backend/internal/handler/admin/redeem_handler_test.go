@@ -63,15 +63,14 @@ func TestCreateAndRedeem_TypeDefaultsToBalance(t *testing.T) {
 		"omitting type should default to balance and pass validation")
 }
 
-func TestCreateAndRedeem_SubscriptionRequiresGroupID(t *testing.T) {
+func TestCreateAndRedeem_SubscriptionRequiresDailyAmount(t *testing.T) {
 	h := newCreateAndRedeemHandler()
 	code := postCreateAndRedeemValidation(t, h, map[string]any{
-		"code":          "test-sub-no-group",
+		"code":          "test-sub-no-daily-amount",
 		"type":          "subscription",
-		"value":         29.9,
+		"value":         0,
 		"user_id":       1,
 		"validity_days": 30,
-		// group_id 缺失
 	})
 
 	assert.Equal(t, http.StatusBadRequest, code)
@@ -88,7 +87,6 @@ func TestCreateAndRedeem_SubscriptionRequiresNonZeroValidityDays(t *testing.T) {
 			"type":          "subscription",
 			"value":         29.9,
 			"user_id":       1,
-			"group_id":      groupID,
 			"validity_days": 0,
 		})
 
@@ -112,14 +110,12 @@ func TestCreateAndRedeem_SubscriptionRequiresNonZeroValidityDays(t *testing.T) {
 }
 
 func TestCreateAndRedeem_SubscriptionValidParamsPassValidation(t *testing.T) {
-	groupID := int64(5)
 	h := newCreateAndRedeemHandler()
 	code := postCreateAndRedeemValidation(t, h, map[string]any{
 		"code":          "test-sub-valid",
 		"type":          "subscription",
 		"value":         29.9,
 		"user_id":       1,
-		"group_id":      groupID,
 		"validity_days": 31,
 	})
 

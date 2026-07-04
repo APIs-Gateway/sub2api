@@ -311,38 +311,19 @@
                 {{ t('admin.redeem.invitationHint') }}
               </p>
             </div>
-            <!-- 订阅类型：显示分组选择和有效天数 -->
+            <!-- 订阅类型：显示每日额度和有效天数 -->
             <template v-if="generateForm.type === 'subscription'">
               <div>
-                <label class="input-label">{{ t('admin.redeem.selectGroup') }}</label>
-                <Select
-                  v-model="generateForm.group_id"
-                  :options="subscriptionGroupOptions"
-                  :placeholder="t('admin.redeem.selectGroupPlaceholder')"
-                >
-                  <template #selected="{ option }">
-                    <GroupBadge
-                      v-if="option"
-                      :name="(option as unknown as GroupOption).label"
-                      :platform="(option as unknown as GroupOption).platform"
-                      :subscription-type="(option as unknown as GroupOption).subscriptionType"
-                      :rate-multiplier="(option as unknown as GroupOption).rate"
-                    />
-                    <span v-else class="text-gray-400">{{
-                      t('admin.redeem.selectGroupPlaceholder')
-                    }}</span>
-                  </template>
-                  <template #option="{ option, selected }">
-                    <GroupOptionItem
-                      :name="(option as unknown as GroupOption).label"
-                      :platform="(option as unknown as GroupOption).platform"
-                      :subscription-type="(option as unknown as GroupOption).subscriptionType"
-                      :rate-multiplier="(option as unknown as GroupOption).rate"
-                      :description="(option as unknown as GroupOption).description"
-                      :selected="selected"
-                    />
-                  </template>
-                </Select>
+                <label class="input-label">{{ t('admin.redeem.dailyAmount') }}</label>
+                <input
+                  v-model.number="generateForm.value"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  required
+                  class="input"
+                />
+                <p class="input-hint">{{ t('admin.redeem.subscriptionNoGroupHint') }}</p>
               </div>
               <div>
                 <label class="input-label">{{ t('admin.redeem.validityDays') }}</label>
@@ -485,23 +466,6 @@
               ></textarea>
             </div>
 
-            <div class="space-y-2">
-              <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                <input
-                  v-model="batchUpdateForm.update_group_id"
-                  type="checkbox"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                />
-                {{ t('admin.redeem.batchFields.group') }}
-              </label>
-              <Select
-                v-if="batchUpdateForm.update_group_id"
-                v-model="batchUpdateForm.group_id"
-                :options="batchGroupOptions"
-                :placeholder="t('admin.redeem.selectGroupPlaceholder')"
-              />
-            </div>
-
             <div class="flex justify-end gap-3 pt-2">
               <button type="button" @click="closeBatchUpdateDialog" class="btn btn-secondary">
                 {{ t('common.cancel') }}
@@ -619,9 +583,6 @@ import { formatDateTime } from '@/utils/format'
 import type {
   RedeemCode,
   RedeemCodeType,
-  Group,
-  GroupPlatform,
-  SubscriptionType,
   BatchUpdateRedeemCodeFields
 } from '@/types'
 import type { Column } from '@/components/common/types'
@@ -631,46 +592,15 @@ import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
-import GroupBadge from '@/components/common/GroupBadge.vue'
-import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 
-interface GroupOption {
-  value: number
-  label: string
-  description: string | null
-  platform: GroupPlatform
-  subscriptionType: SubscriptionType
-  rate: number
-}
-
 const showGenerateDialog = ref(false)
 const showResultDialog = ref(false)
 const generatedCodes = ref<RedeemCode[]>([])
-const subscriptionGroups = ref<Group[]>([])
-
-// 订阅类型分组选项
-const subscriptionGroupOptions = computed(() => {
-  return subscriptionGroups.value
-    .filter((g) => g.subscription_type === 'subscription')
-    .map((g) => ({
-      value: g.id,
-      label: g.name,
-      description: g.description,
-      platform: g.platform,
-      subscriptionType: g.subscription_type,
-      rate: g.rate_multiplier
-    }))
-})
-
-const batchGroupOptions = computed(() => [
-  { value: null, label: t('admin.redeem.clearGroup') },
-  ...subscriptionGroupOptions.value
-])
 
 const generatedCodesText = computed(() => {
   return generatedCodes.value.map((code) => code.code).join('\n')
@@ -812,9 +742,7 @@ const batchUpdateForm = reactive({
   expires_mode: 'clear' as 'clear' | 'custom',
   expires_at_local: '',
   update_notes: false,
-  notes: '',
-  update_group_id: false,
-  group_id: null as number | null
+  notes: ''
 })
 
 type RedeemCodeExpiryOption = 'never' | '1' | '3' | '7' | 'custom'
@@ -971,8 +899,6 @@ const resetBatchUpdateForm = () => {
   )
   batchUpdateForm.update_notes = false
   batchUpdateForm.notes = ''
-  batchUpdateForm.update_group_id = false
-  batchUpdateForm.group_id = null
 }
 
 const openBatchUpdateDialog = () => {
@@ -1009,18 +935,13 @@ const buildBatchUpdateFields = (): BatchUpdateRedeemCodeFields | null => {
   if (batchUpdateForm.update_notes) {
     fields.notes = batchUpdateForm.notes
   }
-  if (batchUpdateForm.update_group_id) {
-    fields.group_id =
-      batchUpdateForm.group_id == null ? null : Number(batchUpdateForm.group_id)
-  }
 
   return Object.keys(fields).length > 0 ? fields : null
 }
 
 const handleGenerateCodes = async () => {
-  // 订阅类型必须选择分组
-  if (generateForm.type === 'subscription' && !generateForm.group_id) {
-    appStore.showError(t('admin.redeem.groupRequired'))
+  if (generateForm.type === 'subscription' && (!generateForm.value || generateForm.value <= 0)) {
+    appStore.showError(t('admin.redeem.dailyAmountRequired'))
     return
   }
 
@@ -1036,7 +957,7 @@ const handleGenerateCodes = async () => {
       generateForm.count,
       generateForm.type,
       generateForm.value,
-      generateForm.type === 'subscription' ? generateForm.group_id : undefined,
+      undefined,
       generateForm.type === 'subscription' ? generateForm.validity_days : undefined,
       expiresInDays
     )
@@ -1140,8 +1061,7 @@ const handleBatchUpdate = async () => {
   const hasSelectedFields =
     batchUpdateForm.update_status ||
     batchUpdateForm.update_expires_at ||
-    batchUpdateForm.update_notes ||
-    batchUpdateForm.update_group_id
+    batchUpdateForm.update_notes
   if (!hasSelectedFields) {
     appStore.showError(t('admin.redeem.noBatchFieldsSelected'))
     return
@@ -1167,19 +1087,8 @@ const handleBatchUpdate = async () => {
   }
 }
 
-// 加载订阅类型分组
-const loadSubscriptionGroups = async () => {
-  try {
-    const groups = await adminAPI.groups.getAll()
-    subscriptionGroups.value = groups
-  } catch (error) {
-    console.error('Error loading subscription groups:', error)
-  }
-}
-
 onMounted(() => {
   loadCodes()
-  loadSubscriptionGroups()
 })
 
 onUnmounted(() => {

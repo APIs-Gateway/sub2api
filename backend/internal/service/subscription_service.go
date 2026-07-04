@@ -212,14 +212,7 @@ func (s *SubscriptionService) AssignOrExtendSubscription(ctx context.Context, in
 
 	// 失效订阅缓存
 	s.InvalidateSubCache(input.UserID, input.GroupID)
-	if s.billingCacheService != nil {
-		userID, groupID := input.UserID, input.GroupID
-		go func() {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
-		}()
-	}
+	s.invalidateSubscriptionCacheAsync(input.UserID, input.GroupID)
 
 	return sub, false, nil // 始终为新建
 }
@@ -559,12 +552,9 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 		Statuses:      make(map[int64]string),
 	}
 
-	// 请求级预校验：group 与每日额度 D 对整批是同一份参数（input.GroupID / input.DailyAmountUSD
-	// 或同一 group 回退）。这类公共参数错误应循环前直接返回（handler 转 400），不要吞成每个用户
+	// 请求级预校验：每日额度 D 对整批是同一份参数（input.DailyAmountUSD
+	// 或历史 group 回退）。这类公共参数错误应循环前直接返回（handler 转 400），不要吞成每个用户
 	// failed 再被 success 包装，导致前端误判请求成功。
-	if input.GroupID <= 0 {
-		return nil, infraerrors.BadRequest("INVALID_INPUT", "group_id is required")
-	}
 	if _, err := s.resolveAssignDailyAmount(ctx, &AssignSubscriptionInput{GroupID: input.GroupID, DailyAmountUSD: input.DailyAmountUSD}); err != nil {
 		return nil, err
 	}
@@ -599,13 +589,14 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 }
 
 func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error) {
-	// per-day：订阅与 group 解耦，不再要求「订阅型分组」；group 仅作历史快照。过渡期 schema 仍要求
-	// group_id NOT NULL（FK），故现阶段仍需有效 group（待 P5e 改 nullable 后放开 GroupID==0）。
-	if input.GroupID <= 0 {
-		return nil, false, infraerrors.BadRequest("INVALID_INPUT", "group_id is required")
-	}
-	if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
-		return nil, false, fmt.Errorf("group not found: %w", err)
+	// per-day：订阅与 group 解耦，group 仅作历史快照。新分配入口可直接创建无 group 卡；
+	// 若旧入口仍传 group，则仅校验来源 group 存在，并允许 D 从该 group 的 daily_limit_usd 兜底。
+	if input.GroupID > 0 {
+		if _, err := s.groupRepo.GetByID(ctx, input.GroupID); err != nil {
+			return nil, false, fmt.Errorf("group not found: %w", err)
+		}
+	} else if input.DailyAmountUSD <= 0 {
+		return nil, false, infraerrors.BadRequest("INVALID_INPUT", "custom subscription requires daily_amount_usd")
 	}
 
 	// per-day：每次分配新建一张 per-day 卡（单卡模式由入口保证至多一张 active）。
@@ -616,14 +607,7 @@ func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, i
 
 	// 失效订阅缓存
 	s.InvalidateSubCache(input.UserID, input.GroupID)
-	if s.billingCacheService != nil {
-		userID, groupID := input.UserID, input.GroupID
-		go func() {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
-		}()
-	}
+	s.invalidateSubscriptionCacheAsync(input.UserID, input.GroupID)
 
 	return sub, false, nil
 }
@@ -1345,22 +1329,19 @@ func (s *SubscriptionService) GetSubscriptionProgress(ctx context.Context, subsc
 		return nil, ErrSubscriptionNotFound
 	}
 
-	group := sub.Group
-	if group == nil {
-		group, err = s.groupRepo.GetByID(ctx, sub.GroupID)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return s.calculateProgress(sub, group), nil
+	return s.calculateProgress(sub), nil
 }
 
-// calculateProgress 根据已加载的订阅和分组数据计算使用进度（纯内存计算，无 DB 查询）
-func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Group) *SubscriptionProgress {
+// calculateProgress 根据已加载的订阅计算使用进度（纯内存计算，无 DB 查询）。
+// 订阅已去分组化；历史卡若带 group 仅用于展示名称，额度全部读卡级字段。
+func (s *SubscriptionService) calculateProgress(sub *UserSubscription) *SubscriptionProgress {
+	groupName := "All groups"
+	if sub.Group != nil && strings.TrimSpace(sub.Group.Name) != "" {
+		groupName = sub.Group.Name
+	}
 	progress := &SubscriptionProgress{
 		ID:            sub.ID,
-		GroupName:     group.Name,
+		GroupName:     groupName,
 		ExpiresAt:     sub.ExpiresAt,
 		ExpiresInDays: sub.DaysRemaining(),
 	}
@@ -1470,11 +1451,7 @@ func (s *SubscriptionService) GetUserSubscriptionsWithProgress(ctx context.Conte
 	progresses := make([]SubscriptionProgress, 0, len(subs))
 	for i := range subs {
 		sub := &subs[i]
-		group := sub.Group
-		if group == nil {
-			continue
-		}
-		progresses = append(progresses, *s.calculateProgress(sub, group))
+		progresses = append(progresses, *s.calculateProgress(sub))
 	}
 
 	return progresses, nil
