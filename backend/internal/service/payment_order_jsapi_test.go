@@ -7,6 +7,91 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 )
 
+func TestRequestNeedsWeChatJSAPICompatibility(t *testing.T) {
+	tests := []struct {
+		name string
+		req  CreateOrderRequest
+		want bool
+	}{
+		{
+			name: "non wxpay never needs compatibility",
+			req:  CreateOrderRequest{PaymentType: payment.TypeAlipay, IsWeChatBrowser: true, OpenID: "openid"},
+			want: false,
+		},
+		{
+			name: "wxpay browser needs compatibility",
+			req:  CreateOrderRequest{PaymentType: payment.TypeWxpay, IsWeChatBrowser: true},
+			want: true,
+		},
+		{
+			name: "wxpay openid needs compatibility",
+			req:  CreateOrderRequest{PaymentType: payment.TypeWxpay, OpenID: "  openid  "},
+			want: true,
+		},
+		{
+			name: "wxpay without browser or openid does not need compatibility",
+			req:  CreateOrderRequest{PaymentType: payment.TypeWxpay},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := requestNeedsWeChatJSAPICompatibility(tt.req); got != tt.want {
+				t.Fatalf("requestNeedsWeChatJSAPICompatibility() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRequiresWeChatJSAPICompatibleSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		req  CreateOrderRequest
+		sel  *payment.InstanceSelection
+		want bool
+	}{
+		{
+			name: "nil selection",
+			req:  CreateOrderRequest{PaymentType: payment.TypeWxpay, IsWeChatBrowser: true},
+			sel:  nil,
+			want: false,
+		},
+		{
+			name: "non wxpay provider",
+			req:  CreateOrderRequest{PaymentType: payment.TypeWxpay, IsWeChatBrowser: true},
+			sel:  &payment.InstanceSelection{ProviderKey: payment.TypeEasyPay},
+			want: false,
+		},
+		{
+			name: "wxpay browser",
+			req:  CreateOrderRequest{PaymentType: payment.TypeWxpay, IsWeChatBrowser: true},
+			sel:  &payment.InstanceSelection{ProviderKey: payment.TypeWxpay},
+			want: true,
+		},
+		{
+			name: "wxpay openid",
+			req:  CreateOrderRequest{PaymentType: payment.TypeWxpay, OpenID: "openid"},
+			sel:  &payment.InstanceSelection{ProviderKey: payment.TypeWxpay},
+			want: true,
+		},
+		{
+			name: "wxpay qrcode",
+			req:  CreateOrderRequest{PaymentType: payment.TypeWxpay},
+			sel:  &payment.InstanceSelection{ProviderKey: payment.TypeWxpay},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := requiresWeChatJSAPICompatibleSelection(tt.req, tt.sel); got != tt.want {
+				t.Fatalf("requiresWeChatJSAPICompatibleSelection() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUsesOfficialWxpayVisibleMethodDerivesFromEnabledProviderInstance(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)

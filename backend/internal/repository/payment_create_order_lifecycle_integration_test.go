@@ -54,7 +54,7 @@ func TestPaymentCreateOrder_RenewIntentFreezesSpecThenPersistsPendingPostgres(t 
 	})
 	group := mustCreateGroup(t, client, &service.Group{Name: "create-renew-" + uuid.NewString()})
 	today := service.TodayEastDayNumber()
-	dDaily := 10.0
+	dDaily := 30.0
 	wLimit, mLimit := service.DeriveWindowCaps(dDaily, 30)
 	mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
@@ -106,7 +106,7 @@ func TestPaymentCreateOrder_ChangePlanIntentFreezesDiffThenPersistsPendingPostgr
 	})
 	group := mustCreateGroup(t, client, &service.Group{Name: "create-change-" + uuid.NewString()})
 	today := service.TodayEastDayNumber()
-	dOld := 10.0
+	dOld := 30.0
 	wOld, mOld := service.DeriveWindowCaps(dOld, 30)
 	mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
@@ -123,7 +123,7 @@ func TestPaymentCreateOrder_ChangePlanIntentFreezesDiffThenPersistsPendingPostgr
 		Status:          service.SubscriptionStatusActive,
 	})
 
-	dNew := 20.0
+	dNew := 60.0
 	_, err := paymentSvc.CreateOrder(ctx, service.CreateOrderRequest{
 		UserID:             user.ID,
 		OrderType:          payment.OrderTypeSubscription,
@@ -180,7 +180,7 @@ func TestPaymentCreateOrder_ChangePlanDowngradeRejectedPostgres(t *testing.T) {
 	})
 	group := mustCreateGroup(t, client, &service.Group{Name: "create-change-down-" + uuid.NewString()})
 	today := service.TodayEastDayNumber()
-	dOld := 30.0
+	dOld := 90.0
 	wOld, mOld := service.DeriveWindowCaps(dOld, 30)
 	mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
@@ -201,7 +201,7 @@ func TestPaymentCreateOrder_ChangePlanDowngradeRejectedPostgres(t *testing.T) {
 		UserID:             user.ID,
 		OrderType:          payment.OrderTypeSubscription,
 		SubscriptionIntent: service.SubscriptionIntentChangePlan,
-		DailyAmountUSD:     5.0,
+		DailyAmountUSD:     30.0,
 		ValidityDays:       30,
 		PaymentType:        payment.TypeAlipay,
 	})
@@ -224,7 +224,7 @@ func TestPaymentCreateOrder_ChangePlanChargeBelowMinRejectedPostgres(t *testing.
 	})
 	group := mustCreateGroup(t, client, &service.Group{Name: "create-change-belowmin-" + uuid.NewString()})
 	today := service.TodayEastDayNumber()
-	dOld := 10.0
+	dOld := 30.0
 	wOld, mOld := service.DeriveWindowCaps(dOld, 30)
 	mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
@@ -245,7 +245,7 @@ func TestPaymentCreateOrder_ChangePlanChargeBelowMinRejectedPostgres(t *testing.
 		UserID:             user.ID,
 		OrderType:          payment.OrderTypeSubscription,
 		SubscriptionIntent: service.SubscriptionIntentChangePlan,
-		DailyAmountUSD:     20.0,
+		DailyAmountUSD:     60.0,
 		ValidityDays:       30,
 		PaymentType:        payment.TypeEasyPay,
 		ClientIP:           "127.0.0.1",

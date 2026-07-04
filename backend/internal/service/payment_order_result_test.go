@@ -79,6 +79,29 @@ func TestBuildWeChatPaymentOAuthStartURLIncludesCustomSubscriptionDT(t *testing.
 	}
 }
 
+func TestPaymentRedirectPathFromURLNormalizesPaymentPaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{"", "/purchase"},
+		{"/payment", "/purchase"},
+		{"/payment?tab=subscription", "/purchase?tab=subscription"},
+		{"https://app.example.com/payment?tab=recharge", "/purchase?tab=recharge"},
+		{"https://app.example.com/orders?status=paid", "/orders?status=paid"},
+		{"://bad", "/purchase"},
+		{"//evil.example.com/payment", "/purchase"},
+	}
+
+	for _, tt := range tests {
+		if got := paymentRedirectPathFromURL(tt.raw); got != tt.want {
+			t.Fatalf("paymentRedirectPathFromURL(%q) = %q, want %q", tt.raw, got, tt.want)
+		}
+	}
+}
+
 func TestBuildCreateOrderResponseCopiesJSAPIPayload(t *testing.T) {
 	t.Parallel()
 
@@ -132,6 +155,14 @@ func TestValidateSelectedCreateOrderAmountCurrencyRejectsFractionalZeroDecimal(t
 	}
 	if appErr := infraerrors.FromError(err); appErr.Reason != "INVALID_AMOUNT" {
 		t.Fatalf("reason = %q, want INVALID_AMOUNT", appErr.Reason)
+	}
+}
+
+func TestValidateSelectedCreateOrderAmountCurrencyAllowsNilSelection(t *testing.T) {
+	t.Parallel()
+
+	if err := validateSelectedCreateOrderAmountCurrency("100.50", nil); err != nil {
+		t.Fatalf("nil selection should not validate provider currency: %v", err)
 	}
 }
 

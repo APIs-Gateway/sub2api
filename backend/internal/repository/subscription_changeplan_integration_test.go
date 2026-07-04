@@ -52,15 +52,15 @@ func TestSubscriptionServiceChangePlan_QuoteThenApplyUpgradePostgres(t *testing.
 	dayStart := timezone.StartOfDay(now)
 	weekStart := timezone.StartOfWeek(now)
 	monthStart := timezone.StartOfMonth(now)
-	oldDaily, oldWeekly, oldMonthly := 10.0, 70.0, 300.0
+	oldDaily, oldWeekly, oldMonthly := 30.0, 210.0, 900.0
 
-	// 旧卡：D=10、剩 29 天、今日满额未用（TodayRemaining=10）。
+	// 旧卡：D=30、剩 29 天、今日满额未用（TodayRemaining=30）。
 	old := mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:             user.ID,
 		GroupID:            group.ID,
-		DailyAmountUSD:     10,
-		GrantedTotalUSD:    300,
-		TodayRemaining:     10,
+		DailyAmountUSD:     30,
+		GrantedTotalUSD:    900,
+		TodayRemaining:     30,
 		TodayDay:           today,
 		StartDay:           today,
 		ExpireDay:          today + 29,
@@ -77,15 +77,15 @@ func TestSubscriptionServiceChangePlan_QuoteThenApplyUpgradePostgres(t *testing.
 		MonthlyWindowStart: &monthStart,
 	})
 
-	// 报价：升档到 D=20、T=30。
-	q, err := svc.QuoteChangePlanOrder(ctx, user.ID, 20, 30)
+	// 报价：升档到 D=60、T=30。
+	q, err := svc.QuoteChangePlanOrder(ctx, user.ID, 60, 30)
 	require.NoError(t, err)
 	require.NotNil(t, q)
 	require.Equal(t, old.ID, q.OldSubscriptionID)
-	wantV := cfg.Price(10, 29) // 剩 29 天
-	wantDiff := cfg.Price(20, 30) - wantV
+	wantV := cfg.Price(30, 29) // 剩 29 天
+	wantDiff := cfg.Price(60, 30) - wantV
 	require.InDelta(t, wantV, q.OldRemainingValue, 1e-6)
-	require.InDelta(t, cfg.Price(20, 30), q.NewPlanPrice, 1e-6)
+	require.InDelta(t, cfg.Price(60, 30), q.NewPlanPrice, 1e-6)
 	require.InDelta(t, wantDiff, q.Diff, 1e-6)
 	require.Greater(t, q.Diff, 0.0, "升档应 diff>0（走网关补差价）")
 
@@ -99,7 +99,7 @@ func TestSubscriptionServiceChangePlan_QuoteThenApplyUpgradePostgres(t *testing.
 	require.InDelta(t, 100000, u0.Balance, 1e-9)
 
 	// 履约（支付成功后）：关旧、开新。
-	res, err := svc.ApplyChangePlanFromOrder(ctx, old.ID, 20, 30)
+	res, err := svc.ApplyChangePlanFromOrder(ctx, old.ID, 60, 30)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 
@@ -110,17 +110,17 @@ func TestSubscriptionServiceChangePlan_QuoteThenApplyUpgradePostgres(t *testing.
 	gotNew, err := subRepo.GetByID(ctx, res.NewSubscriptionID)
 	require.NoError(t, err)
 	require.Equal(t, service.SubscriptionStatusActive, gotNew.Status)
-	require.InDelta(t, 20, gotNew.DailyAmountUSD, 1e-9)
-	require.InDelta(t, 20, gotNew.TodayRemaining, 1e-9)
+	require.InDelta(t, 60, gotNew.DailyAmountUSD, 1e-9)
+	require.InDelta(t, 60, gotNew.TodayRemaining, 1e-9)
 	require.Equal(t, today, gotNew.StartDay)
 	require.Equal(t, today+29, gotNew.ExpireDay)
 	require.Equal(t, 1, countUserSubscriptionsByStatus(t, user.ID, service.SubscriptionStatusActive))
 	require.NotNil(t, gotNew.DailyLimitUSD)
 	require.NotNil(t, gotNew.WeeklyLimitUSD)
 	require.NotNil(t, gotNew.MonthlyLimitUSD)
-	require.InDelta(t, 20, *gotNew.DailyLimitUSD, 1e-9)
-	require.InDelta(t, 140, *gotNew.WeeklyLimitUSD, 1e-9)
-	require.InDelta(t, 600, *gotNew.MonthlyLimitUSD, 1e-9)
+	require.InDelta(t, 60, *gotNew.DailyLimitUSD, 1e-9)
+	require.InDelta(t, 420, *gotNew.WeeklyLimitUSD, 1e-9)
+	require.InDelta(t, 1800, *gotNew.MonthlyLimitUSD, 1e-9)
 	require.InDelta(t, 4, gotNew.DailyUsageUSD, 1e-9, "转套餐新卡必须继承旧卡日窗口 usage，防当天双领")
 	require.InDelta(t, 14, gotNew.WeeklyUsageUSD, 1e-9, "转套餐新卡必须继承旧卡周窗口 usage，防本周双领")
 	require.InDelta(t, 24, gotNew.MonthlyUsageUSD, 1e-9, "转套餐新卡必须继承旧卡月窗口 usage，防本月双领")
@@ -138,7 +138,7 @@ func TestSubscriptionServiceChangePlan_QuoteThenApplyUpgradePostgres(t *testing.
 	require.Equal(t, today, gotUser.LastChangePlanDay)
 
 	// 同一自然日第二次报价 → 撞限频拒。
-	_, err = svc.QuoteChangePlanOrder(ctx, user.ID, 15, 30)
+	_, err = svc.QuoteChangePlanOrder(ctx, user.ID, 90, 30)
 	require.Error(t, err)
 	require.Equal(t, "CHANGE_PLAN_DAILY_LIMIT", infraerrors.Reason(err))
 }
@@ -158,9 +158,9 @@ func TestSubscriptionServiceChangePlanQuote_DowngradeRejectedPostgres(t *testing
 	old := mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
 		GroupID:         group.ID,
-		DailyAmountUSD:  20, // 大 D 高价值
-		GrantedTotalUSD: 600,
-		TodayRemaining:  20,
+		DailyAmountUSD:  90, // 大 D 高价值
+		GrantedTotalUSD: 2700,
+		TodayRemaining:  90,
 		TodayDay:        today,
 		StartDay:        today,
 		ExpireDay:       today + 29, // 剩余价值高
@@ -168,8 +168,8 @@ func TestSubscriptionServiceChangePlanQuote_DowngradeRejectedPostgres(t *testing
 		Status:          service.SubscriptionStatusActive,
 	})
 
-	// 降到 D=10、T=30：V=cfg.Price(20,29) > P_新=cfg.Price(10,30) → diff<0 → 拒。
-	_, err := svc.QuoteChangePlanOrder(ctx, user.ID, 10, 30)
+	// 降到 D=30、T=30：V=cfg.Price(90,29) > P_新=cfg.Price(30,30) → diff<0 → 拒。
+	_, err := svc.QuoteChangePlanOrder(ctx, user.ID, 30, 30)
 	require.Error(t, err)
 	require.Equal(t, "CHANGE_PLAN_DOWNGRADE_NOT_ALLOWED", infraerrors.Reason(err))
 
@@ -193,9 +193,9 @@ func TestSubscriptionServiceChangePlanQuote_StaleActiveTreatedAsNonePostgres(t *
 	mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
 		GroupID:         group.ID,
-		DailyAmountUSD:  10,
-		GrantedTotalUSD: 300,
-		TodayRemaining:  10,
+		DailyAmountUSD:  30,
+		GrantedTotalUSD: 900,
+		TodayRemaining:  30,
 		TodayDay:        today - 1,
 		StartDay:        today - 31,
 		ExpireDay:       today - 1, // 昨天就该过期，但 status 仍 active
@@ -203,7 +203,7 @@ func TestSubscriptionServiceChangePlanQuote_StaleActiveTreatedAsNonePostgres(t *
 		Status:          service.SubscriptionStatusActive,
 	})
 
-	_, err := svc.QuoteChangePlanOrder(ctx, user.ID, 20, 30)
+	_, err := svc.QuoteChangePlanOrder(ctx, user.ID, 60, 30)
 	require.Error(t, err)
 	require.Equal(t, "NO_ACTIVE_SUBSCRIPTION", infraerrors.Reason(err))
 }
@@ -215,7 +215,7 @@ func TestSubscriptionServiceChangePlanQuote_NoActiveCardPostgres(t *testing.T) {
 
 	user := mustCreateUser(t, client, &service.User{Email: fmt.Sprintf("changeplan-none-%s@example.com", uuid.NewString())})
 
-	_, err := svc.QuoteChangePlanOrder(ctx, user.ID, 10, 30)
+	_, err := svc.QuoteChangePlanOrder(ctx, user.ID, 30, 30)
 	require.Error(t, err)
 	require.Equal(t, "NO_ACTIVE_SUBSCRIPTION", infraerrors.Reason(err))
 }
@@ -235,9 +235,9 @@ func TestSubscriptionServiceChangePlanApply_TodaySpentReducesNewCardBalancePostg
 	old := mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
 		GroupID:         group.ID,
-		DailyAmountUSD:  10,
-		GrantedTotalUSD: 300,
-		TodayRemaining:  2, // 今天已从套餐花掉 8
+		DailyAmountUSD:  30,
+		GrantedTotalUSD: 900,
+		TodayRemaining:  22, // 今天已从套餐花掉 8
 		TodayDay:        today,
 		StartDay:        today,
 		ExpireDay:       today + 29,
@@ -245,13 +245,13 @@ func TestSubscriptionServiceChangePlanApply_TodaySpentReducesNewCardBalancePostg
 		Status:          service.SubscriptionStatusActive,
 	})
 
-	res, err := svc.ApplyChangePlanFromOrder(ctx, old.ID, 20, 30)
+	res, err := svc.ApplyChangePlanFromOrder(ctx, old.ID, 60, 30)
 	require.NoError(t, err)
-	require.InDelta(t, 12, res.NewCardTodayBalance, 1e-9, "D_new=20 减旧卡今日已用 8")
+	require.InDelta(t, 52, res.NewCardTodayBalance, 1e-9, "D_new=60 减旧卡今日已用 8")
 
 	gotNew, err := NewUserSubscriptionRepository(client).GetByID(ctx, res.NewSubscriptionID)
 	require.NoError(t, err)
-	require.InDelta(t, 12, gotNew.TodayRemaining, 1e-9)
+	require.InDelta(t, 52, gotNew.TodayRemaining, 1e-9)
 	require.Equal(t, today, gotNew.TodayDay)
 }
 
@@ -281,13 +281,13 @@ func TestSubscriptionServiceChangePlanApply_NewCardBillsThroughThreeWindowsPostg
 		Key:     "sk-changeplan-window-bill-" + uuid.NewString(),
 		Name:    "changeplan-window-bill",
 	})
-	oldDaily, oldWeekly, oldMonthly := 10.0, 70.0, 300.0
+	oldDaily, oldWeekly, oldMonthly := 30.0, 210.0, 900.0
 	old := mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:             user.ID,
 		GroupID:            group.ID,
-		DailyAmountUSD:     10,
-		GrantedTotalUSD:    300,
-		TodayRemaining:     6,
+		DailyAmountUSD:     30,
+		GrantedTotalUSD:    900,
+		TodayRemaining:     26,
 		TodayDay:           today,
 		StartDay:           today,
 		ExpireDay:          today + 29,
@@ -304,7 +304,7 @@ func TestSubscriptionServiceChangePlanApply_NewCardBillsThroughThreeWindowsPostg
 		MonthlyWindowStart: &monthStart,
 	})
 
-	res, err := svc.ApplyChangePlanFromOrder(ctx, old.ID, 20, 30)
+	res, err := svc.ApplyChangePlanFromOrder(ctx, old.ID, 60, 30)
 	require.NoError(t, err)
 
 	applyRes, err := billingRepo.Apply(ctx, &service.UsageBillingCommand{
@@ -347,9 +347,9 @@ func TestSubscriptionServiceChangePlanQuote_InvalidValidityPostgres(t *testing.T
 	old := mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
 		GroupID:         group.ID,
-		DailyAmountUSD:  10,
-		GrantedTotalUSD: 300,
-		TodayRemaining:  10,
+		DailyAmountUSD:  30,
+		GrantedTotalUSD: 900,
+		TodayRemaining:  30,
 		TodayDay:        today,
 		StartDay:        today,
 		ExpireDay:       today + 29,
@@ -357,7 +357,7 @@ func TestSubscriptionServiceChangePlanQuote_InvalidValidityPostgres(t *testing.T
 		Status:          service.SubscriptionStatusActive,
 	})
 
-	_, err := svc.QuoteChangePlanOrder(ctx, user.ID, 20, 45) // 45 非整月
+	_, err := svc.QuoteChangePlanOrder(ctx, user.ID, 60, 45) // 45 非整月
 	require.Error(t, err)
 	require.Equal(t, "INVALID_SUBSCRIPTION_PARAMS", infraerrors.Reason(err))
 

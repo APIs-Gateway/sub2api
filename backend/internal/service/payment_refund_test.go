@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -337,6 +338,81 @@ func TestPrepDeductBalanceRefundClampsToRecoverable(t *testing.T) {
 	p4 := &RefundPlan{RefundAmount: 100}
 	require.Nil(t, mk(-20).prepDeduct(ctx, o, p4, true))
 	require.InDelta(t, 0, p4.BalanceToDeduct, 1e-9)
+}
+
+func TestPaymentServiceRefundFeeRateUsesConfiguredValue(t *testing.T) {
+	ctx := context.Background()
+	svc := &PaymentService{
+		configService: &PaymentConfigService{
+			settingRepo: &paymentConfigSettingRepoStub{values: map[string]string{
+				SettingRefundFeeRate: "1.75",
+			}},
+		},
+	}
+
+	require.InDelta(t, 1.75, svc.refundFeeRate(ctx), 1e-9)
+	require.Zero(t, (&PaymentService{}).refundFeeRate(ctx))
+}
+
+func TestSubscriptionOrderOriginalDaysUsesSnapshotThenLegacyField(t *testing.T) {
+	legacyDays := 30
+	snapshotOrder := &dbent.PaymentOrder{
+		SubscriptionDays: &legacyDays,
+		ProviderSnapshot: map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd": 10.0,
+				"validity_days":    60.0,
+			},
+		},
+	}
+	got, err := subscriptionOrderOriginalDays(snapshotOrder)
+	require.NoError(t, err)
+	require.Equal(t, 60, got)
+
+	legacyOrder := &dbent.PaymentOrder{SubscriptionDays: &legacyDays}
+	got, err = subscriptionOrderOriginalDays(legacyOrder)
+	require.NoError(t, err)
+	require.Equal(t, 30, got)
+
+	_, err = subscriptionOrderOriginalDays(&dbent.PaymentOrder{})
+	require.ErrorContains(t, err, "missing original validity days")
+}
+
+func TestSubscriptionForRefundRejectsMissingServiceAndSnapshotUserMismatch(t *testing.T) {
+	ctx := context.Background()
+	_, err := (&PaymentService{}).subscriptionForRefund(ctx, &dbent.PaymentOrder{UserID: 1})
+	require.ErrorContains(t, err, "subscription service not configured")
+
+	today := TodayEastDayNumber()
+	repo := newRefundUserSubRepoStub(&UserSubscription{
+		ID:             11,
+		UserID:         2,
+		Status:         SubscriptionStatusActive,
+		DailyAmountUSD: 30,
+		TodayRemaining: 30,
+		TodayDay:       today,
+		StartDay:       today,
+		ExpireDay:      today + 29,
+		ExpiresAt:      ExpireDayToExpiresAt(today + 29),
+	})
+	subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+	svc := &PaymentService{subscriptionSvc: subSvc}
+
+	_, err = svc.subscriptionForRefund(ctx, &dbent.PaymentOrder{
+		UserID: 1,
+		ProviderSnapshot: map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"subscription_id": 11.0,
+			},
+		},
+	})
+	require.ErrorContains(t, err, "does not belong to order user")
+}
+
+func TestRefundAttemptAuditActionIncludesPrefix(t *testing.T) {
+	action := refundAttemptAuditAction("REFUND_GATEWAY_FAILED")
+	require.True(t, strings.HasPrefix(action, "REFUND_GATEWAY_FAILED_"), action)
+	require.Greater(t, len(action), len("REFUND_GATEWAY_FAILED_"))
 }
 
 func TestPrepareRefundSubscriptionDefaultsToPerDayRefundAmount(t *testing.T) {

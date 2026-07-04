@@ -47,7 +47,7 @@ func TestSubscriptionEndpointsHTTP_ReadAndQuotePostgres(t *testing.T) {
 	user := mustCreateUser(t, client, &service.User{Email: "sub-endpoints-" + uuid.NewString() + "@example.com"})
 	group := mustCreateGroup(t, client, &service.Group{Name: "sub-endpoints-" + uuid.NewString()})
 	today := service.TodayEastDayNumber()
-	d := 10.0
+	d := 30.0
 	w, m := service.DeriveWindowCaps(d, 30)
 	mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
@@ -77,7 +77,7 @@ func TestSubscriptionEndpointsHTTP_ReadAndQuotePostgres(t *testing.T) {
 
 	// 报价:合法 D/T → 200。
 	rec = performLifecycleRequest(t, router, http.MethodPost, "/api/v1/subscriptions/quote",
-		map[string]any{"daily_amount_usd": 10, "validity_days": 30})
+		map[string]any{"daily_amount_usd": 30, "validity_days": 30})
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	// 报价:越界 D(0)→ 业务错误(非 2xx)。
@@ -97,7 +97,7 @@ func TestSubscriptionEndpointsHTTP_ReadAndQuotePostgres(t *testing.T) {
 
 	// 转套餐报价:升档(新 D 高于旧卡)→ diff>0 → 200。
 	rec = performLifecycleRequest(t, router, http.MethodPost, "/api/v1/subscriptions/change-plan/quote",
-		map[string]any{"daily_amount_usd": 20, "validity_days": 30})
+		map[string]any{"daily_amount_usd": 60, "validity_days": 30})
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	// 转套餐报价:缺必填字段 → 400。
@@ -124,7 +124,7 @@ func TestSubscriptionEndpointsHTTP_RequiresAuthPostgres(t *testing.T) {
 	// 续费 / 转套餐报价端点同样要求鉴权 → 401(在 bind 之前先拦)。
 	for _, path := range []string{"/renew/quote", "/change-plan/quote"} {
 		rec := performLifecycleRequest(t, router, http.MethodPost, "/api/v1/subscriptions"+path,
-			map[string]any{"daily_amount_usd": 10, "validity_days": 30})
+			map[string]any{"daily_amount_usd": 30, "validity_days": 30})
 		require.Equalf(t, http.StatusUnauthorized, rec.Code, "POST %s without auth", path)
 	}
 }

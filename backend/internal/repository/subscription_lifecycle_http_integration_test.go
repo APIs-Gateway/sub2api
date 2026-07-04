@@ -36,9 +36,9 @@ func TestSubscriptionLifecycleHTTP_RenewQuotePostgres(t *testing.T) {
 	card := mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
 		GroupID:         group.ID,
-		DailyAmountUSD:  10,
-		GrantedTotalUSD: 300,
-		TodayRemaining:  10,
+		DailyAmountUSD:  30,
+		GrantedTotalUSD: 900,
+		TodayRemaining:  30,
 		TodayDay:        today,
 		StartDay:        today,
 		ExpireDay:       today + 10,
@@ -54,8 +54,8 @@ func TestSubscriptionLifecycleHTTP_RenewQuotePostgres(t *testing.T) {
 	data := requireLifecycleData(t, env)
 	require.EqualValues(t, card.ID, data["subscription_id"])
 	require.EqualValues(t, 30, data["added_days"])
-	require.InDelta(t, 10, data["daily_amount_usd"], 1e-9)
-	require.InDelta(t, cfg.Price(10, 30), data["price"], 1e-6)
+	require.InDelta(t, 30, data["daily_amount_usd"], 1e-9)
+	require.InDelta(t, cfg.Price(30, 30), data["price"], 1e-6)
 
 	// 报价不改状态：卡未延长、余额未动。
 	gotSub, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
@@ -80,8 +80,8 @@ func TestSubscriptionLifecycleHTTP_ChangePlanQuotePostgres(t *testing.T) {
 	old := mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
 		GroupID:         group.ID,
-		DailyAmountUSD:  10,
-		GrantedTotalUSD: 300,
+		DailyAmountUSD:  30,
+		GrantedTotalUSD: 900,
 		TodayRemaining:  2,
 		TodayDay:        today,
 		StartDay:        today,
@@ -89,7 +89,7 @@ func TestSubscriptionLifecycleHTTP_ChangePlanQuotePostgres(t *testing.T) {
 		ExpiresAt:       service.ExpireDayToExpiresAt(today + 29),
 		Status:          service.SubscriptionStatusActive,
 	})
-	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 20, 30)
+	newPlan := mustCreateChangePlanPlan(t, client, group.ID, 60, 30)
 
 	router := subscriptionLifecycleRouter(t, user.ID)
 	rec := performLifecycleRequest(t, router, http.MethodPost, "/api/v1/subscriptions/change-plan/quote", map[string]any{"daily_amount_usd": newPlan.DailyAmountUsd, "validity_days": newPlan.ValidityDays})
@@ -99,10 +99,10 @@ func TestSubscriptionLifecycleHTTP_ChangePlanQuotePostgres(t *testing.T) {
 	require.EqualValues(t, 0, env.Code)
 	data := requireLifecycleData(t, env)
 	require.EqualValues(t, old.ID, data["old_subscription_id"])
-	require.InDelta(t, 20, data["daily_amount_usd"], 1e-9)
+	require.InDelta(t, 60, data["daily_amount_usd"], 1e-9)
 	require.EqualValues(t, 30, data["validity_days"])
-	require.InDelta(t, cfg.Price(20, 30), data["new_plan_price"], 1e-6)
-	require.InDelta(t, cfg.Price(10, 29), data["old_remaining_value"], 1e-6)
+	require.InDelta(t, cfg.Price(60, 30), data["new_plan_price"], 1e-6)
+	require.InDelta(t, cfg.Price(30, 29), data["old_remaining_value"], 1e-6)
 	require.Greater(t, data["diff"].(float64), 0.0, "升档应 diff>0")
 
 	// 报价不改状态：旧卡仍 active、余额未动。
@@ -132,7 +132,7 @@ func TestSubscriptionLifecycleHTTP_RejectsMissingAuthAndInvalidParams(t *testing
 		{name: "renew missing validity", body: map[string]any{}, path: "/api/v1/subscriptions/renew/quote"},
 		{name: "renew zero validity", body: map[string]any{"validity_days": 0}, path: "/api/v1/subscriptions/renew/quote"},
 		{name: "change missing fields", body: map[string]any{}, path: "/api/v1/subscriptions/change-plan/quote"},
-		{name: "change negative validity", body: map[string]any{"daily_amount_usd": 20, "validity_days": -1}, path: "/api/v1/subscriptions/change-plan/quote"},
+		{name: "change negative validity", body: map[string]any{"daily_amount_usd": 60, "validity_days": -1}, path: "/api/v1/subscriptions/change-plan/quote"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := performLifecycleRequest(t, router, http.MethodPost, tc.path, tc.body)

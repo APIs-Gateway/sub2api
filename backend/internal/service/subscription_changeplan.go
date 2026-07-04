@@ -15,7 +15,7 @@ import (
 // diff = P_新 − 旧卡剩余价值 V；diff<0=降档赔钱（调用方拒）、=0=持平（同步换卡）、>0=补差价（走网关）。
 type ChangePlanOrderQuote struct {
 	OldSubscriptionID int64   `json:"old_subscription_id"`
-	GroupID           int64   `json:"group_id"`            // 沿用当前生效卡的平台/分组
+	GroupID           int64   `json:"group_id"`            // 兼容旧字段：0 表示转套餐新卡全分组通用
 	DailyAmountUSD    float64 `json:"daily_amount_usd"`    // D_新
 	ValidityDays      int     `json:"validity_days"`       // T_新
 	WeeklyCapUSD      float64 `json:"weekly_cap_usd"`      // 派生 W
@@ -77,7 +77,7 @@ func (s *SubscriptionService) QuoteChangePlanOrder(ctx context.Context, userID i
 
 	return &ChangePlanOrderQuote{
 		OldSubscriptionID: oldSub.ID,
-		GroupID:           oldSub.GroupID,
+		GroupID:           0,
 		DailyAmountUSD:    quote.DailyAmountUSD,
 		ValidityDays:      quote.ValidityDays,
 		WeeklyCapUSD:      quote.WeeklyCapUSD,
@@ -101,7 +101,7 @@ type ChangePlanResult struct {
 }
 
 // ApplyChangePlanFromOrder 履约转套餐（法币支付成功后由 doSub 调用，规格第 7 节）：关旧卡、立即开新卡
-// （沿用旧卡 groupID，冻结 D_新/T_新，W/M 按 DeriveWindowCaps 派生），新卡三窗口用量**继承旧卡
+// （转套餐新卡为全分组通用卡，冻结 D_新/T_新，W/M 按 DeriveWindowCaps 派生），新卡三窗口用量**继承旧卡
 // 当前用量**（堵当天/周/月换档重领），stamp last_change_plan_day=today。**不扣余额、不算差价**——补差价已
 // 通过法币网关收取（见 docs/billing-perday-redesign.md §7）。幂等由 doSub 的 SUBSCRIPTION_SUCCESS 审计键保证。
 //
@@ -158,11 +158,11 @@ func (s *SubscriptionService) ApplyChangePlanFromOrder(ctx context.Context, oldS
 		}
 
 		// 开新卡：限额挂卡、新卡继承旧卡当前三窗口 usage/window_start，避免当天/本周/本月换档后重领已用额度
-		// （spec §7）。新卡沿用旧卡 groupID，限额读卡级。不写 users.balance。
+		// （spec §7）。新卡不绑定 group，作为全分组通用卡；限额读卡级。不写 users.balance。
 		activatedAt := now
 		newSub := &UserSubscription{
 			UserID:             userID,
-			GroupID:            oldGroupID,
+			GroupID:            0,
 			StartsAt:           now,
 			ExpiresAt:          ExpireDayToExpiresAt(newExpireDay),
 			Status:             SubscriptionStatusActive,

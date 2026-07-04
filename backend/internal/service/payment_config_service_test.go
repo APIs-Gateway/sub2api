@@ -10,6 +10,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
@@ -479,6 +480,141 @@ func TestUpdatePaymentConfig_PreservesFineSubscriptionPlanRatios(t *testing.T) {
 	}
 }
 
+func TestUpdatePaymentConfig_PersistsSubscriptionBillingSettings(t *testing.T) {
+	repo := &paymentConfigSettingRepoStub{values: map[string]string{}}
+	svc := &PaymentConfigService{settingRepo: repo}
+
+	subPayMultiplier := 1.25
+	refundFeeRate := 2.5
+	minDaily := 30.0
+	maxDaily := 120.0
+	maxDays := 720
+	minPlanRatio := 2.75
+	maxPlanRatio := 1.25
+	kyrenSecret := "  secret-token  "
+	err := svc.UpdatePaymentConfig(context.Background(), UpdatePaymentConfigRequest{
+		SubscriptionPayMultiplier: &subPayMultiplier,
+		RefundFeeRate:             &refundFeeRate,
+		SubscriptionMinDaily:      &minDaily,
+		SubscriptionMaxDaily:      &maxDaily,
+		SubscriptionMaxDays:       &maxDays,
+		SubscriptionMinPlanRatio:  &minPlanRatio,
+		SubscriptionMaxPlanRatio:  &maxPlanRatio,
+		KyrenWebhookSecret:        &kyrenSecret,
+	})
+	if err != nil {
+		t.Fatalf("UpdatePaymentConfig returned error: %v", err)
+	}
+
+	want := map[string]string{
+		SettingSubscriptionPayMult:  "1.25",
+		SettingRefundFeeRate:        "2.50",
+		SettingSubscriptionMinDaily: "30.00",
+		SettingSubscriptionMaxDaily: "120.00",
+		SettingSubscriptionMaxDays:  "720",
+		SettingSubscriptionMinRatio: "2.75",
+		SettingSubscriptionMaxRatio: "1.25",
+		SettingKyrenWebhookSecret:   "secret-token",
+	}
+	for key, expected := range want {
+		if repo.values[key] != expected {
+			t.Fatalf("%s stored as %q, want %q", key, repo.values[key], expected)
+		}
+	}
+}
+
+func TestUpdatePaymentConfig_RejectsInvalidSubscriptionBillingSettings(t *testing.T) {
+	tests := []struct {
+		name       string
+		req        UpdatePaymentConfigRequest
+		wantReason string
+	}{
+		{
+			name:       "subscription pay multiplier must be positive",
+			req:        UpdatePaymentConfigRequest{SubscriptionPayMultiplier: paymentConfigFloatPtr(0)},
+			wantReason: "INVALID_SUBSCRIPTION_PAYMENT_MULTIPLIER",
+		},
+		{
+			name:       "refund fee rate must be a valid percent",
+			req:        UpdatePaymentConfigRequest{RefundFeeRate: paymentConfigFloatPtr(100.001)},
+			wantReason: "INVALID_REFUND_FEE_RATE",
+		},
+		{
+			name:       "subscription minimum daily must use configured step",
+			req:        UpdatePaymentConfigRequest{SubscriptionMinDaily: paymentConfigFloatPtr(31)},
+			wantReason: "INVALID_SUBSCRIPTION_MIN_DAILY_AMOUNT",
+		},
+		{
+			name:       "subscription maximum daily must use configured step",
+			req:        UpdatePaymentConfigRequest{SubscriptionMaxDaily: paymentConfigFloatPtr(59)},
+			wantReason: "INVALID_SUBSCRIPTION_MAX_DAILY_AMOUNT",
+		},
+		{
+			name: "subscription maximum daily must be at least minimum daily",
+			req: UpdatePaymentConfigRequest{
+				SubscriptionMinDaily: paymentConfigFloatPtr(120),
+				SubscriptionMaxDaily: paymentConfigFloatPtr(30),
+			},
+			wantReason: "INVALID_SUBSCRIPTION_DAILY_AMOUNT_RANGE",
+		},
+		{
+			name:       "subscription maximum validity cannot be below minimum",
+			req:        UpdatePaymentConfigRequest{SubscriptionMaxDays: paymentConfigIntPtr(29)},
+			wantReason: "INVALID_SUBSCRIPTION_MAX_VALIDITY_DAYS",
+		},
+		{
+			name:       "subscription minimum plan ratio must be positive",
+			req:        UpdatePaymentConfigRequest{SubscriptionMinPlanRatio: paymentConfigFloatPtr(0)},
+			wantReason: "INVALID_SUBSCRIPTION_MIN_PLAN_RATIO",
+		},
+		{
+			name:       "subscription maximum plan ratio must be positive",
+			req:        UpdatePaymentConfigRequest{SubscriptionMaxPlanRatio: paymentConfigFloatPtr(-1)},
+			wantReason: "INVALID_SUBSCRIPTION_MAX_PLAN_RATIO",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &paymentConfigSettingRepoStub{values: map[string]string{}}
+			svc := &PaymentConfigService{settingRepo: repo}
+
+			err := svc.UpdatePaymentConfig(context.Background(), tt.req)
+			if err == nil {
+				t.Fatal("UpdatePaymentConfig returned nil error")
+			}
+			if got := infraerrors.Reason(err); got != tt.wantReason {
+				t.Fatalf("Reason(err) = %q, want %q", got, tt.wantReason)
+			}
+			if len(repo.updates) != 0 {
+				t.Fatalf("settings were written for invalid request: %v", repo.updates)
+			}
+		})
+	}
+}
+
+func TestGetKyrenWebhookSecret_ReturnsTrimmedConfiguredSecret(t *testing.T) {
+	svc := &PaymentConfigService{
+		settingRepo: &paymentConfigSettingRepoStub{
+			values: map[string]string{
+				SettingKyrenWebhookSecret: "  abc  ",
+			},
+		},
+	}
+
+	if got := svc.GetKyrenWebhookSecret(context.Background()); got != "abc" {
+		t.Fatalf("GetKyrenWebhookSecret() = %q, want abc", got)
+	}
+}
+
 func paymentConfigStrPtr(value string) *string {
+	return &value
+}
+
+func paymentConfigFloatPtr(value float64) *float64 {
+	return &value
+}
+
+func paymentConfigIntPtr(value int) *int {
 	return &value
 }

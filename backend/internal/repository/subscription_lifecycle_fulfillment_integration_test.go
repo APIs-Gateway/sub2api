@@ -245,7 +245,7 @@ func TestPaymentSubscriptionFulfillment_ChangePlanIntentClosesOldOpensNewPostgre
 	group := mustCreateGroup(t, client, &service.Group{Name: "lifecycle-change-" + uuid.NewString()})
 	today := service.TodayEastDayNumber()
 
-	dOld := 10.0
+	dOld := 30.0
 	wOld, mOld := service.DeriveWindowCaps(dOld, 30)
 	dUsage, wUsage, mUsage := 3.0, 8.0, 15.0
 	winStart := time.Now().Add(-2 * time.Hour)
@@ -271,7 +271,7 @@ func TestPaymentSubscriptionFulfillment_ChangePlanIntentClosesOldOpensNewPostgre
 		Status:             service.SubscriptionStatusActive,
 	})
 
-	dNew := 20.0
+	dNew := 60.0
 	wNew, mNew := service.DeriveWindowCaps(dNew, 30)
 	orderID := createPaidLifecycleOrderForIntegration(t, client, user, service.SubscriptionIntentChangePlan, oldCard.ID, dNew, 30, 150)
 	require.NoError(t, paymentSvc.ExecuteSubscriptionFulfillment(ctx, orderID))
@@ -331,7 +331,7 @@ func TestPaymentSubscriptionWebhook_CustomOrderBuildsThreeWindowCardPostgres(t *
 		Balance:  300,
 	})
 
-	const dailyAmount = 9.0
+	const dailyAmount = 30.0
 	const validityDays = 30
 	quote, err := service.DefaultSubscriptionPricingConfig().Quote(dailyAmount, validityDays)
 	require.NoError(t, err)
@@ -408,7 +408,7 @@ func TestPaymentSubscriptionFulfillment_ChangePlanIntentIdempotentOnReplayPostgr
 	})
 	group := mustCreateGroup(t, client, &service.Group{Name: "lifecycle-change-idem-" + uuid.NewString()})
 	today := service.TodayEastDayNumber()
-	dOld := 8.0
+	dOld := 30.0
 	wOld, mOld := service.DeriveWindowCaps(dOld, 30)
 	oldExpireDay := today + 10
 	oldCard := mustCreateSubscription(t, client, &service.UserSubscription{
@@ -426,7 +426,7 @@ func TestPaymentSubscriptionFulfillment_ChangePlanIntentIdempotentOnReplayPostgr
 		Status:          service.SubscriptionStatusActive,
 	})
 
-	dNew := 15.0
+	dNew := 60.0
 	orderID := createPaidLifecycleOrderForIntegration(t, client, user, service.SubscriptionIntentChangePlan, oldCard.ID, dNew, 30, 130)
 	require.NoError(t, paymentSvc.ExecuteSubscriptionFulfillment(ctx, orderID))
 

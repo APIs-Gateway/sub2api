@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
@@ -125,6 +126,44 @@ func TestQuoteChangePlanOrder_UserIDGuard(t *testing.T) {
 	require.Equal(t, "INVALID_INPUT", infraerrors.Reason(err))
 }
 
+type quoteChangePlanUserSubRepoStub struct {
+	userSubRepoNoop
+	sub *UserSubscription
+}
+
+func (s quoteChangePlanUserSubRepoStub) GetActiveByUserID(_ context.Context, _ int64) (*UserSubscription, error) {
+	if s.sub == nil {
+		return nil, ErrSubscriptionNotFound
+	}
+	cp := *s.sub
+	return &cp, nil
+}
+
+func TestQuoteChangePlanOrder_ReturnsUniversalGroup(t *testing.T) {
+	ctx := context.Background()
+	today := TodayEastDayNumber()
+	svc := &SubscriptionService{userSubRepo: quoteChangePlanUserSubRepoStub{sub: &UserSubscription{
+		ID:              101,
+		UserID:          42,
+		GroupID:         777,
+		DailyAmountUSD:  30,
+		TodayRemaining:  30,
+		TodayDay:        today,
+		StartDay:        today,
+		ExpireDay:       today + 1,
+		ExpiresAt:       ExpireDayToExpiresAt(today + 1),
+		Status:          SubscriptionStatusActive,
+		GrantedTotalUSD: 900,
+	}}}
+
+	q, err := svc.QuoteChangePlanOrder(ctx, 42, 60, 30)
+	require.NoError(t, err)
+	require.EqualValues(t, 101, q.OldSubscriptionID)
+	require.EqualValues(t, 0, q.GroupID, "转套餐报价兼容字段应表达新卡全分组通用")
+	require.InDelta(t, 60, q.DailyAmountUSD, 1e-9)
+	require.Greater(t, q.Diff, 0.0)
+}
+
 func TestApplyChangePlanFromOrder_GuardBranches(t *testing.T) {
 	ctx := context.Background()
 
@@ -141,6 +180,54 @@ func TestApplyChangePlanFromOrder_GuardBranches(t *testing.T) {
 	require.Equal(t, "INVALID_INPUT", infraerrors.Reason(err))
 	_, err = svc.ApplyChangePlanFromOrder(ctx, 1, 20, 0)
 	require.Equal(t, "INVALID_INPUT", infraerrors.Reason(err))
+}
+
+func TestApplyChangePlanFromOrder_CreatesUniversalGroupCard(t *testing.T) {
+	ctx := context.Background()
+	client := newSubscriptionGuardsTestClient(t)
+	user := client.User.Create().
+		SetEmail("changeplan-universal@example.com").
+		SetPasswordHash("h").
+		SaveX(ctx)
+	today := TodayEastDayNumber()
+	now := time.Now()
+	oldDaily, oldWeekly, oldMonthly := 30.0, 210.0, 900.0
+	subRepo := newSubscriptionUserSubRepoStub()
+	subRepo.seed(&UserSubscription{
+		ID:                 501,
+		UserID:             user.ID,
+		GroupID:            777,
+		DailyAmountUSD:     oldDaily,
+		GrantedTotalUSD:    900,
+		TodayRemaining:     20,
+		TodayDay:           today,
+		StartDay:           today,
+		ExpireDay:          today + 5,
+		ExpiresAt:          ExpireDayToExpiresAt(today + 5),
+		Status:             SubscriptionStatusActive,
+		DailyLimitUSD:      &oldDaily,
+		WeeklyLimitUSD:     &oldWeekly,
+		MonthlyLimitUSD:    &oldMonthly,
+		DailyWindowStart:   &now,
+		WeeklyWindowStart:  &now,
+		MonthlyWindowStart: &now,
+	})
+	svc := NewSubscriptionService(groupRepoNoop{}, subRepo, nil, nil, nil, client, nil, nil)
+
+	res, err := svc.ApplyChangePlanFromOrder(ctx, 501, 60, 30)
+	require.NoError(t, err)
+	require.NotZero(t, res.NewSubscriptionID)
+
+	got, err := subRepo.GetByID(ctx, res.NewSubscriptionID)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, got.GroupID, "转套餐新卡不应继承旧分组")
+	require.InDelta(t, 60, got.DailyAmountUSD, 1e-9)
+	require.InDelta(t, 50, got.TodayRemaining, 1e-9, "新 D=60 减旧卡今日已用 10")
+	require.NotNil(t, got.DailyLimitUSD)
+	require.InDelta(t, 60, *got.DailyLimitUSD, 1e-9)
+
+	gotUser := client.User.GetX(ctx, user.ID)
+	require.Equal(t, today, gotUser.LastChangePlanDay)
 }
 
 func TestApplyRenewFromOrder_GuardBranches(t *testing.T) {
