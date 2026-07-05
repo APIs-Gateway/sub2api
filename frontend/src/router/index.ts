@@ -614,14 +614,7 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/points/config',
-    name: 'AdminPointsConfig',
-    component: () => import('@/views/admin/points/AdminPointsConfigView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Points Config',
-      titleKey: 'nav.pointsConfig'
-    }
+    redirect: { path: '/admin/settings', query: { tab: 'points' } }
   },
   {
     path: '/admin/points/withdrawals',

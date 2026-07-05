@@ -76,6 +76,15 @@ func (s *PointsService) peg(ctx context.Context) float64 {
 	return s.settingService.GetPointsPeg(ctx)
 }
 
+func (s *PointsService) balanceRedeemMultiplier(ctx context.Context) float64 {
+	if s == nil || s.settingService == nil {
+		return defaultBalanceRechargeMultiplier
+	}
+	return normalizeBalanceRechargeMultiplier(
+		s.settingService.floatSettingOr(ctx, SettingBalanceRechargeMult, defaultBalanceRechargeMultiplier),
+	)
+}
+
 func (s *PointsService) resolveRate(ctx context.Context, inviter *AffiliateSummary) float64 {
 	if inviter != nil && inviter.AffRebateRatePercent != nil {
 		v := *inviter.AffRebateRatePercent
@@ -291,7 +300,7 @@ func (s *PointsService) RedeemToBalance(ctx context.Context, userID, points int6
 		return 0, ErrPointsAmountInvalid
 	}
 	peg := s.peg(ctx)
-	delta := PointsToBalance(points, peg)
+	delta := PointsToBalance(points, peg, s.balanceRedeemMultiplier(ctx))
 	if delta <= 0 {
 		return 0, ErrPointsAmountInvalid
 	}
@@ -565,6 +574,7 @@ func (s *PointsService) AdminUpdateSettings(ctx context.Context, in PointsSettin
 type PointsPublicConfig struct {
 	Enabled            bool    `json:"enabled"`
 	Peg                float64 `json:"peg"`
+	BalanceRedeemRate  float64 `json:"balance_redeem_rate"`
 	WithdrawEnabled    bool    `json:"withdraw_enabled"`
 	WithdrawMinPoints  int64   `json:"withdraw_min_points"`
 	WithdrawFeePercent float64 `json:"withdraw_fee_percent"`
@@ -579,6 +589,7 @@ func (s *PointsService) PublicConfig(ctx context.Context) PointsPublicConfig {
 	return PointsPublicConfig{
 		Enabled:            st.Enabled,
 		Peg:                st.Peg,
+		BalanceRedeemRate:  s.balanceRedeemMultiplier(ctx),
 		WithdrawEnabled:    st.WithdrawEnabled,
 		WithdrawMinPoints:  st.WithdrawMinPoints,
 		WithdrawFeePercent: st.WithdrawFeePercent,

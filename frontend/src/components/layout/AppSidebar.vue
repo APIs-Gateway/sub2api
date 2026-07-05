@@ -764,7 +764,6 @@ const adminNavItems = computed((): NavItem[] => {
       expandOnly: true,
       children: [
         { path: '/admin/affiliates/invites', label: t('nav.affiliateInviteRecords'), icon: UsersIcon },
-        { path: '/admin/points/config', label: t('nav.pointsConfig'), icon: CogIcon },
         { path: '/admin/points/withdrawals', label: t('nav.pointsWithdrawals'), icon: CreditCardIcon },
         { path: '/admin/points/records', label: t('nav.pointsRecords'), icon: OrderIcon },
       ],

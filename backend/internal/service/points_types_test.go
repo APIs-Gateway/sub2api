@@ -76,10 +76,11 @@ func TestComputeClawbackPoints(t *testing.T) {
 }
 
 func TestPointsToBalance(t *testing.T) {
-	require.InDelta(t, 5.0, PointsToBalance(500, 0.01), 1e-9)
-	require.InDelta(t, 0.0, PointsToBalance(0, 0.01), 1e-9)
-	require.InDelta(t, 0.0, PointsToBalance(500, 0), 1e-9)
-	require.InDelta(t, 1.23, PointsToBalance(123, 0.01), 1e-9)
+	require.InDelta(t, 65.0, PointsToBalance(500, 0.01, 13), 1e-9)
+	require.InDelta(t, 0.0, PointsToBalance(0, 0.01, 13), 1e-9)
+	require.InDelta(t, 0.0, PointsToBalance(500, 0, 13), 1e-9)
+	require.InDelta(t, 0.0, PointsToBalance(500, 0.01, 0), 1e-9)
+	require.InDelta(t, 15.99, PointsToBalance(123, 0.01, 13), 1e-9)
 }
 
 func TestComputeWithdrawalAmounts(t *testing.T) {
