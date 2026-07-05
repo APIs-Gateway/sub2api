@@ -294,7 +294,7 @@ func TestPointsRepo_Clawback_GoesNegative_AfterSpent(t *testing.T) {
 	require.NoError(t, err)
 
 	// 邀请人把积分花光（换余额）。
-	_, err = repo.RedeemToBalance(ctx, inviter.ID, 100, service.PointsToBalance(100, pointsTestPeg), pointsTestPeg)
+	_, err = repo.RedeemToBalance(ctx, inviter.ID, 100, service.PointsToBalance(100, pointsTestPeg, 1), pointsTestPeg)
 	require.NoError(t, err)
 	acct, err := repo.GetAccount(ctx, inviter.ID)
 	require.NoError(t, err)
@@ -364,7 +364,7 @@ func TestPointsRepo_RedeemToBalance_DeductsAndCredits_InsufficientGuard(t *testi
 	})
 	require.NoError(t, err)
 
-	delta := service.PointsToBalance(100, pointsTestPeg) // 100 × 0.01 = 1.0
+	delta := service.PointsToBalance(100, pointsTestPeg, 1) // 100 × 0.01 × 1 = 1.0
 	newBalance, err := repo.RedeemToBalance(ctx, inviter.ID, 100, delta, pointsTestPeg)
 	require.NoError(t, err)
 	require.InDelta(t, 1.0, newBalance, 1e-9)
@@ -379,7 +379,7 @@ func TestPointsRepo_RedeemToBalance_DeductsAndCredits_InsufficientGuard(t *testi
 	require.InDelta(t, 1.0, dbBalance, 1e-9)
 
 	// 余额不足：available 已为 0 → 守卫拦截。
-	_, err = repo.RedeemToBalance(ctx, inviter.ID, 1, service.PointsToBalance(1, pointsTestPeg), pointsTestPeg)
+	_, err = repo.RedeemToBalance(ctx, inviter.ID, 1, service.PointsToBalance(1, pointsTestPeg, 1), pointsTestPeg)
 	require.ErrorIs(t, err, service.ErrPointsInsufficient)
 }
 

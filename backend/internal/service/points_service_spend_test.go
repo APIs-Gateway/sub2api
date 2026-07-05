@@ -35,7 +35,10 @@ type fakePointsRepo struct {
 	wTotal      int64
 
 	// 记录
-	redeemCall *struct{ userID, points int64 }
+	redeemCall *struct {
+		userID, points int64
+		balanceDelta   float64
+	}
 	createCall *CreateWithdrawalInput
 	reviewCall *struct {
 		id, adminID int64
@@ -73,7 +76,10 @@ func (r *fakePointsRepo) ThawDuePoints(ctx context.Context, userID int64) (int64
 	return r.thawN, r.thawErr
 }
 func (r *fakePointsRepo) RedeemToBalance(ctx context.Context, userID, points int64, balanceDelta, pegAt float64) (float64, error) {
-	r.redeemCall = &struct{ userID, points int64 }{userID, points}
+	r.redeemCall = &struct {
+		userID, points int64
+		balanceDelta   float64
+	}{userID, points, balanceDelta}
 	return r.redeemBal, r.redeemErr
 }
 func (r *fakePointsRepo) DeductForPlan(ctx context.Context, userID, points int64, pegAt float64, note, idempotencyKey string) error {
@@ -135,6 +141,7 @@ func spendSettings() map[string]string {
 		SettingKeyPointsWithdrawUSDCNYRate: "7.2",
 		SettingKeyPointsRedeemBalanceOn:    "true",
 		SettingKeyPointsRedeemPlanOn:       "true",
+		SettingBalanceRechargeMult:         "13",
 	}
 }
 
@@ -210,6 +217,7 @@ func TestPointsService_RedeemToBalance(t *testing.T) {
 		require.InDelta(t, 12.34, bal, 1e-9)
 		require.NotNil(t, repo.redeemCall)
 		require.EqualValues(t, 100, repo.redeemCall.points)
+		require.InDelta(t, 13, repo.redeemCall.balanceDelta, 1e-9)
 	})
 	t.Run("repo error", func(t *testing.T) {
 		repo := &fakePointsRepo{redeemErr: errors.New("boom")}
@@ -356,6 +364,7 @@ func TestPointsService_PublicConfigAndSettings(t *testing.T) {
 	pub := svc.PublicConfig(ctx)
 	require.True(t, pub.Enabled)
 	require.InDelta(t, 0.01, pub.Peg, 1e-9)
+	require.InDelta(t, 13, pub.BalanceRedeemRate, 1e-9)
 	require.True(t, pub.WithdrawEnabled)
 	require.InDelta(t, 7.2, pub.WithdrawUSDCNYRate, 1e-9)
 	require.True(t, pub.RedeemBalanceOn)

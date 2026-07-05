@@ -7168,13 +7168,18 @@
         </div>
         <!-- /Tab: Email -->
 
+        <!-- Tab: Points -->
+        <div v-show="activeTab === 'points'">
+          <AdminPointsConfigPanel />
+        </div>
+
         <!-- Tab: Backup -->
         <div v-show="activeTab === 'backup'">
           <BackupSettings />
         </div>
 
         <!-- Save Button -->
-        <div v-show="activeTab !== 'backup'" class="flex justify-end">
+        <div v-show="activeTab !== 'backup' && activeTab !== 'points'" class="flex justify-end">
           <button
             type="submit"
             :disabled="saving || loadFailed"
@@ -7247,6 +7252,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute, useRouter } from "vue-router";
 import { adminAPI } from "@/api";
 import {
   appendAuthSourceDefaultsToUpdateRequest,
@@ -7291,6 +7297,7 @@ import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
+import AdminPointsConfigPanel from "@/views/admin/points/AdminPointsConfigPanel.vue";
 import { useClipboard } from "@/composables/useClipboard";
 import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSimpleUser } from "@/api/admin/affiliates";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
@@ -7305,6 +7312,8 @@ import {
 } from "@/utils/registrationEmailPolicy";
 
 const { t, locale } = useI18n();
+const route = useRoute();
+const router = useRouter();
 const appStore = useAppStore();
 const adminSettingsStore = useAdminSettingsStore();
 const isZhLocale = computed(() => locale.value.startsWith("zh"));
@@ -7333,6 +7342,7 @@ type SettingsTab =
   | "users"
   | "gateway"
   | "payment"
+  | "points"
   | "email"
   | "backup";
 const activeTab = ref<SettingsTab>("general");
@@ -7344,6 +7354,7 @@ const settingsTabs = [
   { key: "users" as SettingsTab, icon: "user" as const },
   { key: "gateway" as SettingsTab, icon: "server" as const },
   { key: "payment" as SettingsTab, icon: "creditCard" as const },
+  { key: "points" as SettingsTab, icon: "calculator" as const },
   { key: "email" as SettingsTab, icon: "mail" as const },
   { key: "backup" as SettingsTab, icon: "database" as const },
 ];
@@ -7359,7 +7370,30 @@ const settingsTabKeyboardActions = {
 
 function selectSettingsTab(tab: SettingsTab): void {
   activeTab.value = tab;
+  if (route.name === "AdminSettings") {
+    const nextQuery = { ...route.query };
+    if (tab === "general") {
+      delete nextQuery.tab;
+    } else {
+      nextQuery.tab = tab;
+    }
+    void router.replace({ query: nextQuery }).catch(() => undefined);
+  }
 }
+
+function isSettingsTab(value: unknown): value is SettingsTab {
+  return typeof value === "string" && settingsTabs.some((item) => item.key === value);
+}
+
+watch(
+  () => route.query.tab,
+  (tab) => {
+    if (isSettingsTab(tab)) {
+      activeTab.value = tab;
+    }
+  },
+  { immediate: true },
+);
 
 function focusSettingsTab(tab: SettingsTab): void {
   window.requestAnimationFrame(() => {

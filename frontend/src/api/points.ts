@@ -15,6 +15,7 @@ export interface PointsAccount {
 export interface PointsConfig {
   enabled: boolean
   peg: number
+  balance_redeem_rate: number
   withdraw_enabled: boolean
   withdraw_min_points: number
   withdraw_fee_percent: number

@@ -29,7 +29,7 @@
             <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ formatPercent(firstPaymentRate) }}</p>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.firstPaymentRate', { rate: formatPercent(firstPaymentRate) }) }}</p>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.repeatPaymentRate', { rate: formatPercent(repeatPaymentRate) }) }}</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.pegValue', { value: formatCurrency(overview.config.peg) }) }}</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.pegValue', { value: formatCurrency(overview.config.peg, 'CNY') }) }}</p>
           </div>
         </div>
 
@@ -73,7 +73,7 @@
                 {{ t('points.invite.rewardFormula', {
                   firstRate: formatPercent(firstPaymentRate),
                   repeatRate: formatPercent(repeatPaymentRate),
-                  peg: formatCurrency(peg),
+                  peg: formatCurrency(peg, 'CNY'),
                 }) }}
               </p>
             </template>
@@ -95,6 +95,7 @@
               <label class="input-label">{{ t('points.redeemBalance.points') }}</label>
               <input v-model.number="redeemBalancePoints" type="number" min="1" class="input" />
               <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.estimate', { amount: formatCurrency(redeemBalanceEstimate) }) }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.rateHint', { peg: formatCurrency(peg, 'CNY'), rate: balanceRedeemRate.toFixed(2) }) }}</p>
             </div>
             <button class="btn btn-primary w-full" :disabled="busy || !redeemBalancePoints" @click="onRedeemBalance">{{ t('points.redeemBalance.submit') }}</button>
           </div>
@@ -303,13 +304,14 @@ const planQuoteError = ref('')
 let planQuoteSeq = 0
 
 const peg = computed(() => overview.value?.config.peg ?? 0)
+const balanceRedeemRate = computed(() => overview.value?.config.balance_redeem_rate ?? 1)
 const repeatPaymentRate = computed(() => overview.value?.effective_rate ?? 0)
 const firstPaymentRate = computed(() => repeatPaymentRate.value * 2)
 const inviteExampleAmount = 100
 const inviteRepeatExamplePoints = computed(() => computeEarnPoints(inviteExampleAmount, repeatPaymentRate.value, peg.value))
 const inviteFirstExamplePoints = computed(() => computeEarnPoints(inviteExampleAmount, firstPaymentRate.value, peg.value))
 const feePercent = computed(() => overview.value?.config.withdraw_fee_percent ?? 0)
-const redeemBalanceEstimate = computed(() => (redeemBalancePoints.value || 0) * peg.value)
+const redeemBalanceEstimate = computed(() => (redeemBalancePoints.value || 0) * peg.value * balanceRedeemRate.value)
 const withdrawUSDCNYBaseRate = computed(() => {
   const rate = overview.value?.config.withdraw_usd_cny_rate ?? 0
   return rate > 0 ? rate : 7.2

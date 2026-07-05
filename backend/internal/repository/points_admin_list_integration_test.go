@@ -115,7 +115,7 @@ func TestPointsRepo_ListLedger_FiltersAndPaging(t *testing.T) {
 		Points: 300, PegAt: pointsTestPeg,
 	})
 	require.NoError(t, err)
-	_, err = repo.RedeemToBalance(ctx, user.ID, 100, service.PointsToBalance(100, pointsTestPeg), pointsTestPeg)
+	_, err = repo.RedeemToBalance(ctx, user.ID, 100, service.PointsToBalance(100, pointsTestPeg, 1), pointsTestPeg)
 	require.NoError(t, err)
 
 	// 全部（按 email 圈定）：earn + redeem_balance = 2。

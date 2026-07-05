@@ -14,7 +14,7 @@ import (
 //   - earning  : floor(amount × rate% / 100 / peg)     —— 偏平台
 //   - 换套餐    : ceil(price / peg)                      —— 偏平台
 //   - clawback : floor(earned × refundAmount/originalAmount)；全额退特例 = earned —— 偏用户
-//   - 换余额    : points × peg                            —— 平价
+//   - 换余额    : points × peg × 余额充值倍率               —— 按真实充值价折算为余额 USD
 //   - 提现      : gross = points × peg；fee = gross × fee%；net = gross − fee；支付宝按 CNY，USDT 按 USD/CNY 日价+0.1 折算
 
 // --- 错误 ---
@@ -248,12 +248,16 @@ func ComputeClawbackPoints(earned int64, refundAmount, originalAmount float64) i
 	return v
 }
 
-// PointsToBalance = points × peg（balance 单位，平价；保留至 8 位小数以贴合列精度）。
-func PointsToBalance(points int64, peg float64) float64 {
-	if points <= 0 || peg <= 0 {
+// PointsToBalance = points × peg × rechargeMultiplier（余额 USD；保留至 8 位小数以贴合列精度）。
+func PointsToBalance(points int64, peg, rechargeMultiplier float64) float64 {
+	if points <= 0 || peg <= 0 || rechargeMultiplier <= 0 {
 		return 0
 	}
-	return decimal.NewFromInt(points).Mul(decimal.NewFromFloat(peg)).Round(8).InexactFloat64()
+	return decimal.NewFromInt(points).
+		Mul(decimal.NewFromFloat(peg)).
+		Mul(decimal.NewFromFloat(rechargeMultiplier)).
+		Round(8).
+		InexactFloat64()
 }
 
 // ComputeWithdrawalAmounts 折合金额 / 手续费 / 应付（balance 单位）。
