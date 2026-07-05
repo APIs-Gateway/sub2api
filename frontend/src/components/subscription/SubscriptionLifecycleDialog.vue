@@ -76,18 +76,18 @@
           <template v-else-if="mode === 'renew' && renewQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.renewPrice') }}</span>
-              <span class="text-lg font-bold text-gray-900 dark:text-white">${{ renewQuoteData.price }}</span>
+              <span class="text-lg font-bold text-gray-900 dark:text-white">${{ formatUSD(renewQuoteData.price) }}</span>
             </div>
           </template>
           <template v-else-if="mode === 'change' && changeQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.changeDiff') }}</span>
-              <span class="text-lg font-bold text-gray-900 dark:text-white">${{ changeQuoteData.diff }}</span>
+              <span class="text-lg font-bold text-gray-900 dark:text-white">${{ formatUSD(changeQuoteData.diff) }}</span>
             </div>
             <div class="mt-1 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
-              <div>{{ t('userSubscriptions.lifecycle.newPlanPrice') }}: ${{ changeQuoteData.new_plan_price }}</div>
-              <div>{{ t('userSubscriptions.lifecycle.oldRemainingValue') }}: ${{ changeQuoteData.old_remaining_value }}</div>
-              <div>{{ t('userSubscriptions.lifecycle.caps', { weekly: changeQuoteData.weekly_cap_usd, monthly: changeQuoteData.monthly_cap_usd }) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.newPlanPrice') }}: ${{ formatUSD(changeQuoteData.new_plan_price) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.oldRemainingValue') }}: ${{ formatUSD(changeQuoteData.old_remaining_value) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.caps', { weekly: formatUSD(changeQuoteData.weekly_cap_usd), monthly: formatUSD(changeQuoteData.monthly_cap_usd) }) }}</div>
             </div>
           </template>
         </div>
@@ -133,7 +133,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  // 前往法币支付网关结账：父组件据此跳转 /payment（intent + D/T + 预估金额 charge）。
+  // 前往法币支付网关结账：父组件据此跳转 /purchase（intent + D/T + 预估金额 charge）。
   purchase: [payload: { intent: 'renew' | 'change_plan'; dailyAmountUsd: number; validityDays: number; charge: number }]
 }>()
 
@@ -153,6 +153,7 @@ const quoteErrorMsg = ref('')
 let quoteTimer: ReturnType<typeof setTimeout> | null = null
 let quoteSeq = 0
 const dailyAmountStep = 30
+const MONEY_CENTS = 100
 
 const dialogTitle = computed(() =>
   props.mode === 'renew'
@@ -180,12 +181,24 @@ const dailyAmountMax = computed(() => {
   return Math.max(dailyAmountMin.value, Math.floor(bounds.value.d_max / dailyAmountStep) * dailyAmountStep)
 })
 
+const renewCharge = computed(() => roundMoney(renewQuoteData.value?.price ?? 0))
+const changeCharge = computed(() => roundMoney(changeQuoteData.value?.diff ?? 0))
+
 // 续费：报价成功(price>0)即可去支付；转套餐：必须 diff>0（diff≤0 后端报价已拒，按钮禁用）。
 const canConfirm = computed(() => {
   if (quoting.value || validityDays.value <= 0) return false
-  if (props.mode === 'renew') return renewQuoteData.value != null && renewQuoteData.value.price > 0
-  return changeQuoteData.value != null && changeQuoteData.value.diff > 0
+  if (props.mode === 'renew') return renewQuoteData.value != null && renewCharge.value > 0
+  return changeQuoteData.value != null && changeCharge.value > 0
 })
+
+function roundMoney(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.round((value + Number.EPSILON) * MONEY_CENTS) / MONEY_CENTS
+}
+
+function formatUSD(value: number): string {
+  return roundMoney(value).toFixed(2)
+}
 
 function clamp(v: number, lo: number, hi: number): number {
   if (Number.isNaN(v)) return lo
@@ -281,11 +294,9 @@ watch(
 function handleConfirm() {
   if (!canConfirm.value) return
   if (props.mode === 'renew') {
-    const q = renewQuoteData.value!
-    emit('purchase', { intent: 'renew', dailyAmountUsd: dailyAmount.value, validityDays: validityDays.value, charge: q.price })
+    emit('purchase', { intent: 'renew', dailyAmountUsd: dailyAmount.value, validityDays: validityDays.value, charge: renewCharge.value })
   } else {
-    const q = changeQuoteData.value!
-    emit('purchase', { intent: 'change_plan', dailyAmountUsd: dailyAmount.value, validityDays: validityDays.value, charge: q.diff })
+    emit('purchase', { intent: 'change_plan', dailyAmountUsd: dailyAmount.value, validityDays: validityDays.value, charge: changeCharge.value })
   }
   emit('close')
 }

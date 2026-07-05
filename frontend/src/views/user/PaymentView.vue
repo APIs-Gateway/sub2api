@@ -123,7 +123,7 @@
               </div>
               <div v-if="enabledMethods.length >= 1" class="card p-6">
                 <PaymentMethodSelector
-                  :methods="subMethodOptions"
+                  :methods="lifecycleMethodOptions"
                   :selected="selectedMethod"
                   @select="selectedMethod = $event"
                 />
@@ -601,6 +601,16 @@ function amountFitsMethod(amt: number, methodType: string): boolean {
   return true
 }
 
+function methodCanPayAmount(amt: number, methodType: string): boolean {
+  if (!methodType) return false
+  const ml = visibleMethods.value[methodType]
+  return ml?.available !== false && amountFitsMethod(amt, methodType)
+}
+
+function firstMethodForAmount(amt: number): string {
+  return enabledMethods.value.find((method) => methodCanPayAmount(amt, method)) ?? ''
+}
+
 // Visible methods decide the amount range shown to users.
 const globalMinAmount = computed(() => {
   const limits = Object.values(visibleMethods.value)
@@ -753,6 +763,17 @@ const lifecycleFeeAmount = computed(() => {
 const lifecyclePaymentAmount = computed(() =>
   subscriptionValueToPaymentAmount(lifecycleOrder.value?.amount ?? 0)
 )
+const lifecycleMethodOptions = computed<PaymentMethodOption[]>(() => {
+  const lifecycleAmount = lifecyclePaymentAmount.value
+  return enabledMethods.value.map((type) => {
+    const ml = visibleMethods.value[type]
+    return {
+      type,
+      fee_rate: ml?.fee_rate ?? 0,
+      available: methodCanPayAmount(lifecycleAmount, type),
+    }
+  })
+})
 const lifecycleConcurrency = computed(() =>
   concurrencyForDailyAmount(lifecycleOrder.value?.dailyAmountUsd ?? 0)
 )
@@ -765,6 +786,8 @@ const lifecycleTotalAmount = computed(() => {
 
 const canSubmitLifecycle = computed(() =>
   lifecycleOrder.value !== null
+    && lifecyclePaymentAmount.value > 0
+    && selectedMethod.value !== ''
     && amountFitsMethod(lifecyclePaymentAmount.value, selectedMethod.value)
     && selectedLimit.value?.available !== false
 )
@@ -783,7 +806,13 @@ async function confirmLifecycle() {
 // Auto-switch to first available method when current selection can't handle the amount
 watch(() => [validAmount.value, selectedMethod.value] as const, ([amt, method]) => {
   if (amt <= 0 || amountFitsMethod(amt, method)) return
-  const available = enabledMethods.value.find((m) => amountFitsMethod(amt, m))
+  const available = firstMethodForAmount(amt)
+  if (available) selectedMethod.value = available
+})
+
+watch(() => [lifecyclePaymentAmount.value, selectedMethod.value] as const, ([amt, method]) => {
+  if (!lifecycleOrder.value || amt <= 0 || methodCanPayAmount(amt, method)) return
+  const available = firstMethodForAmount(amt)
   if (available) selectedMethod.value = available
 })
 
@@ -1277,7 +1306,7 @@ onMounted(async () => {
       const tt = Number(route.query.validity_days)
       const charge = Number(route.query.charge)
       if (d > 0 && tt > 0 && Number.isFinite(charge) && charge > 0) {
-        lifecycleOrder.value = { intent: lifecycleIntent, dailyAmountUsd: d, validityDays: tt, amount: charge }
+        lifecycleOrder.value = { intent: lifecycleIntent, dailyAmountUsd: d, validityDays: tt, amount: Math.round((charge + Number.EPSILON) * 100) / 100 }
         // 清掉 query，避免刷新/返回重复进入结账。
         await router.replace({ path: route.path, query: { tab: 'subscription' } })
       }
