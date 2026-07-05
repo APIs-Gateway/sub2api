@@ -130,6 +130,9 @@
       :show="showLifecycle"
       :mode="lifecycleMode"
       :subscription="subscription"
+      :payment-currency="paymentCurrency"
+      :subscription-payment-multiplier="subscriptionPaymentMultiplier"
+      :locale="locale"
       @close="showLifecycle = false"
       @purchase="onLifecyclePurchase"
     />
@@ -165,9 +168,16 @@ import type { UserSubscription } from '@/types'
 import { formatDateOnly } from '@/utils/format'
 import { getRemainingDurationParts, type RemainingDurationParts } from '@/utils/subscriptionQuota'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   subscription: UserSubscription
-}>()
+  paymentCurrency?: string
+  subscriptionPaymentMultiplier?: number
+  locale?: string
+}>(), {
+  paymentCurrency: 'CNY',
+  subscriptionPaymentMultiplier: 1,
+  locale: undefined,
+})
 
 const emit = defineEmits<{
   (e: 'saved'): void

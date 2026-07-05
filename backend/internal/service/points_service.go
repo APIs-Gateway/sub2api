@@ -404,6 +404,9 @@ func (s *PointsService) RedeemToPlan(ctx context.Context, userID int64, dailyAmo
 		active, err := s.subscriptionSvc.userSubRepo.GetActiveByUserID(ctx, userID)
 		switch {
 		case err == nil && active != nil:
+			if active.DailyAmountUSD > quote.DailyAmountUSD+pointsDailyAmountEpsilon {
+				return nil, ErrChangePlanDowngradeNotAllowed
+			}
 			if math.Abs(active.DailyAmountUSD-quote.DailyAmountUSD) <= pointsDailyAmountEpsilon {
 				renewQuote, err := s.subscriptionSvc.QuoteRenewOrder(ctx, userID, quote.ValidityDays)
 				if err != nil {

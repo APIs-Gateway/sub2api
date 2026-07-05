@@ -219,6 +219,23 @@ describe('user PointsView', () => {
     expect(wrapper.text()).toContain('80,000')
   })
 
+  it('redeem plan keeps button feedback when selected plan would downgrade daily amount', async () => {
+    activeSubscriptions.push({ id: 1, status: 'active', daily_amount_usd: 60 })
+    const wrapper = mount(PointsView, pointsViewMountOptions())
+    await flushPromises()
+
+    expect(renewQuote).not.toHaveBeenCalled()
+    expect(changePlanQuote).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('points.redeemPlan.actionLabels.downgrade')
+    expect(wrapper.text()).toContain('points.redeemPlan.downgradeBlocked')
+
+    await wrapper.findAll('button.btn-primary.w-full')[2].trigger('click')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('points.redeemPlan.downgradeBlocked')
+    expect(redeemPointsToPlan).not.toHaveBeenCalled()
+  })
+
   it('withdraw via usdt sends usdt address', async () => {
     const wrapper = mount(PointsView, pointsViewMountOptions())
     await flushPromises()

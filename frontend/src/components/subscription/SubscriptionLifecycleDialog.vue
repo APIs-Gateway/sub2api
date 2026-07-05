@@ -76,18 +76,22 @@
           <template v-else-if="mode === 'renew' && renewQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.renewPrice') }}</span>
-              <span class="text-lg font-bold text-gray-900 dark:text-white">{{ formatUSDValue(renewQuoteData.price) }}</span>
+              <span class="text-lg font-bold text-gray-900 dark:text-white">{{ formatPaymentValue(renewQuoteData.price) }}</span>
+            </div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('userSubscriptions.lifecycle.renewValue') }}: {{ formatPlanValue(renewQuoteData.price) }}
             </div>
           </template>
           <template v-else-if="mode === 'change' && changeQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.changeDiff') }}</span>
-              <span class="text-lg font-bold text-gray-900 dark:text-white">{{ formatUSDValue(changeQuoteData.diff) }}</span>
+              <span class="text-lg font-bold text-gray-900 dark:text-white">{{ formatPaymentValue(changeQuoteData.diff) }}</span>
             </div>
             <div class="mt-1 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
-              <div>{{ t('userSubscriptions.lifecycle.newPlanPrice') }}: {{ formatUSDValue(changeQuoteData.new_plan_price) }}</div>
-              <div>{{ t('userSubscriptions.lifecycle.oldRemainingValue') }}: {{ formatUSDValue(changeQuoteData.old_remaining_value) }}</div>
-              <div>{{ t('userSubscriptions.lifecycle.caps', { weekly: formatUSDValue(changeQuoteData.weekly_cap_usd), monthly: formatUSDValue(changeQuoteData.monthly_cap_usd) }) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.changeDiffValue') }}: {{ formatPlanValue(changeQuoteData.diff) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.newPlanPrice') }}: {{ formatPlanValue(changeQuoteData.new_plan_price) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.oldRemainingValue') }}: {{ formatPlanValue(changeQuoteData.old_remaining_value) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.caps', { weekly: formatPlanValue(changeQuoteData.weekly_cap_usd), monthly: formatPlanValue(changeQuoteData.monthly_cap_usd) }) }}</div>
             </div>
           </template>
         </div>
@@ -121,15 +125,23 @@ import subscriptionsAPI, {
   type RenewOrderQuote,
   type ChangePlanOrderQuote
 } from '@/api/subscriptions'
+import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import type { UserSubscription } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   show: boolean
   mode: 'renew' | 'change'
   subscription: UserSubscription
-}>()
+  paymentCurrency?: string
+  subscriptionPaymentMultiplier?: number
+  locale?: string
+}>(), {
+  paymentCurrency: 'CNY',
+  subscriptionPaymentMultiplier: 1,
+  locale: undefined,
+})
 
 const emit = defineEmits<{
   close: []
@@ -154,6 +166,11 @@ let quoteTimer: ReturnType<typeof setTimeout> | null = null
 let quoteSeq = 0
 const dailyAmountStep = 30
 const MONEY_CENTS = 100
+
+const paymentCurrency = computed(() => normalizePaymentCurrency(props.paymentCurrency))
+const subscriptionPaymentMultiplier = computed(() =>
+  props.subscriptionPaymentMultiplier > 0 ? props.subscriptionPaymentMultiplier : 1
+)
 
 const dialogTitle = computed(() =>
   props.mode === 'renew'
@@ -196,12 +213,16 @@ function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * MONEY_CENTS) / MONEY_CENTS
 }
 
-function formatUSD(value: number): string {
-  return roundMoney(value).toFixed(2)
+function formatPlanValue(value: number): string {
+  return `$${roundMoney(value).toFixed(2)}`
 }
 
-function formatUSDValue(value: number): string {
-  return `USD ${formatUSD(value)}`
+function formatPaymentValue(value: number): string {
+  return formatPaymentAmount(
+    ceilPaymentAmount(roundMoney(value) / subscriptionPaymentMultiplier.value, paymentCurrency.value),
+    paymentCurrency.value,
+    props.locale,
+  )
 }
 
 function clamp(v: number, lo: number, hi: number): number {

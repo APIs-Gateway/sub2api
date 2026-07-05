@@ -291,10 +291,11 @@ const selectedPlan = computed(() => sortedPlans.value.find((plan) => plan.daily_
 const activeSubscription = computed<UserSubscription | null>(() =>
   (subscriptionStore.activeSubscriptions || []).find((sub) => sub.status === 'active') ?? null
 )
-const selectedPlanMode = computed<'purchase' | 'renew' | 'change_plan'>(() => {
+const selectedPlanMode = computed<'purchase' | 'renew' | 'change_plan' | 'downgrade'>(() => {
   const plan = selectedPlan.value
   const sub = activeSubscription.value
   if (!plan || !sub) return 'purchase'
+  if ((sub.daily_amount_usd || 0) > plan.daily_amount_usd + 1e-9) return 'downgrade'
   return Math.abs((sub.daily_amount_usd || 0) - plan.daily_amount_usd) <= 1e-9 ? 'renew' : 'change_plan'
 })
 const selectedPlanPointsPrice = computed(() => {
@@ -309,9 +310,8 @@ const redeemPlanDisabled = computed(() =>
   busy.value ||
   !selectedPlan.value ||
   planQuoteLoading.value ||
-  !!planQuoteError.value ||
   overview.value == null ||
-  overview.value.account.available < selectedPlanPointsPrice.value
+  (!planQuoteError.value && overview.value.account.available < selectedPlanPointsPrice.value)
 )
 
 const inviteLink = computed(() => {
@@ -420,6 +420,10 @@ async function onWithdraw(): Promise<void> {
 }
 
 async function onRedeemPlan(plan: PointsPlanOption): Promise<void> {
+  if (planQuoteError.value) {
+    appStore.showError(planQuoteError.value)
+    return
+  }
   const planName = t('points.redeemPlan.planTitle', { d: plan.daily_amount_usd })
   if (!window.confirm(t('points.redeemPlan.confirm', {
     action: selectedPlanSubmitLabel.value,
@@ -448,6 +452,10 @@ async function refreshSelectedPlanQuote(): Promise<void> {
   if (!plan || !overview.value) return
   if (selectedPlanMode.value === 'purchase') {
     selectedPlanCharge.value = plan.price
+    return
+  }
+  if (selectedPlanMode.value === 'downgrade') {
+    planQuoteError.value = t('points.redeemPlan.downgradeBlocked')
     return
   }
   planQuoteLoading.value = true

@@ -104,6 +104,18 @@ func TestPointsService_RedeemToPlan_EndToEndAndIdempotent(t *testing.T) {
 		`SELECT COUNT(*) FROM user_subscriptions WHERE user_id=$1 AND status='active' AND expires_at > NOW()`, user.ID).Scan(&subCount))
 	require.Equal(t, 1, subCount, "change plan must keep single active subscription")
 
+	afterChange := pointsAvailableOf(t, user.ID)
+
+	// 已有更高每日额度时，即便低 D 长周期套餐总价值更高，也属于降档：不扣积分、不换卡。
+	_, err = h.pointsSvc.RedeemToPlan(ctx, user.ID, 30, 360, uuid.NewString())
+	require.ErrorIs(t, err, service.ErrChangePlanDowngradeNotAllowed)
+	require.Equal(t, afterChange, pointsAvailableOf(t, user.ID), "downgrade must not deduct points")
+
+	var activeDaily float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT daily_amount_usd FROM user_subscriptions WHERE user_id=$1 AND status='active' AND expires_at > NOW()`, user.ID).Scan(&activeDaily))
+	require.InDelta(t, 60, activeDaily, 1e-9, "downgrade must keep current higher daily amount")
+
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM user_points_ledger WHERE user_id=$1 AND kind='to_plan'`, user.ID).Scan(&toPlan))
 	require.Equal(t, 3, toPlan, "purchase, renew, and change-plan each write one to_plan row")
