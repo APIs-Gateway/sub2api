@@ -2,13 +2,16 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
+	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
@@ -20,6 +23,7 @@ const (
 	pointsUSDTAddressMaxLen   = 128
 
 	firstSuccessfulPaymentEarnMultiplier = 2
+	pointsDailyAmountEpsilon             = 1e-9
 )
 
 var pointsSupportedUSDTChains = map[string]string{
@@ -391,15 +395,51 @@ func (s *PointsService) RedeemToPlan(ctx context.Context, userID int64, dailyAmo
 		return nil, err
 	}
 	peg := s.peg(ctx)
-	need := ComputePlanPoints(quote.Price, peg)
-	if need <= 0 {
+
+	mode := "purchase"
+	chargeAmount := quote.Price
+	targetSubscriptionID := int64(0)
+	renewDays := 0
+	if s.subscriptionSvc.userSubRepo != nil {
+		active, err := s.subscriptionSvc.userSubRepo.GetActiveByUserID(ctx, userID)
+		switch {
+		case err == nil && active != nil:
+			if math.Abs(active.DailyAmountUSD-quote.DailyAmountUSD) <= pointsDailyAmountEpsilon {
+				renewQuote, err := s.subscriptionSvc.QuoteRenewOrder(ctx, userID, quote.ValidityDays)
+				if err != nil {
+					return nil, err
+				}
+				mode = "renew"
+				chargeAmount = renewQuote.Price
+				targetSubscriptionID = renewQuote.SubscriptionID
+				renewDays = renewQuote.AddedDays
+			} else {
+				changeQuote, err := s.subscriptionSvc.QuoteChangePlanOrder(ctx, userID, quote.DailyAmountUSD, quote.ValidityDays)
+				if err != nil {
+					return nil, err
+				}
+				mode = "change_plan"
+				chargeAmount = changeQuote.Diff
+				targetSubscriptionID = changeQuote.OldSubscriptionID
+			}
+		case errors.Is(err, ErrSubscriptionNotFound):
+			// 无生效卡：按新购开通。
+		case err != nil:
+			return nil, err
+		}
+	}
+	if chargeAmount < 0 {
+		return nil, ErrChangePlanDowngradeNotAllowed
+	}
+	need := ComputePlanPoints(chargeAmount, peg)
+	if chargeAmount > 0 && need <= 0 {
 		return nil, ErrPointsAmountInvalid
 	}
 	if _, err := s.repo.EnsureAccount(ctx, userID); err != nil {
 		return nil, err
 	}
 
-	// 单事务：扣积分 + 发卡（AssignOrExtendSubscription 复用 txCtx 中的 tx）。发卡失败 → 整体回滚、积分不丢。
+	// 单事务：扣积分 + 购买/续费/转套餐。生命周期方法复用 txCtx 中的 tx，失败整体回滚。
 	tx, err := s.entClient.Tx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin points redeem-plan tx: %w", err)
@@ -412,23 +452,63 @@ func (s *PointsService) RedeemToPlan(ctx context.Context, userID int64, dailyAmo
 	}()
 	txCtx := dbent.NewTxContext(ctx, tx)
 
-	note := fmt.Sprintf("points redeem plan daily=%.4f days=%d price=%.4f", quote.DailyAmountUSD, quote.ValidityDays, quote.Price)
+	note := fmt.Sprintf("points redeem plan mode=%s daily=%.4f days=%d charge=%.4f", mode, quote.DailyAmountUSD, quote.ValidityDays, chargeAmount)
 	// 幂等键先于发卡：重复请求命中 to_plan partial-unique → ErrPointsPlanDuplicate → 回滚、不二次扣分/延卡。
-	if err := s.repo.DeductForPlan(txCtx, userID, need, peg, note, strings.TrimSpace(idempotencyKey)); err != nil {
-		return nil, err
+	if need > 0 {
+		if err := s.repo.DeductForPlan(txCtx, userID, need, peg, note, strings.TrimSpace(idempotencyKey)); err != nil {
+			return nil, err
+		}
 	}
-	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{
-		UserID:          userID,
-		GroupID:         0,
-		ValidityDays:    quote.ValidityDays,
-		DailyAmountUSD:  quote.DailyAmountUSD,
-		WeeklyLimitUSD:  quote.WeeklyCapUSD,
-		MonthlyLimitUSD: quote.MonthlyCapUSD,
-		AssignedBy:      0,
-		Notes:           "points-exchange",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("assign subscription for points redeem: %w", err)
+
+	var sub *UserSubscription
+	switch mode {
+	case "purchase":
+		// 无卡新购在事务内二次确认，避免并发兑换开出第二张 active 卡。
+		hasActive, err := tx.UserSubscription.Query().
+			Where(
+				usersubscription.UserIDEQ(userID),
+				usersubscription.StatusEQ(SubscriptionStatusActive),
+				usersubscription.ExpiresAtGT(time.Now()),
+			).
+			Exist(txCtx)
+		if err != nil {
+			return nil, fmt.Errorf("check active subscription before points redeem: %w", err)
+		}
+		if hasActive {
+			return nil, ErrActiveSubscriptionExists
+		}
+		var assignErr error
+		sub, _, assignErr = s.subscriptionSvc.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{
+			UserID:          userID,
+			GroupID:         0,
+			ValidityDays:    quote.ValidityDays,
+			DailyAmountUSD:  quote.DailyAmountUSD,
+			WeeklyLimitUSD:  quote.WeeklyCapUSD,
+			MonthlyLimitUSD: quote.MonthlyCapUSD,
+			AssignedBy:      0,
+			Notes:           "points-exchange",
+		})
+		if assignErr != nil {
+			return nil, fmt.Errorf("assign subscription for points redeem: %w", assignErr)
+		}
+	case "renew":
+		var renewErr error
+		sub, renewErr = s.subscriptionSvc.ApplyRenewFromOrder(txCtx, targetSubscriptionID, renewDays)
+		if renewErr != nil {
+			return nil, fmt.Errorf("renew subscription for points redeem: %w", renewErr)
+		}
+	case "change_plan":
+		res, applyErr := s.subscriptionSvc.ApplyChangePlanFromOrder(txCtx, targetSubscriptionID, quote.DailyAmountUSD, quote.ValidityDays)
+		if applyErr != nil {
+			return nil, fmt.Errorf("change subscription plan for points redeem: %w", applyErr)
+		}
+		var getErr error
+		sub, getErr = s.subscriptionSvc.GetByID(txCtx, res.NewSubscriptionID)
+		if getErr != nil {
+			return nil, fmt.Errorf("load changed subscription for points redeem: %w", getErr)
+		}
+	default:
+		return nil, fmt.Errorf("unknown points redeem-plan mode %q", mode)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit points redeem-plan tx: %w", err)

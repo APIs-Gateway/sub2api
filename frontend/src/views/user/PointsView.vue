@@ -169,9 +169,13 @@
               </div>
               <div v-if="selectedPlan" class="rounded-md bg-gray-50 px-3 py-3 text-sm text-gray-700 dark:bg-dark-900 dark:text-gray-300">
                 <div class="flex items-center justify-between gap-3">
-                  <span>{{ t('points.redeemPlan.pointsPrice') }}</span>
-                  <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ selectedPlan.points_price.toLocaleString() }} {{ t('points.unit') }}</span>
+                  <span>{{ selectedPlanActionLabel }}</span>
+                  <span class="font-mono tabular-nums text-gray-900 dark:text-white">
+                    <template v-if="planQuoteLoading">{{ t('points.redeemPlan.quoteLoading') }}</template>
+                    <template v-else>{{ selectedPlanPointsPrice.toLocaleString() }} {{ t('points.unit') }}</template>
+                  </span>
                 </div>
+                <p v-if="planQuoteError" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ planQuoteError }}</p>
                 <div class="mt-1 flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-500">
                   <span>{{ t('points.redeemPlan.capSummary') }}</span>
                   <span class="font-mono tabular-nums">{{ formatCurrency(selectedPlan.weekly_cap_usd) }} / {{ formatCurrency(selectedPlan.monthly_cap_usd) }}</span>
@@ -179,10 +183,10 @@
               </div>
               <button
                 class="btn btn-primary w-full"
-                :disabled="busy || !selectedPlan || overview.account.available < selectedPlan.points_price"
+                :disabled="redeemPlanDisabled"
                 @click="selectedPlan && onRedeemPlan(selectedPlan)"
               >
-                {{ t('points.redeemPlan.submit') }}
+                {{ selectedPlanSubmitLabel }}
               </button>
             </div>
           </div>
@@ -238,13 +242,17 @@ import {
   type PointsPayoutMethod,
   type PointsUSDTChain,
 } from '@/api/points'
+import { changePlanQuote, renewQuote } from '@/api/subscriptions'
 import { useAppStore } from '@/stores/app'
+import { useSubscriptionStore } from '@/stores/subscriptions'
 import { useClipboard } from '@/composables/useClipboard'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatCurrency, formatDateTime } from '@/utils/format'
+import type { UserSubscription } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const subscriptionStore = useSubscriptionStore()
 const { copyToClipboard } = useClipboard()
 
 const loading = ref(true)
@@ -262,6 +270,10 @@ const usdtChain = ref<PointsUSDTChain>('TRC20')
 const usdtAddress = ref('')
 const selectedPlanDaily = ref<number | null>(null)
 const selectedPlanDays = ref<number | null>(null)
+const selectedPlanCharge = ref<number | null>(null)
+const planQuoteLoading = ref(false)
+const planQuoteError = ref('')
+let planQuoteSeq = 0
 
 const peg = computed(() => overview.value?.config.peg ?? 0)
 const feePercent = computed(() => overview.value?.config.withdraw_fee_percent ?? 0)
@@ -276,6 +288,31 @@ const planValidityOptions = computed(() => {
   return Array.from(new Set(filtered.map((plan) => plan.validity_days)))
 })
 const selectedPlan = computed(() => sortedPlans.value.find((plan) => plan.daily_amount_usd === selectedPlanDaily.value && plan.validity_days === selectedPlanDays.value) ?? null)
+const activeSubscription = computed<UserSubscription | null>(() =>
+  (subscriptionStore.activeSubscriptions || []).find((sub) => sub.status === 'active') ?? null
+)
+const selectedPlanMode = computed<'purchase' | 'renew' | 'change_plan'>(() => {
+  const plan = selectedPlan.value
+  const sub = activeSubscription.value
+  if (!plan || !sub) return 'purchase'
+  return Math.abs((sub.daily_amount_usd || 0) - plan.daily_amount_usd) <= 1e-9 ? 'renew' : 'change_plan'
+})
+const selectedPlanPointsPrice = computed(() => {
+  const plan = selectedPlan.value
+  if (!plan) return 0
+  if (selectedPlanCharge.value == null) return selectedPlanMode.value === 'purchase' ? plan.points_price : 0
+  return computePlanPoints(selectedPlanCharge.value, peg.value)
+})
+const selectedPlanActionLabel = computed(() => t(`points.redeemPlan.actionLabels.${selectedPlanMode.value}`))
+const selectedPlanSubmitLabel = computed(() => t(`points.redeemPlan.submitLabels.${selectedPlanMode.value}`))
+const redeemPlanDisabled = computed(() =>
+  busy.value ||
+  !selectedPlan.value ||
+  planQuoteLoading.value ||
+  !!planQuoteError.value ||
+  overview.value == null ||
+  overview.value.account.available < selectedPlanPointsPrice.value
+)
 
 const inviteLink = computed(() => {
   const code = overview.value?.affiliate.aff_code || ''
@@ -287,6 +324,11 @@ const inviteLink = computed(() => {
 function formatPercent(value: number): string {
   const rounded = Math.round(Number(value || 0) * 100) / 100
   return `${rounded}%`
+}
+
+function computePlanPoints(amount: number, pegValue: number): number {
+  if (amount <= 0 || pegValue <= 0) return 0
+  return Math.ceil(amount / pegValue)
 }
 
 function kindLabel(kind: string): string {
@@ -311,7 +353,11 @@ async function loadAll(): Promise<void> {
   try {
     overview.value = await getPointsOverview()
     if (overview.value.config.enabled) {
-      const [page, planList] = await Promise.all([listPointsLedger(1, 20), listPointsPlans()])
+      const [page, planList] = await Promise.all([
+        listPointsLedger(1, 20),
+        listPointsPlans(),
+        subscriptionStore.fetchActiveSubscriptions(true).catch(() => []),
+      ])
       ledger.value = page.items
       plans.value = planList
       syncSelectedPlan()
@@ -325,7 +371,10 @@ async function loadAll(): Promise<void> {
 
 async function refresh(): Promise<void> {
   overview.value = await getPointsOverview()
-  const page = await listPointsLedger(1, 20)
+  const [page] = await Promise.all([
+    listPointsLedger(1, 20),
+    subscriptionStore.fetchActiveSubscriptions(true).catch(() => []),
+  ])
   ledger.value = page.items
 }
 
@@ -372,7 +421,11 @@ async function onWithdraw(): Promise<void> {
 
 async function onRedeemPlan(plan: PointsPlanOption): Promise<void> {
   const planName = t('points.redeemPlan.planTitle', { d: plan.daily_amount_usd })
-  if (!window.confirm(t('points.redeemPlan.confirm', { points: plan.points_price.toLocaleString(), plan: planName }))) return
+  if (!window.confirm(t('points.redeemPlan.confirm', {
+    action: selectedPlanSubmitLabel.value,
+    points: selectedPlanPointsPrice.value.toLocaleString(),
+    plan: planName,
+  }))) return
   busy.value = true
   // 幂等键：本次兑换生成一个，网络重发/重试复用同一 key → 后端按 (user, key) 去重，绝不二次扣分。
   const idempotencyKey = newExchangeId()
@@ -384,6 +437,34 @@ async function onRedeemPlan(plan: PointsPlanOption): Promise<void> {
     appStore.showError(extractApiErrorMessage(error, t('points.actionFailed')))
   } finally {
     busy.value = false
+  }
+}
+
+async function refreshSelectedPlanQuote(): Promise<void> {
+  const seq = ++planQuoteSeq
+  const plan = selectedPlan.value
+  planQuoteError.value = ''
+  selectedPlanCharge.value = null
+  if (!plan || !overview.value) return
+  if (selectedPlanMode.value === 'purchase') {
+    selectedPlanCharge.value = plan.price
+    return
+  }
+  planQuoteLoading.value = true
+  try {
+    if (selectedPlanMode.value === 'renew') {
+      const quote = await renewQuote(plan.validity_days)
+      if (seq === planQuoteSeq) selectedPlanCharge.value = quote.price
+    } else {
+      const quote = await changePlanQuote(plan.daily_amount_usd, plan.validity_days)
+      if (seq === planQuoteSeq) selectedPlanCharge.value = quote.diff
+    }
+  } catch (error) {
+    if (seq === planQuoteSeq) {
+      planQuoteError.value = extractApiErrorMessage(error, t('points.redeemPlan.quoteFailed'))
+    }
+  } finally {
+    if (seq === planQuoteSeq) planQuoteLoading.value = false
   }
 }
 
@@ -409,6 +490,10 @@ watch(selectedPlanDaily, () => {
     selectedPlanDays.value = firstDays
   }
 })
+
+watch([selectedPlan, activeSubscription, peg], () => {
+  void refreshSelectedPlanQuote()
+}, { immediate: true })
 
 onMounted(() => {
   void loadAll()

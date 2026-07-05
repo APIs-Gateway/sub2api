@@ -31,6 +31,30 @@ vi.mock('@/api/points', () => ({
   redeemPointsToPlan,
 }))
 
+const { renewQuote, changePlanQuote } = vi.hoisted(() => ({
+  renewQuote: vi.fn(),
+  changePlanQuote: vi.fn(),
+}))
+vi.mock('@/api/subscriptions', () => ({
+  renewQuote,
+  changePlanQuote,
+}))
+
+const { activeSubscriptions, fetchActiveSubscriptions, invalidateSubscriptionCache } = vi.hoisted(() => ({
+  activeSubscriptions: [] as any[],
+  fetchActiveSubscriptions: vi.fn(),
+  invalidateSubscriptionCache: vi.fn(),
+}))
+vi.mock('@/stores/subscriptions', () => ({
+  useSubscriptionStore: () => ({
+    get activeSubscriptions() {
+      return activeSubscriptions
+    },
+    fetchActiveSubscriptions,
+    invalidateCache: invalidateSubscriptionCache,
+  }),
+}))
+
 const showError = vi.fn()
 const showSuccess = vi.fn()
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError, showSuccess }) }))
@@ -78,6 +102,11 @@ describe('user PointsView', () => {
     redeemPointsToBalance.mockReset()
     createWithdrawal.mockReset()
     redeemPointsToPlan.mockReset()
+    renewQuote.mockReset()
+    changePlanQuote.mockReset()
+    fetchActiveSubscriptions.mockReset()
+    invalidateSubscriptionCache.mockReset()
+    activeSubscriptions.length = 0
     showError.mockReset()
     showSuccess.mockReset()
     copyToClipboard.mockReset()
@@ -88,6 +117,9 @@ describe('user PointsView', () => {
     redeemPointsToBalance.mockResolvedValue({ balance: 5 })
     createWithdrawal.mockResolvedValue({ id: 1 })
     redeemPointsToPlan.mockResolvedValue({})
+    renewQuote.mockResolvedValue({ subscription_id: 1, daily_amount_usd: 30, added_days: 30, price: 900, unit_price: 1, group_id: 0 })
+    changePlanQuote.mockResolvedValue({ old_subscription_id: 1, daily_amount_usd: 30, validity_days: 30, weekly_cap_usd: 210, monthly_cap_usd: 900, new_plan_price: 1800, old_remaining_value: 1000, diff: 800, unit_price: 2 })
+    fetchActiveSubscriptions.mockResolvedValue(activeSubscriptions)
   })
 
   afterEach(() => {
@@ -108,10 +140,11 @@ describe('user PointsView', () => {
     expect(getPointsOverview).toHaveBeenCalled()
     expect(listPointsLedger).toHaveBeenCalledWith(1, 20)
     expect(listPointsPlans).toHaveBeenCalled()
+    expect(fetchActiveSubscriptions).toHaveBeenCalledWith(true)
     const text = wrapper.text()
     expect(text).toContain('CODE7') // aff code
     expect(text).toContain('points.redeemPlan.dailyOption') // compact plan selector
-    expect(text).toContain('points.redeemPlan.pointsPrice')
+    expect(text).toContain('points.redeemPlan.actionLabels.purchase')
     expect(text).toContain('+50') // ledger positive
     expect(text).toContain('—') // ledger null balance
   })
@@ -163,6 +196,27 @@ describe('user PointsView', () => {
       payout_usdt_address: undefined,
     })
     expect(showSuccess).toHaveBeenCalled()
+  })
+
+  it('redeem plan with same active daily amount shows renew quote', async () => {
+    activeSubscriptions.push({ id: 1, status: 'active', daily_amount_usd: 30 })
+    renewQuote.mockResolvedValueOnce({ subscription_id: 1, daily_amount_usd: 30, added_days: 30, price: 900, unit_price: 1, group_id: 0 })
+    const wrapper = mount(PointsView, pointsViewMountOptions())
+    await flushPromises()
+    expect(renewQuote).toHaveBeenCalledWith(30)
+    expect(changePlanQuote).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('points.redeemPlan.actionLabels.renew')
+    expect(wrapper.text()).toContain('90,000')
+  })
+
+  it('redeem plan with different active daily amount shows change-plan quote', async () => {
+    activeSubscriptions.push({ id: 1, status: 'active', daily_amount_usd: 10 })
+    changePlanQuote.mockResolvedValueOnce({ old_subscription_id: 1, daily_amount_usd: 30, validity_days: 30, weekly_cap_usd: 210, monthly_cap_usd: 900, new_plan_price: 1800, old_remaining_value: 1000, diff: 800, unit_price: 2 })
+    const wrapper = mount(PointsView, pointsViewMountOptions())
+    await flushPromises()
+    expect(changePlanQuote).toHaveBeenCalledWith(30, 30)
+    expect(wrapper.text()).toContain('points.redeemPlan.actionLabels.change_plan')
+    expect(wrapper.text()).toContain('80,000')
   })
 
   it('withdraw via usdt sends usdt address', async () => {
