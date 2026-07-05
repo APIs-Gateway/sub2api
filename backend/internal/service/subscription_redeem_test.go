@@ -4,18 +4,41 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
 	"math"
 	"testing"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/enttest"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
+
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+	_ "modernc.org/sqlite"
 )
+
+func newRedeemSubscriptionTestEnt(t *testing.T) (*sql.DB, *dbent.Client) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", "file:subscription_redeem?mode=memory&cache=shared&_fk=1")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.Exec("PRAGMA foreign_keys = ON")
+	require.NoError(t, err)
+
+	drv := entsql.OpenDB(dialect.SQLite, db)
+	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
+	t.Cleanup(func() { _ = client.Close() })
+	return db, client
+}
 
 func TestApplyRedeemSubscription_MergesIntoExistingActiveCard(t *testing.T) {
 	ctx := context.Background()
-	db, client := newRedeemAffiliateTestEnt(t)
+	db, client := newRedeemSubscriptionTestEnt(t)
 
 	userRepo := repository.NewUserRepository(client, db)
 	groupRepo := repository.NewGroupRepository(client, db)
@@ -98,7 +121,7 @@ func TestApplyRedeemSubscription_MergesIntoExistingActiveCard(t *testing.T) {
 
 func TestApplyRedeemSubscription_CreatesNoGroupCardAndRaisesConcurrency(t *testing.T) {
 	ctx := context.Background()
-	db, client := newRedeemAffiliateTestEnt(t)
+	db, client := newRedeemSubscriptionTestEnt(t)
 
 	userRepo := repository.NewUserRepository(client, db)
 	groupRepo := repository.NewGroupRepository(client, db)
@@ -135,7 +158,7 @@ func TestApplyRedeemSubscription_CreatesNoGroupCardAndRaisesConcurrency(t *testi
 
 func TestApplyRedeemSubscription_RejectsInvalidInput(t *testing.T) {
 	ctx := context.Background()
-	db, client := newRedeemAffiliateTestEnt(t)
+	db, client := newRedeemSubscriptionTestEnt(t)
 
 	userRepo := repository.NewUserRepository(client, db)
 	groupRepo := repository.NewGroupRepository(client, db)
@@ -163,7 +186,7 @@ func TestApplyRedeemSubscription_RejectsInvalidInput(t *testing.T) {
 
 func TestApplyRedeemSubscription_ReturnsErrorWhenUserDoesNotExist(t *testing.T) {
 	ctx := context.Background()
-	db, client := newRedeemAffiliateTestEnt(t)
+	db, client := newRedeemSubscriptionTestEnt(t)
 
 	userRepo := repository.NewUserRepository(client, db)
 	groupRepo := repository.NewGroupRepository(client, db)

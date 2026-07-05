@@ -41,6 +41,9 @@
               v-for="subscription in activeSubscriptions"
               :key="subscription.id"
               :subscription="subscription"
+              :payment-currency="paymentCurrency"
+              :subscription-payment-multiplier="subscriptionPaymentMultiplier"
+              :locale="localeCode"
               @saved="loadSubscriptions"
             />
           </div>
@@ -79,6 +82,9 @@
               v-for="subscription in endedSubscriptions"
               :key="subscription.id"
               :subscription="subscription"
+              :payment-currency="paymentCurrency"
+              :subscription-payment-multiplier="subscriptionPaymentMultiplier"
+              :locale="localeCode"
               @saved="loadSubscriptions"
             />
           </div>
@@ -93,17 +99,29 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import subscriptionsAPI from '@/api/subscriptions'
+import { paymentAPI } from '@/api/payment'
+import { getVisibleMethods } from '@/components/payment/paymentFlow'
+import { normalizePaymentCurrency } from '@/components/payment/currency'
 import type { UserSubscription } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import UserSubscriptionCard from '@/components/subscription/UserSubscriptionCard.vue'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const appStore = useAppStore()
 
 const subscriptions = ref<UserSubscription[]>([])
 const loading = ref(true)
 const showEnded = ref(false)
+const paymentCurrency = ref('CNY')
+const subscriptionPaymentMultiplier = ref(1)
+
+const localeCode = computed(() => {
+  const raw = locale as unknown
+  if (typeof raw === 'string') return raw
+  if (raw && typeof raw === 'object' && 'value' in raw) return String((raw as { value?: string }).value || '')
+  return undefined
+})
 
 // 生效中：仅 status === 'active'。
 const activeSubscriptions = computed(() =>
@@ -128,7 +146,19 @@ const endedSubscriptionsGridClass = computed(() =>
 async function loadSubscriptions() {
   try {
     loading.value = true
-    subscriptions.value = await subscriptionsAPI.getMySubscriptions()
+    const [items, checkout] = await Promise.all([
+      subscriptionsAPI.getMySubscriptions(),
+      paymentAPI.getCheckoutInfo().then((res) => res.data).catch(() => null),
+    ])
+    subscriptions.value = items
+    if (checkout) {
+      const visibleMethods = getVisibleMethods(checkout.methods || {})
+      const firstMethod = Object.values(visibleMethods)[0]
+      paymentCurrency.value = normalizePaymentCurrency(firstMethod?.currency)
+      subscriptionPaymentMultiplier.value = checkout.subscription_payment_multiplier > 0
+        ? checkout.subscription_payment_multiplier
+        : 1
+    }
     // 没有生效中订阅时，默认展开历史，避免页面显得空白。
     showEnded.value = activeSubscriptions.value.length === 0 && endedSubscriptions.value.length > 0
   } catch (error) {

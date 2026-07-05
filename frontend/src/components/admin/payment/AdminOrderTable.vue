@@ -51,6 +51,12 @@
         <span class="text-sm text-gray-600 dark:text-gray-400">#{{ value }}</span>
       </template>
 
+      <template #cell-product_name="{ value, row }">
+        <div class="max-w-[16rem] truncate text-sm font-medium text-gray-900 dark:text-white" :title="value || fallbackProductName(row)">
+          {{ value || fallbackProductName(row) }}
+        </div>
+      </template>
+
       <template #cell-pay_amount="{ value, row }">
         <div class="text-sm">
           <span class="font-medium text-gray-900 dark:text-white">¥{{ value.toFixed(2) }}</span>
@@ -186,6 +192,7 @@ function emitFiltersChanged() {
 const columns = computed<Column[]>(() => [
   { key: 'id', label: t('payment.orders.orderId') },
   { key: 'user_id', label: t('payment.orders.userId') },
+  { key: 'product_name', label: t('payment.orders.productName') },
   { key: 'pay_amount', label: t('payment.orders.payAmount') },
   { key: 'payment_type', label: t('payment.orders.paymentMethod') },
   { key: 'status', label: t('payment.orders.status') },
@@ -223,6 +230,10 @@ const orderTypeFilterOptions = computed(() => [
 
 function canRefundRow(order: PaymentOrder): boolean {
   return canRefund(order.status)
+}
+
+function fallbackProductName(order: PaymentOrder): string {
+  return order.order_type === 'subscription' ? t('payment.admin.subscriptionOrder') : t('payment.admin.balanceOrder')
 }
 
 function formatDateTime(dateStr: string): string {

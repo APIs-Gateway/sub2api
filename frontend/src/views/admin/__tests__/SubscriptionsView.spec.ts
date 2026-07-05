@@ -64,12 +64,6 @@ vi.mock('vue-i18n', async () => {
         if (key === 'admin.subscriptions.monthly') {
           return '每月'
         }
-        if (key === 'admin.subscriptions.burndown.servedToDay') {
-          return `已服务第 ${params?.day} / ${params?.total} 天`
-        }
-        if (key === 'admin.subscriptions.burndown.consumedDay') {
-          return `已消费 ${params?.day} 天额度`
-        }
         return key
       }
     })
@@ -139,24 +133,31 @@ function subscription(overrides: Partial<UserSubscription> = {}): UserSubscripti
   }
 }
 
-describe('admin SubscriptionsView burn-down progress', () => {
+describe('admin SubscriptionsView usage progress', () => {
   beforeEach(() => {
     listSubscriptions.mockReset()
     getAllGroups.mockReset()
     getAllGroups.mockResolvedValue([])
   })
 
-  it('renders service day separately from overdraft quota consumption day', async () => {
+  it('renders window usage for D/T subscription cards instead of stale burn-down counters', async () => {
     listSubscriptions.mockResolvedValue({
       items: [
-        subscription(),
         subscription({
-          id: 101,
-          calendar_day: Number.NaN,
-          consumption_day: Number.NaN
+          id: 103,
+          daily_amount_usd: 60,
+          granted_total_usd: 1800,
+          consumed_usd: 0,
+          remaining_usd: 1800,
+          daily_usage_usd: 22.11428095,
+          weekly_usage_usd: 139.7676467,
+          monthly_usage_usd: 139.7676467,
+          daily_limit_usd: 60,
+          weekly_limit_usd: 420,
+          monthly_limit_usd: 1800
         })
       ],
-      total: 2,
+      total: 1,
       page: 1,
       page_size: 20,
       pages: 1
@@ -186,11 +187,10 @@ describe('admin SubscriptionsView burn-down progress', () => {
     await flushPromises()
 
     const text = wrapper.text()
-    expect(text).toContain('已服务第 2 / 30 天')
-    expect(text).toContain('已消费 5 天额度')
-    expect(text).toContain('已服务第 0 / 30 天')
-    expect(text).toContain('已消费 0 天额度')
-    expect(text).not.toContain('已用到第')
+    expect(text).toContain('$22.11 / $60.00')
+    expect(text).toContain('$139.77 / $420.00')
+    expect(text).toContain('$139.77 / $1800.00')
+    expect(text).not.toContain('$0.00 / $1800.00')
   })
 
   it('lists subscriptions without group or platform filters and renders plan details from card fields', async () => {

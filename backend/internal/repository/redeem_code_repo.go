@@ -104,6 +104,7 @@ func (r *redeemCodeRepository) List(ctx context.Context, params pagination.Pagin
 
 func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, codeType, status, search string) ([]service.RedeemCode, *pagination.PaginationResult, error) {
 	q := r.client.RedeemCode.Query()
+	q = excludeInternalRedeemAuditRecords(q)
 
 	if codeType != "" {
 		q = q.Where(redeemcode.TypeEQ(codeType))
@@ -163,6 +164,16 @@ func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagin
 	outCodes := redeemCodeEntitiesToService(codes)
 
 	return outCodes, paginationResultFromTotal(int64(total), params), nil
+}
+
+func excludeInternalRedeemAuditRecords(q *dbent.RedeemCodeQuery) *dbent.RedeemCodeQuery {
+	return q.Where(
+		redeemcode.Not(redeemcode.CodeHasPrefix("PAY-")),
+		redeemcode.Not(redeemcode.TypeIn(
+			service.AdjustmentTypeAdminBalance,
+			service.AdjustmentTypeAdminConcurrency,
+		)),
+	)
 }
 
 func redeemCodeListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {

@@ -230,15 +230,21 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    // 旧「邀请返利（$ 返利）」页已退役，统一并入积分（issue #11，方案 C）。
+    // 保留重定向以兜住历史书签/外链。
     path: '/affiliate',
-    name: 'Affiliate',
-    component: () => import('@/views/user/InviteCashbackView.vue'),
+    redirect: '/points'
+  },
+  {
+    path: '/points',
+    name: 'Points',
+    component: () => import('@/views/user/PointsView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Affiliate',
-      titleKey: 'inviteCashback.title',
-      descriptionKey: 'inviteCashback.description'
+      title: 'Points',
+      titleKey: 'points.title',
+      descriptionKey: 'points.description'
     }
   },
   {
@@ -580,19 +586,11 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/affiliates',
-    redirect: '/admin/affiliates/cashback'
+    redirect: '/admin/points/config'
   },
   {
     path: '/admin/affiliates/cashback',
-    name: 'AdminAffiliateCashback',
-    component: () => import('@/views/admin/affiliates/AdminAffiliateCashbackView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Invite Cashback',
-      titleKey: 'nav.affiliateCashback',
-      descriptionKey: 'admin.affiliates.cashback.description'
-    }
+    redirect: '/admin/points/config'
   },
   {
     path: '/admin/affiliates/invites',
@@ -608,26 +606,43 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/affiliates/rebates',
-    name: 'AdminAffiliateRebates',
-    component: () => import('@/views/admin/affiliates/AdminAffiliateRebatesView.vue'),
+    redirect: '/admin/points/records'
+  },
+  {
+    path: '/admin/points',
+    redirect: '/admin/points/config'
+  },
+  {
+    path: '/admin/points/config',
+    name: 'AdminPointsConfig',
+    component: () => import('@/views/admin/points/AdminPointsConfigView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Affiliate Rebate Records',
-      titleKey: 'nav.affiliateRebateRecords',
-      descriptionKey: 'admin.affiliates.rebatesDescription'
+      title: 'Points Config',
+      titleKey: 'nav.pointsConfig'
     }
   },
   {
-    path: '/admin/affiliates/transfers',
-    name: 'AdminAffiliateTransfers',
-    component: () => import('@/views/admin/affiliates/AdminAffiliateTransfersView.vue'),
+    path: '/admin/points/withdrawals',
+    name: 'AdminPointsWithdrawals',
+    component: () => import('@/views/admin/points/AdminPointsWithdrawalsView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Affiliate Transfer Records',
-      titleKey: 'nav.affiliateTransferRecords',
-      descriptionKey: 'admin.affiliates.transfersDescription'
+      title: 'Withdrawal Review',
+      titleKey: 'nav.pointsWithdrawals'
+    }
+  },
+  {
+    path: '/admin/points/records',
+    name: 'AdminPointsRecords',
+    component: () => import('@/views/admin/points/AdminPointsRecordsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Points Records',
+      titleKey: 'nav.pointsRecords'
     }
   },
 

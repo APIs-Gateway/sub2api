@@ -49,6 +49,20 @@ func TestBurndownHelpers(t *testing.T) {
 		t.Fatalf("shortfall(day2, consumed=0)=%v want 20", got)
 	}
 
+	startDay := EastDayNumber(activated)
+	dayBacked := newSub(0, 0)
+	dayBacked.StartDay = startDay
+	dayBacked.ExpireDay = startDay + 29
+	if got := dayBacked.CalendarDayAt(day2); got != 2 {
+		t.Fatalf("CalendarDayAt(start_day day2)=%d want 2", got)
+	}
+
+	expireOnly := newSub(0, 0)
+	expireOnly.ExpireDay = EastDayNumber(day2) + 27 // 30-day card with 28 service days remaining.
+	if got := expireOnly.CalendarDayAt(day2); got != 2 {
+		t.Fatalf("CalendarDayAt(expire_day inferred)=%d want 2", got)
+	}
+
 	// 透支：已消费 $50（用到第 5 天），第 2 天 → 消费进度领先日历，不清扣
 	ahead := newSub(50, 0)
 	if got := ahead.ConsumptionDay(); !approx(got, 5) {

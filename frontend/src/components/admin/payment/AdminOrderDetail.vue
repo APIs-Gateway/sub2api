@@ -17,6 +17,10 @@
             {{ t('payment.status.' + order.status.toLowerCase(), order.status) }}
           </span>
         </div>
+        <div class="col-span-2">
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.productName') }}</p>
+          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ order.product_name || fallbackProductName(order) }}</p>
+        </div>
         <div>
           <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.baseAmount') }}</p>
           <p class="text-sm font-medium text-gray-900 dark:text-white">¥{{ baseAmount.toFixed(2) }}</p>
@@ -152,6 +156,10 @@ const emit = defineEmits<{
 
 function canRefund(order: PaymentOrder): boolean {
   return canRefundStatus(order.status)
+}
+
+function fallbackProductName(order: PaymentOrder): string {
+  return order.order_type === 'subscription' ? t('payment.admin.subscriptionOrder') : t('payment.admin.balanceOrder')
 }
 
 function formatDateTime(dateStr: string): string {

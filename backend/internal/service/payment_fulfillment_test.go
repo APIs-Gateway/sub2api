@@ -9,10 +9,8 @@ import (
 	"testing"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 type paymentFulfillmentTestProvider struct {
@@ -48,7 +46,7 @@ func TestResolveRedeemAction_CodeNotFound(t *testing.T) {
 	assert.Equal(t, redeemActionCreate, action, "nil code with nil error should create")
 }
 
-func TestAffiliateRebateBaseAmountForOrder(t *testing.T) {
+func TestPointsEarnBaseAmountForOrder(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -76,9 +74,10 @@ func TestAffiliateRebateBaseAmountForOrder(t *testing.T) {
 			ok:   true,
 		},
 		{
-			name: "unsupported type skipped",
+			name: "order type does not change paid amount base",
 			o:    &dbent.PaymentOrder{OrderType: "other", Amount: 30, PayAmount: 30},
-			ok:   false,
+			want: 30,
+			ok:   true,
 		},
 		{
 			name: "supported type without any positive amount skipped",
@@ -95,57 +94,11 @@ func TestAffiliateRebateBaseAmountForOrder(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, ok := affiliateRebateBaseAmountForOrder(tc.o)
+			got, ok := pointsEarnBaseAmountForOrder(tc.o)
 			assert.Equal(t, tc.ok, ok)
 			assert.InDelta(t, tc.want, got, 1e-9)
 		})
 	}
-}
-
-func TestApplyAffiliateRebateForOrderInTxSkipsWhenIneligible(t *testing.T) {
-	t.Parallel()
-
-	svc := &PaymentService{}
-	require.NoError(t, svc.applyAffiliateRebateForOrderInTx(context.Background(), nil, &dbent.PaymentOrder{
-		OrderType: "other",
-		Amount:    10,
-		PayAmount: 10,
-	}))
-	require.NoError(t, svc.applyAffiliateRebateForOrderInTx(context.Background(), nil, &dbent.PaymentOrder{
-		OrderType: payment.OrderTypeSubscription,
-		Amount:    10,
-		PayAmount: 10,
-	}))
-}
-
-func TestApplyAffiliateRebateForOrderInTxClaimsThenMarksSkipped(t *testing.T) {
-	ctx := context.Background()
-	client := newPaymentConfigServiceTestClient(t)
-	tx, err := client.Tx(ctx)
-	require.NoError(t, err)
-	txCtx := dbent.NewTxContext(ctx, tx)
-
-	svc := &PaymentService{
-		entClient:        client,
-		affiliateService: NewAffiliateService(nil, nil, nil, nil),
-	}
-	err = svc.applyAffiliateRebateForOrderInTx(txCtx, tx.Client(), &dbent.PaymentOrder{
-		ID:        12345,
-		UserID:    1001,
-		OrderType: payment.OrderTypeSubscription,
-		Amount:    90,
-		PayAmount: 45,
-	})
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
-
-	audit, err := client.PaymentAuditLog.Query().
-		Where(paymentauditlog.OrderIDEQ("12345")).
-		Only(ctx)
-	require.NoError(t, err)
-	require.Equal(t, "AFFILIATE_REBATE_SKIPPED", audit.Action)
-	require.Contains(t, audit.Detail, `"baseAmount":45`)
-	require.Contains(t, audit.Detail, `"orderType":"subscription"`)
 }
 
 func TestResolveRedeemAction_LookupError(t *testing.T) {

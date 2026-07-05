@@ -22,5 +22,6 @@ feature 级改动默认按五步推进，不必逐步征询：**先写 spec → 
 ## 工程笔记索引
 
 - [DB 迁移重号约定](docs/notes/db-migration-duplicate-numbers.md) —— 迁移数字前缀重号是有意且安全的，按完整文件名跟踪/排序，**切勿为连号而重命名已有迁移**。
+- [Docker 热开发约定](docs/notes/docker-hot-dev.md) —— 高频本地调试默认只用 Docker 跑真实 PostgreSQL/Redis，应用在宿主机增量编译运行，避免反复完整构建镜像撑满 Docker。
 - [可空列原始 SQL 扫描陷阱](docs/notes/nullable-column-rawsql-scan.md) —— 列改可空后，手写原始 SQL 扫到 `int64`/`string` 会在 NULL 行崩（P0 资损）；改用 `sql.NullXxx`，并补集成测试覆盖 NULL 行。
 - [Tailwind 透明度 vs scoped 自定义色](docs/notes/tailwind-scoped-color-opacity.md) —— `<style scoped>` 里定义的 CSS 变量色不吃 `/NN` 透明度修饰符，会**静默失效**；要弱化得显式补 `color-mix` 转义类。

@@ -261,9 +261,28 @@ func startOfShanghaiDay(t time.Time) time.Time {
 
 // CalendarDayAt 返回截至 now、自激活起经过的东八区零点数 N（激活当天为 0），上限为 TotalDays。
 func (s *UserSubscription) CalendarDayAt(now time.Time) int {
+	if s.StartDay > 0 {
+		return s.clampCalendarDay(EastDayNumber(now) - s.StartDay)
+	}
+	if s.ExpireDay > 0 {
+		days := s.TotalDays()
+		if days > 0 {
+			today := EastDayNumber(now)
+			remainingDays := s.ExpireDay - today + 1
+			if remainingDays < 0 {
+				remainingDays = 0
+			}
+			return s.clampCalendarDay(days - remainingDays)
+		}
+	}
+
 	start := startOfShanghaiDay(s.ClawbackClock())
 	cur := startOfShanghaiDay(now)
 	n := int(cur.Sub(start).Hours()/24 + 0.5)
+	return s.clampCalendarDay(n)
+}
+
+func (s *UserSubscription) clampCalendarDay(n int) int {
 	if n < 0 {
 		n = 0
 	}

@@ -27,7 +27,18 @@ func RegisterUserRoutes(
 			user.PUT("", h.User.UpdateProfile)
 			user.GET("/aff", h.User.GetAffiliate)
 			user.GET("/invite-cashback", h.User.GetInviteCashback)
-			user.POST("/aff/transfer", h.User.TransferAffiliateQuota)
+
+			// 邀请返利积分制（issue #11）
+			points := user.Group("/points")
+			{
+				points.GET("/overview", h.Points.GetOverview)
+				points.GET("/ledger", h.Points.ListLedger)
+				points.GET("/plans", h.Points.ListPlans)
+				points.POST("/redeem-balance", h.Points.RedeemBalance)
+				points.POST("/redeem-plan", h.Points.RedeemPlan)
+				points.GET("/withdrawals", h.Points.ListWithdrawals)
+				points.POST("/withdrawals", h.Points.CreateWithdrawal)
+			}
 			user.POST("/account-bindings/email/send-code", h.User.SendEmailBindingCode)
 			user.POST("/account-bindings/email", h.User.BindEmailIdentity)
 			user.DELETE("/account-bindings/:provider", h.User.UnbindIdentity)

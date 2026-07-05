@@ -31,7 +31,7 @@
               :id="row.inviter_id"
               :email="row.inviter_email"
               :username="row.inviter_username"
-              :clickable="props.type !== 'transfers'"
+              :clickable="true"
               @open="openUserOverview"
             />
           </template>
@@ -40,15 +40,6 @@
               :id="row.invitee_id"
               :email="row.invitee_email"
               :username="row.invitee_username"
-              :clickable="props.type !== 'transfers'"
-              @open="openUserOverview"
-            />
-          </template>
-          <template #cell-user="{ row }">
-            <UserCell
-              :id="row.user_id"
-              :email="row.user_email"
-              :username="row.username"
               :clickable="true"
               @open="openUserOverview"
             />
@@ -79,21 +70,6 @@
           </template>
           <template #cell-rebate_amount="{ row }">
             <AmountText :value="row.rebate_amount" strong />
-          </template>
-          <template #cell-amount="{ row }">
-            <AmountText :value="row.amount" strong />
-          </template>
-          <template #cell-balance_after="{ row }">
-            <NullableAmountText :value="row.balance_after" />
-          </template>
-          <template #cell-available_quota_after="{ row }">
-            <NullableAmountText :value="row.available_quota_after" />
-          </template>
-          <template #cell-frozen_quota_after="{ row }">
-            <NullableAmountText :value="row.frozen_quota_after" />
-          </template>
-          <template #cell-history_quota_after="{ row }">
-            <NullableAmountText :value="row.history_quota_after" />
           </template>
           <template #cell-created_at="{ row }">
             <span class="text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(row.created_at) }}</span>
@@ -142,7 +118,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref, type PropType } from 'vue'
+import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -153,13 +129,13 @@ import Icon from '@/components/icons/Icon.vue'
 import OrderStatusBadge from '@/components/payment/OrderStatusBadge.vue'
 import type { Column } from '@/components/common/types'
 import { useAppStore } from '@/stores/app'
-import { affiliatesAPI, type AffiliateInviteRecord, type AffiliateRebateRecord, type AffiliateTransferRecord, type AffiliateUserOverview, type ListAffiliateRecordsParams } from '@/api/admin/affiliates'
+import { affiliatesAPI, type AffiliateInviteRecord, type AffiliateRebateRecord, type AffiliateUserOverview, type ListAffiliateRecordsParams } from '@/api/admin/affiliates'
 import type { PaginatedResponse } from '@/types'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { formatDateTime as formatDisplayDateTime } from '@/utils/format'
 
-type RecordType = 'invites' | 'rebates' | 'transfers'
-type AffiliateRecord = AffiliateInviteRecord | AffiliateRebateRecord | AffiliateTransferRecord
+type RecordType = 'invites' | 'rebates'
+type AffiliateRecord = AffiliateInviteRecord | AffiliateRebateRecord
 
 const props = defineProps<{
   type: RecordType
@@ -186,27 +162,16 @@ const columns = computed<Column[]>(() => {
       { key: 'created_at', label: t('admin.affiliates.records.invitedAt'), sortable: true },
     ]
   }
-  if (props.type === 'rebates') {
-    return [
-      { key: 'order', label: t('admin.affiliates.records.order'), sortable: true },
-      { key: 'inviter', label: t('admin.affiliates.records.inviter'), sortable: true },
-      { key: 'invitee', label: t('admin.affiliates.records.invitee'), sortable: true },
-      { key: 'order_amount', label: t('admin.affiliates.records.orderAmount'), sortable: true },
-      { key: 'pay_amount', label: t('admin.affiliates.records.payAmount'), sortable: true },
-      { key: 'rebate_amount', label: t('admin.affiliates.records.rebateAmount') },
-      { key: 'payment_type', label: t('admin.affiliates.records.paymentType'), sortable: true },
-      { key: 'order_status', label: t('admin.affiliates.records.orderStatus'), sortable: true },
-      { key: 'created_at', label: t('admin.affiliates.records.rebatedAt'), sortable: true },
-    ]
-  }
   return [
-    { key: 'user', label: t('admin.affiliates.records.user'), sortable: true },
-    { key: 'amount', label: t('admin.affiliates.records.transferAmount'), sortable: true },
-    { key: 'balance_after', label: t('admin.affiliates.records.balanceAfter'), sortable: true },
-    { key: 'available_quota_after', label: t('admin.affiliates.records.availableQuotaAfter'), sortable: true },
-    { key: 'frozen_quota_after', label: t('admin.affiliates.records.frozenQuotaAfter'), sortable: true },
-    { key: 'history_quota_after', label: t('admin.affiliates.records.historyQuotaAfter'), sortable: true },
-    { key: 'created_at', label: t('admin.affiliates.records.transferredAt'), sortable: true },
+    { key: 'order', label: t('admin.affiliates.records.order'), sortable: true },
+    { key: 'inviter', label: t('admin.affiliates.records.inviter'), sortable: true },
+    { key: 'invitee', label: t('admin.affiliates.records.invitee'), sortable: true },
+    { key: 'order_amount', label: t('admin.affiliates.records.orderAmount'), sortable: true },
+    { key: 'pay_amount', label: t('admin.affiliates.records.payAmount'), sortable: true },
+    { key: 'rebate_amount', label: t('admin.affiliates.records.rebateAmount') },
+    { key: 'payment_type', label: t('admin.affiliates.records.paymentType'), sortable: true },
+    { key: 'order_status', label: t('admin.affiliates.records.orderStatus'), sortable: true },
+    { key: 'created_at', label: t('admin.affiliates.records.rebatedAt'), sortable: true },
   ]
 })
 
@@ -256,10 +221,7 @@ async function fetchRecords(params: ListAffiliateRecordsParams): Promise<Paginat
   if (props.type === 'invites') {
     return affiliatesAPI.listInviteRecords(params)
   }
-  if (props.type === 'rebates') {
-    return affiliatesAPI.listRebateRecords(params)
-  }
-  return affiliatesAPI.listTransferRecords(params)
+  return affiliatesAPI.listRebateRecords(params)
 }
 
 async function loadRecords() {
@@ -365,21 +327,6 @@ const AmountText = defineComponent({
         ? 'text-sm font-semibold text-emerald-600 dark:text-emerald-400'
         : 'text-sm text-gray-900 dark:text-white',
     }, `$${formatAmount(amountProps.value)}`)
-  },
-})
-
-const NullableAmountText = defineComponent({
-  props: {
-    value: { type: Number as PropType<number | null | undefined>, default: null },
-  },
-  setup(amountProps) {
-    return () => {
-      const value = amountProps.value
-      if (value === null || value === undefined) {
-        return h('span', { class: 'text-sm text-gray-400 dark:text-dark-500' }, '-')
-      }
-      return h(AmountText, { value })
-    }
   },
 })
 

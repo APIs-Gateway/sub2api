@@ -277,19 +277,6 @@ func (h *AffiliateHandler) ListRebateRecords(c *gin.Context) {
 	response.Paginated(c, items, total, filter.Page, filter.PageSize)
 }
 
-// ListTransferRecords returns all affiliate quota-to-balance transfer records.
-// GET /api/v1/admin/affiliates/transfers
-func (h *AffiliateHandler) ListTransferRecords(c *gin.Context) {
-	page, pageSize := response.ParsePagination(c)
-	filter := parseAffiliateRecordFilter(c, page, pageSize)
-	items, total, err := h.affiliateService.AdminListTransferRecords(c.Request.Context(), filter)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Paginated(c, items, total, filter.Page, filter.PageSize)
-}
-
 func parseAffiliateRecordFilter(c *gin.Context, page, pageSize int) service.AffiliateRecordFilter {
 	filter := service.AffiliateRecordFilter{
 		Search:   c.Query("search"),

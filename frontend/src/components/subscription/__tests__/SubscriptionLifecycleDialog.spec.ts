@@ -75,6 +75,9 @@ describe('SubscriptionLifecycleDialog', () => {
         show: true,
         mode: 'change',
         subscription: subscriptionFixture(),
+        paymentCurrency: 'CNY',
+        subscriptionPaymentMultiplier: 10,
+        locale: 'zh-CN',
       },
       global: {
         stubs: {
@@ -91,6 +94,8 @@ describe('SubscriptionLifecycleDialog', () => {
     expect(getSubscriptionPricing).toHaveBeenCalledTimes(1)
     expect(changePlanQuote).toHaveBeenCalledWith(90, 30)
     expect(wrapper.text()).toContain('userSubscriptions.lifecycle.dailyAmount')
+    expect(wrapper.text()).toContain('¥7.26')
     expect(wrapper.text()).toContain('$72.60')
+    expect(wrapper.text()).not.toContain('USD 72.60')
   })
 })

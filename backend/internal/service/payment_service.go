@@ -206,6 +206,7 @@ type PaymentService struct {
 	groupRepo                GroupRepository
 	resumeService            *PaymentResumeService
 	affiliateService         *AffiliateService
+	pointsService            *PointsService
 	notificationEmailService *NotificationEmailService
 }
 
@@ -217,6 +218,11 @@ func NewPaymentService(entClient *dbent.Client, registry *payment.Registry, load
 
 func (s *PaymentService) SetNotificationEmailService(notificationEmailService *NotificationEmailService) {
 	s.notificationEmailService = notificationEmailService
+}
+
+// SetPointsService 注入积分服务（邀请返利积分制，issue #11）用于 earning/clawback 钩子。
+func (s *PaymentService) SetPointsService(pointsService *PointsService) {
+	s.pointsService = pointsService
 }
 
 // --- Provider Registry ---

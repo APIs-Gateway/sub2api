@@ -3,7 +3,7 @@
     <!-- Quick Amount Buttons -->
     <div>
       <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-        {{ t('payment.quickAmounts') }}
+        {{ currencyLabel ? t('payment.quickAmountsWithCurrency', { currency: currencyLabel }) : t('payment.quickAmounts') }}
       </label>
       <div class="grid grid-cols-3 gap-2">
         <button
@@ -18,7 +18,7 @@
           ]"
           @click="selectAmount(amt)"
         >
-          {{ amt }}
+          {{ buttonLabel(amt) }}
         </button>
       </div>
     </div>
@@ -26,11 +26,11 @@
     <!-- Custom Amount Input -->
     <div>
       <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-        {{ t('payment.customAmount') }}
+        {{ currencyLabel ? t('payment.customAmountWithCurrency', { currency: currencyLabel }) : t('payment.customAmount') }}
       </label>
       <div class="relative">
         <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-dark-500">
-          $
+          {{ prefix }}
         </span>
         <input
           type="text"
@@ -54,10 +54,14 @@ const props = withDefaults(defineProps<{
   modelValue: number | null
   min?: number
   max?: number
+  currencyLabel?: string
+  prefix?: string
 }>(), {
   amounts: () => [10, 20, 50, 100, 200, 500, 1000, 2000, 5000],
   min: 0,
   max: 0,
+  currencyLabel: '',
+  prefix: '$',
 })
 
 const emit = defineEmits<{
@@ -81,6 +85,10 @@ const placeholderText = computed(() => {
 })
 
 const AMOUNT_PATTERN = /^\d*(\.\d{0,2})?$/
+
+function buttonLabel(amt: number): string {
+  return props.currencyLabel ? `${props.prefix}${amt}` : String(amt)
+}
 
 function selectAmount(amt: number) {
   customText.value = String(amt)
