@@ -209,22 +209,28 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 		"act": "order", "pid": e.config["pid"],
 		"key": e.config["pkey"], "out_trade_no": tradeNo,
 	}
-	body, err := e.post(ctx, e.apiBase()+"/api.php", params)
+	body, err := e.get(ctx, e.apiBase()+"/api.php", params)
 	if err != nil {
 		return nil, fmt.Errorf("easypay query: %w", err)
 	}
+	if easyPayQueryNeedsPOSTRetry(body) {
+		body, err = e.post(ctx, e.apiBase()+"/api.php", params)
+		if err != nil {
+			return nil, fmt.Errorf("easypay query fallback: %w", err)
+		}
+	}
 	type easyPayQueryData struct {
-		TradeStatus *string `json:"trade_status"`
-		Status      *int    `json:"status"`
-		Money       *string `json:"money"`
-		TradeNo     *string `json:"trade_no"`
-		OutTradeNo  *string `json:"out_trade_no"`
+		TradeStatus *string         `json:"trade_status"`
+		Status      json.RawMessage `json:"status"`
+		Money       *string         `json:"money"`
+		TradeNo     *string         `json:"trade_no"`
+		OutTradeNo  *string         `json:"out_trade_no"`
 	}
 	var resp struct {
 		Code        *int             `json:"code"`
 		Msg         string           `json:"msg"`
 		TradeStatus *string          `json:"trade_status"`
-		Status      *int             `json:"status"`
+		Status      json.RawMessage  `json:"status"`
 		Money       *string          `json:"money"`
 		TradeNo     *string          `json:"trade_no"`
 		OutTradeNo  *string          `json:"out_trade_no"`
@@ -262,11 +268,11 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 		if *resp.Data.TradeStatus == tradeStatusSuccess {
 			status = payment.ProviderStatusPaid
 		}
-	} else if resp.Status != nil {
-		if *resp.Status == easypayStatusPaid {
+	} else if len(resp.Status) > 0 {
+		if easyPayNumericStatusIsPaid(resp.Status) {
 			status = payment.ProviderStatusPaid
 		}
-	} else if resp.Data.Status != nil && *resp.Data.Status == easypayStatusPaid {
+	} else if len(resp.Data.Status) > 0 && easyPayNumericStatusIsPaid(resp.Data.Status) {
 		status = payment.ProviderStatusPaid
 	}
 
@@ -312,7 +318,7 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 		return nil, fmt.Errorf("invalid signature")
 	}
 	status := payment.ProviderStatusFailed
-	if params["trade_status"] == tradeStatusSuccess {
+	if easyPayNotifyStatusIsSuccess(params) {
 		status = payment.ProviderStatusSuccess
 	}
 	amount, _ := strconv.ParseFloat(params["money"], 64)
@@ -492,6 +498,31 @@ func (e *EasyPay) post(ctx context.Context, endpoint string, params map[string]s
 	return body, err
 }
 
+func (e *EasyPay) get(ctx context.Context, endpoint string, params map[string]string) ([]byte, error) {
+	form := url.Values{}
+	for k, v := range params {
+		form.Set(k, v)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+form.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	client := e.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: easypayHTTPTimeout}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEasypayResponseSize))
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
 func (e *EasyPay) postRaw(ctx context.Context, endpoint string, params map[string]string) ([]byte, int, error) {
 	form := url.Values{}
 	for k, v := range params {
@@ -541,4 +572,35 @@ func easyPaySign(params map[string]string, pkey string) string {
 
 func easyPayVerifySign(params map[string]string, pkey string, sign string) bool {
 	return hmac.Equal([]byte(easyPaySign(params, pkey)), []byte(sign))
+}
+
+func easyPayQueryNeedsPOSTRetry(body []byte) bool {
+	var resp struct {
+		Code *int   `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil || resp.Code == nil {
+		return false
+	}
+	return *resp.Code != easypayCodeSuccess && strings.Contains(strings.ToLower(resp.Msg), "no act")
+}
+
+func easyPayNumericStatusIsPaid(raw json.RawMessage) bool {
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return n == easypayStatusPaid
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return strings.TrimSpace(s) == strconv.Itoa(easypayStatusPaid)
+	}
+	return false
+}
+
+func easyPayNotifyStatusIsSuccess(params map[string]string) bool {
+	tradeStatus := strings.TrimSpace(params["trade_status"])
+	if tradeStatus != "" {
+		return tradeStatus == tradeStatusSuccess
+	}
+	return strings.TrimSpace(params["status"]) == strconv.Itoa(easypayStatusPaid)
 }

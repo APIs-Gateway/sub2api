@@ -164,6 +164,9 @@ func (s *PaymentService) writeAuditLog(ctx context.Context, oid int64, action, o
 	dj, _ := json.Marshal(detail)
 	_, err := s.entClientForCtx(ctx).PaymentAuditLog.Create().SetOrderID(strconv.FormatInt(oid, 10)).SetAction(action).SetDetail(string(dj)).SetOperator(op).Save(ctx)
 	if err != nil {
+		if dbent.IsConstraintError(err) {
+			return
+		}
 		slog.Error("audit log failed", "orderID", oid, "action", action, "error", err)
 	}
 }
