@@ -127,9 +127,9 @@
               {{ t('points.redeemPlan.empty') }}
             </div>
             <div v-else class="space-y-2">
-              <div v-for="plan in plans" :key="plan.group_id" class="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2 dark:border-dark-700">
+              <div v-for="plan in plans" :key="`${plan.daily_amount_usd}-${plan.validity_days}`" class="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2 dark:border-dark-700">
                 <div class="min-w-0">
-                  <p class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ plan.name }}</p>
+                  <p class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ t('points.redeemPlan.planTitle', { d: plan.daily_amount_usd }) }}</p>
                   <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemPlan.validity', { n: plan.validity_days }) }} · {{ plan.points_price.toLocaleString() }} {{ t('points.unit') }}</p>
                 </div>
                 <button class="btn btn-secondary btn-sm shrink-0" :disabled="busy || overview.account.available < plan.points_price" @click="onRedeemPlan(plan)">{{ t('points.redeemPlan.submit') }}</button>
@@ -307,12 +307,13 @@ async function onWithdraw(): Promise<void> {
 }
 
 async function onRedeemPlan(plan: PointsPlanOption): Promise<void> {
-  if (!window.confirm(t('points.redeemPlan.confirm', { points: plan.points_price.toLocaleString(), plan: plan.name }))) return
+  const planName = t('points.redeemPlan.planTitle', { d: plan.daily_amount_usd })
+  if (!window.confirm(t('points.redeemPlan.confirm', { points: plan.points_price.toLocaleString(), plan: planName }))) return
   busy.value = true
   // 幂等键：本次兑换生成一个，网络重发/重试复用同一 key → 后端按 (user, key) 去重，绝不二次扣分。
   const idempotencyKey = newExchangeId()
   try {
-    await redeemPointsToPlan(plan.group_id, plan.validity_days, idempotencyKey)
+    await redeemPointsToPlan(plan.daily_amount_usd, plan.validity_days, idempotencyKey)
     appStore.showSuccess(t('points.redeemPlan.success'))
     await refresh()
   } catch (error) {

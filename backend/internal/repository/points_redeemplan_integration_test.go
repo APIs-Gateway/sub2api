@@ -21,33 +21,27 @@ func TestPointsService_RedeemToPlan_EndToEndAndIdempotent(t *testing.T) {
 	setPointsEarnSettings(t, h.settingRepo, true, pointsTestPeg, 20, 0)
 	require.NoError(t, h.settingRepo.Set(ctx, service.SettingKeyPointsRedeemPlanOn, "true"))
 
-	daily := 2.0
-	group := mustCreateGroup(t, h.client, &service.Group{
-		Name:                "redeem-plan-" + pointsUniq(),
-		SubscriptionType:    service.SubscriptionTypeSubscription,
-		DailyLimitUSD:       &daily,
-		DefaultValidityDays: 30,
-	})
-
 	user := mustCreatePointsUser(t, "user")
 
-	// 给足积分（quote price 约 2.0×30×unit；need 数千分）。
+	// 给足积分（默认 30/30 价格约 1800 USD；peg=0.01 时需约 180000 分）。
 	pointsRepo := NewPointsRepository(h.client, integrationDB)
 	invitee := mustCreatePointsUser(t, "user")
 	orderID := mustCreatePointsOrder(t, invitee, 1000)
 	_, err := pointsRepo.EarnPoints(ctx, service.EarnPointsInput{
 		InviterID: user.ID, SourceUserID: invitee.ID, SourceOrderID: orderID,
-		Points: 100000, PegAt: pointsTestPeg,
+		Points: 300000, PegAt: pointsTestPeg,
 	})
 	require.NoError(t, err)
 	before := pointsAvailableOf(t, user.ID)
-	require.EqualValues(t, 100000, before)
+	require.EqualValues(t, 300000, before)
 
 	key := uuid.NewString()
-	sub, err := h.pointsSvc.RedeemToPlan(ctx, user.ID, group.ID, 30, key)
+	sub, err := h.pointsSvc.RedeemToPlan(ctx, user.ID, 30, 30, key)
 	require.NoError(t, err)
 	require.NotNil(t, sub)
 	require.Equal(t, user.ID, sub.UserID)
+	require.EqualValues(t, 0, sub.GroupID)
+	require.InDelta(t, 30, sub.DailyAmountUSD, 1e-9)
 
 	// 积分被扣（need>0）。
 	after := pointsAvailableOf(t, user.ID)
@@ -62,11 +56,11 @@ func TestPointsService_RedeemToPlan_EndToEndAndIdempotent(t *testing.T) {
 	// 开通了订阅卡。
 	var subCount int
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM user_subscriptions WHERE user_id=$1 AND group_id=$2`, user.ID, group.ID).Scan(&subCount))
+		`SELECT COUNT(*) FROM user_subscriptions WHERE user_id=$1 AND group_id IS NULL`, user.ID).Scan(&subCount))
 	require.GreaterOrEqual(t, subCount, 1)
 
 	// 幂等：同 key 再兑换 → ErrPointsPlanDuplicate，整事务回滚、不二次扣分、不重复发卡。
-	_, err = h.pointsSvc.RedeemToPlan(ctx, user.ID, group.ID, 30, key)
+	_, err = h.pointsSvc.RedeemToPlan(ctx, user.ID, 30, 30, key)
 	require.ErrorIs(t, err, service.ErrPointsPlanDuplicate)
 	require.Equal(t, after, pointsAvailableOf(t, user.ID), "duplicate redeem must not deduct again")
 

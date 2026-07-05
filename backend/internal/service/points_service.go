@@ -313,28 +313,17 @@ func (s *PointsService) CreateWithdrawal(ctx context.Context, userID, points int
 
 // --- Spending ③ 换套餐（全额、直接开通、扣积分、单事务原子） ---
 
-func (s *PointsService) RedeemToPlan(ctx context.Context, userID, groupID int64, validityDays int, idempotencyKey string) (*UserSubscription, error) {
+func (s *PointsService) RedeemToPlan(ctx context.Context, userID int64, dailyAmountUSD float64, validityDays int, idempotencyKey string) (*UserSubscription, error) {
 	if !s.IsEnabled(ctx) {
 		return nil, ErrPointsDisabled
 	}
 	if !s.settingService.IsPointsRedeemPlanOn(ctx) {
 		return nil, ErrPointsRedeemPlanDisabled
 	}
-	g, err := s.groupRepo.GetByID(ctx, groupID)
-	if err != nil {
-		return nil, err
+	if s.subscriptionSvc == nil {
+		return nil, fmt.Errorf("subscription service not configured")
 	}
-	if g == nil || g.SubscriptionType != SubscriptionTypeSubscription || !g.IsActive() {
-		return nil, ErrPointsPlanInvalid
-	}
-	if g.DailyLimitUSD == nil || *g.DailyLimitUSD <= 0 {
-		return nil, ErrPointsPlanInvalid
-	}
-	t := validityDays
-	if t <= 0 {
-		t = g.DefaultValidityDays
-	}
-	quote, err := s.subscriptionSvc.QuoteSubscription(*g.DailyLimitUSD, t)
+	quote, err := s.subscriptionSvc.QuoteSubscription(ctx, dailyAmountUSD, validityDays)
 	if err != nil {
 		return nil, err
 	}
@@ -360,16 +349,16 @@ func (s *PointsService) RedeemToPlan(ctx context.Context, userID, groupID int64,
 	}()
 	txCtx := dbent.NewTxContext(ctx, tx)
 
-	note := fmt.Sprintf("points redeem plan group=%d days=%d price=%.4f", groupID, t, quote.Price)
+	note := fmt.Sprintf("points redeem plan daily=%.4f days=%d price=%.4f", quote.DailyAmountUSD, quote.ValidityDays, quote.Price)
 	// 幂等键先于发卡：重复请求命中 to_plan partial-unique → ErrPointsPlanDuplicate → 回滚、不二次扣分/延卡。
 	if err := s.repo.DeductForPlan(txCtx, userID, need, peg, note, strings.TrimSpace(idempotencyKey)); err != nil {
 		return nil, err
 	}
 	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{
 		UserID:          userID,
-		GroupID:         groupID,
-		ValidityDays:    t,
-		DailyAmountUSD:  *g.DailyLimitUSD,
+		GroupID:         0,
+		ValidityDays:    quote.ValidityDays,
+		DailyAmountUSD:  quote.DailyAmountUSD,
 		WeeklyLimitUSD:  quote.WeeklyCapUSD,
 		MonthlyLimitUSD: quote.MonthlyCapUSD,
 		AssignedBy:      0,
@@ -451,49 +440,50 @@ func (s *PointsService) EffectiveRateForUser(ctx context.Context, userID int64) 
 	return s.resolveRate(ctx, sum)
 }
 
-// PointsPlanOption 可用积分兑换的套餐项（含积分价）。
+// PointsPlanOption 可用积分兑换的订阅 D/T 组合（含积分价）。
 type PointsPlanOption struct {
-	GroupID        int64   `json:"group_id"`
-	Name           string  `json:"name"`
-	Description    string  `json:"description"`
-	Platform       string  `json:"platform"`
 	ValidityDays   int     `json:"validity_days"`
 	DailyAmountUSD float64 `json:"daily_amount_usd"`
+	UnitPrice      float64 `json:"unit_price"`
 	Price          float64 `json:"price"`
 	PointsPrice    int64   `json:"points_price"`
+	WeeklyCapUSD   float64 `json:"weekly_cap_usd"`
+	MonthlyCapUSD  float64 `json:"monthly_cap_usd"`
 }
 
-// ListRedeemablePlans 列出可用积分兑换的订阅套餐（active + subscription 类型 + 有每日额度）及其积分价。
+// ListRedeemablePlans 列出可用积分兑换的订阅 D/T 组合及其积分价。
 func (s *PointsService) ListRedeemablePlans(ctx context.Context) ([]PointsPlanOption, error) {
-	groups, err := s.groupRepo.ListActive(ctx)
-	if err != nil {
-		return nil, err
+	if s.subscriptionSvc == nil {
+		return nil, fmt.Errorf("subscription service not configured")
 	}
+	bounds := s.subscriptionSvc.PricingBounds(ctx)
 	peg := s.peg(ctx)
-	out := make([]PointsPlanOption, 0, len(groups))
-	for i := range groups {
-		g := groups[i]
-		if g.SubscriptionType != SubscriptionTypeSubscription || g.DailyLimitUSD == nil || *g.DailyLimitUSD <= 0 {
-			continue
+	dMin := math.Ceil(bounds.DMin/subscriptionDailyAmountStep) * subscriptionDailyAmountStep
+	dMax := math.Floor(bounds.DMax/subscriptionDailyAmountStep) * subscriptionDailyAmountStep
+	if dMax < dMin {
+		dMax = dMin
+	}
+	validities := []int{30, 90, 180, 360}
+	out := make([]PointsPlanOption, 0, int((dMax-dMin)/subscriptionDailyAmountStep+1)*len(validities))
+	for d := dMin; d <= dMax+1e-9; d += subscriptionDailyAmountStep {
+		for _, t := range validities {
+			if t < bounds.TMin || t > bounds.TMax || (bounds.TStep > 0 && t%bounds.TStep != 0) {
+				continue
+			}
+			quote, qErr := s.subscriptionSvc.QuoteSubscription(ctx, d, t)
+			if qErr != nil {
+				continue
+			}
+			out = append(out, PointsPlanOption{
+				ValidityDays:   quote.ValidityDays,
+				DailyAmountUSD: quote.DailyAmountUSD,
+				UnitPrice:      quote.UnitPrice,
+				Price:          quote.Price,
+				PointsPrice:    ComputePlanPoints(quote.Price, peg),
+				WeeklyCapUSD:   quote.WeeklyCapUSD,
+				MonthlyCapUSD:  quote.MonthlyCapUSD,
+			})
 		}
-		t := g.DefaultValidityDays
-		if t <= 0 {
-			continue
-		}
-		quote, qErr := s.subscriptionSvc.QuoteSubscription(*g.DailyLimitUSD, t)
-		if qErr != nil {
-			continue
-		}
-		out = append(out, PointsPlanOption{
-			GroupID:        g.ID,
-			Name:           g.Name,
-			Description:    g.Description,
-			Platform:       g.Platform,
-			ValidityDays:   t,
-			DailyAmountUSD: *g.DailyLimitUSD,
-			Price:          quote.Price,
-			PointsPrice:    ComputePlanPoints(quote.Price, peg),
-		})
 	}
 	return out, nil
 }

@@ -87,7 +87,7 @@
         <!-- quoteError 用 primary（Signal）表错误，符合设计系统语义。 -->
         <template v-else>
           <div class="flex items-end justify-between">
-            <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('subscriptionPurchase.price') }}</span>
+            <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('subscriptionPurchase.priceWithCurrency', { currency: paymentCurrency }) }}</span>
             <span class="font-mono text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
               <span v-if="quoting" class="text-base text-gray-400">{{ t('subscriptionPurchase.quoting') }}</span>
               <span v-else>{{ formattedPayableAmount }}</span>
@@ -104,11 +104,11 @@
             </div>
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.weeklyCap') }}</dt>
-              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">${{ (quote?.weekly_cap_usd ?? 0).toFixed(2) }}</dd>
+              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">{{ formatUSDValue(quote?.weekly_cap_usd ?? 0) }}</dd>
             </div>
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.monthlyCap') }}</dt>
-              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">${{ (quote?.monthly_cap_usd ?? 0).toFixed(2) }}</dd>
+              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">{{ formatUSDValue(quote?.monthly_cap_usd ?? 0) }}</dd>
             </div>
           </dl>
         </template>
@@ -181,6 +181,10 @@ const payableAmount = computed(() =>
 const formattedPayableAmount = computed(() =>
   formatPaymentAmount(payableAmount.value, paymentCurrency.value, props.locale)
 )
+
+function formatUSDValue(value: number): string {
+  return `USD ${Number.isFinite(value) ? value.toFixed(2) : '0.00'}`
+}
 
 const validityOptions = computed(() => {
   const options = [

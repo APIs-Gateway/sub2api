@@ -72,14 +72,13 @@ export interface PointsWithdrawal {
 }
 
 export interface PointsPlanOption {
-  group_id: number
-  name: string
-  description: string
-  platform: string
   validity_days: number
   daily_amount_usd: number
+  unit_price: number
   price: number
   points_price: number
+  weekly_cap_usd: number
+  monthly_cap_usd: number
 }
 
 export interface CreateWithdrawalPayload {
@@ -112,9 +111,9 @@ export async function redeemPointsToBalance(points: number): Promise<{ balance: 
   return data
 }
 
-export async function redeemPointsToPlan(groupId: number, validityDays = 0, idempotencyKey = ''): Promise<unknown> {
+export async function redeemPointsToPlan(dailyAmountUsd: number, validityDays: number, idempotencyKey = ''): Promise<unknown> {
   const { data } = await apiClient.post('/user/points/redeem-plan', {
-    group_id: groupId,
+    daily_amount_usd: dailyAmountUsd,
     validity_days: validityDays,
     idempotency_key: idempotencyKey,
   })

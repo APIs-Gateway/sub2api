@@ -45,7 +45,7 @@ vi.mock('vue-i18n', async () => {
 
 function makeOverview(overrides: Record<string, unknown> = {}) {
   return {
-    account: { user_id: 7, available: 100000, frozen: 10, lifetime_earned: 120, created_at: '', updated_at: '' },
+    account: { user_id: 7, available: 300000, frozen: 10, lifetime_earned: 120, created_at: '', updated_at: '' },
     affiliate: { aff_code: 'CODE7', aff_count: 3 },
     effective_rate: 20,
     config: {
@@ -67,7 +67,7 @@ const ledgerRows = [
   { id: 2, user_id: 7, kind: 'to_balance', points: -20, available_after: null, created_at: '2026-06-02T00:00:00Z' },
 ]
 const planList = [
-  { group_id: 11, name: 'Pro', description: '', platform: 'anthropic', validity_days: 30, daily_amount_usd: 2, price: 60, points_price: 6000 },
+  { validity_days: 30, daily_amount_usd: 30, unit_price: 2, price: 1800, points_price: 180000, weekly_cap_usd: 210, monthly_cap_usd: 900 },
 ]
 
 describe('user PointsView', () => {
@@ -110,7 +110,7 @@ describe('user PointsView', () => {
     expect(listPointsPlans).toHaveBeenCalled()
     const text = wrapper.text()
     expect(text).toContain('CODE7') // aff code
-    expect(text).toContain('Pro') // plan name
+    expect(text).toContain('points.redeemPlan.planTitle') // plan title key from mocked i18n
     expect(text).toContain('+50') // ledger positive
     expect(text).toContain('—') // ledger null balance
   })
@@ -198,7 +198,7 @@ describe('user PointsView', () => {
     await flushPromises()
     expect(redeemPointsToPlan).toHaveBeenCalledTimes(1)
     const args = redeemPointsToPlan.mock.calls[0]
-    expect(args[0]).toBe(11) // group_id
+    expect(args[0]).toBe(30) // daily_amount_usd
     expect(args[1]).toBe(30) // validity_days
     expect(typeof args[2]).toBe('string') // idempotency key
     expect(args[2].length).toBeGreaterThan(0)

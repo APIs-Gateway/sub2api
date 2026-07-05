@@ -91,6 +91,6 @@ describe('SubscriptionLifecycleDialog', () => {
     expect(getSubscriptionPricing).toHaveBeenCalledTimes(1)
     expect(changePlanQuote).toHaveBeenCalledWith(90, 30)
     expect(wrapper.text()).toContain('userSubscriptions.lifecycle.dailyAmount')
-    expect(wrapper.text()).toContain('$72.60')
+    expect(wrapper.text()).toContain('USD 72.60')
   })
 })

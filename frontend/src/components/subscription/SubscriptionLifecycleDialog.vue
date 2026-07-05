@@ -76,18 +76,18 @@
           <template v-else-if="mode === 'renew' && renewQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.renewPrice') }}</span>
-              <span class="text-lg font-bold text-gray-900 dark:text-white">${{ formatUSD(renewQuoteData.price) }}</span>
+              <span class="text-lg font-bold text-gray-900 dark:text-white">{{ formatUSDValue(renewQuoteData.price) }}</span>
             </div>
           </template>
           <template v-else-if="mode === 'change' && changeQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.changeDiff') }}</span>
-              <span class="text-lg font-bold text-gray-900 dark:text-white">${{ formatUSD(changeQuoteData.diff) }}</span>
+              <span class="text-lg font-bold text-gray-900 dark:text-white">{{ formatUSDValue(changeQuoteData.diff) }}</span>
             </div>
             <div class="mt-1 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
-              <div>{{ t('userSubscriptions.lifecycle.newPlanPrice') }}: ${{ formatUSD(changeQuoteData.new_plan_price) }}</div>
-              <div>{{ t('userSubscriptions.lifecycle.oldRemainingValue') }}: ${{ formatUSD(changeQuoteData.old_remaining_value) }}</div>
-              <div>{{ t('userSubscriptions.lifecycle.caps', { weekly: formatUSD(changeQuoteData.weekly_cap_usd), monthly: formatUSD(changeQuoteData.monthly_cap_usd) }) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.newPlanPrice') }}: {{ formatUSDValue(changeQuoteData.new_plan_price) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.oldRemainingValue') }}: {{ formatUSDValue(changeQuoteData.old_remaining_value) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.caps', { weekly: formatUSDValue(changeQuoteData.weekly_cap_usd), monthly: formatUSDValue(changeQuoteData.monthly_cap_usd) }) }}</div>
             </div>
           </template>
         </div>
@@ -198,6 +198,10 @@ function roundMoney(value: number): number {
 
 function formatUSD(value: number): string {
   return roundMoney(value).toFixed(2)
+}
+
+function formatUSDValue(value: number): string {
+  return `USD ${formatUSD(value)}`
 }
 
 function clamp(v: number, lo: number, hi: number): number {

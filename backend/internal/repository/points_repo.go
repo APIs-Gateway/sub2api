@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -328,6 +329,20 @@ func (r *pointsRepository) DeductForPlan(ctx context.Context, userID, points int
 	}
 	// 在 service 事务内调用：clientFromContext 取到外层 tx，与发卡同事务。
 	client := clientFromContext(ctx, r.client)
+	key := strings.TrimSpace(idempotencyKey)
+	if key != "" {
+		// 先占用幂等键，再扣账户。这样重复请求即使当前余额不足，也会优先返回 duplicate；
+		// 若后续扣款/发卡失败，外层事务回滚，占位流水不会残留。
+		if _, err := client.ExecContext(ctx, `
+INSERT INTO user_points_ledger (user_id, kind, points, peg_at, note, idempotency_key, created_at, updated_at)
+VALUES ($1, 'to_plan', $2, $3, $4, $5, NOW(), NOW())`,
+			userID, -points, nullablePegArg(pegAt), note, key); err != nil {
+			if isUniqueConstraintViolation(err) {
+				return service.ErrPointsPlanDuplicate
+			}
+			return fmt.Errorf("insert to_plan ledger: %w", err)
+		}
+	}
 	avail, frozen, ok, err := scanTwoInt64(ctx, client, `
 UPDATE user_points_accounts SET available = available - $1, updated_at = NOW()
 WHERE user_id = $2 AND available >= $1 RETURNING available, frozen`, points, userID)
@@ -336,6 +351,15 @@ WHERE user_id = $2 AND available >= $1 RETURNING available, frozen`, points, use
 	}
 	if !ok {
 		return service.ErrPointsInsufficient
+	}
+	if key != "" {
+		if _, err := client.ExecContext(ctx, `
+UPDATE user_points_ledger SET available_after = $1, frozen_after = $2, updated_at = NOW()
+WHERE user_id = $3 AND kind = 'to_plan' AND idempotency_key = $4`,
+			avail, frozen, userID, key); err != nil {
+			return fmt.Errorf("backfill to_plan ledger snapshot: %w", err)
+		}
+		return nil
 	}
 	// to_plan 台账行带幂等键：重复请求（同 user+key）命中 partial-unique → 整事务回滚、不二次扣分。
 	if _, err := client.ExecContext(ctx, `

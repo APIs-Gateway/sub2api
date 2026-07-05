@@ -340,7 +340,7 @@ func TestPointsHandler_ListLedger(t *testing.T) {
 
 func TestPointsHandler_ListPlans(t *testing.T) {
 	h := newTestPointsHandler(
-		&fakePtsRepo{}, &fakeGrpRepo{active: []service.Group{subGroupH(1)}}, &fakeAffRepo{}, ptsSettings())
+		&fakePtsRepo{}, &fakeGrpRepo{}, &fakeAffRepo{}, ptsSettings())
 	c, rec := ptsTestCtx(http.MethodGet, "", true)
 	h.ListPlans(c)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -350,8 +350,10 @@ func TestPointsHandler_ListPlans(t *testing.T) {
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Len(t, resp.Data.Plans, 1)
-	require.EqualValues(t, 1, resp.Data.Plans[0]["group_id"])
+	require.NotEmpty(t, resp.Data.Plans)
+	require.EqualValues(t, 30, resp.Data.Plans[0]["daily_amount_usd"])
+	require.EqualValues(t, 30, resp.Data.Plans[0]["validity_days"])
+	require.NotContains(t, resp.Data.Plans[0], "group_id")
 }
 
 func TestPointsHandler_RedeemBalance(t *testing.T) {
@@ -394,14 +396,14 @@ func TestPointsHandler_RedeemPlan(t *testing.T) {
 	t.Run("disabled -> error (avoids tx)", func(t *testing.T) {
 		s := ptsSettings()
 		s[service.SettingKeyPointsEnabled] = "false"
-		h := newTestPointsHandler(&fakePtsRepo{}, &fakeGrpRepo{active: []service.Group{subGroupH(1)}}, &fakeAffRepo{}, s)
-		c, rec := ptsTestCtx(http.MethodPost, `{"group_id":1,"validity_days":30}`, true)
+		h := newTestPointsHandler(&fakePtsRepo{}, &fakeGrpRepo{}, &fakeAffRepo{}, s)
+		c, rec := ptsTestCtx(http.MethodPost, `{"daily_amount_usd":30,"validity_days":30}`, true)
 		h.RedeemPlan(c)
 		require.NotEqual(t, 0, decodeCode(t, rec))
 	})
 	t.Run("unauthorized", func(t *testing.T) {
 		h := newTestPointsHandler(&fakePtsRepo{}, &fakeGrpRepo{}, &fakeAffRepo{}, ptsSettings())
-		c, rec := ptsTestCtx(http.MethodPost, `{"group_id":1}`, false)
+		c, rec := ptsTestCtx(http.MethodPost, `{"daily_amount_usd":30,"validity_days":30}`, false)
 		h.RedeemPlan(c)
 		require.Equal(t, http.StatusUnauthorized, rec.Code)
 	})

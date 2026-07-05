@@ -49,7 +49,7 @@ describe('points api (user)', () => {
   })
 
   it('listPointsPlans returns plans array', async () => {
-    get.mockResolvedValueOnce({ data: { plans: [{ group_id: 1 }] } })
+    get.mockResolvedValueOnce({ data: { plans: [{ daily_amount_usd: 30, validity_days: 30 }] } })
     const plans = await listPointsPlans()
     expect(get).toHaveBeenCalledWith('/user/points/plans')
     expect(plans).toHaveLength(1)
@@ -67,20 +67,20 @@ describe('points api (user)', () => {
     expect(res.balance).toBe(12.5)
   })
 
-  it('redeemPointsToPlan posts group/days/idempotency (defaults)', async () => {
-    await redeemPointsToPlan(7)
+  it('redeemPointsToPlan posts daily amount/days/idempotency', async () => {
+    await redeemPointsToPlan(30, 30)
     expect(post).toHaveBeenCalledWith('/user/points/redeem-plan', {
-      group_id: 7,
-      validity_days: 0,
+      daily_amount_usd: 30,
+      validity_days: 30,
       idempotency_key: '',
     })
   })
 
   it('redeemPointsToPlan forwards explicit validity/idempotency', async () => {
-    await redeemPointsToPlan(7, 30, 'xid-abc')
+    await redeemPointsToPlan(60, 90, 'xid-abc')
     expect(post).toHaveBeenCalledWith('/user/points/redeem-plan', {
-      group_id: 7,
-      validity_days: 30,
+      daily_amount_usd: 60,
+      validity_days: 90,
       idempotency_key: 'xid-abc',
     })
   })

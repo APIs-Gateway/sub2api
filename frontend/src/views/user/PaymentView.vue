@@ -47,7 +47,12 @@
                 :amounts="[10, 20, 50, 100, 200, 500, 1000, 2000, 5000]"
                 :min="globalMinAmount"
                 :max="globalMaxAmount"
+                :currency-label="selectedCurrency"
+                :prefix="selectedCurrencySymbol"
               />
+              <p v-if="balanceRechargeMultiplier !== 1" class="mt-3 text-xs font-medium text-gray-600 dark:text-gray-400">
+                {{ t('payment.rechargeMultiplier', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
+              </p>
               <p v-if="amountError" class="mt-2 text-xs text-primary-700 dark:text-primary-400">{{ amountError }}</p>
             </div>
             <div v-if="enabledMethods.length >= 1" class="card p-6">
@@ -60,7 +65,7 @@
             <div v-if="validAmount > 0" class="card p-6">
               <div class="space-y-2 text-sm">
                 <div class="flex justify-between">
-                  <span class="text-gray-600 dark:text-gray-400">{{ t('payment.paymentAmount') }}</span>
+                  <span class="text-gray-600 dark:text-gray-400">{{ t('payment.paymentAmountWithCurrency', { currency: selectedCurrency }) }}</span>
                   <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(validAmount) }}</span>
                 </div>
                 <div v-if="feeRate > 0" class="flex justify-between">
@@ -72,11 +77,11 @@
                   <span class="font-mono tabular-nums text-lg font-bold text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(totalAmount) }}</span>
                 </div>
                 <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
-                  <span class="text-gray-600 dark:text-gray-400">{{ t('payment.creditedBalance') }}</span>
-                  <span class="font-mono tabular-nums text-gray-900 dark:text-white">${{ creditedAmount.toFixed(2) }}</span>
+                  <span class="text-gray-600 dark:text-gray-400">{{ t('payment.creditedBalanceWithCurrency', { currency: 'USD' }) }}</span>
+                  <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatUSDValue(creditedAmount) }}</span>
                 </div>
                 <p v-if="balanceRechargeMultiplier !== 1" class="border-t border-gray-200 pt-2 text-xs text-gray-600 dark:border-dark-600 dark:text-gray-400">
-                  {{ t('payment.rechargeRatePreview', { usd: balanceRechargeMultiplier.toFixed(2) }) }}
+                  {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
                 </p>
               </div>
             </div>
@@ -102,13 +107,17 @@
                 <div class="flex items-baseline gap-2">
                   <span class="font-mono tabular-nums text-3xl font-bold text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(lifecyclePaymentAmount) }}</span>
                   <span class="text-sm text-gray-600 dark:text-gray-400">
-                    {{ lifecycleOrder.intent === 'renew' ? t('userSubscriptions.lifecycle.renewPrice') : t('userSubscriptions.lifecycle.changeDiff') }}
+                    {{ t('payment.paymentAmountWithCurrency', { currency: selectedCurrency }) }}
                   </span>
                 </div>
                 <div class="mt-3 grid grid-cols-2 gap-3">
                   <div>
+                    <span class="text-xs text-gray-600 dark:text-gray-400">{{ lifecycleOrder.intent === 'renew' ? t('userSubscriptions.lifecycle.renewValue') : t('userSubscriptions.lifecycle.changeDiffValue') }}</span>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">{{ formatUSDValue(lifecycleOrder.amount) }}</div>
+                  </div>
+                  <div>
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.dailyAmount') }}</span>
-                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">${{ lifecycleOrder.dailyAmountUsd }}</div>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">{{ formatUSDValue(lifecycleOrder.dailyAmountUsd) }}</div>
                   </div>
                   <div>
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.validity') }}</span>
@@ -131,7 +140,7 @@
               <div v-if="feeRate > 0 && lifecyclePaymentAmount > 0" class="card p-6">
                 <div class="space-y-2 text-sm">
                   <div class="flex justify-between">
-                    <span class="text-gray-600 dark:text-gray-400">{{ t('payment.amountLabel') }}</span>
+                    <span class="text-gray-600 dark:text-gray-400">{{ t('payment.paymentAmountWithCurrency', { currency: selectedCurrency }) }}</span>
                     <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(lifecyclePaymentAmount) }}</span>
                   </div>
                   <div class="flex justify-between">
@@ -185,15 +194,19 @@
                   </div>
                   <div v-if="selectedPlan.daily_limit_usd != null">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.dailyLimit') }}</span>
-                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">${{ selectedPlan.daily_limit_usd }}</div>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">{{ formatUSDValue(selectedPlan.daily_limit_usd) }}</div>
                   </div>
                   <div v-if="selectedPlan.weekly_limit_usd != null">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.weeklyLimit') }}</span>
-                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">${{ selectedPlan.weekly_limit_usd }}</div>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">{{ formatUSDValue(selectedPlan.weekly_limit_usd) }}</div>
                   </div>
                   <div v-if="selectedPlan.monthly_limit_usd != null">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.monthlyLimit') }}</span>
-                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">${{ selectedPlan.monthly_limit_usd }}</div>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">{{ formatUSDValue(selectedPlan.monthly_limit_usd) }}</div>
+                  </div>
+                  <div>
+                    <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.subscriptionValueWithCurrency', { currency: 'USD' }) }}</span>
+                    <div class="font-mono tabular-nums text-lg font-semibold text-gray-900 dark:text-white">{{ formatUSDValue(selectedPlan.price) }}</div>
                   </div>
                   <div v-if="selectedPlan.daily_limit_usd == null && selectedPlan.weekly_limit_usd == null && selectedPlan.monthly_limit_usd == null">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.quota') }}</span>
@@ -215,7 +228,7 @@
               <div v-if="feeRate > 0 && selectedPlanPaymentAmount > 0" class="card p-6">
                 <div class="space-y-2 text-sm">
                   <div class="flex justify-between">
-                    <span class="text-gray-600 dark:text-gray-400">{{ t('payment.amountLabel') }}</span>
+                    <span class="text-gray-600 dark:text-gray-400">{{ t('payment.paymentAmountWithCurrency', { currency: selectedCurrency }) }}</span>
                     <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(selectedPlanPaymentAmount) }}</span>
                   </div>
                   <div class="flex justify-between">
@@ -342,7 +355,7 @@ import { platformBadgeClass, platformLabel } from '@/utils/platformColors'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import BillingRulesCard from '@/components/common/BillingRulesCard.vue'
 import PaymentStatusPanel from '@/components/payment/PaymentStatusPanel.vue'
-import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
+import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency, paymentCurrencySymbol } from '@/components/payment/currency'
 import type { PaymentMethodOption } from '@/components/payment/PaymentMethodSelector.vue'
 import { buildPaymentErrorToastMessage, describePaymentScenarioError } from './paymentUx'
 import { hasWechatResumeQuery, parseWechatResumeRoute, stripWechatResumeQuery } from './paymentWechatResume'
@@ -636,9 +649,14 @@ const localeCode = computed(() => {
   }
   return undefined
 })
+const selectedCurrencySymbol = computed(() => paymentCurrencySymbol(selectedCurrency.value, localeCode.value))
 
 function formatSelectedPaymentAmount(value: number): string {
   return formatPaymentAmount(value, selectedCurrency.value, localeCode.value)
+}
+
+function formatUSDValue(value: number): string {
+  return `USD ${Number.isFinite(value) ? value.toFixed(2) : '0.00'}`
 }
 
 function subscriptionValueToPaymentAmount(value: number): number {
