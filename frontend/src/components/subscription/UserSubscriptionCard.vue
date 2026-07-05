@@ -217,18 +217,24 @@ function openLifecycle(mode: 'renew' | 'change') {
   lifecycleMode.value = mode
   showLifecycle.value = true
 }
+
+function formatPaymentQueryAmount(value: number): string {
+  if (!Number.isFinite(value)) return '0.00'
+  return (Math.round((value + Number.EPSILON) * 100) / 100).toFixed(2)
+}
+
 // 续费/转套餐改走法币支付网关：弹窗确认后带「意图 + D/T + 预估金额」跳到支付页结账（选支付方式 → 下单 → 跳 pay_url）。
 // 支付成功由后端回调履约（延长/换卡），不在此同步扣费。
 function onLifecyclePurchase(payload: { intent: 'renew' | 'change_plan'; dailyAmountUsd: number; validityDays: number; charge: number }) {
   showLifecycle.value = false
   router.push({
-    path: '/payment',
+    path: '/purchase',
     query: {
       tab: 'subscription',
       intent: payload.intent,
       daily_amount_usd: String(payload.dailyAmountUsd),
       validity_days: String(payload.validityDays),
-      charge: String(payload.charge),
+      charge: formatPaymentQueryAmount(payload.charge),
     },
   })
 }

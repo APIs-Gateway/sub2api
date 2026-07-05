@@ -418,3 +418,68 @@ describe('PaymentView WeChat JSAPI flow', () => {
     expect(window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)).toContain('weixin://wxpay/bizpayurl?pr=fallback-native')
   })
 })
+
+describe('PaymentView subscription lifecycle checkout', () => {
+  beforeEach(() => {
+    routeState.path = '/purchase'
+    routeState.query = {
+      tab: 'subscription',
+      intent: 'change_plan',
+      daily_amount_usd: '60',
+      validity_days: '308',
+      charge: '72.60000000000001',
+    }
+    routerReplace.mockReset().mockResolvedValue(undefined)
+    routerPush.mockReset().mockResolvedValue(undefined)
+    routerResolve.mockClear()
+    createOrder.mockReset().mockResolvedValue({
+      order_id: 789,
+      amount: 72.6,
+      pay_amount: 72.6,
+      fee_rate: 0,
+      expires_at: '2099-01-01T00:10:00.000Z',
+      payment_type: 'wxpay',
+      qr_code: 'weixin://wxpay/bizpayurl?pr=lifecycle',
+      out_trade_no: 'sub2_lifecycle_789',
+    })
+    refreshUser.mockReset()
+    fetchActiveSubscriptions.mockReset().mockResolvedValue(undefined)
+    showError.mockReset()
+    showInfo.mockReset()
+    showWarning.mockReset()
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture())
+    bridgeInvoke.mockReset()
+    window.localStorage.clear()
+    ;(window as Window & { WeixinJSBridge?: { invoke: typeof bridgeInvoke } }).WeixinJSBridge = undefined
+  })
+
+  it('rounds change-plan charge from route query and creates a lifecycle subscription order', async () => {
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+
+    await flushPromises()
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalledWith({ path: '/purchase', query: { tab: 'subscription' } })
+    const submit = wrapper.findAll('button').find(button => button.classes().includes('w-full'))
+    expect(submit).toBeTruthy()
+    await submit!.trigger('click')
+    await flushPromises()
+
+    expect(createOrder).toHaveBeenCalledWith(expect.objectContaining({
+      amount: 72.6,
+      payment_type: 'wxpay',
+      order_type: 'subscription',
+      daily_amount_usd: 60,
+      validity_days: 308,
+      subscription_intent: 'change_plan',
+    }))
+  })
+})
