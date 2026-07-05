@@ -198,6 +198,24 @@ func (s *RedeemCodeRepoSuite) TestListWithFilters_Search() {
 	s.Require().Contains(codes[0].Code, "ALPHA")
 }
 
+func (s *RedeemCodeRepoSuite) TestListWithFilters_HidesInternalAuditRecords() {
+	s.Require().NoError(s.repo.Create(s.ctx, &service.RedeemCode{Code: "MANUAL-BALANCE", Type: service.RedeemTypeBalance, Value: 10, Status: service.StatusUnused}))
+	s.Require().NoError(s.repo.Create(s.ctx, &service.RedeemCode{Code: "PAY-123-45678", Type: service.RedeemTypeBalance, Value: 10, Status: service.StatusUsed}))
+	s.Require().NoError(s.repo.Create(s.ctx, &service.RedeemCode{Code: "ADMIN-BALANCE", Type: service.AdjustmentTypeAdminBalance, Value: 10, Status: service.StatusUsed}))
+	s.Require().NoError(s.repo.Create(s.ctx, &service.RedeemCode{Code: "ADMIN-CONCURRENCY", Type: service.AdjustmentTypeAdminConcurrency, Value: 1, Status: service.StatusUsed}))
+
+	codes, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", "", "")
+	s.Require().NoError(err)
+	s.Require().Len(codes, 1)
+	s.Require().Equal(int64(1), page.Total)
+	s.Require().Equal("MANUAL-BALANCE", codes[0].Code)
+
+	used, usedPage, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", service.StatusUsed, "")
+	s.Require().NoError(err)
+	s.Require().Empty(used)
+	s.Require().Equal(int64(0), usedPage.Total)
+}
+
 func (s *RedeemCodeRepoSuite) TestListWithFilters_GroupPreload() {
 	group := s.createGroup(uniqueTestValue(s.T(), "g-preload"))
 	_, err := s.client.RedeemCode.Create().
