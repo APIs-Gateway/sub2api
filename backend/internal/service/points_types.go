@@ -15,7 +15,7 @@ import (
 //   - 换套餐    : ceil(price / peg)                      —— 偏平台
 //   - clawback : floor(earned × refundAmount/originalAmount)；全额退特例 = earned —— 偏用户
 //   - 换余额    : points × peg                            —— 平价
-//   - 提现      : gross = points × peg；fee = gross × fee%；net = gross − fee
+//   - 提现      : gross = points × peg；fee = gross × fee%；net = gross − fee；支付宝按 CNY，USDT 按 USD/CNY 日价+0.1 折算
 
 // --- 错误 ---
 
@@ -40,6 +40,8 @@ var (
 const (
 	PointsPayoutMethodAlipay = "alipay"
 	PointsPayoutMethodUSDT   = "usdt"
+	PointsPayoutCurrencyCNY  = "CNY"
+	PointsPayoutCurrencyUSD  = "USD"
 
 	PointsKindEarn           = "earn"
 	PointsKindClawback       = "clawback"
@@ -97,6 +99,8 @@ type PointsWithdrawal struct {
 	GrossAmount         float64    `json:"gross_amount"`
 	FeeAmount           float64    `json:"fee_amount"`
 	NetAmount           float64    `json:"net_amount"`
+	PayoutCurrency      string     `json:"payout_currency"`
+	USDCNYRateAt        *float64   `json:"usd_cny_rate_at,omitempty"`
 	PegAt               *float64   `json:"peg_at,omitempty"`
 	FeePercentAt        *float64   `json:"fee_percent_at,omitempty"`
 	PayoutMethod        string     `json:"payout_method"`
@@ -134,6 +138,8 @@ type CreateWithdrawalInput struct {
 	GrossAmount         float64
 	FeeAmount           float64
 	NetAmount           float64
+	PayoutCurrency      string
+	USDCNYRateAt        float64
 	PegAt               float64
 	FeePercentAt        float64
 	PayoutMethod        string
@@ -262,4 +268,20 @@ func ComputeWithdrawalAmounts(points int64, peg, feePercent float64) (gross, fee
 	}
 	n := g.Sub(f)
 	return g.Round(8).InexactFloat64(), f.Round(8).InexactFloat64(), n.Round(8).InexactFloat64()
+}
+
+func ConvertWithdrawalAmountsForPayout(gross, fee, net float64, method string, usdCNYRate float64) (outGross, outFee, outNet float64, currency string, rateAt float64) {
+	if method != PointsPayoutMethodUSDT {
+		return gross, fee, net, PointsPayoutCurrencyCNY, 0
+	}
+	effectiveRate := usdCNYRate + PointsWithdrawUSDCNYSpread
+	if effectiveRate < PointsWithdrawUSDCNYRateMin {
+		return gross, fee, net, PointsPayoutCurrencyUSD, 0
+	}
+	rate := decimal.NewFromFloat(effectiveRate)
+	return decimal.NewFromFloat(gross).Div(rate).Round(8).InexactFloat64(),
+		decimal.NewFromFloat(fee).Div(rate).Round(8).InexactFloat64(),
+		decimal.NewFromFloat(net).Div(rate).Round(8).InexactFloat64(),
+		PointsPayoutCurrencyUSD,
+		decimal.NewFromFloat(effectiveRate).Round(8).InexactFloat64()
 }

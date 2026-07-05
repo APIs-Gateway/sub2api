@@ -98,3 +98,19 @@ func TestComputeWithdrawalAmounts(t *testing.T) {
 	require.InDelta(t, 0.0, fee, 1e-9)
 	require.InDelta(t, 0.0, net, 1e-9)
 }
+
+func TestConvertWithdrawalAmountsForPayout(t *testing.T) {
+	gross, fee, net, currency, rateAt := ConvertWithdrawalAmountsForPayout(10, 1, 9, PointsPayoutMethodAlipay, 7.2)
+	require.Equal(t, PointsPayoutCurrencyCNY, currency)
+	require.InDelta(t, 10, gross, 1e-9)
+	require.InDelta(t, 1, fee, 1e-9)
+	require.InDelta(t, 9, net, 1e-9)
+	require.InDelta(t, 0, rateAt, 1e-9)
+
+	gross, fee, net, currency, rateAt = ConvertWithdrawalAmountsForPayout(10, 1, 9, PointsPayoutMethodUSDT, 7.2)
+	require.Equal(t, PointsPayoutCurrencyUSD, currency)
+	require.InDelta(t, 7.3, rateAt, 1e-9)
+	require.InDelta(t, 10.0/7.3, gross, 1e-8)
+	require.InDelta(t, 1.0/7.3, fee, 1e-8)
+	require.InDelta(t, 9.0/7.3, net, 1e-8)
+}

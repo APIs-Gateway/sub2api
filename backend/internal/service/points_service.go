@@ -347,6 +347,13 @@ func (s *PointsService) CreateWithdrawal(ctx context.Context, userID, points int
 	peg := s.peg(ctx)
 	feePercent := s.settingService.GetPointsWithdrawFeePercent(ctx)
 	gross, fee, net := ComputeWithdrawalAmounts(points, peg, feePercent)
+	gross, fee, net, payoutCurrency, usdCNYRateAt := ConvertWithdrawalAmountsForPayout(
+		gross,
+		fee,
+		net,
+		method,
+		s.settingService.GetPointsWithdrawUSDCNYRate(ctx),
+	)
 	// 应付为 0（peg 过小取整 / 手续费 100% 等 admin 配置）→ 拒，别凭空冻结用户积分换 0 打款。
 	if net <= 0 {
 		return nil, ErrPointsAmountInvalid
@@ -360,6 +367,8 @@ func (s *PointsService) CreateWithdrawal(ctx context.Context, userID, points int
 		GrossAmount:         gross,
 		FeeAmount:           fee,
 		NetAmount:           net,
+		PayoutCurrency:      payoutCurrency,
+		USDCNYRateAt:        usdCNYRateAt,
 		PegAt:               peg,
 		FeePercentAt:        feePercent,
 		PayoutMethod:        method,
@@ -559,6 +568,7 @@ type PointsPublicConfig struct {
 	WithdrawEnabled    bool    `json:"withdraw_enabled"`
 	WithdrawMinPoints  int64   `json:"withdraw_min_points"`
 	WithdrawFeePercent float64 `json:"withdraw_fee_percent"`
+	WithdrawUSDCNYRate float64 `json:"withdraw_usd_cny_rate"`
 	RedeemBalanceOn    bool    `json:"redeem_balance_on"`
 	RedeemPlanOn       bool    `json:"redeem_plan_on"`
 }
@@ -572,6 +582,7 @@ func (s *PointsService) PublicConfig(ctx context.Context) PointsPublicConfig {
 		WithdrawEnabled:    st.WithdrawEnabled,
 		WithdrawMinPoints:  st.WithdrawMinPoints,
 		WithdrawFeePercent: st.WithdrawFeePercent,
+		WithdrawUSDCNYRate: st.WithdrawUSDCNYRate,
 		RedeemBalanceOn:    st.RedeemBalanceOn,
 		RedeemPlanOn:       st.RedeemPlanOn,
 	}
@@ -644,6 +655,7 @@ type PointsSettings struct {
 	WithdrawEnabled     bool    `json:"withdraw_enabled"`
 	WithdrawMinPoints   int64   `json:"withdraw_min_points"`
 	WithdrawFeePercent  float64 `json:"withdraw_fee_percent"`
+	WithdrawUSDCNYRate  float64 `json:"withdraw_usd_cny_rate"`
 	RedeemBalanceOn     bool    `json:"redeem_balance_on"`
 	RedeemPlanOn        bool    `json:"redeem_plan_on"`
 }
@@ -656,6 +668,7 @@ type PointsSettingsInput struct {
 	WithdrawEnabled     bool    `json:"withdraw_enabled"`
 	WithdrawMinPoints   int64   `json:"withdraw_min_points"`
 	WithdrawFeePercent  float64 `json:"withdraw_fee_percent"`
+	WithdrawUSDCNYRate  float64 `json:"withdraw_usd_cny_rate"`
 	RedeemBalanceOn     bool    `json:"redeem_balance_on"`
 	RedeemPlanOn        bool    `json:"redeem_plan_on"`
 }
@@ -711,6 +724,14 @@ func (s *SettingService) GetPointsWithdrawFeePercent(ctx context.Context) float6
 	return v
 }
 
+func (s *SettingService) GetPointsWithdrawUSDCNYRate(ctx context.Context) float64 {
+	v := s.floatSettingOr(ctx, SettingKeyPointsWithdrawUSDCNYRate, PointsWithdrawUSDCNYRateDefault)
+	if v < PointsWithdrawUSDCNYRateMin || math.IsNaN(v) || math.IsInf(v, 0) {
+		return PointsWithdrawUSDCNYRateDefault
+	}
+	return v
+}
+
 func (s *SettingService) IsPointsRedeemBalanceOn(ctx context.Context) bool {
 	return s.boolSettingOr(ctx, SettingKeyPointsRedeemBalanceOn, PointsRedeemBalanceOnDefault)
 }
@@ -728,6 +749,7 @@ func (s *SettingService) GetPointsSettings(ctx context.Context) *PointsSettings 
 		WithdrawEnabled:     s.IsPointsWithdrawOn(ctx),
 		WithdrawMinPoints:   s.GetPointsWithdrawMin(ctx),
 		WithdrawFeePercent:  s.GetPointsWithdrawFeePercent(ctx),
+		WithdrawUSDCNYRate:  s.GetPointsWithdrawUSDCNYRate(ctx),
 		RedeemBalanceOn:     s.IsPointsRedeemBalanceOn(ctx),
 		RedeemPlanOn:        s.IsPointsRedeemPlanOn(ctx),
 	}
@@ -757,6 +779,10 @@ func (s *SettingService) UpdatePointsSettings(ctx context.Context, in PointsSett
 	if fee > PointsWithdrawFeePercentMax {
 		fee = PointsWithdrawFeePercentMax
 	}
+	usdCNYRate := in.WithdrawUSDCNYRate
+	if usdCNYRate < PointsWithdrawUSDCNYRateMin || math.IsNaN(usdCNYRate) || math.IsInf(usdCNYRate, 0) {
+		usdCNYRate = PointsWithdrawUSDCNYRateDefault
+	}
 	values := map[string]string{
 		SettingKeyPointsEnabled:            strconv.FormatBool(in.Enabled),
 		SettingKeyPointsPeg:                strconv.FormatFloat(peg, 'f', -1, 64),
@@ -765,6 +791,7 @@ func (s *SettingService) UpdatePointsSettings(ctx context.Context, in PointsSett
 		SettingKeyPointsWithdrawEnabled:    strconv.FormatBool(in.WithdrawEnabled),
 		SettingKeyPointsWithdrawMin:        strconv.FormatInt(withdrawMin, 10),
 		SettingKeyPointsWithdrawFeePercent: strconv.FormatFloat(fee, 'f', -1, 64),
+		SettingKeyPointsWithdrawUSDCNYRate: strconv.FormatFloat(usdCNYRate, 'f', -1, 64),
 		SettingKeyPointsRedeemBalanceOn:    strconv.FormatBool(in.RedeemBalanceOn),
 		SettingKeyPointsRedeemPlanOn:       strconv.FormatBool(in.RedeemPlanOn),
 	}

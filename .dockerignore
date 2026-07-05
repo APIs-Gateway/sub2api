@@ -32,9 +32,11 @@ dist/
 build/
 bin/
 backend/bin/
+backend/internal/web/dist/
 backend/server
 backend/cmd/server/server
 backend/coverage*.out
+frontend/dist/
 frontend/*.tsbuildinfo
 .cache/
 .pnpm-store/

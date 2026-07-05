@@ -49,6 +49,9 @@ const (
 	PointsWithdrawMinDefault        = 0   // 最低提现积分，0 = 不限制
 	PointsWithdrawFeePercentDefault = 0.0 // 提现手续费默认 0
 	PointsWithdrawFeePercentMax     = 100.0
+	PointsWithdrawUSDCNYRateDefault = 7.2 // USDT 提现的 USD/CNY 日价，实付折算会额外加 0.1 风险价差
+	PointsWithdrawUSDCNYRateMin     = 0.0000001
+	PointsWithdrawUSDCNYSpread      = 0.1
 	PointsRedeemBalanceOnDefault    = true // 换余额默认开（功能总开关控）
 	PointsRedeemPlanOnDefault       = true // 换套餐默认开
 )
@@ -181,6 +184,7 @@ const (
 	SettingKeyPointsWithdrawEnabled       = "points_withdraw_enabled"         // 积分提现子开关
 	SettingKeyPointsWithdrawMin           = "points_withdraw_min"             // 最低提现积分
 	SettingKeyPointsWithdrawFeePercent    = "points_withdraw_fee_percent"     // 提现手续费（百分比，0-100）
+	SettingKeyPointsWithdrawUSDCNYRate    = "points_withdraw_usd_cny_rate"    // USDT 提现 USD/CNY 日价（实付折算使用日价+0.1）
 	SettingKeyPointsRedeemBalanceOn       = "points_redeem_balance_on"        // 积分换余额子开关
 	SettingKeyPointsRedeemPlanOn          = "points_redeem_plan_on"           // 积分换套餐子开关
 	SettingKeyCheckinEnabled              = "checkin_enabled"                 // 每日签到功能总开关

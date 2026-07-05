@@ -18,6 +18,7 @@ export interface PointsConfig {
   withdraw_enabled: boolean
   withdraw_min_points: number
   withdraw_fee_percent: number
+  withdraw_usd_cny_rate: number
   redeem_balance_on: boolean
   redeem_plan_on: boolean
 }
@@ -57,6 +58,8 @@ export interface PointsWithdrawal {
   gross_amount: number
   fee_amount: number
   net_amount: number
+  payout_currency?: 'CNY' | 'USD'
+  usd_cny_rate_at?: number | null
   peg_at?: number | null
   fee_percent_at?: number | null
   payout_method: PointsPayoutMethod

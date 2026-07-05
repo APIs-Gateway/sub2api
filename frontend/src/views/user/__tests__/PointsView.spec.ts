@@ -78,6 +78,7 @@ function makeOverview(overrides: Record<string, unknown> = {}) {
       withdraw_enabled: true,
       withdraw_min_points: 0,
       withdraw_fee_percent: 10,
+      withdraw_usd_cny_rate: 7.2,
       redeem_balance_on: true,
       redeem_plan_on: true,
       ...(overrides as any).config,
@@ -143,6 +144,10 @@ describe('user PointsView', () => {
     expect(fetchActiveSubscriptions).toHaveBeenCalledWith(true)
     const text = wrapper.text()
     expect(text).toContain('CODE7') // aff code
+    expect(text).toContain('points.invite.rewardExample') // invite reward explanation
+    expect(text).toContain('points.invite.rewardFormula')
+    expect(text).toContain('points.stats.firstPaymentRate')
+    expect(text).toContain('points.stats.repeatPaymentRate')
     expect(text).toContain('points.redeemPlan.dailyOption') // compact plan selector
     expect(text).toContain('points.redeemPlan.actionLabels.purchase')
     expect(text).toContain('+50') // ledger positive
@@ -185,6 +190,7 @@ describe('user PointsView', () => {
     const textInputs = wrapper.findAll('input[type="text"]')
     await textInputs[0].setValue('alipay-acc') // alipay account
     await textInputs[1].setValue('alipay-name')
+    expect(wrapper.text()).toMatch(/(?:CN)?¥9\.00/)
     await wrapper.findAll('button.btn-primary.w-full')[1].trigger('click')
     await flushPromises()
     expect(createWithdrawal).toHaveBeenCalledWith({
@@ -219,6 +225,31 @@ describe('user PointsView', () => {
     expect(wrapper.text()).toContain('80,000')
   })
 
+  it('keeps visible pressed feedback on selected redeem plan options', async () => {
+    listPointsPlans.mockResolvedValue([
+      ...planList,
+      { validity_days: 90, daily_amount_usd: 30, unit_price: 1.8, price: 4860, points_price: 486000, weekly_cap_usd: 210, monthly_cap_usd: 900 },
+      { validity_days: 30, daily_amount_usd: 60, unit_price: 1.6, price: 2880, points_price: 288000, weekly_cap_usd: 420, monthly_cap_usd: 1800 },
+    ])
+    const wrapper = mount(PointsView, pointsViewMountOptions())
+    await flushPromises()
+
+    const pressed = () => wrapper.findAll('button[aria-pressed="true"]').map(button => button.text())
+    expect(pressed()).toEqual(expect.arrayContaining([
+      'points.redeemPlan.dailyOption',
+      'points.redeemPlan.validity',
+    ]))
+    expect(wrapper.findAll('button[aria-pressed="true"]').every(button => button.classes().includes('btn-primary'))).toBe(true)
+
+    const dailyButtons = wrapper.findAll('button').filter(button => button.text() === 'points.redeemPlan.dailyOption')
+    await dailyButtons[1].trigger('click')
+    await flushPromises()
+
+    const selectedButtons = wrapper.findAll('button[aria-pressed="true"]')
+    expect(selectedButtons).toHaveLength(2)
+    expect(selectedButtons.every(button => button.classes().includes('btn-primary'))).toBe(true)
+  })
+
   it('redeem plan keeps button feedback when selected plan would downgrade daily amount', async () => {
     activeSubscriptions.push({ id: 1, status: 'active', daily_amount_usd: 60 })
     const wrapper = mount(PointsView, pointsViewMountOptions())
@@ -241,6 +272,8 @@ describe('user PointsView', () => {
     await flushPromises()
     await wrapper.findAll('input[type="number"]')[1].setValue('1000')
     await wrapper.findAll('select')[0].setValue('usdt')
+    expect(wrapper.text()).toContain('7.30')
+    expect(wrapper.text()).toMatch(/(?:US)?\$1\.23/)
     await wrapper.find('input[maxlength="128"]').setValue('TXaddr')
     await wrapper.findAll('button.btn-primary.w-full')[1].trigger('click')
     await flushPromises()

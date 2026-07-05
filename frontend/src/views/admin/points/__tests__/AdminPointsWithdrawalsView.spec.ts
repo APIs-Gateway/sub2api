@@ -25,12 +25,12 @@ vi.mock('vue-i18n', async () => {
 const rows = [
   {
     id: 1, user_id: 7, user_email: 'u@e.com', points: 1000, net_amount: 9,
-    payout_method: 'alipay', payout_alipay_name: 'N', payout_alipay_account: 'A',
+    payout_method: 'alipay', payout_currency: 'CNY', payout_alipay_name: 'N', payout_alipay_account: 'A',
     status: 'pending', created_at: '2026-06-01T00:00:00Z',
   },
   {
     id: 2, user_id: 8, username: 'bob', points: 500, net_amount: 4.5,
-    payout_method: 'usdt', payout_usdt_chain: 'TRC20', payout_usdt_address: 'TXxxx',
+    payout_method: 'usdt', payout_currency: 'USD', usd_cny_rate_at: 7.3, payout_usdt_chain: 'TRC20', payout_usdt_address: 'TXxxx',
     status: 'paid', created_at: '2026-06-02T00:00:00Z',
   },
   {

@@ -66,6 +66,12 @@
                 <input v-model.number="settings.withdraw_fee_percent" type="number" step="0.01" min="0" max="100" class="input" />
                 <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.withdrawFeeHint') }}</p>
               </div>
+
+              <div class="space-y-1">
+                <label class="input-label">{{ t('points.admin.config.withdrawUSDCNYRate') }}</label>
+                <input v-model.number="settings.withdraw_usd_cny_rate" type="number" step="0.0001" min="0" class="input" />
+                <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.withdrawUSDCNYRateHint') }}</p>
+              </div>
             </div>
           </section>
 

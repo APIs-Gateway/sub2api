@@ -27,7 +27,7 @@
             <span class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">{{ row.points.toLocaleString() }}</span>
           </template>
           <template #cell-net="{ row }">
-            <span class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">{{ formatCurrency(row.net_amount) }}</span>
+            <span class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">{{ formatWithdrawalCurrency(row.net_amount, row) }}</span>
           </template>
           <template #cell-method="{ row }">
             {{ row.payout_method === 'alipay' ? t('points.withdraw.alipay') : t('points.withdraw.usdt') }}
@@ -40,6 +40,7 @@
             <div v-else class="max-w-xs text-xs text-gray-600 dark:text-gray-400">
               <div class="font-medium text-gray-900 dark:text-white">{{ row.payout_usdt_chain || 'USDT' }}</div>
               <div class="break-all font-mono">{{ row.payout_usdt_address }}</div>
+              <div v-if="row.usd_cny_rate_at" class="mt-1 font-mono">{{ t('points.withdraw.usdtRate') }} {{ row.usd_cny_rate_at.toFixed(2) }}</div>
             </div>
           </template>
           <template #cell-status="{ row }">
@@ -83,7 +84,7 @@
           <div class="mt-1 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <span class="font-mono tabular-nums">{{ review.target.points.toLocaleString() }}</span>
             <span>·</span>
-            <span class="font-mono tabular-nums">{{ formatCurrency(review.target.net_amount) }}</span>
+            <span class="font-mono tabular-nums">{{ formatWithdrawalCurrency(review.target.net_amount, review.target) }}</span>
           </div>
         </div>
         <p class="text-sm text-gray-700 dark:text-gray-300">
@@ -173,6 +174,15 @@ function statusClass(s: string): string {
   if (s === 'paid') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
   if (s === 'rejected') return 'bg-gray-200 text-gray-600 dark:bg-dark-700 dark:text-gray-400'
   return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+}
+
+function withdrawalCurrency(row: PointsWithdrawal): 'CNY' | 'USD' {
+  if (row.payout_currency === 'CNY' || row.payout_currency === 'USD') return row.payout_currency
+  return row.payout_method === 'usdt' ? 'USD' : 'CNY'
+}
+
+function formatWithdrawalCurrency(amount: number, row: PointsWithdrawal): string {
+  return formatCurrency(amount, withdrawalCurrency(row))
 }
 
 async function load(): Promise<void> {

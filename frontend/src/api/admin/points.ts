@@ -12,6 +12,7 @@ export interface PointsSettings {
   withdraw_enabled: boolean
   withdraw_min_points: number
   withdraw_fee_percent: number
+  withdraw_usd_cny_rate: number
   redeem_balance_on: boolean
   redeem_plan_on: boolean
 }

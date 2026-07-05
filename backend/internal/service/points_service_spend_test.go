@@ -132,6 +132,7 @@ func spendSettings() map[string]string {
 		SettingKeyPointsWithdrawEnabled:    "true",
 		SettingKeyPointsWithdrawMin:        "0",
 		SettingKeyPointsWithdrawFeePercent: "10",
+		SettingKeyPointsWithdrawUSDCNYRate: "7.2",
 		SettingKeyPointsRedeemBalanceOn:    "true",
 		SettingKeyPointsRedeemPlanOn:       "true",
 	}
@@ -282,6 +283,8 @@ func TestPointsService_CreateWithdrawal(t *testing.T) {
 		require.Equal(t, "acc", repo.createCall.PayoutAlipayAccount, "trim 后入库")
 		require.Equal(t, "", repo.createCall.PayoutUSDTChain, "alipay 不留 usdt chain")
 		require.Equal(t, "", repo.createCall.PayoutUSDTAddress, "alipay 不留 usdt")
+		require.Equal(t, PointsPayoutCurrencyCNY, repo.createCall.PayoutCurrency)
+		require.InDelta(t, 0, repo.createCall.USDCNYRateAt, 1e-9)
 		// gross=1000×0.01=10；fee 10%→1；net=9。
 		require.InDelta(t, 10, repo.createCall.GrossAmount, 1e-9)
 		require.InDelta(t, 9, repo.createCall.NetAmount, 1e-9)
@@ -293,6 +296,10 @@ func TestPointsService_CreateWithdrawal(t *testing.T) {
 		require.Equal(t, "TRC20", repo.createCall.PayoutUSDTChain)
 		require.Equal(t, "addr", repo.createCall.PayoutUSDTAddress)
 		require.Equal(t, "", repo.createCall.PayoutAlipayAccount, "usdt 不留 alipay")
+		require.Equal(t, PointsPayoutCurrencyUSD, repo.createCall.PayoutCurrency)
+		require.InDelta(t, 7.3, repo.createCall.USDCNYRateAt, 1e-9)
+		require.InDelta(t, 10.0/7.3, repo.createCall.GrossAmount, 1e-8)
+		require.InDelta(t, 9.0/7.3, repo.createCall.NetAmount, 1e-8)
 	})
 }
 
@@ -350,11 +357,13 @@ func TestPointsService_PublicConfigAndSettings(t *testing.T) {
 	require.True(t, pub.Enabled)
 	require.InDelta(t, 0.01, pub.Peg, 1e-9)
 	require.True(t, pub.WithdrawEnabled)
+	require.InDelta(t, 7.2, pub.WithdrawUSDCNYRate, 1e-9)
 	require.True(t, pub.RedeemBalanceOn)
 	require.True(t, pub.RedeemPlanOn)
 
 	st := svc.AdminGetSettings(ctx)
 	require.InDelta(t, 20, st.CashbackRatePercent, 1e-9)
+	require.InDelta(t, 7.2, st.WithdrawUSDCNYRate, 1e-9)
 
 	// EffectiveRateForUser：无专属 → 全局 20。
 	require.InDelta(t, 20, svc.EffectiveRateForUser(ctx, 1), 1e-9)

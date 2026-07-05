@@ -30,6 +30,7 @@ const settings = {
   withdraw_enabled: true,
   withdraw_min_points: 0,
   withdraw_fee_percent: 10,
+  withdraw_usd_cny_rate: 7.2,
   redeem_balance_on: true,
   redeem_plan_on: true,
 }

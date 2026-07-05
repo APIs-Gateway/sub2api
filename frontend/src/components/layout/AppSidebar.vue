@@ -763,7 +763,6 @@ const adminNavItems = computed((): NavItem[] => {
       hideInSimpleMode: true,
       expandOnly: true,
       children: [
-        { path: '/admin/affiliates/cashback', label: t('nav.affiliateCashback'), icon: UserIcon },
         { path: '/admin/affiliates/invites', label: t('nav.affiliateInviteRecords'), icon: UsersIcon },
         { path: '/admin/points/config', label: t('nav.pointsConfig'), icon: CogIcon },
         { path: '/admin/points/withdrawals', label: t('nav.pointsWithdrawals'), icon: CreditCardIcon },

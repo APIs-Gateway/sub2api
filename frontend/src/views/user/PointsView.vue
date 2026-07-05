@@ -26,7 +26,9 @@
           </div>
           <div class="card p-5">
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('points.stats.effectiveRate') }}</p>
-            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ formatPercent(overview.effective_rate) }}</p>
+            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ formatPercent(firstPaymentRate) }}</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.firstPaymentRate', { rate: formatPercent(firstPaymentRate) }) }}</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.repeatPaymentRate', { rate: formatPercent(repeatPaymentRate) }) }}</p>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.pegValue', { value: formatCurrency(overview.config.peg) }) }}</p>
           </div>
         </div>
@@ -57,6 +59,28 @@
           <p class="mt-4 text-sm text-gray-600 dark:text-gray-400">
             {{ t('points.invite.count') }}: <span class="font-mono tabular-nums">{{ overview.affiliate.aff_count.toLocaleString() }}</span>
           </p>
+          <div class="mt-4 rounded-md bg-gray-50 px-4 py-3 text-sm text-gray-700 dark:bg-dark-900 dark:text-gray-300">
+            <template v-if="repeatPaymentRate > 0">
+              <p class="font-medium text-gray-900 dark:text-white">{{ t('points.invite.rewardTitle') }}</p>
+              <p class="mt-1">
+                {{ t('points.invite.rewardExample', {
+                  amount: formatCurrency(inviteExampleAmount, 'CNY'),
+                  firstPoints: inviteFirstExamplePoints.toLocaleString(),
+                  repeatPoints: inviteRepeatExamplePoints.toLocaleString(),
+                }) }}
+              </p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">
+                {{ t('points.invite.rewardFormula', {
+                  firstRate: formatPercent(firstPaymentRate),
+                  repeatRate: formatPercent(repeatPaymentRate),
+                  peg: formatCurrency(peg),
+                }) }}
+              </p>
+            </template>
+            <template v-else>
+              {{ t('points.invite.rewardDisabled') }}
+            </template>
+          </div>
         </div>
 
         <!-- 三个动作 -->
@@ -119,9 +143,10 @@
                 </div>
               </template>
               <div class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-900 dark:text-gray-400 space-y-1">
-                <div class="flex justify-between"><span>{{ t('points.withdraw.gross') }}</span><span class="font-mono">{{ formatCurrency(withdrawGross) }}</span></div>
-                <div class="flex justify-between"><span>{{ t('points.withdraw.fee') }} ({{ overview.config.withdraw_fee_percent }}%)</span><span class="font-mono">-{{ formatCurrency(withdrawFee) }}</span></div>
-                <div class="flex justify-between font-semibold text-gray-900 dark:text-white"><span>{{ t('points.withdraw.net') }}</span><span class="font-mono">{{ formatCurrency(withdrawNet) }}</span></div>
+                <div v-if="withdrawMethod === 'usdt'" class="flex justify-between"><span>{{ t('points.withdraw.usdtRate') }}</span><span class="font-mono">{{ withdrawUSDCNYEffectiveRate.toFixed(2) }}</span></div>
+                <div class="flex justify-between"><span>{{ t('points.withdraw.gross') }}</span><span class="font-mono">{{ formatWithdrawCurrency(withdrawGross) }}</span></div>
+                <div class="flex justify-between"><span>{{ t('points.withdraw.fee') }} ({{ overview.config.withdraw_fee_percent }}%)</span><span class="font-mono">-{{ formatWithdrawCurrency(withdrawFee) }}</span></div>
+                <div class="flex justify-between font-semibold text-gray-900 dark:text-white"><span>{{ t('points.withdraw.net') }}</span><span class="font-mono">{{ formatWithdrawCurrency(withdrawNet) }}</span></div>
               </div>
             </div>
             <button class="btn btn-primary w-full" :disabled="busy || !withdrawPoints" @click="onWithdraw">{{ t('points.withdraw.submit') }}</button>
@@ -144,8 +169,9 @@
                     v-for="amount in planDailyOptions"
                     :key="amount"
                     type="button"
-                    class="btn btn-secondary justify-center"
-                    :class="selectedPlanDaily === amount ? 'btn-primary' : ''"
+                    class="btn justify-center"
+                    :class="selectedPlanDaily === amount ? 'btn-primary' : 'btn-secondary'"
+                    :aria-pressed="selectedPlanDaily === amount"
                     @click="selectedPlanDaily = amount"
                   >
                     {{ t('points.redeemPlan.dailyOption', { d: amount }) }}
@@ -159,8 +185,9 @@
                     v-for="days in planValidityOptions"
                     :key="days"
                     type="button"
-                    class="btn btn-secondary justify-center"
-                    :class="selectedPlanDays === days ? 'btn-primary' : ''"
+                    class="btn justify-center"
+                    :class="selectedPlanDays === days ? 'btn-primary' : 'btn-secondary'"
+                    :aria-pressed="selectedPlanDays === days"
                     @click="selectedPlanDays = days"
                   >
                     {{ t('points.redeemPlan.validity', { n: days }) }}
@@ -276,9 +303,25 @@ const planQuoteError = ref('')
 let planQuoteSeq = 0
 
 const peg = computed(() => overview.value?.config.peg ?? 0)
+const repeatPaymentRate = computed(() => overview.value?.effective_rate ?? 0)
+const firstPaymentRate = computed(() => repeatPaymentRate.value * 2)
+const inviteExampleAmount = 100
+const inviteRepeatExamplePoints = computed(() => computeEarnPoints(inviteExampleAmount, repeatPaymentRate.value, peg.value))
+const inviteFirstExamplePoints = computed(() => computeEarnPoints(inviteExampleAmount, firstPaymentRate.value, peg.value))
 const feePercent = computed(() => overview.value?.config.withdraw_fee_percent ?? 0)
 const redeemBalanceEstimate = computed(() => (redeemBalancePoints.value || 0) * peg.value)
-const withdrawGross = computed(() => (withdrawPoints.value || 0) * peg.value)
+const withdrawUSDCNYBaseRate = computed(() => {
+  const rate = overview.value?.config.withdraw_usd_cny_rate ?? 0
+  return rate > 0 ? rate : 7.2
+})
+const withdrawUSDCNYEffectiveRate = computed(() => withdrawUSDCNYBaseRate.value + 0.1)
+const withdrawCurrency = computed<'CNY' | 'USD'>(() => (withdrawMethod.value === 'usdt' ? 'USD' : 'CNY'))
+const withdrawGrossCNY = computed(() => (withdrawPoints.value || 0) * peg.value)
+const withdrawGross = computed(() => (
+  withdrawMethod.value === 'usdt'
+    ? withdrawGrossCNY.value / withdrawUSDCNYEffectiveRate.value
+    : withdrawGrossCNY.value
+))
 const withdrawFee = computed(() => withdrawGross.value * (feePercent.value / 100))
 const withdrawNet = computed(() => withdrawGross.value - withdrawFee.value)
 const sortedPlans = computed(() => [...plans.value].sort((a, b) => a.daily_amount_usd - b.daily_amount_usd || a.validity_days - b.validity_days))
@@ -329,6 +372,15 @@ function formatPercent(value: number): string {
 function computePlanPoints(amount: number, pegValue: number): number {
   if (amount <= 0 || pegValue <= 0) return 0
   return Math.ceil(amount / pegValue)
+}
+
+function computeEarnPoints(amount: number, ratePercent: number, pegValue: number): number {
+  if (amount <= 0 || ratePercent <= 0 || pegValue <= 0) return 0
+  return Math.floor((amount * ratePercent / 100) / pegValue)
+}
+
+function formatWithdrawCurrency(amount: number): string {
+  return formatCurrency(amount, withdrawCurrency.value)
 }
 
 function kindLabel(kind: string): string {

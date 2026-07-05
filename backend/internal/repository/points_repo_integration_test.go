@@ -403,12 +403,15 @@ func TestPointsRepo_CreateWithdrawal_HoldsAndOnePendingGuard(t *testing.T) {
 		UserID: user.ID, Points: 100,
 		GrossAmount: gross, FeeAmount: fee, NetAmount: net,
 		PegAt: pointsTestPeg, FeePercentAt: 0,
+		PayoutCurrency:      service.PointsPayoutCurrencyCNY,
 		PayoutMethod:        service.PointsPayoutMethodAlipay,
 		PayoutAlipayAccount: "13800000000",
 		PayoutAlipayName:    "张三",
 	})
 	require.NoError(t, err)
 	require.Equal(t, service.PointsWithdrawalStatusPending, w.Status)
+	require.Equal(t, service.PointsPayoutCurrencyCNY, w.PayoutCurrency)
+	require.Nil(t, w.USDCNYRateAt)
 	require.Equal(t, "13800000000", w.PayoutAlipayAccount)
 	require.Equal(t, "张三", w.PayoutAlipayName)
 
@@ -561,6 +564,8 @@ func TestPointsRepo_NullRowScan_LedgerAndWithdrawal(t *testing.T) {
 		UserID: user.ID, Points: 50,
 		GrossAmount: gross, FeeAmount: fee, NetAmount: net,
 		PegAt: 0, FeePercentAt: 0, // 故意置 0 → 落库为 NULL
+		PayoutCurrency:    service.PointsPayoutCurrencyUSD,
+		USDCNYRateAt:      7.3,
 		PayoutMethod:      service.PointsPayoutMethodUSDT,
 		PayoutUSDTChain:   "ERC20",
 		PayoutUSDTAddress: "TYyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
@@ -568,6 +573,9 @@ func TestPointsRepo_NullRowScan_LedgerAndWithdrawal(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, w.PegAt)
 	require.Nil(t, w.FeePercentAt)
+	require.Equal(t, service.PointsPayoutCurrencyUSD, w.PayoutCurrency)
+	require.NotNil(t, w.USDCNYRateAt)
+	require.InDelta(t, 7.3, *w.USDCNYRateAt, 1e-9)
 	require.Equal(t, "", w.PayoutAlipayAccount)
 	require.Equal(t, "", w.PayoutAlipayName)
 	require.Equal(t, "ERC20", w.PayoutUSDTChain)
@@ -578,6 +586,7 @@ func TestPointsRepo_NullRowScan_LedgerAndWithdrawal(t *testing.T) {
 	require.Len(t, list, 1)
 	require.Nil(t, list[0].PegAt)
 	require.Equal(t, service.PointsPayoutMethodUSDT, list[0].PayoutMethod)
+	require.Equal(t, service.PointsPayoutCurrencyUSD, list[0].PayoutCurrency)
 	require.Equal(t, "ERC20", list[0].PayoutUSDTChain)
 
 	// GetWithdrawal 单行同样路径。
