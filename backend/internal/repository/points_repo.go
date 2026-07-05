@@ -394,12 +394,12 @@ WHERE user_id = $2 AND available >= $1 RETURNING available, frozen`, in.Points, 
 		id, err := scanInt64(txCtx, txClient, `
 INSERT INTO user_points_withdrawals
     (user_id, points, gross_amount, fee_amount, net_amount, peg_at, fee_percent_at,
-     payout_method, payout_alipay_account, payout_alipay_name, payout_usdt_address, status, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', NOW(), NOW())
+     payout_method, payout_alipay_account, payout_alipay_name, payout_usdt_chain, payout_usdt_address, status, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending', NOW(), NOW())
 RETURNING id`,
 			in.UserID, in.Points, in.GrossAmount, in.FeeAmount, in.NetAmount,
 			nullablePegArg(in.PegAt), nullablePegArg(in.FeePercentAt),
-			in.PayoutMethod, nullableStringArg(in.PayoutAlipayAccount), nullableStringArg(in.PayoutAlipayName), nullableStringArg(in.PayoutUSDTAddress))
+			in.PayoutMethod, nullableStringArg(in.PayoutAlipayAccount), nullableStringArg(in.PayoutAlipayName), nullableStringArg(in.PayoutUSDTChain), nullableStringArg(in.PayoutUSDTAddress))
 		if err != nil {
 			if isUniqueConstraintViolation(err) {
 				return service.ErrPointsWithdrawPending
@@ -497,7 +497,7 @@ VALUES ($1, 'withdraw_refund', $2, $3, $4, $5, NOW(), NOW())`, userID, points, i
 const pointsWithdrawalSelect = `
 SELECT w.id, w.user_id, COALESCE(u.email, ''), COALESCE(u.username, ''),
        w.points, w.gross_amount::double precision, w.fee_amount::double precision, w.net_amount::double precision,
-       w.peg_at, w.fee_percent_at, w.payout_method, w.payout_alipay_account, w.payout_alipay_name, w.payout_usdt_address,
+       w.peg_at, w.fee_percent_at, w.payout_method, w.payout_alipay_account, w.payout_alipay_name, w.payout_usdt_chain, w.payout_usdt_address,
        w.status, w.review_note, w.reviewed_by, w.payout_proof,
        w.created_at, w.updated_at, w.reviewed_at
 FROM user_points_withdrawals w
@@ -518,12 +518,12 @@ func pointsGetWithdrawal(ctx context.Context, client affiliateQueryExecer, id in
 func scanWithdrawalRow(rows *sql.Rows) (*service.PointsWithdrawal, error) {
 	var w service.PointsWithdrawal
 	var pegAt, feePct sql.NullFloat64
-	var alipayAccount, alipayName, usdt, reviewNote, payoutProof sql.NullString
+	var alipayAccount, alipayName, usdtChain, usdt, reviewNote, payoutProof sql.NullString
 	var reviewedBy sql.NullInt64
 	var reviewedAt sql.NullTime
 	if err := rows.Scan(&w.ID, &w.UserID, &w.UserEmail, &w.Username,
 		&w.Points, &w.GrossAmount, &w.FeeAmount, &w.NetAmount,
-		&pegAt, &feePct, &w.PayoutMethod, &alipayAccount, &alipayName, &usdt,
+		&pegAt, &feePct, &w.PayoutMethod, &alipayAccount, &alipayName, &usdtChain, &usdt,
 		&w.Status, &reviewNote, &reviewedBy, &payoutProof,
 		&w.CreatedAt, &w.UpdatedAt, &reviewedAt); err != nil {
 		return nil, err
@@ -536,6 +536,7 @@ func scanWithdrawalRow(rows *sql.Rows) (*service.PointsWithdrawal, error) {
 	}
 	w.PayoutAlipayAccount = alipayAccount.String
 	w.PayoutAlipayName = alipayName.String
+	w.PayoutUSDTChain = usdtChain.String
 	w.PayoutUSDTAddress = usdt.String
 	w.ReviewNote = reviewNote.String
 	w.PayoutProof = payoutProof.String

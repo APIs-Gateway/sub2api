@@ -226,52 +226,61 @@ func TestPointsService_CreateWithdrawal(t *testing.T) {
 	t.Run("disabled", func(t *testing.T) {
 		s := spendSettings()
 		s[SettingKeyPointsEnabled] = "false"
-		_, err := newSpendService(s, &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "alipay", "a", "b", "")
+		_, err := newSpendService(s, &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "alipay", "a", "b", "", "")
 		require.ErrorIs(t, err, ErrPointsDisabled)
 	})
 	t.Run("withdraw off", func(t *testing.T) {
 		s := spendSettings()
 		s[SettingKeyPointsWithdrawEnabled] = "false"
-		_, err := newSpendService(s, &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "alipay", "a", "b", "")
+		_, err := newSpendService(s, &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "alipay", "a", "b", "", "")
 		require.ErrorIs(t, err, ErrPointsWithdrawDisabled)
 	})
 	t.Run("invalid points", func(t *testing.T) {
-		_, err := newSpendService(spendSettings(), &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 0, "alipay", "a", "b", "")
+		_, err := newSpendService(spendSettings(), &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 0, "alipay", "a", "b", "", "")
 		require.ErrorIs(t, err, ErrPointsAmountInvalid)
 	})
 	t.Run("below min", func(t *testing.T) {
 		s := spendSettings()
 		s[SettingKeyPointsWithdrawMin] = "500"
-		_, err := newSpendService(s, &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "alipay", "acc", "name", "")
+		_, err := newSpendService(s, &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "alipay", "acc", "name", "", "")
 		require.ErrorIs(t, err, ErrPointsWithdrawBelowMin)
 	})
 	t.Run("alipay missing fields", func(t *testing.T) {
-		_, err := newSpendService(spendSettings(), &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "alipay", "", "", "")
+		_, err := newSpendService(spendSettings(), &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "alipay", "", "", "", "")
 		require.ErrorIs(t, err, ErrPointsWithdrawPayout)
 	})
 	t.Run("usdt missing address", func(t *testing.T) {
-		_, err := newSpendService(spendSettings(), &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "usdt", "", "", "")
+		_, err := newSpendService(spendSettings(), &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "usdt", "", "", "TRC20", "")
+		require.ErrorIs(t, err, ErrPointsWithdrawPayout)
+	})
+	t.Run("usdt missing chain", func(t *testing.T) {
+		_, err := newSpendService(spendSettings(), &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "usdt", "", "", "", "addr")
+		require.ErrorIs(t, err, ErrPointsWithdrawPayout)
+	})
+	t.Run("usdt unsupported chain", func(t *testing.T) {
+		_, err := newSpendService(spendSettings(), &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "usdt", "", "", "SOL", "addr")
 		require.ErrorIs(t, err, ErrPointsWithdrawPayout)
 	})
 	t.Run("unknown method", func(t *testing.T) {
-		_, err := newSpendService(spendSettings(), &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "paypal", "", "", "")
+		_, err := newSpendService(spendSettings(), &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "paypal", "", "", "", "")
 		require.ErrorIs(t, err, ErrPointsWithdrawPayout)
 	})
 	t.Run("net<=0 rejected", func(t *testing.T) {
 		s := spendSettings()
 		s[SettingKeyPointsWithdrawFeePercent] = "100" // 全额手续费 → net=0
-		_, err := newSpendService(s, &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "alipay", "acc", "name", "")
+		_, err := newSpendService(s, &fakePointsRepo{}).CreateWithdrawal(ctx, 1, 100, "alipay", "acc", "name", "", "")
 		require.ErrorIs(t, err, ErrPointsAmountInvalid)
 	})
 	t.Run("alipay success", func(t *testing.T) {
 		repo := &fakePointsRepo{}
-		w, err := newSpendService(spendSettings(), repo).CreateWithdrawal(ctx, 7, 1000, "alipay", " acc ", " name ", "ignored")
+		w, err := newSpendService(spendSettings(), repo).CreateWithdrawal(ctx, 7, 1000, "alipay", " acc ", " name ", "ignored", "ignored")
 		require.NoError(t, err)
 		require.NotNil(t, w)
 		require.NotNil(t, repo.createCall)
 		require.EqualValues(t, 1000, repo.createCall.Points)
 		require.Equal(t, "alipay", repo.createCall.PayoutMethod)
 		require.Equal(t, "acc", repo.createCall.PayoutAlipayAccount, "trim 后入库")
+		require.Equal(t, "", repo.createCall.PayoutUSDTChain, "alipay 不留 usdt chain")
 		require.Equal(t, "", repo.createCall.PayoutUSDTAddress, "alipay 不留 usdt")
 		// gross=1000×0.01=10；fee 10%→1；net=9。
 		require.InDelta(t, 10, repo.createCall.GrossAmount, 1e-9)
@@ -279,8 +288,9 @@ func TestPointsService_CreateWithdrawal(t *testing.T) {
 	})
 	t.Run("usdt success", func(t *testing.T) {
 		repo := &fakePointsRepo{}
-		_, err := newSpendService(spendSettings(), repo).CreateWithdrawal(ctx, 7, 1000, "usdt", "x", "y", " addr ")
+		_, err := newSpendService(spendSettings(), repo).CreateWithdrawal(ctx, 7, 1000, "usdt", "x", "y", " trc20 ", " addr ")
 		require.NoError(t, err)
+		require.Equal(t, "TRC20", repo.createCall.PayoutUSDTChain)
 		require.Equal(t, "addr", repo.createCall.PayoutUSDTAddress)
 		require.Equal(t, "", repo.createCall.PayoutAlipayAccount, "usdt 不留 alipay")
 	})

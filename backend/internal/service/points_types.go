@@ -102,6 +102,7 @@ type PointsWithdrawal struct {
 	PayoutMethod        string     `json:"payout_method"`
 	PayoutAlipayAccount string     `json:"payout_alipay_account,omitempty"`
 	PayoutAlipayName    string     `json:"payout_alipay_name,omitempty"`
+	PayoutUSDTChain     string     `json:"payout_usdt_chain,omitempty"`
 	PayoutUSDTAddress   string     `json:"payout_usdt_address,omitempty"`
 	Status              string     `json:"status"`
 	ReviewNote          string     `json:"review_note,omitempty"`
@@ -138,6 +139,7 @@ type CreateWithdrawalInput struct {
 	PayoutMethod        string
 	PayoutAlipayAccount string
 	PayoutAlipayName    string
+	PayoutUSDTChain     string
 	PayoutUSDTAddress   string
 }
 

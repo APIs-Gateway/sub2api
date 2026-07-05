@@ -151,7 +151,7 @@ func TestPointsService_EnsureAccountErrorBranches(t *testing.T) {
 	})
 	t.Run("create-withdrawal ensure error", func(t *testing.T) {
 		repo := &fakePointsRepo{ensureErr: errors.New("db")}
-		_, err := newSpendService(spendSettings(), repo).CreateWithdrawal(ctx, 1, 1000, "alipay", "acc", "name", "")
+		_, err := newSpendService(spendSettings(), repo).CreateWithdrawal(ctx, 1, 1000, "alipay", "acc", "name", "", "")
 		require.Error(t, err)
 	})
 }

@@ -30,12 +30,12 @@ const rows = [
   },
   {
     id: 2, user_id: 8, username: 'bob', points: 500, net_amount: 4.5,
-    payout_method: 'usdt', payout_usdt_address: 'TXxxx',
+    payout_method: 'usdt', payout_usdt_chain: 'TRC20', payout_usdt_address: 'TXxxx',
     status: 'paid', created_at: '2026-06-02T00:00:00Z',
   },
   {
     id: 3, user_id: 9, points: 200, net_amount: 1.8,
-    payout_method: 'usdt', payout_usdt_address: 'TYyyy',
+    payout_method: 'usdt', payout_usdt_chain: 'ERC20', payout_usdt_address: 'TYyyy',
     status: 'rejected', created_at: '2026-06-03T00:00:00Z',
   },
 ]

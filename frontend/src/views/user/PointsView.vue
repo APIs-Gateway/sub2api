@@ -104,10 +104,20 @@
                   <input v-model.trim="alipayName" type="text" maxlength="64" class="input" />
                 </div>
               </template>
-              <div v-else class="space-y-1">
-                <label class="input-label">{{ t('points.withdraw.usdtAddress') }}</label>
-                <input v-model.trim="usdtAddress" type="text" maxlength="128" class="input" />
-              </div>
+              <template v-else>
+                <div class="space-y-1">
+                  <label class="input-label">{{ t('points.withdraw.usdtChain') }}</label>
+                  <select v-model="usdtChain" class="input">
+                    <option value="TRC20">{{ t('points.withdraw.usdtChains.trc20') }}</option>
+                    <option value="ERC20">{{ t('points.withdraw.usdtChains.erc20') }}</option>
+                    <option value="BEP20">{{ t('points.withdraw.usdtChains.bep20') }}</option>
+                  </select>
+                </div>
+                <div class="space-y-1">
+                  <label class="input-label">{{ t('points.withdraw.usdtAddress') }}</label>
+                  <input v-model.trim="usdtAddress" type="text" maxlength="128" class="input" />
+                </div>
+              </template>
               <div class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-900 dark:text-gray-400 space-y-1">
                 <div class="flex justify-between"><span>{{ t('points.withdraw.gross') }}</span><span class="font-mono">{{ formatCurrency(withdrawGross) }}</span></div>
                 <div class="flex justify-between"><span>{{ t('points.withdraw.fee') }} ({{ overview.config.withdraw_fee_percent }}%)</span><span class="font-mono">-{{ formatCurrency(withdrawFee) }}</span></div>
@@ -126,14 +136,54 @@
             <div v-if="plans.length === 0" class="rounded-md border border-dashed border-gray-300 p-4 text-center text-sm text-gray-500 dark:border-dark-700">
               {{ t('points.redeemPlan.empty') }}
             </div>
-            <div v-else class="space-y-2">
-              <div v-for="plan in plans" :key="`${plan.daily_amount_usd}-${plan.validity_days}`" class="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2 dark:border-dark-700">
-                <div class="min-w-0">
-                  <p class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ t('points.redeemPlan.planTitle', { d: plan.daily_amount_usd }) }}</p>
-                  <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemPlan.validity', { n: plan.validity_days }) }} · {{ plan.points_price.toLocaleString() }} {{ t('points.unit') }}</p>
+            <div v-else class="space-y-4">
+              <div class="space-y-2">
+                <label class="input-label">{{ t('points.redeemPlan.dailyAmount') }}</label>
+                <div class="grid grid-cols-3 gap-2">
+                  <button
+                    v-for="amount in planDailyOptions"
+                    :key="amount"
+                    type="button"
+                    class="btn btn-secondary justify-center"
+                    :class="selectedPlanDaily === amount ? 'btn-primary' : ''"
+                    @click="selectedPlanDaily = amount"
+                  >
+                    {{ t('points.redeemPlan.dailyOption', { d: amount }) }}
+                  </button>
                 </div>
-                <button class="btn btn-secondary btn-sm shrink-0" :disabled="busy || overview.account.available < plan.points_price" @click="onRedeemPlan(plan)">{{ t('points.redeemPlan.submit') }}</button>
               </div>
+              <div class="space-y-2">
+                <label class="input-label">{{ t('points.redeemPlan.validityDays') }}</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <button
+                    v-for="days in planValidityOptions"
+                    :key="days"
+                    type="button"
+                    class="btn btn-secondary justify-center"
+                    :class="selectedPlanDays === days ? 'btn-primary' : ''"
+                    @click="selectedPlanDays = days"
+                  >
+                    {{ t('points.redeemPlan.validity', { n: days }) }}
+                  </button>
+                </div>
+              </div>
+              <div v-if="selectedPlan" class="rounded-md bg-gray-50 px-3 py-3 text-sm text-gray-700 dark:bg-dark-900 dark:text-gray-300">
+                <div class="flex items-center justify-between gap-3">
+                  <span>{{ t('points.redeemPlan.pointsPrice') }}</span>
+                  <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ selectedPlan.points_price.toLocaleString() }} {{ t('points.unit') }}</span>
+                </div>
+                <div class="mt-1 flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-500">
+                  <span>{{ t('points.redeemPlan.capSummary') }}</span>
+                  <span class="font-mono tabular-nums">{{ formatCurrency(selectedPlan.weekly_cap_usd) }} / {{ formatCurrency(selectedPlan.monthly_cap_usd) }}</span>
+                </div>
+              </div>
+              <button
+                class="btn btn-primary w-full"
+                :disabled="busy || !selectedPlan || overview.account.available < selectedPlan.points_price"
+                @click="selectedPlan && onRedeemPlan(selectedPlan)"
+              >
+                {{ t('points.redeemPlan.submit') }}
+              </button>
             </div>
           </div>
         </div>
@@ -171,7 +221,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -186,6 +236,7 @@ import {
   type PointsLedgerEntry,
   type PointsPlanOption,
   type PointsPayoutMethod,
+  type PointsUSDTChain,
 } from '@/api/points'
 import { useAppStore } from '@/stores/app'
 import { useClipboard } from '@/composables/useClipboard'
@@ -207,7 +258,10 @@ const withdrawPoints = ref<number | null>(null)
 const withdrawMethod = ref<PointsPayoutMethod>('alipay')
 const alipayAccount = ref('')
 const alipayName = ref('')
+const usdtChain = ref<PointsUSDTChain>('TRC20')
 const usdtAddress = ref('')
+const selectedPlanDaily = ref<number | null>(null)
+const selectedPlanDays = ref<number | null>(null)
 
 const peg = computed(() => overview.value?.config.peg ?? 0)
 const feePercent = computed(() => overview.value?.config.withdraw_fee_percent ?? 0)
@@ -215,6 +269,13 @@ const redeemBalanceEstimate = computed(() => (redeemBalancePoints.value || 0) * 
 const withdrawGross = computed(() => (withdrawPoints.value || 0) * peg.value)
 const withdrawFee = computed(() => withdrawGross.value * (feePercent.value / 100))
 const withdrawNet = computed(() => withdrawGross.value - withdrawFee.value)
+const sortedPlans = computed(() => [...plans.value].sort((a, b) => a.daily_amount_usd - b.daily_amount_usd || a.validity_days - b.validity_days))
+const planDailyOptions = computed(() => Array.from(new Set(sortedPlans.value.map((plan) => plan.daily_amount_usd))))
+const planValidityOptions = computed(() => {
+  const filtered = selectedPlanDaily.value == null ? sortedPlans.value : sortedPlans.value.filter((plan) => plan.daily_amount_usd === selectedPlanDaily.value)
+  return Array.from(new Set(filtered.map((plan) => plan.validity_days)))
+})
+const selectedPlan = computed(() => sortedPlans.value.find((plan) => plan.daily_amount_usd === selectedPlanDaily.value && plan.validity_days === selectedPlanDays.value) ?? null)
 
 const inviteLink = computed(() => {
   const code = overview.value?.affiliate.aff_code || ''
@@ -253,6 +314,7 @@ async function loadAll(): Promise<void> {
       const [page, planList] = await Promise.all([listPointsLedger(1, 20), listPointsPlans()])
       ledger.value = page.items
       plans.value = planList
+      syncSelectedPlan()
     }
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('points.loadFailed')))
@@ -291,12 +353,14 @@ async function onWithdraw(): Promise<void> {
       payout_method: withdrawMethod.value,
       payout_alipay_account: withdrawMethod.value === 'alipay' ? alipayAccount.value : undefined,
       payout_alipay_name: withdrawMethod.value === 'alipay' ? alipayName.value : undefined,
+      payout_usdt_chain: withdrawMethod.value === 'usdt' ? usdtChain.value : undefined,
       payout_usdt_address: withdrawMethod.value === 'usdt' ? usdtAddress.value : undefined,
     })
     appStore.showSuccess(t('points.withdraw.success'))
     withdrawPoints.value = null
     alipayAccount.value = ''
     alipayName.value = ''
+    usdtChain.value = 'TRC20'
     usdtAddress.value = ''
     await refresh()
   } catch (error) {
@@ -322,6 +386,29 @@ async function onRedeemPlan(plan: PointsPlanOption): Promise<void> {
     busy.value = false
   }
 }
+
+function syncSelectedPlan(): void {
+  const firstDaily = planDailyOptions.value[0]
+  if (firstDaily == null) {
+    selectedPlanDaily.value = null
+    selectedPlanDays.value = null
+    return
+  }
+  if (selectedPlanDaily.value == null || !planDailyOptions.value.includes(selectedPlanDaily.value)) {
+    selectedPlanDaily.value = firstDaily
+  }
+  const firstDays = planValidityOptions.value[0] ?? null
+  if (selectedPlanDays.value == null || !planValidityOptions.value.includes(selectedPlanDays.value)) {
+    selectedPlanDays.value = firstDays
+  }
+}
+
+watch(selectedPlanDaily, () => {
+  const firstDays = planValidityOptions.value[0] ?? null
+  if (selectedPlanDays.value == null || !planValidityOptions.value.includes(selectedPlanDays.value)) {
+    selectedPlanDays.value = firstDays
+  }
+})
 
 onMounted(() => {
   void loadAll()

@@ -457,6 +457,7 @@ func TestPointsRepo_ReviewWithdrawal_Approve_NonPendingGuard(t *testing.T) {
 		UserID: user.ID, Points: 100,
 		GrossAmount: gross, FeeAmount: fee, NetAmount: net,
 		PegAt: pointsTestPeg, PayoutMethod: service.PointsPayoutMethodUSDT,
+		PayoutUSDTChain:   "TRC20",
 		PayoutUSDTAddress: "TXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 	})
 	require.NoError(t, err)
@@ -561,6 +562,7 @@ func TestPointsRepo_NullRowScan_LedgerAndWithdrawal(t *testing.T) {
 		GrossAmount: gross, FeeAmount: fee, NetAmount: net,
 		PegAt: 0, FeePercentAt: 0, // 故意置 0 → 落库为 NULL
 		PayoutMethod:      service.PointsPayoutMethodUSDT,
+		PayoutUSDTChain:   "ERC20",
 		PayoutUSDTAddress: "TYyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
 	})
 	require.NoError(t, err)
@@ -568,6 +570,7 @@ func TestPointsRepo_NullRowScan_LedgerAndWithdrawal(t *testing.T) {
 	require.Nil(t, w.FeePercentAt)
 	require.Equal(t, "", w.PayoutAlipayAccount)
 	require.Equal(t, "", w.PayoutAlipayName)
+	require.Equal(t, "ERC20", w.PayoutUSDTChain)
 	require.Equal(t, "TYyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", w.PayoutUSDTAddress)
 
 	list, err := repo.ListUserWithdrawals(ctx, user.ID, 50)
@@ -575,6 +578,7 @@ func TestPointsRepo_NullRowScan_LedgerAndWithdrawal(t *testing.T) {
 	require.Len(t, list, 1)
 	require.Nil(t, list[0].PegAt)
 	require.Equal(t, service.PointsPayoutMethodUSDT, list[0].PayoutMethod)
+	require.Equal(t, "ERC20", list[0].PayoutUSDTChain)
 
 	// GetWithdrawal 单行同样路径。
 	got, err := repo.GetWithdrawal(ctx, w.ID)

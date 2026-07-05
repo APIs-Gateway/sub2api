@@ -156,8 +156,8 @@ func TestPointsEarning_SubscriptionPurchase_EarnsForInviter_AndIdempotent(t *tes
 	// 被邀请人确实拿到了卡（履约真成功，钩子才在 markCompleted 前触发）。
 	require.Equal(t, 1, countUserSubscriptionsByStatus(t, invitee.ID, service.SubscriptionStatusActive))
 
-	want := service.ComputeEarnPoints(order.Amount, rate, peg) // floor(545×10/100/0.01) = 5450
-	require.Equal(t, want, pointsAvailableOf(t, inviter.ID), "邀请人按 floor(Amount×rate%%/peg) 返积分")
+	want := service.ComputeEarnPoints(order.Amount*2, rate, peg) // 首笔法币支付 2 倍：floor(545×2×10/100/0.01) = 10900
+	require.Equal(t, want, pointsAvailableOf(t, inviter.ID), "邀请人首笔法币支付按 2 倍积分返还")
 	require.Equal(t, 1, earnLedgerCountForOrder(t, orderID), "恰好一条 earn 流水")
 	require.True(t, orderHasAuditAction(t, h, orderID, "POINTS_EARNED"), "应写 POINTS_EARNED 审计")
 
@@ -216,8 +216,8 @@ func TestPointsEarning_SubscriptionRenew_EarnsForInviter(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, service.OrderStatusCompleted, order.Status)
 
-	want := service.ComputeEarnPoints(charge, rate, peg) // floor(100×10/100/0.01) = 1000
-	require.Equal(t, want, pointsAvailableOf(t, inviter.ID), "续费单也应返积分（doSubLifecycle 钩子）")
+	want := service.ComputeEarnPoints(charge*2, rate, peg) // 首笔法币支付 2 倍：floor(100×2×10/100/0.01) = 2000
+	require.Equal(t, want, pointsAvailableOf(t, inviter.ID), "续费单也应按首笔法币支付 2 倍返积分（doSubLifecycle 钩子）")
 	require.Equal(t, 1, earnLedgerCountForOrder(t, orderID))
 }
 

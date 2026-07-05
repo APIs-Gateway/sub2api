@@ -46,6 +46,7 @@ export interface PointsLedgerEntry {
 }
 
 export type PointsPayoutMethod = 'alipay' | 'usdt'
+export type PointsUSDTChain = 'TRC20' | 'ERC20' | 'BEP20'
 
 export interface PointsWithdrawal {
   id: number
@@ -61,6 +62,7 @@ export interface PointsWithdrawal {
   payout_method: PointsPayoutMethod
   payout_alipay_account?: string
   payout_alipay_name?: string
+  payout_usdt_chain?: PointsUSDTChain
   payout_usdt_address?: string
   status: 'pending' | 'paid' | 'rejected'
   review_note?: string
@@ -86,6 +88,7 @@ export interface CreateWithdrawalPayload {
   payout_method: PointsPayoutMethod
   payout_alipay_account?: string
   payout_alipay_name?: string
+  payout_usdt_chain?: PointsUSDTChain
   payout_usdt_address?: string
 }
 

@@ -110,7 +110,8 @@ describe('user PointsView', () => {
     expect(listPointsPlans).toHaveBeenCalled()
     const text = wrapper.text()
     expect(text).toContain('CODE7') // aff code
-    expect(text).toContain('points.redeemPlan.planTitle') // plan title key from mocked i18n
+    expect(text).toContain('points.redeemPlan.dailyOption') // compact plan selector
+    expect(text).toContain('points.redeemPlan.pointsPrice')
     expect(text).toContain('+50') // ledger positive
     expect(text).toContain('—') // ledger null balance
   })
@@ -158,6 +159,7 @@ describe('user PointsView', () => {
       payout_method: 'alipay',
       payout_alipay_account: 'alipay-acc',
       payout_alipay_name: 'alipay-name',
+      payout_usdt_chain: undefined,
       payout_usdt_address: undefined,
     })
     expect(showSuccess).toHaveBeenCalled()
@@ -176,6 +178,7 @@ describe('user PointsView', () => {
       payout_method: 'usdt',
       payout_alipay_account: undefined,
       payout_alipay_name: undefined,
+      payout_usdt_chain: 'TRC20',
       payout_usdt_address: 'TXaddr',
     })
   })
@@ -194,7 +197,7 @@ describe('user PointsView', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mount(PointsView, pointsViewMountOptions())
     await flushPromises()
-    await wrapper.find('button.btn-secondary.btn-sm.shrink-0').trigger('click')
+    await wrapper.findAll('button.btn-primary.w-full')[2].trigger('click')
     await flushPromises()
     expect(redeemPointsToPlan).toHaveBeenCalledTimes(1)
     const args = redeemPointsToPlan.mock.calls[0]
@@ -209,7 +212,7 @@ describe('user PointsView', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false)
     const wrapper = mount(PointsView, pointsViewMountOptions())
     await flushPromises()
-    await wrapper.find('button.btn-secondary.btn-sm.shrink-0').trigger('click')
+    await wrapper.findAll('button.btn-primary.w-full')[2].trigger('click')
     await flushPromises()
     expect(redeemPointsToPlan).not.toHaveBeenCalled()
   })
@@ -219,7 +222,7 @@ describe('user PointsView', () => {
     redeemPointsToPlan.mockRejectedValueOnce(new Error('boom'))
     const wrapper = mount(PointsView, pointsViewMountOptions())
     await flushPromises()
-    await wrapper.find('button.btn-secondary.btn-sm.shrink-0').trigger('click')
+    await wrapper.findAll('button.btn-primary.w-full')[2].trigger('click')
     await flushPromises()
     expect(showError).toHaveBeenCalled()
   })

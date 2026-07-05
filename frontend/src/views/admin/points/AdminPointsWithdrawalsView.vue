@@ -37,7 +37,10 @@
               <div class="text-sm text-gray-900 dark:text-white">{{ row.payout_alipay_name }}</div>
               <div class="max-w-xs break-all font-mono text-xs text-gray-600 dark:text-gray-400">{{ row.payout_alipay_account }}</div>
             </template>
-            <div v-else class="max-w-xs break-all font-mono text-xs text-gray-600 dark:text-gray-400">{{ row.payout_usdt_address }}</div>
+            <div v-else class="max-w-xs text-xs text-gray-600 dark:text-gray-400">
+              <div class="font-medium text-gray-900 dark:text-white">{{ row.payout_usdt_chain || 'USDT' }}</div>
+              <div class="break-all font-mono">{{ row.payout_usdt_address }}</div>
+            </div>
           </template>
           <template #cell-status="{ row }">
             <span class="rounded px-2 py-0.5 text-xs" :class="statusClass(row.status)">{{ t('points.withdrawals.statuses.' + row.status) }}</span>

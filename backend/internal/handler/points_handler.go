@@ -142,6 +142,7 @@ type pointsCreateWithdrawalRequest struct {
 	PayoutMethod        string `json:"payout_method" binding:"required"`
 	PayoutAlipayAccount string `json:"payout_alipay_account"`
 	PayoutAlipayName    string `json:"payout_alipay_name"`
+	PayoutUSDTChain     string `json:"payout_usdt_chain"`
 	PayoutUSDTAddress   string `json:"payout_usdt_address"`
 }
 
@@ -157,7 +158,7 @@ func (h *PointsHandler) CreateWithdrawal(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	w, err := h.pointsService.CreateWithdrawal(c.Request.Context(), subject.UserID, req.Points, req.PayoutMethod, req.PayoutAlipayAccount, req.PayoutAlipayName, req.PayoutUSDTAddress)
+	w, err := h.pointsService.CreateWithdrawal(c.Request.Context(), subject.UserID, req.Points, req.PayoutMethod, req.PayoutAlipayAccount, req.PayoutAlipayName, req.PayoutUSDTChain, req.PayoutUSDTAddress)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

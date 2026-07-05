@@ -16,10 +16,17 @@ import (
 const (
 	pointsAlipayAccountMaxLen = 128
 	pointsAlipayNameMaxLen    = 64
+	pointsUSDTChainMaxLen     = 16
 	pointsUSDTAddressMaxLen   = 128
 
 	firstSuccessfulPaymentEarnMultiplier = 2
 )
+
+var pointsSupportedUSDTChains = map[string]string{
+	"TRC20": "TRC20",
+	"ERC20": "ERC20",
+	"BEP20": "BEP20",
+}
 
 var pointsSuccessfulPaymentOrderStatuses = []string{OrderStatusPaid, OrderStatusRecharging, OrderStatusCompleted}
 
@@ -297,7 +304,7 @@ func (s *PointsService) RedeemToBalance(ctx context.Context, userID, points int6
 
 // --- Spending ② 提现 ---
 
-func (s *PointsService) CreateWithdrawal(ctx context.Context, userID, points int64, method, alipayAccount, alipayName, usdtAddress string) (*PointsWithdrawal, error) {
+func (s *PointsService) CreateWithdrawal(ctx context.Context, userID, points int64, method, alipayAccount, alipayName, usdtChain, usdtAddress string) (*PointsWithdrawal, error) {
 	if !s.IsEnabled(ctx) {
 		return nil, ErrPointsDisabled
 	}
@@ -313,6 +320,7 @@ func (s *PointsService) CreateWithdrawal(ctx context.Context, userID, points int
 	method = strings.TrimSpace(method)
 	alipayAccount = strings.TrimSpace(alipayAccount)
 	alipayName = strings.TrimSpace(alipayName)
+	usdtChain = normalizeUSDTChain(usdtChain)
 	usdtAddress = strings.TrimSpace(usdtAddress)
 	switch method {
 	case PointsPayoutMethodAlipay:
@@ -320,9 +328,11 @@ func (s *PointsService) CreateWithdrawal(ctx context.Context, userID, points int
 			alipayName == "" || len(alipayName) > pointsAlipayNameMaxLen {
 			return nil, ErrPointsWithdrawPayout
 		}
+		usdtChain = ""
 		usdtAddress = ""
 	case PointsPayoutMethodUSDT:
-		if usdtAddress == "" || len(usdtAddress) > pointsUSDTAddressMaxLen {
+		if usdtChain == "" || len(usdtChain) > pointsUSDTChainMaxLen ||
+			usdtAddress == "" || len(usdtAddress) > pointsUSDTAddressMaxLen {
 			return nil, ErrPointsWithdrawPayout
 		}
 		alipayAccount = ""
@@ -351,8 +361,17 @@ func (s *PointsService) CreateWithdrawal(ctx context.Context, userID, points int
 		PayoutMethod:        method,
 		PayoutAlipayAccount: alipayAccount,
 		PayoutAlipayName:    alipayName,
+		PayoutUSDTChain:     usdtChain,
 		PayoutUSDTAddress:   usdtAddress,
 	})
+}
+
+func normalizeUSDTChain(chain string) string {
+	normalized := strings.ToUpper(strings.TrimSpace(chain))
+	if canonical, ok := pointsSupportedUSDTChains[normalized]; ok {
+		return canonical
+	}
+	return ""
 }
 
 // --- Spending ③ 换套餐（全额、直接开通、扣积分、单事务原子） ---
