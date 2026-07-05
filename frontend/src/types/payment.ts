@@ -21,6 +21,7 @@ export type OrderStatus =
 export type PaymentType = 'alipay' | 'wxpay' | 'alipay_direct' | 'wxpay_direct' | 'stripe' | 'easypay' | 'airwallex'
 
 export type OrderType = 'balance' | 'subscription'
+export type SubscriptionIntent = 'purchase' | 'renew' | 'change_plan'
 
 // ==================== Configuration ====================
 
@@ -91,6 +92,9 @@ export interface SubscriptionCheckoutGroup {
 export interface PaymentOrder {
   id: number
   user_id: number
+  user_email?: string
+  user_name?: string
+  user_notes?: string
   amount: number
   pay_amount: number
   currency?: string
@@ -99,6 +103,8 @@ export interface PaymentOrder {
   out_trade_no: string
   status: OrderStatus
   order_type: OrderType
+  product_name?: string
+  subscription_intent?: SubscriptionIntent
   created_at: string
   expires_at: string
   paid_at?: string
@@ -106,7 +112,7 @@ export interface PaymentOrder {
   refund_amount: number
   refund_reason?: string
   refund_requested_at?: string
-  refund_requested_by?: number
+  refund_requested_by?: string
   refund_request_reason?: string
   plan_id?: number
   provider_instance_id?: string

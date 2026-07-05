@@ -8,6 +8,11 @@
         {{ value }}
       </span>
     </template>
+    <template #cell-product_name="{ value, row }">
+      <div class="max-w-[16rem] truncate text-sm font-medium text-stone-900 dark:text-gray-100" :title="value || fallbackProductName(row)">
+        {{ value || fallbackProductName(row) }}
+      </div>
+    </template>
     <template v-if="showUser" #cell-user_email="{ value, row }">
       <div class="text-sm">
         <span class="text-gray-900 dark:text-white">{{ value || row.user_name || '#' + row.user_id }}</span>
@@ -58,10 +63,15 @@ const props = defineProps<{
 
 function formatDate(dateStr: string) { return new Date(dateStr).toLocaleString() }
 
+function fallbackProductName(order: PaymentOrder): string {
+  return order.order_type === 'subscription' ? t('payment.admin.subscriptionOrder') : t('payment.admin.balanceOrder')
+}
+
 const columns = computed((): Column[] => {
   const cols: Column[] = [
     { key: 'id', label: t('payment.orders.orderId') },
     { key: 'out_trade_no', label: t('payment.orders.orderNo') },
+    { key: 'product_name', label: t('payment.orders.productName') },
   ]
   if (props.showUser) {
     cols.push({ key: 'user_email', label: t('payment.admin.colUser') })

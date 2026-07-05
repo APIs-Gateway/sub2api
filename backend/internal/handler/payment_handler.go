@@ -506,6 +506,8 @@ type PublicOrderResult struct {
 	Currency            string     `json:"currency"`
 	PaymentType         string     `json:"payment_type"`
 	OrderType           string     `json:"order_type"`
+	ProductName         string     `json:"product_name"`
+	SubscriptionIntent  string     `json:"subscription_intent,omitempty"`
 	Status              string     `json:"status"`
 	CreatedAt           time.Time  `json:"created_at"`
 	ExpiresAt           time.Time  `json:"expires_at"`
@@ -529,6 +531,8 @@ func buildPublicOrderResult(order *dbent.PaymentOrder) PublicOrderResult {
 		Currency:            service.PaymentOrderCurrency(order),
 		PaymentType:         order.PaymentType,
 		OrderType:           order.OrderType,
+		ProductName:         service.PaymentOrderProductName(order),
+		SubscriptionIntent:  service.PaymentOrderSubscriptionIntent(order),
 		Status:              order.Status,
 		CreatedAt:           order.CreatedAt,
 		ExpiresAt:           order.ExpiresAt,
@@ -611,6 +615,8 @@ type PaymentOrderResult struct {
 	OutTradeNo          string     `json:"out_trade_no"`
 	Status              string     `json:"status"`
 	OrderType           string     `json:"order_type"`
+	ProductName         string     `json:"product_name"`
+	SubscriptionIntent  string     `json:"subscription_intent,omitempty"`
 	CreatedAt           time.Time  `json:"created_at"`
 	ExpiresAt           time.Time  `json:"expires_at"`
 	PaidAt              *time.Time `json:"paid_at,omitempty"`
@@ -649,6 +655,8 @@ func sanitizePaymentOrderForResponse(order *dbent.PaymentOrder) *PaymentOrderRes
 		OutTradeNo:          order.OutTradeNo,
 		Status:              order.Status,
 		OrderType:           order.OrderType,
+		ProductName:         service.PaymentOrderProductName(order),
+		SubscriptionIntent:  service.PaymentOrderSubscriptionIntent(order),
 		CreatedAt:           order.CreatedAt,
 		ExpiresAt:           order.ExpiresAt,
 		PaidAt:              order.PaidAt,

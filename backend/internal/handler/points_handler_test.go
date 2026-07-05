@@ -446,11 +446,12 @@ func TestPointsHandler_ErrorAndAuthBranches(t *testing.T) {
 		h.ListLedger(c)
 		require.NotEqual(t, 0, decodeCode(t, rec))
 	})
-	t.Run("list plans repo error", func(t *testing.T) {
+	t.Run("list plans ignores group repo error after degroup", func(t *testing.T) {
 		h := newTestPointsHandler(&fakePtsRepo{}, &fakeGrpRepo{activeErr: errors.New("db")}, &fakeAffRepo{}, ptsSettings())
 		c, rec := ptsTestCtx(http.MethodGet, "", true)
 		h.ListPlans(c)
-		require.NotEqual(t, 0, decodeCode(t, rec))
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Equal(t, 0, decodeCode(t, rec))
 	})
 	t.Run("list withdrawals unauthorized", func(t *testing.T) {
 		h := newTestPointsHandler(&fakePtsRepo{}, &fakeGrpRepo{}, &fakeAffRepo{}, ptsSettings())

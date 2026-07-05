@@ -154,9 +154,16 @@ describe('admin SubscriptionsView burn-down progress', () => {
           id: 101,
           calendar_day: Number.NaN,
           consumption_day: Number.NaN
+        }),
+        subscription({
+          id: 102,
+          consumed_usd: 0,
+          remaining_usd: 300,
+          calendar_day: 2,
+          consumption_day: 0
         })
       ],
-      total: 2,
+      total: 3,
       page: 1,
       page_size: 20,
       pages: 1
@@ -190,6 +197,7 @@ describe('admin SubscriptionsView burn-down progress', () => {
     expect(text).toContain('已消费 5 天额度')
     expect(text).toContain('已服务第 0 / 30 天')
     expect(text).toContain('已消费 0 天额度')
+    expect(text).toContain('$20.00 / $300.00')
     expect(text).not.toContain('已用到第')
   })
 

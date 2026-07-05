@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
@@ -16,7 +17,11 @@ const (
 	pointsAlipayAccountMaxLen = 128
 	pointsAlipayNameMaxLen    = 64
 	pointsUSDTAddressMaxLen   = 128
+
+	firstSuccessfulPaymentEarnMultiplier = 2
 )
+
+var pointsSuccessfulPaymentOrderStatuses = []string{OrderStatusPaid, OrderStatusRecharging, OrderStatusCompleted}
 
 // PointsService 邀请返利积分制（issue #11）业务编排。
 type PointsService struct {
@@ -105,10 +110,11 @@ func (s *PointsService) ListUserWithdrawals(ctx context.Context, userID int64, l
 // --- Earning / Clawback（PR #8 支付链路钩子调用，最佳努力非阻断由调用方负责） ---
 
 // AccrueEarnForOrder 被邀请人法币付款成功 → 邀请人返积分。
-// base = order.Amount（商品额/官方价/快照），pts = floor(Amount × rate% / 100 / peg)；幂等（按来源单）。
+// base = order.PayAmount（实付充值金额）优先，旧订单无实付快照时回退 order.Amount；幂等（按来源单）。
 // 返回实际入账积分数（0 = 无邀请人/比例 0/重复回调）。
 func (s *PointsService) AccrueEarnForOrder(ctx context.Context, order *dbent.PaymentOrder) (int64, error) {
-	if !s.IsEnabled(ctx) || order == nil || order.Amount <= 0 {
+	baseAmount, ok := pointsEarnBaseAmountForOrder(order)
+	if !s.IsEnabled(ctx) || !ok {
 		return 0, nil
 	}
 	invitee, err := s.affiliateService.EnsureUserAffiliate(ctx, order.UserID)
@@ -128,7 +134,11 @@ func (s *PointsService) AccrueEarnForOrder(ctx context.Context, order *dbent.Pay
 		return 0, nil
 	}
 	peg := s.peg(ctx)
-	pts := ComputeEarnPoints(order.Amount, rate, peg)
+	multiplier, err := s.pointsEarnMultiplierForOrder(ctx, order)
+	if err != nil {
+		return 0, err
+	}
+	pts := ComputeEarnPoints(baseAmount*multiplier, rate, peg)
 	if pts <= 0 {
 		return 0, nil
 	}
@@ -147,6 +157,40 @@ func (s *PointsService) AccrueEarnForOrder(ctx context.Context, order *dbent.Pay
 		return 0, nil
 	}
 	return pts, nil
+}
+
+func (s *PointsService) pointsEarnMultiplierForOrder(ctx context.Context, order *dbent.PaymentOrder) (float64, error) {
+	if s == nil || s.entClient == nil || order == nil || order.ID <= 0 || order.UserID <= 0 {
+		return 1, nil
+	}
+	hasPrior, err := s.entClient.PaymentOrder.Query().
+		Where(
+			paymentorder.UserIDEQ(order.UserID),
+			paymentorder.IDNEQ(order.ID),
+			paymentorder.StatusIn(pointsSuccessfulPaymentOrderStatuses...),
+		).
+		Limit(1).
+		Exist(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("check first successful payment order: %w", err)
+	}
+	if !hasPrior {
+		return firstSuccessfulPaymentEarnMultiplier, nil
+	}
+	return 1, nil
+}
+
+func pointsEarnBaseAmountForOrder(order *dbent.PaymentOrder) (float64, bool) {
+	if order == nil {
+		return 0, false
+	}
+	if order.PayAmount > 0 {
+		return order.PayAmount, true
+	}
+	if order.Amount > 0 {
+		return order.Amount, true
+	}
+	return 0, false
 }
 
 // AccrueEarnForRedeem 被邀请人兑换码兑付成功 → 邀请人返积分（方案 C：替代旧 cashback→$）。

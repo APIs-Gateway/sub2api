@@ -724,7 +724,8 @@ func (s *PaymentService) applyPointsEarnForOrder(ctx context.Context, o *dbent.P
 		return
 	}
 	if pts > 0 {
-		s.writeAuditLog(ctx, o.ID, "POINTS_EARNED", "system", map[string]any{"points": pts, "baseAmount": o.Amount})
+		baseAmount, _ := pointsEarnBaseAmountForOrder(o)
+		s.writeAuditLog(ctx, o.ID, "POINTS_EARNED", "system", map[string]any{"points": pts, "baseAmount": baseAmount})
 	}
 }
 

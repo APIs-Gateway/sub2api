@@ -4,12 +4,21 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/enttest"
+	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/stretchr/testify/require"
+
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+	_ "modernc.org/sqlite"
 )
 
 // 邀请返利积分制（issue #11，方案 C）—— earning 编排的 service 层单测。
@@ -234,6 +243,52 @@ func paymentOrder(userID int64, amount float64) *dbent.PaymentOrder {
 	return &dbent.PaymentOrder{ID: 555, UserID: userID, Amount: amount}
 }
 
+func newPointsEarnEntClient(t *testing.T) *dbent.Client {
+	t.Helper()
+	name := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=memory&cache=shared&_fk=1", name))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec("PRAGMA foreign_keys = ON")
+	require.NoError(t, err)
+	drv := entsql.OpenDB(dialect.SQLite, db)
+	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
+	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
+func createPointsEarnUser(t *testing.T, client *dbent.Client, email string) *dbent.User {
+	t.Helper()
+	user, err := client.User.Create().
+		SetEmail(email).
+		SetPasswordHash("hash").
+		SetUsername(email).
+		Save(context.Background())
+	require.NoError(t, err)
+	return user
+}
+
+func createPointsEarnOrder(t *testing.T, client *dbent.Client, user *dbent.User, status string, amount float64) *dbent.PaymentOrder {
+	t.Helper()
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(amount).
+		SetPayAmount(amount).
+		SetRechargeCode(fmt.Sprintf("code-%d-%s", user.ID, status)).
+		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo(fmt.Sprintf("trade-%d-%s", user.ID, status)).
+		SetOrderType(payment.OrderTypeBalance).
+		SetStatus(status).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("localhost").
+		Save(context.Background())
+	require.NoError(t, err)
+	return order
+}
+
 // ============================ AccrueEarnForRedeem ============================
 
 func TestAccrueEarnForRedeem_BalanceCode_GlobalRate(t *testing.T) {
@@ -429,21 +484,57 @@ func TestAccrueEarnForRedeem_RepoError(t *testing.T) {
 
 // ============================ AccrueEarnForOrder ============================
 
-// 法币订单返积分对「订单种类」无感：base = order.Amount，充值单与订阅单（皆 Amount>0）一视同仁。
-// 这正是「套餐单不漏返」的逻辑保证——只要订阅购买生成了 Amount>0 的 PaymentOrder 即返。
-func TestAccrueEarnForOrder_EarnsRegardlessOfOrderKind(t *testing.T) {
+// 法币订单返积分对「订单种类」无感：base 优先取实付 PayAmount，充值单与订阅单一视同仁。
+// 这正是「套餐单不漏返」的逻辑保证——只要订阅购买生成了实付 PaymentOrder 即返。
+func TestAccrueEarnForOrder_UsesPaidAmountRegardlessOfOrderKind(t *testing.T) {
 	t.Parallel()
 	aff := &pointsEarnAffiliateRepo{summaries: inviteePair(2, 1, nil)}
 	prepo := &pointsEarnRepo{}
 	svc := newEarnPointsService(pointsEarnDefaults(), aff, prepo)
 
 	order := paymentOrder(2, 100) // 模拟订阅购买订单：UserID=2, Amount=100
+	order.PayAmount = 45
+	pts, err := svc.AccrueEarnForOrder(context.Background(), order)
+	require.NoError(t, err)
+	require.EqualValues(t, 900, pts)
+	require.Len(t, prepo.calls, 1)
+	require.EqualValues(t, order.ID, prepo.calls[0].SourceOrderID, "订单来源锚")
+	require.EqualValues(t, 0, prepo.calls[0].SourceRedeemCodeID, "订单 earning 不写兑换码锚")
+}
+
+func TestAccrueEarnForOrder_FirstSuccessfulPaymentGetsDoublePoints(t *testing.T) {
+	client := newPointsEarnEntClient(t)
+	invitee := createPointsEarnUser(t, client, "first-pay-invitee@example.com")
+	order := createPointsEarnOrder(t, client, invitee, OrderStatusCompleted, 100)
+
+	aff := &pointsEarnAffiliateRepo{summaries: inviteePair(invitee.ID, 1001, nil)}
+	prepo := &pointsEarnRepo{}
+	svc := newEarnPointsService(pointsEarnDefaults(), aff, prepo)
+	svc.entClient = client
+
+	pts, err := svc.AccrueEarnForOrder(context.Background(), order)
+	require.NoError(t, err)
+	require.EqualValues(t, 4000, pts, "first successful fiat payment gets 2x points")
+	require.Len(t, prepo.calls, 1)
+	require.EqualValues(t, 4000, prepo.calls[0].Points)
+}
+
+func TestAccrueEarnForOrder_NonFirstSuccessfulPaymentUsesNormalPoints(t *testing.T) {
+	client := newPointsEarnEntClient(t)
+	invitee := createPointsEarnUser(t, client, "repeat-pay-invitee@example.com")
+	_ = createPointsEarnOrder(t, client, invitee, OrderStatusCompleted, 50)
+	order := createPointsEarnOrder(t, client, invitee, OrderStatusCompleted, 100)
+
+	aff := &pointsEarnAffiliateRepo{summaries: inviteePair(invitee.ID, 1001, nil)}
+	prepo := &pointsEarnRepo{}
+	svc := newEarnPointsService(pointsEarnDefaults(), aff, prepo)
+	svc.entClient = client
+
 	pts, err := svc.AccrueEarnForOrder(context.Background(), order)
 	require.NoError(t, err)
 	require.EqualValues(t, 2000, pts)
 	require.Len(t, prepo.calls, 1)
-	require.EqualValues(t, order.ID, prepo.calls[0].SourceOrderID, "订单来源锚")
-	require.EqualValues(t, 0, prepo.calls[0].SourceRedeemCodeID, "订单 earning 不写兑换码锚")
+	require.EqualValues(t, 2000, prepo.calls[0].Points)
 }
 
 func TestAccrueEarnForOrder_ZeroAmount(t *testing.T) {

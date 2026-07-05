@@ -5,58 +5,89 @@
         <div class="h-8 w-8 animate-spin rounded-full border-2 border-gray-400 border-t-transparent dark:border-dark-500"></div>
       </div>
 
-      <div v-else-if="settings" class="card p-6 max-w-2xl">
+      <div v-else-if="settings" class="card p-6 max-w-4xl">
         <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('points.admin.config.title') }}</h3>
 
-        <div class="mt-6 space-y-5">
+        <div class="mt-6 space-y-6">
           <div class="space-y-1">
             <label class="flex items-center justify-between gap-4">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('points.admin.config.enabled') }}</span>
               <input v-model="settings.enabled" type="checkbox" class="h-4 w-4" />
             </label>
-            <p class="text-xs text-amber-600 dark:text-amber-400">{{ t('points.admin.config.enabledHint') }}</p>
           </div>
 
-          <div class="space-y-1">
-            <label class="input-label">{{ t('points.admin.config.peg') }}</label>
-            <input v-model.number="settings.peg" type="number" step="0.0001" min="0" class="input" />
-            <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.pegHint') }}</p>
-          </div>
+          <section class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h4 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('points.admin.config.earnSection') }}</h4>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.earnHint') }}</p>
+              </div>
+            </div>
+            <div class="mt-4 grid gap-4 md:grid-cols-2">
+              <div class="space-y-1">
+                <label class="input-label">{{ t('points.admin.config.cashbackRate') }}</label>
+                <input v-model.number="settings.cashback_rate_percent" type="number" step="0.01" min="0" max="100" class="input" />
+                <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.cashbackRateHint') }}</p>
+              </div>
 
-          <div class="space-y-1">
-            <label class="input-label">{{ t('points.admin.config.cashbackRate') }}</label>
-            <input v-model.number="settings.cashback_rate_percent" type="number" step="0.01" min="0" max="100" class="input" />
-          </div>
+              <div class="space-y-1">
+                <label class="input-label">{{ t('points.admin.config.freezeHours') }}</label>
+                <input v-model.number="settings.freeze_hours" type="number" min="0" max="720" class="input" />
+                <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.freezeHoursHint') }}</p>
+              </div>
+            </div>
+          </section>
 
-          <div class="space-y-1">
-            <label class="input-label">{{ t('points.admin.config.freezeHours') }}</label>
-            <input v-model.number="settings.freeze_hours" type="number" min="0" max="720" class="input" />
-          </div>
+          <section class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+            <h4 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('points.admin.config.valueSection') }}</h4>
+            <div class="mt-4 space-y-1">
+              <label class="input-label">{{ t('points.admin.config.peg') }}</label>
+              <input v-model.number="settings.peg" type="number" step="0.0001" min="0" class="input" />
+              <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.pegHint') }}</p>
+            </div>
+          </section>
 
-          <label class="flex items-center justify-between gap-4">
-            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('points.admin.config.withdrawEnabled') }}</span>
-            <input v-model="settings.withdraw_enabled" type="checkbox" class="h-4 w-4" />
-          </label>
+          <section class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+            <label class="flex items-center justify-between gap-4">
+              <span>
+                <span class="block text-sm font-semibold text-gray-900 dark:text-white">{{ t('points.admin.config.withdrawSection') }}</span>
+                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.withdrawSectionHint') }}</span>
+              </span>
+              <input v-model="settings.withdraw_enabled" type="checkbox" class="h-4 w-4" />
+            </label>
+            <div class="mt-4 grid gap-4 md:grid-cols-2">
+              <div class="space-y-1">
+                <label class="input-label">{{ t('points.admin.config.withdrawMin') }}</label>
+                <input v-model.number="settings.withdraw_min_points" type="number" min="0" class="input" />
+              </div>
 
-          <div class="space-y-1">
-            <label class="input-label">{{ t('points.admin.config.withdrawMin') }}</label>
-            <input v-model.number="settings.withdraw_min_points" type="number" min="0" class="input" />
-          </div>
+              <div class="space-y-1">
+                <label class="input-label">{{ t('points.admin.config.withdrawFee') }}</label>
+                <input v-model.number="settings.withdraw_fee_percent" type="number" step="0.01" min="0" max="100" class="input" />
+                <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.withdrawFeeHint') }}</p>
+              </div>
+            </div>
+          </section>
 
-          <div class="space-y-1">
-            <label class="input-label">{{ t('points.admin.config.withdrawFee') }}</label>
-            <input v-model.number="settings.withdraw_fee_percent" type="number" step="0.01" min="0" max="100" class="input" />
-          </div>
+          <section class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+            <label class="flex items-center justify-between gap-4">
+              <span>
+                <span class="block text-sm font-semibold text-gray-900 dark:text-white">{{ t('points.admin.config.redeemBalanceOn') }}</span>
+                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.redeemBalanceHint') }}</span>
+              </span>
+              <input v-model="settings.redeem_balance_on" type="checkbox" class="h-4 w-4" />
+            </label>
+          </section>
 
-          <label class="flex items-center justify-between gap-4">
-            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('points.admin.config.redeemBalanceOn') }}</span>
-            <input v-model="settings.redeem_balance_on" type="checkbox" class="h-4 w-4" />
-          </label>
-
-          <label class="flex items-center justify-between gap-4">
-            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('points.admin.config.redeemPlanOn') }}</span>
-            <input v-model="settings.redeem_plan_on" type="checkbox" class="h-4 w-4" />
-          </label>
+          <section class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+            <label class="flex items-center justify-between gap-4">
+              <span>
+                <span class="block text-sm font-semibold text-gray-900 dark:text-white">{{ t('points.admin.config.redeemPlanOn') }}</span>
+                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-500">{{ t('points.admin.config.redeemPlanHint') }}</span>
+              </span>
+              <input v-model="settings.redeem_plan_on" type="checkbox" class="h-4 w-4" />
+            </label>
+          </section>
         </div>
 
         <div class="mt-6">
@@ -68,7 +99,7 @@
     <!-- peg 变更会重估全部存量积分价值 → BaseDialog 二次确认（spec §2.1/§7） -->
     <BaseDialog
       :show="pegConfirm.show"
-      :title="t('points.admin.config.peg')"
+      :title="t('points.admin.config.pegConfirmTitle')"
       width="narrow"
       :close-on-escape="!saving"
       @close="cancelPegChange"

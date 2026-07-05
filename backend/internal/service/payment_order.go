@@ -616,6 +616,75 @@ func readSubscriptionIntent(order *dbent.PaymentOrder) (intent string, targetSub
 	return intent, targetSubID
 }
 
+// PaymentOrderSubscriptionIntent 返回订单冻结的订阅动作，供 API 展示层使用。
+func PaymentOrderSubscriptionIntent(order *dbent.PaymentOrder) string {
+	if order == nil || order.OrderType != payment.OrderTypeSubscription {
+		return ""
+	}
+	intent, _ := readSubscriptionIntent(order)
+	return intent
+}
+
+// PaymentOrderProductName 返回面向站内订单记录的业务商品名；不依赖支付上游的 name/subject。
+func PaymentOrderProductName(order *dbent.PaymentOrder) string {
+	if order == nil {
+		return ""
+	}
+	switch order.OrderType {
+	case payment.OrderTypeSubscription:
+		return paymentOrderSubscriptionProductName(order)
+	case payment.OrderTypeBalance:
+		return fmt.Sprintf("余额充值 $%s", formatPaymentProductUSD(order.Amount))
+	default:
+		return strings.TrimSpace(order.OrderType)
+	}
+}
+
+func paymentOrderSubscriptionProductName(order *dbent.PaymentOrder) string {
+	intent := PaymentOrderSubscriptionIntent(order)
+	label := subscriptionIntentProductLabel(intent)
+	dailyAmount, validityDays, present, err := readSubscriptionSnapshotDT(order)
+	if err == nil && present {
+		return subscriptionProductName(label, dailyAmount, validityDays)
+	}
+	if order.SubscriptionDays != nil && *order.SubscriptionDays > 0 {
+		return fmt.Sprintf("%s %d天", label, *order.SubscriptionDays)
+	}
+	if order.PlanID != nil && *order.PlanID > 0 {
+		return fmt.Sprintf("%s #%d", label, *order.PlanID)
+	}
+	return label
+}
+
+func subscriptionIntentProductLabel(intent string) string {
+	switch intent {
+	case SubscriptionIntentRenew:
+		return "续费套餐"
+	case SubscriptionIntentChangePlan:
+		return "转套餐"
+	default:
+		return "购买套餐"
+	}
+}
+
+func subscriptionProductName(label string, dailyAmount float64, validityDays int) string {
+	if dailyAmount > 0 && validityDays > 0 {
+		return fmt.Sprintf("%s 每日$%s / %d天", label, formatPaymentProductUSD(dailyAmount), validityDays)
+	}
+	if validityDays > 0 {
+		return fmt.Sprintf("%s %d天", label, validityDays)
+	}
+	return label
+}
+
+func formatPaymentProductUSD(v float64) string {
+	rounded := math.Round(v*100) / 100
+	if math.Abs(rounded-math.Round(rounded)) < 1e-9 {
+		return strconv.FormatInt(int64(math.Round(rounded)), 10)
+	}
+	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(rounded, 'f', 2, 64), "0"), ".")
+}
+
 // buildSubscriptionOrderSnapshot 在下单时把订阅定价**冻结**进订单快照（D/T/u/price/formula_version/
 // currency）。支付回调严格按此快照发卡，绝不按回调时的当前公式/配置重算（防下单后管理员改价/范围
 // 导致发出与用户当时所付不一致的卡）。currency 复用基础快照里的值（缺省站点本币）。
@@ -898,7 +967,7 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 		return nil, infraerrors.ServiceUnavailable("PAYMENT_PROVIDER_MISCONFIGURED", "provider_misconfigured").
 			WithMetadata(map[string]string{"provider": sel.ProviderKey, "instance_id": sel.InstanceID})
 	}
-	subject := s.buildPaymentSubject(plan, limitAmount, cfg, sel)
+	subject := s.buildPaymentSubject(plan, order, limitAmount, cfg, sel)
 	outTradeNo := order.OutTradeNo
 	canonicalReturnURL, err := CanonicalizeReturnURL(req.ReturnURL, req.SrcHost, req.SrcURL)
 	if err != nil {
@@ -987,7 +1056,13 @@ func selectedInstanceSupportedTypes(sel *payment.InstanceSelection) string {
 	return sel.SupportedTypes
 }
 
-func (s *PaymentService) buildPaymentSubject(plan *dbent.SubscriptionPlan, limitAmount float64, cfg *PaymentConfig, sel *payment.InstanceSelection) string {
+func (s *PaymentService) buildPaymentSubject(plan *dbent.SubscriptionPlan, order *dbent.PaymentOrder, limitAmount float64, cfg *PaymentConfig, sel *payment.InstanceSelection) string {
+	if order != nil && order.OrderType == payment.OrderTypeSubscription {
+		productName := PaymentOrderProductName(order)
+		if strings.TrimSpace(productName) != "" {
+			return applyPaymentProductNameAffix(productName, cfg)
+		}
+	}
 	if plan != nil {
 		productName := plan.ProductName
 		if productName == "" {

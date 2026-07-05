@@ -89,6 +89,30 @@ func TestSubscriptionSnapshot_FreezesWeeklyMonthlyLimits(t *testing.T) {
 	require.False(t, ok, "老订单无 W/M 快照应回 ok=false")
 }
 
+func TestPaymentOrderProductName_DistinguishesSubscriptionIntents(t *testing.T) {
+	newOrder := func(intent string) *dbent.PaymentOrder {
+		return &dbent.PaymentOrder{
+			OrderType: payment.OrderTypeSubscription,
+			ProviderSnapshot: map[string]any{
+				subscriptionSnapshotKey: map[string]any{
+					"intent":           intent,
+					"daily_amount_usd": 30.0,
+					"validity_days":    30.0,
+				},
+			},
+		}
+	}
+
+	require.Equal(t, "购买套餐 每日$30 / 30天", PaymentOrderProductName(newOrder(SubscriptionIntentPurchase)))
+	require.Equal(t, "续费套餐 每日$30 / 30天", PaymentOrderProductName(newOrder(SubscriptionIntentRenew)))
+	require.Equal(t, "转套餐 每日$30 / 30天", PaymentOrderProductName(newOrder(SubscriptionIntentChangePlan)))
+}
+
+func TestPaymentOrderProductName_BalanceUsesCreditedUSD(t *testing.T) {
+	order := &dbent.PaymentOrder{OrderType: payment.OrderTypeBalance, Amount: 140}
+	require.Equal(t, "余额充值 $140", PaymentOrderProductName(order))
+}
+
 // D/T 越界必须在收款前被拒（INVALID_SUBSCRIPTION_PARAMS），绝不生成无法履约的订单。
 func TestValidateSubOrder_CustomRejectsOutOfRange(t *testing.T) {
 	ctx := context.Background()

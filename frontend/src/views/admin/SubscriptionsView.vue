@@ -210,12 +210,12 @@
                     <div
                       class="h-1.5 rounded-full bg-primary-500 transition-all"
                       :style="{
-                        width: getProgressWidth(row.consumed_usd, row.granted_total_usd)
+                        width: getProgressWidth(burndownProgressUSD(row), row.granted_total_usd)
                       }"
                     ></div>
                   </div>
                   <span class="usage-amount">
-                    ${{ (row.consumed_usd || 0).toFixed(2) }}
+                    ${{ burndownProgressUSD(row).toFixed(2) }}
                     <span class="text-gray-400">/</span>
                     ${{ (row.granted_total_usd || 0).toFixed(2) }}
                   </span>
@@ -1401,6 +1401,15 @@ const burndownCalendarDay = (sub: UserSubscription): number => {
 const burndownConsumptionDay = (sub: UserSubscription): number => {
   const day = sub.consumption_day
   return typeof day === 'number' && Number.isFinite(day) ? Math.max(0, Math.floor(day)) : 0
+}
+
+const burndownProgressUSD = (sub: UserSubscription): number => {
+  const granted = sub.granted_total_usd || 0
+  if (granted <= 0) return 0
+  const consumed = Number.isFinite(sub.consumed_usd) ? sub.consumed_usd || 0 : 0
+  const clawed = Number.isFinite(sub.clawed_usd) ? sub.clawed_usd || 0 : 0
+  const elapsed = burndownCalendarDay(sub) * (sub.daily_amount_usd || 0)
+  return Math.min(granted, Math.max(0, consumed + clawed, elapsed))
 }
 
 const getProgressClass = (used: number | null | undefined, limit: number | null): string => {
