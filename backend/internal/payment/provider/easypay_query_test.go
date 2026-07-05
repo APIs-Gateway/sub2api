@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -57,7 +56,14 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			wantAmount:  3.21,
 		},
 		{
-			name:        "kyren order response with matching out trade no is paid",
+			name:        "keying string paid status remains compatible",
+			body:        `{"code":1,"status":"1","money":"3.21"}`,
+			wantStatus:  payment.ProviderStatusPaid,
+			wantTradeNo: orderID,
+			wantAmount:  3.21,
+		},
+		{
+			name:        "keying order response with matching out trade no is paid",
 			body:        `{"code":1,"msg":"查询订单号成功！","trade_no":"K202605260001","out_trade_no":"order-123","type":"alipay","pid":"10001","addtime":"2026-05-26 10:30:00","endtime":"2026-05-26 10:31:12","name":"AI credits","money":"9.99","status":1,"param":"account_123","buyer":""}`,
 			wantStatus:  payment.ProviderStatusPaid,
 			wantTradeNo: "K202605260001",
@@ -113,23 +119,26 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var gotForm url.Values
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost {
-					t.Errorf("method = %q, want %q", r.Method, http.MethodPost)
+				if r.Method != http.MethodGet {
+					t.Errorf("method = %q, want %q", r.Method, http.MethodGet)
 				}
 				if r.URL.Path != "/api.php" {
 					t.Errorf("path = %q, want /api.php", r.URL.Path)
 				}
-				if err := r.ParseForm(); err != nil {
-					t.Errorf("ParseForm: %v", err)
-				}
-				gotForm = make(url.Values, len(r.PostForm))
-				for key, values := range r.PostForm {
-					gotForm[key] = append([]string(nil), values...)
-				}
+				query := r.URL.Query()
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(tt.body))
+				for key, want := range map[string]string{
+					"act":          "order",
+					"pid":          "pid-1",
+					"key":          "pkey-1",
+					"out_trade_no": orderID,
+				} {
+					if got := query.Get(key); got != want {
+						t.Fatalf("query[%s] = %q, want %q (query=%v)", key, got, want, query)
+					}
+				}
 			}))
 			defer server.Close()
 
@@ -147,16 +156,104 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			if resp.Amount != tt.wantAmount {
 				t.Fatalf("amount = %v, want %v", resp.Amount, tt.wantAmount)
 			}
+		})
+	}
+}
+
+func TestEasyPayQueryOrderUsesGETForKeyingPay(t *testing.T) {
+	t.Parallel()
+
+	const orderID = "sub2_20260705NNXWSKUW"
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			query := r.URL.Query()
 			for key, want := range map[string]string{
 				"act":          "order",
 				"pid":          "pid-1",
 				"key":          "pkey-1",
 				"out_trade_no": orderID,
 			} {
-				if got := gotForm.Get(key); got != want {
-					t.Fatalf("form[%s] = %q, want %q (form=%v)", key, got, want, gotForm)
+				if got := query.Get(key); got != want {
+					t.Fatalf("query[%s] = %q, want %q (query=%v)", key, got, want, query)
 				}
 			}
-		})
+			_, _ = w.Write([]byte(`{"code":1,"msg":"succ","trade_no":"2026070509022580689","out_trade_no":"sub2_20260705NNXWSKUW","money":"1.00","status":"1"}`))
+		default:
+			t.Fatalf("method = %q, want GET", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	provider := newTestEasyPay(t, server.URL)
+	resp, err := provider.QueryOrder(context.Background(), orderID)
+	if err != nil {
+		t.Fatalf("QueryOrder returned error: %v", err)
+	}
+	if resp.Status != payment.ProviderStatusPaid {
+		t.Fatalf("status = %q, want %q (response=%+v)", resp.Status, payment.ProviderStatusPaid, resp)
+	}
+	if resp.TradeNo != "2026070509022580689" {
+		t.Fatalf("trade_no = %q, want gateway trade no", resp.TradeNo)
+	}
+	if resp.Amount != 1 {
+		t.Fatalf("amount = %v, want 1", resp.Amount)
+	}
+	if len(methods) != 1 || methods[0] != http.MethodGet {
+		t.Fatalf("methods = %v, want [GET]", methods)
+	}
+}
+
+func TestEasyPayQueryOrderFallsBackToPOSTForLegacyGateway(t *testing.T) {
+	t.Parallel()
+
+	const orderID = "order-123"
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"code":-5,"msg":"No Act!"}`))
+		case http.MethodPost:
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("ParseForm: %v", err)
+			}
+			for key, want := range map[string]string{
+				"act":          "order",
+				"pid":          "pid-1",
+				"key":          "pkey-1",
+				"out_trade_no": orderID,
+			} {
+				if got := r.PostForm.Get(key); got != want {
+					t.Fatalf("form[%s] = %q, want %q (form=%v)", key, got, want, r.PostForm)
+				}
+			}
+			_, _ = w.Write([]byte(`{"code":1,"trade_no":"legacy-123","money":"2.00","status":1}`))
+		default:
+			t.Fatalf("method = %q, want GET then POST", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	provider := newTestEasyPay(t, server.URL)
+	resp, err := provider.QueryOrder(context.Background(), orderID)
+	if err != nil {
+		t.Fatalf("QueryOrder returned error: %v", err)
+	}
+	if resp.Status != payment.ProviderStatusPaid {
+		t.Fatalf("status = %q, want %q (response=%+v)", resp.Status, payment.ProviderStatusPaid, resp)
+	}
+	if resp.TradeNo != "legacy-123" {
+		t.Fatalf("trade_no = %q, want legacy-123", resp.TradeNo)
+	}
+	if resp.Amount != 2 {
+		t.Fatalf("amount = %v, want 2", resp.Amount)
+	}
+	if len(methods) != 2 || methods[0] != http.MethodGet || methods[1] != http.MethodPost {
+		t.Fatalf("methods = %v, want [GET POST]", methods)
 	}
 }
