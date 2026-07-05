@@ -51,6 +51,11 @@ const {
 }));
 
 const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
+const routeState = vi.hoisted(() => ({
+  name: "AdminSettings",
+  query: {} as Record<string, string>,
+}));
+const routerReplace = vi.hoisted(() => vi.fn());
 
 vi.mock("@/api", () => ({
   adminAPI: {
@@ -106,6 +111,13 @@ vi.mock("@/composables/useClipboard", () => ({
 
 vi.mock("@/utils/apiError", () => ({
   extractApiErrorMessage: () => "error",
+}));
+
+vi.mock("vue-router", () => ({
+  useRoute: () => routeState,
+  useRouter: () => ({
+    replace: routerReplace,
+  }),
 }));
 
 vi.mock("vue-i18n", async () => {
@@ -185,6 +197,7 @@ vi.mock("vue-i18n", async () => {
 });
 
 const AppLayoutStub = { template: "<div><slot /></div>" };
+const RouterLinkStub = { template: "<a><slot /></a>" };
 const ToggleStub = defineComponent({
   props: {
     modelValue: {
@@ -448,6 +461,8 @@ function mountView() {
         ProxySelector: true,
         ImageUpload: ImageUploadStub,
         BackupSettings: true,
+        AdminPointsConfigPanel: true,
+        "router-link": RouterLinkStub,
       },
     },
   });
@@ -507,6 +522,10 @@ describe("admin SettingsView payment visible method controls", () => {
     showError.mockReset();
     showSuccess.mockReset();
     localeRef.value = "zh-CN";
+    routeState.name = "AdminSettings";
+    routeState.query = {};
+    routerReplace.mockReset();
+    routerReplace.mockResolvedValue(undefined);
 
     getSettings.mockResolvedValue({ ...baseSettingsResponse });
     updateSettings.mockImplementation(async (payload) => ({
@@ -758,6 +777,8 @@ describe("admin SettingsView payment visible method controls", () => {
           ProxySelector: true,
           ImageUpload: ImageUploadStub,
           BackupSettings: true,
+          AdminPointsConfigPanel: true,
+          "router-link": RouterLinkStub,
         },
       },
     });
