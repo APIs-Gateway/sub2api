@@ -287,7 +287,8 @@ watch(
     dailyAmount.value = props.mode === 'renew' ? cardD : snapDailyAmount(cardD)
     validityDays.value = b.t_min
     await refreshQuote()
-  }
+  },
+  { immediate: true }
 )
 
 // 确认 → 不在此扣费/换卡，而是带「意图 + D/T + 预估金额」交给父组件跳转法币支付网关结账。

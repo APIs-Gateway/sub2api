@@ -291,6 +291,10 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/payment',
+    redirect: to => ({ path: '/purchase', query: to.query, hash: to.hash })
+  },
+  {
     path: '/orders',
     name: 'OrderList',
     component: () => import('@/views/user/UserOrdersView.vue'),
