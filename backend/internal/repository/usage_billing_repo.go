@@ -108,8 +108,8 @@ func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *s
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
 	// 三窗口结算：按瀑布把官方成本结算到「用户唯一生效卡 + 钱包」（订阅覆盖 1:1 加三窗口 usage
-	// → 钱包正余额 1:1 → 钱包负数 1:1）。订阅余额与钱包余额地位等价、均按官方刀 1:1 抵扣，倍率
-	// 不参与扣费（见 docs/billing-perday-redesign.md §4）。结算不含透支（透支走独立手动接口）。
+	// → 钱包正余额 ×倍率 → 钱包负数 ×倍率）。订阅三窗口配额是资源额度，按官方刀 1:1 消耗；钱包是
+	// 用户实付余额，溢出部分按 rate_multiplier 折算成售价货币额扣费。结算不含透支（透支走独立手动接口）。
 	// 锁序 user→card，整套副作用同 tx，dedup 覆盖整笔。OfficialCost = 官方价；legacy/测试只传
 	// BalanceCost 时回退（按它 1:1 扣，无卡即纯钱包，等价旧 deductUsageBillingBalance）。
 	officialCost := cmd.OfficialCost
@@ -117,7 +117,11 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		officialCost = cmd.BalanceCost
 	}
 	if officialCost > 0 {
-		settleRes, err := settleSubscriptionWindow(ctx, tx, cmd.UserID, officialCost)
+		multiplier := cmd.RateMultiplier
+		if multiplier <= 0 {
+			multiplier = 1
+		}
+		settleRes, err := settleSubscriptionWindow(ctx, tx, cmd.UserID, officialCost, multiplier)
 		if err != nil {
 			return err
 		}
@@ -165,15 +169,15 @@ type subSettleResult struct {
 }
 
 // settleSubscriptionWindow 按三窗口瀑布把一笔请求的官方成本结算到「用户唯一生效卡 + 钱包」。
-// 锁序固定 user→card（与购买/续费/转套餐一致，防死锁）。无生效卡 → 纯钱包计费（官方价 1:1）。
-// 订阅覆盖（1:1，加三窗口 usage，只升） → 钱包正余额（1:1） → 钱包负数兜底（1:1），整套副作用在
+// 锁序固定 user→card（与购买/续费/转套餐一致，防死锁）。无生效卡 → 纯钱包计费（官方价×倍率）。
+// 订阅覆盖（1:1，加三窗口 usage，只升） → 钱包正余额（×倍率） → 钱包负数兜底（×倍率），整套副作用在
 // 本事务内原子完成；dedup（claimUsageBillingKey）与本函数同 tx，重放整笔跳过。**结算不含透支**
 // （透支走独立手动接口，单独改 expires_at + 月度计数）。瀑布逻辑复用 service.SettleWindow（已穷尽单测）。
-// 订阅余额与钱包余额地位等价、均按官方刀 1:1 抵扣，倍率不参与扣费（见 docs/billing-perday-redesign.md §4）。
+// 订阅三窗口配额按官方刀 1:1 消耗（与售价倍率无关）；钱包扣的是用户实付货币额，按 multiplier 折算。
 //
 // ★安全闸（资损）：未配置/未回填卡（三限额全 NULL）经 SubRemaining 返回 0、订阅不覆盖、回落钱包，
 // 不会“免费 1:1 全覆盖”（见 service.SubWindow.SubRemaining）。
-func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, officialCost float64) (*subSettleResult, error) {
+func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, officialCost, multiplier float64) (*subSettleResult, error) {
 	// 1) 锁 user 行（balance）。月度透支计数本路径不改（透支走独立接口），但一并读出构造 WalletState。
 	var balance float64
 	var monthCount int
@@ -251,7 +255,7 @@ func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, off
 			Status:             status,
 		}
 	}
-	service.SettleWindow(card, &wallet, officialCost, now)
+	service.SettleWindow(card, &wallet, officialCost, multiplier, now)
 
 	out := &subSettleResult{}
 	// 计费识别 = 用户存在生效中的订阅卡。即使本次订阅覆盖为 0（撞窗口上限、全由钱包支付），

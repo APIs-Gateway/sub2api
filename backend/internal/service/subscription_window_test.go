@@ -164,15 +164,15 @@ func TestAdmitWindow(t *testing.T) {
 	})
 }
 
-// ── SettleWindow：订阅覆盖(1:1) → 钱包正(1:1) → 钱包负(1:1) ───────────────────────
-// 订阅余额与钱包余额地位等价、均按官方刀 1:1 抵扣，倍率不参与扣费（见 docs/billing-perday-redesign.md §4）。
+// ── SettleWindow：订阅覆盖(1:1) → 钱包正(×倍率) → 钱包负(×倍率) ───────────────────
+// 订阅三窗口配额是资源额度，按官方刀 1:1 消耗；钱包扣的是用户实付货币额，按 rate_multiplier 折算。
 func TestSettleWindow(t *testing.T) {
 	now := time.Now()
 
 	t.Run("subscription covers fully, three usages accrue, wallet untouched", func(t *testing.T) {
 		c := activeCard(10)
 		w := &WalletState{Balance: 100}
-		res := SettleWindow(c, w, 4, now)
+		res := SettleWindow(c, w, 4, 1, now)
 		if !feq(res.SubCover, 4) || res.WalletPay != 0 || res.WalletNegPay != 0 {
 			t.Fatalf("unexpected res: %+v", res)
 		}
@@ -188,7 +188,7 @@ func TestSettleWindow(t *testing.T) {
 		c := activeCard(10)
 		c.DailyUsageUSD = 7 // remaining 3
 		w := &WalletState{Balance: 100}
-		res := SettleWindow(c, w, 5, now) // cover 3, leftover 2 official -> wallet 2 (1:1)
+		res := SettleWindow(c, w, 5, 1, now) // cover 3, leftover 2 official -> wallet 2 (1:1)
 		if !feq(res.SubCover, 3) || !feq(res.WalletPay, 2) || res.WalletNegPay != 0 {
 			t.Fatalf("unexpected res: %+v", res)
 		}
@@ -201,7 +201,7 @@ func TestSettleWindow(t *testing.T) {
 		c := activeCard(10)
 		c.DailyUsageUSD = 10 // remaining 0
 		w := &WalletState{Balance: 6}
-		res := SettleWindow(c, w, 10, now) // cover 0; wallet covers 6 (1:1), leftover 4 -> neg 4
+		res := SettleWindow(c, w, 10, 1, now) // cover 0; wallet covers 6 (1:1), leftover 4 -> neg 4
 		if res.SubCover != 0 || !feq(res.WalletPay, 6) || !feq(res.WalletNegPay, 4) {
 			t.Fatalf("unexpected res: %+v", res)
 		}
@@ -212,7 +212,7 @@ func TestSettleWindow(t *testing.T) {
 
 	t.Run("no card -> pure wallet billing 1:1", func(t *testing.T) {
 		w := &WalletState{Balance: 100}
-		res := SettleWindow(nil, w, 5, now)
+		res := SettleWindow(nil, w, 5, 1, now)
 		if res.SubCover != 0 || !feq(res.WalletPay, 5) {
 			t.Fatalf("unexpected res: %+v", res)
 		}
@@ -225,7 +225,7 @@ func TestSettleWindow(t *testing.T) {
 		c := activeCard(10)
 		c.ExpiresAt = ExpireDayToExpiresAt(EastDayNumber(now) - 2) // 加载时 active 但已过期
 		w := &WalletState{Balance: 100}
-		res := SettleWindow(c, w, 3, now)
+		res := SettleWindow(c, w, 3, 1, now)
 		if !c.JustExpired {
 			t.Fatal("should flag JustExpired")
 		}
@@ -237,9 +237,66 @@ func TestSettleWindow(t *testing.T) {
 	t.Run("zero cost is a no-op", func(t *testing.T) {
 		c := activeCard(10)
 		w := &WalletState{Balance: 100}
-		res := SettleWindow(c, w, 0, now)
+		res := SettleWindow(c, w, 0, 1, now)
 		if res.SubCover != 0 || res.WalletPay != 0 || res.WalletNegPay != 0 || !feq(w.Balance, 100) {
 			t.Fatalf("zero cost should be no-op: %+v balance=%v", res, w.Balance)
+		}
+	})
+
+	t.Run("subscription overflow bills wallet positive balance at multiplier, sub cover stays 1:1", func(t *testing.T) {
+		c := activeCard(10)
+		c.DailyUsageUSD = 7 // remaining 3 official
+		w := &WalletState{Balance: 100}
+		// official cost 5, multiplier 2: cover 3 official (1:1) -> leftover 2 official -> wallet 2*2=4
+		res := SettleWindow(c, w, 5, 2, now)
+		if !feq(res.SubCover, 3) {
+			t.Fatalf("sub cover must stay 1:1 regardless of multiplier, got %v", res.SubCover)
+		}
+		if !feq(res.WalletPay, 4) {
+			t.Fatalf("wallet positive pay must be leftover*multiplier = 2*2=4, got %v", res.WalletPay)
+		}
+		if !feq(c.DailyUsageUSD, 10) || !feq(w.Balance, 96) {
+			t.Fatalf("state wrong: dailyUsage=%v balance=%v", c.DailyUsageUSD, w.Balance)
+		}
+	})
+
+	t.Run("subscription and wallet exhausted -> wallet negative billed at multiplier", func(t *testing.T) {
+		c := activeCard(10)
+		c.DailyUsageUSD = 10 // remaining 0
+		w := &WalletState{Balance: 3}
+		// official cost 10, multiplier 2: cover 0; wallet's $3 cash buys 1.5 official (pay=3);
+		// leftover 8.5 official -> neg 8.5*2=17
+		res := SettleWindow(c, w, 10, 2, now)
+		if res.SubCover != 0 {
+			t.Fatalf("sub cover should be 0, got %v", res.SubCover)
+		}
+		if !feq(res.WalletPay, 3) {
+			t.Fatalf("wallet positive pay must drain the $3 cash, got %v", res.WalletPay)
+		}
+		if !feq(res.WalletNegPay, 17) {
+			t.Fatalf("wallet negative pay must be 8.5*2=17, got %v", res.WalletNegPay)
+		}
+		if !feq(w.Balance, -17) {
+			t.Fatalf("wallet should be -17, got %v", w.Balance)
+		}
+	})
+
+	t.Run("no card -> pure wallet billing at multiplier", func(t *testing.T) {
+		w := &WalletState{Balance: 100}
+		res := SettleWindow(nil, w, 5, 2, now)
+		if res.SubCover != 0 || !feq(res.WalletPay, 10) {
+			t.Fatalf("unexpected res: %+v", res)
+		}
+		if !feq(w.Balance, 90) {
+			t.Fatalf("wallet should be 90 (100 - 5*2), got %v", w.Balance)
+		}
+	})
+
+	t.Run("multiplier <= 0 defaults to 1", func(t *testing.T) {
+		w := &WalletState{Balance: 100}
+		res := SettleWindow(nil, w, 5, 0, now)
+		if !feq(res.WalletPay, 5) || !feq(w.Balance, 95) {
+			t.Fatalf("multiplier<=0 should default to 1: %+v balance=%v", res, w.Balance)
 		}
 	})
 }
@@ -409,7 +466,7 @@ func TestManualOverdraft_WeeklyStillBindingAfter(t *testing.T) {
 		t.Fatalf("weekly still binding -> SubRemaining must be 0, got %v", rem)
 	}
 	// 结算：订阅覆盖 0（周封顶），全落钱包 1:1。
-	res := SettleWindow(c, w, 8, now)
+	res := SettleWindow(c, w, 8, 1, now)
 	if res.SubCover != 0 {
 		t.Fatalf("overdraft cannot bypass weekly cap; SubCover must be 0, got %v", res.SubCover)
 	}

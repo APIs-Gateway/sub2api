@@ -313,7 +313,7 @@ func TestSubscriptionServiceChangePlanApply_NewCardBillsThroughThreeWindowsPostg
 		UserID:         user.ID,
 		SubscriptionID: &res.NewSubscriptionID,
 		OfficialCost:   5,
-		RateMultiplier: 2, // 钱包 1:1，倍率不参与扣费（本次全由订阅覆盖）
+		RateMultiplier: 2, // 本次全由订阅覆盖（1:1），钱包不受倍率影响
 	})
 	require.NoError(t, err)
 	require.True(t, applyRes.Applied)

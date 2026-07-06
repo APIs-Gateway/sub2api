@@ -41,10 +41,10 @@ type UsageBillingCommand struct {
 	AccountQuotaCost    float64
 
 	// 三窗口结算输入（per-day redesign）：
-	// OfficialCost = 官方价（= CostBreakdown.TotalCost）；订阅与钱包余额地位等价、都按它 1:1 扣
-	// （倍率不参与扣费，见 docs/billing-perday-redesign.md §4）。OfficialCost>0 触发三窗口结算。
-	// RateMultiplier = 钱包计费倍率（= ActualCost/TotalCost）；**不再参与扣费**，仅留作 usage_log
-	// 展示/审计与幂等指纹分量（相同 ActualCost 但官方价/倍率拆分不同仍视为不同结算语义）。
+	// OfficialCost = 官方价（= CostBreakdown.TotalCost）；订阅三窗口配额按它 1:1 消耗。
+	// OfficialCost>0 触发三窗口结算。
+	// RateMultiplier = 钱包计费倍率（= ActualCost/TotalCost）；订阅覆盖之外溢出到钱包的部分按它
+	// 折算成售价货币额扣费（<=0 时结算层按 1 处理）；同时也是 usage_log 展示/审计与幂等指纹分量。
 	OfficialCost   float64
 	RateMultiplier float64
 }
