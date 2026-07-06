@@ -7348,7 +7348,7 @@ export default {
     concurrency: '并发',
     weeklyCap: '周封顶',
     monthlyCap: '月封顶',
-    priceWithCurrency: '实付金额（{currency}）',
+    priceWithCurrency: '价格',
     validityMonth: '单月',
     validityQuarter: '季度',
     validityHalfYear: '半年',

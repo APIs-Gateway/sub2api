@@ -90,7 +90,10 @@
             <span class="min-w-0 text-sm text-gray-600 dark:text-gray-400">
               {{ t('subscriptionPurchase.priceWithCurrency', { currency: paymentCurrency }) }}
             </span>
-            <span class="min-w-0 break-words font-mono text-xl font-semibold leading-tight tabular-nums text-gray-900 dark:text-white sm:text-2xl sm:text-right">
+            <span
+              data-testid="subscription-purchase-price-value"
+              class="block w-full max-w-full min-w-0 break-all text-right font-mono text-xl font-semibold leading-tight tabular-nums text-gray-900 dark:text-white sm:w-auto sm:flex-1 sm:text-2xl sm:text-right"
+            >
               <span v-if="quoting" class="text-base text-gray-400">{{ t('subscriptionPurchase.quoting') }}</span>
               <span v-else>{{ formattedPayableAmount }}</span>
             </span>
