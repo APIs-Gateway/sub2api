@@ -119,8 +119,16 @@ describe('UseKeyModal', () => {
 
     const codeBlock = wrapper.find('pre code')
     expect(codeBlock.exists()).toBe(true)
+    expect(codeBlock.text()).toContain('"name": "GPT-5.6 Sol"')
+    expect(codeBlock.text()).toContain('"name": "GPT-5.6 Terra"')
+    expect(codeBlock.text()).toContain('"name": "GPT-5.6 Luna"')
     expect(codeBlock.text()).toContain('"name": "GPT-5.4 Mini"')
     expect(codeBlock.text()).not.toContain('"name": "GPT-5.4 Nano"')
+
+    const parsed = JSON.parse(codeBlock.text())
+    expect(parsed.provider.openai.models['gpt-5.6-sol'].limit).toEqual({ context: 1050000, output: 128000 })
+    expect(parsed.provider.openai.models['gpt-5.6-terra'].limit).toEqual({ context: 1050000, output: 128000 })
+    expect(parsed.provider.openai.models['gpt-5.6-luna'].limit).toEqual({ context: 1050000, output: 128000 })
   })
 
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {
