@@ -7195,6 +7195,7 @@ export default {
     concurrency: 'Concurrency',
     weeklyCap: 'Weekly cap',
     monthlyCap: 'Monthly cap',
+    priceWithCurrency: 'Payable ({currency})',
     validityMonth: 'Monthly',
     validityQuarter: 'Quarterly',
     validityHalfYear: 'Half year',

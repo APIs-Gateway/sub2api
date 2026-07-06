@@ -86,9 +86,11 @@
         </div>
         <!-- quoteError 用 primary（Signal）表错误，符合设计系统语义。 -->
         <template v-else>
-          <div class="flex items-end justify-between">
-            <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('subscriptionPurchase.priceWithCurrency', { currency: paymentCurrency }) }}</span>
-            <span class="font-mono text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
+          <div class="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <span class="min-w-0 text-sm text-gray-600 dark:text-gray-400">
+              {{ t('subscriptionPurchase.priceWithCurrency', { currency: paymentCurrency }) }}
+            </span>
+            <span class="min-w-0 break-words font-mono text-xl font-semibold leading-tight tabular-nums text-gray-900 dark:text-white sm:text-2xl sm:text-right">
               <span v-if="quoting" class="text-base text-gray-400">{{ t('subscriptionPurchase.quoting') }}</span>
               <span v-else>{{ formattedPayableAmount }}</span>
             </span>
