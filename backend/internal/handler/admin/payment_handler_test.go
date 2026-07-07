@@ -13,7 +13,7 @@ import (
 
 func TestSanitizeAdminPaymentOrderForResponseAddsCurrency(t *testing.T) {
 	result := sanitizeAdminPaymentOrderForResponse(&dbent.PaymentOrder{
-		ProviderSnapshot: map[string]interface{}{
+		ProviderSnapshot: map[string]any{
 			"currency": "usd",
 		},
 	})
