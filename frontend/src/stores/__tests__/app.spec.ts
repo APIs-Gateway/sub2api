@@ -261,6 +261,7 @@ describe('useAppStore', () => {
         contact_info: 'test@test.com',
         api_base_url: 'https://api.test.com',
         doc_url: 'https://docs.test.com',
+        default_locale: 'zh-HK',
       }
 
       const store = useAppStore()
@@ -271,6 +272,7 @@ describe('useAppStore', () => {
       expect(store.siteLogo).toBe('/logo.png')
       expect(store.siteVersion).toBe('1.0.0')
       expect(store.publicSettingsLoaded).toBe(true)
+      expect(store.cachedPublicSettings?.default_locale).toBe('zh-HK')
     })
 
     it('无注入配置时返回 false', () => {
@@ -308,6 +310,7 @@ describe('useAppStore', () => {
         site_name: 'Updated Site',
         site_logo: '',
         site_subtitle: '',
+        default_locale: 'zh-HK',
         api_base_url: '',
         contact_info: '',
         doc_url: '',
@@ -331,6 +334,16 @@ describe('useAppStore', () => {
       expect((window as any).__APP_CONFIG__.table_page_size_options).toEqual([20, 100, 1000])
       expect(localStorage.getItem('table-page-size')).toBeNull()
       expect(localStorage.getItem('table-page-size-source')).toBeNull()
+    })
+
+    it('returns zh-CN as the loaded public settings fallback default locale', async () => {
+      const store = useAppStore()
+      store.publicSettingsLoaded = true
+      store.cachedPublicSettings = null
+
+      const settings = await store.fetchPublicSettings()
+
+      expect(settings?.default_locale).toBe('zh-CN')
     })
   })
 })

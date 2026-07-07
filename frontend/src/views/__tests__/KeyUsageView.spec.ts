@@ -4,11 +4,12 @@ import { nextTick } from 'vue'
 
 import KeyUsageView from '../KeyUsageView.vue'
 
-const { showInfo, showSuccess, showError, fetchPublicSettings } = vi.hoisted(() => ({
+const { showInfo, showSuccess, showError, fetchPublicSettings, currentLocale } = vi.hoisted(() => ({
   showInfo: vi.fn(),
   showSuccess: vi.fn(),
   showError: vi.fn(),
   fetchPublicSettings: vi.fn(),
+  currentLocale: { value: 'en' },
 }))
 
 const messages: Record<string, string> = {
@@ -45,8 +46,14 @@ const messages: Record<string, string> = {
   'keyUsage.limitWeekly': 'Weekly Limit',
   'keyUsage.limitMonthly': 'Monthly Limit',
   'keyUsage.remainingQuota': 'Remaining Quota',
+  'keyUsage.expiresAt': 'Expires At',
+  'keyUsage.daysLeft': '({days} days)',
   'keyUsage.usedQuota': 'Used Quota',
   'keyUsage.subscriptionType': 'Subscription Type',
+  'keyUsage.subscriptionExpires': 'Subscription Expires',
+  'keyUsage.windowDay': 'D',
+  'keyUsage.windowWeek': 'W',
+  'keyUsage.windowMonth': 'M',
   'keyUsage.todayRequests': 'Today Requests',
   'keyUsage.todayInputTokens': 'Today Input',
   'keyUsage.todayOutputTokens': 'Today Output',
@@ -78,7 +85,7 @@ vi.mock('vue-i18n', async () => {
     ...actual,
     useI18n: () => ({
       t: (key: string) => messages[key] ?? key,
-      locale: { value: 'en' },
+      locale: currentLocale,
     }),
   }
 })
@@ -103,6 +110,10 @@ describe('KeyUsageView daily detail', () => {
     showSuccess.mockReset()
     showError.mockReset()
     fetchPublicSettings.mockReset()
+    currentLocale.value = 'en'
+    messages['keyUsage.windowDay'] = 'D'
+    messages['keyUsage.windowWeek'] = 'W'
+    messages['keyUsage.windowMonth'] = 'M'
     localStorage.clear()
 
     Object.defineProperty(window, 'matchMedia', {
@@ -122,6 +133,16 @@ describe('KeyUsageView daily detail', () => {
           remaining: 9,
           unit: 'USD',
         },
+        expires_at: '2026-05-19T00:00:00Z',
+        days_until_expiry: 1,
+        rate_limits: [
+          {
+            window: '1d',
+            used: 1,
+            limit: 2,
+            reset_at: null,
+          },
+        ],
         usage: {
           today: {
             requests: 1,
@@ -202,6 +223,63 @@ describe('KeyUsageView daily detail', () => {
     expect(text).toContain('30')
     expect(text).toContain('10')
     expect(text).toContain('$0.12')
+    expect(text).toContain('Used Quota (D)')
+    expect(text).toContain('Expires At')
+
+    wrapper.unmount()
+  })
+
+  it('renders subscription usage windows and dates for zh-HK locales', async () => {
+    currentLocale.value = 'zh-HK'
+    messages['keyUsage.windowDay'] = '日'
+    messages['keyUsage.windowWeek'] = '週'
+    messages['keyUsage.windowMonth'] = '月'
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        mode: 'subscription',
+        isValid: true,
+        status: 'active',
+        planName: 'Pro Plan',
+        remaining: 30,
+        subscription: {
+          daily_limit_usd: 10,
+          daily_usage_usd: 2,
+          weekly_limit_usd: 70,
+          weekly_usage_usd: 12,
+          monthly_limit_usd: 300,
+          monthly_usage_usd: 45,
+          expires_at: '2026-05-19T00:00:00Z',
+        },
+        usage: {
+          today: {},
+          total: {},
+        },
+        daily_usage: [],
+      }),
+    } as Response)
+
+    const wrapper = mount(KeyUsageView, {
+      global: {
+        stubs: {
+          RouterLink: { template: '<a><slot /></a>' },
+          LocaleSwitcher: true,
+          Icon: true,
+        },
+      },
+    })
+
+    await wrapper.find('input').setValue('sk-test-key')
+    await wrapper.find('input').trigger('keydown.enter')
+    await flushPromises()
+    await nextTick()
+
+    const text = wrapper.text()
+    expect(text).toContain('Used Quota (日)')
+    expect(text).toContain('Used Quota (週)')
+    expect(text).toContain('Used Quota (月)')
+    expect(text).toContain('2026年5月19日')
 
     wrapper.unmount()
   })
