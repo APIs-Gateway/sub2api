@@ -6191,8 +6191,10 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 ) (*CostBreakdown, error) {
 	billingModel := firstUsageBillingModel(billingModels)
 	if result != nil && result.ImageCount > 0 {
-		// 渠道定价为 token 计费时走 token 路径，否则走图片计费
-		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
+		if imageBillingModel := s.firstOpenAIImageBillingModel(ctx, billingModels, apiKey); imageBillingModel != "" {
+			return s.calculateOpenAIImageCost(ctx, imageBillingModel, apiKey, result, imageMultiplier), nil
+		}
+		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil {
 			return s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier), nil
 		}
 	}
@@ -6215,6 +6217,29 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		lastErr = errors.New("no non-empty billing model candidates")
 	}
 	return nil, fmt.Errorf("calculate OpenAI usage cost failed for billing models %s: %w", strings.Join(billingModels, ","), lastErr)
+}
+
+func (s *OpenAIGatewayService) firstOpenAIImageBillingModel(ctx context.Context, billingModels []string, apiKey *APIKey) string {
+	seen := make(map[string]struct{}, len(billingModels))
+	for _, candidate := range billingModels {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		key := strings.ToLower(candidate)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		resolved := s.resolveOpenAIChannelPricing(ctx, candidate, apiKey)
+		if resolved == nil {
+			continue
+		}
+		if resolved.Mode == BillingModePerRequest || resolved.Mode == BillingModeImage {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func isUsagePricingUnavailableError(err error) bool {

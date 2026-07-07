@@ -25,6 +25,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
 )
 
 // sseDataPrefix matches SSE data lines with optional whitespace after colon.
@@ -1486,6 +1487,11 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 	}
+
+	if isOpenAIImageModel(modelID) && openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		return s.testOpenAIImageAPIKeyResponses(c, ctx, account, modelID, prompt, normalizedBaseURL, authToken)
+	}
+
 	apiURL := buildOpenAIImagesURL(normalizedBaseURL, openAIImagesGenerationsEndpoint)
 
 	// Set SSE headers
@@ -1563,6 +1569,116 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 	return nil
+}
+
+// testOpenAIImageAPIKeyResponses tests gpt-image-* API key accounts through the
+// Responses image_generation tool. Some OpenAI-compatible upstreams expose
+// gpt-image-* only on /v1/responses and return 5xx on /v1/images/generations.
+func (s *AccountTestService) testOpenAIImageAPIKeyResponses(c *gin.Context, ctx context.Context, account *Account, modelID, prompt, normalizedBaseURL, authToken string) error {
+	apiURL := buildOpenAIResponsesURL(normalizedBaseURL)
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
+	s.sendEvent(c, TestEvent{Type: "content", Text: "Calling /v1/responses image tool...\n"})
+
+	parsed := &OpenAIImagesRequest{
+		Endpoint: openAIImagesGenerationsEndpoint,
+		Model:    strings.TrimSpace(modelID),
+		Prompt:   prompt,
+	}
+	applyOpenAIImagesDefaults(parsed)
+
+	responsesBody, err := buildOpenAIImagesResponsesRequestWithMainModel(parsed, parsed.Model, parsed.Model)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build image request: %s", err.Error()))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(responsesBody))
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create request")
+	}
+	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream, application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Responses API request failed: %s", err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to read response: %s", err.Error()))
+	}
+	if resp.StatusCode != http.StatusOK {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+	}
+
+	results, _, _, _, _, err := collectOpenAIImagesFromResponsesBody(body)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to parse response: %s", err.Error()))
+	}
+	if len(results) == 0 {
+		results = collectOpenAIImagesFromResponsesJSONBody(body)
+	}
+	if len(results) == 0 {
+		return s.sendErrorAndEnd(c, "No images returned from Responses API")
+	}
+
+	for _, item := range results {
+		if item.RevisedPrompt != "" {
+			s.sendEvent(c, TestEvent{Type: "content", Text: item.RevisedPrompt})
+		}
+		if item.Result != "" {
+			mimeType := openAIImageOutputMIMEType(item.OutputFormat)
+			s.sendEvent(c, TestEvent{
+				Type:     "image",
+				ImageURL: "data:" + mimeType + ";base64," + item.Result,
+				MimeType: mimeType,
+			})
+		}
+	}
+
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
+}
+
+func collectOpenAIImagesFromResponsesJSONBody(body []byte) []openAIResponsesImageResult {
+	output := gjson.GetBytes(body, "output")
+	if !output.IsArray() {
+		return nil
+	}
+	results := make([]openAIResponsesImageResult, 0)
+	for _, item := range output.Array() {
+		if !isOpenAIResponsesImageOutputItem(item) {
+			continue
+		}
+		result := strings.TrimSpace(item.Get("result").String())
+		if result == "" {
+			continue
+		}
+		results = append(results, openAIResponsesImageResult{
+			Result:        result,
+			RevisedPrompt: strings.TrimSpace(item.Get("revised_prompt").String()),
+			OutputFormat:  strings.TrimSpace(item.Get("output_format").String()),
+			Size:          strings.TrimSpace(item.Get("size").String()),
+			Background:    strings.TrimSpace(item.Get("background").String()),
+			Quality:       strings.TrimSpace(item.Get("quality").String()),
+		})
+	}
+	return results
 }
 
 // testOpenAIImageOAuth tests OpenAI image generation using an OAuth account via Codex /responses API.

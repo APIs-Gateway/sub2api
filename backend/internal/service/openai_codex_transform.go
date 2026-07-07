@@ -652,6 +652,10 @@ func normalizeOpenAIResponsesImageGenerationTools(reqBody map[string]any) bool {
 		if !ok || strings.TrimSpace(firstNonEmptyString(toolMap["type"])) != "image_generation" {
 			continue
 		}
+		if strings.TrimSpace(firstNonEmptyString(toolMap["model"])) == "" {
+			toolMap["model"] = "gpt-image-2"
+			modified = true
+		}
 		if _, ok := toolMap["output_format"]; !ok {
 			if value := strings.TrimSpace(firstNonEmptyString(toolMap["format"])); value != "" {
 				toolMap["output_format"] = value

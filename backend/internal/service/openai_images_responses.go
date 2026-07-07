@@ -329,6 +329,10 @@ func openAIImageUploadToDataURL(upload OpenAIImagesUpload) (string, error) {
 }
 
 func buildOpenAIImagesResponsesRequest(parsed *OpenAIImagesRequest, toolModel string) ([]byte, error) {
+	return buildOpenAIImagesResponsesRequestWithMainModel(parsed, toolModel, openAIImagesResponsesMainModel)
+}
+
+func buildOpenAIImagesResponsesRequestWithMainModel(parsed *OpenAIImagesRequest, toolModel string, mainModel string) ([]byte, error) {
 	if parsed == nil {
 		return nil, fmt.Errorf("parsed images request is required")
 	}
@@ -355,7 +359,11 @@ func buildOpenAIImagesResponsesRequest(parsed *OpenAIImagesRequest, toolModel st
 	}
 
 	req := []byte(`{"instructions":"","stream":true,"reasoning":{"effort":"medium","summary":"auto"},"parallel_tool_calls":true,"include":["reasoning.encrypted_content"],"model":"","store":false,"tool_choice":{"type":"image_generation"}}`)
-	req, _ = sjson.SetBytes(req, "model", openAIImagesResponsesMainModel)
+	mainModel = strings.TrimSpace(mainModel)
+	if mainModel == "" {
+		mainModel = openAIImagesResponsesMainModel
+	}
+	req, _ = sjson.SetBytes(req, "model", mainModel)
 
 	input := []byte(`[{"type":"message","role":"user","content":[{"type":"input_text","text":""}]}]`)
 	input, _ = sjson.SetBytes(input, "0.content.0.text", prompt)
@@ -416,6 +424,24 @@ func buildOpenAIImagesResponsesRequest(parsed *OpenAIImagesRequest, toolModel st
 	return req, nil
 }
 
+func isOpenAIResponsesImageOutputItem(item gjson.Result) bool {
+	if !item.Exists() || !item.IsObject() {
+		return false
+	}
+	itemType := strings.TrimSpace(item.Get("type").String())
+	if itemType != "" && itemType != "image_generation_call" {
+		return false
+	}
+	if strings.TrimSpace(item.Get("result").String()) == "" {
+		return false
+	}
+	if itemType == "image_generation_call" {
+		return true
+	}
+	id := strings.TrimSpace(item.Get("id").String())
+	return strings.HasPrefix(id, "ig_")
+}
+
 func shouldPassOpenAIImagesN(model string, n int) bool {
 	if n <= 1 {
 		return false
@@ -440,7 +466,7 @@ func extractOpenAIImagesFromResponsesCompleted(payload []byte) ([]openAIResponse
 	output := gjson.GetBytes(payload, "response.output")
 	if output.IsArray() {
 		for _, item := range output.Array() {
-			if item.Get("type").String() != "image_generation_call" {
+			if !isOpenAIResponsesImageOutputItem(item) {
 				continue
 			}
 			result := strings.TrimSpace(item.Get("result").String())
@@ -475,7 +501,7 @@ func extractOpenAIImageFromResponsesOutputItemDone(payload []byte) (openAIRespon
 	}
 
 	item := gjson.GetBytes(payload, "item")
-	if !item.Exists() || item.Get("type").String() != "image_generation_call" {
+	if !isOpenAIResponsesImageOutputItem(item) {
 		return openAIResponsesImageResult{}, "", false, nil
 	}
 
@@ -1358,7 +1384,11 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		return nil, err
 	}
 
-	responsesBody, err := buildOpenAIImagesResponsesRequest(parsed, requestModel)
+	mainModel := openAIImagesResponsesMainModel
+	if account.Type == AccountTypeAPIKey {
+		mainModel = requestModel
+	}
+	responsesBody, err := buildOpenAIImagesResponsesRequestWithMainModel(parsed, requestModel, mainModel)
 	if err != nil {
 		return nil, err
 	}

@@ -1673,6 +1673,24 @@ func TestBuildOpenAIImagesResponsesRequest_PassesThroughNForMultiImageModels(t *
 	require.Equal(t, "draw a cat", gjson.GetBytes(body, "input.0.content.0.text").String())
 }
 
+func TestBuildOpenAIImagesResponsesRequestWithMainModel_UsesProviderImageModel(t *testing.T) {
+	parsed := &OpenAIImagesRequest{
+		Endpoint: openAIImagesEditsEndpoint,
+		Model:    "gpt-image-2",
+		Prompt:   "edit a cat",
+		InputImageURLs: []string{
+			"https://example.com/cat.png",
+		},
+	}
+
+	body, err := buildOpenAIImagesResponsesRequestWithMainModel(parsed, "gpt-image-2", "gpt-image-2")
+	require.NoError(t, err)
+	require.Equal(t, "gpt-image-2", gjson.GetBytes(body, "model").String())
+	require.Equal(t, "gpt-image-2", gjson.GetBytes(body, "tools.0.model").String())
+	require.Equal(t, "edit", gjson.GetBytes(body, "tools.0.action").String())
+	require.Equal(t, "input_image", gjson.GetBytes(body, "input.0.content.1.type").String())
+}
+
 func TestBuildOpenAIImagesResponsesRequest_DoesNotPassNForDallE3(t *testing.T) {
 	parsed := &OpenAIImagesRequest{
 		Endpoint: openAIImagesGenerationsEndpoint,
@@ -1721,6 +1739,22 @@ func TestCollectOpenAIImagesFromResponsesBody_FallsBackToOutputItemDone(t *testi
 	require.Len(t, results, 1)
 	require.Equal(t, "aGVsbG8=", results[0].Result)
 	require.Equal(t, "draw a cat", results[0].RevisedPrompt)
+	require.Equal(t, "png", firstMeta.OutputFormat)
+	require.JSONEq(t, `{"images":1}`, string(usageRaw))
+}
+
+func TestCollectOpenAIImagesFromResponsesBody_AcceptsProviderOutputWithoutType(t *testing.T) {
+	body := []byte(
+		"data: {\"type\":\"response.completed\",\"response\":{\"created_at\":1710000005,\"tool_usage\":{\"image_gen\":{\"images\":1}},\"output\":[{\"id\":\"ig_provider_1\",\"result\":\"ZmluYWw=\",\"output_format\":\"png\"}]}}\n\n" +
+			"data: [DONE]\n\n",
+	)
+
+	results, createdAt, usageRaw, firstMeta, foundFinal, err := collectOpenAIImagesFromResponsesBody(body)
+	require.NoError(t, err)
+	require.True(t, foundFinal)
+	require.Equal(t, int64(1710000005), createdAt)
+	require.Len(t, results, 1)
+	require.Equal(t, "ZmluYWw=", results[0].Result)
 	require.Equal(t, "png", firstMeta.OutputFormat)
 	require.JSONEq(t, `{"images":1}`, string(usageRaw))
 }

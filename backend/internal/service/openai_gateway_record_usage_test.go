@@ -1937,6 +1937,45 @@ func TestGatewayServiceCalculateRecordUsageCost_ChannelImageBillingUsesSizeTier(
 	require.InDelta(t, 0.80, cost.ActualCost, 1e-12)
 }
 
+func TestOpenAIGatewayServiceCalculateRecordUsageCost_ImageCandidateBeatsUpstreamTokenCandidate(t *testing.T) {
+	groupID := int64(129)
+	imagePrice := 0.03
+	cache := newEmptyChannelCache()
+	cache.pricingByGroupModel[channelModelKey{groupID: groupID, model: "gpt-5.4-mini"}] = &ChannelModelPricing{
+		BillingMode: BillingModeToken,
+	}
+	cache.pricingByGroupModel[channelModelKey{groupID: groupID, model: "gpt-image-2"}] = &ChannelModelPricing{
+		BillingMode:     BillingModeImage,
+		PerRequestPrice: &imagePrice,
+	}
+	cache.channelByGroupID[groupID] = &Channel{ID: groupID, Status: StatusActive}
+	cache.loadedAt = time.Now()
+	channelService := &ChannelService{}
+	channelService.cache.Store(cache)
+
+	svc := &OpenAIGatewayService{
+		billingService: NewBillingService(&config.Config{}, nil),
+		resolver:       NewModelPricingResolver(channelService, NewBillingService(&config.Config{}, nil)),
+	}
+
+	cost, err := svc.calculateOpenAIRecordUsageCost(
+		context.Background(),
+		&OpenAIForwardResult{Model: "gpt-image-2", UpstreamModel: "gpt-5.4-mini", ImageCount: 1, ImageSize: "1K"},
+		&APIKey{GroupID: i64p(groupID), Group: &Group{ID: groupID}},
+		[]string{"gpt-5.4-mini", "gpt-image-2"},
+		1.0,
+		1.0,
+		UsageTokens{InputTokens: 3678, OutputTokens: 42},
+		"",
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, cost)
+	require.Equal(t, string(BillingModeImage), cost.BillingMode)
+	require.InDelta(t, 0.03, cost.TotalCost, 1e-12)
+	require.InDelta(t, 0.03, cost.ActualCost, 1e-12)
+}
+
 func TestRecordUsageMarksCyberRequestType(t *testing.T) {
 	logStub := &openAIRecordUsageLogRepoStub{inserted: true}
 	userStub := &openAIRecordUsageUserRepoStub{}

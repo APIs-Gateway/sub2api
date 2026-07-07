@@ -124,6 +124,10 @@ func openAIRequestBodyImageGenerationToolNeedsNormalization(body []byte) bool {
 			needsNormalization = true
 			return false
 		}
+		if strings.TrimSpace(openAIJSONString(item.Get("model"))) == "" {
+			needsNormalization = true
+			return false
+		}
 		return true
 	})
 	return needsNormalization
