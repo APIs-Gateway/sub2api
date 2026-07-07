@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // ResponsesToAnthropicRequest converts a Responses API request into an
@@ -524,13 +527,19 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 				Description: t.Description,
 				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
 			})
+		case "custom":
+			out = append(out, AnthropicTool{
+				Name:        t.Name,
+				Description: t.Description,
+				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
+			})
 		default:
 			// Pass through unknown tool types
 			out = append(out, AnthropicTool{
 				Type:        t.Type,
 				Name:        t.Name,
 				Description: t.Description,
-				InputSchema: t.Parameters,
+				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
 			})
 		}
 	}
@@ -539,10 +548,35 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 
 // normalizeAnthropicInputSchema ensures the input_schema has a "type" field.
 func normalizeAnthropicInputSchema(schema json.RawMessage) json.RawMessage {
-	if len(schema) == 0 || string(schema) == "null" {
-		return json.RawMessage(`{"type":"object","properties":{}}`)
+	const defaultSchema = `{"type":"object","properties":{}}`
+
+	trimmed := strings.TrimSpace(string(schema))
+	if len(trimmed) == 0 || trimmed == "null" || !strings.HasPrefix(trimmed, "{") || !gjson.Valid(trimmed) {
+		return json.RawMessage(defaultSchema)
 	}
-	return schema
+
+	normalized := []byte(trimmed)
+
+	schemaType := gjson.GetBytes(normalized, "type")
+	if !schemaType.Exists() || schemaType.Type != gjson.String || schemaType.String() == "" {
+		var err error
+		normalized, err = sjson.SetBytes(normalized, "type", "object")
+		if err != nil {
+			return json.RawMessage(defaultSchema)
+		}
+	} else if schemaType.String() != "object" {
+		return json.RawMessage(defaultSchema)
+	}
+
+	if !gjson.GetBytes(normalized, "properties").Exists() {
+		var err error
+		normalized, err = sjson.SetRawBytes(normalized, "properties", []byte(`{}`))
+		if err != nil {
+			return json.RawMessage(defaultSchema)
+		}
+	}
+
+	return normalized
 }
 
 // convertResponsesToAnthropicToolChoice maps Responses tool_choice to Anthropic format.

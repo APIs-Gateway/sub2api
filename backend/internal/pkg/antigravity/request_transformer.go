@@ -139,18 +139,20 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 
 	// 4. 构建 tools
 	tools := buildTools(claudeReq.Tools)
+	isGeminiReasoning := isAntigravityGeminiReasoningModel(targetModel)
 
 	// 5. 构建内部请求
 	innerRequest := GeminiRequest{
 		Contents: contents,
-		// 总是设置 toolConfig，与官方客户端一致
-		ToolConfig: &GeminiToolConfig{
+		// 总是生成 sessionId，基于用户消息内容
+		SessionID: generateStableSessionID(contents),
+	}
+	if len(tools) > 0 || !isGeminiReasoning {
+		innerRequest.ToolConfig = &GeminiToolConfig{
 			FunctionCallingConfig: &GeminiFunctionCallingConfig{
 				Mode: "VALIDATED",
 			},
-		},
-		// 总是生成 sessionId，基于用户消息内容
-		SessionID: generateStableSessionID(contents),
+		}
 	}
 
 	if systemInstruction != nil {
@@ -597,6 +599,16 @@ func maxOutputTokensLimit(model string) int {
 	return maxOutputTokensUpperBound
 }
 
+func isAntigravityGeminiReasoningModel(model string) bool {
+	lower := strings.ToLower(strings.TrimSpace(model))
+	switch lower {
+	case "gemini-pro-agent", "gemini-3.1-pro", "gemini-3.1-pro-high", "gemini-3.1-pro-preview":
+		return true
+	default:
+		return false
+	}
+}
+
 // isAntigravityOpusHighTierModel 判断是否为高阶 Opus 模型（4.6+），
 // 用于 adaptive thinking 时覆写为高预算。
 func isAntigravityOpusHighTierModel(model string) bool {
@@ -608,9 +620,12 @@ func isAntigravityOpusHighTierModel(model string) bool {
 
 func buildGenerationConfig(req *ClaudeRequest) *GeminiGenerationConfig {
 	maxLimit := maxOutputTokensLimit(req.Model)
+	isGeminiReasoning := isAntigravityGeminiReasoningModel(req.Model)
 	config := &GeminiGenerationConfig{
 		MaxOutputTokens: defaultMaxOutputTokens, // 默认最大输出
-		StopSequences:   DefaultStopSequences,
+	}
+	if !isGeminiReasoning {
+		config.StopSequences = DefaultStopSequences
 	}
 
 	// 如果请求中指定了 MaxTokens，使用请求值
@@ -656,13 +671,13 @@ func buildGenerationConfig(req *ClaudeRequest) *GeminiGenerationConfig {
 	}
 
 	// 其他参数
-	if req.Temperature != nil {
+	if !isGeminiReasoning && req.Temperature != nil {
 		config.Temperature = req.Temperature
 	}
-	if req.TopP != nil {
+	if !isGeminiReasoning && req.TopP != nil {
 		config.TopP = req.TopP
 	}
-	if req.TopK != nil {
+	if !isGeminiReasoning && req.TopK != nil {
 		config.TopK = req.TopK
 	}
 

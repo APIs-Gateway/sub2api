@@ -309,6 +309,7 @@ func (s *TokenRefreshService) refreshWithRetry(ctx context.Context, account *Acc
 					"error", setErr,
 				)
 			}
+			s.clearAntigravityForceTokenRefreshMarker(ctx, account)
 			return err
 		}
 
@@ -357,6 +358,8 @@ func (s *TokenRefreshService) refreshWithRetry(ctx context.Context, account *Acc
 
 // postRefreshActions 刷新成功后的后续动作（清除错误状态、缓存失效、调度器同步等）
 func (s *TokenRefreshService) postRefreshActions(ctx context.Context, account *Account) {
+	s.clearAntigravityForceTokenRefreshMarker(ctx, account)
+
 	// Antigravity 账户：如果之前是因为缺少 project_id 而标记为 error，现在成功获取到了，清除错误状态
 	if account.Platform == PlatformAntigravity &&
 		account.Status == StatusError &&
@@ -418,6 +421,29 @@ func (s *TokenRefreshService) postRefreshActions(ctx context.Context, account *A
 	s.ensureOpenAIPrivacy(ctx, account)
 	// Antigravity OAuth: 刷新成功后，检查是否已设置 privacy_mode，未设置则调用 setUserSettings
 	s.ensureAntigravityPrivacy(ctx, account)
+}
+
+func (s *TokenRefreshService) clearAntigravityForceTokenRefreshMarker(ctx context.Context, account *Account) {
+	if account == nil || account.Platform != PlatformAntigravity || account.Extra == nil {
+		return
+	}
+	if force, _ := account.Extra["antigravity_force_token_refresh"].(bool); !force {
+		return
+	}
+	updates := map[string]any{
+		"antigravity_force_token_refresh":        false,
+		"antigravity_force_token_refresh_reason": "",
+	}
+	if err := s.accountRepo.UpdateExtra(ctx, account.ID, updates); err != nil {
+		slog.Warn("token_refresh.clear_antigravity_force_refresh_failed",
+			"account_id", account.ID,
+			"error", err,
+		)
+		return
+	}
+	for key, value := range updates {
+		account.Extra[key] = value
+	}
 }
 
 // errRefreshSkipped 表示刷新被跳过（锁竞争或已被其他路径刷新），不计入 failed 或 refreshed

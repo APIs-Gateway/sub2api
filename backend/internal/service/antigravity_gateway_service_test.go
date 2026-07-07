@@ -51,6 +51,20 @@ func TestAntigravityUpstreamErrorBodyReadLimit_RespectsDiagnosticLimit(t *testin
 	require.Equal(t, int64(svc.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes), svc.upstreamErrorBodyReadLimit())
 }
 
+func TestResolveAntigravityForwardBaseURLDefaultsToProduction(t *testing.T) {
+	t.Setenv(antigravityForwardBaseURLEnv, "")
+
+	require.NotEmpty(t, antigravity.BaseURLs)
+	require.Equal(t, antigravity.BaseURLs[0], resolveAntigravityForwardBaseURL())
+}
+
+func TestResolveAntigravityForwardBaseURLDailyOptIn(t *testing.T) {
+	t.Setenv(antigravityForwardBaseURLEnv, "daily")
+
+	require.GreaterOrEqual(t, len(antigravity.BaseURLs), 2)
+	require.Equal(t, antigravity.BaseURLs[1], resolveAntigravityForwardBaseURL())
+}
+
 func TestStripSignatureSensitiveBlocksFromClaudeRequest(t *testing.T) {
 	req := &antigravity.ClaudeRequest{
 		Model: "claude-sonnet-4-5",

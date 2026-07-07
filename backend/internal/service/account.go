@@ -512,11 +512,16 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 	}
 	if len(result) > 0 {
 		if a.Platform == domain.PlatformAntigravity {
-			ensureAntigravityDefaultPassthroughs(result, []string{
-				"gemini-3-flash",
-				"gemini-3.1-pro-high",
-				"gemini-3.1-pro-low",
-			})
+			ensureAntigravityDefaultPassthrough(result, "gemini-3-flash")
+			ensureAntigravityDefaultMapping(result, "gemini-pro-agent", "gemini-pro-agent")
+			ensureAntigravityDefaultMapping(result, "gemini-3.1-pro", "gemini-pro-agent")
+			gemini31HighTarget := "gemini-pro-agent"
+			if modelMappingHasTarget(result, "gemini-3.1-pro-high") {
+				gemini31HighTarget = "gemini-3.1-pro-high"
+			}
+			ensureAntigravityDefaultMapping(result, "gemini-3.1-pro-high", gemini31HighTarget)
+			ensureAntigravityDefaultMapping(result, "gemini-3.1-pro-preview", "gemini-pro-agent")
+			ensureAntigravityDefaultPassthrough(result, "gemini-3.1-pro-low")
 		}
 		return result
 	}
@@ -560,6 +565,10 @@ func modelMappingSignature(rawMapping map[string]any) uint64 {
 }
 
 func ensureAntigravityDefaultPassthrough(mapping map[string]string, model string) {
+	ensureAntigravityDefaultMapping(mapping, model, model)
+}
+
+func ensureAntigravityDefaultMapping(mapping map[string]string, model string, target string) {
 	if mapping == nil || model == "" {
 		return
 	}
@@ -571,7 +580,16 @@ func ensureAntigravityDefaultPassthrough(mapping map[string]string, model string
 			return
 		}
 	}
-	mapping[model] = model
+	mapping[model] = target
+}
+
+func modelMappingHasTarget(mapping map[string]string, target string) bool {
+	for _, mapped := range mapping {
+		if mapped == target {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureAntigravityDefaultPassthroughs(mapping map[string]string, models []string) {

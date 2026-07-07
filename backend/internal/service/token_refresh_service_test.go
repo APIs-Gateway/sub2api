@@ -17,10 +17,12 @@ type tokenRefreshAccountRepo struct {
 	updateCalls            int
 	fullUpdateCalls        int
 	updateCredentialsCalls int
+	updateExtraCalls       int
 	setErrorCalls          int
 	clearTempCalls         int
 	setTempUnschedCalls    int
 	lastAccount            *Account
+	lastExtraUpdates       map[string]any
 	updateErr              error
 }
 
@@ -46,6 +48,23 @@ func (r *tokenRefreshAccountRepo) UpdateCredentials(ctx context.Context, id int6
 		}
 	}
 	r.lastAccount = &Account{ID: id, Credentials: cloned}
+	return nil
+}
+
+func (r *tokenRefreshAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
+	r.updateExtraCalls++
+	r.lastExtraUpdates = updates
+	if r.accountsByID != nil {
+		if acc, ok := r.accountsByID[id]; ok && acc != nil {
+			if acc.Extra == nil {
+				acc.Extra = map[string]any{}
+			}
+			for key, value := range updates {
+				acc.Extra[key] = value
+			}
+			r.lastAccount = acc
+		}
+	}
 	return nil
 }
 
@@ -143,6 +162,60 @@ func TestTokenRefreshService_RefreshWithRetry_InvalidatesCache(t *testing.T) {
 	require.Equal(t, 0, repo.fullUpdateCalls)
 	require.Equal(t, 1, invalidator.calls)
 	require.Equal(t, "new-token", account.GetCredential("access_token"))
+}
+
+func TestAntigravityTokenRefresher_NeedsRefresh_ForceRefreshMarker(t *testing.T) {
+	refresher := NewAntigravityTokenRefresher(nil)
+	account := &Account{
+		ID:       3675,
+		Platform: PlatformAntigravity,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+		},
+		Extra: map[string]any{
+			"antigravity_force_token_refresh": true,
+		},
+	}
+
+	require.True(t, refresher.NeedsRefresh(account, 0), "server-invalidated token must refresh even before expires_at")
+}
+
+func TestTokenRefreshService_RefreshWithRetry_AntigravityClearsForceRefreshOnSuccess(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	cfg := &config.Config{
+		TokenRefresh: config.TokenRefreshConfig{
+			MaxRetries:          1,
+			RetryBackoffSeconds: 0,
+		},
+	}
+	service := NewTokenRefreshService(repo, nil, nil, nil, nil, nil, nil, cfg, nil)
+	until := time.Now().Add(10 * time.Minute)
+	account := &Account{
+		ID:                     3709,
+		Platform:               PlatformAntigravity,
+		Type:                   AccountTypeOAuth,
+		TempUnschedulableUntil: &until,
+		Extra: map[string]any{
+			"antigravity_force_token_refresh":        true,
+			"antigravity_force_token_refresh_reason": "401_invalid",
+			"privacy_mode":                           AntigravityPrivacySet,
+		},
+	}
+	refresher := &tokenRefresherStub{
+		credentials: map[string]any{
+			"access_token": "new-ag-token",
+		},
+	}
+
+	err := service.refreshWithRetry(context.Background(), account, refresher, refresher, time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.Equal(t, 1, repo.updateExtraCalls)
+	require.Equal(t, false, repo.lastExtraUpdates["antigravity_force_token_refresh"])
+	require.Equal(t, "", repo.lastExtraUpdates["antigravity_force_token_refresh_reason"])
+	require.Equal(t, false, account.Extra["antigravity_force_token_refresh"])
+	require.Equal(t, 1, repo.clearTempCalls, "successful refresh should restore schedulability")
 }
 
 func TestTokenRefreshService_RefreshWithRetry_InvalidatorErrorIgnored(t *testing.T) {

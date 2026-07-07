@@ -260,8 +260,8 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			break
 		}
 		// OAuth 账号在 401 错误时临时不可调度（给 token 刷新窗口）；非 OAuth 账号保持原有 SetError 行为。
-		// Antigravity 除外：其 401 由 applyErrorPolicy 的 temp_unschedulable_rules 自行控制。
-		if account.Type == AccountTypeOAuth && account.Platform != PlatformAntigravity {
+		// Antigravity OAuth 会额外写入 force-refresh 标记，确保后台刷新忽略尚未过期的 expires_at。
+		if account.Type == AccountTypeOAuth {
 			// 1. 失效缓存
 			if s.tokenCacheInvalidator != nil {
 				if err := s.tokenCacheInvalidator.InvalidateToken(ctx, account); err != nil {
@@ -301,9 +301,25 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, msg); err != nil {
 				slog.Warn("oauth_401_set_temp_unschedulable_failed", "account_id", account.ID, "error", err)
 			}
+			if account.Platform == PlatformAntigravity {
+				updates := map[string]any{
+					"antigravity_force_token_refresh":        true,
+					"antigravity_force_token_refresh_reason": "401_invalid",
+				}
+				if err := s.accountRepo.UpdateExtra(ctx, account.ID, updates); err != nil {
+					slog.Warn("antigravity_401_force_refresh_marker_failed", "account_id", account.ID, "error", err)
+				} else {
+					if account.Extra == nil {
+						account.Extra = map[string]any{}
+					}
+					for key, value := range updates {
+						account.Extra[key] = value
+					}
+				}
+			}
 			shouldDisable = true
 		} else {
-			// 非 OAuth / Antigravity OAuth：保持 SetError 行为
+			// 非 OAuth：保持 SetError 行为
 			msg := "Authentication failed (401): invalid or expired credentials"
 			if upstreamMsg != "" {
 				msg = "Authentication failed (401): " + upstreamMsg

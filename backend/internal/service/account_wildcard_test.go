@@ -457,6 +457,76 @@ func TestAccountGetModelMapping_AntigravityRespectsWildcardOverride(t *testing.T
 	}
 }
 
+func TestAccountGetModelMapping_AntigravityNormalizesGemini31ProAliases(t *testing.T) {
+	t.Parallel()
+
+	const proAgent = "gemini-pro-agent"
+	account := &Account{
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				proAgent: proAgent,
+			},
+		},
+	}
+
+	mapping := account.GetModelMapping()
+	for _, model := range []string{"gemini-3.1-pro", "gemini-3.1-pro-high", "gemini-3.1-pro-preview"} {
+		if got := mapping[model]; got != proAgent {
+			t.Fatalf("expected %s to map to %q, got %q", model, proAgent, got)
+		}
+	}
+}
+
+func TestAccountGetModelMapping_AntigravityPreservesGemini31ProOverrides(t *testing.T) {
+	t.Parallel()
+
+	const proAgent = "gemini-pro-agent"
+	account := &Account{
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				proAgent:                 proAgent,
+				"gemini-3.1-pro-high":    "custom-high",
+				"gemini-3.1-pro-preview": "custom-preview",
+			},
+		},
+	}
+
+	mapping := account.GetModelMapping()
+	if got := mapping["gemini-3.1-pro-high"]; got != "custom-high" {
+		t.Fatalf("expected gemini-3.1-pro-high override to be preserved, got %q", got)
+	}
+	if got := mapping["gemini-3.1-pro-preview"]; got != "custom-preview" {
+		t.Fatalf("expected gemini-3.1-pro-preview override to be preserved, got %q", got)
+	}
+	if got := mapping["gemini-3.1-pro"]; got != proAgent {
+		t.Fatalf("expected gemini-3.1-pro alias to default to %q, got %q", proAgent, got)
+	}
+}
+
+func TestAccountGetModelMapping_AntigravityGemini31ProAliasesRespectWildcard(t *testing.T) {
+	t.Parallel()
+
+	const proAgent = "gemini-pro-agent"
+	account := &Account{
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				proAgent:       proAgent,
+				"gemini-3.1-*": "custom-wildcard",
+			},
+		},
+	}
+
+	mapping := account.GetModelMapping()
+	for _, model := range []string{"gemini-3.1-pro", "gemini-3.1-pro-high", "gemini-3.1-pro-preview"} {
+		if got := mapping[model]; got != "" {
+			t.Fatalf("expected %s exact alias to stay unset when wildcard exists, got %q", model, got)
+		}
+	}
+}
+
 func TestAccountGetModelMapping_CacheInvalidatesOnCredentialsReplace(t *testing.T) {
 	account := &Account{
 		Credentials: map[string]any{

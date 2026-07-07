@@ -43,6 +43,29 @@ func TestDefaultAntigravityModelMapping_ContainsNewClaudeModels(t *testing.T) {
 	}
 }
 
+func TestDefaultAntigravityModelMapping_Gemini31ProAliases(t *testing.T) {
+	t.Parallel()
+
+	const proAgent = "gemini-pro-agent"
+	cases := map[string]string{
+		proAgent:                 proAgent,
+		"gemini-3.1-pro":         proAgent,
+		"gemini-3.1-pro-high":    proAgent,
+		"gemini-3.1-pro-preview": proAgent,
+		"gemini-3.1-pro-low":     "gemini-3.1-pro-low",
+	}
+
+	for from, want := range cases {
+		got, ok := DefaultAntigravityModelMapping[from]
+		if !ok {
+			t.Fatalf("expected mapping for %q to exist", from)
+		}
+		if got != want {
+			t.Fatalf("unexpected mapping for %q: got %q want %q", from, got, want)
+		}
+	}
+}
+
 func TestDefaultBedrockModelMapping_ContainsNewClaudeModels(t *testing.T) {
 	t.Parallel()
 

@@ -565,3 +565,48 @@ func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions
 	require.Equal(t, "get_weather", req.Request.Tools[0].FunctionDeclarations[0].Name)
 	require.NotNil(t, req.Request.Tools[1].GoogleSearch)
 }
+
+func TestTransformClaudeToGemini_ReasoningModelOmitsToolConfigWithoutTools(t *testing.T) {
+	claudeReq := &ClaudeRequest{
+		Model: "gemini-3.1-pro-high",
+		Messages: []ClaudeMessage{{
+			Role:    "user",
+			Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+		}},
+	}
+
+	body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "gemini-3.1-pro-high", DefaultTransformOptions())
+	require.NoError(t, err)
+
+	var got V1InternalRequest
+	require.NoError(t, json.Unmarshal(body, &got))
+	require.Nil(t, got.Request.ToolConfig, "Gemini reasoning models reject forced empty/default toolConfig without tools")
+}
+
+func TestTransformClaudeToGemini_ReasoningModelOmitsUnsupportedSamplingArgs(t *testing.T) {
+	temperature := 0.7
+	topP := 0.8
+	topK := 40
+	claudeReq := &ClaudeRequest{
+		Model:       "gemini-3.1-pro-high",
+		MaxTokens:   1024,
+		Temperature: &temperature,
+		TopP:        &topP,
+		TopK:        &topK,
+		Messages: []ClaudeMessage{{
+			Role:    "user",
+			Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+		}},
+	}
+
+	body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "gemini-3.1-pro-high", DefaultTransformOptions())
+	require.NoError(t, err)
+
+	var got V1InternalRequest
+	require.NoError(t, json.Unmarshal(body, &got))
+	require.NotNil(t, got.Request.GenerationConfig)
+	require.Empty(t, got.Request.GenerationConfig.StopSequences)
+	require.Nil(t, got.Request.GenerationConfig.Temperature)
+	require.Nil(t, got.Request.GenerationConfig.TopP)
+	require.Nil(t, got.Request.GenerationConfig.TopK)
+}

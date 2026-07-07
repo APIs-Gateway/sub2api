@@ -41,6 +41,9 @@ func (r *AntigravityTokenRefresher) NeedsRefresh(account *Account, _ time.Durati
 	if !r.CanRefresh(account) {
 		return false
 	}
+	if force, _ := account.Extra["antigravity_force_token_refresh"].(bool); force {
+		return true
+	}
 	expiresAt := account.GetCredentialAsTime("expires_at")
 	if expiresAt == nil {
 		return false
