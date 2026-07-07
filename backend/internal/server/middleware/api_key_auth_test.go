@@ -137,6 +137,91 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 	})
 }
 
+func TestAPIKeyAuthReadOnlyWhamUsageSkipsBillingEnforcement(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	user := &service.User{
+		ID:          7,
+		Role:        service.RoleUser,
+		Status:      service.StatusActive,
+		Balance:     0,
+		Concurrency: 3,
+	}
+
+	tests := []struct {
+		name       string
+		path       string
+		status     string
+		wantStatus int
+	}{
+		{
+			name:       "quota exhausted key can read wham usage",
+			path:       "/backend-api/wham/usage",
+			status:     service.StatusAPIKeyQuotaExhausted,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "quota exhausted key can read codex wham usage",
+			path:       "/backend-api/codex/wham/usage",
+			status:     service.StatusAPIKeyQuotaExhausted,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "expired key can read wham usage",
+			path:       "/backend-api/wham/usage",
+			status:     service.StatusAPIKeyExpired,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "expired key can read codex wham usage",
+			path:       "/backend-api/codex/wham/usage",
+			status:     service.StatusAPIKeyExpired,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "disabled key is still rejected",
+			path:       "/backend-api/wham/usage",
+			status:     service.StatusAPIKeyDisabled,
+			wantStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			apiKey := &service.APIKey{
+				ID:     100,
+				UserID: user.ID,
+				Key:    "test-key",
+				Status: tt.status,
+				User:   user,
+			}
+			apiKeyRepo := &stubApiKeyRepo{
+				getByKey: func(ctx context.Context, key string) (*service.APIKey, error) {
+					if key != apiKey.Key {
+						return nil, service.ErrAPIKeyNotFound
+					}
+					clone := *apiKey
+					return &clone, nil
+				},
+			}
+
+			cfg := &config.Config{RunMode: config.RunModeStandard}
+			apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
+			router := newAuthTestRouterForPath(tt.path, apiKeyService, nil, cfg)
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			req.Header.Set("x-api-key", apiKey.Key)
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			if tt.status == service.StatusAPIKeyDisabled {
+				require.Contains(t, w.Body.String(), "API_KEY_DISABLED")
+			}
+		})
+	}
+}
+
 func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -960,9 +1045,13 @@ func TestAPIKeyAuthTouchesLastUsedInStandardMode(t *testing.T) {
 }
 
 func newAuthTestRouter(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) *gin.Engine {
+	return newAuthTestRouterForPath("/t", apiKeyService, subscriptionService, cfg)
+}
+
+func newAuthTestRouterForPath(path string, apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, nil, cfg)))
-	router.GET("/t", func(c *gin.Context) {
+	router.GET(path, func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	return router

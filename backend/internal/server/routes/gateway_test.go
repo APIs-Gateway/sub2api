@@ -15,6 +15,16 @@ import (
 )
 
 func newGatewayRoutesTestRouter() *gin.Engine {
+	groupID := int64(1)
+	return newGatewayRoutesTestRouterWithAPIKey(&service.APIKey{
+		UserID:  7,
+		User:    &service.User{ID: 7, Status: service.StatusActive},
+		GroupID: &groupID,
+		Group:   &service.Group{Platform: service.PlatformOpenAI},
+	})
+}
+
+func newGatewayRoutesTestRouterWithAPIKey(apiKey *service.APIKey) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
@@ -25,11 +35,7 @@ func newGatewayRoutesTestRouter() *gin.Engine {
 			OpenAIGateway: &handler.OpenAIGatewayHandler{},
 		},
 		servermiddleware.APIKeyAuthMiddleware(func(c *gin.Context) {
-			groupID := int64(1)
-			c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
-				GroupID: &groupID,
-				Group:   &service.Group{Platform: service.PlatformOpenAI},
-			})
+			c.Set(string(servermiddleware.ContextKeyAPIKey), apiKey)
 			c.Next()
 		}),
 		nil,
@@ -75,5 +81,26 @@ func TestGatewayRoutesOpenAIImagesPathsAreRegistered(t *testing.T) {
 
 		router.ServeHTTP(w, req)
 		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should hit OpenAI images handler", path)
+	}
+}
+
+func TestGatewayRoutesWhamUsagePathsAreRegisteredWithoutGroupAssignment(t *testing.T) {
+	router := newGatewayRoutesTestRouterWithAPIKey(&service.APIKey{
+		ID:     100,
+		UserID: 7,
+		Status: service.StatusActive,
+		User:   &service.User{ID: 7, Status: service.StatusActive},
+	})
+
+	for _, path := range []string{
+		"/backend-api/wham/usage",
+		"/backend-api/codex/wham/usage",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should be registered", path)
+		require.NotEqual(t, http.StatusForbidden, w.Code, "path=%s should not require group assignment", path)
 	}
 }

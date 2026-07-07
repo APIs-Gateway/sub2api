@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	userhandler "github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	userhandler "github.com/Wei-Shaw/sub2api/internal/handler"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -35,7 +35,7 @@ func newGatewayHandlerForUsage(t *testing.T) *userhandler.GatewayHandler {
 	t.Cleanup(billing.Stop)
 	// usageUnrestricted 卡分支只用 billingCacheService;usageService 等 best-effort 依赖给 nil(已 nil-safe)。
 	return userhandler.NewGatewayHandler(
-		nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil,
 		billing,
 		nil, nil, nil, nil, nil, nil,
 		&config.Config{},

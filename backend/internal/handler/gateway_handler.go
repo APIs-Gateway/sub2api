@@ -42,6 +42,7 @@ type GatewayHandler struct {
 	geminiCompatService       *service.GeminiMessagesCompatService
 	antigravityGatewayService *service.AntigravityGatewayService
 	userService               *service.UserService
+	subscriptionService       *service.SubscriptionService
 	billingCacheService       *service.BillingCacheService
 	usageService              *service.UsageService
 	apiKeyService             *service.APIKeyService
@@ -62,6 +63,7 @@ func NewGatewayHandler(
 	geminiCompatService *service.GeminiMessagesCompatService,
 	antigravityGatewayService *service.AntigravityGatewayService,
 	userService *service.UserService,
+	subscriptionService *service.SubscriptionService,
 	concurrencyService *service.ConcurrencyService,
 	billingCacheService *service.BillingCacheService,
 	usageService *service.UsageService,
@@ -97,6 +99,7 @@ func NewGatewayHandler(
 		geminiCompatService:       geminiCompatService,
 		antigravityGatewayService: antigravityGatewayService,
 		userService:               userService,
+		subscriptionService:       subscriptionService,
 		billingCacheService:       billingCacheService,
 		usageService:              usageService,
 		apiKeyService:             apiKeyService,
@@ -1171,6 +1174,130 @@ func cloneAPIKeyWithGroup(apiKey *service.APIKey, group *service.Group) *service
 	cloned.GroupID = &groupID
 	cloned.Group = group
 	return &cloned
+}
+
+type whamUsageResponse struct {
+	RateLimit whamUsageRateLimit `json:"rate_limit"`
+	Sub2API   whamUsageSub2API   `json:"sub2api"`
+}
+
+type whamUsageRateLimit struct {
+	PrimaryWindow *whamUsagePrimaryWindow `json:"primary_window,omitempty"`
+}
+
+type whamUsagePrimaryWindow struct {
+	UsedPercent        float64 `json:"used_percent"`
+	LimitWindowSeconds int64   `json:"limit_window_seconds"`
+	ResetAt            int64   `json:"reset_at"`
+}
+
+type whamUsageSub2API struct {
+	DailyLimitUSD           float64 `json:"daily_limit_usd"`
+	DailyUsedUSD            float64 `json:"daily_used_usd"`
+	DailyRemainingUSD       float64 `json:"daily_remaining_usd"`
+	WalletBalanceUSD        float64 `json:"wallet_balance_usd"`
+	ActiveSubscriptionCount int     `json:"active_subscription_count"`
+	ResetAt                 int64   `json:"reset_at"`
+}
+
+// WhamUsage returns the cc-switch compatible subscription remaining snapshot.
+// GET /backend-api/wham/usage
+// GET /backend-api/codex/wham/usage
+func (h *GatewayHandler) WhamUsage(c *gin.Context) {
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
+	if !ok || apiKey == nil {
+		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
+		return
+	}
+
+	userID := apiKey.UserID
+	if userID <= 0 && apiKey.User != nil {
+		userID = apiKey.User.ID
+	}
+	if userID <= 0 {
+		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
+		return
+	}
+	if h.userService == nil || h.subscriptionService == nil {
+		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Usage service unavailable")
+		return
+	}
+
+	ctx := c.Request.Context()
+	user, err := h.userService.GetByID(ctx, userID)
+	if err != nil {
+		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get user info")
+		return
+	}
+	subs, err := h.subscriptionService.ListActiveUserSubscriptions(ctx, userID)
+	if err != nil {
+		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get subscription usage")
+		return
+	}
+
+	c.JSON(http.StatusOK, buildWhamUsageResponse(user.Balance, subs, timezone.Now()))
+}
+
+func buildWhamUsageResponse(walletBalance float64, subs []service.UserSubscription, now time.Time) whamUsageResponse {
+	today := service.EastDayNumber(now)
+	resetAt := service.EastDayStart(today + 1).Unix()
+
+	var dailyLimit float64
+	var dailyRemaining float64
+	var activeCount int
+	for i := range subs {
+		sub := subs[i]
+		if sub.Status != service.SubscriptionStatusActive || sub.DailyAmountUSD <= 0 {
+			continue
+		}
+		if !sub.ExpiresAt.IsZero() && !now.Before(sub.ExpiresAt) {
+			continue
+		}
+
+		card := sub.ToPerDayCard()
+		card.ResetIfNewDay(today)
+		if card.Expired {
+			continue
+		}
+
+		dailyLimit += card.DailyAmountUSD
+		dailyRemaining += clampWhamUsageFloat(card.TodayRemaining, 0, card.DailyAmountUSD)
+		activeCount++
+	}
+
+	dailyUsed := math.Max(0, dailyLimit-dailyRemaining)
+	resp := whamUsageResponse{
+		RateLimit: whamUsageRateLimit{},
+		Sub2API: whamUsageSub2API{
+			DailyLimitUSD:           dailyLimit,
+			DailyUsedUSD:            dailyUsed,
+			DailyRemainingUSD:       dailyRemaining,
+			WalletBalanceUSD:        walletBalance,
+			ActiveSubscriptionCount: activeCount,
+			ResetAt:                 resetAt,
+		},
+	}
+	if dailyLimit <= 0 {
+		return resp
+	}
+
+	usedPercent := clampWhamUsageFloat(dailyUsed/dailyLimit*100, 0, 100)
+	resp.RateLimit.PrimaryWindow = &whamUsagePrimaryWindow{
+		UsedPercent:        math.Round(usedPercent*100) / 100,
+		LimitWindowSeconds: 86400,
+		ResetAt:            resetAt,
+	}
+	return resp
+}
+
+func clampWhamUsageFloat(v, minValue, maxValue float64) float64 {
+	if v < minValue {
+		return minValue
+	}
+	if v > maxValue {
+		return maxValue
+	}
+	return v
 }
 
 // Usage handles getting account balance and usage statistics for CC Switch integration
