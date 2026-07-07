@@ -592,12 +592,6 @@ func modelMappingHasTarget(mapping map[string]string, target string) bool {
 	return false
 }
 
-func ensureAntigravityDefaultPassthroughs(mapping map[string]string, models []string) {
-	for _, model := range models {
-		ensureAntigravityDefaultPassthrough(mapping, model)
-	}
-}
-
 func normalizeRequestedModelForLookup(platform, requestedModel string) string {
 	trimmed := strings.TrimSpace(requestedModel)
 	if trimmed == "" {

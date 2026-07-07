@@ -47,12 +47,16 @@ func TestCleanToolSchema_NormalizesGeminiUnsupportedSchemaFields(t *testing.T) {
 	require.NotContains(t, cleaned, "$defs")
 	require.NotContains(t, cleaned, "definitions")
 
-	properties := cleaned["properties"].(map[string]any)
-	pathSchema := properties["path"].(map[string]any)
+	properties, ok := cleaned["properties"].(map[string]any)
+	require.True(t, ok)
+	pathSchema, ok := properties["path"].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, "STRING", pathSchema["type"])
-	countSchema := properties["count"].(map[string]any)
+	countSchema, ok := properties["count"].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, "INTEGER", countSchema["type"])
-	emptySchema := properties["empty"].(map[string]any)
+	emptySchema, ok := properties["empty"].(map[string]any)
+	require.True(t, ok)
 	require.NotContains(t, emptySchema, "type")
 }
 
