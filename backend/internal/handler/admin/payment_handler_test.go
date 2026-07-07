@@ -53,3 +53,24 @@ func TestAdminQueryRefundRejectsInvalidJSON(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
 }
+
+func TestAdminQueryRefundRejectsInvalidOrderID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := NewPaymentHandler(nil, nil)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: "not-a-number"}}
+	ctx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/admin/payment/orders/not-a-number/refund/query",
+		bytes.NewBufferString(`{"refund_id":"refund-123"}`),
+	)
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	handler.QueryRefund(ctx)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+}
