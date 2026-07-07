@@ -34,6 +34,8 @@ export interface PointsOverview {
 export interface PointsLedgerEntry {
   id: number
   user_id: number
+  user_email?: string
+  username?: string
   kind: string
   points: number
   peg_at?: number | null

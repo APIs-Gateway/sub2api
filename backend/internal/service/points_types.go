@@ -74,6 +74,8 @@ type PointsAccount struct {
 type PointsLedgerEntry struct {
 	ID                 int64      `json:"id"`
 	UserID             int64      `json:"user_id"`
+	UserEmail          string     `json:"user_email,omitempty"`
+	Username           string     `json:"username,omitempty"`
 	Kind               string     `json:"kind"`
 	Points             int64      `json:"points"`
 	PegAt              *float64   `json:"peg_at,omitempty"`

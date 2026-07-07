@@ -23,7 +23,11 @@
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('points.admin.records.empty') }}</p>
           </template>
           <template #cell-user="{ row }">
-            <span class="font-mono text-sm text-gray-900 dark:text-white">#{{ row.user_id }}</span>
+            <div class="space-y-0.5">
+              <div class="font-mono text-sm font-semibold text-gray-900 dark:text-white">#{{ row.user_id }}</div>
+              <div class="text-sm text-gray-700 dark:text-gray-300">{{ row.user_email || '-' }}</div>
+              <div v-if="row.username" class="text-xs text-gray-500 dark:text-dark-400">{{ row.username }}</div>
+            </div>
           </template>
           <template #cell-kind="{ row }">
             {{ kindLabel(row.kind) }}
@@ -35,7 +39,10 @@
             >{{ row.points >= 0 ? '+' : '' }}{{ row.points.toLocaleString() }}</span>
           </template>
           <template #cell-available_after="{ row }">
-            <span class="font-mono text-sm tabular-nums text-gray-500 dark:text-dark-400">{{ row.available_after != null ? row.available_after.toLocaleString() : '—' }}</span>
+            <div class="space-y-0.5 font-mono text-sm tabular-nums text-gray-600 dark:text-dark-300">
+              <div>{{ t('points.account.available') }} {{ row.available_after != null ? row.available_after.toLocaleString() : '—' }}</div>
+              <div>{{ t('points.account.frozen') }} {{ row.frozen_after != null ? row.frozen_after.toLocaleString() : '—' }}</div>
+            </div>
           </template>
           <template #cell-created_at="{ row }">
             <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatDateTime(row.created_at) }}</span>
