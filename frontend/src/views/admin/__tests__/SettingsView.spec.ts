@@ -317,6 +317,7 @@ const baseSettingsResponse = {
   site_name: "Sub2API",
   site_logo: "",
   site_subtitle: "",
+  default_locale: "zh-CN",
   api_base_url: "",
   contact_info: "",
   doc_url: "",
@@ -629,6 +630,35 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(payload).not.toHaveProperty("payment_visible_method_wxpay_source");
     expect(payload).not.toHaveProperty("payment_visible_method_alipay_enabled");
     expect(payload).not.toHaveProperty("payment_visible_method_wxpay_enabled");
+  });
+
+  it("loads and submits the default locale setting", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      default_locale: "zh-HK",
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+
+    const localeSelect = wrapper
+      .findAll("select")
+      .find((node) => node.find('option[value="zh-HK"]').exists());
+
+    expect(localeSelect).toBeDefined();
+    expect((localeSelect!.element as HTMLSelectElement).value).toBe("zh-HK");
+
+    await localeSelect!.setValue("en");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        default_locale: "en",
+      }),
+    );
   });
 
   it("submits Anthropic cache TTL injection gateway setting", async () => {

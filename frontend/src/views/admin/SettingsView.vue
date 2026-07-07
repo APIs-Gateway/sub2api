@@ -4741,6 +4741,20 @@
                     {{ t("admin.settings.site.siteSubtitleHint") }}
                   </p>
                 </div>
+                <div>
+                  <label
+                    class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.site.defaultLocale") }}
+                  </label>
+                  <Select
+                    v-model="form.default_locale"
+                    :options="defaultLocaleOptions"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.site.defaultLocaleHint") }}
+                  </p>
+                </div>
               </div>
 
               <!-- API Base URL -->
@@ -7279,6 +7293,7 @@ import type {
 } from "@/api/admin/settings";
 import type {
   AdminGroup,
+  LocaleCode,
   LoginAgreementDocument,
   NotifyEmailEntry,
   Proxy,
@@ -7444,6 +7459,11 @@ const testEmailAddress = ref("");
 const registrationEmailSuffixWhitelistTags = ref<string[]>([]);
 const registrationEmailSuffixWhitelistDraft = ref("");
 const tablePageSizeOptionsInput = ref("10, 20, 50, 100");
+const defaultLocaleOptions: Array<{ value: LocaleCode; label: string }> = [
+  { value: "zh-CN", label: "简体中文" },
+  { value: "zh-HK", label: "繁體中文（香港）" },
+  { value: "en", label: "English" },
+];
 
 // Admin API Key 状态
 const adminApiKeyLoading = ref(true);
@@ -8007,6 +8027,7 @@ const form = reactive<SettingsForm>({
   site_name: "Sub2API",
   site_logo: "",
   site_subtitle: "Subscription to API Conversion Platform",
+  default_locale: "zh-CN",
   api_base_url: "",
   contact_info: "",
   doc_url: "",
@@ -9181,6 +9202,7 @@ async function saveSettings() {
       site_name: form.site_name,
       site_logo: form.site_logo,
       site_subtitle: form.site_subtitle,
+      default_locale: form.default_locale,
       api_base_url: form.api_base_url,
       contact_info: form.contact_info,
       doc_url: form.doc_url,

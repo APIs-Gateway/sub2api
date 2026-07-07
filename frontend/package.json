@@ -12,7 +12,11 @@
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "i18n:keys": "vitest run src/i18n/__tests__/localeKeys.spec.ts",
+    "i18n:cjk": "node src/i18n/check-hardcoded-cjk.mjs",
+    "i18n:cjk:update": "node src/i18n/check-hardcoded-cjk.mjs --update-baseline",
+    "i18n:check": "vitest run src/i18n/__tests__/localeKeys.spec.ts && node src/i18n/check-hardcoded-cjk.mjs"
   },
   "dependencies": {
     "@airwallex/components-sdk": "^1.30.2",

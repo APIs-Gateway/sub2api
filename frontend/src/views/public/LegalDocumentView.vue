@@ -92,6 +92,7 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { getPublicSettings } from '@/api/auth'
 import { getLocale } from '@/i18n'
+import { isChineseLocale } from '@/i18n/localeUtils'
 import { sanitizeUrl } from '@/utils/url'
 import type { LoginAgreementDocument, PublicSettings } from '@/types'
 import zhAdminCompliance from '../../../../docs/legal/admin-compliance.zh.md?raw'
@@ -130,7 +131,7 @@ const currentDocument = computed<LoginAgreementDocument | null>(() => {
     return {
       id: 'admin-compliance',
       title: t('adminCompliance.title'),
-      content_md: getLocale() === 'zh' ? zhAdminCompliance : enAdminCompliance
+      content_md: isChineseLocale(getLocale()) ? zhAdminCompliance : enAdminCompliance
     }
   }
   const id = documentId.value

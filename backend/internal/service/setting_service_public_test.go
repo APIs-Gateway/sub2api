@@ -78,6 +78,49 @@ func TestSettingService_GetPublicSettings_ExposesTablePreferences(t *testing.T) 
 	require.Equal(t, []int{20, 50, 100}, settings.TablePageSizeOptions)
 }
 
+func TestSettingService_GetPublicSettings_DefaultLocaleFallbackAndCompatibility(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "empty settings default to simplified Chinese", want: "zh-CN"},
+		{name: "configured Hong Kong traditional Chinese is exposed", raw: "zh-HK", want: "zh-HK"},
+		{name: "configured English is exposed", raw: "en", want: "en"},
+		{name: "legacy zh is migrated to simplified Chinese", raw: "zh", want: "zh-CN"},
+		{name: "invalid settings fall back to simplified Chinese", raw: "fr", want: "zh-CN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := map[string]string{}
+			if tt.raw != "" {
+				values[SettingKeyDefaultLocale] = tt.raw
+			}
+			svc := NewSettingService(&settingPublicRepoStub{values: values}, &config.Config{})
+
+			settings, err := svc.GetPublicSettings(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, tt.want, settings.DefaultLocale)
+		})
+	}
+}
+
+func TestSettingService_GetPublicSettingsForInjection_ExposesDefaultLocale(t *testing.T) {
+	svc := NewSettingService(&settingPublicRepoStub{
+		values: map[string]string{
+			SettingKeyDefaultLocale: "zh-HK",
+		},
+	}, &config.Config{})
+
+	payload, err := svc.GetPublicSettingsForInjection(context.Background())
+	require.NoError(t, err)
+
+	injected, ok := payload.(*PublicSettingsInjectionPayload)
+	require.True(t, ok)
+	require.Equal(t, "zh-HK", injected.DefaultLocale)
+}
+
 func TestSettingService_GetPublicSettings_ExposesForceEmailOnThirdPartySignup(t *testing.T) {
 	repo := &settingPublicRepoStub{
 		values: map[string]string{
