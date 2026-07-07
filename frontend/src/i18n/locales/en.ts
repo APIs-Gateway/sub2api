@@ -2097,7 +2097,7 @@ export default {
         user: 'User',
         affCode: 'Invite Code',
         order: 'Order',
-        totalRebate: 'Total Rebate',
+        totalRebate: 'Legacy Rebate Total',
         orderAmount: 'Top-up Amount',
         payAmount: 'Paid Amount',
         rebateAmount: 'Rebate Amount',

@@ -628,9 +628,25 @@ func (r *pointsRepository) ListWithdrawals(ctx context.Context, filter service.P
 }
 
 const pointsLedgerSelect = `
-SELECT l.id, l.user_id, l.kind, l.points, l.peg_at, l.source_user_id, l.source_order_id, l.source_redeem_code_id,
-       l.withdrawal_id, l.frozen_until, l.available_after, l.frozen_after, COALESCE(l.note, ''), l.created_at
-FROM user_points_ledger l`
+SELECT l.id,
+       l.user_id,
+       COALESCE(u.email, ''),
+       COALESCE(u.username, ''),
+       l.kind,
+       l.points,
+       l.peg_at,
+       l.source_user_id,
+       l.source_order_id,
+       l.source_redeem_code_id,
+       l.withdrawal_id,
+       l.frozen_until,
+       COALESCE(l.available_after, a.available),
+       COALESCE(l.frozen_after, a.frozen),
+       COALESCE(l.note, ''),
+       l.created_at
+FROM user_points_ledger l
+LEFT JOIN users u ON u.id = l.user_id
+LEFT JOIN user_points_accounts a ON a.user_id = l.user_id`
 
 func scanLedgerRows(rows *sql.Rows) ([]service.PointsLedgerEntry, error) {
 	out := make([]service.PointsLedgerEntry, 0)
@@ -639,7 +655,7 @@ func scanLedgerRows(rows *sql.Rows) ([]service.PointsLedgerEntry, error) {
 		var pegAt sql.NullFloat64
 		var srcUser, srcOrder, srcRedeem, withdrawalID, availAfter, frozenAfter sql.NullInt64
 		var frozenUntil sql.NullTime
-		if err := rows.Scan(&e.ID, &e.UserID, &e.Kind, &e.Points, &pegAt, &srcUser, &srcOrder, &srcRedeem,
+		if err := rows.Scan(&e.ID, &e.UserID, &e.UserEmail, &e.Username, &e.Kind, &e.Points, &pegAt, &srcUser, &srcOrder, &srcRedeem,
 			&withdrawalID, &frozenUntil, &availAfter, &frozenAfter, &e.Note, &e.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -709,7 +725,7 @@ func (r *pointsRepository) ListLedger(ctx context.Context, filter service.Points
 	page, pageSize := normalizePage(filter.Page, filter.PageSize)
 	args = append(args, pageSize, (page-1)*pageSize)
 	rows, err := client.QueryContext(ctx, pointsLedgerSelect+`
-LEFT JOIN users u ON u.id = l.user_id `+clauses+
+`+clauses+
 		fmt.Sprintf(" ORDER BY l.created_at DESC, l.id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list ledger: %w", err)

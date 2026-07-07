@@ -2102,7 +2102,7 @@ export default {
         redeemCode: '兑换码',
         noFaceValues: '暂无可配置的订阅条目。未配置的订阅兑换码不会产生邀请积分。'
       },
-      invitesDescription: '查看全站邀请关系和被邀请用户累计积分',
+      invitesDescription: '查看全站邀请关系和被邀请用户',
       rebatesDescription: '查看被邀请人兑换后产生的邀请积分记录',
       transfersDescription: '查看旧邀请额度转入账户余额的提取流水',
       errors: {
@@ -2118,7 +2118,7 @@ export default {
         user: '用户',
         affCode: '邀请码',
         order: '订单',
-        totalRebate: '累计积分',
+        totalRebate: '旧返利累计',
         orderAmount: '充值金额',
         payAmount: '支付金额',
         rebateAmount: '积分金额',
