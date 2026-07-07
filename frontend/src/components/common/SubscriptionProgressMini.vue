@@ -72,22 +72,6 @@
 
               <!-- Progress bars for limited subscriptions（限额挂卡，逐窗口展示已配置的 日/周/月） -->
               <template v-else>
-                <!-- Burn-down 余额进度（新模型） -->
-                <div v-if="subscription.daily_amount_usd" class="flex items-center gap-2">
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-600 dark:text-gray-400">余额</span>
-                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-700">
-                    <div
-                      class="h-1.5 rounded-full bg-gray-900 transition-all dark:bg-gray-100"
-                      :style="{ width: burndownRemainingWidth(subscription) }"
-                    ></div>
-                  </div>
-                  <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
-                    第{{ burndownCalendarDay(subscription) }}天·剩${{
-                      (subscription.remaining_usd || 0).toFixed(0)
-                    }}
-                  </span>
-                </div>
-
                 <div
                   v-for="w in windowsOf(subscription)"
                   :key="w.key"
@@ -212,19 +196,6 @@ function getProgressWidth(used: number | undefined, limit: number | null | undef
   if (!limit || limit === 0) return '0%'
   const percentage = Math.min(((used || 0) / limit) * 100, 100)
   return `${percentage}%`
-}
-
-// burndownRemainingWidth 返回 burn-down 订阅剩余余额占发放总额的百分比宽度。
-function burndownRemainingWidth(sub: UserSubscription): string {
-  const granted = sub.granted_total_usd || 0
-  if (granted <= 0) return '0%'
-  const pct = Math.max(0, Math.min((sub.remaining_usd || 0) / granted, 1)) * 100
-  return `${pct}%`
-}
-
-function burndownCalendarDay(sub: UserSubscription): number {
-  const day = sub.calendar_day
-  return typeof day === 'number' && Number.isFinite(day) ? Math.max(0, Math.floor(day)) : 0
 }
 
 function formatUsage(used: number | undefined, limit: number | null | undefined): string {
