@@ -91,7 +91,7 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
-import type { AdminDataImportResult } from '@/types'
+import type { AdminDataImportResult, AdminDataPayload } from '@/types'
 
 interface Props {
   show: boolean
@@ -159,10 +159,8 @@ const handleClose = () => {
   emit('close')
 }
 
-type AccountImportPayload = {
+type AccountImportPayload = Omit<AdminDataPayload, 'exported_at'> & {
   exported_at?: string
-  proxies: unknown[]
-  accounts: unknown[]
 }
 
 const isAccountImportPayload = (value: unknown): value is AccountImportPayload => {
@@ -171,8 +169,9 @@ const isAccountImportPayload = (value: unknown): value is AccountImportPayload =
   return Array.isArray(payload.proxies) && Array.isArray(payload.accounts)
 }
 
-const mergePayloads = (payloads: AccountImportPayload[]): AccountImportPayload => ({
-  exported_at: payloads[0]?.exported_at,
+const mergePayloads = (payloads: AccountImportPayload[]): AdminDataPayload => ({
+  exported_at: payloads.find((payload) => typeof payload.exported_at === 'string' && payload.exported_at.trim() !== '')?.exported_at
+    ?? new Date().toISOString(),
   proxies: payloads.flatMap((payload) => payload.proxies),
   accounts: payloads.flatMap((payload) => payload.accounts),
 })
