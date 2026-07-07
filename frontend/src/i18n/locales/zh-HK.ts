@@ -6935,6 +6935,7 @@
         action: '處理方式',
         actionPass: '透傳（保留 service_tier）',
         actionFilter: '過濾（移除 service_tier）',
+        actionForcePriority: '強制設定 priority（fast）',
         actionBlock: '攔截（拒絕請求）',
         scope: '生效範圍',
         scopeAll: '全部帳號',
