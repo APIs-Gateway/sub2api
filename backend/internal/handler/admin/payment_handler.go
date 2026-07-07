@@ -200,6 +200,10 @@ type AdminProcessRefundRequest struct {
 	DeductBalance bool    `json:"deduct_balance"`
 }
 
+type AdminQueryRefundRequest struct {
+	RefundID string `json:"refund_id"`
+}
+
 // ProcessRefund processes a refund for an order (admin).
 // POST /api/v1/admin/payment/orders/:id/refund
 func (h *PaymentHandler) ProcessRefund(c *gin.Context) {
@@ -225,6 +229,29 @@ func (h *PaymentHandler) ProcessRefund(c *gin.Context) {
 	}
 
 	result, err := h.paymentService.ExecuteRefund(c.Request.Context(), plan)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// QueryRefund queries a pending provider refund and finalizes the order only
+// after the provider reports success.
+// POST /api/v1/admin/payment/orders/:id/refund/query
+func (h *PaymentHandler) QueryRefund(c *gin.Context) {
+	orderID, ok := parseIDParam(c, "id")
+	if !ok {
+		return
+	}
+
+	var req AdminQueryRefundRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	result, err := h.paymentService.QueryAndFinalizeRefund(c.Request.Context(), orderID, req.RefundID)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

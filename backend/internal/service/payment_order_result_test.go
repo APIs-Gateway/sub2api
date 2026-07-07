@@ -143,6 +143,50 @@ func TestBuildCreateOrderResponseCopiesJSAPIPayload(t *testing.T) {
 	}
 }
 
+func TestSanitizeCreatePaymentResponseDetailsStripsNULBytes(t *testing.T) {
+	t.Parallel()
+
+	resp := sanitizeCreatePaymentResponseDetails(&payment.CreatePaymentResponse{
+		TradeNo:      "trade\x00-123",
+		PayURL:       "https://pay.example/\x00checkout",
+		QRCode:       "qr\x00-code",
+		ClientSecret: "secret\x00-value",
+		IntentID:     "intent\x00-id",
+		Currency:     "C\x00NY",
+		CountryCode:  "C\x00N",
+		PaymentEnv:   "prod\x00",
+		OAuth: &payment.WechatOAuthInfo{
+			AuthorizeURL: "https://auth.example/\x00start",
+			AppID:        "wx\x00123",
+			OpenID:       "openid\x00",
+			Scope:        "snsapi\x00_base",
+			State:        "state\x00",
+			RedirectURL:  "/redirect\x00",
+		},
+		JSAPI: &payment.WechatJSAPIPayload{
+			AppID:     "wx\x00123",
+			TimeStamp: "171\x00234",
+			NonceStr:  "nonce\x00",
+			Package:   "prepay\x00_id=123",
+			SignType:  "R\x00SA",
+			PaySign:   "pay\x00sign",
+		},
+	})
+
+	if resp.TradeNo != "trade-123" || resp.PayURL != "https://pay.example/checkout" || resp.QRCode != "qr-code" {
+		t.Fatalf("payment details were not sanitized: %+v", resp)
+	}
+	if resp.ClientSecret != "secret-value" || resp.IntentID != "intent-id" || resp.Currency != "CNY" || resp.CountryCode != "CN" || resp.PaymentEnv != "prod" {
+		t.Fatalf("provider metadata strings were not sanitized: %+v", resp)
+	}
+	if resp.OAuth.AuthorizeURL != "https://auth.example/start" || resp.OAuth.AppID != "wx123" || resp.OAuth.OpenID != "openid" || resp.OAuth.Scope != "snsapi_base" || resp.OAuth.State != "state" || resp.OAuth.RedirectURL != "/redirect" {
+		t.Fatalf("oauth payload was not sanitized: %+v", resp.OAuth)
+	}
+	if resp.JSAPI.AppID != "wx123" || resp.JSAPI.TimeStamp != "171234" || resp.JSAPI.NonceStr != "nonce" || resp.JSAPI.Package != "prepay_id=123" || resp.JSAPI.SignType != "RSA" || resp.JSAPI.PaySign != "paysign" {
+		t.Fatalf("jsapi payload was not sanitized: %+v", resp.JSAPI)
+	}
+}
+
 func TestValidateSelectedCreateOrderAmountCurrencyRejectsFractionalZeroDecimal(t *testing.T) {
 	t.Parallel()
 
@@ -155,6 +199,29 @@ func TestValidateSelectedCreateOrderAmountCurrencyRejectsFractionalZeroDecimal(t
 	}
 	if appErr := infraerrors.FromError(err); appErr.Reason != "INVALID_AMOUNT" {
 		t.Fatalf("reason = %q, want INVALID_AMOUNT", appErr.Reason)
+	}
+}
+
+func TestComputeValidityDaysSupportsSingularAndPluralUnits(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		days int
+		unit string
+		want int
+	}{
+		{days: 2, unit: "week", want: 14},
+		{days: 2, unit: "weeks", want: 14},
+		{days: 3, unit: "month", want: 90},
+		{days: 3, unit: "months", want: 90},
+		{days: 5, unit: "day", want: 5},
+		{days: 5, unit: "days", want: 5},
+	}
+
+	for _, tt := range tests {
+		if got := psComputeValidityDays(tt.days, tt.unit); got != tt.want {
+			t.Fatalf("psComputeValidityDays(%d, %q) = %d, want %d", tt.days, tt.unit, got, tt.want)
+		}
 	}
 }
 

@@ -1008,6 +1008,7 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 		}
 		return nil, classifyCreatePaymentError(req, sel.ProviderKey, err)
 	}
+	pr = sanitizeCreatePaymentResponseDetails(pr)
 	_, err = s.entClient.PaymentOrder.UpdateOneID(order.ID).
 		SetNillablePaymentTradeNo(psNilIfEmpty(pr.TradeNo)).
 		SetNillablePayURL(psNilIfEmpty(pr.PayURL)).
@@ -1033,6 +1034,41 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 	resp := buildCreateOrderResponse(order, req, payAmount, sel, pr, resultType)
 	resp.ResumeToken = resumeToken
 	return resp, nil
+}
+
+func sanitizeCreatePaymentResponseDetails(resp *payment.CreatePaymentResponse) *payment.CreatePaymentResponse {
+	if resp == nil {
+		return &payment.CreatePaymentResponse{}
+	}
+	resp.TradeNo = stripNULBytes(resp.TradeNo)
+	resp.PayURL = stripNULBytes(resp.PayURL)
+	resp.QRCode = stripNULBytes(resp.QRCode)
+	resp.ClientSecret = stripNULBytes(resp.ClientSecret)
+	resp.IntentID = stripNULBytes(resp.IntentID)
+	resp.Currency = stripNULBytes(resp.Currency)
+	resp.CountryCode = stripNULBytes(resp.CountryCode)
+	resp.PaymentEnv = stripNULBytes(resp.PaymentEnv)
+	if resp.OAuth != nil {
+		resp.OAuth.AuthorizeURL = stripNULBytes(resp.OAuth.AuthorizeURL)
+		resp.OAuth.AppID = stripNULBytes(resp.OAuth.AppID)
+		resp.OAuth.OpenID = stripNULBytes(resp.OAuth.OpenID)
+		resp.OAuth.Scope = stripNULBytes(resp.OAuth.Scope)
+		resp.OAuth.State = stripNULBytes(resp.OAuth.State)
+		resp.OAuth.RedirectURL = stripNULBytes(resp.OAuth.RedirectURL)
+	}
+	if resp.JSAPI != nil {
+		resp.JSAPI.AppID = stripNULBytes(resp.JSAPI.AppID)
+		resp.JSAPI.TimeStamp = stripNULBytes(resp.JSAPI.TimeStamp)
+		resp.JSAPI.NonceStr = stripNULBytes(resp.JSAPI.NonceStr)
+		resp.JSAPI.Package = stripNULBytes(resp.JSAPI.Package)
+		resp.JSAPI.SignType = stripNULBytes(resp.JSAPI.SignType)
+		resp.JSAPI.PaySign = stripNULBytes(resp.JSAPI.PaySign)
+	}
+	return resp
+}
+
+func stripNULBytes(value string) string {
+	return strings.ReplaceAll(value, "\x00", "")
 }
 
 func buildProviderCreatePaymentRequest(req CreateOrderRequest, sel *payment.InstanceSelection, orderID, amount, subject string) payment.CreatePaymentRequest {

@@ -121,7 +121,7 @@ func TestVerifyOrderPublicReturnsLegacyOrderState(t *testing.T) {
 		Save(context.Background())
 	require.NoError(t, err)
 
-	order, err := client.PaymentOrder.Create().
+	_, err = client.PaymentOrder.Create().
 		SetUserID(user.ID).
 		SetUserEmail(user.Email).
 		SetUserName(user.Username).
@@ -160,33 +160,39 @@ func TestVerifyOrderPublicReturnsLegacyOrderState(t *testing.T) {
 	var resp struct {
 		Code int `json:"code"`
 		Data struct {
-			ID           int64   `json:"id"`
-			OutTradeNo   string  `json:"out_trade_no"`
-			Amount       float64 `json:"amount"`
-			PayAmount    float64 `json:"pay_amount"`
-			FeeRate      float64 `json:"fee_rate"`
-			Currency     string  `json:"currency"`
-			PaymentType  string  `json:"payment_type"`
-			OrderType    string  `json:"order_type"`
-			Status       string  `json:"status"`
-			RefundAmount float64 `json:"refund_amount"`
-			CreatedAt    string  `json:"created_at"`
-			ExpiresAt    string  `json:"expires_at"`
+			OutTradeNo string `json:"out_trade_no"`
+			Status     string `json:"status"`
+			CreatedAt  string `json:"created_at"`
+			ExpiresAt  string `json:"expires_at"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
-	require.Equal(t, order.ID, resp.Data.ID)
 	require.Equal(t, "legacy-order-no", resp.Data.OutTradeNo)
-	require.Equal(t, 90.64, resp.Data.PayAmount)
-	require.Equal(t, 0.03, resp.Data.FeeRate)
-	require.Equal(t, "HKD", resp.Data.Currency)
-	require.Equal(t, payment.TypeAlipay, resp.Data.PaymentType)
-	require.Equal(t, payment.OrderTypeBalance, resp.Data.OrderType)
 	require.Equal(t, service.OrderStatusPending, resp.Data.Status)
-	require.Equal(t, 0.0, resp.Data.RefundAmount)
 	require.NotEmpty(t, resp.Data.CreatedAt)
 	require.NotEmpty(t, resp.Data.ExpiresAt)
+
+	var raw struct {
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &raw))
+	for _, field := range []string{
+		"id",
+		"amount",
+		"pay_amount",
+		"fee_rate",
+		"currency",
+		"payment_type",
+		"order_type",
+		"product_name",
+		"refund_amount",
+		"refund_reason",
+		"refund_requested_by",
+		"plan_id",
+	} {
+		require.NotContains(t, raw.Data, field)
+	}
 }
 
 func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing.T) {
@@ -264,18 +270,18 @@ func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
-	require.Equal(t, float64(order.ID), resp.Data["id"])
 	require.Equal(t, "resolve-order-no", resp.Data["out_trade_no"])
-	require.Equal(t, 100.0, resp.Data["amount"])
-	require.Equal(t, 103.0, resp.Data["pay_amount"])
-	require.Equal(t, 0.03, resp.Data["fee_rate"])
-	require.Equal(t, "USD", resp.Data["currency"])
-	require.Equal(t, payment.TypeAlipay, resp.Data["payment_type"])
-	require.Equal(t, payment.OrderTypeBalance, resp.Data["order_type"])
 	require.Equal(t, service.OrderStatusPaid, resp.Data["status"])
 	require.Contains(t, resp.Data, "created_at")
 	require.Contains(t, resp.Data, "expires_at")
-	require.Contains(t, resp.Data, "refund_amount")
+	require.NotContains(t, resp.Data, "id")
+	require.NotContains(t, resp.Data, "amount")
+	require.NotContains(t, resp.Data, "pay_amount")
+	require.NotContains(t, resp.Data, "fee_rate")
+	require.NotContains(t, resp.Data, "currency")
+	require.NotContains(t, resp.Data, "payment_type")
+	require.NotContains(t, resp.Data, "order_type")
+	require.NotContains(t, resp.Data, "refund_amount")
 }
 
 func TestResolveOrderPublicByResumeTokenReturnsBadRequestForMismatchedToken(t *testing.T) {

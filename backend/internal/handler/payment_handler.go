@@ -498,52 +498,22 @@ func (h *PaymentHandler) VerifyOrder(c *gin.Context) {
 // PublicOrderResult is the limited order info returned by the public verify endpoint.
 // No user details are exposed — only payment status information.
 type PublicOrderResult struct {
-	ID                  int64      `json:"id"`
-	OutTradeNo          string     `json:"out_trade_no"`
-	Amount              float64    `json:"amount"`
-	PayAmount           float64    `json:"pay_amount"`
-	FeeRate             float64    `json:"fee_rate"`
-	Currency            string     `json:"currency"`
-	PaymentType         string     `json:"payment_type"`
-	OrderType           string     `json:"order_type"`
-	ProductName         string     `json:"product_name"`
-	SubscriptionIntent  string     `json:"subscription_intent,omitempty"`
-	Status              string     `json:"status"`
-	CreatedAt           time.Time  `json:"created_at"`
-	ExpiresAt           time.Time  `json:"expires_at"`
-	PaidAt              *time.Time `json:"paid_at,omitempty"`
-	CompletedAt         *time.Time `json:"completed_at,omitempty"`
-	RefundAmount        float64    `json:"refund_amount"`
-	RefundReason        *string    `json:"refund_reason,omitempty"`
-	RefundRequestedAt   *time.Time `json:"refund_requested_at,omitempty"`
-	RefundRequestedBy   *string    `json:"refund_requested_by,omitempty"`
-	RefundRequestReason *string    `json:"refund_request_reason,omitempty"`
-	PlanID              *int64     `json:"plan_id,omitempty"`
+	OutTradeNo  string     `json:"out_trade_no"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	PaidAt      *time.Time `json:"paid_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 func buildPublicOrderResult(order *dbent.PaymentOrder) PublicOrderResult {
 	return PublicOrderResult{
-		ID:                  order.ID,
-		OutTradeNo:          order.OutTradeNo,
-		Amount:              order.Amount,
-		PayAmount:           order.PayAmount,
-		FeeRate:             order.FeeRate,
-		Currency:            service.PaymentOrderCurrency(order),
-		PaymentType:         order.PaymentType,
-		OrderType:           order.OrderType,
-		ProductName:         service.PaymentOrderProductName(order),
-		SubscriptionIntent:  service.PaymentOrderSubscriptionIntent(order),
-		Status:              order.Status,
-		CreatedAt:           order.CreatedAt,
-		ExpiresAt:           order.ExpiresAt,
-		PaidAt:              order.PaidAt,
-		CompletedAt:         order.CompletedAt,
-		RefundAmount:        order.RefundAmount,
-		RefundReason:        order.RefundReason,
-		RefundRequestedAt:   order.RefundRequestedAt,
-		RefundRequestedBy:   order.RefundRequestedBy,
-		RefundRequestReason: order.RefundRequestReason,
-		PlanID:              order.PlanID,
+		OutTradeNo:  order.OutTradeNo,
+		Status:      order.Status,
+		CreatedAt:   order.CreatedAt,
+		ExpiresAt:   order.ExpiresAt,
+		PaidAt:      order.PaidAt,
+		CompletedAt: order.CompletedAt,
 	}
 }
 

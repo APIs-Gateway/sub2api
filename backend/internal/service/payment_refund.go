@@ -9,11 +9,14 @@ import (
 	"strings"
 	"time"
 
+	entsql "entgo.io/ent/dialect/sql"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/tidwall/gjson"
 )
 
 // --- Refund Flow ---
@@ -430,29 +433,33 @@ func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*Ref
 			p.SubDaysToRestore = 0
 		}
 	}
-	if err := s.gwRefund(ctx, p); err != nil {
+	refundResp, err := s.gwRefund(ctx, p)
+	if err != nil {
 		return s.handleGwFail(ctx, p, err)
+	}
+	if refundProviderStatus(refundResp) == payment.ProviderStatusPending {
+		return s.markRefundPending(ctx, p, refundResp)
 	}
 	return s.markRefundOk(ctx, p)
 }
 
-func (s *PaymentService) gwRefund(ctx context.Context, p *RefundPlan) error {
+func (s *PaymentService) gwRefund(ctx context.Context, p *RefundPlan) (*payment.RefundResponse, error) {
 	if p.Order.PaymentTradeNo == "" {
 		s.writeAuditLog(ctx, p.Order.ID, "REFUND_NO_TRADE_NO", "admin", map[string]any{"detail": "skipped"})
-		return nil
+		return &payment.RefundResponse{Status: payment.ProviderStatusSuccess}, nil
 	}
 
 	// Use the exact provider instance that created this order, not a random one
 	// from the registry. Each instance has its own merchant credentials.
 	prov, err := s.getRefundProvider(ctx, p.Order)
 	if err != nil {
-		return fmt.Errorf("get refund provider: %w", err)
+		return nil, fmt.Errorf("get refund provider: %w", err)
 	}
 	if err := validateProviderSnapshotMetadata(p.Order, prov.ProviderKey(), providerMerchantIdentityMetadata(prov)); err != nil {
 		s.writeAuditLog(ctx, p.Order.ID, "REFUND_PROVIDER_METADATA_MISMATCH", "admin", map[string]any{
 			"detail": err.Error(),
 		})
-		return err
+		return nil, err
 	}
 	resp, err := prov.Refund(ctx, payment.RefundRequest{
 		TradeNo: p.Order.PaymentTradeNo,
@@ -461,9 +468,12 @@ func (s *PaymentService) gwRefund(ctx context.Context, p *RefundPlan) error {
 		Reason:  p.Reason,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return validateRefundProviderResponse(resp)
+	if err := validateRefundProviderResponse(resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func formatGatewayRefundAmount(amount float64, order *dbent.PaymentOrder) string {
@@ -485,9 +495,19 @@ func validateRefundProviderResponse(resp *payment.RefundResponse) error {
 	}
 }
 
+func refundProviderStatus(resp *payment.RefundResponse) string {
+	if resp == nil {
+		return ""
+	}
+	return strings.TrimSpace(resp.Status)
+}
+
 // getRefundProvider creates a provider using the order's original instance config.
 // Delegates to getOrderProvider which handles instance lookup and fallback.
 func (s *PaymentService) getRefundProvider(ctx context.Context, o *dbent.PaymentOrder) (payment.Provider, error) {
+	if s.refundProviderOverride != nil {
+		return s.refundProviderOverride, nil
+	}
 	inst, err := s.getRefundOrderProviderInstance(ctx, o)
 	if err != nil {
 		return nil, err
@@ -559,6 +579,209 @@ func (s *PaymentService) applyPointsClawbackForOrder(ctx context.Context, orderI
 	}
 	if clawed > 0 {
 		s.writeAuditLog(ctx, orderID, "POINTS_CLAWBACK_APPLIED", "system", map[string]any{"points": clawed, "refundAmount": refundAmount})
+	}
+}
+
+func (s *PaymentService) markRefundPending(ctx context.Context, p *RefundPlan, resp *payment.RefundResponse) (*RefundResult, error) {
+	now := time.Now()
+	_, err := s.entClient.PaymentOrder.UpdateOneID(p.OrderID).
+		SetStatus(OrderStatusRefundPending).
+		SetRefundAmount(p.RefundAmount).
+		SetRefundReason(p.Reason).
+		SetForceRefund(p.Force).
+		SetUpdatedAt(now).
+		Save(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mark refund pending: %w", err)
+	}
+	s.writeAuditLog(ctx, p.OrderID, "REFUND_PENDING", "admin", map[string]any{
+		"refundAmount":      p.RefundAmount,
+		"gatewayBaseAmount": p.GatewayBaseAmount,
+		"gatewayAmount":     p.GatewayAmount,
+		"refundFeeRate":     p.RefundFeeRate,
+		"refundFeeAmount":   p.RefundFeeAmount,
+		"refundID":          strings.TrimSpace(resp.RefundID),
+		"providerStatus":    strings.TrimSpace(resp.Status),
+		"reason":            p.Reason,
+		"deductionType":     p.DeductionType,
+		"balanceDeducted":   p.BalanceToDeduct,
+		"subscriptionID":    p.SubscriptionID,
+		"subDaysDeducted":   p.SubDaysToDeduct,
+		"subDaysToRestore":  p.SubDaysToRestore,
+		"subExpireDay":      p.SubExpireDayToRestore,
+		"subTodayRemaining": p.SubTodayRemainingToRestore,
+		"subTodayDay":       p.SubTodayDayToRestore,
+		"force":             p.Force,
+	})
+	return &RefundResult{
+		Success:         true,
+		Message:         "refund pending",
+		BalanceDeducted: p.BalanceToDeduct,
+		SubDaysDeducted: p.SubDaysToDeduct,
+		GatewayAmount:   p.GatewayAmount,
+		RefundFeeRate:   p.RefundFeeRate,
+		RefundFeeAmount: p.RefundFeeAmount,
+	}, nil
+}
+
+func (s *PaymentService) QueryAndFinalizeRefund(ctx context.Context, orderID int64, refundID string) (*RefundResult, error) {
+	refundID = strings.TrimSpace(refundID)
+	if refundID == "" {
+		return nil, infraerrors.BadRequest("INVALID_REFUND_ID", "refund_id is required")
+	}
+	order, err := s.entClient.PaymentOrder.Get(ctx, orderID)
+	if err != nil {
+		return nil, infraerrors.NotFound("NOT_FOUND", "order not found")
+	}
+	switch order.Status {
+	case OrderStatusRefunded, OrderStatusPartiallyRefunded:
+		return &RefundResult{Success: true, Message: "refund already finalized"}, nil
+	case OrderStatusRefundPending:
+	default:
+		return nil, infraerrors.BadRequest("INVALID_STATUS", "order is not waiting for refund finalization")
+	}
+
+	prov, err := s.getRefundProvider(ctx, order)
+	if err != nil {
+		return nil, fmt.Errorf("get refund provider: %w", err)
+	}
+	queryProvider, ok := prov.(payment.RefundQueryProvider)
+	if !ok {
+		return nil, infraerrors.BadRequest("REFUND_QUERY_UNSUPPORTED", "refund query is not supported for this provider")
+	}
+	resp, err := queryProvider.QueryRefund(ctx, refundID)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("payment refund query response missing")
+	}
+
+	switch refundProviderStatus(resp) {
+	case payment.ProviderStatusSuccess, payment.ProviderStatusRefunded:
+		refundAmount := order.RefundAmount
+		if refundAmount <= 0 {
+			refundAmount = order.Amount
+		}
+		reason := ""
+		if order.RefundReason != nil {
+			reason = strings.TrimSpace(*order.RefundReason)
+		}
+		if reason == "" {
+			reason = fmt.Sprintf("refund order:%d", order.ID)
+		}
+		return s.markRefundOk(ctx, &RefundPlan{
+			OrderID:       order.ID,
+			Order:         order,
+			RefundAmount:  refundAmount,
+			GatewayAmount: refundAmount,
+			Reason:        reason,
+			Force:         order.ForceRefund,
+		})
+	case payment.ProviderStatusPending:
+		s.writeAuditLog(ctx, order.ID, "REFUND_QUERY_PENDING", "admin", map[string]any{
+			"refundID":       refundID,
+			"providerStatus": strings.TrimSpace(resp.Status),
+		})
+		return &RefundResult{Success: true, Message: "refund pending"}, nil
+	case payment.ProviderStatusFailed:
+		rollbackPlan, hasRollbackPlan := s.pendingRefundRollbackPlan(ctx, order)
+		rollbackOK := true
+		if hasRollbackPlan {
+			rollbackOK = s.RollbackRefund(ctx, rollbackPlan, fmt.Errorf("payment refund query returned failed"))
+		}
+		now := time.Now()
+		_, _ = s.entClient.PaymentOrder.UpdateOneID(order.ID).
+			SetStatus(OrderStatusRefundFailed).
+			SetFailedAt(now).
+			SetFailedReason("payment refund query returned failed").
+			Save(ctx)
+		action := "REFUND_QUERY_FAILED"
+		if hasRollbackPlan && rollbackOK {
+			action = "REFUND_QUERY_FAILED_ROLLED_BACK"
+		}
+		s.writeAuditLog(ctx, order.ID, action, "admin", map[string]any{
+			"refundID":       refundID,
+			"providerStatus": strings.TrimSpace(resp.Status),
+			"rolledBack":     hasRollbackPlan && rollbackOK,
+		})
+		if hasRollbackPlan && !rollbackOK {
+			return nil, infraerrors.InternalServer("REFUND_FAILED_ROLLBACK_FAILED", "payment refund query returned failed and local rollback failed")
+		}
+		return nil, infraerrors.InternalServer("REFUND_FAILED", "payment refund query returned failed")
+	default:
+		return nil, fmt.Errorf("payment refund query returned unknown status: %s", strings.TrimSpace(resp.Status))
+	}
+}
+
+func (s *PaymentService) pendingRefundRollbackPlan(ctx context.Context, order *dbent.PaymentOrder) (*RefundPlan, bool) {
+	if s == nil || order == nil || s.entClientForCtx(ctx) == nil {
+		return nil, false
+	}
+	log, err := s.entClientForCtx(ctx).PaymentAuditLog.Query().
+		Where(
+			paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)),
+			paymentauditlog.ActionEQ("REFUND_PENDING"),
+		).
+		Order(paymentauditlog.ByCreatedAt(entsql.OrderDesc())).
+		First(ctx)
+	if err != nil || log == nil {
+		return nil, false
+	}
+
+	detail := log.Detail
+	refundAmount := gjson.Get(detail, "refundAmount").Float()
+	if refundAmount <= 0 {
+		refundAmount = order.RefundAmount
+	}
+	if refundAmount <= 0 {
+		refundAmount = order.Amount
+	}
+	reason := strings.TrimSpace(gjson.Get(detail, "reason").String())
+	if reason == "" && order.RefundReason != nil {
+		reason = strings.TrimSpace(*order.RefundReason)
+	}
+	if reason == "" {
+		reason = fmt.Sprintf("refund order:%d", order.ID)
+	}
+
+	p := &RefundPlan{
+		OrderID:       order.ID,
+		Order:         order,
+		RefundAmount:  refundAmount,
+		GatewayAmount: gjson.Get(detail, "gatewayAmount").Float(),
+		Reason:        reason,
+		Force:         order.ForceRefund,
+	}
+	if p.GatewayAmount <= 0 {
+		p.GatewayAmount = refundAmount
+	}
+
+	deductionType := strings.TrimSpace(gjson.Get(detail, "deductionType").String())
+	balanceDeducted := gjson.Get(detail, "balanceDeducted").Float()
+	subscriptionID := gjson.Get(detail, "subscriptionID").Int()
+	switch {
+	case deductionType == payment.DeductionTypeBalance || balanceDeducted > 0:
+		if balanceDeducted <= 0 {
+			return nil, false
+		}
+		p.DeductionType = payment.DeductionTypeBalance
+		p.BalanceToDeduct = balanceDeducted
+		return p, true
+	case deductionType == payment.DeductionTypeSubscription || subscriptionID > 0:
+		if subscriptionID <= 0 {
+			return nil, false
+		}
+		p.DeductionType = payment.DeductionTypeSubscription
+		p.SubscriptionID = subscriptionID
+		p.SubDaysToDeduct = int(gjson.Get(detail, "subDaysDeducted").Int())
+		p.SubDaysToRestore = int(gjson.Get(detail, "subDaysToRestore").Int())
+		p.SubExpireDayToRestore = int(gjson.Get(detail, "subExpireDay").Int())
+		p.SubTodayRemainingToRestore = gjson.Get(detail, "subTodayRemaining").Float()
+		p.SubTodayDayToRestore = int(gjson.Get(detail, "subTodayDay").Int())
+		return p, true
+	default:
+		return nil, false
 	}
 }
 

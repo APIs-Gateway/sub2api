@@ -73,7 +73,7 @@ func (s *PaymentService) HandleKyrenRefundWebhook(ctx context.Context, data *pay
 	if _, err := s.entClient.PaymentOrder.Update().
 		Where(
 			paymentorder.IDEQ(order.ID),
-			paymentorder.StatusIn(OrderStatusCompleted, OrderStatusRefundRequested, OrderStatusRefundFailed, OrderStatusRefunding),
+			paymentorder.StatusIn(OrderStatusCompleted, OrderStatusRefundRequested, OrderStatusRefundFailed, OrderStatusRefunding, OrderStatusRefundPending),
 		).
 		SetStatus(OrderStatusRefunded).
 		Save(ctx); err != nil {
