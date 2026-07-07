@@ -65,6 +65,20 @@ func TestResolveAntigravityForwardBaseURLDailyOptIn(t *testing.T) {
 	require.Equal(t, antigravity.BaseURLs[1], resolveAntigravityForwardBaseURL())
 }
 
+func TestResolveAntigravityForwardBaseURLExplicitModes(t *testing.T) {
+	t.Run("production", func(t *testing.T) {
+		t.Setenv(antigravityForwardBaseURLEnv, "production")
+		require.NotEmpty(t, antigravity.BaseURLs)
+		require.Equal(t, antigravity.BaseURLs[0], resolveAntigravityForwardBaseURL())
+	})
+
+	t.Run("sandbox", func(t *testing.T) {
+		t.Setenv(antigravityForwardBaseURLEnv, "sandbox")
+		require.GreaterOrEqual(t, len(antigravity.BaseURLs), 2)
+		require.Equal(t, antigravity.BaseURLs[1], resolveAntigravityForwardBaseURL())
+	})
+}
+
 func TestStripSignatureSensitiveBlocksFromClaudeRequest(t *testing.T) {
 	req := &antigravity.ClaudeRequest{
 		Model: "claude-sonnet-4-5",

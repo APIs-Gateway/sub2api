@@ -24,6 +24,7 @@ type tokenRefreshAccountRepo struct {
 	lastAccount            *Account
 	lastExtraUpdates       map[string]any
 	updateErr              error
+	updateExtraErr         error
 }
 
 func (r *tokenRefreshAccountRepo) Update(ctx context.Context, account *Account) error {
@@ -54,6 +55,9 @@ func (r *tokenRefreshAccountRepo) UpdateCredentials(ctx context.Context, id int6
 func (r *tokenRefreshAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	r.updateExtraCalls++
 	r.lastExtraUpdates = updates
+	if r.updateExtraErr != nil {
+		return r.updateExtraErr
+	}
 	if r.accountsByID != nil {
 		if acc, ok := r.accountsByID[id]; ok && acc != nil {
 			if acc.Extra == nil {
@@ -216,6 +220,33 @@ func TestTokenRefreshService_RefreshWithRetry_AntigravityClearsForceRefreshOnSuc
 	require.Equal(t, "", repo.lastExtraUpdates["antigravity_force_token_refresh_reason"])
 	require.Equal(t, false, account.Extra["antigravity_force_token_refresh"])
 	require.Equal(t, 1, repo.clearTempCalls, "successful refresh should restore schedulability")
+}
+
+func TestTokenRefreshService_ClearAntigravityForceTokenRefreshMarker_Branches(t *testing.T) {
+	service := NewTokenRefreshService(&tokenRefreshAccountRepo{}, nil, nil, nil, nil, nil, nil, &config.Config{}, nil)
+
+	service.clearAntigravityForceTokenRefreshMarker(context.Background(), nil)
+	service.clearAntigravityForceTokenRefreshMarker(context.Background(), &Account{ID: 1, Platform: PlatformGemini})
+	service.clearAntigravityForceTokenRefreshMarker(context.Background(), &Account{
+		ID:       2,
+		Platform: PlatformAntigravity,
+		Extra:    map[string]any{"antigravity_force_token_refresh": false},
+	})
+
+	repo := &tokenRefreshAccountRepo{updateExtraErr: errors.New("db down")}
+	service = NewTokenRefreshService(repo, nil, nil, nil, nil, nil, nil, &config.Config{}, nil)
+	account := &Account{
+		ID:       3,
+		Platform: PlatformAntigravity,
+		Extra: map[string]any{
+			"antigravity_force_token_refresh":        true,
+			"antigravity_force_token_refresh_reason": "401_invalid",
+		},
+	}
+	service.clearAntigravityForceTokenRefreshMarker(context.Background(), account)
+
+	require.Equal(t, 1, repo.updateExtraCalls)
+	require.Equal(t, true, account.Extra["antigravity_force_token_refresh"], "failed DB update must not mutate in-memory marker")
 }
 
 func TestTokenRefreshService_RefreshWithRetry_InvalidatorErrorIgnored(t *testing.T) {

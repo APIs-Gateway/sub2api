@@ -135,3 +135,26 @@ func TestResponsesToAnthropic_DefaultToolNormalizesInputSchema(t *testing.T) {
 	assert.Equal(t, "shell", tools[0].Name)
 	assert.JSONEq(t, `{"type":"object","properties":{}}`, string(tools[0].InputSchema))
 }
+
+func TestNormalizeAnthropicInputSchema_Boundaries(t *testing.T) {
+	tests := []struct {
+		name   string
+		schema json.RawMessage
+		want   string
+	}{
+		{name: "empty", schema: nil, want: `{"type":"object","properties":{}}`},
+		{name: "null", schema: json.RawMessage(`null`), want: `{"type":"object","properties":{}}`},
+		{name: "invalid json", schema: json.RawMessage(`{"type":`), want: `{"type":"object","properties":{}}`},
+		{name: "non object json", schema: json.RawMessage(`[]`), want: `{"type":"object","properties":{}}`},
+		{name: "non object schema type", schema: json.RawMessage(`{"type":"string"}`), want: `{"type":"object","properties":{}}`},
+		{name: "missing type", schema: json.RawMessage(`{"properties":{"path":{"type":"string"}}}`), want: `{"type":"object","properties":{"path":{"type":"string"}}}`},
+		{name: "missing properties", schema: json.RawMessage(`{"type":"object"}`), want: `{"type":"object","properties":{}}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeAnthropicInputSchema(tt.schema)
+			assert.JSONEq(t, tt.want, string(got))
+		})
+	}
+}

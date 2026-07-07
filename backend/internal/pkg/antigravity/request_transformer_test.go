@@ -610,3 +610,36 @@ func TestTransformClaudeToGemini_ReasoningModelOmitsUnsupportedSamplingArgs(t *t
 	require.Nil(t, got.Request.GenerationConfig.TopP)
 	require.Nil(t, got.Request.GenerationConfig.TopK)
 }
+
+func TestTransformClaudeToGemini_ReasoningModelWithToolsKeepsToolConfig(t *testing.T) {
+	claudeReq := &ClaudeRequest{
+		Model: "gemini-3.1-pro-preview",
+		Messages: []ClaudeMessage{{
+			Role:    "user",
+			Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+		}},
+		Tools: []ClaudeTool{{
+			Name:        "lookup",
+			Description: "Lookup data",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		}},
+	}
+
+	body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "gemini-3.1-pro-preview", DefaultTransformOptions())
+	require.NoError(t, err)
+
+	var got V1InternalRequest
+	require.NoError(t, json.Unmarshal(body, &got))
+	require.NotNil(t, got.Request.ToolConfig)
+	require.NotEmpty(t, got.Request.Tools)
+}
+
+func TestIsAntigravityGeminiReasoningModel(t *testing.T) {
+	require.True(t, isAntigravityGeminiReasoningModel(" Gemini-3.1-Pro "))
+	require.True(t, isAntigravityGeminiReasoningModel("gemini-pro-agent"))
+	require.False(t, isAntigravityGeminiReasoningModel("gemini-3.1-pro-low"))
+	require.False(t, isAntigravityGeminiReasoningModel("claude-sonnet-4-5"))
+}
