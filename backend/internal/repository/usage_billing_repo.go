@@ -107,9 +107,9 @@ func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *s
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
-	// 三窗口结算：按瀑布把官方成本结算到「用户唯一生效卡 + 钱包」（订阅覆盖 1:1 加三窗口 usage
-	// → 钱包正余额 ×倍率 → 钱包负数 ×倍率）。订阅三窗口配额是资源额度，按官方刀 1:1 消耗；钱包是
-	// 用户实付余额，溢出部分按 rate_multiplier 折算成售价货币额扣费。结算不含透支（透支走独立手动接口）。
+	// 三窗口结算：先把官方成本按 rate_multiplier 折算成实际计费金额，再按「用户唯一生效卡 + 钱包」
+	// 的瀑布顺序扣减（订阅额度 → 钱包正余额 → 钱包负数）。订阅和钱包使用同一售价货币口径；
+	// 结算不含透支（透支走独立手动接口）。
 	// 锁序 user→card，整套副作用同 tx，dedup 覆盖整笔。OfficialCost = 官方价；legacy/测试只传
 	// BalanceCost 时回退（按它 1:1 扣，无卡即纯钱包，等价旧 deductUsageBillingBalance）。
 	officialCost := cmd.OfficialCost
@@ -162,7 +162,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 // subSettleResult 是三窗口订阅结算的落库结果（供上层重建旧余额、失效缓存）。
 type subSettleResult struct {
 	newBalance       float64 // 结算后钱包余额
-	walletDebit      float64 // 本次从钱包实扣的售价货币额（钱包正余额 + 钱包负数兜底；订阅覆盖 1:1 部分不计）
+	walletDebit      float64 // 本次从钱包实扣的售价货币额（钱包正余额 + 钱包负数兜底；订阅覆盖部分不计）
 	expiredGroupID   *int64  // 本次把卡惰性标记为 expired 时其 group_id（供失效订阅缓存）；否则 nil
 	overdraftApplied bool    // 三窗口结算不自动透支，恒 false（保留字段兼容上层；透支走独立手动接口）
 	subscriptionID   *int64  // 本次结算所用的用户生效卡 ID（有生效卡即填）；供 usage_log 标 subscription 计费
@@ -170,13 +170,12 @@ type subSettleResult struct {
 
 // settleSubscriptionWindow 按三窗口瀑布把一笔请求的官方成本结算到「用户唯一生效卡 + 钱包」。
 // 锁序固定 user→card（与购买/续费/转套餐一致，防死锁）。无生效卡 → 纯钱包计费（官方价×倍率）。
-// 订阅覆盖（1:1，加三窗口 usage，只升） → 钱包正余额（×倍率） → 钱包负数兜底（×倍率），整套副作用在
+// 官方价×倍率后，按订阅覆盖（加三窗口 usage，只升） → 钱包正余额 → 钱包负数兜底，整套副作用在
 // 本事务内原子完成；dedup（claimUsageBillingKey）与本函数同 tx，重放整笔跳过。**结算不含透支**
 // （透支走独立手动接口，单独改 expires_at + 月度计数）。瀑布逻辑复用 service.SettleWindow（已穷尽单测）。
-// 订阅三窗口配额按官方刀 1:1 消耗（与售价倍率无关）；钱包扣的是用户实付货币额，按 multiplier 折算。
 //
 // ★安全闸（资损）：未配置/未回填卡（三限额全 NULL）经 SubRemaining 返回 0、订阅不覆盖、回落钱包，
-// 不会“免费 1:1 全覆盖”（见 service.SubWindow.SubRemaining）。
+// 不会免费全覆盖（见 service.SubWindow.SubRemaining）。
 func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, officialCost, multiplier float64) (*subSettleResult, error) {
 	// 1) 锁 user 行（balance）。月度透支计数本路径不改（透支走独立接口），但一并读出构造 WalletState。
 	var balance float64

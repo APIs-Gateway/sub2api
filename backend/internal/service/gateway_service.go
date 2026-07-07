@@ -8930,7 +8930,7 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 
 	// 计费统一进入仓储事务（见 settlePerDaySubscription）：
 	// - BalanceCost = ActualCost（含倍率），保留供 legacy 兜底路径与 fingerprint 兼容。
-	// - per-day 结算用 OfficialCost（官方价，套餐 1:1）+ RateMultiplier（钱包层倍率）。
+	// - per-day 结算用 OfficialCost（官方价）+ RateMultiplier（售价倍率），套餐和钱包都按折算后的实际金额扣。
 	// rate_multiplier=0（免费组）→ ActualCost=0 → 不设 OfficialCost → 不触发结算（套餐也不扣）。
 	if p.Cost.ActualCost > 0 {
 		cmd.BalanceCost = p.Cost.ActualCost
@@ -9029,7 +9029,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		return
 	}
 
-	// per-day：钱包缓存按「真实钱包实扣」WalletDebit 回写（套餐 1:1 覆盖部分不动钱包）。
+	// per-day：钱包缓存按「真实钱包实扣」WalletDebit 回写（套餐覆盖部分不动钱包）。
 	// 由 WalletDebit 驱动、不再被 IsSubscriptionBill 旧分支挡住——订阅请求套餐不足走钱包正/负余额时
 	// 同样如实回写，避免缓存高于 DB。套餐余额一侧（today_remaining）缓存属准入缓存改造范围（P4c）。
 	walletDebit := resolveWalletDebit(p, result)
@@ -9100,7 +9100,7 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 			slog.Error("panic in notifyBalanceLow", "recover", r)
 		}
 	}()
-	// per-day：按「真实钱包实扣」决定是否检查低余额通知——套餐 1:1 覆盖（walletDebit=0）不触发；
+	// per-day：按「真实钱包实扣」决定是否检查低余额通知——套餐覆盖（walletDebit=0）不触发；
 	// 订阅请求套餐不足走钱包时同样要通知（不再被 IsSubscriptionBill 挡住）。
 	walletDebit := resolveWalletDebit(p, result)
 	if walletDebit <= 0 || p.User == nil || deps.balanceNotifyService == nil {
@@ -9126,7 +9126,7 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 
 // resolveOldBalance returns the pre-deduction balance.
 // Prefers the DB transaction result (newBalance + 真实钱包实扣) over snapshot.
-// per-day 模型下钱包实扣 = WalletDebit（套餐 1:1 覆盖的部分不动钱包），与旧的「扣 ActualCost」不同；
+// per-day 模型下钱包实扣 = WalletDebit（套餐覆盖的部分不动钱包），与旧的「扣 ActualCost」不同；
 // 缺 WalletDebit（legacy 兜底）时回退 ActualCost。
 func resolveOldBalance(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
 	if result != nil && result.NewBalance != nil {

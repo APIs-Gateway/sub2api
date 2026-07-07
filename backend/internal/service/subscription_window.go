@@ -125,12 +125,12 @@ func (c *SubWindow) ExceededLimitCode() string {
 }
 
 // WindowSettleResult 记录一次三窗口结算的扣费明细（用于落库/审计/测试断言）。
-// 订阅三窗口用量是资源配额（按官方刀 1:1 累计，与倍率无关）；钱包是用户实际付费余额，
-// 溢出到钱包的部分按 rate_multiplier 折算成售价货币额扣费。
+// 订阅三窗口用量与钱包余额使用同一售价货币口径：官方成本先乘 rate_multiplier 得到实际计费金额，
+// 再按订阅额度 → 钱包正余额 → 钱包负数的顺序结算。
 type WindowSettleResult struct {
-	SubCover     float64 // 订阅覆盖的官方刀（1:1，加到三窗口 usage；不扣钱包）
-	WalletPay    float64 // 从钱包正余额扣的售价货币额（= 官方刀 × 倍率）
-	WalletNegPay float64 // 最终缺口记入钱包负数的售价货币额（= 官方刀 × 倍率）
+	SubCover     float64 // 订阅覆盖的售价货币额（加到三窗口 usage；不扣钱包）
+	WalletPay    float64 // 从钱包正余额扣的售价货币额
+	WalletNegPay float64 // 最终缺口记入钱包负数的售价货币额
 }
 
 // AdmitWindow 准入（请求前）：有生效卡看三窗口余量、撞上限/无卡看钱包。先惰性重置窗口。
@@ -146,9 +146,9 @@ func AdmitWindow(c *SubWindow, w *WalletState, now time.Time) bool {
 	return w.Balance > 0 // 无生效卡 → 钱包标准计费
 }
 
-// SettleWindow 按三窗口瀑布结算单笔请求的官方成本 cost（multiplier=钱包计费倍率，仅对钱包生效）。
-// 固定顺序：订阅覆盖（1:1，加三窗口 usage） → 钱包正余额（×倍率） → 钱包负数（兜底缺口，×倍率）。
-// 订阅三窗口配额按官方刀 1:1 消耗（与售价倍率无关）；钱包扣的是用户实付货币额，按倍率折算官方成本。
+// SettleWindow 按三窗口瀑布结算单笔请求的官方成本 cost。
+// 先用 multiplier 把官方成本折算为实际计费金额，再固定顺序：订阅覆盖 → 钱包正余额 → 钱包负数兜底。
+// 这样分组/用户倍率、折扣与钱包和订阅额度的消耗保持同一口径。
 // 不含透支（由 ManualOverdraftWindow 显式触发）。就地变更 c、w；订阅 usage 只升、撞上限即停，溢出全落 w.Balance。
 func SettleWindow(c *SubWindow, w *WalletState, cost, multiplier float64, now time.Time) WindowSettleResult {
 	if multiplier <= 0 {
@@ -165,42 +165,40 @@ func SettleWindow(c *SubWindow, w *WalletState, cost, multiplier float64, now ti
 		}
 	}
 
-	C := cost
-	if C <= 0 {
+	charge := cost * multiplier
+	if charge <= 0 {
 		return res
 	}
 
-	// 1) 订阅覆盖（1:1，加三窗口 usage；撞上限即该窗口停止覆盖）
+	// 1) 订阅覆盖（售价货币口径，加三窗口 usage；撞上限即该窗口停止覆盖）
 	if active {
-		cover := math.Min(C, c.SubRemaining())
+		cover := math.Min(charge, c.SubRemaining())
 		if cover > 0 {
 			c.DailyUsageUSD += cover
 			c.WeeklyUsageUSD += cover
 			c.MonthlyUsageUSD += cover
-			C -= cover
+			charge -= cover
 			res.SubCover = cover
 		}
 	}
 
-	// 2) 钱包正余额（×倍率）：只用钱包正数部分
-	if C > 0 && w.Balance > 0 {
-		payOfficial := math.Min(C, w.Balance/multiplier)
-		if payOfficial > 0 {
-			walletPay := payOfficial * multiplier
+	// 2) 钱包正余额：只用钱包正数部分
+	if charge > 0 && w.Balance > 0 {
+		walletPay := math.Min(charge, w.Balance)
+		if walletPay > 0 {
 			if walletPay > w.Balance { // 防浮点把 balance 扣成极小负
 				walletPay = w.Balance
 			}
 			w.Balance -= walletPay
-			C -= payOfficial
+			charge -= walletPay
 			res.WalletPay = walletPay
 		}
 	}
 
-	// 3) 最终缺口 → 钱包负数（×倍率；订阅 usage 绝不“扣负”；钱包负数不随窗口重置清零）
-	if C > 0 {
-		neg := C * multiplier
-		w.Balance -= neg
-		res.WalletNegPay = neg
+	// 3) 最终缺口 → 钱包负数（订阅 usage 绝不“扣负”；钱包负数不随窗口重置清零）
+	if charge > 0 {
+		w.Balance -= charge
+		res.WalletNegPay = charge
 	}
 	return res
 }

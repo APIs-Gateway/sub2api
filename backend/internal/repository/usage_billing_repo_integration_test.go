@@ -229,7 +229,7 @@ func TestUsageBillingRepositoryApply_SubscriptionFallsThroughToWalletAndDeduplic
 	require.NotNil(t, result1.SubscriptionID)
 	require.Equal(t, subscription.ID, *result1.SubscriptionID)
 	require.NotNil(t, result1.WalletDebit)
-	require.InDelta(t, 6, *result1.WalletDebit, 0.000001, "订阅剩余 2 官方刀 1:1 覆盖，剩余 3 官方刀 × 倍率 2 扣钱包")
+	require.InDelta(t, 8, *result1.WalletDebit, 0.000001, "实际计费 5×2=10，订阅剩余 2 覆盖后，剩余 8 扣钱包")
 
 	result2, err := repo.Apply(ctx, cmd)
 	require.NoError(t, err)
@@ -244,7 +244,7 @@ func TestUsageBillingRepositoryApply_SubscriptionFallsThroughToWalletAndDeduplic
 	require.InDelta(t, 3, dailyUsage, 0.000001)
 	require.InDelta(t, 3, weeklyUsage, 0.000001)
 	require.InDelta(t, 3, monthlyUsage, 0.000001)
-	require.InDelta(t, 94, balance, 0.000001) // 100 − 3×2
+	require.InDelta(t, 92, balance, 0.000001) // 100 − (5×2−2)
 }
 
 func TestUsageBillingRepositoryApply_UnconfiguredSubscriptionFallsThroughToWalletPostgres(t *testing.T) {
@@ -497,7 +497,7 @@ func TestUsageBillingRepositoryApply_ConcurrentSameRequestOnlyAppliesOncePostgre
 	require.InDelta(t, 3, dailyUsage, 0.000001)
 	require.InDelta(t, 3, weeklyUsage, 0.000001)
 	require.InDelta(t, 3, monthlyUsage, 0.000001)
-	require.InDelta(t, 94, balance, 0.000001) // 100 − 3×2（订阅覆盖 2 官方刀 1:1，剩余 3 官方刀 × 倍率 2 扣钱包）
+	require.InDelta(t, 92, balance, 0.000001) // 100 − (5×2−2)
 
 	var dedupCount int
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_billing_dedup WHERE request_id = $1 AND api_key_id = $2", requestID, apiKey.ID).Scan(&dedupCount))
@@ -764,7 +764,7 @@ func perDayBillingFixture(t *testing.T, client *dbent.Client, balance float64) (
 	return user, apiKey
 }
 
-// 套餐余额(1:1) → 钱包正余额(×倍率)：套餐先扣满 D，余额按官方×倍率扣，套餐永不为负。
+// 套餐余额 → 钱包正余额：先把官方价按倍率折成实际金额，套餐先扣满 D，余额进钱包，套餐永不为负。
 func TestUsageBillingRepositoryApply_PerDayPackageThenWallet(t *testing.T) {
 	t.Skip("legacy per-day pool contract retired by three-window billing; covered by TestUsageBillingRepositoryApply_SubscriptionFallsThroughToWalletAndDeduplicatesPostgres")
 	ctx := context.Background()
@@ -785,7 +785,7 @@ func TestUsageBillingRepositoryApply_PerDayPackageThenWallet(t *testing.T) {
 		ExpiresAt:      now.Add(10 * 24 * time.Hour),
 	})
 
-	// 官方成本 150、倍率 2：套餐扣 100→0；剩 50 官方走钱包 ×2=100，balance 200→100。
+	// 官方成本 150、倍率 2：实际金额 300；套餐扣 100→0；剩 200 走钱包，balance 200→0。
 	res, err := repo.Apply(ctx, &service.UsageBillingCommand{
 		RequestID: uuid.NewString(), APIKeyID: apiKey.ID, UserID: user.ID,
 		OfficialCost: 150, RateMultiplier: 2,
@@ -793,9 +793,9 @@ func TestUsageBillingRepositoryApply_PerDayPackageThenWallet(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, res.Applied)
 	require.NotNil(t, res.NewBalance)
-	require.InDelta(t, 100, *res.NewBalance, 1e-6, "balance 200 − 50×2")
+	require.InDelta(t, 0, *res.NewBalance, 1e-6, "balance 200 − (150×2−100)")
 	require.NotNil(t, res.WalletDebit)
-	require.InDelta(t, 100, *res.WalletDebit, 1e-6, "钱包实扣 = 50×2")
+	require.InDelta(t, 200, *res.WalletDebit, 1e-6, "钱包实扣 = 150×2−100")
 	// 有生效卡 → 返回卡 ID（上层据此把 usage_log 标 subscription + 写 subscription_id）。
 	require.NotNil(t, res.SubscriptionID, "有卡应返回 SubscriptionID")
 	require.Equal(t, sub.ID, *res.SubscriptionID)

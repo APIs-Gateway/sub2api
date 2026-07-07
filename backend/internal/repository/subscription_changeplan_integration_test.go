@@ -313,7 +313,7 @@ func TestSubscriptionServiceChangePlanApply_NewCardBillsThroughThreeWindowsPostg
 		UserID:         user.ID,
 		SubscriptionID: &res.NewSubscriptionID,
 		OfficialCost:   5,
-		RateMultiplier: 2, // 本次全由订阅覆盖（1:1），钱包不受倍率影响
+		RateMultiplier: 2, // 本次实际计费 5×2=10，全由订阅覆盖，钱包不动
 	})
 	require.NoError(t, err)
 	require.True(t, applyRes.Applied)
@@ -324,9 +324,9 @@ func TestSubscriptionServiceChangePlanApply_NewCardBillsThroughThreeWindowsPostg
 
 	gotNew, err := NewUserSubscriptionRepository(client).GetByID(ctx, res.NewSubscriptionID)
 	require.NoError(t, err)
-	require.InDelta(t, 9, gotNew.DailyUsageUSD, 1e-9)
-	require.InDelta(t, 19, gotNew.WeeklyUsageUSD, 1e-9)
-	require.InDelta(t, 29, gotNew.MonthlyUsageUSD, 1e-9)
+	require.InDelta(t, 14, gotNew.DailyUsageUSD, 1e-9)
+	require.InDelta(t, 24, gotNew.WeeklyUsageUSD, 1e-9)
+	require.InDelta(t, 34, gotNew.MonthlyUsageUSD, 1e-9)
 	gotUser, err := client.User.Get(ctx, user.ID)
 	require.NoError(t, err)
 	require.InDelta(t, 100000, gotUser.Balance, 1e-6, "履约 + 订阅覆盖请求均不动钱包余额")
