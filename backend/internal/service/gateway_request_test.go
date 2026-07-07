@@ -71,6 +71,15 @@ func TestParseGatewayRequest_InvalidModelType(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestParseGatewayRequest_InvalidJSONErrorIsDiagnostic(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-6","messages":[`)
+
+	_, err := ParseGatewayRequest(NewRequestBodyRef(body), domain.PlatformAnthropic)
+
+	require.Error(t, err)
+	require.True(t, strings.HasPrefix(err.Error(), "invalid json (len="), "error should carry parse diagnostics, got: %s", err.Error())
+}
+
 func TestParseGatewayRequest_InvalidStreamType(t *testing.T) {
 	body := []byte(`{"stream":"true"}`)
 	_, err := ParseGatewayRequest(NewRequestBodyRef(body), "")

@@ -53,8 +53,8 @@ const (
 	// 格式固定、不随提示词改版漂移，是比身份 prose 更稳定的客户端标识。
 	// 生成见 gateway_billing_block.go；同类识别见 pkg/apicompat/anthropic_to_responses.go。
 	claudeCodeBillingHeaderPrefix = "x-anthropic-billing-header"
-	// claudeCodeCLIEntrypointMarker 标识请求来自 Claude Code CLI 入口。
-	claudeCodeCLIEntrypointMarker = "cc_entrypoint=cli"
+	// claudeCodeEntrypointMarker 标识请求带有 Claude Code 入口归因。
+	claudeCodeEntrypointMarker = "cc_entrypoint="
 )
 
 // NewClaudeCodeValidator 创建验证器实例
@@ -180,7 +180,7 @@ func (v *ClaudeCodeValidator) hasClaudeCodeSystemPrompt(body map[string]any) boo
 		// 计费归因块识别（WHY 见 claudeCodeBillingHeaderPrefix 注释）。先于 Dice 检查，
 		// 大小写敏感：该块由 gateway_billing_block.go 固定小写生成。
 		if strings.HasPrefix(text, claudeCodeBillingHeaderPrefix) &&
-			strings.Contains(text, claudeCodeCLIEntrypointMarker) {
+			strings.Contains(text, claudeCodeEntrypointMarker) {
 			return true
 		}
 

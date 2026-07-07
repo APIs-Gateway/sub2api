@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -168,7 +169,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 
 	bodyBytes := parsed.Body.Bytes()
 	if !gjson.ValidBytes(bodyBytes) {
-		return fmt.Errorf("invalid json")
+		return describeInvalidGatewayJSON(bodyBytes)
 	}
 
 	// 只在当前函数内零拷贝读取 JSON 字段；ReplaceBody 后必须重新进入本函数刷新派生状态。
@@ -210,6 +211,16 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 
 	setGatewayRequestRanges(parsed, protocol, jsonStr)
 	return nil
+}
+
+func describeInvalidGatewayJSON(body []byte) error {
+	const previewLimit = 160
+	preview := strings.TrimSpace(string(body))
+	if len(preview) > previewLimit {
+		preview = preview[:previewLimit] + "...(truncated)"
+	}
+	sum := sha256.Sum256(body)
+	return fmt.Errorf("invalid json (len=%d sha256=%x preview=%q)", len(body), sum[:8], preview)
 }
 
 func refreshGatewayRequestRanges(parsed *ParsedRequest, protocol string) error {
