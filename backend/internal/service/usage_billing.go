@@ -41,10 +41,10 @@ type UsageBillingCommand struct {
 	AccountQuotaCost    float64
 
 	// 三窗口结算输入（per-day redesign）：
-	// OfficialCost = 官方价（= CostBreakdown.TotalCost）；订阅三窗口配额按它 1:1 消耗。
+	// OfficialCost = 官方价（= CostBreakdown.TotalCost）；结算层会先乘 RateMultiplier 得到实际计费金额。
 	// OfficialCost>0 触发三窗口结算。
-	// RateMultiplier = 钱包计费倍率（= ActualCost/TotalCost）；订阅覆盖之外溢出到钱包的部分按它
-	// 折算成售价货币额扣费（<=0 时结算层按 1 处理）；同时也是 usage_log 展示/审计与幂等指纹分量。
+	// RateMultiplier = 售价倍率（= ActualCost/TotalCost）；订阅额度和钱包都按该实际计费金额扣减
+	// （<=0 时结算层按 1 处理）；同时也是 usage_log 展示/审计与幂等指纹分量。
 	OfficialCost   float64
 	RateMultiplier float64
 }
@@ -85,8 +85,8 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 		c.APIKeyQuotaCost,
 		c.APIKeyRateLimitCost,
 		c.AccountQuotaCost,
-		// per-day 结算实际副作用依赖官方价与倍率：相同 ActualCost 但官方价/倍率不同（套餐 1:1 vs
-		// 钱包×倍率的拆分不同）须视为不同结算语义，纳入指纹避免幂等键误覆盖/漏冲突。
+		// per-day 结算实际副作用依赖官方价与倍率：两者共同决定实际计费金额和套餐/钱包拆分，
+		// 纳入指纹避免幂等键误覆盖/漏冲突。
 		c.OfficialCost,
 		c.RateMultiplier,
 	)
@@ -128,8 +128,8 @@ type UsageBillingApplyResult struct {
 	APIKeyQuotaExhausted bool
 	NewBalance           *float64           // post-settlement wallet balance (nil = no settlement)
 	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
-	// WalletDebit 本次结算从钱包（users.balance）实际扣减的官方刀额（订阅覆盖 1:1 部分不计入）。
-	// = 钱包正余额扣（1:1）+ 钱包负数兜底扣（1:1）。供余额提醒按真实扣减重建旧余额、缓存按真实变化回写。
+	// WalletDebit 本次结算从钱包（users.balance）实际扣减的售价货币额（订阅覆盖部分不计入）。
+	// = 钱包正余额扣 + 钱包负数兜底扣。供余额提醒按真实扣减重建旧余额、缓存按真实变化回写。
 	// nil = 未发生三窗口结算。
 	WalletDebit *float64
 	// OverdraftApplied 本次结算发生了透支（改了 users.monthly_overdraft_count）。
