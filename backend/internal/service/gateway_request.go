@@ -1204,6 +1204,21 @@ func NormalizeClaudeOutputEffort(raw string) *string {
 	}
 }
 
+// NormalizeGLMOpenAIReasoningEffort normalizes OpenAI reasoning_effort values
+// accepted by GLM-compatible upstreams. Empty and unknown values are omitted.
+func NormalizeGLMOpenAIReasoningEffort(raw string) *string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return nil
+	}
+	switch value {
+	case "none", "low", "medium", "high":
+		return &value
+	default:
+		return nil
+	}
+}
+
 // DefaultEffortForThinkingEnabled 给"开启了 thinking 但协议层没有 effort 档位概念"
 // 的国产模型族返回一个默认 effort 字符串（"high"），用于 usage_log.reasoning_effort
 // 字段，避免该字段长期为 NULL 导致用量分析无法区分 thinking 开/关。
