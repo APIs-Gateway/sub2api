@@ -13,6 +13,7 @@ export type OrderStatus =
   | 'CANCELLED'
   | 'FAILED'
   | 'REFUND_REQUESTED'
+  | 'REFUND_PENDING'
   | 'REFUNDING'
   | 'PARTIALLY_REFUNDED'
   | 'REFUNDED'

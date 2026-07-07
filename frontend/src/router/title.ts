@@ -1,4 +1,5 @@
 import { i18n } from '@/i18n'
+import type { RouteLocationNormalizedLoaded } from 'vue-router'
 
 /**
  * 统一生成页面标题，避免多处写入 document.title 产生覆盖冲突。
@@ -19,4 +20,25 @@ export function resolveDocumentTitle(routeTitle: unknown, siteName?: string, tit
   }
 
   return normalizedSiteName
+}
+
+type CustomMenuItemLike = {
+  id?: string | number
+  label?: string | null
+}
+
+export function resolveRouteDocumentTitle(
+  route: Pick<RouteLocationNormalizedLoaded, 'name' | 'params' | 'meta'>,
+  siteName?: string,
+  customMenuItems: CustomMenuItemLike[] = []
+): string {
+  if (route.name === 'CustomPage') {
+    const id = String(route.params?.id ?? '')
+    const menuItem = customMenuItems.find((item) => String(item.id ?? '') === id)
+    if (menuItem?.label?.trim()) {
+      return resolveDocumentTitle(menuItem.label, siteName)
+    }
+  }
+
+  return resolveDocumentTitle(route.meta?.title, siteName, route.meta?.titleKey as string | undefined)
 }

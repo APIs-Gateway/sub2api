@@ -21,12 +21,12 @@
     </template>
     <template #cell-pay_amount="{ value, row }">
       <div class="text-sm leading-snug">
-        <span class="font-mono font-medium tabular-nums text-stone-900 dark:text-gray-100">¥{{ value.toFixed(2) }}</span>
+        <span class="font-mono font-medium tabular-nums text-stone-900 dark:text-gray-100">{{ formatOrderCurrencyAmount(value, row) }}</span>
         <span v-if="row.fee_rate > 0" class="ml-1 text-xs text-stone-400" :title="t('payment.orders.fee') + ': ' + row.fee_rate + '%'">
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
         <div v-if="row.amount !== row.pay_amount" class="mt-0.5 text-xs text-stone-500 dark:text-gray-400">
-          {{ t('payment.orders.creditedAmount') }}: {{ row.order_type === 'balance' ? '$' : '¥' }}{{ row.amount.toFixed(2) }}
+          {{ t('payment.orders.creditedAmount') }}: {{ formatCreditAmount(row.amount) }}
         </div>
       </div>
     </template>
@@ -52,6 +52,7 @@ import type { PaymentOrder } from '@/types/payment'
 import type { Column } from '@/components/common/types'
 import DataTable from '@/components/common/DataTable.vue'
 import OrderStatusBadge from '@/components/payment/OrderStatusBadge.vue'
+import { formatPaymentAmount } from '@/components/payment/currency'
 
 const { t } = useI18n()
 
@@ -65,6 +66,14 @@ function formatDate(dateStr: string) { return new Date(dateStr).toLocaleString()
 
 function fallbackProductName(order: PaymentOrder): string {
   return order.order_type === 'subscription' ? t('payment.admin.subscriptionOrder') : t('payment.admin.balanceOrder')
+}
+
+function formatOrderCurrencyAmount(amount: number, order: PaymentOrder): string {
+  return formatPaymentAmount(amount, order.currency)
+}
+
+function formatCreditAmount(amount: number): string {
+  return formatPaymentAmount(amount, 'USD')
 }
 
 const columns = computed((): Column[] => {

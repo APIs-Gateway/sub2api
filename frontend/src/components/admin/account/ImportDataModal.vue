@@ -36,6 +36,7 @@
           type="file"
           class="hidden"
           accept="application/json,.json"
+          multiple
           @change="handleFileChange"
         />
       </div>
@@ -108,11 +109,12 @@ const { t } = useI18n()
 const appStore = useAppStore()
 
 const importing = ref(false)
-const file = ref<File | null>(null)
+const files = ref<File[]>([])
 const result = ref<AdminDataImportResult | null>(null)
+const emittedImported = ref(false)
 
 const fileInput = ref<HTMLInputElement | null>(null)
-const fileName = computed(() => file.value?.name || '')
+const fileName = computed(() => files.value.map((item) => item.name).join(', '))
 
 const errorItems = computed(() => result.value?.errors || [])
 
@@ -120,8 +122,9 @@ watch(
   () => props.show,
   (open) => {
     if (open) {
-      file.value = null
+      files.value = []
       result.value = null
+      emittedImported.value = false
       if (fileInput.value) {
         fileInput.value.value = ''
       }
@@ -135,13 +138,44 @@ const openFilePicker = () => {
 
 const handleFileChange = (event: Event) => {
   const target = event.target as HTMLInputElement
-  file.value = target.files?.[0] || null
+  const selected = Array.from(target.files ?? []).filter((item) => {
+    const name = item.name.toLowerCase()
+    return item.type === 'application/json' || name.endsWith('.json')
+  })
+  if (selected.length === 0) {
+    files.value = []
+    appStore.showError(t('admin.accounts.dataImportSelectFile'))
+    return
+  }
+  files.value = selected
 }
 
 const handleClose = () => {
   if (importing.value) return
+  if (!emittedImported.value && result.value && ((result.value.account_created ?? 0) > 0 || (result.value.proxy_created ?? 0) > 0 || (result.value.proxy_reused ?? 0) > 0)) {
+    emittedImported.value = true
+    emit('imported')
+  }
   emit('close')
 }
+
+type AccountImportPayload = {
+  exported_at?: string
+  proxies: unknown[]
+  accounts: unknown[]
+}
+
+const isAccountImportPayload = (value: unknown): value is AccountImportPayload => {
+  if (!value || typeof value !== 'object') return false
+  const payload = value as Partial<AccountImportPayload>
+  return Array.isArray(payload.proxies) && Array.isArray(payload.accounts)
+}
+
+const mergePayloads = (payloads: AccountImportPayload[]): AccountImportPayload => ({
+  exported_at: payloads[0]?.exported_at,
+  proxies: payloads.flatMap((payload) => payload.proxies),
+  accounts: payloads.flatMap((payload) => payload.accounts),
+})
 
 const readFileAsText = async (sourceFile: File): Promise<string> => {
   if (typeof sourceFile.text === 'function') {
@@ -162,15 +196,35 @@ const readFileAsText = async (sourceFile: File): Promise<string> => {
 }
 
 const handleImport = async () => {
-  if (!file.value) {
+  if (files.value.length === 0) {
     appStore.showError(t('admin.accounts.dataImportSelectFile'))
     return
   }
 
   importing.value = true
   try {
-    const text = await readFileAsText(file.value)
-    const dataPayload = JSON.parse(text)
+    const payloads: AccountImportPayload[] = []
+    for (const sourceFile of files.value) {
+      let parsed: unknown
+      try {
+        const text = await readFileAsText(sourceFile)
+        parsed = JSON.parse(text)
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          appStore.showError(t('admin.accounts.dataImportParseFailedFile'))
+          return
+        }
+        throw error
+      }
+
+      if (!isAccountImportPayload(parsed)) {
+        appStore.showError(t('admin.accounts.dataImportInvalidFile'))
+        return
+      }
+      payloads.push(parsed)
+    }
+
+    const dataPayload = mergePayloads(payloads)
 
     const res = await adminAPI.accounts.importData({
       data: dataPayload,
@@ -190,6 +244,7 @@ const handleImport = async () => {
       appStore.showError(t('admin.accounts.dataImportCompletedWithErrors', msgParams))
     } else {
       appStore.showSuccess(t('admin.accounts.dataImportSuccess', msgParams))
+      emittedImported.value = true
       emit('imported')
     }
   } catch (error: any) {

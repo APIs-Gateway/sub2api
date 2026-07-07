@@ -122,6 +122,11 @@ export const adminPaymentAPI = {
     return apiClient.post<AdminRefundResult>(`/admin/payment/orders/${id}/refund`, data)
   },
 
+  /** Query and finalize a provider-side pending refund. */
+  queryRefund(id: number, data: { refund_id: string }) {
+    return apiClient.post<AdminRefundResult>(`/admin/payment/orders/${id}/refund/query`, data)
+  },
+
   // ==================== Channels ====================
 
   /** Get all payment channels */

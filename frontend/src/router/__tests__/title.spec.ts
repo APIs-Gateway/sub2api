@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveDocumentTitle } from '@/router/title'
+import { resolveDocumentTitle, resolveRouteDocumentTitle } from '@/router/title'
 
 describe('resolveDocumentTitle', () => {
   it('路由存在标题时，使用“路由标题 - 站点名”格式', () => {
@@ -21,5 +21,29 @@ describe('resolveDocumentTitle', () => {
 
     expect(before).toBe('Admin Dashboard - Alpha')
     expect(after).toBe('Admin Dashboard - Beta')
+  })
+})
+
+describe('resolveRouteDocumentTitle', () => {
+  it('uses the custom page menu label after menu items are loaded', () => {
+    const route = {
+      name: 'CustomPage',
+      params: { id: 'scheduler' },
+      meta: {
+        title: 'Custom Page'
+      }
+    }
+
+    expect(resolveRouteDocumentTitle(route as any, 'EzouAPI')).toBe('Custom Page - EzouAPI')
+    expect(resolveRouteDocumentTitle(route as any, 'EzouAPI', [
+      {
+        id: 'scheduler',
+        label: 'Account Scheduler',
+        icon_svg: '',
+        url: 'https://example.com',
+        visibility: 'admin',
+        sort_order: 0
+      }
+    ] as any)).toBe('Account Scheduler - EzouAPI')
   })
 })

@@ -84,6 +84,7 @@
               getStickyColumnClass(column, index),
               column.class
             ]"
+            :aria-sort="column.sortable && sortKey === column.key ? (sortOrder === 'asc' ? 'ascending' : 'descending') : undefined"
             @click="column.sortable && handleSort(column.key)"
           >
             <slot
@@ -94,11 +95,10 @@
             >
               <div class="flex items-center space-x-1">
                 <span :class="{ 'border-b-2 border-primary-500 pb-0.5': sortKey === column.key }">{{ column.label }}</span>
-                <span v-if="column.sortable" :class="sortKey === column.key ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-dark-500'">
+                <span v-if="column.sortable" class="flex flex-col">
                   <svg
-                    v-if="sortKey === column.key"
-                    class="h-4 w-4"
-                    :class="{ 'rotate-180 transform': sortOrder === 'desc' }"
+                    class="h-3 w-3"
+                    :class="sortKey === column.key && sortOrder === 'asc' ? 'text-primary-600 dark:text-primary-400' : 'text-gray-300 dark:text-dark-500'"
                     fill="currentColor"
                     viewBox="0 0 20 20"
                   >
@@ -108,9 +108,16 @@
                       clip-rule="evenodd"
                     />
                   </svg>
-                  <svg v-else class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                  <svg
+                    class="-mt-1 h-3 w-3 rotate-180 transform"
+                    :class="sortKey === column.key && sortOrder === 'desc' ? 'text-primary-600 dark:text-primary-400' : 'text-gray-300 dark:text-dark-500'"
+                    fill="currentColor"
+                    viewBox="0 0 20 20"
+                  >
                     <path
-                      d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                      fill-rule="evenodd"
+                      d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
+                      clip-rule="evenodd"
                     />
                   </svg>
                 </span>

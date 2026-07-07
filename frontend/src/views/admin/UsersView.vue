@@ -1207,6 +1207,11 @@ const persistUsageSort = () => {
   }
 }
 
+const clearUsageSort = () => {
+  usageSort.value = null
+  persistUsageSort()
+}
+
 const isUsageSortActive = (key: string, metric: UsageMetric) =>
   !!usageSort.value && usageSort.value.key === key && usageSort.value.metric === metric
 const getUsageSortOrder = (key: string, metric: UsageMetric): 'asc' | 'desc' | null =>
@@ -1599,6 +1604,9 @@ const handlePageSizeChange = (pageSize: number) => {
 }
 
 const handleSort = (key: string, order: 'asc' | 'desc') => {
+  if (key === 'last_used_at') {
+    clearUsageSort()
+  }
   sortState.sort_by = key
   sortState.sort_order = order
   pagination.page = 1

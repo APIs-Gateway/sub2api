@@ -1609,11 +1609,38 @@ const handleSetPrivacy = async (a: Account) => {
     const updated = await adminAPI.accounts.setPrivacy(a.id)
     patchAccountInList(updated)
     enterAutoRefreshSilentWindow()
-    appStore.showSuccess(t('common.success'))
+    showPrivacyResultToast(updated)
   } catch (error: any) {
     console.error('Failed to set privacy:', error)
     appStore.showError(error?.response?.data?.message || t('admin.accounts.privacyFailed'))
   }
+}
+
+function showPrivacyResultToast(account: Account) {
+  const platform = String(account.platform || '').toLowerCase()
+  const mode = String(account.extra?.privacy_mode || '').trim()
+
+  if (platform === 'openai') {
+    if (mode === 'training_off') {
+      appStore.showSuccess(t('admin.accounts.privacyTrainingOff'))
+      return
+    }
+    if (mode === 'training_set_cf_blocked') {
+      appStore.showError(t('admin.accounts.privacyCfBlocked'))
+      return
+    }
+  }
+
+  if (platform === 'antigravity') {
+    if (mode === 'privacy_set') {
+      appStore.showSuccess(t('admin.accounts.privacyAntigravitySet'))
+      return
+    }
+    appStore.showError(t('admin.accounts.privacyAntigravityFailed'))
+    return
+  }
+
+  appStore.showSuccess(t('common.success'))
 }
 const onRevertFallback = async (a: Account) => {
   try {

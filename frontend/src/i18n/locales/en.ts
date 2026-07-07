@@ -7397,6 +7397,7 @@
       cancelled: 'Cancelled',
       failed: 'Failed',
       refund_requested: 'Refund Requested',
+      refund_pending: 'Refund Pending',
       refunding: 'Refunding',
       refunded: 'Refunded',
       partially_refunded: 'Partially Refunded',

@@ -9,7 +9,52 @@ import { getLocale } from '@/i18n'
 
 // ==================== Axios Instance Configuration ====================
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
+
+const API_PREFIX = '/api/v1'
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '')
+}
+
+function normalizeApiPath(path: string): string {
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  return normalized.startsWith(`${API_PREFIX}/`) || normalized === API_PREFIX
+    ? normalized.slice(API_PREFIX.length) || '/'
+    : normalized
+}
+
+function resolveConfiguredApiBase(): { base: string; absolute: boolean } {
+  const base = trimTrailingSlash(API_BASE_URL)
+  return { base, absolute: /^https?:\/\//i.test(base) }
+}
+
+export function buildApiUrl(path: string): string {
+  const { base, absolute } = resolveConfiguredApiBase()
+  const normalizedPath = normalizeApiPath(path)
+  const url = `${base}${normalizedPath}`
+  if (absolute) return url
+  return url.startsWith('/') ? url : `/${url}`
+}
+
+export function buildGatewayUrl(path: string): string {
+  const { base, absolute } = resolveConfiguredApiBase()
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+  if (absolute) {
+    const url = new URL(base)
+    const gatewayPath = url.pathname.endsWith(API_PREFIX)
+      ? url.pathname.slice(0, -API_PREFIX.length)
+      : url.pathname
+    url.pathname = `${trimTrailingSlash(gatewayPath) || ''}${normalizedPath}`
+    url.search = ''
+    url.hash = ''
+    return url.toString()
+  }
+
+  const gatewayBase = base.endsWith(API_PREFIX) ? base.slice(0, -API_PREFIX.length) : base
+  return `${trimTrailingSlash(gatewayBase) || ''}${normalizedPath}` || normalizedPath
+}
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,

@@ -210,8 +210,8 @@
 
           <template #cell-billing_mode="{ row }">
             <span class="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium"
-                  :class="getBillingModeBadgeClass(getDisplayBillingMode(row))">
-              {{ getBillingModeLabel(getDisplayBillingMode(row), t) }}
+                  :class="getBillingModeBadgeClass(getUserUsageDisplayBillingMode(row))">
+              {{ getBillingModeLabel(getUserUsageDisplayBillingMode(row), t) }}
             </span>
           </template>
 
@@ -501,7 +501,7 @@
               <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.image_output_cost.toFixed(6) }}</span>
             </div>
             <!-- Token billing: show unit prices per 1M tokens -->
-            <template v-if="!tooltipData?.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN">
+            <template v-if="getUserUsageDisplayBillingMode(tooltipData) === BILLING_MODE_TOKEN">
               <div v-if="tooltipData && tooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.inputTokenPrice') }}</span>
                 <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.input_cost, tooltipData.input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
@@ -617,6 +617,7 @@ import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
+  BILLING_MODE_IMAGE,
   BILLING_MODE_TOKEN,
   getBillingModeBadgeClass,
   getBillingModeLabel,
@@ -785,6 +786,11 @@ const getRequestTypeExportText = (log: UsageLog): string => {
   if (requestType === 'stream') return 'Stream'
   if (requestType === 'sync') return 'Sync'
   return 'Unknown'
+}
+
+const getUserUsageDisplayBillingMode = (log: Pick<UsageLog, 'billing_mode' | 'image_count'> | null | undefined): string | null | undefined => {
+  if (!log?.billing_mode && (log?.image_count ?? 0) > 0) return BILLING_MODE_IMAGE
+  return getDisplayBillingMode(log) || BILLING_MODE_TOKEN
 }
 
 const formatUsageEndpoints = (log: UsageLog): string => {
@@ -975,6 +981,15 @@ const exportToCSV = async () => {
       'Output Tokens',
       'Cache Read Tokens',
       'Cache Creation Tokens',
+      'Input Unit Price (/1M)',
+      'Output Unit Price (/1M)',
+      'Image Count',
+      'Image Billing Size',
+      'Image Input Size',
+      'Image Output Size',
+      'Image Size Source',
+      'Image Size Breakdown',
+      'Image Unit Price',
       'Rate Multiplier',
       'Billed Cost',
       'Original Cost',
@@ -989,11 +1004,20 @@ const exportToCSV = async () => {
         formatReasoningEffort(log.reasoning_effort),
         log.inbound_endpoint || '',
         getRequestTypeExportText(log),
-        getBillingModeLabel(getDisplayBillingMode(log), t),
+        getBillingModeLabel(getUserUsageDisplayBillingMode(log), t),
         log.input_tokens,
         log.output_tokens,
         log.cache_read_tokens,
         log.cache_creation_tokens,
+        log.input_tokens > 0 ? formatTokenPricePerMillion(log.input_cost, log.input_tokens) : '',
+        textOutputTokens(log) > 0 ? formatTokenPricePerMillion(log.output_cost, textOutputTokens(log)) : '',
+        isImageUsage(log) ? log.image_count : '',
+        isImageUsage(log) ? formatImageBillingSize(log, t) : '',
+        isImageUsage(log) ? formatImageInputSize(log, t) : '',
+        isImageUsage(log) ? formatImageOutputSize(log, t) : '',
+        isImageUsage(log) ? formatImageSizeSource(log, t) : '',
+        isImageUsage(log) ? formatImageSizeBreakdown(log) : '',
+        isImageUsage(log) ? imageUnitPrice(log).toFixed(8) : '',
         log.rate_multiplier,
         (log.actual_cost ?? 0).toFixed(8),
         (log.total_cost ?? 0).toFixed(8),
@@ -1007,7 +1031,7 @@ const exportToCSV = async () => {
       ...rows.map((row) => row.join(','))
     ].join('\n')
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url

@@ -18,6 +18,20 @@
         {{ t('usage.in') }}: {{ formatTokens(stats?.total_input_tokens || 0) }} /
         {{ t('usage.out') }}: {{ formatTokens(stats?.total_output_tokens || 0) }}
       </p>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        {{ t('usage.cacheTotal') }}: {{ formatTokens(stats?.total_cache_tokens || 0) }}
+      </p>
+      <div class="mt-3 rounded-md border border-gray-200 p-2 text-xs dark:border-dark-700">
+        <p class="font-medium text-gray-600 dark:text-gray-300">{{ t('usage.cacheBreakdown') }}</p>
+        <div class="mt-1 flex items-center justify-between gap-3 text-gray-500 dark:text-gray-400">
+          <span>{{ t('usage.cacheCreationTokensLabel') }}</span>
+          <span class="font-mono tabular-nums text-gray-700 dark:text-gray-200">{{ formatTokens(stats?.total_cache_creation_tokens || 0) }}</span>
+        </div>
+        <div class="mt-1 flex items-center justify-between gap-3 text-gray-500 dark:text-gray-400">
+          <span>{{ t('usage.cacheReadTokensLabel') }}</span>
+          <span class="font-mono tabular-nums text-gray-700 dark:text-gray-200">{{ formatTokens(stats?.total_cache_read_tokens || 0) }}</span>
+        </div>
+      </div>
     </div>
     <div class="card p-5">
       <div class="mb-3 flex items-start justify-between">

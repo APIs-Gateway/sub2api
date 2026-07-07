@@ -92,9 +92,10 @@ const TablePageLayoutStub = {
   template: '<div><slot name="actions" /><slot name="filters" /><slot name="table" /><slot /></div>',
 }
 const DataTableStub = {
-  props: ['data'],
+  props: ['columns', 'data'],
   template: `
     <div>
+      <div data-test="column-keys">{{ columns.map(col => col.key).join(',') }}</div>
       <div v-for="row in data" :key="row.request_id">
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
@@ -103,6 +104,22 @@ const DataTableStub = {
     </div>
   `,
 }
+
+const readBlobText = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(blob)
+  })
+
+const readBlobBytes = (blob: Blob) =>
+  new Promise<number[]>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(Array.from(new Uint8Array(reader.result as ArrayBuffer)))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsArrayBuffer(blob)
+  })
 
 describe('user UsageView tooltip', () => {
   beforeEach(() => {
@@ -130,6 +147,42 @@ describe('user UsageView tooltip', () => {
       observe() {}
       disconnect() {}
     }
+  })
+
+  it('shows reasoning effort in the default usage columns', async () => {
+    query.mockResolvedValue({
+      items: [],
+      total: 0,
+      pages: 0,
+    })
+    getStatsByDateRange.mockResolvedValue({
+      total_requests: 0,
+      total_tokens: 0,
+      total_cost: 0,
+      avg_duration_ms: 0,
+    })
+    list.mockResolvedValue({ items: [] })
+
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Pagination: true,
+          EmptyState: true,
+          Select: true,
+          DateRangePicker: true,
+          DataTable: DataTableStub,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    const columnKeys = wrapper.get('[data-test="column-keys"]').text().split(',')
+    expect(columnKeys).toContain('reasoning_effort')
   })
 
   it('shows fast service tier and unit prices in user tooltip', async () => {
@@ -303,6 +356,11 @@ describe('user UsageView tooltip', () => {
     expect(hasSortedExportQuery).toBe(true)
     expect(clickSpy).toHaveBeenCalled()
     expect(showSuccess).toHaveBeenCalled()
+    const bytes = await readBlobBytes(exportedBlob as Blob)
+    expect(bytes.slice(0, 3)).toEqual([0xEF, 0xBB, 0xBF])
+    const csv = await readBlobText(exportedBlob as Blob)
+    expect(csv.charCodeAt(0)).not.toBe(0xFEFF)
+    expect(csv).toContain('Reasoning Effort')
 
     window.URL.createObjectURL = originalCreateObjectURL
     window.URL.revokeObjectURL = originalRevokeObjectURL

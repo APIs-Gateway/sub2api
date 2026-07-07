@@ -7577,6 +7577,7 @@
       cancelled: '已取消',
       failed: '失败',
       refund_requested: '退款申请中',
+      refund_pending: '退款待确认',
       refunding: '退款中',
       refunded: '已退款',
       partially_refunded: '部分退款',

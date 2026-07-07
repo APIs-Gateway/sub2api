@@ -3,7 +3,8 @@
  * Defines all application routes with lazy loading and navigation guards
  */
 
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { watch } from 'vue'
+import { createRouter, createWebHistory, type RouteLocationNormalizedLoaded, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
@@ -12,7 +13,7 @@ import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
-import { resolveDocumentTitle } from './title'
+import { resolveRouteDocumentTitle } from './title'
 
 /**
  * Route definitions with lazy loading
@@ -706,6 +707,7 @@ let authInitialized = false
 const navigationLoading = useNavigationLoadingState()
 // 延迟初始化预加载，传入 router 实例
 let routePrefetch: ReturnType<typeof useRoutePrefetch> | null = null
+let documentTitleWatcherReady = false
 const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/setup', '/payment/result', '/payment/airwallex', '/legal']
 const BACKEND_MODE_CALLBACK_PATHS = [
   '/auth/callback',
@@ -734,6 +736,35 @@ function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: bo
   return false
 }
 
+function getCustomMenuItemsForTitle(authStore: ReturnType<typeof useAuthStore>) {
+  const appStore = useAppStore()
+  const adminSettingsStore = useAdminSettingsStore()
+  const publicItems = appStore.cachedPublicSettings?.custom_menu_items ?? []
+  return authStore.isAdmin ? [...publicItems, ...adminSettingsStore.customMenuItems] : publicItems
+}
+
+function updateDocumentTitle(route: RouteLocationNormalizedLoaded, authStore: ReturnType<typeof useAuthStore>) {
+  const appStore = useAppStore()
+  document.title = resolveRouteDocumentTitle(route, appStore.siteName, getCustomMenuItemsForTitle(authStore))
+}
+
+function ensureDocumentTitleWatcher(authStore: ReturnType<typeof useAuthStore>) {
+  if (documentTitleWatcherReady) return
+  documentTitleWatcherReady = true
+  const appStore = useAppStore()
+  const adminSettingsStore = useAdminSettingsStore()
+  watch(
+    () => [
+      appStore.siteName,
+      appStore.cachedPublicSettings?.custom_menu_items,
+      adminSettingsStore.customMenuItems,
+      router.currentRoute.value.fullPath,
+    ],
+    () => updateDocumentTitle(router.currentRoute.value, authStore),
+    { deep: true }
+  )
+}
+
 router.beforeEach(async (to, _from, next) => {
   // 开始导航加载状态
   navigationLoading.startNavigation()
@@ -748,22 +779,8 @@ router.beforeEach(async (to, _from, next) => {
 
   // Set page title
   const appStore = useAppStore()
-  // For custom pages, use menu item label as document title
-  if (to.name === 'CustomPage') {
-    const id = to.params.id as string
-    const publicItems = appStore.cachedPublicSettings?.custom_menu_items ?? []
-    const adminSettingsStore = useAdminSettingsStore()
-    const menuItem = publicItems.find((item) => item.id === id)
-      ?? (authStore.isAdmin ? adminSettingsStore.customMenuItems.find((item) => item.id === id) : undefined)
-    if (menuItem?.label) {
-      const siteName = appStore.siteName || 'Sub2API'
-      document.title = `${menuItem.label} - ${siteName}`
-    } else {
-      document.title = resolveDocumentTitle(to.meta.title, appStore.siteName, to.meta.titleKey as string)
-    }
-  } else {
-    document.title = resolveDocumentTitle(to.meta.title, appStore.siteName, to.meta.titleKey as string)
-  }
+  ensureDocumentTitleWatcher(authStore)
+  updateDocumentTitle(to, authStore)
 
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true

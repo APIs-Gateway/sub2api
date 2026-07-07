@@ -35,15 +35,19 @@
         </div>
         <div class="mt-1 flex justify-between text-sm">
           <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.creditedAmount') }}</span>
-          <span class="font-medium text-gray-900 dark:text-white">{{ order?.order_type === 'balance' ? '$' : '¥' }}{{ order?.amount?.toFixed(2) }}</span>
+          <span class="font-medium text-gray-900 dark:text-white">{{ formatCreditAmount(order?.amount ?? 0) }}</span>
         </div>
         <div class="mt-1 flex justify-between text-sm">
           <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
-          <span class="font-medium text-gray-900 dark:text-white">¥{{ order?.pay_amount?.toFixed(2) }}</span>
+          <span class="font-medium text-gray-900 dark:text-white">{{ formatOrderCurrencyAmount(order?.pay_amount ?? 0) }}</span>
         </div>
         <div v-if="actuallyRefunded > 0" class="mt-1 flex justify-between text-sm">
           <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.alreadyRefunded') }}</span>
-          <span class="font-medium text-red-600 dark:text-red-400">{{ order?.order_type === 'balance' ? '$' : '¥' }}{{ actuallyRefunded.toFixed(2) }}</span>
+          <span class="font-medium text-red-600 dark:text-red-400">{{ formatCreditAmount(actuallyRefunded) }}</span>
+        </div>
+        <div v-if="userBalance != null" class="mt-1 flex justify-between text-sm">
+          <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.userBalance') }}</span>
+          <span class="font-medium text-gray-900 dark:text-white">{{ formatCreditAmount(userBalance) }}</span>
         </div>
       </div>
 
@@ -66,11 +70,11 @@
         <div v-if="form.deduct_balance && userBalance != null" class="mt-3 grid grid-cols-2 gap-3">
           <div class="rounded-lg bg-gray-50 p-3 text-sm dark:bg-dark-700">
             <div class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.userBalance') }}</div>
-            <div class="mt-1 font-semibold text-gray-900 dark:text-white">${{ userBalance.toFixed(2) }}</div>
+            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ formatCreditAmount(userBalance) }}</div>
           </div>
           <div class="rounded-lg bg-gray-50 p-3 text-sm dark:bg-dark-700">
             <div class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.orderAmount') }}</div>
-            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ order?.order_type === 'balance' ? '$' : '¥' }}{{ order?.amount?.toFixed(2) }}</div>
+            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ formatCreditAmount(order?.amount ?? 0) }}</div>
           </div>
         </div>
 
@@ -102,7 +106,7 @@
       <div>
         <label class="input-label">{{ t('payment.admin.refundAmount') }}</label>
         <div class="relative">
-          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ order?.order_type === 'balance' ? '$' : '¥' }}</span>
+          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
           <input
             v-model.number="form.amount"
             type="number"
@@ -114,7 +118,7 @@
           />
         </div>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          {{ t('payment.admin.maxRefundable') }}: {{ order?.order_type === 'balance' ? '$' : '¥' }}{{ maxRefundable.toFixed(2) }}
+          {{ t('payment.admin.maxRefundable') }}: {{ formatCreditAmount(maxRefundable) }}
         </p>
       </div>
 
@@ -196,6 +200,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { PaymentOrder } from '@/types/payment'
 import { formatOrderDateTime } from '@/components/payment/orderUtils'
 import { settingsAPI } from '@/api/admin/settings'
+import { formatPaymentAmount } from '@/components/payment/currency'
 
 const { t } = useI18n()
 
@@ -258,12 +263,12 @@ const userReceivesAmount = computed(() => Math.max(0, roundCurrency(gatewayBaseA
 
 const creditAmountText = computed(() => {
   if (!props.order) return ''
-  return `${props.order.order_type === 'balance' ? '$' : '¥'}${roundCurrency(form.amount).toFixed(2)}`
+  return formatCreditAmount(roundCurrency(form.amount))
 })
 
-const gatewayBaseText = computed(() => `¥${gatewayBaseAmount.value.toFixed(2)}`)
-const refundFeeText = computed(() => `¥${refundFeeAmount.value.toFixed(2)}`)
-const userReceivesText = computed(() => `¥${userReceivesAmount.value.toFixed(2)}`)
+const gatewayBaseText = computed(() => formatOrderCurrencyAmount(gatewayBaseAmount.value))
+const refundFeeText = computed(() => formatOrderCurrencyAmount(refundFeeAmount.value))
+const userReceivesText = computed(() => formatOrderCurrencyAmount(userReceivesAmount.value))
 
 watch(() => props.show, (val) => {
   if (val && props.order) {
@@ -309,5 +314,13 @@ function roundCurrency(value: number): number {
 function roundCurrencyUp(value: number): number {
   if (!Number.isFinite(value)) return 0
   return Math.ceil(value * 100) / 100
+}
+
+function formatOrderCurrencyAmount(amount: number): string {
+  return formatPaymentAmount(amount, props.order?.currency)
+}
+
+function formatCreditAmount(amount: number): string {
+  return formatPaymentAmount(amount, 'USD')
 }
 </script>
