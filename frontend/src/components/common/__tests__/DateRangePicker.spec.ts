@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
 
 import DateRangePicker from '../DateRangePicker.vue'
+
+const { currentLocale } = vi.hoisted(() => ({
+  currentLocale: { value: 'en' }
+}))
 
 const messages: Record<string, string> = {
   'dates.today': 'Today',
@@ -22,7 +25,7 @@ const messages: Record<string, string> = {
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string) => messages[key] ?? key,
-    locale: ref('en')
+    locale: currentLocale
   })
 }))
 
@@ -34,6 +37,10 @@ const formatLocalDate = (date: Date): string => {
 }
 
 describe('DateRangePicker', () => {
+  beforeEach(() => {
+    currentLocale.value = 'en'
+  })
+
   it('uses last 24 hours as the default recognized preset', () => {
     const now = new Date()
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
@@ -92,5 +99,30 @@ describe('DateRangePicker', () => {
         preset: 'last24Hours'
       }
     ])
+  })
+
+  it('formats custom date ranges with the Chinese date locale for zh-HK', async () => {
+    currentLocale.value = 'zh-HK'
+
+    const wrapper = mount(DateRangePicker, {
+      props: {
+        startDate: '2026-05-19',
+        endDate: '2026-05-19'
+      },
+      global: {
+        stubs: {
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.find('.date-picker-trigger').trigger('click')
+    const inputs = wrapper.findAll('input[type="date"]')
+    await inputs[0].setValue('2026-05-19')
+    await inputs[0].trigger('change')
+    await inputs[1].setValue('2026-05-19')
+    await inputs[1].trigger('change')
+
+    expect(wrapper.text()).toContain('5月19日')
   })
 })

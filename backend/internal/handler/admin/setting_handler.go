@@ -215,6 +215,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		SiteName:                               settings.SiteName,
 		SiteLogo:                               settings.SiteLogo,
 		SiteSubtitle:                           settings.SiteSubtitle,
+		DefaultLocale:                          settings.DefaultLocale,
 		APIBaseURL:                             settings.APIBaseURL,
 		ContactInfo:                            settings.ContactInfo,
 		DocURL:                                 settings.DocURL,
@@ -509,6 +510,7 @@ type UpdateSettingsRequest struct {
 	SiteName                    string                `json:"site_name"`
 	SiteLogo                    string                `json:"site_logo"`
 	SiteSubtitle                string                `json:"site_subtitle"`
+	DefaultLocale               *string               `json:"default_locale"`
 	APIBaseURL                  string                `json:"api_base_url"`
 	ContactInfo                 string                `json:"contact_info"`
 	DocURL                      string                `json:"doc_url"`
@@ -1496,6 +1498,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
+	defaultLocale := previousSettings.DefaultLocale
+	if req.DefaultLocale != nil {
+		defaultLocale = strings.TrimSpace(*req.DefaultLocale)
+	}
+
 	settings := &service.SystemSettings{
 		// 系统全局 platform quota 默认值（整体替换语义）
 		DefaultPlatformQuotas: req.DefaultPlatformQuotas,
@@ -1600,6 +1607,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		SiteName:                               req.SiteName,
 		SiteLogo:                               req.SiteLogo,
 		SiteSubtitle:                           req.SiteSubtitle,
+		DefaultLocale:                          defaultLocale,
 		APIBaseURL:                             req.APIBaseURL,
 		ContactInfo:                            req.ContactInfo,
 		DocURL:                                 req.DocURL,
@@ -2081,6 +2089,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		SiteName:                               updatedSettings.SiteName,
 		SiteLogo:                               updatedSettings.SiteLogo,
 		SiteSubtitle:                           updatedSettings.SiteSubtitle,
+		DefaultLocale:                          updatedSettings.DefaultLocale,
 		APIBaseURL:                             updatedSettings.APIBaseURL,
 		ContactInfo:                            updatedSettings.ContactInfo,
 		DocURL:                                 updatedSettings.DocURL,
@@ -2492,6 +2501,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.SiteSubtitle != after.SiteSubtitle {
 		changed = append(changed, "site_subtitle")
+	}
+	if before.DefaultLocale != after.DefaultLocale {
+		changed = append(changed, "default_locale")
 	}
 	if before.APIBaseURL != after.APIBaseURL {
 		changed = append(changed, "api_base_url")

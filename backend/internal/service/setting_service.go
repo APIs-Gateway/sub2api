@@ -55,7 +55,33 @@ var (
 		"DEFAULT_SUBSCRIPTION_GROUP_DUPLICATE",
 		"default subscription group cannot be duplicated",
 	)
+	ErrInvalidDefaultLocale = infraerrors.BadRequest(
+		"INVALID_DEFAULT_LOCALE",
+		"default locale must be one of zh-CN, zh-HK, en",
+	)
 )
+
+const defaultLocaleFallback = "zh-CN"
+
+func normalizeDefaultLocale(value string) string {
+	switch strings.TrimSpace(value) {
+	case "zh-CN", "zh-HK", "en":
+		return strings.TrimSpace(value)
+	case "zh":
+		return defaultLocaleFallback
+	default:
+		return defaultLocaleFallback
+	}
+}
+
+func validDefaultLocaleForWrite(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "zh-CN", "zh-HK", "en":
+		return true
+	default:
+		return false
+	}
+}
 
 type SettingRepository interface {
 	Get(ctx context.Context, key string) (*Setting, error)
@@ -788,6 +814,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeySiteName,
 		SettingKeySiteLogo,
 		SettingKeySiteSubtitle,
+		SettingKeyDefaultLocale,
 		SettingKeyAPIBaseURL,
 		SettingKeyContactInfo,
 		SettingKeyDocURL,
@@ -913,6 +940,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
 		SiteLogo:                         settings[SettingKeySiteLogo],
 		SiteSubtitle:                     s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
+		DefaultLocale:                    normalizeDefaultLocale(settings[SettingKeyDefaultLocale]),
 		APIBaseURL:                       settings[SettingKeyAPIBaseURL],
 		ContactInfo:                      settings[SettingKeyContactInfo],
 		DocURL:                           settings[SettingKeyDocURL],
@@ -1227,6 +1255,7 @@ type PublicSettingsInjectionPayload struct {
 	SiteName                         string                   `json:"site_name"`
 	SiteLogo                         string                   `json:"site_logo"`
 	SiteSubtitle                     string                   `json:"site_subtitle"`
+	DefaultLocale                    string                   `json:"default_locale"`
 	APIBaseURL                       string                   `json:"api_base_url"`
 	ContactInfo                      string                   `json:"contact_info"`
 	DocURL                           string                   `json:"doc_url"`
@@ -1293,6 +1322,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		SiteName:                         settings.SiteName,
 		SiteLogo:                         settings.SiteLogo,
 		SiteSubtitle:                     settings.SiteSubtitle,
+		DefaultLocale:                    settings.DefaultLocale,
 		APIBaseURL:                       settings.APIBaseURL,
 		ContactInfo:                      settings.ContactInfo,
 		DocURL:                           settings.DocURL,
@@ -1727,6 +1757,12 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if settings.WeChatConnectFrontendRedirectURL == "" {
 		settings.WeChatConnectFrontendRedirectURL = defaultWeChatConnectFrontend
 	}
+	settings.DefaultLocale = strings.TrimSpace(settings.DefaultLocale)
+	if settings.DefaultLocale == "" {
+		settings.DefaultLocale = defaultLocaleFallback
+	} else if !validDefaultLocaleForWrite(settings.DefaultLocale) {
+		return nil, ErrInvalidDefaultLocale
+	}
 	settings.GitHubOAuthRedirectURL = strings.TrimSpace(settings.GitHubOAuthRedirectURL)
 	settings.GitHubOAuthFrontendRedirectURL = strings.TrimSpace(settings.GitHubOAuthFrontendRedirectURL)
 	if settings.GitHubOAuthFrontendRedirectURL == "" {
@@ -1887,6 +1923,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeySiteName] = settings.SiteName
 	updates[SettingKeySiteLogo] = settings.SiteLogo
 	updates[SettingKeySiteSubtitle] = settings.SiteSubtitle
+	updates[SettingKeyDefaultLocale] = settings.DefaultLocale
 	updates[SettingKeyAPIBaseURL] = settings.APIBaseURL
 	updates[SettingKeyContactInfo] = settings.ContactInfo
 	updates[SettingKeyDocURL] = settings.DocURL
@@ -2820,6 +2857,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAPIKeyACLTrustForwardedIP:                 "false",
 		SettingKeySiteName:                                  "Sub2API",
 		SettingKeySiteLogo:                                  "",
+		SettingKeyDefaultLocale:                             defaultLocaleFallback,
 		SettingKeyPurchaseSubscriptionEnabled:               "false",
 		SettingKeyPurchaseSubscriptionURL:                   "",
 		SettingKeyTableDefaultPageSize:                      "20",
@@ -3016,6 +3054,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
 		SiteLogo:                         settings[SettingKeySiteLogo],
 		SiteSubtitle:                     s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
+		DefaultLocale:                    normalizeDefaultLocale(settings[SettingKeyDefaultLocale]),
 		APIBaseURL:                       settings[SettingKeyAPIBaseURL],
 		ContactInfo:                      settings[SettingKeyContactInfo],
 		DocURL:                           settings[SettingKeyDocURL],

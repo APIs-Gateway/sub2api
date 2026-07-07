@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   // Home Page
   home: {
     viewOnGithub: 'View on GitHub',
@@ -160,6 +160,9 @@ export default {
     todayExpires: '(expires today)',
     daysLeft: '({days} days)',
     usedQuota: 'Used Quota',
+    windowDay: 'D',
+    windowWeek: 'W',
+    windowMonth: 'M',
     resetNow: 'Resetting soon',
     subscriptionType: 'Subscription Type',
     subscriptionExpires: 'Subscription Expires',
@@ -6194,6 +6197,8 @@ export default {
         siteSubtitle: 'Site Subtitle',
         siteSubtitlePlaceholder: 'Subscription to API Conversion Platform',
         siteSubtitleHint: 'Displayed on login and register pages',
+        defaultLocale: 'Default Language',
+        defaultLocaleHint: 'Used when visitors have not selected a language on this device',
         apiBaseUrl: 'API Base URL',
         apiBaseUrlPlaceholder: 'https://api.example.com',
         apiBaseUrlHint:

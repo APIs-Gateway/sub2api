@@ -182,6 +182,8 @@ export interface LoginAgreementDocument {
   content_md: string
 }
 
+export type LocaleCode = 'zh-CN' | 'zh-HK' | 'en'
+
 export interface PublicSettings {
   registration_enabled: boolean
   email_verify_enabled: boolean
@@ -200,6 +202,7 @@ export interface PublicSettings {
   site_name: string
   site_logo: string
   site_subtitle: string
+  default_locale: LocaleCode
   api_base_url: string
   contact_info: string
   doc_url: string
