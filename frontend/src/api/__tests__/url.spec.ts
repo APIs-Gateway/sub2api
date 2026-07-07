@@ -24,4 +24,13 @@ describe('configured API base URL helpers', () => {
 
     expect(buildGatewayUrl('/v1/usage')).toBe('https://gateway.example.test/v1/usage')
   })
+
+  it('keeps a configured non-api absolute gateway path', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://gateway.example.test/proxy-root/')
+    vi.resetModules()
+
+    const { buildGatewayUrl } = await import('../client')
+
+    expect(buildGatewayUrl('/v1/chat/completions')).toBe('https://gateway.example.test/proxy-root/v1/chat/completions')
+  })
 })

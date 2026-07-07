@@ -349,6 +349,58 @@ describe('EmailVerifyView', () => {
     expect(registerMock).not.toHaveBeenCalled()
   })
 
+  it('forwards pending oauth adoption decisions when creating the account', async () => {
+    authStoreState.pendingAuthSession = {
+      token: 'pending-token-2',
+      token_field: 'pending_auth_token',
+      provider: 'wechat',
+      redirect: '/profile',
+    }
+    sessionStorage.setItem(
+      'register_data',
+      JSON.stringify({
+        email: 'fresh@example.com',
+        password: 'secret-123',
+        pending_adoption_decision: {
+          adopt_display_name: false,
+          adopt_avatar: true,
+        },
+      })
+    )
+    apiClientPostMock.mockResolvedValue({
+      data: {
+        access_token: 'oauth-access-token',
+        refresh_token: 'oauth-refresh-token',
+        expires_in: 3600,
+        token_type: 'Bearer',
+      },
+    })
+
+    const wrapper = mount(EmailVerifyView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: true,
+          TurnstileWidget: true,
+          transition: false,
+        },
+      },
+    })
+
+    await flushPromises()
+    await wrapper.get('#code').setValue('123456')
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(apiClientPostMock).toHaveBeenCalledWith('/auth/oauth/pending/create-account', {
+      email: 'fresh@example.com',
+      password: 'secret-123',
+      verify_code: '123456',
+      adopt_display_name: false,
+      adopt_avatar: true,
+    })
+  })
+
   it('returns to the oauth callback flow when pending account creation becomes bind-login', async () => {
     authStoreState.pendingAuthSession = {
       token: '',

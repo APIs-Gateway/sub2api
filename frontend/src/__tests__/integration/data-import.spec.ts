@@ -41,7 +41,8 @@ const mountModal = () =>
 const makeJsonFile = (name: string, content: string, type = 'application/json') => {
   const file = new File([content], name, { type })
   Object.defineProperty(file, 'text', {
-    value: () => Promise.resolve(content)
+    value: () => Promise.resolve(content),
+    configurable: true
   })
   return file
 }
@@ -67,6 +68,26 @@ describe('ImportDataModal', () => {
 
     await wrapper.find('form').trigger('submit')
     expect(showError).toHaveBeenCalledWith('admin.accounts.dataImportSelectFile')
+  })
+
+  it('resets previous selection and result each time the dialog opens', async () => {
+    const wrapper = mountModal()
+    const input = wrapper.find('input[type="file"]')
+
+    setInputFiles(input.element, [
+      makeJsonFile('valid.json', JSON.stringify({
+        exported_at: '2026-07-05T00:00:00Z',
+        proxies: [],
+        accounts: [{ name: 'a' }]
+      }))
+    ])
+    await input.trigger('change')
+    expect(wrapper.text()).toContain('valid.json')
+
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+
+    expect(wrapper.text()).not.toContain('valid.json')
   })
 
   it('reports invalid JSON with file-aware parse failure', async () => {
@@ -96,6 +117,27 @@ describe('ImportDataModal', () => {
     await flushPromises()
 
     expect(showError).toHaveBeenCalledWith('admin.accounts.dataImportInvalidFile')
+    expect(adminAPI.accounts.importData).not.toHaveBeenCalled()
+  })
+
+  it('reports non-syntax file read errors through the generic import failure path', async () => {
+    const { adminAPI } = await import('@/api/admin')
+    const wrapper = mountModal()
+
+    const file = makeJsonFile('broken.json', JSON.stringify({ proxies: [], accounts: [] }))
+    Object.defineProperty(file, 'text', {
+      value: () => Promise.reject(new Error('disk read failed')),
+      configurable: true
+    })
+
+    const input = wrapper.find('input[type="file"]')
+    setInputFiles(input.element, [file])
+
+    await input.trigger('change')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('disk read failed')
     expect(adminAPI.accounts.importData).not.toHaveBeenCalled()
   })
 
@@ -162,6 +204,39 @@ describe('ImportDataModal', () => {
       skip_default_group_bind: true
     })
     expect(showSuccess).toHaveBeenCalledWith('admin.accounts.dataImportSuccess')
+  })
+
+  it('fills exported_at when merged account payloads omit it', async () => {
+    const { adminAPI } = await import('@/api/admin')
+    vi.mocked(adminAPI.accounts.importData).mockResolvedValue({
+      proxy_created: 0,
+      proxy_reused: 0,
+      proxy_failed: 0,
+      account_created: 1,
+      account_failed: 0
+    })
+
+    const wrapper = mountModal()
+    const input = wrapper.find('input[type="file"]')
+    setInputFiles(input.element, [
+      makeJsonFile('missing-date.json', JSON.stringify({
+        proxies: [],
+        accounts: [{ name: 'a' }]
+      }))
+    ])
+
+    await input.trigger('change')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(adminAPI.accounts.importData).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        exported_at: expect.any(String),
+        proxies: [],
+        accounts: [{ name: 'a' }]
+      }),
+      skip_default_group_bind: true
+    })
   })
 
   it('notifies the parent to refresh after closing a partially successful import', async () => {
