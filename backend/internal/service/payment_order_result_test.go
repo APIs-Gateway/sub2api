@@ -265,6 +265,7 @@ func TestMaybeBuildWeChatOAuthRequiredResponse(t *testing.T) {
 	}
 	if resp.OAuth == nil {
 		t.Fatal("expected oauth payload, got nil")
+		return
 	}
 	if resp.OAuth.AppID != "wx123456" {
 		t.Fatalf("appid = %q, want %q", resp.OAuth.AppID, "wx123456")
@@ -380,6 +381,7 @@ func TestMaybeBuildWeChatOAuthRequiredResponseFallsBackToConfiguredLegacySigning
 	}
 	if resp.OAuth == nil || strings.TrimSpace(resp.OAuth.AuthorizeURL) == "" {
 		t.Fatalf("expected oauth redirect payload, got %+v", resp.OAuth)
+		return
 	}
 }
 
