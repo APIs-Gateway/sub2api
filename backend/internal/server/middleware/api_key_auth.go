@@ -148,8 +148,8 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		// 不再按分组校验订阅日/周/月限额。订阅额度在开通时已一次性打入 users.balance，
 		// 由每日清扣 job 维护；消费时由计费仓储按「订阅优先」归集到各订阅卡。
 		//
-		// skipBilling: /v1/usage 只需鉴权，跳过所有计费执行
-		skipBilling := c.Request.URL.Path == "/v1/usage"
+		// skipBilling: read-only usage endpoints only need authentication.
+		skipBilling := isAPIKeyAuthReadOnlyUsagePath(c.Request.URL.Path)
 
 		if !skipBilling {
 			// Key 状态检查
@@ -207,6 +207,15 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 
 		c.Next()
+	}
+}
+
+func isAPIKeyAuthReadOnlyUsagePath(path string) bool {
+	switch path {
+	case "/v1/usage", "/backend-api/wham/usage", "/backend-api/codex/wham/usage":
+		return true
+	default:
+		return false
 	}
 }
 
