@@ -143,6 +143,65 @@ func TestBuildCreateOrderResponseCopiesJSAPIPayload(t *testing.T) {
 	}
 }
 
+func TestSanitizeCreatePaymentResponseDetailsRemovesNULBytes(t *testing.T) {
+	t.Parallel()
+
+	resp := &payment.CreatePaymentResponse{
+		TradeNo:      "trade\x00-no",
+		PayURL:       "https://pay.example.com/\x00checkout",
+		QRCode:       "wxp://payment-token\x00",
+		ClientSecret: "secret\x00unchanged",
+	}
+
+	sanitizeCreatePaymentResponseDetails(resp)
+
+	if strings.ContainsRune(resp.TradeNo, 0) {
+		t.Fatalf("trade_no still contains NUL: %q", resp.TradeNo)
+	}
+	if strings.ContainsRune(resp.PayURL, 0) {
+		t.Fatalf("pay_url still contains NUL: %q", resp.PayURL)
+	}
+	if strings.ContainsRune(resp.QRCode, 0) {
+		t.Fatalf("qr_code still contains NUL: %q", resp.QRCode)
+	}
+	if resp.TradeNo != "trade-no" {
+		t.Fatalf("trade_no = %q, want trade-no", resp.TradeNo)
+	}
+	if resp.PayURL != "https://pay.example.com/checkout" {
+		t.Fatalf("pay_url = %q, want sanitized URL", resp.PayURL)
+	}
+	if resp.QRCode != "wxp://payment-token" {
+		t.Fatalf("qr_code = %q, want sanitized QR code", resp.QRCode)
+	}
+	if resp.ClientSecret != "secret\x00unchanged" {
+		t.Fatalf("client_secret = %q, should not be touched by payment detail sanitization", resp.ClientSecret)
+	}
+}
+
+func TestSanitizeCreatePaymentResponseDetailsHandlesNilAndCleanValues(t *testing.T) {
+	t.Parallel()
+
+	sanitizeCreatePaymentResponseDetails(nil)
+
+	resp := &payment.CreatePaymentResponse{
+		TradeNo: "trade-no",
+		PayURL:  "https://pay.example.com/checkout",
+		QRCode:  "wxp://payment-token",
+	}
+
+	sanitizeCreatePaymentResponseDetails(resp)
+
+	if resp.TradeNo != "trade-no" {
+		t.Fatalf("trade_no = %q, want unchanged clean value", resp.TradeNo)
+	}
+	if resp.PayURL != "https://pay.example.com/checkout" {
+		t.Fatalf("pay_url = %q, want unchanged clean value", resp.PayURL)
+	}
+	if resp.QRCode != "wxp://payment-token" {
+		t.Fatalf("qr_code = %q, want unchanged clean value", resp.QRCode)
+	}
+}
+
 func TestValidateSelectedCreateOrderAmountCurrencyRejectsFractionalZeroDecimal(t *testing.T) {
 	t.Parallel()
 
@@ -258,6 +317,7 @@ func TestMaybeBuildWeChatOAuthRequiredResponse(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected oauth_required response, got nil")
+		return
 	}
 	if resp.ResultType != payment.CreatePaymentResultOAuthRequired {
 		t.Fatalf("result type = %q, want %q", resp.ResultType, payment.CreatePaymentResultOAuthRequired)
@@ -372,6 +432,7 @@ func TestMaybeBuildWeChatOAuthRequiredResponseFallsBackToConfiguredLegacySigning
 	}
 	if resp == nil {
 		t.Fatal("expected oauth-required response, got nil")
+		return
 	}
 	if resp.ResultType != payment.CreatePaymentResultOAuthRequired {
 		t.Fatalf("result type = %q, want %q", resp.ResultType, payment.CreatePaymentResultOAuthRequired)
