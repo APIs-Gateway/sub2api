@@ -54,6 +54,23 @@ func GetTrustedClientIP(c *gin.Context) string {
 	return normalizeIP(c.ClientIP())
 }
 
+// GetCloudflareCountryCode returns a normalized two-letter CF-IPCountry value.
+func GetCloudflareCountryCode(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	code := strings.ToUpper(strings.TrimSpace(c.GetHeader("CF-IPCountry")))
+	if len(code) != 2 {
+		return ""
+	}
+	for _, ch := range code {
+		if ch < 'A' || ch > 'Z' {
+			return ""
+		}
+	}
+	return code
+}
+
 // normalizeIP 规范化 IP 地址，去除端口号和空格。
 func normalizeIP(ip string) string {
 	ip = strings.TrimSpace(ip)

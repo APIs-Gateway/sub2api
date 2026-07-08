@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -96,11 +97,29 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 
 		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
 
+		UserRegionNoticeEnabled: settings.UserRegionNoticeEnabled,
+
 		AffiliateEnabled: settings.AffiliateEnabled,
 
 		RiskControlEnabled: settings.RiskControlEnabled,
 
 		AllowUserViewErrorRequests: settings.AllowUserViewErrorRequests,
+	})
+}
+
+// GetRegion returns the request region metadata used by the user dashboard notice.
+// GET /api/v1/region
+func (h *SettingHandler) GetRegion(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+
+	enabled := false
+	if h != nil && h.settingService != nil {
+		enabled = h.settingService.IsUserRegionNoticeEnabled(c.Request.Context())
+	}
+
+	response.Success(c, dto.RegionResponse{
+		CountryCode:             ip.GetCloudflareCountryCode(c),
+		UserRegionNoticeEnabled: enabled,
 	})
 }
 

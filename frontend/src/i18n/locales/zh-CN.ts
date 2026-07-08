@@ -350,6 +350,11 @@
     }
   },
 
+  regionNotice: {
+    title: '服务提示',
+    description: '当前地区暂不支持访问用户后台。请切换到受支持的网络环境后重试。'
+  },
+
   adminCompliance: {
     title: '部署与运营合规确认',
     blockingNotice: '继续使用控制台前，须完成部署与运营合规确认。',
@@ -5971,6 +5976,12 @@
           configureLink: '前往 渠道管理 > 渠道定价 配置模型价格',
           enabled: '启用可用渠道',
           enabledHint: '关闭后用户端侧边栏入口隐藏，接口返回空数组。',
+        },
+        regionNotice: {
+          title: '用户后台地区提示',
+          description: '在不支持的地区向已登录的非管理员用户展示阻断提示。默认关闭。',
+          enabled: '启用用户后台地区提示',
+          enabledHint: '仅作用于已登录的非管理员用户页面。',
         },
         riskControl: {
           title: '风控中心',
