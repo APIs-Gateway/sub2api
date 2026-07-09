@@ -787,6 +787,7 @@ const adminNavItems = computed((): NavItem[] => {
       featureFlag: flagAdminPayment,
       children: [
         { path: '/admin/orders/dashboard', label: t('nav.paymentDashboard'), icon: ChartIcon },
+        { path: '/admin/orders/refunds', label: t('nav.refundOverview'), icon: ChartIcon },
         { path: '/admin/orders', label: t('nav.orderManagement'), icon: OrderIcon },
       ],
     },
