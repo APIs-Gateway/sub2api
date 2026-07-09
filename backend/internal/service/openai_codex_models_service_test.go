@@ -127,6 +127,57 @@ func TestFetchCodexModelsManifestUpstreamError(t *testing.T) {
 	}
 }
 
+func TestFetchCodexModelsManifestUpstreamErrorUsesStatusWhenBodyEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
+		t.Fatal("expected error for empty upstream error body, got nil")
+	}
+}
+
+func TestFetchCodexModelsManifestNilAccount(t *testing.T) {
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), nil, "0.137.0", ""); err == nil {
+		t.Fatal("expected error for nil account, got nil")
+	}
+}
+
+func TestFetchCodexModelsManifestInvalidEndpoint(t *testing.T) {
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = "://bad-url"
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
+		t.Fatal("expected error for invalid Codex models endpoint, got nil")
+	}
+}
+
+func TestFetchCodexModelsManifestRequestFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("closed server should not receive a request")
+	}))
+	requestURL := server.URL
+	server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = requestURL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
+		t.Fatal("expected request failure, got nil")
+	}
+}
+
 func TestFetchCodexModelsManifestMissingToken(t *testing.T) {
 	account := newCodexModelsTestAccount()
 	delete(account.Credentials, "access_token")
