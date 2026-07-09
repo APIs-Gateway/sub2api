@@ -744,9 +744,27 @@ func UserSubscriptionFromServiceAdmin(sub *service.UserSubscription) *AdminUserS
 }
 
 func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscription {
+	now := time.Now()
 	calendarDay := 0
 	if sub.GrantedTotalUSD > 0 || sub.DailyAmountUSD > 0 {
-		calendarDay = sub.CalendarDayAt(time.Now())
+		calendarDay = sub.CalendarDayAt(now)
+	}
+
+	dailyWindowStart := sub.DailyWindowStart
+	weeklyWindowStart := sub.WeeklyWindowStart
+	monthlyWindowStart := sub.MonthlyWindowStart
+	dailyUsageUSD := sub.DailyUsageUSD
+	weeklyUsageUSD := sub.WeeklyUsageUSD
+	monthlyUsageUSD := sub.MonthlyUsageUSD
+	if sub.Status == service.SubscriptionStatusActive && now.Before(sub.ExpiresAt) {
+		window := sub.ToSubWindow()
+		window.ResetWindows(now)
+		dailyWindowStart = window.DailyWindowStart
+		weeklyWindowStart = window.WeeklyWindowStart
+		monthlyWindowStart = window.MonthlyWindowStart
+		dailyUsageUSD = window.DailyUsageUSD
+		weeklyUsageUSD = window.WeeklyUsageUSD
+		monthlyUsageUSD = window.MonthlyUsageUSD
 	}
 
 	return UserSubscription{
@@ -756,12 +774,12 @@ func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscrip
 		StartsAt:           sub.StartsAt,
 		ExpiresAt:          sub.ExpiresAt,
 		Status:             sub.Status,
-		DailyWindowStart:   sub.DailyWindowStart,
-		WeeklyWindowStart:  sub.WeeklyWindowStart,
-		MonthlyWindowStart: sub.MonthlyWindowStart,
-		DailyUsageUSD:      sub.DailyUsageUSD,
-		WeeklyUsageUSD:     sub.WeeklyUsageUSD,
-		MonthlyUsageUSD:    sub.MonthlyUsageUSD,
+		DailyWindowStart:   dailyWindowStart,
+		WeeklyWindowStart:  weeklyWindowStart,
+		MonthlyWindowStart: monthlyWindowStart,
+		DailyUsageUSD:      dailyUsageUSD,
+		WeeklyUsageUSD:     weeklyUsageUSD,
+		MonthlyUsageUSD:    monthlyUsageUSD,
 		DailyLimitUSD:      sub.DailyLimitUSD,
 		WeeklyLimitUSD:     sub.WeeklyLimitUSD,
 		MonthlyLimitUSD:    sub.MonthlyLimitUSD,
