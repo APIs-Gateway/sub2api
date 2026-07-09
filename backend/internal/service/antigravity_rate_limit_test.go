@@ -1109,20 +1109,53 @@ func TestIsAntigravityAccountSwitchError(t *testing.T) {
 	}
 }
 
-func TestResolveAntigravityForwardBaseURL_DefaultDaily(t *testing.T) {
-	t.Setenv(antigravityForwardBaseURLEnv, "")
-
+func withAntigravityBaseURLs(t *testing.T, urls []string) {
+	t.Helper()
 	oldBaseURLs := append([]string(nil), antigravity.BaseURLs...)
-	defer func() {
+	t.Cleanup(func() {
 		antigravity.BaseURLs = oldBaseURLs
-	}()
+	})
+	antigravity.BaseURLs = urls
+}
 
+func TestResolveAntigravityForwardBaseURL_DefaultProduction(t *testing.T) {
+	t.Setenv(antigravityForwardBaseURLEnv, "")
 	prodURL := "https://prod.test"
 	dailyURL := "https://daily.test"
-	antigravity.BaseURLs = []string{dailyURL, prodURL}
+	withAntigravityBaseURLs(t, []string{prodURL, dailyURL})
+
+	resolved := resolveAntigravityForwardBaseURL()
+	require.Equal(t, prodURL, resolved)
+}
+
+func TestResolveAntigravityForwardBaseURL_DailyOptIn(t *testing.T) {
+	t.Setenv(antigravityForwardBaseURLEnv, "daily")
+	prodURL := "https://prod.test"
+	dailyURL := "https://daily.test"
+	withAntigravityBaseURLs(t, []string{prodURL, dailyURL})
 
 	resolved := resolveAntigravityForwardBaseURL()
 	require.Equal(t, dailyURL, resolved)
+}
+
+func TestResolveAntigravityForwardBaseURL_SandboxOptIn(t *testing.T) {
+	t.Setenv(antigravityForwardBaseURLEnv, "sandbox")
+	prodURL := "https://prod.test"
+	dailyURL := "https://daily.test"
+	withAntigravityBaseURLs(t, []string{prodURL, dailyURL})
+
+	resolved := resolveAntigravityForwardBaseURL()
+	require.Equal(t, dailyURL, resolved)
+}
+
+func TestResolveAntigravityForwardBaseURL_ProdModeUsesDefaultProduction(t *testing.T) {
+	t.Setenv(antigravityForwardBaseURLEnv, "prod")
+	prodURL := "https://prod.test"
+	dailyURL := "https://daily.test"
+	withAntigravityBaseURLs(t, []string{prodURL, dailyURL})
+
+	resolved := resolveAntigravityForwardBaseURL()
+	require.Equal(t, prodURL, resolved)
 }
 
 func TestAntigravityAccountSwitchError_Error(t *testing.T) {
