@@ -1278,6 +1278,25 @@ func TestGetModelPricingWithChannel_NilImageOutputPriceZerosAndMarksExplicit(t *
 	require.True(t, pricing.ImageOutputPriceExplicit)
 }
 
+func TestGetModelPricingWithChannel_DoesNotPolluteFallbackPricing(t *testing.T) {
+	svc := newTestBillingService()
+
+	chPricing := &ChannelModelPricing{
+		InputPrice:  testPtrFloat64(10e-6),
+		OutputPrice: testPtrFloat64(50e-6),
+	}
+	pricing, err := svc.GetModelPricingWithChannel("claude-sonnet-4", chPricing)
+	require.NoError(t, err)
+	require.InDelta(t, 10e-6, pricing.InputPricePerToken, 1e-12)
+	require.InDelta(t, 50e-6, pricing.OutputPricePerToken, 1e-12)
+	require.True(t, pricing.ImageOutputPriceExplicit)
+
+	fallback := svc.fallbackPrices["claude-sonnet-4"]
+	require.InDelta(t, 3e-6, fallback.InputPricePerToken, 1e-12)
+	require.InDelta(t, 15e-6, fallback.OutputPricePerToken, 1e-12)
+	require.False(t, fallback.ImageOutputPriceExplicit)
+}
+
 func TestComputeTokenBreakdown_ExplicitZeroImagePrice_NoFallback(t *testing.T) {
 	svc := newTestBillingService()
 
