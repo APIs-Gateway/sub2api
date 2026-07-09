@@ -196,6 +196,9 @@ type refundUserSubRepoStub struct {
 	shortenDays       []int
 	grantDays         []int
 	updatedStatuses   []string
+	getErr            error
+	shortenErr        error
+	updateStatusErr   error
 }
 
 func newRefundUserSubRepoStub(active *UserSubscription) *refundUserSubRepoStub {
@@ -229,6 +232,9 @@ func (r *refundUserSubRepoStub) ApplyManualOverdraft(ctx context.Context, sub *U
 }
 
 func (r *refundUserSubRepoStub) GetByID(_ context.Context, id int64) (*UserSubscription, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	sub := r.byID[id]
 	if sub == nil {
 		return nil, ErrSubscriptionNotFound
@@ -253,6 +259,9 @@ func (r *refundUserSubRepoStub) CloseSubscriptionWithReclaim(_ context.Context, 
 }
 
 func (r *refundUserSubRepoStub) ShortenSubscriptionWithReclaim(_ context.Context, subID int64, reduceDays int, _ time.Time, now time.Time) (int64, float64, error) {
+	if r.shortenErr != nil {
+		return 0, 0, r.shortenErr
+	}
 	sub := r.byID[subID]
 	if sub == nil {
 		return 0, 0, ErrSubscriptionNotFound
@@ -291,6 +300,9 @@ func (r *refundUserSubRepoStub) GrantSubscriptionDays(_ context.Context, subID i
 }
 
 func (r *refundUserSubRepoStub) UpdateStatus(_ context.Context, subID int64, status string) error {
+	if r.updateStatusErr != nil {
+		return r.updateStatusErr
+	}
 	sub := r.byID[subID]
 	if sub == nil {
 		return ErrSubscriptionNotFound
@@ -814,6 +826,50 @@ func TestPrepareRefundRenewUsesTargetSubscriptionAndRenewDays(t *testing.T) {
 	require.Equal(t, today+75, plan.SubExpireDayToRestore)
 }
 
+func TestPrepDeductRenewRequiresOriginalDaysUnlessForced(t *testing.T) {
+	ctx := context.Background()
+	today := TodayEastDayNumber()
+	repo := newRefundUserSubRepoStub(&UserSubscription{
+		ID:             11,
+		UserID:         513,
+		GroupID:        7,
+		Status:         SubscriptionStatusActive,
+		DailyAmountUSD: 10,
+		TodayRemaining: 4,
+		TodayDay:       today,
+		StartDay:       today - 5,
+		ExpireDay:      today + 75,
+		ExpiresAt:      ExpireDayToExpiresAt(today + 75),
+	})
+	subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+	svc := &PaymentService{subscriptionSvc: subSvc}
+	order := &dbent.PaymentOrder{
+		UserID:    513,
+		OrderType: payment.OrderTypeSubscription,
+		ProviderSnapshot: map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd":       10.0,
+				"intent":                 SubscriptionIntentRenew,
+				"target_subscription_id": 11.0,
+			},
+		},
+	}
+
+	plan := &RefundPlan{RefundAmount: 600}
+	result := svc.prepDeduct(ctx, order, plan, false)
+	require.NotNil(t, result)
+	require.False(t, result.Success)
+	require.True(t, result.RequireForce)
+	require.Contains(t, result.Warning, "invalid subscription snapshot")
+
+	forcedPlan := &RefundPlan{RefundAmount: 600}
+	result = svc.prepDeduct(ctx, order, forcedPlan, true)
+	require.Nil(t, result)
+	require.Equal(t, int64(11), forcedPlan.SubscriptionID)
+	require.Zero(t, forcedPlan.SubDaysToDeduct)
+	require.Zero(t, forcedPlan.SubDaysToRestore)
+}
+
 func TestExecuteRefundSubscriptionClosesCardWithoutDeleting(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)
@@ -940,6 +996,255 @@ func TestExecuteRefundRenewShortensInsteadOfClosing(t *testing.T) {
 	require.Equal(t, []int{60}, repo.shortenDays)
 	require.Equal(t, today+10, repo.byID[77].ExpireDay)
 	require.Equal(t, SubscriptionStatusActive, repo.byID[77].Status)
+}
+
+func TestRevokeRenewalDaysForRefundBranches(t *testing.T) {
+	ctx := context.Background()
+	today := TodayEastDayNumber()
+
+	t.Run("rejects non-positive days", func(t *testing.T) {
+		repo := newRefundUserSubRepoStub(&UserSubscription{
+			ID:        77,
+			UserID:    513,
+			GroupID:   8,
+			Status:    SubscriptionStatusActive,
+			ExpireDay: today + 10,
+			ExpiresAt: ExpireDayToExpiresAt(today + 10),
+		})
+		subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+
+		err := subSvc.revokeRenewalDaysForRefund(ctx, 77, 0)
+		require.Error(t, err)
+		require.Equal(t, "INVALID_RENEW_DAYS", infraerrors.Reason(err))
+		require.Empty(t, repo.shortenDays)
+	})
+
+	t.Run("closes card when renewal fully consumes remaining service", func(t *testing.T) {
+		repo := newRefundUserSubRepoStub(&UserSubscription{
+			ID:        78,
+			UserID:    513,
+			GroupID:   8,
+			Status:    SubscriptionStatusActive,
+			ExpireDay: today + 3,
+			ExpiresAt: ExpireDayToExpiresAt(today + 3),
+		})
+		subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+
+		require.NoError(t, subSvc.revokeRenewalDaysForRefund(ctx, 78, 10))
+		require.Equal(t, int64(78), repo.closeSubscription)
+		require.NotNil(t, repo.closeDeleteRow)
+		require.False(t, *repo.closeDeleteRow)
+		require.Empty(t, repo.shortenDays)
+	})
+
+	t.Run("caps very large renewal days and reactivates expired card", func(t *testing.T) {
+		repo := newRefundUserSubRepoStub(&UserSubscription{
+			ID:        79,
+			UserID:    513,
+			GroupID:   8,
+			Status:    SubscriptionStatusExpired,
+			ExpireDay: today + MaxValidityDays + 5,
+			ExpiresAt: ExpireDayToExpiresAt(today + MaxValidityDays + 5),
+		})
+		subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+
+		require.NoError(t, subSvc.revokeRenewalDaysForRefund(ctx, 79, MaxValidityDays+100))
+		require.Equal(t, []int{MaxValidityDays}, repo.shortenDays)
+		require.Equal(t, []string{SubscriptionStatusActive}, repo.updatedStatuses)
+		require.Equal(t, SubscriptionStatusActive, repo.byID[79].Status)
+	})
+}
+
+func TestRevokeRenewalDaysForRefundErrorBranches(t *testing.T) {
+	ctx := context.Background()
+	today := TodayEastDayNumber()
+
+	t.Run("get failure", func(t *testing.T) {
+		repo := newRefundUserSubRepoStub(&UserSubscription{
+			ID:        80,
+			UserID:    513,
+			GroupID:   8,
+			Status:    SubscriptionStatusActive,
+			ExpireDay: today + 10,
+			ExpiresAt: ExpireDayToExpiresAt(today + 10),
+		})
+		repo.getErr = assertErr("get failed")
+		subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+
+		require.ErrorContains(t, subSvc.revokeRenewalDaysForRefund(ctx, 80, 1), "get failed")
+	})
+
+	t.Run("shorten failure", func(t *testing.T) {
+		repo := newRefundUserSubRepoStub(&UserSubscription{
+			ID:        81,
+			UserID:    513,
+			GroupID:   8,
+			Status:    SubscriptionStatusActive,
+			ExpireDay: today + 10,
+			ExpiresAt: ExpireDayToExpiresAt(today + 10),
+		})
+		repo.shortenErr = assertErr("shorten failed")
+		subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+
+		require.ErrorContains(t, subSvc.revokeRenewalDaysForRefund(ctx, 81, 1), "shorten failed")
+	})
+
+	t.Run("reactivation failure", func(t *testing.T) {
+		repo := newRefundUserSubRepoStub(&UserSubscription{
+			ID:        82,
+			UserID:    513,
+			GroupID:   8,
+			Status:    SubscriptionStatusExpired,
+			ExpireDay: today + 10,
+			ExpiresAt: ExpireDayToExpiresAt(today + 10),
+		})
+		repo.updateStatusErr = assertErr("update failed")
+		subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+
+		require.ErrorContains(t, subSvc.revokeRenewalDaysForRefund(ctx, 82, 1), "update failed")
+	})
+}
+
+func TestIsRenewSubscriptionRefundPlanGuards(t *testing.T) {
+	require.False(t, isRenewSubscriptionRefundPlan(nil))
+	require.False(t, isRenewSubscriptionRefundPlan(&RefundPlan{}))
+	require.False(t, isRenewSubscriptionRefundPlan(&RefundPlan{Order: &dbent.PaymentOrder{
+		OrderType: payment.OrderTypeBalance,
+	}}))
+	require.True(t, isRenewSubscriptionRefundPlan(&RefundPlan{Order: &dbent.PaymentOrder{
+		OrderType: payment.OrderTypeSubscription,
+		ProviderSnapshot: map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"intent": SubscriptionIntentRenew,
+			},
+		},
+	}}))
+}
+
+func TestHandleKyrenRefundWebhookRenewBadSnapshotReturnsError(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	user, err := client.User.Create().
+		SetEmail("kyren-renew-bad-snapshot@example.com").
+		SetPasswordHash("hash").
+		SetUsername("kyren-renew-bad-snapshot-user").
+		Save(ctx)
+	require.NoError(t, err)
+
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(600).
+		SetPayAmount(600).
+		SetFeeRate(0).
+		SetRechargeCode("KYREN-RENEW-BAD-SNAPSHOT").
+		SetOutTradeNo("sub2_kyren_renew_bad_snapshot").
+		SetPaymentType(payment.TypeEasyPay).
+		SetPaymentTradeNo("kyren_trade_renew_bad_snapshot").
+		SetOrderType(payment.OrderTypeSubscription).
+		SetStatus(OrderStatusCompleted).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetPaidAt(time.Now()).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		SetProviderSnapshot(map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd":       10.0,
+				"intent":                 SubscriptionIntentRenew,
+				"target_subscription_id": 77.0,
+			},
+		}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	today := TodayEastDayNumber()
+	repo := newRefundUserSubRepoStub(&UserSubscription{
+		ID:        77,
+		UserID:    user.ID,
+		GroupID:   8,
+		Status:    SubscriptionStatusActive,
+		ExpireDay: today + 70,
+		ExpiresAt: ExpireDayToExpiresAt(today + 70),
+	})
+	subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+	svc := &PaymentService{entClient: client, subscriptionSvc: subSvc}
+
+	err = svc.HandleKyrenRefundWebhook(ctx, &payment.KyrenRefundData{
+		OrderID:      "sub2_kyren_renew_bad_snapshot",
+		RefundID:     "rf_renew_bad_snapshot",
+		RefundStatus: "FULL",
+	}, "evt_renew_bad_snapshot")
+	require.ErrorContains(t, err, "read renew refund days")
+	require.Empty(t, repo.shortenDays)
+
+	updated, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, updated.Status)
+}
+
+func TestHandleKyrenRefundWebhookRenewShortensCard(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	user, err := client.User.Create().
+		SetEmail("kyren-renew-shortens@example.com").
+		SetPasswordHash("hash").
+		SetUsername("kyren-renew-shortens-user").
+		Save(ctx)
+	require.NoError(t, err)
+
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(600).
+		SetPayAmount(600).
+		SetFeeRate(0).
+		SetRechargeCode("KYREN-RENEW-SHORTENS").
+		SetOutTradeNo("sub2_kyren_renew_shortens").
+		SetPaymentType(payment.TypeEasyPay).
+		SetPaymentTradeNo("kyren_trade_renew_shortens").
+		SetOrderType(payment.OrderTypeSubscription).
+		SetStatus(OrderStatusCompleted).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetPaidAt(time.Now()).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		SetProviderSnapshot(map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd":       10.0,
+				"validity_days":          60.0,
+				"intent":                 SubscriptionIntentRenew,
+				"target_subscription_id": 77.0,
+			},
+		}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	today := TodayEastDayNumber()
+	repo := newRefundUserSubRepoStub(&UserSubscription{
+		ID:        77,
+		UserID:    user.ID,
+		GroupID:   8,
+		Status:    SubscriptionStatusActive,
+		ExpireDay: today + 70,
+		ExpiresAt: ExpireDayToExpiresAt(today + 70),
+	})
+	subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+	svc := &PaymentService{entClient: client, subscriptionSvc: subSvc}
+
+	err = svc.HandleKyrenRefundWebhook(ctx, &payment.KyrenRefundData{
+		OrderID:      "sub2_kyren_renew_shortens",
+		RefundID:     "rf_renew_shortens",
+		RefundStatus: payment.KyrenRefundStatusFull,
+	}, "evt_renew_shortens")
+	require.NoError(t, err)
+	require.Equal(t, []int{60}, repo.shortenDays)
+	require.Equal(t, today+10, repo.byID[77].ExpireDay)
+
+	updated, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRefunded, updated.Status)
 }
 
 func TestRollbackRefundSubscriptionRestoresClosedCard(t *testing.T) {
