@@ -20,9 +20,11 @@ type PublicSettingsProvider interface {
 // FrontendServer is a stub for non-embed builds
 type FrontendServer struct{}
 
+var errFrontendNotEmbedded = errors.New("frontend not embedded")
+
 // NewFrontendServer returns an error when frontend is not embedded
 func NewFrontendServer(settingsProvider PublicSettingsProvider) (*FrontendServer, error) {
-	return nil, errors.New("frontend not embedded")
+	return nil, errFrontendNotEmbedded
 }
 
 // InvalidateCache is a no-op for non-embed builds
