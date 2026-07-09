@@ -290,6 +290,13 @@ describe('user UsageView tooltip', () => {
     await setupState.exportToCSV()
 
     expect(exportedBlob).not.toBeNull()
+    const csvBytes = await new Promise<Uint8Array>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsArrayBuffer(exportedBlob as Blob)
+    })
+    expect(Array.from(csvBytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf])
     const hasSortedExportQuery = query.mock.calls.some((call) => {
       const params = call[0] as Record<string, unknown> | undefined
       const config = call[1]

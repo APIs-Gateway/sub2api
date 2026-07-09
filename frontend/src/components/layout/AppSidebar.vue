@@ -9,14 +9,22 @@
     <!-- Logo/Brand -->
     <div class="sidebar-header" :class="{ 'sidebar-header-collapsed': sidebarCollapsed }">
       <!-- 品牌标记：自定义 logo 优先；否则用黏土星芒（同时充当呼吸签名） -->
-      <div class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden">
+      <router-link
+        :to="homePath"
+        class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden transition-opacity hover:opacity-80"
+        @click="handleMenuItemClick(homePath)"
+      >
         <img v-if="settingsLoaded && siteLogo" :src="siteLogo" alt="Logo" class="h-full w-full rounded-md object-contain" />
         <BrandMark v-else animated class="h-7 w-7" />
-      </div>
+      </router-link>
       <div class="sidebar-brand flex items-baseline gap-1.5" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
-        <span class="sidebar-brand-title font-serif text-lg font-bold text-gray-900 dark:text-white">
+        <router-link
+          :to="homePath"
+          class="sidebar-brand-title font-serif text-lg font-bold text-gray-900 transition-colors hover:text-primary-600 dark:text-white dark:hover:text-primary-400"
+          @click="handleMenuItemClick(homePath)"
+        >
           {{ siteName }}
-        </span>
+        </router-link>
       </div>
     </div>
 
@@ -256,6 +264,7 @@ const adminSettingsStore = useAdminSettingsStore()
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
+const homePath = computed(() => (isAdmin.value ? '/admin/dashboard' : '/dashboard'))
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 
