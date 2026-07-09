@@ -34,6 +34,39 @@ func TestShouldForwardAnthropicViaRawChatCompletions(t *testing.T) {
 		want    bool
 	}{
 		{
+			name:    "nil account uses responses path",
+			account: nil,
+			want:    false,
+		},
+		{
+			name: "oauth account uses responses path",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+			},
+			want: false,
+		},
+		{
+			name: "empty base url keeps official responses default",
+			account: &Account{
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Credentials: map[string]any{},
+			},
+			want: false,
+		},
+		{
+			name: "invalid base url falls back to chat completions",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"base_url": "://bad-url",
+				},
+			},
+			want: true,
+		},
+		{
 			name: "official openai api key defaults to responses",
 			account: &Account{
 				Platform: PlatformOpenAI,
