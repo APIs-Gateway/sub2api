@@ -193,6 +193,7 @@ type refundUserSubRepoStub struct {
 	byID              map[int64]*UserSubscription
 	closeDeleteRow    *bool
 	closeSubscription int64
+	shortenDays       []int
 	grantDays         []int
 	updatedStatuses   []string
 }
@@ -249,6 +250,26 @@ func (r *refundUserSubRepoStub) CloseSubscriptionWithReclaim(_ context.Context, 
 	r.byID[subID] = &cp
 	r.active = nil
 	return sub.UserID, 0, nil
+}
+
+func (r *refundUserSubRepoStub) ShortenSubscriptionWithReclaim(_ context.Context, subID int64, reduceDays int, _ time.Time, now time.Time) (int64, float64, error) {
+	sub := r.byID[subID]
+	if sub == nil {
+		return 0, 0, ErrSubscriptionNotFound
+	}
+	r.shortenDays = append(r.shortenDays, reduceDays)
+	cp := *sub
+	newExpireDay := cp.ExpireDay - reduceDays
+	if floor := EastDayNumber(now) - 1; newExpireDay < floor {
+		newExpireDay = floor
+	}
+	cp.ExpireDay = newExpireDay
+	cp.ExpiresAt = ExpireDayToExpiresAt(newExpireDay)
+	r.byID[subID] = &cp
+	if cp.Status == SubscriptionStatusActive {
+		r.active = &cp
+	}
+	return cp.UserID, 0, nil
 }
 
 func (r *refundUserSubRepoStub) GrantSubscriptionDays(_ context.Context, subID int64, addDays int, _ time.Time, now time.Time) (int64, float64, error) {
@@ -407,6 +428,33 @@ func TestSubscriptionForRefundRejectsMissingServiceAndSnapshotUserMismatch(t *te
 		},
 	})
 	require.ErrorContains(t, err, "does not belong to order user")
+}
+
+func TestReadRefundSubscriptionIDPrefersRenewTarget(t *testing.T) {
+	order := &dbent.PaymentOrder{
+		ProviderSnapshot: map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"intent":                 SubscriptionIntentRenew,
+				"target_subscription_id": 22.0,
+				"subscription_id":        33.0,
+			},
+		},
+	}
+	got, ok := readRefundSubscriptionID(order)
+	require.True(t, ok)
+	require.Equal(t, int64(22), got)
+
+	purchase := &dbent.PaymentOrder{
+		ProviderSnapshot: map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"intent":          SubscriptionIntentPurchase,
+				"subscription_id": 44.0,
+			},
+		},
+	}
+	got, ok = readRefundSubscriptionID(purchase)
+	require.True(t, ok)
+	require.Equal(t, int64(44), got)
 }
 
 func TestRefundAttemptAuditActionIncludesPrefix(t *testing.T) {
@@ -663,6 +711,109 @@ func TestPrepareRefundSubscriptionUsesSnapshotSubscriptionID(t *testing.T) {
 	require.InDelta(t, 4, plan.SubTodayRemainingToRestore, 1e-9)
 }
 
+func TestPrepareRefundRenewUsesTargetSubscriptionAndRenewDays(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	user, err := client.User.Create().
+		SetEmail("refund-renew-target@example.com").
+		SetPasswordHash("hash").
+		SetUsername("refund-renew-target-user").
+		Save(ctx)
+	require.NoError(t, err)
+	inst, err := client.PaymentProviderInstance.Create().
+		SetProviderKey(payment.TypeAlipay).
+		SetName("alipay-renew-refund-target").
+		SetConfig("{}").
+		SetSupportedTypes("alipay").
+		SetEnabled(true).
+		SetRefundEnabled(true).
+		Save(ctx)
+	require.NoError(t, err)
+	instID := strconv.FormatInt(inst.ID, 10)
+	today := TodayEastDayNumber()
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(600).
+		SetPayAmount(600).
+		SetFeeRate(0).
+		SetRechargeCode("REFUND-RENEW-TARGET").
+		SetOutTradeNo("sub2_refund_renew_target").
+		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo("trade-renew-target").
+		SetOrderType(payment.OrderTypeSubscription).
+		SetStatus(OrderStatusCompleted).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetPaidAt(time.Now()).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		SetProviderInstanceID(instID).
+		SetProviderKey(payment.TypeAlipay).
+		SetSubscriptionDays(60).
+		SetProviderSnapshot(map[string]any{
+			"schema_version":       2,
+			"provider_instance_id": instID,
+			"provider_key":         payment.TypeAlipay,
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd":       10.0,
+				"validity_days":          60.0,
+				"intent":                 SubscriptionIntentRenew,
+				"target_subscription_id": 11.0,
+				"subscription_id":        99.0,
+			},
+		}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	repo := newRefundUserSubRepoStub(&UserSubscription{
+		ID:             22,
+		UserID:         user.ID,
+		GroupID:        8,
+		Status:         SubscriptionStatusActive,
+		DailyAmountUSD: 20,
+		TodayRemaining: 20,
+		TodayDay:       today,
+		StartDay:       today,
+		ExpireDay:      today + 25,
+		ExpiresAt:      ExpireDayToExpiresAt(today + 25),
+	})
+	repo.byID[11] = &UserSubscription{
+		ID:             11,
+		UserID:         user.ID,
+		GroupID:        7,
+		Status:         SubscriptionStatusActive,
+		DailyAmountUSD: 10,
+		TodayRemaining: 4,
+		TodayDay:       today,
+		StartDay:       today - 5,
+		ExpireDay:      today + 75,
+		ExpiresAt:      ExpireDayToExpiresAt(today + 75),
+	}
+	repo.byID[99] = &UserSubscription{
+		ID:             99,
+		UserID:         user.ID,
+		GroupID:        9,
+		Status:         SubscriptionStatusActive,
+		DailyAmountUSD: 30,
+		TodayRemaining: 30,
+		TodayDay:       today,
+		StartDay:       today,
+		ExpireDay:      today + 99,
+		ExpiresAt:      ExpireDayToExpiresAt(today + 99),
+	}
+	subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+	svc := &PaymentService{entClient: client, subscriptionSvc: subSvc}
+
+	plan, result, err := svc.PrepareRefund(ctx, order.ID, 0, "", false, false)
+	require.NoError(t, err)
+	require.Nil(t, result)
+	require.Equal(t, int64(11), plan.SubscriptionID)
+	require.Equal(t, 60, plan.SubDaysToDeduct)
+	require.Equal(t, 60, plan.SubDaysToRestore)
+	require.Equal(t, today+75, plan.SubExpireDayToRestore)
+}
+
 func TestExecuteRefundSubscriptionClosesCardWithoutDeleting(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)
@@ -720,6 +871,75 @@ func TestExecuteRefundSubscriptionClosesCardWithoutDeleting(t *testing.T) {
 	require.NotNil(t, repo.closeDeleteRow)
 	require.False(t, *repo.closeDeleteRow, "退款关闭卡必须保留行，便于网关失败回滚")
 	require.Equal(t, int64(77), repo.closeSubscription)
+}
+
+func TestExecuteRefundRenewShortensInsteadOfClosing(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	user, err := client.User.Create().
+		SetEmail("refund-renew-shorten@example.com").
+		SetPasswordHash("hash").
+		SetUsername("refund-renew-shorten-user").
+		Save(ctx)
+	require.NoError(t, err)
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(600).
+		SetPayAmount(600).
+		SetFeeRate(0).
+		SetRechargeCode("REFUND-RENEW-SHORTEN").
+		SetOutTradeNo("sub2_refund_renew_shorten").
+		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo("").
+		SetOrderType(payment.OrderTypeSubscription).
+		SetStatus(OrderStatusCompleted).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetPaidAt(time.Now()).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		SetSubscriptionDays(60).
+		SetProviderSnapshot(map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd":       10.0,
+				"validity_days":          60.0,
+				"intent":                 SubscriptionIntentRenew,
+				"target_subscription_id": 77.0,
+			},
+		}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	today := TodayEastDayNumber()
+	repo := newRefundUserSubRepoStub(&UserSubscription{
+		ID:        77,
+		UserID:    user.ID,
+		GroupID:   8,
+		Status:    SubscriptionStatusActive,
+		ExpireDay: today + 70,
+		ExpiresAt: ExpireDayToExpiresAt(today + 70),
+	})
+	subSvc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+	svc := &PaymentService{entClient: client, subscriptionSvc: subSvc}
+
+	result, err := svc.ExecuteRefund(ctx, &RefundPlan{
+		OrderID:          order.ID,
+		Order:            order,
+		RefundAmount:     600,
+		GatewayAmount:    600,
+		Reason:           "renew refund",
+		DeductionType:    payment.DeductionTypeSubscription,
+		SubscriptionID:   77,
+		SubDaysToDeduct:  60,
+		SubDaysToRestore: 60,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Nil(t, repo.closeDeleteRow, "renew refund must not close the card while previous service days remain")
+	require.Equal(t, []int{60}, repo.shortenDays)
+	require.Equal(t, today+10, repo.byID[77].ExpireDay)
+	require.Equal(t, SubscriptionStatusActive, repo.byID[77].Status)
 }
 
 func TestRollbackRefundSubscriptionRestoresClosedCard(t *testing.T) {

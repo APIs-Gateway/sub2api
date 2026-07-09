@@ -56,14 +56,25 @@ func (s *PaymentService) HandleKyrenRefundWebhook(ctx context.Context, data *pay
 		return nil
 	}
 
-	// 订阅订单退款 = 退订:无条件关卡(不分 FULL/PARTIAL)。退款额本就是按「剩余使用时间 − 手续费」
-	// 在 Kyren 侧算好的,partial 只代表金额扣了已用部分,不代表保留卡。
+	// 订阅订单退款按 lifecycle intent 扣减。purchase/旧单仍是退订关卡；renew 只撤销
+	// 本次续费增加的天数，避免把目标卡原本仍有效的服务期一并关闭。
 	if order.OrderType == payment.OrderTypeSubscription {
-		if subID, ok := readSubscriptionSnapshotSubscriptionID(order); ok && subID > 0 && s.subscriptionSvc != nil {
-			if closeErr := s.subscriptionSvc.closeSubscriptionForRefund(ctx, subID); closeErr != nil {
+		if subID, ok := readRefundSubscriptionID(order); ok && subID > 0 && s.subscriptionSvc != nil {
+			intent, _ := readSubscriptionIntent(order)
+			var deductErr error
+			if intent == SubscriptionIntentRenew {
+				days, daysErr := subscriptionOrderOriginalDays(order)
+				if daysErr != nil {
+					return fmt.Errorf("read renew refund days (order %d): %w", order.ID, daysErr)
+				}
+				deductErr = s.subscriptionSvc.revokeRenewalDaysForRefund(ctx, subID, days)
+			} else {
+				deductErr = s.subscriptionSvc.closeSubscriptionForRefund(ctx, subID)
+			}
+			if deductErr != nil {
 				// 卡已不存在/已关 → 容忍(幂等);其余错误返回触发重试,避免「退了款卡没关」。
-				if !errors.Is(closeErr, ErrSubscriptionNotFound) {
-					return fmt.Errorf("close subscription card on kyren refund (order %d, sub %d): %w", order.ID, subID, closeErr)
+				if !errors.Is(deductErr, ErrSubscriptionNotFound) {
+					return fmt.Errorf("deduct subscription card on kyren refund (order %d, sub %d): %w", order.ID, subID, deductErr)
 				}
 			}
 		}
