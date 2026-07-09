@@ -149,6 +149,114 @@ func requireRecordedHashCount(t *testing.T, cache *contentModerationTestHashCach
 	return hashes
 }
 
+func TestContentModerationFallbackEmailTemplatesUseResolvedLocale(t *testing.T) {
+	ctx := context.Background()
+	repo := newNotificationEmailMemorySettingRepo()
+	notificationSvc := NewNotificationEmailService(repo, nil)
+	userID := int64(77)
+	log := &ContentModerationLog{
+		ID:              123,
+		UserID:          &userID,
+		UserEmail:       "Risky.User@example.com",
+		GroupName:       "default",
+		HighestCategory: "violence",
+		HighestScore:    0.987,
+		ViolationCount:  2,
+		AutoBanned:      true,
+		Model:           "gpt-test",
+		Error:           "blocked by policy",
+		CreatedAt:       time.Date(2026, 7, 9, 12, 30, 0, 0, time.UTC),
+	}
+	cfg := &ContentModerationConfig{BanThreshold: 3}
+
+	require.Equal(t, "zh-CN", contentModerationFallbackLocale(nil, ctx, log))
+	notificationSvc.RememberRecipientLocale(ctx, userID, log.UserEmail, "en-US")
+	require.Equal(t, "en", contentModerationFallbackLocale(notificationSvc, ctx, log))
+	require.Equal(t, log.UserEmail, contentModerationEmailAddress(log))
+	require.Empty(t, contentModerationEmailAddress(nil))
+
+	require.Equal(t, "[Sub2APIBad] Risk Control Notice", contentModerationViolationSubject("Sub2API\r\nBad", "en"))
+	require.Equal(t, "[Sub2APIBad] Account Disabled", contentModerationDisabledSubject("Sub2API\nBad", "en-US"))
+	require.Equal(t, "[Sub2APIBad] Cyber Policy Notice", cyberPolicyNoticeSubject("Sub2API\rBad", "en"))
+	require.Contains(t, contentModerationViolationSubject("Sub2API", "zh"), "账户风控提醒")
+	require.Contains(t, contentModerationDisabledSubject("Sub2API", "zh-CN"), "账户已被禁用")
+	require.Contains(t, cyberPolicyNoticeSubject("Sub2API", "zh"), "网络安全策略拦截")
+	require.Contains(t, contentModerationViolationSubject("Sub2API", "zh-HK"), "帳戶風控提醒")
+
+	violationEN := buildContentModerationViolationEmailBodyForLocale("Sub2API", log, cfg, "en")
+	require.Contains(t, violationEN, "Risk control notice")
+	require.Contains(t, violationEN, "Risky.User@example.com")
+	require.Contains(t, violationEN, "violence / 0.987")
+	require.Contains(t, violationEN, "Violation count: 2 (threshold 3)")
+	require.Contains(t, violationEN, "Your account is currently disabled")
+	require.NotContains(t, violationEN, "账户触发内容审计规则")
+
+	disabledEN := buildContentModerationAccountDisabledEmailBodyForLocale("Sub2API", log, cfg, "en-US")
+	require.Contains(t, disabledEN, "Account disabled")
+	require.Contains(t, disabledEN, "Contact the platform administrator")
+	require.Contains(t, disabledEN, "Violation count: 2 (threshold 3)")
+	require.NotContains(t, disabledEN, "账户已被自动禁用")
+
+	cyberEN := buildCyberPolicyNoticeEmailBodyForLocale("Sub2API", log, "en")
+	require.Contains(t, cyberEN, "Cyber policy notice")
+	require.Contains(t, cyberEN, "gpt-test")
+	require.Contains(t, cyberEN, "blocked by policy")
+	require.NotContains(t, cyberEN, "请求被网络安全策略拦截")
+}
+
+func TestContentModerationFallbackEmailTemplatesHandleNilAndChinese(t *testing.T) {
+	cfg := &ContentModerationConfig{}
+	require.Empty(t, buildContentModerationViolationEmailBodyForLocale("Sub2API", nil, cfg, "en"))
+	require.Empty(t, buildContentModerationAccountDisabledEmailBodyForLocale("Sub2API", nil, cfg, "en"))
+	require.Empty(t, buildCyberPolicyNoticeEmailBodyForLocale("Sub2API", nil, "en"))
+
+	log := &ContentModerationLog{
+		UserEmail:       "",
+		GroupName:       "",
+		HighestCategory: "",
+		HighestScore:    0.5,
+		ViolationCount:  1,
+		CreatedAt:       time.Date(2026, 7, 9, 12, 30, 0, 0, time.UTC),
+	}
+	require.Contains(t, buildContentModerationViolationEmailBodyForLocale("Sub2API", log, cfg, "zh"), "账户触发内容审计规则")
+	require.Contains(t, buildContentModerationAccountDisabledEmailBodyForLocale("Sub2API", log, cfg, "zh-CN"), "账户已被自动禁用")
+	require.Contains(t, buildCyberPolicyNoticeEmailBodyForLocale("Sub2API", log, "zh"), "请求被网络安全策略拦截")
+	require.Contains(t, buildContentModerationViolationEmailBodyForLocale("Sub2API", log, cfg, "en"), "Dear <strong>user</strong>")
+	require.Contains(t, buildContentModerationAccountDisabledEmailBodyForLocale("Sub2API", log, cfg, "en"), "threshold 10")
+}
+
+func TestContentModerationFallbackSendPathsUseBuiltInEmails(t *testing.T) {
+	server := startNotificationEmailTestSMTPServer(t)
+	repo := newNotificationEmailMemorySettingRepo()
+	require.NoError(t, repo.SetMultiple(t.Context(), server.settings()))
+	require.NoError(t, repo.Set(t.Context(), SettingKeyDefaultLocale, "en-US"))
+	require.NoError(t, repo.Set(t.Context(), SettingKeySiteName, "Sub2API"))
+	emailSvc := NewEmailService(repo, nil)
+	svc := NewContentModerationService(repo, nil, nil, nil, nil, nil, emailSvc)
+	userID := int64(88)
+	log := &ContentModerationLog{
+		ID:              1001,
+		UserID:          &userID,
+		UserEmail:       "risk@example.com",
+		GroupName:       "default",
+		HighestCategory: "self-harm",
+		HighestScore:    0.88,
+		ViolationCount:  4,
+		AutoBanned:      true,
+		Model:           "gpt-test",
+		Error:           "blocked by cyber policy",
+		CreatedAt:       time.Date(2026, 7, 9, 12, 30, 0, 0, time.UTC),
+	}
+	cfg := &ContentModerationConfig{BanThreshold: 3}
+
+	require.NoError(t, svc.sendViolationEmail(t.Context(), cfg, log))
+	require.NoError(t, svc.sendAccountDisabledEmail(t.Context(), cfg, log))
+	require.NoError(t, svc.sendCyberPolicyEmail(t.Context(), log))
+	require.Eventually(t, func() bool {
+		return server.messageCount() == 3
+	}, time.Second, 10*time.Millisecond)
+}
+
 type contentModerationTestHashCache struct {
 	mu            sync.Mutex
 	hashes        map[string]struct{}

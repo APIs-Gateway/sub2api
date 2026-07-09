@@ -135,6 +135,9 @@ func (s *AuthService) SendEmailIdentityBindCode(ctx context.Context, userID int6
 	if s.settingService != nil {
 		siteName = s.settingService.GetSiteName(ctx)
 	}
+	if s.emailService.notificationEmailService != nil {
+		s.emailService.notificationEmailService.RememberRecipientLocale(ctx, userID, normalizedEmail, firstEmailLocale(locale))
+	}
 	return s.emailService.SendVerifyCode(ctx, normalizedEmail, siteName, firstEmailLocale(locale))
 }
 

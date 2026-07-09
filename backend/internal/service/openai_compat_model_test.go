@@ -17,10 +17,15 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func openAICompatResponsesExtra() map[string]any {
+	return map[string]any{openai_compat.ExtraKeyResponsesSupported: true}
+}
 
 type openAICompatFailingWriter struct {
 	gin.ResponseWriter
@@ -219,6 +224,7 @@ func TestForwardAsAnthropic_MappedClaudeModelAcceptsChatUsageShape(t *testing.T)
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://api.openai.com/v1",
@@ -272,6 +278,7 @@ func TestForwardAsAnthropic_InjectsPromptCacheKeyForAPIKeyMessagesDispatch(t *te
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://api.openai.com/v1",
@@ -318,6 +325,7 @@ func TestForwardAsAnthropic_AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSe
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://api.openai.com/v1",
@@ -365,6 +373,7 @@ func TestForwardAsAnthropic_DoesNotAutoDerivePromptCacheKeyForNonCodexModel(t *t
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://api.openai.com/v1",
@@ -418,6 +427,7 @@ func TestForwardAsAnthropic_TrimsFullReplayOnlyForCodexCompatModels(t *testing.T
 			Platform:    PlatformOpenAI,
 			Type:        AccountTypeAPIKey,
 			Concurrency: 1,
+			Extra:       openAICompatResponsesExtra(),
 			Credentials: map[string]any{
 				"api_key":  "sk-test",
 				"base_url": "https://api.openai.com/v1",
@@ -500,6 +510,7 @@ func TestForwardAsAnthropic_AttachesPreviousResponseIDForCompatContinuation(t *t
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://api.openai.com/v1",
@@ -552,6 +563,7 @@ func TestForwardAsAnthropic_PreviousResponseIDKeepsMultiToolCallContext(t *testi
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://api.openai.com/v1",
@@ -607,6 +619,7 @@ func TestForwardAsAnthropic_ReplaysWithoutContinuationWhenPreviousResponseMissin
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://api.openai.com/v1",
@@ -658,6 +671,7 @@ func TestForwardAsAnthropic_DisablesAPIKeyContinuationWhenUpstreamRequiresWebSoc
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://api.openai.com/v1",
@@ -729,6 +743,7 @@ func TestForwardAsAnthropic_APIKeyMetadataSessionSurvivesChangingCacheControlAnc
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://api.openai.com/v1",
@@ -1157,6 +1172,7 @@ func TestForwardAsAnthropic_StoresStreamingResponseIDWithoutUsage(t *testing.T) 
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://api.openai.com/v1",
