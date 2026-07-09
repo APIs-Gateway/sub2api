@@ -65,6 +65,7 @@ func TestUserHandlerUpdateMapsRoleAndPreventsSelfDowngrade(t *testing.T) {
 	require.Equal(t, int64(2), adminSvc.updatedUserID)
 	require.NotNil(t, adminSvc.updatedUserInput)
 	require.Equal(t, service.RoleUser, adminSvc.updatedUserInput.Role)
+	require.Equal(t, int64(1), adminSvc.updatedUserInput.ActorAdminID, "操作者 ID 应从 JWT 传入 service 以便审计")
 
 	adminSvc.updatedUserInput = nil
 	rec = httptest.NewRecorder()
@@ -98,4 +99,25 @@ func TestUserHandlerPromoteUserRequiresStepUp(t *testing.T) {
 
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 	require.Nil(t, adminSvc.updatedUserInput)
+}
+
+func TestUserHandlerCreatePassesActorAdminID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adminSvc := newStubAdminService()
+	handler := NewUserHandler(adminSvc, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 3})
+		c.Next()
+	})
+	router.POST("/api/v1/admin/users", handler.Create)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users", bytes.NewBufferString(`{"email":"user@example.com","password":"password","role":"user"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, adminSvc.createdUserInput)
+	require.Equal(t, int64(3), adminSvc.createdUserInput.ActorAdminID, "操作者 ID 应从 JWT 传入 service 以便审计")
 }
