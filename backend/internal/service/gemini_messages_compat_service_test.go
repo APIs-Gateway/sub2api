@@ -352,9 +352,15 @@ func TestCleanToolSchema_NormalizesGeminiUnsupportedSchemaFields(t *testing.T) {
 
 	properties, ok := cleaned["properties"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "STRING", properties["path"].(map[string]any)["type"])
-	require.Equal(t, "INTEGER", properties["count"].(map[string]any)["type"])
-	require.NotContains(t, properties["empty"].(map[string]any), "type")
+	path, ok := properties["path"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "STRING", path["type"])
+	count, ok := properties["count"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "INTEGER", count["type"])
+	empty, ok := properties["empty"].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, empty, "type")
 }
 
 func TestGeminiHandleNativeNonStreamingResponse_DebugDisabledDoesNotEmitHeaderLogs(t *testing.T) {
