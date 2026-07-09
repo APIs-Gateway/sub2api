@@ -132,6 +132,18 @@ func NewOpenAIGatewayHandler(
 	}
 }
 
+func (h *OpenAIGatewayHandler) applyOpenAIForcedAccountRouting(c *gin.Context, apiKey *service.APIKey) {
+	if h == nil || h.cfg == nil || c == nil || c.Request == nil || apiKey == nil || apiKey.UserID <= 0 {
+		return
+	}
+	for _, route := range h.cfg.Gateway.OpenAIForcedAccountRoutes {
+		if route.UserID == apiKey.UserID && route.AccountID > 0 {
+			c.Request = c.Request.WithContext(service.WithOpenAIForcedAccountRouting(c.Request.Context(), route.AccountID))
+			return
+		}
+	}
+}
+
 // Responses handles OpenAI Responses API endpoint
 // POST /openai/v1/responses
 func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
@@ -150,6 +162,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
+	h.applyOpenAIForcedAccountRouting(c, apiKey)
 
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -659,6 +672,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
+	h.applyOpenAIForcedAccountRouting(c, apiKey)
 
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -1188,6 +1202,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
+	h.applyOpenAIForcedAccountRouting(c, apiKey)
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
