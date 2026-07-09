@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"net"
 	"strings"
 	"sync"
@@ -396,16 +397,17 @@ func TestLegacyAuthFallbackTemplatesCoverLocaleBranches(t *testing.T) {
 	require.NotContains(t, hkVerifyBody, "您的验证码是")
 
 	resetURL := "https://example.com/reset?email=a%40example.com&token=abc"
+	escapedResetURL := html.EscapeString(resetURL)
 	zhResetBody := emailSvc.buildPasswordResetEmailBody(resetURL, "Sub2API", "zh")
 	require.Contains(t, emailSvc.passwordResetEmailSubject("Sub2API", "zh-CN"), "密码重置请求")
 	require.Contains(t, zhResetBody, "重置密码")
-	require.Contains(t, zhResetBody, resetURL)
+	require.Contains(t, zhResetBody, escapedResetURL)
 	require.NotContains(t, zhResetBody, "Reset password")
 
 	enResetBody := emailSvc.buildPasswordResetEmailBody(resetURL, "Sub2API", "en")
 	require.Contains(t, emailSvc.passwordResetEmailSubject("Sub2API", "en-US"), "Password reset request")
 	require.Contains(t, enResetBody, "Reset password")
-	require.Contains(t, enResetBody, resetURL)
+	require.Contains(t, enResetBody, escapedResetURL)
 	require.NotContains(t, enResetBody, "重置密码")
 }
 

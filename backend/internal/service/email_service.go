@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"html"
 	"log/slog"
 	"math/big"
 	"net"
@@ -444,6 +445,7 @@ func (s *EmailService) verifyCodeEmailSubject(siteName, locale string) string {
 
 // buildVerifyCodeEmailBody 构建验证码邮件HTML内容
 func (s *EmailService) buildVerifyCodeEmailBody(code, siteName, locale string) string {
+	escapedSiteName := html.EscapeString(siteName)
 	if isNotificationChineseLocale(locale) {
 		return localizeChineseNotificationEmailText(locale, fmt.Sprintf(`
 <!DOCTYPE html>
@@ -480,7 +482,7 @@ func (s *EmailService) buildVerifyCodeEmailBody(code, siteName, locale string) s
     </div>
 </body>
 </html>
-`, siteName, code))
+`, escapedSiteName, code))
 	}
 	return fmt.Sprintf(`
 <!DOCTYPE html>
@@ -517,7 +519,7 @@ func (s *EmailService) buildVerifyCodeEmailBody(code, siteName, locale string) s
     </div>
 </body>
 </html>
-`, siteName, code)
+`, escapedSiteName, code)
 }
 
 // TestSMTPConnectionWithConfig 使用指定配置测试SMTP连接
@@ -700,6 +702,8 @@ func (s *EmailService) passwordResetEmailSubject(siteName, locale string) string
 
 // buildPasswordResetEmailBody builds the HTML content for password reset email
 func (s *EmailService) buildPasswordResetEmailBody(resetURL, siteName, locale string) string {
+	escapedSiteName := html.EscapeString(siteName)
+	escapedResetURL := html.EscapeString(resetURL)
 	if !isNotificationChineseLocale(locale) {
 		return fmt.Sprintf(`
 <!DOCTYPE html>
@@ -744,7 +748,7 @@ func (s *EmailService) buildPasswordResetEmailBody(resetURL, siteName, locale st
     </div>
 </body>
 </html>
-`, siteName, resetURL, resetURL)
+`, escapedSiteName, escapedResetURL, escapedResetURL)
 	}
 	return localizeChineseNotificationEmailText(locale, fmt.Sprintf(`
 <!DOCTYPE html>
@@ -789,5 +793,5 @@ func (s *EmailService) buildPasswordResetEmailBody(resetURL, siteName, locale st
     </div>
 </body>
 </html>
-`, siteName, resetURL, resetURL))
+`, escapedSiteName, escapedResetURL, escapedResetURL))
 }
