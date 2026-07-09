@@ -10,8 +10,11 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
 )
 
 var handlerStructuredLogCaptureMu sync.Mutex
@@ -106,6 +109,65 @@ func TestIsOpenAIRemoteCompactPath(t *testing.T) {
 
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	require.False(t, isOpenAIRemoteCompactPath(c))
+}
+
+func TestNormalizeOpenAIResponsesCompactRequest_BodySignalPromotesBeforeStreamParsing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(`{}`))
+	c.Set(ctxKeyInboundEndpoint, EndpointResponses)
+	body := []byte(`{"model":"gpt-5.4","input":[{"type":"compaction_trigger"}],"stream":true,"prompt_cache_key":"pc_123","store":true}`)
+
+	h := &OpenAIGatewayHandler{}
+	normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
+
+	require.True(t, ok)
+	require.Equal(t, "/openai/v1/responses/compact", c.Request.URL.Path)
+	require.True(t, service.IsOpenAIResponsesCompactPathForTest(c))
+	require.Equal(t, EndpointResponsesCompact, GetInboundEndpoint(c))
+	require.Equal(t, "pc_123", c.GetString(service.OpenAICompactSessionSeedKeyForTest()))
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(normalized, "model").String())
+	require.True(t, gjson.GetBytes(normalized, "input.0.type").Exists())
+	require.False(t, gjson.GetBytes(normalized, "stream").Exists())
+	require.False(t, gjson.GetBytes(normalized, "prompt_cache_key").Exists())
+	require.False(t, gjson.GetBytes(normalized, "store").Exists())
+}
+
+func TestNormalizeOpenAIResponsesCompactRequest_PathBasedSetsInboundCompact(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/responses/compact", strings.NewReader(`{}`))
+	c.Set(ctxKeyInboundEndpoint, EndpointResponses)
+	body := []byte(`{"model":"gpt-5.4","input":"summarize","stream":true}`)
+
+	h := &OpenAIGatewayHandler{}
+	normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
+
+	require.True(t, ok)
+	require.Equal(t, "/responses/compact", c.Request.URL.Path)
+	require.Equal(t, EndpointResponsesCompact, GetInboundEndpoint(c))
+	require.False(t, gjson.GetBytes(normalized, "stream").Exists())
+}
+
+func TestNormalizeOpenAIResponsesCompactRequest_BodySignalDoesNotPromoteSubresources(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/resp_123/cancel", strings.NewReader(`{}`))
+	body := []byte(`{"model":"gpt-5.4","input":[{"type":"compaction_trigger"}],"stream":true}`)
+
+	h := &OpenAIGatewayHandler{}
+	normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
+
+	require.True(t, ok)
+	require.Equal(t, body, normalized)
+	require.Equal(t, "/v1/responses/resp_123/cancel", c.Request.URL.Path)
+	require.False(t, service.IsOpenAIResponsesCompactPathForTest(c))
 }
 
 func TestLogOpenAIRemoteCompactOutcome_Succeeded(t *testing.T) {
