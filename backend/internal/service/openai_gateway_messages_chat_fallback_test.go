@@ -27,6 +27,62 @@ func forceChatMessagesFallbackAccount() *Account {
 	return account
 }
 
+func TestShouldForwardAnthropicViaRawChatCompletions(t *testing.T) {
+	tests := []struct {
+		name    string
+		account *Account
+		want    bool
+	}{
+		{
+			name: "official openai api key defaults to responses",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"base_url": "https://api.openai.com/v1",
+				},
+			},
+			want: false,
+		},
+		{
+			name:    "third party compatible api key defaults to chat completions",
+			account: rawChatCompletionsTestAccount(),
+			want:    true,
+		},
+		{
+			name: "force responses overrides third party default",
+			account: func() *Account {
+				account := rawChatCompletionsTestAccount()
+				account.Extra = map[string]any{
+					openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceResponses),
+				}
+				return account
+			}(),
+			want: false,
+		},
+		{
+			name: "force chat completions overrides official default",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"base_url": "https://api.openai.com/v1",
+				},
+				Extra: map[string]any{
+					openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
+				},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, shouldForwardAnthropicViaRawChatCompletions(tt.account))
+		})
+	}
+}
+
 type errTailReader struct {
 	data []byte
 	off  int
