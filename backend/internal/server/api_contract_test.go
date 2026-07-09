@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -378,60 +379,33 @@ func TestAPIContracts(t *testing.T) {
 			setup: func(t *testing.T, deps *contractDeps) {
 				t.Helper()
 				// 普通用户订阅接口不应包含 assigned_* / notes 等管理员字段。
+				dailyWindowStart, weeklyWindowStart, monthlyWindowStart := currentSubscriptionContractWindows()
 				deps.userSubRepo.SetByUserID(1, []service.UserSubscription{
 					{
-						ID:              501,
-						UserID:          1,
-						GroupID:         10,
-						StartsAt:        deps.now,
-						ExpiresAt:       time.Date(2099, 1, 2, 3, 4, 5, 0, time.UTC), // 使用未来日期避免 normalizeSubscriptionStatus 标记为过期
-						Status:          service.SubscriptionStatusActive,
-						DailyUsageUSD:   1.23,
-						WeeklyUsageUSD:  2.34,
-						MonthlyUsageUSD: 3.45,
-						AssignedBy:      ptr(int64(999)),
-						AssignedAt:      deps.now,
-						Notes:           "admin-note",
-						CreatedAt:       deps.now,
-						UpdatedAt:       deps.now,
+						ID:                 501,
+						UserID:             1,
+						GroupID:            10,
+						StartsAt:           deps.now,
+						ExpiresAt:          time.Date(2099, 1, 2, 3, 4, 5, 0, time.UTC), // 使用未来日期避免 normalizeSubscriptionStatus 标记为过期
+						Status:             service.SubscriptionStatusActive,
+						DailyWindowStart:   &dailyWindowStart,
+						WeeklyWindowStart:  &weeklyWindowStart,
+						MonthlyWindowStart: &monthlyWindowStart,
+						DailyUsageUSD:      1.23,
+						WeeklyUsageUSD:     2.34,
+						MonthlyUsageUSD:    3.45,
+						AssignedBy:         ptr(int64(999)),
+						AssignedAt:         deps.now,
+						Notes:              "admin-note",
+						CreatedAt:          deps.now,
+						UpdatedAt:          deps.now,
 					},
 				})
 			},
 			method:     http.MethodGet,
 			path:       "/api/v1/subscriptions",
 			wantStatus: http.StatusOK,
-			wantJSON: `{
-				"code": 0,
-				"message": "success",
-				"data": [
-					{
-						"id": 501,
-						"user_id": 1,
-						"group_id": 10,
-						"starts_at": "2025-01-02T03:04:05Z",
-						"expires_at": "2099-01-02T03:04:05Z",
-						"status": "active",
-						"daily_window_start": null,
-						"weekly_window_start": null,
-						"monthly_window_start": null,
-						"daily_usage_usd": 1.23,
-						"weekly_usage_usd": 2.34,
-						"monthly_usage_usd": 3.45,
-						"daily_limit_usd": null,
-						"weekly_limit_usd": null,
-						"monthly_limit_usd": null,
-						"granted_total_usd": 0,
-						"daily_amount_usd": 0,
-						"consumed_usd": 0,
-						"clawed_usd": 0,
-						"remaining_usd": 0,
-						"consumption_day": 0,
-						"calendar_day": 0,
-						"created_at": "2025-01-02T03:04:05Z",
-						"updated_at": "2025-01-02T03:04:05Z"
-					}
-				]
-			}`,
+			wantJSON:   subscriptionContractJSONWithCurrentWindows(),
 		},
 		{
 			name: "GET /api/v1/redeem/history",
@@ -1257,6 +1231,52 @@ func TestAPIContracts(t *testing.T) {
 			require.JSONEq(t, tt.wantJSON, body)
 		})
 	}
+}
+
+func currentSubscriptionContractWindows() (time.Time, time.Time, time.Time) {
+	window := service.SubWindow{}
+	window.ResetWindows(time.Now())
+	return *window.DailyWindowStart, *window.WeeklyWindowStart, *window.MonthlyWindowStart
+}
+
+func subscriptionContractJSONWithCurrentWindows() string {
+	dailyWindowStart, weeklyWindowStart, monthlyWindowStart := currentSubscriptionContractWindows()
+	return fmt.Sprintf(`{
+		"code": 0,
+		"message": "success",
+		"data": [
+			{
+				"id": 501,
+				"user_id": 1,
+				"group_id": 10,
+				"starts_at": "2025-01-02T03:04:05Z",
+				"expires_at": "2099-01-02T03:04:05Z",
+				"status": "active",
+				"daily_window_start": %q,
+				"weekly_window_start": %q,
+				"monthly_window_start": %q,
+				"daily_usage_usd": 1.23,
+				"weekly_usage_usd": 2.34,
+				"monthly_usage_usd": 3.45,
+				"daily_limit_usd": null,
+				"weekly_limit_usd": null,
+				"monthly_limit_usd": null,
+				"granted_total_usd": 0,
+				"daily_amount_usd": 0,
+				"consumed_usd": 0,
+				"clawed_usd": 0,
+				"remaining_usd": 0,
+				"consumption_day": 0,
+				"calendar_day": 0,
+				"created_at": "2025-01-02T03:04:05Z",
+				"updated_at": "2025-01-02T03:04:05Z"
+			}
+		]
+	}`,
+		dailyWindowStart.Format(time.RFC3339),
+		weeklyWindowStart.Format(time.RFC3339),
+		monthlyWindowStart.Format(time.RFC3339),
+	)
 }
 
 type contractDeps struct {
