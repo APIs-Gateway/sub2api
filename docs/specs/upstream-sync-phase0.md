@@ -31,6 +31,40 @@ Snapshot date: 2026-07-08
 | C | Large product feature or unclear fit | Separate issue/decision first |
 | D | Upstream branding/docs/release churn or harmful overlap | Skip unless explicitly requested |
 
+## Progress Snapshot: 2026-07-09
+
+Phase 0 has started producing small PRs instead of a single large sync branch.
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| Phase 0 matrix + AWS SDK eventstream vuln bump | Merged in fork PR `#63` | This established the first evaluation matrix and absorbed upstream `#3813`. |
+| Payment provider NUL-byte cleanup | Merged in fork PR `#64` | Direct small port of upstream `#3714`; CI passed before merge. |
+| Codex image_gen namespace guard | Re-opened to `main` as fork PR `#68` | Earlier stacked PR `#65` merged into an intermediate branch; `#68` is the mainline PR to watch. |
+| Go 1.26.5 security unblock | Open as fork PR `#69` | New `govulncheck` data reports GO-2026-5856 against `crypto/tls@go1.26.4`; this must land before new backend-security runs can pass on other sync PRs. |
+| Responses mapped billing model | Open as fork PR `#66`, base retargeted to `main` | CI was green on the stacked branch; retargeted PR must be judged by its own `main` checks. |
+| Promo-code expiry clearing | Open as fork PR `#67`, base retargeted to `main` | Low-risk service/admin fix ported from upstream `#3364`; retargeted PR must be judged by its own `main` checks. |
+| Codex function-call item id stripping | Already absorbed by fork PR `#50` | `origin/main` already contains `openai_codex_function_call_id_test.go` and the `fc` prefix guard. No new PR needed. |
+
+## Proposed Child Issue Queue
+
+These are the first child issues worth opening from the Phase 0 investigations. Each item should stay independently reviewable and should name the upstream PRs/commits it absorbs or intentionally skips.
+
+| Child issue | Class | Scope | Notes |
+| --- | --- | --- | --- |
+| `gateway-compact-protocol-fixes` | A/B | Compact body signal, compact endpoint alias, compact usage SSE, compact image bridge guard | Keep this separate from messages fallback and quota/scheduler changes. Protect WHAM and issue `#16` error ownership. |
+| `gateway-parse-error-observability` | A/B | Request-body parse error logging in gateway/OpenAI handlers | Preserve client response stability, bounded body logging, and `client_via_upstream` attribution. |
+| `gateway-messages-chat-fallback` | A/B | `/v1/messages` fallback hardening and ops upstream error logging | High risk around streaming-after-200 and issue `#16`; do not combine with compact fixes. |
+| `frontend-sidebar-usage-polish` | A | Sidebar scroll persistence, user usage wording, admin usage token-card display | Hand-port to fork `zh-CN`/`zh-HK` i18n layout; avoid payment/subscription wording changes. |
+| `admin-scheduler-score-opt-in` | A/B | Admin account list scheduler score opt-in from upstream `#3811` | Preserve fork account columns, localStorage settings, and scheduler semantics. |
+| `ops-system-logs-api-key-id` | B | System log `api_key_id` and related admin filtering | Use a new migration number, cover old NULL rows, and run real PostgreSQL. |
+| `usage-log-reliability` | B | Usage log queue overflow/fallback-pricing noise before any large repo split | Prefer behavior fixes first; defer pure file moves unless they reduce review risk. |
+| `payment-refund-pending` | B | Refund pending/finalization gaps | Needs a fork-specific refund/points/affiliate spec and real PostgreSQL idempotency tests. |
+| `subscription-revoke-restore-fork-semantics` | B | Revoke/restore rewritten for single-card three-window subscriptions | Must define status/cache/restore-conflict semantics before code. |
+| `openai-account-scheduler` | B | Scheduler score, quota headroom, reset/sticky behavior | Keep separate from OAuth/shadow-account migrations. |
+| `spark-shadow-account` | B/C | Spark shadow account schema/service/UI/import-export | Requires new migration numbers and clean DB plus fork-history DB dry runs. |
+| `grok-oauth-quota-media` | B/C | Grok OAuth/quota first, media/group gate later | Split OAuth/quota from media/pricing/group default enablement. |
+| `batch-image-product-decision` | C | Batch image foundation, audit hardening, migrations `159..169`, frozen balance | Separate product decision; do not include in upstream sync PRs by default. |
+
 ## Initial Evaluation Matrix
 
 Gateway/OpenAI candidates were checked with patch-id and merge conflict probes. They are not already absorbed by the fork, but they should mostly be manually ported: upstream file-level cherry-picks conflict with fork-owned gateway paths and can accidentally drop WHAM or issue #16 error-ownership behavior.
@@ -39,13 +73,13 @@ Migration and large-feature candidates were checked separately. The migration ru
 
 | Upstream item | Class | Scope | Decision | Required checks |
 | --- | --- | --- | --- | --- |
-| `#3813` / `317339e71` `fix/bump-aws-sdk-eventstream-vuln` | A | `backend/go.mod`, `backend/go.sum` | Included in this phase. It only updates AWS SDK dependency checksums and avoids fork business paths. | `go test` for backend packages that compile S3 code; `git diff --check`. |
+| `#3813` / `317339e71` `fix/bump-aws-sdk-eventstream-vuln` | A | `backend/go.mod`, `backend/go.sum` | Done in fork PR `#63`. It only updates AWS SDK dependency checksums and avoids fork business paths. | `go test` for backend packages that compile S3 code; `git diff --check`. |
 | `#3804` / `f407d6a04` compact body signal routing | A/B | OpenAI gateway handler and compact signal helpers | Candidate for next gateway PR, but manual port only. Move endpoint alias/compact constants first, then body `compaction_trigger` promotion, then SSE heuristic. | `go test ./internal/handler ./internal/service -run 'Compact|Endpoint|NormalizeInboundEndpoint|ImageGenerationControls|GatewayService'`; backend build. |
 | `#3802/#3795` / `f68f3b86c`, `9643382bd` messages chat fallback hardening | A/B | OpenAI messages fallback service | Candidate, but must be a standalone gateway PR. Preserve fork `handleAnthropicErrorResponse`, `appendOpsUpstreamError`, and `upstreamDetail` behavior. | `go test ./internal/service -run 'Messages|ChatFallback|Anthropic|OpsUpstream'`; `go test ./internal/handler -run 'OpsErrorLogger|UpstreamError'`. |
-| `#3788` / `17d991786` Codex function call item id | A | Codex transform service and tests | Best next tiny gateway PR. Manually port only the illegal `item_*` id stripping in `PreserveReferences=true` call-input paths. | `go test ./internal/service -run 'Codex|FunctionCall|Transform'`. |
+| `#3788` / `17d991786` Codex function call item id | A | Codex transform service and tests | Already absorbed by fork PR `#50`; no new PR needed. | `go test -tags unit ./internal/service -run 'TestFilterCodexInput_(StripsFunctionCallItemID_WhenPreservingReferences|KeepsFcID_WhenPreservingReferences|StripsItemIDFromAllToolCallInputTypes|OutputTypeKeepsItemID|NonToolCallItemKeepsID)'`. |
 | `#3780` / `87bdaf8e6` gateway parse error observability | A/B | Gateway parse error logging/observability | Candidate, but standalone. Client response text should stay stable; logs must be bounded and avoid full body dumps. | `go test ./internal/handler ./internal/service -run 'RequestBodyParse|InvalidJSON|GatewayRequest'`; inspect logging for body truncation. |
 | `#3778` / `a98397adb` websearch emulation history blocks | A/B | OpenAI websearch/history filtering | Candidate after comparing the fork's existing filter. Preserve Anthropic official passback behavior. | `go test ./internal/service -run 'WebSearch|HistoryBlock|ThinkingProtocol'`. |
-| `#3794` / `af4b75a77` image generation namespace permission bypass | A/B | Codex image-generation intent and transform logic | Candidate for a small backend PR if limited to namespace `image_gen` and `input[].additional_tools` detection. Do not bring account/UI tool-policy changes. | `go test ./internal/service -run 'ImageGenerationIntent|Codex|ImageGenerationControls'`. |
+| `#3794` / `af4b75a77` image generation namespace permission bypass | A/B | Codex image-generation intent and transform logic | In progress as fork PR `#68` against `main`. Keep the port limited to namespace `image_gen` and `input[].additional_tools` detection. | `go test ./internal/service -run 'ImageGenerationIntent|Codex|ImageGenerationControls'`; CI on PR `#68`. |
 | `#3776` / `aff87d949` compact usage SSE detection | A | OpenAI compact usage detection | Candidate for gateway PR if it does not alter billing ownership. | OpenAI SSE usage tests. |
 | `#3761` / `baadb2268` responses alias normalization | A | Responses/OpenAI alias handling | Candidate for gateway PR. | Responses alias unit tests. |
 | `#3803` / `f4e8bec54` sidebar scroll persist | A | Frontend app store/sidebar | Candidate for frontend-only PR. Low backend risk. | `pnpm` lint/typecheck and sidebar/app store vitest. |
@@ -53,7 +87,9 @@ Migration and large-feature candidates were checked separately. The migration ru
 | `#3755` / `913d83877` subscription USD/CNY opt-in rate | B | Subscription and payment amount logic | Do not cherry-pick. Fork has custom subscription pricing and payment behavior. | Billing/payment unit and integration tests with production-shaped data. |
 | `#3749` / `3fa08aa93` EasyPay custom methods | B | Payment provider configuration | Review manually against fork KeyingPay/EasyPay confirmation rules. | Payment provider tests and callback idempotency checks. |
 | `#3747/#3738` subscription amount and affiliate base | B | Subscription confirmation and affiliate calculations | Manual review only; fork affiliate points and ledger semantics are owned locally. | Payment, affiliate, and points ledger tests. |
-| `#3714` / `2e70ec0a1` payment NUL-byte cleanup | A | Payment order provider response sanitization | Good follow-up small payment PR. It can be ported without changing amount, subscription, or points semantics. | Add create-order test with `TradeNo`, `PayURL`, or `QRCode` containing `\x00`. |
+| `#3714` / `2e70ec0a1` payment NUL-byte cleanup | A | Payment order provider response sanitization | Done in fork PR `#64`. It was ported without changing amount, subscription, or points semantics. | Create-order coverage for `TradeNo`, `PayURL`, or `QRCode` containing `\x00`; CI passed before merge. |
+| `#3364` / `2dc1387b` promo-code expiry clearing | A | Admin promo-code update handler and service | In progress as fork PR `#67` against `main`. This is an isolated clear-vs-omit semantics fix. | `go test ./internal/handler/admin ./internal/service -run 'TestPromo(HandlerUpdateClearsExpiryWhenZeroTimestampProvided|ServiceUpdate(ClearsExpiryWhenZeroTimeProvided|PreservesExpiryWhenOmitted))'`; CI on PR `#67`. |
+| `#3699` / `4dd3aee5` responses mapped billing model | A/B | OpenAI Responses usage billing model selection | In progress as fork PR `#66` against `main`. Preserve fork pricing and model mapping semantics. | Targeted OpenAI gateway record-usage tests; CI on PR `#66`. |
 | `#3428` / `147c1879` validity plural units | A | Payment validity duration parsing | Good follow-up small service PR if not already equivalent. | Unit test for `week/weeks` and `month/months`. |
 | `#3509` / `76e0d9073` refund pending flow | B | Refund state machine and payment UI | Manual port only. Fork has KeyingPay/EasyPay/Kyren safety semantics and subscription card shutdown rules. | Real PostgreSQL refund lifecycle tests, webhook idempotency, and active-card closure checks. |
 | `#3586/#3622` subscription revoke/restore | B | Subscription repo/service/cache/admin UI | Manual port only. Fork supports nullable group custom cards and one active-card semantics. | Real PostgreSQL tests for NULL group cards, restore conflicts, and cache invalidation. |
