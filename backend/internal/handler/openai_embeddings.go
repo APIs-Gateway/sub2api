@@ -29,6 +29,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
+	h.applyOpenAIAllGroupsRouting(c, apiKey)
 
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {

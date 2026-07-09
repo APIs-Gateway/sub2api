@@ -97,6 +97,25 @@ func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecord
 	}
 }
 
+func (h *OpenAIGatewayHandler) applyOpenAIAllGroupsRouting(c *gin.Context, apiKey *service.APIKey) {
+	if c == nil || apiKey == nil || h == nil || h.cfg == nil {
+		return
+	}
+	userID := apiKey.UserID
+	if userID <= 0 && apiKey.User != nil {
+		userID = apiKey.User.ID
+	}
+	if userID <= 0 {
+		return
+	}
+	for _, allowedID := range h.cfg.Gateway.OpenAIAllGroupsRoutingUserIDs {
+		if allowedID == userID {
+			c.Request = c.Request.WithContext(service.WithOpenAIAllGroupsRouting(c.Request.Context()))
+			return
+		}
+	}
+}
+
 // NewOpenAIGatewayHandler creates a new OpenAIGatewayHandler
 func NewOpenAIGatewayHandler(
 	gatewayService *service.OpenAIGatewayService,
@@ -150,6 +169,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
+	h.applyOpenAIAllGroupsRouting(c, apiKey)
 
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -631,6 +651,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
+	h.applyOpenAIAllGroupsRouting(c, apiKey)
 
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -1159,6 +1180,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
+	h.applyOpenAIAllGroupsRouting(c, apiKey)
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")

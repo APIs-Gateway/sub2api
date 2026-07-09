@@ -39,6 +39,7 @@ var openAIAdvancedSchedulerSettingSF singleflight.Group
 
 type OpenAIAccountScheduleRequest struct {
 	GroupID                 *int64
+	AllGroupsRouting        bool
 	SessionHash             string
 	StickyAccountID         int64
 	PreserveStickyBinding   bool
@@ -286,9 +287,10 @@ func (s *defaultOpenAIAccountScheduler) Select(
 
 	previousResponseID := strings.TrimSpace(req.PreviousResponseID)
 	if previousResponseID != "" {
+		stickyGroupID := openAIStickyRoutingGroupID(req.GroupID, req.AllGroupsRouting)
 		selection, err := s.service.selectAccountByPreviousResponseIDForCapability(
 			ctx,
-			req.GroupID,
+			stickyGroupID,
 			previousResponseID,
 			req.RequestedModel,
 			req.ExcludedIDs,
@@ -312,7 +314,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			decision.SelectedAccountID = selection.Account.ID
 			decision.SelectedAccountType = selection.Account.Type
 			if req.SessionHash != "" {
-				_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, selection.Account.ID)
+				_ = s.service.BindStickySession(ctx, stickyGroupID, req.SessionHash, selection.Account.ID)
 			}
 			return selection, decision, nil
 		}
@@ -360,7 +362,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	accountID := req.StickyAccountID
 	if accountID <= 0 {
 		var err error
-		accountID, err = s.service.getStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		accountID, err = s.service.getStickySessionAccountID(ctx, openAIStickyRoutingGroupID(req.GroupID, req.AllGroupsRouting), sessionHash)
 		if err != nil || accountID <= 0 {
 			return nil, false, nil
 		}
@@ -376,23 +378,23 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 
 	account, err := s.service.getSchedulableAccount(ctx, accountID)
 	if err != nil || account == nil {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		_ = s.service.deleteStickySessionAccountID(ctx, openAIStickyRoutingGroupID(req.GroupID, req.AllGroupsRouting), sessionHash)
 		return nil, false, nil
 	}
 	if shouldClearStickySession(account, req.RequestedModel) || !account.IsOpenAI() || !account.IsSchedulable() {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		_ = s.service.deleteStickySessionAccountID(ctx, openAIStickyRoutingGroupID(req.GroupID, req.AllGroupsRouting), sessionHash)
 		return nil, false, nil
 	}
 	if !s.isAccountRequestCompatible(ctx, account, req) {
 		return nil, false, nil
 	}
 	if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		_ = s.service.deleteStickySessionAccountID(ctx, openAIStickyRoutingGroupID(req.GroupID, req.AllGroupsRouting), sessionHash)
 		return nil, false, nil
 	}
 	account = s.service.recheckSelectedOpenAIAccountFromDB(ctx, account, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
-	if account == nil || !openAIStickyAccountMatchesGroup(account, req.GroupID) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+	if account == nil || (!req.AllGroupsRouting && !openAIStickyAccountMatchesGroup(account, req.GroupID)) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
+		_ = s.service.deleteStickySessionAccountID(ctx, openAIStickyRoutingGroupID(req.GroupID, req.AllGroupsRouting), sessionHash)
 		return nil, false, nil
 	}
 	escapeCfg := s.service.openAIStickyEscapeConfig()
@@ -407,7 +409,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	}
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr == nil && result != nil && result.Acquired {
-		_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
+		_ = s.service.refreshStickySessionTTL(ctx, openAIStickyRoutingGroupID(req.GroupID, req.AllGroupsRouting), sessionHash, s.service.openAIWSSessionStickyTTL())
 		return &AccountSelectionResult{
 			Account:     account,
 			Acquired:    true,
@@ -889,7 +891,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 		}
 		if result != nil && result.Acquired {
 			if req.SessionHash != "" && !req.PreserveStickyBinding {
-				_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, fresh.ID)
+				_ = s.service.BindStickySession(ctx, openAIStickyRoutingGroupID(req.GroupID, req.AllGroupsRouting), req.SessionHash, fresh.ID)
 			}
 			return &AccountSelectionResult{
 				Account:     fresh,
@@ -905,7 +907,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
 ) (*AccountSelectionResult, int, int, float64, error) {
-	accounts, err := s.service.listSchedulableAccounts(ctx, req.GroupID)
+	accounts, err := s.service.listSchedulableAccountsForOpenAIRouting(ctx, req.GroupID, req.AllGroupsRouting)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
@@ -915,7 +917,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
-	if req.GroupID != nil && s.service.schedulerSnapshot != nil {
+	if !req.AllGroupsRouting && req.GroupID != nil && s.service.schedulerSnapshot != nil {
 		schedGroup, _ = s.service.schedulerSnapshot.GetGroupByID(ctx, *req.GroupID)
 	}
 
@@ -1063,7 +1065,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 	if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
 		return false
 	}
-	if req.GroupID != nil && s != nil && s.service != nil &&
+	if !req.AllGroupsRouting && req.GroupID != nil && s != nil && s.service != nil &&
 		s.service.needsUpstreamChannelRestrictionCheck(ctx, req.GroupID) &&
 		s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact) {
 		return false
@@ -1241,6 +1243,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	decision := OpenAIAccountScheduleDecision{}
+	allGroupsRouting := openAIAllGroupsRoutingEnabled(ctx)
 	scheduler := s.getOpenAIAccountScheduler(ctx)
 	if scheduler == nil {
 		decision.Layer = openAIAccountScheduleLayerLoadBalance
@@ -1296,7 +1299,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		}
 	}
 
-	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
+	if !allGroupsRouting && s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
 			"group_id", derefGroupID(groupID),
 			"model", requestedModel)
@@ -1305,13 +1308,14 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 
 	var stickyAccountID int64
 	if sessionHash != "" && s.cache != nil {
-		if accountID, err := s.getStickySessionAccountID(ctx, groupID, sessionHash); err == nil && accountID > 0 {
+		if accountID, err := s.getStickySessionAccountID(ctx, openAIStickyRoutingGroupID(groupID, allGroupsRouting), sessionHash); err == nil && accountID > 0 {
 			stickyAccountID = accountID
 		}
 	}
 
 	return scheduler.Select(ctx, OpenAIAccountScheduleRequest{
 		GroupID:                 groupID,
+		AllGroupsRouting:        allGroupsRouting,
 		SessionHash:             sessionHash,
 		StickyAccountID:         stickyAccountID,
 		PreviousResponseID:      previousResponseID,

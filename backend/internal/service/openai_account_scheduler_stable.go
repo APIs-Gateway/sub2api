@@ -136,7 +136,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerStable(
 
 	// 快速旁路：未启用 / 无状态存储 / 无 home / 未配兜底链（用快照上已带的指针判断，
 	// 避免 normal 健康路径上的额外 DB 查询）→ 原始行为。
-	if !intent.Enabled || s.stableStore == nil || groupID == nil || homeGroup == nil ||
+	if openAIAllGroupsRoutingEnabled(ctx) || !intent.Enabled || s.stableStore == nil || groupID == nil || homeGroup == nil ||
 		homeGroup.Platform != PlatformOpenAI || homeGroup.StablePriorityFallbackGroupID == nil {
 		return original()
 	}
