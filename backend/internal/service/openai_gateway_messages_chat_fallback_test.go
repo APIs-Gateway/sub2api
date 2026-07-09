@@ -162,6 +162,33 @@ func TestForwardAsAnthropic_ForceChatCompletionsBetaFastModeSetsPriorityTier(t *
 	require.Equal(t, "priority", *result.ServiceTier)
 }
 
+func TestForwardAsAnthropic_ForceChatCompletionsBetaFastModeBlockedByPolicy(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	c, rec := newMessagesChatFallbackContext(t, body)
+	c.Request.Header.Set("anthropic-beta", claude.BetaFastMode)
+
+	upstream := &httpUpstreamRecorder{}
+	svc := newOpenAIGatewayServiceWithSettings(t, &OpenAIFastPolicySettings{
+		Rules: []OpenAIFastPolicyRule{{
+			ServiceTier:  OpenAIFastTierPriority,
+			Action:       BetaPolicyActionBlock,
+			Scope:        BetaPolicyScopeAll,
+			ErrorMessage: "priority tier blocked",
+		}},
+	})
+	svc.cfg = rawChatCompletionsTestConfig()
+	svc.httpUpstream = upstream
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, forceChatMessagesFallbackAccount(), body, "", "")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "priority tier blocked")
+	require.Nil(t, result)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Contains(t, rec.Body.String(), "priority tier blocked")
+	require.Nil(t, upstream.lastReq)
+}
+
 func TestForwardAsAnthropic_ForceChatCompletionsAccountConfigurationErrors(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 
