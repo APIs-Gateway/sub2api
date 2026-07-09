@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -203,6 +204,44 @@ func TestForwardAsRawChatCompletions_TransportErrorFailsOver(t *testing.T) {
 
 	_, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
 
+	require.Equal(t, 1, upstream.calls)
+	var fo *UpstreamFailoverError
+	require.True(t, errors.As(err, &fo), "transport error must trigger account failover")
+	require.Equal(t, http.StatusBadGateway, fo.StatusCode)
+	require.Empty(t, repo.tempUnschedCalls, "plain EOF is transient: fail over but do not evict")
+	require.Equal(t, 0, rec.Body.Len(), "service must not write a hard 502 before handler can fail over")
+}
+
+func TestForwardAsChatCompletions_TransportErrorFailsOver(t *testing.T) {
+	repo := &openaiTransportAccountRepoStub{}
+	upstream := &failingOpenAIHTTPUpstream{
+		err: errors.New(`Post "https://api.openai.com/v1/responses": EOF`),
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg: &config.Config{
+			Security: config.SecurityConfig{
+				URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+			},
+		},
+	}
+	account := &Account{
+		ID:          82,
+		Name:        "responses-api-key",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-test"},
+		Extra:       map[string]any{"openai_responses_supported": true},
+	}
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}]}`)
+	c, rec := newOpenAITransportErrTestContext()
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+
+	require.Nil(t, result)
 	require.Equal(t, 1, upstream.calls)
 	var fo *UpstreamFailoverError
 	require.True(t, errors.As(err, &fo), "transport error must trigger account failover")
