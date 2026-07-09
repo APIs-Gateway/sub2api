@@ -431,5 +431,6 @@ func newOpenAIImageGenerationControlTestAccount() *Account {
 		Credentials: map[string]any{
 			"api_key": "sk-test",
 		},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 }

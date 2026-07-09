@@ -12,9 +12,8 @@
 // 设计取舍：
 //   - 不维护静态 host 白名单——避免新增厂商时必须改代码（讨论沉淀于
 //     pensieve/short-term/knowledge/upstream-capability-detection-design-tradeoffs）
-//   - 标记缺失时默认 true（即"走 Responses"），保持与重构前老代码完全一致的存量
-//     账号行为（"现状即证据"原则；详见
-//     pensieve/short-term/maxims/preserve-existing-runtime-behavior-when-replacing-logic-in-stateful-systems）
+//   - 标记缺失时默认 false（即走 Chat Completions 直转），避免第三方兼容上游被
+//     误打到通常不存在的 /v1/responses；需要 Responses 的账号可显式 force_responses。
 package openai_compat
 
 // AccountResponsesSupport 描述账号上游对 OpenAI Responses API 的有效支持状态。
@@ -24,7 +23,7 @@ type AccountResponsesSupport int
 
 const (
 	// ResponsesSupportUnknown 表示账号尚未完成能力探测（extra 字段缺失）。
-	// 上游路由层应按"现状即证据"原则默认走 Responses，保持与重构前一致。
+	// 上游路由层应默认走 Chat Completions 直转，避免误用 /v1/responses。
 	ResponsesSupportUnknown AccountResponsesSupport = iota
 
 	// ResponsesSupportYes 探测确认上游支持 /v1/responses。
@@ -58,6 +57,12 @@ const ExtraKeyResponsesMode = "openai_responses_mode"
 // 值类型为 bool：true=支持、false=不支持、键缺失=未探测。
 const ExtraKeyResponsesSupported = "openai_responses_supported"
 
+var explicitResponsesTransportKeys = [...]string{
+	"openai_apikey_responses_websockets_v2_enabled",
+	"responses_websockets_v2_enabled",
+	"responses_websockets_enabled",
+}
+
 // NormalizeResponsesSupportMode 归一化账号级 Responses API 路由覆盖模式。
 // 缺失或非法值按 auto 处理，以保持存量行为。
 func NormalizeResponsesSupportMode(mode string) ResponsesSupportMode {
@@ -71,10 +76,11 @@ func NormalizeResponsesSupportMode(mode string) ResponsesSupportMode {
 	}
 }
 
-// ResolveResponsesSupport 从账号的 extra map 中读取手动覆盖模式与探测标记。
+// ResolveResponsesSupport 从账号的 extra map 中读取手动覆盖模式、探测标记与
+// 显式 Responses 传输配置。
 //
 // 标记缺失或类型不匹配时返回 ResponsesSupportUnknown——调用方应按
-// "未探测=保留旧行为=走 Responses" 处理（参见 ShouldUseResponsesAPI）。
+// "未探测=走 Chat Completions 直转"处理（参见 ShouldUseResponsesAPI）。
 func ResolveResponsesSupport(extra map[string]any) AccountResponsesSupport {
 	if extra == nil {
 		return ResponsesSupportUnknown
@@ -89,11 +95,11 @@ func ResolveResponsesSupport(extra map[string]any) AccountResponsesSupport {
 	}
 	v, ok := extra[ExtraKeyResponsesSupported]
 	if !ok {
-		return ResponsesSupportUnknown
+		return resolveExplicitResponsesTransportSupport(extra)
 	}
 	supported, ok := v.(bool)
 	if !ok {
-		return ResponsesSupportUnknown
+		return resolveExplicitResponsesTransportSupport(extra)
 	}
 	if supported {
 		return ResponsesSupportYes
@@ -101,15 +107,25 @@ func ResolveResponsesSupport(extra map[string]any) AccountResponsesSupport {
 	return ResponsesSupportNo
 }
 
+func resolveExplicitResponsesTransportSupport(extra map[string]any) AccountResponsesSupport {
+	for _, key := range explicitResponsesTransportKeys {
+		if enabled, ok := extra[key].(bool); ok && enabled {
+			return ResponsesSupportYes
+		}
+	}
+	return ResponsesSupportUnknown
+}
+
 // ShouldUseResponsesAPI 判断 OpenAI APIKey 账号的入站 /v1/chat/completions 请求
 // 是否应走"CC→Responses 转换 + 上游 /v1/responses"路径。
 //
-// 返回 true 的两种情况：
+// 返回 true 的情况：
 //  1. 账号已探测确认支持 Responses
-//  2. 账号未探测（标记缺失）——按"现状即证据"原则保留旧行为
+//  2. 账号手动配置 force_responses
+//  3. 账号未探测，但已显式启用 Responses WebSocket 传输
 //
-// 仅当账号已探测且确认不支持时返回 false，此时调用方应走 CC 直转路径
+// 账号未探测或确认不支持时返回 false，此时调用方应走 CC 直转路径
 // （详见 internal/service/openai_gateway_chat_completions_raw.go）。
 func ShouldUseResponsesAPI(extra map[string]any) bool {
-	return ResolveResponsesSupport(extra) != ResponsesSupportNo
+	return ResolveResponsesSupport(extra) == ResponsesSupportYes
 }

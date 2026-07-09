@@ -818,6 +818,7 @@ func TestOpenAIGatewayService_OpenAIPassthrough_429And529TriggerFailover(t *test
 			account.Credentials = map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"}
 		case AccountTypeAPIKey:
 			account.Credentials = map[string]any{"api_key": "sk-test"}
+			account.Extra["openai_responses_supported"] = true
 		}
 		return account
 	}
@@ -1205,7 +1206,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PreservesBodyAndUsesResponsesEnd
 		Type:           AccountTypeAPIKey,
 		Concurrency:    1,
 		Credentials:    map[string]any{"api_key": "sk-api-key", "base_url": "https://api.openai.com"},
-		Extra:          map[string]any{"openai_passthrough": true},
+		Extra:          map[string]any{"openai_passthrough": true, "openai_responses_supported": true},
 		Status:         StatusActive,
 		Schedulable:    true,
 		RateMultiplier: f64p(1),

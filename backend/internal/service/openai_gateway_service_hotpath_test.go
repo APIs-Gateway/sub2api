@@ -16,6 +16,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func openAIResponsesSupportedTestExtra() map[string]any {
+	return map[string]any{"openai_responses_supported": true}
+}
+
 func TestOpenAIRequestView_ExtractsRawScalars(t *testing.T) {
 	view := newOpenAIRequestView([]byte(`{"model":" gpt-5 ","stream":true,"prompt_cache_key":" ses-1 ","previous_response_id":" resp-1 ","service_tier":" fast ","reasoning":{"effort":" medium "}}`))
 
@@ -100,7 +104,7 @@ func TestOpenAIGatewayService_Forward_HTTPPatchPathKeepsLargeInputRaw(t *testing
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -141,7 +145,7 @@ func TestOpenAIGatewayService_Forward_DecodedMutationKeepsLaterFieldDeletes(t *t
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -180,7 +184,7 @@ func TestOpenAIGatewayService_Forward_MappedImageModelUsesImageGate(t *testing.T
 			"base_url":      "https://example.com",
 			"model_mapping": map[string]any{"draw-alias": "gpt-image-2"},
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -221,7 +225,7 @@ func TestOpenAIGatewayService_Forward_TextResponsesSetsBillingModelToMappedModel
 			"base_url":      "https://example.com",
 			"model_mapping": map[string]any{"gpt-5.4": "gpt-5.5"},
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -261,7 +265,7 @@ func TestOpenAIGatewayService_Forward_TextResponsesWithoutMappingKeepsRequestedB
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -291,7 +295,7 @@ func TestOpenAIGatewayService_Forward_TextResponsesBillingModelMatchesChatComple
 			"base_url":      "https://example.com",
 			"model_mapping": map[string]any{"gpt-5.4": "gpt-5.5"},
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 
 	responsesUpstream := &httpUpstreamRecorder{
@@ -356,7 +360,7 @@ func TestOpenAIGatewayService_Forward_TextDataImageDoesNotForceMapMarshal(t *tes
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -394,7 +398,7 @@ func TestOpenAIGatewayService_Forward_ImageToolBillingDoesNotForceFullDecode(t *
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -433,7 +437,7 @@ func TestOpenAIGatewayService_Forward_ImageToolWithImageOnlyModelIsNormalized(t 
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -476,7 +480,7 @@ func TestOpenAIGatewayService_Forward_HTTPRetryRecoveryDoesNotDecodeBeforeError(
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -516,7 +520,7 @@ func TestOpenAIGatewayService_Forward_CodexSparkRejectsEscapedInputImage(t *test
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -557,7 +561,7 @@ func TestOpenAIGatewayService_Forward_CodexBridgeInjectionSetsImageBilling(t *te
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -588,7 +592,7 @@ func TestOpenAIGatewayService_Forward_HTTPDeletesPreviousResponseIDWhenPresent(t
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 
 	for _, body := range [][]byte{
@@ -655,7 +659,7 @@ func TestOpenAIGatewayService_Forward_ImageOnlyModelKeepsSupportedVerbosity(t *t
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: openAIResponsesSupportedTestExtra(),
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
