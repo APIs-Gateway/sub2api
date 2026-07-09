@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -36,7 +37,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 ) (*OpenAIForwardResult, error) {
 	// API-key OpenAI-compatible upstreams that do not support /v1/responses
 	// must receive Anthropic /v1/messages traffic through /v1/chat/completions.
-	if account.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+	if shouldForwardAnthropicViaRawChatCompletions(account) {
 		return s.forwardAnthropicViaRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
 
@@ -409,6 +410,31 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	return result, handleErr
+}
+
+func shouldForwardAnthropicViaRawChatCompletions(account *Account) bool {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	switch openai_compat.ResolveResponsesSupport(account.Extra) {
+	case openai_compat.ResponsesSupportYes:
+		return false
+	case openai_compat.ResponsesSupportNo:
+		return true
+	}
+	return !isOfficialOpenAIBaseURL(account.GetOpenAIBaseURL())
+}
+
+func isOfficialOpenAIBaseURL(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return true
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Hostname(), "api.openai.com")
 }
 
 func ensureCodexOAuthInstructionsField(reqBody map[string]any) {
