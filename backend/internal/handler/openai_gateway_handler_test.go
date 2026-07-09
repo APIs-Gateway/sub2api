@@ -112,6 +112,63 @@ func TestResolveOpenAIMessagesMetadataSession_PreservesExplicitPromptCacheKey(t 
 	require.Equal(t, "explicit-cache", promptCacheKey)
 }
 
+func TestOpenAIGatewayHandlerApplyOpenAIForcedAccountRouting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	newContext := func() (*gin.Context, *http.Request) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		return c, c.Request
+	}
+
+	t.Run("guards leave request unchanged", func(t *testing.T) {
+		c, req := newContext()
+		var nilHandler *OpenAIGatewayHandler
+		nilHandler.applyOpenAIForcedAccountRouting(c, &service.APIKey{UserID: 513})
+		require.Same(t, req, c.Request)
+
+		(&OpenAIGatewayHandler{}).applyOpenAIForcedAccountRouting(c, &service.APIKey{UserID: 513})
+		require.Same(t, req, c.Request)
+
+		cfg := &config.Config{}
+		h := &OpenAIGatewayHandler{cfg: cfg}
+		h.applyOpenAIForcedAccountRouting(nil, &service.APIKey{UserID: 513})
+		h.applyOpenAIForcedAccountRouting(&gin.Context{}, &service.APIKey{UserID: 513})
+		h.applyOpenAIForcedAccountRouting(c, nil)
+		h.applyOpenAIForcedAccountRouting(c, &service.APIKey{})
+		require.Same(t, req, c.Request)
+	})
+
+	t.Run("unmatched or invalid routes leave request unchanged", func(t *testing.T) {
+		c, req := newContext()
+		cfg := &config.Config{}
+		cfg.Gateway.OpenAIForcedAccountRoutes = []config.OpenAIForcedAccountRoute{
+			{UserID: 514, AccountID: 9001},
+			{UserID: 513, AccountID: 0},
+		}
+		h := &OpenAIGatewayHandler{cfg: cfg}
+
+		h.applyOpenAIForcedAccountRouting(c, &service.APIKey{UserID: 513})
+
+		require.Same(t, req, c.Request)
+	})
+
+	t.Run("matching route replaces request context", func(t *testing.T) {
+		c, req := newContext()
+		cfg := &config.Config{}
+		cfg.Gateway.OpenAIForcedAccountRoutes = []config.OpenAIForcedAccountRoute{
+			{UserID: 513, AccountID: 9001},
+		}
+		h := &OpenAIGatewayHandler{cfg: cfg}
+
+		h.applyOpenAIForcedAccountRouting(c, &service.APIKey{UserID: 513})
+
+		require.NotSame(t, req, c.Request)
+		require.NotEqual(t, req.Context(), c.Request.Context())
+	})
+}
+
 func TestOpenAIHandleStreamingAwareError_NonStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
