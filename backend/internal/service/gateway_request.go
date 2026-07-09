@@ -222,15 +222,17 @@ func refreshGatewayRequestRanges(parsed *ParsedRequest, protocol string) error {
 // callers can safely wrap or log it without leaking request body content.
 func DescribeInvalidJSON(body []byte) error {
 	var raw json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		var syntaxErr *json.SyntaxError
-		if errors.As(err, &syntaxErr) {
-			return fmt.Errorf("invalid json (len=%d, offset=%d): %s", len(body), syntaxErr.Offset, syntaxErr.Error())
-		}
-		return fmt.Errorf("invalid json (len=%d): %w", len(body), err)
+	err := json.Unmarshal(body, &raw)
+	message := "accepted by standard json parser"
+	if err != nil {
+		message = err.Error()
 	}
-
-	return fmt.Errorf("invalid json (len=%d)", len(body))
+	offset := int64(0)
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		offset = syntaxErr.Offset
+	}
+	return fmt.Errorf("invalid json (len=%d, offset=%d): %s", len(body), offset, message)
 }
 
 // ParsedRequest 保存网关请求的预解析结果

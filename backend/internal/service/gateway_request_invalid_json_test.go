@@ -46,7 +46,7 @@ func TestDescribeInvalidJSON_FallbackWhenStandardLibraryAcceptsBody(t *testing.T
 
 	err := DescribeInvalidJSON(body)
 
-	require.EqualError(t, err, fmt.Sprintf("invalid json (len=%d)", len(body)))
+	require.EqualError(t, err, fmt.Sprintf("invalid json (len=%d, offset=0): accepted by standard json parser", len(body)))
 }
 
 func TestParseGatewayRequest_InvalidJSONErrorIsDiagnostic(t *testing.T) {
