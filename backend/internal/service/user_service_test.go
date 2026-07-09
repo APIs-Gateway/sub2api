@@ -55,6 +55,37 @@ type mockUserSettingRepo struct {
 	values map[string]string
 }
 
+func TestNotifyVerifyEmailFallbackTemplatesCoverLocaleBranches(t *testing.T) {
+	zhSubject := notifyVerifyEmailSubject("Sub2API", "zh-CN")
+	zhBody := buildNotifyVerifyEmailBodyForLocale("112233", "Sub2API", "zh")
+	require.Contains(t, zhSubject, "通知邮箱验证码")
+	require.Contains(t, zhBody, "通知邮箱验证码")
+	require.Contains(t, zhBody, "112233")
+	require.NotContains(t, zhBody, "Notification Email Verification")
+
+	enSubject := notifyVerifyEmailSubject("Sub2API", "en-US")
+	enBody := buildNotifyVerifyEmailBodyForLocale("445566", "Sub2API", "en")
+	require.Contains(t, enSubject, "Notification Email Verification")
+	require.Contains(t, enBody, "Notification Email Verification")
+	require.Contains(t, enBody, "445566")
+	require.NotContains(t, enBody, "通知邮箱验证码")
+}
+
+func TestSendNotifyVerifyEmailUsesLocalizedLegacyFallback(t *testing.T) {
+	server := startNotificationEmailTestSMTPServer(t)
+	repo := newNotificationEmailMemorySettingRepo()
+	require.NoError(t, repo.SetMultiple(t.Context(), server.settings()))
+	require.NoError(t, repo.Set(t.Context(), SettingKeyDefaultLocale, "en"))
+	require.NoError(t, repo.Set(t.Context(), SettingKeySiteName, "Sub2API"))
+	emailSvc := NewEmailService(repo, nil)
+	svc := NewUserService(nil, repo, nil, nil)
+
+	require.NoError(t, svc.sendNotifyVerifyEmail(t.Context(), emailSvc, 7, "notify@example.com", "778899", ""))
+	require.Eventually(t, func() bool {
+		return server.messageCount() == 1
+	}, time.Second, 10*time.Millisecond)
+}
+
 func (m *mockUserSettingRepo) Get(context.Context, string) (*Setting, error) {
 	panic("unexpected Get call")
 }

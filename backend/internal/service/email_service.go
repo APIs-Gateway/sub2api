@@ -129,6 +129,24 @@ func emailRecipientName(email string) string {
 	return trimmed
 }
 
+func (s *EmailService) resolveLegacyEmailLocale(ctx context.Context, userID int64, email, localeHint string) string {
+	if locale, ok := normalizeNotificationLocaleHint(localeHint); ok {
+		if s.notificationEmailService != nil {
+			s.notificationEmailService.RememberRecipientLocale(ctx, userID, email, localeHint)
+		}
+		return locale
+	}
+	if s.notificationEmailService != nil {
+		return s.notificationEmailService.ResolveRecipientLocale(ctx, userID, email)
+	}
+	if s != nil && s.settingRepo != nil {
+		if locale, err := s.settingRepo.GetValue(ctx, SettingKeyDefaultLocale); err == nil && strings.TrimSpace(locale) != "" {
+			return normalizeNotificationLocale(locale)
+		}
+	}
+	return normalizeNotificationLocale(defaultLocaleFallback)
+}
+
 // GetSMTPConfig 从数据库获取SMTP配置
 func (s *EmailService) GetSMTPConfig(ctx context.Context) (*SMTPConfig, error) {
 	keys := []string{
@@ -370,9 +388,9 @@ func (s *EmailService) SendVerifyCode(ctx context.Context, email, siteName strin
 		slog.Warn("failed to send templated verification email, falling back to legacy template", "recipient_hash", notificationEmailHash(email), "error", err)
 	}
 
-	// 构建邮件内容
-	subject := fmt.Sprintf("[%s] Email Verification Code", siteName)
-	body := s.buildVerifyCodeEmailBody(code, siteName)
+	resolvedLocale := s.resolveLegacyEmailLocale(ctx, 0, email, firstEmailLocale(locale))
+	subject := s.verifyCodeEmailSubject(siteName, resolvedLocale)
+	body := s.buildVerifyCodeEmailBody(code, siteName, resolvedLocale)
 
 	// 发送邮件
 	if err := s.SendEmail(ctx, email, subject, body); err != nil {
@@ -417,8 +435,53 @@ func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error
 	return nil
 }
 
+func (s *EmailService) verifyCodeEmailSubject(siteName, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, fmt.Sprintf("[%s] 邮箱验证码", siteName))
+	}
+	return fmt.Sprintf("[%s] Email Verification Code", siteName)
+}
+
 // buildVerifyCodeEmailBody 构建验证码邮件HTML内容
-func (s *EmailService) buildVerifyCodeEmailBody(code, siteName string) string {
+func (s *EmailService) buildVerifyCodeEmailBody(code, siteName, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%); color: white; padding: 30px; text-align: center; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .content { padding: 40px 30px; text-align: center; }
+        .code { font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #333; background-color: #f8f9fa; padding: 20px 30px; border-radius: 8px; display: inline-block; margin: 20px 0; font-family: monospace; }
+        .info { color: #666; font-size: 14px; line-height: 1.6; margin-top: 20px; }
+        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>%s</h1>
+        </div>
+        <div class="content">
+            <p style="font-size: 18px; color: #333;">您的验证码是：</p>
+            <div class="code">%s</div>
+            <div class="info">
+                <p>此验证码将在 <strong>15 分钟</strong>后失效。</p>
+                <p>如果这不是您本人操作，请忽略此邮件。</p>
+            </div>
+        </div>
+        <div class="footer">
+            <p>这是一封自动发送的邮件，请勿回复。</p>
+        </div>
+    </div>
+</body>
+</html>
+`, siteName, code))
+	}
 	return fmt.Sprintf(`
 <!DOCTYPE html>
 <html>
@@ -565,9 +628,9 @@ func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteNa
 		slog.Warn("failed to send templated password reset email, falling back to legacy template", "recipient_hash", notificationEmailHash(email), "error", err)
 	}
 
-	// Build email content
-	subject := fmt.Sprintf("[%s] 密码重置请求", siteName)
-	body := s.buildPasswordResetEmailBody(fullResetURL, siteName)
+	resolvedLocale := s.resolveLegacyEmailLocale(ctx, 0, email, firstEmailLocale(locale))
+	subject := s.passwordResetEmailSubject(siteName, resolvedLocale)
+	body := s.buildPasswordResetEmailBody(fullResetURL, siteName, resolvedLocale)
 
 	// Send email
 	if err := s.SendEmail(ctx, email, subject, body); err != nil {
@@ -628,9 +691,62 @@ func (s *EmailService) ConsumePasswordResetToken(ctx context.Context, email, tok
 	return nil
 }
 
+func (s *EmailService) passwordResetEmailSubject(siteName, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, fmt.Sprintf("[%s] 密码重置请求", siteName))
+	}
+	return fmt.Sprintf("[%s] Password reset request", siteName)
+}
+
 // buildPasswordResetEmailBody builds the HTML content for password reset email
-func (s *EmailService) buildPasswordResetEmailBody(resetURL, siteName string) string {
-	return fmt.Sprintf(`
+func (s *EmailService) buildPasswordResetEmailBody(resetURL, siteName, locale string) string {
+	if !isNotificationChineseLocale(locale) {
+		return fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%); color: white; padding: 30px; text-align: center; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .content { padding: 40px 30px; text-align: center; }
+        .button { display: inline-block; background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: 600; margin: 20px 0; }
+        .button:hover { opacity: 0.9; }
+        .info { color: #666; font-size: 14px; line-height: 1.6; margin-top: 20px; }
+        .link-fallback { color: #666; font-size: 12px; word-break: break-all; margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 4px; }
+        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+        .warning { color: #e74c3c; font-weight: 500; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>%s</h1>
+        </div>
+        <div class="content">
+            <p style="font-size: 18px; color: #333;">Password reset request</p>
+            <p style="color: #666;">You requested to reset your password. Click the button below to set a new password:</p>
+            <a href="%s" class="button">Reset password</a>
+            <div class="info">
+                <p>This link expires in <strong>30 minutes</strong>.</p>
+                <p class="warning">If you did not request a password reset, ignore this email. Your password will remain unchanged.</p>
+            </div>
+            <div class="link-fallback">
+                <p>If the button does not work, copy and paste this link into your browser:</p>
+                <p>%s</p>
+            </div>
+        </div>
+        <div class="footer">
+            <p>This is an automated message, please do not reply.</p>
+        </div>
+    </div>
+</body>
+</html>
+`, siteName, resetURL, resetURL)
+	}
+	return localizeChineseNotificationEmailText(locale, fmt.Sprintf(`
 <!DOCTYPE html>
 <html>
 <head>
@@ -673,5 +789,5 @@ func (s *EmailService) buildPasswordResetEmailBody(resetURL, siteName string) st
     </div>
 </body>
 </html>
-`, siteName, resetURL, resetURL)
+`, siteName, resetURL, resetURL))
 }

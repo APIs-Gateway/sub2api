@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"strings"
@@ -116,6 +117,94 @@ func defaultContentModerationString(value string, fallback string) string {
 	return strings.TrimSpace(value)
 }
 
+func contentModerationFallbackLocale(notificationEmailService *NotificationEmailService, ctx context.Context, log *ContentModerationLog) string {
+	if notificationEmailService == nil {
+		return normalizeNotificationLocale(defaultLocaleFallback)
+	}
+	return notificationEmailService.ResolveRecipientLocale(ctx, contentModerationEmailUserID(log), contentModerationEmailAddress(log))
+}
+
+func contentModerationEmailAddress(log *ContentModerationLog) string {
+	if log == nil {
+		return ""
+	}
+	return log.UserEmail
+}
+
+func contentModerationViolationSubject(siteName, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, fmt.Sprintf("[%s] 账户风控提醒", sanitizeEmailHeader(siteName)))
+	}
+	return fmt.Sprintf("[%s] Risk Control Notice", sanitizeEmailHeader(siteName))
+}
+
+func contentModerationDisabledSubject(siteName, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, fmt.Sprintf("[%s] 账户已被禁用", sanitizeEmailHeader(siteName)))
+	}
+	return fmt.Sprintf("[%s] Account Disabled", sanitizeEmailHeader(siteName))
+}
+
+func cyberPolicyNoticeSubject(siteName, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, fmt.Sprintf("[%s] 网络安全策略拦截", sanitizeEmailHeader(siteName)))
+	}
+	return fmt.Sprintf("[%s] Cyber Policy Notice", sanitizeEmailHeader(siteName))
+}
+
+func buildContentModerationViolationEmailBodyForLocale(siteName string, log *ContentModerationLog, cfg *ContentModerationConfig, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, buildContentModerationViolationEmailBody(siteName, log, cfg))
+	}
+	if log == nil {
+		return ""
+	}
+	userName := defaultContentModerationString(log.UserEmail, "user")
+	threshold := cfg.BanThreshold
+	if threshold <= 0 {
+		threshold = defaultContentModerationBanThreshold
+	}
+	statusBlock := ""
+	if log.AutoBanned {
+		statusBlock = `<p><strong>Your account is currently disabled and API requests will be rejected.</strong></p>`
+	}
+	return fmt.Sprintf(`<!doctype html><html><body><h1>Risk control notice</h1><p>Dear <strong>%s</strong>, your API request triggered the platform content moderation policy.</p><p>Triggered at: %s</p><p>Group: %s</p><p>Category: %s / %.3f</p><p>Violation count: %d (threshold %d)</p>%s<p>This email was sent automatically by %s. Please do not reply.</p></body></html>`,
+		html.EscapeString(userName),
+		html.EscapeString(time.Now().Format("2006-01-02 15:04:05")),
+		html.EscapeString(defaultContentModerationString(log.GroupName, "-")),
+		html.EscapeString(defaultContentModerationString(log.HighestCategory, "-")),
+		log.HighestScore,
+		log.ViolationCount,
+		threshold,
+		statusBlock,
+		html.EscapeString(siteName),
+	)
+}
+
+func buildContentModerationAccountDisabledEmailBodyForLocale(siteName string, log *ContentModerationLog, cfg *ContentModerationConfig, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, buildContentModerationAccountDisabledEmailBody(siteName, log, cfg))
+	}
+	if log == nil {
+		return ""
+	}
+	userName := defaultContentModerationString(log.UserEmail, "user")
+	threshold := cfg.BanThreshold
+	if threshold <= 0 {
+		threshold = defaultContentModerationBanThreshold
+	}
+	return fmt.Sprintf(`<!doctype html><html><body><h1>Account disabled</h1><p>Dear <strong>%s</strong>, your account triggered the platform risk-control policy multiple times and has been disabled automatically.</p><p>Disabled at: %s</p><p>Group: %s</p><p>Category: %s / %.3f</p><p>Violation count: %d (threshold %d)</p><p>Contact the platform administrator if you need to appeal or restore access.</p><p>This email was sent automatically by %s. Please do not reply.</p></body></html>`,
+		html.EscapeString(userName),
+		html.EscapeString(time.Now().Format("2006-01-02 15:04:05")),
+		html.EscapeString(defaultContentModerationString(log.GroupName, "-")),
+		html.EscapeString(defaultContentModerationString(log.HighestCategory, "-")),
+		log.HighestScore,
+		log.ViolationCount,
+		threshold,
+		html.EscapeString(siteName),
+	)
+}
+
 // buildCyberPolicyNoticeEmailBody 是 cyber_policy 通知邮件的内置兜底正文，
 // 当 notification email 模板渲染失败时使用（与 sendViolationEmail 的兜底同理）。
 func buildCyberPolicyNoticeEmailBody(siteName string, log *ContentModerationLog) string {
@@ -146,6 +235,23 @@ func buildCyberPolicyNoticeEmailBody(siteName string, log *ContentModerationLog)
     </div>
   </div>
 </body></html>`,
+		html.EscapeString(userName),
+		html.EscapeString(log.CreatedAt.Format("2006-01-02 15:04:05")),
+		html.EscapeString(defaultContentModerationString(log.Model, "-")),
+		html.EscapeString(defaultContentModerationString(log.Error, "-")),
+		html.EscapeString(siteName),
+	)
+}
+
+func buildCyberPolicyNoticeEmailBodyForLocale(siteName string, log *ContentModerationLog, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, buildCyberPolicyNoticeEmailBody(siteName, log))
+	}
+	if log == nil {
+		return ""
+	}
+	userName := defaultContentModerationString(log.UserEmail, "user")
+	return fmt.Sprintf(`<!doctype html><html><body><h1>Cyber policy notice</h1><p>Dear <strong>%s</strong>, your request was blocked by the upstream cyber policy.</p><p>Triggered at: %s</p><p>Model: %s</p><p>Upstream message: %s</p><p>If you believe this was a false positive, adjust the request and try again or contact the platform administrator.</p><p>This email was sent automatically by %s. Please do not reply.</p></body></html>`,
 		html.EscapeString(userName),
 		html.EscapeString(log.CreatedAt.Format("2006-01-02 15:04:05")),
 		html.EscapeString(defaultContentModerationString(log.Model, "-")),

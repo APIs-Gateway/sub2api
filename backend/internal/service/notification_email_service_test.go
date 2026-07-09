@@ -3,12 +3,14 @@ package service
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -54,7 +56,7 @@ func TestNotificationEmailTemplateOverrideAndRestore(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.True(t, updated.IsCustom)
-	require.Equal(t, "zh", updated.Locale)
+	require.Equal(t, "zh-CN", updated.Locale)
 	require.Equal(t, "充值完成：{{recharge_amount}}", updated.Subject)
 	require.NotNil(t, updated.UpdatedAt)
 
@@ -62,8 +64,42 @@ func TestNotificationEmailTemplateOverrideAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, restored.IsCustom)
 	require.NotEqual(t, updated.Subject, restored.Subject)
-	_, err = repo.GetValue(ctx, notificationEmailTemplateKey(NotificationEmailEventBalanceRechargeSuccess, "zh"))
+	_, err = repo.GetValue(ctx, notificationEmailTemplateKey(NotificationEmailEventBalanceRechargeSuccess, "zh-CN"))
 	require.ErrorIs(t, err, ErrSettingNotFound)
+}
+
+func TestNotificationEmailTemplateSupportsFrontendLocalesAndLegacyChineseOverride(t *testing.T) {
+	ctx := context.Background()
+	repo := newNotificationEmailMemorySettingRepo()
+	svc := NewNotificationEmailService(repo, nil)
+
+	require.ElementsMatch(t, []string{"zh-CN", "zh-HK", "en"}, svc.SupportedLocales())
+
+	hk, err := svc.GetTemplate(ctx, NotificationEmailEventAuthVerifyCode, "zh-HK")
+	require.NoError(t, err)
+	require.Equal(t, "zh-HK", hk.Locale)
+	require.Contains(t, hk.Subject, "郵箱驗證碼")
+	require.Contains(t, hk.HTML, "驗證碼")
+
+	legacy := notificationEmailStoredTemplate{
+		Subject:   "[{{site_name}}] 旧中文模板",
+		HTML:      "<p>{{recipient_name}} 旧中文模板</p>",
+		UpdatedAt: time.Now().UTC(),
+	}
+	payload, err := json.Marshal(legacy)
+	require.NoError(t, err)
+	require.NoError(t, repo.Set(ctx, notificationEmailTemplateKey(NotificationEmailEventAuthVerifyCode, "zh"), string(payload)))
+
+	legacyResolved, err := svc.GetTemplate(ctx, NotificationEmailEventAuthVerifyCode, "zh-CN")
+	require.NoError(t, err)
+	require.True(t, legacyResolved.IsCustom)
+	require.Equal(t, "zh-CN", legacyResolved.Locale)
+	require.Equal(t, legacy.Subject, legacyResolved.Subject)
+
+	hkResolved, err := svc.GetTemplate(ctx, NotificationEmailEventAuthVerifyCode, "zh-HK")
+	require.NoError(t, err)
+	require.False(t, hkResolved.IsCustom)
+	require.Contains(t, hkResolved.Subject, "郵箱驗證碼")
 }
 
 func TestNotificationEmailTemplateRejectsUnsupportedPlaceholder(t *testing.T) {
@@ -262,8 +298,115 @@ func TestNotificationEmailLocaleMemoryNormalizesAcceptLanguage(t *testing.T) {
 	svc := NewNotificationEmailService(newNotificationEmailMemorySettingRepo(), nil)
 
 	svc.RememberRecipientLocale(ctx, 42, "User@Example.com", "zh-CN,zh;q=0.9,en;q=0.8")
-	require.Equal(t, "zh", svc.ResolveRecipientLocale(ctx, 42, "user@example.com"))
-	require.Equal(t, "zh", svc.ResolveRecipientLocale(ctx, 0, "user@example.com"))
+	require.Equal(t, "zh-CN", svc.ResolveRecipientLocale(ctx, 42, "user@example.com"))
+	require.Equal(t, "zh-CN", svc.ResolveRecipientLocale(ctx, 0, "user@example.com"))
+
+	svc.RememberRecipientLocale(ctx, 43, "Hk.User@Example.com", "zh-HK,zh-Hant;q=0.9,en;q=0.8")
+	require.Equal(t, "zh-HK", svc.ResolveRecipientLocale(ctx, 43, "hk.user@example.com"))
+}
+
+func TestNotificationEmailLocaleResolutionUsesSiteDefaultAndIgnoresUnsupportedHints(t *testing.T) {
+	ctx := context.Background()
+	repo := newNotificationEmailMemorySettingRepo()
+	svc := NewNotificationEmailService(repo, nil)
+
+	require.NoError(t, repo.Set(ctx, SettingKeyDefaultLocale, "zh-CN"))
+	require.Equal(t, "zh-CN", svc.ResolveRecipientLocale(ctx, 99, "unknown@example.com"))
+
+	svc.RememberRecipientLocale(ctx, 99, "unknown@example.com", "fr-FR,fr;q=0.9")
+	require.Equal(t, "zh-CN", svc.ResolveRecipientLocale(ctx, 99, "unknown@example.com"))
+
+	require.NoError(t, repo.Set(ctx, SettingKeyDefaultLocale, "zh-HK"))
+	require.Equal(t, "zh-HK", svc.ResolveRecipientLocale(ctx, 101, "hk-default@example.com"))
+
+	require.NoError(t, repo.Set(ctx, SettingKeyDefaultLocale, "en"))
+	require.Equal(t, "en", svc.ResolveRecipientLocale(ctx, 100, "other@example.com"))
+}
+
+func TestNotificationEmailSendRemembersExplicitLocaleBeforeTemplateFallback(t *testing.T) {
+	ctx := context.Background()
+	repo := newNotificationEmailMemorySettingRepo()
+	svc := NewNotificationEmailService(repo, nil)
+
+	err := svc.Send(ctx, NotificationEmailSendInput{
+		Event:          NotificationEmailEventAuthVerifyCode,
+		Locale:         "en-US,en;q=0.9",
+		RecipientEmail: "User@Example.com",
+		UserID:         42,
+		Variables: map[string]string{
+			"verification_code":  "123456",
+			"expires_in_minutes": "15",
+		},
+	})
+	require.Error(t, err)
+	require.True(t, shouldFallbackNotificationEmail(err))
+	require.Equal(t, "en", svc.ResolveRecipientLocale(ctx, 42, "user@example.com"))
+}
+
+func TestLegacyAuthFallbackUsesResolvedLocale(t *testing.T) {
+	ctx := context.Background()
+	repo := newNotificationEmailMemorySettingRepo()
+	emailSvc := NewEmailService(repo, nil)
+	notificationSvc := NewNotificationEmailService(repo, emailSvc)
+
+	require.NoError(t, repo.Set(ctx, SettingKeyDefaultLocale, "zh-CN"))
+	zh := emailSvc.resolveLegacyEmailLocale(ctx, 0, "user@example.com", "")
+	require.Equal(t, "zh-CN", zh)
+	require.Contains(t, emailSvc.verifyCodeEmailSubject("Sub2API", zh), "邮箱验证码")
+	require.Contains(t, emailSvc.buildPasswordResetEmailBody("https://example.com/reset", "Sub2API", zh), "密码重置请求")
+
+	notificationSvc.RememberRecipientLocale(ctx, 7, "user@example.com", "en-US")
+	en := emailSvc.resolveLegacyEmailLocale(ctx, 7, "user@example.com", "")
+	require.Equal(t, "en", en)
+	require.Contains(t, emailSvc.verifyCodeEmailSubject("Sub2API", en), "Email Verification Code")
+	require.Contains(t, emailSvc.buildPasswordResetEmailBody("https://example.com/reset", "Sub2API", en), "Password reset request")
+	require.NotContains(t, emailSvc.buildPasswordResetEmailBody("https://example.com/reset", "Sub2API", en), "密码重置请求")
+}
+
+func TestLegacyAuthFallbackTemplatesCoverLocaleBranches(t *testing.T) {
+	ctx := context.Background()
+	repo := newNotificationEmailMemorySettingRepo()
+	emailSvc := NewEmailService(repo, nil)
+	notificationSvc := NewNotificationEmailService(repo, emailSvc)
+	emailSvc.SetNotificationEmailService(notificationSvc)
+
+	explicit := emailSvc.resolveLegacyEmailLocale(ctx, 9, "person@example.com", "en-US,en;q=0.9")
+	require.Equal(t, "en", explicit)
+	require.Equal(t, "en", notificationSvc.ResolveRecipientLocale(ctx, 9, "person@example.com"))
+
+	require.NoError(t, repo.Set(ctx, SettingKeyDefaultLocale, "en"))
+	siteDefault := NewEmailService(repo, nil).resolveLegacyEmailLocale(ctx, 0, "fallback@example.com", "fr-FR")
+	require.Equal(t, "en", siteDefault)
+
+	zhVerifyBody := emailSvc.buildVerifyCodeEmailBody("246810", "Sub2API", "zh-CN")
+	require.Contains(t, emailSvc.verifyCodeEmailSubject("Sub2API", "zh"), "邮箱验证码")
+	require.Contains(t, zhVerifyBody, "您的验证码是")
+	require.Contains(t, zhVerifyBody, "246810")
+	require.NotContains(t, zhVerifyBody, "Your verification code is")
+
+	enVerifyBody := emailSvc.buildVerifyCodeEmailBody("135790", "Sub2API", "en-US")
+	require.Contains(t, emailSvc.verifyCodeEmailSubject("Sub2API", "en"), "Email Verification Code")
+	require.Contains(t, enVerifyBody, "Your verification code is")
+	require.Contains(t, enVerifyBody, "135790")
+	require.NotContains(t, enVerifyBody, "您的验证码是")
+
+	hkVerifyBody := emailSvc.buildVerifyCodeEmailBody("112233", "Sub2API", "zh-HK")
+	require.Contains(t, emailSvc.verifyCodeEmailSubject("Sub2API", "zh-HK"), "郵箱驗證碼")
+	require.Contains(t, hkVerifyBody, "您的驗證碼是")
+	require.NotContains(t, hkVerifyBody, "您的验证码是")
+
+	resetURL := "https://example.com/reset?email=a%40example.com&token=abc"
+	zhResetBody := emailSvc.buildPasswordResetEmailBody(resetURL, "Sub2API", "zh")
+	require.Contains(t, emailSvc.passwordResetEmailSubject("Sub2API", "zh-CN"), "密码重置请求")
+	require.Contains(t, zhResetBody, "重置密码")
+	require.Contains(t, zhResetBody, resetURL)
+	require.NotContains(t, zhResetBody, "Reset password")
+
+	enResetBody := emailSvc.buildPasswordResetEmailBody(resetURL, "Sub2API", "en")
+	require.Contains(t, emailSvc.passwordResetEmailSubject("Sub2API", "en-US"), "Password reset request")
+	require.Contains(t, enResetBody, "Reset password")
+	require.Contains(t, enResetBody, resetURL)
+	require.NotContains(t, enResetBody, "重置密码")
 }
 
 func TestNotificationEmailDeliveryKeyUsesShortStableHash(t *testing.T) {

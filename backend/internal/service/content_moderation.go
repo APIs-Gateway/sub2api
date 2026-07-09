@@ -1736,8 +1736,9 @@ func (s *ContentModerationService) sendViolationEmail(ctx context.Context, cfg *
 			slog.Warn("template content moderation violation email failed; falling back to built-in body", "log_id", log.ID, "recipient_hash", notificationEmailHash(log.UserEmail), "err", err.Error())
 		}
 	}
-	subject := fmt.Sprintf("[%s] 账户风控提醒 / Risk Control Notice", sanitizeEmailHeader(siteName))
-	body := buildContentModerationViolationEmailBody(siteName, log, cfg)
+	locale := contentModerationFallbackLocale(s.emailService.notificationEmailService, ctx, log)
+	subject := contentModerationViolationSubject(siteName, locale)
+	body := buildContentModerationViolationEmailBodyForLocale(siteName, log, cfg, locale)
 	return s.emailService.SendEmail(ctx, log.UserEmail, subject, body)
 }
 
@@ -1761,8 +1762,9 @@ func (s *ContentModerationService) sendAccountDisabledEmail(ctx context.Context,
 			slog.Warn("template content moderation disabled email failed; falling back to built-in body", "log_id", log.ID, "recipient_hash", notificationEmailHash(log.UserEmail), "err", err.Error())
 		}
 	}
-	subject := fmt.Sprintf("[%s] 账户已被禁用 / Account Disabled", sanitizeEmailHeader(siteName))
-	body := buildContentModerationAccountDisabledEmailBody(siteName, log, cfg)
+	locale := contentModerationFallbackLocale(s.emailService.notificationEmailService, ctx, log)
+	subject := contentModerationDisabledSubject(siteName, locale)
+	body := buildContentModerationAccountDisabledEmailBodyForLocale(siteName, log, cfg, locale)
 	return s.emailService.SendEmail(ctx, log.UserEmail, subject, body)
 }
 
@@ -2833,6 +2835,7 @@ func (s *ContentModerationService) sendCyberPolicyEmail(ctx context.Context, log
 		}
 		slog.Warn("template cyber policy email failed; falling back", "err", err.Error())
 	}
-	subject := fmt.Sprintf("[%s] 网络安全策略拦截 / Cyber Policy Notice", sanitizeEmailHeader(siteName))
-	return s.emailService.SendEmail(ctx, log.UserEmail, subject, buildCyberPolicyNoticeEmailBody(siteName, log))
+	locale := contentModerationFallbackLocale(s.emailService.notificationEmailService, ctx, log)
+	subject := cyberPolicyNoticeSubject(siteName, locale)
+	return s.emailService.SendEmail(ctx, log.UserEmail, subject, buildCyberPolicyNoticeEmailBodyForLocale(siteName, log, locale))
 }
