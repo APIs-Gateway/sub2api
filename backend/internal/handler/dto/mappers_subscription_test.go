@@ -77,6 +77,31 @@ func TestUserSubscriptionFromService_LazilyResetsStaleActiveWindowsForDisplay(t 
 	require.Equal(t, yesterdayStart, *sub.DailyWindowStart)
 }
 
+func TestUserSubscriptionFromService_PreservesUnboundedWindowsForDisplay(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	sub := &service.UserSubscription{
+		ID:              12,
+		UserID:          22,
+		StartsAt:        now.AddDate(0, 0, -10),
+		ExpiresAt:       now.AddDate(0, 0, 10),
+		Status:          service.SubscriptionStatusActive,
+		DailyUsageUSD:   1.23,
+		WeeklyUsageUSD:  2.34,
+		MonthlyUsageUSD: 3.45,
+	}
+
+	got := UserSubscriptionFromService(sub)
+	require.NotNil(t, got)
+	require.Equal(t, 1.23, got.DailyUsageUSD)
+	require.Equal(t, 2.34, got.WeeklyUsageUSD)
+	require.Equal(t, 3.45, got.MonthlyUsageUSD)
+	require.Nil(t, got.DailyWindowStart)
+	require.Nil(t, got.WeeklyWindowStart)
+	require.Nil(t, got.MonthlyWindowStart)
+}
+
 func floatPtr(v float64) *float64 {
 	return &v
 }
