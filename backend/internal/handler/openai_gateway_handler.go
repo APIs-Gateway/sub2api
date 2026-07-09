@@ -564,8 +564,14 @@ func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Con
 		c.Request.URL.Path = strings.TrimRight(c.Request.URL.Path, "/") + "/compact"
 		c.Set(ctxKeyInboundEndpoint, EndpointResponsesCompact)
 		isCompactRequest = true
+		// Normalization removes stream for unary compact upstreams, but a
+		// body-signalled Codex client may still require a Responses SSE reply.
+		clientStream := gjson.GetBytes(body, "stream").Bool()
+		if clientStream {
+			service.MarkOpenAICompactClientStream(c)
+		}
 		if reqLog != nil {
-			reqLog.Info("codex.remote_compact.detected_body_signal")
+			reqLog.Info("codex.remote_compact.detected_body_signal", zap.Bool("client_stream", clientStream))
 		}
 	}
 	if !isCompactRequest {
