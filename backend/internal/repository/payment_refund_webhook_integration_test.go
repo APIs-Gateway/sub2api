@@ -109,6 +109,92 @@ func TestHandleKyrenRefundWebhook_PartialStillClosesCardPostgres(t *testing.T) {
 	require.Equal(t, service.OrderStatusRefunded, gotOrder2.Status)
 }
 
+func TestHandleKyrenRefundWebhook_RenewDeductsOnlyRenewalDaysPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	paySvc := makeRefundPaymentServiceForIntegration(t)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:    fmt.Sprintf("kyren-renew-refund-%s@example.com", uuid.NewString()),
+		Username: "kyren-renew-refund",
+	})
+	group := mustCreateGroup(t, client, &service.Group{Name: "kyren-renew-refund-" + uuid.NewString()})
+	today := service.TodayEastDayNumber()
+	d := 10.0
+	w, m := service.DeriveWindowCaps(d, 30)
+	originalExpireDay := today + 15
+	const renewDays = 60
+	card := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  d,
+		DailyLimitUSD:   &d,
+		WeeklyLimitUSD:  &w,
+		MonthlyLimitUSD: &m,
+		TodayRemaining:  d,
+		TodayDay:        today,
+		StartDay:        today - 5,
+		ExpireDay:       originalExpireDay + renewDays,
+		ExpiresAt:       service.ExpireDayToExpiresAt(originalExpireDay + renewDays),
+		Status:          service.SubscriptionStatusActive,
+	})
+
+	outTradeNo := "kyren_renew_" + uuid.NewString()
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(600).
+		SetPayAmount(600).
+		SetFeeRate(0).
+		SetRechargeCode("KYREN-RENEW-" + uuid.NewString()).
+		SetOutTradeNo(outTradeNo).
+		SetPaymentType(payment.TypeEasyPay).
+		SetPaymentTradeNo("trade-" + uuid.NewString()).
+		SetOrderType(payment.OrderTypeSubscription).
+		SetStatus(service.OrderStatusCompleted).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetPaidAt(time.Now()).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		SetProviderKey(payment.TypeEasyPay).
+		SetSubscriptionDays(renewDays).
+		SetProviderSnapshot(map[string]any{
+			"schema_version": 2,
+			"provider_key":   payment.TypeEasyPay,
+			"subscription": map[string]any{
+				"daily_amount_usd":       d,
+				"validity_days":          float64(renewDays),
+				"intent":                 service.SubscriptionIntentRenew,
+				"target_subscription_id": card.ID,
+				"subscription_id":        card.ID,
+			},
+		}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	data := &payment.KyrenRefundData{
+		OrderID:        outTradeNo,
+		RefundID:       "refund_renew_" + uuid.NewString(),
+		RefundStatus:   payment.KyrenRefundStatusFull,
+		Amount:         "600.00",
+		RefundedAmount: "600.00",
+		OriginalAmount: "600.00",
+		Reason:         "customer_request",
+	}
+	require.NoError(t, paySvc.HandleKyrenRefundWebhook(ctx, data, "evt_kyren_renew"))
+
+	got, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.SubscriptionStatusActive, got.Status, "续费退款不得关闭原本仍有效的目标卡")
+	require.Equal(t, originalExpireDay, got.ExpireDay)
+	require.True(t, got.ExpiresAt.Equal(service.ExpireDayToExpiresAt(originalExpireDay)))
+
+	gotOrder, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.OrderStatusRefunded, gotOrder.Status)
+}
+
 // easypay/KeyingPay 旧版支持 api.php?act=refund,后台退款应产出真实网关退款计划。
 func TestPrepareRefund_EasyPayBuildsGatewayRefundPlanPostgres(t *testing.T) {
 	ctx := context.Background()

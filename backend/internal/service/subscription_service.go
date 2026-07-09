@@ -705,6 +705,54 @@ func (s *SubscriptionService) closeSubscriptionForRefund(ctx context.Context, su
 	return nil
 }
 
+// revokeRenewalDaysForRefund removes only the days added by a renew order. It
+// deliberately does not reset package limits or today's balance unless the
+// shortened card has no service day left and must be closed.
+func (s *SubscriptionService) revokeRenewalDaysForRefund(ctx context.Context, subscriptionID int64, days int) error {
+	if days <= 0 {
+		return infraerrors.BadRequest("INVALID_RENEW_DAYS", "renewal refund days must be positive")
+	}
+	if days > MaxValidityDays {
+		days = MaxValidityDays
+	}
+
+	sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	today := EastDayNumber(now)
+	newExpireDay := sub.ExpireDay - days
+	if newExpireDay < today-1 {
+		newExpireDay = today - 1
+	}
+	if newExpireDay < today {
+		return s.closeSubscriptionForRefund(ctx, subscriptionID)
+	}
+
+	if _, _, err := s.userSubRepo.ShortenSubscriptionWithReclaim(ctx, subscriptionID, days, ExpireDayToExpiresAt(newExpireDay), now); err != nil {
+		return err
+	}
+	if sub.Status == SubscriptionStatusExpired {
+		if err := s.userSubRepo.UpdateStatus(ctx, subscriptionID, SubscriptionStatusActive); err != nil {
+			return err
+		}
+	}
+	s.clearSubscriptionLockCache(sub.UserID)
+	s.InvalidateSubCache(sub.UserID, sub.GroupID)
+	if s.billingCacheService != nil {
+		userID, groupID := sub.UserID, sub.GroupID
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+		}()
+	}
+	s.invalidateUserBalanceCacheAsync(sub.UserID)
+	return nil
+}
+
 // restoreSubscriptionForRefund restores the exact card state captured before a
 // refund deduction. It is intentionally narrower than ExtendSubscription:
 // refund rollback must restore today's package balance as well as expire_day.
