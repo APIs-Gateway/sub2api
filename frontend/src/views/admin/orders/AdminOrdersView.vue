@@ -45,7 +45,10 @@
               <Icon name="refresh" size="sm" />
               {{ t('payment.admin.retryRefund') }}
             </button>
-            <button v-else-if="row.status === 'COMPLETED' || row.status === 'PARTIALLY_REFUNDED'" @click="openRefundDialog(row)" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20">
+            <span v-else-if="isRefundSettled(row) && row.refund_amount" class="rounded-full bg-red-50 px-1.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-300">
+              {{ t('payment.admin.alreadyRefunded') }} {{ row.order_type === 'balance' ? '$' : '¥' }}{{ row.refund_amount.toFixed(2) }}
+            </span>
+            <button v-else-if="row.status === 'COMPLETED'" @click="openRefundDialog(row)" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20">
               <Icon name="dollar" size="sm" />
               {{ t('payment.admin.refund') }}
             </button>
@@ -66,12 +69,27 @@
           <div><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.amount') }}</p><p class="text-sm font-medium text-gray-900 dark:text-white">{{ selectedOrder.order_type === 'balance' ? '$' : '¥' }}{{ selectedOrder.amount.toFixed(2) }}</p></div>
           <div><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</p><p class="text-sm font-medium text-gray-900 dark:text-white">¥{{ selectedOrder.pay_amount.toFixed(2) }}</p></div>
           <div><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.paymentMethod') }}</p><p class="text-sm text-gray-700 dark:text-gray-300">{{ t('payment.methods.' + selectedOrder.payment_type, selectedOrder.payment_type) }}</p></div>
-          <div><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.feeRate') }}</p><p class="text-sm text-gray-700 dark:text-gray-300">{{ selectedOrder.fee_rate }}%</p></div>
+          <div><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.paymentFeeRate') }}</p><p class="text-sm text-gray-700 dark:text-gray-300">{{ selectedOrder.fee_rate }}%</p></div>
+          <div v-if="paymentFeeAmount(selectedOrder) > 0"><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.fee') }}</p><p class="text-sm font-medium text-gray-900 dark:text-white">¥{{ paymentFeeAmount(selectedOrder).toFixed(2) }}</p></div>
           <div><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.createdAt') }}</p><p class="text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(selectedOrder.created_at) }}</p></div>
           <div><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.expiresAt') }}</p><p class="text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(selectedOrder.expires_at) }}</p></div>
           <div v-if="selectedOrder.paid_at"><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.paidAt') }}</p><p class="text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(selectedOrder.paid_at) }}</p></div>
           <div v-if="selectedOrder.refund_amount"><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundAmount') }}</p><p class="text-sm font-medium text-red-600 dark:text-red-400">{{ selectedOrder.order_type === 'balance' ? '$' : '¥' }}{{ selectedOrder.refund_amount.toFixed(2) }}</p></div>
           <div v-if="selectedOrder.refund_reason" class="col-span-2"><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundReason') }}</p><p class="text-sm text-gray-700 dark:text-gray-300">{{ selectedOrder.refund_reason }}</p></div>
+          <div v-if="hasRefundSettlement(selectedOrder)" class="col-span-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-700">
+            <p class="mb-2 text-xs font-medium text-gray-700 dark:text-gray-300">{{ t('payment.admin.refundSettlementTitle') }}</p>
+            <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundCreditAmount') }}</span>
+              <span class="text-right font-medium text-gray-900 dark:text-white">{{ selectedOrder.order_type === 'balance' ? '$' : '¥' }}{{ selectedOrder.refund_amount.toFixed(2) }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundGatewayBase') }}</span>
+              <span class="text-right font-medium text-gray-900 dark:text-white">¥{{ refundGatewayBaseAmount(selectedOrder).toFixed(2) }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundFee') }} ({{ refundFeeRate.toFixed(2) }}%)</span>
+              <span class="text-right font-medium text-amber-700 dark:text-amber-300">¥{{ refundFeeAmount(selectedOrder).toFixed(2) }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundUserReceives') }}</span>
+              <span class="text-right font-semibold text-gray-900 dark:text-white">¥{{ refundUserReceivesAmount(selectedOrder).toFixed(2) }}</span>
+            </div>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.refundFeeNote') }}</p>
+          </div>
           <!-- Refund request info -->
           <div v-if="selectedOrder.refund_requested_at" class="col-span-2 border-t border-gray-200 pt-3 dark:border-dark-600">
             <p class="mb-2 text-xs font-medium text-purple-600 dark:text-purple-400">{{ t('payment.admin.refundRequestInfo') }}</p>
@@ -121,10 +139,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminPaymentAPI } from '@/api/admin/payment'
+import { settingsAPI } from '@/api/admin/settings'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { formatOrderDateTime } from '@/components/payment/orderUtils'
 import type { PaymentOrder } from '@/types/payment'
@@ -147,6 +167,7 @@ interface AuditLog {
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const route = useRoute()
 
 const ordersLoading = ref(false)
 const orders = ref<PaymentOrder[]>([])
@@ -159,7 +180,10 @@ const showRefundDialog = ref(false)
 const refundSubmitting = ref(false)
 const refundRequireForce = ref(false)
 const refundWarning = ref('')
+const refundFeeRate = ref(0)
 const orderAuditLogs = ref<AuditLog[]>([])
+const refundOverviewStatuses = ['REFUND_REQUESTED', 'REFUNDING', 'PARTIALLY_REFUNDED', 'REFUNDED', 'REFUND_FAILED']
+const isRefundOverview = computed(() => route.meta.refundOverview === true)
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 function debounceLoadOrders() {
@@ -172,7 +196,7 @@ async function loadOrders() {
   try {
     const res = await adminPaymentAPI.getOrders({
       page: orderPagination.page, page_size: orderPagination.page_size,
-      keyword: orderSearch.value || undefined, status: orderFilters.status || undefined,
+      keyword: orderSearch.value || undefined, status: selectedStatusFilter(),
       payment_type: orderFilters.payment_type || undefined, order_type: orderFilters.order_type || undefined,
     })
     orders.value = res.data.items || []
@@ -186,15 +210,21 @@ function handleOrderPageChange(page: number) { orderPagination.page = page; load
 function handleOrderPageSizeChange(size: number) { orderPagination.page_size = size; orderPagination.page = 1; loadOrders() }
 
 const statusFilterOptions = computed(() => [
-  { value: '', label: t('payment.admin.allStatuses') },
-  { value: 'PENDING', label: t('payment.status.pending') },
-  { value: 'PAID', label: t('payment.status.paid') },
-  { value: 'COMPLETED', label: t('payment.status.completed') },
-  { value: 'EXPIRED', label: t('payment.status.expired') },
-  { value: 'CANCELLED', label: t('payment.status.cancelled') },
-  { value: 'FAILED', label: t('payment.status.failed') },
-  { value: 'REFUNDED', label: t('payment.status.refunded') },
+  ...(isRefundOverview.value
+    ? [{ value: '', label: t('payment.admin.allRefundStatuses') }]
+    : [
+        { value: '', label: t('payment.admin.allStatuses') },
+        { value: 'PENDING', label: t('payment.status.pending') },
+        { value: 'PAID', label: t('payment.status.paid') },
+        { value: 'COMPLETED', label: t('payment.status.completed') },
+        { value: 'EXPIRED', label: t('payment.status.expired') },
+        { value: 'CANCELLED', label: t('payment.status.cancelled') },
+        { value: 'FAILED', label: t('payment.status.failed') },
+      ]),
   { value: 'REFUND_REQUESTED', label: t('payment.status.refund_requested') },
+  { value: 'REFUNDING', label: t('payment.status.refunding') },
+  { value: 'PARTIALLY_REFUNDED', label: t('payment.status.partially_refunded') },
+  { value: 'REFUNDED', label: t('payment.status.refunded') },
   { value: 'REFUND_FAILED', label: t('payment.status.refund_failed') },
 ])
 
@@ -265,9 +295,73 @@ async function handleRefund(data: { amount: number; reason: string; deduct_balan
 
 function formatDateTime(dateStr: string): string { return formatOrderDateTime(dateStr) }
 
+function selectedStatusFilter(): string | undefined {
+  if (orderFilters.status) return orderFilters.status
+  if (isRefundOverview.value) return refundOverviewStatuses.join(',')
+  return undefined
+}
+
 function fallbackProductName(order: PaymentOrder): string {
   return order.order_type === 'subscription' ? t('payment.admin.subscriptionOrder') : t('payment.admin.balanceOrder')
 }
 
-onMounted(() => loadOrders())
+function isRefundSettled(order: PaymentOrder): boolean {
+  return order.status === 'PARTIALLY_REFUNDED' || order.status === 'REFUNDED'
+}
+
+function paymentFeeAmount(order: PaymentOrder): number {
+  const feeRate = Number(order.fee_rate) || 0
+  if (feeRate <= 0 || order.pay_amount <= 0) return 0
+  return roundCurrency(order.pay_amount - order.pay_amount / (1 + feeRate / 100))
+}
+
+function hasRefundSettlement(order: PaymentOrder): boolean {
+  return (order.refund_amount || 0) > 0
+}
+
+function refundGatewayBaseAmount(order: PaymentOrder): number {
+  if (order.amount <= 0 || order.pay_amount <= 0 || order.refund_amount <= 0) return 0
+  if (Math.abs(order.refund_amount - order.amount) <= 0.01) return roundCurrency(order.pay_amount)
+  return roundCurrency((order.pay_amount * order.refund_amount) / order.amount)
+}
+
+function refundFeeAmount(order: PaymentOrder): number {
+  const rate = Number.isFinite(refundFeeRate.value) ? Math.min(Math.max(refundFeeRate.value, 0), 100) : 0
+  if (rate <= 0) return 0
+  return roundCurrencyUp((refundGatewayBaseAmount(order) * rate) / 100)
+}
+
+function refundUserReceivesAmount(order: PaymentOrder): number {
+  return Math.max(0, roundCurrency(refundGatewayBaseAmount(order) - refundFeeAmount(order)))
+}
+
+async function loadRefundFeeRate() {
+  try {
+    const settings = await settingsAPI.getSettings()
+    refundFeeRate.value = Number(settings.payment_refund_fee_rate) || 0
+  } catch {
+    refundFeeRate.value = 0
+  }
+}
+
+function roundCurrency(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.round(value * 100) / 100
+}
+
+function roundCurrencyUp(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.ceil(value * 100) / 100
+}
+
+onMounted(() => {
+  loadOrders()
+  loadRefundFeeRate()
+})
+
+watch(isRefundOverview, () => {
+  orderFilters.status = ''
+  orderPagination.page = 1
+  loadOrders()
+})
 </script>

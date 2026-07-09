@@ -122,6 +122,7 @@ type OrderListParams struct {
 	Page        int
 	PageSize    int
 	Status      string
+	Statuses    []string
 	OrderType   string
 	PaymentType string
 	Keyword     string

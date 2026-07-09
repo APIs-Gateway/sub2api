@@ -2,6 +2,7 @@ package admin
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -60,6 +61,7 @@ func (h *PaymentHandler) ListOrders(c *gin.Context) {
 		Page:        page,
 		PageSize:    pageSize,
 		Status:      c.Query("status"),
+		Statuses:    parseOrderStatuses(c.Query("status")),
 		OrderType:   c.Query("order_type"),
 		PaymentType: c.Query("payment_type"),
 		Keyword:     c.Query("keyword"),
@@ -69,6 +71,20 @@ func (h *PaymentHandler) ListOrders(c *gin.Context) {
 		return
 	}
 	response.Paginated(c, sanitizeAdminPaymentOrdersForResponse(orders), int64(total), page, pageSize)
+}
+
+func parseOrderStatuses(raw string) []string {
+	if !strings.Contains(raw, ",") {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	statuses := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if status := strings.TrimSpace(part); status != "" {
+			statuses = append(statuses, status)
+		}
+	}
+	return statuses
 }
 
 // GetOrderDetail returns detailed information about a single order.

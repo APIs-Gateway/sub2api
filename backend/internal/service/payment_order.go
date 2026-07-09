@@ -1380,7 +1380,9 @@ func (s *PaymentService) GetOrderByID(ctx context.Context, orderID int64) (*dben
 
 func (s *PaymentService) GetUserOrders(ctx context.Context, userID int64, p OrderListParams) ([]*dbent.PaymentOrder, int, error) {
 	q := s.entClient.PaymentOrder.Query().Where(paymentorder.UserIDEQ(userID))
-	if p.Status != "" {
+	if len(p.Statuses) > 0 {
+		q = q.Where(paymentorder.StatusIn(p.Statuses...))
+	} else if p.Status != "" {
 		q = q.Where(paymentorder.StatusEQ(p.Status))
 	}
 	if p.OrderType != "" {
@@ -1407,7 +1409,9 @@ func (s *PaymentService) AdminListOrders(ctx context.Context, userID int64, p Or
 	if userID > 0 {
 		q = q.Where(paymentorder.UserIDEQ(userID))
 	}
-	if p.Status != "" {
+	if len(p.Statuses) > 0 {
+		q = q.Where(paymentorder.StatusIn(p.Statuses...))
+	} else if p.Status != "" {
 		q = q.Where(paymentorder.StatusEQ(p.Status))
 	}
 	if p.OrderType != "" {

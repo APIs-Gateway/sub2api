@@ -654,6 +654,19 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/orders/refunds',
+    name: 'AdminRefundOverview',
+    component: () => import('@/views/admin/orders/AdminOrdersView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Refund Overview',
+      titleKey: 'nav.refundOverview',
+      requiresPayment: true,
+      refundOverview: true
+    }
+  },
+  {
     path: '/admin/orders',
     name: 'AdminOrders',
     component: () => import('@/views/admin/orders/AdminOrdersView.vue'),
