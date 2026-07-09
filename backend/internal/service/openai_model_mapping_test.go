@@ -218,6 +218,9 @@ func TestResolveOpenAICompactForwardModel(t *testing.T) {
 
 func TestNormalizeCodexModel(t *testing.T) {
 	cases := map[string]string{
+		"gpt-5.6-sol":               "gpt-5.6-sol",
+		"gpt-5.6-terra-high":        "gpt-5.6-terra",
+		"openai/gpt5.6-luna":        "gpt-5.6-luna",
 		"gpt-5.3-codex-spark":       "gpt-5.3-codex-spark",
 		"gpt-5.3-codex-spark-high":  "gpt-5.3-codex-spark",
 		"gpt-5.3-codex-spark-xhigh": "gpt-5.3-codex-spark",
@@ -300,6 +303,20 @@ func TestUsageBillingModelCandidatesPreserveCodexAutoReviewModel(t *testing.T) {
 	for i := range expected {
 		if candidates[i] != expected[i] {
 			t.Fatalf("usageBillingModelCandidates(codex-auto-review) = %#v, want %#v", candidates, expected)
+		}
+	}
+}
+
+func TestUsageBillingModelCandidatesNormalizeGPT56Aliases(t *testing.T) {
+	candidates := usageBillingModelCandidates("openai/gpt5.6-luna")
+
+	expected := []string{"openai/gpt5.6-luna", "gpt-5.6-luna"}
+	if len(candidates) != len(expected) {
+		t.Fatalf("usageBillingModelCandidates(openai/gpt5.6-luna) = %#v, want %#v", candidates, expected)
+	}
+	for i := range expected {
+		if candidates[i] != expected[i] {
+			t.Fatalf("usageBillingModelCandidates(openai/gpt5.6-luna) = %#v, want %#v", candidates, expected)
 		}
 	}
 }
