@@ -102,7 +102,7 @@ func selectResponsesProbeModel(account *Account) string {
 //     仅 reasoning / 无 function_call(如火山方舟 coding/v3 × kimi-k2.6)写 false
 //   - 其他非 2xx（401/422/400/5xx 等）→ 端点存在但无法判定工具能力,保守写 true
 //   - 网络层失败（连接错误、超时）→ 不写标记，保持 unknown
-//     （后续请求仍按"现状即证据"默认走 Responses）
+//     （后续请求默认走 Chat Completions 直转）
 //
 // 该方法是幂等的：重复调用会以最新探测结果覆盖标记。
 //

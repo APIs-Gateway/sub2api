@@ -22,6 +22,10 @@ func TestResolveResponsesSupport(t *testing.T) {
 		{"invalid mode follows probe", map[string]any{ExtraKeyResponsesMode: "bogus", ExtraKeyResponsesSupported: true}, ResponsesSupportYes},
 		{"force responses overrides probe false", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceResponses), ExtraKeyResponsesSupported: false}, ResponsesSupportYes},
 		{"force chat completions overrides probe true", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceChatCompletions), ExtraKeyResponsesSupported: true}, ResponsesSupportNo},
+		{"explicit websocket transport implies responses when unprobed", map[string]any{"responses_websockets_v2_enabled": true}, ResponsesSupportYes},
+		{"explicit apikey websocket transport implies responses when unprobed", map[string]any{"openai_apikey_responses_websockets_v2_enabled": true}, ResponsesSupportYes},
+		{"disabled websocket transport stays unknown", map[string]any{"responses_websockets_v2_enabled": false}, ResponsesSupportUnknown},
+		{"probe false overrides websocket transport", map[string]any{ExtraKeyResponsesSupported: false, "responses_websockets_v2_enabled": true}, ResponsesSupportNo},
 	}
 
 	for _, tc := range tests {
@@ -40,10 +44,10 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 		extra map[string]any
 		want  bool
 	}{
-		// 关键不变量：未探测必须返回 true（保留旧行为）
-		{"unknown defaults to true (preserve old behavior)", nil, true},
-		{"unknown empty defaults to true", map[string]any{}, true},
-		{"unknown wrong type defaults to true", map[string]any{ExtraKeyResponsesSupported: "yes"}, true},
+		// 未探测默认不走 Responses，避免第三方兼容上游被误打到 /v1/responses。
+		{"unknown defaults to chat completions", nil, false},
+		{"unknown empty defaults to chat completions", map[string]any{}, false},
+		{"unknown wrong type defaults to chat completions", map[string]any{ExtraKeyResponsesSupported: "yes"}, false},
 
 		// 已探测：标记决定
 		{"explicitly supported", map[string]any{ExtraKeyResponsesSupported: true}, true},
@@ -52,6 +56,8 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 		// 手动覆盖：覆盖自动探测结果
 		{"force responses overrides unsupported probe", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceResponses), ExtraKeyResponsesSupported: false}, true},
 		{"force chat completions overrides supported probe", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceChatCompletions), ExtraKeyResponsesSupported: true}, false},
+		{"explicit websocket transport uses responses", map[string]any{"responses_websockets_v2_enabled": true}, true},
+		{"unsupported probe overrides explicit websocket transport", map[string]any{ExtraKeyResponsesSupported: false, "responses_websockets_v2_enabled": true}, false},
 	}
 
 	for _, tc := range tests {

@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -466,6 +467,11 @@ func applyOpenAIImagesDefaults(req *OpenAIImagesRequest) {
 // >=1 才能让上游在生成早期就吐出首个 partial image（首字节早到 → 不触发 Cloudflare ~100s 524）。
 const openAIImagesDefaultPartialImages = 2
 
+const (
+	openAIImagesAsyncBridgePollInterval = 3 * time.Second
+	openAIImagesAsyncBridgePollTimeout  = 5 * time.Minute
+)
+
 // applyOpenAIImagesStreamDefault：客户端未显式给 stream 字段时，把图片请求默认改成流式，
 // 并补一个 partial_images 让首字节尽早到达。客户端显式 stream:false / stream:true 一律尊重、不改。
 // 仅作用于图片接口（generations/edits）。partial_images 已显式给则不覆盖。
@@ -618,6 +624,15 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	if err != nil {
 		return nil, err
 	}
+	if account.OpenAIImagesAsyncBridgeEnabled() && parsed.Endpoint == openAIImagesGenerationsEndpoint && !parsed.Multipart {
+		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, false)
+		defer releaseUpstreamCtx()
+		token, _, err := s.GetAccessToken(upstreamCtx, account)
+		if err != nil {
+			return nil, err
+		}
+		return s.forwardOpenAIImagesAPIKeyAsyncBridge(upstreamCtx, c, account, forwardBody, forwardContentType, token, parsed, requestModel, upstreamModel, startTime)
+	}
 	// 「省略 stream → 默认流式」时：客户端原始体里没有 stream/partial_images，需向上游请求体注入，
 	// 否则上游不会流式、首字节晚到仍会被 CF ~100s 掐断。仅这种网关默认补流的情况注入；
 	// 客户端显式 stream 的请求按其原样转发，不动。
@@ -757,6 +772,265 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	}
 }
 
+func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKeyAsyncBridge(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	contentType string,
+	token string,
+	parsed *OpenAIImagesRequest,
+	requestModel string,
+	upstreamModel string,
+	startTime time.Time,
+) (*OpenAIForwardResult, error) {
+	body, contentType, err := injectOpenAIImagesAsyncBridgeFields(body, contentType)
+	if err != nil {
+		return nil, err
+	}
+	upstreamReq, err := s.buildOpenAIImagesRequest(ctx, c, account, body, contentType, token, openAIImagesGenerationsEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+	upstreamStart := time.Now()
+	recordUpstream429Attempt(account.ID)
+	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+	if err != nil {
+		safeErr := sanitizeUpstreamErrorMessage(err.Error())
+		setOpsUpstreamError(c, 0, safeErr, "")
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: 0,
+			UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
+			Kind:               "request_error",
+			Message:            safeErr,
+		})
+		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+	}
+	if resp.StatusCode >= 400 {
+		respBody := s.readUpstreamErrorBody(resp)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+		return s.handleOpenAIImagesErrorResponse(ctx, resp, c, account, upstreamModel)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	submitBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	if err != nil {
+		return nil, err
+	}
+	if openAIImagesAsyncBodyCompleted(submitBody) {
+		return s.writeOpenAIImagesAsyncBridgeFinal(c, resp.Header, resp.StatusCode, submitBody, parsed, requestModel, upstreamModel, startTime)
+	}
+	taskID := extractOpenAIImagesAsyncTaskID(submitBody)
+	if taskID == "" {
+		upErr := &OpenAIImagesUpstreamError{
+			StatusCode:        http.StatusBadGateway,
+			ErrorType:         "upstream_error",
+			Code:              "missing_image_task_id",
+			Message:           "Upstream image async response did not include a task id",
+			UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id")),
+		}
+		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
+		return nil, upErr
+	}
+
+	deadline := time.NewTimer(openAIImagesAsyncBridgePollTimeout)
+	defer deadline.Stop()
+	for {
+		pollBody, pollHeader, pollStatus, err := s.pollOpenAIImagesAsyncTask(ctx, c, account, token, taskID, proxyURL)
+		if err != nil {
+			if upErr, ok := err.(*OpenAIImagesUpstreamError); ok {
+				s.writeOpenAIImagesAsyncBridgeError(c, upErr)
+			}
+			return nil, err
+		}
+		status := normalizeOpenAIImagesAsyncStatus(extractOpenAIImagesAsyncStatus(pollBody))
+		if openAIImagesAsyncBodyCompleted(pollBody) {
+			return s.writeOpenAIImagesAsyncBridgeFinal(c, pollHeader, pollStatus, pollBody, parsed, requestModel, upstreamModel, startTime)
+		}
+		if isOpenAIImagesAsyncFailedStatus(status) {
+			upErr := openAIImagesAsyncTaskFailedError(status, pollHeader, pollBody)
+			s.writeOpenAIImagesAsyncBridgeError(c, upErr)
+			return nil, upErr
+		}
+		if err := s.writeOpenAIImagesAsyncBridgeKeepalive(c); err != nil {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-deadline.C:
+			upErr := &OpenAIImagesUpstreamError{
+				StatusCode: http.StatusGatewayTimeout,
+				ErrorType:  "upstream_timeout",
+				Code:       "image_task_timeout",
+				Message:    "Upstream image async task timed out",
+			}
+			s.writeOpenAIImagesAsyncBridgeError(c, upErr)
+			return nil, upErr
+		case <-time.After(openAIImagesAsyncBridgePollInterval):
+		}
+	}
+}
+
+func (s *OpenAIGatewayService) pollOpenAIImagesAsyncTask(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	token string,
+	taskID string,
+	proxyURL string,
+) ([]byte, http.Header, int, error) {
+	req, err := s.buildOpenAIImagesAsyncPollRequest(ctx, c, account, token, taskID)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	upstreamStart := time.Now()
+	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+	if err != nil {
+		safeErr := sanitizeUpstreamErrorMessage(err.Error())
+		setOpsUpstreamError(c, 0, safeErr, "")
+		return nil, nil, 0, fmt.Errorf("upstream image task poll failed: %s", safeErr)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, readErr := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	if readErr != nil {
+		return nil, nil, resp.StatusCode, readErr
+	}
+	if resp.StatusCode >= 400 {
+		upErr := openAIImagesUpstreamErrorFromHTTP(resp.StatusCode, resp.Header, body)
+		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
+		return nil, resp.Header.Clone(), resp.StatusCode, upErr
+	}
+	return body, resp.Header.Clone(), resp.StatusCode, nil
+}
+
+func (s *OpenAIGatewayService) buildOpenAIImagesAsyncPollRequest(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	token string,
+	taskID string,
+) (*http.Request, error) {
+	baseURL := account.GetOpenAIBaseURL()
+	validatedURL, err := s.validateUpstreamBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := openAIImagesGenerationsEndpoint + "/" + url.PathEscape(strings.TrimSpace(taskID))
+	targetURL := buildOpenAIImagesURL(validatedURL, endpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	for key, values := range c.Request.Header {
+		if !openaiPassthroughAllowedHeaders[strings.ToLower(key)] {
+			continue
+		}
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	customUA := account.GetOpenAIUserAgent()
+	if customUA != "" {
+		req.Header.Set("User-Agent", customUA)
+	}
+	return req, nil
+}
+
+func (s *OpenAIGatewayService) writeOpenAIImagesAsyncBridgeFinal(
+	c *gin.Context,
+	header http.Header,
+	statusCode int,
+	body []byte,
+	parsed *OpenAIImagesRequest,
+	requestModel string,
+	upstreamModel string,
+	startTime time.Time,
+) (*OpenAIForwardResult, error) {
+	if c.Writer.Written() {
+		if _, err := c.Writer.Write(body); err != nil {
+			return nil, err
+		}
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	} else {
+		responseheaders.WriteFilteredHeaders(c.Writer.Header(), header, s.responseHeaderFilter)
+		contentType := "application/json"
+		if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
+			if upstreamType := header.Get("Content-Type"); upstreamType != "" {
+				contentType = upstreamType
+			}
+		}
+		if statusCode <= 0 {
+			statusCode = http.StatusOK
+		}
+		c.Data(statusCode, contentType, body)
+	}
+	usage, _ := extractOpenAIUsageFromJSONBytes(body)
+	imageCount := extractOpenAIImageCountFromJSONBytes(body)
+	if imageCount <= 0 {
+		imageCount = parsed.N
+	}
+	return &OpenAIForwardResult{
+		RequestID:        strings.TrimSpace(header.Get("x-request-id")),
+		Usage:            usage,
+		Model:            requestModel,
+		UpstreamModel:    upstreamModel,
+		Stream:           false,
+		ResponseHeaders:  header.Clone(),
+		Duration:         time.Since(startTime),
+		ImageCount:       imageCount,
+		ImageSize:        parsed.SizeTier,
+		ImageInputSize:   parsed.Size,
+		ImageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
+	}, nil
+}
+
+func (s *OpenAIGatewayService) writeOpenAIImagesAsyncBridgeKeepalive(c *gin.Context) error {
+	if c == nil || c.Writer == nil {
+		return nil
+	}
+	if !c.Writer.Written() {
+		c.Header("Content-Type", "application/json")
+		c.Status(http.StatusOK)
+	}
+	if _, err := c.Writer.Write([]byte(" \n")); err != nil {
+		return err
+	}
+	if flusher, ok := c.Writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return nil
+}
+
+func (s *OpenAIGatewayService) writeOpenAIImagesAsyncBridgeError(c *gin.Context, upErr *OpenAIImagesUpstreamError) {
+	if upErr == nil {
+		return
+	}
+	if c == nil || c.Writer == nil || !c.Writer.Written() {
+		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
+		return
+	}
+	_, _ = c.Writer.Write(openAIImagesUpstreamErrorResponseBody(upErr))
+	if flusher, ok := c.Writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 	ctx context.Context,
 	c *gin.Context,
@@ -801,6 +1075,107 @@ func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 		req.Header.Set("Content-Type", contentType)
 	}
 	return req, nil
+}
+
+func injectOpenAIImagesAsyncBridgeFields(body []byte, contentType string) ([]byte, string, error) {
+	mediaType, _, mediaErr := mime.ParseMediaType(contentType)
+	if mediaErr == nil && strings.EqualFold(mediaType, "multipart/form-data") {
+		return nil, "", fmt.Errorf("openai images async bridge does not support multipart requests")
+	}
+	out, err := sjson.SetBytes(body, "async", true)
+	if err != nil {
+		return nil, "", fmt.Errorf("inject image async field: %w", err)
+	}
+	out, err = sjson.SetBytes(out, "stream", false)
+	if err != nil {
+		return nil, "", fmt.Errorf("inject image stream field: %w", err)
+	}
+	return out, contentType, nil
+}
+
+func extractOpenAIImagesAsyncTaskID(body []byte) string {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return ""
+	}
+	for _, path := range []string{"task_id", "id", "data.task_id", "data.id"} {
+		if value := strings.TrimSpace(gjson.GetBytes(body, path).String()); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func extractOpenAIImagesAsyncStatus(body []byte) string {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return ""
+	}
+	for _, path := range []string{"status", "data.status"} {
+		if value := strings.TrimSpace(gjson.GetBytes(body, path).String()); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func normalizeOpenAIImagesAsyncStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "complete", "succeeded", "success":
+		return "completed"
+	case "failed", "error", "cancelled", "canceled":
+		return "failed"
+	case "queued", "pending", "in_progress", "processing", "running":
+		return "in_progress"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
+	}
+}
+
+func openAIImagesAsyncBodyCompleted(body []byte) bool {
+	if extractOpenAIImageCountFromJSONBytes(body) > 0 {
+		return true
+	}
+	if normalizeOpenAIImagesAsyncStatus(extractOpenAIImagesAsyncStatus(body)) != "completed" {
+		return false
+	}
+	data := gjson.GetBytes(body, "data")
+	if data.Exists() {
+		if data.IsArray() {
+			return len(data.Array()) > 0
+		}
+		return true
+	}
+	return gjson.GetBytes(body, "url").Exists() ||
+		gjson.GetBytes(body, "b64_json").Exists()
+}
+
+func isOpenAIImagesAsyncFailedStatus(status string) bool {
+	return normalizeOpenAIImagesAsyncStatus(status) == "failed"
+}
+
+func openAIImagesAsyncTaskFailedError(status string, header http.Header, body []byte) *OpenAIImagesUpstreamError {
+	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
+	if message == "" {
+		message = "Upstream image async task failed"
+	}
+	errType := strings.TrimSpace(gjson.GetBytes(body, "error.type").String())
+	if errType == "" {
+		errType = "upstream_error"
+	}
+	code := strings.TrimSpace(extractUpstreamErrorCode(body))
+	if code == "" {
+		code = normalizeOpenAIImagesAsyncStatus(status)
+	}
+	requestID := ""
+	if header != nil {
+		requestID = strings.TrimSpace(header.Get("x-request-id"))
+	}
+	return &OpenAIImagesUpstreamError{
+		StatusCode:        http.StatusBadGateway,
+		ErrorType:         errType,
+		Code:              code,
+		Message:           message,
+		UpstreamRequestID: requestID,
+	}
 }
 
 func buildOpenAIImagesURL(base string, endpoint string) string {
