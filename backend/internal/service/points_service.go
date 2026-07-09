@@ -213,19 +213,20 @@ func pointsEarnBaseAmountForOrder(order *dbent.PaymentOrder) (float64, bool) {
 	return 0, false
 }
 
-// AccrueEarnForRedeem 被邀请人兑换码兑付成功 → 邀请人返积分（方案 C：替代旧 cashback→$）。
-// base：balance 码 = 面值 Value；subscription 码 = 订阅返利 base 映射（复用）。pts = floor(base × rate% / 100 / peg)；
+// AccrueEarnForRedeem 被邀请人订阅兑换码兑付成功 → 邀请人返积分（方案 C：替代旧 cashback→$）。
+// base：subscription 码 = 订阅返利 base 映射（复用）。pts = floor(base × rate% / 100 / peg)；
 // 按来源兑换码幂等（partial-unique on (user_id, source_redeem_code_id) WHERE kind='earn'）。
-// 返回实际入账积分数（0 = 无邀请人/比例 0/base 0/重复回调）。
+// balance 码可能是赠码/后台批量发放，缺少“真实付费”来源锚，不能默认产生邀请积分；支付充值单由订单钩子返积分。
+// 返回实际入账积分数（0 = 非订阅兑换码/无邀请人/比例 0/base 0/重复回调）。
 func (s *PointsService) AccrueEarnForRedeem(ctx context.Context, inviteeUserID int64, redeemCode *RedeemCode) (int64, error) {
 	if !s.IsEnabled(ctx) || redeemCode == nil || redeemCode.ID <= 0 || inviteeUserID <= 0 {
 		return 0, nil
 	}
-	// base 取兑换码官方价口径（balance 单位）。
+	// base 取订阅兑换码官方价口径（balance 单位）。
 	var base float64
 	switch redeemCode.Type {
 	case RedeemTypeBalance:
-		base = redeemCode.Value
+		return 0, nil
 	case RedeemTypeSubscription:
 		if redeemCode.GroupID == nil || redeemCode.ValidityDays <= 0 {
 			return 0, nil
