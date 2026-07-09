@@ -41,6 +41,14 @@ func TestDescribeInvalidJSON_DoesNotLeakBodyContent(t *testing.T) {
 	require.NotContains(t, err.Error(), secret)
 }
 
+func TestDescribeInvalidJSON_FallbackWhenStandardLibraryAcceptsBody(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-6"}`)
+
+	err := DescribeInvalidJSON(body)
+
+	require.EqualError(t, err, fmt.Sprintf("invalid json (len=%d)", len(body)))
+}
+
 func TestParseGatewayRequest_InvalidJSONErrorIsDiagnostic(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-6","messages":[`)
 
