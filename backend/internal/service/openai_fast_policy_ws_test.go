@@ -1061,6 +1061,25 @@ func TestPassthroughUsageMeta_TracksReasoningEffortAcrossTurns(t *testing.T) {
 	require.Nil(t, meta.reasoningEffort.Load(), "新的 response.create 无 effort 且无可推导后缀时必须清空旧值")
 }
 
+func TestPassthroughUsageMeta_PreservesOAuthSuffixDerivedEffort(t *testing.T) {
+	firstFrame := []byte(`{"type":"response.create","model":"gpt-5.6-sol-max"}`)
+	meta := newOpenAIWSPassthroughUsageMeta("gpt-5.6-sol-max", firstFrame)
+
+	// Policy evaluation uses the normalized upstream model, but usage metadata
+	// must retain the original suffix model supplied by the client.
+	meta.initFromFirstFrame([]byte(`{"type":"response.create","model":"gpt-5.6-sol"}`))
+	require.NotNil(t, meta.reasoningEffort.Load())
+	require.Equal(t, "max", *meta.reasoningEffort.Load())
+
+	meta.updateSessionRequestModel([]byte(`{"type":"session.update","session":{"model":"gpt-5.6-sol-max"}}`))
+	meta.updateFromResponseCreate(
+		[]byte(`{"type":"response.create","model":"gpt-5.6-sol"}`),
+		meta.requestModelForFrame([]byte(`{"type":"response.create"}`)),
+	)
+	require.NotNil(t, meta.reasoningEffort.Load())
+	require.Equal(t, "max", *meta.reasoningEffort.Load())
+}
+
 // TestPassthroughBilling_BlockedFrameDoesNotMutateServiceTier locks in the
 // "block keeps previous" semantic: when policy returns block on a
 // response.create frame, that frame is never sent upstream, so billing tier
