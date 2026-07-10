@@ -5,17 +5,46 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type paymentFulfillmentTestProvider struct {
 	key            string
 	supportedTypes []payment.PaymentType
+}
+
+type paymentFulfillmentRedeemRepo struct {
+	RedeemCodeRepository
+	code            *RedeemCode
+	createErr       error
+	persistOnCreate bool
+	createCalls     int
+}
+
+func (r *paymentFulfillmentRedeemRepo) Create(_ context.Context, code *RedeemCode) error {
+	r.createCalls++
+	if r.persistOnCreate {
+		cloned := *code
+		r.code = &cloned
+	}
+	return r.createErr
+}
+
+func (r *paymentFulfillmentRedeemRepo) GetByCode(_ context.Context, code string) (*RedeemCode, error) {
+	if r.code == nil || r.code.Code != code {
+		return nil, ErrRedeemCodeNotFound
+	}
+	cloned := *r.code
+	return &cloned, nil
 }
 
 func (p paymentFulfillmentTestProvider) Name() string        { return p.key }
@@ -150,6 +179,67 @@ func TestResolveRedeemAction_CodeExistsWithExpiredStatus(t *testing.T) {
 	}
 	action := resolveRedeemAction(code, nil)
 	assert.Equal(t, redeemActionRedeem, action, "expired-status code is not IsUsed(), should redeem")
+}
+
+func TestGetOrCreateBalanceRedeemCodeRecoversConcurrentCreate(t *testing.T) {
+	ctx := context.Background()
+	repo := &paymentFulfillmentRedeemRepo{
+		createErr:       errors.New("unique constraint"),
+		persistOnCreate: true,
+	}
+	svc := &PaymentService{redeemService: &RedeemService{redeemRepo: repo}}
+	order := &dbent.PaymentOrder{RechargeCode: "balance-concurrent-code", Amount: 80}
+
+	code, err := svc.getOrCreateBalanceRedeemCode(ctx, order)
+	require.NoError(t, err)
+	require.Equal(t, order.RechargeCode, code.Code)
+	require.Equal(t, RedeemTypeBalance, code.Type)
+	require.Equal(t, order.Amount, code.Value)
+	require.Equal(t, StatusUnused, code.Status)
+}
+
+func TestGetOrCreateBalanceRedeemCodeUsesExistingCode(t *testing.T) {
+	ctx := context.Background()
+	order := &dbent.PaymentOrder{RechargeCode: "balance-existing-code", Amount: 80}
+
+	for _, status := range []string{StatusUnused, StatusUsed} {
+		t.Run(status, func(t *testing.T) {
+			repo := &paymentFulfillmentRedeemRepo{
+				code: &RedeemCode{Code: order.RechargeCode, Type: RedeemTypeBalance, Value: order.Amount, Status: status},
+			}
+			svc := &PaymentService{redeemService: &RedeemService{redeemRepo: repo}}
+
+			code, err := svc.getOrCreateBalanceRedeemCode(ctx, order)
+			require.NoError(t, err)
+			require.Equal(t, status, code.Status)
+			require.Zero(t, repo.createCalls)
+		})
+	}
+}
+
+func TestGetOrCreateBalanceRedeemCodeCreatesMissingCode(t *testing.T) {
+	ctx := context.Background()
+	repo := &paymentFulfillmentRedeemRepo{persistOnCreate: true}
+	svc := &PaymentService{redeemService: &RedeemService{redeemRepo: repo}}
+	order := &dbent.PaymentOrder{RechargeCode: "balance-new-code", Amount: 80}
+
+	code, err := svc.getOrCreateBalanceRedeemCode(ctx, order)
+	require.NoError(t, err)
+	require.Equal(t, order.RechargeCode, code.Code)
+	require.Equal(t, RedeemTypeBalance, code.Type)
+	require.Equal(t, order.Amount, code.Value)
+	require.Equal(t, StatusUnused, code.Status)
+	require.Equal(t, 1, repo.createCalls)
+}
+
+func TestGetOrCreateBalanceRedeemCodeReturnsCreateErrorWhenCodeStaysMissing(t *testing.T) {
+	ctx := context.Background()
+	repo := &paymentFulfillmentRedeemRepo{createErr: errors.New("database unavailable")}
+	svc := &PaymentService{redeemService: &RedeemService{redeemRepo: repo}}
+
+	_, err := svc.getOrCreateBalanceRedeemCode(ctx, &dbent.PaymentOrder{RechargeCode: "balance-create-error", Amount: 80})
+	require.ErrorContains(t, err, "database unavailable")
+	require.Equal(t, 1, repo.createCalls)
 }
 
 // ---------------------------------------------------------------------------
@@ -472,4 +562,179 @@ func TestPaymentAmountToleranceForThreeDecimalCurrency(t *testing.T) {
 	assert.Equal(t, amountToleranceCNY, paymentAmountToleranceForCurrency("CNY"))
 	assert.Equal(t, amountToleranceCNY, paymentAmountToleranceForCurrency("JPY"))
 	assert.InDelta(t, 0.0005, paymentAmountToleranceForCurrency("KWD"), 1e-12)
+}
+
+func TestAcquireBalanceFulfillmentLeaseRejectsFreshRechargingOrder(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, time.Now().UTC())
+	svc := &PaymentService{entClient: client}
+
+	lease, err := svc.acquireBalanceFulfillmentLease(ctx, order)
+	require.Nil(t, lease)
+	require.Error(t, err)
+	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRecharging, reloaded.Status)
+}
+
+func TestAcquireBalanceFulfillmentLeaseRecoversStaleRechargingOrder(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	staleAt := time.Now().UTC().Add(-balanceFulfillmentLeaseDuration - time.Minute)
+	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleAt)
+	svc := &PaymentService{entClient: client}
+
+	lease, err := svc.acquireBalanceFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRecharging, reloaded.Status)
+	require.True(t, reloaded.UpdatedAt.After(staleAt))
+	require.True(t, lease.version.Equal(reloaded.UpdatedAt))
+}
+
+func TestAcquireBalanceFulfillmentLeaseHandlesClaimableAndTerminalStates(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	svc := &PaymentService{entClient: client}
+
+	paid := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusPaid, time.Now().UTC())
+	lease, err := svc.acquireBalanceFulfillmentLease(ctx, paid)
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+
+	completed := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusCompleted, time.Now().UTC())
+	lease, err = svc.acquireBalanceFulfillmentLease(ctx, completed)
+	require.NoError(t, err)
+	require.Nil(t, lease)
+
+	expired := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusExpired, time.Now().UTC())
+	lease, err = svc.acquireBalanceFulfillmentLease(ctx, expired)
+	require.Nil(t, lease)
+	require.Error(t, err)
+	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+
+	lease, err = svc.acquireBalanceFulfillmentLease(ctx, nil)
+	require.Nil(t, lease)
+	require.Error(t, err)
+	require.Equal(t, "INVALID_STATUS", infraerrors.Reason(err))
+}
+
+func TestRetryFulfillmentKeepsSubscriptionRechargingBlocked(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleBalanceFulfillmentTimeForTest())
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetOrderType(payment.OrderTypeSubscription).
+		SetSubscriptionGroupID(7).
+		SetSubscriptionDays(30).
+		Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentService{entClient: client}
+	err = svc.RetryFulfillment(ctx, order.ID)
+	require.Error(t, err)
+	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+}
+
+func TestBalanceFulfillmentLeaseFencesStaleWorker(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	staleAt := staleBalanceFulfillmentTimeForTest()
+	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleAt)
+	svc := &PaymentService{entClient: client}
+
+	firstLease, err := svc.acquireBalanceFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+	require.NotNil(t, firstLease)
+
+	_, err = client.PaymentOrder.UpdateOneID(order.ID).SetUpdatedAt(staleAt).Save(ctx)
+	require.NoError(t, err)
+	secondLease, err := svc.acquireBalanceFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+	require.NotNil(t, secondLease)
+	require.False(t, firstLease.version.Equal(secondLease.version))
+
+	err = svc.markBalanceCompletedWithLease(ctx, order, firstLease, "RECHARGE_SUCCESS")
+	require.Error(t, err)
+	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+	svc.markBalanceFailedWithLease(ctx, order.ID, firstLease, errors.New("stale worker failure"))
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRecharging, reloaded.Status)
+
+	require.NoError(t, svc.markBalanceCompletedWithLease(ctx, order, secondLease, "RECHARGE_SUCCESS"))
+	reloaded, err = client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+	// A stale worker that observes completion must not emit a duplicate audit or
+	// turn the completed order into FAILED.
+	require.NoError(t, svc.markBalanceCompletedWithLease(ctx, order, firstLease, "RECHARGE_SUCCESS"))
+}
+
+func TestMarkBalanceFailedWithLeaseOnlyChangesCurrentOwner(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleBalanceFulfillmentTimeForTest())
+	svc := &PaymentService{entClient: client}
+
+	lease, err := svc.acquireBalanceFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	svc.markBalanceFailedWithLease(ctx, order.ID, lease, errors.New("temporary fulfillment error"))
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusFailed, reloaded.Status)
+	require.NotNil(t, reloaded.FailedAt)
+	require.NotEmpty(t, reloaded.FailedReason)
+}
+
+func staleBalanceFulfillmentTimeForTest() time.Time {
+	return time.Now().UTC().Add(-balanceFulfillmentLeaseDuration - time.Minute)
+}
+
+func createBalanceFulfillmentLeaseOrder(
+	t *testing.T,
+	ctx context.Context,
+	client *dbent.Client,
+	status string,
+	updatedAt time.Time,
+) *dbent.PaymentOrder {
+	t.Helper()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	user, err := client.User.Create().
+		SetEmail("balance-lease-" + suffix + "@example.com").
+		SetPasswordHash("hash").
+		SetUsername("balance-lease-user").
+		Save(ctx)
+	require.NoError(t, err)
+
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(80).
+		SetPayAmount(80).
+		SetFeeRate(0).
+		SetRechargeCode("BAL-LEASE-" + suffix).
+		SetOutTradeNo("sub2_balance_lease_" + suffix).
+		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo("trade-" + suffix).
+		SetOrderType(payment.OrderTypeBalance).
+		SetStatus(status).
+		SetPaidAt(time.Now().Add(-time.Hour)).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		SetUpdatedAt(updatedAt).
+		Save(ctx)
+	require.NoError(t, err)
+	return order
 }
