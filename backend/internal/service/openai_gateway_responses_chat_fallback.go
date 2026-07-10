@@ -52,6 +52,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 
 	clientStream := responsesReq.Stream
 	serviceTier := extractOpenAIServiceTierFromBody(body)
+	toolContext := apicompat.NewResponsesChatToolContext(responsesReq.Tools)
 
 	chatReq, err := apicompat.ResponsesToChatCompletionsRequest(&responsesReq)
 	if err != nil {
@@ -189,15 +190,16 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	}
 
 	if clientStream {
-		return s.streamChatCompletionsAsResponses(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+		return s.streamChatCompletionsAsResponses(c, resp, originalModel, toolContext, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
-	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, toolContext, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	c *gin.Context,
 	resp *http.Response,
 	originalModel string,
+	toolContext apicompat.ResponsesChatToolContext,
 	billingModel string,
 	upstreamModel string,
 	reasoningEffort *string,
@@ -228,7 +230,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 		})
 		return nil, fmt.Errorf("parse chat completions response: %w", err)
 	}
-	responsesResp := apicompat.ChatCompletionsResponseToResponses(&ccResp, originalModel)
+	responsesResp := apicompat.ChatCompletionsResponseToResponsesWithToolContext(&ccResp, originalModel, toolContext)
 
 	usage := OpenAIUsage{}
 	if parsed, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
@@ -257,6 +259,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	c *gin.Context,
 	resp *http.Response,
 	originalModel string,
+	toolContext apicompat.ResponsesChatToolContext,
 	billingModel string,
 	upstreamModel string,
 	reasoningEffort *string,
@@ -280,7 +283,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		c.Writer.WriteHeader(http.StatusOK)
 	}
 
-	state := apicompat.NewChatCompletionsToResponsesStreamState(originalModel)
+	state := apicompat.NewChatCompletionsToResponsesStreamStateWithToolContext(originalModel, toolContext)
 	var usage OpenAIUsage
 	var firstTokenMs *int
 	clientDisconnected := false
