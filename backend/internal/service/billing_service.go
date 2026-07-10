@@ -896,7 +896,7 @@ func (s *BillingService) computeTokenBreakdown(
 	}
 
 	if applyLongCtx && s.shouldApplySessionLongContextPricing(tokens, pricing) &&
-		!(priorityPricingApplied && pricing.PriorityExcludesLongContext) {
+		(!priorityPricingApplied || !pricing.PriorityExcludesLongContext) {
 		inputPrice *= pricing.LongContextInputMultiplier
 		outputPrice *= pricing.LongContextOutputMultiplier
 		// 缓存读取本质上是输入侧的复用，应与 input 一同应用长上下文倍率；

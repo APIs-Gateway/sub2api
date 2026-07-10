@@ -424,12 +424,12 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 		// 标记供 handler 事后写风控/邮件/tokens=0 用量行。
 		if hit, code, msg := detectOpenAICyberPolicy(payload); hit {
 			MarkOpsCyberPolicy(c, CyberPolicyMark{
-				Code:           code,
-				Message:        msg,
-				Body:           truncateString(string(payload), 4096),
-				UpstreamStatus: http.StatusOK,
-				UpstreamInTok:  usage.InputTokens,
-				UpstreamOutTok: usage.OutputTokens,
+				Code:                     code,
+				Message:                  msg,
+				Body:                     truncateString(string(payload), 4096),
+				UpstreamStatus:           http.StatusOK,
+				UpstreamInTok:            usage.InputTokens,
+				UpstreamOutTok:           usage.OutputTokens,
 				UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
 				UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 			})
@@ -583,12 +583,12 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				// [DONE]，让程序化客户端可感知并停止重试（F4）；标记供 handler 事后
 				// 写风控/邮件。
 				MarkOpsCyberPolicy(c, CyberPolicyMark{
-					Code:           code,
-					Message:        msg,
-					Body:           truncateString(string(payloadBytes), 4096),
-					UpstreamStatus: http.StatusOK,
-					UpstreamInTok:  usage.InputTokens,
-					UpstreamOutTok: usage.OutputTokens,
+					Code:                     code,
+					Message:                  msg,
+					Body:                     truncateString(string(payloadBytes), 4096),
+					UpstreamStatus:           http.StatusOK,
+					UpstreamInTok:            usage.InputTokens,
+					UpstreamOutTok:           usage.OutputTokens,
 					UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
 					UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 				})
