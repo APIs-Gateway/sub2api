@@ -13,6 +13,8 @@ const messages: Record<string, string> = {
   'admin.usage.cacheReadCost': 'Cache Read Cost',
   'usage.inputTokenPrice': 'Input price',
   'usage.outputTokenPrice': 'Output price',
+  'usage.cacheWriteTokenPrice': 'Cache write price',
+  'usage.cacheReadTokenPrice': 'Cache read price',
   'usage.perMillionTokens': '/ 1M tokens',
   'usage.serviceTier': 'Service tier',
   'usage.serviceTierPriority': 'Fast',
@@ -122,10 +124,12 @@ describe('admin UsageTable tooltip', () => {
       service_tier: 'priority',
       input_cost: 0.020285,
       output_cost: 0.00303,
-      cache_creation_cost: 0,
+      cache_creation_cost: 0.0125,
       cache_read_cost: 0.069568,
       input_tokens: 4057,
       output_tokens: 101,
+      cache_creation_tokens: 2000,
+      cache_read_tokens: 278272,
     }
 
     const wrapper = mount(UsageTable, {
@@ -159,6 +163,10 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('$0.092883')
     expect(text).toContain('$5.0000 / 1M tokens')
     expect(text).toContain('$30.0000 / 1M tokens')
+    expect(text).toContain('Cache write price')
+    expect(text).toContain('$6.2500 / 1M tokens')
+    expect(text).toContain('Cache read price')
+    expect(text).toContain('$0.2500 / 1M tokens')
     expect(text).toContain('$0.069568')
   })
 
