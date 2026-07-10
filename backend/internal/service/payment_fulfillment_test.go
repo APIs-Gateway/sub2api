@@ -829,6 +829,47 @@ func TestDoSubLifecycleCompletesAlreadyAppliedRenewWithCurrentLease(t *testing.T
 	require.Equal(t, OrderStatusCompleted, reloaded.Status)
 }
 
+func TestSubscriptionFulfillmentLeaseGuardsRejectMissingLease(t *testing.T) {
+	ctx := context.Background()
+	svc := &PaymentService{}
+
+	require.Error(t, svc.doSub(ctx, &dbent.PaymentOrder{}, nil))
+	require.Error(t, svc.doSubLifecycle(ctx, &dbent.PaymentOrder{}, SubscriptionIntentRenew, 1, nil))
+	require.Error(t, svc.markSubscriptionCompletedWithLease(ctx, &dbent.PaymentOrder{}, nil, "SUBSCRIPTION_SUCCESS"))
+
+	// A worker that lost its lease must never update an order to FAILED.
+	svc.markSubscriptionFailedWithLease(ctx, 1, nil, errors.New("stale worker"))
+}
+
+func TestExecuteSubscriptionFulfillmentRejectsNonFulfillableStatus(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusExpired, time.Now().UTC())
+	svc := &PaymentService{entClient: client}
+
+	err := svc.ExecuteSubscriptionFulfillment(ctx, order.ID)
+	require.Error(t, err)
+	require.Equal(t, "INVALID_STATUS", infraerrors.Reason(err))
+}
+
+func TestRechargingUnknownOrderTypeIsNotRetried(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, time.Now().UTC())
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetOrderType("unknown").
+		Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentService{entClient: client}
+	err = svc.alreadyProcessed(ctx, order)
+	require.EqualError(t, err, fmt.Sprintf("order %d is being processed", order.ID))
+
+	err = svc.RetryFulfillment(ctx, order.ID)
+	require.Error(t, err)
+	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+}
+
 func TestBalanceFulfillmentLeaseFencesStaleWorker(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)
