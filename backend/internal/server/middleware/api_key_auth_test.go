@@ -107,7 +107,7 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 		}
 		fresh := *stale
 		fresh.DailyWindowStart = &currentWindowStart
-		fresh.DailyUsageUSD = limit
+		fresh.DailyUsageUSD = limit + 0.01
 		subscriptionRepo := &stubUserSubscriptionRepo{
 			getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
 				clone := *stale

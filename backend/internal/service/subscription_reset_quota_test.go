@@ -28,6 +28,16 @@ type resetQuotaUserSubRepoStub struct {
 	resetDailyExpected   *time.Time
 }
 
+type invalidateSubscriptionCacheErrorStub struct {
+	BillingCache
+	called bool
+}
+
+func (s *invalidateSubscriptionCacheErrorStub) InvalidateSubscriptionCache(context.Context, int64, int64) error {
+	s.called = true
+	return errors.New("redis unavailable")
+}
+
 func (r *resetQuotaUserSubRepoStub) GetByID(_ context.Context, id int64) (*UserSubscription, error) {
 	if r.sub == nil || r.sub.ID != id {
 		return nil, ErrSubscriptionNotFound
@@ -263,6 +273,8 @@ func TestEnsureWindowMaintenance_ReturnsFreshSnapshotAfterStaleReset(t *testing.
 	stale.DailyWindowStart = &oldWindowStart
 	stale.DailyUsageUSD = 10
 	svc := newResetQuotaSvc(stub)
+	cache := &invalidateSubscriptionCacheErrorStub{}
+	svc.billingCacheService = &BillingCacheService{cache: cache}
 
 	refreshed, err := svc.EnsureWindowMaintenance(context.Background(), &stale)
 
@@ -273,6 +285,7 @@ func TestEnsureWindowMaintenance_ReturnsFreshSnapshotAfterStaleReset(t *testing.
 	require.InDelta(t, 3, refreshed.DailyUsageUSD, 1e-9, "must return the winner's new-window usage")
 	require.Equal(t, currentWindowStart, *refreshed.DailyWindowStart)
 	require.Zero(t, stale.DailyUsageUSD, "local precheck snapshot may be zeroed but must not be used for admission")
+	require.True(t, cache.called, "billing cache invalidation should still be attempted")
 }
 
 func TestEnsureWindowMaintenance_RejectsNilSubscription(t *testing.T) {

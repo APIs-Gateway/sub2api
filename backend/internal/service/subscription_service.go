@@ -1242,9 +1242,10 @@ func (s *SubscriptionService) EnsureWindowMaintenance(ctx context.Context, sub *
 		s.subCacheL1.Wait()
 	}
 	if s.billingCacheService != nil {
-		if err := s.billingCacheService.InvalidateSubscription(ctx, sub.UserID, sub.GroupID); err != nil {
-			return nil, err
-		}
+		// Redis invalidation is best-effort across subscription mutations. The DB
+		// snapshot is already authoritative, so a cache outage must not turn a
+		// successful window reset into an authentication failure.
+		_ = s.billingCacheService.InvalidateSubscription(ctx, sub.UserID, sub.GroupID)
 	}
 	return refreshed, nil
 }
@@ -1258,8 +1259,8 @@ func (s *SubscriptionService) CheckUsageLimits(ctx context.Context, sub *UserSub
 	dailyLimit := sub.DailyLimitUSD
 	weeklyLimit := sub.WeeklyLimitUSD
 	monthlyLimit := sub.MonthlyLimitUSD
-	// Historical cards may not have card-level limit snapshots. Keep the legacy
-	// group fallback for those rows without overriding frozen card limits.
+	// Non-nil card snapshots are frozen and always win. Historical cards may
+	// have nil snapshots, where the legacy Check*Limit contract read group limits.
 	if group != nil {
 		if dailyLimit == nil {
 			dailyLimit = group.DailyLimitUSD
@@ -1284,7 +1285,7 @@ func (s *SubscriptionService) CheckUsageLimits(ctx context.Context, sub *UserSub
 }
 
 func usageWindowExhausted(limit *float64, usage, additionalCost float64) bool {
-	return limit != nil && *limit > 0 && usage+additionalCost >= *limit
+	return limit != nil && *limit > 0 && usage+additionalCost > *limit
 }
 
 // ValidateAndCheckLimits 合并验证+限额检查（中间件热路径专用）
@@ -1321,7 +1322,7 @@ func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription, grou
 		needsMaintenance = true
 	}
 
-	// 3. 检查卡级三窗口限额；历史无快照卡才回退 group 限额。
+	// 3. 检查卡上冻结的三窗口限额；nil 历史快照回退 group 限额。
 	if err := s.CheckUsageLimits(context.Background(), sub, group, 0); err != nil {
 		return needsMaintenance, err
 	}

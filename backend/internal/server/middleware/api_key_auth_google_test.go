@@ -832,7 +832,7 @@ func TestAPIKeyAuthWithSubscriptionGoogle_RevalidatesCASLoserFromDatabase(t *tes
 	}
 	fresh := *stale
 	fresh.DailyWindowStart = &currentWindowStart
-	fresh.DailyUsageUSD = limit
+	fresh.DailyUsageUSD = limit + 0.01
 	subscriptionService := service.NewSubscriptionService(nil, fakeGoogleSubscriptionRepo{
 		getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
 			clone := *stale
