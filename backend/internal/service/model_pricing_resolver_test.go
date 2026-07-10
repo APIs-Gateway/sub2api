@@ -244,6 +244,28 @@ func TestResolve_WithChannelOverride_TokenPartialOverride(t *testing.T) {
 	require.InDelta(t, 15e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
 }
 
+func TestResolve_WithChannelOverride_DoesNotMutateSharedBasePricing(t *testing.T) {
+	r := newResolverWithChannel(t, []ChannelModelPricing{{
+		Platform:        "anthropic",
+		Models:          []string{"claude-sonnet-4"},
+		BillingMode:     BillingModeToken,
+		CacheWritePrice: testPtrFloat64(0),
+	}})
+
+	overridden := r.Resolve(context.Background(), PricingInput{
+		Model:   "claude-sonnet-4",
+		GroupID: groupIDPtr(),
+	})
+	require.NotNil(t, overridden.BasePricing)
+	require.Zero(t, overridden.BasePricing.CacheCreationPricePerToken)
+	require.True(t, overridden.BasePricing.CacheCreationPriceExplicit)
+
+	withoutChannel := r.Resolve(context.Background(), PricingInput{Model: "claude-sonnet-4"})
+	require.NotNil(t, withoutChannel.BasePricing)
+	require.InDelta(t, 3.75e-6, withoutChannel.BasePricing.CacheCreationPricePerToken, 1e-12)
+	require.False(t, withoutChannel.BasePricing.CacheCreationPriceExplicit)
+}
+
 func TestResolve_WithChannelOverride_TokenWithIntervals(t *testing.T) {
 	r := newResolverWithChannel(t, []ChannelModelPricing{{
 		Platform:    "anthropic",

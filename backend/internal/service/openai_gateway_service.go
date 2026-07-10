@@ -3944,12 +3944,14 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				s.parseSSEUsageBytes(dataBytes, usage)
 				if hit, code, msg := detectOpenAICyberPolicy(dataBytes); hit {
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
-						Code:           code,
-						Message:        msg,
-						Body:           truncateString(string(dataBytes), 4096),
-						UpstreamStatus: http.StatusOK,
-						UpstreamInTok:  usage.InputTokens,
-						UpstreamOutTok: usage.OutputTokens,
+						Code:                     code,
+						Message:                  msg,
+						Body:                     truncateString(string(dataBytes), 4096),
+						UpstreamStatus:           http.StatusOK,
+						UpstreamInTok:            usage.InputTokens,
+						UpstreamOutTok:           usage.OutputTokens,
+						UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
+						UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 					})
 				} else if !openAIStreamClientOutputStarted(c, clientOutputStarted) && openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
 					return resultWithUsage(),
@@ -4882,12 +4884,14 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				s.parseSSEUsageBytes(dataBytes, usage)
 				if hit, code, msg := detectOpenAICyberPolicy(dataBytes); hit {
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
-						Code:           code,
-						Message:        msg,
-						Body:           truncateString(string(dataBytes), 4096),
-						UpstreamStatus: http.StatusOK,
-						UpstreamInTok:  usage.InputTokens,
-						UpstreamOutTok: usage.OutputTokens,
+						Code:                     code,
+						Message:                  msg,
+						Body:                     truncateString(string(dataBytes), 4096),
+						UpstreamStatus:           http.StatusOK,
+						UpstreamInTok:            usage.InputTokens,
+						UpstreamOutTok:           usage.OutputTokens,
+						UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
+						UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 					})
 				} else if !openAIStreamClientOutputStarted(c, clientOutputStarted) && openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
 					sawFailedEvent = true
@@ -5286,6 +5290,7 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	if cacheReadTokens == 0 {
 		cacheReadTokens = value.Get("prompt_tokens_details.cached_tokens").Int()
 	}
+	cacheCreationTokens := openAICacheWriteTokens(value)
 	imageOutputTokens := value.Get("output_tokens_details.image_tokens").Int()
 	if imageOutputTokens == 0 {
 		imageOutputTokens = value.Get("completion_tokens_details.image_tokens").Int()
@@ -5293,10 +5298,24 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	return OpenAIUsage{
 		InputTokens:              int(inputTokens),
 		OutputTokens:             int(outputTokens),
-		CacheCreationInputTokens: int(value.Get("cache_creation_input_tokens").Int()),
+		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     int(cacheReadTokens),
 		ImageOutputTokens:        int(imageOutputTokens),
 	}, true
+}
+
+// openAICacheWriteTokens accepts both native-style usage fields and the
+// OpenAI-compatible cache_write_tokens field returned by GPT-5.6 providers.
+func openAICacheWriteTokens(usage gjson.Result) int {
+	return firstPositiveGJSONInt(
+		usage.Get("cache_creation_input_tokens"),
+		usage.Get("cache_creation_tokens"),
+		usage.Get("cache_write_tokens"),
+		usage.Get("input_tokens_details.cache_write_tokens"),
+		usage.Get("prompt_tokens_details.cache_write_tokens"),
+		usage.Get("input_tokens_details.cache_creation_tokens"),
+		usage.Get("prompt_tokens_details.cache_creation_tokens"),
+	)
 }
 
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
@@ -5902,14 +5921,16 @@ type OpenAIRecordUsageInput struct {
 // 用量按上游真实 token 计费，与 WS cyber 及正常请求口径一致（InputTokens/OutputTokens
 // 取自上游 response.failed 报告的 usage，即 mark.UpstreamInTok/OutTok）。
 type CyberPolicyUsageInput struct {
-	APIKey       *APIKey
-	Account      *Account
-	Subscription *UserSubscription
-	RequestID    string
-	Model        string
-	Stream       bool
-	InputTokens  int
-	OutputTokens int
+	APIKey              *APIKey
+	Account             *Account
+	Subscription        *UserSubscription
+	RequestID           string
+	Model               string
+	Stream              bool
+	InputTokens         int
+	OutputTokens        int
+	CacheCreationTokens int
+	CacheReadTokens     int
 	// 渠道归因与请求级 meta，使 cyber 计费行与正常 RecordUsage 行口径一致
 	// （否则 cyber 行 channel_id 等为空，渠道维度统计会遗漏 cyber 命中）。
 	InboundEndpoint    string
@@ -5945,8 +5966,10 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 		Model:     in.Model,
 		Stream:    in.Stream,
 		Usage: OpenAIUsage{
-			InputTokens:  in.InputTokens,
-			OutputTokens: in.OutputTokens,
+			InputTokens:              in.InputTokens,
+			OutputTokens:             in.OutputTokens,
+			CacheCreationInputTokens: in.CacheCreationTokens,
+			CacheReadInputTokens:     in.CacheReadTokens,
 		},
 	}
 	if err := s.RecordUsage(ctx, &OpenAIRecordUsageInput{
@@ -5995,9 +6018,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	subscription := input.Subscription
 	ApplyOpenAIImageBillingResolution(result)
 
-	// 计算实际的新输入token（减去缓存读取的token）
-	// 因为 input_tokens 包含了 cache_read_tokens，而缓存读取的token不应按输入价格计费
-	actualInputTokens := result.Usage.InputTokens - result.Usage.CacheReadInputTokens
+	// OpenAI input_tokens 聚合普通输入、缓存读取和显式缓存写入。
+	// 后两类会分别按 cache-read/cache-write 单价计费，必须先从普通输入中扣除。
+	// See docs/specs/gpt-5-6-cache-write-pricing.md §2.
+	actualInputTokens := result.Usage.InputTokens - result.Usage.CacheReadInputTokens - result.Usage.CacheCreationInputTokens
 	if actualInputTokens < 0 {
 		actualInputTokens = 0
 	}

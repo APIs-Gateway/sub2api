@@ -972,6 +972,8 @@
     cacheHitRate: '緩存命中率',
     inputTokenPrice: '輸入單價',
     outputTokenPrice: '輸出單價',
+    cacheWriteTokenPrice: '緩存寫入單價',
+    cacheReadTokenPrice: '緩存讀取單價',
     perMillionTokens: '/ 1M Token',
     unitPrice: '單次價格',
     imageUnitPrice: '單張價格',

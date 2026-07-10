@@ -968,6 +968,8 @@
     cacheHitRate: 'Cache hit rate',
     inputTokenPrice: 'Input price',
     outputTokenPrice: 'Output price',
+    cacheWriteTokenPrice: 'Cache write price',
+    cacheReadTokenPrice: 'Cache read price',
     perMillionTokens: '/ 1M tokens',
     unitPrice: 'Per-request price',
     imageUnitPrice: 'Per-image price',

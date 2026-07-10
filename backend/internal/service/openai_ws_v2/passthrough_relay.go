@@ -768,6 +768,25 @@ func parseUsageAndAccumulate(
 	if !cachedResult.Exists() {
 		cachedResult = gjson.GetBytes(message, "response.usage.prompt_tokens_details.cached_tokens")
 	}
+	cacheCreationResult := gjson.GetBytes(message, "response.usage.cache_creation_input_tokens")
+	if !cacheCreationResult.Exists() {
+		cacheCreationResult = gjson.GetBytes(message, "response.usage.cache_creation_tokens")
+	}
+	if !cacheCreationResult.Exists() {
+		cacheCreationResult = gjson.GetBytes(message, "response.usage.cache_write_tokens")
+	}
+	if !cacheCreationResult.Exists() {
+		cacheCreationResult = gjson.GetBytes(message, "response.usage.input_tokens_details.cache_write_tokens")
+	}
+	if !cacheCreationResult.Exists() {
+		cacheCreationResult = gjson.GetBytes(message, "response.usage.prompt_tokens_details.cache_write_tokens")
+	}
+	if !cacheCreationResult.Exists() {
+		cacheCreationResult = gjson.GetBytes(message, "response.usage.input_tokens_details.cache_creation_tokens")
+	}
+	if !cacheCreationResult.Exists() {
+		cacheCreationResult = gjson.GetBytes(message, "response.usage.prompt_tokens_details.cache_creation_tokens")
+	}
 	imageTokens := usageResult.Get("output_tokens_details.image_tokens").Int()
 	if imageTokens == 0 {
 		imageTokens = usageResult.Get("completion_tokens_details.image_tokens").Int()
@@ -776,7 +795,8 @@ func parseUsageAndAccumulate(
 	inputTokens, inputOK := parseUsageIntField(inputResult, true)
 	outputTokens, outputOK := parseUsageIntField(outputResult, true)
 	cachedTokens, cachedOK := parseUsageIntField(cachedResult, false)
-	if !inputOK || !outputOK || !cachedOK {
+	cacheCreationTokens, cacheCreationOK := parseUsageIntField(cacheCreationResult, false)
+	if !inputOK || !outputOK || !cachedOK || !cacheCreationOK {
 		recordUsageParseFailure()
 		if onParseFailure != nil {
 			onParseFailure(eventType, usageRaw)
@@ -787,7 +807,7 @@ func parseUsageAndAccumulate(
 	parsedUsage := Usage{
 		InputTokens:              inputTokens,
 		OutputTokens:             outputTokens,
-		CacheCreationInputTokens: int(usageResult.Get("cache_creation_input_tokens").Int()),
+		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     cachedTokens,
 		ImageOutputTokens:        int(imageTokens),
 	}
