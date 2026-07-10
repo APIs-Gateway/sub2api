@@ -10,38 +10,6 @@ import (
 
 const openAICompactSSEKeepaliveKey = "openai_compact_sse_keepalive"
 
-const openAICompactOpsStreamErrorKey = "openai_compact_ops_stream_error"
-
-// OpsStreamError records the intended HTTP status for an error emitted after a
-// compact keepalive has committed the wire response as SSE 200.
-type OpsStreamError struct {
-	ErrType        string
-	Message        string
-	IntendedStatus int
-}
-
-func MarkOpsStreamError(c *gin.Context, errType, message string, intendedStatus int) {
-	if c == nil {
-		return
-	}
-	if _, exists := c.Get(openAICompactOpsStreamErrorKey); exists {
-		return
-	}
-	c.Set(openAICompactOpsStreamErrorKey, OpsStreamError{ErrType: errType, Message: message, IntendedStatus: intendedStatus})
-}
-
-func GetOpsStreamError(c *gin.Context) (OpsStreamError, bool) {
-	if c == nil {
-		return OpsStreamError{}, false
-	}
-	value, ok := c.Get(openAICompactOpsStreamErrorKey)
-	if !ok {
-		return OpsStreamError{}, false
-	}
-	err, ok := value.(OpsStreamError)
-	return err, ok
-}
-
 // openAICompactSSEKeepalive writes ignorable SSE comments while a unary compact
 // request is pending, so downstream proxies do not timeout an otherwise silent
 // long-running request.

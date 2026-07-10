@@ -299,7 +299,7 @@ func TestOpsStreamError_PreservesFirstFailureAndRejectsInvalidValues(t *testing.
 	require.Equal(t, "first failure", opsError.Message)
 	require.Equal(t, http.StatusBadGateway, opsError.IntendedStatus)
 
-	c.Set(openAICompactOpsStreamErrorKey, "wrong-type")
+	c.Set(OpsStreamErrorKey, "wrong-type")
 	_, recorded = GetOpsStreamError(c)
 	require.False(t, recorded)
 }
