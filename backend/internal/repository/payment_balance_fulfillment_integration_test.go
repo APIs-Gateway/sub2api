@@ -11,6 +11,9 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
+	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
+	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -25,6 +28,11 @@ type balanceFulfillmentHarness struct {
 	paymentSvc *service.PaymentService
 	redeemSvc  *service.RedeemService
 	redeemRepo service.RedeemCodeRepository
+
+	fixtureMu   sync.Mutex
+	orderIDs    []int64
+	userIDs     []int64
+	redeemCodes []string
 }
 
 func newBalanceFulfillmentHarness(t *testing.T, cache service.RedeemCache) *balanceFulfillmentHarness {
@@ -55,12 +63,58 @@ func newBalanceFulfillmentHarnessWithRedeemRepo(
 		nil,
 		nil,
 	)
-	return &balanceFulfillmentHarness{
+	h := &balanceFulfillmentHarness{
 		client:     client,
 		paymentSvc: paymentSvc,
 		redeemSvc:  redeemSvc,
 		redeemRepo: redeemRepo,
 	}
+	t.Cleanup(func() {
+		h.cleanupFixtures(t)
+	})
+	return h
+}
+
+func (h *balanceFulfillmentHarness) trackFixture(orderID, userID int64, redeemCode string) {
+	h.fixtureMu.Lock()
+	defer h.fixtureMu.Unlock()
+	h.orderIDs = append(h.orderIDs, orderID)
+	h.userIDs = append(h.userIDs, userID)
+	h.redeemCodes = append(h.redeemCodes, redeemCode)
+}
+
+func (h *balanceFulfillmentHarness) cleanupFixtures(t *testing.T) {
+	t.Helper()
+	h.fixtureMu.Lock()
+	orderIDs := append([]int64(nil), h.orderIDs...)
+	userIDs := append([]int64(nil), h.userIDs...)
+	redeemCodes := append([]string(nil), h.redeemCodes...)
+	h.fixtureMu.Unlock()
+	if len(orderIDs) == 0 {
+		return
+	}
+
+	ctx := context.Background()
+	auditOrderIDs := make([]string, 0, len(orderIDs))
+	for _, orderID := range orderIDs {
+		auditOrderIDs = append(auditOrderIDs, fmt.Sprint(orderID))
+	}
+	_, err := h.client.PaymentAuditLog.Delete().
+		Where(paymentauditlog.OrderIDIn(auditOrderIDs...)).
+		Exec(ctx)
+	require.NoError(t, err, "delete balance fulfillment audit fixtures")
+	_, err = h.client.PaymentOrder.Delete().
+		Where(paymentorder.IDIn(orderIDs...)).
+		Exec(ctx)
+	require.NoError(t, err, "delete balance fulfillment order fixtures")
+	_, err = h.client.RedeemCode.Delete().
+		Where(redeemcode.CodeIn(redeemCodes...)).
+		Exec(ctx)
+	require.NoError(t, err, "delete balance fulfillment redeem code fixtures")
+	_, err = h.client.User.Delete().
+		Where(dbuser.IDIn(userIDs...)).
+		Exec(ctx)
+	require.NoError(t, err, "delete balance fulfillment user fixtures")
 }
 
 func createBalanceFulfillmentOrder(
@@ -91,12 +145,13 @@ func createBalanceFulfillmentOrder(
 		SetUpdatedAt(updatedAt).
 		Save(context.Background())
 	require.NoError(t, err)
+	h.trackFixture(order.ID, user.ID, order.RechargeCode)
 	return order
 }
 
-func createBalanceFulfillmentUser(t *testing.T, client *dbent.Client) *service.User {
+func createBalanceFulfillmentUser(t *testing.T, h *balanceFulfillmentHarness) *service.User {
 	t.Helper()
-	return mustCreateUser(t, client, &service.User{
+	return mustCreateUser(t, h.client, &service.User{
 		Email:    fmt.Sprintf("balance-lease-%s@example.com", uuid.NewString()),
 		Username: "balance-lease",
 		Balance:  0,
@@ -159,7 +214,7 @@ func redeemBalanceOrderCode(t *testing.T, h *balanceFulfillmentHarness, order *d
 func TestBalanceFulfillment_StaleUsedCodeCompletesWithoutDuplicateCreditPostgres(t *testing.T) {
 	ctx := context.Background()
 	h := newBalanceFulfillmentHarness(t, nil)
-	user := createBalanceFulfillmentUser(t, h.client)
+	user := createBalanceFulfillmentUser(t, h)
 	order := createBalanceFulfillmentOrder(t, h, user, staleBalanceFulfillmentTime())
 
 	redeemBalanceOrderCode(t, h, order)
@@ -172,7 +227,7 @@ func TestBalanceFulfillment_StaleUsedCodeCompletesWithoutDuplicateCreditPostgres
 func TestBalanceFulfillment_FreshRechargingRejectsRecoveryEntriesPostgres(t *testing.T) {
 	ctx := context.Background()
 	h := newBalanceFulfillmentHarness(t, nil)
-	user := createBalanceFulfillmentUser(t, h.client)
+	user := createBalanceFulfillmentUser(t, h)
 	order := createBalanceFulfillmentOrder(t, h, user, time.Now().UTC())
 
 	err := h.paymentSvc.ExecuteBalanceFulfillment(ctx, order.ID)
@@ -192,7 +247,7 @@ func TestBalanceFulfillment_FreshRechargingRejectsRecoveryEntriesPostgres(t *tes
 func TestBalanceFulfillment_ConcurrentStaleRecoveryCreditsExactlyOncePostgres(t *testing.T) {
 	ctx := context.Background()
 	h := newBalanceFulfillmentHarness(t, nil)
-	user := createBalanceFulfillmentUser(t, h.client)
+	user := createBalanceFulfillmentUser(t, h)
 	order := createBalanceFulfillmentOrder(t, h, user, staleBalanceFulfillmentTime())
 
 	errs := make(chan error, 2)
@@ -244,7 +299,7 @@ func TestBalanceFulfillment_WebhookAndRetryRecoverStaleOrdersPostgres(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newBalanceFulfillmentHarness(t, nil)
-			user := createBalanceFulfillmentUser(t, h.client)
+			user := createBalanceFulfillmentUser(t, h)
 			order := createBalanceFulfillmentOrder(t, h, user, staleBalanceFulfillmentTime())
 
 			require.NoError(t, tt.recover(context.Background(), h, order))
@@ -291,7 +346,7 @@ func TestBalanceFulfillment_StaleWorkerCannotOverwriteNewLeasePostgres(t *testin
 		release: releaseFirstRedeem,
 	}
 	h := newBalanceFulfillmentHarness(t, cache)
-	user := createBalanceFulfillmentUser(t, h.client)
+	user := createBalanceFulfillmentUser(t, h)
 	order := createBalanceFulfillmentOrder(t, h, user, staleBalanceFulfillmentTime())
 
 	firstResult := make(chan error, 1)
@@ -372,7 +427,7 @@ func TestBalanceFulfillment_LateCreateConflictDoesNotFailNewLeasePostgres(t *tes
 		createGate.RedeemCodeRepository = repo
 		return createGate
 	})
-	user := createBalanceFulfillmentUser(t, h.client)
+	user := createBalanceFulfillmentUser(t, h)
 	order := createBalanceFulfillmentOrder(t, h, user, staleBalanceFulfillmentTime())
 
 	firstResult := make(chan error, 1)
