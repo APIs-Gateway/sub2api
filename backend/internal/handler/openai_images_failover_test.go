@@ -47,6 +47,10 @@ func (r openAIImagesFailoverAccountRepo) ListSchedulableUngroupedByPlatform(_ co
 	return r.accountsForPlatform(platform), nil
 }
 
+func (r openAIImagesFailoverAccountRepo) ListByPlatform(_ context.Context, platform string) ([]service.Account, error) {
+	return r.accountsForPlatform(platform), nil
+}
+
 func (r openAIImagesFailoverAccountRepo) accountsForPlatform(platform string) []service.Account {
 	out := make([]service.Account, 0, len(r.accounts))
 	for _, account := range r.accounts {
@@ -225,6 +229,81 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 	require.Len(t, events, 2)
 	require.Equal(t, "failover", events[0].Kind)
 	require.Equal(t, "failover", events[1].Kind)
+}
+
+func TestOpenAIGatewayHandlerImages_UnsupportedModelReturnsNotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(3132)
+	accounts := []service.Account{{
+		ID:          3,
+		Name:        "image-account",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"model_mapping": map[string]any{"gpt-image-supported": "gpt-image-supported"}},
+	}}
+	accountRepo := openAIImagesFailoverAccountRepo{accounts: accounts}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	gatewayService := service.NewOpenAIGatewayService(
+		accountRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		cfg,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	billingService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
+	t.Cleanup(billingService.Stop)
+	handler := NewOpenAIGatewayHandler(
+		gatewayService,
+		service.NewConcurrencyService(nil),
+		billingService,
+		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
+		nil,
+		nil,
+		nil,
+		nil,
+		cfg,
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewBufferString(`{"model":"gpt-image-missing","prompt":"draw a cat"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		ID:      101,
+		GroupID: &groupID,
+		Group: &service.Group{
+			ID:                   groupID,
+			AllowImageGeneration: true,
+		},
+		User: &service.User{ID: 102},
+	})
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 102})
+	handler.Images(c)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Equal(t, "model_not_found", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+	require.False(t, isOpsRoutingCapacityLimited(c))
 }
 
 func TestOpenAIGatewayHandlerImages_Weak429DoesNotSwitchAccount(t *testing.T) {

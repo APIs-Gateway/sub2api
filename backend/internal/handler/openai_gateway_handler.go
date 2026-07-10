@@ -343,12 +343,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				if errors.Is(err, service.ErrNoAvailableCompactAccounts) {
+					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "compact_not_supported", "No available OpenAI accounts support /responses/compact", streamStarted)
 					return
 				}
-				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
+				h.respondNoAccountError(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformOpenAI, "Service temporarily unavailable", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseStreaming, streamStarted)
 				return
 			}
 			if lastFailoverErr != nil {
@@ -359,8 +359,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			return
 		}
 		if selection == nil || selection.Account == nil {
-			markOpsRoutingCapacityLimited(c)
-			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+			h.respondNoAccountError(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformOpenAI, "No available accounts", nil, noAccountCapacityMarkAlways, openAINoAccountResponseStreaming, streamStarted)
 			return
 		}
 		if previousResponseID != "" && selection != nil && selection.Account != nil {
@@ -807,8 +806,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			)
 			if len(failedAccountIDs) == 0 {
 				if err != nil {
-					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-					h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
+					h.respondNoAccountError(c, h.gatewayService, apiKey, currentRoutingModel, reqModel, service.PlatformOpenAI, "Service temporarily unavailable", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseAnthropic, streamStarted)
 					return
 				}
 			} else {
@@ -821,8 +819,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			}
 		}
 		if selection == nil || selection.Account == nil {
-			markOpsRoutingCapacityLimited(c)
-			h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+			h.respondNoAccountError(c, h.gatewayService, apiKey, currentRoutingModel, reqModel, service.PlatformOpenAI, "No available accounts", nil, noAccountCapacityMarkAlways, openAINoAccountResponseAnthropic, streamStarted)
 			return
 		}
 		account := selection.Account
