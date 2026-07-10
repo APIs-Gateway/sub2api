@@ -87,7 +87,7 @@ const selectedGroupIds = ref<number[]>([])
 const selectedModels = ref<string[]>([])
 const modelSearch = ref('')
 
-// 候选模型 = 选中的 + 渠道定价里出现过的(去通配符、去重),保证已选项即便不在候选里也可见
+// 候选模型 = 选中的 + 渠道定价 / 精确映射里出现过的(去通配符、去重),保证已选项即便不在候选里也可见
 const allModels = computed(() => {
   const set = new Set<string>([...candidateModels.value, ...selectedModels.value])
   return Array.from(set).sort((a, b) => a.localeCompare(b))
@@ -109,12 +109,17 @@ async function load() {
     selectedGroupIds.value = [...(display.group_ids || [])]
     selectedModels.value = [...(display.models || [])]
     groups.value = groupList
-    // 汇总渠道定价里的具体模型名(剔除通配符)作为候选
+    // 汇总渠道定价和精确映射的模型名(剔除通配符)作为候选。
     const models = new Set<string>()
     for (const ch of channelPage.items || []) {
       for (const p of ch.model_pricing || []) {
         for (const name of p.models || []) {
           if (name && !name.includes('*')) models.add(name)
+        }
+      }
+      for (const mapping of Object.values(ch.model_mapping || {})) {
+        for (const source of Object.keys(mapping || {})) {
+          if (source && !source.includes('*')) models.add(source)
         }
       }
     }

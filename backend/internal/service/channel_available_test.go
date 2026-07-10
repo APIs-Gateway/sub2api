@@ -270,6 +270,110 @@ func TestSynthesizePricingFromLiteLLM_LongContextTier(t *testing.T) {
 	require.Empty(t, mini.Intervals)
 }
 
+func TestSynthesizePricingFromLiteLLM_GPT56LongContextTiers(t *testing.T) {
+	tests := []struct {
+		model          string
+		input          float64
+		output         float64
+		cacheRead      float64
+		cacheWrite     float64
+		longInput      float64
+		longOutput     float64
+		longCacheRead  float64
+		longCacheWrite float64
+	}{
+		{model: "gpt-5.6-sol", input: 5e-6, output: 30e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6, longInput: 10e-6, longOutput: 45e-6, longCacheRead: 1e-6, longCacheWrite: 12.5e-6},
+		{model: "openai/gpt5.6-terra", input: 2.5e-6, output: 15e-6, cacheRead: 0.25e-6, cacheWrite: 3.125e-6, longInput: 5e-6, longOutput: 22.5e-6, longCacheRead: 0.5e-6, longCacheWrite: 6.25e-6},
+		{model: "gpt5.6-luna-2026-06-08", input: 1e-6, output: 6e-6, cacheRead: 0.1e-6, cacheWrite: 1.25e-6, longInput: 2e-6, longOutput: 9e-6, longCacheRead: 0.2e-6, longCacheWrite: 2.5e-6},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			// Simulate a stale dynamic catalogue: named fallback must still render
+			// the official 272K+ interval, including cache read/write prices.
+			got := synthesizePricingFromLiteLLM(&LiteLLMModelPricing{
+				Mode:                        "chat",
+				InputCostPerToken:           tt.input,
+				OutputCostPerToken:          tt.output,
+				CacheReadInputTokenCost:     tt.cacheRead,
+				CacheCreationInputTokenCost: tt.cacheWrite,
+			}, nil, tt.model)
+
+			require.Len(t, got.Intervals, 2)
+			short := got.Intervals[0]
+			long := got.Intervals[1]
+			require.NotNil(t, short.MaxTokens)
+			require.Equal(t, 272000, *short.MaxTokens)
+			require.Equal(t, 272000, long.MinTokens)
+			require.Nil(t, long.MaxTokens)
+			require.InDelta(t, tt.input, *short.InputPrice, 1e-12)
+			require.InDelta(t, tt.output, *short.OutputPrice, 1e-12)
+			require.InDelta(t, tt.cacheRead, *short.CacheReadPrice, 1e-12)
+			require.InDelta(t, tt.cacheWrite, *short.CacheWritePrice, 1e-12)
+			require.InDelta(t, tt.longInput, *long.InputPrice, 1e-12)
+			require.InDelta(t, tt.longOutput, *long.OutputPrice, 1e-12)
+			require.InDelta(t, tt.longCacheRead, *long.CacheReadPrice, 1e-12)
+			require.InDelta(t, tt.longCacheWrite, *long.CacheWritePrice, 1e-12)
+		})
+	}
+}
+
+func TestListAvailable_GPT56PricingEntriesUseOfficialPricing(t *testing.T) {
+	// 生产配置的安全形态：空 token 定价条目既声明模型可用，又在
+	// RestrictModels=true 时放行；不需要改写真实的上游模型名。
+	channel := Channel{
+		ID:             1,
+		Name:           "OpenAI",
+		Status:         StatusActive,
+		RestrictModels: true,
+		GroupIDs:       []int64{7},
+		ModelPricing: []ChannelModelPricing{{
+			Platform: "openai",
+			Models: []string{
+				"gpt-5.6-sol",
+				"gpt-5.6-terra",
+				"gpt-5.6-luna",
+			},
+			BillingMode: BillingModeToken,
+		}},
+	}
+	svc := newAvailableChannelService(
+		[]Channel{channel},
+		&stubGroupRepoForAvailable{activeGroups: []Group{{ID: 7, Name: "OpenAI", Platform: "openai"}}},
+	)
+	svc.pricingService = newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+		"gpt-5.6-sol":   openAIGPT56SolFallbackPricing,
+		"gpt-5.6-terra": openAIGPT56TerraFallbackPricing,
+		"gpt-5.6-luna":  openAIGPT56LunaFallbackPricing,
+	})
+
+	out, err := svc.ListAvailable(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Len(t, out[0].SupportedModels, 3)
+
+	byName := make(map[string]SupportedModel, len(out[0].SupportedModels))
+	for _, model := range out[0].SupportedModels {
+		byName[model.Name] = model
+	}
+	for name, want := range map[string]struct {
+		input, output, cacheRead, cacheWrite float64
+	}{
+		"gpt-5.6-sol":   {5e-6, 30e-6, 0.5e-6, 6.25e-6},
+		"gpt-5.6-terra": {2.5e-6, 15e-6, 0.25e-6, 3.125e-6},
+		"gpt-5.6-luna":  {1e-6, 6e-6, 0.1e-6, 1.25e-6},
+	} {
+		model, ok := byName[name]
+		require.True(t, ok, "missing %s", name)
+		require.NotNil(t, model.Pricing)
+		require.InDelta(t, want.input, *model.Pricing.InputPrice, 1e-12)
+		require.InDelta(t, want.output, *model.Pricing.OutputPrice, 1e-12)
+		require.InDelta(t, want.cacheRead, *model.Pricing.CacheReadPrice, 1e-12)
+		require.InDelta(t, want.cacheWrite, *model.Pricing.CacheWritePrice, 1e-12)
+		require.Len(t, model.Pricing.Intervals, 2)
+	}
+}
+
 func TestFillGlobalPricingFallback_NilPricing(t *testing.T) {
 	pricingSvc := newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
 		"claude-opus-4-5": {Mode: "chat", InputCostPerToken: 5e-6},
