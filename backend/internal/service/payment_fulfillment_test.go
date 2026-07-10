@@ -926,6 +926,42 @@ func TestSubscriptionFulfillmentLeaseTerminalBranches(t *testing.T) {
 	require.NoError(t, svc.markSubscriptionCompletedWithLease(ctx, order, lease), "a completed winner makes the stale completion a no-op")
 }
 
+func TestSubscriptionFulfillmentLeaseCoversOwnershipAndLifecycleGuards(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	svc := &PaymentService{entClient: client}
+
+	t.Run("completed order is an idempotent lost lease", func(t *testing.T) {
+		order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusPaid, time.Now().UTC())
+		_, err := client.PaymentOrder.UpdateOneID(order.ID).SetStatus(OrderStatusCompleted).Save(ctx)
+		require.NoError(t, err)
+
+		lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+		require.NoError(t, err)
+		require.Nil(t, lease)
+	})
+
+	t.Run("non-claimable order reports a status race", func(t *testing.T) {
+		order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusPaid, time.Now().UTC())
+		_, err := client.PaymentOrder.UpdateOneID(order.ID).SetStatus(OrderStatusCancelled).Save(ctx)
+		require.NoError(t, err)
+
+		lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+		require.Nil(t, lease)
+		require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+	})
+
+	t.Run("lifecycle input guards", func(t *testing.T) {
+		missingSnapshot := &dbent.PaymentOrder{ID: 100}
+		require.Error(t, svc.doSubLifecycle(ctx, missingSnapshot, SubscriptionIntentRenew, 1))
+
+		order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, time.Now().UTC())
+		require.Error(t, svc.doSubLifecycle(ctx, order, SubscriptionIntentRenew, 0))
+		require.Error(t, svc.doSubLifecycle(ctx, order, SubscriptionIntentRenew, 1))
+		require.Error(t, svc.doSubLifecycle(ctx, order, "unsupported", 1, &subscriptionFulfillmentLease{version: order.UpdatedAt}))
+	})
+}
+
 func TestPaymentSubscriptionAssignmentRecoveryHelpers(t *testing.T) {
 	order := &dbent.PaymentOrder{ID: 42, UserID: 7, SubscriptionGroupID: ptrInt64(0), ProviderSnapshot: map[string]any{
 		subscriptionSnapshotKey: map[string]any{
