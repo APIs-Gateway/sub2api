@@ -162,8 +162,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
-				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error())
+				h.respondNoAccountError(c, h.gatewayService, apiKey, reqModel, reqModel, groupPlatform, "No available accounts: "+err.Error(), err, noAccountCapacityMarkIfNoAvailable, gatewayNoAccountResponseChatCompletions, false)
 				return
 			}
 			action := fs.HandleSelectionExhausted(c.Request.Context())

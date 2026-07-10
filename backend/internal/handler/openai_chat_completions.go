@@ -136,6 +136,13 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	for {
 		reqLog.Debug("openai_chat_completions.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		stableIntent := service.StablePriorityIntent{Enabled: apiKey.StablePriorityEnabled || (apiKey.User != nil && apiKey.User.StablePriorityEnabled)}
+		modelAvailabilityDiagnoser := service.ModelAvailabilityDiagnoser(h.gatewayService)
+		if openAIStablePriorityCanFallback(apiKey, stableIntent) {
+			// A no-account result may have traversed fallback groups. Diagnosing
+			// only the home group could turn a temporarily unavailable fallback
+			// model into a false 404, so keep the established 503 response.
+			modelAvailabilityDiagnoser = nil
+		}
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerStable(
 			c.Request.Context(),
 			apiKey.Group,
@@ -155,8 +162,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
+				h.respondNoAccountError(c, modelAvailabilityDiagnoser, apiKey, reqModel, reqModel, service.PlatformOpenAI, "Service temporarily unavailable", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseStreaming, streamStarted)
 				return
 			} else {
 				if lastFailoverErr != nil {
@@ -168,8 +174,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			}
 		}
 		if selection == nil || selection.Account == nil {
-			markOpsRoutingCapacityLimited(c)
-			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+			h.respondNoAccountError(c, modelAvailabilityDiagnoser, apiKey, reqModel, reqModel, service.PlatformOpenAI, "No available accounts", nil, noAccountCapacityMarkAlways, openAINoAccountResponseStreaming, streamStarted)
 			return
 		}
 		account := selection.Account
@@ -369,6 +374,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		)
 		return
 	}
+}
+
+func openAIStablePriorityCanFallback(apiKey *service.APIKey, intent service.StablePriorityIntent) bool {
+	return intent.Enabled && apiKey != nil && apiKey.Group != nil && apiKey.Group.StablePriorityFallbackGroupID != nil
 }
 
 // resolveOpenAIUpstreamEndpoint returns the actual upstream endpoint for an
