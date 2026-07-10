@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
@@ -255,4 +256,57 @@ func TestHandlePassthroughSSEToJSON_CompactClientStreamBridgesToSSE(t *testing.T
 	require.Equal(t, "resp_compact_pt_sse", gjson.Get(events[1][1], "response.id").String())
 	require.NotNil(t, result)
 	require.Equal(t, 5, result.usage.InputTokens)
+}
+
+func TestReconstructResponseOutputFromSSE_PreservesRawCompactDoneItem(t *testing.T) {
+	bodyText := strings.Join([]string{
+		`data: {"type":"response.output_item.done","item":{"id":"cmp_1","type":"compaction","encrypted_content":"opaque","summary":[{"type":"summary_text","text":"kept"}]}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","output":[]}}`,
+	}, "\n")
+
+	output, ok := reconstructResponseOutputFromSSE(bodyText)
+	require.True(t, ok)
+	require.Equal(t, "opaque", gjson.GetBytes(output, "0.encrypted_content").String())
+	require.Equal(t, "kept", gjson.GetBytes(output, "0.summary.0.text").String())
+}
+
+func TestHandleSSEToJSON_CompactSupplementsMissingCompaction(t *testing.T) {
+	svc := newCompactBridgeTestService()
+	c, rec := newCompactBridgeTestContext(t, true)
+	upstreamSSE := strings.Join([]string{
+		`data: {"type":"response.output_item.done","item":{"id":"cmp_1","type":"compaction","encrypted_content":"supplement"}}`,
+		``,
+		`data: {"type":"response.completed","response":{"id":"resp_1","output":[{"id":"msg_1","type":"message","content":[{"type":"output_text","text":"note"}]}]}}`,
+		``,
+	}, "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamSSE)),
+	}
+
+	_, err := svc.handleNonStreamingResponse(context.Background(), resp, c, &Account{ID: 1, Type: AccountTypeOAuth}, "gpt-5.5", "gpt-5.5")
+	require.NoError(t, err)
+	events := parseCompactBridgeSSE(t, rec.Body.String())
+	require.Len(t, events, 3)
+	require.Equal(t, "message", gjson.Get(events[0][1], "item.type").String())
+	require.Equal(t, "compaction", gjson.Get(events[1][1], "item.type").String())
+	require.Equal(t, "supplement", gjson.Get(events[2][1], "response.output.1.encrypted_content").String())
+}
+
+func TestOpenAICompactSSEKeepalive_OnlyHeartbeatDoesNotCountAsResponse(t *testing.T) {
+	c, rec := newCompactBridgeTestContext(t, true)
+	stop := StartOpenAICompactSSEKeepalive(c, time.Hour)
+	defer stop()
+	value, ok := c.Get(openAICompactSSEKeepaliveKey)
+	require.True(t, ok)
+	keepalive := value.(*openAICompactSSEKeepalive)
+	require.True(t, keepalive.beat())
+	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
+
+	require.True(t, writeOpenAICompactSSEBridge(c, http.StatusBadGateway, []byte(`{"error":{"message":"upstream failed"}}`)))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), ": keepalive\n\n")
+	require.Contains(t, rec.Body.String(), "event: response.failed\n")
+	require.Contains(t, rec.Body.String(), `"message":"upstream failed"`)
 }
