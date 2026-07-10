@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
@@ -749,6 +750,206 @@ func TestApplyCodexOAuthTransform_DoesNotAddSparkImageUnsupportedForNonSpark(t *
 	instructions, ok := reqBody["instructions"].(string)
 	require.True(t, ok)
 	require.NotContains(t, instructions, codexSparkImageUnsupportedMarker)
+}
+
+// gpt-5.3-codex-spark rejects the image_generation tool upstream (HTTP 400
+// invalid_request_error, param=tools). Codex CLI advertises that tool by default,
+// so the OAuth transform must strip it for spark while keeping the rest.
+func TestApplyCodexOAuthTransform_StripsImageGenerationToolForSpark(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.3-codex-spark",
+		"input": "hello",
+		"tools": []any{
+			map[string]any{"type": "function", "name": "shell"},
+			map[string]any{"type": "image_generation", "output_format": "png"},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	}
+
+	result := applyCodexOAuthTransform(reqBody, true, false)
+	require.True(t, result.Modified)
+	require.False(t, hasOpenAIImageGenerationTool(reqBody))
+
+	tools, ok := reqBody["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	first, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "function", first["type"])
+	require.Equal(t, "shell", first["name"])
+	_, hasToolChoice := reqBody["tool_choice"]
+	require.False(t, hasToolChoice)
+}
+
+// Spark reasoning-effort aliases (e.g. -low/-high) normalize to gpt-5.3-codex-spark,
+// so they must be stripped too.
+func TestApplyCodexOAuthTransform_StripsImageGenerationToolForSparkAlias(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.3-codex-spark-high",
+		"input": "hello",
+		"tools": []any{
+			map[string]any{"type": "image_generation", "output_format": "png"},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	}
+
+	result := applyCodexOAuthTransform(reqBody, true, false)
+	require.True(t, result.Modified)
+	require.False(t, hasOpenAIImageGenerationTool(reqBody))
+	// tools became empty after stripping the only entry; the key is dropped.
+	_, hasTools := reqBody["tools"]
+	require.False(t, hasTools)
+	_, hasToolChoice := reqBody["tool_choice"]
+	require.False(t, hasToolChoice)
+}
+
+// Non-spark Codex models support image_generation; the tool must be preserved.
+func TestApplyCodexOAuthTransform_KeepsImageGenerationToolForNonSpark(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.3-codex",
+		"input": "hello",
+		"tools": []any{
+			map[string]any{"type": "image_generation", "output_format": "png"},
+		},
+	}
+
+	applyCodexOAuthTransform(reqBody, true, false)
+	require.True(t, hasOpenAIImageGenerationTool(reqBody))
+}
+
+func TestStripCodexSparkImageGenerationTools_HandlesToolChoiceEdges(t *testing.T) {
+	tests := []struct {
+		name       string
+		reqBody    map[string]any
+		wantChange bool
+		wantTools  bool
+		wantChoice bool
+	}{
+		{
+			name: "choice without tools is removed",
+			reqBody: map[string]any{
+				"tool_choice": map[string]any{"type": "image_generation"},
+			},
+			wantChange: true,
+			wantTools:  false,
+			wantChoice: false,
+		},
+		{
+			name: "choice with malformed tools is removed",
+			reqBody: map[string]any{
+				"tools":       "not-an-array",
+				"tool_choice": "image_generation",
+			},
+			wantChange: true,
+			wantTools:  true,
+			wantChoice: false,
+		},
+		{
+			name: "unrelated tools are preserved",
+			reqBody: map[string]any{
+				"tools": []any{map[string]any{"type": "function", "name": "shell"}},
+			},
+			wantChange: false,
+			wantTools:  true,
+			wantChoice: false,
+		},
+		{
+			name: "required choice survives when only image tool is removed",
+			reqBody: map[string]any{
+				"tools":       []any{map[string]any{"type": "image_generation"}},
+				"tool_choice": "required",
+			},
+			wantChange: true,
+			wantTools:  false,
+			wantChoice: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.wantChange, stripCodexSparkImageGenerationTools(tt.reqBody))
+			_, hasTools := tt.reqBody["tools"]
+			_, hasChoice := tt.reqBody["tool_choice"]
+			require.Equal(t, tt.wantTools, hasTools)
+			require.Equal(t, tt.wantChoice, hasChoice)
+		})
+	}
+}
+
+func TestStripCodexSparkImageGenerationToolsFromRawBody(t *testing.T) {
+	imageBody := []byte(`{"tools":[{"type":"image_generation"}],"tool_choice":{"type":"image_generation"}}`)
+
+	updated, changed, err := stripCodexSparkImageGenerationToolsFromRawBody(imageBody, "gpt-5.3-codex-spark")
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(updated, "tools").Exists())
+	require.False(t, gjson.GetBytes(updated, "tool_choice").Exists())
+
+	noImage := []byte(`{"tools":[{"type":"function","name":"shell"}]}`)
+	updated, changed, err = stripCodexSparkImageGenerationToolsFromRawBody(noImage, "gpt-5.3-codex-spark")
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(noImage), string(updated))
+
+	updated, changed, err = stripCodexSparkImageGenerationToolsFromRawBody(imageBody, "gpt-5.3-codex")
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(imageBody), string(updated))
+
+	tooLargeNumber := []byte(`{"tools":[{"type":"image_generation"}],"value":1e9999}`)
+	updated, changed, err = stripCodexSparkImageGenerationToolsFromRawBody(tooLargeNumber, "gpt-5.3-codex-spark")
+	require.Error(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(tooLargeNumber), string(updated))
+}
+
+func TestEnsureOpenAIResponsesImageGenerationToolChoiceAuto(t *testing.T) {
+	tests := []struct {
+		name       string
+		reqBody    map[string]any
+		wantChange bool
+		wantChoice any
+	}{
+		{
+			name:       "no image tool",
+			reqBody:    map[string]any{"model": "gpt-5.4"},
+			wantChange: false,
+		},
+		{
+			name: "spark keeps no choice",
+			reqBody: map[string]any{
+				"model": "gpt-5.3-codex-spark",
+				"tools": []any{map[string]any{"type": "image_generation"}},
+			},
+			wantChange: false,
+		},
+		{
+			name: "existing choice wins",
+			reqBody: map[string]any{
+				"model":       "gpt-5.4",
+				"tools":       []any{map[string]any{"type": "image_generation"}},
+				"tool_choice": "required",
+			},
+			wantChange: false,
+			wantChoice: "required",
+		},
+		{
+			name: "adds auto",
+			reqBody: map[string]any{
+				"model": "gpt-5.4",
+				"tools": []any{map[string]any{"type": "image_generation"}},
+			},
+			wantChange: true,
+			wantChoice: "auto",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.wantChange, ensureOpenAIResponsesImageGenerationToolChoiceAuto(tt.reqBody))
+			require.Equal(t, tt.wantChoice, tt.reqBody["tool_choice"])
+		})
+	}
 }
 
 func TestNormalizeOpenAIResponsesImageOnlyModel_BuildsImageToolRequest(t *testing.T) {

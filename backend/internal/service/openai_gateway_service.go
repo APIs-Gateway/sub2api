@@ -2417,6 +2417,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	originalModel := reqModel
 
 	if account.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		fallbackModel := account.GetMappedModel(reqModel)
+		if stripped, changed, stripErr := stripCodexSparkImageGenerationToolsFromRawBody(body, fallbackModel); stripErr != nil {
+			return nil, fmt.Errorf("normalize Codex Spark image tools for chat fallback: %w", stripErr)
+		} else if changed {
+			body = stripped
+		}
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 
@@ -2588,6 +2594,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			markDecodedModified()
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Injected /responses image_generation tool for Codex client")
 		}
+		if codexImageGenerationBridgeEnabled && ensureOpenAIResponsesImageGenerationToolChoiceAuto(decoded) {
+			markDecodedModified()
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Set /responses image_generation tool_choice=auto for Codex client")
+		}
 		if normalizeOpenAIResponsesImageGenerationTools(decoded) {
 			markDecodedModified()
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized /responses image_generation tool payload")
@@ -2626,6 +2636,22 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
 			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": err.Error(), "param": "input"}})
 			return nil, err
+		}
+	}
+
+	// gpt-5.3-codex-spark also rejects the image_generation tool (HTTP 400,
+	// param=tools). Strip it here so both APIKey and OAuth /responses paths are
+	// covered regardless of the image-generation feature gate.
+	if isCodexSparkModel(upstreamModel) && openAIRequestBodyHasImageGenerationTool(body) {
+		decoded, decodeErr := ensureReqBody()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		if stripCodexSparkImageGenerationTools(decoded) {
+			markDecodedModified()
+			// The request no longer contains an image capability after Spark cleanup,
+			// so do not carry the pre-mutation image intent into billing resolution.
+			imageIntent = IsImageGenerationIntentMap(openAIResponsesEndpoint, upstreamModel, decoded)
 		}
 	}
 
