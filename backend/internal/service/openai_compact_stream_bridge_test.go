@@ -51,6 +51,19 @@ func parseCompactBridgeSSE(t *testing.T, body string) [][2]string {
 	return events
 }
 
+func compactBridgeSSEEventData(t *testing.T, body, eventType string) string {
+	t.Helper()
+	for _, block := range strings.Split(body, "\n\n") {
+		lines := strings.Split(strings.TrimSpace(block), "\n")
+		if len(lines) != 2 || lines[0] != "event: "+eventType || !strings.HasPrefix(lines[1], "data: ") {
+			continue
+		}
+		return strings.TrimPrefix(lines[1], "data: ")
+	}
+	require.Failf(t, "missing SSE event", "event %q was not written in %q", eventType, body)
+	return ""
+}
+
 func TestBuildOpenAICompactSSEPayload_EmitsItemsAndCompleted(t *testing.T) {
 	finalResponse := []byte(`{
 		"id":"resp_compact_1",
@@ -137,6 +150,98 @@ func TestWriteOpenAICompactSSEBridge_RequiresMarkAndSuccessStatus(t *testing.T) 
 	require.True(t, writeOpenAICompactSSEBridge(c, http.StatusOK, finalResponse))
 	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
 	require.Contains(t, rec.Body.String(), "event: response.completed")
+}
+
+func TestWriteOpenAICompactSSEBridge_CommittedKeepaliveWritesSuccess(t *testing.T) {
+	c, rec := newCompactBridgeTestContext(t, true)
+	stop := StartOpenAICompactSSEKeepalive(c, time.Hour)
+	t.Cleanup(stop)
+	value, ok := c.Get(openAICompactSSEKeepaliveKey)
+	require.True(t, ok)
+	keepalive, ok := value.(*openAICompactSSEKeepalive)
+	require.True(t, ok)
+	require.True(t, keepalive.beat())
+
+	handled := writeOpenAICompactSSEBridge(c, http.StatusOK, []byte(`{"id":"resp_after_heartbeat","output":[{"id":"cmp_1","type":"compaction","encrypted_content":"compact-after-heartbeat"}]}`))
+	require.True(t, handled)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), ": keepalive\n\n")
+	require.Equal(t, "compaction", gjson.Get(compactBridgeSSEEventData(t, rec.Body.String(), "response.output_item.done"), "item.type").String())
+	require.Equal(t, "resp_after_heartbeat", gjson.Get(compactBridgeSSEEventData(t, rec.Body.String(), "response.completed"), "response.id").String())
+	_, hasOpsError := GetOpsStreamError(c)
+	require.False(t, hasOpsError)
+}
+
+func TestWriteOpenAICompactSSEBridge_CommittedKeepaliveConvertsUpstreamFailures(t *testing.T) {
+	tests := []struct {
+		name           string
+		statusCode     int
+		body           []byte
+		wantMessage    string
+		intendedStatus int
+	}{
+		{
+			name:           "extracts and redacts nested upstream error",
+			statusCode:     http.StatusTooManyRequests,
+			body:           []byte(`{"error":{"message":"request rejected at https://upstream.test/?access_token=top-secret&trace=abc"}}`),
+			wantMessage:    "request rejected at https://upstream.test/?access_token=***&trace=abc",
+			intendedStatus: http.StatusTooManyRequests,
+		},
+		{
+			name:           "falls back to status when upstream body is empty",
+			statusCode:     http.StatusServiceUnavailable,
+			wantMessage:    "Upstream compact request failed with HTTP 503",
+			intendedStatus: http.StatusServiceUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, rec := newCompactBridgeTestContext(t, true)
+			stop := StartOpenAICompactSSEKeepalive(c, time.Hour)
+			t.Cleanup(stop)
+			value, ok := c.Get(openAICompactSSEKeepaliveKey)
+			require.True(t, ok)
+			keepalive, ok := value.(*openAICompactSSEKeepalive)
+			require.True(t, ok)
+			require.True(t, keepalive.beat())
+
+			require.True(t, writeOpenAICompactSSEBridge(c, tt.statusCode, tt.body))
+			require.Equal(t, http.StatusOK, rec.Code)
+			failed := compactBridgeSSEEventData(t, rec.Body.String(), "response.failed")
+			require.Equal(t, "failed", gjson.Get(failed, "response.status").String())
+			require.Equal(t, "upstream_error", gjson.Get(failed, "response.error.code").String())
+			require.Equal(t, tt.wantMessage, gjson.Get(failed, "response.error.message").String())
+
+			opsError, recorded := GetOpsStreamError(c)
+			require.True(t, recorded)
+			require.Equal(t, "upstream_error", opsError.ErrType)
+			require.Equal(t, tt.wantMessage, opsError.Message)
+			require.Equal(t, tt.intendedStatus, opsError.IntendedStatus)
+		})
+	}
+}
+
+func TestWriteOpenAICompactSSEBridge_CommittedKeepaliveConvertsInvalidBody(t *testing.T) {
+	c, rec := newCompactBridgeTestContext(t, true)
+	stop := StartOpenAICompactSSEKeepalive(c, time.Hour)
+	t.Cleanup(stop)
+	value, ok := c.Get(openAICompactSSEKeepaliveKey)
+	require.True(t, ok)
+	keepalive, ok := value.(*openAICompactSSEKeepalive)
+	require.True(t, ok)
+	require.True(t, keepalive.beat())
+
+	require.True(t, writeOpenAICompactSSEBridge(c, http.StatusOK, []byte("not valid json")))
+	require.Equal(t, http.StatusOK, rec.Code)
+	failed := compactBridgeSSEEventData(t, rec.Body.String(), "response.failed")
+	require.Equal(t, "upstream_error", gjson.Get(failed, "response.error.code").String())
+	require.Equal(t, "Upstream compact request failed with HTTP 502", gjson.Get(failed, "response.error.message").String())
+
+	opsError, recorded := GetOpsStreamError(c)
+	require.True(t, recorded)
+	require.Equal(t, http.StatusBadGateway, opsError.IntendedStatus)
+	require.Equal(t, "Upstream compact request failed with HTTP 502", opsError.Message)
 }
 
 func TestOpenAICompactClientStreamHelpersRejectNilAndInvalidMarkers(t *testing.T) {
