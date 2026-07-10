@@ -190,6 +190,23 @@ func TestDefaultPricingIncludesCodexAutoReview(t *testing.T) {
 	require.InDelta(t, 5e-7, got.CacheReadInputTokenCost, 1e-12)
 }
 
+func TestDefaultPricingIncludesGPT56LongContextMetadata(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
+	require.NoError(t, err)
+
+	svc := &PricingService{}
+	pricingData, err := svc.parsePricingData(data)
+	require.NoError(t, err)
+
+	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		pricing := pricingData[model]
+		require.NotNil(t, pricing, model)
+		require.Equal(t, 272000, pricing.LongContextInputTokenThreshold, model)
+		require.InDelta(t, 2.0, pricing.LongContextInputCostMultiplier, 1e-12, model)
+		require.InDelta(t, 1.5, pricing.LongContextOutputCostMultiplier, 1e-12, model)
+	}
+}
+
 func TestDefaultPricingIncludesGPT56CacheWritePrices(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
 	require.NoError(t, err)
