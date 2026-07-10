@@ -881,8 +881,12 @@ func TestApplyCodexOAuthTransform_StripsImageGenNamespaceDeclarationsForSpark(t 
 	tools, ok := reqBody["tools"].([]any)
 	require.True(t, ok)
 	require.Len(t, tools, 2)
-	require.Equal(t, "shell", tools[0].(map[string]any)["name"])
-	require.Equal(t, "code_tools", tools[1].(map[string]any)["name"])
+	firstTool, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	secondTool, ok := tools[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "shell", firstTool["name"])
+	require.Equal(t, "code_tools", secondTool["name"])
 
 	input, ok := reqBody["input"].([]any)
 	require.True(t, ok)
@@ -892,7 +896,9 @@ func TestApplyCodexOAuthTransform_StripsImageGenNamespaceDeclarationsForSpark(t 
 	remainingTools, ok := additionalTools["tools"].([]any)
 	require.True(t, ok)
 	require.Len(t, remainingTools, 1)
-	require.Equal(t, "code_tools", remainingTools[0].(map[string]any)["name"])
+	remainingTool, ok := remainingTools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "code_tools", remainingTool["name"])
 }
 
 // Non-spark Codex models support image_generation; the tool must be preserved.
