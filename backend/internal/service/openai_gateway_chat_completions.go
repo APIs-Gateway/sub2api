@@ -430,6 +430,8 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 				UpstreamStatus: http.StatusOK,
 				UpstreamInTok:  usage.InputTokens,
 				UpstreamOutTok: usage.OutputTokens,
+				UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
+				UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 			})
 			clientMsg := msg
 			if clientMsg == "" {
@@ -587,6 +589,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					UpstreamStatus: http.StatusOK,
 					UpstreamInTok:  usage.InputTokens,
 					UpstreamOutTok: usage.OutputTokens,
+					UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
+					UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 				})
 				if !clientDisconnected {
 					// 被 refusal 检测扣留的 pendingSSE 有意丢弃——cyber 拦截优先于部分内容下发。

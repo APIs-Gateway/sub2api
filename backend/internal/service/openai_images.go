@@ -1628,6 +1628,9 @@ func mergeOpenAIUsage(dst *OpenAIUsage, body []byte) {
 		if parsed.CacheReadInputTokens > 0 {
 			dst.CacheReadInputTokens = parsed.CacheReadInputTokens
 		}
+		if parsed.CacheCreationInputTokens > 0 {
+			dst.CacheCreationInputTokens = parsed.CacheCreationInputTokens
+		}
 		if parsed.ImageOutputTokens > 0 {
 			dst.ImageOutputTokens = parsed.ImageOutputTokens
 		}

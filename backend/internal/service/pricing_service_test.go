@@ -18,6 +18,7 @@ func TestParsePricingData_ParsesPriorityAndServiceTierFields(t *testing.T) {
 			"output_cost_per_token": 0.000015,
 			"output_cost_per_token_priority": 0.00003,
 			"cache_creation_input_token_cost": 0.0000025,
+			"cache_creation_input_token_cost_priority": 0.000005,
 			"cache_read_input_token_cost": 0.00000025,
 			"cache_read_input_token_cost_priority": 0.0000005,
 			"supports_service_tier": true,
@@ -33,6 +34,7 @@ func TestParsePricingData_ParsesPriorityAndServiceTierFields(t *testing.T) {
 	require.NotNil(t, pricing)
 	require.InDelta(t, 5e-6, pricing.InputCostPerTokenPriority, 1e-12)
 	require.InDelta(t, 3e-5, pricing.OutputCostPerTokenPriority, 1e-12)
+	require.InDelta(t, 5e-6, pricing.CacheCreationInputTokenCostPriority, 1e-12)
 	require.InDelta(t, 5e-7, pricing.CacheReadInputTokenCostPriority, 1e-12)
 	require.True(t, pricing.SupportsServiceTier)
 }
@@ -109,12 +111,42 @@ func TestGetModelPricing_Gpt56UsesStaticFallbackWhenRemoteMissing(t *testing.T) 
 
 	got := svc.GetModelPricing("gpt-5.6-luna")
 	require.NotNil(t, got)
-	require.InDelta(t, 2.5e-6, got.InputCostPerToken, 1e-12)
-	require.InDelta(t, 1.5e-5, got.OutputCostPerToken, 1e-12)
-	require.InDelta(t, 2.5e-7, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 1e-6, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 6e-6, got.OutputCostPerToken, 1e-12)
+	require.InDelta(t, 1.25e-6, got.CacheCreationInputTokenCost, 1e-12)
+	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCostPriority, 1e-12)
+	require.InDelta(t, 1e-7, got.CacheReadInputTokenCost, 1e-12)
 	require.Equal(t, 272000, got.LongContextInputTokenThreshold)
 	require.InDelta(t, 2.0, got.LongContextInputCostMultiplier, 1e-12)
 	require.InDelta(t, 1.5, got.LongContextOutputCostMultiplier, 1e-12)
+}
+
+func TestGetModelPricing_Gpt56StaleCatalogDerivesCacheWriteButExplicitPriceWins(t *testing.T) {
+	stale := &LiteLLMModelPricing{
+		InputCostPerToken:         2.5e-6,
+		InputCostPerTokenPriority: 5e-6,
+	}
+	explicit := &LiteLLMModelPricing{
+		InputCostPerToken:                   5e-6,
+		InputCostPerTokenPriority:           10e-6,
+		CacheCreationInputTokenCost:         7e-6,
+		CacheCreationInputTokenCostPriority: 14e-6,
+	}
+	svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"gpt-5.6-terra": stale,
+		"gpt-5.6-sol":   explicit,
+	}}
+
+	derived := svc.GetModelPricing("openai/gpt5.6-terra-2026-06-08")
+	require.NotNil(t, derived)
+	require.NotSame(t, stale, derived, "derivation must not mutate the cached catalog entry")
+	require.InDelta(t, 3.125e-6, derived.CacheCreationInputTokenCost, 1e-12)
+	require.InDelta(t, 6.25e-6, derived.CacheCreationInputTokenCostPriority, 1e-12)
+
+	gotExplicit := svc.GetModelPricing("gpt-5.6-sol")
+	require.Same(t, explicit, gotExplicit)
+	require.InDelta(t, 7e-6, gotExplicit.CacheCreationInputTokenCost, 1e-12)
+	require.InDelta(t, 14e-6, gotExplicit.CacheCreationInputTokenCostPriority, 1e-12)
 }
 
 func TestGetModelPricing_OpenAICompactAliasUsesStaticFallback(t *testing.T) {
@@ -144,6 +176,35 @@ func TestDefaultPricingIncludesCodexAutoReview(t *testing.T) {
 	require.InDelta(t, 5e-6, got.InputCostPerToken, 1e-12)
 	require.InDelta(t, 3e-5, got.OutputCostPerToken, 1e-12)
 	require.InDelta(t, 5e-7, got.CacheReadInputTokenCost, 1e-12)
+}
+
+func TestDefaultPricingIncludesGPT56CacheWritePrices(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
+	require.NoError(t, err)
+
+	svc := &PricingService{}
+	pricingData, err := svc.parsePricingData(data)
+	require.NoError(t, err)
+	svc.pricingData = pricingData
+
+	for _, tt := range []struct {
+		model      string
+		input      float64
+		cacheWrite float64
+		priority   float64
+	}{
+		{model: "gpt-5.6-sol", input: 5e-6, cacheWrite: 6.25e-6, priority: 12.5e-6},
+		{model: "gpt-5.6-terra", input: 2.5e-6, cacheWrite: 3.125e-6, priority: 6.25e-6},
+		{model: "gpt-5.6-luna", input: 1e-6, cacheWrite: 1.25e-6, priority: 2.5e-6},
+	} {
+		t.Run(tt.model, func(t *testing.T) {
+			got := svc.GetModelPricing(tt.model)
+			require.NotNil(t, got)
+			require.InDelta(t, tt.input, got.InputCostPerToken, 1e-12)
+			require.InDelta(t, tt.cacheWrite, got.CacheCreationInputTokenCost, 1e-12)
+			require.InDelta(t, tt.priority, got.CacheCreationInputTokenCostPriority, 1e-12)
+		})
+	}
 }
 
 func TestGetModelPricing_Gpt54MiniUsesDedicatedStaticFallbackWhenRemoteMissing(t *testing.T) {

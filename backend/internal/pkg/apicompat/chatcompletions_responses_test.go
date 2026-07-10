@@ -1113,7 +1113,8 @@ func TestResponsesEventToChatChunks_Completed(t *testing.T) {
 				OutputTokens: 20,
 				TotalTokens:  70,
 				InputTokensDetails: &ResponsesInputTokensDetails{
-					CachedTokens: 30,
+					CachedTokens:     30,
+					CacheWriteTokens: 10,
 				},
 			},
 		},
@@ -1132,6 +1133,7 @@ func TestResponsesEventToChatChunks_Completed(t *testing.T) {
 	assert.Equal(t, 70, chunks[1].Usage.TotalTokens)
 	require.NotNil(t, chunks[1].Usage.PromptTokensDetails)
 	assert.Equal(t, 30, chunks[1].Usage.PromptTokensDetails.CachedTokens)
+	assert.Equal(t, 10, chunks[1].Usage.PromptTokensDetails.CacheWriteTokens)
 }
 
 func TestResponsesEventToChatChunks_CompletedWithReasoningTokens(t *testing.T) {

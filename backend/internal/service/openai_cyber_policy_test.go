@@ -37,6 +37,22 @@ func TestMarkOpsCyberPolicyFirstWins(t *testing.T) {
 	require.Equal(t, "first", GetOpsCyberPolicy(c).Message, "first mark wins, later marks ignored")
 }
 
+func TestMarkOpsCyberPolicy_BackfillsNestedCacheWriteUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	MarkOpsCyberPolicy(c, CyberPolicyMark{
+		Body: `{"type":"response.failed","response":{"usage":{"input_tokens":100,"output_tokens":7,"input_tokens_details":{"cached_tokens":20,"cache_write_tokens":30}}}}`,
+	})
+
+	mark := GetOpsCyberPolicy(c)
+	require.NotNil(t, mark)
+	require.Equal(t, 100, mark.UpstreamInTok)
+	require.Equal(t, 7, mark.UpstreamOutTok)
+	require.Equal(t, 20, mark.UpstreamCacheReadTok)
+	require.Equal(t, 30, mark.UpstreamCacheCreationTok)
+}
+
 func TestMarkOpsCyberPolicyNilContext(t *testing.T) {
 	MarkOpsCyberPolicy(nil, CyberPolicyMark{Code: "cyber_policy"})
 	require.Nil(t, GetOpsCyberPolicy(nil))
