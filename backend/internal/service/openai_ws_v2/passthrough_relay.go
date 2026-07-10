@@ -768,25 +768,15 @@ func parseUsageAndAccumulate(
 	if !cachedResult.Exists() {
 		cachedResult = gjson.GetBytes(message, "response.usage.prompt_tokens_details.cached_tokens")
 	}
-	cacheCreationResult := gjson.GetBytes(message, "response.usage.cache_creation_input_tokens")
-	if !cacheCreationResult.Exists() {
-		cacheCreationResult = gjson.GetBytes(message, "response.usage.cache_creation_tokens")
-	}
-	if !cacheCreationResult.Exists() {
-		cacheCreationResult = gjson.GetBytes(message, "response.usage.cache_write_tokens")
-	}
-	if !cacheCreationResult.Exists() {
-		cacheCreationResult = gjson.GetBytes(message, "response.usage.input_tokens_details.cache_write_tokens")
-	}
-	if !cacheCreationResult.Exists() {
-		cacheCreationResult = gjson.GetBytes(message, "response.usage.prompt_tokens_details.cache_write_tokens")
-	}
-	if !cacheCreationResult.Exists() {
-		cacheCreationResult = gjson.GetBytes(message, "response.usage.input_tokens_details.cache_creation_tokens")
-	}
-	if !cacheCreationResult.Exists() {
-		cacheCreationResult = gjson.GetBytes(message, "response.usage.prompt_tokens_details.cache_creation_tokens")
-	}
+	cacheCreationResult := firstExistingGJSONResult(message,
+		"response.usage.input_tokens_details.cache_write_tokens",
+		"response.usage.prompt_tokens_details.cache_write_tokens",
+		"response.usage.input_tokens_details.cache_creation_tokens",
+		"response.usage.prompt_tokens_details.cache_creation_tokens",
+		"response.usage.cache_creation_input_tokens",
+		"response.usage.cache_creation_tokens",
+		"response.usage.cache_write_tokens",
+	)
 	imageTokens := usageResult.Get("output_tokens_details.image_tokens").Int()
 	if imageTokens == 0 {
 		imageTokens = usageResult.Get("completion_tokens_details.image_tokens").Int()
@@ -828,6 +818,15 @@ func parseUsageIntField(value gjson.Result, required bool) (int, bool) {
 		return 0, false
 	}
 	return int(value.Int()), true
+}
+
+func firstExistingGJSONResult(message []byte, fields ...string) gjson.Result {
+	for _, field := range fields {
+		if result := gjson.GetBytes(message, field); result.Exists() {
+			return result
+		}
+	}
+	return gjson.Result{}
 }
 
 func enrichResult(result *RelayResult, state *relayState, duration time.Duration) {

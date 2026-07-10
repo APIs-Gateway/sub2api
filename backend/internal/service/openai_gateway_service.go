@@ -5364,6 +5364,17 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 // openAICacheWriteTokens accepts both native-style usage fields and the
 // OpenAI-compatible cache_write_tokens field returned by GPT-5.6 providers.
 func openAICacheWriteTokens(usage gjson.Result) int {
+	for _, field := range []string{
+		"input_tokens_details.cache_write_tokens",
+		"prompt_tokens_details.cache_write_tokens",
+		"input_tokens_details.cache_creation_tokens",
+		"prompt_tokens_details.cache_creation_tokens",
+	} {
+		result := usage.Get(field)
+		if result.Exists() {
+			return max(int(result.Int()), 0)
+		}
+	}
 	return firstPositiveGJSONInt(
 		usage.Get("cache_creation_input_tokens"),
 		usage.Get("cache_creation_tokens"),

@@ -353,6 +353,20 @@ func TestParseUsageAndAccumulateAcceptsCacheWriteAliases(t *testing.T) {
 	}
 }
 
+func TestParseUsageAndAccumulate_NestedCacheWriteZeroWins(t *testing.T) {
+	t.Parallel()
+
+	state := &relayState{}
+	got := parseUsageAndAccumulate(
+		state,
+		[]byte(`{"type":"response.completed","response":{"usage":{"input_tokens":12,"output_tokens":6,"cache_write_tokens":3,"input_tokens_details":{"cache_write_tokens":0}}}}`),
+		"response.completed",
+		nil,
+	)
+	require.Zero(t, got.CacheCreationInputTokens)
+	require.Zero(t, state.usage.CacheCreationInputTokens)
+}
+
 func TestEmitTurnCompleteCoverage(t *testing.T) {
 	t.Parallel()
 
