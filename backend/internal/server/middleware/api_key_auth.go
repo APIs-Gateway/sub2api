@@ -126,6 +126,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		if abortIfAPIKeyGroupNotAllowed(c, apiKey) {
 			return
 		}
+		setUserIDContext(c, apiKey.User.ID)
 
 		// ── 4. SimpleMode → early return ─────────────────────────────
 
@@ -295,6 +296,16 @@ func setGroupContext(c *gin.Context, group *service.Group) {
 	}
 	ctx := context.WithValue(c.Request.Context(), ctxkey.Group, group)
 	c.Request = c.Request.WithContext(ctx)
+}
+
+func setUserIDContext(c *gin.Context, userID int64) {
+	if c == nil || userID <= 0 {
+		return
+	}
+	if existing, ok := c.Request.Context().Value(ctxkey.UserID).(int64); ok && existing == userID {
+		return
+	}
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.UserID, userID))
 }
 
 func abortIfAPIKeyGroupUnavailable(c *gin.Context, apiKey *service.APIKey) bool {
