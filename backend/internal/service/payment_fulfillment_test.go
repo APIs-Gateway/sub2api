@@ -1010,6 +1010,31 @@ func TestPaymentSubscriptionAssignmentRecoveryHelpers(t *testing.T) {
 	matched, err = svc.findPaymentSubscriptionAssignment(context.Background(), &withSnapshotID, "payment order 42")
 	require.NoError(t, err)
 	require.NotNil(t, matched)
+
+	_, err = (&PaymentService{}).findPaymentSubscriptionAssignment(context.Background(), order, "payment order 42")
+	require.Error(t, err)
+
+	missingSnapshotID := withSnapshotID
+	missingSnapshotID.ProviderSnapshot = map[string]any{
+		subscriptionSnapshotKey: map[string]any{
+			"subscription_id": int64(404),
+		},
+	}
+	_, err = svc.findPaymentSubscriptionAssignment(context.Background(), &missingSnapshotID, "payment order 42")
+	require.Error(t, err)
+
+	wrongFrozenGroup := withSnapshotID
+	wrongFrozenGroup.SubscriptionGroupID = ptrInt64(1)
+	_, err = svc.findPaymentSubscriptionAssignment(context.Background(), &wrongFrozenGroup, "payment order 42")
+	require.Error(t, err)
+
+	stub.seed(&UserSubscription{
+		UserID:  order.UserID,
+		GroupID: 1,
+		Notes:   "payment order 404",
+	})
+	_, err = svc.findPaymentSubscriptionAssignment(context.Background(), order, "payment order 404")
+	require.Error(t, err)
 }
 
 func matchedSubscriptionID(stub *subscriptionUserSubRepoStub) int64 {
