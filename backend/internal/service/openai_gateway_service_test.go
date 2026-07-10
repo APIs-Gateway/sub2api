@@ -2499,6 +2499,12 @@ func TestExtractOpenAIUsageFromJSONBytes_AcceptsResponseAndChatUsageShapes(t *te
 	require.Equal(t, 3, usage.CacheCreationInputTokens)
 }
 
+func TestOpenAIUsageFromGJSON_NestedCacheWriteZeroWins(t *testing.T) {
+	usage, ok := openAIUsageFromGJSON(gjson.Parse(`{"input_tokens":3,"output_tokens":5,"cache_write_tokens":7,"input_tokens_details":{"cache_write_tokens":0}}`))
+	require.True(t, ok)
+	require.Zero(t, usage.CacheCreationInputTokens)
+}
+
 func TestExtractCodexFinalResponse_SampleReplay(t *testing.T) {
 	body := strings.Join([]string{
 		`event: message`,

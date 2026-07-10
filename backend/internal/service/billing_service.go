@@ -1081,12 +1081,19 @@ func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *
 }
 
 func isOpenAIGPT56Model(model string) bool {
-	switch normalizeKnownOpenAICodexModel(model) {
-	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+	normalized := canonicalizeOpenAIModelAliasSpelling(model)
+	if normalized == "gpt-5.6" {
 		return true
-	default:
-		return false
 	}
+	if suffix, ok := strings.CutPrefix(normalized, "gpt-5.6-"); ok && (suffix == "max" || isKnownCodexModelSuffix(suffix)) {
+		return true
+	}
+	for _, prefix := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		if normalized == prefix || strings.HasPrefix(normalized, prefix+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *BillingService) shouldApplySessionLongContextPricing(tokens UsageTokens, pricing *ModelPricing) bool {
