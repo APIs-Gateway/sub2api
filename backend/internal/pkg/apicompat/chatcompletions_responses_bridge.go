@@ -36,8 +36,14 @@ func ResponsesToChatCompletionsRequest(req *ResponsesRequest) (*ChatCompletionsR
 	if len(req.Tools) > 0 {
 		out.Tools = responsesToolsToChatTools(req.Tools)
 	}
-	if len(req.ToolChoice) > 0 {
-		out.ToolChoice = responsesToolChoiceToChatToolChoice(req.ToolChoice)
+	if len(out.Tools) > 0 && len(req.ToolChoice) > 0 {
+		declared := make(map[string]bool, len(out.Tools))
+		for _, tool := range out.Tools {
+			if tool.Function != nil {
+				declared[tool.Function.Name] = true
+			}
+		}
+		out.ToolChoice = responsesToolChoiceToChatToolChoice(req.ToolChoice, declared)
 	}
 	if req.Text != nil {
 		out.ResponseFormat = responsesTextFormatToChatResponseFormat(req.Text.Format)
@@ -446,20 +452,23 @@ func responsesToolsToChatTools(tools []ResponsesTool) []ChatTool {
 	return out
 }
 
-func responsesToolChoiceToChatToolChoice(raw json.RawMessage) json.RawMessage {
+// responsesToolChoiceToChatToolChoice converts a Responses tool_choice to its
+// Chat Completions form. Named choices are only valid when their function
+// survives tool conversion; nil means the choice must be omitted.
+func responsesToolChoiceToChatToolChoice(raw json.RawMessage, declared map[string]bool) json.RawMessage {
 	var choice map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &choice); err != nil {
 		return raw
 	}
 	if rawString(choice["type"]) != "function" {
-		return raw
+		return nil
 	}
 	name := rawString(choice["name"])
 	if name == "" {
 		name = rawNestedString(choice["function"], "name")
 	}
-	if name == "" {
-		return raw
+	if name == "" || !declared[name] {
+		return nil
 	}
 	out, err := json.Marshal(map[string]any{
 		"type": "function",

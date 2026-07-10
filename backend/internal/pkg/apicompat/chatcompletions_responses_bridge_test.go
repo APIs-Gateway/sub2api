@@ -147,6 +147,63 @@ func TestResponsesToChatCompletionsRequest_ParallelToolCalls(t *testing.T) {
 	assert.Contains(t, string(payload), `"parallel_tool_calls":false`)
 }
 
+func TestResponsesToChatCompletionsRequest_FiltersToolChoiceByConvertedTools(t *testing.T) {
+	tests := []struct {
+		name           string
+		tools          []ResponsesTool
+		toolChoice     json.RawMessage
+		wantToolChoice string
+	}{
+		{
+			name:           "no tools clears choice",
+			toolChoice:     json.RawMessage(`"auto"`),
+			wantToolChoice: "",
+		},
+		{
+			name:           "web search clears choice",
+			tools:          []ResponsesTool{{Type: "web_search"}},
+			toolChoice:     json.RawMessage(`{"type":"web_search"}`),
+			wantToolChoice: "",
+		},
+		{
+			name:           "unknown function clears choice",
+			tools:          []ResponsesTool{{Type: "function", Name: "wait"}},
+			toolChoice:     json.RawMessage(`{"type":"function","name":"missing"}`),
+			wantToolChoice: "",
+		},
+		{
+			name:           "surviving function keeps choice",
+			tools:          []ResponsesTool{{Type: "function", Name: "wait"}},
+			toolChoice:     json.RawMessage(`{"type":"function","name":"wait"}`),
+			wantToolChoice: `{"type":"function","function":{"name":"wait"}}`,
+		},
+		{
+			name:           "auto keeps choice when function survives",
+			tools:          []ResponsesTool{{Type: "function", Name: "wait"}},
+			toolChoice:     json.RawMessage(`"auto"`),
+			wantToolChoice: `"auto"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := ResponsesToChatCompletionsRequest(&ResponsesRequest{
+				Model:      "gpt-4o",
+				Input:      json.RawMessage(`"hi"`),
+				Tools:      tt.tools,
+				ToolChoice: tt.toolChoice,
+			})
+			require.NoError(t, err)
+
+			if tt.wantToolChoice == "" {
+				assert.Empty(t, out.ToolChoice)
+				return
+			}
+			assert.JSONEq(t, tt.wantToolChoice, string(out.ToolChoice))
+		})
+	}
+}
+
 func chatMessageRoles(messages []ChatMessage) []string {
 	roles := make([]string, 0, len(messages))
 	for _, message := range messages {
