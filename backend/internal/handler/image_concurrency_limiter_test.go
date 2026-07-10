@@ -221,6 +221,28 @@ func TestOpenAIGatewayHandlerResponses_ImageIntentRejectedByServerPolicy(t *test
 	require.Equal(t, service.OpenAIResponsesImageGenerationDisabledMessage(), gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
+func TestGatewayHandlerResponses_ImageIntentRejectedByServerPolicy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-image-2","input":"draw"}`))
+	groupID := int64(1)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		ID:      10,
+		GroupID: &groupID,
+		Group:   &service.Group{ID: groupID, AllowImageGeneration: true},
+		User:    &service.User{ID: 20},
+	})
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 20, Concurrency: 1})
+
+	h := &GatewayHandler{cfg: &config.Config{Gateway: config.GatewayConfig{DisableOpenAIResponsesImageGeneration: true}}}
+	h.Responses(c)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "invalid_request_error", gjson.GetBytes(rec.Body.Bytes(), "error.code").String())
+	require.Equal(t, service.OpenAIResponsesImageGenerationDisabledMessage(), gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
+}
+
 func TestOpenAIGatewayHandlerResponses_TextOnlyNotRejectedByImageConcurrency(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := `{"model":"gpt-5.4","input":"write code"}`

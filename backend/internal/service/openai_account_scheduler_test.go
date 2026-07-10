@@ -904,6 +904,54 @@ func TestOpenAIGatewayService_ReportScheduleFailureRecordsRuntimeStats(t *testin
 	require.Zero(t, snapshot.AccountSwitchTotal)
 }
 
+func TestOpenAIGatewayService_SelectAccountWithSchedulerForImages_ServerPolicyRequiresDirectAPIKey(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10107)
+	oauth := &Account{ID: 37001, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1}
+	apiKey := &Account{ID: 37002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{"api_key": "sk-test"}}
+	snapshotCache := &openAISnapshotCacheStub{
+		snapshotAccounts: []*Account{oauth, apiKey},
+		accountsByID:     map[int64]*Account{oauth.ID: oauth, apiKey.ID: apiKey},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{*oauth, *apiKey}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                &config.Config{Gateway: config.GatewayConfig{DisableOpenAIImagesStreaming: true}},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		schedulerSnapshot:  &SchedulerSnapshotService{cache: snapshotCache},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImages(ctx, &groupID, "direct-images", "gpt-image-2", nil, OpenAIImagesCapabilityNative)
+
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, apiKey.ID, selection.Account.ID)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithSchedulerForImages_ServerPolicyKeepsDirectFallback(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10108)
+	oauth := &Account{ID: 37003, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1}
+	snapshotCache := &openAISnapshotCacheStub{
+		snapshotAccounts: []*Account{oauth},
+		accountsByID:     map[int64]*Account{oauth.ID: oauth},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{*oauth}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                &config.Config{Gateway: config.GatewayConfig{DisableOpenAIImagesStreaming: true}},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		schedulerSnapshot:  &SchedulerSnapshotService{cache: snapshotCache},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImages(ctx, &groupID, "direct-images-fallback", "gpt-image-2", nil, OpenAIImagesCapabilityNative)
+
+	require.Error(t, err)
+	require.Nil(t, selection)
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyRateLimitedAccountFallsBackToFreshCandidate(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10101)

@@ -39,6 +39,16 @@ func TestIsOpenAIResponsesWebSocketImageGenerationIntent(t *testing.T) {
 			frame: `{"type":"response.create","model":"gpt-5.5","input":"hello"}`,
 			want:  false,
 		},
+		{
+			name:  "invalid json is not image intent",
+			frame: `{`,
+			want:  false,
+		},
+		{
+			name:  "session update requires an object session",
+			frame: `{"type":"session.update","session":[]}`,
+			want:  false,
+		},
 	}
 
 	for _, tt := range tests {

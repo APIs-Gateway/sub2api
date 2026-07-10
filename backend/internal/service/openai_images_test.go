@@ -145,6 +145,30 @@ func TestForceOpenAIImagesNonStreamingFields_JSONEliminatesDuplicateFields(t *te
 	require.False(t, gjson.GetBytes(out, "stream").Bool())
 }
 
+func TestForceOpenAIImagesNonStreamingFields_RejectsMalformedPayloads(t *testing.T) {
+	_, _, err := forceOpenAIImagesNonStreamingFields([]byte(`{"stream":`), "application/json")
+	require.ErrorContains(t, err, "decode image request JSON")
+
+	_, _, err = forceOpenAIImagesNonStreamingFields([]byte("ignored"), "multipart/form-data")
+	require.ErrorContains(t, err, "multipart boundary is required")
+}
+
+func TestForceOpenAIImagesNonStreaming_NilAndDirectCapability(t *testing.T) {
+	forceOpenAIImagesNonStreaming(nil)
+
+	tests := []struct {
+		capability OpenAIImagesCapability
+		want       OpenAIImagesCapability
+	}{
+		{OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityDirectBasic},
+		{OpenAIImagesCapabilityNative, OpenAIImagesCapabilityDirectNative},
+		{OpenAIImagesCapabilityDirectBasic, OpenAIImagesCapabilityDirectBasic},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, directOpenAIImagesCapability(tt.capability))
+	}
+}
+
 func TestOpenAIImagesRequestModerationBody_JSONEditIncludesInputImageURLs(t *testing.T) {
 	parsed := &OpenAIImagesRequest{
 		Endpoint:       openAIImagesEditsEndpoint,
