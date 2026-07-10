@@ -47,8 +47,10 @@ const (
 type OpenAIImagesCapability string
 
 const (
-	OpenAIImagesCapabilityBasic  OpenAIImagesCapability = "images-basic"
-	OpenAIImagesCapabilityNative OpenAIImagesCapability = "images-native"
+	OpenAIImagesCapabilityBasic        OpenAIImagesCapability = "images-basic"
+	OpenAIImagesCapabilityNative       OpenAIImagesCapability = "images-native"
+	OpenAIImagesCapabilityDirectBasic  OpenAIImagesCapability = "images-direct-basic"
+	OpenAIImagesCapabilityDirectNative OpenAIImagesCapability = "images-direct-native"
 )
 
 type OpenAIImagesUpload struct {
@@ -226,7 +228,11 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 	req.RequiredCapability = classifyOpenAIImagesCapability(req)
 	// 放在能力分类「之后」：默认补的 stream 不参与 Basic/Native 判定，路由口径与改动前完全一致，
 	// 仅改变响应是否流式 + 是否向上游注入 stream/partial_images。
-	applyOpenAIImagesStreamDefault(req)
+	if s.openAIImagesStreamingDisabled() {
+		forceOpenAIImagesNonStreaming(req)
+	} else {
+		applyOpenAIImagesStreamDefault(req)
+	}
 	return req, nil
 }
 
@@ -487,6 +493,29 @@ func applyOpenAIImagesStreamDefault(req *OpenAIImagesRequest) {
 	}
 }
 
+// forceOpenAIImagesNonStreaming applies the server-level policy after request
+// parsing. The forwarded body is normalized separately before it reaches the
+// upstream, so a client-supplied stream:true cannot leak through.
+func forceOpenAIImagesNonStreaming(req *OpenAIImagesRequest) {
+	if req == nil {
+		return
+	}
+	req.Stream = false
+	req.StreamDefaulted = false
+	req.PartialImages = nil
+}
+
+func directOpenAIImagesCapability(capability OpenAIImagesCapability) OpenAIImagesCapability {
+	switch capability {
+	case OpenAIImagesCapabilityBasic:
+		return OpenAIImagesCapabilityDirectBasic
+	case OpenAIImagesCapabilityNative:
+		return OpenAIImagesCapabilityDirectNative
+	default:
+		return capability
+	}
+}
+
 func isOpenAIImageGenerationModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-")
 }
@@ -583,6 +612,9 @@ func (s *OpenAIGatewayService) ForwardImages(
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)
 	case AccountTypeOAuth:
+		if s.openAIImagesRequireDirectAPIKey() {
+			return nil, fmt.Errorf("OpenAI Images API requires an API key account while direct image mode is enabled")
+		}
 		return s.forwardOpenAIImagesOAuth(ctx, c, account, parsed, channelMappedModel)
 	default:
 		return nil, fmt.Errorf("unsupported account type: %s", account.Type)
@@ -617,14 +649,22 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		parsed.Endpoint,
 		account.Type,
 	)
-	if openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportYes && isOpenAIImageModel(upstreamModel) {
+	if !s.openAIImagesRequireDirectAPIKey() &&
+		openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportYes &&
+		isOpenAIImageModel(upstreamModel) {
 		return s.forwardOpenAIImagesOAuth(ctx, c, account, parsed, channelMappedModel)
 	}
 	forwardBody, forwardContentType, err := rewriteOpenAIImagesModel(body, parsed.ContentType, upstreamModel)
 	if err != nil {
 		return nil, err
 	}
-	if account.OpenAIImagesAsyncBridgeEnabled() && parsed.Endpoint == openAIImagesGenerationsEndpoint && !parsed.Multipart {
+	if s.openAIImagesStreamingDisabled() {
+		forwardBody, forwardContentType, err = forceOpenAIImagesNonStreamingFields(forwardBody, forwardContentType)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !s.openAIImagesStreamingDisabled() && account.OpenAIImagesAsyncBridgeEnabled() && parsed.Endpoint == openAIImagesGenerationsEndpoint && !parsed.Multipart {
 		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, false)
 		defer releaseUpstreamCtx()
 		token, _, err := s.GetAccessToken(upstreamCtx, account)
@@ -652,6 +692,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	upstreamReq, err := s.buildOpenAIImagesRequest(upstreamCtx, c, account, forwardBody, forwardContentType, token, parsed.Endpoint)
 	if err != nil {
 		return nil, err
+	}
+	if s.openAIImagesStreamingDisabled() {
+		upstreamReq.Header.Set("Accept", "application/json")
 	}
 
 	proxyURL := ""
@@ -703,6 +746,17 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if s.openAIImagesStreamingDisabled() && isEventStreamResponse(resp.Header) {
+		upErr := &OpenAIImagesUpstreamError{
+			StatusCode:        http.StatusBadGateway,
+			ErrorType:         "upstream_error",
+			Code:              "unexpected_streaming_response",
+			Message:           "Upstream returned a streaming image response while streaming is disabled",
+			UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id")),
+		}
+		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
+		return nil, upErr
+	}
 
 	var usage OpenAIUsage
 	imageCount := parsed.N
@@ -1347,6 +1401,78 @@ func injectOpenAIImagesStreamMultipart(body []byte, contentType string, partialI
 		if err := writer.WriteField("partial_images", strconv.Itoa(*partialImages)); err != nil {
 			return nil, "", fmt.Errorf("append multipart partial_images field: %w", err)
 		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", fmt.Errorf("finalize multipart body: %w", err)
+	}
+	return buffer.Bytes(), writer.FormDataContentType(), nil
+}
+
+// forceOpenAIImagesNonStreamingFields rewrites the exact upstream payload
+// after model mapping. It always supplies stream=false and removes
+// partial_images, including for multipart edits, so a client cannot bypass the
+// server-level non-streaming policy through raw request fields.
+func forceOpenAIImagesNonStreamingFields(body []byte, contentType string) ([]byte, string, error) {
+	mediaType, _, mediaErr := mime.ParseMediaType(contentType)
+	if mediaErr == nil && strings.EqualFold(mediaType, "multipart/form-data") {
+		return forceOpenAIImagesNonStreamingMultipart(body, contentType)
+	}
+	// Decode then re-encode instead of editing a single raw JSON token: JSON
+	// permits duplicate keys and a last-key-wins upstream must never retain a
+	// later stream:true / partial_images value supplied by the client.
+	var request map[string]any
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, "", fmt.Errorf("decode image request JSON: %w", err)
+	}
+	request["stream"] = false
+	delete(request, "partial_images")
+	out, err := json.Marshal(request)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode non-streaming image request JSON: %w", err)
+	}
+	return out, contentType, nil
+}
+
+func forceOpenAIImagesNonStreamingMultipart(body []byte, contentType string) ([]byte, string, error) {
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, "", fmt.Errorf("parse multipart content-type: %w", err)
+	}
+	boundary := strings.TrimSpace(params["boundary"])
+	if boundary == "" {
+		return nil, "", fmt.Errorf("multipart boundary is required")
+	}
+
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	var buffer bytes.Buffer
+	writer := multipart.NewWriter(&buffer)
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("read multipart body: %w", err)
+		}
+		formName := strings.TrimSpace(part.FormName())
+		if part.FileName() == "" && (formName == "stream" || formName == "partial_images") {
+			_ = part.Close()
+			continue
+		}
+		partHeader := cloneMultipartHeader(part.Header)
+		target, err := writer.CreatePart(partHeader)
+		if err != nil {
+			_ = part.Close()
+			return nil, "", fmt.Errorf("create multipart part: %w", err)
+		}
+		if _, err := io.Copy(target, part); err != nil {
+			_ = part.Close()
+			return nil, "", fmt.Errorf("copy multipart part: %w", err)
+		}
+		_ = part.Close()
+	}
+	if err := writer.WriteField("stream", "false"); err != nil {
+		return nil, "", fmt.Errorf("append multipart stream=false: %w", err)
 	}
 	if err := writer.Close(); err != nil {
 		return nil, "", fmt.Errorf("finalize multipart body: %w", err)

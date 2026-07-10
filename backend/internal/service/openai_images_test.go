@@ -59,6 +59,23 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_JSON(t *testing.T) {
 	require.False(t, parsed.Multipart)
 }
 
+func TestOpenAIGatewayServiceParseOpenAIImagesRequest_ServerPolicyForcesNonStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","stream":true,"partial_images":2}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{DisableOpenAIImagesStreaming: true}}}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	require.False(t, parsed.Stream)
+	require.False(t, parsed.StreamDefaulted)
+	require.Nil(t, parsed.PartialImages)
+}
+
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEdit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -91,6 +108,41 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEdit(t *testing.T
 	require.Equal(t, "2K", parsed.SizeTier)
 	require.Len(t, parsed.Uploads, 1)
 	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
+}
+
+func TestForceOpenAIImagesNonStreamingFields_Multipart(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+	require.NoError(t, writer.WriteField("stream", "true"))
+	require.NoError(t, writer.WriteField("partial_images", "2"))
+	part, err := writer.CreateFormFile("image", "source.png")
+	require.NoError(t, err)
+	_, err = part.Write([]byte("fake-image-bytes"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	out, contentType, err := forceOpenAIImagesNonStreamingFields(body.Bytes(), writer.FormDataContentType())
+	require.NoError(t, err)
+	parsed := &OpenAIImagesRequest{Endpoint: openAIImagesEditsEndpoint, N: 1}
+	require.NoError(t, parseOpenAIImagesMultipartRequest(out, contentType, parsed))
+	require.False(t, parsed.Stream)
+	require.True(t, parsed.StreamExplicit)
+	require.Nil(t, parsed.PartialImages)
+	require.Len(t, parsed.Uploads, 1)
+}
+
+func TestForceOpenAIImagesNonStreamingFields_JSONEliminatesDuplicateFields(t *testing.T) {
+	// JSON permits duplicate object keys. A raw token edit can leave the later
+	// stream:true value intact for last-key-wins upstream parsers.
+	body := []byte(`{"prompt":"draw a cat","stream":false,"partial_images":1,"stream":true,"partial_images":2}`)
+
+	out, contentType, err := forceOpenAIImagesNonStreamingFields(body, "application/json")
+	require.NoError(t, err)
+	require.Equal(t, "application/json", contentType)
+	require.Equal(t, 1, bytes.Count(out, []byte(`"stream"`)))
+	require.Zero(t, bytes.Count(out, []byte(`"partial_images"`)))
+	require.False(t, gjson.GetBytes(out, "stream").Bool())
 }
 
 func TestOpenAIImagesRequestModerationBody_JSONEditIncludesInputImageURLs(t *testing.T) {
@@ -510,6 +562,12 @@ func TestAccountSupportsOpenAIImageCapability_OAuthSupportsNative(t *testing.T) 
 
 	require.True(t, account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityBasic))
 	require.True(t, account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityNative))
+	require.False(t, account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityDirectBasic))
+	require.False(t, account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityDirectNative))
+
+	apiKeyAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	require.True(t, apiKeyAccount.SupportsOpenAIImageCapability(OpenAIImagesCapabilityDirectBasic))
+	require.True(t, apiKeyAccount.SupportsOpenAIImageCapability(OpenAIImagesCapabilityDirectNative))
 }
 
 func TestAccountSupportsOpenAIEndpointCapability(t *testing.T) {
@@ -1039,6 +1097,102 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyGenerationUsesConfiguredV1BaseU
 	require.Equal(t, "gpt-image-2", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "aGVsbG8=", gjson.Get(rec.Body.String(), "data.0.b64_json").String())
+}
+
+func TestOpenAIGatewayServiceForwardImages_ServerPolicyUsesDirectNonStreamingImagesAPI(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","stream":true,"partial_images":2}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	upstream := &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"created":1710000007,"data":[{"b64_json":"aGVsbG8="}]}`)),
+		},
+	}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			DisableOpenAIImagesStreaming: true,
+		}},
+		httpUpstream: upstream,
+	}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	require.False(t, parsed.Stream)
+
+	account := &Account{
+		ID:       60,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "test-api-key",
+			"base_url": "https://image-upstream.example/v1",
+		},
+		Extra: map[string]any{"openai_responses_supported": true},
+	}
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Stream)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://image-upstream.example/v1/images/generations", upstream.lastReq.URL.String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "partial_images").Exists())
+	require.NotContains(t, upstream.lastReq.URL.Path, "/responses")
+}
+
+func TestOpenAIGatewayServiceForwardImages_StreamingPolicyRejectsOAuthBridge(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+		DisableOpenAIImagesStreaming: true,
+	}}}
+
+	_, err := svc.ForwardImages(context.Background(), c, &Account{Type: AccountTypeOAuth}, nil, &OpenAIImagesRequest{}, "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires an API key account")
+}
+
+func TestOpenAIGatewayServiceForwardImages_ServerPolicyRejectsUnexpectedUpstreamSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","stream":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	upstream := &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: {\\\"type\\\":\\\"image_generation.completed\\\"}\\n\\n")),
+		},
+	}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{DisableOpenAIImagesStreaming: true}},
+		httpUpstream: upstream,
+	}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	account := &Account{ID: 61, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test-api-key", "base_url": "https://image-upstream.example/v1"}}
+
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.Nil(t, result)
+	var upstreamErr *OpenAIImagesUpstreamError
+	require.ErrorAs(t, err, &upstreamErr)
+	require.Equal(t, "unexpected_streaming_response", upstreamErr.Code)
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.NotContains(t, rec.Header().Get("Content-Type"), "event-stream")
+	upstreamReq := upstream.lastReq
+	require.NotNil(t, upstreamReq)
+	require.Equal(t, "application/json", upstreamReq.Header.Get("Accept"))
 }
 
 func TestOpenAIGatewayServiceForwardImages_APIKeyAsyncBridgePollsTaskAndReturnsFinal(t *testing.T) {

@@ -478,6 +478,9 @@ func (s *OpenAIGatewayService) ResolveChannelMappingAndRestrict(ctx context.Cont
 }
 
 func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.Context, account *Account, apiKey *APIKey) bool {
+	if s.openAIResponsesImageGenerationDisabled() {
+		return false
+	}
 	if override := account.CodexImageGenerationBridgeOverride(); override != nil {
 		return *override
 	}
@@ -2415,9 +2418,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	requestView := newOpenAIRequestView(body)
 	reqModel, reqStream, promptCacheKey := requestView.Model, requestView.Stream, requestView.PromptCacheKey
 	originalModel := reqModel
+	if s.openAIResponsesImageGenerationDisabled() && IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body) {
+		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": OpenAIResponsesImageGenerationDisabledMessage()}})
+		return nil, errors.New("OpenAI Responses image generation is disabled")
+	}
 
 	if account.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
 		fallbackModel := account.GetMappedModel(reqModel)
+		if s.openAIResponsesImageGenerationDisabled() && IsImageGenerationIntent(openAIResponsesEndpoint, fallbackModel, body) {
+			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": OpenAIResponsesImageGenerationDisabledMessage()}})
+			return nil, errors.New("OpenAI Responses image generation is disabled")
+		}
 		if stripped, changed, stripErr := stripCodexSparkImageGenerationToolsFromRawBody(body, fallbackModel); stripErr != nil {
 			return nil, fmt.Errorf("normalize Codex Spark image tools for chat fallback: %w", stripErr)
 		} else if changed {
@@ -2579,6 +2592,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	imageIntent = imageIntent || IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, nil) || isOpenAIImageGenerationModel(upstreamModel)
+	if imageIntent && s.openAIResponsesImageGenerationDisabled() {
+		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": OpenAIResponsesImageGenerationDisabledMessage()}})
+		return nil, errors.New("OpenAI Responses image generation is disabled")
+	}
 	if imageIntent && !imageGenerationAllowed {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
 		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": ImageGenerationPermissionMessage()}})
