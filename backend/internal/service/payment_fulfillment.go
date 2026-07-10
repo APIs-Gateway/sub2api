@@ -473,21 +473,6 @@ func (s *PaymentService) doBalance(ctx context.Context, o *dbent.PaymentOrder, l
 	return s.markBalanceCompletedWithLease(ctx, o, lease, "RECHARGE_SUCCESS")
 }
 
-func (s *PaymentService) markCompleted(ctx context.Context, o *dbent.PaymentOrder, auditAction string) error {
-	now := time.Now()
-	_, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(o.ID), paymentorder.StatusEQ(OrderStatusRecharging)).SetStatus(OrderStatusCompleted).SetCompletedAt(now).Save(ctx)
-	if err != nil {
-		return fmt.Errorf("mark completed: %w", err)
-	}
-	s.writeAuditLog(ctx, o.ID, auditAction, "system", map[string]any{
-		"rechargeCode":   o.RechargeCode,
-		"creditedAmount": o.Amount,
-		"payAmount":      o.PayAmount,
-	})
-	s.dispatchPaymentFulfillmentNotification(o, auditAction)
-	return nil
-}
-
 func (s *PaymentService) markBalanceCompletedWithLease(ctx context.Context, o *dbent.PaymentOrder, lease *balanceFulfillmentLease, auditAction string) error {
 	if lease == nil {
 		return errors.New("missing balance fulfillment lease")
@@ -946,22 +931,6 @@ func (s *PaymentService) applyPointsEarnForOrder(ctx context.Context, o *dbent.P
 	if pts > 0 {
 		baseAmount, _ := pointsEarnBaseAmountForOrder(o)
 		s.writeAuditLog(ctx, o.ID, "POINTS_EARNED", "system", map[string]any{"points": pts, "baseAmount": baseAmount})
-	}
-}
-
-func (s *PaymentService) markFailed(ctx context.Context, oid int64, cause error) {
-	now := time.Now()
-	r := psErrMsg(cause)
-	// Only mark FAILED if still in RECHARGING state — prevents overwriting
-	// a COMPLETED order when markCompleted failed but fulfillment succeeded.
-	c, e := s.entClient.PaymentOrder.Update().
-		Where(paymentorder.IDEQ(oid), paymentorder.StatusEQ(OrderStatusRecharging)).
-		SetStatus(OrderStatusFailed).SetFailedAt(now).SetFailedReason(r).Save(ctx)
-	if e != nil {
-		slog.Error("mark FAILED", "orderID", oid, "error", e)
-	}
-	if c > 0 {
-		s.writeAuditLog(ctx, oid, "FULFILLMENT_FAILED", "system", map[string]any{"reason": r})
 	}
 }
 
