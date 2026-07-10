@@ -5826,7 +5826,6 @@ type OpenAIRecordUsageInput struct {
 	IPAddress          string // 请求的客户端 IP 地址
 	RequestPayloadHash string
 	APIKeyService      APIKeyQuotaUpdater
-	QuotaPlatform      string // handler 在请求 ctx 内经 QuotaPlatform() 算定；后扣 worker ctx 取不到 ForcePlatform。
 	// CyberBlocked 为 true 时把该用量行标记为 cyber（request_type=cyber），计费逻辑不变。
 	CyberBlocked bool
 	ChannelUsageFields
@@ -6160,12 +6159,6 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		return nil
 	}
 
-	// 后扣运行在 worker ctx 上，无法再读取原请求的 ForcePlatform；内部/测试调用保持分组平台回退。
-	quotaPlatform := input.QuotaPlatform
-	if quotaPlatform == "" {
-		quotaPlatform = PlatformFromAPIKey(apiKey)
-	}
-
 	billingErr := func() error {
 		_, err := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
 			Cost:                  cost,
@@ -6177,7 +6170,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			IsSubscriptionBill:    isSubscriptionBilling,
 			AccountRateMultiplier: accountRateMultiplier,
 			APIKeyService:         input.APIKeyService,
-			Platform:              quotaPlatform,
+			Platform:              QuotaPlatform(ctx, apiKey),
 		}, s.billingDeps(), s.usageBillingRepo)
 		return err
 	}()
