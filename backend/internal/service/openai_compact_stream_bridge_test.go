@@ -300,7 +300,8 @@ func TestOpenAICompactSSEKeepalive_OnlyHeartbeatDoesNotCountAsResponse(t *testin
 	defer stop()
 	value, ok := c.Get(openAICompactSSEKeepaliveKey)
 	require.True(t, ok)
-	keepalive := value.(*openAICompactSSEKeepalive)
+	keepalive, ok := value.(*openAICompactSSEKeepalive)
+	require.True(t, ok)
 	require.True(t, keepalive.beat())
 	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
 
