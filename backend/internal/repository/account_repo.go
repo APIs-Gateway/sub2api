@@ -560,7 +560,9 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 		}))
 	}
 
-	total, err := q.Count(ctx)
+	// Count may receive interceptor predicates. Clone first so the list query
+	// remains unchanged when it is reused below.
+	total, err := q.Clone().Count(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
