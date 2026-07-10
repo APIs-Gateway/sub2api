@@ -120,17 +120,15 @@ func TestGetModelPricing_Gpt56UsesStaticFallbackWhenRemoteMissing(t *testing.T) 
 	got := svc.GetModelPricing("gpt-5.6-luna")
 	require.NotNil(t, got)
 	require.InDelta(t, 1e-6, got.InputCostPerToken, 1e-12)
-	require.InDelta(t, 2e-6, got.InputCostPerTokenAbove272KTokens, 1e-12)
 	require.InDelta(t, 6e-6, got.OutputCostPerToken, 1e-12)
-	require.InDelta(t, 9e-6, got.OutputCostPerTokenAbove272KTokens, 1e-12)
 	require.InDelta(t, 1.25e-6, got.CacheCreationInputTokenCost, 1e-12)
-	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCostAbove272KTokens, 1e-12)
 	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCostPriority, 1e-12)
 	require.InDelta(t, 1e-7, got.CacheReadInputTokenCost, 1e-12)
-	require.InDelta(t, 2e-7, got.CacheReadInputTokenCostAbove272KTokens, 1e-12)
-	require.Equal(t, 272000, got.LongContextInputTokenThreshold)
-	require.InDelta(t, 2.0, got.LongContextInputCostMultiplier, 1e-12)
-	require.InDelta(t, 1.5, got.LongContextOutputCostMultiplier, 1e-12)
+	require.Zero(t, got.InputCostPerTokenAbove272KTokens)
+	require.Zero(t, got.OutputCostPerTokenAbove272KTokens)
+	require.Zero(t, got.CacheCreationInputTokenCostAbove272KTokens)
+	require.Zero(t, got.CacheReadInputTokenCostAbove272KTokens)
+	require.Zero(t, got.LongContextInputTokenThreshold)
 }
 
 func TestGetModelPricing_Gpt56StaleCatalogDerivesCacheWriteButExplicitPriceWins(t *testing.T) {
@@ -200,20 +198,16 @@ func TestDefaultPricingIncludesGPT56CacheWritePrices(t *testing.T) {
 	svc.pricingData = pricingData
 
 	for _, tt := range []struct {
-		model          string
-		input          float64
-		cacheRead      float64
-		cacheWrite     float64
-		output         float64
-		longInput      float64
-		longCacheRead  float64
-		longCacheWrite float64
-		longOutput     float64
-		priority       float64
+		model      string
+		input      float64
+		cacheRead  float64
+		cacheWrite float64
+		output     float64
+		priority   float64
 	}{
-		{model: "gpt-5.6-sol", input: 5e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6, output: 30e-6, longInput: 10e-6, longCacheRead: 1e-6, longCacheWrite: 12.5e-6, longOutput: 45e-6, priority: 12.5e-6},
-		{model: "gpt-5.6-terra", input: 2.5e-6, cacheRead: 0.25e-6, cacheWrite: 3.125e-6, output: 15e-6, longInput: 5e-6, longCacheRead: 0.5e-6, longCacheWrite: 6.25e-6, longOutput: 22.5e-6, priority: 6.25e-6},
-		{model: "gpt-5.6-luna", input: 1e-6, cacheRead: 0.1e-6, cacheWrite: 1.25e-6, output: 6e-6, longInput: 2e-6, longCacheRead: 0.2e-6, longCacheWrite: 2.5e-6, longOutput: 9e-6, priority: 2.5e-6},
+		{model: "gpt-5.6-sol", input: 5e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6, output: 30e-6, priority: 12.5e-6},
+		{model: "gpt-5.6-terra", input: 2.5e-6, cacheRead: 0.25e-6, cacheWrite: 3.125e-6, output: 15e-6, priority: 6.25e-6},
+		{model: "gpt-5.6-luna", input: 1e-6, cacheRead: 0.1e-6, cacheWrite: 1.25e-6, output: 6e-6, priority: 2.5e-6},
 	} {
 		t.Run(tt.model, func(t *testing.T) {
 			got := svc.GetModelPricing(tt.model)
@@ -222,10 +216,10 @@ func TestDefaultPricingIncludesGPT56CacheWritePrices(t *testing.T) {
 			require.InDelta(t, tt.cacheRead, got.CacheReadInputTokenCost, 1e-12)
 			require.InDelta(t, tt.cacheWrite, got.CacheCreationInputTokenCost, 1e-12)
 			require.InDelta(t, tt.output, got.OutputCostPerToken, 1e-12)
-			require.InDelta(t, tt.longInput, got.InputCostPerTokenAbove272KTokens, 1e-12)
-			require.InDelta(t, tt.longCacheRead, got.CacheReadInputTokenCostAbove272KTokens, 1e-12)
-			require.InDelta(t, tt.longCacheWrite, got.CacheCreationInputTokenCostAbove272KTokens, 1e-12)
-			require.InDelta(t, tt.longOutput, got.OutputCostPerTokenAbove272KTokens, 1e-12)
+			require.Zero(t, got.InputCostPerTokenAbove272KTokens)
+			require.Zero(t, got.CacheReadInputTokenCostAbove272KTokens)
+			require.Zero(t, got.CacheCreationInputTokenCostAbove272KTokens)
+			require.Zero(t, got.OutputCostPerTokenAbove272KTokens)
 			require.InDelta(t, tt.priority, got.CacheCreationInputTokenCostPriority, 1e-12)
 		})
 	}

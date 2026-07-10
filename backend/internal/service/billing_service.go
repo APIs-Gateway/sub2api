@@ -130,10 +130,6 @@ func newOpenAIGPT56FallbackPricing(input, output, cacheRead float64) *ModelPrici
 		CacheCreationPricePerTokenPriority: input * 2 * 1.25,
 		CacheReadPricePerToken:             cacheRead,
 		CacheReadPricePerTokenPriority:     cacheRead * 2,
-		LongContextInputThreshold:          openAIGPT54LongContextInputThreshold,
-		LongContextInputMultiplier:         openAIGPT54LongContextInputMultiplier,
-		LongContextOutputMultiplier:        openAIGPT54LongContextOutputMultiplier,
-		PriorityExcludesLongContext:        true,
 	}
 }
 
@@ -1040,17 +1036,18 @@ func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *
 		return nil
 	}
 	isGPT56 := isOpenAIGPT56Model(model)
-	if !isGPT56 && !isOpenAIGPT54Model(model) {
+	usesLegacyLongContextPricing := !isGPT56 && isOpenAIGPT54Model(model)
+	if !isGPT56 && !usesLegacyLongContextPricing {
 		return pricing
 	}
-	needsLongContext := pricing.LongContextInputThreshold <= 0 || pricing.LongContextInputMultiplier <= 0 || pricing.LongContextOutputMultiplier <= 0
-	// See docs/specs/gpt-5-6-cache-write-pricing.md §3: only derive a missing
-	// GPT-5.6 cache-write price; an explicit channel value (including zero) wins.
+	needsLongContext := usesLegacyLongContextPricing &&
+		(pricing.LongContextInputThreshold <= 0 || pricing.LongContextInputMultiplier <= 0 || pricing.LongContextOutputMultiplier <= 0)
+	// Only derive a missing GPT-5.6 cache-write price; an explicit channel value
+	// (including zero) wins.
 	needsCacheWriteFallback := isGPT56 && !pricing.CacheCreationPriceExplicit &&
 		((pricing.CacheCreationPricePerToken <= 0 && pricing.InputPricePerToken > 0) ||
 			(pricing.CacheCreationPricePerTokenPriority <= 0 && pricing.InputPricePerTokenPriority > 0))
-	needsPriorityLongContextGuard := isGPT56 && !pricing.PriorityExcludesLongContext
-	if !needsLongContext && !needsCacheWriteFallback && !needsPriorityLongContextGuard {
+	if !needsLongContext && !needsCacheWriteFallback {
 		return pricing
 	}
 	cloned := *pricing
@@ -1062,20 +1059,16 @@ func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *
 			cloned.CacheCreationPricePerTokenPriority = cloned.InputPricePerTokenPriority * 1.25
 		}
 	}
-	if cloned.LongContextInputThreshold <= 0 {
-		cloned.LongContextInputThreshold = openAIGPT54LongContextInputThreshold
-	}
-	if cloned.LongContextInputMultiplier <= 0 {
-		cloned.LongContextInputMultiplier = openAIGPT54LongContextInputMultiplier
-	}
-	if cloned.LongContextOutputMultiplier <= 0 {
-		cloned.LongContextOutputMultiplier = openAIGPT54LongContextOutputMultiplier
-	}
-	// GPT-5.6 publishes independent priority and long-context price columns;
-	// OpenAI does not offer Priority processing for long-context requests, so
-	// they are alternatives rather than multiplicative tiers.
-	if isGPT56 {
-		cloned.PriorityExcludesLongContext = true
+	if usesLegacyLongContextPricing {
+		if cloned.LongContextInputThreshold <= 0 {
+			cloned.LongContextInputThreshold = openAIGPT54LongContextInputThreshold
+		}
+		if cloned.LongContextInputMultiplier <= 0 {
+			cloned.LongContextInputMultiplier = openAIGPT54LongContextInputMultiplier
+		}
+		if cloned.LongContextOutputMultiplier <= 0 {
+			cloned.LongContextOutputMultiplier = openAIGPT54LongContextOutputMultiplier
+		}
 	}
 	return &cloned
 }

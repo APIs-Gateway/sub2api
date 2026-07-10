@@ -1155,6 +1155,42 @@ func TestResponsesEventToChatChunks_Completed(t *testing.T) {
 	assert.Equal(t, 10, chunks[1].Usage.PromptTokensDetails.CacheWriteTokens)
 }
 
+func TestChatUsageToResponsesUsagePreservesCacheCreationTokens(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		details        ChatTokenDetails
+		wantCreation   int
+		wantCacheWrite int
+	}{
+		{
+			name:           "cache creation fallback",
+			details:        ChatTokenDetails{CacheCreationTokens: 11},
+			wantCreation:   11,
+			wantCacheWrite: 0,
+		},
+		{
+			name:           "cache write takes precedence",
+			details:        ChatTokenDetails{CacheCreationTokens: 11, CacheWriteTokens: 13},
+			wantCreation:   13,
+			wantCacheWrite: 13,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := ChatUsageToResponsesUsage(&ChatUsage{
+				PromptTokens:        42,
+				CompletionTokens:    7,
+				PromptTokensDetails: &tt.details,
+			})
+
+			require.NotNil(t, usage)
+			require.Equal(t, tt.wantCreation, usage.CacheCreationInputTokens)
+			require.NotNil(t, usage.InputTokensDetails)
+			require.Equal(t, tt.details.CacheCreationTokens, usage.InputTokensDetails.CacheCreationTokens)
+			require.Equal(t, tt.wantCacheWrite, usage.InputTokensDetails.CacheWriteTokens)
+		})
+	}
+}
+
 func TestResponsesEventToChatChunks_CompletedWithReasoningTokens(t *testing.T) {
 	state := NewResponsesEventToChatState()
 	state.Model = "gpt-5.5"
