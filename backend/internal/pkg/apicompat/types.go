@@ -249,11 +249,31 @@ type ResponsesContentPart struct {
 
 // ResponsesTool describes a tool in the Responses API.
 type ResponsesTool struct {
-	Type        string          `json:"type"` // "function" | "web_search" | "local_shell" etc.
+	Type        string          `json:"type"` // "function" | "custom" | "web_search" | "local_shell" etc.
 	Name        string          `json:"name,omitempty"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
 	Strict      *bool           `json:"strict,omitempty"`
+
+	// type=namespace 的子工具列表（tools 与 children 二选一，语义相同）。
+	Tools    []ResponsesTool `json:"tools,omitempty"`
+	Children []ResponsesTool `json:"children,omitempty"`
+}
+
+// UnmarshalJSON accepts the string shorthand Codex uses for custom tools.
+func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		*t = ResponsesTool{Type: "custom", Name: name}
+		return nil
+	}
+	type alias ResponsesTool
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*t = ResponsesTool(decoded)
+	return nil
 }
 
 // ResponsesResponse is the non-streaming response from POST /v1/responses.
@@ -301,9 +321,35 @@ type ResponsesOutput struct {
 	CallID    string `json:"call_id,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
+	// Namespace identifies a namespace child function for Codex routing.
+	Namespace string `json:"namespace,omitempty"`
+
+	// type=custom_tool_call
+	Input string `json:"input,omitempty"`
 
 	// type=web_search_call
 	Action *WebSearchAction `json:"action,omitempty"`
+}
+
+// MarshalJSON renders tool_search_call with the Responses wire shape. Unlike a
+// function_call, tool_search arguments are a JSON value and execution must be
+// client for Codex to invoke the local tool search handler.
+func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
+	type alias ResponsesOutput
+	if o.Type != "tool_search_call" {
+		return json.Marshal(alias(o))
+	}
+	out := map[string]any{
+		"type":      o.Type,
+		"id":        o.ID,
+		"call_id":   o.CallID,
+		"execution": "client",
+		"arguments": toolSearchCallArgumentsJSON(o.Arguments),
+	}
+	if o.Status != "" {
+		out["status"] = o.Status
+	}
+	return json.Marshal(out)
 }
 
 // WebSearchAction describes the search action in a web_search_call output item.
@@ -443,6 +489,7 @@ type ResponsesStreamEvent struct {
 	CallID    string `json:"call_id,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
+	Input     string `json:"input,omitempty"`
 
 	// response.reasoning_summary_text.delta / done
 	// Reuses Text/Delta fields above, SummaryIndex identifies which summary part
