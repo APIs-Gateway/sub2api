@@ -216,13 +216,12 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 		}
 		return nil, fmt.Errorf("read upstream body: %w", err)
 	}
-
 	var ccResp apicompat.ChatCompletionsResponse
 	if err := json.Unmarshal(respBody, &ccResp); err != nil {
 		writeAnthropicError(c, http.StatusBadGateway, "api_error", "Failed to parse upstream response")
 		return nil, fmt.Errorf("parse chat completions response: %w", err)
 	}
-	responsesResp := apicompat.ChatCompletionsResponseToResponses(&ccResp, originalModel)
+	responsesResp := apicompat.ChatCompletionsResponseToResponses(&ccResp, originalModel, nil, false, nil)
 	anthropicResp := apicompat.ResponsesToAnthropic(responsesResp, originalModel)
 
 	usage := OpenAIUsage{}
