@@ -401,6 +401,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		// capturedSessionModel 的读写都发生在该 goroutine 内，因此无需
 		// 加锁/原子化。
 		filter: func(msgType coderws.MessageType, payload []byte) ([]byte, *OpenAIFastBlockedError, error) {
+			// JSON can be carried in either a text or binary WebSocket frame.
+			// Check this policy before hooks/Fast Policy so a later
+			// response.create or session.update cannot activate image generation
+			// after the connection's first non-image request.
+			if err := s.rejectOpenAIResponsesWebSocketImageGenerationFrame(msgType, payload); err != nil {
+				MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+				return payload, nil, err
+			}
 			if msgType != coderws.MessageText {
 				return payload, nil, nil
 			}

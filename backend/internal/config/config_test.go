@@ -88,6 +88,12 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
+	if cfg.Gateway.DisableOpenAIImagesStreaming {
+		t.Fatalf("Gateway.DisableOpenAIImagesStreaming = true, want false")
+	}
+	if cfg.Gateway.DisableOpenAIResponsesImageGeneration {
+		t.Fatalf("Gateway.DisableOpenAIResponsesImageGeneration = true, want false")
+	}
 
 	if !cfg.Gateway.OpenAIWS.Enabled {
 		t.Fatalf("Gateway.OpenAIWS.Enabled = false, want true")

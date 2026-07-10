@@ -1495,7 +1495,10 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 	}
 
-	if isOpenAIImageModel(modelID) && openai_compat.ShouldUseResponsesAPI(account.Extra) {
+	if isOpenAIImageModel(modelID) &&
+		!OpenAIImagesStreamingDisabled(s.cfg) &&
+		!OpenAIResponsesImageGenerationDisabled(s.cfg) &&
+		openai_compat.ShouldUseResponsesAPI(account.Extra) {
 		return s.testOpenAIImageAPIKeyResponses(c, ctx, account, modelID, prompt, normalizedBaseURL, authToken)
 	}
 

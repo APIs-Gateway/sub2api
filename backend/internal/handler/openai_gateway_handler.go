@@ -259,6 +259,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	imageIntent := service.IsImageGenerationIntent("/v1/responses", reqModel, body)
+	if imageIntent && service.OpenAIResponsesImageGenerationDisabled(h.cfg) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", service.OpenAIResponsesImageGenerationDisabledMessage())
+		return
+	}
 	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
@@ -1307,7 +1311,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 
-	if service.IsImageGenerationIntent("/v1/responses", reqModel, firstMessage) && !service.GroupAllowsImageGeneration(apiKey.Group) {
+	imageIntent := service.IsOpenAIResponsesWebSocketImageGenerationIntent(firstMessage)
+	if imageIntent && service.OpenAIResponsesImageGenerationDisabled(h.cfg) {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.OpenAIResponsesImageGenerationDisabledMessage())
+		return
+	}
+	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.ImageGenerationPermissionMessage())
 		return
 	}
