@@ -13,10 +13,20 @@ const (
 	HvoyProviderPricingSchemaVersion = "1.1"
 	HvoyProviderPricingCurrency      = "CNY"
 	HvoyProviderPricingUnitTokens    = "per_1m_tokens"
-	HvoyProviderPricingGroupName     = "codex"
+	HvoyProviderPricingGroupName     = "codex plus"
 )
 
-var hvoyProviderPricingModels = []string{"gpt-5.5", "gpt-5.4"}
+var hvoyProviderPricingModels = []hvoyProviderPricingModelRef{
+	{modelName: "gpt-5.5", groupName: HvoyProviderPricingGroupName},
+	{modelName: "gpt-5.4", groupName: HvoyProviderPricingGroupName},
+	{modelName: "gpt-5.6-sol", groupName: HvoyProviderPricingGroupName},
+	{modelName: "gpt-5.6-terra", groupName: HvoyProviderPricingGroupName},
+}
+
+type hvoyProviderPricingModelRef struct {
+	modelName string
+	groupName string
+}
 
 type HvoyProviderPricingResponse struct {
 	SchemaVersion string                  `json:"schema_version"`
@@ -58,12 +68,12 @@ func (s *PricingService) BuildHvoyProviderPricing(paymentMultiplier float64, sit
 	}
 
 	models := make([]HvoyProviderPricingModel, 0, len(hvoyProviderPricingModels))
-	for _, modelName := range hvoyProviderPricingModels {
-		pricing := s.GetModelPricing(modelName)
+	for _, model := range hvoyProviderPricingModels {
+		pricing := s.GetModelPricing(model.modelName)
 		if pricing == nil {
 			models = append(models, HvoyProviderPricingModel{
-				ModelName: modelName,
-				GroupName: HvoyProviderPricingGroupName,
+				ModelName: model.modelName,
+				GroupName: model.groupName,
 				Enabled:   false,
 				Note:      "pricing unavailable",
 			})
@@ -71,8 +81,8 @@ func (s *PricingService) BuildHvoyProviderPricing(paymentMultiplier float64, sit
 		}
 
 		models = append(models, HvoyProviderPricingModel{
-			ModelName:          modelName,
-			GroupName:          HvoyProviderPricingGroupName,
+			ModelName:          model.modelName,
+			GroupName:          model.groupName,
 			InputPrice:         usdPerTokenToCNYPerMTok(pricing.InputCostPerToken, multiplier),
 			OutputPrice:        optionalUSDPerTokenToCNYPerMTok(pricing.OutputCostPerToken, multiplier),
 			CacheInputPrice:    optionalUSDPerTokenToCNYPerMTok(pricing.CacheReadInputTokenCost, multiplier),

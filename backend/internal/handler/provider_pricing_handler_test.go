@@ -82,9 +82,16 @@ func TestProviderPricingHandlerGetPricing(t *testing.T) {
 	require.True(t, resp.Success)
 	require.Equal(t, "Codex API", resp.Data.SiteName)
 	require.Equal(t, "codex.example.com", resp.Data.SiteDomain)
-	require.Len(t, resp.Data.Models, 2)
+	require.Len(t, resp.Data.Models, 4)
 	require.Equal(t, "gpt-5.5", resp.Data.Models[0].ModelName)
+	require.Equal(t, "codex plus", resp.Data.Models[0].GroupName)
 	require.Equal(t, 5.0, resp.Data.Models[0].InputPrice)
+	require.Equal(t, "gpt-5.6-sol", resp.Data.Models[2].ModelName)
+	require.Equal(t, "codex plus", resp.Data.Models[2].GroupName)
+	require.Equal(t, 10.0, resp.Data.Models[2].InputPrice)
+	require.Equal(t, "gpt-5.6-terra", resp.Data.Models[3].ModelName)
+	require.Equal(t, "codex plus", resp.Data.Models[3].GroupName)
+	require.Equal(t, 5.0, resp.Data.Models[3].InputPrice)
 }
 
 func TestProviderPricingHandlerGetPricingConfigError(t *testing.T) {
