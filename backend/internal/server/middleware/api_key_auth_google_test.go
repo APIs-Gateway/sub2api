@@ -24,6 +24,7 @@ type fakeAPIKeyRepo struct {
 }
 
 type fakeGoogleSubscriptionRepo struct {
+	getByID        func(ctx context.Context, id int64) (*service.UserSubscription, error)
 	getActive      func(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error)
 	updateStatus   func(ctx context.Context, subscriptionID int64, status string) error
 	activateWindow func(ctx context.Context, id int64, start time.Time) error
@@ -115,6 +116,9 @@ func (f fakeGoogleSubscriptionRepo) Create(ctx context.Context, sub *service.Use
 	return errors.New("not implemented")
 }
 func (f fakeGoogleSubscriptionRepo) GetByID(ctx context.Context, id int64) (*service.UserSubscription, error) {
+	if f.getByID != nil {
+		return f.getByID(ctx, id)
+	}
 	return nil, errors.New("not implemented")
 }
 func (f fakeGoogleSubscriptionRepo) GetByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error) {
@@ -183,19 +187,22 @@ func (f fakeGoogleSubscriptionRepo) ActivateWindows(ctx context.Context, id int6
 	}
 	return errors.New("not implemented")
 }
-func (f fakeGoogleSubscriptionRepo) ResetDailyUsage(ctx context.Context, id int64, start time.Time) error {
+func (f fakeGoogleSubscriptionRepo) ResetUsageWindows(context.Context, int64, bool, bool, bool, time.Time) error {
+	return errors.New("not implemented")
+}
+func (f fakeGoogleSubscriptionRepo) ResetDailyUsage(ctx context.Context, id int64, _ *time.Time, start time.Time) error {
 	if f.resetDaily != nil {
 		return f.resetDaily(ctx, id, start)
 	}
 	return errors.New("not implemented")
 }
-func (f fakeGoogleSubscriptionRepo) ResetWeeklyUsage(ctx context.Context, id int64, start time.Time) error {
+func (f fakeGoogleSubscriptionRepo) ResetWeeklyUsage(ctx context.Context, id int64, _ *time.Time, start time.Time) error {
 	if f.resetWeekly != nil {
 		return f.resetWeekly(ctx, id, start)
 	}
 	return errors.New("not implemented")
 }
-func (f fakeGoogleSubscriptionRepo) ResetMonthlyUsage(ctx context.Context, id int64, start time.Time) error {
+func (f fakeGoogleSubscriptionRepo) ResetMonthlyUsage(ctx context.Context, id int64, _ *time.Time, start time.Time) error {
 	if f.resetMonthly != nil {
 		return f.resetMonthly(ctx, id, start)
 	}
@@ -773,9 +780,84 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionGroupAllowedByBalance(t *t
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	// burn-down 模型：Gemini 原生端点也改为纯余额放行，不再按订阅日限额返回 429。
-	// 用户余额 10 > 0 → 放行。
+	// 窗口耗尽时钱包仍可兜底，保持 fork 的 AdmitWindow 语义。
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestAPIKeyAuthWithSubscriptionGoogle_RevalidatesCASLoserFromDatabase(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	limit := 1.0
+	group := &service.Group{
+		ID:       78,
+		Name:     "gemini-cas",
+		Status:   service.StatusActive,
+		Platform: service.PlatformGemini,
+		Hydrated: true,
+	}
+	user := &service.User{
+		ID:      1000,
+		Role:    service.RoleUser,
+		Status:  service.StatusActive,
+		Balance: 0,
+	}
+	apiKey := &service.APIKey{
+		ID:     502,
+		UserID: user.ID,
+		Key:    "google-cas-loser",
+		Status: service.StatusActive,
+		User:   user,
+		Group:  group,
+	}
+	apiKey.GroupID = &group.ID
+	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
+		getByKey: func(context.Context, string) (*service.APIKey, error) {
+			clone := *apiKey
+			return &clone, nil
+		},
+	})
+
+	oldWindowStart := time.Now().Add(-48 * time.Hour)
+	currentWindowStart := time.Now()
+	stale := &service.UserSubscription{
+		ID:               602,
+		UserID:           user.ID,
+		GroupID:          group.ID,
+		Status:           service.SubscriptionStatusActive,
+		StartsAt:         time.Now().Add(-72 * time.Hour),
+		ExpiresAt:        time.Now().Add(72 * time.Hour),
+		DailyLimitUSD:    &limit,
+		DailyWindowStart: &oldWindowStart,
+		DailyUsageUSD:    limit,
+	}
+	fresh := *stale
+	fresh.DailyWindowStart = &currentWindowStart
+	fresh.DailyUsageUSD = limit
+	subscriptionService := service.NewSubscriptionService(nil, fakeGoogleSubscriptionRepo{
+		getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+			clone := *stale
+			return &clone, nil
+		},
+		getByID: func(context.Context, int64) (*service.UserSubscription, error) {
+			clone := fresh
+			return &clone, nil
+		},
+		resetDaily: func(context.Context, int64, time.Time) error {
+			return nil
+		},
+	}, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
+	t.Cleanup(subscriptionService.Stop)
+
+	r := gin.New()
+	r.Use(APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, &config.Config{RunMode: config.RunModeStandard}))
+	r.GET("/v1beta/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	req := httptest.NewRequest(http.MethodGet, "/v1beta/test", nil)
+	req.Header.Set("x-goog-api-key", apiKey.Key)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Contains(t, rec.Body.String(), "DAILY_LIMIT_EXCEEDED")
 }
 
 func (f fakeGoogleSubscriptionRepo) SetOverdraftDays(context.Context, int64, int64, *int) (bool, error) {
