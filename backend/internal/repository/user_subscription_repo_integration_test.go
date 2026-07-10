@@ -610,6 +610,60 @@ func (s *UserSubscriptionRepoSuite) TestResetDailyUsage_StaleResetDoesNotClearNe
 	s.Require().WithinDuration(newWindowStart, *got.DailyWindowStart, time.Microsecond)
 }
 
+func (s *UserSubscriptionRepoSuite) TestConditionalUsageResets_StaleAndMissingRows() {
+	type resetCase struct {
+		name  string
+		reset func(context.Context, int64, *time.Time, time.Time) error
+		usage func(*service.UserSubscription) float64
+	}
+
+	cases := []resetCase{
+		{
+			name:  "daily",
+			reset: s.repo.ResetDailyUsage,
+			usage: func(sub *service.UserSubscription) float64 { return sub.DailyUsageUSD },
+		},
+		{
+			name:  "weekly",
+			reset: s.repo.ResetWeeklyUsage,
+			usage: func(sub *service.UserSubscription) float64 { return sub.WeeklyUsageUSD },
+		},
+		{
+			name:  "monthly",
+			reset: s.repo.ResetMonthlyUsage,
+			usage: func(sub *service.UserSubscription) float64 { return sub.MonthlyUsageUSD },
+		},
+	}
+
+	for _, tc := range cases {
+		s.T().Run(tc.name, func(t *testing.T) {
+			user := s.mustCreateUser("reset-conditional-"+tc.name+"@test.com", service.RoleUser)
+			group := s.mustCreateGroup("g-reset-conditional-" + tc.name)
+			oldWindowStart := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+			sub := s.mustCreateSubscription(user.ID, group.ID, func(c *dbent.UserSubscriptionCreate) {
+				c.SetDailyWindowStart(oldWindowStart)
+				c.SetWeeklyWindowStart(oldWindowStart)
+				c.SetMonthlyWindowStart(oldWindowStart)
+				c.SetDailyUsageUsd(10)
+				c.SetWeeklyUsageUsd(10)
+				c.SetMonthlyUsageUsd(10)
+			})
+			newWindowStart := oldWindowStart.Add(24 * time.Hour)
+
+			s.Require().NoError(tc.reset(s.ctx, sub.ID, &oldWindowStart, newWindowStart), "matching window reset")
+			s.Require().NoError(s.repo.IncrementUsage(s.ctx, sub.ID, 3))
+			s.Require().NoError(tc.reset(s.ctx, sub.ID, &oldWindowStart, newWindowStart), "stale reset must be a no-op")
+
+			got, err := s.repo.GetByID(s.ctx, sub.ID)
+			s.Require().NoError(err)
+			s.Require().InDelta(3, tc.usage(got), 1e-6)
+
+			err = tc.reset(s.ctx, sub.ID+999999, &oldWindowStart, newWindowStart)
+			s.Require().ErrorIs(err, service.ErrSubscriptionNotFound, "missing row must retain not-found semantics")
+		})
+	}
+}
+
 func (s *UserSubscriptionRepoSuite) TestResetUsageWindows_AdminResetClearsSelectedCurrentWindow() {
 	user := s.mustCreateUser("admin-reset-current@test.com", service.RoleUser)
 	group := s.mustCreateGroup("g-admin-reset-current")

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,6 +27,8 @@ type resetQuotaUserSubRepoStub struct {
 	resetMonthlyErr      error
 	conditionalResetNoop bool
 	resetDailyExpected   *time.Time
+	activateCalled       bool
+	activateErr          error
 }
 
 type invalidateSubscriptionCacheErrorStub struct {
@@ -44,6 +47,19 @@ func (r *resetQuotaUserSubRepoStub) GetByID(_ context.Context, id int64) (*UserS
 	}
 	cp := *r.sub
 	return &cp, nil
+}
+
+func (r *resetQuotaUserSubRepoStub) ActivateWindows(_ context.Context, id int64, start time.Time) error {
+	r.activateCalled = true
+	if r.activateErr != nil {
+		return r.activateErr
+	}
+	if r.sub != nil && r.sub.ID == id {
+		r.sub.DailyWindowStart = &start
+		r.sub.WeeklyWindowStart = &start
+		r.sub.MonthlyWindowStart = &start
+	}
+	return nil
 }
 
 func (r *resetQuotaUserSubRepoStub) ResetUsageWindows(_ context.Context, _ int64, resetDaily, resetWeekly, resetMonthly bool, windowStart time.Time) error {
@@ -294,4 +310,110 @@ func TestEnsureWindowMaintenance_RejectsNilSubscription(t *testing.T) {
 	_, err := svc.EnsureWindowMaintenance(context.Background(), nil)
 
 	require.ErrorIs(t, err, ErrSubscriptionNilInput)
+}
+
+func TestEnsureWindowMaintenance_ActivatesUninitializedWindows(t *testing.T) {
+	stub := &resetQuotaUserSubRepoStub{
+		sub: &UserSubscription{
+			ID:        11,
+			UserID:    20,
+			GroupID:   30,
+			Status:    SubscriptionStatusActive,
+			StartsAt:  time.Now().Add(-time.Hour),
+			ExpiresAt: time.Now().Add(48 * time.Hour),
+		},
+	}
+	svc := newResetQuotaSvc(stub)
+	stale := *stub.sub
+
+	refreshed, err := svc.EnsureWindowMaintenance(context.Background(), &stale)
+
+	require.NoError(t, err)
+	require.True(t, stub.activateCalled)
+	require.NotNil(t, refreshed.DailyWindowStart)
+	require.NotNil(t, refreshed.WeeklyWindowStart)
+	require.NotNil(t, refreshed.MonthlyWindowStart)
+}
+
+func TestEnsureWindowMaintenance_ReturnsActivationAndReadErrors(t *testing.T) {
+	t.Run("activation error", func(t *testing.T) {
+		activationErr := errors.New("activation failed")
+		stub := &resetQuotaUserSubRepoStub{activateErr: activationErr}
+		svc := newResetQuotaSvc(stub)
+
+		_, err := svc.EnsureWindowMaintenance(context.Background(), &UserSubscription{ID: 12})
+
+		require.ErrorIs(t, err, activationErr)
+		require.True(t, stub.activateCalled)
+	})
+
+	t.Run("fresh read error", func(t *testing.T) {
+		windowStart := time.Now()
+		svc := newResetQuotaSvc(&resetQuotaUserSubRepoStub{})
+
+		_, err := svc.EnsureWindowMaintenance(context.Background(), &UserSubscription{
+			ID:               13,
+			DailyWindowStart: &windowStart,
+		})
+
+		require.ErrorIs(t, err, ErrSubscriptionNotFound)
+	})
+}
+
+func TestEnsureWindowMaintenance_WaitsForConfiguredL1Invalidation(t *testing.T) {
+	windowStart := time.Now()
+	stub := &resetQuotaUserSubRepoStub{
+		sub: &UserSubscription{
+			ID:               14,
+			UserID:           20,
+			GroupID:          30,
+			Status:           SubscriptionStatusActive,
+			StartsAt:         time.Now().Add(-time.Hour),
+			ExpiresAt:        time.Now().Add(48 * time.Hour),
+			DailyWindowStart: &windowStart,
+		},
+	}
+	svc := NewSubscriptionService(groupRepoNoop{}, stub, nil, nil, nil, nil, nil, &config.Config{
+		SubscriptionCache: config.SubscriptionCacheConfig{L1Size: 16, L1TTLSeconds: 60},
+	})
+	t.Cleanup(svc.Stop)
+	input := *stub.sub
+
+	refreshed, err := svc.EnsureWindowMaintenance(context.Background(), &input)
+
+	require.NoError(t, err)
+	require.NotNil(t, refreshed)
+	require.NotNil(t, svc.subCacheL1)
+}
+
+func TestCheckAndResetWindows_ResetsAllExpiredWindows(t *testing.T) {
+	now := time.Now()
+	dailyStart := now.Add(-48 * time.Hour)
+	weeklyStart := now.Add(-8 * 24 * time.Hour)
+	monthlyStart := now.AddDate(0, -2, 0)
+	stub := &resetQuotaUserSubRepoStub{}
+	svc := newResetQuotaSvc(stub)
+	sub := &UserSubscription{
+		ID:                 15,
+		UserID:             20,
+		GroupID:            30,
+		StartsAt:           now.Add(-72 * time.Hour),
+		ExpiresAt:          now.Add(72 * time.Hour),
+		DailyWindowStart:   &dailyStart,
+		WeeklyWindowStart:  &weeklyStart,
+		MonthlyWindowStart: &monthlyStart,
+		DailyUsageUSD:      1,
+		WeeklyUsageUSD:     2,
+		MonthlyUsageUSD:    3,
+	}
+
+	err := svc.CheckAndResetWindows(context.Background(), sub)
+
+	require.NoError(t, err)
+	require.True(t, stub.resetDailyCalled)
+	require.True(t, stub.resetWeeklyCalled)
+	require.True(t, stub.resetMonthlyCalled)
+	require.Zero(t, sub.DailyUsageUSD)
+	require.Zero(t, sub.WeeklyUsageUSD)
+	require.Zero(t, sub.MonthlyUsageUSD)
 }

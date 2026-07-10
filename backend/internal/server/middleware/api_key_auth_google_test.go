@@ -860,6 +860,88 @@ func TestAPIKeyAuthWithSubscriptionGoogle_RevalidatesCASLoserFromDatabase(t *tes
 	require.Contains(t, rec.Body.String(), "DAILY_LIMIT_EXCEEDED")
 }
 
+func TestAPIKeyAuthWithSubscriptionGoogle_MaintenanceAndWalletFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	group := &service.Group{ID: 79, Name: "gemini-maintenance", Status: service.StatusActive, Platform: service.PlatformGemini, Hydrated: true}
+	newAPIKeyService := func(user *service.User, key string) (*service.APIKeyService, *service.APIKey) {
+		apiKey := &service.APIKey{ID: 503, UserID: user.ID, Key: key, Status: service.StatusActive, User: user, Group: group}
+		apiKey.GroupID = &group.ID
+		return newTestAPIKeyService(fakeAPIKeyRepo{
+			getByKey: func(context.Context, string) (*service.APIKey, error) {
+				clone := *apiKey
+				return &clone, nil
+			},
+		}), apiKey
+	}
+
+	t.Run("maintenance failure returns google 500", func(t *testing.T) {
+		user := &service.User{ID: 1001, Role: service.RoleUser, Status: service.StatusActive}
+		apiKeyService, apiKey := newAPIKeyService(user, "google-maintenance-error")
+		limit := 1.0
+		oldWindowStart := time.Now().Add(-48 * time.Hour)
+		subscriptionService := service.NewSubscriptionService(nil, fakeGoogleSubscriptionRepo{
+			getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+				return &service.UserSubscription{
+					ID:               603,
+					UserID:           user.ID,
+					GroupID:          group.ID,
+					Status:           service.SubscriptionStatusActive,
+					StartsAt:         time.Now().Add(-72 * time.Hour),
+					ExpiresAt:        time.Now().Add(72 * time.Hour),
+					DailyLimitUSD:    &limit,
+					DailyWindowStart: &oldWindowStart,
+				}, nil
+			},
+			resetDaily: func(context.Context, int64, time.Time) error { return errors.New("reset failed") },
+		}, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
+		t.Cleanup(subscriptionService.Stop)
+		r := gin.New()
+		r.Use(APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, &config.Config{RunMode: config.RunModeStandard}))
+		r.GET("/v1beta/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1beta/test", nil)
+		req.Header.Set("x-goog-api-key", apiKey.Key)
+		r.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusInternalServerError, rec.Code)
+		require.Contains(t, rec.Body.String(), "Failed to maintain subscription usage windows")
+	})
+
+	t.Run("window limit falls back to positive wallet", func(t *testing.T) {
+		user := &service.User{ID: 1002, Role: service.RoleUser, Status: service.StatusActive, Balance: 5}
+		apiKeyService, apiKey := newAPIKeyService(user, "google-wallet-fallback")
+		limit := 1.0
+		windowStart := time.Now()
+		subscriptionService := service.NewSubscriptionService(nil, fakeGoogleSubscriptionRepo{
+			getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+				return &service.UserSubscription{
+					ID:               604,
+					UserID:           user.ID,
+					GroupID:          group.ID,
+					Status:           service.SubscriptionStatusActive,
+					StartsAt:         time.Now().Add(-time.Hour),
+					ExpiresAt:        time.Now().Add(48 * time.Hour),
+					DailyLimitUSD:    &limit,
+					DailyWindowStart: &windowStart,
+					DailyUsageUSD:    limit + 0.01,
+				}, nil
+			},
+		}, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
+		t.Cleanup(subscriptionService.Stop)
+		r := gin.New()
+		r.Use(APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, &config.Config{RunMode: config.RunModeStandard}))
+		r.GET("/v1beta/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1beta/test", nil)
+		req.Header.Set("x-goog-api-key", apiKey.Key)
+		r.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
 func (f fakeGoogleSubscriptionRepo) SetOverdraftDays(context.Context, int64, int64, *int) (bool, error) {
 	return false, nil
 }

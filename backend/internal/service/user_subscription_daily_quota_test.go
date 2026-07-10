@@ -258,3 +258,66 @@ func TestValidateAndCheckLimits_LegacyNilSnapshotFallsBackToGroupLimit(t *testin
 		})
 	}
 }
+
+func TestValidateAndCheckLimits_CoversFrozenAndLegacyWeeklyMonthlyLimits(t *testing.T) {
+	windowStart := time.Now()
+	limit := 10.0
+	svc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil, nil, nil, nil)
+
+	for _, tc := range []struct {
+		name    string
+		sub     UserSubscription
+		group   Group
+		wantErr error
+	}{
+		{
+			name: "frozen weekly limit wins over group",
+			sub: UserSubscription{
+				WeeklyWindowStart: &windowStart,
+				WeeklyUsageUSD:    limit + 0.01,
+				WeeklyLimitUSD:    &limit,
+			},
+			group:   Group{WeeklyLimitUSD: ptrFloat64(100)},
+			wantErr: ErrWeeklyLimitExceeded,
+		},
+		{
+			name: "legacy weekly limit falls back to group",
+			sub: UserSubscription{
+				WeeklyWindowStart: &windowStart,
+				WeeklyUsageUSD:    limit + 0.01,
+			},
+			group:   Group{WeeklyLimitUSD: &limit},
+			wantErr: ErrWeeklyLimitExceeded,
+		},
+		{
+			name: "frozen monthly limit wins over group",
+			sub: UserSubscription{
+				MonthlyWindowStart: &windowStart,
+				MonthlyUsageUSD:    limit + 0.01,
+				MonthlyLimitUSD:    &limit,
+			},
+			group:   Group{MonthlyLimitUSD: ptrFloat64(100)},
+			wantErr: ErrMonthlyLimitExceeded,
+		},
+		{
+			name: "legacy monthly limit falls back to group",
+			sub: UserSubscription{
+				MonthlyWindowStart: &windowStart,
+				MonthlyUsageUSD:    limit + 0.01,
+			},
+			group:   Group{MonthlyLimitUSD: &limit},
+			wantErr: ErrMonthlyLimitExceeded,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sub := tc.sub
+			sub.Status = SubscriptionStatusActive
+			sub.StartsAt = time.Now().Add(-time.Hour)
+			sub.ExpiresAt = time.Now().Add(48 * time.Hour)
+
+			_, err := svc.ValidateAndCheckLimits(&sub, &tc.group)
+
+			require.ErrorIs(t, err, tc.wantErr)
+		})
+	}
+}

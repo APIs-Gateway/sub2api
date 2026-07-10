@@ -195,6 +195,87 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 	})
 }
 
+func TestAPIKeyAuthSubscriptionMaintenanceAndWalletFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	group := &service.Group{ID: 43, Name: "sub-maintenance", Status: service.StatusActive, Hydrated: true}
+	newAPIKeyService := func(user *service.User, key string) (*service.APIKeyService, *service.APIKey) {
+		apiKey := &service.APIKey{ID: 101, UserID: user.ID, Key: key, Status: service.StatusActive, User: user, Group: group}
+		apiKey.GroupID = &group.ID
+		repo := &stubApiKeyRepo{
+			getByKey: func(context.Context, string) (*service.APIKey, error) {
+				clone := *apiKey
+				return &clone, nil
+			},
+		}
+		return service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard}), apiKey
+	}
+
+	t.Run("maintenance failure returns structured 500", func(t *testing.T) {
+		user := &service.User{ID: 70, Role: service.RoleUser, Status: service.StatusActive}
+		apiKeyService, apiKey := newAPIKeyService(user, "maintenance-error")
+		limit := 1.0
+		oldWindowStart := time.Now().Add(-48 * time.Hour)
+		subscriptionRepo := &stubUserSubscriptionRepo{
+			getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+				return &service.UserSubscription{
+					ID:               71,
+					UserID:           user.ID,
+					GroupID:          group.ID,
+					Status:           service.SubscriptionStatusActive,
+					StartsAt:         time.Now().Add(-72 * time.Hour),
+					ExpiresAt:        time.Now().Add(72 * time.Hour),
+					DailyLimitUSD:    &limit,
+					DailyWindowStart: &oldWindowStart,
+				}, nil
+			},
+			resetDaily: func(context.Context, int64, time.Time) error { return errors.New("reset failed") },
+		}
+		subscriptionService := service.NewSubscriptionService(nil, subscriptionRepo, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
+		t.Cleanup(subscriptionService.Stop)
+		router := newAuthTestRouter(apiKeyService, subscriptionService, &config.Config{RunMode: config.RunModeStandard})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.Header.Set("x-api-key", apiKey.Key)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusInternalServerError, w.Code)
+		requireAPIKeyAuthError(t, w, "SUBSCRIPTION_MAINTENANCE_FAILED", "Failed to maintain subscription usage windows")
+	})
+
+	t.Run("window limit falls back to positive wallet", func(t *testing.T) {
+		user := &service.User{ID: 72, Role: service.RoleUser, Status: service.StatusActive, Balance: 5}
+		apiKeyService, apiKey := newAPIKeyService(user, "wallet-fallback")
+		limit := 1.0
+		windowStart := time.Now()
+		subscriptionRepo := &stubUserSubscriptionRepo{
+			getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+				return &service.UserSubscription{
+					ID:               73,
+					UserID:           user.ID,
+					GroupID:          group.ID,
+					Status:           service.SubscriptionStatusActive,
+					StartsAt:         time.Now().Add(-time.Hour),
+					ExpiresAt:        time.Now().Add(48 * time.Hour),
+					DailyLimitUSD:    &limit,
+					DailyWindowStart: &windowStart,
+					DailyUsageUSD:    limit + 0.01,
+				}, nil
+			},
+		}
+		subscriptionService := service.NewSubscriptionService(nil, subscriptionRepo, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
+		t.Cleanup(subscriptionService.Stop)
+		router := newAuthTestRouter(apiKeyService, subscriptionService, &config.Config{RunMode: config.RunModeStandard})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.Header.Set("x-api-key", apiKey.Key)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
 func TestAPIKeyAuthReadOnlyWhamUsageSkipsBillingEnforcement(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
