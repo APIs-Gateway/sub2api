@@ -226,6 +226,16 @@ func (s *subscriptionUserSubRepoStub) GetByID(_ context.Context, id int64) (*Use
 	return &cp, nil
 }
 
+func (s *subscriptionUserSubRepoStub) ListByUserID(_ context.Context, userID int64) ([]UserSubscription, error) {
+	result := make([]UserSubscription, 0)
+	for _, sub := range s.byID {
+		if sub.UserID == userID {
+			result = append(result, *sub)
+		}
+	}
+	return result, nil
+}
+
 func (s *subscriptionUserSubRepoStub) GetActiveByUserID(_ context.Context, userID int64) (*UserSubscription, error) {
 	for _, sub := range s.byID {
 		if sub.UserID == userID && sub.Status == SubscriptionStatusActive {
