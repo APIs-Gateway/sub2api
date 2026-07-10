@@ -19,7 +19,7 @@ trap 'rm -f "$tmp_profile"' EXIT
 
 awk '
 NR == 1 {
-	if ($1 != "mode:") {
+	if ($1 != "mode:" || ($2 != "set" && $2 != "count" && $2 != "atomic")) {
 		printf "invalid Go coverprofile header: %s\\n", $0 > "/dev/stderr"
 		exit 1
 	}
@@ -27,19 +27,24 @@ NR == 1 {
 	next
 }
 {
+	if (NF != 3 || $2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/) {
+		printf "invalid Go coverprofile record at line %d: %s\\n", NR, $0 > "/dev/stderr"
+		invalid = 1
+		exit 1
+	}
 	key = $1 SUBSEP $2
 	if (!(key in seen)) {
 		seen[key] = ++count
 		order[count] = key
 		location[key] = $1
 		statements[key] = $2
-	}
-	if ($3 > hits[key]) {
+		hits[key] = $3
+	} else if ($3 > hits[key]) {
 		hits[key] = $3
 	}
 }
 END {
-	if (mode == "") {
+	if (mode == "" || invalid) {
 		exit 1
 	}
 	print "mode:", mode
