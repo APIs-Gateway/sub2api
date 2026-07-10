@@ -2,6 +2,7 @@ package apicompat
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -195,4 +196,152 @@ func TestChatCompletionsStreamWithToolContext_RestoresToolSearchWireItem(t *test
 	require.NoError(t, err)
 	assert.Contains(t, sse, `"execution":"client"`)
 	assert.Contains(t, sse, `"arguments":{"query":"gmail"}`)
+}
+
+func TestResponsesToChatCompletionsRequest_ProxyToolReplayAndNamespaceEdges(t *testing.T) {
+	longNamespace := "namespace_" + strings.Repeat("n", 80)
+	longName := "tool_" + strings.Repeat("x", 80)
+	req := &ResponsesRequest{
+		Model: "gpt-5.6",
+		Input: json.RawMessage(`[
+			{"type":"custom_tool_call","call_id":"call_exec","name":"exec","input":"pwd"},
+			{"type":"tool_search_call","call_id":"call_search","arguments":{"query":"gmail"}},
+			{"type":"custom_tool_call_output","call_id":"call_exec","output":{"stdout":"/tmp"}},
+			{"type":"tool_search_output","call_id":"call_search","output":["gmail__send"]}
+		]`),
+		Tools: []ResponsesTool{{
+			Type: "namespace", Name: longNamespace,
+			Children: []ResponsesTool{{Type: "function", Name: longName, Parameters: json.RawMessage(`{"type":"object"}`)}},
+		}},
+		ToolChoice: json.RawMessage(`"auto"`),
+	}
+
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Len(t, out.Tools, 1)
+	assert.LessOrEqual(t, len(out.Tools[0].Function.Name), chatToolNameMaxLen)
+	assert.JSONEq(t, `"auto"`, string(out.ToolChoice))
+	require.Len(t, out.Messages, 3)
+	assert.Equal(t, "exec", out.Messages[0].ToolCalls[0].Function.Name)
+	assert.JSONEq(t, `{"input":"pwd"}`, out.Messages[0].ToolCalls[0].Function.Arguments)
+	assert.Equal(t, toolSearchProxyName, out.Messages[0].ToolCalls[1].Function.Name)
+	assert.JSONEq(t, `{"query":"gmail"}`, out.Messages[0].ToolCalls[1].Function.Arguments)
+	var customOutput, searchOutput string
+	require.NoError(t, json.Unmarshal(out.Messages[1].Content, &customOutput))
+	require.NoError(t, json.Unmarshal(out.Messages[2].Content, &searchOutput))
+	assert.Equal(t, `{"stdout":"/tmp"}`, customOutput)
+	assert.Equal(t, `["gmail__send"]`, searchOutput)
+
+	_, err = ResponsesToChatCompletionsRequest(&ResponsesRequest{
+		Model: "gpt-5.6", Input: json.RawMessage(`"help"`),
+		Tools: []ResponsesTool{
+			{Type: "namespace", Name: "one", Tools: []ResponsesTool{{Type: "function", Name: "same"}}},
+			{Type: "namespace", Name: "one", Children: []ResponsesTool{{Type: "function", Name: "same"}}},
+		},
+	})
+	require.NoError(t, err, "identical namespace children are de-duplicated")
+}
+
+func TestResponsesProxyToolWireHandlesMalformedArgumentsAndCustomInput(t *testing.T) {
+	var declared ResponsesTool
+	require.NoError(t, json.Unmarshal([]byte(`"exec"`), &declared))
+	assert.Equal(t, "custom", declared.Type)
+	assert.Equal(t, "exec", declared.Name)
+
+	context := NewResponsesChatToolContext([]ResponsesTool{{Type: "custom", Name: "exec"}, {Type: "tool_search"}})
+	response := ChatCompletionsResponseToResponsesWithToolContext(&ChatCompletionsResponse{
+		Choices: []ChatChoice{{Message: ChatMessage{ToolCalls: []ChatToolCall{
+			{ID: "call_exec", Function: ChatFunctionCall{Name: "exec", Arguments: `{"other":1}`}},
+			{ID: "call_search", Function: ChatFunctionCall{Name: toolSearchProxyName, Arguments: `not-json`}},
+		}}}},
+	}, "gpt-5.6", context)
+	require.Len(t, response.Output, 2)
+	assert.Equal(t, `{"other":1}`, response.Output[0].Input)
+	encoded, err := json.Marshal(response.Output[1])
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"tool_search_call","id":"`+response.Output[1].ID+`","call_id":"call_search","execution":"client","arguments":"not-json","status":"completed"}`, string(encoded))
+}
+
+func TestChatCompletionsResponseWithToolContextKeepsTerminalAndEmptySemantics(t *testing.T) {
+	empty := ChatCompletionsResponseToResponsesWithToolContext(nil, "gpt-5.6", ResponsesChatToolContext{})
+	require.Len(t, empty.Output, 1)
+	assert.Equal(t, "message", empty.Output[0].Type)
+
+	content := json.RawMessage(`"done"`)
+	length := ChatCompletionsResponseToResponsesWithToolContext(&ChatCompletionsResponse{
+		Model:   "upstream-model",
+		Choices: []ChatChoice{{Message: ChatMessage{Role: "assistant", Content: content}, FinishReason: "length"}},
+	}, "", ResponsesChatToolContext{})
+	assert.Equal(t, "upstream-model", length.Model)
+	assert.Equal(t, "incomplete", length.Status)
+	require.NotNil(t, length.IncompleteDetails)
+	assert.Equal(t, "max_output_tokens", length.IncompleteDetails.Reason)
+}
+
+func TestResponsesProxyToolWirePreservesCustomAndNamespaceFields(t *testing.T) {
+	custom := ResponsesStreamEvent{Type: "response.output_item.done", Item: &ResponsesOutput{
+		Type: "custom_tool_call", ID: "item_custom", CallID: "call_custom", Name: "exec", Input: "pwd", Status: "completed",
+	}}
+	namespace := ResponsesStreamEvent{Type: "response.output_item.done", Item: &ResponsesOutput{
+		Type: "function_call", ID: "item_ns", CallID: "call_ns", Namespace: "gmail", Name: "send", Arguments: `{"to":"a@example.test"}`, Status: "completed",
+	}}
+
+	customSSE, err := ResponsesEventToSSE(custom)
+	require.NoError(t, err)
+	assert.Contains(t, customSSE, `"input":"pwd"`)
+	assert.Contains(t, customSSE, `"name":"exec"`)
+
+	namespaceSSE, err := ResponsesEventToSSE(namespace)
+	require.NoError(t, err)
+	assert.Contains(t, namespaceSSE, `"namespace":"gmail"`)
+	assert.Contains(t, namespaceSSE, `"name":"send"`)
+}
+
+func TestResponsesProxyCompatibilityHelpersCoverContentUsageAndWireBranches(t *testing.T) {
+	content, err := responsesContentPartsToChatContent([]json.RawMessage{
+		json.RawMessage(`{"type":"input_text","text":"hello"}`),
+		json.RawMessage(`{"type":"input_image","image_url":{"url":"https://example.test/image.png"}}`),
+	}, "user")
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "image_url")
+
+	single, err := chatContentFromSingleResponsesPart("input_image", map[string]json.RawMessage{
+		"image_url": json.RawMessage(`"https://example.test/direct.png"`),
+	})
+	require.NoError(t, err)
+	assert.Contains(t, string(single), "direct.png")
+	textSingle, err := chatContentFromSingleResponsesPart("input_text", map[string]json.RawMessage{"text": json.RawMessage(`"plain"`)})
+	require.NoError(t, err)
+	assert.JSONEq(t, `"plain"`, string(textSingle))
+
+	assert.Equal(t, "plain", chatMessageContentText(json.RawMessage(`"plain"`)))
+	assert.Equal(t, "first\n\nsecond", chatMessageContentText(json.RawMessage(`[{"type":"text","text":"first"},{"type":"text","text":"second"}]`)))
+	assert.Equal(t, "", chatMessageContentText(json.RawMessage(`null`)))
+
+	usage := ChatUsageToResponsesUsage(&ChatUsage{
+		PromptTokens: 3, CompletionTokens: 2,
+		PromptTokensDetails: &ChatTokenDetails{CachedTokens: 1, CacheWriteTokens: 1},
+	})
+	require.NotNil(t, usage)
+	assert.Equal(t, 5, usage.TotalTokens)
+	require.NotNil(t, usage.InputTokensDetails)
+	assert.Equal(t, 1, usage.InputTokensDetails.CacheWriteTokens)
+	assert.Nil(t, ChatUsageToResponsesUsage(nil))
+
+	messageWire := responsesItemWire(&ResponsesOutput{Type: "message", ID: "msg", Content: []ResponsesContentPart{{Type: "output_text", Text: "ok"}}})
+	assert.Equal(t, "assistant", messageWire["role"])
+	reasoningWire := responsesItemWire(&ResponsesOutput{Type: "reasoning", ID: "reason", Summary: []ResponsesSummary{{Text: "think"}}})
+	assert.NotEmpty(t, reasoningWire["summary"])
+	assert.Empty(t, responsesItemWire(nil))
+
+	var objectTool ResponsesTool
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"namespace","name":"drive","children":[{"type":"function","name":"list"}]}`), &objectTool))
+	assert.Equal(t, "drive", objectTool.Name)
+	require.Len(t, objectTool.Children, 1)
+	var invalidTool ResponsesTool
+	require.Error(t, json.Unmarshal([]byte(`{`), &invalidTool))
+
+	emptyResponse := ChatCompletionsResponseToResponses(nil, "gpt-5.6")
+	require.Len(t, emptyResponse.Output, 1)
+	assert.Equal(t, "message", emptyResponse.Output[0].Type)
 }
