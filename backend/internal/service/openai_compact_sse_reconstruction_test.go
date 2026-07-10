@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,20 @@ func newCompactSSEReconstructionContext(t *testing.T, path string) *gin.Context 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, path, nil)
 	return c
+}
+
+func newReconstructionCommittedCompactContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder, func()) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+	MarkOpenAICompactClientStream(c)
+	stop := StartOpenAICompactSSEKeepalive(c, time.Millisecond)
+	require.Eventually(t, func() bool {
+		return c.Writer.Written()
+	}, time.Second, time.Millisecond)
+	return c, rec, stop
 }
 
 func TestSupplementCompactionItemFromSSE(t *testing.T) {
@@ -42,6 +57,9 @@ func TestSupplementCompactionItemFromSSE(t *testing.T) {
 		alreadyComplete := []byte(`{"output":[{"id":"cmp_existing","type":"compaction"}]}`)
 		got := supplementCompactionItemFromSSE(newCompactSSEReconstructionContext(t, "/v1/responses/compact"), alreadyComplete, doneEvent)
 		require.Equal(t, string(alreadyComplete), string(got))
+
+		noItem := supplementCompactionItemFromSSE(newCompactSSEReconstructionContext(t, "/v1/responses/compact"), finalResponse, "data: {\"type\":\"response.completed\"}\n\n")
+		require.Equal(t, string(finalResponse), string(noItem))
 	})
 }
 
@@ -55,4 +73,29 @@ func TestCollectRawResponsesOutputItemsFromSSEKeepsCompactFallback(t *testing.T)
 	require.Equal(t, "message", gjson.GetBytes(output, "0.type").String())
 	require.Equal(t, "compaction", gjson.GetBytes(output, "1.type").String())
 	require.Equal(t, "opaque", gjson.GetBytes(output, "1.encrypted_content").String())
+}
+
+func TestCompactCommittedErrorPathsEmitResponsesFailure(t *testing.T) {
+	t.Run("non streaming protocol error", func(t *testing.T) {
+		c, rec, stop := newReconstructionCommittedCompactContext(t)
+		defer stop()
+
+		svc := &OpenAIGatewayService{}
+		err := svc.writeOpenAINonStreamingProtocolError(&http.Response{Header: make(http.Header)}, c, "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "non-streaming openai protocol error")
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Contains(t, rec.Body.String(), "event: response.failed")
+		require.Contains(t, rec.Body.String(), "invalid non-streaming response")
+	})
+
+	t.Run("fast policy block", func(t *testing.T) {
+		c, rec, stop := newReconstructionCommittedCompactContext(t)
+		defer stop()
+
+		writeOpenAIFastPolicyBlockedResponse(c, &OpenAIFastBlockedError{Message: "blocked by policy"})
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Contains(t, rec.Body.String(), "event: response.failed")
+		require.Contains(t, rec.Body.String(), "blocked by policy")
+	})
 }
