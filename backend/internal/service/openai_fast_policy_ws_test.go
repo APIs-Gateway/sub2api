@@ -1015,7 +1015,7 @@ func TestPassthroughUsageMeta_TracksReasoningEffortAcrossTurns(t *testing.T) {
 	firstOut, firstBlocked, firstErr := svc.applyOpenAIFastPolicyToWSResponseCreate(context.Background(), account, capturedSessionModel, firstFrame)
 	require.NoError(t, firstErr)
 	require.Nil(t, firstBlocked)
-	meta.initFromFirstFrame(firstOut)
+	meta.initFromFirstFrame(firstOut, capturedSessionModel)
 	require.NotNil(t, meta.reasoningEffort.Load())
 	require.Equal(t, "medium", *meta.reasoningEffort.Load())
 
@@ -1032,7 +1032,7 @@ func TestPassthroughUsageMeta_TracksReasoningEffortAcrossTurns(t *testing.T) {
 		out, blocked, policyErr := svc.applyOpenAIFastPolicyToWSResponseCreate(context.Background(), account, model, payload)
 		if policyErr == nil && blocked == nil &&
 			strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
-			meta.updateFromResponseCreate(out, requestModelForThisFrame)
+			meta.updateFromResponseCreate(out, model, requestModelForThisFrame)
 		}
 		return out, blocked, policyErr
 	}
@@ -1067,13 +1067,14 @@ func TestPassthroughUsageMeta_PreservesOAuthSuffixDerivedEffort(t *testing.T) {
 
 	// Policy evaluation uses the normalized upstream model, but usage metadata
 	// must retain the original suffix model supplied by the client.
-	meta.initFromFirstFrame([]byte(`{"type":"response.create","model":"gpt-5.6-sol"}`))
+	meta.initFromFirstFrame([]byte(`{"type":"response.create","model":"gpt-5.6-sol"}`), "gpt-5.6-sol")
 	require.NotNil(t, meta.reasoningEffort.Load())
 	require.Equal(t, "max", *meta.reasoningEffort.Load())
 
 	meta.updateSessionRequestModel([]byte(`{"type":"session.update","session":{"model":"gpt-5.6-sol-max"}}`))
 	meta.updateFromResponseCreate(
 		[]byte(`{"type":"response.create","model":"gpt-5.6-sol"}`),
+		"gpt-5.6-sol",
 		meta.requestModelForFrame([]byte(`{"type":"response.create"}`)),
 	)
 	require.NotNil(t, meta.reasoningEffort.Load())
