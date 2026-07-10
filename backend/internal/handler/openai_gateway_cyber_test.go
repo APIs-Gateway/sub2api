@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -76,6 +78,31 @@ func TestRecordCyberPolicyIfMarked_ForwardSuccessSkipsUsageLog(t *testing.T) {
 
 	require.NotPanics(t, func() {
 		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false /* forwardErrored=false */, "", service.ChannelUsageFields{}, "")
+	})
+	require.True(t, c.GetBool(cyberPolicyRecordedKey))
+}
+
+func TestRecordCyberPolicyIfMarked_RawChatAPIKeyResolvesUpstreamEndpoint(t *testing.T) {
+	c := newTestGinContext()
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{}`))
+	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{
+		Message:        "flagged",
+		UpstreamStatus: 200,
+	})
+
+	account := &service.Account{
+		ID:       12,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
+		},
+	}
+
+	h := &OpenAIGatewayHandler{}
+	require.Equal(t, EndpointChatCompletions, resolveOpenAIUpstreamEndpoint(c, account))
+	require.NotPanics(t, func() {
+		h.recordCyberPolicyIfMarked(c, nil, account, nil, "gpt-5", false, "", service.ChannelUsageFields{}, "")
 	})
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 }
