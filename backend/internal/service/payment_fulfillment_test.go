@@ -776,6 +776,59 @@ func TestRetryFulfillmentRecoversStaleSubscriptionOrder(t *testing.T) {
 	require.Equal(t, 1, subRepo.createCalls)
 }
 
+func TestDoSubCompletesAlreadyAppliedPurchaseWithCurrentLease(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleSubscriptionFulfillmentTimeForTest())
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetProviderSnapshot(map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd": 10.0,
+				"validity_days":    30.0,
+			},
+		}).
+		SetUpdatedAt(staleSubscriptionFulfillmentTimeForTest()).
+		Save(ctx)
+	require.NoError(t, err)
+
+	groupRepo := &subscriptionGroupRepoStub{group: &Group{ID: *order.SubscriptionGroupID, Status: StatusActive}}
+	svc := &PaymentService{entClient: client, groupRepo: groupRepo}
+	svc.writeAuditLog(ctx, order.ID, "SUBSCRIPTION_SUCCESS", "system", map[string]any{"recovered": true})
+	lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.doSub(ctx, order, lease))
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+}
+
+func TestDoSubLifecycleCompletesAlreadyAppliedRenewWithCurrentLease(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleSubscriptionFulfillmentTimeForTest())
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetProviderSnapshot(map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd": 10.0,
+				"validity_days":    30.0,
+			},
+		}).
+		SetUpdatedAt(staleSubscriptionFulfillmentTimeForTest()).
+		Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentService{entClient: client}
+	svc.writeAuditLog(ctx, order.ID, "SUBSCRIPTION_SUCCESS", "system", map[string]any{"recovered": true})
+	lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.doSubLifecycle(ctx, order, SubscriptionIntentRenew, 1, lease))
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+}
+
 func TestBalanceFulfillmentLeaseFencesStaleWorker(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)
