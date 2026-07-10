@@ -832,6 +832,69 @@ func TestApplyCodexOAuthTransform_StripsImageGenerationToolForSparkAlias(t *test
 	require.False(t, hasToolChoice)
 }
 
+func TestApplyCodexOAuthTransform_StripsImageGenNamespaceDeclarationsForSpark(t *testing.T) {
+	imageNamespace := func() map[string]any {
+		return map[string]any{
+			"type": "namespace",
+			"name": "image_gen",
+			"tools": []any{
+				map[string]any{"type": "function", "name": "imagegen"},
+			},
+		}
+	}
+	codeNamespace := func() map[string]any {
+		return map[string]any{
+			"type": "namespace",
+			"name": "code_tools",
+			"tools": []any{
+				map[string]any{"type": "function", "name": "run"},
+			},
+		}
+	}
+
+	reqBody := map[string]any{
+		"model": "gpt-5.3-codex-spark",
+		"tools": []any{
+			map[string]any{"type": "function", "name": "shell"},
+			imageNamespace(),
+			codeNamespace(),
+		},
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "hello"},
+			map[string]any{
+				"type":  "additional_tools",
+				"tools": []any{imageNamespace(), codeNamespace()},
+			},
+			map[string]any{
+				"type":  "additional_tools",
+				"tools": []any{imageNamespace()},
+			},
+		},
+		"tool_choice": map[string]any{"type": "namespace", "name": "image_gen"},
+	}
+
+	result := applyCodexOAuthTransform(reqBody, true, false)
+	require.True(t, result.Modified)
+	require.False(t, hasOpenAIImageGenerationTool(reqBody))
+	require.NotContains(t, reqBody, "tool_choice")
+
+	tools, ok := reqBody["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 2)
+	require.Equal(t, "shell", tools[0].(map[string]any)["name"])
+	require.Equal(t, "code_tools", tools[1].(map[string]any)["name"])
+
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, input, 2)
+	additionalTools, ok := input[1].(map[string]any)
+	require.True(t, ok)
+	remainingTools, ok := additionalTools["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, remainingTools, 1)
+	require.Equal(t, "code_tools", remainingTools[0].(map[string]any)["name"])
+}
+
 // Non-spark Codex models support image_generation; the tool must be preserved.
 func TestApplyCodexOAuthTransform_KeepsImageGenerationToolForNonSpark(t *testing.T) {
 	reqBody := map[string]any{
@@ -892,6 +955,17 @@ func TestStripCodexSparkImageGenerationTools_HandlesToolChoiceEdges(t *testing.T
 			wantTools:  false,
 			wantChoice: true,
 		},
+		{
+			name: "custom imagegen function choice is preserved",
+			reqBody: map[string]any{
+				"tool_choice": map[string]any{
+					"function": map[string]any{"name": "imagegen"},
+				},
+			},
+			wantChange: false,
+			wantTools:  false,
+			wantChoice: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -930,6 +1004,34 @@ func TestStripCodexSparkImageGenerationToolsFromRawBody(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, changed)
 	require.Equal(t, string(tooLargeNumber), string(updated))
+}
+
+func TestStripCodexSparkImageGenerationToolsFromRawBody_StripsImageGenNamespaceDeclarations(t *testing.T) {
+	body := []byte(`{
+		"tools":[
+			{"type":"function","name":"shell"},
+			{"type":"namespace","name":"image_gen"}
+		],
+		"input":[
+			{"type":"message","role":"user","content":"hello"},
+			{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen"}]}
+		],
+		"tool_choice":{"type":"namespace","name":"image_gen"}
+	}`)
+
+	updated, changed, err := stripCodexSparkImageGenerationToolsFromRawBody(body, "gpt-5.3-codex-spark")
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "shell", gjson.GetBytes(updated, "tools.0.name").String())
+	require.False(t, gjson.GetBytes(updated, "tools.1").Exists())
+	require.Equal(t, "message", gjson.GetBytes(updated, "input.0.type").String())
+	require.False(t, gjson.GetBytes(updated, "input.1").Exists())
+	require.False(t, gjson.GetBytes(updated, "tool_choice").Exists())
+
+	updated, changed, err = stripCodexSparkImageGenerationToolsFromRawBody(body, "gpt-5.3-codex")
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(body), string(updated))
 }
 
 func TestEnsureOpenAIResponsesImageGenerationToolChoiceAuto(t *testing.T) {
