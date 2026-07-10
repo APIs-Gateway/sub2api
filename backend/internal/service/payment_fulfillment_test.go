@@ -874,6 +874,115 @@ func TestPaymentSubscriptionMatchesFrozenOrderProtectsCustomPurchase(t *testing.
 	require.False(t, ok)
 }
 
+func TestAcquireSubscriptionFulfillmentLease_AcceptsPaidAndFailedOrders(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	svc := &PaymentService{entClient: client}
+
+	lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, nil)
+	require.Nil(t, lease)
+	require.Equal(t, "INVALID_STATUS", infraerrors.Reason(err))
+
+	for _, status := range []string{OrderStatusPaid, OrderStatusFailed} {
+		t.Run(status, func(t *testing.T) {
+			order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, status, time.Now().UTC())
+			lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+			require.NoError(t, err)
+			require.NotNil(t, lease)
+
+			reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+			require.NoError(t, err)
+			require.Equal(t, OrderStatusRecharging, reloaded.Status)
+			require.Nil(t, reloaded.FailedAt)
+			require.Empty(t, reloaded.FailedReason)
+		})
+	}
+}
+
+func TestSubscriptionFulfillmentLeaseTerminalBranches(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleSubscriptionFulfillmentTimeForTest())
+	svc := &PaymentService{entClient: client}
+
+	require.Error(t, svc.markSubscriptionCompletedWithLease(ctx, order, nil))
+	svc.markSubscriptionFailedWithLease(ctx, order.ID, nil, errors.New("ignored"))
+
+	lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+
+	svc.markSubscriptionFailedWithLease(ctx, order.ID, lease, errors.New("temporary"))
+	failed, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusFailed, failed.Status)
+	require.NotNil(t, failed.FailedAt)
+
+	_, err = client.PaymentOrder.UpdateOneID(order.ID).
+		SetStatus(OrderStatusCompleted).
+		SetCompletedAt(time.Now()).
+		Save(ctx)
+	require.NoError(t, err)
+	require.NoError(t, svc.markSubscriptionCompletedWithLease(ctx, order, lease), "a completed winner makes the stale completion a no-op")
+}
+
+func TestPaymentSubscriptionAssignmentRecoveryHelpers(t *testing.T) {
+	order := &dbent.PaymentOrder{ID: 42, UserID: 7, SubscriptionGroupID: ptrInt64(0), ProviderSnapshot: map[string]any{
+		subscriptionSnapshotKey: map[string]any{
+			"daily_amount_usd":  18.0,
+			"validity_days":     30.0,
+			"weekly_limit_usd":  90.0,
+			"monthly_limit_usd": 360.0,
+		},
+	}}
+
+	require.Zero(t, paymentSubscriptionIDFromSnapshot(nil))
+	require.Zero(t, paymentSubscriptionIDFromSnapshot(&dbent.PaymentOrder{ProviderSnapshot: map[string]any{subscriptionSnapshotKey: "bad"}}))
+	require.True(t, hasPaymentSubscriptionOrderNote("one\npayment order 42\ntwo", "payment order 42"))
+
+	stub := newSubscriptionUserSubRepoStub()
+	daily, weekly, monthly := 18.0, 90.0, 360.0
+	stub.seed(&UserSubscription{
+		UserID:          order.UserID,
+		GroupID:         0,
+		DailyAmountUSD:  daily,
+		DailyLimitUSD:   &daily,
+		WeeklyLimitUSD:  &weekly,
+		MonthlyLimitUSD: &monthly,
+		Notes:           "payment order 42",
+	})
+	svc := &PaymentService{subscriptionSvc: &SubscriptionService{userSubRepo: stub}}
+
+	matched, err := svc.findPaymentSubscriptionAssignment(context.Background(), order, "payment order 42")
+	require.NoError(t, err)
+	require.NotNil(t, matched)
+
+	matched, err = svc.findPaymentSubscriptionAssignment(context.Background(), order, "payment order 404")
+	require.NoError(t, err)
+	require.Nil(t, matched)
+
+	withSnapshotID := *order
+	withSnapshotID.ProviderSnapshot = map[string]any{
+		subscriptionSnapshotKey: map[string]any{
+			"daily_amount_usd":  18.0,
+			"validity_days":     30.0,
+			"weekly_limit_usd":  90.0,
+			"monthly_limit_usd": 360.0,
+			"subscription_id":   matchedSubscriptionID(stub),
+		},
+	}
+	matched, err = svc.findPaymentSubscriptionAssignment(context.Background(), &withSnapshotID, "payment order 42")
+	require.NoError(t, err)
+	require.NotNil(t, matched)
+}
+
+func matchedSubscriptionID(stub *subscriptionUserSubRepoStub) int64 {
+	for id := range stub.byID {
+		return id
+	}
+	return 0
+}
+
 func staleBalanceFulfillmentTimeForTest() time.Time {
 	return time.Now().UTC().Add(-balanceFulfillmentLeaseDuration - time.Minute)
 }
