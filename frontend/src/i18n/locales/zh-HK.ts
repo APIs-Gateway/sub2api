@@ -6306,7 +6306,7 @@
         antigravityUserAgentVersionPlaceholder: '1.23.2',
         antigravityUserAgentVersionHint: '留空時使用 ANTIGRAVITY_USER_AGENT_VERSION 或內置預設值 1.23.2；填寫後後台設定優先。',
         openaiCodexUserAgent: 'OpenAI Codex UA',
-        openaiCodexUserAgentPlaceholder: 'codex-tui/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.125.0)',
+        openaiCodexUserAgentPlaceholder: 'codex-tui/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.144.1)',
         openaiCodexUserAgentHint: '用於規避 OpenAI 上游 Cloudflare 對瀏覽器 UA 的訪問質詢。僅在檢測到客戶端 User-Agent 為瀏覽器（Mozilla/...）時生效，其他客戶端原樣透傳。留空使用內置預設值。',
         openaiAllowClaudeCodeCodexPlugin: '允許在 Claude Code 中使用 Codex 插件',
         openaiAllowClaudeCodeCodexPluginDesc:
