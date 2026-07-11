@@ -25,6 +25,14 @@ function expectSameKeys(baseName: string, base: LocaleObject, candidateName: str
 }
 
 describe('locale key coverage', () => {
+  it('provides English labels for the completed admin overview and resource views', () => {
+    expect(en.admin.dashboard.totalApiKeys).toBe('Total API Keys')
+    expect(en.admin.users.searchPlaceholder).toBe('Search by email, username, notes, or API key...')
+    expect(en.admin.groups.form.nameLabel).toBe('Group Name')
+    expect(en.admin.proxies.columns.protocolLabel).toBe('Protocol')
+    expect(en.admin.redeem.codesGeneratedSuccess).toBe('Redeem codes generated successfully, {count} total')
+  })
+
   it('keeps zh-CN and zh-HK source leaf key sets aligned', () => {
     expectSameKeys('zh-CN', zhCN, 'zh-HK', zhHK)
   })
