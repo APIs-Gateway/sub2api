@@ -536,25 +536,54 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 				Description: t.Description,
 				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
 			})
+		case "custom":
+			out = append(out, AnthropicTool{
+				Name:        t.Name,
+				Description: t.Description,
+				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
+			})
 		default:
 			// Pass through unknown tool types
 			out = append(out, AnthropicTool{
 				Type:        t.Type,
 				Name:        t.Name,
 				Description: t.Description,
-				InputSchema: t.Parameters,
+				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
 			})
 		}
 	}
 	return out
 }
 
-// normalizeAnthropicInputSchema ensures the input_schema has a "type" field.
+// normalizeAnthropicInputSchema ensures input_schema is a valid object schema.
 func normalizeAnthropicInputSchema(schema json.RawMessage) json.RawMessage {
-	if len(schema) == 0 || string(schema) == "null" {
-		return json.RawMessage(`{"type":"object","properties":{}}`)
+	const emptyObjectSchema = `{"type":"object","properties":{}}`
+
+	trimmed := strings.TrimSpace(string(schema))
+	if trimmed == "" || trimmed == "null" {
+		return json.RawMessage(emptyObjectSchema)
 	}
-	return schema
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(schema, &object); err != nil {
+		return json.RawMessage(emptyObjectSchema)
+	}
+	typeRaw, ok := object["type"]
+	if !ok || strings.TrimSpace(string(typeRaw)) == "" || string(typeRaw) == "null" {
+		object["type"] = json.RawMessage(`"object"`)
+	} else {
+		var schemaType string
+		if err := json.Unmarshal(typeRaw, &schemaType); err != nil || schemaType != "object" {
+			return json.RawMessage(emptyObjectSchema)
+		}
+	}
+	if _, ok := object["properties"]; !ok {
+		object["properties"] = json.RawMessage(`{}`)
+	}
+	normalized, err := json.Marshal(object)
+	if err != nil {
+		return json.RawMessage(emptyObjectSchema)
+	}
+	return normalized
 }
 
 // convertResponsesToAnthropicToolChoice maps Responses tool_choice to Anthropic format.
