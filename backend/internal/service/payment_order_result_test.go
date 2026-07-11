@@ -245,6 +245,17 @@ func TestCalculateCreateOrderPayAmountUsesCurrencyPrecision(t *testing.T) {
 	}
 }
 
+func TestPaymentFeeRateForMethodKeepsCryptoAdjustmentOutOfGlobalFee(t *testing.T) {
+	t.Parallel()
+
+	if got := paymentFeeRateForMethod(payment.TypeCrypto, 0.5); got != 0 {
+		t.Fatalf("crypto fee rate = %v, want 0", got)
+	}
+	if got := paymentFeeRateForMethod(payment.TypeAlipay, 0.5); got != 0.5 {
+		t.Fatalf("alipay fee rate = %v, want 0.5", got)
+	}
+}
+
 func TestCalculateCreateOrderPayAmountRejectsFractionalZeroDecimal(t *testing.T) {
 	t.Parallel()
 

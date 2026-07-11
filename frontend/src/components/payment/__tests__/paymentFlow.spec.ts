@@ -253,6 +253,21 @@ describe('decidePaymentLaunch', () => {
 })
 
 describe('buildCreateOrderPayload', () => {
+  it('includes the selected crypto network for Crypto Pay orders', () => {
+    expect(buildCreateOrderPayload({
+      amount: 100,
+      paymentType: 'crypto',
+      orderType: 'balance',
+      origin: 'https://app.example.com',
+      isMobile: false,
+      isWechatBrowser: false,
+      cryptoNetwork: 'usdt.polygon',
+    })).toMatchObject({
+      payment_type: 'crypto',
+      crypto_network: 'usdt.polygon',
+    })
+  })
+
   it('normalizes visible method aliases and attaches a canonical result URL', () => {
     expect(buildCreateOrderPayload({
       amount: 88,

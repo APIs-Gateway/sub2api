@@ -25,6 +25,7 @@ Sub2API has a built-in payment system that enables user self-service top-up with
 | **Alipay (Direct)** | Desktop QR code, mobile Alipay redirect | Direct integration with Alipay Open Platform, returning desktop QR codes and mobile WAP/app launch links |
 | **WeChat Pay (Direct)** | Native QR, H5, MP/JSAPI Pay | Direct integration with WeChat Pay APIv3 with environment-aware routing |
 | **Stripe** | Card, Alipay, WeChat Pay, Link, etc. | International payments, multi-currency support |
+| **Crypto Pay** | USDT (TRON, Polygon, Solana) | Uses BEpusdt to allocate addresses, monitor on-chain payments, and notify Sub2API |
 
 > Alipay/WeChat Pay direct and EasyPay can both exist as backend provider instances, but the frontend always exposes only two visible buttons: `Alipay` and `WeChat Pay`. Admins choose exactly one source for each visible method: direct or EasyPay. Direct channels connect to payment APIs directly with lower fees; EasyPay aggregates through third-party platforms with easier setup.
 
@@ -153,6 +154,23 @@ International payment platform supporting multiple payment methods and currencie
 | **Secret Key** | Stripe secret key (`sk_live_...` or `sk_test_...`) | Yes |
 | **Publishable Key** | Stripe publishable key (`pk_live_...` or `pk_test_...`) | Yes |
 | **Webhook Secret** | Stripe Webhook signing secret (`whsec_...`) | Yes |
+
+### Crypto Pay
+
+Crypto Pay reuses the existing recharge/subscription order flow: users select an amount or plan, choose a payment network, and the normal callback flow credits the balance or completes the subscription. BEpusdt handles payment addresses, on-chain confirmation, and the hosted checkout page; Sub2API stores integration settings only and never stores wallet private keys.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| **BEpusdt Internal URL** | URL used by the Sub2API server to reach BEpusdt, for example `http://127.0.0.1:18090` | Yes |
+| **BEpusdt Public URL** | HTTPS checkout URL users open, for example `https://pay.example.com` | Yes |
+| **Sub2API Callback URL** | Public Sub2API URL that receives BEpusdt callbacks, for example `https://codex.example.com` | Yes |
+| **BEpusdt Host** | Set when the reverse proxy routes by Host; normally the payment domain | No |
+| **BEpusdt Admin Username/Password/Secure Entry Path** | Required for BEpusdt administration; not used to impose a minimum payment | Yes |
+| **BEpusdt API Token** | Token used to create orders and verify callback signatures | Yes |
+| **USDT Rate Adjustment** | Passed to BEpusdt as a multiplier; default `1.002` | No |
+| **Allowed Payment Networks** | Comma-separated: `usdt.trc20,usdt.polygon,usdt.solana` | No |
+
+Configure wallet addresses, RPC nodes, and blockchain networks in the BEpusdt admin panel. Sub2API appends `/api/v1/payment/webhook/crypto` to the callback URL above. The selected network must exactly match the receiving address; keep wallet private keys separate and never upload them to BEpusdt or Sub2API.
 
 ---
 

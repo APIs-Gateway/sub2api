@@ -231,6 +231,7 @@ type CreateOrderRequest struct {
 	WechatResumeToken string  `json:"wechat_resume_token"`
 	ReturnURL         string  `json:"return_url"`
 	PaymentSource     string  `json:"payment_source"`
+	CryptoNetwork     string  `json:"crypto_network"`
 	OrderType         string  `json:"order_type"`
 	PlanID            int64   `json:"plan_id"`
 	GroupID           int64   `json:"group_id"`
@@ -288,6 +289,7 @@ func (h *PaymentHandler) CreateOrder(c *gin.Context) {
 		SrcURL:             c.Request.Referer(),
 		ReturnURL:          req.ReturnURL,
 		PaymentSource:      req.PaymentSource,
+		CryptoNetwork:      req.CryptoNetwork,
 		OrderType:          req.OrderType,
 		PlanID:             req.PlanID,
 		GroupID:            req.GroupID,

@@ -25,6 +25,7 @@ Sub2API 内置支付系统，支持用户自助充值，无需部署独立的支
 | **支付宝官方** | 桌面二维码扫码、移动端支付宝跳转 | 直接对接支付宝开放平台，桌面端返回二维码，移动端返回 WAP/唤起链接 |
 | **微信官方** | Native 扫码、H5、公众号/JSAPI 支付 | 直接对接微信支付 APIv3，按终端环境自动分流 |
 | **Stripe** | 银行卡、支付宝、微信支付、Link 等 | 国际支付，支持多币种 |
+| **加密货币 Pay** | USDT（TRON、Polygon、Solana） | 通过 BEpusdt 分配收款地址、监听链上到账并回调 Sub2API |
 
 > 支付宝官方 / 微信官方与易支付可以同时作为后台服务商实例存在，但前台始终只展示 `支付宝`、`微信支付` 两个可见按钮。管理员需要分别为这两个按钮选择唯一支付来源：官方或易支付。官方渠道直接对接 API，资金直达商户账户，手续费更低；易支付通过第三方平台聚合，接入门槛更低。
 
@@ -153,6 +154,23 @@ Sub2API 内置支付系统，支持用户自助充值，无需部署独立的支
 | **Secret Key** | Stripe 密钥（`sk_live_...` 或 `sk_test_...`） | 是 |
 | **Publishable Key** | Stripe 可公开密钥（`pk_live_...` 或 `pk_test_...`） | 是 |
 | **Webhook Secret** | Stripe Webhook 签名密钥（`whsec_...`） | 是 |
+
+### 加密货币 Pay
+
+加密货币 Pay 复用现有充值/订阅订单：用户先选择金额或套餐，再选择支付网络，订单回调成功后按原有流程充值余额或完成订阅。BEpusdt 负责收款地址、链上确认和收银台页面；Sub2API 只保存对接配置，不保存钱包私钥。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| **BEpusdt 内部地址** | Sub2API 服务器访问 BEpusdt 的地址，例如 `http://127.0.0.1:18090` | 是 |
+| **BEpusdt 公网地址** | 用户打开收银台的 HTTPS 地址，例如 `https://pay.example.com` | 是 |
+| **Sub2API 回调地址** | 接收 BEpusdt 回调的 Sub2API 公网地址，例如 `https://codex.example.com` | 是 |
+| **BEpusdt Host** | 反向代理按 Host 路由时填写；通常是支付域名 | 否 |
+| **BEpusdt 管理员用户名/密码/安全入口路径** | 用于 BEpusdt 后台管理；不用于设置最低支付金额 | 是 |
+| **BEpusdt API Token** | 创建订单和验证回调签名的令牌 | 是 |
+| **USDT 汇率调整** | 以倍率形式传给 BEpusdt，默认 `1.002` | 否 |
+| **允许的支付网络** | 逗号分隔：`usdt.trc20,usdt.polygon,usdt.solana` | 否 |
+
+BEpusdt 的钱包地址、RPC 节点和链上网络在 BEpusdt 后台配置。Sub2API 会在回调地址后追加 `/api/v1/payment/webhook/crypto`。请确保用户选择的网络与收款地址完全一致；钱包私钥应独立保管，不能上传到 BEpusdt 或 Sub2API。
 
 ---
 

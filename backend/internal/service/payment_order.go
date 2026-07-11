@@ -73,7 +73,7 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	} else if req.OrderType == payment.OrderTypeBalance {
 		orderAmount = calculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
 	}
-	feeRate := cfg.RechargeFeeRate
+	feeRate := paymentFeeRateForMethod(req.PaymentType, cfg.RechargeFeeRate)
 	methodCurrency := payment.DefaultPaymentCurrency
 	if s.configService != nil {
 		methodCurrency, err = s.configService.ValidateMethodCurrencyConsistency(ctx, req.PaymentType)
@@ -99,6 +99,9 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	}
 	if err := s.validateSelectedCreateOrderInstance(ctx, req, sel); err != nil {
 		return nil, err
+	}
+	if sel.ProviderKey == payment.TypeCrypto {
+		sel.Config["rateMarkup"] = strconv.FormatFloat(1+cfg.CryptoRechargeFeeRate/100, 'f', -1, 64)
 	}
 	selectedCurrency := payment.DefaultPaymentCurrency
 	if sel != nil {
@@ -994,11 +997,12 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 		return nil, err
 	}
 	providerReq := buildProviderCreatePaymentRequest(CreateOrderRequest{
-		PaymentType: req.PaymentType,
-		OpenID:      req.OpenID,
-		ClientIP:    req.ClientIP,
-		IsMobile:    req.IsMobile,
-		ReturnURL:   providerReturnURL,
+		PaymentType:   req.PaymentType,
+		CryptoNetwork: req.CryptoNetwork,
+		OpenID:        req.OpenID,
+		ClientIP:      req.ClientIP,
+		IsMobile:      req.IsMobile,
+		ReturnURL:     providerReturnURL,
 	}, sel, outTradeNo, payAmountStr, subject)
 	pr, err := prov.CreatePayment(ctx, providerReq)
 	if err != nil {
@@ -1063,6 +1067,7 @@ func buildProviderCreatePaymentRequest(req CreateOrderRequest, sel *payment.Inst
 		ClientIP:           req.ClientIP,
 		IsMobile:           req.IsMobile,
 		InstanceSubMethods: selectedInstanceSupportedTypes(sel),
+		CryptoNetwork:      req.CryptoNetwork,
 	}
 }
 
@@ -1189,6 +1194,16 @@ func calculateCreateOrderPayAmount(limitAmount, feeRate float64, currency string
 			WithMetadata(map[string]string{"currency": currency})
 	}
 	return payAmountStr, payAmount, nil
+}
+
+// paymentFeeRateForMethod keeps Crypto Pay's adjustment inside the BEpusdt
+// exchange rate. It must not inherit the global fiat recharge fee, which is
+// configured for traditional payment methods and may be non-zero.
+func paymentFeeRateForMethod(paymentType string, configuredRate float64) float64 {
+	if payment.GetBasePaymentType(paymentType) == payment.TypeCrypto {
+		return 0
+	}
+	return configuredRate
 }
 
 func validateCreateOrderAmountCurrency(amount float64, currency string) error {

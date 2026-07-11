@@ -14,34 +14,35 @@ import (
 )
 
 const (
-	SettingPaymentEnabled       = "payment_enabled"
-	SettingMinRechargeAmount    = "MIN_RECHARGE_AMOUNT"
-	SettingMaxRechargeAmount    = "MAX_RECHARGE_AMOUNT"
-	SettingDailyRechargeLimit   = "DAILY_RECHARGE_LIMIT"
-	SettingOrderTimeoutMinutes  = "ORDER_TIMEOUT_MINUTES"
-	SettingMaxPendingOrders     = "MAX_PENDING_ORDERS"
-	SettingEnabledPaymentTypes  = "ENABLED_PAYMENT_TYPES"
-	SettingLoadBalanceStrategy  = "LOAD_BALANCE_STRATEGY"
-	SettingBalancePayDisabled   = "BALANCE_PAYMENT_DISABLED"
-	SettingBalanceRechargeMult  = "BALANCE_RECHARGE_MULTIPLIER"
-	SettingSubscriptionPayMult  = "SUBSCRIPTION_PAYMENT_MULTIPLIER"
-	SettingRechargeFeeRate      = "RECHARGE_FEE_RATE"
-	SettingRefundFeeRate        = "REFUND_FEE_RATE"
-	SettingSubscriptionMinDaily = "SUBSCRIPTION_MIN_DAILY_AMOUNT"
-	SettingSubscriptionMaxDaily = "SUBSCRIPTION_MAX_DAILY_AMOUNT"
-	SettingSubscriptionMaxDays  = "SUBSCRIPTION_MAX_VALIDITY_DAYS"
-	SettingSubscriptionMinRatio = "SUBSCRIPTION_MIN_PLAN_RATIO"
-	SettingSubscriptionMaxRatio = "SUBSCRIPTION_MAX_PLAN_RATIO"
-	SettingProductNamePrefix    = "PRODUCT_NAME_PREFIX"
-	SettingProductNameSuffix    = "PRODUCT_NAME_SUFFIX"
-	SettingHelpImageURL         = "PAYMENT_HELP_IMAGE_URL"
-	SettingHelpText             = "PAYMENT_HELP_TEXT"
-	SettingCancelRateLimitOn    = "CANCEL_RATE_LIMIT_ENABLED"
-	SettingCancelRateLimitMax   = "CANCEL_RATE_LIMIT_MAX"
-	SettingCancelWindowSize     = "CANCEL_RATE_LIMIT_WINDOW"
-	SettingCancelWindowUnit     = "CANCEL_RATE_LIMIT_UNIT"
-	SettingCancelWindowMode     = "CANCEL_RATE_LIMIT_WINDOW_MODE"
-	SettingAlipayForceQRCode    = "ALIPAY_FORCE_QRCODE"
+	SettingPaymentEnabled        = "payment_enabled"
+	SettingMinRechargeAmount     = "MIN_RECHARGE_AMOUNT"
+	SettingMaxRechargeAmount     = "MAX_RECHARGE_AMOUNT"
+	SettingDailyRechargeLimit    = "DAILY_RECHARGE_LIMIT"
+	SettingOrderTimeoutMinutes   = "ORDER_TIMEOUT_MINUTES"
+	SettingMaxPendingOrders      = "MAX_PENDING_ORDERS"
+	SettingEnabledPaymentTypes   = "ENABLED_PAYMENT_TYPES"
+	SettingLoadBalanceStrategy   = "LOAD_BALANCE_STRATEGY"
+	SettingBalancePayDisabled    = "BALANCE_PAYMENT_DISABLED"
+	SettingBalanceRechargeMult   = "BALANCE_RECHARGE_MULTIPLIER"
+	SettingSubscriptionPayMult   = "SUBSCRIPTION_PAYMENT_MULTIPLIER"
+	SettingRechargeFeeRate       = "RECHARGE_FEE_RATE"
+	SettingCryptoRechargeFeeRate = "CRYPTO_RECHARGE_FEE_RATE"
+	SettingRefundFeeRate         = "REFUND_FEE_RATE"
+	SettingSubscriptionMinDaily  = "SUBSCRIPTION_MIN_DAILY_AMOUNT"
+	SettingSubscriptionMaxDaily  = "SUBSCRIPTION_MAX_DAILY_AMOUNT"
+	SettingSubscriptionMaxDays   = "SUBSCRIPTION_MAX_VALIDITY_DAYS"
+	SettingSubscriptionMinRatio  = "SUBSCRIPTION_MIN_PLAN_RATIO"
+	SettingSubscriptionMaxRatio  = "SUBSCRIPTION_MAX_PLAN_RATIO"
+	SettingProductNamePrefix     = "PRODUCT_NAME_PREFIX"
+	SettingProductNameSuffix     = "PRODUCT_NAME_SUFFIX"
+	SettingHelpImageURL          = "PAYMENT_HELP_IMAGE_URL"
+	SettingHelpText              = "PAYMENT_HELP_TEXT"
+	SettingCancelRateLimitOn     = "CANCEL_RATE_LIMIT_ENABLED"
+	SettingCancelRateLimitMax    = "CANCEL_RATE_LIMIT_MAX"
+	SettingCancelWindowSize      = "CANCEL_RATE_LIMIT_WINDOW"
+	SettingCancelWindowUnit      = "CANCEL_RATE_LIMIT_UNIT"
+	SettingCancelWindowMode      = "CANCEL_RATE_LIMIT_WINDOW_MODE"
+	SettingAlipayForceQRCode     = "ALIPAY_FORCE_QRCODE"
 )
 
 // Default values for payment configuration settings.
@@ -63,6 +64,7 @@ type PaymentConfig struct {
 	BalanceRechargeMultiplier float64  `json:"balance_recharge_multiplier"`
 	SubscriptionPayMultiplier float64  `json:"subscription_payment_multiplier"`
 	RechargeFeeRate           float64  `json:"recharge_fee_rate"`
+	CryptoRechargeFeeRate     float64  `json:"crypto_recharge_fee_rate"`
 	RefundFeeRate             float64  `json:"refund_fee_rate"`
 	SubscriptionMinDaily      float64  `json:"subscription_min_daily_amount"`
 	SubscriptionMaxDaily      float64  `json:"subscription_max_daily_amount"`
@@ -100,6 +102,7 @@ type UpdatePaymentConfigRequest struct {
 	BalanceRechargeMultiplier *float64 `json:"balance_recharge_multiplier"`
 	SubscriptionPayMultiplier *float64 `json:"subscription_payment_multiplier"`
 	RechargeFeeRate           *float64 `json:"recharge_fee_rate"`
+	CryptoRechargeFeeRate     *float64 `json:"crypto_recharge_fee_rate"`
 	RefundFeeRate             *float64 `json:"refund_fee_rate"`
 	SubscriptionMinDaily      *float64 `json:"subscription_min_daily_amount"`
 	SubscriptionMaxDaily      *float64 `json:"subscription_max_daily_amount"`
@@ -243,7 +246,7 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 	keys := []string{
 		SettingPaymentEnabled, SettingMinRechargeAmount, SettingMaxRechargeAmount,
 		SettingDailyRechargeLimit, SettingOrderTimeoutMinutes, SettingMaxPendingOrders,
-		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingSubscriptionPayMult, SettingRechargeFeeRate, SettingRefundFeeRate, SettingLoadBalanceStrategy,
+		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingSubscriptionPayMult, SettingRechargeFeeRate, SettingCryptoRechargeFeeRate, SettingRefundFeeRate, SettingLoadBalanceStrategy,
 		SettingSubscriptionMinDaily, SettingSubscriptionMaxDaily, SettingSubscriptionMaxDays,
 		SettingSubscriptionMinRatio, SettingSubscriptionMaxRatio,
 		SettingProductNamePrefix, SettingProductNameSuffix,
@@ -277,6 +280,7 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 		BalanceRechargeMultiplier: normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingBalanceRechargeMult], defaultBalanceRechargeMultiplier)),
 		SubscriptionPayMultiplier: normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingSubscriptionPayMult], defaultBalanceRechargeMultiplier)),
 		RechargeFeeRate:           pcParseFloat(vals[SettingRechargeFeeRate], 0),
+		CryptoRechargeFeeRate:     pcParseFloat(vals[SettingCryptoRechargeFeeRate], 0),
 		RefundFeeRate:             pcParseFloat(vals[SettingRefundFeeRate], 0),
 		SubscriptionMinDaily:      subPricing.DMin,
 		SubscriptionMaxDaily:      subPricing.DMax,
@@ -353,6 +357,11 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 			return err
 		}
 	}
+	if req.CryptoRechargeFeeRate != nil {
+		if err := validatePercentSetting(*req.CryptoRechargeFeeRate, "INVALID_CRYPTO_RECHARGE_FEE_RATE", "crypto recharge fee rate"); err != nil {
+			return err
+		}
+	}
 	if req.RefundFeeRate != nil {
 		if err := validatePercentSetting(*req.RefundFeeRate, "INVALID_REFUND_FEE_RATE", "refund fee rate"); err != nil {
 			return err
@@ -405,6 +414,7 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 		SettingBalanceRechargeMult:               formatPositiveFloat(req.BalanceRechargeMultiplier),
 		SettingSubscriptionPayMult:               formatPositiveFloat(req.SubscriptionPayMultiplier),
 		SettingRechargeFeeRate:                   formatNonNegativeFloat(req.RechargeFeeRate),
+		SettingCryptoRechargeFeeRate:             formatNonNegativeFloat(req.CryptoRechargeFeeRate),
 		SettingRefundFeeRate:                     formatNonNegativeFloat(req.RefundFeeRate),
 		SettingSubscriptionMinDaily:              formatPositiveFloat(req.SubscriptionMinDaily),
 		SettingSubscriptionMaxDaily:              formatPositiveFloat(req.SubscriptionMaxDaily),

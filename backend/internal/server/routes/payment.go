@@ -63,6 +63,7 @@ func RegisterPaymentRoutes(
 		webhook.POST("/wxpay", webhookHandler.WxpayNotify)
 		webhook.POST("/stripe", webhookHandler.StripeWebhook)
 		webhook.POST("/airwallex", webhookHandler.AirwallexWebhook)
+		webhook.POST("/crypto", webhookHandler.CryptoNotify)
 		// Kyren 原生 webhook(退款 order.refunded;easypay 兼容退款 API 不支持,退款走此路确认)
 		webhook.POST("/kyren", webhookHandler.KyrenRefundWebhook)
 	}

@@ -216,6 +216,7 @@ type SystemSettings struct {
 	PaymentBalanceRechargeMultiplier float64  `json:"payment_balance_recharge_multiplier"`
 	PaymentSubscriptionPayMultiplier float64  `json:"payment_subscription_payment_multiplier"`
 	PaymentRechargeFeeRate           float64  `json:"payment_recharge_fee_rate"`
+	PaymentCryptoRechargeFeeRate     float64  `json:"payment_crypto_recharge_fee_rate"`
 	PaymentRefundFeeRate             float64  `json:"payment_refund_fee_rate"`
 	PaymentSubscriptionMinDaily      float64  `json:"payment_subscription_min_daily_amount"`
 	PaymentSubscriptionMaxDaily      float64  `json:"payment_subscription_max_daily_amount"`

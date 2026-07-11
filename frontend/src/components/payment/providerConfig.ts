@@ -36,13 +36,14 @@ export const PROVIDER_SUPPORTED_TYPES: Record<string, string[]> = {
   wxpay: ['wxpay'],
   stripe: ['card', 'alipay', 'wxpay', 'link'],
   airwallex: ['airwallex'],
+  crypto: ['crypto'],
 }
 
 /** Available payment modes for EasyPay providers. */
 export const EASYPAY_PAYMENT_MODES = ['qrcode', 'popup'] as const
 
 /** Fixed display order for user-facing payment methods */
-export const METHOD_ORDER = ['alipay', 'alipay_direct', 'wxpay', 'wxpay_direct', 'stripe', 'airwallex'] as const
+export const METHOD_ORDER = ['alipay', 'alipay_direct', 'wxpay', 'wxpay_direct', 'crypto', 'stripe', 'airwallex'] as const
 
 /** Payment mode constants */
 export const PAYMENT_MODE_QRCODE = 'qrcode'
@@ -96,6 +97,7 @@ export const WEBHOOK_PATHS: Record<string, string> = {
   wxpay: '/api/v1/payment/webhook/wxpay',
   stripe: '/api/v1/payment/webhook/stripe',
   airwallex: '/api/v1/payment/webhook/airwallex',
+  crypto: '/api/v1/payment/webhook/crypto',
 }
 
 export const RETURN_PATH = '/payment/result'
@@ -105,6 +107,7 @@ export const PROVIDER_CALLBACK_PATHS: Record<string, CallbackPaths> = {
   easypay: { notifyUrl: WEBHOOK_PATHS.easypay, returnUrl: RETURN_PATH },
   alipay: { notifyUrl: WEBHOOK_PATHS.alipay, returnUrl: RETURN_PATH },
   wxpay: { notifyUrl: WEBHOOK_PATHS.wxpay },
+  crypto: { notifyUrl: WEBHOOK_PATHS.crypto, returnUrl: RETURN_PATH },
   // stripe: 不需要回调 URL 配置，Webhook 单独配置。
   // airwallex: 不需要回调 URL 配置，Webhook 在空中云汇后台配置。
 }
@@ -146,6 +149,19 @@ export const PROVIDER_CONFIG_FIELDS: Record<string, ConfigFieldDef[]> = {
     { key: 'countryCode', label: '', sensitive: false, defaultValue: 'CN' },
     { key: 'currency', label: '', sensitive: false, defaultValue: 'CNY', hintKey: 'admin.settings.payment.field_paymentCurrencyHint', options: PAYMENT_CURRENCY_OPTIONS },
     { key: 'accountId', label: '', sensitive: false, optional: true, clearable: true, hintKey: 'admin.settings.payment.field_accountIdHint' },
+  ],
+  crypto: [
+    { key: 'beBase', label: '', sensitive: false, hintKey: 'admin.settings.payment.field_beBaseHint' },
+    { key: 'publicBase', label: '', sensitive: false, hintKey: 'admin.settings.payment.field_publicBaseHint' },
+    { key: 'callbackBase', label: '', sensitive: false, hintKey: 'admin.settings.payment.field_callbackBaseHint' },
+    { key: 'beHost', label: '', sensitive: false, optional: true, hintKey: 'admin.settings.payment.field_beHostHint' },
+    { key: 'adminUsername', label: '', sensitive: false },
+    { key: 'adminPassword', label: '', sensitive: true },
+    { key: 'adminSecurePath', label: '', sensitive: true },
+    { key: 'apiToken', label: '', sensitive: true },
+    { key: 'rateMarkup', label: '', sensitive: false, defaultValue: '1.002', hintKey: 'admin.settings.payment.field_rateMarkupHint' },
+    { key: 'timeoutSec', label: '', sensitive: false, defaultValue: '1200' },
+    { key: 'networks', label: '', sensitive: false, defaultValue: 'usdt.trc20,usdt.polygon,usdt.solana', hintKey: 'admin.settings.payment.field_networksHint' },
   ],
 }
 
