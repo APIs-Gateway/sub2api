@@ -6,16 +6,33 @@ import (
 	"testing"
 	"time"
 
+	"entgo.io/ent/dialect"
+
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 
-	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	_ "modernc.org/sqlite"
 )
+
+func TestLatestUsageLogIPsQuery(t *testing.T) {
+	postgresQuery, postgresArgs := latestUsageLogIPsQuery([]int64{11, 12}, dialect.Postgres)
+	require.Contains(t, postgresQuery, "ANY($1::bigint[])")
+	require.Len(t, postgresArgs, 1)
+
+	sqliteQuery, sqliteArgs := latestUsageLogIPsQuery([]int64{11, 12}, dialect.SQLite)
+	require.Contains(t, sqliteQuery, "IN (?, ?)")
+	require.Equal(t, []any{int64(11), int64(12)}, sqliteArgs)
+}
+
+func TestLatestUsageLogIPsQueryEmptyInput(t *testing.T) {
+	query, args := latestUsageLogIPsQuery(nil, dialect.Postgres)
+	require.Contains(t, query, "ANY($1::bigint[])")
+	require.Len(t, args, 1)
+}
 
 func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
 	t.Helper()
