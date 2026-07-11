@@ -78,3 +78,20 @@ func TestLockIndexMaintenanceToleratesRedisFailure(t *testing.T) {
 
 	cache.removeLockIndexMember(context.Background(), "1")
 }
+
+func TestUserMsgQueueCacheReturnsRedisErrors(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	cache := &userMsgQueueCache{rdb: client}
+	mr.Close()
+
+	_, err := cache.AcquireLock(context.Background(), 1, "request", 1_000)
+	require.Error(t, err)
+	_, err = cache.ReleaseLock(context.Background(), 1, "request")
+	require.Error(t, err)
+	_, err = cache.GetCurrentTimeMs(context.Background())
+	require.Error(t, err)
+	_, err = cache.ReconcileExpiredLockCandidates(context.Background(), 1)
+	require.Error(t, err)
+}
