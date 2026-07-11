@@ -3,12 +3,13 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { getRegion } from "@/api/region";
-import { useAuthStore } from "@/stores";
+import { useAppStore, useAuthStore } from "@/stores";
 
 const POLL_INTERVAL_MS = 30_000;
 
 const route = useRoute();
 const authStore = useAuthStore();
+const appStore = useAppStore();
 const { t } = useI18n();
 
 const visible = ref(false);
@@ -17,6 +18,7 @@ let requestToken = 0;
 
 const shouldCheckRegion = computed(
   () =>
+    appStore.userRegionNoticeEnabled === true &&
     authStore.isAuthenticated === true &&
     authStore.isAdmin !== true &&
     route.meta.requiresAuth === true &&
@@ -74,6 +76,7 @@ watch(
     route.fullPath,
     route.meta.requiresAuth,
     route.meta.requiresAdmin,
+    appStore.userRegionNoticeEnabled,
     authStore.isAuthenticated,
     authStore.isAdmin,
   ],

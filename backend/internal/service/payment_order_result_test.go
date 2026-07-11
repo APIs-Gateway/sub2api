@@ -258,14 +258,12 @@ func TestMaybeBuildWeChatOAuthRequiredResponse(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected oauth_required response, got nil")
-		return
 	}
 	if resp.ResultType != payment.CreatePaymentResultOAuthRequired {
 		t.Fatalf("result type = %q, want %q", resp.ResultType, payment.CreatePaymentResultOAuthRequired)
 	}
 	if resp.OAuth == nil {
 		t.Fatal("expected oauth payload, got nil")
-		return
 	}
 	if resp.OAuth.AppID != "wx123456" {
 		t.Fatalf("appid = %q, want %q", resp.OAuth.AppID, "wx123456")
@@ -374,14 +372,12 @@ func TestMaybeBuildWeChatOAuthRequiredResponseFallsBackToConfiguredLegacySigning
 	}
 	if resp == nil {
 		t.Fatal("expected oauth-required response, got nil")
-		return
 	}
 	if resp.ResultType != payment.CreatePaymentResultOAuthRequired {
 		t.Fatalf("result type = %q, want %q", resp.ResultType, payment.CreatePaymentResultOAuthRequired)
 	}
 	if resp.OAuth == nil || strings.TrimSpace(resp.OAuth.AuthorizeURL) == "" {
 		t.Fatalf("expected oauth redirect payload, got %+v", resp.OAuth)
-		return
 	}
 }
 

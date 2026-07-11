@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
     isAuthenticated: boolean;
     isAdmin: boolean;
   },
+  appStore: undefined as unknown as {
+    userRegionNoticeEnabled: boolean;
+  },
   getRegion: vi.fn(),
 }));
 
@@ -28,6 +31,7 @@ vi.mock("vue-i18n", () => ({
 
 vi.mock("@/stores", () => ({
   useAuthStore: () => mocks.authStore,
+  useAppStore: () => mocks.appStore,
 }));
 
 vi.mock("@/api/region", () => ({
@@ -45,6 +49,9 @@ function resetEligibility() {
   mocks.authStore = reactive({
     isAuthenticated: true,
     isAdmin: false,
+  });
+  mocks.appStore = reactive({
+    userRegionNoticeEnabled: true,
   });
 }
 
@@ -107,15 +114,21 @@ describe("UserRegionNoticeOverlay", () => {
     },
   );
 
-  it("stays hidden when the backend setting is disabled", async () => {
+  it("does not check region or poll when the public setting is disabled", async () => {
+    vi.useFakeTimers();
+    mocks.appStore.userRegionNoticeEnabled = false;
     mocks.getRegion.mockResolvedValue({
       country_code: "CN",
-      user_region_notice_enabled: false,
+      user_region_notice_enabled: true,
     });
 
     const wrapper = await mountAndFlush();
 
     expect(wrapper.find('[data-testid="user-region-notice-overlay"]').exists()).toBe(false);
+    expect(mocks.getRegion).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(30_000);
+    await flushPromises();
+    expect(mocks.getRegion).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 

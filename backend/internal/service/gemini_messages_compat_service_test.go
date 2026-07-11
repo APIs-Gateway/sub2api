@@ -252,7 +252,6 @@ func TestConvertClaudeToolsToGeminiTools_CustomType(t *testing.T) {
 
 			if result == nil {
 				t.Fatalf("%s: expected non-nil result", tt.description)
-				return
 			}
 
 			if len(result) != 1 {
@@ -674,9 +673,6 @@ func TestExtractGeminiUsage(t *testing.T) {
 			if got == nil {
 				t.Fatalf("期望返回非 nil，实际返回 nil")
 			}
-			if got == nil {
-				return
-			}
 			if got.InputTokens != tt.wantUsage.InputTokens {
 				t.Errorf("InputTokens: 期望 %d，实际 %d", tt.wantUsage.InputTokens, got.InputTokens)
 			}
@@ -821,9 +817,6 @@ func TestParseGeminiRateLimitResetTime(t *testing.T) {
 			// approxDelta == -1 表示只检查非 nil，不检查具体值（如 daily quota 场景）
 			if tt.approxDelta == -1 {
 				// 仅验证返回的时间戳在合理范围内（未来的某个时间）
-				if got == nil {
-					return
-				}
 				if *got < now {
 					t.Errorf("期望返回的时间戳 >= now(%d)，实际 %d", now, *got)
 				}
@@ -831,9 +824,6 @@ func TestParseGeminiRateLimitResetTime(t *testing.T) {
 			}
 
 			// 使用 +/-2 秒容差进行范围检查
-			if got == nil {
-				return
-			}
 			delta := *got - now
 			if delta < tt.approxDelta-2 || delta > tt.approxDelta+2 {
 				t.Errorf("期望 delta 约为 %d 秒（+/-2），实际 delta = %d 秒（返回值=%d, now=%d）",

@@ -49,6 +49,9 @@ export const useAppStore = defineStore('app', () => {
 
   const hasActiveToasts = computed(() => toasts.value.length > 0)
   const backendModeEnabled = computed(() => cachedPublicSettings.value?.backend_mode_enabled ?? false)
+  const userRegionNoticeEnabled = computed(
+    () => cachedPublicSettings.value?.user_region_notice_enabled === true
+  )
 
   const loadingCount = ref<number>(0)
 
@@ -436,6 +439,7 @@ export const useAppStore = defineStore('app', () => {
     // Computed
     hasActiveToasts,
     backendModeEnabled,
+    userRegionNoticeEnabled,
 
     // Actions
     toggleSidebar,
