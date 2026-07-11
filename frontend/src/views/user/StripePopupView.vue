@@ -53,7 +53,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-import { buildApiUrl } from '@/api/client'
+import { getAPIBaseURL } from '@/api/client'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { isMobileDevice } from '@/utils/device'
 
@@ -165,7 +165,7 @@ function startPolling() {
     inFlight = true
     try {
       const token = localStorage.getItem('auth_token') || ''
-      const res = await fetch(buildApiUrl(`/payment/orders/${orderId}`), {
+      const res = await fetch(`${getAPIBaseURL()}/payment/orders/${orderId}`, {
         headers: token ? { Authorization: 'Bearer ' + token } : {},
         credentials: 'include',
       })
