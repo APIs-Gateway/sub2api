@@ -34,7 +34,12 @@ func TestRefreshActiveIndexUsesSlotAndWaitAsSourceOfTruth(t *testing.T) {
 	_, err := client.ZScore(ctx, accountActiveIndexKey, member).Result()
 	require.NoError(t, err)
 
-	require.NoError(t, client.Del(ctx, accountSlotKey(accountID), accountWaitKey(accountID)).Err())
+	require.NoError(t, client.Del(ctx, accountSlotKey(accountID)).Err())
+	cache.refreshActiveIndex(ctx, accountActiveIndex, accountID)
+	_, err = client.ZScore(ctx, accountActiveIndexKey, member).Result()
+	require.NoError(t, err)
+
+	require.NoError(t, client.Del(ctx, accountWaitKey(accountID)).Err())
 	cache.refreshActiveIndex(ctx, accountActiveIndex, accountID)
 	_, err = client.ZScore(ctx, accountActiveIndexKey, member).Result()
 	require.ErrorIs(t, err, redis.Nil)
@@ -48,4 +53,9 @@ func TestRefreshActiveIndexDropsInvalidInput(t *testing.T) {
 	members, err := client.ZRange(ctx, accountActiveIndexKey, 0, -1).Result()
 	require.NoError(t, err)
 	require.Empty(t, members)
+}
+
+func TestCleanupStaleProcessSlotsWithEmptyIndexes(t *testing.T) {
+	cache, _ := newConcurrencyCacheMiniRedis(t)
+	require.NoError(t, cache.CleanupStaleProcessSlots(context.Background(), "active-"))
 }
