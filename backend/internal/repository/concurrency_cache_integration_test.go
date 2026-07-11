@@ -509,6 +509,24 @@ func (s *ConcurrencyCacheSuite) TestActiveIndexTracksAcquireAndRelease() {
 	require.ErrorIs(s.T(), err, redis.Nil)
 }
 
+func (s *ConcurrencyCacheSuite) TestActiveIndexKeepsCandidateWhileSlotRemains() {
+	accountID := int64(994)
+	member := strconv.FormatInt(accountID, 10)
+
+	for _, requestID := range []string{"first", "second"} {
+		ok, err := s.cache.AcquireAccountSlot(s.ctx, accountID, 2, requestID)
+		require.NoError(s.T(), err)
+		require.True(s.T(), ok)
+	}
+	require.NoError(s.T(), s.cache.ReleaseAccountSlot(s.ctx, accountID, "first"))
+
+	_, err := s.rdb.ZScore(s.ctx, accountActiveIndexKey, member).Result()
+	require.NoError(s.T(), err)
+	count, err := s.cache.GetAccountConcurrency(s.ctx, accountID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, count)
+}
+
 func (s *ConcurrencyCacheSuite) TestActiveIndexTracksWaitCounters() {
 	userID := int64(992)
 	accountID := int64(993)
@@ -549,4 +567,15 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlotsLeavesUnindexedLegac
 	members, err := s.rdb.ZRange(s.ctx, key, 0, -1).Result()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"legacy-request"}, members)
+}
+
+func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlotsDropsMalformedIndexMember() {
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountActiveIndexKey, redis.Z{
+		Score:  float64(time.Now().Unix()),
+		Member: "not-an-id",
+	}).Err())
+
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "active-"))
+	_, err := s.rdb.ZScore(s.ctx, accountActiveIndexKey, "not-an-id").Result()
+	require.ErrorIs(s.T(), err, redis.Nil)
 }
