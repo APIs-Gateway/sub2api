@@ -681,7 +681,11 @@ const methodOptions = computed<PaymentMethodOption[]>(() =>
   })
 )
 
-const feeRate = computed(() => checkout.value?.recharge_fee_rate ?? 0)
+// Crypto Pay applies its adjustment inside BEpusdt's exchange rate.  It must
+// never display or inherit the ordinary recharge fee.
+const feeRate = computed(() =>
+  selectedMethod.value === 'crypto' ? 0 : (checkout.value?.recharge_fee_rate ?? 0),
+)
 const feeAmount = computed(() =>
   feeRate.value > 0 && validAmount.value > 0
     ? Math.ceil(((validAmount.value * feeRate.value) / 100) * 100) / 100
