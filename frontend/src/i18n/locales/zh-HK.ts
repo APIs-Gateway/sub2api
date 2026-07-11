@@ -5149,6 +5149,21 @@
       clickToViewBalance: '點擊查看充值記錄',
       failedToLoadUser: '加載用戶信息失敗',
       userDeletedBadge: '已刪除',
+      tokenRanking: {
+        title: '用戶 Token 排行',
+        subtitle: '按目前篩選條件與時間範圍統計每位用戶的 Token 用量，點擊列可下鑽到該用戶',
+        searchPlaceholder: '搜尋用戶郵箱...',
+        userCount: '共 {count} 位用戶',
+        columns: {
+          user: '用戶',
+          requests: '請求數',
+          inputTokens: '輸入 Token',
+          outputTokens: '輸出 Token',
+          cacheTokens: '緩存 Token',
+          totalTokens: '總 Token',
+          cost: '費用'
+        }
+      },
       cleanup: {
         button: '清理',
         title: '清理使用記錄',

@@ -4997,6 +4997,21 @@
       clickToViewBalance: 'Click to view balance history',
       failedToLoadUser: 'Failed to load user info',
       userDeletedBadge: 'Deleted',
+      tokenRanking: {
+        title: 'User Token Ranking',
+        subtitle: 'Token usage per user for the current filters and time range. Click a row to drill down.',
+        searchPlaceholder: 'Search user email...',
+        userCount: '{count} users',
+        columns: {
+          user: 'User',
+          requests: 'Requests',
+          inputTokens: 'Input Tokens',
+          outputTokens: 'Output Tokens',
+          cacheTokens: 'Cache Tokens',
+          totalTokens: 'Total Tokens',
+          cost: 'Cost'
+        }
+      },
       cleanup: {
         button: 'Cleanup',
         title: 'Cleanup Usage Records',
