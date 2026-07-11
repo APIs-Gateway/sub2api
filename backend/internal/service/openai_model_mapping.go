@@ -35,9 +35,8 @@ func isOpenAIOAuthServableModel(requestedModel string) bool {
 		return true
 	}
 	if normalized := NormalizeOpenAICompatRequestedModel(model); normalized != model {
-		if _, ok := normalizeKnownCodexModel(normalized); ok {
-			return true
-		}
+		_, ok := normalizeKnownCodexModel(normalized)
+		return ok
 	}
 	return false
 }
