@@ -26,6 +26,7 @@ const (
 	cryptoDefaultMarkup  = 1.002
 	cryptoDefaultMinUSDT = 5.0
 	cryptoDefaultTimeout = 1200
+	cryptoMaxRedirectURL = 255
 )
 
 var supportedCryptoNetworks = []string{
@@ -143,19 +144,11 @@ func (c *Crypto) CreatePayment(ctx context.Context, req payment.CreatePaymentReq
 	if err != nil || amountCNY <= 0 || math.IsNaN(amountCNY) || math.IsInf(amountCNY, 0) {
 		return nil, fmt.Errorf("invalid crypto payment amount")
 	}
-	rawRate, err := c.currentRate(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("load USDT/CNY rate: %w", err)
-	}
-	usdtAmount := amountCNY / (rawRate * c.markup)
-	if usdtAmount+1e-9 < c.minUSDT {
-		return nil, fmt.Errorf("crypto payment must be at least %.2f USDT", c.minUSDT)
-	}
-
 	notifyURL := strings.TrimSpace(req.NotifyURL)
 	if notifyURL == "" {
 		notifyURL = c.callbackBase + "/api/v1/payment/webhook/crypto"
 	}
+	redirectURL := compactCryptoReturnURL(req.ReturnURL, c.callbackBase)
 	payload := map[string]any{
 		"order_id":     req.OrderID,
 		"amount":       amountCNY,
@@ -163,7 +156,7 @@ func (c *Crypto) CreatePayment(ctx context.Context, req payment.CreatePaymentReq
 		"trade_type":   network,
 		"name":         req.Subject,
 		"notify_url":   notifyURL,
-		"redirect_url": req.ReturnURL,
+		"redirect_url": redirectURL,
 		"timeout":      float64(c.timeoutSec),
 		"rate":         "~" + strconv.FormatFloat(c.markup, 'f', -1, 64),
 	}
@@ -242,7 +235,7 @@ func (c *Crypto) VerifyNotification(_ context.Context, rawBody string, _ map[str
 	transactionID, _ := values["block_transaction_id"].(string)
 	amount, err := cryptoFloatValue(values["amount"])
 	actualUSDT, actualErr := cryptoFloatValue(values["actual_amount"])
-	if strings.TrimSpace(orderID) == "" || strings.TrimSpace(tradeID) == "" || strings.TrimSpace(transactionID) == "" || err != nil || amount <= 0 || actualErr != nil || actualUSDT < c.minUSDT {
+	if strings.TrimSpace(orderID) == "" || strings.TrimSpace(tradeID) == "" || strings.TrimSpace(transactionID) == "" || err != nil || amount <= 0 || actualErr != nil || actualUSDT <= 0 {
 		return nil, fmt.Errorf("crypto callback has invalid paid amount or transaction")
 	}
 	network, _ := values["trade_type"].(string)
@@ -357,6 +350,37 @@ func normalizeCryptoPaymentURL(raw, publicBase, tradeID string) string {
 		}
 	}
 	return publicBase + "/pay/checkout/" + url.PathEscape(tradeID)
+}
+
+// compactCryptoReturnURL removes the resume token from BEpusdt's redirect URL.
+// BEpusdt stores this field in VARCHAR(255); the token is only needed for the
+// initial browser flow, while the result page can resume by its order ID.
+func compactCryptoReturnURL(raw, callbackBase string) string {
+	fallback := strings.TrimRight(callbackBase, "/") + "/payment/result"
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return fallback
+	}
+	parsed.Fragment = ""
+	query := parsed.Query()
+	query.Del("resume_token")
+	parsed.RawQuery = query.Encode()
+	if len(parsed.String()) <= cryptoMaxRedirectURL {
+		return parsed.String()
+	}
+
+	fallbackURL, err := url.Parse(fallback)
+	if err != nil {
+		return fallback
+	}
+	fallbackQuery := fallbackURL.Query()
+	for _, key := range []string{"order_id", "out_trade_no", "status"} {
+		if value := query.Get(key); value != "" {
+			fallbackQuery.Set(key, value)
+		}
+	}
+	fallbackURL.RawQuery = fallbackQuery.Encode()
+	return fallbackURL.String()
 }
 
 func parseCryptoNetworks(raw string) map[string]struct{} {

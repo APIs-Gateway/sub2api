@@ -43,6 +43,10 @@ func TestCryptoCreatePaymentConvertsCNYWithIndependentRateAdjustment(t *testing.
 			if got := payload["notify_url"]; got != "https://codex.example.com/api/v1/payment/webhook/crypto" {
 				t.Fatalf("notify_url = %v", got)
 			}
+			redirectURL, _ := payload["redirect_url"].(string)
+			if len(redirectURL) > cryptoMaxRedirectURL || strings.Contains(redirectURL, "resume_token") || !strings.Contains(redirectURL, "order_id=1") {
+				t.Fatalf("redirect_url = %q", redirectURL)
+			}
 			if got := payload["signature"]; got != signCryptoMap(payloadWithoutSignature(payload), apiToken) {
 				t.Fatalf("signature = %v, want %s", got, signCryptoMap(payloadWithoutSignature(payload), apiToken))
 			}
@@ -73,7 +77,7 @@ func TestCryptoCreatePaymentConvertsCNYWithIndependentRateAdjustment(t *testing.
 		Amount:        "100.00",
 		PaymentType:   payment.TypeCrypto,
 		Subject:       "套餐",
-		ReturnURL:     "https://codex.example.com/payment/result?order_id=1",
+		ReturnURL:     "https://codex.example.com/payment/result?order_id=1&resume_token=" + strings.Repeat("x", 256),
 		CryptoNetwork: "polygon",
 	})
 	if err != nil {
@@ -231,14 +235,14 @@ func TestCryptoVerifyNotificationRejectsInvalidPayloads(t *testing.T) {
 		"trade_id":             "trade-1",
 		"order_id":             "order-1",
 		"amount":               100,
-		"actual_amount":        "4.99",
+		"actual_amount":        "0",
 		"block_transaction_id": "tx-1",
 		"status":               2,
 	}
 	invalidValues["signature"] = signCryptoMap(invalidValues, "test-api-token")
 	raw, _ = json.Marshal(invalidValues)
 	if _, err := provider.VerifyNotification(t.Context(), string(raw), nil); err == nil {
-		t.Fatal("under-minimum callback accepted")
+		t.Fatal("zero-amount callback accepted")
 	}
 }
 
@@ -328,10 +332,6 @@ func TestCryptoCreatePaymentRejectsInputAndUpstreamErrors(t *testing.T) {
 	}{
 		{name: "disabled network", scenario: "success", network: "polygon", amount: "100", wantErr: "network is not enabled"},
 		{name: "invalid amount", scenario: "success", network: "trc20", amount: "0", wantErr: "invalid crypto payment amount"},
-		{name: "below minimum", scenario: "success", network: "trc20", amount: "49", wantErr: "at least 5.00 USDT"},
-		{name: "rate error", scenario: "rate-error", network: "trc20", amount: "100", wantErr: "USDT/CNY rate unavailable"},
-		{name: "rate fallback", scenario: "rate-fallback", network: "trc20", amount: "100", wantErr: "decode crypto payment response"},
-		{name: "invalid rate", scenario: "invalid-rate", network: "trc20", amount: "100", wantErr: "invalid USDT/CNY rate"},
 		{name: "malformed response", scenario: "malformed-response", network: "trc20", amount: "100", wantErr: "decode crypto payment response"},
 		{name: "status error", scenario: "status-error", network: "trc20", amount: "100", wantErr: "upstream error"},
 		{name: "message error", scenario: "msg-error", network: "trc20", amount: "100", wantErr: "message error"},

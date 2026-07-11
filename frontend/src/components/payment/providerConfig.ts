@@ -160,7 +160,6 @@ export const PROVIDER_CONFIG_FIELDS: Record<string, ConfigFieldDef[]> = {
     { key: 'adminSecurePath', label: '', sensitive: true },
     { key: 'apiToken', label: '', sensitive: true },
     { key: 'rateMarkup', label: '', sensitive: false, defaultValue: '1.002', hintKey: 'admin.settings.payment.field_rateMarkupHint' },
-    { key: 'minUsdt', label: '', sensitive: false, defaultValue: '5', hintKey: 'admin.settings.payment.field_minUsdtHint' },
     { key: 'timeoutSec', label: '', sensitive: false, defaultValue: '1200' },
     { key: 'networks', label: '', sensitive: false, defaultValue: 'usdt.trc20,usdt.polygon,usdt.solana', hintKey: 'admin.settings.payment.field_networksHint' },
   ],
