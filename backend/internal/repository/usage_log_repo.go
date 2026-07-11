@@ -334,8 +334,6 @@ func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.
 	case r.bestEffortBatchCh <- req:
 	case <-ctx.Done():
 		return service.MarkUsageLogCreateDropped(ctx.Err())
-	default:
-		return service.MarkUsageLogCreateDropped(errors.New("usage log best-effort queue full"))
 	}
 
 	select {
@@ -455,8 +453,6 @@ func (r *usageLogRepository) createBatched(ctx context.Context, log *service.Usa
 	case r.createBatchCh <- req:
 	case <-ctx.Done():
 		return false, service.MarkUsageLogCreateNotPersisted(ctx.Err())
-	default:
-		return false, service.MarkUsageLogCreateNotPersisted(errors.New("usage log create batch queue full"))
 	}
 
 	select {
@@ -481,12 +477,12 @@ func (r *usageLogRepository) ensureCreateBatcher() {
 	if r == nil || r.db == nil {
 		return
 	}
-	// 不要在此加 `r.createBatchCh != nil` 快路径:那是绕过 sync.Once 的无同步读,会与 Do 内的写
-	// 形成 data race(双重检查锁反模式)。sync.Once.Do 自带原子 done 快路径,直接走它即可,且
-	// Do 的 happens-before 保证 Do 返回后所有调用方都能看到已建好的 channel。
 	r.createBatchOnce.Do(func() {
-		r.createBatchCh = make(chan usageLogCreateRequest, usageLogCreateBatchQueueCap)
-		go r.runCreateBatcher(r.db)
+		// nil 检查必须在 Once 内：外层的无同步快路径读会与这里的写形成 data race。
+		if r.createBatchCh == nil {
+			r.createBatchCh = make(chan usageLogCreateRequest, usageLogCreateBatchQueueCap)
+			go r.runCreateBatcher(r.db)
+		}
 	})
 }
 
@@ -494,10 +490,12 @@ func (r *usageLogRepository) ensureBestEffortBatcher() {
 	if r == nil || r.db == nil {
 		return
 	}
-	// 同 ensureCreateBatcher:去掉无同步的 `!= nil` 快路径,统一走 sync.Once.Do 避免 data race。
 	r.bestEffortBatchOnce.Do(func() {
-		r.bestEffortBatchCh = make(chan usageLogBestEffortRequest, usageLogBestEffortBatchQueueCap)
-		go r.runBestEffortBatcher(r.db)
+		// 同 ensureCreateBatcher：nil 检查只在 Once 内执行，避免无同步读写竞态。
+		if r.bestEffortBatchCh == nil {
+			r.bestEffortBatchCh = make(chan usageLogBestEffortRequest, usageLogBestEffortBatchQueueCap)
+			go r.runBestEffortBatcher(r.db)
+		}
 	})
 }
 

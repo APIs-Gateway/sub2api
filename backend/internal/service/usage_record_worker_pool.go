@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	defaultUsageRecordWorkerCount          = 128
-	defaultUsageRecordQueueSize            = 16384
-	defaultUsageRecordTaskTimeoutSeconds   = 5
-	defaultUsageRecordOverflowPolicy       = config.UsageRecordOverflowPolicySample
+	defaultUsageRecordWorkerCount        = 128
+	defaultUsageRecordQueueSize          = 16384
+	defaultUsageRecordTaskTimeoutSeconds = 5
+	// 默认 sync：队列满时提交方内联执行，避免使用量记录任务被静默丢弃。
+	defaultUsageRecordOverflowPolicy       = config.UsageRecordOverflowPolicySync
 	defaultUsageRecordOverflowSampleRatio  = 10
 	defaultUsageRecordAutoScaleEnabled     = true
 	defaultUsageRecordAutoScaleMinWorkers  = 128

@@ -9321,10 +9321,15 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	if writer, ok := repo.(usageLogBestEffortWriter); ok {
 		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
 			logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
-			if IsUsageLogCreateDropped(err) {
-				return
+			// 计费已完成；队列超时标记为 dropped 时也必须同步兜底，依赖 request_id 幂等。
+			fallbackCtx := usageCtx
+			if usageCtx.Err() != nil {
+				// 入队阻塞可能耗尽 detached 窗口；换一个独立窗口，避免兜底必然失败。
+				var fallbackCancel context.CancelFunc
+				fallbackCtx, fallbackCancel = detachedBillingContext(context.Background())
+				defer fallbackCancel()
 			}
-			if _, syncErr := repo.Create(usageCtx, usageLog); syncErr != nil {
+			if _, syncErr := repo.Create(fallbackCtx, usageLog); syncErr != nil {
 				logger.LegacyPrintf(logKey, "Create usage log sync fallback failed: %v", syncErr)
 			}
 		}
