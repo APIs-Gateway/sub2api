@@ -1648,6 +1648,7 @@ func TestAnthropicToResponsesResponse_CacheTokensUseOpenAIInputSemantics(t *test
 	assert.Equal(t, 54329, out.Usage.TotalTokens)
 	require.NotNil(t, out.Usage.InputTokensDetails)
 	assert.Equal(t, 50688, out.Usage.InputTokensDetails.CachedTokens)
+	assert.Equal(t, 200, out.Usage.CacheCreationInputTokens)
 }
 
 func TestAnthropicToResponsesResponse_NoCacheTokens(t *testing.T) {
@@ -1714,6 +1715,7 @@ func TestAnthropicEventToResponses_CacheTokensRoundTripFromMessageStart(t *testi
 	assert.Equal(t, 31, completed.Response.Usage.TotalTokens)
 	require.NotNil(t, completed.Response.Usage.InputTokensDetails)
 	assert.Equal(t, 9, completed.Response.Usage.InputTokensDetails.CachedTokens)
+	assert.Equal(t, 3, completed.Response.Usage.CacheCreationInputTokens)
 }
 
 func TestAnthropicEventToResponses_CacheTokensFromMessageDelta(t *testing.T) {
@@ -1753,4 +1755,5 @@ func TestAnthropicEventToResponses_CacheTokensFromMessageDelta(t *testing.T) {
 	assert.Equal(t, 8, completed.Response.Usage.OutputTokens)
 	require.NotNil(t, completed.Response.Usage.InputTokensDetails)
 	assert.Equal(t, 11, completed.Response.Usage.InputTokensDetails.CachedTokens)
+	assert.Equal(t, 4, completed.Response.Usage.CacheCreationInputTokens)
 }
