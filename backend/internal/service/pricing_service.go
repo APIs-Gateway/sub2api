@@ -657,9 +657,10 @@ func (s *PricingService) GetModelPricing(modelName string) (result *LiteLLMModel
 }
 
 // applyGPT56CacheWriteFallback keeps stale local catalogs billable until their
-// next successful refresh. The live catalog is authoritative whenever it
-// supplies an explicit cache-write price. See
-// docs/specs/gpt-5-6-cache-write-pricing.md §3.
+// next successful refresh. It also normalizes every GPT-5.6 catalog entry to
+// the no-surcharge 272K policy, so stale above_272k and long-context fields
+// cannot re-enable the removed surcharge. See
+// docs/specs/gpt-5-6-272k-pricing-policy.md §2.
 func applyGPT56CacheWriteFallback(model string, pricing *LiteLLMModelPricing) *LiteLLMModelPricing {
 	if pricing == nil || !isOpenAIGPT56Model(model) {
 		return pricing
@@ -667,7 +668,14 @@ func applyGPT56CacheWriteFallback(model string, pricing *LiteLLMModelPricing) *L
 
 	needsBase := pricing.CacheCreationInputTokenCost <= 0 && pricing.InputCostPerToken > 0
 	needsPriority := pricing.CacheCreationInputTokenCostPriority <= 0 && pricing.InputCostPerTokenPriority > 0
-	if !needsBase && !needsPriority {
+	needsNoSurchargeGuard := pricing.InputCostPerTokenAbove272KTokens != 0 ||
+		pricing.OutputCostPerTokenAbove272KTokens != 0 ||
+		pricing.CacheCreationInputTokenCostAbove272KTokens != 0 ||
+		pricing.CacheReadInputTokenCostAbove272KTokens != 0 ||
+		pricing.LongContextInputTokenThreshold != gpt56NoSurchargeTokenThreshold ||
+		pricing.LongContextInputCostMultiplier != 1 ||
+		pricing.LongContextOutputCostMultiplier != 1
+	if !needsBase && !needsPriority && !needsNoSurchargeGuard {
 		return pricing
 	}
 
@@ -678,6 +686,13 @@ func applyGPT56CacheWriteFallback(model string, pricing *LiteLLMModelPricing) *L
 	if needsPriority {
 		cloned.CacheCreationInputTokenCostPriority = cloned.InputCostPerTokenPriority * 1.25
 	}
+	cloned.InputCostPerTokenAbove272KTokens = 0
+	cloned.OutputCostPerTokenAbove272KTokens = 0
+	cloned.CacheCreationInputTokenCostAbove272KTokens = 0
+	cloned.CacheReadInputTokenCostAbove272KTokens = 0
+	cloned.LongContextInputTokenThreshold = gpt56NoSurchargeTokenThreshold
+	cloned.LongContextInputCostMultiplier = 1
+	cloned.LongContextOutputCostMultiplier = 1
 	return &cloned
 }
 

@@ -368,6 +368,33 @@ func TestTryCustomRules_FirstMatchWins(t *testing.T) {
 	require.InDelta(t, 2.0, *result, 1e-12)
 }
 
+func TestTryCustomRules_GPT56UsesBasePriceAfter272K(t *testing.T) {
+	channel := &Channel{
+		AccountStatsPricingRules: []AccountStatsPricingRule{{
+			AccountIDs: []int64{999},
+			Pricing: []ChannelModelPricing{{
+				Models:          []string{"gpt-5.6-terra"},
+				BillingMode:     BillingModeToken,
+				InputPrice:      testPtrFloat64(2.5e-6),
+				OutputPrice:     testPtrFloat64(15e-6),
+				CacheWritePrice: testPtrFloat64(3.125e-6),
+				CacheReadPrice:  testPtrFloat64(0.25e-6),
+				Intervals: []PricingInterval{
+					{MinTokens: 0, MaxTokens: testPtrInt(272000), InputPrice: testPtrFloat64(2.5e-6)},
+					{MinTokens: 272000, InputPrice: testPtrFloat64(5e-6)},
+				},
+			}},
+		}},
+	}
+
+	result := tryCustomRules(channel, 999, 1, "", "gpt-5.6-terra", UsageTokens{
+		InputTokens:     1000,
+		CacheReadTokens: 300000,
+	}, 1)
+	require.NotNil(t, result)
+	require.InDelta(t, 1000*2.5e-6+300000*0.25e-6, *result, 1e-12)
+}
+
 func TestTryCustomRules_SkipsNonMatchingRules(t *testing.T) {
 	channel := &Channel{
 		AccountStatsPricingRules: []AccountStatsPricingRule{

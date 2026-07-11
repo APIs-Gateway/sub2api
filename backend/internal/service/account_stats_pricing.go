@@ -90,6 +90,7 @@ func tryCustomRules(
 		if pricing == nil {
 			continue // 规则匹配但模型不在规则定价中，继续下一条
 		}
+		pricing = normalizeGPT56ChannelTokenPricing(model, pricing)
 		return calculateStatsCost(pricing, tokens, requestCount)
 	}
 	return nil

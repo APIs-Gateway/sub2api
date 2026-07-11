@@ -168,6 +168,10 @@ func TestGetRequestTierPrice_NilPerRequestPrice(t *testing.T) {
 // helper: creates a resolver wired to a ChannelService that returns the given
 // channel (active, groupID=100, platform=anthropic) with the specified pricing.
 func newResolverWithChannel(t *testing.T, pricing []ChannelModelPricing) *ModelPricingResolver {
+	return newResolverWithChannelPlatform(t, "anthropic", pricing)
+}
+
+func newResolverWithChannelPlatform(t *testing.T, platform string, pricing []ChannelModelPricing) *ModelPricingResolver {
 	t.Helper()
 	const groupID = 100
 	repo := &mockChannelRepository{
@@ -181,7 +185,7 @@ func newResolverWithChannel(t *testing.T, pricing []ChannelModelPricing) *ModelP
 			}}, nil
 		},
 		getGroupPlatformsFn: func(_ context.Context, _ []int64) (map[int64]string, error) {
-			return map[int64]string{groupID: "anthropic"}, nil
+			return map[int64]string{groupID: platform}, nil
 		},
 	}
 	cs := NewChannelService(repo, nil, nil, nil)
@@ -296,6 +300,40 @@ func TestResolve_WithChannelOverride_TokenWithIntervals(t *testing.T) {
 	require.NotNil(t, iv2)
 	require.InDelta(t, 4e-6, iv2.InputPricePerToken, 1e-12)
 	require.InDelta(t, 16e-6, iv2.OutputPricePerToken, 1e-12)
+}
+
+func TestResolve_GPT56ChannelIntervalsUseBaseAfter272K(t *testing.T) {
+	r := newResolverWithChannelPlatform(t, "openai", []ChannelModelPricing{{
+		Platform:       "openai",
+		Models:         []string{"gpt-5.6-terra"},
+		BillingMode:    BillingModeToken,
+		InputPrice:     testPtrFloat64(2.5e-6),
+		CacheReadPrice: testPtrFloat64(0.25e-6),
+		Intervals: []PricingInterval{
+			{MinTokens: 0, MaxTokens: testPtrInt(272000), InputPrice: testPtrFloat64(2.5e-6)},
+			{MinTokens: 272000, MaxTokens: nil, InputPrice: testPtrFloat64(5e-6)},
+		},
+	}})
+
+	resolved := r.Resolve(context.Background(), PricingInput{
+		Model:   "gpt-5.6-terra",
+		GroupID: groupIDPtr(),
+	})
+	require.Len(t, resolved.Intervals, 2)
+
+	bs := newTestBillingServiceForResolver()
+	cost, err := bs.CalculateCostUnified(CostInput{
+		Ctx:            context.Background(),
+		Model:          "gpt-5.6-terra",
+		GroupID:        groupIDPtr(),
+		Tokens:         UsageTokens{InputTokens: 1000, CacheReadTokens: 300000},
+		RateMultiplier: 1,
+		Resolver:       r,
+		Resolved:       resolved,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 1000*2.5e-6, cost.InputCost, 1e-12)
+	require.InDelta(t, 300000*0.25e-6, cost.CacheReadCost, 1e-12)
 }
 
 func TestResolve_WithChannelOverride_TokenNilBasePricing(t *testing.T) {
