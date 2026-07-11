@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 type cleanupWorkerUserMsgQueueCache struct {
 	reconcileCalls atomic.Int64
 	maxCount       atomic.Int64
+	reconcileErr   error
 }
 
 var _ UserMsgQueueCache = (*cleanupWorkerUserMsgQueueCache)(nil)
@@ -37,7 +39,7 @@ func (c *cleanupWorkerUserMsgQueueCache) GetCurrentTimeMs(context.Context) (int6
 func (c *cleanupWorkerUserMsgQueueCache) ReconcileExpiredLockCandidates(_ context.Context, maxCount int) (int, error) {
 	c.reconcileCalls.Add(1)
 	c.maxCount.Store(int64(maxCount))
-	return 1, nil
+	return 1, c.reconcileErr
 }
 
 func TestStartCleanupWorkerReconcilesExpiredLockCandidates(t *testing.T) {
@@ -51,4 +53,16 @@ func TestStartCleanupWorkerReconcilesExpiredLockCandidates(t *testing.T) {
 		return cache.reconcileCalls.Load() > 0
 	}, time.Second, 10*time.Millisecond)
 	require.EqualValues(t, 1000, cache.maxCount.Load())
+}
+
+func TestStartCleanupWorkerToleratesReconcileError(t *testing.T) {
+	cache := &cleanupWorkerUserMsgQueueCache{reconcileErr: errors.New("redis unavailable")}
+	svc := NewUserMessageQueueService(cache, nil, nil)
+	defer svc.Stop()
+
+	svc.StartCleanupWorker(time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		return cache.reconcileCalls.Load() > 0
+	}, time.Second, 10*time.Millisecond)
 }
