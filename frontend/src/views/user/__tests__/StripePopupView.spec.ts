@@ -128,8 +128,49 @@ describe('StripePopupView', () => {
     wrapper.unmount()
   })
 
+  it('ignores unrelated messages before accepting the popup initialization message', async () => {
+    const wrapper = mount(StripePopupView)
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: 'https://untrusted.example.test',
+      data: { type: 'STRIPE_POPUP_INIT', clientSecret: 'ignored', publishableKey: 'ignored' },
+    }))
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: window.location.origin,
+      data: { type: 'UNRELATED_EVENT' },
+    }))
+    await flushPromises()
+
+    expect(loadStripe).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('notifies its opener that the popup is ready', () => {
+    const postMessage = vi.fn()
+    Object.defineProperty(window, 'opener', { configurable: true, value: { postMessage } })
+
+    const wrapper = mount(StripePopupView)
+
+    expect(postMessage).toHaveBeenCalledWith({ type: 'STRIPE_POPUP_READY' }, window.location.origin)
+    wrapper.unmount()
+    Object.defineProperty(window, 'opener', { configurable: true, value: null })
+  })
+
   it('keeps polling after a non-OK payment status response', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = await initializeWechatPolling()
+    vi.advanceTimersByTime(3000)
+    await flushPromises()
+    vi.advanceTimersByTime(3000)
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('keeps polling after a payment status request fails', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network unavailable'))
     vi.stubGlobal('fetch', fetchMock)
 
     const wrapper = await initializeWechatPolling()

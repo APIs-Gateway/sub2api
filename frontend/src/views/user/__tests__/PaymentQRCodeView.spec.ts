@@ -92,6 +92,22 @@ describe('PaymentQRCodeView', () => {
     wrapper.unmount()
   })
 
+  it('does not poll when the page has no order id', async () => {
+    routeState.query.order_id = undefined
+    pollOrderStatus.mockResolvedValue({ status: 'PENDING' })
+
+    const wrapper = mount(PaymentQRCodeView, {
+      global: {
+        stubs: { AppLayout: { template: '<div><slot /></div>' } },
+      },
+    })
+
+    await vi.advanceTimersByTimeAsync(6000)
+
+    expect(pollOrderStatus).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('ignores a terminal result that arrives after the page is unmounted', async () => {
     const pending = deferred<{ status: string }>()
     pollOrderStatus.mockReturnValue(pending.promise)
@@ -129,6 +145,26 @@ describe('PaymentQRCodeView', () => {
     expect(wrapper.text()).toContain('payment.qr.expired')
     await vi.advanceTimersByTimeAsync(9000)
     expect(pollOrderStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('redirects after a completed QR payment and stops polling', async () => {
+    pollOrderStatus.mockResolvedValue({ status: 'PAID' })
+
+    const wrapper = mount(PaymentQRCodeView, {
+      global: {
+        stubs: { AppLayout: { template: '<div><slot /></div>' } },
+      },
+    })
+
+    await vi.advanceTimersByTimeAsync(3000)
+
+    expect(routerPush).toHaveBeenCalledWith({
+      path: '/payment/result',
+      query: { order_id: '42', status: 'success' },
+    })
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(pollOrderStatus).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 
   it('keeps polling after an empty QR status response', async () => {
