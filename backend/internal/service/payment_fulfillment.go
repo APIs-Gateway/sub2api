@@ -732,6 +732,17 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease
 			monthlyLimit = m
 		}
 	}
+	// Idempotency: once the success audit exists, the subscription was already
+	// applied. Only repair the order state; do not require the source group or
+	// subscription service to still be available during recovery.
+	if s.hasAuditLog(ctx, o.ID, "SUBSCRIPTION_SUCCESS") {
+		slog.Info("subscription already assigned for order, skipping", "orderID", o.ID, "groupID", gid)
+		if err := s.markSubscriptionCompletedWithLease(ctx, o, lease, "SUBSCRIPTION_SUCCESS"); err != nil {
+			return err
+		}
+		s.applyPointsEarnForOrder(ctx, o)
+		return nil
+	}
 	if gid > 0 {
 		// 套餐/历史卡：校验来源 group 仍存在（无快照的老单还要求 active，保证可推导 D）。
 		g, err := s.groupRepo.GetByID(ctx, gid)
@@ -744,16 +755,6 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease
 	} else if !hasSnapshot {
 		// 自定义单必须有冻结快照提供 D/T；无快照无从发卡，直接失败（已付款会 markFailed）。
 		return fmt.Errorf("custom subscription order %d missing pricing snapshot", o.ID)
-	}
-	// Idempotency: check audit log to see if subscription was already assigned.
-	// Prevents double-extension on retry after markCompleted fails.
-	if s.hasAuditLog(ctx, o.ID, "SUBSCRIPTION_SUCCESS") {
-		slog.Info("subscription already assigned for order, skipping", "orderID", o.ID, "groupID", gid)
-		if err := s.markSubscriptionCompletedWithLease(ctx, o, lease, "SUBSCRIPTION_SUCCESS"); err != nil {
-			return err
-		}
-		s.applyPointsEarnForOrder(ctx, o)
-		return nil
 	}
 	if s.subscriptionSvc == nil || s.subscriptionSvc.userSubRepo == nil {
 		return errors.New("subscription service is unavailable")

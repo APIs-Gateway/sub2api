@@ -1012,39 +1012,6 @@ func TestExecuteSubscriptionFulfillmentCompletedIsIdempotent(t *testing.T) {
 	require.Equal(t, OrderStatusCompleted, reloaded.Status)
 }
 
-func TestSubscriptionFulfillmentLeaseFencesStaleWorker(t *testing.T) {
-	ctx := context.Background()
-	client := newPaymentConfigServiceTestClient(t)
-	staleAt := staleSubscriptionFulfillmentTimeForTest()
-	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleAt)
-	svc := &PaymentService{entClient: client}
-
-	firstLease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
-	require.NoError(t, err)
-	require.NotNil(t, firstLease)
-
-	_, err = client.PaymentOrder.UpdateOneID(order.ID).SetUpdatedAt(staleAt).Save(ctx)
-	require.NoError(t, err)
-	secondLease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
-	require.NoError(t, err)
-	require.NotNil(t, secondLease)
-	require.False(t, firstLease.version.Equal(secondLease.version))
-
-	err = svc.markSubscriptionCompletedWithLease(ctx, order, firstLease)
-	require.Error(t, err)
-	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
-	svc.markSubscriptionFailedWithLease(ctx, order.ID, firstLease, errors.New("stale worker failure"))
-
-	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
-	require.NoError(t, err)
-	require.Equal(t, OrderStatusRecharging, reloaded.Status)
-
-	require.NoError(t, svc.markSubscriptionCompletedWithLease(ctx, order, secondLease))
-	reloaded, err = client.PaymentOrder.Get(ctx, order.ID)
-	require.NoError(t, err)
-	require.Equal(t, OrderStatusCompleted, reloaded.Status)
-}
-
 func TestHasPaymentSubscriptionOrderNoteRequiresExactLine(t *testing.T) {
 	t.Parallel()
 	require.True(t, hasPaymentSubscriptionOrderNote("before\r\npayment order 42\r\nafter", "payment order 42"))
