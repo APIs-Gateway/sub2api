@@ -625,10 +625,10 @@ func TestAcquireBalanceFulfillmentLeaseHandlesClaimableAndTerminalStates(t *test
 	require.Equal(t, "INVALID_STATUS", infraerrors.Reason(err))
 }
 
-func TestRetryFulfillmentKeepsSubscriptionRechargingBlocked(t *testing.T) {
+func TestRetryFulfillmentKeepsFreshSubscriptionRechargingBlocked(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)
-	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleBalanceFulfillmentTimeForTest())
+	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, time.Now().UTC())
 	order, err := client.PaymentOrder.UpdateOneID(order.ID).
 		SetOrderType(payment.OrderTypeSubscription).
 		SetSubscriptionGroupID(7).
@@ -637,6 +637,234 @@ func TestRetryFulfillmentKeepsSubscriptionRechargingBlocked(t *testing.T) {
 	require.NoError(t, err)
 
 	svc := &PaymentService{entClient: client}
+	err = svc.RetryFulfillment(ctx, order.ID)
+	require.Error(t, err)
+	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+}
+
+func TestAcquireSubscriptionFulfillmentLeaseRejectsFreshAndRecoversStaleOrders(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	svc := &PaymentService{entClient: client}
+
+	fresh := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, time.Now().UTC())
+	lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, fresh)
+	require.Nil(t, lease)
+	require.Error(t, err)
+	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+
+	staleAt := staleSubscriptionFulfillmentTimeForTest()
+	stale := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleAt)
+	lease, err = svc.acquireSubscriptionFulfillmentLease(ctx, stale)
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+
+	reloaded, err := client.PaymentOrder.Get(ctx, stale.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRecharging, reloaded.Status)
+	require.True(t, reloaded.UpdatedAt.After(staleAt))
+	require.True(t, lease.version.Equal(reloaded.UpdatedAt))
+}
+
+func TestAcquireSubscriptionFulfillmentLeaseHandlesClaimableAndTerminalStates(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	svc := &PaymentService{entClient: client}
+
+	paid := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusPaid, time.Now().UTC())
+	lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, paid)
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+
+	completed := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusCompleted, time.Now().UTC())
+	lease, err = svc.acquireSubscriptionFulfillmentLease(ctx, completed)
+	require.NoError(t, err)
+	require.Nil(t, lease)
+
+	expired := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusExpired, time.Now().UTC())
+	lease, err = svc.acquireSubscriptionFulfillmentLease(ctx, expired)
+	require.Nil(t, lease)
+	require.Error(t, err)
+	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+
+	lease, err = svc.acquireSubscriptionFulfillmentLease(ctx, nil)
+	require.Nil(t, lease)
+	require.Error(t, err)
+	require.Equal(t, "INVALID_STATUS", infraerrors.Reason(err))
+}
+
+func TestSubscriptionFulfillmentLeaseFencesStaleWorker(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	staleAt := staleSubscriptionFulfillmentTimeForTest()
+	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleAt)
+	svc := &PaymentService{entClient: client}
+
+	firstLease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+	require.NotNil(t, firstLease)
+
+	_, err = client.PaymentOrder.UpdateOneID(order.ID).SetUpdatedAt(staleAt).Save(ctx)
+	require.NoError(t, err)
+	secondLease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+	require.NotNil(t, secondLease)
+	require.False(t, firstLease.version.Equal(secondLease.version))
+
+	err = svc.markSubscriptionCompletedWithLease(ctx, order, firstLease, "SUBSCRIPTION_SUCCESS")
+	require.Error(t, err)
+	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+	svc.markSubscriptionFailedWithLease(ctx, order.ID, firstLease, errors.New("stale worker failure"))
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRecharging, reloaded.Status)
+
+	require.NoError(t, svc.markSubscriptionCompletedWithLease(ctx, order, secondLease, "SUBSCRIPTION_SUCCESS"))
+	reloaded, err = client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+	require.NoError(t, svc.markSubscriptionCompletedWithLease(ctx, order, firstLease, "SUBSCRIPTION_SUCCESS"))
+}
+
+func TestMarkSubscriptionFailedWithLeaseOnlyChangesCurrentOwner(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleSubscriptionFulfillmentTimeForTest())
+	svc := &PaymentService{entClient: client}
+
+	lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	svc.markSubscriptionFailedWithLease(ctx, order.ID, lease, errors.New("temporary fulfillment error"))
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusFailed, reloaded.Status)
+	require.NotNil(t, reloaded.FailedAt)
+	require.NotEmpty(t, reloaded.FailedReason)
+}
+
+func TestRetryFulfillmentRecoversStaleSubscriptionOrder(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleSubscriptionFulfillmentTimeForTest())
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetProviderSnapshot(map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd": 10.0,
+				"validity_days":    30.0,
+			},
+		}).
+		SetUpdatedAt(staleSubscriptionFulfillmentTimeForTest()).
+		Save(ctx)
+	require.NoError(t, err)
+
+	groupRepo := &subscriptionGroupRepoStub{group: &Group{ID: *order.SubscriptionGroupID, Status: StatusActive}}
+	subRepo := newSubscriptionUserSubRepoStub()
+	svc := &PaymentService{
+		entClient:       client,
+		groupRepo:       groupRepo,
+		subscriptionSvc: NewSubscriptionService(groupRepo, subRepo, nil, nil, nil, nil, nil, nil),
+	}
+
+	require.NoError(t, svc.RetryFulfillment(ctx, order.ID))
+
+	reloaded, getErr := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, getErr)
+	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+	require.Equal(t, 1, subRepo.createCalls)
+}
+
+func TestDoSubCompletesAlreadyAppliedPurchaseWithCurrentLease(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleSubscriptionFulfillmentTimeForTest())
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetProviderSnapshot(map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd": 10.0,
+				"validity_days":    30.0,
+			},
+		}).
+		SetUpdatedAt(staleSubscriptionFulfillmentTimeForTest()).
+		Save(ctx)
+	require.NoError(t, err)
+
+	groupRepo := &subscriptionGroupRepoStub{group: &Group{ID: *order.SubscriptionGroupID, Status: StatusActive}}
+	svc := &PaymentService{entClient: client, groupRepo: groupRepo}
+	svc.writeAuditLog(ctx, order.ID, "SUBSCRIPTION_SUCCESS", "system", map[string]any{"recovered": true})
+	lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.doSub(ctx, order, lease))
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+}
+
+func TestDoSubLifecycleCompletesAlreadyAppliedRenewWithCurrentLease(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleSubscriptionFulfillmentTimeForTest())
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetProviderSnapshot(map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd": 10.0,
+				"validity_days":    30.0,
+			},
+		}).
+		SetUpdatedAt(staleSubscriptionFulfillmentTimeForTest()).
+		Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentService{entClient: client}
+	svc.writeAuditLog(ctx, order.ID, "SUBSCRIPTION_SUCCESS", "system", map[string]any{"recovered": true})
+	lease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.doSubLifecycle(ctx, order, SubscriptionIntentRenew, 1, lease))
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+}
+
+func TestSubscriptionFulfillmentLeaseGuardsRejectMissingLease(t *testing.T) {
+	ctx := context.Background()
+	svc := &PaymentService{}
+
+	require.Error(t, svc.doSub(ctx, &dbent.PaymentOrder{}, nil))
+	require.Error(t, svc.doSubLifecycle(ctx, &dbent.PaymentOrder{}, SubscriptionIntentRenew, 1, nil))
+	require.Error(t, svc.markSubscriptionCompletedWithLease(ctx, &dbent.PaymentOrder{}, nil, "SUBSCRIPTION_SUCCESS"))
+
+	// A worker that lost its lease must never update an order to FAILED.
+	svc.markSubscriptionFailedWithLease(ctx, 1, nil, errors.New("stale worker"))
+}
+
+func TestExecuteSubscriptionFulfillmentRejectsNonFulfillableStatus(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusExpired, time.Now().UTC())
+	svc := &PaymentService{entClient: client}
+
+	err := svc.ExecuteSubscriptionFulfillment(ctx, order.ID)
+	require.Error(t, err)
+	require.Equal(t, "INVALID_STATUS", infraerrors.Reason(err))
+}
+
+func TestRechargingUnknownOrderTypeIsNotRetried(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, time.Now().UTC())
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetOrderType("unknown").
+		Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentService{entClient: client}
+	err = svc.alreadyProcessed(ctx, order)
+	require.EqualError(t, err, fmt.Sprintf("order %d is being processed", order.ID))
+
 	err = svc.RetryFulfillment(ctx, order.ID)
 	require.Error(t, err)
 	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
@@ -780,39 +1008,6 @@ func TestExecuteSubscriptionFulfillmentCompletedIsIdempotent(t *testing.T) {
 	require.NoError(t, svc.ExecuteSubscriptionFulfillment(ctx, order.ID))
 
 	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
-	require.NoError(t, err)
-	require.Equal(t, OrderStatusCompleted, reloaded.Status)
-}
-
-func TestSubscriptionFulfillmentLeaseFencesStaleWorker(t *testing.T) {
-	ctx := context.Background()
-	client := newPaymentConfigServiceTestClient(t)
-	staleAt := staleSubscriptionFulfillmentTimeForTest()
-	order := createSubscriptionFulfillmentLeaseOrder(t, ctx, client, OrderStatusRecharging, staleAt)
-	svc := &PaymentService{entClient: client}
-
-	firstLease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
-	require.NoError(t, err)
-	require.NotNil(t, firstLease)
-
-	_, err = client.PaymentOrder.UpdateOneID(order.ID).SetUpdatedAt(staleAt).Save(ctx)
-	require.NoError(t, err)
-	secondLease, err := svc.acquireSubscriptionFulfillmentLease(ctx, order)
-	require.NoError(t, err)
-	require.NotNil(t, secondLease)
-	require.False(t, firstLease.version.Equal(secondLease.version))
-
-	err = svc.markSubscriptionCompletedWithLease(ctx, order, firstLease)
-	require.Error(t, err)
-	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
-	svc.markSubscriptionFailedWithLease(ctx, order.ID, firstLease, errors.New("stale worker failure"))
-
-	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
-	require.NoError(t, err)
-	require.Equal(t, OrderStatusRecharging, reloaded.Status)
-
-	require.NoError(t, svc.markSubscriptionCompletedWithLease(ctx, order, secondLease))
-	reloaded, err = client.PaymentOrder.Get(ctx, order.ID)
 	require.NoError(t, err)
 	require.Equal(t, OrderStatusCompleted, reloaded.Status)
 }
@@ -1052,32 +1247,6 @@ func staleSubscriptionFulfillmentTimeForTest() time.Time {
 	return time.Now().UTC().Add(-subscriptionFulfillmentLeaseDuration - time.Minute)
 }
 
-func createSubscriptionFulfillmentLeaseOrder(
-	t *testing.T,
-	ctx context.Context,
-	client *dbent.Client,
-	status string,
-	updatedAt time.Time,
-) *dbent.PaymentOrder {
-	t.Helper()
-	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, status, updatedAt)
-	order, err := client.PaymentOrder.UpdateOneID(order.ID).
-		SetOrderType(payment.OrderTypeSubscription).
-		SetSubscriptionDays(30).
-		SetProviderSnapshot(map[string]any{
-			subscriptionSnapshotKey: map[string]any{
-				"daily_amount_usd":  10.0,
-				"validity_days":     30.0,
-				"weekly_limit_usd":  50.0,
-				"monthly_limit_usd": 200.0,
-			},
-		}).
-		SetUpdatedAt(updatedAt).
-		Save(ctx)
-	require.NoError(t, err)
-	return order
-}
-
 func createBalanceFulfillmentLeaseOrder(
 	t *testing.T,
 	ctx context.Context,
@@ -1111,6 +1280,33 @@ func createBalanceFulfillmentLeaseOrder(
 		SetExpiresAt(time.Now().Add(time.Hour)).
 		SetClientIP("127.0.0.1").
 		SetSrcHost("api.example.com").
+		SetUpdatedAt(updatedAt).
+		Save(ctx)
+	require.NoError(t, err)
+	return order
+}
+
+func createSubscriptionFulfillmentLeaseOrder(
+	t *testing.T,
+	ctx context.Context,
+	client *dbent.Client,
+	status string,
+	updatedAt time.Time,
+) *dbent.PaymentOrder {
+	t.Helper()
+	order := createBalanceFulfillmentLeaseOrder(t, ctx, client, status, updatedAt)
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetOrderType(payment.OrderTypeSubscription).
+		SetSubscriptionGroupID(7).
+		SetSubscriptionDays(30).
+		SetProviderSnapshot(map[string]any{
+			subscriptionSnapshotKey: map[string]any{
+				"daily_amount_usd":  10.0,
+				"validity_days":     30.0,
+				"weekly_limit_usd":  50.0,
+				"monthly_limit_usd": 200.0,
+			},
+		}).
 		SetUpdatedAt(updatedAt).
 		Save(ctx)
 	require.NoError(t, err)

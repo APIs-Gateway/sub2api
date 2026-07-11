@@ -36,8 +36,9 @@ type balanceFulfillmentLease struct {
 	version time.Time
 }
 
-// subscriptionFulfillmentLease keeps subscription recovery independent from
-// balance redemption while using the same five-minute updated_at fencing.
+// subscriptionFulfillmentLease fences the worker that most recently claimed a
+// subscription order. Subscription fulfillment has additional transactional
+// lifecycle work, so it keeps a separate lease from balance orders.
 type subscriptionFulfillmentLease struct {
 	version time.Time
 }
@@ -296,13 +297,14 @@ func (s *PaymentService) alreadyProcessed(ctx context.Context, o *dbent.PaymentO
 	case OrderStatusFailed:
 		return s.executeFulfillment(ctx, o.ID)
 	case OrderStatusPaid, OrderStatusRecharging:
-		if cur.OrderType == payment.OrderTypeBalance {
+		switch cur.OrderType {
+		case payment.OrderTypeBalance:
 			return s.ExecuteBalanceFulfillment(ctx, o.ID)
-		}
-		if cur.OrderType == payment.OrderTypeSubscription {
+		case payment.OrderTypeSubscription:
 			return s.ExecuteSubscriptionFulfillment(ctx, o.ID)
+		default:
+			return fmt.Errorf("order %d is being processed", o.ID)
 		}
-		return fmt.Errorf("order %d is being processed", o.ID)
 	case OrderStatusExpired:
 		slog.Warn("webhook payment success for expired order beyond grace period",
 			"orderID", o.ID,
@@ -694,6 +696,9 @@ func (s *PaymentService) acquireSubscriptionFulfillmentLease(ctx context.Context
 }
 
 func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease *subscriptionFulfillmentLease) error {
+	if lease == nil {
+		return errors.New("missing subscription fulfillment lease")
+	}
 	// 生命周期意图分发（per-day redesign §5/§7）：renew=延长目标卡、change_plan=关旧开新；
 	// 二者参数(目标卡 ID + 新 D/T)由订单冻结快照提供，履约不重算。purchase(默认/老单)走下方建新卡逻辑。
 	if intent, targetSubID := readSubscriptionIntent(o); intent != SubscriptionIntentPurchase {
@@ -727,6 +732,17 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease
 			monthlyLimit = m
 		}
 	}
+	// Idempotency: once the success audit exists, the subscription was already
+	// applied. Only repair the order state; do not require the source group or
+	// subscription service to still be available during recovery.
+	if s.hasAuditLog(ctx, o.ID, "SUBSCRIPTION_SUCCESS") {
+		slog.Info("subscription already assigned for order, skipping", "orderID", o.ID, "groupID", gid)
+		if err := s.markSubscriptionCompletedWithLease(ctx, o, lease, "SUBSCRIPTION_SUCCESS"); err != nil {
+			return err
+		}
+		s.applyPointsEarnForOrder(ctx, o)
+		return nil
+	}
 	if gid > 0 {
 		// 套餐/历史卡：校验来源 group 仍存在（无快照的老单还要求 active，保证可推导 D）。
 		g, err := s.groupRepo.GetByID(ctx, gid)
@@ -739,16 +755,6 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease
 	} else if !hasSnapshot {
 		// 自定义单必须有冻结快照提供 D/T；无快照无从发卡，直接失败（已付款会 markFailed）。
 		return fmt.Errorf("custom subscription order %d missing pricing snapshot", o.ID)
-	}
-	// Idempotency: check audit log to see if subscription was already assigned.
-	// Prevents double-extension on retry after markCompleted fails.
-	if s.hasAuditLog(ctx, o.ID, "SUBSCRIPTION_SUCCESS") {
-		slog.Info("subscription already assigned for order, skipping", "orderID", o.ID, "groupID", gid)
-		s.applyPointsEarnForOrder(ctx, o)
-		return s.markSubscriptionCompletedWithLease(ctx, o, lease)
-	}
-	if lease == nil {
-		return errors.New("missing subscription fulfillment lease")
 	}
 	if s.subscriptionSvc == nil || s.subscriptionSvc.userSubRepo == nil {
 		return errors.New("subscription service is unavailable")
@@ -912,6 +918,9 @@ func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrd
 	if len(leases) > 0 {
 		lease = leases[0]
 	}
+	if lease == nil {
+		return errors.New("missing subscription fulfillment lease")
+	}
 	d, t, hasSnapshot, snapErr := readSubscriptionSnapshotDT(o)
 	if snapErr != nil {
 		return snapErr
@@ -925,11 +934,11 @@ func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrd
 	// 幂等快路：已发卡则只补完成状态（SUCCESS 审计已与 apply 同事务写入，见下）。
 	if s.hasAuditLog(ctx, o.ID, "SUBSCRIPTION_SUCCESS") {
 		slog.Info("lifecycle subscription already applied for order, skipping", "orderID", o.ID, "intent", intent)
+		if err := s.markSubscriptionCompletedWithLease(ctx, o, lease, "SUBSCRIPTION_SUCCESS"); err != nil {
+			return err
+		}
 		s.applyPointsEarnForOrder(ctx, o)
-		return s.markSubscriptionCompletedWithLease(ctx, o, lease)
-	}
-	if lease == nil {
-		return errors.New("missing subscription fulfillment lease")
+		return nil
 	}
 
 	// 原子履约（P2#6 根治「续费双倍延期 / 转套餐重复建卡」）：apply + 订单置完成 + SUCCESS 审计键
@@ -1035,9 +1044,13 @@ func (s *PaymentService) applyPointsEarnForOrder(ctx context.Context, o *dbent.P
 	}
 }
 
-func (s *PaymentService) markSubscriptionCompletedWithLease(ctx context.Context, o *dbent.PaymentOrder, lease *subscriptionFulfillmentLease) error {
+func (s *PaymentService) markSubscriptionCompletedWithLease(ctx context.Context, o *dbent.PaymentOrder, lease *subscriptionFulfillmentLease, auditActions ...string) error {
 	if lease == nil {
 		return errors.New("missing subscription fulfillment lease")
+	}
+	auditAction := "SUBSCRIPTION_SUCCESS"
+	if len(auditActions) > 0 && strings.TrimSpace(auditActions[0]) != "" {
+		auditAction = auditActions[0]
 	}
 
 	updated, err := s.entClient.PaymentOrder.Update().
@@ -1058,6 +1071,14 @@ func (s *PaymentService) markSubscriptionCompletedWithLease(ctx context.Context,
 			return nil
 		}
 		return infraerrors.Conflict("CONFLICT", "subscription fulfillment lease was lost before completion")
+	}
+	if !s.hasAuditLog(ctx, o.ID, auditAction) {
+		s.writeAuditLog(ctx, o.ID, auditAction, "system", map[string]any{
+			"rechargeCode":   o.RechargeCode,
+			"creditedAmount": o.Amount,
+			"payAmount":      o.PayAmount,
+		})
+		s.dispatchPaymentFulfillmentNotification(o, auditAction)
 	}
 	return nil
 }

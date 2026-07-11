@@ -60,11 +60,11 @@ func TestDoSubLifecycle_SnapshotGuards(t *testing.T) {
 	// 快照损坏 → 失败（不能按回调时配置重算）。
 	err := svc.doSubLifecycle(ctx, &dbent.PaymentOrder{
 		ProviderSnapshot: map[string]any{subscriptionSnapshotKey: "corrupt"},
-	}, SubscriptionIntentRenew, 5)
+	}, SubscriptionIntentRenew, 5, &subscriptionFulfillmentLease{})
 	require.Error(t, err)
 
 	// 无定价快照（生命周期单必须有冻结 D/T）→ 失败。
-	err = svc.doSubLifecycle(ctx, &dbent.PaymentOrder{ID: 7}, SubscriptionIntentRenew, 5)
+	err = svc.doSubLifecycle(ctx, &dbent.PaymentOrder{ID: 7}, SubscriptionIntentRenew, 5, &subscriptionFulfillmentLease{})
 	require.Error(t, err)
 
 	// 有快照但无目标卡 ID → 失败。
@@ -72,7 +72,7 @@ func TestDoSubLifecycle_SnapshotGuards(t *testing.T) {
 		ProviderSnapshot: map[string]any{
 			subscriptionSnapshotKey: map[string]any{"daily_amount_usd": 10.0, "validity_days": 30.0},
 		},
-	}, SubscriptionIntentRenew, 0)
+	}, SubscriptionIntentRenew, 0, &subscriptionFulfillmentLease{})
 	require.Error(t, err)
 }
 
