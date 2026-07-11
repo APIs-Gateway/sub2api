@@ -3,11 +3,13 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
 	"entgo.io/ent/dialect"
 
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -44,6 +46,52 @@ func TestLatestUsageLogIPsSkipsEmptyAndNilExecutor(t *testing.T) {
 	keys := []service.APIKey{{ID: 1}}
 	require.NoError(t, repo.attachLastUsedIPs(context.Background(), keys))
 	require.Nil(t, keys[0].LastUsedIP)
+}
+
+func TestLatestUsageLogIPsPropagatesQueryAndRowErrors(t *testing.T) {
+	queryErr := errors.New("usage log query failed")
+	repo, mock := newAPIKeyRepoSQLMock(t)
+	mock.ExpectQuery("SELECT api_key_id").WillReturnError(queryErr)
+
+	ips, err := repo.latestUsageLogIPs(context.Background(), []int64{1})
+	require.ErrorIs(t, err, queryErr)
+	require.Nil(t, ips)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	rowErr := errors.New("usage log row failed")
+	repo, mock = newAPIKeyRepoSQLMock(t)
+	mock.ExpectQuery("SELECT api_key_id").
+		WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "ip_address"}).
+			AddRow(int64(1), "203.0.113.10").
+			AddRow(int64(2), "203.0.113.11").
+			RowError(1, rowErr))
+
+	ips, err = repo.latestUsageLogIPs(context.Background(), []int64{1})
+	require.ErrorIs(t, err, rowErr)
+	require.Nil(t, ips)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLatestUsageLogIPsPropagatesScanError(t *testing.T) {
+	repo, mock := newAPIKeyRepoSQLMock(t)
+	mock.ExpectQuery("SELECT api_key_id").
+		WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "ip_address"}).AddRow("invalid-id", "203.0.113.10"))
+
+	ips, err := repo.latestUsageLogIPs(context.Background(), []int64{1})
+	require.Error(t, err)
+	require.Nil(t, ips)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func newAPIKeyRepoSQLMock(t *testing.T) (*apiKeyRepository, sqlmock.Sqlmock) {
+	t.Helper()
+
+	repo, _ := newAPIKeyRepoSQLite(t)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo.sql = db
+	return repo, mock
 }
 
 func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
