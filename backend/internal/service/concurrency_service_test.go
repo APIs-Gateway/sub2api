@@ -132,6 +132,10 @@ type trackingConcurrencyCache struct {
 	cleanupPrefix string
 }
 
+type concurrencyCacheWithoutAPIKeyTracking struct {
+	ConcurrencyCache
+}
+
 func (c *trackingConcurrencyCache) CleanupStaleProcessSlots(_ context.Context, prefix string) error {
 	c.cleanupPrefix = prefix
 	return c.cleanupErr
@@ -205,6 +209,30 @@ func TestAPIKeyConcurrencyFailuresFailOpen(t *testing.T) {
 	counts, err := svc.GetAPIKeyConcurrencyBatch(context.Background(), []int64{8})
 	require.NoError(t, err)
 	require.Equal(t, map[int64]int{8: 0}, counts)
+}
+
+func TestAPIKeyConcurrencyNoOpFallbacks(t *testing.T) {
+	t.Run("nil or invalid tracking input", func(t *testing.T) {
+		var svc *ConcurrencyService
+		require.NotPanics(t, func() { svc.TrackAPIKeySlot(context.Background(), 8)() })
+
+		svc = NewConcurrencyService(&stubConcurrencyCacheForTest{})
+		require.NotPanics(t, func() { svc.TrackAPIKeySlot(nil, 0)() })
+	})
+
+	t.Run("cache without API key extension returns zeroes", func(t *testing.T) {
+		svc := NewConcurrencyService(&concurrencyCacheWithoutAPIKeyTracking{})
+		counts, err := svc.GetAPIKeyConcurrencyBatch(context.Background(), []int64{8})
+		require.NoError(t, err)
+		require.Equal(t, map[int64]int{8: 0}, counts)
+	})
+
+	t.Run("release failure remains fail-open", func(t *testing.T) {
+		cache := &stubConcurrencyCacheForTest{apiKeyReleaseErr: errors.New("redis down")}
+		release := NewConcurrencyService(cache).TrackAPIKeySlot(context.Background(), 8)
+		require.NotPanics(t, release)
+		require.Equal(t, []int64{8}, cache.releasedAPIKeyIDs)
+	})
 }
 
 func TestAcquireAccountSlot_CacheError(t *testing.T) {

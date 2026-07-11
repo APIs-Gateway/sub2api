@@ -193,6 +193,39 @@ func TestAcquireUserSlotWithWaitTracksAPIKey(t *testing.T) {
 	require.Equal(t, 1, cache.userReleaseCalls)
 }
 
+func TestAPIKeySlotTrackingPassesThroughWithoutAnAPIKey(t *testing.T) {
+	cache := &helperConcurrencyCacheStub{userSeq: []bool{true}}
+	helper := NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second)
+	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	streamStarted := false
+
+	release, err := helper.acquireUserSlotWithWaitTimeout(c, 7, 2, time.Second, false, &streamStarted)
+	require.NoError(t, err)
+	release()
+	require.Empty(t, cache.apiKeyTrackIDs)
+	require.Empty(t, cache.apiKeyReleaseIDs)
+
+	release = helper.withAPIKeySlotFromGin(nil, func() {})
+	require.NotNil(t, release)
+}
+
+func TestTryAcquireUserSlotForAPIKeyTracksOnlyAfterAdmission(t *testing.T) {
+	cache := &helperConcurrencyCacheStub{userSeq: []bool{true, false}}
+	helper := NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second)
+
+	release, acquired, err := helper.TryAcquireUserSlotForAPIKey(context.Background(), 7, 2, 77)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	release()
+	require.Equal(t, []int64{77}, cache.apiKeyTrackIDs)
+
+	release, acquired, err = helper.TryAcquireUserSlotForAPIKey(context.Background(), 7, 2, 77)
+	require.NoError(t, err)
+	require.False(t, acquired)
+	require.Nil(t, release)
+	require.Equal(t, []int64{77}, cache.apiKeyTrackIDs)
+}
+
 func validClaudeCodeBodyJSON() []byte {
 	return []byte(`{
 		"model":"claude-3-5-sonnet-20241022",

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
@@ -35,6 +36,7 @@ type apiKeyRepoStub struct {
 	listByUserIDParams   []pagination.PaginationParams
 	allowListAllByUserID bool
 	listAllByUserIDKeys  []APIKey
+	listAllByUserIDErr   error
 	updateLastUsed       func(ctx context.Context, id int64, usedAt time.Time) error
 	touchedIDs           []int64
 	touchedUsedAts       []time.Time
@@ -116,7 +118,14 @@ func (s *apiKeyRepoStub) ListAllByUserID(_ context.Context, _ int64, _ APIKeyLis
 	if !s.allowListAllByUserID {
 		panic("unexpected ListAllByUserID call")
 	}
+	if s.listAllByUserIDErr != nil {
+		return nil, s.listAllByUserIDErr
+	}
 	return append([]APIKey(nil), s.listAllByUserIDKeys...), nil
+}
+
+type apiKeyRepoWithoutListAllStub struct {
+	APIKeyRepository
 }
 
 func (s *apiKeyRepoStub) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
@@ -235,6 +244,39 @@ func TestAPIKeyService_ListSortsCurrentConcurrencyAscending(t *testing.T) {
 	require.Equal(t, []int64{3, 1, 2, 4}, []int64{keys[0].ID, keys[1].ID, keys[2].ID, keys[3].ID})
 }
 
+func TestAPIKeyService_ListSortByCurrentConcurrencyErrorsAndEmptyPage(t *testing.T) {
+	t.Run("repository does not support computed sort", func(t *testing.T) {
+		svc := &APIKeyService{apiKeyRepo: &apiKeyRepoWithoutListAllStub{}}
+
+		_, _, err := svc.List(context.Background(), 7, pagination.PaginationParams{SortBy: "current_concurrency"}, APIKeyListFilters{})
+		require.ErrorContains(t, err, "does not support")
+	})
+
+	t.Run("repository error is returned", func(t *testing.T) {
+		svc := &APIKeyService{apiKeyRepo: &apiKeyRepoStub{
+			allowListAllByUserID: true,
+			listAllByUserIDErr:   errors.New("database unavailable"),
+		}}
+
+		_, _, err := svc.List(context.Background(), 7, pagination.PaginationParams{SortBy: "current_concurrency"}, APIKeyListFilters{})
+		require.ErrorContains(t, err, "database unavailable")
+	})
+
+	t.Run("page past result is empty", func(t *testing.T) {
+		svc := &APIKeyService{apiKeyRepo: &apiKeyRepoStub{
+			allowListAllByUserID: true,
+			listAllByUserIDKeys:  []APIKey{{ID: 1, UserID: 7}},
+		}}
+
+		keys, page, err := svc.List(context.Background(), 7, pagination.PaginationParams{
+			Page: 2, PageSize: 1, SortBy: "CURRENT_CONCURRENCY",
+		}, APIKeyListFilters{})
+		require.NoError(t, err)
+		require.Empty(t, keys)
+		require.Equal(t, 1, page.Pages)
+	})
+}
+
 func TestAPIKeyService_GetByIDFillsCurrentConcurrency(t *testing.T) {
 	repo := &apiKeyRepoStub{apiKey: &APIKey{ID: 10, UserID: 7, Key: "sk-10"}}
 	svc := &APIKeyService{
@@ -245,6 +287,12 @@ func TestAPIKeyService_GetByIDFillsCurrentConcurrency(t *testing.T) {
 	key, err := svc.GetByID(context.Background(), 10)
 	require.NoError(t, err)
 	require.Equal(t, 4, key.CurrentConcurrency)
+}
+
+func TestProvideAPIKeyServiceSetsConcurrencyService(t *testing.T) {
+	concurrency := NewConcurrencyService(&stubConcurrencyCacheForTest{})
+	svc := ProvideAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{}, nil, concurrency)
+	require.Same(t, concurrency, svc.concurrencyService)
 }
 
 // apiKeyCacheStub 是 APIKeyCache 接口的测试桩实现。
