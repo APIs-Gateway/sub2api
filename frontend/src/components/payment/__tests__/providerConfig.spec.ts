@@ -53,6 +53,7 @@ describe('PROVIDER_CONFIG_FIELDS.stripe', () => {
 
 describe('PROVIDER_CONFIG_FIELDS.crypto', () => {
   it('keeps the BEpusdt rate, minimum, and network defaults in the admin form', () => {
+    expect(findField('crypto', 'callbackBase')?.hintKey).toBe('admin.settings.payment.field_callbackBaseHint')
     expect(findField('crypto', 'rateMarkup')?.defaultValue).toBe('1.002')
     expect(findField('crypto', 'minUsdt')?.defaultValue).toBe('5')
     expect(findField('crypto', 'networks')?.defaultValue).toBe('usdt.trc20,usdt.polygon,usdt.solana')

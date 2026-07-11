@@ -153,6 +153,7 @@ export const PROVIDER_CONFIG_FIELDS: Record<string, ConfigFieldDef[]> = {
   crypto: [
     { key: 'beBase', label: '', sensitive: false, hintKey: 'admin.settings.payment.field_beBaseHint' },
     { key: 'publicBase', label: '', sensitive: false, hintKey: 'admin.settings.payment.field_publicBaseHint' },
+    { key: 'callbackBase', label: '', sensitive: false, hintKey: 'admin.settings.payment.field_callbackBaseHint' },
     { key: 'beHost', label: '', sensitive: false, optional: true, hintKey: 'admin.settings.payment.field_beHostHint' },
     { key: 'adminUsername', label: '', sensitive: false },
     { key: 'adminPassword', label: '', sensitive: true },

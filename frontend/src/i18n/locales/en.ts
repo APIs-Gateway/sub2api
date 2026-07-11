@@ -6537,6 +6537,8 @@
         field_beBaseHint: 'URL used by the Sub2API server to reach BEpusdt, for example http://127.0.0.1:18090.',
         field_publicBase: 'BEpusdt Public URL',
         field_publicBaseHint: 'HTTPS URL users open for payment, for example https://pay.example.com.',
+        field_callbackBase: 'Sub2API Callback URL',
+        field_callbackBaseHint: 'Public Sub2API URL, for example https://codex.example.com. BEpusdt calls this site after payment succeeds.',
         field_beHost: 'BEpusdt Host',
         field_beHostHint: 'Set this when the reverse proxy selects the site by Host, for example pay.example.com; otherwise leave it empty.',
         field_adminUsername: 'BEpusdt Admin Username',

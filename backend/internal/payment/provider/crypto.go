@@ -38,24 +38,25 @@ var supportedCryptoNetworks = []string{
 // The checkout amount remains CNY (the site's payment currency); BEpusdt
 // converts it to USDT at the latest synced rate plus the provider's markup.
 type Crypto struct {
-	instanceID string
-	config     map[string]string
-	baseURL    string
-	publicBase string
-	beHost     string
-	username   string
-	password   string
-	securePath string
-	apiToken   string
-	markup     float64
-	minUSDT    float64
-	timeoutSec int64
-	networks   map[string]struct{}
-	client     *http.Client
+	instanceID   string
+	config       map[string]string
+	baseURL      string
+	publicBase   string
+	callbackBase string
+	beHost       string
+	username     string
+	password     string
+	securePath   string
+	apiToken     string
+	markup       float64
+	minUSDT      float64
+	timeoutSec   int64
+	networks     map[string]struct{}
+	client       *http.Client
 }
 
 func NewCrypto(instanceID string, config map[string]string) (*Crypto, error) {
-	required := []string{"beBase", "publicBase", "adminUsername", "adminPassword", "adminSecurePath", "apiToken"}
+	required := []string{"beBase", "publicBase", "callbackBase", "adminUsername", "adminPassword", "adminSecurePath", "apiToken"}
 	for _, key := range required {
 		if strings.TrimSpace(config[key]) == "" {
 			return nil, fmt.Errorf("crypto config missing required key: %s", key)
@@ -68,6 +69,10 @@ func NewCrypto(instanceID string, config map[string]string) (*Crypto, error) {
 	publicBase, err := normalizeCryptoBaseURL(config["publicBase"])
 	if err != nil {
 		return nil, fmt.Errorf("crypto publicBase: %w", err)
+	}
+	callbackBase, err := normalizeCryptoBaseURL(config["callbackBase"])
+	if err != nil {
+		return nil, fmt.Errorf("crypto callbackBase: %w", err)
 	}
 	markup := cryptoDefaultMarkup
 	if raw := strings.TrimSpace(config["rateMarkup"]); raw != "" {
@@ -105,20 +110,21 @@ func NewCrypto(instanceID string, config map[string]string) (*Crypto, error) {
 		cfg[key] = value
 	}
 	return &Crypto{
-		instanceID: instanceID,
-		config:     cfg,
-		baseURL:    baseURL,
-		publicBase: publicBase,
-		beHost:     beHost,
-		username:   strings.TrimSpace(config["adminUsername"]),
-		password:   config["adminPassword"],
-		securePath: strings.TrimSpace(config["adminSecurePath"]),
-		apiToken:   config["apiToken"],
-		markup:     markup,
-		minUSDT:    minUSDT,
-		timeoutSec: timeoutSec,
-		networks:   networks,
-		client:     &http.Client{Timeout: 15 * time.Second},
+		instanceID:   instanceID,
+		config:       cfg,
+		baseURL:      baseURL,
+		publicBase:   publicBase,
+		callbackBase: callbackBase,
+		beHost:       beHost,
+		username:     strings.TrimSpace(config["adminUsername"]),
+		password:     config["adminPassword"],
+		securePath:   strings.TrimSpace(config["adminSecurePath"]),
+		apiToken:     config["apiToken"],
+		markup:       markup,
+		minUSDT:      minUSDT,
+		timeoutSec:   timeoutSec,
+		networks:     networks,
+		client:       &http.Client{Timeout: 15 * time.Second},
 	}, nil
 }
 
@@ -146,13 +152,17 @@ func (c *Crypto) CreatePayment(ctx context.Context, req payment.CreatePaymentReq
 		return nil, fmt.Errorf("crypto payment must be at least %.2f USDT", c.minUSDT)
 	}
 
+	notifyURL := strings.TrimSpace(req.NotifyURL)
+	if notifyURL == "" {
+		notifyURL = c.callbackBase + "/api/v1/payment/webhook/crypto"
+	}
 	payload := map[string]any{
 		"order_id":     req.OrderID,
 		"amount":       amountCNY,
 		"fiat":         cryptoFiatCurrency,
 		"trade_type":   network,
 		"name":         req.Subject,
-		"notify_url":   req.NotifyURL,
+		"notify_url":   notifyURL,
 		"redirect_url": req.ReturnURL,
 		"timeout":      float64(c.timeoutSec),
 		"rate":         "~" + strconv.FormatFloat(c.markup, 'f', -1, 64),

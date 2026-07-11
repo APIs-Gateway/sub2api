@@ -40,6 +40,9 @@ func TestCryptoCreatePaymentConvertsCNYWithIndependentRateAdjustment(t *testing.
 			if got := payload["amount"]; got != float64(100) {
 				t.Fatalf("amount = %v", got)
 			}
+			if got := payload["notify_url"]; got != "https://codex.example.com/api/v1/payment/webhook/crypto" {
+				t.Fatalf("notify_url = %v", got)
+			}
 			if got := payload["signature"]; got != signCryptoMap(payloadWithoutSignature(payload), apiToken) {
 				t.Fatalf("signature = %v, want %s", got, signCryptoMap(payloadWithoutSignature(payload), apiToken))
 			}
@@ -54,6 +57,7 @@ func TestCryptoCreatePaymentConvertsCNYWithIndependentRateAdjustment(t *testing.
 	provider, err := NewCrypto("1", map[string]string{
 		"beBase":          server.URL,
 		"publicBase":      "https://pay.example.com",
+		"callbackBase":    "https://codex.example.com",
 		"adminUsername":   "admin",
 		"adminPassword":   "password",
 		"adminSecurePath": "/secure",
@@ -69,7 +73,6 @@ func TestCryptoCreatePaymentConvertsCNYWithIndependentRateAdjustment(t *testing.
 		Amount:        "100.00",
 		PaymentType:   payment.TypeCrypto,
 		Subject:       "套餐",
-		NotifyURL:     "https://codex.example.com/api/v1/payment/webhook/crypto",
 		ReturnURL:     "https://codex.example.com/payment/result?order_id=1",
 		CryptoNetwork: "polygon",
 	})
@@ -88,6 +91,7 @@ func TestCryptoVerifyNotification(t *testing.T) {
 	provider, err := NewCrypto("1", map[string]string{
 		"beBase":          "http://127.0.0.1:18090",
 		"publicBase":      "https://pay.example.com",
+		"callbackBase":    "https://codex.example.com",
 		"adminUsername":   "admin",
 		"adminPassword":   "password",
 		"adminSecurePath": "/secure",
@@ -139,6 +143,7 @@ func cryptoTestConfig(overrides map[string]string) map[string]string {
 	config := map[string]string{
 		"beBase":          "http://127.0.0.1:18090",
 		"publicBase":      "https://pay.example.com",
+		"callbackBase":    "https://codex.example.com",
 		"adminUsername":   "admin",
 		"adminPassword":   "password",
 		"adminSecurePath": "/secure",
@@ -176,6 +181,7 @@ func TestNewCryptoValidationAndDefaults(t *testing.T) {
 		{name: "missing required", overrides: map[string]string{"apiToken": ""}, want: "apiToken"},
 		{name: "invalid base", overrides: map[string]string{"beBase": "localhost:18090"}, want: "beBase"},
 		{name: "invalid public base", overrides: map[string]string{"publicBase": "pay.example.com"}, want: "publicBase"},
+		{name: "invalid callback base", overrides: map[string]string{"callbackBase": "codex.example.com"}, want: "callbackBase"},
 		{name: "invalid markup", overrides: map[string]string{"rateMarkup": "not-a-number"}, want: "rateMarkup"},
 		{name: "invalid minimum", overrides: map[string]string{"minUsdt": "0"}, want: "minUsdt"},
 		{name: "invalid timeout", overrides: map[string]string{"timeoutSec": "60"}, want: "timeoutSec"},

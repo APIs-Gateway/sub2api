@@ -6535,6 +6535,8 @@
         field_beBaseHint: 'Sub2API 服务器访问 BEpusdt 的地址，例如 http://127.0.0.1:18090。',
         field_publicBase: 'BEpusdt 公网地址',
         field_publicBaseHint: '用户打开支付页面的 HTTPS 地址，例如 https://pay.example.com。',
+        field_callbackBase: 'Sub2API 回调地址',
+        field_callbackBaseHint: 'Sub2API 对外访问地址，例如 https://codex.example.com；BEpusdt 将在支付成功后回调此站点。',
         field_beHost: 'BEpusdt Host',
         field_beHostHint: '反向代理按 Host 区分站点时填写，例如 pay.example.com；没有特殊要求可留空。',
         field_adminUsername: 'BEpusdt 管理员用户名',

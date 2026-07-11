@@ -163,6 +163,7 @@ Crypto Pay reuses the existing recharge/subscription order flow: users select an
 |-----------|-------------|----------|
 | **BEpusdt Internal URL** | URL used by the Sub2API server to reach BEpusdt, for example `http://127.0.0.1:18090` | Yes |
 | **BEpusdt Public URL** | HTTPS checkout URL users open, for example `https://pay.example.com` | Yes |
+| **Sub2API Callback URL** | Public Sub2API URL that receives BEpusdt callbacks, for example `https://codex.example.com` | Yes |
 | **BEpusdt Host** | Set when the reverse proxy routes by Host; normally the payment domain | No |
 | **BEpusdt Admin Username/Password/Secure Entry Path** | Used to read the latest rate for minimum-payment validation | Yes |
 | **BEpusdt API Token** | Token used to create orders and verify callback signatures | Yes |
@@ -170,7 +171,7 @@ Crypto Pay reuses the existing recharge/subscription order flow: users select an
 | **Minimum USDT Payment** | Orders below this amount are rejected; default `5` | No |
 | **Allowed Payment Networks** | Comma-separated: `usdt.trc20,usdt.polygon,usdt.solana` | No |
 
-Configure wallet addresses, RPC nodes, and blockchain networks in the BEpusdt admin panel. Sub2API uses `/api/v1/payment/webhook/crypto` as the callback path, which is generated automatically by the provider form. The selected network must exactly match the receiving address; keep wallet private keys separate and never upload them to BEpusdt or Sub2API.
+Configure wallet addresses, RPC nodes, and blockchain networks in the BEpusdt admin panel. Sub2API appends `/api/v1/payment/webhook/crypto` to the callback URL above. The selected network must exactly match the receiving address; keep wallet private keys separate and never upload them to BEpusdt or Sub2API.
 
 ---
 
