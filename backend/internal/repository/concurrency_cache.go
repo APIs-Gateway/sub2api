@@ -39,9 +39,6 @@ const (
 	// 业务 slot/wait key 仍是并发正确性的唯一来源。
 	accountActiveIndexKey = "concurrency:account:active_index"
 	userActiveIndexKey    = "concurrency:user:active_index"
-
-	activeIndexCleanupBatchSize  = 1000
-	activeIndexPipelineChunkSize = 500
 )
 
 var (
