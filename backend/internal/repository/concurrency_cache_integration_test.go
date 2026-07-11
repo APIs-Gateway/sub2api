@@ -5,6 +5,7 @@ package repository
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -270,6 +271,8 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
 	).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, userWaitKey, 3, time.Minute).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, accountWaitKey, 2, time.Minute).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountActiveIndexKey, redis.Z{Score: float64(now + 60), Member: strconv.FormatInt(accountID, 10)}).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userActiveIndexKey, redis.Z{Score: float64(now + 60), Member: strconv.FormatInt(userID, 10)}).Err())
 
 	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "keep-"))
 
@@ -456,6 +459,8 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesOldPrefixesA
 	require.NoError(s.T(), s.rdb.Expire(s.ctx, userSlotKey, testSlotTTL).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, userWaitKey, 3, testSlotTTL).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, accountWaitKey, 2, testSlotTTL).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountActiveIndexKey, redis.Z{Score: now + 60, Member: strconv.FormatInt(accountID, 10)}).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userActiveIndexKey, redis.Z{Score: now + 60, Member: strconv.FormatInt(userID, 10)}).Err())
 
 	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "activeproc-"))
 
@@ -478,10 +483,70 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_DeletesEmptySlotKey
 	accountSlotKey := fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountSlotKey, redis.Z{Score: float64(time.Now().Unix()), Member: "oldproc-1"}).Err())
 	require.NoError(s.T(), s.rdb.Expire(s.ctx, accountSlotKey, testSlotTTL).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountActiveIndexKey, redis.Z{Score: float64(time.Now().Unix() + 60), Member: strconv.FormatInt(accountID, 10)}).Err())
 
 	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "activeproc-"))
 
 	exists, err := s.rdb.Exists(s.ctx, accountSlotKey).Result()
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 0, exists)
+}
+
+func (s *ConcurrencyCacheSuite) TestActiveIndexTracksAcquireAndRelease() {
+	accountID := int64(990)
+	member := strconv.FormatInt(accountID, 10)
+
+	ok, err := s.cache.AcquireAccountSlot(s.ctx, accountID, 1, "request")
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+
+	indexed, err := s.rdb.ZScore(s.ctx, accountActiveIndexKey, member).Result()
+	require.NoError(s.T(), err)
+	require.Greater(s.T(), indexed, float64(time.Now().Unix()))
+
+	require.NoError(s.T(), s.cache.ReleaseAccountSlot(s.ctx, accountID, "request"))
+	_, err = s.rdb.ZScore(s.ctx, accountActiveIndexKey, member).Result()
+	require.ErrorIs(s.T(), err, redis.Nil)
+}
+
+func (s *ConcurrencyCacheSuite) TestActiveIndexTracksWaitCounters() {
+	userID := int64(992)
+	accountID := int64(993)
+	userMember := strconv.FormatInt(userID, 10)
+	accountMember := strconv.FormatInt(accountID, 10)
+
+	ok, err := s.cache.IncrementWaitCount(s.ctx, userID, 1)
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+	ok, err = s.cache.IncrementAccountWaitCount(s.ctx, accountID, 1)
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+
+	_, err = s.rdb.ZScore(s.ctx, userActiveIndexKey, userMember).Result()
+	require.NoError(s.T(), err)
+	_, err = s.rdb.ZScore(s.ctx, accountActiveIndexKey, accountMember).Result()
+	require.NoError(s.T(), err)
+
+	require.NoError(s.T(), s.cache.DecrementWaitCount(s.ctx, userID))
+	require.NoError(s.T(), s.cache.DecrementAccountWaitCount(s.ctx, accountID))
+	_, err = s.rdb.ZScore(s.ctx, userActiveIndexKey, userMember).Result()
+	require.ErrorIs(s.T(), err, redis.Nil)
+	_, err = s.rdb.ZScore(s.ctx, accountActiveIndexKey, accountMember).Result()
+	require.ErrorIs(s.T(), err, redis.Nil)
+}
+
+func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlotsLeavesUnindexedLegacySlotToTTL() {
+	accountID := int64(991)
+	key := accountSlotKey(accountID)
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, key, redis.Z{
+		Score:  float64(time.Now().Unix()),
+		Member: "legacy-request",
+	}).Err())
+	require.NoError(s.T(), s.rdb.Expire(s.ctx, key, testSlotTTL).Err())
+
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "active-"))
+
+	members, err := s.rdb.ZRange(s.ctx, key, 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"legacy-request"}, members)
 }
