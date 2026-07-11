@@ -59,3 +59,14 @@ func TestCleanupStaleProcessSlotsWithEmptyIndexes(t *testing.T) {
 	cache, _ := newConcurrencyCacheMiniRedis(t)
 	require.NoError(t, cache.CleanupStaleProcessSlots(context.Background(), "active-"))
 }
+
+func TestActiveIndexBestEffortWhenRedisUnavailable(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	cache := &concurrencyCache{rdb: client, slotTTLSeconds: 60, waitQueueTTLSeconds: 60}
+	mr.Close()
+
+	cache.touchActiveIndex(context.Background(), accountActiveIndexKey, 1, 60)
+	cache.refreshActiveIndex(context.Background(), accountActiveIndex, 1)
+}
