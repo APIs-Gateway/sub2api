@@ -15,7 +15,7 @@ type dailyResetTrackingUserSubRepo struct {
 	resetDailyCalled bool
 }
 
-func (r *dailyResetTrackingUserSubRepo) ResetDailyUsage(context.Context, int64, time.Time) error {
+func (r *dailyResetTrackingUserSubRepo) ResetDailyUsage(context.Context, int64, *time.Time, time.Time) error {
 	r.resetDailyCalled = true
 	return nil
 }
@@ -153,6 +153,7 @@ func TestValidateAndCheckLimits_DailyCardDoesNotAllowSecondQuotaAfterMidnight(t 
 		ExpiresAt:        start.Add(24 * time.Hour),
 		DailyWindowStart: &dailyWindowStart,
 		DailyUsageUSD:    dailyLimit + 0.01,
+		DailyLimitUSD:    &dailyLimit,
 	}
 	group := &Group{
 		SubscriptionType: SubscriptionTypeSubscription,
@@ -165,4 +166,158 @@ func TestValidateAndCheckLimits_DailyCardDoesNotAllowSecondQuotaAfterMidnight(t 
 	require.False(t, needsMaintenance, "日卡跨过日窗口后不应触发 daily reset 维护")
 	require.True(t, errors.Is(err, ErrDailyLimitExceeded))
 	require.Equal(t, dailyLimit+0.01, sub.DailyUsageUSD, "热路径不应清零日卡已用额度")
+}
+
+func TestValidateAndCheckLimits_UsesFrozenCardLimitInsteadOfGroup(t *testing.T) {
+	windowStart := time.Now()
+	cardLimit := 10.0
+	tighterGroupLimit := 1.0
+	looserGroupLimit := 100.0
+	svc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil, nil, nil, nil)
+
+	t.Run("group tightening does not shrink existing card", func(t *testing.T) {
+		sub := &UserSubscription{
+			Status:           SubscriptionStatusActive,
+			StartsAt:         time.Now().Add(-time.Hour),
+			ExpiresAt:        time.Now().Add(48 * time.Hour),
+			DailyWindowStart: &windowStart,
+			DailyUsageUSD:    5,
+			DailyLimitUSD:    &cardLimit,
+		}
+
+		_, err := svc.ValidateAndCheckLimits(sub, &Group{DailyLimitUSD: &tighterGroupLimit})
+
+		require.NoError(t, err)
+	})
+
+	t.Run("group loosening does not expand existing card", func(t *testing.T) {
+		sub := &UserSubscription{
+			Status:           SubscriptionStatusActive,
+			StartsAt:         time.Now().Add(-time.Hour),
+			ExpiresAt:        time.Now().Add(48 * time.Hour),
+			DailyWindowStart: &windowStart,
+			DailyUsageUSD:    cardLimit + 0.01,
+			DailyLimitUSD:    &cardLimit,
+		}
+
+		_, err := svc.ValidateAndCheckLimits(sub, &Group{DailyLimitUSD: &looserGroupLimit})
+
+		require.ErrorIs(t, err, ErrDailyLimitExceeded)
+	})
+}
+
+func TestValidateAndCheckLimits_ExactFrozenLimitIsAllowed(t *testing.T) {
+	windowStart := time.Now()
+	limit := 10.0
+	sub := &UserSubscription{
+		Status:           SubscriptionStatusActive,
+		StartsAt:         time.Now().Add(-time.Hour),
+		ExpiresAt:        time.Now().Add(48 * time.Hour),
+		DailyWindowStart: &windowStart,
+		DailyUsageUSD:    limit,
+		DailyLimitUSD:    &limit,
+	}
+	svc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil, nil, nil, nil)
+
+	needsMaintenance, err := svc.ValidateAndCheckLimits(sub, &Group{})
+
+	require.NoError(t, err)
+	require.False(t, needsMaintenance)
+}
+
+func TestValidateAndCheckLimits_LegacyNilSnapshotFallsBackToGroupLimit(t *testing.T) {
+	windowStart := time.Now()
+	groupLimit := 10.0
+	svc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil, nil, nil, nil)
+
+	for _, tc := range []struct {
+		name    string
+		usage   float64
+		wantErr error
+	}{
+		{name: "exact group limit remains allowed", usage: groupLimit},
+		{name: "usage above group limit is rejected", usage: groupLimit + 0.01, wantErr: ErrDailyLimitExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sub := &UserSubscription{
+				Status:           SubscriptionStatusActive,
+				StartsAt:         time.Now().Add(-time.Hour),
+				ExpiresAt:        time.Now().Add(48 * time.Hour),
+				DailyWindowStart: &windowStart,
+				DailyUsageUSD:    tc.usage,
+				DailyLimitUSD:    nil,
+			}
+
+			_, err := svc.ValidateAndCheckLimits(sub, &Group{DailyLimitUSD: &groupLimit})
+
+			if tc.wantErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateAndCheckLimits_CoversFrozenAndLegacyWeeklyMonthlyLimits(t *testing.T) {
+	windowStart := time.Now()
+	limit := 10.0
+	svc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil, nil, nil, nil)
+
+	for _, tc := range []struct {
+		name    string
+		sub     UserSubscription
+		group   Group
+		wantErr error
+	}{
+		{
+			name: "frozen weekly limit wins over group",
+			sub: UserSubscription{
+				WeeklyWindowStart: &windowStart,
+				WeeklyUsageUSD:    limit + 0.01,
+				WeeklyLimitUSD:    &limit,
+			},
+			group:   Group{WeeklyLimitUSD: ptrFloat64(100)},
+			wantErr: ErrWeeklyLimitExceeded,
+		},
+		{
+			name: "legacy weekly limit falls back to group",
+			sub: UserSubscription{
+				WeeklyWindowStart: &windowStart,
+				WeeklyUsageUSD:    limit + 0.01,
+			},
+			group:   Group{WeeklyLimitUSD: &limit},
+			wantErr: ErrWeeklyLimitExceeded,
+		},
+		{
+			name: "frozen monthly limit wins over group",
+			sub: UserSubscription{
+				MonthlyWindowStart: &windowStart,
+				MonthlyUsageUSD:    limit + 0.01,
+				MonthlyLimitUSD:    &limit,
+			},
+			group:   Group{MonthlyLimitUSD: ptrFloat64(100)},
+			wantErr: ErrMonthlyLimitExceeded,
+		},
+		{
+			name: "legacy monthly limit falls back to group",
+			sub: UserSubscription{
+				MonthlyWindowStart: &windowStart,
+				MonthlyUsageUSD:    limit + 0.01,
+			},
+			group:   Group{MonthlyLimitUSD: &limit},
+			wantErr: ErrMonthlyLimitExceeded,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sub := tc.sub
+			sub.Status = SubscriptionStatusActive
+			sub.StartsAt = time.Now().Add(-time.Hour)
+			sub.ExpiresAt = time.Now().Add(48 * time.Hour)
+
+			_, err := svc.ValidateAndCheckLimits(&sub, &tc.group)
+
+			require.ErrorIs(t, err, tc.wantErr)
+		})
+	}
 }

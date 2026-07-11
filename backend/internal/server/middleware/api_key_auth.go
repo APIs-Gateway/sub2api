@@ -150,6 +150,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		//
 		// skipBilling: read-only usage endpoints only need authentication.
 		skipBilling := isAPIKeyAuthReadOnlyUsagePath(c.Request.URL.Path)
+		var subscription *service.UserSubscription
 
 		if !skipBilling {
 			// Key 状态检查
@@ -170,6 +171,38 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			if apiKey.IsQuotaExhausted() {
 				AbortWithError(c, 429, "API_KEY_QUOTA_EXHAUSTED", "API key 额度已用完")
 				return
+			}
+
+			// Keep window maintenance synchronous with admission. The fork's billing
+			// model uses one active card per user and card-level frozen limits; group
+			// subscription type is intentionally not consulted here.
+			if subscriptionService != nil {
+				loaded, subErr := subscriptionService.GetActiveUserSubscription(c.Request.Context(), apiKey.User.ID)
+				if subErr == nil && loaded != nil {
+					subscription = loaded
+					needsMaintenance, validateErr := subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
+					if needsMaintenance {
+						refreshed, maintenanceErr := subscriptionService.EnsureWindowMaintenance(c.Request.Context(), subscription)
+						if maintenanceErr != nil {
+							AbortWithError(c, 500, "SUBSCRIPTION_MAINTENANCE_FAILED", "Failed to maintain subscription usage windows")
+							return
+						}
+						subscription = refreshed
+						_, validateErr = subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
+					}
+					// Window exhaustion still falls back to wallet under the fork's AdmitWindow
+					// contract. Empty-wallet users are rejected here from the fresh snapshot.
+					if validateErr != nil && !(isSubscriptionLimitError(validateErr) && apiKey.User.Balance > 0) {
+						code := "SUBSCRIPTION_INVALID"
+						status := 403
+						if isSubscriptionLimitError(validateErr) {
+							code = "USAGE_LIMIT_EXCEEDED"
+							status = 429
+						}
+						AbortWithError(c, status, code, validateErr.Error())
+						return
+					}
+				}
 			}
 
 			// per-day：不再在中间件按 user.Balance<=0 早拒。新模型套餐额度在卡的 today_remaining、
@@ -197,6 +230,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// ── 6. 设置上下文 → Next ─────────────────────────────────────
 
+		if subscription != nil {
+			c.Set(string(ContextKeySubscription), subscription)
+		}
 		c.Set(string(ContextKeyAPIKey), apiKey)
 		c.Set(string(ContextKeyUser), AuthSubject{
 			UserID:      apiKey.User.ID,
@@ -208,6 +244,12 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		c.Next()
 	}
+}
+
+func isSubscriptionLimitError(err error) bool {
+	return errors.Is(err, service.ErrDailyLimitExceeded) ||
+		errors.Is(err, service.ErrWeeklyLimitExceeded) ||
+		errors.Is(err, service.ErrMonthlyLimitExceeded)
 }
 
 func isAPIKeyAuthReadOnlyUsagePath(path string) bool {
