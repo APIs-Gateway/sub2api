@@ -131,23 +131,43 @@
                     : t("admin.groups.subscription.standard")
                 }}
               </span>
-              <!-- Subscription Limits - compact single line -->
+              <!-- Subscription limits and usage -->
               <div
                 v-if="row.subscription_type === 'subscription'"
-                class="text-xs text-gray-500 dark:text-gray-400"
+                class="space-y-0.5 text-xs text-gray-500 dark:text-gray-400"
               >
-                <template
+                <div
                   v-if="
                     row.daily_limit_usd ||
                     row.weekly_limit_usd ||
                     row.monthly_limit_usd
                   "
+                  class="flex flex-wrap items-center gap-x-1 gap-y-0.5"
                 >
-                  <span v-if="row.daily_limit_usd"
-                    >${{ row.daily_limit_usd }}/{{
+                  <span v-if="row.daily_limit_usd" class="whitespace-nowrap">
+                    <span
+                      v-if="usageLoading"
+                      class="font-medium text-gray-400 dark:text-gray-500"
+                      >—</span
+                    >
+                    <span
+                      v-else
+                      :class="
+                        getQuotaUsageClass(
+                          usageMap.get(row.id)?.today_cost ?? 0,
+                          row.daily_limit_usd,
+                        )
+                      "
+                      >{{
+                        formatUsd(usageMap.get(row.id)?.today_cost ?? 0)
+                      }}</span
+                    >
+                    <span class="text-gray-400 dark:text-gray-500">
+                      / {{ formatUsd(row.daily_limit_usd) }}/{{
                       t("admin.groups.limitDay")
-                    }}</span
-                  >
+                      }}
+                    </span>
+                  </span>
                   <span
                     v-if="
                       row.daily_limit_usd &&
@@ -157,7 +177,7 @@
                     >·</span
                   >
                   <span v-if="row.weekly_limit_usd"
-                    >${{ row.weekly_limit_usd }}/{{
+                    >{{ formatUsd(row.weekly_limit_usd) }}/{{
                       t("admin.groups.limitWeek")
                     }}</span
                   >
@@ -167,14 +187,22 @@
                     >·</span
                   >
                   <span v-if="row.monthly_limit_usd"
-                    >${{ row.monthly_limit_usd }}/{{
+                    >{{ formatUsd(row.monthly_limit_usd) }}/{{
                       t("admin.groups.limitMonth")
                     }}</span
                   >
-                </template>
+                </div>
                 <span v-else class="text-gray-400 dark:text-gray-500">{{
                   t("admin.groups.subscription.noLimit")
                 }}</span>
+                <div class="text-gray-400 dark:text-gray-500">
+                  {{ t("admin.groups.usageTotal") }}
+                  <span class="ml-1 font-medium text-gray-600 dark:text-gray-300">{{
+                    usageLoading
+                      ? "—"
+                      : formatUsd(usageMap.get(row.id)?.total_cost ?? 0)
+                  }}</span>
+                </div>
               </div>
             </div>
           </template>
@@ -3887,6 +3915,26 @@ const formatCost = (cost: number): string => {
   if (cost >= 1000) return cost.toFixed(0);
   if (cost >= 100) return cost.toFixed(1);
   return cost.toFixed(2);
+};
+
+const formatUsd = (cost: number | null | undefined): string =>
+  "$" + formatCost(cost ?? 0);
+
+const getQuotaUsageClass = (
+  used: number,
+  limit: number | null | undefined,
+): string => {
+  if (!limit || limit <= 0) {
+    return "font-medium text-gray-700 dark:text-gray-300";
+  }
+  const ratio = used / limit;
+  if (ratio >= 1) {
+    return "font-semibold text-red-600 dark:text-red-400";
+  }
+  if (ratio >= 0.8) {
+    return "font-semibold text-amber-600 dark:text-amber-400";
+  }
+  return "font-medium text-gray-700 dark:text-gray-300";
 };
 
 const loadUsageSummary = async () => {

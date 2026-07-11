@@ -9,6 +9,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func chatResponseWithTestToolContext(resp *ChatCompletionsResponse, model string, tools []ResponsesTool) *ResponsesResponse {
+	return ChatCompletionsResponseToResponses(resp, model, CustomToolNames(tools), HasToolSearchTool(tools), NamespaceToolNames(tools))
+}
+
+func streamStateWithTestToolContext(model string, tools []ResponsesTool) *ChatCompletionsToResponsesStreamState {
+	state := NewChatCompletionsToResponsesStreamState(model)
+	state.CustomTools = CustomToolNames(tools)
+	state.ToolSearchDeclared = HasToolSearchTool(tools)
+	state.NamespaceTools = NamespaceToolNames(tools)
+	return state
+}
+
 func TestResponsesToChatCompletionsRequest_ConvertsProxyToolsAndChoices(t *testing.T) {
 	req := &ResponsesRequest{
 		Model: "gpt-5.6",
@@ -69,11 +81,11 @@ func TestResponsesToChatCompletionsRequest_DropsUndeclaredToolChoice(t *testing.
 }
 
 func TestChatCompletionsResponseToResponsesWithToolContext_RestoresCalls(t *testing.T) {
-	context := NewResponsesChatToolContext([]ResponsesTool{
+	tools := []ResponsesTool{
 		{Type: "custom", Name: "exec"},
 		{Type: "tool_search"},
 		{Type: "namespace", Name: "gmail", Tools: []ResponsesTool{{Type: "function", Name: "send"}}},
-	})
+	}
 	resp := &ChatCompletionsResponse{Choices: []ChatChoice{{Message: ChatMessage{ToolCalls: []ChatToolCall{
 		{ID: "call_custom", Function: ChatFunctionCall{Name: "exec", Arguments: `{"input":"ls -la"}`}},
 		{ID: "call_search", Function: ChatFunctionCall{Name: "tool_search", Arguments: `{"query":"gmail"}`}},
@@ -81,7 +93,7 @@ func TestChatCompletionsResponseToResponsesWithToolContext_RestoresCalls(t *test
 		{ID: "call_function", Function: ChatFunctionCall{Name: "wait", Arguments: `{"ms":1}`}},
 	}}}}}
 
-	out := ChatCompletionsResponseToResponsesWithToolContext(resp, "gpt-5.6", context)
+	out := chatResponseWithTestToolContext(resp, "gpt-5.6", tools)
 	require.Len(t, out.Output, 4)
 	assert.Equal(t, "custom_tool_call", out.Output[0].Type)
 	assert.Equal(t, "ls -la", out.Output[0].Input)
@@ -98,8 +110,8 @@ func TestChatCompletionsResponseToResponsesWithToolContext_RestoresCalls(t *test
 }
 
 func TestChatCompletionsStreamWithToolContext_DelaysNameDependentItemAndPreservesReasoning(t *testing.T) {
-	context := NewResponsesChatToolContext([]ResponsesTool{{Type: "custom", Name: "exec"}})
-	state := NewChatCompletionsToResponsesStreamStateWithToolContext("gpt-5.6", context)
+	tools := []ResponsesTool{{Type: "custom", Name: "exec"}}
+	state := streamStateWithTestToolContext("gpt-5.6", tools)
 	index := 0
 	reasoning := "checking"
 	first := &ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{
@@ -142,10 +154,10 @@ func TestChatCompletionsStreamWithToolContext_DelaysNameDependentItemAndPreserve
 }
 
 func TestChatCompletionsStreamWithToolContext_RestoresNamespace(t *testing.T) {
-	context := NewResponsesChatToolContext([]ResponsesTool{{
+	tools := []ResponsesTool{{
 		Type: "namespace", Name: "gmail", Tools: []ResponsesTool{{Type: "function", Name: "send"}},
-	}})
-	state := NewChatCompletionsToResponsesStreamStateWithToolContext("gpt-5.6", context)
+	}}
+	state := streamStateWithTestToolContext("gpt-5.6", tools)
 	index := 0
 	events := ChatCompletionsChunkToResponsesEvents(&ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{
 		ToolCalls: []ChatToolCall{{Index: &index, ID: "call_send", Function: ChatFunctionCall{Name: "gmail__send", Arguments: `{"to":"a@example.test"}`}}},
@@ -174,8 +186,8 @@ func TestChatCompletionsStreamWithToolContext_RestoresNamespace(t *testing.T) {
 }
 
 func TestChatCompletionsStreamWithToolContext_RestoresToolSearchWireItem(t *testing.T) {
-	context := NewResponsesChatToolContext([]ResponsesTool{{Type: "tool_search"}})
-	state := NewChatCompletionsToResponsesStreamStateWithToolContext("gpt-5.6", context)
+	tools := []ResponsesTool{{Type: "tool_search"}}
+	state := streamStateWithTestToolContext("gpt-5.6", tools)
 	index := 0
 	events := ChatCompletionsChunkToResponsesEvents(&ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{
 		ToolCalls: []ChatToolCall{{Index: &index, ID: "call_search", Function: ChatFunctionCall{Name: toolSearchProxyName, Arguments: `{"query":"gmail"}`}}},
@@ -248,13 +260,13 @@ func TestResponsesProxyToolWireHandlesMalformedArgumentsAndCustomInput(t *testin
 	assert.Equal(t, "custom", declared.Type)
 	assert.Equal(t, "exec", declared.Name)
 
-	context := NewResponsesChatToolContext([]ResponsesTool{{Type: "custom", Name: "exec"}, {Type: "tool_search"}})
-	response := ChatCompletionsResponseToResponsesWithToolContext(&ChatCompletionsResponse{
+	tools := []ResponsesTool{{Type: "custom", Name: "exec"}, {Type: "tool_search"}}
+	response := chatResponseWithTestToolContext(&ChatCompletionsResponse{
 		Choices: []ChatChoice{{Message: ChatMessage{ToolCalls: []ChatToolCall{
 			{ID: "call_exec", Function: ChatFunctionCall{Name: "exec", Arguments: `{"other":1}`}},
 			{ID: "call_search", Function: ChatFunctionCall{Name: toolSearchProxyName, Arguments: `not-json`}},
 		}}}},
-	}, "gpt-5.6", context)
+	}, "gpt-5.6", tools)
 	require.Len(t, response.Output, 2)
 	assert.Equal(t, `{"other":1}`, response.Output[0].Input)
 	encoded, err := json.Marshal(response.Output[1])
@@ -263,15 +275,15 @@ func TestResponsesProxyToolWireHandlesMalformedArgumentsAndCustomInput(t *testin
 }
 
 func TestChatCompletionsResponseWithToolContextKeepsTerminalAndEmptySemantics(t *testing.T) {
-	empty := ChatCompletionsResponseToResponsesWithToolContext(nil, "gpt-5.6", ResponsesChatToolContext{})
+	empty := chatResponseWithTestToolContext(nil, "gpt-5.6", nil)
 	require.Len(t, empty.Output, 1)
 	assert.Equal(t, "message", empty.Output[0].Type)
 
 	content := json.RawMessage(`"done"`)
-	length := ChatCompletionsResponseToResponsesWithToolContext(&ChatCompletionsResponse{
+	length := chatResponseWithTestToolContext(&ChatCompletionsResponse{
 		Model:   "upstream-model",
 		Choices: []ChatChoice{{Message: ChatMessage{Role: "assistant", Content: content}, FinishReason: "length"}},
-	}, "", ResponsesChatToolContext{})
+	}, "", nil)
 	assert.Equal(t, "upstream-model", length.Model)
 	assert.Equal(t, "incomplete", length.Status)
 	require.NotNil(t, length.IncompleteDetails)
@@ -341,7 +353,7 @@ func TestResponsesProxyCompatibilityHelpersCoverContentUsageAndWireBranches(t *t
 	var invalidTool ResponsesTool
 	require.Error(t, json.Unmarshal([]byte(`{`), &invalidTool))
 
-	emptyResponse := ChatCompletionsResponseToResponses(nil, "gpt-5.6")
+	emptyResponse := chatResponseWithTestToolContext(nil, "gpt-5.6", nil)
 	require.Len(t, emptyResponse.Output, 1)
 	assert.Equal(t, "message", emptyResponse.Output[0].Type)
 }

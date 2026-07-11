@@ -59,6 +59,7 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	req.Header.Set("Originator", "codex_cli_rs")
 	req.Header.Set("Version", clientVersion)
 	req.Header.Set("User-Agent", codexCLIUserAgent)
+	enforceCodexIdentityHeaders(req.Header)
 	if ifNoneMatch = strings.TrimSpace(ifNoneMatch); ifNoneMatch != "" {
 		req.Header.Set("If-None-Match", ifNoneMatch)
 	}

@@ -260,7 +260,7 @@ type ResponsesTool struct {
 	Children []ResponsesTool `json:"children,omitempty"`
 }
 
-// UnmarshalJSON accepts the string shorthand Codex uses for custom tools.
+// UnmarshalJSON 容忍字符串形式的工具声明：codex 会以 "name" 简写声明 custom 工具，
 func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
 	var name string
 	if err := json.Unmarshal(data, &name); err == nil {
@@ -268,11 +268,11 @@ func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias ResponsesTool
-	var decoded alias
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
 		return err
 	}
-	*t = ResponsesTool(decoded)
+	*t = ResponsesTool(a)
 	return nil
 }
 
@@ -321,25 +321,26 @@ type ResponsesOutput struct {
 	CallID    string `json:"call_id,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
-	// Namespace identifies a namespace child function for Codex routing.
+	// 来源为 namespace 子工具时的归属命名空间（codex 按 namespace+name 路由该调用）。
 	Namespace string `json:"namespace,omitempty"`
 
-	// type=custom_tool_call
+	// type=custom_tool_call（custom/freeform 工具，input 为自由文本）
 	Input string `json:"input,omitempty"`
 
 	// type=web_search_call
 	Action *WebSearchAction `json:"action,omitempty"`
 }
 
-// MarshalJSON renders tool_search_call with the Responses wire shape. Unlike a
-// function_call, tool_search arguments are a JSON value and execution must be
-// client for Codex to invoke the local tool search handler.
+// MarshalJSON 处理 tool_search_call 项的线上形态（复用 CallID/Arguments 字段）：
+// execution 固定为 "client"（codex 的必填字段，非 client 的调用会被静默忽略），
+// arguments 是 JSON 对象而非 function_call 语义下的字符串。其余类型走默认结构体
+// 序列化，输出逐字节不变。
 func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
-	type alias ResponsesOutput
+	type responsesOutputAlias ResponsesOutput
 	if o.Type != "tool_search_call" {
-		return json.Marshal(alias(o))
+		return json.Marshal(responsesOutputAlias(o))
 	}
-	out := map[string]any{
+	m := map[string]any{
 		"type":      o.Type,
 		"id":        o.ID,
 		"call_id":   o.CallID,
@@ -347,9 +348,9 @@ func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
 		"arguments": toolSearchCallArgumentsJSON(o.Arguments),
 	}
 	if o.Status != "" {
-		out["status"] = o.Status
+		m["status"] = o.Status
 	}
-	return json.Marshal(out)
+	return json.Marshal(m)
 }
 
 // WebSearchAction describes the search action in a web_search_call output item.
@@ -489,7 +490,9 @@ type ResponsesStreamEvent struct {
 	CallID    string `json:"call_id,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
-	Input     string `json:"input,omitempty"`
+
+	// response.custom_tool_call_input.done
+	Input string `json:"input,omitempty"`
 
 	// response.reasoning_summary_text.delta / done
 	// Reuses Text/Delta fields above, SummaryIndex identifies which summary part
@@ -628,11 +631,13 @@ type ChatUsage struct {
 // unset fields are omitted so each side only emits the fields that apply.
 //
 // Field set mirrors OpenAI's official CompletionUsage schema:
-//   - prompt_tokens_details: cached_tokens, cache_write_tokens, audio_tokens
+//   - prompt_tokens_details: cached_tokens, cache_creation_tokens,
+//     cache_write_tokens, audio_tokens
 //   - completion_tokens_details: reasoning_tokens, audio_tokens,
 //     accepted_prediction_tokens, rejected_prediction_tokens
 type ChatTokenDetails struct {
 	CachedTokens             int `json:"cached_tokens,omitempty"`
+	CacheCreationTokens      int `json:"cache_creation_tokens,omitempty"`
 	CacheWriteTokens         int `json:"cache_write_tokens,omitempty"`
 	AudioTokens              int `json:"audio_tokens,omitempty"`
 	ReasoningTokens          int `json:"reasoning_tokens,omitempty"`

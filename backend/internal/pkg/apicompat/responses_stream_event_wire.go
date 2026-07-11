@@ -184,14 +184,20 @@ func responsesItemWire(item *ResponsesOutput) map[string]any {
 		m["call_id"] = item.CallID
 		m["name"] = item.Name
 		m["arguments"] = item.Arguments
+		// namespace 子工具的还原调用：codex 按 namespace+name 路由，缺少该字段
+		// 会被判为 unsupported call。
 		if item.Namespace != "" {
 			m["namespace"] = item.Namespace
 		}
 	case "custom_tool_call":
+		// custom/freeform 工具调用（如 codex 的 exec）：input 为自由文本。缺少
+		// call_id/name 时 codex 无法路由该调用（表现为 unsupported call）。
 		m["call_id"] = item.CallID
 		m["name"] = item.Name
 		m["input"] = item.Input
 	case "tool_search_call":
+		// tool_search 调用还原项：execution 必须为 "client"（否则 codex 忽略该
+		// 调用），arguments 在线上是 JSON 对象而非字符串。
 		m["call_id"] = item.CallID
 		m["execution"] = "client"
 		m["arguments"] = toolSearchCallArgumentsJSON(item.Arguments)
