@@ -20,6 +20,28 @@ func resolveOpenAIForwardModel(account *Account, requestedModel, defaultMappedMo
 	return mappedModel
 }
 
+// isOpenAIOAuthServableModel limits empty-mapping OAuth accounts to models the
+// Codex upstream can actually serve. Claude families are allowed because the
+// messages bridge applies its existing default mapping before forwarding.
+func isOpenAIOAuthServableModel(requestedModel string) bool {
+	model := strings.TrimSpace(requestedModel)
+	if model == "" {
+		return true
+	}
+	if claudeMessagesDispatchFamily(model) != "" {
+		return true
+	}
+	if _, ok := normalizeKnownCodexModel(model); ok {
+		return true
+	}
+	if normalized := NormalizeOpenAICompatRequestedModel(model); normalized != model {
+		if _, ok := normalizeKnownCodexModel(normalized); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveOpenAICompactForwardModel determines the compact-only upstream model
 // for /responses/compact requests. It never affects normal /responses traffic.
 // When no compact-specific mapping matches, the input model is returned as-is.
