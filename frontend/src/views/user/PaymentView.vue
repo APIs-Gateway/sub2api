@@ -61,6 +61,7 @@
                 :selected="selectedMethod"
                 @select="selectedMethod = $event"
               />
+              <CryptoNetworkSelector v-if="selectedMethod === 'crypto'" v-model="cryptoNetwork" />
             </div>
             <div v-if="validAmount > 0" class="card p-6">
               <div class="space-y-2 text-sm">
@@ -136,6 +137,7 @@
                   :selected="selectedMethod"
                   @select="selectedMethod = $event"
                 />
+                <CryptoNetworkSelector v-if="selectedMethod === 'crypto'" v-model="cryptoNetwork" />
               </div>
               <div v-if="feeRate > 0 && lifecyclePaymentAmount > 0" class="card p-6">
                 <div class="space-y-2 text-sm">
@@ -224,6 +226,7 @@
                   :selected="selectedMethod"
                   @select="selectedMethod = $event"
                 />
+                <CryptoNetworkSelector v-if="selectedMethod === 'crypto'" v-model="cryptoNetwork" />
               </div>
               <div v-if="feeRate > 0 && selectedPlanPaymentAmount > 0" class="card p-6">
                 <div class="space-y-2 text-sm">
@@ -271,6 +274,7 @@
                     :selected="selectedMethod"
                     @select="selectedMethod = $event"
                   />
+                  <CryptoNetworkSelector v-if="selectedMethod === 'crypto'" v-model="cryptoNetwork" />
                 </div>
                 <div class="card p-6">
                   <SubscriptionPurchasePanel
@@ -338,6 +342,7 @@ import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderTy
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
+import CryptoNetworkSelector from '@/components/payment/CryptoNetworkSelector.vue'
 import SubscriptionPurchasePanel from '@/components/subscription/SubscriptionPurchasePanel.vue'
 import { METHOD_ORDER, getPaymentPopupFeatures } from '@/components/payment/providerConfig'
 import {
@@ -380,6 +385,7 @@ const errorHintMessage = ref('')
 const activeTab = ref<'recharge' | 'subscription'>('subscription')
 const amount = ref<number | null>(null)
 const selectedMethod = ref('')
+const cryptoNetwork = ref('usdt.trc20')
 const selectedPlan = ref<SubscriptionPlan | null>(null)
 const previewImage = ref('')
 
@@ -930,6 +936,7 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
       isMobile: isMobileDevice(),
       isWechatBrowser: typeof window !== 'undefined' && /MicroMessenger/i.test(window.navigator.userAgent),
       forceQRCode: !!(checkout.value.alipay_force_qrcode && normalizeVisibleMethod(requestType) === 'alipay'),
+      cryptoNetwork: cryptoNetwork.value,
     })
     if (options.openid) {
       payload.openid = options.openid
@@ -1178,6 +1185,7 @@ async function attemptMobileQrFallback(err: unknown, context: MobileQrFallbackCo
       origin: typeof window !== 'undefined' ? window.location.origin : '',
       isMobile: false,
       isWechatBrowser: false,
+      cryptoNetwork: cryptoNetwork.value,
     })
     const result = await paymentStore.createOrder(payload) as CreateOrderResult & { resume_token?: string }
     const stripeMethod = visibleMethod === 'wxpay' ? 'wechat_pay' : 'alipay'

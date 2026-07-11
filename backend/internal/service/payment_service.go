@@ -81,6 +81,7 @@ type CreateOrderRequest struct {
 	SrcURL          string
 	ReturnURL       string
 	PaymentSource   string
+	CryptoNetwork   string
 	OrderType       string
 	PlanID          int64
 	GroupID         int64

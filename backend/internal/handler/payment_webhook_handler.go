@@ -68,6 +68,12 @@ func (h *PaymentWebhookHandler) AirwallexWebhook(c *gin.Context) {
 	h.handleNotify(c, payment.TypeAirwallex)
 }
 
+// CryptoNotify handles BEpusdt callbacks.
+// POST /api/v1/payment/webhook/crypto
+func (h *PaymentWebhookHandler) CryptoNotify(c *gin.Context) {
+	h.handleNotify(c, payment.TypeCrypto)
+}
+
 // KyrenRefundWebhook handles Kyren Pay native webhook events (currently order.refunded).
 // Kyren 的 api.php?act=refund 兼容端点不支持,退款在 Kyren 控制台发起,生效后由本端点接收并关卡/对账。
 // POST /api/v1/payment/webhook/kyren
@@ -222,6 +228,13 @@ func extractOutTradeNo(rawBody, providerKey string) string {
 		}
 		if err := json.Unmarshal([]byte(rawBody), &payload); err == nil {
 			return strings.TrimSpace(payload.Data.Object.MerchantOrderID)
+		}
+	case payment.TypeCrypto:
+		var payload struct {
+			OrderID string `json:"order_id"`
+		}
+		if err := json.Unmarshal([]byte(rawBody), &payload); err == nil {
+			return strings.TrimSpace(payload.OrderID)
 		}
 	}
 	// For other providers (Stripe, Alipay direct, WxPay direct), the registry

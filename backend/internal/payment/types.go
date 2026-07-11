@@ -18,6 +18,7 @@ const (
 	TypeLink         PaymentType = "link"
 	TypeEasyPay      PaymentType = "easypay"
 	TypeAirwallex    PaymentType = "airwallex"
+	TypeCrypto       PaymentType = "crypto"
 )
 
 // Order status constants shared across payment and service layers.
@@ -108,6 +109,7 @@ type CreatePaymentRequest struct {
 	ClientIP           string // Payer's IP address
 	IsMobile           bool   // Whether the request comes from a mobile device
 	InstanceSubMethods string // Comma-separated sub-methods from instance supported_types (for Stripe)
+	CryptoNetwork      string // BEpusdt network selected by the user (e.g. usdt.trc20)
 }
 
 // CreatePaymentResultType describes the shape of the create-payment result.
