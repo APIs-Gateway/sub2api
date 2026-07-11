@@ -50,6 +50,7 @@ func TestRefreshActiveIndexDropsInvalidInput(t *testing.T) {
 	ctx := context.Background()
 
 	cache.touchActiveIndex(ctx, accountActiveIndexKey, 0, 60)
+	cache.refreshActiveIndex(ctx, accountActiveIndex, 0)
 	members, err := client.ZRange(ctx, accountActiveIndexKey, 0, -1).Result()
 	require.NoError(t, err)
 	require.Empty(t, members)
