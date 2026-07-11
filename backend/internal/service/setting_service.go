@@ -861,6 +861,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyChannelMonitorEnabled,
 		SettingKeyChannelMonitorDefaultIntervalSeconds,
 		SettingKeyAvailableChannelsEnabled,
+		SettingKeyUserRegionNoticeEnabled,
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
 		SettingKeyAllowUserViewErrorRequests,
@@ -974,6 +975,8 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
 
+		UserRegionNoticeEnabled: settings[SettingKeyUserRegionNoticeEnabled] == "true",
+
 		AffiliateEnabled: settings[SettingKeyAffiliateEnabled] == "true",
 
 		RiskControlEnabled: settings[SettingKeyRiskControlEnabled] == "true",
@@ -1054,6 +1057,19 @@ func (s *SettingService) GetAvailableChannelsRuntime(ctx context.Context) Availa
 	return AvailableChannelsRuntime{
 		Enabled: vals[SettingKeyAvailableChannelsEnabled] == "true",
 	}
+}
+
+// IsUserRegionNoticeEnabled reads the user-region notice switch. Fail-closed.
+func (s *SettingService) IsUserRegionNoticeEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	vals, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyUserRegionNoticeEnabled})
+	if err != nil {
+		slog.Warn("failed to get user_region_notice_enabled setting, defaulting to false", "error", err)
+		return false
+	}
+	return vals[SettingKeyUserRegionNoticeEnabled] == "true"
 }
 
 // IsUserErrorViewAllowed reads the user-facing error-requests visibility switch
@@ -1291,6 +1307,7 @@ type PublicSettingsInjectionPayload struct {
 	ChannelMonitorEnabled                bool `json:"channel_monitor_enabled"`
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
 	AvailableChannelsEnabled             bool `json:"available_channels_enabled"`
+	UserRegionNoticeEnabled              bool `json:"user_region_notice_enabled"`
 	AffiliateEnabled                     bool `json:"affiliate_enabled"`
 	RiskControlEnabled                   bool `json:"risk_control_enabled"`
 	AllowUserViewErrorRequests           bool `json:"allow_user_view_error_requests"`
@@ -1355,6 +1372,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
+		UserRegionNoticeEnabled:              settings.UserRegionNoticeEnabled,
 		AffiliateEnabled:                     settings.AffiliateEnabled,
 		RiskControlEnabled:                   settings.RiskControlEnabled,
 		AllowUserViewErrorRequests:           settings.AllowUserViewErrorRequests,
@@ -2001,6 +2019,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
+
+	// User region notice feature switch
+	updates[SettingKeyUserRegionNoticeEnabled] = strconv.FormatBool(settings.UserRegionNoticeEnabled)
 
 	// Affiliate (邀请返利) feature switch
 	updates[SettingKeyAffiliateEnabled] = strconv.FormatBool(settings.AffiliateEnabled)
@@ -2981,6 +3002,9 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
 
+		// User region notice feature (default disabled; opt-in)
+		SettingKeyUserRegionNoticeEnabled: "false",
+
 		// Affiliate (邀请返利) feature (default disabled; opt-in)
 		SettingKeyAffiliateEnabled: "false",
 
@@ -3495,6 +3519,9 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
+
+	// User region notice feature (default: disabled; strict true)
+	result.UserRegionNoticeEnabled = settings[SettingKeyUserRegionNoticeEnabled] == "true"
 
 	// Affiliate (邀请返利) feature (default: disabled; strict true)
 	result.AffiliateEnabled = settings[SettingKeyAffiliateEnabled] == "true"

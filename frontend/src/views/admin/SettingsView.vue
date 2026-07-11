@@ -5580,6 +5580,33 @@
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.regionNotice.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.regionNotice.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.regionNotice.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.regionNotice.enabledHint') }}
+                </p>
+              </div>
+              <Toggle
+                v-model="form.user_region_notice_enabled"
+                data-testid="user-region-notice-enabled"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ t('admin.settings.features.riskControl.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -8270,6 +8297,8 @@ const form = reactive<SettingsForm>({
   channel_monitor_default_interval_seconds: 60,
   // Available Channels feature switch
   available_channels_enabled: false,
+  // User dashboard region notice feature switch
+  user_region_notice_enabled: false,
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: false,
   // Allow user view error requests
@@ -9453,6 +9482,8 @@ async function saveSettings() {
         Number(form.channel_monitor_default_interval_seconds) || 60,
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      // User dashboard region notice feature switch
+      user_region_notice_enabled: form.user_region_notice_enabled,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
       allow_user_view_error_requests: form.allow_user_view_error_requests,

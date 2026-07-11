@@ -6,6 +6,7 @@ import NavigationProgress from '@/components/common/NavigationProgress.vue'
 import AdminComplianceDialog from '@/components/admin/AdminComplianceDialog.vue'
 import { resolveRouteDocumentTitle } from '@/router/title'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
+import UserRegionNoticeOverlay from '@/components/common/UserRegionNoticeOverlay.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { getSetupStatus } from '@/api/setup'
 
@@ -154,6 +155,7 @@ onMounted(async () => {
 <template>
   <NavigationProgress />
   <RouterView />
+  <UserRegionNoticeOverlay />
   <Toast />
   <AnnouncementPopup />
   <AdminComplianceDialog />

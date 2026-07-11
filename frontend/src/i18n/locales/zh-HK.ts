@@ -350,6 +350,11 @@
     }
   },
 
+  regionNotice: {
+    title: '服務提示',
+    description: '目前所在地區暫不支援存取用戶後台。請切換至受支援的網絡環境後再試。'
+  },
+
   adminCompliance: {
     title: '部署與運營合規確認',
     blockingNotice: '繼續使用控制台前，須完成部署與運營合規確認。',
@@ -5978,6 +5983,12 @@
           configureLink: '前往 渠道管理 > 渠道定價 配置模型價格',
           enabled: '啟用可用渠道',
           enabledHint: '關閉後用戶端側邊欄入口隱藏，接口返回空數組。',
+        },
+        regionNotice: {
+          title: '用戶後台地區提示',
+          description: '在不支援的地區向已登入的非管理員用戶展示阻斷提示。預設關閉。',
+          enabled: '啟用用戶後台地區提示',
+          enabledHint: '僅作用於已登入的非管理員用戶頁面。',
         },
         riskControl: {
           title: '風控中心',

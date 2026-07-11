@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -11,7 +12,8 @@ import (
 )
 
 type settingPublicRepoStub struct {
-	values map[string]string
+	values         map[string]string
+	getMultipleErr error
 }
 
 func (s *settingPublicRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
@@ -27,6 +29,9 @@ func (s *settingPublicRepoStub) Set(ctx context.Context, key, value string) erro
 }
 
 func (s *settingPublicRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	if s.getMultipleErr != nil {
+		return nil, s.getMultipleErr
+	}
 	out := make(map[string]string, len(keys))
 	for _, key := range keys {
 		if value, ok := s.values[key]; ok {
@@ -145,6 +150,55 @@ func TestSettingService_GetPublicSettings_ExposesAllowUserViewErrorRequests(t *t
 	settings, err := svc.GetPublicSettings(context.Background())
 	require.NoError(t, err)
 	require.True(t, settings.AllowUserViewErrorRequests)
+}
+
+func TestSettingService_GetPublicSettings_UserRegionNoticeEnabledDefaultAndInjection(t *testing.T) {
+	disabledSvc := NewSettingService(&settingPublicRepoStub{values: map[string]string{}}, &config.Config{})
+
+	disabledSettings, err := disabledSvc.GetPublicSettings(context.Background())
+	require.NoError(t, err)
+	require.False(t, disabledSettings.UserRegionNoticeEnabled)
+
+	enabledSvc := NewSettingService(&settingPublicRepoStub{
+		values: map[string]string{
+			SettingKeyUserRegionNoticeEnabled: "true",
+		},
+	}, &config.Config{})
+
+	enabledSettings, err := enabledSvc.GetPublicSettings(context.Background())
+	require.NoError(t, err)
+	require.True(t, enabledSettings.UserRegionNoticeEnabled)
+
+	payload, err := enabledSvc.GetPublicSettingsForInjection(context.Background())
+	require.NoError(t, err)
+	injected, ok := payload.(*PublicSettingsInjectionPayload)
+	require.True(t, ok)
+	require.True(t, injected.UserRegionNoticeEnabled)
+}
+
+func TestSettingService_IsUserRegionNoticeEnabled(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string]string
+		err    error
+		want   bool
+	}{
+		{name: "missing setting is disabled", values: map[string]string{}, want: false},
+		{name: "strict true enables notice", values: map[string]string{SettingKeyUserRegionNoticeEnabled: "true"}, want: true},
+		{name: "non-strict true is disabled", values: map[string]string{SettingKeyUserRegionNoticeEnabled: "TRUE"}, want: false},
+		{name: "repo error fails closed", err: errors.New("settings unavailable"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewSettingService(&settingPublicRepoStub{
+				values:         tt.values,
+				getMultipleErr: tt.err,
+			}, &config.Config{})
+
+			require.Equal(t, tt.want, svc.IsUserRegionNoticeEnabled(context.Background()))
+		})
+	}
 }
 
 func TestSettingService_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *testing.T) {

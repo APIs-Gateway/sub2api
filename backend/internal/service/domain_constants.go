@@ -427,6 +427,10 @@ const (
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
 
+	// SettingKeyUserRegionNoticeEnabled controls the user-backend region notice overlay.
+	// Defaults to false (opt-in feature).
+	SettingKeyUserRegionNoticeEnabled = "user_region_notice_enabled"
+
 	// =========================
 	// Overload Cooldown (529)
 	// =========================

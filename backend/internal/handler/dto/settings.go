@@ -253,6 +253,9 @@ type SystemSettings struct {
 	// Available Channels feature switch (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
 
+	// User Region Notice feature switch
+	UserRegionNoticeEnabled bool `json:"user_region_notice_enabled"`
+
 	// 风控中心功能开关
 	RiskControlEnabled bool `json:"risk_control_enabled"`
 
@@ -333,11 +336,18 @@ type PublicSettings struct {
 
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
 
+	UserRegionNoticeEnabled bool `json:"user_region_notice_enabled"`
+
 	AffiliateEnabled bool `json:"affiliate_enabled"`
 
 	RiskControlEnabled bool `json:"risk_control_enabled"`
 
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
+}
+
+type RegionResponse struct {
+	CountryCode             string `json:"country_code"`
+	UserRegionNoticeEnabled bool   `json:"user_region_notice_enabled"`
 }
 
 type LoginAgreementDocument struct {

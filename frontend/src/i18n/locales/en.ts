@@ -350,6 +350,11 @@
     }
   },
 
+  regionNotice: {
+    title: 'Service notice',
+    description: 'This account area is not available from your current region. Please switch to a supported network environment and try again.'
+  },
+
   adminCompliance: {
     title: 'Deployment and Operation Compliance Acknowledgment',
     blockingNotice: 'Deployment and operation compliance acknowledgment is required before continuing to use the console.',
@@ -5976,6 +5981,12 @@
           configureLink: 'Configure model pricing in Channel Management > Channel Pricing',
           enabled: 'Enable Available Channels',
           enabledHint: 'When off, the sidebar entry is hidden and the endpoint returns an empty list.',
+        },
+        regionNotice: {
+          title: 'User Dashboard Region Notice',
+          description: 'Show a blocking notice to non-admin users in the authenticated dashboard for unsupported regions. Disabled by default.',
+          enabled: 'Enable user dashboard region notice',
+          enabledHint: 'Applies only to signed-in non-admin user pages.',
         },
         riskControl: {
           title: 'Risk Control',

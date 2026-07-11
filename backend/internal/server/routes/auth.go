@@ -214,6 +214,7 @@ func RegisterAuthRoutes(
 	}
 
 	// 公开设置（无需认证）
+	v1.GET("/region", h.Setting.GetRegion)
 	settings := v1.Group("/settings")
 	{
 		settings.GET("/public", h.Setting.GetPublicSettings)

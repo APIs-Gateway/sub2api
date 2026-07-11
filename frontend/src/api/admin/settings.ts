@@ -625,6 +625,9 @@ export interface SystemSettings {
   // Available Channels feature switch
   available_channels_enabled: boolean;
 
+  // User dashboard region notice feature switch
+  user_region_notice_enabled: boolean;
+
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: boolean;
 
@@ -874,6 +877,9 @@ export interface UpdateSettingsRequest {
 
   // Available Channels feature switch
   available_channels_enabled?: boolean;
+
+  // User dashboard region notice feature switch
+  user_region_notice_enabled?: boolean;
 
   // Affiliate (邀请返利) feature switch
   affiliate_enabled?: boolean;

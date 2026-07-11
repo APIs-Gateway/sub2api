@@ -74,6 +74,37 @@ func TestGetTrustedClientIPUsesGinClientIP(t *testing.T) {
 	require.Equal(t, "9.9.9.9", w.Body.String())
 }
 
+func TestGetCloudflareCountryCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{name: "lowercase country is uppercased", header: "cn", want: "CN"},
+		{name: "header value is trimmed", header: " hk ", want: "HK"},
+		{name: "taiwan is returned without backend blocking semantics", header: "TW", want: "TW"},
+		{name: "macau is returned without backend blocking semantics", header: "MO", want: "MO"},
+		{name: "missing header returns empty", want: ""},
+		{name: "too long header returns empty", header: "CHN", want: ""},
+		{name: "non alpha header returns empty", header: "C1", want: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest("GET", "/", nil)
+			if tc.header != "" {
+				c.Request.Header.Set("CF-IPCountry", tc.header)
+			}
+
+			require.Equal(t, tc.want, GetCloudflareCountryCode(c))
+		})
+	}
+}
+
 func TestCheckIPRestrictionWithCompiledRules(t *testing.T) {
 	whitelist := CompileIPRules([]string{"10.0.0.0/8", "192.168.1.2"})
 	blacklist := CompileIPRules([]string{"10.1.1.1"})

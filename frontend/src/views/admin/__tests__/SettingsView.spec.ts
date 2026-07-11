@@ -438,6 +438,7 @@ const baseSettingsResponse = {
   subscription_expiry_notify_enabled: true,
   account_quota_notify_enabled: false,
   account_quota_notify_emails: [],
+  user_region_notice_enabled: false,
   // 平台限额嵌套字段（新后端契约）
   default_platform_quotas: {
     anthropic:   { daily: null, weekly: null, monthly: null },
@@ -497,6 +498,16 @@ async function openUsersTab(wrapper: ReturnType<typeof mountView>) {
 
   expect(usersTabButton).toBeDefined();
   await usersTabButton?.trigger("click");
+  await flushPromises();
+}
+
+async function openFeaturesTab(wrapper: ReturnType<typeof mountView>) {
+  const featuresTabButton = wrapper
+    .findAll("button")
+    .find((node) => node.text().includes("admin.settings.tabs.features"));
+
+  expect(featuresTabButton).toBeDefined();
+  await featuresTabButton?.trigger("click");
   await flushPromises();
 }
 
@@ -1083,6 +1094,42 @@ describe("admin SettingsView wechat connect controls", () => {
         .get('[data-testid="wechat-connect-mp-app-secret"]')
         .attributes("placeholder"),
     ).toContain("密钥已配置");
+  });
+
+  it("saves the user dashboard region notice feature switch", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openFeaturesTab(wrapper);
+    await wrapper.get('[data-testid="user-region-notice-enabled"]').setValue(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_region_notice_enabled: true,
+      }),
+    );
+  });
+
+  it("loads the user dashboard region notice feature switch", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      user_region_notice_enabled: true,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openFeaturesTab(wrapper);
+
+    expect(
+      (
+        wrapper.get('[data-testid="user-region-notice-enabled"]')
+          .element as HTMLInputElement
+      ).checked,
+    ).toBe(true);
   });
 
   it("collapses auth source defaults until the source is enabled", async () => {

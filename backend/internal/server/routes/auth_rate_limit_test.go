@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,6 +34,31 @@ func newAuthRoutesTestRouter(redisClient *redis.Client) *gin.Engine {
 	)
 
 	return router
+}
+
+func TestAuthRoutesRegionEndpointIsPublic(t *testing.T) {
+	router := newAuthRoutesTestRouter(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/region", nil)
+	req.Header.Set("CF-IPCountry", "cn")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			CountryCode             string `json:"country_code"`
+			UserRegionNoticeEnabled bool   `json:"user_region_notice_enabled"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, "CN", resp.Data.CountryCode)
+	require.False(t, resp.Data.UserRegionNoticeEnabled)
 }
 
 func TestAuthRoutesRateLimitFailCloseWhenRedisUnavailable(t *testing.T) {

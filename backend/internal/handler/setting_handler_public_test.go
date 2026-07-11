@@ -111,6 +111,58 @@ func TestSettingHandler_GetPublicSettings_ExposesDefaultLocale(t *testing.T) {
 	require.Equal(t, "zh-HK", resp.Data.DefaultLocale)
 }
 
+func TestSettingHandler_GetRegion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name        string
+		setting     string
+		header      string
+		wantCountry string
+		wantEnabled bool
+	}{
+		{name: "enabled CN", setting: "true", header: "cn", wantCountry: "CN", wantEnabled: true},
+		{name: "disabled HK", setting: "false", header: "HK", wantCountry: "HK", wantEnabled: false},
+		{name: "enabled invalid header", setting: "true", header: "C1", wantCountry: "", wantEnabled: true},
+		{name: "missing setting defaults disabled", header: "CN", wantCountry: "CN", wantEnabled: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := map[string]string{}
+			if tt.setting != "" {
+				values[service.SettingKeyUserRegionNoticeEnabled] = tt.setting
+			}
+			h := NewSettingHandler(service.NewSettingService(&settingHandlerPublicRepoStub{values: values}, &config.Config{}), "test-version")
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/region", nil)
+			if tt.header != "" {
+				req.Header.Set("CF-IPCountry", tt.header)
+			}
+			c.Request = req
+
+			h.GetRegion(c)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+
+			var resp struct {
+				Code int `json:"code"`
+				Data struct {
+					CountryCode             string `json:"country_code"`
+					UserRegionNoticeEnabled bool   `json:"user_region_notice_enabled"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+			require.Equal(t, 0, resp.Code)
+			require.Equal(t, tt.wantCountry, resp.Data.CountryCode)
+			require.Equal(t, tt.wantEnabled, resp.Data.UserRegionNoticeEnabled)
+		})
+	}
+}
+
 func TestSettingHandler_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := NewSettingHandler(service.NewSettingService(&settingHandlerPublicRepoStub{
