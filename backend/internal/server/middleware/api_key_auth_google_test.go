@@ -295,6 +295,66 @@ func TestApiKeyAuthWithSubscriptionGoogle_QueryApiKeyRejected(t *testing.T) {
 	require.Equal(t, "INVALID_ARGUMENT", resp.Error.Status)
 }
 
+func TestAPIKeyAuthWithSubscriptionGoogle_EnforcesIPACL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	user := &service.User{ID: 7, Role: service.RoleUser, Status: service.StatusActive}
+	apiKey := &service.APIKey{
+		ID:          100,
+		UserID:      user.ID,
+		Key:         "google-ip-acl",
+		Status:      service.StatusActive,
+		User:        user,
+		IPWhitelist: []string{"1.2.3.4"},
+	}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	router.Use(APIKeyAuthWithSubscriptionGoogle(newTestAPIKeyService(fakeAPIKeyRepo{
+		getByKey: func(context.Context, string) (*service.APIKey, error) { return apiKey, nil },
+	}), nil, cfg))
+	router.GET("/v1beta/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1beta/test", nil)
+	req.RemoteAddr = "9.9.9.9:12345"
+	req.Header.Set("x-goog-api-key", apiKey.Key)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	var resp googleErrorResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, "PERMISSION_DENIED", resp.Error.Status)
+	require.Contains(t, resp.Error.Message, "9.9.9.9")
+}
+
+func TestAPIKeyAuthWithSubscriptionGoogle_RejectsRuntimeKeyStates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name       string
+		status     string
+		wantStatus int
+	}{
+		{name: "expired", status: service.StatusAPIKeyExpired, wantStatus: http.StatusForbidden},
+		{name: "quota exhausted", status: service.StatusAPIKeyQuotaExhausted, wantStatus: http.StatusTooManyRequests},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user := &service.User{ID: 8, Role: service.RoleUser, Status: service.StatusActive}
+			apiKey := &service.APIKey{ID: 101, UserID: user.ID, Key: tc.name, Status: tc.status, User: user}
+			router := gin.New()
+			router.Use(APIKeyAuthWithSubscriptionGoogle(newTestAPIKeyService(fakeAPIKeyRepo{
+				getByKey: func(context.Context, string) (*service.APIKey, error) { return apiKey, nil },
+			}), nil, &config.Config{RunMode: config.RunModeStandard}))
+			router.GET("/v1beta/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+			req := httptest.NewRequest(http.MethodGet, "/v1beta/test", nil)
+			req.Header.Set("x-goog-api-key", apiKey.Key)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			require.Equal(t, tc.wantStatus, rec.Code)
+		})
+	}
+}
+
 func TestApiKeyAuthWithSubscriptionGoogleSetsGroupContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
