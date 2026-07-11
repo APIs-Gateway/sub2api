@@ -34,6 +34,18 @@ func TestLatestUsageLogIPsQueryEmptyInput(t *testing.T) {
 	require.Len(t, args, 1)
 }
 
+func TestLatestUsageLogIPsSkipsEmptyAndNilExecutor(t *testing.T) {
+	repo := &apiKeyRepository{}
+
+	empty, err := repo.latestUsageLogIPs(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, empty)
+
+	keys := []service.APIKey{{ID: 1}}
+	require.NoError(t, repo.attachLastUsedIPs(context.Background(), keys))
+	require.Nil(t, keys[0].LastUsedIP)
+}
+
 func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
 	t.Helper()
 
