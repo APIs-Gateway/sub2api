@@ -4000,6 +4000,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					trimmedData = strings.TrimSpace(replacedData)
 				}
 			}
+			if normalizedData, normalized := normalizeOpenAIResponsesFunctionCallArguments(dataBytes); normalized {
+				dataBytes = normalizedData
+				trimmedData = strings.TrimSpace(string(normalizedData))
+				line = "data: " + string(normalizedData)
+			}
 			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
 			if eventType == "response.failed" {
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
@@ -5313,11 +5318,84 @@ func (s *OpenAIGatewayService) correctToolCallsInResponseBody(body []byte) []byt
 		return body
 	}
 
-	corrected, changed := s.toolCorrector.CorrectToolCallsInSSEBytes(body)
-	if changed {
-		return corrected
+	updated := body
+	if s != nil && s.toolCorrector != nil {
+		if corrected, changed := s.toolCorrector.CorrectToolCallsInSSEBytes(updated); changed {
+			updated = corrected
+		}
 	}
-	return body
+	if normalized, changed := normalizeOpenAIResponsesFunctionCallArguments(updated); changed {
+		updated = normalized
+	}
+	return updated
+}
+
+func normalizeOpenAIResponsesFunctionCallArguments(data []byte) ([]byte, bool) {
+	if len(bytes.TrimSpace(data)) == 0 || !bytes.Contains(data, []byte(`"arguments"`)) || !gjson.ValidBytes(data) {
+		return data, false
+	}
+
+	updated := data
+	changed := false
+	setDedupedArgument := func(path string) {
+		argument := gjson.GetBytes(updated, path)
+		if !argument.Exists() || argument.Type != gjson.String {
+			return
+		}
+		deduped, ok := dedupeRepeatedJSONArgumentString(argument.Str)
+		if !ok {
+			return
+		}
+		next, err := sjson.SetBytes(updated, path, deduped)
+		if err != nil {
+			return
+		}
+		updated = next
+		changed = true
+	}
+
+	eventType := strings.TrimSpace(gjson.GetBytes(updated, "type").String())
+	if eventType == "response.function_call_arguments.done" {
+		setDedupedArgument("arguments")
+	}
+	if itemType := strings.TrimSpace(gjson.GetBytes(updated, "item.type").String()); isResponsesFunctionCallItemType(itemType) {
+		setDedupedArgument("item.arguments")
+	}
+	dedupeResponsesFunctionCallOutputArguments(updated, "response.output", setDedupedArgument)
+	dedupeResponsesFunctionCallOutputArguments(updated, "output", setDedupedArgument)
+
+	return updated, changed
+}
+
+func dedupeResponsesFunctionCallOutputArguments(data []byte, outputPath string, setDedupedArgument func(string)) {
+	output := gjson.GetBytes(data, outputPath)
+	if !output.Exists() || !output.IsArray() {
+		return
+	}
+	for index, item := range output.Array() {
+		if isResponsesFunctionCallItemType(strings.TrimSpace(item.Get("type").String())) {
+			setDedupedArgument(outputPath + "." + strconv.Itoa(index) + ".arguments")
+		}
+	}
+}
+
+func isResponsesFunctionCallItemType(itemType string) bool {
+	return itemType == "function_call" || itemType == "custom_tool_call"
+}
+
+func dedupeRepeatedJSONArgumentString(arguments string) (string, bool) {
+	if len(arguments) == 0 || len(arguments)%2 != 0 {
+		return "", false
+	}
+	half := arguments[:len(arguments)/2]
+	if half != arguments[len(arguments)/2:] {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(half)
+	if trimmed == "" || (!strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[")) || !json.Valid([]byte(half)) {
+		return "", false
+	}
+	return half, true
 }
 
 func (s *OpenAIGatewayService) parseSSEUsage(data string, usage *OpenAIUsage) {
