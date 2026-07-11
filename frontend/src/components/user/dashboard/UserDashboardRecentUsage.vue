@@ -27,7 +27,7 @@
               <span class="text-green-600 dark:text-green-400" :title="t('dashboard.actual')">${{ formatCost(log.actual_cost) }}</span>
               <span class="font-normal text-gray-400 dark:text-gray-500" :title="t('dashboard.standard')"> / ${{ formatCost(log.total_cost) }}</span>
             </p>
-            <p class="text-xs text-gray-500 dark:text-dark-400">{{ (log.input_tokens + log.output_tokens).toLocaleString() }} tokens</p>
+            <p class="text-xs text-gray-500 dark:text-dark-400">{{ totalTokens(log).toLocaleString() }} tokens</p>
           </div>
         </div>
 
@@ -54,4 +54,10 @@ defineProps<{
 }>()
 const { t } = useI18n()
 const formatCost = (c: number) => c.toFixed(4)
+
+const totalTokens = (log: UsageLog): number =>
+  (log.input_tokens ?? 0) +
+  (log.output_tokens ?? 0) +
+  (log.cache_creation_tokens ?? 0) +
+  (log.cache_read_tokens ?? 0)
 </script>

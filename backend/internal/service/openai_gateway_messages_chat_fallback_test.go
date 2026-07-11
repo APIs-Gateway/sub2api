@@ -182,6 +182,33 @@ func TestForwardAsAnthropic_ForceChatCompletionsNonStreaming(t *testing.T) {
 	require.False(t, result.Stream)
 }
 
+func TestForwardAsAnthropic_ForceChatCompletionsPreservesMappedGPT56MaxEffort(t *testing.T) {
+	body := []byte(`{"model":"sol","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"reasoning_effort":"max","stream":false}`)
+	c, _ := newMessagesChatFallbackContext(t, body)
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_max","object":"chat.completion","model":"gpt-5.6-sol","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+	account := forceChatMessagesFallbackAccount()
+	account.Credentials["model_mapping"] = map[string]any{"sol": "gpt-5.6-sol"}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.NotNil(t, result.ReasoningEffort)
+	require.Equal(t, "max", *result.ReasoningEffort)
+}
+
 func TestForwardAsAnthropic_ForceChatCompletionsRequestValidationErrors(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -167,11 +167,11 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	sseBody := strings.Join([]string{
-		`data: {"type":"response.created","response":{"id":"resp_bridge","model":"gpt-5"}}`,
+		`data: {"type":"response.created","response":{"id":"resp_bridge","model":"gpt-5.6-sol"}}`,
 		"",
 		`data: {"type":"response.output_text.delta","response":{"id":"resp_bridge"},"delta":"ok"}`,
 		"",
-		`data: {"type":"response.completed","response":{"id":"resp_bridge","model":"gpt-5","usage":{"input_tokens":3,"output_tokens":2}}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_bridge","model":"gpt-5.6-sol","usage":{"input_tokens":3,"output_tokens":2}}}`,
 		"",
 	}, "\n")
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -196,14 +196,17 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 		toolCorrector: NewCodexToolCorrector(),
 	}
 	account := &Account{
-		ID:          7,
-		Name:        "api-key",
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
+		ID:       7,
+		Name:     "api-key",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{"sol": "gpt-5.6-sol"},
+		},
 		Concurrency: 1,
 		Status:      StatusActive,
 	}
-	payload := []byte(`{"type":"response.create","generate":true,"model":"gpt-5","stream":true,"input":"hi"}`)
+	payload := []byte(`{"type":"response.create","generate":true,"model":"sol","stream":true,"reasoning":{"effort":"max"},"input":"hi"}`)
 
 	type bridgeResult struct {
 		result *OpenAIForwardResult
@@ -236,7 +239,7 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 			"sk-test",
 			payload,
 			len(payload),
-			"gpt-5",
+			"sol",
 			"",
 			"",
 			"",
@@ -278,6 +281,8 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 		require.Equal(t, 3, bridge.result.Usage.InputTokens)
 		require.Equal(t, 2, bridge.result.Usage.OutputTokens)
 		require.True(t, bridge.result.OpenAIWSMode)
+		require.NotNil(t, bridge.result.ReasoningEffort)
+		require.Equal(t, "max", *bridge.result.ReasoningEffort)
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for bridge result")
 	}

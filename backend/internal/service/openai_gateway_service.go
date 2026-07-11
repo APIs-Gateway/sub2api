@@ -44,8 +44,8 @@ const (
 	openaiStickySessionTTL = time.Hour // 粘性会话TTL
 	// 与真实 Codex CLI 的 User-Agent 结构对齐：
 	// {originator}/{version} ({OS} {OS_version}; {arch}) {terminal}
-	// 旧值 "codex_cli_rs/0.125.0" 缺少 OS/架构/终端后缀，易被上游指纹识别为非官方客户端。
-	codexCLIUserAgent = "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	// 简写的 codex_cli_rs/<version> 缺少 OS/架构/终端后缀，易被上游指纹识别为非官方客户端。
+	codexCLIUserAgent = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
@@ -59,7 +59,7 @@ const (
 	openAIWSRetryBackoffMaxDefault     = 2 * time.Second
 	openAIWSRetryJitterRatioDefault    = 0.2
 	openAICompactSessionSeedKey        = "openai_compact_session_seed"
-	codexCLIVersion                    = "0.125.0"
+	codexCLIVersion                    = "0.144.1"
 	// Codex 限额快照仅用于后台展示/诊断，不需要每个成功请求都立即落库。
 	openAICodexSnapshotPersistMinInterval = 30 * time.Second
 	// 配额自动暂停时，超过该时长仍未刷新的 used% 快照视为陈旧，不再据此暂停账号。
@@ -478,6 +478,9 @@ func (s *OpenAIGatewayService) ResolveChannelMappingAndRestrict(ctx context.Cont
 }
 
 func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.Context, account *Account, apiKey *APIKey) bool {
+	if s.openAIResponsesImageGenerationDisabled() {
+		return false
+	}
 	if override := account.CodexImageGenerationBridgeOverride(); override != nil {
 		return *override
 	}
@@ -1313,14 +1316,26 @@ func (s *OpenAIGatewayService) SelectAccountForModelWithExclusions(ctx context.C
 
 // noAvailableOpenAISelectionError builds the standard "no account available" error
 // while preserving the compact-specific error when applicable.
+type noAvailableOpenAISelectionFailure struct {
+	requestedModel string
+}
+
+func (e noAvailableOpenAISelectionFailure) Error() string {
+	if e.requestedModel != "" {
+		return fmt.Sprintf("no available OpenAI accounts supporting model: %s", e.requestedModel)
+	}
+	return "no available OpenAI accounts"
+}
+
+func (noAvailableOpenAISelectionFailure) Unwrap() error {
+	return ErrNoAvailableAccounts
+}
+
 func noAvailableOpenAISelectionError(requestedModel string, compactBlocked bool) error {
 	if compactBlocked {
 		return ErrNoAvailableCompactAccounts
 	}
-	if requestedModel != "" {
-		return fmt.Errorf("no available OpenAI accounts supporting model: %s", requestedModel)
-	}
-	return errors.New("no available OpenAI accounts")
+	return noAvailableOpenAISelectionFailure{requestedModel: requestedModel}
 }
 
 // openAICompactSupportTier classifies an OpenAI account by compact capability.
@@ -2391,12 +2406,36 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
 	}
 
+	normalizedBody, normalized, err := normalizeOpenAICodexCompactReasoningEffortForAccount(c, account, body)
+	if err != nil {
+		return nil, err
+	}
+	if normalized {
+		body = normalizedBody
+	}
+
 	originalBody := body
 	requestView := newOpenAIRequestView(body)
 	reqModel, reqStream, promptCacheKey := requestView.Model, requestView.Stream, requestView.PromptCacheKey
 	originalModel := reqModel
+	if s.openAIResponsesImageGenerationDisabled() && IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body) {
+		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": OpenAIResponsesImageGenerationDisabledMessage()}})
+		return nil, errors.New("OpenAI Responses image generation is disabled")
+	}
 
 	if account.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		fallbackModel := account.GetMappedModel(reqModel)
+		if s.openAIResponsesImageGenerationDisabled() && IsImageGenerationIntent(openAIResponsesEndpoint, fallbackModel, body) {
+			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": OpenAIResponsesImageGenerationDisabledMessage()}})
+			return nil, errors.New("OpenAI Responses image generation is disabled")
+		}
+		if stripped, changed, stripErr := stripCodexSparkImageGenerationToolsFromRawBody(body, fallbackModel); stripErr != nil {
+			return nil, fmt.Errorf("normalize Codex Spark image tools for chat fallback: %w", stripErr)
+		} else if changed {
+			body = stripped
+		}
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 
@@ -2439,9 +2478,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
 	if passthroughEnabled {
 		// 透传分支只需要轻量提取字段，避免热路径全量 Unmarshal。
-		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, reqModel)
+		mappedModel := account.GetMappedModel(reqModel)
+		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, mappedModel)
 		// 国产模型默认 effort 补充：也要用 mappedModel 判定是否是 passback-required 上游。
-		reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, account.GetMappedModel(reqModel))
+		reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, mappedModel)
 		return s.forwardOpenAIPassthrough(ctx, c, account, originalBody, reqModel, reasoningEffort, reqStream, startTime)
 	}
 
@@ -2552,6 +2592,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	imageIntent = imageIntent || IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, nil) || isOpenAIImageGenerationModel(upstreamModel)
+	if imageIntent && s.openAIResponsesImageGenerationDisabled() {
+		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": OpenAIResponsesImageGenerationDisabledMessage()}})
+		return nil, errors.New("OpenAI Responses image generation is disabled")
+	}
 	if imageIntent && !imageGenerationAllowed {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
 		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": ImageGenerationPermissionMessage()}})
@@ -2566,6 +2611,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if codexImageGenerationBridgeEnabled && ensureOpenAIResponsesImageGenerationTool(decoded) {
 			markDecodedModified()
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Injected /responses image_generation tool for Codex client")
+		}
+		if codexImageGenerationBridgeEnabled && ensureOpenAIResponsesImageGenerationToolChoiceAuto(decoded) {
+			markDecodedModified()
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Set /responses image_generation tool_choice=auto for Codex client")
 		}
 		if normalizeOpenAIResponsesImageGenerationTools(decoded) {
 			markDecodedModified()
@@ -2605,6 +2654,22 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
 			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": err.Error(), "param": "input"}})
 			return nil, err
+		}
+	}
+
+	// gpt-5.3-codex-spark also rejects the image_generation tool (HTTP 400,
+	// param=tools). Strip it here so both APIKey and OAuth /responses paths are
+	// covered regardless of the image-generation feature gate.
+	if isCodexSparkModel(upstreamModel) && openAIRequestBodyHasImageGenerationTool(body) {
+		decoded, decodeErr := ensureReqBody()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		if stripCodexSparkImageGenerationTools(decoded) {
+			markDecodedModified()
+			// The request no longer contains an image capability after Spark cleanup,
+			// so do not carry the pre-mutation image intent into billing resolution.
+			imageIntent = IsImageGenerationIntentMap(openAIResponsesEndpoint, upstreamModel, decoded)
 		}
 	}
 
@@ -2700,6 +2765,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				return nil, blocked
 			case BetaPolicyActionFilter:
 				markPatchDelete("service_tier")
+			case OpenAIFastPolicyActionForcePriority:
+				if rawTier != OpenAIFastTierPriority {
+					markPatchSet("service_tier", OpenAIFastTierPriority)
+				}
 			default:
 				if normTier != rawTier {
 					markPatchSet("service_tier", normTier)
@@ -3066,7 +3135,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		defer func() { _ = resp.Body.Close() }()
 
-		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
+		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
 		// 国产模型默认 effort 补充：此处 reqModel 已被 mapping 重写为 billingModel（见
 		// line 2510-2515 的 GetMappedModel + reqModel 赋值），可直接作为 mappedModel。
 		reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, reqModel)
@@ -3494,6 +3563,11 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			req.Header.Set("conversation_id", isolateOpenAISessionID(apiKeyID, clientConversationID))
 		}
 	}
+	if account.Type != AccountTypeOAuth && isOpenAIResponsesCompactPath(c) {
+		// Passthrough preserves client headers, so override Accept for the unary
+		// compact upstream contract.
+		req.Header.Set("accept", "application/json")
+	}
 
 	// 透传模式也支持账户自定义 User-Agent 与 ForceCodexCLI 兜底。
 	customUA := account.GetOpenAIUserAgent()
@@ -3755,6 +3829,48 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	return true
 }
 
+func (s *OpenAIGatewayService) recordOpenAIStreamUpstreamError(
+	c *gin.Context,
+	account *Account,
+	passthrough bool,
+	upstreamRequestID string,
+	kind string,
+	payload []byte,
+	message string,
+) string {
+	message = sanitizeUpstreamErrorMessage(strings.TrimSpace(message))
+	if message == "" {
+		message = "OpenAI upstream response failed"
+	}
+	detail := ""
+	if len(payload) > 0 && s != nil && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+		if maxBytes <= 0 {
+			maxBytes = 2048
+		}
+		detail = truncateString(string(payload), maxBytes)
+	}
+	if c != nil {
+		setOpsUpstreamError(c, http.StatusBadGateway, message, detail)
+		event := OpsUpstreamErrorEvent{
+			Platform:           PlatformOpenAI,
+			UpstreamStatusCode: http.StatusBadGateway,
+			UpstreamRequestID:  strings.TrimSpace(upstreamRequestID),
+			Passthrough:        passthrough,
+			Kind:               kind,
+			Message:            message,
+			Detail:             detail,
+		}
+		if account != nil {
+			event.Platform = account.Platform
+			event.AccountID = account.ID
+			event.AccountName = account.Name
+		}
+		appendOpsUpstreamError(c, event)
+	}
+	return message
+}
+
 func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 	c *gin.Context,
 	account *Account,
@@ -3898,12 +4014,14 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				s.parseSSEUsageBytes(dataBytes, usage)
 				if hit, code, msg := detectOpenAICyberPolicy(dataBytes); hit {
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
-						Code:           code,
-						Message:        msg,
-						Body:           truncateString(string(dataBytes), 4096),
-						UpstreamStatus: http.StatusOK,
-						UpstreamInTok:  usage.InputTokens,
-						UpstreamOutTok: usage.OutputTokens,
+						Code:                     code,
+						Message:                  msg,
+						Body:                     truncateString(string(dataBytes), 4096),
+						UpstreamStatus:           http.StatusOK,
+						UpstreamInTok:            usage.InputTokens,
+						UpstreamOutTok:           usage.OutputTokens,
+						UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
+						UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 					})
 				} else if !openAIStreamClientOutputStarted(c, clientOutputStarted) && openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
 					return resultWithUsage(),
@@ -4043,7 +4161,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 	}
-	c.Data(resp.StatusCode, contentType, body)
+	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		c.Data(resp.StatusCode, contentType, body)
+	}
 	return &openaiNonStreamingResultPassthrough{
 		OpenAIUsage:      usage,
 		usage:            usage,
@@ -4075,6 +4195,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 				}
 			}
 		}
+		finalResponse = supplementCompactionItemFromSSE(c, finalResponse, bodyText)
 		body = finalResponse
 		if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
@@ -4106,7 +4227,9 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			contentType = "text/event-stream"
 		}
 	}
-	c.Data(resp.StatusCode, contentType, body)
+	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		c.Data(resp.StatusCode, contentType, body)
+	}
 
 	return &openaiNonStreamingResultPassthrough{
 		OpenAIUsage:      usage,
@@ -4250,6 +4373,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 				req.Header.Set("conversation_id", isolated)
 			}
 		}
+	} else if isOpenAIResponsesCompactPath(c) {
+		// Compact is a unary JSON upstream protocol even when the client wants
+		// a bridged downstream SSE response.
+		req.Header.Set("accept", "application/json")
 	}
 
 	// Apply custom User-Agent if configured
@@ -4832,12 +4959,14 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				s.parseSSEUsageBytes(dataBytes, usage)
 				if hit, code, msg := detectOpenAICyberPolicy(dataBytes); hit {
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
-						Code:           code,
-						Message:        msg,
-						Body:           truncateString(string(dataBytes), 4096),
-						UpstreamStatus: http.StatusOK,
-						UpstreamInTok:  usage.InputTokens,
-						UpstreamOutTok: usage.OutputTokens,
+						Code:                     code,
+						Message:                  msg,
+						Body:                     truncateString(string(dataBytes), 4096),
+						UpstreamStatus:           http.StatusOK,
+						UpstreamInTok:            usage.InputTokens,
+						UpstreamOutTok:           usage.OutputTokens,
+						UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
+						UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 					})
 				} else if !openAIStreamClientOutputStarted(c, clientOutputStarted) && openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
 					sawFailedEvent = true
@@ -5236,6 +5365,7 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	if cacheReadTokens == 0 {
 		cacheReadTokens = value.Get("prompt_tokens_details.cached_tokens").Int()
 	}
+	cacheCreationTokens := openAICacheWriteTokens(value)
 	imageOutputTokens := value.Get("output_tokens_details.image_tokens").Int()
 	if imageOutputTokens == 0 {
 		imageOutputTokens = value.Get("completion_tokens_details.image_tokens").Int()
@@ -5243,10 +5373,35 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	return OpenAIUsage{
 		InputTokens:              int(inputTokens),
 		OutputTokens:             int(outputTokens),
-		CacheCreationInputTokens: int(value.Get("cache_creation_input_tokens").Int()),
+		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     int(cacheReadTokens),
 		ImageOutputTokens:        int(imageOutputTokens),
 	}, true
+}
+
+// openAICacheWriteTokens accepts both native-style usage fields and the
+// OpenAI-compatible cache_write_tokens field returned by GPT-5.6 providers.
+func openAICacheWriteTokens(usage gjson.Result) int {
+	for _, field := range []string{
+		"input_tokens_details.cache_write_tokens",
+		"prompt_tokens_details.cache_write_tokens",
+		"input_tokens_details.cache_creation_tokens",
+		"prompt_tokens_details.cache_creation_tokens",
+	} {
+		result := usage.Get(field)
+		if result.Exists() {
+			return max(int(result.Int()), 0)
+		}
+	}
+	return firstPositiveGJSONInt(
+		usage.Get("cache_creation_input_tokens"),
+		usage.Get("cache_creation_tokens"),
+		usage.Get("cache_write_tokens"),
+		usage.Get("input_tokens_details.cache_write_tokens"),
+		usage.Get("prompt_tokens_details.cache_write_tokens"),
+		usage.Get("input_tokens_details.cache_creation_tokens"),
+		usage.Get("prompt_tokens_details.cache_creation_tokens"),
+	)
 }
 
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
@@ -5295,7 +5450,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		}
 	}
 
-	c.Data(resp.StatusCode, contentType, body)
+	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		c.Data(resp.StatusCode, contentType, body)
+	}
 
 	return &openaiNonStreamingResult{
 		OpenAIUsage:      usage,
@@ -5330,6 +5487,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 				}
 			}
 		}
+		finalResponse = supplementCompactionItemFromSSE(c, finalResponse, bodyText)
 		body = finalResponse
 		if originalModel != mappedModel {
 			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
@@ -5361,7 +5519,9 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			contentType = "text/event-stream"
 		}
 	}
-	c.Data(resp.StatusCode, contentType, body)
+	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		c.Data(resp.StatusCode, contentType, body)
+	}
 
 	return &openaiNonStreamingResult{
 		OpenAIUsage:      usage,
@@ -5410,6 +5570,10 @@ func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.R
 		message = "Upstream returned an invalid non-streaming response"
 	}
 	setOpsUpstreamError(c, http.StatusBadGateway, message, "")
+	if openAICompactClientWantsStream(c) && StopOpenAICompactSSEKeepaliveCommitted(c) {
+		writeOpenAICompactSSEFailureMessage(c, http.StatusBadGateway, "upstream_error", message)
+		return fmt.Errorf("non-streaming openai protocol error: %s", message)
+	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	c.JSON(http.StatusBadGateway, gin.H{
@@ -5479,10 +5643,117 @@ func responsesStreamEventMayContributeToOutput(eventType string) bool {
 	}
 }
 
-// reconstructResponseOutputFromSSE scans raw SSE body text for delta events and
-// returns a JSON-encoded output array reconstructed from accumulated deltas.
-// Returns (nil, false) if no content was found in deltas.
+// collectRawResponsesOutputItemsFromSSE keeps final output items in their raw
+// protocol form. Compact items contain fields that narrow event structs do not
+// understand, so reconstructing from deltas would silently discard them.
+func collectRawResponsesOutputItemsFromSSE(bodyText string) ([]byte, bool) {
+	var items []json.RawMessage
+	seen := make(map[string]struct{})
+	hasCompactionItem := false
+	appendItem := func(item gjson.Result) {
+		if !item.Exists() || !item.IsObject() {
+			return
+		}
+		key := strings.TrimSpace(item.Get("id").String())
+		if key == "" {
+			key = item.Raw
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return
+		}
+		seen[key] = struct{}{}
+		if isResponsesCompactionItemType(item.Get("type").String()) {
+			hasCompactionItem = true
+		}
+		items = append(items, json.RawMessage(item.Raw))
+	}
+	forEachOpenAISSEDataPayload(bodyText, func(data []byte) {
+		if strings.TrimSpace(gjson.GetBytes(data, "type").String()) == "response.output_item.done" {
+			appendItem(gjson.GetBytes(data, "item"))
+		}
+	})
+	if !hasCompactionItem {
+		forEachOpenAISSEDataPayload(bodyText, func(data []byte) {
+			if strings.TrimSpace(gjson.GetBytes(data, "type").String()) != "response.output_item.added" {
+				return
+			}
+			item := gjson.GetBytes(data, "item")
+			if isResponsesCompactionItemType(item.Get("type").String()) {
+				appendItem(item)
+			}
+		})
+	}
+	if len(items) == 0 {
+		return nil, false
+	}
+	outputJSON, err := json.Marshal(items)
+	if err != nil {
+		return nil, false
+	}
+	return outputJSON, true
+}
+
+func isResponsesCompactionItemType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "compaction", "compaction_summary":
+		return true
+	default:
+		return false
+	}
+}
+
+// supplementCompactionItemFromSSE reconciles the unary SSE-to-JSON path with
+// direct streaming when a non-empty terminal output omits the compact item.
+func supplementCompactionItemFromSSE(c *gin.Context, finalResponse []byte, bodyText string) []byte {
+	if !isOpenAIResponsesCompactPath(c) || len(gjson.GetBytes(finalResponse, "output").Array()) == 0 || responsesOutputHasCompactionItem(finalResponse) {
+		return finalResponse
+	}
+	item, found := findRawCompactionItemFromSSE(bodyText)
+	if !found {
+		return finalResponse
+	}
+	patched, err := sjson.SetRawBytes(finalResponse, "output.-1", item)
+	if err != nil {
+		return finalResponse
+	}
+	return patched
+}
+
+func responsesOutputHasCompactionItem(response []byte) bool {
+	for _, item := range gjson.GetBytes(response, "output").Array() {
+		if isResponsesCompactionItemType(item.Get("type").String()) {
+			return true
+		}
+	}
+	return false
+}
+
+func findRawCompactionItemFromSSE(bodyText string) (json.RawMessage, bool) {
+	var found json.RawMessage
+	pick := func(eventType string) {
+		forEachOpenAISSEDataPayload(bodyText, func(data []byte) {
+			if found != nil || strings.TrimSpace(gjson.GetBytes(data, "type").String()) != eventType {
+				return
+			}
+			item := gjson.GetBytes(data, "item")
+			if item.IsObject() && isResponsesCompactionItemType(item.Get("type").String()) {
+				found = json.RawMessage(item.Raw)
+			}
+		})
+	}
+	pick("response.output_item.done")
+	if found == nil {
+		pick("response.output_item.added")
+	}
+	return found, found != nil
+}
+
+// reconstructResponseOutputFromSSE scans raw SSE body text for final output
+// items before falling back to delta reconstruction.
 func reconstructResponseOutputFromSSE(bodyText string) ([]byte, bool) {
+	if outputJSON, ok := collectRawResponsesOutputItemsFromSSE(bodyText); ok {
+		return outputJSON, true
+	}
 	acc := apicompat.NewBufferedResponseAccumulator()
 	imageOutputs := make([]json.RawMessage, 0, 1)
 	seenImages := make(map[string]struct{})
@@ -5753,6 +6024,30 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 	return normalized, true, nil
 }
 
+func normalizeOpenAICodexCompactReasoningEffortForAccount(c *gin.Context, account *Account, body []byte) ([]byte, bool, error) {
+	if account == nil || !account.IsOpenAIOAuth() || !isOpenAIResponsesCompactPath(c) {
+		return body, false, nil
+	}
+
+	requestedModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	effectiveModel := account.GetMappedModel(requestedModel)
+	return normalizeOpenAICodexCompactReasoningEffort(body, effectiveModel)
+}
+
+func normalizeOpenAICodexCompactReasoningEffort(body []byte, effectiveModel string) ([]byte, bool, error) {
+	if !isOpenAIGPT56Model(effectiveModel) ||
+		!strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()), "max") {
+		return body, false, nil
+	}
+
+	// Codex compact currently accepts xhigh rather than max for GPT-5.6.
+	normalized, err := sjson.SetBytes(body, "reasoning.effort", "xhigh")
+	if err != nil {
+		return body, false, fmt.Errorf("normalize codex compact reasoning effort: %w", err)
+	}
+	return normalized, true, nil
+}
+
 func resolveOpenAICompactSessionID(c *gin.Context) string {
 	if c != nil {
 		if sessionID := strings.TrimSpace(c.GetHeader("session_id")); sessionID != "" {
@@ -5848,14 +6143,16 @@ type OpenAIRecordUsageInput struct {
 // 用量按上游真实 token 计费，与 WS cyber 及正常请求口径一致（InputTokens/OutputTokens
 // 取自上游 response.failed 报告的 usage，即 mark.UpstreamInTok/OutTok）。
 type CyberPolicyUsageInput struct {
-	APIKey       *APIKey
-	Account      *Account
-	Subscription *UserSubscription
-	RequestID    string
-	Model        string
-	Stream       bool
-	InputTokens  int
-	OutputTokens int
+	APIKey              *APIKey
+	Account             *Account
+	Subscription        *UserSubscription
+	RequestID           string
+	Model               string
+	Stream              bool
+	InputTokens         int
+	OutputTokens        int
+	CacheCreationTokens int
+	CacheReadTokens     int
 	// 渠道归因与请求级 meta，使 cyber 计费行与正常 RecordUsage 行口径一致
 	// （否则 cyber 行 channel_id 等为空，渠道维度统计会遗漏 cyber 命中）。
 	InboundEndpoint    string
@@ -5891,8 +6188,10 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 		Model:     in.Model,
 		Stream:    in.Stream,
 		Usage: OpenAIUsage{
-			InputTokens:  in.InputTokens,
-			OutputTokens: in.OutputTokens,
+			InputTokens:              in.InputTokens,
+			OutputTokens:             in.OutputTokens,
+			CacheCreationInputTokens: in.CacheCreationTokens,
+			CacheReadInputTokens:     in.CacheReadTokens,
 		},
 	}
 	if err := s.RecordUsage(ctx, &OpenAIRecordUsageInput{
@@ -5941,9 +6240,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	subscription := input.Subscription
 	ApplyOpenAIImageBillingResolution(result)
 
-	// 计算实际的新输入token（减去缓存读取的token）
-	// 因为 input_tokens 包含了 cache_read_tokens，而缓存读取的token不应按输入价格计费
-	actualInputTokens := result.Usage.InputTokens - result.Usage.CacheReadInputTokens
+	// OpenAI input_tokens 聚合普通输入、缓存读取和显式缓存写入。
+	// 后两类会分别按 cache-read/cache-write 单价计费，必须先从普通输入中扣除。
+	// See docs/specs/gpt-5-6-cache-write-pricing.md §2.
+	actualInputTokens := result.Usage.InputTokens - result.Usage.CacheReadInputTokens - result.Usage.CacheCreationInputTokens
 	if actualInputTokens < 0 {
 		actualInputTokens = 0
 	}
@@ -6170,7 +6470,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			IsSubscriptionBill:    isSubscriptionBilling,
 			AccountRateMultiplier: accountRateMultiplier,
 			APIKeyService:         input.APIKeyService,
-			Platform:              PlatformFromAPIKey(apiKey),
+			Platform:              QuotaPlatform(ctx, apiKey),
 		}, s.billingDeps(), s.usageBillingRepo)
 		return err
 	}()
@@ -6522,7 +6822,7 @@ func (s *OpenAIGatewayService) UpdateCodexUsageSnapshotFromHeaders(ctx context.C
 	}
 }
 
-func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any) (value string, present bool) {
+func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any, requestedModel string) (value string, present bool) {
 	if reqBody == nil {
 		return "", false
 	}
@@ -6530,13 +6830,13 @@ func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any) (value string, 
 	// Primary: reasoning.effort
 	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
 		if effort, ok := reasoning["effort"].(string); ok {
-			return normalizeOpenAIReasoningEffort(effort), true
+			return normalizeOpenAIReasoningEffortForModel(effort, requestedModel), true
 		}
 	}
 
 	// Fallback: some clients may use a flat field.
 	if effort, ok := reqBody["reasoning_effort"].(string); ok {
-		return normalizeOpenAIReasoningEffort(effort), true
+		return normalizeOpenAIReasoningEffortForModel(effort, requestedModel), true
 	}
 
 	return "", false
@@ -6565,7 +6865,16 @@ func deriveOpenAIReasoningEffortFromModel(model string) string {
 		return ""
 	}
 
-	return normalizeOpenAIReasoningEffort(parts[len(parts)-1])
+	return normalizeOpenAIReasoningEffortForModel(parts[len(parts)-1], modelID)
+}
+
+func deriveOpenAIReasoningEffortFromModelCandidates(models []string) string {
+	for _, model := range models {
+		if value := deriveOpenAIReasoningEffortFromModel(model); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type openAIRequestView struct {
@@ -6808,20 +7117,22 @@ func detectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byt
 	return ""
 }
 
-func extractOpenAIReasoningEffortFromBody(body []byte, requestedModel string) *string {
+// extractOpenAIReasoningEffortFromBody preserves model suffix metadata when
+// OAuth normalization removes it from the actual upstream model.
+func extractOpenAIReasoningEffortFromBody(body []byte, modelCandidates ...string) *string {
 	reasoningEffort := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
 	if reasoningEffort == "" {
 		reasoningEffort = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
 	}
 	if reasoningEffort != "" {
-		normalized := normalizeOpenAIReasoningEffort(reasoningEffort)
+		normalized := normalizeOpenAIReasoningEffortForModel(reasoningEffort, firstNonEmpty(modelCandidates...))
 		if normalized == "" {
 			return nil
 		}
 		return &normalized
 	}
 
-	value := deriveOpenAIReasoningEffortFromModel(requestedModel)
+	value := deriveOpenAIReasoningEffortFromModelCandidates(modelCandidates)
 	if value == "" {
 		return nil
 	}
@@ -6975,8 +7286,8 @@ func openAIFastPolicySettingsFromContext(ctx context.Context) *OpenAIFastPolicyS
 // applyOpenAIFastPolicyToBody applies the OpenAI fast policy to a raw request
 // body. When action=filter it removes the service_tier field; when
 // action=block it returns (body, *OpenAIFastBlockedError). On pass it
-// normalizes the service_tier value (e.g. client alias "fast" → "priority"),
-// rewriting the body so the upstream receives a slug it recognizes.
+// normalizes the service_tier value (e.g. client alias "fast" → "priority").
+// action=force_priority rewrites any matched known tier to "priority".
 //
 // Rationale for normalize-on-pass: chat-completions / messages 入口在调用本
 // 函数之前已经通过 normalizeResponsesBodyServiceTier 把 service_tier 归一化
@@ -7009,6 +7320,12 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToBody(ctx context.Context, 
 			return body, fmt.Errorf("strip service_tier from body: %w", err)
 		}
 		return trimmed, nil
+	case OpenAIFastPolicyActionForcePriority:
+		updated, err := sjson.SetBytes(body, "service_tier", OpenAIFastTierPriority)
+		if err != nil {
+			return body, fmt.Errorf("force service_tier priority on body: %w", err)
+		}
+		return updated, nil
 	default:
 		// pass：把别名（如 "fast"）写回为规范值（"priority"）。
 		if normTier == rawTier {
@@ -7029,6 +7346,10 @@ func writeOpenAIFastPolicyBlockedResponse(c *gin.Context, err *OpenAIFastBlocked
 		return
 	}
 	MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+	if StopOpenAICompactSSEKeepaliveCommitted(c) {
+		writeOpenAICompactSSEFailureMessage(c, http.StatusForbidden, "permission_error", err.Message)
+		return
+	}
 	c.JSON(http.StatusForbidden, gin.H{
 		"error": gin.H{
 			"type":    "permission_error",
@@ -7045,6 +7366,7 @@ func writeOpenAIFastPolicyBlockedResponse(c *gin.Context, err *OpenAIFastBlocked
 //
 //   - pass: keeps service_tier, normalizing aliases such as "fast" to "priority"
 //   - filter: returns a copy with top-level service_tier removed
+//   - force_priority: keeps service_tier and rewrites it to "priority"
 //   - block: returns (frame, *OpenAIFastBlockedError)
 //
 // Only frames whose "type" field strictly equals "response.create" are
@@ -7106,6 +7428,12 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToWSResponseCreate(
 			return frame, nil, fmt.Errorf("strip service_tier from ws frame: %w", err)
 		}
 		return trimmed, nil, nil
+	case OpenAIFastPolicyActionForcePriority:
+		updated, err := sjson.SetBytes(frame, "service_tier", OpenAIFastTierPriority)
+		if err != nil {
+			return frame, nil, fmt.Errorf("force service_tier priority in ws frame: %w", err)
+		}
+		return updated, nil, nil
 	default:
 		if normTier == rawTier {
 			return frame, nil, nil
@@ -7376,15 +7704,15 @@ func getOpenAIRequestBodyMap(_ *gin.Context, body []byte) (map[string]any, error
 	return reqBody, nil
 }
 
-func extractOpenAIReasoningEffort(reqBody map[string]any, requestedModel string) *string {
-	if value, present := getOpenAIReasoningEffortFromReqBody(reqBody); present {
+func extractOpenAIReasoningEffort(reqBody map[string]any, modelCandidates ...string) *string {
+	if value, present := getOpenAIReasoningEffortFromReqBody(reqBody, firstNonEmpty(modelCandidates...)); present {
 		if value == "" {
 			return nil
 		}
 		return &value
 	}
 
-	value := deriveOpenAIReasoningEffortFromModel(requestedModel)
+	value := deriveOpenAIReasoningEffortFromModelCandidates(modelCandidates)
 	if value == "" {
 		return nil
 	}
@@ -7411,4 +7739,11 @@ func normalizeOpenAIReasoningEffort(raw string) string {
 		// Only store known effort levels for now to keep UI consistent.
 		return ""
 	}
+}
+
+func normalizeOpenAIReasoningEffortForModel(raw, model string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), "max") && isOpenAIGPT56Model(model) {
+		return "max"
+	}
+	return normalizeOpenAIReasoningEffort(raw)
 }

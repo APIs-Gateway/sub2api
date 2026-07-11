@@ -21,11 +21,14 @@ test-integration:
 	go test -tags=integration ./...
 
 # 带覆盖率(coverpkg=./... 让集成测试对 repository 等被测包的覆盖正确归因;profile 交 Codecov 合并)
+# Go 会为每个测试包重复写入被覆盖包的 block；上传前按最大命中数折叠，避免 Codecov 取到零命中副本。
 test-unit-cover:
 	go test -tags=unit -coverpkg=./... -covermode=atomic -coverprofile=coverage-unit.out ./...
+	./tools/normalize-go-coverprofile.sh coverage-unit.out
 
 test-integration-cover:
 	go test -tags=integration -coverpkg=./... -covermode=atomic -coverprofile=coverage-integration.out ./...
+	./tools/normalize-go-coverprofile.sh coverage-integration.out
 
 test-e2e:
 	./scripts/e2e-test.sh

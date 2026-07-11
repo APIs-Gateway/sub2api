@@ -510,6 +510,14 @@
                 <span class="text-gray-400">{{ t('usage.outputTokenPrice') }}</span>
                 <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.output_cost, textOutputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
+              <div v-if="tooltipData && tooltipData.cache_creation_tokens > 0" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.cacheWriteTokenPrice') }}</span>
+                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.cache_creation_cost, tooltipData.cache_creation_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+              <div v-if="tooltipData && tooltipData.cache_read_tokens > 0" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.cacheReadTokenPrice') }}</span>
+                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.cache_read_cost, tooltipData.cache_read_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
               <div v-if="tooltipData && hasImageOutputTokens(tooltipData)" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageOutputTokenPrice') }}</span>
                 <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.image_output_cost ?? 0, tooltipData.image_output_tokens) }} {{ t('usage.perMillionTokens') }}</span>

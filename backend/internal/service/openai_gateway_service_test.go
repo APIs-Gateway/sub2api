@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/cespare/xxhash/v2"
 	"github.com/gin-gonic/gin"
@@ -2459,10 +2460,11 @@ func TestParseSSEUsage_SelectiveParsing(t *testing.T) {
 	require.Equal(t, 7, usage.CacheReadInputTokens)
 
 	// completed 事件，应提取 usage
-	svc.parseSSEUsage(`{"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5,"input_tokens_details":{"cached_tokens":2}}}}`, usage)
+	svc.parseSSEUsage(`{"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":1}}}}`, usage)
 	require.Equal(t, 3, usage.InputTokens)
 	require.Equal(t, 5, usage.OutputTokens)
 	require.Equal(t, 2, usage.CacheReadInputTokens)
+	require.Equal(t, 1, usage.CacheCreationInputTokens)
 
 	// done 事件同样可能携带最终 usage
 	svc.parseSSEUsage(`{"type":"response.done","response":{"usage":{"input_tokens":13,"output_tokens":15,"input_tokens_details":{"cached_tokens":4}}}}`, usage)
@@ -2483,17 +2485,72 @@ func TestParseSSEUsage_SelectiveParsing(t *testing.T) {
 }
 
 func TestExtractOpenAIUsageFromJSONBytes_AcceptsResponseAndChatUsageShapes(t *testing.T) {
-	usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{"id":"resp_1","usage":{"input_tokens":3,"output_tokens":5,"input_tokens_details":{"cached_tokens":2}}}`))
+	usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{"id":"resp_1","usage":{"input_tokens":3,"output_tokens":5,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":1}}}`))
 	require.True(t, ok)
 	require.Equal(t, 3, usage.InputTokens)
 	require.Equal(t, 5, usage.OutputTokens)
 	require.Equal(t, 2, usage.CacheReadInputTokens)
+	require.Equal(t, 1, usage.CacheCreationInputTokens)
 
-	usage, ok = extractOpenAIUsageFromJSONBytes([]byte(`{"type":"response.completed","response":{"usage":{"prompt_tokens":13,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":4}}}}`))
+	usage, ok = extractOpenAIUsageFromJSONBytes([]byte(`{"type":"response.completed","response":{"usage":{"prompt_tokens":13,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":4,"cache_write_tokens":3}}}}`))
 	require.True(t, ok)
 	require.Equal(t, 13, usage.InputTokens)
 	require.Equal(t, 7, usage.OutputTokens)
 	require.Equal(t, 4, usage.CacheReadInputTokens)
+	require.Equal(t, 3, usage.CacheCreationInputTokens)
+}
+
+func TestCopyOpenAIUsageFromResponsesUsagePreservesCacheCreationTokens(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		usage apicompat.ResponsesUsage
+		want  int
+	}{
+		{
+			name: "details cache creation fallback",
+			usage: apicompat.ResponsesUsage{
+				InputTokens:  31,
+				OutputTokens: 9,
+				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
+					CachedTokens:        5,
+					CacheCreationTokens: 12,
+				},
+			},
+			want: 12,
+		},
+		{
+			name: "details cache write takes precedence",
+			usage: apicompat.ResponsesUsage{
+				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
+					CacheCreationTokens: 12,
+					CacheWriteTokens:    14,
+				},
+			},
+			want: 14,
+		},
+		{
+			name: "top level cache creation wins",
+			usage: apicompat.ResponsesUsage{
+				CacheCreationInputTokens: 16,
+				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
+					CacheCreationTokens: 12,
+					CacheWriteTokens:    14,
+				},
+			},
+			want: 16,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := copyOpenAIUsageFromResponsesUsage(&tt.usage)
+			require.Equal(t, tt.want, usage.CacheCreationInputTokens)
+		})
+	}
+}
+
+func TestOpenAIUsageFromGJSON_NestedCacheWriteZeroWins(t *testing.T) {
+	usage, ok := openAIUsageFromGJSON(gjson.Parse(`{"input_tokens":3,"output_tokens":5,"cache_write_tokens":7,"input_tokens_details":{"cache_write_tokens":0}}`))
+	require.True(t, ok)
+	require.Zero(t, usage.CacheCreationInputTokens)
 }
 
 func TestExtractCodexFinalResponse_SampleReplay(t *testing.T) {

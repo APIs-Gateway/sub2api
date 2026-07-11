@@ -25,6 +25,23 @@ import (
 // misconfigured to point at us, or when our orders table has been wiped).
 var ErrOrderNotFound = errors.New("payment order not found")
 
+const (
+	balanceFulfillmentLeaseDuration      = 5 * time.Minute
+	subscriptionFulfillmentLeaseDuration = 5 * time.Minute
+)
+
+// balanceFulfillmentLease fences the balance-order worker that most recently
+// claimed a RECHARGING order. Subscription fulfillment keeps its own flow.
+type balanceFulfillmentLease struct {
+	version time.Time
+}
+
+// subscriptionFulfillmentLease keeps subscription recovery independent from
+// balance redemption while using the same five-minute updated_at fencing.
+type subscriptionFulfillmentLease struct {
+	version time.Time
+}
+
 // --- Payment Notification & Fulfillment ---
 
 func (s *PaymentService) HandlePaymentNotification(ctx context.Context, n *payment.PaymentNotification, pk string) error {
@@ -279,6 +296,12 @@ func (s *PaymentService) alreadyProcessed(ctx context.Context, o *dbent.PaymentO
 	case OrderStatusFailed:
 		return s.executeFulfillment(ctx, o.ID)
 	case OrderStatusPaid, OrderStatusRecharging:
+		if cur.OrderType == payment.OrderTypeBalance {
+			return s.ExecuteBalanceFulfillment(ctx, o.ID)
+		}
+		if cur.OrderType == payment.OrderTypeSubscription {
+			return s.ExecuteSubscriptionFulfillment(ctx, o.ID)
+		}
 		return fmt.Errorf("order %d is being processed", o.ID)
 	case OrderStatusExpired:
 		slog.Warn("webhook payment success for expired order beyond grace period",
@@ -319,21 +342,71 @@ func (s *PaymentService) ExecuteBalanceFulfillment(ctx context.Context, oid int6
 	if psIsRefundStatus(o.Status) {
 		return infraerrors.BadRequest("INVALID_STATUS", "refund-related order cannot fulfill")
 	}
-	if o.Status != OrderStatusPaid && o.Status != OrderStatusFailed {
+	if o.Status != OrderStatusPaid && o.Status != OrderStatusFailed && o.Status != OrderStatusRecharging {
 		return infraerrors.BadRequest("INVALID_STATUS", "order cannot fulfill in status "+o.Status)
 	}
-	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(oid), paymentorder.StatusIn(OrderStatusPaid, OrderStatusFailed)).SetStatus(OrderStatusRecharging).Save(ctx)
+	lease, err := s.acquireBalanceFulfillmentLease(ctx, o)
 	if err != nil {
-		return fmt.Errorf("lock: %w", err)
+		return err
 	}
-	if c == 0 {
+	if lease == nil {
 		return nil
 	}
-	if err := s.doBalance(ctx, o); err != nil {
-		s.markFailed(ctx, oid, err)
+	if err := s.doBalance(ctx, o, lease); err != nil {
+		s.markBalanceFailedWithLease(ctx, oid, lease, err)
 		return err
 	}
 	return nil
+}
+
+func (s *PaymentService) acquireBalanceFulfillmentLease(ctx context.Context, o *dbent.PaymentOrder) (*balanceFulfillmentLease, error) {
+	if o == nil {
+		return nil, infraerrors.BadRequest("INVALID_STATUS", "nil payment order")
+	}
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	staleBefore := now.Add(-balanceFulfillmentLeaseDuration)
+	updated, err := s.entClient.PaymentOrder.Update().
+		Where(
+			paymentorder.IDEQ(o.ID),
+			paymentorder.Or(
+				paymentorder.StatusIn(OrderStatusPaid, OrderStatusFailed),
+				paymentorder.And(
+					paymentorder.StatusEQ(OrderStatusRecharging),
+					paymentorder.UpdatedAtLTE(staleBefore),
+				),
+			),
+		).
+		SetStatus(OrderStatusRecharging).
+		SetUpdatedAt(now).
+		ClearFailedAt().
+		ClearFailedReason().
+		Save(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire balance fulfillment lease: %w", err)
+	}
+	if updated == 0 {
+		current, getErr := s.entClient.PaymentOrder.Get(ctx, o.ID)
+		if getErr != nil {
+			return nil, fmt.Errorf("reload balance fulfillment lease: %w", getErr)
+		}
+		if current.Status == OrderStatusCompleted {
+			return nil, nil
+		}
+		if current.Status == OrderStatusRecharging {
+			return nil, infraerrors.Conflict("CONFLICT", "order is being processed")
+		}
+		return nil, infraerrors.Conflict("CONFLICT", "order status changed while acquiring balance fulfillment lease")
+	}
+
+	claimed, err := s.entClient.PaymentOrder.Get(ctx, o.ID)
+	if err != nil {
+		return nil, fmt.Errorf("reload acquired balance fulfillment lease: %w", err)
+	}
+	if claimed.Status != OrderStatusRecharging {
+		return nil, infraerrors.Conflict("CONFLICT", "balance fulfillment lease was lost")
+	}
+	return &balanceFulfillmentLease{version: claimed.UpdatedAt}, nil
 }
 
 // redeemAction represents the idempotency decision for balance fulfillment.
@@ -360,37 +433,71 @@ func resolveRedeemAction(existing *RedeemCode, lookupErr error) redeemAction {
 	return redeemActionRedeem
 }
 
-func (s *PaymentService) doBalance(ctx context.Context, o *dbent.PaymentOrder) error {
-	// Idempotency: check if redeem code already exists (from a previous partial run)
+// getOrCreateBalanceRedeemCode tolerates the window where another worker
+// creates this order's deterministic code after our initial lookup.
+func (s *PaymentService) getOrCreateBalanceRedeemCode(ctx context.Context, o *dbent.PaymentOrder) (*RedeemCode, error) {
 	existing, lookupErr := s.redeemService.GetByCode(ctx, o.RechargeCode)
-	action := resolveRedeemAction(existing, lookupErr)
+	if resolveRedeemAction(existing, lookupErr) != redeemActionCreate {
+		return existing, nil
+	}
 
-	switch action {
-	case redeemActionSkipCompleted:
+	created := &RedeemCode{Code: o.RechargeCode, Type: RedeemTypeBalance, Value: o.Amount, Status: StatusUnused}
+	if err := s.redeemService.CreateCode(ctx, created); err == nil {
+		return created, nil
+	} else {
+		// A stale worker can create the code after this worker's lookup. Re-read
+		// it before failing so the current lease holder can finish the order.
+		existing, lookupErr = s.redeemService.GetByCode(ctx, o.RechargeCode)
+		if lookupErr == nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("create redeem code: %w", err)
+	}
+}
+
+func (s *PaymentService) doBalance(ctx context.Context, o *dbent.PaymentOrder, lease *balanceFulfillmentLease) error {
+	redeemCode, err := s.getOrCreateBalanceRedeemCode(ctx, o)
+	if err != nil {
+		return err
+	}
+	if redeemCode.IsUsed() {
 		s.applyPointsEarnForOrder(ctx, o)
 		// Code already created and redeemed — just mark completed
-		return s.markCompleted(ctx, o, "RECHARGE_SUCCESS")
-	case redeemActionCreate:
-		rc := &RedeemCode{Code: o.RechargeCode, Type: RedeemTypeBalance, Value: o.Amount, Status: StatusUnused}
-		if err := s.redeemService.CreateCode(ctx, rc); err != nil {
-			return fmt.Errorf("create redeem code: %w", err)
-		}
-	case redeemActionRedeem:
-		// Code exists but unused — skip creation, proceed to redeem
+		return s.markBalanceCompletedWithLease(ctx, o, lease, "RECHARGE_SUCCESS")
 	}
 	if _, err := s.redeemService.Redeem(ContextSkipRedeemAffiliate(ctx), o.UserID, o.RechargeCode); err != nil {
 		return fmt.Errorf("redeem balance: %w", err)
 	}
 	s.applyPointsEarnForOrder(ctx, o)
-	return s.markCompleted(ctx, o, "RECHARGE_SUCCESS")
+	return s.markBalanceCompletedWithLease(ctx, o, lease, "RECHARGE_SUCCESS")
 }
 
-func (s *PaymentService) markCompleted(ctx context.Context, o *dbent.PaymentOrder, auditAction string) error {
-	now := time.Now()
-	_, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(o.ID), paymentorder.StatusEQ(OrderStatusRecharging)).SetStatus(OrderStatusCompleted).SetCompletedAt(now).Save(ctx)
-	if err != nil {
-		return fmt.Errorf("mark completed: %w", err)
+func (s *PaymentService) markBalanceCompletedWithLease(ctx context.Context, o *dbent.PaymentOrder, lease *balanceFulfillmentLease, auditAction string) error {
+	if lease == nil {
+		return errors.New("missing balance fulfillment lease")
 	}
+
+	now := time.Now()
+	updated, err := s.entClient.PaymentOrder.Update().
+		Where(
+			paymentorder.IDEQ(o.ID),
+			paymentorder.StatusEQ(OrderStatusRecharging),
+			paymentorder.UpdatedAtEQ(lease.version),
+		).
+		SetStatus(OrderStatusCompleted).
+		SetCompletedAt(now).
+		Save(ctx)
+	if err != nil {
+		return fmt.Errorf("mark balance completed: %w", err)
+	}
+	if updated == 0 {
+		current, getErr := s.entClient.PaymentOrder.Get(ctx, o.ID)
+		if getErr == nil && current.Status == OrderStatusCompleted {
+			return nil
+		}
+		return infraerrors.Conflict("CONFLICT", "balance fulfillment lease was lost before completion")
+	}
+
 	s.writeAuditLog(ctx, o.ID, auditAction, "system", map[string]any{
 		"rechargeCode":   o.RechargeCode,
 		"creditedAmount": o.Amount,
@@ -398,6 +505,33 @@ func (s *PaymentService) markCompleted(ctx context.Context, o *dbent.PaymentOrde
 	})
 	s.dispatchPaymentFulfillmentNotification(o, auditAction)
 	return nil
+}
+
+func (s *PaymentService) markBalanceFailedWithLease(ctx context.Context, oid int64, lease *balanceFulfillmentLease, cause error) {
+	if lease == nil {
+		slog.Error("mark balance FAILED without fulfillment lease", "orderID", oid)
+		return
+	}
+
+	now := time.Now()
+	reason := psErrMsg(cause)
+	updated, err := s.entClient.PaymentOrder.Update().
+		Where(
+			paymentorder.IDEQ(oid),
+			paymentorder.StatusEQ(OrderStatusRecharging),
+			paymentorder.UpdatedAtEQ(lease.version),
+		).
+		SetStatus(OrderStatusFailed).
+		SetFailedAt(now).
+		SetFailedReason(reason).
+		Save(ctx)
+	if err != nil {
+		slog.Error("mark balance FAILED", "orderID", oid, "error", err)
+		return
+	}
+	if updated > 0 {
+		s.writeAuditLog(ctx, oid, "FULFILLMENT_FAILED", "system", map[string]any{"reason": reason})
+	}
 }
 
 func (s *PaymentService) dispatchPaymentFulfillmentNotification(o *dbent.PaymentOrder, auditAction string) {
@@ -488,32 +622,82 @@ func (s *PaymentService) ExecuteSubscriptionFulfillment(ctx context.Context, oid
 	if psIsRefundStatus(o.Status) {
 		return infraerrors.BadRequest("INVALID_STATUS", "refund-related order cannot fulfill")
 	}
-	if o.Status != OrderStatusPaid && o.Status != OrderStatusFailed {
+	if o.Status != OrderStatusPaid && o.Status != OrderStatusFailed && o.Status != OrderStatusRecharging {
 		return infraerrors.BadRequest("INVALID_STATUS", "order cannot fulfill in status "+o.Status)
 	}
 	// 订阅单带 subscription_group_id 和 subscription_days；D/T 由 provider_snapshot 提供，doSub 内再深校验。
 	if o.SubscriptionDays == nil {
 		return infraerrors.BadRequest("INVALID_STATUS", "missing subscription info")
 	}
-	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(oid), paymentorder.StatusIn(OrderStatusPaid, OrderStatusFailed)).SetStatus(OrderStatusRecharging).Save(ctx)
+	lease, err := s.acquireSubscriptionFulfillmentLease(ctx, o)
 	if err != nil {
-		return fmt.Errorf("lock: %w", err)
+		return err
 	}
-	if c == 0 {
+	if lease == nil {
 		return nil
 	}
-	if err := s.doSub(ctx, o); err != nil {
-		s.markFailed(ctx, oid, err)
+	if err := s.doSub(ctx, o, lease); err != nil {
+		s.markSubscriptionFailedWithLease(ctx, oid, lease, err)
 		return err
 	}
 	return nil
 }
 
-func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error {
+func (s *PaymentService) acquireSubscriptionFulfillmentLease(ctx context.Context, o *dbent.PaymentOrder) (*subscriptionFulfillmentLease, error) {
+	if o == nil {
+		return nil, infraerrors.BadRequest("INVALID_STATUS", "nil payment order")
+	}
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	staleBefore := now.Add(-subscriptionFulfillmentLeaseDuration)
+	updated, err := s.entClient.PaymentOrder.Update().
+		Where(
+			paymentorder.IDEQ(o.ID),
+			paymentorder.Or(
+				paymentorder.StatusIn(OrderStatusPaid, OrderStatusFailed),
+				paymentorder.And(
+					paymentorder.StatusEQ(OrderStatusRecharging),
+					paymentorder.UpdatedAtLTE(staleBefore),
+				),
+			),
+		).
+		SetStatus(OrderStatusRecharging).
+		SetUpdatedAt(now).
+		ClearFailedAt().
+		ClearFailedReason().
+		Save(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire subscription fulfillment lease: %w", err)
+	}
+	if updated == 0 {
+		current, getErr := s.entClient.PaymentOrder.Get(ctx, o.ID)
+		if getErr != nil {
+			return nil, fmt.Errorf("reload subscription fulfillment lease: %w", getErr)
+		}
+		if current.Status == OrderStatusCompleted {
+			return nil, nil
+		}
+		if current.Status == OrderStatusRecharging {
+			return nil, infraerrors.Conflict("CONFLICT", "order is being processed")
+		}
+		return nil, infraerrors.Conflict("CONFLICT", "order status changed while acquiring subscription fulfillment lease")
+	}
+
+	claimed, err := s.entClient.PaymentOrder.Get(ctx, o.ID)
+	if err != nil {
+		return nil, fmt.Errorf("reload acquired subscription fulfillment lease: %w", err)
+	}
+	if claimed.Status != OrderStatusRecharging {
+		return nil, infraerrors.Conflict("CONFLICT", "subscription fulfillment lease was lost")
+	}
+	return &subscriptionFulfillmentLease{version: claimed.UpdatedAt}, nil
+}
+
+func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease *subscriptionFulfillmentLease) error {
 	// 生命周期意图分发（per-day redesign §5/§7）：renew=延长目标卡、change_plan=关旧开新；
 	// 二者参数(目标卡 ID + 新 D/T)由订单冻结快照提供，履约不重算。purchase(默认/老单)走下方建新卡逻辑。
 	if intent, targetSubID := readSubscriptionIntent(o); intent != SubscriptionIntentPurchase {
-		return s.doSubLifecycle(ctx, o, intent, targetSubID)
+		return s.doSubLifecycle(ctx, o, intent, targetSubID, lease)
 	}
 
 	// 订阅单应带 group（gid>0），用于发卡归属。
@@ -561,7 +745,13 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 	if s.hasAuditLog(ctx, o.ID, "SUBSCRIPTION_SUCCESS") {
 		slog.Info("subscription already assigned for order, skipping", "orderID", o.ID, "groupID", gid)
 		s.applyPointsEarnForOrder(ctx, o)
-		return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
+		return s.markSubscriptionCompletedWithLease(ctx, o, lease)
+	}
+	if lease == nil {
+		return errors.New("missing subscription fulfillment lease")
+	}
+	if s.subscriptionSvc == nil || s.subscriptionSvc.userSubRepo == nil {
+		return errors.New("subscription service is unavailable")
 	}
 
 	tx, err := s.entClient.Tx(ctx)
@@ -577,23 +767,35 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 	}()
 
 	orderNote := fmt.Sprintf("payment order %d", o.ID)
-	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, WeeklyLimitUSD: weeklyLimit, MonthlyLimitUSD: monthlyLimit, AssignedBy: 0, Notes: orderNote})
+	sub, err := s.findPaymentSubscriptionAssignment(txCtx, o, orderNote)
 	if err != nil {
-		return fmt.Errorf("assign subscription: %w", err)
+		return err
 	}
-	if sub != nil {
-		if err := s.writeSubscriptionIDToOrderSnapshot(txCtx, o, sub.ID); err != nil {
-			return fmt.Errorf("write subscription snapshot id: %w", err)
+	if sub == nil {
+		sub, _, err = s.subscriptionSvc.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, WeeklyLimitUSD: weeklyLimit, MonthlyLimitUSD: monthlyLimit, AssignedBy: 0, Notes: orderNote})
+		if err != nil {
+			return fmt.Errorf("assign subscription: %w", err)
 		}
+	} else {
+		slog.Info("recovered existing subscription assignment for order", "orderID", o.ID, "subscriptionID", sub.ID)
 	}
-	c, err := s.entClientForCtx(txCtx).PaymentOrder.Update().
-		Where(paymentorder.IDEQ(o.ID), paymentorder.StatusEQ(OrderStatusRecharging)).
-		SetStatus(OrderStatusCompleted).SetCompletedAt(time.Now()).Save(txCtx)
+	completion := s.entClientForCtx(txCtx).PaymentOrder.Update().
+		Where(
+			paymentorder.IDEQ(o.ID),
+			paymentorder.StatusEQ(OrderStatusRecharging),
+			paymentorder.UpdatedAtEQ(lease.version),
+		)
+	c, err := completion.SetStatus(OrderStatusCompleted).SetCompletedAt(time.Now()).Save(txCtx)
 	if err != nil {
 		return fmt.Errorf("mark completed: %w", err)
 	}
 	if c == 0 {
 		return infraerrors.Conflict("CONFLICT", "order status changed during fulfillment")
+	}
+	if sub != nil {
+		if err := s.writeSubscriptionIDToOrderSnapshot(txCtx, o, sub.ID); err != nil {
+			return fmt.Errorf("write subscription snapshot id: %w", err)
+		}
 	}
 	s.writeAuditLog(txCtx, o.ID, "SUBSCRIPTION_SUCCESS", "system", map[string]any{
 		"rechargeCode":   o.RechargeCode,
@@ -610,9 +812,106 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder) error
 	return nil
 }
 
+func (s *PaymentService) findPaymentSubscriptionAssignment(ctx context.Context, o *dbent.PaymentOrder, orderNote string) (*UserSubscription, error) {
+	if s == nil || s.subscriptionSvc == nil || s.subscriptionSvc.userSubRepo == nil || o == nil {
+		return nil, errors.New("subscription service is unavailable")
+	}
+
+	if subscriptionID := paymentSubscriptionIDFromSnapshot(o); subscriptionID > 0 {
+		sub, err := s.subscriptionSvc.userSubRepo.GetByID(ctx, subscriptionID)
+		if err != nil {
+			return nil, fmt.Errorf("load snapshotted subscription %d: %w", subscriptionID, err)
+		}
+		matches, err := paymentSubscriptionMatchesFrozenOrder(o, sub)
+		if err != nil {
+			return nil, err
+		}
+		if !matches {
+			return nil, fmt.Errorf("snapshotted subscription %d does not match payment order %d", subscriptionID, o.ID)
+		}
+		return sub, nil
+	}
+
+	subs, err := s.subscriptionSvc.userSubRepo.ListByUserID(ctx, o.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("list subscriptions for assignment recovery: %w", err)
+	}
+	for i := range subs {
+		if hasPaymentSubscriptionOrderNote(subs[i].Notes, orderNote) {
+			matches, matchErr := paymentSubscriptionMatchesFrozenOrder(o, &subs[i])
+			if matchErr != nil {
+				return nil, matchErr
+			}
+			if !matches {
+				return nil, fmt.Errorf("subscription %d has order note but does not match payment order %d", subs[i].ID, o.ID)
+			}
+			return &subs[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func paymentSubscriptionMatchesFrozenOrder(o *dbent.PaymentOrder, sub *UserSubscription) (bool, error) {
+	if o == nil || sub == nil || sub.UserID != o.UserID {
+		return false, nil
+	}
+	groupID := int64(0)
+	if o.SubscriptionGroupID != nil {
+		groupID = *o.SubscriptionGroupID
+	}
+	if sub.GroupID != groupID {
+		return false, nil
+	}
+
+	dailyAmount, _, hasSnapshot, err := readSubscriptionSnapshotDT(o)
+	if err != nil {
+		return false, err
+	}
+	if !hasSnapshot {
+		return true, nil
+	}
+	if math.Abs(sub.DailyAmountUSD-dailyAmount) > 1e-9 || sub.DailyLimitUSD == nil || math.Abs(*sub.DailyLimitUSD-dailyAmount) > 1e-9 {
+		return false, nil
+	}
+	if weeklyLimit, monthlyLimit, ok := readSubscriptionSnapshotWM(o); ok {
+		if sub.WeeklyLimitUSD == nil || sub.MonthlyLimitUSD == nil {
+			return false, nil
+		}
+		if math.Abs(*sub.WeeklyLimitUSD-weeklyLimit) > 1e-9 || math.Abs(*sub.MonthlyLimitUSD-monthlyLimit) > 1e-9 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func paymentSubscriptionIDFromSnapshot(o *dbent.PaymentOrder) int64 {
+	if o == nil || o.ProviderSnapshot == nil {
+		return 0
+	}
+	raw, ok := o.ProviderSnapshot[subscriptionSnapshotKey].(map[string]any)
+	if !ok {
+		return 0
+	}
+	id, _ := snapshotInt64(raw["subscription_id"])
+	return id
+}
+
+func hasPaymentSubscriptionOrderNote(notes, orderNote string) bool {
+	for _, line := range strings.Split(strings.ReplaceAll(notes, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == orderNote {
+			return true
+		}
+	}
+	return false
+}
+
 // doSubLifecycle 履约续费/转套餐订单（法币支付成功后）：按冻结快照的目标卡 ID + 新 D/T 执行，
 // 不扣余额（差价/续费价已由网关收取）。幂等沿用 SUBSCRIPTION_SUCCESS 审计键（重放整笔跳过）。
-func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrder, intent string, targetSubID int64) error {
+func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrder, intent string, targetSubID int64, leases ...*subscriptionFulfillmentLease) error {
+	var lease *subscriptionFulfillmentLease
+	if len(leases) > 0 {
+		lease = leases[0]
+	}
 	d, t, hasSnapshot, snapErr := readSubscriptionSnapshotDT(o)
 	if snapErr != nil {
 		return snapErr
@@ -627,7 +926,10 @@ func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrd
 	if s.hasAuditLog(ctx, o.ID, "SUBSCRIPTION_SUCCESS") {
 		slog.Info("lifecycle subscription already applied for order, skipping", "orderID", o.ID, "intent", intent)
 		s.applyPointsEarnForOrder(ctx, o)
-		return s.markCompleted(ctx, o, "SUBSCRIPTION_SUCCESS")
+		return s.markSubscriptionCompletedWithLease(ctx, o, lease)
+	}
+	if lease == nil {
+		return errors.New("missing subscription fulfillment lease")
 	}
 
 	// 原子履约（P2#6 根治「续费双倍延期 / 转套餐重复建卡」）：apply + 订单置完成 + SUCCESS 审计键
@@ -671,20 +973,24 @@ func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrd
 	}
 
 	// 同事务：回写 subscription_id 到订单快照 + 订单置完成 + SUCCESS 审计键（entClientForCtx 自动用事务客户端）。
-	if newSubID > 0 {
-		if err := s.writeSubscriptionIDToOrderSnapshot(txCtx, o, newSubID); err != nil {
-			return fmt.Errorf("write subscription snapshot id: %w", err)
-		}
-	}
-	c, err := s.entClientForCtx(txCtx).PaymentOrder.Update().
-		Where(paymentorder.IDEQ(o.ID), paymentorder.StatusEQ(OrderStatusRecharging)).
-		SetStatus(OrderStatusCompleted).SetCompletedAt(time.Now()).Save(txCtx)
+	completion := s.entClientForCtx(txCtx).PaymentOrder.Update().
+		Where(
+			paymentorder.IDEQ(o.ID),
+			paymentorder.StatusEQ(OrderStatusRecharging),
+			paymentorder.UpdatedAtEQ(lease.version),
+		)
+	c, err := completion.SetStatus(OrderStatusCompleted).SetCompletedAt(time.Now()).Save(txCtx)
 	if err != nil {
 		return fmt.Errorf("mark completed: %w", err)
 	}
 	if c == 0 {
 		// 订单已不在 recharging（被并发改动）→ 回滚 apply，避免与外层状态不一致。
 		return infraerrors.Conflict("CONFLICT", "order status changed during fulfillment")
+	}
+	if newSubID > 0 {
+		if err := s.writeSubscriptionIDToOrderSnapshot(txCtx, o, newSubID); err != nil {
+			return fmt.Errorf("write subscription snapshot id: %w", err)
+		}
 	}
 	s.writeAuditLog(txCtx, o.ID, "SUBSCRIPTION_SUCCESS", "system", map[string]any{
 		"rechargeCode":   o.RechargeCode,
@@ -729,19 +1035,57 @@ func (s *PaymentService) applyPointsEarnForOrder(ctx context.Context, o *dbent.P
 	}
 }
 
-func (s *PaymentService) markFailed(ctx context.Context, oid int64, cause error) {
-	now := time.Now()
-	r := psErrMsg(cause)
-	// Only mark FAILED if still in RECHARGING state — prevents overwriting
-	// a COMPLETED order when markCompleted failed but fulfillment succeeded.
-	c, e := s.entClient.PaymentOrder.Update().
-		Where(paymentorder.IDEQ(oid), paymentorder.StatusEQ(OrderStatusRecharging)).
-		SetStatus(OrderStatusFailed).SetFailedAt(now).SetFailedReason(r).Save(ctx)
-	if e != nil {
-		slog.Error("mark FAILED", "orderID", oid, "error", e)
+func (s *PaymentService) markSubscriptionCompletedWithLease(ctx context.Context, o *dbent.PaymentOrder, lease *subscriptionFulfillmentLease) error {
+	if lease == nil {
+		return errors.New("missing subscription fulfillment lease")
 	}
-	if c > 0 {
-		s.writeAuditLog(ctx, oid, "FULFILLMENT_FAILED", "system", map[string]any{"reason": r})
+
+	updated, err := s.entClient.PaymentOrder.Update().
+		Where(
+			paymentorder.IDEQ(o.ID),
+			paymentorder.StatusEQ(OrderStatusRecharging),
+			paymentorder.UpdatedAtEQ(lease.version),
+		).
+		SetStatus(OrderStatusCompleted).
+		SetCompletedAt(time.Now()).
+		Save(ctx)
+	if err != nil {
+		return fmt.Errorf("mark subscription completed: %w", err)
+	}
+	if updated == 0 {
+		current, getErr := s.entClient.PaymentOrder.Get(ctx, o.ID)
+		if getErr == nil && current.Status == OrderStatusCompleted {
+			return nil
+		}
+		return infraerrors.Conflict("CONFLICT", "subscription fulfillment lease was lost before completion")
+	}
+	return nil
+}
+
+func (s *PaymentService) markSubscriptionFailedWithLease(ctx context.Context, oid int64, lease *subscriptionFulfillmentLease, cause error) {
+	if lease == nil {
+		slog.Error("mark subscription FAILED without fulfillment lease", "orderID", oid)
+		return
+	}
+
+	now := time.Now()
+	reason := psErrMsg(cause)
+	updated, err := s.entClient.PaymentOrder.Update().
+		Where(
+			paymentorder.IDEQ(oid),
+			paymentorder.StatusEQ(OrderStatusRecharging),
+			paymentorder.UpdatedAtEQ(lease.version),
+		).
+		SetStatus(OrderStatusFailed).
+		SetFailedAt(now).
+		SetFailedReason(reason).
+		Save(ctx)
+	if err != nil {
+		slog.Error("mark subscription FAILED", "orderID", oid, "error", err)
+		return
+	}
+	if updated > 0 {
+		s.writeAuditLog(ctx, oid, "FULFILLMENT_FAILED", "system", map[string]any{"reason": reason})
 	}
 }
 
@@ -757,7 +1101,19 @@ func (s *PaymentService) RetryFulfillment(ctx context.Context, oid int64) error 
 		return infraerrors.BadRequest("INVALID_STATUS", "refund-related order cannot retry")
 	}
 	if o.Status == OrderStatusRecharging {
-		return infraerrors.Conflict("CONFLICT", "order is being processed")
+		switch o.OrderType {
+		case payment.OrderTypeBalance:
+			err = s.ExecuteBalanceFulfillment(ctx, oid)
+		case payment.OrderTypeSubscription:
+			err = s.ExecuteSubscriptionFulfillment(ctx, oid)
+		default:
+			return infraerrors.Conflict("CONFLICT", "order is being processed")
+		}
+		if err != nil {
+			return err
+		}
+		s.writeAuditLog(ctx, oid, "RECHARGE_RETRY", "admin", map[string]any{"detail": "admin manual retry"})
+		return nil
 	}
 	if o.Status == OrderStatusCompleted {
 		return infraerrors.BadRequest("INVALID_STATUS", "order already completed")

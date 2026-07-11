@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
@@ -100,6 +101,35 @@ func TestApplyCodexOAuthTransform_ToolContinuationPreservesNativeMessageAndReaso
 	second, ok := input[1].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "rs_123", second["id"])
+}
+
+func TestApplyCodexOAuthTransform_PreservesEncryptedReasoningAcrossTurns(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.5",
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "continue"},
+			map[string]any{
+				"type":              "reasoning",
+				"id":                "rs_reasoning_context",
+				"encrypted_content": "gAAAAAB-encrypted-context",
+				"summary":           []any{map[string]any{"type": "summary_text", "text": "previous work"}},
+			},
+		},
+	}
+
+	applyCodexOAuthTransform(reqBody, false, false)
+
+	require.Equal(t, false, reqBody["store"])
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, input, 2)
+
+	reasoning, ok := input[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "reasoning", reasoning["type"])
+	require.Equal(t, "gAAAAAB-encrypted-context", reasoning["encrypted_content"])
+	require.Equal(t, []any{map[string]any{"type": "summary_text", "text": "previous work"}}, reasoning["summary"])
+	require.NotContains(t, reasoning, "id")
 }
 
 func TestApplyCodexOAuthTransform_ToolContinuationNormalizesToolReferenceIDsOnly(t *testing.T) {
@@ -751,6 +781,314 @@ func TestApplyCodexOAuthTransform_DoesNotAddSparkImageUnsupportedForNonSpark(t *
 	require.NotContains(t, instructions, codexSparkImageUnsupportedMarker)
 }
 
+// gpt-5.3-codex-spark rejects the image_generation tool upstream (HTTP 400
+// invalid_request_error, param=tools). Codex CLI advertises that tool by default,
+// so the OAuth transform must strip it for spark while keeping the rest.
+func TestApplyCodexOAuthTransform_StripsImageGenerationToolForSpark(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.3-codex-spark",
+		"input": "hello",
+		"tools": []any{
+			map[string]any{"type": "function", "name": "shell"},
+			map[string]any{"type": "image_generation", "output_format": "png"},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	}
+
+	result := applyCodexOAuthTransform(reqBody, true, false)
+	require.True(t, result.Modified)
+	require.False(t, hasOpenAIImageGenerationTool(reqBody))
+
+	tools, ok := reqBody["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	first, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "function", first["type"])
+	require.Equal(t, "shell", first["name"])
+	_, hasToolChoice := reqBody["tool_choice"]
+	require.False(t, hasToolChoice)
+}
+
+// Spark reasoning-effort aliases (e.g. -low/-high) normalize to gpt-5.3-codex-spark,
+// so they must be stripped too.
+func TestApplyCodexOAuthTransform_StripsImageGenerationToolForSparkAlias(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.3-codex-spark-high",
+		"input": "hello",
+		"tools": []any{
+			map[string]any{"type": "image_generation", "output_format": "png"},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	}
+
+	result := applyCodexOAuthTransform(reqBody, true, false)
+	require.True(t, result.Modified)
+	require.False(t, hasOpenAIImageGenerationTool(reqBody))
+	// tools became empty after stripping the only entry; the key is dropped.
+	_, hasTools := reqBody["tools"]
+	require.False(t, hasTools)
+	_, hasToolChoice := reqBody["tool_choice"]
+	require.False(t, hasToolChoice)
+}
+
+func TestApplyCodexOAuthTransform_StripsImageGenNamespaceDeclarationsForSpark(t *testing.T) {
+	imageNamespace := func() map[string]any {
+		return map[string]any{
+			"type": "namespace",
+			"name": "image_gen",
+			"tools": []any{
+				map[string]any{"type": "function", "name": "imagegen"},
+			},
+		}
+	}
+	codeNamespace := func() map[string]any {
+		return map[string]any{
+			"type": "namespace",
+			"name": "code_tools",
+			"tools": []any{
+				map[string]any{"type": "function", "name": "run"},
+			},
+		}
+	}
+
+	reqBody := map[string]any{
+		"model": "gpt-5.3-codex-spark",
+		"tools": []any{
+			map[string]any{"type": "function", "name": "shell"},
+			imageNamespace(),
+			codeNamespace(),
+		},
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "hello"},
+			map[string]any{
+				"type":  "additional_tools",
+				"tools": []any{imageNamespace(), codeNamespace()},
+			},
+			map[string]any{
+				"type":  "additional_tools",
+				"tools": []any{imageNamespace()},
+			},
+		},
+		"tool_choice": map[string]any{"type": "namespace", "name": "image_gen"},
+	}
+
+	result := applyCodexOAuthTransform(reqBody, true, false)
+	require.True(t, result.Modified)
+	require.False(t, hasOpenAIImageGenerationTool(reqBody))
+	require.NotContains(t, reqBody, "tool_choice")
+
+	tools, ok := reqBody["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 2)
+	firstTool, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	secondTool, ok := tools[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "shell", firstTool["name"])
+	require.Equal(t, "code_tools", secondTool["name"])
+
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, input, 2)
+	additionalTools, ok := input[1].(map[string]any)
+	require.True(t, ok)
+	remainingTools, ok := additionalTools["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, remainingTools, 1)
+	remainingTool, ok := remainingTools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "code_tools", remainingTool["name"])
+}
+
+// Non-spark Codex models support image_generation; the tool must be preserved.
+func TestApplyCodexOAuthTransform_KeepsImageGenerationToolForNonSpark(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.3-codex",
+		"input": "hello",
+		"tools": []any{
+			map[string]any{"type": "image_generation", "output_format": "png"},
+		},
+	}
+
+	applyCodexOAuthTransform(reqBody, true, false)
+	require.True(t, hasOpenAIImageGenerationTool(reqBody))
+}
+
+func TestStripCodexSparkImageGenerationTools_HandlesToolChoiceEdges(t *testing.T) {
+	tests := []struct {
+		name       string
+		reqBody    map[string]any
+		wantChange bool
+		wantTools  bool
+		wantChoice bool
+	}{
+		{
+			name: "choice without tools is removed",
+			reqBody: map[string]any{
+				"tool_choice": map[string]any{"type": "image_generation"},
+			},
+			wantChange: true,
+			wantTools:  false,
+			wantChoice: false,
+		},
+		{
+			name: "choice with malformed tools is removed",
+			reqBody: map[string]any{
+				"tools":       "not-an-array",
+				"tool_choice": "image_generation",
+			},
+			wantChange: true,
+			wantTools:  true,
+			wantChoice: false,
+		},
+		{
+			name: "unrelated tools are preserved",
+			reqBody: map[string]any{
+				"tools": []any{map[string]any{"type": "function", "name": "shell"}},
+			},
+			wantChange: false,
+			wantTools:  true,
+			wantChoice: false,
+		},
+		{
+			name: "required choice survives when only image tool is removed",
+			reqBody: map[string]any{
+				"tools":       []any{map[string]any{"type": "image_generation"}},
+				"tool_choice": "required",
+			},
+			wantChange: true,
+			wantTools:  false,
+			wantChoice: true,
+		},
+		{
+			name: "custom imagegen function choice is preserved",
+			reqBody: map[string]any{
+				"tool_choice": map[string]any{
+					"function": map[string]any{"name": "imagegen"},
+				},
+			},
+			wantChange: false,
+			wantTools:  false,
+			wantChoice: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.wantChange, stripCodexSparkImageGenerationTools(tt.reqBody))
+			_, hasTools := tt.reqBody["tools"]
+			_, hasChoice := tt.reqBody["tool_choice"]
+			require.Equal(t, tt.wantTools, hasTools)
+			require.Equal(t, tt.wantChoice, hasChoice)
+		})
+	}
+}
+
+func TestStripCodexSparkImageGenerationToolsFromRawBody(t *testing.T) {
+	imageBody := []byte(`{"tools":[{"type":"image_generation"}],"tool_choice":{"type":"image_generation"}}`)
+
+	updated, changed, err := stripCodexSparkImageGenerationToolsFromRawBody(imageBody, "gpt-5.3-codex-spark")
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(updated, "tools").Exists())
+	require.False(t, gjson.GetBytes(updated, "tool_choice").Exists())
+
+	noImage := []byte(`{"tools":[{"type":"function","name":"shell"}]}`)
+	updated, changed, err = stripCodexSparkImageGenerationToolsFromRawBody(noImage, "gpt-5.3-codex-spark")
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(noImage), string(updated))
+
+	updated, changed, err = stripCodexSparkImageGenerationToolsFromRawBody(imageBody, "gpt-5.3-codex")
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(imageBody), string(updated))
+
+	tooLargeNumber := []byte(`{"tools":[{"type":"image_generation"}],"value":1e9999}`)
+	updated, changed, err = stripCodexSparkImageGenerationToolsFromRawBody(tooLargeNumber, "gpt-5.3-codex-spark")
+	require.Error(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(tooLargeNumber), string(updated))
+}
+
+func TestStripCodexSparkImageGenerationToolsFromRawBody_StripsImageGenNamespaceDeclarations(t *testing.T) {
+	body := []byte(`{
+		"tools":[
+			{"type":"function","name":"shell"},
+			{"type":"namespace","name":"image_gen"}
+		],
+		"input":[
+			{"type":"message","role":"user","content":"hello"},
+			{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen"}]}
+		],
+		"tool_choice":{"type":"namespace","name":"image_gen"}
+	}`)
+
+	updated, changed, err := stripCodexSparkImageGenerationToolsFromRawBody(body, "gpt-5.3-codex-spark")
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "shell", gjson.GetBytes(updated, "tools.0.name").String())
+	require.False(t, gjson.GetBytes(updated, "tools.1").Exists())
+	require.Equal(t, "message", gjson.GetBytes(updated, "input.0.type").String())
+	require.False(t, gjson.GetBytes(updated, "input.1").Exists())
+	require.False(t, gjson.GetBytes(updated, "tool_choice").Exists())
+
+	updated, changed, err = stripCodexSparkImageGenerationToolsFromRawBody(body, "gpt-5.3-codex")
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(body), string(updated))
+}
+
+func TestEnsureOpenAIResponsesImageGenerationToolChoiceAuto(t *testing.T) {
+	tests := []struct {
+		name       string
+		reqBody    map[string]any
+		wantChange bool
+		wantChoice any
+	}{
+		{
+			name:       "no image tool",
+			reqBody:    map[string]any{"model": "gpt-5.4"},
+			wantChange: false,
+		},
+		{
+			name: "spark keeps no choice",
+			reqBody: map[string]any{
+				"model": "gpt-5.3-codex-spark",
+				"tools": []any{map[string]any{"type": "image_generation"}},
+			},
+			wantChange: false,
+		},
+		{
+			name: "existing choice wins",
+			reqBody: map[string]any{
+				"model":       "gpt-5.4",
+				"tools":       []any{map[string]any{"type": "image_generation"}},
+				"tool_choice": "required",
+			},
+			wantChange: false,
+			wantChoice: "required",
+		},
+		{
+			name: "adds auto",
+			reqBody: map[string]any{
+				"model": "gpt-5.4",
+				"tools": []any{map[string]any{"type": "image_generation"}},
+			},
+			wantChange: true,
+			wantChoice: "auto",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.wantChange, ensureOpenAIResponsesImageGenerationToolChoiceAuto(tt.reqBody))
+			require.Equal(t, tt.wantChoice, tt.reqBody["tool_choice"])
+		})
+	}
+}
+
 func TestNormalizeOpenAIResponsesImageOnlyModel_BuildsImageToolRequest(t *testing.T) {
 	reqBody := map[string]any{
 		"model":         "gpt-image-2",
@@ -1208,23 +1546,24 @@ func TestIsInstructionsEmpty(t *testing.T) {
 	}
 }
 
-func TestFilterCodexInput_DropsReasoningItemsRegardlessOfPreserveReferences(t *testing.T) {
-	// Reasoning items in input[] reference rs_* IDs that were emitted by
-	// chatgpt.com under store=false (forced by applyCodexOAuthTransform).
-	// They are never persisted upstream, so forwarding them produces a
-	// guaranteed 404 ("Item with id 'rs_...' not found"). Drop them
-	// regardless of preserveReferences. See: Wei-Shaw/sub2api issue #1957.
-
+// TestFilterCodexInput_PreservesReasoningStripsID covers the core OAuth-path
+// reasoning contract (replaces the earlier "drops reasoning" test, whose
+// premise was wrong). A reasoning item carrying encrypted_content is the
+// official channel for replaying reasoning context across turns under
+// store=false, so it must survive the filter with encrypted_content intact;
+// only its rs_* id is stripped (always, independent of PreserveReferences)
+// because a bare rs_* id replayed under store=false 404s upstream. Contracts
+// 1/2/3, verified end-to-end against chatgpt.com codex (gpt-5.5). See issue
+// #1957.
+func TestFilterCodexInput_PreservesReasoningStripsID(t *testing.T) {
 	build := func() []any {
 		return []any{
-			map[string]any{"type": "message", "id": "msg_0", "role": "user", "content": "hi"},
 			map[string]any{
-				"type":    "reasoning",
-				"id":      "rs_0672f12450da0b9c0169f07220a6c08198b68c2455ced99344",
-				"summary": []any{},
+				"type":              "reasoning",
+				"id":                "rs_0672f12450da0b9c0169f07220a6c08198b68c2455ced99344",
+				"encrypted_content": "gAAAAAB-enc-payload",
+				"summary":           []any{},
 			},
-			map[string]any{"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "tool"},
-			map[string]any{"type": "function_call_output", "call_id": "call_1", "output": "{}"},
 		}
 	}
 
@@ -1232,31 +1571,175 @@ func TestFilterCodexInput_DropsReasoningItemsRegardlessOfPreserveReferences(t *t
 		preserve := preserve
 		t.Run(fmt.Sprintf("preserveReferences=%v", preserve), func(t *testing.T) {
 			filtered := filterCodexInput(build(), preserve)
+			require.Len(t, filtered, 1)
 
+			item, ok := filtered[0].(map[string]any)
+			require.True(t, ok)
+			// Contract 2: the reasoning item survives the filter.
+			require.Equal(t, "reasoning", item["type"])
+			// Contract 2: encrypted_content (cross-turn channel) preserved verbatim.
+			require.Equal(t, "gAAAAAB-enc-payload", item["encrypted_content"])
+			// Contract 1/3: rs_* id stripped unconditionally, even when
+			// PreserveReferences=true (id lookup, not the item, triggers the 404).
+			_, hasID := item["id"]
+			require.False(t, hasID)
+			// summary passed through untouched.
+			summary, ok := item["summary"].([]any)
+			require.True(t, ok)
+			require.Len(t, summary, 0)
+		})
+	}
+}
+
+// TestFilterCodexInput_BareReasoningStripsIDBackfillsSummary covers contract 1
+// plus 5: a reasoning item carrying only an rs_* id (no encrypted_content) is
+// kept as an empty shell with the id stripped, and a missing summary is
+// backfilled to [] so upstream does not reject it with 400 "Missing required
+// parameter 'input[N].summary'". Verified against chatgpt.com codex (gpt-5.5).
+func TestFilterCodexInput_BareReasoningStripsIDBackfillsSummary(t *testing.T) {
+	input := []any{
+		map[string]any{
+			"type": "reasoning",
+			"id":   "rs_0672f12450da0b9c0169f07220a6c08198b68c2455ced99344",
+		},
+	}
+
+	filtered := filterCodexInput(input, false)
+	require.Len(t, filtered, 1)
+
+	item, ok := filtered[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "reasoning", item["type"])
+	// Contract 1: id stripped.
+	_, hasID := item["id"]
+	require.False(t, hasID)
+	// Contract 5: summary backfilled to an empty array.
+	summary, ok := item["summary"].([]any)
+	require.True(t, ok)
+	require.Len(t, summary, 0)
+}
+
+// TestFilterCodexInput_ReasoningBackfillsMissingSummary isolates contract 5:
+// even when a reasoning item carries other content (here encrypted_content),
+// a missing summary field is always added as [] before forwarding upstream.
+func TestFilterCodexInput_ReasoningBackfillsMissingSummary(t *testing.T) {
+	input := []any{
+		map[string]any{
+			"type":              "reasoning",
+			"id":                "rs_abc",
+			"encrypted_content": "gAAAAAB-enc",
+		},
+	}
+
+	filtered := filterCodexInput(input, false)
+	require.Len(t, filtered, 1)
+
+	item, ok := filtered[0].(map[string]any)
+	require.True(t, ok)
+	summary, ok := item["summary"].([]any)
+	require.True(t, ok)
+	require.Len(t, summary, 0)
+	// encrypted_content still preserved alongside the backfilled summary.
+	require.Equal(t, "gAAAAAB-enc", item["encrypted_content"])
+}
+
+// TestFilterCodexInput_PreservesReasoningSummaryAndContent verifies that a
+// non-empty summary is not overwritten and that arbitrary reasoning fields
+// (e.g. content) survive verbatim — only the id is removed.
+func TestFilterCodexInput_PreservesReasoningSummaryAndContent(t *testing.T) {
+	summary := []any{
+		map[string]any{"type": "summary_text", "text": "Considered the options."},
+	}
+	content := []any{
+		map[string]any{"type": "reasoning_text", "text": "internal chain"},
+	}
+	input := []any{
+		map[string]any{
+			"type":              "reasoning",
+			"id":                "rs_abc",
+			"summary":           summary,
+			"content":           content,
+			"encrypted_content": "gAAAAAB-enc",
+		},
+	}
+
+	filtered := filterCodexInput(input, false)
+	require.Len(t, filtered, 1)
+
+	item, ok := filtered[0].(map[string]any)
+	require.True(t, ok)
+	// Non-empty summary preserved verbatim (not replaced with []).
+	require.Equal(t, summary, item["summary"])
+	// content preserved verbatim.
+	require.Equal(t, content, item["content"])
+	require.Equal(t, "gAAAAAB-enc", item["encrypted_content"])
+	_, hasID := item["id"]
+	require.False(t, hasID)
+}
+
+// TestFilterCodexInput_PreservesReasoningInMixedInput exercises contract 7:
+// reasoning items are stripped of their rs_* ids but kept (with
+// encrypted_content) while message / function_call / function_call_output
+// items flow through unchanged, with tool-call pairing (call_id) intact.
+func TestFilterCodexInput_PreservesReasoningInMixedInput(t *testing.T) {
+	build := func() []any {
+		return []any{
+			map[string]any{"type": "message", "id": "msg_0", "role": "user", "content": "hi"},
+			map[string]any{
+				"type":              "reasoning",
+				"id":                "rs_1",
+				"encrypted_content": "gAAAAAB-enc-1",
+				"summary":           []any{},
+			},
+			map[string]any{
+				"type":    "reasoning",
+				"id":      "rs_2",
+				"summary": []any{},
+			},
+			// call_id already in fc_ form so the unrelated call_->fc_
+			// normalization does not obscure the pairing assertion.
+			map[string]any{"type": "function_call", "id": "fc_1", "call_id": "fc_1", "name": "tool", "arguments": "{}"},
+			map[string]any{"type": "function_call_output", "call_id": "fc_1", "output": "{}"},
+		}
+	}
+
+	for _, preserve := range []bool{true, false} {
+		preserve := preserve
+		t.Run(fmt.Sprintf("preserveReferences=%v", preserve), func(t *testing.T) {
+			filtered := filterCodexInput(build(), preserve)
+			// Nothing is dropped: both reasoning items are now preserved.
+			require.Len(t, filtered, 5)
+
+			byType := make(map[string][]map[string]any)
 			for _, raw := range filtered {
 				item, ok := raw.(map[string]any)
 				require.True(t, ok)
-				require.NotEqual(t, "reasoning", item["type"],
-					"reasoning items must be dropped from input on the OAuth path")
+				typ, _ := item["type"].(string)
+				byType[typ] = append(byType[typ], item)
+				// No surviving item may carry an rs_* id.
 				if id, ok := item["id"].(string); ok {
 					require.False(t, strings.HasPrefix(id, "rs_"),
 						"no item carrying an rs_* id should survive the filter")
 				}
 			}
 
-			// Sanity check: the non-reasoning items should still be present.
-			gotTypes := make(map[string]int)
-			for _, raw := range filtered {
-				item, ok := raw.(map[string]any)
-				require.True(t, ok)
-				typ, ok := item["type"].(string)
-				require.True(t, ok)
-				gotTypes[typ]++
+			// Both reasoning items kept, ids stripped, summary present.
+			require.Len(t, byType["reasoning"], 2)
+			for _, r := range byType["reasoning"] {
+				_, hasID := r["id"]
+				require.False(t, hasID)
+				_, hasSummary := r["summary"]
+				require.True(t, hasSummary)
 			}
-			require.Equal(t, 1, gotTypes["message"])
-			require.Equal(t, 1, gotTypes["function_call"])
-			require.Equal(t, 1, gotTypes["function_call_output"])
-			require.Equal(t, 0, gotTypes["reasoning"])
+			require.Equal(t, "gAAAAAB-enc-1", byType["reasoning"][0]["encrypted_content"])
+
+			// message / function_call(+output) untouched by reasoning handling.
+			require.Len(t, byType["message"], 1)
+			// Contract 7: tool-call pairing by call_id is unaffected.
+			require.Len(t, byType["function_call"], 1)
+			require.Equal(t, "fc_1", byType["function_call"][0]["call_id"])
+			require.Len(t, byType["function_call_output"], 1)
+			require.Equal(t, "fc_1", byType["function_call_output"][0]["call_id"])
 		})
 	}
 }

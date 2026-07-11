@@ -27,6 +27,9 @@ type CyberPolicyMark struct {
 	UpstreamStatus int    // 上游 HTTP 状态（流式=200，非流式=400）
 	UpstreamInTok  int    // 上游已报 input tokens（如有）
 	UpstreamOutTok int    // 上游已报 output tokens（如有）
+	// 上游原始 input_tokens 内含缓存 read/write 时，用这两个细分供计费路径重建普通输入。
+	UpstreamCacheCreationTok int
+	UpstreamCacheReadTok     int
 }
 
 // MarkOpsCyberPolicy 记录 cyber 标记；首个写入生效，后续忽略（同一 turn 只记一次）。
@@ -41,6 +44,22 @@ func MarkOpsCyberPolicy(c *gin.Context, mark CyberPolicyMark) {
 	mark.Code = "cyber_policy"
 	mark.Message = strings.TrimSpace(mark.Message)
 	mark.Body = strings.TrimSpace(mark.Body)
+	// 大多数 response.failed 会携带完整 usage。显式传入的字段优先；未传时
+	// 从原始 body 补齐，保证 HTTP/SSE/WS 的 cyber 计费都能重建普通输入。
+	if usage, ok := extractOpenAIUsageFromJSONBytes([]byte(mark.Body)); ok {
+		if mark.UpstreamInTok == 0 {
+			mark.UpstreamInTok = usage.InputTokens
+		}
+		if mark.UpstreamOutTok == 0 {
+			mark.UpstreamOutTok = usage.OutputTokens
+		}
+		if mark.UpstreamCacheCreationTok == 0 {
+			mark.UpstreamCacheCreationTok = usage.CacheCreationInputTokens
+		}
+		if mark.UpstreamCacheReadTok == 0 {
+			mark.UpstreamCacheReadTok = usage.CacheReadInputTokens
+		}
+	}
 	c.Set(opsCyberPolicyKey, &mark)
 }
 

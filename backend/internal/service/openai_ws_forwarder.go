@@ -868,6 +868,7 @@ func isOpenAIWSClientDisconnectError(err error) bool {
 		strings.Contains(message, "use of closed network connection") ||
 		strings.Contains(message, "connection reset by peer") ||
 		strings.Contains(message, "broken pipe") ||
+		strings.Contains(message, "an existing connection was forcibly closed by the remote host") ||
 		strings.Contains(message, "an established connection was aborted")
 }
 
@@ -2248,12 +2249,14 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if eventType == "response.failed" {
 			if hit, code, msg := detectOpenAICyberPolicy(message); hit {
 				MarkOpsCyberPolicy(c, CyberPolicyMark{
-					Code:           code,
-					Message:        msg,
-					Body:           truncateString(string(message), 4096),
-					UpstreamStatus: http.StatusOK,
-					UpstreamInTok:  usage.InputTokens,
-					UpstreamOutTok: usage.OutputTokens,
+					Code:                     code,
+					Message:                  msg,
+					Body:                     truncateString(string(message), 4096),
+					UpstreamStatus:           http.StatusOK,
+					UpstreamInTok:            usage.InputTokens,
+					UpstreamOutTok:           usage.OutputTokens,
+					UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
+					UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 				})
 			}
 		}
@@ -2439,7 +2442,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		ImageCount:       imageCounter.Count(),
 		ImageOutputSizes: imageCounter.Sizes(),
 		ServiceTier:      extractOpenAIServiceTier(reqBody),
-		ReasoningEffort:  extractOpenAIReasoningEffort(reqBody, originalModel),
+		ReasoningEffort:  extractOpenAIReasoningEffort(reqBody, mappedModel, originalModel),
 		Stream:           reqStream,
 		OpenAIWSMode:     true,
 		ResponseHeaders:  lease.HandshakeHeaders(),
@@ -2450,6 +2453,15 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 // ProxyResponsesWebSocketFromClient 处理客户端入站 WebSocket（OpenAI Responses WS Mode）并转发到上游。
 // 当前实现按“单请求 -> 终止事件 -> 下一请求”的顺序代理，适配 Codex CLI 的 turn 模式。
+// stripCodexSparkImageGenerationToolFromRawPayload removes the image_generation
+// tool from a raw /responses payload when the upstream model is gpt-5.3-codex-spark.
+// Spark rejects that tool upstream with HTTP 400 (invalid_request_error, param=tools);
+// Codex clients advertise it by default. Returns the (possibly unchanged) payload,
+// whether it changed, and any JSON decode error.
+func stripCodexSparkImageGenerationToolFromRawPayload(payload []byte, model string) ([]byte, bool, error) {
+	return stripCodexSparkImageGenerationToolsFromRawBody(payload, model)
+}
+
 func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	ctx context.Context,
 	c *gin.Context,
@@ -2473,6 +2485,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is empty")
+	}
+	if err := s.rejectOpenAIResponsesWebSocketImageGeneration(firstClientMessage); err != nil {
+		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+		return err
 	}
 
 	// 预取一次 OpenAI Fast Policy settings，绑定到 ctx，让该 WS session
@@ -2660,6 +2676,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				bridgeModified = true
 				logOpenAIWSModeInfo("ingress_ws_codex_image_tool_injected account_id=%d", account.ID)
 			}
+			if ensureOpenAIResponsesImageGenerationToolChoiceAuto(payloadMap) {
+				bridgeModified = true
+				logOpenAIWSModeInfo("ingress_ws_codex_image_tool_choice_auto account_id=%d", account.ID)
+			}
 			if normalizeOpenAIResponsesImageGenerationTools(payloadMap) {
 				bridgeModified = true
 			}
@@ -2683,7 +2703,16 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			normalized = next
 		}
+		if stripped, changed, stripErr := stripCodexSparkImageGenerationToolFromRawPayload(normalized, upstreamModel); stripErr != nil {
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", stripErr)
+		} else if changed {
+			normalized = stripped
+			logOpenAIWSModeInfo("ingress_ws_codex_spark_image_tool_stripped account_id=%d", account.ID)
+		}
 		imageIntent := IsImageGenerationIntent(openAIResponsesEndpoint, originalModel, normalized)
+		if imageIntent && s.openAIResponsesImageGenerationDisabled() {
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, OpenAIResponsesImageGenerationDisabledMessage(), nil)
+		}
 		if imageIntent && !imageGenerationAllowed {
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, ImageGenerationPermissionMessage(), nil)
 		}
@@ -3252,12 +3281,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if eventType == "response.failed" {
 				if hit, code, msg := detectOpenAICyberPolicy(upstreamMessage); hit {
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
-						Code:           code,
-						Message:        msg,
-						Body:           truncateString(string(upstreamMessage), 4096),
-						UpstreamStatus: http.StatusOK,
-						UpstreamInTok:  usage.InputTokens,
-						UpstreamOutTok: usage.OutputTokens,
+						Code:                     code,
+						Message:                  msg,
+						Body:                     truncateString(string(upstreamMessage), 4096),
+						UpstreamStatus:           http.StatusOK,
+						UpstreamInTok:            usage.InputTokens,
+						UpstreamOutTok:           usage.OutputTokens,
+						UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
+						UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 					})
 				}
 			}
@@ -3328,7 +3359,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					Model:           originalModel,
 					UpstreamModel:   mappedModel,
 					ServiceTier:     extractOpenAIServiceTierFromBody(payload),
-					ReasoningEffort: ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, originalModel), payload, mappedModel),
+					ReasoningEffort: ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, mappedModel, originalModel), payload, mappedModel),
 					Stream:          reqStream,
 					OpenAIWSMode:    true,
 					ResponseHeaders: lease.HandshakeHeaders(),
@@ -4231,15 +4262,9 @@ func populateOpenAIUsageFromResponseJSON(body []byte, usage *OpenAIUsage) {
 	if usage == nil || len(body) == 0 {
 		return
 	}
-	values := gjson.GetManyBytes(
-		body,
-		"usage.input_tokens",
-		"usage.output_tokens",
-		"usage.input_tokens_details.cached_tokens",
-	)
-	usage.InputTokens = int(values[0].Int())
-	usage.OutputTokens = int(values[1].Int())
-	usage.CacheReadInputTokens = int(values[2].Int())
+	if parsedUsage, ok := openAIUsageFromGJSON(gjson.GetBytes(body, "usage")); ok {
+		*usage = parsedUsage
+	}
 }
 
 func getOpenAIGroupIDFromContext(c *gin.Context) int64 {

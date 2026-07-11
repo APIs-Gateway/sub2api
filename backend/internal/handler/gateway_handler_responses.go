@@ -85,7 +85,12 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 	requestCtx := c.Request.Context()
-	if service.IsImageGenerationIntent("/v1/responses", reqModel, body) {
+	imageIntent := service.IsImageGenerationIntent("/v1/responses", reqModel, body)
+	if imageIntent && service.OpenAIResponsesImageGenerationDisabled(h.cfg) {
+		h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", service.OpenAIResponsesImageGenerationDisabledMessage())
+		return
+	}
+	if imageIntent {
 		requestCtx = service.WithOpenAIImageGenerationIntent(requestCtx)
 	}
 
@@ -160,8 +165,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(requestCtx, apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
-				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-				h.responsesErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error())
+				h.respondNoAccountError(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformAnthropic, "No available accounts: "+err.Error(), err, noAccountCapacityMarkIfNoAvailable, gatewayNoAccountResponseResponses, false)
 				return
 			}
 			action := fs.HandleSelectionExhausted(requestCtx)

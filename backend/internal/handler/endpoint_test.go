@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -108,6 +109,39 @@ func TestDeriveUpstreamEndpoint(t *testing.T) {
 			require.Equal(t, tt.want, DeriveUpstreamEndpoint(tt.inbound, tt.rawPath, tt.platform))
 		})
 	}
+}
+
+func TestResolveOpenAIUpstreamEndpoint_RawChatAPIKey(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	account := &service.Account{
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
+		},
+	}
+
+	require.Equal(t, EndpointChatCompletions, resolveOpenAIUpstreamEndpoint(c, account))
+}
+
+func TestResolveOpenAIUpstreamEndpoint_ResponsesCapableOpenAI(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	account := &service.Account{
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesMode:      string(openai_compat.ResponsesSupportModeAuto),
+			openai_compat.ExtraKeyResponsesSupported: true,
+		},
+	}
+
+	require.Equal(t, EndpointResponses, resolveOpenAIUpstreamEndpoint(c, account))
 }
 
 // ──────────────────────────────────────────────────────────

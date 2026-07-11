@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -137,6 +139,194 @@ func TestOpsErrorLoggerMiddleware_DoesNotBreakOuterMiddlewares(t *testing.T) {
 		r.ServeHTTP(rec, req)
 	})
 	require.Equal(t, http.StatusNoContent, rec.Code)
+}
+
+// setupOpsErrorLogTestQueue 阻止 enqueueOpsErrorLog 启动真实 worker，改用可检查的测试队列。
+func setupOpsErrorLogTestQueue(t *testing.T, size int) {
+	t.Helper()
+	resetOpsErrorLoggerStateForTest(t)
+	opsErrorLogOnce.Do(func() {})
+	opsErrorLogMu.Lock()
+	opsErrorLogQueue = make(chan opsErrorLogJob, size)
+	opsErrorLogMu.Unlock()
+}
+
+// 就地(in-band) SSE 错误挂在已固化的 HTTP 200 流上：wire 状态码为 200，
+// 常规 status>=400 采集路径不会触发。logOpsStreamError 必须据 MarkOpsStreamError
+// 补记一条错误日志，且用 IntendedStatus(429) 分级、StatusCode 仍记 wire 的 200。
+func TestLogOpsStreamError_RecordsInBandConcurrencyLimit(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Set(opsModelKey, "test-model")
+
+	service.MarkOpsStreamError(c, "rate_limit_error",
+		"Concurrency limit exceeded for account, please retry later", http.StatusTooManyRequests)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal())
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+
+	job := <-opsErrorLogQueue
+	require.NotNil(t, job.entry)
+	require.Equal(t, "rate_limit_error", job.entry.ErrorType)
+	require.Equal(t, "request", job.entry.ErrorPhase)
+	require.True(t, job.entry.IsBusinessLimited)
+	require.True(t, job.entry.Stream)
+	require.Equal(t, http.StatusOK, job.entry.StatusCode) // wire 状态码保持 200
+	require.Equal(t, "P1", job.entry.Severity)            // 用 IntendedStatus 429 分级
+	require.Equal(t, "test-model", job.entry.Model)
+	require.Equal(t, "Concurrency limit exceeded for account, please retry later", job.entry.ErrorMessage)
+}
+
+// 流内错误同样应带齐 Ops 上下文，避免错误看板只有消息而缺少 key、账号、模型和延迟信息。
+func TestLogOpsStreamError_EnrichesRequestContext(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.125.0")
+	c.Request.Header.Set("X-Forwarded-For", "203.0.113.10")
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, "client-rid"))
+	c.Header("X-Request-Id", "server-rid")
+	c.Set(opsModelKey, "gpt-5.6")
+	c.Set(opsAccountIDKey, int64(44))
+	c.Set(opsUpstreamModelKey, "gpt-5.6-terra")
+	c.Set(opsRequestTypeKey, 2)
+
+	groupID := int64(33)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		ID:      22,
+		Key:     "sk-test-ops-key",
+		GroupID: &groupID,
+		User:    &service.User{ID: 11},
+		Group:   &service.Group{Platform: service.PlatformOpenAI},
+	})
+	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, 1)
+	service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, 2)
+	service.SetOpsLatencyMs(c, service.OpsUpstreamLatencyMsKey, 3)
+	service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, 4)
+	service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, 5)
+	service.MarkOpsStreamError(c, "upstream_error", "upstream stream failed", 0)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal())
+	job := <-opsErrorLogQueue
+	require.NotNil(t, job.entry)
+	require.Equal(t, "server-rid", job.entry.RequestID)
+	require.Equal(t, "client-rid", job.entry.ClientRequestID)
+	require.Equal(t, int64(44), *job.entry.AccountID)
+	require.Equal(t, service.PlatformOpenAI, job.entry.Platform)
+	require.Equal(t, "gpt-5.6", job.entry.Model)
+	require.Equal(t, "gpt-5.6-terra", job.entry.UpstreamModel)
+	require.NotNil(t, job.entry.RequestType)
+	require.Equal(t, int16(2), *job.entry.RequestType)
+	require.NotNil(t, job.entry.APIKeyID)
+	require.Equal(t, int64(22), *job.entry.APIKeyID)
+	require.Equal(t, "sk-test-", job.entry.APIKeyPrefix)
+	require.NotNil(t, job.entry.UserID)
+	require.Equal(t, int64(11), *job.entry.UserID)
+	require.NotNil(t, job.entry.GroupID)
+	require.Equal(t, int64(33), *job.entry.GroupID)
+	require.False(t, job.entry.IsCountTokens)
+	require.NotNil(t, job.entry.AuthLatencyMs)
+	require.Equal(t, int64(1), *job.entry.AuthLatencyMs)
+	require.NotNil(t, job.entry.RoutingLatencyMs)
+	require.Equal(t, int64(2), *job.entry.RoutingLatencyMs)
+	require.NotNil(t, job.entry.UpstreamLatencyMs)
+	require.Equal(t, int64(3), *job.entry.UpstreamLatencyMs)
+	require.NotNil(t, job.entry.ResponseLatencyMs)
+	require.Equal(t, int64(4), *job.entry.ResponseLatencyMs)
+	require.NotNil(t, job.entry.TimeToFirstTokenMs)
+	require.Equal(t, int64(5), *job.entry.TimeToFirstTokenMs)
+}
+
+// handler 写出已固化 HTTP 200 的 SSE 错误后，middleware 仍应将该错误补记到 Ops。
+// 这条集成回归覆盖 MarkOpsStreamError 与 OpsErrorLoggerMiddleware 的实际接线。
+func TestOpsErrorLoggerMiddleware_RecordsInBandStreamError(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	r := gin.New()
+	r.POST("/v1/messages", OpsErrorLoggerMiddleware(ops), func(c *gin.Context) {
+		setOpsRequestContext(c, "test-model", true)
+		(&GatewayHandler{}).handleStreamingAwareError(
+			c,
+			http.StatusTooManyRequests,
+			"rate_limit_error",
+			"Concurrency limit exceeded for account, please retry later",
+			true,
+		)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", nil))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal())
+	job := <-opsErrorLogQueue
+	require.Equal(t, "rate_limit_error", job.entry.ErrorType)
+	require.Equal(t, http.StatusOK, job.entry.StatusCode)
+	require.True(t, job.entry.Stream)
+	require.Equal(t, "test-model", job.entry.Model)
+}
+
+// 未标记流内错误时 logOpsStreamError 必须是 no-op（不误记正常的 200 流）。
+func TestLogOpsStreamError_NoopWhenNotMarked(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
+}
+
+// 命中 skip_monitoring=true 透传规则时不落库，与其它采集分支一致。
+func TestLogOpsStreamError_SkipWhenPassthroughSkipMonitoring(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	service.MarkOpsStreamError(c, "upstream_error", "Upstream request failed", http.StatusBadGateway)
+	c.Set(service.OpsSkipPassthroughKey, true)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
+}
+
+// MarkOpsStreamError 采用「首个标记生效」：后续的通用兜底帧不得覆盖根因错误。
+func TestMarkOpsStreamError_FirstWins(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	service.MarkOpsStreamError(c, "rate_limit_error", "Concurrency limit exceeded for account", http.StatusTooManyRequests)
+	service.MarkOpsStreamError(c, "upstream_error", "Upstream request failed", http.StatusBadGateway)
+
+	se, ok := service.GetOpsStreamError(c)
+	require.True(t, ok)
+	require.Equal(t, "rate_limit_error", se.ErrType)
+	require.Equal(t, "Concurrency limit exceeded for account", se.Message)
+	require.Equal(t, http.StatusTooManyRequests, se.IntendedStatus)
 }
 
 func TestIsKnownOpsErrorType(t *testing.T) {

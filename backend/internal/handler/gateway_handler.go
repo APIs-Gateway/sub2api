@@ -304,14 +304,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
 			if err != nil {
 				if len(fs.FailedAccountIDs) == 0 {
-					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 					reqLog.Warn("gateway.select_account_no_available",
 						zap.String("model", reqModel),
 						zap.Int64p("group_id", apiKey.GroupID),
 						zap.String("platform", platform),
 						zap.Error(err),
 					)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
+					h.respondNoAccountError(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformGemini, "No available accounts: "+err.Error(), err, noAccountCapacityMarkIfNoAvailable, gatewayNoAccountResponseStreaming, streamStarted)
 					return
 				}
 				action := fs.HandleSelectionExhausted(c.Request.Context())
@@ -581,7 +580,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), currentAPIKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID, subject.UserID)
 			if err != nil {
 				if len(fs.FailedAccountIDs) == 0 {
-					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 					reqLog.Warn("gateway.select_account_no_available",
 						zap.String("model", reqModel),
 						zap.Int64p("group_id", currentAPIKey.GroupID),
@@ -589,7 +587,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.Bool("fallback_used", fallbackUsed),
 						zap.Error(err),
 					)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
+					h.respondNoAccountError(c, h.gatewayService, currentAPIKey, reqModel, reqModel, platform, "No available accounts: "+err.Error(), err, noAccountCapacityMarkIfNoAvailable, gatewayNoAccountResponseStreaming, streamStarted)
 					return
 				}
 				action := fs.HandleSelectionExhausted(c.Request.Context())
@@ -1684,6 +1682,11 @@ func (h *GatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCod
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
 	if streamStarted {
+		// 响应状态码已固化为 200（ping/部分数据已 flush），错误只能就地以 SSE 帧回传。
+		// 标记本次流内错误，供 ops_error_logger 补记——否则该中间件按 status>=400 采集，
+		// 这类挂在 200 流上的失败（如并发限流回退）不会进错误看板。
+		service.MarkOpsStreamError(c, errType, message, status)
+
 		// /v1/responses 的严格 SDK（Codex CLI）要求终止事件必须属于
 		// response.completed/failed/incomplete/cancelled 集合。
 		// Anthropic-backed Responses 路径同样会因为通用 error 帧被拒。
@@ -1896,8 +1899,7 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	account, err := h.gatewayService.SelectAccountForModel(c.Request.Context(), apiKey.GroupID, sessionHash, parsedReq.Model)
 	if err != nil {
 		reqLog.Warn("gateway.count_tokens_select_account_failed", zap.Error(err))
-		markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable")
+		h.respondNoAccountError(c, h.gatewayService, apiKey, parsedReq.Model, parsedReq.Model, service.PlatformAnthropic, "Service temporarily unavailable", err, noAccountCapacityMarkIfNoAvailable, gatewayNoAccountResponseClaude, false)
 		return
 	}
 	setOpsSelectedAccount(c, account.ID, account.Platform)

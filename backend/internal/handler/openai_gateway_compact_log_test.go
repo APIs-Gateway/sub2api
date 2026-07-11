@@ -127,6 +127,9 @@ func TestNormalizeOpenAIResponsesCompactRequest_BodySignalPromotesBeforeStreamPa
 	require.Equal(t, "/openai/v1/responses/compact", c.Request.URL.Path)
 	require.True(t, service.IsOpenAIResponsesCompactPathForTest(c))
 	require.Equal(t, EndpointResponsesCompact, GetInboundEndpoint(c))
+	marked, exists := c.Get(service.OpenAICompactClientStreamKeyForTest())
+	require.True(t, exists)
+	require.Equal(t, true, marked)
 	require.Equal(t, "pc_123", c.GetString(service.OpenAICompactSessionSeedKeyForTest()))
 	require.Equal(t, "gpt-5.4", gjson.GetBytes(normalized, "model").String())
 	require.True(t, gjson.GetBytes(normalized, "input.0.type").Exists())
@@ -151,6 +154,26 @@ func TestNormalizeOpenAIResponsesCompactRequest_PathBasedSetsInboundCompact(t *t
 	require.Equal(t, "/responses/compact", c.Request.URL.Path)
 	require.Equal(t, EndpointResponsesCompact, GetInboundEndpoint(c))
 	require.False(t, gjson.GetBytes(normalized, "stream").Exists())
+	_, marked := c.Get(service.OpenAICompactClientStreamKeyForTest())
+	require.False(t, marked)
+}
+
+func TestNormalizeOpenAIResponsesCompactRequest_BodySignalWithoutClientStreamDoesNotMarkBridge(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`))
+	c.Set(ctxKeyInboundEndpoint, EndpointResponses)
+	body := []byte(`{"model":"gpt-5.4","input":[{"type":"compaction_trigger"}],"stream":false}`)
+
+	h := &OpenAIGatewayHandler{}
+	_, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
+
+	require.True(t, ok)
+	require.Equal(t, "/v1/responses/compact", c.Request.URL.Path)
+	_, marked := c.Get(service.OpenAICompactClientStreamKeyForTest())
+	require.False(t, marked)
 }
 
 func TestNormalizeOpenAIResponsesCompactRequest_BodySignalDoesNotPromoteSubresources(t *testing.T) {

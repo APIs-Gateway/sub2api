@@ -45,11 +45,18 @@
 
       <!-- 官方阶梯定价 -->
       <div v-if="hasIntervals" class="mt-2 border-t border-gray-100 pt-2 dark:border-dark-700/70">
-        <div class="mb-1 text-[11px] font-medium text-gray-500 dark:text-gray-400">{{ t('availableChannels.pricing.intervals') }}</div>
+        <div class="mb-1 flex items-center justify-between gap-2 text-[11px] font-medium text-gray-500 dark:text-gray-400">
+          <span>{{ t('availableChannels.pricing.intervals') }}</span>
+          <span>{{ intervalUnit }}</span>
+        </div>
         <div class="space-y-0.5">
-          <div v-for="(iv, idx) in model.pricing.intervals" :key="idx" class="flex justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
-            <span class="text-gray-400">{{ iv.tier_label || formatRange(iv.min_tokens, iv.max_tokens) }}</span>
-            <span class="font-mono">{{ intervalDisplay(iv, 1) }}</span>
+          <div v-for="(iv, idx) in model.pricing.intervals" :key="idx" class="flex items-start justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+            <span class="shrink-0 text-gray-400">{{ iv.tier_label || formatRange(iv.min_tokens, iv.max_tokens) }}</span>
+            <span class="flex max-w-[70%] flex-wrap justify-end gap-x-2 gap-y-0.5 text-right font-mono tabular-nums">
+              <span v-for="price in intervalPriceRows(iv, 1)" :key="price.key">
+                <span class="text-gray-400">{{ price.label }}</span> {{ price.value }}
+              </span>
+            </span>
           </div>
         </div>
       </div>
@@ -62,9 +69,13 @@
 
         <!-- token + 阶梯：逐档实付 -->
         <div v-if="isToken && hasIntervals" class="space-y-0.5">
-          <div v-for="(iv, idx) in model.pricing.intervals" :key="idx" class="flex justify-between gap-2 text-[11px] text-gray-700 dark:text-gray-300">
-            <span class="text-gray-400 dark:text-gray-500">{{ iv.tier_label || formatRange(iv.min_tokens, iv.max_tokens) }}</span>
-            <span class="font-mono">{{ intervalDisplay(iv, rateMultiplier) }}</span>
+          <div v-for="(iv, idx) in model.pricing.intervals" :key="idx" class="flex items-start justify-between gap-2 text-[11px] text-gray-700 dark:text-gray-300">
+            <span class="shrink-0 text-gray-400 dark:text-gray-500">{{ iv.tier_label || formatRange(iv.min_tokens, iv.max_tokens) }}</span>
+            <span class="flex max-w-[70%] flex-wrap justify-end gap-x-2 gap-y-0.5 text-right font-mono tabular-nums">
+              <span v-for="price in intervalPriceRows(iv, rateMultiplier)" :key="price.key">
+                <span class="text-gray-400 dark:text-gray-500">{{ price.label }}</span> {{ price.value }}
+              </span>
+            </span>
           </div>
         </div>
 
@@ -114,6 +125,7 @@ const platform = computed(() => props.model.platform || props.platformHint || ''
 
 const isToken = computed(() => props.model.pricing?.billing_mode === BILLING_MODE_TOKEN)
 const hasIntervals = computed(() => (props.model.pricing?.intervals?.length ?? 0) > 0)
+const intervalUnit = computed(() => (isToken.value ? perMillionUnit.value : perRequestUnit.value))
 
 const billingModeLabel = computed(() => {
   switch (props.model.pricing?.billing_mode) {
@@ -147,14 +159,33 @@ function effPerMillion(v: number | null): string {
   return `${formatScaled(v * props.rateMultiplier, perMillionScale)} ${perMillionUnit.value}`
 }
 
-// mult=1 → 官方;mult=rateMultiplier → 本档实付。token 显示 输入/输出,按次/按图显示单值。
-function intervalDisplay(iv: UserPricingInterval, mult: number): string {
-  if (isToken.value) {
-    const i = formatScaled(iv.input_price == null ? null : iv.input_price * mult, perMillionScale)
-    const o = formatScaled(iv.output_price == null ? null : iv.output_price * mult, perMillionScale)
-    return `${i} / ${o}`
+interface IntervalPriceRow {
+  key: string
+  label: string
+  value: string
+}
+
+function intervalPriceRows(iv: UserPricingInterval, mult: number): IntervalPriceRow[] {
+  if (!isToken.value) {
+    return show(iv.per_request_price)
+      ? [{ key: 'per-request', label: t('availableChannels.pricing.perRequestPrice'), value: formatScaled(iv.per_request_price! * mult, 1) }]
+      : []
   }
-  return formatScaled(iv.per_request_price == null ? null : iv.per_request_price * mult, 1)
+
+  const fields: Array<{ key: string; label: string; price: number | null }> = [
+    { key: 'input', label: t('availableChannels.pricing.inputPrice'), price: iv.input_price },
+    { key: 'output', label: t('availableChannels.pricing.outputPrice'), price: iv.output_price },
+    { key: 'cache-read', label: t('availableChannels.pricing.cacheReadPrice'), price: iv.cache_read_price },
+    { key: 'cache-write', label: t('availableChannels.pricing.cacheWritePrice'), price: iv.cache_write_price },
+  ]
+
+  return fields
+    .filter((field) => show(field.price))
+    .map((field) => ({
+      key: field.key,
+      label: field.label,
+      value: formatScaled(field.price! * mult, perMillionScale),
+    }))
 }
 
 function formatRate(r: number): string {
