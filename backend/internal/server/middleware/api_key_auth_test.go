@@ -408,6 +408,11 @@ func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false})
 			return
 		}
+		userID, ok := c.Request.Context().Value(ctxkey.UserID).(int64)
+		if !ok || userID != user.ID {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
@@ -417,6 +422,22 @@ func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestSetUserIDContextValidationAndIdempotence(t *testing.T) {
+	setUserIDContext(nil, 42)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	originalRequest := c.Request
+	setUserIDContext(c, 0)
+	require.Same(t, originalRequest, c.Request)
+
+	setUserIDContext(c, 42)
+	require.Equal(t, int64(42), c.Request.Context().Value(ctxkey.UserID))
+	requestWithUserID := c.Request
+	setUserIDContext(c, 42)
+	require.Same(t, requestWithUserID, c.Request)
 }
 
 func TestAPIKeyAuthRejectsExclusiveGroupWhenUserNoLongerAllowed(t *testing.T) {
