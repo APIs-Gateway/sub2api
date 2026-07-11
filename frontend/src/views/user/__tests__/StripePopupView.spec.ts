@@ -118,4 +118,51 @@ describe('StripePopupView', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     expect(loadStripe).toHaveBeenCalledTimes(1)
   })
+
+  it('shows an initialization timeout when the opener never sends Stripe details', () => {
+    const wrapper = mount(StripePopupView)
+
+    vi.advanceTimersByTime(15000)
+
+    expect(wrapper.text()).toContain('payment.stripePopup.timeout')
+    wrapper.unmount()
+  })
+
+  it('keeps polling after a non-OK payment status response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = await initializeWechatPolling()
+    vi.advanceTimersByTime(3000)
+    await flushPromises()
+    vi.advanceTimersByTime(3000)
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('stops polling and closes after a completed payment status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ data: { status: 'COMPLETED' } }),
+    })
+    const closeWindow = vi.spyOn(window, 'close').mockImplementation(() => undefined)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = await initializeWechatPolling()
+    vi.advanceTimersByTime(3000)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('payment.result.success')
+    vi.advanceTimersByTime(3000)
+    await flushPromises()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(1999)
+    expect(closeWindow).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(closeWindow).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
 })

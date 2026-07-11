@@ -114,4 +114,54 @@ describe('PaymentQRCodeView', () => {
     expect(routerPush).not.toHaveBeenCalled()
     expect(pollOrderStatus).toHaveBeenCalledTimes(1)
   })
+
+  it('shows an expired result and stops polling for a terminal expired order', async () => {
+    pollOrderStatus.mockResolvedValue({ status: 'EXPIRED' })
+
+    const wrapper = mount(PaymentQRCodeView, {
+      global: {
+        stubs: { AppLayout: { template: '<div><slot /></div>' } },
+      },
+    })
+
+    await vi.advanceTimersByTimeAsync(3000)
+
+    expect(wrapper.text()).toContain('payment.qr.expired')
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(pollOrderStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps polling after an empty QR status response', async () => {
+    pollOrderStatus.mockResolvedValue(undefined)
+
+    const wrapper = mount(PaymentQRCodeView, {
+      global: {
+        stubs: { AppLayout: { template: '<div><slot /></div>' } },
+      },
+    })
+
+    await vi.advanceTimersByTimeAsync(6000)
+
+    expect(pollOrderStatus).toHaveBeenCalledTimes(2)
+    expect(routerPush).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('expires at countdown zero and clears the pending poll timer', async () => {
+    const now = new Date('2026-04-20T12:00:00.000Z')
+    vi.setSystemTime(now)
+    routeState.query.expires_at = new Date(now.getTime() + 1000).toISOString()
+
+    const wrapper = mount(PaymentQRCodeView, {
+      global: {
+        stubs: { AppLayout: { template: '<div><slot /></div>' } },
+      },
+    })
+
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(wrapper.text()).toContain('payment.qr.expired')
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(pollOrderStatus).not.toHaveBeenCalled()
+  })
 })
