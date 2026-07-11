@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -29,6 +30,8 @@ type helperConcurrencyCacheStub struct {
 	waitDecrementCalls  int
 	waitMaxWait         int
 	waitIncrementHook   func()
+	apiKeyTrackIDs      []int64
+	apiKeyReleaseIDs    []int64
 }
 
 func (s *helperConcurrencyCacheStub) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
@@ -97,6 +100,28 @@ func (s *helperConcurrencyCacheStub) GetUserConcurrency(ctx context.Context, use
 	return 0, nil
 }
 
+func (s *helperConcurrencyCacheStub) TrackAPIKeySlot(_ context.Context, apiKeyID int64, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.apiKeyTrackIDs = append(s.apiKeyTrackIDs, apiKeyID)
+	return nil
+}
+
+func (s *helperConcurrencyCacheStub) ReleaseAPIKeySlot(_ context.Context, apiKeyID int64, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.apiKeyReleaseIDs = append(s.apiKeyReleaseIDs, apiKeyID)
+	return nil
+}
+
+func (s *helperConcurrencyCacheStub) GetAPIKeyConcurrencyBatch(_ context.Context, ids []int64) (map[int64]int, error) {
+	result := make(map[int64]int, len(ids))
+	for _, id := range ids {
+		result[id] = 0
+	}
+	return result, nil
+}
+
 func (s *helperConcurrencyCacheStub) IncrementWaitCount(ctx context.Context, userID int64, maxWait int) (bool, error) {
 	s.mu.Lock()
 	s.waitIncrementCalls++
@@ -150,6 +175,22 @@ func newHelperTestContext(method, path string) (*gin.Context, *httptest.Response
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(method, path, nil)
 	return c, rec
+}
+
+func TestAcquireUserSlotWithWaitTracksAPIKey(t *testing.T) {
+	cache := &helperConcurrencyCacheStub{userSeq: []bool{true}}
+	helper := NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second)
+	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{ID: 77})
+	streamStarted := false
+
+	release, err := helper.acquireUserSlotWithWaitTimeout(c, 7, 2, time.Second, false, &streamStarted)
+	require.NoError(t, err)
+	require.Equal(t, []int64{77}, cache.apiKeyTrackIDs)
+
+	release()
+	require.Equal(t, []int64{77}, cache.apiKeyReleaseIDs)
+	require.Equal(t, 1, cache.userReleaseCalls)
 }
 
 func validClaudeCodeBodyJSON() []byte {

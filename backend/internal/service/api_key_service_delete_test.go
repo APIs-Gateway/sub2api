@@ -24,18 +24,20 @@ import (
 //   - deleteErr: 模拟 Delete 返回的错误
 //   - deletedIDs: 记录被调用删除的 API Key ID，用于断言验证
 type apiKeyRepoStub struct {
-	apiKey             *APIKey // GetKeyAndOwnerID 的返回值
-	getByIDErr         error   // GetKeyAndOwnerID 的错误返回值
-	deleteErr          error   // Delete 的错误返回值
-	deletedIDs         []int64 // 记录已删除的 API Key ID 列表
-	allowListByUserID  bool
-	listByUserIDKeys   []APIKey
-	listByUserIDErr    error
-	listByUserIDCalls  []int64
-	listByUserIDParams []pagination.PaginationParams
-	updateLastUsed     func(ctx context.Context, id int64, usedAt time.Time) error
-	touchedIDs         []int64
-	touchedUsedAts     []time.Time
+	apiKey               *APIKey // GetKeyAndOwnerID 的返回值
+	getByIDErr           error   // GetKeyAndOwnerID 的错误返回值
+	deleteErr            error   // Delete 的错误返回值
+	deletedIDs           []int64 // 记录已删除的 API Key ID 列表
+	allowListByUserID    bool
+	listByUserIDKeys     []APIKey
+	listByUserIDErr      error
+	listByUserIDCalls    []int64
+	listByUserIDParams   []pagination.PaginationParams
+	allowListAllByUserID bool
+	listAllByUserIDKeys  []APIKey
+	updateLastUsed       func(ctx context.Context, id int64, usedAt time.Time) error
+	touchedIDs           []int64
+	touchedUsedAts       []time.Time
 }
 
 // 以下方法在本测试中不应被调用，使用 panic 确保测试失败时能快速定位问题
@@ -110,6 +112,13 @@ func (s *apiKeyRepoStub) ListByUserID(ctx context.Context, userID int64, params 
 	}, nil
 }
 
+func (s *apiKeyRepoStub) ListAllByUserID(_ context.Context, _ int64, _ APIKeyListFilters) ([]APIKey, error) {
+	if !s.allowListAllByUserID {
+		panic("unexpected ListAllByUserID call")
+	}
+	return append([]APIKey(nil), s.listAllByUserIDKeys...), nil
+}
+
 func (s *apiKeyRepoStub) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
 	panic("unexpected VerifyOwnership call")
 }
@@ -172,6 +181,70 @@ func (s *apiKeyRepoStub) ResetRateLimitWindows(ctx context.Context, id int64) er
 
 func (s *apiKeyRepoStub) GetRateLimitData(ctx context.Context, id int64) (*APIKeyRateLimitData, error) {
 	panic("unexpected GetRateLimitData call")
+}
+
+func TestAPIKeyService_ListFillsCurrentConcurrency(t *testing.T) {
+	repo := &apiKeyRepoStub{
+		allowListByUserID: true,
+		listByUserIDKeys:  []APIKey{{ID: 10, UserID: 7, Key: "sk-10"}, {ID: 11, UserID: 7, Key: "sk-11"}},
+	}
+	svc := &APIKeyService{
+		apiKeyRepo:         repo,
+		concurrencyService: NewConcurrencyService(&stubConcurrencyCacheForTest{apiKeyConcurrency: map[int64]int{10: 2}}),
+	}
+
+	keys, _, err := svc.List(context.Background(), 7, pagination.PaginationParams{Page: 1, PageSize: 20}, APIKeyListFilters{})
+	require.NoError(t, err)
+	require.Equal(t, 2, keys[0].CurrentConcurrency)
+	require.Equal(t, 0, keys[1].CurrentConcurrency)
+}
+
+func TestAPIKeyService_ListSortsByCurrentConcurrency(t *testing.T) {
+	repo := &apiKeyRepoStub{
+		allowListAllByUserID: true,
+		listAllByUserIDKeys:  []APIKey{{ID: 1, UserID: 7}, {ID: 2, UserID: 7}, {ID: 3, UserID: 7}, {ID: 4, UserID: 7}},
+	}
+	svc := &APIKeyService{
+		apiKeyRepo:         repo,
+		concurrencyService: NewConcurrencyService(&stubConcurrencyCacheForTest{apiKeyConcurrency: map[int64]int{1: 5, 2: 5, 3: 2, 4: 8}}),
+	}
+
+	keys, page, err := svc.List(context.Background(), 7, pagination.PaginationParams{
+		Page: 2, PageSize: 2, SortBy: "current_concurrency", SortOrder: pagination.SortOrderDesc,
+	}, APIKeyListFilters{})
+	require.NoError(t, err)
+	require.Equal(t, []int64{1, 3}, []int64{keys[0].ID, keys[1].ID})
+	require.Equal(t, int64(4), page.Total)
+	require.Equal(t, 2, page.Pages)
+}
+
+func TestAPIKeyService_ListSortsCurrentConcurrencyAscending(t *testing.T) {
+	repo := &apiKeyRepoStub{
+		allowListAllByUserID: true,
+		listAllByUserIDKeys:  []APIKey{{ID: 1, UserID: 7}, {ID: 2, UserID: 7}, {ID: 3, UserID: 7}, {ID: 4, UserID: 7}},
+	}
+	svc := &APIKeyService{
+		apiKeyRepo:         repo,
+		concurrencyService: NewConcurrencyService(&stubConcurrencyCacheForTest{apiKeyConcurrency: map[int64]int{1: 5, 2: 5, 3: 2, 4: 8}}),
+	}
+
+	keys, _, err := svc.List(context.Background(), 7, pagination.PaginationParams{
+		Page: 1, PageSize: 4, SortBy: "current_concurrency", SortOrder: pagination.SortOrderAsc,
+	}, APIKeyListFilters{})
+	require.NoError(t, err)
+	require.Equal(t, []int64{3, 1, 2, 4}, []int64{keys[0].ID, keys[1].ID, keys[2].ID, keys[3].ID})
+}
+
+func TestAPIKeyService_GetByIDFillsCurrentConcurrency(t *testing.T) {
+	repo := &apiKeyRepoStub{apiKey: &APIKey{ID: 10, UserID: 7, Key: "sk-10"}}
+	svc := &APIKeyService{
+		apiKeyRepo:         repo,
+		concurrencyService: NewConcurrencyService(&stubConcurrencyCacheForTest{apiKeyConcurrency: map[int64]int{10: 4}}),
+	}
+
+	key, err := svc.GetByID(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, 4, key.CurrentConcurrency)
 }
 
 // apiKeyCacheStub 是 APIKeyCache 接口的测试桩实现。

@@ -44,8 +44,10 @@ type APIKey struct {
 	LastUsedAt          *time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
-	User                *User
-	Group               *Group
+	// CurrentConcurrency is populated from the best-effort API key slot tracker.
+	CurrentConcurrency int
+	User               *User
+	Group              *Group
 
 	// Quota fields
 	Quota     float64    // Quota limit in USD (0 = unlimited)

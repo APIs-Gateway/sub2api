@@ -146,6 +146,30 @@ func (s *ConcurrencyCacheSuite) TestUserSlot_AcquireAndRelease() {
 	require.Equal(s.T(), 0, cur, "expected concurrency=0 after release")
 }
 
+func (s *ConcurrencyCacheSuite) TestAPIKeySlot_TrackReleaseAndBatchRead() {
+	cache, ok := s.cache.(service.APIKeyConcurrencyCache)
+	require.True(s.T(), ok)
+
+	apiKeyID := int64(88)
+	require.NoError(s.T(), cache.TrackAPIKeySlot(s.ctx, apiKeyID, "request-1"))
+	require.NoError(s.T(), cache.TrackAPIKeySlot(s.ctx, apiKeyID, "request-2"))
+
+	counts, err := cache.GetAPIKeyConcurrencyBatch(s.ctx, []int64{apiKeyID, 89})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 2, counts[apiKeyID])
+	require.Equal(s.T(), 0, counts[89])
+
+	require.NoError(s.T(), cache.ReleaseAPIKeySlot(s.ctx, apiKeyID, "request-1"))
+	counts, err = cache.GetAPIKeyConcurrencyBatch(s.ctx, []int64{apiKeyID})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, counts[apiKeyID])
+
+	slotKey := fmt.Sprintf("%s%d", apiKeySlotKeyPrefix, apiKeyID)
+	ttl, err := s.rdb.TTL(s.ctx, slotKey).Result()
+	require.NoError(s.T(), err)
+	s.AssertTTLWithin(ttl, time.Second, testSlotTTL)
+}
+
 func (s *ConcurrencyCacheSuite) TestUserSlot_TTL() {
 	userID := int64(200)
 	reqID := "req_ttl_test"
@@ -254,8 +278,10 @@ func (s *ConcurrencyCacheSuite) TestAccountWaitQueue_IncrementAndDecrement() {
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
 	accountID := int64(901)
 	userID := int64(902)
+	apiKeyID := int64(903)
 	accountKey := fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
 	userKey := fmt.Sprintf("%s%d", userSlotKeyPrefix, userID)
+	apiKeyKey := fmt.Sprintf("%s%d", apiKeySlotKeyPrefix, apiKeyID)
 	userWaitKey := fmt.Sprintf("%s%d", waitQueueKeyPrefix, userID)
 	accountWaitKey := fmt.Sprintf("%s%d", accountWaitKeyPrefix, accountID)
 
@@ -267,6 +293,10 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userKey,
 		redis.Z{Score: float64(now), Member: "oldproc-2"},
 		redis.Z{Score: float64(now), Member: "keep-2"},
+	).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, apiKeyKey,
+		redis.Z{Score: float64(now), Member: "oldproc-3"},
+		redis.Z{Score: float64(now), Member: "keep-3"},
 	).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, userWaitKey, 3, time.Minute).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, accountWaitKey, 2, time.Minute).Err())
@@ -280,6 +310,10 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
 	userMembers, err := s.rdb.ZRange(s.ctx, userKey, 0, -1).Result()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"keep-2"}, userMembers)
+
+	apiKeyMembers, err := s.rdb.ZRange(s.ctx, apiKeyKey, 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"keep-3"}, apiKeyMembers)
 
 	_, err = s.rdb.Get(s.ctx, userWaitKey).Result()
 	require.True(s.T(), errors.Is(err, redis.Nil))
