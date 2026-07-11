@@ -6,18 +6,26 @@ type AppStoreMock = {
 }
 
 function mockRuntimeModules(store: AppStoreMock) {
-  const resolveDocumentTitle = vi.fn(() => 'Resolved page title')
+  const resolveRouteDocumentTitle = vi.fn(() => 'Resolved page title')
 
   vi.doMock('@/stores/app', () => ({
     useAppStore: () => store
   }))
+  vi.doMock('@/stores/auth', () => ({
+    useAuthStore: () => ({ isAdmin: false })
+  }))
+  vi.doMock('@/stores/adminSettings', () => ({
+    useAdminSettingsStore: () => ({ customMenuItems: [] })
+  }))
   vi.doMock('@/router/title', () => ({
-    resolveDocumentTitle
+    resolveRouteDocumentTitle
   }))
   vi.doMock('@/router', () => ({
     default: {
       currentRoute: {
         value: {
+          name: 'Dashboard',
+          params: {},
           meta: {
             title: 'Fallback title',
             titleKey: 'nav.dashboard'
@@ -27,7 +35,7 @@ function mockRuntimeModules(store: AppStoreMock) {
     }
   }))
 
-  return { resolveDocumentTitle }
+  return { resolveRouteDocumentTitle }
 }
 
 describe('i18n runtime behavior', () => {
@@ -42,6 +50,8 @@ describe('i18n runtime behavior', () => {
 
   afterEach(() => {
     vi.doUnmock('@/stores/app')
+    vi.doUnmock('@/stores/auth')
+    vi.doUnmock('@/stores/adminSettings')
     vi.doUnmock('@/router/title')
     vi.doUnmock('@/router')
     localStorage.clear()
@@ -108,7 +118,7 @@ describe('i18n runtime behavior', () => {
   })
 
   it('sets explicit locales, persists them, and refreshes the document title', async () => {
-    const { resolveDocumentTitle } = mockRuntimeModules({
+    const { resolveRouteDocumentTitle } = mockRuntimeModules({
       cachedPublicSettings: null,
       siteName: 'Demo Site'
     })
@@ -123,7 +133,16 @@ describe('i18n runtime behavior', () => {
     expect(document.documentElement.getAttribute('lang')).toBe('zh-HK')
     expect(localStorage.getItem(LOCALE_KEY)).toBe('zh-HK')
     expect(document.title).toBe('Resolved page title')
-    expect(resolveDocumentTitle).toHaveBeenCalledWith('Fallback title', 'Demo Site', 'nav.dashboard')
+    expect(resolveRouteDocumentTitle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({
+          title: 'Fallback title',
+          titleKey: 'nav.dashboard'
+        })
+      }),
+      'Demo Site',
+      []
+    )
 
     i18n.global.locale.value = 'unsupported-locale'
     expect(getLocale()).toBe('zh-CN')

@@ -316,7 +316,7 @@ func (s *PaymentService) subscriptionForRefund(ctx context.Context, o *dbent.Pay
 	if s.subscriptionSvc == nil {
 		return nil, fmt.Errorf("subscription service not configured")
 	}
-	if subID, ok := readSubscriptionSnapshotSubscriptionID(o); ok {
+	if subID, ok := readRefundSubscriptionID(o); ok {
 		sub, err := s.subscriptionSvc.GetByID(ctx, subID)
 		if err != nil {
 			return nil, err
@@ -327,6 +327,14 @@ func (s *PaymentService) subscriptionForRefund(ctx context.Context, o *dbent.Pay
 		return sub, nil
 	}
 	return s.subscriptionSvc.GetActiveUserSubscription(ctx, o.UserID)
+}
+
+func readRefundSubscriptionID(o *dbent.PaymentOrder) (int64, bool) {
+	intent, targetSubID := readSubscriptionIntent(o)
+	if intent == SubscriptionIntentRenew && targetSubID > 0 {
+		return targetSubID, true
+	}
+	return readSubscriptionSnapshotSubscriptionID(o)
 }
 
 func subscriptionOrderOriginalDays(o *dbent.PaymentOrder) (int, error) {
@@ -356,14 +364,26 @@ func (s *PaymentService) prepDeduct(ctx context.Context, o *dbent.PaymentOrder, 
 		if err == nil && sub != nil {
 			today := TodayEastDayNumber()
 			p.SubscriptionID = sub.ID
-			card := sub.ToPerDayCard()
-			p.SubDaysToDeduct = card.RefundableDays(today)
-			// closeSubscriptionForRefund sets expire_day=today-1. Restoring the
-			// original expire_day therefore needs refundableDays+1 days.
-			p.SubDaysToRestore = p.SubDaysToDeduct + 1
 			p.SubExpireDayToRestore = sub.ExpireDay
 			p.SubTodayRemainingToRestore = sub.TodayRemaining
 			p.SubTodayDayToRestore = sub.TodayDay
+			if intent, _ := readSubscriptionIntent(o); intent == SubscriptionIntentRenew {
+				originalDays, daysErr := subscriptionOrderOriginalDays(o)
+				if daysErr != nil {
+					if !force {
+						return &RefundResult{Success: false, Warning: daysErr.Error(), RequireForce: true}
+					}
+					originalDays = 0
+				}
+				p.SubDaysToDeduct = originalDays
+				p.SubDaysToRestore = originalDays
+			} else {
+				card := sub.ToPerDayCard()
+				p.SubDaysToDeduct = card.RefundableDays(today)
+				// closeSubscriptionForRefund sets expire_day=today-1. Restoring the
+				// original expire_day therefore needs refundableDays+1 days.
+				p.SubDaysToRestore = p.SubDaysToDeduct + 1
+			}
 		} else if !force {
 			return &RefundResult{Success: false, Warning: "cannot find active subscription for deduction, use force", RequireForce: true}
 		}
@@ -420,9 +440,15 @@ func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*Ref
 	}
 	if p.DeductionType == payment.DeductionTypeSubscription && p.SubscriptionID > 0 {
 		if !s.hasAuditLog(ctx, p.OrderID, "REFUND_ROLLBACK_FAILED") {
-			if err := s.subscriptionSvc.closeSubscriptionForRefund(ctx, p.SubscriptionID); err != nil {
+			var err error
+			if isRenewSubscriptionRefundPlan(p) {
+				err = s.subscriptionSvc.revokeRenewalDaysForRefund(ctx, p.SubscriptionID, p.SubDaysToDeduct)
+			} else {
+				err = s.subscriptionSvc.closeSubscriptionForRefund(ctx, p.SubscriptionID)
+			}
+			if err != nil {
 				s.restoreStatus(ctx, p)
-				return nil, fmt.Errorf("close subscription for refund: %w", err)
+				return nil, fmt.Errorf("deduct subscription for refund: %w", err)
 			}
 		} else {
 			slog.Warn("skipping subscription deduction on retry (previous rollback failed)", "orderID", p.OrderID)
@@ -434,6 +460,14 @@ func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*Ref
 		return s.handleGwFail(ctx, p, err)
 	}
 	return s.markRefundOk(ctx, p)
+}
+
+func isRenewSubscriptionRefundPlan(p *RefundPlan) bool {
+	if p == nil || p.Order == nil || p.Order.OrderType != payment.OrderTypeSubscription {
+		return false
+	}
+	intent, _ := readSubscriptionIntent(p.Order)
+	return intent == SubscriptionIntentRenew
 }
 
 func (s *PaymentService) gwRefund(ctx context.Context, p *RefundPlan) error {

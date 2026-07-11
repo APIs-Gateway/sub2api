@@ -25,13 +25,6 @@ const (
 	defaultSiteName = "Sub2API"
 )
 
-// quotaDimLabels maps dimension names to display labels.
-var quotaDimLabels = map[string]string{
-	quotaDimDaily:  "日限额 / Daily",
-	quotaDimWeekly: "周限额 / Weekly",
-	quotaDimTotal:  "总限额 / Total",
-}
-
 // AccountQuotaReader provides read access to account quota data.
 type AccountQuotaReader interface {
 	GetByID(ctx context.Context, id int64) (*Account, error)
@@ -56,6 +49,18 @@ func NewBalanceNotifyService(emailService *EmailService, settingRepo SettingRepo
 
 func (s *BalanceNotifyService) SetNotificationEmailService(notificationEmailService *NotificationEmailService) {
 	s.notificationEmailService = notificationEmailService
+}
+
+func (s *BalanceNotifyService) resolveNotificationFallbackLocale(ctx context.Context, userID int64, email string) string {
+	if s.notificationEmailService != nil {
+		return s.notificationEmailService.ResolveRecipientLocale(ctx, userID, email)
+	}
+	if s.settingRepo != nil {
+		if locale, err := s.settingRepo.GetValue(ctx, SettingKeyDefaultLocale); err == nil && strings.TrimSpace(locale) != "" {
+			return normalizeNotificationLocale(locale)
+		}
+	}
+	return normalizeNotificationLocale(defaultLocaleFallback)
 }
 
 // resolveBalanceThreshold returns the effective balance threshold.
@@ -353,7 +358,7 @@ func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID 
 		displayName = userEmail
 	}
 	if s.notificationEmailService != nil {
-		fallbackRecipients := make([]string, 0, len(recipients))
+		fallbackRecipients := make([]notificationEmailFallbackRecipient, 0, len(recipients))
 		for _, to := range recipients {
 			ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
 			err := s.notificationEmailService.Send(ctx, NotificationEmailSendInput{
@@ -374,7 +379,10 @@ func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID 
 			if err != nil {
 				if shouldFallbackNotificationEmail(err) {
 					slog.Warn("template balance low notification failed; falling back to built-in body", "to", to, "err", err.Error())
-					fallbackRecipients = append(fallbackRecipients, to)
+					fallbackRecipients = append(fallbackRecipients, notificationEmailFallbackRecipient{
+						email:  to,
+						locale: s.resolveNotificationFallbackLocale(context.Background(), userID, to),
+					})
 				} else {
 					slog.Warn("template balance low notification delivery failed; not sending fallback to avoid duplicates", "to", to, "err", err.Error())
 				}
@@ -383,20 +391,21 @@ func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID 
 		if len(fallbackRecipients) == 0 {
 			return
 		}
-		recipients = fallbackRecipients
+		for _, recipient := range fallbackRecipients {
+			subject := balanceLowEmailSubject(siteName, recipient.locale)
+			body := s.buildBalanceLowEmailBodyForLocale(html.EscapeString(displayName), balance, threshold, html.EscapeString(siteName), rechargeURL, recipient.locale)
+			s.sendEmails([]string{recipient.email}, subject, body, "user_email", userEmail, "balance", balance)
+		}
+		return
 	}
-	subject := fmt.Sprintf("[%s] 余额不足提醒 / Balance Low Alert", sanitizeEmailHeader(siteName))
-	body := s.buildBalanceLowEmailBody(html.EscapeString(displayName), balance, threshold, html.EscapeString(siteName), rechargeURL)
+	locale := s.resolveNotificationFallbackLocale(context.Background(), userID, userEmail)
+	subject := balanceLowEmailSubject(siteName, locale)
+	body := s.buildBalanceLowEmailBodyForLocale(html.EscapeString(displayName), balance, threshold, html.EscapeString(siteName), rechargeURL, locale)
 	s.sendEmails(recipients, subject, body, "user_email", userEmail, "balance", balance)
 }
 
 // sendQuotaAlertEmails sends quota alert notification to admin emails.
 func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accountID int64, accountName, platform string, dim quotaDim, used float64, siteName string) {
-	dimLabel := quotaDimLabels[dim.name]
-	if dimLabel == "" {
-		dimLabel = dim.name
-	}
-
 	// Format the remaining-based threshold for display
 	thresholdDisplay := fmt.Sprintf("$%.2f", dim.threshold)
 	if dim.thresholdType == thresholdTypePercentage {
@@ -408,9 +417,10 @@ func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accoun
 	}
 
 	if s.notificationEmailService != nil {
-		fallbackRecipients := make([]string, 0, len(adminEmails))
+		fallbackRecipients := make([]notificationEmailFallbackRecipient, 0, len(adminEmails))
 		for _, to := range adminEmails {
 			ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
+			locale := s.resolveNotificationFallbackLocale(ctx, 0, to)
 			err := s.notificationEmailService.Send(ctx, NotificationEmailSendInput{
 				Event:          NotificationEmailEventAccountQuotaAlert,
 				RecipientEmail: to,
@@ -422,7 +432,7 @@ func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accoun
 					"account_id":      strconv.FormatInt(accountID, 10),
 					"account_name":    accountName,
 					"platform":        platform,
-					"quota_dimension": dimLabel,
+					"quota_dimension": quotaDimLabelForLocale(dim.name, locale),
 					"quota_used":      fmt.Sprintf("%.2f", used),
 					"quota_limit":     fmt.Sprintf("%.2f", dim.limit),
 					"quota_remaining": fmt.Sprintf("%.2f", remaining),
@@ -433,7 +443,10 @@ func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accoun
 			if err != nil {
 				if shouldFallbackNotificationEmail(err) {
 					slog.Warn("template account quota alert failed; falling back to built-in body", "to", to, "account_id", accountID, "dimension", dim.name, "err", err.Error())
-					fallbackRecipients = append(fallbackRecipients, to)
+					fallbackRecipients = append(fallbackRecipients, notificationEmailFallbackRecipient{
+						email:  to,
+						locale: locale,
+					})
 				} else {
 					slog.Warn("template account quota alert delivery failed; not sending fallback to avoid duplicates", "to", to, "account_id", accountID, "dimension", dim.name, "err", err.Error())
 				}
@@ -442,12 +455,25 @@ func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accoun
 		if len(fallbackRecipients) == 0 {
 			return
 		}
-		adminEmails = fallbackRecipients
+		for _, recipient := range fallbackRecipients {
+			localizedDimLabel := quotaDimLabelForLocale(dim.name, recipient.locale)
+			subject := quotaAlertEmailSubject(siteName, accountName, recipient.locale)
+			body := s.buildQuotaAlertEmailBodyForLocale(accountID, html.EscapeString(accountName), html.EscapeString(platform), html.EscapeString(localizedDimLabel), used, dim.limit, remaining, thresholdDisplay, html.EscapeString(siteName), recipient.locale)
+			s.sendEmails([]string{recipient.email}, subject, body, "account", accountName, "dimension", dim.name)
+		}
+		return
 	}
 
-	subject := fmt.Sprintf("[%s] 账号限额告警 / Account Quota Alert - %s", sanitizeEmailHeader(siteName), sanitizeEmailHeader(accountName))
-	body := s.buildQuotaAlertEmailBody(accountID, html.EscapeString(accountName), html.EscapeString(platform), html.EscapeString(dimLabel), used, dim.limit, remaining, thresholdDisplay, html.EscapeString(siteName))
+	locale := s.resolveNotificationFallbackLocale(context.Background(), 0, firstNonEmpty(adminEmails...))
+	localizedDimLabel := quotaDimLabelForLocale(dim.name, locale)
+	subject := quotaAlertEmailSubject(siteName, accountName, locale)
+	body := s.buildQuotaAlertEmailBodyForLocale(accountID, html.EscapeString(accountName), html.EscapeString(platform), html.EscapeString(localizedDimLabel), used, dim.limit, remaining, thresholdDisplay, html.EscapeString(siteName), locale)
 	s.sendEmails(adminEmails, subject, body, "account", accountName, "dimension", dim.name)
+}
+
+type notificationEmailFallbackRecipient struct {
+	email  string
+	locale string
 }
 
 // sanitizeEmailHeader removes CR/LF characters to prevent SMTP header injection.
@@ -455,101 +481,71 @@ func sanitizeEmailHeader(s string) string {
 	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
 }
 
-// balanceLowEmailTemplate is the HTML template for balance low notifications.
-// Format args: siteName, userName, userName, balance, threshold, threshold.
-// The recharge button is appended dynamically when rechargeURL is set.
-const balanceLowEmailTemplate = `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .header { background: linear-gradient(135deg, #f59e0b 0%%, #d97706 100%%); color: white; padding: 30px; text-align: center; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .content { padding: 40px 30px; text-align: center; }
-        .balance { font-size: 36px; font-weight: bold; color: #dc2626; margin: 20px 0; }
-        .info { color: #666; font-size: 14px; line-height: 1.6; margin-top: 20px; }
-        .recharge-btn { display: inline-block; margin-top: 24px; padding: 12px 32px; background: linear-gradient(135deg, #f59e0b 0%%, #d97706 100%%); color: #fff; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: bold; }
-        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header"><h1>%s</h1></div>
-        <div class="content">
-            <p style="font-size: 18px; color: #333;">%s，您的余额不足</p>
-            <p style="color: #666;">Dear %s, your balance is running low</p>
-            <div class="balance">$%.2f</div>
-            <div class="info">
-                <p>您的账户余额已低于提醒阈值 <strong>$%.2f</strong>。</p>
-                <p>Your account balance has fallen below the alert threshold of <strong>$%.2f</strong>.</p>
-                <p>请及时充值以免服务中断。</p>
-                <p>Please top up to avoid service interruption.</p>
-            </div>
-            %s
-        </div>
-        <div class="footer"><p>此邮件由系统自动发送，请勿回复。</p></div>
-    </div>
-</body>
-</html>`
-
-// quotaAlertEmailTemplate is the HTML template for account quota alert notifications.
-// Format args: siteName, accountID, accountName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay.
-const quotaAlertEmailTemplate = `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .header { background: linear-gradient(135deg, #ef4444 0%%, #dc2626 100%%); color: white; padding: 30px; text-align: center; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .content { padding: 40px 30px; }
-        .metric { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #eee; }
-        .metric-label { color: #666; }
-        .metric-value { font-weight: bold; color: #333; }
-        .info { color: #666; font-size: 14px; line-height: 1.6; margin-top: 20px; text-align: center; }
-        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header"><h1>%s</h1></div>
-        <div class="content">
-            <p style="font-size: 18px; color: #333; text-align: center;">账号限额告警 / Account Quota Alert</p>
-            <div class="metric"><span class="metric-label">账号 ID / Account ID</span><span class="metric-value">#%d</span></div>
-            <div class="metric"><span class="metric-label">账号 / Account</span><span class="metric-value">%s</span></div>
-            <div class="metric"><span class="metric-label">平台 / Platform</span><span class="metric-value">%s</span></div>
-            <div class="metric"><span class="metric-label">维度 / Dimension</span><span class="metric-value">%s</span></div>
-            <div class="metric"><span class="metric-label">已使用 / Used</span><span class="metric-value">$%.2f</span></div>
-            <div class="metric"><span class="metric-label">限额 / Limit</span><span class="metric-value">%s</span></div>
-            <div class="metric"><span class="metric-label">剩余额度 / Remaining</span><span class="metric-value">$%.2f</span></div>
-            <div class="metric"><span class="metric-label">提醒阈值 / Alert Threshold</span><span class="metric-value">%s</span></div>
-            <div class="info">
-                <p>账号剩余额度已低于提醒阈值，请及时关注。</p>
-                <p>Account remaining quota has fallen below the alert threshold.</p>
-            </div>
-        </div>
-        <div class="footer"><p>此邮件由系统自动发送，请勿回复。</p></div>
-    </div>
-</body>
-</html>`
-
-// buildBalanceLowEmailBody builds HTML email for balance low notification.
-func (s *BalanceNotifyService) buildBalanceLowEmailBody(userName string, balance, threshold float64, siteName, rechargeURL string) string {
-	rechargeBlock := ""
-	if rechargeURL != "" {
-		rechargeBlock = fmt.Sprintf(`<a href="%s" class="recharge-btn">立即充值 / Top Up Now</a>`, html.EscapeString(rechargeURL))
+func balanceLowEmailSubject(siteName, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, fmt.Sprintf("[%s] 余额不足提醒", sanitizeEmailHeader(siteName)))
 	}
-	return fmt.Sprintf(balanceLowEmailTemplate, siteName, userName, userName, balance, threshold, threshold, rechargeBlock)
+	return fmt.Sprintf("[%s] Balance Low Alert", sanitizeEmailHeader(siteName))
 }
 
-// buildQuotaAlertEmailBody builds HTML email for account quota alert.
-func (s *BalanceNotifyService) buildQuotaAlertEmailBody(accountID int64, accountName, platform, dimLabel string, used, limit, remaining float64, thresholdDisplay, siteName string) string {
-	limitStr := fmt.Sprintf("$%.2f", limit)
-	if limit <= 0 {
-		limitStr = "无限制 / Unlimited"
+func quotaAlertEmailSubject(siteName, accountName, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, fmt.Sprintf("[%s] 账号限额告警 - %s", sanitizeEmailHeader(siteName), sanitizeEmailHeader(accountName)))
 	}
-	return fmt.Sprintf(quotaAlertEmailTemplate, siteName, accountID, accountName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay)
+	return fmt.Sprintf("[%s] Account Quota Alert - %s", sanitizeEmailHeader(siteName), sanitizeEmailHeader(accountName))
+}
+
+func quotaDimLabelForLocale(name, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		var label string
+		switch name {
+		case quotaDimDaily:
+			label = "每日额度"
+		case quotaDimWeekly:
+			label = "每周额度"
+		case quotaDimTotal:
+			label = "总额度"
+		default:
+			label = name
+		}
+		return localizeChineseNotificationEmailText(locale, label)
+	}
+	switch name {
+	case quotaDimDaily:
+		return "Daily quota"
+	case quotaDimWeekly:
+		return "Weekly quota"
+	case quotaDimTotal:
+		return "Total quota"
+	default:
+		return name
+	}
+}
+
+func (s *BalanceNotifyService) buildBalanceLowEmailBodyForLocale(userName string, balance, threshold float64, siteName, rechargeURL, locale string) string {
+	if isNotificationChineseLocale(locale) {
+		rechargeBlock := ""
+		if rechargeURL != "" {
+			rechargeBlock = fmt.Sprintf(`<a href="%s" class="recharge-btn">立即充值</a>`, html.EscapeString(rechargeURL))
+		}
+		return localizeChineseNotificationEmailText(locale, fmt.Sprintf(`<!DOCTYPE html><html><body><h1>%s</h1><p>%s，您的余额不足</p><p>当前余额 <strong>$%.2f</strong>，已低于提醒阈值 <strong>$%.2f</strong>。</p><p>请及时充值以免服务中断。</p>%s</body></html>`, siteName, userName, balance, threshold, rechargeBlock))
+	}
+	rechargeBlock := ""
+	if rechargeURL != "" {
+		rechargeBlock = fmt.Sprintf(`<a href="%s" class="recharge-btn">Top Up Now</a>`, html.EscapeString(rechargeURL))
+	}
+	return fmt.Sprintf(`<!DOCTYPE html><html><body><h1>%s</h1><p>Dear %s, your balance is running low.</p><p>Your current balance is <strong>$%.2f</strong>, below the alert threshold of <strong>$%.2f</strong>.</p><p>Please top up to avoid service interruption.</p>%s</body></html>`, siteName, userName, balance, threshold, rechargeBlock)
+}
+
+func (s *BalanceNotifyService) buildQuotaAlertEmailBodyForLocale(accountID int64, accountName, platform, dimLabel string, used, limit, remaining float64, thresholdDisplay, siteName, locale string) string {
+	limitStr := fmt.Sprintf("$%.2f", limit)
+	if limit <= 0 && isNotificationChineseLocale(locale) {
+		limitStr = "无限制"
+	} else if limit <= 0 {
+		limitStr = "Unlimited"
+	}
+	if isNotificationChineseLocale(locale) {
+		return localizeChineseNotificationEmailText(locale, fmt.Sprintf(`<!DOCTYPE html><html><body><h1>%s</h1><p>账号限额告警</p><p>账号 #%d：%s</p><p>平台：%s</p><p>维度：%s</p><p>已使用：$%.2f / 限额：%s / 剩余额度：$%.2f / 提醒阈值：%s</p><p>账号剩余额度已低于提醒阈值，请及时关注。</p></body></html>`, siteName, accountID, accountName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay))
+	}
+	return fmt.Sprintf(`<!DOCTYPE html><html><body><h1>%s</h1><p>Account quota alert</p><p>Account #%d: %s</p><p>Platform: %s</p><p>Dimension: %s</p><p>Used: $%.2f / Limit: %s / Remaining: $%.2f / Alert threshold: %s</p><p>The account remaining quota has fallen below the alert threshold.</p></body></html>`, siteName, accountID, accountName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay)
 }

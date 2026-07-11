@@ -168,3 +168,13 @@ func TestMigration151AddsAccountAutoPauseExpiryPartialIndex(t *testing.T) {
 	require.Contains(t, sql, "auto_pause_on_expired = TRUE")
 	require.Contains(t, sql, "expires_at IS NOT NULL")
 }
+
+func TestMigration174AllowsCyberBlockedUsageRequestType(t *testing.T) {
+	content, err := FS.ReadFile("174_allow_cyber_blocked_usage_request_type.sql")
+	require.NoError(t, err)
+
+	sql := string(content)
+	require.Contains(t, sql, "DROP CONSTRAINT IF EXISTS usage_logs_request_type_check")
+	require.Contains(t, sql, "ADD CONSTRAINT usage_logs_request_type_check")
+	require.Contains(t, sql, "CHECK (request_type IN (0, 1, 2, 3, 4)) NOT VALID")
+}

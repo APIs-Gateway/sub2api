@@ -29,6 +29,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
+	h.applyOpenAIForcedAccountRouting(c, apiKey)
 
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -60,6 +61,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		return
 	}
 	if !gjson.ValidBytes(body) {
+		logRequestBodyParseFailure(reqLog, body, nil)
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
@@ -124,8 +126,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-				h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable")
+				h.respondNoAccountError(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformOpenAI, "Service temporarily unavailable", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseJSON, false)
 				return
 			}
 			if lastFailoverErr != nil {
@@ -136,8 +137,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			return
 		}
 		if selection == nil || selection.Account == nil {
-			markOpsRoutingCapacityLimited(c)
-			h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts")
+			h.respondNoAccountError(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformOpenAI, "No available accounts", nil, noAccountCapacityMarkAlways, openAINoAccountResponseJSON, false)
 			return
 		}
 		account := selection.Account

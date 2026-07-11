@@ -12,7 +12,7 @@ import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
-import { resolveDocumentTitle } from './title'
+import { resolveRouteDocumentTitle } from './title'
 
 /**
  * Route definitions with lazy loading
@@ -654,6 +654,19 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/orders/refunds',
+    name: 'AdminRefundOverview',
+    component: () => import('@/views/admin/orders/AdminOrdersView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Refund Overview',
+      titleKey: 'nav.refundOverview',
+      requiresPayment: true,
+      refundOverview: true
+    }
+  },
+  {
     path: '/admin/orders',
     name: 'AdminOrders',
     component: () => import('@/views/admin/orders/AdminOrdersView.vue'),
@@ -748,22 +761,12 @@ router.beforeEach(async (to, _from, next) => {
 
   // Set page title
   const appStore = useAppStore()
-  // For custom pages, use menu item label as document title
-  if (to.name === 'CustomPage') {
-    const id = to.params.id as string
-    const publicItems = appStore.cachedPublicSettings?.custom_menu_items ?? []
-    const adminSettingsStore = useAdminSettingsStore()
-    const menuItem = publicItems.find((item) => item.id === id)
-      ?? (authStore.isAdmin ? adminSettingsStore.customMenuItems.find((item) => item.id === id) : undefined)
-    if (menuItem?.label) {
-      const siteName = appStore.siteName || 'Sub2API'
-      document.title = `${menuItem.label} - ${siteName}`
-    } else {
-      document.title = resolveDocumentTitle(to.meta.title, appStore.siteName, to.meta.titleKey as string)
-    }
-  } else {
-    document.title = resolveDocumentTitle(to.meta.title, appStore.siteName, to.meta.titleKey as string)
-  }
+  const adminSettingsStore = useAdminSettingsStore()
+  const customMenuItems = [
+    ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
+    ...(authStore.isAdmin ? adminSettingsStore.customMenuItems : []),
+  ]
+  document.title = resolveRouteDocumentTitle(to, appStore.siteName, customMenuItems)
 
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true
@@ -838,22 +841,32 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
-
-  // Check payment requirement (internal payment system only)
-  if (to.meta.requiresPayment) {
-    const paymentEnabled = appStore.cachedPublicSettings?.payment_enabled
-    if (!paymentEnabled) {
-      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
-      return
+  // Initial navigation can run before App.vue loads public settings.
+  if ((to.meta.requiresPayment || to.meta.requiresRiskControl) && !appStore.publicSettingsLoaded) {
+    try {
+      await appStore.fetchPublicSettings()
+    } catch (error) {
+      console.warn('Failed to load public settings in route guard', error)
     }
   }
 
-  if (to.meta.requiresRiskControl) {
-    const riskControlEnabled = appStore.cachedPublicSettings?.risk_control_enabled === true
-    if (!riskControlEnabled) {
-      next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
-      return
-    }
+  // A failed load is unknown state. Only a successfully loaded explicit false disables a route.
+  if (
+    to.meta.requiresPayment &&
+    appStore.publicSettingsLoaded &&
+    appStore.cachedPublicSettings?.payment_enabled === false
+  ) {
+    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+    return
+  }
+
+  if (
+    to.meta.requiresRiskControl &&
+    appStore.publicSettingsLoaded &&
+    appStore.cachedPublicSettings?.risk_control_enabled === false
+  ) {
+    next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
+    return
   }
 
   // 简易模式下限制访问某些页面

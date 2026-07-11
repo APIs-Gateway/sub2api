@@ -234,14 +234,16 @@ func TestResponsesToAnthropic_CachedTokensUseAnthropicInputSemantics(t *testing.
 			OutputTokens: 123,
 			TotalTokens:  54129,
 			InputTokensDetails: &ResponsesInputTokensDetails{
-				CachedTokens: 50688,
+				CachedTokens:     50688,
+				CacheWriteTokens: 3000,
 			},
 		},
 	}
 
 	anth := ResponsesToAnthropic(resp, "claude-sonnet-4-5-20250929")
-	assert.Equal(t, 3318, anth.Usage.InputTokens)
+	assert.Equal(t, 318, anth.Usage.InputTokens)
 	assert.Equal(t, 50688, anth.Usage.CacheReadInputTokens)
+	assert.Equal(t, 3000, anth.Usage.CacheCreationInputTokens)
 	assert.Equal(t, 123, anth.Usage.OutputTokens)
 }
 
@@ -846,6 +848,10 @@ func TestFinalizeStream_AbnormalTermination(t *testing.T) {
 		Type:     "response.created",
 		Response: &ResponsesResponse{ID: "resp_5", Model: "gpt-5.2"},
 	}, state)
+	state.InputTokens = 50
+	state.OutputTokens = 4
+	state.CacheReadInputTokens = 20
+	state.CacheCreationInputTokens = 30
 
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:  "response.output_text.delta",
@@ -858,6 +864,10 @@ func TestFinalizeStream_AbnormalTermination(t *testing.T) {
 	assert.Equal(t, "content_block_stop", events[0].Type)
 	assert.Equal(t, "message_delta", events[1].Type)
 	assert.Equal(t, "end_turn", events[1].Delta.StopReason)
+	require.NotNil(t, events[1].Usage)
+	assert.Equal(t, 50, events[1].Usage.InputTokens)
+	assert.Equal(t, 20, events[1].Usage.CacheReadInputTokens)
+	assert.Equal(t, 30, events[1].Usage.CacheCreationInputTokens)
 	assert.Equal(t, "message_stop", events[2].Type)
 }
 
@@ -894,13 +904,24 @@ func TestStreamingEmptyResponse(t *testing.T) {
 		Type: "response.completed",
 		Response: &ResponsesResponse{
 			Status: "completed",
-			Usage:  &ResponsesUsage{InputTokens: 5, OutputTokens: 0},
+			Usage: &ResponsesUsage{
+				InputTokens:  100,
+				OutputTokens: 0,
+				InputTokensDetails: &ResponsesInputTokensDetails{
+					CachedTokens:     20,
+					CacheWriteTokens: 30,
+				},
+			},
 		},
 	}, state)
 
 	require.Len(t, events, 2) // message_delta + message_stop
 	assert.Equal(t, "message_delta", events[0].Type)
 	assert.Equal(t, "end_turn", events[0].Delta.StopReason)
+	require.NotNil(t, events[0].Usage)
+	assert.Equal(t, 50, events[0].Usage.InputTokens)
+	assert.Equal(t, 20, events[0].Usage.CacheReadInputTokens)
+	assert.Equal(t, 30, events[0].Usage.CacheCreationInputTokens)
 }
 
 func TestResponsesAnthropicEventToSSE(t *testing.T) {
@@ -1627,6 +1648,7 @@ func TestAnthropicToResponsesResponse_CacheTokensUseOpenAIInputSemantics(t *test
 	assert.Equal(t, 54329, out.Usage.TotalTokens)
 	require.NotNil(t, out.Usage.InputTokensDetails)
 	assert.Equal(t, 50688, out.Usage.InputTokensDetails.CachedTokens)
+	assert.Equal(t, 200, out.Usage.CacheCreationInputTokens)
 }
 
 func TestAnthropicToResponsesResponse_NoCacheTokens(t *testing.T) {
@@ -1693,6 +1715,7 @@ func TestAnthropicEventToResponses_CacheTokensRoundTripFromMessageStart(t *testi
 	assert.Equal(t, 31, completed.Response.Usage.TotalTokens)
 	require.NotNil(t, completed.Response.Usage.InputTokensDetails)
 	assert.Equal(t, 9, completed.Response.Usage.InputTokensDetails.CachedTokens)
+	assert.Equal(t, 3, completed.Response.Usage.CacheCreationInputTokens)
 }
 
 func TestAnthropicEventToResponses_CacheTokensFromMessageDelta(t *testing.T) {
@@ -1732,4 +1755,5 @@ func TestAnthropicEventToResponses_CacheTokensFromMessageDelta(t *testing.T) {
 	assert.Equal(t, 8, completed.Response.Usage.OutputTokens)
 	require.NotNil(t, completed.Response.Usage.InputTokensDetails)
 	assert.Equal(t, 11, completed.Response.Usage.InputTokensDetails.CachedTokens)
+	assert.Equal(t, 4, completed.Response.Usage.CacheCreationInputTokens)
 }

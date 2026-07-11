@@ -705,6 +705,54 @@ func (s *SubscriptionService) closeSubscriptionForRefund(ctx context.Context, su
 	return nil
 }
 
+// revokeRenewalDaysForRefund removes only the days added by a renew order. It
+// deliberately does not reset package limits or today's balance unless the
+// shortened card has no service day left and must be closed.
+func (s *SubscriptionService) revokeRenewalDaysForRefund(ctx context.Context, subscriptionID int64, days int) error {
+	if days <= 0 {
+		return infraerrors.BadRequest("INVALID_RENEW_DAYS", "renewal refund days must be positive")
+	}
+	if days > MaxValidityDays {
+		days = MaxValidityDays
+	}
+
+	sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	today := EastDayNumber(now)
+	newExpireDay := sub.ExpireDay - days
+	if newExpireDay < today-1 {
+		newExpireDay = today - 1
+	}
+	if newExpireDay < today {
+		return s.closeSubscriptionForRefund(ctx, subscriptionID)
+	}
+
+	if _, _, err := s.userSubRepo.ShortenSubscriptionWithReclaim(ctx, subscriptionID, days, ExpireDayToExpiresAt(newExpireDay), now); err != nil {
+		return err
+	}
+	if sub.Status == SubscriptionStatusExpired {
+		if err := s.userSubRepo.UpdateStatus(ctx, subscriptionID, SubscriptionStatusActive); err != nil {
+			return err
+		}
+	}
+	s.clearSubscriptionLockCache(sub.UserID)
+	s.InvalidateSubCache(sub.UserID, sub.GroupID)
+	if s.billingCacheService != nil {
+		userID, groupID := sub.UserID, sub.GroupID
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+		}()
+	}
+	s.invalidateUserBalanceCacheAsync(sub.UserID)
+	return nil
+}
+
 // restoreSubscriptionForRefund restores the exact card state captured before a
 // refund deduction. It is intentionally narrower than ExtendSubscription:
 // refund rollback must restore today's package balance as well as expire_day.
@@ -1101,20 +1149,8 @@ func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionI
 		return nil, err
 	}
 	windowStart := startOfDay(time.Now())
-	if resetDaily {
-		if err := s.userSubRepo.ResetDailyUsage(ctx, sub.ID, windowStart); err != nil {
-			return nil, err
-		}
-	}
-	if resetWeekly {
-		if err := s.userSubRepo.ResetWeeklyUsage(ctx, sub.ID, windowStart); err != nil {
-			return nil, err
-		}
-	}
-	if resetMonthly {
-		if err := s.userSubRepo.ResetMonthlyUsage(ctx, sub.ID, windowStart); err != nil {
-			return nil, err
-		}
+	if err := s.userSubRepo.ResetUsageWindows(ctx, sub.ID, resetDaily, resetWeekly, resetMonthly, windowStart); err != nil {
+		return nil, err
 	}
 	// Invalidate L1 ristretto cache. Ristretto's Del() is asynchronous by design,
 	// so call Wait() immediately after to flush pending operations and guarantee
@@ -1138,7 +1174,8 @@ func (s *SubscriptionService) CheckAndResetWindows(ctx context.Context, sub *Use
 
 	// 日窗口重置（24小时）
 	if sub.NeedsDailyReset() {
-		if err := s.userSubRepo.ResetDailyUsage(ctx, sub.ID, windowStart); err != nil {
+		expectedWindowStart := sub.DailyWindowStart
+		if err := s.userSubRepo.ResetDailyUsage(ctx, sub.ID, expectedWindowStart, windowStart); err != nil {
 			return err
 		}
 		sub.DailyWindowStart = &windowStart
@@ -1148,7 +1185,8 @@ func (s *SubscriptionService) CheckAndResetWindows(ctx context.Context, sub *Use
 
 	// 周窗口重置（7天）
 	if sub.NeedsWeeklyReset() {
-		if err := s.userSubRepo.ResetWeeklyUsage(ctx, sub.ID, windowStart); err != nil {
+		expectedWindowStart := sub.WeeklyWindowStart
+		if err := s.userSubRepo.ResetWeeklyUsage(ctx, sub.ID, expectedWindowStart, windowStart); err != nil {
 			return err
 		}
 		sub.WeeklyWindowStart = &windowStart
@@ -1158,7 +1196,8 @@ func (s *SubscriptionService) CheckAndResetWindows(ctx context.Context, sub *Use
 
 	// 月窗口重置（30天）
 	if sub.NeedsMonthlyReset() {
-		if err := s.userSubRepo.ResetMonthlyUsage(ctx, sub.ID, windowStart); err != nil {
+		expectedWindowStart := sub.MonthlyWindowStart
+		if err := s.userSubRepo.ResetMonthlyUsage(ctx, sub.ID, expectedWindowStart, windowStart); err != nil {
 			return err
 		}
 		sub.MonthlyWindowStart = &windowStart
@@ -1177,24 +1216,82 @@ func (s *SubscriptionService) CheckAndResetWindows(ctx context.Context, sub *Use
 	return nil
 }
 
+// EnsureWindowMaintenance advances expired windows synchronously and returns
+// a fresh database snapshot. A competing request may have won a conditional
+// reset and already recorded usage in the new window, so callers must validate
+// the refreshed value rather than the locally zeroed snapshot.
+func (s *SubscriptionService) EnsureWindowMaintenance(ctx context.Context, sub *UserSubscription) (*UserSubscription, error) {
+	if sub == nil {
+		return nil, ErrSubscriptionNilInput
+	}
+	if !sub.IsWindowActivated() {
+		if err := s.CheckAndActivateWindow(ctx, sub); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.CheckAndResetWindows(ctx, sub); err != nil {
+		return nil, err
+	}
+
+	refreshed, err := s.userSubRepo.GetByID(ctx, sub.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.InvalidateSubCache(sub.UserID, sub.GroupID)
+	if s.subCacheL1 != nil {
+		s.subCacheL1.Wait()
+	}
+	if s.billingCacheService != nil {
+		// Redis invalidation is best-effort across subscription mutations. The DB
+		// snapshot is already authoritative, so a cache outage must not turn a
+		// successful window reset into an authentication failure.
+		_ = s.billingCacheService.InvalidateSubscription(ctx, sub.UserID, sub.GroupID)
+	}
+	return refreshed, nil
+}
+
 // CheckUsageLimits 检查使用限额（返回错误如果超限）
 // 用于中间件的快速预检查，additionalCost 通常为 0
 func (s *SubscriptionService) CheckUsageLimits(ctx context.Context, sub *UserSubscription, group *Group, additionalCost float64) error {
-	if !sub.CheckDailyLimit(group, additionalCost) {
+	if sub == nil {
+		return ErrSubscriptionNilInput
+	}
+	dailyLimit := sub.DailyLimitUSD
+	weeklyLimit := sub.WeeklyLimitUSD
+	monthlyLimit := sub.MonthlyLimitUSD
+	// Non-nil card snapshots are frozen and always win. Historical cards may
+	// have nil snapshots, where the legacy Check*Limit contract read group limits.
+	if group != nil {
+		if dailyLimit == nil {
+			dailyLimit = group.DailyLimitUSD
+		}
+		if weeklyLimit == nil {
+			weeklyLimit = group.WeeklyLimitUSD
+		}
+		if monthlyLimit == nil {
+			monthlyLimit = group.MonthlyLimitUSD
+		}
+	}
+	if usageWindowExhausted(dailyLimit, sub.DailyUsageUSD, additionalCost) {
 		return ErrDailyLimitExceeded
 	}
-	if !sub.CheckWeeklyLimit(group, additionalCost) {
+	if usageWindowExhausted(weeklyLimit, sub.WeeklyUsageUSD, additionalCost) {
 		return ErrWeeklyLimitExceeded
 	}
-	if !sub.CheckMonthlyLimit(group, additionalCost) {
+	if usageWindowExhausted(monthlyLimit, sub.MonthlyUsageUSD, additionalCost) {
 		return ErrMonthlyLimitExceeded
 	}
 	return nil
 }
 
+func usageWindowExhausted(limit *float64, usage, additionalCost float64) bool {
+	return limit != nil && *limit > 0 && usage+additionalCost > *limit
+}
+
 // ValidateAndCheckLimits 合并验证+限额检查（中间件热路径专用）
-// 仅做内存检查，不触发 DB 写入。窗口重置的 DB 写入由 DoWindowMaintenance 异步完成。
-// 返回 needsMaintenance 表示是否需要异步执行窗口维护。
+// 仅做内存检查，不触发 DB 写入。调用方必须在放行前同步完成窗口维护，并用
+// EnsureWindowMaintenance 回读的数据库快照重新校验。
+// 返回 needsMaintenance 表示是否需要执行窗口维护。
 func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription, group *Group) (needsMaintenance bool, err error) {
 	// 1. 验证订阅状态
 	if sub.Status == SubscriptionStatusExpired {
@@ -1207,8 +1304,8 @@ func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription, grou
 		return false, ErrSubscriptionExpired
 	}
 
-	// 2. 内存中修正过期窗口的用量，确保 CheckUsageLimits 不会误拒绝用户
-	//    实际的 DB 窗口重置由 DoWindowMaintenance 异步完成
+	// 2. 内存中修正过期窗口的用量，确保预检查不会误拒绝用户。
+	//    调用方随后同步推进 DB 窗口，并用回读快照重新校验。
 	if sub.NeedsDailyReset() {
 		sub.DailyUsageUSD = 0
 		needsMaintenance = true
@@ -1225,15 +1322,9 @@ func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription, grou
 		needsMaintenance = true
 	}
 
-	// 3. 检查用量限额
-	if !sub.CheckDailyLimit(group, 0) {
-		return needsMaintenance, ErrDailyLimitExceeded
-	}
-	if !sub.CheckWeeklyLimit(group, 0) {
-		return needsMaintenance, ErrWeeklyLimitExceeded
-	}
-	if !sub.CheckMonthlyLimit(group, 0) {
-		return needsMaintenance, ErrMonthlyLimitExceeded
+	// 3. 检查卡上冻结的三窗口限额；nil 历史快照回退 group 限额。
+	if err := s.CheckUsageLimits(context.Background(), sub, group, 0); err != nil {
+		return needsMaintenance, err
 	}
 
 	return needsMaintenance, nil

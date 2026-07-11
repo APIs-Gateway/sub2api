@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
@@ -110,6 +113,63 @@ func TestResolveOpenAIMessagesMetadataSession_PreservesExplicitPromptCacheKey(t 
 
 	require.NotEmpty(t, sessionHash)
 	require.Equal(t, "explicit-cache", promptCacheKey)
+}
+
+func TestOpenAIGatewayHandlerApplyOpenAIForcedAccountRouting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	newContext := func() (*gin.Context, *http.Request) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		return c, c.Request
+	}
+
+	t.Run("guards leave request unchanged", func(t *testing.T) {
+		c, req := newContext()
+		var nilHandler *OpenAIGatewayHandler
+		nilHandler.applyOpenAIForcedAccountRouting(c, &service.APIKey{UserID: 513})
+		require.Same(t, req, c.Request)
+
+		(&OpenAIGatewayHandler{}).applyOpenAIForcedAccountRouting(c, &service.APIKey{UserID: 513})
+		require.Same(t, req, c.Request)
+
+		cfg := &config.Config{}
+		h := &OpenAIGatewayHandler{cfg: cfg}
+		h.applyOpenAIForcedAccountRouting(nil, &service.APIKey{UserID: 513})
+		h.applyOpenAIForcedAccountRouting(&gin.Context{}, &service.APIKey{UserID: 513})
+		h.applyOpenAIForcedAccountRouting(c, nil)
+		h.applyOpenAIForcedAccountRouting(c, &service.APIKey{})
+		require.Same(t, req, c.Request)
+	})
+
+	t.Run("unmatched or invalid routes leave request unchanged", func(t *testing.T) {
+		c, req := newContext()
+		cfg := &config.Config{}
+		cfg.Gateway.OpenAIForcedAccountRoutes = []config.OpenAIForcedAccountRoute{
+			{UserID: 514, AccountID: 9001},
+			{UserID: 513, AccountID: 0},
+		}
+		h := &OpenAIGatewayHandler{cfg: cfg}
+
+		h.applyOpenAIForcedAccountRouting(c, &service.APIKey{UserID: 513})
+
+		require.Same(t, req, c.Request)
+	})
+
+	t.Run("matching route replaces request context", func(t *testing.T) {
+		c, req := newContext()
+		cfg := &config.Config{}
+		cfg.Gateway.OpenAIForcedAccountRoutes = []config.OpenAIForcedAccountRoute{
+			{UserID: 513, AccountID: 9001},
+		}
+		h := &OpenAIGatewayHandler{cfg: cfg}
+
+		h.applyOpenAIForcedAccountRouting(c, &service.APIKey{UserID: 513})
+
+		require.NotSame(t, req, c.Request)
+		require.NotEqual(t, req.Context(), c.Request.Context())
+	})
 }
 
 func TestOpenAIHandleStreamingAwareError_NonStreaming(t *testing.T) {
@@ -1197,6 +1257,218 @@ func (s *openAIWSUsageHandlerUsageLogRepoStub) Create(ctx context.Context, log *
 		s.created <- log
 	}
 	return true, nil
+}
+
+func TestOpenAIChatCompletions_RawAPIKeyRecordsChatCompletionsUpstreamEndpoint(t *testing.T) {
+	usageLog := runOpenAIRawChatUsageEndpointCase(t, openAIRawChatUsageEndpointCase{
+		route:       "/openai/v1/chat/completions",
+		inboundWant: EndpointChatCompletions,
+		body:        `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}`,
+		register: func(router *gin.Engine, h *OpenAIGatewayHandler) {
+			router.POST("/openai/v1/chat/completions", h.ChatCompletions)
+		},
+		responseAssert: func(t *testing.T, body string) {
+			t.Helper()
+			require.Equal(t, "chatcmpl_raw_endpoint", gjson.Get(body, "id").String())
+		},
+	})
+
+	require.Equal(t, EndpointChatCompletions, *usageLog.UpstreamEndpoint)
+}
+
+func TestOpenAIResponses_RawAPIKeyRecordsChatCompletionsUpstreamEndpoint(t *testing.T) {
+	usageLog := runOpenAIRawChatUsageEndpointCase(t, openAIRawChatUsageEndpointCase{
+		route:       "/openai/v1/responses",
+		inboundWant: EndpointResponses,
+		body:        `{"model":"gpt-4o-mini","input":"hello"}`,
+		register: func(router *gin.Engine, h *OpenAIGatewayHandler) {
+			router.POST("/openai/v1/responses", h.Responses)
+		},
+		responseAssert: func(t *testing.T, body string) {
+			t.Helper()
+			require.Equal(t, "response", gjson.Get(body, "object").String())
+		},
+	})
+
+	require.Equal(t, EndpointChatCompletions, *usageLog.UpstreamEndpoint)
+}
+
+func TestOpenAIMessages_RawAPIKeyRecordsChatCompletionsUpstreamEndpoint(t *testing.T) {
+	usageLog := runOpenAIRawChatUsageEndpointCase(t, openAIRawChatUsageEndpointCase{
+		route:       "/openai/v1/messages",
+		inboundWant: EndpointMessages,
+		body:        `{"model":"gpt-4o-mini","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`,
+		register: func(router *gin.Engine, h *OpenAIGatewayHandler) {
+			router.POST("/openai/v1/messages", h.Messages)
+		},
+		responseAssert: func(t *testing.T, body string) {
+			t.Helper()
+			require.Equal(t, "message", gjson.Get(body, "type").String())
+		},
+	})
+
+	require.Equal(t, EndpointChatCompletions, *usageLog.UpstreamEndpoint)
+}
+
+type openAIRawChatUsageEndpointCase struct {
+	route          string
+	inboundWant    string
+	body           string
+	register       func(router *gin.Engine, h *OpenAIGatewayHandler)
+	responseAssert func(t *testing.T, body string)
+}
+
+func runOpenAIRawChatUsageEndpointCase(t *testing.T, tc openAIRawChatUsageEndpointCase) *service.UsageLog {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	upstreamPathCh := make(chan string, 1)
+	httpUpstream := openAIHandlerHTTPUpstreamStub{
+		do: func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+			upstreamPathCh <- req.URL.Path
+			body := `{"id":"chatcmpl_raw_endpoint","object":"chat.completion","model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		},
+	}
+
+	groupID := int64(4203)
+	account := service.Account{
+		ID:          9904,
+		Name:        "openai-raw-chat-usage-endpoint",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeAPIKey,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://api.openai.example",
+		},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
+		},
+	}
+
+	cfg := &config.Config{}
+	cfg.RunMode = config.RunModeSimple
+	cfg.Default.RateMultiplier = 1
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+
+	accountRepo := &openAIWSUsageHandlerAccountRepoStub{account: account}
+	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 1)}
+	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
+	defer billingCacheSvc.Stop()
+	gatewaySvc := service.NewOpenAIGatewayService(
+		accountRepo,
+		usageRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		cfg,
+		nil,
+		nil,
+		service.NewBillingService(cfg, nil),
+		nil,
+		billingCacheSvc,
+		httpUpstream,
+		&service.DeferredService{},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil, // userPlatformQuotaRepo
+		nil, // stableStore
+		nil, // groupRepo
+	)
+
+	cache := &concurrencyCacheMock{
+		acquireUserSlotFn: func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
+			return true, nil
+		},
+		acquireAccountSlotFn: func(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+			return true, nil
+		},
+	}
+	h := &OpenAIGatewayHandler{
+		gatewayService:      gatewaySvc,
+		billingCacheService: billingCacheSvc,
+		apiKeyService:       &service.APIKeyService{},
+		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
+	}
+
+	apiKey := &service.APIKey{
+		ID:      1803,
+		GroupID: &groupID,
+		User:    &service.User{ID: 1703, Status: service.StatusActive},
+		Group: &service.Group{
+			ID:                    groupID,
+			Platform:              service.PlatformOpenAI,
+			Status:                service.StatusActive,
+			RateMultiplier:        1,
+			AllowMessagesDispatch: true,
+		},
+	}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
+		c.Next()
+	})
+	tc.register(router, h)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		tc.route,
+		strings.NewReader(tc.body),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	if tc.responseAssert != nil {
+		tc.responseAssert(t, rec.Body.String())
+	}
+
+	select {
+	case upstreamPath := <-upstreamPathCh:
+		require.Equal(t, "/v1/chat/completions", upstreamPath)
+	case <-time.After(3 * time.Second):
+		t.Fatal("等待上游 raw chat 请求超时")
+	}
+
+	var usageLog *service.UsageLog
+	select {
+	case usageLog = <-usageRepo.created:
+		require.NotNil(t, usageLog)
+	case <-time.After(3 * time.Second):
+		t.Fatal("等待 raw chat usage log 写入超时")
+	}
+	require.NotNil(t, usageLog.InboundEndpoint)
+	require.Equal(t, tc.inboundWant, *usageLog.InboundEndpoint)
+	require.NotNil(t, usageLog.UpstreamEndpoint)
+	require.Equal(t, "/v1/chat/completions", *usageLog.UpstreamEndpoint)
+	return usageLog
+}
+
+type openAIHandlerHTTPUpstreamStub struct {
+	do func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)
+}
+
+func (s openAIHandlerHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	return s.do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func (s openAIHandlerHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return s.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
 type openAIWSUsageHandlerChannelRepoStub struct {

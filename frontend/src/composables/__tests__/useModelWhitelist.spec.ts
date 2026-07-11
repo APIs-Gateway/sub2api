@@ -10,10 +10,15 @@ describe('useModelWhitelist', () => {
   it('openai 模型列表包含 GPT-5.4 官方快照', () => {
     const models = getModelsByPlatform('openai')
 
+	    expect(models).toContain('gpt-5.6')
+    expect(models).toContain('gpt-5.6-sol')
+    expect(models).toContain('gpt-5.6-terra')
+    expect(models).toContain('gpt-5.6-luna')
     expect(models).toContain('gpt-5.4')
     expect(models).toContain('gpt-5.4-mini')
     expect(models).toContain('gpt-5.4-2026-03-05')
     expect(models).toContain('codex-auto-review')
+    expect(models.indexOf('gpt-5.6-sol')).toBeLessThan(models.indexOf('gpt-5.5'))
   })
 
   it('openai 模型列表不再暴露已下线的 ChatGPT 登录 Codex 模型', () => {

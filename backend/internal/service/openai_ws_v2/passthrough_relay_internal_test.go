@@ -300,7 +300,7 @@ func TestParseUsageAndEnrichCoverage(t *testing.T) {
 	require.Equal(t, 0, state.usage.OutputTokens)
 	require.Equal(t, 0, state.usage.CacheReadInputTokens)
 
-	parseUsageAndAccumulate(state, []byte(`{"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":1,"input_tokens_details":{"cached_tokens":1},"cache_creation_input_tokens":4,"output_tokens_details":{"image_tokens":3}}}}`), "response.completed", nil)
+	parseUsageAndAccumulate(state, []byte(`{"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":1,"input_tokens_details":{"cached_tokens":1,"cache_write_tokens":4},"output_tokens_details":{"image_tokens":3}}}}`), "response.completed", nil)
 	require.Equal(t, 2, state.usage.InputTokens)
 	require.Equal(t, 1, state.usage.OutputTokens)
 	require.Equal(t, 1, state.usage.CacheReadInputTokens)
@@ -324,15 +324,47 @@ func TestParseUsageAndAccumulateAcceptsChatUsageAliases(t *testing.T) {
 	state := &relayState{}
 	got := parseUsageAndAccumulate(
 		state,
-		[]byte(`{"type":"response.done","response":{"usage":{"prompt_tokens":12,"completion_tokens":6,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"image_tokens":2}}}}`),
+		[]byte(`{"type":"response.done","response":{"usage":{"prompt_tokens":12,"completion_tokens":6,"prompt_tokens_details":{"cached_tokens":4,"cache_write_tokens":3},"completion_tokens_details":{"image_tokens":2}}}}`),
 		"response.done",
 		nil,
 	)
 	require.Equal(t, 12, got.InputTokens)
 	require.Equal(t, 6, got.OutputTokens)
 	require.Equal(t, 4, got.CacheReadInputTokens)
+	require.Equal(t, 3, got.CacheCreationInputTokens)
 	require.Equal(t, 2, got.ImageOutputTokens)
 	require.Equal(t, got, state.usage)
+}
+
+func TestParseUsageAndAccumulateAcceptsCacheWriteAliases(t *testing.T) {
+	t.Parallel()
+
+	for _, rawUsage := range []string{
+		`{"input_tokens":12,"output_tokens":6,"cache_write_tokens":3}`,
+		`{"input_tokens":12,"output_tokens":6,"input_tokens_details":{"cache_creation_tokens":3}}`,
+		`{"prompt_tokens":12,"completion_tokens":6,"prompt_tokens_details":{"cache_creation_tokens":3}}`,
+	} {
+		state := &relayState{}
+		payload := []byte(`{"type":"response.completed","response":{"usage":` + rawUsage + `}}`)
+		got := parseUsageAndAccumulate(state, payload, "response.completed", nil)
+		require.Equal(t, 12, got.InputTokens)
+		require.Equal(t, 6, got.OutputTokens)
+		require.Equal(t, 3, got.CacheCreationInputTokens)
+	}
+}
+
+func TestParseUsageAndAccumulate_NestedCacheWriteZeroWins(t *testing.T) {
+	t.Parallel()
+
+	state := &relayState{}
+	got := parseUsageAndAccumulate(
+		state,
+		[]byte(`{"type":"response.completed","response":{"usage":{"input_tokens":12,"output_tokens":6,"cache_write_tokens":3,"input_tokens_details":{"cache_write_tokens":0}}}}`),
+		"response.completed",
+		nil,
+	)
+	require.Zero(t, got.CacheCreationInputTokens)
+	require.Zero(t, state.usage.CacheCreationInputTokens)
 }
 
 func TestEmitTurnCompleteCoverage(t *testing.T) {
@@ -385,6 +417,7 @@ func TestIsDisconnectErrorCoverage_CloseStatusesAndMessageBranches(t *testing.T)
 	require.True(t, isDisconnectError(coderws.CloseError{Code: coderws.StatusNoStatusRcvd}))
 	require.True(t, isDisconnectError(coderws.CloseError{Code: coderws.StatusAbnormalClosure}))
 	require.True(t, isDisconnectError(errors.New("connection reset by peer")))
+	require.True(t, isDisconnectError(errors.New("wsarecv: An existing connection was forcibly closed by the remote host.")))
 	require.False(t, isDisconnectError(errors.New("   ")))
 }
 

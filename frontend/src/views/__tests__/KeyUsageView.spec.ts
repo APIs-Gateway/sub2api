@@ -4,12 +4,22 @@ import { nextTick } from 'vue'
 
 import KeyUsageView from '../KeyUsageView.vue'
 
-const { showInfo, showSuccess, showError, fetchPublicSettings, currentLocale } = vi.hoisted(() => ({
+const {
+  showInfo,
+  showSuccess,
+  showError,
+  fetchPublicSettings,
+  currentLocale,
+  publicDocUrl,
+  cachedPublicSettings,
+} = vi.hoisted(() => ({
   showInfo: vi.fn(),
   showSuccess: vi.fn(),
   showError: vi.fn(),
   fetchPublicSettings: vi.fn(),
   currentLocale: { value: 'en' },
+  publicDocUrl: { value: '' },
+  cachedPublicSettings: { value: null as null | { doc_url?: string } },
 }))
 
 const messages: Record<string, string> = {
@@ -92,10 +102,10 @@ vi.mock('vue-i18n', async () => {
 
 vi.mock('@/stores', () => ({
   useAppStore: () => ({
-    cachedPublicSettings: null,
+    cachedPublicSettings: cachedPublicSettings.value,
     siteName: 'Sub2API',
     siteLogo: '',
-    docUrl: '',
+    docUrl: publicDocUrl.value,
     publicSettingsLoaded: true,
     fetchPublicSettings,
     showInfo,
@@ -111,6 +121,8 @@ describe('KeyUsageView daily detail', () => {
     showError.mockReset()
     fetchPublicSettings.mockReset()
     currentLocale.value = 'en'
+    publicDocUrl.value = ''
+    cachedPublicSettings.value = null
     messages['keyUsage.windowDay'] = 'D'
     messages['keyUsage.windowWeek'] = 'W'
     messages['keyUsage.windowMonth'] = 'M'
@@ -225,6 +237,62 @@ describe('KeyUsageView daily detail', () => {
     expect(text).toContain('$0.12')
     expect(text).toContain('Used Quota (D)')
     expect(text).toContain('Expires At')
+
+    wrapper.unmount()
+  })
+
+  it('does not render unsafe documentation links', () => {
+    publicDocUrl.value = 'javascript:alert(1)'
+
+    const wrapper = mount(KeyUsageView, {
+      global: {
+        stubs: {
+          RouterLink: { template: '<a><slot /></a>' },
+          LocaleSwitcher: true,
+          Icon: true,
+        },
+      },
+    })
+
+    expect(wrapper.find('a[href="javascript:alert(1)"]').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('renders sanitized documentation links', () => {
+    publicDocUrl.value = 'https://docs.example.com/help'
+
+    const wrapper = mount(KeyUsageView, {
+      global: {
+        stubs: {
+          RouterLink: { template: '<a><slot /></a>' },
+          LocaleSwitcher: true,
+          Icon: true,
+        },
+      },
+    })
+
+    expect(wrapper.find('a[href="https://docs.example.com/help"]').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('prefers sanitized cached documentation links', () => {
+    publicDocUrl.value = 'https://docs.example.com/fallback'
+    cachedPublicSettings.value = { doc_url: 'https://docs.example.com/cached' }
+
+    const wrapper = mount(KeyUsageView, {
+      global: {
+        stubs: {
+          RouterLink: { template: '<a><slot /></a>' },
+          LocaleSwitcher: true,
+          Icon: true,
+        },
+      },
+    })
+
+    expect(wrapper.find('a[href="https://docs.example.com/cached"]').exists()).toBe(true)
+    expect(wrapper.find('a[href="https://docs.example.com/fallback"]').exists()).toBe(false)
 
     wrapper.unmount()
   })

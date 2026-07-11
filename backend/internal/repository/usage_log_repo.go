@@ -334,8 +334,6 @@ func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.
 	case r.bestEffortBatchCh <- req:
 	case <-ctx.Done():
 		return service.MarkUsageLogCreateDropped(ctx.Err())
-	default:
-		return service.MarkUsageLogCreateDropped(errors.New("usage log best-effort queue full"))
 	}
 
 	select {
@@ -455,8 +453,6 @@ func (r *usageLogRepository) createBatched(ctx context.Context, log *service.Usa
 	case r.createBatchCh <- req:
 	case <-ctx.Done():
 		return false, service.MarkUsageLogCreateNotPersisted(ctx.Err())
-	default:
-		return false, service.MarkUsageLogCreateNotPersisted(errors.New("usage log create batch queue full"))
 	}
 
 	select {
@@ -481,12 +477,12 @@ func (r *usageLogRepository) ensureCreateBatcher() {
 	if r == nil || r.db == nil {
 		return
 	}
-	// 不要在此加 `r.createBatchCh != nil` 快路径:那是绕过 sync.Once 的无同步读,会与 Do 内的写
-	// 形成 data race(双重检查锁反模式)。sync.Once.Do 自带原子 done 快路径,直接走它即可,且
-	// Do 的 happens-before 保证 Do 返回后所有调用方都能看到已建好的 channel。
 	r.createBatchOnce.Do(func() {
-		r.createBatchCh = make(chan usageLogCreateRequest, usageLogCreateBatchQueueCap)
-		go r.runCreateBatcher(r.db)
+		// nil 检查必须在 Once 内：外层的无同步快路径读会与这里的写形成 data race。
+		if r.createBatchCh == nil {
+			r.createBatchCh = make(chan usageLogCreateRequest, usageLogCreateBatchQueueCap)
+			go r.runCreateBatcher(r.db)
+		}
 	})
 }
 
@@ -494,10 +490,12 @@ func (r *usageLogRepository) ensureBestEffortBatcher() {
 	if r == nil || r.db == nil {
 		return
 	}
-	// 同 ensureCreateBatcher:去掉无同步的 `!= nil` 快路径,统一走 sync.Once.Do 避免 data race。
 	r.bestEffortBatchOnce.Do(func() {
-		r.bestEffortBatchCh = make(chan usageLogBestEffortRequest, usageLogBestEffortBatchQueueCap)
-		go r.runBestEffortBatcher(r.db)
+		// 同 ensureCreateBatcher：nil 检查只在 Once 内执行，避免无同步读写竞态。
+		if r.bestEffortBatchCh == nil {
+			r.bestEffortBatchCh = make(chan usageLogBestEffortRequest, usageLogBestEffortBatchQueueCap)
+			go r.runBestEffortBatcher(r.db)
+		}
 	})
 }
 
@@ -2748,42 +2746,10 @@ func (r *usageLogRepository) GetUserUsageTrendByUserID(ctx context.Context, user
 
 // GetUserModelStats 获取指定用户的模型统计
 func (r *usageLogRepository) GetUserModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) (results []ModelStat, err error) {
-	query := `
-		SELECT
-			model,
-			COUNT(*) as requests,
-			COALESCE(SUM(input_tokens), 0) as input_tokens,
-			COALESCE(SUM(output_tokens), 0) as output_tokens,
-			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
-			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
-			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
-			COALESCE(SUM(total_cost), 0) as cost,
-			COALESCE(SUM(actual_cost), 0) as actual_cost,
-			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as account_cost
-		FROM usage_logs
-		WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
-		GROUP BY model
-		ORDER BY total_tokens DESC
-	`
-
-	rows, err := r.sql.QueryContext(ctx, query, userID, startTime, endTime)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		// 保持主错误优先；仅在无错误时回传 Close 失败。
-		// 同时清空返回值，避免误用不完整结果。
-		if closeErr := rows.Close(); closeErr != nil && err == nil {
-			err = closeErr
-			results = nil
-		}
-	}()
-
-	results, err = scanModelStatsRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	return results, nil
+	return r.getModelStatsWithFiltersBySource(
+		ctx, startTime, endTime, userID, 0, 0, 0,
+		nil, nil, nil, usagestats.ModelSourceRequested,
+	)
 }
 
 // UsageLogFilters represents filters for usage log queries
@@ -3361,8 +3327,9 @@ func (r *usageLogRepository) GetUserBreakdownStats(ctx context.Context, startTim
 		args = append(args, dim.AccountID)
 	}
 	if dim.RequestType != nil {
-		query += fmt.Sprintf(" AND ul.request_type = $%d", len(args)+1)
-		args = append(args, *dim.RequestType)
+		condition, conditionArgs := buildRequestTypeFilterConditionWithAlias(len(args)+1, *dim.RequestType, "ul")
+		query += " AND " + condition
+		args = append(args, conditionArgs...)
 	}
 	if dim.Stream != nil {
 		query += fmt.Sprintf(" AND ul.stream = $%d", len(args)+1)
@@ -3549,6 +3516,8 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 			COALESCE(SUM(input_tokens), 0) as total_input_tokens,
 			COALESCE(SUM(output_tokens), 0) as total_output_tokens,
 			COALESCE(SUM(cache_creation_tokens + cache_read_tokens), 0) as total_cache_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
 			COALESCE(SUM(total_cost), 0) as total_cost,
 			COALESCE(SUM(actual_cost), 0) as total_actual_cost,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as total_account_cost,
@@ -3579,6 +3548,8 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 			&stats.TotalInputTokens,
 			&stats.TotalOutputTokens,
 			&stats.TotalCacheTokens,
+			&stats.TotalCacheCreationTokens,
+			&stats.TotalCacheReadTokens,
 			&stats.TotalCost,
 			&stats.TotalActualCost,
 			&totalAccountCost,
@@ -4558,17 +4529,25 @@ func appendRequestTypeOrStreamQueryFilter(query string, args []any, requestType 
 
 // buildRequestTypeFilterCondition 在 request_type 过滤时兼容 legacy 字段，避免历史数据漏查。
 func buildRequestTypeFilterCondition(startArgIndex int, requestType int16) (string, []any) {
+	return buildRequestTypeFilterConditionWithAlias(startArgIndex, requestType, "")
+}
+
+func buildRequestTypeFilterConditionWithAlias(startArgIndex int, requestType int16, alias string) (string, []any) {
 	normalized := service.RequestTypeFromInt16(requestType)
 	requestTypeArg := int16(normalized)
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
 	switch normalized {
 	case service.RequestTypeSync:
-		return fmt.Sprintf("(request_type = $%d OR (request_type = %d AND stream = FALSE AND openai_ws_mode = FALSE))", startArgIndex, int16(service.RequestTypeUnknown)), []any{requestTypeArg}
+		return fmt.Sprintf("(%srequest_type = $%d OR (%srequest_type = %d AND %sstream = FALSE AND %sopenai_ws_mode = FALSE))", prefix, startArgIndex, prefix, int16(service.RequestTypeUnknown), prefix, prefix), []any{requestTypeArg}
 	case service.RequestTypeStream:
-		return fmt.Sprintf("(request_type = $%d OR (request_type = %d AND stream = TRUE AND openai_ws_mode = FALSE))", startArgIndex, int16(service.RequestTypeUnknown)), []any{requestTypeArg}
+		return fmt.Sprintf("(%srequest_type = $%d OR (%srequest_type = %d AND %sstream = TRUE AND %sopenai_ws_mode = FALSE))", prefix, startArgIndex, prefix, int16(service.RequestTypeUnknown), prefix, prefix), []any{requestTypeArg}
 	case service.RequestTypeWSV2:
-		return fmt.Sprintf("(request_type = $%d OR (request_type = %d AND openai_ws_mode = TRUE))", startArgIndex, int16(service.RequestTypeUnknown)), []any{requestTypeArg}
+		return fmt.Sprintf("(%srequest_type = $%d OR (%srequest_type = %d AND %sopenai_ws_mode = TRUE))", prefix, startArgIndex, prefix, int16(service.RequestTypeUnknown), prefix), []any{requestTypeArg}
 	default:
-		return fmt.Sprintf("request_type = $%d", startArgIndex), []any{requestTypeArg}
+		return fmt.Sprintf("%srequest_type = $%d", prefix, startArgIndex), []any{requestTypeArg}
 	}
 }
 

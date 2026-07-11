@@ -11,8 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var errFrontendNotEmbedded = errors.New("frontend not embedded")
-
 // PublicSettingsProvider is an interface to fetch public settings
 // This stub is needed for compilation when frontend is not embedded
 type PublicSettingsProvider interface {
@@ -21,6 +19,8 @@ type PublicSettingsProvider interface {
 
 // FrontendServer is a stub for non-embed builds
 type FrontendServer struct{}
+
+var errFrontendNotEmbedded = errors.New("frontend not embedded")
 
 // NewFrontendServer returns an error when frontend is not embedded
 func NewFrontendServer(settingsProvider PublicSettingsProvider) (*FrontendServer, error) {

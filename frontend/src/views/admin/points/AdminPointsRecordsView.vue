@@ -40,8 +40,8 @@
           </template>
           <template #cell-available_after="{ row }">
             <div class="space-y-0.5 font-mono text-sm tabular-nums text-gray-600 dark:text-dark-300">
-              <div>{{ t('points.account.available') }} {{ row.available_after != null ? row.available_after.toLocaleString() : '—' }}</div>
-              <div>{{ t('points.account.frozen') }} {{ row.frozen_after != null ? row.frozen_after.toLocaleString() : '—' }}</div>
+              <div>{{ t('points.stats.available') }} {{ row.available_after != null ? row.available_after.toLocaleString() : '—' }}</div>
+              <div>{{ t('points.stats.frozen') }} {{ row.frozen_after != null ? row.frozen_after.toLocaleString() : '—' }}</div>
             </div>
           </template>
           <template #cell-created_at="{ row }">

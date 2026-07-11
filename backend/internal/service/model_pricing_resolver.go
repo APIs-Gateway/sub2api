@@ -67,6 +67,7 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 	var chPricing *ChannelModelPricing
 	if input.GroupID != nil && r.channelService != nil {
 		chPricing = r.channelService.GetChannelModelPricing(ctx, *input.GroupID, input.Model)
+		chPricing = normalizeGPT56ChannelTokenPricing(input.Model, chPricing)
 		if chPricing != nil {
 			mode := chPricing.BillingMode
 			if mode == "" {
@@ -120,6 +121,7 @@ func (r *ModelPricingResolver) resolveBasePricing(model string) (*ModelPricing, 
 // applyChannelOverrides 应用渠道定价覆盖
 func (r *ModelPricingResolver) applyChannelOverrides(ctx context.Context, groupID int64, model string, resolved *ResolvedPricing) {
 	chPricing := r.channelService.GetChannelModelPricing(ctx, groupID, model)
+	chPricing = normalizeGPT56ChannelTokenPricing(model, chPricing)
 	if chPricing == nil {
 		return
 	}
@@ -141,6 +143,14 @@ func (r *ModelPricingResolver) applyChannelOverrides(ctx context.Context, groupI
 
 // applyTokenOverrides 应用 token 模式的渠道覆盖
 func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricing, resolved *ResolvedPricing) {
+	// The base can point at a shared dynamic-catalog or offline fallback entry.
+	// Channel pricing is local to this resolution and must never leak to another
+	// group or request.
+	if resolved.BasePricing != nil {
+		cloned := *resolved.BasePricing
+		resolved.BasePricing = &cloned
+	}
+
 	// 过滤掉所有价格字段都为空的无效 interval
 	validIntervals := filterValidIntervals(chPricing.Intervals)
 
@@ -150,6 +160,10 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 		// 区间不匹配时回退到 BasePricing，也需要覆盖图片价格
 		if resolved.BasePricing == nil {
 			resolved.BasePricing = &ModelPricing{}
+		} else {
+			// 防止修改 fallbackPrices 中的共享指针
+			cloned := *resolved.BasePricing
+			resolved.BasePricing = &cloned
 		}
 		if chPricing.ImageOutputPrice != nil {
 			resolved.BasePricing.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
@@ -163,6 +177,10 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 	// 否则用 flat 字段覆盖 BasePricing
 	if resolved.BasePricing == nil {
 		resolved.BasePricing = &ModelPricing{}
+	} else {
+		// 防止修改 fallbackPrices 中的共享指针
+		cloned := *resolved.BasePricing
+		resolved.BasePricing = &cloned
 	}
 
 	if chPricing.InputPrice != nil {
@@ -175,6 +193,8 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 	}
 	if chPricing.CacheWritePrice != nil {
 		resolved.BasePricing.CacheCreationPricePerToken = *chPricing.CacheWritePrice
+		resolved.BasePricing.CacheCreationPricePerTokenPriority = *chPricing.CacheWritePrice
+		resolved.BasePricing.CacheCreationPriceExplicit = true
 		resolved.BasePricing.CacheCreation5mPrice = *chPricing.CacheWritePrice
 		resolved.BasePricing.CacheCreation1hPrice = *chPricing.CacheWritePrice
 	}
@@ -243,6 +263,8 @@ func intervalToModelPricing(iv *PricingInterval, supportsCacheBreakdown bool, ch
 	}
 	if iv.CacheWritePrice != nil {
 		pricing.CacheCreationPricePerToken = *iv.CacheWritePrice
+		pricing.CacheCreationPricePerTokenPriority = *iv.CacheWritePrice
+		pricing.CacheCreationPriceExplicit = true
 		pricing.CacheCreation5mPrice = *iv.CacheWritePrice
 		pricing.CacheCreation1hPrice = *iv.CacheWritePrice
 	}

@@ -22,6 +22,8 @@ const messages: Record<string, string> = {
   'admin.usage.cacheReadCost': 'Cache Read Cost',
   'usage.inputTokenPrice': 'Input price',
   'usage.outputTokenPrice': 'Output price',
+  'usage.cacheWriteTokenPrice': 'Cache write price',
+  'usage.cacheReadTokenPrice': 'Cache read price',
   'usage.perMillionTokens': '/ 1M tokens',
   'usage.serviceTier': 'Service tier',
   'usage.serviceTierPriority': 'Fast',
@@ -197,10 +199,12 @@ describe('user UsageView tooltip', () => {
       service_tier: 'priority',
       input_cost: 0.020285,
       output_cost: 0.00303,
-      cache_creation_cost: 0,
+      cache_creation_cost: 0.0125,
       cache_read_cost: 0.069568,
       input_tokens: 4057,
       output_tokens: 101,
+      cache_creation_tokens: 2000,
+      cache_read_tokens: 278272,
     }
     setupState.tooltipVisible = true
     await nextTick()
@@ -214,6 +218,10 @@ describe('user UsageView tooltip', () => {
     expect(text).toContain('$0.092883')
     expect(text).toContain('$5.0000 / 1M tokens')
     expect(text).toContain('$30.0000 / 1M tokens')
+    expect(text).toContain('Cache write price')
+    expect(text).toContain('$6.2500 / 1M tokens')
+    expect(text).toContain('Cache read price')
+    expect(text).toContain('$0.2500 / 1M tokens')
   })
 
   it('exports csv with input and output unit price columns', async () => {
@@ -290,6 +298,13 @@ describe('user UsageView tooltip', () => {
     await setupState.exportToCSV()
 
     expect(exportedBlob).not.toBeNull()
+    const csvBytes = await new Promise<Uint8Array>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsArrayBuffer(exportedBlob as Blob)
+    })
+    expect(Array.from(csvBytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf])
     const hasSortedExportQuery = query.mock.calls.some((call) => {
       const params = call[0] as Record<string, unknown> | undefined
       const config = call[1]

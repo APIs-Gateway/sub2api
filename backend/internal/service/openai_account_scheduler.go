@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	openAIAccountScheduleLayerForcedAccount    = "forced_account"
 	openAIAccountScheduleLayerPreviousResponse = "previous_response_id"
 	openAIAccountScheduleLayerSessionSticky    = "session_hash"
 	openAIAccountScheduleLayerLoadBalance      = "load_balance"
@@ -1216,13 +1217,21 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	selection, decision, err := s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, false)
+	effectiveCapability := requiredCapability
+	if s.openAIImagesRequireDirectAPIKey() {
+		effectiveCapability = directOpenAIImagesCapability(requiredCapability)
+	}
+	selection, decision, err := s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", effectiveCapability, false)
 	if err == nil && selection != nil && selection.Account != nil {
 		return selection, decision, nil
 	}
-	// 如果要求 native 能力（如指定了模型）但没有可用的 APIKey 账号，回退到 basic（OAuth 账号）
-	if requiredCapability == OpenAIImagesCapabilityNative {
-		return s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", OpenAIImagesCapabilityBasic, false)
+	// 如果要求 native 能力（如指定了模型）但没有兼容账号，回退到 basic；直连策略仍仅保留 API Key 账号。
+	if effectiveCapability == OpenAIImagesCapabilityNative || effectiveCapability == OpenAIImagesCapabilityDirectNative {
+		fallbackCapability := OpenAIImagesCapabilityBasic
+		if effectiveCapability == OpenAIImagesCapabilityDirectNative {
+			fallbackCapability = OpenAIImagesCapabilityDirectBasic
+		}
+		return s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", fallbackCapability, false)
 	}
 	return selection, decision, err
 }
@@ -1241,6 +1250,17 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	decision := OpenAIAccountScheduleDecision{}
+	if forcedAccountID := openAIForcedAccountRoutingID(ctx); forcedAccountID > 0 {
+		selection, err := s.selectForcedOpenAIAccount(ctx, forcedAccountID, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact)
+		decision.Layer = openAIAccountScheduleLayerForcedAccount
+		if selection != nil && selection.Account != nil {
+			decision.SelectedAccountID = selection.Account.ID
+			decision.SelectedAccountType = selection.Account.Type
+			decision.CandidateCount = 1
+			decision.TopK = 1
+		}
+		return selection, decision, err
+	}
 	scheduler := s.getOpenAIAccountScheduler(ctx)
 	if scheduler == nil {
 		decision.Layer = openAIAccountScheduleLayerLoadBalance
@@ -1322,6 +1342,79 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		RequireCompact:          requireCompact,
 		ExcludedIDs:             excludedIDs,
 	})
+}
+
+func (s *OpenAIGatewayService) selectForcedOpenAIAccount(
+	ctx context.Context,
+	accountID int64,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredTransport OpenAIUpstreamTransport,
+	requiredCapability OpenAIEndpointCapability,
+	requiredImageCapability OpenAIImagesCapability,
+	requireCompact bool,
+) (*AccountSelectionResult, error) {
+	if accountID <= 0 {
+		return nil, forcedOpenAINoAvailableError(requestedModel)
+	}
+	if excludedIDs != nil {
+		if _, excluded := excludedIDs[accountID]; excluded {
+			return nil, forcedOpenAINoAvailableError(requestedModel)
+		}
+	}
+
+	account, err := s.getSchedulableAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if account == nil ||
+		!isOpenAIAccountEligibleForRequest(ctx, account, requestedModel, requireCompact, requiredCapability) ||
+		!accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability) ||
+		!s.isOpenAIAccountTransportCompatible(account, requiredTransport) ||
+		s.isOpenAIAccountRuntimeBlocked(account) {
+		return nil, forcedOpenAINoAvailableError(requestedModel)
+	}
+
+	account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, requestedModel, requireCompact, requiredCapability)
+	if account == nil ||
+		!accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability) ||
+		!s.isOpenAIAccountTransportCompatible(account, requiredTransport) ||
+		s.isOpenAIAccountRuntimeBlocked(account) {
+		return nil, forcedOpenAINoAvailableError(requestedModel)
+	}
+
+	result, acquireErr := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+	if acquireErr != nil {
+		return nil, acquireErr
+	}
+	if result != nil && result.Acquired {
+		return &AccountSelectionResult{
+			Account:     account,
+			Acquired:    true,
+			ReleaseFunc: result.ReleaseFunc,
+		}, nil
+	}
+
+	if s.concurrencyService == nil {
+		return nil, forcedOpenAINoAvailableError(requestedModel)
+	}
+	cfg := s.schedulingConfig()
+	return &AccountSelectionResult{
+		Account: account,
+		WaitPlan: &AccountWaitPlan{
+			AccountID:      account.ID,
+			MaxConcurrency: account.Concurrency,
+			Timeout:        cfg.FallbackWaitTimeout,
+			MaxWaiting:     cfg.FallbackMaxWaiting,
+		},
+	}, nil
+}
+
+func forcedOpenAINoAvailableError(requestedModel string) error {
+	if strings.TrimSpace(requestedModel) == "" {
+		return ErrNoAvailableAccounts
+	}
+	return fmt.Errorf("%w supporting forced OpenAI account for model: %s", ErrNoAvailableAccounts, requestedModel)
 }
 
 func accountSupportsOpenAICapabilities(account *Account, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {

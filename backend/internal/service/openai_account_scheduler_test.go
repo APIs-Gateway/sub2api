@@ -24,6 +24,14 @@ type schedulerTestOpenAIAccountRepo struct {
 	accounts []Account
 }
 
+type schedulerNilOpenAIAccountRepo struct {
+	AccountRepository
+}
+
+func (r schedulerNilOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
+	return nil, nil
+}
+
 func (r schedulerTestOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
 	for i := range r.accounts {
 		if r.accounts[i].ID == id {
@@ -321,6 +329,203 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabledUsesLega
 	require.Equal(t, int64(36002), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.False(t, decision.StickyPreviousHit)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_ForcedAccountIgnoresSelectedGroupPool(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(10107)
+	otherGroupID := int64(10108)
+	forcedAccountID := int64(36012)
+	accounts := []Account{
+		{
+			ID:          36011,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			GroupIDs:    []int64{groupID},
+		},
+		{
+			ID:          forcedAccountID,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    50,
+			GroupIDs:    []int64{otherGroupID},
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = false
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerGroupAwareOpenAIAccountRepo{schedulerTestOpenAIAccountRepo{accounts: accounts}},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		WithOpenAIForcedAccountRouting(ctx, forcedAccountID),
+		&groupID,
+		"",
+		"session_hash_forced_account",
+		"gpt-5.5",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, forcedAccountID, selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerForcedAccount, decision.Layer)
+	require.Equal(t, forcedAccountID, decision.SelectedAccountID)
+
+	selection, _, err = svc.SelectAccountWithScheduler(
+		WithOpenAIForcedAccountRouting(ctx, forcedAccountID),
+		&groupID,
+		"",
+		"session_hash_forced_account_excluded",
+		"gpt-5.5",
+		map[int64]struct{}{forcedAccountID: {}},
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrNoAvailableAccounts))
+	require.Nil(t, selection)
+}
+
+func TestOpenAIForcedAccountRoutingContext(t *testing.T) {
+	ctx := context.Background()
+	var nilCtx context.Context
+
+	require.Zero(t, openAIForcedAccountRoutingID(nilCtx))
+	require.True(t, ctx == WithOpenAIForcedAccountRouting(ctx, 0))
+	require.True(t, ctx == WithOpenAIForcedAccountRouting(ctx, -1))
+	require.Zero(t, openAIForcedAccountRoutingID(context.WithValue(ctx, openAIForcedAccountRoutingContextKey{}, "not-an-id")))
+	require.Zero(t, openAIForcedAccountRoutingID(context.WithValue(ctx, openAIForcedAccountRoutingContextKey{}, int64(0))))
+
+	routed := WithOpenAIForcedAccountRouting(ctx, 36013)
+	require.False(t, ctx == routed)
+	require.Equal(t, int64(36013), openAIForcedAccountRoutingID(routed))
+}
+
+func TestOpenAIGatewayService_SelectForcedOpenAIAccountBranches(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	forcedAccountID := int64(36014)
+	activeAccount := Account{
+		ID:          forcedAccountID,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 2,
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.FallbackWaitTimeout = 3 * time.Second
+	cfg.Gateway.Scheduling.FallbackMaxWaiting = 7
+
+	t.Run("invalid account id returns plain no available error", func(t *testing.T) {
+		svc := &OpenAIGatewayService{cfg: cfg}
+
+		selection, err := svc.selectForcedOpenAIAccount(
+			ctx,
+			0,
+			"",
+			nil,
+			OpenAIUpstreamTransportAny,
+			"",
+			"",
+			false,
+		)
+
+		require.ErrorIs(t, err, ErrNoAvailableAccounts)
+		require.Equal(t, ErrNoAvailableAccounts, err)
+		require.Nil(t, selection)
+	})
+
+	t.Run("missing account does not fall back", func(t *testing.T) {
+		svc := &OpenAIGatewayService{
+			accountRepo: schedulerNilOpenAIAccountRepo{},
+			cfg:         cfg,
+		}
+
+		selection, err := svc.selectForcedOpenAIAccount(
+			ctx,
+			forcedAccountID,
+			"gpt-5.5",
+			nil,
+			OpenAIUpstreamTransportAny,
+			"",
+			"",
+			false,
+		)
+
+		require.ErrorIs(t, err, ErrNoAvailableAccounts)
+		require.Nil(t, selection)
+	})
+
+	t.Run("capability mismatch rejects forced account", func(t *testing.T) {
+		account := activeAccount
+		account.Type = AccountTypeOAuth
+		svc := &OpenAIGatewayService{
+			accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
+			cfg:         cfg,
+		}
+
+		selection, err := svc.selectForcedOpenAIAccount(
+			ctx,
+			forcedAccountID,
+			"gpt-5.5",
+			nil,
+			OpenAIUpstreamTransportAny,
+			OpenAIEndpointCapabilityEmbeddings,
+			"",
+			false,
+		)
+
+		require.ErrorIs(t, err, ErrNoAvailableAccounts)
+		require.Nil(t, selection)
+	})
+
+	t.Run("busy forced account returns wait plan only for the forced account", func(t *testing.T) {
+		svc := &OpenAIGatewayService{
+			accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{activeAccount}},
+			cfg:         cfg,
+			concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{
+				acquireResults: map[int64]bool{forcedAccountID: false},
+			}),
+		}
+
+		selection, err := svc.selectForcedOpenAIAccount(
+			ctx,
+			forcedAccountID,
+			"gpt-5.5",
+			nil,
+			OpenAIUpstreamTransportAny,
+			"",
+			"",
+			false,
+		)
+
+		require.NoError(t, err)
+		require.NotNil(t, selection)
+		require.NotNil(t, selection.Account)
+		require.Equal(t, forcedAccountID, selection.Account.ID)
+		require.False(t, selection.Acquired)
+		require.NotNil(t, selection.WaitPlan)
+		require.Equal(t, forcedAccountID, selection.WaitPlan.AccountID)
+		require.Equal(t, activeAccount.Concurrency, selection.WaitPlan.MaxConcurrency)
+		require.Equal(t, 3*time.Second, selection.WaitPlan.Timeout)
+		require.Equal(t, 7, selection.WaitPlan.MaxWaiting)
+	})
 }
 
 func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_RequiredWSV2_SkipsHTTPOnlyAccount(t *testing.T) {
@@ -697,6 +902,54 @@ func TestOpenAIGatewayService_ReportScheduleFailureRecordsRuntimeStats(t *testin
 	snapshot := svc.SnapshotOpenAIAccountSchedulerMetrics()
 	require.Equal(t, 1, snapshot.RuntimeStatsAccountCount)
 	require.Zero(t, snapshot.AccountSwitchTotal)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithSchedulerForImages_ServerPolicyRequiresDirectAPIKey(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10107)
+	oauth := &Account{ID: 37001, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1}
+	apiKey := &Account{ID: 37002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{"api_key": "sk-test"}}
+	snapshotCache := &openAISnapshotCacheStub{
+		snapshotAccounts: []*Account{oauth, apiKey},
+		accountsByID:     map[int64]*Account{oauth.ID: oauth, apiKey.ID: apiKey},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{*oauth, *apiKey}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                &config.Config{Gateway: config.GatewayConfig{DisableOpenAIImagesStreaming: true}},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		schedulerSnapshot:  &SchedulerSnapshotService{cache: snapshotCache},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImages(ctx, &groupID, "direct-images", "gpt-image-2", nil, OpenAIImagesCapabilityNative)
+
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, apiKey.ID, selection.Account.ID)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithSchedulerForImages_ServerPolicyKeepsDirectFallback(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10108)
+	oauth := &Account{ID: 37003, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1}
+	snapshotCache := &openAISnapshotCacheStub{
+		snapshotAccounts: []*Account{oauth},
+		accountsByID:     map[int64]*Account{oauth.ID: oauth},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{*oauth}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                &config.Config{Gateway: config.GatewayConfig{DisableOpenAIImagesStreaming: true}},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		schedulerSnapshot:  &SchedulerSnapshotService{cache: snapshotCache},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImages(ctx, &groupID, "direct-images-fallback", "gpt-image-2", nil, OpenAIImagesCapabilityNative)
+
+	require.Error(t, err)
+	require.Nil(t, selection)
 }
 
 func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyRateLimitedAccountFallsBackToFreshCandidate(t *testing.T) {

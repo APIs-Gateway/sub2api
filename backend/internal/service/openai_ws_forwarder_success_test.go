@@ -61,7 +61,7 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 			"type": "response.created",
 			"response": map[string]any{
 				"id":    "resp_new_1",
-				"model": "gpt-5.1",
+				"model": "gpt-5.6-sol-max",
 			},
 		}); err != nil {
 			t.Errorf("write response.created failed: %v", err)
@@ -71,7 +71,7 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 			"type": "response.completed",
 			"response": map[string]any{
 				"id":    "resp_new_1",
-				"model": "gpt-5.1",
+				"model": "gpt-5.6-sol-max",
 				"usage": map[string]any{
 					"input_tokens":  12,
 					"output_tokens": 7,
@@ -142,7 +142,7 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 		},
 	}
 
-	body := []byte(`{"model":"gpt-5.1","stream":false,"previous_response_id":"resp_prev_1","input":[{"type":"input_text","text":"hello"}]}`)
+	body := []byte(`{"model":"gpt-5.6-sol-max","stream":false,"previous_response_id":"resp_prev_1","input":[{"type":"input_text","text":"hello"}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -151,6 +151,8 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
 	require.Equal(t, "resp_new_1", result.RequestID)
 	require.True(t, result.OpenAIWSMode)
+	require.NotNil(t, result.ReasoningEffort)
+	require.Equal(t, "max", *result.ReasoningEffort)
 	require.False(t, gjson.GetBytes(upstream.lastBody, "model").Exists(), "WSv2 成功时不应回落 HTTP 上游")
 
 	received := <-receivedCh
@@ -675,10 +677,11 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 		userAgent      string
 		originator     string
 		wantOriginator string
+		wantUserAgent  string
 	}{
-		{name: "desktop originator preserved", originator: "Codex Desktop", wantOriginator: "Codex Desktop"},
-		{name: "vscode originator preserved", originator: "codex_vscode", wantOriginator: "codex_vscode"},
-		{name: "official ua fallback to codex_cli_rs", userAgent: "Codex Desktop/1.2.3", wantOriginator: "codex_cli_rs"},
+		{name: "official desktop user agent pairs originator", userAgent: "Codex Desktop/1.2.3", originator: "codex_cli_rs", wantOriginator: "Codex Desktop", wantUserAgent: "Codex Desktop/1.2.3"},
+		{name: "official TUI user agent repairs mismatch", userAgent: "codex-tui/0.144.1", originator: "codex_cli_rs", wantOriginator: "codex-tui", wantUserAgent: "codex-tui/0.144.1"},
+		{name: "originator without user agent falls back", originator: "codex_vscode", wantOriginator: "codex_cli_rs", wantUserAgent: codexCLIUserAgent},
 	}
 
 	for _, tt := range tests {
@@ -743,6 +746,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Equal(t, tt.wantOriginator, captureDialer.lastHeaders.Get("originator"))
+			require.Equal(t, tt.wantUserAgent, captureDialer.lastHeaders.Get("user-agent"))
 		})
 	}
 }

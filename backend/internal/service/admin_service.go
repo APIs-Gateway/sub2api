@@ -135,6 +135,7 @@ type CreateUserInput struct {
 	Password      string
 	Username      string
 	Notes         string
+	Role          string
 	Balance       *float64
 	Concurrency   int
 	RPMLimit      int
@@ -150,6 +151,7 @@ type UpdateUserInput struct {
 	Concurrency   *int     // 使用指针区分"未提供"和"设置为0"
 	RPMLimit      *int     // 使用指针区分"未提供"和"设置为0"
 	Status        string
+	Role          string
 	AllowedGroups *[]int64 // 使用指针区分"未提供"和"设置为空数组"
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
@@ -699,6 +701,14 @@ func (s *adminServiceImpl) GetUserIncludeDeleted(ctx context.Context, id int64) 
 }
 
 func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInput) (*User, error) {
+	role := input.Role
+	if role == "" {
+		role = RoleUser
+	}
+	if !isAdminManagedUserRole(role) {
+		return nil, fmt.Errorf("invalid user role: %q", role)
+	}
+
 	balance := 0.0
 	if input.Balance != nil {
 		balance = *input.Balance
@@ -710,7 +720,7 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 		Email:         input.Email,
 		Username:      input.Username,
 		Notes:         input.Notes,
-		Role:          RoleUser, // Always create as regular user, never admin
+		Role:          role,
 		Balance:       balance,
 		Concurrency:   input.Concurrency,
 		RPMLimit:      input.RPMLimit,
@@ -745,6 +755,10 @@ func (s *adminServiceImpl) assignDefaultSubscriptions(ctx context.Context, userI
 }
 
 func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *UpdateUserInput) (*User, error) {
+	if input.Role != "" && !isAdminManagedUserRole(input.Role) {
+		return nil, fmt.Errorf("invalid user role: %q", input.Role)
+	}
+
 	// 校验用户专属分组倍率：必须 > 0（nil 合法，表示清除专属倍率）
 	if input.GroupRates != nil {
 		for groupID, rate := range input.GroupRates {
@@ -788,6 +802,9 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 
 	if input.Status != "" {
 		user.Status = input.Status
+	}
+	if input.Role != "" {
+		user.Role = input.Role
 	}
 
 	if input.Concurrency != nil {
@@ -843,6 +860,10 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	}
 
 	return user, nil
+}
+
+func isAdminManagedUserRole(role string) bool {
+	return role == RoleUser || role == RoleAdmin
 }
 
 func sameInt64Set(a, b []int64) bool {

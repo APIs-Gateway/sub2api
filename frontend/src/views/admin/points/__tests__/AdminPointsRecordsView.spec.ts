@@ -18,7 +18,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 const ledgerRows = [
-  { id: 1, user_id: 7, kind: 'earn', points: 50, available_after: 50, created_at: '2026-06-01T00:00:00Z' },
+  { id: 1, user_id: 7, kind: 'earn', points: 50, available_after: 50, frozen_after: 20, created_at: '2026-06-01T00:00:00Z' },
   { id: 2, user_id: 7, kind: 'to_balance', points: -20, available_after: null, created_at: '2026-06-02T00:00:00Z' },
 ]
 
@@ -37,6 +37,11 @@ describe('admin AdminPointsRecordsView', () => {
     const text = wrapper.text()
     expect(text).toContain('#7')
     expect(text).toContain('+50')
+    expect(text).toContain('points.stats.available 50')
+    expect(text).toContain('points.stats.frozen 20')
+    expect(text).toContain('points.stats.frozen —')
+    expect(text).not.toContain('points.account.available')
+    expect(text).not.toContain('points.account.frozen')
     expect(text).toContain('—') // available_after null
   })
 

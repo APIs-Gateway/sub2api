@@ -1,7 +1,6 @@
 package service
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -13,7 +12,7 @@ import (
 // 与生产 timezone.Init("Asia/Shanghai") 对齐。既有 per-day 测试用绝对 east-8（shanghaiLoc）不受影响。
 func TestMain(m *testing.M) {
 	_ = timezone.Init("Asia/Shanghai")
-	os.Exit(m.Run())
+	m.Run()
 }
 
 // ── ResetWindows：东八区自然 日/周/月 边界惰性重置 ──────────────────────────────

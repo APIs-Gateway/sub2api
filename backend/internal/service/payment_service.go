@@ -122,6 +122,7 @@ type OrderListParams struct {
 	Page        int
 	PageSize    int
 	Status      string
+	Statuses    []string
 	OrderType   string
 	PaymentType string
 	Keyword     string
@@ -362,15 +363,17 @@ func psSliceContains(sl []string, s string) bool {
 
 // Subscription validity period unit constants.
 const (
-	validityUnitWeek  = "week"
-	validityUnitMonth = "month"
+	validityUnitWeek   = "week"
+	validityUnitWeeks  = "weeks"
+	validityUnitMonth  = "month"
+	validityUnitMonths = "months"
 )
 
 func psComputeValidityDays(days int, unit string) int {
 	switch unit {
-	case validityUnitWeek:
+	case validityUnitWeek, validityUnitWeeks:
 		return days * 7
-	case validityUnitMonth:
+	case validityUnitMonth, validityUnitMonths:
 		return days * 30
 	default:
 		return days

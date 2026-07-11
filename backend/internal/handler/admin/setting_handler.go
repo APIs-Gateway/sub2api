@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -3090,7 +3091,18 @@ func (h *SettingHandler) SendTestEmail(c *gin.Context) {
 
 	siteName := h.settingService.GetSiteName(c.Request.Context())
 	subject := "[" + siteName + "] Test Email"
-	body := `
+	body := buildSMTPTestEmailBody(siteName)
+
+	if err := h.emailService.SendEmailWithConfig(config, req.Email, subject, body); err != nil {
+		response.BadRequest(c, "Failed to send test email: "+err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{"message": "Test email sent successfully"})
+}
+
+func buildSMTPTestEmailBody(siteName string) string {
+	return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -3105,9 +3117,9 @@ func (h *SettingHandler) SendTestEmail(c *gin.Context) {
     </style>
 </head>
 <body>
-    <div class="container">
+	<div class="container">
         <div class="header">
-            <h1>` + siteName + `</h1>
+            <h1>` + html.EscapeString(siteName) + `</h1>
         </div>
         <div class="content">
             <div class="success">✓</div>
@@ -3121,13 +3133,6 @@ func (h *SettingHandler) SendTestEmail(c *gin.Context) {
 </body>
 </html>
 `
-
-	if err := h.emailService.SendEmailWithConfig(config, req.Email, subject, body); err != nil {
-		response.BadRequest(c, "Failed to send test email: "+err.Error())
-		return
-	}
-
-	response.Success(c, gin.H{"message": "Test email sent successfully"})
 }
 
 // GetAdminAPIKey 获取管理员 API Key 状态

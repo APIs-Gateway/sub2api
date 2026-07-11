@@ -291,25 +291,17 @@ func createPointsEarnOrder(t *testing.T, client *dbent.Client, user *dbent.User,
 
 // ============================ AccrueEarnForRedeem ============================
 
-func TestAccrueEarnForRedeem_BalanceCode_GlobalRate(t *testing.T) {
+func TestAccrueEarnForRedeem_BalanceCode_NoEarn(t *testing.T) {
 	t.Parallel()
 	aff := &pointsEarnAffiliateRepo{summaries: inviteePair(2, 1, nil)}
 	prepo := &pointsEarnRepo{}
 	svc := newEarnPointsService(pointsEarnDefaults(), aff, prepo)
 
-	// floor(100 × 20% / 0.01) = 2000。
 	pts, err := svc.AccrueEarnForRedeem(context.Background(), 2, balanceCode(77, 100))
 	require.NoError(t, err)
-	require.EqualValues(t, 2000, pts)
-
-	require.Len(t, prepo.calls, 1)
-	c := prepo.calls[0]
-	require.EqualValues(t, 1, c.InviterID, "返给邀请人")
-	require.EqualValues(t, 2, c.SourceUserID, "来源是被邀请人")
-	require.EqualValues(t, 77, c.SourceRedeemCodeID, "兑换码来源锚")
-	require.EqualValues(t, 0, c.SourceOrderID, "兑换码 earning 不写订单锚")
-	require.EqualValues(t, 2000, c.Points)
-	require.InDelta(t, 0.01, c.PegAt, 1e-9)
+	require.EqualValues(t, 0, pts, "balance 兑换码可能是赠码/批量码，不默认返邀请积分")
+	require.Empty(t, prepo.calls)
+	require.Zero(t, aff.ensureN, "balance 码不应触碰身份图谱")
 }
 
 func TestAccrueEarnForRedeem_SubscriptionCode_BaseFromCashback(t *testing.T) {
@@ -345,12 +337,15 @@ func TestAccrueEarnForRedeem_SubscriptionCode_BaseNotFound(t *testing.T) {
 func TestAccrueEarnForRedeem_PerUserRateOverride(t *testing.T) {
 	t.Parallel()
 	override := 50.0
-	aff := &pointsEarnAffiliateRepo{summaries: inviteePair(2, 1, &override)}
+	aff := &pointsEarnAffiliateRepo{
+		summaries: inviteePair(2, 1, &override),
+		subBase:   map[string]float64{"7:30": 100},
+	}
 	prepo := &pointsEarnRepo{}
 	svc := newEarnPointsService(pointsEarnDefaults(), aff, prepo)
 
 	// 邀请人专属 50% 覆盖全局 20% → floor(100 × 50% / 0.01) = 5000。
-	pts, err := svc.AccrueEarnForRedeem(context.Background(), 2, balanceCode(77, 100))
+	pts, err := svc.AccrueEarnForRedeem(context.Background(), 2, subscriptionCode(77, 7, 30))
 	require.NoError(t, err)
 	require.EqualValues(t, 5000, pts)
 }
@@ -455,10 +450,13 @@ func TestAccrueEarnForRedeem_UnknownType(t *testing.T) {
 
 func TestAccrueEarnForRedeem_Idempotent(t *testing.T) {
 	t.Parallel()
-	aff := &pointsEarnAffiliateRepo{summaries: inviteePair(2, 1, nil)}
+	aff := &pointsEarnAffiliateRepo{
+		summaries: inviteePair(2, 1, nil),
+		subBase:   map[string]float64{"7:30": 100},
+	}
 	prepo := &pointsEarnRepo{}
 	svc := newEarnPointsService(pointsEarnDefaults(), aff, prepo)
-	code := balanceCode(77, 100)
+	code := subscriptionCode(77, 7, 30)
 
 	pts1, err := svc.AccrueEarnForRedeem(context.Background(), 2, code)
 	require.NoError(t, err)
@@ -473,11 +471,14 @@ func TestAccrueEarnForRedeem_Idempotent(t *testing.T) {
 
 func TestAccrueEarnForRedeem_RepoError(t *testing.T) {
 	t.Parallel()
-	aff := &pointsEarnAffiliateRepo{summaries: inviteePair(2, 1, nil)}
+	aff := &pointsEarnAffiliateRepo{
+		summaries: inviteePair(2, 1, nil),
+		subBase:   map[string]float64{"7:30": 100},
+	}
 	prepo := &pointsEarnRepo{forceErr: errors.New("db down")}
 	svc := newEarnPointsService(pointsEarnDefaults(), aff, prepo)
 
-	pts, err := svc.AccrueEarnForRedeem(context.Background(), 2, balanceCode(77, 100))
+	pts, err := svc.AccrueEarnForRedeem(context.Background(), 2, subscriptionCode(77, 7, 30))
 	require.Error(t, err)
 	require.EqualValues(t, 0, pts)
 }

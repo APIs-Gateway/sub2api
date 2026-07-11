@@ -19,6 +19,37 @@ describe('AppSidebar custom SVG styles', () => {
   })
 })
 
+describe('AppSidebar scroll position persistence', () => {
+  it('binds a template ref to the sidebar nav element', () => {
+    expect(componentSource).toContain('ref="sidebarNavRef"')
+    expect(componentSource).toContain('sidebar-nav')
+  })
+
+  it('declares sidebarNavRef in script setup', () => {
+    expect(componentSource).toContain('const sidebarNavRef = ref<HTMLElement | null>(null)')
+  })
+
+  it('saves scroll position on beforeUnmount', () => {
+    expect(componentSource).toContain('onBeforeUnmount')
+    expect(componentSource).toContain('appStore.sidebarScrollTop')
+    expect(componentSource).toContain('sidebarNavRef.value.scrollTop')
+  })
+
+  it('restores scroll position on mount', () => {
+    expect(componentSource).toContain('onMounted')
+    expect(componentSource).toContain('appStore.sidebarScrollTop')
+    expect(componentSource).toContain('nextTick')
+  })
+})
+
+describe('AppSidebar home link', () => {
+  it('links the logo and site name to the role-aware home page', () => {
+    expect(componentSource).toContain("const homePath = computed(() => (isAdmin.value ? '/admin/dashboard' : '/dashboard'))")
+    expect(componentSource.match(/:to="homePath"/g)).toHaveLength(2)
+    expect(componentSource.match(/@click="handleMenuItemClick\(homePath\)"/g)).toHaveLength(2)
+  })
+})
+
 describe('AppSidebar header styles', () => {
   it('does not clip the version badge dropdown', () => {
     const sidebarHeaderBlockMatch = styleSource.match(/\.sidebar-header\s*\{[\s\S]*?\n {2}\}/)

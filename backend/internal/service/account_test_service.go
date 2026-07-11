@@ -591,9 +591,17 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		req.Header.Set("accept", "text/event-stream")
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
+		req.Header.Set("Originator", "codex_cli_rs")
+		if customUA := strings.TrimSpace(account.GetOpenAIUserAgent()); customUA != "" {
+			req.Header.Set("User-Agent", customUA)
+		} else {
+			req.Header.Set("User-Agent", codexCLIUserAgent)
+		}
 		if chatgptAccountID != "" {
 			req.Header.Set("chatgpt-account-id", chatgptAccountID)
 		}
+		enforceCodexIdentityHeaders(req.Header)
 	}
 
 	// Get proxy URL
@@ -760,6 +768,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		if chatgptAccountID != "" {
 			req.Header.Set("chatgpt-account-id", chatgptAccountID)
 		}
+		enforceCodexIdentityHeaders(req.Header)
 	}
 
 	proxyURL := ""
@@ -1488,7 +1497,10 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 	}
 
-	if isOpenAIImageModel(modelID) && openai_compat.ShouldUseResponsesAPI(account.Extra) {
+	if isOpenAIImageModel(modelID) &&
+		!OpenAIImagesStreamingDisabled(s.cfg) &&
+		!OpenAIResponsesImageGenerationDisabled(s.cfg) &&
+		openai_compat.ShouldUseResponsesAPI(account.Extra) {
 		return s.testOpenAIImageAPIKeyResponses(c, ctx, account, modelID, prompt, normalizedBaseURL, authToken)
 	}
 
@@ -1729,6 +1741,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	if chatgptAccountID := strings.TrimSpace(account.GetChatGPTAccountID()); chatgptAccountID != "" {
 		req.Header.Set("chatgpt-account-id", chatgptAccountID)
 	}
+	enforceCodexIdentityHeaders(req.Header)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

@@ -8,13 +8,19 @@ const {
   listWithEtag,
   getBatchTodayStats,
   getAllProxies,
-  getAllGroups
+  getAllGroups,
+  setPrivacy,
+  showError,
+  showSuccess
 } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
   getAllProxies: vi.fn(),
-  getAllGroups: vi.fn()
+  getAllGroups: vi.fn(),
+  setPrivacy: vi.fn(),
+  showError: vi.fn(),
+  showSuccess: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -26,7 +32,8 @@ vi.mock('@/api/admin', () => ({
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
-      toggleSchedulable: vi.fn()
+      toggleSchedulable: vi.fn(),
+      setPrivacy
     },
     proxies: {
       getAll: getAllProxies
@@ -39,8 +46,8 @@ vi.mock('@/api/admin', () => ({
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn(),
-    showSuccess: vi.fn(),
+    showError,
+    showSuccess,
     showInfo: vi.fn()
   })
 }))
@@ -130,6 +137,9 @@ describe('admin AccountsView usage windows hint', () => {
     getBatchTodayStats.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
+    setPrivacy.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
 
     listAccounts.mockResolvedValue({
       items: [],
@@ -160,5 +170,37 @@ describe('admin AccountsView usage windows hint', () => {
     const hint = wrapper.find('[data-test="usage-windows-hint"]')
     expect(hint.exists()).toBe(true)
     expect(hint.text()).toBe('admin.accounts.usageWindowsHint')
+  })
+
+  it('shows privacy result toast based on returned privacy mode', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    setPrivacy.mockResolvedValueOnce({
+      id: 42,
+      platform: 'openai',
+      extra: { privacy_mode: 'training_set_cf_blocked' }
+    })
+    await (wrapper.vm as any).handleSetPrivacy({
+      id: 42,
+      platform: 'openai',
+      extra: {}
+    })
+
+    expect(showError).toHaveBeenCalledWith('admin.accounts.privacyCfBlocked')
+    expect(showSuccess).not.toHaveBeenCalled()
+
+    setPrivacy.mockResolvedValueOnce({
+      id: 43,
+      platform: 'antigravity',
+      extra: { privacy_mode: 'privacy_set' }
+    })
+    await (wrapper.vm as any).handleSetPrivacy({
+      id: 43,
+      platform: 'antigravity',
+      extra: {}
+    })
+
+    expect(showSuccess).toHaveBeenCalledWith('admin.accounts.privacyAntigravitySet')
   })
 })

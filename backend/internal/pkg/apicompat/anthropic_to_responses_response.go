@@ -102,13 +102,15 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 		resp.Usage.CacheReadInputTokens +
 		resp.Usage.CacheCreationInputTokens
 	out.Usage = &ResponsesUsage{
-		InputTokens:  totalInputTokens,
-		OutputTokens: resp.Usage.OutputTokens,
-		TotalTokens:  totalInputTokens + resp.Usage.OutputTokens,
+		InputTokens:              totalInputTokens,
+		OutputTokens:             resp.Usage.OutputTokens,
+		TotalTokens:              totalInputTokens + resp.Usage.OutputTokens,
+		CacheCreationInputTokens: resp.Usage.CacheCreationInputTokens,
 	}
-	if resp.Usage.CacheReadInputTokens > 0 {
+	if resp.Usage.CacheReadInputTokens > 0 || resp.Usage.CacheCreationInputTokens > 0 {
 		out.Usage.InputTokensDetails = &ResponsesInputTokensDetails{
-			CachedTokens: resp.Usage.CacheReadInputTokens,
+			CachedTokens:     resp.Usage.CacheReadInputTokens,
+			CacheWriteTokens: resp.Usage.CacheCreationInputTokens,
 		}
 	}
 
@@ -497,13 +499,15 @@ func makeResponsesCompletedEvent(
 	// back to match OpenAI Responses semantics where input_tokens is the total.
 	totalInputTokens := state.InputTokens + state.CacheReadInputTokens + state.CacheCreationInputTokens
 	usage := &ResponsesUsage{
-		InputTokens:  totalInputTokens,
-		OutputTokens: state.OutputTokens,
-		TotalTokens:  totalInputTokens + state.OutputTokens,
+		InputTokens:              totalInputTokens,
+		OutputTokens:             state.OutputTokens,
+		TotalTokens:              totalInputTokens + state.OutputTokens,
+		CacheCreationInputTokens: state.CacheCreationInputTokens,
 	}
-	if state.CacheReadInputTokens > 0 {
+	if state.CacheReadInputTokens > 0 || state.CacheCreationInputTokens > 0 {
 		usage.InputTokensDetails = &ResponsesInputTokensDetails{
-			CachedTokens: state.CacheReadInputTokens,
+			CachedTokens:     state.CacheReadInputTokens,
+			CacheWriteTokens: state.CacheCreationInputTokens,
 		}
 	}
 

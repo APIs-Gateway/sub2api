@@ -31,6 +31,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
+	h.applyOpenAIForcedAccountRouting(c, apiKey)
 
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -159,8 +160,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available compatible accounts", streamStarted)
+				h.respondNoAccountError(c, h.gatewayService, apiKey, requestModel, requestModel, service.PlatformOpenAI, "No available compatible accounts", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseStreaming, streamStarted)
 				return
 			}
 			if lastFailoverErr != nil {
@@ -171,8 +171,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			return
 		}
 		if selection == nil || selection.Account == nil {
-			markOpsRoutingCapacityLimited(c)
-			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available compatible accounts", streamStarted)
+			h.respondNoAccountError(c, h.gatewayService, apiKey, requestModel, requestModel, service.PlatformOpenAI, "No available compatible accounts", nil, noAccountCapacityMarkAlways, openAINoAccountResponseStreaming, streamStarted)
 			return
 		}
 

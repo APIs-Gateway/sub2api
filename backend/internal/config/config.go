@@ -708,6 +708,12 @@ type GatewayConfig struct {
 	// CodexImageGenerationBridgeEnabled: 是否为 Codex `/v1/responses` 自动注入 image_generation 工具和桥接指令。
 	// 默认关闭，避免纯文本 Codex 请求被意外改写；显式携带 image_generation 工具的请求仍按分组能力转发。
 	CodexImageGenerationBridgeEnabled bool `mapstructure:"codex_image_generation_bridge_enabled"`
+	// DisableOpenAIImagesStreaming: 强制 OpenAI Images API 返回非流式 JSON，并在上游请求中关闭 stream/partial_images。
+	// 默认关闭，保持既有的省略 stream 时自动补流行为。
+	DisableOpenAIImagesStreaming bool `mapstructure:"disable_openai_images_streaming"`
+	// DisableOpenAIResponsesImageGeneration: 禁止通过 OpenAI Responses API 触发生图，并让 Images API 仅走 API Key 的上游 Images 端点。
+	// 默认关闭，保持既有的 Responses/OAuth 图片桥接兼容行为。
+	DisableOpenAIResponsesImageGeneration bool `mapstructure:"disable_openai_responses_image_generation"`
 	// ForcedCodexInstructionsTemplateFile: 服务端强制附加到 Codex 顶层 instructions 的模板文件路径。
 	// 模板渲染后会直接覆盖最终 instructions；若需要保留客户端 system 转换结果，请在模板中显式引用 {{ .ExistingInstructions }}。
 	ForcedCodexInstructionsTemplateFile string `mapstructure:"forced_codex_instructions_template_file"`
@@ -795,10 +801,17 @@ type GatewayConfig struct {
 	UserGroupRateCacheTTLSeconds int `mapstructure:"user_group_rate_cache_ttl_seconds"`
 	// ModelsListCacheTTLSeconds: /v1/models 模型列表短缓存 TTL（秒）
 	ModelsListCacheTTLSeconds int `mapstructure:"models_list_cache_ttl_seconds"`
+	// OpenAIForcedAccountRoutes: 隐形 OpenAI 用户专属账号路由。命中后忽略所选分组的账号池，强制调度指定账号。
+	OpenAIForcedAccountRoutes []OpenAIForcedAccountRoute `mapstructure:"openai_forced_account_routes"`
 
 	// UserMessageQueue: 用户消息串行队列配置
 	// 对 role:"user" 的真实用户消息实施账号级串行化 + RPM 自适应延迟
 	UserMessageQueue UserMessageQueueConfig `mapstructure:"user_message_queue"`
+}
+
+type OpenAIForcedAccountRoute struct {
+	UserID    int64 `mapstructure:"user_id"`
+	AccountID int64 `mapstructure:"account_id"`
 }
 
 // GatewayOpenAIHTTP2Config OpenAI HTTP 上游协议配置。
@@ -1820,6 +1833,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.max_account_switches_gemini", 3)
 	viper.SetDefault("gateway.force_codex_cli", false)
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
+	viper.SetDefault("gateway.disable_openai_images_streaming", false)
+	viper.SetDefault("gateway.disable_openai_responses_image_generation", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
 	viper.SetDefault("gateway.openai_ws.enabled", true)
@@ -1888,6 +1903,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.proxy_probe_response_read_max_bytes", int64(1024*1024))
 	viper.SetDefault("gateway.gemini_debug_response_headers", false)
 	viper.SetDefault("gateway.connection_pool_isolation", ConnectionPoolIsolationAccountProxy)
+	viper.SetDefault("gateway.openai_forced_account_routes", []OpenAIForcedAccountRoute{})
 	// HTTP 上游连接池配置（针对 5000+ 并发用户优化）
 	viper.SetDefault("gateway.max_idle_conns", 2560)          // 最大空闲连接总数（高并发场景可调大）
 	viper.SetDefault("gateway.max_idle_conns_per_host", 120)  // 每主机最大空闲连接（HTTP/2 场景默认）
@@ -1923,7 +1939,9 @@ func setDefaults() {
 	viper.SetDefault("gateway.usage_record.worker_count", 128)
 	viper.SetDefault("gateway.usage_record.queue_size", 16384)
 	viper.SetDefault("gateway.usage_record.task_timeout_seconds", 5)
-	viper.SetDefault("gateway.usage_record.overflow_policy", UsageRecordOverflowPolicySample)
+	// 默认 sync：队列满时由提交方内联执行（提交点在响应写出之后，不阻塞客户端）。
+	// sample/drop 仅保留给显式配置的运维场景；默认丢弃会造成扣费与 usage_logs 的对账缺口。
+	viper.SetDefault("gateway.usage_record.overflow_policy", UsageRecordOverflowPolicySync)
 	viper.SetDefault("gateway.usage_record.overflow_sample_percent", 10)
 	viper.SetDefault("gateway.usage_record.auto_scale_enabled", true)
 	viper.SetDefault("gateway.usage_record.auto_scale_min_workers", 128)

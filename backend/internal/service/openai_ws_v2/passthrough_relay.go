@@ -768,6 +768,15 @@ func parseUsageAndAccumulate(
 	if !cachedResult.Exists() {
 		cachedResult = gjson.GetBytes(message, "response.usage.prompt_tokens_details.cached_tokens")
 	}
+	cacheCreationResult := firstExistingGJSONResult(message,
+		"response.usage.input_tokens_details.cache_write_tokens",
+		"response.usage.prompt_tokens_details.cache_write_tokens",
+		"response.usage.input_tokens_details.cache_creation_tokens",
+		"response.usage.prompt_tokens_details.cache_creation_tokens",
+		"response.usage.cache_creation_input_tokens",
+		"response.usage.cache_creation_tokens",
+		"response.usage.cache_write_tokens",
+	)
 	imageTokens := usageResult.Get("output_tokens_details.image_tokens").Int()
 	if imageTokens == 0 {
 		imageTokens = usageResult.Get("completion_tokens_details.image_tokens").Int()
@@ -776,7 +785,8 @@ func parseUsageAndAccumulate(
 	inputTokens, inputOK := parseUsageIntField(inputResult, true)
 	outputTokens, outputOK := parseUsageIntField(outputResult, true)
 	cachedTokens, cachedOK := parseUsageIntField(cachedResult, false)
-	if !inputOK || !outputOK || !cachedOK {
+	cacheCreationTokens, cacheCreationOK := parseUsageIntField(cacheCreationResult, false)
+	if !inputOK || !outputOK || !cachedOK || !cacheCreationOK {
 		recordUsageParseFailure()
 		if onParseFailure != nil {
 			onParseFailure(eventType, usageRaw)
@@ -787,7 +797,7 @@ func parseUsageAndAccumulate(
 	parsedUsage := Usage{
 		InputTokens:              inputTokens,
 		OutputTokens:             outputTokens,
-		CacheCreationInputTokens: int(usageResult.Get("cache_creation_input_tokens").Int()),
+		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     cachedTokens,
 		ImageOutputTokens:        int(imageTokens),
 	}
@@ -808,6 +818,15 @@ func parseUsageIntField(value gjson.Result, required bool) (int, bool) {
 		return 0, false
 	}
 	return int(value.Int()), true
+}
+
+func firstExistingGJSONResult(message []byte, fields ...string) gjson.Result {
+	for _, field := range fields {
+		if result := gjson.GetBytes(message, field); result.Exists() {
+			return result
+		}
+	}
+	return gjson.Result{}
 }
 
 func enrichResult(result *RelayResult, state *relayState, duration time.Duration) {
@@ -844,7 +863,8 @@ func isDisconnectError(err error) bool {
 		strings.Contains(message, "unexpected eof") ||
 		strings.Contains(message, "use of closed network connection") ||
 		strings.Contains(message, "connection reset by peer") ||
-		strings.Contains(message, "broken pipe")
+		strings.Contains(message, "broken pipe") ||
+		strings.Contains(message, "an existing connection was forcibly closed by the remote host")
 }
 
 func isTerminalEvent(eventType string) bool {

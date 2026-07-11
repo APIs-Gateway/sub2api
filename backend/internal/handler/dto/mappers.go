@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -744,9 +745,40 @@ func UserSubscriptionFromServiceAdmin(sub *service.UserSubscription) *AdminUserS
 }
 
 func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscription {
+	now := time.Now()
 	calendarDay := 0
 	if sub.GrantedTotalUSD > 0 || sub.DailyAmountUSD > 0 {
-		calendarDay = sub.CalendarDayAt(time.Now())
+		calendarDay = sub.CalendarDayAt(now)
+	}
+
+	dailyWindowStart := sub.DailyWindowStart
+	weeklyWindowStart := sub.WeeklyWindowStart
+	monthlyWindowStart := sub.MonthlyWindowStart
+	dailyUsageUSD := sub.DailyUsageUSD
+	weeklyUsageUSD := sub.WeeklyUsageUSD
+	monthlyUsageUSD := sub.MonthlyUsageUSD
+	if sub.Status == service.SubscriptionStatusActive && now.Before(sub.ExpiresAt) {
+		if sub.DailyLimitUSD != nil {
+			dailyUsageUSD, dailyWindowStart = resetSubscriptionUsageWindowForDisplay(
+				dailyUsageUSD,
+				dailyWindowStart,
+				timezone.StartOfDay(now),
+			)
+		}
+		if sub.WeeklyLimitUSD != nil {
+			weeklyUsageUSD, weeklyWindowStart = resetSubscriptionUsageWindowForDisplay(
+				weeklyUsageUSD,
+				weeklyWindowStart,
+				timezone.StartOfWeek(now),
+			)
+		}
+		if sub.MonthlyLimitUSD != nil {
+			monthlyUsageUSD, monthlyWindowStart = resetSubscriptionUsageWindowForDisplay(
+				monthlyUsageUSD,
+				monthlyWindowStart,
+				timezone.StartOfMonth(now),
+			)
+		}
 	}
 
 	return UserSubscription{
@@ -756,12 +788,12 @@ func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscrip
 		StartsAt:           sub.StartsAt,
 		ExpiresAt:          sub.ExpiresAt,
 		Status:             sub.Status,
-		DailyWindowStart:   sub.DailyWindowStart,
-		WeeklyWindowStart:  sub.WeeklyWindowStart,
-		MonthlyWindowStart: sub.MonthlyWindowStart,
-		DailyUsageUSD:      sub.DailyUsageUSD,
-		WeeklyUsageUSD:     sub.WeeklyUsageUSD,
-		MonthlyUsageUSD:    sub.MonthlyUsageUSD,
+		DailyWindowStart:   dailyWindowStart,
+		WeeklyWindowStart:  weeklyWindowStart,
+		MonthlyWindowStart: monthlyWindowStart,
+		DailyUsageUSD:      dailyUsageUSD,
+		WeeklyUsageUSD:     weeklyUsageUSD,
+		MonthlyUsageUSD:    monthlyUsageUSD,
 		DailyLimitUSD:      sub.DailyLimitUSD,
 		WeeklyLimitUSD:     sub.WeeklyLimitUSD,
 		MonthlyLimitUSD:    sub.MonthlyLimitUSD,
@@ -778,6 +810,13 @@ func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscrip
 		User:               UserFromServiceShallow(sub.User),
 		Group:              GroupFromServiceShallow(sub.Group),
 	}
+}
+
+func resetSubscriptionUsageWindowForDisplay(usage float64, windowStart *time.Time, periodStart time.Time) (float64, *time.Time) {
+	if windowStart != nil && !windowStart.Before(periodStart) {
+		return usage, windowStart
+	}
+	return 0, &periodStart
 }
 
 func BulkAssignResultFromService(r *service.BulkAssignResult) *BulkAssignResult {

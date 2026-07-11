@@ -57,18 +57,28 @@ func newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo UsageLogReposi
 type openAIRecordUsageBestEffortLogRepoStub struct {
 	UsageLogRepository
 
-	bestEffortErr   error
-	createErr       error
-	bestEffortCalls int
-	createCalls     int
-	lastLog         *UsageLog
-	lastCtxErr      error
+	bestEffortErr    error
+	createErr        error
+	waitForCtxDone   bool
+	bestEffortCalls  int
+	createCalls      int
+	lastLog          *UsageLog
+	lastCtxErr       error
+	bestEffortCtxErr error
+	createCtxErr     error
 }
 
 func (s *openAIRecordUsageBestEffortLogRepoStub) CreateBestEffort(ctx context.Context, log *UsageLog) error {
 	s.bestEffortCalls++
 	s.lastLog = log
 	s.lastCtxErr = ctx.Err()
+	s.bestEffortCtxErr = ctx.Err()
+	if s.waitForCtxDone {
+		<-ctx.Done()
+		s.lastCtxErr = ctx.Err()
+		s.bestEffortCtxErr = ctx.Err()
+		return ctx.Err()
+	}
 	return s.bestEffortErr
 }
 
@@ -76,6 +86,7 @@ func (s *openAIRecordUsageBestEffortLogRepoStub) Create(ctx context.Context, log
 	s.createCalls++
 	s.lastLog = log
 	s.lastCtxErr = ctx.Err()
+	s.createCtxErr = ctx.Err()
 	return false, s.createErr
 }
 
@@ -413,7 +424,8 @@ func TestGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing(t *te
 	require.Equal(t, billingRepo.lastCmd.RequestID, usageRepo.lastLog.RequestID)
 }
 
-func TestGatewayServiceRecordUsage_DroppedUsageLogDoesNotSyncFallback(t *testing.T) {
+func TestGatewayServiceRecordUsage_DroppedUsageLogFallsBackToSyncCreate(t *testing.T) {
+	// 计费成功后 best-effort 队列超时也要同步兜底，避免 usage_logs 对账缺口。
 	usageRepo := &openAIRecordUsageBestEffortLogRepoStub{
 		bestEffortErr: MarkUsageLogCreateDropped(errors.New("usage log best-effort queue full")),
 	}
@@ -437,7 +449,22 @@ func TestGatewayServiceRecordUsage_DroppedUsageLogDoesNotSyncFallback(t *testing
 
 	require.NoError(t, err)
 	require.Equal(t, 1, usageRepo.bestEffortCalls)
-	require.Equal(t, 0, usageRepo.createCalls)
+	require.Equal(t, 1, usageRepo.createCalls)
+	require.NoError(t, usageRepo.lastCtxErr)
+}
+
+func TestWriteUsageLogBestEffort_ExpiredQueueContextUsesFreshSyncFallback(t *testing.T) {
+	usageRepo := &openAIRecordUsageBestEffortLogRepoStub{
+		waitForCtxDone: true,
+		createErr:      errors.New("sync fallback unavailable"),
+	}
+
+	writeUsageLogBestEffort(context.Background(), usageRepo, &UsageLog{RequestID: "expired-best-effort-context"}, "service.gateway")
+
+	require.Equal(t, 1, usageRepo.bestEffortCalls)
+	require.Equal(t, 1, usageRepo.createCalls)
+	require.ErrorIs(t, usageRepo.bestEffortCtxErr, context.DeadlineExceeded)
+	require.NoError(t, usageRepo.createCtxErr)
 }
 
 func TestGatewayServiceRecordUsage_BillingErrorSkipsUsageLogWrite(t *testing.T) {

@@ -242,6 +242,62 @@ func TestChatCompletionsToResponses_ReasoningEffort(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
+func TestChatCompletionsToResponses_ResponseFormatJsonObject(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model:          "gpt-4o",
+		Messages:       []ChatMessage{{Role: "user", Content: json.RawMessage(`"Return JSON"`)}},
+		ResponseFormat: json.RawMessage(`{"type":"json_object"}`),
+	}
+
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Text)
+	assert.JSONEq(t, `{"type":"json_object"}`, string(resp.Text.Format))
+
+	payload, err := json.Marshal(resp)
+	require.NoError(t, err)
+	var serialized struct {
+		Text ResponsesText `json:"text"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &serialized))
+	assert.JSONEq(t, `{"type":"json_object"}`, string(serialized.Text.Format))
+}
+
+func TestChatCompletionsToResponses_ResponseFormatJsonSchema(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model:    "gpt-4o",
+		Messages: []ChatMessage{{Role: "user", Content: json.RawMessage(`"Return structured JSON"`)}},
+		ResponseFormat: json.RawMessage(`{
+			"type":"json_schema",
+			"json_schema":{
+				"name":"answer",
+				"schema":{
+					"type":"object",
+					"properties":{"ok":{"type":"boolean"}},
+					"required":["ok"],
+					"additionalProperties":false
+				},
+				"strict":true
+			}
+		}`),
+	}
+
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Text)
+	assert.JSONEq(t, `{
+		"type":"json_schema",
+		"name":"answer",
+		"schema":{
+			"type":"object",
+			"properties":{"ok":{"type":"boolean"}},
+			"required":["ok"],
+			"additionalProperties":false
+		},
+		"strict":true
+	}`, string(resp.Text.Format))
+}
+
 func TestChatCompletionsToResponses_ImageURL(t *testing.T) {
 	content := `[{"type":"text","text":"Describe this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,abc123"}}]`
 	req := &ChatCompletionsRequest{
@@ -362,7 +418,7 @@ func TestChatCompletionsResponseToResponses_DeepSeekReasoningOnlyFallsBackToMess
 		}},
 	}
 
-	out := ChatCompletionsResponseToResponses(resp, "deepseek-reasoner")
+	out := ChatCompletionsResponseToResponses(resp, "deepseek-reasoner", nil, false, nil)
 
 	require.Len(t, out.Output, 2)
 	require.Equal(t, "reasoning", out.Output[0].Type)
@@ -396,7 +452,7 @@ func TestChatCompletionsResponseToResponses_DeepSeekReasoningToolCallDoesNotFall
 		}},
 	}
 
-	out := ChatCompletionsResponseToResponses(resp, "deepseek-reasoner")
+	out := ChatCompletionsResponseToResponses(resp, "deepseek-reasoner", nil, false, nil)
 
 	require.Len(t, out.Output, 2)
 	require.Equal(t, "reasoning", out.Output[0].Type)
@@ -473,6 +529,25 @@ func TestChatCompletionsToResponses_ServiceTier(t *testing.T) {
 	resp, err := ChatCompletionsToResponses(req)
 	require.NoError(t, err)
 	assert.Equal(t, "flex", resp.ServiceTier)
+}
+
+func TestChatCompletionsToResponses_ParallelToolCalls(t *testing.T) {
+	for _, value := range []bool{false, true} {
+		req := &ChatCompletionsRequest{
+			Model:             "gpt-4o",
+			ParallelToolCalls: &value,
+			Messages:          []ChatMessage{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+		}
+
+		resp, err := ChatCompletionsToResponses(req)
+		require.NoError(t, err)
+		require.NotNil(t, resp.ParallelToolCalls)
+		assert.Equal(t, value, *resp.ParallelToolCalls)
+
+		payload, err := json.Marshal(resp)
+		require.NoError(t, err)
+		assert.Contains(t, string(payload), `"parallel_tool_calls":`+string(mustMarshalJSON(t, value)))
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,7 +1132,8 @@ func TestResponsesEventToChatChunks_Completed(t *testing.T) {
 				OutputTokens: 20,
 				TotalTokens:  70,
 				InputTokensDetails: &ResponsesInputTokensDetails{
-					CachedTokens: 30,
+					CachedTokens:     30,
+					CacheWriteTokens: 10,
 				},
 			},
 		},
@@ -1076,6 +1152,43 @@ func TestResponsesEventToChatChunks_Completed(t *testing.T) {
 	assert.Equal(t, 70, chunks[1].Usage.TotalTokens)
 	require.NotNil(t, chunks[1].Usage.PromptTokensDetails)
 	assert.Equal(t, 30, chunks[1].Usage.PromptTokensDetails.CachedTokens)
+	assert.Equal(t, 10, chunks[1].Usage.PromptTokensDetails.CacheWriteTokens)
+}
+
+func TestChatUsageToResponsesUsagePreservesCacheCreationTokens(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		details        ChatTokenDetails
+		wantCreation   int
+		wantCacheWrite int
+	}{
+		{
+			name:           "cache creation fallback",
+			details:        ChatTokenDetails{CacheCreationTokens: 11},
+			wantCreation:   11,
+			wantCacheWrite: 0,
+		},
+		{
+			name:           "cache write takes precedence",
+			details:        ChatTokenDetails{CacheCreationTokens: 11, CacheWriteTokens: 13},
+			wantCreation:   13,
+			wantCacheWrite: 13,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := ChatUsageToResponsesUsage(&ChatUsage{
+				PromptTokens:        42,
+				CompletionTokens:    7,
+				PromptTokensDetails: &tt.details,
+			})
+
+			require.NotNil(t, usage)
+			require.Equal(t, tt.wantCreation, usage.CacheCreationInputTokens)
+			require.NotNil(t, usage.InputTokensDetails)
+			require.Equal(t, tt.details.CacheCreationTokens, usage.InputTokensDetails.CacheCreationTokens)
+			require.Equal(t, tt.wantCacheWrite, usage.InputTokensDetails.CacheWriteTokens)
+		})
+	}
 }
 
 func TestResponsesEventToChatChunks_CompletedWithReasoningTokens(t *testing.T) {

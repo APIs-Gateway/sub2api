@@ -23,12 +23,13 @@ func TestParseOpenAIWSEventEnvelope(t *testing.T) {
 func TestParseOpenAIWSResponseUsageFromCompletedEvent(t *testing.T) {
 	usage := &OpenAIUsage{}
 	parseOpenAIWSResponseUsageFromCompletedEvent(
-		[]byte(`{"type":"response.completed","response":{"usage":{"input_tokens":11,"output_tokens":7,"input_tokens_details":{"cached_tokens":3}}}}`),
+		[]byte(`{"type":"response.completed","response":{"usage":{"input_tokens":11,"output_tokens":7,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":2}}}}`),
 		usage,
 	)
 	require.Equal(t, 11, usage.InputTokens)
 	require.Equal(t, 7, usage.OutputTokens)
 	require.Equal(t, 3, usage.CacheReadInputTokens)
+	require.Equal(t, 2, usage.CacheCreationInputTokens)
 
 	parseOpenAIWSResponseUsageFromCompletedEvent(
 		[]byte(`{"type":"response.completed","response":{"usage":{"prompt_tokens":19,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":4}}}}`),
@@ -37,6 +38,15 @@ func TestParseOpenAIWSResponseUsageFromCompletedEvent(t *testing.T) {
 	require.Equal(t, 19, usage.InputTokens)
 	require.Equal(t, 5, usage.OutputTokens)
 	require.Equal(t, 4, usage.CacheReadInputTokens)
+	require.Equal(t, 0, usage.CacheCreationInputTokens)
+
+	populateOpenAIUsageFromResponseJSON(
+		[]byte(`{"usage":{"input_tokens":100,"output_tokens":4,"input_tokens_details":{"cached_tokens":20,"cache_write_tokens":30}}}`),
+		usage,
+	)
+	require.Equal(t, 100, usage.InputTokens)
+	require.Equal(t, 20, usage.CacheReadInputTokens)
+	require.Equal(t, 30, usage.CacheCreationInputTokens)
 }
 
 func TestOpenAIWSEventShouldParseUsageTerminalEvents(t *testing.T) {

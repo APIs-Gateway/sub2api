@@ -1008,6 +1008,7 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 		}
 		return nil, classifyCreatePaymentError(req, sel.ProviderKey, err)
 	}
+	sanitizeCreatePaymentResponseDetails(pr)
 	_, err = s.entClient.PaymentOrder.UpdateOneID(order.ID).
 		SetNillablePaymentTradeNo(psNilIfEmpty(pr.TradeNo)).
 		SetNillablePayURL(psNilIfEmpty(pr.PayURL)).
@@ -1033,6 +1034,22 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 	resp := buildCreateOrderResponse(order, req, payAmount, sel, pr, resultType)
 	resp.ResumeToken = resumeToken
 	return resp, nil
+}
+
+func sanitizeCreatePaymentResponseDetails(pr *payment.CreatePaymentResponse) {
+	if pr == nil {
+		return
+	}
+	pr.TradeNo = removePostgresTextNUL(pr.TradeNo)
+	pr.PayURL = removePostgresTextNUL(pr.PayURL)
+	pr.QRCode = removePostgresTextNUL(pr.QRCode)
+}
+
+func removePostgresTextNUL(value string) string {
+	if !strings.ContainsRune(value, 0) {
+		return value
+	}
+	return strings.ReplaceAll(value, "\x00", "")
 }
 
 func buildProviderCreatePaymentRequest(req CreateOrderRequest, sel *payment.InstanceSelection, orderID, amount, subject string) payment.CreatePaymentRequest {
@@ -1363,7 +1380,9 @@ func (s *PaymentService) GetOrderByID(ctx context.Context, orderID int64) (*dben
 
 func (s *PaymentService) GetUserOrders(ctx context.Context, userID int64, p OrderListParams) ([]*dbent.PaymentOrder, int, error) {
 	q := s.entClient.PaymentOrder.Query().Where(paymentorder.UserIDEQ(userID))
-	if p.Status != "" {
+	if len(p.Statuses) > 0 {
+		q = q.Where(paymentorder.StatusIn(p.Statuses...))
+	} else if p.Status != "" {
 		q = q.Where(paymentorder.StatusEQ(p.Status))
 	}
 	if p.OrderType != "" {
@@ -1390,7 +1409,9 @@ func (s *PaymentService) AdminListOrders(ctx context.Context, userID int64, p Or
 	if userID > 0 {
 		q = q.Where(paymentorder.UserIDEQ(userID))
 	}
-	if p.Status != "" {
+	if len(p.Statuses) > 0 {
+		q = q.Where(paymentorder.StatusIn(p.Statuses...))
+	} else if p.Status != "" {
 		q = q.Where(paymentorder.StatusEQ(p.Status))
 	}
 	if p.OrderType != "" {

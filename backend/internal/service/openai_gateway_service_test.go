@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/cespare/xxhash/v2"
 	"github.com/gin-gonic/gin"
@@ -1330,6 +1331,44 @@ func TestOpenAIStreamingResponseFailedBeforeOutputCapacityErrorReturnsFailover(t
 	require.Empty(t, rec.Body.String())
 }
 
+func TestOpenAIStreamingResponseFailedBeforeOutputServerOverloadedCodeReturnsFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+			"",
+			"event: response.failed",
+			`data: {"type":"response.failed","response":{"id":"resp_1","error":{"code":"server_is_overloaded","message":"Please retry later."}}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-overloaded-failed"}},
+	}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "Please retry later")
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+}
+
 func TestOpenAIStreamingPreambleOnlyMissingTerminalReturnsFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
@@ -2170,10 +2209,11 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 		userAgent      string
 		originator     string
 		wantOriginator string
+		wantUserAgent  string
 	}{
-		{name: "desktop originator preserved", originator: "Codex Desktop", wantOriginator: "Codex Desktop"},
-		{name: "vscode originator preserved", originator: "codex_vscode", wantOriginator: "codex_vscode"},
-		{name: "official ua fallback to codex_cli_rs", userAgent: "Codex Desktop/1.2.3", wantOriginator: "codex_cli_rs"},
+		{name: "official desktop user agent pairs originator", userAgent: "Codex Desktop/1.2.3", originator: "codex_cli_rs", wantOriginator: "Codex Desktop", wantUserAgent: "Codex Desktop/1.2.3"},
+		{name: "official TUI user agent repairs mismatch", userAgent: "codex-tui/0.144.1", originator: "codex_cli_rs", wantOriginator: "codex-tui", wantUserAgent: "codex-tui/0.144.1"},
+		{name: "originator without user agent falls back", originator: "codex_vscode", wantOriginator: "codex_cli_rs", wantUserAgent: codexCLIUserAgent},
 	}
 
 	for _, tt := range tests {
@@ -2198,6 +2238,7 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 			req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", isCodexCLI)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantOriginator, req.Header.Get("originator"))
+			require.Equal(t, tt.wantUserAgent, req.Header.Get("user-agent"))
 		})
 	}
 }
@@ -2459,10 +2500,11 @@ func TestParseSSEUsage_SelectiveParsing(t *testing.T) {
 	require.Equal(t, 7, usage.CacheReadInputTokens)
 
 	// completed 事件，应提取 usage
-	svc.parseSSEUsage(`{"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5,"input_tokens_details":{"cached_tokens":2}}}}`, usage)
+	svc.parseSSEUsage(`{"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":1}}}}`, usage)
 	require.Equal(t, 3, usage.InputTokens)
 	require.Equal(t, 5, usage.OutputTokens)
 	require.Equal(t, 2, usage.CacheReadInputTokens)
+	require.Equal(t, 1, usage.CacheCreationInputTokens)
 
 	// done 事件同样可能携带最终 usage
 	svc.parseSSEUsage(`{"type":"response.done","response":{"usage":{"input_tokens":13,"output_tokens":15,"input_tokens_details":{"cached_tokens":4}}}}`, usage)
@@ -2483,17 +2525,72 @@ func TestParseSSEUsage_SelectiveParsing(t *testing.T) {
 }
 
 func TestExtractOpenAIUsageFromJSONBytes_AcceptsResponseAndChatUsageShapes(t *testing.T) {
-	usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{"id":"resp_1","usage":{"input_tokens":3,"output_tokens":5,"input_tokens_details":{"cached_tokens":2}}}`))
+	usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{"id":"resp_1","usage":{"input_tokens":3,"output_tokens":5,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":1}}}`))
 	require.True(t, ok)
 	require.Equal(t, 3, usage.InputTokens)
 	require.Equal(t, 5, usage.OutputTokens)
 	require.Equal(t, 2, usage.CacheReadInputTokens)
+	require.Equal(t, 1, usage.CacheCreationInputTokens)
 
-	usage, ok = extractOpenAIUsageFromJSONBytes([]byte(`{"type":"response.completed","response":{"usage":{"prompt_tokens":13,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":4}}}}`))
+	usage, ok = extractOpenAIUsageFromJSONBytes([]byte(`{"type":"response.completed","response":{"usage":{"prompt_tokens":13,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":4,"cache_write_tokens":3}}}}`))
 	require.True(t, ok)
 	require.Equal(t, 13, usage.InputTokens)
 	require.Equal(t, 7, usage.OutputTokens)
 	require.Equal(t, 4, usage.CacheReadInputTokens)
+	require.Equal(t, 3, usage.CacheCreationInputTokens)
+}
+
+func TestCopyOpenAIUsageFromResponsesUsagePreservesCacheCreationTokens(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		usage apicompat.ResponsesUsage
+		want  int
+	}{
+		{
+			name: "details cache creation fallback",
+			usage: apicompat.ResponsesUsage{
+				InputTokens:  31,
+				OutputTokens: 9,
+				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
+					CachedTokens:        5,
+					CacheCreationTokens: 12,
+				},
+			},
+			want: 12,
+		},
+		{
+			name: "details cache write takes precedence",
+			usage: apicompat.ResponsesUsage{
+				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
+					CacheCreationTokens: 12,
+					CacheWriteTokens:    14,
+				},
+			},
+			want: 14,
+		},
+		{
+			name: "top level cache creation wins",
+			usage: apicompat.ResponsesUsage{
+				CacheCreationInputTokens: 16,
+				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
+					CacheCreationTokens: 12,
+					CacheWriteTokens:    14,
+				},
+			},
+			want: 16,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := copyOpenAIUsageFromResponsesUsage(&tt.usage)
+			require.Equal(t, tt.want, usage.CacheCreationInputTokens)
+		})
+	}
+}
+
+func TestOpenAIUsageFromGJSON_NestedCacheWriteZeroWins(t *testing.T) {
+	usage, ok := openAIUsageFromGJSON(gjson.Parse(`{"input_tokens":3,"output_tokens":5,"cache_write_tokens":7,"input_tokens_details":{"cache_write_tokens":0}}`))
+	require.True(t, ok)
+	require.Zero(t, usage.CacheCreationInputTokens)
 }
 
 func TestExtractCodexFinalResponse_SampleReplay(t *testing.T) {

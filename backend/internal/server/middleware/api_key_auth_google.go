@@ -81,7 +81,35 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		// per-day：不再按 user.Balance<=0 早拒（与主中间件一致）。套餐额度在卡的 today_remaining、
 		// 不在钱包，准入由 handler 的 CheckBillingEligibility（per-day Admit）权威判定，否则
 		// 「钱包 0 + 有今日套餐额度」用户会被误拒、Admit 不可达。
+		var subscription *service.UserSubscription
+		if subscriptionService != nil {
+			loaded, subErr := subscriptionService.GetActiveUserSubscription(c.Request.Context(), apiKey.User.ID)
+			if subErr == nil && loaded != nil {
+				subscription = loaded
+				needsMaintenance, validateErr := subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
+				if needsMaintenance {
+					refreshed, maintenanceErr := subscriptionService.EnsureWindowMaintenance(c.Request.Context(), subscription)
+					if maintenanceErr != nil {
+						abortWithGoogleError(c, 500, "Failed to maintain subscription usage windows")
+						return
+					}
+					subscription = refreshed
+					_, validateErr = subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
+				}
+				if validateErr != nil && !(isSubscriptionLimitError(validateErr) && apiKey.User.Balance > 0) {
+					status := 403
+					if isSubscriptionLimitError(validateErr) {
+						status = 429
+					}
+					abortWithGoogleError(c, status, validateErr.Error())
+					return
+				}
+			}
+		}
 
+		if subscription != nil {
+			c.Set(string(ContextKeySubscription), subscription)
+		}
 		c.Set(string(ContextKeyAPIKey), apiKey)
 		c.Set(string(ContextKeyUser), AuthSubject{
 			UserID:      apiKey.User.ID,

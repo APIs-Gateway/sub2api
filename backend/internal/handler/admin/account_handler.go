@@ -659,7 +659,7 @@ func (h *AccountHandler) Update(c *gin.Context) {
 // 仅对 platform=openai && type=apikey 账号生效；其他账号无操作。
 // 探测本身在 goroutine 中执行（会发一次 HTTP 请求到上游），不会阻塞
 // 当前请求。探测错误仅记录日志，不向上下文传播：探测失败时标记保持缺失，
-// 网关会按"现状即证据"默认走 Responses。
+// 网关会默认走 Chat Completions 直转。
 func (h *AccountHandler) scheduleOpenAIResponsesProbe(account *service.Account) {
 	if account == nil || account.Platform != service.PlatformOpenAI || account.Type != service.AccountTypeAPIKey {
 		return

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
@@ -74,13 +72,13 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 	clientStream := gjson.GetBytes(body, "stream").Bool()
 
-	// 1b. Extract reasoning effort and service tier from the raw body before any transformation.
-	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
+	// 1b. Extract service tier from the raw body before any transformation.
 	serviceTier := extractOpenAIServiceTierFromBody(body)
 
 	// 2. Resolve model mapping (same as ForwardAsChatCompletions)
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
 
@@ -172,18 +170,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	recordUpstream429Attempt(account.ID)
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
-		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
-		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -415,12 +402,9 @@ func extractCCStreamUsage(payload string) *OpenAIUsage {
 	if !usageResult.Exists() || !usageResult.IsObject() {
 		return nil
 	}
-	u := OpenAIUsage{
-		InputTokens:  int(gjson.Get(payload, "usage.prompt_tokens").Int()),
-		OutputTokens: int(gjson.Get(payload, "usage.completion_tokens").Int()),
-	}
-	if cached := gjson.Get(payload, "usage.prompt_tokens_details.cached_tokens"); cached.Exists() {
-		u.CacheReadInputTokens = int(cached.Int())
+	u, ok := openAIUsageFromGJSON(usageResult)
+	if !ok {
+		return nil
 	}
 	return &u
 }
@@ -446,16 +430,9 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		return nil, fmt.Errorf("read upstream body: %w", err)
 	}
 
-	var ccResp apicompat.ChatCompletionsResponse
 	var usage OpenAIUsage
-	if err := json.Unmarshal(respBody, &ccResp); err == nil && ccResp.Usage != nil {
-		usage = OpenAIUsage{
-			InputTokens:  ccResp.Usage.PromptTokens,
-			OutputTokens: ccResp.Usage.CompletionTokens,
-		}
-		if ccResp.Usage.PromptTokensDetails != nil {
-			usage.CacheReadInputTokens = ccResp.Usage.PromptTokensDetails.CachedTokens
-		}
+	if parsedUsage, ok := openAIUsageFromGJSON(gjson.GetBytes(respBody, "usage")); ok {
+		usage = parsedUsage
 	}
 
 	if s.responseHeaderFilter != nil {

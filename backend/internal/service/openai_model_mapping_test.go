@@ -95,6 +95,15 @@ func TestResolveOpenAIForwardModel(t *testing.T) {
 			expectedModel:      "gpt-5.5",
 		},
 		{
+			name: "preserves gpt-5.5-pro instead of group default",
+			account: &Account{
+				Credentials: map[string]any{},
+			},
+			requestedModel:     "gpt-5.5-pro",
+			defaultMappedModel: "gpt-5.5",
+			expectedModel:      "gpt-5.5-pro",
+		},
+		{
 			name: "preserves compact-spelled gpt5.5 instead of group default",
 			account: &Account{
 				Credentials: map[string]any{},
@@ -218,6 +227,9 @@ func TestResolveOpenAICompactForwardModel(t *testing.T) {
 
 func TestNormalizeCodexModel(t *testing.T) {
 	cases := map[string]string{
+		"gpt-5.6-sol":               "gpt-5.6-sol",
+		"gpt-5.6-terra-high":        "gpt-5.6-terra",
+		"openai/gpt5.6-luna":        "gpt-5.6-luna",
 		"gpt-5.3-codex-spark":       "gpt-5.3-codex-spark",
 		"gpt-5.3-codex-spark-high":  "gpt-5.3-codex-spark",
 		"gpt-5.3-codex-spark-xhigh": "gpt-5.3-codex-spark",
@@ -262,6 +274,12 @@ func TestNormalizeOpenAIModelForUpstream(t *testing.T) {
 			want:    "gpt-5.4",
 		},
 		{
+			name:    "oauth preserves GPT-5.5 Pro model",
+			account: &Account{Type: AccountTypeOAuth},
+			model:   "openai/gpt-5.5-pro",
+			want:    "gpt-5.5-pro",
+		},
+		{
 			name:    "oauth preserves codex auto review model",
 			account: &Account{Type: AccountTypeOAuth},
 			model:   "codex-auto-review",
@@ -300,6 +318,34 @@ func TestUsageBillingModelCandidatesPreserveCodexAutoReviewModel(t *testing.T) {
 	for i := range expected {
 		if candidates[i] != expected[i] {
 			t.Fatalf("usageBillingModelCandidates(codex-auto-review) = %#v, want %#v", candidates, expected)
+		}
+	}
+}
+
+func TestUsageBillingModelCandidatesNormalizeGPT56Aliases(t *testing.T) {
+	candidates := usageBillingModelCandidates("openai/gpt5.6-luna")
+
+	expected := []string{"openai/gpt5.6-luna", "gpt-5.6-luna"}
+	if len(candidates) != len(expected) {
+		t.Fatalf("usageBillingModelCandidates(openai/gpt5.6-luna) = %#v, want %#v", candidates, expected)
+	}
+	for i := range expected {
+		if candidates[i] != expected[i] {
+			t.Fatalf("usageBillingModelCandidates(openai/gpt5.6-luna) = %#v, want %#v", candidates, expected)
+		}
+	}
+}
+
+func TestUsageBillingModelCandidatesPreserveGPT55ProModel(t *testing.T) {
+	candidates := usageBillingModelCandidates("openai/gpt-5.5-pro")
+
+	expected := []string{"openai/gpt-5.5-pro", "gpt-5.5-pro"}
+	if len(candidates) != len(expected) {
+		t.Fatalf("usageBillingModelCandidates(openai/gpt-5.5-pro) = %#v, want %#v", candidates, expected)
+	}
+	for i := range expected {
+		if candidates[i] != expected[i] {
+			t.Fatalf("usageBillingModelCandidates(openai/gpt-5.5-pro) = %#v, want %#v", candidates, expected)
 		}
 	}
 }

@@ -9,7 +9,11 @@ import (
 )
 
 var codexModelMap = map[string]string{
+	"gpt-5.6-sol":                "gpt-5.6-sol",
+	"gpt-5.6-terra":              "gpt-5.6-terra",
+	"gpt-5.6-luna":               "gpt-5.6-luna",
 	"gpt-5.5":                    "gpt-5.5",
+	"gpt-5.5-pro":                "gpt-5.5-pro",
 	"codex-auto-review":          "codex-auto-review",
 	"gpt-5.4":                    "gpt-5.4",
 	"gpt-5.4-mini":               "gpt-5.4-mini",
@@ -57,10 +61,14 @@ var codexVersionModelPrefixes = []struct {
 	prefix string
 	target string
 }{
+	{prefix: "gpt-5.6-sol", target: "gpt-5.6-sol"},
+	{prefix: "gpt-5.6-terra", target: "gpt-5.6-terra"},
+	{prefix: "gpt-5.6-luna", target: "gpt-5.6-luna"},
 	{prefix: "gpt-5.3-codex-spark", target: "gpt-5.3-codex-spark"},
 	{prefix: "gpt-5.3-codex", target: "gpt-5.3-codex"},
 	{prefix: "gpt-5.4-mini", target: "gpt-5.4-mini"},
 	{prefix: "gpt-5.4-nano", target: "gpt-5.4-nano"},
+	{prefix: "gpt-5.5-pro", target: "gpt-5.5-pro"},
 	{prefix: "gpt-5.5", target: "gpt-5.5"},
 	{prefix: "gpt-5.4", target: "gpt-5.4"},
 	{prefix: "gpt-5.2", target: "gpt-5.2"},
@@ -222,6 +230,11 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		result.Modified = true
 	}
 	if isCodexSparkModel(normalizedModel) && applyCodexSparkImageUnsupportedInstructions(reqBody) {
+		result.Modified = true
+	}
+	// gpt-5.3-codex-spark rejects the image_generation tool upstream (HTTP 400,
+	// param=tools); Codex CLI advertises it by default, so strip it for spark.
+	if isCodexSparkModel(normalizedModel) && stripCodexSparkImageGenerationTools(reqBody) {
 		result.Modified = true
 	}
 
@@ -582,8 +595,14 @@ func isCodexSparkModel(model string) bool {
 }
 
 func hasOpenAIImageGenerationTool(reqBody map[string]any) bool {
-	rawTools, ok := reqBody["tools"]
-	if !ok || rawTools == nil {
+	if toolsContainImageGeneration(reqBody["tools"]) {
+		return true
+	}
+	return inputContainsImageGenerationTool(reqBody["input"])
+}
+
+func toolsContainImageGeneration(rawTools any) bool {
+	if rawTools == nil {
 		return false
 	}
 	tools, ok := rawTools.([]any)
@@ -595,11 +614,148 @@ func hasOpenAIImageGenerationTool(reqBody map[string]any) bool {
 		if !ok {
 			continue
 		}
-		if strings.TrimSpace(firstNonEmptyString(toolMap["type"])) == "image_generation" {
+		if isOpenAIImageGenerationToolMap(toolMap) {
 			return true
 		}
 	}
 	return false
+}
+
+func isOpenAIImageGenerationToolMap(tool map[string]any) bool {
+	return isOpenAIImageGenerationType(firstNonEmptyString(tool["type"])) ||
+		isImageGenNamespaceToolMap(tool)
+}
+
+func isImageGenNamespaceToolMap(tool map[string]any) bool {
+	return strings.TrimSpace(firstNonEmptyString(tool["type"])) == "namespace" &&
+		isOpenAIImageGenNamespaceName(firstNonEmptyString(tool["name"]))
+}
+
+func inputContainsImageGenerationTool(rawInput any) bool {
+	input, ok := rawInput.([]any)
+	if !ok {
+		return false
+	}
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(firstNonEmptyString(item["type"])) != "additional_tools" {
+			continue
+		}
+		if toolsContainImageGeneration(item["tools"]) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripOpenAIImageGenerationTools keeps the Spark cleanup symmetric across
+// top-level Responses tools, Responses Lite additional_tools, and tool_choice.
+// It removes only native image_generation declarations and the Codex image_gen
+// namespace, preserving ordinary namespaces and function tools.
+func stripOpenAIImageGenerationTools(reqBody map[string]any) bool {
+	if reqBody == nil {
+		return false
+	}
+	modified := stripOpenAIImageGenerationToolList(reqBody, "tools")
+	if stripOpenAIImageGenerationToolsFromInput(reqBody) {
+		modified = true
+	}
+	if openAIAnyToolChoiceSelectsImageGeneration(reqBody["tool_choice"]) {
+		delete(reqBody, "tool_choice")
+		modified = true
+	}
+	return modified
+}
+
+func stripOpenAIImageGenerationToolList(container map[string]any, key string) bool {
+	rawTools, ok := container[key]
+	if !ok || rawTools == nil {
+		return false
+	}
+	tools, ok := rawTools.([]any)
+	if !ok {
+		return false
+	}
+	filtered := make([]any, 0, len(tools))
+	removed := false
+	for _, rawTool := range tools {
+		if toolMap, ok := rawTool.(map[string]any); ok && isOpenAIImageGenerationToolMap(toolMap) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, rawTool)
+	}
+	if !removed {
+		return false
+	}
+	if len(filtered) == 0 {
+		delete(container, key)
+	} else {
+		container[key] = filtered
+	}
+	return true
+}
+
+func stripOpenAIImageGenerationToolsFromInput(reqBody map[string]any) bool {
+	input, ok := reqBody["input"].([]any)
+	if !ok {
+		return false
+	}
+
+	filteredInput := make([]any, 0, len(input))
+	modified := false
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok || strings.TrimSpace(firstNonEmptyString(item["type"])) != "additional_tools" {
+			filteredInput = append(filteredInput, rawItem)
+			continue
+		}
+		if !stripOpenAIImageGenerationToolList(item, "tools") {
+			filteredInput = append(filteredInput, rawItem)
+			continue
+		}
+		modified = true
+		if _, hasTools := item["tools"]; hasTools {
+			filteredInput = append(filteredInput, rawItem)
+		}
+	}
+	if modified {
+		reqBody["input"] = filteredInput
+	}
+	return modified
+}
+
+// stripCodexSparkImageGenerationTools removes image tool declarations and choices.
+// gpt-5.3-codex-spark rejects those capabilities upstream, while Codex clients may
+// advertise them by default.
+func stripCodexSparkImageGenerationTools(reqBody map[string]any) bool {
+	return stripOpenAIImageGenerationTools(reqBody)
+}
+
+// stripCodexSparkImageGenerationToolsFromRawBody applies the Spark restriction
+// before a request enters a protocol bridge. Some API-key accounts use the raw
+// chat-completions fallback and return before the normal Responses map pipeline.
+func stripCodexSparkImageGenerationToolsFromRawBody(body []byte, model string) ([]byte, bool, error) {
+	if !isCodexSparkModel(model) || !openAIRequestBodyHasImageGenerationTool(body) {
+		return body, false, nil
+	}
+
+	reqBody := make(map[string]any)
+	if err := json.Unmarshal(body, &reqBody); err != nil {
+		return body, false, err
+	}
+	if !stripCodexSparkImageGenerationTools(reqBody) {
+		return body, false, nil
+	}
+
+	rebuilt, err := json.Marshal(reqBody)
+	if err != nil {
+		return body, false, err
+	}
+	return rebuilt, true, nil
 }
 
 func hasOpenAIInputImage(reqBody map[string]any) bool {
@@ -715,6 +871,20 @@ func ensureOpenAIResponsesImageGenerationTool(reqBody map[string]any) bool {
 	}
 
 	reqBody["tools"] = append(tools, tool)
+	return true
+}
+
+func ensureOpenAIResponsesImageGenerationToolChoiceAuto(reqBody map[string]any) bool {
+	if len(reqBody) == 0 || !hasOpenAIImageGenerationTool(reqBody) {
+		return false
+	}
+	if isCodexSparkModel(firstNonEmptyString(reqBody["model"])) {
+		return false
+	}
+	if _, ok := reqBody["tool_choice"]; ok {
+		return false
+	}
+	reqBody["tool_choice"] = "auto"
 	return true
 }
 
@@ -1107,11 +1277,41 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		}
 		typ, _ := m["type"].(string)
 
-		// chatgpt.com codex backend (OAuth path) does not persist reasoning
-		// items because applyCodexOAuthTransform forces store=false. Any rs_*
-		// reference replayed in input is guaranteed to 404 upstream
-		// ("Item with id 'rs_...' not found"). Drop reasoning items entirely.
+		// chatgpt.com codex (OAuth path) runs with store=false (forced by
+		// applyCodexOAuthTransform). Replaying a reasoning item with its rs_*
+		// id but no encrypted_content 404s upstream ("Item with id 'rs_...'
+		// not found") — the 404 is triggered by the id lookup, not by the
+		// reasoning item itself. So strip the id (always, independent of
+		// PreserveReferences) yet keep the item: under store=false
+		// encrypted_content is the official channel for carrying reasoning
+		// context across turns, and dropping the whole item silently degrades
+		// multi-turn agent reasoning. Preserve encrypted_content/content/
+		// summary and every other field verbatim. Upstream additionally
+		// requires a summary field — a missing one is rejected with 400
+		// "Missing required parameter 'input[N].summary'" — so backfill an
+		// empty array when it is absent. Contracts verified end-to-end against
+		// chatgpt.com codex (gpt-5.5); see issue #1957.
+		// compaction_summary items (cmp_*) are the other encrypted_content
+		// carrier. Verified against the live backend: they require
+		// encrypted_content (a missing one is rejected with 400), and with it
+		// present the cmp_* id does not 404 whether kept or stripped. Being
+		// neither reasoning nor tool calls, they flow through the generic path
+		// below (id stripped when !PreserveReferences, encrypted_content
+		// preserved either way), which is safe and needs no special-casing.
 		if typ == "reasoning" {
+			newItem := make(map[string]any, len(m))
+			for key, value := range m {
+				if key == "id" {
+					// rs_* id replayed under store=false 404s; strip it.
+					continue
+				}
+				newItem[key] = value
+			}
+			if summary, ok := newItem["summary"]; !ok || summary == nil {
+				// Upstream requires a summary field; an empty array satisfies it.
+				newItem["summary"] = []any{}
+			}
+			filtered = append(filtered, newItem)
 			continue
 		}
 

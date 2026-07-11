@@ -619,11 +619,17 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 	return matchWildcardMappingResult(mapping, requestedModel)
 }
 
-// IsModelSupported 检查模型是否在 model_mapping 中（支持通配符）
-// 如果未配置 mapping，返回 true（允许所有模型）
+// IsModelSupported 检查模型是否在 model_mapping 中（支持通配符）。
+//
+// OpenAI OAuth 账号的空映射不能视为“允许所有”：未知第三方模型会被原样
+// 转发给 Codex 上游并得到不可重试的 400，阻断后续 failover。透传模式和
+// 其它账号类型仍保留空映射允许所有的既有语义。
 func (a *Account) IsModelSupported(requestedModel string) bool {
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
+		if a.IsOpenAIOAuth() && !a.IsOpenAIPassthroughEnabled() {
+			return isOpenAIOAuthServableModel(requestedModel)
+		}
 		return true // 无映射 = 允许所有
 	}
 	if mappingSupportsRequestedModel(mapping, requestedModel) {
@@ -1214,6 +1220,8 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 	switch capability {
 	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
 		return a.Type == AccountTypeOAuth || a.Type == AccountTypeAPIKey
+	case OpenAIImagesCapabilityDirectBasic, OpenAIImagesCapabilityDirectNative:
+		return a.Type == AccountTypeAPIKey
 	default:
 		return true
 	}

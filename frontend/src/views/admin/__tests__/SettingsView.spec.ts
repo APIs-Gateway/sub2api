@@ -173,6 +173,7 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.payment.findProvider": "查看支持的支付方式",
     "admin.settings.openaiExperimentalScheduler.title": "OpenAI 实验调度策略",
     "admin.settings.openaiExperimentalScheduler.description": "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。",
+    "admin.settings.openaiFastPolicy.actionForcePriority": "强制 priority",
     "admin.settings.site.uploadImage": "上传图片",
     "admin.settings.site.remove": "移除",
     "admin.settings.platformQuota.platform": "平台",
@@ -843,6 +844,43 @@ describe("admin SettingsView payment visible method controls", () => {
       "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑",
     );
     expect(wrapper.text()).not.toContain("OpenAI 高级调度器");
+  });
+
+  it("exposes the force priority OpenAI fast policy action", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_fast_policy_settings: {
+        rules: [
+          {
+            service_tier: "flex",
+            action: "filter",
+            scope: "all",
+            user_ids: [42],
+            error_message: "",
+            model_whitelist: [],
+            fallback_action: "pass",
+            fallback_error_message: "",
+          },
+        ],
+      },
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+
+    const actionOptions = wrapper
+      .findAll("option")
+      .filter((node) => node.attributes("value") === "force_priority");
+
+    expect(actionOptions.length).toBeGreaterThan(0);
+    expect(actionOptions[0].text()).toBe("强制 priority");
+
+    const userIDInputs = wrapper.findAll(
+      'input[placeholder="admin.settings.openaiFastPolicy.userIdPlaceholder"]',
+    );
+    expect(userIDInputs).toHaveLength(1);
+    expect((userIDInputs[0].element as HTMLInputElement).value).toBe("42");
   });
 
   it("passes translated upload and remove labels to the payment help image uploader", async () => {

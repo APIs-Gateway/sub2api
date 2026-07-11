@@ -431,6 +431,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InjectsCodexImag
 	upstreamPayload := requestToJSONString(captureConn.writes[0])
 	require.True(t, gjson.Get(upstreamPayload, `tools.#(type=="image_generation")`).Exists())
 	require.Equal(t, "png", gjson.Get(upstreamPayload, `tools.#(type=="image_generation").output_format`).String())
+	require.Equal(t, "auto", gjson.Get(upstreamPayload, "tool_choice").String())
 	require.Contains(t, gjson.Get(upstreamPayload, "instructions").String(), "image_generation")
 }
 
@@ -586,7 +587,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 
 	upstreamConn := &openAIWSCaptureConn{
 		events: [][]byte{
-			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_1","model":"gpt-5.1","usage":{"input_tokens":2,"output_tokens":3}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_1","model":"gpt-5.6-sol-max","usage":{"input_tokens":2,"output_tokens":3}}}`),
 		},
 	}
 	captureDialer := &openAIWSCaptureDialer{conn: upstreamConn}
@@ -669,7 +670,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	}()
 
 	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":false,"service_tier":"fast","reasoning":{"effort":"HIGH"}}`))
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.6-sol-max","stream":false,"service_tier":"fast"}`))
 	cancelWrite()
 	require.NoError(t, err)
 
@@ -702,7 +703,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 		require.NotNil(t, result.ServiceTier)
 		require.Equal(t, "priority", *result.ServiceTier)
 		require.NotNil(t, result.ReasoningEffort)
-		require.Equal(t, "high", *result.ReasoningEffort)
+		require.Equal(t, "max", *result.ReasoningEffort)
 	case <-time.After(2 * time.Second):
 		t.Fatal("未收到 passthrough turn 结果回调")
 	}
