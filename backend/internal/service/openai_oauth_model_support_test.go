@@ -66,8 +66,10 @@ func TestIsModelSupported_EmptyMappingOtherAccountTypesUnchanged(t *testing.T) {
 
 func TestIsOpenAIOAuthServableModel(t *testing.T) {
 	require.True(t, isOpenAIOAuthServableModel("gpt-5.4-high"))
+	require.True(t, isOpenAIOAuthServableModel("gpt-5.4_xhigh"))
 	require.True(t, isOpenAIOAuthServableModel("  gpt-5.3-codex  "))
 	require.True(t, isOpenAIOAuthServableModel("claude-3-5-haiku-20241022"))
 	require.False(t, isOpenAIOAuthServableModel("claude-unknown-family"))
+	require.False(t, isOpenAIOAuthServableModel("gpt-99-high"))
 	require.False(t, isOpenAIOAuthServableModel("deepseek-v4"))
 }
