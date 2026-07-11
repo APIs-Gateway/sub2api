@@ -637,6 +637,7 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 			req.Header.Set("User-Agent", strings.TrimSpace(fp.UserAgent))
 		}
 	}
+	enforceCodexIdentityHeaders(req.Header)
 	if chatgptAccountID := account.GetChatGPTAccountID(); chatgptAccountID != "" {
 		req.Header.Set("chatgpt-account-id", chatgptAccountID)
 	}
