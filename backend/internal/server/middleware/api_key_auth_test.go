@@ -59,7 +59,7 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 	}
 
 	t.Run("standard_mode_subscription_group_allowed_by_balance", func(t *testing.T) {
-		// burn-down 模型：订阅分组请求改为纯余额放行，不再加载订阅或做窗口维护。
+		// 钱包仍可在订阅窗口耗尽时兜底放行。
 		cfg := &config.Config{RunMode: config.RunModeStandard}
 		apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
 		subscriptionService := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{}, nil, nil, nil, nil, nil, cfg)
@@ -74,6 +74,64 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 
 		// user.Balance = 10 > 0 → 放行
 		require.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("standard_mode_revalidates_cas_loser_from_database", func(t *testing.T) {
+		cfg := &config.Config{RunMode: config.RunModeStandard}
+		zeroBalanceUser := *user
+		zeroBalanceUser.Balance = 0
+		zeroKey := *apiKey
+		zeroKey.User = &zeroBalanceUser
+		zeroKey.Key = "stale-window-key"
+		zeroRepo := &stubApiKeyRepo{
+			getByKey: func(context.Context, string) (*service.APIKey, error) {
+				clone := zeroKey
+				return &clone, nil
+			},
+		}
+		apiKeyService := service.NewAPIKeyService(zeroRepo, nil, nil, nil, nil, nil, cfg)
+
+		limit := 1.0
+		oldWindowStart := time.Now().Add(-48 * time.Hour)
+		currentWindowStart := time.Now()
+		stale := &service.UserSubscription{
+			ID:               56,
+			UserID:           zeroBalanceUser.ID,
+			GroupID:          group.ID,
+			Status:           service.SubscriptionStatusActive,
+			StartsAt:         time.Now().Add(-72 * time.Hour),
+			ExpiresAt:        time.Now().Add(72 * time.Hour),
+			DailyLimitUSD:    &limit,
+			DailyWindowStart: &oldWindowStart,
+			DailyUsageUSD:    limit,
+		}
+		fresh := *stale
+		fresh.DailyWindowStart = &currentWindowStart
+		fresh.DailyUsageUSD = limit + 0.01
+		subscriptionRepo := &stubUserSubscriptionRepo{
+			getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+				clone := *stale
+				return &clone, nil
+			},
+			getByID: func(context.Context, int64) (*service.UserSubscription, error) {
+				clone := fresh
+				return &clone, nil
+			},
+			resetDaily: func(context.Context, int64, time.Time) error {
+				return nil // another request already advanced the window
+			},
+		}
+		subscriptionService := service.NewSubscriptionService(nil, subscriptionRepo, nil, nil, nil, nil, nil, cfg)
+		t.Cleanup(subscriptionService.Stop)
+		router := newAuthTestRouter(apiKeyService, subscriptionService, cfg)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.Header.Set("x-api-key", zeroKey.Key)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusTooManyRequests, w.Code)
+		requireAPIKeyAuthError(t, w, "USAGE_LIMIT_EXCEEDED", service.ErrDailyLimitExceeded.Error())
 	})
 
 	t.Run("simple_mode_bypasses_quota_check", func(t *testing.T) {
@@ -131,6 +189,87 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/t", nil)
 		req.Header.Set("x-api-key", zeroKey.Key)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
+func TestAPIKeyAuthSubscriptionMaintenanceAndWalletFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	group := &service.Group{ID: 43, Name: "sub-maintenance", Status: service.StatusActive, Hydrated: true}
+	newAPIKeyService := func(user *service.User, key string) (*service.APIKeyService, *service.APIKey) {
+		apiKey := &service.APIKey{ID: 101, UserID: user.ID, Key: key, Status: service.StatusActive, User: user, Group: group}
+		apiKey.GroupID = &group.ID
+		repo := &stubApiKeyRepo{
+			getByKey: func(context.Context, string) (*service.APIKey, error) {
+				clone := *apiKey
+				return &clone, nil
+			},
+		}
+		return service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard}), apiKey
+	}
+
+	t.Run("maintenance failure returns structured 500", func(t *testing.T) {
+		user := &service.User{ID: 70, Role: service.RoleUser, Status: service.StatusActive}
+		apiKeyService, apiKey := newAPIKeyService(user, "maintenance-error")
+		limit := 1.0
+		oldWindowStart := time.Now().Add(-48 * time.Hour)
+		subscriptionRepo := &stubUserSubscriptionRepo{
+			getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+				return &service.UserSubscription{
+					ID:               71,
+					UserID:           user.ID,
+					GroupID:          group.ID,
+					Status:           service.SubscriptionStatusActive,
+					StartsAt:         time.Now().Add(-72 * time.Hour),
+					ExpiresAt:        time.Now().Add(72 * time.Hour),
+					DailyLimitUSD:    &limit,
+					DailyWindowStart: &oldWindowStart,
+				}, nil
+			},
+			resetDaily: func(context.Context, int64, time.Time) error { return errors.New("reset failed") },
+		}
+		subscriptionService := service.NewSubscriptionService(nil, subscriptionRepo, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
+		t.Cleanup(subscriptionService.Stop)
+		router := newAuthTestRouter(apiKeyService, subscriptionService, &config.Config{RunMode: config.RunModeStandard})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.Header.Set("x-api-key", apiKey.Key)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusInternalServerError, w.Code)
+		requireAPIKeyAuthError(t, w, "SUBSCRIPTION_MAINTENANCE_FAILED", "Failed to maintain subscription usage windows")
+	})
+
+	t.Run("window limit falls back to positive wallet", func(t *testing.T) {
+		user := &service.User{ID: 72, Role: service.RoleUser, Status: service.StatusActive, Balance: 5}
+		apiKeyService, apiKey := newAPIKeyService(user, "wallet-fallback")
+		limit := 1.0
+		windowStart := time.Now()
+		subscriptionRepo := &stubUserSubscriptionRepo{
+			getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+				return &service.UserSubscription{
+					ID:               73,
+					UserID:           user.ID,
+					GroupID:          group.ID,
+					Status:           service.SubscriptionStatusActive,
+					StartsAt:         time.Now().Add(-time.Hour),
+					ExpiresAt:        time.Now().Add(48 * time.Hour),
+					DailyLimitUSD:    &limit,
+					DailyWindowStart: &windowStart,
+					DailyUsageUSD:    limit + 0.01,
+				}, nil
+			},
+		}
+		subscriptionService := service.NewSubscriptionService(nil, subscriptionRepo, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeStandard})
+		t.Cleanup(subscriptionService.Stop)
+		router := newAuthTestRouter(apiKeyService, subscriptionService, &config.Config{RunMode: config.RunModeStandard})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.Header.Set("x-api-key", apiKey.Key)
 		router.ServeHTTP(w, req)
 
 		require.Equal(t, http.StatusOK, w.Code)
@@ -269,6 +408,11 @@ func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false})
 			return
 		}
+		userID, ok := c.Request.Context().Value(ctxkey.UserID).(int64)
+		if !ok || userID != user.ID {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
@@ -278,6 +422,22 @@ func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestSetUserIDContextValidationAndIdempotence(t *testing.T) {
+	setUserIDContext(nil, 42)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	originalRequest := c.Request
+	setUserIDContext(c, 0)
+	require.Same(t, originalRequest, c.Request)
+
+	setUserIDContext(c, 42)
+	require.Equal(t, int64(42), c.Request.Context().Value(ctxkey.UserID))
+	requestWithUserID := c.Request
+	setUserIDContext(c, 42)
+	require.Same(t, requestWithUserID, c.Request)
 }
 
 func TestAPIKeyAuthRejectsExclusiveGroupWhenUserNoLongerAllowed(t *testing.T) {
@@ -1172,6 +1332,7 @@ func (r *stubApiKeyRepo) GetRateLimitData(ctx context.Context, id int64) (*servi
 }
 
 type stubUserSubscriptionRepo struct {
+	getByID        func(ctx context.Context, id int64) (*service.UserSubscription, error)
 	getActive      func(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error)
 	updateStatus   func(ctx context.Context, subscriptionID int64, status string) error
 	activateWindow func(ctx context.Context, id int64, start time.Time) error
@@ -1220,6 +1381,9 @@ func (r *stubUserSubscriptionRepo) Create(ctx context.Context, sub *service.User
 }
 
 func (r *stubUserSubscriptionRepo) GetByID(ctx context.Context, id int64) (*service.UserSubscription, error) {
+	if r.getByID != nil {
+		return r.getByID(ctx, id)
+	}
 	return nil, errors.New("not implemented")
 }
 
@@ -1306,21 +1470,25 @@ func (r *stubUserSubscriptionRepo) ActivateWindows(ctx context.Context, id int64
 	return errors.New("not implemented")
 }
 
-func (r *stubUserSubscriptionRepo) ResetDailyUsage(ctx context.Context, id int64, newWindowStart time.Time) error {
+func (r *stubUserSubscriptionRepo) ResetUsageWindows(context.Context, int64, bool, bool, bool, time.Time) error {
+	return errors.New("not implemented")
+}
+
+func (r *stubUserSubscriptionRepo) ResetDailyUsage(ctx context.Context, id int64, _ *time.Time, newWindowStart time.Time) error {
 	if r.resetDaily != nil {
 		return r.resetDaily(ctx, id, newWindowStart)
 	}
 	return errors.New("not implemented")
 }
 
-func (r *stubUserSubscriptionRepo) ResetWeeklyUsage(ctx context.Context, id int64, newWindowStart time.Time) error {
+func (r *stubUserSubscriptionRepo) ResetWeeklyUsage(ctx context.Context, id int64, _ *time.Time, newWindowStart time.Time) error {
 	if r.resetWeekly != nil {
 		return r.resetWeekly(ctx, id, newWindowStart)
 	}
 	return errors.New("not implemented")
 }
 
-func (r *stubUserSubscriptionRepo) ResetMonthlyUsage(ctx context.Context, id int64, newWindowStart time.Time) error {
+func (r *stubUserSubscriptionRepo) ResetMonthlyUsage(ctx context.Context, id int64, _ *time.Time, newWindowStart time.Time) error {
 	if r.resetMonthly != nil {
 		return r.resetMonthly(ctx, id, newWindowStart)
 	}

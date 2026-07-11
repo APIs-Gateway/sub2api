@@ -3,7 +3,6 @@
 package handler
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,47 +47,22 @@ func TestLogRequestBodyParseFailure_DerivesErrorWhenNil(t *testing.T) {
 	require.Contains(t, fields["error"], "offset=11")
 }
 
-func TestLogRequestBodyParseFailure_ShortBodyHasNoTail(t *testing.T) {
+func TestLogRequestBodyParseFailure_DoesNotLogBodyContent(t *testing.T) {
 	log, logs := newObservedWarnLogger(t)
-	body := []byte(`{"broken":`)
-
-	logRequestBodyParseFailure(log, body, nil)
-
-	fields := parseFailureLoggedFields(t, logs)
-	require.Contains(t, fields, "body_head")
-	require.NotContains(t, fields, "body_tail")
-	require.Contains(t, fields["body_head"].(string), `{\"broken\":`)
-}
-
-func TestLogRequestBodyParseFailure_LargeBodyBoundedSnippets(t *testing.T) {
-	log, logs := newObservedWarnLogger(t)
-	body := []byte(`{"model":"claude-sonnet-4-6","big":"` + strings.Repeat("A", 1<<20) + `"`)
+	secret := "sk-super-secret-value"
+	body := []byte(`{"api_key":"` + secret + `","broken":`)
 
 	logRequestBodyParseFailure(log, body, nil)
 
 	fields := parseFailureLoggedFields(t, logs)
 	require.Equal(t, len(body), fields["body_len"])
-	head := fields["body_head"].(string)
-	tail := fields["body_tail"].(string)
-	require.Contains(t, head, "claude-sonnet-4-6")
-	require.Contains(t, tail, "AAA")
-	require.NotContains(t, tail, "claude-sonnet-4-6")
-	require.LessOrEqual(t, len(head), parseFailureSnippetLen*4)
-	require.LessOrEqual(t, len(tail), parseFailureSnippetLen*4)
-}
-
-func TestLogRequestBodyParseFailure_EscapesControlCharacters(t *testing.T) {
-	log, logs := newObservedWarnLogger(t)
-	body := []byte("{\"model\":\x01\n\"x\"}")
-
-	logRequestBodyParseFailure(log, body, nil)
-
-	fields := parseFailureLoggedFields(t, logs)
-	head := fields["body_head"].(string)
-	require.NotContains(t, head, "\n")
-	require.NotContains(t, head, "\x01")
-	require.Contains(t, head, `\n`)
-	require.Contains(t, head, `\x01`)
+	require.NotContains(t, fields, "body_head")
+	require.NotContains(t, fields, "body_tail")
+	for _, value := range fields {
+		if text, ok := value.(string); ok {
+			require.NotContains(t, text, secret)
+		}
+	}
 }
 
 func TestLogRequestBodyParseFailure_NilLoggerNoPanic(t *testing.T) {

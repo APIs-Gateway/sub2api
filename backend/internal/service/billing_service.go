@@ -130,10 +130,6 @@ func newOpenAIGPT56FallbackPricing(input, output, cacheRead float64) *ModelPrici
 		CacheCreationPricePerTokenPriority: input * 2 * 1.25,
 		CacheReadPricePerToken:             cacheRead,
 		CacheReadPricePerTokenPriority:     cacheRead * 2,
-		LongContextInputThreshold:          openAIGPT54LongContextInputThreshold,
-		LongContextInputMultiplier:         openAIGPT54LongContextInputMultiplier,
-		LongContextOutputMultiplier:        openAIGPT54LongContextOutputMultiplier,
-		PriorityExcludesLongContext:        true,
 	}
 }
 
@@ -295,8 +291,9 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputMultiplier:     openAIGPT54LongContextInputMultiplier,
 		LongContextOutputMultiplier:    openAIGPT54LongContextOutputMultiplier,
 	}
-	// GPT-5.5 暂无独立定价，回退到 GPT-5.4
+	// GPT-5.5 / GPT-5.5 Pro 暂无独立定价，回退到 GPT-5.4。
 	s.fallbackPrices["gpt-5.5"] = s.fallbackPrices["gpt-5.4"]
+	s.fallbackPrices["gpt-5.5-pro"] = s.fallbackPrices["gpt-5.4"]
 
 	// GPT-5.6 的三个 SKU 有独立输入/输出/cache-read 价格；cache-write 固定为输入价的 1.25 倍。
 	s.fallbackPrices["gpt-5.6-sol"] = newOpenAIGPT56FallbackPricing(5e-6, 30e-6, 0.5e-6)
@@ -680,6 +677,8 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 			return s.fallbackPrices["gpt-5.6-terra"]
 		case "gpt-5.6-luna":
 			return s.fallbackPrices["gpt-5.6-luna"]
+		case "gpt-5.5-pro":
+			return s.fallbackPrices["gpt-5.5-pro"]
 		case "gpt-5.5":
 			return s.fallbackPrices["gpt-5.5"]
 		case "gpt-5.4-mini":
@@ -1040,17 +1039,18 @@ func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *
 		return nil
 	}
 	isGPT56 := isOpenAIGPT56Model(model)
-	if !isGPT56 && !isOpenAIGPT54Model(model) {
+	usesLegacyLongContextPricing := !isGPT56 && isOpenAIGPT54Model(model)
+	if !isGPT56 && !usesLegacyLongContextPricing {
 		return pricing
 	}
-	needsLongContext := pricing.LongContextInputThreshold <= 0 || pricing.LongContextInputMultiplier <= 0 || pricing.LongContextOutputMultiplier <= 0
-	// See docs/specs/gpt-5-6-cache-write-pricing.md §3: only derive a missing
-	// GPT-5.6 cache-write price; an explicit channel value (including zero) wins.
+	needsLongContext := usesLegacyLongContextPricing &&
+		(pricing.LongContextInputThreshold <= 0 || pricing.LongContextInputMultiplier <= 0 || pricing.LongContextOutputMultiplier <= 0)
+	// Only derive a missing GPT-5.6 cache-write price; an explicit channel value
+	// (including zero) wins.
 	needsCacheWriteFallback := isGPT56 && !pricing.CacheCreationPriceExplicit &&
 		((pricing.CacheCreationPricePerToken <= 0 && pricing.InputPricePerToken > 0) ||
 			(pricing.CacheCreationPricePerTokenPriority <= 0 && pricing.InputPricePerTokenPriority > 0))
-	needsPriorityLongContextGuard := isGPT56 && !pricing.PriorityExcludesLongContext
-	if !needsLongContext && !needsCacheWriteFallback && !needsPriorityLongContextGuard {
+	if !needsLongContext && !needsCacheWriteFallback {
 		return pricing
 	}
 	cloned := *pricing
@@ -1062,20 +1062,16 @@ func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *
 			cloned.CacheCreationPricePerTokenPriority = cloned.InputPricePerTokenPriority * 1.25
 		}
 	}
-	if cloned.LongContextInputThreshold <= 0 {
-		cloned.LongContextInputThreshold = openAIGPT54LongContextInputThreshold
-	}
-	if cloned.LongContextInputMultiplier <= 0 {
-		cloned.LongContextInputMultiplier = openAIGPT54LongContextInputMultiplier
-	}
-	if cloned.LongContextOutputMultiplier <= 0 {
-		cloned.LongContextOutputMultiplier = openAIGPT54LongContextOutputMultiplier
-	}
-	// GPT-5.6 publishes independent priority and long-context price columns;
-	// OpenAI does not offer Priority processing for long-context requests, so
-	// they are alternatives rather than multiplicative tiers.
-	if isGPT56 {
-		cloned.PriorityExcludesLongContext = true
+	if usesLegacyLongContextPricing {
+		if cloned.LongContextInputThreshold <= 0 {
+			cloned.LongContextInputThreshold = openAIGPT54LongContextInputThreshold
+		}
+		if cloned.LongContextInputMultiplier <= 0 {
+			cloned.LongContextInputMultiplier = openAIGPT54LongContextInputMultiplier
+		}
+		if cloned.LongContextOutputMultiplier <= 0 {
+			cloned.LongContextOutputMultiplier = openAIGPT54LongContextOutputMultiplier
+		}
 	}
 	return &cloned
 }
@@ -1112,7 +1108,7 @@ func isOpenAIGPT54Model(model string) bool {
 	// normalizeCodexModel 的默认兜底把非 OpenAI 模型（claude-*、gemini-*、gpt-4o）
 	// 误识别为 gpt-5.4。
 	normalized := normalizeKnownOpenAICodexModel(model)
-	return normalized == "gpt-5.4" || normalized == "gpt-5.5" ||
+	return normalized == "gpt-5.4" || normalized == "gpt-5.5" || normalized == "gpt-5.5-pro" ||
 		normalized == "gpt-5.6-sol" || normalized == "gpt-5.6-terra" || normalized == "gpt-5.6-luna"
 }
 

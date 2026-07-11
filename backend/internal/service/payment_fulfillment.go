@@ -25,9 +25,10 @@ import (
 // misconfigured to point at us, or when our orders table has been wiped).
 var ErrOrderNotFound = errors.New("payment order not found")
 
-const balanceFulfillmentLeaseDuration = 5 * time.Minute
-
-const subscriptionFulfillmentLeaseDuration = 5 * time.Minute
+const (
+	balanceFulfillmentLeaseDuration      = 5 * time.Minute
+	subscriptionFulfillmentLeaseDuration = 5 * time.Minute
+)
 
 // balanceFulfillmentLease fences the balance-order worker that most recently
 // claimed a RECHARGING order. Subscription fulfillment keeps its own flow.
@@ -754,6 +755,9 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease
 		s.applyPointsEarnForOrder(ctx, o)
 		return nil
 	}
+	if s.subscriptionSvc == nil || s.subscriptionSvc.userSubRepo == nil {
+		return errors.New("subscription service is unavailable")
+	}
 
 	tx, err := s.entClient.Tx(ctx)
 	if err != nil {
@@ -768,17 +772,25 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease
 	}()
 
 	orderNote := fmt.Sprintf("payment order %d", o.ID)
-	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, WeeklyLimitUSD: weeklyLimit, MonthlyLimitUSD: monthlyLimit, AssignedBy: 0, Notes: orderNote})
+	sub, err := s.findPaymentSubscriptionAssignment(txCtx, o, orderNote)
 	if err != nil {
-		return fmt.Errorf("assign subscription: %w", err)
+		return err
 	}
-	c, err := s.entClientForCtx(txCtx).PaymentOrder.Update().
+	if sub == nil {
+		sub, _, err = s.subscriptionSvc.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{UserID: o.UserID, GroupID: gid, ValidityDays: days, DailyAmountUSD: dailyAmount, WeeklyLimitUSD: weeklyLimit, MonthlyLimitUSD: monthlyLimit, AssignedBy: 0, Notes: orderNote})
+		if err != nil {
+			return fmt.Errorf("assign subscription: %w", err)
+		}
+	} else {
+		slog.Info("recovered existing subscription assignment for order", "orderID", o.ID, "subscriptionID", sub.ID)
+	}
+	completion := s.entClientForCtx(txCtx).PaymentOrder.Update().
 		Where(
 			paymentorder.IDEQ(o.ID),
 			paymentorder.StatusEQ(OrderStatusRecharging),
 			paymentorder.UpdatedAtEQ(lease.version),
-		).
-		SetStatus(OrderStatusCompleted).SetCompletedAt(time.Now()).Save(txCtx)
+		)
+	c, err := completion.SetStatus(OrderStatusCompleted).SetCompletedAt(time.Now()).Save(txCtx)
 	if err != nil {
 		return fmt.Errorf("mark completed: %w", err)
 	}
@@ -805,9 +817,106 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease
 	return nil
 }
 
+func (s *PaymentService) findPaymentSubscriptionAssignment(ctx context.Context, o *dbent.PaymentOrder, orderNote string) (*UserSubscription, error) {
+	if s == nil || s.subscriptionSvc == nil || s.subscriptionSvc.userSubRepo == nil || o == nil {
+		return nil, errors.New("subscription service is unavailable")
+	}
+
+	if subscriptionID := paymentSubscriptionIDFromSnapshot(o); subscriptionID > 0 {
+		sub, err := s.subscriptionSvc.userSubRepo.GetByID(ctx, subscriptionID)
+		if err != nil {
+			return nil, fmt.Errorf("load snapshotted subscription %d: %w", subscriptionID, err)
+		}
+		matches, err := paymentSubscriptionMatchesFrozenOrder(o, sub)
+		if err != nil {
+			return nil, err
+		}
+		if !matches {
+			return nil, fmt.Errorf("snapshotted subscription %d does not match payment order %d", subscriptionID, o.ID)
+		}
+		return sub, nil
+	}
+
+	subs, err := s.subscriptionSvc.userSubRepo.ListByUserID(ctx, o.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("list subscriptions for assignment recovery: %w", err)
+	}
+	for i := range subs {
+		if hasPaymentSubscriptionOrderNote(subs[i].Notes, orderNote) {
+			matches, matchErr := paymentSubscriptionMatchesFrozenOrder(o, &subs[i])
+			if matchErr != nil {
+				return nil, matchErr
+			}
+			if !matches {
+				return nil, fmt.Errorf("subscription %d has order note but does not match payment order %d", subs[i].ID, o.ID)
+			}
+			return &subs[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func paymentSubscriptionMatchesFrozenOrder(o *dbent.PaymentOrder, sub *UserSubscription) (bool, error) {
+	if o == nil || sub == nil || sub.UserID != o.UserID {
+		return false, nil
+	}
+	groupID := int64(0)
+	if o.SubscriptionGroupID != nil {
+		groupID = *o.SubscriptionGroupID
+	}
+	if sub.GroupID != groupID {
+		return false, nil
+	}
+
+	dailyAmount, _, hasSnapshot, err := readSubscriptionSnapshotDT(o)
+	if err != nil {
+		return false, err
+	}
+	if !hasSnapshot {
+		return true, nil
+	}
+	if math.Abs(sub.DailyAmountUSD-dailyAmount) > 1e-9 || sub.DailyLimitUSD == nil || math.Abs(*sub.DailyLimitUSD-dailyAmount) > 1e-9 {
+		return false, nil
+	}
+	if weeklyLimit, monthlyLimit, ok := readSubscriptionSnapshotWM(o); ok {
+		if sub.WeeklyLimitUSD == nil || sub.MonthlyLimitUSD == nil {
+			return false, nil
+		}
+		if math.Abs(*sub.WeeklyLimitUSD-weeklyLimit) > 1e-9 || math.Abs(*sub.MonthlyLimitUSD-monthlyLimit) > 1e-9 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func paymentSubscriptionIDFromSnapshot(o *dbent.PaymentOrder) int64 {
+	if o == nil || o.ProviderSnapshot == nil {
+		return 0
+	}
+	raw, ok := o.ProviderSnapshot[subscriptionSnapshotKey].(map[string]any)
+	if !ok {
+		return 0
+	}
+	id, _ := snapshotInt64(raw["subscription_id"])
+	return id
+}
+
+func hasPaymentSubscriptionOrderNote(notes, orderNote string) bool {
+	for _, line := range strings.Split(strings.ReplaceAll(notes, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == orderNote {
+			return true
+		}
+	}
+	return false
+}
+
 // doSubLifecycle 履约续费/转套餐订单（法币支付成功后）：按冻结快照的目标卡 ID + 新 D/T 执行，
 // 不扣余额（差价/续费价已由网关收取）。幂等沿用 SUBSCRIPTION_SUCCESS 审计键（重放整笔跳过）。
-func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrder, intent string, targetSubID int64, lease *subscriptionFulfillmentLease) error {
+func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrder, intent string, targetSubID int64, leases ...*subscriptionFulfillmentLease) error {
+	var lease *subscriptionFulfillmentLease
+	if len(leases) > 0 {
+		lease = leases[0]
+	}
 	if lease == nil {
 		return errors.New("missing subscription fulfillment lease")
 	}
@@ -872,13 +981,13 @@ func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrd
 	}
 
 	// 同事务：回写 subscription_id 到订单快照 + 订单置完成 + SUCCESS 审计键（entClientForCtx 自动用事务客户端）。
-	c, err := s.entClientForCtx(txCtx).PaymentOrder.Update().
+	completion := s.entClientForCtx(txCtx).PaymentOrder.Update().
 		Where(
 			paymentorder.IDEQ(o.ID),
 			paymentorder.StatusEQ(OrderStatusRecharging),
 			paymentorder.UpdatedAtEQ(lease.version),
-		).
-		SetStatus(OrderStatusCompleted).SetCompletedAt(time.Now()).Save(txCtx)
+		)
+	c, err := completion.SetStatus(OrderStatusCompleted).SetCompletedAt(time.Now()).Save(txCtx)
 	if err != nil {
 		return fmt.Errorf("mark completed: %w", err)
 	}
@@ -934,9 +1043,13 @@ func (s *PaymentService) applyPointsEarnForOrder(ctx context.Context, o *dbent.P
 	}
 }
 
-func (s *PaymentService) markSubscriptionCompletedWithLease(ctx context.Context, o *dbent.PaymentOrder, lease *subscriptionFulfillmentLease, auditAction string) error {
+func (s *PaymentService) markSubscriptionCompletedWithLease(ctx context.Context, o *dbent.PaymentOrder, lease *subscriptionFulfillmentLease, auditActions ...string) error {
 	if lease == nil {
 		return errors.New("missing subscription fulfillment lease")
+	}
+	auditAction := "SUBSCRIPTION_SUCCESS"
+	if len(auditActions) > 0 && strings.TrimSpace(auditActions[0]) != "" {
+		auditAction = auditActions[0]
 	}
 
 	updated, err := s.entClient.PaymentOrder.Update().
@@ -975,6 +1088,7 @@ func (s *PaymentService) markSubscriptionFailedWithLease(ctx context.Context, oi
 		return
 	}
 
+	now := time.Now()
 	reason := psErrMsg(cause)
 	updated, err := s.entClient.PaymentOrder.Update().
 		Where(
@@ -983,7 +1097,7 @@ func (s *PaymentService) markSubscriptionFailedWithLease(ctx context.Context, oi
 			paymentorder.UpdatedAtEQ(lease.version),
 		).
 		SetStatus(OrderStatusFailed).
-		SetFailedAt(time.Now()).
+		SetFailedAt(now).
 		SetFailedReason(reason).
 		Save(ctx)
 	if err != nil {
@@ -1009,15 +1123,14 @@ func (s *PaymentService) RetryFulfillment(ctx context.Context, oid int64) error 
 	if o.Status == OrderStatusRecharging {
 		switch o.OrderType {
 		case payment.OrderTypeBalance:
-			if err := s.ExecuteBalanceFulfillment(ctx, oid); err != nil {
-				return err
-			}
+			err = s.ExecuteBalanceFulfillment(ctx, oid)
 		case payment.OrderTypeSubscription:
-			if err := s.ExecuteSubscriptionFulfillment(ctx, oid); err != nil {
-				return err
-			}
+			err = s.ExecuteSubscriptionFulfillment(ctx, oid)
 		default:
 			return infraerrors.Conflict("CONFLICT", "order is being processed")
+		}
+		if err != nil {
+			return err
 		}
 		s.writeAuditLog(ctx, oid, "RECHARGE_RETRY", "admin", map[string]any{"detail": "admin manual retry"})
 		return nil

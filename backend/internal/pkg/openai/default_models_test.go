@@ -7,6 +7,7 @@ func TestDefaultModelsIncludeGPT56SeriesFirst(t *testing.T) {
 		id          string
 		displayName string
 	}{
+		{id: "gpt-5.6", displayName: "GPT-5.6 (Sol)"},
 		{id: "gpt-5.6-sol", displayName: "GPT-5.6 Sol"},
 		{id: "gpt-5.6-terra", displayName: "GPT-5.6 Terra"},
 		{id: "gpt-5.6-luna", displayName: "GPT-5.6 Luna"},

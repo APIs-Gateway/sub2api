@@ -92,3 +92,81 @@ func matchCodexClientHeaderPrefixes(value string, prefixes []string) bool {
 	}
 	return false
 }
+
+var pairableCodexOriginators = map[string]struct{}{
+	"codex_cli_rs":          {},
+	"codex-tui":             {},
+	"codex_vscode":          {},
+	"codex_vscode_copilot":  {},
+	"codex_app":             {},
+	"codex_chatgpt_desktop": {},
+	"codex_atlas":           {},
+	"codex_exec":            {},
+	"codex_sdk_ts":          {},
+}
+
+const codexOriginatorMaxLen = 64
+
+// PairCodexClientIdentity derives the originator accepted by the Codex upstream
+// from the final outbound User-Agent. The Codex upstream rejects a mismatched
+// originator and User-Agent client name with 404, so callers must fall back to a
+// known Codex CLI identity when this returns ok=false.
+func PairCodexClientIdentity(userAgent string) (originator string, pairedUA string, ok bool) {
+	ua := strings.TrimSpace(userAgent)
+	slash := strings.IndexByte(ua, '/')
+	if slash <= 0 {
+		return "", "", false
+	}
+	if leading := strings.TrimSpace(ua[:slash]); isPairableCodexOriginator(leading) {
+		leading = canonicalizePairableCodexOriginator(leading)
+		return leading, leading + ua[slash:], true
+	}
+	// CODEX_INTERNAL_ORIGINATOR_OVERRIDE changes the UA prefix but retains the
+	// real client name in the trailing `(name; version)` group.
+	if trailer := codexUATrailerName(ua); trailer != "" && !strings.ContainsRune(trailer, '/') &&
+		isPairableCodexOriginator(trailer) {
+		trailer = canonicalizePairableCodexOriginator(trailer)
+		return trailer, trailer + ua[slash:], true
+	}
+	return "", "", false
+}
+
+func codexUATrailerName(ua string) string {
+	last := strings.LastIndex(ua, "(")
+	if last < 0 {
+		return ""
+	}
+	rest := ua[last+1:]
+	closeIndex := strings.Index(rest, ")")
+	if closeIndex < 0 {
+		return ""
+	}
+	name := strings.TrimSpace(rest[:closeIndex])
+	if separator := strings.Index(name, ";"); separator >= 0 {
+		name = strings.TrimSpace(name[:separator])
+	}
+	return name
+}
+
+func isPairableCodexOriginator(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > codexOriginatorMaxLen {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; c < 0x20 || c > 0x7e {
+			return false
+		}
+	}
+	if _, ok := pairableCodexOriginators[strings.ToLower(name)]; ok {
+		return true
+	}
+	return strings.HasPrefix(name, "Codex ")
+}
+
+func canonicalizePairableCodexOriginator(name string) string {
+	if _, ok := pairableCodexOriginators[strings.ToLower(name)]; ok {
+		return strings.ToLower(name)
+	}
+	return name
+}

@@ -844,6 +844,7 @@ describe("admin SettingsView payment visible method controls", () => {
             service_tier: "flex",
             action: "filter",
             scope: "all",
+            user_ids: [42],
             error_message: "",
             model_whitelist: [],
             fallback_action: "pass",
@@ -863,6 +864,12 @@ describe("admin SettingsView payment visible method controls", () => {
 
     expect(actionOptions.length).toBeGreaterThan(0);
     expect(actionOptions[0].text()).toBe("强制 priority");
+
+    const userIDInputs = wrapper.findAll(
+      'input[placeholder="admin.settings.openaiFastPolicy.userIdPlaceholder"]',
+    );
+    expect(userIDInputs).toHaveLength(1);
+    expect((userIDInputs[0].element as HTMLInputElement).value).toBe("42");
   });
 
   it("passes translated upload and remove labels to the payment help image uploader", async () => {
