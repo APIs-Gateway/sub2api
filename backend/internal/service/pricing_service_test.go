@@ -128,13 +128,21 @@ func TestGetModelPricing_Gpt56UsesStaticFallbackWhenRemoteMissing(t *testing.T) 
 	require.Zero(t, got.OutputCostPerTokenAbove272KTokens)
 	require.Zero(t, got.CacheCreationInputTokenCostAbove272KTokens)
 	require.Zero(t, got.CacheReadInputTokenCostAbove272KTokens)
-	require.Zero(t, got.LongContextInputTokenThreshold)
+	require.Equal(t, 272000, got.LongContextInputTokenThreshold)
+	require.InDelta(t, 1.0, got.LongContextInputCostMultiplier, 1e-12)
+	require.InDelta(t, 1.0, got.LongContextOutputCostMultiplier, 1e-12)
 }
 
 func TestGetModelPricing_Gpt56StaleCatalogDerivesCacheWriteButExplicitPriceWins(t *testing.T) {
 	stale := &LiteLLMModelPricing{
-		InputCostPerToken:         2.5e-6,
-		InputCostPerTokenPriority: 5e-6,
+		InputCostPerToken:                      2.5e-6,
+		InputCostPerTokenPriority:              5e-6,
+		InputCostPerTokenAbove272KTokens:       5e-6,
+		OutputCostPerTokenAbove272KTokens:      22.5e-6,
+		CacheReadInputTokenCostAbove272KTokens: 0.5e-6,
+		LongContextInputTokenThreshold:         272000,
+		LongContextInputCostMultiplier:         2.0,
+		LongContextOutputCostMultiplier:        1.5,
 	}
 	explicit := &LiteLLMModelPricing{
 		InputCostPerToken:                   5e-6,
@@ -152,11 +160,20 @@ func TestGetModelPricing_Gpt56StaleCatalogDerivesCacheWriteButExplicitPriceWins(
 	require.NotSame(t, stale, derived, "derivation must not mutate the cached catalog entry")
 	require.InDelta(t, 3.125e-6, derived.CacheCreationInputTokenCost, 1e-12)
 	require.InDelta(t, 6.25e-6, derived.CacheCreationInputTokenCostPriority, 1e-12)
+	require.Zero(t, derived.InputCostPerTokenAbove272KTokens)
+	require.Zero(t, derived.OutputCostPerTokenAbove272KTokens)
+	require.Zero(t, derived.CacheReadInputTokenCostAbove272KTokens)
+	require.Equal(t, 272000, derived.LongContextInputTokenThreshold)
+	require.InDelta(t, 1.0, derived.LongContextInputCostMultiplier, 1e-12)
+	require.InDelta(t, 1.0, derived.LongContextOutputCostMultiplier, 1e-12)
 
 	gotExplicit := svc.GetModelPricing("gpt-5.6-sol")
-	require.Same(t, explicit, gotExplicit)
+	require.NotSame(t, explicit, gotExplicit, "GPT-5.6 policy must not mutate the cached catalog entry")
 	require.InDelta(t, 7e-6, gotExplicit.CacheCreationInputTokenCost, 1e-12)
 	require.InDelta(t, 14e-6, gotExplicit.CacheCreationInputTokenCostPriority, 1e-12)
+	require.Equal(t, 272000, gotExplicit.LongContextInputTokenThreshold)
+	require.InDelta(t, 1.0, gotExplicit.LongContextInputCostMultiplier, 1e-12)
+	require.InDelta(t, 1.0, gotExplicit.LongContextOutputCostMultiplier, 1e-12)
 }
 
 func TestGetModelPricing_OpenAICompactAliasUsesStaticFallback(t *testing.T) {
@@ -200,8 +217,8 @@ func TestDefaultPricingIncludesGPT56LongContextMetadata(t *testing.T) {
 		pricing := pricingData[model]
 		require.NotNil(t, pricing, model)
 		require.Equal(t, 272000, pricing.LongContextInputTokenThreshold, model)
-		require.InDelta(t, 2.0, pricing.LongContextInputCostMultiplier, 1e-12, model)
-		require.InDelta(t, 1.5, pricing.LongContextOutputCostMultiplier, 1e-12, model)
+		require.InDelta(t, 1.0, pricing.LongContextInputCostMultiplier, 1e-12, model)
+		require.InDelta(t, 1.0, pricing.LongContextOutputCostMultiplier, 1e-12, model)
 	}
 }
 

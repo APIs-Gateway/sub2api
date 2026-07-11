@@ -303,6 +303,30 @@ func TestSynthesizePricingFromLiteLLM_GPT56HasNoLongContextTier(t *testing.T) {
 	}
 }
 
+func TestSynthesizePricingFromLiteLLM_GPT56IgnoresStaleAbove272KFields(t *testing.T) {
+	got := synthesizePricingFromLiteLLM(&LiteLLMModelPricing{
+		Mode:                                       "chat",
+		InputCostPerToken:                          2.5e-6,
+		InputCostPerTokenAbove272KTokens:           5e-6,
+		OutputCostPerToken:                         15e-6,
+		OutputCostPerTokenAbove272KTokens:          22.5e-6,
+		CacheCreationInputTokenCost:                3.125e-6,
+		CacheCreationInputTokenCostAbove272KTokens: 6.25e-6,
+		CacheReadInputTokenCost:                    0.25e-6,
+		CacheReadInputTokenCostAbove272KTokens:     0.5e-6,
+		LongContextInputTokenThreshold:             272000,
+		LongContextInputCostMultiplier:             2.0,
+		LongContextOutputCostMultiplier:            1.5,
+	}, nil, "gpt-5.6-terra")
+
+	require.NotNil(t, got)
+	require.Empty(t, got.Intervals)
+	require.InDelta(t, 2.5e-6, *got.InputPrice, 1e-12)
+	require.InDelta(t, 15e-6, *got.OutputPrice, 1e-12)
+	require.InDelta(t, 3.125e-6, *got.CacheWritePrice, 1e-12)
+	require.InDelta(t, 0.25e-6, *got.CacheReadPrice, 1e-12)
+}
+
 func TestListAvailable_GPT56PricingEntriesUseOfficialPricing(t *testing.T) {
 	// 生产配置的安全形态：空 token 定价条目既声明模型可用，又在
 	// RestrictModels=true 时放行；不需要改写真实的上游模型名。
