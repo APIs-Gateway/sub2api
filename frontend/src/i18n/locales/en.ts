@@ -785,6 +785,7 @@
     total: 'Last 30d',
     quota: 'Quota',
     lastUsedAt: 'Last Used',
+    lastUsedIP: 'Last Used IP',
     useKey: 'Use Key',
     quickConnect: 'Quick connect',
     useKeyModal: {
