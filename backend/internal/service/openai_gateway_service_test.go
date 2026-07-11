@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/cespare/xxhash/v2"
 	"github.com/gin-gonic/gin"
@@ -2497,6 +2498,53 @@ func TestExtractOpenAIUsageFromJSONBytes_AcceptsResponseAndChatUsageShapes(t *te
 	require.Equal(t, 7, usage.OutputTokens)
 	require.Equal(t, 4, usage.CacheReadInputTokens)
 	require.Equal(t, 3, usage.CacheCreationInputTokens)
+}
+
+func TestCopyOpenAIUsageFromResponsesUsagePreservesCacheCreationTokens(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		usage apicompat.ResponsesUsage
+		want  int
+	}{
+		{
+			name: "details cache creation fallback",
+			usage: apicompat.ResponsesUsage{
+				InputTokens:  31,
+				OutputTokens: 9,
+				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
+					CachedTokens:        5,
+					CacheCreationTokens: 12,
+				},
+			},
+			want: 12,
+		},
+		{
+			name: "details cache write takes precedence",
+			usage: apicompat.ResponsesUsage{
+				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
+					CacheCreationTokens: 12,
+					CacheWriteTokens:    14,
+				},
+			},
+			want: 14,
+		},
+		{
+			name: "top level cache creation wins",
+			usage: apicompat.ResponsesUsage{
+				CacheCreationInputTokens: 16,
+				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
+					CacheCreationTokens: 12,
+					CacheWriteTokens:    14,
+				},
+			},
+			want: 16,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := copyOpenAIUsageFromResponsesUsage(&tt.usage)
+			require.Equal(t, tt.want, usage.CacheCreationInputTokens)
+		})
+	}
 }
 
 func TestOpenAIUsageFromGJSON_NestedCacheWriteZeroWins(t *testing.T) {

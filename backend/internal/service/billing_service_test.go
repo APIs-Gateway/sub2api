@@ -149,7 +149,7 @@ func TestGetModelPricing_OpenAICompactAliasesFallback(t *testing.T) {
 		longContext int
 	}{
 		{model: "gpt5.5", inputPrice: 2.5e-6, outputPrice: 15e-6, cacheRead: 0.25e-6, longContext: 272000},
-		{model: "openai/gpt5.6-terra", inputPrice: 2.5e-6, outputPrice: 15e-6, cacheRead: 0.25e-6, cacheWrite: 3.125e-6, longContext: 272000},
+		{model: "openai/gpt5.6-terra", inputPrice: 2.5e-6, outputPrice: 15e-6, cacheRead: 0.25e-6, cacheWrite: 3.125e-6, longContext: 0},
 		{model: "openai/gpt5.4", inputPrice: 2.5e-6, outputPrice: 15e-6, cacheRead: 0.25e-6, longContext: 272000},
 		{model: "gpt5.4-mini", inputPrice: 7.5e-7, outputPrice: 4.5e-6, cacheRead: 7.5e-8, longContext: 0},
 		{model: "gpt5.3codexspark", inputPrice: 1.5e-6, outputPrice: 12e-6, cacheRead: 0.15e-6, longContext: 0},
@@ -196,7 +196,7 @@ func TestGetModelPricing_OpenAIGPT56VariantsFallback(t *testing.T) {
 			require.InDelta(t, tt.cacheRead, pricing.CacheReadPricePerToken, 1e-12)
 			require.InDelta(t, tt.cacheWrite, pricing.CacheCreationPricePerToken, 1e-12)
 			require.InDelta(t, tt.priorityWrite, pricing.CacheCreationPricePerTokenPriority, 1e-12)
-			require.Equal(t, 272000, pricing.LongContextInputThreshold)
+			require.Zero(t, pricing.LongContextInputThreshold)
 		})
 	}
 }
@@ -232,7 +232,7 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesWholeSessionMultipliers(t *t
 	require.InDelta(t, expectedInput+expectedOutput, cost.ActualCost, 1e-10)
 }
 
-func TestCalculateCost_OpenAIGPT56LongContextAppliesConfiguredRatesToCacheWrite(t *testing.T) {
+func TestCalculateCost_OpenAIGPT56DoesNotApplyLegacyLongContextSurcharge(t *testing.T) {
 	svc := newTestBillingService()
 
 	tokens := UsageTokens{
@@ -245,16 +245,44 @@ func TestCalculateCost_OpenAIGPT56LongContextAppliesConfiguredRatesToCacheWrite(
 	cost, err := svc.CalculateCost("gpt-5.6-sol", tokens, 1.0)
 	require.NoError(t, err)
 
-	expectedInput := float64(tokens.InputTokens) * 5e-6 * 2.0
-	expectedOutput := float64(tokens.OutputTokens) * 30e-6 * 1.5
-	expectedCacheRead := float64(tokens.CacheReadTokens) * 0.5e-6 * 2.0
-	expectedCacheWrite := float64(tokens.CacheCreationTokens) * 6.25e-6 * 2.0
+	expectedInput := float64(tokens.InputTokens) * 5e-6
+	expectedOutput := float64(tokens.OutputTokens) * 30e-6
+	expectedCacheRead := float64(tokens.CacheReadTokens) * 0.5e-6
+	expectedCacheWrite := float64(tokens.CacheCreationTokens) * 6.25e-6
 	require.InDelta(t, expectedInput, cost.InputCost, 1e-10)
 	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
 	require.InDelta(t, expectedCacheRead, cost.CacheReadCost, 1e-10)
 	require.InDelta(t, expectedCacheWrite, cost.CacheCreationCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput+expectedCacheRead+expectedCacheWrite, cost.TotalCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput+expectedCacheRead+expectedCacheWrite, cost.ActualCost, 1e-10)
+}
+
+func TestApplyModelSpecificPricingPolicy_GPT56CacheWritePolicy(t *testing.T) {
+	svc := newTestBillingService()
+
+	derived := svc.applyModelSpecificPricingPolicy("gpt-5.6-terra", &ModelPricing{
+		InputPricePerToken:         2.5e-6,
+		InputPricePerTokenPriority: 5e-6,
+	})
+	require.InDelta(t, 3.125e-6, derived.CacheCreationPricePerToken, 1e-12)
+	require.InDelta(t, 6.25e-6, derived.CacheCreationPricePerTokenPriority, 1e-12)
+	require.Zero(t, derived.LongContextInputThreshold)
+
+	explicitZero := svc.applyModelSpecificPricingPolicy("gpt-5.6-terra", &ModelPricing{
+		InputPricePerToken:                 2.5e-6,
+		CacheCreationPriceExplicit:         true,
+		CacheCreationPricePerToken:         0,
+		CacheCreationPricePerTokenPriority: 0,
+	})
+	require.Zero(t, explicitZero.CacheCreationPricePerToken)
+	require.Zero(t, explicitZero.CacheCreationPricePerTokenPriority)
+
+	legacy := svc.applyModelSpecificPricingPolicy("gpt-5.4", &ModelPricing{
+		InputPricePerToken: 2.5e-6,
+	})
+	require.Equal(t, 272000, legacy.LongContextInputThreshold)
+	require.InDelta(t, 2.0, legacy.LongContextInputMultiplier, 1e-12)
+	require.InDelta(t, 1.5, legacy.LongContextOutputMultiplier, 1e-12)
 }
 
 // 回归测试 #2293：长上下文计费触发时，cache_read_tokens 也应应用 LongContextInputMultiplier。
