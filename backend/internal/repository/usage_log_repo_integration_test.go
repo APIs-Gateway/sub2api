@@ -1353,31 +1353,33 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 
-	// Create logs with different models
+	// Different routed models for the same requested model should aggregate together.
 	log1 := &service.UsageLog{
-		UserID:       user.ID,
-		APIKeyID:     apiKey.ID,
-		AccountID:    account.ID,
-		Model:        "claude-3-opus",
-		InputTokens:  100,
-		OutputTokens: 200,
-		TotalCost:    0.5,
-		ActualCost:   0.5,
-		CreatedAt:    base,
+		UserID:         user.ID,
+		APIKeyID:       apiKey.ID,
+		AccountID:      account.ID,
+		Model:          "claude-3-opus-upstream-a",
+		RequestedModel: "claude-3-opus",
+		InputTokens:    100,
+		OutputTokens:   200,
+		TotalCost:      0.5,
+		ActualCost:     0.5,
+		CreatedAt:      base,
 	}
 	_, err := s.repo.Create(s.ctx, log1)
 	s.Require().NoError(err)
 
 	log2 := &service.UsageLog{
-		UserID:       user.ID,
-		APIKeyID:     apiKey.ID,
-		AccountID:    account.ID,
-		Model:        "claude-3-sonnet",
-		InputTokens:  50,
-		OutputTokens: 100,
-		TotalCost:    0.2,
-		ActualCost:   0.2,
-		CreatedAt:    base.Add(1 * time.Hour),
+		UserID:         user.ID,
+		APIKeyID:       apiKey.ID,
+		AccountID:      account.ID,
+		Model:          "claude-3-opus-upstream-b",
+		RequestedModel: "claude-3-opus",
+		InputTokens:    50,
+		OutputTokens:   100,
+		TotalCost:      0.2,
+		ActualCost:     0.2,
+		CreatedAt:      base.Add(1 * time.Hour),
 	}
 	_, err = s.repo.Create(s.ctx, log2)
 	s.Require().NoError(err)
@@ -1386,11 +1388,11 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 	endTime := base.Add(2 * time.Hour)
 	stats, err := s.repo.GetUserModelStats(s.ctx, user.ID, startTime, endTime)
 	s.Require().NoError(err, "GetUserModelStats")
-	s.Require().Len(stats, 2)
+	s.Require().Len(stats, 1)
 
-	// Should be ordered by total_tokens DESC
+	// The dashboard presents the model requested by the user, not per-route names.
 	s.Require().Equal("claude-3-opus", stats[0].Model)
-	s.Require().Equal(int64(300), stats[0].TotalTokens)
+	s.Require().Equal(int64(450), stats[0].TotalTokens)
 }
 
 // --- GetUsageTrendWithFilters ---
