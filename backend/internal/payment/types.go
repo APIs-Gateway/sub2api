@@ -88,6 +88,8 @@ func GetBasePaymentType(t string) string {
 		return TypeAirwallex
 	case t == TypeStripe || t == TypeCard || t == TypeLink:
 		return TypeStripe
+	case len(t) >= len(TypeCrypto) && t[:len(TypeCrypto)] == TypeCrypto:
+		return TypeCrypto
 	case len(t) >= len(TypeAlipay) && t[:len(TypeAlipay)] == TypeAlipay:
 		return TypeAlipay
 	case len(t) >= len(TypeWxpay) && t[:len(TypeWxpay)] == TypeWxpay:

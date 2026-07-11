@@ -1200,7 +1200,7 @@ func calculateCreateOrderPayAmount(limitAmount, feeRate float64, currency string
 // exchange rate. It must not inherit the global fiat recharge fee, which is
 // configured for traditional payment methods and may be non-zero.
 func paymentFeeRateForMethod(paymentType string, configuredRate float64) float64 {
-	if paymentType == payment.TypeCrypto {
+	if payment.GetBasePaymentType(paymentType) == payment.TypeCrypto {
 		return 0
 	}
 	return configuredRate
