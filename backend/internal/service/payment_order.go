@@ -100,6 +100,9 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if err := s.validateSelectedCreateOrderInstance(ctx, req, sel); err != nil {
 		return nil, err
 	}
+	if sel.ProviderKey == payment.TypeCrypto {
+		sel.Config["rateMarkup"] = strconv.FormatFloat(1+cfg.CryptoRechargeFeeRate/100, 'f', -1, 64)
+	}
 	selectedCurrency := payment.DefaultPaymentCurrency
 	if sel != nil {
 		selectedCurrency = paymentProviderConfigCurrency(sel.ProviderKey, sel.Config)

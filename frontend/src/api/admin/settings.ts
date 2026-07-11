@@ -587,6 +587,7 @@ export interface SystemSettings {
   payment_balance_recharge_multiplier: number;
   payment_subscription_payment_multiplier: number;
   payment_recharge_fee_rate: number;
+	payment_crypto_recharge_fee_rate: number;
   payment_refund_fee_rate: number;
   payment_subscription_min_daily_amount: number;
   payment_subscription_max_daily_amount: number;
@@ -841,6 +842,7 @@ export interface UpdateSettingsRequest {
   payment_balance_recharge_multiplier?: number;
   payment_subscription_payment_multiplier?: number;
   payment_recharge_fee_rate?: number;
+	payment_crypto_recharge_fee_rate?: number;
   payment_refund_fee_rate?: number;
   payment_subscription_min_daily_amount?: number;
   payment_subscription_max_daily_amount?: number;

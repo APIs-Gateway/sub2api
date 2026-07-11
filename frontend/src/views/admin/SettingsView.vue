@@ -6229,6 +6229,21 @@
                 <!-- Row 1: Product name -->
                 <div class="grid grid-cols-3 gap-3">
                   <div>
+                    <label class="input-label">加密货币手续费率</label>
+                    <div class="relative">
+                      <input
+                        v-model.number="form.payment_crypto_recharge_fee_rate"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                        class="input pr-8"
+                      />
+                      <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400">%</span>
+                    </div>
+                    <p class="mt-0.5 text-xs text-gray-400">仅用于 Crypto Pay，普通充值手续费不受影响。</p>
+                  </div>
+                  <div>
                     <label class="input-label">{{
                       t("admin.settings.payment.productNamePrefix")
                     }}</label
@@ -8124,6 +8139,7 @@ const form = reactive<SettingsForm>({
   payment_balance_recharge_multiplier: 1,
   payment_subscription_payment_multiplier: 1,
   payment_recharge_fee_rate: 0,
+  payment_crypto_recharge_fee_rate: 0,
   payment_refund_fee_rate: 0,
   payment_subscription_min_daily_amount: 30,
   payment_subscription_max_daily_amount: 510,
@@ -9437,6 +9453,7 @@ async function saveSettings() {
       payment_subscription_payment_multiplier:
         Number(form.payment_subscription_payment_multiplier) || 1,
       payment_recharge_fee_rate: Number(form.payment_recharge_fee_rate) || 0,
+      payment_crypto_recharge_fee_rate: Number(form.payment_crypto_recharge_fee_rate) || 0,
       payment_refund_fee_rate: Number(form.payment_refund_fee_rate) || 0,
       payment_subscription_min_daily_amount:
         Number(form.payment_subscription_min_daily_amount) || 30,
