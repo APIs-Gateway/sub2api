@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -2547,10 +2548,11 @@ func TestCopyOpenAIUsageFromResponsesUsagePreservesCacheCreationTokens(t *testin
 		want  int
 	}{
 		{
-			name: "details cache creation fallback",
+			name: "normalized cache creation is preserved",
 			usage: apicompat.ResponsesUsage{
-				InputTokens:  31,
-				OutputTokens: 9,
+				InputTokens:              31,
+				OutputTokens:             9,
+				CacheCreationInputTokens: 12,
 				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
 					CachedTokens:        5,
 					CacheCreationTokens: 12,
@@ -2559,14 +2561,14 @@ func TestCopyOpenAIUsageFromResponsesUsagePreservesCacheCreationTokens(t *testin
 			want: 12,
 		},
 		{
-			name: "details cache write takes precedence",
+			name: "normalized zero is not overwritten by detail aliases",
 			usage: apicompat.ResponsesUsage{
 				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
 					CacheCreationTokens: 12,
-					CacheWriteTokens:    14,
+					CacheWriteTokens:    0,
 				},
 			},
-			want: 14,
+			want: 0,
 		},
 		{
 			name: "top level cache creation wins",
@@ -2585,6 +2587,19 @@ func TestCopyOpenAIUsageFromResponsesUsagePreservesCacheCreationTokens(t *testin
 			require.Equal(t, tt.want, usage.CacheCreationInputTokens)
 		})
 	}
+}
+
+func TestCopyOpenAIUsageFromResponsesUsagePreservesExplicitNestedCacheWriteZero(t *testing.T) {
+	var parsed apicompat.ResponsesUsage
+	require.NoError(t, json.Unmarshal([]byte(`{
+        "input_tokens": 3,
+        "output_tokens": 5,
+        "cache_creation_input_tokens": 7,
+        "input_tokens_details": {"cache_write_tokens": 0, "cache_creation_tokens": 12}
+    }`), &parsed))
+
+	usage := copyOpenAIUsageFromResponsesUsage(&parsed)
+	require.Zero(t, usage.CacheCreationInputTokens)
 }
 
 func TestOpenAIUsageFromGJSON_NestedCacheWriteZeroWins(t *testing.T) {
