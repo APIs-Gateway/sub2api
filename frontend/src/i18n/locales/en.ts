@@ -1186,6 +1186,7 @@
     notActiveButton: 'Activity not met',
     notActiveEnough: 'Your activity has not reached today’s check-in threshold yet. Keep using the service, then check in later.',
     claimedToast: 'Checked in — +${amount} added to your balance',
+    claimRecoveredToast: 'Check-in succeeded and the reward was added to your balance',
     claimFailed: 'Check-in failed, please try again'
   },
 

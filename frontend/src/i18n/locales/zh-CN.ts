@@ -1190,6 +1190,7 @@
     notActiveButton: '活跃度未达标',
     notActiveEnough: '今日活跃度还未达签到门槛，继续使用后即可签到。',
     claimedToast: '签到成功，+${amount} 已到账余额',
+    claimRecoveredToast: '签到已成功，奖励已到账余额',
     claimFailed: '签到失败，请稍后再试'
   },
 

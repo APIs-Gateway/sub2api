@@ -1190,6 +1190,7 @@
     notActiveButton: '活躍度未達標',
     notActiveEnough: '今日活躍度還未達簽到門檻，繼續使用後即可簽到。',
     claimedToast: '簽到成功，+${amount} 已到賬餘額',
+    claimRecoveredToast: '簽到已成功，獎勵已到賬餘額',
     claimFailed: '簽到失敗，請稍後再試'
   },
 

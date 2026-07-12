@@ -113,4 +113,27 @@ describe('CheckinCard', () => {
     expect(showSuccess).not.toHaveBeenCalled()
     warn.mockRestore()
   })
+
+  it('reconciles a lost success response without retrying the claim', async () => {
+    claimCheckin.mockRejectedValueOnce(new Error('response lost'))
+    getCheckinStatus
+      .mockResolvedValueOnce(claimableStatus)
+      .mockResolvedValueOnce(claimedStatus)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const wrapper = mount(CheckinCard, {
+      global: { stubs: { TurnstileWidget: true } }
+    })
+    await flushPromises()
+
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+
+    expect(claimCheckin).toHaveBeenCalledTimes(1)
+    expect(getCheckinStatus).toHaveBeenCalledTimes(2)
+    expect(showSuccess).toHaveBeenCalledWith('checkin.claimRecoveredToast')
+    expect(showError).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('checkin.doneToday')
+    warn.mockRestore()
+  })
 })
