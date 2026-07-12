@@ -87,6 +87,22 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			abortWithGoogleError(c, 403, "API Key 所属专属分组不再允许当前用户使用")
 			return
 		}
+		switch apiKey.Status {
+		case service.StatusAPIKeyQuotaExhausted:
+			abortWithGoogleError(c, 429, "API key 额度已用完")
+			return
+		case service.StatusAPIKeyExpired:
+			abortWithGoogleError(c, 403, "API key 已过期")
+			return
+		}
+		if apiKey.IsExpired() {
+			abortWithGoogleError(c, 403, "API key 已过期")
+			return
+		}
+		if apiKey.IsQuotaExhausted() {
+			abortWithGoogleError(c, 429, "API key 额度已用完")
+			return
+		}
 
 		// 简易模式：跳过余额和订阅检查
 		if cfg.RunMode == config.RunModeSimple {
@@ -105,22 +121,6 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		// per-day：不再按 user.Balance<=0 早拒（与主中间件一致）。套餐额度在卡的 today_remaining、
 		// 不在钱包，准入由 handler 的 CheckBillingEligibility（per-day Admit）权威判定，否则
 		// 「钱包 0 + 有今日套餐额度」用户会被误拒、Admit 不可达。
-		switch apiKey.Status {
-		case service.StatusAPIKeyQuotaExhausted:
-			abortWithGoogleError(c, 429, "API key 额度已用完")
-			return
-		case service.StatusAPIKeyExpired:
-			abortWithGoogleError(c, 403, "API key 已过期")
-			return
-		}
-		if apiKey.IsExpired() {
-			abortWithGoogleError(c, 403, "API key 已过期")
-			return
-		}
-		if apiKey.IsQuotaExhausted() {
-			abortWithGoogleError(c, 429, "API key 额度已用完")
-			return
-		}
 		var subscription *service.UserSubscription
 		if subscriptionService != nil {
 			loaded, subErr := subscriptionService.GetActiveUserSubscription(c.Request.Context(), apiKey.User.ID)

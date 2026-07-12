@@ -396,51 +396,53 @@ func TestAPIKeyAuthWithSubscriptionGoogle_RejectsExclusiveGroupWhenUserNoLongerA
 
 func TestAPIKeyAuthWithSubscriptionGoogle_RejectsRuntimeKeyStates(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, tc := range []struct {
-		name       string
-		status     string
-		wantStatus int
-		configure  func(*service.APIKey)
-	}{
-		{name: "expired", status: service.StatusAPIKeyExpired, wantStatus: http.StatusForbidden},
-		{name: "quota exhausted", status: service.StatusAPIKeyQuotaExhausted, wantStatus: http.StatusTooManyRequests},
-		{
-			name:       "active key past expiry time",
-			status:     service.StatusActive,
-			wantStatus: http.StatusForbidden,
-			configure: func(apiKey *service.APIKey) {
-				expiresAt := time.Now().Add(-time.Hour)
-				apiKey.ExpiresAt = &expiresAt
+	for _, runMode := range []string{config.RunModeStandard, config.RunModeSimple} {
+		for _, tc := range []struct {
+			name       string
+			status     string
+			wantStatus int
+			configure  func(*service.APIKey)
+		}{
+			{name: "expired", status: service.StatusAPIKeyExpired, wantStatus: http.StatusForbidden},
+			{name: "quota exhausted", status: service.StatusAPIKeyQuotaExhausted, wantStatus: http.StatusTooManyRequests},
+			{
+				name:       "active key past expiry time",
+				status:     service.StatusActive,
+				wantStatus: http.StatusForbidden,
+				configure: func(apiKey *service.APIKey) {
+					expiresAt := time.Now().Add(-time.Hour)
+					apiKey.ExpiresAt = &expiresAt
+				},
 			},
-		},
-		{
-			name:       "active key with exhausted quota",
-			status:     service.StatusActive,
-			wantStatus: http.StatusTooManyRequests,
-			configure: func(apiKey *service.APIKey) {
-				apiKey.Quota = 1
-				apiKey.QuotaUsed = 1
+			{
+				name:       "active key with exhausted quota",
+				status:     service.StatusActive,
+				wantStatus: http.StatusTooManyRequests,
+				configure: func(apiKey *service.APIKey) {
+					apiKey.Quota = 1
+					apiKey.QuotaUsed = 1
+				},
 			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			user := &service.User{ID: 8, Role: service.RoleUser, Status: service.StatusActive}
-			apiKey := &service.APIKey{ID: 101, UserID: user.ID, Key: tc.name, Status: tc.status, User: user}
-			if tc.configure != nil {
-				tc.configure(apiKey)
-			}
-			router := gin.New()
-			router.Use(APIKeyAuthWithSubscriptionGoogle(newTestAPIKeyService(fakeAPIKeyRepo{
-				getByKey: func(context.Context, string) (*service.APIKey, error) { return apiKey, nil },
-			}), nil, &config.Config{RunMode: config.RunModeStandard}))
-			router.GET("/v1beta/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+		} {
+			t.Run(runMode+"/"+tc.name, func(t *testing.T) {
+				user := &service.User{ID: 8, Role: service.RoleUser, Status: service.StatusActive}
+				apiKey := &service.APIKey{ID: 101, UserID: user.ID, Key: tc.name, Status: tc.status, User: user}
+				if tc.configure != nil {
+					tc.configure(apiKey)
+				}
+				router := gin.New()
+				router.Use(APIKeyAuthWithSubscriptionGoogle(newTestAPIKeyService(fakeAPIKeyRepo{
+					getByKey: func(context.Context, string) (*service.APIKey, error) { return apiKey, nil },
+				}), nil, &config.Config{RunMode: runMode}))
+				router.GET("/v1beta/test", func(c *gin.Context) { c.Status(http.StatusOK) })
 
-			req := httptest.NewRequest(http.MethodGet, "/v1beta/test", nil)
-			req.Header.Set("x-goog-api-key", apiKey.Key)
-			rec := httptest.NewRecorder()
-			router.ServeHTTP(rec, req)
-			require.Equal(t, tc.wantStatus, rec.Code)
-		})
+				req := httptest.NewRequest(http.MethodGet, "/v1beta/test", nil)
+				req.Header.Set("x-goog-api-key", apiKey.Key)
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, req)
+				require.Equal(t, tc.wantStatus, rec.Code)
+			})
+		}
 	}
 }
 
