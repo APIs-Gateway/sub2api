@@ -1790,6 +1790,71 @@ func assertVerboseResponseFailedIsSanitized(t *testing.T, body string) {
 	require.NotContains(t, body, `"usage"`)
 }
 
+func TestOpenAIStreamingPassthroughDeduplicatesRepeatedFunctionCallArguments(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	arguments := `{"cmd":"echo hi","meta":{"nested":[1,true]}}`
+	repeated := arguments + arguments
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec","arguments":""}}`,
+			"",
+			fmt.Sprintf(`data: {"type":"response.function_call_arguments.done","call_id":"call_1","arguments":%q}`, repeated),
+			"",
+			fmt.Sprintf(`data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec","arguments":%q}}`, repeated),
+			"",
+			fmt.Sprintf(`data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec","arguments":%q}]}}`, repeated),
+			"",
+			"data: [DONE]",
+			"",
+		}, "\n"))),
+		Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+
+	_, err := (&OpenAIGatewayService{}).handleStreamingResponsePassthrough(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "gpt-5.4", "gpt-5.4")
+	require.NoError(t, err)
+
+	seen := map[string]bool{}
+	for _, event := range strings.Split(rec.Body.String(), "\n\n") {
+		payload, ok := extractOpenAISSEDataLine(event)
+		if !ok || strings.TrimSpace(payload) == "[DONE]" {
+			continue
+		}
+		switch gjson.Get(payload, "type").String() {
+		case "response.function_call_arguments.done":
+			seen["done"] = true
+			require.Equal(t, arguments, gjson.Get(payload, "arguments").String())
+		case "response.output_item.done":
+			seen["item_done"] = true
+			require.Equal(t, arguments, gjson.Get(payload, "item.arguments").String())
+		case "response.completed":
+			seen["completed"] = true
+			require.Equal(t, arguments, gjson.Get(payload, "response.output.0.arguments").String())
+		}
+	}
+	require.Equal(t, map[string]bool{"done": true, "item_done": true, "completed": true}, seen)
+
+	nonStreaming := []byte(fmt.Sprintf(`{"output":[{"type":"function_call","arguments":%q}]}`, repeated))
+	require.Equal(t, arguments, gjson.GetBytes((&OpenAIGatewayService{}).correctToolCallsInResponseBody(nonStreaming), "output.0.arguments").String())
+}
+
+func TestDedupeRepeatedJSONArgumentStringRejectsNonExactOrNonJSONValues(t *testing.T) {
+	for _, value := range []string{
+		`{"cmd":"echo hi"}{"cmd":"echo bye"}`,
+		`plainplain`,
+		`{"cmd":"echo hi"}`,
+		`{broken}{broken}`,
+	} {
+		got, changed := dedupeRepeatedJSONArgumentString(value)
+		require.False(t, changed, value)
+		require.Empty(t, got, value)
+	}
+}
+
 func TestOpenAIStreamingPassthroughResponseDoneWithoutDoneMarkerStillSucceeds(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
