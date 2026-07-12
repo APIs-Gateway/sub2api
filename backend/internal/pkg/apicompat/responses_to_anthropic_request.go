@@ -540,7 +540,10 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 			out = append(out, AnthropicTool{
 				Name:        t.Name,
 				Description: t.Description,
-				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
+				// Anthropic only supports object-shaped input schemas. Preserve
+				// Responses custom/freeform semantics by carrying the raw input in
+				// one required string field, then restoring it on the return path.
+				InputSchema: json.RawMessage(customToolInputSchema),
 			})
 		default:
 			// Pass through unknown tool types
@@ -592,8 +595,8 @@ func normalizeAnthropicInputSchema(schema json.RawMessage) json.RawMessage {
 //	"auto"                                     → {"type":"auto"}
 //	"required"                                 → {"type":"any"}
 //	"none"                                     → {"type":"none"}
-//	{"type":"function","name":"X"}                 → {"type":"tool","name":"X"}
-//	{"type":"function","function":{"name":"X"}}     → {"type":"tool","name":"X"} // legacy
+//	{"type":"function"|"custom","name":"X"}             → {"type":"tool","name":"X"}
+//	{"type":"function"|"custom","function":{"name":"X"}} → {"type":"tool","name":"X"} // legacy
 func convertResponsesToAnthropicToolChoice(raw json.RawMessage) (json.RawMessage, error) {
 	// Try as string first
 	var s string
@@ -610,7 +613,7 @@ func convertResponsesToAnthropicToolChoice(raw json.RawMessage) (json.RawMessage
 		}
 	}
 
-	// Try as object with type=function
+	// Function and custom tools both become Anthropic tool choices.
 	var tc struct {
 		Type     string `json:"type"`
 		Name     string `json:"name"`
@@ -618,7 +621,7 @@ func convertResponsesToAnthropicToolChoice(raw json.RawMessage) (json.RawMessage
 			Name string `json:"name"`
 		} `json:"function"`
 	}
-	if err := json.Unmarshal(raw, &tc); err == nil && tc.Type == "function" {
+	if err := json.Unmarshal(raw, &tc); err == nil && (tc.Type == "function" || tc.Type == "custom") {
 		name := strings.TrimSpace(tc.Name)
 		if name == "" {
 			name = strings.TrimSpace(tc.Function.Name)

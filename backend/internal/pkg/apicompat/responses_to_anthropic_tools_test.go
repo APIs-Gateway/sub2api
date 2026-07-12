@@ -7,14 +7,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResponsesToAnthropicCustomToolUsesObjectSchema(t *testing.T) {
+func TestResponsesToAnthropicCustomToolUsesTextInputSchema(t *testing.T) {
 	tools := convertResponsesToAnthropicTools([]ResponsesTool{{
 		Type: "custom", Name: "apply_patch", Description: "Apply a patch",
 	}})
 	require.Len(t, tools, 1)
 	require.Empty(t, tools[0].Type)
 	require.Equal(t, "apply_patch", tools[0].Name)
-	require.JSONEq(t, `{"type":"object","properties":{}}`, string(tools[0].InputSchema))
+	require.JSONEq(t, customToolInputSchema, string(tools[0].InputSchema))
+}
+
+func TestResponsesToAnthropicCustomToolChoiceBecomesToolChoice(t *testing.T) {
+	choice, err := convertResponsesToAnthropicToolChoice(json.RawMessage(`{"type":"custom","name":"exec"}`))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"tool","name":"exec"}`, string(choice))
 }
 
 func TestNormalizeAnthropicInputSchemaRequiresObject(t *testing.T) {
