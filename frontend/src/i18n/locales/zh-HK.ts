@@ -665,6 +665,8 @@
   dashboard: {
     title: '儀表盤',
     welcomeMessage: '歡迎回來！這是您帳戶的概覽。',
+    loadFailed: '儀表板資料載入失敗',
+    loadFailedDescription: '資料不會遺失，請重新整理後再試。',
     balance: '餘額',
     apiKeys: 'API 金鑰',
     todayRequests: '今日請求',
@@ -1189,6 +1191,7 @@
     notActiveButton: '活躍度未達標',
     notActiveEnough: '今日活躍度還未達簽到門檻，繼續使用後即可簽到。',
     claimedToast: '簽到成功，+${amount} 已到賬餘額',
+    claimRecoveredToast: '簽到已成功，獎勵已到賬餘額',
     claimFailed: '簽到失敗，請稍後再試'
   },
 

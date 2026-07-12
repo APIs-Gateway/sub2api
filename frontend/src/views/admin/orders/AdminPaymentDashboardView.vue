@@ -1,6 +1,15 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
+      <DashboardLoadError
+        v-if="loadError"
+        :title="t('dashboard.loadFailed')"
+        :description="t('dashboard.loadFailedDescription')"
+        :retry-label="t('common.refresh')"
+        :loading="loading"
+        @retry="loadDashboard"
+      />
+
       <!-- Header with Day Switcher -->
       <div class="flex items-center justify-end">
         <div class="flex items-center gap-2">
@@ -25,7 +34,7 @@
       </div>
 
       <!-- Dashboard Content -->
-      <div v-if="loading" class="flex items-center justify-center py-12">
+      <div v-if="loading && !stats" class="flex items-center justify-center py-12">
         <LoadingSpinner />
       </div>
       <template v-else-if="stats">
@@ -76,6 +85,7 @@ import { extractI18nErrorMessage } from '@/utils/apiError'
 import type { DashboardStats } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import DashboardLoadError from '@/components/common/DashboardLoadError.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OrderStatsCards from '@/components/admin/payment/OrderStatsCards.vue'
 import DailyRevenueChart from '@/components/admin/payment/DailyRevenueChart.vue'
@@ -87,6 +97,7 @@ const DAYS_OPTIONS = [7, 30, 90] as const
 const days = ref<number>(30)
 const loading = ref(false)
 const stats = ref<DashboardStats | null>(null)
+const loadError = ref(false)
 
 function methodColor(type: string): string {
   const c: Record<string, string> = {
@@ -106,10 +117,13 @@ function rankClass(idx: number): string {
 
 async function loadDashboard() {
   loading.value = true
+  loadError.value = false
   try {
     const res = await adminPaymentAPI.getDashboard(days.value)
+    if (!res.data) throw new Error('Payment dashboard response did not include data')
     stats.value = res.data
   } catch (err: unknown) {
+    loadError.value = true
     appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
   } finally {
     loading.value = false

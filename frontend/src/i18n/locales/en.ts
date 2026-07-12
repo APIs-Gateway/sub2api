@@ -666,6 +666,8 @@
   dashboard: {
     title: 'Dashboard',
     welcomeMessage: "Welcome back! Here's an overview of your account.",
+    loadFailed: 'Dashboard data could not be loaded',
+    loadFailedDescription: 'Your data is safe. Please refresh and try again.',
     balance: 'Wallet Balance',
     apiKeys: 'API Keys',
     todayRequests: 'Today Requests',
@@ -1185,6 +1187,7 @@
     notActiveButton: 'Activity not met',
     notActiveEnough: 'Your activity has not reached today’s check-in threshold yet. Keep using the service, then check in later.',
     claimedToast: 'Checked in — +${amount} added to your balance',
+    claimRecoveredToast: 'Check-in succeeded and the reward was added to your balance',
     claimFailed: 'Check-in failed, please try again'
   },
 
