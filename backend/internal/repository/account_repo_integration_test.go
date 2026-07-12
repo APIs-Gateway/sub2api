@@ -128,11 +128,12 @@ func (s *AccountRepoSuite) TestGetByID_NotFound() {
 func (s *AccountRepoSuite) TestListOpsAccountsForStats() {
 	targetGroup := mustCreateGroup(s.T(), s.client, &service.Group{Name: "ops-target", Platform: service.PlatformOpenAI})
 	otherGroup := mustCreateGroup(s.T(), s.client, &service.Group{Name: "ops-other", Platform: service.PlatformOpenAI})
+	loadFactor := 2
 	target := mustCreateAccount(s.T(), s.client, &service.Account{
 		Name:        "ops-target-account",
 		Platform:    service.PlatformOpenAI,
 		Concurrency: 6,
-		LoadFactor:  2,
+		LoadFactor:  &loadFactor,
 		Status:      service.StatusActive,
 		Schedulable: true,
 	})
@@ -152,7 +153,8 @@ func (s *AccountRepoSuite) TestListOpsAccountsForStats() {
 	s.Equal("ops-target-account", accounts[0].Name)
 	s.Equal(service.PlatformOpenAI, accounts[0].Platform)
 	s.Equal(6, accounts[0].Concurrency)
-	s.Equal(2, accounts[0].LoadFactor)
+	s.Require().NotNil(accounts[0].LoadFactor)
+	s.Equal(2, *accounts[0].LoadFactor)
 	s.Equal([]int64{targetGroup.ID}, accounts[0].GroupIDs)
 	s.Require().Len(accounts[0].Groups, 1)
 	s.Equal(targetGroup.ID, accounts[0].Groups[0].ID)
