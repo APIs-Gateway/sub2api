@@ -14,8 +14,9 @@ Replacing the embedded frontend binary removes the previous build's hashed asset
    - renders a persistent failure state with a retry action when no statistics are available;
    - preserves already-rendered statistics when a refresh fails.
 5. The admin Dashboard renders a persistent failure state with a retry action on initial snapshot failure and preserves existing data on refresh failure.
-6. The Ops Dashboard uses a request-local abort signal, invalidates stale requests during abort/unmount, and does not fan out legacy fallback requests for cancellation, authentication, or disabled-feature errors.
-7. Regression tests cover each failure and recovery path.
+6. The admin payment Dashboard renders the same persistent retry state and preserves existing data on refresh failure.
+7. The Ops Dashboard uses a request-local abort signal, invalidates stale requests during abort/unmount, and does not fan out legacy fallback requests for cancellation, authentication, or disabled-feature errors.
+8. Regression tests cover each failure and recovery path.
 
 ## Out of scope
 
