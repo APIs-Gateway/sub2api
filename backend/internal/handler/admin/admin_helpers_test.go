@@ -1,14 +1,18 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -175,6 +179,109 @@ func TestParseOpsRealtimeWindow(t *testing.T) {
 
 	_, _, ok = parseOpsRealtimeWindow("invalid")
 	require.False(t, ok)
+}
+
+func TestIsOpsRealtimeRequestCanceled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	require.False(t, isOpsRealtimeRequestCanceled(c, nil))
+	require.True(t, isOpsRealtimeRequestCanceled(c, context.Canceled))
+	require.True(t, isOpsRealtimeRequestCanceled(c, errors.New("pq: canceling statement due to user request")))
+	require.False(t, isOpsRealtimeRequestCanceled(c, errors.New("database unavailable")))
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil).WithContext(canceledCtx)
+	require.True(t, isOpsRealtimeRequestCanceled(c, errors.New("wrapped database error")))
+}
+
+type canceledOpsAccountRepository struct {
+	service.AccountRepository
+}
+
+func (canceledOpsAccountRepository) ListWithFilters(context.Context, pagination.PaginationParams, string, string, string, string, int64, string) ([]service.Account, *pagination.PaginationResult, error) {
+	return nil, nil, context.Canceled
+}
+
+type canceledOpsUserRepository struct {
+	service.UserRepository
+}
+
+func (canceledOpsUserRepository) ListWithFilters(context.Context, pagination.PaginationParams, service.UserListFilters) ([]service.User, *pagination.PaginationResult, error) {
+	return nil, nil, context.Canceled
+}
+
+type canceledOpsRepository struct {
+	service.OpsRepository
+}
+
+func (canceledOpsRepository) GetRealtimeTrafficSummary(context.Context, *service.OpsDashboardFilter) (*service.OpsRealtimeTrafficSummary, error) {
+	return nil, context.Canceled
+}
+
+func TestOpsRealtimeHandlersIgnoreCanceledRequests(t *testing.T) {
+	newHandler := func(opsRepo service.OpsRepository, accountRepo service.AccountRepository, userRepo service.UserRepository) *OpsHandler {
+		return NewOpsHandler(service.NewOpsService(
+			opsRepo,
+			nil,
+			&config.Config{Ops: config.OpsConfig{Enabled: true}},
+			accountRepo,
+			userRepo,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		))
+	}
+
+	tests := []struct {
+		name    string
+		handler *OpsHandler
+		path    string
+		call    func(*OpsHandler, *gin.Context)
+	}{
+		{
+			name:    "concurrency",
+			handler: newHandler(nil, canceledOpsAccountRepository{}, nil),
+			path:    "/",
+			call:    func(h *OpsHandler, c *gin.Context) { h.GetConcurrencyStats(c) },
+		},
+		{
+			name:    "user concurrency",
+			handler: newHandler(nil, nil, canceledOpsUserRepository{}),
+			path:    "/",
+			call:    func(h *OpsHandler, c *gin.Context) { h.GetUserConcurrencyStats(c) },
+		},
+		{
+			name:    "account availability",
+			handler: newHandler(nil, canceledOpsAccountRepository{}, nil),
+			path:    "/",
+			call:    func(h *OpsHandler, c *gin.Context) { h.GetAccountAvailability(c) },
+		},
+		{
+			name:    "traffic summary",
+			handler: newHandler(canceledOpsRepository{}, nil, nil),
+			path:    "/",
+			call:    func(h *OpsHandler, c *gin.Context) { h.GetRealtimeTrafficSummary(c) },
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, tt.path, nil)
+
+			tt.call(tt.handler, c)
+			require.Empty(t, w.Body.String())
+		})
+	}
 }
 
 func TestPickThroughputBucketSeconds(t *testing.T) {

@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   fetchAdminSettings: vi.fn(),
   getAdvancedSettings: vi.fn(),
   getDashboardSnapshotV2: vi.fn(),
+  getDashboardOverview: vi.fn(),
+  getErrorTrend: vi.fn(),
   getErrorDistribution: vi.fn(),
   getLatencyHistogram: vi.fn(),
   getMetricThresholds: vi.fn(),
@@ -24,6 +26,8 @@ vi.mock('@/api/admin/ops', async () => {
       ...actual.opsAPI,
       getAdvancedSettings: mocks.getAdvancedSettings,
       getDashboardSnapshotV2: mocks.getDashboardSnapshotV2,
+      getDashboardOverview: mocks.getDashboardOverview,
+      getErrorTrend: mocks.getErrorTrend,
       getErrorDistribution: mocks.getErrorDistribution,
       getLatencyHistogram: mocks.getLatencyHistogram,
       getMetricThresholds: mocks.getMetricThresholds,
@@ -90,6 +94,8 @@ describe('OpsDashboard', () => {
       throughput_trend: null
     })
     mocks.getErrorDistribution.mockResolvedValue(null)
+    mocks.getDashboardOverview.mockResolvedValue(null)
+    mocks.getErrorTrend.mockResolvedValue(null)
     mocks.getLatencyHistogram.mockResolvedValue(null)
     mocks.getMetricThresholds.mockResolvedValue(null)
     mocks.getThroughputTrend.mockResolvedValue(null)
@@ -115,5 +121,43 @@ describe('OpsDashboard', () => {
     expect(cards[2].classes()).toContain('h-[360px]')
 
     wrapper.unmount()
+  })
+
+  it('does not use legacy fallback endpoints when ops monitoring is disabled', async () => {
+    mocks.getDashboardSnapshotV2.mockRejectedValue({ code: 'OPS_DISABLED' })
+
+    const wrapper = mount(OpsDashboard, {
+      shallow: true,
+      global: { stubs: { AppLayout: LayoutStub } }
+    })
+    await flushPromises()
+
+    expect(mocks.getDashboardOverview).not.toHaveBeenCalled()
+    // One call belongs to the independent five-hour switch trend, not the
+    // legacy snapshot fallback.
+    expect(mocks.getThroughputTrend).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('does not dereference a cleared controller after unmount', async () => {
+    let resolveSnapshot!: (value: { error_trend: null; overview: null; throughput_trend: null }) => void
+    mocks.getDashboardSnapshotV2.mockImplementation(() => new Promise((resolve) => {
+      resolveSnapshot = resolve
+    }))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const wrapper = mount(OpsDashboard, {
+      shallow: true,
+      global: { stubs: { AppLayout: LayoutStub } }
+    })
+    await flushPromises()
+    expect(mocks.getDashboardSnapshotV2).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+    resolveSnapshot({ error_trend: null, overview: null, throughput_trend: null })
+    await flushPromises()
+
+    expect(consoleError.mock.calls.flat().join(' ')).not.toContain("reading 'signal'")
+    consoleError.mockRestore()
   })
 })

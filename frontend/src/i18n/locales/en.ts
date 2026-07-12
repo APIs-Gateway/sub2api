@@ -666,6 +666,8 @@
   dashboard: {
     title: 'Dashboard',
     welcomeMessage: "Welcome back! Here's an overview of your account.",
+    loadFailed: 'Dashboard data could not be loaded',
+    loadFailedDescription: 'Your data is safe. Please refresh and try again.',
     balance: 'Wallet Balance',
     apiKeys: 'API Keys',
     todayRequests: 'Today Requests',
@@ -790,6 +792,7 @@
     total: 'Last 30d',
     quota: 'Quota',
     lastUsedAt: 'Last Used',
+    lastUsedIP: 'Last Used IP',
     useKey: 'Use Key',
     quickConnect: 'Quick connect',
     useKeyModal: {
@@ -1184,6 +1187,7 @@
     notActiveButton: 'Activity not met',
     notActiveEnough: 'Your activity has not reached today’s check-in threshold yet. Keep using the service, then check in later.',
     claimedToast: 'Checked in — +${amount} added to your balance',
+    claimRecoveredToast: 'Check-in succeeded and the reward was added to your balance',
     claimFailed: 'Check-in failed, please try again'
   },
 
@@ -5153,6 +5157,21 @@
       clickToViewBalance: 'Click to view balance history',
       failedToLoadUser: 'Failed to load user info',
       userDeletedBadge: 'Deleted',
+      tokenRanking: {
+        title: 'User Token Ranking',
+        subtitle: 'Token usage per user for the current filters and time range. Click a row to drill down.',
+        searchPlaceholder: 'Search user email...',
+        userCount: '{count} users',
+        columns: {
+          user: 'User',
+          requests: 'Requests',
+          inputTokens: 'Input Tokens',
+          outputTokens: 'Output Tokens',
+          cacheTokens: 'Cache Tokens',
+          totalTokens: 'Total Tokens',
+          cost: 'Cost'
+        }
+      },
       cleanup: {
         button: 'Cleanup',
         title: 'Cleanup Usage Records',
