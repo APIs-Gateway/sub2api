@@ -128,17 +128,18 @@ func (c *userMsgQueueCache) AcquireLock(ctx context.Context, accountID int64, re
 	return acquired == 1, nil
 }
 
-// ReleaseLock 释放锁并记录完成时间
-// 只有 requestID 匹配时才移除索引。与下一个获取的竞态由获取路径回填自愈。
+// ReleaseLock 释放锁并记录完成时间。
+//
+// Do not remove the index entry here: a new AcquireLock can write a fresh score
+// after the release script deletes the old lock but before a separate ZREM runs.
+// That delayed ZREM would remove the new lock's live candidate. Reconciliation
+// safely removes the short-lived stale entry after its recorded expiry.
 func (c *userMsgQueueCache) ReleaseLock(ctx context.Context, accountID int64, requestID string) (bool, error) {
 	lockKey := umqLockKey(accountID)
 	lastKey := umqLastKey(accountID)
 	result, err := releaseLockScript.Run(ctx, c.rdb, []string{lockKey, lastKey}, requestID).Int()
 	if err != nil {
 		return false, fmt.Errorf("umq release lock: %w", err)
-	}
-	if result == 1 {
-		c.removeLockIndexMember(ctx, strconv.FormatInt(accountID, 10))
 	}
 	return result == 1, nil
 }

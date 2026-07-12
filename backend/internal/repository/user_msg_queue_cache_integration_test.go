@@ -26,7 +26,7 @@ func (s *UserMsgQueueCacheSuite) SetupTest() {
 	s.cache = NewUserMsgQueueCache(s.rdb).(*userMsgQueueCache)
 }
 
-func (s *UserMsgQueueCacheSuite) TestAcquireLockWritesIndexAndReleaseRemovesIt() {
+func (s *UserMsgQueueCacheSuite) TestReleaseLockLeavesIndexForReconciliation() {
 	accountID := int64(701)
 	nowMs, err := s.cache.GetCurrentTimeMs(s.ctx)
 	require.NoError(s.T(), err)
@@ -43,6 +43,21 @@ func (s *UserMsgQueueCacheSuite) TestAcquireLockWritesIndexAndReleaseRemovesIt()
 	require.NoError(s.T(), err)
 	require.True(s.T(), released)
 
+	// A release must not remove the candidate in a separate Redis command: that
+	// can race with the next acquire and delete its newer score.
+	_, err = s.rdb.ZScore(s.ctx, umqLockIndexKey, "701").Result()
+	require.NoError(s.T(), err)
+
+	nowMs, err = s.cache.GetCurrentTimeMs(s.ctx)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, umqLockIndexKey, redis.Z{
+		Score:  float64(nowMs),
+		Member: "701",
+	}).Err())
+
+	cleaned, err := s.cache.ReconcileExpiredLockCandidates(s.ctx, 1000)
+	require.NoError(s.T(), err)
+	require.Zero(s.T(), cleaned)
 	_, err = s.rdb.ZScore(s.ctx, umqLockIndexKey, "701").Result()
 	require.ErrorIs(s.T(), err, redis.Nil)
 }
