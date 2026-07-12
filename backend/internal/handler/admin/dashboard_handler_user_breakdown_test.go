@@ -142,6 +142,19 @@ func TestGetUserBreakdown_CustomLimit(t *testing.T) {
 	require.Equal(t, 100, repo.capturedLimit)
 }
 
+func TestGetUserBreakdown_SortBy(t *testing.T) {
+	repo := &userBreakdownRepoCapture{}
+	router := newUserBreakdownRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/admin/dashboard/user-breakdown?start_date=2026-03-01&end_date=2026-03-16&sort_by=cache_tokens", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "cache_tokens", repo.capturedDim.SortBy)
+}
+
 func TestGetUserBreakdown_LimitClamped(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)

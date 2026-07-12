@@ -44,6 +44,12 @@ func TestAccountsToService_LargeActiveAccountSetDoesNotExceedPostgresParameterLi
 	require.Len(t, got, len(accounts))
 }
 
+func TestListOpsAccountsForStats_NilClient(t *testing.T) {
+	accounts, err := (&accountRepository{}).ListOpsAccountsForStats(context.Background(), "openai", nil)
+	require.NoError(t, err)
+	require.Empty(t, accounts)
+}
+
 func newParameterLimitAccountRepo(t *testing.T) *accountRepository {
 	t.Helper()
 

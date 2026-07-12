@@ -242,3 +242,37 @@ func TestIsCountTokensUnsupported404(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultBetaPolicy_Context1MAllowsOnlySonnet5(t *testing.T) {
+	settings := DefaultBetaPolicySettings()
+	var rule *BetaPolicyRule
+	for i := range settings.Rules {
+		if settings.Rules[i].BetaToken == "context-1m-2025-08-07" {
+			rule = &settings.Rules[i]
+			break
+		}
+	}
+	require.NotNil(t, rule)
+
+	for _, model := range []string{
+		"claude-sonnet-5",
+		"claude-sonnet-5-20260701",
+		"claude-sonnet-5@20260701",
+		"us.anthropic.claude-sonnet-5-v1",
+		"eu.anthropic.claude-sonnet-5-20260701-v1:0",
+	} {
+		action, _ := resolveRuleAction(*rule, model)
+		require.Equalf(t, BetaPolicyActionPass, action, "model=%s", model)
+	}
+
+	for _, model := range []string{
+		"claude-sonnet-4-6",
+		"claude-opus-4-8",
+		"claude-haiku-4-5",
+		"claude-sonnet-50",
+		"us.anthropic.claude-sonnet-50-v1",
+	} {
+		action, _ := resolveRuleAction(*rule, model)
+		require.Equalf(t, BetaPolicyActionFilter, action, "model=%s", model)
+	}
+}

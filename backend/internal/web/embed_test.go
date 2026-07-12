@@ -7,6 +7,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -95,7 +97,7 @@ func TestInjectSiteTitle(t *testing.T) {
 
 		result := injectSiteTitle(html, settingsJSON)
 
-		assert.Contains(t, string(result), "<title>A&amp;B - AI API Gateway</title>")
+		assert.Contains(t, string(result), "<title>A&amp;B - Codex订阅站</title>")
 	})
 
 	t.Run("preserves_rest_of_html", func(t *testing.T) {
@@ -593,9 +595,35 @@ func TestFrontendServer_Middleware(t *testing.T) {
 				router.ServeHTTP(w, req)
 
 				assert.Equal(t, http.StatusNotFound, w.Code)
+				assert.Equal(t, "no-store, max-age=0", w.Header().Get("Cache-Control"))
 				assert.NotContains(t, w.Body.String(), "<!doctype html>")
 			})
 		}
+	})
+
+	t.Run("serves_retained_asset_not_present_in_embedded_build", func(t *testing.T) {
+		provider := &mockSettingsProvider{settings: map[string]string{"test": "value"}}
+		server, err := NewFrontendServer(provider)
+		require.NoError(t, err)
+
+		server.overrideDir = t.TempDir()
+		assetDir := filepath.Join(server.overrideDir, "assets")
+		require.NoError(t, os.MkdirAll(assetDir, 0o755))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(assetDir, "DashboardView-PREVIOUS.js"),
+			[]byte("export const retained = true"),
+			0o644,
+		))
+
+		router := gin.New()
+		router.Use(server.Middleware())
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/assets/DashboardView-PREVIOUS.js", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "export const retained = true", w.Body.String())
 	})
 }
 

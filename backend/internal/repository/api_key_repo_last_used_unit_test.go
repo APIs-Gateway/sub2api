@@ -3,18 +3,96 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
+	"entgo.io/ent/dialect"
+
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 
-	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	_ "modernc.org/sqlite"
 )
+
+func TestLatestUsageLogIPsQuery(t *testing.T) {
+	postgresQuery, postgresArgs := latestUsageLogIPsQuery([]int64{11, 12}, dialect.Postgres)
+	require.Contains(t, postgresQuery, "ANY($1::bigint[])")
+	require.Len(t, postgresArgs, 1)
+
+	sqliteQuery, sqliteArgs := latestUsageLogIPsQuery([]int64{11, 12}, dialect.SQLite)
+	require.Contains(t, sqliteQuery, "IN (?, ?)")
+	require.Equal(t, []any{int64(11), int64(12)}, sqliteArgs)
+}
+
+func TestLatestUsageLogIPsQueryEmptyInput(t *testing.T) {
+	query, args := latestUsageLogIPsQuery(nil, dialect.Postgres)
+	require.Contains(t, query, "ANY($1::bigint[])")
+	require.Len(t, args, 1)
+}
+
+func TestLatestUsageLogIPsSkipsEmptyAndNilExecutor(t *testing.T) {
+	repo := &apiKeyRepository{}
+
+	empty, err := repo.latestUsageLogIPs(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, empty)
+
+	keys := []service.APIKey{{ID: 1}}
+	require.NoError(t, repo.attachLastUsedIPs(context.Background(), keys))
+	require.Nil(t, keys[0].LastUsedIP)
+}
+
+func TestLatestUsageLogIPsPropagatesQueryAndRowErrors(t *testing.T) {
+	queryErr := errors.New("usage log query failed")
+	repo, mock := newAPIKeyRepoSQLMock(t)
+	mock.ExpectQuery("SELECT api_key_id").WillReturnError(queryErr)
+
+	ips, err := repo.latestUsageLogIPs(context.Background(), []int64{1})
+	require.ErrorIs(t, err, queryErr)
+	require.Nil(t, ips)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	rowErr := errors.New("usage log row failed")
+	repo, mock = newAPIKeyRepoSQLMock(t)
+	mock.ExpectQuery("SELECT api_key_id").
+		WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "ip_address"}).
+			AddRow(int64(1), "203.0.113.10").
+			AddRow(int64(2), "203.0.113.11").
+			RowError(1, rowErr))
+
+	ips, err = repo.latestUsageLogIPs(context.Background(), []int64{1})
+	require.ErrorIs(t, err, rowErr)
+	require.Nil(t, ips)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLatestUsageLogIPsPropagatesScanError(t *testing.T) {
+	repo, mock := newAPIKeyRepoSQLMock(t)
+	mock.ExpectQuery("SELECT api_key_id").
+		WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "ip_address"}).AddRow("invalid-id", "203.0.113.10"))
+
+	ips, err := repo.latestUsageLogIPs(context.Background(), []int64{1})
+	require.Error(t, err)
+	require.Nil(t, ips)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func newAPIKeyRepoSQLMock(t *testing.T) (*apiKeyRepository, sqlmock.Sqlmock) {
+	t.Helper()
+
+	repo, _ := newAPIKeyRepoSQLite(t)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo.sql = db
+	return repo, mock
+}
 
 func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
 	t.Helper()
@@ -30,7 +108,7 @@ func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
 
-	return &apiKeyRepository{client: client}, client
+	return &apiKeyRepository{client: client, sql: db}, client
 }
 
 func mustCreateAPIKeyRepoUser(t *testing.T, ctx context.Context, client *dbent.Client, email string) *service.User {
@@ -43,6 +121,80 @@ func mustCreateAPIKeyRepoUser(t *testing.T, ctx context.Context, client *dbent.C
 		Save(ctx)
 	require.NoError(t, err)
 	return userEntityToService(u)
+}
+
+func mustCreateAPIKeyRepoAccount(t *testing.T, ctx context.Context, client *dbent.Client, name string) int64 {
+	t.Helper()
+	a, err := client.Account.Create().
+		SetName(name).
+		SetPlatform(service.PlatformOpenAI).
+		SetType(service.AccountTypeAPIKey).
+		SetStatus(service.StatusActive).
+		SetCredentials(map[string]any{"api_key": "sk-test"}).
+		Save(ctx)
+	require.NoError(t, err)
+	return a.ID
+}
+
+func mustCreateAPIKeyRepoUsageLog(t *testing.T, ctx context.Context, client *dbent.Client, userID, apiKeyID, accountID int64, requestID string, createdAt time.Time, ipAddress *string) {
+	t.Helper()
+	builder := client.UsageLog.Create().
+		SetUserID(userID).
+		SetAPIKeyID(apiKeyID).
+		SetAccountID(accountID).
+		SetRequestID(requestID).
+		SetModel("gpt-5").
+		SetCreatedAt(createdAt)
+	if ipAddress != nil {
+		builder.SetIPAddress(*ipAddress)
+	}
+	_, err := builder.Save(ctx)
+	require.NoError(t, err)
+}
+
+func TestAPIKeyRepositoryListByUserIDAttachesLastUsedIP(t *testing.T) {
+	repo, client := newAPIKeyRepoSQLite(t)
+	ctx := context.Background()
+	user := mustCreateAPIKeyRepoUser(t, ctx, client, "list-last-used-ip@test.com")
+	accountID := mustCreateAPIKeyRepoAccount(t, ctx, client, "acc-list-last-used-ip")
+
+	withLogs := &service.APIKey{UserID: user.ID, Key: "sk-list-last-used-ip-logs", Name: "With Logs", Status: service.StatusActive}
+	emptyOnly := &service.APIKey{UserID: user.ID, Key: "sk-list-last-used-ip-empty", Name: "Empty Only", Status: service.StatusActive}
+	noLogs := &service.APIKey{UserID: user.ID, Key: "sk-list-last-used-ip-none", Name: "No Logs", Status: service.StatusActive}
+	require.NoError(t, repo.Create(ctx, withLogs))
+	require.NoError(t, repo.Create(ctx, emptyOnly))
+	require.NoError(t, repo.Create(ctx, noLogs))
+
+	olderIP := "198.51.100.10"
+	newerEmptyIP := ""
+	newestIP := "203.0.113.20"
+	base := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
+	mustCreateAPIKeyRepoUsageLog(t, ctx, client, user.ID, withLogs.ID, accountID, "req-last-ip-older", base, &olderIP)
+	mustCreateAPIKeyRepoUsageLog(t, ctx, client, user.ID, withLogs.ID, accountID, "req-last-ip-empty", base.Add(time.Hour), &newerEmptyIP)
+	mustCreateAPIKeyRepoUsageLog(t, ctx, client, user.ID, withLogs.ID, accountID, "req-last-ip-newest", base.Add(2*time.Hour), &newestIP)
+	mustCreateAPIKeyRepoUsageLog(t, ctx, client, user.ID, emptyOnly.ID, accountID, "req-empty-ip", base.Add(3*time.Hour), &newerEmptyIP)
+
+	keys, _, err := repo.ListByUserID(ctx, user.ID, pagination.PaginationParams{Page: 1, PageSize: 10}, service.APIKeyListFilters{})
+	require.NoError(t, err)
+
+	byID := make(map[int64]service.APIKey, len(keys))
+	for _, key := range keys {
+		byID[key.ID] = key
+	}
+	require.NotNil(t, byID[withLogs.ID].LastUsedIP)
+	require.Equal(t, newestIP, *byID[withLogs.ID].LastUsedIP)
+	require.Nil(t, byID[emptyOnly.ID].LastUsedIP)
+	require.Nil(t, byID[noLogs.ID].LastUsedIP)
+}
+
+func TestLatestUsageLogIPsQueryUsesOneDialectAppropriateBatchArgument(t *testing.T) {
+	postgresQuery, postgresArgs := latestUsageLogIPsQuery([]int64{1, 2, 3}, dialect.Postgres)
+	require.Contains(t, postgresQuery, "api_key_id = ANY($1::bigint[])")
+	require.Len(t, postgresArgs, 1)
+
+	sqliteQuery, sqliteArgs := latestUsageLogIPsQuery([]int64{1, 2, 3}, dialect.SQLite)
+	require.Contains(t, sqliteQuery, "api_key_id IN (?, ?, ?)")
+	require.Equal(t, []any{int64(1), int64(2), int64(3)}, sqliteArgs)
 }
 
 func TestAPIKeyRepository_CreateWithLastUsedAt(t *testing.T) {
