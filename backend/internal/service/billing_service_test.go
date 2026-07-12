@@ -306,17 +306,18 @@ func TestCalculateCost_OpenAIGPT56At272KUsesBaseRate(t *testing.T) {
 	require.InDelta(t, 272000*5e-6+30e-6, cost.TotalCost, 1e-12)
 }
 
-func TestCalculateCost_OpenAIGPT56DynamicCatalogAppliesLongContextPricing(t *testing.T) {
+func TestCalculateCost_OpenAIGPT56DynamicCatalogPrefersExplicitLongContextPrices(t *testing.T) {
 	pricingSvc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
 		"gpt-5.6-terra": {
 			InputCostPerToken:                          2.5e-6,
-			InputCostPerTokenAbove272KTokens:           5e-6,
+			InputCostPerTokenAbove272KTokens:           6e-6,
 			OutputCostPerToken:                         15e-6,
-			OutputCostPerTokenAbove272KTokens:          22.5e-6,
+			OutputCostPerTokenAbove272KTokens:          29e-6,
 			CacheCreationInputTokenCost:                3.125e-6,
-			CacheCreationInputTokenCostAbove272KTokens: 6.25e-6,
+			CacheCreationInputTokenCostAbove272KTokens: 9e-6,
+			CacheCreationInputTokenCostAbove1hr:        4e-6,
 			CacheReadInputTokenCost:                    0.25e-6,
-			CacheReadInputTokenCostAbove272KTokens:     0.5e-6,
+			CacheReadInputTokenCostAbove272KTokens:     0.75e-6,
 			LongContextInputTokenThreshold:             272000,
 			LongContextInputCostMultiplier:             2.0,
 			LongContextOutputCostMultiplier:            1.5,
@@ -332,10 +333,10 @@ func TestCalculateCost_OpenAIGPT56DynamicCatalogAppliesLongContextPricing(t *tes
 
 	cost, err := svc.CalculateCost("gpt-5.6-terra", tokens, 1.0)
 	require.NoError(t, err)
-	require.InDelta(t, float64(tokens.InputTokens)*5e-6, cost.InputCost, 1e-10)
-	require.InDelta(t, float64(tokens.OutputTokens)*22.5e-6, cost.OutputCost, 1e-10)
-	require.InDelta(t, float64(tokens.CacheReadTokens)*0.5e-6, cost.CacheReadCost, 1e-10)
-	require.InDelta(t, float64(tokens.CacheCreationTokens)*6.25e-6, cost.CacheCreationCost, 1e-10)
+	require.InDelta(t, float64(tokens.InputTokens)*6e-6, cost.InputCost, 1e-10)
+	require.InDelta(t, float64(tokens.OutputTokens)*29e-6, cost.OutputCost, 1e-10)
+	require.InDelta(t, float64(tokens.CacheReadTokens)*0.75e-6, cost.CacheReadCost, 1e-10)
+	require.InDelta(t, float64(tokens.CacheCreationTokens)*9e-6, cost.CacheCreationCost, 1e-10)
 }
 
 func TestApplyModelSpecificPricingPolicy_GPT56CacheWritePolicy(t *testing.T) {
