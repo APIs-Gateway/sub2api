@@ -133,10 +133,11 @@ func (s *AccountRepoSuite) TestListOpsAccountsForStats() {
 		Name:        "ops-target-account",
 		Platform:    service.PlatformOpenAI,
 		Concurrency: 6,
-		LoadFactor:  &loadFactor,
 		Status:      service.StatusActive,
 		Schedulable: true,
 	})
+	_, err := s.client.Account.UpdateOneID(target.ID).SetLoadFactor(loadFactor).Save(s.ctx)
+	s.Require().NoError(err)
 	mustBindAccountToGroup(s.T(), s.client, target.ID, targetGroup.ID, 1)
 
 	other := mustCreateAccount(s.T(), s.client, &service.Account{
