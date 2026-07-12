@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -81,6 +82,60 @@ func TestWhamUsageReturnsFreshWalletBalanceForAPIKeyOwner(t *testing.T) {
 	require.Equal(t, 5.0, resp.Sub2API.DailyRemainingUSD)
 	require.Equal(t, 55.75, resp.Sub2API.WalletBalanceUSD)
 	require.Equal(t, 1, resp.Sub2API.ActiveSubscriptionCount)
+}
+
+func TestUsageUnrestrictedIncludesWalletAfterWeeklyLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := timezone.Now()
+	dailyStart := timezone.StartOfDay(now)
+	weeklyStart := timezone.StartOfWeek(now)
+	monthlyStart := timezone.StartOfMonth(now)
+	dailyLimit, weeklyLimit, monthlyLimit := 210.0, 1470.0, 6300.0
+	userRepo := &whamUsageUserRepoStub{user: &service.User{ID: 77, Balance: 55.04}}
+	subRepo := &whamUsageSubscriptionRepoStub{active: &service.UserSubscription{
+		UserID: 77, Status: service.SubscriptionStatusActive, ExpiresAt: now.Add(24 * time.Hour),
+		DailyWindowStart: &dailyStart, WeeklyWindowStart: &weeklyStart, MonthlyWindowStart: &monthlyStart,
+		DailyLimitUSD: &dailyLimit, WeeklyLimitUSD: &weeklyLimit, MonthlyLimitUSD: &monthlyLimit,
+		DailyUsageUSD: 115, WeeklyUsageUSD: weeklyLimit, MonthlyUsageUSD: weeklyLimit,
+	}}
+	billing := service.NewBillingCacheService(nil, userRepo, subRepo, nil, nil, nil, &config.Config{}, nil, nil)
+	defer billing.Stop()
+	h := &GatewayHandler{billingCacheService: billing}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/usage", nil)
+	h.usageUnrestricted(c, c.Request.Context(), &service.APIKey{}, middleware2.AuthSubject{UserID: 77}, nil, nil, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 55.04, resp["remaining"])
+	require.Equal(t, 55.04, resp["balance"])
+	subscription := resp["subscription"].(map[string]any)
+	require.Equal(t, float64(0), subscription["weekly_remaining_usd"])
+}
+
+func TestUsageUnrestrictedReturnsWalletLookupError(t *testing.T) {
+	now := timezone.Now()
+	dailyLimit := 30.0
+	userRepo := &whamUsageUserRepoStub{err: errors.New("db unavailable")}
+	subRepo := &whamUsageSubscriptionRepoStub{active: &service.UserSubscription{
+		UserID: 77, Status: service.SubscriptionStatusActive, ExpiresAt: now.Add(24 * time.Hour),
+		DailyLimitUSD: &dailyLimit,
+	}}
+	billing := service.NewBillingCacheService(nil, userRepo, subRepo, nil, nil, nil, &config.Config{}, nil, nil)
+	defer billing.Stop()
+	h := &GatewayHandler{billingCacheService: billing}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/usage", nil)
+	h.usageUnrestricted(c, c.Request.Context(), &service.APIKey{}, middleware2.AuthSubject{UserID: 77}, nil, nil, nil)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Contains(t, rec.Body.String(), "Failed to get wallet balance")
 }
 
 func TestWhamUsageUsesEmbeddedUserWhenAPIKeyUserIDIsMissing(t *testing.T) {
@@ -271,8 +326,21 @@ func (r *whamUsageUserRepoStub) GetUserAvatar(context.Context, int64) (*service.
 type whamUsageSubscriptionRepoStub struct {
 	service.UserSubscriptionRepository
 	subs            []service.UserSubscription
+	active          *service.UserSubscription
 	err             error
 	requestedUserID int64
+}
+
+func (r *whamUsageSubscriptionRepoStub) GetActiveByUserID(_ context.Context, userID int64) (*service.UserSubscription, error) {
+	r.requestedUserID = userID
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.active == nil {
+		return nil, service.ErrSubscriptionNotFound
+	}
+	cloned := *r.active
+	return &cloned, nil
 }
 
 func (r *whamUsageSubscriptionRepoStub) ListActiveByUserID(_ context.Context, userID int64) ([]service.UserSubscription, error) {
