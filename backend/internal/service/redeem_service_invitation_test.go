@@ -32,3 +32,23 @@ func TestRedeemRejectsInvitationCodeBeforeTransaction(t *testing.T) {
 	require.Equal(t, "REDEEM_CODE_UNSUPPORTED_TYPE", infraerrors.Reason(err))
 	require.Equal(t, "invitation codes can only be used during registration", infraerrors.Message(err))
 }
+
+func TestUnsupportedRedeemTypeError(t *testing.T) {
+	err := unsupportedRedeemTypeError("unknown")
+	require.True(t, infraerrors.IsBadRequest(err))
+	require.Equal(t, "REDEEM_CODE_UNSUPPORTED_TYPE", infraerrors.Reason(err))
+	require.Equal(t, "unsupported redeem type: unknown", infraerrors.Message(err))
+}
+
+func TestRedeemRejectsSubscriptionWithoutGroupBeforeTransaction(t *testing.T) {
+	repo := &invitationRedeemRepoStub{code: RedeemCode{
+		ID: 2, Code: "SUB-001", Type: RedeemTypeSubscription, Status: StatusUnused,
+	}}
+	svc := NewRedeemService(repo, nil, nil, nil, nil, nil, nil, nil)
+
+	got, err := svc.Redeem(context.Background(), 2, repo.code.Code)
+
+	require.Nil(t, got)
+	require.True(t, infraerrors.IsBadRequest(err))
+	require.Equal(t, "REDEEM_CODE_INVALID", infraerrors.Reason(err))
+}
