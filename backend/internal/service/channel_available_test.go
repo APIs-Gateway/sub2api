@@ -270,7 +270,7 @@ func TestSynthesizePricingFromLiteLLM_LongContextTier(t *testing.T) {
 	require.Empty(t, mini.Intervals)
 }
 
-func TestSynthesizePricingFromLiteLLM_GPT56HasNoLongContextTier(t *testing.T) {
+func TestSynthesizePricingFromLiteLLM_GPT56HasOfficialLongContextTier(t *testing.T) {
 	tests := []struct {
 		model      string
 		input      float64
@@ -285,7 +285,7 @@ func TestSynthesizePricingFromLiteLLM_GPT56HasNoLongContextTier(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			// GPT-5.6 uses the published base pricing at every context length.
+			// GPT-5.6 applies the official 272K long-context tier.
 			got := synthesizePricingFromLiteLLM(&LiteLLMModelPricing{
 				Mode:                        "chat",
 				InputCostPerToken:           tt.input,
@@ -294,16 +294,20 @@ func TestSynthesizePricingFromLiteLLM_GPT56HasNoLongContextTier(t *testing.T) {
 				CacheCreationInputTokenCost: tt.cacheWrite,
 			}, nil, tt.model)
 
-			require.Empty(t, got.Intervals)
+			require.Len(t, got.Intervals, 2)
 			require.InDelta(t, tt.input, *got.InputPrice, 1e-12)
 			require.InDelta(t, tt.output, *got.OutputPrice, 1e-12)
 			require.InDelta(t, tt.cacheRead, *got.CacheReadPrice, 1e-12)
 			require.InDelta(t, tt.cacheWrite, *got.CacheWritePrice, 1e-12)
+			require.InDelta(t, tt.input*2, *got.Intervals[1].InputPrice, 1e-12)
+			require.InDelta(t, tt.output*1.5, *got.Intervals[1].OutputPrice, 1e-12)
+			require.InDelta(t, tt.cacheRead*2, *got.Intervals[1].CacheReadPrice, 1e-12)
+			require.InDelta(t, tt.cacheWrite*2, *got.Intervals[1].CacheWritePrice, 1e-12)
 		})
 	}
 }
 
-func TestSynthesizePricingFromLiteLLM_GPT56IgnoresStaleAbove272KFields(t *testing.T) {
+func TestSynthesizePricingFromLiteLLM_GPT56PreservesAbove272KFields(t *testing.T) {
 	got := synthesizePricingFromLiteLLM(&LiteLLMModelPricing{
 		Mode:                                       "chat",
 		InputCostPerToken:                          2.5e-6,
@@ -320,11 +324,15 @@ func TestSynthesizePricingFromLiteLLM_GPT56IgnoresStaleAbove272KFields(t *testin
 	}, nil, "gpt-5.6-terra")
 
 	require.NotNil(t, got)
-	require.Empty(t, got.Intervals)
+	require.Len(t, got.Intervals, 2)
 	require.InDelta(t, 2.5e-6, *got.InputPrice, 1e-12)
 	require.InDelta(t, 15e-6, *got.OutputPrice, 1e-12)
 	require.InDelta(t, 3.125e-6, *got.CacheWritePrice, 1e-12)
 	require.InDelta(t, 0.25e-6, *got.CacheReadPrice, 1e-12)
+	require.InDelta(t, 5e-6, *got.Intervals[1].InputPrice, 1e-12)
+	require.InDelta(t, 22.5e-6, *got.Intervals[1].OutputPrice, 1e-12)
+	require.InDelta(t, 6.25e-6, *got.Intervals[1].CacheWritePrice, 1e-12)
+	require.InDelta(t, 0.5e-6, *got.Intervals[1].CacheReadPrice, 1e-12)
 }
 
 func TestListAvailable_GPT56PricingEntriesUseOfficialPricing(t *testing.T) {
@@ -379,7 +387,12 @@ func TestListAvailable_GPT56PricingEntriesUseOfficialPricing(t *testing.T) {
 		require.InDelta(t, want.output, *model.Pricing.OutputPrice, 1e-12)
 		require.InDelta(t, want.cacheRead, *model.Pricing.CacheReadPrice, 1e-12)
 		require.InDelta(t, want.cacheWrite, *model.Pricing.CacheWritePrice, 1e-12)
-		require.Empty(t, model.Pricing.Intervals)
+		require.Len(t, model.Pricing.Intervals, 2)
+		require.Equal(t, 272000, model.Pricing.Intervals[1].MinTokens)
+		require.InDelta(t, want.input*2, *model.Pricing.Intervals[1].InputPrice, 1e-12)
+		require.InDelta(t, want.output*1.5, *model.Pricing.Intervals[1].OutputPrice, 1e-12)
+		require.InDelta(t, want.cacheRead*2, *model.Pricing.Intervals[1].CacheReadPrice, 1e-12)
+		require.InDelta(t, want.cacheWrite*2, *model.Pricing.Intervals[1].CacheWritePrice, 1e-12)
 	}
 }
 

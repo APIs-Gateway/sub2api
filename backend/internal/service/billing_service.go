@@ -130,6 +130,10 @@ func newOpenAIGPT56FallbackPricing(input, output, cacheRead float64) *ModelPrici
 		CacheCreationPricePerTokenPriority: input * 2 * 1.25,
 		CacheReadPricePerToken:             cacheRead,
 		CacheReadPricePerTokenPriority:     cacheRead * 2,
+		LongContextInputThreshold:          gpt56LongContextTokenThreshold,
+		LongContextInputMultiplier:         gpt56LongContextInputMultiplier,
+		LongContextOutputMultiplier:        gpt56LongContextOutputMultiplier,
+		PriorityExcludesLongContext:        true,
 	}
 }
 
@@ -1043,11 +1047,11 @@ func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *
 	if !isGPT56 && !usesLegacyLongContextPricing {
 		return pricing
 	}
-	needsGPT56NoSurchargeGuard := isGPT56 &&
-		(pricing.LongContextInputThreshold != gpt56NoSurchargeTokenThreshold ||
-			pricing.LongContextInputMultiplier != 1 ||
-			pricing.LongContextOutputMultiplier != 1 ||
-			pricing.PriorityExcludesLongContext)
+	needsGPT56LongContextPolicy := isGPT56 &&
+		(pricing.LongContextInputThreshold != gpt56LongContextTokenThreshold ||
+			pricing.LongContextInputMultiplier != gpt56LongContextInputMultiplier ||
+			pricing.LongContextOutputMultiplier != gpt56LongContextOutputMultiplier ||
+			!pricing.PriorityExcludesLongContext)
 	needsLongContext := usesLegacyLongContextPricing &&
 		(pricing.LongContextInputThreshold <= 0 || pricing.LongContextInputMultiplier <= 0 || pricing.LongContextOutputMultiplier <= 0)
 	// Only derive a missing GPT-5.6 cache-write price; an explicit channel value
@@ -1055,7 +1059,7 @@ func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *
 	needsCacheWriteFallback := isGPT56 && !pricing.CacheCreationPriceExplicit &&
 		((pricing.CacheCreationPricePerToken <= 0 && pricing.InputPricePerToken > 0) ||
 			(pricing.CacheCreationPricePerTokenPriority <= 0 && pricing.InputPricePerTokenPriority > 0))
-	if !needsGPT56NoSurchargeGuard && !needsLongContext && !needsCacheWriteFallback {
+	if !needsGPT56LongContextPolicy && !needsLongContext && !needsCacheWriteFallback {
 		return pricing
 	}
 	cloned := *pricing
@@ -1068,10 +1072,10 @@ func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *
 		}
 	}
 	if isGPT56 {
-		cloned.LongContextInputThreshold = gpt56NoSurchargeTokenThreshold
-		cloned.LongContextInputMultiplier = 1
-		cloned.LongContextOutputMultiplier = 1
-		cloned.PriorityExcludesLongContext = false
+		cloned.LongContextInputThreshold = gpt56LongContextTokenThreshold
+		cloned.LongContextInputMultiplier = gpt56LongContextInputMultiplier
+		cloned.LongContextOutputMultiplier = gpt56LongContextOutputMultiplier
+		cloned.PriorityExcludesLongContext = true
 	}
 	if usesLegacyLongContextPricing {
 		if cloned.LongContextInputThreshold <= 0 {

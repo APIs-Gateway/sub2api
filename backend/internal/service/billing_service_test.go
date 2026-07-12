@@ -197,8 +197,9 @@ func TestGetModelPricing_OpenAIGPT56VariantsFallback(t *testing.T) {
 			require.InDelta(t, tt.cacheWrite, pricing.CacheCreationPricePerToken, 1e-12)
 			require.InDelta(t, tt.priorityWrite, pricing.CacheCreationPricePerTokenPriority, 1e-12)
 			require.Equal(t, 272000, pricing.LongContextInputThreshold)
-			require.InDelta(t, 1.0, pricing.LongContextInputMultiplier, 1e-12)
-			require.InDelta(t, 1.0, pricing.LongContextOutputMultiplier, 1e-12)
+			require.InDelta(t, 2.0, pricing.LongContextInputMultiplier, 1e-12)
+			require.InDelta(t, 1.5, pricing.LongContextOutputMultiplier, 1e-12)
+			require.True(t, pricing.PriorityExcludesLongContext)
 		})
 	}
 }
@@ -253,7 +254,7 @@ func TestCalculateCost_OpenAIGPT55ProUsesGPT55PricingPolicy(t *testing.T) {
 	require.InDelta(t, expectedInput+expectedOutput, cost.ActualCost, 1e-10)
 }
 
-func TestCalculateCost_OpenAIGPT56DoesNotApplyLegacyLongContextSurcharge(t *testing.T) {
+func TestCalculateCost_OpenAIGPT56AppliesLongContextPricingToWholeRequest(t *testing.T) {
 	svc := newTestBillingService()
 
 	tokens := UsageTokens{
@@ -266,10 +267,10 @@ func TestCalculateCost_OpenAIGPT56DoesNotApplyLegacyLongContextSurcharge(t *test
 	cost, err := svc.CalculateCost("gpt-5.6-sol", tokens, 1.0)
 	require.NoError(t, err)
 
-	expectedInput := float64(tokens.InputTokens) * 5e-6
-	expectedOutput := float64(tokens.OutputTokens) * 30e-6
-	expectedCacheRead := float64(tokens.CacheReadTokens) * 0.5e-6
-	expectedCacheWrite := float64(tokens.CacheCreationTokens) * 6.25e-6
+	expectedInput := float64(tokens.InputTokens) * 5e-6 * 2
+	expectedOutput := float64(tokens.OutputTokens) * 30e-6 * 1.5
+	expectedCacheRead := float64(tokens.CacheReadTokens) * 0.5e-6 * 2
+	expectedCacheWrite := float64(tokens.CacheCreationTokens) * 6.25e-6 * 2
 	require.InDelta(t, expectedInput, cost.InputCost, 1e-10)
 	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
 	require.InDelta(t, expectedCacheRead, cost.CacheReadCost, 1e-10)
@@ -278,7 +279,34 @@ func TestCalculateCost_OpenAIGPT56DoesNotApplyLegacyLongContextSurcharge(t *test
 	require.InDelta(t, expectedInput+expectedOutput+expectedCacheRead+expectedCacheWrite, cost.ActualCost, 1e-10)
 }
 
-func TestCalculateCost_OpenAIGPT56DynamicCatalogIgnoresLegacy272KFields(t *testing.T) {
+func TestCalculateCost_OpenAIGPT56SolLongCacheReadMatchesOfficial272KRate(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 951, CacheReadTokens: 327424, OutputTokens: 39}
+
+	cost, err := svc.CalculateCost("gpt-5.6-sol", tokens, 1.0)
+	require.NoError(t, err)
+
+	// 951 + 327424 = 328375 > 272K. OpenAI's full-request long-context
+	// pricing is $10/M input-side, $1/M cache read, and $45/M output.
+	require.InDelta(t, 0.009510, cost.InputCost, 1e-12)
+	require.InDelta(t, 0.327424, cost.CacheReadCost, 1e-12)
+	require.InDelta(t, 0.001755, cost.OutputCost, 1e-12)
+	require.InDelta(t, 0.338689, cost.TotalCost, 1e-12)
+	require.InDelta(t, 0.338689, cost.ActualCost, 1e-12)
+}
+
+func TestCalculateCost_OpenAIGPT56At272KUsesBaseRate(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 272000, OutputTokens: 1}
+
+	cost, err := svc.CalculateCost("gpt-5.6-sol", tokens, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, 272000*5e-6, cost.InputCost, 1e-12)
+	require.InDelta(t, 30e-6, cost.OutputCost, 1e-12)
+	require.InDelta(t, 272000*5e-6+30e-6, cost.TotalCost, 1e-12)
+}
+
+func TestCalculateCost_OpenAIGPT56DynamicCatalogAppliesLongContextPricing(t *testing.T) {
 	pricingSvc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
 		"gpt-5.6-terra": {
 			InputCostPerToken:                          2.5e-6,
@@ -304,10 +332,10 @@ func TestCalculateCost_OpenAIGPT56DynamicCatalogIgnoresLegacy272KFields(t *testi
 
 	cost, err := svc.CalculateCost("gpt-5.6-terra", tokens, 1.0)
 	require.NoError(t, err)
-	require.InDelta(t, float64(tokens.InputTokens)*2.5e-6, cost.InputCost, 1e-10)
-	require.InDelta(t, float64(tokens.OutputTokens)*15e-6, cost.OutputCost, 1e-10)
-	require.InDelta(t, float64(tokens.CacheReadTokens)*0.25e-6, cost.CacheReadCost, 1e-10)
-	require.InDelta(t, float64(tokens.CacheCreationTokens)*3.125e-6, cost.CacheCreationCost, 1e-10)
+	require.InDelta(t, float64(tokens.InputTokens)*5e-6, cost.InputCost, 1e-10)
+	require.InDelta(t, float64(tokens.OutputTokens)*22.5e-6, cost.OutputCost, 1e-10)
+	require.InDelta(t, float64(tokens.CacheReadTokens)*0.5e-6, cost.CacheReadCost, 1e-10)
+	require.InDelta(t, float64(tokens.CacheCreationTokens)*6.25e-6, cost.CacheCreationCost, 1e-10)
 }
 
 func TestApplyModelSpecificPricingPolicy_GPT56CacheWritePolicy(t *testing.T) {
@@ -320,8 +348,9 @@ func TestApplyModelSpecificPricingPolicy_GPT56CacheWritePolicy(t *testing.T) {
 	require.InDelta(t, 3.125e-6, derived.CacheCreationPricePerToken, 1e-12)
 	require.InDelta(t, 6.25e-6, derived.CacheCreationPricePerTokenPriority, 1e-12)
 	require.Equal(t, 272000, derived.LongContextInputThreshold)
-	require.InDelta(t, 1.0, derived.LongContextInputMultiplier, 1e-12)
-	require.InDelta(t, 1.0, derived.LongContextOutputMultiplier, 1e-12)
+	require.InDelta(t, 2.0, derived.LongContextInputMultiplier, 1e-12)
+	require.InDelta(t, 1.5, derived.LongContextOutputMultiplier, 1e-12)
+	require.True(t, derived.PriorityExcludesLongContext)
 
 	explicitZero := svc.applyModelSpecificPricingPolicy("gpt-5.6-terra", &ModelPricing{
 		InputPricePerToken:                 2.5e-6,

@@ -302,7 +302,7 @@ func TestResolve_WithChannelOverride_TokenWithIntervals(t *testing.T) {
 	require.InDelta(t, 16e-6, iv2.OutputPricePerToken, 1e-12)
 }
 
-func TestResolve_GPT56ChannelIntervalsUseBaseAfter272K(t *testing.T) {
+func TestResolve_GPT56ChannelIntervalsUseConfiguredHighTierAfter272K(t *testing.T) {
 	r := newResolverWithChannelPlatform(t, "openai", []ChannelModelPricing{{
 		Platform:       "openai",
 		Models:         []string{"gpt-5.6-terra"},
@@ -311,7 +311,7 @@ func TestResolve_GPT56ChannelIntervalsUseBaseAfter272K(t *testing.T) {
 		CacheReadPrice: testPtrFloat64(0.25e-6),
 		Intervals: []PricingInterval{
 			{MinTokens: 0, MaxTokens: testPtrInt(272000), InputPrice: testPtrFloat64(2.5e-6)},
-			{MinTokens: 272000, MaxTokens: nil, InputPrice: testPtrFloat64(5e-6)},
+			{MinTokens: 272000, MaxTokens: nil, InputPrice: testPtrFloat64(5e-6), CacheReadPrice: testPtrFloat64(0.5e-6)},
 		},
 	}})
 
@@ -332,8 +332,8 @@ func TestResolve_GPT56ChannelIntervalsUseBaseAfter272K(t *testing.T) {
 		Resolved:       resolved,
 	})
 	require.NoError(t, err)
-	require.InDelta(t, 1000*2.5e-6, cost.InputCost, 1e-12)
-	require.InDelta(t, 300000*0.25e-6, cost.CacheReadCost, 1e-12)
+	require.InDelta(t, 1000*5e-6, cost.InputCost, 1e-12)
+	require.InDelta(t, 300000*0.5e-6, cost.CacheReadCost, 1e-12)
 }
 
 func TestResolve_WithChannelOverride_TokenNilBasePricing(t *testing.T) {

@@ -67,7 +67,6 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 	var chPricing *ChannelModelPricing
 	if input.GroupID != nil && r.channelService != nil {
 		chPricing = r.channelService.GetChannelModelPricing(ctx, *input.GroupID, input.Model)
-		chPricing = normalizeGPT56ChannelTokenPricing(input.Model, chPricing)
 		if chPricing != nil {
 			mode := chPricing.BillingMode
 			if mode == "" {
@@ -121,7 +120,6 @@ func (r *ModelPricingResolver) resolveBasePricing(model string) (*ModelPricing, 
 // applyChannelOverrides 应用渠道定价覆盖
 func (r *ModelPricingResolver) applyChannelOverrides(ctx context.Context, groupID int64, model string, resolved *ResolvedPricing) {
 	chPricing := r.channelService.GetChannelModelPricing(ctx, groupID, model)
-	chPricing = normalizeGPT56ChannelTokenPricing(model, chPricing)
 	if chPricing == nil {
 		return
 	}

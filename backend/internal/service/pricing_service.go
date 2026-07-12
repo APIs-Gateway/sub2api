@@ -52,43 +52,64 @@ var (
 		SupportsPromptCaching:   true,
 	}
 	openAIGPT56SolFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   5e-06,
-		InputCostPerTokenPriority:           1e-05,
-		OutputCostPerToken:                  3e-05,
-		OutputCostPerTokenPriority:          6e-05,
-		CacheCreationInputTokenCost:         6.25e-06,
-		CacheCreationInputTokenCostPriority: 1.25e-05,
-		CacheReadInputTokenCost:             5e-07,
-		CacheReadInputTokenCostPriority:     1e-06,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
+		InputCostPerToken:                          5e-06,
+		InputCostPerTokenAbove272KTokens:           1e-05,
+		InputCostPerTokenPriority:                  1e-05,
+		OutputCostPerToken:                         3e-05,
+		OutputCostPerTokenAbove272KTokens:          4.5e-05,
+		OutputCostPerTokenPriority:                 6e-05,
+		CacheCreationInputTokenCost:                6.25e-06,
+		CacheCreationInputTokenCostAbove272KTokens: 1.25e-05,
+		CacheCreationInputTokenCostPriority:        1.25e-05,
+		CacheReadInputTokenCost:                    5e-07,
+		CacheReadInputTokenCostAbove272KTokens:     1e-06,
+		CacheReadInputTokenCostPriority:            1e-06,
+		LongContextInputTokenThreshold:             gpt56LongContextTokenThreshold,
+		LongContextInputCostMultiplier:             gpt56LongContextInputMultiplier,
+		LongContextOutputCostMultiplier:            gpt56LongContextOutputMultiplier,
+		LiteLLMProvider:                            "openai",
+		Mode:                                       "chat",
+		SupportsPromptCaching:                      true,
 	}
 	openAIGPT56TerraFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   2.5e-06,
-		InputCostPerTokenPriority:           5e-06,
-		OutputCostPerToken:                  1.5e-05,
-		OutputCostPerTokenPriority:          3e-05,
-		CacheCreationInputTokenCost:         3.125e-06,
-		CacheCreationInputTokenCostPriority: 6.25e-06,
-		CacheReadInputTokenCost:             2.5e-07,
-		CacheReadInputTokenCostPriority:     5e-07,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
+		InputCostPerToken:                          2.5e-06,
+		InputCostPerTokenAbove272KTokens:           5e-06,
+		InputCostPerTokenPriority:                  5e-06,
+		OutputCostPerToken:                         1.5e-05,
+		OutputCostPerTokenAbove272KTokens:          2.25e-05,
+		OutputCostPerTokenPriority:                 3e-05,
+		CacheCreationInputTokenCost:                3.125e-06,
+		CacheCreationInputTokenCostAbove272KTokens: 6.25e-06,
+		CacheCreationInputTokenCostPriority:        6.25e-06,
+		CacheReadInputTokenCost:                    2.5e-07,
+		CacheReadInputTokenCostAbove272KTokens:     5e-07,
+		CacheReadInputTokenCostPriority:            5e-07,
+		LongContextInputTokenThreshold:             gpt56LongContextTokenThreshold,
+		LongContextInputCostMultiplier:             gpt56LongContextInputMultiplier,
+		LongContextOutputCostMultiplier:            gpt56LongContextOutputMultiplier,
+		LiteLLMProvider:                            "openai",
+		Mode:                                       "chat",
+		SupportsPromptCaching:                      true,
 	}
 	openAIGPT56LunaFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                   1e-06,
-		InputCostPerTokenPriority:           2e-06,
-		OutputCostPerToken:                  6e-06,
-		OutputCostPerTokenPriority:          1.2e-05,
-		CacheCreationInputTokenCost:         1.25e-06,
-		CacheCreationInputTokenCostPriority: 2.5e-06,
-		CacheReadInputTokenCost:             1e-07,
-		CacheReadInputTokenCostPriority:     2e-07,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
+		InputCostPerToken:                          1e-06,
+		InputCostPerTokenAbove272KTokens:           2e-06,
+		InputCostPerTokenPriority:                  2e-06,
+		OutputCostPerToken:                         6e-06,
+		OutputCostPerTokenAbove272KTokens:          9e-06,
+		OutputCostPerTokenPriority:                 1.2e-05,
+		CacheCreationInputTokenCost:                1.25e-06,
+		CacheCreationInputTokenCostAbove272KTokens: 2.5e-06,
+		CacheCreationInputTokenCostPriority:        2.5e-06,
+		CacheReadInputTokenCost:                    1e-07,
+		CacheReadInputTokenCostAbove272KTokens:     2e-07,
+		CacheReadInputTokenCostPriority:            2e-07,
+		LongContextInputTokenThreshold:             gpt56LongContextTokenThreshold,
+		LongContextInputCostMultiplier:             gpt56LongContextInputMultiplier,
+		LongContextOutputCostMultiplier:            gpt56LongContextOutputMultiplier,
+		LiteLLMProvider:                            "openai",
+		Mode:                                       "chat",
+		SupportsPromptCaching:                      true,
 	}
 )
 
@@ -657,9 +678,8 @@ func (s *PricingService) GetModelPricing(modelName string) (result *LiteLLMModel
 }
 
 // applyGPT56CacheWriteFallback keeps stale local catalogs billable until their
-// next successful refresh. It also normalizes every GPT-5.6 catalog entry to
-// the no-surcharge 272K policy, so stale above_272k and long-context fields
-// cannot re-enable the removed surcharge. See
+// next successful refresh. GPT-5.6's official long-context policy remains in
+// force even when a catalog omits its multiplier metadata. See
 // docs/specs/gpt-5-6-272k-pricing-policy.md §2.
 func applyGPT56CacheWriteFallback(model string, pricing *LiteLLMModelPricing) *LiteLLMModelPricing {
 	if pricing == nil || !isOpenAIGPT56Model(model) {
@@ -668,14 +688,10 @@ func applyGPT56CacheWriteFallback(model string, pricing *LiteLLMModelPricing) *L
 
 	needsBase := pricing.CacheCreationInputTokenCost <= 0 && pricing.InputCostPerToken > 0
 	needsPriority := pricing.CacheCreationInputTokenCostPriority <= 0 && pricing.InputCostPerTokenPriority > 0
-	needsNoSurchargeGuard := pricing.InputCostPerTokenAbove272KTokens != 0 ||
-		pricing.OutputCostPerTokenAbove272KTokens != 0 ||
-		pricing.CacheCreationInputTokenCostAbove272KTokens != 0 ||
-		pricing.CacheReadInputTokenCostAbove272KTokens != 0 ||
-		pricing.LongContextInputTokenThreshold != gpt56NoSurchargeTokenThreshold ||
-		pricing.LongContextInputCostMultiplier != 1 ||
-		pricing.LongContextOutputCostMultiplier != 1
-	if !needsBase && !needsPriority && !needsNoSurchargeGuard {
+	needsLongContextPolicy := pricing.LongContextInputTokenThreshold != gpt56LongContextTokenThreshold ||
+		pricing.LongContextInputCostMultiplier != gpt56LongContextInputMultiplier ||
+		pricing.LongContextOutputCostMultiplier != gpt56LongContextOutputMultiplier
+	if !needsBase && !needsPriority && !needsLongContextPolicy {
 		return pricing
 	}
 
@@ -686,13 +702,9 @@ func applyGPT56CacheWriteFallback(model string, pricing *LiteLLMModelPricing) *L
 	if needsPriority {
 		cloned.CacheCreationInputTokenCostPriority = cloned.InputCostPerTokenPriority * 1.25
 	}
-	cloned.InputCostPerTokenAbove272KTokens = 0
-	cloned.OutputCostPerTokenAbove272KTokens = 0
-	cloned.CacheCreationInputTokenCostAbove272KTokens = 0
-	cloned.CacheReadInputTokenCostAbove272KTokens = 0
-	cloned.LongContextInputTokenThreshold = gpt56NoSurchargeTokenThreshold
-	cloned.LongContextInputCostMultiplier = 1
-	cloned.LongContextOutputCostMultiplier = 1
+	cloned.LongContextInputTokenThreshold = gpt56LongContextTokenThreshold
+	cloned.LongContextInputCostMultiplier = gpt56LongContextInputMultiplier
+	cloned.LongContextOutputCostMultiplier = gpt56LongContextOutputMultiplier
 	return &cloned
 }
 
