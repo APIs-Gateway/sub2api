@@ -386,6 +386,21 @@ func (s *RedeemService) releaseRedeemLock(ctx context.Context, code string) {
 	_ = s.cache.ReleaseRedeemLock(ctx, code)
 }
 
+func unsupportedRedeemTypeError(codeType string) error {
+	if codeType == RedeemTypeInvitation {
+		return infraerrors.BadRequest("REDEEM_CODE_UNSUPPORTED_TYPE", "invitation codes can only be used during registration")
+	}
+	return infraerrors.BadRequest("REDEEM_CODE_UNSUPPORTED_TYPE", fmt.Sprintf("unsupported redeem type: %s", codeType))
+}
+
+// invalidSubscriptionRedeemPreflight catches only subscription codes that
+// cannot resolve a daily amount. A positive code value is the current
+// no-group representation, while negative validity days take the independent
+// reduce/cancel path and therefore do not need either field.
+func invalidSubscriptionRedeemPreflight(code *RedeemCode) bool {
+	return code != nil && code.ValidityDays >= 0 && code.Value <= 0 && code.GroupID == nil
+}
+
 // Redeem 使用兑换码
 func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
 	// 检查限流
@@ -417,6 +432,15 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	if !redeemCode.CanUse() {
 		s.incrementRedeemErrorCount(ctx, userID)
 		return nil, ErrRedeemCodeUsed
+	}
+	switch redeemCode.Type {
+	case RedeemTypeBalance, RedeemTypeConcurrency:
+	case RedeemTypeSubscription:
+		if invalidSubscriptionRedeemPreflight(redeemCode) {
+			return nil, infraerrors.BadRequest("REDEEM_CODE_INVALID", "invalid subscription redeem code: missing daily amount")
+		}
+	default:
+		return nil, unsupportedRedeemTypeError(redeemCode.Type)
 	}
 
 	// 获取用户信息
