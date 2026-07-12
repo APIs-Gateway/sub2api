@@ -16,6 +16,13 @@ import (
 // Responses API response. This is the reverse of ResponsesToAnthropic and
 // enables Anthropic upstream responses to be returned in OpenAI Responses format.
 func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
+	return AnthropicToResponsesResponseWithCustomTools(resp, nil)
+}
+
+// AnthropicToResponsesResponseWithCustomTools converts an Anthropic Messages
+// response into a Responses API response, restoring declared custom tools to
+// custom_tool_call items rather than function_call items.
+func AnthropicToResponsesResponseWithCustomTools(resp *AnthropicResponse, customTools map[string]bool) *ResponsesResponse {
 	id := resp.ID
 	if id == "" {
 		id = generateResponsesID()
@@ -54,6 +61,17 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 			args := "{}"
 			if len(block.Input) > 0 {
 				args = string(block.Input)
+			}
+			if customTools[block.Name] {
+				outputs = append(outputs, ResponsesOutput{
+					Type:   "custom_tool_call",
+					ID:     generateItemID(),
+					CallID: toResponsesCallID(block.ID),
+					Name:   block.Name,
+					Input:  extractCustomToolCallInput(args),
+					Status: "completed",
+				})
+				continue
 			}
 			outputs = append(outputs, ResponsesOutput{
 				Type:      "function_call",
@@ -157,6 +175,11 @@ type AnthropicEventToResponsesState struct {
 	// For function_call: track per-output info
 	CurrentCallID string
 	CurrentName   string
+	// CurrentToolArguments accumulates Anthropic's input_json_delta fragments
+	// for a custom tool, whose Responses equivalent is a text input lifecycle.
+	CurrentToolArguments string
+	CurrentToolInput     string
+	CustomTools          map[string]bool
 
 	// Usage from message_start / message_delta. InputTokens here follows
 	// Anthropic semantics (excludes cached tokens); they are added back when
@@ -300,11 +323,16 @@ func anthToResHandleContentBlockStart(evt *AnthropicStreamEvent, state *Anthropi
 		state.CurrentItemType = "function_call"
 		state.CurrentCallID = toResponsesCallID(evt.ContentBlock.ID)
 		state.CurrentName = evt.ContentBlock.Name
+		state.CurrentToolArguments = ""
+		state.CurrentToolInput = ""
+		if state.CustomTools[state.CurrentName] {
+			state.CurrentItemType = "custom_tool_call"
+		}
 
 		events = append(events, makeResponsesEvent(state, "response.output_item.added", &ResponsesStreamEvent{
 			OutputIndex: state.OutputIndex,
 			Item: &ResponsesOutput{
-				Type:   "function_call",
+				Type:   state.CurrentItemType,
 				ID:     state.CurrentItemID,
 				CallID: state.CurrentCallID,
 				Name:   state.CurrentName,
@@ -348,6 +376,10 @@ func anthToResHandleContentBlockDelta(evt *AnthropicStreamEvent, state *Anthropi
 		if evt.Delta.PartialJSON == "" {
 			return nil
 		}
+		if state.CurrentItemType == "custom_tool_call" {
+			state.CurrentToolArguments += evt.Delta.PartialJSON
+			return nil
+		}
 		return []ResponsesStreamEvent{makeResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
 			OutputIndex: state.OutputIndex,
 			Delta:       evt.Delta.PartialJSON,
@@ -388,6 +420,26 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 				Name:        state.CurrentName,
 			}),
 		}
+		events = append(events, closeCurrentResponsesItem(state)...)
+		return events
+
+	case "custom_tool_call":
+		state.CurrentToolInput = extractCustomToolCallInput(state.CurrentToolArguments)
+		events := make([]ResponsesStreamEvent, 0, 3)
+		if state.CurrentToolInput != "" {
+			events = append(events, makeResponsesEvent(state, "response.custom_tool_call_input.delta", &ResponsesStreamEvent{
+				OutputIndex: state.OutputIndex,
+				ItemID:      state.CurrentItemID,
+				Delta:       state.CurrentToolInput,
+			}))
+		}
+		events = append(events, makeResponsesEvent(state, "response.custom_tool_call_input.done", &ResponsesStreamEvent{
+			OutputIndex: state.OutputIndex,
+			ItemID:      state.CurrentItemID,
+			CallID:      state.CurrentCallID,
+			Name:        state.CurrentName,
+			Input:       state.CurrentToolInput,
+		}))
 		events = append(events, closeCurrentResponsesItem(state)...)
 		return events
 
@@ -452,22 +504,34 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 
 	itemType := state.CurrentItemType
 	itemID := state.CurrentItemID
+	callID := state.CurrentCallID
+	name := state.CurrentName
+	input := state.CurrentToolInput
 
 	// Reset
 	state.CurrentItemType = ""
 	state.CurrentItemID = ""
 	state.CurrentCallID = ""
 	state.CurrentName = ""
+	state.CurrentToolArguments = ""
+	state.CurrentToolInput = ""
 	state.OutputIndex++
 	state.ContentIndex = 0
 
+	item := &ResponsesOutput{
+		Type:   itemType,
+		ID:     itemID,
+		Status: "completed",
+	}
+	if itemType == "custom_tool_call" {
+		item.CallID = callID
+		item.Name = name
+		item.Input = input
+	}
+
 	return []ResponsesStreamEvent{makeResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 		OutputIndex: state.OutputIndex - 1, // Use the index before increment
-		Item: &ResponsesOutput{
-			Type:   itemType,
-			ID:     itemID,
-			Status: "completed",
-		},
+		Item:        item,
 	})}
 }
 
