@@ -834,6 +834,67 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(getProviders).toHaveBeenCalledTimes(2);
   });
 
+  it("normalizes null provider types before toggling a payment method", async () => {
+    const provider = {
+      id: 8,
+      provider_key: "alipay",
+      name: "Legacy Alipay",
+      config: {},
+      supported_types: null,
+      enabled: false,
+      payment_mode: "",
+      refund_enabled: false,
+      allow_user_refund: false,
+      limits: "",
+      sort_order: 0,
+    };
+    getProviders.mockResolvedValue({ data: [provider] });
+    updateProvider.mockResolvedValue({ data: provider });
+
+    const PaymentProviderListStub = defineComponent({
+      emits: ["toggleType"],
+      setup(_, { emit }) {
+        return () =>
+          h(
+            "button",
+            {
+              class: "provider-toggle-type-stub",
+              onClick: () => emit("toggleType", provider, "alipay"),
+            },
+            "toggle type",
+          );
+      },
+    });
+
+    const wrapper = mount(SettingsView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          Select: SelectStub,
+          Toggle: ToggleStub,
+          Icon: true,
+          ConfirmDialog: true,
+          PaymentProviderList: PaymentProviderListStub,
+          PaymentProviderDialog: true,
+          GroupBadge: true,
+          GroupOptionItem: true,
+          ProxySelector: true,
+          ImageUpload: ImageUploadStub,
+          BackupSettings: true,
+          AdminPointsConfigPanel: true,
+          "router-link": RouterLinkStub,
+        },
+      },
+    });
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+    await wrapper.get(".provider-toggle-type-stub").trigger("click");
+    await flushPromises();
+
+    expect(updateProvider).toHaveBeenCalledWith(8, { supported_types: ["alipay"] });
+  });
+
   it("renders advanced scheduler copy as local experimental gateway policy", async () => {
     const wrapper = mountView();
 
