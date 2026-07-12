@@ -9,6 +9,7 @@ vi.mock('@/i18n', () => ({
 
 describe('API Client', () => {
   let apiClient: AxiosInstance
+  let getAPIBaseURL: () => string
 
   beforeEach(async () => {
     localStorage.clear()
@@ -16,6 +17,7 @@ describe('API Client', () => {
     vi.resetModules()
     const mod = await import('@/api/client')
     apiClient = mod.apiClient
+    getAPIBaseURL = mod.getAPIBaseURL
   })
 
   afterEach(() => {
@@ -23,6 +25,10 @@ describe('API Client', () => {
   })
 
   // --- 请求拦截器 ---
+
+  it('exposes the same configured base URL used by the Axios client', () => {
+    expect(getAPIBaseURL()).toBe(apiClient.defaults.baseURL)
+  })
 
   describe('请求拦截器', () => {
     it('自动附加 Authorization 头', async () => {

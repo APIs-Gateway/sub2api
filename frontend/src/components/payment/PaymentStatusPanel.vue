@@ -267,22 +267,34 @@ async function tryRecoverPendingOrder(order: PaymentOrder): Promise<PaymentOrder
   }
 }
 
+let pollInFlight = false
+
 async function pollStatus() {
   if (!props.orderId || outcome.value) return
-  let order = await paymentStore.pollOrderStatus(props.orderId)
-  if (!order) return
-  order = await tryRecoverPendingOrder(order)
-  if (isSuccessStatus(order.status)) {
-    cleanup()
-    paidOrder.value = order
-    setOutcome('success')
-    emit('success')
-  } else if (order.status === 'CANCELLED') {
-    cleanup()
-    setOutcome('cancelled')
-  } else if (order.status === 'EXPIRED' || order.status === 'FAILED') {
-    cleanup()
-    setOutcome('expired')
+  if (pollInFlight) return
+
+  pollInFlight = true
+  try {
+    let order = await paymentStore.pollOrderStatus(props.orderId)
+    if (!order || outcome.value) return
+
+    order = await tryRecoverPendingOrder(order)
+    if (outcome.value) return
+
+    if (isSuccessStatus(order.status)) {
+      cleanup()
+      paidOrder.value = order
+      setOutcome('success')
+      emit('success')
+    } else if (order.status === 'CANCELLED') {
+      cleanup()
+      setOutcome('cancelled')
+    } else if (order.status === 'EXPIRED' || order.status === 'FAILED') {
+      cleanup()
+      setOutcome('expired')
+    }
+  } finally {
+    pollInFlight = false
   }
 }
 

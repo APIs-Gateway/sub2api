@@ -11,6 +11,10 @@ import { getLocale } from '@/i18n'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
+export function getAPIBaseURL(): string {
+  return API_BASE_URL
+}
+
 export const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,

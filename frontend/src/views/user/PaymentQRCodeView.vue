@@ -62,6 +62,7 @@ const paymentType = ref('')
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
+let pollInFlight = false
 
 const countdownDisplay = computed(() => {
   const m = Math.floor(remainingSeconds.value / 60)
@@ -133,14 +134,22 @@ async function renderQR() {
 
 async function pollStatus() {
   if (!orderId.value) return
-  const order = await paymentStore.pollOrderStatus(orderId.value)
-  if (!order) return
-  if (order.status === 'COMPLETED' || order.status === 'PAID') {
-    cleanup()
-    router.push({ path: '/payment/result', query: { order_id: String(orderId.value), status: 'success' } })
-  } else if (order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'FAILED') {
-    cleanup()
-    expired.value = true
+  if (pollInFlight) return
+
+  pollInFlight = true
+  try {
+    const order = await paymentStore.pollOrderStatus(orderId.value)
+    if (!order || !pollTimer) return
+
+    if (order.status === 'COMPLETED' || order.status === 'PAID') {
+      cleanup()
+      router.push({ path: '/payment/result', query: { order_id: String(orderId.value), status: 'success' } })
+    } else if (order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'FAILED') {
+      cleanup()
+      expired.value = true
+    }
+  } finally {
+    pollInFlight = false
   }
 }
 
