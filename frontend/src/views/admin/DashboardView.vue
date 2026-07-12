@@ -1,8 +1,16 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
+      <DashboardLoadError
+        v-if="loadError"
+        :title="t('admin.dashboard.failedToLoad')"
+        :description="t('dashboard.loadFailedDescription')"
+        :retry-label="t('common.refresh')"
+        :loading="loading"
+        @retry="loadDashboardStats"
+      />
       <!-- Loading State -->
-      <div v-if="loading" class="flex items-center justify-center py-12">
+      <div v-if="loading && !stats" class="flex items-center justify-center py-12">
         <LoadingSpinner />
       </div>
 
@@ -277,6 +285,7 @@ import type {
 } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import DashboardLoadError from '@/components/common/DashboardLoadError.vue'
 import Icon from '@/components/icons/Icon.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Select from '@/components/common/Select.vue'
@@ -314,6 +323,7 @@ const chartsLoading = ref(false)
 const userTrendLoading = ref(false)
 const rankingLoading = ref(false)
 const rankingError = ref(false)
+const loadError = ref(false)
 
 // Chart data
 const trendData = ref<TrendDataPoint[]>([])
@@ -562,6 +572,9 @@ const loadDashboardSnapshot = async (includeStats: boolean) => {
     loading.value = true
   }
   chartsLoading.value = true
+  if (includeStats) {
+    loadError.value = false
+  }
   try {
     const response = await adminAPI.dashboard.getSnapshotV2({
       start_date: startDate.value,
@@ -574,13 +587,19 @@ const loadDashboardSnapshot = async (includeStats: boolean) => {
       include_users_trend: false
     })
     if (currentSeq !== chartLoadSeq) return
-    if (includeStats && response.stats) {
+    if (includeStats) {
+      if (!response.stats) {
+        throw new Error('Dashboard snapshot did not include statistics')
+      }
       stats.value = response.stats
     }
     trendData.value = response.trend || []
     modelStats.value = response.models || []
   } catch (error) {
     if (currentSeq !== chartLoadSeq) return
+    if (includeStats) {
+      loadError.value = true
+    }
     appStore.showError(t('admin.dashboard.failedToLoad'))
     console.error('Error loading dashboard snapshot:', error)
   } finally {

@@ -665,6 +665,8 @@
   dashboard: {
     title: '儀表盤',
     welcomeMessage: '歡迎回來！這是您帳戶的概覽。',
+    loadFailed: '儀表板資料載入失敗',
+    loadFailedDescription: '資料不會遺失，請重新整理後再試。',
     balance: '餘額',
     apiKeys: 'API 金鑰',
     todayRequests: '今日請求',
@@ -789,6 +791,7 @@
     total: '近30天',
     quota: '額度',
     lastUsedAt: '上次使用時間',
+    lastUsedIP: '最近使用 IP',
     useKey: '使用金鑰',
     quickConnect: '一鍵接入',
     useKeyModal: {
@@ -1188,6 +1191,7 @@
     notActiveButton: '活躍度未達標',
     notActiveEnough: '今日活躍度還未達簽到門檻，繼續使用後即可簽到。',
     claimedToast: '簽到成功，+${amount} 已到賬餘額',
+    claimRecoveredToast: '簽到已成功，獎勵已到賬餘額',
     claimFailed: '簽到失敗，請稍後再試'
   },
 
@@ -5154,6 +5158,21 @@
       clickToViewBalance: '點擊查看充值記錄',
       failedToLoadUser: '加載用戶信息失敗',
       userDeletedBadge: '已刪除',
+      tokenRanking: {
+        title: '用戶 Token 排行',
+        subtitle: '按目前篩選條件與時間範圍統計每位用戶的 Token 用量，點擊列可下鑽到該用戶',
+        searchPlaceholder: '搜尋用戶郵箱...',
+        userCount: '共 {count} 位用戶',
+        columns: {
+          user: '用戶',
+          requests: '請求數',
+          inputTokens: '輸入 Token',
+          outputTokens: '輸出 Token',
+          cacheTokens: '緩存 Token',
+          totalTokens: '總 Token',
+          cost: '費用'
+        }
+      },
       cleanup: {
         button: '清理',
         title: '清理使用記錄',

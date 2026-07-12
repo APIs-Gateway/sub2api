@@ -156,4 +156,20 @@ describe('PaymentProviderDialog payment guide', () => {
     const payload = wrapper.emitted('save')?.[0]?.[0] as { config: Record<string, string> }
     expect(payload.config.accountId).toBe('')
   })
+
+  it('treats a missing supported type list as empty when loading a provider', async () => {
+    const provider = providerFactory({
+      provider_key: 'legacy-provider',
+      name: 'Legacy provider',
+      supported_types: null as unknown as string[],
+    })
+    const wrapper = mountDialog({ editing: provider })
+
+    ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
+    await nextTick()
+    await wrapper.find('form').trigger('submit.prevent')
+
+    const payload = wrapper.emitted('save')?.[0]?.[0] as { supported_types: string[] }
+    expect(payload.supported_types).toEqual([])
+  })
 })

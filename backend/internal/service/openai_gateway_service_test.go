@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1369,6 +1370,39 @@ func TestOpenAIStreamingResponseFailedBeforeOutputServerOverloadedCodeReturnsFai
 	require.Empty(t, rec.Body.String())
 }
 
+func TestOpenAIStreamingResponseFailedAfterOutputSanitizesVerboseResponseForClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+		StreamDataIntervalTimeout: 0,
+		StreamKeepaliveInterval:   0,
+		MaxLineSize:               defaultMaxLineSize,
+	}}}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	failedPayload := verboseResponseFailedPayload(t)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_failed"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial"}`,
+			"",
+			"event: response.failed",
+			"data: " + failedPayload,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-failed-after-output"}},
+	}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+	require.Error(t, err)
+	assertVerboseResponseFailedIsSanitized(t, rec.Body.String())
+}
+
 func TestOpenAIStreamingPreambleOnlyMissingTerminalReturnsFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
@@ -1706,6 +1740,54 @@ func TestOpenAIStreamingPassthroughResponseFailedBeforeOutputReturnsFailover(t *
 	require.Contains(t, string(failoverErr.ResponseBody), "upstream processing failed")
 	require.False(t, c.Writer.Written())
 	require.Empty(t, rec.Body.String())
+}
+
+func TestOpenAIStreamingPassthroughResponseFailedAfterOutputSanitizesVerboseResponseForClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	failedPayload := verboseResponseFailedPayload(t)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_failed"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial"}`,
+			"",
+			"event: response.failed",
+			"data: " + failedPayload,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-pass-failed-after-output"}},
+	}
+
+	_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "", "")
+	require.Error(t, err)
+	assertVerboseResponseFailedIsSanitized(t, rec.Body.String())
+}
+
+func verboseResponseFailedPayload(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf(
+		`{"type":"response.failed","response":{"id":"resp_failed","object":"response","status":"failed","instructions":%q,"output":[{"type":"message","content":[{"type":"output_text","text":"large"}]}],"usage":{"input_tokens":123,"output_tokens":0},"error":{"code":"context_length_exceeded","message":"Your input exceeds the context window."}}}`,
+		strings.Repeat("You are running in the Codex CLI. ", 20),
+	)
+}
+
+func assertVerboseResponseFailedIsSanitized(t *testing.T, body string) {
+	t.Helper()
+	require.Contains(t, body, "event: response.failed")
+	require.Contains(t, body, "context_length_exceeded")
+	require.Contains(t, body, "Your input exceeds the context window.")
+	require.NotContains(t, body, "You are running in the Codex CLI.")
+	require.NotContains(t, body, `"instructions"`)
+	require.NotContains(t, body, `"output"`)
+	require.NotContains(t, body, `"usage"`)
 }
 
 func TestOpenAIStreamingPassthroughDeduplicatesRepeatedFunctionCallArguments(t *testing.T) {
@@ -2612,10 +2694,11 @@ func TestCopyOpenAIUsageFromResponsesUsagePreservesCacheCreationTokens(t *testin
 		want  int
 	}{
 		{
-			name: "details cache creation fallback",
+			name: "normalized cache creation is preserved",
 			usage: apicompat.ResponsesUsage{
-				InputTokens:  31,
-				OutputTokens: 9,
+				InputTokens:              31,
+				OutputTokens:             9,
+				CacheCreationInputTokens: 12,
 				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
 					CachedTokens:        5,
 					CacheCreationTokens: 12,
@@ -2624,14 +2707,14 @@ func TestCopyOpenAIUsageFromResponsesUsagePreservesCacheCreationTokens(t *testin
 			want: 12,
 		},
 		{
-			name: "details cache write takes precedence",
+			name: "normalized zero is not overwritten by detail aliases",
 			usage: apicompat.ResponsesUsage{
 				InputTokensDetails: &apicompat.ResponsesInputTokensDetails{
 					CacheCreationTokens: 12,
-					CacheWriteTokens:    14,
+					CacheWriteTokens:    0,
 				},
 			},
-			want: 14,
+			want: 0,
 		},
 		{
 			name: "top level cache creation wins",
@@ -2650,6 +2733,19 @@ func TestCopyOpenAIUsageFromResponsesUsagePreservesCacheCreationTokens(t *testin
 			require.Equal(t, tt.want, usage.CacheCreationInputTokens)
 		})
 	}
+}
+
+func TestCopyOpenAIUsageFromResponsesUsagePreservesExplicitNestedCacheWriteZero(t *testing.T) {
+	var parsed apicompat.ResponsesUsage
+	require.NoError(t, json.Unmarshal([]byte(`{
+        "input_tokens": 3,
+        "output_tokens": 5,
+        "cache_creation_input_tokens": 7,
+        "input_tokens_details": {"cache_write_tokens": 0, "cache_creation_tokens": 12}
+    }`), &parsed))
+
+	usage := copyOpenAIUsageFromResponsesUsage(&parsed)
+	require.Zero(t, usage.CacheCreationInputTokens)
 }
 
 func TestOpenAIUsageFromGJSON_NestedCacheWriteZeroWins(t *testing.T) {

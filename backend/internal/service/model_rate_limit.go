@@ -12,6 +12,9 @@ const (
 	modelRateLimitsKey                 = "model_rate_limits"
 	antigravityGeminiModelRateLimitKey = "antigravity:gemini"
 	openAIImageGenerationRateLimitKey  = "openai:image_generation"
+	// anthropicFableRateLimitKey 是 Anthropic 7d_oi（Fable 专属 7d 窗口）限流的
+	// 家族级 scope：命中后所有 Fable 变体（含 [1m] 等后缀）都不再调度到该账号。
+	anthropicFableRateLimitKey = "claude-fable-5"
 )
 
 // isRateLimitActiveForKey 检查指定 key 的限流是否生效
@@ -82,8 +85,32 @@ func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedMod
 		if openAIImageGenerationRateLimitApplies(ctx, requestedModel, modelKey) && modelKey != openAIImageGenerationRateLimitKey {
 			keys = append(keys, openAIImageGenerationRateLimitKey)
 		}
+	case PlatformAnthropic:
+		if isAnthropicFableModel(modelKey) && modelKey != anthropicFableRateLimitKey {
+			keys = append(keys, anthropicFableRateLimitKey)
+		}
 	}
 	return keys
+}
+
+// isAnthropicFableModel 判断是否为 Anthropic Fable 5 的正式模型键或已知上游变体。
+// 不能按任意 "fable" 子串判断，否则用户自定义的无关模型名也会被 7d_oi 限流误伤。
+func isAnthropicFableModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == anthropicFableRateLimitKey || model == anthropicFableRateLimitKey+"[1m]" {
+		return true
+	}
+
+	version, ok := strings.CutPrefix(model, anthropicFableRateLimitKey+"-")
+	if !ok || len(version) != len("20060102") {
+		return false
+	}
+	for _, char := range version {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func openAIImageGenerationRateLimitApplies(ctx context.Context, requestedModel, modelKey string) bool {

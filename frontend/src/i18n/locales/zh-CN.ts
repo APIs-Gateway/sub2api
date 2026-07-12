@@ -665,6 +665,8 @@
   dashboard: {
     title: '仪表盘',
     welcomeMessage: '欢迎回来！这是您账户的概览。',
+    loadFailed: '仪表盘数据加载失败',
+    loadFailedDescription: '数据不会丢失，请刷新后重试。',
     balance: '余额',
     apiKeys: 'API 密钥',
     todayRequests: '今日请求',
@@ -789,6 +791,7 @@
     total: '近30天',
     quota: '额度',
     lastUsedAt: '上次使用时间',
+    lastUsedIP: '最近使用 IP',
     useKey: '使用密钥',
     quickConnect: '一键接入',
     useKeyModal: {
@@ -1188,6 +1191,7 @@
     notActiveButton: '活跃度未达标',
     notActiveEnough: '今日活跃度还未达签到门槛，继续使用后即可签到。',
     claimedToast: '签到成功，+${amount} 已到账余额',
+    claimRecoveredToast: '签到已成功，奖励已到账余额',
     claimFailed: '签到失败，请稍后再试'
   },
 
@@ -5154,6 +5158,21 @@
       clickToViewBalance: '点击查看充值记录',
       failedToLoadUser: '加载用户信息失败',
       userDeletedBadge: '已删除',
+      tokenRanking: {
+        title: '用户 Token 排行',
+        subtitle: '按当前筛选与时间范围统计每个用户的 Token 用量，点击行可下钻到该用户',
+        searchPlaceholder: '搜索用户邮箱...',
+        userCount: '共 {count} 位用户',
+        columns: {
+          user: '用户',
+          requests: '请求数',
+          inputTokens: '输入 Token',
+          outputTokens: '输出 Token',
+          cacheTokens: '缓存 Token',
+          totalTokens: '总 Token',
+          cost: '费用'
+        }
+      },
       cleanup: {
         button: '清理',
         title: '清理使用记录',

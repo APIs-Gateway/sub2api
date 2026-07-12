@@ -156,6 +156,21 @@ describe('useAuthStore', () => {
       expect(localStorage.getItem('refresh_token')).toBeNull()
       expect(localStorage.getItem('token_expires_at')).toBeNull()
     })
+
+    it('服务端登出失败时仍清除本地会话', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      mockLogout.mockRejectedValue(new Error('network unavailable'))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const store = useAuthStore()
+
+      await store.login({ email: 'test@example.com', password: '123456' })
+      await expect(store.logout()).resolves.toBeUndefined()
+
+      expect(store.isAuthenticated).toBe(false)
+      expect(localStorage.getItem('auth_token')).toBeNull()
+      expect(localStorage.getItem('refresh_token')).toBeNull()
+      expect(warn).toHaveBeenCalledOnce()
+    })
   })
 
   // --- checkAuth ---

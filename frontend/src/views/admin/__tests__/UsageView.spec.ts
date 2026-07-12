@@ -115,6 +115,10 @@ const GroupDistributionChartStub = {
     </div>
   `,
 }
+const UserTokenRankingStub = {
+  emits: ['select-user'],
+  template: '<button data-test="ranking-user" @click="$emit(\'select-user\', 7, \'user@example.com\')">user</button>',
+}
 
 describe('admin UsageView distribution metric toggles', () => {
   beforeEach(() => {
@@ -165,7 +169,7 @@ describe('admin UsageView distribution metric toggles', () => {
         UserBalanceHistoryModal: true, AuditLogModal: true, Pagination: true, Select: true,
         DateRangePicker: true, Icon: true, TokenUsageTrend: true,
         ModelDistributionChart: ModelDistributionChartStub, GroupDistributionChart: GroupDistributionChartStub,
-        EndpointDistributionChart: true,
+        EndpointDistributionChart: true, UserTokenRanking: true,
       } },
     })
     vi.advanceTimersByTime(120)
@@ -200,7 +204,7 @@ describe('admin UsageView distribution metric toggles', () => {
           Select: true,
           DateRangePicker: true,
           Icon: true,
-          TokenUsageTrend: true,
+          TokenUsageTrend: true, UserTokenRanking: true,
           ModelDistributionChart: ModelDistributionChartStub,
           GroupDistributionChart: GroupDistributionChartStub,
         },
@@ -282,7 +286,7 @@ describe('admin UsageView handleUserClick', () => {
           TokenUsageTrend: true,
           ModelDistributionChart: true,
           GroupDistributionChart: true,
-          EndpointDistributionChart: true,
+          EndpointDistributionChart: true, UserTokenRanking: true,
         },
       },
     })
@@ -327,7 +331,7 @@ describe('admin UsageView errors tab filter forwarding', () => {
         UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
         UserBalanceHistoryModal: true, AuditLogModal: true, Pagination: true, Select: true,
         DateRangePicker: true, Icon: true, TokenUsageTrend: true,
-        ModelDistributionChart: true, GroupDistributionChart: true, EndpointDistributionChart: true,
+        ModelDistributionChart: true, GroupDistributionChart: true, EndpointDistributionChart: true, UserTokenRanking: true,
         OpsErrorLogTable: true, OpsErrorDetailModal: true,
       } },
     })
@@ -352,5 +356,47 @@ describe('admin UsageView errors tab filter forwarding', () => {
       account_id: 7,
       group_id: 3,
     }))
+  })
+})
+
+describe('admin UsageView token ranking drill-down', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    list.mockReset()
+    getStats.mockReset()
+    getSnapshotV2.mockReset()
+    getModelStats.mockReset()
+
+    list.mockResolvedValue({ items: [], total: 0, pages: 0 })
+    getStats.mockResolvedValue({
+      total_requests: 0, total_input_tokens: 0, total_output_tokens: 0,
+      total_cache_tokens: 0, total_cache_creation_tokens: 0, total_cache_read_tokens: 0, total_tokens: 0, total_cost: 0, total_actual_cost: 0, average_duration_ms: 0,
+    })
+    getSnapshotV2.mockResolvedValue({ trend: [], models: [], groups: [] })
+    getModelStats.mockResolvedValue({ models: [] })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('filters usage records by user_id after selecting a ranking row', async () => {
+    const wrapper = mount(UsageView, {
+      global: { stubs: {
+        AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
+        UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
+        UserBalanceHistoryModal: true, Pagination: true, Select: true, DateRangePicker: true,
+        Icon: true, TokenUsageTrend: true, ModelDistributionChart: true, GroupDistributionChart: true,
+        EndpointDistributionChart: true, UserTokenRanking: UserTokenRankingStub,
+      } },
+    })
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+    list.mockClear()
+
+    await wrapper.find('[data-test="ranking-user"]').trigger('click')
+    await flushPromises()
+
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 7 }), expect.anything())
   })
 })

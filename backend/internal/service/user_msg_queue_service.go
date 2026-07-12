@@ -25,10 +25,8 @@ type UserMsgQueueCache interface {
 	GetLastCompletedMs(ctx context.Context, accountID int64) (int64, error)
 	// GetCurrentTimeMs 获取 Redis 服务器当前时间（毫秒），与 ReleaseLock 记录的时间源一致
 	GetCurrentTimeMs(ctx context.Context) (int64, error)
-	// ForceReleaseLock 强制释放锁（孤儿锁清理）
-	ForceReleaseLock(ctx context.Context, accountID int64) error
-	// ScanLockKeys 扫描 PTTL == -1 的孤儿锁 key，返回 accountID 列表
-	ScanLockKeys(ctx context.Context, maxCount int) ([]int64, error)
+	// ReconcileExpiredLockCandidates 清理索引中已到期的锁候选，返回实际删除的无 TTL 异常锁数量。
+	ReconcileExpiredLockCandidates(ctx context.Context, maxCount int) (cleaned int, err error)
 }
 
 // QueueLockResult 锁获取结果
@@ -246,8 +244,8 @@ func (s *UserMessageQueueService) CalculateRPMAwareDelay(ctx context.Context, ac
 	return applyJitter(baseDelay, 0.15)
 }
 
-// StartCleanupWorker 启动孤儿锁清理 worker
-// 定期 SCAN umq:*:lock 并清理 PTTL == -1 的异常锁（PTTL 检查在 cache.ScanLockKeys 内完成）
+// StartCleanupWorker 启动孤儿锁清理 worker。
+// 它只重协调候选索引，不扫描 Redis keyspace。
 func (s *UserMessageQueueService) StartCleanupWorker(interval time.Duration) {
 	if s == nil || s.cache == nil || interval <= 0 {
 		return
@@ -257,25 +255,14 @@ func (s *UserMessageQueueService) StartCleanupWorker(interval time.Duration) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		accountIDs, err := s.cache.ScanLockKeys(ctx, 1000)
+		cleaned, err := s.cache.ReconcileExpiredLockCandidates(ctx, 1000)
 		if err != nil {
-			logger.LegacyPrintf("service.umq", "Cleanup scan failed: %v", err)
+			logger.LegacyPrintf("service.umq", "Cleanup reconcile failed: %v", err)
 			return
 		}
 
-		cleaned := 0
-		for _, accountID := range accountIDs {
-			cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			if err := s.cache.ForceReleaseLock(cleanCtx, accountID); err != nil {
-				logger.LegacyPrintf("service.umq", "Cleanup force release failed for account %d: %v", accountID, err)
-			} else {
-				cleaned++
-			}
-			cleanCancel()
-		}
-
 		if cleaned > 0 {
-			logger.LegacyPrintf("service.umq", "Cleanup completed: released %d orphaned locks", cleaned)
+			logger.LegacyPrintf("service.umq", "Cleanup completed: reconciled %d orphaned locks", cleaned)
 		}
 	}
 
