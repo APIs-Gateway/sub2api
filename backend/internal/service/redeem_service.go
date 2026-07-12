@@ -393,6 +393,14 @@ func unsupportedRedeemTypeError(codeType string) error {
 	return infraerrors.BadRequest("REDEEM_CODE_UNSUPPORTED_TYPE", fmt.Sprintf("unsupported redeem type: %s", codeType))
 }
 
+// invalidSubscriptionRedeemPreflight catches only subscription codes that
+// cannot resolve a daily amount. A positive code value is the current
+// no-group representation, while negative validity days take the independent
+// reduce/cancel path and therefore do not need either field.
+func invalidSubscriptionRedeemPreflight(code *RedeemCode) bool {
+	return code != nil && code.ValidityDays >= 0 && code.Value <= 0 && code.GroupID == nil
+}
+
 // Redeem 使用兑换码
 func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
 	// 检查限流
@@ -428,8 +436,8 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	switch redeemCode.Type {
 	case RedeemTypeBalance, RedeemTypeConcurrency:
 	case RedeemTypeSubscription:
-		if redeemCode.GroupID == nil {
-			return nil, infraerrors.BadRequest("REDEEM_CODE_INVALID", "invalid subscription redeem code: missing group_id")
+		if invalidSubscriptionRedeemPreflight(redeemCode) {
+			return nil, infraerrors.BadRequest("REDEEM_CODE_INVALID", "invalid subscription redeem code: missing daily amount")
 		}
 	default:
 		return nil, unsupportedRedeemTypeError(redeemCode.Type)
