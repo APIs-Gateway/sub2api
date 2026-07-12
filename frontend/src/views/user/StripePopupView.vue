@@ -74,6 +74,7 @@ const hint = ref(t('payment.stripePopup.redirecting'))
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let initTimeoutTimer: ReturnType<typeof setTimeout> | null = null
+let closeTimeoutTimer: ReturnType<typeof setTimeout> | null = null
 let messageHandler: ((event: MessageEvent) => void) | null = null
 
 function closeWindow() { window.close() }
@@ -83,6 +84,11 @@ function clearInitTimeout() {
     clearTimeout(initTimeoutTimer)
     initTimeoutTimer = null
   }
+}
+
+function scheduleCloseWindow() {
+  if (closeTimeoutTimer) clearTimeout(closeTimeoutTimer)
+  closeTimeoutTimer = setTimeout(closeWindow, 2000)
 }
 
 onMounted(() => {
@@ -115,6 +121,10 @@ onUnmounted(() => {
     pollTimer = null
   }
   clearInitTimeout()
+  if (closeTimeoutTimer) {
+    clearTimeout(closeTimeoutTimer)
+    closeTimeoutTimer = null
+  }
   if (messageHandler) {
     window.removeEventListener('message', messageHandler)
     messageHandler = null
@@ -147,7 +157,7 @@ async function initStripe(clientSecret: string, publishableKey: string) {
         error.value = result.error.message || t('payment.result.failed')
       } else if (result.paymentIntent?.status === 'succeeded') {
         success.value = true
-        setTimeout(closeWindow, 2000)
+        scheduleCloseWindow()
       } else {
         // Payment not completed (user closed QR dialog)
         startPolling()
@@ -160,7 +170,7 @@ async function initStripe(clientSecret: string, publishableKey: string) {
 
 function startPolling() {
   let inFlight = false
-  pollTimer = setInterval(async () => {
+  const currentPollTimer = setInterval(async () => {
     if (inFlight) return
     inFlight = true
     try {
@@ -169,13 +179,15 @@ function startPolling() {
         headers: token ? { Authorization: 'Bearer ' + token } : {},
         credentials: 'include',
       })
-      if (!res.ok) return
+      if (pollTimer !== currentPollTimer || !res.ok) return
       const data = await res.json()
+      if (pollTimer !== currentPollTimer) return
       const status = data?.data?.status
       if (status === 'COMPLETED' || status === 'PAID') {
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+        clearInterval(currentPollTimer)
+        pollTimer = null
         success.value = true
-        setTimeout(closeWindow, 2000)
+        scheduleCloseWindow()
       }
     } catch {
       // Polling is best-effort; the next interval retries.
@@ -183,5 +195,6 @@ function startPolling() {
       inFlight = false
     }
   }, 3000)
+  pollTimer = currentPollTimer
 }
 </script>

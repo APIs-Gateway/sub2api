@@ -119,6 +119,27 @@ describe('StripePopupView', () => {
     expect(loadStripe).toHaveBeenCalledTimes(1)
   })
 
+  it('ignores a completed polling response that arrives after unmount', async () => {
+    const pendingBody = deferred<{ data: { status: string } }>()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockReturnValue(pendingBody.promise),
+    })
+    const closeWindow = vi.spyOn(window, 'close').mockImplementation(() => undefined)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = await initializeWechatPolling()
+    vi.advanceTimersByTime(3000)
+    await flushPromises()
+    wrapper.unmount()
+
+    pendingBody.resolve({ data: { status: 'COMPLETED' } })
+    await flushPromises()
+    vi.advanceTimersByTime(2000)
+
+    expect(closeWindow).not.toHaveBeenCalled()
+  })
+
   it('shows an initialization timeout when the opener never sends Stripe details', () => {
     const wrapper = mount(StripePopupView)
 
