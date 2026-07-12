@@ -150,6 +150,24 @@ func TestGetModelPricing_FallbackWarningRemainsPerModel(t *testing.T) {
 	require.Equal(t, 1, strings.Count(output, "Using fallback pricing for model: glm-4.6"), output)
 }
 
+func TestGetModelPricing_FallbackWarningUsesBoundedPricingKey(t *testing.T) {
+	svc := newTestBillingService()
+	logs := captureBillingLog(t)
+
+	for _, model := range []string{"claude-random-one", "claude-random-two", "claude-random-three"} {
+		_, err := svc.GetModelPricing(model)
+		require.NoError(t, err)
+	}
+
+	entries := 0
+	svc.fallbackWarnSeen.Range(func(_, _ any) bool {
+		entries++
+		return true
+	})
+	require.Equal(t, 1, entries)
+	require.Equal(t, 1, strings.Count(logs.String(), "Using fallback pricing for model:"), logs.String())
+}
+
 func TestGetModelPricing_UnknownClaudeModelFallsBackToSonnet(t *testing.T) {
 	svc := newTestBillingService()
 

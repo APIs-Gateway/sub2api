@@ -191,8 +191,9 @@ type BillingService struct {
 	pricingService *PricingService
 	fallbackPrices map[string]*ModelPricing // 硬编码回退价格
 
-	// fallbackWarnSeen ensures fallback pricing warnings remain useful without
-	// flooding ops logs from this request-path lookup.
+	// fallbackWarnSeen is keyed by the static fallback pricing pointer, keeping
+	// warning deduplication bounded by the fallback price table rather than
+	// untrusted request model names.
 	fallbackWarnSeen sync.Map
 }
 
@@ -740,7 +741,7 @@ func (s *BillingService) GetModelPricing(model string) (*ModelPricing, error) {
 	// 2. 使用硬编码回退价格
 	fallback := s.getFallbackPricing(model)
 	if fallback != nil {
-		if _, seen := s.fallbackWarnSeen.LoadOrStore(model, struct{}{}); !seen {
+		if _, seen := s.fallbackWarnSeen.LoadOrStore(fallback, struct{}{}); !seen {
 			log.Printf("[Billing] Using fallback pricing for model: %s", model)
 		}
 		return s.applyModelSpecificPricingPolicy(model, fallback), nil
