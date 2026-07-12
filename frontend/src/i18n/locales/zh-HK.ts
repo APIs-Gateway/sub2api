@@ -789,6 +789,7 @@
     total: '近30天',
     quota: '額度',
     lastUsedAt: '上次使用時間',
+    lastUsedIP: '最近使用 IP',
     useKey: '使用金鑰',
     quickConnect: '一鍵接入',
     useKeyModal: {
