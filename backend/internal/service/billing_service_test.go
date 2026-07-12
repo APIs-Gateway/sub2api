@@ -3,7 +3,10 @@
 package service
 
 import (
+	"bytes"
+	"log"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -12,6 +15,20 @@ import (
 
 func newTestBillingService() *BillingService {
 	return NewBillingService(&config.Config{}, nil)
+}
+
+func captureBillingLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	previousOutput := log.Writer()
+	previousFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previousOutput)
+		log.SetFlags(previousFlags)
+	})
+	return &buf
 }
 
 func TestCalculateCost_BasicComputation(t *testing.T) {
@@ -103,6 +120,52 @@ func TestGetModelPricing_CaseInsensitive(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, p1.InputPricePerToken, p2.InputPricePerToken)
+}
+
+func TestGetModelPricing_FallbackWarningIsDeduplicatedPerNormalizedModel(t *testing.T) {
+	svc := newTestBillingService()
+	logs := captureBillingLog(t)
+
+	for i := 0; i < 3; i++ {
+		_, err := svc.GetModelPricing("GLM-5.2")
+		require.NoError(t, err)
+		_, err = svc.GetModelPricing("glm-5.2")
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, 1, strings.Count(logs.String(), "Using fallback pricing for model: glm-5.2"), logs.String())
+}
+
+func TestGetModelPricing_FallbackWarningRemainsPerModel(t *testing.T) {
+	svc := newTestBillingService()
+	logs := captureBillingLog(t)
+
+	for _, model := range []string{"glm-5.2", "glm-4.6", "glm-5.2", "glm-4.6"} {
+		_, err := svc.GetModelPricing(model)
+		require.NoError(t, err)
+	}
+
+	output := logs.String()
+	require.Equal(t, 1, strings.Count(output, "Using fallback pricing for model: glm-5.2"), output)
+	require.Equal(t, 1, strings.Count(output, "Using fallback pricing for model: glm-4.6"), output)
+}
+
+func TestGetModelPricing_FallbackWarningUsesBoundedPricingKey(t *testing.T) {
+	svc := newTestBillingService()
+	logs := captureBillingLog(t)
+
+	for _, model := range []string{"claude-random-one", "claude-random-two", "claude-random-three"} {
+		_, err := svc.GetModelPricing(model)
+		require.NoError(t, err)
+	}
+
+	entries := 0
+	svc.fallbackWarnSeen.Range(func(_, _ any) bool {
+		entries++
+		return true
+	})
+	require.Equal(t, 1, entries)
+	require.Equal(t, 1, strings.Count(logs.String(), "Using fallback pricing for model:"), logs.String())
 }
 
 func TestGetModelPricing_UnknownClaudeModelFallsBackToSonnet(t *testing.T) {
