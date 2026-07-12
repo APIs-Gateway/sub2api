@@ -666,6 +666,8 @@
   dashboard: {
     title: 'Dashboard',
     welcomeMessage: "Welcome back! Here's an overview of your account.",
+    loadFailed: 'Dashboard data could not be loaded',
+    loadFailedDescription: 'Your data is safe. Please refresh and try again.',
     balance: 'Wallet Balance',
     apiKeys: 'API Keys',
     todayRequests: 'Today Requests',

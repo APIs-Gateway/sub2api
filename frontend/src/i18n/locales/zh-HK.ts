@@ -665,6 +665,8 @@
   dashboard: {
     title: '儀表盤',
     welcomeMessage: '歡迎回來！這是您帳戶的概覽。',
+    loadFailed: '儀表板資料載入失敗',
+    loadFailedDescription: '資料不會遺失，請重新整理後再試。',
     balance: '餘額',
     apiKeys: 'API 金鑰',
     todayRequests: '今日請求',
