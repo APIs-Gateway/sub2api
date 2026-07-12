@@ -1,45 +1,34 @@
-# GPT-5.6 272K 计费边界
+# GPT-5.6 272K 长上下文计费
 
-## §1 目标
+## §1 规则
 
 对 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 及其已支持的别名统一规定：
 
-- `total_context_tokens <= 272000` 时，使用对应来源的基础价格；
-- `total_context_tokens > 272000` 时，仍使用对应来源的基础价格，不因长上下文加价；
-- 输入、输出、cache read、cache write 均适用上述规则。
+- `total_context_tokens <= 272000` 时，使用基础价格；
+- `total_context_tokens > 272000` 时，整笔请求使用长上下文价格：输入侧（普通输入、cache read、cache write）为基础价的 2 倍，输出为基础价的 1.5 倍；
+- 判断按整笔请求的 `input_tokens + cache_read_tokens + cache_creation_tokens` 执行，而非只对超出阈值的 token 加价。
 
-该规则只改变 GPT-5.6 的长上下文加价语义，不改变 GPT-5.4 的既有长上下文定价，也不改变 Gemini 等其他模型的规则。
+该规则只改变 GPT-5.6 的长上下文语义；GPT-5.4 和其他模型保持各自既有规则。Priority 使用上游公布的独立价格，不与此长上下文倍率叠加。
 
 ## §2 定价来源
 
-远程 LiteLLM 目录、内置资源和离线回退中的以下字段不能为 GPT-5.6 触发加价：
+远程 LiteLLM 目录、内置资源和离线回退都应保留并优先使用以下显式高档价格：
 
-- `*_above_272k_tokens`；
-- `long_context_*_multiplier`；
-- 渠道配置合成出的等价长上下文倍率。
+- `input_cost_per_token_above_272k_tokens`；
+- `output_cost_per_token_above_272k_tokens`；
+- `cache_read_input_token_cost_above_272k_tokens`；
+- `cache_creation_input_token_cost_above_272k_tokens`。
 
-缓存写入仍按既有规则从输入价推导为输入价的 1.25 倍；显式渠道 cache-write 价格仍优先。
+若目录缺失倍率元数据，系统补齐 `272000`、输入侧 `2x`、输出 `1.5x`。仅当 cache-write 价格缺失时，才从输入价推导为 1.25 倍；显式渠道 cache-write 价格优先。
 
-## §3 渠道区间
+## §3 渠道与账号统计
 
-Token 模式的渠道自定义区间在 GPT-5.6 下按 272K 截断：
+Token 模式的渠道自定义区间不做 GPT-5.6 截断或重写：`(272K,∞)` 的显式高档区间必须参与实际计费、价格展示和账号统计。`per_request` 与 `image` 模式不适用本规则。
 
-- 272K 以内的原有区间保持不变；
-- 跨过 272K 的区间只保留到 272K；
-- 272K 之后追加一个使用渠道基础价的无上限区间；
-- 272K 以上的原有加价区间不再参与计费。
+## §4 验证矩阵
 
-`per_request` 和 `image` 模式不适用此 token 边界规则。
-
-## §4 账号统计
-
-账号统计中的渠道自定义 token 区间与请求实际计费使用同一条 272K 规则，避免客户计费与账号统计出现不同价格。
-
-## §5 验证矩阵
-
-1. 远程目录带旧 `above_272k` 字段时，GPT-5.6 仍返回基础价且不产生长上下文区间加价。
-2. 远程目录带 `long_context` 2x/1.5x 字段时，GPT-5.6 仍不加价。
-3. 内置 GPT-5.6 资源保留 272K 边界，但倍率为 1x。
-4. 渠道配置 `(0,272K]` 基础价、`(272K,∞)` 加价时，超过 272K 使用基础价。
-5. 跨界区间、仅区间配置、通配符配置和账号统计规则均不绕过边界。
-6. GPT-5.4 长上下文加价和非 GPT-5.6 模型行为保持不变。
+1. 超过 272K 的标准 GPT-5.6 请求对普通输入、cache read、cache write 应用 2x，对输出应用 1.5x。
+2. 恰好 272K 不触发长上下文价。
+3. 显式 `*_above_272k_tokens` 价格和渠道高档 interval 不被清零或截断。
+4. Priority 使用独立价格，不再叠加 2x/1.5x。
+5. GPT-5.4 长上下文加价和非 GPT-5.6 模型行为保持不变。

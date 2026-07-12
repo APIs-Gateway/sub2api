@@ -124,13 +124,13 @@ func TestGetModelPricing_Gpt56UsesStaticFallbackWhenRemoteMissing(t *testing.T) 
 	require.InDelta(t, 1.25e-6, got.CacheCreationInputTokenCost, 1e-12)
 	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCostPriority, 1e-12)
 	require.InDelta(t, 1e-7, got.CacheReadInputTokenCost, 1e-12)
-	require.Zero(t, got.InputCostPerTokenAbove272KTokens)
-	require.Zero(t, got.OutputCostPerTokenAbove272KTokens)
-	require.Zero(t, got.CacheCreationInputTokenCostAbove272KTokens)
-	require.Zero(t, got.CacheReadInputTokenCostAbove272KTokens)
+	require.InDelta(t, 2e-6, got.InputCostPerTokenAbove272KTokens, 1e-12)
+	require.InDelta(t, 9e-6, got.OutputCostPerTokenAbove272KTokens, 1e-12)
+	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCostAbove272KTokens, 1e-12)
+	require.InDelta(t, 2e-7, got.CacheReadInputTokenCostAbove272KTokens, 1e-12)
 	require.Equal(t, 272000, got.LongContextInputTokenThreshold)
-	require.InDelta(t, 1.0, got.LongContextInputCostMultiplier, 1e-12)
-	require.InDelta(t, 1.0, got.LongContextOutputCostMultiplier, 1e-12)
+	require.InDelta(t, 2.0, got.LongContextInputCostMultiplier, 1e-12)
+	require.InDelta(t, 1.5, got.LongContextOutputCostMultiplier, 1e-12)
 }
 
 func TestGetModelPricing_Gpt56StaleCatalogDerivesCacheWriteButExplicitPriceWins(t *testing.T) {
@@ -160,20 +160,20 @@ func TestGetModelPricing_Gpt56StaleCatalogDerivesCacheWriteButExplicitPriceWins(
 	require.NotSame(t, stale, derived, "derivation must not mutate the cached catalog entry")
 	require.InDelta(t, 3.125e-6, derived.CacheCreationInputTokenCost, 1e-12)
 	require.InDelta(t, 6.25e-6, derived.CacheCreationInputTokenCostPriority, 1e-12)
-	require.Zero(t, derived.InputCostPerTokenAbove272KTokens)
-	require.Zero(t, derived.OutputCostPerTokenAbove272KTokens)
-	require.Zero(t, derived.CacheReadInputTokenCostAbove272KTokens)
+	require.InDelta(t, 5e-6, derived.InputCostPerTokenAbove272KTokens, 1e-12)
+	require.InDelta(t, 22.5e-6, derived.OutputCostPerTokenAbove272KTokens, 1e-12)
+	require.InDelta(t, 0.5e-6, derived.CacheReadInputTokenCostAbove272KTokens, 1e-12)
 	require.Equal(t, 272000, derived.LongContextInputTokenThreshold)
-	require.InDelta(t, 1.0, derived.LongContextInputCostMultiplier, 1e-12)
-	require.InDelta(t, 1.0, derived.LongContextOutputCostMultiplier, 1e-12)
+	require.InDelta(t, 2.0, derived.LongContextInputCostMultiplier, 1e-12)
+	require.InDelta(t, 1.5, derived.LongContextOutputCostMultiplier, 1e-12)
 
 	gotExplicit := svc.GetModelPricing("gpt-5.6-sol")
 	require.NotSame(t, explicit, gotExplicit, "GPT-5.6 policy must not mutate the cached catalog entry")
 	require.InDelta(t, 7e-6, gotExplicit.CacheCreationInputTokenCost, 1e-12)
 	require.InDelta(t, 14e-6, gotExplicit.CacheCreationInputTokenCostPriority, 1e-12)
 	require.Equal(t, 272000, gotExplicit.LongContextInputTokenThreshold)
-	require.InDelta(t, 1.0, gotExplicit.LongContextInputCostMultiplier, 1e-12)
-	require.InDelta(t, 1.0, gotExplicit.LongContextOutputCostMultiplier, 1e-12)
+	require.InDelta(t, 2.0, gotExplicit.LongContextInputCostMultiplier, 1e-12)
+	require.InDelta(t, 1.5, gotExplicit.LongContextOutputCostMultiplier, 1e-12)
 }
 
 func TestGetModelPricing_OpenAICompactAliasUsesStaticFallback(t *testing.T) {
@@ -217,8 +217,8 @@ func TestDefaultPricingIncludesGPT56LongContextMetadata(t *testing.T) {
 		pricing := pricingData[model]
 		require.NotNil(t, pricing, model)
 		require.Equal(t, 272000, pricing.LongContextInputTokenThreshold, model)
-		require.InDelta(t, 1.0, pricing.LongContextInputCostMultiplier, 1e-12, model)
-		require.InDelta(t, 1.0, pricing.LongContextOutputCostMultiplier, 1e-12, model)
+		require.InDelta(t, 2.0, pricing.LongContextInputCostMultiplier, 1e-12, model)
+		require.InDelta(t, 1.5, pricing.LongContextOutputCostMultiplier, 1e-12, model)
 	}
 }
 
@@ -250,10 +250,10 @@ func TestDefaultPricingIncludesGPT56CacheWritePrices(t *testing.T) {
 			require.InDelta(t, tt.cacheRead, got.CacheReadInputTokenCost, 1e-12)
 			require.InDelta(t, tt.cacheWrite, got.CacheCreationInputTokenCost, 1e-12)
 			require.InDelta(t, tt.output, got.OutputCostPerToken, 1e-12)
-			require.Zero(t, got.InputCostPerTokenAbove272KTokens)
-			require.Zero(t, got.CacheReadInputTokenCostAbove272KTokens)
-			require.Zero(t, got.CacheCreationInputTokenCostAbove272KTokens)
-			require.Zero(t, got.OutputCostPerTokenAbove272KTokens)
+			require.InDelta(t, tt.input*2, got.InputCostPerTokenAbove272KTokens, 1e-12)
+			require.InDelta(t, tt.cacheRead*2, got.CacheReadInputTokenCostAbove272KTokens, 1e-12)
+			require.InDelta(t, tt.cacheWrite*2, got.CacheCreationInputTokenCostAbove272KTokens, 1e-12)
+			require.InDelta(t, tt.output*1.5, got.OutputCostPerTokenAbove272KTokens, 1e-12)
 			require.InDelta(t, tt.priority, got.CacheCreationInputTokenCostPriority, 1e-12)
 		})
 	}

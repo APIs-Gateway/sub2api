@@ -85,9 +85,6 @@ func (s *ChannelService) ListAvailable(ctx context.Context) ([]AvailableChannel,
 
 		supported := ch.SupportedModels()
 		s.fillGlobalPricingFallback(supported)
-		for i := range supported {
-			supported[i].Pricing = normalizeGPT56ChannelTokenPricing(supported[i].Name, supported[i].Pricing)
-		}
 
 		out = append(out, AvailableChannel{
 			ID:                 ch.ID,
@@ -254,13 +251,6 @@ func longContextDisplayIntervals(lp *LiteLLMModelPricing, modelName string) []Pr
 	if lp == nil {
 		return nil
 	}
-	// GPT-5.6 has a 272K boundary but no long-context surcharge. Ignore both
-	// stale catalogue above_272k fields and any legacy multiplier metadata at
-	// this display boundary; the flat prices remain the effective prices.
-	if isOpenAIGPT56Model(modelName) {
-		return nil
-	}
-
 	threshold := lp.LongContextInputTokenThreshold
 	inMult := lp.LongContextInputCostMultiplier
 	outMult := lp.LongContextOutputCostMultiplier
