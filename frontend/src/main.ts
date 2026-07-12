@@ -4,6 +4,7 @@ import App from './App.vue'
 import router from './router'
 import i18n, { initI18n } from './i18n'
 import { useAppStore } from '@/stores/app'
+import { installChunkLoadRecovery } from '@/utils/chunkLoadRecovery'
 // Self-hosted brand fonts (offline / China-safe, no Google CDN)
 import '@fontsource-variable/fraunces' // 衬线标题 Latin (近 Tiempos/Anthropic 编辑感)
 import '@fontsource-variable/space-grotesk' // 无衬线正文/UI Latin (方头怪趣，近 Styrene)
@@ -15,6 +16,8 @@ import '@fontsource/noto-sans-sc/700.css'
 import '@fontsource/noto-serif-sc/600.css' // 标题中文 (宋体衬线)
 import '@fontsource/noto-serif-sc/700.css'
 import './style.css'
+
+installChunkLoadRecovery()
 
 function initThemeClass() {
   const savedTheme = localStorage.getItem('theme')

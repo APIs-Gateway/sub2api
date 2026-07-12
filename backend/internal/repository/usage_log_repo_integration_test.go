@@ -87,6 +87,38 @@ func (s *UsageLogRepoSuite) TestCreate() {
 	s.Require().NotZero(log.ID)
 }
 
+func (s *UsageLogRepoSuite) TestGetUserBreakdownStats_AggregatesTokenKindsAndSorts() {
+	first := mustCreateUser(s.T(), s.client, &service.User{Email: "breakdown-first@example.com"})
+	second := mustCreateUser(s.T(), s.client, &service.User{Email: "breakdown-second@example.com"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "breakdown-account"})
+	firstKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: first.ID, Key: "sk-breakdown-first", Name: "first"})
+	secondKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: second.ID, Key: "sk-breakdown-second", Name: "second"})
+	now := time.Now().UTC()
+
+	for _, log := range []*service.UsageLog{
+		{
+			UserID: first.ID, APIKeyID: firstKey.ID, AccountID: account.ID, RequestID: uuid.NewString(), Model: "gpt-test",
+			InputTokens: 11, OutputTokens: 7, CacheCreationTokens: 5, CacheReadTokens: 3, TotalCost: 1, ActualCost: 1, CreatedAt: now,
+		},
+		{
+			UserID: second.ID, APIKeyID: secondKey.ID, AccountID: account.ID, RequestID: uuid.NewString(), Model: "gpt-test",
+			InputTokens: 2, OutputTokens: 1, CacheCreationTokens: 1, CacheReadTokens: 1, TotalCost: 1, ActualCost: 1, CreatedAt: now,
+		},
+	} {
+		_, err := s.repo.Create(s.ctx, log)
+		s.Require().NoError(err)
+	}
+
+	stats, err := s.repo.GetUserBreakdownStats(s.ctx, now.Add(-time.Hour), now.Add(time.Hour), usagestats.UserBreakdownDimension{SortBy: "cache_tokens"}, 10)
+	s.Require().NoError(err)
+	s.Require().Len(stats, 2)
+	s.Require().Equal(first.ID, stats[0].UserID)
+	s.Require().Equal(int64(11), stats[0].InputTokens)
+	s.Require().Equal(int64(7), stats[0].OutputTokens)
+	s.Require().Equal(int64(8), stats[0].CacheTokens)
+	s.Require().Equal(int64(26), stats[0].TotalTokens)
+}
+
 func TestUsageLogRepositoryCreate_BatchPathConcurrent(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)

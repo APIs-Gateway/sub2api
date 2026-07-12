@@ -252,6 +252,7 @@ function isCanceledRequest(err: unknown): boolean {
 }
 
 function abortDashboardFetch() {
+  dashboardFetchSeq += 1
   if (dashboardFetchController) {
     dashboardFetchController.abort()
     dashboardFetchController = null
@@ -608,6 +609,7 @@ async function refreshCoreSnapshotWithCancel(fetchSeq: number, signal: AbortSign
     errorTrend.value = data.error_trend
   } catch (err: any) {
     if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
+    if (shouldSkipLegacyFallback(err)) throw err
     // Fallback to legacy split endpoints when snapshot endpoint is unavailable.
     await Promise.all([
       refreshOverviewWithCancel(fetchSeq, signal),
@@ -694,20 +696,32 @@ function isOpsDisabledError(err: unknown): boolean {
   )
 }
 
+function isAuthError(err: unknown): boolean {
+  if (!err || typeof err !== 'object' || !('status' in err)) return false
+  const status = (err as Record<string, unknown>).status
+  return status === 401 || status === 403
+}
+
+function shouldSkipLegacyFallback(err: unknown): boolean {
+  return isCanceledRequest(err) || isOpsDisabledError(err) || isAuthError(err)
+}
+
 async function fetchData() {
   if (!opsEnabled.value) return
 
   abortDashboardFetch()
-  dashboardFetchSeq += 1
-  const fetchSeq = dashboardFetchSeq
-  dashboardFetchController = new AbortController()
+  const fetchSeq = ++dashboardFetchSeq
+  const controller = new AbortController()
+  const signal = controller.signal
+  dashboardFetchController = controller
+  let deferredStarted = false
 
   loading.value = true
   errorMessage.value = ''
   try {
     await Promise.all([
-      refreshCoreSnapshotWithCancel(fetchSeq, dashboardFetchController.signal),
-      refreshSwitchTrendWithCancel(fetchSeq, dashboardFetchController.signal),
+      refreshCoreSnapshotWithCancel(fetchSeq, signal),
+      refreshSwitchTrendWithCancel(fetchSeq, signal),
     ])
     if (fetchSeq !== dashboardFetchSeq) return
 
@@ -722,9 +736,14 @@ async function fetchData() {
     }
 
     // Defer non-core visual panels to reduce initial blocking.
-    void refreshDeferredPanels(fetchSeq, dashboardFetchController.signal)
+    deferredStarted = true
+    void refreshDeferredPanels(fetchSeq, signal).finally(() => {
+      if (dashboardFetchController === controller) {
+        dashboardFetchController = null
+      }
+    })
   } catch (err) {
-    if (!isOpsDisabledError(err)) {
+    if (!shouldSkipLegacyFallback(err)) {
       console.error('[ops] failed to fetch dashboard data', err)
       errorMessage.value = t('admin.ops.failedToLoadData')
     }
@@ -732,6 +751,9 @@ async function fetchData() {
     if (fetchSeq === dashboardFetchSeq) {
       loading.value = false
       hasLoadedOnce.value = true
+    }
+    if (!deferredStarted && dashboardFetchController === controller) {
+      dashboardFetchController = null
     }
   }
 }

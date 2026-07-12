@@ -397,11 +397,15 @@ export const useAuthStore = defineStore('auth', () => {
    * Clears all authentication state and persisted data
    */
   async function logout(): Promise<void> {
-    // Call API logout (revokes refresh token on server)
-    await authAPI.logout()
-
-    // Clear state
-    clearAuth()
+    try {
+      // Call API logout (revokes refresh token on server)
+      await authAPI.logout()
+    } catch (err) {
+      // A failed server-side revoke must not keep the local session alive.
+      console.warn('Logout API call failed, clearing local session anyway', err)
+    } finally {
+      clearAuth()
+    }
   }
 
   /**

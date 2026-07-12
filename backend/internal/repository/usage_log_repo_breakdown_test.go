@@ -76,3 +76,24 @@ func TestGetUserBreakdownStatsRequestTypeIncludesLegacyFallback(t *testing.T) {
 	require.Empty(t, rows)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestResolveUserBreakdownSortColumn(t *testing.T) {
+	tests := map[string]string{
+		"":              "actual_cost",
+		"actual_cost":   "actual_cost",
+		"total_tokens":  "total_tokens",
+		"input_tokens":  "input_tokens",
+		"output_tokens": "output_tokens",
+		"cache_tokens":  "cache_tokens",
+		"requests":      "requests",
+		"cost":          "cost",
+		"email":         "actual_cost",
+		"cost DESC; --": "actual_cost",
+	}
+
+	for input, want := range tests {
+		t.Run(input, func(t *testing.T) {
+			require.Equal(t, want, resolveUserBreakdownSortColumn(input))
+		})
+	}
+}

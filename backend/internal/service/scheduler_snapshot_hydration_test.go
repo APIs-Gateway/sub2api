@@ -189,6 +189,59 @@ func TestGatewaySelectAccountWithLoadAwareness_HydratesSelectedAccountFromSchedu
 	}
 }
 
+func TestGatewaySelectAccountWithLoadAwareness_HydratesStickyWaitPlanAccount(t *testing.T) {
+	const accountID int64 = 11
+	cache := &snapshotHydrationCache{
+		snapshot: []*Account{{
+			ID:          accountID,
+			Platform:    PlatformAnthropic,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    1,
+		}},
+		accounts: map[int64]*Account{
+			accountID: {
+				ID:          accountID,
+				Platform:    PlatformAnthropic,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Priority:    1,
+				Credentials: map[string]any{
+					"api_key": "anthropic-live-key",
+				},
+			},
+		},
+	}
+
+	cfg := testConfig()
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 1
+	svc := &GatewayService{
+		schedulerSnapshot:  NewSchedulerSnapshotService(cache, nil, nil, nil, nil),
+		cache:              &mockGatewayCacheForPlatform{sessionBindings: map[string]int64{"sticky-wait": accountID}},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(&mockConcurrencyCache{acquireResults: map[int64]bool{accountID: false}, waitCounts: map[int64]int{accountID: 0}}),
+	}
+
+	result, err := svc.SelectAccountWithLoadAwareness(context.Background(), nil, "sticky-wait", "claude-3-5-sonnet-20241022", nil, "", 0)
+	if err != nil {
+		t.Fatalf("SelectAccountWithLoadAwareness error: %v", err)
+	}
+	if result == nil || result.WaitPlan == nil || result.Account == nil {
+		t.Fatalf("expected hydrated sticky wait plan")
+	}
+	if result.Account.ID != accountID {
+		t.Fatalf("account ID = %d, want %d", result.Account.ID, accountID)
+	}
+	if got := result.Account.GetCredential("api_key"); got != "anthropic-live-key" {
+		t.Fatalf("expected hydrated api key, got %q", got)
+	}
+}
+
 func TestGatewaySelectAccountWithLoadAwareness_SkipsAntigravityGeminiFamilyRateLimitedSnapshot(t *testing.T) {
 	resetAt := time.Now().Add(10 * time.Minute).Format(time.RFC3339)
 	cache := &snapshotHydrationCache{

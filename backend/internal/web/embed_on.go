@@ -104,6 +104,13 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 			return
 		}
 
+		// Try the persistent override directory before checking the embedded
+		// build. Deployments keep the previous release's hashed assets here so
+		// tabs that are still running the old entry bundle can finish loading.
+		if s.tryServeOverride(c, cleanPath) {
+			return
+		}
+
 		// Unknown path: SPA navigation routes (extensionless) fall back to the
 		// index.html shell; a missing static asset (under assets/ or with a file
 		// extension) must return 404 instead. Serving the HTML shell under a
@@ -112,16 +119,15 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 		// asset URLs, breaking the page for every user on that edge.
 		if !s.fileExists(cleanPath) {
 			if looksLikeStaticAsset(cleanPath) {
+				// A stale hashed filename must not become a negatively cached 404 at
+				// the browser or CDN. The next deployment may restore it through the
+				// compatibility override directory.
+				c.Header("Cache-Control", "no-store, max-age=0")
 				c.Status(http.StatusNotFound)
 				c.Abort()
 				return
 			}
 			s.serveIndexHTML(c)
-			return
-		}
-
-		// Try local override first
-		if s.tryServeOverride(c, cleanPath) {
 			return
 		}
 

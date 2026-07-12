@@ -138,15 +138,27 @@ function resetTurnstile() {
 
 async function load() {
   try {
-    status.value = await getCheckinStatus()
+    const nextStatus = await getCheckinStatus()
+    status.value = nextStatus
+    return nextStatus
   } catch (error) {
     console.warn('Failed to load checkin status:', error)
     status.value = null
+    return null
   }
+}
+
+function claimAdvanced(before: CheckinStatus | null, after: CheckinStatus | null) {
+  if (!before || !after) return false
+  return (
+    (!before.daily_claimed && after.daily_claimed) ||
+    after.bonus_claimed_today > before.bonus_claimed_today
+  )
 }
 
 async function claim() {
   if (claimDisabled.value) return
+  const beforeClaim = status.value
   claiming.value = true
   try {
     const res = await claimCheckin(turnstileEnabled.value ? turnstileToken.value : undefined)
@@ -155,13 +167,25 @@ async function claim() {
     } else {
       await load()
     }
-    // 余额已变动，刷新用户信息让仪表盘余额同步更新
-    await authStore.refreshUser()
     appStore.showSuccess(t('checkin.claimedToast', { amount: formatUsd(res.amount) }))
+    // 签到领取已经在服务端提交。余额刷新是后续同步动作，即使失败也不能把
+    // 已成功的签到误报为失败；用户信息会在下一次常规刷新时再次同步。
+    void authStore.refreshUser().catch((error) => {
+      console.warn('Failed to refresh user after successful checkin:', error)
+    })
   } catch (error) {
     console.warn('Checkin claim failed:', error)
-    appStore.showError(t('checkin.claimFailed'))
-    await load()
+    // POST 可能已在服务端提交，只是成功响应在弱网或重启时丢失。先回查
+    // 原子签到状态；确认领取计数前进时按成功处理，绝不重放 POST。
+    const reconciledStatus = await load()
+    if (claimAdvanced(beforeClaim, reconciledStatus)) {
+      appStore.showSuccess(t('checkin.claimRecoveredToast'))
+      void authStore.refreshUser().catch((refreshError) => {
+        console.warn('Failed to refresh user after reconciled checkin:', refreshError)
+      })
+    } else {
+      appStore.showError(t('checkin.claimFailed'))
+    }
   } finally {
     claiming.value = false
     // Turnstile token 单次有效，无论成败都重置以便下次领取

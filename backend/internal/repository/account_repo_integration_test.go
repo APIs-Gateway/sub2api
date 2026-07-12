@@ -125,6 +125,42 @@ func (s *AccountRepoSuite) TestGetByID_NotFound() {
 	s.Require().Error(err, "expected error for non-existent ID")
 }
 
+func (s *AccountRepoSuite) TestListOpsAccountsForStats() {
+	targetGroup := mustCreateGroup(s.T(), s.client, &service.Group{Name: "ops-target", Platform: service.PlatformOpenAI})
+	otherGroup := mustCreateGroup(s.T(), s.client, &service.Group{Name: "ops-other", Platform: service.PlatformOpenAI})
+	loadFactor := 2
+	target := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:        "ops-target-account",
+		Platform:    service.PlatformOpenAI,
+		Concurrency: 6,
+		Status:      service.StatusActive,
+		Schedulable: true,
+	})
+	_, err := s.client.Account.UpdateOneID(target.ID).SetLoadFactor(loadFactor).Save(s.ctx)
+	s.Require().NoError(err)
+	mustBindAccountToGroup(s.T(), s.client, target.ID, targetGroup.ID, 1)
+
+	other := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:     "ops-other-account",
+		Platform: service.PlatformOpenAI,
+	})
+	mustBindAccountToGroup(s.T(), s.client, other.ID, otherGroup.ID, 1)
+	mustCreateAccount(s.T(), s.client, &service.Account{Name: "ops-other-platform", Platform: service.PlatformAnthropic})
+
+	accounts, err := s.repo.ListOpsAccountsForStats(s.ctx, " openai ", &targetGroup.ID)
+	s.Require().NoError(err)
+	s.Require().Len(accounts, 1)
+	s.Equal(target.ID, accounts[0].ID)
+	s.Equal("ops-target-account", accounts[0].Name)
+	s.Equal(service.PlatformOpenAI, accounts[0].Platform)
+	s.Equal(6, accounts[0].Concurrency)
+	s.Require().NotNil(accounts[0].LoadFactor)
+	s.Equal(2, *accounts[0].LoadFactor)
+	s.Equal([]int64{targetGroup.ID}, accounts[0].GroupIDs)
+	s.Require().Len(accounts[0].Groups, 1)
+	s.Equal(targetGroup.ID, accounts[0].Groups[0].ID)
+}
+
 func (s *AccountRepoSuite) TestUpdate() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "original"})
 
