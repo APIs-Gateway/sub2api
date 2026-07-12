@@ -1,9 +1,58 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 )
+
+type checkinBlockingBalanceCache struct {
+	billingCacheWorkerStub
+	started chan struct{}
+	release chan struct{}
+}
+
+func (c *checkinBlockingBalanceCache) InvalidateUserBalance(_ context.Context, _ int64) error {
+	close(c.started)
+	<-c.release
+	return nil
+}
+
+func TestCheckinInvalidatesBalanceCacheBeforeReturning(t *testing.T) {
+	cache := &checkinBlockingBalanceCache{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := &CheckinService{
+		billingCache: &BillingCacheService{cache: cache},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		svc.invalidateBalanceCaches(context.Background(), 42)
+		close(done)
+	}()
+
+	select {
+	case <-cache.started:
+	case <-time.After(time.Second):
+		t.Fatal("balance cache invalidation was not started")
+	}
+
+	select {
+	case <-done:
+		close(cache.release)
+		t.Fatal("checkin returned before the balance cache was invalidated")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(cache.release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("checkin did not return after balance cache invalidation completed")
+	}
+}
 
 func TestCheckinEarnedBonus(t *testing.T) {
 	cases := []struct {

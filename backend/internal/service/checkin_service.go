@@ -317,11 +317,11 @@ func (s *CheckinService) invalidateBalanceCaches(ctx context.Context, userID int
 	if s.billingCache == nil {
 		return
 	}
-	go func() {
-		cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = s.billingCache.InvalidateUserBalance(cacheCtx, userID)
-	}()
+	// 签到成功后前端会立即刷新用户信息。这里若异步删缓存，刷新请求可能先
+	// 命中旧余额，直到重新登录才会再次拉取；因此必须在响应返回前完成失效。
+	cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.billingCache.InvalidateUserBalance(cacheCtx, userID)
 }
 
 // checkinToday 返回 Asia/Shanghai 自然日字符串(YYYY-MM-DD)与该日 00:00 的绝对时刻。
