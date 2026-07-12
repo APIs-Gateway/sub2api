@@ -1553,9 +1553,15 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 	if card, _ := h.billingCacheService.GetActiveSubscriptionCard(ctx, subject.UserID); card != nil {
 		now := timezone.Now()
 		if card.Status == service.SubscriptionStatusActive && now.Before(card.ExpiresAt) {
+			walletBalance, err := h.billingCacheService.GetUserBalance(ctx, subject.UserID)
+			if err != nil {
+				h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get wallet balance")
+				return
+			}
 			window := card.ToSubWindow()
 			window.ResetWindows(now)
-			remaining := window.SubRemaining()
+			subscriptionRemaining := window.SubRemaining()
+			remaining := usageSpendableRemaining(subscriptionRemaining, walletBalance)
 			planName := "订阅"
 			if apiKey.Group != nil && apiKey.Group.Name != "" {
 				planName = apiKey.Group.Name
@@ -1566,6 +1572,7 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 				"planName":  planName,
 				"unit":      "USD",
 				"remaining": remaining,
+				"balance":   walletBalance,
 				"subscription": gin.H{
 					"daily_limit_usd":      usageLimitValue(window.DailyLimitUSD),
 					"daily_usage_usd":      window.DailyUsageUSD,
@@ -1642,6 +1649,14 @@ func usageRemainingValue(limit, used float64) any {
 		return nil
 	}
 	return math.Max(0, limit-used)
+}
+
+// usageSpendableRemaining mirrors billing admission/settlement: an active
+// subscription covers up to its tightest window, then positive wallet balance
+// remains available as fallback. Negative wallet debt is never displayable as
+// spendable credit.
+func usageSpendableRemaining(subscriptionRemaining, walletBalance float64) float64 {
+	return math.Max(0, subscriptionRemaining) + math.Max(0, walletBalance)
 }
 
 func usageResetAt(windowStart *time.Time, window string) any {

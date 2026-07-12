@@ -24,6 +24,13 @@ func TestUsageRemainingValue(t *testing.T) {
 	require.Equal(t, 0.0, usageRemainingValue(10, 15)) // 超用 → 夹到 0,不为负
 }
 
+func TestUsageSpendableRemainingIncludesWalletFallback(t *testing.T) {
+	require.Equal(t, 55.04, usageSpendableRemaining(0, 55.04))
+	require.Equal(t, 75.0, usageSpendableRemaining(20, 55))
+	require.Equal(t, 20.0, usageSpendableRemaining(20, -5))
+	require.Equal(t, 0.0, usageSpendableRemaining(-1, -5))
+}
+
 func TestUsageResetAt(t *testing.T) {
 	require.Nil(t, usageResetAt(nil, "daily"))
 
