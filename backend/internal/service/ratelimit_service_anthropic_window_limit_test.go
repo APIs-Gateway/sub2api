@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"testing"
@@ -20,6 +21,7 @@ type anthropicWindowLimitRepo struct {
 	modelRateLimitCalls     int
 	lastModelRateLimitScope string
 	lastModelRateLimitReset time.Time
+	modelRateLimitErr       error
 	sessionWindowCalls      int
 	lastExtraUpdates        map[string]any
 }
@@ -39,7 +41,7 @@ func (r *anthropicWindowLimitRepo) SetModelRateLimit(_ context.Context, _ int64,
 	r.modelRateLimitCalls++
 	r.lastModelRateLimitScope = scope
 	r.lastModelRateLimitReset = resetAt
-	return nil
+	return r.modelRateLimitErr
 }
 
 func (r *anthropicWindowLimitRepo) UpdateSessionWindow(_ context.Context, _ int64, _, _ *time.Time, _ string) error {
@@ -160,6 +162,33 @@ func TestHandleUpstreamError_Anthropic7dOiOnlyMarksModelRateLimit(t *testing.T) 
 	require.Equal(t, 1.0, repo.lastExtraUpdates["passive_usage_7d_oi_utilization"])
 	require.Equal(t, resetOI.Unix(), repo.lastExtraUpdates["passive_usage_7d_oi_reset"])
 	require.Equal(t, 0.41, repo.lastExtraUpdates["session_window_utilization"])
+}
+
+func TestHandleUpstreamError_Anthropic7dOiPersistenceFailureUses429Fallback(t *testing.T) {
+	// 模型级限流写入失败时，不能直接放过 429；应落回既有账号级保护路径。
+	resetUpstream429TrackerForTest()
+	now := time.Now()
+	reset5h := now.Add(2 * time.Hour).Truncate(time.Second)
+	resetOI := now.Add(80 * time.Hour).Truncate(time.Second)
+
+	repo := &anthropicWindowLimitRepo{modelRateLimitErr: errors.New("database unavailable")}
+	svc := NewRateLimitService(repo, nil, nil, nil, nil)
+	account := &Account{ID: 42, Type: AccountTypeOAuth, Platform: PlatformAnthropic}
+
+	svc.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusTooManyRequests,
+		fable429Headers(reset5h, resetOI),
+		nil,
+		"claude-fable-5",
+	)
+
+	require.Equal(t, 1, repo.modelRateLimitCalls)
+	require.Equal(t, 1, repo.rateLimitCalls, "failed model limit persistence must fall back to account-level 429 protection")
+	require.Equal(t, reset5h, repo.lastRateLimitReset)
+	require.Equal(t, 1, repo.sessionWindowCalls)
+	require.True(t, ShouldSwitchAccountOn429(account.ID))
 }
 
 func TestHandleUpstreamError_Anthropic5hWindowStillWinsOver7dOi(t *testing.T) {

@@ -1336,7 +1336,7 @@ func (s *RateLimitService) persistAnthropicFableWindowLimit(ctx context.Context,
 			"scope", anthropicFableRateLimitKey,
 			"reset_at", limit.resetAt,
 			"error", err)
-		return true
+		return false
 	}
 	slog.Info("anthropic_fable_window_model_rate_limited",
 		"account_id", account.ID,
