@@ -786,21 +786,32 @@ describe("admin SettingsView payment visible method controls", () => {
     getProviders.mockReset();
     getProviders
       .mockResolvedValueOnce({ data: [provider] })
-      .mockResolvedValueOnce({ data: [{ ...provider, enabled: true }] });
+      .mockResolvedValueOnce({ data: [{ ...provider, enabled: true }] })
+      .mockResolvedValueOnce({ data: [{ ...provider, enabled: true, supported_types: [] }] });
     updateProvider.mockResolvedValue({ data: { ...provider, enabled: true } });
 
     const PaymentProviderListStub = defineComponent({
-      emits: ["toggleField"],
+      emits: ["toggleField", "toggleType"],
       setup(_, { emit }) {
         return () =>
-          h(
-            "button",
-            {
-              class: "provider-toggle-stub",
-              onClick: () => emit("toggleField", provider, "enabled"),
-            },
-            "toggle provider",
-          );
+          h("div", [
+            h(
+              "button",
+              {
+                class: "provider-toggle-stub",
+                onClick: () => emit("toggleField", provider, "enabled"),
+              },
+              "toggle provider",
+            ),
+            h(
+              "button",
+              {
+                class: "provider-toggle-type-existing-stub",
+                onClick: () => emit("toggleType", provider, "alipay"),
+              },
+              "disable alipay",
+            ),
+          ]);
       },
     });
 
@@ -829,9 +840,12 @@ describe("admin SettingsView payment visible method controls", () => {
     await openPaymentTab(wrapper);
     await wrapper.get(".provider-toggle-stub").trigger("click");
     await flushPromises();
+    await wrapper.get(".provider-toggle-type-existing-stub").trigger("click");
+    await flushPromises();
 
-    expect(updateProvider).toHaveBeenCalledWith(7, { enabled: true });
-    expect(getProviders).toHaveBeenCalledTimes(2);
+    expect(updateProvider).toHaveBeenNthCalledWith(1, 7, { enabled: true });
+    expect(updateProvider).toHaveBeenNthCalledWith(2, 7, { supported_types: [] });
+    expect(getProviders).toHaveBeenCalledTimes(3);
   });
 
   it("normalizes null provider types before toggling a payment method", async () => {
