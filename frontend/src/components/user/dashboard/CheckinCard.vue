@@ -155,9 +155,12 @@ async function claim() {
     } else {
       await load()
     }
-    // 余额已变动，刷新用户信息让仪表盘余额同步更新
-    await authStore.refreshUser()
     appStore.showSuccess(t('checkin.claimedToast', { amount: formatUsd(res.amount) }))
+    // 签到领取已经在服务端提交。余额刷新是后续同步动作，即使失败也不能把
+    // 已成功的签到误报为失败；用户信息会在下一次常规刷新时再次同步。
+    void authStore.refreshUser().catch((error) => {
+      console.warn('Failed to refresh user after successful checkin:', error)
+    })
   } catch (error) {
     console.warn('Checkin claim failed:', error)
     appStore.showError(t('checkin.claimFailed'))
