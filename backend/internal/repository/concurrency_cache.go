@@ -27,6 +27,8 @@ const (
 	accountSlotKeyPrefix = "concurrency:account:"
 	// 格式: concurrency:user:{userID}
 	userSlotKeyPrefix = "concurrency:user:"
+	// apiKeySlotKeyPrefix is stats-only and does not apply an API key limit.
+	apiKeySlotKeyPrefix = "concurrency:api_key:"
 	// 等待队列计数器格式: concurrency:wait:{userID}
 	waitQueueKeyPrefix = "concurrency:wait:"
 	// 账号级等待队列计数器格式: wait:account:{accountID}
@@ -39,6 +41,7 @@ const (
 	// 业务 slot/wait key 仍是并发正确性的唯一来源。
 	accountActiveIndexKey = "concurrency:account:active_index"
 	userActiveIndexKey    = "concurrency:user:active_index"
+	apiKeyActiveIndexKey  = "concurrency:api_key:active_index"
 )
 
 var (
@@ -102,6 +105,21 @@ var (
 
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
 		return redis.call('ZCARD', key)
+	`)
+
+	// trackSlotScript records a stats-only slot and refreshes its TTL.
+	trackSlotScript = redis.NewScript(`
+		redis.replicate_commands()
+		local key = KEYS[1]
+		local ttl = tonumber(ARGV[1])
+		local requestID = ARGV[2]
+		local timeResult = redis.call('TIME')
+		local now = tonumber(timeResult[1])
+		local expireBefore = now - ttl
+		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
+		redis.call('ZADD', key, now, requestID)
+		redis.call('EXPIRE', key, ttl)
+		return 1
 	`)
 
 	// incrementWaitScript - refreshes TTL on each increment to keep queue depth accurate
@@ -233,6 +251,10 @@ func userSlotKey(userID int64) string {
 	return fmt.Sprintf("%s%d", userSlotKeyPrefix, userID)
 }
 
+func apiKeySlotKey(apiKeyID int64) string {
+	return fmt.Sprintf("%s%d", apiKeySlotKeyPrefix, apiKeyID)
+}
+
 func waitQueueKey(userID int64) string {
 	return fmt.Sprintf("%s%d", waitQueueKeyPrefix, userID)
 }
@@ -262,8 +284,9 @@ type activeIndexSpec struct {
 }
 
 var (
-	accountActiveIndex = activeIndexSpec{accountActiveIndexKey, accountSlotKey, accountWaitKey}
-	userActiveIndex    = activeIndexSpec{userActiveIndexKey, userSlotKey, waitQueueKey}
+	accountActiveIndex = activeIndexSpec{indexKey: accountActiveIndexKey, slotKey: accountSlotKey, waitKey: accountWaitKey}
+	userActiveIndex    = activeIndexSpec{indexKey: userActiveIndexKey, slotKey: userSlotKey, waitKey: waitQueueKey}
+	apiKeyActiveIndex  = activeIndexSpec{indexKey: apiKeyActiveIndexKey, slotKey: apiKeySlotKey}
 )
 
 func (c *concurrencyCache) refreshActiveIndex(ctx context.Context, spec activeIndexSpec, id int64) {
@@ -277,14 +300,19 @@ func (c *concurrencyCache) refreshActiveIndex(ctx context.Context, spec activeIn
 	pipe := c.rdb.Pipeline()
 	pipe.ZRemRangeByScore(ctx, spec.slotKey(id), "-inf", strconv.FormatInt(now.Unix()-int64(c.slotTTLSeconds), 10))
 	slots := pipe.ZCard(ctx, spec.slotKey(id))
-	wait := pipe.Get(ctx, spec.waitKey(id))
+	var wait *redis.StringCmd
+	if spec.waitKey != nil {
+		wait = pipe.Get(ctx, spec.waitKey(id))
+	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return
 	}
 	member := strconv.FormatInt(id, 10)
 	waiting := 0
-	if value, err := wait.Int(); err == nil && value > 0 {
-		waiting = value
+	if wait != nil {
+		if value, err := wait.Int(); err == nil && value > 0 {
+			waiting = value
+		}
 	}
 	if slots.Val() == 0 && waiting == 0 {
 		_ = c.rdb.ZRem(ctx, spec.indexKey, member).Err()
@@ -398,6 +426,56 @@ func (c *concurrencyCache) GetUserConcurrency(ctx context.Context, userID int64)
 	result, err := getCountScript.Run(ctx, c.rdb, []string{key}, c.slotTTLSeconds).Int()
 	if err != nil {
 		return 0, err
+	}
+	return result, nil
+}
+
+// API key slot operations are stats-only and use the same stale-slot TTL as
+// user/account admission slots.
+func (c *concurrencyCache) TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error {
+	if err := trackSlotScript.Run(ctx, c.rdb, []string{apiKeySlotKey(apiKeyID)}, c.slotTTLSeconds, requestID).Err(); err != nil {
+		return err
+	}
+	c.touchActiveIndex(ctx, apiKeyActiveIndexKey, apiKeyID, c.slotTTLSeconds)
+	return nil
+}
+
+func (c *concurrencyCache) ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error {
+	if err := c.rdb.ZRem(ctx, apiKeySlotKey(apiKeyID), requestID).Err(); err != nil {
+		return err
+	}
+	c.refreshActiveIndex(ctx, apiKeyActiveIndex, apiKeyID)
+	return nil
+}
+
+func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error) {
+	if len(apiKeyIDs) == 0 {
+		return map[int64]int{}, nil
+	}
+	now, err := c.rdb.Time(ctx).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis TIME: %w", err)
+	}
+	cutoffTime := now.Unix() - int64(c.slotTTLSeconds)
+	type batchCommand struct {
+		apiKeyID int64
+		zcardCmd *redis.IntCmd
+	}
+	commands := make([]batchCommand, 0, len(apiKeyIDs))
+	_, err = c.rdb.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, apiKeyID := range apiKeyIDs {
+			key := apiKeySlotKey(apiKeyID)
+			pipe.ZRemRangeByScore(ctx, key, "-inf", strconv.FormatInt(cutoffTime, 10))
+			commands = append(commands, batchCommand{apiKeyID: apiKeyID, zcardCmd: pipe.ZCard(ctx, key)})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[int64]int, len(apiKeyIDs))
+	for _, command := range commands {
+		result[command.apiKeyID] = int(command.zcardCmd.Val())
 	}
 	return result, nil
 }
@@ -598,7 +676,10 @@ func (c *concurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeR
 	if err := c.cleanupStaleProcessSlotsForIndex(ctx, accountActiveIndex, activeRequestPrefix); err != nil {
 		return err
 	}
-	return c.cleanupStaleProcessSlotsForIndex(ctx, userActiveIndex, activeRequestPrefix)
+	if err := c.cleanupStaleProcessSlotsForIndex(ctx, userActiveIndex, activeRequestPrefix); err != nil {
+		return err
+	}
+	return c.cleanupStaleProcessSlotsForIndex(ctx, apiKeyActiveIndex, activeRequestPrefix)
 }
 
 func (c *concurrencyCache) cleanupStaleProcessSlotsForIndex(ctx context.Context, spec activeIndexSpec, activePrefix string) error {
@@ -615,8 +696,10 @@ func (c *concurrencyCache) cleanupStaleProcessSlotsForIndex(ctx context.Context,
 		if _, err := startupCleanupSlotScript.Run(ctx, c.rdb, []string{spec.slotKey(id)}, activePrefix, c.slotTTLSeconds).Result(); err != nil {
 			return fmt.Errorf("cleanup stale slot %s: %w", spec.slotKey(id), err)
 		}
-		if err := c.rdb.Del(ctx, spec.waitKey(id)).Err(); err != nil {
-			return fmt.Errorf("delete stale wait key %s: %w", spec.waitKey(id), err)
+		if spec.waitKey != nil {
+			if err := c.rdb.Del(ctx, spec.waitKey(id)).Err(); err != nil {
+				return fmt.Errorf("delete stale wait key %s: %w", spec.waitKey(id), err)
+			}
 		}
 		c.refreshActiveIndex(ctx, spec, id)
 	}

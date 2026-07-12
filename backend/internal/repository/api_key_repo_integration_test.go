@@ -228,6 +228,17 @@ func (s *APIKeyRepoSuite) TestListByUserID() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
+func (s *APIKeyRepoSuite) TestListAllByUserID_AppliesFilters() {
+	user := s.mustCreateUser("listallbyuser@test.com")
+	matching := s.mustCreateApiKey(user.ID, "sk-listall-match", "Needle key", nil)
+	s.mustCreateApiKey(user.ID, "sk-listall-other", "Other key", nil)
+
+	keys, err := s.repo.ListAllByUserID(s.ctx, user.ID, service.APIKeyListFilters{Search: "needle"})
+	s.Require().NoError(err)
+	s.Require().Len(keys, 1)
+	s.Require().Equal(matching.ID, keys[0].ID)
+}
+
 func (s *APIKeyRepoSuite) TestListByUserID_Pagination() {
 	user := s.mustCreateUser("paging@test.com")
 	for i := 0; i < 5; i++ {
