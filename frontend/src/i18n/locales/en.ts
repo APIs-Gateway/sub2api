@@ -750,6 +750,7 @@
     deleteConfirmMessage: "Are you sure you want to delete '{name}'? This action cannot be undone.",
     apiKey: 'API Key',
     group: 'Group',
+    currentConcurrency: 'Current Concurrency',
     noGroup: 'No group',
     searchGroup: 'Search groups...',
     noGroupFound: 'No groups found',
