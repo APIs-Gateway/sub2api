@@ -11,11 +11,13 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/imroc/req/v3"
 )
 
 // Endpoints used by the OpenAI/ChatGPT/Codex quota query and reset feature.
 const (
 	chatGPTUsageURL             = "https://chatgpt.com/backend-api/wham/usage"
+	chatGPTRateLimitCreditsURL  = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 	chatGPTRateLimitResetURL    = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 	openaiQuotaUpstreamTimeout  = 20 * time.Second
 	openaiQuotaCodexOriginator  = "Codex Desktop"
@@ -53,7 +55,13 @@ type OpenAIAdditionalRateLimit struct {
 // OpenAIRateLimitResetCredits captures the "available_count" surfaced for the
 // rate_limit_reset_credit grant type, which the reset action consumes.
 type OpenAIRateLimitResetCredits struct {
-	AvailableCount int `json:"available_count"`
+	AvailableCount int                                `json:"available_count"`
+	Credits        []OpenAIRateLimitResetCreditDetail `json:"credits,omitempty"`
+}
+
+// OpenAIRateLimitResetCreditDetail contains only safe reset-credit metadata.
+type OpenAIRateLimitResetCreditDetail struct {
+	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
 // OpenAIQuotaUsage is the typed projection of /wham/usage we expose to the UI.
@@ -152,7 +160,52 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 	}
 
 	payload.FetchedAt = time.Now().Unix()
+	details := s.queryResetCreditDetails(callCtx, client, accessToken, chatGPTAccountID, accountID)
+	applyOpenAIRateLimitResetCreditDetails(&payload, details)
 	return &payload, nil
+}
+
+func applyOpenAIRateLimitResetCreditDetails(payload *OpenAIQuotaUsage, details *openAIRateLimitResetCreditDetails) {
+	if payload == nil || details == nil {
+		return
+	}
+	if payload.RateLimitResetCredits == nil {
+		payload.RateLimitResetCredits = &OpenAIRateLimitResetCredits{}
+	}
+	if details.CreditListPresent {
+		payload.RateLimitResetCredits.Credits = details.Credits
+	}
+	switch {
+	case details.AvailableCount != nil:
+		payload.RateLimitResetCredits.AvailableCount = *details.AvailableCount
+	case details.CreditListPresent:
+		payload.RateLimitResetCredits.AvailableCount = details.AvailableCreditCount
+	}
+}
+
+func (s *OpenAIQuotaService) queryResetCreditDetails(ctx context.Context, client *req.Client, accessToken, chatGPTAccountID string, accountID int64) *openAIRateLimitResetCreditDetails {
+	resp, err := client.R().
+		SetContext(ctx).
+		SetHeaders(buildCodexCommonHeaders(accessToken, chatGPTAccountID)).
+		Get(chatGPTRateLimitCreditsURL)
+	if err != nil {
+		slog.Warn("openai_quota_reset_credit_details_failed", "account_id", accountID, "error", err)
+		return nil
+	}
+	if !resp.IsSuccessState() {
+		slog.Warn("openai_quota_reset_credit_details_failed", "account_id", accountID, "status", resp.StatusCode)
+		return nil
+	}
+
+	details, err := parseOpenAIRateLimitResetCreditDetails(resp.Bytes())
+	if err != nil {
+		slog.Warn("openai_quota_reset_credit_details_parse_failed", "account_id", accountID, "error", err)
+		return nil
+	}
+	if details.AvailableCount == nil && !details.CreditListPresent {
+		return nil
+	}
+	return &details
 }
 
 // ResetCredit consumes one rate_limit_reset_credit for the given OpenAI account.
