@@ -356,6 +356,115 @@ func TestSchedulerSnapshotServiceCheckOutboxLagTriggersFullRebuildForPendingEven
 	}
 }
 
+func TestSchedulerSnapshotServiceCheckOutboxLagLatchesPersistentDegradation(t *testing.T) {
+	cache := &schedulerFullRebuildTestCache{}
+	repo := &outboxCleanupRepo{
+		events: []SchedulerOutboxEvent{{ID: 1, CreatedAt: time.Now().Add(-time.Hour)}},
+	}
+	cfg := &config.Config{Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
+		OutboxLagRebuildSeconds:  1,
+		OutboxLagRebuildFailures: 1,
+		OutboxBacklogRebuildRows: 50,
+	}}}
+	svc := NewSchedulerSnapshotService(cache, repo, nil, nil, cfg)
+
+	for range 3 {
+		svc.checkOutboxLag(context.Background(), 0)
+	}
+
+	if cache.listCalls != 1 {
+		t.Fatalf("expected one rebuild during a persistent lag episode, got %d", cache.listCalls)
+	}
+	if !svc.outboxRebuildLatched {
+		t.Fatal("expected a successful rebuild to latch the degraded episode")
+	}
+}
+
+func TestSchedulerSnapshotServiceCheckOutboxLagRetriesAfterCooldown(t *testing.T) {
+	wantErr := errors.New("rebuild unavailable")
+	cache := &schedulerFullRebuildTestCache{listErr: wantErr}
+	repo := &outboxCleanupRepo{
+		events: []SchedulerOutboxEvent{{ID: 1, CreatedAt: time.Now().Add(-time.Hour)}},
+	}
+	cfg := &config.Config{Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
+		OutboxLagRebuildSeconds:  1,
+		OutboxLagRebuildFailures: 1,
+		OutboxBacklogRebuildRows: 50,
+	}}}
+	svc := NewSchedulerSnapshotService(cache, repo, nil, nil, cfg)
+
+	svc.checkOutboxLag(context.Background(), 0)
+	if cache.listCalls != 1 || svc.outboxRebuildRetryReason != "outbox_lag" {
+		t.Fatalf("expected one failed lag rebuild with retry state, calls=%d reason=%q", cache.listCalls, svc.outboxRebuildRetryReason)
+	}
+
+	svc.lagMu.Lock()
+	svc.outboxRebuildRetryAt = time.Now().Add(-time.Second)
+	svc.lagMu.Unlock()
+	svc.checkOutboxLag(context.Background(), 0)
+	if cache.listCalls != 2 {
+		t.Fatalf("expected one retry after cooldown expiry, got %d calls", cache.listCalls)
+	}
+
+	// A recovered lag episode must clear the old retry reason before a new
+	// backlog episode is evaluated, so the stale lag cooldown cannot delay it.
+	repo.events[0].CreatedAt = time.Now()
+	repo.rows = []int64{100}
+	cache.listErr = nil
+	svc.checkOutboxLag(context.Background(), 0)
+	if cache.listCalls != 3 {
+		t.Fatalf("expected the new backlog episode to trigger immediately, got %d calls", cache.listCalls)
+	}
+	if !svc.outboxRebuildLatched || svc.outboxRebuildRetryReason != "" {
+		t.Fatalf("expected successful backlog retry to latch and clear retry state, latched=%v reason=%q", svc.outboxRebuildLatched, svc.outboxRebuildRetryReason)
+	}
+}
+
+func TestSchedulerSnapshotServicePollOutboxEmptyBatchClearsDegradedEpisode(t *testing.T) {
+	cache := &outboxCleanupCache{}
+	repo := &outboxCleanupRepo{}
+	svc := NewSchedulerSnapshotService(cache, repo, nil, nil, &config.Config{})
+	svc.lagFailures = 2
+	svc.outboxRebuildLatched = true
+	svc.outboxRebuildFailures = 2
+	svc.outboxRebuildRetryAt = time.Now().Add(time.Minute)
+	svc.outboxRebuildRetryReason = "outbox_lag"
+	svc.outboxLagWarningActive = true
+
+	svc.pollOutbox()
+
+	if svc.lagFailures != 0 || svc.outboxRebuildLatched || svc.outboxRebuildFailures != 0 ||
+		!svc.outboxRebuildRetryAt.IsZero() || svc.outboxRebuildRetryReason != "" || svc.outboxLagWarningActive {
+		t.Fatalf("expected empty outbox batch to clear degraded state: %#v", svc)
+	}
+}
+
+func TestOutboxRebuildRetryDelayIsBounded(t *testing.T) {
+	previous := time.Duration(0)
+	for failures := 1; failures <= 20; failures++ {
+		delay := outboxRebuildRetryDelay(failures)
+		if delay < previous || delay > outboxRebuildRetryMaxDelay {
+			t.Fatalf("unexpected retry delay at failure %d: previous=%s current=%s", failures, previous, delay)
+		}
+		previous = delay
+	}
+	if previous != outboxRebuildRetryMaxDelay {
+		t.Fatalf("expected retry delay to reach %s, got %s", outboxRebuildRetryMaxDelay, previous)
+	}
+}
+
+func TestSchedulerSnapshotServiceOutboxWarningAndMaxIDErrorsAreSampled(t *testing.T) {
+	svc := NewSchedulerSnapshotService(nil, nil, nil, nil, nil)
+	now := time.Now()
+
+	if !svc.shouldLogOutboxLagWarning(true) || svc.shouldLogOutboxLagWarning(true) || svc.shouldLogOutboxLagWarning(false) || !svc.shouldLogOutboxLagWarning(true) {
+		t.Fatal("expected lag warnings to be transition limited")
+	}
+	if !svc.shouldLogOutboxMaxIDError(now) || svc.shouldLogOutboxMaxIDError(now.Add(time.Second)) || !svc.shouldLogOutboxMaxIDError(now.Add(outboxMaxIDErrorLogSampleInterval)) {
+		t.Fatal("expected MaxID errors to be sampled")
+	}
+}
+
 func TestSchedulerSnapshotServiceCleanupSkipsNonPositiveWatermark(t *testing.T) {
 	repo := &outboxCleanupRepo{
 		rows:         []int64{1, 2, 3},
