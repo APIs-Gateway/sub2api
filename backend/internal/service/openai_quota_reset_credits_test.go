@@ -124,9 +124,12 @@ func TestQueryResetCreditDetailsResponseHandling(t *testing.T) {
 		name       string
 		statusCode int
 		body       string
+		wantCount  int
+		wantList   bool
 		wantNil    bool
 	}{
-		{name: "valid detail", statusCode: http.StatusOK, body: `{"available_count":0,"credits":[]` + `}`, wantNil: false},
+		{name: "valid detail", statusCode: http.StatusOK, body: `{"available_count":0,"credits":[]` + `}`, wantCount: 0, wantList: true, wantNil: false},
+		{name: "malformed credits preserve detail count", statusCode: http.StatusOK, body: `{"available_count":2,"credits":"malformed"}`, wantCount: 2, wantNil: false},
 		{name: "empty detail", statusCode: http.StatusOK, body: `{}`, wantNil: true},
 		{name: "malformed detail", statusCode: http.StatusOK, body: `{invalid`, wantNil: true},
 	}
@@ -147,8 +150,8 @@ func TestQueryResetCreditDetailsResponseHandling(t *testing.T) {
 				return
 			}
 			require.NotNil(t, details)
-			require.Equal(t, 0, *details.AvailableCount)
-			require.True(t, details.CreditListPresent)
+			require.Equal(t, tt.wantCount, *details.AvailableCount)
+			require.Equal(t, tt.wantList, details.CreditListPresent)
 		})
 	}
 }
