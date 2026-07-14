@@ -749,6 +749,7 @@
     deleteConfirmMessage: "確定要刪除 '{name}' 嗎？此操作無法撤銷。",
     apiKey: 'API 金鑰',
     group: '分組',
+    currentConcurrency: '當前並發數',
     noGroup: '無分組',
     searchGroup: '搜索分組...',
     noGroupFound: '未找到匹配的分組',

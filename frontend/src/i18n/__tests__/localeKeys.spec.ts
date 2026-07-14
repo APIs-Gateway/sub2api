@@ -31,6 +31,7 @@ describe('locale key coverage', () => {
     expect(en.admin.groups.form.nameLabel).toBe('Group Name')
     expect(en.admin.proxies.columns.protocolLabel).toBe('Protocol')
     expect(en.admin.redeem.codesGeneratedSuccess).toBe('Redeem codes generated successfully, {count} total')
+    expect(en.keys.currentConcurrency).toBe('Current Concurrency')
   })
 
   it('keeps zh-CN and zh-HK source leaf key sets aligned', () => {
