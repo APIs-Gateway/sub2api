@@ -166,7 +166,7 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 }
 
 func applyOpenAIRateLimitResetCreditDetails(payload *OpenAIQuotaUsage, details *openAIRateLimitResetCreditDetails) {
-	if payload == nil || details == nil {
+	if payload == nil || details == nil || (details.AvailableCount == nil && !details.CreditListPresent) {
 		return
 	}
 	if payload.RateLimitResetCredits == nil {

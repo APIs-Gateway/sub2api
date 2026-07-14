@@ -97,6 +97,14 @@ func TestApplyOpenAIRateLimitResetCreditDetailsUsesListCount(t *testing.T) {
 	require.Equal(t, 2, payload.RateLimitResetCredits.AvailableCount)
 }
 
+func TestApplyOpenAIRateLimitResetCreditDetailsIgnoresEmptyDetails(t *testing.T) {
+	payload := &OpenAIQuotaUsage{}
+	applyOpenAIRateLimitResetCreditDetails(payload, &openAIRateLimitResetCreditDetails{})
+	applyOpenAIRateLimitResetCreditDetails(nil, &openAIRateLimitResetCreditDetails{CreditListPresent: true})
+
+	require.Nil(t, payload.RateLimitResetCredits)
+}
+
 func TestQueryResetCreditDetailsFailureIsNonFatal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -109,6 +117,59 @@ func TestQueryResetCreditDetailsFailureIsNonFatal(t *testing.T) {
 	service := &OpenAIQuotaService{}
 	details := service.queryResetCreditDetails(context.Background(), client, "token", "account", 1)
 	require.Nil(t, details)
+}
+
+func TestQueryResetCreditDetailsResponseHandling(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantNil    bool
+	}{
+		{name: "valid detail", statusCode: http.StatusOK, body: `{"available_count":0,"credits":[]` + `}`, wantNil: false},
+		{name: "empty detail", statusCode: http.StatusOK, body: `{}`, wantNil: true},
+		{name: "malformed detail", statusCode: http.StatusOK, body: `{invalid`, wantNil: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			client, err := newResetCreditTestClient(server.URL)
+			require.NoError(t, err)
+			details := (&OpenAIQuotaService{}).queryResetCreditDetails(context.Background(), client, "token", "account", 1)
+			if tt.wantNil {
+				require.Nil(t, details)
+				return
+			}
+			require.NotNil(t, details)
+			require.Equal(t, 0, *details.AvailableCount)
+			require.True(t, details.CreditListPresent)
+		})
+	}
+}
+
+func TestParseOpenAIRateLimitResetCreditDetailsMalformedShapes(t *testing.T) {
+	for _, body := range []string{"[", "{", `{"items":{}}`} {
+		_, err := parseOpenAIRateLimitResetCreditDetails([]byte(body))
+		require.Error(t, err)
+	}
+}
+
+func TestParseOpenAIResetCreditAvailableCountSkipsInvalidValues(t *testing.T) {
+	details, err := parseOpenAIRateLimitResetCreditDetails([]byte(`{"available_count":"invalid","availableCount":-1,"data":[]}`))
+	require.NoError(t, err)
+	require.Nil(t, details.AvailableCount)
+	require.True(t, details.CreditListPresent)
+
+	details, err = parseOpenAIRateLimitResetCreditDetails([]byte(`{"available_count":true,"availableCount":" 2 "}`))
+	require.NoError(t, err)
+	require.NotNil(t, details.AvailableCount)
+	require.Equal(t, 2, *details.AvailableCount)
 }
 
 func newResetCreditTestClient(target string) (*req.Client, error) {
