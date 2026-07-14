@@ -1,11 +1,14 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +16,220 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+type imageKeepaliveFailWriter struct {
+	gin.ResponseWriter
+	err              error
+	bytesBeforeError int
+	writeSignal      chan struct{}
+	once             sync.Once
+}
+
+func (w *imageKeepaliveFailWriter) Write(data []byte) (int, error) {
+	if w.writeSignal != nil {
+		w.once.Do(func() { close(w.writeSignal) })
+	}
+	return w.bytesBeforeError, w.err
+}
+
+func startImageKeepaliveForTest(t *testing.T) (*gin.Context, *httptest.ResponseRecorder, *openAIImagesJSONKeepalive) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	stop := StartOpenAIImagesJSONKeepalive(c, time.Hour)
+	t.Cleanup(stop)
+	k := openAIImagesJSONKeepaliveFromContext(c)
+	require.NotNil(t, k)
+	return c, rec, k
+}
+
+func TestStartOpenAIImagesJSONKeepalive_NoOpsForNilDisabledAndWrongContexts(t *testing.T) {
+	stop := StartOpenAIImagesJSONKeepalive(nil, time.Second)
+	stop()
+	require.False(t, StopOpenAIImagesJSONKeepaliveCommitted(nil))
+	require.Equal(t, -1, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(nil))
+
+	bareContext := &gin.Context{}
+	stop = StartOpenAIImagesJSONKeepalive(bareContext, time.Second)
+	stop()
+	require.Equal(t, -1, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(bareContext))
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	stop = StartOpenAIImagesJSONKeepalive(c, 0)
+	stop()
+	_, registered := c.Get(openAIImagesJSONKeepaliveKey)
+	require.False(t, registered)
+	require.Empty(t, rec.Body.String())
+
+	c.Set(openAIImagesJSONKeepaliveKey, "wrong-type")
+	require.False(t, StopOpenAIImagesJSONKeepaliveCommitted(c))
+}
+
+func TestOpenAIImagesJSONKeepalive_RequestCancellationStopsBeforeFirstBeat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	requestContext, cancel := context.WithCancel(context.Background())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil).WithContext(requestContext)
+	stop := StartOpenAIImagesJSONKeepalive(c, time.Hour)
+	t.Cleanup(stop)
+	cancel()
+
+	time.Sleep(10 * time.Millisecond)
+	require.Empty(t, rec.Body.String())
+	require.False(t, c.Writer.Written())
+	require.Equal(t, -1, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c))
+}
+
+func TestOpenAIImagesJSONKeepalive_FirstBeatAndCommittedStop(t *testing.T) {
+	c, rec, keepalive := startImageKeepaliveForTest(t)
+
+	require.True(t, keepalive.beat())
+	require.Equal(t, http.StatusOK, c.Writer.Status())
+	require.Equal(t, "application/json; charset=utf-8", keepalive.writer.Header().Get("Content-Type"))
+	require.Equal(t, "no-cache", keepalive.writer.Header().Get("Cache-Control"))
+	require.Equal(t, "no", keepalive.writer.Header().Get("X-Accel-Buffering"))
+	require.Equal(t, " \n", rec.Body.String())
+	require.Equal(t, len(" \n"), keepalive.bytes)
+
+	require.True(t, StopOpenAIImagesJSONKeepaliveCommitted(c))
+	require.False(t, keepalive.beat())
+	require.True(t, StopOpenAIImagesJSONKeepaliveCommitted(c))
+}
+
+func TestOpenAIImagesJSONKeepalive_BeatWriteFailureStops(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	failing := &imageKeepaliveFailWriter{
+		ResponseWriter:   c.Writer,
+		err:              errors.New("downstream write failed"),
+		bytesBeforeError: 3,
+	}
+	c.Writer = failing
+	stop := StartOpenAIImagesJSONKeepalive(c, time.Hour)
+	t.Cleanup(stop)
+	keepalive := openAIImagesJSONKeepaliveFromContext(c)
+	require.NotNil(t, keepalive)
+
+	require.False(t, keepalive.beat())
+	require.Equal(t, 3, keepalive.bytes)
+	require.True(t, keepalive.stopped)
+	require.False(t, keepalive.beat())
+}
+
+func TestOpenAIImagesJSONKeepalive_StopsTimerAfterWriteFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	failing := &imageKeepaliveFailWriter{
+		ResponseWriter: c.Writer,
+		err:            errors.New("downstream write failed"),
+		writeSignal:    make(chan struct{}),
+	}
+	c.Writer = failing
+	stop := StartOpenAIImagesJSONKeepalive(c, time.Millisecond)
+	t.Cleanup(stop)
+
+	select {
+	case <-failing.writeSignal:
+	case <-time.After(time.Second):
+		t.Fatal("timer did not attempt the image keepalive write")
+	}
+	require.True(t, openAIImagesJSONKeepaliveFromContext(c).stopped)
+}
+
+func TestOpenAIImagesJSONKeepaliveAdjustedWrittenSize_SeparatesHeartbeatFromApplicationBytes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	_, err := c.Writer.WriteString("direct")
+	require.NoError(t, err)
+	require.Equal(t, len("direct"), OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c))
+
+	c.Set(openAIImagesJSONKeepaliveKey, "wrong-type")
+	require.Equal(t, len("direct"), OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c))
+
+	c, _, keepalive := startImageKeepaliveForTest(t)
+	require.Equal(t, -1, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c))
+	require.True(t, keepalive.beat())
+	require.Equal(t, -1, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c))
+	_, err = c.Writer.WriteString("application-json")
+	require.NoError(t, err)
+	require.Equal(t, len("application-json"), OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c))
+}
+
+func TestOpenAIImagesJSONKeepaliveWriter_SuspendsApplicationWritesAndSnapshots(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T, writer *openAIImagesJSONKeepaliveWriter)
+	}{
+		{
+			name: "header",
+			run: func(t *testing.T, writer *openAIImagesJSONKeepaliveWriter) {
+				writer.Header().Set("X-Application", "started")
+				require.Equal(t, "started", writer.Header().Get("X-Application"))
+			},
+		},
+		{
+			name: "write",
+			run: func(t *testing.T, writer *openAIImagesJSONKeepaliveWriter) {
+				n, err := writer.Write([]byte("body"))
+				require.NoError(t, err)
+				require.Equal(t, len("body"), n)
+			},
+		},
+		{
+			name: "write string",
+			run: func(t *testing.T, writer *openAIImagesJSONKeepaliveWriter) {
+				n, err := writer.WriteString("body")
+				require.NoError(t, err)
+				require.Equal(t, len("body"), n)
+			},
+		},
+		{
+			name: "write header",
+			run: func(t *testing.T, writer *openAIImagesJSONKeepaliveWriter) {
+				writer.WriteHeader(http.StatusAccepted)
+				require.Equal(t, http.StatusAccepted, writer.Status())
+			},
+		},
+		{
+			name: "write header now",
+			run: func(t *testing.T, writer *openAIImagesJSONKeepaliveWriter) {
+				writer.WriteHeaderNow()
+				require.True(t, writer.Written())
+			},
+		},
+		{
+			name: "flush",
+			run: func(t *testing.T, writer *openAIImagesJSONKeepaliveWriter) {
+				writer.Flush()
+				require.True(t, writer.Written())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, keepalive := startImageKeepaliveForTest(t)
+			writer, ok := c.Writer.(*openAIImagesJSONKeepaliveWriter)
+			require.True(t, ok)
+			require.Equal(t, http.StatusOK, writer.Status())
+			require.Equal(t, -1, writer.Size())
+			require.False(t, writer.Written())
+
+			tt.run(t, writer)
+			require.True(t, keepalive.stopped)
+			require.False(t, keepalive.beat())
+		})
+	}
+}
 
 func TestOpenAIImagesJSONKeepalive_PreservesValidJSONResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
