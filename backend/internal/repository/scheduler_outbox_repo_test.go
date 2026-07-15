@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -56,6 +57,32 @@ func TestSchedulerOutboxRepositoryFirstCreatedAtAfterReturnsNotFound(t *testing.
 	got, ok, err := repo.FirstCreatedAtAfter(context.Background(), 42)
 
 	require.NoError(t, err)
+	require.False(t, ok)
+	require.True(t, got.IsZero())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSchedulerOutboxRepositoryFirstCreatedAtAfterReturnsQueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	repo := &schedulerOutboxRepository{db: db}
+	const expectedSQL = `
+		SELECT created_at
+		FROM scheduler_outbox
+		WHERE id > $1
+		ORDER BY id ASC
+		LIMIT 1
+	`
+	wantErr := errors.New("database unavailable")
+	mock.ExpectQuery(regexp.QuoteMeta(expectedSQL)).
+		WithArgs(int64(42)).
+		WillReturnError(wantErr)
+
+	got, ok, err := repo.FirstCreatedAtAfter(context.Background(), 42)
+
+	require.ErrorIs(t, err, wantErr)
 	require.False(t, ok)
 	require.True(t, got.IsZero())
 	require.NoError(t, mock.ExpectationsWereMet())

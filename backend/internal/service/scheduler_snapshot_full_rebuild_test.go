@@ -138,6 +138,48 @@ func TestSchedulerSnapshotServiceInitialFullRebuildFallsBackWhenListBucketsFails
 	require.Equal(t, requested, completed)
 }
 
+func TestSchedulerSnapshotServiceTriggerFullRebuildReturnsListError(t *testing.T) {
+	wantErr := errors.New("list buckets failed")
+	cache := &schedulerFullRebuildTestCache{listErr: wantErr}
+	svc := NewSchedulerSnapshotService(cache, nil, nil, nil, nil)
+
+	require.ErrorIs(t, svc.triggerFullRebuild("manual"), wantErr)
+	cache.mu.Lock()
+	listCalls := cache.listCalls
+	lockCalls := cache.lockCalls
+	cache.mu.Unlock()
+	require.Equal(t, 1, listCalls)
+	require.Zero(t, lockCalls)
+}
+
+func TestSchedulerSnapshotServiceTriggerFullRebuildUsesDefaultBuckets(t *testing.T) {
+	cache := &schedulerFullRebuildTestCache{}
+	svc := NewSchedulerSnapshotService(cache, nil, nil, nil, nil)
+
+	require.NoError(t, svc.triggerFullRebuild("manual"))
+	cache.mu.Lock()
+	listCalls := cache.listCalls
+	lockCalls := cache.lockCalls
+	cache.mu.Unlock()
+	require.Equal(t, 1, listCalls)
+	require.Positive(t, lockCalls)
+}
+
+func TestSchedulerSnapshotServiceFullRebuildReturnsCompletedRequestResult(t *testing.T) {
+	wantErr := errors.New("previous rebuild failed")
+	svc := &SchedulerSnapshotService{}
+	svc.fullRebuildStateMu.Lock()
+	svc.fullRebuildRequested = 1
+	svc.fullRebuildCompleted = 1
+	svc.fullRebuildLastErr = wantErr
+	svc.fullRebuildStateMu.Unlock()
+
+	require.ErrorIs(t, svc.coalesceFullRebuild(func() error {
+		t.Fatal("completed request should not execute another rebuild")
+		return nil
+	}), wantErr)
+}
+
 func schedulerFullRebuildState(svc *SchedulerSnapshotService) (requested uint64, completed uint64) {
 	svc.fullRebuildStateMu.Lock()
 	defer svc.fullRebuildStateMu.Unlock()

@@ -13,6 +13,7 @@ import (
 type outboxCleanupCache struct {
 	watermark       int64
 	setWatermarks   []int64
+	watermarkErr    error
 	updateErr       error
 	listBucketCalls int
 }
@@ -59,6 +60,9 @@ func (c *outboxCleanupCache) GetOutboxWatermark(ctx context.Context) (int64, err
 }
 
 func (c *outboxCleanupCache) SetOutboxWatermark(ctx context.Context, id int64) error {
+	if c.watermarkErr != nil {
+		return c.watermarkErr
+	}
 	c.watermark = id
 	c.setWatermarks = append(c.setWatermarks, id)
 	return nil
@@ -77,6 +81,7 @@ type outboxCleanupRepo struct {
 	releaseCount        int
 	deleteCalls         []outboxCleanupDeleteCall
 	firstCreatedAfterID []int64
+	firstCreatedErr     error
 }
 
 func (r *outboxCleanupRepo) ListAfterAndReleaseDedup(ctx context.Context, afterID int64, limit int) ([]SchedulerOutboxEvent, error) {
@@ -95,6 +100,9 @@ func (r *outboxCleanupRepo) ListAfterAndReleaseDedup(ctx context.Context, afterI
 
 func (r *outboxCleanupRepo) FirstCreatedAtAfter(ctx context.Context, afterID int64) (time.Time, bool, error) {
 	r.firstCreatedAfterID = append(r.firstCreatedAfterID, afterID)
+	if r.firstCreatedErr != nil {
+		return time.Time{}, false, r.firstCreatedErr
+	}
 	for _, event := range r.events {
 		if event.ID > afterID {
 			return event.CreatedAt, true, nil
@@ -290,6 +298,61 @@ func TestSchedulerSnapshotServicePollOutboxDoesNotUseConsumedEventForLag(t *test
 	}
 	if svc.lagFailures != 0 {
 		t.Fatalf("expected lag failures to remain reset, got %d", svc.lagFailures)
+	}
+}
+
+func TestSchedulerSnapshotServicePollOutboxStopsAfterWatermarkWriteFailure(t *testing.T) {
+	wantErr := errors.New("watermark write failed")
+	cache := &outboxCleanupCache{watermarkErr: wantErr}
+	repo := &outboxCleanupRepo{
+		events: []SchedulerOutboxEvent{{ID: 8, EventType: SchedulerOutboxEventAccountLastUsed}},
+		rows:   []int64{1, 2, 3},
+	}
+	svc := NewSchedulerSnapshotService(cache, repo, nil, nil, nil)
+
+	svc.pollOutbox()
+
+	if len(cache.setWatermarks) != 0 {
+		t.Fatalf("expected watermark write to fail before recording success, got %#v", cache.setWatermarks)
+	}
+	if len(repo.deleteCalls) != 0 || len(repo.firstCreatedAfterID) != 0 {
+		t.Fatalf("expected no cleanup or lag query after watermark failure, deletes=%#v lag=%#v", repo.deleteCalls, repo.firstCreatedAfterID)
+	}
+}
+
+func TestSchedulerSnapshotServiceCheckOutboxLagStopsOnPendingReadFailure(t *testing.T) {
+	wantErr := errors.New("pending event read failed")
+	repo := &outboxCleanupRepo{firstCreatedErr: wantErr}
+	cfg := &config.Config{Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{OutboxLagRebuildSeconds: 1, OutboxLagRebuildFailures: 1}}}
+	svc := NewSchedulerSnapshotService(&outboxCleanupCache{}, repo, nil, nil, cfg)
+	svc.lagFailures = 3
+
+	svc.checkOutboxLag(context.Background(), 7)
+
+	if svc.lagFailures != 3 {
+		t.Fatalf("expected lag failures to remain unchanged after read failure, got %d", svc.lagFailures)
+	}
+}
+
+func TestSchedulerSnapshotServiceCheckOutboxLagTriggersFullRebuildForPendingEvent(t *testing.T) {
+	cache := &schedulerFullRebuildTestCache{listErr: errors.New("rebuild list failed")}
+	repo := &outboxCleanupRepo{
+		events: []SchedulerOutboxEvent{{ID: 8, CreatedAt: time.Now().Add(-time.Hour)}},
+	}
+	cfg := &config.Config{Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
+		OutboxLagWarnSeconds:     1,
+		OutboxLagRebuildSeconds:  1,
+		OutboxLagRebuildFailures: 1,
+	}}}
+	svc := NewSchedulerSnapshotService(cache, repo, nil, nil, cfg)
+
+	svc.checkOutboxLag(context.Background(), 7)
+
+	if cache.listBucketCalls != 1 {
+		t.Fatalf("expected one full rebuild attempt, got %d", cache.listBucketCalls)
+	}
+	if svc.lagFailures != 0 {
+		t.Fatalf("expected lag failures to reset after triggering rebuild, got %d", svc.lagFailures)
 	}
 }
 
