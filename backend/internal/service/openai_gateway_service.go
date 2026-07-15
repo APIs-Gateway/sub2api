@@ -79,6 +79,7 @@ var openaiAllowedHeaders = map[string]bool{
 	"session_id":            true,
 	"x-codex-turn-state":    true,
 	"x-codex-turn-metadata": true,
+	responsesLiteHeaderKey:  true,
 }
 
 // OpenAI passthrough allowed headers whitelist.
@@ -94,6 +95,7 @@ var openaiPassthroughAllowedHeaders = map[string]bool{
 	"session_id":            true,
 	"x-codex-turn-state":    true,
 	"x-codex-turn-metadata": true,
+	responsesLiteHeaderKey:  true,
 }
 
 // codex_cli_only 拒绝时记录的请求头白名单（仅用于诊断日志，不参与上游透传）
@@ -2560,7 +2562,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if apiKey != nil {
 		imageGenerationAllowed = GroupAllowsImageGeneration(apiKey.Group)
 	}
-	codexImageGenerationBridgeEnabled := isCodexCLI && imageGenerationAllowed && s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
+	codexImageGenerationBridgeEnabled := isCodexCLI &&
+		!isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) &&
+		imageGenerationAllowed &&
+		s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
 	imageIntent := IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
 	if imageIntent && !imageGenerationAllowed {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
