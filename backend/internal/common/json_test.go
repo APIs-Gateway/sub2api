@@ -42,3 +42,15 @@ func TestUnmarshal(t *testing.T) {
 		t.Fatal("Unmarshal() error = nil, want syntax error")
 	}
 }
+
+func TestMarshal(t *testing.T) {
+	payload, err := Marshal(struct {
+		Value int `json:"value"`
+	}{Value: 7})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if string(payload) != `{"value":7}` {
+		t.Fatalf("Marshal() = %s, want %s", payload, `{"value":7}`)
+	}
+}
