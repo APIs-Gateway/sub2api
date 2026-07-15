@@ -93,6 +93,35 @@ func (r *schedulerOutboxRepository) ListAfterAndReleaseDedup(ctx context.Context
 	return events, nil
 }
 
+func (r *schedulerOutboxRepository) FirstCreatedAtAfter(ctx context.Context, afterID int64) (time.Time, bool, error) {
+	var createdAt time.Time
+	err := r.db.QueryRowContext(ctx, schedulerOutboxFirstCreatedAtAfterQuery(schedulerOutboxIDPlaceholder(r.db)), afterID).Scan(&createdAt)
+	if err == sql.ErrNoRows {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return createdAt, true, nil
+}
+
+func schedulerOutboxIDPlaceholder(db *sql.DB) string {
+	if isPostgresDriver(db) {
+		return "$1"
+	}
+	return "?"
+}
+
+func schedulerOutboxFirstCreatedAtAfterQuery(placeholder string) string {
+	return fmt.Sprintf(`
+		SELECT created_at
+		FROM scheduler_outbox
+		WHERE id > %s
+		ORDER BY id ASC
+		LIMIT 1
+	`, placeholder)
+}
+
 func (r *schedulerOutboxRepository) MaxID(ctx context.Context) (int64, error) {
 	var maxID int64
 	if err := r.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(id), 0) FROM scheduler_outbox").Scan(&maxID); err != nil {
