@@ -32,6 +32,26 @@ type firstOutputCloseTrackingBody struct {
 	once   sync.Once
 }
 
+type firstOutputErrorReadCloser struct {
+	err error
+}
+
+func (b *firstOutputErrorReadCloser) Read([]byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (b *firstOutputErrorReadCloser) Close() error {
+	return b.err
+}
+
+type firstOutputFailingWriter struct {
+	err error
+}
+
+func (w firstOutputFailingWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
 func (b *firstOutputCloseTrackingBody) Close() error {
 	b.once.Do(func() { close(b.closed) })
 	return b.ReadCloser.Close()
@@ -162,6 +182,115 @@ func TestOpenAIFirstOutputTimeoutForReasoningEffort(t *testing.T) {
 	require.Equal(t, 300*time.Second, svc.openAIFirstOutputTimeout("high"))
 	require.Equal(t, 300*time.Second, svc.openAIFirstOutputTimeout("xhigh"))
 	require.Equal(t, 300*time.Second, svc.openAIFirstOutputTimeout("max"))
+}
+
+func TestOpenAIFirstOutputTimeoutDisabledForNilOrMissingConfig(t *testing.T) {
+	var nilService *OpenAIGatewayService
+	require.Zero(t, nilService.openAIFirstOutputTimeout("high"))
+	require.Zero(t, (&OpenAIGatewayService{}).openAIFirstOutputTimeout("high"))
+	require.Zero(t, (&OpenAIGatewayService{cfg: &config.Config{}}).openAIFirstOutputTimeout("high"))
+
+	service := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+		OpenAIFirstOutputTimeoutSeconds:           120,
+		OpenAIHighEffortFirstOutputTimeoutSeconds: 0,
+	}}}
+	require.Equal(t, 120*time.Second, service.openAIFirstOutputTimeout(" HIGH "))
+}
+
+func TestOpenAIFirstOutputStageDefensiveBranches(t *testing.T) {
+	var nilStage *openAIFirstOutputStage
+	require.Zero(t, nilStage.Buffered())
+	require.NoError(t, nilStage.Close())
+	require.ErrorIs(t, nilStage.WriteString("value"), os.ErrClosed)
+	require.ErrorIs(t, nilStage.CommitTo(io.Discard), os.ErrClosed)
+
+	stage := newOpenAIFirstOutputStage(0)
+	require.EqualValues(t, 1, stage.limit)
+	_, err := stage.WriteString("too large")
+	require.ErrorIs(t, err, errOpenAIFirstOutputStageLimit)
+	require.NoError(t, stage.Close())
+	_, err = stage.WriteString("closed")
+	require.ErrorIs(t, err, os.ErrClosed)
+	require.ErrorIs(t, stage.CommitTo(io.Discard), os.ErrClosed)
+}
+
+func TestOpenAIFirstOutputStageReportsSpoolAndCommitErrors(t *testing.T) {
+	const payloadSize = 68 * 1024
+	payload := strings.Repeat("p", payloadSize)
+
+	createErr := errors.New("create spool failed")
+	stage := newOpenAIFirstOutputStage(80 * 1024)
+	stage.createTemp = func() (*os.File, error) { return nil, createErr }
+	_, err := stage.WriteString(payload)
+	require.ErrorIs(t, err, createErr)
+	require.NoError(t, stage.Close())
+
+	failErr := errors.New("downstream write failed")
+	stage = newOpenAIFirstOutputStage(80 * 1024)
+	_, err = stage.WriteString("small")
+	require.NoError(t, err)
+	require.ErrorIs(t, stage.CommitTo(firstOutputFailingWriter{err: failErr}), failErr)
+	require.NoError(t, stage.Close())
+
+	stage = newOpenAIFirstOutputStage(80 * 1024)
+	_, err = stage.WriteString(payload)
+	require.NoError(t, err)
+	if runtime.GOOS == "windows" {
+		require.NoError(t, stage.Close())
+		return
+	}
+	require.NotNil(t, stage.tempFile)
+	require.Error(t, stage.CommitTo(firstOutputFailingWriter{err: failErr}))
+	require.NoError(t, stage.Close())
+}
+
+func TestOpenAIFirstOutputStageRetriesFailedCleanup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses memory-only staging")
+	}
+	stage := newOpenAIFirstOutputStage(80 * 1024)
+	_, err := stage.WriteString(strings.Repeat("s", 68*1024))
+	require.NoError(t, err)
+	require.NotEmpty(t, stage.tempPath)
+	stage.removeFile = func(string) error { return errors.New("cleanup failed") }
+	require.ErrorContains(t, stage.Close(), "cleanup failed")
+	require.NotEmpty(t, stage.tempPath)
+	stage.removeFile = os.Remove
+	require.NoError(t, stage.Close())
+	require.Empty(t, stage.tempPath)
+}
+
+func TestOpenAIFirstOutputHeaderGuardStopsAndFires(t *testing.T) {
+	releaseCalls := 0
+	ctx, guard := newOpenAIFirstOutputHeaderGuard(context.Background(), func() { releaseCalls++ }, time.Now().Add(time.Second))
+	require.NotNil(t, ctx)
+	require.False(t, guard.stopHeaderWait())
+	guard.close()
+	guard.close()
+	require.Equal(t, 1, releaseCalls)
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+
+	ctx, guard = newOpenAIFirstOutputHeaderGuard(context.Background(), func() {}, time.Now().Add(-time.Millisecond))
+	select {
+	case <-guard.fired:
+	case <-time.After(time.Second):
+		t.Fatal("header guard did not fire")
+	}
+	require.True(t, guard.stopHeaderWait())
+	guard.close()
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+}
+
+func TestOpenAIRequestContextReadCloserCleansUpOnce(t *testing.T) {
+	closeErr := errors.New("close failed")
+	cleanupCalls := 0
+	reader := &openAIRequestContextReadCloser{
+		ReadCloser: &firstOutputErrorReadCloser{err: closeErr},
+		cleanup:    func() { cleanupCalls++ },
+	}
+	require.ErrorIs(t, reader.Close(), closeErr)
+	require.ErrorIs(t, reader.Close(), closeErr)
+	require.Equal(t, 1, cleanupCalls)
 }
 
 func TestOpenAIFirstOutputStageDefaultLimitIsIndependentFromScannerLimit(t *testing.T) {

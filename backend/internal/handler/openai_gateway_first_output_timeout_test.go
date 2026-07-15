@@ -27,6 +27,16 @@ func TestOpenAIForwardMayFailoverAfterKeepaliveOnly(t *testing.T) {
 	require.False(t, openAIForwardMayFailover(c, before, &service.UpstreamFailoverError{}))
 }
 
+func TestOpenAIForwardFailoverGuardsNilAndUncommittedInputs(t *testing.T) {
+	require.False(t, openAIForwardMayFailover(nil, 0, nil))
+	require.False(t, openAIRequestAllowsFailoverReplay(nil))
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	require.False(t, openAIForwardMayFailover(c, 1, nil))
+	require.False(t, openAIRequestAllowsFailoverReplay(c))
+}
+
 func TestOpenAIFirstOutputFailoverSwitchesOnlyOnce(t *testing.T) {
 	failoverErr := &service.UpstreamFailoverError{SafeToFailoverAfterWrite: true}
 	count := 0
@@ -34,6 +44,21 @@ func TestOpenAIFirstOutputFailoverSwitchesOnlyOnce(t *testing.T) {
 	require.False(t, openAIFirstOutputFailoverExhausted(failoverErr, &count))
 	require.Equal(t, 1, count)
 	require.True(t, openAIFirstOutputFailoverExhausted(failoverErr, &count))
+	require.Equal(t, 1, count)
+}
+
+func TestOpenAIFirstOutputFailoverExhaustionRequiresSafeErrorAndCounter(t *testing.T) {
+	count := 0
+	require.False(t, openAIFirstOutputFailoverExhausted(nil, &count))
+	require.False(t, openAIFirstOutputFailoverExhausted(&service.UpstreamFailoverError{}, &count))
+	require.False(t, openAIFirstOutputFailoverExhausted(&service.UpstreamFailoverError{
+		SafeToFailoverAfterWrite: true,
+	}, nil))
+
+	count = 1
+	require.True(t, openAIFirstOutputFailoverExhausted(&service.UpstreamFailoverError{
+		SafeToFailoverAfterWrite: true,
+	}, &count))
 	require.Equal(t, 1, count)
 }
 
