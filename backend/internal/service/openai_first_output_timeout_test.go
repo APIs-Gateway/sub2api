@@ -201,12 +201,13 @@ func TestOpenAIFirstOutputStageDefensiveBranches(t *testing.T) {
 	var nilStage *openAIFirstOutputStage
 	require.Zero(t, nilStage.Buffered())
 	require.NoError(t, nilStage.Close())
-	require.ErrorIs(t, nilStage.WriteString("value"), os.ErrClosed)
+	_, err := nilStage.WriteString("value")
+	require.ErrorIs(t, err, os.ErrClosed)
 	require.ErrorIs(t, nilStage.CommitTo(io.Discard), os.ErrClosed)
 
 	stage := newOpenAIFirstOutputStage(0)
 	require.EqualValues(t, 1, stage.limit)
-	_, err := stage.WriteString("too large")
+	_, err = stage.WriteString("too large")
 	require.ErrorIs(t, err, errOpenAIFirstOutputStageLimit)
 	require.NoError(t, stage.Close())
 	_, err = stage.WriteString("closed")
