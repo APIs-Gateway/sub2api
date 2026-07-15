@@ -2,12 +2,91 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"testing"
+	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSchedulerOutboxRepositoryFirstCreatedAtAfter(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	repo := &schedulerOutboxRepository{db: db}
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	expectedSQL := schedulerOutboxFirstCreatedAtAfterQuery("?")
+	mock.ExpectQuery(regexp.QuoteMeta(expectedSQL)).
+		WithArgs(int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(createdAt))
+
+	got, ok, err := repo.FirstCreatedAtAfter(context.Background(), 42)
+
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, createdAt, got)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSchedulerOutboxRepositoryFirstCreatedAtAfterReturnsNotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	repo := &schedulerOutboxRepository{db: db}
+	expectedSQL := schedulerOutboxFirstCreatedAtAfterQuery("?")
+	mock.ExpectQuery(regexp.QuoteMeta(expectedSQL)).
+		WithArgs(int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"created_at"}))
+
+	got, ok, err := repo.FirstCreatedAtAfter(context.Background(), 42)
+
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.True(t, got.IsZero())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSchedulerOutboxRepositoryFirstCreatedAtAfterReturnsQueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	repo := &schedulerOutboxRepository{db: db}
+	expectedSQL := schedulerOutboxFirstCreatedAtAfterQuery("?")
+	wantErr := errors.New("database unavailable")
+	mock.ExpectQuery(regexp.QuoteMeta(expectedSQL)).
+		WithArgs(int64(42)).
+		WillReturnError(wantErr)
+
+	got, ok, err := repo.FirstCreatedAtAfter(context.Background(), 42)
+
+	require.ErrorIs(t, err, wantErr)
+	require.False(t, ok)
+	require.True(t, got.IsZero())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSchedulerOutboxFirstCreatedAtAfterQueryUsesDialectPlaceholders(t *testing.T) {
+	tests := []struct {
+		name        string
+		placeholder string
+	}{
+		{name: "postgres", placeholder: "$1"},
+		{name: "mysql", placeholder: "?"},
+		{name: "sqlite", placeholder: "?"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query := schedulerOutboxFirstCreatedAtAfterQuery(tt.placeholder)
+			require.Contains(t, query, "WHERE id > "+tt.placeholder)
+		})
+	}
+}
 
 func TestSchedulerOutboxRepositoryDeleteConsumedUpToUsesBoundedCTE(t *testing.T) {
 	db, mock, err := sqlmock.New()
