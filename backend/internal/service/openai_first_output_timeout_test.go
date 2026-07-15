@@ -198,7 +198,7 @@ func TestOpenAIFirstOutputDynamicScannerLimitsOnlyWhileGuardIsActive(t *testing.
 func TestOpenAIFirstOutputStageOverflowIsAtomicAndCleanupRemovesSpool(t *testing.T) {
 	stage := newOpenAIFirstOutputStage(70 * 1024)
 	payload := bytes.Repeat([]byte("x"), 68*1024)
-	n, err := stage.Write(payload)
+	n, err := stage.WriteString(string(payload))
 	require.NoError(t, err)
 	require.Equal(t, len(payload), n)
 	if runtime.GOOS == "windows" {
@@ -214,7 +214,7 @@ func TestOpenAIFirstOutputStageOverflowIsAtomicAndCleanupRemovesSpool(t *testing
 		require.Equal(t, os.FileMode(0o600), stat.Mode().Perm())
 	}
 
-	n, err = stage.Write(bytes.Repeat([]byte("y"), 3*1024))
+	n, err = stage.WriteString(string(bytes.Repeat([]byte("y"), 3*1024)))
 	require.Zero(t, n)
 	require.ErrorIs(t, err, errOpenAIFirstOutputStageLimit)
 	require.EqualValues(t, len(payload), stage.Buffered())
@@ -232,7 +232,7 @@ func TestOpenAIFirstOutputStageOverflowIsAtomicAndCleanupRemovesSpool(t *testing
 func TestOpenAIFirstOutputStageCommitCopiesSpoolAndRemovesTemp(t *testing.T) {
 	stage := newOpenAIFirstOutputStage(80 * 1024)
 	payload := bytes.Repeat([]byte("z"), 68*1024)
-	_, err := stage.Write(payload)
+	_, err := stage.WriteString(string(payload))
 	require.NoError(t, err)
 	path := stage.tempPath
 	if runtime.GOOS == "windows" {
@@ -278,7 +278,7 @@ func TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetri
 	}
 
 	payload := bytes.Repeat([]byte("m"), 68*1024)
-	_, err := stage.Write(payload)
+	_, err := stage.WriteString(string(payload))
 	require.NoError(t, err)
 	require.True(t, stage.memoryOnly)
 	require.Nil(t, stage.tempFile)
