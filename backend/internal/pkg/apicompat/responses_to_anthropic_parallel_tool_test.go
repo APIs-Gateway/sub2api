@@ -252,6 +252,7 @@ func TestStreamingThreeParallelToolsAllPackedDone(t *testing.T) {
 	started := map[int]bool{0: true, 1: true, 2: true}
 
 	// All three .done events with packed arguments (no prior delta).
+	gotArgs := make(map[int]string)
 	for i, args := range []string{`{"a":1}`, `{"b":2}`, `{"c":3}`} {
 		events := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 			Type:        "response.function_call_arguments.done",
@@ -266,6 +267,7 @@ func TestStreamingThreeParallelToolsAllPackedDone(t *testing.T) {
 					"ghost delta: tool %d .done emitted content_block_delta on index %d (never started)", i, idx)
 				require.Equal(t, i, idx,
 					"tool %d .done delta should target its own block index %d, got %d", i, i, idx)
+				gotArgs[idx] = e.Delta.PartialJSON
 			}
 			if e.Type == "content_block_stop" && e.Index != nil {
 				idx := *e.Index
@@ -274,6 +276,12 @@ func TestStreamingThreeParallelToolsAllPackedDone(t *testing.T) {
 			}
 		}
 	}
+
+	require.Equal(t, map[int]string{
+		0: `{"a":1}`,
+		1: `{"b":2}`,
+		2: `{"c":3}`,
+	}, gotArgs, "every parallel tool must retain its packed arguments")
 }
 
 func TestFuncArgsDoneFallsBackToCurrentBlockWhenOutputIndexIsUnmapped(t *testing.T) {
