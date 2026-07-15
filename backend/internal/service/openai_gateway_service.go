@@ -7147,7 +7147,7 @@ func newOpenAIRequestView(body []byte) openAIRequestView {
 
 	view := openAIRequestView{body: body}
 	var seen uint8
-	// Scan the raw object once; the view keeps body alive for extracted strings.
+	// parseRawJSONView reads body without copying; view keeps body alive for extracted strings.
 	parseRawJSONView(body).ForEach(func(key, value gjson.Result) bool {
 		switch key.Str {
 		case "model":
