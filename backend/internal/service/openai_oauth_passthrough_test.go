@@ -1186,8 +1186,8 @@ func TestOpenAIPassthroughErrorHelpersCoverPolicyBranches(t *testing.T) {
 		{name: "zero seconds", raw: "0"},
 		{name: "positive seconds", raw: "2", want: true},
 		{name: "invalid date", raw: "not-a-date"},
-		{name: "future date", raw: now.Add(time.Minute).Format(http.TimeFormat), want: true},
-		{name: "past date", raw: now.Add(-time.Minute).Format(http.TimeFormat)},
+		{name: "future date", raw: now.Add(time.Minute).UTC().Format(http.TimeFormat), want: true},
+		{name: "past date", raw: now.Add(-time.Minute).UTC().Format(http.TimeFormat)},
 		{name: "uint overflow", raw: "18446744073709551616"},
 	} {
 		t.Run("retry_after_"+tt.name, func(t *testing.T) {
