@@ -56,6 +56,24 @@ func openAIModelMappedBody(body []byte, mapped bool, mappedModel string, replace
 	return replace(body, mappedModel)
 }
 
+func appendOpenAIProxyLogFields(account *service.Account, fields ...zap.Field) []zap.Field {
+	if account == nil {
+		return fields
+	}
+	if account.Proxy != nil {
+		return append(fields,
+			zap.Int64("proxy_id", account.Proxy.ID),
+			zap.String("proxy_name", account.Proxy.Name),
+			zap.String("proxy_host", account.Proxy.Host),
+			zap.Int("proxy_port", account.Proxy.Port),
+		)
+	}
+	if account.ProxyID != nil {
+		return append(fields, zap.Int64p("proxy_id", account.ProxyID))
+	}
+	return fields
+}
+
 func newOpenAIModelMappedBodyCache(body []byte, replace openAIModelBodyReplaceFunc) func(bool, string) []byte {
 	replacedBodies := make(map[string][]byte)
 	return func(mapped bool, mappedModel string) []byte {
@@ -328,11 +346,15 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	firstOutputTimeoutSwitchCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
 
 	for {
+		if failoverClientGone(c) {
+			return
+		}
 		// Select account supporting the requested model
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
@@ -347,6 +369,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			requireCompact,
 		)
 		if err != nil {
+			if failoverClientGone(c) {
+				reqLog.Info("openai.account_select_aborted_client_disconnected", zap.Error(err))
+				return
+			}
 			reqLog.Warn("openai.account_select_failed",
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
@@ -430,9 +456,19 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
+					if failoverClientGone(c) {
+						reqLog.Info("openai.failover_aborted_client_disconnected",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+						)
+						return
+					}
+					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
+					}
+					if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
+						streamStarted = true
 					}
 					// 池模式：同账号重试
 					if failoverErr.RetryableOnSameAccount {
@@ -457,6 +493,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
+					if openAIFirstOutputFailoverExhausted(failoverErr, &firstOutputTimeoutSwitchCount) {
+						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
 					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
@@ -470,7 +510,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
-					reqLog.Warn("openai.upstream_failover_switching",
+					reqLog.With(appendOpenAIProxyLogFields(account)...).Warn("openai.upstream_failover_switching",
 						zap.Int64("account_id", account.ID),
 						zap.Int("upstream_status", failoverErr.StatusCode),
 						zap.Int("switch_count", switchCount),
@@ -803,6 +843,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	effectiveMappedModel := preferredMappedModel
 
 	for {
+		if failoverClientGone(c) {
+			return
+		}
 		currentRoutingModel := routingModel
 		if effectiveMappedModel != "" {
 			currentRoutingModel = effectiveMappedModel
@@ -820,6 +863,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			false,
 		)
 		if err != nil {
+			if failoverClientGone(c) {
+				reqLog.Info("openai_messages.account_select_aborted_client_disconnected", zap.Error(err))
+				return
+			}
 			reqLog.Warn("openai_messages.account_select_failed",
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
@@ -893,6 +940,13 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					if failoverClientGone(c) {
+						reqLog.Info("openai_messages.failover_aborted_client_disconnected",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+						)
+						return
+					}
 					if c.Writer.Size() != writerSizeBeforeForward {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
 						return
@@ -1261,7 +1315,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	wsConn.SetReadLimit(service.ResolveOpenAIWSClientReadLimitBytes(h.cfg))
 
 	ctx := c.Request.Context()
-	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	firstMessageTimeout := service.ResolveOpenAIWSClientFirstMessageTimeout(h.cfg)
+	readCtx, cancel := context.WithTimeout(ctx, firstMessageTimeout)
 	msgType, firstMessage, err := wsConn.Read(readCtx)
 	cancel()
 	if err != nil {
@@ -1271,7 +1326,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			zap.String("client_ip", clientIP),
 			zap.String("close_status", closeStatus),
 			zap.String("close_reason", closeReason),
-			zap.Duration("read_timeout", 30*time.Second),
+			zap.Duration("read_timeout", firstMessageTimeout),
 		)
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "missing first response.create message")
 		return
@@ -1654,7 +1709,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
 			closeStatus, closeReason := summarizeWSCloseErrorForLog(err)
-			reqLog.Warn("openai.websocket_proxy_failed",
+			reqLog.With(appendOpenAIProxyLogFields(account)...).Warn("openai.websocket_proxy_failed",
 				zap.Int64("account_id", account.ID),
 				zap.Error(err),
 				zap.String("close_status", closeStatus),
@@ -1970,6 +2025,36 @@ func openAIForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForwa
 			return true
 		}
 	}
+	return false
+}
+
+const maxOpenAIFirstOutputTimeoutSwitches = 1
+
+func openAIForwardMayFailover(c *gin.Context, writerSizeBeforeForward int, failoverErr *service.UpstreamFailoverError) bool {
+	if c == nil || c.Writer == nil {
+		return false
+	}
+	if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
+		return true
+	}
+	return failoverErr != nil && failoverErr.SafeToFailoverAfterWrite
+}
+
+func openAIRequestAllowsFailoverReplay(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	return c.Request.Context().Err() == nil
+}
+
+func openAIFirstOutputFailoverExhausted(failoverErr *service.UpstreamFailoverError, switchCount *int) bool {
+	if failoverErr == nil || !failoverErr.SafeToFailoverAfterWrite || switchCount == nil {
+		return false
+	}
+	if *switchCount >= maxOpenAIFirstOutputTimeoutSwitches {
+		return true
+	}
+	*switchCount = *switchCount + 1
 	return false
 }
 

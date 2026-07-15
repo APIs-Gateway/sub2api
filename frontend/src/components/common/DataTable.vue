@@ -511,18 +511,20 @@ const compareSortValues = (a: any, b: any): number => {
   if (res === 0) return 0
   return res < 0 ? -1 : 1
 }
-const resolveRowKey = (row: any, index: number) => {
+const resolveStableRowKey = (row: any): string | number | undefined => {
   if (typeof props.rowKey === 'function') {
     const key = props.rowKey(row)
-    return key ?? index
+    return key ?? undefined
   }
   if (typeof props.rowKey === 'string' && props.rowKey) {
     const key = row?.[props.rowKey]
-    return key ?? index
+    return key ?? undefined
   }
   const key = row?.id
-  return key ?? index
+  return key ?? undefined
 }
+
+const resolveRowKey = (row: any, index: number) => resolveStableRowKey(row) ?? index
 
 const dataColumns = computed(() => props.columns.filter((column) => column.key !== 'actions'))
 const columnsSignature = computed(() =>
@@ -594,10 +596,43 @@ const sortedData = computed(() => {
     .map(item => item.row)
 })
 
+type RowIdentityToken = string | number | object | symbol
+
+const rowIdentityKeys = computed<RowIdentityToken[]>(() =>
+  (sortedData.value ?? []).map((row) => {
+    const stableKey = resolveStableRowKey(row)
+    if (stableKey !== undefined) return stableKey
+
+    // Object references survive pure reordering but change across page/filter results.
+    // Primitive rows have no stable identity, so force conservative invalidation.
+    return row !== null && typeof row === 'object' ? row : Symbol('unstable-row')
+  })
+)
+
+const stableRowKeyCounts = computed(() => {
+  const counts = new Map<string | number, number>()
+  for (const row of sortedData.value ?? []) {
+    const stableKey = resolveStableRowKey(row)
+    if (stableKey === undefined) continue
+    counts.set(stableKey, (counts.get(stableKey) ?? 0) + 1)
+  }
+  return counts
+})
+
 // --- Virtual scrolling ---
 const rowVirtualizer = useVirtualizer(computed(() => ({
   count: isDesktopViewport.value ? (sortedData.value?.length ?? 0) : 0,
   getScrollElement: () => tableWrapperRef.value,
+  getItemKey: (index: number) => {
+    const row = sortedData.value?.[index]
+    if (row == null) return index
+    const stableKey = resolveStableRowKey(row)
+    if (stableKey === undefined) return index
+
+    // Duplicate stable keys cannot identify a unique measurement cache entry;
+    // fall back to the row index until the identity set watcher invalidates it.
+    return stableRowKeyCounts.value.get(stableKey) === 1 ? stableKey : index
+  },
   estimateSize: () => props.estimateRowHeight ?? 56,
   overscan: props.overscan ?? 5,
   // 兜底高度:首个有效高度读数到来前,先按一屏渲染,避免空白帧
@@ -626,6 +661,32 @@ const measureElement = (el: any) => {
     rowVirtualizer.value.measureElement(el as Element)
   }
 }
+
+const hasSameRowIdentitySet = (
+  current: RowIdentityToken[],
+  previous: RowIdentityToken[]
+) => {
+  if (current.length !== previous.length) return false
+  const currentKeys = new Set(current)
+  const previousKeys = new Set(previous)
+  // Duplicate keys make row-to-cache ownership ambiguous, even when the unique
+  // key set looks unchanged (for example [1, 1, 2] -> [1, 2, 2]).
+  if (currentKeys.size !== current.length || previousKeys.size !== previous.length) return false
+  return [...currentKeys].every(key => previousKeys.has(key))
+}
+
+watch(
+  rowIdentityKeys,
+  (current, previous) => {
+    if (hasSameRowIdentitySet(current, previous)) return
+
+    // The virtualizer owns caches across option updates. A new page/filter result
+    // must release detached rows and sizes, while pure reordering keeps them.
+    rowVirtualizer.value.measureElement(null as unknown as Element)
+    rowVirtualizer.value.measure()
+  },
+  { flush: 'post' }
+)
 
 const hasActionsColumn = computed(() => {
   return props.columns.some(column => column.key === 'actions')

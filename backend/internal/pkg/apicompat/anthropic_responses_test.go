@@ -739,7 +739,14 @@ func TestStreamingReadToolEmitsSanitizedCompleteJSON(t *testing.T) {
 	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:        "response.function_call_arguments.delta",
 		OutputIndex: 0,
-		Delta:       `{"file_path":"/tmp/demo.py","limit":2000,"offset":0,"pages":""}`,
+		Delta:       `{"file_path":"/tmp/demo.py","limit":2000,`,
+	}, state)
+	assert.Empty(t, events, "partial Read JSON must wait for sanitization")
+
+	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type:        "response.function_call_arguments.delta",
+		OutputIndex: 0,
+		Delta:       `"offset":0,"pages":""}`,
 	}, state)
 	require.Len(t, events, 1)
 	assert.Equal(t, "content_block_delta", events[0].Type)
@@ -753,6 +760,11 @@ func TestStreamingReadToolEmitsSanitizedCompleteJSON(t *testing.T) {
 	}, state)
 	require.Len(t, events, 1)
 	assert.Equal(t, "content_block_stop", events[0].Type)
+
+	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type: "response.function_call_arguments.done",
+	}, state)
+	assert.Empty(t, events, "duplicate done must be idempotent")
 }
 
 func TestStreamingReasoning(t *testing.T) {
