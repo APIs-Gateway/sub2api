@@ -19,7 +19,7 @@ func http2KeepAliveTestPoolSettings() poolSettings {
 	}
 }
 
-func TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck(t *testing.T) {
+func TestEnableOpenAIHTTP2KeepAliveEnablesPingHealthCheck(t *testing.T) {
 	tr := &http.Transport{}
 
 	h2, err := enableOpenAIHTTP2KeepAlive(tr)
@@ -39,20 +39,20 @@ func TestEnableOpenAIHTTP2KeepAlive_PropagatesConfigureError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBuildUpstreamTransport_OpenAIH2_EnablesPingHealthCheck(t *testing.T) {
+func TestBuildUpstreamTransportOpenAIH2EnablesPingHealthCheck(t *testing.T) {
 	tr, err := buildUpstreamTransport(http2KeepAliveTestPoolSettings(), nil, upstreamProtocolModeOpenAIH2)
 	require.NoError(t, err)
 	require.True(t, tr.ForceAttemptHTTP2)
 	require.NotNil(t, tr.TLSNextProto["h2"])
 }
 
-func TestBuildUpstreamTransport_NonOpenAIH2_NotEagerlyConfigured(t *testing.T) {
+func TestBuildUpstreamTransportNonOpenAIH2IsNotEagerlyConfigured(t *testing.T) {
 	tr, err := buildUpstreamTransport(http2KeepAliveTestPoolSettings(), nil, upstreamProtocolModeDefault)
 	require.NoError(t, err)
 	require.Nil(t, tr.TLSNextProto["h2"])
 }
 
-func TestBuildUpstreamTransport_OpenAIH2_WithHTTPProxy_EnablesKeepAlive(t *testing.T) {
+func TestBuildUpstreamTransportOpenAIH2WithHTTPProxyEnablesKeepAlive(t *testing.T) {
 	proxyURL, err := url.Parse("http://127.0.0.1:8080")
 	require.NoError(t, err)
 

@@ -1016,9 +1016,13 @@ func buildOpenAIImagesStreamErrorBodyFromUpstream(err *OpenAIImagesUpstreamError
 }
 
 func writeOpenAIImagesUpstreamErrorResponse(c *gin.Context, err *OpenAIImagesUpstreamError) bool {
-	if c == nil || c.Writer == nil || c.Writer.Written() || err == nil {
+	if c == nil || c.Writer == nil || err == nil {
 		return false
 	}
+	if c.Writer.Written() && OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) >= 0 {
+		return false
+	}
+	StopOpenAIImagesJSONKeepaliveCommitted(c)
 	errorObj := gin.H{
 		"type":    err.clientErrorType(),
 		"message": err.clientMessage(),
@@ -1168,7 +1172,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 	var sseData openAISSEDataAccumulator
 	var processDataErr error
 	processDataDone := false
-	writerSizeBeforeResponse := c.Writer.Size()
+	writerSizeBeforeResponse := OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
 
 	processData := func(dataBytes []byte) {
 		if processDataDone || processDataErr != nil {
@@ -1273,7 +1277,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 		case "error", "response.failed":
 			if upstreamErr := openAIImagesUpstreamErrorFromSSEPayload(dataBytes); upstreamErr != nil {
 				retryable := IsOpenAIImagesRetryableUpstreamError(upstreamErr)
-				if !clientDisconnected && (!retryable || c.Writer.Size() != writerSizeBeforeResponse) {
+				if !clientDisconnected && (!retryable || OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeResponse) {
 					s.tryWriteOpenAIImagesStreamEvent(c, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", buildOpenAIImagesStreamErrorBodyFromUpstream(upstreamErr))
 				}
 				setOpsUpstreamError(c, upstreamErr.clientStatusCode(), upstreamErr.clientMessage(), "")
@@ -1585,7 +1589,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		imageOutputSizes []string
 		firstTokenMs     *int
 	)
-	writerSizeBeforeResponse := c.Writer.Size()
+	writerSizeBeforeResponse := OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
 	if parsed.Stream {
 		usage, imageCount, imageOutputSizes, firstTokenMs, err = s.handleOpenAIImagesOAuthStreamingResponse(resp, c, startTime, parsed.ResponseFormat, openAIImagesStreamPrefix(parsed), requestModel)
 		if err != nil {
@@ -1666,7 +1670,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	}
 
 	retryable := IsOpenAIImagesRetryableUpstreamError(upstreamErr)
-	responseWritten := c != nil && c.Writer != nil && c.Writer.Size() != writerSizeBeforeResponse
+	responseWritten := c != nil && c.Writer != nil && OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeResponse
 	kind := "http_error"
 	if retryable {
 		kind = "failover"
