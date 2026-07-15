@@ -549,6 +549,11 @@ func isOpenAICompatResponsesTerminalEvent(eventType string) bool {
 	}
 }
 
+func classifyOpenAIMessagesStreamEvent(eventType string) (string, bool) {
+	eventType = strings.TrimSpace(eventType)
+	return eventType, eventType == "error"
+}
+
 func (s *OpenAIGatewayService) recordOpenAIMessagesStreamUpstreamError(c *gin.Context, account *Account, upstreamRequestID, kind, message string) {
 	if c == nil {
 		return
@@ -832,8 +837,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			return false
 		}
 
-		eventType := strings.TrimSpace(event.Type)
-		isBareErrorEvent := eventType == "error"
+		eventType, isBareErrorEvent := classifyOpenAIMessagesStreamEvent(event.Type)
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(eventType) || isBareErrorEvent
 		if isTerminalEvent {
 			if event.Response != nil {

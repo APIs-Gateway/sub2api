@@ -103,7 +103,7 @@ func TestForwardAsAnthropic_StreamingBareErrorAfterOutputIsVisible(t *testing.T)
 		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"partial"}`,
 		"",
 		`event: error`,
-		`data: {"type":"error","error":{"type":"server_error","code":"upstream_error","message":"mixed tools failed"}}`,
+		`data: {"type":" error ","error":{"type":"server_error","code":"upstream_error","message":"mixed tools failed"}}`,
 		"",
 		`data: [DONE]`,
 		"",
@@ -142,7 +142,7 @@ func TestForwardAsAnthropic_StreamingBareErrorBeforeOutputFailsOver(t *testing.T
 
 	ssePayload := strings.Join([]string{
 		`event: error`,
-		`data: {"type":"error","error":{"type":"server_error","code":"upstream_error","message":"temporary upstream failure"}}`,
+		`data: {"type":" error ","error":{"type":"server_error","code":"upstream_error","message":"temporary upstream failure"}}`,
 		"",
 		`data: [DONE]`,
 		"",
