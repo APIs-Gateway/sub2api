@@ -638,10 +638,6 @@ func (s *SchedulerSnapshotService) rebuildBuckets(ctx context.Context, buckets [
 	return firstErr
 }
 
-func (s *SchedulerSnapshotService) rebuildBucket(ctx context.Context, bucket SchedulerBucket, reason string) error {
-	return s.rebuildBucketWithQueryCache(ctx, bucket, reason, nil)
-}
-
 func (s *SchedulerSnapshotService) rebuildBucketWithQueryCache(
 	ctx context.Context,
 	bucket SchedulerBucket,
