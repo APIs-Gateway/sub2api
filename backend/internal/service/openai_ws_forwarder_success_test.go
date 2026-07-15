@@ -1545,6 +1545,62 @@ func TestOpenAIGatewayService_Forward_WSv2ReadTimeoutAppliesPerRead(t *testing.T
 	require.Nil(t, upstream.lastReq, "每次 Read 都应独立应用超时；总时长超过 read_timeout 不应误回退 HTTP")
 }
 
+func TestOpenAIGatewayService_Forward_WSv2_RepairsConcatenatedJSONDocuments(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+
+	created := []byte(`{"type":"response.created","response":{"id":"resp_concat_1","model":"gpt-5.1"}}`)
+	completed := []byte(`{"type":"response.completed","response":{"id":"resp_concat_1","model":"gpt-5.1","usage":{"input_tokens":2,"output_tokens":1}}}`)
+	captureConn := &openAIWSCaptureConn{events: [][]byte{append(created, completed...)}}
+	pool := newOpenAIWSConnPool(cfg)
+	pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: captureConn})
+	defer pool.Close()
+
+	svc := &OpenAIGatewayService{
+		cfg:              cfg,
+		httpUpstream:     &httpUpstreamRecorder{},
+		cache:            &stubGatewayCache{},
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+		openaiWSPool:     pool,
+	}
+	account := &Account{
+		ID: 1401, Name: "openai-ws-concatenated", Platform: PlatformOpenAI,
+		Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://api.example.test",
+		},
+		Extra: map[string]any{"responses_websockets_v2_enabled": true},
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":false,"input":"hello"}`))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.OpenAIWSMode)
+	require.Equal(t, "resp_concat_1", result.RequestID)
+	require.Equal(t, 2, result.Usage.InputTokens)
+	require.Equal(t, 1, result.Usage.OutputTokens)
+	require.Equal(t, "resp_concat_1", gjson.GetBytes(rec.Body.Bytes(), "id").String())
+}
+
 type openAIWSCaptureDialer struct {
 	mu          sync.Mutex
 	conn        *openAIWSCaptureConn
