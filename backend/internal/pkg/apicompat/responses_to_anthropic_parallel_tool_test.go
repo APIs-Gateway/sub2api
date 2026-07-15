@@ -275,3 +275,38 @@ func TestStreamingThreeParallelToolsAllPackedDone(t *testing.T) {
 		}
 	}
 }
+
+func TestFuncArgsDoneFallsBackToCurrentBlockWhenOutputIndexIsUnmapped(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	state.ContentBlockIndex = 3
+	state.ContentBlockOpen = true
+	state.CurrentBlockType = "tool_use"
+	state.CurrentToolName = "lookup"
+
+	events := resToAnthHandleFuncArgsDone(&ResponsesStreamEvent{
+		OutputIndex: 99,
+		Arguments:   `{"value":1}`,
+	}, state)
+
+	require.Len(t, events, 2)
+	require.Equal(t, "content_block_delta", events[0].Type)
+	require.NotNil(t, events[0].Index)
+	require.Equal(t, 3, *events[0].Index)
+	require.Equal(t, `{"value":1}`, events[0].Delta.PartialJSON)
+	require.Equal(t, "content_block_stop", events[1].Type)
+}
+
+func TestFuncArgsDoneSkipsClosedCurrentBlock(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	state.ContentBlockIndex = 3
+	state.CurrentBlockType = "tool_use"
+	state.CurrentToolName = "lookup"
+	state.OutputIndexToBlockIdx[99] = 3
+
+	events := resToAnthHandleFuncArgsDone(&ResponsesStreamEvent{
+		OutputIndex: 99,
+		Arguments:   `{"value":1}`,
+	}, state)
+
+	require.Empty(t, events)
+}
