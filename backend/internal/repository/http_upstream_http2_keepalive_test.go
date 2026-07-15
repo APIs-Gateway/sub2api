@@ -30,6 +30,15 @@ func TestEnableOpenAIHTTP2KeepAliveEnablesPingHealthCheck(t *testing.T) {
 	require.NotNil(t, tr.TLSNextProto["h2"])
 }
 
+func TestEnableOpenAIHTTP2KeepAlive_PropagatesConfigureError(t *testing.T) {
+	tr := &http.Transport{}
+	_, err := enableOpenAIHTTP2KeepAlive(tr)
+	require.NoError(t, err)
+
+	_, err = enableOpenAIHTTP2KeepAlive(tr)
+	require.Error(t, err)
+}
+
 func TestBuildUpstreamTransportOpenAIH2EnablesPingHealthCheck(t *testing.T) {
 	tr, err := buildUpstreamTransport(http2KeepAliveTestPoolSettings(), nil, upstreamProtocolModeOpenAIH2)
 	require.NoError(t, err)
