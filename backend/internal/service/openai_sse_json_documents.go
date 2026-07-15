@@ -3,9 +3,10 @@ package service
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"io"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/common"
 )
 
 const (
@@ -17,14 +18,14 @@ const (
 // concatenated in one transport message without changing other malformed data.
 func splitOpenAIConcatenatedJSONDocuments(payload []byte) ([][]byte, bool) {
 	payload = bytes.TrimSpace(payload)
-	if len(payload) == 0 || len(payload) > maxOpenAIConcatenatedJSONBytes || json.Valid(payload) {
+	if len(payload) == 0 || len(payload) > maxOpenAIConcatenatedJSONBytes || common.Valid(payload) {
 		return nil, false
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder := common.NewDecoder(bytes.NewReader(payload))
 	documents := make([][]byte, 0, 2)
 	for {
-		var raw json.RawMessage
+		var raw common.RawMessage
 		err := decoder.Decode(&raw)
 		if err != nil {
 			if err == io.EOF && len(documents) > 1 {
@@ -36,7 +37,7 @@ func splitOpenAIConcatenatedJSONDocuments(payload []byte) ([][]byte, bool) {
 		var envelope struct {
 			Type string `json:"type"`
 		}
-		if err := json.Unmarshal(raw, &envelope); err != nil {
+		if err := common.Unmarshal(raw, &envelope); err != nil {
 			return nil, false
 		}
 		eventType := strings.TrimSpace(envelope.Type)
@@ -88,7 +89,7 @@ func (s *openAISSEJSONDocumentScanner) Scan() bool {
 			var envelope struct {
 				Type string `json:"type"`
 			}
-			_ = json.Unmarshal(document, &envelope)
+			_ = common.Unmarshal(document, &envelope)
 			expanded = append(expanded, "event: "+strings.TrimSpace(envelope.Type))
 		}
 		expanded = append(expanded, "data: "+string(document), "")

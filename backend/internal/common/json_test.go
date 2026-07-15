@@ -1,6 +1,31 @@
 package common
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestValid(t *testing.T) {
+	if !Valid([]byte(`{"value":7}`)) {
+		t.Fatal("Valid() returned false for valid JSON")
+	}
+	if Valid([]byte(`{"value":`)) {
+		t.Fatal("Valid() returned true for invalid JSON")
+	}
+}
+
+func TestNewDecoder(t *testing.T) {
+	decoder := NewDecoder(strings.NewReader(`{"value":7}`))
+	var payload struct {
+		Value int `json:"value"`
+	}
+	if err := decoder.Decode(&payload); err != nil {
+		t.Fatalf("NewDecoder().Decode() error = %v", err)
+	}
+	if payload.Value != 7 {
+		t.Fatalf("NewDecoder() value = %d, want 7", payload.Value)
+	}
+}
 
 func TestUnmarshal(t *testing.T) {
 	var payload struct {
