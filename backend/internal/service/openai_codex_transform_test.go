@@ -740,6 +740,44 @@ func TestCodexImageGenerationBridge_PreservesClientImageFunctionTools(t *testing
 			wantClient: true,
 		},
 		{
+			name: "top-level image_gen namespace",
+			reqBody: map[string]any{
+				"model": "gpt-5.5",
+				"input": "draw a cat",
+				"tools": []any{
+					map[string]any{
+						"type": "namespace",
+						"name": "image_gen",
+						"tools": []any{
+							map[string]any{"type": "function", "name": "imagegen"},
+						},
+					},
+				},
+			},
+			wantClient: true,
+		},
+		{
+			name: "additional_tools image_gen namespace",
+			reqBody: map[string]any{
+				"model": "gpt-5.5",
+				"input": []any{
+					map[string]any{
+						"type": "additional_tools",
+						"tools": []any{
+							map[string]any{
+								"type": "namespace",
+								"name": "image_gen",
+								"tools": []any{
+									map[string]any{"type": "function", "name": "imagegen"},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantClient: true,
+		},
+		{
 			name: "similar function name still receives hosted bridge",
 			reqBody: map[string]any{
 				"model": "gpt-5.5",

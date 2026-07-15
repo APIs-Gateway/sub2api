@@ -604,8 +604,43 @@ func hasOpenAIImageGenerationTool(reqBody map[string]any) bool {
 }
 
 func hasCodexImageGenerationFunctionTool(reqBody map[string]any) bool {
-	return len(reqBody) > 0 &&
-		codexToolsContainFunctionName(reqBody["tools"], codexImageGenerationFunctionToolName)
+	if len(reqBody) == 0 {
+		return false
+	}
+	if codexToolsContainFunctionName(reqBody["tools"], codexImageGenerationFunctionToolName) ||
+		codexToolsContainImageGenNamespace(reqBody["tools"]) {
+		return true
+	}
+
+	input, ok := reqBody["input"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok || strings.TrimSpace(firstNonEmptyString(item["type"])) != "additional_tools" {
+			continue
+		}
+		if codexToolsContainFunctionName(item["tools"], codexImageGenerationFunctionToolName) ||
+			codexToolsContainImageGenNamespace(item["tools"]) {
+			return true
+		}
+	}
+	return false
+}
+
+func codexToolsContainImageGenNamespace(rawTools any) bool {
+	tools, ok := rawTools.([]any)
+	if !ok {
+		return false
+	}
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if ok && isImageGenNamespaceToolMap(tool) {
+			return true
+		}
+	}
+	return false
 }
 
 func toolsContainImageGeneration(rawTools any) bool {
