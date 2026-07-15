@@ -85,6 +85,33 @@ func TestIsImageGenerationIntent(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponsesLiteMarkers(t *testing.T) {
+	tests := []struct {
+		name       string
+		header     string
+		body       []byte
+		wantHeader bool
+		wantBody   bool
+	}{
+		{name: "canonical header", header: "true", wantHeader: true},
+		{name: "case and whitespace insensitive header", header: " TRUE ", wantHeader: true},
+		{name: "non-true header", header: "false"},
+		{
+			name:     "websocket metadata",
+			body:     []byte(`{"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"}}`),
+			wantBody: true,
+		},
+		{name: "invalid websocket payload", body: []byte(`{"client_metadata":`)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.wantHeader, isOpenAIResponsesLiteHeader(tt.header))
+			require.Equal(t, tt.wantBody, isOpenAIResponsesLiteWebSocketPayload(tt.body))
+		})
+	}
+}
+
 func TestIsImageGenerationIntentMap_NamespaceImageGen(t *testing.T) {
 	tests := []struct {
 		name    string
