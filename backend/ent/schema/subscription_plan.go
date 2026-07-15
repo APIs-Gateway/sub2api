@@ -53,6 +53,10 @@ func (SubscriptionPlan) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,2)"}).
 			Optional().
 			Nillable(),
+		// currency：可选的 ISO 4217 展示标签，不参与支付扣款逻辑。
+		field.String("currency").
+			MaxLen(3).
+			Default(""),
 		field.Int("validity_days").
 			Default(30),
 		field.String("validity_unit").

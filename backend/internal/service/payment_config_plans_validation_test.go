@@ -115,6 +115,30 @@ func TestValidatePlanRequired_ValidOriginalPrice(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestNormalizePlanCurrency(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+		ok   bool
+	}{
+		{name: "empty keeps label disabled", raw: "", want: "", ok: true},
+		{name: "normalizes ISO code", raw: " usd ", want: "USD", ok: true},
+		{name: "rejects invalid code", raw: "US1", ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizePlanCurrency(tt.raw)
+			if tt.ok {
+				require.NoError(t, err)
+				require.Equal(t, tt.want, got)
+				return
+			}
+			require.Error(t, err)
+		})
+	}
+}
+
 // --- validatePlanPatch tests ---
 
 func TestValidatePlanPatch_NegativeOriginalPrice(t *testing.T) {
