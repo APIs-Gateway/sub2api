@@ -22,6 +22,7 @@ import (
 // POST /v1/images/edits
 func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	streamStarted := false
+	defer failoverClientGone(c)
 	defer h.recoverResponsesPanic(c, &streamStarted)
 
 	requestStart := time.Now()
@@ -158,10 +159,6 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			parsed.RequiredCapability,
 		)
 		if err != nil {
-			if failoverClientGone(c) {
-				reqLog.Info("openai.images.account_select_aborted_client_disconnected", zap.Error(err))
-				return
-			}
 			reqLog.Warn("openai.images.account_select_failed",
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),

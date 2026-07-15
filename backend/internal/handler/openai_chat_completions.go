@@ -21,6 +21,7 @@ import (
 // POST /v1/chat/completions
 func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	streamStarted := false
+	defer failoverClientGone(c)
 	defer h.recoverResponsesPanic(c, &streamStarted)
 
 	requestStart := time.Now()
