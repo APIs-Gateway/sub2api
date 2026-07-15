@@ -609,13 +609,29 @@ const rowIdentityKeys = computed<RowIdentityToken[]>(() =>
   })
 )
 
+const stableRowKeyCounts = computed(() => {
+  const counts = new Map<string | number, number>()
+  for (const row of sortedData.value ?? []) {
+    const stableKey = resolveStableRowKey(row)
+    if (stableKey === undefined) continue
+    counts.set(stableKey, (counts.get(stableKey) ?? 0) + 1)
+  }
+  return counts
+})
+
 // --- Virtual scrolling ---
 const rowVirtualizer = useVirtualizer(computed(() => ({
   count: isDesktopViewport.value ? (sortedData.value?.length ?? 0) : 0,
   getScrollElement: () => tableWrapperRef.value,
   getItemKey: (index: number) => {
     const row = sortedData.value?.[index]
-    return row != null ? resolveRowKey(row, index) : index
+    if (row == null) return index
+    const stableKey = resolveStableRowKey(row)
+    if (stableKey === undefined) return index
+
+    // Duplicate stable keys cannot identify a unique measurement cache entry;
+    // fall back to the row index until the identity set watcher invalidates it.
+    return stableRowKeyCounts.value.get(stableKey) === 1 ? stableKey : index
   },
   estimateSize: () => props.estimateRowHeight ?? 56,
   overscan: props.overscan ?? 5,

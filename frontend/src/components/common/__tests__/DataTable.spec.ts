@@ -87,6 +87,24 @@ describe('DataTable virtualizer row identity', () => {
     wrapper.unmount()
   })
 
+  it('uses unique index keys when stable row keys are duplicated', async () => {
+    const wrapper = mountTable(
+      [{ id: 1, name: 'First A' }, { id: 1, name: 'First B' }, { id: 2, name: 'Second' }],
+      'id'
+    )
+    await nextTick()
+
+    const virtualizer = (wrapper.vm as any).virtualizer
+    const getItemKey = virtualizer.options.getItemKey
+    const keys = [0, 1, 2].map(index => getItemKey(index))
+
+    expect(new Set(keys).size).toBe(keys.length)
+    expect(keys[0]).toBe(0)
+    expect(keys[1]).toBe(1)
+    expect(keys[2]).toBe(2)
+    wrapper.unmount()
+  })
+
   it('preserves caches when stable rows are only reordered', async () => {
     const firstPage = [{ id: 1, name: 'First' }, { id: 2, name: 'Second' }]
     const wrapper = mountTable(firstPage, 'id')
