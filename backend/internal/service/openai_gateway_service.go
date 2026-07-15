@@ -2329,11 +2329,7 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 			if err != nil {
 				return "", "", err
 			}
-			authorization := strings.TrimSpace(headers.Get("Authorization"))
-			if authorization == "" {
-				return "", "", errors.New("agent identity authorization header is empty")
-			}
-			return authorization, "agent_identity", nil
+			return headers.Get("Authorization"), "agent_identity", nil
 		}
 		// 使用 TokenProvider 获取缓存的 token
 		if s.openAITokenProvider != nil {
