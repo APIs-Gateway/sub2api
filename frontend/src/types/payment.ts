@@ -136,6 +136,8 @@ export interface SubscriptionPlan {
   description: string
   price: number
   original_price?: number
+  /** Optional ISO 4217 code shown next to the display price. */
+  currency?: string
   validity_days: number
   validity_unit: string
   /** Stored as JSON string in backend; API layer should parse before use */

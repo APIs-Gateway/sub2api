@@ -20,17 +20,21 @@ func TestPaymentConfigPlanCRUD_PersistsDailyAmount(t *testing.T) {
 		Name:           "Pro",
 		DailyAmountUSD: 10,
 		Price:          545,
+		Currency:       " usd ",
 		ValidityDays:   30,
 		ValidityUnit:   "day",
 		ForSale:        true,
 	})
 	require.NoError(t, err)
 	require.InDelta(t, 10, plan.DailyAmountUsd, 1e-9)
+	require.Equal(t, "USD", plan.Currency)
 
 	updatedD := 25.0
-	updated, err := svc.UpdatePlan(ctx, plan.ID, UpdatePlanRequest{DailyAmountUSD: &updatedD})
+	updatedCurrency := " nzd "
+	updated, err := svc.UpdatePlan(ctx, plan.ID, UpdatePlanRequest{DailyAmountUSD: &updatedD, Currency: &updatedCurrency})
 	require.NoError(t, err)
 	require.InDelta(t, updatedD, updated.DailyAmountUsd, 1e-9)
+	require.Equal(t, "NZD", updated.Currency)
 }
 
 func TestPaymentConfigPlanCRUD_RejectsMissingDailyAmount(t *testing.T) {
