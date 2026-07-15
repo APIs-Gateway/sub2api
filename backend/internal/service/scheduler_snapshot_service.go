@@ -34,6 +34,58 @@ type batchSeenKey struct {
 	platform string
 }
 
+type schedulerAccountQueryKey struct {
+	groupID  int64
+	platform string
+}
+
+// schedulerAccountQueryCache is deliberately scoped to one rebuild batch.
+// Single and forced buckets share account eligibility, while mixed buckets
+// have different platform filtering and must keep their own query.
+type schedulerAccountQueryCache struct {
+	remaining map[schedulerAccountQueryKey]int
+	accounts  map[schedulerAccountQueryKey][]Account
+}
+
+func newSchedulerAccountQueryCache(batches ...[]SchedulerBucket) *schedulerAccountQueryCache {
+	cache := &schedulerAccountQueryCache{
+		remaining: make(map[schedulerAccountQueryKey]int),
+		accounts:  make(map[schedulerAccountQueryKey][]Account),
+	}
+	for _, buckets := range batches {
+		for _, bucket := range buckets {
+			if key, ok := schedulerAccountQueryKeyForBucket(bucket); ok {
+				cache.remaining[key]++
+			}
+		}
+	}
+	return cache
+}
+
+func schedulerAccountQueryKeyForBucket(bucket SchedulerBucket) (schedulerAccountQueryKey, bool) {
+	if bucket.Mode != SchedulerModeSingle && bucket.Mode != SchedulerModeForced {
+		return schedulerAccountQueryKey{}, false
+	}
+	return schedulerAccountQueryKey{groupID: bucket.GroupID, platform: bucket.Platform}, true
+}
+
+func (c *schedulerAccountQueryCache) release(bucket SchedulerBucket) {
+	if c == nil {
+		return
+	}
+	key, ok := schedulerAccountQueryKeyForBucket(bucket)
+	if !ok {
+		return
+	}
+	remaining, ok := c.remaining[key]
+	if !ok || remaining <= 1 {
+		delete(c.remaining, key)
+		delete(c.accounts, key)
+		return
+	}
+	c.remaining[key] = remaining - 1
+}
+
 type SchedulerSnapshotService struct {
 	cache                        SchedulerCache
 	outboxRepo                   SchedulerOutboxRepository
@@ -551,7 +603,7 @@ func (s *SchedulerSnapshotService) rebuildBucketsForPlatform(ctx context.Context
 	if platform == "" {
 		return nil
 	}
-	var firstErr error
+	buckets := make([]SchedulerBucket, 0, len(groupIDs)*3)
 	for _, gid := range groupIDs {
 		// Within a single poll batch, skip (groupID, platform) pairs that were
 		// already rebuilt. The first rebuild loads fresh DB data for all accounts
@@ -564,25 +616,22 @@ func (s *SchedulerSnapshotService) rebuildBucketsForPlatform(ctx context.Context
 			}
 			seen[key] = struct{}{}
 		}
-		if err := s.rebuildBucket(ctx, SchedulerBucket{GroupID: gid, Platform: platform, Mode: SchedulerModeSingle}, reason); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		if err := s.rebuildBucket(ctx, SchedulerBucket{GroupID: gid, Platform: platform, Mode: SchedulerModeForced}, reason); err != nil && firstErr == nil {
-			firstErr = err
-		}
+		buckets = append(buckets,
+			SchedulerBucket{GroupID: gid, Platform: platform, Mode: SchedulerModeSingle},
+			SchedulerBucket{GroupID: gid, Platform: platform, Mode: SchedulerModeForced},
+		)
 		if platform == PlatformAnthropic || platform == PlatformGemini {
-			if err := s.rebuildBucket(ctx, SchedulerBucket{GroupID: gid, Platform: platform, Mode: SchedulerModeMixed}, reason); err != nil && firstErr == nil {
-				firstErr = err
-			}
+			buckets = append(buckets, SchedulerBucket{GroupID: gid, Platform: platform, Mode: SchedulerModeMixed})
 		}
 	}
-	return firstErr
+	return s.rebuildBuckets(ctx, buckets, reason)
 }
 
 func (s *SchedulerSnapshotService) rebuildBuckets(ctx context.Context, buckets []SchedulerBucket, reason string) error {
+	queries := newSchedulerAccountQueryCache(buckets)
 	var firstErr error
 	for _, bucket := range buckets {
-		if err := s.rebuildBucket(ctx, bucket, reason); err != nil && firstErr == nil {
+		if err := s.rebuildBucketWithQueryCache(ctx, bucket, reason, queries); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -590,6 +639,18 @@ func (s *SchedulerSnapshotService) rebuildBuckets(ctx context.Context, buckets [
 }
 
 func (s *SchedulerSnapshotService) rebuildBucket(ctx context.Context, bucket SchedulerBucket, reason string) error {
+	return s.rebuildBucketWithQueryCache(ctx, bucket, reason, nil)
+}
+
+func (s *SchedulerSnapshotService) rebuildBucketWithQueryCache(
+	ctx context.Context,
+	bucket SchedulerBucket,
+	reason string,
+	queries *schedulerAccountQueryCache,
+) error {
+	if queries != nil {
+		defer queries.release(bucket)
+	}
 	if s.cache == nil {
 		return ErrSchedulerCacheNotReady
 	}
@@ -607,7 +668,7 @@ func (s *SchedulerSnapshotService) rebuildBucket(ctx context.Context, bucket Sch
 	rebuildCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	accounts, err := s.loadAccountsFromDB(rebuildCtx, bucket, bucket.Mode == SchedulerModeMixed)
+	accounts, err := s.loadAccountsForRebuild(rebuildCtx, bucket, queries)
 	if err != nil {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild failed: bucket=%s reason=%s err=%v", bucket.String(), reason, err)
 		return err
@@ -888,6 +949,29 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 		return s.accountRepo.ListSchedulableByPlatform(ctx, bucket.Platform)
 	}
 	return s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, bucket.Platform)
+}
+
+func (s *SchedulerSnapshotService) loadAccountsForRebuild(
+	ctx context.Context,
+	bucket SchedulerBucket,
+	queries *schedulerAccountQueryCache,
+) ([]Account, error) {
+	key, cacheable := schedulerAccountQueryKeyForBucket(bucket)
+	if queries == nil || !cacheable {
+		return s.loadAccountsFromDB(ctx, bucket, bucket.Mode == SchedulerModeMixed)
+	}
+	if accounts, ok := queries.accounts[key]; ok {
+		return accounts, nil
+	}
+	if queries.remaining[key] <= 1 {
+		return s.loadAccountsFromDB(ctx, bucket, false)
+	}
+	accounts, err := s.loadAccountsFromDB(ctx, bucket, false)
+	if err != nil {
+		return nil, err
+	}
+	queries.accounts[key] = accounts
+	return accounts, nil
 }
 
 func (s *SchedulerSnapshotService) bucketFor(groupID *int64, platform string, mode string) SchedulerBucket {
