@@ -118,7 +118,7 @@ func TestForwardAsAnthropic_StreamingBareErrorAfterOutputIsVisible(t *testing.T)
 		httpUpstream: upstream,
 	}
 
-	account := rawChatCompletionsTestAccount()
+	account := responsesSupportedMessagesTestAccount()
 	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)
@@ -157,7 +157,7 @@ func TestForwardAsAnthropic_StreamingBareErrorBeforeOutputFailsOver(t *testing.T
 		httpUpstream: upstream,
 	}
 
-	account := rawChatCompletionsTestAccount()
+	account := responsesSupportedMessagesTestAccount()
 	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)
