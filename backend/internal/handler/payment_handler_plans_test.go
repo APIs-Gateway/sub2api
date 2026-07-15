@@ -48,6 +48,8 @@ func TestPaymentHandlerPlanEndpointsIncludeDisplayCurrency(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:payment_handler_plan_currency?mode=memory&cache=shared&_fk=1")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec("PRAGMA foreign_keys = ON")
+	require.NoError(t, err)
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
