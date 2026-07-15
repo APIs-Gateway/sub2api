@@ -28,6 +28,29 @@ type openAIResponsesFailoverCancelUpstream struct {
 	onFirstDo  func()
 }
 
+type cancelOnOpenAIAccountSelectionRepo struct {
+	openAIImagesFailoverAccountRepo
+	onCancel context.CancelFunc
+	once     sync.Once
+}
+
+func (r *cancelOnOpenAIAccountSelectionRepo) cancelAndFail() ([]service.Account, error) {
+	r.once.Do(r.onCancel)
+	return nil, context.Canceled
+}
+
+func (r *cancelOnOpenAIAccountSelectionRepo) ListSchedulableByGroupIDAndPlatform(context.Context, int64, string) ([]service.Account, error) {
+	return r.cancelAndFail()
+}
+
+func (r *cancelOnOpenAIAccountSelectionRepo) ListSchedulableByPlatform(context.Context, string) ([]service.Account, error) {
+	return r.cancelAndFail()
+}
+
+func (r *cancelOnOpenAIAccountSelectionRepo) ListSchedulableUngroupedByPlatform(context.Context, string) ([]service.Account, error) {
+	return r.cancelAndFail()
+}
+
 func (u *openAIResponsesFailoverCancelUpstream) Do(_ *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
 	u.mu.Lock()
 	u.accountIDs = append(u.accountIDs, accountID)
@@ -56,26 +79,31 @@ func newOpenAIResponsesFailoverTestHandler(t *testing.T, upstream service.HTTPUp
 			ID:          1,
 			Name:        "responses-account-1",
 			Platform:    service.PlatformOpenAI,
-			Type:        service.AccountTypeOAuth,
+			Type:        service.AccountTypeAPIKey,
 			Status:      service.StatusActive,
 			Schedulable: true,
 			Concurrency: 0,
 			Priority:    0,
-			Credentials: map[string]any{"access_token": "token-1"},
+			Credentials: map[string]any{"access_token": "token-1", "api_key": "sk-test-1", "openai_capabilities": []any{"chat_completions", "embeddings"}},
 		},
 		{
 			ID:          2,
 			Name:        "responses-account-2",
 			Platform:    service.PlatformOpenAI,
-			Type:        service.AccountTypeOAuth,
+			Type:        service.AccountTypeAPIKey,
 			Status:      service.StatusActive,
 			Schedulable: true,
 			Concurrency: 0,
 			Priority:    1,
-			Credentials: map[string]any{"access_token": "token-2"},
+			Credentials: map[string]any{"access_token": "token-2", "api_key": "sk-test-2", "openai_capabilities": []any{"chat_completions", "embeddings"}},
 		},
 	}
 	accountRepo := openAIImagesFailoverAccountRepo{accounts: accounts}
+	return newOpenAIResponsesFailoverTestHandlerWithRepo(t, upstream, accountRepo)
+}
+
+func newOpenAIResponsesFailoverTestHandlerWithRepo(t *testing.T, upstream service.HTTPUpstream, accountRepo service.AccountRepository) *OpenAIGatewayHandler {
+	t.Helper()
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	gatewayService := service.NewOpenAIGatewayService(
 		accountRepo,
@@ -121,10 +149,13 @@ func newOpenAIResponsesFailoverTestHandler(t *testing.T, upstream service.HTTPUp
 }
 
 func newOpenAIResponsesFailoverTestContext(t *testing.T, ctx context.Context) (*gin.Context, *httptest.ResponseRecorder) {
+	return newOpenAIFailoverTestContext(t, ctx, "/v1/responses", `{"model":"gpt-5.1","stream":false,"input":"hello"}`, false)
+}
+
+func newOpenAIFailoverTestContext(t *testing.T, ctx context.Context, path, body string, allowImageGeneration bool) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	groupID := int64(3131)
-	body := []byte(`{"model":"gpt-5.1","stream":false,"input":"hello"}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
 	if ctx != nil {
 		req = req.WithContext(ctx)
 	}
@@ -136,13 +167,197 @@ func newOpenAIResponsesFailoverTestContext(t *testing.T, ctx context.Context) (*
 		ID:      99,
 		GroupID: &groupID,
 		Group: &service.Group{
-			ID:       groupID,
-			Platform: service.PlatformOpenAI,
+			ID:                    groupID,
+			Platform:              service.PlatformOpenAI,
+			AllowImageGeneration:  allowImageGeneration,
+			AllowMessagesDispatch: true,
 		},
 		User: &service.User{ID: 100},
 	})
 	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 100, Concurrency: 0})
 	return c, rec
+}
+
+func TestOpenAIGatewayHandlerChatCompletions_FailoverAbortsWhenClientDisconnected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	upstream := &openAIResponsesFailoverCancelUpstream{onFirstDo: cancel}
+	handler := newOpenAIResponsesFailoverTestHandler(t, upstream)
+	c, rec := newOpenAIFailoverTestContext(t, ctx, "/v1/chat/completions", `{"model":"gpt-5.1","stream":false,"messages":[{"role":"user","content":"hello"}]}`, false)
+
+	handler.ChatCompletions(c)
+
+	require.Equal(t, []int64{1}, upstream.calls())
+	require.Equal(t, statusClientClosedRequest, c.Writer.Status())
+	require.Zero(t, rec.Body.Len())
+}
+
+func TestOpenAIGatewayHandlerEmbeddings_FailoverAbortsWhenClientDisconnected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	upstream := &openAIResponsesFailoverCancelUpstream{onFirstDo: cancel}
+	handler := newOpenAIResponsesFailoverTestHandler(t, upstream)
+	c, rec := newOpenAIFailoverTestContext(t, ctx, "/v1/embeddings", `{"model":"text-embedding-3-small","input":"hello"}`, false)
+
+	handler.Embeddings(c)
+	require.Equal(t, []int64{1}, upstream.calls())
+	require.Equal(t, statusClientClosedRequest, c.Writer.Status())
+	require.Zero(t, rec.Body.Len())
+}
+
+func TestOpenAIGatewayHandlerImages_FailoverAbortsWhenClientDisconnected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	upstream := &openAIResponsesFailoverCancelUpstream{onFirstDo: cancel}
+	handler := newOpenAIResponsesFailoverTestHandler(t, upstream)
+	c, rec := newOpenAIFailoverTestContext(t, ctx, "/v1/images/generations", `{"model":"gpt-image-2","prompt":"draw a cat"}`, true)
+
+	handler.Images(c)
+
+	require.Equal(t, []int64{1}, upstream.calls())
+	require.Equal(t, statusClientClosedRequest, c.Writer.Status())
+	require.Zero(t, rec.Body.Len())
+}
+
+func TestOpenAIGatewayHandlerMessages_FailoverAbortsWhenClientDisconnected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	upstream := &openAIResponsesFailoverCancelUpstream{onFirstDo: cancel}
+	handler := newOpenAIResponsesFailoverTestHandler(t, upstream)
+	c, rec := newOpenAIFailoverTestContext(t, ctx, "/v1/messages", `{"model":"gpt-5.1","stream":false,"messages":[{"role":"user","content":"hello"}]}`, false)
+
+	handler.Messages(c)
+
+	require.Equal(t, []int64{1}, upstream.calls())
+	require.Equal(t, statusClientClosedRequest, c.Writer.Status())
+	require.Zero(t, rec.Body.Len())
+}
+
+func TestOpenAIGatewayHandlerFailoverGuardsStopBeforeSelectingAnAccount(t *testing.T) {
+	cases := []struct {
+		name   string
+		path   string
+		body   string
+		invoke func(*OpenAIGatewayHandler, *gin.Context)
+	}{
+		{
+			name:   "responses",
+			path:   "/v1/responses",
+			body:   `{"model":"gpt-5.1","stream":false,"input":"hello"}`,
+			invoke: func(h *OpenAIGatewayHandler, c *gin.Context) { h.Responses(c) },
+		},
+		{
+			name:   "chat_completions",
+			path:   "/v1/chat/completions",
+			body:   `{"model":"gpt-5.1","stream":false,"messages":[{"role":"user","content":"hello"}]}`,
+			invoke: func(h *OpenAIGatewayHandler, c *gin.Context) { h.ChatCompletions(c) },
+		},
+		{
+			name:   "messages",
+			path:   "/v1/messages",
+			body:   `{"model":"gpt-5.1","stream":false,"messages":[{"role":"user","content":"hello"}]}`,
+			invoke: func(h *OpenAIGatewayHandler, c *gin.Context) { h.Messages(c) },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			upstream := &openAIResponsesFailoverCancelUpstream{}
+			handler := newOpenAIResponsesFailoverTestHandler(t, upstream)
+			c, rec := newOpenAIFailoverTestContext(t, ctx, tc.path, tc.body, false)
+
+			tc.invoke(handler, c)
+
+			require.Empty(t, upstream.calls())
+			require.Equal(t, statusClientClosedRequest, c.Writer.Status())
+			require.Zero(t, rec.Body.Len())
+		})
+	}
+}
+
+func TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError(t *testing.T) {
+	cases := []struct {
+		name   string
+		path   string
+		body   string
+		invoke func(*OpenAIGatewayHandler, *gin.Context)
+	}{
+		{
+			name:   "responses",
+			path:   "/v1/responses",
+			body:   `{"model":"gpt-5.1","stream":false,"input":"hello"}`,
+			invoke: func(h *OpenAIGatewayHandler, c *gin.Context) { h.Responses(c) },
+		},
+		{
+			name:   "chat_completions",
+			path:   "/v1/chat/completions",
+			body:   `{"model":"gpt-5.1","stream":false,"messages":[{"role":"user","content":"hello"}]}`,
+			invoke: func(h *OpenAIGatewayHandler, c *gin.Context) { h.ChatCompletions(c) },
+		},
+		{
+			name:   "embeddings",
+			path:   "/v1/embeddings",
+			body:   `{"model":"text-embedding-3-small","input":"hello"}`,
+			invoke: func(h *OpenAIGatewayHandler, c *gin.Context) { h.Embeddings(c) },
+		},
+		{
+			name:   "images",
+			path:   "/v1/images/generations",
+			body:   `{"model":"gpt-image-2","prompt":"draw a cat"}`,
+			invoke: func(h *OpenAIGatewayHandler, c *gin.Context) { h.Images(c) },
+		},
+		{
+			name:   "messages",
+			path:   "/v1/messages",
+			body:   `{"model":"gpt-5.1","stream":false,"messages":[{"role":"user","content":"hello"}]}`,
+			invoke: func(h *OpenAIGatewayHandler, c *gin.Context) { h.Messages(c) },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			ctx, cancel := context.WithCancel(context.Background())
+			upstream := &openAIResponsesFailoverCancelUpstream{}
+			repo := &cancelOnOpenAIAccountSelectionRepo{
+				openAIImagesFailoverAccountRepo: openAIImagesFailoverAccountRepo{accounts: []service.Account{{
+					ID: 1, Name: "selection-account", Platform: service.PlatformOpenAI,
+					Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true,
+					Credentials: map[string]any{"api_key": "sk-test", "openai_capabilities": []any{"chat_completions", "embeddings"}},
+				}}},
+				onCancel: cancel,
+			}
+			handler := newOpenAIResponsesFailoverTestHandlerWithRepo(t, upstream, repo)
+			c, rec := newOpenAIFailoverTestContext(t, ctx, tc.path, tc.body, tc.name == "images")
+
+			tc.invoke(handler, c)
+
+			require.Empty(t, upstream.calls())
+			require.Equal(t, statusClientClosedRequest, c.Writer.Status())
+			require.Zero(t, rec.Body.Len())
+		})
+	}
+}
+
+func TestFailoverClientGoneStopsCommittedCompactKeepalive(t *testing.T) {
+	c, _, stop := newCommittedCompactKeepaliveContext(t)
+	defer stop()
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	c.Request = c.Request.WithContext(ctx)
+	cancel()
+
+	require.True(t, failoverClientGone(c))
 }
 
 // TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected 复现
