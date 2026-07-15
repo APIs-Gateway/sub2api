@@ -435,7 +435,28 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 		err := newTestFailoverErr(400, true, false)
 
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // 立即取消
+		go func() {
+			time.Sleep(30 * time.Millisecond)
+			cancel() // 通过入口检查后、sleep 期间取消
+		}()
+
+		start := time.Now()
+		action := fs.HandleFailoverError(ctx, mock, 100, "openai", err)
+		elapsed := time.Since(start)
+
+		require.Equal(t, FailoverCanceled, action)
+		require.Less(t, elapsed, 400*time.Millisecond, "sleep 应被取消打断")
+		// 进入重试分支后才取消：重试计数已递增
+		require.Equal(t, 1, fs.SameAccountRetryCount[100])
+	})
+
+	t.Run("入口即已取消_不改动任何failover状态", func(t *testing.T) {
+		mock := &mockTempUnscheduler{}
+		fs := NewFailoverState(3, false)
+		err := newTestFailoverErr(520, false, false)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
 		start := time.Now()
 		action := fs.HandleFailoverError(ctx, mock, 100, "openai", err)
@@ -443,8 +464,11 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 
 		require.Equal(t, FailoverCanceled, action)
 		require.Less(t, elapsed, 100*time.Millisecond, "应立即返回")
-		// 重试计数仍应递增
-		require.Equal(t, 1, fs.SameAccountRetryCount[100])
+		require.Equal(t, 0, fs.SwitchCount, "取消的请求不应计入切换")
+		require.Equal(t, 0, fs.SameAccountRetryCount[100], "取消的请求不应改动重试计数")
+		require.NotContains(t, fs.FailedAccountIDs, int64(100))
+		require.Nil(t, fs.LastFailoverErr)
+		require.Empty(t, mock.calls, "不应触发 TempUnschedule")
 	})
 
 	t.Run("Antigravity延迟期间context取消", func(t *testing.T) {
