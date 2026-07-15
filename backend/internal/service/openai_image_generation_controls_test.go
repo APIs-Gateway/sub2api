@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -383,7 +383,7 @@ func TestOpenAIGatewayServiceForward_CodexBridgePreservesImageGenFunction(t *tes
 			require.NotNil(t, upstream.lastReq)
 
 			var forwarded map[string]any
-			require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
+			require.NoError(t, common.Unmarshal(upstream.lastBody, &forwarded))
 			require.True(t, hasCodexImageGenerationFunctionTool(forwarded))
 			require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
 			require.False(t, gjson.GetBytes(upstream.lastBody, "tool_choice").Exists())
