@@ -56,6 +56,24 @@ func openAIModelMappedBody(body []byte, mapped bool, mappedModel string, replace
 	return replace(body, mappedModel)
 }
 
+func appendOpenAIProxyLogFields(account *service.Account, fields ...zap.Field) []zap.Field {
+	if account == nil {
+		return fields
+	}
+	if account.Proxy != nil {
+		return append(fields,
+			zap.Int64("proxy_id", account.Proxy.ID),
+			zap.String("proxy_name", account.Proxy.Name),
+			zap.String("proxy_host", account.Proxy.Host),
+			zap.Int("proxy_port", account.Proxy.Port),
+		)
+	}
+	if account.ProxyID != nil {
+		return append(fields, zap.Int64p("proxy_id", account.ProxyID))
+	}
+	return fields
+}
+
 func newOpenAIModelMappedBodyCache(body []byte, replace openAIModelBodyReplaceFunc) func(bool, string) []byte {
 	replacedBodies := make(map[string][]byte)
 	return func(mapped bool, mappedModel string) []byte {
@@ -470,7 +488,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
-					reqLog.Warn("openai.upstream_failover_switching",
+					reqLog.With(appendOpenAIProxyLogFields(account)...).Warn("openai.upstream_failover_switching",
 						zap.Int64("account_id", account.ID),
 						zap.Int("upstream_status", failoverErr.StatusCode),
 						zap.Int("switch_count", switchCount),
@@ -1654,7 +1672,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
 			closeStatus, closeReason := summarizeWSCloseErrorForLog(err)
-			reqLog.Warn("openai.websocket_proxy_failed",
+			reqLog.With(appendOpenAIProxyLogFields(account)...).Warn("openai.websocket_proxy_failed",
 				zap.Int64("account_id", account.ID),
 				zap.Error(err),
 				zap.String("close_status", closeStatus),
