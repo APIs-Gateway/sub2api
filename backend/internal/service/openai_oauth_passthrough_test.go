@@ -1011,7 +1011,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_Transient5xxTriggersFailover(t *
 					"api_key":  "sk-test",
 					"base_url": "https://api.example.test",
 				},
-				Extra:       map[string]any{"openai_passthrough": true},
+				Extra:       map[string]any{"openai_passthrough": true, "openai_responses_supported": true},
 				Status:      StatusActive,
 				Schedulable: true,
 			}
@@ -1053,7 +1053,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_ContextWindow502DoesNotFailover(
 	account := &Account{
 		ID: 127, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.example.test"},
-		Extra:       map[string]any{"openai_passthrough": true}, Status: StatusActive, Schedulable: true,
+		Extra:       map[string]any{"openai_passthrough": true, "openai_responses_supported": true}, Status: StatusActive, Schedulable: true,
 	}
 
 	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.2","input":"hello"}`))
@@ -1092,7 +1092,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeConfigured5xxRetriesSame
 			"pool_mode":                    true,
 			"pool_mode_retry_status_codes": []any{float64(http.StatusBadGateway)},
 		},
-		Extra: map[string]any{"openai_passthrough": true}, Status: StatusActive, Schedulable: true,
+		Extra: map[string]any{"openai_passthrough": true, "openai_responses_supported": true}, Status: StatusActive, Schedulable: true,
 	}
 
 	_, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.2","input":"hello"}`))
@@ -1124,7 +1124,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsErrorAndFiltersRetryAfte
 	account := &Account{
 		ID: 129, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.example.test"},
-		Extra:       map[string]any{"openai_passthrough": true}, Status: StatusActive, Schedulable: true,
+		Extra:       map[string]any{"openai_passthrough": true, "openai_responses_supported": true}, Status: StatusActive, Schedulable: true,
 	}
 
 	_, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.2","input":"hello"}`))
@@ -1155,7 +1155,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_ReadsErrorBodyOnce(t *testing.T)
 	account := &Account{
 		ID: 130, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.example.test"},
-		Extra:       map[string]any{"openai_passthrough": true}, Status: StatusActive, Schedulable: true,
+		Extra:       map[string]any{"openai_passthrough": true, "openai_responses_supported": true}, Status: StatusActive, Schedulable: true,
 	}
 
 	_, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.2","input":"hello"}`))
