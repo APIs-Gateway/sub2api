@@ -290,6 +290,13 @@ func ensureAgentIdentityTaskForAccount(ctx context.Context, repo AccountReposito
 	return nil
 }
 
+// EnsureOpenAIAgentIdentityTask makes sure an Agent Identity account has a
+// current upstream task. Gateway and quota integrations use this entry point
+// when they add task-invalid recovery in follow-up phases.
+func EnsureOpenAIAgentIdentityTask(ctx context.Context, repo AccountRepository, account *Account, expectedTaskID string) error {
+	return ensureAgentIdentityTaskForAccount(ctx, repo, account, expectedTaskID)
+}
+
 func accountIdentityTaskLock(accountID int64) *sync.Mutex {
 	if accountID <= 0 {
 		return &sync.Mutex{}
@@ -320,4 +327,10 @@ func buildAgentIdentityAuthenticationHeaders(ctx context.Context, repo AccountRe
 	headers := make(http.Header)
 	headers.Set("Authorization", assertion)
 	return headers, nil
+}
+
+// BuildOpenAIAgentIdentityAuthenticationHeaders returns the assertion header
+// required by Agent Identity upstream requests.
+func BuildOpenAIAgentIdentityAuthenticationHeaders(ctx context.Context, repo AccountRepository, account *Account) (http.Header, error) {
+	return buildAgentIdentityAuthenticationHeaders(ctx, repo, account)
 }
