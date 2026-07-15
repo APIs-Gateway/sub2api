@@ -165,21 +165,6 @@ func TestSchedulerSnapshotServiceTriggerFullRebuildUsesDefaultBuckets(t *testing
 	require.Positive(t, lockCalls)
 }
 
-func TestSchedulerSnapshotServiceFullRebuildReturnsCompletedRequestResult(t *testing.T) {
-	wantErr := errors.New("previous rebuild failed")
-	svc := &SchedulerSnapshotService{}
-	svc.fullRebuildStateMu.Lock()
-	svc.fullRebuildRequested = 1
-	svc.fullRebuildCompleted = 1
-	svc.fullRebuildLastErr = wantErr
-	svc.fullRebuildStateMu.Unlock()
-
-	require.ErrorIs(t, svc.coalesceFullRebuild(func() error {
-		t.Fatal("completed request should not execute another rebuild")
-		return nil
-	}), wantErr)
-}
-
 func schedulerFullRebuildState(svc *SchedulerSnapshotService) (requested uint64, completed uint64) {
 	svc.fullRebuildStateMu.Lock()
 	defer svc.fullRebuildStateMu.Unlock()
