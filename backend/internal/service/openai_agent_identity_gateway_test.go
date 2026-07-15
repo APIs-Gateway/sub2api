@@ -35,6 +35,31 @@ func TestOpenAIGatewayGetAccessTokenAgentIdentityBuildsAssertion(t *testing.T) {
 	require.NotContains(t, token, "Bearer ")
 }
 
+func TestOpenAIGatewayGetAccessTokenAgentIdentityReturnsCredentialError(t *testing.T) {
+	account := newAgentIdentityTestAccount(t, "invalid-private-key")
+
+	svc := &OpenAIGatewayService{}
+	_, _, err := svc.GetAccessToken(context.Background(), account)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "agent identity")
+}
+
+func TestOpenAIGatewayGetAccessTokenOAuthKeepsCredentialFallback(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "oauth-fallback",
+		},
+	}
+
+	svc := &OpenAIGatewayService{}
+	token, kind, err := svc.GetAccessToken(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, "oauth-fallback", token)
+	require.Equal(t, "oauth", kind)
+}
+
 func TestOpenAIBuildUpstreamRequestAgentIdentityUsesAssertion(t *testing.T) {
 	c := newAgentIdentityGatewayContext(t, "/v1/responses")
 	account := &Account{
