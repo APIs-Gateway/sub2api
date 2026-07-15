@@ -720,7 +720,7 @@ func TestStreamingToolCallDoneWithoutDeltaEmitsArguments(t *testing.T) {
 	assert.Equal(t, "content_block_stop", events[1].Type)
 }
 
-func TestStreamingReadToolDropsEmptyPages(t *testing.T) {
+func TestStreamingReadToolEmitsSanitizedCompleteJSON(t *testing.T) {
 	state := NewResponsesEventToAnthropicState()
 
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
@@ -739,20 +739,32 @@ func TestStreamingReadToolDropsEmptyPages(t *testing.T) {
 	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:        "response.function_call_arguments.delta",
 		OutputIndex: 0,
-		Delta:       `{"file_path":"/tmp/demo.py","limit":2000,"offset":0,"pages":""}`,
+		Delta:       `{"file_path":"/tmp/demo.py","limit":2000,`,
 	}, state)
-	assert.Len(t, events, 0)
+	assert.Empty(t, events, "partial Read JSON must wait for sanitization")
+
+	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type:        "response.function_call_arguments.delta",
+		OutputIndex: 0,
+		Delta:       `"offset":0,"pages":""}`,
+	}, state)
+	require.Len(t, events, 1)
+	assert.Equal(t, "content_block_delta", events[0].Type)
+	assert.Equal(t, "input_json_delta", events[0].Delta.Type)
+	assert.JSONEq(t, `{"file_path":"/tmp/demo.py","limit":2000,"offset":0}`, events[0].Delta.PartialJSON)
 
 	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:        "response.function_call_arguments.done",
 		OutputIndex: 0,
 		Arguments:   `{"file_path":"/tmp/demo.py","limit":2000,"offset":0,"pages":""}`,
 	}, state)
-	require.Len(t, events, 2)
-	assert.Equal(t, "content_block_delta", events[0].Type)
-	assert.Equal(t, "input_json_delta", events[0].Delta.Type)
-	assert.JSONEq(t, `{"file_path":"/tmp/demo.py","limit":2000,"offset":0}`, events[0].Delta.PartialJSON)
-	assert.Equal(t, "content_block_stop", events[1].Type)
+	require.Len(t, events, 1)
+	assert.Equal(t, "content_block_stop", events[0].Type)
+
+	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type: "response.function_call_arguments.done",
+	}, state)
+	assert.Empty(t, events, "duplicate done must be idempotent")
 }
 
 func TestStreamingReasoning(t *testing.T) {
