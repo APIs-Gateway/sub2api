@@ -6114,12 +6114,18 @@ func sanitizeEncryptedReasoningInputItem(item any) (next any, changed bool, keep
 		return item, false, true
 	}
 
-	_, hasEncryptedContent := inputItem["encrypted_content"]
-	if !hasEncryptedContent {
+	changed := false
+	if _, has := inputItem["encrypted_content"]; has {
+		delete(inputItem, "encrypted_content")
+		changed = true
+	}
+	if value, has := inputItem["content"]; has && value == nil {
+		delete(inputItem, "content")
+		changed = true
+	}
+	if !changed {
 		return item, false, true
 	}
-
-	delete(inputItem, "encrypted_content")
 	if len(inputItem) == 1 {
 		return nil, true, false
 	}
