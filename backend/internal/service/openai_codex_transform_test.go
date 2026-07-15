@@ -696,12 +696,14 @@ func TestEnsureOpenAIResponsesImageGenerationTool_PreservesImageGenNamespace(t *
 			modified := ensureOpenAIResponsesImageGenerationTool(tt.reqBody)
 
 			require.False(t, modified)
-			tools, _ := tt.reqBody["tools"].([]any)
-			for _, rawTool := range tools {
-				tool, ok := rawTool.(map[string]any)
-				require.True(t, ok)
-				require.NotEqual(t, "image_generation", firstNonEmptyString(tool["type"]))
+			if tools, ok := tt.reqBody["tools"].([]any); ok {
+				for _, rawTool := range tools {
+					tool, ok := rawTool.(map[string]any)
+					require.True(t, ok)
+					require.NotEqual(t, "image_generation", firstNonEmptyString(tool["type"]))
+				}
 			}
+			require.True(t, hasOpenAIImageGenerationTool(tt.reqBody))
 		})
 	}
 }
