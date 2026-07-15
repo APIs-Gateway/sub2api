@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/common"
 )
 
 type openAIRateLimitResetCreditDetailPayload struct {
@@ -41,13 +43,13 @@ func parseOpenAIRateLimitResetCreditDetails(body []byte) (openAIRateLimitResetCr
 	var availableCount *int
 	var creditListPresent bool
 	if trimmed[0] == '[' {
-		if err := json.Unmarshal(trimmed, &rawCredits); err != nil {
+		if err := common.Unmarshal(trimmed, &rawCredits); err != nil {
 			return openAIRateLimitResetCreditDetails{}, err
 		}
 		creditListPresent = true
 	} else {
 		var payload openAIRateLimitResetCreditDetailsPayload
-		if err := json.Unmarshal(trimmed, &payload); err != nil {
+		if err := common.Unmarshal(trimmed, &payload); err != nil {
 			return openAIRateLimitResetCreditDetails{}, err
 		}
 		availableCount = parseOpenAIResetCreditAvailableCount(payload.AvailableCount, payload.AvailableCountCamel)
@@ -107,7 +109,7 @@ func parseOpenAIResetCreditAvailableCount(values ...json.RawMessage) *int {
 		var count int
 		if trimmed[0] == '"' {
 			var text string
-			if err := json.Unmarshal(trimmed, &text); err != nil {
+			if err := common.Unmarshal(trimmed, &text); err != nil {
 				continue
 			}
 			parsed, err := strconv.Atoi(strings.TrimSpace(text))
@@ -115,7 +117,7 @@ func parseOpenAIResetCreditAvailableCount(values ...json.RawMessage) *int {
 				continue
 			}
 			count = parsed
-		} else if err := json.Unmarshal(trimmed, &count); err != nil {
+		} else if err := common.Unmarshal(trimmed, &count); err != nil {
 			continue
 		}
 		if count >= 0 {
@@ -132,7 +134,7 @@ func firstPresentResetCreditPayload(values ...json.RawMessage) ([]*openAIRateLim
 			continue
 		}
 		var credits []*openAIRateLimitResetCreditDetailPayload
-		if err := json.Unmarshal(trimmed, &credits); err != nil {
+		if err := common.Unmarshal(trimmed, &credits); err != nil {
 			return nil, false, err
 		}
 		return credits, true, nil
