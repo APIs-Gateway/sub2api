@@ -46,6 +46,29 @@ const mountPlanCard = (groupPlatform: string) =>
   });
 
 describe("SubscriptionPlanCard", () => {
+  it("shows the optional display currency beside current and original prices", () => {
+    const wrapper = mount(SubscriptionPlanCard, {
+      props: {
+        plan: {
+          id: 1,
+          group_id: 10,
+          group_platform: "openai",
+          name: "Pro",
+          price: 10,
+          original_price: 20,
+          currency: "USD",
+          features: [],
+          rate_multiplier: 1,
+          validity_days: 30,
+          validity_unit: "day",
+        },
+      },
+      global: { plugins: [i18n] },
+    })
+
+    expect(wrapper.text()).toContain("USD")
+  })
+
   it("does not show Antigravity model scopes for OpenAI plans", () => {
     const text = mountPlanCard("openai").text();
 

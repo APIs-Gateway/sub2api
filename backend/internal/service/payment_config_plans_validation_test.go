@@ -160,6 +160,19 @@ func TestValidatePlanPatch_ValidOriginalPrice(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestValidatePlanPatch_InvalidCurrency(t *testing.T) {
+	currency := "US1"
+	err := validatePlanPatch(UpdatePlanRequest{Currency: &currency})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "currency")
+}
+
+func TestValidatePlanPatch_ValidCurrency(t *testing.T) {
+	currency := " usd "
+	err := validatePlanPatch(UpdatePlanRequest{Currency: &currency})
+	require.NoError(t, err)
+}
+
 func TestValidatePlanPatch_NilOriginalPrice(t *testing.T) {
 	err := validatePlanPatch(UpdatePlanRequest{OriginalPrice: nil})
 	require.NoError(t, err)
