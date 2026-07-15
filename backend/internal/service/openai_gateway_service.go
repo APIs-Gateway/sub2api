@@ -5346,7 +5346,7 @@ func normalizeOpenAIResponsesFunctionCallArguments(data []byte) ([]byte, bool) {
 	}
 
 	updated := data
-	changed = false
+	changed := false
 	setDedupedArgument := func(path string) {
 		argument := gjson.GetBytes(updated, path)
 		if !argument.Exists() || argument.Type != gjson.String {
@@ -6114,7 +6114,7 @@ func sanitizeEncryptedReasoningInputItem(item any) (next any, changed bool, keep
 		return item, false, true
 	}
 
-	changed := false
+	changed = false
 	if _, has := inputItem["encrypted_content"]; has {
 		delete(inputItem, "encrypted_content")
 		changed = true
