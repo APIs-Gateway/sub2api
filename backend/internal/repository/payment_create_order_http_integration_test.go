@@ -30,7 +30,7 @@ func createOrderHTTPRouter(t *testing.T, userID int64, paySvc *service.PaymentSe
 			c.Next()
 		})
 	}
-	h := userhandler.NewPaymentHandler(paySvc, nil, nil)
+	h := userhandler.NewPaymentHandler(paySvc, nil)
 	router.POST("/api/v1/payment/orders", h.CreateOrder)
 	return router
 }

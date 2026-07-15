@@ -25,7 +25,7 @@ func TestPaymentHandlerEndpoints_ReadOnlyPostgres(t *testing.T) {
 	settingRepo := NewSettingRepository(client)
 	require.NoError(t, settingRepo.Set(ctx, service.SettingPaymentEnabled, "true"))
 	configSvc := service.NewPaymentConfigService(client, settingRepo, nil)
-	h := userhandler.NewPaymentHandler(nil, configSvc, nil)
+	h := userhandler.NewPaymentHandler(nil, configSvc)
 
 	// 一个在售套餐(D>0)供 GetPlans 列出 + 平台富化。
 	group := mustCreateGroup(t, client, &service.Group{Name: "pay-plans-" + uuid.NewString()})
