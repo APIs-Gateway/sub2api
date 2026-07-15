@@ -7,7 +7,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
+
+	"golang.org/x/net/http2"
 )
 
 func newCodexModelsTestAccount() *Account {
@@ -225,10 +229,23 @@ func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
 	}{
 		{name: "nil", err: nil},
 		{name: "configuration error", err: errors.New("invalid proxy URL")},
+		{name: "upstream configuration error", err: errors.New("upstream error: invalid proxy")},
+		{name: "redirect policy error", err: &url.Error{Op: "Get", URL: "https://upstream.example/v1/models", Err: errors.New("stopped after 10 redirects")}},
 		{name: "canceled", err: context.Canceled},
 		{name: "deadline", err: context.DeadlineExceeded, retryable: true},
 		{name: "eof", err: io.EOF, retryable: true},
+		{name: "unexpected eof", err: io.ErrUnexpectedEOF, retryable: true},
+		{name: "closed connection", err: net.ErrClosed, retryable: true},
 		{name: "network operation", err: &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")}, retryable: true},
+		{name: "dns", err: &net.DNSError{Err: "temporary failure", Name: "upstream.example"}, retryable: true},
+		{name: "typed goaway", err: http2.GoAwayError{ErrCode: http2.ErrCodeNo}, retryable: true},
+		{name: "typed stream error", err: http2.StreamError{Code: http2.ErrCodeRefusedStream}, retryable: true},
+		{name: "typed connection error", err: http2.ConnectionError(http2.ErrCodeProtocol), retryable: true},
+		{name: "stdlib goaway", err: errors.New("http2: server sent GOAWAY and closed the connection"), retryable: true},
+		{name: "stdlib refused stream", err: errors.New("stream error: stream ID 3; REFUSED_STREAM"), retryable: true},
+		{name: "stdlib frame too large", err: errors.New("http2: frame too large"), retryable: true},
+		{name: "stdlib connection error", err: errors.New("connection error: PROTOCOL_ERROR"), retryable: true},
+		{name: "timeout error", err: codexModelsTimeoutError{}, retryable: true},
 	}
 
 	for _, tt := range tests {
@@ -239,6 +256,39 @@ func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
 		})
 	}
 }
+
+func TestIsRetryableCodexModelsManifestHTTP2ConnectionCodes(t *testing.T) {
+	codes := []http2.ErrCode{
+		http2.ErrCodeNo,
+		http2.ErrCodeProtocol,
+		http2.ErrCodeInternal,
+		http2.ErrCodeFlowControl,
+		http2.ErrCodeSettingsTimeout,
+		http2.ErrCodeStreamClosed,
+		http2.ErrCodeFrameSize,
+		http2.ErrCodeRefusedStream,
+		http2.ErrCodeCancel,
+		http2.ErrCodeCompression,
+		http2.ErrCodeConnect,
+		http2.ErrCodeEnhanceYourCalm,
+		http2.ErrCodeInadequateSecurity,
+		http2.ErrCodeHTTP11Required,
+	}
+	for _, code := range codes {
+		t.Run(code.String(), func(t *testing.T) {
+			err := errors.New("connection error: " + strings.ToLower(code.String()))
+			if !isRetryableCodexModelsManifestTransportError(err) {
+				t.Fatalf("expected %s to be retryable", code)
+			}
+		})
+	}
+}
+
+type codexModelsTimeoutError struct{}
+
+func (codexModelsTimeoutError) Error() string   { return "request timed out" }
+func (codexModelsTimeoutError) Timeout() bool   { return true }
+func (codexModelsTimeoutError) Temporary() bool { return true }
 
 func TestIsRetryableCodexModelsManifestErrorUsesWrapper(t *testing.T) {
 	if !IsRetryableCodexModelsManifestError(&codexModelsManifestUpstreamError{err: errors.New("temporary"), retryable: true}) {

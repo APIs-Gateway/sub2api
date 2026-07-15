@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,14 @@ import (
 // see the account's real, always-current model entitlements instead of a
 // frozen local cache.
 func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
+	h.codexModels(c, func(ctx context.Context, account *service.Account, clientVersion, ifNoneMatch string) (*service.CodexModelsManifest, error) {
+		return h.gatewayService.FetchCodexModelsManifest(ctx, account, clientVersion, ifNoneMatch)
+	})
+}
+
+type codexModelsManifestFetcher func(context.Context, *service.Account, string, string) (*service.CodexModelsManifest, error)
+
+func (h *OpenAIGatewayHandler) codexModels(c *gin.Context, fetchManifest codexModelsManifestFetcher) {
 	if c.Request.Context().Err() != nil {
 		return
 	}
@@ -55,7 +64,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			return
 		}
 
-		manifest, err := h.gatewayService.FetchCodexModelsManifest(c.Request.Context(), account, c.Query("client_version"), c.GetHeader("If-None-Match"))
+		manifest, err := fetchManifest(c.Request.Context(), account, c.Query("client_version"), c.GetHeader("If-None-Match"))
 		if err != nil {
 			if c.Request.Context().Err() != nil {
 				return

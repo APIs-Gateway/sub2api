@@ -43,7 +43,17 @@ func (e *codexModelsManifestUpstreamError) Unwrap() error { return e.err }
 // responses, except 429, are intentionally not retried.
 func IsRetryableCodexModelsManifestError(err error) bool {
 	var upstreamErr *codexModelsManifestUpstreamError
-	return errors.As(err, &upstreamErr) && upstreamErr.retryable
+	if errors.As(err, &upstreamErr) {
+		return upstreamErr.retryable
+	}
+	// Keep the classification stable for callers that preserve the canonical
+	// application error but do not retain the private wrapper type.
+	var appErr *infraerrors.ApplicationError
+	if errors.As(err, &appErr) && appErr.Reason == "OPENAI_CODEX_MODELS_UPSTREAM_FAILED" {
+		code := int(appErr.Code)
+		return code == http.StatusTooManyRequests || (code >= http.StatusInternalServerError && code < 600)
+	}
+	return false
 }
 
 func isRetryableCodexModelsManifestTransportError(err error) bool {
