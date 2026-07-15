@@ -334,3 +334,10 @@ func buildAgentIdentityAuthenticationHeaders(ctx context.Context, repo AccountRe
 func BuildOpenAIAgentIdentityAuthenticationHeaders(ctx context.Context, repo AccountRepository, account *Account) (http.Header, error) {
 	return buildAgentIdentityAuthenticationHeaders(ctx, repo, account)
 }
+
+func buildOpenAIAuthorizationHeader(account *Account, token string) string {
+	if account != nil && account.IsOpenAIAgentIdentity() {
+		return token
+	}
+	return "Bearer " + token
+}

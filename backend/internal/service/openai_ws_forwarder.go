@@ -1120,7 +1120,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	promptCacheKey string,
 ) (http.Header, openAIWSSessionHeaderResolution) {
 	headers := make(http.Header)
-	headers.Set("authorization", "Bearer "+token)
+	headers.Set("authorization", buildOpenAIAuthorizationHeader(account, token))
 
 	sessionResolution := resolveOpenAIWSSessionHeaders(c, promptCacheKey)
 	if c != nil && c.Request != nil {
