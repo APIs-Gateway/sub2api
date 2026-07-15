@@ -58,8 +58,9 @@ const (
 	defaultOpenAIHTTP2FallbackErrorThreshold = 2
 	defaultOpenAIHTTP2FallbackWindow         = 60 * time.Second
 	defaultOpenAIHTTP2FallbackTTL            = 10 * time.Minute
-	openAIHTTP2ReadIdleTimeout               = 15 * time.Second
-	openAIHTTP2PingTimeout                   = 15 * time.Second
+	// OpenAI HTTP/2 连接健康探测：主动 PING 可尽早剔除代理/NAT 静默断开的死连接。
+	openAIHTTP2ReadIdleTimeout = 15 * time.Second
+	openAIHTTP2PingTimeout     = 15 * time.Second
 )
 
 const (
@@ -1082,8 +1083,8 @@ func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL, protocolMo
 	return transport, nil
 }
 
-// enableOpenAIHTTP2KeepAlive configures active PING health checks for the
-// OpenAI HTTP/2 transport so silently dead pooled connections are evicted.
+// enableOpenAIHTTP2KeepAlive explicitly configures HTTP/2 and enables active
+// PING health checks so pooled dead connections are evicted promptly.
 func enableOpenAIHTTP2KeepAlive(transport *http.Transport) (*http2.Transport, error) {
 	h2, err := http2.ConfigureTransports(transport)
 	if err != nil {
