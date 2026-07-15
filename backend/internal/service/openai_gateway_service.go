@@ -5298,13 +5298,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				handlePendingWriteError(err)
 			} else if _, err := writePendingString("\n"); err != nil {
 				handlePendingWriteError(err)
-			} else if queueDrained && clientOutputStarted {
-				if err := flushBuffered(); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
-				} else {
-					clientOutputStarted = true
-					lastDownstreamWriteAt = time.Now()
+			} else {
+				eventInProgress = line != ""
+				if queueDrained && clientOutputStarted {
+					if err := flushBuffered(); err != nil {
+						clientDisconnected = true
+						logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
+					} else {
+						clientOutputStarted = true
+						lastDownstreamWriteAt = time.Now()
+					}
 				}
 			}
 		}
