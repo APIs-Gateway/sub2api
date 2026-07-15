@@ -43,6 +43,12 @@ type SchedulerSnapshotService struct {
 	fallbackLimit *fallbackLimiter
 	lagMu         sync.Mutex
 	lagFailures   int
+
+	fullRebuildRunMu     sync.Mutex
+	fullRebuildStateMu   sync.Mutex
+	fullRebuildRequested uint64
+	fullRebuildCompleted uint64
+	fullRebuildLastErr   error
 }
 
 func NewSchedulerSnapshotService(
@@ -183,22 +189,26 @@ func (s *SchedulerSnapshotService) runInitialRebuild() {
 	if s.cache == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	buckets, err := s.cache.ListBuckets(ctx)
-	if err != nil {
-		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] list buckets failed: %v", err)
-	}
-	if len(buckets) == 0 {
-		buckets, err = s.defaultBuckets(ctx)
+	_ = s.coalesceFullRebuild(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		buckets, err := s.cache.ListBuckets(ctx)
 		if err != nil {
-			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", err)
-			return
+			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] list buckets failed: %v", err)
 		}
-	}
-	if err := s.rebuildBuckets(ctx, buckets, "startup"); err != nil {
-		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild startup failed: %v", err)
-	}
+		if len(buckets) == 0 {
+			buckets, err = s.defaultBuckets(ctx)
+			if err != nil {
+				logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", err)
+				return err
+			}
+		}
+		if err := s.rebuildBuckets(ctx, buckets, "startup"); err != nil {
+			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild startup failed: %v", err)
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *SchedulerSnapshotService) runOutboxWorker(interval time.Duration) {
@@ -603,22 +613,53 @@ func (s *SchedulerSnapshotService) triggerFullRebuild(reason string) error {
 	if s.cache == nil {
 		return ErrSchedulerCacheNotReady
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	return s.coalesceFullRebuild(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
 
-	buckets, err := s.cache.ListBuckets(ctx)
-	if err != nil {
-		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] list buckets failed: %v", err)
-		return err
-	}
-	if len(buckets) == 0 {
-		buckets, err = s.defaultBuckets(ctx)
+		buckets, err := s.cache.ListBuckets(ctx)
 		if err != nil {
-			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", err)
+			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] list buckets failed: %v", err)
 			return err
 		}
+		if len(buckets) == 0 {
+			buckets, err = s.defaultBuckets(ctx)
+			if err != nil {
+				logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", err)
+				return err
+			}
+		}
+		return s.rebuildBuckets(ctx, buckets, reason)
+	})
+}
+
+func (s *SchedulerSnapshotService) coalesceFullRebuild(run func() error) error {
+	s.fullRebuildStateMu.Lock()
+	s.fullRebuildRequested++
+	requestID := s.fullRebuildRequested
+	s.fullRebuildStateMu.Unlock()
+
+	s.fullRebuildRunMu.Lock()
+	defer s.fullRebuildRunMu.Unlock()
+
+	s.fullRebuildStateMu.Lock()
+	if s.fullRebuildCompleted >= requestID {
+		err := s.fullRebuildLastErr
+		s.fullRebuildStateMu.Unlock()
+		return err
 	}
-	return s.rebuildBuckets(ctx, buckets, reason)
+	// A rebuild may start before a new outbox transaction commits. Requests
+	// registered during the current run therefore need a trailing run.
+	coveredThrough := s.fullRebuildRequested
+	s.fullRebuildStateMu.Unlock()
+
+	err := run()
+
+	s.fullRebuildStateMu.Lock()
+	s.fullRebuildCompleted = coveredThrough
+	s.fullRebuildLastErr = err
+	s.fullRebuildStateMu.Unlock()
+	return err
 }
 
 func (s *SchedulerSnapshotService) checkOutboxLag(ctx context.Context, watermark int64) {
