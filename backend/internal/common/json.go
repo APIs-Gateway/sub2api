@@ -6,3 +6,8 @@ import "encoding/json"
 func Unmarshal(data []byte, value any) error {
 	return json.Unmarshal(data, value)
 }
+
+// Marshal encodes a value through the repository's shared JSON boundary.
+func Marshal(value any) ([]byte, error) {
+	return json.Marshal(value)
+}

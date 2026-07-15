@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -3699,12 +3700,15 @@ func writeOpenAIPassthroughErrorEnvelope(c *gin.Context, downstreamStatus int, u
 	if c == nil {
 		return
 	}
-	body, _ := json.Marshal(gin.H{
+	body, err := common.Marshal(gin.H{
 		"error": gin.H{
 			"type":    "upstream_error",
 			"message": message,
 		},
 	})
+	if err != nil {
+		body = []byte(`{"error":{"type":"upstream_error","message":"failed to encode upstream error"}}`)
+	}
 	if writeOpenAICompactSSEBridge(c, downstreamStatus, body) {
 		return
 	}
