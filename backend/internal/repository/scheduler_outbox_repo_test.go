@@ -18,13 +18,7 @@ func TestSchedulerOutboxRepositoryFirstCreatedAtAfter(t *testing.T) {
 
 	repo := &schedulerOutboxRepository{db: db}
 	createdAt := time.Now().UTC().Truncate(time.Microsecond)
-	const expectedSQL = `
-		SELECT created_at
-		FROM scheduler_outbox
-		WHERE id > $1
-		ORDER BY id ASC
-		LIMIT 1
-	`
+	expectedSQL := schedulerOutboxFirstCreatedAtAfterQuery("?")
 	mock.ExpectQuery(regexp.QuoteMeta(expectedSQL)).
 		WithArgs(int64(42)).
 		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(createdAt))
@@ -43,13 +37,7 @@ func TestSchedulerOutboxRepositoryFirstCreatedAtAfterReturnsNotFound(t *testing.
 	defer func() { _ = db.Close() }()
 
 	repo := &schedulerOutboxRepository{db: db}
-	const expectedSQL = `
-		SELECT created_at
-		FROM scheduler_outbox
-		WHERE id > $1
-		ORDER BY id ASC
-		LIMIT 1
-	`
+	expectedSQL := schedulerOutboxFirstCreatedAtAfterQuery("?")
 	mock.ExpectQuery(regexp.QuoteMeta(expectedSQL)).
 		WithArgs(int64(42)).
 		WillReturnRows(sqlmock.NewRows([]string{"created_at"}))
@@ -68,13 +56,7 @@ func TestSchedulerOutboxRepositoryFirstCreatedAtAfterReturnsQueryError(t *testin
 	defer func() { _ = db.Close() }()
 
 	repo := &schedulerOutboxRepository{db: db}
-	const expectedSQL = `
-		SELECT created_at
-		FROM scheduler_outbox
-		WHERE id > $1
-		ORDER BY id ASC
-		LIMIT 1
-	`
+	expectedSQL := schedulerOutboxFirstCreatedAtAfterQuery("?")
 	wantErr := errors.New("database unavailable")
 	mock.ExpectQuery(regexp.QuoteMeta(expectedSQL)).
 		WithArgs(int64(42)).
@@ -86,6 +68,24 @@ func TestSchedulerOutboxRepositoryFirstCreatedAtAfterReturnsQueryError(t *testin
 	require.False(t, ok)
 	require.True(t, got.IsZero())
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSchedulerOutboxFirstCreatedAtAfterQueryUsesDialectPlaceholders(t *testing.T) {
+	tests := []struct {
+		name        string
+		placeholder string
+	}{
+		{name: "postgres", placeholder: "$1"},
+		{name: "mysql", placeholder: "?"},
+		{name: "sqlite", placeholder: "?"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query := schedulerOutboxFirstCreatedAtAfterQuery(tt.placeholder)
+			require.Contains(t, query, "WHERE id > "+tt.placeholder)
+		})
+	}
 }
 
 func TestSchedulerOutboxRepositoryDeleteConsumedUpToUsesBoundedCTE(t *testing.T) {
