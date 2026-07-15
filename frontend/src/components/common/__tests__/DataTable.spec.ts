@@ -68,6 +68,25 @@ describe('DataTable virtualizer row identity', () => {
     wrapper.unmount()
   })
 
+  it('clears caches when duplicate row-key multiplicity changes', async () => {
+    const wrapper = mountTable(
+      [{ id: 1, name: 'First A' }, { id: 1, name: 'First B' }, { id: 2, name: 'First C' }],
+      'id'
+    )
+    await nextTick()
+
+    const virtualizer = (wrapper.vm as any).virtualizer
+    const measure = vi.spyOn(virtualizer, 'measure')
+
+    await wrapper.setProps({
+      data: [{ id: 1, name: 'Next A' }, { id: 2, name: 'Next B' }, { id: 2, name: 'Next C' }]
+    })
+    await nextTick()
+
+    expect(measure).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('preserves caches when stable rows are only reordered', async () => {
     const firstPage = [{ id: 1, name: 'First' }, { id: 2, name: 'Second' }]
     const wrapper = mountTable(firstPage, 'id')
