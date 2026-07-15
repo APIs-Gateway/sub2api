@@ -5346,7 +5346,7 @@ func normalizeOpenAIResponsesFunctionCallArguments(data []byte) ([]byte, bool) {
 	}
 
 	updated := data
-	changed := false
+	changed = false
 	setDedupedArgument := func(path string) {
 		argument := gjson.GetBytes(updated, path)
 		if !argument.Exists() || argument.Type != gjson.String {
