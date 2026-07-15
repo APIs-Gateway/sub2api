@@ -348,8 +348,8 @@ func TestSchedulerSnapshotServiceCheckOutboxLagTriggersFullRebuildForPendingEven
 
 	svc.checkOutboxLag(context.Background(), 7)
 
-	if cache.listBucketCalls != 1 {
-		t.Fatalf("expected one full rebuild attempt, got %d", cache.listBucketCalls)
+	if cache.listCalls != 1 {
+		t.Fatalf("expected one full rebuild attempt, got %d", cache.listCalls)
 	}
 	if svc.lagFailures != 0 {
 		t.Fatalf("expected lag failures to reset after triggering rebuild, got %d", svc.lagFailures)
