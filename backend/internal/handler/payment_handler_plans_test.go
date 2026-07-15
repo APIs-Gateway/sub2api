@@ -45,7 +45,7 @@ func TestPaymentHandlerPlanEndpointsIncludeDisplayCurrency(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
 
-	db, err := sql.Open("sqlite", "file:payment_handler_plan_currency?mode=memory&cache=shared")
+	db, err := sql.Open("sqlite", "file:payment_handler_plan_currency?mode=memory&cache=shared&_fk=1")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	drv := entsql.OpenDB(dialect.SQLite, db)
