@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -128,6 +131,8 @@ func TestFetchCodexModelsManifestUpstreamError(t *testing.T) {
 	s := &OpenAIGatewayService{}
 	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
 		t.Fatal("expected error for upstream 500, got nil")
+	} else if !IsRetryableCodexModelsManifestError(err) {
+		t.Fatalf("expected upstream 500 to be retryable, got %v", err)
 	}
 }
 
@@ -144,6 +149,26 @@ func TestFetchCodexModelsManifestUpstreamErrorUsesStatusWhenBodyEmpty(t *testing
 	s := &OpenAIGatewayService{}
 	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
 		t.Fatal("expected error for empty upstream error body, got nil")
+	} else if !IsRetryableCodexModelsManifestError(err) {
+		t.Fatalf("expected upstream 429 to be retryable, got %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestPermanentUpstreamErrorIsNotRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"detail":"bad request"}`, http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
+		t.Fatal("expected error for permanent upstream status, got nil")
+	} else if IsRetryableCodexModelsManifestError(err) {
+		t.Fatalf("expected upstream 400 not to be retryable, got %v", err)
 	}
 }
 
@@ -189,5 +214,37 @@ func TestFetchCodexModelsManifestMissingToken(t *testing.T) {
 	s := &OpenAIGatewayService{}
 	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", ""); err == nil {
 		t.Fatal("expected error for missing access token, got nil")
+	}
+}
+
+func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		retryable bool
+	}{
+		{name: "nil", err: nil},
+		{name: "configuration error", err: errors.New("invalid proxy URL")},
+		{name: "canceled", err: context.Canceled},
+		{name: "deadline", err: context.DeadlineExceeded, retryable: true},
+		{name: "eof", err: io.EOF, retryable: true},
+		{name: "network operation", err: &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")}, retryable: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRetryableCodexModelsManifestTransportError(tt.err); got != tt.retryable {
+				t.Fatalf("retryable: got %v, want %v", got, tt.retryable)
+			}
+		})
+	}
+}
+
+func TestIsRetryableCodexModelsManifestErrorUsesWrapper(t *testing.T) {
+	if !IsRetryableCodexModelsManifestError(&codexModelsManifestUpstreamError{err: errors.New("temporary"), retryable: true}) {
+		t.Fatal("expected retryable wrapped error")
+	}
+	if IsRetryableCodexModelsManifestError(errors.New("temporary")) {
+		t.Fatal("unwrapped error must not be retryable")
 	}
 }

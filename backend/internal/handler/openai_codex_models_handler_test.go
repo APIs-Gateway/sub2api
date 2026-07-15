@@ -56,6 +56,20 @@ func TestOpenAIGatewayHandlerCodexModels_RequiresAPIKeyGroup(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "API key group is required")
 }
 
+func TestOpenAIGatewayHandlerCodexModels_CanceledRequestDoesNotWriteResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil).WithContext(ctx)
+
+	h := &OpenAIGatewayHandler{}
+	h.CodexModels(c)
+
+	require.False(t, c.Writer.Written())
+}
+
 func TestOpenAIGatewayHandlerCodexModels_RejectsNonOpenAIGroup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
