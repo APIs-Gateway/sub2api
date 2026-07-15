@@ -1166,6 +1166,65 @@ func TestOpenAIGatewayService_APIKeyPassthrough_ReadsErrorBodyOnce(t *testing.T)
 	require.True(t, body.closed)
 }
 
+func TestOpenAIPassthroughErrorHelpersCoverPolicyBranches(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	contextBody := []byte(`{"error":{"message":"request exceeds the context window"}}`)
+	require.False(t, shouldFailoverOpenAIPassthroughResponse(nil, http.StatusBadGateway, nil))
+	require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusBadGateway, nil))
+	require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeAPIKey}, http.StatusBadRequest, nil))
+	require.True(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeAPIKey}, http.StatusTooManyRequests, nil))
+	require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeAPIKey}, http.StatusBadGateway, contextBody))
+
+	now := time.Now()
+	for _, tt := range []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "empty", raw: ""},
+		{name: "zero seconds", raw: "0"},
+		{name: "positive seconds", raw: "2", want: true},
+		{name: "invalid date", raw: "not-a-date"},
+		{name: "future date", raw: now.Add(time.Minute).Format(http.TimeFormat), want: true},
+		{name: "past date", raw: now.Add(-time.Minute).Format(http.TimeFormat)},
+		{name: "uint overflow", raw: "18446744073709551616"},
+	} {
+		t.Run("retry_after_"+tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, validOpenAIPassthroughRetryAfter(tt.raw, now))
+		})
+	}
+
+	dst := http.Header{"Retry-After": []string{"stale"}}
+	writeOpenAIPassthroughErrorHeaders(dst, nil)
+	require.Empty(t, dst.Get("Retry-After"))
+	writeOpenAIPassthroughErrorHeaders(dst, http.Header{"Retry-After": []string{"2"}})
+	require.Equal(t, "2", dst.Get("Retry-After"))
+	writeOpenAIPassthroughErrorHeaders(dst, http.Header{"Retry-After": []string{"0"}})
+	require.Empty(t, dst.Get("Retry-After"))
+	writeOpenAIPassthroughErrorHeaders(nil, http.Header{"Retry-After": []string{"2"}})
+
+	writeOpenAIPassthroughErrorEnvelope(nil, http.StatusBadGateway, nil, "ignored")
+	for _, tt := range []struct {
+		name        string
+		upstream    int
+		downstream  int
+		wantMessage string
+	}{
+		{name: "unauthorized", upstream: http.StatusUnauthorized, downstream: http.StatusBadGateway, wantMessage: "Upstream authentication failed"},
+		{name: "forbidden", upstream: http.StatusForbidden, downstream: http.StatusBadGateway, wantMessage: "Upstream access denied"},
+		{name: "server error", upstream: http.StatusInternalServerError, downstream: http.StatusInternalServerError, wantMessage: "Upstream service temporarily unavailable"},
+	} {
+		t.Run("sanitize_"+tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			writeSanitizedOpenAIPassthroughError(c, tt.upstream, nil)
+			require.Equal(t, tt.downstream, rec.Code)
+			require.Equal(t, tt.wantMessage, gjson.Get(rec.Body.String(), "error.message").String())
+		})
+	}
+}
+
 func TestOpenAIGatewayService_OAuthPassthrough_NonCodexUAFallbackToCodexUA(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
