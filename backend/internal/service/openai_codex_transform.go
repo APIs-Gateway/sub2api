@@ -1123,10 +1123,9 @@ func extractTextFromContent(content any) string {
 	}
 }
 
-// extractSystemMessagesFromInput scans the input array for items with role=="system",
-// removes them, and merges their content into reqBody["instructions"].
+// extractSystemMessagesFromInput maps system items to developer, preserves them
+// in input, and mirrors their content into reqBody["instructions"].
 // If instructions is already non-empty, extracted content is prepended with "\n\n".
-// Returns true if any system messages were extracted.
 func extractSystemMessagesFromInput(reqBody map[string]any) bool {
 	input, ok := reqBody["input"].([]any)
 	if !ok || len(input) == 0 {
@@ -1134,25 +1133,25 @@ func extractSystemMessagesFromInput(reqBody map[string]any) bool {
 	}
 
 	var systemTexts []string
-	remaining := make([]any, 0, len(input))
+	modified := false
 
 	for _, item := range input {
 		m, ok := item.(map[string]any)
 		if !ok {
-			remaining = append(remaining, item)
 			continue
 		}
 		if role, _ := m["role"].(string); role != "system" {
-			remaining = append(remaining, item)
 			continue
 		}
+		m["role"] = "developer"
+		modified = true
 		if text := extractTextFromContent(m["content"]); text != "" {
 			systemTexts = append(systemTexts, text)
 		}
 	}
 
 	if len(systemTexts) == 0 {
-		return false
+		return modified
 	}
 
 	extracted := strings.Join(systemTexts, "\n\n")
@@ -1161,7 +1160,6 @@ func extractSystemMessagesFromInput(reqBody map[string]any) bool {
 	} else {
 		reqBody["instructions"] = extracted
 	}
-	reqBody["input"] = remaining
 	return true
 }
 
