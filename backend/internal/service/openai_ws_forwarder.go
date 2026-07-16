@@ -1906,19 +1906,41 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	acquireCtx, acquireCancel := context.WithTimeout(ctx, s.openAIWSAcquireTimeout())
 	defer acquireCancel()
 
-	lease, err := s.getOpenAIWSConnPool().Acquire(acquireCtx, openAIWSAcquireRequest{
-		Account:         account,
-		WSURL:           wsURL,
-		Headers:         wsHeaders,
-		PreferredConnID: preferredConnID,
-		ForceNewConn:    forceNewConn,
-		ProxyURL: func() string {
-			if account.ProxyID != nil && account.Proxy != nil {
-				return account.Proxy.URL()
+	pool := s.getOpenAIWSConnPool()
+	agentTaskRecoveryTried := false
+	var lease *openAIWSConnLease
+	for {
+		lease, err = pool.Acquire(acquireCtx, openAIWSAcquireRequest{
+			Account:         account,
+			WSURL:           wsURL,
+			Headers:         wsHeaders,
+			PreferredConnID: preferredConnID,
+			ForceNewConn:    forceNewConn,
+			ProxyURL: func() string {
+				if account.ProxyID != nil && account.Proxy != nil {
+					return account.Proxy.URL()
+				}
+				return ""
+			}(),
+		})
+		if err == nil {
+			break
+		}
+		var dialErr *openAIWSDialError
+		if s.isAgentIdentityAccount(ctx, account) && errors.As(err, &dialErr) && isAgentIdentityTaskInvalidWSDialError(dialErr) && !agentTaskRecoveryTried {
+			agentTaskRecoveryTried = true
+			if recoveryErr := s.recoverAgentIdentityTask(ctx, account, account.GetCredential("task_id")); recoveryErr != nil {
+				return nil, fmt.Errorf("agent identity task recovery failed: %w", recoveryErr)
 			}
-			return ""
-		}(),
-	})
+			token, _, err = s.GetAccessToken(ctx, account)
+			if err != nil {
+				return nil, fmt.Errorf("refresh agent identity authentication failed: %w", err)
+			}
+			wsHeaders.Set("Authorization", buildOpenAIAuthorizationHeader(account, token))
+			continue
+		}
+		break
+	}
 	if err != nil {
 		dialStatus, dialClass, dialCloseStatus, dialCloseReason, dialRespServer, dialRespVia, dialRespCFRay, dialRespReqID := summarizeOpenAIWSDialError(err)
 		logOpenAIWSModeInfo(
@@ -3054,7 +3076,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		acquireTimeout = 30 * time.Second
 	}
 
-	acquireTurnLease := func(turn int, preferred string, forcePreferredConn bool) (*openAIWSConnLease, error) {
+	agentTaskRecoveryTried := false
+	var acquireTurnLease func(int, string, bool) (*openAIWSConnLease, error)
+	acquireTurnLease = func(turn int, preferred string, forcePreferredConn bool) (*openAIWSConnLease, error) {
 		req := cloneOpenAIWSAcquireRequest(baseAcquireReq)
 		req.PreferredConnID = strings.TrimSpace(preferred)
 		req.ForcePreferredConn = forcePreferredConn
@@ -3064,6 +3088,24 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		lease, acquireErr := pool.Acquire(acquireCtx, req)
 		acquireCancel()
 		if acquireErr != nil {
+			var dialErr *openAIWSDialError
+			if s.isAgentIdentityAccount(ctx, account) && errors.As(acquireErr, &dialErr) && isAgentIdentityTaskInvalidWSDialError(dialErr) && !agentTaskRecoveryTried {
+				agentTaskRecoveryTried = true
+				if recoveryErr := s.recoverAgentIdentityTask(ctx, account, account.GetCredential("task_id")); recoveryErr != nil {
+					return nil, fmt.Errorf("agent identity task recovery failed: %w", recoveryErr)
+				}
+				token, _, refreshErr := s.GetAccessToken(ctx, account)
+				if refreshErr != nil {
+					return nil, fmt.Errorf("refresh agent identity authentication failed: %w", refreshErr)
+				}
+				updatedHeaders := cloneHeader(baseAcquireReq.Headers)
+				if updatedHeaders == nil {
+					updatedHeaders = make(http.Header)
+				}
+				updatedHeaders.Set("Authorization", buildOpenAIAuthorizationHeader(account, token))
+				baseAcquireReq.Headers = updatedHeaders
+				return acquireTurnLease(turn, preferred, forcePreferredConn)
+			}
 			dialStatus, dialClass, dialCloseStatus, dialCloseReason, dialRespServer, dialRespVia, dialRespCFRay, dialRespReqID := summarizeOpenAIWSDialError(acquireErr)
 			logOpenAIWSModeInfo(
 				"ingress_ws_upstream_acquire_fail account_id=%d turn=%d reason=%s dial_status=%d dial_class=%s dial_close_status=%s dial_close_reason=%s dial_resp_server=%s dial_resp_via=%s dial_resp_cf_ray=%s dial_resp_x_request_id=%s cause=%s preferred_conn_id=%s force_preferred_conn=%v ws_host=%s ws_path=%s proxy_enabled=%v",
@@ -3085,7 +3127,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				wsPath,
 				account.ProxyID != nil && account.Proxy != nil,
 			)
-			var dialErr *openAIWSDialError
 			if errors.As(acquireErr, &dialErr) && dialErr != nil && dialErr.StatusCode == http.StatusTooManyRequests {
 				recordUpstream429Attempt(account.ID)
 				s.persistOpenAIWSRateLimitSignal(ctx, account, dialErr.ResponseHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(acquireErr.Error()))
