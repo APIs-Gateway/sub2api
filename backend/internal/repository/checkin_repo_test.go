@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"regexp"
 	"testing"
@@ -112,6 +113,30 @@ func TestCheckinClaimDailyRollsBackWhenLockFails(t *testing.T) {
 	}
 }
 
+func TestCheckinClaimRollsBackWhenEligibilityCheckFails(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended('checkin:' || $1::text, 0))`)).
+		WithArgs(int64(42)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectRollback()
+
+	_, err = (&checkinRepository{db: db}).claim(context.Background(), 42, "2026-07-16", "daily", 0.25, func(context.Context, *sql.Tx) error {
+		return errors.New("eligibility check failed")
+	})
+	if err == nil {
+		t.Fatal("expected eligibility check error")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCheckinClaimDailyRollsBackWhenRecordInsertFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -134,6 +159,37 @@ func TestCheckinClaimDailyRollsBackWhenRecordInsertFails(t *testing.T) {
 	_, err = (&checkinRepository{db: db}).ClaimDaily(context.Background(), 42, "2026-07-16", 0.25)
 	if err == nil {
 		t.Fatal("expected insert error")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckinClaimDailyRollsBackWhenBalanceUpdateFails(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended('checkin:' || $1::text, 0))`)).
+		WithArgs(int64(42)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS(SELECT 1 FROM checkin_records WHERE user_id = $1 AND checkin_date = $2 AND type = 'daily')`)).
+		WithArgs(int64(42), "2026-07-16").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO checkin_records (user_id, checkin_date, type, amount) VALUES ($1, $2, $3, $4)`)).
+		WithArgs(int64(42), "2026-07-16", "daily", 0.25).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE users SET balance = balance + $1 WHERE id = $2 AND deleted_at IS NULL`)).
+		WithArgs(0.25, int64(42)).
+		WillReturnError(errors.New("balance update failed"))
+	mock.ExpectRollback()
+
+	_, err = (&checkinRepository{db: db}).ClaimDaily(context.Background(), 42, "2026-07-16", 0.25)
+	if err == nil {
+		t.Fatal("expected balance update error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -165,6 +221,43 @@ func TestCheckinClaimDailyRollsBackWhenUserBalanceIsMissing(t *testing.T) {
 	_, err = (&checkinRepository{db: db}).ClaimDaily(context.Background(), 42, "2026-07-16", 0.25)
 	if err == nil {
 		t.Fatal("expected user not found error")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckinClaimBonusReturnsBalanceFromCommittedTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended('checkin:' || $1::text, 0))`)).
+		WithArgs(int64(42)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM checkin_records WHERE user_id = $1 AND checkin_date = $2 AND type = 'bonus'`)).
+		WithArgs(int64(42), "2026-07-16").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO checkin_records (user_id, checkin_date, type, amount) VALUES ($1, $2, $3, $4)`)).
+		WithArgs(int64(42), "2026-07-16", "bonus", 0.5).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE users SET balance = balance + $1 WHERE id = $2 AND deleted_at IS NULL`)).
+		WithArgs(0.5, int64(42)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT balance FROM users WHERE id = $1 AND deleted_at IS NULL`)).
+		WithArgs(int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(13.25))
+	mock.ExpectCommit()
+
+	balance, err := (&checkinRepository{db: db}).ClaimBonus(context.Background(), 42, "2026-07-16", 0.5, 1)
+	if err != nil {
+		t.Fatalf("claim bonus: %v", err)
+	}
+	if balance != 13.25 {
+		t.Fatalf("balance = %v, want 13.25", balance)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
