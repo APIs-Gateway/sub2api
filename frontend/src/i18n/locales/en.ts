@@ -4840,7 +4840,7 @@
       nDays: '{days}d',
       expiryDaysPlaceholder: 'Custom days, empty = never',
       expiryWarnDays: 'Expiry warning (days)',
-      fallbackMode: 'Failure fallback',
+      fallbackMode: 'Expiry fallback',
       fallbackNone: 'No fallback',
       fallbackProxy: 'Backup proxy',
       fallbackDirect: 'Direct connection',
