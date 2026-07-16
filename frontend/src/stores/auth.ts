@@ -79,6 +79,17 @@ export const useAuthStore = defineStore('auth', () => {
   const pendingAuthSession = ref<PendingAuthSessionSummary | null>(null)
   let refreshIntervalId: ReturnType<typeof setInterval> | null = null
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
+  let userStateVersion = 0
+  let latestRefreshRequest = 0
+
+  function setCurrentUser(nextUser: User | null): void {
+    user.value = nextUser
+    userStateVersion += 1
+
+    if (nextUser) {
+      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(nextUser))
+    }
+  }
 
   // ==================== Computed ====================
 
@@ -110,7 +121,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (savedToken && savedUser) {
       try {
         token.value = savedToken
-        user.value = JSON.parse(savedUser)
+        setCurrentUser(JSON.parse(savedUser))
         refreshTokenValue.value = savedRefreshToken
         tokenExpiresAt.value = savedExpiresAt ? parseInt(savedExpiresAt, 10) : null
 
@@ -294,11 +305,10 @@ export const useAuthStore = defineStore('auth', () => {
       runMode.value = response.user.run_mode
     }
     const { run_mode: _run_mode, ...userData } = response.user
-    user.value = userData
+    setCurrentUser(userData)
 
     // Persist to localStorage
     localStorage.setItem(AUTH_TOKEN_KEY, response.access_token)
-    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
     clearPendingAuthSession()
 
     // Start auto-refresh interval for user data
@@ -343,7 +353,7 @@ export const useAuthStore = defineStore('auth', () => {
     stopAutoRefresh()
     stopTokenRefresh()
     token.value = null
-    user.value = null
+    setCurrentUser(null)
 
     token.value = newToken
     localStorage.setItem(AUTH_TOKEN_KEY, newToken)
@@ -420,15 +430,20 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     try {
+      const refreshRequest = ++latestRefreshRequest
+      const stateVersion = userStateVersion
       const response = await authAPI.getCurrentUser()
+      if (refreshRequest !== latestRefreshRequest || stateVersion !== userStateVersion) {
+        if (!user.value) {
+          throw new Error('Authenticated user changed while refreshing')
+        }
+        return user.value
+      }
       if (response.data.run_mode) {
         runMode.value = response.data.run_mode
       }
       const { run_mode: _run_mode, ...userData } = response.data
-      user.value = userData
-
-      // Update localStorage
-      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
+      setCurrentUser(userData)
 
       return userData
     } catch (error) {
@@ -438,6 +453,14 @@ export const useAuthStore = defineStore('auth', () => {
       }
       throw error
     }
+  }
+
+  function setBalance(balance: number): void {
+    if (!user.value || !Number.isFinite(balance)) {
+      return
+    }
+
+    setCurrentUser({ ...user.value, balance })
   }
 
   /**
@@ -453,7 +476,7 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = null
     refreshTokenValue.value = null
     tokenExpiresAt.value = null
-    user.value = null
+    setCurrentUser(null)
     localStorage.removeItem(AUTH_TOKEN_KEY)
     localStorage.removeItem(AUTH_USER_KEY)
     localStorage.removeItem(REFRESH_TOKEN_KEY)
@@ -491,6 +514,7 @@ export const useAuthStore = defineStore('auth', () => {
     logout,
     checkAuth,
     refreshUser,
+    setBalance,
     setPendingAuthSession,
     clearPendingAuthSession
   }

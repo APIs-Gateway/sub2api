@@ -40,7 +40,7 @@ func (r *checkinRepository) CountBonusOnDate(ctx context.Context, userID int64, 
 	return n, nil
 }
 
-func (r *checkinRepository) ClaimDaily(ctx context.Context, userID int64, date string, amount float64) error {
+func (r *checkinRepository) ClaimDaily(ctx context.Context, userID int64, date string, amount float64) (float64, error) {
 	return r.claim(ctx, userID, date, "daily", amount, func(ctx context.Context, tx *sql.Tx) error {
 		var exists bool
 		if err := tx.QueryRowContext(ctx,
@@ -56,7 +56,7 @@ func (r *checkinRepository) ClaimDaily(ctx context.Context, userID int64, date s
 	})
 }
 
-func (r *checkinRepository) ClaimBonus(ctx context.Context, userID int64, date string, amount float64, maxBonus int) error {
+func (r *checkinRepository) ClaimBonus(ctx context.Context, userID int64, date string, amount float64, maxBonus int) (float64, error) {
 	return r.claim(ctx, userID, date, "bonus", amount, func(ctx context.Context, tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx,
@@ -80,10 +80,10 @@ func (r *checkinRepository) claim(
 	date, ctype string,
 	amount float64,
 	check func(ctx context.Context, tx *sql.Tx) error,
-) (err error) {
+) (balance float64, err error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() {
 		if err != nil {
@@ -95,11 +95,11 @@ func (r *checkinRepository) claim(
 	if _, err = tx.ExecContext(ctx,
 		`SELECT pg_advisory_xact_lock(hashtextextended('checkin:' || $1::text, 0))`, userID,
 	); err != nil {
-		return err
+		return 0, err
 	}
 
 	if err = check(ctx, tx); err != nil {
-		return err
+		return 0, err
 	}
 
 	if _, insErr := tx.ExecContext(ctx,
@@ -112,7 +112,7 @@ func (r *checkinRepository) claim(
 		} else {
 			err = insErr
 		}
-		return err
+		return 0, err
 	}
 
 	res, execErr := tx.ExecContext(ctx,
@@ -121,18 +121,29 @@ func (r *checkinRepository) claim(
 	)
 	if execErr != nil {
 		err = execErr
-		return err
+		return 0, err
 	}
 	affected, raErr := res.RowsAffected()
 	if raErr != nil {
 		err = raErr
-		return err
+		return 0, err
 	}
 	if affected == 0 {
 		err = service.ErrUserNotFound
-		return err
+		return 0, err
+	}
+
+	err = tx.QueryRowContext(ctx,
+		`SELECT balance FROM users WHERE id = $1 AND deleted_at IS NULL`,
+		userID,
+	).Scan(&balance)
+	if err != nil {
+		return 0, err
 	}
 
 	err = tx.Commit()
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return balance, nil
 }

@@ -381,6 +381,39 @@ describe('useAuthStore', () => {
     })
   })
 
+  describe('setBalance', () => {
+    it('updates the authenticated user and persisted balance snapshot', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      store.setBalance(123.45)
+
+      expect(store.user?.balance).toBe(123.45)
+      expect(JSON.parse(localStorage.getItem('auth_user')!).balance).toBe(123.45)
+    })
+
+    it('keeps a newer balance when an older profile refresh resolves afterwards', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let resolveProfile!: (value: { data: typeof fakeUser }) => void
+      mockGetCurrentUser.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveProfile = resolve
+        })
+      )
+
+      const refresh = store.refreshUser()
+      store.setBalance(123.45)
+      resolveProfile({ data: { ...fakeUser, balance: 100 } })
+      await refresh
+
+      expect(store.user?.balance).toBe(123.45)
+    })
+  })
+
   // --- isSimpleMode ---
 
   describe('isSimpleMode', () => {

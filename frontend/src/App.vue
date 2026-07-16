@@ -72,6 +72,9 @@ watch(
 function onVisibilityChange() {
   if (document.visibilityState === 'visible' && authStore.isAuthenticated) {
     announcementStore.fetchAnnouncements()
+    authStore.refreshUser().catch((error) => {
+      console.warn('Failed to refresh user when page became visible:', error)
+    })
   }
 }
 

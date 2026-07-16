@@ -5,6 +5,10 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \
 	src/views/user/__tests__/PaymentView.spec.ts \
 	src/views/user/__tests__/PaymentResultView.spec.ts \
+	src/components/user/dashboard/__tests__/CheckinCard.spec.ts \
+	src/views/user/__tests__/DashboardView.spec.ts \
+	src/__tests__/App.documentTitle.spec.ts \
+	src/stores/__tests__/auth.spec.ts \
 	src/components/user/profile/__tests__/ProfileInfoCard.spec.ts \
 	src/views/admin/__tests__/SettingsView.spec.ts \
 	src/views/admin/orders/__tests__/AdminOrdersView.spec.ts

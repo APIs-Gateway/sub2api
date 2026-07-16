@@ -39,7 +39,8 @@ const appStore = reactive<AppStoreMock>({
 
 const authStore = reactive({
   isAdmin: false,
-  isAuthenticated: false
+  isAuthenticated: false,
+  refreshUser: vi.fn().mockResolvedValue(undefined)
 })
 
 const subscriptionStore = {
@@ -120,6 +121,7 @@ describe('App document title refresh', () => {
     appStore.fetchPublicSettings.mockClear()
     authStore.isAdmin = false
     authStore.isAuthenticated = false
+    authStore.refreshUser.mockClear()
     adminSettingsStore.customMenuItems = []
     document.title = ''
   })
@@ -153,6 +155,20 @@ describe('App document title refresh', () => {
 
     expect(document.title).toBe('账号调度器 - Demo Site')
 
+    wrapper.unmount()
+  })
+
+  it('refreshes user data when the authenticated page becomes visible', async () => {
+    authStore.isAuthenticated = true
+    const { default: App } = await import('../App.vue')
+    const wrapper = mount(App)
+    await nextTick()
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await nextTick()
+
+    expect(authStore.refreshUser).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 })

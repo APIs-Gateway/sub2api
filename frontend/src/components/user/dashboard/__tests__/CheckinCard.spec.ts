@@ -4,10 +4,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { CheckinStatus } from '@/api/user'
 import CheckinCard from '../CheckinCard.vue'
 
-const { getCheckinStatus, claimCheckin, refreshUser, showSuccess, showError } = vi.hoisted(() => ({
+const { getCheckinStatus, claimCheckin, refreshUser, setBalance, showSuccess, showError } = vi.hoisted(() => ({
   getCheckinStatus: vi.fn(),
   claimCheckin: vi.fn(),
   refreshUser: vi.fn(),
+  setBalance: vi.fn(),
   showSuccess: vi.fn(),
   showError: vi.fn()
 }))
@@ -26,7 +27,7 @@ vi.mock('@/stores/app', () => ({
 }))
 
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ refreshUser })
+  useAuthStore: () => ({ refreshUser, setBalance })
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -71,6 +72,7 @@ describe('CheckinCard', () => {
     getCheckinStatus.mockReset()
     claimCheckin.mockReset()
     refreshUser.mockReset()
+    setBalance.mockReset()
     showSuccess.mockReset()
     showError.mockReset()
     getCheckinStatus.mockResolvedValue(claimableStatus)
@@ -95,6 +97,25 @@ describe('CheckinCard', () => {
     expect(showError).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('checkin.doneToday')
     warn.mockRestore()
+  })
+
+  it('updates the displayed balance from the successful claim response', async () => {
+    claimCheckin.mockResolvedValueOnce({
+      type: 'daily',
+      amount: 0.25,
+      balance: 12.75,
+      status: claimedStatus
+    })
+
+    const wrapper = mount(CheckinCard, {
+      global: { stubs: { TurnstileWidget: true } }
+    })
+    await flushPromises()
+
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+
+    expect(setBalance).toHaveBeenCalledWith(12.75)
   })
 
   it('still reports an actual claim request failure', async () => {
