@@ -101,7 +101,7 @@ func normalizeAuditBodyKey(key string) string {
 		case '_', '-', '.', ' ':
 			continue
 		default:
-			builder.WriteRune(r)
+			_, _ = builder.WriteRune(r)
 		}
 	}
 	return builder.String()

@@ -238,7 +238,9 @@ func (r *auditLogRepository) List(ctx context.Context, filter *service.AuditLogF
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	logs := make([]*service.AuditLog, 0, pageSize)
 	for rows.Next() {
