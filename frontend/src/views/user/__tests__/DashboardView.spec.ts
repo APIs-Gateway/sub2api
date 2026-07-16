@@ -55,6 +55,8 @@ describe('user DashboardView', () => {
     mocks.getDashboardStats
       .mockRejectedValueOnce(new Error('temporary failure'))
       .mockResolvedValueOnce({ total_api_keys: 1 })
+    mocks.refreshUser.mockRejectedValueOnce(new Error('profile refresh failed'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     const wrapper = mount(DashboardView, {
       global: {
@@ -79,5 +81,7 @@ describe('user DashboardView', () => {
     expect(mocks.refreshUser).toHaveBeenCalledTimes(2)
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     expect(wrapper.findComponent({ name: 'UserDashboardStats' }).exists()).toBe(true)
+    expect(warn).toHaveBeenCalledWith('Failed to refresh user on dashboard load:', expect.any(Error))
+    warn.mockRestore()
   })
 })

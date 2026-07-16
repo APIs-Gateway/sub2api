@@ -164,6 +164,8 @@ describe('App document title refresh', () => {
 
   it('refreshes user data when the authenticated page becomes visible', async () => {
     authStore.isAuthenticated = true
+    authStore.refreshUser.mockRejectedValueOnce(new Error('profile refresh failed'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const { default: App } = await import('../App.vue')
     const wrapper = mount(App)
     await nextTick()
@@ -173,6 +175,8 @@ describe('App document title refresh', () => {
     await nextTick()
 
     expect(authStore.refreshUser).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith('Failed to refresh user when page became visible:', expect.any(Error))
+    warn.mockRestore()
     wrapper.unmount()
   })
 })

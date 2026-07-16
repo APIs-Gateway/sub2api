@@ -412,6 +412,35 @@ describe('useAuthStore', () => {
 
       expect(store.user?.balance).toBe(123.45)
     })
+
+    it('rejects an outdated profile refresh after the user logs out', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let resolveProfile!: (value: { data: typeof fakeUser }) => void
+      mockGetCurrentUser.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveProfile = resolve
+        })
+      )
+
+      const refresh = store.refreshUser()
+      await store.logout()
+      resolveProfile({ data: fakeUser })
+
+      await expect(refresh).rejects.toThrow('Authenticated user changed while refreshing')
+    })
+
+    it('ignores an invalid balance update', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      store.setBalance(Number.NaN)
+
+      expect(store.user?.balance).toBe(100)
+    })
   })
 
   // --- isSimpleMode ---
