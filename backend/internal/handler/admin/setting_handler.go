@@ -1513,9 +1513,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		defaultLocale = strings.TrimSpace(*req.DefaultLocale)
 	}
 	sessionBindingEnabled := previousSettings.SessionBindingEnabled
-	if req.SessionBindingEnabled != nil {
-		sessionBindingEnabled = *req.SessionBindingEnabled
-	}
+	sessionBindingEnabled = resolveSessionBindingEnabled(sessionBindingEnabled, req.SessionBindingEnabled)
 
 	settings := &service.SystemSettings{
 		// 系统全局 platform quota 默认值（整体替换语义）
@@ -2730,6 +2728,13 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	changed = appendAuthSourceDefaultChanges(changed, beforeAuthSourceDefaults, afterAuthSourceDefaults)
 	return changed
+}
+
+func resolveSessionBindingEnabled(previous bool, requested *bool) bool {
+	if requested == nil {
+		return previous
+	}
+	return *requested
 }
 
 func appendAuthSourceDefaultChanges(changed []string, before *service.AuthSourceDefaultSettings, after *service.AuthSourceDefaultSettings) []string {

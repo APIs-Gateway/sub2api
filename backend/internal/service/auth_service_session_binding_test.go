@@ -41,11 +41,22 @@ func TestAuthServiceSessionBindingTokenLifecycle(t *testing.T) {
 		IP:        "192.0.2.11",
 		UserAgent: "test-agent/1",
 	})
+	contextToken, err := svc.GenerateTokenWithContext(boundContext, model)
+	require.NoError(t, err)
+	_, err = svc.RefreshToken(otherContext, contextToken)
+	require.ErrorIs(t, err, service.ErrSessionBindingMismatch)
+
+	legacyRefreshPair, err := svc.GenerateTokenPair(boundContext, model, "")
+	require.NoError(t, err)
+	_, err = svc.RefreshTokenPair(otherContext, legacyRefreshPair.RefreshToken)
+	require.ErrorIs(t, err, service.ErrSessionBindingMismatch)
+
 	_, err = svc.RefreshTokenPair(otherContext, pair.RefreshToken)
 	require.ErrorIs(t, err, service.ErrSessionBindingMismatch)
 
 	_, err = svc.RefreshTokenPair(boundContext, pair.RefreshToken)
 	require.True(t, errors.Is(err, service.ErrRefreshTokenInvalid) || errors.Is(err, service.ErrRefreshTokenNotFound))
+	require.NoError(t, svc.RevokeSessionFamily(context.Background(), ""))
 }
 
 func TestAuthServiceSessionBindingAllowsLegacyRefreshOnce(t *testing.T) {

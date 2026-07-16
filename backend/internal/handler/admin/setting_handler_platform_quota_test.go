@@ -64,6 +64,23 @@ func TestDiffSettings_NoChangeWhenEqual(t *testing.T) {
 	}
 }
 
+func TestResolveSessionBindingEnabledPreservesOmission(t *testing.T) {
+	requested := false
+	require.True(t, resolveSessionBindingEnabled(true, nil))
+	require.False(t, resolveSessionBindingEnabled(true, &requested))
+}
+
+func TestDiffSettingsDetectsSessionBindingChange(t *testing.T) {
+	changed := diffSettings(
+		&service.SystemSettings{SessionBindingEnabled: true},
+		&service.SystemSettings{SessionBindingEnabled: false},
+		nil,
+		nil,
+		UpdateSettingsRequest{},
+	)
+	require.Contains(t, changed, service.SettingKeySessionBindingEnabled)
+}
+
 func TestEqualNullableFloat(t *testing.T) {
 	five := 5.0
 	five2 := 5.0

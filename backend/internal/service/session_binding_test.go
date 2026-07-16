@@ -29,6 +29,7 @@ func TestSessionBindingContext_RoundTripsAndPreservesEmptyContext(t *testing.T) 
 	ctx := context.Background()
 	binding := &SessionBinding{IP: "203.0.113.7", UserAgent: "agent"}
 
+	require.Nil(t, SessionBindingFromContext(nil))
 	require.Nil(t, SessionBindingFromContext(ctx))
 	require.Same(t, binding, SessionBindingFromContext(WithSessionBinding(ctx, binding)))
 	require.Equal(t, ctx, WithSessionBinding(ctx, nil))
