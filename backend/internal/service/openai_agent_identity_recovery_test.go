@@ -91,8 +91,11 @@ func TestOpenAIPassthroughRecoversAgentIdentityTaskOnce(t *testing.T) {
 		},
 		{
 			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"id":"resp-recovered","model":"gpt-5.4","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)),
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-recovered\",\"model\":\"gpt-5.4\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n" +
+					"data: [DONE]\n\n",
+			)),
 		},
 	}}
 	svc := &OpenAIGatewayService{
@@ -109,7 +112,8 @@ func TestOpenAIPassthroughRecoversAgentIdentityTaskOnce(t *testing.T) {
 	result, err := svc.Forward(context.Background(), c, account, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, "resp-recovered", result.RequestID)
+	require.Equal(t, "resp-recovered", result.ResponseID)
+	require.Contains(t, rec.Body.String(), "resp-recovered")
 	require.Len(t, upstream.requests, 2)
 	require.Equal(t, "task-old", agentTaskIDFromAuthorization(t, upstream.requests[0].Header.Get("Authorization")))
 	require.Equal(t, "task-new", agentTaskIDFromAuthorization(t, upstream.requests[1].Header.Get("Authorization")))
