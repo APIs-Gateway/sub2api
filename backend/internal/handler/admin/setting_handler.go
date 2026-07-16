@@ -129,6 +129,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		FrontendURL:                            settings.FrontendURL,
 		InvitationCodeEnabled:                  settings.InvitationCodeEnabled,
 		TotpEnabled:                            settings.TotpEnabled,
+		SessionBindingEnabled:                  settings.SessionBindingEnabled,
 		TotpEncryptionKeyConfigured:            h.settingService.IsTotpEncryptionKeyConfigured(),
 		LoginAgreementEnabled:                  settings.LoginAgreementEnabled,
 		LoginAgreementMode:                     settings.LoginAgreementMode,
@@ -410,7 +411,8 @@ type UpdateSettingsRequest struct {
 	PasswordResetEnabled             bool                         `json:"password_reset_enabled"`
 	FrontendURL                      string                       `json:"frontend_url"`
 	InvitationCodeEnabled            bool                         `json:"invitation_code_enabled"`
-	TotpEnabled                      bool                         `json:"totp_enabled"` // TOTP 双因素认证
+	TotpEnabled                      bool                         `json:"totp_enabled"`            // TOTP 双因素认证
+	SessionBindingEnabled            *bool                        `json:"session_binding_enabled"` // 会话 IP/UA 绑定，省略时沿用现值
 	LoginAgreementEnabled            bool                         `json:"login_agreement_enabled"`
 	LoginAgreementMode               string                       `json:"login_agreement_mode"`
 	LoginAgreementUpdatedAt          string                       `json:"login_agreement_updated_at"`
@@ -1510,6 +1512,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if req.DefaultLocale != nil {
 		defaultLocale = strings.TrimSpace(*req.DefaultLocale)
 	}
+	sessionBindingEnabled := previousSettings.SessionBindingEnabled
+	if req.SessionBindingEnabled != nil {
+		sessionBindingEnabled = *req.SessionBindingEnabled
+	}
 
 	settings := &service.SystemSettings{
 		// 系统全局 platform quota 默认值（整体替换语义）
@@ -1524,6 +1530,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FrontendURL:                      req.FrontendURL,
 		InvitationCodeEnabled:            req.InvitationCodeEnabled,
 		TotpEnabled:                      req.TotpEnabled,
+		SessionBindingEnabled:            sessionBindingEnabled,
 		LoginAgreementEnabled:            req.LoginAgreementEnabled,
 		LoginAgreementMode:               loginAgreementMode,
 		LoginAgreementUpdatedAt:          loginAgreementUpdatedAt,
@@ -2017,6 +2024,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FrontendURL:                            updatedSettings.FrontendURL,
 		InvitationCodeEnabled:                  updatedSettings.InvitationCodeEnabled,
 		TotpEnabled:                            updatedSettings.TotpEnabled,
+		SessionBindingEnabled:                  updatedSettings.SessionBindingEnabled,
 		TotpEncryptionKeyConfigured:            h.settingService.IsTotpEncryptionKeyConfigured(),
 		LoginAgreementEnabled:                  updatedSettings.LoginAgreementEnabled,
 		LoginAgreementMode:                     updatedSettings.LoginAgreementMode,
@@ -2300,6 +2308,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.TotpEnabled != after.TotpEnabled {
 		changed = append(changed, "totp_enabled")
+	}
+	if before.SessionBindingEnabled != after.SessionBindingEnabled {
+		changed = append(changed, "session_binding_enabled")
 	}
 	if before.LoginAgreementEnabled != after.LoginAgreementEnabled {
 		changed = append(changed, "login_agreement_enabled")
