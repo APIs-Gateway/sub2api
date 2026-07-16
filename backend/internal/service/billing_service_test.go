@@ -1389,6 +1389,7 @@ func TestGetModelPricing_MapsDynamicPriorityFieldsIntoBillingPricing(t *testing.
 				LongContextInputTokenThreshold:      999,
 				LongContextInputCostMultiplier:      1.5,
 				LongContextOutputCostMultiplier:     1.25,
+				InputCostPerImageToken:              9e-8,
 			},
 		},
 	})
@@ -1407,6 +1408,7 @@ func TestGetModelPricing_MapsDynamicPriorityFieldsIntoBillingPricing(t *testing.
 	require.Equal(t, 999, pricing.LongContextInputThreshold)
 	require.InDelta(t, 1.5, pricing.LongContextInputMultiplier, 1e-12)
 	require.InDelta(t, 1.25, pricing.LongContextOutputMultiplier, 1e-12)
+	require.InDelta(t, 9e-8, pricing.ImageInputPricePerToken, 1e-12)
 }
 
 // ---------------------------------------------------------------------------
