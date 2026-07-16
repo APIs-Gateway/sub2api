@@ -57,14 +57,26 @@ func TestBuildAuditLogInsertQuery_RejectsInvalidExtraAndSkipsNil(t *testing.T) {
 	require.Len(t, args, 16)
 	require.Equal(t, createdAt, args[0])
 	require.Equal(t, userID, args[1])
-	if got := len([]rune(args[2].(string))); got != 255 {
+	actorEmail, ok := args[2].(string)
+	if !ok {
+		t.Fatalf("expected actor email argument to be a string, got %T", args[2])
+	}
+	if got := len([]rune(actorEmail)); got != 255 {
 		t.Fatalf("expected actor email to be truncated to 255 runes, got %d", got)
 	}
-	if got := len([]rune(args[3].(string))); got != 32 {
+	actorRole, ok := args[3].(string)
+	if !ok {
+		t.Fatalf("expected actor role argument to be a string, got %T", args[3])
+	}
+	if got := len([]rune(actorRole)); got != 32 {
 		t.Fatalf("expected actor role to be truncated to 32 runes, got %d", got)
 	}
-	if got := args[15].(string); got != "{\"source\":\"test\"}" {
-		t.Fatalf("unexpected extra JSON: %s", got)
+	extraJSON, ok := args[15].(string)
+	if !ok {
+		t.Fatalf("expected extra JSON argument to be a string, got %T", args[15])
+	}
+	if extraJSON != "{\"source\":\"test\"}" {
+		t.Fatalf("unexpected extra JSON: %s", extraJSON)
 	}
 
 	_, _, _, err = buildAuditLogInsertQuery([]*service.AuditLog{{
