@@ -20,7 +20,7 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 	}
 	rawTools, exists := reqBody["tools"]
 	if !exists || rawTools == nil {
-		return ensureOpenAIResponsesLiteReasoningContext(reqBody)
+		return ensureOpenAIResponsesLiteReasoningContext(reqBody), nil
 	}
 	tools, ok := rawTools.([]any)
 	if !ok {
@@ -54,7 +54,7 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 		}
 	}
 	if len(namespaceTools) == 0 {
-		return ensureOpenAIResponsesLiteReasoningContext(reqBody)
+		return ensureOpenAIResponsesLiteReasoningContext(reqBody), nil
 	}
 
 	input, err := appendOpenAIResponsesLiteAdditionalTools(reqBody["input"], namespaceTools)
@@ -67,27 +67,22 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 	} else {
 		reqBody["tools"] = topLevelTools
 	}
-	if _, err := ensureOpenAIResponsesLiteReasoningContext(reqBody); err != nil {
-		return false, err
-	}
+	ensureOpenAIResponsesLiteReasoningContext(reqBody)
 	return true, nil
 }
 
-func ensureOpenAIResponsesLiteReasoningContext(reqBody map[string]any) (bool, error) {
+func ensureOpenAIResponsesLiteReasoningContext(reqBody map[string]any) bool {
 	rawReasoning, exists := reqBody["reasoning"]
 	if !exists || rawReasoning == nil {
 		reqBody["reasoning"] = map[string]any{"context": "all_turns"}
-		return true, nil
+		return true
 	}
-	reasoning, ok := rawReasoning.(map[string]any)
-	if !ok {
-		return false, fmt.Errorf("responses Lite requires reasoning to be an object")
-	}
+	reasoning := rawReasoning.(map[string]any)
 	if context, ok := reasoning["context"].(string); ok && context == "all_turns" {
-		return false, nil
+		return false
 	}
 	reasoning["context"] = "all_turns"
-	return true, nil
+	return true
 }
 
 func appendOpenAIResponsesLiteAdditionalTools(input any, namespaceTools []any) ([]any, error) {
