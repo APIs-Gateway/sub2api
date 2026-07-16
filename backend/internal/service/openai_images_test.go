@@ -665,6 +665,54 @@ func TestAccountSupportsOpenAIEndpointCapability(t *testing.T) {
 
 		require.False(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapability("unknown")))
 	})
+
+	t.Run("responses capability follows the current API key fallback policy", func(t *testing.T) {
+		unprobed := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+		require.False(t, unprobed.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponses))
+
+		unsupported := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Extra:    map[string]any{"openai_responses_supported": false},
+		}
+		require.False(t, unsupported.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponses))
+
+		supported := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Extra:    map[string]any{"openai_responses_supported": true},
+		}
+		require.True(t, supported.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponses))
+
+		forcedChat := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Extra:    map[string]any{"openai_responses_mode": "force_chat_completions"},
+		}
+		require.False(t, forcedChat.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponses))
+
+		oauth := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra:    map[string]any{"openai_responses_supported": false},
+		}
+		require.True(t, oauth.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponses))
+	})
+
+	t.Run("responses capability still requires the chat capability gate", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Extra:    map[string]any{"openai_responses_supported": true},
+			Credentials: map[string]any{
+				"openai_capabilities": []any{"embeddings"},
+			},
+		}
+		require.False(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponses))
+	})
+
+	require.Equal(t, OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityForImageIntent(false))
+	require.Equal(t, OpenAIEndpointCapabilityResponses, OpenAIEndpointCapabilityForImageIntent(true))
 }
 
 func TestBuildOpenAIImagesURL_HandlesVersionedBaseURL(t *testing.T) {
