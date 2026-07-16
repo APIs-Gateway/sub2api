@@ -177,6 +177,28 @@ func TestOpenAIRequestBodyTooLargeFailsOverButContextWindowDoesNot(t *testing.T)
 	}))
 }
 
+func TestOpenAIRequestBodyTooLargeDoesNotRetrySameAccount(t *testing.T) {
+	bodyLimitBody := []byte(`{"error":{"message":"request entity too large"}}`)
+	require.False(t, openAIRetryableOnSameAccount(
+		http.StatusRequestEntityTooLarge,
+		"request entity too large",
+		bodyLimitBody,
+		true,
+	))
+	require.True(t, openAIRetryableOnSameAccount(
+		http.StatusServiceUnavailable,
+		"upstream unavailable",
+		[]byte(`{"error":{"message":"upstream unavailable"}}`),
+		true,
+	))
+	require.True(t, openAIRetryableOnSameAccount(
+		http.StatusRequestEntityTooLarge,
+		responseFailedContextMessage,
+		[]byte(`{"error":{"code":"context_length_exceeded","message":"`+responseFailedContextMessage+`"}}`),
+		true,
+	))
+}
+
 func TestOpenAIStreamFailedEventSemanticStatus(t *testing.T) {
 	tests := []struct {
 		name    string
