@@ -77,7 +77,10 @@ func ensureOpenAIResponsesLiteReasoningContext(reqBody map[string]any) bool {
 		reqBody["reasoning"] = map[string]any{"context": "all_turns"}
 		return true
 	}
-	reasoning := rawReasoning.(map[string]any)
+	reasoning, ok := rawReasoning.(map[string]any)
+	if !ok {
+		return false
+	}
 	if context, ok := reasoning["context"].(string); ok && context == "all_turns" {
 		return false
 	}
