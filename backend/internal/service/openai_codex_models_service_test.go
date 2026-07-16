@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"golang.org/x/net/http2"
 )
 
@@ -98,7 +99,7 @@ func TestFetchCodexModelsManifestDefaultClientVersion(t *testing.T) {
 }
 
 func TestFetchCodexModelsManifestUsesAPIKeyUpstream(t *testing.T) {
-	const manifestBody = `{"object":"list","data":[{"id":"gpt-5.6"}]}`
+	const manifestBody = `{"models":[{"slug":"gpt-5.6"}]}`
 	var gotPath, gotClientVersion, gotAuthorization string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -193,7 +194,7 @@ func TestFetchCodexModelsManifestUnsupportedAccountType(t *testing.T) {
 }
 
 func TestFetchCodexModelsManifestUsesAPIKeyHTTPUpstream(t *testing.T) {
-	const manifestBody = `{"object":"list","data":[{"id":"gpt-5.6"}]}`
+	const manifestBody = `{"models":[{"slug":"gpt-5.6"}]}`
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),
@@ -235,6 +236,53 @@ func TestFetchCodexModelsManifestUsesAPIKeyHTTPUpstream(t *testing.T) {
 	}
 	if got := HTTPUpstreamProfileFromContext(upstream.lastReq.Context()); got != HTTPUpstreamProfileOpenAI {
 		t.Errorf("upstream profile: got %q, want %q", got, HTTPUpstreamProfileOpenAI)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyRejectsInvalidEnvelope(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "OpenAI models list", body: `{"object":"list","data":[]}`},
+		{name: "invalid JSON", body: `{"models":`},
+		{name: "non-object", body: `[]`},
+		{name: "null object", body: `null`},
+		{name: "missing models", body: `{}`},
+		{name: "models object", body: `{"models":{}}`},
+		{name: "models null", body: `{"models":null}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			account := &Account{
+				ID:       2,
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key":  "test-api-key",
+					"base_url": server.URL,
+				},
+			}
+			cfg := &config.Config{}
+			cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+			s := &OpenAIGatewayService{cfg: cfg}
+			_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", "")
+			if err == nil {
+				t.Fatal("expected invalid manifest error, got nil")
+			}
+			if got, want := infraerrors.Reason(err), "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST"; got != want {
+				t.Errorf("error reason: got %q, want %q", got, want)
+			}
+			if !IsRetryableCodexModelsManifestError(err) {
+				t.Error("invalid upstream manifest must be retryable")
+			}
+		})
 	}
 }
 
