@@ -306,6 +306,27 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 	require.Equal(t, "true", upstream.lastReq.Header.Get(responsesLiteHeader))
 }
 
+func TestOpenAIWSHTTPBridgeBodyPreservesNormalizedResponsesLiteTools(t *testing.T) {
+	payload := []byte(`{
+		"type":"response.create",
+		"model":"gpt-5.6-terra",
+		"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},
+		"input":"hello",
+		"tools":[{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent"}]}],
+		"tool_choice":{"type":"namespace","name":"collaboration"}
+	}`)
+
+	normalized, changed, err := normalizeOpenAIResponsesLiteToolsPayload(payload)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	body, err := prepareOpenAIWSHTTPBridgeBody(normalized)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(body, "type").Exists())
+	require.Equal(t, "collaboration", gjson.GetBytes(body, `input.#(type=="additional_tools").tools.0.name`).String())
+	require.Equal(t, "namespace", gjson.GetBytes(body, "tool_choice.type").String())
+}
+
 func TestOpenAIWSHTTPBridgeAcceptsFirstFrameAboveLegacy16MiB(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
