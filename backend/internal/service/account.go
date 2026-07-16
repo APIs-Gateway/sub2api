@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 )
 
 type Account struct {
@@ -73,7 +74,15 @@ type OpenAIEndpointCapability string
 const (
 	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
 	OpenAIEndpointCapabilityEmbeddings      OpenAIEndpointCapability = "embeddings"
+	OpenAIEndpointCapabilityResponses       OpenAIEndpointCapability = "responses"
 )
+
+func OpenAIEndpointCapabilityForImageIntent(imageIntent bool) OpenAIEndpointCapability {
+	if imageIntent {
+		return OpenAIEndpointCapabilityResponses
+	}
+	return OpenAIEndpointCapabilityChatCompletions
+}
 
 const openAIEndpointCapabilitiesCredentialKey = "openai_capabilities"
 
@@ -1151,6 +1160,14 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	}
 	switch capability {
 	case OpenAIEndpointCapabilityChatCompletions:
+	case OpenAIEndpointCapabilityResponses:
+		// The native Responses path is required for image-intent requests. API key
+		// accounts that currently fall back to raw Chat Completions cannot fulfill it.
+		if a.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(a.Extra) {
+			return false
+		}
+		// Responses-capable upstreams must still advertise the existing chat gate.
+		capability = OpenAIEndpointCapabilityChatCompletions
 	case OpenAIEndpointCapabilityEmbeddings:
 		if a.Type != AccountTypeAPIKey {
 			return false
