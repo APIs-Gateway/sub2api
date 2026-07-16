@@ -1423,7 +1423,7 @@ func (s *GatewayService) buildOAuthMetadataUserID(parsed *ParsedRequest, account
 //   - account：必须是 OAuth 账号，且调用方已判断不是 Claude Code 客户端。
 //   - body：已经 marshal 成 Anthropic /v1/messages 格式的请求体。
 //   - systemRaw：body 中原始 system 字段（用于判断是否需要 rewrite）。
-//   - model：最终会发给上游的模型 ID（用于 haiku 旁路 + metadata 版本选择）。
+//   - model：最终会发给上游的模型 ID（用于模型规范化 + metadata 版本选择）。
 //
 // 返回：改写后的 body。即使中间任何一步失败，也会退化成原 body（不会 panic）。
 func (s *GatewayService) applyClaudeCodeOAuthMimicryToBody(
@@ -1440,7 +1440,7 @@ func (s *GatewayService) applyClaudeCodeOAuthMimicryToBody(
 
 	systemPromptInjectionEnabled, systemPrompt, systemPromptBlocks := s.claudeOAuthSystemPromptInjectionSettings(ctx)
 	systemRewritten := false
-	if systemPromptInjectionEnabled && !strings.Contains(strings.ToLower(model), "haiku") {
+	if systemPromptInjectionEnabled {
 		body = rewriteSystemForNonClaudeCodeWithPromptBlocks(body, normalizeSystemParam(systemRaw), systemPrompt, systemPromptBlocks)
 		systemRewritten = true
 	}
@@ -7019,8 +7019,8 @@ func (s *GatewayService) getBetaHeader(modelID string, clientBetaHeader string) 
 		return claude.BetaOAuth + "," + clientBetaHeader
 	}
 
-	// 客户端没传，根据模型生成
-	// haiku 模型不需要 claude-code beta
+	// OAuth 真实客户端透传且客户端没传 beta 时，根据模型生成默认值。
+	// Haiku 的透传默认值不补 claude-code beta；mimic 路径不会调用本分支。
 	if strings.Contains(strings.ToLower(modelID), "haiku") {
 		return claude.HaikuBetaHeader
 	}
@@ -7142,13 +7142,9 @@ func (s *GatewayService) computeFinalAnthropicBeta(
 
 	if tokenType == "oauth" {
 		if mimicClaudeCode {
-			// mimic 路径：原代码跳过白名单透传，incomingBeta 总是空字符串。
-			// 这里传空 string 以严格对齐原行为。
-			requiredBetas := []string{claude.BetaOAuth, claude.BetaInterleavedThinking}
-			if !strings.Contains(strings.ToLower(modelID), "haiku") {
-				requiredBetas = claude.FullClaudeCodeMimicryBetas()
-			}
-			return mergeAnthropicBetaDropping(requiredBetas, "", effectiveDropSet), true
+			// mimic 路径跳过白名单透传，incomingBeta 始终为空；所有模型都必须
+			// 携带完整 Claude Code beta 集合，避免 Haiku 被识别为第三方客户端。
+			return mergeAnthropicBetaDropping(claude.FullClaudeCodeMimicryBetas(), "", effectiveDropSet), true
 		}
 		// 真 Claude Code 客户端透传路径
 		return stripBetaTokensWithSet(s.getBetaHeader(modelID, clientBeta), effectiveDropSet), true
