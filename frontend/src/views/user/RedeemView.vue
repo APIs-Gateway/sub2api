@@ -421,12 +421,30 @@ const handleRedeem = async () => {
   redeemResult.value = null
 
   try {
-    const result = await redeemAPI.redeem(redeemCode.value.trim())
+    let result: Awaited<ReturnType<typeof redeemAPI.redeem>>
+    try {
+      result = await redeemAPI.redeem(redeemCode.value.trim())
+    } catch (error: any) {
+      errorMessage.value = error.response?.data?.detail || t('redeem.failedToRedeem')
+      appStore.showError(t('redeem.redeemFailed'))
+      return
+    }
 
     redeemResult.value = result
 
-    // Refresh user data to get updated balance/concurrency
-    await authStore.refreshUser()
+    if (result.new_balance !== undefined && authStore.user) {
+      authStore.user = {
+        ...authStore.user,
+        balance: result.new_balance
+      }
+    }
+
+    // Refresh user data to get updated balance/concurrency, without changing redemption success.
+    try {
+      await authStore.refreshUser()
+    } catch (error) {
+      console.error('Failed to refresh user after redeem:', error)
+    }
 
     // If subscription type, immediately refresh subscription status
     if (result.type === 'subscription') {
@@ -446,10 +464,6 @@ const handleRedeem = async () => {
 
     // Show success toast
     appStore.showSuccess(t('redeem.codeRedeemSuccess'))
-  } catch (error: any) {
-    errorMessage.value = error.response?.data?.detail || t('redeem.failedToRedeem')
-
-    appStore.showError(t('redeem.redeemFailed'))
   } finally {
     submitting.value = false
   }

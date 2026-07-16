@@ -55,6 +55,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
+      - name: Frontend production build
+        working-directory: frontend
+        run: pnpm run build
 
   golangci-lint:
     runs-on: ubuntu-latest
@@ -94,16 +97,16 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
-      # 全量跑 vitest 出覆盖率(非 required:允许存量未铺满的测试失败,仍上传已生成的覆盖)
+      # 全量跑 vitest 并生成覆盖率
       - name: Frontend coverage (full vitest)
         working-directory: frontend
         run: pnpm run test:coverage
-        continue-on-error: true
       - name: Upload frontend coverage to Codecov
+        if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v5
         with:
           files: frontend/coverage/lcov.info
           flags: frontend
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: APIs-Gateway/sub2api
-          fail_ci_if_error: false
+          fail_ci_if_error: true
