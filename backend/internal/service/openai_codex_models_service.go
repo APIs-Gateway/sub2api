@@ -30,8 +30,10 @@ type CodexModelsManifest struct {
 }
 
 type codexModelsManifestUpstreamError struct {
-	err       error
-	retryable bool
+	err        error
+	retryable  bool
+	statusCode int
+	body       []byte
 }
 
 func (e *codexModelsManifestUpstreamError) Error() string { return e.err.Error() }
@@ -138,24 +140,53 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	if account == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_ACCOUNT_REQUIRED", "account is required")
 	}
-	accessToken := account.GetOpenAIAccessToken()
-	if accessToken == "" {
-		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_TOKEN_MISSING", "account has no Codex backend access token")
-	}
 
 	clientVersion = strings.TrimSpace(clientVersion)
 	if clientVersion == "" {
 		clientVersion = openAICodexProbeVersion
 	}
-	requestURL := chatgptCodexModelsURL + "?client_version=" + url.QueryEscape(clientVersion)
+	manifest, fetchErr := s.fetchCodexModelsManifestUpstream(ctx, account, clientVersion, ifNoneMatch)
+	if !account.IsOpenAIAgentIdentity() || !isAgentIdentityTaskInvalidCodexModelsError(fetchErr) {
+		return manifest, fetchErr
+	}
+	expectedTaskID := strings.TrimSpace(account.GetCredential("task_id"))
+	if recoverErr := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); recoverErr != nil {
+		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_AUTH_FAILED", "agent identity task recovery failed: %v", recoverErr)
+	}
+	return s.fetchCodexModelsManifestUpstream(ctx, account, clientVersion, ifNoneMatch)
+}
 
+func isAgentIdentityTaskInvalidCodexModelsError(err error) bool {
+	var upstreamErr *codexModelsManifestUpstreamError
+	return errors.As(err, &upstreamErr) &&
+		isAgentIdentityTaskInvalidHTTPResponse(upstreamErr.statusCode, upstreamErr.body)
+}
+
+func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*CodexModelsManifest, error) {
+	accessToken := account.GetOpenAIAccessToken()
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	requestURL := chatgptCodexModelsURL + "?client_version=" + url.QueryEscape(clientVersion)
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_REQUEST_FAILED", "create codex models request: %v", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	if account.IsOpenAIAgentIdentity() {
+		authHeaders, authErr := BuildOpenAIAgentIdentityAuthenticationHeaders(reqCtx, s.accountRepo, account)
+		if authErr != nil {
+			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_AUTH_FAILED", "build Codex models authentication: %v", authErr)
+		}
+		for key, values := range authHeaders {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+	} else {
+		if accessToken == "" {
+			return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_TOKEN_MISSING", "account has no Codex backend access token")
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Originator", "codex_cli_rs")
 	req.Header.Set("Version", clientVersion)
@@ -195,12 +226,15 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		body = s.redactAgentIdentitySensitiveBody(reqCtx, account, body)
 		message := strings.TrimSpace(string(body))
 		if message == "" {
 			message = resp.Status
 		}
 		return nil, &codexModelsManifestUpstreamError{
-			err: infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest upstream error %d: %s", resp.StatusCode, message),
+			err:        infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest upstream error %d: %s", resp.StatusCode, message),
+			statusCode: resp.StatusCode,
+			body:       body,
 			retryable: resp.StatusCode == http.StatusTooManyRequests ||
 				(resp.StatusCode >= http.StatusInternalServerError && resp.StatusCode < 600),
 		}
