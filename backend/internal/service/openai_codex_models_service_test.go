@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"golang.org/x/net/http2"
 )
 
@@ -93,6 +94,49 @@ func TestFetchCodexModelsManifestDefaultClientVersion(t *testing.T) {
 	}
 	if gotClientVersion != openAICodexProbeVersion {
 		t.Errorf("default client_version: got %q, want %q", gotClientVersion, openAICodexProbeVersion)
+	}
+}
+
+func TestFetchCodexModelsManifestUsesAPIKeyUpstream(t *testing.T) {
+	const manifestBody = `{"object":"list","data":[{"id":"gpt-5.6"}]}`
+	var gotPath, gotClientVersion, gotAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotClientVersion = r.URL.Query().Get("client_version")
+		gotAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(manifestBody))
+	}))
+	defer server.Close()
+
+	account := &Account{
+		ID:       2,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "test-api-key",
+			"base_url": server.URL,
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	s := &OpenAIGatewayService{cfg: cfg}
+
+	manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", "")
+	if err != nil {
+		t.Fatalf("FetchCodexModelsManifest returned error: %v", err)
+	}
+	if string(manifest.Body) != manifestBody {
+		t.Fatalf("manifest body: got %q, want %q", manifest.Body, manifestBody)
+	}
+	if gotPath != "/v1/models" {
+		t.Errorf("request path: got %q, want /v1/models", gotPath)
+	}
+	if gotClientVersion != "0.144.2" {
+		t.Errorf("client_version: got %q, want 0.144.2", gotClientVersion)
+	}
+	if gotAuthorization != "Bearer test-api-key" {
+		t.Errorf("authorization: got %q", gotAuthorization)
 	}
 }
 
