@@ -680,6 +680,67 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Embeddi
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_ResponsesCapabilityExcludesImageIncompatibleAPIKeys(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(10111)
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = false
+
+	newService := func(accounts []Account) *OpenAIGatewayService {
+		return &OpenAIGatewayService{
+			accountRepo:        schedulerTestOpenAIAccountRepo{accounts: accounts},
+			cache:              &schedulerTestGatewayCache{},
+			cfg:                cfg,
+			concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+		}
+	}
+
+	supported := Account{
+		ID:          36101,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Extra:       map[string]any{"openai_responses_supported": true},
+	}
+	unsupported := Account{
+		ID:          36102,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    5,
+		Extra:       map[string]any{"openai_responses_supported": false},
+	}
+
+	selection, _, err := newService([]Account{supported, unsupported}).SelectAccountWithSchedulerForCapability(
+		ctx, &groupID, "", "", "gpt-image-2", nil,
+		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityResponses, false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, int64(36101), selection.Account.ID)
+
+	selection, _, err = newService([]Account{unsupported}).SelectAccountWithSchedulerForCapability(
+		ctx, &groupID, "", "", "gpt-image-2", nil,
+		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityResponses, false,
+	)
+	require.Error(t, err)
+	require.Nil(t, selection)
+
+	selection, _, err = newService([]Account{unsupported}).SelectAccountWithSchedulerForCapability(
+		ctx, &groupID, "", "", "gpt-5.5", nil,
+		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, int64(36102), selection.Account.ID)
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_EnabledUsesAdvancedPreviousResponseRouting(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
