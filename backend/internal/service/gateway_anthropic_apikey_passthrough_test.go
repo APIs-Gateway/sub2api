@@ -759,6 +759,10 @@ func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(
 			name: "system string",
 			body: `{"model":"claude-3-5-sonnet-latest","system":"x-anthropic-billing-header keep","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`,
 		},
+		{
+			name: "haiku system string",
+			body: `{"model":"claude-haiku-4-5","system":"x-anthropic-billing-header keep","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`,
+		},
 	}
 
 	for _, tt := range tests {
