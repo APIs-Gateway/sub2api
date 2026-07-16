@@ -77,6 +77,18 @@ func TestNormalizeOpenAIResponsesLiteTools_ConvertsStringInputAndDeduplicates(t 
 	require.Equal(t, "additional_tools", input[1].(map[string]any)["type"])
 }
 
+func TestNormalizeOpenAIResponsesLiteTools_AddsAdditionalToolsForMissingInput(t *testing.T) {
+	reqBody := map[string]any{
+		"tools": []any{map[string]any{"type": "namespace", "name": "collaboration"}},
+	}
+
+	changed, err := normalizeOpenAIResponsesLiteTools(reqBody)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "additional_tools", reqBody["input"].([]any)[0].(map[string]any)["type"])
+}
+
 func TestNormalizeOpenAIResponsesLiteTools_RejectsUnsupportedToolsWithoutMutation(t *testing.T) {
 	reqBody := map[string]any{"tools": []any{
 		map[string]any{"type": "function", "name": "shell"},
@@ -150,6 +162,115 @@ func TestNormalizeOpenAIResponsesLiteTools_RejectsNonObjectReasoning(t *testing.
 	require.ErrorContains(t, err, "reasoning to be an object")
 	require.False(t, changed)
 	require.Equal(t, "high", reqBody["reasoning"])
+}
+
+func TestNormalizeOpenAIResponsesLiteTools_ValidationAndNoOpCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		reqBody map[string]any
+		wantErr string
+		changed bool
+	}{
+		{name: "nil request"},
+		{name: "tools must be array", reqBody: map[string]any{"tools": "invalid"}, wantErr: "tools to be an array"},
+		{name: "empty string tool", reqBody: map[string]any{"tools": []any{"  "}}, wantErr: "must not be empty"},
+		{name: "tool must be object", reqBody: map[string]any{"tools": []any{42}}, wantErr: "must be an object"},
+		{name: "tool type required", reqBody: map[string]any{"tools": []any{map[string]any{}}}, wantErr: "missing type"},
+		{
+			name: "supported top level tools keep all turns",
+			reqBody: map[string]any{
+				"reasoning": map[string]any{"context": "all_turns"},
+				"tools": []any{
+					map[string]any{"type": "function", "name": "shell"},
+					map[string]any{"type": "custom", "name": "exec"},
+					map[string]any{"type": "tool_search"},
+					"custom shorthand",
+				},
+			},
+			changed: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed, err := normalizeOpenAIResponsesLiteTools(tt.reqBody)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				require.False(t, changed)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.changed, changed)
+		})
+	}
+}
+
+func TestNormalizeOpenAIResponsesLiteTools_RejectsInvalidAdditionalToolsInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		input any
+	}{
+		{name: "input object", input: map[string]any{"type": "message"}},
+		{name: "additional tools not array", input: []any{map[string]any{"type": "additional_tools", "tools": "invalid"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reqBody := map[string]any{
+				"input": tt.input,
+				"tools": []any{map[string]any{"type": "namespace", "name": "collaboration"}},
+			}
+			changed, err := normalizeOpenAIResponsesLiteTools(reqBody)
+			require.Error(t, err)
+			require.False(t, changed)
+		})
+	}
+}
+
+func TestNormalizeOpenAIResponsesLiteTools_RejectsConflictingExistingDefinitions(t *testing.T) {
+	reqBody := map[string]any{
+		"input": []any{
+			map[string]any{"type": "additional_tools", "tools": []any{
+				map[string]any{"type": "namespace", "name": "collaboration", "description": "first"},
+			}},
+			map[string]any{"type": "additional_tools", "tools": []any{
+				map[string]any{"type": "namespace", "name": "collaboration", "description": "second"},
+			}},
+		},
+		"tools": []any{map[string]any{"type": "namespace", "name": "new_namespace"}},
+	}
+
+	changed, err := normalizeOpenAIResponsesLiteTools(reqBody)
+
+	require.ErrorContains(t, err, "contains conflicting definitions")
+	require.False(t, changed)
+}
+
+func TestNormalizeOpenAIResponsesLiteToolIdentityHandlesUnnamedTools(t *testing.T) {
+	merged, err := mergeOpenAIResponsesLiteAdditionalTools(
+		[]any{"string tool", map[string]any{"type": "function"}},
+		[]any{map[string]any{"type": "namespace"}},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, merged, 3)
+	require.Empty(t, openAIResponsesLiteToolIdentity("string tool"))
+	require.Empty(t, openAIResponsesLiteToolIdentity(map[string]any{"type": "function"}))
+	require.Empty(t, openAIResponsesLiteToolIdentity(map[string]any{"name": "unnamed_type"}))
+}
+
+func TestNormalizeOpenAIResponsesLiteToolsPayloadRejectsInvalidJSONAndKeepsNoOp(t *testing.T) {
+	invalid := []byte(`{"tools":[`)
+	updated, changed, err := normalizeOpenAIResponsesLiteToolsPayload(invalid)
+	require.Error(t, err)
+	require.False(t, changed)
+	require.Equal(t, invalid, updated)
+
+	noOp := []byte(`{"reasoning":{"context":"all_turns"},"tools":[{"type":"function","name":"shell"}]}`)
+	updated, changed, err = normalizeOpenAIResponsesLiteToolsPayload(noOp)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, noOp, updated)
 }
 
 func TestNormalizeOpenAIResponsesLiteToolsPayload_PreservesResponseCreateShape(t *testing.T) {
