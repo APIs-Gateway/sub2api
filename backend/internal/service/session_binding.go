@@ -5,7 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
+
+// ErrSessionBindingMismatch indicates that a session's trusted IP/User-Agent fingerprint changed.
+var ErrSessionBindingMismatch = infraerrors.Unauthorized("SESSION_BINDING_MISMATCH", "session network fingerprint changed, please login again")
 
 // SessionBinding is the trusted client fingerprint attached to an auth session.
 type SessionBinding struct {
