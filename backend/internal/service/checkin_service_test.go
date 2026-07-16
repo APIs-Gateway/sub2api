@@ -4,7 +4,61 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
+
+type checkinSettingsRepoStub struct{}
+
+func (checkinSettingsRepoStub) Get(context.Context, string) (*Setting, error) {
+	panic("unexpected Get call")
+}
+func (checkinSettingsRepoStub) GetValue(context.Context, string) (string, error) {
+	panic("unexpected GetValue call")
+}
+func (checkinSettingsRepoStub) Set(context.Context, string, string) error {
+	panic("unexpected Set call")
+}
+func (checkinSettingsRepoStub) GetMultiple(context.Context, []string) (map[string]string, error) {
+	return map[string]string{
+		SettingKeyCheckinEnabled:       "true",
+		SettingKeyCheckinAmountMin:     "0.25",
+		SettingKeyCheckinAmountMax:     "0.25",
+		SettingKeyCheckinSpendPerExtra: "0",
+		SettingKeyCheckinMinTokens:     "0",
+	}, nil
+}
+func (checkinSettingsRepoStub) SetMultiple(context.Context, map[string]string) error {
+	panic("unexpected SetMultiple call")
+}
+func (checkinSettingsRepoStub) GetAll(context.Context) (map[string]string, error) {
+	panic("unexpected GetAll call")
+}
+func (checkinSettingsRepoStub) Delete(context.Context, string) error { panic("unexpected Delete call") }
+
+type checkinClaimRepoStub struct {
+	dailyClaims int
+}
+
+func (r *checkinClaimRepoStub) HasDailyCheckin(context.Context, int64, string) (bool, error) {
+	return r.dailyClaims > 0, nil
+}
+func (checkinClaimRepoStub) CountBonusOnDate(context.Context, int64, string) (int, error) {
+	return 0, nil
+}
+func (r *checkinClaimRepoStub) ClaimDaily(context.Context, int64, string, float64) (float64, error) {
+	r.dailyClaims++
+	return 12.75, nil
+}
+func (checkinClaimRepoStub) ClaimBonus(context.Context, int64, string, float64, int) (float64, error) {
+	panic("unexpected ClaimBonus call")
+}
+
+type checkinUsageRepoStub struct{ UsageLogRepository }
+
+func (checkinUsageRepoStub) GetUserStatsAggregated(context.Context, int64, time.Time, time.Time) (*usagestats.UsageStats, error) {
+	return &usagestats.UsageStats{}, nil
+}
 
 type checkinBlockingBalanceCache struct {
 	billingCacheWorkerStub
@@ -51,6 +105,29 @@ func TestCheckinInvalidatesBalanceCacheBeforeReturning(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("checkin did not return after balance cache invalidation completed")
+	}
+}
+
+func TestCheckinClaimReturnsTransactionBalance(t *testing.T) {
+	repo := &checkinClaimRepoStub{}
+	svc := &CheckinService{
+		repo:     repo,
+		settings: &SettingService{settingRepo: checkinSettingsRepoStub{}},
+		usage:    checkinUsageRepoStub{},
+	}
+
+	result, err := svc.Claim(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("claim checkin: %v", err)
+	}
+	if result.Balance != 12.75 {
+		t.Fatalf("balance = %v, want 12.75", result.Balance)
+	}
+	if result.Type != "daily" {
+		t.Fatalf("type = %q, want daily", result.Type)
+	}
+	if repo.dailyClaims != 1 {
+		t.Fatalf("daily claims = %d, want 1", repo.dailyClaims)
 	}
 }
 
