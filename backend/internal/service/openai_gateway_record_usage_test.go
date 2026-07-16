@@ -314,6 +314,35 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 	require.Zero(t, billingRepo.lastCmd.AccountQuotaCost)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_PersistsImageInputUsage(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, userRepo, subRepo, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_image_input_usage",
+			Usage: OpenAIUsage{
+				InputTokens:      371,
+				ImageInputTokens: 352,
+				OutputTokens:     439,
+			},
+			Model:    "gpt-5.1",
+			Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 1001, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:    &User{ID: 2001},
+		Account: &Account{ID: 3001, Type: AccountTypeAPIKey},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, 371, usageRepo.lastLog.InputTokens)
+	require.Equal(t, 352, usageRepo.lastLog.ImageInputTokens)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}

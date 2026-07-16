@@ -889,7 +889,7 @@ func TestGetModelPricing_DoubaoEmbeddingVisionImageInputRate(t *testing.T) {
 	}
 }
 
-// 验证双档计费：InputCost = 文本token×文本价 + 图片token×图片价；
+// 验证双档计费：InputCost = 文本token×文本价（不含图片），ImageInputCost = 图片token×图片价；
 // 且 ImageInputTokens=0 时走原单价路径，ImageInputTokens>InputTokens 时不负计文本。
 func TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput(t *testing.T) {
 	svc := newTestBillingService()
@@ -898,23 +898,69 @@ func TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput(t *testing.T) {
 	mixed := UsageTokens{InputTokens: 1340, ImageInputTokens: 28}
 	cost, err := svc.CalculateCost("doubao-embedding-vision", mixed, 1.0)
 	require.NoError(t, err)
-	wantMixed := float64(1312)*0.098e-6 + float64(28)*0.252e-6
-	require.InDelta(t, wantMixed, cost.InputCost, 1e-15)
-	require.InDelta(t, wantMixed, cost.TotalCost, 1e-15)
+	wantText := float64(1312) * 0.098e-6
+	wantImage := float64(28) * 0.252e-6
+	require.InDelta(t, wantText, cost.InputCost, 1e-15, "InputCost 仅计文本输入")
+	require.InDelta(t, wantImage, cost.ImageInputCost, 1e-15, "ImageInputCost 单独计图片输入")
+	require.InDelta(t, wantText+wantImage, cost.TotalCost, 1e-15, "TotalCost 口径不变")
 	require.Zero(t, cost.OutputCost)
 
-	// 纯文本：全部按文本档计费，与原单价路径一致。
+	// 纯文本：全部按文本档计费，与原单价路径一致，无图片输入费用。
 	textOnly := UsageTokens{InputTokens: 1340}
 	costText, err := svc.CalculateCost("doubao-embedding-vision", textOnly, 1.0)
 	require.NoError(t, err)
 	require.InDelta(t, float64(1340)*0.098e-6, costText.InputCost, 1e-15)
+	require.Zero(t, costText.ImageInputCost)
 
 	// 健壮性：ImageInputTokens 超过 InputTokens 时，文本置 0、计费 token 不超过 InputTokens。
 	weird := UsageTokens{InputTokens: 10, ImageInputTokens: 50}
 	costWeird, err := svc.CalculateCost("doubao-embedding-vision", weird, 1.0)
 	require.NoError(t, err)
-	require.InDelta(t, float64(10)*0.252e-6, costWeird.InputCost, 1e-15)
+	require.Zero(t, costWeird.InputCost, "全为图片输入时文本费用为 0")
+	require.InDelta(t, float64(10)*0.252e-6, costWeird.ImageInputCost, 1e-15)
+	require.InDelta(t, float64(10)*0.252e-6, costWeird.TotalCost, 1e-15)
 }
+
+// 复现 issue #4386：gpt-image-2 /v1/images/edits 带 1 张输入图。
+func TestComputeTokenBreakdown_GptImage2ImageEditIssue4386(t *testing.T) {
+	svc := newTestBillingService()
+
+	pricing := &ModelPricing{
+		InputPricePerToken:       5e-6,
+		ImageInputPricePerToken:  8e-6,
+		OutputPricePerToken:      10e-6,
+		ImageOutputPricePerToken: 30e-6,
+		ImageOutputPriceExplicit: true,
+	}
+	tokens := UsageTokens{
+		InputTokens:       371,
+		ImageInputTokens:  352,
+		OutputTokens:      439,
+		ImageOutputTokens: 439,
+	}
+
+	cost := svc.computeTokenBreakdown(pricing, tokens, 1.0, "", false)
+
+	require.InDelta(t, float64(19)*5e-6, cost.InputCost, 1e-15)
+	require.InDelta(t, float64(352)*8e-6, cost.ImageInputCost, 1e-15)
+	require.Zero(t, cost.OutputCost)
+	require.InDelta(t, float64(439)*30e-6, cost.ImageOutputCost, 1e-15)
+	require.InDelta(t, 0.016081, cost.TotalCost, 1e-9)
+}
+
+func TestCalculateCostWithLongContextPreservesImageInputCost(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 1000, ImageInputTokens: 500, CacheReadTokens: 1000}
+
+	cost, err := svc.CalculateCostWithLongContext("doubao-embedding-vision", tokens, 1.0, 1000, 2.0)
+	require.NoError(t, err)
+	// CostBreakdown stores unit-rate costs; the long-context multiplier is
+	// applied to ActualCost, just like the existing text-input fields.
+	require.InDelta(t, float64(500)*0.252e-6, cost.ImageInputCost, 1e-15)
+	require.Greater(t, cost.ActualCost, cost.TotalCost)
+	require.InDelta(t, cost.InputCost+cost.ImageInputCost+cost.CacheReadCost, cost.TotalCost, 1e-15)
+}
+
 func TestCalculateCostWithLongContext_BelowThreshold(t *testing.T) {
 	svc := newTestBillingService()
 
