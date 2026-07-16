@@ -52,6 +52,8 @@ func SetupRouter(
 
 	// 应用中间件
 	r.Use(middleware2.RequestLogger())
+	// 将可信客户端 IP + UA 注入 request context，供 token 签发路径写入会话绑定。
+	r.Use(middleware2.SessionBindingContext())
 	r.Use(middleware2.Logger())
 	r.Use(middleware2.CORS(cfg.CORS))
 	r.Use(middleware2.SecurityHeaders(cfg.Security.CSP, func() []string {
