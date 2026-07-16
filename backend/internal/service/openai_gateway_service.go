@@ -2371,12 +2371,27 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
 }
 
+// OpenAIRequestBodyTooLargeClientMessage is the fixed client-facing message
+// used after account-specific upstream body-limit failover is exhausted.
+const OpenAIRequestBodyTooLargeClientMessage = "Request payload is too large"
+
 // isOpenAIRequestBodyTooLargeError identifies an account-specific upstream
 // payload limit. Context-window failures are deterministic for the request and
 // must remain on the current account so their existing client-facing message is
 // preserved.
 func isOpenAIRequestBodyTooLargeError(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	return statusCode == http.StatusRequestEntityTooLarge && !isOpenAIContextWindowError(upstreamMsg, upstreamBody)
+}
+
+// IsOpenAIRequestBodyTooLargeFailover reports whether an exhausted failover
+// should use the fixed account-specific body-limit response. The raw upstream
+// body is retained on the failover error, so the context-window exclusion can
+// be applied without adding a second failure metadata model to this fork.
+func IsOpenAIRequestBodyTooLargeFailover(err *UpstreamFailoverError) bool {
+	if err == nil {
+		return false
+	}
+	return isOpenAIRequestBodyTooLargeError(err.StatusCode, "", err.ResponseBody)
 }
 
 func marshalOpenAIUpstreamJSON(v any) ([]byte, error) {

@@ -82,7 +82,7 @@ func TestOpenAIHandleFailoverExhausted_KeepsBodyLimitStatusAndSafeMessage(t *tes
 
 	(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, failover, false)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
-	assert.Contains(t, rec.Body.String(), "Request body is too large")
+	assert.Contains(t, rec.Body.String(), service.OpenAIRequestBodyTooLargeClientMessage)
 	assert.NotContains(t, rec.Body.String(), "private upstream body-limit detail")
 }
 

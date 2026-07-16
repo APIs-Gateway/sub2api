@@ -1918,6 +1918,17 @@ func (h *OpenAIGatewayHandler) handleConcurrencyError(c *gin.Context, err error,
 
 // handleFailoverExhausted 走共享的「上游错误 → 对外响应」策略(issue #16 Part B)。
 func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	if service.IsOpenAIRequestBodyTooLargeFailover(failoverErr) {
+		service.SetOpsUpstreamError(c, http.StatusRequestEntityTooLarge, service.OpenAIRequestBodyTooLargeClientMessage, "")
+		h.handleStreamingAwareError(
+			c,
+			http.StatusRequestEntityTooLarge,
+			"invalid_request_error",
+			service.OpenAIRequestBodyTooLargeClientMessage,
+			streamStarted,
+		)
+		return
+	}
 	status, errType, errMsg := service.ResolveUpstreamErrorResponse(c, service.PlatformOpenAI, failoverErr.StatusCode, failoverErr.ResponseBody)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }

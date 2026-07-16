@@ -154,17 +154,27 @@ func TestOpenAIContextWindowErrorDoesNotFailover(t *testing.T) {
 
 func TestOpenAIRequestBodyTooLargeFailsOverButContextWindowDoesNot(t *testing.T) {
 	svc := &OpenAIGatewayService{}
+	bodyLimitBody := []byte(`{"error":{"message":"request entity too large"}}`)
+	bodyLimitFailover := &UpstreamFailoverError{
+		StatusCode:   http.StatusRequestEntityTooLarge,
+		ResponseBody: bodyLimitBody,
+	}
 
 	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(
 		http.StatusRequestEntityTooLarge,
 		"request entity too large",
-		[]byte(`{"error":{"message":"request entity too large"}}`),
+		bodyLimitBody,
 	))
+	require.True(t, IsOpenAIRequestBodyTooLargeFailover(bodyLimitFailover))
 	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(
 		http.StatusRequestEntityTooLarge,
 		responseFailedContextMessage,
 		[]byte(`{"error":{"code":"context_length_exceeded","message":"`+responseFailedContextMessage+`"}}`),
 	))
+	require.False(t, IsOpenAIRequestBodyTooLargeFailover(&UpstreamFailoverError{
+		StatusCode:   http.StatusRequestEntityTooLarge,
+		ResponseBody: []byte(`{"error":{"code":"context_length_exceeded","message":"` + responseFailedContextMessage + `"}}`),
+	}))
 }
 
 func TestOpenAIStreamFailedEventSemanticStatus(t *testing.T) {
