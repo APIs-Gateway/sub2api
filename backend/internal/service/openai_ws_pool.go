@@ -39,6 +39,7 @@ var (
 type openAIWSDialError struct {
 	StatusCode      int
 	ResponseHeaders http.Header
+	ResponseBody    []byte
 	Err             error
 }
 
@@ -516,6 +517,7 @@ type openAIWSAccountPool struct {
 	mu            sync.Mutex
 	conns         map[string]*openAIWSConn
 	pinnedConns   map[string]int
+	generation    uint64
 	creating      int
 	lastCleanupAt time.Time
 	lastAcquire   *openAIWSAcquireRequest
@@ -1283,6 +1285,7 @@ func (p *openAIWSConnPool) ensureTargetIdleAsync(accountID int64) {
 	}
 
 	var req openAIWSAcquireRequest
+	generation := uint64(0)
 	need := 0
 	ap, ok := p.getAccountPool(accountID)
 	if !ok || ap == nil {
@@ -1317,6 +1320,7 @@ func (p *openAIWSConnPool) ensureTargetIdleAsync(accountID int64) {
 		return
 	}
 	req = cloneOpenAIWSAcquireRequest(*ap.lastAcquire)
+	generation = ap.generation
 	ap.prewarmActive = true
 	if cooldown := p.prewarmCooldown(); cooldown > 0 {
 		ap.prewarmUntil = now.Add(cooldown)
@@ -1324,7 +1328,7 @@ func (p *openAIWSConnPool) ensureTargetIdleAsync(accountID int64) {
 	ap.creating += need
 	p.metrics.scaleUpTotal.Add(int64(need))
 
-	go p.prewarmConns(accountID, req, need)
+	go p.prewarmConns(accountID, req, need, generation)
 }
 
 func (p *openAIWSConnPool) targetConnCountLocked(ap *openAIWSAccountPool, maxConns int) int {
@@ -1367,7 +1371,11 @@ func (p *openAIWSConnPool) targetConnCountLocked(ap *openAIWSAccountPool, maxCon
 	return target
 }
 
-func (p *openAIWSConnPool) prewarmConns(accountID int64, req openAIWSAcquireRequest, total int) {
+func (p *openAIWSConnPool) prewarmConns(accountID int64, req openAIWSAcquireRequest, total int, generations ...uint64) {
+	generation := uint64(0)
+	if len(generations) > 0 {
+		generation = generations[0]
+	}
 	defer func() {
 		if ap, ok := p.getAccountPool(accountID); ok && ap != nil {
 			ap.mu.Lock()
@@ -1398,6 +1406,11 @@ func (p *openAIWSConnPool) prewarmConns(accountID int64, req openAIWSAcquireRequ
 			ap.mu.Unlock()
 			continue
 		}
+		if len(generations) > 0 && ap.generation != generation {
+			ap.mu.Unlock()
+			conn.close()
+			return
+		}
 		if len(ap.conns) >= p.effectiveMaxConnsByAccount(req.Account) {
 			ap.mu.Unlock()
 			conn.close()
@@ -1408,6 +1421,37 @@ func (p *openAIWSConnPool) prewarmConns(accountID int64, req openAIWSAcquireRequ
 		ap.prewarmFailAt = time.Time{}
 		ap.mu.Unlock()
 	}
+}
+
+// ClearAccount invalidates all pooled connections and prevents an in-flight
+// prewarm started with stale Agent Identity credentials from being admitted.
+func (p *openAIWSConnPool) ClearAccount(accountID int64) {
+	if p == nil || accountID <= 0 {
+		return
+	}
+	ap, ok := p.getAccountPool(accountID)
+	if !ok || ap == nil {
+		return
+	}
+	ap.mu.Lock()
+	ap.generation++
+	conns := make([]*openAIWSConn, 0, len(ap.conns))
+	for _, conn := range ap.conns {
+		if conn != nil {
+			conns = append(conns, conn)
+		}
+	}
+	ap.conns = make(map[string]*openAIWSConn)
+	ap.pinnedConns = make(map[string]int)
+	ap.creating = 0
+	ap.lastAcquire = nil
+	ap.lastCleanupAt = time.Time{}
+	ap.prewarmActive = false
+	ap.prewarmUntil = time.Time{}
+	ap.prewarmFails = 0
+	ap.prewarmFailAt = time.Time{}
+	ap.mu.Unlock()
+	closeOpenAIWSConns(conns)
 }
 
 func (p *openAIWSConnPool) evictConn(accountID int64, connID string) {
@@ -1490,6 +1534,7 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 		return nil, &openAIWSDialError{
 			StatusCode:      status,
 			ResponseHeaders: cloneHeader(handshakeHeaders),
+			ResponseBody:    extractOpenAIWSHandshakeErrorBody(err),
 			Err:             err,
 		}
 	}

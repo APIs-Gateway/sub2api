@@ -297,6 +297,110 @@ func EnsureOpenAIAgentIdentityTask(ctx context.Context, repo AccountRepository, 
 	return ensureAgentIdentityTaskForAccount(ctx, repo, account, expectedTaskID)
 }
 
+func (s *OpenAIGatewayService) recoverAgentIdentityTask(ctx context.Context, account *Account, expectedTaskID string) error {
+	if s == nil {
+		return errors.New("openai gateway service is nil")
+	}
+	if err := EnsureOpenAIAgentIdentityTask(ctx, s.accountRepo, account, expectedTaskID); err != nil {
+		return err
+	}
+	s.InvalidateAgentIdentityWSConnections(account)
+	return nil
+}
+
+func (s *OpenAIGatewayService) isAgentIdentityAccount(_ context.Context, account *Account) bool {
+	return account != nil && account.IsOpenAIAgentIdentity()
+}
+
+func isAgentIdentityTaskInvalidHTTPResponse(statusCode int, body []byte) bool {
+	if statusCode != http.StatusUnauthorized {
+		return false
+	}
+	lower := strings.ToLower(string(body))
+	compact := strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "").Replace(lower)
+	for _, marker := range []string{
+		`"code":"invalid_task_id"`,
+		`"code":"task_not_found"`,
+		`"code":"task_expired"`,
+		`"error":"invalid_task_id"`,
+	} {
+		if strings.Contains(compact, marker) {
+			return true
+		}
+	}
+	for _, marker := range []string{
+		"invalid task_id",
+		"invalid task id",
+		"task_id is invalid",
+		"task id is invalid",
+		"task not found",
+		"task expired",
+		"unknown task_id",
+		"unknown task id",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAgentIdentityTaskInvalidWSDialError(err *openAIWSDialError) bool {
+	return err != nil && isAgentIdentityTaskInvalidHTTPResponse(err.StatusCode, err.ResponseBody)
+}
+
+func redactAgentIdentitySensitiveBodyForAccount(account *Account, body []byte) []byte {
+	if account == nil || !account.IsOpenAIAgentIdentity() || len(body) == 0 {
+		return body
+	}
+	redacted := string(body)
+	for _, key := range []string{
+		"agent_private_key",
+		"agent_runtime_id",
+		"task_id",
+		"access_token",
+		"refresh_token",
+		"id_token",
+		"api_key",
+		"session_key",
+		"cookie",
+	} {
+		if value := strings.TrimSpace(account.GetCredential(key)); value != "" {
+			redacted = strings.ReplaceAll(redacted, value, "[redacted]")
+		}
+	}
+	const assertionPrefix = "AgentAssertion "
+	for offset := 0; offset < len(redacted); {
+		relativeStart := strings.Index(redacted[offset:], assertionPrefix)
+		if relativeStart < 0 {
+			break
+		}
+		start := offset + relativeStart
+		valueStart := start + len(assertionPrefix)
+		end := valueStart
+		for end < len(redacted) && !strings.ContainsRune(" \t\r\n\"',}", rune(redacted[end])) {
+			end++
+		}
+		redacted = redacted[:valueStart] + "[redacted]" + redacted[end:]
+		offset = valueStart + len("[redacted]")
+	}
+	return []byte(redacted)
+}
+
+func (s *OpenAIGatewayService) redactAgentIdentitySensitiveBody(ctx context.Context, account *Account, body []byte) []byte {
+	if !s.isAgentIdentityAccount(ctx, account) {
+		return body
+	}
+	return redactAgentIdentitySensitiveBodyForAccount(account, body)
+}
+
+func (s *OpenAIGatewayService) InvalidateAgentIdentityWSConnections(account *Account) {
+	if s == nil || account == nil || s.openaiWSPool == nil {
+		return
+	}
+	s.openaiWSPool.ClearAccount(account.ID)
+}
+
 func accountIdentityTaskLock(accountID int64) *sync.Mutex {
 	if accountID <= 0 {
 		return &sync.Mutex{}
