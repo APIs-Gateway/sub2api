@@ -8,7 +8,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
 
-type checkinSettingsRepoStub struct{}
+type checkinSettingsRepoStub struct {
+	values map[string]string
+}
 
 func (checkinSettingsRepoStub) Get(context.Context, string) (*Setting, error) {
 	panic("unexpected Get call")
@@ -19,7 +21,10 @@ func (checkinSettingsRepoStub) GetValue(context.Context, string) (string, error)
 func (checkinSettingsRepoStub) Set(context.Context, string, string) error {
 	panic("unexpected Set call")
 }
-func (checkinSettingsRepoStub) GetMultiple(context.Context, []string) (map[string]string, error) {
+func (r checkinSettingsRepoStub) GetMultiple(context.Context, []string) (map[string]string, error) {
+	if r.values != nil {
+		return r.values, nil
+	}
 	return map[string]string{
 		SettingKeyCheckinEnabled:       "true",
 		SettingKeyCheckinAmountMin:     "0.25",
@@ -37,26 +42,35 @@ func (checkinSettingsRepoStub) GetAll(context.Context) (map[string]string, error
 func (checkinSettingsRepoStub) Delete(context.Context, string) error { panic("unexpected Delete call") }
 
 type checkinClaimRepoStub struct {
-	dailyClaims int
+	dailyClaims  int
+	bonusClaims  int
+	dailyClaimed bool
 }
 
 func (r *checkinClaimRepoStub) HasDailyCheckin(context.Context, int64, string) (bool, error) {
-	return r.dailyClaims > 0, nil
+	return r.dailyClaimed || r.dailyClaims > 0, nil
 }
-func (checkinClaimRepoStub) CountBonusOnDate(context.Context, int64, string) (int, error) {
-	return 0, nil
+func (r *checkinClaimRepoStub) CountBonusOnDate(context.Context, int64, string) (int, error) {
+	return r.bonusClaims, nil
 }
 func (r *checkinClaimRepoStub) ClaimDaily(context.Context, int64, string, float64) (float64, error) {
 	r.dailyClaims++
 	return 12.75, nil
 }
-func (checkinClaimRepoStub) ClaimBonus(context.Context, int64, string, float64, int) (float64, error) {
-	panic("unexpected ClaimBonus call")
+func (r *checkinClaimRepoStub) ClaimBonus(context.Context, int64, string, float64, int) (float64, error) {
+	r.bonusClaims++
+	return 14.25, nil
 }
 
-type checkinUsageRepoStub struct{ UsageLogRepository }
+type checkinUsageRepoStub struct {
+	UsageLogRepository
+	stats *usagestats.UsageStats
+}
 
-func (checkinUsageRepoStub) GetUserStatsAggregated(context.Context, int64, time.Time, time.Time) (*usagestats.UsageStats, error) {
+func (r checkinUsageRepoStub) GetUserStatsAggregated(context.Context, int64, time.Time, time.Time) (*usagestats.UsageStats, error) {
+	if r.stats != nil {
+		return r.stats, nil
+	}
 	return &usagestats.UsageStats{}, nil
 }
 
@@ -128,6 +142,35 @@ func TestCheckinClaimReturnsTransactionBalance(t *testing.T) {
 	}
 	if repo.dailyClaims != 1 {
 		t.Fatalf("daily claims = %d, want 1", repo.dailyClaims)
+	}
+}
+
+func TestCheckinBonusClaimReturnsTransactionBalance(t *testing.T) {
+	repo := &checkinClaimRepoStub{dailyClaimed: true}
+	svc := &CheckinService{
+		repo: repo,
+		settings: &SettingService{settingRepo: checkinSettingsRepoStub{values: map[string]string{
+			SettingKeyCheckinEnabled:       "true",
+			SettingKeyCheckinAmountMin:     "0.25",
+			SettingKeyCheckinAmountMax:     "0.25",
+			SettingKeyCheckinSpendPerExtra: "0.5",
+			SettingKeyCheckinMinTokens:     "0",
+		}}},
+		usage: checkinUsageRepoStub{stats: &usagestats.UsageStats{TotalActualCost: 0.5}},
+	}
+
+	result, err := svc.Claim(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("claim bonus checkin: %v", err)
+	}
+	if result.Balance != 14.25 {
+		t.Fatalf("balance = %v, want 14.25", result.Balance)
+	}
+	if result.Type != "bonus" {
+		t.Fatalf("type = %q, want bonus", result.Type)
+	}
+	if repo.bonusClaims != 1 {
+		t.Fatalf("bonus claims = %d, want 1", repo.bonusClaims)
 	}
 }
 
