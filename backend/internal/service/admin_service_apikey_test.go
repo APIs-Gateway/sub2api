@@ -72,6 +72,9 @@ func (s *userRepoStubForGroupUpdate) UpdateConcurrency(context.Context, int64, i
 func (s *userRepoStubForGroupUpdate) BatchSetConcurrency(context.Context, []int64, int) (int, error) {
 	return 0, nil
 }
+func (s *userRepoStubForGroupUpdate) BatchUpdateLimits(context.Context, []int64, *int, *int) (int, error) {
+	return 0, nil
+}
 func (s *userRepoStubForGroupUpdate) BatchAddConcurrency(context.Context, []int64, int) (int, error) {
 	return 0, nil
 }
