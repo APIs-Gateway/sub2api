@@ -198,6 +198,7 @@ func validateJWTForAdmin(
 		Concurrency: user.Concurrency,
 	})
 	c.Set(string(ContextKeyUserRole), user.Role)
+	c.Set(string(ContextKeySessionID), claims.SessionID)
 	c.Set("auth_method", "jwt")
 
 	return true
