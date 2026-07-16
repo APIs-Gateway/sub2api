@@ -2362,10 +2362,21 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
 		return false
 	}
+	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, upstreamBody) {
+		return true
+	}
 	if s.shouldFailoverUpstreamError(statusCode) {
 		return true
 	}
 	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
+}
+
+// isOpenAIRequestBodyTooLargeError identifies an account-specific upstream
+// payload limit. Context-window failures are deterministic for the request and
+// must remain on the current account so their existing client-facing message is
+// preserved.
+func isOpenAIRequestBodyTooLargeError(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	return statusCode == http.StatusRequestEntityTooLarge && !isOpenAIContextWindowError(upstreamMsg, upstreamBody)
 }
 
 func marshalOpenAIUpstreamJSON(v any) ([]byte, error) {
@@ -3660,6 +3671,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, responseBody []byte) bool {
 	if isOpenAIContextWindowError("", responseBody) {
 		return false
+	}
+	if statusCode == http.StatusRequestEntityTooLarge {
+		return true
 	}
 	switch statusCode {
 	case http.StatusTooManyRequests, 529:

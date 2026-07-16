@@ -1174,7 +1174,10 @@ func TestOpenAIPassthroughErrorHelpersCoverPolicyBranches(t *testing.T) {
 	require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusBadGateway, nil))
 	require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeAPIKey}, http.StatusBadRequest, nil))
 	require.True(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeAPIKey}, http.StatusTooManyRequests, nil))
+	require.True(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusRequestEntityTooLarge, nil))
+	require.True(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeAPIKey}, http.StatusRequestEntityTooLarge, nil))
 	require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeAPIKey}, http.StatusBadGateway, contextBody))
+	require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusRequestEntityTooLarge, contextBody))
 
 	now := time.Now()
 	for _, tt := range []struct {
