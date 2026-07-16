@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -84,4 +85,56 @@ func TestFetchCodexModelsManifestAgentIdentityRedactsUpstreamErrors(t *testing.T
 	require.NotContains(t, err.Error(), privateKey)
 	require.NotContains(t, err.Error(), "AgentAssertion leaked")
 	require.Contains(t, err.Error(), "[redacted]")
+}
+
+func TestFetchCodexModelsManifestAgentIdentityRecoveryFailureIsReturned(t *testing.T) {
+	_, privateKey := newAgentIdentityTestCredentials(t)
+	account := newAgentIdentityTestAccount(t, privateKey)
+	account.Credentials["task_id"] = "task-models-old"
+	repo := &agentIdentityRepoStub{
+		mockAccountRepoForGemini: mockAccountRepoForGemini{
+			accountsByID: map[int64]*Account{account.ID: account},
+		},
+		updateErr: errors.New("persist task failed"),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/task/register") {
+			_, _ = w.Write([]byte(`{"task_id":"task-models-new"}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"invalid_task_id"}}`))
+	}))
+	defer server.Close()
+
+	originalModelsURL := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	t.Cleanup(func() { chatgptCodexModelsURL = originalModelsURL })
+	originalAuthURL := openAIAgentIdentityAuthAPIBaseURL
+	openAIAgentIdentityAuthAPIBaseURL = server.URL
+	t.Cleanup(func() { openAIAgentIdentityAuthAPIBaseURL = originalAuthURL })
+
+	service := &OpenAIGatewayService{accountRepo: repo}
+	_, err := service.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "OPENAI_CODEX_MODELS_AUTH_FAILED")
+	require.Contains(t, err.Error(), "persist task failed")
+}
+
+func TestFetchCodexModelsManifestAgentIdentityAuthenticationFailureIsReturned(t *testing.T) {
+	account := newAgentIdentityTestAccount(t, "invalid-private-key")
+	account.Credentials["task_id"] = "task-models-invalid-key"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	originalModelsURL := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	t.Cleanup(func() { chatgptCodexModelsURL = originalModelsURL })
+
+	service := &OpenAIGatewayService{}
+	_, err := service.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "OPENAI_CODEX_MODELS_AUTH_FAILED")
 }
