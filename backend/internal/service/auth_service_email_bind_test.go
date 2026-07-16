@@ -93,8 +93,9 @@ CREATE TABLE IF NOT EXISTS user_provider_default_grants (
 	repo := repository.NewUserRepository(client, db)
 	cfg := &config.Config{
 		JWT: config.JWTConfig{
-			Secret:     "test-bind-email-secret",
-			ExpireHour: 1,
+			Secret:                 "test-bind-email-secret",
+			ExpireHour:             1,
+			RefreshTokenExpireDays: 7,
 		},
 		Default: config.DefaultConfig{
 			UserBalance:     3.5,

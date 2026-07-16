@@ -57,6 +57,8 @@ type JWTClaims struct {
 	Email        string `json:"email"`
 	Role         string `json:"role"`
 	TokenVersion int64  `json:"token_version"` // Used to invalidate tokens on password change
+	SessionID    string `json:"sid,omitempty"`
+	BindingHash  string `json:"bnd,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -277,7 +279,7 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	}
 
 	// 生成token
-	token, err := s.GenerateToken(user)
+	token, err := s.GenerateTokenWithContext(ctx, user)
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
 	}
@@ -472,7 +474,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (string
 	}
 
 	// 生成JWT token
-	token, err := s.GenerateToken(user)
+	token, err := s.GenerateTokenWithContext(ctx, user)
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
 	}
@@ -573,7 +575,7 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 			logger.LegacyPrintf("service.auth", "[Auth] Failed to update username after oauth login: %v", err)
 		}
 	}
-	token, err := s.GenerateToken(user)
+	token, err := s.GenerateTokenWithContext(ctx, user)
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
 	}
@@ -1203,9 +1205,22 @@ func isReservedEmail(email string) bool {
 		strings.HasSuffix(normalized, DingTalkConnectSyntheticEmailDomain)
 }
 
-// GenerateToken 生成JWT access token
-// 使用新的access_token_expire_minutes配置项（如果配置了），否则回退到expire_hour
+// GenerateToken 生成不带会话绑定的JWT access token。
+// 保留该入口兼容 CLI、测试和旧的服务内调用；HTTP 认证流程应使用 GenerateTokenWithContext。
 func (s *AuthService) GenerateToken(user *User) (string, error) {
+	return s.generateAccessToken(user, "", "")
+}
+
+// GenerateTokenWithContext 生成带会话 ID 与请求指纹的 JWT access token。
+func (s *AuthService) GenerateTokenWithContext(ctx context.Context, user *User) (string, error) {
+	sessionID, err := randomHexString(8)
+	if err != nil {
+		return "", fmt.Errorf("generate session id: %w", err)
+	}
+	return s.generateAccessToken(user, sessionID, sessionBindingHashFromContext(ctx))
+}
+
+func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash string) (string, error) {
 	now := time.Now()
 	var expiresAt time.Time
 	if s.cfg.JWT.AccessTokenExpireMinutes > 0 {
@@ -1220,6 +1235,8 @@ func (s *AuthService) GenerateToken(user *User) (string, error) {
 		Email:        user.Email,
 		Role:         user.Role,
 		TokenVersion: resolvedTokenVersion(user),
+		SessionID:    sessionID,
+		BindingHash:  bindingHash,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -1289,8 +1306,15 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldTokenString string) (
 		return "", ErrTokenRevoked
 	}
 
+	if s.settingService != nil && s.settingService.IsSessionBindingEnabled(ctx) && claims.BindingHash != "" {
+		if current := sessionBindingHashFromContext(ctx); current != "" && current != claims.BindingHash {
+			_ = s.RevokeSessionFamily(ctx, claims.SessionID)
+			return "", ErrSessionBindingMismatch
+		}
+	}
+
 	// 生成新token
-	return s.GenerateToken(user)
+	return s.GenerateTokenWithContext(ctx, user)
 }
 
 // IsPasswordResetEnabled 检查是否启用密码重置功能
@@ -1468,8 +1492,16 @@ func (s *AuthService) GenerateTokenPair(ctx context.Context, user *User, familyI
 		return nil, errors.New("refresh token cache not configured")
 	}
 
-	// 生成Access Token
-	accessToken, err := s.GenerateToken(user)
+	var err error
+	if familyID == "" {
+		familyID, err = randomHexString(16)
+		if err != nil {
+			return nil, fmt.Errorf("generate family id: %w", err)
+		}
+	}
+
+	// 生成带会话 ID 与请求指纹的Access Token。
+	accessToken, err := s.generateAccessToken(user, familyID, sessionBindingHashFromContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
@@ -1515,6 +1547,7 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 		UserID:       user.ID,
 		TokenVersion: resolvedTokenVersion(user),
 		FamilyID:     familyID,
+		BindingHash:  sessionBindingHashFromContext(ctx),
 		CreatedAt:    now,
 		ExpiresAt:    now.Add(ttl),
 	}
@@ -1599,6 +1632,14 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 		return nil, ErrTokenRevoked
 	}
 
+	// 旧 refresh token 可能没有绑定哈希，允许其完成一次轮转并在新 token 上补齐绑定。
+	if s.settingService != nil && s.settingService.IsSessionBindingEnabled(ctx) && data.BindingHash != "" {
+		if current := sessionBindingHashFromContext(ctx); current != "" && current != data.BindingHash {
+			_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
+			return nil, ErrSessionBindingMismatch
+		}
+	}
+
 	// Token轮转：立即使旧Token失效
 	if err := s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to delete old refresh token: %v", err)
@@ -1627,6 +1668,14 @@ func (s *AuthService) RevokeRefreshToken(ctx context.Context, refreshToken strin
 
 	tokenHash := hashToken(refreshToken)
 	return s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash)
+}
+
+// RevokeSessionFamily 撤销一个登录会话产生的全部 refresh token。
+func (s *AuthService) RevokeSessionFamily(ctx context.Context, familyID string) error {
+	if s.refreshTokenCache == nil || strings.TrimSpace(familyID) == "" {
+		return nil
+	}
+	return s.refreshTokenCache.DeleteTokenFamily(ctx, familyID)
 }
 
 // RevokeAllUserSessions 撤销用户的所有会话（所有Refresh Token）
