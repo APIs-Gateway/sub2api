@@ -159,7 +159,17 @@ func (h *TotpHandler) Disable(c *gin.Context) {
 // GetVerificationMethod returns the verification method for TOTP operations
 // GET /api/v1/user/totp/verification-method
 func (h *TotpHandler) GetVerificationMethod(c *gin.Context) {
-	method := h.totpService.GetVerificationMethod(c.Request.Context())
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	method, err := h.totpService.GetVerificationMethod(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	response.Success(c, method)
 }
 
@@ -178,4 +188,38 @@ func (h *TotpHandler) SendVerifyCode(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"success": true})
+}
+
+type TotpStepUpRequest struct {
+	Code string `json:"code" binding:"required"`
+}
+
+type TotpStepUpResponse struct {
+	Verified  bool  `json:"verified"`
+	ExpiresIn int64 `json:"expires_in"`
+}
+
+// StepUp verifies TOTP and grants the current authenticated session a short
+// window for sensitive operations.
+func (h *TotpHandler) StepUp(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	var req TotpStepUpRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "TOTP code is required")
+		return
+	}
+
+	sessionKey := middleware2.StepUpSessionKey(c, subject.UserID)
+	ttl, err := h.totpService.VerifyStepUp(c.Request.Context(), subject.UserID, sessionKey, req.Code)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, TotpStepUpResponse{Verified: true, ExpiresIn: int64(ttl.Seconds())})
 }

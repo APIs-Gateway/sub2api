@@ -12,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/handler/quotaview"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -29,6 +30,8 @@ type UserHandler struct {
 	concurrencyService    *service.ConcurrencyService
 	userPlatformQuotaRepo service.UserPlatformQuotaRepository // T13 admin quota view
 	billingCache          service.BillingCache                // T17/T18 缓存失效（PUT/POST 路径）
+	totpService           *service.TotpService
+	userService           *service.UserService
 }
 
 // NewUserHandler creates a new admin user handler
@@ -37,12 +40,16 @@ func NewUserHandler(
 	concurrencyService *service.ConcurrencyService,
 	userPlatformQuotaRepo service.UserPlatformQuotaRepository,
 	billingCache service.BillingCache,
+	totpService *service.TotpService,
+	userService *service.UserService,
 ) *UserHandler {
 	return &UserHandler{
 		adminService:          adminService,
 		concurrencyService:    concurrencyService,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
 		billingCache:          billingCache,
+		totpService:           totpService,
+		userService:           userService,
 	}
 }
 
@@ -265,6 +272,10 @@ func (h *UserHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if req.Role == service.RoleAdmin && !servermiddleware.EnforceStepUp(c, h.totpService, h.userService) {
+		return
+	}
+
 	user, err := h.adminService.CreateUser(c.Request.Context(), &service.CreateUserInput{
 		Email:         req.Email,
 		Password:      req.Password,
@@ -297,6 +308,17 @@ func (h *UserHandler) Update(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
+	}
+
+	if req.Role == service.RoleAdmin {
+		target, err := h.adminService.GetUser(c.Request.Context(), userID)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if target.Role != service.RoleAdmin && !servermiddleware.EnforceStepUp(c, h.totpService, h.userService) {
+			return
+		}
 	}
 	if req.Role == service.RoleUser {
 		if userID == getAdminIDFromContext(c) {
