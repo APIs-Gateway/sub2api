@@ -104,6 +104,10 @@ vi.mock('@/components/common/AnnouncementPopup.vue', () => ({
   default: { template: '<div />' }
 }))
 
+vi.mock('@/components/common/UserRegionNoticeOverlay.vue', () => ({
+  default: { template: '<div />' }
+}))
+
 describe('App document title refresh', () => {
   beforeEach(() => {
     route.fullPath = '/custom/scheduler'
