@@ -112,6 +112,46 @@ func TestNormalizeOpenAIResponsesLiteTools_RejectsConflictingAdditionalTool(t *t
 	require.Len(t, reqBody["tools"], 1)
 }
 
+func TestNormalizeOpenAIResponsesLiteTools_EnsuresReasoningContext(t *testing.T) {
+	tests := []struct {
+		name      string
+		reasoning any
+	}{
+		{name: "missing"},
+		{name: "missing context", reasoning: map[string]any{"effort": "high"}},
+		{name: "wrong context", reasoning: map[string]any{"effort": "medium", "context": "current_turn"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reqBody := map[string]any{"input": "hello"}
+			if tt.reasoning != nil {
+				reqBody["reasoning"] = tt.reasoning
+			}
+
+			changed, err := normalizeOpenAIResponsesLiteTools(reqBody)
+
+			require.NoError(t, err)
+			require.True(t, changed)
+			reasoning := reqBody["reasoning"].(map[string]any)
+			require.Equal(t, "all_turns", reasoning["context"])
+			if tt.reasoning != nil {
+				require.Equal(t, tt.reasoning.(map[string]any)["effort"], reasoning["effort"])
+			}
+		})
+	}
+}
+
+func TestNormalizeOpenAIResponsesLiteTools_RejectsNonObjectReasoning(t *testing.T) {
+	reqBody := map[string]any{"reasoning": "high"}
+
+	changed, err := normalizeOpenAIResponsesLiteTools(reqBody)
+
+	require.ErrorContains(t, err, "reasoning to be an object")
+	require.False(t, changed)
+	require.Equal(t, "high", reqBody["reasoning"])
+}
+
 func TestNormalizeOpenAIResponsesLiteToolsPayload_PreservesResponseCreateShape(t *testing.T) {
 	body := []byte(`{
 		"type":"response.create",
@@ -130,6 +170,7 @@ func TestNormalizeOpenAIResponsesLiteToolsPayload_PreservesResponseCreateShape(t
 	require.False(t, gjson.GetBytes(updated, "tools").Exists())
 	require.Equal(t, "collaboration", gjson.GetBytes(updated, `input.#(type=="additional_tools").tools.0.name`).String())
 	require.Equal(t, "namespace", gjson.GetBytes(updated, "tool_choice.type").String())
+	require.Equal(t, "all_turns", gjson.GetBytes(updated, "reasoning.context").String())
 }
 
 func TestApplyCodexOAuthTransform_PreservesLiteNamespaceToolChoice(t *testing.T) {
@@ -187,4 +228,5 @@ func TestOpenAIGatewayServiceForward_NormalizesResponsesLiteToolsForOAuth(t *tes
 	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="namespace")`).Exists())
 	require.Equal(t, "collaboration", gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools").tools.0.name`).String())
 	require.Equal(t, "namespace", gjson.GetBytes(upstream.lastBody, "tool_choice.type").String())
+	require.Equal(t, "all_turns", gjson.GetBytes(upstream.lastBody, "reasoning.context").String())
 }
