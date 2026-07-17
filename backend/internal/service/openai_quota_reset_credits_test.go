@@ -105,6 +105,14 @@ func TestApplyOpenAIRateLimitResetCreditDetailsIgnoresEmptyDetails(t *testing.T)
 	require.Nil(t, payload.RateLimitResetCredits)
 }
 
+func TestBuildCodexCommonHeadersIncludesFedRAMPOnlyWhenEnabled(t *testing.T) {
+	standard := buildCodexCommonHeaders("token", "account", false)
+	fedRAMP := buildCodexCommonHeaders("token", "account", true)
+
+	require.Empty(t, standard["x-openai-fedramp"])
+	require.Equal(t, "true", fedRAMP["x-openai-fedramp"])
+}
+
 func TestQueryResetCreditDetailsFailureIsNonFatal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -115,7 +123,7 @@ func TestQueryResetCreditDetailsFailureIsNonFatal(t *testing.T) {
 	require.NoError(t, err)
 
 	service := &OpenAIQuotaService{}
-	details := service.queryResetCreditDetails(context.Background(), client, "token", "account", 1)
+	details := service.queryResetCreditDetails(context.Background(), client, "token", "account", false, 1)
 	require.Nil(t, details)
 }
 
@@ -144,7 +152,7 @@ func TestQueryResetCreditDetailsResponseHandling(t *testing.T) {
 
 			client, err := newResetCreditTestClient(server.URL)
 			require.NoError(t, err)
-			details := (&OpenAIQuotaService{}).queryResetCreditDetails(context.Background(), client, "token", "account", 1)
+			details := (&OpenAIQuotaService{}).queryResetCreditDetails(context.Background(), client, "token", "account", false, 1)
 			if tt.wantNil {
 				require.Nil(t, details)
 				return
