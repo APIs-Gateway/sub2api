@@ -238,7 +238,8 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	proxyMismatch.Proxy = &service.Proxy{ID: proxyID, Protocol: "https", Host: "proxy.example", Port: 8080, Username: "user", Password: "pass", Status: service.StatusActive}
 	require.False(t, probeProxyIdentityMatches(ctx, client, &proxyMismatch))
 	proxyMissing := *account
-	proxyMissing.ProxyID = ptrInt64(999)
+	missingProxyID := int64(999)
+	proxyMissing.ProxyID = &missingProxyID
 	require.False(t, probeProxyIdentityMatches(ctx, client, &proxyMissing))
 	matched, err := lockAndMatchProbeProxyIdentity(ctx, client, &service.Account{})
 	require.NoError(t, err)
@@ -376,7 +377,8 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 		SetAutoPauseOnExpired(false).
 		Save(ctx)
 	require.NoError(t, err)
-	changed, err = sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, redirectProxy.ID, ptrInt64(targetProxy.ID), true)
+	targetProxyID := targetProxy.ID
+	changed, err = sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, redirectProxy.ID, &targetProxyID, true)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, changed)
 	redirected, err := client.Account.Get(ctx, redirectAccount.ID)

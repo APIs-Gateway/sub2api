@@ -409,5 +409,3 @@ func TestLockAndMatchProbeProxyIdentityHandlesMissingAndMismatchedProxies(t *tes
 		})
 	}
 }
-
-func ptrInt64(value int64) *int64 { return &value }
