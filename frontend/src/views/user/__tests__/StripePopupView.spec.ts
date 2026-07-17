@@ -36,7 +36,7 @@ vi.mock('@/api/client', () => ({ getAPIBaseURL }))
 
 vi.mock('@/utils/device', () => ({ isMobileDevice: () => false }))
 
-vi.mock('@stripe/stripe-js', () => ({ loadStripe }))
+vi.mock('@stripe/stripe-js/pure', () => ({ loadStripe }))
 
 import StripePopupView from '../StripePopupView.vue'
 
