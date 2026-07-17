@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,8 +20,8 @@ func TestUserRepositoryBatchUpdateLimitsBuildsPartialUpdate(t *testing.T) {
 	userIDs := []int64{11, 12}
 	concurrency := 8
 	rpmLimit := 0
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE users SET concurrency = $1, rpm_limit = $2, updated_at = NOW() WHERE id = ANY($3) AND deleted_at IS NULL")).
-		WithArgs(concurrency, rpmLimit, pq.Array(userIDs)).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE users SET concurrency = $1, rpm_limit = $2, updated_at = CURRENT_TIMESTAMP WHERE id IN ($3, $4) AND deleted_at IS NULL")).
+		WithArgs(concurrency, rpmLimit, userIDs[0], userIDs[1]).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 
 	affected, err := repo.BatchUpdateLimits(context.Background(), userIDs, &concurrency, &rpmLimit)
@@ -40,8 +39,8 @@ func TestUserRepositoryBatchUpdateLimitsLeavesUnselectedFieldUntouched(t *testin
 	repo := newUserRepositoryWithSQL(nil, db)
 	userIDs := []int64{13}
 	rpmLimit := 60
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE users SET rpm_limit = $1, updated_at = NOW() WHERE id = ANY($2) AND deleted_at IS NULL")).
-		WithArgs(rpmLimit, pq.Array(userIDs)).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE users SET rpm_limit = $1, updated_at = CURRENT_TIMESTAMP WHERE id IN ($2) AND deleted_at IS NULL")).
+		WithArgs(rpmLimit, userIDs[0]).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	affected, err := repo.BatchUpdateLimits(context.Background(), userIDs, nil, &rpmLimit)
