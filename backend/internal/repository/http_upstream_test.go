@@ -415,6 +415,32 @@ func TestHTTPUpstreamSuite(t *testing.T) {
 	suite.Run(t, new(HTTPUpstreamSuite))
 }
 
+func TestHTTPClientForUpstreamRequestRedirectPolicy(t *testing.T) {
+	client := &http.Client{Transport: http.DefaultTransport}
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	require.NoError(t, err)
+	if got := httpClientForUpstreamRequest(nil, req); got != nil {
+		t.Fatal("nil client should stay nil")
+	}
+	if got := httpClientForUpstreamRequest(client, nil); got != client {
+		t.Fatal("nil request should keep the original client")
+	}
+	if got := httpClientForUpstreamRequest(client, req); got != client {
+		t.Fatal("plain request should keep the original client")
+	}
+	req = req.WithContext(service.WithHTTPUpstreamRedirectsDisabled(req.Context()))
+	clone := httpClientForUpstreamRequest(client, req)
+	if clone == client {
+		t.Fatal("probe request should use a client clone")
+	}
+	if clone.Transport != client.Transport {
+		t.Fatal("client clone should preserve the transport")
+	}
+	if err := clone.CheckRedirect(req, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("unexpected redirect policy error: %v", err)
+	}
+}
+
 // mustGetOrCreateClient 测试辅助函数，调用 getOrCreateClient 并断言无错误
 func mustGetOrCreateClient(t *testing.T, svc *httpUpstreamService, proxyURL string, accountID int64, concurrency int) *upstreamClientEntry {
 	t.Helper()
