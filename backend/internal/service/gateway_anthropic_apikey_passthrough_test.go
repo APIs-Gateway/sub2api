@@ -863,6 +863,25 @@ func TestGatewayService_AnthropicOAuth_HaikuMimicUsesFullClaudeCodeHelpers(t *te
 	}
 }
 
+func TestGatewayService_AnthropicOAuth_HaikuMimicReturnsBodyRewriteError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	validBody := []byte(`{"model":"1234567890123","system":"Original system prompt","messages":[{"role":"user","content":"hello"}]}`)
+	parsed, err := ParseGatewayRequest(NewRequestBodyRef(validBody), PlatformAnthropic)
+	require.NoError(t, err)
+	// Keep the original field width so ParsedRequest's raw ranges remain valid,
+	// while making the model type invalid for the post-rewrite refresh.
+	parsed.Body.Replace([]byte(`{"model":1234567890123  ,"system":"Original system prompt","messages":[{"role":"user","content":"hello"}]}`))
+
+	svc := &GatewayService{cfg: &config.Config{}}
+	account := &Account{ID: 304, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+	_, err = svc.Forward(context.Background(), c, account, parsed)
+	require.ErrorContains(t, err, "rewrite request body")
+}
+
 func TestGatewayService_AnthropicOAuth_SystemPromptInjectionCanBeDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	resetGatewayForwardingSettingsCacheForTest(t)
