@@ -416,8 +416,15 @@ func (r *accountRepository) updateExtraWithProbe(ctx context.Context, id int64, 
 			if contextTx == nil {
 				r.syncSchedulerAccountSnapshot(baseCtx, id)
 			}
-		} else if contextTx == nil {
-			r.syncSchedulerAccountSnapshot(baseCtx, id)
+		} else {
+			if tx != nil {
+				if err := tx.Commit(); err != nil {
+					return err
+				}
+			}
+			if contextTx == nil {
+				r.syncSchedulerAccountSnapshot(baseCtx, id)
+			}
 		}
 		return nil
 	}
