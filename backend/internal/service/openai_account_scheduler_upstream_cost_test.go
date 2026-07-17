@@ -142,11 +142,13 @@ func TestBuildOpenAIAccountLoadPlanCostSignalIsOptIn(t *testing.T) {
 		context.Background(), OpenAIAccountScheduleRequest{}, accounts, loadMap,
 	)
 	require.Equal(t, withoutSignal.candidates[0].score, withoutSignal.candidates[1].score)
+	require.False(t, withoutSignal.includeOverflowFallback)
 
 	withSignal := scheduler.buildOpenAIAccountLoadPlan(
 		context.Background(), OpenAIAccountScheduleRequest{UseUpstreamTokenCost: true}, accounts, loadMap,
 	)
 	require.Greater(t, withSignal.candidates[0].score, withSignal.candidates[1].score)
+	require.True(t, withSignal.includeOverflowFallback)
 }
 
 func TestOpenAISchedulerSettingHelpers(t *testing.T) {

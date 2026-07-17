@@ -179,6 +179,105 @@ func TestOpenAISelectionReleasesSlotWhenRecheckFails(t *testing.T) {
 	require.Equal(t, 1, cache.releaseCalls[candidate.ID])
 }
 
+func TestOpenAISelectionReleasesSlotWhenRecheckBudgetExhausts(t *testing.T) {
+	candidate := probeBudgetTestAccount(1, 1)
+	cache := &openAISelectionProbeTrackingCache{acquire: true}
+	service := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{},
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(cache),
+		schedulerSnapshot: &SchedulerSnapshotService{cache: &openAISnapshotCacheStub{
+			accountsByID: map[int64]*Account{candidate.ID: candidate},
+		}},
+	}
+	scheduler := &defaultOpenAIAccountScheduler{service: service}
+	budget := newOpenAISelectionProbeBudget()
+	budget.enableLimit()
+	for i := 0; i < openAIAccountSelectionProbeLimit; i++ {
+		require.True(t, budget.recordRecheck())
+	}
+
+	selection, _, err := scheduler.tryAcquireOpenAISelectionOrderWithBudget(
+		context.Background(), OpenAIAccountScheduleRequest{RequiredTransport: OpenAIUpstreamTransportAny},
+		[]openAIAccountCandidateScore{{account: candidate}}, budget,
+	)
+	require.NoError(t, err)
+	require.Nil(t, selection)
+	require.Equal(t, 1, cache.acquireCalls[candidate.ID])
+	require.Equal(t, 1, cache.releaseCalls[candidate.ID])
+}
+
+func TestOpenAISelectionReleasesSlotWhenCompactIsUnsupported(t *testing.T) {
+	candidate := probeBudgetTestAccount(1, 1)
+	candidate.Extra = map[string]any{"openai_compact_supported": false}
+	cache := &openAISelectionProbeTrackingCache{acquire: true}
+	service := &OpenAIGatewayService{
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(cache),
+	}
+	scheduler := &defaultOpenAIAccountScheduler{service: service}
+
+	selection, compactBlocked, err := scheduler.tryAcquireOpenAISelectionOrderWithBudget(
+		context.Background(), OpenAIAccountScheduleRequest{
+			RequireCompact:    true,
+			RequiredTransport: OpenAIUpstreamTransportAny,
+		},
+		[]openAIAccountCandidateScore{{account: candidate}}, newOpenAISelectionProbeBudget(),
+	)
+	require.NoError(t, err)
+	require.True(t, compactBlocked)
+	require.Nil(t, selection)
+	require.Equal(t, 1, cache.acquireCalls[candidate.ID])
+	require.Equal(t, 1, cache.releaseCalls[candidate.ID])
+}
+
+func TestOpenAISelectionReacquireStopsAtAcquireBudget(t *testing.T) {
+	candidate := probeBudgetTestAccount(1, 1)
+	latest := probeBudgetTestAccount(1, 2)
+	cache := &openAISelectionProbeTrackingCache{acquire: true}
+	service := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{*latest}},
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(cache),
+		schedulerSnapshot: &SchedulerSnapshotService{cache: &openAISnapshotCacheStub{
+			accountsByID: map[int64]*Account{candidate.ID: candidate},
+		}},
+	}
+	scheduler := &defaultOpenAIAccountScheduler{service: service}
+	budget := newOpenAISelectionProbeBudget()
+	budget.enableLimit()
+	for i := 0; i < openAIAccountSelectionProbeLimit-1; i++ {
+		require.True(t, budget.recordAcquire(int64(i+1)))
+	}
+
+	selection, _, err := scheduler.tryAcquireOpenAISelectionOrderWithBudget(
+		context.Background(), OpenAIAccountScheduleRequest{RequiredTransport: OpenAIUpstreamTransportAny},
+		[]openAIAccountCandidateScore{{account: candidate}}, budget,
+	)
+	require.NoError(t, err)
+	require.Nil(t, selection)
+	require.Equal(t, 1, cache.acquireCalls[candidate.ID])
+	require.Equal(t, 1, cache.releaseCalls[candidate.ID])
+}
+
+func TestBuildOpenAIAccountLoadPlanTracksKnownLoad(t *testing.T) {
+	account := probeBudgetTestAccount(1, 2)
+	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{cfg: &config.Config{}}}
+
+	known := scheduler.buildOpenAIAccountLoadPlan(
+		context.Background(), OpenAIAccountScheduleRequest{}, []*Account{account},
+		map[int64]*AccountLoadInfo{account.ID: {AccountID: account.ID, CurrentConcurrency: 1}},
+	)
+	require.True(t, known.candidates[0].loadKnown)
+	require.Equal(t, 1, known.candidates[0].loadInfo.CurrentConcurrency)
+
+	unknown := scheduler.buildOpenAIAccountLoadPlan(
+		context.Background(), OpenAIAccountScheduleRequest{}, []*Account{account}, map[int64]*AccountLoadInfo{},
+	)
+	require.False(t, unknown.candidates[0].loadKnown)
+	require.Zero(t, unknown.candidates[0].loadInfo.CurrentConcurrency)
+}
+
 func TestOpenAISelectionReacquiresWhenConcurrencyChangesAfterRecheck(t *testing.T) {
 	candidate := probeBudgetTestAccount(1, 1)
 	latest := probeBudgetTestAccount(1, 2)
