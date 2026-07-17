@@ -78,6 +78,9 @@ const DataTableStub = {
           <slot :name="'header-' + column.key" :column="column" />
         </div>
       </template>
+      <div v-for="row in data" :key="row.id" data-test="account-row">
+        <slot name="cell-name" :row="row" :value="row.name" />
+      </div>
     </div>
   `
 }
@@ -85,7 +88,7 @@ const DataTableStub = {
 // Expose the content passed to HelpTooltip without dealing with its <Teleport>.
 const HelpTooltipStub = {
   props: ['content', 'widthClass'],
-  template: '<span data-test="usage-windows-hint">{{ content }}</span>'
+  template: '<span data-test="help-tooltip">{{ content }}<slot name="trigger" /></span>'
 }
 
 function mountView() {
@@ -167,7 +170,7 @@ describe('admin AccountsView usage windows hint', () => {
     // Column label is still shown alongside the help icon.
     expect(header.text()).toContain('admin.accounts.columns.usageWindows')
 
-    const hint = wrapper.find('[data-test="usage-windows-hint"]')
+    const hint = wrapper.find('[data-test="help-tooltip"]')
     expect(hint.exists()).toBe(true)
     expect(hint.text()).toBe('admin.accounts.usageWindowsHint')
   })
@@ -202,5 +205,42 @@ describe('admin AccountsView usage windows hint', () => {
     })
 
     expect(showSuccess).toHaveBeenCalledWith('admin.accounts.privacyAntigravitySet')
+  })
+
+  it('links only API Key account names with a safe base_url to the upstream origin', async () => {
+    listAccounts.mockResolvedValue({
+      items: [
+        { id: 101, name: 'relay-account', platform: 'openai', type: 'apikey', credentials: { base_url: 'https://relay.example.com/api/v1/' } },
+        { id: 102, name: 'oauth-account', platform: 'openai', type: 'oauth', credentials: { base_url: 'https://oauth.example.com/v1' } },
+        { id: 103, name: 'invalid-url', platform: 'openai', type: 'apikey', credentials: { base_url: 'javascript:alert(1)' } }
+      ],
+      total: 3,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const links = wrapper.findAll('a')
+    expect(links).toHaveLength(1)
+    expect(links[0].text()).toBe('relay-account')
+    expect(links[0].attributes()).toMatchObject({
+      href: 'https://relay.example.com',
+      target: '_blank',
+      rel: 'noopener noreferrer'
+    })
+    expect(wrapper.text()).toContain('oauth-account')
+    expect(wrapper.text()).toContain('invalid-url')
+
+    const tooltip = wrapper.findAllComponents(HelpTooltipStub).find(
+      component => component.props('content') === 'https://relay.example.com'
+    )
+    expect(tooltip).toBeDefined()
+    expect(tooltip?.props('widthClass')).toBe('w-max max-w-sm break-all')
+    expect(tooltip?.classes()).toEqual(expect.arrayContaining(['self-start']))
+
+    wrapper.unmount()
   })
 })
