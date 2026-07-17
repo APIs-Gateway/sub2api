@@ -7,7 +7,6 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/nacl/box"
@@ -135,7 +135,7 @@ func buildAgentAssertion(key agentIdentityKey, now time.Time) (string, error) {
 		"timestamp":        timestamp,
 		"signature":        base64.StdEncoding.EncodeToString(signature),
 	}
-	encoded, err := json.Marshal(envelope)
+	encoded, err := common.Marshal(envelope)
 	if err != nil {
 		return "", errors.New("failed to serialize agent assertion")
 	}
@@ -204,7 +204,7 @@ func registerAgentIdentityTask(ctx context.Context, account *Account) (string, e
 	if err != nil {
 		return "", errors.New("invalid proxy configuration for agent task registration")
 	}
-	body, err := json.Marshal(map[string]string{
+	body, err := common.Marshal(map[string]string{
 		"timestamp": timestamp,
 		"signature": signature,
 	})
@@ -228,7 +228,7 @@ func registerAgentIdentityTask(ctx context.Context, account *Account) (string, e
 		return "", fmt.Errorf("agent task registration returned status %d", resp.StatusCode)
 	}
 	var result agentIdentityTaskRegistrationResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&result); err != nil {
+	if err := common.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&result); err != nil {
 		return "", errors.New("agent task registration response is invalid")
 	}
 	if taskID := strings.TrimSpace(result.TaskID); taskID != "" {
