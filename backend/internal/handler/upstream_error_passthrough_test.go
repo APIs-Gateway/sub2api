@@ -73,6 +73,19 @@ func TestOpenAIHandleFailoverExhausted_KeepsUpstream4xxStatus(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
+func TestOpenAIHandleFailoverExhausted_KeepsBodyLimitStatusAndSafeMessage(t *testing.T) {
+	c, rec := newPassthroughTestCtx()
+	failover := &service.UpstreamFailoverError{
+		StatusCode:   http.StatusRequestEntityTooLarge,
+		ResponseBody: []byte(`{"error":{"message":"private upstream body-limit detail"}}`),
+	}
+
+	(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, failover, false)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	assert.Contains(t, rec.Body.String(), service.OpenAIRequestBodyTooLargeClientMessage)
+	assert.NotContains(t, rec.Body.String(), "private upstream body-limit detail")
+}
+
 func TestHandleAnthropicFailoverExhausted_KeepsUpstream4xxStatus(t *testing.T) {
 	c, rec := newPassthroughTestCtx()
 	(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, failover422(), false)

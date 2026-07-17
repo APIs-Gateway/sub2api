@@ -152,6 +152,53 @@ func TestOpenAIContextWindowErrorDoesNotFailover(t *testing.T) {
 	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, "upstream unavailable", []byte(`{"error":{"message":"upstream unavailable"}}`)))
 }
 
+func TestOpenAIRequestBodyTooLargeFailsOverButContextWindowDoesNot(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	bodyLimitBody := []byte(`{"error":{"message":"request entity too large"}}`)
+	bodyLimitFailover := &UpstreamFailoverError{
+		StatusCode:   http.StatusRequestEntityTooLarge,
+		ResponseBody: bodyLimitBody,
+	}
+
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(
+		http.StatusRequestEntityTooLarge,
+		"request entity too large",
+		bodyLimitBody,
+	))
+	require.True(t, IsOpenAIRequestBodyTooLargeFailover(bodyLimitFailover))
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(
+		http.StatusRequestEntityTooLarge,
+		responseFailedContextMessage,
+		[]byte(`{"error":{"code":"context_length_exceeded","message":"`+responseFailedContextMessage+`"}}`),
+	))
+	require.False(t, IsOpenAIRequestBodyTooLargeFailover(&UpstreamFailoverError{
+		StatusCode:   http.StatusRequestEntityTooLarge,
+		ResponseBody: []byte(`{"error":{"code":"context_length_exceeded","message":"` + responseFailedContextMessage + `"}}`),
+	}))
+}
+
+func TestOpenAIRequestBodyTooLargeDoesNotRetrySameAccount(t *testing.T) {
+	bodyLimitBody := []byte(`{"error":{"message":"request entity too large"}}`)
+	require.False(t, openAIRetryableOnSameAccount(
+		http.StatusRequestEntityTooLarge,
+		"request entity too large",
+		bodyLimitBody,
+		true,
+	))
+	require.True(t, openAIRetryableOnSameAccount(
+		http.StatusServiceUnavailable,
+		"upstream unavailable",
+		[]byte(`{"error":{"message":"upstream unavailable"}}`),
+		true,
+	))
+	require.True(t, openAIRetryableOnSameAccount(
+		http.StatusRequestEntityTooLarge,
+		responseFailedContextMessage,
+		[]byte(`{"error":{"code":"context_length_exceeded","message":"`+responseFailedContextMessage+`"}}`),
+		true,
+	))
+}
+
 func TestOpenAIStreamFailedEventSemanticStatus(t *testing.T) {
 	tests := []struct {
 		name    string

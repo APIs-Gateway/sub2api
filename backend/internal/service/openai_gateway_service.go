@@ -2362,10 +2362,45 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
 		return false
 	}
+	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, upstreamBody) {
+		return true
+	}
 	if s.shouldFailoverUpstreamError(statusCode) {
 		return true
 	}
 	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
+}
+
+// OpenAIRequestBodyTooLargeClientMessage is the fixed client-facing message
+// used after account-specific upstream body-limit failover is exhausted.
+const OpenAIRequestBodyTooLargeClientMessage = "Request payload is too large"
+
+// isOpenAIRequestBodyTooLargeError identifies an account-specific upstream
+// payload limit. Context-window failures are deterministic for the request and
+// must remain on the current account so their existing client-facing message is
+// preserved.
+func isOpenAIRequestBodyTooLargeError(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	return statusCode == http.StatusRequestEntityTooLarge && !isOpenAIContextWindowError(upstreamMsg, upstreamBody)
+}
+
+// IsOpenAIRequestBodyTooLargeFailover reports whether an exhausted failover
+// should use the fixed account-specific body-limit response. The raw upstream
+// body is retained on the failover error, so the context-window exclusion can
+// be applied without adding a second failure metadata model to this fork.
+func IsOpenAIRequestBodyTooLargeFailover(err *UpstreamFailoverError) bool {
+	if err == nil {
+		return false
+	}
+	return isOpenAIRequestBodyTooLargeError(err.StatusCode, "", err.ResponseBody)
+}
+
+// openAIRetryableOnSameAccount prevents account-specific request-size limits
+// from being retried on the account that already rejected the request.
+func openAIRetryableOnSameAccount(statusCode int, upstreamMsg string, upstreamBody []byte, retryable bool) bool {
+	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, upstreamBody) {
+		return false
+	}
+	return retryable
 }
 
 func marshalOpenAIUpstreamJSON(v any) ([]byte, error) {
@@ -3203,7 +3238,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				return nil, &UpstreamFailoverError{
 					StatusCode:             resp.StatusCode,
 					ResponseBody:           respBody,
-					RetryableOnSameAccount: account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
+					RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody))),
 				}
 			}
 			return s.handleErrorResponse(ctx, resp, c, account, body, billingModel)
@@ -3671,6 +3706,9 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	if isOpenAIContextWindowError("", responseBody) {
 		return false
 	}
+	if statusCode == http.StatusRequestEntityTooLarge {
+		return true
+	}
 	switch statusCode {
 	case http.StatusTooManyRequests, 529:
 		return true
@@ -3806,7 +3844,7 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 		StatusCode:             resp.StatusCode,
 		ResponseBody:           body,
 		ResponseHeaders:        resp.Header.Clone(),
-		RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+		RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, body, account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)),
 	}
 }
 
@@ -4738,7 +4776,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
-			RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+			RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, body, account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)),
 		}
 	}
 
@@ -4890,7 +4928,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
-			RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+			RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, body, account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)),
 		}
 	}
 
