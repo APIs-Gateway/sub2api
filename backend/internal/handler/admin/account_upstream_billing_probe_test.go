@@ -2,7 +2,9 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +13,35 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type billingProbeAdminSettingRepo struct {
+	service.SettingRepository
+	values map[string]string
+	getErr error
+	setErr error
+}
+
+func (r *billingProbeAdminSettingRepo) GetValue(_ context.Context, key string) (string, error) {
+	if r.getErr != nil {
+		return "", r.getErr
+	}
+	value, ok := r.values[key]
+	if !ok {
+		return "", service.ErrSettingNotFound
+	}
+	return value, nil
+}
+
+func (r *billingProbeAdminSettingRepo) Set(_ context.Context, key, value string) error {
+	if r.setErr != nil {
+		return r.setErr
+	}
+	if r.values == nil {
+		r.values = make(map[string]string)
+	}
+	r.values[key] = value
+	return nil
+}
 
 func setupUpstreamBillingProbeRouter(probe *service.UpstreamBillingProbeService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -48,6 +79,31 @@ func TestAccountHandlerUpstreamBillingProbeRequiresService(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 }
 
+func TestAccountHandlerUpstreamBillingProbeRequiresServiceForAllRoutes(t *testing.T) {
+	router := setupUpstreamBillingProbeRouter(nil)
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "update settings", method: http.MethodPut, path: "/admin/accounts/upstream-billing-probe/settings", body: `{"enabled":true,"interval_minutes":30}`},
+		{name: "batch probe", method: http.MethodPost, path: "/admin/accounts/upstream-billing-probe/batch", body: `{"account_ids":[1]}`},
+		{name: "set account", method: http.MethodPut, path: "/admin/accounts/1/upstream-billing-probe", body: `{"enabled":true}`},
+		{name: "probe account", method: http.MethodPost, path: "/admin/accounts/1/upstream-billing-probe"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(recorder, request)
+			require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+		})
+	}
+}
+
 func TestAccountHandlerUpstreamBillingProbeValidatesRequests(t *testing.T) {
 	router := setupUpstreamBillingProbeRouter(service.NewUpstreamBillingProbeService(nil, nil, nil))
 
@@ -60,6 +116,7 @@ func TestAccountHandlerUpstreamBillingProbeValidatesRequests(t *testing.T) {
 		{name: "empty batch", method: http.MethodPost, path: "/admin/accounts/upstream-billing-probe/batch", body: `{"account_ids":[]}`},
 		{name: "negative batch id", method: http.MethodPost, path: "/admin/accounts/upstream-billing-probe/batch", body: `{"account_ids":[0]}`},
 		{name: "duplicate batch ids are accepted", method: http.MethodPost, path: "/admin/accounts/upstream-billing-probe/batch", body: `{"account_ids":[1,1]}`},
+		{name: "malformed batch", method: http.MethodPost, path: "/admin/accounts/upstream-billing-probe/batch", body: `{`},
 		{name: "malformed settings", method: http.MethodPut, path: "/admin/accounts/upstream-billing-probe/settings", body: `{`},
 		{name: "invalid enabled payload", method: http.MethodPut, path: "/admin/accounts/1/upstream-billing-probe", body: `{}`},
 		{name: "invalid enabled id", method: http.MethodPut, path: "/admin/accounts/not-an-id/upstream-billing-probe", body: `{"enabled":true}`},
@@ -101,4 +158,55 @@ func TestAccountHandlerUpdateUpstreamBillingProbeSettingsReportsUnavailable(t *t
 	router.ServeHTTP(recorder, request)
 
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+}
+
+func TestAccountHandlerUpdateUpstreamBillingProbeSettingsRoundTrip(t *testing.T) {
+	settingRepo := &billingProbeAdminSettingRepo{values: map[string]string{}}
+	settingService := service.NewSettingService(settingRepo, nil)
+	router := setupUpstreamBillingProbeRouter(service.NewUpstreamBillingProbeService(nil, nil, settingService))
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/admin/accounts/upstream-billing-probe/settings", bytes.NewBufferString(`{"enabled":false,"interval_minutes":15}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload struct {
+		Data service.UpstreamBillingProbeSettings `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.False(t, payload.Data.Enabled)
+	require.Equal(t, 15, payload.Data.IntervalMinutes)
+}
+
+func TestAccountHandlerUpstreamBillingProbeSettingsReportsReadError(t *testing.T) {
+	settingRepo := &billingProbeAdminSettingRepo{
+		values: map[string]string{},
+		getErr: errors.New("settings unavailable"),
+	}
+	settingService := service.NewSettingService(settingRepo, nil)
+	router := setupUpstreamBillingProbeRouter(service.NewUpstreamBillingProbeService(nil, nil, settingService))
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/accounts/upstream-billing-probe/settings", nil))
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+}
+
+func TestAccountHandlerUpstreamBillingProbeOperationErrors(t *testing.T) {
+	router := setupUpstreamBillingProbeRouter(service.NewUpstreamBillingProbeService(nil, nil, nil))
+	requests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodPut, path: "/admin/accounts/1/upstream-billing-probe", body: `{"enabled":true}`},
+		{method: http.MethodPost, path: "/admin/accounts/1/upstream-billing-probe"},
+	}
+
+	for _, tc := range requests {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(tc.body))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	}
 }
