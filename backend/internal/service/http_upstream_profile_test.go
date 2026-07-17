@@ -19,3 +19,16 @@ func TestWithHTTPUpstreamProfile_OpenAI(t *testing.T) {
 		t.Fatalf("expected profile %q, got %q", HTTPUpstreamProfileOpenAI, profile)
 	}
 }
+
+func TestHTTPUpstreamRedirectsDisabledContext(t *testing.T) {
+	if HTTPUpstreamRedirectsDisabled(nil) {
+		t.Fatal("nil context must not disable redirects")
+	}
+	if HTTPUpstreamRedirectsDisabled(context.Background()) {
+		t.Fatal("plain context must not disable redirects")
+	}
+	ctx := WithHTTPUpstreamRedirectsDisabled(nil)
+	if !HTTPUpstreamRedirectsDisabled(ctx) {
+		t.Fatal("wrapped context should disable redirects")
+	}
+}
