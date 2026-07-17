@@ -134,3 +134,70 @@ func TestBuildSchedulerMetadataAccount_KeepsModelRateLimits(t *testing.T) {
 	require.Contains(t, limits, "antigravity:gemini")
 	require.Nil(t, got.Extra["unused_large_field"])
 }
+
+func TestBuildSchedulerMetadataAccount_ProjectsUpstreamBillingProbe(t *testing.T) {
+	account := service.Account{
+		ID: 91,
+		Extra: map[string]any{
+			service.UpstreamBillingProbeExtraKey: map[string]any{
+				"status":           service.UpstreamBillingProbeStatusOK,
+				"received_at":      "2026-07-17T10:00:00Z",
+				"fresh_until":      "2026-07-17T10:05:00Z",
+				"next_probe_at":    "2026-07-17T10:10:00Z",
+				"last_error":       "upstream diagnostics must not enter metadata",
+				"failure_count":    4,
+				"http_status":      502,
+				"unexpected_field": "drop-me",
+				"data": map[string]any{
+					"billing_scope":             "token",
+					"resolved_rate_multiplier":  1.25,
+					"peak_rate_enabled":         true,
+					"peak_start":                "09:00",
+					"peak_end":                  "17:00",
+					"peak_rate_multiplier":      1.5,
+					"timezone":                  "Asia/Shanghai",
+					"observed_at":               "2026-07-17T10:00:00Z",
+					"group_rate_multiplier":     1.25,
+					"effective_rate_multiplier": 1.25,
+					"unexpected_field":          "drop-me",
+				},
+			},
+		},
+	}
+
+	got := buildSchedulerMetadataAccount(account)
+	probe, ok := got.Extra[service.UpstreamBillingProbeExtraKey].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, service.UpstreamBillingProbeStatusOK, probe["status"])
+	require.Equal(t, "2026-07-17T10:05:00Z", probe["fresh_until"])
+	require.NotContains(t, probe, "last_error")
+	require.NotContains(t, probe, "failure_count")
+	require.NotContains(t, probe, "http_status")
+	require.NotContains(t, probe, "unexpected_field")
+
+	data, ok := probe["data"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "token", data["billing_scope"])
+	require.Equal(t, 1.25, data["resolved_rate_multiplier"])
+	require.Equal(t, true, data["peak_rate_enabled"])
+	require.Equal(t, "Asia/Shanghai", data["timezone"])
+	require.NotContains(t, data, "observed_at")
+	require.NotContains(t, data, "group_rate_multiplier")
+	require.NotContains(t, data, "effective_rate_multiplier")
+	require.NotContains(t, data, "unexpected_field")
+}
+
+func TestBuildSchedulerMetadataAccount_DropsInvalidUpstreamBillingProbe(t *testing.T) {
+	for _, probe := range []any{
+		"invalid",
+		map[string]any{},
+		map[string]any{"status": ""},
+		map[string]any{"status": 502},
+	} {
+		got := buildSchedulerMetadataAccount(service.Account{
+			Extra: map[string]any{service.UpstreamBillingProbeExtraKey: probe},
+		})
+
+		require.NotContains(t, got.Extra, service.UpstreamBillingProbeExtraKey)
+	}
+}
