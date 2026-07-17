@@ -19,6 +19,8 @@ type duplicateChannelMonitorRepoStub struct {
 	created     []*ChannelMonitor
 	byOperation map[string]*ChannelMonitor
 	nextID      int64
+	createErr   error
+	findErr     error
 }
 
 func (r *duplicateChannelMonitorRepoStub) GetByID(_ context.Context, id int64) (*ChannelMonitor, error) {
@@ -29,6 +31,9 @@ func (r *duplicateChannelMonitorRepoStub) GetByID(_ context.Context, id int64) (
 }
 
 func (r *duplicateChannelMonitorRepoStub) Create(_ context.Context, monitor *ChannelMonitor) error {
+	if r.createErr != nil {
+		return r.createErr
+	}
 	r.nextID++
 	monitor.ID = 100 + r.nextID
 	monitor.CreatedAt = time.Date(2026, time.July, 16, 8, 0, 0, 0, time.UTC)
@@ -53,6 +58,9 @@ func (r *duplicateChannelMonitorRepoStub) Create(_ context.Context, monitor *Cha
 }
 
 func (r *duplicateChannelMonitorRepoStub) FindByDuplicateOperationID(_ context.Context, operationID string) (*ChannelMonitor, error) {
+	if r.findErr != nil {
+		return nil, r.findErr
+	}
 	monitor := r.byOperation[operationID]
 	if monitor == nil {
 		return nil, nil
@@ -196,6 +204,72 @@ func TestDuplicateChannelMonitorRejectsUndecryptableAPIKey(t *testing.T) {
 	require.ErrorIs(t, err, ErrChannelMonitorAPIKeyDecryptFailed)
 	require.Empty(t, repo.created)
 	require.Equal(t, "OLD:broken", source.APIKey)
+}
+
+func TestDuplicateChannelMonitorPropagatesEncryptionAndCreateErrors(t *testing.T) {
+	source := &ChannelMonitor{
+		ID:              42,
+		Name:            "primary",
+		APIKey:          "OLD:top-secret",
+		PrimaryModel:    "gpt-5.4-mini",
+		IntervalSeconds: 60,
+	}
+
+	encryptErr := errors.New("encrypt unavailable")
+	service := NewChannelMonitorService(
+		&duplicateChannelMonitorRepoStub{source: source},
+		&duplicateChannelMonitorEncryptor{encryptErr: encryptErr},
+	)
+	duplicate, err := service.Duplicate(context.Background(), source.ID, 77, "admin:77", "encrypt-error")
+	require.Nil(t, duplicate)
+	require.ErrorIs(t, err, encryptErr)
+
+	createErr := errors.New("insert unavailable")
+	service = NewChannelMonitorService(
+		&duplicateChannelMonitorRepoStub{source: source, createErr: createErr},
+		&duplicateChannelMonitorEncryptor{},
+	)
+	duplicate, err = service.Duplicate(context.Background(), source.ID, 77, "admin:77", "create-error")
+	require.Nil(t, duplicate)
+	require.ErrorContains(t, err, "duplicate channel monitor")
+	require.ErrorIs(t, err, createErr)
+}
+
+func TestDuplicateChannelMonitorPropagatesCloneAndRecoveryErrors(t *testing.T) {
+	source := &ChannelMonitor{
+		ID:              42,
+		Name:            "primary",
+		APIKey:          "OLD:top-secret",
+		PrimaryModel:    "gpt-5.4-mini",
+		IntervalSeconds: 60,
+		BodyOverride:    map[string]any{"unsupported": func() {}},
+	}
+	service := NewChannelMonitorService(
+		&duplicateChannelMonitorRepoStub{source: source},
+		&duplicateChannelMonitorEncryptor{},
+	)
+	duplicate, err := service.Duplicate(context.Background(), source.ID, 77, "admin:77", "clone-error")
+	require.Nil(t, duplicate)
+	require.ErrorContains(t, err, "clone duplicate channel monitor body override")
+
+	recoveryErr := errors.New("lookup unavailable")
+	service = NewChannelMonitorService(
+		&duplicateChannelMonitorRepoStub{findErr: recoveryErr},
+		&duplicateChannelMonitorEncryptor{},
+	)
+	recovered, err := service.RecoverDuplicate(context.Background(), source.ID, "admin:77", "recovery-error")
+	require.Nil(t, recovered)
+	require.ErrorContains(t, err, "find duplicate channel monitor operation")
+	require.ErrorIs(t, err, recoveryErr)
+
+	recovered, err = service.RecoverDuplicate(context.Background(), source.ID, "admin:77", "")
+	require.NoError(t, err)
+	require.Nil(t, recovered)
+	require.Equal(
+		t,
+		duplicateChannelMonitorOperationID(source.ID, "admin:0", "stable-key"),
+		duplicateChannelMonitorOperationID(source.ID, "", "stable-key"),
+	)
 }
 
 func TestDuplicateChannelMonitorRecoversCommittedCopyForSameOperation(t *testing.T) {
