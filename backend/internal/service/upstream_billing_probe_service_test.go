@@ -523,6 +523,7 @@ func TestUpstreamBillingProbeServiceProbeFailureReasons(t *testing.T) {
 
 func TestUpstreamBillingProbeHelpersAndPublicSettings(t *testing.T) {
 	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	require.Equal(t, upstreamBillingProbeMaxBackoff, nextProbeDelay(10, 0, 30*24*time.Hour))
 	require.Equal(t, time.Hour, retryAfter(http.Header{"Retry-After": []string{"3600"}}, now))
 	require.Equal(t, time.Minute, retryAfter(http.Header{"Retry-After": []string{now.Add(time.Minute).UTC().Format(http.TimeFormat)}}, now))
 	require.Zero(t, retryAfter(http.Header{"Retry-After": []string{"-1"}}, now))
