@@ -4,6 +4,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -294,6 +295,65 @@ func TestOpenAIGatewayHandlerAlphaSearchRequestBodyReadError(t *testing.T) {
 	require.Equal(t, "Failed to read request body", gjson.GetBytes(recorder.Body.Bytes(), "error.message").String())
 }
 
+func TestOpenAIGatewayHandlerAlphaSearchRejectsOversizedBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := newReadyAlphaSearchHandler(t)
+	apiKey := alphaSearchAPIKey(service.PlatformOpenAI, 5102)
+	c, recorder := newAlphaSearchContext(`{"model":"gpt-5.6-sol"}`, apiKey, &middleware2.AuthSubject{UserID: 100})
+	c.Request.Body = http.MaxBytesReader(recorder, io.NopCloser(bytes.NewBufferString(`{"model":"gpt-5.6-sol"}`)), 4)
+
+	handler.AlphaSearch(c)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
+	require.Equal(t, "invalid_request_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+	require.Contains(t, gjson.GetBytes(recorder.Body.Bytes(), "error.message").String(), "limit is 4B")
+}
+
+type alphaSearchBillingUserRepo struct {
+	service.UserRepository
+	user *service.User
+}
+
+func (r alphaSearchBillingUserRepo) GetByID(context.Context, int64) (*service.User, error) {
+	return r.user, nil
+}
+
+type alphaSearchBillingRPMCache struct {
+	service.UserRPMCache
+}
+
+func (alphaSearchBillingRPMCache) IncrementUserGroupRPM(context.Context, int64, int64) (int, error) {
+	return 2, nil
+}
+
+func TestOpenAIGatewayHandlerAlphaSearchBillingRetryAfter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{}
+	billing := service.NewBillingCacheService(
+		nil,
+		alphaSearchBillingUserRepo{user: &service.User{ID: 100, Balance: 1}},
+		nil,
+		nil,
+		alphaSearchBillingRPMCache{},
+		nil,
+		cfg,
+		nil,
+		nil,
+	)
+	t.Cleanup(billing.Stop)
+	handler := newReadyAlphaSearchHandler(t)
+	handler.billingCacheService = billing
+	apiKey := alphaSearchAPIKey(service.PlatformOpenAI, 5102)
+	apiKey.Group.RPMLimit = 1
+	c, recorder := newAlphaSearchContext(`{"model":"gpt-5.6-sol"}`, apiKey, &middleware2.AuthSubject{UserID: 100})
+
+	handler.AlphaSearch(c)
+
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.Equal(t, "rate_limit_exceeded", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+	require.NotEmpty(t, recorder.Header().Get("Retry-After"))
+}
+
 func TestOpenAIGatewayHandlerAlphaSearchNoAvailableAccountReturnsServiceUnavailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := newAlphaSearchGatewayHandler(t, nil, &alphaSearchHTTPUpstream{})
@@ -385,4 +445,27 @@ func TestOpenAIGatewayHandlerAlphaSearchExhaustedFailoverReturnsGatewayError(t *
 	require.Equal(t, http.StatusBadGateway, recorder.Code)
 	require.Equal(t, "upstream_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
 	require.Equal(t, []int64{21, 22}, upstream.calls())
+}
+
+func TestOpenAIGatewayHandlerAlphaSearchStopsAtMaxAccountSwitches(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &alphaSearchHTTPUpstream{responses: []*http.Response{
+		{StatusCode: http.StatusInternalServerError, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewBufferString(`{"error":{"message":"first failure"}}`))},
+		{StatusCode: http.StatusInternalServerError, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewBufferString(`{"error":{"message":"second failure"}}`))},
+	}}
+	accounts := []service.Account{
+		{ID: 41, Name: "alpha-primary", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true, Credentials: map[string]any{"access_token": "token-1"}},
+		{ID: 42, Name: "alpha-secondary", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true, Priority: 1, Credentials: map[string]any{"access_token": "token-2"}},
+		{ID: 43, Name: "alpha-unused", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true, Priority: 2, Credentials: map[string]any{"access_token": "token-3"}},
+	}
+	handler := newAlphaSearchGatewayHandler(t, accounts, upstream)
+	handler.maxAccountSwitches = 1
+	apiKey := alphaSearchAPIKey(service.PlatformOpenAI, 5102)
+	c, recorder := newAlphaSearchContext(`{"id":"max-switches","model":"gpt-5.6-sol"}`, apiKey, &middleware2.AuthSubject{UserID: 100})
+
+	handler.AlphaSearch(c)
+
+	require.Equal(t, http.StatusBadGateway, recorder.Code)
+	require.Equal(t, "upstream_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+	require.Equal(t, []int64{41, 42}, upstream.calls())
 }
