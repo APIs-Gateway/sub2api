@@ -182,7 +182,7 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 		"",
 		`data: {"type":"response.output_text.delta","response":{"id":"resp_bridge"},"delta":"ok"}`,
 		"",
-		`data: {"type":"response.completed","response":{"id":"resp_bridge","model":"gpt-5.6-sol","usage":{"input_tokens":3,"output_tokens":2}}}`,
+		`data: {"type":"response.done","response":{"id":"resp_bridge","model":"gpt-5.6-sol","output":[{"id":"ig_bridge_1","type":"image_generation_call","status":"in_progress","result":"final-image"}],"usage":{"input_tokens":3,"output_tokens":2}}}`,
 		"",
 	}, "\n")
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -282,7 +282,8 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 
 	require.Equal(t, "response.created", gjson.GetBytes(created, "type").String())
 	require.Equal(t, "response.output_text.delta", gjson.GetBytes(delta, "type").String())
-	require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
+	require.Equal(t, "response.done", gjson.GetBytes(completed, "type").String())
+	require.Equal(t, "completed", gjson.GetBytes(completed, "response.output.0.status").String())
 
 	select {
 	case bridge := <-resultCh:
