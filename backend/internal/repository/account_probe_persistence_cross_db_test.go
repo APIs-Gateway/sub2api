@@ -110,10 +110,13 @@ func TestProbePersistenceSQLiteUsesPortableEntAndOutboxPaths(t *testing.T) {
 
 	tx, err := client.Tx(ctx)
 	require.NoError(t, err)
-	identity, err := lockProbeProxyIdentity(dbent.NewTxContext(ctx, tx), tx.Client(), tx, proxyRow.ID)
+	identity, err := lockProbeProxyIdentity(dbent.NewTxContext(ctx, tx), nil, tx, proxyRow.ID)
 	require.NoError(t, err)
 	require.Equal(t, probeProxyIdentity{protocol: "http", host: "proxy.example", port: 8080, username: "user", password: "pass", status: service.StatusActive}, identity)
 	require.NoError(t, tx.Rollback())
+	identity, err = lockProbeProxyIdentity(ctx, nil, client, proxyRow.ID)
+	require.NoError(t, err)
+	require.Equal(t, probeProxyIdentity{protocol: "http", host: "proxy.example", port: 8080, username: "user", password: "pass", status: service.StatusActive}, identity)
 }
 
 func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
@@ -270,12 +273,16 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	identity, err := lockProbeProxyIdentity(txCtx, tx.Client(), tx, proxyID)
 	require.NoError(t, err)
 	require.Equal(t, probeProxyIdentity{protocol: "http", host: "proxy.example", port: 8080, username: "user", password: "pass", status: service.StatusActive}, identity)
-	require.NoError(t, clearProbeSnapshotsForProxy(txCtx, tx.Client(), tx, proxyID))
+	require.NoError(t, clearProbeSnapshotsForProxy(txCtx, nil, tx, proxyID))
 	require.NoError(t, tx.Commit())
 
 	proxyRepo := &proxyRepository{client: client}
 	require.NoError(t, proxyRepo.Update(ctx, &service.Proxy{ID: proxyID, Name: "edge-proxy", Protocol: "http", Host: "proxy.example", Port: 8080, Username: "user", Password: "pass", Status: service.StatusActive}))
 	require.NoError(t, proxyRepo.Update(ctx, &service.Proxy{ID: proxyID, Name: "edge-proxy", Protocol: "http", Host: "proxy-new.example", Port: 8080, Username: "user", Password: "pass", Status: service.StatusActive}))
+	tx, err = client.Tx(ctx)
+	require.NoError(t, err)
+	require.NoError(t, proxyRepo.Update(dbent.NewTxContext(ctx, tx), &service.Proxy{ID: proxyID, Name: "edge-proxy", Protocol: "http", Host: "proxy-new.example", Port: 8080, Username: "user", Password: "pass", Status: service.StatusActive}))
+	require.NoError(t, tx.Commit())
 
 	updated, err = client.Account.Get(ctx, accountRow.ID)
 	require.NoError(t, err)

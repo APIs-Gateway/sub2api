@@ -342,6 +342,34 @@ func TestBulkUpdateNilProbeRemovesKey(t *testing.T) {
 	require.Contains(t, normalizeSQLWhitespace(exec.execQueries[0]), "- 'upstream_billing_probe'")
 }
 
+func TestBulkUpdateUsesExistingTransaction(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectBegin()
+	tx, err := client.Tx(context.Background())
+	require.NoError(t, err)
+	mock.ExpectExec(`(?s)UPDATE accounts SET .*status = \$1.*schedulable = \$2.*WHERE id = ANY\(\$3\)`).
+		WithArgs(service.StatusDisabled, false, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
+		WithArgs(service.SchedulerOutboxEventAccountBulkChanged, nil, nil, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	status := service.StatusDisabled
+	schedulable := false
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	rows, err := repo.BulkUpdate(dbent.NewTxContext(context.Background(), tx), []int64{27}, service.AccountBulkUpdate{
+		Status:      &status,
+		Schedulable: &schedulable,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUpdateCredentialsAtomicallyClearsProbeForIdentityChange(t *testing.T) {
 	db, mock := newSQLMock(t)
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
