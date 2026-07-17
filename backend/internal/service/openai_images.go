@@ -517,6 +517,11 @@ func directOpenAIImagesCapability(capability OpenAIImagesCapability) OpenAIImage
 }
 
 func isOpenAIImageGenerationModel(model string) bool {
+	return IsGPTImageGenerationModel(model)
+}
+
+// IsGPTImageGenerationModel identifies the GPT native image-generation model family.
+func IsGPTImageGenerationModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-")
 }
 
