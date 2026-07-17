@@ -215,7 +215,24 @@
           </template>
           <template #cell-name="{ row, value }">
             <div class="flex flex-col">
-              <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <HelpTooltip
+                v-if="accountHomepageUrl(row)"
+                :content="accountHomepageUrl(row)"
+                width-class="w-max max-w-sm break-all"
+                class="-ml-1 self-start"
+              >
+                <template #trigger>
+                  <a
+                    :href="accountHomepageUrl(row)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="border-b border-dotted border-gray-300 font-medium text-gray-900 dark:border-gray-600 dark:text-white"
+                  >
+                    {{ value }}
+                  </a>
+                </template>
+              </HelpTooltip>
+              <span v-else class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
               <span
                 v-if="row.extra?.email_address || row.extra?.email || row.credentials?.email"
                 class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]"
@@ -437,6 +454,7 @@ import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfil
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
+import { sanitizeUrl } from '@/utils/url'
 import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -1133,6 +1151,12 @@ function getAntigravityTierClass(row: any): string {
     case 'g1-ultra-tier': return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
     default: return ''
   }
+}
+
+function accountHomepageUrl(row: Account): string {
+  if (row.type !== 'apikey' || typeof row.credentials?.base_url !== 'string') return ''
+  const baseUrl = sanitizeUrl(row.credentials.base_url)
+  return baseUrl ? new URL(baseUrl).origin : ''
 }
 
 // All available columns
