@@ -65,7 +65,7 @@ func TestPromptEventAdminHandlerListEventsParsesFilters(t *testing.T) {
 }
 
 func TestPromptEventAdminHandlerRejectsInvalidQuery(t *testing.T) {
-	for _, target := range []string{"/?page=0", "/?page_size=101", "/?group_id=0", "/?start_at=not-a-time"} {
+	for _, target := range []string{"/?page=0", "/?page_size=101", "/?group_id=0", "/?user_id=0", "/?api_key_id=0", "/?start_at=not-a-time", "/?end_at=not-a-time"} {
 		t.Run(target, func(t *testing.T) {
 			repo := &promptEventRepositoryStub{page: &EventPage{}}
 			handler := NewPromptEventAdminHandler(repo)
@@ -77,6 +77,18 @@ func TestPromptEventAdminHandlerRejectsInvalidQuery(t *testing.T) {
 			require.Zero(t, repo.pageNum)
 		})
 	}
+}
+
+func TestPromptEventAdminHandlerListEventsMapsRepositoryErrors(t *testing.T) {
+	repo := &promptEventRepositoryStub{listErr: errors.New("list failed")}
+	handler := NewPromptEventAdminHandler(repo)
+	c, recorder := newPromptEventTestContext(t, "/")
+	handler.ListEvents(c)
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+
+	c, recorder = newPromptEventTestContext(t, "/")
+	(*PromptEventAdminHandler)(nil).ListEvents(c)
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
 }
 
 func TestPromptEventAdminHandlerGetEventMapsNotFoundAndOmitsRawText(t *testing.T) {
@@ -111,6 +123,20 @@ func TestPromptEventAdminHandlerRejectsInvalidEventID(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.Zero(t, repo.requested)
+}
+
+func TestPromptEventAdminHandlerGetEventMapsRepositoryErrors(t *testing.T) {
+	repo := &promptEventRepositoryStub{getErr: errors.New("get failed")}
+	handler := NewPromptEventAdminHandler(repo)
+	c, recorder := newPromptEventTestContext(t, "/admin/prompt-audit/events/21")
+	c.Params = gin.Params{{Key: "id", Value: "21"}}
+	handler.GetEvent(c)
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+
+	c, recorder = newPromptEventTestContext(t, "/admin/prompt-audit/events/21")
+	c.Params = gin.Params{{Key: "id", Value: "21"}}
+	(*PromptEventAdminHandler)(nil).GetEvent(c)
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
 }
 
 func TestPromptEventAdminHandlerResponseEnvelopeIsJSON(t *testing.T) {
