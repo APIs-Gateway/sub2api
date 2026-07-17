@@ -7076,7 +7076,13 @@
       },
       openaiExperimentalScheduler: {
         title: 'OpenAI 实验调度策略',
-        description: '默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。'
+        description: '默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。',
+        lowRatePriorityTitle: '优先选择上游倍率较低的账号',
+        lowRatePriorityDescription: '传统调度模式下，优先选择已观测上游 Token 计费倍率较低的账号。',
+        oauthRateTitle: 'OAuth 调度参考倍率',
+        oauthRateDescription: '设置传统低倍率调度使用的 OAuth 参考倍率，默认参考值为 1。',
+        upstreamCostWeightTitle: '上游计费倍率权重',
+        upstreamCostWeightDescription: '设置高级调度中上游 Token 计费信号的排序权重，填 0 可关闭该信号。',
       },
       usageRecords: {
         title: '使用记录',

@@ -7079,7 +7079,13 @@
       },
       openaiExperimentalScheduler: {
         title: 'OpenAI experimental scheduler policy',
-        description: "Disabled by default. When enabled, this only changes the gateway's experimental account-selection policy for OpenAI traffic; it does not indicate an upstream OpenAI capability."
+        description: "Disabled by default. When enabled, this only changes the gateway's experimental account-selection policy for OpenAI traffic; it does not indicate an upstream OpenAI capability.",
+        lowRatePriorityTitle: 'Prefer lower upstream billing rates',
+        lowRatePriorityDescription: 'Legacy scheduler mode prefers accounts with a lower observed upstream token-cost multiplier.',
+        oauthRateTitle: 'OAuth scheduling rate multiplier',
+        oauthRateDescription: 'Set the OAuth reference rate used by legacy low-rate scheduling. Use 1 for the default reference.',
+        upstreamCostWeightTitle: 'Upstream-cost score weight',
+        upstreamCostWeightDescription: 'Weight the observed upstream token-cost signal in advanced scheduler ranking. Set 0 to disable it.',
       },
       usageRecords: {
         title: 'Usage Records',

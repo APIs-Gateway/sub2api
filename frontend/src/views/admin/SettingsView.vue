@@ -3829,7 +3829,83 @@
                     }}
                   </p>
                 </div>
-                <Toggle v-model="form.openai_advanced_scheduler_enabled" />
+                <Toggle
+                  v-model="form.openai_advanced_scheduler_enabled"
+                  data-testid="openai-advanced-scheduler-toggle"
+                />
+              </div>
+
+              <div
+                v-if="!form.openai_advanced_scheduler_enabled"
+                class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
+              >
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.openaiExperimentalScheduler.lowRatePriorityTitle") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.openaiExperimentalScheduler.lowRatePriorityDescription") }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.openai_low_upstream_rate_priority_enabled"
+                  data-testid="openai-low-rate-priority-toggle"
+                />
+              </div>
+
+              <div
+                v-if="!form.openai_advanced_scheduler_enabled && form.openai_low_upstream_rate_priority_enabled"
+                class="flex flex-col items-stretch gap-3 border-t border-gray-100 pt-5 sm:flex-row sm:items-start sm:justify-between sm:gap-6 dark:border-dark-700"
+              >
+                <div class="min-w-0">
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    for="openai-oauth-scheduling-rate-multiplier"
+                  >
+                    {{ t("admin.settings.openaiExperimentalScheduler.oauthRateTitle") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.openaiExperimentalScheduler.oauthRateDescription") }}
+                  </p>
+                </div>
+                <input
+                  id="openai-oauth-scheduling-rate-multiplier"
+                  v-model.number="form.openai_oauth_scheduling_rate_multiplier"
+                  class="input w-full shrink-0 sm:w-32"
+                  data-testid="openai-oauth-scheduling-rate-multiplier"
+                  min="0"
+                  step="0.01"
+                  type="number"
+                />
+              </div>
+
+              <div
+                v-if="form.openai_advanced_scheduler_enabled"
+                class="flex flex-col items-stretch gap-3 border-t border-gray-100 pt-5 sm:flex-row sm:items-start sm:justify-between sm:gap-6 dark:border-dark-700"
+              >
+                <div class="min-w-0">
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    for="openai-advanced-scheduler-weight-upstream-cost"
+                  >
+                    {{ t("admin.settings.openaiExperimentalScheduler.upstreamCostWeightTitle") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.openaiExperimentalScheduler.upstreamCostWeightDescription") }}
+                  </p>
+                </div>
+                <input
+                  id="openai-advanced-scheduler-weight-upstream-cost"
+                  v-model="form.openai_advanced_scheduler_weight_upstream_cost"
+                  class="input w-full shrink-0 sm:w-32"
+                  data-testid="openai-advanced-scheduler-weight-upstream-cost"
+                  min="0"
+                  placeholder="0"
+                  step="0.1"
+                  type="number"
+                />
               </div>
             </div>
           </div>
@@ -8087,7 +8163,10 @@ type SettingsForm = Omit<
   github_oauth_client_secret: string;
   google_oauth_client_secret: string;
   force_email_on_third_party_signup: boolean;
+  openai_low_upstream_rate_priority_enabled: boolean;
+  openai_oauth_scheduling_rate_multiplier: number;
   openai_advanced_scheduler_enabled: boolean;
+  openai_advanced_scheduler_weight_upstream_cost: string;
   // 系统全局平台限额 map；form 内始终归一化为全 4 平台对象（模板非空绑定依赖此不变量）
   default_platform_quotas: DefaultPlatformQuotasMap;
 };
@@ -8288,7 +8367,10 @@ const form = reactive<SettingsForm>({
   max_claude_code_version: "",
   // 分组隔离
   allow_ungrouped_key_scheduling: false,
+  openai_low_upstream_rate_priority_enabled: false,
+  openai_oauth_scheduling_rate_multiplier: 1,
   openai_advanced_scheduler_enabled: false,
+  openai_advanced_scheduler_weight_upstream_cost: "",
   // Gateway forwarding behavior
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
@@ -9480,7 +9562,13 @@ async function saveSettings() {
       payment_cancel_rate_limit_window_mode:
         form.payment_cancel_rate_limit_window_mode,
       payment_alipay_force_qrcode: form.payment_alipay_force_qrcode,
+      openai_low_upstream_rate_priority_enabled:
+        form.openai_low_upstream_rate_priority_enabled,
+      openai_oauth_scheduling_rate_multiplier:
+        Number(form.openai_oauth_scheduling_rate_multiplier) || 0,
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,
+      openai_advanced_scheduler_weight_upstream_cost:
+        String(form.openai_advanced_scheduler_weight_upstream_cost ?? ""),
       // 余额、订阅到期与账号限额通知
       balance_low_notify_enabled: form.balance_low_notify_enabled,
       balance_low_notify_threshold:

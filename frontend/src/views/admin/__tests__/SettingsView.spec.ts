@@ -173,6 +173,12 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.payment.findProvider": "查看支持的支付方式",
     "admin.settings.openaiExperimentalScheduler.title": "OpenAI 实验调度策略",
     "admin.settings.openaiExperimentalScheduler.description": "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。",
+    "admin.settings.openaiExperimentalScheduler.lowRatePriorityTitle": "优先选择上游倍率较低的账号",
+    "admin.settings.openaiExperimentalScheduler.lowRatePriorityDescription": "传统调度模式下，优先选择已观测上游 Token 计费倍率较低的账号。",
+    "admin.settings.openaiExperimentalScheduler.oauthRateTitle": "OAuth 调度参考倍率",
+    "admin.settings.openaiExperimentalScheduler.oauthRateDescription": "设置传统低倍率调度使用的 OAuth 参考倍率，默认参考值为 1。",
+    "admin.settings.openaiExperimentalScheduler.upstreamCostWeightTitle": "上游计费倍率权重",
+    "admin.settings.openaiExperimentalScheduler.upstreamCostWeightDescription": "设置高级调度中上游 Token 计费信号的排序权重，填 0 可关闭该信号。",
     "admin.settings.openaiFastPolicy.actionForcePriority": "强制 priority",
     "admin.settings.site.uploadImage": "上传图片",
     "admin.settings.site.remove": "移除",
@@ -432,6 +438,9 @@ const baseSettingsResponse = {
   payment_visible_method_alipay_enabled: true,
   payment_visible_method_wxpay_enabled: true,
   openai_advanced_scheduler_enabled: false,
+  openai_low_upstream_rate_priority_enabled: false,
+  openai_oauth_scheduling_rate_multiplier: 1,
+  openai_advanced_scheduler_weight_upstream_cost: "",
   balance_low_notify_enabled: false,
   balance_low_notify_threshold: 0,
   balance_low_notify_recharge_url: "",
@@ -919,6 +928,51 @@ describe("admin SettingsView payment visible method controls", () => {
       "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑",
     );
     expect(wrapper.text()).not.toContain("OpenAI 高级调度器");
+  });
+
+  it("shows legacy upstream-cost controls only when advanced scheduling is disabled", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_low_upstream_rate_priority_enabled: true,
+      openai_oauth_scheduling_rate_multiplier: 0.25,
+      openai_advanced_scheduler_weight_upstream_cost: "1.5",
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="openai-low-rate-priority-toggle"]').element).toBeTruthy();
+    expect(wrapper.get('[data-testid="openai-oauth-scheduling-rate-multiplier"]').element).toHaveProperty("value", "0.25");
+    expect(wrapper.find('[data-testid="openai-advanced-scheduler-weight-upstream-cost"]').exists()).toBe(false);
+  });
+
+  it("submits upstream-cost scheduler settings and switches the advanced control", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_advanced_scheduler_enabled: true,
+      openai_low_upstream_rate_priority_enabled: false,
+      openai_oauth_scheduling_rate_multiplier: 1,
+      openai_advanced_scheduler_weight_upstream_cost: "1.5",
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const weightInput = wrapper.get('[data-testid="openai-advanced-scheduler-weight-upstream-cost"]');
+    expect(weightInput.element).toHaveProperty("value", "1.5");
+    await weightInput.setValue("2.25");
+    await wrapper.get('input[data-testid="openai-advanced-scheduler-toggle"]').setValue(false);
+    await wrapper.get('[data-testid="openai-low-rate-priority-toggle"]').setValue(true);
+    await wrapper.get('[data-testid="openai-oauth-scheduling-rate-multiplier"]').setValue("0.5");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_low_upstream_rate_priority_enabled: true,
+        openai_oauth_scheduling_rate_multiplier: 0.5,
+        openai_advanced_scheduler_enabled: false,
+        openai_advanced_scheduler_weight_upstream_cost: "2.25",
+      }),
+    );
   });
 
   it("exposes the force priority OpenAI fast policy action", async () => {
