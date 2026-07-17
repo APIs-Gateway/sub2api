@@ -268,14 +268,13 @@ type defaultOpenAIAccountScheduler struct {
 }
 
 type openAISelectionProbeBudget struct {
-	acquires  int
-	rechecks  int
-	attempted map[int64]struct{}
-	limited   bool
+	acquires int
+	rechecks int
+	limited  bool
 }
 
 func newOpenAISelectionProbeBudget() *openAISelectionProbeBudget {
-	return &openAISelectionProbeBudget{attempted: make(map[int64]struct{})}
+	return &openAISelectionProbeBudget{}
 }
 
 func (b *openAISelectionProbeBudget) enableLimit() {
@@ -284,18 +283,14 @@ func (b *openAISelectionProbeBudget) enableLimit() {
 	}
 }
 
-func (b *openAISelectionProbeBudget) recordAcquire(accountID int64) bool {
+func (b *openAISelectionProbeBudget) recordAcquire(_ int64) bool {
 	if b == nil || !b.limited {
 		return true
 	}
 	if b.acquires >= openAIAccountSelectionProbeLimit {
 		return false
 	}
-	if b.attempted == nil {
-		b.attempted = make(map[int64]struct{})
-	}
 	b.acquires++
-	b.attempted[accountID] = struct{}{}
 	return true
 }
 
@@ -308,18 +303,6 @@ func (b *openAISelectionProbeBudget) recordRecheck() bool {
 	}
 	b.rechecks++
 	return true
-}
-
-func (b *openAISelectionProbeBudget) acquireExhausted() bool {
-	return b != nil && b.limited && b.acquires >= openAIAccountSelectionProbeLimit
-}
-
-func (b *openAISelectionProbeBudget) wasAttempted(accountID int64) bool {
-	if b == nil {
-		return false
-	}
-	_, ok := b.attempted[accountID]
-	return ok
 }
 
 type openAIStickyEscapeConfig struct {
@@ -973,16 +956,6 @@ func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []open
 		}
 	})
 	return ordered
-}
-
-func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
-	ctx context.Context,
-	req OpenAIAccountScheduleRequest,
-	selectionOrder []openAIAccountCandidateScore,
-) (*AccountSelectionResult, bool, error) {
-	budget := newOpenAISelectionProbeBudget()
-	budget.enableLimit()
-	return s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, selectionOrder, budget)
 }
 
 func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget(

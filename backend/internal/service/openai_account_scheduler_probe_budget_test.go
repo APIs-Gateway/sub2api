@@ -62,9 +62,6 @@ func TestOpenAISelectionProbeBudgetLimitsAcquireAndRecheck(t *testing.T) {
 		require.True(t, budget.recordAcquire(int64(i+1)))
 	}
 	require.False(t, budget.recordAcquire(999))
-	require.True(t, budget.acquireExhausted())
-	require.True(t, budget.wasAttempted(1))
-	require.False(t, budget.wasAttempted(999))
 
 	for i := 0; i < openAIAccountSelectionProbeLimit; i++ {
 		require.True(t, budget.recordRecheck())
