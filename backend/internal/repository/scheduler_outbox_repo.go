@@ -10,7 +10,11 @@ import (
 	"strconv"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+
+	"entgo.io/ent/dialect"
 )
 
 type schedulerOutboxRepository struct {
@@ -196,12 +200,38 @@ func enqueueSchedulerOutbox(ctx context.Context, exec sqlExecutor, eventType str
 	var payloadArg any
 	var payloadJSON []byte
 	if payload != nil {
-		encoded, err := json.Marshal(payload)
+		encoded, err := common.Marshal(payload)
 		if err != nil {
 			return err
 		}
 		payloadArg = encoded
 		payloadJSON = encoded
+	}
+	if dbDialect := schedulerOutboxDialect(exec); dbDialect != dialect.Postgres {
+		query := `
+			INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
+			VALUES (?, ?, ?, ?)
+		`
+		args := []any{eventType, accountID, groupID, payloadArg}
+		if schedulerOutboxEventSupportsDedup(eventType) {
+			dedupKey := schedulerOutboxDedupKey(eventType, accountID, groupID, payloadJSON)
+			if dbDialect == dialect.MySQL {
+				query = `
+					INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload, dedup_key)
+					VALUES (?, ?, ?, ?, ?)
+					ON DUPLICATE KEY UPDATE dedup_key = VALUES(dedup_key)
+				`
+			} else {
+				query = `
+					INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload, dedup_key)
+					VALUES (?, ?, ?, ?, ?)
+					ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING
+				`
+			}
+			args = append(args, dedupKey)
+		}
+		_, err := exec.ExecContext(ctx, query, args...)
+		return err
 	}
 	query := `
 		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
@@ -219,6 +249,17 @@ func enqueueSchedulerOutbox(ctx context.Context, exec sqlExecutor, eventType str
 	}
 	_, err := exec.ExecContext(ctx, query, args...)
 	return err
+}
+
+func schedulerOutboxDialect(exec sqlExecutor) string {
+	switch value := exec.(type) {
+	case *dbent.Client:
+		return value.Driver().Dialect()
+	case *dbent.Tx:
+		return value.Client().Driver().Dialect()
+	default:
+		return dialect.Postgres
+	}
 }
 
 func schedulerOutboxDedupKey(eventType string, accountID *int64, groupID *int64, payloadJSON []byte) string {
