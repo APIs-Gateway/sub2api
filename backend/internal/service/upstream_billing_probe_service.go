@@ -654,7 +654,7 @@ func nextProbeDelay(intervalMinutes, failureCount int, retryAfterDuration time.D
 		interval += time.Duration(rand.Int64N(int64(jitterRange)*2+1)) - jitterRange
 	}
 	if retryAfterDuration > interval {
-		return retryAfterDuration
+		interval = retryAfterDuration
 	}
 	if interval > upstreamBillingProbeMaxBackoff {
 		return upstreamBillingProbeMaxBackoff

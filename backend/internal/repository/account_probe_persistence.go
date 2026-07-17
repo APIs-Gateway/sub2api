@@ -2,11 +2,17 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"reflect"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	dbaccount "github.com/Wei-Shaw/sub2api/ent/account"
+	dbproxy "github.com/Wei-Shaw/sub2api/ent/proxy"
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 )
 
 func (r *accountRepository) updateAccountWithProbe(ctx context.Context, account *service.Account) error {
@@ -138,7 +144,11 @@ func (r *accountRepository) updateLockedAccountWithProbe(ctx context.Context, cl
 }
 
 func lockAndMergeAccountProbeExtra(ctx context.Context, client *dbent.Client, account *service.Account) (map[string]any, error) {
-	credentials, err := json.Marshal(normalizeJSONMap(account.Credentials))
+	if client.Driver().Dialect() != dialect.Postgres {
+		return lockAndMergeAccountProbeExtraEnt(ctx, client, account)
+	}
+
+	credentials, err := common.Marshal(normalizeJSONMap(account.Credentials))
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +196,7 @@ func lockAndMergeAccountProbeExtra(ctx context.Context, client *dbent.Client, ac
 	probeExplicitlyDisabled := false
 	if account.IsOpenAIApiKey() && identityUnchanged && len(currentEnabled) > 0 && string(currentEnabled) != "null" {
 		var enabled any
-		if err := json.Unmarshal(currentEnabled, &enabled); err != nil {
+		if err := common.Unmarshal(currentEnabled, &enabled); err != nil {
 			return nil, err
 		}
 		extra[service.UpstreamBillingProbeEnabledExtraKey] = enabled
@@ -196,7 +206,7 @@ func lockAndMergeAccountProbeExtra(ctx context.Context, client *dbent.Client, ac
 	}
 	if account.IsOpenAIApiKey() && identityUnchanged && !probeExplicitlyDisabled && len(currentSnapshot) > 0 && string(currentSnapshot) != "null" {
 		var snapshot any
-		if err := json.Unmarshal(currentSnapshot, &snapshot); err != nil {
+		if err := common.Unmarshal(currentSnapshot, &snapshot); err != nil {
 			return nil, err
 		}
 		extra[service.UpstreamBillingProbeExtraKey] = snapshot
@@ -204,8 +214,67 @@ func lockAndMergeAccountProbeExtra(ctx context.Context, client *dbent.Client, ac
 	return extra, nil
 }
 
+func lockAndMergeAccountProbeExtraEnt(ctx context.Context, client *dbent.Client, account *service.Account) (map[string]any, error) {
+	query := client.Account.Query().Where(dbaccount.IDEQ(account.ID), dbaccount.DeletedAtIsNil())
+	if client.Driver().Dialect() != dialect.SQLite {
+		query = query.ForUpdate()
+	}
+	current, err := query.Only(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return nil, service.ErrAccountNotFound
+		}
+		return nil, err
+	}
+
+	identityUnchanged := probeAccountIdentityMatches(current, account)
+	extra := copyJSONMap(normalizeJSONMap(account.Extra))
+	delete(extra, service.UpstreamBillingProbeEnabledExtraKey)
+	delete(extra, service.UpstreamBillingProbeExtraKey)
+	if account.IsOpenAIApiKey() && identityUnchanged {
+		if enabled, ok := current.Extra[service.UpstreamBillingProbeEnabledExtraKey]; ok && enabled != nil {
+			extra[service.UpstreamBillingProbeEnabledExtraKey] = enabled
+			if value, ok := enabled.(bool); ok && !value {
+				return extra, nil
+			}
+		}
+		if snapshot, ok := current.Extra[service.UpstreamBillingProbeExtraKey]; ok && snapshot != nil {
+			extra[service.UpstreamBillingProbeExtraKey] = snapshot
+		}
+	}
+	return extra, nil
+}
+
+func probeAccountIdentityMatches(current *dbent.Account, account *service.Account) bool {
+	if current == nil || account == nil || current.Platform != account.Platform || current.Type != account.Type ||
+		!probeJSONEqual(current.Credentials, account.Credentials) {
+		return false
+	}
+	if current.ProxyID == nil || account.ProxyID == nil {
+		return current.ProxyID == nil && account.ProxyID == nil
+	}
+	return *current.ProxyID == *account.ProxyID
+}
+
+func probeJSONEqual(left, right any) bool {
+	normalize := func(value any) (any, bool) {
+		encoded, err := common.Marshal(value)
+		if err != nil {
+			return nil, false
+		}
+		var decoded any
+		if err := common.Unmarshal(encoded, &decoded); err != nil {
+			return nil, false
+		}
+		return decoded, true
+	}
+	normalizedLeft, leftOK := normalize(left)
+	normalizedRight, rightOK := normalize(right)
+	return leftOK && rightOK && reflect.DeepEqual(normalizedLeft, normalizedRight)
+}
+
 func (r *accountRepository) updateCredentialsWithProbe(ctx context.Context, id int64, credentials map[string]any) error {
-	payload, err := json.Marshal(normalizeJSONMap(credentials))
+	payload, err := common.Marshal(normalizeJSONMap(credentials))
 	if err != nil {
 		return err
 	}
@@ -225,6 +294,23 @@ func (r *accountRepository) updateCredentialsWithProbe(ctx context.Context, id i
 			ctx = dbent.NewTxContext(ctx, tx)
 			client = tx.Client()
 		}
+	}
+	if client.Driver().Dialect() != dialect.Postgres {
+		if err := updateCredentialsWithProbeEnt(ctx, client, id, credentials); err != nil {
+			return err
+		}
+		if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+			return err
+		}
+		if tx != nil {
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+		}
+		if contextTx == nil {
+			r.syncSchedulerAccountSnapshot(baseCtx, id)
+		}
+		return nil
 	}
 	result, err := client.ExecContext(ctx, `
 		UPDATE accounts
@@ -264,11 +350,36 @@ func (r *accountRepository) updateCredentialsWithProbe(ctx context.Context, id i
 	return nil
 }
 
+func updateCredentialsWithProbeEnt(ctx context.Context, client *dbent.Client, id int64, credentials map[string]any) error {
+	current, err := client.Account.Query().Where(dbaccount.IDEQ(id), dbaccount.DeletedAtIsNil()).Only(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return service.ErrAccountNotFound
+		}
+		return err
+	}
+
+	builder := client.Account.UpdateOneID(id).SetCredentials(normalizeJSONMap(credentials))
+	if current.Platform == service.PlatformOpenAI && current.Type == service.AccountTypeAPIKey &&
+		!probeJSONEqual(current.Credentials, credentials) {
+		extra := copyJSONMap(current.Extra)
+		delete(extra, service.UpstreamBillingProbeExtraKey)
+		builder.SetExtra(extra)
+	}
+	if _, err := builder.Save(ctx); err != nil {
+		if dbent.IsNotFound(err) {
+			return service.ErrAccountNotFound
+		}
+		return err
+	}
+	return nil
+}
+
 func (r *accountRepository) updateExtraWithProbe(ctx context.Context, id int64, updates map[string]any) error {
 	if len(updates) == 0 {
 		return nil
 	}
-	payload, err := json.Marshal(updates)
+	payload, err := common.Marshal(updates)
 	if err != nil {
 		return err
 	}
@@ -278,7 +389,7 @@ func (r *accountRepository) updateExtraWithProbe(ctx context.Context, id int64, 
 	contextTx := dbent.TxFromContext(ctx)
 	client := clientFromContext(ctx, r.client)
 	var tx *dbent.Tx
-	if durableSchedulerChange && contextTx == nil {
+	if (durableSchedulerChange || client.Driver().Dialect() != dialect.Postgres) && contextTx == nil {
 		var txErr error
 		tx, txErr = r.client.Tx(ctx)
 		if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
@@ -289,6 +400,34 @@ func (r *accountRepository) updateExtraWithProbe(ctx context.Context, id int64, 
 			ctx = dbent.NewTxContext(ctx, tx)
 			client = tx.Client()
 		}
+	}
+	if client.Driver().Dialect() != dialect.Postgres {
+		if err := updateExtraWithProbeEnt(ctx, client, id, updates, clearSnapshot); err != nil {
+			return err
+		}
+		if durableSchedulerChange {
+			if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+				return err
+			}
+			if tx != nil {
+				if err := tx.Commit(); err != nil {
+					return err
+				}
+			}
+			if contextTx == nil {
+				r.syncSchedulerAccountSnapshot(baseCtx, id)
+			}
+		} else {
+			if tx != nil {
+				if err := tx.Commit(); err != nil {
+					return err
+				}
+			}
+			if contextTx == nil {
+				r.syncSchedulerAccountSnapshot(baseCtx, id)
+			}
+		}
+		return nil
 	}
 	result, err := client.ExecContext(ctx, `
 		UPDATE accounts
@@ -325,6 +464,34 @@ func (r *accountRepository) updateExtraWithProbe(ctx context.Context, id int64, 
 		if dbent.TxFromContext(ctx) == nil {
 			r.syncSchedulerAccountSnapshot(ctx, id)
 		}
+	}
+	return nil
+}
+
+func updateExtraWithProbeEnt(ctx context.Context, client *dbent.Client, id int64, updates map[string]any, clearSnapshot bool) error {
+	query := client.Account.Query().Where(dbaccount.IDEQ(id), dbaccount.DeletedAtIsNil())
+	if client.Driver().Dialect() != dialect.SQLite {
+		query = query.ForUpdate()
+	}
+	current, err := query.Only(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return service.ErrAccountNotFound
+		}
+		return err
+	}
+	extra := copyJSONMap(current.Extra)
+	for key, value := range updates {
+		extra[key] = value
+	}
+	if clearSnapshot {
+		delete(extra, service.UpstreamBillingProbeExtraKey)
+	}
+	if _, err := client.Account.UpdateOneID(id).SetExtra(extra).Save(ctx); err != nil {
+		if dbent.IsNotFound(err) {
+			return service.ErrAccountNotFound
+		}
+		return err
 	}
 	return nil
 }
@@ -366,11 +533,15 @@ func (r *accountRepository) UpdateUpstreamBillingProbeSnapshot(ctx context.Conte
 }
 
 func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(ctx context.Context, client *dbent.Client, account *service.Account, snapshot *service.UpstreamBillingProbeSnapshot) error {
-	payload, err := json.Marshal(map[string]any{service.UpstreamBillingProbeExtraKey: snapshot})
+	if client.Driver().Dialect() != dialect.Postgres {
+		return r.updateUpstreamBillingProbeSnapshotEnt(ctx, client, account, snapshot)
+	}
+
+	payload, err := common.Marshal(map[string]any{service.UpstreamBillingProbeExtraKey: snapshot})
 	if err != nil {
 		return err
 	}
-	credentials, err := json.Marshal(normalizeJSONMap(account.Credentials))
+	credentials, err := common.Marshal(normalizeJSONMap(account.Credentials))
 	if err != nil {
 		return err
 	}
@@ -378,7 +549,7 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(ctx context.C
 	if account.Extra != nil {
 		expectedSnapshot = account.Extra[service.UpstreamBillingProbeExtraKey]
 	}
-	expectedSnapshotJSON, err := json.Marshal(expectedSnapshot)
+	expectedSnapshotJSON, err := common.Marshal(expectedSnapshot)
 	if err != nil {
 		return err
 	}
@@ -386,7 +557,7 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(ctx context.C
 	if account.Extra != nil {
 		expectedEnabled = account.Extra[service.UpstreamBillingProbeEnabledExtraKey]
 	}
-	expectedEnabledJSON, err := json.Marshal(expectedEnabled)
+	expectedEnabledJSON, err := common.Marshal(expectedEnabled)
 	if err != nil {
 		return err
 	}
@@ -424,6 +595,35 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(ctx context.C
 	return enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, nil)
 }
 
+func (r *accountRepository) updateUpstreamBillingProbeSnapshotEnt(ctx context.Context, client *dbent.Client, account *service.Account, snapshot *service.UpstreamBillingProbeSnapshot) error {
+	query := client.Account.Query().Where(dbaccount.IDEQ(account.ID), dbaccount.DeletedAtIsNil())
+	if client.Driver().Dialect() != dialect.SQLite {
+		query = query.ForUpdate()
+	}
+	current, err := query.Only(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return service.ErrUpstreamBillingProbeIdentityChanged
+		}
+		return err
+	}
+	if !probeAccountIdentityMatches(current, account) || !probeProxyIdentityMatches(ctx, client, account) ||
+		!probeJSONEqual(current.Extra[service.UpstreamBillingProbeExtraKey], account.Extra[service.UpstreamBillingProbeExtraKey]) ||
+		!probeJSONEqual(current.Extra[service.UpstreamBillingProbeEnabledExtraKey], account.Extra[service.UpstreamBillingProbeEnabledExtraKey]) {
+		return service.ErrUpstreamBillingProbeIdentityChanged
+	}
+
+	extra := copyJSONMap(current.Extra)
+	extra[service.UpstreamBillingProbeExtraKey] = snapshot
+	if _, err := client.Account.UpdateOneID(account.ID).SetExtra(extra).Save(ctx); err != nil {
+		if dbent.IsNotFound(err) {
+			return service.ErrUpstreamBillingProbeIdentityChanged
+		}
+		return err
+	}
+	return enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, nil)
+}
+
 type probeProxyIdentity struct {
 	protocol string
 	host     string
@@ -451,6 +651,9 @@ func lockAndMatchProbeProxyIdentity(ctx context.Context, client *dbent.Client, a
 	if account.ProxyID == nil {
 		return true, nil
 	}
+	if client.Driver().Dialect() != dialect.Postgres {
+		return probeProxyIdentityMatches(ctx, client, account), nil
+	}
 	rows, err := client.QueryContext(ctx, `
 		SELECT protocol, host, port, COALESCE(username, ''), COALESCE(password, ''), status
 		FROM proxies
@@ -475,6 +678,31 @@ func lockAndMatchProbeProxyIdentity(ctx context.Context, client *dbent.Client, a
 		return false, err
 	}
 	return current == probeProxyIdentityFromService(account.Proxy), rows.Err()
+}
+
+func probeProxyIdentityMatches(ctx context.Context, client *dbent.Client, account *service.Account) bool {
+	if account.ProxyID == nil {
+		return true
+	}
+	query := client.Proxy.Query().Where(dbproxy.IDEQ(*account.ProxyID), dbproxy.DeletedAtIsNil())
+	if client.Driver().Dialect() != dialect.SQLite {
+		query = probeSharedLock(query, client)
+	}
+	current, err := query.Only(ctx)
+	if err != nil {
+		return account.Proxy == nil
+	}
+	return account.Proxy != nil && current.ID == account.Proxy.ID &&
+		current.Protocol == account.Proxy.Protocol && current.Host == account.Proxy.Host &&
+		current.Port == account.Proxy.Port && derefString(current.Username) == account.Proxy.Username &&
+		derefString(current.Password) == account.Proxy.Password && current.Status == account.Proxy.Status
+}
+
+func probeSharedLock(query *dbent.ProxyQuery, client *dbent.Client) *dbent.ProxyQuery {
+	if client.Driver().Dialect() == dialect.MySQL {
+		return query.ForShare(entsql.WithLockClause("LOCK IN SHARE MODE"))
+	}
+	return query.ForShare()
 }
 
 func upstreamBillingProbeExplicitlyDisabled(updates map[string]any) bool {

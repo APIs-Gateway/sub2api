@@ -4,10 +4,51 @@ import (
 	"context"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	dbaccount "github.com/Wei-Shaw/sub2api/ent/account"
+	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+
+	"entgo.io/ent/dialect"
 )
 
-func lockProbeProxyIdentity(ctx context.Context, exec sqlExecutor, id int64) (probeProxyIdentity, error) {
+func probePersistenceClient(client *dbent.Client, exec sqlExecutor) *dbent.Client {
+	if client != nil {
+		return client
+	}
+	switch value := exec.(type) {
+	case *dbent.Tx:
+		return value.Client()
+	case *dbent.Client:
+		return value
+	default:
+		return nil
+	}
+}
+
+func lockProbeProxyIdentity(ctx context.Context, client *dbent.Client, exec sqlExecutor, id int64) (probeProxyIdentity, error) {
+	client = probePersistenceClient(client, exec)
+	if client != nil && client.Driver().Dialect() != dialect.Postgres {
+		query := client.Proxy.Query().Where(proxy.IDEQ(id), proxy.DeletedAtIsNil())
+		if client.Driver().Dialect() != dialect.SQLite {
+			query = query.ForUpdate()
+		}
+		current, err := query.Only(ctx)
+		if err != nil {
+			if dbent.IsNotFound(err) {
+				return probeProxyIdentity{}, service.ErrProxyNotFound
+			}
+			return probeProxyIdentity{}, err
+		}
+		return probeProxyIdentity{
+			protocol: current.Protocol,
+			host:     current.Host,
+			port:     current.Port,
+			username: derefString(current.Username),
+			password: derefString(current.Password),
+			status:   current.Status,
+		}, nil
+	}
+
 	rows, err := exec.QueryContext(ctx, `
 		SELECT protocol, host, port, COALESCE(username, ''), COALESCE(password, ''), status
 		FROM proxies
@@ -31,7 +72,38 @@ func lockProbeProxyIdentity(ctx context.Context, exec sqlExecutor, id int64) (pr
 	return identity, rows.Err()
 }
 
-func clearProbeSnapshotsForProxy(ctx context.Context, exec sqlExecutor, proxyID int64) error {
+func clearProbeSnapshotsForProxy(ctx context.Context, client *dbent.Client, exec sqlExecutor, proxyID int64) error {
+	client = probePersistenceClient(client, exec)
+	if client != nil && client.Driver().Dialect() != dialect.Postgres {
+		accounts, err := client.Account.Query().Where(
+			dbaccount.ProxyIDEQ(proxyID),
+			dbaccount.PlatformEQ(service.PlatformOpenAI),
+			dbaccount.TypeEQ(service.AccountTypeAPIKey),
+			dbaccount.DeletedAtIsNil(),
+		).All(ctx)
+		if err != nil {
+			return err
+		}
+		accountIDs := make([]int64, 0, len(accounts))
+		for _, account := range accounts {
+			if value, exists := account.Extra[service.UpstreamBillingProbeExtraKey]; !exists || value == nil {
+				continue
+			}
+			extra := copyJSONMap(account.Extra)
+			delete(extra, service.UpstreamBillingProbeExtraKey)
+			if _, err := client.Account.UpdateOneID(account.ID).SetExtra(extra).Save(ctx); err != nil {
+				return err
+			}
+			accountIDs = append(accountIDs, account.ID)
+		}
+		if len(accountIDs) == 0 {
+			return nil
+		}
+		return enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, map[string]any{
+			"account_ids": accountIDs,
+		})
+	}
+
 	rows, err := exec.QueryContext(ctx, `
 		UPDATE accounts
 		SET extra = COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe', updated_at = NOW()
@@ -68,3 +140,4 @@ func clearProbeSnapshotsForProxy(ctx context.Context, exec sqlExecutor, proxyID 
 }
 
 var _ sqlExecutor = (*dbent.Tx)(nil)
+var _ sqlExecutor = (*dbent.Client)(nil)

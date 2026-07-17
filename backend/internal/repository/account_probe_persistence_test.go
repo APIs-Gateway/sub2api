@@ -173,13 +173,13 @@ func TestProxyProbePersistenceHelpersInvalidateOnlyRealSnapshots(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
 		WithArgs(service.SchedulerOutboxEventAccountBulkChanged, nil, nil, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	require.NoError(t, clearProbeSnapshotsForProxy(context.Background(), db, 7))
+	require.NoError(t, clearProbeSnapshotsForProxy(context.Background(), nil, db, 7))
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 		WithArgs(int64(8)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	require.NoError(t, clearProbeSnapshotsForProxy(context.Background(), db, 8))
+	require.NoError(t, clearProbeSnapshotsForProxy(context.Background(), nil, db, 8))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -189,7 +189,7 @@ func TestLockProbeProxyIdentity(t *testing.T) {
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 			AddRow("http", "proxy.example", 8080, "user", "pass", service.StatusActive))
-	identity, err := lockProbeProxyIdentity(context.Background(), db, 7)
+	identity, err := lockProbeProxyIdentity(context.Background(), nil, db, 7)
 	require.NoError(t, err)
 	require.Equal(t, probeProxyIdentity{protocol: "http", host: "proxy.example", port: 8080, username: "user", password: "pass", status: service.StatusActive}, identity)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -197,8 +197,24 @@ func TestLockProbeProxyIdentity(t *testing.T) {
 	mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FROM proxies.*FOR UPDATE`).
 		WithArgs(int64(8)).
 		WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}))
-	_, err = lockProbeProxyIdentity(context.Background(), db, 8)
+	_, err = lockProbeProxyIdentity(context.Background(), nil, db, 8)
 	require.ErrorIs(t, err, service.ErrProxyNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProbeProxyIdentityUsesMySQL57SharedLockSyntax(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.MySQL, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	proxyID := int64(7)
+	mock.ExpectQuery(`(?s)SELECT .*FROM .*proxies.*LOCK IN SHARE MODE`).
+		WithArgs(int64(7)).
+		WillReturnError(errors.New("probe query failed"))
+	matched := probeProxyIdentityMatches(context.Background(), client, &service.Account{
+		ProxyID: &proxyID,
+		Proxy:   &service.Proxy{ID: 7},
+	})
+	require.False(t, matched)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -223,6 +239,40 @@ func TestLockAndMergeAccountProbeExtraUsesCurrentDatabaseSnapshot(t *testing.T) 
 	require.Equal(t, true, got[service.UpstreamBillingProbeEnabledExtraKey])
 	require.Equal(t, map[string]any{"status": "ok"}, got[service.UpstreamBillingProbeExtraKey])
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLockAndMergeAccountProbeExtraReportsDatabaseAndDecodeErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		rows *sqlmock.Rows
+		err  error
+	}{
+		{name: "query error", err: errors.New("query failed")},
+		{name: "row error", rows: sqlmock.NewRows([]string{"identity_unchanged", "enabled", "snapshot"}).AddRow(true, []byte(`true`), []byte(`{}`)).RowError(0, errors.New("row failed"))},
+		{name: "scan error", rows: sqlmock.NewRows([]string{"identity_unchanged", "enabled", "snapshot"}).AddRow("not-a-bool", []byte(`true`), []byte(`{}`))},
+		{name: "enabled decode error", rows: sqlmock.NewRows([]string{"identity_unchanged", "enabled", "snapshot"}).AddRow(true, []byte(`{`), []byte(`{}`))},
+		{name: "snapshot decode error", rows: sqlmock.NewRows([]string{"identity_unchanged", "enabled", "snapshot"}).AddRow(true, []byte(`true`), []byte(`{`))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newSQLMock(t)
+			client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+			t.Cleanup(func() { _ = client.Close() })
+			expect := mock.ExpectQuery(`(?s)SELECT.*FROM accounts.*FOR NO KEY UPDATE`).
+				WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil)
+			if tc.err != nil {
+				expect.WillReturnError(tc.err)
+			} else {
+				expect.WillReturnRows(tc.rows)
+			}
+			_, err := lockAndMergeAccountProbeExtra(context.Background(), client, &service.Account{
+				ID: 27, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "sk-test"},
+			})
+			require.Error(t, err)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestLockAndMergeAccountProbeExtraClearsStaleStateOnIdentityOrTypeChange(t *testing.T) {
@@ -326,6 +376,56 @@ func TestBulkUpdateNilProbeRemovesKey(t *testing.T) {
 	require.Contains(t, normalizeSQLWhitespace(exec.execQueries[0]), "- 'upstream_billing_probe'")
 }
 
+func TestBulkUpdateStartsTransactionAndCommitsOutbox(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE accounts SET .*extra = .*WHERE id = ANY\(\$2\)`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
+		WithArgs(service.SchedulerOutboxEventAccountBulkChanged, nil, nil, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	rows, err := repo.BulkUpdate(context.Background(), []int64{27}, service.AccountBulkUpdate{
+		Extra: map[string]any{"custom": "value"},
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBulkUpdateUsesExistingTransaction(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectBegin()
+	tx, err := client.Tx(context.Background())
+	require.NoError(t, err)
+	mock.ExpectExec(`(?s)UPDATE accounts SET .*status = \$1.*schedulable = \$2.*WHERE id = ANY\(\$3\)`).
+		WithArgs(service.StatusDisabled, false, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
+		WithArgs(service.SchedulerOutboxEventAccountBulkChanged, nil, nil, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	status := service.StatusDisabled
+	schedulable := false
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	rows, err := repo.BulkUpdate(dbent.NewTxContext(context.Background(), tx), []int64{27}, service.AccountBulkUpdate{
+		Status:      &status,
+		Schedulable: &schedulable,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUpdateCredentialsAtomicallyClearsProbeForIdentityChange(t *testing.T) {
 	db, mock := newSQLMock(t)
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
@@ -389,6 +489,38 @@ func TestLockAndMatchProbeProxyIdentityHandlesMissingAndMismatchedProxies(t *tes
 				require.NoError(t, err)
 			}
 			require.Equal(t, tc.want, got)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestLockAndMatchProbeProxyIdentityReportsDatabaseAndScanErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		rows *sqlmock.Rows
+		err  error
+	}{
+		{name: "query error", err: errors.New("query failed")},
+		{name: "row error", rows: sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).AddRow("http", "proxy", 8080, "", "", service.StatusActive).RowError(0, errors.New("row failed"))},
+		{name: "scan error", rows: sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).AddRow("http", "proxy", "not-a-port", "", "", service.StatusActive)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newSQLMock(t)
+			client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+			t.Cleanup(func() { _ = client.Close() })
+			expect := mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FOR SHARE`).WithArgs(int64(9))
+			if tc.err != nil {
+				expect.WillReturnError(tc.err)
+			} else {
+				expect.WillReturnRows(tc.rows)
+			}
+			proxyID := int64(9)
+			_, err := lockAndMatchProbeProxyIdentity(context.Background(), client, &service.Account{
+				ProxyID: &proxyID,
+				Proxy:   &service.Proxy{ID: proxyID},
+			})
+			require.Error(t, err)
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}

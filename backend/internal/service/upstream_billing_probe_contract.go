@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
@@ -65,7 +66,7 @@ type upstreamBillingProbeResponse struct {
 
 func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	var response upstreamBillingProbeResponse
-	if err := json.Unmarshal(body, &response); err != nil {
+	if err := common.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
 	if response.Object != "sub2api.key_billing" || response.SchemaVersion != 1 || response.BillingScope != "token" {
@@ -203,12 +204,12 @@ func decodeUpstreamBillingProbeSnapshot(extra map[string]any) *UpstreamBillingPr
 	if !ok {
 		return nil
 	}
-	raw, err := json.Marshal(value)
+	raw, err := common.Marshal(value)
 	if err != nil {
 		return nil
 	}
 	var snapshot UpstreamBillingProbeSnapshot
-	if err := json.Unmarshal(raw, &snapshot); err != nil || snapshot.Status == "" {
+	if err := common.Unmarshal(raw, &snapshot); err != nil || snapshot.Status == "" {
 		return nil
 	}
 	switch snapshot.Status {
