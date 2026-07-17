@@ -148,3 +148,166 @@ func TestBuildOpenAIAccountLoadPlanCostSignalIsOptIn(t *testing.T) {
 	)
 	require.Greater(t, withSignal.candidates[0].score, withSignal.candidates[1].score)
 }
+
+func TestOpenAISchedulerSettingHelpers(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost = 2.25
+	require.Zero(t, defaultOpenAIAdvancedSchedulerWeightUpstreamCost(nil))
+	require.Equal(t, 2.25, defaultOpenAIAdvancedSchedulerWeightUpstreamCost(cfg))
+
+	for _, raw := range []string{"", "-1", "NaN", "+Inf", "not-a-number"} {
+		require.Equal(t, defaultOpenAIOAuthSchedulingRateMultiplier, parseOpenAIOAuthSchedulingRateMultiplier(raw), raw)
+	}
+	require.Equal(t, 0.25, parseOpenAIOAuthSchedulingRateMultiplier(" 0.25 "))
+
+	weight, err := parseNonNegativeFiniteSchedulerWeight(" 1.75 ")
+	require.NoError(t, err)
+	require.Equal(t, 1.75, weight)
+	for _, raw := range []string{"-1", "NaN", "+Inf", "invalid"} {
+		_, err = parseNonNegativeFiniteSchedulerWeight(raw)
+		require.Error(t, err, raw)
+	}
+	require.Equal(t, 2.25, resolveOpenAIAdvancedSchedulerWeight("", 2.25))
+	require.Equal(t, 2.25, resolveOpenAIAdvancedSchedulerWeight("invalid", 2.25))
+	require.Equal(t, 1.75, resolveOpenAIAdvancedSchedulerWeight("1.75", 2.25))
+	require.Equal(t, "2.25", formatOpenAIAdvancedSchedulerFloat(2.25))
+}
+
+func TestOpenAIAdvancedSchedulerSettingsLoadsOverridesAndCaches(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	repo := &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{
+		openAIAdvancedSchedulerSettingKey:                   " TRUE ",
+		SettingKeyOpenAILowUpstreamRatePriorityEnabled:      "true",
+		SettingKeyOpenAIOAuthSchedulingRateMultiplier:       "0.25",
+		SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost: " 1.75 ",
+	}}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost = 0.5
+	service := &OpenAIGatewayService{
+		cfg: cfg,
+		rateLimitService: &RateLimitService{
+			settingService: NewSettingService(repo, cfg),
+		},
+	}
+	ctx := context.Background()
+
+	settings := service.openAIAdvancedSchedulerSettings(ctx)
+	require.True(t, settings.enabled)
+	require.True(t, settings.lowUpstreamRatePriorityEnabled)
+	require.Equal(t, 0.25, settings.oauthSchedulingRateMultiplier)
+	require.Equal(t, "1.75", settings.upstreamCostWeightOverride)
+	require.Same(t, settings, service.openAIAdvancedSchedulerSettings(ctx))
+	require.True(t, service.isOpenAIAdvancedSchedulerEnabled(ctx))
+	require.False(t, service.isOpenAILowUpstreamRatePriorityEnabled(ctx))
+	require.Equal(t, 0.25, service.openAIOAuthSchedulingRateMultiplier(ctx))
+	require.Equal(t, 1.75, service.openAIWSSchedulerWeightsForRequest(ctx).UpstreamCost)
+
+	var nilService *OpenAIGatewayService
+	require.Nil(t, nilService.openAIAdvancedSchedulerSettingRepo())
+}
+
+func TestOpenAIAdvancedSchedulerSettingsLowRateModeAndInvalidWeight(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost = 0.5
+	repo := &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{
+		openAIAdvancedSchedulerSettingKey:                   "false",
+		SettingKeyOpenAILowUpstreamRatePriorityEnabled:      "true",
+		SettingKeyOpenAIOAuthSchedulingRateMultiplier:       "not-a-number",
+		SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost: "-1",
+	}}
+	service := &OpenAIGatewayService{
+		cfg: cfg,
+		rateLimitService: &RateLimitService{
+			settingService: NewSettingService(repo, cfg),
+		},
+	}
+	ctx := context.Background()
+
+	require.True(t, service.isOpenAILowUpstreamRatePriorityEnabled(ctx))
+	require.Equal(t, defaultOpenAIOAuthSchedulingRateMultiplier, service.openAIOAuthSchedulingRateMultiplier(ctx))
+	require.Equal(t, 0.5, service.openAIWSSchedulerWeightsForRequest(ctx).UpstreamCost)
+}
+
+func TestOpenAILegacyRateOrderHandlesUnknownAndEqualRates(t *testing.T) {
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	cheap := upstreamCostTestAccount(1, UpstreamBillingProbeStatusOK, 0.03, now.Add(-time.Minute), 30*time.Minute)
+	expensive := upstreamCostTestAccount(2, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+	unknown := &Account{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	order := newOpenAILegacyUpstreamRateOrder([]*Account{cheap, expensive, unknown}, now, 1)
+	require.True(t, order.enabled)
+	require.Less(t, order.compare(cheap, unknown), 0)
+	require.Greater(t, order.compare(unknown, cheap), 0)
+	require.Equal(t, 0, order.compare(nil, cheap))
+	require.Equal(t, 0, order.compare(cheap, cheap))
+
+	equal := newOpenAILegacyUpstreamRateOrder([]*Account{
+		upstreamCostTestAccount(4, UpstreamBillingProbeStatusOK, 0.4, now.Add(-time.Minute), 30*time.Minute),
+		upstreamCostTestAccount(5, UpstreamBillingProbeStatusOK, 0.4, now.Add(-time.Minute), 30*time.Minute),
+	}, now, 1)
+	require.False(t, equal.enabled)
+
+	invalidOAuth := newOpenAILegacyUpstreamRateOrder([]*Account{
+		{ID: 6, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+		{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+	}, now, math.NaN())
+	require.False(t, invalidOAuth.enabled)
+}
+
+func TestOpenAIUpstreamCostFactorsUsesEvenMedianAndNeutralForNonOpenAI(t *testing.T) {
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	zero := upstreamCostTestAccount(1, UpstreamBillingProbeStatusOK, 0, now.Add(-time.Minute), 30*time.Minute)
+	cheap := upstreamCostTestAccount(2, UpstreamBillingProbeStatusOK, 0.03, now.Add(-time.Minute), 30*time.Minute)
+	expensive := upstreamCostTestAccount(3, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+	other := &Account{ID: 4, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+	factors := openAIUpstreamCostFactors([]*Account{nil, zero, cheap, expensive, other}, now, 1)
+	require.NotEqual(t, openAIUpstreamCostNeutralFactor, factors[zero.ID])
+	require.NotEqual(t, openAIUpstreamCostNeutralFactor, factors[cheap.ID])
+	require.NotEqual(t, openAIUpstreamCostNeutralFactor, factors[expensive.ID])
+	require.Equal(t, openAIUpstreamCostNeutralFactor, factors[other.ID])
+
+	equal := openAIUpstreamCostFactors([]*Account{
+		upstreamCostTestAccount(5, UpstreamBillingProbeStatusOK, 0.4, now.Add(-time.Minute), 30*time.Minute),
+		upstreamCostTestAccount(6, UpstreamBillingProbeStatusOK, 0.4, now.Add(-time.Minute), 30*time.Minute),
+	}, now, 1)
+	require.Equal(t, openAIUpstreamCostNeutralFactor, equal[5])
+	require.Equal(t, openAIUpstreamCostNeutralFactor, equal[6])
+}
+
+func TestOpenAIFreshUpstreamBillingRateDerivesExpiryAndRejectsStaleSnapshots(t *testing.T) {
+	receivedAt := time.Date(2026, 7, 13, 8, 0, 0, 0, time.UTC)
+	now := receivedAt.Add(90 * time.Minute)
+	account := upstreamCostTestAccount(1, UpstreamBillingProbeStatusOK, 0.2, receivedAt, time.Hour)
+	snapshot := account.Extra[UpstreamBillingProbeExtraKey].(map[string]any)
+	delete(snapshot, "fresh_until")
+
+	rate, ok := openAIFreshUpstreamBillingRate(account, now)
+	require.True(t, ok)
+	require.Equal(t, 0.2, rate)
+	_, ok = openAIFreshUpstreamBillingRate(account, receivedAt.Add(-time.Second))
+	require.False(t, ok)
+
+	delete(snapshot, "next_probe_at")
+	_, ok = openAIFreshUpstreamBillingRate(account, now)
+	require.False(t, ok)
+	_, ok = openAIFreshUpstreamBillingRate(nil, now)
+	require.False(t, ok)
+	_, ok = openAIFreshUpstreamBillingRate(&Account{Platform: PlatformAnthropic, Type: AccountTypeAPIKey}, now)
+	require.False(t, ok)
+
+	invalid := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra: map[string]any{UpstreamBillingProbeExtraKey: map[string]any{
+			"status": "unknown",
+		}},
+	}
+	_, ok = openAIFreshUpstreamBillingRate(invalid, now)
+	require.False(t, ok)
+}

@@ -64,6 +64,20 @@ func TestDiffSettings_NoChangeWhenEqual(t *testing.T) {
 	}
 }
 
+func TestDiffSettings_DetectsOpenAISchedulingChanges(t *testing.T) {
+	before := &service.SystemSettings{}
+	after := &service.SystemSettings{
+		OpenAILowUpstreamRatePriorityEnabled:      true,
+		OpenAIOAuthSchedulingRateMultiplier:       0.25,
+		OpenAIAdvancedSchedulerWeightUpstreamCost: "1.5",
+	}
+
+	changed := diffSettings(before, after, nil, nil, UpdateSettingsRequest{})
+	require.Contains(t, changed, "openai_low_upstream_rate_priority_enabled")
+	require.Contains(t, changed, "openai_oauth_scheduling_rate_multiplier")
+	require.Contains(t, changed, "openai_advanced_scheduler_weight_upstream_cost")
+}
+
 func TestEqualNullableFloat(t *testing.T) {
 	five := 5.0
 	five2 := 5.0
