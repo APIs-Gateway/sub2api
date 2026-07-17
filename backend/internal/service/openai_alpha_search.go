@@ -393,7 +393,7 @@ func parseOpenAIResponsesSSEForAlphaSearch(body []byte) (string, []any) {
 			continue
 		}
 		if delta, _ := event["delta"].(string); delta != "" && event["type"] == "response.output_text.delta" {
-			output.WriteString(delta)
+			_, _ = output.WriteString(delta)
 		}
 		if event["type"] == "response.completed" {
 			completedResponse = event["response"]
@@ -441,7 +441,7 @@ func extractOpenAIResponsesCompletedText(response any) string {
 			}
 			if contentMap["type"] == "output_text" {
 				if text, _ := contentMap["text"].(string); text != "" {
-					b.WriteString(text)
+					_, _ = b.WriteString(text)
 				}
 			}
 		}
