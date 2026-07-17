@@ -843,6 +843,26 @@ func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(
 	}
 }
 
+func TestGatewayService_AnthropicOAuth_HaikuMimicUsesFullClaudeCodeHelpers(t *testing.T) {
+	account := &Account{ID: 303, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+	body := []byte(`{"model":"claude-haiku-4-5","system":"Original system prompt","messages":[{"role":"user","content":"hello"}]}`)
+	svc := &GatewayService{cfg: &config.Config{}}
+
+	rewritten := svc.applyClaudeCodeOAuthMimicryToBody(
+		context.Background(), nil, account, body, "Original system prompt", "claude-haiku-4-5",
+	)
+	require.True(t, gjson.GetBytes(rewritten, "system").IsArray())
+	require.Contains(t, gjson.GetBytes(rewritten, "system.0.text").String(), "x-anthropic-billing-header:")
+
+	beta, ok := svc.computeFinalAnthropicBeta(
+		"oauth", true, "claude-haiku-4-5", http.Header{}, []byte(`{}`), nil,
+	)
+	require.True(t, ok)
+	for _, token := range claude.FullClaudeCodeMimicryBetas() {
+		require.Truef(t, anthropicBetaTokensContains(beta, token), "missing Haiku mimic beta %s", token)
+	}
+}
+
 func TestGatewayService_AnthropicOAuth_SystemPromptInjectionCanBeDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	resetGatewayForwardingSettingsCacheForTest(t)
