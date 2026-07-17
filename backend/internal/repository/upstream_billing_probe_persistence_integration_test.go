@@ -132,6 +132,11 @@ func TestSweepExpiredProxyWithoutFallbackInvalidatesOnlyRealSnapshot(t *testing.
 		Name: "expired-probe-proxy", Protocol: "http", Host: "127.0.0.1", Port: 8080,
 		Status: service.StatusActive, ExpiresAt: &past, FallbackMode: service.FallbackModeNone,
 	})
+	_, err := tx.Client().Proxy.UpdateOneID(proxy.ID).
+		SetExpiresAt(past).
+		SetFallbackMode(service.FallbackModeNone).
+		Save(ctx)
+	require.NoError(t, err)
 	withSnapshot := mustCreateAccount(t, tx.Client(), &service.Account{
 		Name: "expired-with-snapshot", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "sk-test"}, ProxyID: &proxy.ID,
