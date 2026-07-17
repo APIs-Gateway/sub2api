@@ -3,14 +3,12 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitor"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorrequesttemplate"
 	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/lib/pq"
 )
 
 // channelMonitorRequestTemplateRepository 实现 service.ChannelMonitorRequestTemplateRepository。
@@ -153,61 +151,46 @@ func (r *channelMonitorRequestTemplateRepository) applyToMonitorsWithClient(
 		return 0, translatePersistenceError(err, service.ErrChannelMonitorTemplateNotFound, nil)
 	}
 
-	updater := client.ChannelMonitor.Update().
+	targets, err := client.ChannelMonitor.Query().
 		Where(
 			channelmonitor.TemplateIDEQ(id),
 			channelmonitor.IDIn(monitorIDs...),
 			channelmonitor.ProviderEQ(channelmonitor.Provider(tpl.Provider)),
 			channelmonitor.APIModeEQ(defaultAPIModeRepo(tpl.APIMode)),
 		).
-		SetAPIMode(defaultAPIModeRepo(tpl.APIMode)).
-		SetBodyOverrideMode(defaultBodyModeRepo(tpl.BodyOverrideMode)).
-		SetResponseFormat(defaultResponseFormatRepo(tpl.ResponseFormat))
-	if tpl.BodyOverride != nil {
-		updater = updater.SetBodyOverride(tpl.BodyOverride)
-	} else {
-		updater = updater.ClearBodyOverride()
-	}
-
-	affected, err := updater.Save(ctx)
+		All(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("apply template to monitors: %w", err)
+		return 0, fmt.Errorf("find monitors for template: %w", err)
 	}
-	if affected == 0 {
+	if len(targets) == 0 {
 		return 0, nil
 	}
 
-	templateHeaders := channelMonitorHeadersForPersistence(&service.ChannelMonitor{
-		ExtraHeaders: tpl.ExtraHeaders,
-	})
-	templateHeadersJSON, err := json.Marshal(templateHeaders)
-	if err != nil {
-		return 0, fmt.Errorf("marshal template headers: %w", err)
+	templateHeaders := channelMonitorHeadersForPersistence(&service.ChannelMonitor{ExtraHeaders: tpl.ExtraHeaders})
+	for _, monitor := range targets {
+		headers := make(map[string]string, len(templateHeaders)+1)
+		for key, value := range templateHeaders {
+			headers[key] = value
+		}
+		if operationID, ok := monitor.ExtraHeaders[service.ChannelMonitorDuplicateOperationIDMetadataKey]; ok {
+			headers[service.ChannelMonitorDuplicateOperationIDMetadataKey] = operationID
+		}
+
+		updater := client.ChannelMonitor.UpdateOneID(monitor.ID).
+			SetAPIMode(defaultAPIModeRepo(tpl.APIMode)).
+			SetExtraHeaders(headers).
+			SetBodyOverrideMode(defaultBodyModeRepo(tpl.BodyOverrideMode)).
+			SetResponseFormat(defaultResponseFormatRepo(tpl.ResponseFormat))
+		if tpl.BodyOverride != nil {
+			updater = updater.SetBodyOverride(tpl.BodyOverride)
+		} else {
+			updater = updater.ClearBodyOverride()
+		}
+		if _, err := updater.Save(ctx); err != nil {
+			return 0, fmt.Errorf("apply template to monitor %d: %w", monitor.ID, err)
+		}
 	}
-	result, err := client.ExecContext(ctx, `
-		UPDATE channel_monitors
-		SET extra_headers = $1::jsonb || CASE
-			WHEN COALESCE(extra_headers, '{}'::jsonb) ? ($2::text)
-			THEN jsonb_build_object($2::text, COALESCE(extra_headers, '{}'::jsonb) -> ($2::text))
-			ELSE '{}'::jsonb
-		END
-		WHERE template_id = $3
-		  AND id = ANY($4)
-		  AND provider = $5
-		  AND api_mode = $6
-	`, string(templateHeadersJSON), service.ChannelMonitorDuplicateOperationIDMetadataKey,
-		id, pq.Array(monitorIDs), string(tpl.Provider), defaultAPIModeRepo(tpl.APIMode))
-	if err != nil {
-		return 0, fmt.Errorf("apply template headers to monitors: %w", err)
-	}
-	headersAffected, err := result.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("count applied template headers: %w", err)
-	}
-	if headersAffected != int64(affected) {
-		return 0, fmt.Errorf("apply template headers: affected %d rows, expected %d", headersAffected, affected)
-	}
-	return headersAffected, nil
+	return int64(len(targets)), nil
 }
 
 // CountAssociatedMonitors 统计关联监控数（UI 展示「N 个配置」用）。

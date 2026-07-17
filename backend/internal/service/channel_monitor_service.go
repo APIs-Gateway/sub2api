@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -11,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -307,12 +307,12 @@ func cloneChannelMonitorJSONMap(source map[string]any) (map[string]any, error) {
 	if source == nil {
 		return nil, nil
 	}
-	payload, err := json.Marshal(source)
+	payload, err := common.Marshal(source)
 	if err != nil {
 		return nil, err
 	}
 	cloned := make(map[string]any, len(source))
-	if err := json.Unmarshal(payload, &cloned); err != nil {
+	if err := common.Unmarshal(payload, &cloned); err != nil {
 		return nil, err
 	}
 	return cloned, nil

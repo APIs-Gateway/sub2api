@@ -4,106 +4,68 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"testing"
-	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/channelmonitor"
+	"github.com/Wei-Shaw/sub2api/ent/channelmonitorrequesttemplate"
+	"github.com/Wei-Shaw/sub2api/ent/enttest"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
+	_ "modernc.org/sqlite"
 )
 
-func TestApplyChannelMonitorTemplatePreservesDuplicateOperationMetadataAtomically(t *testing.T) {
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+func TestApplyChannelMonitorTemplatePreservesDuplicateOperationMetadataSQLite(t *testing.T) {
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=memory&cache=shared&_fk=1", t.Name()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	_, err = db.Exec("PRAGMA foreign_keys = ON")
+	require.NoError(t, err)
+
+	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(entsql.OpenDB(dialect.SQLite, db))))
 	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
 
-	const templateID int64 = 7
-	monitorIDs := []int64{41, 42}
+	template, err := client.ChannelMonitorRequestTemplate.Create().
+		SetName("duplicate-metadata-template").
+		SetProvider(channelmonitorrequesttemplate.ProviderOpenai).
+		SetAPIMode(service.MonitorAPIModeResponses).
+		SetExtraHeaders(map[string]string{"User-Agent": "template-client"}).
+		SetBodyOverrideMode(service.MonitorBodyOverrideModeOff).
+		Save(ctx)
+	require.NoError(t, err)
 
-	mock.ExpectBegin()
-	expectChannelMonitorTemplateForApply(mock, templateID)
-	mock.ExpectExec(`(?s)UPDATE "channel_monitors" SET "body_override" = NULL, "updated_at" = \$1, "api_mode" = \$2, "body_override_mode" = \$3, "response_format" = \$4 WHERE .*"template_id" = \$5.*"id" IN \(\$6, \$7\).*"provider" = \$8.*"api_mode" = \$9`).
-		WithArgs(
-			sqlmock.AnyArg(),
-			service.MonitorAPIModeResponses,
-			service.MonitorBodyOverrideModeOff,
-			service.MonitorResponseFormatJSON,
-			templateID,
-			monitorIDs[0],
-			monitorIDs[1],
-			service.MonitorProviderOpenAI,
-			service.MonitorAPIModeResponses,
-		).
-		WillReturnResult(sqlmock.NewResult(0, 2))
-	mock.ExpectExec(`(?s)UPDATE channel_monitors\s+SET extra_headers = \$1::jsonb \|\| CASE\s+WHEN COALESCE\(extra_headers, '\{\}'::jsonb\) \? \(\$2::text\)\s+THEN jsonb_build_object\(\$2::text, COALESCE\(extra_headers, '\{\}'::jsonb\) -> \(\$2::text\)\)\s+ELSE '\{\}'::jsonb\s+END\s+WHERE template_id = \$3\s+AND id = ANY\(\$4\)\s+AND provider = \$5\s+AND api_mode = \$6`).
-		WithArgs(
-			`{"User-Agent":"template-client"}`,
-			service.ChannelMonitorDuplicateOperationIDMetadataKey,
-			templateID,
-			`{41,42}`,
-			service.MonitorProviderOpenAI,
-			service.MonitorAPIModeResponses,
-		).
-		WillReturnResult(sqlmock.NewResult(0, 2))
-	mock.ExpectCommit()
+	monitor, err := client.ChannelMonitor.Create().
+		SetName("duplicate-copy").
+		SetProvider(channelmonitor.ProviderOpenai).
+		SetAPIMode(service.MonitorAPIModeResponses).
+		SetEndpoint("https://api.example.com").
+		SetAPIKeyEncrypted("encrypted-key").
+		SetPrimaryModel("gpt-5.4-mini").
+		SetIntervalSeconds(60).
+		SetCreatedBy(1).
+		SetTemplateID(template.ID).
+		SetExtraHeaders(map[string]string{
+			"X-Original": "replaced",
+			service.ChannelMonitorDuplicateOperationIDMetadataKey: "operation-digest",
+		}).
+		Save(ctx)
+	require.NoError(t, err)
 
 	repo := NewChannelMonitorRequestTemplateRepository(client, db)
-	affected, err := repo.ApplyToMonitors(context.Background(), templateID, monitorIDs)
-
+	affected, err := repo.ApplyToMonitors(ctx, template.ID, []int64{monitor.ID})
 	require.NoError(t, err)
-	require.Equal(t, int64(2), affected)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
+	require.Equal(t, int64(1), affected)
 
-func TestApplyChannelMonitorTemplateRollsBackWhenHeaderRowCountDiffers(t *testing.T) {
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	stored, err := client.ChannelMonitor.Get(ctx, monitor.ID)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
-	t.Cleanup(func() { _ = client.Close() })
-
-	const templateID int64 = 7
-
-	mock.ExpectBegin()
-	expectChannelMonitorTemplateForApply(mock, templateID)
-	mock.ExpectExec(`(?s)UPDATE "channel_monitors" SET .*WHERE `).
-		WillReturnResult(sqlmock.NewResult(0, 2))
-	mock.ExpectExec(`(?s)UPDATE channel_monitors\s+SET extra_headers = \$1::jsonb \|\| CASE.*jsonb_build_object\(\$2::text,.*WHERE template_id = \$3.*AND id = ANY\(\$4\)`).
-		WithArgs(
-			`{"User-Agent":"template-client"}`,
-			service.ChannelMonitorDuplicateOperationIDMetadataKey,
-			templateID,
-			`{41,42}`,
-			service.MonitorProviderOpenAI,
-			service.MonitorAPIModeResponses,
-		).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectRollback()
-
-	repo := NewChannelMonitorRequestTemplateRepository(client, db)
-	affected, err := repo.ApplyToMonitors(context.Background(), templateID, []int64{41, 42})
-
-	require.Zero(t, affected)
-	require.EqualError(t, err, "apply template headers: affected 1 rows, expected 2")
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func expectChannelMonitorTemplateForApply(mock sqlmock.Sqlmock, templateID int64) {
-	now := time.Now()
-	mock.ExpectQuery(`(?s)SELECT .* FROM "channel_monitor_request_templates" WHERE "channel_monitor_request_templates"\."id" = \$1 LIMIT 2`).
-		WithArgs(templateID).
-		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "created_at", "updated_at", "name", "provider", "api_mode", "description",
-			"extra_headers", "body_override_mode", "body_override",
-		}).AddRow(
-			templateID, now, now, "monitor-template", service.MonitorProviderOpenAI,
-			service.MonitorAPIModeResponses, "", []byte(`{"User-Agent":"template-client"}`),
-			service.MonitorBodyOverrideModeOff, nil,
-		))
+	require.Equal(t, map[string]string{
+		"User-Agent": "template-client",
+		service.ChannelMonitorDuplicateOperationIDMetadataKey: "operation-digest",
+	}, stored.ExtraHeaders)
 }
