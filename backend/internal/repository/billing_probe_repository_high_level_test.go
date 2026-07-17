@@ -1,0 +1,246 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"regexp"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	dbent "github.com/Wei-Shaw/sub2api/ent"
+	dbaccount "github.com/Wei-Shaw/sub2api/ent/account"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
+
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+)
+
+func TestUpdateWithProbeCoversAccountMutationBranches(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	rateMultiplier := 1.25
+	loadFactor := 2
+	proxyID := int64(9)
+	lastUsedAt := now.Add(-time.Minute)
+	expiresAt := now.Add(time.Hour)
+	rateLimitedAt := now.Add(-2 * time.Minute)
+	rateLimitResetAt := now.Add(time.Minute)
+	overloadUntil := now.Add(2 * time.Minute)
+	sessionStart := now.Add(-3 * time.Minute)
+	sessionEnd := now.Add(3 * time.Minute)
+	note := "note"
+
+	tests := []struct {
+		name    string
+		account *service.Account
+		proxyID any
+	}{
+		{
+			name: "all optional fields set",
+			account: &service.Account{
+				ID: 27, Name: "full", Notes: &note,
+				Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "sk-test"},
+				Extra:       map[string]any{"custom": "value"},
+				ProxyID:     &proxyID, RateMultiplier: &rateMultiplier, LoadFactor: &loadFactor,
+				Concurrency: 3, Priority: 4, Status: service.StatusActive, Schedulable: true,
+				LastUsedAt: &lastUsedAt, ExpiresAt: &expiresAt, RateLimitedAt: &rateLimitedAt,
+				RateLimitResetAt: &rateLimitResetAt, OverloadUntil: &overloadUntil,
+				SessionWindowStart: &sessionStart, SessionWindowEnd: &sessionEnd,
+				SessionWindowStatus: "active",
+			},
+			proxyID: proxyID,
+		},
+		{
+			name: "optional fields cleared and error status disables scheduling",
+			account: &service.Account{
+				ID: 28, Name: "sparse", Platform: service.PlatformOpenAI,
+				Type: service.AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-test"},
+				Status: service.StatusError, Schedulable: true,
+			},
+			proxyID: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+			client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+			t.Cleanup(func() { _ = client.Close() })
+
+			mock.ExpectBegin()
+			mock.ExpectQuery(`(?s)SELECT.*FROM accounts.*FOR NO KEY UPDATE`).
+				WithArgs(tc.account.ID, tc.account.Platform, tc.account.Type, `{"api_key":"sk-test"}`, tc.proxyID).
+				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "enabled", "snapshot"}).
+					AddRow(true, []byte(`true`), []byte(`{"status":"ok"}`)))
+			mock.ExpectExec(`(?s)UPDATE "accounts" SET`).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery(`(?s)SELECT .* FROM "accounts" WHERE "id" = \$1`).
+				WithArgs(tc.account.ID).
+				WillReturnRows(updatedProbeAccountRows(tc.account.ID, `{"custom":"value"}`))
+			mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
+				WithArgs(service.SchedulerOutboxEventAccountChanged, tc.account.ID, nil, nil, sqlmock.AnyArg()).
+				WillReturnResult(sqlmock.NewResult(1, 1))
+			mock.ExpectCommit()
+
+			repo := newAccountRepositoryWithSQL(client, db, nil)
+			require.NoError(t, repo.Update(context.Background(), tc.account))
+			require.False(t, tc.account.UpdatedAt.IsZero())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestUpdateWithProbeReturnsPersistenceAndOutboxErrors(t *testing.T) {
+	t.Run("nil account is a no-op", func(t *testing.T) {
+		repo := &accountRepository{}
+		require.NoError(t, repo.Update(context.Background(), nil))
+	})
+
+	t.Run("lock query error", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+		t.Cleanup(func() { _ = client.Close() })
+		mock.ExpectBegin()
+		mock.ExpectQuery(`(?s)SELECT.*FROM accounts.*FOR NO KEY UPDATE`).
+			WithArgs(int64(29), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil).
+			WillReturnError(errors.New("lock failed"))
+		mock.ExpectRollback()
+		repo := newAccountRepositoryWithSQL(client, db, nil)
+		err := repo.Update(context.Background(), &service.Account{
+			ID: 29, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "sk-test"},
+		})
+		require.EqualError(t, err, "lock failed")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("outbox error rolls back account update", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+		t.Cleanup(func() { _ = client.Close() })
+		mock.ExpectBegin()
+		mock.ExpectQuery(`(?s)SELECT.*FROM accounts.*FOR NO KEY UPDATE`).
+			WithArgs(int64(30), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil).
+			WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "enabled", "snapshot"}).
+				AddRow(true, []byte(`true`), []byte(`{"status":"ok"}`)))
+		mock.ExpectExec(`(?s)UPDATE "accounts" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectQuery(`(?s)SELECT .* FROM "accounts" WHERE "id" = \$1`).
+			WithArgs(int64(30)).
+			WillReturnRows(updatedProbeAccountRows(30, `{"upstream_billing_probe":{"status":"ok"}}`))
+		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).WillReturnError(errors.New("outbox failed"))
+		mock.ExpectRollback()
+		repo := newAccountRepositoryWithSQL(client, db, nil)
+		err := repo.Update(context.Background(), &service.Account{
+			ID: 30, Name: "account", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "sk-test"},
+		})
+		require.EqualError(t, err, "outbox failed")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestProxyUpdateInvalidatesProbeSnapshotsAtomically(t *testing.T) {
+	t.Run("identity change clears snapshots", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+		t.Cleanup(func() { _ = client.Close() })
+		mock.ExpectBegin()
+		mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FOR UPDATE`).
+			WithArgs(int64(9)).
+			WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
+				AddRow("http", "old.example", 8080, "user", "pass", service.StatusActive))
+		mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
+			WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
+		expectProxyReloadRow(mock, 9, "new.example", "user", "pass")
+		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
+			WithArgs(int64(9)).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(17)))
+		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+
+		repo := newProxyRepositoryWithSQL(client, db)
+		err := repo.Update(context.Background(), &service.Proxy{
+			ID: 9, Name: "proxy", Protocol: "http", Host: "new.example", Port: 8080,
+			Username: "user", Password: "pass", Status: service.StatusActive,
+		})
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("same identity skips invalidation", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+		t.Cleanup(func() { _ = client.Close() })
+		mock.ExpectBegin()
+		mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FOR UPDATE`).
+			WithArgs(int64(9)).
+			WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
+				AddRow("http", "same.example", 8080, "", "", service.StatusActive))
+		mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
+			WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
+		expectProxyReloadRow(mock, 9, "same.example", "", "")
+		mock.ExpectCommit()
+
+		repo := newProxyRepositoryWithSQL(client, db)
+		err := repo.Update(context.Background(), &service.Proxy{
+			ID: 9, Name: "renamed", Protocol: "http", Host: "same.example", Port: 8080,
+			Status: service.StatusActive,
+		})
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestProxyUpdateRollsBackWhenProbeOutboxFails(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FOR UPDATE`).
+		WithArgs(int64(9)).
+		WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
+			AddRow("http", "old.example", 8080, "", "", service.StatusActive))
+	mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
+		WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectProxyReloadRow(mock, 9, "new.example", "", "")
+	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
+		WithArgs(int64(9)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(17)))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).WillReturnError(errors.New("outbox failed"))
+	mock.ExpectRollback()
+
+	repo := newProxyRepositoryWithSQL(client, db)
+	err := repo.Update(context.Background(), &service.Proxy{
+		ID: 9, Name: "proxy", Protocol: "http", Host: "new.example", Port: 8080,
+		Status: service.StatusActive,
+	})
+	require.EqualError(t, err, "outbox failed")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func updatedProbeAccountRows(id int64, extra string) *sqlmock.Rows {
+	now := time.Now().UTC()
+	return sqlmock.NewRows(dbaccount.Columns).AddRow(
+		id, now, now, nil, "test", nil, service.PlatformOpenAI, service.AccountTypeAPIKey,
+		[]byte(`{"api_key":"sk-test"}`), []byte(extra), nil, nil, 1, nil, 1, 1.0,
+		service.StatusActive, nil, nil, nil, false, true, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+}
+
+func expectProxyReloadRow(mock sqlmock.Sqlmock, id int64, host, username, password string) {
+	now := time.Now().UTC()
+	mock.ExpectQuery(`(?s)SELECT .* FROM "proxies" WHERE "id" = \$1`).
+		WithArgs(id).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "created_at", "updated_at", "deleted_at", "name", "protocol", "host", "port",
+			"username", "password", "status", "expires_at", "fallback_mode", "backup_proxy_id", "expiry_warn_days",
+		}).AddRow(id, now, now, nil, "proxy", "http", host, 8080, username, password,
+			service.StatusActive, nil, service.FallbackModeNone, nil, 0))
+}
