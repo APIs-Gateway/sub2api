@@ -65,9 +65,12 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) {
+		endpointUnsupported := isOpenAIAlphaSearchEndpointUnsupported(account, resp.StatusCode)
+		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) || endpointUnsupported {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
-			s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
+			if !endpointUnsupported {
+				s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
+			}
 			return &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
@@ -84,6 +87,17 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 	}
 	c.Data(resp.StatusCode, contentType, respBody)
 	return nil
+}
+
+// isOpenAIAlphaSearchEndpointUnsupported identifies API-key upstreams that do
+// not implement the standalone search endpoint. Unlike a model-level 404,
+// this is a capability mismatch and should move to another account without
+// marking the current account unhealthy. OAuth 404 responses remain passthrough.
+func isOpenAIAlphaSearchEndpointUnsupported(account *Account, statusCode int) bool {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	return statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed
 }
 
 func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string) (*http.Request, error) {
