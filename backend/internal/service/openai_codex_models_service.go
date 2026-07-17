@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"golang.org/x/net/http2"
@@ -49,9 +52,14 @@ func IsRetryableCodexModelsManifestError(err error) bool {
 	// Keep the classification stable for callers that preserve the canonical
 	// application error but do not retain the private wrapper type.
 	var appErr *infraerrors.ApplicationError
-	if errors.As(err, &appErr) && appErr.Reason == "OPENAI_CODEX_MODELS_UPSTREAM_FAILED" {
-		code := int(appErr.Code)
-		return code == http.StatusTooManyRequests || (code >= http.StatusInternalServerError && code < 600)
+	if errors.As(err, &appErr) {
+		if appErr.Reason == "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST" {
+			return true
+		}
+		if appErr.Reason == "OPENAI_CODEX_MODELS_UPSTREAM_FAILED" {
+			code := int(appErr.Code)
+			return code == http.StatusTooManyRequests || (code >= http.StatusInternalServerError && code < 600)
+		}
 	}
 	return false
 }
@@ -131,10 +139,11 @@ func isRetryableCodexModelsManifestTransportError(err error) bool {
 // ChatGPT backend for OAuth accounts or from the configured OpenAI-compatible
 // upstream for API-key accounts.
 //
-// The response body is passed through verbatim: the manifest schema evolves
-// with Codex client releases, and interpreting it here would force the gateway
-// to chase upstream changes. Passing it through keeps the gateway
-// schema-agnostic and always reflects the account's real entitlements.
+// After validating the stable top-level envelope, the response body is passed
+// through verbatim: the manifest schema evolves with Codex client releases,
+// and interpreting model entries here would force the gateway to chase
+// upstream changes. Passing it through keeps the gateway schema-agnostic and
+// always reflects the account's real entitlements.
 func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*CodexModelsManifest, error) {
 	if account == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_ACCOUNT_REQUIRED", "account is required")
@@ -257,5 +266,40 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 			retryable: isRetryableCodexModelsManifestTransportError(err),
 		}
 	}
+	if err := validateCodexModelsManifestEnvelope(body); err != nil {
+		return nil, &codexModelsManifestUpstreamError{
+			err: infraerrors.Newf(
+				http.StatusBadGateway,
+				"OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST",
+				"codex models manifest upstream returned an invalid envelope: %v",
+				err,
+			),
+			retryable: true,
+		}
+	}
 	return &CodexModelsManifest{Body: body, ETag: resp.Header.Get("ETag")}, nil
+}
+
+func validateCodexModelsManifestEnvelope(body []byte) error {
+	var envelope map[string]json.RawMessage
+	if err := common.Unmarshal(body, &envelope); err != nil {
+		return errors.New("decode JSON object: " + err.Error())
+	}
+	if envelope == nil {
+		return errors.New("expected a JSON object")
+	}
+
+	models, ok := envelope["models"]
+	if !ok {
+		return errors.New("missing top-level models array")
+	}
+	models = bytes.TrimSpace(models)
+	if len(models) == 0 || models[0] != '[' {
+		return errors.New("top-level models field is not an array")
+	}
+	var entries []json.RawMessage
+	if err := common.Unmarshal(models, &entries); err != nil {
+		return errors.New("decode top-level models array: " + err.Error())
+	}
+	return nil
 }
