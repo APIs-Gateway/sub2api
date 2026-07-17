@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"golang.org/x/net/http2"
 )
 
@@ -93,6 +94,147 @@ func TestFetchCodexModelsManifestDefaultClientVersion(t *testing.T) {
 	}
 	if gotClientVersion != openAICodexProbeVersion {
 		t.Errorf("default client_version: got %q, want %q", gotClientVersion, openAICodexProbeVersion)
+	}
+}
+
+func TestFetchCodexModelsManifestUsesAPIKeyUpstream(t *testing.T) {
+	const manifestBody = `{"object":"list","data":[{"id":"gpt-5.6"}]}`
+	var gotPath, gotClientVersion, gotAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotClientVersion = r.URL.Query().Get("client_version")
+		gotAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(manifestBody))
+	}))
+	defer server.Close()
+
+	account := &Account{
+		ID:       2,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":    "test-api-key",
+			"base_url":   server.URL,
+			"user_agent": "test-api-key-agent",
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	s := &OpenAIGatewayService{cfg: cfg}
+
+	manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", "")
+	if err != nil {
+		t.Fatalf("FetchCodexModelsManifest returned error: %v", err)
+	}
+	if string(manifest.Body) != manifestBody {
+		t.Fatalf("manifest body: got %q, want %q", manifest.Body, manifestBody)
+	}
+	if gotPath != "/v1/models" {
+		t.Errorf("request path: got %q, want /v1/models", gotPath)
+	}
+	if gotClientVersion != "0.144.2" {
+		t.Errorf("client_version: got %q, want 0.144.2", gotClientVersion)
+	}
+	if gotAuthorization != "Bearer test-api-key" {
+		t.Errorf("authorization: got %q", gotAuthorization)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyMissing(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://example.com",
+		},
+	}
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", ""); err == nil {
+		t.Fatal("expected error for missing API key, got nil")
+	} else if !strings.Contains(err.Error(), "OPENAI_CODEX_MODELS_API_KEY_MISSING") {
+		t.Fatalf("unexpected missing API key error: %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyInvalidUpstream(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "test-api-key",
+			"base_url": "://bad-url",
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	s := &OpenAIGatewayService{cfg: cfg}
+
+	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", ""); err == nil {
+		t.Fatal("expected error for invalid API key upstream, got nil")
+	} else if !strings.Contains(err.Error(), "OPENAI_CODEX_MODELS_API_KEY_UPSTREAM_INVALID") {
+		t.Fatalf("unexpected invalid upstream error: %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestUnsupportedAccountType(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeSetupToken,
+	}
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", ""); err == nil {
+		t.Fatal("expected error for unsupported account type, got nil")
+	} else if !strings.Contains(err.Error(), "OPENAI_CODEX_MODELS_ACCOUNT_TYPE_UNSUPPORTED") {
+		t.Fatalf("unexpected unsupported account error: %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestUsesAPIKeyHTTPUpstream(t *testing.T) {
+	const manifestBody = `{"object":"list","data":[{"id":"gpt-5.6"}]}`
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(manifestBody)),
+	}}
+	account := &Account{
+		ID:          7,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 3,
+		Credentials: map[string]any{
+			"api_key":    "test-api-key",
+			"base_url":   "https://example.com",
+			"user_agent": "test-api-key-agent",
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	s := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+
+	manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", "")
+	if err != nil {
+		t.Fatalf("FetchCodexModelsManifest returned error: %v", err)
+	}
+	if string(manifest.Body) != manifestBody {
+		t.Fatalf("manifest body: got %q, want %q", manifest.Body, manifestBody)
+	}
+	if upstream.lastReq == nil {
+		t.Fatal("expected HTTP upstream to receive a request")
+	}
+	if upstream.lastReq.URL.String() != "https://example.com/v1/models?client_version=0.144.2" {
+		t.Errorf("request URL: got %q", upstream.lastReq.URL.String())
+	}
+	if got := upstream.lastReq.Header.Get("Authorization"); got != "Bearer test-api-key" {
+		t.Errorf("authorization header: got %q", got)
+	}
+	if got := upstream.lastReq.Header.Get("User-Agent"); got != "test-api-key-agent" {
+		t.Errorf("user-agent header: got %q", got)
+	}
+	if got := HTTPUpstreamProfileFromContext(upstream.lastReq.Context()); got != HTTPUpstreamProfileOpenAI {
+		t.Errorf("upstream profile: got %q, want %q", got, HTTPUpstreamProfileOpenAI)
 	}
 }
 
