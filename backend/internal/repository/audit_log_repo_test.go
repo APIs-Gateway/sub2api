@@ -138,13 +138,20 @@ func TestAuditLogRepositoryBatchInsertAndDeleteBefore(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	args := make([]driver.Value, 32)
+	args := make([]driver.Value, 34)
 	for index := range args {
 		args[index] = sqlmock.AnyArg()
 	}
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE audit_log_id_sequence SET id = id + $1")).
+		WithArgs(2).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM audit_log_id_sequence")).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(2)))
 	mock.ExpectExec("INSERT INTO audit_logs").
 		WithArgs(args...).
 		WillReturnResult(sqlmock.NewResult(1, 2))
+	mock.ExpectCommit()
 
 	repo := &auditLogRepository{db: db}
 	inserted, err := repo.BatchInsert(t.Context(), []*service.AuditLog{
