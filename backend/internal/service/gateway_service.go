@@ -7140,9 +7140,10 @@ func (s *GatewayService) computeFinalAnthropicBeta(
 
 	if tokenType == "oauth" {
 		if mimicClaudeCode {
-			// mimic 路径跳过白名单透传，incomingBeta 始终为空；所有模型都必须
-			// 携带完整 Claude Code beta 集合，避免 Haiku 被识别为第三方客户端。
-			return mergeAnthropicBetaDropping(claude.FullClaudeCodeMimicryBetas(), "", effectiveDropSet), true
+			// mimic 路径：原代码跳过白名单透传，incomingBeta 总是空字符串。
+			// 这里传空 string 以严格对齐 mimic 行为。
+			requiredBetas := claude.FullClaudeCodeMimicryBetas()
+			return mergeAnthropicBetaDropping(requiredBetas, "", effectiveDropSet), true
 		}
 		// 真 Claude Code 客户端透传路径
 		return stripBetaTokensWithSet(s.getBetaHeader(modelID, clientBeta), effectiveDropSet), true

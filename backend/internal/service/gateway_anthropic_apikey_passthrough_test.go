@@ -843,6 +843,45 @@ func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(
 	}
 }
 
+func TestGatewayService_AnthropicOAuth_HaikuMimicUsesFullClaudeCodeHelpers(t *testing.T) {
+	account := &Account{ID: 303, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+	body := []byte(`{"model":"claude-haiku-4-5","system":"Original system prompt","messages":[{"role":"user","content":"hello"}]}`)
+	svc := &GatewayService{cfg: &config.Config{}}
+
+	rewritten := svc.applyClaudeCodeOAuthMimicryToBody(
+		context.Background(), nil, account, body, "Original system prompt", "claude-haiku-4-5",
+	)
+	require.True(t, gjson.GetBytes(rewritten, "system").IsArray())
+	require.Contains(t, gjson.GetBytes(rewritten, "system.0.text").String(), "x-anthropic-billing-header:")
+
+	beta, ok := svc.computeFinalAnthropicBeta(
+		"oauth", true, "claude-haiku-4-5", http.Header{}, []byte(`{}`), nil,
+	)
+	require.True(t, ok)
+	for _, token := range claude.FullClaudeCodeMimicryBetas() {
+		require.Truef(t, anthropicBetaTokensContains(beta, token), "missing Haiku mimic beta %s", token)
+	}
+}
+
+func TestGatewayService_AnthropicOAuth_HaikuMimicReturnsBodyRewriteError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	validBody := []byte(`{"model":"1234567890123","system":"Original system prompt","messages":[{"role":"user","content":"hello"}]}`)
+	parsed, err := ParseGatewayRequest(NewRequestBodyRef(validBody), PlatformAnthropic)
+	require.NoError(t, err)
+	// Keep the original field width so ParsedRequest's raw ranges remain valid,
+	// while making the model type invalid for the post-rewrite refresh.
+	parsed.Body.Replace([]byte(`{"model":1234567890123  ,"system":"Original system prompt","messages":[{"role":"user","content":"hello"}]}`))
+
+	svc := &GatewayService{cfg: &config.Config{}}
+	account := &Account{ID: 304, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+	_, err = svc.Forward(context.Background(), c, account, parsed)
+	require.ErrorContains(t, err, "rewrite request body")
+}
+
 func TestGatewayService_AnthropicOAuth_SystemPromptInjectionCanBeDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	resetGatewayForwardingSettingsCacheForTest(t)
