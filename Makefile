@@ -4,6 +4,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \
 	src/views/user/__tests__/PaymentView.spec.ts \
+	src/views/user/__tests__/RedeemView.spec.ts \
 	src/views/user/__tests__/PaymentResultView.spec.ts \
 	src/components/user/dashboard/__tests__/CheckinCard.spec.ts \
 	src/views/user/__tests__/DashboardView.spec.ts \
