@@ -140,7 +140,7 @@ func TestFetchCodexModelsManifestDefaultClientVersion(t *testing.T) {
 }
 
 func TestFetchCodexModelsManifestUsesAPIKeyUpstream(t *testing.T) {
-	const manifestBody = `{"object":"list","data":[{"id":"gpt-5.6"}]}`
+	const manifestBody = `{"models":[{"id":"gpt-5.6"}]}`
 	var gotPath, gotClientVersion, gotAuthorization string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -235,7 +235,7 @@ func TestFetchCodexModelsManifestUnsupportedAccountType(t *testing.T) {
 }
 
 func TestFetchCodexModelsManifestUsesAPIKeyHTTPUpstream(t *testing.T) {
-	const manifestBody = `{"object":"list","data":[{"id":"gpt-5.6"}]}`
+	const manifestBody = `{"models":[{"id":"gpt-5.6"}]}`
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),

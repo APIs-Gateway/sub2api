@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"golang.org/x/net/http2"
@@ -281,7 +282,7 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 
 func validateCodexModelsManifestEnvelope(body []byte) error {
 	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(body, &envelope); err != nil {
+	if err := common.Unmarshal(body, &envelope); err != nil {
 		return errors.New("decode JSON object: " + err.Error())
 	}
 	if envelope == nil {
@@ -297,7 +298,7 @@ func validateCodexModelsManifestEnvelope(body []byte) error {
 		return errors.New("top-level models field is not an array")
 	}
 	var entries []json.RawMessage
-	if err := json.Unmarshal(models, &entries); err != nil {
+	if err := common.Unmarshal(models, &entries); err != nil {
 		return errors.New("decode top-level models array: " + err.Error())
 	}
 	return nil
