@@ -20,14 +20,23 @@ import (
 
 type alphaSearchAccountStateRepo struct {
 	AccountRepository
-	setErrorCalls int
-	lastError     string
+	setErrorCalls          int
+	lastError              string
+	updateCredentialsCalls int
+	lastCredentials        map[string]any
+	updateCredentialsError error
 }
 
 func (r *alphaSearchAccountStateRepo) SetError(_ context.Context, _ int64, errorMsg string) error {
 	r.setErrorCalls++
 	r.lastError = errorMsg
 	return nil
+}
+
+func (r *alphaSearchAccountStateRepo) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {
+	r.updateCredentialsCalls++
+	r.lastCredentials = cloneCredentials(credentials)
+	return r.updateCredentialsError
 }
 
 func alphaSearchResponsesSSE(output string) string {
@@ -656,4 +665,206 @@ func TestShouldApplyOpenAIAlphaSearchAccountErrorSideEffects(t *testing.T) {
 	require.False(t, shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(http.StatusUnauthorized))
 	require.True(t, shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(http.StatusForbidden))
 	require.True(t, shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(http.StatusTooManyRequests))
+}
+
+func TestOpenAIAlphaSearchResponsesFallbackErrorPaths(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{}}`)
+	account := &Account{
+		ID:       47,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":               "at-test-token",
+			"auth_mode":                  OpenAIAuthModePersonalAccessToken,
+			"chatgpt_account_id":         "chatgpt-account",
+			"chatgpt_account_is_fedramp": true,
+		},
+	}
+
+	newContext := func() (*gin.Context, *httptest.ResponseRecorder) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", bytes.NewReader(body))
+		return c, recorder
+	}
+
+	t.Run("transport_error", func(t *testing.T) {
+		c, _ := newContext()
+		svc := &OpenAIGatewayService{
+			cfg:          &config.Config{},
+			httpUpstream: &httpUpstreamRecorder{err: errors.New("connection refused")},
+		}
+		err := svc.forwardAlphaSearchViaResponsesWebSearch(context.Background(), c, account, body, "at-test-token", "", "gpt-5.6-sol", "")
+		var failoverErr *UpstreamFailoverError
+		require.ErrorAs(t, err, &failoverErr)
+		require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	})
+
+	t.Run("read_error", func(t *testing.T) {
+		c, _ := newContext()
+		svc := &OpenAIGatewayService{
+			cfg: &config.Config{},
+			httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       errReadCloser{err: io.ErrUnexpectedEOF},
+			}},
+		}
+		err := svc.forwardAlphaSearchViaResponsesWebSearch(context.Background(), c, account, body, "at-test-token", "", "gpt-5.6-sol", "gpt-5.6-sol")
+		require.EqualError(t, err, "read alpha search responses fallback response: unexpected EOF")
+	})
+
+	t.Run("non_failover_error_passthrough", func(t *testing.T) {
+		c, recorder := newContext()
+		upstreamBody := `{"error":{"type":"invalid_request_error","message":"bad search"}}`
+		svc := &OpenAIGatewayService{
+			cfg: &config.Config{},
+			httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+			}},
+		}
+		err := svc.forwardAlphaSearchViaResponsesWebSearch(context.Background(), c, account, body, "at-test-token", "", "gpt-5.6-sol", "gpt-5.6-sol")
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, recorder.Code)
+		require.JSONEq(t, upstreamBody, recorder.Body.String())
+	})
+
+	t.Run("failover_applies_non_401_side_effect_path", func(t *testing.T) {
+		c, _ := newContext()
+		svc := &OpenAIGatewayService{
+			cfg: &config.Config{},
+			httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusForbidden,
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"forbidden"}}`)),
+			}},
+		}
+		err := svc.forwardAlphaSearchViaResponsesWebSearch(context.Background(), c, account, body, "at-test-token", "", "gpt-5.6-sol", "gpt-5.6-sol")
+		var failoverErr *UpstreamFailoverError
+		require.ErrorAs(t, err, &failoverErr)
+		require.Equal(t, http.StatusForbidden, failoverErr.StatusCode)
+	})
+}
+
+func TestOpenAIAlphaSearchHelperEdgeCases(t *testing.T) {
+	require.Empty(t, openAIAlphaSearchInboundHeader(nil, "Version"))
+	stripOpenAIAlphaSearchResponsesHeaders(nil)
+
+	unchanged, err := sanitizeOpenAIAlphaSearchBody(nil)
+	require.NoError(t, err)
+	require.Nil(t, unchanged)
+	unchanged, err = sanitizeOpenAIAlphaSearchBody([]byte("not-json"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("not-json"), unchanged)
+
+	sse := "data: {invalid}\n\n" + "data: [DONE]\n\n" +
+		`data: {"type":"response.output_text.delta","delta":"ok"}` + "\n\n"
+	output, results := parseOpenAIResponsesSSEForAlphaSearch([]byte(sse))
+	require.Equal(t, "ok", output)
+	require.Empty(t, results)
+
+	completed := map[string]any{"output": []any{
+		"not-an-object",
+		map[string]any{"type": "tool_call"},
+		map[string]any{"type": "message", "content": []any{
+			"not-an-object",
+			map[string]any{"type": "reasoning"},
+			map[string]any{"type": "output_text", "text": "a"},
+			map[string]any{"type": "output_text", "text": "b"},
+		}},
+	}}
+	require.Equal(t, "ab", extractOpenAIResponsesCompletedText(completed))
+	require.Empty(t, extractOpenAIResponsesCompletedText("not-an-object"))
+}
+
+func TestOpenAIAlphaSearchRequestHeaderBranches(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":       "at-test-token",
+			"auth_mode":          OpenAIAuthModePersonalAccessToken,
+			"chatgpt_account_id": "chatgpt-account",
+			"user_agent":         "custom-agent/1.0",
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: true}}}
+
+	req, err := svc.buildOpenAIAlphaSearchRequest(context.Background(), nil, account, []byte(`{"model":"gpt-5.6-sol"}`), "at-test-token")
+	require.NoError(t, err)
+	require.Equal(t, codexCLIUserAgent, req.Header.Get("User-Agent"))
+	require.Equal(t, "Bearer at-test-token", req.Header.Get("Authorization"))
+
+	responsesReq, err := svc.buildOpenAIAlphaSearchResponsesWebSearchRequest(
+		context.Background(), nil, account, []byte(`{"id":"search-session"}`), []byte(`{"model":"gpt-5.6-sol"}`), "at-test-token",
+	)
+	require.NoError(t, err)
+	require.Equal(t, codexCLIUserAgent, responsesReq.Header.Get("User-Agent"))
+	require.Equal(t, "chatgpt-account", responsesReq.Header.Get("ChatGPT-Account-ID"))
+}
+
+func TestEnsureOpenAIAlphaSearchAuthMetadataPersistsAndPropagatesErrors(t *testing.T) {
+	statusCode := http.StatusOK
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(statusCode)
+		if statusCode == http.StatusOK {
+			_, _ = w.Write([]byte(`{"email":"pat@example.com","chatgpt_user_id":"user-123","chatgpt_account_id":"acct-123","chatgpt_plan_type":"plus","chatgpt_account_is_fedramp":true}`))
+			return
+		}
+		_, _ = w.Write([]byte(`invalid`))
+	}))
+	defer server.Close()
+
+	oldWhoamiURL := openAICodexPATWhoamiURL
+	openAICodexPATWhoamiURL = server.URL
+	defer func() { openAICodexPATWhoamiURL = oldWhoamiURL }()
+
+	oauthService := NewOpenAIOAuthService(nil, nil)
+	defer oauthService.Stop()
+	repo := &alphaSearchAccountStateRepo{}
+	svc := &OpenAIGatewayService{
+		openAITokenProvider: NewOpenAITokenProvider(nil, nil, oauthService),
+		accountRepo:         repo,
+	}
+	account := &Account{
+		ID:       48,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "at-test-token",
+			"auth_mode":    OpenAIAuthModePersonalAccessToken,
+		},
+	}
+
+	require.NoError(t, svc.ensureOpenAIAlphaSearchAuthMetadata(context.Background(), account, "at-test-token", ""))
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.Equal(t, "acct-123", repo.lastCredentials["chatgpt_account_id"])
+
+	repo.updateCredentialsError = errors.New("persist failed")
+	statusCode = http.StatusOK
+	accountWithoutMetadata := &Account{
+		ID:       49,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "at-test-token",
+			"auth_mode":    OpenAIAuthModePersonalAccessToken,
+		},
+	}
+	err := svc.ensureOpenAIAlphaSearchAuthMetadata(context.Background(), accountWithoutMetadata, "at-test-token", "")
+	require.EqualError(t, err, "persist Codex PAT metadata for alpha/search: persist failed")
+
+	statusCode = http.StatusUnauthorized
+	unauthorizedAccount := &Account{
+		ID:       50,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "at-test-token",
+			"auth_mode":    OpenAIAuthModePersonalAccessToken,
+		},
+	}
+	err = svc.ensureOpenAIAlphaSearchAuthMetadata(context.Background(), unauthorizedAccount, "at-test-token", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid or expired")
 }
