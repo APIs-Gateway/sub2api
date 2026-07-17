@@ -439,3 +439,19 @@ func TestParsePricingData_PreservesImageInputTokenPriceWithoutTextPrice(t *testi
 	require.InDelta(t, 1e-8, pricing.InputCostPerImageToken, 1e-12)
 	require.InDelta(t, 2e-8, pricing.OutputCostPerImageToken, 1e-12)
 }
+
+func TestParsePricingData_PreservesImageOutputTokenPriceWithoutOtherPrices(t *testing.T) {
+	svc := &PricingService{}
+	pricingData, err := svc.parsePricingData([]byte(`{
+		"gpt-image-output-only": {
+			"output_cost_per_image_token": 0.00000002,
+			"litellm_provider": "openai",
+			"mode": "image_generation"
+		}
+	}`))
+	require.NoError(t, err)
+
+	pricing := pricingData["gpt-image-output-only"]
+	require.NotNil(t, pricing)
+	require.InDelta(t, 2e-8, pricing.OutputCostPerImageToken, 1e-12)
+}
