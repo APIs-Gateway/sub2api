@@ -275,16 +275,16 @@ func openAIAlphaSearchResponsesWebSearchPrompt(alphaBody []byte) string {
 	_, _ = b.WriteString("Use the hosted web_search tool when web/current information is needed.\n")
 	_, _ = b.WriteString("Return concise source-backed results. Include titles, URLs, dates, and direct answers when available.\n")
 	if commands := strings.TrimSpace(gjson.GetBytes(alphaBody, "commands").Raw); commands != "" {
-		b.WriteString("\nCommands JSON:\n")
-		b.WriteString(truncateOpenAIAlphaSearchPromptJSON(commands, 12000))
+		_, _ = b.WriteString("\nCommands JSON:\n")
+		_, _ = b.WriteString(truncateOpenAIAlphaSearchPromptJSON(commands, 12000))
 	}
 	if settings := strings.TrimSpace(gjson.GetBytes(alphaBody, "settings").Raw); settings != "" {
-		b.WriteString("\n\nSearch settings JSON:\n")
-		b.WriteString(truncateOpenAIAlphaSearchPromptJSON(settings, 4000))
+		_, _ = b.WriteString("\n\nSearch settings JSON:\n")
+		_, _ = b.WriteString(truncateOpenAIAlphaSearchPromptJSON(settings, 4000))
 	}
 	if input := strings.TrimSpace(gjson.GetBytes(alphaBody, "input").Raw); input != "" {
-		b.WriteString("\n\nRecent conversation/input JSON:\n")
-		b.WriteString(truncateOpenAIAlphaSearchPromptJSON(input, 8000))
+		_, _ = b.WriteString("\n\nRecent conversation/input JSON:\n")
+		_, _ = b.WriteString(truncateOpenAIAlphaSearchPromptJSON(input, 8000))
 	}
 	if b.Len() == 0 {
 		return "Execute the requested web search and return concise source-backed results."
