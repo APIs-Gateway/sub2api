@@ -4,7 +4,75 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
+
+type checkinSettingsRepoStub struct {
+	values map[string]string
+}
+
+func (checkinSettingsRepoStub) Get(context.Context, string) (*Setting, error) {
+	panic("unexpected Get call")
+}
+func (checkinSettingsRepoStub) GetValue(context.Context, string) (string, error) {
+	panic("unexpected GetValue call")
+}
+func (checkinSettingsRepoStub) Set(context.Context, string, string) error {
+	panic("unexpected Set call")
+}
+func (r checkinSettingsRepoStub) GetMultiple(context.Context, []string) (map[string]string, error) {
+	if r.values != nil {
+		return r.values, nil
+	}
+	return map[string]string{
+		SettingKeyCheckinEnabled:       "true",
+		SettingKeyCheckinAmountMin:     "0.25",
+		SettingKeyCheckinAmountMax:     "0.25",
+		SettingKeyCheckinSpendPerExtra: "0",
+		SettingKeyCheckinMinTokens:     "0",
+	}, nil
+}
+func (checkinSettingsRepoStub) SetMultiple(context.Context, map[string]string) error {
+	panic("unexpected SetMultiple call")
+}
+func (checkinSettingsRepoStub) GetAll(context.Context) (map[string]string, error) {
+	panic("unexpected GetAll call")
+}
+func (checkinSettingsRepoStub) Delete(context.Context, string) error { panic("unexpected Delete call") }
+
+type checkinClaimRepoStub struct {
+	dailyClaims  int
+	bonusClaims  int
+	dailyClaimed bool
+}
+
+func (r *checkinClaimRepoStub) HasDailyCheckin(context.Context, int64, string) (bool, error) {
+	return r.dailyClaimed || r.dailyClaims > 0, nil
+}
+func (r *checkinClaimRepoStub) CountBonusOnDate(context.Context, int64, string) (int, error) {
+	return r.bonusClaims, nil
+}
+func (r *checkinClaimRepoStub) ClaimDaily(context.Context, int64, string, float64) (float64, error) {
+	r.dailyClaims++
+	return 12.75, nil
+}
+func (r *checkinClaimRepoStub) ClaimBonus(context.Context, int64, string, float64, int) (float64, error) {
+	r.bonusClaims++
+	return 14.25, nil
+}
+
+type checkinUsageRepoStub struct {
+	UsageLogRepository
+	stats *usagestats.UsageStats
+}
+
+func (r checkinUsageRepoStub) GetUserStatsAggregated(context.Context, int64, time.Time, time.Time) (*usagestats.UsageStats, error) {
+	if r.stats != nil {
+		return r.stats, nil
+	}
+	return &usagestats.UsageStats{}, nil
+}
 
 type checkinBlockingBalanceCache struct {
 	billingCacheWorkerStub
@@ -51,6 +119,58 @@ func TestCheckinInvalidatesBalanceCacheBeforeReturning(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("checkin did not return after balance cache invalidation completed")
+	}
+}
+
+func TestCheckinClaimReturnsTransactionBalance(t *testing.T) {
+	repo := &checkinClaimRepoStub{}
+	svc := &CheckinService{
+		repo:     repo,
+		settings: &SettingService{settingRepo: checkinSettingsRepoStub{}},
+		usage:    checkinUsageRepoStub{},
+	}
+
+	result, err := svc.Claim(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("claim checkin: %v", err)
+	}
+	if result.Balance != 12.75 {
+		t.Fatalf("balance = %v, want 12.75", result.Balance)
+	}
+	if result.Type != "daily" {
+		t.Fatalf("type = %q, want daily", result.Type)
+	}
+	if repo.dailyClaims != 1 {
+		t.Fatalf("daily claims = %d, want 1", repo.dailyClaims)
+	}
+}
+
+func TestCheckinBonusClaimReturnsTransactionBalance(t *testing.T) {
+	repo := &checkinClaimRepoStub{dailyClaimed: true}
+	svc := &CheckinService{
+		repo: repo,
+		settings: &SettingService{settingRepo: checkinSettingsRepoStub{values: map[string]string{
+			SettingKeyCheckinEnabled:       "true",
+			SettingKeyCheckinAmountMin:     "0.25",
+			SettingKeyCheckinAmountMax:     "0.25",
+			SettingKeyCheckinSpendPerExtra: "0.5",
+			SettingKeyCheckinMinTokens:     "0",
+		}}},
+		usage: checkinUsageRepoStub{stats: &usagestats.UsageStats{TotalActualCost: 0.5}},
+	}
+
+	result, err := svc.Claim(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("claim bonus checkin: %v", err)
+	}
+	if result.Balance != 14.25 {
+		t.Fatalf("balance = %v, want 14.25", result.Balance)
+	}
+	if result.Type != "bonus" {
+		t.Fatalf("type = %q, want bonus", result.Type)
+	}
+	if repo.bonusClaims != 1 {
+		t.Fatalf("bonus claims = %d, want 1", repo.bonusClaims)
 	}
 }
 

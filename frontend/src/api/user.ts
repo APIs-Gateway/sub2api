@@ -210,6 +210,8 @@ export interface CheckinStatus {
 export interface CheckinClaimResult {
   type: 'daily' | 'bonus'
   amount: number
+  /** Persisted balance returned by the server after the claim. */
+  balance?: number
   status: CheckinStatus | null
 }
 

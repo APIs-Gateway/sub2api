@@ -122,10 +122,10 @@ type CheckinRepository interface {
 	CountBonusOnDate(ctx context.Context, userID int64, date string) (int, error)
 	// ClaimDaily 原子地写入一条 daily 记录并把 amount 加到用户余额。
 	// 若当日 daily 已存在则返回 ErrCheckinAlreadyClaimed。
-	ClaimDaily(ctx context.Context, userID int64, date string, amount float64) error
+	ClaimDaily(ctx context.Context, userID int64, date string, amount float64) (float64, error)
 	// ClaimBonus 原子地写入一条 bonus 记录并把 amount 加到用户余额；
 	// 锁内复核当日 bonus 数 < maxBonus，否则返回 ErrCheckinNoBonus，防止并发超领。
-	ClaimBonus(ctx context.Context, userID int64, date string, amount float64, maxBonus int) error
+	ClaimBonus(ctx context.Context, userID int64, date string, amount float64, maxBonus int) (float64, error)
 }
 
 // CheckinService 实现每日签到与按消费解锁的额外签到。
@@ -178,9 +178,10 @@ type CheckinStatus struct {
 
 // CheckinClaimResult 是一次领取的结果，附带刷新后的状态。
 type CheckinClaimResult struct {
-	Type   string         `json:"type"` // daily | bonus
-	Amount float64        `json:"amount"`
-	Status *CheckinStatus `json:"status"`
+	Type    string         `json:"type"` // daily | bonus
+	Amount  float64        `json:"amount"`
+	Balance float64        `json:"balance"`
+	Status  *CheckinStatus `json:"status"`
 }
 
 // GetStatus 计算用户当前签到状态。
@@ -254,10 +255,11 @@ func (s *CheckinService) Claim(ctx context.Context, userID int64) (*CheckinClaim
 
 	// 1) 基础签到：当日未领 且 当日 Token 用量达到门槛。
 	if !hasDaily && tokensMet {
-		if err := s.repo.ClaimDaily(ctx, userID, date, amount); err != nil {
+		balance, err := s.repo.ClaimDaily(ctx, userID, date, amount)
+		if err != nil {
 			return nil, err
 		}
-		return s.finishClaim(ctx, userID, "daily", amount)
+		return s.finishClaim(ctx, userID, "daily", amount, balance)
 	}
 
 	// 2) 额外签到：按当日消费解锁（不受活跃度门槛限制）。
@@ -270,10 +272,11 @@ func (s *CheckinService) Claim(ctx context.Context, userID int64) (*CheckinClaim
 			}
 			if claimed < earned {
 				// maxBonus=earned：repo 在锁内复核，绝不超过当前应得数。
-				if err := s.repo.ClaimBonus(ctx, userID, date, amount, earned); err != nil {
+				balance, err := s.repo.ClaimBonus(ctx, userID, date, amount, earned)
+				if err != nil {
 					return nil, err
 				}
-				return s.finishClaim(ctx, userID, "bonus", amount)
+				return s.finishClaim(ctx, userID, "bonus", amount, balance)
 			}
 		}
 	}
@@ -286,13 +289,13 @@ func (s *CheckinService) Claim(ctx context.Context, userID int64) (*CheckinClaim
 }
 
 // finishClaim 在一次成功领取后失效余额缓存并返回携带最新状态的结果。
-func (s *CheckinService) finishClaim(ctx context.Context, userID int64, ctype string, amount float64) (*CheckinClaimResult, error) {
+func (s *CheckinService) finishClaim(ctx context.Context, userID int64, ctype string, amount, balance float64) (*CheckinClaimResult, error) {
 	s.invalidateBalanceCaches(ctx, userID)
 	status, statusErr := s.GetStatus(ctx, userID)
 	if statusErr != nil {
 		status = nil
 	}
-	return &CheckinClaimResult{Type: ctype, Amount: amount, Status: status}, nil
+	return &CheckinClaimResult{Type: ctype, Amount: amount, Balance: balance, Status: status}, nil
 }
 
 // todayUsage 返回用户当日（dayStart 至今）累计消费（USD）与 Token 用量（input+output+cache 合计）。

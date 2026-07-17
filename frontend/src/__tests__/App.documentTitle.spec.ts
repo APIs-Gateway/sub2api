@@ -39,7 +39,8 @@ const appStore = reactive<AppStoreMock>({
 
 const authStore = reactive({
   isAdmin: false,
-  isAuthenticated: false
+  isAuthenticated: false,
+  refreshUser: vi.fn().mockResolvedValue(undefined)
 })
 
 const subscriptionStore = {
@@ -103,6 +104,10 @@ vi.mock('@/components/common/AnnouncementPopup.vue', () => ({
   default: { template: '<div />' }
 }))
 
+vi.mock('@/components/common/UserRegionNoticeOverlay.vue', () => ({
+  default: { template: '<div />' }
+}))
+
 describe('App document title refresh', () => {
   beforeEach(() => {
     route.fullPath = '/custom/scheduler'
@@ -120,6 +125,7 @@ describe('App document title refresh', () => {
     appStore.fetchPublicSettings.mockClear()
     authStore.isAdmin = false
     authStore.isAuthenticated = false
+    authStore.refreshUser.mockClear()
     adminSettingsStore.customMenuItems = []
     document.title = ''
   })
@@ -153,6 +159,24 @@ describe('App document title refresh', () => {
 
     expect(document.title).toBe('账号调度器 - Demo Site')
 
+    wrapper.unmount()
+  })
+
+  it('refreshes user data when the authenticated page becomes visible', async () => {
+    authStore.isAuthenticated = true
+    authStore.refreshUser.mockRejectedValueOnce(new Error('profile refresh failed'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { default: App } = await import('../App.vue')
+    const wrapper = mount(App)
+    await nextTick()
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await nextTick()
+
+    expect(authStore.refreshUser).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith('Failed to refresh user when page became visible:', expect.any(Error))
+    warn.mockRestore()
     wrapper.unmount()
   })
 })

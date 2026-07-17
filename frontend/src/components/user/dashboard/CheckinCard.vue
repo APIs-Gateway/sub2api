@@ -167,12 +167,15 @@ async function claim() {
     } else {
       await load()
     }
+    if (typeof res.balance === 'number') {
+      authStore.setBalance(res.balance)
+    } else {
+      // Older servers do not return the persisted balance; retain a safe fallback.
+      void authStore.refreshUser().catch((error) => {
+        console.warn('Failed to refresh user after successful checkin:', error)
+      })
+    }
     appStore.showSuccess(t('checkin.claimedToast', { amount: formatUsd(res.amount) }))
-    // 签到领取已经在服务端提交。余额刷新是后续同步动作，即使失败也不能把
-    // 已成功的签到误报为失败；用户信息会在下一次常规刷新时再次同步。
-    void authStore.refreshUser().catch((error) => {
-      console.warn('Failed to refresh user after successful checkin:', error)
-    })
   } catch (error) {
     console.warn('Checkin claim failed:', error)
     // POST 可能已在服务端提交，只是成功响应在弱网或重启时丢失。先回查

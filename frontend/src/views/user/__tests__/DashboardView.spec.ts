@@ -7,13 +7,15 @@ const mocks = vi.hoisted(() => ({
   getDashboardTrend: vi.fn(),
   getDashboardModels: vi.fn(),
   getByDateRange: vi.fn(),
-  getMyPlatformQuotas: vi.fn()
+  getMyPlatformQuotas: vi.fn(),
+  refreshUser: vi.fn()
 }))
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
     user: { balance: 0 },
-    isSimpleMode: false
+    isSimpleMode: false,
+    refreshUser: mocks.refreshUser
   })
 }))
 
@@ -46,12 +48,15 @@ describe('user DashboardView', () => {
     mocks.getDashboardModels.mockResolvedValue({ models: [] })
     mocks.getByDateRange.mockResolvedValue({ items: [] })
     mocks.getMyPlatformQuotas.mockResolvedValue({ platform_quotas: [] })
+    mocks.refreshUser.mockResolvedValue(undefined)
   })
 
   it('shows a persistent error and retries the primary statistics request', async () => {
     mocks.getDashboardStats
       .mockRejectedValueOnce(new Error('temporary failure'))
       .mockResolvedValueOnce({ total_api_keys: 1 })
+    mocks.refreshUser.mockRejectedValueOnce(new Error('profile refresh failed'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     const wrapper = mount(DashboardView, {
       global: {
@@ -73,8 +78,10 @@ describe('user DashboardView', () => {
     await flushPromises()
 
     expect(mocks.getDashboardStats).toHaveBeenCalledTimes(2)
+    expect(mocks.refreshUser).toHaveBeenCalledTimes(2)
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     expect(wrapper.findComponent({ name: 'UserDashboardStats' }).exists()).toBe(true)
+    expect(warn).toHaveBeenCalledWith('Failed to refresh user on dashboard load:', expect.any(Error))
+    warn.mockRestore()
   })
 })
-
