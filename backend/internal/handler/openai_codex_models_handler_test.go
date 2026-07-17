@@ -93,6 +93,24 @@ func TestOpenAIGatewayHandlerCodexModels_FailsOverRetryableManifestError(t *test
 	require.JSONEq(t, `{"models":[{"slug":"gpt-5.6-sol"}]}`, recorder.Body.String())
 }
 
+func TestOpenAIGatewayHandlerCodexModels_FailsOverInvalidManifest(t *testing.T) {
+	h, groupID := newCodexModelsFailoverHandlerForTest(2, 3)
+	calls := make([]int64, 0, 2)
+	fetch := func(_ context.Context, account *service.Account, _, _ string) (*service.CodexModelsManifest, error) {
+		calls = append(calls, account.ID)
+		if account.ID == 1 {
+			return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "invalid manifest envelope")
+		}
+		return &service.CodexModelsManifest{Body: []byte(`{"models":[{"slug":"gpt-5.6-sol"}]}`)}, nil
+	}
+
+	recorder := performCodexModelsRequestWithFetcher(t, h, groupID, fetch)
+
+	require.Equal(t, []int64{1, 2}, calls)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.JSONEq(t, `{"models":[{"slug":"gpt-5.6-sol"}]}`, recorder.Body.String())
+}
+
 func TestOpenAIGatewayHandlerCodexModels_DoesNotFailOverPermanentManifestError(t *testing.T) {
 	h, groupID := newCodexModelsFailoverHandlerForTest(2, 3)
 	calls := make([]int64, 0, 1)

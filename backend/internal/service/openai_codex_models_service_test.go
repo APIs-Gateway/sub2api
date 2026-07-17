@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"golang.org/x/net/http2"
 )
 
@@ -73,6 +74,47 @@ func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 	}
 	if gotClientVersion != "0.137.0" {
 		t.Errorf("client_version query: got %q", gotClientVersion)
+	}
+}
+
+func TestFetchCodexModelsManifestRejectsInvalidEnvelope(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "OpenAI models list", body: `{"object":"list","data":[]}`},
+		{name: "invalid JSON", body: `{"models":`},
+		{name: "non-object", body: `[]`},
+		{name: "null object", body: `null`},
+		{name: "missing models", body: `{}`},
+		{name: "models object", body: `{"models":{}}`},
+		{name: "models null", body: `{"models":null}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			original := chatgptCodexModelsURL
+			chatgptCodexModelsURL = server.URL
+			defer func() { chatgptCodexModelsURL = original }()
+
+			s := &OpenAIGatewayService{}
+			_, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", "")
+			if err == nil {
+				t.Fatal("expected invalid manifest error, got nil")
+			}
+			if got, want := infraerrors.Reason(err), "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST"; got != want {
+				t.Fatalf("error reason: got %q, want %q", got, want)
+			}
+			if !IsRetryableCodexModelsManifestError(err) {
+				t.Fatal("invalid upstream manifest must be retryable")
+			}
+		})
 	}
 }
 
