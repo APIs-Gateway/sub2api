@@ -112,12 +112,38 @@ func (r *channelMonitorRequestTemplateRepository) List(ctx context.Context, para
 
 // ApplyToMonitors 把模板当前配置覆盖到 monitorIDs 列表里的关联监控。
 // WHERE 双重过滤：template_id = id AND id IN (monitorIDs)，防止用户传了未关联本模板的 id
-// 就被覆盖。走 ent UpdateMany 保留 hooks。
+// 就被覆盖。模板字段通过 ent UpdateMany 更新以保留 hooks；extra_headers 在同一事务中
+// 单独合并，以保留仅用于幂等恢复、绝不会发往上游的内部 operation ID。
 func (r *channelMonitorRequestTemplateRepository) ApplyToMonitors(ctx context.Context, id int64, monitorIDs []int64) (int64, error) {
 	if len(monitorIDs) == 0 {
 		return 0, nil
 	}
-	client := clientFromContext(ctx, r.client)
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		return r.applyToMonitorsWithClient(ctx, tx.Client(), id, monitorIDs)
+	}
+
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin apply template transaction: %w", err)
+	}
+	txCtx := dbent.NewTxContext(ctx, tx)
+	affected, err := r.applyToMonitorsWithClient(txCtx, tx.Client(), id, monitorIDs)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit apply template transaction: %w", err)
+	}
+	return affected, nil
+}
+
+func (r *channelMonitorRequestTemplateRepository) applyToMonitorsWithClient(
+	ctx context.Context,
+	client *dbent.Client,
+	id int64,
+	monitorIDs []int64,
+) (int64, error) {
 	tpl, err := client.ChannelMonitorRequestTemplate.Query().
 		Where(channelmonitorrequesttemplate.IDEQ(id)).
 		Only(ctx)
@@ -125,28 +151,46 @@ func (r *channelMonitorRequestTemplateRepository) ApplyToMonitors(ctx context.Co
 		return 0, translatePersistenceError(err, service.ErrChannelMonitorTemplateNotFound, nil)
 	}
 
-	updater := client.ChannelMonitor.Update().
+	targets, err := client.ChannelMonitor.Query().
 		Where(
 			channelmonitor.TemplateIDEQ(id),
 			channelmonitor.IDIn(monitorIDs...),
 			channelmonitor.ProviderEQ(channelmonitor.Provider(tpl.Provider)),
 			channelmonitor.APIModeEQ(defaultAPIModeRepo(tpl.APIMode)),
 		).
-		SetAPIMode(defaultAPIModeRepo(tpl.APIMode)).
-		SetExtraHeaders(emptyHeadersIfNilRepo(tpl.ExtraHeaders)).
-		SetBodyOverrideMode(defaultBodyModeRepo(tpl.BodyOverrideMode)).
-		SetResponseFormat(defaultResponseFormatRepo(tpl.ResponseFormat))
-	if tpl.BodyOverride != nil {
-		updater = updater.SetBodyOverride(tpl.BodyOverride)
-	} else {
-		updater = updater.ClearBodyOverride()
+		All(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("find monitors for template: %w", err)
+	}
+	if len(targets) == 0 {
+		return 0, nil
 	}
 
-	affected, err := updater.Save(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("apply template to monitors: %w", err)
+	templateHeaders := channelMonitorHeadersForPersistence(&service.ChannelMonitor{ExtraHeaders: tpl.ExtraHeaders})
+	for _, monitor := range targets {
+		headers := make(map[string]string, len(templateHeaders)+1)
+		for key, value := range templateHeaders {
+			headers[key] = value
+		}
+		if operationID, ok := monitor.ExtraHeaders[service.ChannelMonitorDuplicateOperationIDMetadataKey]; ok {
+			headers[service.ChannelMonitorDuplicateOperationIDMetadataKey] = operationID
+		}
+
+		updater := client.ChannelMonitor.UpdateOneID(monitor.ID).
+			SetAPIMode(defaultAPIModeRepo(tpl.APIMode)).
+			SetExtraHeaders(headers).
+			SetBodyOverrideMode(defaultBodyModeRepo(tpl.BodyOverrideMode)).
+			SetResponseFormat(defaultResponseFormatRepo(tpl.ResponseFormat))
+		if tpl.BodyOverride != nil {
+			updater = updater.SetBodyOverride(tpl.BodyOverride)
+		} else {
+			updater = updater.ClearBodyOverride()
+		}
+		if _, err := updater.Save(ctx); err != nil {
+			return 0, fmt.Errorf("apply template to monitor %d: %w", monitor.ID, err)
+		}
 	}
-	return int64(affected), nil
+	return int64(len(targets)), nil
 }
 
 // CountAssociatedMonitors 统计关联监控数（UI 展示「N 个配置」用）。
