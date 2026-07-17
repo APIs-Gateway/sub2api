@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -136,4 +137,155 @@ func TestForwardAlphaSearchReturnsFailoverBeforeWriting(t *testing.T) {
 	require.Equal(t, openAIPlatformAlphaSearchURL, upstream.lastReq.URL.String())
 	require.False(t, c.Writer.Written())
 	require.Empty(t, recorder.Body.String())
+}
+
+func TestForwardAlphaSearchEdgeCases(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("rejects_nil_inputs_and_invalid_model", func(t *testing.T) {
+		var svc *OpenAIGatewayService
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+
+		require.Error(t, svc.ForwardAlphaSearch(context.Background(), c, &Account{}, []byte(`{"model":"gpt-5.6-sol"}`)))
+		require.Error(t, (&OpenAIGatewayService{}).ForwardAlphaSearch(context.Background(), c, nil, []byte(`{"model":"gpt-5.6-sol"}`)))
+		require.Error(t, (&OpenAIGatewayService{}).ForwardAlphaSearch(context.Background(), c, &Account{}, []byte(`{"model":123}`)))
+	})
+
+	t.Run("returns_token_and_transport_errors", func(t *testing.T) {
+		newContext := func() *gin.Context {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+			return c
+		}
+		account := &Account{
+			ID:       61,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Credentials: map[string]any{
+				"access_token": "oauth-token",
+			},
+		}
+
+		t.Run("transport_error_is_failover", func(t *testing.T) {
+			svc := &OpenAIGatewayService{
+				cfg:          &config.Config{},
+				httpUpstream: &httpUpstreamRecorder{err: errors.New("connection refused")},
+			}
+			err := svc.ForwardAlphaSearch(context.Background(), newContext(), account, []byte(`{"model":"gpt-5.6-sol"}`))
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+		})
+
+		t.Run("missing_token_is_plain_error", func(t *testing.T) {
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			missingToken := *account
+			missingToken.Credentials = nil
+			require.Error(t, svc.ForwardAlphaSearch(context.Background(), newContext(), &missingToken, []byte(`{"model":"gpt-5.6-sol"}`)))
+		})
+
+		t.Run("invalid_base_url_is_returned", func(t *testing.T) {
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			invalidBase := *account
+			invalidBase.Type = AccountTypeAPIKey
+			invalidBase.Credentials = map[string]any{
+				"api_key":  "sk-test",
+				"base_url": "http://[::1",
+			}
+			require.Error(t, svc.ForwardAlphaSearch(context.Background(), newContext(), &invalidBase, []byte(`{"model":"gpt-5.6-sol"}`)))
+		})
+	})
+
+	t.Run("proxy_default_headers_and_content_type", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search?feature=standalone", nil)
+		c.Request.Header.Set("OpenAI-Beta", "alpha-search=v1")
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+		}}
+		svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+		proxyID := int64(91)
+		account := &Account{
+			ID:       62,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			ProxyID:  &proxyID,
+			Proxy:    &Proxy{Protocol: "http", Host: "proxy.example", Port: 8080},
+			Credentials: map[string]any{
+				"access_token": "oauth-token",
+			},
+		}
+
+		err := svc.ForwardAlphaSearch(context.Background(), c, account, []byte(`{"model":"gpt-5.6-sol"}`))
+
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+		require.Equal(t, "alpha-search=v1", upstream.lastReq.Header.Get("OpenAI-Beta"))
+		require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
+	})
+
+	t.Run("upstream_body_read_error_is_returned", func(t *testing.T) {
+		svc := &OpenAIGatewayService{
+			cfg: &config.Config{},
+			httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       errReadCloser{err: io.ErrUnexpectedEOF},
+			}},
+		}
+		account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-test"}}
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+
+		require.Error(t, svc.ForwardAlphaSearch(context.Background(), c, account, []byte(`{"model":"gpt-5.6-sol"}`)))
+	})
+}
+
+func TestOpenAIAlphaSearchURLValidation(t *testing.T) {
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{
+		URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true},
+	}}}
+
+	_, err := svc.openAIAlphaSearchURL(nil)
+	require.EqualError(t, err, "account is required")
+
+	_, err = svc.openAIAlphaSearchURL(&Account{Type: "unsupported"})
+	require.EqualError(t, err, "unsupported OpenAI account type: unsupported")
+
+	_, err = svc.openAIAlphaSearchURL(&Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"base_url": "http://[::1"},
+	})
+	require.Error(t, err)
+
+	value, err := svc.openAIAlphaSearchURL(&Account{Type: AccountTypeAPIKey})
+	require.NoError(t, err)
+	require.Equal(t, openAIPlatformAlphaSearchURL, value)
+}
+
+func TestBuildOpenAIAlphaSearchRequestRejectsUnsupportedAccountType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+
+	_, err := svc.buildOpenAIAlphaSearchRequest(
+		context.Background(),
+		c,
+		&Account{Platform: PlatformOpenAI, Type: "unsupported"},
+		[]byte(`{"model":"gpt-5.6-sol"}`),
+		"token",
+	)
+
+	require.EqualError(t, err, "unsupported OpenAI account type: unsupported")
 }
