@@ -4311,6 +4311,8 @@
           refreshTokenAuth: '手動輸入 RT',
           refreshTokenDesc: '輸入您已有的 OpenAI Refresh Token，支持批量輸入（每行一個），系統將自動驗證并創建帳號。',
           refreshTokenPlaceholder: '粘貼您的 OpenAI Refresh Token...\n支持多個，每行一個',
+          mobileRefreshTokenAuth: '手動輸入 Mobile RT',
+          accessTokenAuth: '手動輸入 AT',
           codexSessionAuth: 'Codex JSON / AT 批量輸入',
           codexSessionDesc: '粘貼 Codex JSON 或 accessToken，按第一步配置創建帳號。',
           codexSessionInputLabel: 'Codex JSON 或 accessToken',

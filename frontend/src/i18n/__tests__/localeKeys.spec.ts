@@ -34,6 +34,15 @@ describe('locale key coverage', () => {
     expect(en.keys.currentConcurrency).toBe('Current Concurrency')
   })
 
+  it('provides localized OpenAI OAuth account entry labels', () => {
+    expect(en.admin.accounts.oauth.openai.mobileRefreshTokenAuth).toBe('Manual Mobile RT Input')
+    expect(en.admin.accounts.oauth.openai.accessTokenAuth).toBe('Manual AT Input')
+    expect(zhCN.admin.accounts.oauth.openai.mobileRefreshTokenAuth).toBe('手动输入 Mobile RT')
+    expect(zhCN.admin.accounts.oauth.openai.accessTokenAuth).toBe('手动输入 AT')
+    expect(zhHK.admin.accounts.oauth.openai.mobileRefreshTokenAuth).toBe('手動輸入 Mobile RT')
+    expect(zhHK.admin.accounts.oauth.openai.accessTokenAuth).toBe('手動輸入 AT')
+  })
+
   it('keeps zh-CN and zh-HK source leaf key sets aligned', () => {
     expectSameKeys('zh-CN', zhCN, 'zh-HK', zhHK)
   })
