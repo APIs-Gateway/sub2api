@@ -153,6 +153,7 @@ func runMainServer() {
 		log.Fatalf("Failed to initialize application: %v", err)
 	}
 	defer app.Cleanup()
+	startPromptAudit(app.PromptAudit)
 
 	// 启动服务器
 	go func() {
@@ -178,4 +179,19 @@ func runMainServer() {
 	}
 
 	log.Println("Server exited")
+}
+
+type promptAuditStarter interface {
+	Start(context.Context) error
+}
+
+func startPromptAudit(promptAudit promptAuditStarter) {
+	if promptAudit == nil {
+		return
+	}
+	if err := promptAudit.Start(context.Background()); err != nil {
+		// Prompt Audit is isolated from unrelated APIs; keep startup alive while
+		// the service remains fail-closed for persisted blocking policy.
+		log.Printf("Prompt Audit started in degraded fail-closed state: %v", err)
+	}
 }
