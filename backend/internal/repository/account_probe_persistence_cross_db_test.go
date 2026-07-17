@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -161,6 +162,17 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, false, merged[service.UpstreamBillingProbeEnabledExtraKey])
 	require.NotContains(t, merged, service.UpstreamBillingProbeExtraKey)
+	_, err = client.Account.UpdateOneID(accountRow.ID).
+		SetExtra(map[string]any{
+			service.UpstreamBillingProbeEnabledExtraKey: true,
+			service.UpstreamBillingProbeExtraKey:        snapshot,
+		}).
+		Save(ctx)
+	require.NoError(t, err)
+	merged, err = lockAndMergeAccountProbeExtra(ctx, client, account)
+	require.NoError(t, err)
+	require.Equal(t, true, merged[service.UpstreamBillingProbeEnabledExtraKey])
+	require.Equal(t, snapshot, merged[service.UpstreamBillingProbeExtraKey])
 
 	identityChanged := *account
 	identityChanged.Credentials = map[string]any{"api_key": "sk-other"}
@@ -187,6 +199,11 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, updated.Extra, service.UpstreamBillingProbeExtraKey)
 	require.ErrorIs(t, updateCredentialsWithProbeEnt(ctx, client, 999, map[string]any{"api_key": "missing"}), service.ErrAccountNotFound)
+	_, err = client.Account.UpdateOneID(accountRow.ID).SetPlatform(service.PlatformAnthropic).Save(ctx)
+	require.NoError(t, err)
+	require.NoError(t, updateCredentialsWithProbeEnt(ctx, client, accountRow.ID, map[string]any{"api_key": "sk-anthropic"}))
+	_, err = client.Account.UpdateOneID(accountRow.ID).SetPlatform(service.PlatformOpenAI).Save(ctx)
+	require.NoError(t, err)
 
 	require.NoError(t, updateExtraWithProbeEnt(ctx, client, accountRow.ID, map[string]any{
 		"custom": "value", service.UpstreamBillingProbeExtraKey: snapshot,
@@ -213,7 +230,9 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	missingProxy := *account
 	missingProxy.ProxyID = nil
 	require.ErrorIs(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, &missingProxy, &service.UpstreamBillingProbeSnapshot{Status: service.UpstreamBillingProbeStatusOK}), service.ErrUpstreamBillingProbeIdentityChanged)
+	require.ErrorIs(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, &service.Account{ID: 999}, &service.UpstreamBillingProbeSnapshot{Status: service.UpstreamBillingProbeStatusOK}), service.ErrUpstreamBillingProbeIdentityChanged)
 
+	require.True(t, probeProxyIdentityMatches(ctx, client, &service.Account{}))
 	require.True(t, probeProxyIdentityMatches(ctx, client, account))
 	proxyMismatch := *account
 	proxyMismatch.Proxy = &service.Proxy{ID: proxyID, Protocol: "https", Host: "proxy.example", Port: 8080, Username: "user", Password: "pass", Status: service.StatusActive}
@@ -221,6 +240,13 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	proxyMissing := *account
 	proxyMissing.ProxyID = ptrInt64(999)
 	require.False(t, probeProxyIdentityMatches(ctx, client, &proxyMissing))
+	matched, err := lockAndMatchProbeProxyIdentity(ctx, client, &service.Account{})
+	require.NoError(t, err)
+	require.True(t, matched)
+	matched, err = lockAndMatchProbeProxyIdentity(ctx, client, &proxyMissing)
+	require.NoError(t, err)
+	require.False(t, matched)
+	require.False(t, probeJSONEqual(func() {}, map[string]any{}))
 
 	second, err := client.Account.Create().
 		SetName("edge-account-two").
@@ -246,6 +272,10 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	require.NoError(t, clearProbeSnapshotsForProxy(txCtx, tx, proxyID))
 	require.NoError(t, tx.Commit())
 
+	proxyRepo := &proxyRepository{client: client}
+	require.NoError(t, proxyRepo.Update(ctx, &service.Proxy{ID: proxyID, Name: "edge-proxy", Protocol: "http", Host: "proxy.example", Port: 8080, Username: "user", Password: "pass", Status: service.StatusActive}))
+	require.NoError(t, proxyRepo.Update(ctx, &service.Proxy{ID: proxyID, Name: "edge-proxy", Protocol: "http", Host: "proxy-new.example", Port: 8080, Username: "user", Password: "pass", Status: service.StatusActive}))
+
 	updated, err = client.Account.Get(ctx, accountRow.ID)
 	require.NoError(t, err)
 	require.NotContains(t, updated.Extra, service.UpstreamBillingProbeExtraKey)
@@ -263,6 +293,7 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	}(), service.ErrProxyNotFound)
 
 	accountRepo := &accountRepository{client: client}
+	require.NoError(t, accountRepo.UpdateExtra(ctx, accountRow.ID, nil))
 	require.NoError(t, accountRepo.UpdateExtra(ctx, accountRow.ID, map[string]any{"custom_two": "value"}))
 	updated, err = client.Account.Get(ctx, accountRow.ID)
 	require.NoError(t, err)
@@ -310,3 +341,17 @@ func newSQLiteProbePersistenceClient(t *testing.T) (*sql.DB, *dbent.Client) {
 }
 
 func ptrInt64(value int64) *int64 { return &value }
+
+func TestSchedulerOutboxMySQLDedupUsesPortablePlaceholderSQL(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.MySQL, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectExec("INSERT INTO scheduler_outbox").
+		WithArgs(service.SchedulerOutboxEventAccountChanged, int64(7), nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	id := int64(7)
+	require.NoError(t, enqueueSchedulerOutbox(context.Background(), client, service.SchedulerOutboxEventAccountChanged, &id, nil, map[string]any{"changed": true}))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
