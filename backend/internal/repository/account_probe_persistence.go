@@ -183,14 +183,18 @@ func lockAndMergeAccountProbeExtra(ctx context.Context, client *dbent.Client, ac
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
 	delete(extra, service.UpstreamBillingProbeEnabledExtraKey)
 	delete(extra, service.UpstreamBillingProbeExtraKey)
+	probeExplicitlyDisabled := false
 	if account.IsOpenAIApiKey() && identityUnchanged && len(currentEnabled) > 0 && string(currentEnabled) != "null" {
 		var enabled any
 		if err := json.Unmarshal(currentEnabled, &enabled); err != nil {
 			return nil, err
 		}
 		extra[service.UpstreamBillingProbeEnabledExtraKey] = enabled
+		if value, ok := enabled.(bool); ok && !value {
+			probeExplicitlyDisabled = true
+		}
 	}
-	if account.IsOpenAIApiKey() && identityUnchanged && len(currentSnapshot) > 0 && string(currentSnapshot) != "null" {
+	if account.IsOpenAIApiKey() && identityUnchanged && !probeExplicitlyDisabled && len(currentSnapshot) > 0 && string(currentSnapshot) != "null" {
 		var snapshot any
 		if err := json.Unmarshal(currentSnapshot, &snapshot); err != nil {
 			return nil, err
