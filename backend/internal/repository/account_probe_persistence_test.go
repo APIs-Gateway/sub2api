@@ -173,13 +173,13 @@ func TestProxyProbePersistenceHelpersInvalidateOnlyRealSnapshots(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
 		WithArgs(service.SchedulerOutboxEventAccountBulkChanged, nil, nil, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	require.NoError(t, clearProbeSnapshotsForProxy(context.Background(), db, 7))
+	require.NoError(t, clearProbeSnapshotsForProxy(context.Background(), nil, db, 7))
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 		WithArgs(int64(8)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	require.NoError(t, clearProbeSnapshotsForProxy(context.Background(), db, 8))
+	require.NoError(t, clearProbeSnapshotsForProxy(context.Background(), nil, db, 8))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -189,7 +189,7 @@ func TestLockProbeProxyIdentity(t *testing.T) {
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 			AddRow("http", "proxy.example", 8080, "user", "pass", service.StatusActive))
-	identity, err := lockProbeProxyIdentity(context.Background(), db, 7)
+	identity, err := lockProbeProxyIdentity(context.Background(), nil, db, 7)
 	require.NoError(t, err)
 	require.Equal(t, probeProxyIdentity{protocol: "http", host: "proxy.example", port: 8080, username: "user", password: "pass", status: service.StatusActive}, identity)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -197,8 +197,23 @@ func TestLockProbeProxyIdentity(t *testing.T) {
 	mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FROM proxies.*FOR UPDATE`).
 		WithArgs(int64(8)).
 		WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}))
-	_, err = lockProbeProxyIdentity(context.Background(), db, 8)
+	_, err = lockProbeProxyIdentity(context.Background(), nil, db, 8)
 	require.ErrorIs(t, err, service.ErrProxyNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProbeProxyIdentityUsesMySQL57SharedLockSyntax(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.MySQL, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectQuery(`(?s)SELECT .*FROM .*proxies.*LOCK IN SHARE MODE`).
+		WithArgs(int64(7)).
+		WillReturnError(errors.New("probe query failed"))
+	matched := probeProxyIdentityMatches(context.Background(), client, &service.Account{
+		ProxyID: ptrInt64(7),
+		Proxy:   &service.Proxy{ID: 7},
+	})
+	require.False(t, matched)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

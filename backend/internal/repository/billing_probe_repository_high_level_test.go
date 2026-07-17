@@ -259,7 +259,7 @@ func TestSweepExpiredProxyClearsProbeForBothFallbackModes(t *testing.T) {
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
 		repo := &proxyRepository{}
-		_, err := repo.sweepOneExpiredProxyOnExec(context.Background(), db, 9, nil, false)
+		_, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, 9, nil, false)
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -268,7 +268,7 @@ func TestSweepExpiredProxyClearsProbeForBothFallbackModes(t *testing.T) {
 		exec := &recordingSQLExecutor{result: rowsAffectedResult(2)}
 		target := int64(11)
 		repo := &proxyRepository{}
-		changed, err := repo.sweepOneExpiredProxyOnExec(context.Background(), exec, 9, &target, true)
+		changed, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, exec, 9, &target, true)
 		require.NoError(t, err)
 		require.EqualValues(t, 2, changed)
 		require.Len(t, exec.execQueries, 2)
@@ -282,14 +282,14 @@ func TestBillingProbePersistenceErrorEdges(t *testing.T) {
 		db, mock := newSQLMock(t)
 		mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FOR UPDATE`).
 			WithArgs(int64(9)).WillReturnError(errors.New("query failed"))
-		_, err := lockProbeProxyIdentity(context.Background(), db, 9)
+		_, err := lockProbeProxyIdentity(context.Background(), nil, db, 9)
 		require.EqualError(t, err, "query failed")
 
 		mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FOR UPDATE`).
 			WithArgs(int64(10)).
 			WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 				AddRow("http", "proxy", "not-a-port", "", "", service.StatusActive))
-		_, err = lockProbeProxyIdentity(context.Background(), db, 10)
+		_, err = lockProbeProxyIdentity(context.Background(), nil, db, 10)
 		require.Error(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -300,7 +300,7 @@ func TestBillingProbePersistenceErrorEdges(t *testing.T) {
 			WithArgs(int64(11)).
 			WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 				RowError(0, errors.New("row failed")))
-		_, err := lockProbeProxyIdentity(context.Background(), db, 11)
+		_, err := lockProbeProxyIdentity(context.Background(), nil, db, 11)
 		require.ErrorIs(t, err, service.ErrProxyNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -309,12 +309,12 @@ func TestBillingProbePersistenceErrorEdges(t *testing.T) {
 		db, mock := newSQLMock(t)
 		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 			WithArgs(int64(9)).WillReturnError(errors.New("clear query failed"))
-		require.EqualError(t, clearProbeSnapshotsForProxy(context.Background(), db, 9), "clear query failed")
+		require.EqualError(t, clearProbeSnapshotsForProxy(context.Background(), nil, db, 9), "clear query failed")
 
 		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 			WithArgs(int64(10)).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("not-an-id"))
-		require.Error(t, clearProbeSnapshotsForProxy(context.Background(), db, 10))
+		require.Error(t, clearProbeSnapshotsForProxy(context.Background(), nil, db, 10))
 
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -369,7 +369,7 @@ func TestBillingProbePersistenceErrorEdges(t *testing.T) {
 			WithArgs(service.StatusExpired, int64(9)).WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).WillReturnError(errors.New("clear failed"))
 		repo := &proxyRepository{}
-		_, err := repo.sweepOneExpiredProxyOnExec(context.Background(), db, 9, nil, false)
+		_, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, 9, nil, false)
 		require.EqualError(t, err, "clear failed")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})

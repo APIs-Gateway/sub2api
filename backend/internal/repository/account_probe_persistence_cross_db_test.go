@@ -110,7 +110,7 @@ func TestProbePersistenceSQLiteUsesPortableEntAndOutboxPaths(t *testing.T) {
 
 	tx, err := client.Tx(ctx)
 	require.NoError(t, err)
-	identity, err := lockProbeProxyIdentity(dbent.NewTxContext(ctx, tx), tx, proxyRow.ID)
+	identity, err := lockProbeProxyIdentity(dbent.NewTxContext(ctx, tx), tx.Client(), tx, proxyRow.ID)
 	require.NoError(t, err)
 	require.Equal(t, probeProxyIdentity{protocol: "http", host: "proxy.example", port: 8080, username: "user", password: "pass", status: service.StatusActive}, identity)
 	require.NoError(t, tx.Rollback())
@@ -266,10 +266,10 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	tx, err := client.Tx(ctx)
 	require.NoError(t, err)
 	txCtx := dbent.NewTxContext(ctx, tx)
-	identity, err := lockProbeProxyIdentity(txCtx, tx, proxyID)
+	identity, err := lockProbeProxyIdentity(txCtx, tx.Client(), tx, proxyID)
 	require.NoError(t, err)
 	require.Equal(t, probeProxyIdentity{protocol: "http", host: "proxy.example", port: 8080, username: "user", password: "pass", status: service.StatusActive}, identity)
-	require.NoError(t, clearProbeSnapshotsForProxy(txCtx, tx, proxyID))
+	require.NoError(t, clearProbeSnapshotsForProxy(txCtx, tx.Client(), tx, proxyID))
 	require.NoError(t, tx.Commit())
 
 	proxyRepo := &proxyRepository{client: client}
@@ -288,7 +288,7 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 			return txErr
 		}
 		defer func() { _ = tx.Rollback() }()
-		_, lockErr := lockProbeProxyIdentity(dbent.NewTxContext(ctx, tx), tx, 999)
+		_, lockErr := lockProbeProxyIdentity(dbent.NewTxContext(ctx, tx), tx.Client(), tx, 999)
 		return lockErr
 	}(), service.ErrProxyNotFound)
 
@@ -308,6 +308,111 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 		Concurrency: 2, Priority: 1, Status: service.StatusActive, Schedulable: true, AutoPauseOnExpired: false,
 	}
 	require.NoError(t, accountRepo.Update(ctx, accountForUpdate))
+
+	// Exercise the SQLite expiry/fallback path without PostgreSQL JSON operators.
+	sweepProxy, err := client.Proxy.Create().
+		SetName("sweep-proxy").
+		SetProtocol("http").
+		SetHost("sweep.example").
+		SetPort(8081).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+	sweepAccount, err := client.Account.Create().
+		SetName("sweep-account").
+		SetPlatform(service.PlatformOpenAI).
+		SetType(service.AccountTypeAPIKey).
+		SetCredentials(map[string]any{"api_key": "sk-sweep"}).
+		SetExtra(map[string]any{service.UpstreamBillingProbeExtraKey: snapshot}).
+		SetProxyID(sweepProxy.ID).
+		SetConcurrency(1).
+		SetPriority(0).
+		SetStatus(service.StatusActive).
+		SetSchedulable(true).
+		SetAutoPauseOnExpired(false).
+		Save(ctx)
+	require.NoError(t, err)
+
+	sweepRepo := &proxyRepository{client: client}
+	changed, err := sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, sweepProxy.ID, nil, true)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, changed)
+	sweptProxy, err := client.Proxy.Get(ctx, sweepProxy.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.StatusExpired, sweptProxy.Status)
+	sweptAccount, err := client.Account.Get(ctx, sweepAccount.ID)
+	require.NoError(t, err)
+	require.Nil(t, sweptAccount.ProxyID)
+	require.Equal(t, sweepProxy.ID, *sweptAccount.ProxyFallbackOriginID)
+	require.NotContains(t, sweptAccount.Extra, service.UpstreamBillingProbeExtraKey)
+
+	targetProxy, err := client.Proxy.Create().
+		SetName("target-proxy").
+		SetProtocol("http").
+		SetHost("target.example").
+		SetPort(8082).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+	redirectProxy, err := client.Proxy.Create().
+		SetName("redirect-proxy").
+		SetProtocol("http").
+		SetHost("redirect.example").
+		SetPort(8083).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+	redirectAccount, err := client.Account.Create().
+		SetName("redirect-account").
+		SetPlatform(service.PlatformOpenAI).
+		SetType(service.AccountTypeAPIKey).
+		SetCredentials(map[string]any{"api_key": "sk-redirect"}).
+		SetExtra(map[string]any{service.UpstreamBillingProbeExtraKey: snapshot}).
+		SetProxyID(redirectProxy.ID).
+		SetConcurrency(1).
+		SetPriority(0).
+		SetStatus(service.StatusActive).
+		SetSchedulable(true).
+		SetAutoPauseOnExpired(false).
+		Save(ctx)
+	require.NoError(t, err)
+	changed, err = sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, redirectProxy.ID, ptrInt64(targetProxy.ID), true)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, changed)
+	redirected, err := client.Account.Get(ctx, redirectAccount.ID)
+	require.NoError(t, err)
+	require.Equal(t, targetProxy.ID, *redirected.ProxyID)
+	require.Equal(t, redirectProxy.ID, *redirected.ProxyFallbackOriginID)
+	require.NotContains(t, redirected.Extra, service.UpstreamBillingProbeExtraKey)
+
+	clearProxy, err := client.Proxy.Create().
+		SetName("clear-proxy").
+		SetProtocol("http").
+		SetHost("clear.example").
+		SetPort(8084).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+	clearAccount, err := client.Account.Create().
+		SetName("clear-account").
+		SetPlatform(service.PlatformOpenAI).
+		SetType(service.AccountTypeAPIKey).
+		SetCredentials(map[string]any{"api_key": "sk-clear"}).
+		SetExtra(map[string]any{service.UpstreamBillingProbeExtraKey: snapshot}).
+		SetProxyID(clearProxy.ID).
+		SetConcurrency(1).
+		SetPriority(0).
+		SetStatus(service.StatusActive).
+		SetSchedulable(true).
+		SetAutoPauseOnExpired(false).
+		Save(ctx)
+	require.NoError(t, err)
+	changed, err = sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, clearProxy.ID, nil, false)
+	require.NoError(t, err)
+	require.Zero(t, changed)
+	cleared, err := client.Account.Get(ctx, clearAccount.ID)
+	require.NoError(t, err)
+	require.NotContains(t, cleared.Extra, service.UpstreamBillingProbeExtraKey)
 
 	var outboxCount int
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM scheduler_outbox").Scan(&outboxCount))

@@ -12,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 )
 
 func (r *accountRepository) updateAccountWithProbe(ctx context.Context, account *service.Account) error {
@@ -685,7 +686,7 @@ func probeProxyIdentityMatches(ctx context.Context, client *dbent.Client, accoun
 	}
 	query := client.Proxy.Query().Where(dbproxy.IDEQ(*account.ProxyID), dbproxy.DeletedAtIsNil())
 	if client.Driver().Dialect() != dialect.SQLite {
-		query = query.ForShare()
+		query = probeSharedLock(query, client)
 	}
 	current, err := query.Only(ctx)
 	if err != nil {
@@ -695,6 +696,13 @@ func probeProxyIdentityMatches(ctx context.Context, client *dbent.Client, accoun
 		current.Protocol == account.Proxy.Protocol && current.Host == account.Proxy.Host &&
 		current.Port == account.Proxy.Port && derefString(current.Username) == account.Proxy.Username &&
 		derefString(current.Password) == account.Proxy.Password && current.Status == account.Proxy.Status
+}
+
+func probeSharedLock(query *dbent.ProxyQuery, client *dbent.Client) *dbent.ProxyQuery {
+	if client.Driver().Dialect() == dialect.MySQL {
+		return query.ForShare(entsql.WithLockClause("LOCK IN SHARE MODE"))
+	}
+	return query.ForShare()
 }
 
 func upstreamBillingProbeExplicitlyDisabled(updates map[string]any) bool {
