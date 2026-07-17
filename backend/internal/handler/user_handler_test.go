@@ -90,6 +90,9 @@ func (s *userHandlerRepoStub) UpdateConcurrency(context.Context, int64, int) err
 func (s *userHandlerRepoStub) BatchSetConcurrency(context.Context, []int64, int) (int, error) {
 	return 0, nil
 }
+func (s *userHandlerRepoStub) BatchUpdateLimits(context.Context, []int64, *int, *int) (int, error) {
+	return 0, nil
+}
 func (s *userHandlerRepoStub) BatchAddConcurrency(context.Context, []int64, int) (int, error) {
 	return 0, nil
 }

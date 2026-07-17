@@ -3164,6 +3164,9 @@ func (r *oauthPendingFlowUserRepo) UpdateConcurrency(context.Context, int64, int
 func (r *oauthPendingFlowUserRepo) BatchSetConcurrency(context.Context, []int64, int) (int, error) {
 	panic("unexpected BatchSetConcurrency call")
 }
+func (r *oauthPendingFlowUserRepo) BatchUpdateLimits(context.Context, []int64, *int, *int) (int, error) {
+	panic("unexpected BatchUpdateLimits call")
+}
 
 func (r *oauthPendingFlowUserRepo) BatchAddConcurrency(context.Context, []int64, int) (int, error) {
 	panic("unexpected BatchAddConcurrency call")

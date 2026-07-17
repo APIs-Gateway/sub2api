@@ -884,6 +884,74 @@ func (r *userRepository) BatchAddConcurrency(ctx context.Context, userIDs []int6
 	return int(affected), nil
 }
 
+func (r *userRepository) BatchUpdateLimits(ctx context.Context, userIDs []int64, concurrency, rpmLimit *int) (int, error) {
+	if len(userIDs) == 0 || (concurrency == nil && rpmLimit == nil) {
+		return 0, nil
+	}
+
+	dialect := userRepositorySQLDialect(r.sql)
+	query, args := buildBatchUpdateLimitsQuery(userIDs, concurrency, rpmLimit, dialect)
+	res, err := r.sql.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("batch update user limits: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	return int(affected), nil
+}
+
+type userRepositoryDialect uint8
+
+const (
+	userRepositoryPostgresDialect userRepositoryDialect = iota
+	userRepositoryQuestionDialect
+)
+
+func userRepositorySQLDialect(sqlq sqlExecutor) userRepositoryDialect {
+	db, ok := sqlq.(*sql.DB)
+	if !ok || db == nil || isPostgresDriver(db) {
+		return userRepositoryPostgresDialect
+	}
+	driverName := strings.ToLower(fmt.Sprintf("%T", db.Driver()))
+	if strings.Contains(driverName, "sqlite") || strings.Contains(driverName, "mysql") {
+		return userRepositoryQuestionDialect
+	}
+	return userRepositoryPostgresDialect
+}
+
+func userRepositoryPlaceholder(dialect userRepositoryDialect, position int) string {
+	if dialect == userRepositoryQuestionDialect {
+		return "?"
+	}
+	return fmt.Sprintf("$%d", position)
+}
+
+func buildBatchUpdateLimitsQuery(userIDs []int64, concurrency, rpmLimit *int, dialect userRepositoryDialect) (string, []any) {
+	setClauses := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	if concurrency != nil {
+		value := max(*concurrency, 0)
+		args = append(args, value)
+		setClauses = append(setClauses, "concurrency = "+userRepositoryPlaceholder(dialect, len(args)))
+	}
+	if rpmLimit != nil {
+		value := max(*rpmLimit, 0)
+		args = append(args, value)
+		setClauses = append(setClauses, "rpm_limit = "+userRepositoryPlaceholder(dialect, len(args)))
+	}
+	setClauses = append(setClauses, "updated_at = CURRENT_TIMESTAMP")
+	userPlaceholders := make([]string, 0, len(userIDs))
+	for _, userID := range userIDs {
+		args = append(args, userID)
+		userPlaceholders = append(userPlaceholders, userRepositoryPlaceholder(dialect, len(args)))
+	}
+	query := fmt.Sprintf(
+		"UPDATE users SET %s WHERE id IN (%s) AND deleted_at IS NULL",
+		strings.Join(setClauses, ", "),
+		strings.Join(userPlaceholders, ", "),
+	)
+	return query, args
+}
+
 func (r *userRepository) ExistsByEmail(ctx context.Context, email string) (bool, error) {
 	return r.client.User.Query().Where(userEmailLookupPredicate(email)).Exist(ctx)
 }
