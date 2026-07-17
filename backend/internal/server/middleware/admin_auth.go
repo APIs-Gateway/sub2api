@@ -167,6 +167,14 @@ func validateJWTForAdmin(
 		AbortWithError(c, 401, "INVALID_TOKEN", "Invalid token")
 		return false
 	}
+	if err := authService.ValidateAccessTokenBinding(c.Request.Context(), claims); err != nil {
+		if errors.Is(err, service.ErrSessionBindingMismatch) {
+			AbortWithError(c, 401, "SESSION_BINDING_MISMATCH", "Session network fingerprint changed, please login again")
+			return false
+		}
+		AbortWithError(c, 401, "INVALID_TOKEN", "Invalid token")
+		return false
+	}
 
 	// 从数据库获取用户
 	user, err := userService.GetByID(c.Request.Context(), claims.UserID)

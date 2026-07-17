@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -1184,6 +1185,24 @@ func (s *AuthService) ValidateToken(tokenString string) (*JWTClaims, error) {
 	}
 
 	return nil, ErrInvalidToken
+}
+
+// ValidateAccessTokenBinding checks the request fingerprint for a bound access token.
+// Refresh-token validation keeps its legacy compatibility behavior separately; ordinary
+// authenticated requests must fail closed when the current fingerprint is unavailable
+// or does not match the token claim.
+func (s *AuthService) ValidateAccessTokenBinding(ctx context.Context, claims *JWTClaims) error {
+	if s == nil || claims == nil || claims.BindingHash == "" || s.settingService == nil {
+		return nil
+	}
+	if !s.settingService.IsSessionBindingEnabled(ctx) {
+		return nil
+	}
+	current := sessionBindingHashFromContext(ctx)
+	if subtle.ConstantTimeCompare([]byte(current), []byte(claims.BindingHash)) != 1 {
+		return ErrSessionBindingMismatch
+	}
+	return nil
 }
 
 func randomHexString(byteLength int) (string, error) {
