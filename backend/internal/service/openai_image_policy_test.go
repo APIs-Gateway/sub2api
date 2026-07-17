@@ -58,6 +58,51 @@ func TestIsOpenAIResponsesWebSocketImageGenerationIntent(t *testing.T) {
 	}
 }
 
+func TestIsExplicitOpenAIResponsesWebSocketImageGenerationIntent(t *testing.T) {
+	tests := []struct {
+		name  string
+		frame string
+		want  bool
+	}{
+		{
+			name:  "passive response create namespace is ignored",
+			frame: `{"type":"response.create","model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}],"tool_choice":"auto"}`,
+		},
+		{
+			name:  "passive session update namespace is ignored",
+			frame: `{"type":"session.update","session":{"model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}]}}`,
+		},
+		{
+			name:  "native response create tool is explicit",
+			frame: `{"type":"response.create","model":"gpt-5.5","tools":[{"type":"image_generation"}]}`,
+			want:  true,
+		},
+		{
+			name:  "native session update tool is explicit",
+			frame: `{"type":"session.update","session":{"model":"gpt-5.5","tools":[{"type":"image_generation"}]}}`,
+			want:  true,
+		},
+		{
+			name:  "ordinary text response is not explicit",
+			frame: `{"type":"response.create","model":"gpt-5.5","input":"hello"}`,
+		},
+		{
+			name:  "invalid frame is not explicit",
+			frame: `{`,
+		},
+		{
+			name:  "session update requires an object session",
+			frame: `{"type":"session.update","session":[]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, IsExplicitOpenAIResponsesWebSocketImageGenerationIntent([]byte(tt.frame)))
+		})
+	}
+}
+
 func TestRejectOpenAIResponsesWebSocketImageGeneration(t *testing.T) {
 	frame := []byte(`{"type":"session.update","session":{"tools":[{"type":"image_generation"}]}}`)
 
@@ -70,6 +115,8 @@ func TestRejectOpenAIResponsesWebSocketImageGeneration(t *testing.T) {
 
 	enabled := &OpenAIGatewayService{cfg: &config.Config{}}
 	require.NoError(t, enabled.rejectOpenAIResponsesWebSocketImageGeneration(frame))
+	passive := []byte(`{"type":"response.create","model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}]}`)
+	require.NoError(t, disabled.rejectOpenAIResponsesWebSocketImageGeneration(passive))
 }
 
 func TestRejectOpenAIResponsesWebSocketImageGenerationFrame(t *testing.T) {

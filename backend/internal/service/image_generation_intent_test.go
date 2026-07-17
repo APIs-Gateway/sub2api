@@ -85,6 +85,108 @@ func TestIsImageGenerationIntent(t *testing.T) {
 	}
 }
 
+func TestIsExplicitImageGenerationIntent(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		model    string
+		body     string
+		want     bool
+	}{
+		{
+			name:     "passive namespace is ignored",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}],"tool_choice":"auto"}`,
+		},
+		{
+			name:     "passive namespace in additional tools is ignored",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen"}]}]}`,
+		},
+		{
+			name:     "native image tool in additional tools is explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","input":[{"type":"message","content":"draw"},{"type":"additional_tools","tools":[{"type":"image_generation"}]}]}`,
+			want:     true,
+		},
+		{
+			name:     "invalid body is not explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{`,
+		},
+		{
+			name:     "empty body is not explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+		},
+		{
+			name:     "native image tool is explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","tools":[{"type":"image_generation"}]}`,
+			want:     true,
+		},
+		{
+			name:     "image model is explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-image-2",
+			body:     `{"model":"gpt-image-2"}`,
+			want:     true,
+		},
+		{
+			name:     "image endpoint is explicit",
+			endpoint: "/v1/images/generations",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5"}`,
+			want:     true,
+		},
+		{
+			name:     "explicit tool choice is explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","tool_choice":"image_generation"}`,
+			want:     true,
+		},
+		{
+			name:     "explicit object tool choice is explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","tool_choice":{"type":"image_generation"}}`,
+			want:     true,
+		},
+		{
+			name:     "explicit function tool choice is explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","tool_choice":{"function":{"name":"image_generation"}}}`,
+			want:     true,
+		},
+		{
+			name:     "nested explicit tool choice is explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","tool_choice":{"tool":{"type":"image_generation"}}}`,
+			want:     true,
+		},
+		{
+			name:     "unrelated tool choice is not explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","tool_choice":[]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, IsExplicitImageGenerationIntent(tt.endpoint, tt.model, []byte(tt.body)))
+		})
+	}
+}
+
 func TestOpenAIResponsesLiteMarkers(t *testing.T) {
 	tests := []struct {
 		name       string
