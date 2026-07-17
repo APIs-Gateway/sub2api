@@ -206,11 +206,12 @@ func TestProbeProxyIdentityUsesMySQL57SharedLockSyntax(t *testing.T) {
 	db, mock := newSQLMock(t)
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.MySQL, db)))
 	t.Cleanup(func() { _ = client.Close() })
+	proxyID := int64(7)
 	mock.ExpectQuery(`(?s)SELECT .*FROM .*proxies.*LOCK IN SHARE MODE`).
 		WithArgs(int64(7)).
 		WillReturnError(errors.New("probe query failed"))
 	matched := probeProxyIdentityMatches(context.Background(), client, &service.Account{
-		ProxyID: ptrInt64(7),
+		ProxyID: &proxyID,
 		Proxy:   &service.Proxy{ID: 7},
 	})
 	require.False(t, matched)
