@@ -106,6 +106,24 @@ func TestOpenAIOAuthService_RefreshAccountToken_PATIgnoresStaleRefreshToken(t *t
 	require.Zero(t, atomic.LoadInt32(&client.refreshCalls), "PAT accounts must not call OAuth refresh even if stale refresh_token remains")
 }
 
+func TestOpenAIOAuthService_RefreshAccountToken_PATRequiresAccessToken(t *testing.T) {
+	svc := NewOpenAIOAuthService(nil, nil)
+	defer svc.Stop()
+	proxyID := int64(9)
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		ProxyID:  &proxyID,
+		Credentials: map[string]any{
+			"auth_mode": OpenAIAuthModePersonalAccessToken,
+		},
+	}
+
+	_, err := svc.RefreshAccountToken(context.Background(), account)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "OPENAI_CODEX_PAT_REQUIRED")
+}
+
 func TestOpenAITokenRefresher_NeedsRefresh_SkipsAccountWithoutRefreshToken(t *testing.T) {
 	refresher := NewOpenAITokenRefresher(nil, nil)
 	expiresAt := time.Now().Add(time.Minute).UTC().Format(time.RFC3339)

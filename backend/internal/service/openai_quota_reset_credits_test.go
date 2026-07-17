@@ -2,14 +2,30 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/imroc/req/v3"
 	"github.com/stretchr/testify/require"
 )
+
+type quotaTestAccountRepo struct {
+	AccountRepository
+	account *Account
+	err     error
+}
+
+func (r *quotaTestAccountRepo) GetByID(_ context.Context, _ int64) (*Account, error) {
+	return r.account, r.err
+}
+
+func (r *quotaTestAccountRepo) SetError(_ context.Context, _ int64, _ string) error {
+	return nil
+}
 
 func TestParseOpenAIRateLimitResetCreditDetails(t *testing.T) {
 	tests := []struct {
@@ -160,6 +176,92 @@ func TestQueryResetCreditDetailsResponseHandling(t *testing.T) {
 			require.NotNil(t, details)
 			require.Equal(t, tt.wantCount, *details.AvailableCount)
 			require.Equal(t, tt.wantList, details.CreditListPresent)
+		})
+	}
+}
+
+func TestOpenAIQuotaServicePATQueryAndResetIncludeFedRAMPHeaders(t *testing.T) {
+	var requests []*http.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Clone(r.Context()))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/backend-api/wham/usage":
+			_, _ = w.Write([]byte(`{"rate_limit_reset_credits":{"available_count":1,"credits":[]}}`))
+		case "/backend-api/wham/rate-limit-reset-credits":
+			_, _ = w.Write([]byte(`{"available_count":1,"credits":[]}`))
+		case "/backend-api/wham/rate-limit-reset-credits/consume":
+			_, _ = w.Write([]byte(`{"code":"ok","windows_reset":2,"credit":{"id":"credit-1","status":"redeemed"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	account := &Account{
+		ID:       77,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":               "at-test-token",
+			"auth_mode":                  OpenAIAuthModePersonalAccessToken,
+			"chatgpt_account_id":         "acct-test",
+			"chatgpt_account_is_fedramp": true,
+		},
+	}
+	repo := &quotaTestAccountRepo{account: account}
+	provider := NewOpenAITokenProvider(repo, nil, nil)
+	service := NewOpenAIQuotaService(repo, nil, provider, func(proxyURL string) (*req.Client, error) {
+		require.Empty(t, proxyURL)
+		return newResetCreditTestClient(server.URL)
+	})
+
+	usage, err := service.QueryUsage(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.NotNil(t, usage.RateLimitResetCredits)
+	require.Equal(t, 1, usage.RateLimitResetCredits.AvailableCount)
+
+	reset, err := service.ResetCredit(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Equal(t, "ok", reset.Code)
+	require.Equal(t, 2, reset.WindowsReset)
+	require.Len(t, requests, 3)
+	for _, request := range requests {
+		require.Equal(t, "Bearer at-test-token", request.Header.Get("Authorization"))
+		require.Equal(t, "acct-test", request.Header.Get("ChatGPT-Account-ID"))
+		require.Equal(t, "true", request.Header.Get("X-OpenAI-Fedramp"))
+	}
+}
+
+func TestOpenAIQuotaServicePrepareUpstreamCallValidation(t *testing.T) {
+	_, _, _, _, err := (&OpenAIQuotaService{}).prepareUpstreamCall(context.Background(), 1)
+	require.Error(t, err)
+
+	tests := []struct {
+		name    string
+		account *Account
+		repoErr error
+	}{
+		{name: "repository error", repoErr: errors.New("database unavailable")},
+		{name: "nil account"},
+		{name: "invalid platform", account: &Account{Platform: PlatformAnthropic, Type: AccountTypeOAuth}},
+		{name: "invalid type", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}},
+		{name: "missing account id", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"access_token": "token"}}},
+		{
+			name:    "token unavailable",
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"access_token": "expired", "chatgpt_account_id": "acct", "expires_at": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &quotaTestAccountRepo{account: tt.account, err: tt.repoErr}
+			provider := NewOpenAITokenProvider(nil, nil, nil)
+			service := NewOpenAIQuotaService(repo, nil, provider, func(string) (*req.Client, error) {
+				return req.C(), nil
+			})
+			_, _, _, _, err := service.prepareUpstreamCall(context.Background(), 1)
+			require.Error(t, err)
 		})
 	}
 }
