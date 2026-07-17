@@ -154,5 +154,6 @@ func newCountTokensModelAvailabilityHandler(t *testing.T, accounts []service.Acc
 		nil, nil, nil, nil, nil, nil,
 		cfg,
 		nil,
+		nil,
 	)
 }

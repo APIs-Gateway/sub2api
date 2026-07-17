@@ -39,7 +39,7 @@ func newGatewayHandlerForUsage(t *testing.T) *userhandler.GatewayHandler {
 		billing,
 		nil, nil, nil, nil, nil, nil,
 		&config.Config{},
-		nil,
+		nil, nil,
 	)
 }
 

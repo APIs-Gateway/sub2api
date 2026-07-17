@@ -54,6 +54,7 @@ func TestWhamUsageReturnsFreshWalletBalanceForAPIKeyOwner(t *testing.T) {
 		nil, nil, nil, nil, nil, nil, nil, nil,
 		&config.Config{},
 		nil,
+		nil,
 	)
 
 	rec := httptest.NewRecorder()
@@ -286,6 +287,7 @@ func whamUsageTestHandler(userRepo *whamUsageUserRepoStub, subRepo *whamUsageSub
 		service.NewSubscriptionService(nil, subRepo, nil, nil, nil, nil, nil, &config.Config{}),
 		nil, nil, nil, nil, nil, nil, nil, nil,
 		&config.Config{},
+		nil,
 		nil,
 	)
 }
