@@ -720,7 +720,7 @@ func TestStreamingToolCallDoneWithoutDeltaEmitsArguments(t *testing.T) {
 	assert.Equal(t, "content_block_stop", events[1].Type)
 }
 
-func TestStreamingReadToolDropsEmptyPages(t *testing.T) {
+func TestStreamingReadToolEmitsSanitizedCompleteJSON(t *testing.T) {
 	state := NewResponsesEventToAnthropicState()
 
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
@@ -741,7 +741,7 @@ func TestStreamingReadToolDropsEmptyPages(t *testing.T) {
 		OutputIndex: 0,
 		Delta:       `{"file_path":"/tmp/demo.py","limit":2000,`,
 	}, state)
-	assert.Len(t, events, 0)
+	assert.Empty(t, events, "partial Read JSON must wait for sanitization")
 
 	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:        "response.function_call_arguments.delta",

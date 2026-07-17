@@ -7899,6 +7899,7 @@
       deletePlanConfirm: '確定要刪除此套餐嗎？',
       originalPrice: '原價',
       price: '價格',
+      currency: '展示幣種',
       validityDays: '有效期（天）',
       validityUnit: '有效期單位',
       sortOrder: '排序',

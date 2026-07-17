@@ -184,6 +184,7 @@ type CreatePlanRequest struct {
 	DailyAmountUSD float64  `json:"daily_amount_usd"`
 	Price          float64  `json:"price"`
 	OriginalPrice  *float64 `json:"original_price"`
+	Currency       string   `json:"currency"`
 	ValidityDays   int      `json:"validity_days"`
 	ValidityUnit   string   `json:"validity_unit"`
 	Features       string   `json:"features"`
@@ -199,6 +200,7 @@ type UpdatePlanRequest struct {
 	DailyAmountUSD *float64 `json:"daily_amount_usd"`
 	Price          *float64 `json:"price"`
 	OriginalPrice  *float64 `json:"original_price"`
+	Currency       *string  `json:"currency"`
 	ValidityDays   *int     `json:"validity_days"`
 	ValidityUnit   *string  `json:"validity_unit"`
 	Features       *string  `json:"features"`

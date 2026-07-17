@@ -40,6 +40,12 @@
       </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
+          <label class="input-label">{{ t('payment.admin.currency') }}</label>
+          <input v-model="planForm.currency" type="text" maxlength="3" class="input uppercase" autocomplete="off" />
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
           <label class="input-label">{{ t('payment.admin.dailyAmount') }} <span class="text-red-500">*</span></label>
           <input v-model.number="planForm.daily_amount_usd" type="number" step="0.01" min="0.01" class="input" required />
         </div>
@@ -111,7 +117,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 
 const saving = ref(false)
-const planForm = reactive({ name: '', group_id: null as number | null, description: '', daily_amount_usd: 0, price: 0, original_price: 0, validity_days: 30, validity_unit: 'days', sort_order: 0, for_sale: true })
+const planForm = reactive({ name: '', group_id: null as number | null, description: '', daily_amount_usd: 0, price: 0, original_price: 0, currency: '', validity_days: 30, validity_unit: 'days', sort_order: 0, for_sale: true })
 const planFeaturesText = ref('')
 
 const validityUnitOptions = computed(() => [
@@ -139,10 +145,10 @@ const selectedGroupInfo = computed(() => {
 watch(() => props.show, (visible) => {
   if (!visible) return
   if (props.plan) {
-    Object.assign(planForm, { name: props.plan.name, group_id: props.plan.group_id, description: props.plan.description, daily_amount_usd: props.plan.daily_amount_usd ?? 0, price: props.plan.price, original_price: props.plan.original_price || 0, validity_days: props.plan.validity_days, validity_unit: props.plan.validity_unit || 'days', sort_order: props.plan.sort_order || 0, for_sale: props.plan.for_sale })
+    Object.assign(planForm, { name: props.plan.name, group_id: props.plan.group_id, description: props.plan.description, daily_amount_usd: props.plan.daily_amount_usd ?? 0, price: props.plan.price, original_price: props.plan.original_price || 0, currency: props.plan.currency || '', validity_days: props.plan.validity_days, validity_unit: props.plan.validity_unit || 'days', sort_order: props.plan.sort_order || 0, for_sale: props.plan.for_sale })
     planFeaturesText.value = (props.plan.features || []).join('\n')
   } else {
-    Object.assign(planForm, { name: '', group_id: null, description: '', daily_amount_usd: 0, price: 0, original_price: 0, validity_days: 30, validity_unit: 'days', sort_order: 0, for_sale: true })
+    Object.assign(planForm, { name: '', group_id: null, description: '', daily_amount_usd: 0, price: 0, original_price: 0, currency: '', validity_days: 30, validity_unit: 'days', sort_order: 0, for_sale: true })
     planFeaturesText.value = ''
   }
 })
@@ -157,6 +163,7 @@ function buildPlanPayload() {
     daily_amount_usd: planForm.daily_amount_usd,
     price: planForm.price,
     original_price: planForm.original_price || 0,
+    currency: planForm.currency.trim().toUpperCase(),
     validity_days: planForm.validity_days,
     validity_unit: planForm.validity_unit,
     sort_order: planForm.sort_order,
