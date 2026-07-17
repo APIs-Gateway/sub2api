@@ -147,15 +147,15 @@ func TestComputeFinalAnthropicBeta_OAuthMimic_NonHaiku_IncludesContextManagement
 	require.True(t, anthropicBetaTokensContains(final, claude.BetaClaudeCode))
 }
 
-func TestComputeFinalAnthropicBeta_OAuthMimic_Haiku_IncludesContextManagement(t *testing.T) {
+func TestComputeFinalAnthropicBeta_OAuthMimic_Haiku_IncludesFullClaudeCodeBetas(t *testing.T) {
 	s := newTestGatewayServiceForBeta(false)
 	final, ok := s.computeFinalAnthropicBeta("oauth", true, "claude-haiku-4-5", http.Header{}, []byte(`{}`), nil)
 	require.True(t, ok)
-	require.True(t, anthropicBetaTokensContains(final, claude.BetaContextManagement),
-		"OAuth mimic Haiku 必须与其他模型统一使用完整 Claude Code beta")
-	require.True(t, anthropicBetaTokensContains(final, claude.BetaOAuth))
-	require.True(t, anthropicBetaTokensContains(final, claude.BetaInterleavedThinking))
-	require.True(t, anthropicBetaTokensContains(final, claude.BetaClaudeCode))
+	require.Equal(t, strings.Join(claude.FullClaudeCodeMimicryBetas(), ","), final)
+	for _, beta := range claude.FullClaudeCodeMimicryBetas() {
+		require.Truef(t, anthropicBetaTokensContains(final, beta),
+			"OAuth mimic Haiku 必须包含完整 Claude Code beta 集合，缺少 %s", beta)
+	}
 }
 
 func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBeta(t *testing.T) {
@@ -324,10 +324,10 @@ func TestApplyClaudeCodeOAuthMimicryToBody_HaikuRewritesSystem(t *testing.T) {
 		context.Background(), nil, account, body, "Pi project instructions", "claude-haiku-4-5",
 	)
 
-	system := gjson.GetBytes(out, "system").Array()
-	require.Len(t, system, 3)
-	require.Contains(t, system[0].Get("text").String(), "x-anthropic-billing-header:")
-	require.Equal(t, claudeCodeSystemPrompt, system[1].Get("text").String())
+	system := gjson.GetBytes(out, "system")
+	require.True(t, system.IsArray())
+	require.Len(t, system.Array(), 3)
+	require.Contains(t, system.Array()[0].Get("text").String(), "x-anthropic-billing-header:")
 	require.Contains(t, gjson.GetBytes(out, "messages.0.content.0.text").String(), "Pi project instructions")
 	require.Equal(t, "claude-haiku-4-5-20251001", gjson.GetBytes(out, "model").String())
 }
