@@ -445,8 +445,6 @@ func newSQLiteProbePersistenceClient(t *testing.T) (*sql.DB, *dbent.Client) {
 	return db, client
 }
 
-func ptrInt64(value int64) *int64 { return &value }
-
 func TestSchedulerOutboxMySQLDedupUsesPortablePlaceholderSQL(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
