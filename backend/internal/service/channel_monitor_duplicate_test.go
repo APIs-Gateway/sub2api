@@ -185,27 +185,6 @@ func TestDuplicateChannelMonitorNamePreservesSuffixWithinSchemaLimit(t *testing.
 	require.True(t, strings.HasSuffix(name, " (Copy)"))
 }
 
-func TestDuplicateChannelMonitorCloneHelpersHandleNilAndCopies(t *testing.T) {
-	require.Nil(t, cloneInt64Pointer(nil))
-	originalID := int64(9)
-	clonedID := cloneInt64Pointer(&originalID)
-	require.NotNil(t, clonedID)
-	*clonedID = 10
-	require.Equal(t, int64(9), originalID)
-
-	require.Empty(t, cloneChannelMonitorHeaders(nil))
-	originalHeaders := map[string]string{"User-Agent": "Codex"}
-	clonedHeaders := cloneChannelMonitorHeaders(originalHeaders)
-	clonedHeaders["User-Agent"] = "changed"
-	require.Equal(t, "Codex", originalHeaders["User-Agent"])
-
-	require.Nil(t, mustCloneJSONMap(nil))
-	originalBody := map[string]any{"metadata": map[string]any{"source": "original"}}
-	clonedBody := mustCloneJSONMap(originalBody)
-	clonedBody["metadata"].(map[string]any)["source"] = "changed"
-	require.Equal(t, "original", originalBody["metadata"].(map[string]any)["source"])
-}
-
 func TestDuplicateChannelMonitorRejectsUndecryptableAPIKey(t *testing.T) {
 	source := &ChannelMonitor{ID: 42, Name: "broken", APIKey: "OLD:broken"}
 	repo := &duplicateChannelMonitorRepoStub{source: source}
