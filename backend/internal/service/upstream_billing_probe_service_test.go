@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -21,6 +22,7 @@ type billingProbeSettingRepo struct {
 	mu     sync.Mutex
 	values map[string]string
 	getErr error
+	setErr error
 }
 
 func (r *billingProbeSettingRepo) GetValue(_ context.Context, key string) (string, error) {
@@ -37,6 +39,9 @@ func (r *billingProbeSettingRepo) GetValue(_ context.Context, key string) (strin
 }
 
 func (r *billingProbeSettingRepo) Set(_ context.Context, key, value string) error {
+	if r.setErr != nil {
+		return r.setErr
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.values == nil {
@@ -55,6 +60,7 @@ type billingProbeAccountRepo struct {
 	updated     map[int64]map[string]any
 	writerError error
 	dueLimit    int
+	dueError    error
 }
 
 func (r *billingProbeAccountRepo) GetByID(_ context.Context, id int64) (*Account, error) {
@@ -83,6 +89,9 @@ func (r *billingProbeAccountRepo) ListDueUpstreamBillingProbeAccounts(_ context.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.dueLimit = limit
+	if r.dueError != nil {
+		return nil, r.dueError
+	}
 	if len(r.due) == 0 {
 		return []Account{}, nil
 	}
@@ -124,6 +133,7 @@ func (r *billingProbeAccountRepo) UpdateUpstreamBillingProbeSnapshot(_ context.C
 
 type billingProbeHTTPUpstream struct {
 	handler       func(*http.Request, int) *http.Response
+	err           error
 	delay         time.Duration
 	calls         atomic.Int32
 	active        atomic.Int32
@@ -150,6 +160,9 @@ func (u *billingProbeHTTPUpstream) do(req *http.Request) (*http.Response, error)
 	}
 	if u.delay > 0 {
 		time.Sleep(u.delay)
+	}
+	if u.err != nil {
+		return nil, u.err
 	}
 	if u.handler == nil {
 		return nil, nil
@@ -199,13 +212,20 @@ func newBillingProbeAccount(id int64, baseURL string, enabled bool) *Account {
 func newBillingProbeService(repo *billingProbeAccountRepo, upstream HTTPUpstream, settings *billingProbeSettingRepo, now time.Time) *UpstreamBillingProbeService {
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.Enabled = false
+	var accountRepo AccountRepository
+	if repo != nil {
+		accountRepo = repo
+	}
 	testService := &AccountTestService{
-		accountRepo:  repo,
+		accountRepo:  accountRepo,
 		httpUpstream: upstream,
 		cfg:          cfg,
 	}
-	settingService := &SettingService{settingRepo: settings}
-	service := NewUpstreamBillingProbeService(repo, testService, settingService)
+	var settingService *SettingService
+	if settings != nil {
+		settingService = &SettingService{settingRepo: settings}
+	}
+	service := NewUpstreamBillingProbeService(accountRepo, testService, settingService)
 	service.now = func() time.Time { return now }
 	return service
 }
@@ -238,6 +258,40 @@ func validBillingProbeBody(t *testing.T, observedAt time.Time) string {
 	return string(body)
 }
 
+type billingProbeFallbackRepo struct {
+	AccountRepository
+	account  *Account
+	accounts []Account
+}
+
+func (r *billingProbeFallbackRepo) GetByID(_ context.Context, id int64) (*Account, error) {
+	if r.account != nil && r.account.ID == id {
+		return r.account, nil
+	}
+	return nil, ErrAccountNotFound
+}
+
+func (r *billingProbeFallbackRepo) FindByExtraField(_ context.Context, _ string, _ any) ([]Account, error) {
+	return append([]Account(nil), r.accounts...), nil
+}
+
+type billingProbeNoWriterRepo struct {
+	AccountRepository
+	account *Account
+}
+
+func (r *billingProbeNoWriterRepo) GetByID(_ context.Context, id int64) (*Account, error) {
+	if r.account != nil && r.account.ID == id {
+		return r.account, nil
+	}
+	return nil, ErrAccountNotFound
+}
+
+type billingProbeReadCloser struct{}
+
+func (billingProbeReadCloser) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+func (billingProbeReadCloser) Close() error             { return nil }
+
 func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {
 	repo := &billingProbeSettingRepo{values: map[string]string{}}
 	service := &SettingService{settingRepo: repo}
@@ -255,6 +309,239 @@ func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {
 	settings, err = service.GetUpstreamBillingProbeSettings(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, &UpstreamBillingProbeSettings{Enabled: false, IntervalMinutes: 15}, settings)
+}
+
+func TestUpstreamBillingProbeSettingsErrorsNormalizationAndServiceFacade(t *testing.T) {
+	dbErr := errors.New("settings database unavailable")
+	repo := &billingProbeSettingRepo{values: map[string]string{}, getErr: dbErr}
+	settingService := &SettingService{settingRepo: repo}
+
+	_, err := settingService.GetUpstreamBillingProbeSettings(context.Background())
+	require.ErrorIs(t, err, dbErr)
+	repo.getErr = nil
+	repo.values[SettingKeyUpstreamBillingProbeSettings] = `{"enabled":true,"interval_minutes":1}`
+	settings, err := settingService.GetUpstreamBillingProbeSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 5, settings.IntervalMinutes)
+	repo.values[SettingKeyUpstreamBillingProbeSettings] = "not-json"
+	_, err = settingService.GetUpstreamBillingProbeSettings(context.Background())
+	require.Error(t, err)
+
+	repo.values[SettingKeyUpstreamBillingProbeSettings] = ""
+	settings, err = settingService.GetUpstreamBillingProbeSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, defaultUpstreamBillingProbeSettings(), settings)
+	repo.setErr = dbErr
+	err = settingService.SetUpstreamBillingProbeSettings(context.Background(), &UpstreamBillingProbeSettings{Enabled: true, IntervalMinutes: 10})
+	require.ErrorIs(t, err, dbErr)
+
+	service := NewUpstreamBillingProbeService(nil, nil, settingService)
+	settings, err = service.GetSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, defaultUpstreamBillingProbeSettings(), settings)
+	require.ErrorIs(t, service.UpdateSettings(context.Background(), &UpstreamBillingProbeSettings{Enabled: true, IntervalMinutes: 10}), dbErr)
+	var nilService *UpstreamBillingProbeService
+	require.NoError(t, nilService.RunDue(context.Background()))
+	nilService.SetLeaderLock(nil, nil)
+}
+
+func TestUpstreamBillingProbeServiceRunDueSkipsDisabledHeldAndNonDueAccounts(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	future := newBillingProbeAccount(5, "https://api.example.com", true)
+	futureSnapshot := &UpstreamBillingProbeSnapshot{Status: UpstreamBillingProbeStatusOK, NextProbeAt: now.Add(time.Hour)}
+	raw, err := json.Marshal(futureSnapshot)
+	require.NoError(t, err)
+	future.Extra[UpstreamBillingProbeExtraKey] = raw
+	inactive := newBillingProbeAccount(2, "https://api.example.com", true)
+	inactive.Status = StatusDisabled
+	nonOpenAI := newBillingProbeAccount(3, "https://api.example.com", true)
+	nonOpenAI.Platform = PlatformAnthropic
+	disabled := newBillingProbeAccount(4, "https://api.example.com", false)
+
+	repo := &billingProbeAccountRepo{
+		accounts: map[int64]*Account{1: newBillingProbeAccount(1, "https://api.example.com", true)},
+		due:      []Account{*inactive, *nonOpenAI, *disabled, *future},
+	}
+	// Keep one genuinely due account separate from the filtered fixtures above.
+	due := newBillingProbeAccount(6, "https://api.example.com", true)
+	repo.accounts[6] = due
+	repo.due = append(repo.due, *due)
+	upstream := &billingProbeHTTPUpstream{handler: func(_ *http.Request, _ int) *http.Response {
+		return billingProbeResponse(t, http.StatusOK, validBillingProbeBody(t, now), nil)
+	}}
+	settingsRepo := &billingProbeSettingRepo{values: map[string]string{
+		SettingKeyUpstreamBillingProbeSettings: `{"enabled":true,"interval_minutes":30}`,
+	}}
+	service := newBillingProbeService(repo, upstream, settingsRepo, now)
+	service.SetLeaderLock(&billingProbeLeaderCache{owners: map[string]string{upstreamBillingProbeLeaderLockKey: "peer"}}, nil)
+	require.NoError(t, service.RunDue(context.Background()))
+	require.Zero(t, upstream.calls.Load())
+
+	settingsRepo.values[SettingKeyUpstreamBillingProbeSettings] = `{"enabled":false,"interval_minutes":30}`
+	service.SetLeaderLock(nil, nil)
+	require.NoError(t, service.RunDue(context.Background()))
+	require.Zero(t, upstream.calls.Load())
+}
+
+func TestUpstreamBillingProbeServiceRunDueFallbackListerAndErrors(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	account := newBillingProbeAccount(1, "https://api.example.com", true)
+	fallback := &billingProbeFallbackRepo{account: account, accounts: []Account{*account}}
+	settingsRepo := &billingProbeSettingRepo{values: map[string]string{}}
+	service := NewUpstreamBillingProbeService(fallback, nil, &SettingService{settingRepo: settingsRepo})
+	accounts, err := service.listDueAccounts(context.Background(), now)
+	require.NoError(t, err)
+	require.Len(t, accounts, 1)
+
+	repo := &billingProbeAccountRepo{accounts: map[int64]*Account{1: account}, dueError: errors.New("due query failed")}
+	service = newBillingProbeService(repo, nil, settingsRepo, now)
+	_, err = service.listDueAccounts(context.Background(), now)
+	require.Error(t, err)
+	require.Error(t, service.RunDue(context.Background()))
+
+	settingsRepo.getErr = errors.New("settings read failed")
+	require.Error(t, service.RunDue(context.Background()))
+}
+
+func TestUpstreamBillingProbeServiceAccountModesAndBatchErrors(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	invalid := newBillingProbeAccount(2, "https://api.example.com", true)
+	invalid.Platform = PlatformAnthropic
+	account := newBillingProbeAccount(1, "https://api.example.com", true)
+	repo := &billingProbeAccountRepo{accounts: map[int64]*Account{1: account, 2: invalid}}
+	service := newBillingProbeService(repo, nil, &billingProbeSettingRepo{values: map[string]string{}}, now)
+	_, err := service.ProbeAccount(context.Background(), 2)
+	require.ErrorIs(t, err, ErrUpstreamBillingProbeAccountInvalid)
+
+	account.Extra[UpstreamBillingProbeEnabledExtraKey] = false
+	result, err := service.probeScheduledAccount(context.Background(), 1, 30)
+	require.NoError(t, err)
+	require.Nil(t, result)
+	account.Extra[UpstreamBillingProbeEnabledExtraKey] = true
+	account.Extra[UpstreamBillingProbeExtraKey] = map[string]any{
+		"status":        UpstreamBillingProbeStatusOK,
+		"next_probe_at": now.Add(time.Hour),
+	}
+	result, err = service.probeScheduledAccount(context.Background(), 1, 30)
+	require.NoError(t, err)
+	require.Nil(t, result)
+
+	service = newBillingProbeService(repo, nil, &billingProbeSettingRepo{getErr: errors.New("settings unavailable")}, now)
+	results := service.ProbeAccounts(context.Background(), []int64{1, 2})
+	require.Equal(t, "probe_failed", results[0].Error)
+	require.Equal(t, "probe_failed", results[1].Error)
+
+	service = newBillingProbeService(nil, nil, nil, now)
+	results = service.ProbeAccounts(context.Background(), []int64{1})
+	require.Equal(t, ErrUpstreamBillingProbeUnavailable.Error(), results[0].Error)
+
+	service = newBillingProbeService(repo, nil, &billingProbeSettingRepo{values: map[string]string{}}, now)
+	for i := 0; i < upstreamBillingProbeConcurrency; i++ {
+		service.probeSlots <- struct{}{}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = service.probeAccount(ctx, 1, 30)
+	require.ErrorIs(t, err, context.Canceled)
+	for i := 0; i < upstreamBillingProbeConcurrency; i++ {
+		<-service.probeSlots
+	}
+}
+
+func TestUpstreamBillingProbeServiceProbeFailureReasons(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	base := newBillingProbeAccount(1, "https://api.example.com", true)
+	tests := []struct {
+		name       string
+		account    *Account
+		response   *http.Response
+		httpErr    error
+		wantReason string
+		wantStatus string
+	}{
+		{name: "transport unavailable", account: base, wantReason: "transport_unavailable"},
+		{name: "missing api key", account: &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{}}, wantReason: "missing_api_key"},
+		{name: "invalid base url", account: func() *Account { a := newBillingProbeAccount(1, "://bad", true); return a }(), wantReason: "invalid_base_url"},
+		{name: "proxy unavailable", account: func() *Account {
+			a := newBillingProbeAccount(1, "https://api.example.com", true)
+			id := int64(7)
+			a.ProxyID = &id
+			return a
+		}(), wantReason: "proxy_unavailable"},
+		{name: "proxy identity changed", account: func() *Account {
+			a := newBillingProbeAccount(1, "https://api.example.com", true)
+			id := int64(7)
+			a.ProxyID = &id
+			a.Proxy = &Proxy{ID: 8}
+			return a
+		}(), wantStatus: "identity_changed"},
+		{name: "request failed", account: base, httpErr: errors.New("network failed"), wantReason: "request_failed"},
+		{name: "empty response", account: base, response: &http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}, wantReason: "empty_response"},
+		{name: "read failed", account: base, response: &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: billingProbeReadCloser{}}, wantReason: "response_read_failed"},
+		{name: "response too large", account: base, response: billingProbeResponse(t, http.StatusOK, strings.Repeat("x", upstreamBillingProbeMaxBodyBytes+1), nil), wantReason: "response_too_large"},
+		{name: "unsupported", account: base, response: billingProbeResponse(t, http.StatusNotFound, "", nil), wantReason: "unsupported", wantStatus: UpstreamBillingProbeStatusUnsupported},
+		{name: "http error", account: base, response: billingProbeResponse(t, http.StatusInternalServerError, "", nil), wantReason: "http_error"},
+		{name: "invalid response", account: base, response: billingProbeResponse(t, http.StatusOK, `{}`, nil), wantReason: "invalid_response"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			account := test.account
+			repo := &billingProbeAccountRepo{accounts: map[int64]*Account{1: account}}
+			upstream := &billingProbeHTTPUpstream{err: test.httpErr, handler: func(_ *http.Request, _ int) *http.Response {
+				return test.response
+			}}
+			service := newBillingProbeService(repo, upstream, &billingProbeSettingRepo{values: map[string]string{}}, now)
+			if test.name == "transport unavailable" {
+				service.accountTestService.httpUpstream = nil
+			}
+			if test.name == "proxy identity changed" {
+				_, err := service.ProbeAccount(context.Background(), 1)
+				require.ErrorIs(t, err, ErrUpstreamBillingProbeIdentityChanged)
+				return
+			}
+			snapshot, err := service.ProbeAccount(context.Background(), 1)
+			require.NoError(t, err)
+			require.NotNil(t, snapshot)
+			require.Equal(t, test.wantReason, snapshot.LastError)
+			if test.wantStatus != "" {
+				require.Equal(t, test.wantStatus, snapshot.Status)
+			}
+		})
+	}
+
+	noWriter := &billingProbeNoWriterRepo{account: newBillingProbeAccount(1, "https://api.example.com", true)}
+	service := NewUpstreamBillingProbeService(noWriter, &AccountTestService{
+		httpUpstream: &billingProbeHTTPUpstream{handler: func(_ *http.Request, _ int) *http.Response {
+			return billingProbeResponse(t, http.StatusOK, validBillingProbeBody(t, now), nil)
+		}},
+		cfg: &config.Config{},
+	}, &SettingService{})
+	_, err := service.ProbeAccount(context.Background(), 1)
+	require.ErrorIs(t, err, ErrUpstreamBillingProbeUnavailable)
+}
+
+func TestUpstreamBillingProbeHelpersAndPublicSettings(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	require.Equal(t, time.Hour, retryAfter(http.Header{"Retry-After": []string{"3600"}}, now))
+	require.Equal(t, time.Minute, retryAfter(http.Header{"Retry-After": []string{now.Add(time.Minute).UTC().Format(http.TimeFormat)}}, now))
+	require.Zero(t, retryAfter(http.Header{"Retry-After": []string{"-1"}}, now))
+	require.Zero(t, retryAfter(http.Header{"Retry-After": []string{"invalid"}}, now))
+	require.Equal(t, "", safeProbeError(nil))
+	require.Equal(t, ErrUpstreamBillingProbeAccountInvalid.Error(), safeProbeError(ErrUpstreamBillingProbeAccountInvalid))
+	require.Equal(t, ErrUpstreamBillingProbeUnavailable.Error(), safeProbeError(ErrUpstreamBillingProbeUnavailable))
+	require.Equal(t, "probe_failed", safeProbeError(errors.New("internal")))
+
+	service := NewUpstreamBillingProbeService(nil, nil, nil)
+	settings, err := service.GetSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, defaultUpstreamBillingProbeSettings(), settings)
+	require.ErrorIs(t, service.UpdateSettings(context.Background(), &UpstreamBillingProbeSettings{Enabled: true, IntervalMinutes: 10}), ErrUpstreamBillingProbeUnavailable)
+
+	service.Start()
+	service.Start()
+	service.Stop()
+	service.Stop()
 }
 
 func TestUpstreamBillingProbeServiceProbeAccountPersistsSnapshot(t *testing.T) {
