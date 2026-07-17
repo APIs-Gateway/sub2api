@@ -202,7 +202,11 @@ type SystemSettings struct {
 	PaymentVisibleMethodWxpayEnabled  bool   `json:"payment_visible_method_wxpay_enabled"`
 
 	// OpenAI account scheduling
-	OpenAIAdvancedSchedulerEnabled bool `json:"openai_advanced_scheduler_enabled"`
+	OpenAILowUpstreamRatePriorityEnabled               bool    `json:"openai_low_upstream_rate_priority_enabled"`
+	OpenAIOAuthSchedulingRateMultiplier                float64 `json:"openai_oauth_scheduling_rate_multiplier"`
+	OpenAIAdvancedSchedulerEnabled                     bool    `json:"openai_advanced_scheduler_enabled"`
+	OpenAIAdvancedSchedulerWeightUpstreamCost          string  `json:"openai_advanced_scheduler_weight_upstream_cost"`
+	OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost string  `json:"openai_advanced_scheduler_effective_weight_upstream_cost"`
 
 	// Payment configuration
 	PaymentEnabled                   bool     `json:"payment_enabled"`

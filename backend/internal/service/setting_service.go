@@ -2064,6 +2064,17 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodWxpaySource] = settings.PaymentVisibleMethodWxpaySource
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
+	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
+	if settings.OpenAIOAuthSchedulingRateMultiplier < 0 || math.IsNaN(settings.OpenAIOAuthSchedulingRateMultiplier) || math.IsInf(settings.OpenAIOAuthSchedulingRateMultiplier, 0) {
+		return nil, infraerrors.BadRequest("INVALID_OPENAI_OAUTH_SCHEDULING_RATE_MULTIPLIER", "OAuth scheduling rate multiplier must be finite and non-negative")
+	}
+	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(settings.OpenAIOAuthSchedulingRateMultiplier, 'f', -1, 64)
+	if settings.OpenAIAdvancedSchedulerWeightUpstreamCost != "" {
+		if _, err := parseNonNegativeFiniteSchedulerWeight(settings.OpenAIAdvancedSchedulerWeightUpstreamCost); err != nil {
+			return nil, err
+		}
+	}
+	updates[SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost] = strings.TrimSpace(settings.OpenAIAdvancedSchedulerWeightUpstreamCost)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
 
 	// 余额、订阅到期与账号限额通知
@@ -2214,8 +2225,11 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	})
 	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
-		enabled:   settings.OpenAIAdvancedSchedulerEnabled,
-		expiresAt: time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
+		enabled:                        settings.OpenAIAdvancedSchedulerEnabled,
+		lowUpstreamRatePriorityEnabled: settings.OpenAILowUpstreamRatePriorityEnabled,
+		oauthSchedulingRateMultiplier:  settings.OpenAIOAuthSchedulingRateMultiplier,
+		upstreamCostWeightOverride:     strings.TrimSpace(settings.OpenAIAdvancedSchedulerWeightUpstreamCost),
+		expiresAt:                      time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
 	})
 	// Invalidate the quota auto-pause cache and let the next read trigger a fresh load.
 	// We can't know from here whether ops_advanced_settings was also touched, so be
@@ -3020,16 +3034,19 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyMaxClaudeCodeVersion: "",
 
 		// 分组隔离（默认不允许未分组 Key 调度）
-		SettingKeyAllowUngroupedKeyScheduling:        "false",
-		SettingKeyEnableAnthropicCacheTTL1hInjection: "false",
-		SettingKeyRewriteMessageCacheControl:         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
-		SettingKeyAntigravityUserAgentVersion:        "",
-		SettingKeyOpenAICodexUserAgent:               "",
-		SettingPaymentVisibleMethodAlipaySource:      "",
-		SettingPaymentVisibleMethodWxpaySource:       "",
-		SettingPaymentVisibleMethodAlipayEnabled:     "false",
-		SettingPaymentVisibleMethodWxpayEnabled:      "false",
-		openAIAdvancedSchedulerSettingKey:            "false",
+		SettingKeyAllowUngroupedKeyScheduling:               "false",
+		SettingKeyEnableAnthropicCacheTTL1hInjection:        "false",
+		SettingKeyRewriteMessageCacheControl:                strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
+		SettingKeyAntigravityUserAgentVersion:               "",
+		SettingKeyOpenAICodexUserAgent:                      "",
+		SettingPaymentVisibleMethodAlipaySource:             "",
+		SettingPaymentVisibleMethodWxpaySource:              "",
+		SettingPaymentVisibleMethodAlipayEnabled:            "false",
+		SettingPaymentVisibleMethodWxpayEnabled:             "false",
+		SettingKeyOpenAILowUpstreamRatePriorityEnabled:      "false",
+		SettingKeyOpenAIOAuthSchedulingRateMultiplier:       "1",
+		SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost: "",
+		openAIAdvancedSchedulerSettingKey:                   "false",
 
 		SettingKeyAllowUserViewErrorRequests: "false",
 	}
@@ -3581,7 +3598,14 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodWxpaySource = NormalizeVisibleMethodSource("wxpay", settings[SettingPaymentVisibleMethodWxpaySource])
 	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
+	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
+	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
+	result.OpenAIAdvancedSchedulerWeightUpstreamCost = strings.TrimSpace(settings[SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost])
+	result.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost = formatOpenAIAdvancedSchedulerFloat(resolveOpenAIAdvancedSchedulerWeight(
+		result.OpenAIAdvancedSchedulerWeightUpstreamCost,
+		defaultOpenAIAdvancedSchedulerWeightUpstreamCost(s.cfg),
+	))
 
 	// 余额、订阅到期与账号限额通知
 	result.BalanceLowNotifyEnabled = settings[SettingKeyBalanceLowNotifyEnabled] == "true"

@@ -328,6 +328,7 @@ gateway:
       queue: 0.7
       error_rate: 0.8
       ttft: 0.5
+      upstream_cost: 0.0
   # OpenAI 高级调度器补充配置
   openai_scheduler:
     # 是否允许 session_hash sticky 在账号健康度恶化时临时逃逸；false 可一键回退旧行为

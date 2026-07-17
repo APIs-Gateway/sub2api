@@ -217,7 +217,11 @@ type SystemSettings struct {
 	PaymentVisibleMethodWxpayEnabled  bool
 
 	// OpenAI 账号调度
-	OpenAIAdvancedSchedulerEnabled bool
+	OpenAILowUpstreamRatePriorityEnabled               bool
+	OpenAIOAuthSchedulingRateMultiplier                float64
+	OpenAIAdvancedSchedulerEnabled                     bool
+	OpenAIAdvancedSchedulerWeightUpstreamCost          string
+	OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost string
 
 	// 余额不足提醒
 	BalanceLowNotifyEnabled     bool

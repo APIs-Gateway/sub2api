@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/url"
 	"os"
 	"strings"
@@ -983,6 +984,8 @@ type GatewayOpenAIWSSchedulerScoreWeights struct {
 	Queue     float64 `mapstructure:"queue"`
 	ErrorRate float64 `mapstructure:"error_rate"`
 	TTFT      float64 `mapstructure:"ttft"`
+	// UpstreamCost 倾向上游声明计费倍率更低的账号；默认 0，保持旧排序。
+	UpstreamCost float64 `mapstructure:"upstream_cost"`
 }
 
 // GatewayOpenAISchedulerConfig OpenAI 高级调度器配置。
@@ -1901,6 +1904,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.queue", 0.7)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.error_rate", 0.8)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.ttft", 0.5)
+	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.upstream_cost", 0.0)
 	// OpenAI HTTP upstream protocol strategy
 	viper.SetDefault("gateway.openai_http2.enabled", true)
 	viper.SetDefault("gateway.openai_http2.allow_proxy_fallback_to_http1", true)
@@ -2698,14 +2702,28 @@ func (c *Config) Validate() error {
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.Load < 0 ||
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.Queue < 0 ||
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate < 0 ||
-		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT < 0 {
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT < 0 ||
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost < 0 {
 		return fmt.Errorf("gateway.openai_ws.scheduler_score_weights.* must be non-negative")
+	}
+	for _, weight := range []float64{
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.Priority,
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.Load,
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.Queue,
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate,
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT,
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost,
+	} {
+		if math.IsNaN(weight) || math.IsInf(weight, 0) {
+			return fmt.Errorf("gateway.openai_ws.scheduler_score_weights.* must be finite")
+		}
 	}
 	weightSum := c.Gateway.OpenAIWS.SchedulerScoreWeights.Priority +
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.Load +
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.Queue +
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate +
-		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT +
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost
 	if weightSum <= 0 {
 		return fmt.Errorf("gateway.openai_ws.scheduler_score_weights must not all be zero")
 	}

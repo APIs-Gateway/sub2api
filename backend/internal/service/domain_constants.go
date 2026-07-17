@@ -467,6 +467,12 @@ const (
 	// targets OpenAI's body-level service_tier field instead of Claude's
 	// anthropic-beta header.
 	SettingKeyOpenAIFastPolicySettings = "openai_fast_policy_settings"
+	// SettingKeyOpenAILowUpstreamRatePriorityEnabled enables legacy lower-rate-first ordering.
+	SettingKeyOpenAILowUpstreamRatePriorityEnabled = "openai_low_upstream_rate_priority_enabled"
+	// SettingKeyOpenAIOAuthSchedulingRateMultiplier is the reference token rate for OAuth accounts.
+	SettingKeyOpenAIOAuthSchedulingRateMultiplier = "openai_oauth_scheduling_rate_multiplier"
+	// SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost overrides the configured advanced scheduler cost weight.
+	SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost = "openai_advanced_scheduler_weight_upstream_cost"
 
 	// =========================
 	// Claude Code Version Check
