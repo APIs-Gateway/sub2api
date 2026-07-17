@@ -225,6 +225,52 @@ func TestLockAndMergeAccountProbeExtraUsesCurrentDatabaseSnapshot(t *testing.T) 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestLockAndMergeAccountProbeExtraClearsStaleStateOnIdentityOrTypeChange(t *testing.T) {
+	cases := []struct {
+		name              string
+		platform          string
+		typeName          string
+		identityUnchanged bool
+		enabled           []byte
+		snapshot          []byte
+		wantEnabled       bool
+		wantSnapshot      bool
+	}{
+		{name: "identity changed", platform: service.PlatformOpenAI, typeName: service.AccountTypeAPIKey, enabled: []byte(`true`), snapshot: []byte(`{"status":"ok"}`)},
+		{name: "current disabled", platform: service.PlatformOpenAI, typeName: service.AccountTypeAPIKey, identityUnchanged: true, enabled: []byte(`false`), snapshot: []byte(`{"status":"ok"}`), wantEnabled: true},
+		{name: "non api key", platform: service.PlatformOpenAI, typeName: service.AccountTypeOAuth, identityUnchanged: true, enabled: []byte(`true`), snapshot: []byte(`{"status":"ok"}`)},
+		{name: "missing snapshot", platform: service.PlatformOpenAI, typeName: service.AccountTypeAPIKey, identityUnchanged: true, enabled: []byte(`true`), wantEnabled: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newSQLMock(t)
+			client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+			t.Cleanup(func() { _ = client.Close() })
+			mock.ExpectQuery(`(?s)SELECT.*FROM accounts.*FOR NO KEY UPDATE`).
+				WithArgs(int64(28), tc.platform, tc.typeName, `{"api_key":"sk-test"}`, nil).
+				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "enabled", "snapshot"}).
+					AddRow(tc.identityUnchanged, tc.enabled, tc.snapshot))
+			account := &service.Account{
+				ID: 28, Platform: tc.platform, Type: tc.typeName,
+				Credentials: map[string]any{"api_key": "sk-test"},
+				Extra: map[string]any{
+					service.UpstreamBillingProbeEnabledExtraKey: true,
+					service.UpstreamBillingProbeExtraKey:        map[string]any{"status": "stale"},
+				},
+			}
+			got, err := lockAndMergeAccountProbeExtra(context.Background(), client, account)
+			require.NoError(t, err)
+			if tc.wantEnabled {
+				require.Contains(t, got, service.UpstreamBillingProbeEnabledExtraKey)
+			} else {
+				require.NotContains(t, got, service.UpstreamBillingProbeEnabledExtraKey)
+			}
+			require.Equal(t, tc.wantSnapshot, got[service.UpstreamBillingProbeExtraKey] != nil)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestUpdateExtraExplicitProbeDisableRemovesSnapshotAtomically(t *testing.T) {
 	db, mock := newSQLMock(t)
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
@@ -239,6 +285,33 @@ func TestUpdateExtraExplicitProbeDisableRemovesSnapshotAtomically(t *testing.T) 
 	mock.ExpectCommit()
 	repo := newAccountRepositoryWithSQL(client, db, nil)
 	require.NoError(t, repo.UpdateExtra(context.Background(), 27, map[string]any{service.UpstreamBillingProbeEnabledExtraKey: false}))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateExtraNeutralProbeFlagDoesNotEnqueueOutbox(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectExec(`(?s)UPDATE accounts SET extra = CASE.*WHERE id = \$2`).
+		WithArgs(`{"upstream_billing_probe_enabled":true}`, int64(27), false).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	require.NoError(t, repo.UpdateExtra(context.Background(), 27, map[string]any{service.UpstreamBillingProbeEnabledExtraKey: true}))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateExtraRollsBackWhenOutboxFails(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE accounts SET extra = CASE.*- 'upstream_billing_probe'`).
+		WithArgs(`{"upstream_billing_probe_enabled":false}`, int64(27), true).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).WillReturnError(errors.New("outbox failed"))
+	mock.ExpectRollback()
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	require.EqualError(t, repo.UpdateExtra(context.Background(), 27, map[string]any{service.UpstreamBillingProbeEnabledExtraKey: false}), "outbox failed")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -268,4 +341,55 @@ func TestUpdateCredentialsAtomicallyClearsProbeForIdentityChange(t *testing.T) {
 	repo := newAccountRepositoryWithSQL(client, db, nil)
 	require.NoError(t, repo.UpdateCredentials(context.Background(), 27, map[string]any{"api_key": "sk-new"}))
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateCredentialsRollsBackWhenOutboxFails(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE accounts.*credentials IS DISTINCT FROM \$1::jsonb.*- 'upstream_billing_probe'`).
+		WithArgs(`{"api_key":"sk-new"}`, int64(27)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).WillReturnError(errors.New("outbox failed"))
+	mock.ExpectRollback()
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	require.EqualError(t, repo.UpdateCredentials(context.Background(), 27, map[string]any{"api_key": "sk-new"}), "outbox failed")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLockAndMatchProbeProxyIdentityHandlesMissingAndMismatchedProxies(t *testing.T) {
+	proxyID := int64(9)
+	cases := []struct {
+		name         string
+		rows         *sqlmock.Rows
+		accountProxy *service.Proxy
+		want         bool
+	}{
+		{name: "no proxy id", accountProxy: nil, want: true},
+		{name: "missing database proxy with nil account proxy", rows: sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}), want: true},
+		{name: "missing database proxy with account proxy", rows: sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}), accountProxy: &service.Proxy{ID: proxyID}, want: false},
+		{name: "database proxy but account proxy missing", rows: sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).AddRow("http", "proxy", 8080, "", "", service.StatusActive), want: false},
+		{name: "matching proxy", rows: sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).AddRow("http", "proxy", 8080, "", "", service.StatusActive), accountProxy: &service.Proxy{ID: proxyID, Protocol: "http", Host: "proxy", Port: 8080, Status: service.StatusActive}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newSQLMock(t)
+			if tc.rows != nil {
+				mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FOR SHARE`).WithArgs(proxyID).WillReturnRows(tc.rows)
+			}
+			account := &service.Account{ProxyID: &proxyID, Proxy: tc.accountProxy}
+			if tc.name == "no proxy id" {
+				account.ProxyID = nil
+			}
+			got, err := lockAndMatchProbeProxyIdentity(context.Background(), dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db))), account)
+			if tc.name == "no proxy id" {
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.want, got)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
