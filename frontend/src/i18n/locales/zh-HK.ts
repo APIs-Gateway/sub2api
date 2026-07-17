@@ -661,6 +661,15 @@
     invalidOrExpiredToken: '密碼重置連結無效或已過期。請重新請求一個新連結。'
   },
 
+  // Step-up（敏感操作二次驗證）
+  stepUp: {
+    title: '需要二次驗證',
+    hint: '請輸入身份驗證器應用中的 6 位驗證碼以繼續此敏感操作。',
+    verifyFailed: '驗證失敗，請重試',
+    notEnabled: '此操作需要開啟二次驗證，請先在個人資料中啟用 TOTP。',
+    adminApiKeyForbidden: '管理 API Key 無法執行此操作，請使用已通過二次驗證的管理員會話。'
+  },
+
   // Dashboard
   dashboard: {
     title: '儀表盤',

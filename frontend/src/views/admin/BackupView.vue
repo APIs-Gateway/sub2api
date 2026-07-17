@@ -276,6 +276,7 @@
         </div>
       </transition>
     </teleport>
+    <TotpStepUpDialog :controller="backupStepUp" />
 </template>
 
 <script setup lang="ts">
@@ -284,9 +285,12 @@ import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api'
 import { useAppStore } from '@/stores'
 import type { BackupS3Config, BackupScheduleConfig, BackupRecord } from '@/api/admin/backup'
+import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const backupStepUp = useStepUp()
 
 // S3 config
 const s3Form = ref<BackupS3Config>({
@@ -456,10 +460,11 @@ async function loadS3Config() {
 async function saveS3Config() {
   savingS3.value = true
   try {
-    await adminAPI.backup.updateS3Config(s3Form.value)
+    await backupStepUp.run(() => adminAPI.backup.updateS3Config(s3Form.value))
     appStore.showSuccess(t('admin.backup.s3.saved'))
     await loadS3Config()
   } catch (error) {
+    if (isStepUpCancelled(error)) return
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
   } finally {
     savingS3.value = false
