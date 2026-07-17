@@ -437,6 +437,7 @@ const handleRedeem = async () => {
         ...authStore.user,
         balance: result.new_balance
       }
+      localStorage.setItem('auth_user', JSON.stringify(authStore.user))
     }
 
     // Refresh user data to get updated balance/concurrency, without changing redemption success.

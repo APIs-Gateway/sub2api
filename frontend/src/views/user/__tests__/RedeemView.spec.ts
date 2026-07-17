@@ -92,6 +92,7 @@ async function redeemCode(wrapper: VueWrapper) {
 
 describe('RedeemView', () => {
   beforeEach(() => {
+    window.localStorage.clear()
     getHistoryMock.mockReset()
     getPublicSettingsMock.mockReset()
     redeemMock.mockReset()
@@ -128,6 +129,7 @@ describe('RedeemView', () => {
     await redeemCode(wrapper)
 
     expect(authState.user).toMatchObject({ balance: 25, concurrency: 2 })
+    expect(JSON.parse(window.localStorage.getItem('auth_user') || '{}')).toMatchObject({ balance: 25 })
     expect(wrapper.text()).toContain('redeem.redeemSuccess')
     expect(wrapper.text()).toContain('redeem.newBalance')
     expect(wrapper.text()).toContain('$25.00')
