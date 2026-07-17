@@ -25,8 +25,12 @@ func TestChannelMonitorDuplicateCloneHelpersHandleNilAndCopies(t *testing.T) {
 	}
 	clonedBody, err := cloneChannelMonitorJSONMap(originalBody)
 	require.NoError(t, err)
-	clonedBody["metadata"].(map[string]any)["source"] = "changed"
-	require.Equal(t, "original", originalBody["metadata"].(map[string]any)["source"])
+	clonedMetadata, ok := clonedBody["metadata"].(map[string]any)
+	require.True(t, ok)
+	clonedMetadata["source"] = "changed"
+	originalMetadata, ok := originalBody["metadata"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "original", originalMetadata["source"])
 	nilBody, err := cloneChannelMonitorJSONMap(nil)
 	require.NoError(t, err)
 	require.Nil(t, nilBody)
