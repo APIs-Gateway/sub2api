@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"regexp"
 	"testing"
@@ -273,6 +274,104 @@ func TestSweepExpiredProxyClearsProbeForBothFallbackModes(t *testing.T) {
 		require.Len(t, exec.execQueries, 2)
 		require.Contains(t, exec.execQueries[1], "proxy_id=$2")
 		require.Contains(t, exec.execQueries[1], "- 'upstream_billing_probe'")
+	})
+}
+
+func TestBillingProbePersistenceErrorEdges(t *testing.T) {
+	t.Run("proxy identity query and scan errors", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FOR UPDATE`).
+			WithArgs(int64(9)).WillReturnError(errors.New("query failed"))
+		_, err := lockProbeProxyIdentity(context.Background(), db, 9)
+		require.EqualError(t, err, "query failed")
+
+		mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FOR UPDATE`).
+			WithArgs(int64(10)).
+			WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
+				AddRow("http", "proxy", "not-a-port", "", "", service.StatusActive))
+		_, err = lockProbeProxyIdentity(context.Background(), db, 10)
+		require.Error(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("proxy identity row error", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		mock.ExpectQuery(`(?s)SELECT protocol, host, port.*FOR UPDATE`).
+			WithArgs(int64(11)).
+			WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
+				RowError(0, errors.New("row failed")))
+		_, err := lockProbeProxyIdentity(context.Background(), db, 11)
+		require.ErrorIs(t, err, service.ErrProxyNotFound)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("snapshot clear query scan and row errors", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
+			WithArgs(int64(9)).WillReturnError(errors.New("clear query failed"))
+		require.EqualError(t, clearProbeSnapshotsForProxy(context.Background(), db, 9), "clear query failed")
+
+		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
+			WithArgs(int64(10)).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("not-an-id"))
+		require.Error(t, clearProbeSnapshotsForProxy(context.Background(), db, 10))
+
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("account probe row and scan errors", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+		t.Cleanup(func() { _ = client.Close() })
+		args := []driver.Value{int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil}
+		mock.ExpectQuery(`(?s)SELECT.*FROM accounts.*FOR NO KEY UPDATE`).
+			WithArgs(args...).WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "enabled", "snapshot"}))
+		_, err := lockAndMergeAccountProbeExtra(context.Background(), client, &service.Account{
+			ID: 27, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "sk-test"},
+		})
+		require.ErrorIs(t, err, service.ErrAccountNotFound)
+
+		mock.ExpectQuery(`(?s)SELECT.*FROM accounts.*FOR NO KEY UPDATE`).
+			WithArgs(args...).WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "enabled", "snapshot"}).
+			AddRow("not-a-bool", []byte(`true`), []byte(`{"status":"ok"}`)))
+		_, err = lockAndMergeAccountProbeExtra(context.Background(), client, &service.Account{
+			ID: 27, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "sk-test"},
+		})
+		require.Error(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("nil snapshot and zero affected updates", func(t *testing.T) {
+		repo := &accountRepository{}
+		require.ErrorIs(t, repo.UpdateUpstreamBillingProbeSnapshot(context.Background(), nil, nil), service.ErrAccountNilInput)
+
+		db, mock := newSQLMock(t)
+		client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+		t.Cleanup(func() { _ = client.Close() })
+		mock.ExpectBegin()
+		mock.ExpectExec(`UPDATE accounts`).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectRollback()
+		repo = newAccountRepositoryWithSQL(client, db, nil)
+		require.ErrorIs(t, repo.UpdateCredentials(context.Background(), 27, map[string]any{"api_key": "sk-new"}), service.ErrAccountNotFound)
+
+		mock.ExpectExec(`UPDATE accounts`).
+			WithArgs(sqlmock.AnyArg(), int64(28), false).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		require.ErrorIs(t, repo.UpdateExtra(context.Background(), 28, map[string]any{service.UpstreamBillingProbeEnabledExtraKey: true}), service.ErrAccountNotFound)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("proxy expiry snapshot clear error", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		mock.ExpectExec(`UPDATE proxies SET status=\$1`).
+			WithArgs(service.StatusExpired, int64(9)).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).WillReturnError(errors.New("clear failed"))
+		repo := &proxyRepository{}
+		_, err := repo.sweepOneExpiredProxyOnExec(context.Background(), db, 9, nil, false)
+		require.EqualError(t, err, "clear failed")
+		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
 
