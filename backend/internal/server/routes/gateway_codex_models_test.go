@@ -61,6 +61,7 @@ func TestGatewayRoutesV1ModelsWithClientVersionUsesCodexManifestHandler(t *testi
 				nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 				&config.Config{},
 				nil,
+				nil,
 			),
 			OpenAIGateway: handler.NewOpenAIGatewayHandler(
 				gatewaySvc,

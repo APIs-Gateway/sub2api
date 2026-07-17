@@ -84,6 +84,17 @@ func TestGatewayRoutesOpenAIImagesPathsAreRegistered(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesRegistersKeyBillingEndpoint(t *testing.T) {
+	router := newGatewayRoutesTestRouter()
+
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodGet && route.Path == "/v1/sub2api/billing" {
+			return
+		}
+	}
+	t.Fatal("GET /v1/sub2api/billing is not registered")
+}
+
 func TestGatewayRoutesWhamUsagePathsAreRegisteredWithoutGroupAssignment(t *testing.T) {
 	router := newGatewayRoutesTestRouterWithAPIKey(&service.APIKey{
 		ID:     100,

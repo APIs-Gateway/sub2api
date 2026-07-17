@@ -25,7 +25,7 @@ func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionS
 //   - 鉴权（Authentication）：验证 Key 有效性、用户状态、IP 限制 —— 始终执行
 //   - 计费执行（Billing Enforcement）：过期/配额/订阅/余额检查 —— skipBilling 时整块跳过
 //
-// /v1/usage 端点只需鉴权，不需要计费执行（允许过期/配额耗尽的 Key 查询自身用量）。
+// /v1/usage 和 /v1/sub2api/billing 端点只需鉴权，不需要计费执行。
 func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, billingCacheService *service.BillingCacheService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// ── 1. 提取 API Key ──────────────────────────────────────────
@@ -138,7 +138,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			})
 			c.Set(string(ContextKeyUserRole), apiKey.User.Role)
 			setGroupContext(c, apiKey.Group)
-			_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
+			if !isAPIKeyBillingInfoPath(c.Request.URL.Path) {
+				_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
+			}
 			c.Next()
 			return
 		}
@@ -241,7 +243,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		})
 		c.Set(string(ContextKeyUserRole), apiKey.User.Role)
 		setGroupContext(c, apiKey.Group)
-		_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
+		if !isAPIKeyBillingInfoPath(c.Request.URL.Path) {
+			_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
+		}
 
 		c.Next()
 	}
@@ -255,11 +259,15 @@ func isSubscriptionLimitError(err error) bool {
 
 func isAPIKeyAuthReadOnlyUsagePath(path string) bool {
 	switch path {
-	case "/v1/usage", "/backend-api/wham/usage", "/backend-api/codex/wham/usage":
+	case "/v1/usage", "/backend-api/wham/usage", "/backend-api/codex/wham/usage", "/v1/sub2api/billing":
 		return true
 	default:
 		return false
 	}
+}
+
+func isAPIKeyBillingInfoPath(path string) bool {
+	return path == "/v1/sub2api/billing"
 }
 
 // writePublicBenefitCapError 在公益 key 命中单 IP 每日上限时，按调用方所属分组的

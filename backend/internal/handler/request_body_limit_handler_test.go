@@ -16,7 +16,7 @@ func TestGatewayHandlerMessages_RejectsBodyOverConfiguredLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := NewGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, &config.Config{
 		Gateway: config.GatewayConfig{MaxBodySize: 8},
-	}, nil)
+	}, nil, nil)
 
 	c, recorder := newBodyLimitTestContext(t, []byte(`{"messages":[{"role":"user","content":"hello"}]}`))
 
