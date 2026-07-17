@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,6 +173,9 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	}
 	if cfg.Gateway.OpenAIWS.PayloadLogSampleRate != 0.2 {
 		t.Fatalf("Gateway.OpenAIWS.PayloadLogSampleRate = %v, want 0.2", cfg.Gateway.OpenAIWS.PayloadLogSampleRate)
+	}
+	if cfg.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost != 0 {
+		t.Fatalf("Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost = %v, want 0", cfg.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost)
 	}
 	if !cfg.Gateway.OpenAIWS.StoreDisabledForceNewConn {
 		t.Fatalf("Gateway.OpenAIWS.StoreDisabledForceNewConn = false, want true")
@@ -1785,6 +1789,11 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be non-negative",
 		},
 		{
+			name:    "scheduler_score_weights 必须为有限数",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost = math.Inf(1) },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
+		},
+		{
 			name: "scheduler_score_weights 不能全为 0",
 			mutate: func(c *Config) {
 				c.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 0
@@ -1823,6 +1832,18 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			require.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
+
+	t.Run("upstream_cost 可以作为唯一基础权重", func(t *testing.T) {
+		cfg := buildValid(t)
+		weights := &cfg.Gateway.OpenAIWS.SchedulerScoreWeights
+		weights.Priority = 0
+		weights.Load = 0
+		weights.Queue = 0
+		weights.ErrorRate = 0
+		weights.TTFT = 0
+		weights.UpstreamCost = 1
+		require.NoError(t, cfg.Validate())
+	})
 }
 
 func TestValidateConfig_AutoScaleDisabledIgnoreAutoScaleFields(t *testing.T) {
