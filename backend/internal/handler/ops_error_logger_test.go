@@ -250,6 +250,36 @@ func TestLogOpsStreamError_EnrichesRequestContext(t *testing.T) {
 	require.Equal(t, int64(5), *job.entry.TimeToFirstTokenMs)
 }
 
+func TestLogOpsStreamError_UpstreamFailureCountsTowardsSLA(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Set(opsModelKey, "gpt-5.6-sol")
+
+	service.MarkOpsStreamFailure(
+		c,
+		"upstream_error",
+		service.OpenAIUpstreamHTTP2StreamErrorCode,
+		"Upstream HTTP/2 stream failed",
+		http.StatusBadGateway,
+	)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	job := <-opsErrorLogQueue
+	require.NotNil(t, job.entry)
+	require.Equal(t, http.StatusBadGateway, job.entry.StatusCode)
+	require.Equal(t, "upstream_error", job.entry.ErrorType)
+	require.Equal(t, "upstream", job.entry.ErrorPhase)
+	require.Equal(t, "provider", job.entry.ErrorOwner)
+	require.False(t, job.entry.IsBusinessLimited)
+	require.Contains(t, job.entry.ErrorBody, service.OpenAIUpstreamHTTP2StreamErrorCode)
+}
+
 // handler 写出已固化 HTTP 200 的 SSE 错误后，middleware 仍应将该错误补记到 Ops。
 // 这条集成回归覆盖 MarkOpsStreamError 与 OpsErrorLoggerMiddleware 的实际接线。
 func TestOpsErrorLoggerMiddleware_RecordsInBandStreamError(t *testing.T) {
