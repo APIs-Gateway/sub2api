@@ -613,6 +613,45 @@ func TestBuildOpenAIAlphaSearchRequestRejectsUnsupportedAccountType(t *testing.T
 	require.EqualError(t, err, "unsupported OpenAI account type: unsupported")
 }
 
+func TestBuildOpenAIAlphaSearchResponsesWebSearchBodyCarriesSettings(t *testing.T) {
+	body, err := buildOpenAIAlphaSearchResponsesWebSearchBody([]byte(`{
+		"commands":{"search_query":[{"q":"OpenAI news"}]},
+		"settings":{"search_context_size":"high","user_location":{"type":"approximate","country":"US"}},
+		"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"latest"}]}]
+	}`), "gpt-5.6-sol")
+	require.NoError(t, err)
+	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(body, "model").String())
+	require.True(t, gjson.GetBytes(body, "stream").Bool())
+	require.False(t, gjson.GetBytes(body, "store").Bool())
+	require.Equal(t, "web_search", gjson.GetBytes(body, "tools.0.type").String())
+	require.Equal(t, "high", gjson.GetBytes(body, "tools.0.search_context_size").String())
+	require.Equal(t, "US", gjson.GetBytes(body, "tools.0.user_location.country").String())
+	require.Contains(t, gjson.GetBytes(body, "input.0.content.0.text").String(), "latest")
+}
+
+func TestBuildOpenAIAlphaSearchResponsesWebSearchBodyRequiresModel(t *testing.T) {
+	_, err := buildOpenAIAlphaSearchResponsesWebSearchBody([]byte(`{"commands":{}}`), " ")
+	require.EqualError(t, err, "model is required")
+}
+
+func TestOpenAIAlphaSearchResponsesSSEUsesCompletedOutputWhenNoDelta(t *testing.T) {
+	body := "event: response.completed\n" +
+		`data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"completed result"}]}]}}` + "\n\n"
+	converted, err := openAIAlphaSearchResponseFromResponsesSSE([]byte(body))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"output":"completed result"}`, string(converted))
+}
+
+func TestOpenAIAlphaSearchPromptIncludesRequestPartsAndTruncates(t *testing.T) {
+	body := []byte(`{"commands":{"search_query":[{"q":"news"}]},"settings":{"search_context_size":"high"},"input":[{"role":"user"}]}`)
+	prompt := openAIAlphaSearchResponsesWebSearchPrompt(body)
+	require.Contains(t, prompt, "Commands JSON:")
+	require.Contains(t, prompt, "Search settings JSON:")
+	require.Contains(t, prompt, "Recent conversation/input JSON:")
+	require.Equal(t, "short", truncateOpenAIAlphaSearchPromptJSON("short", 20))
+	require.Equal(t, "0123\n...<truncated>", truncateOpenAIAlphaSearchPromptJSON("0123456789", 4))
+}
+
 func TestShouldApplyOpenAIAlphaSearchAccountErrorSideEffects(t *testing.T) {
 	require.False(t, shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(http.StatusUnauthorized))
 	require.True(t, shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(http.StatusForbidden))

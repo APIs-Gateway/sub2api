@@ -271,9 +271,9 @@ func buildOpenAIAlphaSearchResponsesWebSearchBody(alphaBody []byte, model string
 
 func openAIAlphaSearchResponsesWebSearchPrompt(alphaBody []byte) string {
 	var b strings.Builder
-	b.WriteString("Execute this Codex standalone web.run request for another model.\n")
-	b.WriteString("Use the hosted web_search tool when web/current information is needed.\n")
-	b.WriteString("Return concise source-backed results. Include titles, URLs, dates, and direct answers when available.\n")
+	_, _ = b.WriteString("Execute this Codex standalone web.run request for another model.\n")
+	_, _ = b.WriteString("Use the hosted web_search tool when web/current information is needed.\n")
+	_, _ = b.WriteString("Return concise source-backed results. Include titles, URLs, dates, and direct answers when available.\n")
 	if commands := strings.TrimSpace(gjson.GetBytes(alphaBody, "commands").Raw); commands != "" {
 		b.WriteString("\nCommands JSON:\n")
 		b.WriteString(truncateOpenAIAlphaSearchPromptJSON(commands, 12000))
