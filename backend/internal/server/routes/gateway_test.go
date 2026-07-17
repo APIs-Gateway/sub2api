@@ -95,6 +95,41 @@ func TestGatewayRoutesRegistersKeyBillingEndpoint(t *testing.T) {
 	t.Fatal("GET /v1/sub2api/billing is not registered")
 }
 
+func TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered(t *testing.T) {
+	router := newGatewayRoutesTestRouter()
+
+	for _, path := range []string{
+		"/v1/alpha/search",
+		"/alpha/search",
+		"/backend-api/codex/alpha/search",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-5.6-sol"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should hit OpenAI alpha search handler", path)
+	}
+}
+
+func TestGatewayRoutesAlphaSearchRejectsNonOpenAIGroup(t *testing.T) {
+	groupID := int64(1)
+	router := newGatewayRoutesTestRouterWithAPIKey(&service.APIKey{
+		GroupID: &groupID,
+		UserID:  7,
+		User:    &service.User{ID: 7, Status: service.StatusActive},
+		Group:   &service.Group{Platform: service.PlatformAnthropic},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/alpha/search", strings.NewReader(`{"model":"gpt-5.6-sol"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Contains(t, w.Body.String(), "only available for OpenAI groups")
+}
+
 func TestGatewayRoutesWhamUsagePathsAreRegisteredWithoutGroupAssignment(t *testing.T) {
 	router := newGatewayRoutesTestRouterWithAPIKey(&service.APIKey{
 		ID:     100,
