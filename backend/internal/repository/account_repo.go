@@ -57,6 +57,7 @@ var schedulerNeutralExtraKeyPrefixes = []string{
 	"codex_5h_",
 	"codex_7d_",
 	"passive_usage_",
+	"upstream_billing_probe",
 }
 
 var schedulerNeutralExtraKeys = map[string]struct{}{
@@ -316,109 +317,11 @@ func (r *accountRepository) ListCRSAccountIDs(ctx context.Context) (map[string]i
 }
 
 func (r *accountRepository) Update(ctx context.Context, account *service.Account) error {
-	if account == nil {
-		return nil
-	}
-	schedulable := account.Schedulable
-	if account.Status == service.StatusError {
-		schedulable = false
-	}
-
-	builder := r.client.Account.UpdateOneID(account.ID).
-		SetName(account.Name).
-		SetNillableNotes(account.Notes).
-		SetPlatform(account.Platform).
-		SetType(account.Type).
-		SetCredentials(normalizeJSONMap(account.Credentials)).
-		SetExtra(normalizeJSONMap(account.Extra)).
-		SetConcurrency(account.Concurrency).
-		SetPriority(account.Priority).
-		SetStatus(account.Status).
-		SetErrorMessage(account.ErrorMessage).
-		SetSchedulable(schedulable).
-		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
-
-	if account.RateMultiplier != nil {
-		builder.SetRateMultiplier(*account.RateMultiplier)
-	}
-	if account.LoadFactor != nil {
-		builder.SetLoadFactor(*account.LoadFactor)
-	} else {
-		builder.ClearLoadFactor()
-	}
-
-	if account.ProxyID != nil {
-		builder.SetProxyID(*account.ProxyID)
-	} else {
-		builder.ClearProxyID()
-	}
-	if account.LastUsedAt != nil {
-		builder.SetLastUsedAt(*account.LastUsedAt)
-	} else {
-		builder.ClearLastUsedAt()
-	}
-	if account.ExpiresAt != nil {
-		builder.SetExpiresAt(*account.ExpiresAt)
-	} else {
-		builder.ClearExpiresAt()
-	}
-	if account.RateLimitedAt != nil {
-		builder.SetRateLimitedAt(*account.RateLimitedAt)
-	} else {
-		builder.ClearRateLimitedAt()
-	}
-	if account.RateLimitResetAt != nil {
-		builder.SetRateLimitResetAt(*account.RateLimitResetAt)
-	} else {
-		builder.ClearRateLimitResetAt()
-	}
-	if account.OverloadUntil != nil {
-		builder.SetOverloadUntil(*account.OverloadUntil)
-	} else {
-		builder.ClearOverloadUntil()
-	}
-	if account.SessionWindowStart != nil {
-		builder.SetSessionWindowStart(*account.SessionWindowStart)
-	} else {
-		builder.ClearSessionWindowStart()
-	}
-	if account.SessionWindowEnd != nil {
-		builder.SetSessionWindowEnd(*account.SessionWindowEnd)
-	} else {
-		builder.ClearSessionWindowEnd()
-	}
-	if account.SessionWindowStatus != "" {
-		builder.SetSessionWindowStatus(account.SessionWindowStatus)
-	} else {
-		builder.ClearSessionWindowStatus()
-	}
-	if account.Notes == nil {
-		builder.ClearNotes()
-	}
-
-	updated, err := builder.Save(ctx)
-	if err != nil {
-		return translatePersistenceError(err, service.ErrAccountNotFound, nil)
-	}
-	account.UpdatedAt = updated.UpdatedAt
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, buildSchedulerGroupPayload(account.GroupIDs)); err != nil {
-		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue account update failed: account=%d err=%v", account.ID, err)
-	}
-	// 普通账号编辑（如 model_mapping / credentials）也需要立即刷新单账号快照，
-	// 否则网关在 outbox worker 延迟或异常时仍可能读到旧配置。
-	r.syncSchedulerAccountSnapshot(ctx, account.ID)
-	return nil
+	return r.updateAccountWithProbe(ctx, account)
 }
 
 func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
-	_, err := r.client.Account.UpdateOneID(id).
-		SetCredentials(normalizeJSONMap(credentials)).
-		Save(ctx)
-	if err != nil {
-		return translatePersistenceError(err, service.ErrAccountNotFound, nil)
-	}
-	r.syncSchedulerAccountSnapshot(ctx, id)
-	return nil
+	return r.updateCredentialsWithProbe(ctx, id, credentials)
 }
 
 func (r *accountRepository) Delete(ctx context.Context, id int64) error {
@@ -1463,45 +1366,7 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 }
 
 func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
-	if len(updates) == 0 {
-		return nil
-	}
-
-	// 使用 JSONB 合并操作实现原子更新，避免读-改-写的并发丢失更新问题
-	payload, err := json.Marshal(updates)
-	if err != nil {
-		return err
-	}
-
-	client := clientFromContext(ctx, r.client)
-	result, err := client.ExecContext(
-		ctx,
-		"UPDATE accounts SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL",
-		string(payload), id,
-	)
-
-	if err != nil {
-		return err
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return service.ErrAccountNotFound
-	}
-	if shouldEnqueueSchedulerOutboxForExtraUpdates(updates) {
-		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
-			logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue extra update failed: account=%d err=%v", id, err)
-		}
-	} else {
-		// 观测型 extra 字段不需要触发 bucket 重建，但仍同步单账号快照，
-		// 让 sticky session / GetAccount 命中缓存时也能读到最新数据，
-		// 同时避免缓存局部 patch 覆盖掉并发写入的其它账号字段。
-		r.syncSchedulerAccountSnapshot(ctx, id)
-	}
-	return nil
+	return r.updateExtraWithProbe(ctx, id, updates)
 }
 
 func shouldEnqueueSchedulerOutboxForExtraUpdates(updates map[string]any) bool {
@@ -1606,7 +1471,11 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		if err != nil {
 			return 0, err
 		}
-		setClauses = append(setClauses, "extra = COALESCE(extra, '{}'::jsonb) || $"+itoa(idx)+"::jsonb")
+		extraExpression := "COALESCE(extra, '{}'::jsonb) || $" + itoa(idx) + "::jsonb"
+		if upstreamBillingProbeExplicitlyDisabled(updates.Extra) || upstreamBillingProbeSnapshotClearRequested(updates.Extra) {
+			extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
+		}
+		setClauses = append(setClauses, "extra = "+extraExpression)
 		args = append(args, payload)
 		idx++
 	}
@@ -1620,7 +1489,26 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	query := "UPDATE accounts SET " + joinClauses(setClauses, ", ") + " WHERE id = ANY($" + itoa(idx) + ") AND deleted_at IS NULL"
 	args = append(args, pq.Array(ids))
 
-	result, err := r.sql.ExecContext(ctx, query, args...)
+	baseCtx := ctx
+	contextTx := dbent.TxFromContext(ctx)
+	exec := r.sql
+	var tx *dbent.Tx
+	if contextTx != nil {
+		exec = contextTx.Client()
+	} else if r.client != nil {
+		var txErr error
+		tx, txErr = r.client.Tx(ctx)
+		if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
+			return 0, txErr
+		}
+		if tx != nil {
+			defer func() { _ = tx.Rollback() }()
+			ctx = dbent.NewTxContext(ctx, tx)
+			exec = tx.Client()
+		}
+	}
+
+	result, err := exec.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -1630,9 +1518,16 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	}
 	if rows > 0 {
 		payload := map[string]any{"account_ids": ids}
-		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
-			logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue bulk update failed: err=%v", err)
+		if err := enqueueSchedulerOutbox(ctx, exec, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
+			return 0, err
 		}
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+	}
+	if rows > 0 && contextTx == nil {
 		shouldSync := false
 		if updates.Status != nil && (*updates.Status == service.StatusError || *updates.Status == service.StatusDisabled) {
 			shouldSync = true
@@ -1641,7 +1536,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			shouldSync = true
 		}
 		if shouldSync {
-			r.syncSchedulerAccountSnapshots(ctx, ids)
+			r.syncSchedulerAccountSnapshots(baseCtx, ids)
 		}
 	}
 	return rows, nil

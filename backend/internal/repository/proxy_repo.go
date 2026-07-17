@@ -91,7 +91,30 @@ func (r *proxyRepository) ListByIDs(ctx context.Context, ids []int64) ([]service
 }
 
 func (r *proxyRepository) Update(ctx context.Context, proxyIn *service.Proxy) error {
-	builder := r.client.Proxy.UpdateOneID(proxyIn.ID).
+	client := r.client
+	exec := r.sql
+	var tx *dbent.Tx
+	if contextTx := dbent.TxFromContext(ctx); contextTx != nil {
+		client = contextTx.Client()
+		exec = contextTx
+	} else {
+		var txErr error
+		tx, txErr = r.client.Tx(ctx)
+		if txErr == nil {
+			defer func() { _ = tx.Rollback() }()
+			client = tx.Client()
+			exec = tx
+		} else if txErr != dbent.ErrTxStarted {
+			return txErr
+		}
+	}
+
+	previous, err := lockProbeProxyIdentity(ctx, exec, proxyIn.ID)
+	if err != nil {
+		return err
+	}
+
+	builder := client.Proxy.UpdateOneID(proxyIn.ID).
 		SetName(proxyIn.Name).
 		SetProtocol(proxyIn.Protocol).
 		SetHost(proxyIn.Host).
@@ -121,14 +144,25 @@ func (r *proxyRepository) Update(ctx context.Context, proxyIn *service.Proxy) er
 	}
 
 	updated, err := builder.Save(ctx)
-	if err == nil {
-		applyProxyEntityToService(proxyIn, updated)
-		return nil
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return service.ErrProxyNotFound
+		}
+		return err
 	}
-	if dbent.IsNotFound(err) {
-		return service.ErrProxyNotFound
+
+	if previous != probeProxyIdentityFromService(proxyIn) {
+		if err := clearProbeSnapshotsForProxy(ctx, exec, proxyIn.ID); err != nil {
+			return err
+		}
 	}
-	return err
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	applyProxyEntityToService(proxyIn, updated)
+	return nil
 }
 
 func (r *proxyRepository) Delete(ctx context.Context, id int64) error {
@@ -569,6 +603,9 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 		return 0, err
 	}
 	if !change {
+		if err := clearProbeSnapshotsForProxy(ctx, exec, proxyID); err != nil {
+			return 0, err
+		}
 		return 0, nil
 	}
 	var (
@@ -577,11 +614,23 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 	)
 	if target == nil {
 		res, err = exec.ExecContext(ctx, `
-			UPDATE accounts SET proxy_id=NULL, proxy_fallback_origin_id=$1, updated_at=NOW()
+			UPDATE accounts
+			SET proxy_id=NULL,
+				proxy_fallback_origin_id=$1,
+				extra = CASE WHEN platform='openai' AND type='apikey'
+					THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe'
+					ELSE extra END,
+				updated_at=NOW()
 			WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL`, proxyID)
 	} else {
 		res, err = exec.ExecContext(ctx, `
-			UPDATE accounts SET proxy_id=$2, proxy_fallback_origin_id=$1, updated_at=NOW()
+			UPDATE accounts
+			SET proxy_id=$2,
+				proxy_fallback_origin_id=$1,
+				extra = CASE WHEN platform='openai' AND type='apikey'
+					THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe'
+					ELSE extra END,
+				updated_at=NOW()
 			WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL`, proxyID, *target)
 	}
 	if err != nil {
