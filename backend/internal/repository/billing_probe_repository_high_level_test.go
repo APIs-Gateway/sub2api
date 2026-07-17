@@ -225,6 +225,57 @@ func TestProxyUpdateRollsBackWhenProbeOutboxFails(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestBulkUpdateProbeClearUsesTransactionAndOutbox(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE accounts SET .*extra = .* - 'upstream_billing_probe'`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	rows, err := repo.BulkUpdate(context.Background(), []int64{27}, service.AccountBulkUpdate{
+		Extra: map[string]any{service.UpstreamBillingProbeExtraKey: nil},
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSweepExpiredProxyClearsProbeForBothFallbackModes(t *testing.T) {
+	t.Run("without fallback clears snapshots", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		mock.ExpectExec(`UPDATE proxies SET status=\$1`).
+			WithArgs(service.StatusExpired, int64(9)).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
+			WithArgs(int64(9)).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(17)))
+		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+
+		repo := &proxyRepository{}
+		_, err := repo.sweepOneExpiredProxyOnExec(context.Background(), db, 9, nil, false)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("fallback target updates accounts and clears snapshots", func(t *testing.T) {
+		exec := &recordingSQLExecutor{result: rowsAffectedResult(2)}
+		target := int64(11)
+		repo := &proxyRepository{}
+		changed, err := repo.sweepOneExpiredProxyOnExec(context.Background(), exec, 9, &target, true)
+		require.NoError(t, err)
+		require.EqualValues(t, 2, changed)
+		require.Len(t, exec.execQueries, 2)
+		require.Contains(t, exec.execQueries[1], "proxy_id=$2")
+		require.Contains(t, exec.execQueries[1], "- 'upstream_billing_probe'")
+	})
+}
+
 func updatedProbeAccountRows(id int64, extra string) *sqlmock.Rows {
 	now := time.Now().UTC()
 	return sqlmock.NewRows(dbaccount.Columns).AddRow(
