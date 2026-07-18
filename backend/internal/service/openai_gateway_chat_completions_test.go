@@ -96,6 +96,7 @@ func TestOpenAIUpstreamStreamReadError_ClassifiesGenericAndHTTP2Variants(t *test
 	require.True(t, ok)
 	require.Equal(t, OpenAIUpstreamStreamReadErrorCode, code)
 	require.Equal(t, "Upstream response stream was interrupted", message)
+	require.Equal(t, "stream usage incomplete: connection reset by peer", genericErr.Error())
 	require.ErrorIs(t, genericErr, genericCause)
 
 	http2Err := newOpenAIUpstreamStreamReadError(errors.New("http2: stream closed"))
