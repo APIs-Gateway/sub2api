@@ -8,8 +8,10 @@ import (
 )
 
 type BackupHandler struct {
-	backupService *service.BackupService
-	userService   *service.UserService
+	backupService  *service.BackupService
+	userService    *service.UserService
+	totpService    *service.TotpService
+	settingService *service.SettingService
 }
 
 func NewBackupHandler(backupService *service.BackupService, userService *service.UserService) *BackupHandler {
@@ -17,6 +19,16 @@ func NewBackupHandler(backupService *service.BackupService, userService *service
 		backupService: backupService,
 		userService:   userService,
 	}
+}
+
+// SetStepUpDeps wires the optional sensitive-operation gate after construction.
+func (h *BackupHandler) SetStepUpDeps(totpService *service.TotpService, settingService *service.SettingService) {
+	h.totpService = totpService
+	h.settingService = settingService
+}
+
+func (h *BackupHandler) requireStepUp(c *gin.Context) bool {
+	return middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService)
 }
 
 // ─── S3 配置 ───
@@ -31,6 +43,9 @@ func (h *BackupHandler) GetS3Config(c *gin.Context) {
 }
 
 func (h *BackupHandler) UpdateS3Config(c *gin.Context) {
+	if !h.requireStepUp(c) {
+		return
+	}
 	var req service.BackupS3Config
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -90,6 +105,9 @@ type CreateBackupRequest struct {
 }
 
 func (h *BackupHandler) CreateBackup(c *gin.Context) {
+	if !h.requireStepUp(c) {
+		return
+	}
 	var req CreateBackupRequest
 	_ = c.ShouldBindJSON(&req) // 允许空 body
 
@@ -146,6 +164,9 @@ func (h *BackupHandler) DeleteBackup(c *gin.Context) {
 }
 
 func (h *BackupHandler) GetDownloadURL(c *gin.Context) {
+	if !h.requireStepUp(c) {
+		return
+	}
 	backupID := c.Param("id")
 	if backupID == "" {
 		response.BadRequest(c, "backup ID is required")
@@ -166,6 +187,9 @@ type RestoreBackupRequest struct {
 }
 
 func (h *BackupHandler) RestoreBackup(c *gin.Context) {
+	if !h.requireStepUp(c) {
+		return
+	}
 	backupID := c.Param("id")
 	if backupID == "" {
 		response.BadRequest(c, "backup ID is required")

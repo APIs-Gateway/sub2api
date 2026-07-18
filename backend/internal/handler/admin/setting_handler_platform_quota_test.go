@@ -81,6 +81,55 @@ func TestDiffSettingsDetectsSessionBindingChange(t *testing.T) {
 	require.Contains(t, changed, service.SettingKeySessionBindingEnabled)
 }
 
+func TestDiffSettingsDetectsStepUpChange(t *testing.T) {
+	changed := diffSettings(
+		&service.SystemSettings{StepUpEnabled: false},
+		&service.SystemSettings{StepUpEnabled: true},
+		nil,
+		nil,
+		UpdateSettingsRequest{},
+	)
+	require.Contains(t, changed, service.SettingKeyStepUpEnabled)
+}
+
+func TestUpdateSettingsSecuritySwitchTransitions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	newHandler := func(values map[string]string) (*SettingHandler, *settingHandlerRepoStub) {
+		repo := &settingHandlerRepoStub{values: values}
+		svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
+		return NewSettingHandler(svc, nil, nil, nil, nil, nil, nil), repo
+	}
+	doUpdate := func(handler *SettingHandler, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewBufferString(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		handler.UpdateSettings(c)
+		return rec
+	}
+
+	handler, repo := newHandler(map[string]string{
+		service.SettingKeyStepUpEnabled:         "true",
+		service.SettingKeySessionBindingEnabled: "true",
+	})
+	rec := doUpdate(handler, `{"registration_enabled":true}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", repo.values[service.SettingKeyStepUpEnabled])
+	require.Equal(t, "true", repo.values[service.SettingKeySessionBindingEnabled])
+
+	handler, repo = newHandler(map[string]string{})
+	rec = doUpdate(handler, `{"step_up_enabled":true}`)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Contains(t, rec.Body.String(), "STEP_UP_ENABLE_REQUIRES_TOTP")
+	require.NotEqual(t, "true", repo.values[service.SettingKeyStepUpEnabled])
+
+	handler, repo = newHandler(map[string]string{service.SettingKeyStepUpEnabled: "true"})
+	rec = doUpdate(handler, `{"step_up_enabled":false}`)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Equal(t, "true", repo.values[service.SettingKeyStepUpEnabled])
+}
+
 func TestEqualNullableFloat(t *testing.T) {
 	five := 5.0
 	five2 := 5.0

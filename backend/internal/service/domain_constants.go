@@ -227,7 +227,10 @@ const (
 	SettingKeyTotpEnabled = "totp_enabled" // 是否启用 TOTP 2FA 功能
 
 	// 会话安全设置
-	SettingKeySessionBindingEnabled = "session_binding_enabled" // 是否启用会话 IP/UA 绑定，默认开启
+	SettingKeySessionBindingEnabled = "session_binding_enabled" // 是否启用会话 IP/UA 绑定，默认关闭
+
+	// 敏感操作 step-up 2FA 设置
+	SettingKeyStepUpEnabled = "step_up_enabled" // 是否启用敏感操作 step-up 2FA，默认关闭
 
 	// LinuxDo Connect OAuth 登录设置
 	SettingKeyLinuxDoConnectEnabled      = "linuxdo_connect_enabled"

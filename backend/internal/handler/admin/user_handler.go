@@ -32,6 +32,13 @@ type UserHandler struct {
 	billingCache          service.BillingCache                // T17/T18 缓存失效（PUT/POST 路径）
 	totpService           *service.TotpService
 	userService           *service.UserService
+	settingService        *service.SettingService
+}
+
+// SetStepUpSettingService wires the optional feature switch without changing
+// the constructor signature used by focused handler tests.
+func (h *UserHandler) SetStepUpSettingService(settingService *service.SettingService) {
+	h.settingService = settingService
 }
 
 // NewUserHandler creates a new admin user handler
@@ -272,7 +279,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		return
 	}
 
-	if req.Role == service.RoleAdmin && !servermiddleware.EnforceStepUp(c, h.totpService, h.userService) {
+	if req.Role == service.RoleAdmin && !servermiddleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
 		return
 	}
 
@@ -316,7 +323,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 			response.ErrorFrom(c, err)
 			return
 		}
-		if target.Role != service.RoleAdmin && !servermiddleware.EnforceStepUp(c, h.totpService, h.userService) {
+		if target.Role != service.RoleAdmin && !servermiddleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
 			return
 		}
 	}
