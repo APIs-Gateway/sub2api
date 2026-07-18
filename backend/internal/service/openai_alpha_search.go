@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -245,7 +246,7 @@ func buildOpenAIAlphaSearchResponsesWebSearchBody(alphaBody []byte, model string
 	}
 	if userLocation := gjson.GetBytes(alphaBody, "settings.user_location"); userLocation.IsObject() {
 		var loc map[string]any
-		if err := json.Unmarshal([]byte(userLocation.Raw), &loc); err == nil && len(loc) > 0 {
+		if err := common.Unmarshal([]byte(userLocation.Raw), &loc); err == nil && len(loc) > 0 {
 			tool["user_location"] = loc
 		}
 	}
@@ -266,7 +267,7 @@ func buildOpenAIAlphaSearchResponsesWebSearchBody(alphaBody []byte, model string
 		},
 		"tools": []any{tool},
 	}
-	return json.Marshal(payload)
+	return common.Marshal(payload)
 }
 
 func openAIAlphaSearchResponsesWebSearchPrompt(alphaBody []byte) string {
@@ -373,7 +374,7 @@ func openAIAlphaSearchResponseFromResponsesSSE(body []byte) ([]byte, error) {
 	if len(results) > 0 {
 		resp["results"] = results
 	}
-	return json.Marshal(resp)
+	return common.Marshal(resp)
 }
 
 func parseOpenAIResponsesSSEForAlphaSearch(body []byte) (string, []any) {
@@ -389,7 +390,7 @@ func parseOpenAIResponsesSSEForAlphaSearch(body []byte) (string, []any) {
 			continue
 		}
 		var event map[string]any
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
+		if err := common.Unmarshal([]byte(data), &event); err != nil {
 			continue
 		}
 		if delta, _ := event["delta"].(string); delta != "" && event["type"] == "response.output_text.delta" {
@@ -524,7 +525,7 @@ func sanitizeOpenAIAlphaSearchBody(body []byte) ([]byte, error) {
 		return body, nil
 	}
 	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
+	if err := common.Unmarshal(body, &obj); err != nil || obj == nil {
 		return body, nil
 	}
 	changed := false
@@ -537,7 +538,7 @@ func sanitizeOpenAIAlphaSearchBody(body []byte) ([]byte, error) {
 	if !changed {
 		return body, nil
 	}
-	out, err := json.Marshal(obj)
+	out, err := common.Marshal(obj)
 	if err != nil {
 		return nil, err
 	}
