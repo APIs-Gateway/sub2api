@@ -661,6 +661,15 @@
     invalidOrExpiredToken: '密碼重置連結無效或已過期。請重新請求一個新連結。'
   },
 
+  // Step-up（敏感操作二次驗證）
+  stepUp: {
+    title: '需要二次驗證',
+    hint: '請輸入身份驗證器應用中的 6 位驗證碼以繼續此敏感操作。',
+    verifyFailed: '驗證失敗，請重試',
+    notEnabled: '此操作需要開啟二次驗證，請先在個人資料中啟用 TOTP。',
+    adminApiKeyForbidden: '管理 API Key 無法執行此操作，請使用已通過二次驗證的管理員會話。'
+  },
+
   // Dashboard
   dashboard: {
     title: '儀表盤',
@@ -3695,6 +3704,7 @@
       types: {
         oauth: 'OAuth',
         chatgptOauth: 'ChatGPT OAuth',
+        agentIdentity: 'Agent Identity',
         responsesApi: 'Responses API',
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',
@@ -4323,6 +4333,12 @@
           codexSessionImportFailed: 'Codex 帳號匯入失敗',
           codexSessionImportSuccess: '匯入完成：新增 {created}，更新 {updated}，跳過 {skipped}',
           codexSessionImportPartial: '部分成功：新增 {created}，更新 {updated}，跳過 {skipped}，失敗 {failed}',
+          agentIdentityAuth: 'Agent Identity auth.json',
+          agentIdentityDesc: '匯入 Codex Agent Identity auth.json，不儲存 OAuth access token 或 refresh token。',
+          agentIdentityInputLabel: 'Agent Identity auth.json',
+          agentIdentityPlaceholder: '貼上一個 Agent Identity auth.json 物件',
+          agentIdentityHint: '檔案必須使用 auth_mode=agentIdentity；每次上游請求都會動態簽名。',
+          agentIdentityInvalid: '請選擇使用 auth_mode=agentIdentity 的 Codex auth.json。',
           sessionTokenAuth: '手動輸入 ST',
           sessionTokenDesc: '輸入您已有的 Session Token，支持批量輸入（每行一個），系統將自動驗證并創建帳號。',
           sessionTokenPlaceholder: '粘貼您的 Session Token...\n支持多個，每行一個',

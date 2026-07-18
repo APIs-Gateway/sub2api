@@ -33,8 +33,10 @@ type CodexModelsManifest struct {
 }
 
 type codexModelsManifestUpstreamError struct {
-	err       error
-	retryable bool
+	err        error
+	retryable  bool
+	statusCode int
+	body       []byte
 }
 
 func (e *codexModelsManifestUpstreamError) Error() string { return e.err.Error() }
@@ -153,11 +155,30 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	if clientVersion == "" {
 		clientVersion = openAICodexProbeVersion
 	}
+	manifest, fetchErr := s.fetchCodexModelsManifestUpstream(ctx, account, clientVersion, ifNoneMatch)
+	if !account.IsOpenAIAgentIdentity() || !isAgentIdentityTaskInvalidCodexModelsError(fetchErr) {
+		return manifest, fetchErr
+	}
+	expectedTaskID := strings.TrimSpace(account.GetCredential("task_id"))
+	if recoverErr := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); recoverErr != nil {
+		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_AUTH_FAILED", "agent identity task recovery failed: %v", recoverErr)
+	}
+	return s.fetchCodexModelsManifestUpstream(ctx, account, clientVersion, ifNoneMatch)
+}
 
+func isAgentIdentityTaskInvalidCodexModelsError(err error) bool {
+	var upstreamErr *codexModelsManifestUpstreamError
+	return errors.As(err, &upstreamErr) &&
+		isAgentIdentityTaskInvalidHTTPResponse(upstreamErr.statusCode, upstreamErr.body)
+}
+
+func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*CodexModelsManifest, error) {
 	requestURL := chatgptCodexModelsURL
 	authToken := ""
 	apiKeyUpstream := false
 	switch {
+	case account.IsOpenAIAgentIdentity():
+		requestURL += "?client_version=" + url.QueryEscape(clientVersion)
 	case account.IsOpenAIOAuth():
 		authToken = account.GetOpenAIAccessToken()
 		if authToken == "" {
@@ -169,8 +190,7 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 		if authToken == "" {
 			return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_API_KEY_MISSING", "account has no API key for the Codex models upstream")
 		}
-		baseURL := account.GetOpenAIBaseURL()
-		validatedURL, err := s.validateUpstreamBaseURL(baseURL)
+		validatedURL, err := s.validateUpstreamBaseURL(account.GetOpenAIBaseURL())
 		if err != nil {
 			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_API_KEY_UPSTREAM_INVALID", "invalid Codex models upstream base URL: %v", err)
 		}
@@ -194,7 +214,19 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_REQUEST_FAILED", "create codex models request: %v", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+authToken)
+	if account.IsOpenAIAgentIdentity() {
+		authHeaders, authErr := BuildOpenAIAgentIdentityAuthenticationHeaders(reqCtx, s.accountRepo, account)
+		if authErr != nil {
+			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_AUTH_FAILED", "build Codex models authentication: %v", authErr)
+		}
+		for key, values := range authHeaders {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+	} else {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Originator", "codex_cli_rs")
 	req.Header.Set("Version", clientVersion)
@@ -248,12 +280,15 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		body = s.redactAgentIdentitySensitiveBody(reqCtx, account, body)
 		message := strings.TrimSpace(string(body))
 		if message == "" {
 			message = resp.Status
 		}
 		return nil, &codexModelsManifestUpstreamError{
-			err: infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest upstream error %d: %s", resp.StatusCode, message),
+			err:        infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest upstream error %d: %s", resp.StatusCode, message),
+			statusCode: resp.StatusCode,
+			body:       body,
 			retryable: resp.StatusCode == http.StatusTooManyRequests ||
 				(resp.StatusCode >= http.StatusInternalServerError && resp.StatusCode < 600),
 		}

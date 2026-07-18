@@ -662,6 +662,15 @@
     invalidOrExpiredToken: 'The password reset link is invalid or has expired. Please request a new one.'
   },
 
+  // Step-up (sudo) 2FA prompt
+  stepUp: {
+    title: 'Two-Factor Verification Required',
+    hint: 'Enter the 6-digit code from your authenticator app to continue this sensitive operation.',
+    verifyFailed: 'Verification failed, please try again',
+    notEnabled: 'This operation requires two-factor authentication. Please enable TOTP in your profile first.',
+    adminApiKeyForbidden: 'Admin API keys cannot perform this operation. Use a two-factor verified admin session.'
+  },
+
   // Dashboard
   dashboard: {
     title: 'Dashboard',
@@ -3595,6 +3604,7 @@
       types: {
         oauth: 'OAuth',
         chatgptOauth: 'ChatGPT OAuth',
+        agentIdentity: 'Agent Identity',
         responsesApi: 'Responses API',
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',
@@ -4268,6 +4278,12 @@
           codexSessionImportFailed: 'Failed to import Codex account',
           codexSessionImportSuccess: 'Import completed: created {created}, updated {updated}, skipped {skipped}',
           codexSessionImportPartial: 'Partial success: created {created}, updated {updated}, skipped {skipped}, failed {failed}',
+          agentIdentityAuth: 'Agent Identity auth.json',
+          agentIdentityDesc: 'Import a Codex Agent Identity auth.json. No OAuth access or refresh token is stored.',
+          agentIdentityInputLabel: 'Agent Identity auth.json',
+          agentIdentityPlaceholder: 'Paste one Agent Identity auth.json object',
+          agentIdentityHint: 'The file must use auth_mode=agentIdentity. Upstream requests are signed dynamically.',
+          agentIdentityInvalid: 'Use a Codex auth.json with auth_mode=agentIdentity.',
           sessionTokenAuth: 'Manual ST Input',
           sessionTokenDesc: 'Enter your existing Session Token(s). Supports batch input (one per line). The system will automatically validate and create accounts.',
           sessionTokenPlaceholder: 'Paste your Session Token...\nSupports multiple, one per line',
