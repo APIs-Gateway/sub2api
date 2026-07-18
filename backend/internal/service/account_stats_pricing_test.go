@@ -507,6 +507,20 @@ func TestTryModelFilePricing_AppliesLongContextPricing(t *testing.T) {
 	require.InDelta(t, 544.033, *result, 1e-12)
 }
 
+func TestTryModelFilePricing_LongContextZeroCostFallsBackToNil(t *testing.T) {
+	bs := newTestBillingServiceWithPrices(map[string]*ModelPricing{
+		"gpt-5.6-sol": {
+			LongContextInputThreshold:   272_000,
+			LongContextInputMultiplier:  2,
+			LongContextOutputMultiplier: 1.5,
+		},
+	})
+
+	result := tryModelFilePricing(bs, "gpt-5.6-sol", UsageTokens{InputTokens: 272_001})
+
+	require.Nil(t, result)
+}
+
 func TestTryModelFilePricing_PricingNotFound(t *testing.T) {
 	// "nonexistent-model" does not match any fallback pattern
 	bs := newTestBillingServiceWithPrices(map[string]*ModelPricing{})
