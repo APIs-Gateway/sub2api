@@ -277,8 +277,14 @@ func openAIJSONToolChoiceSelectsExplicitImageGeneration(choice gjson.Result) boo
 	if !choice.IsObject() {
 		return false
 	}
-	if isOpenAIImageGenerationType(openAIJSONString(choice.Get("type"))) ||
+	choiceType := openAIJSONString(choice.Get("type"))
+	if isOpenAIImageGenerationType(choiceType) ||
 		isOpenAIImageGenerationType(openAIJSONString(choice.Get("function.name"))) {
+		return true
+	}
+	if choiceType == "namespace" &&
+		(isOpenAIImageGenNamespaceName(openAIJSONString(choice.Get("name"))) ||
+			isOpenAIImageGenNamespaceName(openAIJSONString(choice.Get("namespace")))) {
 		return true
 	}
 	tool := choice.Get("tool")

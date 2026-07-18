@@ -73,6 +73,16 @@ func TestIsExplicitOpenAIResponsesWebSocketImageGenerationIntent(t *testing.T) {
 			frame: `{"type":"session.update","session":{"model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}]}}`,
 		},
 		{
+			name:  "explicit response create namespace is explicit",
+			frame: `{"type":"response.create","model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}],"tool_choice":{"type":"namespace","name":"image_gen"}}`,
+			want:  true,
+		},
+		{
+			name:  "explicit session update namespace is explicit",
+			frame: `{"type":"session.update","session":{"model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}],"tool_choice":{"type":"namespace","name":"image_gen"}}}`,
+			want:  true,
+		},
+		{
 			name:  "native response create tool is explicit",
 			frame: `{"type":"response.create","model":"gpt-5.5","tools":[{"type":"image_generation"}]}`,
 			want:  true,

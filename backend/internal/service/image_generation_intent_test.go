@@ -166,6 +166,20 @@ func TestIsExplicitImageGenerationIntent(t *testing.T) {
 			want:     true,
 		},
 		{
+			name:     "explicit image namespace tool choice is explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}],"tool_choice":{"type":"namespace","name":"image_gen"}}`,
+			want:     true,
+		},
+		{
+			name:     "nested explicit image namespace tool choice is explicit",
+			endpoint: "/v1/responses",
+			model:    "gpt-5.5",
+			body:     `{"model":"gpt-5.5","tool_choice":{"tool":{"type":"namespace","namespace":"image_gen"}}}`,
+			want:     true,
+		},
+		{
 			name:     "nested explicit tool choice is explicit",
 			endpoint: "/v1/responses",
 			model:    "gpt-5.5",
