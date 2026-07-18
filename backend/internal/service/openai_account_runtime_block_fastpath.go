@@ -49,6 +49,13 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	if len(requestedModel) > 0 && s.rateLimitService.HandleUpstreamModelNotFound(stateCtx, account, requestedModel[0], statusCode, responseBody) {
 		return true
 	}
+	stateCtx = withTempUnschedulableModel(stateCtx, requestedModel)
+	// Preserve the fork's 429 sliding-window gate; a custom rule must not turn
+	// one transient rate-limit response into an immediate model cooldown.
+	if statusCode != http.StatusUnauthorized && statusCode != http.StatusTooManyRequests && len(requestedModel) > 0 &&
+		s.rateLimitService.HandleTempUnschedulable(stateCtx, account, statusCode, responseBody, requestedModel[0]) {
+		return true
+	}
 	shouldDisable := s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody)
 	if statusCode == http.StatusTooManyRequests {
 		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
