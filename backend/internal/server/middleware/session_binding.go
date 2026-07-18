@@ -23,25 +23,6 @@ func SessionBindingContext(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-// requestSessionBinding returns the binding injected for the current request.
-// Direct callers without the global middleware retain the trusted-chain fallback.
-func requestSessionBinding(c *gin.Context) *service.SessionBinding {
-	if c != nil && c.Request != nil {
-		if binding := service.SessionBindingFromContext(c.Request.Context()); binding != nil {
-			return binding
-		}
-	}
-
-	userAgent := ""
-	if c != nil && c.Request != nil {
-		userAgent = c.Request.UserAgent()
-	}
-	return &service.SessionBinding{
-		IP:        ip.GetTrustedClientIP(c),
-		UserAgent: userAgent,
-	}
-}
-
 // SecurityClientIP returns the IP used by security-sensitive records.
 func SecurityClientIP(c *gin.Context) string {
 	if c != nil && c.Request != nil {

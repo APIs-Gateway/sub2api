@@ -111,28 +111,3 @@ func TestSecurityClientIPFallsBackWithoutInjectedBinding(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "9.9.9.9", w.Body.String())
 }
-
-func TestRequestSessionBindingPrefersInjectedBinding(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	cfg := &config.Config{}
-	cfg.SetTrustForwardedIPForAPIKeyACL(true)
-
-	router := gin.New()
-	require.NoError(t, router.SetTrustedProxies(nil))
-	router.Use(SessionBindingContext(cfg))
-	router.GET("/binding", func(c *gin.Context) {
-		issued := &service.SessionBinding{IP: "1.2.3.4", UserAgent: "test-agent"}
-		require.Equal(t, issued.Hash(), requestSessionBinding(c).Hash())
-		c.Status(http.StatusOK)
-	})
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/binding", nil)
-	req.RemoteAddr = "127.0.0.1:54321"
-	req.Header.Set("X-Real-IP", "1.2.3.4")
-	req.Header.Set("User-Agent", "test-agent")
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-}
