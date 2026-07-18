@@ -528,12 +528,15 @@ async function loadBackups() {
 async function createBackup() {
   creatingBackup.value = true
   try {
-    const record = await adminAPI.backup.createBackup({ expire_days: manualExpireDays.value })
+    const record = await backupStepUp.run(() =>
+      adminAPI.backup.createBackup({ expire_days: manualExpireDays.value }),
+    )
     // 插入到列表顶部
     backups.value.unshift(record)
     startPolling(record.id)
   } catch (error: any) {
-    if (error?.response?.status === 409) {
+    if (isStepUpCancelled(error)) return
+    if (error?.status === 409 || error?.response?.status === 409) {
       appStore.showWarning(t('admin.backup.operations.alreadyInProgress'))
     } else {
       appStore.showError(error?.message || t('errors.networkError'))
@@ -544,9 +547,10 @@ async function createBackup() {
 
 async function downloadBackup(id: string) {
   try {
-    const result = await adminAPI.backup.getDownloadURL(id)
+    const result = await backupStepUp.run(() => adminAPI.backup.getDownloadURL(id))
     window.open(result.url, '_blank')
   } catch (error) {
+    if (isStepUpCancelled(error)) return
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
   }
 }
@@ -557,16 +561,17 @@ async function restoreBackup(id: string) {
   if (!password) return
   restoringId.value = id
   try {
-    const record = await adminAPI.backup.restoreBackup(id, password)
+    const record = await backupStepUp.run(() => adminAPI.backup.restoreBackup(id, password))
     updateRecordInList(record)
     startRestorePolling(id)
   } catch (error: any) {
-    if (error?.response?.status === 409) {
+    restoringId.value = ''
+    if (isStepUpCancelled(error)) return
+    if (error?.status === 409 || error?.response?.status === 409) {
       appStore.showWarning(t('admin.backup.operations.restoreRunning'))
     } else {
       appStore.showError(error?.message || t('errors.networkError'))
     }
-    restoringId.value = ''
   }
 }
 

@@ -6146,7 +6146,12 @@
         totp: '雙因素認證 (2FA)',
         totpHint: '允許用戶使用 Google Authenticator 等應用進行二次驗證',
         totpKeyNotConfigured:
-          '請先在環境變量中配置 TOTP_ENCRYPTION_KEY。使用命令 openssl rand -hex 32 生成金鑰。'
+          '請先在環境變量中配置 TOTP_ENCRYPTION_KEY。使用命令 openssl rand -hex 32 生成金鑰。',
+        stepUp: '敏感操作二次驗證 (step-up 2FA)',
+        stepUpHint: '開啟後，提升管理員、建立/下載/恢復備份、修改 S3 設定等敏感操作需要近期完成 TOTP 二次驗證。關閉此開關本身也受保護。',
+        stepUpEnableRequiresTotp: '開啟敏感操作二次驗證前，請先為目前帳號啟用 TOTP。',
+        sessionBinding: '會話 IP/User-Agent 綁定',
+        sessionBindingHint: '將會話綁定到客戶端 IP 和 User-Agent，任一變化都會使會話失效。預設關閉，適合流動網絡和多出口網絡。'
       },
       turnstile: {
         title: 'Cloudflare Turnstile',
