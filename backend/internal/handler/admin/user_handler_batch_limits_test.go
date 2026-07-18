@@ -30,7 +30,7 @@ func (s *batchLimitsAdminServiceStub) BatchUpdateLimits(_ context.Context, userI
 func setupBatchLimitsRouter(adminService service.AdminService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	handler := NewUserHandler(adminService, nil, nil, nil)
+	handler := NewUserHandler(adminService, nil, nil, nil, nil, nil)
 	router.POST("/api/v1/admin/users/batch-limits", handler.BatchUpdateLimits)
 	return router
 }

@@ -143,7 +143,7 @@ func TestOpenAIQuotaHelpersHandleMissingAccountsAndInvalidCredentials(t *testing
 	require.False(t, service.isAgentIdentityAccount(ctx, 1))
 	var nilService *OpenAIQuotaService
 	require.Error(t, nilService.recoverAgentIdentityTask(ctx, 1, "task"))
-	headers, taskID, err := service.buildCodexQuotaHeaders(ctx, 1, "token", "account")
+	headers, taskID, err := service.buildCodexQuotaHeaders(ctx, 1, "token", "account", false)
 	require.NoError(t, err)
 	require.Empty(t, taskID)
 	require.Equal(t, "Bearer token", headers["authorization"])
@@ -151,9 +151,9 @@ func TestOpenAIQuotaHelpersHandleMissingAccountsAndInvalidCredentials(t *testing
 
 	missingRepo := &agentIdentityRepoStub{}
 	service = &OpenAIQuotaService{accountRepo: missingRepo}
-	_, _, err = service.buildCodexQuotaHeaders(ctx, 1, "", "account")
+	_, _, err = service.buildCodexQuotaHeaders(ctx, 1, "", "account", false)
 	require.Error(t, err)
-	_, _, err = service.buildCodexQuotaHeaders(ctx, 1, "token", "account")
+	_, _, err = service.buildCodexQuotaHeaders(ctx, 1, "token", "account", false)
 	require.NoError(t, err)
 	require.Error(t, service.recoverAgentIdentityTask(ctx, 1, "task"))
 	require.Equal(t, "body", service.redactQuotaErrorBody(ctx, 1, "body"))
@@ -179,7 +179,7 @@ func TestOpenAIQuotaHelpersHandleMissingAccountsAndInvalidCredentials(t *testing
 	invalidAgent.ID = 207
 	invalidAgent.Credentials["task_id"] = "task-invalid-key"
 	normalRepo.accountsByID[invalidAgent.ID] = invalidAgent
-	_, _, err = service.buildCodexQuotaHeaders(ctx, invalidAgent.ID, "", "account")
+	_, _, err = service.buildCodexQuotaHeaders(ctx, invalidAgent.ID, "", "account", false)
 	require.Error(t, err)
 }
 
@@ -240,7 +240,7 @@ func TestOpenAIQuotaAgentIdentityAuthErrors(t *testing.T) {
 	_, err = service.ResetCredit(context.Background(), account.ID)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "OPENAI_QUOTA_AUTH_FAILED")
-	require.Nil(t, service.queryResetCreditDetailsForAccount(context.Background(), req.C(), "", "account", account.ID))
+	require.Nil(t, service.queryResetCreditDetailsForAccount(context.Background(), req.C(), "", "account", false, account.ID))
 }
 
 func TestOpenAIQuotaAgentIdentityRecoveryFailureIsReturned(t *testing.T) {
