@@ -74,6 +74,36 @@ func TestGetTrustedClientIPUsesGinClientIP(t *testing.T) {
 	require.Equal(t, "9.9.9.9", w.Body.String())
 }
 
+func TestGetSecurityClientIPHonorsTrustToggle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, tc := range []struct {
+		name           string
+		trustForwarded bool
+		want           string
+	}{
+		{name: "trust disabled uses trusted proxy chain", trustForwarded: false, want: "9.9.9.9"},
+		{name: "trust enabled uses forwarded header", trustForwarded: true, want: "1.2.3.4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := gin.New()
+			require.NoError(t, router.SetTrustedProxies(nil))
+			router.GET("/ip", func(c *gin.Context) {
+				c.String(200, GetSecurityClientIP(c, tc.trustForwarded))
+			})
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/ip", nil)
+			req.RemoteAddr = "9.9.9.9:12345"
+			req.Header.Set("X-Real-IP", "1.2.3.4")
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, 200, w.Code)
+			require.Equal(t, tc.want, w.Body.String())
+		})
+	}
+}
+
 func TestGetCloudflareCountryCode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
