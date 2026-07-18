@@ -89,6 +89,55 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError(t *testing.T) {
 	require.NotContains(t, message, "INTERNAL_ERROR")
 }
 
+func TestOpenAIUpstreamStreamReadError_ClassifiesGenericAndHTTP2Variants(t *testing.T) {
+	genericCause := errors.New("connection reset by peer")
+	genericErr := newOpenAIUpstreamStreamReadError(genericCause)
+	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(genericErr)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamStreamReadErrorCode, code)
+	require.Equal(t, "Upstream response stream was interrupted", message)
+	require.ErrorIs(t, genericErr, genericCause)
+
+	http2Err := newOpenAIUpstreamStreamReadError(errors.New("http2: stream closed"))
+	code, message, ok = OpenAIUpstreamStreamReadErrorDetails(http2Err)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamHTTP2StreamErrorCode, code)
+	require.Equal(t, "Upstream HTTP/2 stream failed", message)
+
+	_, _, ok = OpenAIUpstreamStreamReadErrorDetails(nil)
+	require.False(t, ok)
+}
+
+func TestHandleChatStreamingResponse_CanceledReadKeepsGenericError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: &openAIChatStreamReadErrorCloser{
+			payload: []byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"),
+			err:     context.Canceled,
+		},
+	}
+
+	_, err := (&OpenAIGatewayService{cfg: &config.Config{}}).handleChatStreamingResponse(
+		resp,
+		c,
+		&Account{ID: 1, Name: "openai-oauth", Platform: PlatformOpenAI},
+		"gpt-5.6-sol",
+		"gpt-5.6-sol",
+		"gpt-5.6-sol",
+		time.Now(),
+		0,
+	)
+
+	require.ErrorIs(t, err, context.Canceled)
+	_, _, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.False(t, ok)
+}
+
 func TestNormalizeResponsesRequestServiceTier(t *testing.T) {
 	t.Parallel()
 

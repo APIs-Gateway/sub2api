@@ -126,6 +126,72 @@ func TestOpenAIHandleStreamingAwareErrorWithCode_EmitsStableClassification(t *te
 	require.Equal(t, http.StatusBadGateway, streamErr.IntendedStatus)
 }
 
+func TestOpenAIHandleStreamingAwareError_WithoutCodeKeepsJSONEnvelope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	(&OpenAIGatewayHandler{}).handleStreamingAwareError(
+		c,
+		http.StatusBadGateway,
+		"upstream_error",
+		"Upstream request failed",
+		false,
+	)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Equal(t, "upstream_error", gjson.Get(w.Body.String(), "error.type").String())
+	require.Equal(t, "Upstream request failed", gjson.Get(w.Body.String(), "error.message").String())
+	_, marked := service.GetOpsStreamError(c)
+	require.False(t, marked)
+}
+
+func TestOpenAIHandleStreamingAwareErrorWithCode_WithoutSLAUsesSSEWithoutCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	(&OpenAIGatewayHandler{}).handleStreamingAwareErrorWithCode(
+		c,
+		http.StatusBadGateway,
+		"upstream_error",
+		"",
+		"Upstream request failed",
+		true,
+		false,
+	)
+
+	body := w.Body.String()
+	require.Contains(t, body, "event: error\n")
+	require.Equal(t, "upstream_error", gjson.Get(body[strings.Index(body, "{"):], "error.type").String())
+	require.Empty(t, gjson.Get(body[strings.Index(body, "{"):], "error.code").String())
+	streamErr, ok := service.GetOpsStreamError(c)
+	require.True(t, ok)
+	require.False(t, streamErr.CountTowardsSLA)
+}
+
+func TestOpenAIHandleStreamingAwareErrorWithCode_NonStreamingIncludesCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	(&OpenAIGatewayHandler{}).handleStreamingAwareErrorWithCode(
+		c,
+		http.StatusBadGateway,
+		"upstream_error",
+		service.OpenAIUpstreamStreamReadErrorCode,
+		"Upstream response stream was interrupted",
+		false,
+		true,
+	)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Equal(t, service.OpenAIUpstreamStreamReadErrorCode, gjson.Get(w.Body.String(), "error.code").String())
+}
+
 func TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-5","metadata":{"user_id":"claude-code-session"},"messages":[{"role":"user","content":"hello"}]}`)
 
