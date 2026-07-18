@@ -1,14 +1,44 @@
-//go:build integration
-
 package service
 
 import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+type modelScopedCooldownCoverageRepo struct {
+	AccountRepository
+	modelRateLimitCalls []modelScopedCooldownCall
+	rateCalls           []accountRateLimitCall
+}
+
+type modelScopedCooldownCall struct {
+	accountID int64
+	modelKey  string
+	resetAt   time.Time
+}
+
+type accountRateLimitCall struct {
+	accountID int64
+	resetAt   time.Time
+}
+
+func (r *modelScopedCooldownCoverageRepo) SetModelRateLimit(_ context.Context, id int64, modelKey string, resetAt time.Time, _ ...string) error {
+	r.modelRateLimitCalls = append(r.modelRateLimitCalls, modelScopedCooldownCall{
+		accountID: id,
+		modelKey:  modelKey,
+		resetAt:   resetAt,
+	})
+	return nil
+}
+
+func (r *modelScopedCooldownCoverageRepo) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
+	r.rateCalls = append(r.rateCalls, accountRateLimitCall{accountID: id, resetAt: resetAt})
+	return nil
+}
 
 func integrationModelTempAccount(id int64, platform string) *Account {
 	return &Account{
@@ -31,7 +61,7 @@ func integrationModelTempAccount(id int64, platform string) *Account {
 }
 
 func TestIntegration_ModelScopedTempPolicyPersistsKnownModel(t *testing.T) {
-	repo := &stubAntigravityAccountRepo{}
+	repo := &modelScopedCooldownCoverageRepo{}
 	svc := &RateLimitService{accountRepo: repo}
 	account := integrationModelTempAccount(601, PlatformOpenAI)
 
@@ -51,7 +81,7 @@ func TestIntegration_ModelScopedTempPolicyPersistsKnownModel(t *testing.T) {
 }
 
 func TestIntegration_AntigravityPolicyUsesResolvedMappedModel(t *testing.T) {
-	repo := &stubAntigravityAccountRepo{}
+	repo := &modelScopedCooldownCoverageRepo{}
 	account := integrationModelTempAccount(602, PlatformAntigravity)
 	account.Credentials["model_mapping"] = map[string]any{
 		"claude-sonnet-4-5": "claude-sonnet-4-6",
@@ -78,7 +108,7 @@ func TestIntegration_AntigravityPolicyUsesResolvedMappedModel(t *testing.T) {
 }
 
 func TestIntegration_OpenAIModelTempFastPathStaysModelScoped(t *testing.T) {
-	repo := &stubAntigravityAccountRepo{}
+	repo := &modelScopedCooldownCoverageRepo{}
 	svc := &OpenAIGatewayService{
 		rateLimitService: &RateLimitService{accountRepo: repo},
 	}
