@@ -141,3 +141,16 @@ func TestEnforceStepUpBypassesWhenDisabled(t *testing.T) {
 	require.True(t, EnforceStepUp(c, nil, nil, settingService))
 	require.Equal(t, http.StatusOK, rec.Code)
 }
+
+func TestEnforceStepUpAlwaysUsesTheGate(t *testing.T) {
+	c, rec := newStepUpContext(t)
+	c.Set(string(ContextKeyUser), AuthSubject{UserID: 1})
+
+	require.False(t, EnforceStepUpAlways(
+		c,
+		stepUpGrantCheckerStub{granted: false},
+		stepUpUserReaderStub{user: &service.User{ID: 1, TotpEnabled: true}},
+	))
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
+}

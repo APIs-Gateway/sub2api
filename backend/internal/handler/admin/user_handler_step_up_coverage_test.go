@@ -45,6 +45,7 @@ func newAdminStepUpTestRouter(adminSvc *stubAdminService, cache *adminStepUpCach
 	userSvc := service.NewUserService(actorRepo, nil, nil, nil)
 	totpSvc := service.NewTotpService(nil, nil, cache, nil, nil, nil)
 	handler := NewUserHandler(adminSvc, nil, nil, nil, totpSvc, userSvc)
+	handler.SetStepUpSettingService(nil)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
