@@ -84,6 +84,32 @@ func TestRateLimitService_TempUnschedulableModelContextHelpers(t *testing.T) {
 	require.Empty(t, tempUnschedulableModel(context.Background(), nil))
 }
 
+func TestRateLimitService_CheckErrorPolicy_ModelTempUnschedulableUsesModelScope(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	account := openAIModelNotFoundTempAccount()
+	account.Credentials["temp_unschedulable_rules"] = []any{
+		map[string]any{
+			"error_code":       float64(http.StatusServiceUnavailable),
+			"keywords":         []any{"overloaded"},
+			"duration_minutes": float64(10),
+		},
+	}
+
+	policy := svc.CheckErrorPolicy(
+		context.Background(),
+		account,
+		http.StatusServiceUnavailable,
+		[]byte(`{"error":{"message":"endpoint overloaded"}}`),
+		"gpt-5.4",
+	)
+
+	require.Equal(t, ErrorPolicyTempUnscheduled, policy)
+	require.Zero(t, repo.tempCalls)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "gpt-5.4", repo.modelRateLimitCalls[0].scope)
+}
+
 func TestRateLimitService_MatchTempUnschedulableRulesCoversGuardsAndTruncation(t *testing.T) {
 	require.Nil(t, matchTempUnschedulableRules(nil, http.StatusServiceUnavailable, []byte("overloaded")))
 
