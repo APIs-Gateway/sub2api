@@ -139,6 +139,98 @@ func TestForwardAlphaSearchReturnsFailoverBeforeWriting(t *testing.T) {
 	require.Empty(t, recorder.Body.String())
 }
 
+type alphaSearchAccountStateRepo struct {
+	AccountRepository
+	setErrorCalls int
+	lastError     string
+}
+
+func (r *alphaSearchAccountStateRepo) SetError(_ context.Context, _ int64, message string) error {
+	r.setErrorCalls++
+	r.lastError = message
+	return nil
+}
+
+func TestForwardAlphaSearchAPIKeyUnsupportedEndpointFailsOverWithoutAccountError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
+
+	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", bytes.NewReader(body))
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: status,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"endpoint unavailable"}}`)),
+			}}
+			repo := &alphaSearchAccountStateRepo{}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream, accountRepo: repo}
+			account := &Account{
+				ID:       9,
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key":  "sk-test",
+					"base_url": "https://relay.example",
+				},
+			}
+
+			err := svc.ForwardAlphaSearch(context.Background(), c, account, body)
+
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, status, failoverErr.StatusCode)
+			require.Zero(t, repo.setErrorCalls)
+			require.Empty(t, repo.lastError)
+			require.False(t, c.Writer.Written())
+			require.Empty(t, recorder.Body.String())
+		})
+	}
+}
+
+func TestForwardAlphaSearchOAuthNotFoundPassesThrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"id":"search-session","model":"gpt-5.6-sol","commands":{"search_query":[{"q":"news"}]}}`)
+	upstreamBody := `{"detail":"Not Found"}`
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", bytes.NewReader(body))
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusNotFound,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID:       10,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-account",
+		},
+	}
+
+	err := svc.ForwardAlphaSearch(context.Background(), c, account, body)
+
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+	require.JSONEq(t, upstreamBody, recorder.Body.String())
+}
+
+func TestIsOpenAIAlphaSearchEndpointUnsupported(t *testing.T) {
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	require.True(t, isOpenAIAlphaSearchEndpointUnsupported(apiKey, http.StatusNotFound))
+	require.True(t, isOpenAIAlphaSearchEndpointUnsupported(apiKey, http.StatusMethodNotAllowed))
+	require.False(t, isOpenAIAlphaSearchEndpointUnsupported(apiKey, http.StatusBadRequest))
+	require.False(t, isOpenAIAlphaSearchEndpointUnsupported(oauth, http.StatusNotFound))
+	require.False(t, isOpenAIAlphaSearchEndpointUnsupported(nil, http.StatusNotFound))
+}
+
 func TestForwardAlphaSearchEdgeCases(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
