@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,6 +68,55 @@ func TestRateLimitService_HandleUpstreamError_ModelNotFoundUsesModelRateLimit(t 
 	require.Equal(t, "gpt-5.4", call.scope)
 	require.Equal(t, upstreamModelNotFoundReason, call.reason)
 	require.WithinDuration(t, time.Now().Add(upstreamModelNotFoundCooldown), call.resetAt, 5*time.Second)
+}
+
+func TestRateLimitService_TempUnschedulableModelContextHelpers(t *testing.T) {
+	require.Empty(t, firstRequestedModel(nil))
+	require.Empty(t, firstRequestedModel([]string{"  "}))
+	require.Equal(t, "gpt-5.4", firstRequestedModel([]string{" gpt-5.4 ", "other"}))
+
+	base := context.Background()
+	require.Equal(t, base, withTempUnschedulableModel(base, nil))
+	ctx := withTempUnschedulableModel(nil, []string{"gpt-5.4"})
+	require.Equal(t, "gpt-5.4", tempUnschedulableModel(ctx, nil))
+	require.Equal(t, "other", tempUnschedulableModel(ctx, []string{"other"}))
+	require.Empty(t, tempUnschedulableModel(nil, nil))
+	require.Empty(t, tempUnschedulableModel(context.Background(), nil))
+}
+
+func TestRateLimitService_MatchTempUnschedulableRulesCoversGuardsAndTruncation(t *testing.T) {
+	require.Nil(t, matchTempUnschedulableRules(nil, http.StatusServiceUnavailable, []byte("overloaded")))
+
+	account := openAIModelNotFoundTempAccount()
+	require.Nil(t, matchTempUnschedulableRules(account, 0, []byte("overloaded")))
+	require.Nil(t, matchTempUnschedulableRules(account, http.StatusServiceUnavailable, nil))
+	account.Credentials["temp_unschedulable_rules"] = nil
+	require.Nil(t, matchTempUnschedulableRules(account, http.StatusServiceUnavailable, []byte("overloaded")))
+
+	account.Credentials["temp_unschedulable_rules"] = []any{
+		map[string]any{
+			"error_code": float64(http.StatusBadGateway),
+			"keywords":   []any{"wrong status"},
+		},
+		map[string]any{
+			"error_code": float64(http.StatusServiceUnavailable),
+			"keywords":   []any{},
+		},
+		map[string]any{
+			"error_code": float64(http.StatusServiceUnavailable),
+			"keywords":   []any{"missing marker"},
+		},
+		map[string]any{
+			"error_code":       float64(http.StatusServiceUnavailable),
+			"keywords":         []any{"overloaded"},
+			"duration_minutes": float64(10),
+		},
+	}
+
+	body := "overloaded" + strings.Repeat("x", tempUnschedBodyMaxBytes+1)
+	matches := matchTempUnschedulableRules(account, http.StatusServiceUnavailable, []byte(body))
+	require.Len(t, matches, 1)
+	require.Equal(t, "overloaded", matches[0].matchedKeyword)
 }
 
 func TestRateLimitService_HandleUpstreamError_ModelNotFoundWriteFailureDoesNotTempUnschedule(t *testing.T) {

@@ -40,6 +40,20 @@ func TestOpenAI429FastPath_UsesThresholdBeforeCoolingOAuthAccount(t *testing.T) 
 	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
+func TestOpenAIAccountUpstreamError_NilRateLimitService(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 47, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	require.False(t, svc.handleOpenAIAccountUpstreamError(
+		context.Background(),
+		account,
+		http.StatusServiceUnavailable,
+		http.Header{},
+		[]byte(`{"error":{"message":"temporary"}}`),
+		"gpt-5.4",
+	))
+}
+
 func TestOpenAIRuntimeBlock_AppliesToOpenAIAPIKeyWhenRateLimitServiceStopsScheduling(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	account := &Account{ID: 44, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}

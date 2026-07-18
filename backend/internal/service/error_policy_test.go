@@ -396,6 +396,19 @@ func TestApplyErrorPolicy(t *testing.T) {
 	}
 }
 
+func TestAntigravityCheckErrorPolicy_NilRateLimitService(t *testing.T) {
+	svc := &AntigravityGatewayService{}
+	account := &Account{ID: 16, Type: AccountTypeOAuth, Platform: PlatformAntigravity}
+
+	require.Equal(t, ErrorPolicyNone, svc.checkErrorPolicy(
+		context.Background(),
+		account,
+		http.StatusServiceUnavailable,
+		[]byte("temporary"),
+		"claude-sonnet-4-5",
+	))
+}
+
 func TestApplyErrorPolicy_GeminiRateLimitDefersTo429FlowWhenCustomCodesSkip(t *testing.T) {
 	repo := &stubAntigravityAccountRepo{}
 	cache := &stubSmartRetryCache{}
