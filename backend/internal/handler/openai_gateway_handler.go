@@ -276,7 +276,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
-	imageIntent := service.IsImageGenerationIntent("/v1/responses", reqModel, body)
+	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body)
 	if imageIntent && service.OpenAIResponsesImageGenerationDisabled(h.cfg) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", service.OpenAIResponsesImageGenerationDisabledMessage())
 		return
@@ -1370,7 +1370,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 
-	imageIntent := service.IsOpenAIResponsesWebSocketImageGenerationIntent(firstMessage)
+	imageIntent := service.IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(firstMessage)
 	if imageIntent && service.OpenAIResponsesImageGenerationDisabled(h.cfg) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.OpenAIResponsesImageGenerationDisabledMessage())
 		return

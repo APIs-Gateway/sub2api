@@ -52,6 +52,29 @@ func IsOpenAIResponsesWebSocketImageGenerationIntent(frame []byte) bool {
 	)
 }
 
+// IsExplicitOpenAIResponsesWebSocketImageGenerationIntent applies the same
+// passive-namespace rule to both response.create and session.update frames.
+func IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(frame []byte) bool {
+	if len(frame) == 0 || !gjson.ValidBytes(frame) {
+		return false
+	}
+	if IsExplicitImageGenerationIntent(openAIResponsesEndpoint, gjson.GetBytes(frame, "model").String(), frame) {
+		return true
+	}
+	if gjson.GetBytes(frame, "type").String() != "session.update" {
+		return false
+	}
+	session := gjson.GetBytes(frame, "session")
+	if !session.IsObject() {
+		return false
+	}
+	return IsExplicitImageGenerationIntent(
+		openAIResponsesEndpoint,
+		session.Get("model").String(),
+		[]byte(session.Raw),
+	)
+}
+
 func (s *OpenAIGatewayService) openAIImagesStreamingDisabled() bool {
 	return s != nil && OpenAIImagesStreamingDisabled(s.cfg)
 }
@@ -68,7 +91,7 @@ func (s *OpenAIGatewayService) openAIImagesRequireDirectAPIKey() bool {
 }
 
 func (s *OpenAIGatewayService) rejectOpenAIResponsesWebSocketImageGeneration(frame []byte) error {
-	if s.openAIResponsesImageGenerationDisabled() && IsOpenAIResponsesWebSocketImageGenerationIntent(frame) {
+	if s.openAIResponsesImageGenerationDisabled() && IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(frame) {
 		return NewOpenAIWSClientCloseError(
 			coderws.StatusPolicyViolation,
 			OpenAIResponsesImageGenerationDisabledMessage(),
