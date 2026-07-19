@@ -121,6 +121,25 @@ func TestOpsCaptureWriterPool_ResetOnRelease(t *testing.T) {
 	require.Zero(t, reused.buf.Len(), "writer should be reset before reuse")
 }
 
+func TestOpsErrorLoggerMiddleware_SkipsIngressReject(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	r := gin.New()
+	r.GET("/v1/messages", OpsErrorLoggerMiddleware(ops), func(c *gin.Context) {
+		middleware2.MarkIngressRejected(c, middleware2.IngressRejectInvalidAPIKey)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/messages", nil))
+
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
+	require.Equal(t, 0, len(opsErrorLogQueue))
+}
+
 func TestOpsErrorLoggerMiddleware_DoesNotBreakOuterMiddlewares(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
