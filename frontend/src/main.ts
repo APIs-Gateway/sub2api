@@ -4,6 +4,7 @@ import App from './App.vue'
 import router from './router'
 import i18n, { initI18n } from './i18n'
 import { useAppStore } from '@/stores/app'
+import { updateFavicon } from '@/utils/branding'
 import { installChunkLoadRecovery } from '@/utils/chunkLoadRecovery'
 // Self-hosted brand fonts (offline / China-safe, no Google CDN)
 import '@fontsource-variable/fraunces' // 衬线标题 Latin (近 Tiempos/Anthropic 编辑感)
