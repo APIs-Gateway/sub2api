@@ -114,9 +114,28 @@ func requestLogFields(req Request) map[string]any {
 	}
 }
 
+func snapshotLogFields(snapshot PromptSnapshot) map[string]any {
+	return map[string]any{
+		"request_id": snapshot.RequestID, "user_id": snapshot.UserID, "api_key_id": snapshot.APIKeyID,
+		"group_id": pointerLogID(snapshot.GroupID), "provider": snapshot.Provider, "protocol": snapshot.Protocol,
+		"endpoint": snapshot.Endpoint, "model": snapshot.Model, "stage": snapshot.Stage,
+	}
+}
+
 func pointerLogID(value *int64) int64 {
 	if value == nil {
 		return 0
 	}
 	return *value
+}
+
+func jobLogFields(job *Job) map[string]any {
+	if job == nil {
+		return map[string]any{}
+	}
+	fields := snapshotLogFields(job.Snapshot)
+	fields["job_id"] = job.ID
+	fields["config_version"] = job.ConfigVersion
+	fields["claim_version"] = job.ClaimVersion
+	return fields
 }
