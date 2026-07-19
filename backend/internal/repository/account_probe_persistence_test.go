@@ -275,7 +275,7 @@ func TestLockAndMergeAccountProbeExtraReportsDatabaseAndDecodeErrors(t *testing.
 	}
 }
 
-func TestLockAndMergeAccountProbeExtraClearsStaleStateOnIdentityOrTypeChange(t *testing.T) {
+func TestLockAndMergeAccountProbeExtraClearsStaleSnapshotOnIdentityOrTypeChange(t *testing.T) {
 	cases := []struct {
 		name              string
 		platform          string
@@ -286,7 +286,7 @@ func TestLockAndMergeAccountProbeExtraClearsStaleStateOnIdentityOrTypeChange(t *
 		wantEnabled       bool
 		wantSnapshot      bool
 	}{
-		{name: "identity changed", platform: service.PlatformOpenAI, typeName: service.AccountTypeAPIKey, enabled: []byte(`true`), snapshot: []byte(`{"status":"ok"}`)},
+		{name: "identity changed", platform: service.PlatformOpenAI, typeName: service.AccountTypeAPIKey, enabled: []byte(`true`), snapshot: []byte(`{"status":"ok"}`), wantEnabled: true},
 		{name: "current disabled", platform: service.PlatformOpenAI, typeName: service.AccountTypeAPIKey, identityUnchanged: true, enabled: []byte(`false`), snapshot: []byte(`{"status":"ok"}`), wantEnabled: true},
 		{name: "non api key", platform: service.PlatformOpenAI, typeName: service.AccountTypeOAuth, identityUnchanged: true, enabled: []byte(`true`), snapshot: []byte(`{"status":"ok"}`)},
 		{name: "missing snapshot", platform: service.PlatformOpenAI, typeName: service.AccountTypeAPIKey, identityUnchanged: true, enabled: []byte(`true`), wantEnabled: true},
@@ -374,6 +374,28 @@ func TestBulkUpdateNilProbeRemovesKey(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, exec.execQueries)
 	require.Contains(t, normalizeSQLWhitespace(exec.execQueries[0]), "- 'upstream_billing_probe'")
+}
+
+func TestBulkUpdateCredentialPatchClearsProbeSnapshotOnIdentityChange(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE accounts SET .*credentials = COALESCE\(credentials, '\{\}'::jsonb\) \|\| \$1::jsonb.*extra = CASE WHEN platform = 'openai'.*credentials IS DISTINCT FROM \(COALESCE\(credentials, '\{\}'::jsonb\) \|\| \$1::jsonb\).* - 'upstream_billing_probe'.*WHERE id = ANY\(\$2\)`).
+		WithArgs([]byte(`{"api_key":"sk-new"}`), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
+		WithArgs(service.SchedulerOutboxEventAccountBulkChanged, nil, nil, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	rows, err := repo.BulkUpdate(context.Background(), []int64{27}, service.AccountBulkUpdate{
+		Credentials: map[string]any{"api_key": "sk-new"},
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestBulkUpdateStartsTransactionAndCommitsOutbox(t *testing.T) {

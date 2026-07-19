@@ -1686,27 +1686,44 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		updates.Extra[service.UpstreamBillingProbeEnabledExtraKey] = *updates.ProbeEnabled
 	}
 	// JSONB 需要合并而非覆盖，使用 raw SQL 保持旧行为。
+	credentialsParam := 0
 	if len(updates.Credentials) > 0 {
 		payload, err := json.Marshal(updates.Credentials)
 		if err != nil {
 			return 0, err
 		}
+		credentialsParam = idx
 		setClauses = append(setClauses, "credentials = COALESCE(credentials, '{}'::jsonb) || $"+itoa(idx)+"::jsonb")
 		args = append(args, payload)
 		idx++
 	}
-	if len(updates.Extra) > 0 {
-		payload, err := json.Marshal(updates.Extra)
-		if err != nil {
-			return 0, err
+	if len(updates.Extra) > 0 || credentialsParam > 0 {
+		extraExpression := "extra"
+		if len(updates.Extra) > 0 {
+			payload, err := json.Marshal(updates.Extra)
+			if err != nil {
+				return 0, err
+			}
+			extraExpression = "COALESCE(extra, '{}'::jsonb) || $" + itoa(idx) + "::jsonb"
+			args = append(args, payload)
+			idx++
 		}
-		extraExpression := "COALESCE(extra, '{}'::jsonb) || $" + itoa(idx) + "::jsonb"
+
+		clearSnapshotPredicate := ""
+		if credentialsParam > 0 {
+			clearSnapshotPredicate = "platform = 'openai' AND type = 'apikey' AND credentials IS DISTINCT FROM (COALESCE(credentials, '{}'::jsonb) || $" + itoa(credentialsParam) + "::jsonb)"
+		}
 		if upstreamBillingProbeExplicitlyDisabled(updates.Extra) || upstreamBillingProbeSnapshotClearRequested(updates.Extra) {
-			extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
+			clearSnapshotPredicate = "TRUE"
+		}
+		if clearSnapshotPredicate != "" {
+			clearSource := extraExpression
+			if len(updates.Extra) == 0 {
+				clearSource = "COALESCE(extra, '{}'::jsonb)"
+			}
+			extraExpression = "CASE WHEN " + clearSnapshotPredicate + " THEN (" + clearSource + ") - 'upstream_billing_probe' ELSE " + clearSource + " END"
 		}
 		setClauses = append(setClauses, "extra = "+extraExpression)
-		args = append(args, payload)
-		idx++
 	}
 
 	if len(setClauses) == 0 {
