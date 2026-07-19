@@ -9,13 +9,13 @@ import (
 )
 
 // ModelAvailabilityDiagnosis describes whether the requested model can be
-// served by any active configured account in the group. Handlers use this on
-// the "no available accounts" error path to distinguish 404 model_not_found
-// from 503 service_unavailable.
+// served by any persistently eligible account in the group. Handlers use this
+// on the "no available accounts" error path to distinguish 404
+// model_not_found from 503 service_unavailable.
 type ModelAvailabilityDiagnosis struct {
-	// HasAccountsInPool is true if the group has at least one active configured
-	// account on the queried platform (or, for Anthropic/Gemini, on the
-	// platform plus mixed-scheduled Antigravity accounts).
+	// HasAccountsInPool is true if the group has at least one active, persistently
+	// schedulable account on the queried platform (or, for Anthropic/Gemini, on
+	// the platform plus mixed-scheduled Antigravity accounts).
 	HasAccountsInPool bool
 	// HasModelSupport is true if at least one account's model mapping admits
 	// the requested model.
@@ -35,11 +35,12 @@ type ModelAvailabilityDiagnoser interface {
 	) ModelAvailabilityDiagnosis
 }
 
-// DiagnoseModelAvailabilityForPlatform inspects active configured accounts of
-// the given platform and returns whether the requested model is configured to
-// be served by any of them. It deliberately includes accounts that are
-// temporarily unschedulable, rate-limited, or overloaded: those conditions
-// should remain 503 because the account can serve the model after recovery.
+// DiagnoseModelAvailabilityForPlatform inspects persistently eligible accounts
+// of the given platform and returns whether the requested model is configured
+// to be served by any of them. Persistent eligibility means an active account
+// with scheduling enabled; transient rate limits, overloads, temporary
+// unschedulability, and expiry windows are deliberately ignored so they stay
+// on the 503 path until the account recovers.
 //
 // Safe to call on the error path: returns {true,true} on any internal failure
 // or when the inputs preclude meaningful diagnosis (empty model, etc.), so
@@ -101,8 +102,18 @@ func (s *GatewayService) listConfiguredAccountsForModelDiagnosis(
 		accounts []Account
 		err      error
 	)
+	simpleMode := s.cfg != nil && s.cfg.RunMode == config.RunModeSimple
+	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	switch {
-	case s.cfg != nil && s.cfg.RunMode == config.RunModeSimple:
+	case useMixed && groupID != nil:
+		// An explicit group still wins for mixed scheduling, including in
+		// simple mode, just like the normal selection path.
+		accounts, err = s.accountRepo.ListByGroup(ctx, *groupID)
+	case simpleMode && useMixed:
+		// Simple-mode mixed scheduling scans the whole active pool, including
+		// accounts already bound to a group.
+		accounts, err = s.accountRepo.ListActive(ctx)
+	case simpleMode:
 		accounts, err = s.accountRepo.ListByPlatform(ctx, platform)
 	case groupID != nil:
 		accounts, err = s.accountRepo.ListByGroup(ctx, *groupID)
@@ -113,11 +124,13 @@ func (s *GatewayService) listConfiguredAccountsForModelDiagnosis(
 		return nil, err
 	}
 
-	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	filtered := make([]Account, 0, len(accounts))
 	for i := range accounts {
 		account := &accounts[i]
-		if groupID == nil && !s.isAccountInGroup(account, nil) {
+		if !isPersistentlyEligibleModelAvailabilityAccount(account) {
+			continue
+		}
+		if !simpleMode && groupID == nil && !s.isAccountInGroup(account, nil) {
 			continue
 		}
 		if !s.isAccountAllowedForPlatform(account, platform, useMixed) {
@@ -126,4 +139,12 @@ func (s *GatewayService) listConfiguredAccountsForModelDiagnosis(
 		filtered = append(filtered, *account)
 	}
 	return filtered, nil
+}
+
+// isPersistentlyEligibleModelAvailabilityAccount intentionally does not call
+// Account.IsSchedulable: that method includes transient runtime state, which
+// is exactly what this diagnostic must ignore. The persistent switch is the
+// account's explicit Schedulable setting.
+func isPersistentlyEligibleModelAvailabilityAccount(account *Account) bool {
+	return account != nil && account.Status == StatusActive && account.Schedulable
 }

@@ -8,9 +8,10 @@ import (
 )
 
 // DiagnoseModelAvailabilityForPlatform reports whether the requested model
-// is configured to be served by any active OpenAI account in the group. The
-// platform argument is accepted to satisfy ModelAvailabilityDiagnoser but
-// is ignored — OpenAIGatewayService only scans OpenAI accounts.
+// is configured to be served by any persistently eligible account in the
+// requested OpenAI-compatible platform. It ignores transient runtime state so
+// rate limits, overloads, temporary unschedulability, and expiry windows stay
+// on the 503 path.
 //
 // Safe to call on the error path: returns {true,true} on any internal
 // failure or when the inputs preclude meaningful diagnosis (empty model,
@@ -19,7 +20,7 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 	ctx context.Context,
 	groupID *int64,
 	requestedModel string,
-	_ string,
+	platform string,
 ) ModelAvailabilityDiagnosis {
 	if s == nil || s.accountRepo == nil {
 		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
@@ -28,8 +29,12 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 	if requestedModel == "" {
 		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
 	}
+	platform = strings.TrimSpace(platform)
+	if platform == "" {
+		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
+	}
 
-	accounts, err := s.listConfiguredOpenAIAccountsForModelDiagnosis(ctx, groupID)
+	accounts, err := s.listConfiguredOpenAIAccountsForModelDiagnosis(ctx, groupID, platform)
 	if err != nil {
 		// Conservative fallback so the caller keeps returning 503; we do not
 		// want a transient lookup failure to flip into 404 model_not_found.
@@ -51,14 +56,17 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 	return diag
 }
 
-func (s *OpenAIGatewayService) listConfiguredOpenAIAccountsForModelDiagnosis(ctx context.Context, groupID *int64) ([]Account, error) {
+func (s *OpenAIGatewayService) listConfiguredOpenAIAccountsForModelDiagnosis(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	var (
 		accounts []Account
 		err      error
 	)
+	simpleMode := s.cfg != nil && s.cfg.RunMode == config.RunModeSimple
 	switch {
-	case s.cfg != nil && s.cfg.RunMode == config.RunModeSimple:
-		accounts, err = s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+	case simpleMode:
+		// Simple-mode selection scans the whole platform pool, including
+		// accounts that also have group bindings.
+		accounts, err = s.accountRepo.ListByPlatform(ctx, platform)
 	case groupID != nil:
 		accounts, err = s.accountRepo.ListByGroup(ctx, *groupID)
 	default:
@@ -71,10 +79,13 @@ func (s *OpenAIGatewayService) listConfiguredOpenAIAccountsForModelDiagnosis(ctx
 	filtered := make([]Account, 0, len(accounts))
 	for i := range accounts {
 		account := &accounts[i]
-		if groupID == nil && len(account.AccountGroups) != 0 {
+		if !isPersistentlyEligibleModelAvailabilityAccount(account) {
 			continue
 		}
-		if account.Platform == PlatformOpenAI {
+		if !simpleMode && groupID == nil && len(account.AccountGroups) != 0 {
+			continue
+		}
+		if account.Platform == platform {
 			filtered = append(filtered, *account)
 		}
 	}
