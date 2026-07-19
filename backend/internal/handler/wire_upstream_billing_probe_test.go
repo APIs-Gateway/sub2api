@@ -15,7 +15,7 @@ func TestProvideAdminHandlersAttachesUpstreamBillingProbe(t *testing.T) {
 	adminHandlers := ProvideAdminHandlers(
 		nil, nil, nil, accountHandler, nil, nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, probe,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, probe,
 	)
 
 	require.Same(t, accountHandler, adminHandlers.Account)
