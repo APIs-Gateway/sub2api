@@ -461,6 +461,22 @@ default:
   rate_multiplier: 1.0
 ```
 
+### OpenAI Responses WebSocket mode
+
+Account-level WebSocket modes such as `http_bridge` take effect only when the
+global v2 mode router is enabled. Set this in `config.yaml`:
+
+```yaml
+gateway:
+  openai_ws:
+    mode_router_v2_enabled: true
+```
+
+The equivalent environment variable is
+`GATEWAY_OPENAI_WS_MODE_ROUTER_V2_ENABLED=true`. When the router is disabled,
+account-level WS modes are ignored and the legacy routing behavior remains in
+place.
+
 ### Sora Status (Temporarily Unavailable)
 
 > ⚠️ Sora-related features are temporarily unavailable due to technical issues in upstream integration and media delivery.

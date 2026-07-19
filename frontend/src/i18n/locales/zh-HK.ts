@@ -3958,7 +3958,8 @@
         responsesWebsocketsV2Desc:
           '預設關閉。開啟後可啟用 responses_websockets_v2 協議能力（受網關全局開關與帳號類型開關約束）。',
         wsMode: 'WS mode',
-        wsModeDesc: '僅對當前 OpenAI 帳號類型生效。',
+        wsModeDesc:
+          '僅對當前 OpenAI 帳號類型生效；包括 http_bridge 在內的帳號 WS mode 僅在全局 gateway.openai_ws.mode_router_v2_enabled=true 時生效。',
         wsModeOff: '關閉（off）',
         wsModeCtxPool: '上下文池（ctx_pool）',
         wsModePassthrough: '透傳（passthrough）',
