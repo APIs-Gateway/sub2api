@@ -37,7 +37,7 @@ func (s *GroupRepoSuite) TestCreateFromSourceCopiesPrioritiesAndOperationMetadat
 	description := "copied config"
 	dailyLimit, weeklyLimit, monthlyLimit := 1.25, 2.5, 3.75
 	imagePrice1K, imagePrice2K, imagePrice4K := 0.1, 0.2, 0.4
-	fallbackID, invalidFallbackID, stableFallbackID := int64(11), int64(12), int64(13)
+	fallbackID, invalidFallbackID, stableFallbackID := source.ID, source.ID, source.ID
 	duplicate := &service.Group{
 		Name:                            "duplicate-source (Copy)",
 		Description:                     description,
