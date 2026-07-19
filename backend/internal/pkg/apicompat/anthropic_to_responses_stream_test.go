@@ -73,16 +73,58 @@ func TestAnthropicEventToResponses_FunctionCallIncludesArgumentsInOutput(t *test
 	feed(&AnthropicStreamEvent{Type: "message_stop"})
 
 	var completed *ResponsesStreamEvent
+	var argumentsDone *ResponsesStreamEvent
 	for i := range events {
-		if events[i].Type == "response.completed" {
+		switch events[i].Type {
+		case "response.function_call_arguments.done":
+			argumentsDone = &events[i]
+		case "response.completed":
 			completed = &events[i]
 		}
 	}
+	require.NotNil(t, argumentsDone)
+	require.Equal(t, `{"city":"SH"}`, argumentsDone.Arguments)
 	require.NotNil(t, completed)
 	require.Len(t, completed.Response.Output, 1)
 	require.Equal(t, "function_call", completed.Response.Output[0].Type)
 	require.Equal(t, `{"city":"SH"}`, completed.Response.Output[0].Arguments)
 	require.Equal(t, "get_weather", completed.Response.Output[0].Name)
+}
+
+func TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex(t *testing.T) {
+	state := NewAnthropicEventToResponsesState()
+	var events []ResponsesStreamEvent
+	feed := func(evt *AnthropicStreamEvent) {
+		events = append(events, AnthropicEventToResponsesEvents(evt, state)...)
+	}
+
+	first, second := 0, 1
+	feed(&AnthropicStreamEvent{Type: "message_start", Message: &AnthropicResponse{ID: "msg_multi_text"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &first, ContentBlock: &AnthropicContentBlock{Type: "text"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &first, Delta: &AnthropicDelta{Type: "text_delta", Text: "first"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &first})
+	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &second, ContentBlock: &AnthropicContentBlock{Type: "text"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &second, Delta: &AnthropicDelta{Type: "text_delta", Text: "second"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &second})
+	feed(&AnthropicStreamEvent{Type: "message_stop"})
+
+	var completed *ResponsesStreamEvent
+	var partAdded []ResponsesStreamEvent
+	for i := range events {
+		switch events[i].Type {
+		case "response.content_part.added":
+			partAdded = append(partAdded, events[i])
+		case "response.completed":
+			completed = &events[i]
+		}
+	}
+	require.Len(t, partAdded, 2)
+	require.Equal(t, 0, partAdded[0].ContentIndex)
+	require.Equal(t, 1, partAdded[1].ContentIndex)
+	require.NotNil(t, completed)
+	require.Len(t, completed.Response.Output[0].Content, 2)
+	require.Equal(t, "first", completed.Response.Output[0].Content[0].Text)
+	require.Equal(t, "second", completed.Response.Output[0].Content[1].Text)
 }
 
 func TestAnthropicEventToResponses_ReasoningIncludesSummaryInOutput(t *testing.T) {
@@ -100,11 +142,17 @@ func TestAnthropicEventToResponses_ReasoningIncludesSummaryInOutput(t *testing.T
 	feed(&AnthropicStreamEvent{Type: "message_stop"})
 
 	var completed *ResponsesStreamEvent
+	var summaryDone *ResponsesStreamEvent
 	for i := range events {
-		if events[i].Type == "response.completed" {
+		switch events[i].Type {
+		case "response.reasoning_summary_text.done":
+			summaryDone = &events[i]
+		case "response.completed":
 			completed = &events[i]
 		}
 	}
+	require.NotNil(t, summaryDone)
+	require.Equal(t, "thinking", summaryDone.Text)
 	require.NotNil(t, completed)
 	require.Len(t, completed.Response.Output, 1)
 	require.Equal(t, "reasoning", completed.Response.Output[0].Type)
