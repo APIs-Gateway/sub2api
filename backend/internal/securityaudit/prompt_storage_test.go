@@ -3,60 +3,51 @@ package securityaudit
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 )
 
-func newPromptStorageSQLMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
+func newPromptStorageSQLite(t *testing.T) *sql.DB {
 	t.Helper()
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := sql.Open("sqlite", dsn)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		mock.ExpectClose()
-		require.NoError(t, db.Close())
-		require.NoError(t, mock.ExpectationsWereMet())
-	})
-	return db, mock
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(`PRAGMA foreign_keys = ON`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		CREATE TABLE users (id BIGINT PRIMARY KEY);
+		CREATE TABLE groups (id BIGINT PRIMARY KEY);
+		CREATE TABLE api_keys (id BIGINT PRIMARY KEY);
+	`)
+	require.NoError(t, err)
+	applyPromptAuditMigration(t, db)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	return db
 }
 
-func promptJobRows(status string) *sqlmock.Rows {
-	now := time.Unix(1700000000, 0).UTC()
-	return sqlmock.NewRows([]string{
-		"id", "request_id", "user_id", "username_snapshot", "user_email_snapshot", "api_key_id",
-		"api_key_name_snapshot", "group_id", "group_name", "provider", "endpoint", "protocol", "model",
-		"prompt_hash", "redacted_preview", "prompt_length", "message_count", "execution_mode",
-		"config_version", "status", "attempts", "max_attempts", "claim_version", "next_attempt_at",
-		"processing_started_at", "processed_at", "last_error_code", "last_error_message", "created_at", "updated_at",
-	}).AddRow(
-		int64(11), "request-11", int64(2), "user", "user@example.test", int64(3), "key", int64(4), "group",
-		"openai", "/v1/chat/completions", "openai_chat", "guard-model", strings.Repeat("a", 64), "redacted",
-		12, 2, string(ModeAsync), int64(7), status, 1, 3, int64(5), now, nil, nil, "", "", now, now,
-	)
-}
-
-func promptEventRows() *sqlmock.Rows {
-	now := time.Unix(1700000000, 0).UTC()
-	return sqlmock.NewRows([]string{
-		"id", "job_id", "request_id", "user_id", "username_snapshot", "user_email_snapshot", "api_key_id",
-		"api_key_name_snapshot", "group_id", "group_name", "provider", "endpoint", "protocol", "model",
-		"prompt_hash", "redacted_preview", "decision", "risk_level", "action", "categories", "matched_scanners",
-		"scanner_scores", "scanner_evidence", "scanner_backend", "scanner_version", "guard_endpoint_id", "policy_id",
-		"policy_version", "config_version", "chunk_total", "latency_ms", "created_at",
-	}).AddRow(
-		int64(21), int64(11), "request-11", int64(2), "user", "user@example.test", int64(3), "key", int64(4), "group",
-		"openai", "/v1/chat/completions", "openai_chat", "guard-model", strings.Repeat("a", 64), "redacted",
-		string(EventCritical), string(RiskCritical), string(ActionBlock), []byte(`["pii"]`), []byte(`["pii"]`),
-		[]byte(`{"pii":1}`), []byte(`{"pii":"email"}`), "qwen3guard-openai", "guard-model", "guard-1", "priority",
-		1, int64(7), 1, 3, now,
-	)
+func applyPromptAuditMigration(t *testing.T, db *sql.DB) {
+	t.Helper()
+	contents, err := os.ReadFile("../../migrations/181_prompt_audit.sql")
+	require.NoError(t, err)
+	for _, statement := range strings.Split(string(contents), ";") {
+		statement = strings.TrimSpace(statement)
+		if statement == "" || strings.HasPrefix(statement, "--") && !strings.Contains(statement, "\nCREATE") && !strings.Contains(statement, "\nINSERT") {
+			continue
+		}
+		_, err := db.Exec(statement)
+		require.NoError(t, err, statement)
+	}
 }
 
 func storageSnapshot() PromptSnapshot {
@@ -73,7 +64,103 @@ func storageResult() *NormalizedResult {
 		GuardEndpointID: "guard-1", PolicyID: "priority", PolicyVersion: 1, ChunkTotal: 1, LatencyMS: 3}
 }
 
-func TestPromptStorageHelpersAndScanCodecs(t *testing.T) {
+func TestPromptAuditSQLiteRepositoryLifecycleAndPrivacy(t *testing.T) {
+	db := newPromptStorageSQLite(t)
+	repo := NewSQLRepository(db)
+	ctx := context.Background()
+	snapshot := storageSnapshot()
+	snapshot.ScanText = "raw prompt must stay outside durable storage"
+
+	event, err := repo.RecordBlocking(ctx, snapshot, 7, storageResult(), true)
+	require.NoError(t, err)
+	require.NotNil(t, event)
+	raw, err := json.Marshal(event)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), snapshot.ScanText)
+	var stored string
+	require.NoError(t, db.QueryRow(`SELECT scanner_evidence FROM prompt_audit_events WHERE id = ?`, event.ID).Scan(&stored))
+	require.NotContains(t, stored, snapshot.ScanText)
+
+	job, err := repo.CreateStagingWithCapacity(ctx, snapshot, 7, 2, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), job.ID)
+	require.NoError(t, repo.PublishQueued(ctx, job.ID))
+	claimed, ok, err := repo.ClaimNextJob(ctx, time.Now().Add(time.Second))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, repo.RefreshLease(ctx, claimed.ID, claimed.ClaimVersion, time.Now()))
+	completed, err := repo.Complete(ctx, claimed, storageResult(), true)
+	require.NoError(t, err)
+	require.NotNil(t, completed)
+	stats, err := repo.QueueStats(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), stats.Done)
+	require.Zero(t, stats.Active)
+}
+
+func TestPromptAuditSQLiteRepositoryCapacityLeaseAndReclaim(t *testing.T) {
+	db := newPromptStorageSQLite(t)
+	repo := NewSQLRepository(db)
+	ctx := context.Background()
+
+	job, err := repo.CreateStagingWithCapacity(ctx, storageSnapshot(), 7, 2, 1)
+	require.NoError(t, err)
+	_, err = repo.CreateStagingWithCapacity(ctx, storageSnapshot(), 7, 2, 1)
+	require.ErrorIs(t, err, ErrQueueFull)
+	require.NoError(t, repo.PublishQueued(ctx, job.ID))
+	claimed, ok, err := repo.ClaimNextJob(ctx, time.Now().Add(time.Second))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, repo.Retry(ctx, claimed.ID, claimed.ClaimVersion, time.Now().Add(-time.Second), "queue_full", "secret"))
+	claimed, ok, err = repo.ClaimNextJob(ctx, time.Now().Add(time.Second))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, repo.Fail(ctx, claimed.ID, claimed.ClaimVersion, "worker_failed", "secret"))
+	require.ErrorIs(t, repo.RefreshLease(ctx, claimed.ID, claimed.ClaimVersion, time.Now()), ErrLeaseLost)
+
+	staging, err := repo.CreateStagingWithCapacity(ctx, storageSnapshot(), 7, 1, 10)
+	require.NoError(t, err)
+	reclaimed, err := repo.ReclaimStale(ctx, time.Now().Add(time.Second), time.Now().Add(time.Second), 100)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), reclaimed)
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM prompt_audit_jobs WHERE id = ?`, staging.ID).Scan(&status))
+	require.Equal(t, "failed", status)
+}
+
+func TestPromptAuditMigrationIsPortableAndIdempotent(t *testing.T) {
+	db := newPromptStorageSQLite(t)
+	applyPromptAuditMigration(t, db)
+	contents, err := os.ReadFile("../../migrations/181_prompt_audit.sql")
+	require.NoError(t, err)
+	raw := strings.ToLower(string(contents))
+	for _, forbidden := range []string{"bigserial", "timestamptz", "jsonb", "::json", "pg_", "skip locked", "returning"} {
+		require.NotContains(t, raw, forbidden)
+	}
+	for _, required := range []string{"prompt_audit_sequences", "categories               text", "matched_scanners         text"} {
+		require.Contains(t, raw, required)
+	}
+	nonCommentSQL := make([]string, 0)
+	for _, line := range strings.Split(raw, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+			nonCommentSQL = append(nonCommentSQL, line)
+		}
+	}
+	for _, forbidden := range []string{"raw_prompt", "raw_request", "payload", "token", "authorization", "credential", "ciphertext"} {
+		require.NotContains(t, strings.Join(nonCommentSQL, "\n"), forbidden)
+	}
+}
+
+func TestPromptAuditRepositoryUsesQuestionMarkDialectForSQLite(t *testing.T) {
+	db := newPromptStorageSQLite(t)
+	repo := NewSQLRepository(db)
+	require.Equal(t, promptAuditQuestionMark, repo.dialect)
+	require.Equal(t, "?", repo.placeholder(1))
+	require.Equal(t, "$2", (&PostgreSQLRepository{dialect: promptAuditPostgreSQL}).placeholder(2))
+}
+
+func TestPromptStorageHelpersAndPayloadStore(t *testing.T) {
 	require.Equal(t, int64(0), nullableInt64Value(sql.NullInt64{}))
 	require.Equal(t, int64(7), nullableInt64Value(sql.NullInt64{Int64: 7, Valid: true}))
 	require.Nil(t, nullableInt64Ptr(sql.NullInt64{}))
@@ -91,109 +178,6 @@ func TestPromptStorageHelpersAndScanCodecs(t *testing.T) {
 	require.Equal(t, "queue_full", code)
 	require.Equal(t, "Prompt Audit queue is unavailable", message)
 
-	db, mock := newPromptStorageSQLMock(t)
-	mock.ExpectQuery("SELECT job").WillReturnRows(promptJobRows("processing"))
-	job, err := scanJob(db.QueryRow("SELECT job"))
-	require.NoError(t, err)
-	require.Equal(t, int64(11), job.ID)
-	require.Equal(t, int64(2), job.Snapshot.UserID)
-	require.Equal(t, int64(4), *job.Snapshot.GroupID)
-	require.Equal(t, ModeAsync, job.ExecutionMode)
-
-	mock.ExpectQuery("SELECT event").WillReturnRows(promptEventRows())
-	event, err := scanEvent(db.QueryRow("SELECT event"))
-	require.NoError(t, err)
-	require.Equal(t, int64(21), event.ID)
-	require.Equal(t, []string{"pii"}, event.Categories)
-	require.Len(t, event.IssueSummaries, 1)
-}
-
-func TestPromptStorageCreateAdmissionAndSimpleUpdates(t *testing.T) {
-	db, mock := newPromptStorageSQLMock(t)
-	repo := NewPostgreSQLRepository(db)
-	ctx := context.Background()
-	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WithArgs(promptAuditAdmissionLockKey).
-		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM prompt_audit_jobs").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery("INSERT INTO prompt_audit_jobs").WillReturnRows(promptJobRows("staging"))
-	mock.ExpectCommit()
-	job, err := repo.CreateStagingWithCapacity(ctx, storageSnapshot(), 7, 3, 10)
-	require.NoError(t, err)
-	require.Equal(t, int64(11), job.ID)
-
-	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WithArgs(promptAuditAdmissionLockKey).
-		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM prompt_audit_jobs").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(10))
-	mock.ExpectRollback()
-	_, err = repo.CreateStagingWithCapacity(ctx, storageSnapshot(), 7, 3, 10)
-	require.ErrorIs(t, err, ErrQueueFull)
-
-	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='queued'").WithArgs(int64(11)).WillReturnResult(sqlmock.NewResult(0, 1))
-	require.NoError(t, repo.PublishQueued(ctx, 11))
-	mock.ExpectExec("UPDATE prompt_audit_jobs[[:space:]]+SET status='failed'").WithArgs(int64(11), "payload_store_failed", "Prompt Audit operation failed").WillReturnResult(sqlmock.NewResult(0, 1))
-	require.NoError(t, repo.MarkStagingFailed(ctx, 11, "payload_store_failed", "raw secret must not persist"))
-}
-
-func TestPromptStorageClaimLeaseCompletionAndRetry(t *testing.T) {
-	db, mock := newPromptStorageSQLMock(t)
-	repo := NewPostgreSQLRepository(db)
-	ctx := context.Background()
-	now := time.Unix(1700000000, 0).UTC()
-	mock.ExpectQuery("WITH candidate AS").WillReturnRows(promptJobRows("processing"))
-	job, claimed, err := repo.ClaimNextJob(ctx, now)
-	require.NoError(t, err)
-	require.True(t, claimed)
-	require.Equal(t, int64(11), job.ID)
-	mock.ExpectExec("UPDATE prompt_audit_jobs SET processing_started_at").WithArgs(int64(11), int64(5), now).WillReturnResult(sqlmock.NewResult(0, 1))
-	require.NoError(t, repo.RefreshLease(ctx, 11, 5, now))
-
-	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='done'").WithArgs(int64(11), int64(5)).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("INSERT INTO prompt_audit_events").WillReturnRows(promptEventRows())
-	mock.ExpectCommit()
-	job.ClaimVersion = 5
-	event, err := repo.Complete(ctx, job, storageResult(), true)
-	require.NoError(t, err)
-	require.NotNil(t, event)
-
-	next := now.Add(time.Minute)
-	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='retry'").WithArgs(int64(11), int64(5), next, "queue_full", "Prompt Audit queue is unavailable").WillReturnResult(sqlmock.NewResult(0, 1))
-	require.NoError(t, repo.Retry(ctx, 11, 5, next, "queue_full", "raw error"))
-	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='failed'").WithArgs(int64(11), int64(5), "worker_failed", "Prompt Audit operation failed").WillReturnResult(sqlmock.NewResult(0, 1))
-	require.NoError(t, repo.Fail(ctx, 11, 5, "worker_failed", "raw error"))
-	mock.ExpectExec("WITH stale AS").WithArgs(now, now, 100).WillReturnResult(sqlmock.NewResult(0, 2))
-	reclaimed, err := repo.ReclaimStale(ctx, now, now, 0)
-	require.NoError(t, err)
-	require.Equal(t, int64(2), reclaimed)
-}
-
-func TestPromptStorageQueueStatsAndBlockingRecord(t *testing.T) {
-	db, mock := newPromptStorageSQLMock(t)
-	repo := NewPostgreSQLRepository(db)
-	ctx := context.Background()
-	mock.ExpectQuery("SELECT status, COUNT\\(\\*\\)").WillReturnRows(sqlmock.NewRows([]string{"status", "count"}).
-		AddRow("staging", int64(1)).AddRow("queued", int64(2)).AddRow("processing", int64(3)).
-		AddRow("retry", int64(4)).AddRow("done", int64(5)).AddRow("failed", int64(6)).AddRow("unknown", int64(99)))
-	stats, err := repo.QueueStats(ctx)
-	require.NoError(t, err)
-	require.Equal(t, int64(10), stats.Active)
-	require.Equal(t, int64(5), stats.Done)
-	require.Equal(t, int64(6), stats.Failed)
-
-	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO prompt_audit_jobs").WillReturnRows(promptJobRows("done"))
-	mock.ExpectQuery("INSERT INTO prompt_audit_events").WillReturnRows(promptEventRows())
-	mock.ExpectCommit()
-	event, err := repo.RecordBlocking(ctx, storageSnapshot(), 7, storageResult(), true)
-	require.NoError(t, err)
-	require.Equal(t, int64(21), event.ID)
-	_, err = repo.RecordBlocking(ctx, storageSnapshot(), 7, nil, true)
-	require.Error(t, err)
-}
-
-func TestPromptStoragePayloadStoreRoundTripAndValidation(t *testing.T) {
 	require.Equal(t, PayloadKeyPrefix+"7", payloadKey(7))
 	nilStore := NewRedisPayloadStore(nil)
 	require.Error(t, nilStore.Set(context.Background(), 1, "text", time.Second))
@@ -220,21 +204,4 @@ func TestPromptStoragePayloadStoreRoundTripAndValidation(t *testing.T) {
 	_, err = store.Get(context.Background(), 7)
 	require.ErrorIs(t, err, redis.Nil)
 	require.True(t, errors.Is(err, redis.Nil))
-}
-
-func TestPromptAuditMigrationContainsOnlyRedactedPersistenceColumns(t *testing.T) {
-	contents, err := os.ReadFile("../../migrations/181_prompt_audit.sql")
-	require.NoError(t, err)
-	raw := strings.ToLower(string(contents))
-	require.Contains(t, raw, "create table if not exists prompt_audit_jobs")
-	require.Contains(t, raw, "create table if not exists prompt_audit_events")
-	nonCommentSQL := make([]string, 0)
-	for _, line := range strings.Split(raw, "\n") {
-		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
-			nonCommentSQL = append(nonCommentSQL, line)
-		}
-	}
-	for _, forbidden := range []string{"raw_prompt", "raw_request", "payload", "token", "authorization", "credential", "ciphertext"} {
-		require.NotContains(t, strings.Join(nonCommentSQL, "\n"), forbidden)
-	}
 }

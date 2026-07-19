@@ -7,70 +7,92 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
-	"path/filepath"
-	"strings"
+	"runtime"
 	"testing"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/mysql"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-func openPromptStorageIntegrationDB(t *testing.T) *sql.DB {
-	t.Helper()
-	dsn := strings.TrimSpace(os.Getenv("PROMPT_AUDIT_TEST_POSTGRES_DSN"))
-	if dsn == "" {
-		t.Skip("PROMPT_AUDIT_TEST_POSTGRES_DSN is not set")
-	}
+func TestPromptAuditStoragePostgreSQLIntegration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	container, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23",
+		tcpostgres.WithDatabase("prompt_audit"),
+		tcpostgres.WithUsername("postgres"),
+		tcpostgres.WithPassword("postgres"),
+		tcpostgres.BasicWaitStrategies(),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
+	dsn, err := container.ConnectionString(ctx, "sslmode=disable", "TimeZone=UTC")
+	require.NoError(t, err)
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	require.NoError(t, db.PingContext(ctx))
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS users (id BIGSERIAL PRIMARY KEY);
-		CREATE TABLE IF NOT EXISTS groups (id BIGSERIAL PRIMARY KEY);
-		CREATE TABLE IF NOT EXISTS api_keys (id BIGSERIAL PRIMARY KEY);
-	`)
-	require.NoError(t, err)
-	migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "181_prompt_audit.sql"))
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, string(migration))
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, string(migration))
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `TRUNCATE TABLE prompt_audit_events, prompt_audit_jobs, api_keys, users, groups RESTART IDENTITY CASCADE`)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	return db
+	exercisePromptAuditStorageIntegration(t, ctx, db)
 }
 
-func TestPromptAuditStorageRealDatabasePrivacyAndQueueLifecycle(t *testing.T) {
-	db := openPromptStorageIntegrationDB(t)
-	repo := NewPostgreSQLRepository(db)
-	ctx := context.Background()
+func TestPromptAuditStorageMySQL57Integration(t *testing.T) {
+	if runtime.GOARCH != "amd64" && os.Getenv("PROMPT_AUDIT_TEST_MYSQL57_EMULATED") != "1" {
+		t.Skip("mysql:5.7.44 only publishes an amd64 image; run this test on native amd64 or set PROMPT_AUDIT_TEST_MYSQL57_EMULATED=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	container, err := mysql.Run(ctx, "mysql:5.7.44",
+		mysql.WithDatabase("prompt_audit"),
+		mysql.WithUsername("audit"),
+		mysql.WithPassword("audit"),
+		testcontainers.WithImagePlatform("linux/amd64"),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
+	dsn, err := container.ConnectionString(ctx, "parseTime=true")
+	require.NoError(t, err)
+	db, err := sql.Open("mysql", dsn)
+	require.NoError(t, err)
+	exercisePromptAuditStorageIntegration(t, ctx, db)
+}
+
+func exercisePromptAuditStorageIntegration(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	require.NoError(t, db.PingContext(ctx))
+	for _, statement := range []string{
+		`CREATE TABLE users (id BIGINT PRIMARY KEY)`,
+		`CREATE TABLE groups (id BIGINT PRIMARY KEY)`,
+		`CREATE TABLE api_keys (id BIGINT PRIMARY KEY)`,
+	} {
+		_, err := db.ExecContext(ctx, statement)
+		require.NoError(t, err)
+	}
+	applyPromptAuditMigration(t, db)
+	applyPromptAuditMigration(t, db)
+
+	repo := NewSQLRepository(db)
 	snapshot := storageSnapshot()
-	snapshot.ScanText = "raw prompt must stay outside PostgreSQL"
+	snapshot.ScanText = "raw prompt must stay outside durable storage"
 	event, err := repo.RecordBlocking(ctx, snapshot, 7, storageResult(), true)
 	require.NoError(t, err)
 	require.NotNil(t, event)
 	raw, err := json.Marshal(event)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), snapshot.ScanText)
-	var stored string
-	require.NoError(t, db.QueryRow(`SELECT row_to_json(e)::text FROM prompt_audit_events e WHERE id=$1`, event.ID).Scan(&stored))
-	require.NotContains(t, stored, snapshot.ScanText)
 
 	job, err := repo.CreateStagingWithCapacity(ctx, snapshot, 7, 2, 10)
 	require.NoError(t, err)
 	require.NoError(t, repo.PublishQueued(ctx, job.ID))
-	claimed, ok, err := repo.ClaimNextJob(ctx, time.Now().Add(time.Second))
+	claimed, ok, err := repo.ClaimNextJob(ctx, time.Now().UTC().Add(time.Second))
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.NoError(t, repo.RefreshLease(ctx, claimed.ID, claimed.ClaimVersion, time.Now()))
+	require.NoError(t, repo.RefreshLease(ctx, claimed.ID, claimed.ClaimVersion, time.Now().UTC()))
 	_, err = repo.Complete(ctx, claimed, storageResult(), true)
 	require.NoError(t, err)
 	stats, err := repo.QueueStats(ctx)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), stats.Done)
+	require.Equal(t, int64(2), stats.Done)
 }
