@@ -113,3 +113,32 @@ func TestAuthCacheInvalidationOutboxRepositoryPropagatesQueryErrors(t *testing.T
 	require.ErrorIs(t, err, wantErr)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestAuthCacheInvalidationOutboxRepositoryPropagatesExecErrors(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := &authCacheInvalidationOutboxRepository{db: db}
+
+	scheduleErr := errors.New("schedule database unavailable")
+	mock.ExpectExec("(?s)UPDATE auth_cache_invalidation_outbox.*delivery_stage = 1").
+		WillReturnError(scheduleErr)
+	require.ErrorIs(t, repo.ScheduleSecondPass(context.Background(), 1, "worker", time.Now()), scheduleErr)
+
+	retryErr := errors.New("retry database unavailable")
+	mock.ExpectExec("(?s)UPDATE auth_cache_invalidation_outbox.*attempts = attempts \\+ 1").
+		WillReturnError(retryErr)
+	require.ErrorIs(t, repo.RetryClaimed(context.Background(), 1, "worker", time.Now(), "failure"), retryErr)
+
+	deleteErr := errors.New("delete database unavailable")
+	mock.ExpectExec("(?s)DELETE FROM auth_cache_invalidation_outbox").
+		WillReturnError(deleteErr)
+	require.ErrorIs(t, repo.DeleteClaimed(context.Background(), 1, "worker"), deleteErr)
+
+	statsErr := errors.New("stats database unavailable")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*), MIN(created_at), COALESCE(MAX(attempts), 0)")).
+		WillReturnError(statsErr)
+	_, err = repo.Stats(context.Background())
+	require.ErrorIs(t, err, statsErr)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

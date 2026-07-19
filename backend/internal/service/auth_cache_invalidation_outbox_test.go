@@ -21,6 +21,16 @@ type authCacheInvalidationCacheStub struct {
 	publishErr error
 }
 
+type authCacheInvalidationSubscriberStub struct {
+	apiKeyCacheStub
+	subscribeHandler func(string)
+}
+
+func (s *authCacheInvalidationSubscriberStub) SubscribeAuthCacheInvalidation(_ context.Context, handler func(string)) error {
+	s.subscribeHandler = handler
+	return nil
+}
+
 func (s *authCacheInvalidationCacheStub) DeleteAuthCache(ctx context.Context, key string) error {
 	s.deleteAuthKeys = append(s.deleteAuthKeys, key)
 	return s.deleteErr
@@ -139,6 +149,32 @@ func TestAuthCacheInvalidationWorkerRetriesRedisFailure(t *testing.T) {
 	require.NotEmpty(t, worker.Health(context.Background()).LastError)
 }
 
+func TestAuthCacheInvalidationWorkerRetriesPublishFailure(t *testing.T) {
+	repo := &authCacheInvalidationOutboxStub{}
+	cache := &authCacheInvalidationCacheStub{publishErr: errors.New("pubsub unavailable")}
+	worker := NewAuthCacheInvalidationWorker(repo, cache, nil)
+
+	worker.processEvent(context.Background(), AuthCacheInvalidationEvent{ID: 10, CacheKey: "cache-key"})
+
+	require.Equal(t, []int64{10}, repo.retried)
+	require.Empty(t, repo.scheduled)
+	require.EqualValues(t, 1, worker.failures.Load())
+}
+
+func TestAuthCacheInvalidationWorkerHandlesNilDependenciesAndClaimErrors(t *testing.T) {
+	var nilWorker *AuthCacheInvalidationWorker
+	nilWorker.Start()
+	nilWorker.Stop()
+
+	worker := NewAuthCacheInvalidationWorker(nil, nil, nil)
+	worker.Start()
+	worker.Stop()
+
+	claimErr := errors.New("claim unavailable")
+	worker = NewAuthCacheInvalidationWorker(&authCacheInvalidationOutboxStub{claimErr: claimErr}, &authCacheInvalidationCacheStub{}, nil)
+	require.ErrorIs(t, worker.processBatch(context.Background()), claimErr)
+}
+
 func TestAuthCacheInvalidationWorkerRecordsCompletionFailures(t *testing.T) {
 	scheduleRepo := &authCacheInvalidationOutboxStub{scheduleErr: errors.New("schedule unavailable")}
 	worker := NewAuthCacheInvalidationWorker(scheduleRepo, &authCacheInvalidationCacheStub{}, nil)
@@ -199,4 +235,25 @@ func TestAuthCacheInvalidationWorkerUsesLocalL1Invalidation(t *testing.T) {
 	local.invalidateLocalAuthCache("cache-key")
 	local = nil
 	local.invalidateLocalAuthCache("cache-key")
+}
+
+func TestAuthCacheInvalidationSubscriberUsesLocalInvalidation(t *testing.T) {
+	cache := &authCacheInvalidationSubscriberStub{}
+	local := &APIKeyService{cache: cache}
+	local.initAuthCache(&config.Config{APIKeyAuth: config.APIKeyAuthCacheConfig{L1Size: 8, L1TTLSeconds: 60}})
+	local.authCacheL1.Set("cache-key", &APIKeyAuthCacheEntry{}, 1)
+	local.authCacheL1.Wait()
+
+	local.StartAuthCacheInvalidationSubscriber(context.Background())
+	require.NotNil(t, cache.subscribeHandler)
+	cache.subscribeHandler("cache-key")
+	local.authCacheL1.Wait()
+	_, ok := local.authCacheL1.Get("cache-key")
+	require.False(t, ok)
+}
+
+func TestProvideAuthCacheInvalidationWorkerStartsWorker(t *testing.T) {
+	worker := ProvideAuthCacheInvalidationWorker(&authCacheInvalidationOutboxStub{}, &authCacheInvalidationCacheStub{}, nil)
+	require.NotNil(t, worker)
+	worker.Stop()
 }
