@@ -316,6 +316,70 @@ func TestPromptAuditPostgreSQLRepositorySkipsPassEventWhenDisabled(t *testing.T)
 	require.Nil(t, event)
 }
 
+func TestPromptAuditRepositoryAdmissionAndClaimContention(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0).UTC()
+
+	postgres := NewPostgreSQLRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WithArgs(promptAuditAdmissionLockKey).WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(false))
+	mock.ExpectRollback()
+	_, err := postgres.CreateStagingWithCapacity(ctx, storageSnapshot(), 7, 3, 10)
+	require.ErrorIs(t, err, ErrQueueAdmissionBusy)
+
+	mock.ExpectQuery("WITH candidate AS").WithArgs(now).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	job, claimed, err := postgres.ClaimNextJob(ctx, now)
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.Nil(t, job)
+
+	portable := &PostgreSQLRepository{db: db, dialect: promptAuditQuestionMark}
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT prompt_audit_jobs.id").WithArgs(now).WillReturnRows(promptJobRows("queued"))
+	mock.ExpectExec("UPDATE prompt_audit_jobs[[:space:]]+SET status='processing'").
+		WithArgs(now, now, int64(11), int64(5), now).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT prompt_audit_jobs.id").WithArgs(now).WillReturnRows(promptJobRows("queued"))
+	mock.ExpectExec("UPDATE prompt_audit_jobs[[:space:]]+SET status='processing'").
+		WithArgs(now, now, int64(11), int64(5), now).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	job, claimed, err = portable.ClaimNextJob(ctx, now)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.Equal(t, "processing", job.Status)
+	require.Equal(t, int64(6), job.ClaimVersion)
+}
+
+func TestPromptAuditRepositoryValidationAndPassCompletion(t *testing.T) {
+	ctx := context.Background()
+	var unavailable *PostgreSQLRepository
+	_, err := unavailable.CreateStagingWithCapacity(ctx, storageSnapshot(), 7, 1, 1)
+	require.Error(t, err)
+	_, _, err = unavailable.ClaimNextJob(ctx, time.Now())
+	require.Error(t, err)
+	_, err = unavailable.Complete(ctx, nil, nil, false)
+	require.Error(t, err)
+	_, err = unavailable.ReclaimStale(ctx, time.Now(), time.Now(), 1)
+	require.Error(t, err)
+	_, err = unavailable.RecordBlocking(ctx, storageSnapshot(), 7, nil, false)
+	require.Error(t, err)
+
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	job := &Job{ID: 11, ClaimVersion: 5, Snapshot: storageSnapshot(), ConfigVersion: 7}
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='done'").WithArgs(int64(11), int64(5)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	event, err := repo.Complete(ctx, job, &NormalizedResult{Decision: EventPass}, false)
+	require.NoError(t, err)
+	require.Nil(t, event)
+
+	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='queued'").WithArgs(int64(11)).WillReturnResult(sqlmock.NewResult(0, 0))
+	require.ErrorIs(t, repo.PublishQueued(ctx, 11), ErrLeaseLost)
+}
+
 func TestPromptStorageHelpersAndPayloadStore(t *testing.T) {
 	require.Equal(t, int64(0), nullableInt64Value(sql.NullInt64{}))
 	require.Equal(t, int64(7), nullableInt64Value(sql.NullInt64{Int64: 7, Valid: true}))
