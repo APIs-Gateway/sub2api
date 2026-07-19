@@ -230,6 +230,23 @@ func isUpstreamBillingProbeAccount(account *Account) bool {
 	return account != nil && account.IsOpenAIApiKey()
 }
 
+// sanitizeUpstreamBillingProbeExtra prevents callers from mutating managed
+// probe state through the generic JSONB extra payload. Typed fields are
+// applied by the admin service after this sanitization step.
+func sanitizeUpstreamBillingProbeExtra(extra map[string]any) map[string]any {
+	if len(extra) == 0 {
+		return extra
+	}
+	sanitized := make(map[string]any, len(extra))
+	for key, value := range extra {
+		if key == UpstreamBillingProbeEnabledExtraKey || key == UpstreamBillingProbeExtraKey {
+			continue
+		}
+		sanitized[key] = value
+	}
+	return sanitized
+}
+
 func resolveUpstreamBillingNumber(values map[string]any, keys ...string) (float64, bool) {
 	for _, key := range keys {
 		value, ok := values[key]
