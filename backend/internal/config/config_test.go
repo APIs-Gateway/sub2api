@@ -137,6 +137,9 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds != 3600 {
 		t.Fatalf("Gateway.OpenAIWS.StickyResponseIDTTLSeconds = %d, want 3600", cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds)
 	}
+	if cfg.Gateway.OpenAIWS.IngressInterTurnIdleTimeoutSeconds != 300 {
+		t.Fatalf("Gateway.OpenAIWS.IngressInterTurnIdleTimeoutSeconds = %d, want 300", cfg.Gateway.OpenAIWS.IngressInterTurnIdleTimeoutSeconds)
+	}
 	if cfg.Gateway.OpenAIWS.FallbackCooldownSeconds != 30 {
 		t.Fatalf("Gateway.OpenAIWS.FallbackCooldownSeconds = %d, want 30", cfg.Gateway.OpenAIWS.FallbackCooldownSeconds)
 	}
@@ -1668,6 +1671,11 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			name:    "max_conns_per_account 必须为正数",
 			mutate:  func(c *Config) { c.Gateway.OpenAIWS.MaxConnsPerAccount = 0 },
 			wantErr: "gateway.openai_ws.max_conns_per_account",
+		},
+		{
+			name:    "ingress_inter_turn_idle_timeout_seconds 不能为负数",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.IngressInterTurnIdleTimeoutSeconds = -1 },
+			wantErr: "gateway.openai_ws.ingress_inter_turn_idle_timeout_seconds",
 		},
 		{
 			name:    "client_first_message_timeout_seconds 必须为正数",

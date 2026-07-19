@@ -103,3 +103,54 @@ func TestReadOpenAIWSClientMessage_ParentCancellationJoinsReader(t *testing.T) {
 		t.Fatal("server read goroutine leaked after parent cancellation")
 	}
 }
+
+func TestReadOpenAIWSClientMessage_DelayedTimeoutStartsAfterTurnSignal(t *testing.T) {
+	serverResult := make(chan error, 1)
+	readStarted := make(chan struct{})
+	startTimeout := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			serverResult <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		close(readStarted)
+		_, _, err = readOpenAIWSClientMessageWithTimeoutStart(
+			context.Background(),
+			conn,
+			25*time.Millisecond,
+			coderws.StatusNormalClosure,
+			"websocket idle timeout",
+			startTimeout,
+			func() bool { return true },
+		)
+		serverResult <- err
+	}))
+	defer server.Close()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), time.Second)
+	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+	<-readStarted
+	startTimeout <- struct{}{}
+
+	readCtx, cancelRead := context.WithTimeout(context.Background(), time.Second)
+	_, _, err = clientConn.Read(readCtx)
+	cancelRead()
+	var clientClose coderws.CloseError
+	require.ErrorAs(t, err, &clientClose)
+	require.Equal(t, coderws.StatusNormalClosure, clientClose.Code)
+	require.Equal(t, "websocket idle timeout", clientClose.Reason)
+
+	select {
+	case serverErr := <-serverResult:
+		var closeErr *OpenAIWSClientCloseError
+		require.ErrorAs(t, serverErr, &closeErr)
+		require.Equal(t, coderws.StatusNormalClosure, closeErr.StatusCode())
+	case <-time.After(time.Second):
+		t.Fatal("delayed timeout reader did not exit after timeout signal")
+	}
+}

@@ -992,6 +992,13 @@ func (s *OpenAIGatewayService) openAIWSPassthroughIdleTimeout() time.Duration {
 	return openAIWSPassthroughIdleTimeoutDefault
 }
 
+func (s *OpenAIGatewayService) openAIWSIngressInterTurnIdleTimeout() time.Duration {
+	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIWS.IngressInterTurnIdleTimeoutSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(s.cfg.Gateway.OpenAIWS.IngressInterTurnIdleTimeoutSeconds) * time.Second
+}
+
 func (s *OpenAIGatewayService) openAIWSWriteTimeout() time.Duration {
 	if s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.WriteTimeoutSeconds > 0 {
 		return time.Duration(s.cfg.Gateway.OpenAIWS.WriteTimeoutSeconds) * time.Second
