@@ -114,3 +114,20 @@ func TestAPIKeyServiceRejectsOversizedCredentialBeforeRepository(t *testing.T) {
 	require.ErrorIs(t, err, ErrAPIKeyNotFound)
 	require.False(t, called)
 }
+
+func TestAPIKeyServiceInvalidAuthAbuseMethods(t *testing.T) {
+	svc := NewAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{
+		APIKeyAuth: config.APIKeyAuthCacheConfig{InvalidAbuse: config.InvalidAuthAbuseConfig{
+			Enabled: true, Threshold: 2, WindowSeconds: 60, BlockSeconds: 10, Capacity: 16,
+		}},
+	})
+
+	svc.RecordInvalidAuthFailure("198.51.100.20")
+	svc.RecordInvalidAuthFailure("198.51.100.20")
+	retry, blocked := svc.CheckInvalidAuthAbuse("198.51.100.20")
+	require.True(t, blocked)
+	require.Positive(t, retry)
+	health := svc.InvalidAuthAbuseHealth()
+	require.Equal(t, uint64(2), health.Recorded)
+	require.Equal(t, uint64(1), health.Blocks)
+}
