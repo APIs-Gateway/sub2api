@@ -58,6 +58,13 @@ type AccountHandler struct {
 	sessionLimitCache       service.SessionLimitCache
 	rpmCache                service.RPMCache
 	tokenCacheInvalidator   service.TokenCacheInvalidator
+	upstreamBillingProbe    *service.UpstreamBillingProbeService
+}
+
+// SetUpstreamBillingProbeService attaches the optional billing probe producer
+// after the existing account handler dependencies are constructed.
+func (h *AccountHandler) SetUpstreamBillingProbeService(probe *service.UpstreamBillingProbeService) {
+	h.upstreamBillingProbe = probe
 }
 
 // NewAccountHandler creates a new admin account handler

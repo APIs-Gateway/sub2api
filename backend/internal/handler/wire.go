@@ -44,7 +44,9 @@ func ProvideAdminHandlers(
 	complianceHandler *admin.ComplianceHandler,
 	pointsHandler *admin.PointsHandler,
 	promptAuditHandler *securityaudit.PromptEventAdminHandler,
+	upstreamBillingProbe *service.UpstreamBillingProbeService,
 ) *AdminHandlers {
+	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	return &AdminHandlers{
 		Dashboard:              dashboardHandler,
 		User:                   userHandler,
