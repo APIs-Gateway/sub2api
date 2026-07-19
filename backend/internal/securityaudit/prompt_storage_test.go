@@ -11,11 +11,34 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
+
+func newPromptStorageSQLMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
+	t.Helper()
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		mock.ExpectClose()
+		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	return db, mock
+}
+
+func promptJobRows(status string) *sqlmock.Rows {
+	now := time.Unix(1700000000, 0).UTC()
+	return sqlmock.NewRows([]string{"id", "request_id", "user_id", "username_snapshot", "user_email_snapshot", "api_key_id", "api_key_name_snapshot", "group_id", "group_name", "provider", "endpoint", "protocol", "model", "prompt_hash", "redacted_preview", "prompt_length", "message_count", "execution_mode", "config_version", "status", "attempts", "max_attempts", "claim_version", "next_attempt_at", "processing_started_at", "processed_at", "last_error_code", "last_error_message", "created_at", "updated_at"}).AddRow(11, "request-11", 2, "user", "user@example.test", 3, "key", 4, "group", "openai", "/v1/chat/completions", "openai_chat", "guard-model", strings.Repeat("a", 64), "redacted", 12, 2, string(ModeAsync), 7, status, 1, 3, 5, now, nil, nil, "", "", now, now)
+}
+
+func promptEventRows() *sqlmock.Rows {
+	now := time.Unix(1700000000, 0).UTC()
+	return sqlmock.NewRows([]string{"id", "job_id", "request_id", "user_id", "username_snapshot", "user_email_snapshot", "api_key_id", "api_key_name_snapshot", "group_id", "group_name", "provider", "endpoint", "protocol", "model", "prompt_hash", "redacted_preview", "decision", "risk_level", "action", "categories", "matched_scanners", "scanner_scores", "scanner_evidence", "scanner_backend", "scanner_version", "guard_endpoint_id", "policy_id", "policy_version", "config_version", "chunk_total", "latency_ms", "created_at"}).AddRow(21, 11, "request-11", 2, "user", "user@example.test", 3, "key", 4, "group", "openai", "/v1/chat/completions", "openai_chat", "guard-model", strings.Repeat("a", 64), "redacted", string(EventCritical), string(RiskCritical), string(ActionBlock), []byte(`["pii"]`), []byte(`["pii"]`), []byte(`{"pii":1}`), []byte(`{"pii":"email"}`), "qwen3guard-openai", "guard-model", "guard-1", "priority", 1, 7, 1, 3, now)
+}
 
 func newPromptStorageSQLite(t *testing.T) *sql.DB {
 	t.Helper()
@@ -158,6 +181,85 @@ func TestPromptAuditRepositoryUsesQuestionMarkDialectForSQLite(t *testing.T) {
 	require.Equal(t, promptAuditQuestionMark, repo.dialect)
 	require.Equal(t, "?", repo.placeholder(1))
 	require.Equal(t, "$2", (&PostgreSQLRepository{dialect: promptAuditPostgreSQL}).placeholder(2))
+}
+
+func TestPromptAuditPostgreSQLRepositoryClaimAndUpdates(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0).UTC()
+	mock.ExpectQuery("WITH candidate AS").WithArgs(now).WillReturnRows(promptJobRows("processing"))
+	job, claimed, err := repo.ClaimNextJob(ctx, now)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.Equal(t, int64(11), job.ID)
+	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='queued'").WithArgs(int64(11)).WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, repo.PublishQueued(ctx, 11))
+	mock.ExpectExec("UPDATE prompt_audit_jobs[[:space:]]+SET status='failed'").WithArgs(int64(11), "queue_full", "Prompt Audit queue is unavailable").WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, repo.MarkStagingFailed(ctx, 11, "queue_full", "secret"))
+	mock.ExpectExec("UPDATE prompt_audit_jobs SET processing_started_at").WithArgs(int64(11), int64(5), now).WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, repo.RefreshLease(ctx, 11, 5, now))
+	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='retry'").WithArgs(int64(11), int64(5), now, "queue_full", "Prompt Audit queue is unavailable").WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, repo.Retry(ctx, 11, 5, now, "queue_full", "secret"))
+	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='failed'").WithArgs(int64(11), int64(5), "worker_failed", "Prompt Audit operation failed").WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, repo.Fail(ctx, 11, 5, "worker_failed", "secret"))
+}
+
+func TestPromptAuditPostgreSQLRepositorySequenceAllocation(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	ctx := context.Background()
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	mock.ExpectQuery("SELECT next_id FROM prompt_audit_sequences").WithArgs("job").WillReturnRows(sqlmock.NewRows([]string{"next_id"}).AddRow(9))
+	mock.ExpectExec("UPDATE prompt_audit_sequences SET next_id=\\$1").WithArgs(int64(10), "job", int64(9)).WillReturnResult(sqlmock.NewResult(0, 1))
+	id, err := repo.reserveID(ctx, tx, "job")
+	require.NoError(t, err)
+	require.Equal(t, int64(9), id)
+	mock.ExpectCommit()
+	require.NoError(t, tx.Commit())
+
+	mock.ExpectBegin()
+	tx, err = db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	for i := 0; i < 8; i++ {
+		mock.ExpectQuery("SELECT next_id FROM prompt_audit_sequences").WithArgs("event").WillReturnRows(sqlmock.NewRows([]string{"next_id"}).AddRow(3))
+		mock.ExpectExec("UPDATE prompt_audit_sequences SET next_id=\\$1").WithArgs(int64(4), "event", int64(3)).WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+	_, err = repo.reserveID(ctx, tx, "event")
+	require.ErrorIs(t, err, ErrQueueAdmissionBusy)
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+}
+
+func TestPromptAuditPostgreSQLRepositoryAdmissionAndCompletion(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	ctx := context.Background()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WithArgs(promptAuditAdmissionLockKey).WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM prompt_audit_jobs").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("SELECT next_id FROM prompt_audit_sequences").WithArgs("job").WillReturnRows(sqlmock.NewRows([]string{"next_id"}).AddRow(11))
+	mock.ExpectExec("UPDATE prompt_audit_sequences SET next_id=\\$1").WithArgs(int64(12), "job", int64(11)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO prompt_audit_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT prompt_audit_jobs.id").WithArgs(int64(11)).WillReturnRows(promptJobRows("staging"))
+	mock.ExpectCommit()
+	job, err := repo.CreateStagingWithCapacity(ctx, storageSnapshot(), 7, 3, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(11), job.ID)
+
+	job.ClaimVersion = 5
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='done'").WithArgs(int64(11), int64(5)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT next_id FROM prompt_audit_sequences").WithArgs("event").WillReturnRows(sqlmock.NewRows([]string{"next_id"}).AddRow(21))
+	mock.ExpectExec("UPDATE prompt_audit_sequences SET next_id=\\$1").WithArgs(int64(22), "event", int64(21)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO prompt_audit_events").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT prompt_audit_events.id").WithArgs(int64(21)).WillReturnRows(promptEventRows())
+	mock.ExpectCommit()
+	event, err := repo.Complete(ctx, job, storageResult(), true)
+	require.NoError(t, err)
+	require.Equal(t, int64(21), event.ID)
 }
 
 func TestPromptStorageHelpersAndPayloadStore(t *testing.T) {
