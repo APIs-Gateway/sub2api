@@ -262,6 +262,60 @@ func TestPromptAuditPostgreSQLRepositoryAdmissionAndCompletion(t *testing.T) {
 	require.Equal(t, int64(21), event.ID)
 }
 
+func TestPromptAuditPostgreSQLRepositoryReclaimAndQueueStats(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	ctx := context.Background()
+	stagingBefore := time.Unix(1700000100, 0).UTC()
+	processingBefore := time.Unix(1700000200, 0).UTC()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id,status,attempts,max_attempts FROM prompt_audit_jobs").
+		WithArgs(stagingBefore, processingBefore, 100).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "status", "attempts", "max_attempts"}).
+			AddRow(int64(11), "staging", int64(0), int64(3)).
+			AddRow(int64(12), "processing", int64(1), int64(3)).
+			AddRow(int64(13), "processing", int64(3), int64(3)))
+	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='failed', processing_started_at=NULL").
+		WithArgs(int64(11), stagingBefore).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='retry', next_attempt_at=CURRENT_TIMESTAMP").
+		WithArgs(int64(12), processingBefore).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='failed', processing_started_at=NULL").
+		WithArgs(int64(13), processingBefore).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	reclaimed, err := repo.ReclaimStale(ctx, stagingBefore, processingBefore, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), reclaimed)
+
+	mock.ExpectQuery("SELECT status, COUNT\\(\\*\\) FROM prompt_audit_jobs GROUP BY status").WillReturnRows(
+		sqlmock.NewRows([]string{"status", "count"}).
+			AddRow("staging", int64(1)).
+			AddRow("queued", int64(2)).
+			AddRow("processing", int64(3)).
+			AddRow("retry", int64(4)).
+			AddRow("done", int64(5)).
+			AddRow("failed", int64(6)).
+			AddRow("unknown", int64(7)))
+	stats, err := repo.QueueStats(ctx)
+	require.NoError(t, err)
+	require.Equal(t, QueueStats{Staging: 1, Queued: 2, Processing: 3, Retry: 4, Done: 5, Failed: 6, Active: 10}, stats)
+}
+
+func TestPromptAuditPostgreSQLRepositorySkipsPassEventWhenDisabled(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT next_id FROM prompt_audit_sequences").WithArgs("job").WillReturnRows(sqlmock.NewRows([]string{"next_id"}).AddRow(11))
+	mock.ExpectExec("UPDATE prompt_audit_sequences SET next_id=\\$1").WithArgs(int64(12), "job", int64(11)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO prompt_audit_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT prompt_audit_jobs.id").WithArgs(int64(11)).WillReturnRows(promptJobRows("done"))
+	mock.ExpectCommit()
+
+	event, err := repo.RecordBlocking(context.Background(), storageSnapshot(), 7, &NormalizedResult{Decision: EventPass}, false)
+	require.NoError(t, err)
+	require.Nil(t, event)
+}
+
 func TestPromptStorageHelpersAndPayloadStore(t *testing.T) {
 	require.Equal(t, int64(0), nullableInt64Value(sql.NullInt64{}))
 	require.Equal(t, int64(7), nullableInt64Value(sql.NullInt64{Int64: 7, Valid: true}))
@@ -279,6 +333,18 @@ func TestPromptStorageHelpersAndPayloadStore(t *testing.T) {
 	code, message := sanitizeStoredError("queue_full")
 	require.Equal(t, "queue_full", code)
 	require.Equal(t, "Prompt Audit queue is unavailable", message)
+	for _, tc := range []struct {
+		code, message string
+	}{
+		{ErrorCodeBlocked, "Prompt Guard blocked the request"},
+		{ErrorCodeUnavailable, "Prompt Audit dependency is unavailable"},
+		{"payload_missing", "Prompt Audit dependency is unavailable"},
+		{ErrorCodeInvalidResponse, "Prompt Guard returned an invalid response"},
+		{"unexpected", "Prompt Audit operation failed"},
+	} {
+		require.Equal(t, tc.message, stableErrorMessage(tc.code))
+	}
+	require.False(t, realClock{}.Now().IsZero())
 
 	require.Equal(t, PayloadKeyPrefix+"7", payloadKey(7))
 	nilStore := NewRedisPayloadStore(nil)
@@ -293,6 +359,7 @@ func TestPromptStorageHelpersAndPayloadStore(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 	store := NewRedisPayloadStore(client)
+	require.Error(t, store.Set(context.Background(), 0, "text", time.Second))
 	require.NoError(t, store.Set(context.Background(), 7, "scan text", 2*DefaultPayloadTTL))
 	value, err := store.Get(context.Background(), 7)
 	require.NoError(t, err)
