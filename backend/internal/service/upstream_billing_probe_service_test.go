@@ -743,20 +743,20 @@ func TestUpstreamBillingProbeServiceBoundaryErrorsAndLifecycle(t *testing.T) {
 	service := newBillingProbeService(repo, nil, &billingProbeSettingRepo{values: map[string]string{}}, now)
 
 	var nilService *UpstreamBillingProbeService
-	_, err := nilService.ProbeAccount(nil, 1)
+	_, err := nilService.ProbeAccount(context.TODO(), 1)
 	require.ErrorIs(t, err, ErrUpstreamBillingProbeUnavailable)
 	nilService.Stop()
 	nilService.Start()
 	require.NotZero(t, nilService.currentTime())
 
-	_, err = service.ProbeAccount(nil, 99)
+	_, err = service.ProbeAccount(context.TODO(), 99)
 	require.ErrorIs(t, err, ErrAccountNotFound)
 	results := service.ProbeAccounts(context.Background(), []int64{99})
 	require.Len(t, results, 1)
 	require.Equal(t, "probe_failed", results[0].Error)
 
 	require.ErrorIs(t, service.SetAccountEnabled(context.Background(), 99, true), ErrAccountNotFound)
-	var nilRepoService *UpstreamBillingProbeService = NewUpstreamBillingProbeService(nil, nil, nil)
+	nilRepoService := NewUpstreamBillingProbeService(nil, nil, nil)
 	require.ErrorIs(t, nilRepoService.SetAccountEnabled(context.Background(), 1, true), ErrUpstreamBillingProbeUnavailable)
 
 	released := false
