@@ -79,6 +79,7 @@ func TestBuildOpenAISelectionOrderAddsCostOverflowWithoutChangingNormalTopK(t *t
 		{account: &Account{ID: 1}, loadInfo: &AccountLoadInfo{}, score: 3},
 		{account: &Account{ID: 2}, loadInfo: &AccountLoadInfo{}, score: 2},
 		{account: &Account{ID: 3}, loadInfo: &AccountLoadInfo{}, score: 1},
+		{},
 	}
 
 	normal := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{}, openAIAccountLoadPlan{
@@ -126,7 +127,7 @@ func TestOpenAISelectionSkipsKnownFullAndSharesAcquireBudget(t *testing.T) {
 	full := probeBudgetTestAccount(1, 1)
 	selected, _, err := scheduler.tryAcquireOpenAISelectionOrderWithBudget(
 		context.Background(), OpenAIAccountScheduleRequest{RequiredTransport: OpenAIUpstreamTransportAny},
-		[]openAIAccountCandidateScore{{account: full, loadKnown: true, loadInfo: &AccountLoadInfo{CurrentConcurrency: 1}}},
+		[]openAIAccountCandidateScore{{}, {account: full, loadKnown: true, loadInfo: &AccountLoadInfo{CurrentConcurrency: 1}}},
 		newOpenAISelectionProbeBudget(),
 	)
 	require.NoError(t, err)
