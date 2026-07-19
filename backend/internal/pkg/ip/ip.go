@@ -54,6 +54,16 @@ func GetTrustedClientIP(c *gin.Context) string {
 	return normalizeIP(c.ClientIP())
 }
 
+// GetSecurityClientIP selects the client IP used by security-sensitive paths.
+// The setting is shared with API-key ACLs and session binding so those paths
+// cannot disagree about the request fingerprint behind a reverse proxy.
+func GetSecurityClientIP(c *gin.Context, trustForwarded bool) string {
+	if trustForwarded {
+		return GetClientIP(c)
+	}
+	return GetTrustedClientIP(c)
+}
+
 // GetCloudflareCountryCode returns a normalized two-letter CF-IPCountry value.
 func GetCloudflareCountryCode(c *gin.Context) string {
 	if c == nil {
