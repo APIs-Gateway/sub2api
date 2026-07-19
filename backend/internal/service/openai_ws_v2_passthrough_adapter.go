@@ -1165,10 +1165,34 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		turnCount,
 	)
 
-	relayErr := relayExit.Err
+	relayErr := openAIWSPassthroughNormalizeRelayError(
+		relayExit.Err,
+		relayExit.Stage,
+		relayExit.WroteDownstream,
+		turnCount,
+		handshakeHeaders,
+	)
+	turnErr := wrapOpenAIWSIngressTurnError(
+		relayExit.Stage,
+		relayErr,
+		relayExit.WroteDownstream,
+	)
+	if hooks != nil && hooks.AfterTurn != nil {
+		hooks.AfterTurn(turnCount+1, nil, turnErr)
+	}
+	return turnErr
+}
+
+func openAIWSPassthroughNormalizeRelayError(
+	relayErr error,
+	stage string,
+	wroteDownstream bool,
+	completedTurns int,
+	handshakeHeaders http.Header,
+) error {
 	var firstOutputTimeoutErr *openAIWSPassthroughFirstOutputTimeoutError
 	if errors.As(relayErr, &firstOutputTimeoutErr) {
-		if turnCount > 0 || relayExit.WroteDownstream {
+		if completedTurns > 0 || wroteDownstream {
 			relayErr = NewOpenAIWSClientCloseError(
 				coderws.StatusGoingAway,
 				"upstream produced no semantic output; please reconnect",
@@ -1190,22 +1214,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			activeTurnTimeoutErr,
 		)
 	}
-	if relayExit.Stage == "idle_timeout" {
+	if stage == "idle_timeout" {
 		relayErr = NewOpenAIWSClientCloseError(
 			coderws.StatusPolicyViolation,
 			"client websocket idle timeout",
 			relayErr,
 		)
 	}
-	turnErr := wrapOpenAIWSIngressTurnError(
-		relayExit.Stage,
-		relayErr,
-		relayExit.WroteDownstream,
-	)
-	if hooks != nil && hooks.AfterTurn != nil {
-		hooks.AfterTurn(turnCount+1, nil, turnErr)
-	}
-	return turnErr
+	return relayErr
 }
 
 func openAIWSPassthroughRelayClientClose(exit openaiwsv2.RelayExit, completedTurns int) (coderws.StatusCode, string, bool) {

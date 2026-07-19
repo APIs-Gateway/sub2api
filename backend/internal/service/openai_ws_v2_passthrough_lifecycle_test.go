@@ -405,3 +405,105 @@ func TestOpenAIWSPassthroughRelayClientCloseMapping_TimeoutBranches(t *testing.T
 	require.Equal(t, "upstream websocket proxy failed", reason)
 	require.True(t, ok)
 }
+
+func TestOpenAIWSPassthroughFirstOutputFrameConn_ReadFrameBranches(t *testing.T) {
+	conn := newPassthroughLifecycleTestFrameConn()
+	wrapper := &openAIWSPassthroughFirstOutputFrameConn{inner: conn}
+	readDone := make(chan error, 1)
+	go func() {
+		_, _, err := wrapper.ReadFrame(nil)
+		readDone <- err
+	}()
+	conn.frames <- []byte(`{"type":"response.created"}`)
+	require.NoError(t, <-readDone)
+
+	active := &openAIWSPassthroughFirstOutputFrameConn{activeReadTimeout: time.Second}
+	active.armActiveReadDeadline()
+	require.True(t, active.deadlineState().armed)
+	active.observeUpstreamActivity(coderws.MessageText, []byte(`{"type":"response.output_text.delta"}`))
+	require.True(t, active.deadlineState().armed)
+	require.NoError(t, active.Close())
+
+	base := time.Now()
+	nowCalls := 0
+	timedConn := newPassthroughLifecycleTestFrameConn()
+	timed := &openAIWSPassthroughFirstOutputFrameConn{
+		inner:           timedConn,
+		deadlineChanged: make(chan struct{}, 1),
+		now: func() time.Time {
+			nowCalls++
+			if nowCalls <= 3 {
+				return base
+			}
+			return base.Add(time.Second)
+		},
+		resolveDeadline: func([]byte) openAIWSPassthroughFirstOutputDeadline {
+			return openAIWSPassthroughFirstOutputDeadline{
+				timeout:   5 * time.Millisecond,
+				startedAt: base,
+			}
+		},
+	}
+	require.NoError(t, timed.WriteFrame(context.Background(), coderws.MessageText, []byte(`{"type":"response.create"}`)))
+	select {
+	case <-timed.deadlineChanged:
+	default:
+	}
+	_, _, err := timed.ReadFrame(context.Background())
+	var timeoutErr *openAIWSPassthroughFirstOutputTimeoutError
+	require.ErrorAs(t, err, &timeoutErr)
+}
+
+func TestReadOpenAIWSClientMessageWithTimeoutStart_NilConnection(t *testing.T) {
+	_, _, err := readOpenAIWSClientMessageWithTimeoutStart(
+		context.Background(),
+		nil,
+		time.Second,
+		coderws.StatusNormalClosure,
+		"timeout",
+		nil,
+		nil,
+	)
+	require.EqualError(t, err, "openai websocket client connection is nil")
+}
+
+func TestOpenAIWSPassthroughNormalizeRelayError(t *testing.T) {
+	failover := openAIWSPassthroughNormalizeRelayError(
+		&openAIWSPassthroughFirstOutputTimeoutError{},
+		"read_upstream",
+		false,
+		0,
+		http.Header{"X-Request-Id": []string{"req_1"}},
+	)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, failover, &failoverErr)
+	require.Equal(t, http.StatusGatewayTimeout, failoverErr.StatusCode)
+	require.Equal(t, `{"error":{"type":"first_output_timeout"}}`, string(failoverErr.ResponseBody))
+	require.Equal(t, "req_1", failoverErr.ResponseHeaders.Get("X-Request-ID"))
+
+	closeErr := openAIWSPassthroughNormalizeRelayError(
+		&openAIWSPassthroughFirstOutputTimeoutError{},
+		"read_upstream",
+		true,
+		0,
+		nil,
+	)
+	var clientCloseErr *OpenAIWSClientCloseError
+	require.ErrorAs(t, closeErr, &clientCloseErr)
+	require.Equal(t, coderws.StatusGoingAway, clientCloseErr.StatusCode())
+
+	activeErr := openAIWSPassthroughNormalizeRelayError(
+		&openAIWSPassthroughActiveTurnTimeoutError{},
+		"read_upstream",
+		false,
+		1,
+		nil,
+	)
+	require.ErrorAs(t, activeErr, &clientCloseErr)
+	require.Equal(t, "upstream websocket read timeout; please reconnect", clientCloseErr.Reason())
+
+	idleErr := openAIWSPassthroughNormalizeRelayError(errors.New("idle"), "idle_timeout", false, 0, nil)
+	require.ErrorAs(t, idleErr, &clientCloseErr)
+	require.Equal(t, coderws.StatusPolicyViolation, clientCloseErr.StatusCode())
+	require.Equal(t, "client websocket idle timeout", clientCloseErr.Reason())
+}
