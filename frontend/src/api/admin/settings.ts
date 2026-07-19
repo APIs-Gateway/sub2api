@@ -368,6 +368,8 @@ export interface SystemSettings {
   invitation_code_enabled: boolean;
   totp_enabled: boolean; // TOTP 双因素认证
   totp_encryption_key_configured: boolean; // TOTP 加密密钥是否已配置
+  session_binding_enabled: boolean; // Session IP/UA binding
+  step_up_enabled: boolean; // Sensitive-operation step-up 2FA
   login_agreement_enabled: boolean;
   login_agreement_mode: "modal" | "checkbox" | string;
   login_agreement_updated_at: string;
@@ -650,6 +652,8 @@ export interface UpdateSettingsRequest {
   frontend_url?: string;
   invitation_code_enabled?: boolean;
   totp_enabled?: boolean; // TOTP 双因素认证
+  session_binding_enabled?: boolean; // Session IP/UA binding
+  step_up_enabled?: boolean; // Sensitive-operation step-up 2FA
   login_agreement_enabled?: boolean;
   login_agreement_mode?: "modal" | "checkbox" | string;
   login_agreement_updated_at?: string;

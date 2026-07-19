@@ -17,6 +17,10 @@ type stepUpUserReader interface {
 	GetByID(ctx context.Context, id int64) (*service.User, error)
 }
 
+type stepUpSettingReader interface {
+	IsStepUpEnabled(ctx context.Context) bool
+}
+
 // StepUpSessionKey binds a grant to the current JWT session. Legacy tokens
 // without sid use a user-scoped fallback for compatibility.
 func StepUpSessionKey(c *gin.Context, userID int64) string {
@@ -28,7 +32,31 @@ func StepUpSessionKey(c *gin.Context, userID int64) string {
 
 // EnforceStepUp applies the same gate used by sensitive route middleware and
 // can be called conditionally by handlers.
-func EnforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader stepUpUserReader) bool {
+func EnforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader stepUpUserReader, settingService *service.SettingService) bool {
+	return enforceStepUp(c, grantChecker, userReader, stepUpSettingsOrNil(settingService))
+}
+
+// EnforceStepUpAlways applies the gate without consulting the feature switch.
+// It is used when the caller has already established that disabling the switch
+// is itself the sensitive operation being protected.
+func EnforceStepUpAlways(c *gin.Context, grantChecker stepUpGrantChecker, userReader stepUpUserReader) bool {
+	return enforceStepUp(c, grantChecker, userReader, nil)
+}
+
+func stepUpSettingsOrNil(settingService *service.SettingService) stepUpSettingReader {
+	if settingService == nil {
+		return nil
+	}
+	return settingService
+}
+
+func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader stepUpUserReader, settings stepUpSettingReader) bool {
+	// Missing settings keeps the historical fail-closed behavior used by unit
+	// tests and protects callers that have not completed dependency wiring.
+	if settings != nil && !settings.IsStepUpEnabled(c.Request.Context()) {
+		return true
+	}
+
 	if c.GetString("auth_method") == service.AuditAuthMethodAdminAPIKey {
 		AbortWithError(c, 403, "STEP_UP_ADMIN_API_KEY_FORBIDDEN",
 			"Admin API key cannot access this endpoint; a two-factor verified admin session is required")

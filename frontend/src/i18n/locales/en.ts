@@ -6144,7 +6144,12 @@
         totp: 'Two-Factor Authentication (2FA)',
         totpHint: 'Allow users to use authenticator apps like Google Authenticator',
         totpKeyNotConfigured:
-          'Please configure TOTP_ENCRYPTION_KEY in environment variables first. Generate a key with: openssl rand -hex 32'
+          'Please configure TOTP_ENCRYPTION_KEY in environment variables first. Generate a key with: openssl rand -hex 32',
+        stepUp: 'Sensitive operation step-up 2FA',
+        stepUpHint: 'When enabled, sensitive operations such as admin promotion, backup creation/download/restore, and S3 configuration changes require a recent TOTP verification. The switch itself is protected when turned off.',
+        stepUpEnableRequiresTotp: 'Enable TOTP for your own account before turning on sensitive-operation step-up verification.',
+        sessionBinding: 'Session IP/User-Agent Binding',
+        sessionBindingHint: 'Bind sessions to the client IP and User-Agent. Any change invalidates the session. Disabled by default for mobile and multi-egress networks.'
       },
       turnstile: {
         title: 'Cloudflare Turnstile',
