@@ -206,6 +206,42 @@ func TestProbePersistenceUsesExistingTransactionForAccountMutations(t *testing.T
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestProbePersistenceCoversTransactionAndMarshalErrors(t *testing.T) {
+	t.Run("account update begin error", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+		t.Cleanup(func() { _ = client.Close() })
+		mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
+		repo := newAccountRepositoryWithSQL(client, db, nil)
+		err := repo.Update(context.Background(), &service.Account{ID: 41, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey})
+		require.ErrorContains(t, err, "begin failed")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("account credentials marshal error", func(t *testing.T) {
+		repo := &accountRepository{}
+		err := repo.UpdateCredentials(context.Background(), 41, map[string]any{"invalid": func() {}})
+		require.Error(t, err)
+	})
+
+	t.Run("account credentials begin error", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+		t.Cleanup(func() { _ = client.Close() })
+		mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
+		repo := newAccountRepositoryWithSQL(client, db, nil)
+		err := repo.UpdateCredentials(context.Background(), 41, map[string]any{"api_key": "sk-test"})
+		require.ErrorContains(t, err, "begin failed")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("extra marshal error", func(t *testing.T) {
+		repo := &accountRepository{}
+		err := repo.UpdateExtra(context.Background(), 41, map[string]any{"invalid": func() {}})
+		require.Error(t, err)
+	})
+}
+
 func TestProxyUpdateInvalidatesProbeSnapshotsAtomically(t *testing.T) {
 	t.Run("identity change clears snapshots", func(t *testing.T) {
 		db, mock := newSQLMock(t)
