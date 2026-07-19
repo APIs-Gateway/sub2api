@@ -618,3 +618,36 @@ func TestRunnerWorkerTicksAndPublishesHeartbeat(t *testing.T) {
 	defer cancel()
 	require.NoError(t, runner.Shutdown(ctx))
 }
+
+func TestRunnerFailureClassificationAndHelperBranches(t *testing.T) {
+	runner := NewRunner(&fakeConfigStore{cfg: asyncConfig(), active: true}, &fakeJobRepository{}, &fakePayloadStore{values: map[int64]string{51: "payload"}}, PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+		return nil, &GuardError{Code: ErrorCodeInvalidResponse}
+	}), NewAtomicMetrics())
+
+	job := workerJob(1, 1)
+	err := runner.processJob(context.Background(), 0, asyncConfig(), job)
+	require.Error(t, err)
+	_, _, failed, _, _, code, message := runner.Snapshot()
+	require.Zero(t, failed)
+	require.Equal(t, ErrorCodeInvalidResponse, code)
+	require.Equal(t, "Prompt Guard returned an invalid response", message)
+
+	metrics := NewAtomicMetrics()
+	runner.metrics = metrics
+	runner.observeAsyncFailure(&GuardError{Code: ErrorCodeInvalidResponse, Timeout: true}, time.Millisecond)
+	require.Equal(t, int64(1), metrics.Snapshot().Invalid)
+	require.Equal(t, int64(1), metrics.Snapshot().Timeouts)
+	require.Equal(t, DecisionInvalid, decisionKindForResult(nil))
+	require.Equal(t, DecisionFlag, decisionKindForResult(&NormalizedResult{Action: ActionWarn}))
+	require.Equal(t, DecisionBlock, decisionKindForResult(&NormalizedResult{Action: ActionBlock}))
+	require.Equal(t, int64(0), eventID(nil))
+	require.Equal(t, int64(42), eventID(&Event{ID: 42}))
+
+	result, err := scanWithFailover(context.Background(), PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+		return nil, &GuardError{Code: ErrorCodeUnavailable, Retryable: true}
+	}), nil, nil, "chunk", nil)
+	require.Nil(t, result)
+	var guardErr *GuardError
+	require.ErrorAs(t, err, &guardErr)
+	require.Equal(t, ErrorCodeUnavailable, guardErr.Code)
+}

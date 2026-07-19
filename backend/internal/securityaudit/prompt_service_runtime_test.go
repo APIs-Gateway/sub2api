@@ -249,3 +249,39 @@ func TestPromptServiceProbeConnectionAndScannerFailures(t *testing.T) {
 	}})
 	require.Equal(t, "response_too_large", result.ErrorCode)
 }
+
+func TestPromptServiceEvaluateInactiveModesAndProbeDefaults(t *testing.T) {
+	request := enqueueRequest(`{"messages":[{"role":"user","content":"hello"}]}`)
+	config := &enqueueTestConfig{ok: false}
+	service := &PromptService{config: config, evaluator: NewGuardEvaluator(nil, nil, NewAtomicMetrics())}
+
+	decision, err := service.Evaluate(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, DecisionAllow, decision.Kind)
+
+	config.active = ActiveConfig{RiskControlEnabled: true, Enabled: true, BlockingEnabled: true}
+	_, err = service.Evaluate(context.Background(), request)
+	var guardErr *GuardError
+	require.ErrorAs(t, err, &guardErr)
+	require.Equal(t, ErrorCodeUnavailable, guardErr.Code)
+
+	config.ok = true
+	config.active = ActiveConfig{Endpoints: []ActiveEndpoint{{
+		ID: "guard", BaseURL: "https://guard.example", Token: "stored-token", Enabled: true,
+	}}}
+	endpoint, tokenApplied, err := service.resolveProbeEndpoint(UpdateEndpoint{ID: "guard", BaseURL: "https://guard.example"})
+	require.NoError(t, err)
+	require.True(t, tokenApplied)
+	require.Equal(t, "stored-token", endpoint.Token)
+	require.Equal(t, DefaultGuardModel, endpoint.Model)
+	require.Equal(t, DefaultTimeoutMS, endpoint.TimeoutMS)
+	require.Equal(t, DefaultInputLimit, endpoint.InputLimit)
+
+	endpoint, tokenApplied, err = service.resolveProbeEndpoint(UpdateEndpoint{ID: "guard", BaseURL: "https://other.example/v1"})
+	require.NoError(t, err)
+	require.False(t, tokenApplied)
+	require.Empty(t, endpoint.Token)
+
+	_, _, err = service.resolveProbeEndpoint(UpdateEndpoint{BaseURL: "https://metadata.google.internal"})
+	require.Error(t, err)
+}

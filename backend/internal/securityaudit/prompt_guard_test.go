@@ -288,6 +288,46 @@ func TestGuardEvaluatorNilResultAndScannerPanicBecomeStableFailures(t *testing.T
 	}
 }
 
+func TestGuardEvaluatorFailClosedAndDefaultBranches(t *testing.T) {
+	snapshot := PromptSnapshot{RequestID: "r", ScanText: "hello", PromptLength: 5}
+
+	t.Run("nil scanner and no endpoint fail closed", func(t *testing.T) {
+		metrics := NewAtomicMetrics()
+		decision, err := newGuardEvaluator(nil, nil, metrics, 0, 0).Evaluate(context.Background(), guardConfig(
+			ActiveEndpoint{ID: "one", Enabled: true},
+		), snapshot)
+		require.Nil(t, decision)
+		var guardErr *GuardError
+		require.ErrorAs(t, err, &guardErr)
+		require.Equal(t, ErrorCodeUnavailable, guardErr.Code)
+		require.Equal(t, int64(1), metrics.Snapshot().Unavailable)
+
+		decision, err = NewGuardEvaluator(PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+			return workerTestResult(EventPass), nil
+		}), nil, metrics).Evaluate(context.Background(), guardConfig(), snapshot)
+		require.Nil(t, decision)
+		require.ErrorAs(t, err, &guardErr)
+		require.Equal(t, ErrorCodeUnavailable, guardErr.Code)
+	})
+
+	t.Run("empty scan text allows without scanner call", func(t *testing.T) {
+		called := false
+		decision, err := newGuardEvaluator(PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+			called = true
+			return nil, errors.New("must not scan")
+		}), nil, NewAtomicMetrics(), 1, 1).Evaluate(context.Background(), guardConfig(
+			ActiveEndpoint{ID: "one", Enabled: true, TimeoutMS: 0, InputLimit: 0},
+		), PromptSnapshot{})
+		require.NoError(t, err)
+		require.Equal(t, DecisionAllow, decision.Kind)
+		require.False(t, called)
+	})
+
+	require.Equal(t, DefaultInputLimit, minimumInputLimit(nil))
+	require.Equal(t, 12, minimumInputLimit([]ActiveEndpoint{{InputLimit: 24}, {InputLimit: 12}, {InputLimit: 0}}))
+	require.Equal(t, ErrorCodeUnavailable, guardErrorCode(errors.New("untyped")))
+}
+
 type PromptScannerFunc func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error)
 
 func (f PromptScannerFunc) Scan(ctx context.Context, endpoint ActiveEndpoint, chunk string, scanners []string) (*NormalizedResult, error) {
