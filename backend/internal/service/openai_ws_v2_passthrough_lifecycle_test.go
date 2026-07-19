@@ -215,7 +215,7 @@ func TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers(t *testing.T) {
 	wrapper.notifyDeadlineChanged()
 	require.NoError(t, wrapper.WriteFrame(context.Background(), coderws.MessageText, []byte(`{"type":"noop"}`)))
 	conn.frames <- []byte(`{"type":"response.created"}`)
-	_, _, err = wrapper.ReadFrame(nil)
+	_, _, err = wrapper.ReadFrame(context.TODO())
 	require.NoError(t, err)
 
 	conn = newPassthroughLifecycleTestFrameConn()
@@ -233,7 +233,7 @@ func TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers(t *testing.T) {
 	require.True(t, state.armed)
 	wrapper.disarmDeadline(state.generation + 1)
 	require.True(t, wrapper.deadlineState().armed)
-	conn.Close()
+	require.NoError(t, conn.Close())
 	require.Error(t, wrapper.WriteFrame(context.Background(), coderws.MessageText, []byte(`{"type":"response.create"}`)))
 	require.False(t, wrapper.deadlineState().armed)
 
