@@ -184,6 +184,24 @@ describe('admin AccountsView upstream billing controls', () => {
     expect(probeOne).toHaveBeenCalledWith(1)
   })
 
+  it('reports a single-account probe failure and refreshes the sorted view', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="sort-rate"]').trigger('click')
+    await flushPromises()
+
+    probeOne.mockRejectedValueOnce(new Error('single probe unavailable'))
+    await wrapper.get('[data-test="probe-one"]').trigger('click')
+    await flushPromises()
+    expect(showError).toHaveBeenCalledWith('single probe unavailable')
+
+    probeOne.mockResolvedValueOnce({ account_id: 1, snapshot })
+    const callsBeforeProbe = listAccounts.mock.calls.length
+    await wrapper.get('[data-test="probe-one"]').trigger('click')
+    await flushPromises()
+    expect(listAccounts.mock.calls.length).toBeGreaterThan(callsBeforeProbe)
+  })
+
   it('rejects an empty batch and reports successful results', async () => {
     const wrapper = mountView()
     await flushPromises()

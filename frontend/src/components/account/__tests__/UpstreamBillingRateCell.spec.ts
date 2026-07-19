@@ -177,4 +177,16 @@ describe('UpstreamBillingRateCell', () => {
 
     expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('-')
   })
+
+  it('uses the fallback freshness window and formats elapsed days', () => {
+    const wrapper = mountCell(makeAccount({ extra: {
+      upstream_billing_probe: snapshot({
+        received_at: '2026-07-10T00:00:00Z',
+        fresh_until: undefined
+      })
+    }}), Date.parse('2026-07-13T00:30:00Z'))
+
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.stale')
+    expect(wrapper.text()).toContain('admin.accounts.upstreamBilling.daysAgo:3')
+  })
 })
