@@ -49,6 +49,14 @@ func TestAccountRepositoryListDueUpstreamBillingProbeAccountsRejectsNonPositiveL
 	require.Empty(t, accounts)
 }
 
+func TestAccountRepositoryListDueUpstreamBillingProbeAccountsRejectsMissingSQL(t *testing.T) {
+	repo := newAccountRepositoryWithSQL(nil, nil, nil)
+
+	_, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), time.Now(), 20)
+
+	require.EqualError(t, err, "account repository SQL executor not configured")
+}
+
 func TestAccountRepositoryListDueUpstreamBillingProbeAccountsQueryAndRowErrors(t *testing.T) {
 	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
 
@@ -96,5 +104,21 @@ func TestAccountRepositoryListDueUpstreamBillingProbeAccountsHydratesIDs(t *test
 	accounts, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), now, 20)
 	require.NoError(t, err)
 	require.Empty(t, accounts)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAccountRepositoryListDueUpstreamBillingProbeAccountsPropagatesHydrationError(t *testing.T) {
+	db, mock := newSQLMock(t)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	mock.ExpectQuery("WITH candidates").WithArgs(now, 20).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(42)))
+	mock.ExpectQuery("SELECT").WillReturnError(sql.ErrConnDone)
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+
+	_, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), now, 20)
+
+	require.ErrorIs(t, err, sql.ErrConnDone)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

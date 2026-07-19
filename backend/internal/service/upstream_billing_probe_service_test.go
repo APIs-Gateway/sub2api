@@ -323,6 +323,14 @@ func TestUpstreamBillingProbeSettingsErrorsNormalizationAndServiceFacade(t *test
 	settings, err := settingService.GetUpstreamBillingProbeSettings(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 5, settings.IntervalMinutes)
+	repo.values[SettingKeyUpstreamBillingProbeSettings] = `{"enabled":true,"interval_minutes":0}`
+	settings, err = settingService.GetUpstreamBillingProbeSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, upstreamBillingProbeDefaultIntervalMinutes, settings.IntervalMinutes)
+	repo.values[SettingKeyUpstreamBillingProbeSettings] = `{"enabled":true,"interval_minutes":99999}`
+	settings, err = settingService.GetUpstreamBillingProbeSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, upstreamBillingProbeMaxIntervalMinutes, settings.IntervalMinutes)
 	repo.values[SettingKeyUpstreamBillingProbeSettings] = "not-json"
 	_, err = settingService.GetUpstreamBillingProbeSettings(context.Background())
 	require.Error(t, err)
@@ -678,4 +686,84 @@ func TestUpstreamBillingProbeServiceSetAccountEnabled(t *testing.T) {
 	require.NoError(t, service.SetAccountEnabled(context.Background(), 1, false))
 	require.Equal(t, false, repo.updated[1][UpstreamBillingProbeEnabledExtraKey])
 	require.ErrorIs(t, service.SetAccountEnabled(context.Background(), 2, true), ErrUpstreamBillingProbeAccountInvalid)
+}
+
+func TestUpstreamBillingProbeServiceRunDueFiltersAndSortsCandidates(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	newAccountWithSnapshot := func(id int64, nextProbeAt time.Time) *Account {
+		account := newBillingProbeAccount(id, "https://api.example.com", true)
+		snapshot := &UpstreamBillingProbeSnapshot{Status: UpstreamBillingProbeStatusOK, NextProbeAt: nextProbeAt}
+		raw, err := json.Marshal(snapshot)
+		require.NoError(t, err)
+		var rawValue any
+		require.NoError(t, json.Unmarshal(raw, &rawValue))
+		account.Extra[UpstreamBillingProbeExtraKey] = rawValue
+		return account
+	}
+
+	unset := newBillingProbeAccount(1, "https://api.example.com", true)
+	earlier := newAccountWithSnapshot(2, now.Add(-2*time.Minute))
+	later := newAccountWithSnapshot(3, now.Add(-time.Minute))
+	future := newAccountWithSnapshot(4, now.Add(time.Hour))
+	inactive := newBillingProbeAccount(5, "https://api.example.com", true)
+	inactive.Status = StatusDisabled
+	nonOpenAI := newBillingProbeAccount(6, "https://api.example.com", true)
+	nonOpenAI.Platform = PlatformAnthropic
+	disabled := newBillingProbeAccount(7, "https://api.example.com", false)
+
+	repo := &billingProbeAccountRepo{
+		accounts: map[int64]*Account{
+			1: unset, 2: earlier, 3: later, 4: future,
+			5: inactive, 6: nonOpenAI, 7: disabled,
+		},
+		due: []Account{*future, *disabled, *later, *inactive, *unset, *nonOpenAI, *earlier},
+	}
+	upstream := &billingProbeHTTPUpstream{handler: func(_ *http.Request, _ int) *http.Response {
+		return billingProbeResponse(t, http.StatusOK, validBillingProbeBody(t, now), nil)
+	}}
+	service := newBillingProbeService(repo, upstream, &billingProbeSettingRepo{values: map[string]string{}}, now)
+	service.SetLeaderLock(&billingProbeLeaderCache{}, nil)
+
+	require.NoError(t, service.RunDue(context.Background()))
+	require.Equal(t, int32(3), upstream.calls.Load())
+	require.Len(t, repo.snapshots, 3)
+	require.Contains(t, repo.snapshots, int64(1))
+	require.Contains(t, repo.snapshots, int64(2))
+	require.Contains(t, repo.snapshots, int64(3))
+	// The future account and non-runnable candidates must not be probed.
+	require.NotContains(t, repo.snapshots, int64(4))
+	require.NotContains(t, repo.snapshots, int64(5))
+	require.NotContains(t, repo.snapshots, int64(6))
+	require.NotContains(t, repo.snapshots, int64(7))
+}
+
+func TestUpstreamBillingProbeServiceBoundaryErrorsAndLifecycle(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	repo := &billingProbeAccountRepo{accounts: map[int64]*Account{1: newBillingProbeAccount(1, "https://api.example.com", true)}}
+	service := newBillingProbeService(repo, nil, &billingProbeSettingRepo{values: map[string]string{}}, now)
+
+	var nilService *UpstreamBillingProbeService
+	_, err := nilService.ProbeAccount(nil, 1)
+	require.ErrorIs(t, err, ErrUpstreamBillingProbeUnavailable)
+	nilService.Stop()
+	nilService.Start()
+	require.NotZero(t, nilService.currentTime())
+
+	_, err = service.ProbeAccount(nil, 99)
+	require.ErrorIs(t, err, ErrAccountNotFound)
+	results := service.ProbeAccounts(context.Background(), []int64{99})
+	require.Len(t, results, 1)
+	require.Equal(t, "probe_failed", results[0].Error)
+
+	require.ErrorIs(t, service.SetAccountEnabled(context.Background(), 99, true), ErrAccountNotFound)
+	var nilRepoService *UpstreamBillingProbeService = NewUpstreamBillingProbeService(nil, nil, nil)
+	require.ErrorIs(t, nilRepoService.SetAccountEnabled(context.Background(), 1, true), ErrUpstreamBillingProbeUnavailable)
+
+	released := false
+	releaseUpstreamBillingProbeLeaderLock(func() { released = true }, now.Add(-time.Second))
+	require.True(t, released)
+
+	provided := ProvideUpstreamBillingProbeService(nil, nil, nil, nil, nil)
+	require.NotNil(t, provided)
+	provided.Stop()
 }
