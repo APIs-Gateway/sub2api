@@ -2748,7 +2748,8 @@ func (c *Config) Validate() error {
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.Queue < 0 ||
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate < 0 ||
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT < 0 ||
-		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost < 0 {
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost < 0 ||
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset < 0 {
 		return fmt.Errorf("gateway.openai_ws.scheduler_score_weights.* must be non-negative")
 	}
 	for _, weight := range []float64{
@@ -2758,6 +2759,7 @@ func (c *Config) Validate() error {
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate,
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT,
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost,
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset,
 	} {
 		if math.IsNaN(weight) || math.IsInf(weight, 0) {
 			return fmt.Errorf("gateway.openai_ws.scheduler_score_weights.* must be finite")
@@ -2768,7 +2770,8 @@ func (c *Config) Validate() error {
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.Queue +
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate +
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT +
-		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost +
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset
 	if weightSum <= 0 {
 		return fmt.Errorf("gateway.openai_ws.scheduler_score_weights must not all be zero")
 	}

@@ -65,13 +65,16 @@ func TestBuildOpenAIAccountLoadPlan_ResetWeightZeroNoEffect(t *testing.T) {
 func TestBuildOpenAIAccountLoadPlan_ResetWeightIgnoresNilWindow(t *testing.T) {
 	now := time.Now()
 	soon := now.Add(2 * time.Hour)
+	expired := now.Add(-1 * time.Hour)
 	filtered := []*Account{
 		{ID: 1, Priority: 0, SessionWindowEnd: nil},
-		{ID: 2, Priority: 0, SessionWindowEnd: &soon},
+		{ID: 2, Priority: 0, SessionWindowEnd: &expired},
+		{ID: 3, Priority: 0, SessionWindowEnd: &soon},
 	}
 	sched := openAIResetTestScheduler(5.0)
 
 	plan := sched.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{}, filtered, map[int64]*AccountLoadInfo{})
 	scores := openAIPlanScores(plan)
-	require.Greater(t, scores[2], scores[1], "拥有活跃窗口的账号得分高于无窗口账号")
+	require.Equal(t, scores[1], scores[2], "无窗口和已过期窗口的账号都不应获得 reset 加分")
+	require.Greater(t, scores[3], scores[1], "拥有活跃窗口的账号得分高于无窗口账号")
 }
