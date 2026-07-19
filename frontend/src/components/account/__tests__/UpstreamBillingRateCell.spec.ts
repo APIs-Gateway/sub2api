@@ -135,4 +135,46 @@ describe('UpstreamBillingRateCell', () => {
 
     expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.stale')
   })
+
+  it('covers non-peak and relative-time presentation branches', () => {
+    const wrapper = mountCell(makeAccount({ extra: {
+      upstream_billing_probe: snapshot({
+        data: { ...billingData, peak_rate_enabled: false },
+        received_at: '2026-07-12T22:00:00Z',
+        fresh_until: '2026-07-12T23:00:00Z'
+      })
+    }}), Date.parse('2026-07-13T00:30:00Z'))
+
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.stale')
+    expect(wrapper.text()).toContain('admin.accounts.upstreamBilling.hoursAgo:2')
+  })
+
+  it('shows unsupported snapshots and keeps a valid next-probe timestamp', () => {
+    const wrapper = mountCell(makeAccount({ extra: {
+      upstream_billing_probe_enabled: true,
+      upstream_billing_probe: snapshot({
+        status: 'unsupported',
+        data: undefined,
+        fresh_until: undefined
+      })
+    }}))
+
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.unsupported')
+    expect(wrapper.get('[data-testid="upstream-billing-next-probe"]')).toBeTruthy()
+  })
+
+  it('rejects invalid time zones and malformed peak windows', () => {
+    const wrapper = mountCell(makeAccount({ extra: {
+      upstream_billing_probe: snapshot({
+        data: {
+          ...billingData,
+          timezone: 'Invalid/Zone',
+          peak_start: '25:00',
+          peak_end: 'bad'
+        }
+      })
+    }}))
+
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('-')
+  })
 })
