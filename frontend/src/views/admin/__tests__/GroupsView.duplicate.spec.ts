@@ -4,13 +4,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AdminGroup } from '@/types'
 import GroupsView from '../GroupsView.vue'
 
-const { listGroups, duplicate, getUsageSummary, getCapacitySummary, getModelsListCandidates } =
-  vi.hoisted(() => ({
+const {
+  listGroups,
+  duplicate,
+  getUsageSummary,
+  getCapacitySummary,
+  getModelsListCandidates,
+  showError,
+  showSuccess
+} = vi.hoisted(() => ({
     listGroups: vi.fn(),
     duplicate: vi.fn(),
     getUsageSummary: vi.fn(),
     getCapacitySummary: vi.fn(),
-    getModelsListCandidates: vi.fn()
+    getModelsListCandidates: vi.fn(),
+    showError: vi.fn(),
+    showSuccess: vi.fn()
   }))
 
 vi.mock('@/api/admin', () => ({
@@ -31,7 +40,7 @@ vi.mock('@/api/admin', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn() })
+  useAppStore: () => ({ showError, showSuccess })
 }))
 
 vi.mock('@/stores/onboarding', () => ({
@@ -114,6 +123,8 @@ describe('admin GroupsView duplicate action', () => {
   beforeEach(() => {
     listGroups.mockReset()
     duplicate.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
     getUsageSummary.mockReset()
     getCapacitySummary.mockReset()
     getModelsListCandidates.mockReset()
@@ -133,5 +144,42 @@ describe('admin GroupsView duplicate action', () => {
 
     expect(duplicate).toHaveBeenCalledWith(7)
     expect(listGroups).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a duplicate failure and releases the busy state', async () => {
+    duplicate.mockRejectedValueOnce(new Error('network timeout'))
+    const wrapper = mountView()
+    await flushPromises()
+
+    const button = wrapper.get('[data-testid="group-duplicate"]')
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalled()
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(listGroups).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a second click while duplication is in progress', async () => {
+    let resolveDuplicate: (value: AdminGroup) => void = () => undefined
+    duplicate.mockImplementationOnce(
+      () => new Promise<AdminGroup>((resolve) => {
+        resolveDuplicate = resolve
+      })
+    )
+    const wrapper = mountView()
+    await flushPromises()
+
+    const button = wrapper.get('[data-testid="group-duplicate"]')
+    await button.trigger('click')
+    await flushPromises()
+    expect(button.attributes('disabled')).toBeDefined()
+
+    await button.trigger('click')
+    expect(duplicate).toHaveBeenCalledTimes(1)
+
+    resolveDuplicate({ ...group(8), name: 'Group 7 (Copy)', status: 'inactive' })
+    await flushPromises()
+    expect(button.attributes('disabled')).toBeUndefined()
   })
 })

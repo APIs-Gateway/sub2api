@@ -23,6 +23,7 @@ describe('admin group duplicate API', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -48,5 +49,37 @@ describe('admin group duplicate API', () => {
     expect(post).toHaveBeenCalledTimes(2)
     expect(post.mock.calls[1][2].headers).toEqual(post.mock.calls[0][2].headers)
     expect(sessionStorage.length).toBe(0)
+  })
+
+  it('uses an unknown admin scope when the stored user is invalid', async () => {
+    localStorage.setItem('auth_user', JSON.stringify({ id: 'not-a-number' }))
+
+    await duplicate(12)
+
+    expect(post.mock.calls[0][2].headers['Idempotency-Key']).toMatch(
+      /^group-duplicate-unknown-admin-12-/
+    )
+  })
+
+  it('survives malformed user data, unavailable storage, and missing UUID support', async () => {
+    localStorage.setItem('auth_user', '{malformed')
+    vi.spyOn(globalThis.crypto, 'randomUUID').mockImplementation(() => undefined as never)
+    vi.stubGlobal('sessionStorage', {
+      getItem: () => {
+        throw new Error('storage unavailable')
+      },
+      setItem: () => {
+        throw new Error('storage unavailable')
+      },
+      removeItem: () => {
+        throw new Error('storage unavailable')
+      },
+    })
+
+    await duplicate(13)
+
+    expect(post.mock.calls[0][2].headers['Idempotency-Key']).toMatch(
+      /^group-duplicate-unknown-admin-13-/
+    )
   })
 })

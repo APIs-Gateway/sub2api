@@ -34,13 +34,45 @@ func (s *GroupRepoSuite) TestCreateFromSourceCopiesPrioritiesAndOperationMetadat
 	)
 	s.Require().NoError(err)
 
+	description := "copied config"
+	dailyLimit, weeklyLimit, monthlyLimit := 1.25, 2.5, 3.75
+	imagePrice1K, imagePrice2K, imagePrice4K := 0.1, 0.2, 0.4
+	fallbackID, invalidFallbackID, stableFallbackID := int64(11), int64(12), int64(13)
 	duplicate := &service.Group{
-		Name:                 "duplicate-source (Copy)",
-		Platform:             source.Platform,
-		RateMultiplier:       source.RateMultiplier,
-		Status:               "inactive",
-		SubscriptionType:     source.SubscriptionType,
-		DuplicateOperationID: "digest-123",
+		Name:                            "duplicate-source (Copy)",
+		Description:                     description,
+		Platform:                        source.Platform,
+		RateMultiplier:                  source.RateMultiplier,
+		IsExclusive:                     true,
+		Status:                          "inactive",
+		SubscriptionType:                source.SubscriptionType,
+		DailyLimitUSD:                   &dailyLimit,
+		WeeklyLimitUSD:                  &weeklyLimit,
+		MonthlyLimitUSD:                 &monthlyLimit,
+		DefaultValidityDays:             30,
+		AllowImageGeneration:            true,
+		ImageRateIndependent:            true,
+		ImageRateMultiplier:             1.5,
+		ImagePrice1K:                    &imagePrice1K,
+		ImagePrice2K:                    &imagePrice2K,
+		ImagePrice4K:                    &imagePrice4K,
+		ClaudeCodeOnly:                  true,
+		FallbackGroupID:                 &fallbackID,
+		FallbackGroupIDOnInvalidRequest: &invalidFallbackID,
+		StablePriorityFallbackGroupID:   &stableFallbackID,
+		ModelRouting:                    map[string][]int64{"gpt-5": {11, 12}},
+		ModelRoutingEnabled:             true,
+		MCPXMLInject:                    true,
+		SupportedModelScopes:            []string{"claude", "gemini_text"},
+		SortOrder:                       4,
+		AllowMessagesDispatch:           true,
+		RequireOAuthOnly:                true,
+		RequirePrivacySet:               true,
+		DefaultMappedModel:              "gpt-5.4",
+		MessagesDispatchModelConfig:     service.OpenAIMessagesDispatchModelConfig{ExactModelMappings: map[string]string{"claude": "gpt-5.4"}},
+		ModelsListConfig:                service.GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.4"}},
+		RPMLimit:                        20,
+		DuplicateOperationID:            "digest-123",
 	}
 	s.Require().NoError(s.repo.CreateFromSource(context.Background(), duplicate, source.ID))
 
@@ -71,6 +103,47 @@ func (s *GroupRepoSuite) TestCreateFromSourceCopiesPrioritiesAndOperationMetadat
 	recovered, err := s.repo.FindByDuplicateOperationID(s.ctx, "digest-123")
 	s.Require().NoError(err)
 	s.Require().Equal(duplicate.ID, recovered.ID)
+	s.Require().Equal(description, recovered.Description)
+	s.Require().Equal(30, recovered.DefaultValidityDays)
+	s.Require().Equal(map[string][]int64{"gpt-5": {11, 12}}, recovered.ModelRouting)
+	s.Require().Equal(service.GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.4"}}, recovered.ModelsListConfig)
+}
+
+func (s *GroupRepoSuite) TestCreateFromSourceRejectsNilDuplicate() {
+	err := s.repo.CreateFromSource(s.ctx, nil, 1)
+	s.Require().ErrorContains(err, "group is nil")
+}
+
+func (s *GroupRepoSuite) TestCreateFromSourceReturnsNameConflict() {
+	source := &service.Group{
+		Name:             "duplicate-conflict-source",
+		Platform:         service.PlatformOpenAI,
+		RateMultiplier:   1,
+		Status:           service.StatusActive,
+		SubscriptionType: service.SubscriptionTypeStandard,
+	}
+	s.Require().NoError(s.repo.Create(s.ctx, source))
+
+	duplicate := &service.Group{
+		Name:                 source.Name,
+		Platform:             source.Platform,
+		RateMultiplier:       1,
+		Status:               "inactive",
+		SubscriptionType:     service.SubscriptionTypeStandard,
+		DuplicateOperationID: "conflict-op",
+	}
+	err := s.repo.CreateFromSource(s.ctx, duplicate, source.ID)
+	s.Require().ErrorIs(err, service.ErrGroupExists)
+}
+
+func (s *GroupRepoSuite) TestFindByDuplicateOperationIDHandlesEmptyAndMissingValues() {
+	got, err := s.repo.FindByDuplicateOperationID(s.ctx, "  ")
+	s.Require().NoError(err)
+	s.Require().Nil(got)
+
+	got, err = s.repo.FindByDuplicateOperationID(s.ctx, "not-present")
+	s.Require().NoError(err)
+	s.Require().Nil(got)
 }
 
 func (s *GroupRepoSuite) TestCreateFromSourceMissingSourceDoesNotCreateGroup() {
