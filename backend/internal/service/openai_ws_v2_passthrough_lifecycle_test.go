@@ -329,3 +329,79 @@ func TestOpenAIWSPassthroughEventClassification(t *testing.T) {
 	}
 	require.False(t, openAIWSPassthroughStartsSemanticOutput([]byte(`not-json`)))
 }
+
+func TestOpenAIWSPassthroughFirstOutputFrameConn_ControlPaths(t *testing.T) {
+	conn := newPassthroughLifecycleTestFrameConn()
+	wrapper := &openAIWSPassthroughFirstOutputFrameConn{
+		inner:           conn,
+		deadlineChanged: make(chan struct{}, 1),
+	}
+	readDone := make(chan error, 1)
+	go func() {
+		_, _, err := wrapper.ReadFrame(context.Background())
+		readDone <- err
+	}()
+	wrapper.notifyDeadlineChanged()
+	conn.frames <- []byte(`{"type":"response.created"}`)
+	require.NoError(t, <-readDone)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conn = newPassthroughLifecycleTestFrameConn()
+	wrapper = &openAIWSPassthroughFirstOutputFrameConn{inner: conn}
+	readDone = make(chan error, 1)
+	go func() {
+		_, _, err := wrapper.ReadFrame(ctx)
+		readDone <- err
+	}()
+	cancel()
+	require.ErrorIs(t, <-readDone, context.Canceled)
+
+	var nilWrapper *openAIWSPassthroughFirstOutputFrameConn
+	nilWrapper.notifyDeadlineChanged()
+	nilWrapper.armActiveReadDeadline()
+	nilWrapper.observeUpstreamActivity(coderws.MessageText, []byte(`{"type":"response.done"}`))
+
+	wrapper = &openAIWSPassthroughFirstOutputFrameConn{
+		resolveDeadline: func([]byte) openAIWSPassthroughFirstOutputDeadline {
+			return openAIWSPassthroughFirstOutputDeadline{timeout: 0}
+		},
+	}
+	require.Zero(t, wrapper.armDeadline([]byte(`{"type":"response.create"}`)))
+	wrapper.resolveDeadline = func([]byte) openAIWSPassthroughFirstOutputDeadline {
+		return openAIWSPassthroughFirstOutputDeadline{
+			timeout:   time.Second,
+			startedAt: time.Now(),
+		}
+	}
+	require.Equal(t, uint64(1), wrapper.armDeadline([]byte(`{"type":"response.create"}`)))
+	require.True(t, wrapper.deadlineState().armed)
+	wrapper.disarmDeadline(0)
+}
+
+func TestOpenAIWSPassthroughRelayClientCloseMapping_TimeoutBranches(t *testing.T) {
+	status, reason, ok := openAIWSPassthroughRelayClientClose(openaiwsv2.RelayExit{
+		Err: &openAIWSPassthroughActiveTurnTimeoutError{},
+	}, 1)
+	require.Equal(t, coderws.StatusGoingAway, status)
+	require.Equal(t, "upstream websocket read timeout; please reconnect", reason)
+	require.True(t, ok)
+
+	status, reason, ok = openAIWSPassthroughRelayClientClose(openaiwsv2.RelayExit{
+		Stage:    "read_upstream",
+		Graceful: true,
+		Err:      errors.New("normal close"),
+	}, 0)
+	require.Zero(t, status)
+	require.Empty(t, reason)
+	require.False(t, ok)
+
+	status, reason, ok = openAIWSPassthroughRelayClientClose(openaiwsv2.RelayExit{
+		Stage:    "read_upstream",
+		Graceful: false,
+		Err:      errors.New("broken upstream"),
+	}, 0)
+	require.Equal(t, coderws.StatusInternalError, status)
+	require.Equal(t, "upstream websocket proxy failed", reason)
+	require.True(t, ok)
+}
