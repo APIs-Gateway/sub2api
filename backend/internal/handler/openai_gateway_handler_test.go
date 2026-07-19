@@ -159,6 +159,29 @@ func TestOpenAIHandleStreamingAwareError_WithoutCodeKeepsJSONEnvelope(t *testing
 	require.False(t, marked)
 }
 
+func TestOpenAIHandleStreamingAwareErrorWithCode_WritesJSONClassificationBeforeStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	h := &OpenAIGatewayHandler{}
+	h.handleStreamingAwareErrorWithCode(
+		c,
+		http.StatusBadGateway,
+		"upstream_error",
+		service.OpenAIUpstreamStreamReadErrorCode,
+		"Upstream response stream was interrupted",
+		false,
+		true,
+	)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Equal(t, service.OpenAIUpstreamStreamReadErrorCode, gjson.Get(w.Body.String(), "error.code").String())
+	_, marked := service.GetOpsStreamError(c)
+	require.False(t, marked)
+}
+
 func TestOpenAIHandleStreamingAwareErrorWithCode_WithoutSLAUsesSSEWithoutCode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -190,7 +213,8 @@ func TestOpenAIHandleStreamingAwareErrorWithCode_NonStreamingIncludesCode(t *tes
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	(&OpenAIGatewayHandler{}).handleStreamingAwareErrorWithCode(
+	h := &OpenAIGatewayHandler{}
+	h.handleStreamingAwareErrorWithCode(
 		c,
 		http.StatusBadGateway,
 		"upstream_error",

@@ -128,6 +128,41 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadErrorWithKeepalive(t *te
 	require.Equal(t, "Upstream HTTP/2 stream failed", message)
 }
 
+func TestHandleChatStreamingResponse_ClassifiesGenericReadErrorWithKeepalive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: &openAIChatStreamReadErrorCloser{
+			payload: []byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"),
+			err:     errors.New("upstream connection closed unexpectedly"),
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{StreamDataIntervalTimeout: 1}}}
+
+	result, err := svc.handleChatStreamingResponse(
+		resp,
+		c,
+		&Account{ID: 2, Platform: PlatformOpenAI},
+		"gpt-5.6-sol",
+		"gpt-5.6-sol",
+		"gpt-5.6-sol",
+		time.Now(),
+		0,
+	)
+
+	require.Error(t, err)
+	require.NotNil(t, result)
+	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamStreamReadErrorCode, code)
+	require.Equal(t, "Upstream response stream was interrupted", message)
+}
+
 func TestOpenAIUpstreamStreamReadError_ClassifiesGenericAndHTTP2Variants(t *testing.T) {
 	genericCause := errors.New("connection reset by peer")
 	genericErr := newOpenAIUpstreamStreamReadError(genericCause)
@@ -176,6 +211,47 @@ func TestHandleChatStreamingResponse_CanceledReadKeepsGenericError(t *testing.T)
 	require.ErrorIs(t, err, context.Canceled)
 	_, _, ok := OpenAIUpstreamStreamReadErrorDetails(err)
 	require.False(t, ok)
+}
+
+func TestHandleChatStreamingResponse_PreservesCanceledReadErrorWithKeepalive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       cancelReadCloser{},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{StreamDataIntervalTimeout: 1}}}
+
+	result, err := svc.handleChatStreamingResponse(
+		resp,
+		c,
+		&Account{ID: 4, Platform: PlatformOpenAI},
+		"gpt-5.6-sol",
+		"gpt-5.6-sol",
+		"gpt-5.6-sol",
+		time.Now(),
+		0,
+	)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	_, _, classified := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.False(t, classified)
+}
+
+func TestOpenAIUpstreamStreamReadErrorDetails_RejectsUnclassifiedErrors(t *testing.T) {
+	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(errors.New("ordinary error"))
+	require.False(t, ok)
+	require.Empty(t, code)
+	require.Empty(t, message)
+
+	wrapped := newOpenAIUpstreamStreamReadError(errors.New("wrapped failure"))
+	require.Contains(t, wrapped.Error(), "wrapped failure")
+	require.ErrorIs(t, wrapped, errors.Unwrap(wrapped))
 }
 
 func TestNormalizeResponsesRequestServiceTier(t *testing.T) {
