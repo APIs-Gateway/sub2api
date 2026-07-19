@@ -275,7 +275,26 @@ func (r *PostgreSQLRepository) RefreshLease(ctx context.Context, jobID, claimVer
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE prompt_audit_jobs SET processing_started_at=`+p(3)+`, updated_at=`+p(3)+`
 		WHERE id=`+p(1)+` AND status='processing' AND claim_version=`+p(2), args...)
-	return requireOneRow(result, err, ErrLeaseLost)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 1 {
+		return nil
+	}
+	// MySQL reports changed rows by default. When a claim and its first
+	// heartbeat land in the same timestamp precision bucket, the row matches
+	// but reports zero affected rows. Recheck the lease predicate so that case
+	// is not mistaken for a lost worker lease.
+	var exists int
+	err = r.db.QueryRowContext(ctx, `SELECT 1 FROM prompt_audit_jobs WHERE id=`+p(1)+` AND status='processing' AND claim_version=`+p(2), jobID, claimVersion).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrLeaseLost
+	}
+	return err
 }
 
 func (r *PostgreSQLRepository) Complete(ctx context.Context, job *Job, result *NormalizedResult, storePass bool) (*Event, error) {
