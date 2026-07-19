@@ -467,3 +467,53 @@ func TestSchedulerOutboxMySQLDedupUsesPortablePlaceholderSQL(t *testing.T) {
 	require.NoError(t, enqueueSchedulerOutbox(context.Background(), client, service.SchedulerOutboxEventAccountChanged, &id, nil, map[string]any{"changed": true}))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestSweepExpiredProxyWrapperUsesTransactionAndRollsBackOnError(t *testing.T) {
+	db, client := newSQLiteProbePersistenceClient(t)
+	ctx := context.Background()
+	proxyRow, err := client.Proxy.Create().
+		SetName("wrapper-proxy").
+		SetProtocol("http").
+		SetHost("wrapper.example").
+		SetPort(8080).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	repo := &proxyRepository{client: client}
+	changed, err := repo.sweepOneExpiredProxy(ctx, proxyRow.ID, nil, true)
+	require.NoError(t, err)
+	require.Zero(t, changed)
+	updated, err := client.Proxy.Get(ctx, proxyRow.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.StatusExpired, updated.Status)
+
+	proxyWithSnapshot, err := client.Proxy.Create().
+		SetName("rollback-proxy").
+		SetProtocol("http").
+		SetHost("rollback.example").
+		SetPort(8081).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+	_, err = client.Account.Create().
+		SetName("rollback-account").
+		SetPlatform(service.PlatformOpenAI).
+		SetType(service.AccountTypeAPIKey).
+		SetCredentials(map[string]any{"api_key": "sk-rollback"}).
+		SetExtra(map[string]any{service.UpstreamBillingProbeExtraKey: map[string]any{"status": "ok"}}).
+		SetProxyID(proxyWithSnapshot.ID).
+		SetConcurrency(1).
+		SetPriority(0).
+		SetStatus(service.StatusActive).
+		SetSchedulable(true).
+		SetAutoPauseOnExpired(false).
+		Save(ctx)
+	require.NoError(t, err)
+	require.NoError(t, func() error {
+		_, err := db.Exec("DROP TABLE scheduler_outbox")
+		return err
+	}())
+	_, err = repo.sweepOneExpiredProxy(ctx, proxyWithSnapshot.ID, nil, false)
+	require.Error(t, err)
+}
