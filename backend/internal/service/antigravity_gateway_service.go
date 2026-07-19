@@ -3040,7 +3040,7 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 	if s.rateLimitService == nil {
 		return nil
 	}
-	shouldDisable := s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
+	shouldDisable := s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body, requestedModel)
 	if shouldDisable {
 		logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d marked_error", prefix, statusCode)
 	}

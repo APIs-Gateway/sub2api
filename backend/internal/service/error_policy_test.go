@@ -449,6 +449,45 @@ func TestApplyErrorPolicy_UsesResolvedAntigravityModelForTempUnschedulable(t *te
 	require.Equal(t, "claude-sonnet-4-6", repo.modelRateLimitCalls[0].scope)
 }
 
+func TestHandleUpstreamError_UsesRequestedModelForTempUnschedulable(t *testing.T) {
+	repo := &errorPolicyRepoStub{}
+	account := &Account{
+		ID:       18,
+		Type:     AccountTypeOAuth,
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(http.StatusBadRequest),
+					"keywords":         []any{"overloaded"},
+					"duration_minutes": float64(10),
+				},
+			},
+		},
+	}
+	svc := &AntigravityGatewayService{
+		rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+	}
+
+	svc.handleUpstreamError(
+		context.Background(),
+		"[test]",
+		account,
+		http.StatusBadRequest,
+		http.Header{},
+		[]byte("overloaded"),
+		"claude-sonnet-4-5",
+		0,
+		"",
+		false,
+	)
+
+	require.Zero(t, repo.tempCalls)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].scope)
+}
+
 func TestApplyErrorPolicy_GeminiRateLimitDefersTo429FlowWhenCustomCodesSkip(t *testing.T) {
 	repo := &stubAntigravityAccountRepo{}
 	cache := &stubSmartRetryCache{}

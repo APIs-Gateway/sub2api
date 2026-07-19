@@ -453,6 +453,41 @@ func TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedBelowThresholdSkips
 	require.False(t, ShouldSwitchAccountOn429(account.ID))
 }
 
+func TestHandleGeminiUpstreamError_UsesRequestedModelForTempUnschedulable(t *testing.T) {
+	repo := &geminiErrorPolicyRepo{}
+	svc := &GeminiMessagesCompatService{
+		rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+	}
+	account := &Account{
+		ID:       513,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(http.StatusForbidden),
+					"keywords":         []any{"overloaded"},
+					"duration_minutes": float64(10),
+				},
+			},
+		},
+	}
+
+	svc.handleGeminiUpstreamError(
+		context.Background(),
+		account,
+		http.StatusForbidden,
+		http.Header{},
+		[]byte("overloaded"),
+		"gemini-2.5-pro",
+	)
+
+	require.Zero(t, repo.setTempCalls)
+	require.Equal(t, 1, repo.setModelRateLimitedCalls)
+	require.Equal(t, "gemini-2.5-pro", repo.lastModelScope)
+}
+
 func TestHandleGeminiUpstreamError_RetryAfterBypassesThreshold(t *testing.T) {
 	resetUpstream429TrackerForTest()
 	repo := &rateLimit429AccountRepoStub{}
