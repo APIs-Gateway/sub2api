@@ -414,6 +414,7 @@ const baseSettingsResponse = {
   payment_refund_fee_rate: 0,
   payment_subscription_min_daily_amount: 30,
   payment_subscription_max_daily_amount: 510,
+  payment_subscription_min_ratio_start_daily_amount: 510,
   payment_subscription_max_validity_days: 360,
   payment_subscription_min_plan_ratio: 2,
   payment_subscription_max_plan_ratio: 1,
@@ -642,6 +643,34 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(payload).not.toHaveProperty("payment_visible_method_wxpay_source");
     expect(payload).not.toHaveProperty("payment_visible_method_alipay_enabled");
     expect(payload).not.toHaveProperty("payment_visible_method_wxpay_enabled");
+  });
+
+  it("loads and saves the subscription minimum-ratio floor", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      payment_subscription_min_ratio_start_daily_amount: 90,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    const floorInput = wrapper.get(
+      '[data-testid="payment-subscription-min-ratio-start-daily-amount"]',
+    );
+    expect((floorInput.element as HTMLInputElement).value).toBe("90");
+    expect(floorInput.attributes("step")).toBe("30");
+
+    await floorInput.setValue(120);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_subscription_min_ratio_start_daily_amount: 120,
+      }),
+    );
   });
 
   it("loads and submits the default locale setting", async () => {

@@ -91,9 +91,9 @@ func TestParsePaymentConfig(t *testing.T) {
 		if cfg.MaxAmount != 0 {
 			t.Fatalf("expected MaxAmount=0 (no limit), got %v", cfg.MaxAmount)
 		}
-		if cfg.SubscriptionMinDaily != 30 || cfg.SubscriptionMaxDaily != 510 || cfg.SubscriptionMaxDays != 360 {
-			t.Fatalf("subscription pricing defaults = min %v max %v days %d, want 30/510/360",
-				cfg.SubscriptionMinDaily, cfg.SubscriptionMaxDaily, cfg.SubscriptionMaxDays)
+		if cfg.SubscriptionMinDaily != 30 || cfg.SubscriptionMinRatioStartDaily != 510 || cfg.SubscriptionMaxDaily != 510 || cfg.SubscriptionMaxDays != 360 {
+			t.Fatalf("subscription pricing defaults = min %v floor %v max %v days %d, want 30/510/510/360",
+				cfg.SubscriptionMinDaily, cfg.SubscriptionMinRatioStartDaily, cfg.SubscriptionMaxDaily, cfg.SubscriptionMaxDays)
 		}
 		if cfg.SubscriptionPayMultiplier != 1 || cfg.SubscriptionMinPlanRatio != 2 || cfg.SubscriptionMaxPlanRatio != 1 {
 			t.Fatalf("subscription multipliers defaults = pay %v min ratio %v max ratio %v, want 1/2/1",
@@ -116,24 +116,25 @@ func TestParsePaymentConfig(t *testing.T) {
 	t.Run("all values populated", func(t *testing.T) {
 		t.Parallel()
 		vals := map[string]string{
-			SettingPaymentEnabled:       "true",
-			SettingMinRechargeAmount:    "5.00",
-			SettingMaxRechargeAmount:    "1000.00",
-			SettingDailyRechargeLimit:   "5000.00",
-			SettingOrderTimeoutMinutes:  "15",
-			SettingMaxPendingOrders:     "5",
-			SettingEnabledPaymentTypes:  "alipay,wxpay,stripe",
-			SettingBalancePayDisabled:   "true",
-			SettingSubscriptionPayMult:  "1.98",
-			SettingRefundFeeRate:        "1.25",
-			SettingLoadBalanceStrategy:  "least_amount",
-			SettingProductNamePrefix:    "PRE",
-			SettingProductNameSuffix:    "SUF",
-			SettingSubscriptionMinDaily: "30.00",
-			SettingSubscriptionMaxDaily: "90.00",
-			SettingSubscriptionMaxDays:  "720",
-			SettingSubscriptionMinRatio: "2.50",
-			SettingSubscriptionMaxRatio: "1.20",
+			SettingPaymentEnabled:                 "true",
+			SettingMinRechargeAmount:              "5.00",
+			SettingMaxRechargeAmount:              "1000.00",
+			SettingDailyRechargeLimit:             "5000.00",
+			SettingOrderTimeoutMinutes:            "15",
+			SettingMaxPendingOrders:               "5",
+			SettingEnabledPaymentTypes:            "alipay,wxpay,stripe",
+			SettingBalancePayDisabled:             "true",
+			SettingSubscriptionPayMult:            "1.98",
+			SettingRefundFeeRate:                  "1.25",
+			SettingLoadBalanceStrategy:            "least_amount",
+			SettingProductNamePrefix:              "PRE",
+			SettingProductNameSuffix:              "SUF",
+			SettingSubscriptionMinDaily:           "30.00",
+			SettingSubscriptionMinRatioStartDaily: "60.00",
+			SettingSubscriptionMaxDaily:           "90.00",
+			SettingSubscriptionMaxDays:            "720",
+			SettingSubscriptionMinRatio:           "2.50",
+			SettingSubscriptionMaxRatio:           "1.20",
 		}
 		cfg := svc.parsePaymentConfig(vals)
 
@@ -176,9 +177,9 @@ func TestParsePaymentConfig(t *testing.T) {
 		if cfg.ProductNameSuffix != "SUF" {
 			t.Fatalf("ProductNameSuffix = %q, want %q", cfg.ProductNameSuffix, "SUF")
 		}
-		if cfg.SubscriptionMinDaily != 30 || cfg.SubscriptionMaxDaily != 90 || cfg.SubscriptionMaxDays != 720 {
-			t.Fatalf("subscription pricing = min %v max %v days %d, want 30/90/720",
-				cfg.SubscriptionMinDaily, cfg.SubscriptionMaxDaily, cfg.SubscriptionMaxDays)
+		if cfg.SubscriptionMinDaily != 30 || cfg.SubscriptionMinRatioStartDaily != 60 || cfg.SubscriptionMaxDaily != 90 || cfg.SubscriptionMaxDays != 720 {
+			t.Fatalf("subscription pricing = min %v floor %v max %v days %d, want 30/60/90/720",
+				cfg.SubscriptionMinDaily, cfg.SubscriptionMinRatioStartDaily, cfg.SubscriptionMaxDaily, cfg.SubscriptionMaxDays)
 		}
 		if cfg.SubscriptionPayMultiplier != 1.98 || cfg.SubscriptionMinPlanRatio != 2.5 || cfg.SubscriptionMaxPlanRatio != 1.2 {
 			t.Fatalf("subscription multipliers = pay %v min ratio %v max ratio %v, want 1.98/2.5/1.2",
@@ -487,39 +488,62 @@ func TestUpdatePaymentConfig_PersistsSubscriptionBillingSettings(t *testing.T) {
 	subPayMultiplier := 1.25
 	refundFeeRate := 2.5
 	minDaily := 30.0
+	minRatioStartDaily := 90.0
 	maxDaily := 120.0
 	maxDays := 720
 	minPlanRatio := 2.75
 	maxPlanRatio := 1.25
 	kyrenSecret := "  secret-token  "
 	err := svc.UpdatePaymentConfig(context.Background(), UpdatePaymentConfigRequest{
-		SubscriptionPayMultiplier: &subPayMultiplier,
-		RefundFeeRate:             &refundFeeRate,
-		SubscriptionMinDaily:      &minDaily,
-		SubscriptionMaxDaily:      &maxDaily,
-		SubscriptionMaxDays:       &maxDays,
-		SubscriptionMinPlanRatio:  &minPlanRatio,
-		SubscriptionMaxPlanRatio:  &maxPlanRatio,
-		KyrenWebhookSecret:        &kyrenSecret,
+		SubscriptionPayMultiplier:      &subPayMultiplier,
+		RefundFeeRate:                  &refundFeeRate,
+		SubscriptionMinDaily:           &minDaily,
+		SubscriptionMinRatioStartDaily: &minRatioStartDaily,
+		SubscriptionMaxDaily:           &maxDaily,
+		SubscriptionMaxDays:            &maxDays,
+		SubscriptionMinPlanRatio:       &minPlanRatio,
+		SubscriptionMaxPlanRatio:       &maxPlanRatio,
+		KyrenWebhookSecret:             &kyrenSecret,
 	})
 	if err != nil {
 		t.Fatalf("UpdatePaymentConfig returned error: %v", err)
 	}
 
 	want := map[string]string{
-		SettingSubscriptionPayMult:  "1.25",
-		SettingRefundFeeRate:        "2.50",
-		SettingSubscriptionMinDaily: "30.00",
-		SettingSubscriptionMaxDaily: "120.00",
-		SettingSubscriptionMaxDays:  "720",
-		SettingSubscriptionMinRatio: "2.75",
-		SettingSubscriptionMaxRatio: "1.25",
-		SettingKyrenWebhookSecret:   "secret-token",
+		SettingSubscriptionPayMult:            "1.25",
+		SettingRefundFeeRate:                  "2.50",
+		SettingSubscriptionMinDaily:           "30.00",
+		SettingSubscriptionMinRatioStartDaily: "90.00",
+		SettingSubscriptionMaxDaily:           "120.00",
+		SettingSubscriptionMaxDays:            "720",
+		SettingSubscriptionMinRatio:           "2.75",
+		SettingSubscriptionMaxRatio:           "1.25",
+		SettingKyrenWebhookSecret:             "secret-token",
 	}
 	for key, expected := range want {
 		if repo.values[key] != expected {
 			t.Fatalf("%s stored as %q, want %q", key, repo.values[key], expected)
 		}
+	}
+}
+
+func TestUpdatePaymentConfig_ValidatesPartialSubscriptionRangeAgainstStoredFloor(t *testing.T) {
+	repo := &paymentConfigSettingRepoStub{values: map[string]string{
+		SettingSubscriptionMinDaily:           "30",
+		SettingSubscriptionMinRatioStartDaily: "90",
+		SettingSubscriptionMaxDaily:           "180",
+	}}
+	svc := &PaymentConfigService{settingRepo: repo}
+	newMaxDaily := 60.0
+
+	err := svc.UpdatePaymentConfig(context.Background(), UpdatePaymentConfigRequest{
+		SubscriptionMaxDaily: &newMaxDaily,
+	})
+	if err == nil {
+		t.Fatal("expected a partial update that moves DMax below the stored floor to fail")
+	}
+	if len(repo.updates) != 0 {
+		t.Fatalf("settings were written for invalid partial update: %v", repo.updates)
 	}
 }
 
@@ -548,6 +572,11 @@ func TestUpdatePaymentConfig_RejectsInvalidSubscriptionBillingSettings(t *testin
 			name:       "subscription maximum daily must use configured step",
 			req:        UpdatePaymentConfigRequest{SubscriptionMaxDaily: paymentConfigFloatPtr(59)},
 			wantReason: "INVALID_SUBSCRIPTION_MAX_DAILY_AMOUNT",
+		},
+		{
+			name:       "subscription minimum-ratio start daily must use configured step",
+			req:        UpdatePaymentConfigRequest{SubscriptionMinRatioStartDaily: paymentConfigFloatPtr(59)},
+			wantReason: "INVALID_SUBSCRIPTION_MIN_RATIO_START_DAILY_AMOUNT",
 		},
 		{
 			name: "subscription maximum daily must be at least minimum daily",

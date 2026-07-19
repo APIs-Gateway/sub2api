@@ -77,6 +77,31 @@ func TestSubscriptionPricing_UnitPriceUsesFineScale(t *testing.T) {
 	}
 }
 
+func TestSubscriptionPricing_MinRatioFloorStopsDiscountCurve(t *testing.T) {
+	c := SubscriptionPricingConfig{DMin: 30, DFloor: 90, DMax: 180, UMax: 2.0, UMin: 1.0, TMin: 30, TMax: 360, TStep: 30}
+	cases := []struct {
+		d    float64
+		want float64
+	}{
+		{d: 30, want: 2.0},
+		{d: 60, want: 1.5},
+		{d: 90, want: 1.0},
+		{d: 180, want: 1.0},
+	}
+
+	for _, tc := range cases {
+		if got := c.UnitPrice(tc.d); !approx(got, tc.want, 1e-12) {
+			t.Errorf("UnitPrice(%v)=%v, want %v", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestSubscriptionPricing_FormulaVersionIs2(t *testing.T) {
+	if SubscriptionFormulaVersion != 2 {
+		t.Fatalf("SubscriptionFormulaVersion=%d, want 2", SubscriptionFormulaVersion)
+	}
+}
+
 func TestSubscriptionPricing_ValidateCustom(t *testing.T) {
 	c := DefaultSubscriptionPricingConfig()
 	ok := []struct {

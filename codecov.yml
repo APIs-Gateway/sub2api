@@ -12,10 +12,10 @@ coverage:
     project:
       default:
         informational: true
-    # 本次 PR 改动的那些行:必须 ≥80% 才绿(逼新代码补测试)
+    # 本次 PR 改动的那些行:必须 ≥85% 才绿(逼新代码补测试)
     patch:
       default:
-        target: 80%
+        target: 85%
         threshold: 0%
 
 comment:
