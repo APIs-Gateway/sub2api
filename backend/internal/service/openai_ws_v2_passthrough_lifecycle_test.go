@@ -24,6 +24,10 @@ type passthroughLifecycleTestFrameConn struct {
 	closeOnce sync.Once
 }
 
+func passthroughNilContextForTest() context.Context {
+	return nil
+}
+
 func newPassthroughLifecycleTestFrameConn() *passthroughLifecycleTestFrameConn {
 	return &passthroughLifecycleTestFrameConn{
 		frames: make(chan []byte, 4),
@@ -411,7 +415,7 @@ func TestOpenAIWSPassthroughFirstOutputFrameConn_ReadFrameBranches(t *testing.T)
 	wrapper := &openAIWSPassthroughFirstOutputFrameConn{inner: conn}
 	readDone := make(chan error, 1)
 	go func() {
-		_, _, err := wrapper.ReadFrame(nil)
+		_, _, err := wrapper.ReadFrame(passthroughNilContextForTest())
 		readDone <- err
 	}()
 	conn.frames <- []byte(`{"type":"response.created"}`)
