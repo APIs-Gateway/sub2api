@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,6 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type promptAuditStarterFunc func(context.Context) error
+
+func (f promptAuditStarterFunc) Start(ctx context.Context) error {
+	return f(ctx)
+}
+
 func TestProvideServiceBuildInfo(t *testing.T) {
 	in := handler.BuildInfo{
 		Version:   "v-test",
@@ -18,6 +26,21 @@ func TestProvideServiceBuildInfo(t *testing.T) {
 	out := provideServiceBuildInfo(in)
 	require.Equal(t, in.Version, out.Version)
 	require.Equal(t, in.BuildType, out.BuildType)
+}
+
+func TestStartPromptAudit_NilAndDegraded(t *testing.T) {
+	startPromptAudit(nil)
+
+	started := false
+	startPromptAudit(promptAuditStarterFunc(func(context.Context) error {
+		started = true
+		return nil
+	}))
+	require.True(t, started)
+
+	startPromptAudit(promptAuditStarterFunc(func(context.Context) error {
+		return errors.New("audit unavailable")
+	}))
 }
 
 func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
@@ -80,6 +103,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // paymentOrderExpiry
 		nil, // channelMonitorRunner
 		nil, // quotaFlusher
+		nil, // promptAudit
 	)
 
 	require.NotPanics(t, func() {
