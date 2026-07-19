@@ -38,6 +38,13 @@ func TestOpenAIGatewayServiceDiagnoseModelAvailabilityForPlatform(t *testing.T) 
 		require.True(t, diag.HasModelSupport)
 	})
 
+	t.Run("empty platform stays on the conservative fallback", func(t *testing.T) {
+		diag := newService(nil).DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-5", " ")
+
+		require.True(t, diag.HasAccountsInPool)
+		require.True(t, diag.HasModelSupport)
+	})
+
 	t.Run("lookup errors stay on the conservative fallback", func(t *testing.T) {
 		repo := newModelAvailabilityAccountRepo(nil)
 		repo.listByGroupErr = errors.New("database unavailable")
@@ -161,4 +168,41 @@ func TestOpenAIGatewayServiceDiagnoseModelAvailabilityForPlatformIgnoresTransien
 
 	require.True(t, diag.HasAccountsInPool)
 	require.True(t, diag.HasModelSupport)
+}
+
+func TestOpenAIGatewayServiceDiagnoseModelAvailabilityForPlatformExcludesPersistentlyDisabledAccount(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		accountRepo: newModelAvailabilityAccountRepo([]Account{{
+			ID:          1,
+			Platform:    PlatformOpenAI,
+			Status:      StatusActive,
+			Schedulable: false,
+			Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5"}},
+		}}),
+		cfg: testConfig(),
+	}
+
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), nil, "gpt-5", PlatformOpenAI)
+
+	require.False(t, diag.HasAccountsInPool)
+	require.False(t, diag.HasModelSupport)
+}
+
+func TestOpenAIGatewayServiceDiagnoseModelAvailabilityForPlatformExcludesGroupedAccountWithoutGroup(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		accountRepo: newModelAvailabilityAccountRepo([]Account{{
+			ID:            1,
+			Platform:      PlatformOpenAI,
+			Status:        StatusActive,
+			Schedulable:   true,
+			AccountGroups: []AccountGroup{{GroupID: 46}},
+			Credentials:   map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5"}},
+		}}),
+		cfg: testConfig(),
+	}
+
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), nil, "gpt-5", PlatformOpenAI)
+
+	require.False(t, diag.HasAccountsInPool)
+	require.False(t, diag.HasModelSupport)
 }
