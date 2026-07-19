@@ -55,13 +55,13 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		s.rateLimitService.HandleTempUnschedulable(stateCtx, account, statusCode, responseBody, requestedModel[0]) {
 		return true
 	}
-	if statusCode == http.StatusTooManyRequests {
-		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
-	}
 	if s.rateLimitService == nil {
 		return false
 	}
 	shouldDisable := s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody, requestedModel...)
+	if statusCode == http.StatusTooManyRequests {
+		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
+	}
 	modelTempMatched := statusCode != http.StatusUnauthorized && len(firstRequestedModel(requestedModel)) > 0 &&
 		len(matchTempUnschedulableRules(account, statusCode, responseBody)) > 0
 	if shouldDisable && !modelTempMatched {

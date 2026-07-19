@@ -169,6 +169,7 @@ func TestOpenAIOAuth429_MatchingModelTempRuleAvoidsAccountRuntimeBlock(t *testin
 }
 
 func TestOpenAIOAuth429_NonmatchingModelTempRuleKeepsAccountRuntimeBlock(t *testing.T) {
+	resetUpstream429TrackerForTest()
 	repo := &modelNotFoundAccountRepoStub{}
 	svc := &OpenAIGatewayService{
 		rateLimitService: &RateLimitService{accountRepo: repo},
@@ -183,14 +184,20 @@ func TestOpenAIOAuth429_NonmatchingModelTempRuleKeepsAccountRuntimeBlock(t *test
 		},
 	}
 
-	shouldDisable := svc.handleOpenAIAccountUpstreamError(
-		context.Background(),
-		account,
-		http.StatusTooManyRequests,
-		http.Header{},
-		[]byte(`{"error":{"message":"global rate limit"}}`),
-		"gpt-5.4",
-	)
+	for i := 0; i < upstream429MinAttempts; i++ {
+		recordUpstream429Attempt(account.ID)
+	}
+	var shouldDisable bool
+	for i := 0; i < upstream429MinAttempts/2; i++ {
+		shouldDisable = svc.handleOpenAIAccountUpstreamError(
+			context.Background(),
+			account,
+			http.StatusTooManyRequests,
+			http.Header{},
+			[]byte(`{"error":{"message":"global rate limit"}}`),
+			"gpt-5.4",
+		)
+	}
 
 	require.False(t, shouldDisable)
 	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
