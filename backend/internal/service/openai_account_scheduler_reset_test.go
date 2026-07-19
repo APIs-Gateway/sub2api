@@ -35,8 +35,8 @@ func TestBuildOpenAIAccountLoadPlan_ResetWeightPrefersSoonestReset(t *testing.T)
 	soon := now.Add(1 * time.Hour)
 	later := now.Add(20 * time.Hour)
 	filtered := []*Account{
-		{ID: 1, Priority: 0, SessionWindowEnd: &later},
 		{ID: 2, Priority: 0, SessionWindowEnd: &soon},
+		{ID: 1, Priority: 0, SessionWindowEnd: &later},
 	}
 	sched := openAIResetTestScheduler(5.0)
 
@@ -77,4 +77,9 @@ func TestBuildOpenAIAccountLoadPlan_ResetWeightIgnoresNilWindow(t *testing.T) {
 	scores := openAIPlanScores(plan)
 	require.Equal(t, scores[1], scores[2], "无窗口和已过期窗口的账号都不应获得 reset 加分")
 	require.Greater(t, scores[3], scores[1], "拥有活跃窗口的账号得分高于无窗口账号")
+}
+
+func TestOpenAIWSSchedulerWeights_DefaultResetDisabled(t *testing.T) {
+	weights := (&OpenAIGatewayService{}).openAIWSSchedulerWeights()
+	require.Equal(t, 0.0, weights.Reset)
 }
