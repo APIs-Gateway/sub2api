@@ -7970,7 +7970,7 @@
       selectGroup: '請選擇分組',
       groupRequired: '請選擇訂閱分組',
       priceRequired: '價格必須大於 0',
-      validityRequired: '有效期天數必須大於 0',
+      validityRequired: '有效期必須大於 0',
       groupMissing: '缺失',
       groupInfo: '分組信息',
       platform: '平台',
