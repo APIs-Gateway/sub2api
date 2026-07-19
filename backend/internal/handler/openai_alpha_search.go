@@ -120,6 +120,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			service.OpenAIUpstreamTransportHTTPSSE,
 			service.OpenAIEndpointCapabilityChatCompletions,
 			false,
+			false,
 		)
 		if err != nil || selection == nil || selection.Account == nil {
 			if len(failedAccountIDs) == 0 {
