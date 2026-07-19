@@ -19,4 +19,24 @@ describe('updateFavicon', () => {
     const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
     expect(link?.getAttribute('href')).toBe('/logo.png')
   })
+
+  it('creates an SVG favicon from a safe relative URL', () => {
+    document.head.innerHTML = ''
+
+    updateFavicon('/custom-logo.svg')
+
+    const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+    expect(link?.getAttribute('href')).toBe('/custom-logo.svg')
+    expect(link?.type).toBe('image/svg+xml')
+  })
+
+  it('accepts image data URLs for configured branding', () => {
+    const dataUrl = 'data:image/png;base64,AAAA'
+
+    updateFavicon(dataUrl)
+
+    const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+    expect(link?.getAttribute('href')).toBe(dataUrl)
+    expect(link?.type).toBe('image/x-icon')
+  })
 })
