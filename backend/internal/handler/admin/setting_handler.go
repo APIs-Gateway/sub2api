@@ -319,6 +319,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 		AllowUserViewErrorRequests: settings.AllowUserViewErrorRequests,
 	}
+	payload.PaymentSubscriptionMinRatioStartDaily = paymentCfg.SubscriptionMinRatioStartDaily
 
 	// OpenAI fast policy (stored under a dedicated setting key)
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
@@ -632,29 +633,30 @@ type UpdateSettingsRequest struct {
 	AccountQuotaNotifyEmails        *[]dto.NotifyEmailEntry `json:"account_quota_notify_emails"`
 
 	// Payment configuration (integrated into settings, full replace)
-	PaymentEnabled                   *bool    `json:"payment_enabled"`
-	PaymentMinAmount                 *float64 `json:"payment_min_amount"`
-	PaymentMaxAmount                 *float64 `json:"payment_max_amount"`
-	PaymentDailyLimit                *float64 `json:"payment_daily_limit"`
-	PaymentOrderTimeoutMin           *int     `json:"payment_order_timeout_minutes"`
-	PaymentMaxPendingOrders          *int     `json:"payment_max_pending_orders"`
-	PaymentEnabledTypes              []string `json:"payment_enabled_types"`
-	PaymentBalanceDisabled           *bool    `json:"payment_balance_disabled"`
-	PaymentBalanceRechargeMultiplier *float64 `json:"payment_balance_recharge_multiplier"`
-	PaymentSubscriptionPayMultiplier *float64 `json:"payment_subscription_payment_multiplier"`
-	PaymentRechargeFeeRate           *float64 `json:"payment_recharge_fee_rate"`
-	PaymentCryptoRechargeFeeRate     *float64 `json:"payment_crypto_recharge_fee_rate"`
-	PaymentRefundFeeRate             *float64 `json:"payment_refund_fee_rate"`
-	PaymentSubscriptionMinDaily      *float64 `json:"payment_subscription_min_daily_amount"`
-	PaymentSubscriptionMaxDaily      *float64 `json:"payment_subscription_max_daily_amount"`
-	PaymentSubscriptionMaxDays       *int     `json:"payment_subscription_max_validity_days"`
-	PaymentSubscriptionMinPlanRatio  *float64 `json:"payment_subscription_min_plan_ratio"`
-	PaymentSubscriptionMaxPlanRatio  *float64 `json:"payment_subscription_max_plan_ratio"`
-	PaymentLoadBalanceStrat          *string  `json:"payment_load_balance_strategy"`
-	PaymentProductNamePrefix         *string  `json:"payment_product_name_prefix"`
-	PaymentProductNameSuffix         *string  `json:"payment_product_name_suffix"`
-	PaymentHelpImageURL              *string  `json:"payment_help_image_url"`
-	PaymentHelpText                  *string  `json:"payment_help_text"`
+	PaymentEnabled                        *bool    `json:"payment_enabled"`
+	PaymentMinAmount                      *float64 `json:"payment_min_amount"`
+	PaymentMaxAmount                      *float64 `json:"payment_max_amount"`
+	PaymentDailyLimit                     *float64 `json:"payment_daily_limit"`
+	PaymentOrderTimeoutMin                *int     `json:"payment_order_timeout_minutes"`
+	PaymentMaxPendingOrders               *int     `json:"payment_max_pending_orders"`
+	PaymentEnabledTypes                   []string `json:"payment_enabled_types"`
+	PaymentBalanceDisabled                *bool    `json:"payment_balance_disabled"`
+	PaymentBalanceRechargeMultiplier      *float64 `json:"payment_balance_recharge_multiplier"`
+	PaymentSubscriptionPayMultiplier      *float64 `json:"payment_subscription_payment_multiplier"`
+	PaymentRechargeFeeRate                *float64 `json:"payment_recharge_fee_rate"`
+	PaymentCryptoRechargeFeeRate          *float64 `json:"payment_crypto_recharge_fee_rate"`
+	PaymentRefundFeeRate                  *float64 `json:"payment_refund_fee_rate"`
+	PaymentSubscriptionMinDaily           *float64 `json:"payment_subscription_min_daily_amount"`
+	PaymentSubscriptionMinRatioStartDaily *float64 `json:"payment_subscription_min_ratio_start_daily_amount"`
+	PaymentSubscriptionMaxDaily           *float64 `json:"payment_subscription_max_daily_amount"`
+	PaymentSubscriptionMaxDays            *int     `json:"payment_subscription_max_validity_days"`
+	PaymentSubscriptionMinPlanRatio       *float64 `json:"payment_subscription_min_plan_ratio"`
+	PaymentSubscriptionMaxPlanRatio       *float64 `json:"payment_subscription_max_plan_ratio"`
+	PaymentLoadBalanceStrat               *string  `json:"payment_load_balance_strategy"`
+	PaymentProductNamePrefix              *string  `json:"payment_product_name_prefix"`
+	PaymentProductNameSuffix              *string  `json:"payment_product_name_suffix"`
+	PaymentHelpImageURL                   *string  `json:"payment_help_image_url"`
+	PaymentHelpText                       *string  `json:"payment_help_text"`
 
 	// Cancel rate limit
 	PaymentCancelRateLimitEnabled *bool   `json:"payment_cancel_rate_limit_enabled"`
@@ -1941,35 +1943,36 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	// Skip if no payment fields were provided (prevents accidental wipe).
 	if h.paymentConfigService != nil && hasPaymentFields(req) {
 		paymentReq := service.UpdatePaymentConfigRequest{
-			Enabled:                   req.PaymentEnabled,
-			MinAmount:                 req.PaymentMinAmount,
-			MaxAmount:                 req.PaymentMaxAmount,
-			DailyLimit:                req.PaymentDailyLimit,
-			OrderTimeoutMin:           req.PaymentOrderTimeoutMin,
-			MaxPendingOrders:          req.PaymentMaxPendingOrders,
-			EnabledTypes:              req.PaymentEnabledTypes,
-			BalanceDisabled:           req.PaymentBalanceDisabled,
-			BalanceRechargeMultiplier: req.PaymentBalanceRechargeMultiplier,
-			SubscriptionPayMultiplier: req.PaymentSubscriptionPayMultiplier,
-			RechargeFeeRate:           req.PaymentRechargeFeeRate,
-			CryptoRechargeFeeRate:     req.PaymentCryptoRechargeFeeRate,
-			RefundFeeRate:             req.PaymentRefundFeeRate,
-			SubscriptionMinDaily:      req.PaymentSubscriptionMinDaily,
-			SubscriptionMaxDaily:      req.PaymentSubscriptionMaxDaily,
-			SubscriptionMaxDays:       req.PaymentSubscriptionMaxDays,
-			SubscriptionMinPlanRatio:  req.PaymentSubscriptionMinPlanRatio,
-			SubscriptionMaxPlanRatio:  req.PaymentSubscriptionMaxPlanRatio,
-			LoadBalanceStrategy:       req.PaymentLoadBalanceStrat,
-			ProductNamePrefix:         req.PaymentProductNamePrefix,
-			ProductNameSuffix:         req.PaymentProductNameSuffix,
-			HelpImageURL:              req.PaymentHelpImageURL,
-			HelpText:                  req.PaymentHelpText,
-			CancelRateLimitEnabled:    req.PaymentCancelRateLimitEnabled,
-			CancelRateLimitMax:        req.PaymentCancelRateLimitMax,
-			CancelRateLimitWindow:     req.PaymentCancelRateLimitWindow,
-			CancelRateLimitUnit:       req.PaymentCancelRateLimitUnit,
-			CancelRateLimitMode:       req.PaymentCancelRateLimitMode,
-			AlipayForceQRCode:         req.PaymentAlipayForceQRCode,
+			Enabled:                        req.PaymentEnabled,
+			MinAmount:                      req.PaymentMinAmount,
+			MaxAmount:                      req.PaymentMaxAmount,
+			DailyLimit:                     req.PaymentDailyLimit,
+			OrderTimeoutMin:                req.PaymentOrderTimeoutMin,
+			MaxPendingOrders:               req.PaymentMaxPendingOrders,
+			EnabledTypes:                   req.PaymentEnabledTypes,
+			BalanceDisabled:                req.PaymentBalanceDisabled,
+			BalanceRechargeMultiplier:      req.PaymentBalanceRechargeMultiplier,
+			SubscriptionPayMultiplier:      req.PaymentSubscriptionPayMultiplier,
+			RechargeFeeRate:                req.PaymentRechargeFeeRate,
+			CryptoRechargeFeeRate:          req.PaymentCryptoRechargeFeeRate,
+			RefundFeeRate:                  req.PaymentRefundFeeRate,
+			SubscriptionMinDaily:           req.PaymentSubscriptionMinDaily,
+			SubscriptionMinRatioStartDaily: req.PaymentSubscriptionMinRatioStartDaily,
+			SubscriptionMaxDaily:           req.PaymentSubscriptionMaxDaily,
+			SubscriptionMaxDays:            req.PaymentSubscriptionMaxDays,
+			SubscriptionMinPlanRatio:       req.PaymentSubscriptionMinPlanRatio,
+			SubscriptionMaxPlanRatio:       req.PaymentSubscriptionMaxPlanRatio,
+			LoadBalanceStrategy:            req.PaymentLoadBalanceStrat,
+			ProductNamePrefix:              req.PaymentProductNamePrefix,
+			ProductNameSuffix:              req.PaymentProductNameSuffix,
+			HelpImageURL:                   req.PaymentHelpImageURL,
+			HelpText:                       req.PaymentHelpText,
+			CancelRateLimitEnabled:         req.PaymentCancelRateLimitEnabled,
+			CancelRateLimitMax:             req.PaymentCancelRateLimitMax,
+			CancelRateLimitWindow:          req.PaymentCancelRateLimitWindow,
+			CancelRateLimitUnit:            req.PaymentCancelRateLimitUnit,
+			CancelRateLimitMode:            req.PaymentCancelRateLimitMode,
+			AlipayForceQRCode:              req.PaymentAlipayForceQRCode,
 		}
 		if err := h.paymentConfigService.UpdatePaymentConfig(c.Request.Context(), paymentReq); err != nil {
 			response.ErrorFrom(c, err)
@@ -2211,6 +2214,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CyberSessionBlockTTLSeconds: updatedSettings.CyberSessionBlockTTLSeconds,
 		AllowUserViewErrorRequests:  updatedSettings.AllowUserViewErrorRequests,
 	}
+	payload.PaymentSubscriptionMinRatioStartDaily = updatedPaymentCfg.SubscriptionMinRatioStartDaily
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)
 	} else if fastPolicy != nil {
@@ -2247,7 +2251,7 @@ func hasPaymentFields(req UpdateSettingsRequest) bool {
 		req.PaymentBalanceRechargeMultiplier != nil || req.PaymentRechargeFeeRate != nil || req.PaymentCryptoRechargeFeeRate != nil ||
 		req.PaymentRefundFeeRate != nil ||
 		req.PaymentSubscriptionPayMultiplier != nil ||
-		req.PaymentSubscriptionMinDaily != nil || req.PaymentSubscriptionMaxDaily != nil ||
+		req.PaymentSubscriptionMinDaily != nil || req.PaymentSubscriptionMinRatioStartDaily != nil || req.PaymentSubscriptionMaxDaily != nil ||
 		req.PaymentSubscriptionMaxDays != nil ||
 		req.PaymentSubscriptionMinPlanRatio != nil || req.PaymentSubscriptionMaxPlanRatio != nil ||
 		req.PaymentLoadBalanceStrat != nil || req.PaymentProductNamePrefix != nil ||

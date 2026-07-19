@@ -11,7 +11,7 @@ import (
 //
 // 每刀额度单价 u 随每日额度 D 线性递减——D 越大单价越低、越划算：
 //
-//	u(D) = u_max + (u_min − u_max) × (D − D_min) / (D_max − D_min)，clamp 到 [u_min, u_max]
+//	u(D) = u_max + (u_min − u_max) × (D − D_min) / (D_floor − D_min)，D > D_floor 时为 u_min
 //	套餐售价 P = D × T × u(D)
 //
 // 注意：u 只用于「售价 ↔ 额度」换算。套餐余额消费 1 官方刀扣 1 刀、不乘 u；
@@ -19,7 +19,7 @@ import (
 
 // SubscriptionFormulaVersion 标识当前定价公式版本，下单时冻结进订单快照，
 // 供日后审计/排查「这单是按哪版公式成交的」。改公式形态时 +1。
-const SubscriptionFormulaVersion = 1
+const SubscriptionFormulaVersion = 2
 
 const subscriptionDailyAmountStep = 30.0
 const subscriptionUnitPriceScale int32 = 4
@@ -27,25 +27,27 @@ const subscriptionUnitPriceScale int32 = 4
 // SubscriptionPricingConfig 定价端点与自定义范围（规格第 3/10 节，均「可调」）。
 // 下单时按当前设置冻结快照，后续改配置不影响已下单订单。
 type SubscriptionPricingConfig struct {
-	DMin  float64 // 最小档每日额度（官方刀/天）
-	DMax  float64 // 最大档每日额度
-	UMax  float64 // 最小档单价（最贵）
-	UMin  float64 // 最大档单价（最便宜）
-	TMin  int     // 自定义最短天数（默认 30 天起买，挤掉短期大 D 套利空间）
-	TMax  int     // 自定义最长天数
-	TStep int     // 自定义天数步长：T 必须为 TStep 的整数倍（默认 30，即只能按整月购买 30/60/90…）
+	DMin   float64 // 最小档每日额度（官方刀/天）
+	DFloor float64 // 达到最低倍率的每日额度
+	DMax   float64 // 最大可购买每日额度
+	UMax   float64 // 最小档单价（最贵）
+	UMin   float64 // 最大档单价（最便宜）
+	TMin   int     // 自定义最短天数（默认 30 天起买，挤掉短期大 D 套利空间）
+	TMax   int     // 自定义最长天数
+	TStep  int     // 自定义天数步长：T 必须为 TStep 的整数倍（默认 30，即只能按整月购买 30/60/90…）
 }
 
 // DefaultSubscriptionPricingConfig 规格默认值：D∈[30,510]、u∈[1.0,2.0]、T∈[30,360] 且 T 为 30 的倍数。
 func DefaultSubscriptionPricingConfig() SubscriptionPricingConfig {
 	return SubscriptionPricingConfig{
-		DMin:  30,
-		DMax:  510,
-		UMax:  2.0,
-		UMin:  1.0,
-		TMin:  30,
-		TMax:  360,
-		TStep: 30,
+		DMin:   30,
+		DFloor: 510,
+		DMax:   510,
+		UMax:   2.0,
+		UMin:   1.0,
+		TMin:   30,
+		TMax:   360,
+		TStep:  30,
 	}
 }
 
@@ -67,6 +69,11 @@ func subscriptionPricingConfigFromSettings(vals map[string]string) SubscriptionP
 	if cfg.DMax < cfg.DMin {
 		cfg.DMax = cfg.DMin
 	}
+	cfg.DFloor = pcParseFloat(vals[SettingSubscriptionMinRatioStartDaily], cfg.DMax)
+	if !isValidSubscriptionDailyAmount(cfg.DFloor) || cfg.DFloor <= cfg.DMin || cfg.DFloor > cfg.DMax {
+		// 缺失或损坏的新 setting 均回退到当前有效 DMax，保持升级前报价不变。
+		cfg.DFloor = cfg.DMax
+	}
 	if cfg.TMax < cfg.TMin {
 		cfg.TMax = cfg.TMin
 	}
@@ -79,10 +86,15 @@ func subscriptionPricingConfigFromSettings(vals map[string]string) SubscriptionP
 	return cfg
 }
 
-// UnitPrice 计算每刀额度单价 u(D)：随 D 线性递减，clamp 到 [UMin, UMax]。
-// 退化场景 DMax==DMin（无梯度）按最贵档 UMax。
+// UnitPrice 计算每刀额度单价 u(D)：在 DMin 至 DFloor 线性递减，之后固定为 UMin。
+// 退化场景 DFloor==DMin（无梯度）按最贵档 UMax。
 func (c SubscriptionPricingConfig) UnitPrice(d float64) float64 {
-	span := c.DMax - c.DMin
+	floor := c.DFloor
+	if floor == 0 {
+		// Keep manually constructed legacy configs (and their tests) on the v1 curve.
+		floor = c.DMax
+	}
+	span := floor - c.DMin
 	var u float64
 	if span <= 0 {
 		u = c.UMax
@@ -92,6 +104,11 @@ func (c SubscriptionPricingConfig) UnitPrice(d float64) float64 {
 	// clamp 到 [min,max]，对 UMin<UMax（默认）与异常配置都容错。
 	lo, hi := math.Min(c.UMin, c.UMax), math.Max(c.UMin, c.UMax)
 	return ceilDecimal(math.Min(math.Max(u, lo), hi), subscriptionUnitPriceScale)
+}
+
+func isValidSubscriptionDailyAmount(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v > 0 &&
+		math.Abs(math.Round(v/subscriptionDailyAmountStep)*subscriptionDailyAmountStep-v) <= 1e-9
 }
 
 // Price 计算套餐售价 P = D × T × u(D)，单价按更细粒度冻结，最终金额按 2 位小数向上取整。

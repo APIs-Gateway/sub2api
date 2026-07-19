@@ -336,6 +336,48 @@ func TestSettingHandler_UpdateSettings_PersistsPaymentVisibleMethodsAndAdvancedS
 	require.Equal(t, true, data["openai_advanced_scheduler_enabled"])
 }
 
+func TestSettingHandler_SubscriptionMinRatioStartDailyRoundTrips(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{
+		values: map[string]string{
+			service.SettingSubscriptionMinDaily:           "30",
+			service.SettingSubscriptionMinRatioStartDaily: "90",
+			service.SettingSubscriptionMaxDaily:           "510",
+		},
+	}
+	settingSvc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
+	paymentCfgSvc := service.NewPaymentConfigService(nil, repo, nil)
+	handler := NewSettingHandler(settingSvc, nil, nil, nil, paymentCfgSvc, nil, nil)
+
+	getRec := httptest.NewRecorder()
+	getCtx, _ := gin.CreateTestContext(getRec)
+	getCtx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings", nil)
+	handler.GetSettings(getCtx)
+
+	require.Equal(t, http.StatusOK, getRec.Code)
+	var getResp response.Response
+	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &getResp))
+	getData, ok := getResp.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(90), getData["payment_subscription_min_ratio_start_daily_amount"])
+
+	updateRec := httptest.NewRecorder()
+	updateCtx, _ := gin.CreateTestContext(updateRec)
+	updateCtx.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewBufferString(`{"payment_subscription_min_ratio_start_daily_amount":120}`))
+	updateCtx.Request.Header.Set("Content-Type", "application/json")
+	handler.UpdateSettings(updateCtx)
+
+	require.Equal(t, http.StatusOK, updateRec.Code)
+	require.Equal(t, "30.00", repo.values[service.SettingSubscriptionMinDaily])
+	require.Equal(t, "120.00", repo.values[service.SettingSubscriptionMinRatioStartDaily])
+	require.Equal(t, "510.00", repo.values[service.SettingSubscriptionMaxDaily])
+	var updateResp response.Response
+	require.NoError(t, json.Unmarshal(updateRec.Body.Bytes(), &updateResp))
+	updateData, ok := updateResp.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(120), updateData["payment_subscription_min_ratio_start_daily_amount"])
+}
+
 func TestSettingHandler_UpdateSettings_PreservesLegacyBlankPaymentVisibleMethodSource(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &settingHandlerRepoStub{

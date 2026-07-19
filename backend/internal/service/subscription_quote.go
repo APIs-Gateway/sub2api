@@ -65,6 +65,7 @@ func (s *SubscriptionService) subscriptionPricingConfig(ctx context.Context) Sub
 	}
 	vals, err := s.settingService.settingRepo.GetMultiple(ctx, []string{
 		SettingSubscriptionMinDaily,
+		SettingSubscriptionMinRatioStartDaily,
 		SettingSubscriptionMaxDaily,
 		SettingSubscriptionMaxDays,
 		SettingSubscriptionMinRatio,

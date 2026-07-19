@@ -102,3 +102,47 @@ func TestPricingBounds_UsesSettingsOverride(t *testing.T) {
 		t.Fatalf("linear rounded quote = unit %v price %v, want 1.875/3375", q.UnitPrice, q.Price)
 	}
 }
+
+func TestSubscriptionPricingConfig_FallsBackMinRatioFloorToMaxDaily(t *testing.T) {
+	cfg := subscriptionPricingConfigFromSettings(map[string]string{
+		SettingSubscriptionMinDaily: "30",
+		SettingSubscriptionMaxDaily: "90",
+	})
+
+	if cfg.DFloor != cfg.DMax {
+		t.Fatalf("legacy config floor=%v, want configured max daily amount %v", cfg.DFloor, cfg.DMax)
+	}
+}
+
+func TestQuoteSubscription_PreservesPricesAtOrBelowFloorWhenMaxDailyIncreases(t *testing.T) {
+	base := map[string]string{
+		SettingSubscriptionMinDaily:           "30",
+		SettingSubscriptionMinRatioStartDaily: "90",
+		SettingSubscriptionMaxDaily:           "90",
+		SettingSubscriptionMaxDays:            "360",
+		SettingSubscriptionMinRatio:           "2",
+		SettingSubscriptionMaxRatio:           "1",
+	}
+	before := &SubscriptionService{settingService: NewSettingService(&settingRepoStub{values: base}, nil)}
+
+	withHigherMax := make(map[string]string, len(base))
+	for key, value := range base {
+		withHigherMax[key] = value
+	}
+	withHigherMax[SettingSubscriptionMaxDaily] = "180"
+	after := &SubscriptionService{settingService: NewSettingService(&settingRepoStub{values: withHigherMax}, nil)}
+
+	for _, dailyAmount := range []float64{30, 60, 90} {
+		beforeQuote, err := before.QuoteSubscription(context.Background(), dailyAmount, 30)
+		if err != nil {
+			t.Fatalf("quote before increasing maximum for D=%v: %v", dailyAmount, err)
+		}
+		afterQuote, err := after.QuoteSubscription(context.Background(), dailyAmount, 30)
+		if err != nil {
+			t.Fatalf("quote after increasing maximum for D=%v: %v", dailyAmount, err)
+		}
+		if !approxEq(afterQuote.UnitPrice, beforeQuote.UnitPrice) || !approxEq(afterQuote.Price, beforeQuote.Price) {
+			t.Errorf("quote for D=%v changed after only DMax increased: before=%+v after=%+v", dailyAmount, beforeQuote, afterQuote)
+		}
+	}
+}
