@@ -48,11 +48,12 @@ const (
 // The classifier intentionally does not consume the original error: the
 // selection layer never tells us *why* the pool came up empty (rate-limited
 // vs. unsupported model are both wrapped as ErrNoAvailableAccounts). Instead
-// we re-check pool composition through DiagnoseModelAvailabilityForPlatform,
-// which only inspects model_mapping configuration and ignores transient
-// state. That guarantees a 404 is only returned when no operator action
-// short of editing the account's model_mapping could make this request
-// succeed.
+// we re-check pool composition through DiagnoseModelAvailabilityForPlatform.
+// Its account read path considers only persistent eligibility (active status
+// plus the account's schedulable setting) and model_mapping, while ignoring
+// transient runtime state. That guarantees a 404 is only returned when the
+// persistent account/group/model configuration must change before this request
+// can succeed.
 //
 // routingModel is the model name that account selection actually compared
 // against (i.e. after group-level dispatch mapping). displayModel is the
