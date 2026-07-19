@@ -3,10 +3,14 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
@@ -173,4 +177,151 @@ func TestOpenAIWSPassthroughRelayClientCloseMapping(t *testing.T) {
 	require.Equal(t, coderws.StatusGoingAway, status)
 	require.Equal(t, "upstream produced no semantic output; please reconnect", reason)
 	require.True(t, ok)
+}
+
+func TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers(t *testing.T) {
+	var nilLifecycle *openAIWSPassthroughTurnLifecycle
+	require.False(t, nilLifecycle.beginResponseCreate(nil))
+	nilLifecycle.cancelResponseCreate()
+	nilLifecycle.beginTerminalWrite()
+	nilLifecycle.finishTerminalWrite(true, nil)
+
+	lifecycle := newOpenAIWSPassthroughTurnLifecycle(false)
+	require.True(t, lifecycle.beginResponseCreate(nil))
+	require.False(t, lifecycle.beginResponseCreate(nil))
+	lifecycle.cancelResponseCreate()
+	require.True(t, lifecycle.beginResponseCreate(nil))
+	lifecycle.beginTerminalWrite()
+	lifecycle.finishTerminalWrite(false, nil)
+
+	firstOutputErr := &openAIWSPassthroughFirstOutputTimeoutError{}
+	require.Equal(t, "openai websocket passthrough first output timeout", firstOutputErr.Error())
+	require.ErrorIs(t, firstOutputErr, errOpenAIWSPassthroughFirstOutputTimeout)
+	activeErr := &openAIWSPassthroughActiveTurnTimeoutError{}
+	require.Equal(t, "openai websocket passthrough active turn read timeout", activeErr.Error())
+	require.ErrorIs(t, activeErr, errOpenAIWSPassthroughActiveTurnTimeout)
+
+	var nilConn *openAIWSPassthroughFirstOutputFrameConn
+	_, _, err := nilConn.ReadFrame(context.Background())
+	require.ErrorIs(t, err, errOpenAIWSConnClosed)
+	require.ErrorIs(t, nilConn.WriteFrame(context.Background(), coderws.MessageText, nil), errOpenAIWSConnClosed)
+	require.NoError(t, nilConn.Close())
+
+	conn := newPassthroughLifecycleTestFrameConn()
+	wrapper := &openAIWSPassthroughFirstOutputFrameConn{inner: conn}
+	require.Equal(t, uint64(0), wrapper.armDeadline([]byte(`{"type":"response.create"}`)))
+	wrapper.armActiveReadDeadline()
+	wrapper.observeUpstreamActivity(coderws.MessageText, []byte(`{"type":"response.output_text.delta"}`))
+	wrapper.notifyDeadlineChanged()
+	require.NoError(t, wrapper.WriteFrame(context.Background(), coderws.MessageText, []byte(`{"type":"noop"}`)))
+	conn.frames <- []byte(`{"type":"response.created"}`)
+	_, _, err = wrapper.ReadFrame(nil)
+	require.NoError(t, err)
+
+	conn = newPassthroughLifecycleTestFrameConn()
+	wrapper = &openAIWSPassthroughFirstOutputFrameConn{
+		inner:             conn,
+		activeReadTimeout: time.Second,
+		deadlineChanged:   make(chan struct{}, 1),
+		now:               time.Now,
+		resolveDeadline: func([]byte) openAIWSPassthroughFirstOutputDeadline {
+			return openAIWSPassthroughFirstOutputDeadline{timeout: time.Second}
+		},
+	}
+	require.NoError(t, wrapper.WriteFrame(context.Background(), coderws.MessageText, []byte(`{"type":"response.create"}`)))
+	state := wrapper.deadlineState()
+	require.True(t, state.armed)
+	wrapper.disarmDeadline(state.generation + 1)
+	require.True(t, wrapper.deadlineState().armed)
+	conn.Close()
+	require.Error(t, wrapper.WriteFrame(context.Background(), coderws.MessageText, []byte(`{"type":"response.create"}`)))
+	require.False(t, wrapper.deadlineState().armed)
+
+	wrapper.observeUpstreamActivity(coderws.MessageText, []byte(`{"type":"response.output_text.delta"}`))
+	state = wrapper.deadlineState()
+	require.True(t, state.armed)
+	wrapper.observeUpstreamActivity(coderws.MessageText, []byte(`{"type":"response.done"}`))
+	require.False(t, wrapper.deadlineState().armed)
+
+	var nilClient *openAIWSClientFrameConn
+	nilClient.markTurnStarted()
+	nilClient.markTurnCompleted()
+	_, _, err = nilClient.ReadFrame(context.Background())
+	require.ErrorIs(t, err, errOpenAIWSConnClosed)
+	client := &openAIWSClientFrameConn{}
+	client.markTurnCompleted()
+	client.markTurnStarted()
+	client.interTurnStarted = make(chan struct{}, 1)
+	client.interTurnStarted <- struct{}{}
+	client.markTurnCompleted()
+	require.Len(t, client.interTurnStarted, 1)
+
+	service := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{OpenAIWS: config.GatewayOpenAIWSConfig{IngressInterTurnIdleTimeoutSeconds: 7}}}}
+	require.Equal(t, 7*time.Second, service.openAIWSIngressInterTurnIdleTimeout())
+	require.Zero(t, (*OpenAIGatewayService)(nil).openAIWSIngressInterTurnIdleTimeout())
+	require.Zero(t, (&OpenAIGatewayService{}).openAIWSIngressInterTurnIdleTimeout())
+}
+
+func TestOpenAIWSClientFrameConn_DelayedInterTurnTimeout(t *testing.T) {
+	serverReady := make(chan *openAIWSClientFrameConn, 1)
+	serverResult := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			serverResult <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		frameConn := &openAIWSClientFrameConn{
+			conn:                 conn,
+			interTurnIdleTimeout: 25 * time.Millisecond,
+			interTurnStarted:     make(chan struct{}, 1),
+			controlCtx:           context.Background(),
+		}
+		serverReady <- frameConn
+		_, _, err = frameConn.ReadFrame(context.Background())
+		serverResult <- err
+	}))
+	defer server.Close()
+
+	conn, _, err := coderws.Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	frameConn := <-serverReady
+	frameConn.markTurnCompleted()
+
+	readCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	_, _, err = conn.Read(readCtx)
+	cancel()
+	var closeErr coderws.CloseError
+	require.ErrorAs(t, err, &closeErr)
+	require.Equal(t, coderws.StatusNormalClosure, closeErr.Code)
+
+	select {
+	case readErr := <-serverResult:
+		var serverCloseErr *OpenAIWSClientCloseError
+		require.ErrorAs(t, readErr, &serverCloseErr)
+	case <-time.After(time.Second):
+		t.Fatal("client frame reader did not exit after inter-turn timeout")
+	}
+}
+
+func TestOpenAIWSPassthroughEventClassification(t *testing.T) {
+	for _, eventType := range []string{
+		"response.completed", "response.done", "response.failed", "response.incomplete",
+		"response.cancelled", "response.canceled",
+	} {
+		payload := []byte(`{"type":"` + eventType + `"}`)
+		require.True(t, openAIWSPassthroughStartsSemanticOutput(payload), eventType)
+		require.True(t, openAIWSPassthroughIsTerminalOutput(payload), eventType)
+	}
+	for _, eventType := range []string{"", "response.created", "response.in_progress", "response.output_item.added", "response.output_item.done", "response.other"} {
+		payload := []byte(`{"type":"` + eventType + `"}`)
+		require.False(t, openAIWSPassthroughStartsSemanticOutput(payload), eventType)
+		require.False(t, openAIWSPassthroughIsTerminalOutput(payload), eventType)
+	}
+	for _, eventType := range []string{"response.function_call_arguments.delta", "response.output_text.done", "response.output_audio.delta"} {
+		require.True(t, openAIWSPassthroughStartsSemanticOutput([]byte(`{"type":"`+eventType+`"}`)), eventType)
+	}
+	require.False(t, openAIWSPassthroughStartsSemanticOutput([]byte(`not-json`)))
 }
