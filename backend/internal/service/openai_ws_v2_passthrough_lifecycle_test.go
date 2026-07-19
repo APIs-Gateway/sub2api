@@ -20,6 +20,7 @@ type passthroughLifecycleTestFrameConn struct {
 	frames    chan []byte
 	writes    chan []byte
 	closed    chan struct{}
+	writeErr  error
 	closeOnce sync.Once
 }
 
@@ -43,6 +44,9 @@ func (c *passthroughLifecycleTestFrameConn) ReadFrame(ctx context.Context) (code
 }
 
 func (c *passthroughLifecycleTestFrameConn) WriteFrame(ctx context.Context, _ coderws.MessageType, payload []byte) error {
+	if c.writeErr != nil {
+		return c.writeErr
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -233,7 +237,7 @@ func TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers(t *testing.T) {
 	require.True(t, state.armed)
 	wrapper.disarmDeadline(state.generation + 1)
 	require.True(t, wrapper.deadlineState().armed)
-	require.NoError(t, conn.Close())
+	conn.writeErr = errors.New("write failed")
 	require.Error(t, wrapper.WriteFrame(context.Background(), coderws.MessageText, []byte(`{"type":"response.create"}`)))
 	require.False(t, wrapper.deadlineState().armed)
 
