@@ -417,6 +417,17 @@ func ProvideAPIKeyAuthCacheInvalidator(apiKeyService *APIKeyService) APIKeyAuthC
 	return apiKeyService
 }
 
+// ProvideAuthCacheInvalidationWorker starts the durable cross-instance auth cache invalidation worker.
+func ProvideAuthCacheInvalidationWorker(
+	repo AuthCacheInvalidationOutboxRepository,
+	cache APIKeyCache,
+	apiKeyService *APIKeyService,
+) *AuthCacheInvalidationWorker {
+	worker := NewAuthCacheInvalidationWorker(repo, cache, apiKeyService)
+	worker.Start()
+	return worker
+}
+
 // ProvideBackupService creates and starts BackupService
 func ProvideBackupService(
 	settingRepo SettingRepository,
@@ -522,6 +533,7 @@ var ProviderSet = wire.NewSet(
 	NewUserService,
 	ProvideAPIKeyService,
 	ProvideAPIKeyAuthCacheInvalidator,
+	ProvideAuthCacheInvalidationWorker,
 	NewGroupService,
 	NewAccountService,
 	NewProxyService,
