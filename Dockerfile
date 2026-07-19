@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # =============================================================================
 # Sub2API Multi-Stage Dockerfile
 # =============================================================================
@@ -16,7 +17,9 @@ ARG GOSUMDB=sum.golang.google.cn
 # -----------------------------------------------------------------------------
 # Stage 1: Frontend Builder
 # -----------------------------------------------------------------------------
-FROM ${NODE_IMAGE} AS frontend-builder
+# The frontend output is architecture-neutral JavaScript, so build it on the
+# native host platform instead of under QEMU emulation.
+FROM --platform=${BUILDPLATFORM} ${NODE_IMAGE} AS frontend-builder
 
 WORKDIR /app/frontend
 
@@ -39,7 +42,9 @@ RUN pnpm run build
 # -----------------------------------------------------------------------------
 # Stage 2: Backend Builder
 # -----------------------------------------------------------------------------
-FROM ${GOLANG_IMAGE} AS backend-builder
+# Run the Go toolchain on the native host platform and cross-compile the pure-Go
+# binary below, avoiding emulated module downloads and builds.
+FROM --platform=${BUILDPLATFORM} ${GOLANG_IMAGE} AS backend-builder
 
 # Build arguments for version info (set by CI)
 ARG VERSION=
@@ -47,6 +52,8 @@ ARG COMMIT=docker
 ARG DATE
 ARG GOPROXY
 ARG GOSUMDB
+ARG TARGETOS
+ARG TARGETARCH
 
 ENV GOPROXY=${GOPROXY}
 ENV GOSUMDB=${GOSUMDB}
@@ -58,7 +65,8 @@ WORKDIR /app/backend
 
 # Copy go mod files first (better caching)
 COPY backend/go.mod backend/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,id=sub2api-gomod,target=/go/pkg/mod \
+    go mod download
 
 # Copy backend source first
 COPY backend/ ./
@@ -68,10 +76,12 @@ COPY --from=frontend-builder /app/backend/internal/web/dist ./internal/web/dist
 
 # Build the binary (BuildType=release for CI builds, embed frontend)
 # Version precedence: build arg VERSION > cmd/server/VERSION
-RUN VERSION_VALUE="${VERSION}" && \
+RUN --mount=type=cache,id=sub2api-gomod,target=/go/pkg/mod \
+    --mount=type=cache,id=sub2api-gobuild,target=/root/.cache/go-build \
+    VERSION_VALUE="${VERSION}" && \
     if [ -z "${VERSION_VALUE}" ]; then VERSION_VALUE="$(tr -d '\r\n' < ./cmd/server/VERSION)"; fi && \
     DATE_VALUE="${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
-    CGO_ENABLED=0 GOOS=linux go build \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} go build \
     -tags embed \
     -ldflags="-s -w -X main.Version=${VERSION_VALUE} -X main.Commit=${COMMIT} -X main.Date=${DATE_VALUE} -X main.BuildType=release" \
     -trimpath \
