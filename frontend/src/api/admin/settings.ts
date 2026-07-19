@@ -590,6 +590,7 @@ export interface SystemSettings {
 	payment_crypto_recharge_fee_rate: number;
   payment_refund_fee_rate: number;
   payment_subscription_min_daily_amount: number;
+  payment_subscription_min_ratio_start_daily_amount: number;
   payment_subscription_max_daily_amount: number;
   payment_subscription_max_validity_days: number;
   payment_subscription_min_plan_ratio: number;
@@ -845,6 +846,7 @@ export interface UpdateSettingsRequest {
 	payment_crypto_recharge_fee_rate?: number;
   payment_refund_fee_rate?: number;
   payment_subscription_min_daily_amount?: number;
+  payment_subscription_min_ratio_start_daily_amount?: number;
   payment_subscription_max_daily_amount?: number;
   payment_subscription_max_validity_days?: number;
   payment_subscription_min_plan_ratio?: number;

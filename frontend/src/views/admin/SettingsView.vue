@@ -6514,7 +6514,7 @@
                   </div>
                 </div>
                 <!-- Row 3: Subscription pricing bounds -->
-                <div class="grid grid-cols-1 gap-3 sm:grid-cols-5">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3 xl:grid-cols-6">
                   <div>
                     <label class="input-label">{{
                       t("admin.settings.payment.subscriptionMinDaily")
@@ -6541,6 +6541,25 @@
                       :value="form.payment_subscription_max_daily_amount || ''"
                       @input="
                         form.payment_subscription_max_daily_amount =
+                          parseFloat(
+                            ($event.target as HTMLInputElement).value,
+                          ) || 510
+                      "
+                      type="number"
+                      step="30"
+                      min="30"
+                      class="input"
+                    />
+                  </div>
+                  <div>
+                    <label class="input-label">{{
+                      t("admin.settings.payment.subscriptionMinRatioStartDaily")
+                    }}</label>
+                    <input
+                      data-testid="payment-subscription-min-ratio-start-daily-amount"
+                      :value="form.payment_subscription_min_ratio_start_daily_amount || ''"
+                      @input="
+                        form.payment_subscription_min_ratio_start_daily_amount =
                           parseFloat(
                             ($event.target as HTMLInputElement).value,
                           ) || 510
@@ -8142,6 +8161,7 @@ const form = reactive<SettingsForm>({
   payment_crypto_recharge_fee_rate: 0,
   payment_refund_fee_rate: 0,
   payment_subscription_min_daily_amount: 30,
+  payment_subscription_min_ratio_start_daily_amount: 510,
   payment_subscription_max_daily_amount: 510,
   payment_subscription_max_validity_days: 360,
   payment_subscription_min_plan_ratio: 2,
@@ -9457,6 +9477,8 @@ async function saveSettings() {
       payment_refund_fee_rate: Number(form.payment_refund_fee_rate) || 0,
       payment_subscription_min_daily_amount:
         Number(form.payment_subscription_min_daily_amount) || 30,
+      payment_subscription_min_ratio_start_daily_amount:
+        Number(form.payment_subscription_min_ratio_start_daily_amount) || 510,
       payment_subscription_max_daily_amount:
         Number(form.payment_subscription_max_daily_amount) || 510,
       payment_subscription_max_validity_days:

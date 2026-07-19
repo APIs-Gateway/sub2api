@@ -14,35 +14,36 @@ import (
 )
 
 const (
-	SettingPaymentEnabled        = "payment_enabled"
-	SettingMinRechargeAmount     = "MIN_RECHARGE_AMOUNT"
-	SettingMaxRechargeAmount     = "MAX_RECHARGE_AMOUNT"
-	SettingDailyRechargeLimit    = "DAILY_RECHARGE_LIMIT"
-	SettingOrderTimeoutMinutes   = "ORDER_TIMEOUT_MINUTES"
-	SettingMaxPendingOrders      = "MAX_PENDING_ORDERS"
-	SettingEnabledPaymentTypes   = "ENABLED_PAYMENT_TYPES"
-	SettingLoadBalanceStrategy   = "LOAD_BALANCE_STRATEGY"
-	SettingBalancePayDisabled    = "BALANCE_PAYMENT_DISABLED"
-	SettingBalanceRechargeMult   = "BALANCE_RECHARGE_MULTIPLIER"
-	SettingSubscriptionPayMult   = "SUBSCRIPTION_PAYMENT_MULTIPLIER"
-	SettingRechargeFeeRate       = "RECHARGE_FEE_RATE"
-	SettingCryptoRechargeFeeRate = "CRYPTO_RECHARGE_FEE_RATE"
-	SettingRefundFeeRate         = "REFUND_FEE_RATE"
-	SettingSubscriptionMinDaily  = "SUBSCRIPTION_MIN_DAILY_AMOUNT"
-	SettingSubscriptionMaxDaily  = "SUBSCRIPTION_MAX_DAILY_AMOUNT"
-	SettingSubscriptionMaxDays   = "SUBSCRIPTION_MAX_VALIDITY_DAYS"
-	SettingSubscriptionMinRatio  = "SUBSCRIPTION_MIN_PLAN_RATIO"
-	SettingSubscriptionMaxRatio  = "SUBSCRIPTION_MAX_PLAN_RATIO"
-	SettingProductNamePrefix     = "PRODUCT_NAME_PREFIX"
-	SettingProductNameSuffix     = "PRODUCT_NAME_SUFFIX"
-	SettingHelpImageURL          = "PAYMENT_HELP_IMAGE_URL"
-	SettingHelpText              = "PAYMENT_HELP_TEXT"
-	SettingCancelRateLimitOn     = "CANCEL_RATE_LIMIT_ENABLED"
-	SettingCancelRateLimitMax    = "CANCEL_RATE_LIMIT_MAX"
-	SettingCancelWindowSize      = "CANCEL_RATE_LIMIT_WINDOW"
-	SettingCancelWindowUnit      = "CANCEL_RATE_LIMIT_UNIT"
-	SettingCancelWindowMode      = "CANCEL_RATE_LIMIT_WINDOW_MODE"
-	SettingAlipayForceQRCode     = "ALIPAY_FORCE_QRCODE"
+	SettingPaymentEnabled                 = "payment_enabled"
+	SettingMinRechargeAmount              = "MIN_RECHARGE_AMOUNT"
+	SettingMaxRechargeAmount              = "MAX_RECHARGE_AMOUNT"
+	SettingDailyRechargeLimit             = "DAILY_RECHARGE_LIMIT"
+	SettingOrderTimeoutMinutes            = "ORDER_TIMEOUT_MINUTES"
+	SettingMaxPendingOrders               = "MAX_PENDING_ORDERS"
+	SettingEnabledPaymentTypes            = "ENABLED_PAYMENT_TYPES"
+	SettingLoadBalanceStrategy            = "LOAD_BALANCE_STRATEGY"
+	SettingBalancePayDisabled             = "BALANCE_PAYMENT_DISABLED"
+	SettingBalanceRechargeMult            = "BALANCE_RECHARGE_MULTIPLIER"
+	SettingSubscriptionPayMult            = "SUBSCRIPTION_PAYMENT_MULTIPLIER"
+	SettingRechargeFeeRate                = "RECHARGE_FEE_RATE"
+	SettingCryptoRechargeFeeRate          = "CRYPTO_RECHARGE_FEE_RATE"
+	SettingRefundFeeRate                  = "REFUND_FEE_RATE"
+	SettingSubscriptionMinDaily           = "SUBSCRIPTION_MIN_DAILY_AMOUNT"
+	SettingSubscriptionMinRatioStartDaily = "SUBSCRIPTION_MIN_RATIO_START_DAILY_AMOUNT"
+	SettingSubscriptionMaxDaily           = "SUBSCRIPTION_MAX_DAILY_AMOUNT"
+	SettingSubscriptionMaxDays            = "SUBSCRIPTION_MAX_VALIDITY_DAYS"
+	SettingSubscriptionMinRatio           = "SUBSCRIPTION_MIN_PLAN_RATIO"
+	SettingSubscriptionMaxRatio           = "SUBSCRIPTION_MAX_PLAN_RATIO"
+	SettingProductNamePrefix              = "PRODUCT_NAME_PREFIX"
+	SettingProductNameSuffix              = "PRODUCT_NAME_SUFFIX"
+	SettingHelpImageURL                   = "PAYMENT_HELP_IMAGE_URL"
+	SettingHelpText                       = "PAYMENT_HELP_TEXT"
+	SettingCancelRateLimitOn              = "CANCEL_RATE_LIMIT_ENABLED"
+	SettingCancelRateLimitMax             = "CANCEL_RATE_LIMIT_MAX"
+	SettingCancelWindowSize               = "CANCEL_RATE_LIMIT_WINDOW"
+	SettingCancelWindowUnit               = "CANCEL_RATE_LIMIT_UNIT"
+	SettingCancelWindowMode               = "CANCEL_RATE_LIMIT_WINDOW_MODE"
+	SettingAlipayForceQRCode              = "ALIPAY_FORCE_QRCODE"
 )
 
 // Default values for payment configuration settings.
@@ -53,30 +54,31 @@ const (
 
 // PaymentConfig holds the payment system configuration.
 type PaymentConfig struct {
-	Enabled                   bool     `json:"enabled"`
-	MinAmount                 float64  `json:"min_amount"`
-	MaxAmount                 float64  `json:"max_amount"`
-	DailyLimit                float64  `json:"daily_limit"`
-	OrderTimeoutMin           int      `json:"order_timeout_minutes"`
-	MaxPendingOrders          int      `json:"max_pending_orders"`
-	EnabledTypes              []string `json:"enabled_payment_types"`
-	BalanceDisabled           bool     `json:"balance_disabled"`
-	BalanceRechargeMultiplier float64  `json:"balance_recharge_multiplier"`
-	SubscriptionPayMultiplier float64  `json:"subscription_payment_multiplier"`
-	RechargeFeeRate           float64  `json:"recharge_fee_rate"`
-	CryptoRechargeFeeRate     float64  `json:"crypto_recharge_fee_rate"`
-	RefundFeeRate             float64  `json:"refund_fee_rate"`
-	SubscriptionMinDaily      float64  `json:"subscription_min_daily_amount"`
-	SubscriptionMaxDaily      float64  `json:"subscription_max_daily_amount"`
-	SubscriptionMaxDays       int      `json:"subscription_max_validity_days"`
-	SubscriptionMinPlanRatio  float64  `json:"subscription_min_plan_ratio"`
-	SubscriptionMaxPlanRatio  float64  `json:"subscription_max_plan_ratio"`
-	LoadBalanceStrategy       string   `json:"load_balance_strategy"`
-	ProductNamePrefix         string   `json:"product_name_prefix"`
-	ProductNameSuffix         string   `json:"product_name_suffix"`
-	HelpImageURL              string   `json:"help_image_url"`
-	HelpText                  string   `json:"help_text"`
-	StripePublishableKey      string   `json:"stripe_publishable_key,omitempty"`
+	Enabled                        bool     `json:"enabled"`
+	MinAmount                      float64  `json:"min_amount"`
+	MaxAmount                      float64  `json:"max_amount"`
+	DailyLimit                     float64  `json:"daily_limit"`
+	OrderTimeoutMin                int      `json:"order_timeout_minutes"`
+	MaxPendingOrders               int      `json:"max_pending_orders"`
+	EnabledTypes                   []string `json:"enabled_payment_types"`
+	BalanceDisabled                bool     `json:"balance_disabled"`
+	BalanceRechargeMultiplier      float64  `json:"balance_recharge_multiplier"`
+	SubscriptionPayMultiplier      float64  `json:"subscription_payment_multiplier"`
+	RechargeFeeRate                float64  `json:"recharge_fee_rate"`
+	CryptoRechargeFeeRate          float64  `json:"crypto_recharge_fee_rate"`
+	RefundFeeRate                  float64  `json:"refund_fee_rate"`
+	SubscriptionMinDaily           float64  `json:"subscription_min_daily_amount"`
+	SubscriptionMinRatioStartDaily float64  `json:"subscription_min_ratio_start_daily_amount"`
+	SubscriptionMaxDaily           float64  `json:"subscription_max_daily_amount"`
+	SubscriptionMaxDays            int      `json:"subscription_max_validity_days"`
+	SubscriptionMinPlanRatio       float64  `json:"subscription_min_plan_ratio"`
+	SubscriptionMaxPlanRatio       float64  `json:"subscription_max_plan_ratio"`
+	LoadBalanceStrategy            string   `json:"load_balance_strategy"`
+	ProductNamePrefix              string   `json:"product_name_prefix"`
+	ProductNameSuffix              string   `json:"product_name_suffix"`
+	HelpImageURL                   string   `json:"help_image_url"`
+	HelpText                       string   `json:"help_text"`
+	StripePublishableKey           string   `json:"stripe_publishable_key,omitempty"`
 
 	// Cancel rate limit settings
 	CancelRateLimitEnabled bool   `json:"cancel_rate_limit_enabled"`
@@ -91,29 +93,30 @@ type PaymentConfig struct {
 
 // UpdatePaymentConfigRequest contains fields to update payment configuration.
 type UpdatePaymentConfigRequest struct {
-	Enabled                   *bool    `json:"enabled"`
-	MinAmount                 *float64 `json:"min_amount"`
-	MaxAmount                 *float64 `json:"max_amount"`
-	DailyLimit                *float64 `json:"daily_limit"`
-	OrderTimeoutMin           *int     `json:"order_timeout_minutes"`
-	MaxPendingOrders          *int     `json:"max_pending_orders"`
-	EnabledTypes              []string `json:"enabled_payment_types"`
-	BalanceDisabled           *bool    `json:"balance_disabled"`
-	BalanceRechargeMultiplier *float64 `json:"balance_recharge_multiplier"`
-	SubscriptionPayMultiplier *float64 `json:"subscription_payment_multiplier"`
-	RechargeFeeRate           *float64 `json:"recharge_fee_rate"`
-	CryptoRechargeFeeRate     *float64 `json:"crypto_recharge_fee_rate"`
-	RefundFeeRate             *float64 `json:"refund_fee_rate"`
-	SubscriptionMinDaily      *float64 `json:"subscription_min_daily_amount"`
-	SubscriptionMaxDaily      *float64 `json:"subscription_max_daily_amount"`
-	SubscriptionMaxDays       *int     `json:"subscription_max_validity_days"`
-	SubscriptionMinPlanRatio  *float64 `json:"subscription_min_plan_ratio"`
-	SubscriptionMaxPlanRatio  *float64 `json:"subscription_max_plan_ratio"`
-	LoadBalanceStrategy       *string  `json:"load_balance_strategy"`
-	ProductNamePrefix         *string  `json:"product_name_prefix"`
-	ProductNameSuffix         *string  `json:"product_name_suffix"`
-	HelpImageURL              *string  `json:"help_image_url"`
-	HelpText                  *string  `json:"help_text"`
+	Enabled                        *bool    `json:"enabled"`
+	MinAmount                      *float64 `json:"min_amount"`
+	MaxAmount                      *float64 `json:"max_amount"`
+	DailyLimit                     *float64 `json:"daily_limit"`
+	OrderTimeoutMin                *int     `json:"order_timeout_minutes"`
+	MaxPendingOrders               *int     `json:"max_pending_orders"`
+	EnabledTypes                   []string `json:"enabled_payment_types"`
+	BalanceDisabled                *bool    `json:"balance_disabled"`
+	BalanceRechargeMultiplier      *float64 `json:"balance_recharge_multiplier"`
+	SubscriptionPayMultiplier      *float64 `json:"subscription_payment_multiplier"`
+	RechargeFeeRate                *float64 `json:"recharge_fee_rate"`
+	CryptoRechargeFeeRate          *float64 `json:"crypto_recharge_fee_rate"`
+	RefundFeeRate                  *float64 `json:"refund_fee_rate"`
+	SubscriptionMinDaily           *float64 `json:"subscription_min_daily_amount"`
+	SubscriptionMinRatioStartDaily *float64 `json:"subscription_min_ratio_start_daily_amount"`
+	SubscriptionMaxDaily           *float64 `json:"subscription_max_daily_amount"`
+	SubscriptionMaxDays            *int     `json:"subscription_max_validity_days"`
+	SubscriptionMinPlanRatio       *float64 `json:"subscription_min_plan_ratio"`
+	SubscriptionMaxPlanRatio       *float64 `json:"subscription_max_plan_ratio"`
+	LoadBalanceStrategy            *string  `json:"load_balance_strategy"`
+	ProductNamePrefix              *string  `json:"product_name_prefix"`
+	ProductNameSuffix              *string  `json:"product_name_suffix"`
+	HelpImageURL                   *string  `json:"help_image_url"`
+	HelpText                       *string  `json:"help_text"`
 
 	// Cancel rate limit settings
 	CancelRateLimitEnabled *bool   `json:"cancel_rate_limit_enabled"`
@@ -249,7 +252,7 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 		SettingPaymentEnabled, SettingMinRechargeAmount, SettingMaxRechargeAmount,
 		SettingDailyRechargeLimit, SettingOrderTimeoutMinutes, SettingMaxPendingOrders,
 		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingSubscriptionPayMult, SettingRechargeFeeRate, SettingCryptoRechargeFeeRate, SettingRefundFeeRate, SettingLoadBalanceStrategy,
-		SettingSubscriptionMinDaily, SettingSubscriptionMaxDaily, SettingSubscriptionMaxDays,
+		SettingSubscriptionMinDaily, SettingSubscriptionMinRatioStartDaily, SettingSubscriptionMaxDaily, SettingSubscriptionMaxDays,
 		SettingSubscriptionMinRatio, SettingSubscriptionMaxRatio,
 		SettingProductNamePrefix, SettingProductNameSuffix,
 		SettingHelpImageURL, SettingHelpText,
@@ -272,28 +275,29 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *PaymentConfig {
 	subPricing := subscriptionPricingConfigFromSettings(vals)
 	cfg := &PaymentConfig{
-		Enabled:                   vals[SettingPaymentEnabled] == "true",
-		MinAmount:                 pcParseFloat(vals[SettingMinRechargeAmount], 1),
-		MaxAmount:                 pcParseFloat(vals[SettingMaxRechargeAmount], 0),
-		DailyLimit:                pcParseFloat(vals[SettingDailyRechargeLimit], 0),
-		OrderTimeoutMin:           pcParseInt(vals[SettingOrderTimeoutMinutes], defaultOrderTimeoutMin),
-		MaxPendingOrders:          pcParseInt(vals[SettingMaxPendingOrders], defaultMaxPendingOrders),
-		BalanceDisabled:           vals[SettingBalancePayDisabled] == "true",
-		BalanceRechargeMultiplier: normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingBalanceRechargeMult], defaultBalanceRechargeMultiplier)),
-		SubscriptionPayMultiplier: normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingSubscriptionPayMult], defaultBalanceRechargeMultiplier)),
-		RechargeFeeRate:           pcParseFloat(vals[SettingRechargeFeeRate], 0),
-		CryptoRechargeFeeRate:     pcParseFloat(vals[SettingCryptoRechargeFeeRate], 0),
-		RefundFeeRate:             pcParseFloat(vals[SettingRefundFeeRate], 0),
-		SubscriptionMinDaily:      subPricing.DMin,
-		SubscriptionMaxDaily:      subPricing.DMax,
-		SubscriptionMaxDays:       subPricing.TMax,
-		SubscriptionMinPlanRatio:  subPricing.UMax,
-		SubscriptionMaxPlanRatio:  subPricing.UMin,
-		LoadBalanceStrategy:       vals[SettingLoadBalanceStrategy],
-		ProductNamePrefix:         vals[SettingProductNamePrefix],
-		ProductNameSuffix:         vals[SettingProductNameSuffix],
-		HelpImageURL:              vals[SettingHelpImageURL],
-		HelpText:                  vals[SettingHelpText],
+		Enabled:                        vals[SettingPaymentEnabled] == "true",
+		MinAmount:                      pcParseFloat(vals[SettingMinRechargeAmount], 1),
+		MaxAmount:                      pcParseFloat(vals[SettingMaxRechargeAmount], 0),
+		DailyLimit:                     pcParseFloat(vals[SettingDailyRechargeLimit], 0),
+		OrderTimeoutMin:                pcParseInt(vals[SettingOrderTimeoutMinutes], defaultOrderTimeoutMin),
+		MaxPendingOrders:               pcParseInt(vals[SettingMaxPendingOrders], defaultMaxPendingOrders),
+		BalanceDisabled:                vals[SettingBalancePayDisabled] == "true",
+		BalanceRechargeMultiplier:      normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingBalanceRechargeMult], defaultBalanceRechargeMultiplier)),
+		SubscriptionPayMultiplier:      normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingSubscriptionPayMult], defaultBalanceRechargeMultiplier)),
+		RechargeFeeRate:                pcParseFloat(vals[SettingRechargeFeeRate], 0),
+		CryptoRechargeFeeRate:          pcParseFloat(vals[SettingCryptoRechargeFeeRate], 0),
+		RefundFeeRate:                  pcParseFloat(vals[SettingRefundFeeRate], 0),
+		SubscriptionMinDaily:           subPricing.DMin,
+		SubscriptionMinRatioStartDaily: subPricing.DFloor,
+		SubscriptionMaxDaily:           subPricing.DMax,
+		SubscriptionMaxDays:            subPricing.TMax,
+		SubscriptionMinPlanRatio:       subPricing.UMax,
+		SubscriptionMaxPlanRatio:       subPricing.UMin,
+		LoadBalanceStrategy:            vals[SettingLoadBalanceStrategy],
+		ProductNamePrefix:              vals[SettingProductNamePrefix],
+		ProductNameSuffix:              vals[SettingProductNameSuffix],
+		HelpImageURL:                   vals[SettingHelpImageURL],
+		HelpText:                       vals[SettingHelpText],
 
 		CancelRateLimitEnabled: vals[SettingCancelRateLimitOn] == "true",
 		CancelRateLimitMax:     pcParseInt(vals[SettingCancelRateLimitMax], 10),
@@ -387,8 +391,36 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MAX_DAILY_AMOUNT", "subscription maximum daily amount must be a multiple of 30")
 		}
 	}
-	if req.SubscriptionMinDaily != nil && req.SubscriptionMaxDaily != nil && *req.SubscriptionMaxDaily < *req.SubscriptionMinDaily {
-		return infraerrors.BadRequest("INVALID_SUBSCRIPTION_DAILY_AMOUNT_RANGE", "subscription maximum daily amount must be greater than or equal to minimum daily amount")
+	if req.SubscriptionMinRatioStartDaily != nil {
+		v := *req.SubscriptionMinRatioStartDaily
+		if !isValidSubscriptionDailyAmount(v) {
+			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MIN_RATIO_START_DAILY_AMOUNT", "subscription minimum-ratio start daily amount must be a positive multiple of 30")
+		}
+	}
+	if req.SubscriptionMinDaily != nil || req.SubscriptionMinRatioStartDaily != nil || req.SubscriptionMaxDaily != nil {
+		current, err := s.GetPaymentConfig(ctx)
+		if err != nil {
+			return fmt.Errorf("get current subscription pricing config: %w", err)
+		}
+		minDaily := current.SubscriptionMinDaily
+		minRatioStartDaily := current.SubscriptionMinRatioStartDaily
+		maxDaily := current.SubscriptionMaxDaily
+		if req.SubscriptionMinDaily != nil {
+			minDaily = *req.SubscriptionMinDaily
+		}
+		if req.SubscriptionMinRatioStartDaily != nil {
+			minRatioStartDaily = *req.SubscriptionMinRatioStartDaily
+		}
+		if req.SubscriptionMaxDaily != nil {
+			maxDaily = *req.SubscriptionMaxDaily
+		}
+		if !(minDaily < minRatioStartDaily && minRatioStartDaily <= maxDaily) {
+			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_DAILY_AMOUNT_RANGE", "subscription daily amounts must satisfy minimum < minimum-ratio start <= maximum")
+		}
+		// Persist the complete validated trio so partial settings updates cannot erase a bound.
+		req.SubscriptionMinDaily = &minDaily
+		req.SubscriptionMinRatioStartDaily = &minRatioStartDaily
+		req.SubscriptionMaxDaily = &maxDaily
 	}
 	if req.SubscriptionMaxDays != nil && *req.SubscriptionMaxDays < DefaultSubscriptionPricingConfig().TMin {
 		return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MAX_VALIDITY_DAYS", "subscription maximum validity days must be at least the minimum validity days")
@@ -419,6 +451,7 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 		SettingCryptoRechargeFeeRate:             formatNonNegativeFloat(req.CryptoRechargeFeeRate),
 		SettingRefundFeeRate:                     formatNonNegativeFloat(req.RefundFeeRate),
 		SettingSubscriptionMinDaily:              formatPositiveFloat(req.SubscriptionMinDaily),
+		SettingSubscriptionMinRatioStartDaily:    formatPositiveFloat(req.SubscriptionMinRatioStartDaily),
 		SettingSubscriptionMaxDaily:              formatPositiveFloat(req.SubscriptionMaxDaily),
 		SettingSubscriptionMaxDays:               formatPositiveInt(req.SubscriptionMaxDays),
 		SettingSubscriptionMinRatio:              formatPositiveFlexibleFloat(req.SubscriptionMinPlanRatio),
