@@ -54,17 +54,16 @@ func (r *PostgreSQLRepository) ListEvents(ctx context.Context, filter EventFilte
 		pageSize = 100
 	}
 
-	where, args := buildEventWhere(filter, 1)
+	where, args := buildEventWhere(filter, 1, r.placeholder)
 	var total int64
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM prompt_audit_events e`+where, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 
 	queryArgs := append([]any(nil), args...)
-	limitIndex := len(queryArgs) + 1
 	queryArgs = append(queryArgs, pageSize, (page-1)*pageSize)
 	rows, err := r.db.QueryContext(ctx, `SELECT `+eventColumns("e")+` FROM prompt_audit_events e`+where+
-		fmt.Sprintf(` ORDER BY e.created_at DESC, e.id DESC LIMIT $%d OFFSET $%d`, limitIndex, limitIndex+1), queryArgs...)
+		` ORDER BY e.created_at DESC, e.id DESC LIMIT `+r.placeholder(len(queryArgs)-1)+` OFFSET `+r.placeholder(len(queryArgs)), queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +93,7 @@ func (r *PostgreSQLRepository) GetEvent(ctx context.Context, id int64) (*Event, 
 		return nil, errors.New("prompt audit database unavailable")
 	}
 	event, err := scanEvent(r.db.QueryRowContext(ctx,
-		`SELECT `+eventColumns("e")+` FROM prompt_audit_events e WHERE e.id=$1`, id))
+		`SELECT `+eventColumns("e")+` FROM prompt_audit_events e WHERE e.id=`+r.placeholder(1), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrEventNotFound
 	}
@@ -119,50 +118,54 @@ func canonicalEventFilter(filter EventFilter) EventFilter {
 	return filter
 }
 
-func buildEventWhere(filter EventFilter, firstIndex int) (string, []any) {
+func buildEventWhere(filter EventFilter, firstIndex int, placeholder func(int) string) (string, []any) {
 	filter = canonicalEventFilter(filter)
 	clauses := []string{" WHERE TRUE"}
 	args := make([]any, 0, 12)
 	add := func(clause string, value any) {
-		clauses = append(clauses, fmt.Sprintf(clause, firstIndex+len(args)))
+		clauses = append(clauses, fmt.Sprintf(clause, placeholder(firstIndex+len(args))))
 		args = append(args, value)
 	}
 	if filter.Decision != "" {
-		add(" AND e.decision=$%d", filter.Decision)
+		add(" AND e.decision=%s", filter.Decision)
 	}
 	if filter.RiskLevel != "" {
-		add(" AND e.risk_level=$%d", filter.RiskLevel)
+		add(" AND e.risk_level=%s", filter.RiskLevel)
 	}
 	if filter.Endpoint != "" {
-		add(" AND e.endpoint=$%d", filter.Endpoint)
+		add(" AND e.endpoint=%s", filter.Endpoint)
 	}
 	if filter.GroupID != nil {
-		add(" AND e.group_id=$%d", *filter.GroupID)
+		add(" AND e.group_id=%s", *filter.GroupID)
 	}
 	if filter.UserID != nil {
-		add(" AND e.user_id=$%d", *filter.UserID)
+		add(" AND e.user_id=%s", *filter.UserID)
 	}
 	if filter.APIKeyID != nil {
-		add(" AND e.api_key_id=$%d", *filter.APIKeyID)
+		add(" AND e.api_key_id=%s", *filter.APIKeyID)
 	}
 	if filter.RequestID != "" {
-		add(" AND e.request_id=$%d", filter.RequestID)
+		add(" AND e.request_id=%s", filter.RequestID)
 	}
 	if filter.PromptHash != "" {
-		add(" AND e.prompt_hash=$%d", filter.PromptHash)
+		add(" AND e.prompt_hash=%s", filter.PromptHash)
 	}
 	if filter.Keyword != "" {
-		placeholder := firstIndex + len(args)
-		clauses = append(clauses, fmt.Sprintf(` AND (e.request_id ILIKE $%d OR e.prompt_hash ILIKE $%d OR e.redacted_preview ILIKE $%d
-			OR e.username_snapshot ILIKE $%d OR e.user_email_snapshot ILIKE $%d OR e.api_key_name_snapshot ILIKE $%d)`,
-			placeholder, placeholder, placeholder, placeholder, placeholder, placeholder))
-		args = append(args, "%"+TrimRunes(filter.Keyword, 128)+"%")
+		value := placeholder(firstIndex + len(args))
+		clauses = append(clauses, ` AND (LOWER(e.request_id) LIKE LOWER(`+value+`) OR LOWER(e.prompt_hash) LIKE LOWER(`+value+`) OR LOWER(e.redacted_preview) LIKE LOWER(`+value+`)
+			OR LOWER(e.username_snapshot) LIKE LOWER(`+value+`) OR LOWER(e.user_email_snapshot) LIKE LOWER(`+value+`) OR LOWER(e.api_key_name_snapshot) LIKE LOWER(`+value+`))`)
+		keyword := "%" + TrimRunes(filter.Keyword, 128) + "%"
+		if value == "?" {
+			args = append(args, keyword, keyword, keyword, keyword, keyword, keyword)
+		} else {
+			args = append(args, keyword)
+		}
 	}
 	if filter.StartAt != nil {
-		add(" AND e.created_at >= $%d", filter.StartAt.UTC())
+		add(" AND e.created_at >= %s", filter.StartAt.UTC())
 	}
 	if filter.EndAt != nil {
-		add(" AND e.created_at <= $%d", filter.EndAt.UTC())
+		add(" AND e.created_at <= %s", filter.EndAt.UTC())
 	}
 	return strings.Join(clauses, ""), args
 }

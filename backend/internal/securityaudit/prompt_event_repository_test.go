@@ -137,7 +137,7 @@ func TestBuildEventWhereCanonicalizesFiltersWithoutRawPrompt(t *testing.T) {
 		Decision: " CRITICAL ", RiskLevel: " HIGH ", Endpoint: " /v1/chat ", GroupID: &groupID,
 		UserID: &userID, APIKeyID: &apiKeyID, RequestID: " req-1 ",
 		PromptHash: strings.Repeat("A", 64), Keyword: "  user  ", StartAt: &start, EndAt: &end,
-	}, 1)
+	}, 1, (&PostgreSQLRepository{dialect: promptAuditPostgreSQL}).placeholder)
 	require.Contains(t, where, "e.decision=$1")
 	require.Contains(t, where, "e.risk_level=$2")
 	require.Contains(t, where, "e.endpoint=$3")
@@ -146,11 +146,21 @@ func TestBuildEventWhereCanonicalizesFiltersWithoutRawPrompt(t *testing.T) {
 	require.Contains(t, where, "e.api_key_id=$6")
 	require.Contains(t, where, "e.request_id=$7")
 	require.Contains(t, where, "e.prompt_hash=$8")
-	require.Contains(t, where, "e.request_id ILIKE $9")
+	require.Contains(t, where, "LOWER(e.request_id) LIKE LOWER($9)")
 	require.Contains(t, where, "e.created_at >= $10")
 	require.Contains(t, where, "e.created_at <= $11")
 	require.Equal(t, []any{"critical", "high", "/v1/chat", int64(4), int64(2), int64(3), "req-1", strings.Repeat("a", 64), "%user%", start, end}, args)
 	require.NotContains(t, where, "full_prompt")
+}
+
+func TestBuildEventWhereUsesQuestionMarkDialect(t *testing.T) {
+	groupID := int64(4)
+	where, args := buildEventWhere(EventFilter{GroupID: &groupID, Keyword: "Needle"}, 1,
+		(&PostgreSQLRepository{dialect: promptAuditQuestionMark}).placeholder)
+	require.Contains(t, where, "e.group_id=?")
+	require.Contains(t, where, "LOWER(e.request_id) LIKE LOWER(?)")
+	require.NotContains(t, where, "ILIKE")
+	require.Equal(t, []any{groupID, "%Needle%", "%Needle%", "%Needle%", "%Needle%", "%Needle%", "%Needle%"}, args)
 }
 
 func sqlmockRows(name string, value any) *sqlmock.Rows {
