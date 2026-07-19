@@ -73,3 +73,26 @@ func (s *GroupRepoSuite) TestCreateFromSourceCopiesPrioritiesAndOperationMetadat
 	s.Require().NoError(err)
 	s.Require().Equal(duplicate.ID, recovered.ID)
 }
+
+func (s *GroupRepoSuite) TestCreateFromSourceMissingSourceDoesNotCreateGroup() {
+	duplicate := &service.Group{
+		Name:                 "orphan-copy",
+		Platform:             service.PlatformOpenAI,
+		RateMultiplier:       1,
+		Status:               "inactive",
+		SubscriptionType:     service.SubscriptionTypeStandard,
+		DuplicateOperationID: "missing-source-op",
+	}
+	err := s.repo.CreateFromSource(s.ctx, duplicate, 9_999_999)
+	s.Require().ErrorIs(err, service.ErrGroupNotFound)
+
+	var count int
+	s.Require().NoError(scanSingleRow(
+		s.ctx,
+		s.tx,
+		"SELECT COUNT(*) FROM groups WHERE name = $1 AND deleted_at IS NULL",
+		[]any{"orphan-copy"},
+		&count,
+	))
+	s.Require().Zero(count)
+}

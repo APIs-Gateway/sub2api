@@ -73,6 +73,29 @@ func (r *groupRepository) CreateFromSource(ctx context.Context, duplicate *servi
 		txClient = tx.Client()
 		exec = txClient
 	}
+	rows, err := exec.QueryContext(ctx, `
+		SELECT id FROM groups
+		WHERE id = $1 AND deleted_at IS NULL
+		FOR SHARE`, sourceGroupID)
+	if err != nil {
+		return err
+	}
+	var lockedSourceID int64
+	if rows.Next() {
+		if err := rows.Scan(&lockedSourceID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if lockedSourceID == 0 {
+		return service.ErrGroupNotFound
+	}
 
 	if err := createGroupRecord(ctx, txClient, duplicate); err != nil {
 		return err
