@@ -207,17 +207,25 @@ func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actor
 	if req.ExpectedConfigVersion < 1 {
 		return PublicConfig{}, infraerrors.BadRequest("prompt_audit_expected_config_version_required", "必须提供有效的配置版本")
 	}
-	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	// The write below uses the previously read value as a compare-and-swap
+	// guard, so it is safe on PostgreSQL, MySQL 5.7, and SQLite without
+	// database-specific advisory locks or row-lock syntax.
+	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return PublicConfig{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, promptAuditConfigLockKey); err != nil {
-		return PublicConfig{}, err
+	p := func(position int) string {
+		if promptAuditSQLDialect(m.db) == promptAuditQuestionMark {
+			return "?"
+		}
+		return fmt.Sprintf("$%d", position)
 	}
+	settingKeyColumn := configSettingKeyColumn(m.db)
 	current := DefaultStorageConfig()
 	var raw string
-	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key=$1 FOR UPDATE`, SettingKeyPromptAuditConfig).Scan(&raw)
+	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE `+settingKeyColumn+`=`+p(1), SettingKeyPromptAuditConfig).Scan(&raw)
+	exists := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return PublicConfig{}, err
 	}
@@ -242,10 +250,26 @@ func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actor
 	if err != nil {
 		return PublicConfig{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO settings (key,value,updated_at) VALUES ($1,$2,NOW())
-		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`,
+	if exists {
+		updated, err := tx.ExecContext(ctx, `
+			UPDATE settings SET value=`+p(1)+`, updated_at=CURRENT_TIMESTAMP
+			WHERE `+settingKeyColumn+`=`+p(2)+` AND value=`+p(3), string(rawNext), SettingKeyPromptAuditConfig, raw)
+		if err != nil {
+			return PublicConfig{}, err
+		}
+		affected, err := updated.RowsAffected()
+		if err != nil {
+			return PublicConfig{}, err
+		}
+		if affected != 1 {
+			return PublicConfig{}, configConflictError()
+		}
+	} else if _, err := tx.ExecContext(ctx, `
+		INSERT INTO settings (`+settingKeyColumn+`,value,updated_at) VALUES (`+p(1)+`,`+p(2)+`,CURRENT_TIMESTAMP)`,
 		SettingKeyPromptAuditConfig, string(rawNext)); err != nil {
+		if isConfigSettingDuplicate(err) {
+			return PublicConfig{}, configConflictError()
+		}
 		return PublicConfig{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -254,8 +278,10 @@ func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actor
 	// Install the snapshot with the current global gate, not merely the value
 	// cached when this process last reloaded Prompt Audit configuration.
 	riskControlEnabled := m.currentRiskControlEnabled()
-	if values, getErr := m.settings.GetMultiple(ctx, []string{SettingKeyRiskControl}); getErr == nil {
-		riskControlEnabled = values[SettingKeyRiskControl] == "true"
+	if m.settings != nil {
+		if values, getErr := m.settings.GetMultiple(ctx, []string{SettingKeyRiskControl}); getErr == nil {
+			riskControlEnabled = values[SettingKeyRiskControl] == "true"
+		}
 	}
 	active, err := ActiveFromStorage(next, riskControlEnabled, m.encryptor)
 	if err != nil {
@@ -276,6 +302,22 @@ func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actor
 		}
 	}
 	return PublicFromStorage(next, active.RiskControlEnabled), nil
+}
+
+func configSettingKeyColumn(db *sql.DB) string {
+	if promptAuditSQLDialect(db) == promptAuditQuestionMark {
+		return "`key`"
+	}
+	return `"key"`
+}
+
+func configConflictError() error {
+	return infraerrors.Conflict(ErrorCodeConfigConflict, "提示词审计配置已被其他管理员更新")
+}
+
+func isConfigSettingDuplicate(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "duplicate") || strings.Contains(message, "unique constraint") || strings.Contains(message, "constraint failed")
 }
 
 func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfigRequest, actorID int64) (storageConfig, error) {

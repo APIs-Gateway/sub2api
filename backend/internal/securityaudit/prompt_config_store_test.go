@@ -196,10 +196,10 @@ func TestConfigManagerSaveFailurePaths(t *testing.T) {
 			},
 		},
 		{
-			name: "advisory lock failure",
+			name: "read failure",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
-				mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(promptAuditConfigLockKey).WillReturnError(errors.New("lock failed"))
+				mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnError(errors.New("read failed"))
 				mock.ExpectRollback()
 			},
 		},
@@ -207,7 +207,6 @@ func TestConfigManagerSaveFailurePaths(t *testing.T) {
 			name: "malformed stored config",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
-				mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(promptAuditConfigLockKey).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("not-json"))
 				mock.ExpectRollback()
 			},
@@ -217,7 +216,6 @@ func TestConfigManagerSaveFailurePaths(t *testing.T) {
 			mutate: func(req *UpdateConfigRequest) { req.ExpectedConfigVersion = 2 },
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
-				mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(promptAuditConfigLockKey).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(validRaw))
 				mock.ExpectRollback()
 			},
@@ -231,28 +229,58 @@ func TestConfigManagerSaveFailurePaths(t *testing.T) {
 			mutate: func(req *UpdateConfigRequest) { req.Strategy = "round_robin" },
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
-				mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(promptAuditConfigLockKey).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(validRaw))
 				mock.ExpectRollback()
+			},
+		},
+		{
+			name: "compare and swap update failure",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(validRaw))
+				mock.ExpectExec("UPDATE settings SET value=").WithArgs(sqlmock.AnyArg(), SettingKeyPromptAuditConfig, validRaw).WillReturnError(errors.New("update failed"))
+				mock.ExpectRollback()
+			},
+		},
+		{
+			name: "compare and swap conflict",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(validRaw))
+				mock.ExpectExec("UPDATE settings SET value=").WithArgs(sqlmock.AnyArg(), SettingKeyPromptAuditConfig, validRaw).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectRollback()
+			},
+			check: func(t *testing.T, err error) {
+				require.Equal(t, ErrorCodeConfigConflict, infraerrors.Reason(err))
 			},
 		},
 		{
 			name: "insert failure",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
-				mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(promptAuditConfigLockKey).WillReturnResult(sqlmock.NewResult(0, 1))
-				mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(validRaw))
+				mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnError(sql.ErrNoRows)
 				mock.ExpectExec("INSERT INTO settings").WithArgs(SettingKeyPromptAuditConfig, sqlmock.AnyArg()).WillReturnError(errors.New("insert failed"))
 				mock.ExpectRollback()
+			},
+		},
+		{
+			name: "concurrent insert conflict",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnError(sql.ErrNoRows)
+				mock.ExpectExec("INSERT INTO settings").WithArgs(SettingKeyPromptAuditConfig, sqlmock.AnyArg()).WillReturnError(errors.New("duplicate key"))
+				mock.ExpectRollback()
+			},
+			check: func(t *testing.T, err error) {
+				require.Equal(t, ErrorCodeConfigConflict, infraerrors.Reason(err))
 			},
 		},
 		{
 			name: "commit failure",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
-				mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(promptAuditConfigLockKey).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(validRaw))
-				mock.ExpectExec("INSERT INTO settings").WithArgs(SettingKeyPromptAuditConfig, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("UPDATE settings SET value=").WithArgs(sqlmock.AnyArg(), SettingKeyPromptAuditConfig, validRaw).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
 			},
 		},
@@ -292,7 +320,6 @@ func TestConfigManagerSaveAndPublicGuards(t *testing.T) {
 	manager.clock = fixedTestClock{now: time.Unix(1700000000, 0).UTC()}
 	req := promptAuditUpdateRequest(1, 1, "save-token")
 	mock.ExpectBegin()
-	mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(promptAuditConfigLockKey).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec("INSERT INTO settings").WithArgs(SettingKeyPromptAuditConfig, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -322,6 +349,24 @@ func TestConfigManagerSaveAndPublicGuards(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	LogError(EventConfigReloadDegraded, map[string]any{"status": "failed"})
 	require.Contains(t, output.String(), EventConfigReloadDegraded)
+}
+
+func TestConfigManagerSaveUsesPortableCASOnSQLite(t *testing.T) {
+	db := newPromptStorageSQLite(t)
+	_, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`)
+	require.NoError(t, err)
+	manager := NewConfigManager(db, &configTestSettings{values: map[string]string{SettingKeyRiskControl: "true"}}, nil, prefixEncryptor{})
+
+	first, err := manager.Save(context.Background(), promptAuditUpdateRequest(1, 1, "first-token"), 9)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), first.ConfigVersion)
+
+	second, err := manager.Save(context.Background(), promptAuditUpdateRequest(2, 2, "second-token"), 9)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), second.ConfigVersion)
+
+	_, err = manager.Save(context.Background(), promptAuditUpdateRequest(2, 3, "stale-token"), 9)
+	require.Equal(t, ErrorCodeConfigConflict, infraerrors.Reason(err))
 }
 
 func mustDecryptForTest(t *testing.T, manager *ConfigManager, endpointID string) string {
