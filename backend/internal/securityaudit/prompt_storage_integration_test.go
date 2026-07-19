@@ -89,6 +89,13 @@ func exercisePromptAuditStorageIntegration(t *testing.T, ctx context.Context, db
 	raw, err := json.Marshal(event)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), snapshot.ScanText)
+	page, err := repo.ListEvents(ctx, EventFilter{Keyword: snapshot.RequestID}, 1, 20)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), page.Total)
+	require.Len(t, page.Items, 1)
+	loadedEvent, err := repo.GetEvent(ctx, event.ID)
+	require.NoError(t, err)
+	require.Equal(t, event.ID, loadedEvent.ID)
 
 	job, err := repo.CreateStagingWithCapacity(ctx, snapshot, 7, 2, 10)
 	require.NoError(t, err)

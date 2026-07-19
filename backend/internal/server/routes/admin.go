@@ -23,6 +23,9 @@ func RegisterAdminRoutes(
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)
 
+		// Prompt Audit 事件只读查询
+		registerPromptAuditRoutes(admin, h)
+
 		// 仪表盘
 		registerDashboardRoutes(admin, h)
 
@@ -106,6 +109,14 @@ func RegisterAdminRoutes(
 
 		// 邀请返利积分制（issue #11）
 		registerPointsRoutes(admin, h)
+	}
+}
+
+func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	events := admin.Group("/prompt-audit/events")
+	{
+		events.GET("", h.Admin.PromptAudit.ListEvents)
+		events.GET("/:id", h.Admin.PromptAudit.GetEvent)
 	}
 }
 

@@ -43,6 +43,7 @@ func ProvideAdminHandlers(
 	affiliateHandler *admin.AffiliateHandler,
 	complianceHandler *admin.ComplianceHandler,
 	pointsHandler *admin.PointsHandler,
+	promptAuditHandler *securityaudit.PromptEventAdminHandler,
 ) *AdminHandlers {
 	return &AdminHandlers{
 		Dashboard:              dashboardHandler,
@@ -77,6 +78,7 @@ func ProvideAdminHandlers(
 		Affiliate:              affiliateHandler,
 		Compliance:             complianceHandler,
 		Points:                 pointsHandler,
+		PromptAudit:            promptAuditHandler,
 	}
 }
 

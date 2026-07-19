@@ -2,6 +2,7 @@ package handler
 
 import (
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 )
 
 // AdminHandlers contains all admin-related HTTP handlers
@@ -38,6 +39,7 @@ type AdminHandlers struct {
 	Affiliate              *admin.AffiliateHandler
 	Compliance             *admin.ComplianceHandler
 	Points                 *admin.PointsHandler
+	PromptAudit            *securityaudit.PromptEventAdminHandler
 }
 
 // Handlers contains all HTTP handlers
