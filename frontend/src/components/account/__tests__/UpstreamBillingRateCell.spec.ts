@@ -105,7 +105,6 @@ describe('UpstreamBillingRateCell', () => {
       upstream_billing_probe: snapshot({
         status: 'failed',
         data: undefined,
-        fresh_until: undefined,
         last_error: 'network_error'
       })
     }}), Date.parse('2026-07-13T00:30:00Z'), false)
@@ -182,6 +181,7 @@ describe('UpstreamBillingRateCell', () => {
     const wrapper = mountCell(makeAccount({ extra: {
       upstream_billing_probe: snapshot({
         received_at: '2026-07-10T00:00:00Z',
+        next_probe_at: '2026-07-10T00:30:00Z',
         fresh_until: undefined
       })
     }}), Date.parse('2026-07-13T00:30:00Z'))
