@@ -251,6 +251,14 @@ type RuntimeSnapshot struct {
 	GuardMetrics          GuardMetricsSnapshot   `json:"guard_metrics"`
 }
 
+type Clock interface {
+	Now() time.Time
+}
+
+type realClock struct{}
+
+func (realClock) Now() time.Time { return time.Now().UTC() }
+
 type Metrics interface {
 	Snapshot() GuardMetricsSnapshot
 	AuditSnapshot() AuditMetricsSnapshot
