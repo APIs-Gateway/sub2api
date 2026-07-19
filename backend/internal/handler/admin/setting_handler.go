@@ -292,7 +292,6 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PaymentCryptoRechargeFeeRate:           paymentCfg.CryptoRechargeFeeRate,
 		PaymentRefundFeeRate:                   paymentCfg.RefundFeeRate,
 		PaymentSubscriptionMinDaily:            paymentCfg.SubscriptionMinDaily,
-		PaymentSubscriptionMinRatioStartDaily:  paymentCfg.SubscriptionMinRatioStartDaily,
 		PaymentSubscriptionMaxDaily:            paymentCfg.SubscriptionMaxDaily,
 		PaymentSubscriptionMaxDays:             paymentCfg.SubscriptionMaxDays,
 		PaymentSubscriptionMinPlanRatio:        paymentCfg.SubscriptionMinPlanRatio,
@@ -320,6 +319,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 		AllowUserViewErrorRequests: settings.AllowUserViewErrorRequests,
 	}
+	payload.PaymentSubscriptionMinRatioStartDaily = paymentCfg.SubscriptionMinRatioStartDaily
 
 	// OpenAI fast policy (stored under a dedicated setting key)
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
@@ -2184,7 +2184,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentCryptoRechargeFeeRate:           updatedPaymentCfg.CryptoRechargeFeeRate,
 		PaymentRefundFeeRate:                   updatedPaymentCfg.RefundFeeRate,
 		PaymentSubscriptionMinDaily:            updatedPaymentCfg.SubscriptionMinDaily,
-		PaymentSubscriptionMinRatioStartDaily:  updatedPaymentCfg.SubscriptionMinRatioStartDaily,
 		PaymentSubscriptionMaxDaily:            updatedPaymentCfg.SubscriptionMaxDaily,
 		PaymentSubscriptionMaxDays:             updatedPaymentCfg.SubscriptionMaxDays,
 		PaymentSubscriptionMinPlanRatio:        updatedPaymentCfg.SubscriptionMinPlanRatio,
@@ -2215,6 +2214,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CyberSessionBlockTTLSeconds: updatedSettings.CyberSessionBlockTTLSeconds,
 		AllowUserViewErrorRequests:  updatedSettings.AllowUserViewErrorRequests,
 	}
+	payload.PaymentSubscriptionMinRatioStartDaily = updatedPaymentCfg.SubscriptionMinRatioStartDaily
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)
 	} else if fastPolicy != nil {
