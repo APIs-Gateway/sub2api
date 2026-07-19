@@ -43,17 +43,28 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		return false
 	}
 
-	if s == nil || account == nil || s.rateLimitService == nil {
+	if s == nil || account == nil {
 		return false
 	}
-	if len(requestedModel) > 0 && s.rateLimitService.HandleUpstreamModelNotFound(stateCtx, account, requestedModel[0], statusCode, responseBody) {
+	stateCtx = withTempUnschedulableModel(stateCtx, requestedModel)
+	if s.rateLimitService != nil && len(requestedModel) > 0 && s.rateLimitService.HandleUpstreamModelNotFound(stateCtx, account, requestedModel[0], statusCode, responseBody) {
 		return true
 	}
-	shouldDisable := s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody)
+	// A matching known-model rule should not block the whole OpenAI account.
+	if s.rateLimitService != nil && statusCode != http.StatusUnauthorized && len(requestedModel) > 0 &&
+		s.rateLimitService.HandleTempUnschedulable(stateCtx, account, statusCode, responseBody, requestedModel[0]) {
+		return true
+	}
 	if statusCode == http.StatusTooManyRequests {
 		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
 	}
-	if shouldDisable {
+	if s.rateLimitService == nil {
+		return false
+	}
+	shouldDisable := s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody, requestedModel...)
+	modelTempMatched := statusCode != http.StatusUnauthorized && len(firstRequestedModel(requestedModel)) > 0 &&
+		len(matchTempUnschedulableRules(account, statusCode, responseBody)) > 0
+	if shouldDisable && !modelTempMatched {
 		s.BlockAccountScheduling(account, time.Time{}, "upstream_disable")
 	}
 	return shouldDisable
