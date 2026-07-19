@@ -719,38 +719,18 @@ type UpdateSettingsRequest struct {
 
 // UpdateSettings 更新系统设置
 // PUT /api/v1/admin/settings
-// ensureActorTotpForStepUp verifies that the acting administrator can enable
-// step-up without locking themselves out of sensitive operations.
+// ensureActorTotpForStepUp verifies a fresh TOTP step-up grant before an
+// administrator enables the global step-up switch. The switch is off before
+// this transition, so the conditional gate must not bypass verification.
 func (h *SettingHandler) ensureActorTotpForStepUp(c *gin.Context) bool {
-	if c.GetString("auth_method") == service.AuditAuthMethodAdminAPIKey {
-		response.ErrorWithDetails(c, http.StatusForbidden,
-			"Admin API key cannot enable step-up verification; use an admin session with TOTP enabled",
-			"STEP_UP_ADMIN_API_KEY_FORBIDDEN", nil)
-		return false
+	// Avoid passing typed nil pointers through the middleware interfaces: they
+	// would evade its nil-interface guard and panic while loading the actor.
+	// Untyped nils preserve the common gate's normal authentication and
+	// unavailable-service responses.
+	if h.totpService == nil || h.userService == nil {
+		return middleware.EnforceStepUpAlways(c, nil, nil)
 	}
-	subject, ok := middleware.GetAuthSubjectFromContext(c)
-	if !ok || subject.UserID <= 0 {
-		response.ErrorWithDetails(c, http.StatusForbidden,
-			"Enabling step-up verification requires an authenticated admin session",
-			"STEP_UP_ENABLE_REQUIRES_TOTP", nil)
-		return false
-	}
-	if h.userService == nil {
-		response.InternalError(c, "Step-up precondition check unavailable")
-		return false
-	}
-	user, err := h.userService.GetByID(c.Request.Context(), subject.UserID)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return false
-	}
-	if !user.TotpEnabled {
-		response.ErrorWithDetails(c, http.StatusBadRequest,
-			"Enable two-factor authentication (TOTP) for your account before turning on step-up verification",
-			"STEP_UP_ENABLE_REQUIRES_TOTP", nil)
-		return false
-	}
-	return true
+	return middleware.EnforceStepUpAlways(c, h.totpService, h.userService)
 }
 
 func (h *SettingHandler) UpdateSettings(c *gin.Context) {

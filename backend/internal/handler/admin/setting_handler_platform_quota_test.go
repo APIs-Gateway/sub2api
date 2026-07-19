@@ -123,8 +123,8 @@ func TestUpdateSettingsSecuritySwitchTransitions(t *testing.T) {
 
 	handler, repo = newHandler(map[string]string{})
 	rec = doUpdate(handler, `{"step_up_enabled":true}`)
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Contains(t, rec.Body.String(), "STEP_UP_ENABLE_REQUIRES_TOTP")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Contains(t, rec.Body.String(), "UNAUTHORIZED")
 	require.NotEqual(t, "true", repo.values[service.SettingKeyStepUpEnabled])
 
 	handler, repo = newHandler(map[string]string{service.SettingKeyStepUpEnabled: "true"})
@@ -147,13 +147,23 @@ func (s settingStepUpActorRepoStub) GetUserAvatar(context.Context, int64) (*serv
 	return nil, nil
 }
 
+type settingStepUpCacheStub struct {
+	service.TotpCache
+	granted bool
+}
+
+func (s settingStepUpCacheStub) HasStepUpGrant(context.Context, int64, string) (bool, error) {
+	return s.granted, nil
+}
+
 func TestEnsureActorTotpForStepUpCoversActorPreconditions(t *testing.T) {
-	newHandler := func(actor *service.User, actorErr error) *SettingHandler {
+	newHandler := func(actor *service.User, actorErr error, granted bool) *SettingHandler {
 		repo := &settingHandlerRepoStub{values: map[string]string{}}
 		settingService := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
 		userService := service.NewUserService(&settingStepUpActorRepoStub{user: actor, err: actorErr}, nil, nil, nil)
+		totpService := service.NewTotpService(nil, nil, settingStepUpCacheStub{granted: granted}, nil, nil, nil)
 		h := NewSettingHandler(settingService, nil, nil, nil, nil, nil, nil)
-		h.SetStepUpDeps(nil, userService)
+		h.SetStepUpDeps(totpService, userService)
 		return h
 	}
 	newContext := func(rec *httptest.ResponseRecorder) *gin.Context {
@@ -164,7 +174,7 @@ func TestEnsureActorTotpForStepUpCoversActorPreconditions(t *testing.T) {
 	}
 
 	t.Run("admin api key is rejected", func(t *testing.T) {
-		h := newHandler(&service.User{ID: 1, TotpEnabled: true}, nil)
+		h := newHandler(&service.User{ID: 1, TotpEnabled: true}, nil, true)
 		rec := httptest.NewRecorder()
 		c := newContext(rec)
 		c.Set("auth_method", service.AuditAuthMethodAdminAPIKey)
@@ -182,11 +192,11 @@ func TestEnsureActorTotpForStepUpCoversActorPreconditions(t *testing.T) {
 		h.SetStepUpDeps(nil, nil)
 
 		require.False(t, h.ensureActorTotpForStepUp(c))
-		require.Equal(t, http.StatusInternalServerError, rec.Code)
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	})
 
 	t.Run("user lookup error is returned", func(t *testing.T) {
-		h := newHandler(nil, errors.New("user lookup failed"))
+		h := newHandler(nil, errors.New("user lookup failed"), true)
 		rec := httptest.NewRecorder()
 
 		require.False(t, h.ensureActorTotpForStepUp(newContext(rec)))
@@ -194,20 +204,50 @@ func TestEnsureActorTotpForStepUpCoversActorPreconditions(t *testing.T) {
 	})
 
 	t.Run("actor without totp is rejected", func(t *testing.T) {
-		h := newHandler(&service.User{ID: 1, TotpEnabled: false}, nil)
+		h := newHandler(&service.User{ID: 1, TotpEnabled: false}, nil, true)
 		rec := httptest.NewRecorder()
 
 		require.False(t, h.ensureActorTotpForStepUp(newContext(rec)))
-		require.Equal(t, http.StatusBadRequest, rec.Code)
-		require.Contains(t, rec.Body.String(), "STEP_UP_ENABLE_REQUIRES_TOTP")
+		require.Equal(t, http.StatusForbidden, rec.Code)
+		require.Contains(t, rec.Body.String(), "STEP_UP_TOTP_NOT_ENABLED")
 	})
 
-	t.Run("actor with totp is accepted", func(t *testing.T) {
-		h := newHandler(&service.User{ID: 1, TotpEnabled: true}, nil)
+	t.Run("actor without current step-up grant is rejected", func(t *testing.T) {
+		h := newHandler(&service.User{ID: 1, TotpEnabled: true}, nil, false)
+		rec := httptest.NewRecorder()
+
+		require.False(t, h.ensureActorTotpForStepUp(newContext(rec)))
+		require.Equal(t, http.StatusForbidden, rec.Code)
+		require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
+	})
+
+	t.Run("actor with current step-up grant is accepted", func(t *testing.T) {
+		h := newHandler(&service.User{ID: 1, TotpEnabled: true}, nil, true)
 		rec := httptest.NewRecorder()
 
 		require.True(t, h.ensureActorTotpForStepUp(newContext(rec)))
 	})
+}
+
+func TestUpdateSettingsRejectsStepUpEnableWithoutCurrentGrant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{values: map[string]string{}}
+	settingService := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
+	userService := service.NewUserService(&settingStepUpActorRepoStub{user: &service.User{ID: 1, TotpEnabled: true}}, nil, nil, nil)
+	cache := settingStepUpCacheStub{}
+	h := NewSettingHandler(settingService, nil, nil, nil, nil, nil, nil)
+	h.SetStepUpDeps(service.NewTotpService(nil, nil, cache, nil, nil, nil), userService)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewBufferString(`{"step_up_enabled":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+	h.UpdateSettings(c)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
+	require.NotEqual(t, "true", repo.values[service.SettingKeyStepUpEnabled])
 }
 
 func TestEqualNullableFloat(t *testing.T) {

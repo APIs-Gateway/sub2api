@@ -10,6 +10,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type defaultSecuritySettingsRepoStub struct {
+	SettingRepository
+	updates map[string]string
+}
+
+func (s *defaultSecuritySettingsRepoStub) GetValue(context.Context, string) (string, error) {
+	return "", ErrSettingNotFound
+}
+
+func (s *defaultSecuritySettingsRepoStub) SetMultiple(_ context.Context, updates map[string]string) error {
+	s.updates = updates
+	return nil
+}
+
 func TestBuildSystemSettingsUpdatesPersistsSessionBinding(t *testing.T) {
 	svc := NewSettingService(&settingUpdateRepoStub{}, nil)
 
@@ -53,9 +67,19 @@ func TestStepUpSettingDefaultsToDisabledAndPersists(t *testing.T) {
 	require.True(t, NewSettingService(&settingRepoStub{values: map[string]string{
 		SettingKeyStepUpEnabled: "true",
 	}}, nil).IsStepUpEnabled(ctx))
+	require.False(t, NewSettingService(&settingRepoStub{values: map[string]string{
+		SettingKeyStepUpEnabled: "unexpected",
+	}}, nil).IsStepUpEnabled(ctx))
 	require.False(t, NewSettingService(&settingRepoStub{err: ErrSettingNotFound}, nil).IsStepUpEnabled(ctx))
 
 	updates, err := NewSettingService(&settingUpdateRepoStub{}, nil).buildSystemSettingsUpdates(ctx, &SystemSettings{StepUpEnabled: true})
 	require.NoError(t, err)
 	require.Equal(t, "true", updates[SettingKeyStepUpEnabled])
+}
+
+func TestInitializeDefaultSettingsDisablesSecuritySwitches(t *testing.T) {
+	repo := &defaultSecuritySettingsRepoStub{}
+	require.NoError(t, NewSettingService(repo, &config.Config{}).InitializeDefaultSettings(context.Background()))
+	require.Equal(t, "false", repo.updates[SettingKeySessionBindingEnabled])
+	require.Equal(t, "false", repo.updates[SettingKeyStepUpEnabled])
 }

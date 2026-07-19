@@ -2,11 +2,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import BackupView from '../BackupView.vue'
 
-const { getS3Config, updateS3Config, getSchedule, listBackups, showError, showSuccess, showWarning } = vi.hoisted(() => ({
+const { getS3Config, updateS3Config, getSchedule, listBackups, createBackup, getDownloadURL, restoreBackup, showError, showSuccess, showWarning } = vi.hoisted(() => ({
   getS3Config: vi.fn(),
   updateS3Config: vi.fn(),
   getSchedule: vi.fn(),
   listBackups: vi.fn(),
+  createBackup: vi.fn(),
+  getDownloadURL: vi.fn(),
+  restoreBackup: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
   showWarning: vi.fn()
@@ -22,9 +25,9 @@ vi.mock('@/api', () => ({
       getBackup: vi.fn(),
       testS3Connection: vi.fn(),
       updateSchedule: vi.fn(),
-      createBackup: vi.fn(),
-      getDownloadURL: vi.fn(),
-      restoreBackup: vi.fn(),
+      createBackup,
+      getDownloadURL,
+      restoreBackup,
       deleteBackup: vi.fn()
     }
   }
@@ -66,6 +69,9 @@ describe('admin BackupView S3 step-up gate', () => {
     updateS3Config.mockReset()
     getSchedule.mockReset()
     listBackups.mockReset()
+    createBackup.mockReset()
+    getDownloadURL.mockReset()
+    restoreBackup.mockReset()
     showError.mockReset()
     showSuccess.mockReset()
     showWarning.mockReset()
@@ -118,6 +124,38 @@ describe('admin BackupView S3 step-up gate', () => {
 
     expect(updateS3Config).toHaveBeenCalledTimes(1)
     expect(showError).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('uses the same step-up retry wrapper for create and download actions', async () => {
+    createBackup
+      .mockRejectedValueOnce({ status: 403, code: 'STEP_UP_REQUIRED' })
+      .mockResolvedValueOnce({ id: 'new-backup' })
+    getDownloadURL
+      .mockRejectedValueOnce({ status: 403, code: 'STEP_UP_REQUIRED' })
+      .mockResolvedValueOnce({ url: 'https://example.test/backup' })
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const wrapper = mountView()
+    await flushPromises()
+
+    const vm = wrapper.vm as unknown as {
+      createBackup: () => Promise<void>
+      downloadBackup: (id: string) => Promise<void>
+    }
+    const create = vm.createBackup()
+    await vi.waitFor(() => expect(wrapper.find('[data-test="step-up-dialog"]').exists()).toBe(true))
+    await wrapper.get('[data-test="step-up-verify"]').trigger('click')
+    await create
+
+    const download = vm.downloadBackup('new-backup')
+    await vi.waitFor(() => expect(wrapper.find('[data-test="step-up-dialog"]').exists()).toBe(true))
+    await wrapper.get('[data-test="step-up-verify"]').trigger('click')
+    await download
+
+    expect(createBackup).toHaveBeenCalledTimes(2)
+    expect(getDownloadURL).toHaveBeenCalledTimes(2)
+    expect(open).toHaveBeenCalledWith('https://example.test/backup', '_blank')
+    open.mockRestore()
     wrapper.unmount()
   })
 })

@@ -605,6 +605,30 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(wrapper.text()).not.toContain("支付来源");
   });
 
+  it("renders and submits the opt-in step-up and session-binding switches", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      step_up_enabled: true,
+      session_binding_enabled: true,
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openSecurityTab(wrapper);
+
+    expect(wrapper.text()).toContain("admin.settings.registration.stepUp");
+    expect(wrapper.text()).toContain("admin.settings.registration.sessionBinding");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step_up_enabled: true,
+        session_binding_enabled: true,
+      }),
+    );
+  });
+
   it("links payment guidance to README sections instead of removed payment docs", async () => {
     const wrapper = mountView();
 
