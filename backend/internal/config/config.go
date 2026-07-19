@@ -1292,12 +1292,21 @@ type RateLimitConfig struct {
 
 // APIKeyAuthCacheConfig API Key 认证缓存配置
 type APIKeyAuthCacheConfig struct {
-	L1Size             int  `mapstructure:"l1_size"`
-	L1TTLSeconds       int  `mapstructure:"l1_ttl_seconds"`
-	L2TTLSeconds       int  `mapstructure:"l2_ttl_seconds"`
-	NegativeTTLSeconds int  `mapstructure:"negative_ttl_seconds"`
-	JitterPercent      int  `mapstructure:"jitter_percent"`
-	Singleflight       bool `mapstructure:"singleflight"`
+	L1Size             int                    `mapstructure:"l1_size"`
+	L1TTLSeconds       int                    `mapstructure:"l1_ttl_seconds"`
+	L2TTLSeconds       int                    `mapstructure:"l2_ttl_seconds"`
+	NegativeTTLSeconds int                    `mapstructure:"negative_ttl_seconds"`
+	JitterPercent      int                    `mapstructure:"jitter_percent"`
+	Singleflight       bool                   `mapstructure:"singleflight"`
+	InvalidAbuse       InvalidAuthAbuseConfig `mapstructure:"invalid_abuse"`
+}
+
+type InvalidAuthAbuseConfig struct {
+	Enabled       bool `mapstructure:"enabled"`
+	Threshold     int  `mapstructure:"threshold"`
+	WindowSeconds int  `mapstructure:"window_seconds"`
+	BlockSeconds  int  `mapstructure:"block_seconds"`
+	Capacity      int  `mapstructure:"capacity"`
 }
 
 // SubscriptionCacheConfig 订阅认证 L1 缓存配置
@@ -1796,6 +1805,11 @@ func setDefaults() {
 	viper.SetDefault("api_key_auth_cache.negative_ttl_seconds", 30)
 	viper.SetDefault("api_key_auth_cache.jitter_percent", 10)
 	viper.SetDefault("api_key_auth_cache.singleflight", true)
+	viper.SetDefault("api_key_auth_cache.invalid_abuse.enabled", true)
+	viper.SetDefault("api_key_auth_cache.invalid_abuse.threshold", 120)
+	viper.SetDefault("api_key_auth_cache.invalid_abuse.window_seconds", 60)
+	viper.SetDefault("api_key_auth_cache.invalid_abuse.block_seconds", 60)
+	viper.SetDefault("api_key_auth_cache.invalid_abuse.capacity", 16384)
 
 	// Subscription auth L1 cache
 	viper.SetDefault("subscription_cache.l1_size", 16384)
@@ -2009,6 +2023,20 @@ func setDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if c.APIKeyAuth.InvalidAbuse.Enabled {
+		if c.APIKeyAuth.InvalidAbuse.Threshold < 10 {
+			return fmt.Errorf("api_key_auth_cache.invalid_abuse.threshold must be at least 10")
+		}
+		if c.APIKeyAuth.InvalidAbuse.WindowSeconds < 1 || c.APIKeyAuth.InvalidAbuse.WindowSeconds > 3600 {
+			return fmt.Errorf("api_key_auth_cache.invalid_abuse.window_seconds must be between 1 and 3600")
+		}
+		if c.APIKeyAuth.InvalidAbuse.BlockSeconds < 1 || c.APIKeyAuth.InvalidAbuse.BlockSeconds > 3600 {
+			return fmt.Errorf("api_key_auth_cache.invalid_abuse.block_seconds must be between 1 and 3600")
+		}
+		if c.APIKeyAuth.InvalidAbuse.Capacity < 256 || c.APIKeyAuth.InvalidAbuse.Capacity > 1_000_000 {
+			return fmt.Errorf("api_key_auth_cache.invalid_abuse.capacity must be between 256 and 1000000")
+		}
+	}
 	jwtSecret := strings.TrimSpace(c.JWT.Secret)
 	if jwtSecret == "" {
 		return fmt.Errorf("jwt.secret is required")
