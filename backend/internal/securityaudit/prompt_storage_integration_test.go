@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
@@ -70,6 +71,12 @@ func exercisePromptAuditStorageIntegration(t *testing.T, ctx context.Context, db
 		_, err := db.ExecContext(ctx, statement)
 		require.NoError(t, err)
 	}
+	settingsKeyColumn := `"key"`
+	if promptAuditSQLDialect(db) == promptAuditQuestionMark {
+		settingsKeyColumn = "`key`"
+	}
+	_, err := db.ExecContext(ctx, `CREATE TABLE settings (`+settingsKeyColumn+` VARCHAR(255) PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`)
+	require.NoError(t, err)
 	applyPromptAuditMigration(t, db)
 	applyPromptAuditMigration(t, db)
 
@@ -95,4 +102,14 @@ func exercisePromptAuditStorageIntegration(t *testing.T, ctx context.Context, db
 	stats, err := repo.QueueStats(ctx)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), stats.Done)
+
+	manager := NewConfigManager(db, nil, nil, prefixEncryptor{})
+	first, err := manager.Save(ctx, promptAuditUpdateRequest(1, 1, "first-token"), 9)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), first.ConfigVersion)
+	second, err := manager.Save(ctx, promptAuditUpdateRequest(2, 2, "second-token"), 9)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), second.ConfigVersion)
+	_, err = manager.Save(ctx, promptAuditUpdateRequest(2, 3, "stale-token"), 9)
+	require.Equal(t, ErrorCodeConfigConflict, infraerrors.Reason(err))
 }

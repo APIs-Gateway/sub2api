@@ -28,6 +28,8 @@ func stableErrorMessage(code string) string {
 		return "Prompt Guard returned an invalid response"
 	case "queue_full", "queue_admission_busy":
 		return "Prompt Audit queue is unavailable"
+	case "config_load_failed", "config_ttl_reload_failed", "config_invalidation_reload_failed":
+		return "Prompt Audit configuration could not be loaded"
 	default:
 		return "Prompt Audit operation failed"
 	}
