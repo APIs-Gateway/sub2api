@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -67,4 +68,48 @@ func TestAuthCacheInvalidationOutboxRepositoryRejectsInvalidDependencies(t *test
 	_, err = repo.Stats(context.Background())
 	require.Error(t, err)
 	require.Error(t, repo.DeleteClaimed(context.Background(), 1, "worker"))
+}
+
+func TestAuthCacheInvalidationOutboxRepositoryConstructsAndRejectsClaimInput(t *testing.T) {
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	repo := NewAuthCacheInvalidationOutboxRepository(db)
+	require.NotNil(t, repo)
+	_, err = repo.Claim(context.Background(), " ", 1, time.Second)
+	require.Error(t, err)
+}
+
+func TestAuthCacheInvalidationOutboxRepositoryReportsLostClaims(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := &authCacheInvalidationOutboxRepository{db: db}
+
+	mock.ExpectExec("(?s)UPDATE auth_cache_invalidation_outbox.*delivery_stage = 1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	require.Error(t, repo.ScheduleSecondPass(context.Background(), 1, "worker", time.Now()))
+
+	mock.ExpectExec("(?s)UPDATE auth_cache_invalidation_outbox.*attempts = attempts \\+ 1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	require.Error(t, repo.RetryClaimed(context.Background(), 1, "worker", time.Now(), "failure"))
+
+	mock.ExpectExec("(?s)DELETE FROM auth_cache_invalidation_outbox").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	require.Error(t, repo.DeleteClaimed(context.Background(), 1, "worker"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAuthCacheInvalidationOutboxRepositoryPropagatesQueryErrors(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := &authCacheInvalidationOutboxRepository{db: db}
+	wantErr := errors.New("database unavailable")
+	mock.ExpectQuery("(?s)WITH candidates.*FOR UPDATE SKIP LOCKED.*RETURNING").
+		WillReturnError(wantErr)
+	_, err = repo.Claim(context.Background(), "worker", 0, 0)
+	require.ErrorIs(t, err, wantErr)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
