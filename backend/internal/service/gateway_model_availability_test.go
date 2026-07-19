@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -107,6 +108,17 @@ func TestDiagnoseModelAvailabilityForPlatform_NoAccountsInPool(t *testing.T) {
 
 	require.False(t, diag.HasAccountsInPool)
 	require.False(t, diag.HasModelSupport, "no accounts means no support; caller stays on 503 (empty-pool branch)")
+}
+
+func TestDiagnoseModelAvailabilityForPlatform_LookupErrorStays503(t *testing.T) {
+	repo := newModelAvailabilityAccountRepo(nil)
+	repo.listActiveErr = errors.New("database unavailable")
+	svc := &GatewayService{accountRepo: repo, cfg: testConfig()}
+
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), nil, "gpt-5", PlatformOpenAI)
+
+	require.True(t, diag.HasAccountsInPool)
+	require.True(t, diag.HasModelSupport)
 }
 
 func TestDiagnoseModelAvailabilityForPlatform_SimpleModeUsesPlatformScopedPool(t *testing.T) {
@@ -271,6 +283,43 @@ func TestDiagnoseModelAvailabilityForPlatform_SimpleMixedPoolIncludesGroupedAnti
 	}
 
 	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), nil, "claude-opus", PlatformAnthropic)
+
+	require.True(t, diag.HasAccountsInPool)
+	require.True(t, diag.HasModelSupport)
+}
+
+func TestDiagnoseModelAvailabilityForPlatform_ExplicitGroupMixedPool(t *testing.T) {
+	groupID := int64(7)
+	repo := newModelAvailabilityAccountRepo([]Account{{
+		ID:            1,
+		Platform:      PlatformAntigravity,
+		Status:        StatusActive,
+		Schedulable:   true,
+		AccountGroups: []AccountGroup{{GroupID: groupID}},
+		Extra:         map[string]any{"mixed_scheduling": true},
+		Credentials:   map[string]any{"model_mapping": map[string]any{"claude-opus": "claude-opus"}},
+	}})
+	svc := &GatewayService{accountRepo: repo, cfg: testConfig()}
+
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "claude-opus", PlatformAnthropic)
+
+	require.True(t, diag.HasAccountsInPool)
+	require.True(t, diag.HasModelSupport)
+}
+
+func TestDiagnoseModelAvailabilityForPlatform_ExplicitGroupSinglePlatform(t *testing.T) {
+	groupID := int64(8)
+	repo := newModelAvailabilityAccountRepo([]Account{{
+		ID:            1,
+		Platform:      PlatformOpenAI,
+		Status:        StatusActive,
+		Schedulable:   true,
+		AccountGroups: []AccountGroup{{GroupID: groupID}},
+		Credentials:   map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5"}},
+	}})
+	svc := &GatewayService{accountRepo: repo, cfg: testConfig()}
+
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-5", PlatformOpenAI)
 
 	require.True(t, diag.HasAccountsInPool)
 	require.True(t, diag.HasModelSupport)
