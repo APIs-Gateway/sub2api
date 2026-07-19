@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -78,4 +79,37 @@ func TestFilterBySoonestReset_SingleOrEmptyUnchanged(t *testing.T) {
 	require.Empty(t, filterBySoonestReset(nil))
 	single := []accountWithLoad{accWithWindowEnd(1, nil)}
 	require.Len(t, filterBySoonestReset(single), 1)
+}
+
+func TestSelectAccountWithLoadAwareness_PreferSoonestReset(t *testing.T) {
+	now := time.Now()
+	soon := now.Add(1 * time.Hour)
+	later := now.Add(20 * time.Hour)
+	repo := &mockAccountRepoForPlatform{
+		accounts: []Account{
+			{ID: 1, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5, SessionWindowEnd: &later},
+			{ID: 2, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5, SessionWindowEnd: &soon},
+		},
+		accountsByID: map[int64]*Account{},
+	}
+	for i := range repo.accounts {
+		repo.accountsByID[repo.accounts[i].ID] = &repo.accounts[i]
+	}
+
+	cfg := testConfig()
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	cfg.Gateway.Scheduling.PreferSoonestReset = true
+	concurrencyCache := &mockConcurrencyCache{}
+	svc := &GatewayService{
+		accountRepo:        repo,
+		cache:              &mockGatewayCacheForPlatform{},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(concurrencyCache),
+	}
+
+	result, err := svc.SelectAccountWithLoadAwareness(context.Background(), nil, "", "claude-3-5-sonnet-20241022", nil, "", 0)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Account)
+	require.Equal(t, int64(2), result.Account.ID)
 }
