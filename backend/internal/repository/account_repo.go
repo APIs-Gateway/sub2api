@@ -1742,6 +1742,31 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			exec = tx.Client()
 		}
 	}
+	if updates.ProbeEnabled != nil {
+		var validTargets int64
+		if err := scanSingleRow(ctx, exec, `
+			SELECT COUNT(*)
+			FROM accounts
+			WHERE id = ANY($1)
+			  AND deleted_at IS NULL
+			  AND platform = $2
+			  AND type = $3
+		`, []any{pq.Array(ids), service.PlatformOpenAI, service.AccountTypeAPIKey}, &validTargets); err != nil {
+			return 0, err
+		}
+		expectedTargets := int64(0)
+		seenIDs := make(map[int64]struct{}, len(ids))
+		for _, id := range ids {
+			if _, seen := seenIDs[id]; seen {
+				continue
+			}
+			seenIDs[id] = struct{}{}
+			expectedTargets++
+		}
+		if validTargets != expectedTargets {
+			return 0, service.ErrUpstreamBillingProbeAccountInvalid
+		}
+	}
 
 	result, err := exec.ExecContext(ctx, query, args...)
 	if err != nil {
