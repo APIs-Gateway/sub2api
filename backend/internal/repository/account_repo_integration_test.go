@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -94,6 +95,59 @@ func (s *AccountRepoSuite) SetupTest() {
 
 func TestAccountRepoSuite(t *testing.T) {
 	suite.Run(t, new(AccountRepoSuite))
+}
+
+func (s *AccountRepoSuite) TestAutoPauseExpiredAccountsPublishesOnlyPausedAccountIDs() {
+	now := time.Now().UTC().Truncate(time.Second)
+	create := func(name string, expiresAt time.Time, autoPause, schedulable bool) *dbent.Account {
+		account, err := s.client.Account.Create().
+			SetName(name).
+			SetPlatform(service.PlatformOpenAI).
+			SetType(service.AccountTypeAPIKey).
+			SetStatus(service.StatusActive).
+			SetCredentials(map[string]any{}).
+			SetExtra(map[string]any{}).
+			SetConcurrency(1).
+			SetPriority(1).
+			SetExpiresAt(expiresAt).
+			SetAutoPauseOnExpired(autoPause).
+			SetSchedulable(schedulable).
+			Save(s.ctx)
+		s.Require().NoError(err)
+		return account
+	}
+
+	expired := create("auto-pause-expired", now.Add(-time.Minute), true, true)
+	active := create("auto-pause-active", now.Add(time.Minute), true, true)
+	disabled := create("auto-pause-disabled", now.Add(-time.Minute), false, true)
+
+	updated, err := s.repo.AutoPauseExpiredAccounts(s.ctx, now)
+	s.Require().NoError(err)
+	s.Require().EqualValues(1, updated)
+
+	gotExpired, err := s.client.Account.Get(s.ctx, expired.ID)
+	s.Require().NoError(err)
+	s.Require().False(gotExpired.Schedulable)
+	for _, accountID := range []int64{active.ID, disabled.ID} {
+		got, err := s.client.Account.Get(s.ctx, accountID)
+		s.Require().NoError(err)
+		s.Require().True(got.Schedulable)
+	}
+
+	rows, err := s.repo.sql.QueryContext(s.ctx,
+		"SELECT payload FROM scheduler_outbox WHERE event_type = $1", service.SchedulerOutboxEventAccountBulkChanged)
+	s.Require().NoError(err)
+	defer func() { _ = rows.Close() }()
+	s.Require().True(rows.Next())
+	var rawPayload []byte
+	s.Require().NoError(rows.Scan(&rawPayload))
+	var payload struct {
+		AccountIDs []int64 `json:"account_ids"`
+	}
+	s.Require().NoError(json.Unmarshal(rawPayload, &payload))
+	s.Require().Equal([]int64{expired.ID}, payload.AccountIDs)
+	s.Require().False(rows.Next())
+	s.Require().NoError(rows.Err())
 }
 
 // --- Create / GetByID / Update / Delete ---

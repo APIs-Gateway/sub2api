@@ -1437,23 +1437,43 @@ func (r *accountRepository) SetSchedulable(ctx context.Context, id int64, schedu
 }
 
 func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now time.Time) (int64, error) {
-	rows, err := r.sql.QueryContext(ctx, `
-		UPDATE accounts
-		SET schedulable = FALSE,
-			updated_at = NOW()
+	// Keep the affected-ID lookup and update together when the repository owns a
+	// database handle. Besides avoiding a partially written outbox event on an
+	// update error, this deliberately avoids UPDATE ... RETURNING, which MySQL
+	// 5.7 does not support.
+	if db, ok := r.sql.(*sql.DB); ok {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return 0, err
+		}
+		updated, err := r.autoPauseExpiredAccounts(ctx, now, tx)
+		if err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+		return updated, nil
+	}
+
+	return r.autoPauseExpiredAccounts(ctx, now, r.sql)
+}
+
+func (r *accountRepository) autoPauseExpiredAccounts(ctx context.Context, now time.Time, exec sqlExecutor) (int64, error) {
+	rows, err := exec.QueryContext(ctx, `
+		SELECT id
+		FROM accounts
 		WHERE deleted_at IS NULL
 			AND schedulable = TRUE
 			AND auto_pause_on_expired = TRUE
 			AND expires_at IS NOT NULL
 			AND expires_at <= $1
-		RETURNING id
 	`, now)
 	if err != nil {
 		return 0, err
 	}
-	defer func() {
-		_ = rows.Close()
-	}()
+	defer func() { _ = rows.Close() }()
 
 	accountIDs := make([]int64, 0)
 	for rows.Next() {
@@ -1464,17 +1484,49 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 		accountIDs = append(accountIDs, accountID)
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if len(accountIDs) == 0 {
+		return 0, nil
+	}
+
+	placeholders := make([]string, len(accountIDs))
+	args := make([]any, 0, len(accountIDs)+1)
+	for i, accountID := range accountIDs {
+		placeholders[i] = "$" + itoa(i+1)
+		args = append(args, accountID)
+	}
+	args = append(args, now)
+	result, err := exec.ExecContext(ctx, `
+		UPDATE accounts
+		SET schedulable = FALSE,
+			updated_at = NOW()
+		WHERE id IN (`+strings.Join(placeholders, ", ")+`)
+			AND deleted_at IS NULL
+			AND schedulable = TRUE
+			AND auto_pause_on_expired = TRUE
+			AND expires_at IS NOT NULL
+			AND expires_at <= $`+itoa(len(args)), args...)
+	if err != nil {
+		return 0, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
 		return 0, err
 	}
 
-	if len(accountIDs) > 0 {
+	if updated > 0 {
 		// 只刷新本次暂停的账号及其所属分组，避免少量账号到期触发所有调度桶重建。
 		payload := map[string]any{"account_ids": accountIDs}
-		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
+		if err := enqueueSchedulerOutbox(ctx, exec, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
 			logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue auto pause account changes failed: err=%v", err)
 		}
 	}
-	return int64(len(accountIDs)), nil
+	return updated, nil
 }
 
 func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
