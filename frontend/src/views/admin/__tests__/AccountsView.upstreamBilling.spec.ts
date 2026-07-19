@@ -105,6 +105,11 @@ const AccountBulkActionsBarStub = {
   template: '<button data-test="probe-batch" @click="$emit(\'probe-upstream-billing\')">probe batch</button>'
 }
 
+const AccountTableActionsStub = {
+  emits: ['refresh'],
+  template: '<div><button data-test="manual-refresh" @click="$emit(\'refresh\')">refresh</button><slot name="beforeCreate" /><slot name="after" /></div>'
+}
+
 const BillingCellStub = {
   emits: ['probe'],
   template: '<button data-test="probe-one" @click="$emit(\'probe\')">probe one</button>'
@@ -121,7 +126,7 @@ function mountView() {
         DataTable: DataTableStub,
         Pagination: true,
         ConfirmDialog: true,
-        AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+        AccountTableActions: AccountTableActionsStub,
         AccountTableFilters: { template: '<div></div>' },
         AccountBulkActionsBar: AccountBulkActionsBarStub,
         AccountActionMenu: true,
@@ -202,6 +207,17 @@ describe('admin AccountsView upstream billing controls', () => {
     expect(listAccounts.mock.calls.length).toBeGreaterThan(callsBeforeProbe)
   })
 
+  it('reloads account data and global settings on manual refresh', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const settingsCallsBeforeRefresh = getProbeSettings.mock.calls.length
+
+    await wrapper.get('[data-test="manual-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(getProbeSettings.mock.calls.length).toBeGreaterThan(settingsCallsBeforeRefresh)
+  })
+
   it('rejects an empty batch and reports successful results', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -235,6 +251,25 @@ describe('admin AccountsView upstream billing controls', () => {
     await wrapper.get('[data-test="probe-batch"]').trigger('click')
     await flushPromises()
     expect(showError).toHaveBeenCalledWith('probe unavailable')
+  })
+
+  it('rejects batches larger than the server limit', async () => {
+    const manyAccounts = Array.from({ length: 21 }, (_, index) => ({
+      ...account,
+      id: index + 1,
+      name: `openai-key-${index + 1}`
+    }))
+    listAccounts.mockResolvedValueOnce({ items: manyAccounts, total: 21, page: 1, page_size: 20, pages: 2 })
+    const wrapper = mountView()
+    await flushPromises()
+
+    for (const checkbox of wrapper.findAll('input[type="checkbox"]')) {
+      await checkbox.trigger('change')
+    }
+    await wrapper.get('[data-test="probe-batch"]').trigger('click')
+
+    expect(showError).toHaveBeenCalledWith('admin.accounts.upstreamBilling.batchLimit')
+    expect(probeBatch).not.toHaveBeenCalled()
   })
 
   it('keeps the view usable when global probe settings cannot be loaded', async () => {
