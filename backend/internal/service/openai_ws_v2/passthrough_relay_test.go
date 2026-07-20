@@ -661,6 +661,31 @@ func TestRelay_ContextCanceled(t *testing.T) {
 	require.NotNil(t, relayExit)
 }
 
+func TestRelay_ClientWriteAndCancelCallbacks(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.completed","response":{"id":"resp_callback"}}`),
+		},
+	}, true)
+	var before, after int
+	var cancelExit RelayExit
+	result, relayExit := Relay(context.Background(), clientConn, upstreamConn, []byte(`{"type":"response.create","model":"gpt-4o"}`), RelayOptions{
+		BeforeClientWrite: func(coderws.MessageType, []byte) { before++ },
+		AfterClientWrite:  func(_ coderws.MessageType, _ []byte, err error) { require.NoError(t, err); after++ },
+		BeforeRelayCancel: func(exit RelayExit) { cancelExit = exit },
+	})
+	require.Nil(t, relayExit)
+	require.Equal(t, int64(1), result.UpstreamToClientFrames)
+	require.Equal(t, 1, before)
+	require.Equal(t, before, after)
+	require.Equal(t, "read_upstream", cancelExit.Stage)
+	require.True(t, cancelExit.Graceful)
+}
+
 func TestRelay_TraceEvents_ContainsLifecycleStages(t *testing.T) {
 	t.Parallel()
 

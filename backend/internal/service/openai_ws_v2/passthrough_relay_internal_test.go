@@ -125,6 +125,8 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			nil,
 			nil,
 			nil,
+			nil,
+			func(coderws.MessageType, []byte) {},
 			drop,
 			nil,
 			nil,
@@ -156,6 +158,8 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			nil,
 			nil,
 			nil,
+			nil,
+			func(coderws.MessageType, []byte) {},
 			drop,
 			nil,
 			nil,
@@ -190,6 +194,8 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			nil,
 			nil,
 			nil,
+			nil,
+			func(coderws.MessageType, []byte) {},
 			drop,
 			nil,
 			dropped,
@@ -201,6 +207,86 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 		require.Equal(t, "drain_terminal", sig.stage)
 		require.True(t, sig.graceful)
 		require.Equal(t, int64(1), dropped.Load())
+	})
+}
+
+func TestRunUpstreamToClient_ClientWriteCallbacks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("success", func(t *testing.T) {
+		exitCh := make(chan relayExitSignal, 1)
+		drop := &atomic.Bool{}
+		before := make([]string, 0, 2)
+		after := make([]string, 0, 2)
+		completed := make([]string, 0, 2)
+		runUpstreamToClient(
+			context.Background(),
+			newPassthroughTestFrameConn([]passthroughTestFrame{
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"response.output_text.delta"}`)},
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"response.done"}`)},
+			}, true),
+			func(_ coderws.MessageType, _ []byte) error { return nil },
+			time.Now(),
+			time.Now,
+			&relayState{},
+			nil,
+			nil,
+			nil,
+			func(msgType coderws.MessageType, payload []byte) {
+				before = append(before, relayMessageTypeString(msgType)+":"+string(payload))
+			},
+			func(msgType coderws.MessageType, payload []byte, writeErr error) {
+				require.NoError(t, writeErr)
+				after = append(after, relayMessageTypeString(msgType)+":"+string(payload))
+			},
+			func(msgType coderws.MessageType, payload []byte) {
+				completed = append(completed, relayMessageTypeString(msgType)+":"+string(payload))
+			},
+			drop,
+			nil,
+			nil,
+			func() {},
+			nil,
+			exitCh,
+		)
+		sig := <-exitCh
+		require.Equal(t, "read_upstream", sig.stage)
+		require.Len(t, before, 2)
+		require.Equal(t, before, after)
+		require.Equal(t, before, completed)
+	})
+
+	t.Run("write failure", func(t *testing.T) {
+		exitCh := make(chan relayExitSignal, 1)
+		drop := &atomic.Bool{}
+		var callbackErr error
+		afterWriteCalled := false
+		runUpstreamToClient(
+			context.Background(),
+			newPassthroughTestFrameConn([]passthroughTestFrame{
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"response.output_text.delta"}`)},
+			}, true),
+			func(_ coderws.MessageType, _ []byte) error { return errors.New("write failed") },
+			time.Now(),
+			time.Now,
+			&relayState{},
+			nil,
+			nil,
+			nil,
+			func(coderws.MessageType, []byte) {},
+			func(_ coderws.MessageType, _ []byte, err error) { callbackErr = err },
+			func(coderws.MessageType, []byte) { afterWriteCalled = true },
+			drop,
+			nil,
+			nil,
+			func() {},
+			nil,
+			exitCh,
+		)
+		sig := <-exitCh
+		require.Equal(t, "write_client", sig.stage)
+		require.EqualError(t, callbackErr, "write failed")
+		require.False(t, afterWriteCalled)
 	})
 }
 
