@@ -249,6 +249,43 @@ func TestOpenAITempUnschedulable_UnknownModelKeepsAccountRuntimeBlock(t *testing
 	require.Empty(t, repo.modelRateLimitCalls)
 }
 
+func TestOpenAIFailoverSideEffects_PoolTempRuleStopsSameAccountRetry(t *testing.T) {
+	repo := &errorPolicyRepoStub{}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	account := &Account{
+		ID:       48,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"pool_mode":                  true,
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(http.StatusServiceUnavailable),
+					"keywords":         []any{"unavailable"},
+					"duration_minutes": float64(30),
+				},
+			},
+		},
+	}
+	resp := &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{}}
+	body := []byte("Service temporarily unavailable")
+
+	shouldDisable := svc.handleFailoverSideEffects(context.Background(), resp, account, body, "gpt-5.4")
+
+	require.True(t, shouldDisable)
+	require.Zero(t, repo.tempCalls)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "gpt-5.4", repo.modelRateLimitCalls[0].scope)
+	require.False(t, openAIRetryableOnSameAccount(
+		resp.StatusCode,
+		"Service temporarily unavailable",
+		body,
+		!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+	))
+}
+
 func TestOpenAIRuntimeBlock_DoesNotShortenExistingBlock(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	account := &Account{ID: 46, Platform: PlatformOpenAI, Type: AccountTypeOAuth}

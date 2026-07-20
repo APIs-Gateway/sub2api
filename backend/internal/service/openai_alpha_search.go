@@ -86,13 +86,14 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 		endpointUnsupported := isOpenAIAlphaSearchEndpointUnsupported(account, resp.StatusCode)
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) || endpointUnsupported {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			shouldDisable := false
 			if !endpointUnsupported && shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(resp.StatusCode) {
-				s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
+				shouldDisable = s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
 			}
 			return &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
-				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+				RetryableOnSameAccount: !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			}
 		}
 	}
@@ -158,13 +159,14 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			// 仍按 alpha/search 工具请求处理：PAT 的工具链路失败不能直接永久置错。
+			shouldDisable := false
 			if shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(resp.StatusCode) {
-				s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
+				shouldDisable = s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
 			}
 			return &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
-				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+				RetryableOnSameAccount: !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			}
 		}
 	}
