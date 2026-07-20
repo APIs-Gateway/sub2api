@@ -107,6 +107,7 @@ func TestOpsScheduledReportLegacyTemplateReceivesSummaryHTML(t *testing.T) {
 
 	emailService := NewEmailService(repo, nil)
 	notificationService := NewNotificationEmailService(repo, emailService)
+	require.NoError(t, repo.Set(ctx, notificationEmailLocaleEmailKeyPrefix+notificationEmailHash("ops@example.com"), "en"))
 	_, err := notificationService.UpdateTemplate(
 		ctx,
 		NotificationEmailEventOpsScheduledReport,
