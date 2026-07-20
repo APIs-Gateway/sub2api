@@ -75,7 +75,7 @@ describe('AdminPaymentPlansView display currency', () => {
           name: 'Legacy plan',
           description: 'Legacy plan',
           price: 10,
-          original_price: 0,
+          original_price: 12,
           currency: '',
           validity_days: 30,
           validity_unit: 'day',
@@ -108,5 +108,6 @@ describe('AdminPaymentPlansView display currency', () => {
     expect(text).toContain('¥499.00')
     expect(text).toContain('¥599.00')
     expect(text).toContain('$10.00')
+    expect(text).toContain('$12.00')
   })
 })
