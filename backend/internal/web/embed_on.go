@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 )
@@ -258,7 +259,7 @@ func injectSiteFavicon(html, settingsJSON []byte) []byte {
 	var cfg struct {
 		SiteLogo string `json:"site_logo"`
 	}
-	if err := json.Unmarshal(settingsJSON, &cfg); err != nil {
+	if err := common.Unmarshal(settingsJSON, &cfg); err != nil {
 		return html
 	}
 
