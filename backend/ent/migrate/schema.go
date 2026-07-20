@@ -716,12 +716,9 @@ var (
 				Columns: []*schema.Column{GroupsColumns[30]},
 			},
 			{
-				Name:    "idx_groups_duplicate_operation_id_active",
+				Name:    "idx_groups_duplicate_operation_id",
 				Unique:  true,
 				Columns: []*schema.Column{GroupsColumns[9]},
-				Annotation: &entsql.IndexAnnotation{
-					Where: "duplicate_operation_id IS NOT NULL AND deleted_at IS NULL",
-				},
 			},
 		},
 	}

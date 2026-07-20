@@ -33,8 +33,6 @@ func (Group) Mixin() []ent.Mixin {
 
 func (Group) Fields() []ent.Field {
 	return []ent.Field{
-		// 唯一约束通过部分索引实现（WHERE deleted_at IS NULL），支持软删除后重用
-		// 见迁移文件 016_soft_delete_partial_unique_indexes.sql
 		field.String("name").
 			MaxLen(100).
 			NotEmpty(),
@@ -207,7 +205,6 @@ func (Group) Indexes() []ent.Index {
 		index.Fields("sort_order"),
 		index.Fields("duplicate_operation_id").
 			Unique().
-			StorageKey("idx_groups_duplicate_operation_id_active").
-			Annotations(entsql.IndexWhere("duplicate_operation_id IS NOT NULL AND deleted_at IS NULL")),
+			StorageKey("idx_groups_duplicate_operation_id"),
 	}
 }
