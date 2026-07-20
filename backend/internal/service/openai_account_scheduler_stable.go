@@ -131,7 +131,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerStable(
 	intent StablePriorityIntent,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	original := func() (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-		return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact)
+		return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, true)
 	}
 
 	// 快速旁路：未启用 / 无状态存储 / 无 home / 未配兜底链（用快照上已带的指针判断，
@@ -152,7 +152,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerStable(
 		if gid != homeID {
 			prevID = ""
 		}
-		return s.selectAccountWithScheduler(ctx, &id, prevID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact)
+		return s.selectAccountWithScheduler(ctx, &id, prevID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, true)
 	}
 
 	if state.InFallback() {

@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -294,11 +295,14 @@ func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler
 	svc := NewSettingService(repo, &config.Config{})
 
 	err := svc.UpdateSettings(context.Background(), &SystemSettings{
-		PaymentVisibleMethodAlipaySource:  "alipay",
-		PaymentVisibleMethodWxpaySource:   "easypay",
-		PaymentVisibleMethodAlipayEnabled: true,
-		PaymentVisibleMethodWxpayEnabled:  false,
-		OpenAIAdvancedSchedulerEnabled:    true,
+		PaymentVisibleMethodAlipaySource:          "alipay",
+		PaymentVisibleMethodWxpaySource:           "easypay",
+		PaymentVisibleMethodAlipayEnabled:         true,
+		PaymentVisibleMethodWxpayEnabled:          false,
+		OpenAIAdvancedSchedulerEnabled:            true,
+		OpenAILowUpstreamRatePriorityEnabled:      true,
+		OpenAIOAuthSchedulingRateMultiplier:       0.05,
+		OpenAIAdvancedSchedulerWeightUpstreamCost: "1.5",
 	})
 	require.NoError(t, err)
 	require.Equal(t, VisibleMethodSourceOfficialAlipay, repo.updates[SettingPaymentVisibleMethodAlipaySource])
@@ -306,6 +310,43 @@ func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler
 	require.Equal(t, "true", repo.updates[SettingPaymentVisibleMethodAlipayEnabled])
 	require.Equal(t, "false", repo.updates[SettingPaymentVisibleMethodWxpayEnabled])
 	require.Equal(t, "true", repo.updates[openAIAdvancedSchedulerSettingKey])
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled])
+	require.Equal(t, "0.05", repo.updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
+	require.Equal(t, "1.5", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost])
+}
+
+func TestSettingService_UpdateSettings_RejectsInvalidOpenAIOAuthSchedulingRateMultiplier(t *testing.T) {
+	for _, rate := range []float64{-1, math.NaN(), math.Inf(1)} {
+		rate := rate
+		t.Run(formatOpenAIAdvancedSchedulerFloat(rate), func(t *testing.T) {
+			repo := &settingUpdateRepoStub{}
+			svc := NewSettingService(repo, &config.Config{})
+
+			err := svc.UpdateSettings(context.Background(), &SystemSettings{
+				OpenAIOAuthSchedulingRateMultiplier: rate,
+			})
+			require.Error(t, err)
+			require.Equal(t, "INVALID_OPENAI_OAUTH_SCHEDULING_RATE_MULTIPLIER", infraerrors.Reason(err))
+			require.Nil(t, repo.updates)
+		})
+	}
+}
+
+func TestSettingService_ParseSettings_OpenAISchedulingDefaultsAndOverrides(t *testing.T) {
+	svc := NewSettingService(&settingUpdateRepoStub{}, &config.Config{})
+
+	defaults := svc.parseSettings(map[string]string{})
+	require.False(t, defaults.OpenAILowUpstreamRatePriorityEnabled)
+	require.Equal(t, 1.0, defaults.OpenAIOAuthSchedulingRateMultiplier)
+
+	got := svc.parseSettings(map[string]string{
+		SettingKeyOpenAILowUpstreamRatePriorityEnabled:      "true",
+		SettingKeyOpenAIOAuthSchedulingRateMultiplier:       "0.05",
+		SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost: "1.5",
+	})
+	require.True(t, got.OpenAILowUpstreamRatePriorityEnabled)
+	require.Equal(t, 0.05, got.OpenAIOAuthSchedulingRateMultiplier)
+	require.Equal(t, "1.5", got.OpenAIAdvancedSchedulerWeightUpstreamCost)
 }
 
 func TestSettingService_UpdateSettings_AntigravityUserAgentVersion(t *testing.T) {
