@@ -165,7 +165,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import subscriptionsAPI from '@/api/subscriptions'
 import { useAppStore } from '@/stores'
 import type { UserSubscription } from '@/types'
-import { formatDateOnly } from '@/utils/format'
+import { formatDateTimeToMinute } from '@/utils/format'
 import { getRemainingDurationParts, type RemainingDurationParts } from '@/utils/subscriptionQuota'
 
 const props = withDefaults(defineProps<{
@@ -445,7 +445,7 @@ function formatExpirationDate(expiresAt: string): string {
     return t('userSubscriptions.status.expired')
   }
 
-  const dateStr = formatDateOnly(expires)
+  const dateStr = formatDateTimeToMinute(expires)
 
   if (days === 0) {
     return `${dateStr} (${t('common.today')})`
