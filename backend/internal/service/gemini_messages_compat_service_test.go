@@ -25,6 +25,91 @@ type geminiCompatHTTPUpstreamStub struct {
 	lastReq  *http.Request
 }
 
+type geminiPolicyCoverageRepo struct {
+	AccountRepository
+	setRateLimitedCalls int
+}
+
+func (r *geminiPolicyCoverageRepo) SetRateLimited(_ context.Context, _ int64, _ time.Time) error {
+	r.setRateLimitedCalls++
+	return nil
+}
+
+func newGeminiPolicyCoverageService() (*GeminiMessagesCompatService, *Account) {
+	repo := &geminiPolicyCoverageRepo{}
+	svc := &GeminiMessagesCompatService{
+		rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+		cfg:              &config.Config{},
+		httpUpstream: &geminiCompatHTTPUpstreamStub{
+			response: &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"policy marker"}}`)),
+			},
+		},
+	}
+	account := &Account{
+		ID:       701,
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":                    "gemini-policy-key",
+			"custom_error_codes_enabled": true,
+			"custom_error_codes":         []any{float64(http.StatusInternalServerError)},
+		},
+		Concurrency: 1,
+	}
+	return svc, account
+}
+
+func TestGeminiForwardAsChatCompletions_ErrorPolicyMatchedUsesMappedModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc, account := newGeminiPolicyCoverageService()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Nil(t, result)
+	require.Equal(t, http.StatusInternalServerError, failoverErr.StatusCode)
+}
+
+func TestGeminiMessagesCompatServiceForward_ErrorPolicyMatchedUsesMappedModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc, account := newGeminiPolicyCoverageService()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"claude-sonnet-4","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Nil(t, result)
+	require.Equal(t, http.StatusInternalServerError, failoverErr.StatusCode)
+}
+
+func TestGeminiMessagesCompatServiceForwardNative_ErrorPolicyMatchedUsesMappedModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc, account := newGeminiPolicyCoverageService()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:generateContent", bytes.NewReader(body))
+
+	result, err := svc.ForwardNative(context.Background(), c, account, "gemini-2.5-flash", "generateContent", false, body)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Nil(t, result)
+	require.Equal(t, http.StatusInternalServerError, failoverErr.StatusCode)
+}
+
 func (s *geminiCompatHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	s.calls++
 	s.lastReq = req

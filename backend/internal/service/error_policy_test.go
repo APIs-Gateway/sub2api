@@ -333,6 +333,9 @@ func TestApplyErrorPolicy(t *testing.T) {
 				Type:     AccountTypeOAuth,
 				Platform: PlatformAntigravity,
 				Credentials: map[string]any{
+					"model_mapping": map[string]any{
+						"claude-sonnet-4-5": "claude-sonnet-4-5",
+					},
 					"temp_unschedulable_enabled": true,
 					"temp_unschedulable_rules": []any{
 						map[string]any{
@@ -362,9 +365,10 @@ func TestApplyErrorPolicy(t *testing.T) {
 
 			var handleErrorCount int
 			p := antigravityRetryLoopParams{
-				ctx:     context.Background(),
-				prefix:  "[test]",
-				account: tt.account,
+				ctx:            context.Background(),
+				prefix:         "[test]",
+				account:        tt.account,
+				requestedModel: "claude-sonnet-4-5",
 				handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
 					handleErrorCount++
 					return nil
@@ -382,11 +386,106 @@ func TestApplyErrorPolicy(t *testing.T) {
 				var switchErr *AntigravityAccountSwitchError
 				require.ErrorAs(t, retErr, &switchErr)
 				require.Equal(t, tt.account.ID, switchErr.OriginalAccountID)
+				require.Zero(t, repo.tempCalls)
+				require.Len(t, repo.modelRateLimitCalls, 1)
+				require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].scope)
 			} else {
 				require.NoError(t, retErr)
 			}
 		})
 	}
+}
+
+func TestAntigravityCheckErrorPolicy_NilRateLimitService(t *testing.T) {
+	svc := &AntigravityGatewayService{}
+	account := &Account{ID: 16, Type: AccountTypeOAuth, Platform: PlatformAntigravity}
+
+	require.Equal(t, ErrorPolicyNone, svc.checkErrorPolicy(
+		context.Background(),
+		account,
+		http.StatusServiceUnavailable,
+		[]byte("temporary"),
+		"claude-sonnet-4-5",
+	))
+}
+
+func TestApplyErrorPolicy_UsesResolvedAntigravityModelForTempUnschedulable(t *testing.T) {
+	repo := &errorPolicyRepoStub{}
+	rule := map[string]any{
+		"error_code":       float64(http.StatusServiceUnavailable),
+		"keywords":         []any{"overloaded"},
+		"duration_minutes": float64(10),
+	}
+	account := &Account{
+		ID:       17,
+		Type:     AccountTypeOAuth,
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"claude-sonnet-4-5": "claude-sonnet-4-6",
+			},
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules":   []any{rule},
+		},
+	}
+	svc := &AntigravityGatewayService{
+		rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+	}
+
+	handled, status, err := svc.applyErrorPolicy(antigravityRetryLoopParams{
+		ctx:             context.Background(),
+		prefix:          "[test]",
+		account:         account,
+		requestedModel:  "claude-sonnet-4-5",
+		isStickySession: true,
+	}, http.StatusServiceUnavailable, http.Header{}, []byte("overloaded"))
+
+	require.True(t, handled)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	var switchErr *AntigravityAccountSwitchError
+	require.ErrorAs(t, err, &switchErr)
+	require.Equal(t, account.ID, switchErr.OriginalAccountID)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "claude-sonnet-4-6", repo.modelRateLimitCalls[0].scope)
+}
+
+func TestHandleUpstreamError_UsesRequestedModelForTempUnschedulable(t *testing.T) {
+	repo := &errorPolicyRepoStub{}
+	account := &Account{
+		ID:       18,
+		Type:     AccountTypeOAuth,
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(http.StatusBadRequest),
+					"keywords":         []any{"overloaded"},
+					"duration_minutes": float64(10),
+				},
+			},
+		},
+	}
+	svc := &AntigravityGatewayService{
+		rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+	}
+
+	svc.handleUpstreamError(
+		context.Background(),
+		"[test]",
+		account,
+		http.StatusBadRequest,
+		http.Header{},
+		[]byte("overloaded"),
+		"claude-sonnet-4-5",
+		0,
+		"",
+		false,
+	)
+
+	require.Zero(t, repo.tempCalls)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].scope)
 }
 
 func TestApplyErrorPolicy_GeminiRateLimitDefersTo429FlowWhenCustomCodesSkip(t *testing.T) {
@@ -445,9 +544,10 @@ func TestApplyErrorPolicy_GeminiRateLimitDefersTo429FlowWhenCustomCodesSkip(t *t
 
 type errorPolicyRepoStub struct {
 	mockAccountRepoForGemini
-	tempCalls    int
-	setErrCalls  int
-	lastErrorMsg string
+	tempCalls           int
+	setErrCalls         int
+	lastErrorMsg        string
+	modelRateLimitCalls []modelNotFoundRateLimitCall
 }
 
 func (r *errorPolicyRepoStub) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
@@ -458,5 +558,14 @@ func (r *errorPolicyRepoStub) SetTempUnschedulable(ctx context.Context, id int64
 func (r *errorPolicyRepoStub) SetError(ctx context.Context, id int64, errorMsg string) error {
 	r.setErrCalls++
 	r.lastErrorMsg = errorMsg
+	return nil
+}
+
+func (r *errorPolicyRepoStub) SetModelRateLimit(_ context.Context, id int64, scope string, resetAt time.Time, reason ...string) error {
+	call := modelNotFoundRateLimitCall{accountID: id, scope: scope, resetAt: resetAt}
+	if len(reason) > 0 {
+		call.reason = reason[0]
+	}
+	r.modelRateLimitCalls = append(r.modelRateLimitCalls, call)
 	return nil
 }

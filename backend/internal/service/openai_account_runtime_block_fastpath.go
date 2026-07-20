@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -43,17 +44,32 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		return false
 	}
 
-	if s == nil || account == nil || s.rateLimitService == nil {
+	if s == nil || account == nil {
 		return false
 	}
-	if len(requestedModel) > 0 && s.rateLimitService.HandleUpstreamModelNotFound(stateCtx, account, requestedModel[0], statusCode, responseBody) {
+	stateCtx = withTempUnschedulableModel(stateCtx, requestedModel)
+	if s.rateLimitService != nil && len(requestedModel) > 0 && strings.TrimSpace(requestedModel[0]) != "" &&
+		s.rateLimitService.HandleUpstreamModelNotFound(stateCtx, account, requestedModel[0], statusCode, responseBody) {
 		return true
 	}
-	shouldDisable := s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody)
+	// A matching known-model temporary rule must be applied before the generic
+	// account path, including 429 responses, so it cannot widen into an account
+	// cooldown or be delayed by the 429 sliding-window gate.
+	if s.rateLimitService != nil && statusCode != http.StatusUnauthorized &&
+		len(requestedModel) > 0 && strings.TrimSpace(requestedModel[0]) != "" &&
+		s.rateLimitService.HandleTempUnschedulable(stateCtx, account, statusCode, responseBody, requestedModel[0]) {
+		return true
+	}
+	if s.rateLimitService == nil {
+		return false
+	}
+	shouldDisable := s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody, requestedModel...)
 	if statusCode == http.StatusTooManyRequests {
 		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
 	}
-	if shouldDisable {
+	modelTempMatched := statusCode != http.StatusUnauthorized && tempUnschedulableModel(stateCtx, nil) != "" &&
+		len(matchTempUnschedulableRules(account, statusCode, responseBody)) > 0
+	if shouldDisable && !modelTempMatched {
 		s.BlockAccountScheduling(account, time.Time{}, "upstream_disable")
 	}
 	return shouldDisable
