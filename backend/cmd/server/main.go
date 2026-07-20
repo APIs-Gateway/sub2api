@@ -191,7 +191,7 @@ func startPromptAudit(promptAudit promptAuditStarter) {
 	}
 	if err := promptAudit.Start(context.Background()); err != nil {
 		// Prompt Audit is isolated from unrelated APIs; keep startup alive while
-		// the service remains fail-closed for persisted blocking policy.
-		log.Printf("Prompt Audit started in degraded fail-closed state: %v", err)
+		// the service remains fail-closed only when persisted blocking was intended.
+		log.Printf("Prompt Audit started in degraded state: %v", err)
 	}
 }

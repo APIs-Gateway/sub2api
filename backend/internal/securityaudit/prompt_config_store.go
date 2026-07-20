@@ -147,11 +147,14 @@ func (m *ConfigManager) BlockingActivationDegraded() bool {
 	if m == nil {
 		return false
 	}
-	if m.configUntrusted.Load() {
-		return true
-	}
 	if !m.expectedBlocking.Load() {
 		return false
+	}
+	// Fail closed only when storage intent requires blocking. Untrusted config
+	// without blocking intent must remain ModeOff so administrators can still
+	// operate the gateway and turn Prompt Audit off after a failed reload.
+	if m.configUntrusted.Load() {
+		return true
 	}
 	active, ok := m.Active()
 	if !ok {
@@ -290,6 +293,9 @@ func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actor
 	m.expected.Store(next.ConfigVersion)
 	m.expectedBlocking.Store(active.RiskControlEnabled && next.Enabled && next.BlockingEnabled)
 	m.snapshot.Store(&activeConfigSnapshot{storage: cloneStorageConfig(next), active: cloneActiveConfig(active), loadedAt: m.clock.Now()})
+	// A successful admin save installs a trustworthy snapshot; clear any prior
+	// fail-closed degradation so disabling audit actually takes effect.
+	m.configUntrusted.Store(false)
 	m.clearLoadError()
 	LogInfo(EventConfigUpdated, map[string]any{
 		"config_version": next.ConfigVersion, "status": "updated",
