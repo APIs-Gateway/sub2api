@@ -58,3 +58,25 @@ func TestAPIKeyServiceUpdateClearsIPRulesWithExplicitEmptyArrays(t *testing.T) {
 	require.Empty(t, repo.updated.IPWhitelist)
 	require.Empty(t, repo.updated.IPBlacklist)
 }
+
+func TestAPIKeyServiceUpdateValidatesAndReplacesNonEmptyIPRules(t *testing.T) {
+	repo := &apiKeyUpdateRepoStub{apiKeyRepoStub: apiKeyRepoStub{apiKey: &APIKey{
+		ID:          7,
+		UserID:      11,
+		Status:      StatusActive,
+		IPWhitelist: []string{"10.0.0.0/8"},
+		IPBlacklist: []string{"192.0.2.10"},
+	}}}
+	svc := NewAPIKeyService(repo, nil, nil, nil, nil, nil, nil)
+	newWhitelist := []string{"203.0.113.0/24"}
+	newBlacklist := []string{"198.51.100.25"}
+
+	_, err := svc.Update(context.Background(), 7, 11, UpdateAPIKeyRequest{
+		IPWhitelist: &newWhitelist,
+		IPBlacklist: &newBlacklist,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, repo.updated)
+	require.Equal(t, newWhitelist, repo.updated.IPWhitelist)
+	require.Equal(t, newBlacklist, repo.updated.IPBlacklist)
+}
