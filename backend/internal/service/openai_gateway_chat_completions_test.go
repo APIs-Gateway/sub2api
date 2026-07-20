@@ -89,6 +89,45 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError(t *testing.T) {
 	require.NotContains(t, message, "INTERNAL_ERROR")
 }
 
+func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadErrorWithKeepalive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+			"x-request-id": []string{"upstream-rid-keepalive"},
+		},
+		Body: &openAIChatStreamReadErrorCloser{
+			payload: []byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"),
+			err:     errors.New("stream error: stream ID 7; INTERNAL_ERROR; received from peer"),
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.StreamKeepaliveInterval = 5
+
+	result, err := (&OpenAIGatewayService{cfg: cfg}).handleChatStreamingResponse(
+		resp,
+		c,
+		&Account{ID: 1, Name: "openai-oauth", Platform: PlatformOpenAI},
+		"gpt-5.6-sol",
+		"gpt-5.6-sol",
+		"gpt-5.6-sol",
+		time.Now(),
+		0,
+	)
+
+	require.Error(t, err)
+	require.NotNil(t, result)
+	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamHTTP2StreamErrorCode, code)
+	require.Equal(t, "Upstream HTTP/2 stream failed", message)
+}
+
 func TestOpenAIUpstreamStreamReadError_ClassifiesGenericAndHTTP2Variants(t *testing.T) {
 	genericCause := errors.New("connection reset by peer")
 	genericErr := newOpenAIUpstreamStreamReadError(genericCause)

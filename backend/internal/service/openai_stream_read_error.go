@@ -26,6 +26,12 @@ func (e *openAIUpstreamStreamReadError) Error() string {
 func (e *openAIUpstreamStreamReadError) Unwrap() error { return e.cause }
 
 func newOpenAIUpstreamStreamReadError(err error) error {
+	return NewOpenAIUpstreamStreamReadError(err)
+}
+
+// NewOpenAIUpstreamStreamReadError wraps a transport read failure with the
+// stable client-facing classification used by the OpenAI gateway handler.
+func NewOpenAIUpstreamStreamReadError(err error) error {
 	code, message := classifyOpenAIUpstreamStreamReadError(err)
 	return &openAIUpstreamStreamReadError{
 		cause:         err,
