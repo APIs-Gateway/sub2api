@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -480,5 +482,162 @@ func TestIsRetryableCodexModelsManifestErrorUsesWrapper(t *testing.T) {
 	}
 	if IsRetryableCodexModelsManifestError(errors.New("temporary")) {
 		t.Fatal("unwrapped error must not be retryable")
+	}
+}
+
+type codexModelsAccountStateRepo struct {
+	AccountRepository
+	mu                  sync.Mutex
+	setErrorCalls       int
+	lastErrorMsg        string
+	setTempUnschedCalls int
+	lastTempReason      string
+}
+
+func (r *codexModelsAccountStateRepo) SetError(_ context.Context, _ int64, errorMsg string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.setErrorCalls++
+	r.lastErrorMsg = errorMsg
+	return nil
+}
+
+func (r *codexModelsAccountStateRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, reason string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.setTempUnschedCalls++
+	r.lastTempReason = reason
+	return nil
+}
+
+func newCodexModels401TestService(repo AccountRepository) *OpenAIGatewayService {
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	rateLimitService := NewRateLimitService(repo, nil, cfg, nil, nil)
+	s := &OpenAIGatewayService{cfg: cfg, rateLimitService: rateLimitService}
+	rateLimitService.SetAccountRuntimeBlocker(s)
+	return s
+}
+
+func TestFetchCodexModelsManifestOAuth401MarksAccountUnschedulable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"detail":{"message":"invalid token"}}`))
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	repo := &codexModelsAccountStateRepo{}
+	s := newCodexModels401TestService(repo)
+	account := newCodexModelsTestAccount()
+	account.Credentials["refresh_token"] = "test-refresh-token"
+
+	_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
+	if err == nil {
+		t.Fatal("expected manifest 401 error")
+	}
+	if !IsRetryableCodexModelsManifestError(err) {
+		t.Fatal("manifest OAuth 401 should allow account failover")
+	}
+	if repo.setTempUnschedCalls != 1 {
+		t.Fatalf("OAuth 401 temp-unschedule calls: got %d, want 1", repo.setTempUnschedCalls)
+	}
+	if repo.setErrorCalls != 0 {
+		t.Fatalf("OAuth 401 permanent-disable calls: got %d, want 0", repo.setErrorCalls)
+	}
+	if !s.isOpenAIAccountRuntimeBlocked(account) {
+		t.Fatal("OAuth 401 should runtime-block the account")
+	}
+}
+
+func TestFetchCodexModelsManifestOAuth401TokenRevokedDisablesAccount(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"token_revoked","message":"token has been revoked"}}`))
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	repo := &codexModelsAccountStateRepo{}
+	s := newCodexModels401TestService(repo)
+	account := newCodexModelsTestAccount()
+	account.Credentials["refresh_token"] = "test-refresh-token"
+
+	_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
+	if err == nil {
+		t.Fatal("expected manifest 401 error")
+	}
+	if !IsRetryableCodexModelsManifestError(err) {
+		t.Fatal("manifest OAuth 401 should allow account failover")
+	}
+	if repo.setErrorCalls != 1 {
+		t.Fatalf("token_revoked permanent-disable calls: got %d, want 1", repo.setErrorCalls)
+	}
+	if !strings.Contains(repo.lastErrorMsg, "Token revoked") {
+		t.Fatalf("unexpected permanent-disable message: %q", repo.lastErrorMsg)
+	}
+	if repo.setTempUnschedCalls != 0 {
+		t.Fatalf("token_revoked temp-unschedule calls: got %d, want 0", repo.setTempUnschedCalls)
+	}
+}
+
+func TestHandleCodexModelsManifestAccountAuthErrorAgentIdentity401DoesNotDisableAccount(t *testing.T) {
+	repo := &codexModelsAccountStateRepo{}
+	s := newCodexModels401TestService(repo)
+	account := &Account{
+		ID:       6,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"auth_mode": OpenAIAuthModeAgentIdentity,
+		},
+	}
+	err := &codexModelsManifestUpstreamError{
+		err:        errors.New("manifest unauthorized"),
+		statusCode: http.StatusUnauthorized,
+		body:       []byte(`{"detail":"some non-task 401"}`),
+	}
+
+	s.handleCodexModelsManifestAccountAuthError(context.Background(), account, account, err)
+	if repo.setErrorCalls != 0 || repo.setTempUnschedCalls != 0 {
+		t.Fatalf("Agent Identity 401 changed account state: set_error=%d temp_unsched=%d", repo.setErrorCalls, repo.setTempUnschedCalls)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKey401KeepsNoFailoverAndNoDisable(t *testing.T) {
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusUnauthorized,
+		Status:     "401 Unauthorized",
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"error":"invalid api key"}`)),
+	}}
+	repo := &codexModelsAccountStateRepo{}
+	s := newCodexModels401TestService(repo)
+	s.httpUpstream = upstream
+	account := &Account{
+		ID:       7,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "test-api-key",
+			"base_url": "https://example.com",
+		},
+	}
+
+	_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	if err == nil {
+		t.Fatal("expected manifest 401 error")
+	}
+	if IsRetryableCodexModelsManifestError(err) {
+		t.Fatal("custom upstream manifest 401 must keep no-failover behavior")
+	}
+	if repo.setErrorCalls != 0 || repo.setTempUnschedCalls != 0 {
+		t.Fatalf("API-key manifest 401 changed account state: set_error=%d temp_unsched=%d", repo.setErrorCalls, repo.setTempUnschedCalls)
 	}
 }
