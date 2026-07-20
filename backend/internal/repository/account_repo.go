@@ -31,6 +31,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 
+	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqljson"
 )
@@ -372,6 +373,10 @@ func (r *accountRepository) List(ctx context.Context, params pagination.Paginati
 }
 
 func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
+	if err := validateAccountListSort(strings.ToLower(strings.TrimSpace(params.SortBy)), r.client.Driver().Dialect()); err != nil {
+		return nil, nil, err
+	}
+
 	q := r.client.Account.Query()
 
 	if platform != "" {
@@ -526,10 +531,20 @@ func (r *accountRepository) ListOpsAccountsForStats(ctx context.Context, platfor
 	return r.accountsToService(ctx, accounts)
 }
 
+func validateAccountListSort(sortBy, dbDialect string) error {
+	if sortBy == "upstream_billing_rate" && dbDialect != dialect.Postgres {
+		return errors.New("sorting by upstream_billing_rate is only supported on PostgreSQL")
+	}
+	return nil
+}
+
 func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderAsc)
 	if sortBy == "upstream_billing_rate" {
+		// The expression below uses PostgreSQL JSONB and timezone catalog
+		// functions. validateAccountListSort rejects other dialects before this
+		// callback can be attached to an Ent query.
 		direction := "ASC"
 		tieOrder := entsql.Asc
 		if sortOrder == pagination.SortOrderDesc {
