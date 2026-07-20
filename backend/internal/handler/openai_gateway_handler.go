@@ -369,6 +369,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			service.OpenAIUpstreamTransportAny,
 			service.OpenAIEndpointCapabilityForImageIntent(imageIntent),
 			requireCompact,
+			!imageIntent,
 		)
 		if err != nil {
 			if failoverClientGone(c) {
@@ -863,6 +864,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			service.OpenAIUpstreamTransportAny,
 			service.OpenAIEndpointCapabilityChatCompletions,
 			false,
+			true,
 		)
 		if err != nil {
 			if failoverClientGone(c) {
@@ -1472,6 +1474,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			service.OpenAIUpstreamTransportResponsesWebsocketV2,
 			service.OpenAIEndpointCapabilityForImageIntent(imageIntent),
 			false,
+			!imageIntent,
 		)
 		if err != nil {
 			reqLog.Warn("openai.websocket_account_select_failed",

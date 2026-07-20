@@ -672,6 +672,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Embeddi
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		true,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -719,7 +720,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_ResponsesCapabilityExcl
 
 	selection, _, err := newService([]Account{supported, unsupported}).SelectAccountWithSchedulerForCapability(
 		ctx, &groupID, "", "", "gpt-image-2", nil,
-		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityResponses, false,
+		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityResponses, false, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -727,14 +728,14 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_ResponsesCapabilityExcl
 
 	selection, _, err = newService([]Account{unsupported}).SelectAccountWithSchedulerForCapability(
 		ctx, &groupID, "", "", "gpt-image-2", nil,
-		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityResponses, false,
+		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityResponses, false, false,
 	)
 	require.Error(t, err)
 	require.Nil(t, selection)
 
 	selection, _, err = newService([]Account{unsupported}).SelectAccountWithSchedulerForCapability(
 		ctx, &groupID, "", "", "gpt-5.5", nil,
-		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false,
+		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -857,6 +858,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		true,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -930,6 +932,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		true,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
