@@ -39,17 +39,16 @@ const IconStub = defineComponent({ setup: () => () => h('i') })
 const GroupBadgeStub = defineComponent({ setup: () => () => h('span') })
 const PlanEditDialogStub = defineComponent({ template: '<div />' })
 const ConfirmDialogStub = defineComponent({ template: '<div />' })
-const DataTableStub = defineComponent({
+const DataTableStub = {
   props: ['data'],
-  setup: (props, { slots }) => () => h(
-    'div',
-    (props.data as Array<Record<string, unknown>>).map(row => h(
-      'div',
-      { 'data-test': 'plan-row' },
-      slots['cell-price']?.({ value: row.price, row }),
-    )),
-  ),
-})
+  template: `
+    <div>
+      <div v-for="row in data" :key="row.id" data-test="plan-row">
+        <slot name="cell-price" :value="row.price" :row="row" />
+      </div>
+    </div>
+  `,
+}
 
 describe('AdminPaymentPlansView display currency', () => {
   beforeEach(() => {
