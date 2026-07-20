@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -586,83 +587,46 @@ func (r *accountRepository) ListDueUpstreamBillingProbeAccounts(ctx context.Cont
 	if limit <= 0 {
 		return []service.Account{}, nil
 	}
-	if r.sql == nil {
+	if r == nil || r.sql == nil {
 		return nil, errors.New("account repository SQL executor not configured")
 	}
 
 	rows, err := r.sql.QueryContext(ctx, `
-		WITH candidates AS (
-			SELECT
-				id,
-				extra #>> '{upstream_billing_probe,status}' AS probe_status,
-				extra #>> '{upstream_billing_probe,next_probe_at}' AS next_probe_at
-			FROM accounts
-			WHERE deleted_at IS NULL
-				AND status = 'active'
-				AND platform = 'openai'
-				AND type = 'apikey'
-				AND extra @> '{"upstream_billing_probe_enabled": true}'::jsonb
-		), parsed AS MATERIALIZED (
-			SELECT
-				id,
-				probe_status,
-				next_probe_at,
-				next_probe_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$' AS rfc3339_shape,
-				jsonb_path_query_first_tz(
-					jsonb_build_object(
-						'value',
-						replace(regexp_replace(next_probe_at, 'Z$', '+00:00'), 'T', ' ')
-					),
-					'$.value.datetime()',
-					'{}'::jsonb,
-					true
-				) #>> '{}' AS parsed_next_probe_at
-			FROM candidates
-		), normalized AS (
-			SELECT
-				id,
-				probe_status,
-				next_probe_at,
-				parsed_next_probe_at,
-				rfc3339_shape AND parsed_next_probe_at IS NOT NULL AS valid_next_probe_at
-			FROM parsed
-		)
-		SELECT id
-		FROM normalized
-		WHERE probe_status NOT IN ('ok', 'unsupported', 'failed')
-			OR probe_status IS NULL
-			OR next_probe_at IS NULL
-			OR NOT valid_next_probe_at
-			OR CASE WHEN valid_next_probe_at THEN parsed_next_probe_at::timestamptz <= $1 ELSE FALSE END
-		ORDER BY
-			CASE
-				WHEN probe_status NOT IN ('ok', 'unsupported', 'failed')
-					OR probe_status IS NULL
-					OR next_probe_at IS NULL
-					OR NOT valid_next_probe_at
-				THEN 0
-				ELSE 1
-			END ASC,
-			CASE WHEN valid_next_probe_at THEN parsed_next_probe_at::timestamptz END ASC NULLS FIRST,
-			id ASC
-		LIMIT $2
-	`, now.UTC(), limit)
+		SELECT id, extra
+		FROM accounts
+		WHERE deleted_at IS NULL
+			AND status = 'active'
+			AND platform = 'openai'
+			AND type = 'apikey'
+	`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	ids := make([]int64, 0, limit)
+	candidates := make([]upstreamBillingProbeDueCandidate, 0)
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var rawExtra []byte
+		if err := rows.Scan(&id, &rawExtra); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		var extra map[string]any
+		if len(rawExtra) == 0 || json.Unmarshal(rawExtra, &extra) != nil {
+			continue
+		}
+		if enabled, ok := extra[service.UpstreamBillingProbeEnabledExtraKey].(bool); !ok || !enabled {
+			continue
+		}
+		candidates = append(candidates, upstreamBillingProbeDueCandidate{
+			id:       id,
+			snapshot: service.DecodeUpstreamBillingProbeSnapshot(extra),
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	ids := dueUpstreamBillingProbeCandidateIDs(candidates, now, limit)
 	if len(ids) == 0 {
 		return []service.Account{}, nil
 	}
@@ -678,6 +642,49 @@ func (r *accountRepository) ListDueUpstreamBillingProbeAccounts(ctx context.Cont
 		}
 	}
 	return out, nil
+}
+
+type upstreamBillingProbeDueCandidate struct {
+	id       int64
+	snapshot *service.UpstreamBillingProbeSnapshot
+}
+
+func dueUpstreamBillingProbeCandidateIDs(candidates []upstreamBillingProbeDueCandidate, now time.Time, limit int) []int64 {
+	if limit <= 0 || len(candidates) == 0 {
+		return []int64{}
+	}
+	due := make([]upstreamBillingProbeDueCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.snapshot != nil && !candidate.snapshot.NextProbeAt.IsZero() && now.Before(candidate.snapshot.NextProbeAt) {
+			continue
+		}
+		due = append(due, candidate)
+	}
+	sort.SliceStable(due, func(i, j int) bool {
+		leftUnset := due[i].snapshot == nil || due[i].snapshot.NextProbeAt.IsZero()
+		rightUnset := due[j].snapshot == nil || due[j].snapshot.NextProbeAt.IsZero()
+		if leftUnset && rightUnset {
+			return due[i].id < due[j].id
+		}
+		if leftUnset {
+			return true
+		}
+		if rightUnset {
+			return false
+		}
+		if due[i].snapshot.NextProbeAt.Equal(due[j].snapshot.NextProbeAt) {
+			return due[i].id < due[j].id
+		}
+		return due[i].snapshot.NextProbeAt.Before(due[j].snapshot.NextProbeAt)
+	})
+	if len(due) > limit {
+		due = due[:limit]
+	}
+	ids := make([]int64, 0, len(due))
+	for _, candidate := range due {
+		ids = append(ids, candidate.id)
+	}
+	return ids
 }
 
 func (r *accountRepository) ListActive(ctx context.Context) ([]service.Account, error) {

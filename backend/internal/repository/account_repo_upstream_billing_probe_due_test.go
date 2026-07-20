@@ -1,3 +1,5 @@
+//go:build unit
+
 package repository
 
 import (
@@ -7,36 +9,34 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 
-	"entgo.io/ent/dialect"
-	entsql "entgo.io/ent/dialect/sql"
+	_ "modernc.org/sqlite"
 )
 
-func TestAccountRepositoryListDueUpstreamBillingProbeAccountsBoundsQuery(t *testing.T) {
+func TestAccountRepositoryListDueUpstreamBillingProbeAccountsUsesPortableQuery(t *testing.T) {
 	db, mock := newSQLMock(t)
-	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
 	var capturedSQL string
-	mock.ExpectQuery("WITH candidates AS").
-		WithArgs(now, 20).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("SELECT id, extra FROM accounts").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "extra"}))
 	repo := newAccountRepositoryWithSQL(nil, captureQuerySQL{db: db, captured: &capturedSQL}, nil)
 
-	accounts, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), now, 20)
+	accounts, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), time.Now(), 20)
 
 	require.NoError(t, err)
 	require.Empty(t, accounts)
 	normalized := normalizeSQLWhitespace(capturedSQL)
+	require.Contains(t, normalized, "SELECT id, extra FROM accounts")
 	require.Contains(t, normalized, "deleted_at IS NULL")
 	require.Contains(t, normalized, "status = 'active'")
 	require.Contains(t, normalized, "platform = 'openai'")
 	require.Contains(t, normalized, "type = 'apikey'")
-	require.Contains(t, normalized, `extra @> '{"upstream_billing_probe_enabled": true}'::jsonb`)
-	require.Contains(t, normalized, "jsonb_path_query_first_tz")
-	require.Contains(t, normalized, "parsed AS MATERIALIZED")
-	require.Contains(t, normalized, "parsed_next_probe_at::timestamptz <= $1")
-	require.Contains(t, normalized, "LIMIT $2")
+	for _, fragment := range []string{
+		"#>>", "#>", "@>", "::jsonb", "jsonb_path_query_first_tz", "MATERIALIZED", "timestamptz", "NULLS FIRST",
+	} {
+		require.NotContains(t, normalized, fragment)
+	}
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -58,67 +58,131 @@ func TestAccountRepositoryListDueUpstreamBillingProbeAccountsRejectsMissingSQL(t
 }
 
 func TestAccountRepositoryListDueUpstreamBillingProbeAccountsQueryAndRowErrors(t *testing.T) {
-	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	testQuery := "SELECT id, extra FROM accounts"
 
 	t.Run("query error", func(t *testing.T) {
 		db, mock := newSQLMock(t)
-		mock.ExpectQuery("WITH candidates").WithArgs(now, 20).WillReturnError(sql.ErrConnDone)
+		mock.ExpectQuery(testQuery).WillReturnError(sql.ErrConnDone)
 		repo := newAccountRepositoryWithSQL(nil, db, nil)
-		_, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), now, 20)
+		_, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), time.Now(), 20)
 		require.ErrorIs(t, err, sql.ErrConnDone)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
 	t.Run("scan error", func(t *testing.T) {
 		db, mock := newSQLMock(t)
-		mock.ExpectQuery("WITH candidates").WithArgs(now, 20).
-			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("not-an-id"))
+		mock.ExpectQuery(testQuery).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "extra"}).AddRow("not-an-id", []byte(`{}`)))
 		repo := newAccountRepositoryWithSQL(nil, db, nil)
-		_, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), now, 20)
+		_, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), time.Now(), 20)
 		require.Error(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
 	t.Run("rows error", func(t *testing.T) {
 		db, mock := newSQLMock(t)
-		mock.ExpectQuery("WITH candidates").WithArgs(now, 20).
-			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(42)).AddRow(int64(43)).RowError(1, sql.ErrNoRows))
+		mock.ExpectQuery(testQuery).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "extra"}).
+				AddRow(int64(42), []byte(`{}`)).
+				AddRow(int64(43), []byte(`{}`)).
+				RowError(1, sql.ErrNoRows))
 		repo := newAccountRepositoryWithSQL(nil, db, nil)
-		_, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), now, 20)
+		_, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), time.Now(), 20)
 		require.ErrorIs(t, err, sql.ErrNoRows)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
 
-func TestAccountRepositoryListDueUpstreamBillingProbeAccountsHydratesIDs(t *testing.T) {
-	db, mock := newSQLMock(t)
-	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
-	t.Cleanup(func() { _ = client.Close() })
+func TestDueUpstreamBillingProbeCandidateIDsFiltersAndOrdersInGo(t *testing.T) {
 	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
-	mock.ExpectQuery("WITH candidates").WithArgs(now, 20).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(42)))
-	// An empty account result exercises the bounded hydration handoff without
-	// requiring a full Ent account fixture.
-	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	repo := newAccountRepositoryWithSQL(client, db, nil)
-	accounts, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), now, 20)
-	require.NoError(t, err)
-	require.Empty(t, accounts)
-	require.NoError(t, mock.ExpectationsWereMet())
+	future := now.Add(time.Hour)
+	earlier := now.Add(-2 * time.Minute)
+	later := now.Add(-time.Minute)
+	ids := dueUpstreamBillingProbeCandidateIDs([]upstreamBillingProbeDueCandidate{
+		{id: 10, snapshot: &service.UpstreamBillingProbeSnapshot{Status: service.UpstreamBillingProbeStatusOK, NextProbeAt: future}},
+		{id: 20, snapshot: &service.UpstreamBillingProbeSnapshot{Status: service.UpstreamBillingProbeStatusOK, NextProbeAt: later}},
+		{id: 30, snapshot: nil},
+		{id: 40, snapshot: &service.UpstreamBillingProbeSnapshot{Status: service.UpstreamBillingProbeStatusFailed, NextProbeAt: earlier}},
+		{id: 50, snapshot: &service.UpstreamBillingProbeSnapshot{Status: service.UpstreamBillingProbeStatusOK, NextProbeAt: earlier}},
+	}, now, 3)
+
+	require.Equal(t, []int64{30, 40, 50}, ids)
 }
 
-func TestAccountRepositoryListDueUpstreamBillingProbeAccountsPropagatesHydrationError(t *testing.T) {
-	db, mock := newSQLMock(t)
-	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
-	t.Cleanup(func() { _ = client.Close() })
+func TestAccountRepositoryListDueUpstreamBillingProbeAccountsSQLite(t *testing.T) {
+	db, client := newSQLiteProbePersistenceClient(t)
+	ctx := context.Background()
 	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
-	mock.ExpectQuery("WITH candidates").WithArgs(now, 20).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(42)))
-	mock.ExpectQuery("SELECT").WillReturnError(sql.ErrConnDone)
+	_, err := client.Account.Create().
+		SetName("sqlite-due-probe").
+		SetPlatform(service.PlatformOpenAI).
+		SetType(service.AccountTypeAPIKey).
+		SetCredentials(map[string]any{"api_key": "sk-sqlite"}).
+		SetExtra(map[string]any{
+			service.UpstreamBillingProbeEnabledExtraKey: true,
+			service.UpstreamBillingProbeExtraKey: map[string]any{
+				"status":        service.UpstreamBillingProbeStatusOK,
+				"next_probe_at": now.Add(-time.Minute).Format(time.RFC3339Nano),
+			},
+		}).
+		SetConcurrency(1).
+		SetPriority(0).
+		SetStatus(service.StatusActive).
+		SetSchedulable(true).
+		SetAutoPauseOnExpired(false).
+		Save(ctx)
+	require.NoError(t, err)
+
 	repo := newAccountRepositoryWithSQL(client, db, nil)
+	accounts, err := repo.ListDueUpstreamBillingProbeAccounts(ctx, now, 20)
 
-	_, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), now, 20)
+	require.NoError(t, err)
+	require.Len(t, accounts, 1)
+	require.Equal(t, "sqlite-due-probe", accounts[0].Name)
+}
 
-	require.ErrorIs(t, err, sql.ErrConnDone)
+func TestAccountRepositoryListDueUpstreamBillingProbeAccountsSQLiteSkipsFutureAndDisabled(t *testing.T) {
+	db, client := newSQLiteProbePersistenceClient(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC)
+	create := func(name, status string, enabled bool, next time.Time) {
+		_, err := client.Account.Create().
+			SetName(name).
+			SetPlatform(service.PlatformOpenAI).
+			SetType(service.AccountTypeAPIKey).
+			SetCredentials(map[string]any{"api_key": "sk-" + name}).
+			SetExtra(map[string]any{
+				service.UpstreamBillingProbeEnabledExtraKey: enabled,
+				service.UpstreamBillingProbeExtraKey: map[string]any{
+					"status":        service.UpstreamBillingProbeStatusOK,
+					"next_probe_at": next.Format(time.RFC3339Nano),
+				},
+			}).
+			SetConcurrency(1).
+			SetPriority(0).
+			SetStatus(status).
+			SetSchedulable(true).
+			SetAutoPauseOnExpired(false).
+			Save(ctx)
+		require.NoError(t, err)
+	}
+	create("sqlite-future", service.StatusActive, true, now.Add(time.Hour))
+	create("sqlite-disabled", service.StatusDisabled, true, now.Add(-time.Minute))
+	create("sqlite-disabled-flag", service.StatusActive, false, now.Add(-time.Minute))
+
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	accounts, err := repo.ListDueUpstreamBillingProbeAccounts(ctx, now, 20)
+
+	require.NoError(t, err)
+	require.Empty(t, accounts)
+}
+
+func TestAccountRepositoryListDueUpstreamBillingProbeAccountsMySQLQueryHasNoDialectSpecificSQL(t *testing.T) {
+	db, mock := newSQLMock(t)
+	mock.ExpectQuery("SELECT id, extra FROM accounts").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "extra"}))
+	repo := newAccountRepositoryWithSQL(nil, db, nil)
+	_, err := repo.ListDueUpstreamBillingProbeAccounts(context.Background(), time.Now(), 20)
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
