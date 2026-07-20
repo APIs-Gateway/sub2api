@@ -171,10 +171,18 @@ type AnthropicEventToResponsesState struct {
 
 	// For message output: accumulate text parts
 	ContentIndex int
+	// TextAccum accumulates the current text part so done events can carry the full text.
+	TextAccum string
 
 	// For function_call: track per-output info
 	CurrentCallID string
 	CurrentName   string
+	// CurrentContent, CurrentArgs, and CurrentSummary are folded into the
+	// corresponding output item when it closes.
+	CurrentContent []ResponsesContentPart
+	CurrentArgs    string
+	CurrentSummary string
+	Outputs        []ResponsesOutput
 	// CurrentToolArguments accumulates Anthropic's input_json_delta fragments
 	// for a custom tool, whose Responses equivalent is a text input lifecycle.
 	CurrentToolArguments string
@@ -316,6 +324,16 @@ func anthToResHandleContentBlockStart(evt *AnthropicStreamEvent, state *Anthropi
 			}))
 		}
 
+		// The OpenAI SDK's accumulating Responses stream appends a content part
+		// only after receiving content_part.added. Emit it before text deltas.
+		events = append(events, makeResponsesEvent(state, "response.content_part.added", &ResponsesStreamEvent{
+			OutputIndex:  state.OutputIndex,
+			ContentIndex: state.ContentIndex,
+			ItemID:       state.CurrentItemID,
+			Part:         &ResponsesContentPart{Type: "output_text", Text: ""},
+		}))
+		state.TextAccum = ""
+
 	case "tool_use":
 		// Close previous item if any
 		events = append(events, closeCurrentResponsesItem(state)...)
@@ -355,6 +373,7 @@ func anthToResHandleContentBlockDelta(evt *AnthropicStreamEvent, state *Anthropi
 		if evt.Delta.Text == "" {
 			return nil
 		}
+		state.TextAccum += evt.Delta.Text
 		return []ResponsesStreamEvent{makeResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
 			OutputIndex:  state.OutputIndex,
 			ContentIndex: state.ContentIndex,
@@ -366,6 +385,7 @@ func anthToResHandleContentBlockDelta(evt *AnthropicStreamEvent, state *Anthropi
 		if evt.Delta.Thinking == "" {
 			return nil
 		}
+		state.CurrentSummary += evt.Delta.Thinking
 		return []ResponsesStreamEvent{makeResponsesEvent(state, "response.reasoning_summary_text.delta", &ResponsesStreamEvent{
 			OutputIndex:  state.OutputIndex,
 			SummaryIndex: 0,
@@ -381,6 +401,7 @@ func anthToResHandleContentBlockDelta(evt *AnthropicStreamEvent, state *Anthropi
 			state.CurrentToolArguments += evt.Delta.PartialJSON
 			return nil
 		}
+		state.CurrentArgs += evt.Delta.PartialJSON
 		return []ResponsesStreamEvent{makeResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
 			OutputIndex: state.OutputIndex,
 			Delta:       evt.Delta.PartialJSON,
@@ -406,6 +427,7 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 				OutputIndex:  state.OutputIndex,
 				SummaryIndex: 0,
 				ItemID:       state.CurrentItemID,
+				Text:         state.CurrentSummary,
 			}),
 		}
 		events = append(events, closeCurrentResponsesItem(state)...)
@@ -419,6 +441,7 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 				ItemID:      state.CurrentItemID,
 				CallID:      state.CurrentCallID,
 				Name:        state.CurrentName,
+				Arguments:   state.CurrentArgs,
 			}),
 		}
 		events = append(events, closeCurrentResponsesItem(state)...)
@@ -445,14 +468,26 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 		return events
 
 	case "message":
-		// Emit output_text.done (text block is done, but message item stays open for potential more blocks)
-		return []ResponsesStreamEvent{
+		// Keep the full text in both done events; deltas carry increments only.
+		text := state.TextAccum
+		state.TextAccum = ""
+		state.CurrentContent = append(state.CurrentContent, ResponsesContentPart{Type: "output_text", Text: text})
+		events := []ResponsesStreamEvent{
 			makeResponsesEvent(state, "response.output_text.done", &ResponsesStreamEvent{
 				OutputIndex:  state.OutputIndex,
 				ContentIndex: state.ContentIndex,
 				ItemID:       state.CurrentItemID,
+				Text:         text,
+			}),
+			makeResponsesEvent(state, "response.content_part.done", &ResponsesStreamEvent{
+				OutputIndex:  state.OutputIndex,
+				ContentIndex: state.ContentIndex,
+				ItemID:       state.CurrentItemID,
+				Part:         &ResponsesContentPart{Type: "output_text", Text: text},
 			}),
 		}
+		state.ContentIndex++
+		return events
 	}
 
 	return nil
@@ -510,36 +545,50 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 		return nil
 	}
 
-	itemType := state.CurrentItemType
-	itemID := state.CurrentItemID
-	callID := state.CurrentCallID
-	name := state.CurrentName
-	input := state.CurrentToolInput
+	item := ResponsesOutput{
+		Type:   state.CurrentItemType,
+		ID:     state.CurrentItemID,
+		Status: "completed",
+	}
+	switch state.CurrentItemType {
+	case "message":
+		item.Role = "assistant"
+		item.Content = state.CurrentContent
+	case "function_call":
+		item.CallID = state.CurrentCallID
+		item.Name = state.CurrentName
+		item.Arguments = state.CurrentArgs
+		if item.Arguments == "" {
+			item.Arguments = "{}"
+		}
+	case "reasoning":
+		if state.CurrentSummary != "" {
+			item.Summary = []ResponsesSummary{{Type: "summary_text", Text: state.CurrentSummary}}
+		}
+	case "custom_tool_call":
+		item.CallID = state.CurrentCallID
+		item.Name = state.CurrentName
+		item.Input = state.CurrentToolInput
+	}
+	state.Outputs = append(state.Outputs, item)
 
 	// Reset
 	state.CurrentItemType = ""
 	state.CurrentItemID = ""
 	state.CurrentCallID = ""
 	state.CurrentName = ""
+	state.CurrentContent = nil
+	state.CurrentArgs = ""
+	state.CurrentSummary = ""
+	state.TextAccum = ""
 	state.CurrentToolArguments = ""
 	state.CurrentToolInput = ""
 	state.OutputIndex++
 	state.ContentIndex = 0
 
-	item := &ResponsesOutput{
-		Type:   itemType,
-		ID:     itemID,
-		Status: "completed",
-	}
-	if itemType == "custom_tool_call" {
-		item.CallID = callID
-		item.Name = name
-		item.Input = input
-	}
-
 	return []ResponsesStreamEvent{makeResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 		OutputIndex: state.OutputIndex - 1, // Use the index before increment
-		Item:        item,
+		Item:        &item,
 	})}
 }
 
@@ -583,6 +632,11 @@ func makeResponsesCompletedEvent(
 		}
 	}
 
+	outputs := state.Outputs
+	if outputs == nil {
+		outputs = []ResponsesOutput{}
+	}
+
 	eventType := "response.completed"
 	if status == "incomplete" {
 		eventType = "response.incomplete"
@@ -596,7 +650,7 @@ func makeResponsesCompletedEvent(
 			Object:            "response",
 			Model:             state.Model,
 			Status:            status,
-			Output:            []ResponsesOutput{}, // Simplified; full output tracking would add complexity
+			Output:            outputs,
 			Usage:             usage,
 			IncompleteDetails: incompleteDetails,
 		},
