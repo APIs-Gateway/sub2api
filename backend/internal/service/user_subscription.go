@@ -6,6 +6,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
+const subscriptionDayDuration = 24 * time.Hour
+
 // entGroupIDValue 把 ent 可空 group_id(*int64) 映射为 domain/业务侧 int64：
 // NULL（自定义 D+T 卡无 group 归属）→ 0。与 repository.groupIDValue 同语义，供 service 层直读 ent 实体时使用。
 func entGroupIDValue(p *int64) int64 {
@@ -85,10 +87,20 @@ func (s *UserSubscription) IsExpired() bool {
 }
 
 func (s *UserSubscription) DaysRemaining() int {
-	if s.IsExpired() {
+	return s.daysRemainingAt(time.Now())
+}
+
+func (s *UserSubscription) daysRemainingAt(now time.Time) int {
+	remaining := s.ExpiresAt.Sub(now)
+	if remaining <= 0 {
 		return 0
 	}
-	return int(time.Until(s.ExpiresAt).Hours() / 24)
+
+	days := int(remaining / subscriptionDayDuration)
+	if remaining%subscriptionDayDuration != 0 {
+		days++
+	}
+	return days
 }
 
 func (s *UserSubscription) IsWindowActivated() bool {
