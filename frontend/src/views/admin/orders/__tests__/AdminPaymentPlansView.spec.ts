@@ -21,7 +21,7 @@ vi.mock('@/api/admin', () => ({
   },
 }))
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError: mocks.showError }),
+  useAppStore: () => ({ showError: mocks.showError, showSuccess: vi.fn() }),
 }))
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
@@ -54,27 +54,42 @@ const DataTableStub = defineComponent({
 describe('AdminPaymentPlansView display currency', () => {
   beforeEach(() => {
     mocks.getPlans.mockReset().mockResolvedValue({
-      data: [{
-        id: 1,
-        group_id: 1,
-        name: 'Pro',
-        description: 'Pro plan',
-        daily_amount_usd: 10,
-        price: 10,
-        original_price: 20,
-        currency: 'USD',
-        validity_days: 30,
-        validity_unit: 'day',
-        features: '',
-        for_sale: true,
-        sort_order: 1,
-      }],
+      data: [
+        {
+          id: 1,
+          group_id: 1,
+          name: 'CNY plan',
+          description: 'CNY plan',
+          price: 499,
+          original_price: 599,
+          currency: 'CNY',
+          validity_days: 30,
+          validity_unit: 'day',
+          features: '',
+          for_sale: true,
+          sort_order: 1,
+        },
+        {
+          id: 2,
+          group_id: 1,
+          name: 'Legacy plan',
+          description: 'Legacy plan',
+          price: 10,
+          original_price: 0,
+          currency: '',
+          validity_days: 30,
+          validity_unit: 'day',
+          features: '',
+          for_sale: true,
+          sort_order: 2,
+        },
+      ],
     })
     mocks.getAllGroups.mockResolvedValue([])
     mocks.showError.mockReset()
   })
 
-  it('renders the display currency beside current and original prices', async () => {
+  it('uses configured symbols and keeps legacy prices in USD', async () => {
     const wrapper = mount(AdminPaymentPlansView, {
       global: {
         stubs: {
@@ -89,7 +104,9 @@ describe('AdminPaymentPlansView display currency', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('[data-test="plan-row"]').text()).toContain('USD')
-    expect(wrapper.find('[data-test="plan-row"]').text()).toContain('$20.00')
+    const text = wrapper.text()
+    expect(text).toContain('¥499.00')
+    expect(text).toContain('¥599.00')
+    expect(text).toContain('$10.00')
   })
 })
