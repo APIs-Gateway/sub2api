@@ -194,7 +194,7 @@ func lockAndMergeAccountProbeExtra(ctx context.Context, client *dbent.Client, ac
 	delete(extra, service.UpstreamBillingProbeEnabledExtraKey)
 	delete(extra, service.UpstreamBillingProbeExtraKey)
 	probeExplicitlyDisabled := false
-	if account.IsOpenAIApiKey() && identityUnchanged && len(currentEnabled) > 0 && string(currentEnabled) != "null" {
+	if account.IsOpenAIApiKey() && len(currentEnabled) > 0 && string(currentEnabled) != "null" {
 		var enabled any
 		if err := common.Unmarshal(currentEnabled, &enabled); err != nil {
 			return nil, err
@@ -231,15 +231,17 @@ func lockAndMergeAccountProbeExtraEnt(ctx context.Context, client *dbent.Client,
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
 	delete(extra, service.UpstreamBillingProbeEnabledExtraKey)
 	delete(extra, service.UpstreamBillingProbeExtraKey)
-	if account.IsOpenAIApiKey() && identityUnchanged {
+	if account.IsOpenAIApiKey() {
 		if enabled, ok := current.Extra[service.UpstreamBillingProbeEnabledExtraKey]; ok && enabled != nil {
 			extra[service.UpstreamBillingProbeEnabledExtraKey] = enabled
 			if value, ok := enabled.(bool); ok && !value {
 				return extra, nil
 			}
 		}
-		if snapshot, ok := current.Extra[service.UpstreamBillingProbeExtraKey]; ok && snapshot != nil {
-			extra[service.UpstreamBillingProbeExtraKey] = snapshot
+		if identityUnchanged {
+			if snapshot, ok := current.Extra[service.UpstreamBillingProbeExtraKey]; ok && snapshot != nil {
+				extra[service.UpstreamBillingProbeExtraKey] = snapshot
+			}
 		}
 	}
 	return extra, nil

@@ -102,6 +102,21 @@ func TestIsUpstreamBillingProbeAccountOnlyAcceptsOpenAIAPIKeys(t *testing.T) {
 	require.False(t, isUpstreamBillingProbeAccount(nil))
 }
 
+func TestSanitizeUpstreamBillingProbeExtraRemovesManagedState(t *testing.T) {
+	input := map[string]any{
+		"safe":                              "value",
+		UpstreamBillingProbeEnabledExtraKey: true,
+		UpstreamBillingProbeExtraKey:        map[string]any{"status": UpstreamBillingProbeStatusOK},
+	}
+
+	got := sanitizeUpstreamBillingProbeExtra(input)
+
+	require.Equal(t, "value", got["safe"])
+	require.NotContains(t, got, UpstreamBillingProbeEnabledExtraKey)
+	require.NotContains(t, got, UpstreamBillingProbeExtraKey)
+	require.Contains(t, input, UpstreamBillingProbeEnabledExtraKey)
+}
+
 func TestParseUpstreamBillingProbeResponseRejectsMalformedAndIncompleteResponses(t *testing.T) {
 	cases := []struct {
 		name      string

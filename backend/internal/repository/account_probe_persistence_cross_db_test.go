@@ -181,7 +181,7 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	identityChanged.Credentials = map[string]any{"api_key": "sk-other"}
 	merged, err = lockAndMergeAccountProbeExtra(ctx, client, &identityChanged)
 	require.NoError(t, err)
-	require.NotContains(t, merged, service.UpstreamBillingProbeEnabledExtraKey)
+	require.Equal(t, true, merged[service.UpstreamBillingProbeEnabledExtraKey])
 	require.NotContains(t, merged, service.UpstreamBillingProbeExtraKey)
 
 	_, err = lockAndMergeAccountProbeExtra(ctx, client, &service.Account{ID: 999, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey})

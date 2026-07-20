@@ -16,6 +16,9 @@ type accountRepoStubForBulkUpdate struct {
 	accountRepoStub
 	bulkUpdateErr    error
 	bulkUpdateIDs    []int64
+	bulkUpdateInput  AccountBulkUpdate
+	createErr        error
+	createdAccount   *Account
 	bindGroupErrByID map[int64]error
 	bindGroupsCalls  []int64
 	getByIDsAccounts []*Account
@@ -42,8 +45,18 @@ type accountRepoStubForBulkUpdate struct {
 	}
 }
 
-func (s *accountRepoStubForBulkUpdate) BulkUpdate(_ context.Context, ids []int64, _ AccountBulkUpdate) (int64, error) {
+func (s *accountRepoStubForBulkUpdate) Create(_ context.Context, account *Account) error {
+	if s.createErr != nil {
+		return s.createErr
+	}
+	account.ID = 100
+	s.createdAccount = account
+	return nil
+}
+
+func (s *accountRepoStubForBulkUpdate) BulkUpdate(_ context.Context, ids []int64, input AccountBulkUpdate) (int64, error) {
 	s.bulkUpdateIDs = append([]int64{}, ids...)
+	s.bulkUpdateInput = input
 	if s.bulkUpdateErr != nil {
 		return 0, s.bulkUpdateErr
 	}
@@ -245,4 +258,87 @@ func TestAdminServiceBulkUpdateAccounts_ResolvesIDsFromFilters(t *testing.T) {
 	require.Equal(t, 2, result.Success)
 	require.Equal(t, 0, result.Failed)
 	require.Equal(t, []int64{7, 11}, result.SuccessIDs)
+}
+
+func TestAdminServiceCreateAccountTypedProbeRejectsInvalidAccount(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{}
+	svc := &adminServiceImpl{accountRepo: repo}
+	enabled := true
+
+	account, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
+		Platform:             PlatformAnthropic,
+		Type:                 AccountTypeAPIKey,
+		ProbeEnabled:         &enabled,
+		SkipDefaultGroupBind: true,
+	})
+
+	require.Nil(t, account)
+	require.ErrorIs(t, err, ErrUpstreamBillingProbeAccountInvalid)
+	require.Nil(t, repo.createdAccount)
+}
+
+func TestAdminServiceCreateAccountTypedProbeSanitizesManagedExtra(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{}
+	svc := &adminServiceImpl{accountRepo: repo}
+	enabled := true
+
+	account, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
+		Platform:             PlatformOpenAI,
+		Type:                 AccountTypeAPIKey,
+		Extra:                map[string]any{"safe": "value", UpstreamBillingProbeExtraKey: map[string]any{"status": UpstreamBillingProbeStatusOK}},
+		ProbeEnabled:         &enabled,
+		SkipDefaultGroupBind: true,
+	})
+
+	require.NoError(t, err)
+	require.Same(t, repo.createdAccount, account)
+	require.Equal(t, "value", account.Extra["safe"])
+	require.Equal(t, true, account.Extra[UpstreamBillingProbeEnabledExtraKey])
+	require.NotContains(t, account.Extra, UpstreamBillingProbeExtraKey)
+}
+
+func TestAdminServiceBulkUpdateTypedProbeRejectsMixedTargets(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{
+		getByIDsAccounts: []*Account{
+			{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+			{ID: 2, Platform: PlatformAnthropic, Type: AccountTypeAPIKey},
+		},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+	enabled := true
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs:   []int64{1, 2},
+		ProbeEnabled: &enabled,
+	})
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrUpstreamBillingProbeAccountInvalid)
+	require.Empty(t, repo.bulkUpdateIDs)
+}
+
+func TestAdminServiceBulkUpdateTypedProbeSanitizesManagedExtra(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{
+		getByIDsAccounts: []*Account{{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+	enabled := false
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1},
+		Extra: map[string]any{
+			"safe":                              "value",
+			UpstreamBillingProbeEnabledExtraKey: true,
+			UpstreamBillingProbeExtraKey:        map[string]any{"status": UpstreamBillingProbeStatusOK},
+		},
+		ProbeEnabled: &enabled,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Success)
+	require.Equal(t, "value", repo.bulkUpdateInput.Extra["safe"])
+	require.Equal(t, false, repo.bulkUpdateInput.Extra[UpstreamBillingProbeEnabledExtraKey])
+	require.NotContains(t, repo.bulkUpdateInput.Extra, UpstreamBillingProbeExtraKey)
+	require.NotNil(t, repo.bulkUpdateInput.ProbeEnabled)
+	require.False(t, *repo.bulkUpdateInput.ProbeEnabled)
 }

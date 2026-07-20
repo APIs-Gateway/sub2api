@@ -10,6 +10,8 @@ const {
   getWebSearchEmulationConfig,
   updateWebSearchEmulationConfig,
   getAdminApiKey,
+  getUpstreamBillingProbeSettings,
+  updateUpstreamBillingProbeSettings,
   getOverloadCooldownSettings,
   getRateLimit429CooldownSettings,
   updateRateLimit429CooldownSettings,
@@ -32,6 +34,8 @@ const {
   getWebSearchEmulationConfig: vi.fn(),
   updateWebSearchEmulationConfig: vi.fn(),
   getAdminApiKey: vi.fn(),
+  getUpstreamBillingProbeSettings: vi.fn(),
+  updateUpstreamBillingProbeSettings: vi.fn(),
   getOverloadCooldownSettings: vi.fn(),
   getRateLimit429CooldownSettings: vi.fn(),
   updateRateLimit429CooldownSettings: vi.fn(),
@@ -59,6 +63,10 @@ const routerReplace = vi.hoisted(() => vi.fn());
 
 vi.mock("@/api", () => ({
   adminAPI: {
+    accounts: {
+      getUpstreamBillingProbeSettings,
+      updateUpstreamBillingProbeSettings,
+    },
     settings: {
       getSettings,
       updateSettings,
@@ -528,6 +536,8 @@ describe("admin SettingsView payment visible method controls", () => {
     getWebSearchEmulationConfig.mockReset();
     updateWebSearchEmulationConfig.mockReset();
     getAdminApiKey.mockReset();
+    getUpstreamBillingProbeSettings.mockReset();
+    updateUpstreamBillingProbeSettings.mockReset();
     getOverloadCooldownSettings.mockReset();
     getRateLimit429CooldownSettings.mockReset();
     updateRateLimit429CooldownSettings.mockReset();
@@ -567,6 +577,11 @@ describe("admin SettingsView payment visible method controls", () => {
       exists: false,
       masked_key: "",
     });
+    getUpstreamBillingProbeSettings.mockResolvedValue({
+      enabled: true,
+      interval_minutes: 30,
+    });
+    updateUpstreamBillingProbeSettings.mockImplementation(async (payload) => payload);
     getOverloadCooldownSettings.mockResolvedValue({
       enabled: true,
       cooldown_minutes: 10,
@@ -612,6 +627,22 @@ describe("admin SettingsView payment visible method controls", () => {
 
     expect(wrapper.text()).not.toContain("可见方式");
     expect(wrapper.text()).not.toContain("支付来源");
+  });
+
+  it("loads and saves upstream billing probe settings", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    const interval = wrapper.get('[data-testid="upstream-billing-probe-interval"]');
+    await interval.setValue("45");
+    await wrapper.get('[data-testid="upstream-billing-probe-save"]').trigger("click");
+    await flushPromises();
+
+    expect(getUpstreamBillingProbeSettings).toHaveBeenCalled();
+    expect(updateUpstreamBillingProbeSettings).toHaveBeenCalledWith({
+      enabled: true,
+      interval_minutes: 45,
+    });
   });
 
   it("renders and submits the opt-in step-up and session-binding switches", async () => {
