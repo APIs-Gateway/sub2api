@@ -1745,6 +1745,25 @@
                 </div>
                 <Toggle v-model="form.api_key_acl_trust_forwarded_ip" />
               </div>
+              <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
+                <label
+                  class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{ t("admin.settings.apiKeyAcl.customHeaders") }}
+                </label>
+                <textarea
+                  v-model="form.forwarded_client_ip_headers_input"
+                  data-testid="forwarded-client-ip-headers"
+                  rows="3"
+                  class="input resize-y font-mono text-sm"
+                  :placeholder="
+                    t('admin.settings.apiKeyAcl.customHeadersPlaceholder')
+                  "
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.apiKeyAcl.customHeadersHint") }}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -8302,6 +8321,7 @@ type SettingsForm = Omit<
   openai_advanced_scheduler_weight_upstream_cost: string;
   // 系统全局平台限额 map；form 内始终归一化为全 4 平台对象（模板非空绑定依赖此不变量）
   default_platform_quotas: DefaultPlatformQuotasMap;
+  forwarded_client_ip_headers_input: string;
 };
 
 const form = reactive<SettingsForm>({
@@ -8403,6 +8423,8 @@ const form = reactive<SettingsForm>({
   turnstile_secret_key: "",
   turnstile_secret_key_configured: false,
   api_key_acl_trust_forwarded_ip: false,
+  forwarded_client_ip_headers: [],
+  forwarded_client_ip_headers_input: "",
   // LinuxDo Connect OAuth 登录
   linuxdo_connect_enabled: false,
   linuxdo_connect_client_id: "",
@@ -9139,6 +9161,11 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    form.forwarded_client_ip_headers_input = Array.isArray(
+      settings.forwarded_client_ip_headers,
+    )
+      ? settings.forwarded_client_ip_headers.join("\n")
+      : "";
     if (!form.claude_oauth_system_prompt_blocks?.trim()) {
       form.claude_oauth_system_prompt_blocks =
         defaultClaudeOAuthSystemPromptBlocks;
@@ -9541,6 +9568,10 @@ async function saveSettings() {
       turnstile_site_key: form.turnstile_site_key,
       turnstile_secret_key: form.turnstile_secret_key || undefined,
       api_key_acl_trust_forwarded_ip: form.api_key_acl_trust_forwarded_ip,
+      forwarded_client_ip_headers: form.forwarded_client_ip_headers_input
+        .split(/[\n,]/)
+        .map((header) => header.trim())
+        .filter(Boolean),
       linuxdo_connect_enabled: form.linuxdo_connect_enabled,
       linuxdo_connect_client_id: form.linuxdo_connect_client_id,
       linuxdo_connect_client_secret:
@@ -9778,6 +9809,11 @@ async function saveSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    form.forwarded_client_ip_headers_input = Array.isArray(
+      updated.forwarded_client_ip_headers,
+    )
+      ? updated.forwarded_client_ip_headers.join("\n")
+      : "";
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     form.default_platform_quotas = normalizePlatformQuotasMap(updated.default_platform_quotas);
     registrationEmailSuffixWhitelistTags.value =

@@ -6214,7 +6214,10 @@
         description: '控制 API Key 白名單和黑名單使用哪個客戶端 IP 判斷',
         trustForwardedIp: '信任反代傳遞的客戶端 IP',
         trustForwardedIpHint:
-          '預設關閉。僅在源站只允許 Cloudflare 或 Nginx 反代訪問時開啟；開啟後 API Key IP 白/黑名單會使用 CF-Connecting-IP、X-Real-IP 或 X-Forwarded-For，與使用記錄中的請求 IP 保持一致。'
+          '預設關閉。僅在源站只允許 Cloudflare 或 Nginx 反代訪問時開啟；開啟後 API Key IP 白/黑名單會使用 CF-Connecting-IP、X-Real-IP 或 X-Forwarded-For，與使用記錄中的請求 IP 保持一致。',
+        customHeaders: '可信客戶端 IP 請求標頭',
+        customHeadersPlaceholder: '每行一個請求標頭，例如 X-Cdn-Client-IP',
+        customHeadersHint: '可選。開啟信任轉發 IP 後，會優先使用這裡配置的請求標頭，再回退到 Cloudflare、X-Real-IP 和 X-Forwarded-For。'
       },
       linuxdo: {
         title: 'LinuxDo Connect 登入',
@@ -7152,7 +7155,13 @@
       },
       openaiExperimentalScheduler: {
         title: 'OpenAI 實驗調度策略',
-        description: '預設關閉。開啟後僅影響本網關在 OpenAI 帳號間的實驗性調度選擇邏輯，不代表上游 OpenAI 官方能力。'
+        description: '預設關閉。開啟後僅影響本網關在 OpenAI 帳號間的實驗性調度選擇邏輯，不代表上游 OpenAI 官方能力。',
+        lowRatePriorityTitle: '優先選擇上游倍率較低的帳號',
+        lowRatePriorityDescription: '傳統調度模式下，優先選擇已觀測上游 Token 計費倍率較低的帳號。',
+        oauthRateTitle: 'OAuth 調度參考倍率',
+        oauthRateDescription: '設定傳統低倍率調度使用的 OAuth 參考倍率，預設參考值為 1。',
+        upstreamCostWeightTitle: '上游計費倍率權重',
+        upstreamCostWeightDescription: '設定高級調度中上游 Token 計費信號的排序權重，填 0 可關閉該信號。'
       },
       upstreamBillingProbe: {
         title: '上游倍率自動探測',

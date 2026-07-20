@@ -200,6 +200,9 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.defaults.platformQuotaNotice": "月限额为 30 天滚动窗口，非自然月",
     "admin.settings.authSourceDefaults.platformQuotasOverride": "平台限额覆盖",
     "admin.settings.authSourceDefaults.platformQuotasOverrideHint": "留空的字段继承「系统默认平台限额」；填 0 表示禁止该窗口使用。",
+    "admin.settings.apiKeyAcl.customHeaders": "可信客户端 IP 请求头",
+    "admin.settings.apiKeyAcl.customHeadersPlaceholder": "每行一个请求头，例如 X-Cdn-Client-IP",
+    "admin.settings.apiKeyAcl.customHeadersHint": "可选。启用信任转发 IP 后，会优先使用这里配置的请求头，再回退到 Cloudflare、X-Real-IP 和 X-Forwarded-For。",
   };
   return {
     ...actual,
@@ -354,6 +357,8 @@ const baseSettingsResponse = {
   turnstile_enabled: false,
   turnstile_site_key: "",
   turnstile_secret_key_configured: false,
+  api_key_acl_trust_forwarded_ip: false,
+  forwarded_client_ip_headers: [],
   linuxdo_connect_enabled: false,
   linuxdo_connect_client_id: "",
   linuxdo_connect_client_secret_configured: false,
@@ -665,6 +670,40 @@ describe("admin SettingsView payment visible method controls", () => {
       expect.objectContaining({
         step_up_enabled: true,
         session_binding_enabled: true,
+      }),
+    );
+  });
+
+  it("loads and submits custom forwarded client-IP headers", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      api_key_acl_trust_forwarded_ip: true,
+      forwarded_client_ip_headers: ["X-Cdn-Client-IP", "True-Client-IP"],
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openSecurityTab(wrapper);
+
+    const headersInput = wrapper.get(
+      '[data-testid="forwarded-client-ip-headers"]',
+    );
+    expect((headersInput.element as HTMLTextAreaElement).value).toBe(
+      "X-Cdn-Client-IP\nTrue-Client-IP",
+    );
+
+    await headersInput.setValue("X-Cdn-Client-IP\n True-Client-IP, X-Edge-IP ");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        api_key_acl_trust_forwarded_ip: true,
+        forwarded_client_ip_headers: [
+          "X-Cdn-Client-IP",
+          "True-Client-IP",
+          "X-Edge-IP",
+        ],
       }),
     );
   });

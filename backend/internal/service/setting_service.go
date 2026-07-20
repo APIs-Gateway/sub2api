@@ -702,20 +702,60 @@ func (s *SettingService) SetProxyRepository(repo ProxyRepository) {
 }
 
 func (s *SettingService) LoadAPIKeyACLTrustForwardedIPSetting(ctx context.Context) error {
+	return s.LoadForwardedClientIPSettings(ctx)
+}
+
+// LoadForwardedClientIPSettings loads the legacy trust toggle and the
+// optional custom CDN client-IP header list into the live config snapshot.
+func (s *SettingService) LoadForwardedClientIPSettings(ctx context.Context) error {
 	if s == nil || s.cfg == nil || s.settingRepo == nil {
 		return nil
 	}
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyAPIKeyACLTrustForwardedIP)
+	values, err := s.settingRepo.GetMultiple(ctx, []string{
+		SettingKeyAPIKeyACLTrustForwardedIP,
+		SettingKeyForwardedClientIPHeaders,
+	})
 	if err != nil {
-		if errors.Is(err, ErrSettingNotFound) {
-			s.cfg.SetTrustForwardedIPForAPIKeyACL(s.cfg.Security.TrustForwardedIPForAPIKeyACL)
-			return nil
-		}
-		return fmt.Errorf("get api key acl forwarded ip setting: %w", err)
+		s.cfg.SetForwardedClientIPSettings(false, nil)
+		return fmt.Errorf("get forwarded client ip settings: %w", err)
 	}
-	enabled := value == "true"
-	s.cfg.SetTrustForwardedIPForAPIKeyACL(enabled)
-	return nil
+
+	runtimeSettings := s.cfg.ForwardedClientIPSettings()
+	enabled := runtimeSettings.TrustForwardedIP
+	headers := runtimeSettings.Headers
+	if value, ok := values[SettingKeyAPIKeyACLTrustForwardedIP]; ok {
+		enabled = value == "true"
+	}
+
+	var headersErr error
+	if value, ok := values[SettingKeyForwardedClientIPHeaders]; ok {
+		headers, headersErr = parseForwardedClientIPHeadersSetting(value)
+		if headersErr != nil {
+			enabled = false
+			headers = []string{}
+			headersErr = fmt.Errorf("load forwarded client ip headers: %w", headersErr)
+		}
+	}
+
+	updates := make(map[string]string)
+	if _, ok := values[SettingKeyForwardedClientIPHeaders]; !ok {
+		headersJSON, marshalErr := json.Marshal(headers)
+		if marshalErr != nil {
+			headers = []string{}
+			headersErr = errors.Join(headersErr, fmt.Errorf("marshal forwarded client ip headers: %w", marshalErr))
+			headersJSON = []byte("[]")
+		}
+		updates[SettingKeyForwardedClientIPHeaders] = string(headersJSON)
+	}
+	if len(updates) > 0 {
+		if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
+			s.cfg.SetForwardedClientIPSettings(enabled, headers)
+			return errors.Join(headersErr, fmt.Errorf("migrate forwarded client ip settings: %w", err))
+		}
+	}
+
+	s.cfg.SetForwardedClientIPSettings(enabled, headers)
+	return headersErr
 }
 
 // GetAllSettings 获取所有系统设置
@@ -1842,6 +1882,16 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		updates[SettingKeyTurnstileSecretKey] = settings.TurnstileSecretKey
 	}
 	updates[SettingKeyAPIKeyACLTrustForwardedIP] = strconv.FormatBool(settings.APIKeyACLTrustForwardedIP)
+	forwardedClientIPHeaders, err := config.NormalizeForwardedClientIPHeaders(settings.ForwardedClientIPHeaders)
+	if err != nil {
+		return nil, infraerrors.BadRequest("INVALID_FORWARDED_CLIENT_IP_HEADERS", err.Error())
+	}
+	settings.ForwardedClientIPHeaders = forwardedClientIPHeaders
+	forwardedClientIPHeadersJSON, err := json.Marshal(forwardedClientIPHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("marshal forwarded client ip headers: %w", err)
+	}
+	updates[SettingKeyForwardedClientIPHeaders] = string(forwardedClientIPHeadersJSON)
 
 	// LinuxDo Connect OAuth 登录
 	updates[SettingKeyLinuxDoConnectEnabled] = strconv.FormatBool(settings.LinuxDoConnectEnabled)
@@ -2245,7 +2295,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		})
 	}
 	if s.cfg != nil {
-		s.cfg.SetTrustForwardedIPForAPIKeyACL(settings.APIKeyACLTrustForwardedIP)
+		s.cfg.SetForwardedClientIPSettings(settings.APIKeyACLTrustForwardedIP, settings.ForwardedClientIPHeaders)
 	}
 	s.openAIAllowCodexPluginSF.Forget("openai_allow_codex_plugin_enabled")
 	s.openAIAllowCodexPluginCache.Store(&cachedOpenAIAllowCodexPlugin{
@@ -2912,6 +2962,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyLoginAgreementUpdatedAt:                   defaultLoginAgreementDate,
 		SettingKeyLoginAgreementDocuments:                   loginAgreementDocumentsJSON,
 		SettingKeyAPIKeyACLTrustForwardedIP:                 "false",
+		SettingKeyForwardedClientIPHeaders:                  "[]",
 		SettingKeySiteName:                                  "Sub2API",
 		SettingKeySiteLogo:                                  "",
 		SettingKeyDefaultLocale:                             defaultLocaleFallback,
@@ -3085,10 +3136,24 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		loginAgreementUpdatedAt = defaultLoginAgreementDate
 	}
 	apiKeyACLTrustForwardedIP := false
+	forwardedClientIPHeaders := []string{}
+	if s != nil && s.cfg != nil {
+		runtimeSettings := s.cfg.ForwardedClientIPSettings()
+		apiKeyACLTrustForwardedIP = runtimeSettings.TrustForwardedIP
+		forwardedClientIPHeaders = runtimeSettings.Headers
+	}
 	if value, ok := settings[SettingKeyAPIKeyACLTrustForwardedIP]; ok {
 		apiKeyACLTrustForwardedIP = value == "true"
-	} else if s != nil && s.cfg != nil {
-		apiKeyACLTrustForwardedIP = s.cfg.Security.TrustForwardedIPForAPIKeyACL
+	}
+	if value, ok := settings[SettingKeyForwardedClientIPHeaders]; ok {
+		parsed, err := parseForwardedClientIPHeadersSetting(value)
+		if err != nil {
+			slog.Error("invalid persisted forwarded client IP headers; forwarded trust disabled", "error", err)
+			apiKeyACLTrustForwardedIP = false
+			forwardedClientIPHeaders = []string{}
+		} else {
+			forwardedClientIPHeaders = parsed
+		}
 	}
 	result := &SystemSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
@@ -3116,6 +3181,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		TurnstileSiteKey:                 settings[SettingKeyTurnstileSiteKey],
 		TurnstileSecretKeyConfigured:     settings[SettingKeyTurnstileSecretKey] != "",
 		APIKeyACLTrustForwardedIP:        apiKeyACLTrustForwardedIP,
+		ForwardedClientIPHeaders:         forwardedClientIPHeaders,
 		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
 		SiteLogo:                         settings[SettingKeySiteLogo],
 		SiteSubtitle:                     s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
