@@ -41,6 +41,7 @@ var (
 )
 
 const (
+	MaxAPIKeyCredentialBytes     = 128
 	apiKeyMaxErrorsPerHour       = 20
 	apiKeyLastUsedMinTouch       = 30 * time.Second
 	apiKeySortCurrentConcurrency = "current_concurrency"
@@ -220,6 +221,7 @@ type APIKeyService struct {
 	authCacheL1           *ristretto.Cache
 	authCfg               apiKeyAuthCacheConfig
 	authGroup             singleflight.Group
+	invalidAuthAbuse      *invalidAuthAbuseLimiter
 	lastUsedTouchL1       sync.Map // keyID -> nextAllowedAt(time.Time)
 	lastUsedTouchSF       singleflight.Group
 }
@@ -244,6 +246,7 @@ func NewAPIKeyService(
 		cfg:               cfg,
 	}
 	svc.initAuthCache(cfg)
+	svc.invalidAuthAbuse = newInvalidAuthAbuseLimiter(cfg)
 	return svc
 }
 
@@ -575,6 +578,9 @@ func (s *APIKeyService) GetByID(ctx context.Context, id int64) (*APIKey, error) 
 
 // GetByKey 根据Key字符串获取API Key（用于认证）
 func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, error) {
+	if len(key) == 0 || len(key) > MaxAPIKeyCredentialBytes {
+		return nil, ErrAPIKeyNotFound
+	}
 	cacheKey := s.authCacheKey(key)
 
 	if entry, ok := s.getAuthCacheEntry(ctx, cacheKey); ok {

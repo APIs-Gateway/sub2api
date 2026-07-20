@@ -1,6 +1,14 @@
 package middleware
 
-import "github.com/gin-gonic/gin"
+import (
+	"math"
+	"net/netip"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
 
 // IngressRejectReason identifies expected gateway admission failures that must
 // not be treated as operational request errors.
@@ -23,6 +31,38 @@ const (
 
 const ingressRejectReasonContextKey = "ingress_reject_reason"
 
+func invalidAuthClientKey(c *gin.Context) string {
+	return normalizeIngressRejectIP(SecurityClientIP(c))
+}
+
+func rejectInvalidAuthAbuse(c *gin.Context, apiKeyService interface {
+	CheckInvalidAuthAbuse(string) (time.Duration, bool)
+}) bool {
+	if c == nil || apiKeyService == nil {
+		return false
+	}
+	retry, blocked := apiKeyService.CheckInvalidAuthAbuse(invalidAuthClientKey(c))
+	if !blocked {
+		return false
+	}
+	retrySeconds := int(math.Ceil(retry.Seconds()))
+	if retrySeconds < 1 {
+		retrySeconds = 1
+	}
+	c.Header("Retry-After", strconv.Itoa(retrySeconds))
+	MarkIngressRejected(c, IngressRejectInvalidAuthRateLimited)
+	return true
+}
+
+func recordInvalidAuthFailure(c *gin.Context, apiKeyService interface {
+	RecordInvalidAuthFailure(string)
+}) {
+	if c == nil || apiKeyService == nil {
+		return
+	}
+	apiKeyService.RecordInvalidAuthFailure(invalidAuthClientKey(c))
+}
+
 // MarkIngressRejected marks a request as rejected before gateway admission.
 func MarkIngressRejected(c *gin.Context, reason IngressRejectReason) {
 	if c == nil || reason == "" {
@@ -42,4 +82,16 @@ func GetIngressRejectReason(c *gin.Context) (IngressRejectReason, bool) {
 	}
 	reason, ok := value.(IngressRejectReason)
 	return reason, ok && reason != ""
+}
+
+func normalizeIngressRejectIP(raw string) string {
+	addr, err := netip.ParseAddr(strings.TrimSpace(raw))
+	if err != nil {
+		return "0.0.0.0"
+	}
+	addr = addr.Unmap()
+	if addr.Is6() {
+		return netip.PrefixFrom(addr, 64).Masked().Addr().String()
+	}
+	return addr.String()
 }

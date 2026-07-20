@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -24,21 +25,44 @@ func APIKeyAuthGoogle(apiKeyService *service.APIKeyService, cfg *config.Config) 
 // It is intended for Gemini native endpoints (/v1beta) to match Gemini SDK expectations.
 func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if rejectInvalidAuthAbuse(c, apiKeyService) {
+			abortWithGoogleError(c, http.StatusTooManyRequests, "Too many invalid authentication attempts; retry later")
+			return
+		}
+		if apiKeyHeadersTooLarge(c) {
+			recordInvalidAuthFailure(c, apiKeyService)
+			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+			abortWithGoogleError(c, http.StatusUnauthorized, "Invalid API key")
+			return
+		}
 		if v := strings.TrimSpace(c.Query("api_key")); v != "" {
+			recordInvalidAuthFailure(c, apiKeyService)
 			MarkIngressRejected(c, IngressRejectQueryAPIKeyDeprecated)
 			abortWithGoogleError(c, 400, "Query parameter api_key is deprecated. Use Authorization header or key instead.")
 			return
 		}
 		apiKeyString := extractAPIKeyForGoogle(c)
 		if apiKeyString == "" {
-			MarkIngressRejected(c, IngressRejectAPIKeyRequired)
+			recordInvalidAuthFailure(c, apiKeyService)
+			if hasAPIKeyCredentialInput(c) {
+				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+			} else {
+				MarkIngressRejected(c, IngressRejectAPIKeyRequired)
+			}
 			abortWithGoogleError(c, 401, "API key is required")
+			return
+		}
+		if len(apiKeyString) > service.MaxAPIKeyCredentialBytes {
+			recordInvalidAuthFailure(c, apiKeyService)
+			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+			abortWithGoogleError(c, http.StatusUnauthorized, "Invalid API key")
 			return
 		}
 
 		apiKey, err := apiKeyService.GetByKey(c.Request.Context(), apiKeyString)
 		if err != nil {
 			if errors.Is(err, service.ErrAPIKeyNotFound) {
+				recordInvalidAuthFailure(c, apiKeyService)
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 				abortWithGoogleError(c, 401, "Invalid API key")
 				return

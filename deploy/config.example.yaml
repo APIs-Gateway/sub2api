@@ -666,6 +666,14 @@ api_key_auth_cache:
   # Enable singleflight for cache misses
   # 缓存未命中时启用 singleflight 合并回源
   singleflight: true
+  # Process-local invalid-auth abuse protection.
+  # 本机无效鉴权防护，按可信客户端 IP 统计失败次数。
+  invalid_abuse:
+    enabled: true
+    threshold: 120
+    window_seconds: 60
+    block_seconds: 60
+    capacity: 16384
 
 # =============================================================================
 # Dashboard Cache Configuration

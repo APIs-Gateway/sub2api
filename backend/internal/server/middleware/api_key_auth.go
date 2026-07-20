@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -29,10 +30,22 @@ func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionS
 func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, billingCacheService *service.BillingCacheService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// ── 1. 提取 API Key ──────────────────────────────────────────
+		if rejectInvalidAuthAbuse(c, apiKeyService) {
+			AbortWithError(c, http.StatusTooManyRequests, "INVALID_AUTH_RATE_LIMITED", "Too many invalid authentication attempts; retry later")
+			return
+		}
+
+		if apiKeyHeadersTooLarge(c) {
+			recordInvalidAuthFailure(c, apiKeyService)
+			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+			AbortWithError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
+			return
+		}
 
 		queryKey := strings.TrimSpace(c.Query("key"))
 		queryApiKey := strings.TrimSpace(c.Query("api_key"))
 		if queryKey != "" || queryApiKey != "" {
+			recordInvalidAuthFailure(c, apiKeyService)
 			MarkIngressRejected(c, IngressRejectQueryAPIKeyDeprecated)
 			AbortWithError(c, 400, "api_key_in_query_deprecated", "API key in query parameter is deprecated. Please use Authorization header instead.")
 			return
@@ -62,7 +75,12 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// 如果所有header都没有API key
 		if apiKeyString == "" {
-			MarkIngressRejected(c, IngressRejectAPIKeyRequired)
+			recordInvalidAuthFailure(c, apiKeyService)
+			if hasAPIKeyCredentialInput(c) {
+				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+			} else {
+				MarkIngressRejected(c, IngressRejectAPIKeyRequired)
+			}
 			AbortWithError(c, 401, "API_KEY_REQUIRED", "API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header")
 			return
 		}
@@ -72,6 +90,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		apiKey, err := apiKeyService.GetByKey(c.Request.Context(), apiKeyString)
 		if err != nil {
 			if errors.Is(err, service.ErrAPIKeyNotFound) {
+				recordInvalidAuthFailure(c, apiKeyService)
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 				AbortWithError(c, 401, "INVALID_API_KEY", "Invalid API key")
 				return
@@ -252,6 +271,26 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		c.Next()
 	}
+}
+
+const maxAPIKeyAuthorizationHeaderBytes = service.MaxAPIKeyCredentialBytes + 128
+
+func apiKeyHeadersTooLarge(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	return len(c.GetHeader("Authorization")) > maxAPIKeyAuthorizationHeaderBytes ||
+		len(c.GetHeader("x-api-key")) > service.MaxAPIKeyCredentialBytes ||
+		len(c.GetHeader("x-goog-api-key")) > service.MaxAPIKeyCredentialBytes
+}
+
+func hasAPIKeyCredentialInput(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	return c.GetHeader("Authorization") != "" ||
+		c.GetHeader("x-api-key") != "" ||
+		c.GetHeader("x-goog-api-key") != ""
 }
 
 func isSubscriptionLimitError(err error) bool {
