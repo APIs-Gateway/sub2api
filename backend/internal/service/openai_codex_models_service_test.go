@@ -81,9 +81,11 @@ func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 
 func TestFetchCodexModelsManifestAPIKeyConvertsStandardOpenAIModelList(t *testing.T) {
 	upstreamBody := `{"object":"list","data":[{"id":"gpt-5.6","object":"model"},{"id":"  ","object":"model"},{"id":"gpt-5.6-codex","object":"model"}]}`
+	header := make(http.Header)
+	header.Set("ETag", `W/"openai-list"`)
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
-		Header:     http.Header{"ETag": []string{`W/"openai-list"`}},
+		Header:     header,
 		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
 	}}
 
