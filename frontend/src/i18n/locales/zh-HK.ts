@@ -217,9 +217,11 @@
       description: '連接到您的 Redis 服務器',
       host: '主機',
       port: '端口',
+      username: '用戶名（可選）',
       password: '密碼（可選）',
       database: '數據庫',
       passwordPlaceholder: '密碼',
+      usernamePlaceholder: '預設用戶留空',
       enableTls: '啟用 TLS',
       enableTlsHint: '連接 Redis 時使用 TLS（公共 CA 證書）'
     },
