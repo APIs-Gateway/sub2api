@@ -195,6 +195,27 @@ func TestNotificationEmailAdditionalEventsAreListedAndPreviewable(t *testing.T) 
 	}
 }
 
+func TestCyberPolicyTemplatesWrapLongUpstreamMessages(t *testing.T) {
+	ctx := context.Background()
+	svc := NewNotificationEmailService(newNotificationEmailMemorySettingRepo(), nil)
+	longMessage := strings.Repeat("7b226572726f72223a5b", 512)
+
+	for _, locale := range []string{"en", "zh-CN"} {
+		preview, err := svc.PreviewTemplate(ctx, NotificationEmailPreviewInput{
+			Event:  NotificationEmailEventCyberPolicyNotice,
+			Locale: locale,
+			Variables: map[string]string{
+				"upstream_message": longMessage,
+			},
+		})
+		require.NoError(t, err)
+		require.Contains(t, preview.HTML, "table-layout:fixed")
+		require.Contains(t, preview.HTML, "overflow-wrap:anywhere")
+		require.Contains(t, preview.HTML, "word-break:break-all")
+		require.Contains(t, preview.HTML, "white-space:pre-wrap")
+	}
+}
+
 func TestNotificationEmailRawHTMLVariablesAreTrustedOnlyForHTMLPlaceholders(t *testing.T) {
 	require.True(t, notificationEmailRawHTMLAllowed(NotificationEmailEventOpsScheduledReport, "report_html"))
 	require.False(t, notificationEmailRawHTMLAllowed(NotificationEmailEventOpsScheduledReport, "recipient_name"))
