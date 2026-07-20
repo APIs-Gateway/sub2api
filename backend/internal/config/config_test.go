@@ -86,6 +86,33 @@ func TestForwardedClientIPSettingsSnapshotPreservesHeaders(t *testing.T) {
 	require.Equal(t, []string{"X-Cdn-Client-Ip"}, cfg.ForwardedClientIPSettings().Headers)
 }
 
+func TestForwardedClientIPSettingsFallbackAndNilSafety(t *testing.T) {
+	var nilConfig *Config
+	require.False(t, nilConfig.TrustForwardedIPForAPIKeyACL())
+	require.False(t, nilConfig.ForwardedClientIPTrustEnabled())
+	require.Equal(t, []string{}, nilConfig.ForwardedClientIPSettings().Headers)
+	require.NotPanics(t, func() {
+		nilConfig.SetForwardedClientIPSettings(true, []string{"X-Cdn-Client-IP"})
+		nilConfig.SetTrustForwardedIPForAPIKeyACL(true)
+	})
+
+	cfg := &Config{Security: SecurityConfig{
+		TrustForwardedIPForAPIKeyACL: true,
+		ForwardedClientIPHeaders:     []string{"X-Cdn-Client-IP"},
+	}}
+	require.True(t, cfg.ForwardedClientIPTrustEnabled())
+	require.Equal(t, []string{"X-Cdn-Client-IP"}, cfg.ForwardedClientIPSettings().Headers)
+}
+
+func TestLoadForwardedClientIPHeadersFromEnvironment(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("SECURITY_FORWARDED_CLIENT_IP_HEADERS", " x-cdn-client-ip , True-Client-IP ")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, []string{"X-Cdn-Client-Ip", "True-Client-Ip"}, cfg.ForwardedClientIPSettings().Headers)
+}
+
 func TestLoadDefaultSchedulingConfig(t *testing.T) {
 	resetViperWithJWTSecret(t)
 

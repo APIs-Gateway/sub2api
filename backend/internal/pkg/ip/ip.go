@@ -108,13 +108,13 @@ func resolveCustomForwardedClientIP(c *gin.Context, headers []string) (string, s
 
 func resolveLegacyForwardedHeaderIP(c *gin.Context) (string, string) {
 	var fallback string
-	if forwarded := normalizeIP(c.GetHeader("CF-Connecting-IP")); forwarded != "" {
+	if forwarded := parseNormalizedIP(c.GetHeader("CF-Connecting-IP")); forwarded != "" {
 		fallback = forwarded
 		if !isPrivateIP(forwarded) {
 			return forwarded, fallback
 		}
 	}
-	if realIP := normalizeIP(c.GetHeader("X-Real-IP")); realIP != "" {
+	if realIP := parseNormalizedIP(c.GetHeader("X-Real-IP")); realIP != "" {
 		if fallback == "" {
 			fallback = realIP
 		}
@@ -125,13 +125,13 @@ func resolveLegacyForwardedHeaderIP(c *gin.Context) (string, string) {
 	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
 		ips := strings.Split(xff, ",")
 		for _, candidate := range ips {
-			candidate = strings.TrimSpace(candidate)
+			candidate = parseNormalizedIP(candidate)
 			if candidate != "" && !isPrivateIP(candidate) {
-				return normalizeIP(candidate), fallback
+				return candidate, fallback
 			}
 		}
 		if fallback == "" && len(ips) > 0 {
-			fallback = normalizeIP(strings.TrimSpace(ips[0]))
+			fallback = parseNormalizedIP(ips[0])
 		}
 	}
 	return "", fallback
@@ -188,6 +188,14 @@ func normalizeIP(ip string) string {
 		return host
 	}
 	return ip
+}
+
+func parseNormalizedIP(value string) string {
+	normalized := normalizeIP(value)
+	if net.ParseIP(normalized) == nil {
+		return ""
+	}
+	return normalized
 }
 
 // privateNets 预编译私有 IP CIDR 块，避免每次调用 isPrivateIP 时重复解析

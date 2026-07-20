@@ -187,6 +187,34 @@ func TestGetSecurityClientIPSnapshotDisablesForwardedHeaders(t *testing.T) {
 	require.Equal(t, "9.9.9.9", w.Body.String())
 }
 
+func TestGetClientIPHandlesLegacyPrivateAndInvalidForwardedValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/", nil)
+	c.Request.Header.Set("CF-Connecting-IP", "10.0.0.2")
+	c.Request.Header.Set("X-Real-IP", "192.168.1.5")
+	c.Request.Header.Set("X-Forwarded-For", "172.16.0.3")
+	require.Equal(t, "10.0.0.2", GetClientIP(c))
+
+	c.Request.Header.Set("CF-Connecting-IP", "not-an-ip")
+	c.Request.Header.Set("X-Real-IP", "192.168.1.6")
+	c.Request.Header.Set("X-Forwarded-For", "invalid, 8.8.8.8")
+	require.Equal(t, "8.8.8.8", GetClientIP(c))
+}
+
+func TestForwardedIPHelpersHandleNilContexts(t *testing.T) {
+	require.Equal(t, "", GetClientIP(nil))
+	require.Equal(t, "", GetTrustedClientIP(nil))
+	require.Equal(t, "", GetSecurityClientIP(nil, true))
+	require.NotPanics(t, func() {
+		SetForwardedIPSettings(nil, true, []string{"X-Cdn-Client-IP"})
+		SetLegacyForwardedIPTrust(nil, true)
+	})
+	_, _ = resolveCustomForwardedClientIP(nil, []string{"X-Cdn-Client-IP"})
+	_, _ = resolveCustomForwardedClientIP(&gin.Context{}, []string{"X-Cdn-Client-IP"})
+}
+
 func TestGetCloudflareCountryCode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
