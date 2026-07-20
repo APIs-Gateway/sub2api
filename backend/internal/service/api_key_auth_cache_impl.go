@@ -97,11 +97,18 @@ func (s *APIKeyService) StartAuthCacheInvalidationSubscriber(ctx context.Context
 		return
 	}
 	if err := s.cache.SubscribeAuthCacheInvalidation(ctx, func(cacheKey string) {
-		s.authCacheL1.Del(cacheKey)
+		s.invalidateLocalAuthCache(cacheKey)
 	}); err != nil {
 		// Log but don't fail - L1 cache will still work, just without cross-instance invalidation
 		slog.Warn("failed to start auth cache invalidation subscriber", "error", err)
 	}
+}
+
+func (s *APIKeyService) invalidateLocalAuthCache(cacheKey string) {
+	if s == nil || s.authCacheL1 == nil {
+		return
+	}
+	s.authCacheL1.Del(cacheKey)
 }
 
 func (s *APIKeyService) authCacheKey(key string) string {

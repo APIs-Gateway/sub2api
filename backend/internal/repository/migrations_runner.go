@@ -55,6 +55,78 @@ const paymentOrdersOutTradeNoUniqueMigration = "120_enforce_payment_orders_out_t
 const paymentOrdersOutTradeNoUniqueIndex = "paymentorder_out_trade_no_unique"
 const schedulerOutboxPendingDedupKeyMigration = "153_scheduler_outbox_pending_dedup_key_index_notx.sql"
 const schedulerOutboxPendingDedupKeyIndex = "idx_scheduler_outbox_pending_dedup_key"
+const authCacheInvalidationOutboxMigration = "184_auth_cache_invalidation_outbox.sql"
+
+type migrationDatabaseDialect uint8
+
+const (
+	migrationDatabasePostgres migrationDatabaseDialect = iota
+	migrationDatabaseMySQL
+	migrationDatabaseSQLite
+)
+
+func migrationDatabaseDialectForDB(db *sql.DB) migrationDatabaseDialect {
+	if db == nil || isPostgresDriver(db) {
+		return migrationDatabasePostgres
+	}
+	driverName := strings.ToLower(fmt.Sprintf("%T", db.Driver()))
+	if strings.Contains(driverName, "mysql") {
+		return migrationDatabaseMySQL
+	}
+	if strings.Contains(driverName, "sqlite") {
+		return migrationDatabaseSQLite
+	}
+	// Keep the PostgreSQL default for sqlmock and unknown drivers, matching the
+	// production default and the existing migration-runner tests.
+	return migrationDatabasePostgres
+}
+
+func migrationPlaceholder(dialect migrationDatabaseDialect, position int) string {
+	if dialect == migrationDatabasePostgres {
+		return fmt.Sprintf("$%d", position)
+	}
+	return "?"
+}
+
+func migrationAppliesToDatabase(name string, dialect migrationDatabaseDialect) bool {
+	switch {
+	case strings.HasSuffix(name, "_mysql.sql"):
+		return dialect == migrationDatabaseMySQL
+	case strings.HasSuffix(name, "_sqlite.sql"):
+		return dialect == migrationDatabaseSQLite
+	case name == authCacheInvalidationOutboxMigration:
+		return dialect == migrationDatabasePostgres
+	default:
+		return true
+	}
+}
+
+func schemaMigrationsTableDDLForDialect(dialect migrationDatabaseDialect) string {
+	if dialect == migrationDatabaseMySQL {
+		return `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+	filename   VARCHAR(255) PRIMARY KEY,
+	checksum   VARCHAR(64) NOT NULL,
+	applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+	}
+	if dialect == migrationDatabasePostgres {
+		return schemaMigrationsTableDDL
+	}
+	return `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+	filename   TEXT PRIMARY KEY,
+	checksum   TEXT NOT NULL,
+	applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+}
+
+func recordMigrationQuery(dialect migrationDatabaseDialect) string {
+	return fmt.Sprintf("INSERT INTO schema_migrations (filename, checksum) VALUES (%s, %s)",
+		migrationPlaceholder(dialect, 1), migrationPlaceholder(dialect, 2))
+}
 
 type migrationChecksumCompatibilityRule struct {
 	fileChecksum       string
@@ -121,27 +193,34 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	if db == nil {
 		return errors.New("nil sql db")
 	}
+	dialect := migrationDatabaseDialectForDB(db)
 
 	// 获取分布式锁，确保多实例部署时只有一个实例执行迁移。
 	// 这是 PostgreSQL 特有的 Advisory Lock 机制。
-	if err := pgAdvisoryLock(ctx, db); err != nil {
-		return err
+	if dialect == migrationDatabasePostgres {
+		if err := pgAdvisoryLock(ctx, db); err != nil {
+			return err
+		}
 	}
 	defer func() {
 		// 无论迁移是否成功，都要释放锁。
 		// 使用 context.Background() 确保即使原 ctx 已取消也能释放锁。
-		_ = pgAdvisoryUnlock(context.Background(), db)
+		if dialect == migrationDatabasePostgres {
+			_ = pgAdvisoryUnlock(context.Background(), db)
+		}
 	}()
 
 	// 创建迁移记录表（如果不存在）。
 	// 该表记录所有已应用的迁移及其校验和。
-	if _, err := db.ExecContext(ctx, schemaMigrationsTableDDL); err != nil {
+	if _, err := db.ExecContext(ctx, schemaMigrationsTableDDLForDialect(dialect)); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
 	// 自动对齐 Atlas 基线（如果检测到 legacy schema_migrations 且缺失 atlas_schema_revisions）。
-	if err := ensureAtlasBaselineAligned(ctx, db, fsys); err != nil {
-		return err
+	if dialect == migrationDatabasePostgres {
+		if err := ensureAtlasBaselineAligned(ctx, db, fsys); err != nil {
+			return err
+		}
 	}
 
 	// 获取所有 .sql 迁移文件并按文件名排序。
@@ -153,6 +232,9 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	sort.Strings(files) // 确保按文件名顺序执行迁移
 
 	for _, name := range files {
+		if !migrationAppliesToDatabase(name, dialect) {
+			continue
+		}
 		// 读取迁移文件内容
 		contentBytes, err := fs.ReadFile(fsys, name)
 		if err != nil {
@@ -171,7 +253,10 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 
 		// 检查该迁移是否已经应用
 		var existing string
-		rowErr := db.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE filename = $1", name).Scan(&existing)
+		rowErr := db.QueryRowContext(ctx,
+			fmt.Sprintf("SELECT checksum FROM schema_migrations WHERE filename = %s", migrationPlaceholder(dialect, 1)),
+			name,
+		).Scan(&existing)
 		if rowErr == nil {
 			// 迁移已应用，验证校验和是否匹配
 			if existing != checksum {
@@ -222,8 +307,21 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 					return fmt.Errorf("apply migration %s (non-tx statement %d): %w", name, i+1, err)
 				}
 			}
-			if _, err := db.ExecContext(ctx, "INSERT INTO schema_migrations (filename, checksum) VALUES ($1, $2)", name, checksum); err != nil {
+			if _, err := db.ExecContext(ctx, recordMigrationQuery(dialect), name, checksum); err != nil {
 				return fmt.Errorf("record migration %s (non-tx): %w", name, err)
+			}
+			continue
+		}
+
+		// MySQL 5.7 does not enable multiStatements by default and DDL such as
+		// CREATE TRIGGER implicitly commits.  The MySQL variant is therefore
+		// executed statement-by-statement outside an explicit transaction.
+		if dialect == migrationDatabaseMySQL && strings.HasSuffix(name, "_mysql.sql") {
+			if err := execMigrationContent(ctx, db, content, dialect); err != nil {
+				return fmt.Errorf("apply migration %s: %w", name, err)
+			}
+			if _, err := db.ExecContext(ctx, recordMigrationQuery(dialect), name, checksum); err != nil {
+				return fmt.Errorf("record migration %s: %w", name, err)
 			}
 			continue
 		}
@@ -234,14 +332,15 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 			return fmt.Errorf("begin migration %s: %w", name, err)
 		}
 
-		// 执行迁移 SQL
-		if _, err := tx.ExecContext(ctx, content); err != nil {
+		// 执行迁移 SQL。MySQL 驱动默认关闭 multiStatements，因此其方言
+		// 迁移逐条执行；触发器文件保持单语句 trigger body。
+		if err := execMigrationContent(ctx, tx, content, dialect); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
 
 		// 记录迁移已完成，保存文件名和校验和
-		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (filename, checksum) VALUES ($1, $2)", name, checksum); err != nil {
+		if _, err := tx.ExecContext(ctx, recordMigrationQuery(dialect), name, checksum); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("record migration %s: %w", name, err)
 		}
@@ -373,7 +472,7 @@ func ensureAtlasBaselineAligned(ctx context.Context, db *sql.DB, fsys fs.FS) err
 		return nil
 	}
 
-	version, description, hash, err := latestMigrationBaseline(fsys)
+	version, description, hash, err := latestMigrationBaselineForDialect(fsys, migrationDatabaseDialectForDB(db))
 	if err != nil {
 		return fmt.Errorf("atlas baseline version: %w", err)
 	}
@@ -400,10 +499,21 @@ func tableExists(ctx context.Context, db *sql.DB, tableName string) (bool, error
 }
 
 func latestMigrationBaseline(fsys fs.FS) (string, string, string, error) {
+	return latestMigrationBaselineForDialect(fsys, migrationDatabasePostgres)
+}
+
+func latestMigrationBaselineForDialect(fsys fs.FS, dialect migrationDatabaseDialect) (string, string, string, error) {
 	files, err := fs.Glob(fsys, "*.sql")
 	if err != nil {
 		return "", "", "", err
 	}
+	filtered := files[:0]
+	for _, name := range files {
+		if migrationAppliesToDatabase(name, dialect) {
+			filtered = append(filtered, name)
+		}
+	}
+	files = filtered
 	if len(files) == 0 {
 		return "baseline", "baseline", "", nil
 	}
@@ -503,6 +613,27 @@ func splitSQLStatements(content string) []string {
 		out = append(out, part)
 	}
 	return out
+}
+
+type migrationSQLExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func execMigrationContent(ctx context.Context, executor migrationSQLExecutor, content string, dialect migrationDatabaseDialect) error {
+	if dialect != migrationDatabaseMySQL {
+		_, err := executor.ExecContext(ctx, content)
+		return err
+	}
+	for index, statement := range splitSQLStatements(content) {
+		trimmed := strings.TrimSpace(statement)
+		if trimmed == "" || stripSQLLineComment(trimmed) == "" {
+			continue
+		}
+		if _, err := executor.ExecContext(ctx, trimmed); err != nil {
+			return fmt.Errorf("statement %d: %w", index+1, err)
+		}
+	}
+	return nil
 }
 
 func stripSQLLineComment(s string) string {
