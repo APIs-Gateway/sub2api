@@ -105,6 +105,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // quotaFlusher
 		nil, // authCacheInvalidationWorker
 		nil, // promptAudit
+		nil, // upstreamBillingProbe
 	)
 
 	require.NotPanics(t, func() {
