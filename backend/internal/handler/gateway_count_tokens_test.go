@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -45,6 +46,24 @@ func (r countTokensModelAvailabilityAccountRepo) ListSchedulableByGroupIDAndPlat
 
 func (r countTokensModelAvailabilityAccountRepo) ListByPlatform(_ context.Context, platform string) ([]service.Account, error) {
 	return r.accountsForPlatforms([]string{platform}, false), nil
+}
+
+func (r countTokensModelAvailabilityAccountRepo) ListByGroup(context.Context, int64) ([]service.Account, error) {
+	return r.activeAccounts(), nil
+}
+
+func (r countTokensModelAvailabilityAccountRepo) ListActive(context.Context) ([]service.Account, error) {
+	return r.activeAccounts(), nil
+}
+
+func (r countTokensModelAvailabilityAccountRepo) activeAccounts() []service.Account {
+	out := make([]service.Account, 0, len(r.accounts))
+	for _, account := range r.accounts {
+		if account.Status == service.StatusActive {
+			out = append(out, account)
+		}
+	}
+	return out
 }
 
 func (r countTokensModelAvailabilityAccountRepo) accountsForPlatforms(platforms []string, schedulableOnly bool) []service.Account {
@@ -96,7 +115,11 @@ func TestGatewayHandlerCountTokens_ModelAvailabilityClassification(t *testing.T)
 				Platform:    service.PlatformAnthropic,
 				Type:        service.AccountTypeOAuth,
 				Status:      service.StatusActive,
-				Schedulable: false,
+				Schedulable: true,
+				RateLimitResetAt: func() *time.Time {
+					until := time.Now().Add(time.Hour)
+					return &until
+				}(),
 				Credentials: map[string]any{"model_mapping": map[string]any{"claude-supported": "claude-supported"}},
 			}},
 			wantStatus:   http.StatusServiceUnavailable,
