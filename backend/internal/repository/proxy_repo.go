@@ -8,11 +8,13 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	dbaccount "github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
+	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 )
 
@@ -91,7 +93,30 @@ func (r *proxyRepository) ListByIDs(ctx context.Context, ids []int64) ([]service
 }
 
 func (r *proxyRepository) Update(ctx context.Context, proxyIn *service.Proxy) error {
-	builder := r.client.Proxy.UpdateOneID(proxyIn.ID).
+	client := r.client
+	exec := r.sql
+	var tx *dbent.Tx
+	if contextTx := dbent.TxFromContext(ctx); contextTx != nil {
+		client = contextTx.Client()
+		exec = contextTx
+	} else {
+		var txErr error
+		tx, txErr = r.client.Tx(ctx)
+		if txErr == nil {
+			defer func() { _ = tx.Rollback() }()
+			client = tx.Client()
+			exec = tx
+		} else if txErr != dbent.ErrTxStarted {
+			return txErr
+		}
+	}
+
+	previous, err := lockProbeProxyIdentity(ctx, client, exec, proxyIn.ID)
+	if err != nil {
+		return err
+	}
+
+	builder := client.Proxy.UpdateOneID(proxyIn.ID).
 		SetName(proxyIn.Name).
 		SetProtocol(proxyIn.Protocol).
 		SetHost(proxyIn.Host).
@@ -121,14 +146,25 @@ func (r *proxyRepository) Update(ctx context.Context, proxyIn *service.Proxy) er
 	}
 
 	updated, err := builder.Save(ctx)
-	if err == nil {
-		applyProxyEntityToService(proxyIn, updated)
-		return nil
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return service.ErrProxyNotFound
+		}
+		return err
 	}
-	if dbent.IsNotFound(err) {
-		return service.ErrProxyNotFound
+
+	if previous != probeProxyIdentityFromService(proxyIn) {
+		if err := clearProbeSnapshotsForProxy(ctx, client, exec, proxyIn.ID); err != nil {
+			return err
+		}
 	}
-	return err
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	applyProxyEntityToService(proxyIn, updated)
+	return nil
 }
 
 func (r *proxyRepository) Delete(ctx context.Context, id int64) error {
@@ -544,13 +580,13 @@ func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, proxyID int6
 			return 0, txErr
 		}
 		// 已在外层事务中（集成测试场景），直接用 r.sql 执行
-		return r.sweepOneExpiredProxyOnExec(ctx, r.sql, proxyID, target, change)
+		return r.sweepOneExpiredProxyOnExec(ctx, r.client, r.sql, proxyID, target, change)
 	}
 
 	// 使用新事务执行
 	var n int64
 	var err error
-	n, err = r.sweepOneExpiredProxyOnExec(ctx, tx, proxyID, target, change)
+	n, err = r.sweepOneExpiredProxyOnExec(ctx, tx.Client(), tx, proxyID, target, change)
 	if err != nil {
 		_ = tx.Rollback()
 		return 0, err
@@ -562,13 +598,19 @@ func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, proxyID int6
 }
 
 // sweepOneExpiredProxyOnExec 在给定的 sqlExecutor 上执行：标记 expired + 改投账号。
-func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec sqlExecutor, proxyID int64, target *int64, change bool) (int64, error) {
+func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, client *dbent.Client, exec sqlExecutor, proxyID int64, target *int64, change bool) (int64, error) {
+	if client != nil && client.Driver().Dialect() != dialect.Postgres {
+		return r.sweepOneExpiredProxyOnEnt(ctx, client, proxyID, target, change)
+	}
 	if _, err := exec.ExecContext(ctx,
 		`UPDATE proxies SET status=$1, updated_at=NOW() WHERE id=$2 AND deleted_at IS NULL`,
 		service.StatusExpired, proxyID); err != nil {
 		return 0, err
 	}
 	if !change {
+		if err := clearProbeSnapshotsForProxy(ctx, client, exec, proxyID); err != nil {
+			return 0, err
+		}
 		return 0, nil
 	}
 	var (
@@ -577,11 +619,23 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 	)
 	if target == nil {
 		res, err = exec.ExecContext(ctx, `
-			UPDATE accounts SET proxy_id=NULL, proxy_fallback_origin_id=$1, updated_at=NOW()
+			UPDATE accounts
+			SET proxy_id=NULL,
+				proxy_fallback_origin_id=$1,
+				extra = CASE WHEN platform='openai' AND type='apikey'
+					THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe'
+					ELSE extra END,
+				updated_at=NOW()
 			WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL`, proxyID)
 	} else {
 		res, err = exec.ExecContext(ctx, `
-			UPDATE accounts SET proxy_id=$2, proxy_fallback_origin_id=$1, updated_at=NOW()
+			UPDATE accounts
+			SET proxy_id=$2,
+				proxy_fallback_origin_id=$1,
+				extra = CASE WHEN platform='openai' AND type='apikey'
+					THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe'
+					ELSE extra END,
+				updated_at=NOW()
 			WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL`, proxyID, *target)
 	}
 	if err != nil {
@@ -589,6 +643,44 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
+}
+
+func (r *proxyRepository) sweepOneExpiredProxyOnEnt(ctx context.Context, client *dbent.Client, proxyID int64, target *int64, change bool) (int64, error) {
+	if _, err := client.Proxy.Update().Where(proxy.IDEQ(proxyID), proxy.DeletedAtIsNil()).SetStatus(service.StatusExpired).Save(ctx); err != nil {
+		return 0, err
+	}
+	if !change {
+		if err := clearProbeSnapshotsForProxy(ctx, client, client, proxyID); err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+
+	accounts, err := client.Account.Query().Where(
+		dbaccount.ProxyIDEQ(proxyID),
+		dbaccount.ProxyFallbackOriginIDIsNil(),
+		dbaccount.DeletedAtIsNil(),
+	).All(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, account := range accounts {
+		builder := client.Account.UpdateOneID(account.ID).SetProxyFallbackOriginID(proxyID)
+		if target == nil {
+			builder.ClearProxyID()
+		} else {
+			builder.SetProxyID(*target)
+		}
+		if account.Platform == service.PlatformOpenAI && account.Type == service.AccountTypeAPIKey {
+			extra := copyJSONMap(account.Extra)
+			delete(extra, service.UpstreamBillingProbeExtraKey)
+			builder.SetExtra(extra)
+		}
+		if _, err := builder.Save(ctx); err != nil {
+			return 0, err
+		}
+	}
+	return int64(len(accounts)), nil
 }
 
 // CountExpired 返回已过期（status=expired）的代理数量。

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/common"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 const (
@@ -20,6 +22,17 @@ const (
 	UpstreamBillingProbeStatusUnsupported = "unsupported"
 	UpstreamBillingProbeStatusFailed      = "failed"
 )
+
+var ErrUpstreamBillingProbeIdentityChanged = infraerrors.Conflict(
+	"UPSTREAM_BILLING_PROBE_IDENTITY_CHANGED",
+	"account identity changed during upstream billing probe; retry the probe",
+)
+
+// UpstreamBillingProbeSnapshotWriter is intentionally optional so existing account
+// repository test doubles do not need to implement the probe foundation yet.
+type UpstreamBillingProbeSnapshotWriter interface {
+	UpdateUpstreamBillingProbeSnapshot(context.Context, *Account, *UpstreamBillingProbeSnapshot) error
+}
 
 // UpstreamBillingProbeSnapshot is the durable, sanitized result consumed by later scheduling.
 type UpstreamBillingProbeSnapshot struct {
