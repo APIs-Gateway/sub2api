@@ -83,10 +83,11 @@ type codexTransformResult struct {
 }
 
 type codexOAuthTransformOptions struct {
-	IsCodexCLI              bool
-	IsCompact               bool
-	SkipDefaultInstructions bool
-	PreserveToolCallIDs     bool
+	IsCodexCLI                          bool
+	IsCompact                           bool
+	SkipDefaultInstructions             bool
+	PreserveToolCallIDs                 bool
+	OmitPromotedSystemMessagesFromInput bool
 }
 
 const (
@@ -252,8 +253,12 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		}
 	}
 
-	// 提取 input 中 role:"system" 消息至 instructions（OAuth 上游不支持 system role）。
-	if extractSystemMessagesFromInput(reqBody) {
+	// ChatGPT internal Codex endpoint does not accept role:"system".
+	// Mirror its text into instructions because Codex OAuth requires it. Some
+	// callers must also keep the guidance in input as developer (notably
+	// Responses JSON object mode), while Chat Completions compatibility can
+	// omit text-only messages after promoting them losslessly.
+	if extractSystemMessagesFromInput(reqBody, opts.OmitPromotedSystemMessagesFromInput) {
 		result.Modified = true
 	}
 
@@ -1170,31 +1175,47 @@ func extractTextFromContent(content any) string {
 	}
 }
 
-// extractSystemMessagesFromInput maps system items to developer, preserves them
-// in input, and mirrors their content into reqBody["instructions"].
-// If instructions is already non-empty, extracted content is prepended with "\n\n".
-func extractSystemMessagesFromInput(reqBody map[string]any) bool {
+// extractSystemMessagesFromInput scans input for role=="system" and mirrors
+// their text into reqBody["instructions"]. By default it maps those items to
+// developer so Responses JSON mode can still see JSON instructions in input.
+// When omitPromoted is true, text-only items are removed after their content is
+// losslessly promoted; mixed or malformed content is retained as developer.
+func extractSystemMessagesFromInput(reqBody map[string]any, omitPromoted bool) bool {
 	input, ok := reqBody["input"].([]any)
 	if !ok || len(input) == 0 {
 		return false
 	}
 
 	var systemTexts []string
+	filteredInput := make([]any, 0, len(input))
 	modified := false
 
 	for _, item := range input {
 		m, ok := item.(map[string]any)
-		if !ok {
+		if !ok || m["role"] != "system" {
+			filteredInput = append(filteredInput, item)
 			continue
 		}
-		if role, _ := m["role"].(string); role != "system" {
-			continue
+
+		if omitPromoted {
+			if losslessText, lossless := extractLosslessTextFromContent(m["content"]); lossless {
+				if losslessText != "" {
+					systemTexts = append(systemTexts, losslessText)
+				}
+				modified = true
+				continue
+			}
 		}
-		m["role"] = "developer"
-		modified = true
+
 		if text := extractTextFromContent(m["content"]); text != "" {
 			systemTexts = append(systemTexts, text)
 		}
+		m["role"] = "developer"
+		filteredInput = append(filteredInput, item)
+		modified = true
+	}
+	if omitPromoted && len(filteredInput) != len(input) {
+		reqBody["input"] = filteredInput
 	}
 
 	if len(systemTexts) == 0 {
@@ -1208,6 +1229,35 @@ func extractSystemMessagesFromInput(reqBody map[string]any) bool {
 		reqBody["instructions"] = extracted
 	}
 	return true
+}
+
+// extractLosslessTextFromContent returns text only when the entire content can
+// be represented by an instructions string without dropping non-text parts.
+func extractLosslessTextFromContent(content any) (string, bool) {
+	switch v := content.(type) {
+	case string:
+		return v, true
+	case []any:
+		var b strings.Builder
+		for _, part := range v {
+			m, ok := part.(map[string]any)
+			if !ok {
+				return "", false
+			}
+			typeName, ok := m["type"].(string)
+			if !ok || (typeName != "text" && typeName != "input_text" && typeName != "output_text") {
+				return "", false
+			}
+			text, ok := m["text"].(string)
+			if !ok {
+				return "", false
+			}
+			_, _ = b.WriteString(text)
+		}
+		return b.String(), true
+	default:
+		return "", false
+	}
 }
 
 func extractPromptLikeInstructionsFromInput(reqBody map[string]any) string {
