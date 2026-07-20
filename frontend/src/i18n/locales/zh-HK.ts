@@ -815,6 +815,10 @@
         '此 API 金鑰尚未分配分組，請先在金鑰列表中點擊分組列進行分配，然後才能查看使用配置。',
       openai: {
         description: '將以下配置文件添加到 Codex CLI 配置目錄中。',
+        authModeTitle: 'Codex 認證模式',
+        authModeDescription: '兼容模式保留舊版 Codex 配置；API Key Mode 用於啟用客戶端圖片執行器。',
+        authModeLegacy: '兼容模式',
+        authModeApiKey: 'API Key Mode',
         configTomlHint: '請確保以下內容位於 config.toml 文件的開頭部分',
         note: '請確保配置目錄存在。macOS/Linux 用戶可運行 mkdir -p ~/.codex 創建目錄。',
         noteWindows:
