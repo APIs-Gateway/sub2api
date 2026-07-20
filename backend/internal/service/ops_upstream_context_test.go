@@ -78,3 +78,23 @@ func TestMarkOpsUpstreamFailoverRecoveredGuards(t *testing.T) {
 	MarkOpsUpstreamFailoverRecovered(c)
 	require.True(t, events[1].FailoverRecovered)
 }
+
+func TestMarkOpsStreamFailure_TrimsAndPreservesClassification(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	MarkOpsStreamFailure(c, " upstream_error ", " upstream_http2_stream_error ", " upstream failed ", 502)
+
+	streamErr, ok := GetOpsStreamError(c)
+	require.True(t, ok)
+	require.Equal(t, "upstream_error", streamErr.ErrType)
+	require.Equal(t, "upstream_http2_stream_error", streamErr.Code)
+	require.Equal(t, "upstream failed", streamErr.Message)
+	require.Equal(t, 502, streamErr.IntendedStatus)
+	require.True(t, streamErr.CountTowardsSLA)
+
+	MarkOpsStreamError(c, "later_error", "must not replace", 500)
+	streamErr, ok = GetOpsStreamError(c)
+	require.True(t, ok)
+	require.Equal(t, "upstream_error", streamErr.ErrType)
+	require.Equal(t, "upstream_http2_stream_error", streamErr.Code)
+}

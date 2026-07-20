@@ -27,6 +27,18 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+type failingOpenAIHandlerWriter struct {
+	gin.ResponseWriter
+}
+
+func (w *failingOpenAIHandlerWriter) Write([]byte) (int, error) {
+	return 0, errors.New("client disconnected")
+}
+
+func (w *failingOpenAIHandlerWriter) WriteString(string) (int, error) {
+	return 0, errors.New("client disconnected")
+}
+
 func TestOpenAIHandleStreamingAwareError_JSONEscaping(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -95,6 +107,158 @@ func TestOpenAIHandleStreamingAwareError_JSONEscaping(t *testing.T) {
 			assert.Equal(t, tt.message, errorObj["message"])
 		})
 	}
+}
+
+func TestOpenAIHandleStreamingAwareErrorWithCode_EmitsStableClassification(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	h := &OpenAIGatewayHandler{}
+	h.handleStreamingAwareErrorWithCode(
+		c,
+		http.StatusBadGateway,
+		"upstream_error",
+		service.OpenAIUpstreamHTTP2StreamErrorCode,
+		"Upstream HTTP/2 stream failed",
+		true,
+		true,
+	)
+
+	body := w.Body.String()
+	require.Contains(t, body, "event: error\n")
+	require.Equal(t, "upstream_error", gjson.Get(body[strings.Index(body, "{"):], "error.type").String())
+	require.Equal(t, service.OpenAIUpstreamHTTP2StreamErrorCode, gjson.Get(body[strings.Index(body, "{"):], "error.code").String())
+	require.NotContains(t, body, "stream ID")
+
+	streamErr, ok := service.GetOpsStreamError(c)
+	require.True(t, ok)
+	require.True(t, streamErr.CountTowardsSLA)
+	require.Equal(t, http.StatusBadGateway, streamErr.IntendedStatus)
+}
+
+func TestOpenAIHandleStreamingAwareError_WithoutCodeKeepsJSONEnvelope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	(&OpenAIGatewayHandler{}).handleStreamingAwareError(
+		c,
+		http.StatusBadGateway,
+		"upstream_error",
+		"Upstream request failed",
+		false,
+	)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Equal(t, "upstream_error", gjson.Get(w.Body.String(), "error.type").String())
+	require.Equal(t, "Upstream request failed", gjson.Get(w.Body.String(), "error.message").String())
+	_, marked := service.GetOpsStreamError(c)
+	require.False(t, marked)
+}
+
+func TestOpenAIHandleStreamingAwareErrorWithCode_WithoutSLAUsesSSEWithoutCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	(&OpenAIGatewayHandler{}).handleStreamingAwareErrorWithCode(
+		c,
+		http.StatusBadGateway,
+		"upstream_error",
+		"",
+		"Upstream request failed",
+		true,
+		false,
+	)
+
+	body := w.Body.String()
+	require.Contains(t, body, "event: error\n")
+	require.Equal(t, "upstream_error", gjson.Get(body[strings.Index(body, "{"):], "error.type").String())
+	require.Empty(t, gjson.Get(body[strings.Index(body, "{"):], "error.code").String())
+	streamErr, ok := service.GetOpsStreamError(c)
+	require.True(t, ok)
+	require.False(t, streamErr.CountTowardsSLA)
+}
+
+func TestOpenAIHandleStreamingAwareErrorWithCode_NonStreamingIncludesCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	(&OpenAIGatewayHandler{}).handleStreamingAwareErrorWithCode(
+		c,
+		http.StatusBadGateway,
+		"upstream_error",
+		service.OpenAIUpstreamStreamReadErrorCode,
+		"Upstream response stream was interrupted",
+		false,
+		true,
+	)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Equal(t, service.OpenAIUpstreamStreamReadErrorCode, gjson.Get(w.Body.String(), "error.code").String())
+}
+
+func TestEnsureOpenAIStreamReadErrorResponse_ClassifiesAndHandlesGuards(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &OpenAIGatewayHandler{}
+
+	t.Run("unclassified error returns false", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+		require.False(t, h.ensureOpenAIStreamReadErrorResponse(c, errors.New("plain read error"), false))
+	})
+
+	t.Run("uncommitted response returns classified JSON", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+		err := service.NewOpenAIUpstreamStreamReadError(errors.New("connection reset by peer"))
+		require.True(t, h.ensureOpenAIStreamReadErrorResponse(c, err, false))
+		require.Equal(t, http.StatusBadGateway, w.Code)
+		require.Equal(t, service.OpenAIUpstreamStreamReadErrorCode, gjson.Get(w.Body.String(), "error.code").String())
+	})
+
+	t.Run("already written response emits classified SSE", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		_, err := c.Writer.Write([]byte("data: partial\n\n"))
+		require.NoError(t, err)
+
+		streamErr := service.NewOpenAIUpstreamStreamReadError(errors.New("stream error: stream ID 9; INTERNAL_ERROR"))
+		require.True(t, h.ensureOpenAIStreamReadErrorResponse(c, streamErr, false))
+		require.Contains(t, w.Body.String(), service.OpenAIUpstreamHTTP2StreamErrorCode)
+	})
+}
+
+func TestOpenAIHandleStreamingAwareErrorWithCode_RecordsWriteError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Writer = &failingOpenAIHandlerWriter{ResponseWriter: c.Writer}
+
+	(&OpenAIGatewayHandler{}).handleStreamingAwareErrorWithCode(
+		c,
+		http.StatusBadGateway,
+		"upstream_error",
+		service.OpenAIUpstreamStreamReadErrorCode,
+		"Upstream response stream was interrupted",
+		true,
+		true,
+	)
+
+	require.Len(t, c.Errors, 1)
+	require.EqualError(t, c.Errors.Last(), "client disconnected")
 }
 
 func TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey(t *testing.T) {
