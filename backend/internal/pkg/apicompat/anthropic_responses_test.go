@@ -208,7 +208,7 @@ func TestResponsesToAnthropic_TextOnly(t *testing.T) {
 	anth := ResponsesToAnthropic(resp, "claude-opus-4-6")
 	assert.Equal(t, "resp_123", anth.ID)
 	assert.Equal(t, "claude-opus-4-6", anth.Model)
-	assert.Equal(t, "end_turn", anth.StopReason)
+	assert.Equal(t, "end_turn", AnthropicStopReasonString(anth.StopReason))
 	require.Len(t, anth.Content, 1)
 	assert.Equal(t, "text", anth.Content[0].Type)
 	assert.Equal(t, "Hello there!", anth.Content[0].Text)
@@ -289,7 +289,7 @@ func TestResponsesToAnthropic_ToolUse(t *testing.T) {
 	}
 
 	anth := ResponsesToAnthropic(resp, "claude-opus-4-6")
-	assert.Equal(t, "tool_use", anth.StopReason)
+	assert.Equal(t, "tool_use", AnthropicStopReasonString(anth.StopReason))
 	require.Len(t, anth.Content, 2)
 	assert.Equal(t, "text", anth.Content[0].Type)
 	assert.Equal(t, "tool_use", anth.Content[1].Type)
@@ -320,7 +320,7 @@ func TestResponsesToAnthropic_ToolUseStopReasonDoesNotDependOnLastBlock(t *testi
 	}
 
 	anth := ResponsesToAnthropic(resp, "claude-opus-4-6")
-	assert.Equal(t, "tool_use", anth.StopReason)
+	assert.Equal(t, "tool_use", AnthropicStopReasonString(anth.StopReason))
 	require.Len(t, anth.Content, 2)
 	assert.Equal(t, "tool_use", anth.Content[0].Type)
 	assert.Equal(t, "text", anth.Content[1].Type)
@@ -413,7 +413,7 @@ func TestResponsesToAnthropic_Incomplete(t *testing.T) {
 	}
 
 	anth := ResponsesToAnthropic(resp, "claude-opus-4-6")
-	assert.Equal(t, "max_tokens", anth.StopReason)
+	assert.Equal(t, "max_tokens", AnthropicStopReasonString(anth.StopReason))
 }
 
 func TestResponsesToAnthropic_EmptyOutput(t *testing.T) {
@@ -952,6 +952,27 @@ func TestResponsesAnthropicEventToSSE(t *testing.T) {
 	assert.Contains(t, sse, `"resp_1"`)
 }
 
+func TestMessageStartSSE_StopReasonIsJSONNull(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	state.Model = "grok-4.5"
+	events := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type: "response.created",
+		Response: &ResponsesResponse{
+			ID:    "resp_test",
+			Model: "grok-4.5",
+		},
+	}, state)
+	require.Len(t, events, 1)
+	require.Equal(t, "message_start", events[0].Type)
+	require.NotNil(t, events[0].Message)
+	require.Nil(t, events[0].Message.StopReason, "message_start must use null stop_reason, not empty string")
+
+	sse, err := ResponsesAnthropicEventToSSE(events[0])
+	require.NoError(t, err)
+	assert.Contains(t, sse, `"stop_reason":null`)
+	assert.NotContains(t, sse, `"stop_reason":""`)
+}
+
 // ---------------------------------------------------------------------------
 // response.failed tests
 // ---------------------------------------------------------------------------
@@ -1029,7 +1050,7 @@ func TestResponsesToAnthropic_Failed(t *testing.T) {
 
 	anth := ResponsesToAnthropic(resp, "claude-opus-4-6")
 	// Failed status defaults to "end_turn" stop reason
-	assert.Equal(t, "end_turn", anth.StopReason)
+	assert.Equal(t, "end_turn", AnthropicStopReasonString(anth.StopReason))
 	// Should have at least an empty text block
 	require.Len(t, anth.Content, 1)
 	assert.Equal(t, "text", anth.Content[0].Type)
@@ -1643,7 +1664,7 @@ func TestAnthropicToResponsesResponse_CacheTokensUseOpenAIInputSemantics(t *test
 		Content: []AnthropicContentBlock{
 			{Type: "text", Text: "ok"},
 		},
-		StopReason: "end_turn",
+		StopReason: AnthropicStopReasonPtr("end_turn"),
 		Usage: AnthropicUsage{
 			InputTokens:              3318,
 			OutputTokens:             123,
@@ -1670,7 +1691,7 @@ func TestAnthropicToResponsesResponse_NoCacheTokens(t *testing.T) {
 		Content: []AnthropicContentBlock{
 			{Type: "text", Text: "ok"},
 		},
-		StopReason: "end_turn",
+		StopReason: AnthropicStopReasonPtr("end_turn"),
 		Usage: AnthropicUsage{
 			InputTokens:  100,
 			OutputTokens: 50,

@@ -557,12 +557,13 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 	if emitAnthropicEvent(&apicompat.AnthropicStreamEvent{
 		Type: "message_start",
 		Message: &apicompat.AnthropicResponse{
-			ID:      messageID,
-			Type:    "message",
-			Role:    "assistant",
-			Model:   originalModel,
-			Content: []apicompat.AnthropicContentBlock{},
-			Usage:   apicompat.AnthropicUsage{},
+			ID:         messageID,
+			Type:       "message",
+			Role:       "assistant",
+			Model:      originalModel,
+			Content:    []apicompat.AnthropicContentBlock{},
+			StopReason: nil,
+			Usage:      apicompat.AnthropicUsage{},
 		},
 	}) {
 		return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
