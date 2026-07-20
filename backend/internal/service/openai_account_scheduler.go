@@ -977,7 +977,16 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		}
 		if candidate.loadKnown && candidate.loadInfo != nil && candidate.account.Concurrency > 0 &&
 			candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency {
-			continue
+			if !s.consumeOpenAISelectionDBRecheck(budget) {
+				continue
+			}
+			fresh := s.refreshFullOpenAISelectionCandidate(ctx, candidate.account, req)
+			if fresh == nil {
+				continue
+			}
+			candidate.account = fresh
+			candidate.loadKnown = false
+			candidate.loadInfo = &AccountLoadInfo{AccountID: fresh.ID}
 		}
 
 		result, attempted, acquireErr := s.tryAcquireOpenAIAccountSlot(ctx, candidate.account.ID, candidate.account.Concurrency, budget)
@@ -1034,6 +1043,33 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		}, compactBlocked, nil
 	}
 	return nil, compactBlocked, nil
+}
+
+// refreshFullOpenAISelectionCandidate treats a full Redis load snapshot as a
+// recheck hint, not a final rejection. The account row is refreshed before the
+// acquire so an admin concurrency increase is reflected in the slot limit.
+func (s *defaultOpenAIAccountScheduler) refreshFullOpenAISelectionCandidate(
+	ctx context.Context,
+	account *Account,
+	req OpenAIAccountScheduleRequest,
+) *Account {
+	if s == nil || s.service == nil || account == nil {
+		return nil
+	}
+	var fresh *Account
+	if s.service.schedulerSnapshot == nil && s.service.accountRepo != nil {
+		latest, err := s.service.accountRepo.GetByID(ctx, account.ID)
+		if err != nil || latest == nil {
+			return nil
+		}
+		fresh = latest
+	} else {
+		fresh = s.service.resolveFreshSchedulableOpenAIAccount(ctx, account, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
+	}
+	if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
+		return nil
+	}
+	return s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
 }
 
 func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAIAccountSlot(
