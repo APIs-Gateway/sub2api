@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -577,6 +578,113 @@ func (r *accountRepository) ListByGroup(ctx context.Context, groupID int64) ([]s
 		return nil, err
 	}
 	return accounts, nil
+}
+
+// ListDueUpstreamBillingProbeAccounts bounds account hydration and network work
+// for the periodic billing probe runner. Invalid or missing timestamps are
+// deliberately treated as due so a malformed snapshot cannot disable probing.
+func (r *accountRepository) ListDueUpstreamBillingProbeAccounts(ctx context.Context, now time.Time, limit int) ([]service.Account, error) {
+	if limit <= 0 {
+		return []service.Account{}, nil
+	}
+	if r == nil || r.sql == nil {
+		return nil, errors.New("account repository SQL executor not configured")
+	}
+
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT id, extra
+		FROM accounts
+		WHERE deleted_at IS NULL
+			AND status = 'active'
+			AND platform = 'openai'
+			AND type = 'apikey'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	candidates := make([]upstreamBillingProbeDueCandidate, 0)
+	for rows.Next() {
+		var id int64
+		var rawExtra []byte
+		if err := rows.Scan(&id, &rawExtra); err != nil {
+			return nil, err
+		}
+		var extra map[string]any
+		if len(rawExtra) == 0 || json.Unmarshal(rawExtra, &extra) != nil {
+			continue
+		}
+		if enabled, ok := extra[service.UpstreamBillingProbeEnabledExtraKey].(bool); !ok || !enabled {
+			continue
+		}
+		candidates = append(candidates, upstreamBillingProbeDueCandidate{
+			id:       id,
+			snapshot: service.DecodeUpstreamBillingProbeSnapshot(extra),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	ids := dueUpstreamBillingProbeCandidateIDs(candidates, now, limit)
+	if len(ids) == 0 {
+		return []service.Account{}, nil
+	}
+
+	accounts, err := r.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]service.Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account != nil {
+			out = append(out, *account)
+		}
+	}
+	return out, nil
+}
+
+type upstreamBillingProbeDueCandidate struct {
+	id       int64
+	snapshot *service.UpstreamBillingProbeSnapshot
+}
+
+func dueUpstreamBillingProbeCandidateIDs(candidates []upstreamBillingProbeDueCandidate, now time.Time, limit int) []int64 {
+	if limit <= 0 || len(candidates) == 0 {
+		return []int64{}
+	}
+	due := make([]upstreamBillingProbeDueCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.snapshot != nil && !candidate.snapshot.NextProbeAt.IsZero() && now.Before(candidate.snapshot.NextProbeAt) {
+			continue
+		}
+		due = append(due, candidate)
+	}
+	sort.SliceStable(due, func(i, j int) bool {
+		leftUnset := due[i].snapshot == nil || due[i].snapshot.NextProbeAt.IsZero()
+		rightUnset := due[j].snapshot == nil || due[j].snapshot.NextProbeAt.IsZero()
+		if leftUnset && rightUnset {
+			return due[i].id < due[j].id
+		}
+		if leftUnset {
+			return true
+		}
+		if rightUnset {
+			return false
+		}
+		if due[i].snapshot.NextProbeAt.Equal(due[j].snapshot.NextProbeAt) {
+			return due[i].id < due[j].id
+		}
+		return due[i].snapshot.NextProbeAt.Before(due[j].snapshot.NextProbeAt)
+	})
+	if len(due) > limit {
+		due = due[:limit]
+	}
+	ids := make([]int64, 0, len(due))
+	for _, candidate := range due {
+		ids = append(ids, candidate.id)
+	}
+	return ids
 }
 
 func (r *accountRepository) ListActive(ctx context.Context) ([]service.Account, error) {

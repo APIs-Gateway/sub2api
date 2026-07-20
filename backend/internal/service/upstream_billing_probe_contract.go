@@ -220,6 +220,12 @@ func decodeUpstreamBillingProbeSnapshot(extra map[string]any) *UpstreamBillingPr
 	}
 }
 
+// DecodeUpstreamBillingProbeSnapshot exposes the database-independent snapshot
+// decoder to repositories that need to filter JSON values outside SQL.
+func DecodeUpstreamBillingProbeSnapshot(extra map[string]any) *UpstreamBillingProbeSnapshot {
+	return decodeUpstreamBillingProbeSnapshot(extra)
+}
+
 func isUpstreamBillingProbeAccount(account *Account) bool {
 	return account != nil && account.IsOpenAIApiKey()
 }
