@@ -80,3 +80,30 @@ func TestAPIKeyServiceUpdateValidatesAndReplacesNonEmptyIPRules(t *testing.T) {
 	require.Equal(t, newWhitelist, repo.updated.IPWhitelist)
 	require.Equal(t, newBlacklist, repo.updated.IPBlacklist)
 }
+
+func TestAPIKeyServiceUpdateRejectsInvalidIPRules(t *testing.T) {
+	invalidWhitelist := []string{"not-an-ip"}
+	invalidBlacklist := []string{"also-not-an-ip"}
+	cases := []struct {
+		name string
+		req  UpdateAPIKeyRequest
+	}{
+		{name: "whitelist", req: UpdateAPIKeyRequest{IPWhitelist: &invalidWhitelist}},
+		{name: "blacklist", req: UpdateAPIKeyRequest{IPBlacklist: &invalidBlacklist}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &apiKeyUpdateRepoStub{apiKeyRepoStub: apiKeyRepoStub{apiKey: &APIKey{
+				ID:     7,
+				UserID: 11,
+				Status: StatusActive,
+			}}}
+			svc := NewAPIKeyService(repo, nil, nil, nil, nil, nil, nil)
+
+			_, err := svc.Update(context.Background(), 7, 11, tc.req)
+			require.ErrorIs(t, err, ErrInvalidIPPattern)
+			require.Nil(t, repo.updated)
+		})
+	}
+}
