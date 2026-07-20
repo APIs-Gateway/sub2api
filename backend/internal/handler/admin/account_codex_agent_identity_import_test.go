@@ -43,7 +43,35 @@ func TestNormalizeCodexImportEntryAcceptsAgentIdentityAuthJSON(t *testing.T) {
 	require.Equal(t, "task-import", item.Credentials["task_id"])
 	require.NotContains(t, item.Credentials, "access_token")
 	require.NotContains(t, item.Credentials, "refresh_token")
-	require.Contains(t, item.IdentityKeys, "agent:runtime-import")
+	require.Equal(t, []string{"account:account-import"}, item.IdentityKeys)
+}
+
+func TestBuildCodexAgentIdentityKeysUseChatGPTAccountOnly(t *testing.T) {
+	require.Equal(t, []string{"account:team-a"}, buildCodexAgentIdentityKeys("team-a"))
+	require.Nil(t, buildCodexAgentIdentityKeys(""))
+}
+
+func TestCodexAgentIdentityIndexSeparatesTeamsAndMergesRuntimes(t *testing.T) {
+	existing := service.Account{
+		ID: 1,
+		Credentials: map[string]any{
+			"auth_mode":          service.OpenAIAuthModeAgentIdentity,
+			"chatgpt_account_id": "team-a",
+			"chatgpt_user_id":    "same-user",
+			"agent_runtime_id":   "runtime-a",
+		},
+	}
+	index := buildCodexAccountIndex([]service.Account{existing})
+
+	matched := index.Find(buildCodexAgentIdentityKeys("team-b"))
+	require.Nil(t, matched, "a shared ChatGPT user ID must not merge different Teams")
+
+	matched = index.Find(buildCodexAgentIdentityKeys("team-a"))
+	require.NotNil(t, matched)
+	require.Equal(t, int64(1), matched.ID)
+
+	matched = index.Find(buildCodexAgentIdentityKeys("team-a"))
+	require.NotNil(t, matched, "a new runtime must still match the same ChatGPT account")
 }
 
 func TestNormalizeCodexImportEntryRejectsInvalidAgentIdentity(t *testing.T) {
