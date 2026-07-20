@@ -275,7 +275,9 @@ func TestOpenAIFailoverSideEffects_PoolTempRuleStopsSameAccountRetry(t *testing.
 	shouldDisable := svc.handleFailoverSideEffects(context.Background(), resp, account, body, "gpt-5.4")
 
 	require.True(t, shouldDisable)
-	require.Equal(t, 1, repo.tempCalls)
+	require.Zero(t, repo.tempCalls)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "gpt-5.4", repo.modelRateLimitCalls[0].scope)
 	require.False(t, openAIRetryableOnSameAccount(
 		resp.StatusCode,
 		"Service temporarily unavailable",
