@@ -1802,6 +1802,21 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
 		},
 		{
+			name:    "scheduler_score_weights.reset 不能为 NaN",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset = math.NaN() },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
+		},
+		{
+			name:    "scheduler_score_weights.reset 不能为 Inf",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset = math.Inf(1) },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
+		},
+		{
+			name:    "scheduler_score_weights.reset 不能为负数",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset = -0.1 },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be non-negative",
+		},
+		{
 			name: "scheduler_score_weights 不能全为 0",
 			mutate: func(c *Config) {
 				c.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 0
@@ -1852,6 +1867,20 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 		weights.UpstreamCost = 1
 		require.NoError(t, cfg.Validate())
 	})
+}
+
+func TestValidateConfig_AllowsPositiveResetWeight(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Queue = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Reset = 0.5
+
+	require.NoError(t, cfg.Validate())
 }
 
 func TestValidateConfig_AutoScaleDisabledIgnoreAutoScaleFields(t *testing.T) {
