@@ -4278,7 +4278,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				trimmedData = strings.TrimSpace(string(normalizedData))
 				line = "data: " + string(normalizedData)
 			}
-			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
+			eventTypeRaw := gjson.Get(trimmedData, "type").String()
+			eventType := strings.TrimSpace(eventTypeRaw)
 			if eventType == "response.failed" {
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
 				// response.failed 自带上游已消耗的 usage（input token 通常已扣）；必须先解析
@@ -4320,7 +4321,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if trimmedData == "[DONE]" {
 				sawDone = true
 			}
-			if openAIStreamEventIsTerminal(trimmedData) {
+			if openAIStreamEventIsTerminalWithType(trimmedData, eventTypeRaw) {
 				sawTerminalEvent = true
 			}
 			if responseID == "" {
@@ -5385,10 +5386,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		// Extract data from SSE line (supports both "data: " and "data:" formats)
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
-			if openAIStreamEventIsTerminal(data) {
+			eventTypeRaw := gjson.GetBytes(dataBytes, "type").String()
+			if openAIStreamEventIsTerminalWithType(data, eventTypeRaw) {
 				sawTerminalEvent = true
 			}
-			eventType := strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
+			eventType := strings.TrimSpace(eventTypeRaw)
 			if responseID == "" {
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
 			}
