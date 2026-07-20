@@ -17,11 +17,13 @@ import (
 )
 
 type systemHandlerUpdateServiceStub struct {
-	performErr  error
-	updateInfo  *service.UpdateInfo
-	checkErr    error
-	checkForces []bool
-	performCall int
+	performErr         error
+	updateInfo         *service.UpdateInfo
+	checkErr           error
+	checkForces        []bool
+	performCall        int
+	performCtxErr      error
+	performHasDeadline bool
 }
 
 func (s *systemHandlerUpdateServiceStub) CheckUpdate(_ context.Context, force bool) (*service.UpdateInfo, error) {
@@ -29,8 +31,10 @@ func (s *systemHandlerUpdateServiceStub) CheckUpdate(_ context.Context, force bo
 	return s.updateInfo, s.checkErr
 }
 
-func (s *systemHandlerUpdateServiceStub) PerformUpdate(context.Context) error {
+func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context) error {
 	s.performCall++
+	s.performCtxErr = ctx.Err()
+	_, s.performHasDeadline = ctx.Deadline()
 	return s.performErr
 }
 
@@ -141,4 +145,25 @@ func TestSystemHandlerPerformUpdateFailureStillReturnsInternalError(t *testing.T
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, http.StatusInternalServerError, body.Code)
 	require.Equal(t, "internal error", body.Message)
+}
+
+func TestSystemHandlerPerformUpdateSurvivesClientDisconnect(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{}
+	repo := newMemoryIdempotencyRepoStub()
+	router := newSystemHandlerTestRouter(t, updateSvc, repo)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/update", nil)
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req = req.WithContext(canceledCtx)
+	req.Header.Set("Idempotency-Key", "disconnected-update")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, 1, updateSvc.performCall)
+	require.NoError(t, updateSvc.performCtxErr,
+		"update must not observe the canceled request context")
+	require.True(t, updateSvc.performHasDeadline,
+		"detached update context must still be bounded by a deadline")
+	requireSystemLockStatus(t, repo, service.IdempotencyStatusSucceeded)
 }

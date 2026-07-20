@@ -40,6 +40,10 @@ export async function checkUpdates(force = false): Promise<VersionInfo> {
   return data
 }
 
+// Release downloads can take several minutes on slow links; the global client
+// timeout must not cancel an in-progress server-side update.
+const UPDATE_REQUEST_TIMEOUT_MS = 15 * 60 * 1000
+
 export interface UpdateResult {
   message: string
   need_restart: boolean
@@ -50,7 +54,9 @@ export interface UpdateResult {
  * Downloads and applies the latest version
  */
 export async function performUpdate(): Promise<UpdateResult> {
-  const { data } = await apiClient.post<UpdateResult>('/admin/system/update')
+  const { data } = await apiClient.post<UpdateResult>('/admin/system/update', undefined, {
+    timeout: UPDATE_REQUEST_TIMEOUT_MS
+  })
   return data
 }
 
