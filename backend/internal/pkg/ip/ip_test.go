@@ -104,6 +104,89 @@ func TestGetSecurityClientIPHonorsTrustToggle(t *testing.T) {
 	}
 }
 
+func TestGetSecurityClientIPUsesConfiguredForwardedHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	router.GET("/ip", func(c *gin.Context) {
+		SetForwardedIPSettings(c, true, []string{"X-Cdn-Client-IP", "True-Client-IP"})
+		c.String(200, GetSecurityClientIP(c, false))
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/ip", nil)
+	req.RemoteAddr = "9.9.9.9:12345"
+	req.Header.Add("X-Cdn-Client-IP", "not-an-ip, 10.0.0.2")
+	req.Header.Add("X-Cdn-Client-IP", "8.8.8.8")
+	req.Header.Set("X-Real-IP", "1.2.3.4")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, 200, w.Code)
+	require.Equal(t, "8.8.8.8", w.Body.String())
+}
+
+func TestGetSecurityClientIPConfiguredHeaderIgnoresInvalidValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	router.GET("/ip", func(c *gin.Context) {
+		SetForwardedIPSettings(c, true, []string{"X-Cdn-Client-IP"})
+		c.String(200, GetSecurityClientIP(c, false))
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/ip", nil)
+	req.RemoteAddr = "9.9.9.9:12345"
+	req.Header.Set("X-Cdn-Client-IP", "not-an-ip")
+	req.Header.Set("X-Real-IP", "1.2.3.4")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, 200, w.Code)
+	require.Equal(t, "1.2.3.4", w.Body.String())
+}
+
+func TestGetSecurityClientIPConfiguredHeaderUsesPrivateFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	router.GET("/ip", func(c *gin.Context) {
+		SetForwardedIPSettings(c, true, []string{"X-Cdn-Client-IP"})
+		c.String(200, GetSecurityClientIP(c, false))
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/ip", nil)
+	req.RemoteAddr = "9.9.9.9:12345"
+	req.Header.Set("X-Cdn-Client-IP", "10.0.0.2, 192.168.1.5")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, 200, w.Code)
+	require.Equal(t, "10.0.0.2", w.Body.String())
+}
+
+func TestGetSecurityClientIPSnapshotDisablesForwardedHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	router.GET("/ip", func(c *gin.Context) {
+		SetForwardedIPSettings(c, false, []string{"X-Cdn-Client-IP"})
+		c.String(200, GetSecurityClientIP(c, true))
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/ip", nil)
+	req.RemoteAddr = "9.9.9.9:12345"
+	req.Header.Set("X-Cdn-Client-IP", "1.2.3.4")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, 200, w.Code)
+	require.Equal(t, "9.9.9.9", w.Body.String())
+}
+
 func TestGetCloudflareCountryCode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
