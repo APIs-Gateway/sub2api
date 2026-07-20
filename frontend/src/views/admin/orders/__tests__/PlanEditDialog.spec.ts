@@ -145,4 +145,31 @@ describe('PlanEditDialog display currency', () => {
       features: 'priority\nfast support',
     }))
   })
+
+  it('rejects a plan without a positive validity period', async () => {
+    const wrapper = mountDialog(null)
+    await wrapper.setProps({ show: true })
+    await nextTick()
+
+    const vm = wrapper.vm as unknown as {
+      planForm: {
+        group_id: number
+        name: string
+        daily_amount_usd: number
+        price: number
+        validity_days: number
+      }
+      handleSavePlan: () => Promise<void>
+    }
+    vm.planForm.group_id = 1
+    vm.planForm.name = 'Invalid plan'
+    vm.planForm.daily_amount_usd = 10
+    vm.planForm.price = 10
+    vm.planForm.validity_days = 0
+
+    await vm.handleSavePlan()
+
+    expect(mocks.showError).toHaveBeenCalledWith('payment.admin.validityRequired')
+    expect(mocks.createPlan).not.toHaveBeenCalled()
+  })
 })
