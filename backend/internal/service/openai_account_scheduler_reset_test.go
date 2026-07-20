@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func TestBuildOpenAIAccountLoadPlan_ResetWeightPrefersSoonestReset(t *testing.T)
 	}
 	sched := openAIResetTestScheduler(5.0)
 
-	plan := sched.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{}, filtered, map[int64]*AccountLoadInfo{})
+	plan := sched.buildOpenAIAccountLoadPlan(context.Background(), OpenAIAccountScheduleRequest{}, filtered, map[int64]*AccountLoadInfo{})
 	scores := openAIPlanScores(plan)
 	require.Greater(t, scores[2], scores[1], "重置时间最早的账号（ID=2）得分更高")
 }
@@ -56,7 +57,7 @@ func TestBuildOpenAIAccountLoadPlan_ResetWeightZeroNoEffect(t *testing.T) {
 	}
 	sched := openAIResetTestScheduler(0.0)
 
-	plan := sched.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{}, filtered, map[int64]*AccountLoadInfo{})
+	plan := sched.buildOpenAIAccountLoadPlan(context.Background(), OpenAIAccountScheduleRequest{}, filtered, map[int64]*AccountLoadInfo{})
 	scores := openAIPlanScores(plan)
 	require.Equal(t, scores[1], scores[2], "Reset 权重为 0 时两账号得分相同")
 }
@@ -73,7 +74,7 @@ func TestBuildOpenAIAccountLoadPlan_ResetWeightIgnoresNilWindow(t *testing.T) {
 	}
 	sched := openAIResetTestScheduler(5.0)
 
-	plan := sched.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{}, filtered, map[int64]*AccountLoadInfo{})
+	plan := sched.buildOpenAIAccountLoadPlan(context.Background(), OpenAIAccountScheduleRequest{}, filtered, map[int64]*AccountLoadInfo{})
 	scores := openAIPlanScores(plan)
 	require.Equal(t, scores[1], scores[2], "无窗口和已过期窗口的账号都不应获得 reset 加分")
 	require.Greater(t, scores[3], scores[1], "拥有活跃窗口的账号得分高于无窗口账号")

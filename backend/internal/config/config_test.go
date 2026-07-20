@@ -1802,6 +1802,16 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
 		},
 		{
+			name:    "scheduler_score_weights.reset 不能为 NaN",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset = math.NaN() },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
+		},
+		{
+			name:    "scheduler_score_weights.reset 不能为 Inf",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset = math.Inf(1) },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
+		},
+		{
 			name:    "scheduler_score_weights.reset 不能为负数",
 			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset = -0.1 },
 			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be non-negative",
