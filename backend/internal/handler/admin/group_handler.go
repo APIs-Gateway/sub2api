@@ -2,14 +2,18 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -248,6 +252,63 @@ func (h *GroupHandler) GetByID(c *gin.Context) {
 	}
 
 	response.Success(c, dto.GroupFromServiceAdmin(group))
+}
+
+// Duplicate creates an inactive copy of a group and its account bindings.
+// POST /api/v1/admin/groups/:id/duplicate
+func (h *GroupHandler) Duplicate(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || groupID <= 0 {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+
+	subject, _ := middleware2.GetAuthSubjectFromContext(c)
+	actorScope := "admin:0"
+	if subject.UserID > 0 {
+		actorScope = "admin:" + strconv.FormatInt(subject.UserID, 10)
+	}
+	duplicateService, ok := h.adminService.(service.GroupDuplicateAdminService)
+	if !ok {
+		response.Error(c, 500, "Group duplication is unavailable")
+		return
+	}
+	operationKey := c.GetHeader("Idempotency-Key")
+	result, err := executeAdminIdempotent(
+		c,
+		"admin.groups.duplicate",
+		struct {
+			GroupID int64 `json:"group_id"`
+		}{GroupID: groupID},
+		service.DefaultWriteIdempotencyTTL(),
+		func(ctx context.Context) (any, error) {
+			group, err := duplicateService.DuplicateGroup(ctx, groupID, actorScope, operationKey)
+			if err != nil {
+				return nil, err
+			}
+			return dto.GroupFromServiceAdmin(group), nil
+		},
+	)
+	if err != nil {
+		reason := infraerrors.Reason(err)
+		if reason == infraerrors.Reason(service.ErrIdempotencyInProgress) || reason == infraerrors.Reason(service.ErrIdempotencyStoreUnavail) {
+			recovered, recoverErr := duplicateService.RecoverDuplicateGroup(c.Request.Context(), groupID, actorScope, operationKey)
+			if recoverErr != nil {
+				slog.Warn("group_duplicate_recovery_failed", "group_id", groupID, "actor_scope", actorScope, "reason", reason, "error", recoverErr)
+			} else if recovered != nil {
+				c.Header("X-Idempotency-Recovered", "true")
+				response.Success(c, dto.GroupFromServiceAdmin(recovered))
+				return
+			}
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	if result != nil && result.Replayed {
+		c.Header("X-Idempotency-Replayed", "true")
+	}
+	response.Success(c, result.Data)
 }
 
 // GetModelsListCandidates handles getting candidate model IDs for custom /v1/models list.
