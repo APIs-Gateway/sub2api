@@ -59,6 +59,17 @@ func TestOpenAIAccountRequestCompatibilityReasonReportsQuotaAndCapability(t *tes
 	require.Equal(t, "capability_mismatch", reason)
 }
 
+func TestOpenAIAccountRequestCompatibilityReasonReportsRuntimeBlock(t *testing.T) {
+	account := &Account{ID: 38223, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	svc := &OpenAIGatewayService{}
+	svc.BlockAccountScheduling(account, time.Now().Add(time.Minute), "test")
+	scheduler := &defaultOpenAIAccountScheduler{service: svc}
+
+	compatible, reason := scheduler.isAccountRequestCompatibleReason(context.Background(), account, OpenAIAccountScheduleRequest{})
+	require.False(t, compatible)
+	require.Equal(t, "runtime_blocked", reason)
+}
+
 func TestNoAvailableOpenAISelectionErrorPreservesDefaultMessageAndCompactError(t *testing.T) {
 	require.EqualError(t,
 		noAvailableOpenAISelectionError("", false, " detail "),
@@ -88,6 +99,33 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NoAvailableErrorReports
 	require.ErrorIs(t, err, ErrNoAvailableAccounts)
 	require.Nil(t, selection)
 	require.EqualError(t, err, "no available OpenAI accounts supporting model: gpt-5.1 (pool=0)")
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_NoAvailableErrorReportsNotSchedulable(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	groupID := int64(102405)
+	svc := &OpenAIGatewayService{
+		accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{{
+			ID:          38224,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: false,
+			Concurrency: 1,
+		}}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                &config.Config{},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithScheduler(
+		context.Background(), &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false,
+	)
+	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+	require.Nil(t, selection)
+	require.EqualError(t, err, "no available OpenAI accounts supporting model: gpt-5.1 (pool=1, filtered: not_schedulable=1)")
 }
 
 func TestOpenAIGatewayService_SelectAccountWithScheduler_NoAvailableErrorReportsQuotaAutoPause(t *testing.T) {
