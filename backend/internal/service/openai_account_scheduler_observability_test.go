@@ -18,6 +18,58 @@ func TestOpenAISelectionFilterStatsSummarySortsReasons(t *testing.T) {
 	require.Equal(t, "pool=3, filtered: excluded=1 quota_auto_pause_7d=2, selection_order_empty", stats.summary("selection_order_empty"))
 }
 
+func TestOpenAISelectionFilterStatsIgnoresEmptyReason(t *testing.T) {
+	stats := openAISelectionFilterStats{}
+	stats.exclude("")
+
+	require.Empty(t, stats.reasons)
+	require.Equal(t, "pool=0", stats.summary(""))
+}
+
+func TestOpenAIAccountRequestCompatibilityReasonReportsQuotaAndCapability(t *testing.T) {
+	scheduler := &defaultOpenAIAccountScheduler{}
+
+	compatible, reason := scheduler.isAccountRequestCompatibleReason(context.Background(), nil, OpenAIAccountScheduleRequest{})
+	require.False(t, compatible)
+	require.Equal(t, "account_nil", reason)
+
+	ctx := withOpenAIQuotaAutoPauseSettings(context.Background(), OpsOpenAIAccountQuotaAutoPauseSettings{DefaultThreshold5h: 0.95})
+	quotaPaused := &Account{
+		ID:       38221,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra: map[string]any{
+			"codex_5h_used_percent": 95.0,
+		},
+	}
+	compatible, reason = scheduler.isAccountRequestCompatibleReason(ctx, quotaPaused, OpenAIAccountScheduleRequest{})
+	require.False(t, compatible)
+	require.Equal(t, "quota_auto_pause_5h", reason)
+
+	capabilityMiss := &Account{
+		ID:          38222,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"openai_capabilities": []any{"chat_completions"}},
+	}
+	compatible, reason = scheduler.isAccountRequestCompatibleReason(context.Background(), capabilityMiss, OpenAIAccountScheduleRequest{
+		RequiredCapability: OpenAIEndpointCapabilityEmbeddings,
+	})
+	require.False(t, compatible)
+	require.Equal(t, "capability_mismatch", reason)
+}
+
+func TestNoAvailableOpenAISelectionErrorPreservesDefaultMessageAndCompactError(t *testing.T) {
+	require.EqualError(t,
+		noAvailableOpenAISelectionError("", false, " detail "),
+		"no available OpenAI accounts (detail)",
+	)
+	require.ErrorIs(t,
+		noAvailableOpenAISelectionError("gpt-5.4-mini", true, "ignored"),
+		ErrNoAvailableCompactAccounts,
+	)
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_NoAvailableErrorReportsEmptyPool(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
