@@ -297,6 +297,8 @@
     inactive: '停用',
     more: '更多',
     close: '關閉',
+    toggleMenu: '切換選單',
+    userMenu: '用戶選單',
     enabled: '已啟用',
     disabled: '已停用',
     total: '總計',
