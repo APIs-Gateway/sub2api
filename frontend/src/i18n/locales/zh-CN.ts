@@ -3756,6 +3756,10 @@
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
         antigravityApikey: '通过 Base URL + API Key 连接',
+        antigravityProjectIdLabel: 'GCP Project ID（可选）',
+        antigravityProjectIdPlaceholder: 'your-gcp-project-id',
+        antigravityProjectIdHint:
+          'standard-tier 且未自动返回 project_id 的 Antigravity 账号需要填写用户自有的 GCP project。',
         upstream: '对接上游',
         upstreamDesc: '通过 Base URL + API Key 连接上游',
         api_key: 'API Key',
