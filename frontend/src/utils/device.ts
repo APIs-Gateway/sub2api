@@ -20,6 +20,7 @@ interface DeviceDetectionEnvironment {
 
 const MOBILE_UA_RE = /\b(Mobi|Android|iPhone|iPod|Windows Phone|webOS|BlackBerry|IEMobile)\b/i
 const TABLET_UA_RE = /\b(iPad|Tablet)\b/i
+const IOS_UA_RE = /\b(iPhone|iPad|iPod)\b/i
 
 function matchesQuery(
   matchMedia: DeviceDetectionEnvironment['matchMedia'],
@@ -59,4 +60,22 @@ export function isMobileDevice(): boolean {
     navigator,
     matchMedia: typeof window !== 'undefined' ? window.matchMedia.bind(window) : undefined,
   })
+}
+
+export function detectIOSDevice(env: DeviceDetectionEnvironment = {}): boolean {
+  const nav = env.navigator
+  if (!nav) return false
+
+  const userAgent = nav.userAgent || ''
+  const maxTouchPoints = nav.maxTouchPoints ?? 0
+  // iPadOS 13+ desktop mode uses a macOS user agent, so detect it by touch support.
+  const isIPadOSDesktopMode = nav.platform === 'MacIntel' && maxTouchPoints > 1
+
+  return IOS_UA_RE.test(userAgent) || isIPadOSDesktopMode
+}
+
+export function isIOSDevice(): boolean {
+  if (typeof navigator === 'undefined') return false
+
+  return detectIOSDevice({ navigator })
 }
