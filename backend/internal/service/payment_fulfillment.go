@@ -1011,6 +1011,11 @@ func (s *PaymentService) doSubLifecycle(ctx context.Context, o *dbent.PaymentOrd
 		return fmt.Errorf("commit lifecycle fulfill: %w", err)
 	}
 	committed = true
+	if intent == SubscriptionIntentChangePlan {
+		// ApplyChangePlanFromOrder 在外层事务提交前已做一次 best-effort 失效；
+		// 提交后再清一次，防止并发请求在事务窗口内回填旧透支次数。
+		s.subscriptionSvc.invalidateChangePlanAuthCache(ctx, o.UserID)
+	}
 
 	// 提交后才发通知（best-effort，不影响履约原子性）。
 	s.applyPointsEarnForOrder(ctx, o)

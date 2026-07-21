@@ -90,6 +90,7 @@ func TestPointsService_RedeemToPlan_EndToEndAndIdempotent(t *testing.T) {
 	afterRenew := pointsAvailableOf(t, user.ID)
 
 	// 已有不同 D active 卡时，积分兑换应转为转套餐：关旧卡、开新卡，仍保持单 active 卡。
+	setMonthlyOverdraftState(t, h.client, user.ID, 4, service.CurrentEastMonthKey())
 	changed, err := h.pointsSvc.RedeemToPlan(ctx, user.ID, 60, 90, uuid.NewString())
 	require.NoError(t, err)
 	require.NotEqual(t, sub.ID, changed.ID)
@@ -103,6 +104,10 @@ func TestPointsService_RedeemToPlan_EndToEndAndIdempotent(t *testing.T) {
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM user_subscriptions WHERE user_id=$1 AND status='active' AND expires_at > NOW()`, user.ID).Scan(&subCount))
 	require.Equal(t, 1, subCount, "change plan must keep single active subscription")
+	gotUser, err := h.client.User.Get(ctx, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, 0, gotUser.MonthlyOverdraftCount, "积分换套餐应重置透支次数")
+	require.Equal(t, service.CurrentEastMonthKey(), gotUser.MonthlyOverdraftMonth)
 
 	afterChange := pointsAvailableOf(t, user.ID)
 

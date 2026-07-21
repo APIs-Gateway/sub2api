@@ -106,7 +106,7 @@ type ChangePlanResult struct {
 // 通过法币网关收取（见 docs/billing-perday-redesign.md §7）。幂等由 doSub 的 SUBSCRIPTION_SUCCESS 审计键保证。
 //
 // 单事务内：GetByID 取目标卡 → FOR UPDATE 锁 user 行 + 清假 active(lockUserAndPruneStaleForLifecycle)
-// → 关旧卡 → 开新卡 → stamp last_change_plan_day，任一步失败全回滚。
+// → 关旧卡 → 开新卡 → 重置用户级月度透支次数 + stamp last_change_plan_day，任一步失败全回滚。
 func (s *SubscriptionService) ApplyChangePlanFromOrder(ctx context.Context, oldSubscriptionID int64, newDailyAmount float64, newValidityDays int) (*ChangePlanResult, error) {
 	if s.entClient == nil {
 		return nil, fmt.Errorf("ent client not configured")
@@ -197,10 +197,16 @@ func (s *SubscriptionService) ApplyChangePlanFromOrder(ctx context.Context, oldS
 			return fmt.Errorf("bump subscription concurrency: %w", err)
 		}
 
-		// 限频戳（无余额变动；差价已网关收取）。
+		// 旧卡已退、新卡重开：用户级月度透支次数也从新套餐开始。
+		// 月份与锁后的 now 同口径，避免东八区月界跨越时写入过期月份。
+		// 限频戳与透支重置同一次 UPDATE（无余额变动；差价已网关收取）。
 		client := dbent.TxFromContext(txCtx).Client()
-		if _, err := client.User.UpdateOneID(userID).SetLastChangePlanDay(today).Save(txCtx); err != nil {
-			return fmt.Errorf("stamp change-plan day: %w", err)
+		if _, err := client.User.UpdateOneID(userID).
+			SetMonthlyOverdraftCount(0).
+			SetMonthlyOverdraftMonth(EastMonthKey(now)).
+			SetLastChangePlanDay(today).
+			Save(txCtx); err != nil {
+			return fmt.Errorf("reset overdraft count and stamp change-plan day: %w", err)
 		}
 
 		result = &ChangePlanResult{
@@ -225,5 +231,15 @@ func (s *SubscriptionService) ApplyChangePlanFromOrder(ctx context.Context, oldS
 		s.InvalidateSubCache(userID, oldGroupID)
 		s.invalidateSubscriptionCacheAsync(userID, oldGroupID)
 	}
+	s.invalidateChangePlanAuthCache(ctx, userID)
 	return result, nil
+}
+
+// invalidateChangePlanAuthCache 透支次数存在 API Key 鉴权快照中，换套餐后必须按用户失效。
+// ApplyChangePlanFromOrder 可能复用外层事务，所以法币/积分编排层会在 commit 后再调用一次，
+// 关闭「失效后、提交前」并发请求回填旧快照的竞态窗口。
+func (s *SubscriptionService) invalidateChangePlanAuthCache(ctx context.Context, userID int64) {
+	if s.authCacheInvalidator != nil && userID > 0 {
+		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
+	}
 }

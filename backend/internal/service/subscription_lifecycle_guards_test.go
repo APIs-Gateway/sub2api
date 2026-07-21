@@ -212,7 +212,8 @@ func TestApplyChangePlanFromOrder_CreatesUniversalGroupCard(t *testing.T) {
 		WeeklyWindowStart:  &now,
 		MonthlyWindowStart: &now,
 	})
-	svc := NewSubscriptionService(groupRepoNoop{}, subRepo, nil, nil, nil, client, nil, nil)
+	authCache := &mockAuthCacheInvalidator{}
+	svc := NewSubscriptionService(groupRepoNoop{}, subRepo, nil, nil, authCache, client, nil, nil)
 
 	res, err := svc.ApplyChangePlanFromOrder(ctx, 501, 60, 30)
 	require.NoError(t, err)
@@ -228,6 +229,9 @@ func TestApplyChangePlanFromOrder_CreatesUniversalGroupCard(t *testing.T) {
 
 	gotUser := client.User.GetX(ctx, user.ID)
 	require.Equal(t, today, gotUser.LastChangePlanDay)
+	require.Equal(t, 0, gotUser.MonthlyOverdraftCount)
+	require.Equal(t, CurrentEastMonthKey(), gotUser.MonthlyOverdraftMonth)
+	require.Equal(t, []int64{user.ID}, authCache.invalidatedUserIDs, "换套餐后应失效用户鉴权快照")
 }
 
 func TestApplyRenewFromOrder_GuardBranches(t *testing.T) {
