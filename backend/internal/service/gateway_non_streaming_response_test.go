@@ -190,6 +190,19 @@ func TestHandleNonStreamingResponseAnthropicAPIKeyPassthrough_ForceCacheBillingR
 	}
 }
 
+func TestClassifyAnthropicPassthroughResponse_InvalidJSON(t *testing.T) {
+	svc := &GatewayService{}
+
+	_, err := svc.classifyAnthropicPassthroughResponse(
+		WithForceCacheBilling(context.Background()),
+		[]byte(`{`),
+		&ClaudeUsage{InputTokens: 1},
+	)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "classify forced cache billing response")
+}
+
 func TestHandleNonStreamingResponse_NonJSON2xxMatchesModelScopedTempUnschedulableRule(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
