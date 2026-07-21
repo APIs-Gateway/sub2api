@@ -6299,6 +6299,10 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	}
 
 	usage := parseClaudeUsageFromResponseBody(body)
+	body, err = s.classifyAnthropicPassthroughResponse(ctx, body, usage)
+	if err != nil {
+		return nil, err
+	}
 
 	writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
@@ -6308,6 +6312,24 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	body = reverseToolNamesIfPresent(c, body)
 	c.Data(resp.StatusCode, contentType, body)
 	return usage, nil
+}
+
+func (s *GatewayService) classifyAnthropicPassthroughResponse(ctx context.Context, body []byte, usage *ClaudeUsage) ([]byte, error) {
+	if !IsForceCacheBilling(ctx) || usage == nil || usage.InputTokens <= 0 {
+		return body, nil
+	}
+	return classifyAnthropicResponseInputAsCacheRead(body, usage)
+}
+
+func classifyAnthropicResponseInputAsCacheRead(body []byte, usage *ClaudeUsage) ([]byte, error) {
+	if !gjson.ValidBytes(body) {
+		return nil, fmt.Errorf("classify forced cache billing response: invalid JSON")
+	}
+	classified, err := sjson.SetBytes(body, "usage.input_tokens", 0)
+	if err != nil {
+		return nil, fmt.Errorf("classify forced cache billing input tokens: %w", err)
+	}
+	return sjson.SetBytes(classified, "usage.cache_read_input_tokens", usage.CacheReadInputTokens+usage.InputTokens)
 }
 
 func writeAnthropicPassthroughResponseHeaders(dst http.Header, src http.Header, filter *responseheaders.CompiledHeaderFilter) {
