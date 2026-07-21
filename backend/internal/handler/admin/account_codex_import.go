@@ -508,7 +508,7 @@ func normalizeCodexImportEntry(entry codexImportEntry) (*codexImportAccount, err
 			if item.AgentTaskID == "" {
 				item.WarningTexts = append(item.WarningTexts, "未包含 task_id，首次请求会使用现有 runtime 注册新 task")
 			}
-			item.IdentityKeys = buildCodexAgentIdentityKeys(item.AccountID, item.UserID, item.Email, item.AgentRuntimeID)
+			item.IdentityKeys = buildCodexAgentIdentityKeys(item.AccountID)
 			item.Name = buildCodexImportAccountName(item, entry.Index)
 			return item, nil
 		}
@@ -873,12 +873,14 @@ func buildCodexIdentityKeys(accountID, userID, email, accessToken string) []stri
 	return keys
 }
 
-func buildCodexAgentIdentityKeys(accountID, userID, email, runtimeID string) []string {
-	keys := buildCodexIdentityKeys(accountID, userID, email, "")
-	if runtimeID = strings.TrimSpace(runtimeID); runtimeID != "" {
-		keys = append([]string{"agent:" + runtimeID}, keys...)
+func buildCodexAgentIdentityKeys(accountID string) []string {
+	// Agent Identity credentials are scoped to the ChatGPT account (Team). The
+	// user ID can be shared across Teams and runtime IDs change on re-registration.
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil
 	}
-	return keys
+	return []string{"account:" + accountID}
 }
 
 func buildCodexAccountIndex(accounts []service.Account) *codexAccountIndex {
