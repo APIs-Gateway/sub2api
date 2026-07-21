@@ -3622,6 +3622,10 @@
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
         antigravityApikey: 'Connect via Base URL + API Key',
+        antigravityProjectIdLabel: 'GCP Project ID (optional)',
+        antigravityProjectIdPlaceholder: 'your-gcp-project-id',
+        antigravityProjectIdHint:
+          'Antigravity standard-tier accounts that do not receive an automatic project_id need a user-owned GCP project.',
         upstream: 'Upstream',
         upstreamDesc: 'Connect via Base URL + API Key'
       },
