@@ -1,5 +1,5 @@
 import { nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('vue-i18n', () => ({
@@ -30,6 +30,7 @@ describe('SetupWizardView Redis username', () => {
 
     const testDatabaseButton = wrapper.find('button.btn-secondary')
     await testDatabaseButton.trigger('click')
+    await flushPromises()
     await nextTick()
 
     const nextButton = wrapper.find('button.btn-primary')
