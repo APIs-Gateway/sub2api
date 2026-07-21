@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { applyIOSViewportZoomFix, detectIOSDevice, detectMobileDevice, isIOSDevice } from '../device'
 
 describe('detectMobileDevice', () => {
@@ -55,6 +55,11 @@ describe('detectMobileDevice', () => {
 })
 
 describe('detectIOSDevice', () => {
+  it('returns false when navigator data is unavailable', () => {
+    expect(detectIOSDevice()).toBe(false)
+    expect(detectIOSDevice({ navigator: {} })).toBe(false)
+  })
+
   it('recognizes iPhone from the user agent', () => {
     expect(detectIOSDevice({
       navigator: {
@@ -132,6 +137,18 @@ describe('applyIOSViewportZoomFix', () => {
   })
 })
 
-it('reports the test runtime as non-iOS', () => {
-  expect(isIOSDevice()).toBe(false)
+describe('isIOSDevice', () => {
+  it('reports false when the runtime has no navigator', () => {
+    const runtimeNavigator = globalThis.navigator
+    vi.stubGlobal('navigator', undefined)
+    try {
+      expect(isIOSDevice()).toBe(false)
+    } finally {
+      vi.stubGlobal('navigator', runtimeNavigator)
+    }
+  })
+
+  it('reports the test runtime as non-iOS', () => {
+    expect(isIOSDevice()).toBe(false)
+  })
 })
