@@ -88,6 +88,9 @@ func TestHandleCCBufferedFromAnthropic_CompactSSEFormat(t *testing.T) {
 	resp := &http.Response{
 		Header: http.Header{"x-request-id": []string{"rid_cc_buffered_compact"}},
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`invalid event line`,
+			`event:message_start`,
+			`invalid data line`,
 			`event:message_start`,
 			`data:{"type":"message_start","message":{"id":"msg_c1","type":"message","role":"assistant","content":[],"model":"k3","stop_reason":"","usage":{"input_tokens":15,"cache_read_input_tokens":5,"cache_creation_input_tokens":2}}}`,
 			``,
@@ -97,6 +100,7 @@ func TestHandleCCBufferedFromAnthropic_CompactSSEFormat(t *testing.T) {
 			`event:message_delta`,
 			`data:{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`,
 			``,
+			`event:ping`,
 		}, "\n"))),
 	}
 
@@ -121,6 +125,9 @@ func TestHandleCCStreamingFromAnthropic_CompactSSEFormat(t *testing.T) {
 	resp := &http.Response{
 		Header: http.Header{"x-request-id": []string{"rid_cc_stream_compact"}},
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`invalid event line`,
+			`event:message_start`,
+			`invalid data line`,
 			`event:message_start`,
 			`data:{"type":"message_start","message":{"id":"msg_c2","type":"message","role":"assistant","content":[],"model":"k3","stop_reason":"","usage":{"input_tokens":21,"cache_read_input_tokens":6,"cache_creation_input_tokens":1}}}`,
 			``,
@@ -130,9 +137,7 @@ func TestHandleCCStreamingFromAnthropic_CompactSSEFormat(t *testing.T) {
 			`event:message_delta`,
 			`data:{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}`,
 			``,
-			`event:message_stop`,
-			`data:{"type":"message_stop"}`,
-			``,
+			`event:ping`,
 		}, "\n"))),
 	}
 
