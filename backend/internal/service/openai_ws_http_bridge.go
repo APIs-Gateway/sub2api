@@ -225,9 +225,6 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if resp.StatusCode == http.StatusTooManyRequests && account.Platform == PlatformOpenAI {
 			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, originalModel)
 			accountErrorHandled = true
-			if s.rateLimitService != nil {
-				shouldFailover = ShouldSwitchAccountOn429(account.ID)
-			}
 		}
 		if turn == 1 && shouldFailover {
 			if accountErrorHandled {
@@ -374,9 +371,6 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			if statusCode == http.StatusTooManyRequests && account.Platform == PlatformOpenAI {
 				s.persistOpenAIWSRateLimitSignal(ctx, account, resp.Header, upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw)
 				accountErrorHandled = true
-				if s.rateLimitService != nil {
-					shouldFailover = ShouldSwitchAccountOn429(account.ID)
-				}
 			}
 			if shouldFailover && !accountErrorHandled {
 				s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, resp.Header, upstreamMessage, originalModel)
