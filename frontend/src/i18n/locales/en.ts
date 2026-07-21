@@ -7881,6 +7881,7 @@
       currentExpiry: 'Current subscription expires on {date}.',
     },
     days: 'days',
+    weeks: 'weeks',
     months: 'months',
     years: 'years',
     oneMonth: '1 Month',

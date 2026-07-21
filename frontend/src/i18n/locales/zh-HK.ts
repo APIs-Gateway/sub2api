@@ -7901,6 +7901,7 @@
       currentExpiry: '當前訂閱 {date} 到期。',
     },
     days: '天',
+    weeks: '週',
     months: '個月',
     years: '年',
     oneMonth: '1 個月',
