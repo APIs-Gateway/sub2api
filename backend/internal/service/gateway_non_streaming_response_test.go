@@ -203,6 +203,22 @@ func TestClassifyAnthropicPassthroughResponse_InvalidJSON(t *testing.T) {
 	require.ErrorContains(t, err, "classify forced cache billing response")
 }
 
+func TestClassifyAnthropicResponseInputAsCacheRead_SetBytesErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "array root", body: `[]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := classifyAnthropicResponseInputAsCacheRead([]byte(tt.body), &ClaudeUsage{InputTokens: 1})
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestHandleNonStreamingResponse_NonJSON2xxMatchesModelScopedTempUnschedulableRule(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
