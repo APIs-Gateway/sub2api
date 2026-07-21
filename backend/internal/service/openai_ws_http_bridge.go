@@ -221,10 +221,22 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			upstreamMsg = http.StatusText(resp.StatusCode)
 		}
 		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+		accountErrorHandled := false
+		if resp.StatusCode == http.StatusTooManyRequests && account.Platform == PlatformOpenAI {
+			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, originalModel)
+			accountErrorHandled = true
+		}
 		if turn == 1 && shouldFailover {
+			if accountErrorHandled {
+				return nil, &UpstreamFailoverError{
+					StatusCode:      resp.StatusCode,
+					ResponseBody:    append([]byte(nil), respBody...),
+					ResponseHeaders: cloneHeader(resp.Header),
+				}
+			}
 			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body, respBody)
 		}
-		if shouldFailover {
+		if !accountErrorHandled && shouldFailover {
 			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, originalModel)
 		}
 		_ = writeClientMessage(buildOpenAIWSHTTPBridgeErrorEvent(resp.StatusCode, upstreamMsg))
@@ -355,16 +367,20 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			}
 			statusCode := openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
 			shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(statusCode, errMessage, upstreamMessage)
-			s.persistOpenAIWSRateLimitSignal(ctx, account, resp.Header, upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw)
+			accountErrorHandled := false
+			if statusCode == http.StatusTooManyRequests && account.Platform == PlatformOpenAI {
+				s.persistOpenAIWSRateLimitSignal(ctx, account, resp.Header, upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw)
+				accountErrorHandled = true
+			}
+			if shouldFailover && !accountErrorHandled {
+				s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, resp.Header, upstreamMessage, originalModel)
+			}
 			if turn == 1 && !wroteDownstream && shouldFailover {
 				return nil, &UpstreamFailoverError{
 					StatusCode:      statusCode,
 					ResponseBody:    append([]byte(nil), upstreamMessage...),
 					ResponseHeaders: cloneHeader(resp.Header),
 				}
-			}
-			if shouldFailover {
-				s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, resp.Header, upstreamMessage, originalModel)
 			}
 			upstreamEventErr = errors.New(errMessage)
 		}
