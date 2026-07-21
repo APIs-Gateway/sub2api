@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestDecideAdminBootstrap(t *testing.T) {
@@ -86,6 +88,43 @@ func TestWriteConfigFileKeepsDefaultUserConcurrency(t *testing.T) {
 	if !strings.Contains(string(data), "user_concurrency: 5") {
 		t.Fatalf("config missing default user concurrency, got:\n%s", string(data))
 	}
+}
+
+func TestWriteConfigFileIncludesRedisUsername(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	if err := writeConfigFile(&SetupConfig{
+		Redis: RedisConfig{
+			Host:     "redis",
+			Port:     6379,
+			Username: "app-user",
+		},
+	}); err != nil {
+		t.Fatalf("writeConfigFile() error = %v", err)
+	}
+
+	data, err := os.ReadFile(GetConfigFilePath())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	if !strings.Contains(string(data), "username: app-user") {
+		t.Fatalf("config missing Redis username, got:\n%s", string(data))
+	}
+}
+
+func TestAutoSetupFromEnvReadsRedisUsername(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	t.Setenv("DATABASE_HOST", "127.0.0.1")
+	t.Setenv("DATABASE_PORT", "1")
+	t.Setenv("REDIS_USERNAME", "app-user")
+
+	err := AutoSetupFromEnv()
+
+	// The local PostgreSQL connection fails before Redis is contacted, but the
+	// environment-backed Redis config is still constructed on this path.
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "database connection failed")
 }
 
 func TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap(t *testing.T) {

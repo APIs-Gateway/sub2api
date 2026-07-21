@@ -217,9 +217,11 @@
       description: 'Connect to your Redis server',
       host: 'Host',
       port: 'Port',
+      username: 'Username (optional)',
       password: 'Password (optional)',
       database: 'Database',
       passwordPlaceholder: 'Password',
+      usernamePlaceholder: 'Leave empty for default user',
       enableTls: 'Enable TLS',
       enableTlsHint: 'Use TLS when connecting to Redis (public CA certs)'
     },
