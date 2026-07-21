@@ -7901,6 +7901,7 @@
       currentExpiry: '当前订阅 {date} 到期。',
     },
     days: '天',
+    weeks: '周',
     months: '个月',
     years: '年',
     oneMonth: '1 个月',
