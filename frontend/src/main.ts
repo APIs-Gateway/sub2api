@@ -5,6 +5,7 @@ import router from './router'
 import i18n, { initI18n } from './i18n'
 import { useAppStore } from '@/stores/app'
 import { updateFavicon } from '@/utils/branding'
+import { applyIOSViewportZoomFix } from '@/utils/device'
 import { installChunkLoadRecovery } from '@/utils/chunkLoadRecovery'
 // Self-hosted brand fonts (offline / China-safe, no Google CDN)
 import '@fontsource-variable/fraunces' // 衬线标题 Latin (近 Tiempos/Anthropic 编辑感)
@@ -31,6 +32,8 @@ function initThemeClass() {
 async function bootstrap() {
   // Apply theme class globally before app mount to keep all routes consistent.
   initThemeClass()
+  // c8 ignore next: the browser bootstrap entrypoint is covered by the helper tests.
+  applyIOSViewportZoomFix(document)
 
   const app = createApp(App)
   const pinia = createPinia()
