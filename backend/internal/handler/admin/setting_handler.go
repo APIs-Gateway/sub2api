@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -156,6 +157,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		TurnstileSiteKey:                       settings.TurnstileSiteKey,
 		TurnstileSecretKeyConfigured:           settings.TurnstileSecretKeyConfigured,
 		APIKeyACLTrustForwardedIP:              settings.APIKeyACLTrustForwardedIP,
+		ForwardedClientIPHeaders:               settings.ForwardedClientIPHeaders,
 		LinuxDoConnectEnabled:                  settings.LinuxDoConnectEnabled,
 		LinuxDoConnectClientID:                 settings.LinuxDoConnectClientID,
 		LinuxDoConnectClientSecretConfigured:   settings.LinuxDoConnectClientSecretConfigured,
@@ -449,7 +451,8 @@ type UpdateSettingsRequest struct {
 	TurnstileSecretKey string `json:"turnstile_secret_key"`
 
 	// API Key IP 访问控制设置
-	APIKeyACLTrustForwardedIP *bool `json:"api_key_acl_trust_forwarded_ip"`
+	APIKeyACLTrustForwardedIP *bool     `json:"api_key_acl_trust_forwarded_ip"`
+	ForwardedClientIPHeaders  *[]string `json:"forwarded_client_ip_headers"`
 
 	// LinuxDo Connect OAuth 登录
 	LinuxDoConnectEnabled      bool   `json:"linuxdo_connect_enabled"`
@@ -1601,6 +1604,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.APIKeyACLTrustForwardedIP
 		}(),
+		ForwardedClientIPHeaders: func() []string {
+			if req.ForwardedClientIPHeaders != nil {
+				return append([]string(nil), (*req.ForwardedClientIPHeaders)...)
+			}
+			return append([]string(nil), previousSettings.ForwardedClientIPHeaders...)
+		}(),
 		LinuxDoConnectEnabled:                  req.LinuxDoConnectEnabled,
 		LinuxDoConnectClientID:                 req.LinuxDoConnectClientID,
 		LinuxDoConnectClientSecret:             req.LinuxDoConnectClientSecret,
@@ -2111,6 +2120,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		TurnstileSiteKey:                       updatedSettings.TurnstileSiteKey,
 		TurnstileSecretKeyConfigured:           updatedSettings.TurnstileSecretKeyConfigured,
 		APIKeyACLTrustForwardedIP:              updatedSettings.APIKeyACLTrustForwardedIP,
+		ForwardedClientIPHeaders:               updatedSettings.ForwardedClientIPHeaders,
 		LinuxDoConnectEnabled:                  updatedSettings.LinuxDoConnectEnabled,
 		LinuxDoConnectClientID:                 updatedSettings.LinuxDoConnectClientID,
 		LinuxDoConnectClientSecretConfigured:   updatedSettings.LinuxDoConnectClientSecretConfigured,
@@ -2434,6 +2444,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.APIKeyACLTrustForwardedIP != after.APIKeyACLTrustForwardedIP {
 		changed = append(changed, "api_key_acl_trust_forwarded_ip")
+	}
+	if !slices.Equal(before.ForwardedClientIPHeaders, after.ForwardedClientIPHeaders) {
+		changed = append(changed, "forwarded_client_ip_headers")
 	}
 	if before.LinuxDoConnectEnabled != after.LinuxDoConnectEnabled {
 		changed = append(changed, "linuxdo_connect_enabled")

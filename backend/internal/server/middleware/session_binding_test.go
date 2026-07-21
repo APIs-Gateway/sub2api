@@ -67,7 +67,11 @@ func TestSessionBindingContextHonorsTrustForwardedToggle(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{}
-			cfg.SetTrustForwardedIPForAPIKeyACL(tc.trustForwarded)
+			if tc.trustForwarded {
+				cfg.SetForwardedClientIPSettings(true, []string{"X-Cdn-Client-IP"})
+			} else {
+				cfg.SetTrustForwardedIPForAPIKeyACL(false)
+			}
 
 			router := gin.New()
 			require.NoError(t, router.SetTrustedProxies(nil))
@@ -84,7 +88,11 @@ func TestSessionBindingContextHonorsTrustForwardedToggle(t *testing.T) {
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/binding", nil)
 			req.RemoteAddr = "127.0.0.1:54321"
-			req.Header.Set("X-Real-IP", "1.2.3.4")
+			if tc.trustForwarded {
+				req.Header.Set("X-Cdn-Client-IP", "1.2.3.4")
+			} else {
+				req.Header.Set("X-Real-IP", "1.2.3.4")
+			}
 			req.Header.Set("User-Agent", "test-agent")
 			router.ServeHTTP(w, req)
 

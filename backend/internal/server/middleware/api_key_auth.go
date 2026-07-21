@@ -29,6 +29,12 @@ func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionS
 // /v1/usage 和 /v1/sub2api/billing 端点只需鉴权，不需要计费执行。
 func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, billingCacheService *service.BillingCacheService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		forwardedIPSettings := config.ForwardedClientIPSettings{}
+		if cfg != nil {
+			forwardedIPSettings = cfg.ForwardedClientIPSettings()
+		}
+		ip.SetForwardedIPSettings(c, forwardedIPSettings.TrustForwardedIP, forwardedIPSettings.Headers)
+
 		// ── 1. 提取 API Key ──────────────────────────────────────────
 		if rejectInvalidAuthAbuse(c, apiKeyService) {
 			AbortWithError(c, http.StatusTooManyRequests, "INVALID_AUTH_RATE_LIMITED", "Too many invalid authentication attempts; retry later")
@@ -117,7 +123,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		// 检查 IP 限制（白名单/黑名单）
 		// 注意：错误信息故意模糊，避免暴露具体的 IP 限制机制
 		if len(apiKey.IPWhitelist) > 0 || len(apiKey.IPBlacklist) > 0 {
-			clientIP := ip.GetSecurityClientIP(c, cfg.TrustForwardedIPForAPIKeyACL())
+			clientIP := ip.GetSecurityClientIP(c, forwardedIPSettings.TrustForwardedIP)
 			allowed, _ := ip.CheckIPRestrictionWithCompiledRules(clientIP, apiKey.CompiledIPWhitelist, apiKey.CompiledIPBlacklist)
 			if !allowed {
 				if clientIP == "" {

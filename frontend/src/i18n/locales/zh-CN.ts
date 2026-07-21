@@ -6214,7 +6214,10 @@
         description: '控制 API Key 白名单和黑名单使用哪个客户端 IP 判断',
         trustForwardedIp: '信任反代传递的客户端 IP',
         trustForwardedIpHint:
-          '默认关闭。仅在源站只允许 Cloudflare 或 Nginx 反代访问时开启；开启后 API Key IP 白/黑名单会使用 CF-Connecting-IP、X-Real-IP 或 X-Forwarded-For，与使用记录中的请求 IP 保持一致。'
+          '默认关闭。仅在源站只允许 Cloudflare 或 Nginx 反代访问时开启；开启后 API Key IP 白/黑名单会使用 CF-Connecting-IP、X-Real-IP 或 X-Forwarded-For，与使用记录中的请求 IP 保持一致。',
+        customHeaders: '可信客户端 IP 请求头',
+        customHeadersPlaceholder: '每行一个请求头，例如 X-Cdn-Client-IP',
+        customHeadersHint: '可选。启用信任转发 IP 后，会优先使用这里配置的请求头，再回退到 Cloudflare、X-Real-IP 和 X-Forwarded-For。'
       },
       linuxdo: {
         title: 'LinuxDo Connect 登录',

@@ -14,8 +14,13 @@ import (
 // request context before auth/token issuance.
 func SessionBindingContext(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		forwardedIPSettings := config.ForwardedClientIPSettings{}
+		if cfg != nil {
+			forwardedIPSettings = cfg.ForwardedClientIPSettings()
+		}
+		ip.SetForwardedIPSettings(c, forwardedIPSettings.TrustForwardedIP, forwardedIPSettings.Headers)
 		binding := &service.SessionBinding{
-			IP:        ip.GetSecurityClientIP(c, cfg != nil && cfg.TrustForwardedIPForAPIKeyACL()),
+			IP:        ip.GetSecurityClientIP(c, forwardedIPSettings.TrustForwardedIP),
 			UserAgent: c.Request.UserAgent(),
 		}
 		c.Request = c.Request.WithContext(service.WithSessionBinding(c.Request.Context(), binding))

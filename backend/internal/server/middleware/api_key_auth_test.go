@@ -990,7 +990,7 @@ func TestAPIKeyAuthIPRestrictionCanTrustForwardedClientIPForReverseProxy(t *test
 	}
 
 	cfg := &config.Config{RunMode: config.RunModeSimple}
-	cfg.SetTrustForwardedIPForAPIKeyACL(true)
+	cfg.SetForwardedClientIPSettings(true, []string{"X-Cdn-Client-IP"})
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
 	router := gin.New()
 	require.NoError(t, router.SetTrustedProxies(nil))
@@ -1003,9 +1003,7 @@ func TestAPIKeyAuthIPRestrictionCanTrustForwardedClientIPForReverseProxy(t *test
 	req := httptest.NewRequest(http.MethodGet, "/t", nil)
 	req.RemoteAddr = "9.9.9.9:12345"
 	req.Header.Set("x-api-key", apiKey.Key)
-	req.Header.Set("X-Forwarded-For", "1.2.3.4")
-	req.Header.Set("X-Real-IP", "1.2.3.4")
-	req.Header.Set("CF-Connecting-IP", "1.2.3.4")
+	req.Header.Set("X-Cdn-Client-IP", "1.2.3.4")
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)

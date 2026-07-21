@@ -95,6 +95,17 @@ func TestDiffSettingsDetectsStepUpChange(t *testing.T) {
 	require.Contains(t, changed, service.SettingKeyStepUpEnabled)
 }
 
+func TestDiffSettingsDetectsForwardedClientIPHeaderChange(t *testing.T) {
+	changed := diffSettings(
+		&service.SystemSettings{ForwardedClientIPHeaders: []string{"X-Cdn-Client-IP"}},
+		&service.SystemSettings{ForwardedClientIPHeaders: []string{"True-Client-IP"}},
+		nil,
+		nil,
+		UpdateSettingsRequest{},
+	)
+	require.Contains(t, changed, service.SettingKeyForwardedClientIPHeaders)
+}
+
 func TestUpdateSettingsSecuritySwitchTransitions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

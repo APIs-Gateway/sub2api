@@ -6212,7 +6212,12 @@
         description: 'Choose which client IP is used by API Key allowlists and denylists',
         trustForwardedIp: 'Trust forwarded client IP',
         trustForwardedIpHint:
-          'Disabled by default. Enable only when the origin is reachable only through Cloudflare or Nginx reverse proxy. When enabled, API Key IP allowlists and denylists use CF-Connecting-IP, X-Real-IP, or X-Forwarded-For, matching the request IP shown in usage records.'
+          'Disabled by default. Enable only when the origin is reachable only through Cloudflare or Nginx reverse proxy. When enabled, API Key IP allowlists and denylists use CF-Connecting-IP, X-Real-IP, or X-Forwarded-For, matching the request IP shown in usage records.',
+        customHeaders: 'Trusted client-IP headers',
+        customHeadersPlaceholder:
+          'One header name per line, for example X-Cdn-Client-IP',
+        customHeadersHint:
+          'Optional. Used before the built-in Cloudflare, X-Real-IP, and X-Forwarded-For headers when forwarded IP trust is enabled.'
       },
       linuxdo: {
         title: 'LinuxDo Connect Login',
