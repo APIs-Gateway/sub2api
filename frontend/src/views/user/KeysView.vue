@@ -962,7 +962,7 @@
       <div
         v-if="groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
-        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max min-w-[380px] overflow-hidden rounded-md bg-white shadow-overlay ring-1 ring-black/5 duration-200 dark:bg-dark-800 dark:ring-white/10"
+        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-md bg-white shadow-overlay ring-1 ring-black/5 duration-200 sm:min-w-[380px] dark:bg-dark-800 dark:ring-white/10"
         style="pointer-events: auto !important;"
         :style="{
           top: dropdownPosition.top !== undefined ? dropdownPosition.top + 'px' : undefined,
@@ -1416,20 +1416,23 @@ const openGroupSelector = (key: ApiKey) => {
     if (buttonEl) {
       const rect = buttonEl.getBoundingClientRect()
       const dropdownEstHeight = 400 // estimated max dropdown height
+      const dropdownEstWidth = Math.min(380, window.innerWidth - 16)
       const spaceBelow = window.innerHeight - rect.bottom
       const spaceAbove = rect.top
+      // Clamp the dropdown to the viewport so it remains usable on narrow screens.
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - dropdownEstWidth - 8))
 
       if (spaceBelow < dropdownEstHeight && spaceAbove > spaceBelow) {
         // Not enough space below, pop upward
         dropdownPosition.value = {
           bottom: window.innerHeight - rect.top + 4,
-          left: rect.left
+          left
         }
       } else {
         // Default: pop downward
         dropdownPosition.value = {
           top: rect.bottom + 4,
-          left: rect.left
+          left
         }
       }
     }
