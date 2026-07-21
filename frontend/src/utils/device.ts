@@ -18,6 +18,15 @@ interface DeviceDetectionEnvironment {
   matchMedia?: (query: string) => MediaQueryResultLike | null | undefined
 }
 
+interface ViewportMetaLike {
+  getAttribute(name: string): string | null
+  setAttribute(name: string, value: string): void
+}
+
+interface ViewportDocumentLike {
+  querySelector(selector: string): ViewportMetaLike | null
+}
+
 const MOBILE_UA_RE = /\b(Mobi|Android|iPhone|iPod|Windows Phone|webOS|BlackBerry|IEMobile)\b/i
 const TABLET_UA_RE = /\b(iPad|Tablet)\b/i
 const IOS_UA_RE = /\b(iPhone|iPad|iPod)\b/i
@@ -78,4 +87,18 @@ export function isIOSDevice(): boolean {
   if (typeof navigator === 'undefined') return false
 
   return detectIOSDevice({ navigator })
+}
+
+export function applyIOSViewportZoomFix(
+  doc: ViewportDocumentLike,
+  iosDevice = isIOSDevice(),
+): void {
+  if (!iosDevice) return
+
+  const viewport = doc.querySelector('meta[name="viewport"]')
+  if (!viewport) return
+
+  const content = viewport.getAttribute('content') || ''
+  if (/maximum-scale/i.test(content)) return
+  viewport.setAttribute('content', `${content}, maximum-scale=1.0`)
 }

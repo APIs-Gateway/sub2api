@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectIOSDevice, detectMobileDevice } from '../device'
+import { applyIOSViewportZoomFix, detectIOSDevice, detectMobileDevice, isIOSDevice } from '../device'
 
 describe('detectMobileDevice', () => {
   it('prefers userAgentData.mobile when available', () => {
@@ -92,4 +92,40 @@ describe('detectIOSDevice', () => {
       },
     })).toBe(false)
   })
+})
+
+describe('applyIOSViewportZoomFix', () => {
+  const createViewport = (content: string | null) => {
+    const attributes = { content }
+    return {
+      getAttribute: (name: string) => (name === 'content' ? attributes.content : null),
+      setAttribute: (name: string, value: string) => {
+        if (name === 'content') attributes.content = value
+      },
+      readContent: () => attributes.content,
+    }
+  }
+
+  it('adds maximum-scale for an iOS viewport without the setting', () => {
+    const viewport = createViewport('width=device-width, initial-scale=1.0')
+    applyIOSViewportZoomFix({ querySelector: () => viewport }, true)
+    expect(viewport.readContent()).toBe('width=device-width, initial-scale=1.0, maximum-scale=1.0')
+  })
+
+  it('keeps an existing maximum-scale setting unchanged', () => {
+    const viewport = createViewport('width=device-width, maximum-scale=2.0')
+    applyIOSViewportZoomFix({ querySelector: () => viewport }, true)
+    expect(viewport.readContent()).toBe('width=device-width, maximum-scale=2.0')
+  })
+
+  it('does nothing for non-iOS devices or a missing viewport', () => {
+    const viewport = createViewport('width=device-width')
+    applyIOSViewportZoomFix({ querySelector: () => viewport }, false)
+    expect(viewport.readContent()).toBe('width=device-width')
+    applyIOSViewportZoomFix({ querySelector: () => null }, true)
+  })
+})
+
+it('reports the test runtime as non-iOS', () => {
+  expect(isIOSDevice()).toBe(false)
 })

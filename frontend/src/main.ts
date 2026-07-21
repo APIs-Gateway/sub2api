@@ -5,7 +5,7 @@ import router from './router'
 import i18n, { initI18n } from './i18n'
 import { useAppStore } from '@/stores/app'
 import { updateFavicon } from '@/utils/branding'
-import { isIOSDevice } from '@/utils/device'
+import { applyIOSViewportZoomFix } from '@/utils/device'
 import { installChunkLoadRecovery } from '@/utils/chunkLoadRecovery'
 // Self-hosted brand fonts (offline / China-safe, no Google CDN)
 import '@fontsource-variable/fraunces' // 衬线标题 Latin (近 Tiempos/Anthropic 编辑感)
@@ -21,18 +21,6 @@ import './style.css'
 
 installChunkLoadRecovery()
 
-function initIOSViewportZoomFix() {
-  // iOS Safari zooms inputs below 16px on focus and may keep the page zoomed.
-  if (!isIOSDevice()) return
-
-  const viewport = document.querySelector('meta[name="viewport"]')
-  if (!viewport) return
-
-  const content = viewport.getAttribute('content') || ''
-  if (/maximum-scale/i.test(content)) return
-  viewport.setAttribute('content', `${content}, maximum-scale=1.0`)
-}
-
 function initThemeClass() {
   const savedTheme = localStorage.getItem('theme')
   const shouldUseDark =
@@ -44,7 +32,7 @@ function initThemeClass() {
 async function bootstrap() {
   // Apply theme class globally before app mount to keep all routes consistent.
   initThemeClass()
-  initIOSViewportZoomFix()
+  applyIOSViewportZoomFix(document)
 
   const app = createApp(App)
   const pinia = createPinia()
