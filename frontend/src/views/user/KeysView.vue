@@ -1054,7 +1054,7 @@ import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
-import { clampDropdownLeft } from '@/utils/viewport'
+import { getDropdownPosition } from '@/utils/viewport'
 
 // Helper to format date for datetime-local input
 const formatDateTimeLocal = (isoDate: string): string => {
@@ -1416,26 +1416,8 @@ const openGroupSelector = (key: ApiKey) => {
     const buttonEl = groupButtonRefs.value.get(key.id)
     if (buttonEl) {
       const rect = buttonEl.getBoundingClientRect()
-      const dropdownEstHeight = 400 // estimated max dropdown height
-      const spaceBelow = window.innerHeight - rect.bottom
-      const spaceAbove = rect.top
-      // Clamp the dropdown to the viewport so it remains usable on narrow screens.
-      // c8 ignore next: viewport sizing is covered by the pure helper tests.
-      const left = clampDropdownLeft(rect.left, window.innerWidth)
-
-      if (spaceBelow < dropdownEstHeight && spaceAbove > spaceBelow) {
-        // Not enough space below, pop upward
-        dropdownPosition.value = {
-          bottom: window.innerHeight - rect.top + 4,
-          left
-        }
-      } else {
-        // Default: pop downward
-        dropdownPosition.value = {
-          top: rect.bottom + 4,
-          left
-        }
-      }
+      // c8 ignore next: browser viewport interaction is covered by the pure helper tests.
+      dropdownPosition.value = getDropdownPosition(rect, window.innerWidth, window.innerHeight)
     }
     groupSelectorKeyId.value = key.id
     groupSearchQuery.value = ''
