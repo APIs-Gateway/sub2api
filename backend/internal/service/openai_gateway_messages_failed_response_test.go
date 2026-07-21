@@ -61,6 +61,32 @@ func TestForwardAsAnthropic_BufferedResponseFailed_ReturnsError(t *testing.T) {
 	require.Contains(t, events[0].Detail, "Content policy violation")
 }
 
+func TestForwardAsAnthropic_BufferedResponseSetsJSONContentType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	ssePayload := `data: {"type":"response.completed","response":{"id":"resp_ok","model":"gpt-5.4","status":"completed","output":[{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(ssePayload)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:                  rawChatCompletionsTestConfig(),
+		httpUpstream:         upstream,
+		responseHeaderFilter: compileResponseHeaderFilter(rawChatCompletionsTestConfig()),
+	}
+
+	_, err := svc.ForwardAsAnthropic(context.Background(), c, responsesSupportedMessagesTestAccount(), body, "", "")
+	require.NoError(t, err)
+	require.Equal(t, "application/json; charset=utf-8", rec.Header().Get("Content-Type"))
+}
+
 func TestForwardAsAnthropic_StreamingResponseFailed_ReturnsError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

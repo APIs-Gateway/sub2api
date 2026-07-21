@@ -1188,6 +1188,31 @@ func (s *AccountRepoSuite) TestBulkUpdate_EmptyUpdates() {
 	s.Require().Zero(affected)
 }
 
+func (s *AccountRepoSuite) TestBulkUpdate_ProbeEnabledRequiresOpenAIAPIKeyAccounts() {
+	valid := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:     "probe-valid",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+	})
+	invalid := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:     "probe-invalid",
+		Platform: service.PlatformAnthropic,
+		Type:     service.AccountTypeAPIKey,
+	})
+	enabled := true
+
+	_, err := s.repo.BulkUpdate(s.ctx, []int64{valid.ID, invalid.ID}, service.AccountBulkUpdate{ProbeEnabled: &enabled})
+	s.Require().ErrorIs(err, service.ErrUpstreamBillingProbeAccountInvalid)
+
+	gotValid, _ := s.repo.GetByID(s.ctx, valid.ID)
+	s.Require().NotContains(gotValid.Extra, service.UpstreamBillingProbeEnabledExtraKey)
+
+	_, err = s.repo.BulkUpdate(s.ctx, []int64{valid.ID}, service.AccountBulkUpdate{ProbeEnabled: &enabled})
+	s.Require().NoError(err)
+	gotValid, _ = s.repo.GetByID(s.ctx, valid.ID)
+	s.Require().Equal(true, gotValid.Extra[service.UpstreamBillingProbeEnabledExtraKey])
+}
+
 func idsOfAccounts(accounts []service.Account) []int64 {
 	out := make([]int64, 0, len(accounts))
 	for i := range accounts {

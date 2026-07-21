@@ -127,9 +127,22 @@ type AnthropicResponse struct {
 	Role         string                  `json:"role"` // "assistant"
 	Content      []AnthropicContentBlock `json:"content"`
 	Model        string                  `json:"model"`
-	StopReason   string                  `json:"stop_reason"`
+	StopReason   *string                 `json:"stop_reason"`
 	StopSequence *string                 `json:"stop_sequence,omitempty"`
 	Usage        AnthropicUsage          `json:"usage"`
+}
+
+// AnthropicStopReasonPtr returns a non-nil pointer for a final stop reason.
+func AnthropicStopReasonPtr(s string) *string {
+	return &s
+}
+
+// AnthropicStopReasonString returns the stop reason value, or "" when unset.
+func AnthropicStopReasonString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // AnthropicUsage holds token counts in Anthropic format.

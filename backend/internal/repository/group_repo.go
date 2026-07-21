@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 
+	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 )
 
@@ -36,8 +37,160 @@ func newGroupRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *groupRep
 	return &groupRepository{client: client, sql: sqlq}
 }
 
+func (r *groupRepository) FindByDuplicateOperationID(ctx context.Context, operationID string) (*service.Group, error) {
+	operationID = strings.TrimSpace(operationID)
+	if operationID == "" {
+		return nil, nil
+	}
+	row, err := clientFromContext(ctx, r.client).Group.Query().
+		Where(group.DuplicateOperationIDEQ(operationID), group.DeletedAtIsNil()).
+		Order(dbent.Asc(group.FieldID)).
+		First(ctx)
+	if dbent.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find group duplicate operation: %w", err)
+	}
+	return groupEntityToService(row), nil
+}
+
+// CreateFromSource persists the copied group, its source account bindings, and
+// the scheduler invalidation event atomically. It is intentionally separate
+// from GroupRepository so existing group CRUD callers keep their contract.
+func (r *groupRepository) CreateFromSource(ctx context.Context, duplicate *service.Group, sourceGroupID int64) error {
+	if duplicate == nil {
+		return errors.New("group is nil")
+	}
+	client := clientFromContext(ctx, r.client)
+	tx, err := client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return err
+	}
+	txClient := client
+	var exec sqlExecutor = client
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		txClient = tx.Client()
+		exec = txClient
+	}
+	dbDialect := txClient.Driver().Dialect()
+	rows, err := exec.QueryContext(ctx, groupDuplicateSourceLockQuery(dbDialect), sourceGroupID)
+	if err != nil {
+		return err
+	}
+	var lockedSourceID int64
+	if rows.Next() {
+		if err := rows.Scan(&lockedSourceID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if lockedSourceID == 0 {
+		return service.ErrGroupNotFound
+	}
+
+	if err := createGroupRecord(ctx, txClient, duplicate); err != nil {
+		return err
+	}
+	copyArgs := []any{sourceGroupID, duplicate.ID}
+	if dbDialect != dialect.Postgres {
+		// MySQL and SQLite use positional '?' placeholders. The duplicate ID
+		// appears in the SELECT list before the source ID in the WHERE clause.
+		copyArgs = []any{duplicate.ID, sourceGroupID}
+	}
+	result, err := exec.ExecContext(ctx, groupDuplicateAccountCopyQuery(dbDialect), copyArgs...)
+	if err != nil {
+		return err
+	}
+	if count, countErr := result.RowsAffected(); countErr == nil {
+		duplicate.AccountCount = count
+	}
+	if err := enqueueSchedulerOutbox(ctx, exec, service.SchedulerOutboxEventGroupChanged, nil, &duplicate.ID, nil); err != nil {
+		return err
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func groupDuplicateSourceLockQuery(dbDialect string) string {
+	lockClause := "FOR SHARE"
+	placeholder := "$1"
+	switch dbDialect {
+	case dialect.MySQL:
+		lockClause = "LOCK IN SHARE MODE"
+		placeholder = "?"
+	case dialect.SQLite:
+		// SQLite serializes the write transaction, but does not support row-lock
+		// clauses. Keeping the SELECT inside the transaction preserves the
+		// source-exists check without emitting PostgreSQL-only syntax.
+		lockClause = ""
+		placeholder = "?"
+	}
+
+	return fmt.Sprintf(`
+		SELECT id FROM groups
+		WHERE id = %s AND deleted_at IS NULL
+		%s`, placeholder, lockClause)
+}
+
+func groupDuplicateAccountCopyQuery(dbDialect string) string {
+	ignoreClause := "ON CONFLICT (account_id, group_id) DO NOTHING"
+	placeholderSource := "$1"
+	placeholderDuplicate := "$2"
+	switch dbDialect {
+	case dialect.MySQL:
+		ignoreClause = ""
+		placeholderSource = "?"
+		placeholderDuplicate = "?"
+	case dialect.SQLite:
+		ignoreClause = ""
+		placeholderSource = "?"
+		placeholderDuplicate = "?"
+	}
+
+	insertVerb := "INSERT"
+	switch dbDialect {
+	case dialect.MySQL:
+		insertVerb = "INSERT IGNORE"
+	case dialect.SQLite:
+		insertVerb = "INSERT OR IGNORE"
+	}
+
+	return fmt.Sprintf(`
+		%s INTO account_groups (account_id, group_id, priority, created_at)
+		SELECT ag.account_id, %s, ag.priority, CURRENT_TIMESTAMP
+		FROM account_groups ag
+		JOIN accounts a ON a.id = ag.account_id
+		WHERE ag.group_id = %s AND a.deleted_at IS NULL
+		%s`, insertVerb, placeholderDuplicate, placeholderSource, ignoreClause)
+}
+
 func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) error {
-	builder := r.client.Group.Create().
+	if err := createGroupRecord(ctx, clientFromContext(ctx, r.client), groupIn); err != nil {
+		return err
+	}
+	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
+		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group create failed: group=%d err=%v", groupIn.ID, err)
+	}
+	return nil
+}
+
+func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *service.Group) error {
+	if groupIn == nil {
+		return errors.New("group is nil")
+	}
+	builder := client.Group.Create().
 		SetName(groupIn.Name).
 		SetDescription(groupIn.Description).
 		SetPlatform(groupIn.Platform).
@@ -69,6 +222,9 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
 		SetModelsListConfig(groupIn.ModelsListConfig).
 		SetRpmLimit(groupIn.RPMLimit)
+	if groupIn.DuplicateOperationID != "" {
+		builder = builder.SetDuplicateOperationID(groupIn.DuplicateOperationID)
+	}
 
 	// 设置模型路由配置
 	if groupIn.ModelRouting != nil {
@@ -79,15 +235,13 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 	builder = builder.SetSupportedModelScopes(groupIn.SupportedModelScopes)
 
 	created, err := builder.Save(ctx)
-	if err == nil {
-		groupIn.ID = created.ID
-		groupIn.CreatedAt = created.CreatedAt
-		groupIn.UpdatedAt = created.UpdatedAt
-		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
-			logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group create failed: group=%d err=%v", groupIn.ID, err)
-		}
+	if err != nil {
+		return translatePersistenceError(err, nil, service.ErrGroupExists)
 	}
-	return translatePersistenceError(err, nil, service.ErrGroupExists)
+	groupIn.ID = created.ID
+	groupIn.CreatedAt = created.CreatedAt
+	groupIn.UpdatedAt = created.UpdatedAt
+	return nil
 }
 
 func (r *groupRepository) GetByID(ctx context.Context, id int64) (*service.Group, error) {
@@ -219,7 +373,11 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 }
 
 func (r *groupRepository) Delete(ctx context.Context, id int64) error {
-	_, err := r.client.Group.Delete().Where(group.IDEQ(id)).Exec(ctx)
+	client := clientFromContext(ctx, r.client)
+	if err := clearGroupDuplicateOperationID(ctx, client, id); err != nil {
+		return err
+	}
+	_, err := client.Group.Delete().Where(group.IDEQ(id)).Exec(ctx)
 	if err != nil {
 		return translatePersistenceError(err, service.ErrGroupNotFound, nil)
 	}
@@ -227,6 +385,24 @@ func (r *groupRepository) Delete(ctx context.Context, id int64) error {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group delete failed: group=%d err=%v", id, err)
 	}
 	return nil
+}
+
+// clearGroupDuplicateOperationID keeps the portable full unique index reusable
+// after a soft delete. The field is immutable through Ent's public update API;
+// deleting is the one lifecycle transition that intentionally clears it.
+func clearGroupDuplicateOperationID(ctx context.Context, client *dbent.Client, id int64) error {
+	if client == nil {
+		return nil
+	}
+	placeholder := "$1"
+	if client.Driver().Dialect() != dialect.Postgres {
+		placeholder = "?"
+	}
+	_, err := client.ExecContext(ctx, fmt.Sprintf(
+		"UPDATE groups SET duplicate_operation_id = NULL WHERE id = %s AND deleted_at IS NULL",
+		placeholder,
+	), id)
+	return err
 }
 
 func (r *groupRepository) List(ctx context.Context, params pagination.PaginationParams) ([]service.Group, *pagination.PaginationResult, error) {
@@ -655,6 +831,9 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 	}
 
 	// 4. Soft-delete group itself.
+	if err := clearGroupDuplicateOperationID(ctx, txClient, id); err != nil {
+		return nil, err
+	}
 	if _, err := txClient.Group.Delete().Where(group.IDEQ(id)).Exec(ctx); err != nil {
 		return nil, err
 	}

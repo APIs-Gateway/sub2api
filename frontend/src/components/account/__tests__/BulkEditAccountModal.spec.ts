@@ -178,6 +178,22 @@ describe('BulkEditAccountModal', () => {
     expect(wrapper.find('#bulk-edit-openai-ws-mode-enabled').exists()).toBe(false)
   })
 
+  it('OpenAI API Key 批量编辑可设置上游倍率自动探测开关', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['apikey']
+    })
+
+    await wrapper.get('#bulk-edit-upstream-billing-auto-probe-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-edit-upstream-billing-auto-probe-select"]').setValue('disabled')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      upstream_billing_probe_enabled: false
+    })
+  })
+
   it('OpenAI OAuth 批量编辑应提交 codex_cli_only 字段', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],

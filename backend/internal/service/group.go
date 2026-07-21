@@ -19,6 +19,10 @@ type Group struct {
 	IsExclusive    bool
 	Status         string
 	Hydrated       bool // indicates the group was loaded from a trusted repository source
+	// DuplicateOperationID is internal persistence metadata used only to recover
+	// an idempotent admin duplication after the generic idempotency store expires
+	// or is unavailable. It is never serialized by the admin DTO.
+	DuplicateOperationID string
 
 	SubscriptionType    string
 	DailyLimitUSD       *float64
