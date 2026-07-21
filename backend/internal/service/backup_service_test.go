@@ -211,11 +211,28 @@ func newTestBackupService(repo *mockSettingRepo, dumper DBDumper, store *mockObj
 			User:   "test",
 			DBName: "testdb",
 		},
+		Totp: config.TotpConfig{EncryptionKeyConfigured: true},
 	}
 	factory := func(_ context.Context, _ *BackupS3Config) (BackupObjectStore, error) {
 		return store, nil
 	}
 	return NewBackupService(repo, cfg, &plainEncryptor{}, factory, dumper)
+}
+
+func newTestBackupServiceEphemeralKey(repo *mockSettingRepo) *BackupService {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{
+			Host:   "localhost",
+			Port:   5432,
+			User:   "test",
+			DBName: "testdb",
+		},
+		Totp: config.TotpConfig{EncryptionKeyConfigured: false},
+	}
+	factory := func(_ context.Context, _ *BackupS3Config) (BackupObjectStore, error) {
+		return newMockObjectStore(), nil
+	}
+	return NewBackupService(repo, cfg, &plainEncryptor{}, factory, &mockDumper{})
 }
 
 func seedS3Config(t *testing.T, repo *mockSettingRepo) {
@@ -286,6 +303,38 @@ func TestBackupService_S3ConfigKeepExistingSecret(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "original-secret", internal.SecretAccessKey)
 	require.Equal(t, "AKID-NEW", internal.AccessKeyID)
+}
+
+func TestBackupService_UpdateS3Config_RejectsEphemeralKey(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupServiceEphemeralKey(repo)
+
+	_, err := svc.UpdateS3Config(context.Background(), BackupS3Config{
+		Bucket:          "my-bucket",
+		AccessKeyID:     "AKID",
+		SecretAccessKey: "my-secret",
+	})
+	require.ErrorIs(t, err, ErrSecretEncryptionKeyNotConfigured)
+
+	raw, _ := repo.GetValue(context.Background(), settingKeyBackupS3Config)
+	require.Empty(t, raw)
+}
+
+func TestBackupService_UpdateS3Config_NoSecretAllowedWithEphemeralKey(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupServiceEphemeralKey(repo)
+
+	_, err := svc.UpdateS3Config(context.Background(), BackupS3Config{
+		Bucket:      "my-bucket",
+		AccessKeyID: "AKID",
+	})
+	require.NoError(t, err)
+}
+
+func TestBackupService_EncryptionKeyConfigured(t *testing.T) {
+	repo := newMockSettingRepo()
+	require.True(t, newTestBackupService(repo, &mockDumper{}, newMockObjectStore()).EncryptionKeyConfigured())
+	require.False(t, newTestBackupServiceEphemeralKey(repo).EncryptionKeyConfigured())
 }
 
 func TestBackupService_SaveRecordConcurrency(t *testing.T) {
