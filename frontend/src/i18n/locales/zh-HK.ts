@@ -3846,7 +3846,9 @@
         resetTooltipNeedQuery: '先點擊「次數」加載剩餘重置次數',
         resetTooltipNoCredits: '沒有可用的重置次數',
         noCreditsAvailable: '沒有可用的重置次數',
-        resetSuccess: '已重置 {windows} 個窗口'
+        resetSuccess: '已重置 {windows} 個窗口',
+        confirmTitle: '確認重置週限',
+        confirmMessage: '將消耗 1 次重置次數立即恢復當前窗口，剩餘 {count} 次。此操作不可撤銷，確定繼續嗎？'
       },
       tier: {
         free: 'Free',
