@@ -2,6 +2,8 @@
 # 再算 status / 发评论,避免同仓库 PR 里两个 frontend upload 先到齐后,
 # Codecov 抢在 backend coverage 上传前算出偏低的假 fail。
 codecov:
+  # main requires the legacy codecov/patch commit status.
+  github_checks: false
   notify:
     wait_for_ci: true
     after_n_builds: 4
