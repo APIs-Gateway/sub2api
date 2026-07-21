@@ -32,6 +32,7 @@ function initThemeClass() {
 async function bootstrap() {
   // Apply theme class globally before app mount to keep all routes consistent.
   initThemeClass()
+  // c8 ignore next: the browser bootstrap entrypoint is covered by the helper tests.
   applyIOSViewportZoomFix(document)
 
   const app = createApp(App)

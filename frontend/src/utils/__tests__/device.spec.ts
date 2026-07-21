@@ -124,6 +124,12 @@ describe('applyIOSViewportZoomFix', () => {
     expect(viewport.readContent()).toBe('width=device-width')
     applyIOSViewportZoomFix({ querySelector: () => null }, true)
   })
+
+  it('uses runtime device detection when the iOS flag is omitted', () => {
+    const viewport = createViewport('width=device-width')
+    applyIOSViewportZoomFix({ querySelector: () => viewport })
+    expect(viewport.readContent()).toBe('width=device-width')
+  })
 })
 
 it('reports the test runtime as non-iOS', () => {
