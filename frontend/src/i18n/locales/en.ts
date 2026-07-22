@@ -4018,8 +4018,8 @@
         modelRestrictionDisabledByPassthrough: 'Automatic passthrough is enabled: model whitelist/mapping will not take effect.',
       },
       grok: {
-        baseUrlHint: 'Grok OAuth accounts forward to the official xAI API base URL.',
-        apiKeyHint: 'Grok subscription support uses OAuth refresh tokens; API keys are out of scope for this account type.'
+        baseUrlHint: 'Grok accounts forward to the official xAI API base URL.',
+        apiKeyHint: 'Use an xAI API key for direct API access.'
       },
       anthropic: {
         apiKeyPassthrough: 'Auto passthrough (auth only)',

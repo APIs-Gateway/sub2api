@@ -4091,8 +4091,8 @@
         modelRestrictionDisabledByPassthrough: '已开启自动透传：模型白名单/映射不会生效。',
       },
       grok: {
-        baseUrlHint: 'Grok OAuth 账号会转发到官方 xAI API Base URL。',
-        apiKeyHint: 'Grok 订阅支持使用 OAuth refresh token；API Key 账号不在本次范围内。'
+        baseUrlHint: 'Grok 账号会转发到官方 xAI API Base URL。',
+        apiKeyHint: '直接 API 访问请使用 xAI API Key。'
       },
       anthropic: {
         apiKeyPassthrough: '自动透传（仅替换认证）',
