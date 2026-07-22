@@ -142,10 +142,6 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	}, nil
 }
 
-func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
-	return patchGrokResponsesBodyBase(body, upstreamModel)
-}
-
 func patchGrokResponsesBodyWithClientTools(body []byte, upstreamModel string) ([]byte, apicompat.ResponsesClientToolMapping, error) {
 	if !json.Valid(body) {
 		return nil, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("invalid json request body")

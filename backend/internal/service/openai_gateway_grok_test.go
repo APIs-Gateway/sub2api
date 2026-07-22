@@ -25,7 +25,7 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 		"reasoning": {"effort": "high"}
 	}`)
 
-	patched, err := patchGrokResponsesBody(body, "grok-4.3")
+	patched, err := patchGrokResponsesBodyBase(body, "grok-4.3")
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 	require.Equal(t, "grok-4.3", gjson.GetBytes(patched, "model").String())
