@@ -257,6 +257,12 @@ func BuildResponsesURL(baseURL string) string {
 	return EffectiveBaseURL(baseURL) + "/responses"
 }
 
+// BuildChatCompletionsURL returns the xAI-compatible Chat Completions endpoint
+// for an account-specific base URL.
+func BuildChatCompletionsURL(baseURL string) string {
+	return EffectiveBaseURL(baseURL) + "/chat/completions"
+}
+
 // TokenResponse represents xAI OAuth token responses.
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
