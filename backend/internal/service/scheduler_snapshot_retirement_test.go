@@ -214,7 +214,7 @@ func (r *retirementGroupRepo) GetByIDLite(context.Context, int64) (*Group, error
 }
 
 func TestSchedulerGroupEventReopensBucketsUnderLifecycleLease(t *testing.T) {
-	const groupID = int64(69)
+	groupID := int64(69)
 	cache := newRetirementRaceCache()
 	cache.requireLifecycleLease = true
 	cache.tryLockOK = false
@@ -234,11 +234,11 @@ func TestSchedulerGroupEventReopensBucketsUnderLifecycleLease(t *testing.T) {
 }
 
 func TestSchedulerGroupEventRetiresRegisteredBucketsUnderLifecycleLease(t *testing.T) {
-	const groupID = int64(70)
+	groupID := int64(70)
 	historical := SchedulerBucket{GroupID: groupID, Platform: "legacy", Mode: "single"}
 	cache := newRetirementRaceCache(historical)
 	cache.requireLifecycleLease = true
-	groupRepo := &retirementGroupRepo{group: &Group{ID: groupID, Status: StatusInactive, Hydrated: true}}
+	groupRepo := &retirementGroupRepo{group: &Group{ID: groupID, Status: StatusDisabled, Hydrated: true}}
 	svc := NewSchedulerSnapshotService(cache, nil, nil, groupRepo, testConfig())
 
 	require.NoError(t, svc.handleGroupEvent(context.Background(), &groupID, nil))
