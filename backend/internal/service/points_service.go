@@ -536,6 +536,10 @@ func (s *PointsService) RedeemToPlan(ctx context.Context, userID int64, dailyAmo
 		return nil, fmt.Errorf("commit points redeem-plan tx: %w", err)
 	}
 	committed = true
+	if mode == "change_plan" {
+		// 同法币换套餐：提交后再清鉴权快照，确保新套餐的透支次数立即生效。
+		s.subscriptionSvc.invalidateChangePlanAuthCache(ctx, userID)
+	}
 	return sub, nil
 }
 

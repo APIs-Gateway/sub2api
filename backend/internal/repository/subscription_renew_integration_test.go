@@ -73,6 +73,7 @@ func TestSubscriptionServiceRenewApply_NotExpiredExtendsPostgres(t *testing.T) {
 		Email:   fmt.Sprintf("renew-apply-%s@example.com", uuid.NewString()),
 		Balance: 100000,
 	})
+	setMonthlyOverdraftState(t, client, user.ID, 3, service.CurrentEastMonthKey())
 	group := mustCreateGroup(t, client, &service.Group{Name: "renew-apply-" + uuid.NewString()})
 	card := mustCreateSubscription(t, client, &service.UserSubscription{
 		UserID:          user.ID,
@@ -102,6 +103,8 @@ func TestSubscriptionServiceRenewApply_NotExpiredExtendsPostgres(t *testing.T) {
 	gotUser, err := client.User.Get(ctx, user.ID)
 	require.NoError(t, err)
 	require.InDelta(t, 100000, gotUser.Balance, 1e-9, "履约不动钱包余额")
+	require.Equal(t, 3, gotUser.MonthlyOverdraftCount, "续费只延长原卡，不应重置透支次数")
+	require.Equal(t, service.CurrentEastMonthKey(), gotUser.MonthlyOverdraftMonth)
 }
 
 // 履约已到期卡：从今天起算 T'（today−1+T'），中间断档不补。

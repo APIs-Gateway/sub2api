@@ -242,6 +242,7 @@ func TestPaymentSubscriptionFulfillment_ChangePlanIntentClosesOldOpensNewPostgre
 		Email:   fmt.Sprintf("lifecycle-change-%s@example.com", uuid.NewString()),
 		Balance: 700,
 	})
+	setMonthlyOverdraftState(t, client, user.ID, 5, service.CurrentEastMonthKey())
 	group := mustCreateGroup(t, client, &service.Group{Name: "lifecycle-change-" + uuid.NewString()})
 	today := service.TodayEastDayNumber()
 
@@ -310,6 +311,8 @@ func TestPaymentSubscriptionFulfillment_ChangePlanIntentClosesOldOpensNewPostgre
 	require.NoError(t, err)
 	require.Equal(t, today, gotUser.LastChangePlanDay)
 	require.InDelta(t, 700, gotUser.Balance, 1e-9, "转套餐补差价走网关，履约不动钱包余额")
+	require.Equal(t, 0, gotUser.MonthlyOverdraftCount, "法币换套餐应重置透支次数")
+	require.Equal(t, service.CurrentEastMonthKey(), gotUser.MonthlyOverdraftMonth)
 
 	gotOrder, err := client.PaymentOrder.Get(ctx, orderID)
 	require.NoError(t, err)
@@ -432,6 +435,8 @@ func TestPaymentSubscriptionFulfillment_ChangePlanIntentIdempotentOnReplayPostgr
 
 	firstActive, err := NewUserSubscriptionRepository(client).GetActiveByUserID(ctx, user.ID)
 	require.NoError(t, err)
+	// 首次换套餐后用户又使用了 1 次透支；订单重放只能补完成状态，不能再次把新消费清零。
+	setMonthlyOverdraftState(t, client, user.ID, 1, service.CurrentEastMonthKey())
 
 	// 重放：复位 PAID 再次履约 → SUBSCRIPTION_SUCCESS 审计拦截，不得再换一次卡。
 	_, err = client.PaymentOrder.UpdateOneID(orderID).SetStatus(service.OrderStatusPaid).Save(ctx)
@@ -443,4 +448,7 @@ func TestPaymentSubscriptionFulfillment_ChangePlanIntentIdempotentOnReplayPostgr
 	secondActive, err := NewUserSubscriptionRepository(client).GetActiveByUserID(ctx, user.ID)
 	require.NoError(t, err)
 	require.Equal(t, firstActive.ID, secondActive.ID, "重放不得再开一张新卡")
+	gotUser, err := client.User.Get(ctx, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, gotUser.MonthlyOverdraftCount, "履约重放不得再次重置首次换卡后新增的透支次数")
 }

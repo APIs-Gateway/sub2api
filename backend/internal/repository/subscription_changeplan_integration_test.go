@@ -35,6 +35,15 @@ func mustCreateChangePlanPlan(t *testing.T, client *dbent.Client, groupID int64,
 	return plan
 }
 
+func setMonthlyOverdraftState(t *testing.T, client *dbent.Client, userID int64, count int, month string) {
+	t.Helper()
+	_, err := client.User.UpdateOneID(userID).
+		SetMonthlyOverdraftCount(count).
+		SetMonthlyOverdraftMonth(month).
+		Save(context.Background())
+	require.NoError(t, err)
+}
+
 // 升档：报价算 diff>0；履约关旧开新、继承三窗口用量、不扣余额；履约后再报价撞每日限频。
 func TestSubscriptionServiceChangePlan_QuoteThenApplyUpgradePostgres(t *testing.T) {
 	ctx := context.Background()
@@ -47,6 +56,7 @@ func TestSubscriptionServiceChangePlan_QuoteThenApplyUpgradePostgres(t *testing.
 		Email:   fmt.Sprintf("changeplan-up-%s@example.com", uuid.NewString()),
 		Balance: 100000,
 	})
+	setMonthlyOverdraftState(t, client, user.ID, 4, service.CurrentEastMonthKey())
 	group := mustCreateGroup(t, client, &service.Group{Name: "changeplan-" + uuid.NewString()})
 	now := time.Now()
 	dayStart := timezone.StartOfDay(now)
@@ -136,11 +146,57 @@ func TestSubscriptionServiceChangePlan_QuoteThenApplyUpgradePostgres(t *testing.
 	require.NoError(t, err)
 	require.InDelta(t, 100000, gotUser.Balance, 1e-9, "履约不动钱包余额")
 	require.Equal(t, today, gotUser.LastChangePlanDay)
+	require.Equal(t, 0, gotUser.MonthlyOverdraftCount, "旧卡退掉并开新卡后，透支次数应重置")
+	require.Equal(t, service.CurrentEastMonthKey(), gotUser.MonthlyOverdraftMonth)
 
 	// 同一自然日第二次报价 → 撞限频拒。
 	_, err = svc.QuoteChangePlanOrder(ctx, user.ID, 90, 30)
 	require.Error(t, err)
 	require.Equal(t, "CHANGE_PLAN_DAILY_LIMIT", infraerrors.Reason(err))
+}
+
+// 换套餐复用外层事务时，透支次数必须与关旧开新一起回滚。
+func TestSubscriptionServiceChangePlanApply_OuterRollbackPreservesOverdraftCountPostgres(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	svc := makeSubscriptionService(t)
+	today := service.TodayEastDayNumber()
+	month := service.CurrentEastMonthKey()
+
+	user := mustCreateUser(t, client, &service.User{
+		Email: fmt.Sprintf("changeplan-rollback-%s@example.com", uuid.NewString()),
+	})
+	setMonthlyOverdraftState(t, client, user.ID, 4, month)
+	group := mustCreateGroup(t, client, &service.Group{Name: "changeplan-rollback-" + uuid.NewString()})
+	old := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:          user.ID,
+		GroupID:         group.ID,
+		DailyAmountUSD:  30,
+		GrantedTotalUSD: 900,
+		TodayRemaining:  30,
+		TodayDay:        today,
+		StartDay:        today,
+		ExpireDay:       today + 29,
+		ExpiresAt:       service.ExpireDayToExpiresAt(today + 29),
+		Status:          service.SubscriptionStatusActive,
+	})
+
+	tx, err := client.Tx(ctx)
+	require.NoError(t, err)
+	txCtx := dbent.NewTxContext(ctx, tx)
+	_, err = svc.ApplyChangePlanFromOrder(txCtx, old.ID, 60, 30)
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
+
+	gotUser, err := client.User.Get(ctx, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, 4, gotUser.MonthlyOverdraftCount)
+	require.Equal(t, month, gotUser.MonthlyOverdraftMonth)
+	require.Equal(t, 0, gotUser.LastChangePlanDay)
+	gotOld, err := NewUserSubscriptionRepository(client).GetByID(ctx, old.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.SubscriptionStatusActive, gotOld.Status)
+	require.Equal(t, 1, countUserSubscriptionsByStatus(t, user.ID, service.SubscriptionStatusActive))
 }
 
 // 降档（新档折价后 diff<0：旧卡剩余价值 > 新档价）→ 报价即拒（禁止赔钱降档），不改状态。
