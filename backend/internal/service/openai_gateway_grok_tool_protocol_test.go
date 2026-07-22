@@ -161,7 +161,7 @@ func TestForwardGrokResponsesClientToolNameConflictReturns400(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	upstream := &httpUpstreamRecorder{}
 	svc := &OpenAIGatewayService{httpUpstream: upstream}
-	account := grokProtocolAPIKeyAccount(7101)
+	account := grokProtocolOAuthAccount(7101)
 
 	result, err := svc.forwardGrokResponses(context.Background(), c, account, body, "grok", false, time.Now())
 
@@ -185,9 +185,9 @@ func TestForwardGrokResponsesOAuthRestoresClientToolsNonStreaming(t *testing.T) 
 	c.Set("api_key", &APIKey{ID: 7102})
 
 	account := grokProtocolOAuthAccount(7102)
-	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
+	repo := &mockAccountRepoForPlatform{
 		accountsByID: map[int64]*Account{account.ID: account},
-	}}
+	}
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
 		Header: http.Header{
@@ -206,7 +206,7 @@ func TestForwardGrokResponsesOAuthRestoresClientToolsNonStreaming(t *testing.T) 
 	}}
 	svc := &OpenAIGatewayService{
 		httpUpstream:      upstream,
-		grokTokenProvider: NewGrokTokenProvider(repo, nil),
+		grokTokenProvider: NewGrokTokenProvider(repo, nil, nil),
 		accountRepo:       repo,
 	}
 
@@ -216,7 +216,7 @@ func TestForwardGrokResponsesOAuthRestoresClientToolsNonStreaming(t *testing.T) 
 	require.NotNil(t, result)
 	require.False(t, result.Stream)
 	require.Equal(t, "resp_protocol_oauth", result.ResponseID)
-	require.Equal(t, xai.DefaultCLIBaseURL+"/responses", upstream.lastReq.URL.String())
+	require.Equal(t, xai.DefaultBaseURL+"/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer oauth-protocol-token", upstream.lastReq.Header.Get("Authorization"))
 	assertGrokProtocolRequestLowered(t, upstream.lastBody)
 
@@ -234,7 +234,7 @@ func TestForwardGrokResponsesOAuthRestoresClientToolsNonStreaming(t *testing.T) 
 	require.Equal(t, "send_message", gjson.GetBytes(response, "output.2.name").String())
 }
 
-func TestForwardGrokResponsesAPIKeyRestoresClientToolsFromSSEForNonStreamingRequest(t *testing.T) {
+func TestForwardGrokResponsesOAuthRestoresClientToolsFromSSEForNonStreamingRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	body := grokClientToolProtocolRequest(false)
@@ -251,8 +251,13 @@ func TestForwardGrokResponsesAPIKeyRestoresClientToolsFromSSEForNonStreamingRequ
 		},
 		Body: io.NopCloser(strings.NewReader(grokProtocolUpstreamSSE())),
 	}}
-	svc := &OpenAIGatewayService{httpUpstream: upstream}
-	account := grokProtocolAPIKeyAccount(7104)
+	account := grokProtocolOAuthAccount(7104)
+	repo := &mockAccountRepoForPlatform{accountsByID: map[int64]*Account{account.ID: account}}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: NewGrokTokenProvider(repo, nil, nil),
+		accountRepo:       repo,
+	}
 
 	result, err := svc.forwardGrokResponses(context.Background(), c, account, body, "grok", false, time.Now())
 
@@ -272,7 +277,7 @@ func TestForwardGrokResponsesAPIKeyRestoresClientToolsFromSSEForNonStreamingRequ
 	require.Equal(t, "send_message", gjson.GetBytes(response, "output.2.name").String())
 }
 
-func TestForwardGrokResponsesAPIKeyRestoresClientToolsStreaming(t *testing.T) {
+func TestForwardGrokResponsesOAuthRestoresClientToolsStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	body := grokClientToolProtocolRequest(true)
@@ -289,8 +294,13 @@ func TestForwardGrokResponsesAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 		},
 		Body: io.NopCloser(strings.NewReader(grokProtocolUpstreamSSE())),
 	}}
-	svc := &OpenAIGatewayService{httpUpstream: upstream}
-	account := grokProtocolAPIKeyAccount(7103)
+	account := grokProtocolOAuthAccount(7103)
+	repo := &mockAccountRepoForPlatform{accountsByID: map[int64]*Account{account.ID: account}}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: NewGrokTokenProvider(repo, nil, nil),
+		accountRepo:       repo,
+	}
 
 	result, err := svc.forwardGrokResponses(context.Background(), c, account, body, "grok", true, time.Now())
 
@@ -298,8 +308,8 @@ func TestForwardGrokResponsesAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 	require.NotNil(t, result)
 	require.True(t, result.Stream)
 	require.Equal(t, "resp_protocol_stream", result.ResponseID)
-	require.Equal(t, "https://api.x.ai/v1/responses", upstream.lastReq.URL.String())
-	require.Equal(t, "Bearer xai-protocol-key", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, xai.DefaultBaseURL+"/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer oauth-protocol-token", upstream.lastReq.Header.Get("Authorization"))
 	assertGrokProtocolRequestLowered(t, upstream.lastBody)
 
 	frames := parseGrokProtocolSSEFrames(t, recorder.Body.String())
@@ -423,7 +433,7 @@ func grokProtocolOAuthAccount(id int64) *Account {
 		Credentials: map[string]any{
 			"access_token": "oauth-protocol-token", "refresh_token": "refresh-token",
 			"expires_at": time.Now().Add(2 * grokTokenRefreshSkew).UTC().Format(time.RFC3339),
-			"base_url":   xai.DefaultCLIBaseURL, "subscription_tier": "supergrok",
+			"base_url":   xai.DefaultBaseURL, "subscription_tier": "supergrok",
 		},
 	}
 }
