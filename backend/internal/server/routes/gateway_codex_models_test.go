@@ -51,7 +51,7 @@ func TestGatewayRoutesV1ModelsWithClientVersionUsesCodexManifestHandler(t *testi
 	gatewaySvc := service.NewOpenAIGatewayService(
 		&codexModelsRouteAccountRepoStub{},
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	router := gin.New()
 	RegisterGatewayRoutes(
