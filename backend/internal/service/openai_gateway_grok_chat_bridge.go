@@ -17,11 +17,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const (
-	grokChatResponsesEndpoint = "/v1/responses"
-	grokChatRawEndpoint       = "/v1/chat/completions"
-)
-
 var grokChatResponsesBridgeTopLevelFields = map[string]struct{}{
 	"model":                 {},
 	"messages":              {},
@@ -528,6 +523,9 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	if cacheIdentity != "" {
 		responsesReq.PromptCacheKey = cacheIdentity
 		responsesBody, err = json.Marshal(responsesReq)
+		if err != nil {
+			return nil, fmt.Errorf("remarshal Grok Responses bridge request: %w", err)
+		}
 	}
 	responsesBody, _, err = patchGrokResponsesBodyWithClientTools(responsesBody, upstreamModel)
 	if err != nil {

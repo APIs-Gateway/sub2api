@@ -132,7 +132,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsRaw(
 			c.JSON(http.StatusForbidden, gin.H{"error": gin.H{
 				"type": "invalid_request_error", "message": clientMsg,
 			}})
-			return nil, fmt.Errorf("Grok content policy rejection: %s", clientMsg)
+			return nil, fmt.Errorf("grok content policy rejection: %s", clientMsg)
 		}
 		kind := "http_error"
 		if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
