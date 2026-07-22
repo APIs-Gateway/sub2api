@@ -49,7 +49,10 @@ func (s *OpenAIGatewayService) openAIWSHTTPBridgeThresholdBytes() int64 {
 	return s.cfg.Gateway.OpenAIWS.HTTPBridgeThresholdBytes
 }
 
-func (s *OpenAIGatewayService) shouldBridgeOpenAIWSHTTP(payloadBytes int, previousResponseID string) bool {
+func (s *OpenAIGatewayService) shouldBridgeOpenAIWSHTTP(account *Account, payloadBytes int, previousResponseID string) bool {
+	if account != nil && account.Platform == PlatformGrok {
+		return true
+	}
 	if !s.openAIWSHTTPBridgeEnabled() {
 		return false
 	}
@@ -183,12 +186,33 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
+	var upstreamReq *http.Request
+	if account.Platform == PlatformGrok {
+		upstreamModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		if originalModel != "" {
+			if mappedModel := normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel)); mappedModel != "" {
+				upstreamModel = mappedModel
+			}
+		}
+		if upstreamModel == "" {
+			upstreamModel = "grok-4.3"
+		}
+		patchedBody, clientToolMapping, patchErr := patchGrokResponsesBodyWithClientTools(body, upstreamModel)
+		if patchErr != nil {
+			releaseUpstreamCtx()
+			return nil, patchErr
+		}
+		setGrokResponsesClientToolMapping(c, clientToolMapping)
+		body = patchedBody
+		upstreamReq, err = buildGrokResponsesRequest(upstreamCtx, c, account, body, token)
+	} else {
+		upstreamReq, err = s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
+	}
 	releaseUpstreamCtx()
 	if err != nil {
 		return nil, err
 	}
-	if isOpenAIResponsesLiteWebSocketPayload(payload) {
+	if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
 		upstreamReq.Header.Set(responsesLiteHeader, "true")
 	}
 
@@ -213,7 +237,6 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		return nil, fmt.Errorf("upstream http bridge request failed: %s", safeErr)
 	}
 	defer func() { _ = resp.Body.Close() }()
-
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, openAIWSHTTPBridgeErrorBodyLimitBytes))
 		upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
@@ -241,6 +264,15 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		_ = writeClientMessage(buildOpenAIWSHTTPBridgeErrorEvent(resp.StatusCode, upstreamMsg))
 		return nil, fmt.Errorf("upstream http bridge error: status=%d message=%s", resp.StatusCode, upstreamMsg)
+	}
+	if account.Platform == PlatformGrok {
+		if mapping, ok := grokResponsesClientToolMapping(c); ok {
+			maxLineSize := defaultMaxLineSize
+			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+				maxLineSize = s.cfg.Gateway.MaxLineSize
+			}
+			resp.Body = newGrokResponsesClientToolStreamBody(resp.Body, mapping, maxLineSize)
+		}
 	}
 
 	responseID := ""
