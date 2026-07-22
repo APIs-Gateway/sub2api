@@ -4,6 +4,7 @@ package repository
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -169,18 +170,7 @@ func TestBuildSchedulerMetadataAccount_KeepsQuotaStateForCachedAccounts(t *testi
 				ID: int64(46690 + i), Platform: tc.platform, Type: tc.typ, Extra: extra,
 				Status: service.StatusActive, Schedulable: true,
 			}
-			cache := newSchedulerCacheUnit(t)
-			ctx := context.Background()
-			bucket := service.SchedulerBucket{GroupID: int64(46690 + i), Platform: tc.platform, Mode: service.SchedulerModeSingle}
-			token, err := cache.CaptureBucketWriteToken(ctx, bucket)
-			require.NoError(t, err)
-			require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{account}))
-
-			snapshot, hit, err := cache.GetSnapshot(ctx, bucket)
-			require.NoError(t, err)
-			require.True(t, hit)
-			require.Len(t, snapshot, 1)
-			cached := snapshot[0]
+			cached := buildSchedulerMetadataAccount(account)
 			require.Equal(t, tc.extra, cached.Extra)
 			require.NotContains(t, cached.Extra, "unrelated")
 			require.Equal(t, tc.quotaExceeded, cached.IsQuotaExceeded())
