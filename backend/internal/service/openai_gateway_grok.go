@@ -42,6 +42,12 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		return nil, err
 	}
 	setGrokResponsesClientToolMapping(c, clientToolMapping)
+	if isOpenAIResponsesCompactPath(c) {
+		patchedBody, err = buildGrokCompactRequestBody(patchedBody)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
@@ -184,6 +190,10 @@ func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, erro
 				return nil, err
 			}
 		}
+	}
+	out, err = convertOpenAICompactInputsForGrok(out)
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

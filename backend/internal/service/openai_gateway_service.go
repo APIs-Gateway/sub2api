@@ -332,7 +332,7 @@ var defaultOpenAICodexSnapshotPersistThrottle = newAccountWriteThrottle(openAICo
 
 // ErrNoAvailableCompactAccounts indicates the request needs /responses/compact
 // support but no compatible account is available.
-var ErrNoAvailableCompactAccounts = errors.New("no available OpenAI accounts support /responses/compact")
+var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /responses/compact")
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
@@ -1379,7 +1379,13 @@ func normalizeOpenAICompatiblePlatform(platform string) string {
 // openAICompactSupportTier classifies an OpenAI account by compact capability.
 // 0 = explicitly unsupported, 1 = unknown / not yet probed, 2 = explicitly supported.
 func openAICompactSupportTier(account *Account) int {
-	if account == nil || !account.IsOpenAI() {
+	if account == nil {
+		return 0
+	}
+	if account.IsGrokOAuth() {
+		return 2
+	}
+	if !account.IsOpenAI() {
 		return 0
 	}
 	supported, known := account.OpenAICompactSupportKnown()
@@ -1416,7 +1422,7 @@ func isOpenAICompatibleAccountEligibleForRequest(ctx context.Context, account *A
 	if !account.SupportsOpenAIEndpointCapability(requiredCapability) {
 		return false
 	}
-	if requireCompact && (!account.IsOpenAI() || openAICompactSupportTier(account) == 0) {
+	if requireCompact && openAICompactSupportTier(account) == 0 {
 		return false
 	}
 	return true
@@ -6116,6 +6122,12 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	// "event:" in their text content.
 	if account.Type == AccountTypeOAuth && bodyLooksLikeSSE {
 		return s.handleSSEToJSON(resp, c, body, originalModel, mappedModel)
+	}
+	if account != nil && account.IsGrokOAuth() && isOpenAIResponsesCompactPath(c) {
+		body, err = convertGrokResponseToOpenAICompact(body)
+		if err != nil {
+			return nil, fmt.Errorf("convert Grok compact response: %w", err)
+		}
 	}
 
 	usageValue, usageOK := extractOpenAIUsageFromJSONBytes(body)
