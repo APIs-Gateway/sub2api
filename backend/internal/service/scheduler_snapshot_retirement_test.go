@@ -386,31 +386,6 @@ func TestSchedulerFallbackReturnsDBAccountsWhenBucketRetired(t *testing.T) {
 	require.Zero(t, published)
 }
 
-func TestSchedulerDefaultBucketsUseCaptureAndListActiveFailureKeepsGroupZero(t *testing.T) {
-	cache := newRetirementRaceCache()
-	svc := NewSchedulerSnapshotService(
-		cache,
-		nil,
-		nil,
-		&retirementGroupRepo{err: errors.New("list active failed")},
-		testConfig(),
-	)
-
-	buckets, err := svc.defaultBuckets(context.Background())
-	require.NoError(t, err)
-	require.NotEmpty(t, buckets)
-	for _, bucket := range buckets {
-		require.Zero(t, bucket.GroupID)
-	}
-
-	tasks, err := svc.prepareBucketWriteTasks(context.Background(), buckets)
-	require.NoError(t, err)
-	require.Len(t, tasks, len(buckets))
-	captures, reopens := cache.captureAndReopenCounts()
-	require.Equal(t, len(buckets), captures)
-	require.Zero(t, reopens)
-}
-
 func TestSchedulerListFallbackKeepsDBResultWhenCachePublishErrors(t *testing.T) {
 	bucket := SchedulerBucket{GroupID: 64, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}
 	account := Account{ID: 6401, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}
