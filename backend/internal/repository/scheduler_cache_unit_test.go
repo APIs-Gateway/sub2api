@@ -423,3 +423,37 @@ func TestSchedulerCacheReopenExpiresPreviousActiveSnapshot(t *testing.T) {
 	require.Zero(t, exists)
 	require.NoError(t, cache.SetSnapshot(ctx, bucket, newToken, []service.Account{account}))
 }
+
+func TestSchedulerCacheBucketLifecyclePropagatesRedisErrors(t *testing.T) {
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 54, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.Error(t, err)
+	require.Error(t, cache.RetireBucket(ctx, bucket))
+	_, err = cache.ReopenBucket(ctx, bucket)
+	require.Error(t, err)
+
+	token := service.SchedulerBucketWriteToken{Bucket: bucket, Epoch: 1}
+	require.Error(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{{ID: 5401}}))
+	_, err = cache.allocateSnapshotVersion(ctx, bucket, token)
+	require.Error(t, err)
+	require.Error(t, cache.writeSnapshotVersion(ctx, bucket, "1", []service.Account{{ID: 5401}}))
+	require.Error(t, cache.activateSnapshotVersion(ctx, bucket, token, "1"))
+
+	invalid := service.SchedulerBucket{GroupID: 55, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	require.NoError(t, cache.rdb.Set(context.Background(), schedulerBucketKey(schedulerEpochPrefix, invalid), "invalid", 0).Err())
+	_, err = cache.CaptureBucketWriteToken(context.Background(), invalid)
+	require.ErrorIs(t, err, service.ErrSchedulerBucketWriteFenced)
+
+	malformedRetired := service.SchedulerBucket{GroupID: 56, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	require.NoError(t, cache.rdb.Set(context.Background(), schedulerBucketKey(schedulerRetiredPrefix, malformedRetired), "invalid", 0).Err())
+	_, err = cache.ReopenBucket(context.Background(), malformedRetired)
+	require.ErrorIs(t, err, service.ErrSchedulerBucketWriteFenced)
+
+	invalidRetirement := service.SchedulerBucket{GroupID: 57, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	require.NoError(t, cache.rdb.Set(context.Background(), schedulerBucketKey(schedulerRetiredPrefix, invalidRetirement), "0", 0).Err())
+	require.Error(t, cache.RetireBucket(context.Background(), invalidRetirement))
+}

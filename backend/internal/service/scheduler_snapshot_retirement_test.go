@@ -26,6 +26,11 @@ type retirementRaceCache struct {
 	published   map[string]int
 	versions    map[string]int
 	beforeSet   func()
+	captureErrs map[string]error
+	setErrs     map[string]error
+	tryLockOK   bool
+	tryLockErr  error
+	unlockErr   error
 }
 
 func newRetirementRaceCache(buckets ...SchedulerBucket) *retirementRaceCache {
@@ -36,6 +41,9 @@ func newRetirementRaceCache(buckets ...SchedulerBucket) *retirementRaceCache {
 		setAttempts: make(map[string]int),
 		published:   make(map[string]int),
 		versions:    make(map[string]int),
+		captureErrs: make(map[string]error),
+		setErrs:     make(map[string]error),
+		tryLockOK:   true,
 	}
 }
 
@@ -48,6 +56,9 @@ func (c *retirementRaceCache) CaptureBucketWriteToken(_ context.Context, bucket 
 	defer c.mu.Unlock()
 	key := bucket.String()
 	c.captures = append(c.captures, bucket)
+	if err := c.captureErrs[key]; err != nil {
+		return SchedulerBucketWriteToken{}, err
+	}
 	if c.retired[key] {
 		return SchedulerBucketWriteToken{}, ErrSchedulerBucketRetired
 	}
@@ -65,6 +76,9 @@ func (c *retirementRaceCache) SetSnapshot(_ context.Context, bucket SchedulerBuc
 	defer c.mu.Unlock()
 	key := bucket.String()
 	c.setAttempts[key]++
+	if err := c.setErrs[key]; err != nil {
+		return err
+	}
 	if !token.ValidFor(bucket) {
 		return ErrSchedulerBucketWriteFenced
 	}
@@ -106,11 +120,13 @@ func (c *retirementRaceCache) ReopenBucket(_ context.Context, bucket SchedulerBu
 }
 
 func (c *retirementRaceCache) TryLockBucket(context.Context, SchedulerBucket, time.Duration) (bool, error) {
-	return true, nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tryLockOK, c.tryLockErr
 }
 
 func (c *retirementRaceCache) UnlockBucket(context.Context, SchedulerBucket) error {
-	return nil
+	return c.unlockErr
 }
 
 func (c *retirementRaceCache) ListBuckets(context.Context) ([]SchedulerBucket, error) {
@@ -286,4 +302,110 @@ func TestSchedulerDefaultBucketsUseCaptureAndListActiveFailureKeepsGroupZero(t *
 	captures, reopens := cache.captureAndReopenCounts()
 	require.Equal(t, len(buckets), captures)
 	require.Zero(t, reopens)
+}
+
+func TestSchedulerListFallbackKeepsDBResultWhenCachePublishErrors(t *testing.T) {
+	bucket := SchedulerBucket{GroupID: 64, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}
+	account := Account{ID: 6401, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}
+	repoErr := errors.New("cache token unavailable")
+	cache := newRetirementRaceCache()
+	cache.captureErrs[bucket.String()] = repoErr
+	cfg := testConfig()
+	cfg.Gateway.Scheduling.DbFallbackEnabled = true
+	svc := NewSchedulerSnapshotService(cache, nil, &mockAccountRepoForPlatform{accounts: []Account{account}}, nil, cfg)
+
+	groupID := bucket.GroupID
+	accounts, _, err := svc.ListSchedulableAccounts(context.Background(), &groupID, bucket.Platform, false)
+	require.NoError(t, err)
+	require.Equal(t, []Account{account}, accounts)
+	setAttempts, published := cache.counts(bucket)
+	require.Zero(t, setAttempts)
+	require.Zero(t, published)
+
+	setErr := errors.New("cache publish failed")
+	cache = newRetirementRaceCache()
+	cache.setErrs[bucket.String()] = setErr
+	svc = NewSchedulerSnapshotService(cache, nil, &mockAccountRepoForPlatform{accounts: []Account{account}}, nil, cfg)
+	accounts, _, err = svc.ListSchedulableAccounts(context.Background(), &groupID, bucket.Platform, false)
+	require.NoError(t, err)
+	require.Equal(t, []Account{account}, accounts)
+	setAttempts, published = cache.counts(bucket)
+	require.Equal(t, 1, setAttempts)
+	require.Zero(t, published)
+}
+
+func TestSchedulerPrepareTasksSkipsFencedBucketsAndReturnsCaptureErrors(t *testing.T) {
+	retired := SchedulerBucket{GroupID: 65, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}
+	failed := SchedulerBucket{GroupID: 66, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}
+	ready := SchedulerBucket{GroupID: 67, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}
+	cache := newRetirementRaceCache()
+	require.NoError(t, cache.RetireBucket(context.Background(), retired))
+	wantErr := errors.New("capture failed")
+	cache.captureErrs[failed.String()] = wantErr
+	svc := NewSchedulerSnapshotService(cache, nil, nil, nil, testConfig())
+
+	tasks, err := svc.prepareBucketWriteTasks(context.Background(), []SchedulerBucket{retired, failed, ready})
+	require.ErrorIs(t, err, wantErr)
+	require.Len(t, tasks, 1)
+	require.Equal(t, ready, tasks[0].bucket)
+}
+
+func TestSchedulerRebuildBucketReturnsLockAndDatabaseErrors(t *testing.T) {
+	bucket := SchedulerBucket{GroupID: 68, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}
+	lockErr := errors.New("lock backend failed")
+	cache := newRetirementRaceCache()
+	cache.tryLockErr = lockErr
+	svc := NewSchedulerSnapshotService(cache, nil, nil, nil, testConfig())
+	tasks, err := svc.prepareBucketWriteTasks(context.Background(), []SchedulerBucket{bucket})
+	require.NoError(t, err)
+	require.ErrorIs(t, svc.rebuildBucketWithToken(context.Background(), tasks[0], "lock_error"), lockErr)
+
+	cache = newRetirementRaceCache()
+	cache.tryLockOK = false
+	svc = NewSchedulerSnapshotService(cache, nil, nil, nil, testConfig())
+	tasks, err = svc.prepareBucketWriteTasks(context.Background(), []SchedulerBucket{bucket})
+	require.NoError(t, err)
+	require.NoError(t, svc.rebuildBucketWithToken(context.Background(), tasks[0], "lock_busy"))
+
+	dbErr := errors.New("database load failed")
+	cache = newRetirementRaceCache()
+	svc = NewSchedulerSnapshotService(cache, nil, &mockAccountRepoForPlatform{listPlatformFunc: func(context.Context, string) ([]Account, error) {
+		return nil, dbErr
+	}}, nil, testConfig())
+	tasks, err = svc.prepareBucketWriteTasks(context.Background(), []SchedulerBucket{bucket})
+	require.NoError(t, err)
+	require.ErrorIs(t, svc.rebuildBucketWithToken(context.Background(), tasks[0], "db_error"), dbErr)
+}
+
+func TestSchedulerRebuildBucketReturnsNonFencingCacheError(t *testing.T) {
+	bucket := SchedulerBucket{GroupID: 69, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}
+	cacheErr := errors.New("snapshot publish failed")
+	cache := newRetirementRaceCache()
+	cache.setErrs[bucket.String()] = cacheErr
+	svc := NewSchedulerSnapshotService(cache, nil, &mockAccountRepoForPlatform{
+		accounts: []Account{{ID: 6901, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}},
+	}, nil, testConfig())
+
+	require.ErrorIs(t, svc.rebuildBuckets(context.Background(), []SchedulerBucket{bucket}, "cache_error"), cacheErr)
+}
+
+func TestSchedulerBucketBuildersCoverPlatformModesAndDeduplication(t *testing.T) {
+	svc := &SchedulerSnapshotService{}
+	seen := make(map[batchSeenKey]struct{})
+
+	buckets := svc.bucketsForPlatform(PlatformAnthropic, []int64{70, 70}, seen)
+	require.Equal(t, []SchedulerBucket{
+		{GroupID: 70, Platform: PlatformAnthropic, Mode: SchedulerModeSingle},
+		{GroupID: 70, Platform: PlatformAnthropic, Mode: SchedulerModeForced},
+		{GroupID: 70, Platform: PlatformAnthropic, Mode: SchedulerModeMixed},
+	}, buckets)
+	require.Empty(t, svc.bucketsForPlatform(PlatformAnthropic, []int64{70}, seen))
+	require.Empty(t, svc.bucketsForPlatform("", []int64{70}, nil))
+
+	cache := newRetirementRaceCache()
+	cache.tryLockOK = false
+	svc = NewSchedulerSnapshotService(cache, nil, nil, nil, testConfig())
+	account := &Account{ID: 7001, Platform: PlatformAntigravity, GroupIDs: []int64{70}, Extra: map[string]any{"mixed_scheduling": true}}
+	require.NoError(t, svc.rebuildByAccount(context.Background(), account, []int64{70}, "builder", nil))
+	require.NoError(t, svc.rebuildByGroupIDs(context.Background(), []int64{70}, "builder", nil))
 }
