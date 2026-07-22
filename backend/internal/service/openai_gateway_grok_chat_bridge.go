@@ -14,7 +14,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 )
 
 var grokChatResponsesBridgeTopLevelFields = map[string]struct{}{
@@ -496,10 +495,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	clientStream := chatReq.Stream
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
-	cacheIdentity := strings.TrimSpace(promptCacheKey)
-	if cacheIdentity == "" {
-		cacheIdentity = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
-	}
+	cacheIdentity := resolveGrokCacheIdentity(c, body, promptCacheKey, upstreamModel)
 
 	responsesReq, err := apicompat.ChatCompletionsToResponses(&chatReq)
 	if err != nil {
@@ -520,16 +516,13 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	if err != nil {
 		return nil, fmt.Errorf("marshal grok responses bridge request: %w", err)
 	}
-	if cacheIdentity != "" {
-		responsesReq.PromptCacheKey = cacheIdentity
-		responsesBody, err = json.Marshal(responsesReq)
-		if err != nil {
-			return nil, fmt.Errorf("remarshal Grok Responses bridge request: %w", err)
-		}
-	}
 	responsesBody, _, err = patchGrokResponsesBodyWithClientTools(responsesBody, upstreamModel)
 	if err != nil {
 		return nil, fmt.Errorf("patch grok responses bridge request: %w", err)
+	}
+	responsesBody, err = applyGrokResponsesCacheIdentity(responsesBody, cacheIdentity)
+	if err != nil {
+		return nil, fmt.Errorf("apply Grok prompt cache identity: %w", err)
 	}
 
 	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, responsesBody)
@@ -548,7 +541,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 		return nil, fmt.Errorf("get grok access token: %w", err)
 	}
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-	upstreamReq, err := buildGrokResponsesRequest(upstreamCtx, c, account, responsesBody, token)
+	upstreamReq, err := buildGrokResponsesRequest(upstreamCtx, c, account, responsesBody, token, cacheIdentity)
 	releaseUpstreamCtx()
 	if err != nil {
 		return nil, fmt.Errorf("build grok responses bridge request: %w", err)

@@ -197,14 +197,19 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if upstreamModel == "" {
 			upstreamModel = "grok-4.3"
 		}
+		grokCacheIdentity := resolveGrokCacheIdentity(c, body, "", upstreamModel)
 		patchedBody, clientToolMapping, patchErr := patchGrokResponsesBodyWithClientTools(body, upstreamModel)
 		if patchErr != nil {
 			releaseUpstreamCtx()
 			return nil, patchErr
 		}
 		setGrokResponsesClientToolMapping(c, clientToolMapping)
-		body = patchedBody
-		upstreamReq, err = buildGrokResponsesRequest(upstreamCtx, c, account, body, token)
+		body, patchErr = applyGrokResponsesCacheIdentity(patchedBody, grokCacheIdentity)
+		if patchErr != nil {
+			releaseUpstreamCtx()
+			return nil, fmt.Errorf("apply Grok prompt cache identity: %w", patchErr)
+		}
+		upstreamReq, err = buildGrokResponsesRequest(upstreamCtx, c, account, body, token, grokCacheIdentity)
 	} else {
 		upstreamReq, err = s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 	}

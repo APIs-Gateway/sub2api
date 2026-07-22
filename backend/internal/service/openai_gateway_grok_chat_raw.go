@@ -13,7 +13,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 // forwardGrokChatCompletions chooses the protocol that preserves the client's
@@ -49,6 +48,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsRaw(
 	clientStream := gjson.GetBytes(body, "stream").Bool()
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	cacheIdentity := resolveGrokCacheIdentity(c, body, "", upstreamModel)
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
 	serviceTier := extractOpenAIServiceTierFromBody(body)
 
@@ -60,7 +60,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsRaw(
 	// must not receive it as an unknown parameter.
 	if gjson.GetBytes(upstreamBody, "prompt_cache_key").Exists() {
 		var err error
-		upstreamBody, err = sjson.DeleteBytes(upstreamBody, "prompt_cache_key")
+		upstreamBody, err = stripGrokChatPromptCacheKey(upstreamBody)
 		if err != nil {
 			return nil, fmt.Errorf("remove Grok prompt_cache_key: %w", err)
 		}
@@ -100,9 +100,11 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsRaw(
 	} else {
 		upstreamReq.Header.Set("Accept", "application/json")
 	}
+	applyGrokCLIHeaders(upstreamReq.Header)
+	applyGrokCacheHeaders(upstreamReq.Header, cacheIdentity)
 	userAgent := account.GetOpenAIUserAgent()
 	if strings.TrimSpace(userAgent) == "" {
-		userAgent = "sub2api-grok/1.0"
+		userAgent = grokUpstreamUserAgent
 	}
 	upstreamReq.Header.Set("User-Agent", userAgent)
 

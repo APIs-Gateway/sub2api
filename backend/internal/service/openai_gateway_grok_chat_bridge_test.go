@@ -320,6 +320,7 @@ func TestForwardGrokChatCompletionsUsesResponsesBridge(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Set("api_key", &APIKey{ID: 7201})
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -344,6 +345,8 @@ func TestForwardGrokChatCompletionsUsesResponsesBridge(t *testing.T) {
 	require.Equal(t, "grok-4.3", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Equal(t, "bridge-cache", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
+	require.NotEmpty(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String(), upstream.lastReq.Header.Get(grokConversationIDHeader))
 	require.Contains(t, recorder.Body.String(), `"chat.completion"`)
 	require.Equal(t, int64(6), gjson.GetBytes(recorder.Body.Bytes(), "usage.total_tokens").Int())
 }
@@ -629,6 +632,7 @@ func TestForwardGrokChatCompletionsUsesNativeChatForUnsupportedFields(t *testing
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Set("api_key", &APIKey{ID: 7202})
 
 	upstreamBody := `{"id":"chatcmpl_grok","object":"chat.completion","model":"grok-4.3","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}`
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -648,6 +652,7 @@ func TestForwardGrokChatCompletionsUsesNativeChatForUnsupportedFields(t *testing
 	require.Equal(t, "Bearer xai-protocol-key", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "END", gjson.GetBytes(upstream.lastBody, "stop.0").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
+	require.NotEmpty(t, upstream.lastReq.Header.Get(grokConversationIDHeader))
 	require.JSONEq(t, upstreamBody, recorder.Body.String())
 }
 
