@@ -87,7 +87,7 @@ func TestOpenAIGatewaySelectBestAccountUsesLowRateOrder(t *testing.T) {
 	}
 
 	selected, compactBlocked := (&OpenAIGatewayService{}).selectBestAccount(
-		context.Background(), nil, []Account{*expensive, *cheap}, "gpt-5.1", nil, false, "", true,
+		context.Background(), nil, PlatformOpenAI, []Account{*expensive, *cheap}, "gpt-5.1", nil, false, OpenAIEndpointCapabilityResponses, true,
 	)
 	require.False(t, compactBlocked)
 	require.NotNil(t, selected)
