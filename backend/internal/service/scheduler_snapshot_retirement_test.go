@@ -284,7 +284,7 @@ func TestSchedulerFullRebuildCapturesAllRegistryTokensBeforeDBLoad(t *testing.T)
 			return []Account{{ID: 6101, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}}, nil
 		},
 	}
-	svc := NewSchedulerSnapshotService(cache, nil, repo, nil, &config.Config{
+	svc := NewSchedulerSnapshotService(cache, nil, repo, &retirementGroupRepo{groups: []Group{{ID: 61, Status: StatusActive}}}, &config.Config{
 		RunMode: config.RunModeStandard,
 		Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
 			DbFallbackEnabled: true,
@@ -300,7 +300,7 @@ func TestSchedulerFullRebuildCapturesAllRegistryTokensBeforeDBLoad(t *testing.T)
 	}
 
 	captures, reopens := cache.captureAndReopenCounts()
-	require.Equal(t, 2, captures, "all registry tokens must be captured before the first DB load")
+	require.Equal(t, 20, captures, "group0 and active-group canonical tokens must be captured before the first DB load")
 	require.Zero(t, reopens)
 	require.NoError(t, cache.RetireBucket(context.Background(), queued))
 	_, err := cache.ReopenBucket(context.Background(), queued)

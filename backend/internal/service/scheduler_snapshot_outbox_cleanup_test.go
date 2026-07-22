@@ -381,7 +381,7 @@ func TestSchedulerSnapshotServiceCheckOutboxLagLatchesPersistentDegradation(t *t
 	repo := &outboxCleanupRepo{
 		events: []SchedulerOutboxEvent{{ID: 1, CreatedAt: time.Now().Add(-time.Hour)}},
 	}
-	cfg := &config.Config{Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
+	cfg := &config.Config{RunMode: config.RunModeSimple, Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
 		OutboxLagRebuildSeconds:  1,
 		OutboxLagRebuildFailures: 1,
 		OutboxBacklogRebuildRows: 50,
@@ -406,7 +406,7 @@ func TestSchedulerSnapshotServiceCheckOutboxLagRetriesAfterCooldown(t *testing.T
 	repo := &outboxCleanupRepo{
 		events: []SchedulerOutboxEvent{{ID: 1, CreatedAt: time.Now().Add(-time.Hour)}},
 	}
-	cfg := &config.Config{Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
+	cfg := &config.Config{RunMode: config.RunModeSimple, Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
 		OutboxLagRebuildSeconds:  1,
 		OutboxLagRebuildFailures: 1,
 		OutboxBacklogRebuildRows: 50,
