@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -16,21 +17,29 @@ import (
 type retirementRaceCache struct {
 	SchedulerCache
 
-	mu          sync.Mutex
-	epochs      map[string]int64
-	retired     map[string]bool
-	listBuckets []SchedulerBucket
-	captures    []SchedulerBucket
-	reopens     []SchedulerBucket
-	setAttempts map[string]int
-	published   map[string]int
-	versions    map[string]int
-	beforeSet   func()
-	captureErrs map[string]error
-	setErrs     map[string]error
-	tryLockOK   bool
-	tryLockErr  error
-	unlockErr   error
+	mu                    sync.Mutex
+	epochs                map[string]int64
+	retired               map[string]bool
+	listBuckets           []SchedulerBucket
+	captures              []SchedulerBucket
+	reopens               []SchedulerBucket
+	retireCalls           []SchedulerBucket
+	setAttempts           map[string]int
+	published             map[string]int
+	versions              map[string]int
+	beforeSet             func()
+	captureErrs           map[string]error
+	setErrs               map[string]error
+	tryLockOK             bool
+	tryLockErr            error
+	unlockErr             error
+	requireLifecycleLease bool
+	lifecycleLeaseHeld    bool
+	lifecycleLease        SchedulerGroupLifecycleLease
+	lifecycleLeaseSeq     int
+	lifecycleAcquireErr   error
+	lifecycleReleaseErr   error
+	lifecycleLeaseBusy    bool
 }
 
 func newRetirementRaceCache(buckets ...SchedulerBucket) *retirementRaceCache {
@@ -96,6 +105,10 @@ func (c *retirementRaceCache) SetSnapshot(_ context.Context, bucket SchedulerBuc
 func (c *retirementRaceCache) RetireBucket(_ context.Context, bucket SchedulerBucket) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.requireLifecycleLease && !c.lifecycleLeaseHeld {
+		return errors.New("retire called outside group lifecycle lease")
+	}
+	c.retireCalls = append(c.retireCalls, bucket)
 	key := bucket.String()
 	if !c.retired[key] {
 		c.epochs[key]++
@@ -110,6 +123,9 @@ func (c *retirementRaceCache) RetireBucket(_ context.Context, bucket SchedulerBu
 func (c *retirementRaceCache) ReopenBucket(_ context.Context, bucket SchedulerBucket) (SchedulerBucketWriteToken, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.requireLifecycleLease && !c.lifecycleLeaseHeld {
+		return SchedulerBucketWriteToken{}, errors.New("reopen called outside group lifecycle lease")
+	}
 	key := bucket.String()
 	if c.epochs[key] == 0 {
 		c.epochs[key] = 1
@@ -117,6 +133,34 @@ func (c *retirementRaceCache) ReopenBucket(_ context.Context, bucket SchedulerBu
 	delete(c.retired, key)
 	c.reopens = append(c.reopens, bucket)
 	return SchedulerBucketWriteToken{Bucket: bucket, Epoch: c.epochs[key]}, nil
+}
+
+func (c *retirementRaceCache) TryAcquireGroupLifecycleLease(_ context.Context, groupID int64, _ time.Duration) (SchedulerGroupLifecycleLease, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lifecycleAcquireErr != nil {
+		return SchedulerGroupLifecycleLease{}, false, c.lifecycleAcquireErr
+	}
+	if c.lifecycleLeaseBusy || c.lifecycleLeaseHeld {
+		return SchedulerGroupLifecycleLease{}, false, nil
+	}
+	c.lifecycleLeaseSeq++
+	c.lifecycleLease = SchedulerGroupLifecycleLease{GroupID: groupID, OwnerToken: fmt.Sprintf("owner-%d", c.lifecycleLeaseSeq)}
+	c.lifecycleLeaseHeld = true
+	return c.lifecycleLease, true, nil
+}
+
+func (c *retirementRaceCache) ReleaseGroupLifecycleLease(_ context.Context, lease SchedulerGroupLifecycleLease) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lifecycleReleaseErr != nil {
+		return c.lifecycleReleaseErr
+	}
+	if !c.lifecycleLeaseHeld || lease != c.lifecycleLease {
+		return ErrSchedulerGroupLifecycleLeaseLost
+	}
+	c.lifecycleLeaseHeld = false
+	return nil
 }
 
 func (c *retirementRaceCache) TryLockBucket(context.Context, SchedulerBucket, time.Duration) (bool, error) {
@@ -155,10 +199,57 @@ type retirementGroupRepo struct {
 	GroupRepository
 	groups []Group
 	err    error
+	group  *Group
 }
 
 func (r *retirementGroupRepo) ListActive(context.Context) ([]Group, error) {
 	return r.groups, r.err
+}
+
+func (r *retirementGroupRepo) GetByIDLite(context.Context, int64) (*Group, error) {
+	if r.group == nil {
+		return nil, ErrGroupNotFound
+	}
+	return r.group, nil
+}
+
+func TestSchedulerGroupEventReopensBucketsUnderLifecycleLease(t *testing.T) {
+	const groupID = int64(69)
+	cache := newRetirementRaceCache()
+	cache.requireLifecycleLease = true
+	cache.tryLockOK = false
+	groupRepo := &retirementGroupRepo{group: &Group{ID: groupID, Status: StatusActive, Hydrated: true}}
+	svc := NewSchedulerSnapshotService(cache, nil, nil, groupRepo, testConfig())
+	seen := make(map[batchSeenKey]struct{})
+
+	require.NoError(t, svc.handleGroupEvent(context.Background(), &groupID, seen))
+
+	cache.mu.Lock()
+	reopens := append([]SchedulerBucket(nil), cache.reopens...)
+	leaseHeld := cache.lifecycleLeaseHeld
+	cache.mu.Unlock()
+	require.Equal(t, schedulerBucketsForGroup(groupID), reopens)
+	require.False(t, leaseHeld)
+	require.Contains(t, seen, batchSeenKey{groupID: groupID, lifecycle: true})
+}
+
+func TestSchedulerGroupEventRetiresRegisteredBucketsUnderLifecycleLease(t *testing.T) {
+	const groupID = int64(70)
+	historical := SchedulerBucket{GroupID: groupID, Platform: "legacy", Mode: "single"}
+	cache := newRetirementRaceCache(historical)
+	cache.requireLifecycleLease = true
+	groupRepo := &retirementGroupRepo{group: &Group{ID: groupID, Status: StatusInactive, Hydrated: true}}
+	svc := NewSchedulerSnapshotService(cache, nil, nil, groupRepo, testConfig())
+
+	require.NoError(t, svc.handleGroupEvent(context.Background(), &groupID, nil))
+
+	cache.mu.Lock()
+	retired := append([]SchedulerBucket(nil), cache.retireCalls...)
+	leaseHeld := cache.lifecycleLeaseHeld
+	cache.mu.Unlock()
+	want := append(schedulerBucketsForGroup(groupID), historical)
+	require.ElementsMatch(t, want, retired)
+	require.False(t, leaseHeld)
 }
 
 func TestSchedulerFullRebuildCapturesAllRegistryTokensBeforeDBLoad(t *testing.T) {

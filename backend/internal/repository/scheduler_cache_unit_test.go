@@ -457,3 +457,53 @@ func TestSchedulerCacheBucketLifecyclePropagatesRedisErrors(t *testing.T) {
 	require.NoError(t, cache.rdb.Set(context.Background(), schedulerBucketKey(schedulerRetiredPrefix, invalidRetirement), "0", 0).Err())
 	require.Error(t, cache.RetireBucket(context.Background(), invalidRetirement))
 }
+
+func TestSchedulerCacheGroupLifecycleLeaseUsesOwnerCheckedRelease(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+
+	lease, acquired, err := cache.TryAcquireGroupLifecycleLease(ctx, 71, time.Minute)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	require.True(t, lease.ValidFor(71))
+
+	second, acquired, err := cache.TryAcquireGroupLifecycleLease(ctx, 71, time.Minute)
+	require.NoError(t, err)
+	require.False(t, acquired)
+	require.False(t, second.ValidFor(71))
+
+	require.ErrorIs(t, cache.ReleaseGroupLifecycleLease(ctx, service.SchedulerGroupLifecycleLease{
+		GroupID:    lease.GroupID,
+		OwnerToken: "wrong-owner",
+	}), service.ErrSchedulerGroupLifecycleLeaseLost)
+	require.NoError(t, cache.ReleaseGroupLifecycleLease(ctx, lease))
+	require.ErrorIs(t, cache.ReleaseGroupLifecycleLease(ctx, lease), service.ErrSchedulerGroupLifecycleLeaseLost)
+
+	_, acquired, err = cache.TryAcquireGroupLifecycleLease(ctx, 71, time.Minute)
+	require.NoError(t, err)
+	require.True(t, acquired)
+
+	for _, invalid := range []struct {
+		groupID int64
+		ttl     time.Duration
+	}{
+		{groupID: 0, ttl: time.Minute},
+		{groupID: 71, ttl: 0},
+	} {
+		_, _, err := cache.TryAcquireGroupLifecycleLease(ctx, invalid.groupID, invalid.ttl)
+		require.ErrorIs(t, err, service.ErrSchedulerGroupLifecycleLeaseInvalid)
+	}
+}
+
+func TestSchedulerCacheGroupLifecycleLeasePropagatesRedisErrors(t *testing.T) {
+	cache := newSchedulerCacheUnit(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := cache.TryAcquireGroupLifecycleLease(ctx, 72, time.Minute)
+	require.Error(t, err)
+	require.Error(t, cache.ReleaseGroupLifecycleLease(ctx, service.SchedulerGroupLifecycleLease{
+		GroupID:    72,
+		OwnerToken: "owner",
+	}))
+}
