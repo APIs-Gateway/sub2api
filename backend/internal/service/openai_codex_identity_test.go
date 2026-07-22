@@ -46,3 +46,15 @@ func TestEnforceCodexIdentityHeadersWithoutOriginatorIsNoop(t *testing.T) {
 	require.Empty(t, headers.Get("originator"))
 	require.Equal(t, "curl/8.0", headers.Get("user-agent"))
 }
+
+func TestApplyOpenAICodexProbeHeaders(t *testing.T) {
+	headers := make(http.Header)
+
+	applyOpenAICodexProbeHeaders(headers)
+
+	require.Equal(t, codexCLIUserAgent, headers.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", headers.Get("Originator"))
+	require.Equal(t, codexCLIVersion, headers.Get("Version"))
+	require.Equal(t, "responses=experimental", headers.Get("OpenAI-Beta"))
+	require.NotEmpty(t, headers.Get("X-Codex-Window-ID"))
+}
