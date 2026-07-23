@@ -59,7 +59,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if err != nil {
 		return nil, fmt.Errorf("apply grok prompt cache identity: %w", err)
 	}
-	patchedBody, err = applyGrokFreeMessagesFunctionToolCacheRoute(patchedBody, intentSourceBody, account, cacheIdentity)
+	patchedBody, err = applyGrokFreeRequestToolCacheRoute(c, patchedBody, intentSourceBody, account, cacheIdentity)
 	if err != nil {
 		return nil, fmt.Errorf("apply grok Free function-tool cache route: %w", err)
 	}

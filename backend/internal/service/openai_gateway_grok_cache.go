@@ -14,6 +14,7 @@ import (
 
 const (
 	grokConversationIDHeader         = "X-Grok-Conv-Id"
+	grokClientToolCacheOptInHeader   = "X-Sub2API-Grok-Client-Tool-Cache"
 	openCodeSessionAffinityHeader    = "X-Session-Affinity"
 	openCodeSessionIDHeader          = "X-Session-Id"
 	openCodeNativeSessionHeader      = "X-OpenCode-Session"
@@ -169,6 +170,52 @@ func hasGrokResponsesToolIntent(body []byte) bool {
 func applyGrokFreeMessagesFunctionToolCacheRoute(body, intentSourceBody []byte, account *Account, cacheIdentity string) ([]byte, error) {
 	allowPureClientTools := account != nil && account.getExtraBool(grokClientToolCacheOptInExtraKey)
 	return applyGrokFreeToolCacheRoute(body, intentSourceBody, account, cacheIdentity, allowPureClientTools, true)
+}
+
+// applyGrokFreeRequestToolCacheRoute adds request-scoped policy for native
+// Responses requests. The opt-in header is consumed locally and is never
+// forwarded to xAI.
+func applyGrokFreeRequestToolCacheRoute(c *gin.Context, body, intentSourceBody []byte, account *Account, cacheIdentity string) ([]byte, error) {
+	allowPureClientTools := account != nil && account.getExtraBool(grokClientToolCacheOptInExtraKey)
+	requestOptOut := false
+	if c != nil {
+		switch strings.ToLower(strings.TrimSpace(c.GetHeader(grokClientToolCacheOptInHeader))) {
+		case "1", "true", "yes", "on", "prefer-cache":
+			allowPureClientTools = true
+		case "0", "false", "no", "off":
+			allowPureClientTools = false
+			requestOptOut = true
+		}
+	}
+	if !allowPureClientTools && !requestOptOut && isGrokClaudeDesktopResponsesCacheRequest(c) {
+		allowPureClientTools = true
+	}
+	return applyGrokFreeToolCacheRoute(body, intentSourceBody, account, cacheIdentity, allowPureClientTools, allowPureClientTools)
+}
+
+// isGrokClaudeDesktopResponsesCacheRequest requires the independent markers
+// emitted by Claude Desktop's Responses compatibility path. This prevents a
+// generic Claude-compatible client from silently changing tool routing.
+func isGrokClaudeDesktopResponsesCacheRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil || isOpenAIResponsesCompactPath(c) {
+		return false
+	}
+	path := strings.TrimRight(strings.TrimSpace(c.Request.URL.Path), "/")
+	if !strings.HasSuffix(path, "/responses") {
+		return false
+	}
+	if !claudeCodeUAPattern.MatchString(strings.TrimSpace(c.GetHeader("User-Agent"))) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(c.GetHeader("X-App"))) {
+	case "cli", "cli-bg":
+	default:
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.GetHeader("anthropic-client-platform")), "desktop_app") {
+		return false
+	}
+	return strings.TrimSpace(c.GetHeader("X-Claude-Code-Session-Id")) != ""
 }
 
 func applyGrokFreeToolCacheRoute(body, intentSourceBody []byte, account *Account, cacheIdentity string, allowPureClientTools, allowFunctionSearch bool) ([]byte, error) {

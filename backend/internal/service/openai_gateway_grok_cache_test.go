@@ -4,9 +4,13 @@ package service
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
@@ -287,6 +291,182 @@ func TestAppendMissingGrokFreeCacheNativeToolsHandlesExistingAndInvalidTools(t *
 			require.JSONEq(t, tt.want, string(body))
 		})
 	}
+}
+
+func TestGrokFreeRequestToolCacheRouteAutoOptsInClaudeDesktop(t *testing.T) {
+	account := &Account{
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"subscription_tier": "free"},
+	}
+	body := []byte(`{"model":"grok-4.3","tools":[{"type":"function","name":"Read"},{"type":"function","name":"Edit"}],"tool_choice":"auto"}`)
+
+	for _, xApp := range []string{"cli", "cli-bg"} {
+		t.Run(xApp, func(t *testing.T) {
+			c := newGrokCacheTestContext(90141, "/v1/responses", map[string]string{
+				"User-Agent":                "claude-cli/2.1.215 (external, future-desktop, agent-sdk/0.3.215)",
+				"X-App":                     xApp,
+				"anthropic-client-platform": "desktop_app",
+				"X-Claude-Code-Session-Id":  "desktop-session-1",
+			})
+
+			patched, err := applyGrokFreeRequestToolCacheRoute(c, body, body, account, "isolated-id")
+
+			require.NoError(t, err)
+			tools := gjson.GetBytes(patched, "tools").Array()
+			require.Len(t, tools, 4)
+			require.Equal(t, "Read", tools[0].Get("name").String())
+			require.Equal(t, "Edit", tools[1].Get("name").String())
+			require.Equal(t, "web_search", tools[2].Get("type").String())
+			require.Equal(t, "x_search", tools[3].Get("type").String())
+		})
+	}
+}
+
+func TestGrokFreeRequestToolCacheRouteRequiresClaudeDesktopFingerprint(t *testing.T) {
+	account := &Account{
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"subscription_tier": "free"},
+	}
+	body := []byte(`{"model":"grok-4.3","tools":[{"type":"function","name":"Read"}],"tool_choice":"auto"}`)
+	baseHeaders := map[string]string{
+		"User-Agent":                "claude-cli/2.1.215 (external, claude-desktop-3p, agent-sdk/0.3.215)",
+		"X-App":                     "cli",
+		"anthropic-client-platform": "desktop_app",
+		"X-Claude-Code-Session-Id":  "desktop-session-1",
+	}
+	tests := []struct {
+		name    string
+		path    string
+		remove  string
+		replace map[string]string
+	}{
+		{name: "chat path", path: "/v1/chat/completions"},
+		{name: "compact path", path: "/v1/responses/compact"},
+		{name: "missing user agent", path: "/v1/responses", remove: "User-Agent"},
+		{name: "wrong app", path: "/v1/responses", replace: map[string]string{"X-App": "desktop"}},
+		{name: "missing platform", path: "/v1/responses", remove: "anthropic-client-platform"},
+		{name: "wrong platform", path: "/v1/responses", replace: map[string]string{"anthropic-client-platform": "web"}},
+		{name: "missing session", path: "/v1/responses", remove: "X-Claude-Code-Session-Id"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			headers := make(map[string]string, len(baseHeaders))
+			for name, value := range baseHeaders {
+				headers[name] = value
+			}
+			delete(headers, tt.remove)
+			for name, value := range tt.replace {
+				headers[name] = value
+			}
+			c := newGrokCacheTestContext(90142, tt.path, headers)
+
+			patched, err := applyGrokFreeRequestToolCacheRoute(c, body, body, account, "isolated-id")
+
+			require.NoError(t, err)
+			require.JSONEq(t, string(body), string(patched))
+		})
+	}
+}
+
+func TestGrokFreeRequestToolCacheRouteHonorsExplicitRequestPolicy(t *testing.T) {
+	freeAccount := &Account{
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"subscription_tier": "free"},
+	}
+	body := []byte(`{"model":"grok-4.3","tools":[{"type":"function","name":"lookup"}],"tool_choice":"auto"}`)
+
+	optIn := newGrokCacheTestContext(90143, "/v1/responses", map[string]string{
+		grokClientToolCacheOptInHeader: "prefer-cache",
+	})
+	patched, err := applyGrokFreeRequestToolCacheRoute(optIn, body, body, freeAccount, "isolated-id")
+	require.NoError(t, err)
+	require.Len(t, gjson.GetBytes(patched, "tools").Array(), 3)
+
+	accountOptIn := *freeAccount
+	accountOptIn.Extra = map[string]any{grokClientToolCacheOptInExtraKey: true}
+	requestOptOut := newGrokCacheTestContext(90144, "/v1/responses", map[string]string{
+		"User-Agent":                   "claude-cli/2.1.215 (external, claude-desktop-3p, agent-sdk/0.3.215)",
+		"X-App":                        "cli",
+		"anthropic-client-platform":    "desktop_app",
+		"X-Claude-Code-Session-Id":     "desktop-session-1",
+		grokClientToolCacheOptInHeader: "off",
+	})
+	patched, err = applyGrokFreeRequestToolCacheRoute(requestOptOut, body, body, &accountOptIn, "isolated-id")
+	require.NoError(t, err)
+	require.JSONEq(t, string(body), string(patched))
+
+	paidAccount := *freeAccount
+	paidAccount.Credentials = map[string]any{"subscription_tier": "supergrok"}
+	claHeaders := map[string]string{
+		"User-Agent":                "claude-cli/2.1.215 (external, claude-desktop-3p, agent-sdk/0.3.215)",
+		"X-App":                     "cli",
+		"anthropic-client-platform": "desktop_app",
+		"X-Claude-Code-Session-Id":  "desktop-session-1",
+	}
+	paid := newGrokCacheTestContext(90145, "/v1/responses", claHeaders)
+	patched, err = applyGrokFreeRequestToolCacheRoute(paid, body, body, &paidAccount, "isolated-id")
+	require.NoError(t, err)
+	require.JSONEq(t, string(body), string(patched))
+
+	unchanged, err := applyGrokFreeRequestToolCacheRoute(nil, body, body, freeAccount, "isolated-id")
+	require.NoError(t, err)
+	require.JSONEq(t, string(body), string(unchanged))
+}
+
+func TestForwardGrokResponsesClaudeDesktopUsesRequestCacheRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{
+		"model":"grok","stream":false,"instructions":"You are Claude Desktop.",
+		"tools":[
+			{"type":"function","name":"Read","parameters":{"type":"object"}},
+			{"type":"function","name":"Edit","parameters":{"type":"object"}}
+		],
+		"input":[{"role":"user","content":[{"type":"input_text","text":"first turn"}]}]
+	}`)
+	c := newGrokCacheTestContext(4504, "/v1/responses", map[string]string{
+		"User-Agent":                "claude-cli/2.1.215 (external, claude-desktop-3p, agent-sdk/0.3.215)",
+		"X-App":                     "cli",
+		"anthropic-client-platform": "desktop_app",
+		"X-Claude-Code-Session-Id":  "claude-desktop-session",
+	})
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Set("api_key", &APIKey{ID: 4504})
+
+	account := grokProtocolOAuthAccount(4504)
+	account.Credentials["subscription_tier"] = "free"
+	repo := &mockAccountRepoForPlatform{accountsByID: map[int64]*Account{account.ID: account}}
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{
+			"id":"resp_claude_desktop_1","object":"response","model":"grok-4.3","status":"completed",
+			"output":[],"usage":{"input_tokens":30000,"output_tokens":10,"input_tokens_details":{"cached_tokens":0}}
+		}`)),
+	}}}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: NewGrokTokenProvider(repo, nil, nil),
+		accountRepo:       repo,
+	}
+
+	result, err := svc.forwardGrokResponses(context.Background(), c, account, body, "grok", false, time.Now())
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.bodies, 1)
+	tools := gjson.GetBytes(upstream.bodies[0], "tools").Array()
+	require.Len(t, tools, 4)
+	require.Equal(t, "Read", tools[0].Get("name").String())
+	require.Equal(t, "Edit", tools[1].Get("name").String())
+	require.Equal(t, "web_search", tools[2].Get("type").String())
+	require.Equal(t, "x_search", tools[3].Get("type").String())
+	require.Empty(t, upstream.requests[0].Header.Get("X-App"))
+	require.Empty(t, upstream.requests[0].Header.Get("anthropic-client-platform"))
+	require.Empty(t, upstream.requests[0].Header.Get("X-Claude-Code-Session-Id"))
+	require.NotEmpty(t, gjson.GetBytes(upstream.bodies[0], "prompt_cache_key").String())
 }
 
 func TestApplyGrokCacheHeadersAndCLIHeaders(t *testing.T) {
