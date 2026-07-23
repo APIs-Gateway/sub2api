@@ -34,6 +34,29 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning.effort").String())
 }
 
+func TestPatchGrokResponsesBodySanitizesUnsupportedFieldsAndTools(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model":"grok",
+		"external_web_access":true,
+		"metadata":{"external_web_access":true},
+		"tools":[
+			{"type":"function","name":"lookup"},
+			{"type":"computer_use"}
+		],
+		"tool_choice":{"type":"computer_use"}
+	}`)
+
+	patched, err := patchGrokResponsesBodyBase(body, "grok-4.3")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(patched, "external_web_access").Exists())
+	require.False(t, gjson.GetBytes(patched, "metadata.external_web_access").Exists())
+	require.Len(t, gjson.GetBytes(patched, "tools").Array(), 1)
+	require.Equal(t, "function", gjson.GetBytes(patched, "tools.0.type").String())
+	require.False(t, gjson.GetBytes(patched, "tool_choice").Exists())
+}
+
 func TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken(t *testing.T) {
 	t.Parallel()
 
