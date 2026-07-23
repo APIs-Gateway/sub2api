@@ -1615,7 +1615,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 		groupID = resolvedGroupID
 		ctx = s.withGroupContext(ctx, group)
 		platform = group.Platform
-		if resolvedPlatform, ok := ResolvedTargetPlatformFromContext(ctx); ok {
+		if resolvedPlatform, ok := resolveCompositeTargetPlatform(ctx, group, requestedModel); ok && isConcreteRequestPlatform(resolvedPlatform) {
 			platform = resolvedPlatform
 		}
 	} else {
@@ -8945,7 +8945,7 @@ func QuotaPlatform(ctx context.Context, apiKey *APIKey) string {
 	if fp, ok := ctx.Value(ctxkey.ForcePlatform).(string); ok && fp != "" {
 		return fp
 	}
-	if platform, ok := ResolvedTargetPlatformFromContext(ctx); ok {
+	if platform, ok := ResolvedTargetPlatformFromContext(ctx); ok && isConcreteRequestPlatform(platform) {
 		return platform
 	}
 	return PlatformFromAPIKey(apiKey)
