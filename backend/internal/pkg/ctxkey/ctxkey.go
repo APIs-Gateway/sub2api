@@ -20,6 +20,9 @@ const (
 	// Platform 当前请求最终命中的平台（用于统一请求链路日志字段）。
 	Platform Key = "ctx_platform"
 
+	// ResolvedTargetPlatform 当前 composite 请求根据模型解析出的具体 provider。
+	ResolvedTargetPlatform Key = "ctx_resolved_target_platform"
+
 	// AccountID 当前请求最终命中的账号 ID（用于统一请求链路日志字段）。
 	AccountID Key = "ctx_account_id"
 

@@ -8933,8 +8933,14 @@ func PlatformFromAPIKey(apiKey *APIKey) string {
 // 后扣运行在 worker 池的 background ctx 上没有 ForcePlatform，因此后扣平台由 handler
 // 预先算定、经 RecordUsageInput.QuotaPlatform 传入，不要在后扣链路用 worker ctx 调用本函数。
 func QuotaPlatform(ctx context.Context, apiKey *APIKey) string {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if fp, ok := ctx.Value(ctxkey.ForcePlatform).(string); ok && fp != "" {
 		return fp
+	}
+	if platform, ok := ResolvedTargetPlatformFromContext(ctx); ok {
+		return platform
 	}
 	return PlatformFromAPIKey(apiKey)
 }
