@@ -133,6 +133,54 @@ func TestForwardAsAnthropicForGrokStripsThinkingSignaturesAfterRetryFails(t *tes
 	require.False(t, gjson.GetBytes(upstream.bodies[2], `input.#(type=="reasoning")`).Exists())
 }
 
+func TestForwardAsAnthropicForGrokDoesNotRetryUnrelatedBadRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"grok","max_tokens":32,"stream":true,"messages":[{"role":"user","content":"hello"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+
+	account := grokProtocolOAuthAccount(7113)
+	repo := &mockAccountRepoForPlatform{accountsByID: map[int64]*Account{account.ID: account}}
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusBadRequest, `{"code":"invalid-argument","error":"tool_choice is invalid"}`)}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: NewGrokTokenProvider(repo, nil, nil),
+		accountRepo:       repo,
+	}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Len(t, upstream.bodies, 1)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestForwardAsAnthropicForGrokDoesNotRetryWhenEncryptedReasoningIsAbsent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"grok","max_tokens":32,"stream":true,"messages":[{"role":"user","content":"hello"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+
+	account := grokProtocolOAuthAccount(7114)
+	repo := &mockAccountRepoForPlatform{accountsByID: map[int64]*Account{account.ID: account}}
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusBadRequest, `{"code":"invalid-argument","error":"Could not decrypt the provided encrypted_content."}`)}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: NewGrokTokenProvider(repo, nil, nil),
+		accountRepo:       repo,
+	}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Len(t, upstream.bodies, 1)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
 func TestGrokInvalidEncryptedContentResponseClassification(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -153,15 +201,63 @@ func TestGrokInvalidEncryptedContentResponseClassification(t *testing.T) {
 			want:   true,
 		},
 		{
+			name:   "nested decrypt message without code",
+			status: http.StatusBadRequest,
+			body:   `{"error":{"message":"Could not decrypt the encrypted_content."}}`,
+			want:   true,
+		},
+		{
+			name:   "nested fallback error message",
+			status: http.StatusBadRequest,
+			body:   `{"code":"invalid-argument","error":{"error":"encrypted_content is unmodified"}}`,
+			want:   true,
+		},
+		{
+			name:   "top-level decrypt message",
+			status: http.StatusBadRequest,
+			body:   `{"message":"Could not decrypt the encrypted_content."}`,
+			want:   true,
+		},
+		{
 			name:   "wrong status",
 			status: http.StatusInternalServerError,
 			body:   `{"code":"invalid_encrypted_content","message":"content rejected"}`,
 			want:   false,
 		},
 		{
+			name:   "empty message",
+			status: http.StatusBadRequest,
+			body:   `{"code":"invalid-argument"}`,
+			want:   false,
+		},
+		{
+			name:   "wrong error code",
+			status: http.StatusBadRequest,
+			body:   `{"code":"invalid-request","error":"Could not decrypt the encrypted_content."}`,
+			want:   false,
+		},
+		{
+			name:   "message without decrypt text",
+			status: http.StatusBadRequest,
+			body:   `{"message":"encrypted_content is invalid"}`,
+			want:   false,
+		},
+		{
 			name:   "unrelated bad request",
 			status: http.StatusBadRequest,
 			body:   `{"code":"invalid-argument","error":"tool_choice is invalid"}`,
+			want:   false,
+		},
+		{
+			name:   "invalid argument unmodified message",
+			status: http.StatusBadRequest,
+			body:   `{"code":"invalid-argument","error":"encrypted_content is unmodified"}`,
+			want:   true,
+		},
+		{
+			name:   "empty body",
+			status: http.StatusBadRequest,
+			body:   "",
 			want:   false,
 		},
 	}
@@ -185,6 +281,38 @@ func TestTrimGrokInvalidEncryptedContentRetryBodyPreservesOtherInput(t *testing.
 	require.True(t, gjson.GetBytes(retryBody, "metadata.keep").Bool())
 }
 
+func TestTrimGrokInvalidEncryptedContentRetryBodyHandlesNoopObjectAndMalformedBodies(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantChange bool
+		wantError  bool
+	}{
+		{name: "missing input", body: `{"model":"grok-4.3"}`},
+		{name: "input without encrypted reasoning", body: `{"input":[{"type":"message","role":"user"}]}`},
+		{name: "single reasoning object", body: `{"input":{"type":"reasoning","encrypted_content":"opaque","summary":[]}}`, wantChange: true},
+		{name: "malformed JSON after encrypted item", body: `{"input":[{"type":"reasoning","encrypted_content":"opaque"}]`, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			retryBody, changed, err := trimGrokInvalidEncryptedContentRetryBody([]byte(tt.body))
+			if tt.wantError {
+				require.Error(t, err)
+				require.False(t, changed)
+				require.Nil(t, retryBody)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.wantChange, changed)
+			if tt.wantChange {
+				require.False(t, gjson.GetBytes(retryBody, "input.encrypted_content").Exists())
+			} else {
+				require.JSONEq(t, tt.body, string(retryBody))
+			}
+		})
+	}
+}
+
 func TestStripAnthropicThinkingSignaturesOnlyChangesThinkingBlocks(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"reasoning","signature":"gAAAAAB"},{"type":"text","text":"visible","signature":"keep-me"}]}]}`)
 
@@ -193,4 +321,28 @@ func TestStripAnthropicThinkingSignaturesOnlyChangesThinkingBlocks(t *testing.T)
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(stripped, "messages.0.content.0.signature").Exists())
 	require.Equal(t, "keep-me", gjson.GetBytes(stripped, "messages.0.content.1.signature").String())
+}
+
+func TestStripAnthropicThinkingSignaturesNoopInputs(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "empty", body: ""},
+		{name: "no signature", body: `{"messages":[{"role":"user","content":"hello"}]}`},
+		{name: "invalid JSON", body: `{"messages":[{"type":"thinking","signature":"x"}]`},
+		{name: "missing messages", body: `{"signature":"x"}`},
+		{name: "empty messages", body: `{"messages":[],"signature":"x"}`},
+		{name: "non-object message", body: `{"messages":[1],"signature":"x"}`},
+		{name: "non-array content", body: `{"messages":[{"content":"text"}],"signature":"x"}`},
+		{name: "non-object block", body: `{"messages":[{"content":[1]}],"signature":"x"}`},
+		{name: "thinking without signature", body: `{"messages":[{"content":[{"type":"thinking"}]}],"signature":"x"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stripped, changed := stripAnthropicThinkingSignatures([]byte(tt.body))
+			require.False(t, changed)
+			require.Equal(t, tt.body, string(stripped))
+		})
+	}
 }
