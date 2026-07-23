@@ -129,3 +129,17 @@ func TestCompositeImplicitTargetPlatformMiddlewareSkipsNonCompositeRequests(t *t
 	require.NotPanics(t, func() { compositeImplicitTargetPlatformMiddleware(service.PlatformGemini)(noRequest) })
 	require.NotPanics(t, func() { resetCompositeRequestBody(nil, nil) })
 }
+
+func TestGetGroupPlatformUsesResolvedCompositeProvider(t *testing.T) {
+	group := &service.Group{Platform: service.PlatformComposite}
+	apiKey := &service.APIKey{Group: group}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set(string(middleware.ContextKeyAPIKey), apiKey)
+	ctx.Request = ctx.Request.WithContext(service.WithResolvedTargetPlatform(ctx.Request.Context(), service.PlatformGrok))
+
+	require.Equal(t, service.PlatformGrok, getGroupPlatform(ctx))
+	noResolved, _ := gin.CreateTestContext(httptest.NewRecorder())
+	noResolved.Set(string(middleware.ContextKeyAPIKey), apiKey)
+	require.Equal(t, service.PlatformComposite, getGroupPlatform(noResolved))
+}

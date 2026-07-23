@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
 )
@@ -91,6 +92,53 @@ func TestIsConcreteRequestPlatform(t *testing.T) {
 	for _, platform := range []string{"", PlatformComposite, "unknown"} {
 		require.False(t, isConcreteRequestPlatform(platform), platform)
 	}
+}
+
+func TestCompositePlatformServiceCallSites(t *testing.T) {
+	groupID := int64(10)
+	account := Account{
+		ID:          20,
+		GroupIDs:    []int64{groupID},
+		Platform:    PlatformGrok,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"model_mapping": map[string]any{"grok-4": "grok-4"}},
+	}
+	accountRepo := &mockAccountRepoForPlatform{
+		accounts:     []Account{account},
+		accountsByID: map[int64]*Account{account.ID: &account},
+	}
+	groupRepo := &mockGroupRepoForGateway{groups: map[int64]*Group{
+		groupID: {ID: groupID, Platform: PlatformComposite},
+	}}
+	svc := &GatewayService{
+		accountRepo: accountRepo,
+		groupRepo:   groupRepo,
+		cache:       &mockGatewayCacheForPlatform{},
+		cfg:         testConfig(),
+	}
+
+	selected, err := svc.SelectAccountForModelWithExclusions(context.Background(), &groupID, "", "grok-4", nil)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	require.Equal(t, PlatformGrok, selected.Platform)
+
+	platform, forced, err := svc.resolvePlatform(WithResolvedTargetPlatform(context.Background(), PlatformGrok), &groupID, &Group{Platform: PlatformComposite})
+	require.NoError(t, err)
+	require.False(t, forced)
+	require.Equal(t, PlatformGrok, platform)
+}
+
+func TestCompositeSchedulerCallSites(t *testing.T) {
+	svc := &SchedulerSnapshotService{}
+	err := svc.rebuildByGroupIDs(context.Background(), []int64{10}, "test", nil)
+	require.ErrorIs(t, err, ErrSchedulerCacheNotReady)
+
+	svc = &SchedulerSnapshotService{cfg: &config.Config{RunMode: config.RunModeSimple}}
+	buckets, err := svc.defaultBuckets(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, buckets)
+	require.Contains(t, buckets, SchedulerBucket{GroupID: 0, Platform: PlatformGrok, Mode: SchedulerModeSingle})
 }
 
 func TestQuotaPlatformCompositeUsesResolvedOrForceOnly(t *testing.T) {
