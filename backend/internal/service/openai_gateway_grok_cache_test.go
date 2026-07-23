@@ -433,6 +433,10 @@ func TestForwardGrokResponsesClaudeDesktopUsesRequestCacheRoute(t *testing.T) {
 		"X-Claude-Code-Session-Id":  "claude-desktop-session",
 	})
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("User-Agent", "claude-cli/2.1.215 (external, claude-desktop-3p, agent-sdk/0.3.215)")
+	c.Request.Header.Set("X-App", "cli")
+	c.Request.Header.Set("anthropic-client-platform", "desktop_app")
+	c.Request.Header.Set("X-Claude-Code-Session-Id", "claude-desktop-session")
 	c.Set("api_key", &APIKey{ID: 4504})
 
 	account := grokProtocolOAuthAccount(4504)
