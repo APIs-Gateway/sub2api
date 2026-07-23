@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseCodexSessionImportEntriesSupportsRawTokenJSONAndArray(t *testing.T) {
@@ -315,6 +318,44 @@ func TestCodexIdentityKeysPreferStrongIdentifiers(t *testing.T) {
 	}
 	if !hasEmail {
 		t.Fatalf("weak identity should include email fallback: %v", keys)
+	}
+}
+
+func TestCodexAccountIndexAddRemovesStaleIdentityKeys(t *testing.T) {
+	legacy := service.Account{
+		ID: 50,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "team-old",
+			"chatgpt_user_id":    "user-old",
+			"email":              "old@example.com",
+			"access_token":       "access-old",
+			"agent_runtime_id":   "runtime-old",
+		},
+	}
+	index := buildCodexAccountIndex([]service.Account{legacy})
+
+	updated := service.Account{
+		ID: 50,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "team-new",
+			"chatgpt_user_id":    "user-new",
+			"email":              "new@example.com",
+			"access_token":       "access-new",
+			"agent_runtime_id":   "runtime-new",
+		},
+	}
+	index.Add(updated)
+
+	oldKeys := append(buildCodexIdentityKeys("team-old", "user-old", "old@example.com", "access-old"), "agent:runtime-old")
+	for _, key := range oldKeys {
+		require.Nil(t, index.Find([]string{key}), "stale identity key %q must not match", key)
+	}
+
+	newKeys := append(buildCodexIdentityKeys("team-new", "user-new", "new@example.com", "access-new"), "agent:runtime-new")
+	for _, key := range newKeys {
+		matched := index.Find([]string{key})
+		require.NotNil(t, matched, "updated identity key %q must match", key)
+		require.Equal(t, int64(50), matched.ID)
 	}
 }
 

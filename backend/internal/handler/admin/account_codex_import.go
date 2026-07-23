@@ -111,7 +111,8 @@ type codexJWTOpenAIClaims struct {
 }
 
 type codexAccountIndex struct {
-	accountsByKey map[string]service.Account
+	accountsByKey   map[string]service.Account
+	keysByAccountID map[int64]map[string]struct{}
 }
 
 func (h *AccountHandler) ImportCodexSession(c *gin.Context) {
@@ -884,7 +885,10 @@ func buildCodexAgentIdentityKeys(accountID string) []string {
 }
 
 func buildCodexAccountIndex(accounts []service.Account) *codexAccountIndex {
-	index := &codexAccountIndex{accountsByKey: map[string]service.Account{}}
+	index := &codexAccountIndex{
+		accountsByKey:   map[string]service.Account{},
+		keysByAccountID: map[int64]map[string]struct{}{},
+	}
 	for _, account := range accounts {
 		index.Add(account)
 	}
@@ -898,6 +902,9 @@ func (i *codexAccountIndex) Add(account service.Account) {
 	if i.accountsByKey == nil {
 		i.accountsByKey = map[string]service.Account{}
 	}
+	if i.keysByAccountID == nil {
+		i.keysByAccountID = map[int64]map[string]struct{}{}
+	}
 	keys := buildCodexIdentityKeys(
 		codexCredentialString(account.Credentials, "chatgpt_account_id"),
 		codexCredentialString(account.Credentials, "chatgpt_user_id"),
@@ -907,9 +914,26 @@ func (i *codexAccountIndex) Add(account service.Account) {
 	if runtimeID := codexCredentialString(account.Credentials, "agent_runtime_id"); runtimeID != "" {
 		keys = append([]string{"agent:" + runtimeID}, keys...)
 	}
+	currentKeys := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
+		currentKeys[key] = struct{}{}
+	}
+	for key := range i.keysByAccountID[account.ID] {
+		if _, retained := currentKeys[key]; retained {
+			continue
+		}
+		if existing, ok := i.accountsByKey[key]; ok && existing.ID == account.ID {
+			delete(i.accountsByKey, key)
+		}
+	}
+	for key := range currentKeys {
 		i.accountsByKey[key] = account
 	}
+	if len(currentKeys) == 0 {
+		delete(i.keysByAccountID, account.ID)
+		return
+	}
+	i.keysByAccountID[account.ID] = currentKeys
 }
 
 func (i *codexAccountIndex) Find(keys []string) *service.Account {
