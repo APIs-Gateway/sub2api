@@ -322,9 +322,41 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		proxyURL = account.Proxy.URL()
 	}
 	recordUpstream429Attempt(account.ID)
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
-	if err != nil {
-		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+	var resp *http.Response
+	for attempt := 0; ; attempt++ {
+		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		if err != nil {
+			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		}
+		if account.Platform != PlatformGrok || attempt > 0 || resp.StatusCode != http.StatusBadRequest {
+			break
+		}
+
+		respBody := s.readUpstreamErrorBody(resp)
+		_ = resp.Body.Close()
+		if !isGrokInvalidEncryptedContentResponse(resp.StatusCode, respBody) {
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			break
+		}
+		retryBody, changed, trimErr := trimGrokInvalidEncryptedContentRetryBody(responsesBody)
+		if trimErr != nil {
+			return nil, fmt.Errorf("prepare Grok invalid encrypted_content retry: %w", trimErr)
+		}
+		if !changed {
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			break
+		}
+		responsesBody = retryBody
+		upstreamCtxRetry, releaseRetry := detachUpstreamContext(ctx)
+		upstreamReq, err = buildGrokResponsesRequest(upstreamCtxRetry, c, account, responsesBody, token, grokCacheIdentity)
+		releaseRetry()
+		if err != nil {
+			return nil, fmt.Errorf("build Grok encrypted_content retry request: %w", err)
+		}
+		logger.L().Info("openai messages: retrying after stripping invalid Grok encrypted_content",
+			zap.Int64("account_id", account.ID),
+			zap.Bool("cache_identity_present", strings.TrimSpace(grokCacheIdentity) != ""),
+		)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -352,6 +384,16 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 				zap.String("upstream_model", upstreamModel),
 			)
 			return s.ForwardAsAnthropic(ctx, c, account, body, promptCacheKey, defaultMappedModel)
+		}
+		if account.Platform == PlatformGrok &&
+			isGrokInvalidEncryptedContentResponse(resp.StatusCode, respBody) &&
+			!grokEncryptedContentStripRetried(ctx) {
+			if strippedBody, ok := stripAnthropicThinkingSignatures(body); ok {
+				logger.L().Info("openai messages: stripping thinking signatures for Grok retry",
+					zap.Int64("account_id", account.ID),
+				)
+				return s.ForwardAsAnthropic(markGrokEncryptedContentStripRetried(ctx), c, account, strippedBody, promptCacheKey, defaultMappedModel)
+			}
 		}
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 			upstreamDetail := ""

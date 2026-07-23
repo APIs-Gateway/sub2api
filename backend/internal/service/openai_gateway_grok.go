@@ -456,6 +456,141 @@ func (s *OpenAIGatewayService) tempUnscheduleGrok(ctx context.Context, account *
 	}
 }
 
+func isGrokInvalidEncryptedContentResponse(statusCode int, body []byte) bool {
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+
+	// xAI has used both flat and nested error envelopes for this condition.
+	code := strings.TrimSpace(gjson.GetBytes(body, "code").String())
+	message := ""
+	errNode := gjson.GetBytes(body, "error")
+	switch {
+	case errNode.Type == gjson.String:
+		message = errNode.String()
+	case errNode.IsObject():
+		message = firstNonEmpty(errNode.Get("message").String(), errNode.Get("error").String())
+		if code == "" {
+			code = strings.TrimSpace(errNode.Get("code").String())
+		}
+	default:
+		message = gjson.GetBytes(body, "message").String()
+	}
+	normalizedMessage := strings.ToLower(strings.TrimSpace(message))
+	if normalizedMessage == "" {
+		return false
+	}
+	if strings.EqualFold(code, "invalid_encrypted_content") {
+		return true
+	}
+	if code != "" && !strings.EqualFold(code, "invalid-argument") {
+		return false
+	}
+	if code == "" && !strings.Contains(normalizedMessage, "decrypt") {
+		return false
+	}
+	return strings.Contains(normalizedMessage, "encrypted_content") &&
+		(strings.Contains(normalizedMessage, "decrypt") || strings.Contains(normalizedMessage, "unmodified"))
+}
+
+// trimGrokInvalidEncryptedContentRetryBody removes only Responses reasoning
+// encrypted_content, preserving the rest of the multi-turn request for the
+// one retry allowed after an xAI decrypt failure.
+func trimGrokInvalidEncryptedContentRetryBody(body []byte) ([]byte, bool, error) {
+	input := gjson.GetBytes(body, "input")
+	items := input.Array()
+	if input.IsObject() {
+		items = []gjson.Result{input}
+	}
+
+	hasEncryptedReasoning := false
+	for _, item := range items {
+		if strings.TrimSpace(item.Get("type").String()) == "reasoning" && item.Get("encrypted_content").Exists() {
+			hasEncryptedReasoning = true
+			break
+		}
+	}
+	if !hasEncryptedReasoning {
+		return body, false, nil
+	}
+
+	var requestBody map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&requestBody); err != nil {
+		return nil, false, err
+	}
+	if !trimOpenAIEncryptedReasoningItems(requestBody) {
+		return body, false, nil
+	}
+
+	retryBody, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return nil, false, err
+	}
+	return retryBody, true, nil
+}
+
+type grokEncryptedContentStripRetriedKey struct{}
+
+func markGrokEncryptedContentStripRetried(ctx context.Context) context.Context {
+	return context.WithValue(ctx, grokEncryptedContentStripRetriedKey{}, true)
+}
+
+func grokEncryptedContentStripRetried(ctx context.Context) bool {
+	v, _ := ctx.Value(grokEncryptedContentStripRetriedKey{}).(bool)
+	return v
+}
+
+// stripAnthropicThinkingSignatures removes thinking.signature from Claude
+// history so a second Grok attempt can rebuild the reasoning without opaque
+// encrypted state. Returns ok=false when there is nothing to change.
+func stripAnthropicThinkingSignatures(body []byte) ([]byte, bool) {
+	if len(body) == 0 || !bytes.Contains(body, []byte(`"signature"`)) {
+		return body, false
+	}
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body, false
+	}
+	messages, ok := req["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		return body, false
+	}
+	changed := false
+	for _, rawMsg := range messages {
+		msg, ok := rawMsg.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := msg["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawBlock := range content {
+			block, ok := rawBlock.(map[string]any)
+			if !ok {
+				continue
+			}
+			if typ, _ := block["type"].(string); typ != "thinking" {
+				continue
+			}
+			if _, has := block["signature"]; has {
+				delete(block, "signature")
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return body, false
+	}
+	out, err := json.Marshal(req)
+	if err != nil {
+		return body, false
+	}
+	return out, true
+}
+
 func ptrStringOrNil(value string) *string {
 	if strings.TrimSpace(value) == "" {
 		return nil
