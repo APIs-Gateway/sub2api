@@ -1615,6 +1615,9 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 		groupID = resolvedGroupID
 		ctx = s.withGroupContext(ctx, group)
 		platform = group.Platform
+		if resolvedPlatform, ok := ResolvedTargetPlatformFromContext(ctx); ok {
+			platform = resolvedPlatform
+		}
 	} else {
 		// 无分组时只使用原生 anthropic 平台
 		platform = PlatformAnthropic
@@ -2459,6 +2462,9 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 	forcePlatform, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string)
 	if hasForcePlatform && forcePlatform != "" {
 		return forcePlatform, true, nil
+	}
+	if resolvedPlatform, ok := ResolvedTargetPlatformFromContext(ctx); ok {
+		return resolvedPlatform, false, nil
 	}
 	if group != nil {
 		return group.Platform, false, nil
@@ -8926,8 +8932,8 @@ func PlatformFromAPIKey(apiKey *APIKey) string {
 }
 
 // QuotaPlatform 返回 user×platform 配额计量使用的平台标识。
-// 强制平台路由（如 /antigravity）优先按 ctx 中的 ForcePlatform 计量，否则回退到
-// APIKey 关联 Group 的平台。
+// 强制平台路由（如 /antigravity）优先按 ctx 中的 ForcePlatform 计量，复合请求其次使用
+// 已解析的 concrete provider，否则回退到 APIKey 关联 Group 的平台。
 //
 // 注意：必须用带 ForcePlatform 的请求 context 调用（如 handler 的 c.Request.Context()）。
 // 后扣运行在 worker 池的 background ctx 上没有 ForcePlatform，因此后扣平台由 handler
