@@ -59,7 +59,8 @@ type AnthropicContentBlock struct {
 	Text string `json:"text,omitempty"`
 
 	// type=thinking
-	Thinking string `json:"thinking,omitempty"`
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
 
 	// type=image
 	Source *AnthropicImageSource `json:"source,omitempty"`
@@ -242,6 +243,9 @@ type ResponsesInputItem struct {
 	// Role-based messages (developer/system/user/assistant)
 	Role    string          `json:"role,omitempty"`
 	Content json.RawMessage `json:"content,omitempty"` // string or []ResponsesContentPart
+
+	// type=reasoning: provider encrypted reasoning replayed on the next turn.
+	EncryptedContent string `json:"encrypted_content,omitempty"`
 
 	// type=function_call
 	CallID    string `json:"call_id,omitempty"`

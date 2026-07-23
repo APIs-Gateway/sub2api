@@ -173,6 +173,46 @@ func TestAnthropicToResponses_ThinkingIgnored(t *testing.T) {
 	assert.Equal(t, "Hi!", parts[0].Text)
 }
 
+func TestAnthropicToResponses_ThinkingSignatureBecomesReasoning(t *testing.T) {
+	req := &AnthropicRequest{
+		Model:     "grok-4.5",
+		MaxTokens: 1024,
+		Messages: []AnthropicMessage{
+			{Role: "user", Content: json.RawMessage(`"Hello"`)},
+			{Role: "assistant", Content: json.RawMessage(`[{"type":"thinking","thinking":"plan","signature":"enc-rs-1"},{"type":"text","text":"Hi!"}]`)},
+			{Role: "user", Content: json.RawMessage(`"More"`)},
+		},
+	}
+
+	resp, err := AnthropicToResponses(req)
+	require.NoError(t, err)
+
+	var items []ResponsesInputItem
+	require.NoError(t, json.Unmarshal(resp.Input, &items))
+	require.Len(t, items, 4)
+	assert.Equal(t, "reasoning", items[1].Type)
+	assert.Equal(t, "enc-rs-1", items[1].EncryptedContent)
+	assert.Equal(t, "assistant", items[2].Role)
+}
+
+func TestAnthropicToResponses_SkipsForeignThinkingSignatures(t *testing.T) {
+	req := &AnthropicRequest{
+		Model:     "grok-4.5",
+		MaxTokens: 1024,
+		Messages: []AnthropicMessage{{
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"thinking","signature":"gAAAA-foreign"},{"type":"thinking","signature":" "},{"type":"text","text":"Hi!"}]`),
+		}},
+	}
+
+	resp, err := AnthropicToResponses(req)
+	require.NoError(t, err)
+	var items []ResponsesInputItem
+	require.NoError(t, json.Unmarshal(resp.Input, &items))
+	require.Len(t, items, 1)
+	assert.Equal(t, "assistant", items[0].Role)
+}
+
 func TestAnthropicToResponses_MaxTokensFloor(t *testing.T) {
 	req := &AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -374,7 +414,8 @@ func TestResponsesToAnthropic_Reasoning(t *testing.T) {
 		Status: "completed",
 		Output: []ResponsesOutput{
 			{
-				Type: "reasoning",
+				Type:             "reasoning",
+				EncryptedContent: "enc-rs-roundtrip",
 				Summary: []ResponsesSummary{
 					{Type: "summary_text", Text: "Thinking about the answer..."},
 				},
@@ -392,6 +433,7 @@ func TestResponsesToAnthropic_Reasoning(t *testing.T) {
 	require.Len(t, anth.Content, 2)
 	assert.Equal(t, "thinking", anth.Content[0].Type)
 	assert.Equal(t, "Thinking about the answer...", anth.Content[0].Thinking)
+	assert.Equal(t, "enc-rs-roundtrip", anth.Content[0].Signature)
 	assert.Equal(t, "text", anth.Content[1].Type)
 	assert.Equal(t, "42", anth.Content[1].Text)
 }
@@ -804,8 +846,22 @@ func TestStreamingReasoning(t *testing.T) {
 	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type: "response.reasoning_summary_text.done",
 	}, state)
-	require.Len(t, events, 1)
-	assert.Equal(t, "content_block_stop", events[0].Type)
+	require.Empty(t, events)
+
+	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type:        "response.output_item.done",
+		OutputIndex: 0,
+		Item: &ResponsesOutput{
+			Type:             "reasoning",
+			EncryptedContent: "enc-rs-stream",
+			Status:           "completed",
+		},
+	}, state)
+	require.Len(t, events, 2)
+	assert.Equal(t, "content_block_delta", events[0].Type)
+	assert.Equal(t, "signature_delta", events[0].Delta.Type)
+	assert.Equal(t, "enc-rs-stream", events[0].Delta.Signature)
+	assert.Equal(t, "content_block_stop", events[1].Type)
 }
 
 func TestStreamingIncomplete(t *testing.T) {

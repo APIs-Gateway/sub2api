@@ -257,7 +257,8 @@ func anthropicUserToResponses(raw json.RawMessage) ([]ResponsesInputItem, error)
 // anthropicAssistantToResponses handles an Anthropic assistant message.
 // Text content → assistant message with output_text parts.
 // tool_use blocks → function_call items.
-// thinking blocks → ignored (OpenAI doesn't accept them as input).
+// thinking blocks with a provider signature → reasoning items. Unsigned
+// thinking remains ignored because Responses cannot accept plain thought text.
 func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, error) {
 	// Try plain string.
 	var s string
@@ -276,6 +277,22 @@ func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, e
 	}
 
 	var items []ResponsesInputItem
+
+	for _, b := range blocks {
+		if b.Type != "thinking" {
+			continue
+		}
+		// Do not replay foreign or empty signatures: xAI rejects them as invalid
+		// encrypted_content after a provider/account switch.
+		sig := strings.TrimSpace(b.Signature)
+		if sig == "" || strings.HasPrefix(sig, "gAAAA") {
+			continue
+		}
+		items = append(items, ResponsesInputItem{
+			Type:             "reasoning",
+			EncryptedContent: sig,
+		})
+	}
 
 	// Text content → assistant message with output_text content parts.
 	text := extractAnthropicTextFromBlocks(blocks)
