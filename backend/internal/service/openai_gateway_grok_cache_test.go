@@ -86,6 +86,15 @@ func TestApplyGrokResponsesCacheIdentityAddsDisabledNativeToolsForKnownFree(t *t
 	require.Equal(t, "x_search", gjson.GetBytes(body, "tools.1.type").String())
 }
 
+func TestApplyGrokResponsesCacheIdentityPreservesExplicitToolIntent(t *testing.T) {
+	intent := []byte(`{"model":"grok-4.3","tools":[{"type":"function","name":"lookup"}]}`)
+	body, err := applyGrokResponsesCacheIdentity(intent, intent, "isolated-key", true)
+	require.NoError(t, err)
+	require.Equal(t, "isolated-key", gjson.GetBytes(body, "prompt_cache_key").String())
+	require.Equal(t, "function", gjson.GetBytes(body, "tools.0.type").String())
+	require.False(t, gjson.GetBytes(body, "tool_choice").Exists())
+}
+
 func TestApplyGrokResponsesCacheIdentityRespectsToolIntentShapes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -133,6 +142,11 @@ func TestGrokFreeFunctionToolCacheRouteIsSelective(t *testing.T) {
 	paid, err := applyGrokFreeMessagesFunctionToolCacheRoute(mixedTools, mixedTools, paidAccount, "isolated-key")
 	require.NoError(t, err)
 	require.JSONEq(t, string(mixedTools), string(paid))
+
+	nativeOnly := []byte(`{"model":"grok-4.3","tools":[{"type":"web_search"}]}`)
+	nativeResult, err := applyGrokFreeMessagesFunctionToolCacheRoute(nativeOnly, nativeOnly, freeAccount, "isolated-key")
+	require.NoError(t, err)
+	require.JSONEq(t, string(nativeOnly), string(nativeResult))
 }
 
 func TestIsKnownGrokFreeAccountUsesQuotaProbe(t *testing.T) {
@@ -171,6 +185,13 @@ func TestIsKnownGrokFreeAccountFailsClosedForUnknownAndPaidSignals(t *testing.T)
 			"subscription_tier": "grok-basic",
 		},
 	}))
+	require.True(t, isKnownGrokFreeAccount(&Account{
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{grokQuotaSnapshotExtraKey: map[string]any{
+			"subscription_tier": "free",
+		}},
+	}))
 }
 
 func TestGrokFreeCacheFunctionToolIntentValidation(t *testing.T) {
@@ -202,9 +223,11 @@ func TestAppendMissingGrokFreeCacheNativeToolsHandlesExistingAndInvalidTools(t *
 		{name: "native only", body: `{"tools":[{"type":"web_search"}]}`, want: `{"tools":[{"type":"web_search"}]}`},
 		{name: "unknown tool", body: `{"tools":[{"type":"computer_use"}]}`, want: `{"tools":[{"type":"computer_use"}]}`},
 		{name: "malformed function", body: `{"tools":[{"type":"function"}]}`, want: `{"tools":[{"type":"function"}]}`},
+		{name: "nested function", body: `{"tools":[{"type":"function","name":"lookup","function":{}}]}`, want: `{"tools":[{"type":"function","name":"lookup","function":{}}]}`},
 		{name: "native web plus function", body: `{"tools":[{"type":"web_search"},{"type":"function","name":"lookup"}]}`, want: `{"tools":[{"type":"web_search"},{"type":"function","name":"lookup"},{"type":"x_search"}]}`},
 		{name: "both native plus function", body: `{"tools":[{"type":"web_search"},{"type":"x_search"},{"type":"function","name":"lookup"}]}`, want: `{"tools":[{"type":"web_search"},{"type":"x_search"},{"type":"function","name":"lookup"}]}`},
 		{name: "duplicate native and function search", body: `{"tools":[{"type":"function","name":"lookup"},{"type":"function","name":"web_search"},{"type":"web_search"}]}`, want: `{"tools":[{"type":"function","name":"lookup"},{"type":"web_search"},{"type":"x_search"}]}`},
+		{name: "duplicate function search", body: `{"tools":[{"type":"function","name":"lookup"},{"type":"function","name":"web_search"},{"type":"function","name":"web_search"}]}`, want: `{"tools":[{"type":"function","name":"lookup"},{"type":"web_search"},{"type":"x_search"}]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -216,6 +239,7 @@ func TestAppendMissingGrokFreeCacheNativeToolsHandlesExistingAndInvalidTools(t *
 }
 
 func TestApplyGrokCacheHeadersAndCLIHeaders(t *testing.T) {
+	applyGrokCacheHeaders(nil, "ignored")
 	headers := make(http.Header)
 	applyGrokCLIHeaders(headers)
 	applyGrokCacheHeaders(headers, "isolated-key")
@@ -228,6 +252,10 @@ func TestApplyGrokCacheHeadersAndCLIHeaders(t *testing.T) {
 }
 
 func TestStripGrokChatPromptCacheKey(t *testing.T) {
+	unchanged, err := stripGrokChatPromptCacheKey([]byte(`{"model":"grok-4.3"}`))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"model":"grok-4.3"}`, string(unchanged))
+
 	body, err := stripGrokChatPromptCacheKey(bytes.TrimSpace([]byte(`{"model":"grok-4.3","prompt_cache_key":"client-key"}`)))
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(body, "prompt_cache_key").Exists())
