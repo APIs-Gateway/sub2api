@@ -4021,6 +4021,10 @@
         baseUrlHint: 'Grok accounts forward to the official xAI API base URL.',
         apiKeyHint: 'Use an xAI API key for direct API access.'
       },
+      grokClientToolCache: {
+        title: 'Client Tool Cache (May Change Automatic Tool Selection)',
+        hint: 'For detected Grok Free OAuth accounts, client function tools such as Codex and Trae use upstream prompt caching by default. Turn this off if that automatic tool-selection behavior is not acceptable.'
+      },
       anthropic: {
         apiKeyPassthrough: 'Auto passthrough (auth only)',
         apiKeyPassthroughDesc:

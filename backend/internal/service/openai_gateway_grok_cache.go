@@ -168,7 +168,7 @@ func hasGrokResponsesToolIntent(body []byte) bool {
 }
 
 func applyGrokFreeMessagesFunctionToolCacheRoute(body, intentSourceBody []byte, account *Account, cacheIdentity string) ([]byte, error) {
-	allowPureClientTools := account != nil && account.getExtraBool(grokClientToolCacheOptInExtraKey)
+	allowPureClientTools, _ := grokClientToolCacheAccountPolicy(account)
 	return applyGrokFreeToolCacheRoute(body, intentSourceBody, account, cacheIdentity, allowPureClientTools, true)
 }
 
@@ -176,7 +176,7 @@ func applyGrokFreeMessagesFunctionToolCacheRoute(body, intentSourceBody []byte, 
 // Responses requests. The opt-in header is consumed locally and is never
 // forwarded to xAI.
 func applyGrokFreeRequestToolCacheRoute(c *gin.Context, body, intentSourceBody []byte, account *Account, cacheIdentity string) ([]byte, error) {
-	allowPureClientTools := account != nil && account.getExtraBool(grokClientToolCacheOptInExtraKey)
+	allowPureClientTools, accountPolicyExplicit := grokClientToolCacheAccountPolicy(account)
 	requestOptOut := false
 	if c != nil {
 		switch strings.ToLower(strings.TrimSpace(c.GetHeader(grokClientToolCacheOptInHeader))) {
@@ -187,10 +187,32 @@ func applyGrokFreeRequestToolCacheRoute(c *gin.Context, body, intentSourceBody [
 			requestOptOut = true
 		}
 	}
-	if !allowPureClientTools && !requestOptOut && isGrokClaudeDesktopResponsesCacheRequest(c) {
+	if !allowPureClientTools && !accountPolicyExplicit && !requestOptOut && isGrokClaudeDesktopResponsesCacheRequest(c) {
 		allowPureClientTools = true
 	}
 	return applyGrokFreeToolCacheRoute(body, intentSourceBody, account, cacheIdentity, allowPureClientTools, allowPureClientTools)
+}
+
+// grokClientToolCacheAccountPolicy is intentionally strict for configured
+// values: only a JSON boolean is accepted. A missing key defaults on solely for
+// accounts positively identified as Grok Free OAuth; paid, API-key, and unknown
+// accounts remain fail-closed.
+func grokClientToolCacheAccountPolicy(account *Account) (enabled, explicit bool) {
+	if !isKnownGrokFreeAccount(account) {
+		return false, false
+	}
+	if account.Extra == nil {
+		return true, false
+	}
+	value, exists := account.Extra[grokClientToolCacheOptInExtraKey]
+	if !exists {
+		return true, false
+	}
+	enabled, valid := value.(bool)
+	if !valid {
+		return false, true
+	}
+	return enabled, true
 }
 
 // isGrokClaudeDesktopResponsesCacheRequest requires the independent markers

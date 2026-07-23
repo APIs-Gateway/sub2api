@@ -167,6 +167,29 @@ function buildVertexAccount() {
   } as any
 }
 
+function buildGrokOAuthAccount(extra: Record<string, unknown> = {}) {
+  return {
+    id: 4,
+    name: 'Grok OAuth',
+    notes: '',
+    platform: 'grok',
+    type: 'oauth',
+    credentials: {
+      access_token: 'access-token',
+      subscription_tier: 'free'
+    },
+    extra,
+    proxy_id: null,
+    concurrency: 1,
+    priority: 1,
+    rate_multiplier: 1,
+    status: 'active',
+    group_ids: [],
+    expires_at: null,
+    auto_pause_on_expired: false
+  } as any
+}
+
 function buildAntigravityAccount(projectId = 'configured-project') {
   return {
     id: 3,
@@ -642,5 +665,62 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty(
       'antigravity_project_id'
     )
+  })
+
+  it('shows the Grok client-tool cache switch only for Grok OAuth accounts', () => {
+    expect(mountModal(buildGrokOAuthAccount()).find('[data-testid="grok-client-tool-cache-toggle"]').exists()).toBe(true)
+    expect(mountModal({
+      ...buildGrokOAuthAccount(),
+      type: 'apikey',
+      credentials: { api_key: 'xai-test', base_url: 'https://api.x.ai/v1' }
+    }).find('[data-testid="grok-client-tool-cache-toggle"]').exists()).toBe(false)
+    expect(mountModal({
+      ...buildGrokOAuthAccount(),
+      platform: 'openai'
+    }).find('[data-testid="grok-client-tool-cache-toggle"]').exists()).toBe(false)
+  })
+
+  it('defaults Grok OAuth client-tool caching on and persists an explicit opt-out', async () => {
+    const account = buildGrokOAuthAccount({ unrelated_setting: 'keep-me' })
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="grok-client-tool-cache-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toEqual({
+      unrelated_setting: 'keep-me',
+      grok_client_tool_cache_enabled: false
+    })
+  })
+
+  it('loads an explicit Grok OAuth opt-out without dropping unrelated extras', async () => {
+    const account = buildGrokOAuthAccount({
+      grok_client_tool_cache_enabled: false,
+      unrelated_setting: 'keep-me'
+    })
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="grok-client-tool-cache-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toEqual({
+      grok_client_tool_cache_enabled: false,
+      unrelated_setting: 'keep-me'
+    })
   })
 })

@@ -4094,6 +4094,10 @@
         baseUrlHint: 'Grok 账号会转发到官方 xAI API Base URL。',
         apiKeyHint: '直接 API 访问请使用 xAI API Key。'
       },
+      grokClientToolCache: {
+        title: '客户端工具缓存（可能改变自动工具选择）',
+        hint: '仅对已识别为 Free 的 Grok OAuth 账号生效，Codex、Trae 等客户端函数工具默认使用上游提示词缓存。如不接受自动工具选择行为，请关闭此开关。'
+      },
       anthropic: {
         apiKeyPassthrough: '自动透传（仅替换认证）',
         apiKeyPassthroughDesc:
