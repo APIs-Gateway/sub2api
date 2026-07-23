@@ -359,6 +359,57 @@ func TestCodexAccountIndexAddRemovesStaleIdentityKeys(t *testing.T) {
 	}
 }
 
+func TestCodexAccountIndexAddInitializesZeroValueAndPreservesSharedKeyOwner(t *testing.T) {
+	index := &codexAccountIndex{}
+	index.Add(service.Account{
+		ID: 51,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "team-shared",
+		},
+	})
+	index.Add(service.Account{
+		ID: 50,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "team-shared",
+			"access_token":       "access-old",
+		},
+	})
+	index.Add(service.Account{
+		ID: 51,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "team-shared",
+		},
+	})
+
+	index.Add(service.Account{
+		ID: 50,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "team-new",
+			"access_token":       "access-new",
+		},
+	})
+
+	shared := index.Find([]string{"account:team-shared"})
+	require.NotNil(t, shared)
+	require.Equal(t, int64(51), shared.ID, "an old key owned by another account must survive")
+}
+
+func TestCodexAccountIndexAddRemovesAllKeysWhenIdentityDisappears(t *testing.T) {
+	index := buildCodexAccountIndex([]service.Account{
+		{
+			ID: 50,
+			Credentials: map[string]any{
+				"chatgpt_account_id": "team-old",
+				"access_token":       "access-old",
+			},
+		},
+	})
+
+	index.Add(service.Account{ID: 50})
+
+	require.Nil(t, index.Find([]string{"account:team-old", "access:" + codexTokenFingerprint("access-old")}))
+}
+
 func buildCodexImportTestJWT(t *testing.T, exp time.Time, extraClaims map[string]any) string {
 	t.Helper()
 	header := map[string]any{
