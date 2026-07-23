@@ -159,6 +159,40 @@ func TestGrokFreeFunctionToolCacheRouteIsSelective(t *testing.T) {
 	require.JSONEq(t, string(nativeOnly), string(nativeResult))
 }
 
+func TestGrokFreeCacheRoutePreservesToolChoiceNoneAndSupportsNativeCompanions(t *testing.T) {
+	freeAccount := &Account{
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"subscription_tier": "free"},
+	}
+
+	noneBody := []byte(`{"model":"grok-4.3","tools":[{"type":"function","name":"lookup"}],"tool_choice":"none"}`)
+	noneResult, err := applyGrokFreeMessagesFunctionToolCacheRoute(noneBody, noneBody, freeAccount, "isolated-key")
+	require.NoError(t, err)
+	require.Equal(t, 3, len(gjson.GetBytes(noneResult, "tools").Array()))
+	require.Equal(t, "none", gjson.GetBytes(noneResult, "tool_choice").String())
+
+	withNative := []byte(`{"model":"grok-4.3","tools":[{"type":"web_search"},{"type":"code_execution"}]}`)
+	nativeResult, err := applyGrokFreeToolCacheRoute(withNative, withNative, freeAccount, "isolated-key", false, false)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(gjson.GetBytes(nativeResult, "tools").Array()))
+	require.Equal(t, "x_search", gjson.GetBytes(nativeResult, "tools.2.type").String())
+
+	pureClient := []byte(`{"model":"grok-4.3","tools":[{"type":"function","name":"lookup"}]}`)
+	pureResult, err := applyGrokFreeToolCacheRoute(pureClient, pureClient, freeAccount, "isolated-key", false, false)
+	require.NoError(t, err)
+	require.JSONEq(t, string(pureClient), string(pureResult))
+
+	clientSearch, err := appendGrokFreeCacheNativeToolsWithPolicy(
+		[]byte(`{"tools":[{"type":"function","name":"web_search"},{"type":"function","name":"lookup"}]}`),
+		true,
+		false,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "function", gjson.GetBytes(clientSearch, "tools.0.type").String())
+	require.Equal(t, "x_search", gjson.GetBytes(clientSearch, "tools.2.type").String())
+}
+
 func TestIsKnownGrokFreeAccountUsesQuotaProbe(t *testing.T) {
 	limit := xai.GrokFreeRolling24hTokenLimit
 	account := &Account{

@@ -57,6 +57,76 @@ func TestPatchGrokResponsesBodySanitizesUnsupportedFieldsAndTools(t *testing.T) 
 	require.False(t, gjson.GetBytes(patched, "tool_choice").Exists())
 }
 
+func TestSanitizeGrokResponsesUnsupportedFieldsBranches(t *testing.T) {
+	t.Parallel()
+
+	unchanged := []byte(`{"model":"grok-4.3"}`)
+	got, err := sanitizeGrokResponsesUnsupportedFields(unchanged)
+	require.NoError(t, err)
+	require.Equal(t, string(unchanged), string(got))
+
+	got, err = sanitizeGrokResponsesUnsupportedFields([]byte(`{"items":[{"external_web_access":true},{"ok":true}]}`))
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(got, "items.0.external_web_access").Exists())
+	require.True(t, gjson.GetBytes(got, "items.1.ok").Bool())
+
+	_, err = sanitizeGrokResponsesUnsupportedFields([]byte(`{"external_web_access"`))
+	require.Error(t, err)
+}
+
+func TestSanitizeGrokResponsesToolsBranches(t *testing.T) {
+	t.Parallel()
+
+	noTools, err := sanitizeGrokResponsesTools([]byte(`{"model":"grok"}`))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"model":"grok"}`, string(noTools))
+
+	validChoice, err := sanitizeGrokResponsesTools([]byte(`{"tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"}}`))
+	require.NoError(t, err)
+	require.Equal(t, "lookup", gjson.GetBytes(validChoice, "tool_choice.name").String())
+
+	missingFunction, err := sanitizeGrokResponsesTools([]byte(`{"tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"missing"}}`))
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(missingFunction, "tool_choice").Exists())
+
+	allUnsupported, err := sanitizeGrokResponsesTools([]byte(`{"tools":[{"type":"computer_use"}],"tool_choice":{"type":"computer_use"}}`))
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(allUnsupported, "tools").Exists())
+	require.False(t, gjson.GetBytes(allUnsupported, "tool_choice").Exists())
+}
+
+func TestShouldDropGrokToolChoiceBranches(t *testing.T) {
+	t.Parallel()
+
+	tools := []json.RawMessage{json.RawMessage(`{"type":"function","name":"lookup"}`)}
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "no tools", body: `null`, want: true},
+		{name: "string choice", body: `"auto"`, want: false},
+		{name: "empty object", body: `{}`, want: false},
+		{name: "missing function name", body: `{"type":"function"}`, want: false},
+		{name: "matching function", body: `{"type":"function","name":"lookup"}`, want: false},
+		{name: "missing function", body: `{"type":"function","name":"missing"}`, want: true},
+		{name: "unsupported type", body: `{"type":"computer_use"}`, want: true},
+		{name: "supported native type", body: `{"type":"web_search"}`, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			choice := gjson.Parse(tt.body)
+			want := tt.want
+			if tt.name == "no tools" {
+				want = true
+				require.Equal(t, want, shouldDropGrokToolChoice(choice, nil))
+				return
+			}
+			require.Equal(t, want, shouldDropGrokToolChoice(choice, tools))
+		})
+	}
+}
+
 func TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken(t *testing.T) {
 	t.Parallel()
 
