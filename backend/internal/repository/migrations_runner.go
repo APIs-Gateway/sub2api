@@ -56,6 +56,7 @@ const paymentOrdersOutTradeNoUniqueIndex = "paymentorder_out_trade_no_unique"
 const schedulerOutboxPendingDedupKeyMigration = "153_scheduler_outbox_pending_dedup_key_index_notx.sql"
 const schedulerOutboxPendingDedupKeyIndex = "idx_scheduler_outbox_pending_dedup_key"
 const authCacheInvalidationOutboxMigration = "184_auth_cache_invalidation_outbox.sql"
+const groupAuthCacheImageGenerationMigration = "185_group_auth_cache_image_generation.sql"
 
 type migrationDatabaseDialect uint8
 
@@ -95,6 +96,8 @@ func migrationAppliesToDatabase(name string, dialect migrationDatabaseDialect) b
 	case strings.HasSuffix(name, "_sqlite.sql"):
 		return dialect == migrationDatabaseSQLite
 	case name == authCacheInvalidationOutboxMigration:
+		return dialect == migrationDatabasePostgres
+	case name == groupAuthCacheImageGenerationMigration:
 		return dialect == migrationDatabasePostgres
 	default:
 		return true

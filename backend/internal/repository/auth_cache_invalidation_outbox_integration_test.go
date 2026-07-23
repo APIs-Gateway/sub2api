@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 
@@ -46,4 +47,44 @@ func TestAuthCacheInvalidationOutboxTriggersAndTwoPassClaim(t *testing.T) {
 	stats, err := repo.Stats(ctx)
 	require.NoError(t, err)
 	require.Zero(t, stats.Pending)
+}
+
+func TestAuthCacheInvalidationOutboxGroupImagePermission(t *testing.T) {
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	group := mustCreateGroup(t, integrationEntClient, &service.Group{
+		Name: fmt.Sprintf("auth-outbox-grok-group-%d", suffix), RateMultiplier: 1,
+	})
+	user := mustCreateUser(t, integrationEntClient, &service.User{
+		Email: fmt.Sprintf("auth-outbox-grok-%d@example.com", suffix), Concurrency: 5,
+	})
+	groupID := group.ID
+	keyValue := fmt.Sprintf("sk-auth-outbox-grok-%d", suffix)
+	key := mustCreateApiKey(t, integrationEntClient, &service.APIKey{
+		UserID: user.ID, GroupID: &groupID, Key: keyValue, Name: "outbox-grok", Status: service.StatusActive,
+	})
+
+	wantDigest := sha256.Sum256([]byte(keyValue))
+	wantCacheKey := hex.EncodeToString(wantDigest[:])
+	clear := func() {
+		_, err := integrationDB.ExecContext(ctx, "DELETE FROM auth_cache_invalidation_outbox WHERE cache_key = $1", wantCacheKey)
+		require.NoError(t, err)
+	}
+	clear()
+	t.Cleanup(clear)
+	t.Cleanup(func() {
+		_, err := integrationDB.ExecContext(ctx, "DELETE FROM api_keys WHERE id = $1", key.ID)
+		require.NoError(t, err)
+		_, err = integrationDB.ExecContext(ctx, "DELETE FROM users WHERE id = $1", user.ID)
+		require.NoError(t, err)
+		_, err = integrationDB.ExecContext(ctx, "DELETE FROM groups WHERE id = $1", group.ID)
+		require.NoError(t, err)
+	})
+
+	_, err := integrationDB.ExecContext(ctx, "UPDATE groups SET allow_image_generation = TRUE WHERE id = $1", group.ID)
+	require.NoError(t, err)
+	var storedCacheKey string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT cache_key FROM auth_cache_invalidation_outbox WHERE cache_key = $1", wantCacheKey).Scan(&storedCacheKey))
+	require.Equal(t, wantCacheKey, storedCacheKey)
 }
