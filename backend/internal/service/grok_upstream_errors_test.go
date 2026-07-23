@@ -55,6 +55,29 @@ func TestGrokContentPolicy403DoesNotMutateOrFailover(t *testing.T) {
 	require.True(t, svc.shouldFailoverGrokUpstreamError(http.StatusForbidden, []byte(`{"error":{"message":"subscription required"}}`)))
 }
 
+func TestGrokAccountUpstreamError402TempUnschedulesAndRecovers(t *testing.T) {
+	repo := &openaiTransportAccountRepoStub{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 610, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true}
+	before := time.Now()
+
+	svc.handleGrokAccountUpstreamError(context.Background(), account, http.StatusPaymentRequired, nil, nil)
+
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Len(t, repo.tempUnschedCalls, 1)
+	require.Equal(t, int64(610), repo.tempUnschedCalls[0].accountID)
+	require.Equal(t, "grok payment required", repo.tempUnschedCalls[0].reason)
+	require.True(t, repo.tempUnschedCalls[0].until.After(before.Add(30*time.Minute-time.Second)))
+	require.True(t, repo.tempUnschedCalls[0].until.Before(before.Add(30*time.Minute+time.Second)))
+
+	expired := time.Now().Add(-time.Second)
+	account.TempUnschedulableUntil = &expired
+	svc.openaiAccountRuntimeBlockUntil.Store(account.ID, expired)
+
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.True(t, account.IsSchedulable())
+}
+
 func TestForwardGrokResponsesContentPolicy403ReturnsInvalidRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
