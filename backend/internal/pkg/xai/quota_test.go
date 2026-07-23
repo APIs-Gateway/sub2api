@@ -44,3 +44,11 @@ func TestParseQuotaHeadersReturnsNilForMissingHeaders(t *testing.T) {
 
 	require.Nil(t, ParseQuotaHeaders(http.Header{}, http.StatusOK))
 }
+
+func TestIsGrokFreeRolling24hTokenLimit(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, IsGrokFreeRolling24hTokenLimit(GrokFreeRolling24hTokenLimit))
+	require.True(t, IsGrokFreeRolling24hTokenLimit(2_000_000), "legacy snapshots remain classifiable")
+	require.False(t, IsGrokFreeRolling24hTokenLimit(3_000_000))
+}

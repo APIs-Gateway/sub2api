@@ -201,6 +201,7 @@ type UsageInfo struct {
 	GrokRetryAfterSeconds  *int             `json:"grok_retry_after_seconds,omitempty"`
 	GrokEntitlementStatus  string           `json:"grok_entitlement_status,omitempty"`
 	GrokQuotaSnapshotState string           `json:"grok_quota_snapshot_state,omitempty"`
+	GrokFreeTokenLimit     int64            `json:"grok_free_token_limit,omitempty"`
 	GrokLocalUsage         *WindowStats     `json:"grok_local_usage,omitempty"`
 
 	// Antigravity 账号级信息

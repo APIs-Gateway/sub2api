@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -150,7 +151,7 @@ func TestGrokFreeFunctionToolCacheRouteIsSelective(t *testing.T) {
 }
 
 func TestIsKnownGrokFreeAccountUsesQuotaProbe(t *testing.T) {
-	limit := grokFreeRolling24hTokenLimit
+	limit := xai.GrokFreeRolling24hTokenLimit
 	account := &Account{
 		Platform: PlatformGrok,
 		Type:     AccountTypeOAuth,
@@ -159,6 +160,12 @@ func TestIsKnownGrokFreeAccountUsesQuotaProbe(t *testing.T) {
 		}},
 	}
 	require.True(t, isKnownGrokFreeAccount(account))
+
+	legacy := *account
+	legacy.Extra = map[string]any{grokQuotaSnapshotExtraKey: map[string]any{
+		"tokens": map[string]any{"limit": int64(2_000_000)},
+	}}
+	require.True(t, isKnownGrokFreeAccount(&legacy))
 }
 
 func TestIsKnownGrokFreeAccountFailsClosedForUnknownAndPaidSignals(t *testing.T) {
