@@ -776,6 +776,28 @@ func TestGetChannelModelPricing_PlatformFiltering(t *testing.T) {
 	require.Nil(t, result)
 }
 
+func TestGetChannelModelPricing_CompositeUsesResolvedConcretePlatform(t *testing.T) {
+	ch := Channel{
+		ID:       1,
+		Status:   StatusActive,
+		GroupIDs: []int64{10},
+		ModelPricing: []ChannelModelPricing{
+			{ID: 100, Platform: PlatformOpenAI, Models: []string{"shared-model"}, InputPrice: testPtrFloat64(5e-6)},
+			{ID: 200, Platform: PlatformGrok, Models: []string{"shared-model"}, InputPrice: testPtrFloat64(8e-6)},
+		},
+	}
+	repo := makeStandardRepo(ch, map[int64]string{10: PlatformComposite})
+	svc := newTestChannelService(repo)
+
+	openAI := svc.GetChannelModelPricing(WithResolvedTargetPlatform(context.Background(), PlatformOpenAI), 10, "shared-model")
+	require.NotNil(t, openAI)
+	require.Equal(t, int64(100), openAI.ID)
+
+	grok := svc.GetChannelModelPricing(WithResolvedTargetPlatform(context.Background(), PlatformGrok), 10, "shared-model")
+	require.NotNil(t, grok)
+	require.Equal(t, int64(200), grok.ID)
+}
+
 func TestGetChannelModelPricing_ReturnsCopy(t *testing.T) {
 	ch := Channel{
 		ID:       1,
