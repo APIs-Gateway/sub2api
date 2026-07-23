@@ -167,6 +167,109 @@ func TestGatewayModels_CompositeUnmappedAccountsFallbackToLinkedPlatformsOnly(t 
 	require.NotContains(t, ids, "gemini-2.5-flash")
 }
 
+func TestGatewayModels_CompositeFallsBackToAllDefaultModelsWithoutLinkedAccounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(35)
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformComposite},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	ids := modelIDsForTest(got.Data)
+	require.Contains(t, ids, "claude-sonnet-4-6")
+	require.Contains(t, ids, "gemini-2.5-flash")
+	require.Contains(t, ids, "gpt-5.5")
+	require.Contains(t, ids, "grok-4.3")
+}
+
+func TestGatewayModels_CompositeCustomModelsListUsesCompositeDefaults(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(36)
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{
+			ID:       groupID,
+			Platform: service.PlatformComposite,
+			ModelsListConfig: service.GroupModelsListConfig{
+				Enabled: true,
+				Models:  []string{"grok-4.3", "legacy-model"},
+			},
+		},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{"grok-4.3"}, modelIDsForTest(got.Data))
+}
+
+func TestGatewayModels_CompositeModelListSkipsEmptyAndDuplicateModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(37)
+	h := newGatewayModelsHandlerForTest(
+		&gatewayModelsAccountRepoStub{
+			byGroup: map[int64][]service.Account{
+				groupID: {
+					{
+						ID:       1,
+						Platform: service.PlatformOpenAI,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{"": "", "gpt-5.5": "gpt-5.5"},
+						},
+					},
+					{
+						ID:       2,
+						Platform: service.PlatformGrok,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{"gpt-5.5": "gpt-5.5", "grok-4.3": "grok-4.3"},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformComposite},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{"gpt-5.5", "grok-4.3"}, modelIDsForTest(got.Data))
+}
+
+func TestGatewayModels_CompositeAvailableModelsNilHandler(t *testing.T) {
+	var nilHandler *GatewayHandler
+	require.Nil(t, nilHandler.compositeAvailableModels(context.Background(), nil))
+	require.Nil(t, (&GatewayHandler{}).compositeAvailableModels(context.Background(), nil))
+}
+
 func TestGatewayModels_CustomModelsListDisabledKeepsOriginalModels(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
