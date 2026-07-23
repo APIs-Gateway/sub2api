@@ -9555,6 +9555,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	imageMultiplier := resolveImageRateMultiplier(apiKey, multiplier)
 
 	// 确定计费模型
+	concreteBillingModel := concreteForwardResultBillingModel(result.Model, result.UpstreamModel)
 	billingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
 	if input.BillingModelSource == BillingModelSourceChannelMapped && input.ChannelMappedModel != "" {
 		billingModel = input.ChannelMappedModel
@@ -9562,6 +9563,12 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
 		billingModel = input.OriginalModel
 	}
+	if apiKey != nil {
+		billingModel = selectCompositeBillingModel(apiKey.Group, billingModel, concreteBillingModel, func() bool {
+			return s.resolveChannelPricing(ctx, billingModel, apiKey) != nil
+		})
+	}
+	billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, result.UpstreamModel, result.Model)
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
@@ -9664,7 +9671,7 @@ func (s *GatewayService) calculateRecordUsageCost(
 // resolveChannelPricing 检查指定模型是否存在渠道级别定价。
 // 返回非 nil 的 ResolvedPricing 表示有渠道定价，nil 表示走默认定价路径。
 func (s *GatewayService) resolveChannelPricing(ctx context.Context, billingModel string, apiKey *APIKey) *ResolvedPricing {
-	if s.resolver == nil || apiKey.Group == nil {
+	if s.resolver == nil || apiKey == nil || apiKey.Group == nil {
 		return nil
 	}
 	gid := apiKey.Group.ID
@@ -9673,6 +9680,38 @@ func (s *GatewayService) resolveChannelPricing(ctx context.Context, billingModel
 		return resolved
 	}
 	return nil
+}
+
+// billableModelWithFallback prevents a missing price for a mapped alias from
+// silently turning a request into zero-cost usage when a concrete model is
+// available. A resolvable alias remains authoritative, including family-based
+// pricing for non-composite groups.
+func (s *GatewayService) billableModelWithFallback(ctx context.Context, apiKey *APIKey, billingModel string, fallbacks ...string) string {
+	if s.hasResolvableTokenPricing(ctx, billingModel, apiKey) {
+		return billingModel
+	}
+	for _, fallback := range fallbacks {
+		fallback = strings.TrimSpace(fallback)
+		if fallback == "" || fallback == billingModel || !s.hasResolvableTokenPricing(ctx, fallback, apiKey) {
+			continue
+		}
+		return fallback
+	}
+	return billingModel
+}
+
+func (s *GatewayService) hasResolvableTokenPricing(ctx context.Context, model string, apiKey *APIKey) bool {
+	if strings.TrimSpace(model) == "" {
+		return false
+	}
+	if s.resolveChannelPricing(ctx, model, apiKey) != nil {
+		return true
+	}
+	if s.billingService == nil {
+		return false
+	}
+	_, err := s.billingService.GetModelPricing(model)
+	return err == nil
 }
 
 // calculateImageCost 计算图片生成费用：渠道级别定价优先，否则走按次计费。

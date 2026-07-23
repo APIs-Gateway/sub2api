@@ -7147,6 +7147,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	var cost *CostBreakdown
 	var err error
+	concreteBillingModel := concreteForwardResultBillingModel(result.Model, result.UpstreamModel)
 	billingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
 	if result.BillingModel != "" {
 		billingModel = strings.TrimSpace(result.BillingModel)
@@ -7157,6 +7158,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
 		billingModel = input.OriginalModel
 	}
+	billingModel = selectCompositeBillingModel(apiKey.Group, billingModel, concreteBillingModel, func() bool {
+		return s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey) != nil
+	})
 	billingModels := usageBillingModelCandidates(
 		billingModel,
 		result.BillingModel,

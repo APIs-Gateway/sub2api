@@ -107,6 +107,9 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if forcePlatform, _ := parent.Value(ctxkey.ForcePlatform).(string); strings.TrimSpace(forcePlatform) != "" {
 		base = context.WithValue(base, ctxkey.ForcePlatform, strings.TrimSpace(forcePlatform))
 	}
+	if resolvedPlatform, ok := service.ResolvedTargetPlatformFromContext(parent); ok {
+		base = service.WithResolvedTargetPlatform(base, resolvedPlatform)
+	}
 	return base
 }
 

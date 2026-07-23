@@ -27,6 +27,16 @@ func forwardResultBillingModel(requestedModel, upstreamModel string) string {
 	return strings.TrimSpace(upstreamModel)
 }
 
+// concreteForwardResultBillingModel returns the model actually sent to the
+// upstream account. ForwardResult.Model is often the client or channel model,
+// while UpstreamModel carries the account mapping and must win for billing.
+func concreteForwardResultBillingModel(requestedModel, upstreamModel string) string {
+	if trimmed := strings.TrimSpace(upstreamModel); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(requestedModel)
+}
+
 func optionalInt64Ptr(v int64) *int64 {
 	if v == 0 {
 		return nil
