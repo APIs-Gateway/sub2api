@@ -66,13 +66,66 @@ func TestResolveGrokCacheIdentityFailsClosedForModelOnlyAndCompact(t *testing.T)
 }
 
 func TestApplyGrokResponsesCacheIdentityReplacesAndRemovesClientKey(t *testing.T) {
-	body, err := applyGrokResponsesCacheIdentity([]byte(`{"model":"grok-4.3","prompt_cache_key":"client-key"}`), "isolated-key")
+	intent := []byte(`{"model":"grok-4.3","prompt_cache_key":"client-key"}`)
+	body, err := applyGrokResponsesCacheIdentity(intent, intent, "isolated-key", false)
 	require.NoError(t, err)
 	require.Equal(t, "isolated-key", gjson.GetBytes(body, "prompt_cache_key").String())
 
-	body, err = applyGrokResponsesCacheIdentity(body, "")
+	body, err = applyGrokResponsesCacheIdentity(body, body, "", false)
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(body, "prompt_cache_key").Exists())
+}
+
+func TestApplyGrokResponsesCacheIdentityAddsDisabledNativeToolsForKnownFree(t *testing.T) {
+	intent := []byte(`{"model":"grok-4.3","input":[{"role":"user","content":"hello"}]}`)
+	body, err := applyGrokResponsesCacheIdentity(intent, intent, "isolated-key", true)
+	require.NoError(t, err)
+	require.Equal(t, "isolated-key", gjson.GetBytes(body, "prompt_cache_key").String())
+	require.Equal(t, "none", gjson.GetBytes(body, "tool_choice").String())
+	require.Equal(t, "web_search", gjson.GetBytes(body, "tools.0.type").String())
+	require.Equal(t, "x_search", gjson.GetBytes(body, "tools.1.type").String())
+}
+
+func TestGrokFreeFunctionToolCacheRouteIsSelective(t *testing.T) {
+	freeAccount := &Account{
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"subscription_tier": "free"},
+	}
+	paidAccount := &Account{
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"subscription_tier": "SuperGrok"},
+	}
+
+	pureClientTools := []byte(`{"model":"grok-4.3","tools":[{"type":"function","name":"lookup"}]}`)
+	unchanged, err := applyGrokFreeMessagesFunctionToolCacheRoute(pureClientTools, pureClientTools, freeAccount, "isolated-key")
+	require.NoError(t, err)
+	require.JSONEq(t, string(pureClientTools), string(unchanged))
+
+	mixedTools := []byte(`{"model":"grok-4.3","tools":[{"type":"function","name":"lookup"},{"type":"function","name":"web_search"}]}`)
+	mixed, err := applyGrokFreeMessagesFunctionToolCacheRoute(mixedTools, mixedTools, freeAccount, "isolated-key")
+	require.NoError(t, err)
+	require.Equal(t, 3, len(gjson.GetBytes(mixed, "tools").Array()))
+	require.Equal(t, "lookup", gjson.GetBytes(mixed, "tools.0.name").String())
+	require.Equal(t, "web_search", gjson.GetBytes(mixed, "tools.1.type").String())
+	require.Equal(t, "x_search", gjson.GetBytes(mixed, "tools.2.type").String())
+
+	paid, err := applyGrokFreeMessagesFunctionToolCacheRoute(mixedTools, mixedTools, paidAccount, "isolated-key")
+	require.NoError(t, err)
+	require.JSONEq(t, string(mixedTools), string(paid))
+}
+
+func TestIsKnownGrokFreeAccountUsesQuotaProbe(t *testing.T) {
+	limit := grokFreeRolling24hTokenLimit
+	account := &Account{
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{grokQuotaSnapshotExtraKey: map[string]any{
+			"tokens": map[string]any{"limit": limit},
+		}},
+	}
+	require.True(t, isKnownGrokFreeAccount(account))
 }
 
 func TestApplyGrokCacheHeadersAndCLIHeaders(t *testing.T) {

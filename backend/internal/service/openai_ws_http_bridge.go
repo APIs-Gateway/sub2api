@@ -198,16 +198,22 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			upstreamModel = "grok-4.3"
 		}
 		grokCacheIdentity := resolveGrokCacheIdentity(c, body, "", upstreamModel)
+		intentSourceBody := append([]byte(nil), body...)
 		patchedBody, clientToolMapping, patchErr := patchGrokResponsesBodyWithClientTools(body, upstreamModel)
 		if patchErr != nil {
 			releaseUpstreamCtx()
 			return nil, patchErr
 		}
 		setGrokResponsesClientToolMapping(c, clientToolMapping)
-		body, patchErr = applyGrokResponsesCacheIdentity(patchedBody, grokCacheIdentity)
+		body, patchErr = applyGrokResponsesCacheIdentity(patchedBody, intentSourceBody, grokCacheIdentity, isKnownGrokFreeAccount(account))
 		if patchErr != nil {
 			releaseUpstreamCtx()
 			return nil, fmt.Errorf("apply Grok prompt cache identity: %w", patchErr)
+		}
+		body, patchErr = applyGrokFreeMessagesFunctionToolCacheRoute(body, intentSourceBody, account, grokCacheIdentity)
+		if patchErr != nil {
+			releaseUpstreamCtx()
+			return nil, fmt.Errorf("apply Grok Free function-tool cache route: %w", patchErr)
 		}
 		upstreamReq, err = buildGrokResponsesRequest(upstreamCtx, c, account, body, token, grokCacheIdentity)
 	} else {

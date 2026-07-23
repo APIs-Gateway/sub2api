@@ -248,14 +248,19 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	responsesBody = updatedBody
 	grokCacheIdentity := ""
 	if account.Platform == PlatformGrok {
-		grokCacheIdentity = resolveGrokCacheIdentity(c, responsesBody, promptCacheKey, upstreamModel)
-		patchedBody, _, patchErr := patchGrokResponsesBodyWithClientTools(responsesBody, upstreamModel)
+		grokIntentBody := append([]byte(nil), responsesBody...)
+		grokCacheIdentity = resolveGrokCacheIdentity(c, grokIntentBody, promptCacheKey, upstreamModel)
+		patchedBody, _, patchErr := patchGrokResponsesBodyWithClientTools(grokIntentBody, upstreamModel)
 		if patchErr != nil {
 			return nil, fmt.Errorf("patch Grok Messages request: %w", patchErr)
 		}
-		responsesBody, patchErr = applyGrokResponsesCacheIdentity(patchedBody, grokCacheIdentity)
+		responsesBody, patchErr = applyGrokResponsesCacheIdentity(patchedBody, grokIntentBody, grokCacheIdentity, isKnownGrokFreeAccount(account))
 		if patchErr != nil {
 			return nil, fmt.Errorf("apply Grok prompt cache identity: %w", patchErr)
+		}
+		responsesBody, patchErr = applyGrokFreeMessagesFunctionToolCacheRoute(responsesBody, grokIntentBody, account, grokCacheIdentity)
+		if patchErr != nil {
+			return nil, fmt.Errorf("apply Grok Free function-tool cache route: %w", patchErr)
 		}
 	}
 

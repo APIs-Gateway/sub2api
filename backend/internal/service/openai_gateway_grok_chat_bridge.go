@@ -516,13 +516,18 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	if err != nil {
 		return nil, fmt.Errorf("marshal grok responses bridge request: %w", err)
 	}
+	intentBody := append([]byte(nil), responsesBody...)
 	responsesBody, _, err = patchGrokResponsesBodyWithClientTools(responsesBody, upstreamModel)
 	if err != nil {
 		return nil, fmt.Errorf("patch grok responses bridge request: %w", err)
 	}
-	responsesBody, err = applyGrokResponsesCacheIdentity(responsesBody, cacheIdentity)
+	responsesBody, err = applyGrokResponsesCacheIdentity(responsesBody, intentBody, cacheIdentity, isKnownGrokFreeAccount(account))
 	if err != nil {
 		return nil, fmt.Errorf("apply Grok prompt cache identity: %w", err)
+	}
+	responsesBody, err = applyGrokFreeMessagesFunctionToolCacheRoute(responsesBody, intentBody, account, cacheIdentity)
+	if err != nil {
+		return nil, fmt.Errorf("apply Grok Free function-tool cache route: %w", err)
 	}
 
 	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, responsesBody)

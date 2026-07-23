@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,11 +12,14 @@ import (
 )
 
 const (
-	grokConversationIDHeader      = "X-Grok-Conv-Id"
-	openCodeSessionAffinityHeader = "X-Session-Affinity"
-	openCodeSessionIDHeader       = "X-Session-Id"
-	openCodeNativeSessionHeader   = "X-OpenCode-Session"
-	codeBuddyConversationHeader   = "X-Conversation-ID"
+	grokConversationIDHeader        = "X-Grok-Conv-Id"
+	openCodeSessionAffinityHeader   = "X-Session-Affinity"
+	openCodeSessionIDHeader         = "X-Session-Id"
+	openCodeNativeSessionHeader     = "X-OpenCode-Session"
+	codeBuddyConversationHeader     = "X-Conversation-ID"
+	grokFreeCacheNativeToolsJSON    = `[{"type":"web_search"},{"type":"x_search"}]`
+	grokFreeCacheDisabledToolChoice = "none"
+	grokFreeRolling24hTokenLimit    = int64(2_000_000)
 )
 
 // resolveGrokCacheIdentity derives a tenant-isolated identity for xAI's
@@ -117,7 +121,9 @@ func isGrokRequestContext(c *gin.Context) bool {
 
 // applyGrokResponsesCacheIdentity replaces client-provided cache keys with
 // the isolated identity. An empty identity removes the compatibility field.
-func applyGrokResponsesCacheIdentity(body []byte, identity string) ([]byte, error) {
+// Known Free OAuth requests without explicit tool intent receive disabled
+// native search tools so xAI selects its cache-capable tier.
+func applyGrokResponsesCacheIdentity(body, intentSourceBody []byte, identity string, injectFreeTierTools bool) ([]byte, error) {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		if gjson.GetBytes(body, "prompt_cache_key").Exists() {
@@ -125,7 +131,175 @@ func applyGrokResponsesCacheIdentity(body []byte, identity string) ([]byte, erro
 		}
 		return body, nil
 	}
-	return sjson.SetBytes(body, "prompt_cache_key", identity)
+	out, err := sjson.SetBytes(body, "prompt_cache_key", identity)
+	if err != nil || !injectFreeTierTools {
+		return out, err
+	}
+	if hasGrokResponsesToolIntent(intentSourceBody) {
+		return out, nil
+	}
+	out, err = sjson.SetRawBytes(out, "tools", []byte(grokFreeCacheNativeToolsJSON))
+	if err != nil {
+		return nil, err
+	}
+	return sjson.SetBytes(out, "tool_choice", grokFreeCacheDisabledToolChoice)
+}
+
+func hasGrokResponsesToolIntent(body []byte) bool {
+	if gjson.GetBytes(body, "tools").Exists() || gjson.GetBytes(body, "tool_choice").Exists() {
+		return true
+	}
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return false
+	}
+	for _, item := range input.Array() {
+		if strings.TrimSpace(item.Get("type").String()) != "additional_tools" {
+			continue
+		}
+		tools := item.Get("tools")
+		if !tools.Exists() || !tools.IsArray() || len(tools.Array()) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func applyGrokFreeMessagesFunctionToolCacheRoute(body, intentSourceBody []byte, account *Account, cacheIdentity string) ([]byte, error) {
+	if strings.TrimSpace(cacheIdentity) == "" || !isKnownGrokFreeAccount(account) {
+		return body, nil
+	}
+	intentTools := gjson.GetBytes(intentSourceBody, "tools")
+	intentToolChoice := gjson.GetBytes(intentSourceBody, "tool_choice")
+	if !isGrokFreeCacheFunctionToolIntent(intentTools, intentToolChoice) {
+		return body, nil
+	}
+	return appendMissingGrokFreeCacheNativeTools(body)
+}
+
+func isKnownGrokFreeAccount(account *Account) bool {
+	if account == nil || !account.IsGrokOAuth() {
+		return false
+	}
+	freeSignal := false
+	paidSignal := false
+	inferredFreeSignal := false
+	if snapshot, err := grokQuotaSnapshotFromExtra(account.Extra); err == nil && snapshot != nil {
+		tier := strings.TrimSpace(snapshot.SubscriptionTier)
+		if isGrokFreeSubscriptionTier(tier) {
+			freeSignal = true
+		} else if !isGrokUnknownSubscriptionTier(tier) {
+			paidSignal = true
+		}
+		if snapshot.Tokens != nil && snapshot.Tokens.Limit != nil &&
+			*snapshot.Tokens.Limit == grokFreeRolling24hTokenLimit {
+			inferredFreeSignal = true
+		}
+	}
+	tier := strings.TrimSpace(account.GetCredential("subscription_tier"))
+	if isGrokFreeSubscriptionTier(tier) {
+		freeSignal = true
+	} else if !isGrokUnknownSubscriptionTier(tier) {
+		paidSignal = true
+	}
+	return !paidSignal && (freeSignal || inferredFreeSignal)
+}
+
+func isGrokFreeSubscriptionTier(tier string) bool {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "free", "grok-free", "grok_free", "free-tier", "free_tier", "basic", "grok-basic", "grok_basic":
+		return true
+	default:
+		return false
+	}
+}
+
+func isGrokUnknownSubscriptionTier(tier string) bool {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "", "unknown", "n/a", "none":
+		return true
+	default:
+		return false
+	}
+}
+
+func isGrokFreeCacheFunctionToolIntent(tools, toolChoice gjson.Result) bool {
+	if !tools.IsArray() || len(tools.Array()) == 0 {
+		return false
+	}
+	for _, tool := range tools.Array() {
+		if !tool.IsObject() || strings.TrimSpace(tool.Get("type").String()) != "function" {
+			return false
+		}
+		if strings.TrimSpace(tool.Get("name").String()) == "" || tool.Get("function").Exists() {
+			return false
+		}
+	}
+	if !toolChoice.Exists() {
+		return true
+	}
+	return toolChoice.Type == gjson.String &&
+		(strings.TrimSpace(toolChoice.String()) == "auto" || strings.TrimSpace(toolChoice.String()) == grokFreeCacheDisabledToolChoice)
+}
+
+func appendMissingGrokFreeCacheNativeTools(body []byte) ([]byte, error) {
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.Exists() || !tools.IsArray() || len(tools.Array()) == 0 {
+		return body, nil
+	}
+	merged := make([]json.RawMessage, 0, len(tools.Array())+2)
+	present := make(map[string]bool, 2)
+	hasCompanionTool := false
+	for _, tool := range tools.Array() {
+		toolType := strings.TrimSpace(tool.Get("type").String())
+		switch toolType {
+		case "function":
+			name := strings.TrimSpace(tool.Get("name").String())
+			if !tool.IsObject() || name == "" || tool.Get("function").Exists() {
+				return body, nil
+			}
+			if name == "web_search" || name == "x_search" {
+				if present[name] {
+					continue
+				}
+				raw, err := json.Marshal(map[string]string{"type": name})
+				if err != nil {
+					return nil, err
+				}
+				merged = append(merged, raw)
+				present[name] = true
+				continue
+			}
+			hasCompanionTool = true
+			merged = append(merged, json.RawMessage(tool.Raw))
+		case "web_search", "x_search":
+			if present[toolType] {
+				continue
+			}
+			merged = append(merged, json.RawMessage(tool.Raw))
+			present[toolType] = true
+		default:
+			return body, nil
+		}
+	}
+	if !hasCompanionTool || (!present["web_search"] && !present["x_search"]) {
+		return body, nil
+	}
+	for _, toolType := range []string{"web_search", "x_search"} {
+		if present[toolType] {
+			continue
+		}
+		raw, err := json.Marshal(map[string]string{"type": toolType})
+		if err != nil {
+			return nil, err
+		}
+		merged = append(merged, raw)
+	}
+	encoded, err := json.Marshal(merged)
+	if err != nil {
+		return nil, err
+	}
+	return sjson.SetRawBytes(body, "tools", encoded)
 }
 
 func applyGrokCacheHeaders(headers http.Header, identity string) {

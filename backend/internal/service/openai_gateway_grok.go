@@ -39,6 +39,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		upstreamModel = "grok-4.3"
 	}
 	cacheIdentity := resolveGrokCacheIdentity(c, body, "", upstreamModel)
+	intentSourceBody := append([]byte(nil), body...)
 	patchedBody, clientToolMapping, err := patchGrokResponsesBodyWithClientTools(body, upstreamModel)
 	if err != nil {
 		setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
@@ -54,9 +55,13 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			return nil, err
 		}
 	}
-	patchedBody, err = applyGrokResponsesCacheIdentity(patchedBody, cacheIdentity)
+	patchedBody, err = applyGrokResponsesCacheIdentity(patchedBody, intentSourceBody, cacheIdentity, isKnownGrokFreeAccount(account))
 	if err != nil {
 		return nil, fmt.Errorf("apply grok prompt cache identity: %w", err)
+	}
+	patchedBody, err = applyGrokFreeMessagesFunctionToolCacheRoute(patchedBody, intentSourceBody, account, cacheIdentity)
+	if err != nil {
+		return nil, fmt.Errorf("apply grok Free function-tool cache route: %w", err)
 	}
 
 	token, _, err := s.GetAccessToken(ctx, account)
