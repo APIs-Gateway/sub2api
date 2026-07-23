@@ -86,6 +86,25 @@ func TestApplyGrokResponsesCacheIdentityAddsDisabledNativeToolsForKnownFree(t *t
 	require.Equal(t, "x_search", gjson.GetBytes(body, "tools.1.type").String())
 }
 
+func TestApplyGrokResponsesCacheIdentityRespectsToolIntentShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "no input", body: `{"model":"grok-4.3"}`, want: false},
+		{name: "additional tools without list", body: `{"input":[{"type":"additional_tools"}]}`, want: true},
+		{name: "empty additional tools", body: `{"input":[{"type":"additional_tools","tools":[]}]}`, want: false},
+		{name: "additional tools with entries", body: `{"input":[{"type":"additional_tools","tools":[{"type":"web_search"}]}]}`, want: true},
+		{name: "explicit tools", body: `{"tools":[]}`, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, hasGrokResponsesToolIntent([]byte(tt.body)))
+		})
+	}
+}
+
 func TestGrokFreeFunctionToolCacheRouteIsSelective(t *testing.T) {
 	freeAccount := &Account{
 		Platform:    PlatformGrok,
@@ -126,6 +145,74 @@ func TestIsKnownGrokFreeAccountUsesQuotaProbe(t *testing.T) {
 		}},
 	}
 	require.True(t, isKnownGrokFreeAccount(account))
+}
+
+func TestIsKnownGrokFreeAccountFailsClosedForUnknownAndPaidSignals(t *testing.T) {
+	require.False(t, isKnownGrokFreeAccount(nil))
+	require.False(t, isKnownGrokFreeAccount(&Account{Platform: PlatformGrok, Type: AccountTypeAPIKey}))
+	require.False(t, isKnownGrokFreeAccount(&Account{
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"subscription_tier": "SuperGrok",
+		},
+	}))
+	require.False(t, isKnownGrokFreeAccount(&Account{
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{grokQuotaSnapshotExtraKey: map[string]any{
+			"subscription_tier": "SuperGrok",
+		}},
+	}))
+	require.True(t, isKnownGrokFreeAccount(&Account{
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"subscription_tier": "grok-basic",
+		},
+	}))
+}
+
+func TestGrokFreeCacheFunctionToolIntentValidation(t *testing.T) {
+	validTools := gjson.Parse(`[{"type":"function","name":"lookup"}]`)
+	for name, body := range map[string]string{
+		"missing tools":      `{}`,
+		"empty tools":        `{"tools":[]}`,
+		"native tool":        `{"tools":[{"type":"web_search"}]}`,
+		"missing name":       `{"tools":[{"type":"function"}]}`,
+		"nested function":    `{"tools":[{"type":"function","name":"lookup","function":{}}]}`,
+		"object choice":      `{"tools":[{"type":"function","name":"lookup"}],"tool_choice":{}}`,
+		"unsupported choice": `{"tools":[{"type":"function","name":"lookup"}],"tool_choice":"required"}`,
+	} {
+		result := gjson.GetBytes([]byte(body), "tools")
+		require.False(t, isGrokFreeCacheFunctionToolIntent(result, gjson.GetBytes([]byte(body), "tool_choice")), name)
+	}
+	require.True(t, isGrokFreeCacheFunctionToolIntent(validTools, gjson.Result{}))
+	require.True(t, isGrokFreeCacheFunctionToolIntent(validTools, gjson.Parse(`"none"`)))
+}
+
+func TestAppendMissingGrokFreeCacheNativeToolsHandlesExistingAndInvalidTools(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "no tools", body: `{"model":"grok"}`, want: `{"model":"grok"}`},
+		{name: "empty tools", body: `{"tools":[]}`, want: `{"tools":[]}`},
+		{name: "native only", body: `{"tools":[{"type":"web_search"}]}`, want: `{"tools":[{"type":"web_search"}]}`},
+		{name: "unknown tool", body: `{"tools":[{"type":"computer_use"}]}`, want: `{"tools":[{"type":"computer_use"}]}`},
+		{name: "malformed function", body: `{"tools":[{"type":"function"}]}`, want: `{"tools":[{"type":"function"}]}`},
+		{name: "native web plus function", body: `{"tools":[{"type":"web_search"},{"type":"function","name":"lookup"}]}`, want: `{"tools":[{"type":"web_search"},{"type":"function","name":"lookup"},{"type":"x_search"}]}`},
+		{name: "both native plus function", body: `{"tools":[{"type":"web_search"},{"type":"x_search"},{"type":"function","name":"lookup"}]}`, want: `{"tools":[{"type":"web_search"},{"type":"x_search"},{"type":"function","name":"lookup"}]}`},
+		{name: "duplicate native and function search", body: `{"tools":[{"type":"function","name":"lookup"},{"type":"function","name":"web_search"},{"type":"web_search"}]}`, want: `{"tools":[{"type":"function","name":"lookup"},{"type":"web_search"},{"type":"x_search"}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := appendMissingGrokFreeCacheNativeTools([]byte(tt.body))
+			require.NoError(t, err)
+			require.JSONEq(t, tt.want, string(body))
+		})
+	}
 }
 
 func TestApplyGrokCacheHeadersAndCLIHeaders(t *testing.T) {
