@@ -85,6 +85,14 @@ func TestSanitizeGrokResponsesToolsBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "lookup", gjson.GetBytes(validChoice, "tool_choice.name").String())
 
+	stringChoice, err := sanitizeGrokResponsesTools([]byte(`{"tools":[{"type":"function","name":"lookup"}],"tool_choice":"auto"}`))
+	require.NoError(t, err)
+	require.Equal(t, "auto", gjson.GetBytes(stringChoice, "tool_choice").String())
+
+	emptyChoice, err := sanitizeGrokResponsesTools([]byte(`{"tools":[{"type":"function","name":"lookup"}],"tool_choice":{}}`))
+	require.NoError(t, err)
+	require.True(t, gjson.GetBytes(emptyChoice, "tool_choice").Exists())
+
 	missingFunction, err := sanitizeGrokResponsesTools([]byte(`{"tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"missing"}}`))
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(missingFunction, "tool_choice").Exists())
@@ -109,6 +117,7 @@ func TestShouldDropGrokToolChoiceBranches(t *testing.T) {
 		{name: "empty object", body: `{}`, want: false},
 		{name: "missing function name", body: `{"type":"function"}`, want: false},
 		{name: "matching function", body: `{"type":"function","name":"lookup"}`, want: false},
+		{name: "matching nested function", body: `{"type":"function","function":{"name":"lookup"}}`, want: false},
 		{name: "missing function", body: `{"type":"function","name":"missing"}`, want: true},
 		{name: "unsupported type", body: `{"type":"computer_use"}`, want: true},
 		{name: "supported native type", body: `{"type":"web_search"}`, want: false},
@@ -125,6 +134,7 @@ func TestShouldDropGrokToolChoiceBranches(t *testing.T) {
 			require.Equal(t, want, shouldDropGrokToolChoice(choice, tools))
 		})
 	}
+	require.True(t, shouldDropGrokToolChoice(gjson.Parse(`{"type":"function","name":"lookup"}`), []json.RawMessage{json.RawMessage("{")}))
 }
 
 func TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken(t *testing.T) {
