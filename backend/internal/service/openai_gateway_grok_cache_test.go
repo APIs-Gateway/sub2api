@@ -248,7 +248,7 @@ func TestAppendMissingGrokFreeCacheNativeToolsHandlesExistingAndInvalidTools(t *
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			body, err := appendMissingGrokFreeCacheNativeTools([]byte(tt.body))
+			body, err := appendGrokFreeCacheNativeToolsWithPolicy([]byte(tt.body), false, true)
 			require.NoError(t, err)
 			require.JSONEq(t, tt.want, string(body))
 		})

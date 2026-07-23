@@ -266,14 +266,6 @@ func isGrokFreeCacheFunctionToolIntent(tools, toolChoice gjson.Result) bool {
 	}
 }
 
-func appendMissingGrokFreeCacheNativeTools(body []byte) ([]byte, error) {
-	return appendGrokFreeCacheNativeTools(body, false)
-}
-
-func appendGrokFreeCacheNativeTools(body []byte, allowPureClientTools bool) ([]byte, error) {
-	return appendGrokFreeCacheNativeToolsWithPolicy(body, allowPureClientTools, true)
-}
-
 func appendGrokFreeCacheNativeToolsWithPolicy(body []byte, allowPureClientTools, allowFunctionSearch bool) ([]byte, error) {
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.Exists() || !tools.IsArray() || len(tools.Array()) == 0 {
