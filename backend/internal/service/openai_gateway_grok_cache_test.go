@@ -132,6 +132,15 @@ func TestGrokFreeFunctionToolCacheRouteIsSelective(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, string(pureClientTools), string(unchanged))
 
+	optInAccount := *freeAccount
+	optInAccount.Extra = map[string]any{grokClientToolCacheOptInExtraKey: true}
+	optIn, err := applyGrokFreeMessagesFunctionToolCacheRoute(pureClientTools, pureClientTools, &optInAccount, "isolated-key")
+	require.NoError(t, err)
+	require.Equal(t, 3, len(gjson.GetBytes(optIn, "tools").Array()))
+	require.Equal(t, "lookup", gjson.GetBytes(optIn, "tools.0.name").String())
+	require.Equal(t, "web_search", gjson.GetBytes(optIn, "tools.1.type").String())
+	require.Equal(t, "x_search", gjson.GetBytes(optIn, "tools.2.type").String())
+
 	mixedTools := []byte(`{"model":"grok-4.3","tools":[{"type":"function","name":"lookup"},{"type":"function","name":"web_search"}]}`)
 	mixed, err := applyGrokFreeMessagesFunctionToolCacheRoute(mixedTools, mixedTools, freeAccount, "isolated-key")
 	require.NoError(t, err)
@@ -204,19 +213,20 @@ func TestIsKnownGrokFreeAccountFailsClosedForUnknownAndPaidSignals(t *testing.T)
 func TestGrokFreeCacheFunctionToolIntentValidation(t *testing.T) {
 	validTools := gjson.Parse(`[{"type":"function","name":"lookup"}]`)
 	for name, body := range map[string]string{
-		"missing tools":      `{}`,
-		"empty tools":        `{"tools":[]}`,
-		"native tool":        `{"tools":[{"type":"web_search"}]}`,
-		"missing name":       `{"tools":[{"type":"function"}]}`,
-		"nested function":    `{"tools":[{"type":"function","name":"lookup","function":{}}]}`,
-		"object choice":      `{"tools":[{"type":"function","name":"lookup"}],"tool_choice":{}}`,
-		"unsupported choice": `{"tools":[{"type":"function","name":"lookup"}],"tool_choice":"required"}`,
+		"missing tools":           `{}`,
+		"empty tools":             `{"tools":[]}`,
+		"unsupported native tool": `{"tools":[{"type":"computer_use"}]}`,
+		"missing name":            `{"tools":[{"type":"function"}]}`,
+		"nested function":         `{"tools":[{"type":"function","name":"lookup","function":{}}]}`,
+		"object choice":           `{"tools":[{"type":"function","name":"lookup"}],"tool_choice":{}}`,
+		"unsupported choice":      `{"tools":[{"type":"function","name":"lookup"}],"tool_choice":"required"}`,
 	} {
 		result := gjson.GetBytes([]byte(body), "tools")
 		require.False(t, isGrokFreeCacheFunctionToolIntent(result, gjson.GetBytes([]byte(body), "tool_choice")), name)
 	}
 	require.True(t, isGrokFreeCacheFunctionToolIntent(validTools, gjson.Result{}))
 	require.True(t, isGrokFreeCacheFunctionToolIntent(validTools, gjson.Parse(`"none"`)))
+	require.True(t, isGrokFreeCacheFunctionToolIntent(gjson.Parse(`[{"type":"web_search"}]`), gjson.Result{}))
 }
 
 func TestAppendMissingGrokFreeCacheNativeToolsHandlesExistingAndInvalidTools(t *testing.T) {

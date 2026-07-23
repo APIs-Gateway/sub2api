@@ -13,13 +13,14 @@ import (
 )
 
 const (
-	grokConversationIDHeader        = "X-Grok-Conv-Id"
-	openCodeSessionAffinityHeader   = "X-Session-Affinity"
-	openCodeSessionIDHeader         = "X-Session-Id"
-	openCodeNativeSessionHeader     = "X-OpenCode-Session"
-	codeBuddyConversationHeader     = "X-Conversation-ID"
-	grokFreeCacheNativeToolsJSON    = `[{"type":"web_search"},{"type":"x_search"}]`
-	grokFreeCacheDisabledToolChoice = "none"
+	grokConversationIDHeader         = "X-Grok-Conv-Id"
+	openCodeSessionAffinityHeader    = "X-Session-Affinity"
+	openCodeSessionIDHeader          = "X-Session-Id"
+	openCodeNativeSessionHeader      = "X-OpenCode-Session"
+	codeBuddyConversationHeader      = "X-Conversation-ID"
+	grokClientToolCacheOptInExtraKey = "grok_client_tool_cache_enabled"
+	grokFreeCacheNativeToolsJSON     = `[{"type":"web_search"},{"type":"x_search"}]`
+	grokFreeCacheDisabledToolChoice  = "none"
 )
 
 // resolveGrokCacheIdentity derives a tenant-isolated identity for xAI's
@@ -166,6 +167,11 @@ func hasGrokResponsesToolIntent(body []byte) bool {
 }
 
 func applyGrokFreeMessagesFunctionToolCacheRoute(body, intentSourceBody []byte, account *Account, cacheIdentity string) ([]byte, error) {
+	allowPureClientTools := account != nil && account.getExtraBool(grokClientToolCacheOptInExtraKey)
+	return applyGrokFreeToolCacheRoute(body, intentSourceBody, account, cacheIdentity, allowPureClientTools, true)
+}
+
+func applyGrokFreeToolCacheRoute(body, intentSourceBody []byte, account *Account, cacheIdentity string, allowPureClientTools, allowFunctionSearch bool) ([]byte, error) {
 	if strings.TrimSpace(cacheIdentity) == "" || !isKnownGrokFreeAccount(account) {
 		return body, nil
 	}
@@ -174,7 +180,12 @@ func applyGrokFreeMessagesFunctionToolCacheRoute(body, intentSourceBody []byte, 
 	if !isGrokFreeCacheFunctionToolIntent(intentTools, intentToolChoice) {
 		return body, nil
 	}
-	return appendMissingGrokFreeCacheNativeTools(body)
+	if intentToolChoice.Type == gjson.String && strings.TrimSpace(intentToolChoice.String()) == grokFreeCacheDisabledToolChoice {
+		// Adding native cache-routing tools cannot change behavior when the
+		// client has explicitly disabled all tool execution.
+		return appendGrokFreeCacheNativeToolsWithPolicy(body, true, false)
+	}
+	return appendGrokFreeCacheNativeToolsWithPolicy(body, allowPureClientTools, allowFunctionSearch)
 }
 
 func isKnownGrokFreeAccount(account *Account) bool {
@@ -228,23 +239,55 @@ func isGrokFreeCacheFunctionToolIntent(tools, toolChoice gjson.Result) bool {
 		return false
 	}
 	for _, tool := range tools.Array() {
-		if !tool.IsObject() || strings.TrimSpace(tool.Get("type").String()) != "function" {
+		if !tool.IsObject() {
 			return false
 		}
-		if strings.TrimSpace(tool.Get("name").String()) == "" || tool.Get("function").Exists() {
+		toolType := strings.TrimSpace(tool.Get("type").String())
+		if _, ok := grokResponsesSupportedToolTypes[toolType]; !ok {
 			return false
+		}
+		if toolType == "function" {
+			if strings.TrimSpace(tool.Get("name").String()) == "" || tool.Get("function").Exists() {
+				return false
+			}
 		}
 	}
 	if !toolChoice.Exists() {
 		return true
 	}
-	return toolChoice.Type == gjson.String &&
-		(strings.TrimSpace(toolChoice.String()) == "auto" || strings.TrimSpace(toolChoice.String()) == grokFreeCacheDisabledToolChoice)
+	if toolChoice.Type != gjson.String {
+		return false
+	}
+	switch strings.TrimSpace(toolChoice.String()) {
+	case "auto", grokFreeCacheDisabledToolChoice:
+		return true
+	default:
+		return false
+	}
 }
 
 func appendMissingGrokFreeCacheNativeTools(body []byte) ([]byte, error) {
+	return appendGrokFreeCacheNativeTools(body, false)
+}
+
+func appendGrokFreeCacheNativeTools(body []byte, allowPureClientTools bool) ([]byte, error) {
+	return appendGrokFreeCacheNativeToolsWithPolicy(body, allowPureClientTools, true)
+}
+
+func appendGrokFreeCacheNativeToolsWithPolicy(body []byte, allowPureClientTools, allowFunctionSearch bool) ([]byte, error) {
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.Exists() || !tools.IsArray() || len(tools.Array()) == 0 {
+		return body, nil
+	}
+	items := tools.Array()
+	hasNativeSearch := false
+	for _, tool := range items {
+		switch strings.TrimSpace(tool.Get("type").String()) {
+		case "web_search", "x_search":
+			hasNativeSearch = true
+		}
+	}
+	if !allowPureClientTools && !allowFunctionSearch && !hasNativeSearch {
 		return body, nil
 	}
 	merged := make([]json.RawMessage, 0, len(tools.Array())+2)
@@ -258,7 +301,7 @@ func appendMissingGrokFreeCacheNativeTools(body []byte) ([]byte, error) {
 			if !tool.IsObject() || name == "" || tool.Get("function").Exists() {
 				return body, nil
 			}
-			if name == "web_search" || name == "x_search" {
+			if (name == "web_search" || name == "x_search") && allowFunctionSearch {
 				if present[name] {
 					continue
 				}
@@ -268,7 +311,14 @@ func appendMissingGrokFreeCacheNativeTools(body []byte) ([]byte, error) {
 				}
 				merged = append(merged, raw)
 				present[name] = true
+				if allowPureClientTools {
+					hasCompanionTool = true
+				}
 				continue
+			}
+			if name == "web_search" || name == "x_search" {
+				// Keep client functions intact unless conversion is explicitly enabled.
+				present[name] = true
 			}
 			hasCompanionTool = true
 			merged = append(merged, json.RawMessage(tool.Raw))
@@ -279,10 +329,17 @@ func appendMissingGrokFreeCacheNativeTools(body []byte) ([]byte, error) {
 			merged = append(merged, json.RawMessage(tool.Raw))
 			present[toolType] = true
 		default:
-			return body, nil
+			if _, ok := grokResponsesSupportedToolTypes[toolType]; !ok {
+				return body, nil
+			}
+			hasCompanionTool = true
+			merged = append(merged, json.RawMessage(tool.Raw))
 		}
 	}
-	if !hasCompanionTool || (!present["web_search"] && !present["x_search"]) {
+	if !hasCompanionTool {
+		return body, nil
+	}
+	if !allowPureClientTools && !present["web_search"] && !present["x_search"] {
 		return body, nil
 	}
 	for _, toolType := range []string{"web_search", "x_search"} {
