@@ -90,7 +90,7 @@ type PaymentConfig struct {
 	CancelRateLimitMode    string `json:"cancel_rate_limit_window_mode"`
 
 	// Force Alipay mobile users to use QR code instead of mobile redirect
-	AlipayForceQRCode bool `json:"alipay_force_qrcode"`
+	AlipayForceQRCode             bool `json:"alipay_force_qrcode"`
 	AlipayMobilePrecreateDeepLink bool `json:"alipay_mobile_precreate_deep_link"`
 }
 
@@ -129,7 +129,7 @@ type UpdatePaymentConfigRequest struct {
 	CancelRateLimitMode    *string `json:"cancel_rate_limit_window_mode"`
 
 	// Force Alipay mobile users to use QR code instead of mobile redirect
-	AlipayForceQRCode *bool `json:"alipay_force_qrcode"`
+	AlipayForceQRCode             *bool `json:"alipay_force_qrcode"`
 	AlipayMobilePrecreateDeepLink *bool `json:"alipay_mobile_precreate_deep_link"`
 
 	VisibleMethodAlipaySource  *string `json:"payment_visible_method_alipay_source"`
@@ -309,7 +309,7 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 		CancelRateLimitUnit:    vals[SettingCancelWindowUnit],
 		CancelRateLimitMode:    vals[SettingCancelWindowMode],
 
-		AlipayForceQRCode: vals[SettingAlipayForceQRCode] == "true",
+		AlipayForceQRCode:             vals[SettingAlipayForceQRCode] == "true",
 		AlipayMobilePrecreateDeepLink: vals[SettingAlipayMobilePrecreateDeepLink] == "true",
 	}
 	cfg.AlipayMobilePrecreateDeepLink = pcEnvBoolOverride(SettingAlipayMobilePrecreateDeepLink, cfg.AlipayMobilePrecreateDeepLink)
