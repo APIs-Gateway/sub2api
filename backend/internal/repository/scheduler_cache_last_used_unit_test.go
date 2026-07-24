@@ -19,7 +19,7 @@ func TestSchedulerCacheUpdateLastUsedUsesSideKeyWithoutRewritingPayloads(t *test
 	initial := time.Now().UTC().Truncate(time.Millisecond).Add(-time.Hour)
 	account := service.Account{
 		ID:         9201,
-		Platform:   service.PlatformGrok,
+		Platform:   service.PlatformOpenAI,
 		Type:       service.AccountTypeOAuth,
 		LastUsedAt: &initial,
 		Credentials: map[string]any{
@@ -55,7 +55,7 @@ func TestSchedulerCacheUpdateLastUsedUsesSideKeyWithoutRewritingPayloads(t *test
 func TestSchedulerCacheLastUsedSideKeyIsMonotonicAndRequiresAccount(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
-	account := service.Account{ID: 9202, Platform: service.PlatformGrok, Type: service.AccountTypeOAuth}
+	account := service.Account{ID: 9202, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth}
 	require.NoError(t, cache.SetAccount(ctx, &account))
 
 	newer := time.Now().UTC().Truncate(time.Millisecond)
@@ -85,14 +85,14 @@ func TestSchedulerCacheLastUsedSideKeySurvivesStaleAccountWrites(t *testing.T) {
 	cache := newSchedulerCacheUnit(t)
 	bucket := service.SchedulerBucket{
 		GroupID:  10,
-		Platform: service.PlatformGrok,
+		Platform: service.PlatformOpenAI,
 		Mode:     service.SchedulerModeSingle,
 	}
 	embedded := time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)
 	latest := embedded.Add(30 * time.Second)
 	account := service.Account{
 		ID:         9203,
-		Platform:   service.PlatformGrok,
+		Platform:   service.PlatformOpenAI,
 		Type:       service.AccountTypeOAuth,
 		Schedulable: true,
 		LastUsedAt: &embedded,
@@ -121,7 +121,7 @@ func TestSchedulerCacheLastUsedSideKeyFallsBackToNewerEmbeddedValue(t *testing.T
 	embedded := time.Now().UTC().Truncate(time.Millisecond)
 	account := service.Account{
 		ID:         9204,
-		Platform:   service.PlatformGrok,
+		Platform:   service.PlatformOpenAI,
 		Type:       service.AccountTypeOAuth,
 		LastUsedAt: &embedded,
 	}
@@ -144,7 +144,7 @@ func TestSchedulerCacheUpdateLastUsedChunksLargeBatches(t *testing.T) {
 	base := time.Now().UTC().Truncate(time.Millisecond)
 	for i := 0; i < total; i++ {
 		id := int64(9300 + i)
-		accounts = append(accounts, service.Account{ID: id, Platform: service.PlatformGrok})
+		accounts = append(accounts, service.Account{ID: id, Platform: service.PlatformOpenAI})
 		updates[id] = base.Add(time.Duration(i) * time.Millisecond)
 	}
 
