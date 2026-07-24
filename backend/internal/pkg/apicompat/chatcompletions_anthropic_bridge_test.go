@@ -666,6 +666,46 @@ func TestChatCompletionsChunkToAnthropicEvents_SanitizesFragmentedReadArguments(
 	require.JSONEq(t, `{"file_path":"/tmp/demo.py"}`, tools[0].Input)
 }
 
+func TestChatCompletionsChunkToAnthropicEvents_ClosesToolBeforeLaterTextAndThinking(t *testing.T) {
+	// The text arrives in a later choice in the same chunk as the tool call;
+	// reasoning follows in the next chunk. Both must start only after the tool
+	// block is complete, otherwise terminal tool events would follow later
+	// content blocks.
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"tool_a","arguments":"{\"a\":1}"}}]}},{"index":1,"delta":{"content":"text after tool"}}]}`,
+		`{"choices":[{"index":0,"delta":{"reasoning_content":"thinking after text"}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+	})
+
+	toolBlockIndex := -1
+	textBlockIndex := -1
+	textStopAt := -1
+	for eventIndex, event := range events {
+		if event.Type == "content_block_start" && event.ContentBlock != nil && event.Index != nil {
+			switch event.ContentBlock.Type {
+			case "tool_use":
+				toolBlockIndex = *event.Index
+			case "text":
+				textBlockIndex = *event.Index
+			}
+		}
+		if event.Type == "content_block_stop" && event.Index != nil && *event.Index == textBlockIndex {
+			textStopAt = eventIndex
+		}
+	}
+	require.NotEqual(t, -1, toolBlockIndex)
+	require.NotEqual(t, -1, textBlockIndex)
+	require.NotEqual(t, -1, textStopAt)
+
+	for eventIndex, event := range events {
+		if eventIndex <= textStopAt || event.Index == nil || *event.Index != toolBlockIndex {
+			continue
+		}
+		require.NotContains(t, []string{"content_block_delta", "content_block_stop"}, event.Type,
+			"tool events must not follow the later text block")
+	}
+}
+
 func TestFinalizeChatCompletionsAnthropicStream_NoOpAfterStop(t *testing.T) {
 	state := NewChatCompletionsToAnthropicStreamState("test")
 	state.MessageStopSent = true

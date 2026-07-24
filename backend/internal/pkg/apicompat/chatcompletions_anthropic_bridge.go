@@ -724,12 +724,15 @@ func ensureCCAnthropicMessageStart(state *ChatCompletionsToAnthropicStreamState)
 	}}
 }
 
-// ensureCCAnthropicThinkingBlock opens a thinking block if none is open.
+// ensureCCAnthropicThinkingBlock opens a thinking block if none is open. Any
+// open tool blocks are completed first so Anthropic content blocks remain
+// sequential when an upstream resumes with reasoning after tool calls.
 func ensureCCAnthropicThinkingBlock(state *ChatCompletionsToAnthropicStreamState) []AnthropicStreamEvent {
+	events := closeCCAnthropicToolBlocks(state)
 	if state.ContentBlockOpen && state.CurrentBlockType == "thinking" {
-		return nil
+		return events
 	}
-	events := closeCCAnthropicBlock(state)
+	events = append(events, closeCCAnthropicBlock(state)...)
 	idx := state.ContentBlockIndex
 	state.ContentBlockOpen = true
 	state.CurrentBlockType = "thinking"
@@ -744,12 +747,15 @@ func ensureCCAnthropicThinkingBlock(state *ChatCompletionsToAnthropicStreamState
 	return events
 }
 
-// ensureCCAnthropicTextBlock opens a text block if none is open.
+// ensureCCAnthropicTextBlock opens a text block if none is open. Any open tool
+// blocks are completed first so their final input_json_delta and stop never
+// appear after a later text block.
 func ensureCCAnthropicTextBlock(state *ChatCompletionsToAnthropicStreamState) []AnthropicStreamEvent {
+	events := closeCCAnthropicToolBlocks(state)
 	if state.ContentBlockOpen && state.CurrentBlockType == "text" {
-		return nil
+		return events
 	}
-	events := closeCCAnthropicBlock(state)
+	events = append(events, closeCCAnthropicBlock(state)...)
 	idx := state.ContentBlockIndex
 	state.ContentBlockOpen = true
 	state.CurrentBlockType = "text"
