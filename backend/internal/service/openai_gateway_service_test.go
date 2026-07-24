@@ -223,6 +223,34 @@ func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 	}
 }
 
+func TestOpenAIGatewayService_GrokOnlySessionHeadersAreScoped(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{}
+	headers := map[string]string{
+		openCodeSessionAffinityHeader: "opencode-affinity",
+		openCodeSessionIDHeader:       "opencode-session",
+		openCodeNativeSessionHeader:   "opencode-native",
+		codeBuddyConversationHeader:   "codebuddy-conversation",
+		grokConversationIDHeader:      "grok-conversation",
+	}
+
+	for header, value := range headers {
+		t.Run(header, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			c.Request.Header.Set(header, value)
+
+			require.Empty(t, explicitOpenAIHeaderSessionID(c))
+			require.Empty(t, svc.GenerateExplicitSessionHash(c, nil))
+
+			c.Set("api_key", &APIKey{ID: 7203, Group: &Group{Platform: PlatformGrok}})
+			require.Equal(t, value, explicitOpenAIRequestSessionID(c, nil))
+			require.NotEmpty(t, svc.GenerateExplicitSessionHash(c, nil))
+		})
+	}
+}
+
 func TestOpenAIGatewayService_GenerateSessionHash_UsesXXHash64(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

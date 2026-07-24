@@ -22,6 +22,7 @@ func TestForwardAsAnthropicForGrokUsesXAIResponses(t *testing.T) {
 	c, _ := gin.CreateTestContext(recorder)
 	body := []byte(`{"model":"grok","max_tokens":32,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Set("api_key", &APIKey{ID: 7109})
 
 	account := grokProtocolOAuthAccount(7109)
 	repo := &mockAccountRepoForPlatform{accountsByID: map[int64]*Account{account.ID: account}}
@@ -32,13 +33,18 @@ func TestForwardAsAnthropicForGrokUsesXAIResponses(t *testing.T) {
 		accountRepo:       repo,
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "client-messages-key", "")
 
 	require.NoError(t, err)
 	require.Equal(t, "https://api.x.ai/v1/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer oauth-protocol-token", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "sub2api-grok/1.0", upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "grok-4.3", gjson.GetBytes(upstream.lastBody, "model").String())
+	cacheIdentity := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
+	require.NotEqual(t, "client-messages-key", cacheIdentity)
+	require.NotEmpty(t, cacheIdentity)
+	require.Equal(t, cacheIdentity, upstream.lastReq.Header.Get(grokConversationIDHeader))
+	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
 	require.NotContains(t, string(upstream.lastBody), "chatgpt.com")
 	require.Equal(t, "grok", result.Model)
 	require.Equal(t, "grok-4.3", result.UpstreamModel)

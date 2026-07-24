@@ -1223,10 +1223,6 @@ func explicitOpenAIHeaderSessionID(c *gin.Context) string {
 	for _, header := range []string{
 		"session_id",
 		"conversation_id",
-		openCodeSessionAffinityHeader,
-		openCodeSessionIDHeader,
-		openCodeNativeSessionHeader,
-		codeBuddyConversationHeader,
 	} {
 		if sessionID := strings.TrimSpace(c.GetHeader(header)); sessionID != "" {
 			return sessionID
@@ -1255,7 +1251,7 @@ func explicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
 	}
 	sessionID := explicitOpenAIHeaderSessionID(c)
 	if sessionID == "" && isGrokRequestContext(c) {
-		sessionID = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
+		sessionID = explicitGrokOnlyHeaderSessionID(c)
 	}
 	if sessionID == "" && len(body) > 0 {
 		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())

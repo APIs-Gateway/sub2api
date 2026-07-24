@@ -121,6 +121,7 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridge(t *testing.T)
 		req := r.Clone(r.Context())
 		req.Header = req.Header.Clone()
 		ginCtx.Request = req
+		ginCtx.Set("api_key", &APIKey{ID: 7171})
 
 		errCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "access-token", firstMessage, nil)
 	}))
@@ -167,6 +168,9 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridge(t *testing.T)
 	require.False(t, gjson.GetBytes(upstream.lastBody, "type").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "generate").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_retention").Exists())
+	cacheIdentity := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
+	require.NotEmpty(t, cacheIdentity)
+	require.Equal(t, cacheIdentity, upstream.lastReq.Header.Get(grokConversationIDHeader))
 }
 
 func TestOpenAIWSHTTPBridgeHTTP429FailsOverBeforeWrite(t *testing.T) {

@@ -52,8 +52,8 @@ func explicitGrokCacheSeed(c *gin.Context, body []byte, explicitKey string) stri
 	if seed == "" {
 		seed = explicitOpenAIHeaderSessionID(c)
 	}
-	if seed == "" && c != nil {
-		seed = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
+	if seed == "" {
+		seed = explicitGrokOnlyHeaderSessionID(c)
 	}
 	if seed == "" && len(body) > 0 {
 		seed = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
@@ -62,6 +62,26 @@ func explicitGrokCacheSeed(c *gin.Context, body []byte, explicitKey string) stri
 		seed = strings.TrimSpace(explicitKey)
 	}
 	return seed
+}
+
+// explicitGrokOnlyHeaderSessionID keeps client-specific Grok/IDE session
+// headers out of the shared OpenAI sticky-session path.
+func explicitGrokOnlyHeaderSessionID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	for _, header := range []string{
+		openCodeSessionAffinityHeader,
+		openCodeSessionIDHeader,
+		openCodeNativeSessionHeader,
+		codeBuddyConversationHeader,
+		grokConversationIDHeader,
+	} {
+		if sessionID := strings.TrimSpace(c.GetHeader(header)); sessionID != "" {
+			return sessionID
+		}
+	}
+	return ""
 }
 
 // extractClaudeCodeSessionID accepts the stable Claude Code session header and

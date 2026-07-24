@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -215,4 +216,97 @@ func TestDeriveOpenAIContentSessionSeed_ResponsesAPI_TypedMessageItem(t *testing
 	seed := deriveOpenAIContentSessionSeed(body)
 	require.Contains(t, seed, "|first_user=")
 	require.Contains(t, seed, "Hello from typed message")
+}
+
+func TestDeriveOpenAIAnchoredContentSessionSeedRequiresMeaningfulAnchor(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "empty body", body: "", want: false},
+		{name: "system only", body: `{"messages":[{"role":"system","content":"policy"}]}`, want: false},
+		{name: "empty first user", body: `{"messages":[{"role":"user","content":"  "}]}`, want: false},
+		{name: "text user", body: `{"messages":[{"role":"user","content":"hello"}]}`, want: true},
+		{name: "structured text user", body: `{"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`, want: true},
+		{name: "structured empty user", body: `{"messages":[{"role":"user","content":[{"type":"text","text":"  "}]}]}`, want: false},
+		{name: "responses string", body: `{"input":"hello"}`, want: true},
+		{name: "responses empty string", body: `{"input":"  "}`, want: false},
+		{name: "responses typed text", body: `{"input":[{"type":"input_text","text":"hello"}]}`, want: true},
+		{name: "responses empty typed text", body: `{"input":[{"type":"input_text","text":"  "}]}`, want: false},
+		{name: "responses object input", body: `{"input":{"type":"message"}}`, want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			seed := deriveOpenAIAnchoredContentSessionSeed([]byte(test.body))
+			if test.want {
+				require.NotEmpty(t, seed)
+				require.Contains(t, seed, contentSessionSeedPrefix)
+			} else {
+				require.Empty(t, seed)
+			}
+		})
+	}
+}
+
+func TestDeriveOpenAIAnchoredContentSessionSeedHandlesNonTextContent(t *testing.T) {
+	require.Empty(t, deriveOpenAIAnchoredContentSessionSeed([]byte(`{"messages":[{"role":"user","content":null}]}`)))
+	require.Empty(t, deriveOpenAIAnchoredContentSessionSeed([]byte(`{"messages":[{"role":"user","content":{}}]}`)))
+	require.NotEmpty(t, deriveOpenAIAnchoredContentSessionSeed([]byte(`{"messages":[{"role":"user","content":{"type":"image_url","image_url":{"url":"https://example.test/image"}}}]}`)))
+	require.NotEmpty(t, deriveOpenAIAnchoredContentSessionSeed([]byte(`{"messages":[{"role":"user","content":["",{"type":"image_url","image_url":{"url":"https://example.test/image"}}]}]}`)))
+}
+
+func TestDeriveOpenAIStablePrefixSessionSeedUsesOnlyReusableFields(t *testing.T) {
+	base := []byte(`{
+		"model":"grok-4.3",
+		"tools":[{"type":"function","function":{"name":"lookup"}}],
+		"functions":[{"name":"lookup"}],
+		"instructions":"Be concise",
+		"messages":[
+			{"role":"system","content":"System policy"},
+			{"role":"developer","content":[{"type":"text","text":"Developer policy"}]},
+			{"role":"user","content":"Question A"}
+		]
+	}`)
+	turn := []byte(`{
+		"model":"grok-4.3",
+		"tools":[{"function":{"name":"lookup"},"type":"function"}],
+		"functions":[{"name":"lookup"}],
+		"instructions":"Be concise",
+		"messages":[
+			{"role":"system","content":"System policy"},
+			{"role":"developer","content":[{"text":"Developer policy","type":"text"}]},
+			{"role":"user","content":"Question B"}
+		]
+	}`)
+
+	seed := deriveOpenAIStablePrefixSessionSeed(base)
+	require.NotEmpty(t, seed)
+	require.Equal(t, seed, deriveOpenAIStablePrefixSessionSeed(turn))
+	require.True(t, strings.HasPrefix(seed, contentStablePrefixSessionSeedPrefix))
+	require.Contains(t, seed, "|tools=")
+	require.Contains(t, seed, "|functions=")
+	require.Contains(t, seed, "|instructions=")
+	require.Contains(t, seed, "|system=")
+	require.Contains(t, seed, "|developer=")
+	require.NotContains(t, seed, "Question A")
+	require.NotContains(t, seed, "Question B")
+}
+
+func TestDeriveOpenAIStablePrefixSessionSeedSupportsResponsesAndFailsClosed(t *testing.T) {
+	responses := []byte(`{
+		"tools":[{"type":"function","function":{"name":"lookup"}}],
+		"instructions":"Be concise",
+		"input":[{"role":"system","content":"System policy"},{"role":"user","content":"Question"}]
+	}`)
+	seed := deriveOpenAIStablePrefixSessionSeed(responses)
+	require.NotEmpty(t, seed)
+	require.Contains(t, seed, "|tools=")
+	require.Contains(t, seed, "|instructions=")
+	require.Contains(t, seed, "|system=")
+
+	require.Empty(t, deriveOpenAIStablePrefixSessionSeed(nil))
+	require.Empty(t, deriveOpenAIStablePrefixSessionSeed([]byte(`{"messages":[{"role":"user","content":"Question"}]}`)))
+	require.Empty(t, deriveOpenAIStablePrefixSessionSeed([]byte(`{"tools":[],"functions":[],"instructions":"  ","messages":[]}`)))
 }
