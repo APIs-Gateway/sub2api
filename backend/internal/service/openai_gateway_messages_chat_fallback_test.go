@@ -27,6 +27,89 @@ func forceChatMessagesFallbackAccount() *Account {
 	return account
 }
 
+func TestShouldUseDirectAnthropicChatBridge_OnlyForceChatCompletions(t *testing.T) {
+	tests := []struct {
+		name    string
+		account *Account
+		want    bool
+	}{
+		{
+			name:    "force chat completions",
+			account: forceChatMessagesFallbackAccount(),
+			want:    true,
+		},
+		{
+			name: "auto with unsupported probe keeps legacy bridge",
+			account: func() *Account {
+				account := rawChatCompletionsTestAccount()
+				account.Extra = map[string]any{
+					openai_compat.ExtraKeyResponsesMode:      string(openai_compat.ResponsesSupportModeAuto),
+					openai_compat.ExtraKeyResponsesSupported: false,
+				}
+				return account
+			}(),
+			want: false,
+		},
+		{
+			name:    "unknown external account keeps legacy bridge",
+			account: rawChatCompletionsTestAccount(),
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.True(t, shouldForwardAnthropicViaRawChatCompletions(tt.account))
+			require.Equal(t, tt.want, shouldUseDirectAnthropicChatBridge(tt.account))
+		})
+	}
+}
+
+func TestForwardAsAnthropic_NonForcedRawFallbackKeepsLegacyContentFilterBridge(t *testing.T) {
+	accounts := []struct {
+		name    string
+		account *Account
+	}{
+		{
+			name: "auto unsupported",
+			account: func() *Account {
+				account := rawChatCompletionsTestAccount()
+				account.Extra = map[string]any{
+					openai_compat.ExtraKeyResponsesMode:      string(openai_compat.ResponsesSupportModeAuto),
+					openai_compat.ExtraKeyResponsesSupported: false,
+				}
+				return account
+			}(),
+		},
+		{
+			name:    "unknown external",
+			account: rawChatCompletionsTestAccount(),
+		},
+	}
+
+	for _, tt := range accounts {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+			c, rec := newMessagesChatFallbackContext(t, body)
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(
+					`{"id":"chatcmpl_filter","object":"chat.completion","model":"gpt-5.4","choices":[{"index":0,"message":{"role":"assistant","content":"filtered"},"finish_reason":"content_filter"}]}`,
+				)),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+			result, err := svc.ForwardAsAnthropic(context.Background(), c, tt.account, body, "", "")
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.False(t, shouldUseDirectAnthropicChatBridge(tt.account))
+			require.Equal(t, "end_turn", gjson.Get(rec.Body.String(), "stop_reason").String())
+		})
+	}
+}
+
 func TestShouldForwardAnthropicViaRawChatCompletions(t *testing.T) {
 	tests := []struct {
 		name    string

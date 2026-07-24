@@ -546,6 +546,9 @@ type ChatCompletionsToAnthropicStreamState struct {
 	// announcement; tools whose name never arrives are announced with an empty
 	// name at finalize so their arguments are not lost.
 	toolBlockIndex    map[int]int
+	toolBlockOpen     map[int]bool
+	toolBlockHadDelta map[int]bool
+	toolArgs          map[int]string
 	toolAnnounced     map[int]bool
 	toolName          map[int]string
 	pendingToolCallID map[int]string
@@ -575,6 +578,9 @@ func NewChatCompletionsToAnthropicStreamState(model string) *ChatCompletionsToAn
 		Model:             model,
 		Created:           time.Now().Unix(),
 		toolBlockIndex:    make(map[int]int),
+		toolBlockOpen:     make(map[int]bool),
+		toolBlockHadDelta: make(map[int]bool),
+		toolArgs:          make(map[int]string),
 		toolAnnounced:     make(map[int]bool),
 		toolName:          make(map[int]string),
 		pendingToolCallID: make(map[int]string),
@@ -661,6 +667,8 @@ func FinalizeChatCompletionsAnthropicStream(state *ChatCompletionsToAnthropicStr
 	// not silently dropped. The double-conversion path announced these
 	// immediately with an empty name; the deferred announcement keeps that data
 	// preservation while still delivering correct names when they do arrive.
+	events = append(events, closeCCAnthropicBlock(state)...)
+
 	if len(state.pendingToolCallID) > 0 {
 		idxs := make([]int, 0, len(state.pendingToolCallID))
 		for idx := range state.pendingToolCallID {
@@ -669,12 +677,11 @@ func FinalizeChatCompletionsAnthropicStream(state *ChatCompletionsToAnthropicStr
 		sort.Ints(idxs)
 		for _, idx := range idxs {
 			callID := state.pendingToolCallID[idx]
-			events = append(events, closeCCAnthropicBlock(state)...)
 			events = append(events, announceCCAnthropicToolBlock(state, idx, callID, "")...)
 		}
 	}
 
-	events = append(events, closeCCAnthropicBlock(state)...)
+	events = append(events, closeCCAnthropicToolBlocks(state)...)
 
 	stopReason := ccFinishReasonToAnthropicStopReason(state.FinishReason, state.HasToolCall)
 
@@ -771,7 +778,8 @@ func handleCCAnthropicToolCall(state *ChatCompletionsToAnthropicStreamState, too
 	var events []AnthropicStreamEvent
 
 	if _, seen := state.toolAnnounced[idx]; !seen {
-		// New tool call: it ends whatever block is currently streaming.
+		// New tool call closes a text/thinking block, but previously announced
+		// tool blocks stay open: OpenAI may interleave argument fragments by index.
 		events = append(events, closeCCAnthropicBlock(state)...)
 		state.HasToolCall = true
 
@@ -795,22 +803,13 @@ func handleCCAnthropicToolCall(state *ChatCompletionsToAnthropicStreamState, too
 		events = append(events, announceCCAnthropicToolBlock(state, idx, callID, toolCall.Function.Name)...)
 	}
 
-	// Argument fragment → input_json_delta on the tool's block once announced,
-	// buffered until the deferred announcement otherwise.
+	// Accumulate arguments per upstream tool index. The complete JSON must be
+	// available before emitting it so Read parameters use the same sanitization
+	// as the Responses→Anthropic path.
 	if toolCall.Function.Arguments != "" {
 		if state.toolAnnounced[idx] {
-			blockIdx := state.toolBlockIndex[idx]
-			if state.ContentBlockOpen && blockIdx == state.ContentBlockIndex {
-				state.CurrentToolHadDelta = true
-			}
-			events = append(events, AnthropicStreamEvent{
-				Type:  "content_block_delta",
-				Index: &blockIdx,
-				Delta: &AnthropicDelta{
-					Type:        "input_json_delta",
-					PartialJSON: toolCall.Function.Arguments,
-				},
-			})
+			state.toolArgs[idx] += toolCall.Function.Arguments
+			state.toolBlockHadDelta[idx] = true
 		} else {
 			state.pendingToolArgs[idx] += toolCall.Function.Arguments
 		}
@@ -824,13 +823,12 @@ func handleCCAnthropicToolCall(state *ChatCompletionsToAnthropicStreamState, too
 // buffered while the announcement was deferred.
 func announceCCAnthropicToolBlock(state *ChatCompletionsToAnthropicStreamState, idx int, callID, name string) []AnthropicStreamEvent {
 	blockIdx := state.ContentBlockIndex
+	state.ContentBlockIndex++
 	state.toolBlockIndex[idx] = blockIdx
+	state.toolBlockOpen[idx] = true
+	state.toolBlockHadDelta[idx] = false
 	state.toolAnnounced[idx] = true
 	state.toolName[idx] = name
-	state.CurrentToolName = name
-	state.CurrentToolHadDelta = false
-	state.ContentBlockOpen = true
-	state.CurrentBlockType = "tool_use"
 	delete(state.pendingToolCallID, idx)
 
 	events := []AnthropicStreamEvent{{
@@ -845,15 +843,50 @@ func announceCCAnthropicToolBlock(state *ChatCompletionsToAnthropicStreamState, 
 	}}
 	if pending := state.pendingToolArgs[idx]; pending != "" {
 		delete(state.pendingToolArgs, idx)
-		state.CurrentToolHadDelta = true
+		state.toolArgs[idx] = pending
+		state.toolBlockHadDelta[idx] = true
+	}
+	return events
+}
+
+// closeCCAnthropicToolBlocks closes all announced tool blocks after the
+// upstream stream is terminal. Tool arguments may be interleaved by upstream
+// index, so each block remains open until this point rather than being closed
+// when another tool block starts.
+func closeCCAnthropicToolBlocks(state *ChatCompletionsToAnthropicStreamState) []AnthropicStreamEvent {
+	idxs := make([]int, 0, len(state.toolBlockOpen))
+	for idx, open := range state.toolBlockOpen {
+		if open {
+			idxs = append(idxs, idx)
+		}
+	}
+	sort.Slice(idxs, func(i, j int) bool {
+		return state.toolBlockIndex[idxs[i]] < state.toolBlockIndex[idxs[j]]
+	})
+
+	var events []AnthropicStreamEvent
+	for _, idx := range idxs {
+		blockIdx := state.toolBlockIndex[idx]
+		arguments := state.toolArgs[idx]
+		if !state.toolBlockHadDelta[idx] {
+			arguments = "{}"
+		}
+		sanitized := sanitizeAnthropicToolUseInput(state.toolName[idx], arguments)
+		if len(sanitized) > 0 {
+			events = append(events, AnthropicStreamEvent{
+				Type:  "content_block_delta",
+				Index: &blockIdx,
+				Delta: &AnthropicDelta{
+					Type:        "input_json_delta",
+					PartialJSON: string(sanitized),
+				},
+			})
+		}
 		events = append(events, AnthropicStreamEvent{
-			Type:  "content_block_delta",
+			Type:  "content_block_stop",
 			Index: &blockIdx,
-			Delta: &AnthropicDelta{
-				Type:        "input_json_delta",
-				PartialJSON: pending,
-			},
 		})
+		state.toolBlockOpen[idx] = false
 	}
 	return events
 }

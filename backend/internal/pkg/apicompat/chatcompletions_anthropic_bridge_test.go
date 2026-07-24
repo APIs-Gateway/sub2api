@@ -521,11 +521,10 @@ func TestChatCompletionsChunkToAnthropicEvents_ToolCallAggregation(t *testing.T)
 	})
 
 	types := anthropicEventTypes(events)
-	// message_start → content_block_start(tool_use) → 2× input_json_delta (empty first arg skipped) → content_block_stop → message_delta(tool_use) → message_stop
+	// message_start → content_block_start(tool_use) → input_json_delta → content_block_stop → message_delta(tool_use) → message_stop
 	require.Equal(t, []string{
 		"message_start",
 		"content_block_start",
-		"content_block_delta",
 		"content_block_delta",
 		"content_block_stop",
 		"message_delta",
@@ -544,14 +543,14 @@ func TestChatCompletionsChunkToAnthropicEvents_ToolCallAggregation(t *testing.T)
 		}
 	}
 
-	// Verify arguments assembled (empty first fragment skipped)
+	// Arguments are emitted after the complete tool JSON is available.
 	var partials []string
 	for _, e := range events {
 		if e.Type == "content_block_delta" && e.Delta != nil {
 			partials = append(partials, e.Delta.PartialJSON)
 		}
 	}
-	require.Equal(t, []string{`{"city":`, `"SF"}`}, partials)
+	require.Equal(t, []string{`{"city":"SF"}`}, partials)
 }
 
 func TestChatCompletionsChunkToAnthropicEvents_LengthMapsToMaxTokens(t *testing.T) {
@@ -615,6 +614,56 @@ func TestChatCompletionsChunkToAnthropicEvents_ParallelToolCalls(t *testing.T) {
 			require.Equal(t, "tool_use", e.Delta.StopReason)
 		}
 	}
+}
+
+func TestChatCompletionsChunkToAnthropicEvents_InterleavedToolArgumentsKeepBlocksOpen(t *testing.T) {
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"tool_a","arguments":"{\"a\":"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_1","type":"function","function":{"name":"tool_b","arguments":"{\"b\":"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+	})
+
+	open := make(map[int]bool)
+	partials := make(map[int]string)
+	for _, event := range events {
+		switch event.Type {
+		case "content_block_start":
+			if event.ContentBlock == nil || event.ContentBlock.Type != "tool_use" {
+				continue
+			}
+			require.NotNil(t, event.Index)
+			require.False(t, open[*event.Index], "tool block %d started twice", *event.Index)
+			open[*event.Index] = true
+		case "content_block_delta":
+			if event.Delta == nil || event.Delta.Type != "input_json_delta" {
+				continue
+			}
+			require.NotNil(t, event.Index)
+			require.True(t, open[*event.Index], "tool block %d received a delta after stop", *event.Index)
+			partials[*event.Index] += event.Delta.PartialJSON
+		case "content_block_stop":
+			require.NotNil(t, event.Index)
+			require.True(t, open[*event.Index], "tool block %d stopped before start", *event.Index)
+			open[*event.Index] = false
+		}
+	}
+	require.Equal(t, map[int]string{0: `{"a":1}`, 1: `{"b":2}`}, partials)
+	require.Equal(t, map[int]bool{0: false, 1: false}, open)
+}
+
+func TestChatCompletionsChunkToAnthropicEvents_SanitizesFragmentedReadArguments(t *testing.T) {
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_read","type":"function","function":{"name":"Read","arguments":"{\"file_path\":\"/tmp/demo.py\",\"pages\":"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"\"}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+	})
+
+	tools := assembleToolUseBlocks(events)
+	require.Len(t, tools, 1)
+	require.Equal(t, "Read", tools[0].Name)
+	require.JSONEq(t, `{"file_path":"/tmp/demo.py"}`, tools[0].Input)
 }
 
 func TestFinalizeChatCompletionsAnthropicStream_NoOpAfterStop(t *testing.T) {
