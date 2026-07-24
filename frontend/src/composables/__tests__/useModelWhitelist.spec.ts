@@ -59,6 +59,18 @@ describe('useModelWhitelist', () => {
     }))
   })
 
+  it('grok 模型列表包含官方 4.5 及其别名映射', () => {
+    const models = getModelsByPlatform('grok')
+
+    expect(models).toContain('grok-4.5')
+    expect(models).toContain('grok-4.5-latest')
+    expect(models).toContain('grok-build-latest')
+    expect(getPresetMappingsByPlatform('grok')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: 'grok-latest', to: 'grok-4.5' }),
+      expect.objectContaining({ from: 'grok-build-latest', to: 'grok-4.5' })
+    ]))
+  })
+
   it('gemini 模型列表包含原生生图模型', () => {
     const models = getModelsByPlatform('gemini')
 

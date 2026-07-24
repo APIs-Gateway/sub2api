@@ -671,6 +671,12 @@ func TestResolveOpenAIMessagesDispatchMappedModel(t *testing.T) {
 		require.Equal(t, "gpt-5.6-sol", resolveOpenAIMessagesDispatchMappedModel(apiKey, "claude-fable-5"))
 	})
 
+	t.Run("grok_uses_current_default_for_claude_models", func(t *testing.T) {
+		apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformGrok}}
+		require.Equal(t, "grok-4.5", resolveOpenAIMessagesDispatchMappedModel(apiKey, "claude-sonnet-4-5"))
+		require.Empty(t, resolveOpenAIMessagesDispatchMappedModel(apiKey, "grok"))
+	})
+
 	t.Run("uses_family_default_when_no_override", func(t *testing.T) {
 		apiKey := &service.APIKey{Group: &service.Group{}}
 		require.Equal(t, "gpt-5.4", resolveOpenAIMessagesDispatchMappedModel(apiKey, "claude-opus-4-6"))

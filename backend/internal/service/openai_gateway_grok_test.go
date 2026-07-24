@@ -34,6 +34,45 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning.effort").String())
 }
 
+func TestPatchGrokResponsesBodyDropsGrok45UnsupportedFields(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "grok-latest",
+		"input": "hello",
+		"presence_penalty": 0.1,
+		"presencePenalty": 0.2,
+		"frequency_penalty": 0.3,
+		"frequencyPenalty": 0.4,
+		"stop": ["done"]
+	}`)
+
+	patched, err := patchGrokResponsesBodyBase(body, "grok-4.5")
+	require.NoError(t, err)
+	require.Equal(t, "grok-4.5", gjson.GetBytes(patched, "model").String())
+	for _, field := range []string{"presence_penalty", "presencePenalty", "frequency_penalty", "frequencyPenalty", "stop"} {
+		require.False(t, gjson.GetBytes(patched, field).Exists(), field)
+	}
+}
+
+func TestPatchGrokResponsesBodyKeepsUnsupportedFieldsForNon45Models(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "grok-4.3",
+		"input": "hello",
+		"presence_penalty": 0.1,
+		"frequency_penalty": 0.2,
+		"stop": ["done"]
+	}`)
+
+	patched, err := patchGrokResponsesBodyBase(body, "grok-4.3")
+	require.NoError(t, err)
+	require.Equal(t, 0.1, gjson.GetBytes(patched, "presence_penalty").Float())
+	require.Equal(t, 0.2, gjson.GetBytes(patched, "frequency_penalty").Float())
+	require.Len(t, gjson.GetBytes(patched, "stop").Array(), 1)
+}
+
 func TestPatchGrokResponsesBodySanitizesUnsupportedFieldsAndTools(t *testing.T) {
 	t.Parallel()
 
