@@ -23,7 +23,7 @@ import (
 
 func TestLatestUsageLogIPsQuery(t *testing.T) {
 	postgresQuery, postgresArgs := latestUsageLogIPsQuery([]int64{11, 12}, dialect.Postgres)
-	require.Contains(t, postgresQuery, "ANY($1::bigint[])")
+	require.Contains(t, postgresQuery, "FROM unnest($1::bigint[]) AS requested(api_key_id)")
 	require.Len(t, postgresArgs, 1)
 
 	sqliteQuery, sqliteArgs := latestUsageLogIPsQuery([]int64{11, 12}, dialect.SQLite)
@@ -33,7 +33,7 @@ func TestLatestUsageLogIPsQuery(t *testing.T) {
 
 func TestLatestUsageLogIPsQueryEmptyInput(t *testing.T) {
 	query, args := latestUsageLogIPsQuery(nil, dialect.Postgres)
-	require.Contains(t, query, "ANY($1::bigint[])")
+	require.Contains(t, query, "FROM unnest($1::bigint[]) AS requested(api_key_id)")
 	require.Len(t, args, 1)
 }
 
@@ -190,7 +190,7 @@ func TestAPIKeyRepositoryListByUserIDAttachesLastUsedIP(t *testing.T) {
 
 func TestLatestUsageLogIPsQueryUsesOneDialectAppropriateBatchArgument(t *testing.T) {
 	postgresQuery, postgresArgs := latestUsageLogIPsQuery([]int64{1, 2, 3}, dialect.Postgres)
-	require.Contains(t, postgresQuery, "api_key_id = ANY($1::bigint[])")
+	require.Contains(t, postgresQuery, "FROM unnest($1::bigint[]) AS requested(api_key_id)")
 	require.Len(t, postgresArgs, 1)
 
 	sqliteQuery, sqliteArgs := latestUsageLogIPsQuery([]int64{1, 2, 3}, dialect.SQLite)
