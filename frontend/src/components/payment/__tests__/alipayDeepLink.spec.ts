@@ -137,6 +137,7 @@ describe('Alipay deep link', () => {
 
     launcher.dispose()
     lifecycle.dispatch('pagehide')
+    launcher.launch()
     expect(onStateChange).toHaveBeenCalledTimes(2)
   })
 
