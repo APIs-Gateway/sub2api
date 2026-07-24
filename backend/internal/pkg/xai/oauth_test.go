@@ -72,6 +72,40 @@ func TestBuildAuthorizationURLIncludesHermesCompatibleParameters(t *testing.T) {
 	require.Equal(t, "sub2api", values.Get("referrer"))
 }
 
+func TestBuildGrokMediaURLs(t *testing.T) {
+	imagesURL, err := BuildImagesGenerationsURL(DefaultBaseURL + "/")
+	require.NoError(t, err)
+	require.Equal(t, DefaultBaseURL+"/images/generations", imagesURL)
+
+	editsURL, err := BuildImagesEditsURL(DefaultBaseURL)
+	require.NoError(t, err)
+	require.Equal(t, DefaultBaseURL+"/images/edits", editsURL)
+
+	videosURL, err := BuildVideosGenerationsURL(DefaultBaseURL)
+	require.NoError(t, err)
+	require.Equal(t, DefaultBaseURL+"/videos/generations", videosURL)
+
+	videoURL, err := BuildVideoURL(DefaultBaseURL, "req 123")
+	require.NoError(t, err)
+	require.Equal(t, DefaultBaseURL+"/videos/req%20123", videoURL)
+
+	_, err = BuildVideoURL(DefaultBaseURL, " ")
+	require.Error(t, err)
+}
+
+func TestValidatedBaseURLRejectsUnsafeComponents(t *testing.T) {
+	for _, raw := range []string{
+		"ftp://example.test/v1",
+		"https://user:secret@example.test/v1",
+		"https://example.test/v1?token=secret",
+		"https://example.test/v1#secret",
+	} {
+		_, err := ValidatedBaseURL(raw)
+		require.Error(t, err, "raw=%s", raw)
+		require.NotContains(t, err.Error(), "secret")
+	}
+}
+
 func TestDefaultModelMappingIncludesGrokAliases(t *testing.T) {
 	t.Parallel()
 

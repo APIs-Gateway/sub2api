@@ -13,6 +13,7 @@ const (
 	responsesLiteHeaderKey           = "x-openai-internal-codex-responses-lite"
 	responsesLiteWSMetadataKey       = "ws_request_header_x_openai_internal_codex_responses_lite"
 	imageGenerationPermissionMessage = "Image generation is not enabled for this group"
+	videoGenerationPermissionMessage = "Video generation is not enabled for this group"
 )
 
 func isOpenAIResponsesLiteHeader(value string) bool {
@@ -29,6 +30,11 @@ func isOpenAIResponsesLiteWebSocketPayload(body []byte) bool {
 // ImageGenerationPermissionMessage returns the stable end-user error text for disabled groups.
 func ImageGenerationPermissionMessage() string {
 	return imageGenerationPermissionMessage
+}
+
+// VideoGenerationPermissionMessage returns the stable end-user error text for disabled groups.
+func VideoGenerationPermissionMessage() string {
+	return videoGenerationPermissionMessage
 }
 
 // GroupAllowsImageGeneration preserves ungrouped-key behavior and enforces the flag when a group is present.

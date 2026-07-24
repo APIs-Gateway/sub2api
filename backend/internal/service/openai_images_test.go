@@ -214,6 +214,26 @@ func TestOpenAIImagesRequestModerationBody_MultipartEditIncludesUploadsInMemory(
 	require.NotContains(t, log.InputExcerpt, "ZmFrZS")
 }
 
+func TestBuildOpenAIImagesModerationBody_MultipartDoesNotValidateModel(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "grok-imagine-edit"))
+	require.NoError(t, writer.WriteField("prompt", "replace the background"))
+	part, err := writer.CreatePart(textproto.MIMEHeader{
+		"Content-Disposition": {`form-data; name="image"; filename="source.png"`},
+		"Content-Type":        {"image/png"},
+	})
+	require.NoError(t, err)
+	_, err = part.Write([]byte("fake-image"))
+	require.NoError(t, err)
+	contentType := writer.FormDataContentType()
+	require.NoError(t, writer.Close())
+
+	input := ExtractContentModerationInput(ContentModerationProtocolOpenAIImages, BuildOpenAIImagesModerationBody(contentType, body.Bytes()))
+	require.Equal(t, "replace the background", input.Text)
+	require.Len(t, input.Images, 1)
+}
+
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_NormalizesOfficialAndCustomSizes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -592,6 +612,9 @@ func TestAccountSupportsOpenAIImageCapability_OAuthSupportsNative(t *testing.T) 
 	apiKeyAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	require.True(t, apiKeyAccount.SupportsOpenAIImageCapability(OpenAIImagesCapabilityDirectBasic))
 	require.True(t, apiKeyAccount.SupportsOpenAIImageCapability(OpenAIImagesCapabilityDirectNative))
+
+	grokAccount := &Account{Platform: PlatformGrok, Type: AccountTypeAPIKey}
+	require.True(t, grokAccount.SupportsOpenAIImageCapability(""))
 }
 
 func TestAccountSupportsOpenAIEndpointCapability(t *testing.T) {

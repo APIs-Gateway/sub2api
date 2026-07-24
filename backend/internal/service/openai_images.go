@@ -118,6 +118,22 @@ func (r *OpenAIImagesRequest) ModerationBody() []byte {
 	return body
 }
 
+// BuildOpenAIImagesModerationBody extracts the moderation payload from a
+// multipart image request without applying the OpenAI image-model validator.
+// Grok media endpoints reuse the same prompt/upload shape but use different
+// model names.
+func BuildOpenAIImagesModerationBody(contentType string, body []byte) []byte {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil || !strings.EqualFold(mediaType, "multipart/form-data") {
+		return nil
+	}
+	req := &OpenAIImagesRequest{Endpoint: openAIImagesGenerationsEndpoint}
+	if err := parseOpenAIImagesMultipartRequest(body, contentType, req); err != nil {
+		return nil
+	}
+	return req.ModerationBody()
+}
+
 func (r *OpenAIImagesRequest) moderationImages() []map[string]string {
 	if r == nil {
 		return nil

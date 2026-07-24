@@ -30,6 +30,7 @@ func TestEveryGatewayPOSTRouteIsClassifiedForPromptAuditCoverage(t *testing.T) {
 		"/alpha/search":        {"openai_alpha_search.go"},
 		"/images/generations":  {"openai_images.go"},
 		"/images/edits":        {"openai_images.go"},
+		"/videos/generations":  {"grok_media.go"},
 		"/models/*modelAction": {"gemini_v1beta_handler.go"},
 	}
 	excluded := map[string]string{

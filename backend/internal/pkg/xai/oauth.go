@@ -141,6 +141,22 @@ func EffectiveBaseURL(override string) string {
 	return strings.TrimRight(envOrDefault(EnvBaseURL, DefaultBaseURL), "/")
 }
 
+// ValidatedBaseURL keeps media endpoint construction from accepting URL
+// components that would change the path or leak credentials into requests.
+func ValidatedBaseURL(override string) (string, error) {
+	raw := EffectiveBaseURL(override)
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", fmt.Errorf("invalid base url")
+	}
+	if parsed.User != nil || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("base url contains unsafe components")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
 func envOrDefault(key, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 		return value
@@ -261,6 +277,42 @@ func BuildResponsesURL(baseURL string) string {
 // for an account-specific base URL.
 func BuildChatCompletionsURL(baseURL string) string {
 	return EffectiveBaseURL(baseURL) + "/chat/completions"
+}
+
+func BuildImagesGenerationsURL(baseURL string) (string, error) {
+	validatedBaseURL, err := ValidatedBaseURL(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid base url: %w", err)
+	}
+	return validatedBaseURL + "/images/generations", nil
+}
+
+func BuildImagesEditsURL(baseURL string) (string, error) {
+	validatedBaseURL, err := ValidatedBaseURL(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid base url: %w", err)
+	}
+	return validatedBaseURL + "/images/edits", nil
+}
+
+func BuildVideosGenerationsURL(baseURL string) (string, error) {
+	validatedBaseURL, err := ValidatedBaseURL(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid base url: %w", err)
+	}
+	return validatedBaseURL + "/videos/generations", nil
+}
+
+func BuildVideoURL(baseURL, requestID string) (string, error) {
+	validatedBaseURL, err := ValidatedBaseURL(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid base url: %w", err)
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return "", fmt.Errorf("request id is required")
+	}
+	return validatedBaseURL + "/videos/" + url.PathEscape(requestID), nil
 }
 
 // TokenResponse represents xAI OAuth token responses.
