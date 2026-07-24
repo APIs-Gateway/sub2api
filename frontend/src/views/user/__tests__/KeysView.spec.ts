@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
 
 import type { ApiKey } from '@/types'
 import KeysView from '../KeysView.vue'
@@ -87,7 +87,10 @@ vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
-    useI18n: () => ({ t: (key: string) => messages[key] ?? key }),
+    useI18n: () => ({
+      locale: ref('en'),
+      t: (key: string) => messages[key] ?? key,
+    }),
   }
 })
 
@@ -153,7 +156,7 @@ const mountView = async () => {
         Select: true,
         SearchInput: true,
         Icon: { template: '<span />' },
-        UseKeyModal: true,
+        KeyOnboardingModal: true,
         EndpointPopover: true,
         GroupBadge: true,
         GroupOptionItem: true,
@@ -212,6 +215,12 @@ describe('user KeysView column settings', () => {
     expect(wrapper.get('[data-test="key-id"]').text()).toBe('#1')
     expect(JSON.parse(localStorage.getItem('api-key-hidden-columns') ?? '[]')).not.toContain('id')
     expect(localStorage.getItem('api-key-column-settings-version')).toBe('3')
+
+    await getButtonByText(wrapper, 'ID').trigger('click')
+    await nextTick()
+
+    expect(visibleColumnKeys(wrapper)).not.toContain('id')
+    expect(JSON.parse(localStorage.getItem('api-key-hidden-columns') ?? '[]')).toContain('id')
   })
 
   it('migrates prior column preferences by keeping newly introduced columns hidden', async () => {
@@ -230,6 +239,18 @@ describe('user KeysView column settings', () => {
       'last_used_ip',
       'id',
     ])
+    expect(localStorage.getItem('api-key-column-settings-version')).toBe('3')
+  })
+
+  it('keeps a current-version user preference without applying the migration defaults again', async () => {
+    localStorage.setItem('api-key-hidden-columns', JSON.stringify(['group']))
+    localStorage.setItem('api-key-column-settings-version', '3')
+
+    const wrapper = await mountView()
+
+    expect(visibleColumnKeys(wrapper)).not.toContain('group')
+    expect(visibleColumnKeys(wrapper)).toContain('id')
+    expect(localStorage.getItem('api-key-hidden-columns')).toBe(JSON.stringify(['group']))
     expect(localStorage.getItem('api-key-column-settings-version')).toBe('3')
   })
 })
