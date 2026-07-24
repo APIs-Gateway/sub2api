@@ -529,7 +529,118 @@ func TestChatCompletionsChunkToAnthropicEvents_ToolCallAggregation(t *testing.T)
 		"content_block_delta",
 		"content_block_stop",
 		"message_delta",
-		"message_stop…1097 tokens truncated…as the
+		"message_stop",
+	}, types)
+
+	// Verify tool_use block
+	for _, e := range events {
+		if e.Type == "content_block_start" && e.ContentBlock != nil {
+			require.Equal(t, "tool_use", e.ContentBlock.Type)
+			require.Equal(t, "call_1", e.ContentBlock.ID)
+			require.Equal(t, "get_weather", e.ContentBlock.Name)
+		}
+		if e.Type == "message_delta" {
+			require.Equal(t, "tool_use", e.Delta.StopReason)
+		}
+	}
+
+	// Verify arguments assembled (empty first fragment skipped)
+	var partials []string
+	for _, e := range events {
+		if e.Type == "content_block_delta" && e.Delta != nil {
+			partials = append(partials, e.Delta.PartialJSON)
+		}
+	}
+	require.Equal(t, []string{`{"city":`, `"SF"}`}, partials)
+}
+
+func TestChatCompletionsChunkToAnthropicEvents_LengthMapsToMaxTokens(t *testing.T) {
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"content":"partial"}}]}`,
+		`{"choices":[{"index":0,"delta":{"content":""},"finish_reason":"length"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`,
+	})
+
+	for _, e := range events {
+		if e.Type == "message_delta" {
+			require.Equal(t, "max_tokens", e.Delta.StopReason)
+		}
+	}
+}
+
+func TestChatCompletionsChunkToAnthropicEvents_EmptyStream(t *testing.T) {
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":0,"total_tokens":1}}`,
+	})
+
+	types := anthropicEventTypes(events)
+	// Even with no content, message_start + message_delta + message_stop should fire.
+	require.Contains(t, types, "message_start")
+	require.Contains(t, types, "message_stop")
+}
+
+func TestChatCompletionsChunkToAnthropicEvents_MessageStartEmittedOnce(t *testing.T) {
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"content":"a"}}]}`,
+		`{"choices":[{"index":0,"delta":{"content":"b"}}]}`,
+		`{"choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`,
+	})
+
+	count := 0
+	for _, e := range events {
+		if e.Type == "message_start" {
+			count++
+		}
+	}
+	require.Equal(t, 1, count, "message_start should only be emitted once")
+}
+
+func TestChatCompletionsChunkToAnthropicEvents_ParallelToolCalls(t *testing.T) {
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"tool_a","arguments":"{}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"tool_b","arguments":"{}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`,
+	})
+
+	// Two tool_use blocks should be opened
+	var toolBlocks []string
+	for _, e := range events {
+		if e.Type == "content_block_start" && e.ContentBlock != nil && e.ContentBlock.Type == "tool_use" {
+			toolBlocks = append(toolBlocks, e.ContentBlock.Name)
+		}
+	}
+	require.Equal(t, []string{"tool_a", "tool_b"}, toolBlocks)
+
+	for _, e := range events {
+		if e.Type == "message_delta" {
+			require.Equal(t, "tool_use", e.Delta.StopReason)
+		}
+	}
+}
+
+func TestFinalizeChatCompletionsAnthropicStream_NoOpAfterStop(t *testing.T) {
+	state := NewChatCompletionsToAnthropicStreamState("test")
+	state.MessageStopSent = true
+
+	events := FinalizeChatCompletionsAnthropicStream(state)
+	require.Nil(t, events, "finalize should be a no-op after message_stop")
+}
+
+func TestFinalizeChatCompletionsAnthropicStream_EmitsMessageStartIfMissing(t *testing.T) {
+	state := NewChatCompletionsToAnthropicStreamState("test")
+	// Never fed any chunks — message_start not yet sent
+
+	events := FinalizeChatCompletionsAnthropicStream(state)
+	types := anthropicEventTypes(events)
+	require.Contains(t, types, "message_start")
+	require.Contains(t, types, "message_stop")
+}
+
+// ---------------------------------------------------------------------------
+// Equivalence: direct bridge matches the double-conversion bridge
+// ---------------------------------------------------------------------------
+
+// TestDirectBridge_NonStreamingMatchesDoubleConversion verifies that
+// ChatCompletionsResponseToAnthropic produces the same Anthropic response as the
 // existing ChatCompletionsResponseToResponses + ResponsesToAnthropic chain.
 func TestDirectBridge_NonStreamingMatchesDoubleConversion(t *testing.T) {
 	resp := &ChatCompletionsResponse{
