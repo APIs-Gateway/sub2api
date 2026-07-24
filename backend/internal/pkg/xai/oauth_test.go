@@ -85,6 +85,14 @@ func TestBuildGrokMediaURLs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, DefaultBaseURL+"/videos/generations", videosURL)
 
+	editsVideoURL, err := BuildVideosEditsURL(DefaultBaseURL)
+	require.NoError(t, err)
+	require.Equal(t, DefaultBaseURL+"/videos/edits", editsVideoURL)
+
+	extensionsVideoURL, err := BuildVideosExtensionsURL(DefaultBaseURL)
+	require.NoError(t, err)
+	require.Equal(t, DefaultBaseURL+"/videos/extensions", extensionsVideoURL)
+
 	videoURL, err := BuildVideoURL(DefaultBaseURL, "req 123")
 	require.NoError(t, err)
 	require.Equal(t, DefaultBaseURL+"/videos/req%20123", videoURL)
@@ -103,6 +111,10 @@ func TestValidatedBaseURLRejectsUnsafeComponents(t *testing.T) {
 		_, err := ValidatedBaseURL(raw)
 		require.Error(t, err, "raw=%s", raw)
 		require.NotContains(t, err.Error(), "secret")
+		_, err = BuildVideosEditsURL(raw)
+		require.Error(t, err, "edits raw=%s", raw)
+		_, err = BuildVideosExtensionsURL(raw)
+		require.Error(t, err, "extensions raw=%s", raw)
 	}
 }
 

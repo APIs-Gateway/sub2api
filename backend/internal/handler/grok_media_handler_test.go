@@ -62,6 +62,34 @@ type grokMediaBillingCacheStub struct {
 	balance float64
 }
 
+type grokMediaGatewayCacheStub struct {
+	sessionBindings map[string]int64
+}
+
+func (s *grokMediaGatewayCacheStub) GetSessionAccountID(_ context.Context, _ int64, sessionHash string) (int64, error) {
+	if accountID, ok := s.sessionBindings[sessionHash]; ok {
+		return accountID, nil
+	}
+	return 0, errors.New("session binding not found")
+}
+
+func (s *grokMediaGatewayCacheStub) SetSessionAccountID(_ context.Context, _ int64, sessionHash string, accountID int64, _ time.Duration) error {
+	if s.sessionBindings == nil {
+		s.sessionBindings = make(map[string]int64)
+	}
+	s.sessionBindings[sessionHash] = accountID
+	return nil
+}
+
+func (s *grokMediaGatewayCacheStub) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
+	return nil
+}
+
+func (s *grokMediaGatewayCacheStub) DeleteSessionAccountID(_ context.Context, _ int64, sessionHash string) error {
+	delete(s.sessionBindings, sessionHash)
+	return nil
+}
+
 func (s grokMediaBillingCacheStub) GetUserBalance(context.Context, int64) (float64, error) {
 	return s.balance, nil
 }
@@ -142,6 +170,7 @@ func newGrokMediaHandlerWithOptions(t *testing.T, upstream service.HTTPUpstream,
 		openAIImagesFailoverAccountRepo: openAIImagesFailoverAccountRepo{accounts: accounts},
 	}
 	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cache := &grokMediaGatewayCacheStub{}
 	gatewayService := service.NewOpenAIGatewayService(
 		accountRepo,
 		nil,
@@ -149,7 +178,7 @@ func newGrokMediaHandlerWithOptions(t *testing.T, upstream service.HTTPUpstream,
 		nil,
 		nil,
 		nil,
-		nil,
+		cache,
 		cfg,
 		nil,
 		nil,
@@ -168,6 +197,10 @@ func newGrokMediaHandlerWithOptions(t *testing.T, upstream service.HTTPUpstream,
 		nil,
 		nil,
 	)
+	groupID := int64(7401)
+	if err := gatewayService.BindGrokMediaVideoRequestAccount(context.Background(), &groupID, "request-123", 7404, 7403, 7402); err != nil {
+		t.Fatalf("seed video request binding: %v", err)
+	}
 	billingService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 	t.Cleanup(billingService.Stop)
 	h := NewOpenAIGatewayHandler(
@@ -219,6 +252,41 @@ func TestGrokMediaHandlerVideoGenerationForwardsAndRecordsResponse(t *testing.T)
 	require.Equal(t, "https://xai.test/v1/videos/generations", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer grok-key", upstream.lastReq.Header.Get("Authorization"))
 	require.Contains(t, string(upstream.lastBody), "grok-imagine-video-1.5")
+}
+
+func TestGrokMediaHandlerVideoMutationsForward(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name    string
+		invoke  func(*OpenAIGatewayHandler, *gin.Context)
+		path    string
+		wantURL string
+	}{
+		{
+			name:    "edit",
+			invoke:  (*OpenAIGatewayHandler).GrokVideoEdit,
+			path:    "/v1/videos/edits",
+			wantURL: "https://xai.test/v1/videos/edits",
+		},
+		{
+			name:    "extension",
+			invoke:  (*OpenAIGatewayHandler).GrokVideoExtension,
+			path:    "/v1/videos/extensions",
+			wantURL: "https://xai.test/v1/videos/extensions",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &grokMediaHandlerUpstream{}
+			h := newGrokMediaHandler(t, upstream)
+			c, rec := newGrokMediaHandlerContext(t, tt.path, `{"model":"grok-imagine-video-1.5","prompt":"waves"}`, true)
+
+			tt.invoke(h, c)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, tt.wantURL, upstream.lastReq.URL.String())
+		})
+	}
 }
 
 func TestGrokMediaHandlerImagesAndStatusForward(t *testing.T) {
@@ -277,6 +345,35 @@ func TestGrokMediaHandlerImagesAndStatusForward(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, http.MethodGet, upstream.lastReq.Method)
 	require.Equal(t, "https://xai.test/v1/videos/request-123", upstream.lastReq.URL.String())
+}
+
+func TestGrokMediaHandlerVideoStatusRequiresOwnerBinding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newGrokMediaHandler(t, &grokMediaHandlerUpstream{})
+	c, rec := newGrokMediaHandlerContext(t, "/v1/videos/request-123", "", true)
+	c.Request.Method = http.MethodGet
+	c.Params = gin.Params{{Key: "request_id", Value: "request-123"}}
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 9999, Concurrency: 1})
+
+	h.GrokVideoStatus(c)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), "Video request not found")
+}
+
+func TestGrokMediaHandlerVideoStatusRejectsDifferentBoundAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := newGrokMediaTestAccount()
+	account.ID = 7405
+	h := newGrokMediaHandlerWithOptions(t, &grokMediaHandlerUpstream{}, []service.Account{account}, []bool{true}, []bool{true})
+	c, rec := newGrokMediaHandlerContext(t, "/v1/videos/request-123", "", true)
+	c.Request.Method = http.MethodGet
+	c.Params = gin.Params{{Key: "request_id", Value: "request-123"}}
+
+	h.GrokVideoStatus(c)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), "Video request not found")
 }
 
 func TestGrokMediaHandlerRejectsGenerationWithoutImagePermission(t *testing.T) {
@@ -511,7 +608,7 @@ func TestGrokMediaHandlerFailsOverOnUpstreamError(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "temporarily unavailable")
 }
 
-func TestGrokMediaHandlerVideoStatus404SwitchesAccounts(t *testing.T) {
+func TestGrokMediaHandlerVideoStatus404DoesNotSwitchAccounts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstream := &grokMediaStatusFailoverUpstream{}
 	first := newGrokMediaTestAccount()
@@ -526,8 +623,8 @@ func TestGrokMediaHandlerVideoStatus404SwitchesAccounts(t *testing.T) {
 
 	h.GrokVideoStatus(c)
 
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, []int64{first.ID, second.ID}, upstream.accountIDs)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Equal(t, []int64{first.ID}, upstream.accountIDs)
 }
 
 func TestGrokMediaHandlerReturnsBadGatewayForInvalidUpstreamURL(t *testing.T) {

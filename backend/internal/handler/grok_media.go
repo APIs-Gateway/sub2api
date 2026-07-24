@@ -32,6 +32,16 @@ func (h *OpenAIGatewayHandler) GrokVideoGeneration(c *gin.Context) {
 	h.handleGrokMedia(c, service.GrokMediaEndpointVideosGenerations, "")
 }
 
+// GrokVideoEdit handles asynchronous xAI video edits through Grok groups.
+func (h *OpenAIGatewayHandler) GrokVideoEdit(c *gin.Context) {
+	h.handleGrokMedia(c, service.GrokMediaEndpointVideosEdits, "")
+}
+
+// GrokVideoExtension handles asynchronous xAI video extensions through Grok groups.
+func (h *OpenAIGatewayHandler) GrokVideoExtension(c *gin.Context) {
+	h.handleGrokMedia(c, service.GrokMediaEndpointVideosExtensions, "")
+}
+
 // GrokVideoStatus handles xAI video status retrieval through Grok groups.
 func (h *OpenAIGatewayHandler) GrokVideoStatus(c *gin.Context) {
 	h.handleGrokMedia(c, service.GrokMediaEndpointVideoStatus, c.Param("request_id"))
@@ -89,7 +99,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
-	if endpoint == service.GrokMediaEndpointVideoStatus && strings.TrimSpace(requestID) == "" {
+	if endpoint.IsVideoLookupRequest() && strings.TrimSpace(requestID) == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "request_id is required")
 		return
 	}
@@ -149,10 +159,17 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	}
 
 	var sessionHash string
-	if endpoint == service.GrokMediaEndpointVideoStatus {
-		// GenerateExplicitSessionHash intentionally ignores arbitrary body values;
-		// use the xAI request ID directly as the stable account-affinity key.
-		sessionHash = service.DeriveSessionHashFromSeed(requestID)
+	boundLookupAccountID := int64(0)
+	if endpoint.IsVideoLookupRequest() {
+		sessionHash = service.GrokMediaVideoRequestSessionHash(requestID, subject.UserID, apiKey.ID)
+		boundLookupAccountID, err = h.gatewayService.ResolveGrokMediaVideoRequestAccount(
+			c.Request.Context(), apiKey.GroupID, requestID, subject.UserID, apiKey.ID,
+		)
+		if err != nil || boundLookupAccountID <= 0 {
+			reqLog.Info("grok_media.video_lookup_owner_binding_missing", zap.Error(err))
+			h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
+			return
+		}
 	} else {
 		sessionHash = h.gatewayService.GenerateExplicitSessionHash(c, body)
 	}
@@ -207,6 +224,14 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				markOpsRoutingCapacityLimited(c)
 			}
 			h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
+			return
+		}
+		if boundLookupAccountID > 0 && selection.Account.ID != boundLookupAccountID {
+			reqLog.Warn("grok_media.video_lookup_bound_account_unavailable",
+				zap.Int64("bound_account_id", boundLookupAccountID),
+				zap.Int64("selected_account_id", selection.Account.ID),
+			)
+			h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
 			return
 		}
 
@@ -277,6 +302,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				failedAccountIDs[account.ID] = struct{}{}
 				lastFailoverErr = failoverErr
+				if endpoint.IsVideoLookupRequest() {
+					h.handleFailoverExhausted(c, failoverErr, false)
+					return
+				}
 				if switchCount >= maxAccountSwitches {
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return
@@ -302,6 +331,17 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
+		if endpoint.IsVideoGenerationRequest() && result != nil && strings.TrimSpace(result.ResponseID) != "" {
+			if err := h.gatewayService.BindGrokMediaVideoRequestAccount(
+				requestCtx, apiKey.GroupID, result.ResponseID, subject.UserID, apiKey.ID, account.ID,
+			); err != nil {
+				reqLog.Warn("grok_media.bind_video_request_account_failed",
+					zap.Int64("account_id", account.ID),
+					zap.String("request_id", result.ResponseID),
+					zap.Error(err),
+				)
+			}
+		}
 		recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
 		reqLog.Debug("grok_media.request_completed",
 			zap.Int64("account_id", account.ID),

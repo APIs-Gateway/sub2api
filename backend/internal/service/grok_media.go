@@ -23,16 +23,31 @@ const (
 	GrokMediaEndpointImagesGenerations GrokMediaEndpoint = "images_generations"
 	GrokMediaEndpointImagesEdits       GrokMediaEndpoint = "images_edits"
 	GrokMediaEndpointVideosGenerations GrokMediaEndpoint = "videos_generations"
+	GrokMediaEndpointVideosEdits       GrokMediaEndpoint = "videos_edits"
+	GrokMediaEndpointVideosExtensions  GrokMediaEndpoint = "videos_extensions"
 	GrokMediaEndpointVideoStatus       GrokMediaEndpoint = "video_status"
 )
 
 func (e GrokMediaEndpoint) RequiresRequestBody() bool {
-	return e != GrokMediaEndpointVideoStatus
+	return !e.IsVideoLookupRequest()
+}
+
+func (e GrokMediaEndpoint) IsVideoLookupRequest() bool {
+	return e == GrokMediaEndpointVideoStatus
 }
 
 func (e GrokMediaEndpoint) IsGenerationRequest() bool {
 	switch e {
-	case GrokMediaEndpointImagesGenerations, GrokMediaEndpointImagesEdits, GrokMediaEndpointVideosGenerations:
+	case GrokMediaEndpointImagesGenerations, GrokMediaEndpointImagesEdits, GrokMediaEndpointVideosGenerations, GrokMediaEndpointVideosEdits, GrokMediaEndpointVideosExtensions:
+		return true
+	default:
+		return false
+	}
+}
+
+func (e GrokMediaEndpoint) IsVideoGenerationRequest() bool {
+	switch e {
+	case GrokMediaEndpointVideosGenerations, GrokMediaEndpointVideosEdits, GrokMediaEndpointVideosExtensions:
 		return true
 	default:
 		return false
@@ -40,7 +55,7 @@ func (e GrokMediaEndpoint) IsGenerationRequest() bool {
 }
 
 func (e GrokMediaEndpoint) httpMethod() string {
-	if e == GrokMediaEndpointVideoStatus {
+	if e.IsVideoLookupRequest() {
 		return http.MethodGet
 	}
 	return http.MethodPost
@@ -90,11 +105,61 @@ func (e GrokMediaEndpoint) upstreamURL(baseURL, requestID string) (string, error
 		return xai.BuildImagesEditsURL(baseURL)
 	case GrokMediaEndpointVideosGenerations:
 		return xai.BuildVideosGenerationsURL(baseURL)
+	case GrokMediaEndpointVideosEdits:
+		return xai.BuildVideosEditsURL(baseURL)
+	case GrokMediaEndpointVideosExtensions:
+		return xai.BuildVideosExtensionsURL(baseURL)
 	case GrokMediaEndpointVideoStatus:
 		return xai.BuildVideoURL(baseURL, requestID)
 	default:
 		return "", fmt.Errorf("unsupported grok media endpoint: %s", e)
 	}
+}
+
+func GrokMediaVideoRequestSessionHash(requestID string, userID, apiKeyID int64) string {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" || userID <= 0 || apiKeyID <= 0 {
+		return ""
+	}
+	ownerSeed := fmt.Sprintf("%d:%d:%s", userID, apiKeyID, requestID)
+	return "grok-video:" + DeriveSessionHashFromSeed(ownerSeed)
+}
+
+func (s *OpenAIGatewayService) BindGrokMediaVideoRequestAccount(
+	ctx context.Context,
+	groupID *int64,
+	requestID string,
+	userID, apiKeyID, accountID int64,
+) error {
+	if s == nil || s.cache == nil {
+		return fmt.Errorf("grok video request binding cache is unavailable")
+	}
+	sessionHash := GrokMediaVideoRequestSessionHash(requestID, userID, apiKeyID)
+	cacheKey := s.openAISessionCacheKey(sessionHash)
+	if cacheKey == "" || accountID <= 0 {
+		return fmt.Errorf("grok video request binding is invalid")
+	}
+	ttl := openaiStickySessionTTL
+	if s.cfg != nil && s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds > 0 {
+		ttl = time.Duration(s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds) * time.Second
+	}
+	return s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), cacheKey, accountID, ttl)
+}
+
+func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
+	ctx context.Context,
+	groupID *int64,
+	requestID string,
+	userID, apiKeyID int64,
+) (int64, error) {
+	if s == nil || s.cache == nil {
+		return 0, fmt.Errorf("grok video request binding cache is unavailable")
+	}
+	cacheKey := s.openAISessionCacheKey(GrokMediaVideoRequestSessionHash(requestID, userID, apiKeyID))
+	if cacheKey == "" {
+		return 0, fmt.Errorf("grok video request binding is invalid")
+	}
+	return s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), cacheKey)
 }
 
 func (s *OpenAIGatewayService) ForwardGrokMedia(
@@ -205,13 +270,30 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		return nil, err
 	}
 	writeGrokMediaResponse(c, resp, respBody, s.responseHeaderFilter)
+	responseID := ""
+	if endpoint.IsVideoGenerationRequest() {
+		responseID = extractGrokMediaVideoRequestID(respBody)
+	}
 	return &OpenAIForwardResult{
 		RequestID:       requestIDHeader,
+		ResponseID:      responseID,
 		Model:           requestModel,
 		UpstreamModel:   requestModel,
 		ResponseHeaders: resp.Header.Clone(),
 		Duration:        time.Since(startTime),
 	}, nil
+}
+
+func extractGrokMediaVideoRequestID(body []byte) string {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return ""
+	}
+	for _, path := range []string{"request_id", "id", "data.request_id", "data.id", "video.request_id", "video.id"} {
+		if id := strings.TrimSpace(gjson.GetBytes(body, path).String()); id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 func writeGrokMediaResponse(c *gin.Context, resp *http.Response, body []byte, filter *responseheaders.CompiledHeaderFilter) {

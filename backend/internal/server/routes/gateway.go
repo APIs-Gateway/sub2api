@@ -74,6 +74,20 @@ func RegisterGatewayRoutes(
 		}
 		unsupportedMedia(c, "Videos API is not supported for this platform")
 	}
+	videoEditHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformGrok {
+			h.OpenAIGateway.GrokVideoEdit(c)
+			return
+		}
+		unsupportedMedia(c, "Videos API is not supported for this platform")
+	}
+	videoExtensionHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformGrok {
+			h.OpenAIGateway.GrokVideoExtension(c)
+			return
+		}
+		unsupportedMedia(c, "Videos API is not supported for this platform")
+	}
 	videoStatusHandler := func(c *gin.Context) {
 		// Status requests do not carry a model. Composite groups therefore need
 		// to use the Grok handler and let account scheduling enforce capacity.
@@ -164,6 +178,8 @@ func RegisterGatewayRoutes(
 		gateway.POST("/images/generations", imagesHandler)
 		gateway.POST("/images/edits", imagesHandler)
 		gateway.POST("/videos/generations", videoGenerationHandler)
+		gateway.POST("/videos/edits", videoEditHandler)
+		gateway.POST("/videos/extensions", videoExtensionHandler)
 		gateway.GET("/videos/:request_id", videoStatusHandler)
 	}
 
@@ -231,6 +247,8 @@ func RegisterGatewayRoutes(
 	r.POST("/images/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, imagesHandler)
 	r.POST("/images/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, imagesHandler)
 	r.POST("/videos/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoGenerationHandler)
+	r.POST("/videos/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoEditHandler)
+	r.POST("/videos/extensions", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoExtensionHandler)
 	r.GET("/videos/:request_id", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoStatusHandler)
 
 	// Antigravity 模型列表
