@@ -25,6 +25,7 @@ type tokenRefreshAccountRepo struct {
 	lastExtraUpdates       map[string]any
 	lastAccount            *Account
 	updateErr              error
+	updateExtraErr         error
 }
 
 func (r *tokenRefreshAccountRepo) Update(ctx context.Context, account *Account) error {
@@ -71,7 +72,7 @@ func (r *tokenRefreshAccountRepo) SetTempUnschedulable(ctx context.Context, id i
 func (r *tokenRefreshAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	r.updateExtraCalls++
 	r.lastExtraUpdates = shallowCopyMap(updates)
-	return nil
+	return r.updateExtraErr
 }
 
 type tokenCacheInvalidatorStub struct {
@@ -299,6 +300,42 @@ func TestTokenRefreshService_RefreshWithRetry_AntigravityInvalidGrantClearsForce
 	require.Equal(t, 1, repo.updateExtraCalls)
 	require.Equal(t, false, repo.lastExtraUpdates[antigravityForceTokenRefreshExtraKey])
 	require.Contains(t, repo.lastErrorMessage, "non-retryable")
+}
+
+func TestTokenRefreshService_ClearAntigravityForceRefreshMarkerPersistenceFailureKeepsMarker(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{updateExtraErr: errors.New("extra update failed")}
+	service := &TokenRefreshService{accountRepo: repo}
+	account := &Account{
+		ID:       3711,
+		Platform: PlatformAntigravity,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			antigravityForceTokenRefreshExtraKey: true,
+		},
+	}
+
+	service.clearAntigravityForceTokenRefresh(context.Background(), account, "success")
+
+	require.Equal(t, 1, repo.updateExtraCalls)
+	require.Equal(t, true, account.Extra[antigravityForceTokenRefreshExtraKey])
+}
+
+func TestTokenRefreshService_ClearAntigravityForceRefreshMarkerIsPlatformScoped(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	service := &TokenRefreshService{accountRepo: repo}
+	account := &Account{
+		ID:       3712,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			antigravityForceTokenRefreshExtraKey: true,
+		},
+	}
+
+	service.clearAntigravityForceTokenRefresh(context.Background(), account, "success")
+
+	require.Zero(t, repo.updateExtraCalls)
+	require.Equal(t, true, account.Extra[antigravityForceTokenRefreshExtraKey])
 }
 
 // TestTokenRefreshService_RefreshWithRetry_NonOAuthAccount 测试非 OAuth 账号不触发缓存失效

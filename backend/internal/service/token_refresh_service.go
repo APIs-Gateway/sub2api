@@ -437,9 +437,6 @@ func (s *TokenRefreshService) clearAntigravityForceTokenRefresh(ctx context.Cont
 		)
 		return
 	}
-	if account.Extra == nil {
-		account.Extra = make(map[string]any, len(updates))
-	}
 	for key, value := range updates {
 		account.Extra[key] = value
 	}

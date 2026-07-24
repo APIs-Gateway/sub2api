@@ -19,6 +19,7 @@ type rateLimitAccountRepoStub struct {
 	tempCalls              int
 	updateCredentialsCalls int
 	updateExtraCalls       int
+	updateExtraErr         error
 	lastCredentials        map[string]any
 	lastExtraUpdates       map[string]any
 	lastErrorMsg           string
@@ -46,7 +47,48 @@ func (r *rateLimitAccountRepoStub) UpdateCredentials(ctx context.Context, id int
 func (r *rateLimitAccountRepoStub) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	r.updateExtraCalls++
 	r.lastExtraUpdates = shallowCopyMap(updates)
-	return nil
+	return r.updateExtraErr
+}
+
+func TestRateLimitService_HandleUpstreamError_Antigravity401MergesForceRefreshMarker(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:       120,
+		Platform: PlatformAntigravity,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"refresh_token": "rt-120",
+		},
+		Extra: map[string]any{"privacy_mode": AntigravityPrivacySet},
+	}
+
+	shouldDisable := service.HandleUpstreamError(context.Background(), account, http.StatusUnauthorized, http.Header{}, []byte("unauthorized"))
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.updateExtraCalls)
+	require.Equal(t, true, account.Extra[antigravityForceTokenRefreshExtraKey])
+	require.Equal(t, AntigravityPrivacySet, account.Extra["privacy_mode"])
+}
+
+func TestRateLimitService_HandleUpstreamError_Antigravity401MarkerPersistenceFailureKeepsCooldown(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{updateExtraErr: errors.New("extra update failed")}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:       121,
+		Platform: PlatformAntigravity,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"refresh_token": "rt-121",
+		},
+	}
+
+	shouldDisable := service.HandleUpstreamError(context.Background(), account, http.StatusUnauthorized, http.Header{}, []byte("unauthorized"))
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.updateExtraCalls)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Empty(t, account.Extra)
 }
 
 type tokenCacheInvalidatorRecorder struct {
