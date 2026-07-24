@@ -224,6 +224,68 @@ describe('UsageFilters — user search dropdown', () => {
     await flushPromises()
     expect(wrapper.text()).not.toContain('stale@test.com')
   })
+
+  it('clears previous user results when the latest search fails', async () => {
+    const failedSearch = deferred<Array<{ id: number; email: string; deleted: boolean }>>()
+    mockSearchUsers
+      .mockResolvedValueOnce([{ id: 4, email: 'previous@test.com', deleted: false }])
+      .mockImplementationOnce(() => failedSearch.promise)
+
+    const wrapper = mountFilters()
+    const input = wrapper.find('input[type="text"]')
+    await input.trigger('focus')
+
+    await input.setValue('previous')
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+    expect(wrapper.text()).toContain('previous@test.com')
+
+    await input.setValue('failed')
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+
+    failedSearch.reject(new Error('search failed'))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('previous@test.com')
+  })
+
+  it('keeps current user results when a superseded search fails', async () => {
+    const staleSearch = deferred<Array<{ id: number; email: string; deleted: boolean }>>()
+    mockSearchUsers
+      .mockImplementationOnce(() => staleSearch.promise)
+      .mockResolvedValueOnce([{ id: 5, email: 'current@test.com', deleted: false }])
+
+    const wrapper = mountFilters()
+    const input = wrapper.find('input[type="text"]')
+    await input.trigger('focus')
+
+    await input.setValue('stale')
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+
+    await input.setValue('current')
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+    expect(wrapper.text()).toContain('current@test.com')
+
+    staleSearch.reject(new Error('search failed'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('current@test.com')
+  })
+
+  it('cancels a queued user search before scheduling the next query', async () => {
+    mockSearchUsers.mockResolvedValue([])
+
+    const wrapper = mountFilters()
+    const input = wrapper.find('input[type="text"]')
+    await input.setValue('first')
+    await input.setValue('second')
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+
+    expect(mockSearchUsers).toHaveBeenCalledTimes(1)
+    expect(mockSearchUsers).toHaveBeenCalledWith('second')
+  })
 })
 
 describe('UsageFilters — model options come from prop (no dup request)', () => {
