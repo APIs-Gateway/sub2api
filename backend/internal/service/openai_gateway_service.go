@@ -7873,17 +7873,13 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 			} else {
 				inputValue = []any{}
 			}
-			next, err := sjson.SetBytes(normalized, "input", inputValue)
-			if err != nil {
-				return body, false, fmt.Errorf("normalize passthrough body input string: %w", err)
-			}
+			// inputResult exists only for an input member that sjson replaces in place.
+			next, _ := sjson.SetBytes(normalized, "input", inputValue)
 			normalized = next
 			changed = true
 		case inputResult.Type == gjson.JSON && !inputResult.IsArray():
-			next, err := sjson.SetRawBytes(normalized, "input", []byte("["+inputResult.Raw+"]"))
-			if err != nil {
-				return body, false, fmt.Errorf("normalize passthrough body input object: %w", err)
-			}
+			// inputResult exists only for an input member that sjson replaces in place.
+			next, _ := sjson.SetRawBytes(normalized, "input", []byte("["+inputResult.Raw+"]"))
 			normalized = next
 			changed = true
 		}
