@@ -112,7 +112,7 @@ func TestOpenAIGatewayServiceForwardImages_OAuthStreamingFallbackUsesDecodedOutp
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body: io.NopCloser(strings.NewReader(
-			"data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ig_actual_size\",\"type\":\"image_generation_call\",\"result\":"+fmt.Sprintf("%q", encoded)+"}}\n\n"+
+			"data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ig_actual_size\",\"type\":\"image_generation_call\",\"result\":" + fmt.Sprintf("%q", encoded) + "}}\n\n" +
 				"data: [DONE]\n\n",
 		)),
 	}}
