@@ -39,7 +39,7 @@ func TestForwardAsAnthropicForGrokUsesXAIResponses(t *testing.T) {
 	require.Equal(t, "https://api.x.ai/v1/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer oauth-protocol-token", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "sub2api-grok/1.0", upstream.lastReq.Header.Get("User-Agent"))
-	require.Equal(t, "grok-4.3", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Equal(t, "grok-4.5", gjson.GetBytes(upstream.lastBody, "model").String())
 	cacheIdentity := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
 	require.NotEqual(t, "client-messages-key", cacheIdentity)
 	require.NotEmpty(t, cacheIdentity)
@@ -47,7 +47,7 @@ func TestForwardAsAnthropicForGrokUsesXAIResponses(t *testing.T) {
 	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
 	require.NotContains(t, string(upstream.lastBody), "chatgpt.com")
 	require.Equal(t, "grok", result.Model)
-	require.Equal(t, "grok-4.3", result.UpstreamModel)
+	require.Equal(t, "grok-4.5", result.UpstreamModel)
 	require.Contains(t, recorder.Body.String(), `"type":"text_delta"`)
 	require.Contains(t, recorder.Body.String(), `"text":"ok"`)
 }
@@ -56,7 +56,7 @@ func grokMessagesSSECompletedResponse() *http.Response {
 	body := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"ok"}`,
 		"",
-		`data: {"type":"response.completed","response":{"id":"resp_grok_messages","object":"response","model":"grok-4.3","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_grok_messages","object":"response","model":"grok-4.5","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}`,
 		"",
 		"data: [DONE]",
 		"",
