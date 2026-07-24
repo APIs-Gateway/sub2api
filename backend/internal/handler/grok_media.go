@@ -47,6 +47,11 @@ func (h *OpenAIGatewayHandler) GrokVideoStatus(c *gin.Context) {
 	h.handleGrokMedia(c, service.GrokMediaEndpointVideoStatus, c.Param("request_id"))
 }
 
+// GrokVideoContent proxies downloadable video content through the task's bound upstream account.
+func (h *OpenAIGatewayHandler) GrokVideoContent(c *gin.Context) {
+	h.handleGrokMedia(c, service.GrokMediaEndpointVideoContent, c.Param("request_id"))
+}
+
 func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.GrokMediaEndpoint, requestID string) {
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
@@ -320,7 +325,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				continue
 			}
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
-			if c.Writer.Size() == writerSizeBeforeForward {
+			if !service.IsResponseCommitted(c) && c.Writer.Size() == writerSizeBeforeForward {
 				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 			}
 			reqLog.Warn("grok_media.forward_failed",
@@ -342,7 +347,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				)
 			}
 		}
-		recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+		if endpoint.IsGenerationRequest() && strings.TrimSpace(requestModel) != "" {
+			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+		}
 		reqLog.Debug("grok_media.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", switchCount),

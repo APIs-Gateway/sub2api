@@ -97,6 +97,14 @@ func RegisterGatewayRoutes(
 		}
 		unsupportedMedia(c, "Videos API is not supported for this platform")
 	}
+	videoContentHandler := func(c *gin.Context) {
+		// Content requests inherit the same composite target routing as status.
+		if getGroupPlatform(c) == service.PlatformGrok || getGroupPlatform(c) == service.PlatformComposite {
+			h.OpenAIGateway.GrokVideoContent(c)
+			return
+		}
+		unsupportedMedia(c, "Videos API is not supported for this platform")
+	}
 
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
@@ -181,6 +189,7 @@ func RegisterGatewayRoutes(
 		gateway.POST("/videos/edits", videoEditHandler)
 		gateway.POST("/videos/extensions", videoExtensionHandler)
 		gateway.GET("/videos/:request_id", videoStatusHandler)
+		gateway.GET("/videos/:request_id/content", videoContentHandler)
 	}
 
 	// Gemini 原生 API 兼容层（Gemini SDK/CLI 直连）
@@ -250,6 +259,7 @@ func RegisterGatewayRoutes(
 	r.POST("/videos/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoEditHandler)
 	r.POST("/videos/extensions", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoExtensionHandler)
 	r.GET("/videos/:request_id", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoStatusHandler)
+	r.GET("/videos/:request_id/content", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoContentHandler)
 
 	// Antigravity 模型列表
 	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.Gateway.AntigravityModels)
