@@ -155,3 +155,89 @@ func TestSchedulerCacheUpdateLastUsedChunksLargeBatches(t *testing.T) {
 		require.Equal(t, strconv.FormatInt(usedAt.UnixMilli(), 10), cache.rdb.Get(ctx, key).Val())
 	}
 }
+
+func TestSchedulerCacheLastUsedSkipsInvalidUpdatesAndNonPositiveDeletion(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	usedAt := time.Now().UTC().Truncate(time.Millisecond)
+
+	require.NoError(t, cache.UpdateLastUsed(ctx, map[int64]time.Time{0: usedAt, -1: usedAt}))
+	require.NoError(t, cache.DeleteAccount(ctx, 0))
+	require.NoError(t, cache.DeleteAccount(ctx, -1))
+
+	_, err := cache.rdb.Get(ctx, schedulerLastUsedKey("0")).Result()
+	require.ErrorIs(t, err, redis.Nil)
+	_, err = cache.rdb.Get(ctx, schedulerLastUsedKey("-1")).Result()
+	require.ErrorIs(t, err, redis.Nil)
+}
+
+func TestSchedulerCacheGetSnapshotRejectsMissingAndInvalidLastUsedEntries(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+
+	missingBucket := service.SchedulerBucket{GroupID: 9205, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	missingAccount := service.Account{ID: 9205, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth}
+	missingToken, err := cache.CaptureBucketWriteToken(ctx, missingBucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, missingBucket, missingToken, []service.Account{missingAccount}))
+	require.NoError(t, cache.rdb.Del(ctx, schedulerAccountMetaKey(strconv.FormatInt(missingAccount.ID, 10))).Err())
+
+	snapshot, hit, err := cache.GetSnapshot(ctx, missingBucket)
+	require.NoError(t, err)
+	require.False(t, hit)
+	require.Nil(t, snapshot)
+
+	invalidBucket := service.SchedulerBucket{GroupID: 9206, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	invalidAccount := service.Account{ID: 9206, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth}
+	invalidToken, err := cache.CaptureBucketWriteToken(ctx, invalidBucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, invalidBucket, invalidToken, []service.Account{invalidAccount}))
+	require.NoError(t, cache.rdb.Set(ctx, schedulerLastUsedKey(strconv.FormatInt(invalidAccount.ID, 10)), "invalid", 0).Err())
+
+	_, hit, err = cache.GetSnapshot(ctx, invalidBucket)
+	require.Error(t, err)
+	require.False(t, hit)
+	require.ErrorContains(t, err, "invalid last_used cache value")
+}
+
+func TestSchedulerCacheLastUsedHelpersHandleCacheRepresentations(t *testing.T) {
+	base := time.UnixMilli(1_700_000_000_000).UTC()
+	newer := base.Add(time.Second)
+
+	account := &service.Account{}
+	require.NoError(t, applySchedulerLastUsed(account, strconv.FormatInt(base.UnixMilli(), 10)))
+	require.Equal(t, base, *account.LastUsedAt)
+	require.NoError(t, applySchedulerLastUsed(account, []byte(strconv.FormatInt(newer.UnixMilli(), 10))))
+	require.Equal(t, newer, *account.LastUsedAt)
+	require.NoError(t, applySchedulerLastUsed(account, strconv.FormatInt(base.UnixMilli(), 10)))
+	require.Equal(t, newer, *account.LastUsedAt)
+	require.NoError(t, applySchedulerLastUsed(account, nil))
+	require.NoError(t, applySchedulerLastUsed(nil, strconv.FormatInt(base.UnixMilli(), 10)))
+
+	err := applySchedulerLastUsed(account, 1)
+	require.ErrorContains(t, err, "unexpected last_used cache type")
+	err = applySchedulerLastUsed(account, "invalid")
+	require.ErrorContains(t, err, "invalid last_used cache value")
+
+	millis, err := schedulerLastUsedMillis(base)
+	require.NoError(t, err)
+	require.Equal(t, base.UnixMilli(), millis)
+}
+
+func TestSchedulerCacheGetAccountHandlesMissingAccountAndAbsentSideKey(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+
+	missing, err := cache.GetAccount(ctx, 9207)
+	require.NoError(t, err)
+	require.Nil(t, missing)
+
+	embedded := time.Now().UTC().Truncate(time.Millisecond)
+	account := service.Account{ID: 9208, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, LastUsedAt: &embedded}
+	require.NoError(t, cache.SetAccount(ctx, &account))
+
+	cached, err := cache.GetAccount(ctx, account.ID)
+	require.NoError(t, err)
+	require.NotNil(t, cached)
+	require.Equal(t, embedded, *cached.LastUsedAt)
+}
