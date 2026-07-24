@@ -82,10 +82,10 @@ func TestPCEnvBoolOverride(t *testing.T) {
 		want     bool
 	}{
 		{name: "unset keeps configured value", fallback: true, want: true},
-		{name: "empty keeps configured value", envValue: ptr("  "), fallback: false, want: false},
-		{name: "true override", envValue: ptr(" true "), fallback: false, want: true},
-		{name: "false override", envValue: ptr("false"), fallback: true, want: false},
-		{name: "invalid keeps configured value", envValue: ptr("not-a-bool"), fallback: true, want: true},
+		{name: "empty keeps configured value", envValue: paymentConfigStringPtr("  "), fallback: false, want: false},
+		{name: "true override", envValue: paymentConfigStringPtr(" true "), fallback: false, want: true},
+		{name: "false override", envValue: paymentConfigStringPtr("false"), fallback: true, want: false},
+		{name: "invalid keeps configured value", envValue: paymentConfigStringPtr("not-a-bool"), fallback: true, want: true},
 	}
 
 	for _, tt := range tests {
@@ -100,7 +100,7 @@ func TestPCEnvBoolOverride(t *testing.T) {
 	}
 }
 
-func ptr(value string) *string { return &value }
+func paymentConfigStringPtr(value string) *string { return &value }
 
 func TestParsePaymentConfig(t *testing.T) {
 	t.Parallel()
