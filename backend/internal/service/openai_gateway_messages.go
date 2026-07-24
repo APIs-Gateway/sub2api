@@ -97,7 +97,13 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	// 3. Convert Anthropic → Responses after compatibility-only replay guard.
-	responsesReq, err := apicompat.AnthropicToResponses(&anthropicReq)
+	var responsesReq *apicompat.ResponsesRequest
+	var err error
+	if account.Platform == PlatformGrok {
+		responsesReq, err = apicompat.AnthropicToResponsesWithEncryptedReasoning(&anthropicReq)
+	} else {
+		responsesReq, err = apicompat.AnthropicToResponses(&anthropicReq)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("convert anthropic to responses: %w", err)
 	}
@@ -553,7 +559,12 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	// accumulated delta events so the client receives the full content.
 	acc.SupplementResponseOutput(finalResponse)
 
-	anthropicResp := apicompat.ResponsesToAnthropic(finalResponse, originalModel)
+	var anthropicResp *apicompat.AnthropicResponse
+	if account.Platform == PlatformGrok {
+		anthropicResp = apicompat.ResponsesToAnthropicWithEncryptedReasoning(finalResponse, originalModel)
+	} else {
+		anthropicResp = apicompat.ResponsesToAnthropic(finalResponse, originalModel)
+	}
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -806,6 +817,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	}
 
 	state := apicompat.NewResponsesEventToAnthropicState()
+	if account.Platform == PlatformGrok {
+		state = apicompat.NewResponsesEventToAnthropicStateWithEncryptedReasoning()
+	}
 	state.Model = originalModel
 	var usage OpenAIUsage
 	responseID := ""

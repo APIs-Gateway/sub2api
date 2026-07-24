@@ -11,7 +11,18 @@ import (
 // Chat Completions intermediary round-trip (e.g. thinking, cache_control,
 // structured system prompts).
 func AnthropicToResponses(req *AnthropicRequest) (*ResponsesRequest, error) {
-	input, err := convertAnthropicToResponsesInput(req.System, req.Messages)
+	return anthropicToResponses(req, false)
+}
+
+// AnthropicToResponsesWithEncryptedReasoning enables provider-specific
+// encrypted reasoning replay for Grok Messages requests. Other upstreams
+// must not receive opaque reasoning blobs from a different account/provider.
+func AnthropicToResponsesWithEncryptedReasoning(req *AnthropicRequest) (*ResponsesRequest, error) {
+	return anthropicToResponses(req, true)
+}
+
+func anthropicToResponses(req *AnthropicRequest, preserveEncryptedReasoning bool) (*ResponsesRequest, error) {
+	input, err := convertAnthropicToResponsesInput(req.System, req.Messages, preserveEncryptedReasoning)
 	if err != nil {
 		return nil, err
 	}
@@ -22,10 +33,12 @@ func AnthropicToResponses(req *AnthropicRequest) (*ResponsesRequest, error) {
 	}
 
 	out := &ResponsesRequest{
-		Model:   req.Model,
-		Input:   inputJSON,
-		Stream:  req.Stream,
-		Include: []string{"reasoning.encrypted_content"},
+		Model:  req.Model,
+		Input:  inputJSON,
+		Stream: req.Stream,
+	}
+	if preserveEncryptedReasoning {
+		out.Include = []string{"reasoning.encrypted_content"}
 	}
 
 	// Reasoning models (gpt-5.x) served via the Responses API do not accept
@@ -115,7 +128,7 @@ func convertAnthropicToolChoiceToResponses(raw json.RawMessage) (json.RawMessage
 
 // convertAnthropicToResponsesInput builds the Responses API input items array
 // from the Anthropic system field and message list.
-func convertAnthropicToResponsesInput(system json.RawMessage, msgs []AnthropicMessage) ([]ResponsesInputItem, error) {
+func convertAnthropicToResponsesInput(system json.RawMessage, msgs []AnthropicMessage, preserveEncryptedReasoning bool) ([]ResponsesInputItem, error) {
 	var out []ResponsesInputItem
 
 	// System prompt → developer role input item. ChatGPT Codex SSE behaves like
@@ -137,7 +150,7 @@ func convertAnthropicToResponsesInput(system json.RawMessage, msgs []AnthropicMe
 	}
 
 	for _, m := range msgs {
-		items, err := anthropicMsgToResponsesItems(m)
+		items, err := anthropicMsgToResponsesItems(m, preserveEncryptedReasoning)
 		if err != nil {
 			return nil, err
 		}
@@ -176,12 +189,12 @@ func isAnthropicBillingHeaderText(text string) bool {
 
 // anthropicMsgToResponsesItems converts a single Anthropic message into one
 // or more Responses API input items.
-func anthropicMsgToResponsesItems(m AnthropicMessage) ([]ResponsesInputItem, error) {
+func anthropicMsgToResponsesItems(m AnthropicMessage, preserveEncryptedReasoning bool) ([]ResponsesInputItem, error) {
 	switch m.Role {
 	case "user":
 		return anthropicUserToResponses(m.Content)
 	case "assistant":
-		return anthropicAssistantToResponses(m.Content)
+		return anthropicAssistantToResponses(m.Content, preserveEncryptedReasoning)
 	default:
 		return anthropicUserToResponses(m.Content)
 	}
@@ -259,7 +272,7 @@ func anthropicUserToResponses(raw json.RawMessage) ([]ResponsesInputItem, error)
 // tool_use blocks → function_call items.
 // thinking blocks with a provider signature → reasoning items. Unsigned
 // thinking remains ignored because Responses cannot accept plain thought text.
-func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, error) {
+func anthropicAssistantToResponses(raw json.RawMessage, preserveEncryptedReasoning bool) ([]ResponsesInputItem, error) {
 	// Try plain string.
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
@@ -278,20 +291,22 @@ func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, e
 
 	var items []ResponsesInputItem
 
-	for _, b := range blocks {
-		if b.Type != "thinking" {
-			continue
+	if preserveEncryptedReasoning {
+		for _, b := range blocks {
+			if b.Type != "thinking" {
+				continue
+			}
+			// Do not replay foreign or empty signatures: xAI rejects them as invalid
+			// encrypted_content after a provider/account switch.
+			sig := strings.TrimSpace(b.Signature)
+			if sig == "" || strings.HasPrefix(sig, "gAAAA") {
+				continue
+			}
+			items = append(items, ResponsesInputItem{
+				Type:             "reasoning",
+				EncryptedContent: sig,
+			})
 		}
-		// Do not replay foreign or empty signatures: xAI rejects them as invalid
-		// encrypted_content after a provider/account switch.
-		sig := strings.TrimSpace(b.Signature)
-		if sig == "" || strings.HasPrefix(sig, "gAAAA") {
-			continue
-		}
-		items = append(items, ResponsesInputItem{
-			Type:             "reasoning",
-			EncryptedContent: sig,
-		})
 	}
 
 	// Text content → assistant message with output_text content parts.

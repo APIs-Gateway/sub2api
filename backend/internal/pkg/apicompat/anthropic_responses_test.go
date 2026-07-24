@@ -184,7 +184,7 @@ func TestAnthropicToResponses_ThinkingSignatureBecomesReasoning(t *testing.T) {
 		},
 	}
 
-	resp, err := AnthropicToResponses(req)
+	resp, err := AnthropicToResponsesWithEncryptedReasoning(req)
 	require.NoError(t, err)
 
 	var items []ResponsesInputItem
@@ -193,6 +193,25 @@ func TestAnthropicToResponses_ThinkingSignatureBecomesReasoning(t *testing.T) {
 	assert.Equal(t, "reasoning", items[1].Type)
 	assert.Equal(t, "enc-rs-1", items[1].EncryptedContent)
 	assert.Equal(t, "assistant", items[2].Role)
+	assert.Equal(t, []string{"reasoning.encrypted_content"}, resp.Include)
+}
+
+func TestAnthropicToResponses_DoesNotReplayEncryptedReasoningByDefault(t *testing.T) {
+	req := &AnthropicRequest{
+		Model: "gpt-5.5",
+		Messages: []AnthropicMessage{{
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"thinking","thinking":"plan","signature":"enc-rs-foreign"},{"type":"text","text":"Hi!"}]`),
+		}},
+	}
+
+	resp, err := AnthropicToResponses(req)
+	require.NoError(t, err)
+	var items []ResponsesInputItem
+	require.NoError(t, json.Unmarshal(resp.Input, &items))
+	require.Len(t, items, 1)
+	assert.Equal(t, "assistant", items[0].Role)
+	assert.Empty(t, resp.Include)
 }
 
 func TestAnthropicToResponses_SkipsForeignThinkingSignatures(t *testing.T) {
@@ -205,7 +224,7 @@ func TestAnthropicToResponses_SkipsForeignThinkingSignatures(t *testing.T) {
 		}},
 	}
 
-	resp, err := AnthropicToResponses(req)
+	resp, err := AnthropicToResponsesWithEncryptedReasoning(req)
 	require.NoError(t, err)
 	var items []ResponsesInputItem
 	require.NoError(t, json.Unmarshal(resp.Input, &items))
@@ -429,13 +448,28 @@ func TestResponsesToAnthropic_Reasoning(t *testing.T) {
 		},
 	}
 
-	anth := ResponsesToAnthropic(resp, "claude-opus-4-6")
+	anth := ResponsesToAnthropicWithEncryptedReasoning(resp, "claude-opus-4-6")
 	require.Len(t, anth.Content, 2)
 	assert.Equal(t, "thinking", anth.Content[0].Type)
 	assert.Equal(t, "Thinking about the answer...", anth.Content[0].Thinking)
 	assert.Equal(t, "enc-rs-roundtrip", anth.Content[0].Signature)
 	assert.Equal(t, "text", anth.Content[1].Type)
 	assert.Equal(t, "42", anth.Content[1].Text)
+}
+
+func TestResponsesToAnthropic_DropsEncryptedReasoningByDefault(t *testing.T) {
+	resp := &ResponsesResponse{
+		Status: "completed",
+		Output: []ResponsesOutput{{
+			Type:             "reasoning",
+			EncryptedContent: "enc-rs-foreign",
+		}},
+	}
+
+	anth := ResponsesToAnthropic(resp, "gpt-5.5")
+	require.Len(t, anth.Content, 1)
+	assert.Equal(t, "text", anth.Content[0].Type)
+	assert.Empty(t, anth.Content[0].Signature)
 }
 
 func TestResponsesToAnthropic_Incomplete(t *testing.T) {
@@ -810,7 +844,7 @@ func TestStreamingReadToolEmitsSanitizedCompleteJSON(t *testing.T) {
 }
 
 func TestStreamingReasoning(t *testing.T) {
-	state := NewResponsesEventToAnthropicState()
+	state := NewResponsesEventToAnthropicStateWithEncryptedReasoning()
 
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:     "response.created",
@@ -1130,7 +1164,7 @@ func TestAnthropicToResponses_ThinkingEnabled(t *testing.T) {
 	// thinking.type is ignored for effort; Codex bridge default medium applies.
 	assert.Equal(t, "medium", resp.Reasoning.Effort)
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
-	assert.Contains(t, resp.Include, "reasoning.encrypted_content")
+	assert.NotContains(t, resp.Include, "reasoning.encrypted_content")
 	assert.NotContains(t, resp.Include, "reasoning.summary")
 }
 
