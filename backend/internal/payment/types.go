@@ -110,6 +110,9 @@ type CreatePaymentRequest struct {
 	OpenID             string // WeChat JSAPI payer OpenID when available
 	ClientIP           string // Payer's IP address
 	IsMobile           bool   // Whether the request comes from a mobile device
+	// AlipayMobilePrecreate routes a mobile official Alipay request through
+	// alipay.trade.precreate instead of alipay.trade.wap.pay.
+	AlipayMobilePrecreate bool
 	InstanceSubMethods string // Comma-separated sub-methods from instance supported_types (for Stripe)
 	CryptoNetwork      string // BEpusdt network selected by the user (e.g. usdt.trc20)
 }

@@ -6619,6 +6619,8 @@
         cancelRateLimitWindowModeFixed: 'Fixed',
         alipayForceQRCode: 'Force Alipay QR Code',
         alipayForceQRCodeHint: 'When enabled, mobile Alipay users always see a QR code instead of being redirected to the mobile payment page',
+        alipayMobilePrecreateDeepLink: 'Open Alipay App for Mobile Payments',
+        alipayMobilePrecreateDeepLinkHint: 'Use face-to-face precreate for official Alipay on mobile, then open the Alipay app with a QR fallback',
         helpText: 'Help Text',
         helpImageUrl: 'Help Image URL',
         manageProviders: 'Manage Providers',

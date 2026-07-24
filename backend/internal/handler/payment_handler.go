@@ -101,6 +101,14 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	alipayMobilePrecreateDeepLink := false
+	if cfg.AlipayMobilePrecreateDeepLink {
+		alipayMobilePrecreateDeepLink, err = h.configService.UsesOfficialAlipayVisibleMethod(ctx)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 
 	subscriptionGroups, err := h.configService.ListSubscriptionCheckoutGroups(ctx)
 	if err != nil {
@@ -143,6 +151,7 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		HelpImageURL:              cfg.HelpImageURL,
 		StripePublishableKey:      cfg.StripePublishableKey,
 		AlipayForceQRCode:         cfg.AlipayForceQRCode,
+		AlipayMobilePrecreateDeepLink: alipayMobilePrecreateDeepLink,
 	})
 }
 
@@ -161,6 +170,7 @@ type checkoutInfoResponse struct {
 	HelpImageURL              string                              `json:"help_image_url"`
 	StripePublishableKey      string                              `json:"stripe_publishable_key"`
 	AlipayForceQRCode         bool                                `json:"alipay_force_qrcode"`
+	AlipayMobilePrecreateDeepLink bool                              `json:"alipay_mobile_precreate_deep_link"`
 }
 
 type checkoutPlan struct {
