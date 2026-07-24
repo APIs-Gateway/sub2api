@@ -21,9 +21,12 @@ type retirementRaceCache struct {
 	epochs                map[string]int64
 	retired               map[string]bool
 	listBuckets           []SchedulerBucket
+	listErr               error
 	captures              []SchedulerBucket
 	reopens               []SchedulerBucket
+	reopenErr             error
 	retireCalls           []SchedulerBucket
+	retireErr             error
 	setAttempts           map[string]int
 	published             map[string]int
 	versions              map[string]int
@@ -105,6 +108,9 @@ func (c *retirementRaceCache) SetSnapshot(_ context.Context, bucket SchedulerBuc
 func (c *retirementRaceCache) RetireBucket(_ context.Context, bucket SchedulerBucket) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.retireErr != nil {
+		return c.retireErr
+	}
 	if c.requireLifecycleLease && !c.lifecycleLeaseHeld {
 		return errors.New("retire called outside group lifecycle lease")
 	}
@@ -123,6 +129,9 @@ func (c *retirementRaceCache) RetireBucket(_ context.Context, bucket SchedulerBu
 func (c *retirementRaceCache) ReopenBucket(_ context.Context, bucket SchedulerBucket) (SchedulerBucketWriteToken, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.reopenErr != nil {
+		return SchedulerBucketWriteToken{}, c.reopenErr
+	}
 	if c.requireLifecycleLease && !c.lifecycleLeaseHeld {
 		return SchedulerBucketWriteToken{}, errors.New("reopen called outside group lifecycle lease")
 	}
@@ -174,6 +183,9 @@ func (c *retirementRaceCache) UnlockBucket(context.Context, SchedulerBucket) err
 }
 
 func (c *retirementRaceCache) ListBuckets(context.Context) ([]SchedulerBucket, error) {
+	if c.listErr != nil {
+		return nil, c.listErr
+	}
 	return append([]SchedulerBucket(nil), c.listBuckets...), nil
 }
 
@@ -200,6 +212,7 @@ type retirementGroupRepo struct {
 	groups []Group
 	err    error
 	group  *Group
+	getErr error
 }
 
 func (r *retirementGroupRepo) ListActive(context.Context) ([]Group, error) {
@@ -207,6 +220,9 @@ func (r *retirementGroupRepo) ListActive(context.Context) ([]Group, error) {
 }
 
 func (r *retirementGroupRepo) GetByIDLite(context.Context, int64) (*Group, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	if r.group == nil {
 		return nil, ErrGroupNotFound
 	}
@@ -423,6 +439,122 @@ func TestSchedulerListFallbackKeepsDBResultWhenCachePublishErrors(t *testing.T) 
 	setAttempts, published = cache.counts(bucket)
 	require.Equal(t, 1, setAttempts)
 	require.Zero(t, published)
+}
+
+func TestSchedulerListFallbackIgnoresFencedCacheOperations(t *testing.T) {
+	bucket := SchedulerBucket{GroupID: 641, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}
+	account := Account{ID: 64101, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}
+	cfg := testConfig()
+	cfg.Gateway.Scheduling.DbFallbackEnabled = true
+
+	cache := newRetirementRaceCache()
+	cache.captureErrs[bucket.String()] = ErrSchedulerBucketWriteFenced
+	svc := NewSchedulerSnapshotService(cache, nil, &mockAccountRepoForPlatform{accounts: []Account{account}}, nil, cfg)
+	groupID := bucket.GroupID
+	accounts, _, err := svc.ListSchedulableAccounts(context.Background(), &groupID, bucket.Platform, false)
+	require.NoError(t, err)
+	require.Equal(t, []Account{account}, accounts)
+	setAttempts, published := cache.counts(bucket)
+	require.Zero(t, setAttempts)
+	require.Zero(t, published)
+
+	cache = newRetirementRaceCache()
+	cache.setErrs[bucket.String()] = ErrSchedulerBucketWriteFenced
+	svc = NewSchedulerSnapshotService(cache, nil, &mockAccountRepoForPlatform{accounts: []Account{account}}, nil, cfg)
+	accounts, _, err = svc.ListSchedulableAccounts(context.Background(), &groupID, bucket.Platform, false)
+	require.NoError(t, err)
+	require.Equal(t, []Account{account}, accounts)
+	setAttempts, published = cache.counts(bucket)
+	require.Equal(t, 1, setAttempts)
+	require.Zero(t, published)
+}
+
+func TestSchedulerGroupEventGuardsAndDeduplicates(t *testing.T) {
+	cache := newRetirementRaceCache()
+	svc := NewSchedulerSnapshotService(cache, nil, nil, &retirementGroupRepo{}, testConfig())
+	groupID := int64(6411)
+
+	require.NoError(t, svc.handleGroupEvent(context.Background(), nil, nil))
+	zero := int64(0)
+	require.NoError(t, svc.handleGroupEvent(context.Background(), &zero, nil))
+
+	seen := map[batchSeenKey]struct{}{{groupID: groupID, lifecycle: true}: {}}
+	require.NoError(t, svc.handleGroupEvent(context.Background(), &groupID, seen))
+
+	simpleCfg := testConfig()
+	simpleCfg.RunMode = config.RunModeSimple
+	simpleSvc := NewSchedulerSnapshotService(cache, nil, nil, nil, simpleCfg)
+	require.NoError(t, simpleSvc.handleGroupEvent(context.Background(), &groupID, nil))
+}
+
+func TestSchedulerGroupLifecycleRejectsInvalidOrBusyState(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(6412)
+
+	cache := newRetirementRaceCache()
+	cache.lifecycleLeaseBusy = true
+	svc := NewSchedulerSnapshotService(cache, nil, nil, &retirementGroupRepo{}, testConfig())
+	require.ErrorIs(t, svc.handleGroupEvent(ctx, &groupID, nil), ErrSchedulerGroupLifecycleLeaseBusy)
+
+	acquireErr := errors.New("lifecycle lease unavailable")
+	cache = newRetirementRaceCache()
+	cache.lifecycleAcquireErr = acquireErr
+	svc = NewSchedulerSnapshotService(cache, nil, nil, &retirementGroupRepo{}, testConfig())
+	require.ErrorIs(t, svc.handleGroupEvent(ctx, &groupID, nil), acquireErr)
+
+	getErr := errors.New("group lookup failed")
+	cache = newRetirementRaceCache()
+	svc = NewSchedulerSnapshotService(cache, nil, nil, &retirementGroupRepo{getErr: getErr}, testConfig())
+	require.ErrorIs(t, svc.handleGroupEvent(ctx, &groupID, nil), getErr)
+	require.False(t, cache.lifecycleLeaseHeld)
+
+	for _, group := range []*Group{
+		{ID: groupID, Status: StatusActive},
+		{ID: groupID + 1, Status: StatusActive, Hydrated: true},
+	} {
+		cache = newRetirementRaceCache()
+		svc = NewSchedulerSnapshotService(cache, nil, nil, &retirementGroupRepo{group: group}, testConfig())
+		require.Error(t, svc.handleGroupEvent(ctx, &groupID, nil))
+		require.False(t, cache.lifecycleLeaseHeld)
+	}
+}
+
+func TestSchedulerGroupLifecyclePropagatesMutationAndReleaseErrors(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(6413)
+	group := &Group{ID: groupID, Status: StatusActive, Hydrated: true}
+
+	reopenErr := errors.New("reopen failed")
+	cache := newRetirementRaceCache()
+	cache.reopenErr = reopenErr
+	svc := NewSchedulerSnapshotService(cache, nil, nil, &retirementGroupRepo{group: group}, testConfig())
+	require.ErrorIs(t, svc.handleGroupEvent(ctx, &groupID, nil), reopenErr)
+	require.False(t, cache.lifecycleLeaseHeld)
+
+	lockErr := errors.New("bucket lock failed")
+	cache = newRetirementRaceCache()
+	cache.tryLockErr = lockErr
+	svc = NewSchedulerSnapshotService(cache, nil, nil, &retirementGroupRepo{group: group}, testConfig())
+	require.ErrorIs(t, svc.handleGroupEvent(ctx, &groupID, nil), lockErr)
+
+	listErr := errors.New("bucket list failed")
+	cache = newRetirementRaceCache()
+	cache.listErr = listErr
+	disabled := &Group{ID: groupID, Status: StatusDisabled, Hydrated: true}
+	svc = NewSchedulerSnapshotService(cache, nil, nil, &retirementGroupRepo{group: disabled}, testConfig())
+	require.ErrorIs(t, svc.handleGroupEvent(ctx, &groupID, nil), listErr)
+
+	retireErr := errors.New("retire failed")
+	cache = newRetirementRaceCache()
+	cache.retireErr = retireErr
+	svc = NewSchedulerSnapshotService(cache, nil, nil, &retirementGroupRepo{group: disabled}, testConfig())
+	require.ErrorIs(t, svc.handleGroupEvent(ctx, &groupID, nil), retireErr)
+
+	releaseErr := errors.New("release failed")
+	cache = newRetirementRaceCache()
+	cache.lifecycleReleaseErr = releaseErr
+	svc = NewSchedulerSnapshotService(cache, nil, nil, &retirementGroupRepo{group: group}, testConfig())
+	require.ErrorIs(t, svc.handleGroupEvent(ctx, &groupID, nil), releaseErr)
 }
 
 func TestSchedulerPrepareTasksSkipsFencedBucketsAndReturnsCaptureErrors(t *testing.T) {
