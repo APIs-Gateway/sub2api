@@ -65,6 +65,18 @@ func TestIsOfficialAlipayProviderInstance(t *testing.T) {
 	}
 }
 
+func TestUsesOfficialAlipayVisibleMethodWithoutProviderStorage(t *testing.T) {
+	t.Parallel()
+
+	got, err := (&PaymentConfigService{}).UsesOfficialAlipayVisibleMethod(context.Background())
+	if err != nil {
+		t.Fatalf("UsesOfficialAlipayVisibleMethod() error = %v", err)
+	}
+	if got {
+		t.Fatal("UsesOfficialAlipayVisibleMethod() = true without a configured provider")
+	}
+}
+
 func TestBuildCreateOrderResponseDefaultsToOrderCreated(t *testing.T) {
 	t.Parallel()
 

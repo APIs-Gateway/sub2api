@@ -74,6 +74,34 @@ func TestPcParseInt(t *testing.T) {
 	}
 }
 
+func TestPCEnvBoolOverride(t *testing.T) {
+	tests := []struct {
+		name     string
+		envValue *string
+		fallback bool
+		want     bool
+	}{
+		{name: "unset keeps configured value", fallback: true, want: true},
+		{name: "empty keeps configured value", envValue: ptr("  "), fallback: false, want: false},
+		{name: "true override", envValue: ptr(" true "), fallback: false, want: true},
+		{name: "false override", envValue: ptr("false"), fallback: true, want: false},
+		{name: "invalid keeps configured value", envValue: ptr("not-a-bool"), fallback: true, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envValue != nil {
+				t.Setenv(SettingAlipayMobilePrecreateDeepLink, *tt.envValue)
+			}
+			if got := pcEnvBoolOverride(SettingAlipayMobilePrecreateDeepLink, tt.fallback); got != tt.want {
+				t.Fatalf("pcEnvBoolOverride() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func ptr(value string) *string { return &value }
+
 func TestParsePaymentConfig(t *testing.T) {
 	t.Parallel()
 
