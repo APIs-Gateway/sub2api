@@ -6,6 +6,12 @@ const cancelOrder = vi.hoisted(() => vi.fn())
 const verifyOrder = vi.hoisted(() => vi.fn())
 const showError = vi.hoisted(() => vi.fn())
 const toCanvas = vi.hoisted(() => vi.fn())
+const alipayDeepLinkLauncher = vi.hoisted(() => ({
+  create: vi.fn(),
+  launch: vi.fn(),
+  dispose: vi.fn(),
+  onStateChange: undefined as undefined | ((state: 'launching' | 'backgrounded' | 'fallback') => void),
+}))
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -44,6 +50,10 @@ vi.mock('@/api/payment', () => ({
   },
 }))
 
+vi.mock('../alipayDeepLink', () => ({
+  createAlipayDeepLinkLauncher: alipayDeepLinkLauncher.create,
+}))
+
 vi.mock('qrcode', () => ({
   default: {
     toCanvas,
@@ -75,6 +85,10 @@ describe('PaymentStatusPanel', () => {
     verifyOrder.mockReset()
     showError.mockReset()
     toCanvas.mockReset().mockResolvedValue(undefined)
+    alipayDeepLinkLauncher.create.mockReset()
+    alipayDeepLinkLauncher.launch.mockReset()
+    alipayDeepLinkLauncher.dispose.mockReset()
+    alipayDeepLinkLauncher.onStateChange = undefined
   })
 
   afterEach(() => {
@@ -317,5 +331,37 @@ describe('PaymentStatusPanel', () => {
 
     pending.resolve(orderFactory('PENDING'))
     await flushPromises()
+  })
+
+  it('opens the Alipay app before rendering the QR fallback for a mobile precreate order', async () => {
+    alipayDeepLinkLauncher.create.mockImplementation((options: { onStateChange: (state: 'launching' | 'backgrounded' | 'fallback') => void }) => {
+      alipayDeepLinkLauncher.onStateChange = options.onStateChange
+      return { launch: alipayDeepLinkLauncher.launch, dispose: alipayDeepLinkLauncher.dispose }
+    })
+
+    const wrapper = mount(PaymentStatusPanel, {
+      props: {
+        orderId: 42,
+        qrCode: 'https://qr.alipay.com/dynamic-order',
+        expiresAt: '2099-01-01T12:30:00Z',
+        paymentType: 'alipay',
+        mobileAlipayDeepLink: true,
+      },
+      global: { stubs: { Icon: true } },
+    })
+
+    expect(alipayDeepLinkLauncher.create).toHaveBeenCalledWith(expect.objectContaining({
+      qrCode: 'https://qr.alipay.com/dynamic-order',
+    }))
+    expect(alipayDeepLinkLauncher.launch).toHaveBeenCalledOnce()
+    expect(wrapper.find('canvas').exists()).toBe(false)
+
+    alipayDeepLinkLauncher.onStateChange?.('fallback')
+    await flushPromises()
+    expect(wrapper.find('canvas').exists()).toBe(true)
+    expect(toCanvas).toHaveBeenCalled()
+
+    wrapper.unmount()
+    expect(alipayDeepLinkLauncher.dispose).toHaveBeenCalledOnce()
   })
 })
