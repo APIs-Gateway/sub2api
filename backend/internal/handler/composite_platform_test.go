@@ -42,6 +42,20 @@ func TestCompositeTargetPlatformHelpersFailClosedForUnknownModel(t *testing.T) {
 	require.Equal(t, service.PlatformComposite, effectiveAPIKeyPlatform(context, apiKey))
 }
 
+func TestCompositeTargetPlatformRefreshesContextForWebSocketRouting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformComposite}}
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+	ensureCompositeTargetPlatform(context, apiKey, "grok-4")
+
+	resolved, ok := service.ResolvedTargetPlatformFromContext(context.Request.Context())
+	require.True(t, ok)
+	require.Equal(t, service.PlatformGrok, resolved)
+	require.Equal(t, service.PlatformGrok, openAICompatibleRequestPlatform(context.Request.Context(), apiKey))
+}
+
 func TestCompositeTargetPlatformHelpersFallbacks(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
