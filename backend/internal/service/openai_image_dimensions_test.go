@@ -39,6 +39,39 @@ func TestDetectOpenAIImageResultSize(t *testing.T) {
 	require.Empty(t, detectOpenAIImageResultSize("not-image-data"))
 }
 
+func TestDetectOpenAIImageResultSize_SafelyRejectsIncompletePayloadsAndWebPHeaders(t *testing.T) {
+	require.Empty(t, detectOpenAIImageResultSize("   "))
+	require.Empty(t, detectOpenAIImageResultSize("data:,"))
+
+	for _, header := range [][]byte{
+		[]byte("RIFF"),
+		[]byte("RIFFxxxxWEBPVP8X"),
+		openAIImageTestWebPHeader("VP8 ", 30),
+		openAIImageTestWebPHeader("VP8L", 20),
+		openAIImageTestWebPHeader("ANIM", 30),
+	} {
+		width, height, ok := detectOpenAIWebPDimensions(header)
+		require.Zero(t, width)
+		require.Zero(t, height)
+		require.False(t, ok)
+	}
+}
+
+func TestReconcileOpenAIResponsesImageResultSizes_PreservesMetadataWhenDecodingFails(t *testing.T) {
+	meta := openAIResponsesImageResult{Size: "existing"}
+	results := []openAIResponsesImageResult{{Result: "not-image-data", Size: "auto"}}
+
+	reconcileOpenAIResponsesImageResultSizes(results, &meta)
+	require.Equal(t, "auto", results[0].Size)
+	require.Equal(t, "auto", meta.Size)
+
+	meta = openAIResponsesImageResult{Size: "existing"}
+	reconcileOpenAIResponsesImageResultSizes([]openAIResponsesImageResult{{Result: "not-image-data"}}, &meta)
+	require.Equal(t, "existing", meta.Size)
+	reconcileOpenAIResponsesImageResultSizes(nil, &meta)
+	require.Equal(t, "existing", meta.Size)
+}
+
 func TestOpenAIGatewayServiceForwardImages_OAuthUsesDecodedOutputDimensions(t *testing.T) {
 	run := runOpenAIOAuthImageActualSizeTest(t, false)
 
@@ -63,6 +96,45 @@ func TestOpenAIGatewayServiceForwardImages_OAuthStreamingUsesDecodedOutputDimens
 	require.Equal(t, "1672x941", gjson.Get(completed.Data, "size").String())
 	require.Equal(t, "auto", gjson.Get(completed.Data, "quality").String())
 	require.Equal(t, []string{"1672x941"}, run.result.ImageOutputSizes)
+}
+
+func TestOpenAIGatewayServiceForwardImages_OAuthStreamingFallbackUsesDecodedOutputDimensions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a test chart","stream":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	c.Set("api_key", &APIKey{ID: 42})
+
+	encoded := encodeOpenAIImageTestPNG(t, 640, 360)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ig_actual_size\",\"type\":\"image_generation_call\",\"result\":"+fmt.Sprintf("%q", encoded)+"}}\n\n"+
+				"data: [DONE]\n\n",
+		)),
+	}}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	result, err := svc.ForwardImages(context.Background(), c, &Account{
+		ID:       1,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token-123",
+		},
+	}, body, parsed, "")
+	require.NoError(t, err)
+	require.Equal(t, []string{"640x360"}, result.ImageOutputSizes)
+
+	events := parseOpenAIImageTestSSEEvents(rec.Body.String())
+	completed, ok := findOpenAIImageTestSSEEvent(events, "image_generation.completed")
+	require.True(t, ok)
+	require.Equal(t, "640x360", gjson.Get(completed.Data, "size").String())
 }
 
 type openAIOAuthImageActualSizeTestRun struct {
@@ -171,4 +243,12 @@ func encodeOpenAIImageTestWebPVP8L(width, height int) string {
 	header[23] = byte(height >> 2)
 	header[24] = byte(height>>10) & 0x0f
 	return base64.StdEncoding.EncodeToString(header)
+}
+
+func openAIImageTestWebPHeader(chunk string, size int) []byte {
+	header := make([]byte, size)
+	copy(header[0:4], "RIFF")
+	copy(header[8:12], "WEBP")
+	copy(header[12:16], chunk)
+	return header
 }
