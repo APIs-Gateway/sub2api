@@ -566,9 +566,18 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	if resp.StatusCode >= http.StatusBadRequest {
 		respBody := s.readUpstreamErrorBody(resp)
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+		s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
 		upstreamMsg := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(respBody))
 		if upstreamMsg == "" {
 			upstreamMsg = fmt.Sprintf("xAI upstream returned status %d", resp.StatusCode)
+		}
+		if isGrokContentPolicyRejection(resp.StatusCode, respBody) {
+			clientMsg := grokContentPolicyClientMessage(respBody)
+			MarkResponseCommitted(c)
+			c.JSON(http.StatusForbidden, gin.H{"error": gin.H{
+				"type": "invalid_request_error", "message": clientMsg,
+			}})
+			return nil, fmt.Errorf("grok content policy rejection: %s", clientMsg)
 		}
 		kind := "http_error"
 		if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
