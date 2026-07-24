@@ -43,7 +43,10 @@ func TestGrokMediaEndpointContracts(t *testing.T) {
 	require.False(t, GrokMediaEndpointVideoStatus.IsGenerationRequest())
 	require.Equal(t, http.MethodPost, GrokMediaEndpointImagesEdits.httpMethod())
 	require.Equal(t, http.MethodGet, GrokMediaEndpointVideoStatus.httpMethod())
+	require.Equal(t, "https://xai.test/v1/images/generations", mustGrokMediaURL(t, GrokMediaEndpointImagesGenerations, ""))
 	require.Equal(t, "https://xai.test/v1/images/edits", mustGrokMediaURL(t, GrokMediaEndpointImagesEdits, ""))
+	require.Equal(t, "https://xai.test/v1/videos/generations", mustGrokMediaURL(t, GrokMediaEndpointVideosGenerations, ""))
+	require.Equal(t, "https://xai.test/v1/videos/request-123", mustGrokMediaURL(t, GrokMediaEndpointVideoStatus, "request-123"))
 	_, err := GrokMediaEndpoint("unknown").upstreamURL("https://xai.test/v1", "")
 	require.Error(t, err)
 }

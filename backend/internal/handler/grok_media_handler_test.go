@@ -31,6 +31,26 @@ type grokMediaHandlerUpstream struct {
 	body     string
 }
 
+type grokMediaStatusFailoverUpstream struct {
+	service.HTTPUpstream
+	accountIDs []int64
+}
+
+func (u *grokMediaStatusFailoverUpstream) Do(req *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
+	u.accountIDs = append(u.accountIDs, accountID)
+	status := http.StatusOK
+	body := `{"id":"request-123","status":"completed"}`
+	if len(u.accountIDs) == 1 {
+		status = http.StatusNotFound
+		body = `{"error":{"message":"video belongs to another account"}}`
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}, nil
+}
+
 type grokMediaAccountRepo struct {
 	openAIImagesFailoverAccountRepo
 }
@@ -489,6 +509,25 @@ func TestGrokMediaHandlerFailsOverOnUpstreamError(t *testing.T) {
 
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Contains(t, rec.Body.String(), "temporarily unavailable")
+}
+
+func TestGrokMediaHandlerVideoStatus404SwitchesAccounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &grokMediaStatusFailoverUpstream{}
+	first := newGrokMediaTestAccount()
+	second := newGrokMediaTestAccount()
+	second.ID = first.ID + 1
+	second.Name = "grok-media-2"
+	h := newGrokMediaHandlerWithOptions(t, upstream, []service.Account{first, second}, []bool{true, true}, []bool{true, true})
+	h.maxAccountSwitches = 1
+	c, rec := newGrokMediaHandlerContext(t, "/v1/videos/request-123", "", true)
+	c.Request.Method = http.MethodGet
+	c.Params = gin.Params{{Key: "request_id", Value: "request-123"}}
+
+	h.GrokVideoStatus(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []int64{first.ID, second.ID}, upstream.accountIDs)
 }
 
 func TestGrokMediaHandlerReturnsBadGatewayForInvalidUpstreamURL(t *testing.T) {

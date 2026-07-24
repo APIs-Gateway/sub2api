@@ -106,6 +106,25 @@ func TestValidatedBaseURLRejectsUnsafeComponents(t *testing.T) {
 	}
 }
 
+func TestGrokMediaURLBuildersRejectInvalidBaseURL(t *testing.T) {
+	builders := []func(string) (string, error){
+		BuildImagesGenerationsURL,
+		BuildImagesEditsURL,
+		BuildVideosGenerationsURL,
+		func(baseURL string) (string, error) { return BuildVideoURL(baseURL, "request-123") },
+	}
+	for _, build := range builders {
+		_, err := build("https://xai.test/v1?token=secret")
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "secret")
+	}
+
+	for _, raw := range []string{"https://", "://malformed"} {
+		_, err := ValidatedBaseURL(raw)
+		require.Error(t, err, "raw=%s", raw)
+	}
+}
+
 func TestDefaultModelMappingIncludesGrokAliases(t *testing.T) {
 	t.Parallel()
 
