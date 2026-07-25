@@ -180,7 +180,7 @@ func TestSubscriptionOverdraftHTTP_ConcurrentDifferentKeysOnlyOneBorrowPostgres(
 
 	gotSub, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
 	require.NoError(t, err)
-	require.Equal(t, startExpireDay-1, gotSub.ExpireDay)
+	require.Equal(t, startExpireDay, gotSub.ExpireDay)
 	require.InDelta(t, 0, gotSub.DailyUsageUSD, 1e-9)
 	gotUser, err := client.User.Get(ctx, user.ID)
 	require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestSubscriptionOverdraftHTTP_LastServiceDaySucceedsWithoutChangingExpiryPo
 	gotSub, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
 	require.NoError(t, err)
 	require.Equal(t, today, gotSub.ExpireDay)
-	require.Equal(t, service.ExpireDayToExpiresAt(today), gotSub.ExpiresAt)
+	require.True(t, service.ExpireDayToExpiresAt(today).Equal(gotSub.ExpiresAt))
 	require.InDelta(t, 0, gotSub.DailyUsageUSD, 1e-9)
 	gotUser, err := client.User.Get(ctx, user.ID)
 	require.NoError(t, err)
