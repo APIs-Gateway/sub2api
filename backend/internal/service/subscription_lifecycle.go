@@ -3,8 +3,7 @@ package service
 // per-day 订阅生命周期纯计算：续费(renew) / 退款(refund) / 转套餐(change plan)。规格第 5–7 节。
 //
 // 唯一真相源 = 东八区自然日 expire_day。剩余/可退天数一律用 max(0, expire_day − today)，
-// 它天然已含「已用天 + 透支借走天」的扣减（每次透支把 expire_day 提前 1 天）；
-// 切勿用 T − 日历已过天数 这种忽略透支的算法（会退多 / 折多）。
+// 手动透支不改变 expire_day；切勿用 T − 日历已过天数以外的推导值替代该字段。
 
 // RenewExpireDay 计算同套餐续 addDays 天后的新 expire_day（规格第 5 节，D 不变）：
 //
@@ -23,14 +22,14 @@ func RenewExpireDay(curExpireDay, today, addDays int) int {
 // RefundAmount 按剩余服务天数比例退款（规格第 6 节）：退款额 = price × refundableDays / originalT。
 //
 //	refundableDays = max(0, expire_day − today)（调用方用 (*PerDayCard).RefundableDays(today) 取，
-//	  已含已用 + 透支借走的扣减）；originalT = 购买时的原始天数 validity_days。
+//	  originalT = 购买时的原始天数 validity_days。
 //
 // originalT ≤ 0 / refundableDays ≤ 0 / price ≤ 0 → 退款额 0（非法或无可退）。
 // 注意：本函数只算「按比例应退额」；退到何处（先填平钱包负债、余量进可用余额 / 原路退）由调用方按
 // 规格第 6 节处理。管理员 force 全额退也在调用方分支，不走本函数。
 //
 // 单笔订单口径：refundableDays 夹到 originalT。规格 §6 的等价式
-// 「refundable = T − 已用 − 透支借走」恒有 refundable ≤ T——但调用方常传整卡剩余天
+// refundable ≤ T——但调用方常传整卡剩余天
 // (*PerDayCard).RefundableDays(today)=expire_day−today，续费叠加后整卡剩余天会 > 本单 T，
 // 不夹则退款额 > 本单售价 P → 撞 REFUND_AMOUNT_EXCEEDED 误挡(只能 force 全额退);
 // 同样口径下 ChangePlanRemainingValue 复用本函数,旧卡续费叠加会把剩余价值 V 算超 → 超额抵扣资损。
@@ -53,7 +52,7 @@ func RefundAmount(price float64, refundableDays, originalT int) float64 {
 //
 //	V = P_旧 × max(0, expire_day_旧 − today) / T_旧。
 //
-// 旧卡已被透支借光天数(remaining=0) → V=0，转套餐即全额买新套餐。
+// 旧卡没有剩余服务天数(remaining=0) → V=0，转套餐即全额买新套餐。
 func ChangePlanRemainingValue(oldPrice float64, oldRefundableDays, oldT int) float64 {
 	return RefundAmount(oldPrice, oldRefundableDays, oldT)
 }
@@ -75,7 +74,7 @@ func ChangePlanNewCardTodayBalance(dNew, oldTodaySpent float64) float64 {
 
 // ChangePlanQuote 转套餐的完整资金/发卡测算（规格第 7 节），纯计算、无副作用，供服务层落账时直接取用。
 type ChangePlanQuote struct {
-	OldRemainingValue   float64 // V = P_旧 × max(0, expire_day_旧−today) / T_旧（旧卡折剩余价值，已含已用+透支借天扣减）
+	OldRemainingValue   float64 // V = P_旧 × max(0, expire_day_旧−today) / T_旧（旧卡折剩余价值）
 	NewPlanPrice        float64 // P_新 = D_新 × T_新 × u(D_新)
 	Diff                float64 // P_新 − V：>0 需补差价（从其他余额扣或发起支付）；<0 应退差价（进其他余额）
 	NewCardTodayBalance float64 // max(0, D_新 − 旧卡今日已用)（防套利；次日起按 D_新 发放）
@@ -84,7 +83,7 @@ type ChangePlanQuote struct {
 
 // QuoteChangePlan 用旧卡的剩余天数/原价/原天数与新套餐 D_新/T_新，测算转套餐的多退少补与新卡发放参数。
 //
-//	oldRefundableDays 用旧卡 (*PerDayCard).RefundableDays(today) 取（含透支借天扣减）；
+//	oldRefundableDays 用旧卡 (*PerDayCard).RefundableDays(today) 取；
 //	oldTodaySpent     用旧卡 (*PerDayCard).TodaySpentFromPackage(today) 取。
 //
 // 仅做纯测算；旧卡关闭、新卡落库、差额补扣/退、发起支付等副作用由服务层按规格第 7 节处理。

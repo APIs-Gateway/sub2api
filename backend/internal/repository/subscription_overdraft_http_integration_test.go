@@ -222,7 +222,7 @@ func TestSubscriptionOverdraftHTTP_MonthlyLimitFailureRollsBackPostgres(t *testi
 	require.Equal(t, service.MaxMonthlyOverdraftUses, gotUser.MonthlyOverdraftCount)
 }
 
-func TestSubscriptionOverdraftHTTP_NoFutureDayFailureRollsBackPostgres(t *testing.T) {
+func TestSubscriptionOverdraftHTTP_LastServiceDaySucceedsWithoutChangingExpiryPostgres(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
 	service.SetDefaultIdempotencyCoordinator(service.NewIdempotencyCoordinator(
@@ -245,17 +245,17 @@ func TestSubscriptionOverdraftHTTP_NoFutureDayFailureRollsBackPostgres(t *testin
 	require.NoError(t, err)
 	router := subscriptionOverdraftRouter(t, user.ID)
 
-	rec := performOverdraftRequest(t, router, "overdraft-no-future-"+uuid.NewString(), nil)
-	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), "OVERDRAFT_NO_FUTURE_DAY")
+	rec := performOverdraftRequest(t, router, "overdraft-last-service-day-"+uuid.NewString(), nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	gotSub, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
 	require.NoError(t, err)
 	require.Equal(t, today, gotSub.ExpireDay)
-	require.InDelta(t, 10, gotSub.DailyUsageUSD, 1e-9)
+	require.Equal(t, service.ExpireDayToExpiresAt(today), gotSub.ExpiresAt)
+	require.InDelta(t, 0, gotSub.DailyUsageUSD, 1e-9)
 	gotUser, err := client.User.Get(ctx, user.ID)
 	require.NoError(t, err)
-	require.Equal(t, 0, gotUser.MonthlyOverdraftCount)
+	require.Equal(t, 1, gotUser.MonthlyOverdraftCount)
 }
 
 func TestSubscriptionOverdraftHTTP_LegacyToggleEndpointRetiredPostgres(t *testing.T) {

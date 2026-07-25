@@ -7430,21 +7430,19 @@
     noActiveSubscriptionsDesc: '您没有任何有效订阅。请联系管理员获取订阅。',
     failedToLoad: '加载订阅失败',
     overdraftBtn: {
-      label: '透支借一天',
+      label: '透支刷新当日额度',
       remaining: '本月剩余 {n} 次',
-      confirmTitle: '透支借一天',
+      confirmTitle: '透支刷新当日额度',
       confirmMessage:
-        '将清空「今日已用额度」、立即恢复当日可用额度，代价是有效期提前 1 天。仅解日上限，周/月封顶仍然生效。每自然月最多 5 次。',
+        '将清空「今日已用额度」、立即恢复当日可用额度。仅解日上限，周/月封顶仍然生效。每自然月最多 5 次。',
       confirmOk: '确认透支',
-      success: '已透支：今日额度已刷新，有效期 −1 天',
+      success: '已透支：今日额度已刷新',
       disabledNotMaxed: '今日额度尚未用满，无需透支',
-      disabledNoFutureDay: '有效期不足，没有可借的未来天数',
       disabledExhausted: '本月透支次数已用满（每月最多 5 次）',
       errors: {
         noActiveCard: '没有生效中的订阅，无法透支',
         dailyNotExhausted: '今日额度尚未用满，无需透支',
         monthlyLimit: '本月透支次数已用满（每月最多 5 次）',
-        noFutureDay: '有效期不足，没有可借的未来天数',
         generic: '透支失败，请稍后重试'
       }
     },
