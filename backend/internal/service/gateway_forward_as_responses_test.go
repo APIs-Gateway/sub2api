@@ -74,6 +74,72 @@ func TestAdaptResponsesClientToolsForAnthropic_LiftsAdditionalTools(t *testing.T
 	require.Equal(t, "message", input[0].(map[string]any)["type"])
 }
 
+func TestResponsesClientToolAdapter_LowersHistoryAndRestoresPayload(t *testing.T) {
+	req := map[string]any{
+		"tools": []any{
+			map[string]any{"type": "custom", "name": "exec", "format": map[string]any{"type": "grammar"}},
+			map[string]any{"type": "tool_search"},
+			map[string]any{"type": "namespace", "name": "team", "tools": []any{map[string]any{"type": "function", "name": "send"}}},
+		},
+		"tool_choice": map[string]any{"type": "custom", "name": "exec"},
+		"input": []any{
+			map[string]any{"type": "custom_tool_call", "call_id": "c1", "name": "exec", "input": "dir"},
+			map[string]any{"type": "custom_tool_call_output", "call_id": "c1", "output": "ok"},
+			map[string]any{"type": "tool_search_call", "call_id": "s1", "arguments": map[string]any{"query": "git"}},
+			map[string]any{"type": "tool_search_output", "call_id": "s1", "output": map[string]any{"groups": []string{"git"}}},
+			map[string]any{"type": "function_call", "call_id": "n1", "namespace": "team", "name": "send", "arguments": "{}"},
+		},
+	}
+
+	mapping, changed, err := apicompat.AdaptResponsesClientTools(req)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, mapping.CustomTools["exec"])
+	require.True(t, mapping.ToolSearch)
+	require.Equal(t, apicompat.ResponsesNamespaceName{Namespace: "team", Name: "send"}, mapping.NamespaceTools["team__send"])
+
+	choice := req["tool_choice"].(map[string]any)
+	require.Equal(t, "function", choice["type"])
+	input := req["input"].([]any)
+	require.Equal(t, "function_call", input[0].(map[string]any)["type"])
+	require.Equal(t, "function_call_output", input[1].(map[string]any)["type"])
+	require.Equal(t, "function_call", input[2].(map[string]any)["type"])
+	require.Equal(t, "function_call_output", input[3].(map[string]any)["type"])
+	require.Equal(t, "team__send", input[4].(map[string]any)["name"])
+
+	payload := []byte(`{"id":"resp","output":[{"type":"function_call","id":"i1","call_id":"c1","name":"exec","arguments":"{\"input\":\"dir\"}"},{"type":"function_call","id":"i2","call_id":"s1","name":"tool_search","arguments":"{\"query\":\"git\"}"},{"type":"function_call","id":"i3","call_id":"n1","name":"team__send","arguments":"{}"}]}`)
+	restored, restoredChanged, err := apicompat.RestoreResponsesClientToolPayload(payload, mapping)
+	require.NoError(t, err)
+	require.True(t, restoredChanged)
+	require.JSONEq(t, `{"id":"resp","output":[{"type":"custom_tool_call","id":"i1","call_id":"c1","name":"exec","input":"dir"},{"type":"tool_search_call","id":"i2","call_id":"s1","execution":"client","arguments":{"query":"git"}},{"type":"function_call","id":"i3","call_id":"n1","name":"send","namespace":"team","arguments":"{}"}]}`, string(restored))
+}
+
+func TestResponsesClientToolStreamRestorer_ConvertsCustomToolLifecycle(t *testing.T) {
+	restorer := apicompat.NewResponsesClientToolStreamRestorer(apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}})
+	added := restorer.Restore(apicompat.ResponsesStreamEvent{
+		Type: "response.output_item.added", SequenceNumber: 7, OutputIndex: 0,
+		Item: &apicompat.ResponsesOutput{Type: "function_call", ID: "i1", CallID: "c1", Name: "exec", Status: "in_progress"},
+	})
+	require.Len(t, added, 1)
+	require.Equal(t, "custom_tool_call", added[0].Item.Type)
+	require.Empty(t, restorer.Restore(apicompat.ResponsesStreamEvent{Type: "response.function_call_arguments.delta", SequenceNumber: 8, ItemID: "i1", Delta: `{"input":"di`}))
+
+	done := restorer.Restore(apicompat.ResponsesStreamEvent{Type: "response.function_call_arguments.done", SequenceNumber: 9, ItemID: "i1", CallID: "c1", Name: "exec", Arguments: `{"input":"dir"}`})
+	require.Len(t, done, 2)
+	require.Equal(t, "response.custom_tool_call_input.delta", done[0].Type)
+	require.Equal(t, "dir", done[0].Delta)
+	require.Equal(t, "response.custom_tool_call_input.done", done[1].Type)
+	require.Equal(t, "dir", done[1].Input)
+
+	closed := restorer.Restore(apicompat.ResponsesStreamEvent{
+		Type: "response.output_item.done", SequenceNumber: 10, OutputIndex: 0,
+		Item: &apicompat.ResponsesOutput{Type: "function_call", ID: "i1", CallID: "c1", Name: "exec", Arguments: `{"input":"dir"}`, Status: "completed"},
+	})
+	require.Len(t, closed, 1)
+	require.Equal(t, "custom_tool_call", closed[0].Item.Type)
+	require.Equal(t, "dir", closed[0].Item.Input)
+}
+
 func namespaceToolAnthropicStream() string {
 	return strings.Join([]string{
 		`event: message_start`,
