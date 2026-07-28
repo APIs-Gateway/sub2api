@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"net/http/httptest"
 	"testing"
 
@@ -28,7 +27,7 @@ func TestBuildOpenAIWSHeaders_AppliesAPIKeyAccountOverrides(t *testing.T) {
 	}
 
 	headers, _ := (&OpenAIGatewayService{}).buildOpenAIWSHeaders(
-		context.Background(), c, account, "upstream-key", OpenAIWSProtocolDecision{}, false, "", "", "",
+		c, account, "upstream-key", OpenAIWSProtocolDecision{}, false, "", "", "",
 	)
 	require.Equal(t, "override-agent/2.0", headers.Get("User-Agent"))
 	require.Equal(t, "gateway", headers.Get("X-Vendor"))
