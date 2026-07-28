@@ -249,6 +249,12 @@ func TestSchedulerCacheBucketRetirementFencesWritersAndReopen(t *testing.T) {
 	retiredEpoch, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerEpochPrefix, bucket)).Int64()
 	require.NoError(t, err)
 	require.Greater(t, retiredEpoch, token.Epoch)
+	epochTTL, err := cache.rdb.TTL(ctx, schedulerBucketKey(schedulerEpochPrefix, bucket)).Result()
+	require.NoError(t, err)
+	require.Greater(t, epochTTL, time.Duration(schedulerRetirementFencingTTLSeconds-2)*time.Second)
+	retiredTTL, err := cache.rdb.TTL(ctx, schedulerBucketKey(schedulerRetiredPrefix, bucket)).Result()
+	require.NoError(t, err)
+	require.Greater(t, retiredTTL, time.Duration(schedulerRetirementFencingTTLSeconds-2)*time.Second)
 
 	// Retirement is idempotent and does not advance the epoch again.
 	require.NoError(t, cache.RetireBucket(ctx, bucket))
@@ -303,6 +309,9 @@ func TestSchedulerCacheBucketRetirementFencesWritersAndReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, newToken.ValidFor(bucket))
 	require.Equal(t, retiredEpoch, newToken.Epoch)
+	epochTTL, err = cache.rdb.TTL(ctx, schedulerBucketKey(schedulerEpochPrefix, bucket)).Result()
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(-1), epochTTL, "active bucket epochs must not expire after reopen")
 	reopenedAgain, err := cache.ReopenBucket(ctx, bucket)
 	require.NoError(t, err)
 	require.Equal(t, newToken, reopenedAgain, "reopen must be idempotent within one retirement generation")

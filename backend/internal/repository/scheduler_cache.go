@@ -34,6 +34,10 @@ const (
 	// snapshotGraceTTLSeconds 旧快照过期的宽限期（秒）。
 	// 替代立即 DEL，让正在读取旧版本的 reader 有足够时间完成 ZRANGE。
 	snapshotGraceTTLSeconds = 60
+
+	// schedulerRetirementFencingTTLSeconds 退休 bucket 的 epoch/tombstone
+	// 保留窗口（秒）。活跃 bucket reopen 后 epoch 会恢复为持久键。
+	schedulerRetirementFencingTTLSeconds = 24 * 60 * 60
 )
 
 var (
@@ -90,6 +94,8 @@ local currentActive = redis.call('GET', KEYS[5])
 if currentActive ~= false then
     redis.call('EXPIRE', ARGV[2] .. currentActive, tonumber(ARGV[3]))
 end
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[4]))
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[4]))
 redis.call('DEL', KEYS[4], KEYS[5])
 return currentEpoch
 `)
@@ -102,11 +108,13 @@ local retiredEpochRaw = redis.call('GET', KEYS[2])
 if retiredEpochRaw == false then
     if currentEpochRaw == false then
         redis.call('SET', KEYS[1], '1')
+        redis.call('PERSIST', KEYS[1])
         return 1
     end
     if currentEpoch == nil or currentEpoch < 1 then
         return -2
     end
+    redis.call('PERSIST', KEYS[1])
     return currentEpoch
 end
 
@@ -119,6 +127,7 @@ if currentEpoch == nil or currentEpoch < retiredEpoch then
 end
 
 redis.call('SET', KEYS[1], tostring(currentEpoch))
+redis.call('PERSIST', KEYS[1])
 redis.call('DEL', KEYS[2])
 redis.call('SREM', KEYS[3], ARGV[1])
 local currentActive = redis.call('GET', KEYS[5])
@@ -292,7 +301,7 @@ func (c *schedulerCache) RetireBucket(ctx context.Context, bucket service.Schedu
 		schedulerBucketSetKey,
 		schedulerBucketKey(schedulerReadyPrefix, bucket),
 		schedulerBucketKey(schedulerActivePrefix, bucket),
-	}, bucket.String(), snapshotKeyPrefix, snapshotGraceTTLSeconds).Int64()
+	}, bucket.String(), snapshotKeyPrefix, snapshotGraceTTLSeconds, schedulerRetirementFencingTTLSeconds).Int64()
 	if err != nil {
 		return err
 	}
