@@ -205,6 +205,39 @@ func TestResponsesClientToolStreamRestorer_HandlesRawAndToolSearchEvents(t *test
 	require.Equal(t, `{"query":"git"}`, closed[0].Item.Arguments)
 }
 
+func TestResponsesClientToolStreamRestorer_RestoresCompletedAndUnmappedEvents(t *testing.T) {
+	restorer := NewResponsesClientToolStreamRestorer(ResponsesClientToolMapping{
+		CustomTools: map[string]bool{"exec": true},
+		NamespaceTools: map[string]ResponsesNamespaceName{
+			"team__send": {Namespace: "team", Name: "send"},
+		},
+	})
+
+	completed := restorer.Restore(ResponsesStreamEvent{
+		Type: "response.completed", SequenceNumber: 1,
+		Response: &ResponsesResponse{Output: []ResponsesOutput{
+			{Type: "function_call", Name: "exec", Arguments: `{"input":"pwd"}`},
+			{Type: "function_call", Name: "team__send", Arguments: `{}`},
+		}},
+	})
+	require.Len(t, completed, 1)
+	require.Equal(t, "custom_tool_call", completed[0].Response.Output[0].Type)
+	require.Equal(t, "pwd", completed[0].Response.Output[0].Input)
+	require.Equal(t, "send", completed[0].Response.Output[1].Name)
+	require.Equal(t, "team", completed[0].Response.Output[1].Namespace)
+
+	unmapped := restorer.Restore(ResponsesStreamEvent{Type: "response.output_item.added", SequenceNumber: 2, Item: &ResponsesOutput{Type: "message", ID: "message-1"}})
+	require.Len(t, unmapped, 1)
+	require.Equal(t, "message", unmapped[0].Item.Type)
+
+	tracked := restorer.Restore(ResponsesStreamEvent{Type: "response.output_item.added", SequenceNumber: 3, OutputIndex: 9, Item: &ResponsesOutput{Type: "function_call", CallID: "call-only", Name: "exec"}})
+	require.Len(t, tracked, 1)
+	require.Empty(t, restorer.Restore(ResponsesStreamEvent{Type: "response.function_call_arguments.delta", SequenceNumber: 4, Name: "exec", Delta: `{"input":"ls"}`}))
+	finished := restorer.Restore(ResponsesStreamEvent{Type: "response.function_call_arguments.done", SequenceNumber: 5, Name: "exec"})
+	require.Len(t, finished, 2)
+	require.Equal(t, "ls", finished[1].Input)
+}
+
 func TestRestoreResponsesClientToolPayload_RestoresClientAndNamespaceCalls(t *testing.T) {
 	mapping := ResponsesClientToolMapping{
 		CustomTools: map[string]bool{"exec": true}, ToolSearch: true,
