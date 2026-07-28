@@ -184,7 +184,18 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 	}
 	switch statusCode {
 	case http.StatusUnauthorized:
-		s.tempUnscheduleGrok(ctx, account, 10*time.Minute, "grok oauth token unauthorized")
+		if s.grokTokenProvider == nil {
+			s.tempUnscheduleGrok(ctx, account, 10*time.Minute, "grok oauth token unauthorized")
+			break
+		}
+		if err := s.grokTokenProvider.RefreshAfterUnauthorized(ctx, account); err != nil {
+			s.tempUnscheduleGrok(ctx, account, 10*time.Minute, "grok oauth token refresh failed")
+			break
+		}
+		s.ClearAccountSchedulingBlock(account.ID)
+		if s.accountRepo != nil {
+			_ = s.accountRepo.ClearTempUnschedulable(ctx, account.ID)
+		}
 	case http.StatusForbidden:
 		s.tempUnscheduleGrok(ctx, account, 30*time.Minute, "grok entitlement or subscription tier denied")
 	case http.StatusTooManyRequests:

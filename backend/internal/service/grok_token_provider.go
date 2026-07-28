@@ -54,6 +54,43 @@ func (p *GrokTokenProvider) SetTempUnschedCache(cache TempUnschedCache) {
 	p.tempUnschedCache = cache
 }
 
+// RefreshAfterUnauthorized invalidates the cached access token and forces one
+// refresh attempt. The normal refresh path deliberately checks expires_at, but
+// a 401 proves that an otherwise fresh-looking token is no longer accepted.
+func (p *GrokTokenProvider) RefreshAfterUnauthorized(ctx context.Context, account *Account) error {
+	if p == nil || account == nil {
+		return errors.New("grok token provider is not configured")
+	}
+	cacheKey := GrokTokenCacheKey(account)
+	if p.tokenCache != nil {
+		if err := p.tokenCache.DeleteAccessToken(ctx, cacheKey); err != nil {
+			return err
+		}
+	}
+	if p.refreshAPI == nil || p.executor == nil {
+		return errors.New("grok token refresh is not configured")
+	}
+
+	refreshCtx, cancel := context.WithTimeout(ctx, grokRequestRefreshTimeout)
+	defer cancel()
+	result, err := p.refreshAPI.RefreshIfNeeded(refreshCtx, account, p.executor, 0, true)
+	if err != nil {
+		p.markTempUnschedulable(account, err)
+		return err
+	}
+	if result == nil || result.LockHeld {
+		// Another worker owns the refresh lock and will publish the fresh account.
+		return nil
+	}
+	if result.Account != nil {
+		account.Credentials = cloneCredentials(result.Account.Credentials)
+	}
+	if result.NewCredentials != nil {
+		account.Credentials = cloneCredentials(result.NewCredentials)
+	}
+	return nil
+}
+
 func (p *GrokTokenProvider) GetAccessToken(ctx context.Context, account *Account) (string, error) {
 	if account == nil {
 		return "", errors.New("account is nil")

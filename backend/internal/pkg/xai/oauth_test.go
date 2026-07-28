@@ -83,3 +83,15 @@ func TestDefaultModelMappingIncludesGrokAliases(t *testing.T) {
 	require.Equal(t, "grok-4.20-0309-non-reasoning", mapping["grok-4.20-non-reasoning"])
 	require.Equal(t, "grok-4.20-multi-agent-0309", mapping["grok-4.20-multi-agent-0309"])
 }
+
+func TestDefaultModelsAndIDsReturnIndependentModelLists(t *testing.T) {
+	models := DefaultModels()
+	require.Len(t, models, 5)
+	require.Equal(t, "grok-4.3", models[0].ID)
+	require.Equal(t, "Grok 4.20 Multi Agent", models[4].DisplayName)
+
+	models[0].ID = "mutated"
+	ids := DefaultModelIDs()
+	require.Equal(t, "grok-4.3", ids[0])
+	require.Len(t, ids, len(DefaultModels()))
+}

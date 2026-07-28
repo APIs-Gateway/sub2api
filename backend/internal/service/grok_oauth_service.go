@@ -118,7 +118,7 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 	if state == "" {
 		state = strings.TrimSpace(parsed.State)
 	}
-	if state != "" && subtle.ConstantTimeCompare([]byte(state), []byte(session.State)) != 1 {
+	if state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(session.State)) != 1 {
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_INVALID_STATE", "invalid oauth state")
 	}
 
