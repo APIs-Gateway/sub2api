@@ -118,7 +118,7 @@ func (c *groupLifecycleTestCache) ReopenBucket(ctx context.Context, bucket Sched
 	reopenErr := c.reopenErr
 	reopenErrAt := c.reopenErrAt
 	c.stateMu.Unlock()
-	if !held {
+	if bucket.GroupID > 0 && !held {
 		return SchedulerBucketWriteToken{}, errors.New("reopen called outside group lifecycle lease")
 	}
 	if reopenErr != nil && (reopenErrAt <= 0 || call == reopenErrAt) {
@@ -490,6 +490,30 @@ func TestSchedulerFullRebuildActiveTombstoneDoesNotBlockFollowingGroupEvent(t *t
 		require.True(t, held)
 	}
 	require.Equal(t, 30, accounts.callCount())
+}
+
+func TestSchedulerFullRebuildReopensRetiredGroupZeroCanonical(t *testing.T) {
+	canonical := schedulerCanonicalBuckets(0)
+	cache := newFullRebuildLifecycleCache()
+	require.NoError(t, cache.retirementRaceCache.RetireBucket(context.Background(), canonical[0]))
+	cache.captureErrors[canonical[0].String()] = ErrSchedulerBucketRetired
+	groups := &fullRebuildLifecycleGroupRepo{
+		fresh:    make(map[int64]*Group),
+		freshErr: make(map[int64]error),
+	}
+	accounts := &fullRebuildAccountRepo{}
+	svc := newFullRebuildLifecycleService(cache, nil, accounts, groups, config.RunModeStandard)
+
+	require.NoError(t, svc.rebuildFullSnapshot(context.Background(), "test"))
+	require.Equal(t, 10, cache.captureAttemptCount())
+	require.Equal(t, 10, accounts.callCount())
+	tokens := cache.tokens()
+	require.Len(t, tokens, 1)
+	require.Equal(t, canonical[0], tokens[0].Bucket)
+	_, reopenHeld := cache.lifecycleMutationLeaseStates()
+	require.Equal(t, []bool{false}, reopenHeld, "group0 recovery must not require a group lifecycle lease")
+	_, published := cache.counts(canonical[0])
+	require.Equal(t, 1, published)
 }
 
 func TestSchedulerFullRebuildGlobalReadErrorsFailBeforeMutationOrDB(t *testing.T) {

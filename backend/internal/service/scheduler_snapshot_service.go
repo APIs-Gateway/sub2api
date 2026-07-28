@@ -1005,6 +1005,12 @@ func (s *SchedulerSnapshotService) captureFullRebuildCanonicalTasks(ctx context.
 	tasks := make([]schedulerBucketWriteTask, 0, len(buckets))
 	for _, bucket := range buckets {
 		token, err := s.cache.CaptureBucketWriteToken(ctx, bucket)
+		if errors.Is(err, ErrSchedulerBucketRetired) && bucket.GroupID == 0 {
+			// group0 has no lifecycle lease. A stale tombstone here would
+			// otherwise make every full rebuild fail forever, so reopen the
+			// canonical bucket and continue with the fresh epoch.
+			token, err = s.cache.ReopenBucket(ctx, bucket)
+		}
 		if err != nil {
 			return nil, err
 		}
