@@ -47,6 +47,26 @@ func TestEnforceCodexIdentityHeadersWithoutOriginatorIsNoop(t *testing.T) {
 	require.Equal(t, "curl/8.0", headers.Get("user-agent"))
 }
 
+func TestEnsureCodexIdentityHeadersNilHeadersIsNoop(t *testing.T) {
+	require.NotPanics(t, func() {
+		ensureCodexIdentityHeaders(nil)
+	})
+}
+
+func TestEnsureCodexIdentityHeadersPreservesCallerIdentity(t *testing.T) {
+	headers := make(http.Header)
+	headers.Set("User-Agent", "caller/1.0")
+	headers.Set("Originator", "caller-origin")
+	headers.Set("Version", "caller-version")
+
+	ensureCodexIdentityHeaders(headers)
+
+	require.Equal(t, "caller/1.0", headers.Get("User-Agent"))
+	require.Equal(t, "caller-origin", headers.Get("Originator"))
+	require.Equal(t, "caller-version", headers.Get("Version"))
+	require.Equal(t, "responses=experimental", headers.Get("OpenAI-Beta"))
+}
+
 func TestApplyOpenAICodexProbeHeaders(t *testing.T) {
 	headers := make(http.Header)
 
