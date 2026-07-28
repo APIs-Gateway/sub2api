@@ -122,12 +122,12 @@ func TestProbeOpenAIAPIKeyResponsesSupport_AppliesAllowedHeaderOverridesWithoutR
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
-			"api_key":  "upstream-secret",
-			"base_url": "https://compat.example",
+			"api_key":                    "upstream-secret",
+			"base_url":                   "https://compat.example",
 			credKeyHeaderOverrideEnabled: true,
 			credKeyHeaderOverrides: map[string]any{
 				"X-Upstream-Mode": "responses-probe",
-				"Authorization":    "Bearer forbidden-override",
+				"Authorization":   "Bearer forbidden-override",
 			},
 		},
 	}
@@ -142,7 +142,7 @@ func TestProbeOpenAIAPIKeyResponsesSupport_AppliesAllowedHeaderOverridesWithoutR
 	svc.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), account.ID)
 
 	require.NotNil(t, upstream.request)
-	require.Equal(t, "responses-probe", upstream.request.Header.Get("X-Upstream-Mode"))
+	require.Equal(t, "responses-probe", getHeaderRaw(upstream.request.Header, "x-upstream-mode"))
 	require.Equal(t, "Bearer upstream-secret", upstream.request.Header.Get("Authorization"))
 	require.Equal(t, true, repo.updates["openai_responses_supported"])
 }

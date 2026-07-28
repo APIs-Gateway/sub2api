@@ -50,12 +50,12 @@ func TestOpenAIUpstreamRequestBuilders_ApplyAPIKeyAccountOverrides(t *testing.T)
 	passthrough, err := svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, []byte(`{"model":"gpt-5"}`), "upstream-key")
 	require.NoError(t, err)
 	require.Equal(t, "override-agent/2.0", passthrough.Header.Get("User-Agent"))
-	require.Equal(t, "gateway", passthrough.Header.Get("X-Vendor"))
+	require.Equal(t, "gateway", getHeaderRaw(passthrough.Header, "x-vendor"))
 
 	request, err := svc.buildUpstreamRequest(context.Background(), c, account, []byte(`{"model":"gpt-5"}`), "upstream-key", false, "", false)
 	require.NoError(t, err)
 	require.Equal(t, "override-agent/2.0", request.Header.Get("User-Agent"))
-	require.Equal(t, "gateway", request.Header.Get("X-Vendor"))
+	require.Equal(t, "gateway", getHeaderRaw(request.Header, "x-vendor"))
 }
 
 type stubOpenAIAccountRepo struct {

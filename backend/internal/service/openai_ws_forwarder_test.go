@@ -30,7 +30,7 @@ func TestBuildOpenAIWSHeaders_AppliesAPIKeyAccountOverrides(t *testing.T) {
 		c, account, "upstream-key", OpenAIWSProtocolDecision{}, false, "", "", "",
 	)
 	require.Equal(t, "override-agent/2.0", headers.Get("User-Agent"))
-	require.Equal(t, "gateway", headers.Get("X-Vendor"))
+	require.Equal(t, "gateway", getHeaderRaw(headers, "x-vendor"))
 }
 
 // TestIsOpenAIWSTokenEvent_TerminalEventsExcluded 覆盖 isOpenAIWSTokenEvent 的回归用例。

@@ -15,14 +15,14 @@ func TestAccountApplyHeaderOverrides(t *testing.T) {
 			credKeyHeaderOverrideEnabled: true,
 			credKeyHeaderOverrides: map[string]any{
 				"Anthropic-Beta": "context-management-2025-06-27",
-				"authorization":   "Bearer forbidden",
-				"Content-Type":    "application/json; broken",
+				"authorization":  "Bearer forbidden",
+				"Content-Type":   "application/json; broken",
 			},
 		},
 	}
 	header := http.Header{"anthropic-beta": {"client"}, "Authorization": {"Bearer gateway"}}
 	account.ApplyHeaderOverrides(header)
-	require.Equal(t, "context-management-2025-06-27", header.Get("anthropic-beta"))
+	require.Equal(t, "context-management-2025-06-27", getHeaderRaw(header, "anthropic-beta"))
 	require.Equal(t, "Bearer gateway", header.Get("authorization"))
 	_, ok := account.HeaderOverrideValue("content-type")
 	require.False(t, ok)
@@ -33,7 +33,7 @@ func TestNormalizeHeaderOverrideCredentials(t *testing.T) {
 		credKeyHeaderOverrideEnabled: true,
 		credKeyHeaderOverrides: map[string]any{
 			" X-Upstream-Mode ": " enabled ",
-			"":                    "",
+			"":                  "",
 		},
 	}
 	require.NoError(t, NormalizeHeaderOverrideCredentials(credentials))
@@ -93,7 +93,7 @@ func TestAccountHeaderOverrides_EnabledNoopAndCaseInsensitiveReplacement(t *test
 	}
 	header = http.Header{"X-Upstream-Mode": {"client"}, "x-upstream-mode": {"duplicate"}}
 	enabled.ApplyHeaderOverrides(header)
-	require.Equal(t, "gateway", header.Get("X-Upstream-Mode"))
+	require.Equal(t, "gateway", getHeaderRaw(header, "x-upstream-mode"))
 	matching := 0
 	for name := range header {
 		if name == "X-Upstream-Mode" || name == "x-upstream-mode" {
@@ -122,7 +122,7 @@ func TestNormalizeHeaderOverrideCredentials_RejectsMalformedBlockedAndUnsafeValu
 		{"entry limit", map[string]any{credKeyHeaderOverrides: tooMany}},
 		{"name length limit", map[string]any{credKeyHeaderOverrides: map[string]any{string(make([]byte, maxHeaderOverrideNameLength+1)): "value"}}},
 		{"value length limit", map[string]any{credKeyHeaderOverrides: map[string]any{"X-Test": string(make([]byte, maxHeaderOverrideValueLength+1))}}},
-		{"CRLF value", map[string]any{credKeyHeaderOverrides: map[string]any{"X-Test": "ok\\r\\nInjected: true"}}},
+		{"CRLF value", map[string]any{credKeyHeaderOverrides: map[string]any{"X-Test": "ok\r\nInjected: true"}}},
 		{"authorization is gateway owned", map[string]any{credKeyHeaderOverrides: map[string]any{"Authorization": "Bearer override"}}},
 		{"anthropic API key is gateway owned", map[string]any{credKeyHeaderOverrides: map[string]any{"X-Api-Key": "override"}}},
 	}

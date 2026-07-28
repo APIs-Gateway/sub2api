@@ -49,12 +49,12 @@ func TestBuildOpenAIImagesRequests_ApplyAPIKeyAccountOverrides(t *testing.T) {
 	request, err := svc.buildOpenAIImagesRequest(context.Background(), c, account, []byte(`{"model":"gpt-image-1"}`), "application/json", "upstream-key", openAIImagesGenerationsEndpoint)
 	require.NoError(t, err)
 	require.Equal(t, "override-agent/2.0", request.Header.Get("User-Agent"))
-	require.Equal(t, "gateway", request.Header.Get("X-Vendor"))
+	require.Equal(t, "gateway", getHeaderRaw(request.Header, "x-vendor"))
 
 	pollRequest, err := svc.buildOpenAIImagesAsyncPollRequest(context.Background(), c, account, "upstream-key", "task-1")
 	require.NoError(t, err)
 	require.Equal(t, "override-agent/2.0", pollRequest.Header.Get("User-Agent"))
-	require.Equal(t, "gateway", pollRequest.Header.Get("X-Vendor"))
+	require.Equal(t, "gateway", getHeaderRaw(pollRequest.Header, "x-vendor"))
 }
 
 func (w *failingOpenAIImageWriter) Write(p []byte) (int, error) {

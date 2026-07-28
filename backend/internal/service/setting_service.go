@@ -2461,7 +2461,7 @@ func (s *SettingService) IsBackendModeEnabled(ctx context.Context) bool {
 
 type gatewayForwardingSettingsResult struct {
 	fp, mp, cch, claudeOAuthSystemPromptInjection, cacheTTL1h, rewriteMessageCacheControl, clientDatelineNormalization bool
-	claudeOAuthSystemPrompt, claudeOAuthSystemPromptBlocks                                string
+	claudeOAuthSystemPrompt, claudeOAuthSystemPromptBlocks                                                             string
 }
 
 func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context) gatewayForwardingSettingsResult {
@@ -3126,7 +3126,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// 分组隔离（默认不允许未分组 Key 调度）
 		SettingKeyAllowUngroupedKeyScheduling:               "false",
 		SettingKeyEnableAnthropicCacheTTL1hInjection:        "false",
-		SettingKeyEnableClientDatelineNormalization:          "true",
+		SettingKeyEnableClientDatelineNormalization:         "true",
 		SettingKeyRewriteMessageCacheControl:                strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyAntigravityUserAgentVersion:               "",
 		SettingKeyOpenAICodexUserAgent:                      "",
