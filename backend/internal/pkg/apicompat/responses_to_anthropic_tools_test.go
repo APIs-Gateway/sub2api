@@ -138,3 +138,18 @@ func TestResponsesToAnthropic_DefaultToolNormalizesInputSchema(t *testing.T) {
 	assert.Equal(t, "shell", tools[0].Name)
 	assert.JSONEq(t, `{"type":"object","properties":{}}`, string(tools[0].InputSchema))
 }
+
+func TestNormalizeAnthropicInputSchema_HandlesMalformedAndIncompleteSchemas(t *testing.T) {
+	assert.JSONEq(t, `{"type":"object","properties":{}}`, string(normalizeAnthropicInputSchema(nil)))
+	assert.JSONEq(t, `{"type":"object","properties":{}}`, string(normalizeAnthropicInputSchema(json.RawMessage(`not-json`))))
+	assert.JSONEq(t, `{"type":"object","properties":{}}`, string(normalizeAnthropicInputSchema(json.RawMessage(`{"type":"array"}`))))
+	assert.JSONEq(t, `{"type":"object","properties":{}}`, string(normalizeAnthropicInputSchema(json.RawMessage(`{"type":"object"}`))))
+	assert.JSONEq(t, `{"type":"object","properties":{"path":{"type":"string"}}}`, string(normalizeAnthropicInputSchema(json.RawMessage(`{"properties":{"path":{"type":"string"}}}`))))
+}
+
+func TestResponsesFunctionOutputToAnthropicContent_HandlesPartsAndFallbacks(t *testing.T) {
+	assert.JSONEq(t, `"(empty)"`, string(responsesFunctionOutputToAnthropicContent(ResponsesInputItem{})))
+	assert.JSONEq(t, `"fallback"`, string(responsesFunctionOutputToAnthropicContent(ResponsesInputItem{Output: "fallback", outputRaw: json.RawMessage(`[{"type":"input_text","text":""}]`)})))
+	assert.JSONEq(t, `"(empty)"`, string(responsesFunctionOutputToAnthropicContent(ResponsesInputItem{outputRaw: json.RawMessage(`[]`)})))
+	assert.JSONEq(t, `[{"type":"text","text":"first"},{"type":"text","text":"second"}]`, string(responsesFunctionOutputToAnthropicContent(ResponsesInputItem{outputRaw: json.RawMessage(`[{"type":"input_text","text":"first"},{"type":"output_text","text":"second"}]`)})))
+}

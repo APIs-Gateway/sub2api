@@ -74,6 +74,31 @@ func TestAdaptResponsesClientToolsForAnthropic_LiftsAdditionalTools(t *testing.T
 	require.Equal(t, "message", input[0].(map[string]any)["type"])
 }
 
+func TestAdaptResponsesClientToolsForAnthropic_HandlesPassthroughAndInvalidBodies(t *testing.T) {
+	body := []byte(`{"model":"claude-fable-5","input":"hello"}`)
+	adapted, mapping, err := adaptResponsesClientToolsForAnthropic(body)
+	require.NoError(t, err)
+	require.Equal(t, body, adapted)
+	require.Empty(t, mapping.CustomTools)
+	require.False(t, mapping.ToolSearch)
+
+	_, _, err = adaptResponsesClientToolsForAnthropic([]byte(`not-json`))
+	require.Error(t, err)
+
+	request := map[string]any{"input": []any{"unchanged", map[string]any{"type": "message"}}}
+	changed, err := liftResponsesAdditionalTools(request)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Len(t, request["input"].([]any), 2)
+
+	_, err = liftResponsesAdditionalTools(map[string]any{"input": []any{map[string]any{"type": "additional_tools", "tools": "not-an-array"}}})
+	require.Error(t, err)
+
+	changed, err = liftResponsesAdditionalTools(map[string]any{})
+	require.NoError(t, err)
+	require.False(t, changed)
+}
+
 func TestResponsesClientToolAdapter_LowersHistoryAndRestoresPayload(t *testing.T) {
 	req := map[string]any{
 		"tools": []any{
