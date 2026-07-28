@@ -58,6 +58,7 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactOAuthSuccessPersi
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
 	require.NotEmpty(t, upstream.lastReq.Header.Get("Session_Id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Codex-Window-ID"))
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
 	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "chatgpt-acc", upstream.lastReq.Header.Get("chatgpt-account-id"))
@@ -155,6 +156,7 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactAPIKeyUsesCompact
 	require.NoError(t, err)
 
 	require.Equal(t, "https://example.com/v1/responses/compact", upstream.lastReq.URL.String())
+	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Codex-Window-ID"))
 	require.Equal(t, "gpt-5.4-openai-compact", gjson.GetBytes(upstream.lastBody, "model").String())
 	updates := <-updateCalls
 	require.Equal(t, true, updates["openai_compact_supported"])
@@ -198,5 +200,6 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactAPIKeyDefaultBase
 	err := svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact)
 	require.NoError(t, err)
 	require.Equal(t, "https://api.openai.com/v1/responses/compact", upstream.lastReq.URL.String())
+	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Codex-Window-ID"))
 	<-updateCalls
 }
