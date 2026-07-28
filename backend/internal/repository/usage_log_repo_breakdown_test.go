@@ -54,6 +54,16 @@ func TestResolveModelDimensionExpression(t *testing.T) {
 	}
 }
 
+func TestAppendUsageLogModelWhereCondition(t *testing.T) {
+	conditions, args := appendUsageLogModelWhereCondition(nil, nil, "gpt-5", usagestats.ModelSourceRequested)
+	require.Equal(t, []string{"COALESCE(NULLIF(TRIM(requested_model), ''), model) = $1"}, conditions)
+	require.Equal(t, []any{"gpt-5"}, args)
+
+	conditions, args = appendUsageLogModelWhereCondition(nil, nil, "legacy-model", "")
+	require.Equal(t, []string{"model = $1"}, conditions)
+	require.Equal(t, []any{"legacy-model"}, args)
+}
+
 func TestGetUserBreakdownStatsRequestTypeIncludesLegacyFallback(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &usageLogRepository{sql: db}
