@@ -12,12 +12,20 @@ import (
 )
 
 type grokUnauthorizedCacheStub struct {
-	deleteKeys []string
-	cacheMiss  bool
-	setTokens  []string
+	deleteKeys    []string
+	cacheMiss     bool
+	setTokens     []string
+	getErr        error
+	deleteErr     error
+	setErr        error
+	lockResult    bool
+	lockResultSet bool
 }
 
 func (c *grokUnauthorizedCacheStub) GetAccessToken(context.Context, string) (string, error) {
+	if c.getErr != nil {
+		return "", c.getErr
+	}
 	if c.cacheMiss {
 		return "", nil
 	}
@@ -26,15 +34,18 @@ func (c *grokUnauthorizedCacheStub) GetAccessToken(context.Context, string) (str
 
 func (c *grokUnauthorizedCacheStub) SetAccessToken(_ context.Context, _ string, token string, _ time.Duration) error {
 	c.setTokens = append(c.setTokens, token)
-	return nil
+	return c.setErr
 }
 
 func (c *grokUnauthorizedCacheStub) DeleteAccessToken(_ context.Context, key string) error {
 	c.deleteKeys = append(c.deleteKeys, key)
-	return nil
+	return c.deleteErr
 }
 
 func (c *grokUnauthorizedCacheStub) AcquireRefreshLock(context.Context, string, time.Duration) (bool, error) {
+	if c.lockResultSet {
+		return c.lockResult, nil
+	}
 	return true, nil
 }
 
@@ -179,4 +190,73 @@ func TestGrokTokenCacheKeyUsesEmailWhenAvailable(t *testing.T) {
 		ID:          707,
 		Credentials: map[string]any{"email": " user@example.com "},
 	}))
+}
+
+func TestGrokTokenProviderUnauthorizedAndRefreshConfigurationErrors(t *testing.T) {
+	account := &Account{ID: 709, Platform: PlatformGrok, Type: AccountTypeOAuth}
+	var nilProvider *GrokTokenProvider
+	require.Error(t, nilProvider.RefreshAfterUnauthorized(context.Background(), account))
+	provider := NewGrokTokenProvider(nil, nil, nil)
+	require.Error(t, provider.RefreshAfterUnauthorized(context.Background(), nil))
+	require.Error(t, provider.RefreshAfterUnauthorized(context.Background(), account))
+
+	cacheErr := errors.New("cache delete failed")
+	provider = NewGrokTokenProvider(nil, &grokUnauthorizedCacheStub{deleteErr: cacheErr}, nil)
+	require.ErrorIs(t, provider.RefreshAfterUnauthorized(context.Background(), account), cacheErr)
+
+	provider.SetRefreshPolicy(ProviderRefreshPolicy{OnRefreshError: ProviderRefreshErrorUseExistingToken})
+	provider.SetTempUnschedCache(&tempUnschedCacheStub{})
+	require.Equal(t, ProviderRefreshErrorUseExistingToken, provider.refreshPolicy.OnRefreshError)
+}
+
+func TestGrokTokenProviderRefreshLockAndVersionBranches(t *testing.T) {
+	account := &Account{
+		ID:       710,
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":  "current-token",
+			"refresh_token": "refresh-token",
+			"expires_at":    time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
+		},
+	}
+	cache := &grokUnauthorizedCacheStub{cacheMiss: true, lockResult: false, lockResultSet: true}
+	repo := &refreshAPIAccountRepo{account: account}
+	executor := &refreshAPIExecutorStub{needsRefresh: true, credentials: map[string]any{"access_token": "unused"}}
+	provider := NewGrokTokenProvider(repo, cache, nil)
+	provider.SetRefreshAPI(NewOAuthRefreshAPI(repo, cache), executor)
+	token, err := provider.GetAccessToken(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, "current-token", token)
+
+	staleAccount := &Account{
+		ID:       711,
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "old-token",
+			"expires_at":   time.Now().Add(2 * time.Minute).UTC().Format(time.RFC3339),
+		},
+	}
+	latest := &Account{
+		ID:          711,
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "latest-token", "_token_version": int64(2)},
+	}
+	staleRepo := &refreshAPIAccountRepo{account: latest}
+	staleCache := &grokUnauthorizedCacheStub{cacheMiss: true, setErr: errors.New("set failed")}
+	provider = NewGrokTokenProvider(staleRepo, staleCache, nil)
+	token, err = provider.GetAccessToken(context.Background(), staleAccount)
+	require.NoError(t, err)
+	require.Equal(t, "latest-token", token)
+
+	getErrCache := &grokUnauthorizedCacheStub{cacheMiss: true, getErr: errors.New("cache unavailable")}
+	provider = NewGrokTokenProvider(nil, getErrCache, nil)
+	_, err = provider.GetAccessToken(context.Background(), &Account{
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)},
+	})
+	require.EqualError(t, err, "access_token not found in credentials")
 }

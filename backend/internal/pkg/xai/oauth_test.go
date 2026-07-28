@@ -5,6 +5,7 @@ package xai
 import (
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -94,4 +95,38 @@ func TestDefaultModelsAndIDsReturnIndependentModelLists(t *testing.T) {
 	ids := DefaultModelIDs()
 	require.Equal(t, "grok-4.3", ids[0])
 	require.Len(t, ids, len(DefaultModels()))
+}
+
+func TestSessionStoreExpiresAndDeletesSessions(t *testing.T) {
+	store := NewSessionStore()
+	defer store.Stop()
+
+	store.Set("live", &OAuthSession{CreatedAt: time.Now()})
+	got, ok := store.Get("live")
+	require.True(t, ok)
+	require.NotNil(t, got)
+
+	store.Set("expired", &OAuthSession{CreatedAt: time.Now().Add(-SessionTTL - time.Second)})
+	got, ok = store.Get("expired")
+	require.False(t, ok)
+	require.Nil(t, got)
+
+	store.Delete("live")
+	_, ok = store.Get("live")
+	require.False(t, ok)
+	store.Stop()
+}
+
+func TestXAIEnvironmentOverridesAndAuthorizationInputEdges(t *testing.T) {
+	t.Setenv(EnvBaseURL, " https://env.example.test/v1/ ")
+	require.Equal(t, "https://env.example.test/v1", EffectiveBaseURL(""))
+	require.Equal(t, "https://override.example.test", EffectiveBaseURL(" https://override.example.test/ "))
+
+	require.Equal(t, AuthorizationInput{}, ParseAuthorizationInput(""))
+	require.Equal(t, AuthorizationInput{Code: "abc"}, ParseAuthorizationInput("code=abc&state="))
+	require.Equal(t, AuthorizationInput{Code: "abc"}, ParseAuthorizationInput("?code=abc&state="))
+
+	require.Equal(t, AuthorizationInput{Code: "abc", State: "state"}, ParseAuthorizationInput("https://callback.test/?code=abc&state=state"))
+	require.NotEmpty(t, BuildAuthorizationURL("state", "challenge", "", "nonce"))
+	require.Equal(t, "https://api.x.ai/v1/responses", BuildResponsesURL("https://api.x.ai/v1/"))
 }

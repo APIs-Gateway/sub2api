@@ -199,3 +199,101 @@ func TestOpenAIGatewayServiceGrokUnauthorizedRefreshFailureBlocks(t *testing.T) 
 	require.True(t, ok)
 	require.IsType(t, time.Time{}, blocked)
 }
+
+func TestOpenAIGatewayServiceGrokForwardTransportAndStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := &Account{
+		ID:       712,
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token",
+			"base_url":     "https://xai.test/v1",
+			"expires_at":   time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339),
+		},
+	}
+	provider := NewGrokTokenProvider(nil, &grokUnauthorizedCacheStub{cacheMiss: true}, nil)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	transportService := &OpenAIGatewayService{
+		grokTokenProvider: provider,
+		httpUpstream:      &httpUpstreamStub{err: errors.New("upstream unavailable")},
+	}
+	_, err := transportService.forwardGrokResponses(context.Background(), c, account, []byte(`{"model":"grok"}`), "grok", false, time.Now())
+	require.Error(t, err)
+
+	streamRecorder := httptest.NewRecorder()
+	streamContext, _ := gin.CreateTestContext(streamRecorder)
+	streamContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	streamService := &OpenAIGatewayService{
+		grokTokenProvider: provider,
+		httpUpstream: &httpUpstreamStub{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-stream\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-stream\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n\ndata: [DONE]\n\n")),
+		}},
+	}
+	result, err := streamService.forwardGrokResponses(context.Background(), streamContext, account, []byte(`{"model":"grok","stream":true}`), "grok", true, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "resp-stream", result.ResponseID)
+	require.Equal(t, 1, result.Usage.InputTokens)
+	require.Equal(t, 2, result.Usage.OutputTokens)
+}
+
+func TestOpenAIGatewayServiceGrokForwardUpstreamFailoverAndRequestErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := &Account{
+		ID:       713,
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token",
+			"base_url":     "https://xai.test/v1",
+			"expires_at":   time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339),
+		},
+	}
+	provider := NewGrokTokenProvider(nil, &grokUnauthorizedCacheStub{cacheMiss: true}, nil)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	service := &OpenAIGatewayService{
+		grokTokenProvider: provider,
+		httpUpstream: &httpUpstreamStub{resp: &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"unauthorized"}}`)),
+		}},
+	}
+	_, err := service.forwardGrokResponses(context.Background(), c, account, []byte(`{"model":"grok"}`), "grok", false, time.Now())
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusUnauthorized, failoverErr.StatusCode)
+
+	badURLAccount := *account
+	badURLAccount.Credentials = map[string]any{"access_token": "token", "base_url": "https://xai.test/\ninvalid"}
+	service.httpUpstream = &httpUpstreamStub{}
+	_, err = service.forwardGrokResponses(context.Background(), c, &badURLAccount, []byte(`{"model":"grok"}`), "grok", false, time.Now())
+	require.Error(t, err)
+}
+
+func TestOpenAIGatewayServiceGrokHelperBranches(t *testing.T) {
+	account := &Account{ID: 714, Platform: PlatformGrok, Type: AccountTypeOAuth}
+	(&OpenAIGatewayService{}).handleGrokAccountUpstreamError(context.Background(), nil, http.StatusUnauthorized, nil, nil)
+	(&OpenAIGatewayService{}).updateGrokUsageSnapshot(context.Background(), 1, nil)
+	(&OpenAIGatewayService{}).tempUnscheduleGrok(context.Background(), nil, time.Minute, "ignored")
+
+	service := &OpenAIGatewayService{}
+	service.handleGrokAccountUpstreamError(context.Background(), account, http.StatusUnauthorized, nil, nil)
+	_, blocked := service.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.True(t, blocked)
+	service.handleGrokAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, nil)
+	service.handleGrokAccountUpstreamError(context.Background(), account, http.StatusBadRequest, http.Header{}, nil)
+
+	repo := &tokenRefreshAccountRepo{}
+	service = &OpenAIGatewayService{accountRepo: repo}
+	service.tempUnscheduleGrok(context.Background(), account, time.Minute, "test")
+	require.Equal(t, 1, repo.setTempUnschedCalls)
+	require.Nil(t, ptrStringOrNil(" "))
+}

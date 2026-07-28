@@ -186,3 +186,47 @@ func TestGrokOAuthHandlerCreateAccountFromOAuth(t *testing.T) {
 	require.Equal(t, service.PlatformGrok, adminService.createdAccounts[0].Platform)
 	require.Equal(t, service.AccountTypeOAuth, adminService.createdAccounts[0].Type)
 }
+
+func TestGrokOAuthHandlerServiceAndAdminErrors(t *testing.T) {
+	oauthService := service.NewGrokOAuthService(nil, grokOAuthHandlerClientStub{})
+	defer oauthService.Stop()
+	adminService := &grokHandlerAdminService{stubAdminService: newStubAdminService()}
+	router := setupGrokOAuthHandlerRouter(NewGrokOAuthHandler(oauthService, adminService))
+
+	generate := grokHandlerRequest(t, router, http.MethodPost, "/auth-url", map[string]any{"proxy_id": 1})
+	require.Equal(t, http.StatusBadRequest, generate.Code)
+
+	invalidState := grokHandlerRequest(t, router, http.MethodPost, "/exchange", map[string]any{
+		"session_id": "missing",
+		"code":       "code",
+	})
+	require.Equal(t, http.StatusBadRequest, invalidState.Code)
+
+	proxyRefresh := grokHandlerRequest(t, router, http.MethodPost, "/refresh", map[string]any{
+		"refresh_token": "refresh-token",
+		"proxy_id":      1,
+	})
+	require.Equal(t, http.StatusOK, proxyRefresh.Code)
+
+	missingAccount := grokHandlerRequest(t, router, http.MethodPost, "/accounts/99/refresh", map[string]any{})
+	require.Equal(t, http.StatusInternalServerError, missingAccount.Code)
+
+	adminService.account = &service.Account{
+		ID: 42, Platform: service.PlatformGrok, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{"refresh_token": "refresh-token"},
+	}
+	adminService.updateAccountErr = errors.New("update failed")
+	updateErr := grokHandlerRequest(t, router, http.MethodPost, "/accounts/42/refresh", map[string]any{})
+	require.Equal(t, http.StatusInternalServerError, updateErr.Code)
+
+	adminService.updateAccountErr = nil
+	adminService.createAccountErr = errors.New("create failed")
+	authURL, err := oauthService.GenerateAuthURL(context.Background(), nil, "")
+	require.NoError(t, err)
+	createErr := grokHandlerRequest(t, router, http.MethodPost, "/accounts", map[string]any{
+		"session_id": authURL.SessionID,
+		"code":       "authorization-code",
+		"state":      authURL.State,
+	})
+	require.Equal(t, http.StatusInternalServerError, createErr.Code)
+}
