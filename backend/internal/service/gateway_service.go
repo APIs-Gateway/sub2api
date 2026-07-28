@@ -432,6 +432,9 @@ func isClaudeCodeCredentialScopeError(msg string) bool {
 var (
 	sseDataRe            = regexp.MustCompile(`^data:\s*`)
 	claudeCliUserAgentRe = regexp.MustCompile(`(?i)^claude-cli/\d+\.\d+\.\d+`)
+	clientDatelineHyphen = regexp.MustCompile(`Today(['’ʼʹ])s date is (\d{4})-(\d{2})-(\d{2})\.`)
+	clientDatelineSlash  = regexp.MustCompile(`Today(['’ʼʹ])s date is (\d{4})/(\d{2})/(\d{2})\.`)
+	systemReminderRe     = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
 
 	// claudeCodePromptPrefixes 用于检测 Claude Code 系统提示词的前缀列表
 	// 支持多种变体：标准版、Agent SDK 版、Explore Agent 版、Compact 版等
@@ -443,6 +446,121 @@ var (
 		"You are a helpful AI assistant tasked with summarizing conversations", // Compact 版
 	}
 )
+
+func normalizeAnthropicClientDatelineText(text string) string {
+	text = clientDatelineHyphen.ReplaceAllString(text, "Today's date is $2-$3-$4.")
+	return clientDatelineSlash.ReplaceAllString(text, "Today's date is $2-$3-$4.")
+}
+
+// normalizeAnthropicClientDateline removes known base-URL dateline variants
+// from OAuth/Setup Token Claude requests. Only top-level system text and
+// <system-reminder> content are in scope; user and tool text stay untouched.
+func normalizeAnthropicClientDateline(body []byte) []byte {
+	if len(body) == 0 || !bytes.Contains(body, []byte("date is ")) {
+		return body
+	}
+	out := body
+	if system := gjson.GetBytes(out, "system"); system.Exists() {
+		switch {
+		case system.Type == gjson.String:
+			if next := normalizeAnthropicClientDatelineText(system.String()); next != system.String() {
+				if updated, err := sjson.SetBytes(out, "system", next); err == nil {
+					out = updated
+				}
+			}
+		case system.IsArray():
+			idx := 0
+			system.ForEach(func(_, item gjson.Result) bool {
+				if item.Get("type").String() == "text" {
+					text := item.Get("text").String()
+					if next := normalizeAnthropicClientDatelineText(text); next != text {
+						if updated, err := sjson.SetBytes(out, fmt.Sprintf("system.%d.text", idx), next); err == nil {
+							out = updated
+						}
+					}
+				}
+				idx++
+				return true
+			})
+		}
+	}
+	messages := gjson.GetBytes(out, "messages")
+	if !messages.IsArray() {
+		return out
+	}
+	messageIndex := 0
+	messages.ForEach(func(_, message gjson.Result) bool {
+		content := message.Get("content")
+		normalizeReminderText := func(text string) string {
+			return systemReminderRe.ReplaceAllStringFunc(text, normalizeAnthropicClientDatelineText)
+		}
+		switch {
+		case content.Type == gjson.String:
+			if next := normalizeReminderText(content.String()); next != content.String() {
+				if updated, err := sjson.SetBytes(out, fmt.Sprintf("messages.%d.content", messageIndex), next); err == nil {
+					out = updated
+				}
+			}
+		case content.IsArray():
+			contentIndex := 0
+			content.ForEach(func(_, block gjson.Result) bool {
+				if block.Get("type").String() == "text" {
+					text := block.Get("text").String()
+					if next := normalizeReminderText(text); next != text {
+						if updated, err := sjson.SetBytes(out, fmt.Sprintf("messages.%d.content.%d.text", messageIndex, contentIndex), next); err == nil {
+							out = updated
+						}
+					}
+				}
+				contentIndex++
+				return true
+			})
+		}
+		messageIndex++
+		return true
+	})
+	return out
+}
+
+// systemHasBillingAttributionBlock recognizes Claude Code traffic that was
+// relayed by another gateway. Such relays commonly replace User-Agent but keep
+// the real Claude Code billing block and its cache breakpoints in the body.
+func systemHasBillingAttributionBlock(body []byte) bool {
+	system := gjson.GetBytes(body, "system")
+	if !system.IsArray() {
+		return false
+	}
+	found := false
+	system.ForEach(func(_, item gjson.Result) bool {
+		text := item.Get("text").String()
+		if strings.HasPrefix(text, "x-anthropic-billing-header:") &&
+			strings.Contains(text, "cc_entrypoint=cli") {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func (s *GatewayService) shouldNormalizeAnthropicClientDateline(ctx context.Context, account *Account) bool {
+	return s != nil && account != nil && account.IsAnthropicOAuthOrSetupToken() &&
+		s.settingService != nil && s.settingService.IsClientDatelineNormalizationEnabled(ctx)
+}
+
+func isClaudeCodeForwardRequest(ctx context.Context, c *gin.Context, parsed *ParsedRequest, body []byte) bool {
+	if parsed == nil {
+		return IsClaudeCodeClient(ctx)
+	}
+	userAgent := ""
+	if c != nil {
+		userAgent = c.GetHeader("User-Agent")
+	}
+	if IsClaudeCodeClient(ctx) || isClaudeCodeClient(userAgent, parsed.MetadataUserID) {
+		return true
+	}
+	return parsed.MetadataUserID != "" && systemHasBillingAttributionBlock(body)
+}
 
 // ErrNoAvailableAccounts 表示没有可用的账号
 var ErrNoAvailableAccounts = errors.New("no available accounts")
@@ -4489,29 +4607,43 @@ func ValidateClaudeOAuthSystemPromptBlocksConfig(raw string) error {
 	return nil
 }
 
+func extractSystemTextAndCacheControl(system any) (string, any) {
+	switch v := system.(type) {
+	case string:
+		return strings.TrimSpace(v), nil
+	case []any:
+		var parts []string
+		var cacheControl any
+		for _, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			text, ok := m["text"].(string)
+			if !ok || strings.TrimSpace(text) == "" {
+				continue
+			}
+			parts = append(parts, text)
+			if cc, exists := m["cache_control"]; exists && cc != nil {
+				cacheControl = cc
+			}
+		}
+		return strings.Join(parts, "\n\n"), cacheControl
+	default:
+		return "", nil
+	}
+}
+
 func rewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expansionPrompt string, blocksConfig string) []byte {
 	system = normalizeSystemParam(system)
 	expansionPrompt = defaultClaudeOAuthExpansionPrompt(expansionPrompt)
 
-	// 1. 提取原始 system prompt 文本
-	var originalSystemText string
-	switch v := system.(type) {
-	case string:
-		originalSystemText = strings.TrimSpace(v)
-	case []any:
-		var parts []string
-		for _, item := range v {
-			if m, ok := item.(map[string]any); ok {
-				if text, ok := m["text"].(string); ok && strings.TrimSpace(text) != "" {
-					parts = append(parts, text)
-				}
-			}
-		}
-		originalSystemText = strings.Join(parts, "\n\n")
-	}
+	// Preserve the last client cache breakpoint when the original system is
+	// migrated into the synthetic instruction message.
+	originalSystemText, originalSystemCacheControl := extractSystemTextAndCacheControl(system)
 
 	// 2. 构造 system 数组，对齐真实 Claude Code CLI 的 3-block 形态：
-	//    [0] billing attribution block（cc_version={cliVer}.{fp}; cc_entrypoint=cli; cch=00000;）
+	//    [0] billing attribution block（cc_version={cliVer}.{fp}; cc_entrypoint=cli;）
 	//    [1] "You are Claude Code..." 身份前缀 block（默认不带 cache_control）
 	//    [2] 工具无关的通用提示词扩充 block（带 cache_control 作为稳定缓存断点）
 	//
@@ -4519,9 +4651,8 @@ func rewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expa
 	//    区别于真实 CLI。这里注入 claudeCodeSystemPromptExpansion（中性段落）把形态做到
 	//    接近真实，同时不注入会污染被代理用户行为的工具专属指令。
 	//
-	//    billing block 的 cch=00000 是占位符，会被 buildUpstreamRequest 里的
-	//    signBillingHeaderCCH 替换成 xxhash64 签名。缺失 billing block 的系统 payload
-	//    是 Anthropic 判定第三方的关键信号之一（真实 CLI 每个请求都带）。
+	//    缺失 billing block 的系统 payload 是 Anthropic 判定第三方的关键信号之一
+	//    （真实 CLI 每个请求都带）。新版 CLI 已取消 cch=... 签名字段，故 block 不再注入 cch。
 	systemBlocks, blockErr := buildClaudeOAuthSystemPromptBlocksJSON(body, expansionPrompt, blocksConfig)
 	if blockErr != nil {
 		logger.LegacyPrintf("service.gateway", "Warning: failed to build configured Claude OAuth system blocks: %v", blockErr)
@@ -4541,10 +4672,17 @@ func rewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expa
 	//    模型仍通过 messages 接收完整指令，保留客户端功能
 	ccPromptTrimmed := strings.TrimSpace(claudeCodeSystemPrompt)
 	if originalSystemText != "" && originalSystemText != ccPromptTrimmed && !hasClaudeCodePrefix(originalSystemText) {
+		instructionBlock := map[string]any{
+			"type": "text",
+			"text": "[System Instructions]\n" + originalSystemText,
+		}
+		if originalSystemCacheControl != nil {
+			instructionBlock["cache_control"] = originalSystemCacheControl
+		}
 		instrMsg, err1 := json.Marshal(map[string]any{
 			"role": "user",
 			"content": []map[string]any{
-				{"type": "text", "text": "[System Instructions]\n" + originalSystemText},
+				instructionBlock,
 			},
 		})
 		ackMsg, err2 := json.Marshal(map[string]any{
@@ -4897,7 +5035,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// 最低缓存门槛，导致系统级缓存失效）。
 	//
 	// 对于非 Claude Code 的第三方客户端（opencode 等），仍然走完整 mimicry。
-	isClaudeCode := IsClaudeCodeClient(ctx) || isClaudeCodeClient(c.GetHeader("User-Agent"), parsed.MetadataUserID)
+	isClaudeCode := isClaudeCodeForwardRequest(ctx, c, parsed, body)
 	shouldMimicClaudeCode := account.IsOAuth() && !isClaudeCode
 
 	if shouldMimicClaudeCode {
@@ -4953,6 +5091,16 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			c.Set(toolNameRewriteKey, rw)
 		} else {
 			if err := replaceBody(applyToolsLastCacheBreakpoint(body)); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// Normalize only Anthropic OAuth/Setup Token bodies. API-key passthrough
+	// remains byte-for-byte transparent.
+	if s.shouldNormalizeAnthropicClientDateline(ctx, account) {
+		if normalized := normalizeAnthropicClientDateline(body); !bytes.Equal(normalized, body) {
+			if err := replaceBody(normalized); err != nil {
 				return nil, err
 			}
 		}
@@ -5072,7 +5220,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		if err != nil {
 			return nil, err
 		}
-		// 记录本次实际发送的 wire body；只有请求成功后才写回 ParsedRequest，避免 400 retry 基于已签名 CCH 再改写。
+		// 记录本次实际发送的 wire body；只有请求成功后才写回 ParsedRequest，避免 400 retry 基于已转换的 body 再改写。
 		lastWireBody = wireBody
 
 		// 发送请求
@@ -5486,7 +5634,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// 处理正常响应
 
 	if !bytes.Equal(lastWireBody, body) {
-		// 成功后再同步最终 wire body，避免失败重试从已签名 CCH 的 body 继续派生。
+		// 成功后再同步最终 wire body，避免失败重试从已转换的 body 继续派生。
 		if err := replaceBody(lastWireBody); err != nil {
 			return nil, err
 		}
@@ -5859,6 +6007,9 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	if c != nil && c.Request != nil {
 		clientBeta = getHeaderRaw(c.Request.Header, "anthropic-beta")
 	}
+	if override, ok := account.HeaderOverrideValue("anthropic-beta"); ok {
+		clientBeta = override
+	}
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, clientBeta); changed {
 		body = sanitized
 	}
@@ -5886,7 +6037,8 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	req.Header.Del("x-api-key")
 	req.Header.Del("x-goog-api-key")
 	req.Header.Del("cookie")
-	setHeaderRaw(req.Header, "x-api-key", token)
+	setAnthropicAPIKeyAuthHeader(req.Header, account, token)
+	account.ApplyHeaderOverrides(req.Header)
 
 	if getHeaderRaw(req.Header, "content-type") == "" {
 		setHeaderRaw(req.Header, "content-type", "application/json")
@@ -6779,9 +6931,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 
 	// OAuth账号：应用统一指纹和metadata重写（受设置开关控制）
 	var fingerprint *Fingerprint
-	enableFP, enableMPT, enableCCH := true, false, false
+	enableFP, enableMPT := true, false
 	if s.settingService != nil {
-		enableFP, enableMPT, enableCCH = s.settingService.GetGatewayForwardingSettings(ctx)
+		enableFP, enableMPT, _ = s.settingService.GetGatewayForwardingSettings(ctx)
 	}
 	if account.IsOAuth() && s.identityService != nil {
 		// 1. 获取或创建指纹（包含随机生成的ClientID）
@@ -6813,31 +6965,27 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		body = syncBillingHeaderVersion(body, fingerprint.UserAgent)
 	}
 
-	// === 计算最终 anthropic-beta header（先于 body sanitize 与 CCH 签名）===
+	// === 计算最终 anthropic-beta header（先于 body sanitize）===
 	//
 	// 顺序约束：
 	//   1) 算 finalBeta（纯函数，不依赖 req.Header；mimicry 路径会忽略客户端 beta，
 	//      与原“OAuth + mimicClaudeCode 跳过白名单透传”行为对齐）
 	//   2) 按 finalBeta 做能力维度 body sanitize（如 context-management beta 缺失 →
 	//      strip body.context_management，与 Bedrock 路径对称）
-	//   3) CCH 签名（必须使用 strip 后的 body，否则 hash 与最终 body 不一致 →
-	//      被 Anthropic 判 third-party）
-	//   4) NewRequest（body 至此最终敲定）
-	//   5) 透传白名单 / fingerprint / mimic header / 写入 finalBeta
+	//   3) NewRequest（body 至此最终敲定）
+	//   4) 透传白名单 / fingerprint / mimic header / 写入 finalBeta
 	policyFilterSet := s.getBetaPolicyFilterSet(ctx, c, account, modelID)
 	effectiveDropSet := mergeDropSets(policyFilterSet)
 	finalBetaHeader, finalBetaShouldSet := s.computeFinalAnthropicBeta(
 		tokenType, mimicClaudeCode, modelID, clientHeaders, body, effectiveDropSet,
 	)
+	if override, ok := account.HeaderOverrideValue("anthropic-beta"); ok {
+		finalBetaHeader, finalBetaShouldSet = override, true
+	}
 
 	// 能力维度 body sanitize：与最终 anthropic-beta header 对称
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, finalBetaHeader); changed {
 		body = sanitized
-	}
-
-	// CCH 签名：将 cch=00000 占位符替换为 xxHash64 签名（需在所有 body 修改之后）
-	if enableCCH {
-		body = signBillingHeaderCCH(body)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
@@ -6849,9 +6997,8 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	if tokenType == "oauth" {
 		setHeaderRaw(req.Header, "authorization", "Bearer "+token)
 	} else {
-		setHeaderRaw(req.Header, "x-api-key", token)
+		setAnthropicAPIKeyAuthHeader(req.Header, account, token)
 	}
-
 	// 白名单透传 headers
 	// OAuth mimicry 路径：跳过客户端 header 透传，与 Parrot 对齐。
 	// Parrot 的 build_upstream_headers 只发 9 个精确 header，不透传任何客户端 header。
@@ -6894,6 +7041,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	// 写入最终 anthropic-beta header
 	// 注：透传分支白名单可能写入了客户端 anthropic-beta，无条件 Del 一次再按 finalBeta
 	// 决定是否 set，确保 dropSet 过滤后的结果一定覆盖客户端原始值。
+	account.ApplyHeaderOverrides(req.Header)
 	deleteHeaderAllForms(req.Header, "anthropic-beta")
 	if finalBetaShouldSet {
 		setHeaderRaw(req.Header, "anthropic-beta", finalBetaHeader)
@@ -7187,9 +7335,7 @@ func mergeAnthropicBetaDropping(required []string, incoming string, drop map[str
 //
 // 设计动机：将原本在 buildUpstreamRequest 内联在一起、依赖 req.Header 的
 // anthropic-beta 计算逻辑抽成纯函数。这样调用方可以在 NewRequest 之前
-// 就提前拿到最终 beta header，进而能按它对 body 做能力维度 sanitize 后再做
-// CCH 签名——一举修复了以下之前由顺序依赖导致的能力维度 sanitize
-// 无法部署的问题（签名与最终 body 不一致可以被判 third-party）。
+// 就提前拿到最终 beta header，进而能按它对 body 做能力维度 sanitize。
 //
 // 返回 (value, shouldSet)：
 //   - shouldSet=false 意为“不主动设置 anthropic-beta header”，与原代码“
@@ -10336,6 +10482,9 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 	if c != nil && c.Request != nil {
 		clientBeta = getHeaderRaw(c.Request.Header, "anthropic-beta")
 	}
+	if override, ok := account.HeaderOverrideValue("anthropic-beta"); ok {
+		clientBeta = override
+	}
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, clientBeta); changed {
 		body = sanitized
 	}
@@ -10362,7 +10511,8 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 	req.Header.Del("x-api-key")
 	req.Header.Del("x-goog-api-key")
 	req.Header.Del("cookie")
-	req.Header.Set("x-api-key", token)
+	setAnthropicAPIKeyAuthHeader(req.Header, account, token)
+	account.ApplyHeaderOverrides(req.Header)
 
 	if req.Header.Get("content-type") == "" {
 		req.Header.Set("content-type", "application/json")
@@ -10406,9 +10556,9 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 
 	// OAuth 账号：应用统一指纹和重写 userID（受设置开关控制）
 	// 如果启用了会话ID伪装，会在重写后替换 session 部分为固定值
-	ctEnableFP, ctEnableMPT, ctEnableCCH := true, false, false
+	ctEnableFP, ctEnableMPT := true, false
 	if s.settingService != nil {
-		ctEnableFP, ctEnableMPT, ctEnableCCH = s.settingService.GetGatewayForwardingSettings(ctx)
+		ctEnableFP, ctEnableMPT, _ = s.settingService.GetGatewayForwardingSettings(ctx)
 	}
 	var ctFingerprint *Fingerprint
 	if account.IsOAuth() && s.identityService != nil {
@@ -10431,21 +10581,21 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 		body = syncBillingHeaderVersion(body, ctFingerprint.UserAgent)
 	}
 
-	// === 计算最终 anthropic-beta header（先于 body sanitize 与 CCH 签名）===
+	// === 计算最终 anthropic-beta header（先于 body sanitize）===
 	// 顺序约束同 buildUpstreamRequest。
 	ctEffectiveDropSet := mergeDropSets(s.getBetaPolicyFilterSet(ctx, c, account, modelID))
 	finalBetaHeader, finalBetaShouldSet := s.computeFinalCountTokensAnthropicBeta(
 		tokenType, mimicClaudeCode, modelID, clientHeaders, body, ctEffectiveDropSet,
 	)
+	if override, ok := account.HeaderOverrideValue("anthropic-beta"); ok {
+		finalBetaHeader, finalBetaShouldSet = override, true
+	}
 
 	// 能力维度 body sanitize：与最终 anthropic-beta header 对称
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, finalBetaHeader); changed {
 		body = sanitized
 	}
 
-	if ctEnableCCH {
-		body = signBillingHeaderCCH(body)
-	}
 	body = sanitizeCountTokensRequestBody(body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
@@ -10457,9 +10607,8 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 	if tokenType == "oauth" {
 		setHeaderRaw(req.Header, "authorization", "Bearer "+token)
 	} else {
-		setHeaderRaw(req.Header, "x-api-key", token)
+		setAnthropicAPIKeyAuthHeader(req.Header, account, token)
 	}
-
 	// 白名单透传 headers（恢复真实 wire casing）
 	for key, values := range clientHeaders {
 		lowerKey := strings.ToLower(key)
@@ -10493,6 +10642,7 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 	}
 
 	// 写入最终 anthropic-beta header（Del 一次避免白名单透传值残留）
+	account.ApplyHeaderOverrides(req.Header)
 	deleteHeaderAllForms(req.Header, "anthropic-beta")
 	if finalBetaShouldSet {
 		setHeaderRaw(req.Header, "anthropic-beta", finalBetaHeader)

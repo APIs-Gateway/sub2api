@@ -27,6 +27,36 @@ type failingOpenAIImageWriter struct {
 	writes    int
 }
 
+func TestBuildOpenAIImagesRequests_ApplyAPIKeyAccountOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":                 "upstream-key",
+			"base_url":                "https://upstream.example.com",
+			"header_override_enabled": true,
+			"header_overrides": map[string]any{
+				"user-agent": "override-agent/2.0",
+				"x-vendor":   "gateway",
+			},
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+
+	request, err := svc.buildOpenAIImagesRequest(context.Background(), c, account, []byte(`{"model":"gpt-image-1"}`), "application/json", "upstream-key", openAIImagesGenerationsEndpoint)
+	require.NoError(t, err)
+	require.Equal(t, "override-agent/2.0", request.Header.Get("User-Agent"))
+	require.Equal(t, "gateway", request.Header.Get("X-Vendor"))
+
+	pollRequest, err := svc.buildOpenAIImagesAsyncPollRequest(context.Background(), c, account, "upstream-key", "task-1")
+	require.NoError(t, err)
+	require.Equal(t, "override-agent/2.0", pollRequest.Header.Get("User-Agent"))
+	require.Equal(t, "gateway", pollRequest.Header.Get("X-Vendor"))
+}
+
 func (w *failingOpenAIImageWriter) Write(p []byte) (int, error) {
 	if w.writes >= w.failAfter {
 		return 0, errors.New("write failed: client disconnected")

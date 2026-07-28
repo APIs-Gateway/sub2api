@@ -1462,6 +1462,31 @@
           </div>
         </div>
 
+        <div
+          v-if="isHeaderOverridePlatform(form.platform)"
+          class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        >
+          <div class="mb-3 flex items-center justify-between">
+            <div>
+              <label class="input-label mb-0">{{ t('admin.accounts.headerOverride.title') }}</label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.headerOverride.hint') }}</p>
+            </div>
+            <Toggle v-model="headerOverrideEnabled" />
+          </div>
+          <div v-if="headerOverrideEnabled" class="space-y-2">
+            <p class="text-xs text-blue-700 dark:text-blue-400">{{ t('admin.accounts.headerOverride.info') }}</p>
+            <div v-for="(row, index) in headerOverrideRows" :key="index" class="flex gap-2">
+              <input v-model="row.name" type="text" class="input flex-1" :placeholder="t('admin.accounts.headerOverride.namePlaceholder')" />
+              <input v-model="row.value" type="text" class="input flex-1" :placeholder="t('admin.accounts.headerOverride.valuePlaceholder')" />
+              <button type="button" class="btn btn-secondary" @click="headerOverrideRows.splice(index, 1)">×</button>
+            </div>
+            <button type="button" class="btn btn-secondary" @click="headerOverrideRows.push({ name: '', value: '' })">
+              {{ t('admin.accounts.headerOverride.addRow') }}
+            </button>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.headerOverride.emptyValueHint') }}</p>
+          </div>
+        </div>
+
       </div>
 
       <!-- Bedrock credentials (only for Anthropic Bedrock type) -->
@@ -2647,6 +2672,24 @@
         </div>
       </div>
 
+      <div
+        v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.apiKeyAuthScheme') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.apiKeyAuthSchemeDesc') }}
+            </p>
+          </div>
+          <select v-model="anthropicAPIKeyAuthScheme" class="input w-52 text-sm">
+            <option value="x_api_key">{{ t('admin.accounts.anthropic.apiKeyAuthSchemeXApiKey') }}</option>
+            <option value="authorization_bearer">{{ t('admin.accounts.anthropic.apiKeyAuthSchemeBearer') }}</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Anthropic API Key: Web Search Emulation (hidden when global disabled) -->
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey' && webSearchGlobalEnabled"
@@ -3304,7 +3347,11 @@ import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import {
   applyAntigravityProjectID,
-  applyInterceptWarmup
+  applyInterceptWarmup,
+  applyHeaderOverride,
+  isHeaderOverridePlatform,
+  validateHeaderOverrideRows,
+  type HeaderOverrideRow
 } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
@@ -3482,6 +3529,8 @@ function parsePoolModeRetryStatusCodes(input: string): number[] {
 const customErrorCodesEnabled = ref(false)
 const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
+const headerOverrideEnabled = ref(false)
+const headerOverrideRows = ref<HeaderOverrideRow[]>([])
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
@@ -3492,7 +3541,9 @@ const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
+type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
+const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
 const {
@@ -3925,8 +3976,11 @@ watch(
     }
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
+      anthropicAPIKeyAuthScheme.value = 'x_api_key'
       webSearchEmulationMode.value = 'default'
     }
+    headerOverrideEnabled.value = false
+    headerOverrideRows.value = []
     // Reset OAuth states
     oauth.resetState()
     openaiOAuth.resetState()
@@ -3946,6 +4000,7 @@ watch(
     }
     if (platform !== 'anthropic' || category !== 'apikey') {
       anthropicPassthroughEnabled.value = false
+      anthropicAPIKeyAuthScheme.value = 'x_api_key'
       webSearchEmulationMode.value = 'default'
     }
   }
@@ -4326,6 +4381,8 @@ const resetForm = () => {
   customErrorCodesEnabled.value = false
   selectedErrorCodes.value = []
   customErrorCodeInput.value = null
+  headerOverrideEnabled.value = false
+  headerOverrideRows.value = []
   interceptWarmupRequests.value = false
   autoPauseOnExpired.value = true
   openaiPassthroughEnabled.value = false
@@ -4337,6 +4394,7 @@ const resetForm = () => {
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   anthropicPassthroughEnabled.value = false
+  anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   // Reset quota control state
   windowCostEnabled.value = false
@@ -4453,6 +4511,11 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
     extra.anthropic_passthrough = true
   } else {
     delete extra.anthropic_passthrough
+  }
+  if (anthropicAPIKeyAuthScheme.value === 'authorization_bearer') {
+    extra.anthropic_apikey_auth_scheme = 'authorization_bearer'
+  } else {
+    delete extra.anthropic_apikey_auth_scheme
   }
   if (webSearchEmulationMode.value === 'default') {
     delete extra.web_search_emulation
@@ -4747,6 +4810,15 @@ const handleSubmit = async () => {
     credentials.custom_error_codes_enabled = true
     credentials.custom_error_codes = [...selectedErrorCodes.value]
   }
+
+  if (headerOverrideEnabled.value) {
+    const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
+    if (headerError) {
+      appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
+      return
+    }
+  }
+  applyHeaderOverride(credentials, headerOverrideEnabled.value, headerOverrideRows.value, 'create')
 
   applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
   if (!applyTempUnschedConfig(credentials)) {

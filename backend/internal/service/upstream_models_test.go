@@ -138,26 +138,53 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 		Platform: PlatformAnthropic,
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
-			"api_key":  "anthropic-key",
-			"base_url": "https://anthropic.example.com/v1",
+			"api_key":                 "anthropic-key",
+			"base_url":                "https://anthropic.example.com/v1",
+			"header_override_enabled": true,
+			"header_overrides": map[string]any{
+				"user-agent": "anthropic-model-sync/1.0",
+			},
 		},
 	})
 	require.NoError(t, err)
 	require.Equal(t, "https://anthropic.example.com/v1/models", anthropicReq.URL.String())
 	require.Equal(t, "anthropic-key", anthropicReq.Header.Get("x-api-key"))
 	require.Equal(t, "2023-06-01", anthropicReq.Header.Get("anthropic-version"))
+	require.Equal(t, "anthropic-model-sync/1.0", anthropicReq.Header.Get("User-Agent"))
+
+	anthropicBearerReq, err := svc.buildAnthropicUpstreamModelsRequest(ctx, &Account{
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "ollama-key",
+			"base_url": "https://ollama.com",
+		},
+		Extra: map[string]any{
+			"anthropic_apikey_auth_scheme": AnthropicAPIKeyAuthSchemeAuthorizationBearer,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://ollama.com/v1/models", anthropicBearerReq.URL.String())
+	require.Equal(t, "Bearer ollama-key", anthropicBearerReq.Header.Get("Authorization"))
+	require.Empty(t, anthropicBearerReq.Header.Get("x-api-key"))
+	require.Equal(t, "2023-06-01", anthropicBearerReq.Header.Get("anthropic-version"))
 
 	openAIReq, err := svc.buildOpenAIUpstreamModelsRequest(ctx, &Account{
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
-			"api_key":  "openai-key",
-			"base_url": "https://openai.example.com",
+			"api_key":                 "openai-key",
+			"base_url":                "https://openai.example.com",
+			"header_override_enabled": true,
+			"header_overrides": map[string]any{
+				"user-agent": "openai-model-sync/1.0",
+			},
 		},
 	})
 	require.NoError(t, err)
 	require.Equal(t, "https://openai.example.com/v1/models", openAIReq.URL.String())
 	require.Equal(t, "Bearer openai-key", openAIReq.Header.Get("Authorization"))
+	require.Equal(t, "openai-model-sync/1.0", openAIReq.Header.Get("User-Agent"))
 
 	geminiReq, err := svc.buildGeminiUpstreamModelsRequest(ctx, &Account{
 		Platform: PlatformGemini,

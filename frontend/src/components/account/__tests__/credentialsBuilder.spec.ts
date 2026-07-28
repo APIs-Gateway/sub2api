@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest'
 import {
   ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY,
   applyAntigravityProjectID,
-  applyInterceptWarmup
+  applyInterceptWarmup,
+  applyHeaderOverride,
+  buildHeaderOverridesObject,
+  validateHeaderOverrideRows
 } from '../credentialsBuilder'
 
 describe('applyInterceptWarmup', () => {
@@ -80,5 +83,30 @@ describe('applyAntigravityProjectID', () => {
     expect(creds.project_id).toBe('onboard-project')
     expect(creds.model_mapping).toEqual({ 'gemini-*': 'gemini-2.5-flash' })
     expect(creds[ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY]).toBe('configured-project')
+  })
+})
+
+describe('header overrides', () => {
+  it('normalizes names and preserves empty values as placeholders', () => {
+    expect(buildHeaderOverridesObject([
+      { name: ' X-Upstream-Mode ', value: ' enabled ' },
+      { name: 'x-placeholder', value: '' }
+    ])).toEqual({ 'x-upstream-mode': 'enabled', 'x-placeholder': '' })
+  })
+
+  it('matches backend blocked names and UTF-8 value length validation', () => {
+    expect(validateHeaderOverrideRows([{ name: 'Content-Type', value: 'application/json' }])).toBe('blockedName')
+    expect(validateHeaderOverrideRows([{ name: 'x-client-request-id', value: 'fixed' }])).toBe('blockedName')
+    expect(validateHeaderOverrideRows([{ name: 'x-upstream', value: '测'.repeat(3000) }])).toBe('invalidValue')
+  })
+
+  it('removes override credentials while editing when disabled', () => {
+    const credentials: Record<string, unknown> = {
+      header_override_enabled: true,
+      header_overrides: { 'x-old': 'value' }
+    }
+    applyHeaderOverride(credentials, false, [], 'edit')
+    expect(credentials).not.toHaveProperty('header_override_enabled')
+    expect(credentials).not.toHaveProperty('header_overrides')
   })
 })

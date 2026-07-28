@@ -416,6 +416,7 @@ const baseSettingsResponse = {
   claude_oauth_system_prompt: "",
   claude_oauth_system_prompt_blocks: "",
   enable_anthropic_cache_ttl_1h_injection: false,
+  enable_client_dateline_normalization: true,
   rewrite_message_cache_control: false,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
@@ -842,6 +843,22 @@ describe("admin SettingsView payment visible method controls", () => {
       expect.objectContaining({
         rewrite_message_cache_control: true,
       }),
+    );
+  });
+
+  it("submits Anthropic client dateline normalization gateway setting", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      enable_client_dateline_normalization: false,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ enable_client_dateline_normalization: false }),
     );
   });
 

@@ -152,11 +152,7 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 
 		case item.Type == "function_call_output":
 			// function_call_output → user message with tool_result block
-			outputContent := item.Output
-			if outputContent == "" {
-				outputContent = "(empty)"
-			}
-			contentJSON, _ := json.Marshal(outputContent)
+			contentJSON := responsesFunctionOutputToAnthropicContent(item)
 			block := AnthropicContentBlock{
 				Type:      "tool_result",
 				ToolUseID: fromResponsesCallIDToAnthropic(item.CallID),
@@ -214,6 +210,45 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 	}
 
 	return system, messages, nil
+}
+
+func responsesFunctionOutputToAnthropicContent(item ResponsesInputItem) json.RawMessage {
+	if len(item.outputRaw) == 0 {
+		output := item.Output
+		if output == "" {
+			output = "(empty)"
+		}
+		content, _ := json.Marshal(output)
+		return content
+	}
+
+	var parts []ResponsesContentPart
+	if err := json.Unmarshal(item.outputRaw, &parts); err == nil {
+		blocks := make([]AnthropicContentBlock, 0, len(parts))
+		for _, part := range parts {
+			switch part.Type {
+			case "input_text", "output_text", "text":
+				if part.Text != "" {
+					blocks = append(blocks, AnthropicContentBlock{Type: "text", Text: part.Text})
+				}
+			case "input_image":
+				if source := dataURIToAnthropicImageSource(part.ImageURL); source != nil {
+					blocks = append(blocks, AnthropicContentBlock{Type: "image", Source: source})
+				}
+			}
+		}
+		if len(blocks) > 0 {
+			content, _ := json.Marshal(blocks)
+			return content
+		}
+		if len(parts) == 0 {
+			content, _ := json.Marshal("(empty)")
+			return content
+		}
+	}
+
+	content, _ := json.Marshal(item.Output)
+	return content
 }
 
 // normalizeAnthropicToolPairing rebuilds the message sequence so it satisfies
@@ -540,10 +575,7 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 			out = append(out, AnthropicTool{
 				Name:        t.Name,
 				Description: t.Description,
-				// Anthropic only supports object-shaped input schemas. Preserve
-				// Responses custom/freeform semantics by carrying the raw input in
-				// one required string field, then restoring it on the return path.
-				InputSchema: json.RawMessage(customToolInputSchema),
+				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
 			})
 		default:
 			// Pass through unknown tool types
@@ -566,27 +598,31 @@ func normalizeAnthropicInputSchema(schema json.RawMessage) json.RawMessage {
 	if trimmed == "" || trimmed == "null" {
 		return json.RawMessage(emptyObjectSchema)
 	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(schema, &object); err != nil {
-		return json.RawMessage(emptyObjectSchema)
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(schema, &m); err != nil {
+		return json.RawMessage(`{"type":"object","properties":{}}`)
 	}
-	typeRaw, ok := object["type"]
+
+	typeRaw, ok := m["type"]
 	if !ok || strings.TrimSpace(string(typeRaw)) == "" || string(typeRaw) == "null" {
-		object["type"] = json.RawMessage(`"object"`)
+		m["type"] = json.RawMessage(`"object"`)
 	} else {
-		var schemaType string
-		if err := json.Unmarshal(typeRaw, &schemaType); err != nil || schemaType != "object" {
+		var typ string
+		if err := json.Unmarshal(typeRaw, &typ); err != nil || typ != "object" {
 			return json.RawMessage(emptyObjectSchema)
 		}
 	}
-	if _, ok := object["properties"]; !ok {
-		object["properties"] = json.RawMessage(`{}`)
+
+	if _, ok := m["properties"]; !ok {
+		m["properties"] = json.RawMessage(`{}`)
 	}
-	normalized, err := json.Marshal(object)
+
+	out, err := json.Marshal(m)
 	if err != nil {
 		return json.RawMessage(emptyObjectSchema)
 	}
-	return normalized
+	return out
 }
 
 // convertResponsesToAnthropicToolChoice maps Responses tool_choice to Anthropic format.
@@ -595,8 +631,8 @@ func normalizeAnthropicInputSchema(schema json.RawMessage) json.RawMessage {
 //	"auto"                                     → {"type":"auto"}
 //	"required"                                 → {"type":"any"}
 //	"none"                                     → {"type":"none"}
-//	{"type":"function"|"custom","name":"X"}             → {"type":"tool","name":"X"}
-//	{"type":"function"|"custom","function":{"name":"X"}} → {"type":"tool","name":"X"} // legacy
+//	{"type":"function","name":"X"}                 → {"type":"tool","name":"X"}
+//	{"type":"function","function":{"name":"X"}}     → {"type":"tool","name":"X"} // legacy
 func convertResponsesToAnthropicToolChoice(raw json.RawMessage) (json.RawMessage, error) {
 	// Try as string first
 	var s string
@@ -613,7 +649,7 @@ func convertResponsesToAnthropicToolChoice(raw json.RawMessage) (json.RawMessage
 		}
 	}
 
-	// Function and custom tools both become Anthropic tool choices.
+	// Try as object with type=function
 	var tc struct {
 		Type     string `json:"type"`
 		Name     string `json:"name"`
@@ -621,7 +657,7 @@ func convertResponsesToAnthropicToolChoice(raw json.RawMessage) (json.RawMessage
 			Name string `json:"name"`
 		} `json:"function"`
 	}
-	if err := json.Unmarshal(raw, &tc); err == nil && (tc.Type == "function" || tc.Type == "custom") {
+	if err := json.Unmarshal(raw, &tc); err == nil && tc.Type == "function" {
 		name := strings.TrimSpace(tc.Name)
 		if name == "" {
 			name = strings.TrimSpace(tc.Function.Name)

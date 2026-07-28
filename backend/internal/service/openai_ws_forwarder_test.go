@@ -1,12 +1,38 @@
 package service
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBuildOpenAIWSHeaders_AppliesAPIKeyAccountOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "client-agent/1.0")
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":                 "upstream-key",
+			"header_override_enabled": true,
+			"header_overrides": map[string]any{
+				"user-agent": "override-agent/2.0",
+				"x-vendor":   "gateway",
+			},
+		},
+	}
+
+	headers, _ := (&OpenAIGatewayService{}).buildOpenAIWSHeaders(
+		context.Background(), c, account, "upstream-key", OpenAIWSProtocolDecision{}, false, "", "", "",
+	)
+	require.Equal(t, "override-agent/2.0", headers.Get("User-Agent"))
+	require.Equal(t, "gateway", headers.Get("X-Vendor"))
+}
 
 // TestIsOpenAIWSTokenEvent_TerminalEventsExcluded 覆盖 isOpenAIWSTokenEvent 的回归用例。
 // 重点验证终止事件（response.completed / response.done）不再被当作 token event，

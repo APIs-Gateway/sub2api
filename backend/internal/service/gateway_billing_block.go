@@ -74,10 +74,9 @@ func extractFirstUserText(body []byte) string {
 //
 // 形态严格对齐真实 Claude Code CLI：
 //
-//	x-anthropic-billing-header: cc_version=2.1.161.{fp}; cc_entrypoint=cli; cch=00000;
+//	x-anthropic-billing-header: cc_version=2.1.220.{fp}; cc_entrypoint=cli;
 //
-// cch=00000 是签名占位符，由 signBillingHeaderCCH 在 buildUpstreamRequest 阶段
-// 替换为基于完整 body 的 xxhash64 5 位十六进制摘要。
+// 新版 Claude Code CLI 不再发送 cch 签名字段，因此伪装流量也不得注入该字段。
 //
 // 此 block 不带 cache_control（与真实 CLI 一致；cache breakpoint 由后续的
 // Claude Code prompt block 承担）。
@@ -87,7 +86,7 @@ func buildBillingAttributionText(body []byte, cliVersion string) (string, error)
 	}
 	fp := computeClaudeCodeFingerprint(body, cliVersion)
 	return fmt.Sprintf(
-		"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli; cch=00000;",
+		"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli;",
 		cliVersion, fp,
 	), nil
 }

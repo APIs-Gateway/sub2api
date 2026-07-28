@@ -1,11 +1,14 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -417,7 +420,7 @@ func TestRewriteSystemForNonClaudeCode(t *testing.T) {
 			require.Contains(t, billingBlock["text"], "x-anthropic-billing-header:")
 			require.Contains(t, billingBlock["text"], "cc_version=")
 			require.Contains(t, billingBlock["text"], "cc_entrypoint=cli")
-			require.Contains(t, billingBlock["text"], "cch=00000")
+			require.NotContains(t, billingBlock["text"], "cch=")
 
 			systemBlock, ok := systemArr[1].(map[string]any)
 			require.True(t, ok)
@@ -468,6 +471,56 @@ func TestRewriteSystemForNonClaudeCode(t *testing.T) {
 	}
 }
 
+func TestRewriteSystemForNonClaudeCode_PreservesSystemCacheControlOnMigratedMessage(t *testing.T) {
+	body := []byte(`{"model":"claude-3","system":[{"type":"text","text":"Stable project instructions","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[{"role":"user","content":"hello"}]}`)
+	system := []any{
+		map[string]any{
+			"type":          "text",
+			"text":          "Stable project instructions",
+			"cache_control": map[string]any{"type": "ephemeral", "ttl": "1h"},
+		},
+	}
+
+	result := rewriteSystemForNonClaudeCode(body, system)
+
+	require.Equal(t, "[System Instructions]\nStable project instructions", gjson.GetBytes(result, "messages.0.content.0.text").String())
+	require.Equal(t, "ephemeral", gjson.GetBytes(result, "messages.0.content.0.cache_control.type").String())
+	require.Equal(t, "1h", gjson.GetBytes(result, "messages.0.content.0.cache_control.ttl").String())
+}
+
+func TestSystemHasBillingAttributionBlock(t *testing.T) {
+	body := []byte(`{"metadata":{"user_id":"session"},"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.220.abc; cc_entrypoint=cli;"}]}`)
+	require.True(t, systemHasBillingAttributionBlock(body))
+	require.False(t, systemHasBillingAttributionBlock([]byte(`{"system":[{"type":"text","text":"You are Claude Code"}]}`)))
+}
+
+func TestIsClaudeCodeForwardRequest_RecognizesProxiedClaudeCodeForCacheBypass(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+	c.Request.Header.Set("User-Agent", "Go-http-client/1.1")
+	parsed := &ParsedRequest{MetadataUserID: "proxied-claude-code-session"}
+	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.220.abc; cc_entrypoint=cli;"}]}`)
+
+	require.True(t, isClaudeCodeForwardRequest(context.Background(), c, parsed, body))
+	require.False(t, isClaudeCodeForwardRequest(context.Background(), c, parsed, []byte(`{"system":[]}`)))
+}
+
+func TestGatewayService_ShouldNormalizeAnthropicClientDateline_FailsClosedWithoutSettings(t *testing.T) {
+	account := &Account{Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+	var nilService *GatewayService
+	require.False(t, nilService.shouldNormalizeAnthropicClientDateline(context.Background(), account))
+	require.False(t, (&GatewayService{}).shouldNormalizeAnthropicClientDateline(context.Background(), account))
+}
+
+func TestNormalizeAnthropicClientDateline(t *testing.T) {
+	body := []byte(`{"system":[{"type":"text","text":"Today’s date is 2026/07/01."}],"messages":[{"role":"user","content":"keep Today’s date is 2026/07/01. <system-reminder>Todayʼs date is 2026/07/01.</system-reminder>"}]}`)
+	result := normalizeAnthropicClientDateline(body)
+	require.Equal(t, "Today's date is 2026-07-01.", gjson.GetBytes(result, "system.0.text").String())
+	content := gjson.GetBytes(result, "messages.0.content").String()
+	require.Contains(t, content, "keep Today’s date is 2026/07/01.")
+	require.Contains(t, content, "<system-reminder>Today's date is 2026-07-01.</system-reminder>")
+}
+
 func TestRewriteSystemForNonClaudeCodeWithPrompt_UsesCustomExpansionPrompt(t *testing.T) {
 	body := []byte(`{"model":"claude-3","system":"Project instructions","messages":[{"role":"user","content":"hello"}]}`)
 	customPrompt := "Custom Claude OAuth expansion prompt"
@@ -505,4 +558,52 @@ func TestRewriteSystemForNonClaudeCodeWithPromptBlocks_UsesConfiguredBlocks(t *t
 	require.False(t, arr[1].Get("cache_control").Exists())
 	require.Equal(t, "tail", arr[2].Get("text").String())
 	require.Equal(t, "1h", arr[2].Get("cache_control.ttl").String())
+}
+
+func TestNormalizeAnthropicClientDateline_NormalizesApostropheAndSeparatorVariants(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"ASCII apostrophe with slash", "Today's date is 2026/07/01."},
+		{"U+2019 apostrophe with hyphen", "Today\u2019s date is 2026-07-01."},
+		{"U+02BC apostrophe with slash", "Today\u02bcs date is 2026/07/01."},
+		{"U+02B9 apostrophe with hyphen", "Today\u02b9s date is 2026-07-01."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"system": tt.input})
+			require.NoError(t, err)
+			result := normalizeAnthropicClientDateline(body)
+			require.Equal(t, "Today's date is 2026-07-01.", gjson.GetBytes(result, "system").String())
+		})
+	}
+}
+
+func TestNormalizeAnthropicClientDateline_OnlyTouchesSupportedScopes(t *testing.T) {
+	body := []byte(`{"system":[{"type":"text","text":"Today\u2019s date is 2026/07/01."}],"messages":[{"role":"user","content":"keep Today\u2019s date is 2026/07/01. <system-reminder>Today\u02bcs date is 2026/07/01.</system-reminder>"},{"role":"user","content":[{"type":"text","text":"<system-reminder>Today\u02b9s date is 2026-07-01.</system-reminder>"},{"type":"tool_result","content":"Today\u2019s date is 2026/07/01."}]}]}`)
+	result := normalizeAnthropicClientDateline(body)
+	require.Equal(t, "Today's date is 2026-07-01.", gjson.GetBytes(result, "system.0.text").String())
+	content := gjson.GetBytes(result, "messages.0.content").String()
+	require.Contains(t, content, "keep Today\u2019s date is 2026/07/01.")
+	require.Contains(t, content, "<system-reminder>Today's date is 2026-07-01.</system-reminder>")
+	require.Equal(t, "<system-reminder>Today's date is 2026-07-01.</system-reminder>", gjson.GetBytes(result, "messages.1.content.0.text").String())
+	require.Equal(t, "Today\u2019s date is 2026/07/01.", gjson.GetBytes(result, "messages.1.content.1.content").String())
+}
+
+func TestNormalizeAnthropicClientDateline_MixedSeparatorsAreLeftUntouched(t *testing.T) {
+	body := []byte(`{"system":"Today\u2019s date is 2026-07/01."}`)
+	require.Equal(t, body, normalizeAnthropicClientDateline(body))
+}
+
+func TestNormalizeAnthropicClientDateline_NormalizesMultipleOccurrencesAndIsIdempotent(t *testing.T) {
+	body := []byte(`{"system":"Today\u2019s date is 2026/07/01. Next: Today\u02bcs date is 2026-07-02."}`)
+	first := normalizeAnthropicClientDateline(body)
+	require.Equal(t, "Today's date is 2026-07-01. Next: Today's date is 2026-07-02.", gjson.GetBytes(first, "system").String())
+	require.Equal(t, first, normalizeAnthropicClientDateline(first))
+}
+
+func TestNormalizeAnthropicClientDateline_FailsClosedForMalformedJSON(t *testing.T) {
+	body := []byte(`{"system":`)
+	require.Equal(t, body, normalizeAnthropicClientDateline(body))
 }

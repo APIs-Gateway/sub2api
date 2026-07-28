@@ -235,6 +235,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 	}
 	s.overrideBrowserUserAgent(ctx, account, req)
 	enforceCodexIdentityHeaders(req.Header)
+	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }
 
@@ -365,6 +366,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context
 	}
 
 	stripOpenAIAlphaSearchResponsesHeaders(req.Header)
+	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }
 

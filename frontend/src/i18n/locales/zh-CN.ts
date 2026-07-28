@@ -4087,6 +4087,10 @@
         apiKeyPassthrough: '自动透传（仅替换认证）',
         apiKeyPassthroughDesc:
           '仅对 Anthropic API Key 生效。开启后，messages/count_tokens 请求将透传上游并仅替换认证，保留计费/并发/审计及必要安全过滤；关闭即可回滚到现有兼容链路。',
+        apiKeyAuthScheme: '上游认证方式',
+        apiKeyAuthSchemeDesc: '选择转发到 Anthropic 兼容上游时使用的 API Key 认证头。Ollama Cloud 使用 Authorization: Bearer。',
+        apiKeyAuthSchemeXApiKey: 'x-api-key',
+        apiKeyAuthSchemeBearer: 'Authorization: Bearer',
         webSearchEmulation: 'Web Search 模拟',
         webSearchEmulationDesc:
           '为该 API Key 账号启用 web search 模拟。客户端发送纯 web_search 请求时，由网关调用第三方搜索 API 并构造响应返回。默认跟随渠道配置。',
@@ -4134,6 +4138,23 @@
       customErrorCodes: '自定义错误码',
       customErrorCodesHint: '仅对选中的错误码停止调度',
       customErrorCodesWarning: '仅选中的错误码会停止调度，其他错误将返回 500。',
+      headerOverride: {
+        title: '请求头覆写',
+        hint: '为兼容的 API Key 上游账号设置静态请求头。',
+        info: '认证、传输和单次请求会话头由网关管理，不能覆写。',
+        namePlaceholder: '请求头名称',
+        valuePlaceholder: '请求头值',
+        addRow: '添加请求头',
+        emptyValueHint: '值留空的行只作为占位，不会参与覆写。',
+        bulkDisableHint: '保存后将关闭所选账号的请求头覆写并清空已有配置。',
+        bulkReplaceHint: '保存后将用下方配置整体替换所选账号已有的请求头覆写配置。',
+        bulkEmptyRows: '请至少添加一行请求头再保存；如需清空已有配置，请关闭上方开关。',
+        invalidName: '请求头名称格式不正确',
+        blockedName: '该请求头由系统管理，不允许覆写。',
+        duplicateName: '存在重复的请求头名称（匹配不区分大小写）',
+        invalidValue: '请求头值格式不正确或长度超限',
+        tooManyEntries: '最多允许 64 个请求头覆写'
+      },
       customErrorCodes429Warning:
         '429 已有内置的限流处理机制。添加到自定义错误码后，将直接停止调度而非临时限流。确定要添加吗？',
       customErrorCodes529Warning:
@@ -6421,6 +6442,8 @@
         anthropicCacheTTL1hInjectionHint: '开启后，对 Anthropic OAuth/Setup Token 请求体中已有的 ephemeral 缓存块强制写入 1h；响应 usage 默认按 5m 回写计费，账号级 TTL 计费设置优先。',
         rewriteMessageCacheControl: '改写消息缓存断点',
         rewriteMessageCacheControlHint: '默认关闭，保留客户端在 messages 内容块中的 cache_control。开启后会清除客户端断点并注入代理断点，适合不自行管理缓存策略的客户端。',
+        clientDatelineNormalization: '归一化 Anthropic 客户端日期',
+        clientDatelineNormalizationHint: '仅作用于 Anthropic OAuth 和 Setup Token 请求，将客户端日期中的非 ASCII 撇号和斜杠日期格式还原，避免上游指纹识别。默认开启。',
         antigravityUserAgentVersion: 'Antigravity UA 版本',
         antigravityUserAgentVersionPlaceholder: '1.23.2',
         antigravityUserAgentVersionHint: '留空时使用 ANTIGRAVITY_USER_AGENT_VERSION 或内置默认值 1.23.2；填写后后台设置优先。',
