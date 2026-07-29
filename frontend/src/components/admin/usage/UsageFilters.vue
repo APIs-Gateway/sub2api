@@ -208,6 +208,7 @@ const userKeyword = ref('')
 const userResults = ref<SimpleUser[]>([])
 const showUserDropdown = ref(false)
 let userSearchTimeout: ReturnType<typeof setTimeout> | null = null
+let userSearchSequence = 0
 
 const apiKeyKeyword = ref('')
 const apiKeyResults = ref<SimpleApiKey[]>([])
@@ -252,18 +253,34 @@ const billingModeOptions = ref<SelectOption[]>([
 
 const emitChange = () => emit('change')
 
+const clearPendingUserSearch = () => {
+  if (userSearchTimeout) {
+    clearTimeout(userSearchTimeout)
+    userSearchTimeout = null
+  }
+  userSearchSequence += 1
+}
+
 const debounceUserSearch = () => {
-  if (userSearchTimeout) clearTimeout(userSearchTimeout)
+  clearPendingUserSearch()
+  const query = userKeyword.value.trim()
+  if (!query) {
+    userResults.value = []
+    return
+  }
+
+  const sequence = userSearchSequence
   userSearchTimeout = setTimeout(async () => {
-    if (!userKeyword.value) {
-      userResults.value = []
-      return
-    }
+    userSearchTimeout = null
     try {
-      const results = await adminAPI.usage.searchUsers(userKeyword.value)
-      userResults.value = results.sort((a, b) => Number(a.deleted) - Number(b.deleted))
+      const results = await adminAPI.usage.searchUsers(query)
+      if (sequence === userSearchSequence) {
+        userResults.value = results.sort((a, b) => Number(a.deleted) - Number(b.deleted))
+      }
     } catch {
-      userResults.value = []
+      if (sequence === userSearchSequence) {
+        userResults.value = []
+      }
     }
   }, 300)
 }
@@ -283,6 +300,7 @@ const debounceApiKeySearch = () => {
 }
 
 const selectUser = async (u: SimpleUser) => {
+  clearPendingUserSearch()
   userKeyword.value = u.email
   showUserDropdown.value = false
   filters.value.user_id = u.id
@@ -299,6 +317,7 @@ const selectUser = async (u: SimpleUser) => {
 }
 
 const clearUser = () => {
+  clearPendingUserSearch()
   userKeyword.value = ''
   userResults.value = []
   showUserDropdown.value = false
@@ -398,6 +417,7 @@ watch(
   () => filters.value.user_id,
   (userId) => {
     if (!userId) {
+      clearPendingUserSearch()
       userKeyword.value = ''
       userResults.value = []
     }
@@ -435,6 +455,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  clearPendingUserSearch()
   document.removeEventListener('click', onDocumentClick)
 })
 </script>
