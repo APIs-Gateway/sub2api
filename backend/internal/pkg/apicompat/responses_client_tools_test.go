@@ -365,3 +365,21 @@ func TestResponsesClientToolStreamRestorer_RestoreEventHandlesCompletedAndPlainL
 	require.True(t, changed)
 	require.Equal(t, int64(12), gjson.GetBytes(resequenced[0], "sequence_number").Int())
 }
+
+func TestResponsesClientToolStreamRestorer_IdentifiesRelevantWireEvents(t *testing.T) {
+	restorer := NewResponsesClientToolStreamRestorer(ResponsesClientToolMapping{
+		NamespaceTools: map[string]ResponsesNamespaceName{"team__send": {Namespace: "team", Name: "send"}},
+	})
+	require.False(t, restorer.clientToolEventPayload([]byte(`not-json`)))
+	require.False(t, restorer.clientToolEventPayload([]byte(`{"item":{"type":"message","name":"team__send"}}`)))
+	require.True(t, restorer.clientToolEventPayload([]byte(`{"item":{"type":"function_call","name":"team__send"}}`)))
+	require.True(t, restorer.clientToolEventPayload([]byte(`{"name":"team__send"}`)))
+	require.False(t, restorer.clientToolEventPayload([]byte(`{"name":"plain"}`)))
+
+	custom := NewResponsesClientToolStreamRestorer(ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}})
+	custom.Restore(ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 4, Item: &ResponsesOutput{Type: "function_call", ID: "item", CallID: "call", Name: "exec"}})
+	require.True(t, custom.clientToolEventPayload([]byte(`{"item":{"type":"function_call","id":"item","name":"plain"}}`)))
+	require.True(t, custom.clientToolEventPayload([]byte(`{"item_id":"item"}`)))
+	require.True(t, custom.clientToolEventPayload([]byte(`{"call_id":"call"}`)))
+	require.True(t, custom.clientToolEventPayload([]byte(`{"output_index":4}`)))
+}
