@@ -7909,6 +7909,30 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 		changed = true
 	}
 
+	if inputResult := gjson.GetBytes(normalized, "input"); inputResult.Exists() {
+		switch {
+		case inputResult.Type == gjson.String:
+			text := inputResult.String()
+			var inputValue any
+			if strings.TrimSpace(text) != "" {
+				inputValue = []any{map[string]any{
+					"type": "message", "role": "user", "content": text,
+				}}
+			} else {
+				inputValue = []any{}
+			}
+			// inputResult exists only for an input member that sjson replaces in place.
+			next, _ := sjson.SetBytes(normalized, "input", inputValue)
+			normalized = next
+			changed = true
+		case inputResult.Type == gjson.JSON && !inputResult.IsArray():
+			// inputResult exists only for an input member that sjson replaces in place.
+			next, _ := sjson.SetRawBytes(normalized, "input", []byte("["+inputResult.Raw+"]"))
+			normalized = next
+			changed = true
+		}
+	}
+
 	if compact {
 		if store := gjson.GetBytes(normalized, "store"); store.Exists() {
 			next, err := sjson.DeleteBytes(normalized, "store")
