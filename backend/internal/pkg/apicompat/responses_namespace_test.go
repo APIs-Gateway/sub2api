@@ -198,7 +198,8 @@ func TestFlattenResponsesNamespaces_HandlesChildrenFallbackDuplicatesAndIgnoredE
 	require.True(t, ok)
 	require.Equal(t, "ops__run", call["name"])
 	require.NotContains(t, call, "namespace")
-	choice := req["tool_choice"].(map[string]any)
+	choice, ok := req["tool_choice"].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, "ops__run", choice["name"])
 	require.NotContains(t, choice, "namespace")
 }
