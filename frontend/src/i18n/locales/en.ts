@@ -757,10 +757,12 @@
     },
     allGroups: 'All Groups',
     allStatus: 'All Status',
+    columnSettings: 'Column Settings',
     createKey: 'Create API Key',
     editKey: 'Edit API Key',
     deleteKey: 'Delete API Key',
     deleteConfirmMessage: "Are you sure you want to delete '{name}'? This action cannot be undone.",
+    id: 'ID',
     apiKey: 'API Key',
     group: 'Group',
     currentConcurrency: 'Current Concurrency',
@@ -2658,6 +2660,7 @@
         openai: 'OpenAI',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        grok: 'Grok',
       },
       deleteConfirm:
         "Are you sure you want to delete '{name}'? All associated API keys will no longer belong to any group.",
@@ -3621,6 +3624,7 @@
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
+        grokOauth: 'Grok OAuth',
         antigravityApikey: 'Connect via Base URL + API Key',
         antigravityProjectIdLabel: 'GCP Project ID (optional)',
         antigravityProjectIdPlaceholder: 'your-gcp-project-id',
@@ -4015,6 +4019,10 @@
         testModeCompact: 'Compact probe',
         modelRestrictionDisabledByPassthrough: 'Automatic passthrough is enabled: model whitelist/mapping will not take effect.',
       },
+      grok: {
+        baseUrlHint: 'Grok OAuth accounts forward to the official xAI API base URL.',
+        apiKeyHint: 'Grok subscription support uses OAuth refresh tokens; API keys are out of scope for this account type.'
+      },
       anthropic: {
         apiKeyPassthrough: 'Auto passthrough (auth only)',
         apiKeyPassthroughDesc:
@@ -4374,6 +4382,31 @@
           pleaseEnterRefreshToken: 'Please enter Refresh Token',
           pleaseEnterSessionToken: 'Please enter Session Token'
         },
+        grok: {
+          title: 'Grok Account Authorization',
+          followSteps: 'Follow these steps to authorize your xAI/Grok account:',
+          step1GenerateUrl: 'Generate the xAI authorization URL',
+          generateAuthUrl: 'Generate Auth URL',
+          step2OpenUrl: 'Open the URL in your browser and complete authorization',
+          openUrlDesc: 'Open the authorization URL in a new tab, sign in to xAI, and authorize API access.',
+          importantNotice: 'When the browser reaches the local callback URL, copy the full URL or the code query parameter back here.',
+          step3EnterCode: 'Enter Authorization URL or Code',
+          authCodeDesc: 'After authorization, paste the callback URL, query string, or authorization code:',
+          authCode: 'Authorization URL or Code',
+          authCodePlaceholder: 'Paste the full callback URL, ?code=... query string, or code value',
+          authCodeHint: 'Full callback URLs, query strings, and bare codes are accepted.',
+          refreshTokenAuth: 'Manual RT Input',
+          refreshTokenDesc: 'Enter existing xAI refresh token(s). Supports batch input, one per line.',
+          refreshTokenPlaceholder: 'Paste your xAI refresh token...\nSupports multiple, one per line',
+          validating: 'Validating...',
+          validateAndCreate: 'Validate & Create Account',
+          pleaseEnterRefreshToken: 'Please enter Refresh Token',
+          failedToGenerateUrl: 'Failed to generate Grok auth URL',
+          missingExchangeParams: 'Missing authorization code, state, or OAuth session',
+          failedToExchangeCode: 'Failed to exchange Grok authorization code',
+          failedToValidateRT: 'Failed to validate Grok refresh token',
+          oauthOnlyHint: 'Initial Grok support is OAuth subscription-backed text and reasoning traffic only.'
+        },
         // Gemini specific
 	        gemini: {
 	          title: 'Gemini Account Authorization',
@@ -4595,6 +4628,7 @@
       openaiAccount: 'OpenAI Account',
       geminiAccount: 'Gemini Account',
       antigravityAccount: 'Antigravity Account',
+      grokAccount: 'Grok Account',
       inputMethod: 'Input Method',
       reAuthorizedSuccess: 'Account re-authorized successfully',
       // Test Modal
@@ -4669,6 +4703,10 @@
         gemini3Flash: 'G3F',
         gemini3Image: 'G31FI',
         claude: 'Claude',
+        grokRequests: 'Req',
+        grokTokens: 'Tok',
+        grokUnknown: 'Grok quota is unknown until the first upstream response includes xAI rate-limit headers.',
+        grokRetryAfter: 'Retry after {time}',
         passiveSampled: 'Passive',
         activeQuery: 'Query'
       },
@@ -6642,6 +6680,8 @@
         cancelRateLimitWindowModeFixed: 'Fixed',
         alipayForceQRCode: 'Force Alipay QR Code',
         alipayForceQRCodeHint: 'When enabled, mobile Alipay users always see a QR code instead of being redirected to the mobile payment page',
+        alipayMobilePrecreateDeepLink: 'Open Alipay App for Mobile Payments',
+        alipayMobilePrecreateDeepLinkHint: 'Use face-to-face precreate for official Alipay on mobile, then open the Alipay app with a QR fallback',
         helpText: 'Help Text',
         helpImageUrl: 'Help Image URL',
         manageProviders: 'Manage Providers',
@@ -7460,21 +7500,19 @@
       "You don't have any active subscriptions. Contact administrator to get one.",
     failedToLoad: 'Failed to load subscriptions',
     overdraftBtn: {
-      label: 'Borrow a day',
+      label: 'Refresh daily allowance',
       remaining: '{n} left this month',
-      confirmTitle: 'Borrow a day (overdraft)',
+      confirmTitle: 'Refresh daily allowance (overdraft)',
       confirmMessage:
-        "This clears today's used amount and restores today's allowance immediately, at the cost of bringing the expiry forward by 1 day. It only lifts the daily cap; weekly/monthly caps still apply. Up to 5 times per calendar month.",
+        "This clears today's used amount and restores today's allowance immediately. It only lifts the daily cap; weekly/monthly caps still apply. Up to 5 times per calendar month.",
       confirmOk: 'Confirm overdraft',
-      success: "Overdraft applied: today's allowance refreshed, expiry −1 day",
+      success: "Overdraft applied: today's allowance refreshed",
       disabledNotMaxed: "Today's allowance is not used up yet — no overdraft needed",
-      disabledNoFutureDay: 'Not enough validity left — no future day to borrow',
       disabledExhausted: 'Monthly overdraft limit reached (up to 5 per month)',
       errors: {
         noActiveCard: 'No active subscription to overdraft against',
         dailyNotExhausted: "Today's allowance is not used up yet — no overdraft needed",
         monthlyLimit: 'Monthly overdraft limit reached (up to 5 per month)',
-        noFutureDay: 'Not enough validity left — no future day to borrow',
         generic: 'Overdraft failed, please try again later'
       }
     },

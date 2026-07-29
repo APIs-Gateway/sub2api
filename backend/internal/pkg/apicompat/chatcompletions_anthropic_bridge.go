@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/common"
 )
 
 // This file implements a DIRECT bridge between Anthropic Messages and OpenAI
@@ -129,7 +131,7 @@ func anthropicToChatMessages(system json.RawMessage, msgs []AnthropicMessage) ([
 		if len(sysParts) > 0 {
 			text := joinResponsesContentPartText(sysParts)
 			if text != "" {
-				content, _ := json.Marshal(text)
+				content, _ := common.Marshal(text)
 				messages = append(messages, ChatMessage{Role: "system", Content: content})
 			}
 		}
@@ -167,13 +169,13 @@ func anthropicMsgToChatMessages(m AnthropicMessage) ([]ChatMessage, error) {
 func anthropicUserToChatMessages(raw json.RawMessage) ([]ChatMessage, error) {
 	// Plain string → single user message.
 	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		content, _ := json.Marshal(s)
+	if err := common.Unmarshal(raw, &s); err == nil {
+		content, _ := common.Marshal(s)
 		return []ChatMessage{{Role: "user", Content: content}}, nil
 	}
 
 	var blocks []AnthropicContentBlock
-	if err := json.Unmarshal(raw, &blocks); err != nil {
+	if err := common.Unmarshal(raw, &blocks); err != nil {
 		return nil, err
 	}
 
@@ -186,7 +188,7 @@ func anthropicUserToChatMessages(raw json.RawMessage) ([]ChatMessage, error) {
 			continue
 		}
 		text, imageParts := convertToolResultOutput(b)
-		content, _ := json.Marshal(text)
+		content, _ := common.Marshal(text)
 		out = append(out, ChatMessage{
 			Role:       "tool",
 			Content:    content,
@@ -232,13 +234,13 @@ func anthropicUserToChatMessages(raw json.RawMessage) ([]ChatMessage, error) {
 
 	if !hasImage {
 		if len(textParts) > 0 {
-			content, _ := json.Marshal(strings.Join(textParts, "\n\n"))
+			content, _ := common.Marshal(strings.Join(textParts, "\n\n"))
 			out = append(out, ChatMessage{Role: "user", Content: content})
 		}
 		return out, nil
 	}
 
-	content, err := json.Marshal(parts)
+	content, err := common.Marshal(parts)
 	if err != nil {
 		return nil, err
 	}
@@ -254,20 +256,20 @@ func anthropicUserToChatMessages(raw json.RawMessage) ([]ChatMessage, error) {
 func anthropicAssistantToChatMessages(raw json.RawMessage) ([]ChatMessage, error) {
 	// Plain string → single assistant message.
 	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		content, _ := json.Marshal(s)
+	if err := common.Unmarshal(raw, &s); err == nil {
+		content, _ := common.Marshal(s)
 		return []ChatMessage{{Role: "assistant", Content: content}}, nil
 	}
 
 	var blocks []AnthropicContentBlock
-	if err := json.Unmarshal(raw, &blocks); err != nil {
+	if err := common.Unmarshal(raw, &blocks); err != nil {
 		return nil, err
 	}
 
 	msg := ChatMessage{Role: "assistant"}
 	text := extractAnthropicTextFromBlocks(blocks)
 	if text != "" {
-		content, _ := json.Marshal(text)
+		content, _ := common.Marshal(text)
 		msg.Content = content
 	}
 
@@ -329,22 +331,22 @@ func convertAnthropicToolChoiceToChat(raw json.RawMessage, declared map[string]b
 		Type string `json:"type"`
 		Name string `json:"name"`
 	}
-	if err := json.Unmarshal(raw, &tc); err != nil {
+	if err := common.Unmarshal(raw, &tc); err != nil {
 		return nil, err
 	}
 
 	switch tc.Type {
 	case "auto":
-		return json.Marshal("auto")
+		return common.Marshal("auto")
 	case "any":
-		return json.Marshal("required")
+		return common.Marshal("required")
 	case "none":
-		return json.Marshal("none")
+		return common.Marshal("none")
 	case "tool":
 		if tc.Name == "" || !declared[tc.Name] {
 			return nil, nil
 		}
-		return json.Marshal(map[string]any{
+		return common.Marshal(map[string]any{
 			"type":     "function",
 			"function": map[string]string{"name": tc.Name},
 		})
@@ -464,14 +466,17 @@ func chatMessageToAnthropicBlocks(message ChatMessage) []AnthropicContentBlock {
 //	"tool_calls" → "tool_use"
 //	other        → "end_turn" (or "tool_use" if tool_use blocks present)
 //
-// "stop", "content_filter", and unknown reasons all map to a completed response
-// in the double-conversion path, which then derives stop_reason from the blocks.
+// content_filter remains explicit so the direct bridge preserves the existing
+// Chat Completions content-filter terminal reason instead of degrading it to
+// the older end_turn fallback.
 func chatFinishReasonToAnthropicStopReason(reason string, blocks []AnthropicContentBlock) string {
 	switch reason {
 	case "length":
 		return "max_tokens"
 	case "tool_calls":
 		return "tool_use"
+	case "content_filter":
+		return "content_filter"
 	default:
 		if containsAnthropicToolUseBlock(blocks) {
 			return "tool_use"
@@ -541,6 +546,9 @@ type ChatCompletionsToAnthropicStreamState struct {
 	// announcement; tools whose name never arrives are announced with an empty
 	// name at finalize so their arguments are not lost.
 	toolBlockIndex    map[int]int
+	toolBlockOpen     map[int]bool
+	toolBlockHadDelta map[int]bool
+	toolArgs          map[int]string
 	toolAnnounced     map[int]bool
 	toolName          map[int]string
 	pendingToolCallID map[int]string
@@ -570,6 +578,9 @@ func NewChatCompletionsToAnthropicStreamState(model string) *ChatCompletionsToAn
 		Model:             model,
 		Created:           time.Now().Unix(),
 		toolBlockIndex:    make(map[int]int),
+		toolBlockOpen:     make(map[int]bool),
+		toolBlockHadDelta: make(map[int]bool),
+		toolArgs:          make(map[int]string),
 		toolAnnounced:     make(map[int]bool),
 		toolName:          make(map[int]string),
 		pendingToolCallID: make(map[int]string),
@@ -656,6 +667,8 @@ func FinalizeChatCompletionsAnthropicStream(state *ChatCompletionsToAnthropicStr
 	// not silently dropped. The double-conversion path announced these
 	// immediately with an empty name; the deferred announcement keeps that data
 	// preservation while still delivering correct names when they do arrive.
+	events = append(events, closeCCAnthropicBlock(state)...)
+
 	if len(state.pendingToolCallID) > 0 {
 		idxs := make([]int, 0, len(state.pendingToolCallID))
 		for idx := range state.pendingToolCallID {
@@ -664,12 +677,11 @@ func FinalizeChatCompletionsAnthropicStream(state *ChatCompletionsToAnthropicStr
 		sort.Ints(idxs)
 		for _, idx := range idxs {
 			callID := state.pendingToolCallID[idx]
-			events = append(events, closeCCAnthropicBlock(state)...)
 			events = append(events, announceCCAnthropicToolBlock(state, idx, callID, "")...)
 		}
 	}
 
-	events = append(events, closeCCAnthropicBlock(state)...)
+	events = append(events, closeCCAnthropicToolBlocks(state)...)
 
 	stopReason := ccFinishReasonToAnthropicStopReason(state.FinishReason, state.HasToolCall)
 
@@ -712,12 +724,15 @@ func ensureCCAnthropicMessageStart(state *ChatCompletionsToAnthropicStreamState)
 	}}
 }
 
-// ensureCCAnthropicThinkingBlock opens a thinking block if none is open.
+// ensureCCAnthropicThinkingBlock opens a thinking block if none is open. Any
+// open tool blocks are completed first so Anthropic content blocks remain
+// sequential when an upstream resumes with reasoning after tool calls.
 func ensureCCAnthropicThinkingBlock(state *ChatCompletionsToAnthropicStreamState) []AnthropicStreamEvent {
+	events := closeCCAnthropicToolBlocks(state)
 	if state.ContentBlockOpen && state.CurrentBlockType == "thinking" {
-		return nil
+		return events
 	}
-	events := closeCCAnthropicBlock(state)
+	events = append(events, closeCCAnthropicBlock(state)...)
 	idx := state.ContentBlockIndex
 	state.ContentBlockOpen = true
 	state.CurrentBlockType = "thinking"
@@ -732,12 +747,15 @@ func ensureCCAnthropicThinkingBlock(state *ChatCompletionsToAnthropicStreamState
 	return events
 }
 
-// ensureCCAnthropicTextBlock opens a text block if none is open.
+// ensureCCAnthropicTextBlock opens a text block if none is open. Any open tool
+// blocks are completed first so their final input_json_delta and stop never
+// appear after a later text block.
 func ensureCCAnthropicTextBlock(state *ChatCompletionsToAnthropicStreamState) []AnthropicStreamEvent {
+	events := closeCCAnthropicToolBlocks(state)
 	if state.ContentBlockOpen && state.CurrentBlockType == "text" {
-		return nil
+		return events
 	}
-	events := closeCCAnthropicBlock(state)
+	events = append(events, closeCCAnthropicBlock(state)...)
 	idx := state.ContentBlockIndex
 	state.ContentBlockOpen = true
 	state.CurrentBlockType = "text"
@@ -766,7 +784,8 @@ func handleCCAnthropicToolCall(state *ChatCompletionsToAnthropicStreamState, too
 	var events []AnthropicStreamEvent
 
 	if _, seen := state.toolAnnounced[idx]; !seen {
-		// New tool call: it ends whatever block is currently streaming.
+		// New tool call closes a text/thinking block, but previously announced
+		// tool blocks stay open: OpenAI may interleave argument fragments by index.
 		events = append(events, closeCCAnthropicBlock(state)...)
 		state.HasToolCall = true
 
@@ -790,22 +809,13 @@ func handleCCAnthropicToolCall(state *ChatCompletionsToAnthropicStreamState, too
 		events = append(events, announceCCAnthropicToolBlock(state, idx, callID, toolCall.Function.Name)...)
 	}
 
-	// Argument fragment → input_json_delta on the tool's block once announced,
-	// buffered until the deferred announcement otherwise.
+	// Accumulate arguments per upstream tool index. The complete JSON must be
+	// available before emitting it so Read parameters use the same sanitization
+	// as the Responses→Anthropic path.
 	if toolCall.Function.Arguments != "" {
 		if state.toolAnnounced[idx] {
-			blockIdx := state.toolBlockIndex[idx]
-			if state.ContentBlockOpen && blockIdx == state.ContentBlockIndex {
-				state.CurrentToolHadDelta = true
-			}
-			events = append(events, AnthropicStreamEvent{
-				Type:  "content_block_delta",
-				Index: &blockIdx,
-				Delta: &AnthropicDelta{
-					Type:        "input_json_delta",
-					PartialJSON: toolCall.Function.Arguments,
-				},
-			})
+			state.toolArgs[idx] += toolCall.Function.Arguments
+			state.toolBlockHadDelta[idx] = true
 		} else {
 			state.pendingToolArgs[idx] += toolCall.Function.Arguments
 		}
@@ -819,13 +829,12 @@ func handleCCAnthropicToolCall(state *ChatCompletionsToAnthropicStreamState, too
 // buffered while the announcement was deferred.
 func announceCCAnthropicToolBlock(state *ChatCompletionsToAnthropicStreamState, idx int, callID, name string) []AnthropicStreamEvent {
 	blockIdx := state.ContentBlockIndex
+	state.ContentBlockIndex++
 	state.toolBlockIndex[idx] = blockIdx
+	state.toolBlockOpen[idx] = true
+	state.toolBlockHadDelta[idx] = false
 	state.toolAnnounced[idx] = true
 	state.toolName[idx] = name
-	state.CurrentToolName = name
-	state.CurrentToolHadDelta = false
-	state.ContentBlockOpen = true
-	state.CurrentBlockType = "tool_use"
 	delete(state.pendingToolCallID, idx)
 
 	events := []AnthropicStreamEvent{{
@@ -840,15 +849,50 @@ func announceCCAnthropicToolBlock(state *ChatCompletionsToAnthropicStreamState, 
 	}}
 	if pending := state.pendingToolArgs[idx]; pending != "" {
 		delete(state.pendingToolArgs, idx)
-		state.CurrentToolHadDelta = true
+		state.toolArgs[idx] = pending
+		state.toolBlockHadDelta[idx] = true
+	}
+	return events
+}
+
+// closeCCAnthropicToolBlocks closes all announced tool blocks after the
+// upstream stream is terminal. Tool arguments may be interleaved by upstream
+// index, so each block remains open until this point rather than being closed
+// when another tool block starts.
+func closeCCAnthropicToolBlocks(state *ChatCompletionsToAnthropicStreamState) []AnthropicStreamEvent {
+	idxs := make([]int, 0, len(state.toolBlockOpen))
+	for idx, open := range state.toolBlockOpen {
+		if open {
+			idxs = append(idxs, idx)
+		}
+	}
+	sort.Slice(idxs, func(i, j int) bool {
+		return state.toolBlockIndex[idxs[i]] < state.toolBlockIndex[idxs[j]]
+	})
+
+	var events []AnthropicStreamEvent
+	for _, idx := range idxs {
+		blockIdx := state.toolBlockIndex[idx]
+		arguments := state.toolArgs[idx]
+		if !state.toolBlockHadDelta[idx] {
+			arguments = "{}"
+		}
+		sanitized := sanitizeAnthropicToolUseInput(state.toolName[idx], arguments)
+		if len(sanitized) > 0 {
+			events = append(events, AnthropicStreamEvent{
+				Type:  "content_block_delta",
+				Index: &blockIdx,
+				Delta: &AnthropicDelta{
+					Type:        "input_json_delta",
+					PartialJSON: string(sanitized),
+				},
+			})
+		}
 		events = append(events, AnthropicStreamEvent{
-			Type:  "content_block_delta",
+			Type:  "content_block_stop",
 			Index: &blockIdx,
-			Delta: &AnthropicDelta{
-				Type:        "input_json_delta",
-				PartialJSON: pending,
-			},
 		})
+		state.toolBlockOpen[idx] = false
 	}
 	return events
 }
@@ -914,6 +958,8 @@ func ccFinishReasonToAnthropicStopReason(reason string, hasToolCall bool) string
 		return "max_tokens"
 	case "tool_calls":
 		return "tool_use"
+	case "content_filter":
+		return "content_filter"
 	case "stop":
 		if hasToolCall {
 			return "tool_use"

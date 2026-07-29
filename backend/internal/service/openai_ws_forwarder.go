@@ -1134,6 +1134,11 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		if v := strings.TrimSpace(c.Request.Header.Get("accept-language")); v != "" {
 			headers.Set("accept-language", v)
 		}
+		for _, name := range [...]string{"x-codex-window-id", "x-codex-installation-id"} {
+			if value := strings.TrimSpace(c.Request.Header.Get(name)); value != "" {
+				headers.Set(name, value)
+			}
+		}
 	}
 	// OAuth 账号：将 apiKeyID 混入 session 标识符，防止跨用户会话碰撞。
 	if account != nil && account.Type == AccountTypeOAuth {

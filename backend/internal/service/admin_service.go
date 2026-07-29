@@ -25,6 +25,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/httputil"
 )
 
@@ -1848,6 +1849,8 @@ func defaultModelsListCandidateIDs(platform string) []string {
 			ids = append(ids, model.ID)
 		}
 		return ids
+	case PlatformGrok:
+		return xai.DefaultModelIDs()
 	default:
 		ids := make([]string, 0, len(claude.DefaultModels))
 		for _, model := range claude.DefaultModels {
@@ -1993,7 +1996,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 
 	// require_oauth_only: 过滤掉 apikey 类型账号
-	if group.RequireOAuthOnly && (group.Platform == PlatformOpenAI || group.Platform == PlatformAntigravity || group.Platform == PlatformAnthropic || group.Platform == PlatformGemini) && len(accountIDsToCopy) > 0 {
+	if group.RequireOAuthOnly && (group.Platform == PlatformOpenAI || group.Platform == PlatformAntigravity || group.Platform == PlatformAnthropic || group.Platform == PlatformGemini || group.Platform == PlatformGrok) && len(accountIDsToCopy) > 0 {
 		accounts, err := s.accountRepo.GetByIDs(ctx, accountIDsToCopy)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch accounts for oauth filter: %w", err)
@@ -2338,7 +2341,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		}
 
 		// require_oauth_only: 过滤掉 apikey 类型账号
-		if group.RequireOAuthOnly && (group.Platform == PlatformOpenAI || group.Platform == PlatformAntigravity || group.Platform == PlatformAnthropic || group.Platform == PlatformGemini) && len(accountIDsToCopy) > 0 {
+		if group.RequireOAuthOnly && (group.Platform == PlatformOpenAI || group.Platform == PlatformAntigravity || group.Platform == PlatformAnthropic || group.Platform == PlatformGemini || group.Platform == PlatformGrok) && len(accountIDsToCopy) > 0 {
 			accounts, err := s.accountRepo.GetByIDs(ctx, accountIDsToCopy)
 			if err != nil {
 				return nil, fmt.Errorf("failed to fetch accounts for oauth filter: %w", err)

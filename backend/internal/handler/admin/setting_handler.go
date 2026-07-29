@@ -320,6 +320,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PaymentCancelRateLimitUnit:             paymentCfg.CancelRateLimitUnit,
 		PaymentCancelRateLimitMode:             paymentCfg.CancelRateLimitMode,
 		PaymentAlipayForceQRCode:               paymentCfg.AlipayForceQRCode,
+		PaymentAlipayMobilePrecreateDeepLink:   paymentCfg.AlipayMobilePrecreateDeepLink,
 
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
@@ -689,7 +690,8 @@ type UpdateSettingsRequest struct {
 	PaymentCancelRateLimitMode    *string `json:"payment_cancel_rate_limit_window_mode"`
 
 	// Force Alipay mobile clients to use QR code payment instead of mobile redirect
-	PaymentAlipayForceQRCode *bool `json:"payment_alipay_force_qrcode"`
+	PaymentAlipayForceQRCode             *bool `json:"payment_alipay_force_qrcode"`
+	PaymentAlipayMobilePrecreateDeepLink *bool `json:"payment_alipay_mobile_precreate_deep_link"`
 
 	// Channel Monitor feature switch
 	ChannelMonitorEnabled                *bool `json:"channel_monitor_enabled"`
@@ -2058,6 +2060,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			CancelRateLimitUnit:            req.PaymentCancelRateLimitUnit,
 			CancelRateLimitMode:            req.PaymentCancelRateLimitMode,
 			AlipayForceQRCode:              req.PaymentAlipayForceQRCode,
+			AlipayMobilePrecreateDeepLink:  req.PaymentAlipayMobilePrecreateDeepLink,
 		}
 		if err := h.paymentConfigService.UpdatePaymentConfig(c.Request.Context(), paymentReq); err != nil {
 			response.ErrorFrom(c, err)
@@ -2287,6 +2290,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentCancelRateLimitUnit:             updatedPaymentCfg.CancelRateLimitUnit,
 		PaymentCancelRateLimitMode:             updatedPaymentCfg.CancelRateLimitMode,
 		PaymentAlipayForceQRCode:               updatedPaymentCfg.AlipayForceQRCode,
+		PaymentAlipayMobilePrecreateDeepLink:   updatedPaymentCfg.AlipayMobilePrecreateDeepLink,
 
 		ChannelMonitorEnabled:                updatedSettings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: updatedSettings.ChannelMonitorDefaultIntervalSeconds,
@@ -2351,7 +2355,7 @@ func hasPaymentFields(req UpdateSettingsRequest) bool {
 		req.PaymentHelpText != nil || req.PaymentCancelRateLimitEnabled != nil ||
 		req.PaymentCancelRateLimitMax != nil || req.PaymentCancelRateLimitWindow != nil ||
 		req.PaymentCancelRateLimitUnit != nil || req.PaymentCancelRateLimitMode != nil ||
-		req.PaymentAlipayForceQRCode != nil
+		req.PaymentAlipayForceQRCode != nil || req.PaymentAlipayMobilePrecreateDeepLink != nil
 }
 
 func (h *SettingHandler) auditSettingsUpdate(c *gin.Context, before *service.SystemSettings, after *service.SystemSettings, beforeAuthSourceDefaults *service.AuthSourceDefaultSettings, afterAuthSourceDefaults *service.AuthSourceDefaultSettings, req UpdateSettingsRequest) {

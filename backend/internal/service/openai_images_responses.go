@@ -591,12 +591,14 @@ func collectOpenAIImagesFromResponsesBody(body []byte) ([]openAIResponsesImageRe
 		return nil, 0, nil, openAIResponsesImageResult{}, false, collectErr
 	}
 	if len(finalResults) > 0 {
+		reconcileOpenAIResponsesImageResultSizes(finalResults, &finalMeta)
 		return finalResults, createdAt, usageRaw, finalMeta, true, nil
 	}
 
 	if len(fallbackResults) > 0 {
 		firstMeta := fallbackResults[0]
 		mergeOpenAIResponsesImageMeta(&firstMeta, responseMeta)
+		reconcileOpenAIResponsesImageResultSizes(fallbackResults, &firstMeta)
 		return fallbackResults, createdAt, usageRaw, firstMeta, foundFinal, nil
 	}
 	return nil, createdAt, usageRaw, openAIResponsesImageResult{}, foundFinal, nil
@@ -1413,6 +1415,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 				mergeOpenAIResponsesImageMeta(&img, streamMeta)
 				appendOpenAIResponsesImageResultDedup(&finalResults, finalSeen, "", img)
 			}
+			reconcileOpenAIResponsesImageResultSizes(finalResults, nil)
 			if len(finalResults) == 0 {
 				outputErr := fmt.Errorf("upstream did not return image output")
 				s.tryWriteOpenAIImagesStreamEvent(c, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", buildOpenAIImagesStreamErrorBody(outputErr.Error()))
@@ -1472,8 +1475,12 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 		}
 		if len(pendingResults) > 0 {
 			eventName := streamPrefix + ".completed"
-			for _, img := range pendingResults {
-				mergeOpenAIResponsesImageMeta(&img, streamMeta)
+			finalResults := append([]openAIResponsesImageResult(nil), pendingResults...)
+			for i := range finalResults {
+				mergeOpenAIResponsesImageMeta(&finalResults[i], streamMeta)
+			}
+			reconcileOpenAIResponsesImageResultSizes(finalResults, nil)
+			for _, img := range finalResults {
 				key := openAIResponsesImageResultKey("", img)
 				if _, exists := emitted[key]; exists {
 					continue
@@ -1483,7 +1490,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 				s.tryWriteOpenAIImagesStreamEvent(c, flusher, &clientDisconnected, &lastDownstreamWriteAt, eventName, payload)
 			}
 			imageCount = len(emitted)
-			imageOutputSizes = openAIResponsesImageResultSizes(pendingResults)
+			imageOutputSizes = openAIResponsesImageResultSizes(finalResults)
 			return nil
 		}
 

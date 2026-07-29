@@ -423,6 +423,43 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsP
 	require.NotContains(t, body, "当前测试接口仅支持 Responses API 路径")
 }
 
+func TestAccountTestService_OpenAIAPIKeyResponsesAddsCodexHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	resp := newJSONResponse(http.StatusOK, "")
+	resp.Header.Set("Content-Type", "text/event-stream")
+	resp.Body = io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n"))
+	upstream := &httpUpstreamRecorder{resp: resp}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          95,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer sk-test", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("Originator"))
+	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
+	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Codex-Window-ID"))
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
 func TestAccountTestService_OpenAIChatCompletionsPathReturns4xx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

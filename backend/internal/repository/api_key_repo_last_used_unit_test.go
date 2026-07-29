@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 
 func TestLatestUsageLogIPsQuery(t *testing.T) {
 	postgresQuery, postgresArgs := latestUsageLogIPsQuery([]int64{11, 12}, dialect.Postgres)
-	require.Contains(t, postgresQuery, "ANY($1::bigint[])")
+	require.Contains(t, postgresQuery, "FROM unnest($1::bigint[]) AS requested(api_key_id)")
 	require.Len(t, postgresArgs, 1)
 
 	sqliteQuery, sqliteArgs := latestUsageLogIPsQuery([]int64{11, 12}, dialect.SQLite)
@@ -32,7 +33,7 @@ func TestLatestUsageLogIPsQuery(t *testing.T) {
 
 func TestLatestUsageLogIPsQueryEmptyInput(t *testing.T) {
 	query, args := latestUsageLogIPsQuery(nil, dialect.Postgres)
-	require.Contains(t, query, "ANY($1::bigint[])")
+	require.Contains(t, query, "FROM unnest($1::bigint[]) AS requested(api_key_id)")
 	require.Len(t, args, 1)
 }
 
@@ -189,12 +190,26 @@ func TestAPIKeyRepositoryListByUserIDAttachesLastUsedIP(t *testing.T) {
 
 func TestLatestUsageLogIPsQueryUsesOneDialectAppropriateBatchArgument(t *testing.T) {
 	postgresQuery, postgresArgs := latestUsageLogIPsQuery([]int64{1, 2, 3}, dialect.Postgres)
-	require.Contains(t, postgresQuery, "api_key_id = ANY($1::bigint[])")
+	require.Contains(t, postgresQuery, "FROM unnest($1::bigint[]) AS requested(api_key_id)")
 	require.Len(t, postgresArgs, 1)
 
 	sqliteQuery, sqliteArgs := latestUsageLogIPsQuery([]int64{1, 2, 3}, dialect.SQLite)
 	require.Contains(t, sqliteQuery, "api_key_id IN (?, ?, ?)")
 	require.Equal(t, []any{int64(1), int64(2), int64(3)}, sqliteArgs)
+}
+
+func TestLatestUsageLogIPsQueryPostgresUsesPerKeyLateralLookup(t *testing.T) {
+	query, args := latestUsageLogIPsQuery([]int64{11, 22}, dialect.Postgres)
+	normalizedQuery := strings.Join(strings.Fields(query), " ")
+
+	require.Contains(t, normalizedQuery, "FROM unnest($1::bigint[]) AS requested(api_key_id)")
+	require.Contains(t, normalizedQuery, "CROSS JOIN LATERAL")
+	require.Contains(t, normalizedQuery, "WHERE ul.api_key_id = requested.api_key_id")
+	require.Contains(t, normalizedQuery, "AND ul.ip_address IS NOT NULL")
+	require.Contains(t, normalizedQuery, "AND ul.ip_address <> ''")
+	require.Contains(t, normalizedQuery, "ORDER BY ul.created_at DESC, ul.id DESC LIMIT 1")
+	require.NotContains(t, normalizedQuery, "ROW_NUMBER")
+	require.Len(t, args, 1)
 }
 
 func TestAPIKeyRepository_CreateWithLastUsedAt(t *testing.T) {

@@ -756,10 +756,12 @@
     },
     allGroups: '全部分組',
     allStatus: '全部狀態',
+    columnSettings: '列設定',
     createKey: '創建金鑰',
     editKey: '編輯金鑰',
     deleteKey: '刪除金鑰',
     deleteConfirmMessage: "確定要刪除 '{name}' 嗎？此操作無法撤銷。",
+    id: 'ID',
     apiKey: 'API 金鑰',
     group: '分組',
     currentConcurrency: '當前並發數',
@@ -7430,21 +7432,19 @@
     noActiveSubscriptionsDesc: '您沒有任何有效訂閱。請聯系管理員獲取訂閱。',
     failedToLoad: '加載訂閱失敗',
     overdraftBtn: {
-      label: '透支借一天',
+      label: '透支刷新當日額度',
       remaining: '本月剩餘 {n} 次',
-      confirmTitle: '透支借一天',
+      confirmTitle: '透支刷新當日額度',
       confirmMessage:
-        '將清空「今日已用額度」、立即恢復當日可用額度，代價是有效期提前 1 天。僅解日上限，周/月封頂仍然生效。每自然月最多 5 次。',
+        '將清空「今日已用額度」、立即恢復當日可用額度。僅解日上限，周/月封頂仍然生效。每自然月最多 5 次。',
       confirmOk: '確認透支',
-      success: '已透支：今日額度已刷新，有效期 −1 天',
+      success: '已透支：今日額度已刷新',
       disabledNotMaxed: '今日額度尚未用滿，無需透支',
-      disabledNoFutureDay: '有效期不足，沒有可借的未來天數',
       disabledExhausted: '本月透支次數已用滿（每月最多 5 次）',
       errors: {
         noActiveCard: '沒有生效中的訂閱，無法透支',
         dailyNotExhausted: '今日額度尚未用滿，無需透支',
         monthlyLimit: '本月透支次數已用滿（每月最多 5 次）',
-        noFutureDay: '有效期不足，沒有可借的未來天數',
         generic: '透支失敗，請稍後重試'
       }
     },

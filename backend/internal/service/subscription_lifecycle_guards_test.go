@@ -40,7 +40,6 @@ func TestMapOverdraftErr_AllBranches(t *testing.T) {
 	require.Equal(t, "OVERDRAFT_NO_ACTIVE_CARD", infraerrors.Reason(mapOverdraftErr(ErrOverdraftNoActiveCard)))
 	require.Equal(t, "OVERDRAFT_DAILY_NOT_EXHAUSTED", infraerrors.Reason(mapOverdraftErr(ErrOverdraftDailyNotExhausted)))
 	require.Equal(t, "OVERDRAFT_MONTHLY_LIMIT", infraerrors.Reason(mapOverdraftErr(ErrOverdraftMonthlyLimit)))
-	require.Equal(t, "OVERDRAFT_NO_FUTURE_DAY", infraerrors.Reason(mapOverdraftErr(ErrOverdraftNoFutureDay)))
 	// default：非透支错误原样透传。
 	sentinel := errors.New("some other failure")
 	require.ErrorIs(t, mapOverdraftErr(sentinel), sentinel)

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,7 +21,7 @@ func collectAnthropicStreamEvents(t *testing.T, chunks []string) []AnthropicStre
 	var events []AnthropicStreamEvent
 	for _, payload := range chunks {
 		var chunk ChatCompletionsChunk
-		require.NoError(t, json.Unmarshal([]byte(payload), &chunk))
+		require.NoError(t, common.Unmarshal([]byte(payload), &chunk))
 		events = append(events, ChatCompletionsChunkToAnthropicEvents(&chunk, state)...)
 	}
 	events = append(events, FinalizeChatCompletionsAnthropicStream(state)...)
@@ -194,7 +195,7 @@ func TestAnthropicToChatCompletionsRequest_ToolChoiceSpecificTool(t *testing.T) 
 	out, err := AnthropicToChatCompletionsRequest(req)
 	require.NoError(t, err)
 	var tc map[string]any
-	require.NoError(t, json.Unmarshal(out.ToolChoice, &tc))
+	require.NoError(t, common.Unmarshal(out.ToolChoice, &tc))
 	require.Equal(t, "function", tc["type"])
 	fn, ok := tc["function"].(map[string]any)
 	require.True(t, ok, "tool_choice function should be a map")
@@ -520,11 +521,10 @@ func TestChatCompletionsChunkToAnthropicEvents_ToolCallAggregation(t *testing.T)
 	})
 
 	types := anthropicEventTypes(events)
-	// message_start → content_block_start(tool_use) → 2× input_json_delta (empty first arg skipped) → content_block_stop → message_delta(tool_use) → message_stop
+	// message_start → content_block_start(tool_use) → input_json_delta → content_block_stop → message_delta(tool_use) → message_stop
 	require.Equal(t, []string{
 		"message_start",
 		"content_block_start",
-		"content_block_delta",
 		"content_block_delta",
 		"content_block_stop",
 		"message_delta",
@@ -543,14 +543,14 @@ func TestChatCompletionsChunkToAnthropicEvents_ToolCallAggregation(t *testing.T)
 		}
 	}
 
-	// Verify arguments assembled (empty first fragment skipped)
+	// Arguments are emitted after the complete tool JSON is available.
 	var partials []string
 	for _, e := range events {
 		if e.Type == "content_block_delta" && e.Delta != nil {
 			partials = append(partials, e.Delta.PartialJSON)
 		}
 	}
-	require.Equal(t, []string{`{"city":`, `"SF"}`}, partials)
+	require.Equal(t, []string{`{"city":"SF"}`}, partials)
 }
 
 func TestChatCompletionsChunkToAnthropicEvents_LengthMapsToMaxTokens(t *testing.T) {
@@ -613,6 +613,96 @@ func TestChatCompletionsChunkToAnthropicEvents_ParallelToolCalls(t *testing.T) {
 		if e.Type == "message_delta" {
 			require.Equal(t, "tool_use", e.Delta.StopReason)
 		}
+	}
+}
+
+func TestChatCompletionsChunkToAnthropicEvents_InterleavedToolArgumentsKeepBlocksOpen(t *testing.T) {
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"tool_a","arguments":"{\"a\":"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_1","type":"function","function":{"name":"tool_b","arguments":"{\"b\":"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+	})
+
+	open := make(map[int]bool)
+	partials := make(map[int]string)
+	for _, event := range events {
+		switch event.Type {
+		case "content_block_start":
+			if event.ContentBlock == nil || event.ContentBlock.Type != "tool_use" {
+				continue
+			}
+			require.NotNil(t, event.Index)
+			require.False(t, open[*event.Index], "tool block %d started twice", *event.Index)
+			open[*event.Index] = true
+		case "content_block_delta":
+			if event.Delta == nil || event.Delta.Type != "input_json_delta" {
+				continue
+			}
+			require.NotNil(t, event.Index)
+			require.True(t, open[*event.Index], "tool block %d received a delta after stop", *event.Index)
+			partials[*event.Index] += event.Delta.PartialJSON
+		case "content_block_stop":
+			require.NotNil(t, event.Index)
+			require.True(t, open[*event.Index], "tool block %d stopped before start", *event.Index)
+			open[*event.Index] = false
+		}
+	}
+	require.Equal(t, map[int]string{0: `{"a":1}`, 1: `{"b":2}`}, partials)
+	require.Equal(t, map[int]bool{0: false, 1: false}, open)
+}
+
+func TestChatCompletionsChunkToAnthropicEvents_SanitizesFragmentedReadArguments(t *testing.T) {
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_read","type":"function","function":{"name":"Read","arguments":"{\"file_path\":\"/tmp/demo.py\",\"pages\":"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"\"}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+	})
+
+	tools := assembleToolUseBlocks(events)
+	require.Len(t, tools, 1)
+	require.Equal(t, "Read", tools[0].Name)
+	require.JSONEq(t, `{"file_path":"/tmp/demo.py"}`, tools[0].Input)
+}
+
+func TestChatCompletionsChunkToAnthropicEvents_ClosesToolBeforeLaterTextAndThinking(t *testing.T) {
+	// The text arrives in a later choice in the same chunk as the tool call;
+	// reasoning follows in the next chunk. Both must start only after the tool
+	// block is complete, otherwise terminal tool events would follow later
+	// content blocks.
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"tool_a","arguments":"{\"a\":1}"}}]}},{"index":1,"delta":{"content":"text after tool"}}]}`,
+		`{"choices":[{"index":0,"delta":{"reasoning_content":"thinking after text"}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+	})
+
+	toolBlockIndex := -1
+	textBlockIndex := -1
+	textStopAt := -1
+	for eventIndex, event := range events {
+		if event.Type == "content_block_start" && event.ContentBlock != nil && event.Index != nil {
+			switch event.ContentBlock.Type {
+			case "tool_use":
+				toolBlockIndex = *event.Index
+			case "text":
+				textBlockIndex = *event.Index
+			}
+		}
+		if event.Type == "content_block_stop" && event.Index != nil && *event.Index == textBlockIndex {
+			textStopAt = eventIndex
+		}
+	}
+	require.NotEqual(t, -1, toolBlockIndex)
+	require.NotEqual(t, -1, textBlockIndex)
+	require.NotEqual(t, -1, textStopAt)
+
+	for eventIndex, event := range events {
+		if eventIndex <= textStopAt || event.Index == nil || *event.Index != toolBlockIndex {
+			continue
+		}
+		require.NotContains(t, []string{"content_block_delta", "content_block_stop"}, event.Type,
+			"tool events must not follow the later text block")
 	}
 }
 
@@ -740,8 +830,8 @@ func TestDirectBridge_RequestMatchesDoubleConversion(t *testing.T) {
 		require.Equal(t, double.Messages[i].Role, direct.Messages[i].Role, "msg %d role mismatch", i)
 		// Normalize content for comparison (both should be valid JSON)
 		var dContent, dblContent any
-		_ = json.Unmarshal(double.Messages[i].Content, &dblContent)
-		_ = json.Unmarshal(direct.Messages[i].Content, &dContent)
+		_ = common.Unmarshal(double.Messages[i].Content, &dblContent)
+		_ = common.Unmarshal(direct.Messages[i].Content, &dContent)
 		require.Equal(t, dblContent, dContent, "msg %d content mismatch", i)
 		require.Equal(t, double.Messages[i].ToolCallID, direct.Messages[i].ToolCallID, "msg %d tool_call_id mismatch", i)
 		require.Len(t, direct.Messages[i].ToolCalls, len(double.Messages[i].ToolCalls), "msg %d tool_calls count mismatch", i)
@@ -783,7 +873,7 @@ func TestChatCompletionsChunkToAnthropicEvents_ImageInToolResult(t *testing.T) {
 			continue
 		}
 		var parts []ChatContentPart
-		if err := json.Unmarshal(m.Content, &parts); err == nil {
+		if err := common.Unmarshal(m.Content, &parts); err == nil {
 			for _, p := range parts {
 				if p.Type == "image_url" && p.ImageURL != nil {
 					foundImage = true
@@ -958,8 +1048,8 @@ func TestDirectBridge_RequestMatchesDoubleConversion_ArrayUserContent(t *testing
 	for i := range direct.Messages {
 		require.Equal(t, double.Messages[i].Role, direct.Messages[i].Role, "msg %d role mismatch", i)
 		var dContent, dblContent any
-		require.NoError(t, json.Unmarshal(double.Messages[i].Content, &dblContent))
-		require.NoError(t, json.Unmarshal(direct.Messages[i].Content, &dContent))
+		require.NoError(t, common.Unmarshal(double.Messages[i].Content, &dblContent))
+		require.NoError(t, common.Unmarshal(direct.Messages[i].Content, &dContent))
 		require.Equal(t, dblContent, dContent, "msg %d content mismatch", i)
 	}
 }
@@ -1065,9 +1155,7 @@ func TestDirectBridge_NonStreamingMatchesDoubleConversion_EmptyChoices(t *testin
 	require.Equal(t, "end_turn", AnthropicStopReasonString(direct.StopReason))
 }
 
-func TestChatCompletionsResponseToAnthropic_ContentFilterWithToolUse(t *testing.T) {
-	// content_filter (and unknown finish reasons) derive stop_reason from the
-	// blocks, like the double-conversion path.
+func TestChatCompletionsResponseToAnthropic_PreservesContentFilter(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID:    "chatcmpl-cf",
 		Model: "deepseek-v4-pro",
@@ -1086,5 +1174,27 @@ func TestChatCompletionsResponseToAnthropic_ContentFilterWithToolUse(t *testing.
 	}
 
 	out := ChatCompletionsResponseToAnthropic(resp, "claude-sonnet-4-20250514")
-	require.Equal(t, "tool_use", AnthropicStopReasonString(out.StopReason))
+	require.Equal(t, "content_filter", AnthropicStopReasonString(out.StopReason))
+}
+
+func TestChatCompletionsChunkToAnthropicEvents_PreservesContentFilter(t *testing.T) {
+	state := NewChatCompletionsToAnthropicStreamState("claude-sonnet-4-20250514")
+	content := "partial"
+	finishReason := "content_filter"
+	events := ChatCompletionsChunkToAnthropicEvents(&ChatCompletionsChunk{
+		ID: "chatcmpl-cf-stream",
+		Choices: []ChatChunkChoice{{
+			Delta:        ChatDelta{Content: &content},
+			FinishReason: &finishReason,
+		}},
+	}, state)
+	events = append(events, FinalizeChatCompletionsAnthropicStream(state)...)
+
+	var stopReason string
+	for _, event := range events {
+		if event.Type == "message_delta" {
+			stopReason = event.Delta.StopReason
+		}
+	}
+	require.Equal(t, "content_filter", stopReason)
 }

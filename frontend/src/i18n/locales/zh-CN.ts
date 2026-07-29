@@ -756,10 +756,12 @@
     },
     allGroups: '全部分组',
     allStatus: '全部状态',
+    columnSettings: '列设置',
     createKey: '创建密钥',
     editKey: '编辑密钥',
     deleteKey: '删除密钥',
     deleteConfirmMessage: "确定要删除 '{name}' 吗？此操作无法撤销。",
+    id: 'ID',
     apiKey: 'API 密钥',
     group: '分组',
     currentConcurrency: '当前并发数',
@@ -2594,6 +2596,7 @@
         openai: 'OpenAI',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        grok: 'Grok',
       },
       saving: '保存中...',
       noGroups: '暂无分组',
@@ -3746,6 +3749,7 @@
         anthropic: 'Anthropic',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        grok: 'Grok',
       },
       types: {
         oauth: 'OAuth',
@@ -3755,6 +3759,7 @@
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
+        grokOauth: 'Grok OAuth',
         antigravityApikey: '通过 Base URL + API Key 连接',
         antigravityProjectIdLabel: 'GCP Project ID（可选）',
         antigravityProjectIdPlaceholder: 'your-gcp-project-id',
@@ -3838,6 +3843,10 @@
         gemini3Flash: 'G3F',
         gemini3Image: 'G31FI',
         claude: 'Claude',
+        grokRequests: '请求',
+        grokTokens: 'Token',
+        grokUnknown: 'Grok 配额需等待首次上游响应返回 xAI rate-limit 头后显示。',
+        grokRetryAfter: '{time} 后重试',
         passiveSampled: '被动采样',
         activeQuery: '查询'
       },
@@ -4082,6 +4091,10 @@
         testModeDefault: '常规请求',
         testModeCompact: 'Compact 探测',
         modelRestrictionDisabledByPassthrough: '已开启自动透传：模型白名单/映射不会生效。',
+      },
+      grok: {
+        baseUrlHint: 'Grok OAuth 账号会转发到官方 xAI API Base URL。',
+        apiKeyHint: 'Grok 订阅支持使用 OAuth refresh token；API Key 账号不在本次范围内。'
       },
       anthropic: {
         apiKeyPassthrough: '自动透传（仅替换认证）',
@@ -4431,6 +4444,31 @@
           pleaseEnterRefreshToken: '请输入 Refresh Token',
           pleaseEnterSessionToken: '请输入 Session Token'
         },
+        grok: {
+          title: 'Grok 账号授权',
+          followSteps: '请按照以下步骤授权您的 xAI/Grok 账号：',
+          step1GenerateUrl: '生成 xAI 授权链接',
+          generateAuthUrl: '生成授权链接',
+          step2OpenUrl: '在浏览器中打开链接并完成授权',
+          openUrlDesc: '在新标签页中打开授权链接，登录 xAI 并授权 API 访问。',
+          importantNotice: '当浏览器跳转到本地 callback URL 后，请复制完整 URL 或 code 参数回填到这里。',
+          step3EnterCode: '输入授权链接或 Code',
+          authCodeDesc: '授权完成后，粘贴 callback URL、查询字符串或授权码：',
+          authCode: '授权链接或 Code',
+          authCodePlaceholder: '粘贴完整 callback URL、?code=... 查询字符串或 code 值',
+          authCodeHint: '支持完整 callback URL、查询字符串或裸 code。',
+          refreshTokenAuth: '手动输入 RT',
+          refreshTokenDesc: '输入已有的 xAI refresh token，支持批量输入（每行一个）。',
+          refreshTokenPlaceholder: '粘贴您的 xAI refresh token...\n支持多个，每行一个',
+          validating: '验证中...',
+          validateAndCreate: '验证并创建账号',
+          pleaseEnterRefreshToken: '请输入 Refresh Token',
+          failedToGenerateUrl: '生成 Grok 授权链接失败',
+          missingExchangeParams: '缺少授权码、state 或 OAuth 会话',
+          failedToExchangeCode: 'Grok 授权码兑换失败',
+          failedToValidateRT: '验证 Grok refresh token 失败',
+          oauthOnlyHint: '首版 Grok 支持仅包含 OAuth 订阅文本/推理转发。'
+        },
         // Gemini specific
         gemini: {
           title: 'Gemini 账户授权',
@@ -4647,6 +4685,7 @@
       openaiAccount: 'OpenAI 账号',
       geminiAccount: 'Gemini 账号',
       antigravityAccount: 'Antigravity 账号',
+      grokAccount: 'Grok 账号',
       inputMethod: '输入方式',
       reAuthorizedSuccess: '账号重新授权成功',
       // Test Modal
@@ -6638,6 +6677,8 @@
         cancelRateLimitWindowModeFixed: '固定',
         alipayForceQRCode: '支付宝强制二维码支付',
         alipayForceQRCodeHint: '启用后，移动端支付宝用户将统一使用二维码扫码支付，不再跳转至手机网站支付',
+        alipayMobilePrecreateDeepLink: '支付宝移动端当面付唤起',
+        alipayMobilePrecreateDeepLinkHint: '官方支付宝移动端使用当面付二维码唤起 App；唤起失败时显示二维码',
         helpText: '帮助文本',
         helpImageUrl: '帮助图片链接',
         manageProviders: '管理服务商',
@@ -7453,21 +7494,19 @@
     noActiveSubscriptionsDesc: '您没有任何有效订阅。请联系管理员获取订阅。',
     failedToLoad: '加载订阅失败',
     overdraftBtn: {
-      label: '透支借一天',
+      label: '透支刷新当日额度',
       remaining: '本月剩余 {n} 次',
-      confirmTitle: '透支借一天',
+      confirmTitle: '透支刷新当日额度',
       confirmMessage:
-        '将清空「今日已用额度」、立即恢复当日可用额度，代价是有效期提前 1 天。仅解日上限，周/月封顶仍然生效。每自然月最多 5 次。',
+        '将清空「今日已用额度」、立即恢复当日可用额度。仅解日上限，周/月封顶仍然生效。每自然月最多 5 次。',
       confirmOk: '确认透支',
-      success: '已透支：今日额度已刷新，有效期 −1 天',
+      success: '已透支：今日额度已刷新',
       disabledNotMaxed: '今日额度尚未用满，无需透支',
-      disabledNoFutureDay: '有效期不足，没有可借的未来天数',
       disabledExhausted: '本月透支次数已用满（每月最多 5 次）',
       errors: {
         noActiveCard: '没有生效中的订阅，无法透支',
         dailyNotExhausted: '今日额度尚未用满，无需透支',
         monthlyLimit: '本月透支次数已用满（每月最多 5 次）',
-        noFutureDay: '有效期不足，没有可借的未来天数',
         generic: '透支失败，请稍后重试'
       }
     },

@@ -207,6 +207,40 @@ describe('admin AccountsView usage windows hint', () => {
     expect(showSuccess).toHaveBeenCalledWith('admin.accounts.privacyAntigravitySet')
   })
 
+  it('repositions the account actions panel for the mobile viewport', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const trigger = wrapper.get('button[title="admin.accounts.moreActions"]')
+    vi.spyOn(trigger.element, 'getBoundingClientRect').mockReturnValue({
+      top: 160,
+      right: 148,
+      bottom: 200
+    } as DOMRect)
+    Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 393 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 })
+
+    await trigger.trigger('click')
+
+    const panel = document.body.querySelector('div.fixed') as HTMLElement
+    expect(panel).not.toBeNull()
+    expect(panel.style.top).toBe('208px')
+    expect(panel.style.left).toBe('16px')
+    expect(panel.style.width).toBe('320px')
+
+    vi.spyOn(trigger.element, 'getBoundingClientRect').mockReturnValue({
+      top: 700,
+      right: 148,
+      bottom: 740
+    } as DOMRect)
+    window.dispatchEvent(new Event('resize'))
+    await wrapper.vm.$nextTick()
+
+    expect(panel.style.top).toBe('auto')
+    expect(panel.style.bottom).toBe('152px')
+    wrapper.unmount()
+  })
+
   it('links only API Key account names with a safe base_url to the upstream origin', async () => {
     listAccounts.mockResolvedValue({
       items: [

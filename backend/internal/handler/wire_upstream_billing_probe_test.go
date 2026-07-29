@@ -14,6 +14,7 @@ func TestProvideAdminHandlersAttachesUpstreamBillingProbe(t *testing.T) {
 
 	adminHandlers := ProvideAdminHandlers(
 		nil, nil, nil, accountHandler, nil, nil, nil, nil, nil, nil, nil,
+		nil, // grokOAuthHandler
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, probe,
 	)

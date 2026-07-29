@@ -129,6 +129,7 @@ func newOpenAIResponsesFailoverTestHandlerWithRepo(t *testing.T, upstream servic
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	billingService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 	t.Cleanup(billingService.Stop)

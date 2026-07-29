@@ -181,6 +181,7 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	billingService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 	t.Cleanup(billingService.Stop)
@@ -254,6 +255,7 @@ func TestOpenAIGatewayHandlerImages_UnsupportedModelReturnsNotFound(t *testing.T
 		nil,
 		nil,
 		cfg,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -354,6 +356,7 @@ func TestOpenAIGatewayHandlerImages_Weak429DoesNotSwitchAccount(t *testing.T) {
 		rateLimitService,
 		nil,
 		upstream,
+		nil,
 		nil,
 		nil,
 		nil,

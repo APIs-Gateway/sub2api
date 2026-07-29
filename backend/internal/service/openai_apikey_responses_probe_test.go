@@ -2,49 +2,17 @@ package service
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/stretchr/testify/require"
 )
-
-type responsesProbeAccountRepo struct {
-	AccountRepository
-	account *Account
-	updates map[string]any
-}
-
-func (r *responsesProbeAccountRepo) GetByID(_ context.Context, _ int64) (*Account, error) {
-	return r.account, nil
-}
-
-func (r *responsesProbeAccountRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
-	r.updates = updates
-	return nil
-}
-
-type responsesProbeUpstream struct {
-	request *http.Request
-}
-
-func (u *responsesProbeUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
-	return nil, errors.New("unexpected probe Do call")
-}
-
-func (u *responsesProbeUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
-	u.request = req
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(`{"output":[{"type":"function_call"}]}`)),
-	}, nil
-}
 
 func TestDecideResponsesProbeSupport(t *testing.T) {
 	fnCall := []byte(`{"output":[{"type":"reasoning"},{"type":"function_call","name":"probe_ping"}]}`)
@@ -116,23 +84,26 @@ func TestSelectResponsesProbeModel(t *testing.T) {
 	require.Equal(t, openai.DefaultTestModel, selectResponsesProbeModel(acctAllWild))
 }
 
-func TestProbeOpenAIAPIKeyResponsesSupport_AppliesAllowedHeaderOverridesWithoutReplacingAuthorization(t *testing.T) {
-	account := &Account{
-		ID:       42,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeAPIKey,
+func TestProbeOpenAIAPIKeyResponsesSupportAddsCodexHeaders(t *testing.T) {
+	account := Account{
+		ID:          96,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
 		Credentials: map[string]any{
-			"api_key":                    "upstream-secret",
-			"base_url":                   "https://compat.example",
-			credKeyHeaderOverrideEnabled: true,
-			credKeyHeaderOverrides: map[string]any{
-				"X-Upstream-Mode": "responses-probe",
-				"Authorization":   "Bearer forbidden-override",
-			},
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
 		},
 	}
-	repo := &responsesProbeAccountRepo{account: account}
-	upstream := &responsesProbeUpstream{}
+	updates := make(chan map[string]any, 1)
+	repo := &snapshotUpdateAccountRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
+		updateExtraCalls:      updates,
+	}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"output":[{"type":"function_call"}]}`)),
+	}}
 	svc := &AccountTestService{
 		accountRepo:  repo,
 		httpUpstream: upstream,
@@ -141,8 +112,19 @@ func TestProbeOpenAIAPIKeyResponsesSupport_AppliesAllowedHeaderOverridesWithoutR
 
 	svc.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), account.ID)
 
-	require.NotNil(t, upstream.request)
-	require.Equal(t, "responses-probe", getHeaderRaw(upstream.request.Header, "x-upstream-mode"))
-	require.Equal(t, "Bearer upstream-secret", upstream.request.Header.Get("Authorization"))
-	require.Equal(t, true, repo.updates["openai_responses_supported"])
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer sk-test", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("Originator"))
+	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
+	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Codex-Window-ID"))
+
+	select {
+	case got := <-updates:
+		require.Equal(t, true, got[openai_compat.ExtraKeyResponsesSupported])
+	case <-time.After(time.Second):
+		t.Fatal("expected probe result to be persisted")
+	}
 }

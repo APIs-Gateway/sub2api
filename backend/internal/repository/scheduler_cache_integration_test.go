@@ -117,6 +117,12 @@ func TestSchedulerCacheRetireAndReopenFencesOldEpochIntegration(t *testing.T) {
 	require.NoError(t, cache.SetSnapshot(ctx, bucket, oldToken, []service.Account{account}))
 	require.NoError(t, cache.RetireBucket(ctx, bucket))
 	require.NoError(t, cache.RetireBucket(ctx, bucket))
+	epochTTL, err := rdb.TTL(ctx, schedulerBucketKey(schedulerEpochPrefix, bucket)).Result()
+	require.NoError(t, err)
+	require.Greater(t, epochTTL, time.Duration(schedulerRetirementFencingTTLSeconds-2)*time.Second)
+	retiredTTL, err := rdb.TTL(ctx, schedulerBucketKey(schedulerRetiredPrefix, bucket)).Result()
+	require.NoError(t, err)
+	require.Greater(t, retiredTTL, time.Duration(schedulerRetirementFencingTTLSeconds-2)*time.Second)
 
 	_, hit, err := cache.GetSnapshot(ctx, bucket)
 	require.NoError(t, err)
@@ -128,6 +134,9 @@ func TestSchedulerCacheRetireAndReopenFencesOldEpochIntegration(t *testing.T) {
 	newToken, err := cache.ReopenBucket(ctx, bucket)
 	require.NoError(t, err)
 	require.Greater(t, newToken.Epoch, oldToken.Epoch)
+	epochTTL, err = rdb.TTL(ctx, schedulerBucketKey(schedulerEpochPrefix, bucket)).Result()
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(-1), epochTTL, "active bucket epochs must not expire after reopen")
 	require.ErrorIs(t, cache.SetSnapshot(ctx, bucket, oldToken, []service.Account{account}), service.ErrSchedulerBucketWriteFenced)
 	require.NoError(t, cache.SetSnapshot(ctx, bucket, newToken, []service.Account{account}))
 

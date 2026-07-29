@@ -21,7 +21,7 @@ type UserSubscriptionRepository interface {
 	// GetLatestActiveStatusForUpdate 同上但加行级 FOR UPDATE，供手动透支在事务内锁卡行（与结算串行）。
 	GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*UserSubscription, error)
 	Update(ctx context.Context, sub *UserSubscription) error
-	// ApplyManualOverdraft 原子落库手动透支：三窗口用量/起点 + expires_at + expire_day（借天 −1，两者同步）。
+	// ApplyManualOverdraft 原子落库手动透支：三窗口用量/起点；expires_at 与 expire_day 保持不变。
 	// 须在持有该卡 FOR UPDATE 锁的事务内调用；不可用通用 Update（它不写 expire_day，会致两者分裂）。
 	ApplyManualOverdraft(ctx context.Context, sub *UserSubscription) error
 	Delete(ctx context.Context, id int64) error

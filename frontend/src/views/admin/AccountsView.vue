@@ -65,22 +65,24 @@
               <!-- More Tools Dropdown -->
               <div class="relative" ref="accountToolsDropdownRef">
                 <button
-                  @click="
-                    showAccountToolsDropdown = !showAccountToolsDropdown;
-                    showAutoRefreshDropdown = false
-                  "
+                  ref="accountToolsTriggerRef"
+                  @click="toggleAccountToolsDropdown"
                   class="btn btn-secondary px-2 md:px-3"
                   :title="t('admin.accounts.moreActions')"
+                  :aria-expanded="showAccountToolsDropdown"
                 >
                   <Icon name="more" size="sm" class="md:mr-1.5" />
                   <span class="hidden md:inline">{{ t('admin.accounts.moreActions') }}</span>
                   <Icon name="chevronDown" size="xs" class="ml-1 hidden md:inline" />
                 </button>
-                <div
-                  v-if="showAccountToolsDropdown"
-                  class="absolute right-0 z-50 mt-2 w-[min(20rem,calc(100vw-2rem))] origin-top-right overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800"
-                >
-                  <div class="max-h-[70vh] overflow-y-auto p-2">
+                <Teleport to="body">
+                  <div
+                    v-if="showAccountToolsDropdown"
+                    class="fixed z-[9999] origin-top-right overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800"
+                    :style="accountToolsDropdownStyle"
+                    @click.stop
+                  >
+                    <div class="overflow-y-auto p-2" :style="{ maxHeight: `${accountToolsDropdownPosition.maxHeight}px` }">
                     <div class="px-2 py-2">
                       <div class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
                         {{ t('admin.accounts.dataActions') }}
@@ -152,8 +154,9 @@
                         <Icon v-if="isColumnVisible(col.key)" name="check" size="sm" class="text-primary-500" />
                       </button>
                     </div>
+                    </div>
                   </div>
-                </div>
+                </Teleport>
               </div>
             </template>
           </AccountTableActions>
@@ -466,6 +469,7 @@ import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { sanitizeUrl } from '@/utils/url'
+import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
 
 const { t } = useI18n()
@@ -551,6 +555,20 @@ useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
 // Account tools dropdown
 const showAccountToolsDropdown = ref(false)
 const accountToolsDropdownRef = ref<HTMLElement | null>(null)
+const accountToolsTriggerRef = ref<HTMLElement | null>(null)
+const accountToolsDropdownPosition = reactive({
+  top: null as number | null,
+  bottom: null as number | null,
+  left: 16,
+  width: 320,
+  maxHeight: 0
+})
+const accountToolsDropdownStyle = computed(() => ({
+  top: accountToolsDropdownPosition.top == null ? 'auto' : `${accountToolsDropdownPosition.top}px`,
+  bottom: accountToolsDropdownPosition.bottom == null ? 'auto' : `${accountToolsDropdownPosition.bottom}px`,
+  left: `${accountToolsDropdownPosition.left}px`,
+  width: `${accountToolsDropdownPosition.width}px`
+}))
 const hiddenColumns = reactive<Set<string>>(new Set())
 const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
@@ -1058,6 +1076,25 @@ const handleManualRefresh = async () => {
 
 const closeAccountToolsDropdown = () => {
   showAccountToolsDropdown.value = false
+}
+
+const updateAccountToolsDropdownPosition = () => {
+  const trigger = accountToolsTriggerRef.value
+  if (!trigger) return
+
+  const position = getFloatingPanelPosition(
+    trigger.getBoundingClientRect(),
+    document.documentElement.clientWidth || window.innerWidth,
+    window.innerHeight
+  )
+  Object.assign(accountToolsDropdownPosition, position)
+}
+
+const toggleAccountToolsDropdown = () => {
+  const nextVisible = !showAccountToolsDropdown.value
+  showAutoRefreshDropdown.value = false
+  if (nextVisible) updateAccountToolsDropdownPosition()
+  showAccountToolsDropdown.value = nextVisible
 }
 
 const openSyncFromCrs = () => {
@@ -1846,6 +1883,11 @@ const proxyExpiryText = (p: AccountProxy): string => {
 // 滚动时关闭操作菜单（不关闭列设置下拉菜单）
 const handleScroll = () => {
   menu.show = false
+  if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
+}
+
+const handleViewportResize = () => {
+  if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
 }
 
 // 点击外部关闭顶部下拉菜单
@@ -1870,6 +1912,7 @@ onMounted(async () => {
     console.error('Failed to load proxies/groups:', error)
   }
   window.addEventListener('scroll', handleScroll, true)
+  window.addEventListener('resize', handleViewportResize)
   document.addEventListener('click', handleClickOutside)
 
   if (autoRefreshEnabled.value) {
@@ -1882,6 +1925,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('scroll', handleScroll, true)
+  window.removeEventListener('resize', handleViewportResize)
   document.removeEventListener('click', handleClickOutside)
 })
 </script>
