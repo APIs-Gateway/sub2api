@@ -56,6 +56,8 @@ const paymentOrdersOutTradeNoUniqueIndex = "paymentorder_out_trade_no_unique"
 const schedulerOutboxPendingDedupKeyMigration = "153_scheduler_outbox_pending_dedup_key_index_notx.sql"
 const schedulerOutboxPendingDedupKeyIndex = "idx_scheduler_outbox_pending_dedup_key"
 const authCacheInvalidationOutboxMigration = "184_auth_cache_invalidation_outbox.sql"
+const latestAPIKeyIPIndexMigration = "185_add_usage_logs_api_key_latest_ip_index_notx.sql"
+const latestAPIKeyIPIndex = "idx_usage_logs_api_key_latest_ip"
 
 type migrationDatabaseDialect uint8
 
@@ -94,7 +96,7 @@ func migrationAppliesToDatabase(name string, dialect migrationDatabaseDialect) b
 		return dialect == migrationDatabaseMySQL
 	case strings.HasSuffix(name, "_sqlite.sql"):
 		return dialect == migrationDatabaseSQLite
-	case name == authCacheInvalidationOutboxMigration:
+	case name == authCacheInvalidationOutboxMigration || name == latestAPIKeyIPIndexMigration:
 		return dialect == migrationDatabasePostgres
 	default:
 		return true
@@ -361,6 +363,8 @@ func prepareNonTransactionalMigration(ctx context.Context, db *sql.DB, name stri
 		return preparePaymentOrdersOutTradeNoUniqueMigration(ctx, db)
 	case schedulerOutboxPendingDedupKeyMigration:
 		return dropInvalidIndexIfPresent(ctx, db, schedulerOutboxPendingDedupKeyIndex)
+	case latestAPIKeyIPIndexMigration:
+		return dropInvalidIndexIfPresent(ctx, db, latestAPIKeyIPIndex)
 	default:
 		return nil
 	}
