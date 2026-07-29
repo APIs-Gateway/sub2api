@@ -161,6 +161,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if customUA != "" {
 		upstreamReq.Header.Set("user-agent", customUA)
 	}
+	account.ApplyHeaderOverrides(upstreamReq.Header)
 
 	// 6. Send request
 	proxyURL := ""

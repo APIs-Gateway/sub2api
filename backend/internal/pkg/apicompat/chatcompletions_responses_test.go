@@ -32,6 +32,47 @@ func TestChatCompletionsToResponses_BasicText(t *testing.T) {
 	assert.Equal(t, "user", items[0].Role)
 }
 
+func TestUsageConversionsPreserveCacheWriteTokens(t *testing.T) {
+	var responsesUsage ResponsesUsage
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"input_tokens":1000,
+		"output_tokens":50,
+		"input_tokens_details":{"cached_tokens":100,"cache_write_tokens":200}
+	}`), &responsesUsage))
+	require.NotNil(t, responsesUsage.InputTokensDetails)
+	require.Equal(t, 200, responsesUsage.InputTokensDetails.CacheWriteTokens)
+
+	chatUsage := chatUsageFromResponsesUsage(&responsesUsage)
+	require.NotNil(t, chatUsage.PromptTokensDetails)
+	require.Equal(t, 100, chatUsage.PromptTokensDetails.CachedTokens)
+	require.Equal(t, 200, chatUsage.PromptTokensDetails.CacheWriteTokens)
+
+	roundTrip := ChatUsageToResponsesUsage(chatUsage)
+	require.NotNil(t, roundTrip.InputTokensDetails)
+	require.Equal(t, 200, roundTrip.CacheCreationInputTokens)
+	require.Equal(t, 200, roundTrip.InputTokensDetails.CacheWriteTokens)
+}
+
+func TestResponsesUsageNestedCacheWritePresenceOverridesTopLevelAlias(t *testing.T) {
+	tests := []struct {
+		name       string
+		nestedJSON string
+		want       int
+	}{
+		{name: "explicit zero", nestedJSON: `{"cache_write_tokens":0}`, want: 0},
+		{name: "nonzero", nestedJSON: `{"cache_write_tokens":7}`, want: 7},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var usage ResponsesUsage
+			payload := []byte(`{"input_tokens":20,"output_tokens":2,"cache_creation_input_tokens":19,"input_tokens_details":` + tt.nestedJSON + `}`)
+			require.NoError(t, json.Unmarshal(payload, &usage))
+			require.Equal(t, tt.want, usage.CacheCreationInputTokens)
+		})
+	}
+}
+
 func TestChatCompletionsToResponses_SystemMessage(t *testing.T) {
 	req := &ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -1132,8 +1173,7 @@ func TestResponsesEventToChatChunks_Completed(t *testing.T) {
 				OutputTokens: 20,
 				TotalTokens:  70,
 				InputTokensDetails: &ResponsesInputTokensDetails{
-					CachedTokens:     30,
-					CacheWriteTokens: 10,
+					CachedTokens: 30,
 				},
 			},
 		},
@@ -1152,43 +1192,6 @@ func TestResponsesEventToChatChunks_Completed(t *testing.T) {
 	assert.Equal(t, 70, chunks[1].Usage.TotalTokens)
 	require.NotNil(t, chunks[1].Usage.PromptTokensDetails)
 	assert.Equal(t, 30, chunks[1].Usage.PromptTokensDetails.CachedTokens)
-	assert.Equal(t, 10, chunks[1].Usage.PromptTokensDetails.CacheWriteTokens)
-}
-
-func TestChatUsageToResponsesUsagePreservesCacheCreationTokens(t *testing.T) {
-	for _, tt := range []struct {
-		name           string
-		details        ChatTokenDetails
-		wantCreation   int
-		wantCacheWrite int
-	}{
-		{
-			name:           "cache creation fallback",
-			details:        ChatTokenDetails{CacheCreationTokens: 11},
-			wantCreation:   11,
-			wantCacheWrite: 0,
-		},
-		{
-			name:           "cache write takes precedence",
-			details:        ChatTokenDetails{CacheCreationTokens: 11, CacheWriteTokens: 13},
-			wantCreation:   13,
-			wantCacheWrite: 13,
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			usage := ChatUsageToResponsesUsage(&ChatUsage{
-				PromptTokens:        42,
-				CompletionTokens:    7,
-				PromptTokensDetails: &tt.details,
-			})
-
-			require.NotNil(t, usage)
-			require.Equal(t, tt.wantCreation, usage.CacheCreationInputTokens)
-			require.NotNil(t, usage.InputTokensDetails)
-			require.Equal(t, tt.details.CacheCreationTokens, usage.InputTokensDetails.CacheCreationTokens)
-			require.Equal(t, tt.wantCacheWrite, usage.InputTokensDetails.CacheWriteTokens)
-		})
-	}
 }
 
 func TestResponsesEventToChatChunks_CompletedWithReasoningTokens(t *testing.T) {

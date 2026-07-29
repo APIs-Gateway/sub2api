@@ -1006,6 +1006,7 @@ func (s *OpenAIGatewayService) buildOpenAIImagesAsyncPollRequest(
 	if customUA != "" {
 		req.Header.Set("User-Agent", customUA)
 	}
+	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }
 
@@ -1133,6 +1134,7 @@ func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 	if strings.TrimSpace(contentType) != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
+	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }
 

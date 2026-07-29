@@ -27,6 +27,37 @@ import (
 var _ AccountRepository = (*stubOpenAIAccountRepo)(nil)
 var _ GatewayCache = (*stubGatewayCache)(nil)
 
+func TestOpenAIUpstreamRequestBuilders_ApplyAPIKeyAccountOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "client-agent/1.0")
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":                 "upstream-key",
+			"base_url":                "https://upstream.example.com",
+			"header_override_enabled": true,
+			"header_overrides": map[string]any{
+				"user-agent": "override-agent/2.0",
+				"x-vendor":   "gateway",
+			},
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+
+	passthrough, err := svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, []byte(`{"model":"gpt-5"}`), "upstream-key")
+	require.NoError(t, err)
+	require.Equal(t, "override-agent/2.0", passthrough.Header.Get("User-Agent"))
+	require.Equal(t, "gateway", getHeaderRaw(passthrough.Header, "x-vendor"))
+
+	request, err := svc.buildUpstreamRequest(context.Background(), c, account, []byte(`{"model":"gpt-5"}`), "upstream-key", false, "", false)
+	require.NoError(t, err)
+	require.Equal(t, "override-agent/2.0", request.Header.Get("User-Agent"))
+	require.Equal(t, "gateway", getHeaderRaw(request.Header, "x-vendor"))
+}
+
 type stubOpenAIAccountRepo struct {
 	AccountRepository
 	accounts []Account

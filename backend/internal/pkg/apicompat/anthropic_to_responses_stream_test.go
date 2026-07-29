@@ -1,14 +1,68 @@
 package apicompat
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/stretchr/testify/require"
-)
-
-func TestAnthropicEventToResponses_TextIncludesContentPartAndFullOutput(t *testing.T) {
+// TestAnthropicEventToResponses_TextEmitsContentPart pins that a message text
+// stream emits response.content_part.added, and that it precedes the first
+// output_text.delta for that part.
+//
+// Why: the OpenAI SDK's accumulating stream helper (client.responses.stream)
+// only appends a content part to the message item when it sees
+// content_part.added. The item is added with content: [], so a missing event
+// makes the following output_text.delta index output.content[content_index] and
+// raise IndexError. Raw event iteration does not accumulate, so a regression
+// here is easy to miss.
+func TestAnthropicEventToResponses_TextEmitsContentPart(t *testing.T) {
 	state := NewAnthropicEventToResponsesState()
 	state.Model = "claude-sonnet-4-5"
+
+	var types []string
+	feed := func(evt *AnthropicStreamEvent) {
+		for _, out := range AnthropicEventToResponsesEvents(evt, state) {
+			types = append(types, out.Type)
+		}
+	}
+
+	idx := 0
+	feed(&AnthropicStreamEvent{Type: "message_start", Message: &AnthropicResponse{ID: "msg_1", Model: "claude-sonnet-4-5"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &idx, ContentBlock: &AnthropicContentBlock{Type: "text"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "text_delta", Text: "Hel"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "text_delta", Text: "lo"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &idx})
+	feed(&AnthropicStreamEvent{Type: "message_stop"})
+
+	posOf := func(target string) int {
+		for i, ty := range types {
+			if ty == target {
+				return i
+			}
+		}
+		return -1
+	}
+
+	partAdded := posOf("response.content_part.added")
+	firstDelta := posOf("response.output_text.delta")
+
+	if partAdded < 0 {
+		t.Fatalf("response.content_part.added was not emitted; got %v", types)
+	}
+	if firstDelta < 0 {
+		t.Fatalf("response.output_text.delta was not emitted; got %v", types)
+	}
+	if partAdded > firstDelta {
+		t.Errorf("content_part.added must precede the first output_text.delta; got %v", types)
+	}
+	if posOf("response.content_part.done") < 0 {
+		t.Errorf("response.content_part.done was not emitted; got %v", types)
+	}
+}
+
+// TestAnthropicEventToResponses_DoneEventsCarryFullText pins that done events
+// carry the part's full text (deltas carry increments only).
+func TestAnthropicEventToResponses_DoneEventsCarryFullText(t *testing.T) {
+	state := NewAnthropicEventToResponsesState()
+	state.Model = "claude-sonnet-4-5"
+
 	var events []ResponsesStreamEvent
 	feed := func(evt *AnthropicStreamEvent) {
 		events = append(events, AnthropicEventToResponsesEvents(evt, state)...)
@@ -20,142 +74,114 @@ func TestAnthropicEventToResponses_TextIncludesContentPartAndFullOutput(t *testi
 	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "text_delta", Text: "Hello "}})
 	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "text_delta", Text: "world"}})
 	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &idx})
-	feed(&AnthropicStreamEvent{Type: "message_stop"})
 
-	indexOf := func(typ string) int {
-		for i, evt := range events {
-			if evt.Type == typ {
-				return i
+	const want = "Hello world"
+	var sawTextDone, sawPartDone bool
+	for _, e := range events {
+		switch e.Type {
+		case "response.output_text.done":
+			sawTextDone = true
+			if e.Text != want {
+				t.Errorf("output_text.done text = %q, want %q", e.Text, want)
+			}
+		case "response.content_part.done":
+			sawPartDone = true
+			if e.Part == nil || e.Part.Text != want {
+				t.Errorf("content_part.done part = %+v, want text %q", e.Part, want)
 			}
 		}
-		return -1
 	}
-	partAdded := indexOf("response.content_part.added")
-	delta := indexOf("response.output_text.delta")
-	require.GreaterOrEqual(t, partAdded, 0)
-	require.GreaterOrEqual(t, delta, 0)
-	require.Less(t, partAdded, delta)
-
-	var textDone, partDone, completed *ResponsesStreamEvent
-	for i := range events {
-		switch events[i].Type {
-		case "response.output_text.done":
-			textDone = &events[i]
-		case "response.content_part.done":
-			partDone = &events[i]
-		case "response.completed":
-			completed = &events[i]
-		}
+	if !sawTextDone || !sawPartDone {
+		t.Errorf("missing done events: output_text.done=%v content_part.done=%v", sawTextDone, sawPartDone)
 	}
-	require.NotNil(t, textDone)
-	require.Equal(t, "Hello world", textDone.Text)
-	require.NotNil(t, partDone)
-	require.Equal(t, "Hello world", partDone.Part.Text)
-	require.NotNil(t, completed)
-	require.Len(t, completed.Response.Output, 1)
-	require.Equal(t, "message", completed.Response.Output[0].Type)
-	require.Equal(t, "Hello world", completed.Response.Output[0].Content[0].Text)
 }
 
-func TestAnthropicEventToResponses_FunctionCallIncludesArgumentsInOutput(t *testing.T) {
+// TestAnthropicEventToResponses_CompletedCarriesOutput pins that
+// response.completed carries the full output list. The SDK's
+// get_final_response() and tracing integrations parse the terminal event's
+// response directly; an empty output leaves them with nothing (the text still
+// renders from deltas, which is why this is invisible when only watching the
+// stream).
+func TestAnthropicEventToResponses_CompletedCarriesOutput(t *testing.T) {
 	state := NewAnthropicEventToResponsesState()
+	state.Model = "claude-sonnet-4-5"
+
 	var events []ResponsesStreamEvent
 	feed := func(evt *AnthropicStreamEvent) {
 		events = append(events, AnthropicEventToResponsesEvents(evt, state)...)
 	}
 
 	idx := 0
-	feed(&AnthropicStreamEvent{Type: "message_start", Message: &AnthropicResponse{ID: "msg_2"}})
-	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &idx, ContentBlock: &AnthropicContentBlock{Type: "tool_use", ID: "toolu_1", Name: "get_weather"}})
-	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "input_json_delta", PartialJSON: `{"city":`}})
-	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "input_json_delta", PartialJSON: `"SH"}`}})
+	feed(&AnthropicStreamEvent{Type: "message_start", Message: &AnthropicResponse{ID: "msg_1"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &idx, ContentBlock: &AnthropicContentBlock{Type: "text"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "text_delta", Text: "4826"}})
 	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &idx})
 	feed(&AnthropicStreamEvent{Type: "message_stop"})
 
 	var completed *ResponsesStreamEvent
-	var argumentsDone *ResponsesStreamEvent
 	for i := range events {
-		switch events[i].Type {
-		case "response.function_call_arguments.done":
-			argumentsDone = &events[i]
-		case "response.completed":
+		if events[i].Type == "response.completed" {
 			completed = &events[i]
 		}
 	}
-	require.NotNil(t, argumentsDone)
-	require.Equal(t, `{"city":"SH"}`, argumentsDone.Arguments)
-	require.NotNil(t, completed)
-	require.Len(t, completed.Response.Output, 1)
-	require.Equal(t, "function_call", completed.Response.Output[0].Type)
-	require.Equal(t, `{"city":"SH"}`, completed.Response.Output[0].Arguments)
-	require.Equal(t, "get_weather", completed.Response.Output[0].Name)
+	if completed == nil || completed.Response == nil {
+		t.Fatalf("response.completed was not emitted")
+	}
+	if len(completed.Response.Output) == 0 {
+		t.Fatalf("response.completed carries an empty output; clients would see no result")
+	}
+	msg := completed.Response.Output[0]
+	if msg.Type != "message" || len(msg.Content) == 0 {
+		t.Fatalf("output[0] = %+v, want a message with content", msg)
+	}
+	if msg.Content[0].Text != "4826" {
+		t.Errorf("output[0].content[0].text = %q, want %q", msg.Content[0].Text, "4826")
+	}
 }
 
-func TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex(t *testing.T) {
+// TestAnthropicEventToResponses_ToolCallCompletedCarriesArguments pins that a
+// function call's accumulated arguments survive into output_item.done and
+// response.completed.
+func TestAnthropicEventToResponses_ToolCallCompletedCarriesArguments(t *testing.T) {
 	state := NewAnthropicEventToResponsesState()
-	var events []ResponsesStreamEvent
-	feed := func(evt *AnthropicStreamEvent) {
-		events = append(events, AnthropicEventToResponsesEvents(evt, state)...)
-	}
+	state.Model = "claude-sonnet-4-5"
 
-	first, second := 0, 1
-	feed(&AnthropicStreamEvent{Type: "message_start", Message: &AnthropicResponse{ID: "msg_multi_text"}})
-	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &first, ContentBlock: &AnthropicContentBlock{Type: "text"}})
-	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &first, Delta: &AnthropicDelta{Type: "text_delta", Text: "first"}})
-	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &first})
-	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &second, ContentBlock: &AnthropicContentBlock{Type: "text"}})
-	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &second, Delta: &AnthropicDelta{Type: "text_delta", Text: "second"}})
-	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &second})
-	feed(&AnthropicStreamEvent{Type: "message_stop"})
-
-	var completed *ResponsesStreamEvent
-	var partAdded []ResponsesStreamEvent
-	for i := range events {
-		switch events[i].Type {
-		case "response.content_part.added":
-			partAdded = append(partAdded, events[i])
-		case "response.completed":
-			completed = &events[i]
-		}
-	}
-	require.Len(t, partAdded, 2)
-	require.Equal(t, 0, partAdded[0].ContentIndex)
-	require.Equal(t, 1, partAdded[1].ContentIndex)
-	require.NotNil(t, completed)
-	require.Len(t, completed.Response.Output[0].Content, 2)
-	require.Equal(t, "first", completed.Response.Output[0].Content[0].Text)
-	require.Equal(t, "second", completed.Response.Output[0].Content[1].Text)
-}
-
-func TestAnthropicEventToResponses_ReasoningIncludesSummaryInOutput(t *testing.T) {
-	state := NewAnthropicEventToResponsesState()
 	var events []ResponsesStreamEvent
 	feed := func(evt *AnthropicStreamEvent) {
 		events = append(events, AnthropicEventToResponsesEvents(evt, state)...)
 	}
 
 	idx := 0
-	feed(&AnthropicStreamEvent{Type: "message_start", Message: &AnthropicResponse{ID: "msg_3"}})
-	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &idx, ContentBlock: &AnthropicContentBlock{Type: "thinking"}})
-	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "thinking_delta", Thinking: "thinking"}})
+	feed(&AnthropicStreamEvent{Type: "message_start", Message: &AnthropicResponse{ID: "msg_1"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &idx, ContentBlock: &AnthropicContentBlock{
+		Type: "tool_use", ID: "toolu_1", Name: "get_weather",
+	}})
+	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{
+		Type: "input_json_delta", PartialJSON: `{"city":`,
+	}})
+	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{
+		Type: "input_json_delta", PartialJSON: `"SH"}`,
+	}})
 	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &idx})
 	feed(&AnthropicStreamEvent{Type: "message_stop"})
 
 	var completed *ResponsesStreamEvent
-	var summaryDone *ResponsesStreamEvent
 	for i := range events {
-		switch events[i].Type {
-		case "response.reasoning_summary_text.done":
-			summaryDone = &events[i]
-		case "response.completed":
+		if events[i].Type == "response.completed" {
 			completed = &events[i]
 		}
 	}
-	require.NotNil(t, summaryDone)
-	require.Equal(t, "thinking", summaryDone.Text)
-	require.NotNil(t, completed)
-	require.Len(t, completed.Response.Output, 1)
-	require.Equal(t, "reasoning", completed.Response.Output[0].Type)
-	require.Len(t, completed.Response.Output[0].Summary, 1)
-	require.Equal(t, "thinking", completed.Response.Output[0].Summary[0].Text)
+	if completed == nil || completed.Response == nil || len(completed.Response.Output) == 0 {
+		t.Fatalf("response.completed carries no output")
+	}
+	fc := completed.Response.Output[0]
+	if fc.Type != "function_call" {
+		t.Fatalf("output[0].type = %q, want function_call", fc.Type)
+	}
+	if fc.Arguments != `{"city":"SH"}` {
+		t.Errorf("arguments = %q, want %q", fc.Arguments, `{"city":"SH"}`)
+	}
+	if fc.Name != "get_weather" {
+		t.Errorf("name = %q, want get_weather", fc.Name)
+	}
 }

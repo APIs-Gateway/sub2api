@@ -68,6 +68,14 @@ type Account struct {
 	modelMappingCacheRawPtr         uintptr
 	modelMappingCacheRawLen         int
 	modelMappingCacheRawSig         uint64
+
+	// header_overrides hot-path cache, mirroring model_mapping caching.
+	headerOverrideCache               map[string]string
+	headerOverrideCacheReady          bool
+	headerOverrideCacheCredentialsPtr uintptr
+	headerOverrideCacheRawPtr         uintptr
+	headerOverrideCacheRawLen         int
+	headerOverrideCacheRawSig         uint64
 }
 
 type OpenAIEndpointCapability string

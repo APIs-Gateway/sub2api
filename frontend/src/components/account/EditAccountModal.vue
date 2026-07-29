@@ -417,6 +417,31 @@
           </div>
         </div>
 
+        <div
+          v-if="isHeaderOverridePlatform(account.platform) && account.type === 'apikey'"
+          class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        >
+          <div class="mb-3 flex items-center justify-between">
+            <div>
+              <label class="input-label mb-0">{{ t('admin.accounts.headerOverride.title') }}</label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.headerOverride.hint') }}</p>
+            </div>
+            <Toggle v-model="headerOverrideEnabled" />
+          </div>
+          <div v-if="headerOverrideEnabled" class="space-y-2">
+            <p class="text-xs text-blue-700 dark:text-blue-400">{{ t('admin.accounts.headerOverride.info') }}</p>
+            <div v-for="(row, index) in headerOverrideRows" :key="index" class="flex gap-2">
+              <input v-model="row.name" type="text" class="input flex-1" :placeholder="t('admin.accounts.headerOverride.namePlaceholder')" />
+              <input v-model="row.value" type="text" class="input flex-1" :placeholder="t('admin.accounts.headerOverride.valuePlaceholder')" />
+              <button type="button" class="btn btn-secondary" @click="headerOverrideRows.splice(index, 1)">×</button>
+            </div>
+            <button type="button" class="btn btn-secondary" @click="headerOverrideRows.push({ name: '', value: '' })">
+              {{ t('admin.accounts.headerOverride.addRow') }}
+            </button>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.headerOverride.emptyValueHint') }}</p>
+          </div>
+        </div>
+
       </div>
 
       <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
@@ -1537,6 +1562,24 @@
         </div>
       </div>
 
+      <div
+        v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.apiKeyAuthScheme') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.apiKeyAuthSchemeDesc') }}
+            </p>
+          </div>
+          <select v-model="anthropicAPIKeyAuthScheme" class="input w-52 text-sm">
+            <option value="x_api_key">{{ t('admin.accounts.anthropic.apiKeyAuthSchemeXApiKey') }}</option>
+            <option value="authorization_bearer">{{ t('admin.accounts.anthropic.apiKeyAuthSchemeBearer') }}</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Anthropic API Key: Web Search Emulation (hidden when global disabled) -->
       <div
         v-if="account?.platform === 'anthropic' && account?.type === 'apikey' && webSearchGlobalEnabled"
@@ -2415,7 +2458,12 @@ import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import {
   applyAntigravityProjectID,
-  applyInterceptWarmup
+  applyInterceptWarmup,
+  applyHeaderOverride,
+  isHeaderOverridePlatform,
+  splitHeaderOverridesObject,
+  validateHeaderOverrideRows,
+  type HeaderOverrideRow
 } from '@/components/account/credentialsBuilder'
 import { formatDateTime, formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
@@ -2541,6 +2589,8 @@ function formatPoolModeRetryStatusCodes(value: unknown): string {
 const customErrorCodesEnabled = ref(false)
 const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
+const headerOverrideEnabled = ref(false)
+const headerOverrideRows = ref<HeaderOverrideRow[]>([])
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(false)
 const autoPause5hThreshold = ref<number | null>(null)
@@ -2606,7 +2656,9 @@ const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 type CodexImageGenerationBridgeMode = 'inherit' | 'enabled' | 'disabled'
 const codexImageGenerationBridgeMode = ref<CodexImageGenerationBridgeMode>('inherit')
+type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
+const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
 const {
@@ -2989,6 +3041,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   codexImageGenerationBridgeMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
+  anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
@@ -3036,6 +3089,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   }
   if (newAccount.platform === 'anthropic' && newAccount.type === 'apikey') {
     anthropicPassthroughEnabled.value = extra?.anthropic_passthrough === true
+    anthropicAPIKeyAuthScheme.value = extra?.anthropic_apikey_auth_scheme === 'authorization_bearer'
+      ? 'authorization_bearer'
+      : 'x_api_key'
     // 三态：string "default"/"enabled"/"disabled"，向后兼容旧 bool
     const wsVal = extra?.web_search_emulation
     if (wsVal === 'enabled' || wsVal === 'disabled') {
@@ -3143,6 +3199,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     } else {
       selectedErrorCodes.value = []
     }
+    headerOverrideEnabled.value = credentials.header_override_enabled === true
+    headerOverrideRows.value = splitHeaderOverridesObject(credentials.header_overrides)
   } else if (newAccount.type === 'bedrock' && newAccount.credentials) {
     const bedrockCreds = newAccount.credentials as Record<string, unknown>
     const authMode = (bedrockCreds.auth_mode as string) || 'sigv4'
@@ -3207,6 +3265,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     poolModeRetryStatusCodesInput.value = ''
     customErrorCodesEnabled.value = false
     selectedErrorCodes.value = []
+    headerOverrideEnabled.value = false
+    headerOverrideRows.value = []
   }
   editApiKey.value = ''
 }
@@ -3778,6 +3838,15 @@ const handleSubmit = async () => {
         delete newCredentials.custom_error_codes
       }
 
+      if (headerOverrideEnabled.value) {
+        const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
+        if (headerError) {
+          appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
+          return
+        }
+      }
+      applyHeaderOverride(newCredentials, headerOverrideEnabled.value, headerOverrideRows.value, 'edit')
+
       // Add intercept warmup requests setting
       applyInterceptWarmup(newCredentials, interceptWarmupRequests.value, 'edit')
       if (!applyTempUnschedConfig(newCredentials)) {
@@ -4092,6 +4161,11 @@ const handleSubmit = async () => {
         newExtra.anthropic_passthrough = true
       } else {
         delete newExtra.anthropic_passthrough
+      }
+      if (anthropicAPIKeyAuthScheme.value === 'authorization_bearer') {
+        newExtra.anthropic_apikey_auth_scheme = 'authorization_bearer'
+      } else {
+        delete newExtra.anthropic_apikey_auth_scheme
       }
       if (webSearchEmulationMode.value === 'default') {
         delete newExtra.web_search_emulation

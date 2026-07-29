@@ -427,6 +427,35 @@ func TestHandleFailoverError_SameAccountRetry(t *testing.T) {
 		require.Equal(t, FailoverContinue, action)
 		require.Len(t, mock.calls, 2, "第二次耗尽也应调用 TempUnschedule")
 	})
+	t.Run("uses the configured retry limit instead of the legacy default", func(t *testing.T) {
+		mock := &mockTempUnscheduler{}
+		fs := NewFailoverState(5, false)
+		err := newTestFailoverErr(403, true, false)
+
+		action := fs.HandleFailoverErrorWithRetryLimit(context.Background(), mock, 100, "anthropic", 1, err)
+		require.Equal(t, FailoverContinue, action)
+		require.Equal(t, 1, fs.SameAccountRetryCount[100])
+		require.Zero(t, fs.SwitchCount)
+		require.Empty(t, mock.calls)
+
+		action = fs.HandleFailoverErrorWithRetryLimit(context.Background(), mock, 100, "anthropic", 1, err)
+		require.Equal(t, FailoverContinue, action)
+		require.Equal(t, 1, fs.SameAccountRetryCount[100])
+		require.Equal(t, 1, fs.SwitchCount)
+		require.Len(t, mock.calls, 1)
+	})
+
+	t.Run("allows a configured retry limit of zero to disable same-account retry", func(t *testing.T) {
+		mock := &mockTempUnscheduler{}
+		fs := NewFailoverState(5, false)
+		err := newTestFailoverErr(403, true, false)
+
+		action := fs.HandleFailoverErrorWithRetryLimit(context.Background(), mock, 100, "anthropic", 0, err)
+		require.Equal(t, FailoverContinue, action)
+		require.Zero(t, fs.SameAccountRetryCount[100])
+		require.Equal(t, 1, fs.SwitchCount)
+		require.Len(t, mock.calls, 1)
+	})
 }
 
 // ---------------------------------------------------------------------------

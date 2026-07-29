@@ -4027,6 +4027,10 @@
         apiKeyPassthrough: 'Auto passthrough (auth only)',
         apiKeyPassthroughDesc:
           'Only applies to Anthropic API Key accounts. When enabled, messages/count_tokens are forwarded in passthrough mode with auth replacement only, while billing/concurrency/audit and safety filtering are preserved. Disable to roll back immediately.',
+        apiKeyAuthScheme: 'Upstream auth scheme',
+        apiKeyAuthSchemeDesc: 'Choose the API key auth header used when forwarding to an Anthropic-compatible upstream. Ollama Cloud uses Authorization: Bearer.',
+        apiKeyAuthSchemeXApiKey: 'x-api-key',
+        apiKeyAuthSchemeBearer: 'Authorization: Bearer',
         webSearchEmulation: 'Web Search Emulation',
         webSearchEmulationDesc:
           'Enable web search emulation for this API Key account. When a pure web_search request is detected, the gateway calls a third-party search API and constructs the response locally. Default follows channel config.',
@@ -4078,6 +4082,23 @@
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:
         'Only selected error codes will stop scheduling. Other errors will return 500.',
+      headerOverride: {
+        title: 'Request Header Override',
+        hint: 'Set static request headers for compatible API key upstream accounts.',
+        info: 'Authentication, transport, and per-request session headers are managed by the gateway and cannot be overridden.',
+        namePlaceholder: 'Header name',
+        valuePlaceholder: 'Header value',
+        addRow: 'Add header',
+        emptyValueHint: 'Rows with an empty value are placeholders and do not override anything.',
+        bulkDisableHint: 'Saving will disable header override and clear existing configuration on the selected accounts.',
+        bulkReplaceHint: 'Saving will replace the existing header override configuration on all selected accounts with the rows below.',
+        bulkEmptyRows: 'Add at least one header row before saving, or turn the toggle off to clear existing configuration.',
+        invalidName: 'Invalid header name',
+        blockedName: 'This header cannot be overridden because it is managed by the system.',
+        duplicateName: 'Duplicate header name (matching is case-insensitive)',
+        invalidValue: 'Invalid or excessively long header value',
+        tooManyEntries: 'At most 64 header overrides are allowed'
+      },
       customErrorCodes429Warning:
         '429 already has built-in rate limit handling. Adding it to custom error codes will disable the account instead of temporary rate limiting. Are you sure?',
       customErrorCodes529Warning:
@@ -6465,6 +6486,8 @@
         anthropicCacheTTL1hInjectionHint: 'When enabled, existing ephemeral cache_control blocks in Anthropic OAuth/Setup Token request bodies are forced to 1h; response usage is billed back as 5m by default, with account-level TTL billing override taking priority.',
         rewriteMessageCacheControl: 'Rewrite Message Cache Breakpoints',
         rewriteMessageCacheControlHint: 'Default off: preserve client cache_control on message content blocks. When enabled, client breakpoints are stripped and proxy breakpoints are injected for clients that do not manage caching themselves.',
+        clientDatelineNormalization: 'Normalize Anthropic Client Dateline',
+        clientDatelineNormalizationHint: 'For Anthropic OAuth and Setup Token requests only, normalize non-ASCII apostrophes and slash-separated dates in the client dateline to avoid upstream fingerprinting. Enabled by default.',
         antigravityUserAgentVersion: 'Antigravity UA Version',
         antigravityUserAgentVersionPlaceholder: '1.23.2',
         antigravityUserAgentVersionHint: 'Leave empty to use ANTIGRAVITY_USER_AGENT_VERSION or the built-in default 1.23.2; when set, the admin setting takes precedence.',
