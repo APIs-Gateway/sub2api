@@ -30,14 +30,14 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 		"reasoning": {"effort": "high"}
 	}`)
 
-	patched, err := patchGrokResponsesBody(body, "grok-4.3")
+	patched, _, err := patchGrokResponsesBodyWithClientTools(body, "grok-4.3")
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 	require.Equal(t, "grok-4.3", gjson.GetBytes(patched, "model").String())
 	require.False(t, gjson.GetBytes(patched, "prompt_cache_retention").Exists())
 	require.False(t, gjson.GetBytes(patched, "safety_identifier").Exists())
 	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning.effort").String())
-	_, err = patchGrokResponsesBody([]byte("not-json"), "grok-4.3")
+	_, _, err = patchGrokResponsesBodyWithClientTools([]byte("not-json"), "grok-4.3")
 	require.EqualError(t, err, "invalid json request body")
 }
 
