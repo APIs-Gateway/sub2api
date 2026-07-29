@@ -20,8 +20,12 @@ type tokenRefreshAccountRepo struct {
 	setErrorCalls          int
 	clearTempCalls         int
 	setTempUnschedCalls    int
+	updateExtraCalls       int
+	lastErrorMessage       string
+	lastExtraUpdates       map[string]any
 	lastAccount            *Account
 	updateErr              error
+	updateExtraErr         error
 }
 
 func (r *tokenRefreshAccountRepo) Update(ctx context.Context, account *Account) error {
@@ -51,6 +55,7 @@ func (r *tokenRefreshAccountRepo) UpdateCredentials(ctx context.Context, id int6
 
 func (r *tokenRefreshAccountRepo) SetError(ctx context.Context, id int64, errorMsg string) error {
 	r.setErrorCalls++
+	r.lastErrorMessage = errorMsg
 	return nil
 }
 
@@ -62,6 +67,12 @@ func (r *tokenRefreshAccountRepo) ClearTempUnschedulable(ctx context.Context, id
 func (r *tokenRefreshAccountRepo) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
 	r.setTempUnschedCalls++
 	return nil
+}
+
+func (r *tokenRefreshAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
+	r.updateExtraCalls++
+	r.lastExtraUpdates = shallowCopyMap(updates)
+	return r.updateExtraErr
 }
 
 type tokenCacheInvalidatorStub struct {
@@ -223,6 +234,108 @@ func TestTokenRefreshService_RefreshWithRetry_Antigravity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.updateCalls)
 	require.Equal(t, 1, invalidator.calls) // Antigravity 也应触发缓存失效
+}
+
+func TestAntigravityTokenRefresher_NeedsRefresh_ForceRefreshMarker(t *testing.T) {
+	refresher := NewAntigravityTokenRefresher(nil)
+	account := &Account{
+		ID:       3675,
+		Platform: PlatformAntigravity,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+		},
+		Extra: map[string]any{
+			antigravityForceTokenRefreshExtraKey: true,
+		},
+	}
+
+	require.True(t, refresher.NeedsRefresh(account, 0), "server-invalidated token must refresh before expires_at")
+}
+
+func TestTokenRefreshService_RefreshWithRetry_AntigravityClearsForceRefreshOnSuccess(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	cfg := &config.Config{TokenRefresh: config.TokenRefreshConfig{MaxRetries: 1, RetryBackoffSeconds: 0}}
+	service := NewTokenRefreshService(repo, nil, nil, nil, nil, nil, nil, cfg, nil)
+	account := &Account{
+		ID:       3709,
+		Platform: PlatformAntigravity,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			antigravityForceTokenRefreshExtraKey:       true,
+			antigravityForceTokenRefreshReasonExtraKey: "401_invalid",
+			"privacy_mode":                             AntigravityPrivacySet,
+		},
+	}
+	refresher := &tokenRefresherStub{credentials: map[string]any{"access_token": "new-ag-token"}}
+
+	err := service.refreshWithRetry(context.Background(), account, refresher, refresher, time.Hour)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.updateExtraCalls)
+	require.Equal(t, false, repo.lastExtraUpdates[antigravityForceTokenRefreshExtraKey])
+	require.Equal(t, "", repo.lastExtraUpdates[antigravityForceTokenRefreshReasonExtraKey])
+	require.Equal(t, false, account.Extra[antigravityForceTokenRefreshExtraKey])
+}
+
+func TestTokenRefreshService_RefreshWithRetry_AntigravityInvalidGrantClearsForceRefresh(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	cfg := &config.Config{TokenRefresh: config.TokenRefreshConfig{MaxRetries: 1, RetryBackoffSeconds: 0}}
+	service := NewTokenRefreshService(repo, nil, nil, nil, nil, nil, nil, cfg, nil)
+	account := &Account{
+		ID:       3710,
+		Platform: PlatformAntigravity,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			antigravityForceTokenRefreshExtraKey:       true,
+			antigravityForceTokenRefreshReasonExtraKey: "401_invalid",
+		},
+	}
+	refresher := &tokenRefresherStub{err: errors.New("invalid_grant: token revoked")}
+
+	err := service.refreshWithRetry(context.Background(), account, refresher, refresher, time.Hour)
+
+	require.Error(t, err)
+	require.Equal(t, 1, repo.setErrorCalls)
+	require.Equal(t, 1, repo.updateExtraCalls)
+	require.Equal(t, false, repo.lastExtraUpdates[antigravityForceTokenRefreshExtraKey])
+	require.Contains(t, repo.lastErrorMessage, "non-retryable")
+}
+
+func TestTokenRefreshService_ClearAntigravityForceRefreshMarkerPersistenceFailureKeepsMarker(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{updateExtraErr: errors.New("extra update failed")}
+	service := &TokenRefreshService{accountRepo: repo}
+	account := &Account{
+		ID:       3711,
+		Platform: PlatformAntigravity,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			antigravityForceTokenRefreshExtraKey: true,
+		},
+	}
+
+	service.clearAntigravityForceTokenRefresh(context.Background(), account, "success")
+
+	require.Equal(t, 1, repo.updateExtraCalls)
+	require.Equal(t, true, account.Extra[antigravityForceTokenRefreshExtraKey])
+}
+
+func TestTokenRefreshService_ClearAntigravityForceRefreshMarkerIsPlatformScoped(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	service := &TokenRefreshService{accountRepo: repo}
+	account := &Account{
+		ID:       3712,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			antigravityForceTokenRefreshExtraKey: true,
+		},
+	}
+
+	service.clearAntigravityForceTokenRefresh(context.Background(), account, "success")
+
+	require.Zero(t, repo.updateExtraCalls)
+	require.Equal(t, true, account.Extra[antigravityForceTokenRefreshExtraKey])
 }
 
 // TestTokenRefreshService_RefreshWithRetry_NonOAuthAccount 测试非 OAuth 账号不触发缓存失效
