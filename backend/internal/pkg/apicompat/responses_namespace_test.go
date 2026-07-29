@@ -162,3 +162,66 @@ func TestRestoreResponsesNamespaceCalls_RewritesLifecycleItems(t *testing.T) {
 		})
 	}
 }
+
+func TestFlattenResponsesNamespaces_HandlesChildrenFallbackDuplicatesAndIgnoredEntries(t *testing.T) {
+	req := map[string]any{
+		"tools": []any{
+			"opaque tool",
+			map[string]any{"type": "namespace", "name": ""},
+			map[string]any{"type": "namespace", "name": "preserved", "tools": []any{map[string]any{"type": "function", "name": "keep"}}},
+			map[string]any{"type": "namespace", "name": "ops", "children": []any{
+				"invalid child",
+				map[string]any{"type": "custom", "name": "skip"},
+				map[string]any{"type": "function", "name": " "},
+				map[string]any{"type": "function", "name": "run", "description": "run command"},
+				map[string]any{"type": "function", "name": "run"},
+			}},
+		},
+		"input":       []any{map[string]any{"type": "function_call", "namespace": "ops", "name": "run", "arguments": "{}"}},
+		"tool_choice": map[string]any{"type": "function", "namespace": "ops", "name": "run"},
+	}
+
+	names, changed, err := FlattenResponsesNamespacesExcept(req, map[string]bool{"preserved": true})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, map[string]ResponsesNamespaceName{"ops__run": {Namespace: "ops", Name: "run"}}, names)
+
+	tools, ok := req["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 3)
+	flat := tools[2].(map[string]any)
+	require.Equal(t, "ops__run", flat["name"])
+	input := req["input"].([]any)
+	call := input[0].(map[string]any)
+	require.Equal(t, "ops__run", call["name"])
+	require.NotContains(t, call, "namespace")
+	choice := req["tool_choice"].(map[string]any)
+	require.Equal(t, "ops__run", choice["name"])
+	require.NotContains(t, choice, "namespace")
+}
+
+func TestResponsesNamespaceHelpers_HandleNoopsAndInvalidPayloads(t *testing.T) {
+	for _, req := range []map[string]any{nil, {}, {"tools": "not a slice"}, {"tools": []any{map[string]any{"type": "namespace", "name": "empty"}}}} {
+		names, changed, err := FlattenResponsesNamespaces(req)
+		require.NoError(t, err)
+		require.Nil(t, names)
+		require.False(t, changed)
+	}
+
+	mapping := map[string]ResponsesNamespaceName{"ops__run": {Namespace: "ops", Name: "run"}}
+	payload := []byte(`{"type":"message","name":"ops__run"}`)
+	restored, changed, err := RestoreResponsesNamespaceCalls(payload, mapping)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, payload, restored)
+
+	_, changed, err = RestoreResponsesNamespaceCalls([]byte(`not-json`), mapping)
+	require.Error(t, err)
+	require.False(t, changed)
+
+	item := map[string]any{"type": "function_call", "namespace": "other", "name": "run"}
+	require.False(t, rewriteNamespaceQualifiedCall(item, mapping))
+	require.Equal(t, "run", item["name"])
+	require.False(t, rewriteNamespaceQualifiedCall(map[string]any{"type": "function_call", "namespace": "ops"}, mapping))
+	require.Empty(t, stringValue(123))
+}

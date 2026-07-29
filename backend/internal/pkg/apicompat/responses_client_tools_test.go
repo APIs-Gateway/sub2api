@@ -331,3 +331,37 @@ func TestResponsesClientToolStreamRestorer_RawEventsPreserveUnknownFieldsAndOutp
 	require.Len(t, done, 2)
 	require.Equal(t, "pwd", done[1].Input)
 }
+
+func TestResponsesClientToolHelpers_HandleUnencodableValues(t *testing.T) {
+	cyclic := map[string]any{}
+	cyclic["self"] = cyclic
+	require.Equal(t, "{}", rawObjectString(cyclic))
+
+	output := map[string]any{"output": cyclic}
+	normalizeClientToolOutput(output)
+	require.Equal(t, "", output["output"])
+}
+
+func TestResponsesClientToolStreamRestorer_RestoreEventHandlesCompletedAndPlainLifecyclePayloads(t *testing.T) {
+	restorer := NewResponsesClientToolStreamRestorer(ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}})
+
+	completed, changed, err := restorer.RestoreEvent([]byte(`{"type":"response.completed","sequence_number":10,"response":{"output":[{"type":"function_call","name":"exec","arguments":"{\"input\":\"pwd\"}"}]}}`))
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Len(t, completed, 1)
+	require.Equal(t, "custom_tool_call", gjson.GetBytes(completed[0], "response.output.0.type").String())
+	require.Equal(t, "pwd", gjson.GetBytes(completed[0], "response.output.0.input").String())
+	require.Equal(t, int64(10), gjson.GetBytes(completed[0], "sequence_number").Int())
+
+	plain := []byte(`{"type":"response.output_item.added","sequence_number":11,"item":{"type":"function_call","id":"plain","name":"plain"}}`)
+	passthrough, changed, err := restorer.RestoreEvent(plain)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, [][]byte{plain}, passthrough)
+
+	unknown := []byte(`{"type":"response.function_call_arguments.delta","sequence_number":13,"name":"plain","delta":"{}"}`)
+	resequenced, changed, err := restorer.RestoreEvent(unknown)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, int64(12), gjson.GetBytes(resequenced[0], "sequence_number").Int())
+}
