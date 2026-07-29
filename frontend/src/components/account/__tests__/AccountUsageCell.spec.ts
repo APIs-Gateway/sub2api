@@ -753,4 +753,74 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).not.toContain('7d S')
     expect(wrapper.text()).not.toContain('7d F')
   })
+
+  it('Grok OAuth 会展示观测到的请求/Token配额、本地用量和重试提示', async () => {
+    getUsage.mockResolvedValue({
+      grok_quota_snapshot_state: 'observed',
+      grok_entitlement_status: 'active',
+      grok_retry_after_seconds: 61,
+      grok_request_quota: {
+        limit: 100,
+        remaining: 25,
+        reset_at: '2026-07-28T23:00:00Z'
+      },
+      grok_token_quota: {
+        limit: 1000,
+        remaining: 700,
+        reset_at: '2026-07-29T00:00:00Z'
+      },
+      grok_local_usage: {
+        requests: 12,
+        tokens: 3456,
+        cost: 1.23
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 5001, platform: 'grok', type: 'oauth', extra: {} })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization', 'resetsAt'],
+            template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ resetsAt }}</div>'
+          },
+          GrokQuotaProbeCell: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('active')
+    expect(wrapper.text()).toContain('12 req')
+    expect(wrapper.text()).toContain('A $1.23')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.grokRequests|75|2026-07-28T23:00:00Z')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.grokTokens|30|2026-07-29T00:00:00Z')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.grokRetryAfter')
+  })
+
+  it('Grok OAuth 会区分待重新授权、禁止和未知配额状态', async () => {
+    const mountGrok = async (usage: Record<string, unknown>) => {
+      getUsage.mockResolvedValueOnce(usage)
+      const wrapper = mount(AccountUsageCell, {
+        props: {
+          account: makeAccount({ id: 5002, platform: 'grok', type: 'oauth', extra: {} })
+        },
+        global: { stubs: { UsageProgressBar: true, GrokQuotaProbeCell: true } }
+      })
+      await flushPromises()
+      return wrapper
+    }
+
+    const reauth = await mountGrok({ needs_reauth: true })
+    expect(reauth.text()).toContain('admin.accounts.needsReauth')
+
+    const forbidden = await mountGrok({ is_forbidden: true, grok_entitlement_status: 'forbidden' })
+    expect(forbidden.text()).toContain('forbidden')
+
+    const unknown = await mountGrok({ grok_quota_snapshot_state: 'unknown' })
+    expect(unknown.text()).toContain('admin.accounts.usageWindow.grokUnknown')
+  })
 })

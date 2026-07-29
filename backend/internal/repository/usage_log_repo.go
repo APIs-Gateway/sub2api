@@ -144,6 +144,18 @@ func appendRawUsageLogModelWhereCondition(conditions []string, args []any, model
 	return conditions, args
 }
 
+func appendUsageLogModelWhereCondition(conditions []string, args []any, model, source string) ([]string, []any) {
+	if strings.TrimSpace(model) == "" {
+		return conditions, args
+	}
+	if strings.TrimSpace(source) == "" {
+		return appendRawUsageLogModelWhereCondition(conditions, args, model)
+	}
+	conditions = append(conditions, fmt.Sprintf("%s = $%d", resolveModelDimensionExpression(source), len(args)+1))
+	args = append(args, model)
+	return conditions, args
+}
+
 func appendUsageLogBillingModeWhereCondition(conditions []string, args []any, billingMode string) ([]string, []any) {
 	mode := strings.TrimSpace(billingMode)
 	if mode == "" {
@@ -2796,7 +2808,7 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		conditions = append(conditions, fmt.Sprintf("group_id = $%d", len(args)+1))
 		args = append(args, filters.GroupID)
 	}
-	conditions, args = appendRawUsageLogModelWhereCondition(conditions, args, filters.Model)
+	conditions, args = appendUsageLogModelWhereCondition(conditions, args, filters.Model, filters.ModelFilterSource)
 	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
 	if filters.BillingType != nil {
 		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", len(args)+1))
@@ -3529,7 +3541,7 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 		conditions = append(conditions, fmt.Sprintf("group_id = $%d", len(args)+1))
 		args = append(args, filters.GroupID)
 	}
-	conditions, args = appendRawUsageLogModelWhereCondition(conditions, args, filters.Model)
+	conditions, args = appendUsageLogModelWhereCondition(conditions, args, filters.Model, filters.ModelFilterSource)
 	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
 	if filters.BillingType != nil {
 		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", len(args)+1))

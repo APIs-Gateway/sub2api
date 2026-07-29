@@ -22,7 +22,27 @@ func (c *outboxCleanupCache) GetSnapshot(ctx context.Context, bucket SchedulerBu
 	return nil, false, nil
 }
 
-func (c *outboxCleanupCache) SetSnapshot(ctx context.Context, bucket SchedulerBucket, accounts []Account) error {
+func (c *outboxCleanupCache) CaptureBucketWriteToken(ctx context.Context, bucket SchedulerBucket) (SchedulerBucketWriteToken, error) {
+	return SchedulerBucketWriteToken{Bucket: bucket, Epoch: 1}, nil
+}
+
+func (c *outboxCleanupCache) SetSnapshot(ctx context.Context, bucket SchedulerBucket, token SchedulerBucketWriteToken, accounts []Account) error {
+	return nil
+}
+
+func (c *outboxCleanupCache) RetireBucket(ctx context.Context, bucket SchedulerBucket) error {
+	return nil
+}
+
+func (c *outboxCleanupCache) ReopenBucket(ctx context.Context, bucket SchedulerBucket) (SchedulerBucketWriteToken, error) {
+	return SchedulerBucketWriteToken{Bucket: bucket, Epoch: 1}, nil
+}
+
+func (c *outboxCleanupCache) TryAcquireGroupLifecycleLease(_ context.Context, groupID int64, _ time.Duration) (SchedulerGroupLifecycleLease, bool, error) {
+	return SchedulerGroupLifecycleLease{GroupID: groupID, OwnerToken: "test-owner"}, true, nil
+}
+
+func (c *outboxCleanupCache) ReleaseGroupLifecycleLease(_ context.Context, _ SchedulerGroupLifecycleLease) error {
 	return nil
 }
 
@@ -361,7 +381,7 @@ func TestSchedulerSnapshotServiceCheckOutboxLagLatchesPersistentDegradation(t *t
 	repo := &outboxCleanupRepo{
 		events: []SchedulerOutboxEvent{{ID: 1, CreatedAt: time.Now().Add(-time.Hour)}},
 	}
-	cfg := &config.Config{Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
+	cfg := &config.Config{RunMode: config.RunModeSimple, Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
 		OutboxLagRebuildSeconds:  1,
 		OutboxLagRebuildFailures: 1,
 		OutboxBacklogRebuildRows: 50,
@@ -386,7 +406,7 @@ func TestSchedulerSnapshotServiceCheckOutboxLagRetriesAfterCooldown(t *testing.T
 	repo := &outboxCleanupRepo{
 		events: []SchedulerOutboxEvent{{ID: 1, CreatedAt: time.Now().Add(-time.Hour)}},
 	}
-	cfg := &config.Config{Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
+	cfg := &config.Config{RunMode: config.RunModeSimple, Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{
 		OutboxLagRebuildSeconds:  1,
 		OutboxLagRebuildFailures: 1,
 		OutboxBacklogRebuildRows: 50,
