@@ -6652,6 +6652,8 @@
         cancelRateLimitWindowModeFixed: '固定',
         alipayForceQRCode: '支付宝强制二维码支付',
         alipayForceQRCodeHint: '启用后，移动端支付宝用户将统一使用二维码扫码支付，不再跳转至手机网站支付',
+        alipayMobilePrecreateDeepLink: '支付宝移动端当面付唤起',
+        alipayMobilePrecreateDeepLinkHint: '官方支付宝移动端使用当面付二维码唤起 App；唤起失败时显示二维码',
         helpText: '帮助文本',
         helpImageUrl: '帮助图片链接',
         manageProviders: '管理服务商',

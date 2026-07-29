@@ -1004,6 +1004,7 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 		IsMobile:      req.IsMobile,
 		ReturnURL:     providerReturnURL,
 	}, sel, outTradeNo, payAmountStr, subject)
+	providerReq.AlipayMobilePrecreate = shouldUseAlipayMobilePrecreate(req, cfg, sel)
 	pr, err := prov.CreatePayment(ctx, providerReq)
 	if err != nil {
 		slog.Error("[PaymentService] CreatePayment failed", "provider", sel.ProviderKey, "instance", sel.InstanceID, "error", err)
@@ -1037,7 +1038,13 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 	}
 	resp := buildCreateOrderResponse(order, req, payAmount, sel, pr, resultType)
 	resp.ResumeToken = resumeToken
+	resp.AlipayMobilePrecreateDeepLink = providerReq.AlipayMobilePrecreate && strings.TrimSpace(pr.QRCode) != ""
 	return resp, nil
+}
+
+func shouldUseAlipayMobilePrecreate(req CreateOrderRequest, cfg *PaymentConfig, sel *payment.InstanceSelection) bool {
+	return cfg != nil && cfg.AlipayMobilePrecreateDeepLink && req.IsMobile && sel != nil &&
+		strings.EqualFold(strings.TrimSpace(sel.ProviderKey), payment.TypeAlipay)
 }
 
 func sanitizeCreatePaymentResponseDetails(pr *payment.CreatePaymentResponse) {

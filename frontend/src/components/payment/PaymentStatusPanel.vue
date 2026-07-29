@@ -70,7 +70,7 @@
     <!-- ═══ Active States: QR or Popup waiting ═══ -->
 
     <!-- QR Code Mode -->
-    <template v-else-if="qrUrl">
+    <template v-else-if="showQRCode">
       <div class="card p-6">
         <div class="flex flex-col items-center space-y-4">
           <p class="text-lg font-semibold text-gray-900 dark:text-white">{{ scanTitle }}</p>
@@ -122,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePaymentStore } from '@/stores/payment'
 import { useAppStore } from '@/stores'
@@ -135,6 +135,7 @@ import Icon from '@/components/icons/Icon.vue'
 import QRCode from 'qrcode'
 import alipayIcon from '@/assets/icons/alipay.svg'
 import wxpayIcon from '@/assets/icons/wxpay.svg'
+import { createAlipayDeepLinkLauncher, type AlipayDeepLinkLauncher } from './alipayDeepLink'
 
 const props = defineProps<{
   orderId: number
@@ -144,6 +145,7 @@ const props = defineProps<{
   payUrl?: string
   orderType?: string
   currency?: string
+  mobileAlipayDeepLink?: boolean
 }>()
 
 type PaymentOutcome = 'success' | 'cancelled' | 'expired'
@@ -160,6 +162,7 @@ const qrUrl = ref('')
 const remainingSeconds = ref(0)
 const cancelling = ref(false)
 const paidOrder = ref<PaymentOrder | null>(null)
+const deepLinkFallbackVisible = ref(false)
 const paymentCurrency = computed(() => normalizePaymentCurrency(props.currency))
 const localeCode = computed(() => {
   const raw = i18n.locale as unknown
@@ -177,12 +180,15 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let verifyAttempts = 0
 let lastVerifyAt = 0
+let alipayLauncher: AlipayDeepLinkLauncher | null = null
 
 const VERIFY_RETRY_INTERVAL_MS = 15000
 const VERIFY_RETRY_MAX_ATTEMPTS = 6
 
 const isAlipay = computed(() => props.paymentType.includes('alipay'))
 const isWxpay = computed(() => props.paymentType.includes('wxpay'))
+const isMobileAlipayDeepLink = computed(() => props.mobileAlipayDeepLink === true && isAlipay.value && !!qrUrl.value)
+const showQRCode = computed(() => !!qrUrl.value && (!isMobileAlipayDeepLink.value || deepLinkFallbackVisible.value))
 
 const qrBorderClass = computed(() => {
   if (isAlipay.value) return 'border-[#00AEEF] bg-blue-50 dark:border-[#00AEEF]/70 dark:bg-blue-950/20'
@@ -239,7 +245,7 @@ function setOutcome(next: PaymentOutcome) {
 
 async function renderQR() {
   await nextTick()
-  if (!qrCanvas.value || !qrUrl.value) return
+  if (!showQRCode.value || !qrCanvas.value || !qrUrl.value) return
   await QRCode.toCanvas(qrCanvas.value, qrUrl.value, {
     width: 220, margin: 2,
     errorCorrectionLevel: 'M',
@@ -326,6 +332,8 @@ function handleDone() { cleanup(); emit('done') }
 function cleanup() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
+  alipayLauncher?.dispose()
+  alipayLauncher = null
 }
 
 // Initialize on mount
@@ -340,6 +348,21 @@ startCountdown(seconds)
 pollTimer = setInterval(pollStatus, 3000)
 renderQR()
 
-watch(() => qrUrl.value, () => renderQR())
+watch([() => qrUrl.value, showQRCode], () => renderQR())
+onMounted(() => {
+  if (!isMobileAlipayDeepLink.value) return
+  alipayLauncher = createAlipayDeepLinkLauncher({
+    qrCode: qrUrl.value,
+    document,
+    lifecycleTarget: window,
+    userAgent: window.navigator.userAgent,
+    assignLocation: (url) => window.location.assign(url),
+    onStateChange: (state) => {
+      deepLinkFallbackVisible.value = state === 'fallback'
+      if (state === 'fallback') renderQR()
+    },
+  })
+  alipayLauncher.launch()
+})
 onUnmounted(() => cleanup())
 </script>
