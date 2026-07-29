@@ -316,7 +316,7 @@ func TestManualOverdraftWindow(t *testing.T) {
 	now := time.Now()
 	today := EastDayNumber(now)
 
-	t.Run("success refreshes daily window and borrows one day", func(t *testing.T) {
+	t.Run("success refreshes daily window without changing expiry", func(t *testing.T) {
 		c := activeCard(10)
 		c.DailyUsageUSD = 10  // 日上限已满
 		c.WeeklyUsageUSD = 50 // 周/月用量不应被透支清掉
@@ -329,8 +329,8 @@ func TestManualOverdraftWindow(t *testing.T) {
 		if c.DailyUsageUSD != 0 {
 			t.Fatalf("daily usage should reset to 0, got %v", c.DailyUsageUSD)
 		}
-		if !c.ExpiresAt.Equal(ExpireDayToExpiresAt(today + 4)) {
-			t.Fatalf("expires_at should be -1 day: %v", c.ExpiresAt)
+		if !c.ExpiresAt.Equal(ExpireDayToExpiresAt(today + 5)) {
+			t.Fatalf("expires_at must remain unchanged: %v", c.ExpiresAt)
 		}
 		if w.MonthlyOverdraftCount != 1 {
 			t.Fatalf("monthly count should be 1, got %v", w.MonthlyOverdraftCount)
@@ -360,13 +360,22 @@ func TestManualOverdraftWindow(t *testing.T) {
 		}
 	})
 
-	t.Run("no future day to borrow", func(t *testing.T) {
+	t.Run("last service day can refresh daily window without changing expiry", func(t *testing.T) {
 		c := activeCard(10)
 		c.DailyUsageUSD = 10                      // 撞满日额度以触达"未来天"校验
 		c.ExpiresAt = ExpireDayToExpiresAt(today) // 最后服务日=今天，无未来天
 		w := &WalletState{}
-		if err := ManualOverdraftWindow(c, w, now); err != ErrOverdraftNoFutureDay {
-			t.Fatalf("want ErrOverdraftNoFutureDay, got %v", err)
+		if err := ManualOverdraftWindow(c, w, now); err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if c.DailyUsageUSD != 0 {
+			t.Fatalf("daily usage should reset to 0, got %v", c.DailyUsageUSD)
+		}
+		if !c.ExpiresAt.Equal(ExpireDayToExpiresAt(today)) {
+			t.Fatalf("expires_at must remain unchanged: %v", c.ExpiresAt)
+		}
+		if w.MonthlyOverdraftCount != 1 {
+			t.Fatalf("monthly count should be 1, got %v", w.MonthlyOverdraftCount)
 		}
 	})
 

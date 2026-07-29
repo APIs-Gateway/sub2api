@@ -188,7 +188,7 @@ func (h *SubscriptionHandler) Quote(c *gin.Context) {
 	response.Success(c, res)
 }
 
-// Overdraft 用户手动透支「借一天」（规格第 8 节）：清空今日已用额度（刷新当日额度）+ expires_at 提前 1 天
+// Overdraft 用户手动透支（规格第 8 节）：清空今日已用额度（刷新当日额度），不改变订阅到期时间
 // + 用户级月度计数 +1。仅解日上限，周/月封顶仍生效；每用户每自然月最多 5 次。
 // POST /api/v1/subscriptions/overdraft
 func (h *SubscriptionHandler) Overdraft(c *gin.Context) {
@@ -197,9 +197,9 @@ func (h *SubscriptionHandler) Overdraft(c *gin.Context) {
 		response.Unauthorized(c, "User not found in context")
 		return
 	}
-	// 幂等（spec §并发与幂等）：持久化去重——同键重放返回首次结果，绝不重复 expires_at−1 /
-	// month_overdraft++（光靠「借后 daily_usage=0」只能挡瞬时连点，挡不住「首次成功→当日再次撞满
-	// →同键重放」二次借天，故必须落幂等记录）。
+	// 幂等（spec §并发与幂等）：持久化去重——同键重放返回首次结果，绝不重复刷新日额度 /
+	// month_overdraft++（光靠「透支后 daily_usage=0」只能挡瞬时连点，挡不住「首次成功→当日再次撞满
+	// →同键重放」的二次透支，故必须落幂等记录）。
 	// key 来源兼容两路：优先 Idempotency-Key 头（标准）；缺失时回填 body.idempotency_key
 	// （前端历史契约），保证两条路径都进持久化去重。
 	if c.GetHeader("Idempotency-Key") == "" {

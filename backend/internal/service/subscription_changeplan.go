@@ -28,7 +28,7 @@ type ChangePlanOrderQuote struct {
 
 // QuoteChangePlanOrder 解析转套餐下单的权威参数（不锁、不改状态）。
 // 校验：新档 D/T 走 QuoteSubscription（区间+整月）；每自然日最多转 1 次（撞则 ErrChangePlanDailyLimit）；
-// 须有生效卡（否则 ErrNoActiveSubscription，应购买）。V 与退款同口径（含透支借天扣减）。
+// 须有生效卡（否则 ErrNoActiveSubscription，应购买）。V 与退款同口径。
 func (s *SubscriptionService) QuoteChangePlanOrder(ctx context.Context, userID int64, newDailyAmount float64, newValidityDays int) (*ChangePlanOrderQuote, error) {
 	if userID <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_INPUT", "user is required")
@@ -62,7 +62,7 @@ func (s *SubscriptionService) QuoteChangePlanOrder(ctx context.Context, userID i
 		return nil, err
 	}
 
-	// 旧卡剩余价值 V（口径同退款，含透支借天扣减）：在卡副本上惰性跨天后取剩余天数。
+	// 旧卡剩余价值 V（口径同退款）：在卡副本上惰性跨天后取剩余天数。
 	oldCard := oldSub.ToPerDayCard()
 	oldCard.ResetIfNewDay(today)
 	refundable := oldCard.RefundableDays(today)

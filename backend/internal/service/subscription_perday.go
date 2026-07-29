@@ -77,7 +77,7 @@ type PerDayCard struct {
 	DailyAmountUSD float64 // D，每日额度（官方刀/天）
 	TodayRemaining float64 // 今日剩余（官方刀，1:1，永不为负）
 	TodayDay       int     // today_remaining 所属东八区日序号；-1=未初始化
-	DailySpentUSD  float64 // 今日套餐侧已实际扣掉的官方刀（含透支借天后扣掉的额度）
+	DailySpentUSD  float64 // 今日套餐侧已实际扣掉的官方刀
 	DailySpentDay  int     // daily_spent_usd 所属东八区日序号；与 today_day 同口径
 	StartDay       int     // 激活日（东八区日序号）
 	ExpireDay      int     // 最后发放 D 的东八区日序号（含）；每透支 −1
@@ -165,7 +165,7 @@ func (s *UserSubscription) ToPerDayCard() PerDayCard {
 }
 
 // RefundableDays 返回可退/剩余服务天数 = max(0, expire_day − today)。
-// 今天已开始服务、不计入可退；expire_day 已含「已用天 + 透支借走天」的扣减（每透支 expire_day−1）。
+// 今天已开始服务、不计入可退；手动透支不会改变 expire_day。
 func (c *PerDayCard) RefundableDays(today int) int {
 	d := c.ExpireDay - today
 	if d < 0 {

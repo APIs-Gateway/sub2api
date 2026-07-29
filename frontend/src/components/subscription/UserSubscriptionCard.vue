@@ -296,7 +296,7 @@ const configuredWindows = computed(() =>
 )
 const hasAnyLimit = computed(() => configuredWindows.value.length > 0)
 
-// ─── 手动透支「借一天」（三窗口模型）─────────────────────────────────────────
+// ─── 手动透支（刷新当日额度；三窗口模型）─────────────────────────────────────────
 const showOverdraftConfirm = ref(false)
 const overdrafting = ref(false)
 const overdraftIdemKey = ref('')
@@ -306,11 +306,6 @@ const dailyMaxed = computed(() => {
   const s = props.subscription
   const limit = s.daily_limit_usd
   return limit != null && limit > 0 && (s.daily_usage_usd || 0) >= limit
-})
-// 仍有可借的未来天：expires_at 晚于「今天结束」（东八区明日 00:00）。
-const hasFutureDay = computed(() => {
-  const exp = props.subscription.expires_at
-  return exp != null && new Date(exp).getTime() > endOfTodaySHms()
 })
 // 用户级本月透支剩余次数（后端 #7/#8 提供）；无值 = 不前置拦截，交服务端兜底。
 const overdraftRemaining = computed(() => props.subscription.monthly_overdraft_remaining ?? null)
@@ -322,13 +317,10 @@ const showOverdraftButton = computed(() => {
 const canOverdraft = computed(
   () =>
     showOverdraftButton.value &&
-    dailyMaxed.value &&
-    hasFutureDay.value &&
-    (overdraftRemaining.value == null || overdraftRemaining.value > 0)
+    dailyMaxed.value && (overdraftRemaining.value == null || overdraftRemaining.value > 0)
 )
 const overdraftDisabledReason = computed(() => {
   if (!dailyMaxed.value) return t('userSubscriptions.overdraftBtn.disabledNotMaxed')
-  if (!hasFutureDay.value) return t('userSubscriptions.overdraftBtn.disabledNoFutureDay')
   if (overdraftRemaining.value != null && overdraftRemaining.value <= 0)
     return t('userSubscriptions.overdraftBtn.disabledExhausted')
   return ''
@@ -368,8 +360,7 @@ function overdraftErrorMessage(e: unknown): string {
   const map: Record<string, string> = {
     OVERDRAFT_NO_ACTIVE_CARD: t('userSubscriptions.overdraftBtn.errors.noActiveCard'),
     OVERDRAFT_DAILY_NOT_EXHAUSTED: t('userSubscriptions.overdraftBtn.errors.dailyNotExhausted'),
-    OVERDRAFT_MONTHLY_LIMIT: t('userSubscriptions.overdraftBtn.errors.monthlyLimit'),
-    OVERDRAFT_NO_FUTURE_DAY: t('userSubscriptions.overdraftBtn.errors.noFutureDay')
+    OVERDRAFT_MONTHLY_LIMIT: t('userSubscriptions.overdraftBtn.errors.monthlyLimit')
   }
   if (code && map[code]) return map[code]
   return data?.error?.message ?? data?.message ?? t('userSubscriptions.overdraftBtn.errors.generic')
@@ -392,20 +383,6 @@ function nextWindowReset(windowStart: string, kind: 'daily' | 'weekly' | 'monthl
   }
   const hours = kind === 'weekly' ? 168 : 24
   return new Date(start.getTime() + hours * 60 * 60 * 1000)
-}
-
-// endOfTodaySHms 返回「今天结束」= 东八区明日 00:00 的时间戳（ms）。
-function endOfTodaySHms(): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: SH_TZ,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric'
-  }).formatToParts(new Date())
-  const year = Number(parts.find((p) => p.type === 'year')?.value)
-  const month = Number(parts.find((p) => p.type === 'month')?.value) // 1-12
-  const day = Number(parts.find((p) => p.type === 'day')?.value)
-  return Date.UTC(year, month - 1, day + 1, 0, 0, 0) - SH_OFFSET_MS
 }
 
 function platformAccentDotClass(_p: string): string {

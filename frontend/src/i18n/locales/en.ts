@@ -7477,21 +7477,19 @@
       "You don't have any active subscriptions. Contact administrator to get one.",
     failedToLoad: 'Failed to load subscriptions',
     overdraftBtn: {
-      label: 'Borrow a day',
+      label: 'Refresh daily allowance',
       remaining: '{n} left this month',
-      confirmTitle: 'Borrow a day (overdraft)',
+      confirmTitle: 'Refresh daily allowance (overdraft)',
       confirmMessage:
-        "This clears today's used amount and restores today's allowance immediately, at the cost of bringing the expiry forward by 1 day. It only lifts the daily cap; weekly/monthly caps still apply. Up to 5 times per calendar month.",
+        "This clears today's used amount and restores today's allowance immediately. It only lifts the daily cap; weekly/monthly caps still apply. Up to 5 times per calendar month.",
       confirmOk: 'Confirm overdraft',
-      success: "Overdraft applied: today's allowance refreshed, expiry −1 day",
+      success: "Overdraft applied: today's allowance refreshed",
       disabledNotMaxed: "Today's allowance is not used up yet — no overdraft needed",
-      disabledNoFutureDay: 'Not enough validity left — no future day to borrow',
       disabledExhausted: 'Monthly overdraft limit reached (up to 5 per month)',
       errors: {
         noActiveCard: 'No active subscription to overdraft against',
         dailyNotExhausted: "Today's allowance is not used up yet — no overdraft needed",
         monthlyLimit: 'Monthly overdraft limit reached (up to 5 per month)',
-        noFutureDay: 'Not enough validity left — no future day to borrow',
         generic: 'Overdraft failed, please try again later'
       }
     },

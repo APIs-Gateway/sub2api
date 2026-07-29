@@ -12,7 +12,7 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
-// ManualOverdraftResult 手动透支「借一天」结果（规格第 8 节「透支」）。
+// ManualOverdraftResult 手动透支结果（规格第 8 节「透支」）。
 type ManualOverdraftResult struct {
 	SubscriptionID            int64     `json:"subscription_id"`
 	NewExpiresAt              time.Time `json:"new_expires_at"`
@@ -20,13 +20,13 @@ type ManualOverdraftResult struct {
 	MonthlyOverdraftRemaining int       `json:"monthly_overdraft_remaining"` // 本月剩余可透支次数
 }
 
-// ManualOverdraft 用户手动透支「借一天」（规格第 8 节，仅解日上限、用户级月度计数）：
-// 锁 user 行（月度计数）+ active 卡行（与结算亦锁卡行串行），锁内惰性按东八区月重置计数 → 引擎校验+借天
-// （daily_usage 清零刷新当日额度 + expires_at/expire_day 提前 1 天 + count++）→ 落库。周/月上限照样生效。
+// ManualOverdraft 用户手动透支（规格第 8 节，仅解日上限、用户级月度计数）：
+// 锁 user 行（月度计数）+ active 卡行（与结算亦锁卡行串行），锁内惰性按东八区月重置计数 → 引擎校验并刷新日额度
+// （daily_usage 清零刷新当日额度 + count++）→ 落库；expires_at/expire_day 保持不变。周/月上限照样生效。
 // 「每用户每自然月最多 5 次」由同一把锁内的「校验 count<5 → 自增」原子完成，并发不被突破。
 //
-// 幂等：本接口未持久化 idempotency_key 去重，但靠「先按自然日重置 → 要求 daily_usage≥D」天然挡连点重复借天
-// （借后 daily_usage=0 → 二次调用即 ErrOverdraftDailyNotExhausted），故重复点击不会重复借天/重复扣额度。
+// 幂等：本接口未持久化 idempotency_key 去重，但靠「先按自然日重置 → 要求 daily_usage≥D」天然挡连点重复透支
+// （透支后 daily_usage=0 → 二次调用即 ErrOverdraftDailyNotExhausted），故重复点击不会重复执行/重复扣额度。
 func (s *SubscriptionService) ManualOverdraft(ctx context.Context, userID int64) (*ManualOverdraftResult, error) {
 	if s.entClient == nil {
 		return nil, fmt.Errorf("ent client not configured")
@@ -80,7 +80,7 @@ func (s *SubscriptionService) ManualOverdraft(ctx context.Context, userID int64)
 			return mapOverdraftErr(err)
 		}
 
-		// 回写卡：引擎可能惰性重置过窗口用量/起点；daily_usage 已清零；expires_at 借天 −1。
+		// 回写卡：引擎可能惰性重置过窗口用量/起点；daily_usage 已清零；expires_at 保持不变。
 		sub.DailyUsageUSD = sw.DailyUsageUSD
 		sub.WeeklyUsageUSD = sw.WeeklyUsageUSD
 		sub.MonthlyUsageUSD = sw.MonthlyUsageUSD
@@ -153,8 +153,6 @@ func mapOverdraftErr(err error) error {
 		return infraerrors.BadRequest("OVERDRAFT_DAILY_NOT_EXHAUSTED", "today's allowance is not used up yet")
 	case errors.Is(err, ErrOverdraftMonthlyLimit):
 		return infraerrors.Conflict("OVERDRAFT_MONTHLY_LIMIT", "monthly overdraft limit reached")
-	case errors.Is(err, ErrOverdraftNoFutureDay):
-		return infraerrors.BadRequest("OVERDRAFT_NO_FUTURE_DAY", "no future day left to borrow")
 	default:
 		return err
 	}

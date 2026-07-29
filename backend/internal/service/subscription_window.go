@@ -16,10 +16,10 @@ import (
 // 关键不变量：
 //   - 订阅 *_usage 只升不退；撞某窗口上限即该窗口停止覆盖（不存在“窗口重置清零白嫖”，溢出全落钱包）。
 //   - 一切溢出/欠账只落 WalletState.Balance（可负，不随窗口重置清零）。
-//   - 透支不在 SettleWindow 内：由 ManualOverdraftWindow 显式触发（仅解“日上限” + expires_at−1 天）。
+//   - 透支不在 SettleWindow 内：由 ManualOverdraftWindow 显式触发（仅解“日上限”）。
 //
 // 时区口径：窗口边界用 timezone.StartOfDay/Week/Month（默认 Asia/Shanghai，周一/1 号起）；
-// 退款/透支借天的“整天”算术复用 EastDayNumber/ExpireDayToExpiresAt（东八区绝对日序号），二者在
+// 退款的“整天”算术复用 EastDayNumber/ExpireDayToExpiresAt（东八区绝对日序号），二者在
 // Asia/Shanghai 部署下一致。
 
 // SubWindow 是三窗口模型下一张订阅卡的最小可计费状态（映射 user_subscriptions 的限额/用量/窗口起点/有效期）。
@@ -208,22 +208,19 @@ var (
 	ErrOverdraftNoActiveCard      = errors.New("no active subscription card to overdraft")
 	ErrOverdraftDailyNotExhausted = errors.New("daily limit not exhausted; overdraft not needed")
 	ErrOverdraftMonthlyLimit      = errors.New("monthly overdraft limit reached")
-	ErrOverdraftNoFutureDay       = errors.New("no future day left to borrow for overdraft")
 )
 
-// ManualOverdraftWindow 用户手动透支（仅解“日上限”）：daily_usage 清零（刷新当日额度）+ expires_at 提前 1 天
-// （借未来一天）+ 用户级月度计数 +1。周/月上限照样生效（本函数不动 weekly/monthly usage）。
+// ManualOverdraftWindow 用户手动透支（仅解“日上限”）：daily_usage 清零（刷新当日额度）+ 用户级月度计数 +1；不改变订阅到期时间。
 // 调用方须在事务内锁 user 行 + active 卡行，并在调用前 w.ResetMonthIfNeeded(monthKey) 惰性按月重置计数。
 //
 // 校验（顺序即错误优先级）：
 //  1. 有生效卡（active）；
 //  2. 当日额度已撞满（daily_limit>0 且 daily_usage≥daily_limit）——按钮语义是“今天 D 用完了想继续用”，
-//     未撞满则无需透支（不让用户白白损失一天有效期 + 一次月度额度）。先 ResetWindows 对齐自然日：
+//     未撞满则无需透支。先 ResetWindows 对齐自然日：
 //     新的一天 daily_usage 已自动归零→不算撞满→拒；
 //  3. 本月透支 < MaxMonthlyOverdraftUses；
-//  4. 仍有“未来一天”可借（最后服务日 > 今天）。
 //
-// 注意：撞日上限即可借，即便周/月窗口也撞上限也允许（透支只清日窗口、对 W/M 无效，用户借了也越不过 W/M，
+// 注意：撞日上限即可透支，即便周/月窗口也撞上限也允许（透支只清日窗口、对 W/M 无效，用户仍越不过 W/M，
 // 见 spec §8 场景 22）；不在此额外拦截。
 func ManualOverdraftWindow(c *SubWindow, w *WalletState, now time.Time) error {
 	if c == nil || !c.active(now) {
@@ -236,19 +233,13 @@ func ManualOverdraftWindow(c *SubWindow, w *WalletState, now time.Time) error {
 	if w.MonthlyOverdraftCount >= MaxMonthlyOverdraftUses {
 		return ErrOverdraftMonthlyLimit
 	}
-	today := EastDayNumber(now)
-	lastServiceDay := ExpiresAtToExpireDay(c.ExpiresAt) // = EastDayNumber(expires_at) − 1
-	if lastServiceDay <= today {
-		return ErrOverdraftNoFutureDay
-	}
-	c.DailyUsageUSD = 0                                    // 刷新当日额度（仅日窗口清零）
-	c.ExpiresAt = ExpireDayToExpiresAt(lastServiceDay - 1) // 借未来一天：最后服务日 −1
+	c.DailyUsageUSD = 0 // 刷新当日额度（仅日窗口清零）
 	w.MonthlyOverdraftCount++
 	return nil
 }
 
 // RefundableDaysByExpiry 返回剩余可退/服务天数 = max(0, 最后服务日 − 今天)。
-// 最后服务日 = EastDayNumber(expiresAt) − 1；expires_at 已含透支借天的扣减（每透支提前 1 天）。
+// 最后服务日 = EastDayNumber(expiresAt) − 1；手动透支不会改变 expires_at。
 // 今天已开始服务、不计入可退（与 per-day RefundableDays 同口径，只是真相源换成 expires_at）。
 func RefundableDaysByExpiry(expiresAt, now time.Time) int {
 	if d := ExpiresAtToExpireDay(expiresAt) - EastDayNumber(now); d > 0 {
