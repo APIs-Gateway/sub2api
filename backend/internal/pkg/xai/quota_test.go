@@ -5,6 +5,7 @@ package xai
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -43,4 +44,21 @@ func TestParseQuotaHeadersReturnsNilForMissingHeaders(t *testing.T) {
 	t.Parallel()
 
 	require.Nil(t, ParseQuotaHeaders(http.Header{}, http.StatusOK))
+}
+
+func TestParseQuotaHeadersParsesTimeBasedValuesAndIgnoresInvalidNumbers(t *testing.T) {
+	t.Parallel()
+
+	headers := http.Header{}
+	headers.Set("x-ratelimit-reset-requests", "1893456000000")
+	headers.Set("x-ratelimit-limit-tokens", "not-a-number")
+	headers.Set("x-ratelimit-remaining-tokens", "also-not-a-number")
+	headers.Set("retry-after", time.Now().Add(2*time.Minute).UTC().Format(http.TimeFormat))
+
+	snapshot := ParseQuotaHeaders(headers, http.StatusTooManyRequests)
+	require.NotNil(t, snapshot)
+	require.Equal(t, int64(1893456000), *snapshot.Requests.ResetUnix)
+	require.Nil(t, snapshot.Tokens)
+	require.NotNil(t, snapshot.RetryAfterSeconds)
+	require.Greater(t, *snapshot.RetryAfterSeconds, 0)
 }
