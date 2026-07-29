@@ -63,7 +63,9 @@ func (api *OAuthRefreshAPI) getLocalLock(cacheKey string) *sync.Mutex {
 	return mu
 }
 
-// RefreshIfNeeded 在分布式锁保护下按需刷新 OAuth token
+// RefreshIfNeeded 在分布式锁保护下按需刷新 OAuth token。
+// forceRefresh 可选参数用于上游明确返回 401 时绕过 expires_at 检查，
+// 避免已被吊销但仍在本地有效期内的 access token 被重复使用。
 //
 // 流程:
 //  1. 获取分布式锁
@@ -77,7 +79,9 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 	account *Account,
 	executor OAuthRefreshExecutor,
 	refreshWindow time.Duration,
+	forceRefresh ...bool,
 ) (*OAuthRefreshResult, error) {
+	force := len(forceRefresh) > 0 && forceRefresh[0]
 	cacheKey := executor.CacheKey(account)
 
 	// 0. 获取进程内互斥锁（防止同一进程内的并发刷新竞争）
@@ -119,7 +123,7 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 	}
 
 	// 3. 二次检查是否仍需刷新（另一条路径可能已刷新）
-	if !executor.NeedsRefresh(freshAccount, refreshWindow) {
+	if !force && !executor.NeedsRefresh(freshAccount, refreshWindow) {
 		return &OAuthRefreshResult{
 			Account: freshAccount,
 		}, nil

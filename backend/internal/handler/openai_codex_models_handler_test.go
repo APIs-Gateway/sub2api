@@ -37,6 +37,7 @@ func newCodexModelsHandlerForTest(repo service.AccountRepository) *OpenAIGateway
 	return &OpenAIGatewayHandler{
 		gatewayService: service.NewOpenAIGatewayService(
 			repo,
+			nil, // grokTokenProvider
 			nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 			nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		),
