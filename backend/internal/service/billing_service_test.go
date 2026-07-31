@@ -212,7 +212,7 @@ func TestGetModelPricing_OpenAICompactAliasesFallback(t *testing.T) {
 		longContext int
 	}{
 		{model: "gpt5.5", inputPrice: 2.5e-6, outputPrice: 15e-6, cacheRead: 0.25e-6, longContext: 272000},
-		{model: "openai/gpt5.6-terra", inputPrice: 2.5e-6, outputPrice: 15e-6, cacheRead: 0.25e-6, cacheWrite: 3.125e-6, longContext: 272000},
+		{model: "openai/gpt5.6-terra", inputPrice: 2e-6, outputPrice: 12e-6, cacheRead: 0.2e-6, cacheWrite: 2.5e-6, longContext: 272000},
 		{model: "openai/gpt5.4", inputPrice: 2.5e-6, outputPrice: 15e-6, cacheRead: 0.25e-6, longContext: 272000},
 		{model: "gpt5.4-mini", inputPrice: 7.5e-7, outputPrice: 4.5e-6, cacheRead: 7.5e-8, longContext: 0},
 		{model: "gpt5.3codexspark", inputPrice: 1.5e-6, outputPrice: 12e-6, cacheRead: 0.15e-6, longContext: 0},
@@ -246,8 +246,8 @@ func TestGetModelPricing_OpenAIGPT56VariantsFallback(t *testing.T) {
 		priorityWrite float64
 	}{
 		{model: "gpt-5.6-sol", input: 5e-6, output: 30e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6, priorityWrite: 12.5e-6},
-		{model: "gpt-5.6-terra", input: 2.5e-6, output: 15e-6, cacheRead: 0.25e-6, cacheWrite: 3.125e-6, priorityWrite: 6.25e-6},
-		{model: "gpt-5.6-luna", input: 1e-6, output: 6e-6, cacheRead: 0.1e-6, cacheWrite: 1.25e-6, priorityWrite: 2.5e-6},
+		{model: "gpt-5.6-terra", input: 2e-6, output: 12e-6, cacheRead: 0.2e-6, cacheWrite: 2.5e-6, priorityWrite: 5e-6},
+		{model: "gpt-5.6-luna", input: 0.2e-6, output: 1.2e-6, cacheRead: 0.02e-6, cacheWrite: 0.25e-6, priorityWrite: 0.5e-6},
 		{model: "gpt-5.6-sol-2026-06-08", input: 5e-6, output: 30e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6, priorityWrite: 12.5e-6},
 	} {
 		t.Run(tt.model, func(t *testing.T) {
@@ -1260,8 +1260,8 @@ func TestCalculateCostWithServiceTier_GPT56PriorityUsesCacheWritePriorityRate(t 
 
 	cost, err := svc.CalculateCostWithServiceTier("gpt-5.6-terra", tokens, 1.0, "priority")
 	require.NoError(t, err)
-	// Terra priority cache-write is $6.25 / MTok, not its standard $3.125 / MTok.
-	require.InDelta(t, 100*6.25e-6, cost.CacheCreationCost, 1e-12)
+	// Terra priority cache-write is $5 / MTok, not its standard $2.5 / MTok.
+	require.InDelta(t, 100*5e-6, cost.CacheCreationCost, 1e-12)
 }
 
 func TestCalculateCostWithServiceTier_GPT56PriorityDoesNotStackLongContext(t *testing.T) {
@@ -1275,10 +1275,10 @@ func TestCalculateCostWithServiceTier_GPT56PriorityDoesNotStackLongContext(t *te
 	cost, err := svc.CalculateCostWithServiceTier("gpt-5.6-terra", tokens, 1.0, "priority")
 	require.NoError(t, err)
 	// The published Terra priority and long-context cache-write prices are both
-	// $6.25 / MTok; they are not a $12.50 / MTok compounded tier.
-	require.InDelta(t, float64(tokens.CacheCreationTokens)*6.25e-6, cost.CacheCreationCost, 1e-12)
-	require.InDelta(t, float64(tokens.InputTokens)*5e-6, cost.InputCost, 1e-12)
-	require.InDelta(t, float64(tokens.CacheReadTokens)*0.5e-6, cost.CacheReadCost, 1e-12)
+	// $5 / MTok; they are not a $10 / MTok compounded tier.
+	require.InDelta(t, float64(tokens.CacheCreationTokens)*5e-6, cost.CacheCreationCost, 1e-12)
+	require.InDelta(t, float64(tokens.InputTokens)*4e-6, cost.InputCost, 1e-12)
+	require.InDelta(t, float64(tokens.CacheReadTokens)*0.4e-6, cost.CacheReadCost, 1e-12)
 }
 
 func TestCalculateCostWithServiceTier_FlexAppliesHalfMultiplier(t *testing.T) {
@@ -1595,7 +1595,7 @@ func TestGetModelPricingWithChannel_GPT56ZeroCacheWriteRemainsExplicit(t *testin
 
 	basePricing, err := svc.GetModelPricing("gpt-5.6-terra")
 	require.NoError(t, err)
-	require.InDelta(t, 3.125e-6, basePricing.CacheCreationPricePerToken, 1e-12)
+	require.InDelta(t, 2.5e-6, basePricing.CacheCreationPricePerToken, 1e-12)
 	require.False(t, basePricing.CacheCreationPriceExplicit, "a channel override must not leak into shared fallback pricing")
 }
 

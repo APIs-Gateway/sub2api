@@ -27,13 +27,13 @@ from an existing wildcard mapping.
 ## §2 Official Standard prices
 
 All values are USD per 1M tokens, sourced from OpenAI's flagship pricing table
-on 2026-07-10.
+on 2026-07-10; Terra and Luna were repriced on 2026-07-31.
 
 | Model | Short input | Short cache read | Short cache write | Short output | Long input | Long cache read | Long cache write | Long output |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `gpt-5.6-sol` | 5 | 0.50 | 6.25 | 30 | 10 | 1 | 12.50 | 45 |
-| `gpt-5.6-terra` | 2.50 | 0.25 | 3.125 | 15 | 5 | 0.50 | 6.25 | 22.50 |
-| `gpt-5.6-luna` | 1 | 0.10 | 1.25 | 6 | 2 | 0.20 | 2.50 | 9 |
+| `gpt-5.6-terra` | 2 | 0.20 | 2.50 | 12 | 4 | 0.40 | 5 | 18 |
+| `gpt-5.6-luna` | 0.20 | 0.02 | 0.25 | 1.20 | 0.40 | 0.04 | 0.50 | 1.80 |
 
 OpenAI defines long context as a request with **more than 272K input tokens**.
 For the complete request, input, cache read, and cache write are 2× the short

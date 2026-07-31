@@ -119,15 +119,15 @@ func TestGetModelPricing_Gpt56UsesStaticFallbackWhenRemoteMissing(t *testing.T) 
 
 	got := svc.GetModelPricing("gpt-5.6-luna")
 	require.NotNil(t, got)
-	require.InDelta(t, 1e-6, got.InputCostPerToken, 1e-12)
-	require.InDelta(t, 6e-6, got.OutputCostPerToken, 1e-12)
-	require.InDelta(t, 1.25e-6, got.CacheCreationInputTokenCost, 1e-12)
-	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCostPriority, 1e-12)
-	require.InDelta(t, 1e-7, got.CacheReadInputTokenCost, 1e-12)
-	require.InDelta(t, 2e-6, got.InputCostPerTokenAbove272KTokens, 1e-12)
-	require.InDelta(t, 9e-6, got.OutputCostPerTokenAbove272KTokens, 1e-12)
-	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCostAbove272KTokens, 1e-12)
-	require.InDelta(t, 2e-7, got.CacheReadInputTokenCostAbove272KTokens, 1e-12)
+	require.InDelta(t, 2e-7, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 1.2e-6, got.OutputCostPerToken, 1e-12)
+	require.InDelta(t, 2.5e-7, got.CacheCreationInputTokenCost, 1e-12)
+	require.InDelta(t, 5e-7, got.CacheCreationInputTokenCostPriority, 1e-12)
+	require.InDelta(t, 2e-8, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 4e-7, got.InputCostPerTokenAbove272KTokens, 1e-12)
+	require.InDelta(t, 1.8e-6, got.OutputCostPerTokenAbove272KTokens, 1e-12)
+	require.InDelta(t, 5e-7, got.CacheCreationInputTokenCostAbove272KTokens, 1e-12)
+	require.InDelta(t, 4e-8, got.CacheReadInputTokenCostAbove272KTokens, 1e-12)
 	require.Equal(t, 272000, got.LongContextInputTokenThreshold)
 	require.InDelta(t, 2.0, got.LongContextInputCostMultiplier, 1e-12)
 	require.InDelta(t, 1.5, got.LongContextOutputCostMultiplier, 1e-12)
@@ -155,7 +155,7 @@ func TestGetModelPricing_Gpt56StaleCatalogDerivesCacheWriteButExplicitPriceWins(
 		"gpt-5.6-sol":   explicit,
 	}}
 
-	derived := svc.GetModelPricing("openai/gpt5.6-terra-2026-06-08")
+	derived := svc.GetModelPricing("gpt-5.6-terra")
 	require.NotNil(t, derived)
 	require.NotSame(t, stale, derived, "derivation must not mutate the cached catalog entry")
 	require.InDelta(t, 3.125e-6, derived.CacheCreationInputTokenCost, 1e-12)
@@ -240,8 +240,8 @@ func TestDefaultPricingIncludesGPT56CacheWritePrices(t *testing.T) {
 		priority   float64
 	}{
 		{model: "gpt-5.6-sol", input: 5e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6, output: 30e-6, priority: 12.5e-6},
-		{model: "gpt-5.6-terra", input: 2.5e-6, cacheRead: 0.25e-6, cacheWrite: 3.125e-6, output: 15e-6, priority: 6.25e-6},
-		{model: "gpt-5.6-luna", input: 1e-6, cacheRead: 0.1e-6, cacheWrite: 1.25e-6, output: 6e-6, priority: 2.5e-6},
+		{model: "gpt-5.6-terra", input: 2e-6, cacheRead: 0.2e-6, cacheWrite: 2.5e-6, output: 12e-6, priority: 5e-6},
+		{model: "gpt-5.6-luna", input: 0.2e-6, cacheRead: 0.02e-6, cacheWrite: 0.25e-6, output: 1.2e-6, priority: 0.5e-6},
 	} {
 		t.Run(tt.model, func(t *testing.T) {
 			got := svc.GetModelPricing(tt.model)
