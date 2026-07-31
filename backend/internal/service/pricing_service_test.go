@@ -189,6 +189,24 @@ func TestGetModelPricing_OpenAICompactAliasUsesStaticFallback(t *testing.T) {
 	require.InDelta(t, 1.5e-5, got.OutputCostPerToken, 1e-12)
 }
 
+// "紧凑别名 + 日期后缀"（openai/gpt5.6-terra-2026-06-08）在 catalog 查找阶段命不中
+// catalog 里的 gpt-5.6-terra，会落到编译进二进制的静态 fallback。这里放一个价格与静态
+// fallback 明显不同的 catalog 条目，把该行为钉死：如果哪天 lookup 改成能命中 catalog，
+// 本用例会失败，提醒一并复核 docs/specs/available-channels-gpt-5-6-pricing.md §3 的数据
+// 路径描述，以及"远程 catalog 调价后这类模型名会滞后到下次发版"的影响面。
+func TestGetModelPricing_Gpt56CompactAliasWithDateUsesStaticFallback(t *testing.T) {
+	svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"gpt-5.6-terra": {InputCostPerToken: 9e-6, OutputCostPerToken: 9e-5},
+	}}
+
+	got := svc.GetModelPricing("openai/gpt5.6-terra-2026-06-08")
+	require.NotNil(t, got)
+	require.InDelta(t, 2e-6, got.InputCostPerToken, 1e-12, "catalog 未命中时应回落到静态 fallback")
+	require.InDelta(t, 1.2e-5, got.OutputCostPerToken, 1e-12)
+	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCost, 1e-12)
+	require.InDelta(t, 2e-7, got.CacheReadInputTokenCost, 1e-12)
+}
+
 func TestDefaultPricingIncludesCodexAutoReview(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
 	require.NoError(t, err)
