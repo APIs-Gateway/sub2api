@@ -91,7 +91,7 @@ func TestProviderPricingHandlerGetPricing(t *testing.T) {
 	require.Equal(t, 10.0, resp.Data.Models[2].InputPrice)
 	require.Equal(t, "gpt-5.6-terra", resp.Data.Models[3].ModelName)
 	require.Equal(t, "codex plus", resp.Data.Models[3].GroupName)
-	require.Equal(t, 5.0, resp.Data.Models[3].InputPrice)
+	require.Equal(t, 4.0, resp.Data.Models[3].InputPrice)
 }
 
 func TestProviderPricingHandlerGetPricingConfigError(t *testing.T) {

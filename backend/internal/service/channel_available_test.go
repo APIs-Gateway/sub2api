@@ -377,8 +377,8 @@ func TestListAvailable_GPT56PricingEntriesUseOfficialPricing(t *testing.T) {
 		input, output, cacheRead, cacheWrite float64
 	}{
 		"gpt-5.6-sol":   {5e-6, 30e-6, 0.5e-6, 6.25e-6},
-		"gpt-5.6-terra": {2.5e-6, 15e-6, 0.25e-6, 3.125e-6},
-		"gpt-5.6-luna":  {1e-6, 6e-6, 0.1e-6, 1.25e-6},
+		"gpt-5.6-terra": {2e-6, 12e-6, 0.2e-6, 2.5e-6},
+		"gpt-5.6-luna":  {0.2e-6, 1.2e-6, 0.02e-6, 0.25e-6},
 	} {
 		model, ok := byName[name]
 		require.True(t, ok, "missing %s", name)

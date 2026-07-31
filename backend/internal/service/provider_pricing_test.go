@@ -70,13 +70,13 @@ func TestBuildHvoyProviderPricingUsesRechargeMultiplier(t *testing.T) {
 	gpt56Terra := resp.Data.Models[3]
 	require.Equal(t, "gpt-5.6-terra", gpt56Terra.ModelName)
 	require.Equal(t, "codex plus", gpt56Terra.GroupName)
-	require.Equal(t, 5.0, gpt56Terra.InputPrice)
+	require.Equal(t, 4.0, gpt56Terra.InputPrice)
 	require.NotNil(t, gpt56Terra.OutputPrice)
-	require.Equal(t, 30.0, *gpt56Terra.OutputPrice)
+	require.Equal(t, 24.0, *gpt56Terra.OutputPrice)
 	require.NotNil(t, gpt56Terra.CacheInputPrice)
-	require.Equal(t, 0.5, *gpt56Terra.CacheInputPrice)
+	require.Equal(t, 0.4, *gpt56Terra.CacheInputPrice)
 	require.NotNil(t, gpt56Terra.CacheCreatePrice)
-	require.Equal(t, 6.25, *gpt56Terra.CacheCreatePrice)
+	require.Equal(t, 5.0, *gpt56Terra.CacheCreatePrice)
 }
 
 func TestBuildHvoyProviderPricingUsesStaticFallbackWithoutCatalog(t *testing.T) {
@@ -95,7 +95,7 @@ func TestBuildHvoyProviderPricingUsesStaticFallbackWithoutCatalog(t *testing.T) 
 	require.True(t, resp.Data.Models[3].Enabled)
 	require.Equal(t, "gpt-5.6-terra", resp.Data.Models[3].ModelName)
 	require.Equal(t, "codex plus", resp.Data.Models[3].GroupName)
-	require.Equal(t, 2.5, resp.Data.Models[3].InputPrice)
+	require.Equal(t, 2.0, resp.Data.Models[3].InputPrice)
 }
 
 func TestBuildHvoyProviderPricingMarksUnavailableModel(t *testing.T) {

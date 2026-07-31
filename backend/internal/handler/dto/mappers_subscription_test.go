@@ -42,7 +42,9 @@ func TestUserSubscriptionFromService_LazilyResetsStaleActiveWindowsForDisplay(t 
 	now := time.Now()
 	yesterdayStart := timezone.StartOfDay(now.AddDate(0, 0, -1))
 	lastWeekStart := timezone.StartOfWeek(now.AddDate(0, 0, -8))
-	lastMonthStart := timezone.StartOfMonth(now.AddDate(0, -1, 0))
+	// 先取本月月初再减一个月：直接对 now 减一个月会在月末溢出（例如 7-31 减一个月
+	// 得到不存在的 6-31，Go 归一化成 7-01，于是"上个月"反而落回本月，窗口不再 stale）。
+	lastMonthStart := timezone.StartOfMonth(now).AddDate(0, -1, 0)
 
 	sub := &service.UserSubscription{
 		ID:                 11,

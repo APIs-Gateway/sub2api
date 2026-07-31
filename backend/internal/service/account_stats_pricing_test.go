@@ -375,13 +375,13 @@ func TestTryCustomRules_GPT56UsesConfiguredHighTierAfter272K(t *testing.T) {
 			Pricing: []ChannelModelPricing{{
 				Models:          []string{"gpt-5.6-terra"},
 				BillingMode:     BillingModeToken,
-				InputPrice:      testPtrFloat64(2.5e-6),
-				OutputPrice:     testPtrFloat64(15e-6),
-				CacheWritePrice: testPtrFloat64(3.125e-6),
-				CacheReadPrice:  testPtrFloat64(0.25e-6),
+				InputPrice:      testPtrFloat64(2e-6),
+				OutputPrice:     testPtrFloat64(12e-6),
+				CacheWritePrice: testPtrFloat64(2.5e-6),
+				CacheReadPrice:  testPtrFloat64(0.2e-6),
 				Intervals: []PricingInterval{
-					{MinTokens: 0, MaxTokens: testPtrInt(272000), InputPrice: testPtrFloat64(2.5e-6)},
-					{MinTokens: 272000, InputPrice: testPtrFloat64(5e-6), CacheReadPrice: testPtrFloat64(0.5e-6)},
+					{MinTokens: 0, MaxTokens: testPtrInt(272000), InputPrice: testPtrFloat64(2e-6)},
+					{MinTokens: 272000, InputPrice: testPtrFloat64(4e-6), CacheReadPrice: testPtrFloat64(0.4e-6)},
 				},
 			}},
 		}},
@@ -392,7 +392,7 @@ func TestTryCustomRules_GPT56UsesConfiguredHighTierAfter272K(t *testing.T) {
 		CacheReadTokens: 300000,
 	}, 1)
 	require.NotNil(t, result)
-	require.InDelta(t, 1000*5e-6+300000*0.5e-6, *result, 1e-12)
+	require.InDelta(t, 1000*4e-6+300000*0.4e-6, *result, 1e-12)
 }
 
 func TestTryCustomRules_SkipsNonMatchingRules(t *testing.T) {

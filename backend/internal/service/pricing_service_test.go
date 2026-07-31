@@ -119,15 +119,15 @@ func TestGetModelPricing_Gpt56UsesStaticFallbackWhenRemoteMissing(t *testing.T) 
 
 	got := svc.GetModelPricing("gpt-5.6-luna")
 	require.NotNil(t, got)
-	require.InDelta(t, 1e-6, got.InputCostPerToken, 1e-12)
-	require.InDelta(t, 6e-6, got.OutputCostPerToken, 1e-12)
-	require.InDelta(t, 1.25e-6, got.CacheCreationInputTokenCost, 1e-12)
-	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCostPriority, 1e-12)
-	require.InDelta(t, 1e-7, got.CacheReadInputTokenCost, 1e-12)
-	require.InDelta(t, 2e-6, got.InputCostPerTokenAbove272KTokens, 1e-12)
-	require.InDelta(t, 9e-6, got.OutputCostPerTokenAbove272KTokens, 1e-12)
-	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCostAbove272KTokens, 1e-12)
-	require.InDelta(t, 2e-7, got.CacheReadInputTokenCostAbove272KTokens, 1e-12)
+	require.InDelta(t, 2e-7, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 1.2e-6, got.OutputCostPerToken, 1e-12)
+	require.InDelta(t, 2.5e-7, got.CacheCreationInputTokenCost, 1e-12)
+	require.InDelta(t, 5e-7, got.CacheCreationInputTokenCostPriority, 1e-12)
+	require.InDelta(t, 2e-8, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 4e-7, got.InputCostPerTokenAbove272KTokens, 1e-12)
+	require.InDelta(t, 1.8e-6, got.OutputCostPerTokenAbove272KTokens, 1e-12)
+	require.InDelta(t, 5e-7, got.CacheCreationInputTokenCostAbove272KTokens, 1e-12)
+	require.InDelta(t, 4e-8, got.CacheReadInputTokenCostAbove272KTokens, 1e-12)
 	require.Equal(t, 272000, got.LongContextInputTokenThreshold)
 	require.InDelta(t, 2.0, got.LongContextInputCostMultiplier, 1e-12)
 	require.InDelta(t, 1.5, got.LongContextOutputCostMultiplier, 1e-12)
@@ -155,7 +155,7 @@ func TestGetModelPricing_Gpt56StaleCatalogDerivesCacheWriteButExplicitPriceWins(
 		"gpt-5.6-sol":   explicit,
 	}}
 
-	derived := svc.GetModelPricing("openai/gpt5.6-terra-2026-06-08")
+	derived := svc.GetModelPricing("gpt-5.6-terra")
 	require.NotNil(t, derived)
 	require.NotSame(t, stale, derived, "derivation must not mutate the cached catalog entry")
 	require.InDelta(t, 3.125e-6, derived.CacheCreationInputTokenCost, 1e-12)
@@ -187,6 +187,24 @@ func TestGetModelPricing_OpenAICompactAliasUsesStaticFallback(t *testing.T) {
 	require.NotNil(t, got)
 	require.InDelta(t, 2.5e-6, got.InputCostPerToken, 1e-12)
 	require.InDelta(t, 1.5e-5, got.OutputCostPerToken, 1e-12)
+}
+
+// "紧凑别名 + 日期后缀"（openai/gpt5.6-terra-2026-06-08）在 catalog 查找阶段命不中
+// catalog 里的 gpt-5.6-terra，会落到编译进二进制的静态 fallback。这里放一个价格与静态
+// fallback 明显不同的 catalog 条目，把该行为钉死：如果哪天 lookup 改成能命中 catalog，
+// 本用例会失败，提醒一并复核 docs/specs/available-channels-gpt-5-6-pricing.md §3 的数据
+// 路径描述，以及"远程 catalog 调价后这类模型名会滞后到下次发版"的影响面。
+func TestGetModelPricing_Gpt56CompactAliasWithDateUsesStaticFallback(t *testing.T) {
+	svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"gpt-5.6-terra": {InputCostPerToken: 9e-6, OutputCostPerToken: 9e-5},
+	}}
+
+	got := svc.GetModelPricing("openai/gpt5.6-terra-2026-06-08")
+	require.NotNil(t, got)
+	require.InDelta(t, 2e-6, got.InputCostPerToken, 1e-12, "catalog 未命中时应回落到静态 fallback")
+	require.InDelta(t, 1.2e-5, got.OutputCostPerToken, 1e-12)
+	require.InDelta(t, 2.5e-6, got.CacheCreationInputTokenCost, 1e-12)
+	require.InDelta(t, 2e-7, got.CacheReadInputTokenCost, 1e-12)
 }
 
 func TestDefaultPricingIncludesCodexAutoReview(t *testing.T) {
@@ -240,8 +258,8 @@ func TestDefaultPricingIncludesGPT56CacheWritePrices(t *testing.T) {
 		priority   float64
 	}{
 		{model: "gpt-5.6-sol", input: 5e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6, output: 30e-6, priority: 12.5e-6},
-		{model: "gpt-5.6-terra", input: 2.5e-6, cacheRead: 0.25e-6, cacheWrite: 3.125e-6, output: 15e-6, priority: 6.25e-6},
-		{model: "gpt-5.6-luna", input: 1e-6, cacheRead: 0.1e-6, cacheWrite: 1.25e-6, output: 6e-6, priority: 2.5e-6},
+		{model: "gpt-5.6-terra", input: 2e-6, cacheRead: 0.2e-6, cacheWrite: 2.5e-6, output: 12e-6, priority: 5e-6},
+		{model: "gpt-5.6-luna", input: 0.2e-6, cacheRead: 0.02e-6, cacheWrite: 0.25e-6, output: 1.2e-6, priority: 0.5e-6},
 	} {
 		t.Run(tt.model, func(t *testing.T) {
 			got := svc.GetModelPricing(tt.model)
