@@ -56,7 +56,6 @@ func TestConfigureTransportProxyHTTPPreservesDialContext(t *testing.T) {
 	_, _ = transport.DialContext(context.Background(), "tcp", "127.0.0.1:1")
 	require.True(t, called, "HTTP 代理分支不应替换调用方的 DialContext")
 }
-
 // 端到端回归：SOCKS5 forward dialer 的超时确实会在拨往不可达地址时生效，
 // 而不是被内核默认的 TCP 重传（约 130 秒）拖住。使用一个极小超时验证
 // dial 会在超时窗口内返回错误，不依赖真实网络环境的可达性差异。
