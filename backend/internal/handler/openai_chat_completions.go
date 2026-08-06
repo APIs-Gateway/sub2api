@@ -69,6 +69,14 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// Reject oversized prompts before selecting an account or contacting the
+	// upstream: over-limit input is still billed upstream while returning
+	// nothing usable, and clients retry it.
+	if est, limit, ok := inputTokensWithinLimit(body, h.cfg); !ok {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", buildInputTokensTooLargeMessage(est, limit))
+		return
+	}
+
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")

@@ -256,6 +256,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	// 输入过大的请求在选号和转发前直接拒绝：超限 input 在上游照常按 token 计费，
+	// 却返回不了可用结果，客户端重试后成本会成倍叠加。
+	if est, limit, ok := inputTokensWithinLimit(body, h.cfg); !ok {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", buildInputTokensTooLargeMessage(est, limit))
+		return
+	}
+
 	// 使用 gjson 只读提取字段做校验，避免完整 Unmarshal
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
@@ -828,6 +835,12 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	if !gjson.ValidBytes(body) {
 		logRequestBodyParseFailure(reqLog, body, nil)
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
+
+	// 输入过大的请求在选号和转发前直接拒绝，理由同 Responses 路径。
+	if est, limit, ok := inputTokensWithinLimit(body, h.cfg); !ok {
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", buildInputTokensTooLargeMessage(est, limit))
 		return
 	}
 
