@@ -14,7 +14,10 @@ const (
 	// monitorPingTimeout HEAD 请求 endpoint origin 的超时。
 	monitorPingTimeout = 8 * time.Second
 	// monitorDegradedThreshold 主请求成功但耗时超过该阈值视为 degraded。
-	monitorDegradedThreshold = 6 * time.Second
+	// 取值依据实测分布：LLM 首字延迟本身波动很大，线上 24h 样本 p50≈2.9s、
+	// p90≈15.1s。原先的 6s 会把约 1/4 的正常请求标成 degraded，可用率被长期
+	// 压低、失去指示意义；取 15s（≈p90）后只有最慢的一成算降级。
+	monitorDegradedThreshold = 15 * time.Second
 	// monitorHistoryRetentionDays 明细历史保留天数。
 	// 60s 默认间隔 * 30 天 ≈ 43200 行/monitor/model，一般部署总量 <= 2M 行，
 	// PG 无压力；所以直接保留完整明细一个月，可用率查询可以全走原始行不依赖聚合。
