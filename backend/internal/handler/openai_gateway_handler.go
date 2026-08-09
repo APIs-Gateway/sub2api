@@ -1668,6 +1668,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return nil
 			},
 			BeforeTurn: func(turn int) error {
+				// native 与 ws_v2 passthrough ingress 都会在后续 turn 写入上游前回调本钩子，
+				// 用于重新抢占上一 turn 在 AfterTurn 中释放的并发槽位。
 				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
 				if cyberBlockedThisConn {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
