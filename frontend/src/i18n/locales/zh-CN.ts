@@ -4020,6 +4020,7 @@
       status: {
         active: '正常',
         inactive: '停用',
+        expired: '已过期',
         error: '错误',
         cooldown: '冷却中',
         paused: '暂停',
