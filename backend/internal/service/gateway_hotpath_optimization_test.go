@@ -883,3 +883,11 @@ func TestSelectAccountWithLoadAwareness_StickyReadReuse(t *testing.T) {
 		require.Equal(t, int64(1), cache.getCalls.Load())
 	})
 }
+
+func (c *stickyGatewayCacheHotpathStub) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *stickyGatewayCacheHotpathStub) GetReasoningContent(_ context.Context, _ string) (string, error) {
+	return "", ErrReasoningContentNotFound
+}
