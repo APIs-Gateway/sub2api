@@ -31,19 +31,53 @@ func oversizedPrompt() string {
 	return strings.Repeat("a", 8000)
 }
 
-// /v1/messages 是 Claude Code 的主力路径，闸门必须在选号和转发之前就生效。
-func TestGatewayHandlerMessages_RejectsOverInputTokenLimit(t *testing.T) {
+// 闸门挂在 7 个网关入口上，每一个都必须在选号和转发之前就把超限请求拒掉。
+// 漏掉任何一个，闸门开着也拦不住那条线上的流量——/v1/messages 就是这么被漏掉过的。
+func TestGatewayHandlers_RejectOverInputTokenLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		tokenLimitTestConfig(), nil, nil)
 
-	body := []byte(`{"model":"claude-opus-4-8","messages":[{"role":"user","content":"` + oversizedPrompt() + `"}]}`)
-	c, recorder := newBodyLimitTestContext(t, body)
+	messagesBody := []byte(`{"model":"claude-opus-4-8","max_tokens":1024,"messages":[{"role":"user","content":"` + oversizedPrompt() + `"}]}`)
+	chatBody := []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"` + oversizedPrompt() + `"}]}`)
+	responsesBody := []byte(`{"model":"gpt-5.6-sol","input":"` + oversizedPrompt() + `"}`)
 
-	h.Messages(c)
+	newGateway := func() *GatewayHandler {
+		return NewGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+			tokenLimitTestConfig(), nil, nil)
+	}
+	newOpenAI := func() *OpenAIGatewayHandler {
+		return NewOpenAIGatewayHandler(
+			&service.OpenAIGatewayService{},
+			&service.ConcurrencyService{},
+			&service.BillingCacheService{},
+			&service.APIKeyService{},
+			nil, nil, nil, nil,
+			tokenLimitTestConfig(),
+		)
+	}
 
-	require.Equal(t, http.StatusBadRequest, recorder.Code, "body=%s", recorder.Body.String())
-	require.Contains(t, recorder.Body.String(), "too large")
+	cases := []struct {
+		route  string
+		body   []byte
+		invoke func(*gin.Context)
+	}{
+		{"claude /v1/messages", messagesBody, func(c *gin.Context) { newGateway().Messages(c) }},
+		{"claude /v1/responses", responsesBody, func(c *gin.Context) { newGateway().Responses(c) }},
+		{"claude /v1/chat/completions", chatBody, func(c *gin.Context) { newGateway().ChatCompletions(c) }},
+		{"openai /v1/responses", responsesBody, func(c *gin.Context) { newOpenAI().Responses(c) }},
+		{"openai /v1/chat/completions", chatBody, func(c *gin.Context) { newOpenAI().ChatCompletions(c) }},
+		{"openai anthropic messages", messagesBody, func(c *gin.Context) { newOpenAI().Messages(c) }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.route, func(t *testing.T) {
+			c, recorder := newBodyLimitTestContext(t, tc.body)
+
+			tc.invoke(c)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code, "body=%s", recorder.Body.String())
+			require.Contains(t, recorder.Body.String(), "too large")
+		})
+	}
 }
 
 // Gemini 原生路径走的是另一套错误响应格式，同样要拦住。
