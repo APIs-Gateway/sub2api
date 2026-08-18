@@ -184,6 +184,15 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		return
 	}
 
+	// 输入过大的请求在选号和转发前直接拒绝，理由同 /v1/responses 路径。
+	// countTokens 是客户端用来自查长度的动作，放行不拦。
+	if action != "countTokens" {
+		if est, limit, ok := inputTokensWithinLimit(body, h.cfg); !ok {
+			googleError(c, http.StatusBadRequest, buildInputTokensTooLargeMessage(est, limit))
+			return
+		}
+	}
+
 	setOpsRequestContext(c, modelName, stream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(stream, false)))
 

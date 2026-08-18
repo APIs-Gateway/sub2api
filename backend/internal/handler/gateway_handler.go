@@ -160,6 +160,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
+	// 输入过大的请求在选号和转发前直接拒绝，理由同 /v1/responses 路径。
+	// count_tokens 端点刻意不设这道闸门：客户端正是靠它来判断自己是否超长。
+	if est, limit, ok := inputTokensWithinLimit(body, h.cfg); !ok {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", buildInputTokensTooLargeMessage(est, limit))
+		return
+	}
+
 	setOpsRequestContext(c, "", false)
 
 	bodyRef := service.NewRequestBodyRef(body)
