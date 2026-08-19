@@ -263,9 +263,10 @@ type OpenAIForwardResult struct {
 	ImageSizeSource    string
 	ImageSizeBreakdown map[string]int
 
-	wsReplayInput       []json.RawMessage
-	wsReplayInputExists bool
-	wsClientToolState   openAIWSHTTPBridgeToolState
+	wsReplayInput                []json.RawMessage
+	wsReplayInputExists          bool
+	wsClientToolState            openAIWSHTTPBridgeToolState
+	wsAccountFailoverReplayInput []json.RawMessage
 }
 
 type OpenAIWSRetryMetricsSnapshot struct {

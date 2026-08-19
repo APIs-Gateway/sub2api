@@ -77,20 +77,25 @@ func prepareOpenAIWSHTTPBridgeBody(payload []byte) ([]byte, error) {
 }
 
 type openAIWSToolCallReplayCollector struct {
-	items []json.RawMessage
-	seen  map[string]struct{}
+	items    []json.RawMessage
+	seen     map[string]struct{}
+	allItems []json.RawMessage
+	allSeen  map[string]struct{}
 }
 
 func (c *openAIWSToolCallReplayCollector) AddEvent(eventType string, message []byte) {
 	switch strings.TrimSpace(eventType) {
 	case "response.output_item.done":
-		c.addItem(gjson.GetBytes(message, "item"))
+		item := gjson.GetBytes(message, "item")
+		c.addAllItem(item)
+		c.addItem(item)
 	case "response.completed", "response.done":
 		output := gjson.GetBytes(message, "response.output")
 		if !output.IsArray() {
 			return
 		}
 		for _, item := range output.Array() {
+			c.addAllItem(item)
 			c.addItem(item)
 		}
 	}
@@ -98,6 +103,35 @@ func (c *openAIWSToolCallReplayCollector) AddEvent(eventType string, message []b
 
 func (c *openAIWSToolCallReplayCollector) Items() []json.RawMessage {
 	return cloneOpenAIWSRawMessages(c.items)
+}
+
+func (c *openAIWSToolCallReplayCollector) AllItems() []json.RawMessage {
+	return cloneOpenAIWSRawMessages(c.allItems)
+}
+
+func (c *openAIWSToolCallReplayCollector) addAllItem(item gjson.Result) {
+	if !item.Exists() || item.Type != gjson.JSON {
+		return
+	}
+	raw := strings.TrimSpace(item.Raw)
+	if raw == "" || !strings.HasPrefix(raw, "{") || strings.TrimSpace(item.Get("type").String()) == "" {
+		return
+	}
+	key := strings.TrimSpace(item.Get("id").String())
+	if key == "" {
+		key = strings.TrimSpace(item.Get("call_id").String())
+	}
+	if key == "" {
+		key = raw
+	}
+	if c.allSeen == nil {
+		c.allSeen = make(map[string]struct{})
+	}
+	if _, ok := c.allSeen[key]; ok {
+		return
+	}
+	c.allSeen[key] = struct{}{}
+	c.allItems = append(c.allItems, json.RawMessage(raw))
 }
 
 func (c *openAIWSToolCallReplayCollector) addItem(item gjson.Result) {
@@ -281,7 +315,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, originalModel)
 			accountErrorHandled = true
 		}
-		if turn == 1 && shouldFailover {
+		if shouldFailover && (turn == 1 || resp.StatusCode == http.StatusTooManyRequests) {
 			if accountErrorHandled {
 				return nil, &UpstreamFailoverError{
 					StatusCode:      resp.StatusCode,
@@ -350,6 +384,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 				LoweredTools:  loweredClientTools,
 			}
 		}
+		result.wsAccountFailoverReplayInput = replayCollector.AllItems()
 		if imageCount > 0 {
 			result.ImageCount = imageCount
 			result.ImageSize = imageSizeTier
@@ -460,7 +495,8 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			}
 			// A disconnected client needs this attempt drained for usage, not replayed,
 			// even when only non-semantic heartbeats were delivered.
-			if turn == 1 && !clientDisconnected && !wroteDownstream && shouldFailover {
+			if !clientDisconnected && !wroteDownstream && shouldFailover &&
+				(turn == 1 || statusCode == http.StatusTooManyRequests) {
 				if account.Platform == PlatformOpenAI && !accountErrorHandled {
 					// 与上游一致：OpenAI 流内 error 帧按流式失败构造 failover（容量降载带
 					// RequestScopedTransient + 同账号重试）。fork 独有的 429 持久化分支
@@ -483,11 +519,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		// response.failed 在首轮尚未输出语义内容时（元数据帧已被暂存）与 HTTP 流式路径
 		// 同一边界：可重试类失败走 failover，而不是把终止事件原样交给客户端。
-		if eventType == "response.failed" && turn == 1 && account.Platform == PlatformOpenAI &&
+		if eventType == "response.failed" && account.Platform == PlatformOpenAI &&
 			!clientDisconnected && !wroteDownstream {
 			failedMessage := extractOpenAISSEErrorMessage(upstreamMessage)
 			if hit, _, _ := detectOpenAICyberPolicy(upstreamMessage); !hit &&
-				openAIStreamFailedEventShouldFailover(upstreamMessage, failedMessage) {
+				openAIStreamFailedEventShouldFailover(upstreamMessage, failedMessage) &&
+				(turn == 1 || openAIStreamFailureStatus(upstreamMessage, failedMessage) == http.StatusTooManyRequests) {
 				return nil, s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, upstreamMessage, failedMessage, resp.Header)
 			}
 		}
