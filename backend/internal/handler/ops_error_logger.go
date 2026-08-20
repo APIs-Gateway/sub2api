@@ -1057,6 +1057,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				}
 			}
 		}
+		suppressOpsUpstreamAttributionForLocalModelConfiguration(c, entry)
 
 		if apiKey != nil {
 			entry.APIKeyID = &apiKey.ID
@@ -1261,6 +1262,22 @@ func applyOpsLatencyFieldsFromContext(c *gin.Context, entry *service.OpsInsertEr
 	entry.UpstreamLatencyMs = getContextLatencyMs(c, service.OpsUpstreamLatencyMsKey)
 	entry.ResponseLatencyMs = getContextLatencyMs(c, service.OpsResponseLatencyMsKey)
 	entry.TimeToFirstTokenMs = getContextLatencyMs(c, service.OpsTimeToFirstTokenMsKey)
+}
+
+// suppressOpsUpstreamAttributionForLocalModelConfiguration drops stale upstream
+// attribution (from earlier failover attempts) when the request finally failed
+// because no account in the group is configured for the requested model.
+func suppressOpsUpstreamAttributionForLocalModelConfiguration(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
+	if entry == nil || !service.HasOpsClientBusinessLimited(c) || service.OpsClientBusinessLimitedReason(c) != service.OpsClientBusinessLimitedReasonLocalModelConfiguration {
+		return
+	}
+	entry.AccountID = nil
+	entry.UpstreamEndpoint = ""
+	entry.UpstreamModel = ""
+	entry.UpstreamStatusCode = nil
+	entry.UpstreamErrorMessage = nil
+	entry.UpstreamErrorDetail = nil
+	entry.UpstreamErrors = nil
 }
 
 func getContextLatencyMs(c *gin.Context, key string) *int64 {
@@ -1472,27 +1489,31 @@ func classifyOpsErrorLog(c *gin.Context, errType, message, code string, status i
 	phase = classifyOpsPhase(errType, message, code)
 	routingCapacityLimited := isOpsRoutingCapacityLimited(c)
 	clientBusinessLimited := service.HasOpsClientBusinessLimited(c)
+	localModelConfiguration := clientBusinessLimited && service.OpsClientBusinessLimitedReason(c) == service.OpsClientBusinessLimitedReasonLocalModelConfiguration
 	upstreamError := hasOpsUpstreamErrorContext(c)
-	if upstreamError && !routingCapacityLimited {
+	if localModelConfiguration {
+		phase = "routing"
+	} else if upstreamError && !routingCapacityLimited {
 		phase = "upstream"
 	}
-	if clientBusinessLimited && !upstreamError && !routingCapacityLimited {
+	if clientBusinessLimited && !upstreamError && !routingCapacityLimited && !localModelConfiguration {
 		phase = "auth"
 	}
 	if routingCapacityLimited {
 		phase = "routing"
 	}
 	msg := strings.ToLower(message)
-	localClientAuthError := !upstreamError && phase == "auth" && isOpsClientAuthError(code, msg)
-	localBusinessLimited := !upstreamError && classifyOpsIsBusinessLimited(errType, phase, code, status, message, localClientAuthError)
-	isBusinessLimited = routingCapacityLimited || (clientBusinessLimited && !upstreamError) || localBusinessLimited
+	effectiveUpstreamError := upstreamError && !localModelConfiguration
+	localClientAuthError := !effectiveUpstreamError && phase == "auth" && isOpsClientAuthError(code, msg)
+	localBusinessLimited := !effectiveUpstreamError && classifyOpsIsBusinessLimited(errType, phase, code, status, message, localClientAuthError)
+	isBusinessLimited = localModelConfiguration || routingCapacityLimited || (clientBusinessLimited && !effectiveUpstreamError) || localBusinessLimited
 	errorOwner = classifyOpsErrorOwner(phase, message)
 	// A2(issue #16 Part B):上游「请求本身的问题」4xx(400/404/422 等,换账号也救不了)归
 	// client_via_upstream,而非笼统的 provider。否则透传真实状态码不会自动纠正归因,SLA 仍误计。
 	// 与 service.IsRequestShapedUpstream4xx 同源,保证「透传什么」与「归因到 client 的是什么」一致。
 	// 守卫:仅重归「真正由上游拒绝的畸形请求」;命中本地业务限制白名单的(平台能力/策略类 message,
 	// 如「token counting 不支持」)即便携带上游状态码也保持既有 provider 归因,不误判为客户端错。
-	if upstreamError && errorOwner == "provider" &&
+	if effectiveUpstreamError && errorOwner == "provider" &&
 		service.IsRequestShapedUpstream4xx(opsUpstreamStatusCode(c)) &&
 		!isOpsLocalBusinessLimitError(code, msg) {
 		errorOwner = opsErrorOwnerClientViaUpstream
