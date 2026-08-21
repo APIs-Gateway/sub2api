@@ -41,6 +41,43 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 	require.EqualError(t, err, "invalid json request body")
 }
 
+func TestPatchGrokResponsesBodyDropsOrphanToolChoice(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		body           string
+		wantToolChoice bool
+	}{
+		{
+			name: "no tools with string tool_choice is dropped",
+			body: `{"input":"hello","tool_choice":"auto"}`,
+		},
+		{
+			name: "no tools with object tool_choice is dropped",
+			body: `{"input":"hello","tool_choice":{"type":"function","name":"lookup"}}`,
+		},
+		{
+			name:           "tools present keeps tool_choice",
+			body:           `{"input":"hello","tools":[{"type":"function","name":"lookup"}],"tool_choice":"auto"}`,
+			wantToolChoice: true,
+		},
+		{
+			name: "no tools and no tool_choice stays absent",
+			body: `{"input":"hello"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			patched, err := patchGrokResponsesBody([]byte(tt.body), "grok-4.3")
+			require.NoError(t, err)
+			require.True(t, json.Valid(patched))
+			require.Equal(t, tt.wantToolChoice, gjson.GetBytes(patched, "tool_choice").Exists())
+		})
+	}
+}
+
 func TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken(t *testing.T) {
 	t.Parallel()
 

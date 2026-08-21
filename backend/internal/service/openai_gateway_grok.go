@@ -149,6 +149,12 @@ func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 			}
 		}
 	}
+	if !gjson.GetBytes(out, "tools").Exists() && gjson.GetBytes(out, "tool_choice").Exists() {
+		out, err = sjson.DeleteBytes(out, "tool_choice")
+		if err != nil {
+			return nil, err
+		}
+	}
 	return out, nil
 }
 
