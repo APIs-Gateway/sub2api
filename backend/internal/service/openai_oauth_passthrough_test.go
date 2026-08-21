@@ -536,10 +536,8 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCance
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsRejectedBeforeUpstream(t *testing.T) {
+func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsGetsDefault(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	logSink, restore := captureStructuredLog(t)
-	defer restore()
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -548,7 +546,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsRejectedB
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Request.Header.Set("OpenAI-Beta", "responses=experimental")
 
-	// Codex 模型且缺少 instructions，应在本地直接 403 拒绝，不触达上游。
+	// Codex 模型且缺少 instructions：不再本地拒绝，而是自动补上默认 instructions 再转发上游。
 	originalBody := []byte(`{"model":"gpt-5.1-codex-max","stream":false,"store":true,"input":[{"type":"text","text":"hi"}]}`)
 
 	upstream := &httpUpstreamRecorder{
@@ -578,15 +576,13 @@ func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsRejectedB
 	}
 
 	result, err := svc.Forward(context.Background(), c, account, originalBody)
-	require.Error(t, err)
-	require.Nil(t, result)
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Contains(t, rec.Body.String(), "requires a non-empty instructions field")
-	require.Nil(t, upstream.lastReq)
-
-	require.True(t, logSink.ContainsMessage("OpenAI passthrough 本地拦截：Codex 请求缺少有效 instructions"))
-	require.True(t, logSink.ContainsFieldValue("request_user_agent", "codex_cli_rs/0.98.0 (Windows 10.0.19045; x86_64) unknown"))
-	require.True(t, logSink.ContainsFieldValue("reject_reason", "instructions_missing"))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t,
+		strings.TrimSpace(defaultCodexSynthInstructions("gpt-5.1-codex-max")),
+		strings.TrimSpace(gjson.GetBytes(upstream.lastBody, "instructions").String()),
+	)
 }
 
 func TestOpenAIGatewayService_OAuthPassthrough_DisabledUsesLegacyTransform(t *testing.T) {
