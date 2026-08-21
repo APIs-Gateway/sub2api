@@ -568,7 +568,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// upstream and must apply the same model normalization as real forwarding.
 	upstreamTestModelID := testModelID
 	if isOAuth {
-		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
+		upstreamTestModelID = normalizeOpenAIModelForUpstream(account, testModelID)
 	}
 	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
 	payloadBytes, _ := json.Marshal(payload)
