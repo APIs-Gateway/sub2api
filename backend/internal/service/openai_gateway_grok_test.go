@@ -445,6 +445,39 @@ func TestHandleGrokAccountUpstreamError403UsesConfiguredForbiddenRule(t *testing
 	require.WithinDuration(t, before.Add(7*time.Minute), until.(time.Time), time.Second)
 }
 
+func TestHandleGrokAccountUpstreamError5xxRespectsPoolMode(t *testing.T) {
+	t.Run("pool mode keeps scheduling state", func(t *testing.T) {
+		repo := &tokenRefreshAccountRepo{}
+		svc := &OpenAIGatewayService{accountRepo: repo}
+		account := &Account{
+			ID:          724,
+			Platform:    PlatformGrok,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"pool_mode": true},
+		}
+
+		svc.handleGrokAccountUpstreamError(context.Background(), account, http.StatusBadGateway, nil, nil)
+
+		require.Zero(t, repo.setTempUnschedCalls)
+		_, blocked := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+		require.False(t, blocked)
+	})
+
+	t.Run("non-pool mode keeps two minute cooldown", func(t *testing.T) {
+		repo := &tokenRefreshAccountRepo{}
+		svc := &OpenAIGatewayService{accountRepo: repo}
+		account := &Account{ID: 725, Platform: PlatformGrok, Type: AccountTypeAPIKey}
+		before := time.Now()
+
+		svc.handleGrokAccountUpstreamError(context.Background(), account, http.StatusBadGateway, nil, nil)
+
+		require.Equal(t, 1, repo.setTempUnschedCalls)
+		until, ok := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+		require.True(t, ok)
+		require.WithinDuration(t, before.Add(2*time.Minute), until.(time.Time), time.Second)
+	})
+}
+
 func TestHandleGrokAccountUpstreamError402CooldownsForThirtyMinutes(t *testing.T) {
 	repo := &tokenRefreshAccountRepo{}
 	svc := &OpenAIGatewayService{accountRepo: repo}
