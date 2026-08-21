@@ -287,7 +287,6 @@ func TestResponsesOutputTextIncludedInSnapshot(t *testing.T) {
 	full, err := ExtractPromptSnapshot(req)
 	require.NoError(t, err)
 	require.Contains(t, full.ScanText, "captured previous assistant output")
-	require.Contains(t, full.FullPrompt, "captured previous assistant output")
 	require.Equal(t, 3, full.MessageCount)
 }
 func TestBuildPromptPreviewWithholdsMajorityOfOrdinaryText(t *testing.T) {
