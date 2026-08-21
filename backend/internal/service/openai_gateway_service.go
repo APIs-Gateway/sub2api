@@ -8698,3 +8698,12 @@ func normalizeOpenAIReasoningEffortForModel(raw, model string) string {
 	}
 	return normalizeOpenAIReasoningEffort(raw)
 }
+
+// OpenAIImagesJSONKeepalivePresent reports whether the response writer belongs
+// to an Images JSON request, including fast responses before the first beat.
+// Kept here (rather than alongside its sibling helpers in
+// openai_images_json_keepalive.go) so the error-response wiring in
+// openai_gateway_handler.go stays within this batch's file scope.
+func OpenAIImagesJSONKeepalivePresent(c *gin.Context) bool {
+	return openAIImagesJSONKeepaliveFromContext(c) != nil
+}
