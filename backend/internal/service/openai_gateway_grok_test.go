@@ -364,3 +364,38 @@ func TestPatchGrokResponsesBody_MultipleReasoningContentNull(t *testing.T) {
 	require.False(t, items[0].Get("content").Exists())
 	require.False(t, items[2].Get("content").Exists())
 }
+
+func TestIsGrokImageGenerationModel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"grok-imagine", true},
+		{"grok-imagine-image-quality", true},
+		{"grok-imagine-edit", true},
+		{"grok-imagine-image-hd", true},
+		{"grok-4.5", false},
+		{"grok-composer", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			require.Equal(t, tt.want, isGrokImageGenerationModel(tt.model))
+		})
+	}
+}
+
+// forwardGrokResponses 在到达任何需要 token/网络调用的分支之前，先按模型名
+// 拒绝生图模型；空映射的 Account 足以驱动到这条检查且不会 panic。
+func TestForwardGrokResponsesRejectsImageModel(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{ID: 1, Type: AccountTypeOAuth}
+
+	svc := &OpenAIGatewayService{}
+	result, err := svc.forwardGrokResponses(context.Background(), nil, account, []byte(`{"model":"grok-imagine","input":"hi"}`), "grok-imagine", false, time.Now())
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "not available on the Responses endpoint")
+}

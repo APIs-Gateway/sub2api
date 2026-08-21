@@ -32,6 +32,9 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if strings.TrimSpace(upstreamModel) == "" {
 		upstreamModel = "grok-4.3"
 	}
+	if isGrokImageGenerationModel(upstreamModel) {
+		return nil, fmt.Errorf("model %s is an image model and is not available on the Responses endpoint; use /v1/images/generations instead", upstreamModel)
+	}
 	patchedBody, err := patchGrokResponsesBody(body, upstreamModel)
 	if err != nil {
 		return nil, err
@@ -177,6 +180,15 @@ func sanitizeGrokReasoningNullContent(body []byte) ([]byte, error) {
 		}
 	}
 	return body, nil
+}
+
+// isGrokImageGenerationModel identifies Grok image models that must go
+// through /v1/images/generations instead of the Responses endpoint.
+func isGrokImageGenerationModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return model == "grok-imagine" ||
+		model == "grok-imagine-edit" ||
+		strings.HasPrefix(model, "grok-imagine-image")
 }
 
 func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string) (*http.Request, error) {
