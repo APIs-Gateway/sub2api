@@ -203,6 +203,8 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 		if s.accountRepo != nil {
 			_ = s.accountRepo.ClearTempUnschedulable(ctx, account.ID)
 		}
+	case http.StatusPaymentRequired:
+		s.tempUnscheduleGrok(ctx, account, 30*time.Minute, "grok payment required")
 	case http.StatusForbidden:
 		if s.applyGrokForbiddenPolicy(ctx, account, responseBody) {
 			return

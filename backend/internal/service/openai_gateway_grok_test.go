@@ -408,6 +408,20 @@ func TestHandleGrokAccountUpstreamError403UsesConfiguredForbiddenRule(t *testing
 	require.WithinDuration(t, before.Add(7*time.Minute), until.(time.Time), time.Second)
 }
 
+func TestHandleGrokAccountUpstreamError402CooldownsForThirtyMinutes(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 723, Platform: PlatformGrok, Type: AccountTypeOAuth}
+	before := time.Now()
+
+	svc.handleGrokAccountUpstreamError(context.Background(), account, http.StatusPaymentRequired, nil, nil)
+
+	require.Equal(t, 1, repo.setTempUnschedCalls)
+	until, ok := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.True(t, ok)
+	require.WithinDuration(t, before.Add(30*time.Minute), until.(time.Time), time.Second)
+}
+
 func TestHandleGrokAccountUpstreamError403ConfiguredRuleUnmatchedKeepsDefaultCooldown(t *testing.T) {
 	repo := &tokenRefreshAccountRepo{}
 	svc := &OpenAIGatewayService{accountRepo: repo}
