@@ -3581,6 +3581,22 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		c.Set("openai_passthrough", true)
 	}
 
+	// Codex 0.147+ 声明 custom / tool_search / namespace 三类工具。官方 Responses
+	// 上游认得，但 type=apikey 的二级中转商只认标准 function 工具，未降级的声明会被
+	// 拒绝或静默丢弃，客户端侧表现为工具调用整体不可用。出站前降级，回程再还原。
+	if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
+		!isOpenAIResponsesCompactPath(c) {
+		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
+		if adaptErr != nil {
+			return nil, adaptErr
+		}
+		body = adaptedBody
+		setOpenAIResponsesClientToolMapping(c, mapping)
+	} else {
+		// failover 在同一个 context 上换号重试，换到非 apikey 账号必须清掉旧映射。
+		clearOpenAIResponsesClientToolMapping(c)
+	}
+
 	agentTaskRecoveryTried := false
 	var resp *http.Response
 	for {
@@ -3630,6 +3646,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body, responseBody)
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if mapping, ok := openAIResponsesClientToolMapping(c); ok && isEventStreamResponse(resp.Header) {
+		maxLineSize := defaultMaxLineSize
+		if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+			maxLineSize = s.cfg.Gateway.MaxLineSize
+		}
+		resp.Body = newResponsesClientToolStreamBody(resp.Body, mapping, maxLineSize)
+	}
 
 	serviceTier := extractOpenAIServiceTierFromBody(body)
 
@@ -4512,6 +4536,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 	}
+	body, err = restoreOpenAIResponsesClientToolPayload(c, body)
+	if err != nil {
+		return nil, err
+	}
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}
@@ -4578,6 +4606,11 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			contentType = "text/event-stream"
 		}
 	}
+	restoredBody, restoreErr := restoreOpenAIResponsesClientToolPayload(c, body)
+	if restoreErr != nil {
+		return nil, restoreErr
+	}
+	body = restoredBody
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}
