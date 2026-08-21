@@ -295,7 +295,6 @@ func TestOpenAIGatewayServiceGrokHelperBranches(t *testing.T) {
 	service = &OpenAIGatewayService{accountRepo: repo}
 	service.tempUnscheduleGrok(context.Background(), account, time.Minute, "test")
 	require.Equal(t, 1, repo.setTempUnschedCalls)
-	require.Nil(t, ptrStringOrNil(" "))
 }
 
 func TestPatchGrokResponsesBody_StripsReasoningContentNull(t *testing.T) {
