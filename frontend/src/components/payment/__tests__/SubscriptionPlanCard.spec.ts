@@ -84,4 +84,58 @@ describe("SubscriptionPlanCard", () => {
     expect(text).toContain("Gemini");
     expect(text).toContain("Imagen");
   });
+
+  const mountPlanCardWithName = (name: string) =>
+    mount(SubscriptionPlanCard, {
+      props: {
+        plan: {
+          id: 1,
+          group_id: 10,
+          group_platform: "openai",
+          name,
+          price: 10,
+          features: [],
+          rate_multiplier: 1,
+          validity_days: 30,
+          validity_unit: "day",
+        },
+      },
+      global: { plugins: [i18n] },
+    });
+
+  it.each([
+    ["long Chinese", "企业全球加速专业订阅套餐（含高级模型与优先支持）"],
+    ["long English", "Enterprise Global Acceleration Subscription with Priority Support"],
+    ["unbroken token", "EnterpriseGlobalAccelerationSubscriptionWithPrioritySupport1234567890"],
+  ])("keeps the full %s plan title accessible in a bounded two-line area", (_label, name) => {
+    const wrapper = mountPlanCardWithName(name);
+    const title = wrapper.get("h3");
+
+    expect(title.text()).toBe(name);
+    expect(title.attributes("title")).toBe(name);
+    expect(title.classes()).toEqual(expect.arrayContaining([
+      "min-w-0",
+      "h-12",
+      "break-words",
+      "line-clamp-2",
+      "[overflow-wrap:anywhere]",
+    ]));
+    expect(title.classes()).not.toContain("truncate");
+  });
+
+  it("keeps title, badge, and validity suffix in separate bounded regions", () => {
+    const wrapper = mountPlanCardWithName("Enterprise Global Acceleration Subscription with Priority Support");
+    const title = wrapper.get("h3");
+    const badge = wrapper.findAll("span").find((node) => node.text() === "OpenAI");
+
+    expect(title.element.parentElement?.classList).toContain("min-w-0");
+    expect(title.element.parentElement?.classList).toContain("flex-1");
+    expect(badge?.classes()).toContain("shrink-0");
+    expect([...(badge?.element.parentElement?.classList ?? [])]).toEqual(expect.arrayContaining([
+      "flex",
+      "items-center",
+      "justify-end",
+    ]));
+    expect(badge?.element.parentElement?.textContent).toContain("30days");
+  });
 });
