@@ -431,7 +431,7 @@ func TestAdaptResponsesClientTools_HandlesNoOpAndToolSearchHistory(t *testing.T)
 		"tool_choice": map[string]any{"type": "tool_search"},
 		"input": []any{
 			map[string]any{"type": "tool_search_call", "arguments": `{"query":"git"}`, "execution": "client"},
-			map[string]any{"type": "tool_search_output", "output": nil},
+			map[string]any{"type": "tool_search_output", "call_id": "cs_history", "output": nil},
 		},
 	}
 
