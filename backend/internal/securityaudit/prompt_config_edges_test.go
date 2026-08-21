@@ -126,6 +126,19 @@ func TestActiveFromStorageDecryptsAndDegradesInvalidTokens(t *testing.T) {
 	require.Equal(t, []string{"one"}, degraded.InvalidTokenEndpointIDs())
 }
 
+func TestPublicFromStorageMarksInvalidTokenStatus(t *testing.T) {
+	cfg := DefaultStorageConfig()
+	cfg.Endpoints = []StorageEndpoint{
+		{ID: "one", TokenCiphertext: "cipher"},
+		{ID: "two", TokenCiphertext: "cipher"},
+		{ID: "three"},
+	}
+	public := PublicFromStorage(cfg, true, []string{"one"})
+	require.Equal(t, "invalid", public.Endpoints[0].TokenStatus)
+	require.Equal(t, "configured", public.Endpoints[1].TokenStatus)
+	require.Equal(t, "missing", public.Endpoints[2].TokenStatus)
+}
+
 func TestConfigCanonicalizationAndPublicTokenStatus(t *testing.T) {
 	var nilConfig *storageConfig
 	normalizeStorageConfig(nilConfig)
