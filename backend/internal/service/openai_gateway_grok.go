@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -195,6 +196,13 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 	if isGrokContentPolicyRejection(statusCode, responseBody) {
 		return
 	}
+	if statusCode == http.StatusForbidden && s.applyGrokForbiddenPolicy(ctx, account, responseBody) {
+		return
+	}
+	if account.IsPoolMode() {
+		slog.Info("grok_pool_mode_error_state_skipped", "account_id", account.ID, "status_code", statusCode)
+		return
+	}
 	switch statusCode {
 	case http.StatusUnauthorized:
 		if s.grokTokenProvider == nil {
@@ -212,9 +220,6 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 	case http.StatusPaymentRequired:
 		s.tempUnscheduleGrok(ctx, account, 30*time.Minute, "grok payment required")
 	case http.StatusForbidden:
-		if s.applyGrokForbiddenPolicy(ctx, account, responseBody) {
-			return
-		}
 		s.tempUnscheduleGrok(ctx, account, 30*time.Minute, "grok entitlement or subscription tier denied")
 	case http.StatusTooManyRequests:
 		cooldown := 2 * time.Minute
@@ -223,7 +228,7 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 		}
 		s.tempUnscheduleGrok(ctx, account, cooldown, "grok rate limited")
 	default:
-		if statusCode >= 500 && !account.IsPoolMode() {
+		if statusCode >= 500 {
 			s.tempUnscheduleGrok(ctx, account, 2*time.Minute, "grok upstream temporary error")
 		}
 	}

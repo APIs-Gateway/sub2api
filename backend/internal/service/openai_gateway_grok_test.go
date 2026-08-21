@@ -478,6 +478,58 @@ func TestHandleGrokAccountUpstreamError5xxRespectsPoolMode(t *testing.T) {
 	})
 }
 
+func TestHandleGrokAccountUpstreamErrorPoolModeSkipsAllDefaultStateChanges(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{
+		ID:          726,
+		Platform:    PlatformGrok,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"pool_mode": true},
+	}
+
+	svc.handleGrokAccountUpstreamError(
+		context.Background(), account, http.StatusTooManyRequests,
+		http.Header{"Retry-After": []string{"45"}}, nil,
+	)
+
+	require.Zero(t, repo.setTempUnschedCalls)
+	_, blocked := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.False(t, blocked)
+}
+
+func TestHandleGrokAccountUpstreamErrorPoolModeStillHonorsConfiguredForbiddenRule(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{
+		ID:       727,
+		Platform: PlatformGrok,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"pool_mode":                  true,
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(http.StatusForbidden),
+					"keywords":         []any{"subscription"},
+					"duration_minutes": float64(7),
+				},
+			},
+		},
+	}
+	before := time.Now()
+
+	svc.handleGrokAccountUpstreamError(
+		context.Background(), account, http.StatusForbidden, nil,
+		[]byte(`{"error":{"message":"subscription required"}}`),
+	)
+
+	require.Equal(t, 1, repo.setTempUnschedCalls)
+	until, ok := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.True(t, ok)
+	require.WithinDuration(t, before.Add(7*time.Minute), until.(time.Time), time.Second)
+}
+
 func TestHandleGrokAccountUpstreamError402CooldownsForThirtyMinutes(t *testing.T) {
 	repo := &tokenRefreshAccountRepo{}
 	svc := &OpenAIGatewayService{accountRepo: repo}
