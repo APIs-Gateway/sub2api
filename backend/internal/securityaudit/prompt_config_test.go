@@ -38,7 +38,7 @@ func TestDefaultConfigIsOff(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ModeOff, active.EffectiveMode())
 	require.Equal(t, AllScannerIDs, storage.Scanners)
-	publicJSON, err := json.Marshal(PublicFromStorage(storage, true))
+	publicJSON, err := json.Marshal(PublicFromStorage(storage, true, nil))
 	require.NoError(t, err)
 	require.Contains(t, string(publicJSON), `"group_ids":[]`)
 	require.Contains(t, string(publicJSON), `"endpoints":[]`)
@@ -53,7 +53,7 @@ func TestConfigRejectsBlockingWithoutAudit(t *testing.T) {
 func TestPublicConfigNeverMarshalsToken(t *testing.T) {
 	storage := DefaultStorageConfig()
 	storage.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", Model: DefaultGuardModel, TokenCiphertext: "GUARD_TOKEN_CANARY_SECRET", TimeoutMS: 1000, InputLimit: 1000, Enabled: true}}
-	public := PublicFromStorage(storage, true)
+	public := PublicFromStorage(storage, true, nil)
 	raw, err := json.Marshal(public)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "GUARD_TOKEN_CANARY_SECRET")

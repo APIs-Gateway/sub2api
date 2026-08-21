@@ -99,7 +99,7 @@ func TestValidateStorageConfigEndpointRules(t *testing.T) {
 	require.Equal(t, "prompt_audit_scanners_required", infraerrors.Reason(validateStorageConfig(scanners)))
 }
 
-func TestActiveFromStorageDecryptsAndFailsClosed(t *testing.T) {
+func TestActiveFromStorageDecryptsAndDegradesInvalidTokens(t *testing.T) {
 	cfg := DefaultStorageConfig()
 	cfg.Endpoints = []StorageEndpoint{{
 		ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:18080",
@@ -112,9 +112,18 @@ func TestActiveFromStorageDecryptsAndFailsClosed(t *testing.T) {
 	_, err = ActiveFromStorage(cfg, true, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "encryptor unavailable")
+
+	// A single endpoint's undecryptable token (e.g. after a key rotation) must
+	// not take the whole config down (issue #4887): the endpoint is marked
+	// TokenInvalid and excluded from runtime use, but ActiveFromStorage still
+	// succeeds so admins can see and fix it.
 	failure := errors.New("decrypt failed")
-	_, err = ActiveFromStorage(cfg, true, failingDecryptor{err: failure})
-	require.ErrorIs(t, err, failure)
+	degraded, err := ActiveFromStorage(cfg, true, failingDecryptor{err: failure})
+	require.NoError(t, err)
+	require.True(t, degraded.Endpoints[0].TokenInvalid)
+	require.False(t, degraded.Endpoints[0].Enabled)
+	require.Empty(t, degraded.Endpoints[0].Token)
+	require.Equal(t, []string{"one"}, degraded.InvalidTokenEndpointIDs())
 }
 
 func TestConfigCanonicalizationAndPublicTokenStatus(t *testing.T) {
@@ -128,7 +137,7 @@ func TestConfigCanonicalizationAndPublicTokenStatus(t *testing.T) {
 	normalizeStorageConfig(&cfg)
 	require.Equal(t, []int64{1, 4}, cfg.GroupIDs)
 	require.Equal(t, []string{"pii"}, cfg.Scanners)
-	public := PublicFromStorage(cfg, true)
+	public := PublicFromStorage(cfg, true, nil)
 	require.True(t, public.Endpoints[0].HasToken)
 	require.Equal(t, "configured", public.Endpoints[0].TokenStatus)
 	require.False(t, public.Endpoints[1].HasToken)
