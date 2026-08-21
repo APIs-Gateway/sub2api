@@ -9837,13 +9837,18 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	imageMultiplier := resolveImageRateMultiplier(apiKey, multiplier)
 
 	// 确定计费模型
-	billingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
+	concreteBillingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
+	billingModel := concreteBillingModel
 	if input.BillingModelSource == BillingModelSourceChannelMapped && input.ChannelMappedModel != "" {
 		billingModel = input.ChannelMappedModel
 	}
 	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
 		billingModel = input.OriginalModel
 	}
+	// 通用兜底（与 OpenAI 路径的 usageBillingModelCandidates 语义对齐）：渠道映射/请求来源
+	// 覆盖把计费模型换成查无价的别名时，回退到实际转发的具体模型，避免静默按 $0 计费。
+	// 已定价流量不受影响。
+	billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel)
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
@@ -9941,6 +9946,41 @@ func (s *GatewayService) calculateRecordUsageCost(
 
 	// Token 计费
 	return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, opts)
+}
+
+// billableModelWithFallback 在选定计费模型（可能是渠道映射/请求来源覆盖出的别名）
+// 查不到任何价格（渠道价与全局价均无）时，按序回退到候选模型，避免静默 $0 计费。
+// 所有候选都无价时保持原值，走既有的 warn + 零成本路径。
+func (s *GatewayService) billableModelWithFallback(ctx context.Context, apiKey *APIKey, billingModel string, fallbacks ...string) string {
+	if s.hasResolvableTokenPricing(ctx, billingModel, apiKey) {
+		return billingModel
+	}
+	for _, fallback := range fallbacks {
+		fallback = strings.TrimSpace(fallback)
+		if fallback == "" || fallback == billingModel {
+			continue
+		}
+		if s.hasResolvableTokenPricing(ctx, fallback, apiKey) {
+			logger.LegacyPrintf("service.gateway", "[Billing] billing model %q has no pricing, falling back to concrete model %q", billingModel, fallback)
+			return fallback
+		}
+	}
+	return billingModel
+}
+
+// hasResolvableTokenPricing 判断模型是否能在渠道定价或全局价格表中解析出 token 价格。
+func (s *GatewayService) hasResolvableTokenPricing(ctx context.Context, model string, apiKey *APIKey) bool {
+	if strings.TrimSpace(model) == "" {
+		return false
+	}
+	if s.resolveChannelPricing(ctx, model, apiKey) != nil {
+		return true
+	}
+	if s.billingService == nil {
+		return false
+	}
+	_, err := s.billingService.GetModelPricing(model)
+	return err == nil
 }
 
 // resolveChannelPricing 检查指定模型是否存在渠道级别定价。
