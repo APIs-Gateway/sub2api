@@ -297,3 +297,143 @@ func TestOpenAIGatewayServiceGrokHelperBranches(t *testing.T) {
 	require.Equal(t, 1, repo.setTempUnschedCalls)
 	require.Nil(t, ptrStringOrNil(" "))
 }
+
+func TestIsGrokContentPolicyRejection(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{
+			name:   "new sensitive code",
+			status: http.StatusForbidden,
+			body:   `{"error":{"code":"new_sensitive","message":"image is sensitive"}}`,
+			want:   true,
+		},
+		{
+			name:   "moderation feature unavailable",
+			status: http.StatusForbidden,
+			body:   `{"error":{"message":"The moderation feature is not available for this request"}}`,
+			want:   true,
+		},
+		{
+			name:   "entitlement forbidden",
+			status: http.StatusForbidden,
+			body:   `{"error":{"message":"subscription required"}}`,
+			want:   false,
+		},
+		{
+			name:   "structured account suspension overrides policy reason",
+			status: http.StatusForbidden,
+			body:   `{"error":{"code":"account_suspended","reason":"policy_violation","message":"account suspended due to policy violation"}}`,
+			want:   false,
+		},
+		{
+			name:   "ambiguous policy violation code is not enough",
+			status: http.StatusForbidden,
+			body:   `{"error":{"code":"policy_violation","message":"policy violation"}}`,
+			want:   false,
+		},
+		{
+			name:   "policy violation with request scoped message",
+			status: http.StatusForbidden,
+			body:   `{"error":{"code":"policy_violation","message":"request blocked by policy"}}`,
+			want:   true,
+		},
+		{
+			name:   "wrong status",
+			status: http.StatusBadRequest,
+			body:   `{"error":{"code":"new_sensitive"}}`,
+			want:   false,
+		},
+		{
+			name:   "empty body",
+			status: http.StatusForbidden,
+			body:   "",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isGrokContentPolicyRejection(tt.status, []byte(tt.body)))
+		})
+	}
+}
+
+func TestHandleGrokAccountUpstreamErrorSkipsContentPolicyRejection(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 720, Platform: PlatformGrok, Type: AccountTypeOAuth}
+	body := []byte(`{"error":{"code":"new_sensitive","message":"text is sensitive"}}`)
+
+	svc.handleGrokAccountUpstreamError(context.Background(), account, http.StatusForbidden, nil, body)
+
+	require.Zero(t, repo.setTempUnschedCalls)
+	_, blocked := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.False(t, blocked)
+	require.False(t, svc.shouldFailoverGrokUpstreamError(http.StatusForbidden, body))
+}
+
+func TestHandleGrokAccountUpstreamError403UsesConfiguredForbiddenRule(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{
+		ID:       721,
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(http.StatusForbidden),
+					"keywords":         []any{"subscription"},
+					"duration_minutes": float64(7),
+				},
+			},
+		},
+	}
+	before := time.Now()
+
+	svc.handleGrokAccountUpstreamError(
+		context.Background(), account, http.StatusForbidden, nil,
+		[]byte(`{"error":{"message":"subscription required"}}`),
+	)
+
+	require.Equal(t, 1, repo.setTempUnschedCalls)
+	_, blocked := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.True(t, blocked)
+	until, _ := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.WithinDuration(t, before.Add(7*time.Minute), until.(time.Time), time.Second)
+}
+
+func TestHandleGrokAccountUpstreamError403ConfiguredRuleUnmatchedKeepsDefaultCooldown(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{
+		ID:       722,
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(http.StatusForbidden),
+					"keywords":         []any{"different failure"},
+					"duration_minutes": float64(7),
+				},
+			},
+		},
+	}
+	before := time.Now()
+
+	svc.handleGrokAccountUpstreamError(
+		context.Background(), account, http.StatusForbidden, nil,
+		[]byte(`{"error":{"message":"subscription required"}}`),
+	)
+
+	require.Equal(t, 1, repo.setTempUnschedCalls)
+	until, _ := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.WithinDuration(t, before.Add(30*time.Minute), until.(time.Time), time.Second)
+}
