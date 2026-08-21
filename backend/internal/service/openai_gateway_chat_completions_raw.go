@@ -183,7 +183,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+		var tempUnscheduled bool
+		shouldFailover, tempUnscheduled = s.openAIPromoteTempUnscheduleFailover(ctx, c, account, resp.StatusCode, respBody, shouldFailover, upstreamModel)
+		if shouldFailover {
 			upstreamDetail := ""
 			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 				maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
@@ -202,7 +205,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
 			})
-			shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
+			shouldDisable := tempUnscheduled
+			if !tempUnscheduled {
+				shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
+			}
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
