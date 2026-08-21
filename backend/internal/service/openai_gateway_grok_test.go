@@ -573,3 +573,80 @@ func TestHandleGrokAccountUpstreamError403ConfiguredRuleUnmatchedKeepsDefaultCoo
 	until, _ := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
 	require.WithinDuration(t, before.Add(30*time.Minute), until.(time.Time), time.Second)
 }
+
+func TestShouldFailoverGrokUpstreamError_DelegatesToDefaultForNonContentPolicy(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+
+	require.True(t, svc.shouldFailoverGrokUpstreamError(http.StatusInternalServerError, nil), "5xx must remain eligible for account failover")
+	require.False(t, svc.shouldFailoverGrokUpstreamError(http.StatusBadRequest, nil), "generic 400 must not trigger failover")
+	require.True(t, svc.shouldFailoverGrokUpstreamError(http.StatusForbidden, nil), "403 without a content-policy body still delegates to the default rule")
+}
+
+func TestNormalizeGrokErrorMarker(t *testing.T) {
+	require.Equal(t, "new_sensitive", normalizeGrokErrorMarker("New-Sensitive"))
+	require.Equal(t, "content_policy_violation", normalizeGrokErrorMarker(" Content Policy Violation "))
+	require.Equal(t, "account_suspended", normalizeGrokErrorMarker("ACCOUNT-SUSPENDED"))
+}
+
+func TestGrokStructuredMarkers_RecurseThroughArraysAndNestedObjects(t *testing.T) {
+	t.Run("content policy marker inside array", func(t *testing.T) {
+		body := []byte(`{"errors":[{"unrelated":true},{"code":"New-Sensitive"}]}`)
+		require.True(t, isGrokContentPolicyRejection(http.StatusForbidden, body))
+	})
+
+	t.Run("account access marker inside array", func(t *testing.T) {
+		body := []byte(`{"errors":[{"reason":"unrelated"},{"error_code":"ACCOUNT_SUSPENDED"}]}`)
+		require.False(t, isGrokContentPolicyRejection(http.StatusForbidden, body),
+			"account-access marker anywhere in the payload must suppress the content-policy classification")
+	})
+
+	t.Run("content policy marker nested two levels deep", func(t *testing.T) {
+		body := []byte(`{"error":{"details":{"category":"content-moderation"}}}`)
+		require.True(t, isGrokContentPolicyRejection(http.StatusForbidden, body))
+	})
+
+	t.Run("account access marker nested two levels deep suppresses classification", func(t *testing.T) {
+		body := []byte(`{"error":{"details":{"type":"plan_required"},"code":"new_sensitive"}}`)
+		require.False(t, isGrokContentPolicyRejection(http.StatusForbidden, body))
+	})
+
+	t.Run("no marker anywhere returns false", func(t *testing.T) {
+		body := []byte(`{"errors":[{"unrelated":"x"},{"nested":{"also_unrelated":1}}]}`)
+		require.False(t, isGrokContentPolicyRejection(http.StatusForbidden, body))
+	})
+}
+
+func TestApplyGrokForbiddenPolicy_ReturnsFalseWhenTempUnschedulableDisabled(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 728, Platform: PlatformGrok, Type: AccountTypeOAuth}
+
+	require.False(t, svc.applyGrokForbiddenPolicy(context.Background(), account, []byte(`{"error":{"message":"subscription required"}}`)))
+}
+
+func TestApplyGrokForbiddenPolicy_UsesRateLimitServiceAccountRepoWhenAvailable(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	svc := &OpenAIGatewayService{
+		accountRepo:      repo,
+		rateLimitService: NewRateLimitService(repo, nil, nil, nil, nil),
+	}
+	account := &Account{
+		ID:       729,
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(http.StatusForbidden),
+					"keywords":         []any{"subscription"},
+					"duration_minutes": float64(9),
+				},
+			},
+		},
+	}
+
+	handled := svc.applyGrokForbiddenPolicy(context.Background(), account, []byte(`{"error":{"message":"subscription required"}}`))
+
+	require.True(t, handled)
+	require.Equal(t, 1, repo.setTempUnschedCalls, "should route through rateLimitService.tryTempUnschedulable -> accountRepo.SetTempUnschedulable")
+}
