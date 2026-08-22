@@ -140,10 +140,14 @@ func TestPatchGrokResponsesBodyDropsOrphanToolChoice(t *testing.T) {
 	}
 }
 
-// stripRedundantGrokViewImageTool（Responses 侧）只清 tools/parallel_tool_calls，
-// 不清 tool_choice——这与 Chat 侧的 stripRedundantGrokChatViewImageTool 不同
-// （Chat 侧额外在 tool_choice=="auto" 时把它也删掉），是上游这两个函数本身就有
-// 的差异，不是移植遗漏。
+// stripRedundantGrokViewImageTool 本身只清 tools/parallel_tool_calls，不碰
+// tool_choice——这与 Chat 侧的 stripRedundantGrokChatViewImageTool 不同（Chat
+// 侧额外在 tool_choice=="auto" 时把它也删掉），是上游这两个函数本身就有的差异，
+// 不是移植遗漏。但 patchGrokResponsesBody 的管线里，strip 之后紧接着有一段
+// orphan tool_choice 清理（tools 不存在但 tool_choice 存在时删除 tool_choice），
+// 所以 strip 把唯一的 view_image 工具连同 tools 一起删掉后，残留的 tool_choice
+// 会被这一步兜底清掉，而不是原样透传给 xAI（xAI 对「有 tool_choice、没有
+// tools」的 Responses 请求会直接 400）。
 func TestPatchGrokResponsesBodyDropsViewImageOnlyToolMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -156,7 +160,7 @@ func TestPatchGrokResponsesBodyDropsViewImageOnlyToolMetadata(t *testing.T) {
 	patched, err := patchGrokResponsesBody(body, "grok-4.6")
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(patched, "tools").Exists())
-	require.Equal(t, "auto", gjson.GetBytes(patched, "tool_choice").String())
+	require.False(t, gjson.GetBytes(patched, "tool_choice").Exists())
 	require.False(t, gjson.GetBytes(patched, "parallel_tool_calls").Exists())
 }
 
