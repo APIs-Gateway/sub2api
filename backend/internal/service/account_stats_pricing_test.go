@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -824,11 +825,12 @@ func TestResolveAccountStatsCost_Gemini31ProUsesFallbackPricing(t *testing.T) {
 		ApplyPricingToAccountStats: false,
 	}
 	cs := newTestChannelServiceForStats(t, channel, 10, "antigravity")
-	// getFallbackPricing 对 Gemini 只认 "gemini-3.1-pro" 这一个模式（fork 的
-	// fallback 表与上游已分叉，未收录其它 Gemini 型号，包括原先想用的
-	// "gemini-3.6-flash-low"——未命中任何模式会直接解析出 nil，不管测试自己的
-	// map 里塞了什么价格）。用 "gemini-3.1-pro" 搭配本文件其它用例一致的合成
-	// 价格表，只验证"落到模型文件定价"这条 plumbing 本身。
+	// getFallbackPricing 对 Gemini 只认 "gemini-3.1-pro" 这一个模式在本用例引入时
+	// （fork 的 fallback 表与上游已分叉，尚未收录 "gemini-3.6-flash-low"）。main 侧
+	// 合入 #738 后补齐了 gemini-3.6-flash 静态兜底价（见下方
+	// TestResolveAccountStatsCost_Gemini36FlashTierUsesFallbackPricing），这里继续
+	// 保留 gemini-3.1-pro 搭配本文件其它用例一致的合成价格表，作为独立回归用例，
+	// 验证"落到模型文件定价"这条 plumbing 本身。
 	bs := newTestBillingServiceWithPrices(map[string]*ModelPricing{
 		"gemini-3.1-pro": {
 			InputPricePerToken:     0.000001,
@@ -841,6 +843,25 @@ func TestResolveAccountStatsCost_Gemini31ProUsesFallbackPricing(t *testing.T) {
 		context.Background(),
 		cs, bs,
 		1, 10, "gemini-3.1-pro",
+		UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000, CacheReadTokens: 1_000_000}, 1, 0, "",
+	)
+	require.NotNil(t, result)
+	require.InDelta(t, 9.15, *result, 1e-12)
+}
+
+func TestResolveAccountStatsCost_Gemini36FlashTierUsesFallbackPricing(t *testing.T) {
+	channel := &Channel{
+		ID:                         1,
+		Status:                     StatusActive,
+		ApplyPricingToAccountStats: false,
+	}
+	cs := newTestChannelServiceForStats(t, channel, 10, "antigravity")
+	bs := NewBillingService(&config.Config{}, nil)
+
+	result := resolveAccountStatsCost(
+		context.Background(),
+		cs, bs,
+		1, 10, "gemini-3.6-flash-low",
 		UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000, CacheReadTokens: 1_000_000}, 1, 0, "",
 	)
 	require.NotNil(t, result)
