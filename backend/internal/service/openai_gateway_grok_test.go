@@ -41,6 +41,87 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 	require.EqualError(t, err, "invalid json request body")
 }
 
+// 上游同一 commit 的测试还覆盖了一个 "Responses Lite additional tools"（把
+// input 里 additional_tools 项的嵌套 tools 提升为顶层 tools）场景，但那是
+// patchGrokResponsesBodyBase 更大流水线里另一个步骤的行为，不属于
+// stripRedundantGrokViewImageTool 本身；fork 的 patchGrokResponsesBody 没有
+// 那个前置提升步骤，因此只移植顶层 tools 这一个场景。
+func TestPatchGrokResponsesBodyDropsRedundantViewImageForCurrentInlineImage(t *testing.T) {
+	t.Parallel()
+
+	body := `{
+		"model":"grok-4.6",
+		"input":[{"type":"message","role":"user","content":[
+			{"type":"input_text","text":"What text is in this image?"},
+			{"type":"input_image","image_url":"data:image/png;base64,AA=="}
+		]}],
+		"tools":[
+			{"type":"function","name":"view_image","parameters":{"type":"object"}},
+			{"type":"function","name":"shell_command","parameters":{"type":"object"}}
+		]
+	}`
+
+	patched, err := patchGrokResponsesBody([]byte(body), "grok-4.6")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(patched, `tools.#(name=="view_image")`).Exists())
+	require.Equal(t, "shell_command", gjson.GetBytes(patched, "tools.0.name").String())
+}
+
+func TestPatchGrokResponsesBodyKeepsNonRedundantViewImage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "current turn has no inline image",
+			body: `{"input":[{"role":"user","content":[{"type":"input_text","text":"Inspect a local image"}]}],"tools":[{"type":"function","name":"view_image"}]}`,
+		},
+		{
+			name: "inline image is only historical",
+			body: `{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]},{"role":"assistant","content":[{"type":"output_text","text":"Done"}]},{"role":"user","content":[{"type":"input_text","text":"Inspect another local image"}]}],"tools":[{"type":"function","name":"view_image"}]}`,
+		},
+		{
+			name: "view image is explicitly selected",
+			body: `{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}],"tools":[{"type":"function","name":"view_image"}],"tool_choice":{"type":"function","name":"view_image"}}`,
+		},
+		{
+			name: "required with view image as the only tool",
+			body: `{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}],"tools":[{"type":"function","name":"view_image"}],"tool_choice":"required"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			patched, err := patchGrokResponsesBody([]byte(tt.body), "grok-4.6")
+			require.NoError(t, err)
+			require.Equal(t, "view_image", gjson.GetBytes(patched, "tools.0.name").String())
+		})
+	}
+}
+
+// stripRedundantGrokViewImageTool（Responses 侧）只清 tools/parallel_tool_calls，
+// 不清 tool_choice——这与 Chat 侧的 stripRedundantGrokChatViewImageTool 不同
+// （Chat 侧额外在 tool_choice=="auto" 时把它也删掉），是上游这两个函数本身就有
+// 的差异，不是移植遗漏。
+func TestPatchGrokResponsesBodyDropsViewImageOnlyToolMetadata(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}],
+		"tools":[{"type":"function","name":"view_image"}],
+		"tool_choice":"auto",
+		"parallel_tool_calls":true
+	}`)
+	patched, err := patchGrokResponsesBody(body, "grok-4.6")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(patched, "tools").Exists())
+	require.Equal(t, "auto", gjson.GetBytes(patched, "tool_choice").String())
+	require.False(t, gjson.GetBytes(patched, "parallel_tool_calls").Exists())
+}
+
 func TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken(t *testing.T) {
 	t.Parallel()
 
