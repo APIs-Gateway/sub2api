@@ -20,7 +20,7 @@ func (c *enqueueTestConfig) Active() (ActiveConfig, bool)     { return c.active,
 func (c *enqueueTestConfig) EffectiveMode() Mode              { return c.active.EffectiveMode() }
 func (c *enqueueTestConfig) BlockingActivationDegraded() bool { return false }
 func (c *enqueueTestConfig) Public() PublicConfig {
-	return PublicFromStorage(DefaultStorageConfig(), c.active.RiskControlEnabled)
+	return PublicFromStorage(DefaultStorageConfig(), c.active.RiskControlEnabled, nil)
 }
 func (c *enqueueTestConfig) Save(context.Context, UpdateConfigRequest, int64) (PublicConfig, error) {
 	return PublicConfig{}, nil

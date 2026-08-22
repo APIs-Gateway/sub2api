@@ -265,6 +265,30 @@ func TestPromptSnapshotIncludesClientControlledInstructions(t *testing.T) {
 	}
 }
 
+func TestContentTextsIncludesSupportedTextTypes(t *testing.T) {
+	value := []any{
+		map[string]any{"type": "text", "text": "plain text"},
+		map[string]any{"type": "input_text", "text": "input text"},
+		map[string]any{"type": "output_text", "text": "output text"},
+		map[string]any{"type": "image_url", "text": "ignored text"},
+	}
+
+	require.Equal(t, []string{"plain text", "input text", "output text"}, contentTexts(value))
+}
+
+func TestResponsesOutputTextIncludedInSnapshot(t *testing.T) {
+	body := []byte(`{"input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"earlier user input"}]},
+		{"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","annotations":[],"text":"captured previous assistant output"}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"captured latest user input"}]}
+	]}`)
+
+	req := Request{Protocol: "openai_responses", Body: body}
+	full, err := ExtractPromptSnapshot(req)
+	require.NoError(t, err)
+	require.Contains(t, full.ScanText, "captured previous assistant output")
+	require.Equal(t, 3, full.MessageCount)
+}
 func TestBuildPromptPreviewWithholdsMajorityOfOrdinaryText(t *testing.T) {
 	prompt := strings.Repeat("机密业务提示词内容", 40)
 	preview := BuildPromptPreview(prompt, DefaultPromptPreviewMaxRunes)

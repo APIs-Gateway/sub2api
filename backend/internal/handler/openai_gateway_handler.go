@@ -2092,13 +2092,26 @@ func (h *OpenAIGatewayHandler) ensureForwardErrorResponse(c *gin.Context, stream
 	if c == nil || c.Writer == nil {
 		return false
 	}
-	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+	// 先停 compact 心跳再读 Writer 状态，避免与心跳 goroutine 竞争。
+	compactKeepaliveCommitted := service.StopOpenAICompactSSEKeepaliveCommitted(c)
+	if compactKeepaliveCommitted {
 		streamStarted = true
 	}
-	if service.IsResponseCommitted(c) {
+	// Images JSON 心跳只写填充空白，不能算作"已产生真实输出"，
+	// 否则失败时会被误判为流已开始而跳过兜底错误体。
+	imageKeepalivePresent := service.OpenAIImagesJSONKeepalivePresent(c)
+	service.StopOpenAIImagesJSONKeepaliveCommitted(c)
+	imageKeepalivePaddingOnly := false
+	imageKeepaliveResponseWritten := false
+	if imageKeepalivePresent {
+		adjustedSize := service.OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
+		imageKeepalivePaddingOnly = adjustedSize < 0
+		imageKeepaliveResponseWritten = adjustedSize >= 0
+	}
+	if service.IsResponseCommitted(c) || (!compactKeepaliveCommitted && imageKeepaliveResponseWritten) {
 		return false
 	}
-	if c.Writer.Written() {
+	if c.Writer.Written() && !imageKeepalivePaddingOnly {
 		streamStarted = true
 	}
 	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed", streamStarted)
