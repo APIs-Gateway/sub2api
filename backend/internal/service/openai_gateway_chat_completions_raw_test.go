@@ -123,6 +123,66 @@ func TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDown
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+// 覆盖 forwardAsRawChatCompletions 新接线的 Grok 分支（stripRedundantGrokChatViewImageTool
+// 调用 + 成功赋值回 upstreamBody）。
+//
+// 发现但未修的问题：这条分支执行完之后，函数会在稍后的 account.GetOpenAIApiKey() /
+// GetOpenAIBaseURL()（约 129/133 行）上失败——这两个方法内部都是
+// `if !a.IsOpenAI() { return "" }`，对 Platform==PlatformGrok 恒定返回空字符串，
+// 与本 PR 无关、是这条 Grok 分支落地之前就存在的代码。account.go 里已有
+// GetGrokAccessToken()/GetGrokBaseURL()，但 forwardGrokResponses（订阅转发路径）
+// 用的是带刷新能力的 grokTokenProvider 包装，不是直接调用它们；APIKey 类型的
+// Grok 账号在直转 Chat Completions 这条路径上该怎么取凭证，看起来是一个需要
+// 产品/架构决策的问题，不是这次补覆盖率可以顺手改的，本测试如实断言当前行为
+// （分支本身跑完，但函数最终因取不到凭证而报错），不伪造一个不存在的成功路径。
+func TestForwardAsRawChatCompletions_StripsRedundantGrokViewImageToolBeforeFailingOnMissingCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{
+		"model":"grok-4.6",
+		"messages":[{"role":"user","content":[
+			{"type":"text","text":"What is in this image?"},
+			{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}
+		]}],
+		"tools":[
+			{"type":"function","function":{"name":"view_image"}},
+			{"type":"function","function":{"name":"shell_command"}}
+		],
+		"stream":false
+	}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_grok_1","object":"chat.completion","model":"grok-4.6","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          102,
+		Name:        "raw-grok-apikey",
+		Platform:    PlatformGrok,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "http://upstream.example",
+		},
+	}
+
+	_, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+	require.EqualError(t, err, "account 102 missing api_key")
+	require.Nil(t, upstream.lastBody, "the request never reaches the upstream given the missing-credential error above")
+}
+
 func TestForwardAsRawChatCompletions_PreservesMappedGPT56MaxEffort(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

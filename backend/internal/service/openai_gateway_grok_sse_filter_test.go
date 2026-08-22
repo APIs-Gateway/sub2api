@@ -260,3 +260,165 @@ func TestGrokResponsesBillingPingFilterReportsOversizedLine(t *testing.T) {
 	require.ErrorContains(t, err, "filter Grok Responses billing ping")
 	require.NoError(t, body.Close())
 }
+
+// maxLineSize<=0（调用方没传或传了非法值）应回退到 defaultMaxLineSize，而不是
+// 直接把 0/负数交给 bufio.Scanner.Buffer（那会 panic）。
+func TestGrokResponsesBillingPingFilterFallsBackToDefaultMaxLineSize(t *testing.T) {
+	for _, size := range []int{0, -1} {
+		body := newGrokResponsesBillingPingFilterBody(
+			io.NopCloser(strings.NewReader("event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n")),
+			&Account{Platform: PlatformGrok},
+			size,
+		)
+		output, err := io.ReadAll(body)
+		require.NoError(t, err)
+		require.Contains(t, string(output), "response.completed")
+		require.NoError(t, body.Close())
+	}
+}
+
+// 一个以 `event: ping` 开头、但候选帧最终被判定"不是真的 ping"（payload type
+// 不是 ping）的帧，如果流恰好在这个候选帧内部结束（没有收到收尾的空行），
+// endPingFrame 用 blankLine=nil 调用：原样重放已缓冲的行，但不追加任何空行
+// （109-111 行）——这与既有的
+// TestGrokResponsesBillingPingFilterPreservesNonPingFrames（收到了收尾空行）
+// 是两条不同的代码路径。
+func TestGrokResponsesBillingPingFilterReplaysNonPingCandidateAtEOFWithoutTrailingBlankLine(t *testing.T) {
+	input := "event: ping\ndata: {\"type\":\"response.completed\"}"
+	require.Equal(t, input, filterGrokPingTestInput(t, input))
+}
+
+// 以下四个测试覆盖 filterGrokResponsesBillingPings 里"下游消费者提前断开读取
+// （destination.Write 返回错误）"这条防御性路径在四个不同触发点的表现：调用方
+// 停止读取 body（典型场景是客户端断开连接、http.ResponseWriter 不再消费）时，
+// 过滤器必须 abort 并把错误经由 destination 传播回 body.Read()，而不是死循环
+// 或吞掉错误。用 io.Pipe 精确控制"读了多少字节就关闭"来确定性地让某一次特定的
+// destination.Write 调用失败，而不是用真实网络断开这种无法确定性复现的手段。
+
+// 场景一：候选帧确实是 ping，且在main 循环遇到收尾空行时触发（134-137 行）。
+// 提前整体关闭（一次都不读），保证 endPingFrame 里唯一的一次 write 必然失败。
+func TestGrokResponsesBillingPingFilterAbortsWhenBlankLineTriggeredWriteFails(t *testing.T) {
+	t.Parallel()
+	input := "event: ping\ndata: {\"type\":\"ping\"}\n\n"
+	body := newGrokResponsesBillingPingFilterBody(
+		io.NopCloser(strings.NewReader(input)),
+		&Account{Platform: PlatformGrok},
+		defaultMaxLineSize,
+	)
+	typed, ok := body.(*grokResponsesBillingPingFilterBody)
+	require.True(t, ok)
+	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.Eventually(t, func() bool {
+		_, err := typed.PipeReader.Read(make([]byte, 1))
+		return err != nil
+	}, time.Second, time.Millisecond)
+}
+
+// 场景二：候选帧不是真的 ping（收尾空行触发），endPingFrame 走 replayPingFrame()
+// 重放分支，重放本身的第一次 write 就失败（88-90 行的 write 失败 + 106-108 行
+// endPingFrame 对这次失败的错误检查）。
+func TestGrokResponsesBillingPingFilterAbortsWhenReplayFromEndPingFrameFails(t *testing.T) {
+	t.Parallel()
+	input := "event: ping\ndata: {\"type\":\"response.completed\"}\n\n"
+	body := newGrokResponsesBillingPingFilterBody(
+		io.NopCloser(strings.NewReader(input)),
+		&Account{Platform: PlatformGrok},
+		defaultMaxLineSize,
+	)
+	typed, ok := body.(*grokResponsesBillingPingFilterBody)
+	require.True(t, ok)
+	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.Eventually(t, func() bool {
+		_, err := typed.PipeReader.Read(make([]byte, 1))
+		return err != nil
+	}, time.Second, time.Millisecond)
+}
+
+// 场景三：候选帧在缓冲期间遇到一个既不能延续、又不是收尾空行的字段（例如 "id: 7"），
+// 这里精确放行第一次 write（重放已缓冲的 "event: ping\n"，12 字节）成功，再让
+// 紧接着的第二次 write（当前行 "id: 7\n"）失败——分别覆盖 150-153 行（重放调用点）
+// 与 154-157 行（重放之后写当前行）。
+func TestGrokResponsesBillingPingFilterAbortsWhenWriteAfterReplaySucceedsFails(t *testing.T) {
+	t.Parallel()
+	input := "event: ping\nid: 7\ndata: {\"type\":\"ping\",\"cost\":\"0\"}\n\n"
+	body := newGrokResponsesBillingPingFilterBody(
+		io.NopCloser(strings.NewReader(input)),
+		&Account{Platform: PlatformGrok},
+		defaultMaxLineSize,
+	)
+	typed, ok := body.(*grokResponsesBillingPingFilterBody)
+	require.True(t, ok)
+
+	first := make([]byte, len("event: ping\n"))
+	_, err := io.ReadFull(typed, first)
+	require.NoError(t, err)
+	require.Equal(t, "event: ping\n", string(first))
+
+	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.Eventually(t, func() bool {
+		_, err := typed.PipeReader.Read(make([]byte, 1))
+		return err != nil
+	}, time.Second, time.Millisecond)
+}
+
+// 场景三 b：与场景三同样的"遇到不可延续字段"触发点，但这次不放行任何读取——
+// replayPingFrame() 自己的唯一一次 write 就失败，覆盖 150-153 行本身（场景三
+// 覆盖的是 replayPingFrame 成功之后、紧接着写当前行失败的 154-157 行，两者是
+// 同一个 if 语句里不同的东西：150-153 是"重放本身失败"，154-157 是"重放成功、
+// 写当前行失败"）。
+func TestGrokResponsesBillingPingFilterAbortsWhenReplayFromNonExtendableFieldFails(t *testing.T) {
+	t.Parallel()
+	input := "event: ping\nid: 7\ndata: {\"type\":\"ping\",\"cost\":\"0\"}\n\n"
+	body := newGrokResponsesBillingPingFilterBody(
+		io.NopCloser(strings.NewReader(input)),
+		&Account{Platform: PlatformGrok},
+		defaultMaxLineSize,
+	)
+	typed, ok := body.(*grokResponsesBillingPingFilterBody)
+	require.True(t, ok)
+	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.Eventually(t, func() bool {
+		_, err := typed.PipeReader.Read(make([]byte, 1))
+		return err != nil
+	}, time.Second, time.Millisecond)
+}
+
+// 场景四：流在候选帧内部结束（没有收尾空行），走 176-180 行的 EOF flush 分支，
+// 而不是 main 循环里的 blank-line 分支——虽然写的是同一条语句
+// （grokResponsesPingComment），但调用点（连带它自己的错误检查）不同，是单独
+// 一段覆盖率统计区间。
+func TestGrokResponsesBillingPingFilterAbortsWhenEOFFlushWriteFails(t *testing.T) {
+	t.Parallel()
+	input := "event: ping\ndata: {\"type\":\"ping\"}"
+	body := newGrokResponsesBillingPingFilterBody(
+		io.NopCloser(strings.NewReader(input)),
+		&Account{Platform: PlatformGrok},
+		defaultMaxLineSize,
+	)
+	typed, ok := body.(*grokResponsesBillingPingFilterBody)
+	require.True(t, ok)
+	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.Eventually(t, func() bool {
+		_, err := typed.PipeReader.Read(make([]byte, 1))
+		return err != nil
+	}, time.Second, time.Millisecond)
+}
+
+// 场景五：直接进入主 passthrough 写路径（帧本身不是以 event: ping 开头），
+// 覆盖 170-173 行。
+func TestGrokResponsesBillingPingFilterAbortsWhenPlainPassthroughWriteFails(t *testing.T) {
+	t.Parallel()
+	input := "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n"
+	body := newGrokResponsesBillingPingFilterBody(
+		io.NopCloser(strings.NewReader(input)),
+		&Account{Platform: PlatformGrok},
+		defaultMaxLineSize,
+	)
+	typed, ok := body.(*grokResponsesBillingPingFilterBody)
+	require.True(t, ok)
+	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.Eventually(t, func() bool {
+		_, err := typed.PipeReader.Read(make([]byte, 1))
+		return err != nil
+	}, time.Second, time.Millisecond)
+}

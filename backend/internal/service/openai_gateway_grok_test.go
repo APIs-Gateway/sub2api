@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -377,4 +378,104 @@ func TestOpenAIGatewayServiceGrokHelperBranches(t *testing.T) {
 	service.tempUnscheduleGrok(context.Background(), account, time.Minute, "test")
 	require.Equal(t, 1, repo.setTempUnschedCalls)
 	require.Nil(t, ptrStringOrNil(" "))
+}
+
+// 覆盖 forwardGrokResponses 里新增的 maxLineSize 接线：reqStream=true 时用
+// s.cfg.Gateway.MaxLineSize（若配置了正值）而不是硬编码的 defaultMaxLineSize，
+// 传给 newGrokResponsesBillingPingFilterBody。
+func TestOpenAIGatewayServiceForwardGrokResponsesStreamingUsesConfiguredMaxLineSize(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := &Account{
+		ID:       706,
+		Name:     "grok-forward-stream",
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"base_url": "https://xai.test/v1",
+		},
+	}
+	provider := NewGrokTokenProvider(nil, &grokUnauthorizedCacheStub{}, nil)
+	upstreamBody := strings.Join([]string{
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"id":"resp-grok-stream-1","usage":{"input_tokens":3,"output_tokens":5}}}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamStub{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+			"X-Request-Id": []string{"req-grok-stream-1"},
+		},
+		Body: io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: provider,
+		toolCorrector:     NewCodexToolCorrector(),
+		cfg:               &config.Config{Gateway: config.GatewayConfig{MaxLineSize: 32 * 1024}},
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("OpenAI-Beta", "responses=v1")
+
+	result, err := svc.forwardGrokResponses(context.Background(), c, account, []byte(`{"model":"grok-4.3","stream":true}`), "grok-4.3", true, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "resp-grok-stream-1", result.ResponseID)
+	require.Equal(t, 3, result.Usage.InputTokens)
+	require.Equal(t, 5, result.Usage.OutputTokens)
+}
+
+func TestStripRedundantGrokViewImageToolLeavesEmptyOrMissingInputAlone(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "input is an empty array", body: `{"input":[]}`},
+		{name: "input is not an array", body: `{"input":"not-an-array"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			body := []byte(tt.body)
+			patched, err := stripRedundantGrokViewImageTool(body)
+			require.NoError(t, err)
+			require.Equal(t, body, patched)
+		})
+	}
+}
+
+// tool_choice.name 为空时回退读 tool_choice.function.name——与 Chat 侧
+// stripRedundantGrokChatViewImageTool 的回退顺序（function.name 优先、name 兜底）
+// 刚好相反，这是 Responses 与 Chat 两种 tool_choice 形状本身的差异，不是移植遗漏。
+func TestStripRedundantGrokViewImageToolFallsBackToFunctionName(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{
+		"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}],
+		"tools":[{"type":"function","name":"view_image"}],
+		"tool_choice":{"type":"function","function":{"name":"view_image"}}
+	}`)
+	patched, err := stripRedundantGrokViewImageTool(body)
+	require.NoError(t, err)
+	require.Equal(t, body, patched)
+}
+
+func TestStripRedundantGrokViewImageToolLeavesMissingOrNonArrayToolsAlone(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}]}`)
+	patched, err := stripRedundantGrokViewImageTool(body)
+	require.NoError(t, err)
+	require.Equal(t, body, patched)
+}
+
+func TestStripRedundantGrokViewImageToolNoViewImagePresentLeavesToolsUnchanged(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{
+		"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}],
+		"tools":[{"type":"function","name":"shell_command"}]
+	}`)
+	patched, err := stripRedundantGrokViewImageTool(body)
+	require.NoError(t, err)
+	require.Equal(t, body, patched)
 }
