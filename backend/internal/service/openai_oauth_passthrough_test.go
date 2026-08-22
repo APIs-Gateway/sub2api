@@ -552,8 +552,13 @@ func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsGetsDefau
 	upstream := &httpUpstreamRecorder{
 		resp: &http.Response{
 			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid"}},
-			Body:       io.NopCloser(strings.NewReader(`{"output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)),
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid"}},
+			Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+				`data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}`,
+				"",
+				"data: [DONE]",
+				"",
+			}, "\n"))),
 		},
 	}
 
@@ -1128,8 +1133,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeAuthErrorsTriggerFailove
 
 			upstreamBody := `{"error":{"message":"upstream credential rejected"}}`
 			svc := &OpenAIGatewayService{
-				cfg:              &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
-				rateLimitService: NewRateLimitService(&rateLimit429AccountRepoStub{}, nil, &config.Config{}, nil, nil),
+				cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
 				httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
 					StatusCode: tt.statusCode,
 					Header:     http.Header{"Content-Type": []string{"application/json"}},
