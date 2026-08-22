@@ -478,3 +478,137 @@ func TestOpenAIMessages_RecordUsageBillingErrorLogsFailure(t *testing.T) {
 		t.Fatal("等待 usageBillingRepo.Apply 被调用超时——RecordUsage 未走到 billingErr 分支")
 	}
 }
+
+// TestOpenAIMessages_ForwardGenericErrorWithNilResultSkipsUsageRecord covers
+// the defensive "if res == nil { return }" guard inside submitMessagesUsage:
+// forwardAnthropicViaRawChatCompletions returns a plain (non-failover) error
+// with a nil *OpenAIForwardResult when the account is missing its API key
+// (see openai_gateway_messages_chat_fallback.go's "missing api_key" check).
+// That generic-error branch still calls submitMessagesUsage(result) with
+// result == nil, and the guard must no-op instead of dereferencing it.
+func TestOpenAIMessages_ForwardGenericErrorWithNilResultSkipsUsageRecord(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstreamCalled := make(chan struct{}, 1)
+	httpUpstream := openAIHandlerHTTPUpstreamStub{
+		do: func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+			upstreamCalled <- struct{}{}
+			return nil, errors.New("upstream must not be called: account has no api_key")
+		},
+	}
+
+	groupID := int64(4216)
+	account := service.Account{
+		ID:          9916,
+		Name:        "openai-raw-messages-missing-api-key",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeAPIKey,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		GroupIDs:    []int64{groupID},
+		Credentials: map[string]any{
+			// 故意不设 api_key —— forwardAnthropicViaRawChatCompletions 会在联系
+			// 上游之前就以 nil result + 普通 error 返回。
+			"base_url": "https://api.openai.example",
+		},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
+		},
+	}
+
+	cfg := &config.Config{}
+	cfg.RunMode = config.RunModeSimple
+	cfg.Default.RateMultiplier = 1
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+
+	accountRepo := &openAIWSUsageHandlerAccountRepoStub{account: account}
+	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 1)}
+	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
+	defer billingCacheSvc.Stop()
+	gatewaySvc := service.NewOpenAIGatewayService(
+		accountRepo,
+		usageRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		cfg,
+		nil,
+		nil,
+		service.NewBillingService(cfg, nil),
+		nil,
+		billingCacheSvc,
+		httpUpstream,
+		&service.DeferredService{},
+		nil, // grokTokenProvider
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil, // userPlatformQuotaRepo
+		nil, // stableStore
+		nil, // groupRepo
+	)
+
+	cache := &concurrencyCacheMock{
+		acquireUserSlotFn: func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
+			return true, nil
+		},
+		acquireAccountSlotFn: func(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+			return true, nil
+		},
+	}
+	h := &OpenAIGatewayHandler{
+		gatewayService:      gatewaySvc,
+		billingCacheService: billingCacheSvc,
+		apiKeyService:       &service.APIKeyService{},
+		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
+	}
+
+	apiKey := &service.APIKey{
+		ID:      1816,
+		GroupID: &groupID,
+		User:    &service.User{ID: 1716, Status: service.StatusActive},
+		Group: &service.Group{
+			ID:                    groupID,
+			Platform:              service.PlatformOpenAI,
+			Status:                service.StatusActive,
+			RateMultiplier:        1,
+			AllowMessagesDispatch: true,
+		},
+	}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
+		c.Next()
+	})
+	router.POST("/openai/v1/messages", h.Messages)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/openai/v1/messages",
+		strings.NewReader(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"hello"}],"stream":false}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.NotEqual(t, http.StatusOK, rec.Code, "缺 api_key 必须以错误响应结束，而不是假装转发成功")
+
+	select {
+	case <-upstreamCalled:
+		t.Fatal("account 缺 api_key 时不应该联系上游")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	select {
+	case usageLog := <-usageRepo.created:
+		t.Fatalf("nil result 不应该产生 usage log，却收到了: %+v", usageLog)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
