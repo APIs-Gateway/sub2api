@@ -1823,6 +1823,35 @@ func TestOpenAIStreamingPassthroughResponseFailedAfterOutputSanitizesVerboseResp
 	assertVerboseResponseFailedIsSanitized(t, rec.Body.String())
 }
 
+func TestOpenAIStreamingWithReasoningResponseFailedAfterOutputSanitizesVerboseResponseForClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	failedPayload := verboseResponseFailedPayload(t)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_failed"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial"}`,
+			"",
+			"event: response.failed",
+			"data: " + failedPayload,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-reasoning-failed-after-output"}},
+	}
+
+	_, err := svc.handleStreamingResponseWithReasoning(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "", "", "")
+	require.Error(t, err)
+	assertVerboseResponseFailedIsSanitized(t, rec.Body.String())
+}
+
 func verboseResponseFailedPayload(t *testing.T) string {
 	t.Helper()
 	return fmt.Sprintf(
