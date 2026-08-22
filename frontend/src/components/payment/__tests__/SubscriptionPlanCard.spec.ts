@@ -136,6 +136,11 @@ describe("SubscriptionPlanCard", () => {
       "items-center",
       "justify-end",
     ]));
-    expect(badge?.element.parentElement?.textContent).toContain("30days");
+    // Assert the structural relationship (badge and validity suffix share one row) instead of
+    // the translated text: vitest aliases vue-i18n to the runtime-only build, so t() here only
+    // ever echoes the message key back (e.g. "payment.days"), not the actual translation.
+    const suffixSpan = badge?.element.nextElementSibling;
+    expect(suffixSpan?.tagName).toBe("SPAN");
+    expect(suffixSpan?.textContent?.trim().startsWith("/")).toBe(true);
   });
 });
