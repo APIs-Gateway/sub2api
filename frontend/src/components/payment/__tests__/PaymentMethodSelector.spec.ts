@@ -41,9 +41,13 @@ describe('PaymentMethodSelector', () => {
     const buttons = wrapper.findAll('button')
     expect(buttons).toHaveLength(methods.length)
     expect(buttons.every((button) => button.classes().includes('min-w-0'))).toBe(true)
-    expect(
-      buttons.every((button, index) => button.attributes('title') === `payment.methods.${methods[index].type}`),
-    ).toBe(true)
+    // Buttons are re-ordered by METHOD_ORDER (see providerConfig.ts), so titles can't be
+    // matched by input-array index. Compare as a set instead: every method must still be
+    // rendered with its own title, regardless of the sorted display order.
+    const titles = buttons.map((button) => button.attributes('title'))
+    const expectedTitles = methods.map((method) => `payment.methods.${method.type}`)
+    expect(titles).toHaveLength(expectedTitles.length)
+    expect(titles).toEqual(expect.arrayContaining(expectedTitles))
     expect(
       wrapper.findAll('[data-testid="payment-method-label"]').every((label) => label.classes().includes('truncate')),
     ).toBe(true)
