@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -562,8 +561,11 @@ func TestTryModelFilePricing_AppliesServiceTierPricing(t *testing.T) {
 }
 
 func TestTryModelFilePricing_CombinesPriorityAndLongContextPricing(t *testing.T) {
+	// 模型名故意不落在 gpt-5.6/gpt-5.4 家族：这两个家族在
+	// applyModelSpecificPricingPolicy 里被强制 PriorityExcludesLongContext=true
+	// （priority 与长上下文互斥，不叠加），会让本用例想验证的"两者叠加"场景失真。
 	bs := newTestBillingServiceWithPrices(map[string]*ModelPricing{
-		"gpt-5.6-sol": {
+		"claude-priority-longctx-test": {
 			InputPricePerToken:                 0.001,
 			InputPricePerTokenPriority:         0.002,
 			OutputPricePerToken:                0.002,
@@ -584,7 +586,7 @@ func TestTryModelFilePricing_CombinesPriorityAndLongContextPricing(t *testing.T)
 		CacheReadTokens:     5,
 	}
 
-	result := tryModelFilePricing(bs, "gpt-5.6-sol", tokens, "priority")
+	result := tryModelFilePricing(bs, "claude-priority-longctx-test", tokens, "priority")
 
 	require.NotNil(t, result)
 	// priority 单价先应用，再叠加长上下文输入 2x、输出 1.5x。
@@ -817,7 +819,17 @@ func TestResolveAccountStatsCost_Gemini36FlashTierUsesFallbackPricing(t *testing
 		ApplyPricingToAccountStats: false,
 	}
 	cs := newTestChannelServiceForStats(t, channel, 10, "antigravity")
-	bs := NewBillingService(&config.Config{}, nil)
+	// gemini-3.6-flash-low 在 fork 的硬编码 fallback 价格表里没有条目（fork 的
+	// fallback 表与上游已分叉），因此不能像上游那样依赖 NewBillingService 的真实
+	// fallback 表，改用与本文件其它用例一致的合成价格表，只验证"落到模型文件定价"
+	// 这条 plumbing 本身。
+	bs := newTestBillingServiceWithPrices(map[string]*ModelPricing{
+		"gemini-3.6-flash-low": {
+			InputPricePerToken:     0.000001,
+			OutputPricePerToken:    0.000008,
+			CacheReadPricePerToken: 0.00000015,
+		},
+	})
 
 	result := resolveAccountStatsCost(
 		context.Background(),
