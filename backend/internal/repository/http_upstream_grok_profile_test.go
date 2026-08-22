@@ -10,16 +10,16 @@ import (
 )
 
 func TestApplyProfilePoolSettings_Grok(t *testing.T) {
-	t.Run("nil cfg falls back to 120s default", func(t *testing.T) {
+	t.Run("nil cfg falls back to 600s default", func(t *testing.T) {
 		s := &httpUpstreamService{}
 		got := s.applyProfilePoolSettings(poolSettings{}, service.HTTPUpstreamProfileGrok)
-		require.Equal(t, 120*time.Second, got.responseHeaderTimeout)
+		require.Equal(t, 600*time.Second, got.responseHeaderTimeout)
 	})
 
 	t.Run("zero config value uses provider-safe default, not no-timeout", func(t *testing.T) {
 		s := &httpUpstreamService{cfg: &config.Config{}}
 		got := s.applyProfilePoolSettings(poolSettings{}, service.HTTPUpstreamProfileGrok)
-		require.Equal(t, 120*time.Second, got.responseHeaderTimeout,
+		require.Equal(t, 600*time.Second, got.responseHeaderTimeout,
 			"a zero GrokResponseHeaderTimeout must mean 'use the provider-safe default', matching the field's own doc comment — not silently disable the timeout")
 	})
 
