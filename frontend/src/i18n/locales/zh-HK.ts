@@ -2476,6 +2476,8 @@
         statusLabel: '狀態',
         selectStatus: '選擇狀態',
         rpmLimit: '每分鐘請求數 (RPM)',
+        concurrencyPlaceholder: '0 表示不限制',
+        concurrencyHint: '該用戶的最大並發請求數，0 = 不限制',
         rpmLimitPlaceholder: '0 表示不限制',
         rpmLimitHint: '該用戶每分鐘最大請求數，0 = 不限制；僅在所用分組未設定 rpm_limit 時作為兜底生效'
       },
@@ -2496,7 +2498,7 @@
       failedToSave: '儲存用戶失敗',
       failedToAdjust: '調整失敗',
       emailRequired: '請輸入郵箱',
-      concurrencyMin: '并發數不能小於1',
+      concurrencyNonNegative: '並發數不能為負數，0 表示不限制',
       soraStorageQuota: 'Sora 存儲配額',
       soraStorageQuotaHint: '單位 GB，0 表示使用分組或系統預設配額',
       amountRequired: '請輸入有效金額',
