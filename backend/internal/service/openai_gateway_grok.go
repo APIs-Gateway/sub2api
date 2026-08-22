@@ -32,6 +32,9 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if strings.TrimSpace(upstreamModel) == "" {
 		upstreamModel = "grok-4.3"
 	}
+	if isGrokImageGenerationModel(upstreamModel) {
+		return nil, fmt.Errorf("model %s is an image model and is not available on the Responses endpoint; use /v1/images/generations instead", upstreamModel)
+	}
 	patchedBody, err := patchGrokResponsesBody(body, upstreamModel)
 	if err != nil {
 		return nil, err
@@ -114,13 +117,14 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if usage == nil {
 		usage = &OpenAIUsage{}
 	}
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(patchedBody, originalModel)
 	return &OpenAIForwardResult{
 		RequestID:       firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
 		ResponseID:      responseID,
 		Usage:           *usage,
 		Model:           originalModel,
 		UpstreamModel:   upstreamModel,
-		ReasoningEffort: ptrStringOrNil(normalizeOpenAIReasoningEffort(gjson.GetBytes(patchedBody, "reasoning.effort").String())),
+		ReasoningEffort: reasoningEffort,
 		Stream:          reqStream,
 		OpenAIWSMode:    false,
 		ResponseHeaders: resp.Header.Clone(),
@@ -137,6 +141,10 @@ func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	out, err = sanitizeGrokReasoningNullContent(out)
+	if err != nil {
+		return nil, err
+	}
 	for _, unsupportedField := range []string{"prompt_cache_retention", "safety_identifier"} {
 		if gjson.GetBytes(out, unsupportedField).Exists() {
 			out, err = sjson.DeleteBytes(out, unsupportedField)
@@ -146,6 +154,41 @@ func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 		}
 	}
 	return out, nil
+}
+
+// sanitizeGrokReasoningNullContent 删除 reasoning 项中的 "content": null。
+// xAI 的 untagged enum 反序列化器拒收该字段，返回 422。
+func sanitizeGrokReasoningNullContent(body []byte) ([]byte, error) {
+	input := gjson.GetBytes(body, "input")
+	if !input.Exists() || !input.IsArray() {
+		return body, nil
+	}
+
+	items := input.Array()
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if strings.TrimSpace(item.Get("type").String()) != "reasoning" {
+			continue
+		}
+		contentResult := item.Get("content")
+		if contentResult.Exists() && contentResult.Type == gjson.Null {
+			var err error
+			body, err = sjson.DeleteBytes(body, fmt.Sprintf("input.%d.content", i))
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return body, nil
+}
+
+// isGrokImageGenerationModel identifies Grok image models that must go
+// through /v1/images/generations instead of the Responses endpoint.
+func isGrokImageGenerationModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return model == "grok-imagine" ||
+		model == "grok-imagine-edit" ||
+		strings.HasPrefix(model, "grok-imagine-image")
 }
 
 func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string) (*http.Request, error) {
@@ -223,11 +266,4 @@ func (s *OpenAIGatewayService) tempUnscheduleGrok(ctx context.Context, account *
 		defer cancel()
 		_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, until, reason)
 	}
-}
-
-func ptrStringOrNil(value string) *string {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	return &value
 }

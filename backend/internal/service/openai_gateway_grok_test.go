@@ -295,5 +295,106 @@ func TestOpenAIGatewayServiceGrokHelperBranches(t *testing.T) {
 	service = &OpenAIGatewayService{accountRepo: repo}
 	service.tempUnscheduleGrok(context.Background(), account, time.Minute, "test")
 	require.Equal(t, 1, repo.setTempUnschedCalls)
-	require.Nil(t, ptrStringOrNil(" "))
+}
+
+func TestPatchGrokResponsesBody_StripsReasoningContentNull(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "grok-latest",
+		"input": [
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"thinking..."}],"content":null,"encrypted_content":null},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello!"}]}
+		]
+	}`)
+
+	patched, err := patchGrokResponsesBody(body, "grok-4.5")
+	require.NoError(t, err)
+	require.True(t, json.Valid(patched))
+
+	input := gjson.GetBytes(patched, "input")
+	require.True(t, input.IsArray())
+
+	items := input.Array()
+	require.Len(t, items, 3)
+
+	reasoning := items[1]
+	require.Equal(t, "reasoning", reasoning.Get("type").String())
+	require.True(t, reasoning.Get("summary").Exists(), "summary should be preserved")
+	require.False(t, reasoning.Get("content").Exists(), "content: null should be stripped")
+}
+
+func TestPatchGrokResponsesBody_KeepsReasoningContentNonNull(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "grok-latest",
+		"input": [
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"ok"}],"content":"real content"}
+		]
+	}`)
+
+	patched, err := patchGrokResponsesBody(body, "grok-4.5")
+	require.NoError(t, err)
+
+	reasoning := gjson.GetBytes(patched, "input.0")
+	require.Equal(t, "real content", reasoning.Get("content").String(), "non-null content must not be stripped")
+}
+
+func TestPatchGrokResponsesBody_MultipleReasoningContentNull(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "grok-latest",
+		"input": [
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"r1"}],"content":null},
+			{"type":"message","role":"user","content":"hi"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"r2"}],"content":null}
+		]
+	}`)
+
+	patched, err := patchGrokResponsesBody(body, "grok-4.5")
+	require.NoError(t, err)
+
+	items := gjson.GetBytes(patched, "input").Array()
+	require.Len(t, items, 3)
+
+	require.False(t, items[0].Get("content").Exists())
+	require.False(t, items[2].Get("content").Exists())
+}
+
+func TestIsGrokImageGenerationModel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"grok-imagine", true},
+		{"grok-imagine-image-quality", true},
+		{"grok-imagine-edit", true},
+		{"grok-imagine-image-hd", true},
+		{"grok-4.5", false},
+		{"grok-composer", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			require.Equal(t, tt.want, isGrokImageGenerationModel(tt.model))
+		})
+	}
+}
+
+// forwardGrokResponses 在到达任何需要 token/网络调用的分支之前，先按模型名
+// 拒绝生图模型；空映射的 Account 足以驱动到这条检查且不会 panic。
+func TestForwardGrokResponsesRejectsImageModel(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{ID: 1, Type: AccountTypeOAuth}
+
+	svc := &OpenAIGatewayService{}
+	result, err := svc.forwardGrokResponses(context.Background(), nil, account, []byte(`{"model":"grok-imagine","input":"hi"}`), "grok-imagine", false, time.Now())
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "not available on the Responses endpoint")
 }
