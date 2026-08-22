@@ -455,3 +455,41 @@ func mustDecryptForTest(t *testing.T, manager *ConfigManager, endpointID string)
 	}
 	return ""
 }
+
+func TestLogInvalidTokenEndpointsDedupesPerChange(t *testing.T) {
+	m := &ConfigManager{}
+	activeWithInvalid := ActiveConfig{
+		ConfigVersion: 1,
+		Endpoints:     []ActiveEndpoint{{ID: "one", TokenInvalid: true}},
+	}
+
+	var output strings.Builder
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	m.logInvalidTokenEndpoints(nil, activeWithInvalid)
+	require.Contains(t, output.String(), EventConfigTokenInvalid)
+	require.Contains(t, output.String(), "one")
+
+	output.Reset()
+	prevSnapshot := &activeConfigSnapshot{active: activeWithInvalid}
+	m.logInvalidTokenEndpoints(prevSnapshot, activeWithInvalid)
+	require.Empty(t, output.String(), "same invalid endpoint set and config version must not log again")
+
+	nextVersion := activeWithInvalid
+	nextVersion.ConfigVersion = 2
+	m.logInvalidTokenEndpoints(prevSnapshot, nextVersion)
+	require.Contains(t, output.String(), EventConfigTokenInvalid, "a config version change must log again even with the same invalid set")
+}
+
+func TestLogInvalidTokenEndpointsNoOpWhenNoneInvalid(t *testing.T) {
+	m := &ConfigManager{}
+	var output strings.Builder
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	m.logInvalidTokenEndpoints(nil, ActiveConfig{ConfigVersion: 1})
+	require.Empty(t, output.String())
+}

@@ -534,6 +534,49 @@ func TestResolveUpstreamErrorResponse(t *testing.T) {
 	})
 }
 
+// erroringReadCloser returns data once, then always fails with err — simulating
+// an upstream connection that drops mid-body (network reset, truncated read).
+type erroringReadCloser struct {
+	data []byte
+	sent bool
+	err  error
+}
+
+func (r *erroringReadCloser) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		return copy(p, r.data), nil
+	}
+	return 0, r.err
+}
+
+func (r *erroringReadCloser) Close() error { return nil }
+
+// 上游错误体读取到一半就失败时(网络中断等)，handleErrorResponse 仍要用已读到的
+// 部分数据完成错误分类与响应写出，只是多记一条日志，不能因为 readErr 而整体失败。
+func TestGatewayHandleErrorResponse_ContinuesWhenBodyReadFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	svc := &GatewayService{}
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Body: &erroringReadCloser{
+			data: []byte(`{"error":{"message":"partial upstream body"}}`),
+			err:  io.ErrUnexpectedEOF,
+		},
+		Header: http.Header{},
+	}
+	account := &Account{ID: 12, Name: "acc-12", Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, account)
+	require.Error(t, err)
+	assert.True(t, IsResponseCommitted(c), "read-failure path must still commit a response instead of hanging the request")
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+}
+
 func newNonFailoverPassthroughRule(statusCode int, keyword string, respCode int, customMessage string) *model.ErrorPassthroughRule {
 	return &model.ErrorPassthroughRule{
 		ID:              1,
