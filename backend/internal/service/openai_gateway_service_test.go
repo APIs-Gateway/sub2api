@@ -1909,6 +1909,17 @@ func TestSanitizeOpenAIResponseFailedEventForClient_ContextWindowEscalation(t *t
 		require.False(t, sanitized)
 		require.Equal(t, contextWindowPayload, string(updated))
 	})
+
+	t.Run("array-valued error field fails the sjson rewrite and leaves the payload untouched", func(t *testing.T) {
+		// response.error is an array here, not an object -- sjson can't set a
+		// ".type" sub-key inside a JSON array under a non-numeric key, so
+		// setSanitizedOpenAIJSONField reports ok=false and the whole rewrite
+		// must be abandoned rather than left half-applied.
+		payload := `{"type":"response.failed","message":"context_length_exceeded","response":{"error":[1,2,3]}}`
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(payload), "response.failed", true)
+		require.False(t, sanitized)
+		require.Equal(t, payload, string(updated))
+	})
 }
 
 func TestSetSanitizedOpenAIJSONField(t *testing.T) {
