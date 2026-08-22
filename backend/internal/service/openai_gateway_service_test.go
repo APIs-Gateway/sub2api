@@ -1497,8 +1497,13 @@ func TestOpenAIStreamingResponseFailedBeforeOutputRateLimitUsesPoolRetryPolicy(t
 
 // 流内 rate limit 只产生 failover 错误，不写账号级限流/封禁状态：
 // HTTP 200 流的 x-codex-* 头是正常配额快照，不能按 429 头驱动账号冷却。
+//
+// review finding f1 回归守卫：newOpenAIStreamFailoverError 把该事件提升为
+// StatusCode=429 后，handler 的 ShouldSwitchAccountOn429 闸门必须放行，
+// 否则流内限流会被误判成真实 HTTP 429 耗尽，直接给客户端返回 429 而不切号。
 func TestOpenAIStreamingResponseFailedRateLimitDoesNotBlockAccountScheduling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	resetUpstream429TrackerForTest()
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
 			StreamDataIntervalTimeout: 0,
@@ -1542,6 +1547,7 @@ func TestOpenAIStreamingResponseFailedRateLimitDoesNotBlockAccountScheduling(t *
 	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 	require.False(t, failoverErr.RetryableOnSameAccount)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.True(t, ShouldSwitchAccountOn429(account.ID), "流内限流应放行 handler 的 429 切号闸门，而不是让请求卡在当前账号上")
 }
 
 func TestOpenAIStreamingResponseFailedAfterOutputSanitizesVerboseResponseForClient(t *testing.T) {

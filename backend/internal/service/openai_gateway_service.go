@@ -4303,6 +4303,14 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 	errType := "upstream_error"
 	if statusCode == http.StatusTooManyRequests {
 		errType = "rate_limit_error"
+		// handler 对 429 failover 额外设了 ShouldSwitchAccountOn429 闸门（fork 独有，
+		// 用于抑制真实 HTTP 429 时的无脑连续切号）。该闸门只读 upstream429Tracker，
+		// 而流内 failed 事件不经过真实 HTTP 429 响应，不会自然写入这个状态，导致
+		// 闸门恒为 false、请求在第一个账号上直接判定耗尽。这里显式放行一次切换
+		// （forceSwitch=true），不写账号级冷却/封禁状态，与上面注释的声明保持一致。
+		if account != nil {
+			recordUpstream429AndShouldSwitch(account.ID, true)
+		}
 	}
 	body, _ := json.Marshal(gin.H{
 		"error": gin.H{
