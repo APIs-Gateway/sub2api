@@ -158,7 +158,10 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Equal(t, "0.144.1", upstream.lastReq.Header.Get("Version"))
-	require.Equal(t, `{"turn_id":"turn-1"}`, upstream.lastReq.Header.Get("X-Codex-Turn-Metadata"))
+	require.Equal(t,
+		scopeCodexAccountIdentityValue(account, 0, "turn", "turn-1"),
+		gjson.Get(upstream.lastReq.Header.Get("X-Codex-Turn-Metadata"), "turn_id").String(),
+	)
 	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("Originator"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Codex-Beta-Features"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Codex-Turn-State"))

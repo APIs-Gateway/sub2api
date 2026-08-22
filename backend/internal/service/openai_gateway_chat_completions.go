@@ -60,6 +60,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
+		return nil, err
+	}
 	restrictionResult := s.detectCodexClientRestriction(c, account)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	logCodexCLIOnlyDetection(ctx, c, account, apiKeyID, restrictionResult, body)
@@ -250,7 +253,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 	if promptCacheKey != "" {
 		apiKeyID := getAPIKeyIDFromContext(c)
-		upstreamReq.Header.Set("session_id", generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey)))
+		upstreamReq.Header.Set("session_id", generateSessionUUID(isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey)))
 	}
 
 	// 7. Send request
