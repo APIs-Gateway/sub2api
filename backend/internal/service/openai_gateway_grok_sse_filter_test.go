@@ -307,9 +307,9 @@ func TestGrokResponsesBillingPingFilterAbortsWhenBlankLineTriggeredWriteFails(t 
 	)
 	typed, ok := body.(*grokResponsesBillingPingFilterBody)
 	require.True(t, ok)
-	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.NoError(t, typed.CloseWithError(errors.New("consumer stopped reading")))
 	require.Eventually(t, func() bool {
-		_, err := typed.PipeReader.Read(make([]byte, 1))
+		_, err := typed.Read(make([]byte, 1))
 		return err != nil
 	}, time.Second, time.Millisecond)
 }
@@ -327,9 +327,9 @@ func TestGrokResponsesBillingPingFilterAbortsWhenReplayFromEndPingFrameFails(t *
 	)
 	typed, ok := body.(*grokResponsesBillingPingFilterBody)
 	require.True(t, ok)
-	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.NoError(t, typed.CloseWithError(errors.New("consumer stopped reading")))
 	require.Eventually(t, func() bool {
-		_, err := typed.PipeReader.Read(make([]byte, 1))
+		_, err := typed.Read(make([]byte, 1))
 		return err != nil
 	}, time.Second, time.Millisecond)
 }
@@ -354,9 +354,9 @@ func TestGrokResponsesBillingPingFilterAbortsWhenWriteAfterReplaySucceedsFails(t
 	require.NoError(t, err)
 	require.Equal(t, "event: ping\n", string(first))
 
-	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.NoError(t, typed.CloseWithError(errors.New("consumer stopped reading")))
 	require.Eventually(t, func() bool {
-		_, err := typed.PipeReader.Read(make([]byte, 1))
+		_, err := typed.Read(make([]byte, 1))
 		return err != nil
 	}, time.Second, time.Millisecond)
 }
@@ -376,9 +376,9 @@ func TestGrokResponsesBillingPingFilterAbortsWhenReplayFromNonExtendableFieldFai
 	)
 	typed, ok := body.(*grokResponsesBillingPingFilterBody)
 	require.True(t, ok)
-	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.NoError(t, typed.CloseWithError(errors.New("consumer stopped reading")))
 	require.Eventually(t, func() bool {
-		_, err := typed.PipeReader.Read(make([]byte, 1))
+		_, err := typed.Read(make([]byte, 1))
 		return err != nil
 	}, time.Second, time.Millisecond)
 }
@@ -397,9 +397,9 @@ func TestGrokResponsesBillingPingFilterAbortsWhenEOFFlushWriteFails(t *testing.T
 	)
 	typed, ok := body.(*grokResponsesBillingPingFilterBody)
 	require.True(t, ok)
-	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.NoError(t, typed.CloseWithError(errors.New("consumer stopped reading")))
 	require.Eventually(t, func() bool {
-		_, err := typed.PipeReader.Read(make([]byte, 1))
+		_, err := typed.Read(make([]byte, 1))
 		return err != nil
 	}, time.Second, time.Millisecond)
 }
@@ -416,9 +416,9 @@ func TestGrokResponsesBillingPingFilterAbortsWhenPlainPassthroughWriteFails(t *t
 	)
 	typed, ok := body.(*grokResponsesBillingPingFilterBody)
 	require.True(t, ok)
-	require.NoError(t, typed.PipeReader.CloseWithError(errors.New("consumer stopped reading")))
+	require.NoError(t, typed.CloseWithError(errors.New("consumer stopped reading")))
 	require.Eventually(t, func() bool {
-		_, err := typed.PipeReader.Read(make([]byte, 1))
+		_, err := typed.Read(make([]byte, 1))
 		return err != nil
 	}, time.Second, time.Millisecond)
 }
