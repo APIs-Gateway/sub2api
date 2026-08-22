@@ -6296,6 +6296,14 @@ func extractOpenAISSEErrorMessage(payload []byte) string {
 // sanitizeOpenAIResponseFailedEventForClient removes verbose request and
 // response metadata from a failed SSE event while preserving the error clients
 // need to handle the failure.
+func setSanitizedOpenAIJSONField(payload []byte, path string, value any) ([]byte, bool) {
+	next, err := sjson.SetBytes(payload, path, value)
+	if err != nil {
+		return payload, false
+	}
+	return next, true
+}
+
 func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string, clientOutputStarted bool) ([]byte, bool) {
 	if eventType != "response.failed" || len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return payload, false
@@ -6315,16 +6323,15 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 			errorPath = "error"
 		}
 		if errorPath != "" {
-			next, err := sjson.SetBytes(updated, errorPath+".type", "invalid_request_error")
-			if err != nil {
+			var ok bool
+			updated, ok = setSanitizedOpenAIJSONField(updated, errorPath+".type", "invalid_request_error")
+			if !ok {
 				return payload, false
 			}
-			updated = next
-			next, err = sjson.SetBytes(updated, errorPath+".code", "context_length_exceeded")
-			if err != nil {
+			updated, ok = setSanitizedOpenAIJSONField(updated, errorPath+".code", "context_length_exceeded")
+			if !ok {
 				return payload, false
 			}
-			updated = next
 		}
 	}
 	if !gjson.GetBytes(updated, "response").Exists() {

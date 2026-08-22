@@ -1911,6 +1911,21 @@ func TestSanitizeOpenAIResponseFailedEventForClient_ContextWindowEscalation(t *t
 	})
 }
 
+func TestSetSanitizedOpenAIJSONField(t *testing.T) {
+	t.Run("valid string value succeeds", func(t *testing.T) {
+		updated, ok := setSanitizedOpenAIJSONField([]byte(`{"error":{}}`), "error.type", "invalid_request_error")
+		require.True(t, ok)
+		require.Equal(t, "invalid_request_error", gjson.GetBytes(updated, "error.type").String())
+	})
+
+	t.Run("unmarshalable value returns the original payload unmodified", func(t *testing.T) {
+		original := []byte(`{"error":{}}`)
+		updated, ok := setSanitizedOpenAIJSONField(original, "error.type", make(chan int))
+		require.False(t, ok)
+		require.Equal(t, original, updated)
+	})
+}
+
 func TestOpenAIStreamingPassthroughDeduplicatesRepeatedFunctionCallArguments(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	arguments := `{"cmd":"echo hi","meta":{"nested":[1,true]}}`
