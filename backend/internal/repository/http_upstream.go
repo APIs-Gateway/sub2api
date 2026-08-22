@@ -699,7 +699,7 @@ func (s *httpUpstreamService) applyProfilePoolSettings(settings poolSettings, pr
 		// generic 600s gateway timeout from turning one request into a 10-minute
 		// resource hold; streaming after headers is unaffected.
 		settings.responseHeaderTimeout = 120 * time.Second
-		if s != nil && s.cfg != nil {
+		if s != nil && s.cfg != nil && s.cfg.Gateway.GrokResponseHeaderTimeout > 0 {
 			settings.responseHeaderTimeout = time.Duration(s.cfg.Gateway.GrokResponseHeaderTimeout) * time.Second
 		}
 	}
