@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -516,7 +517,7 @@ func TestTryModelFilePricing_LongContextZeroCostFallsBackToNil(t *testing.T) {
 		},
 	})
 
-	result := tryModelFilePricing(bs, "gpt-5.6-sol", UsageTokens{InputTokens: 272_001})
+	result := tryModelFilePricing(bs, "gpt-5.6-sol", UsageTokens{InputTokens: 272_001}, "")
 
 	require.Nil(t, result)
 }
