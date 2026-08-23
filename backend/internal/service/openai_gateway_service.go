@@ -28,6 +28,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/cespare/xxhash/v2"
@@ -6165,6 +6166,17 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	outputTokens := value.Get("output_tokens").Int()
 	if outputTokens == 0 {
 		outputTokens = value.Get("completion_tokens").Int()
+	}
+	// xAI reports visible output separately from reasoning_tokens; OpenAI
+	// folds reasoning into completion/output. Use total_tokens to tell them apart.
+	reasoningTokens := firstPositiveGJSONInt(
+		value.Get("completion_tokens_details.reasoning_tokens"),
+		value.Get("output_tokens_details.reasoning_tokens"),
+	)
+	if reasoningTokens > 0 {
+		outputTokens = xai.IncludeIndependentReasoningTokens(
+			inputTokens, outputTokens, value.Get("total_tokens").Int(), int64(reasoningTokens),
+		)
 	}
 	cacheReadTokens := value.Get("input_tokens_details.cached_tokens").Int()
 	if cacheReadTokens == 0 {
