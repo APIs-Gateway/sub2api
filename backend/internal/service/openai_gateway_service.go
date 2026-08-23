@@ -4489,7 +4489,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
 			}
 			imageCounter.AddSSEData(dataBytes)
-			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(dataBytes, eventType); sanitized {
+			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(dataBytes, eventType, openAIStreamClientOutputStarted(c, clientOutputStarted)); sanitized {
 				dataBytes = sanitizedData
 				trimmedData = strings.TrimSpace(string(sanitizedData))
 				line = "data: " + string(sanitizedData)
@@ -5639,7 +5639,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				line = "data: " + data
 				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			}
-			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(dataBytes, eventType); sanitized {
+			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(dataBytes, eventType, openAIStreamClientOutputStarted(c, clientOutputStarted)); sanitized {
 				dataBytes = sanitizedData
 				data = string(sanitizedData)
 				line = "data: " + data
@@ -6395,15 +6395,48 @@ func extractOpenAISSEErrorMessage(payload []byte) string {
 // sanitizeOpenAIResponseFailedEventForClient removes verbose request and
 // response metadata from a failed SSE event while preserving the error clients
 // need to handle the failure.
-func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string) ([]byte, bool) {
-	if eventType != "response.failed" || len(payload) == 0 || !gjson.ValidBytes(payload) {
+func setSanitizedOpenAIJSONField(payload []byte, path string, value any) ([]byte, bool) {
+	next, err := sjson.SetBytes(payload, path, value)
+	if err != nil {
 		return payload, false
 	}
-	if !gjson.GetBytes(payload, "response").Exists() {
+	return next, true
+}
+
+func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string, clientOutputStarted bool) ([]byte, bool) {
+	if eventType != "response.failed" || len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return payload, false
 	}
 
 	updated := payload
+	if clientOutputStarted && isOpenAIContextWindowError(extractOpenAISSEErrorMessage(payload), payload) {
+		// The client has already consumed output from this stream, so we can no
+		// longer fail it over or replace it with a fresh HTTP error -- but a
+		// strict SDK parsing the terminal event still needs a recognizable
+		// context-overflow error shape to react correctly.
+		errorPath := ""
+		switch {
+		case gjson.GetBytes(updated, "response.error").Exists():
+			errorPath = "response.error"
+		case gjson.GetBytes(updated, "error").Exists():
+			errorPath = "error"
+		}
+		if errorPath != "" {
+			var ok bool
+			updated, ok = setSanitizedOpenAIJSONField(updated, errorPath+".type", "invalid_request_error")
+			if !ok {
+				return payload, false
+			}
+			updated, ok = setSanitizedOpenAIJSONField(updated, errorPath+".code", "context_length_exceeded")
+			if !ok {
+				return payload, false
+			}
+		}
+	}
+	if !gjson.GetBytes(updated, "response").Exists() {
+		return updated, !bytes.Equal(updated, payload)
+	}
+
 	for _, path := range []string{
 		"response.instructions",
 		"response.output",
