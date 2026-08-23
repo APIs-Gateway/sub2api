@@ -523,7 +523,8 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingPreservesOtherFie
 	require.Equal(t, "hello world", gjson.GetBytes(sentBody, "messages.0.content.0.text").String(), "messages 字段不应被修改")
 	require.Equal(t, "enabled", gjson.GetBytes(sentBody, "thinking.type").String(), "thinking 字段不应被修改")
 	require.Equal(t, int64(5000), gjson.GetBytes(sentBody, "thinking.budget_tokens").Int(), "thinking.budget_tokens 不应被修改")
-	require.Equal(t, int64(1024), gjson.GetBytes(sentBody, "max_tokens").Int(), "max_tokens 不应被修改")
+	require.False(t, gjson.GetBytes(sentBody, "max_tokens").Exists(),
+		"max_tokens 作为生成参数应被 count_tokens 过滤剥离")
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensFiltersGenerationFields(t *testing.T) {
@@ -582,7 +583,8 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensFiltersGenerationF
 	require.Equal(t, "sys", gjson.GetBytes(sentBody, "system.0.text").String())
 	require.Equal(t, "hello", gjson.GetBytes(sentBody, "messages.0.content").String())
 	require.Equal(t, "tool", gjson.GetBytes(sentBody, "tools.0.name").String())
-	require.Equal(t, int64(1024), gjson.GetBytes(sentBody, "max_tokens").Int())
+	require.False(t, gjson.GetBytes(sentBody, "max_tokens").Exists(),
+		"count_tokens 请求不得携带生成参数 max_tokens")
 	require.Equal(t, "enabled", gjson.GetBytes(sentBody, "thinking.type").String())
 }
 
@@ -765,6 +767,32 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_BuildRequestRejectsInvalidBas
 
 	_, _, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(context.Background(), c, account, []byte(`{}`), "k")
 	require.Error(t, err)
+}
+
+func TestGatewayService_AnthropicAPIKeyPassthrough_StripsDeferredToolCacheControl(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	svc := &GatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}}
+	account := &Account{Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+	body := []byte(`{"tools":[{"name":"deferred","custom":{"defer_loading":true},"cache_control":{"type":"ephemeral"}},{"name":"top-level-deferred","defer_loading":true,"cache_control":{"type":"ephemeral"}},{"name":"ordinary","defer_loading":false,"cache_control":{"type":"ephemeral"}},{"name":"malformed","defer_loading":"true","cache_control":{"type":"ephemeral"}}]}`)
+
+	_, wireBody, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(context.Background(), c, account, body, "k")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(wireBody, "tools.0.cache_control").Exists())
+	require.False(t, gjson.GetBytes(wireBody, "tools.1.cache_control").Exists())
+	require.True(t, gjson.GetBytes(wireBody, "tools.2.cache_control").Exists())
+	require.True(t, gjson.GetBytes(wireBody, "tools.3.cache_control").Exists())
+
+	countReq, err := svc.buildCountTokensRequestAnthropicAPIKeyPassthrough(context.Background(), c, account, body, "k")
+	require.NoError(t, err)
+	countBody, err := io.ReadAll(countReq.Body)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(countBody, "tools.0.cache_control").Exists())
+	require.False(t, gjson.GetBytes(countBody, "tools.1.cache_control").Exists())
+	require.True(t, gjson.GetBytes(countBody, "tools.2.cache_control").Exists())
+	require.True(t, gjson.GetBytes(countBody, "tools.3.cache_control").Exists())
 }
 
 func TestGatewayService_AnthropicOAuth_NotAffectedByAPIKeyPassthroughToggle(t *testing.T) {
@@ -1611,4 +1639,143 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingUpstreamReadErrorAft
 	require.NotNil(t, result)
 	require.True(t, result.clientDisconnect)
 	require.Equal(t, 8, result.usage.InputTokens)
+}
+
+type gatewayForwardErrorPolicyRepoStub struct {
+	AccountRepository
+	tempCalls           int
+	modelRateLimitCalls []gatewayForwardModelRateLimitCall
+}
+
+type gatewayForwardModelRateLimitCall struct {
+	accountID int64
+	scope     string
+}
+
+func (r *gatewayForwardErrorPolicyRepoStub) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
+	r.tempCalls++
+	return nil
+}
+
+func (r *gatewayForwardErrorPolicyRepoStub) SetModelRateLimit(_ context.Context, id int64, scope string, _ time.Time, _ ...string) error {
+	r.modelRateLimitCalls = append(r.modelRateLimitCalls, gatewayForwardModelRateLimitCall{
+		accountID: id,
+		scope:     scope,
+	})
+	return nil
+}
+
+func newAnthropicOAuthAccountForSSEOverloadTest() *Account {
+	return &Account{
+		ID:          301,
+		Name:        "anthropic-oauth-sse-overload-test",
+		Platform:    PlatformAnthropic,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":  "oauth-access-token",
+			"refresh_token": "oauth-refresh-token",
+		},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+}
+
+// 本组测试覆盖上游 PR #5567：Anthropic HTTP 200 + SSE 流体内出现
+// event:error(type=overloaded_error) 帧时，若尚未向客户端写出任何字节，
+// 应按语义 529 参与 failover 侧作用（限流/冷却规则），而不是固定伪装成 403。
+// 一旦已经写出部分流数据，则必须保留旧的 403 语义，避免破坏客户端已建立的连接语义。
+func TestGatewayService_Forward_PreOutputSSEOverloadedErrorUsesSemantic529(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	body := []byte(`{"model":"claude-3-5-sonnet-latest","stream":true,"messages":[{"role":"user","content":"hello"}]}`)
+	parsed := &ParsedRequest{
+		Body:   NewRequestBodyRef(body),
+		Model:  "claude-3-5-sonnet-latest",
+		Stream: true,
+	}
+
+	const errorJSON = `{"type":"error","error":{"details":null,"type":"overloaded_error","message":"Overloaded"},"request_id":"req_01"}`
+	upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("event: error\ndata: " + errorJSON + "\n\n")),
+	}}
+	repo := &gatewayForwardErrorPolicyRepoStub{}
+	cfg := &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}
+	svc := &GatewayService{
+		cfg:                  cfg,
+		responseHeaderFilter: compileResponseHeaderFilter(cfg),
+		httpUpstream:         upstream,
+		rateLimitService:     NewRateLimitService(repo, nil, cfg, nil, nil),
+		deferredService:      &DeferredService{},
+	}
+	account := newAnthropicOAuthAccountForSSEOverloadTest()
+	account.Credentials["temp_unschedulable_enabled"] = true
+	account.Credentials["temp_unschedulable_rules"] = []any{map[string]any{
+		"error_code":       float64(529),
+		"keywords":         []any{"Overloaded"},
+		"duration_minutes": float64(10),
+	}}
+
+	result, err := svc.Forward(context.Background(), c, account, parsed)
+	require.Error(t, err)
+	require.Nil(t, result)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, 529, failoverErr.StatusCode)
+	require.JSONEq(t, errorJSON, string(failoverErr.ResponseBody))
+	require.Len(t, repo.modelRateLimitCalls, 1, "synthetic 529 must participate in temp-unschedulable rules")
+	require.Equal(t, account.ID, repo.modelRateLimitCalls[0].accountID)
+	require.Equal(t, parsed.Model, repo.modelRateLimitCalls[0].scope)
+	require.Empty(t, rec.Body.String(), "pre-output overload must remain eligible for account failover")
+}
+
+func TestGatewayService_Forward_PostOutputSSEOverloadedErrorKeepsExistingStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	body := []byte(`{"model":"claude-3-5-sonnet-latest","stream":true,"messages":[{"role":"user","content":"hello"}]}`)
+	parsed := &ParsedRequest{
+		Body:   NewRequestBodyRef(body),
+		Model:  "claude-3-5-sonnet-latest",
+		Stream: true,
+	}
+
+	const errorJSON = `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
+	fixture := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n" +
+		"event: error\ndata: " + errorJSON + "\n\n"
+	upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(fixture)),
+	}}
+	repo := &gatewayForwardErrorPolicyRepoStub{}
+	cfg := &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}
+	svc := &GatewayService{
+		cfg:                  cfg,
+		responseHeaderFilter: compileResponseHeaderFilter(cfg),
+		httpUpstream:         upstream,
+		rateLimitService:     NewRateLimitService(repo, nil, cfg, nil, nil),
+		deferredService:      &DeferredService{},
+	}
+
+	result, err := svc.Forward(context.Background(), c, newAnthropicOAuthAccountForSSEOverloadTest(), parsed)
+	require.Error(t, err)
+	require.Nil(t, result)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusForbidden, failoverErr.StatusCode)
+	require.JSONEq(t, errorJSON, string(failoverErr.ResponseBody))
+	require.Zero(t, repo.tempCalls)
+	require.Contains(t, rec.Body.String(), "message_start")
 }

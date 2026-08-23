@@ -123,13 +123,43 @@ func (m *ConfigManager) Reload(ctx context.Context) error {
 		return err
 	}
 	now := m.clock.Now()
+	previous := m.snapshot.Load()
 	m.snapshot.Store(&activeConfigSnapshot{storage: cloneStorageConfig(storage), active: cloneActiveConfig(active), loadedAt: now})
 	m.configUntrusted.Store(false)
 	m.clearLoadError()
+	m.logInvalidTokenEndpoints(previous, active)
 	LogInfo(EventConfigLoaded, map[string]any{
 		"config_version": storage.ConfigVersion, "status": "loaded",
 	})
 	return nil
+}
+
+// logInvalidTokenEndpoints warns once per change (not on every 5s refresh)
+// when stored endpoint tokens cannot be decrypted with the current key.
+func (m *ConfigManager) logInvalidTokenEndpoints(previous *activeConfigSnapshot, active ActiveConfig) {
+	invalid := active.InvalidTokenEndpointIDs()
+	if len(invalid) == 0 {
+		return
+	}
+	if previous != nil {
+		prior := previous.active.InvalidTokenEndpointIDs()
+		if len(prior) == len(invalid) {
+			same := true
+			for i := range invalid {
+				if prior[i] != invalid[i] {
+					same = false
+					break
+				}
+			}
+			if same && previous.active.ConfigVersion == active.ConfigVersion {
+				return
+			}
+		}
+	}
+	LogWarn(EventConfigTokenInvalid, map[string]any{
+		"config_version": active.ConfigVersion, "status": "degraded",
+		"error_code": "endpoint_token_undecryptable", "guard_endpoint_id": strings.Join(invalid, ","),
+	})
 }
 
 func (m *ConfigManager) Active() (ActiveConfig, bool) {
@@ -194,13 +224,13 @@ func (m *ConfigManager) markUntrustedIfNoActiveSnapshot() {
 
 func (m *ConfigManager) Public() PublicConfig {
 	if m == nil {
-		return PublicFromStorage(DefaultStorageConfig(), false)
+		return PublicFromStorage(DefaultStorageConfig(), false, nil)
 	}
 	snapshot := m.snapshot.Load()
 	if snapshot == nil {
-		return PublicFromStorage(DefaultStorageConfig(), false)
+		return PublicFromStorage(DefaultStorageConfig(), false, nil)
 	}
-	return PublicFromStorage(cloneStorageConfig(snapshot.storage), snapshot.active.RiskControlEnabled)
+	return PublicFromStorage(cloneStorageConfig(snapshot.storage), snapshot.active.RiskControlEnabled, snapshot.active.InvalidTokenEndpointIDs())
 }
 
 func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actorID int64) (PublicConfig, error) {
@@ -292,11 +322,13 @@ func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actor
 	}
 	m.expected.Store(next.ConfigVersion)
 	m.expectedBlocking.Store(active.RiskControlEnabled && next.Enabled && next.BlockingEnabled)
+	previous := m.snapshot.Load()
 	m.snapshot.Store(&activeConfigSnapshot{storage: cloneStorageConfig(next), active: cloneActiveConfig(active), loadedAt: m.clock.Now()})
 	// A successful admin save installs a trustworthy snapshot; clear any prior
 	// fail-closed degradation so disabling audit actually takes effect.
 	m.configUntrusted.Store(false)
 	m.clearLoadError()
+	m.logInvalidTokenEndpoints(previous, active)
 	LogInfo(EventConfigUpdated, map[string]any{
 		"config_version": next.ConfigVersion, "status": "updated",
 	})
@@ -307,7 +339,7 @@ func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actor
 			})
 		}
 	}
-	return PublicFromStorage(next, active.RiskControlEnabled), nil
+	return PublicFromStorage(next, active.RiskControlEnabled, active.InvalidTokenEndpointIDs()), nil
 }
 
 func configSettingKeyColumn(db *sql.DB) string {

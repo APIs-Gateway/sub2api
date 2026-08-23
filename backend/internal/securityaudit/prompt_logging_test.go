@@ -27,5 +27,5 @@ func TestPromptAuditLogAllowlistDoesNotLeakSecrets(t *testing.T) {
 	beforeUnknown := output.Len()
 	LogWarn("prompt_audit.typo_event", map[string]any{"status": "failed"})
 	require.Equal(t, beforeUnknown, output.Len())
-	require.Len(t, knownLogEvents, 27)
+	require.Len(t, knownLogEvents, 28)
 }

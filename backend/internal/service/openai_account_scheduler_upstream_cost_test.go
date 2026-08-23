@@ -86,12 +86,25 @@ func TestOpenAIGatewaySelectBestAccountUsesLowRateOrder(t *testing.T) {
 		account.Priority = 0
 	}
 
-	selected, compactBlocked := (&OpenAIGatewayService{}).selectBestAccount(
+	selected, compactBlocked, _ := (&OpenAIGatewayService{}).selectBestAccount(
 		context.Background(), nil, PlatformOpenAI, []Account{*expensive, *cheap}, "gpt-5.1", nil, false, OpenAIEndpointCapability(""), true,
 	)
 	require.False(t, compactBlocked)
 	require.NotNil(t, selected)
 	require.Equal(t, cheap.ID, selected.ID)
+}
+
+func TestOpenAIGatewaySelectBestAccount_ReportsExclusionReasons(t *testing.T) {
+	excluded := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true}
+
+	selected, compactBlocked, filterStats := (&OpenAIGatewayService{}).selectBestAccount(
+		context.Background(), nil, PlatformOpenAI, []Account{*excluded}, "gpt-5.1",
+		map[int64]struct{}{excluded.ID: {}}, false, OpenAIEndpointCapability(""), false,
+	)
+
+	require.Nil(t, selected)
+	require.False(t, compactBlocked)
+	require.Equal(t, "pool=1, filtered: excluded=1", filterStats.summary(""))
 }
 
 func TestOpenAIFreshUpstreamBillingRateHonorsPeakAndExpiry(t *testing.T) {
