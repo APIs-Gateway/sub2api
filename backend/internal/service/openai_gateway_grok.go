@@ -102,6 +102,17 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			}
 		}
+		// Grok content-policy 403s are request-scoped (bad prompt/media), not an
+		// account problem: handleGrokAccountUpstreamError already skipped the
+		// cooldown above. Falling through to the generic handleErrorResponse
+		// would still call handleOpenAIAccountUpstreamError -> handleAuthError
+		// -> SetError, permanently marking a perfectly healthy OAuth account as
+		// errored and then failing the request over to the next pool account
+		// (which would hit the same rejection). Answer the caller directly and
+		// leave the account/pool untouched.
+		if isGrokContentPolicyRejection(resp.StatusCode, respBody) {
+			return nil, s.writeGrokContentPolicyRejection(c, resp.StatusCode, upstreamMsg)
+		}
 		return s.handleErrorResponse(ctx, resp, c, account, patchedBody, upstreamModel)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -290,6 +301,24 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 		}
 	}
 	_ = responseBody
+}
+
+// writeGrokContentPolicyRejection answers a Grok content-policy 403 directly
+// with a generic, safe rejection instead of routing through the shared OpenAI
+// error handler. The upstream body/message is intentionally not echoed back:
+// it must not leak account-pool or subscription-to-API implementation details.
+func (s *OpenAIGatewayService) writeGrokContentPolicyRejection(c *gin.Context, statusCode int, upstreamMsg string) error {
+	MarkResponseCommitted(c)
+	c.JSON(statusCode, gin.H{
+		"error": gin.H{
+			"type":    "invalid_request_error",
+			"message": "Your request was rejected by the upstream content safety system. Please modify your input and try again.",
+		},
+	})
+	if upstreamMsg == "" {
+		return fmt.Errorf("grok content policy rejection: %d", statusCode)
+	}
+	return fmt.Errorf("grok content policy rejection: %d message=%s", statusCode, upstreamMsg)
 }
 
 func (s *OpenAIGatewayService) tempUnscheduleGrok(ctx context.Context, account *Account, cooldown time.Duration, reason string) {
