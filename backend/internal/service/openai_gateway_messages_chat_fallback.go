@@ -78,12 +78,23 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 			return nil, fmt.Errorf("convert responses to chat completions: %w", err)
 		}
 	}
+	chatReq.ReasoningEffort = openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, chatReq.ReasoningEffort)
 	chatReq.Stream = clientStream
 	if clientStream {
 		chatReq.StreamOptions = &apicompat.ChatStreamOptions{IncludeUsage: true}
 	}
 
-	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
+	// extractOpenAIReasoningEffortFromBody also recognizes fork-only raw-body
+	// shapes (e.g. a top-level reasoning_effort field on an otherwise
+	// Anthropic-shaped request) that the Anthropic->ChatCompletions bridge never
+	// sees; prefer it when it finds something, and fall back to the bridge's own
+	// chatReq.ReasoningEffort (always populated, defaults to "medium") otherwise.
+	baseEffort := chatReq.ReasoningEffort
+	if extracted := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel); extracted != nil {
+		baseEffort = *extracted
+	}
+	convertedEffort := openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, baseEffort)
+	reasoningEffort := &convertedEffort
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
 	var serviceTier *string
 	if chatReq.ServiceTier != "" {
