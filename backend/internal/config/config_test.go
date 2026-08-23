@@ -316,6 +316,24 @@ func TestLoadOpenAIResponseHeaderTimeoutFromEnv(t *testing.T) {
 	require.Equal(t, 1800, cfg.Gateway.OpenAIResponseHeaderTimeout)
 }
 
+func TestLoadDefaultGrokResponseHeaderTimeoutMatchesGateway(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 600, cfg.Gateway.GrokResponseHeaderTimeout,
+		"Grok's default header-wait budget must match the generic gateway timeout so enabling the profile doesn't silently tighten it")
+}
+
+func TestLoadGrokResponseHeaderTimeoutFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_GROK_RESPONSE_HEADER_TIMEOUT", "45")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 45, cfg.Gateway.GrokResponseHeaderTimeout)
+}
+
 func TestLoadDefaultOpenAIFirstOutputTimeoutsDisabled(t *testing.T) {
 	resetViperWithJWTSecret(t)
 
