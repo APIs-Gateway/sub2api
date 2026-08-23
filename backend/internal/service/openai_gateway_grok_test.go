@@ -464,6 +464,91 @@ func TestOpenAIGatewayServiceGrokForwardUpstreamFailoverAndRequestErrors(t *test
 	require.Error(t, err)
 }
 
+// TestOpenAIGatewayServiceForwardGrokResponsesContentPolicy403DoesNotDisableAccount
+// guards the path that used to fall through to handleErrorResponse ->
+// handleOpenAIAccountUpstreamError -> SetError, which permanently marked a
+// healthy OAuth account as errored (and still failed the request over to the
+// rest of the pool) for a request-scoped content-policy rejection.
+func TestOpenAIGatewayServiceForwardGrokResponsesContentPolicy403DoesNotDisableAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &tokenRefreshAccountRepo{}
+	account := &Account{
+		ID:       730,
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token",
+			"base_url":     "https://xai.test/v1",
+			"expires_at":   time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339),
+		},
+	}
+	provider := NewGrokTokenProvider(nil, &grokUnauthorizedCacheStub{cacheMiss: true}, nil)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	svc := &OpenAIGatewayService{
+		accountRepo:       repo,
+		grokTokenProvider: provider,
+		httpUpstream: &httpUpstreamStub{resp: &http.Response{
+			StatusCode: http.StatusForbidden,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"new_sensitive","message":"image is sensitive"}}`)),
+		}},
+	}
+
+	_, err := svc.forwardGrokResponses(context.Background(), c, account, []byte(`{"model":"grok"}`), "grok", false, time.Now())
+	require.Error(t, err)
+
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr), "content-policy 403 must not trigger pool failover")
+
+	require.Zero(t, repo.setErrorCalls, "content-policy rejection must not permanently disable the account")
+	require.Zero(t, repo.setTempUnschedCalls, "content-policy rejection must not cool down the account either")
+	_, blocked := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.False(t, blocked)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	body := recorder.Body.String()
+	require.NotContains(t, body, "sensitive")
+	require.NotContains(t, strings.ToLower(body), "account")
+}
+
+// TestWriteGrokContentPolicyRejection covers both branches of the returned
+// error's message formatting: an empty upstream message must not leave a
+// dangling "message=" suffix, and a non-empty one must be appended to the
+// (internal-only) error without ever leaking into the client-facing body.
+func TestWriteGrokContentPolicyRejection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("empty upstream message omits the message suffix", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+		svc := &OpenAIGatewayService{}
+		err := svc.writeGrokContentPolicyRejection(c, http.StatusForbidden, "")
+
+		require.EqualError(t, err, "grok content policy rejection: 403")
+		require.True(t, IsResponseCommitted(c))
+		require.Equal(t, http.StatusForbidden, recorder.Code)
+		require.Contains(t, recorder.Body.String(), "upstream content safety system")
+	})
+
+	t.Run("non-empty upstream message is appended to the internal error only", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+		svc := &OpenAIGatewayService{}
+		err := svc.writeGrokContentPolicyRejection(c, http.StatusForbidden, "image is sensitive")
+
+		require.EqualError(t, err, "grok content policy rejection: 403 message=image is sensitive")
+		require.True(t, IsResponseCommitted(c))
+		require.Equal(t, http.StatusForbidden, recorder.Code)
+		require.NotContains(t, recorder.Body.String(), "image is sensitive", "upstream message must never leak to the client")
+	})
+}
+
 func TestOpenAIGatewayServiceGrokHelperBranches(t *testing.T) {
 	account := &Account{ID: 714, Platform: PlatformGrok, Type: AccountTypeOAuth}
 	(&OpenAIGatewayService{}).handleGrokAccountUpstreamError(context.Background(), nil, http.StatusUnauthorized, nil, nil)
