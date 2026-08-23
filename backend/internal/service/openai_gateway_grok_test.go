@@ -427,6 +427,42 @@ func TestOpenAIGatewayServiceForwardGrokResponsesContentPolicy403DoesNotDisableA
 	require.NotContains(t, strings.ToLower(body), "account")
 }
 
+// TestWriteGrokContentPolicyRejection covers both branches of the returned
+// error's message formatting: an empty upstream message must not leave a
+// dangling "message=" suffix, and a non-empty one must be appended to the
+// (internal-only) error without ever leaking into the client-facing body.
+func TestWriteGrokContentPolicyRejection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("empty upstream message omits the message suffix", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+		svc := &OpenAIGatewayService{}
+		err := svc.writeGrokContentPolicyRejection(c, http.StatusForbidden, "")
+
+		require.EqualError(t, err, "grok content policy rejection: 403")
+		require.True(t, IsResponseCommitted(c))
+		require.Equal(t, http.StatusForbidden, recorder.Code)
+		require.Contains(t, recorder.Body.String(), "upstream content safety system")
+	})
+
+	t.Run("non-empty upstream message is appended to the internal error only", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+		svc := &OpenAIGatewayService{}
+		err := svc.writeGrokContentPolicyRejection(c, http.StatusForbidden, "image is sensitive")
+
+		require.EqualError(t, err, "grok content policy rejection: 403 message=image is sensitive")
+		require.True(t, IsResponseCommitted(c))
+		require.Equal(t, http.StatusForbidden, recorder.Code)
+		require.NotContains(t, recorder.Body.String(), "image is sensitive", "upstream message must never leak to the client")
+	})
+}
+
 func TestOpenAIGatewayServiceGrokHelperBranches(t *testing.T) {
 	account := &Account{ID: 714, Platform: PlatformGrok, Type: AccountTypeOAuth}
 	(&OpenAIGatewayService{}).handleGrokAccountUpstreamError(context.Background(), nil, http.StatusUnauthorized, nil, nil)
