@@ -143,7 +143,7 @@ func TestNormalizeOpenAIResponsesCompactRequest_NativeV2StaysOnResponses(t *test
 	require.True(t, ok)
 	// 路径与入站端点保持原样，不进入 legacy compact 链路。
 	require.Equal(t, "/openai/v1/responses", c.Request.URL.Path)
-	require.False(t, service.IsOpenAIResponsesCompactPathForTest(c))
+	require.False(t, service.IsOpenAIResponsesCompactPath(c))
 	require.Equal(t, EndpointResponses, GetInboundEndpoint(c))
 	// body 原样透传：不剥离 stream/prompt_cache_key/store，也不标记 SSE 桥接。
 	require.Equal(t, body, normalized)
@@ -261,7 +261,7 @@ func TestNormalizeOpenAIResponsesCompactRequest_BodySignalDoesNotPromoteSubresou
 	require.True(t, ok)
 	require.Equal(t, body, normalized)
 	require.Equal(t, "/v1/responses/resp_123/cancel", c.Request.URL.Path)
-	require.False(t, service.IsOpenAIResponsesCompactPathForTest(c))
+	require.False(t, service.IsOpenAIResponsesCompactPath(c))
 }
 
 func TestLogOpenAIRemoteCompactOutcome_Succeeded(t *testing.T) {
