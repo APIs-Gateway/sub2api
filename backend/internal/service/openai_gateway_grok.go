@@ -40,6 +40,15 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if err != nil {
 		return nil, err
 	}
+	// OpenAI /responses/compact is not a native xAI endpoint. Convert it into a
+	// normal Grok Responses turn that asks for a structured summary, then map the
+	// reply back to an OpenAI compaction item on the way out.
+	if isOpenAIResponsesCompactPath(c) {
+		patchedBody, err = buildGrokCompactRequestBody(patchedBody)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
@@ -143,6 +152,10 @@ func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid json request body")
 	}
 	out, err := sjson.SetBytes(body, "model", upstreamModel)
+	if err != nil {
+		return nil, err
+	}
+	out, err = convertOpenAICompactInputsForGrok(out)
 	if err != nil {
 		return nil, err
 	}
