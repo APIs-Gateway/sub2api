@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -30,6 +32,26 @@ func isOpenAIOAuthAccount(account *Account) bool {
 
 func isOpenAIAccount(account *Account) bool {
 	return account != nil && (account.Platform == PlatformOpenAI || account.Platform == PlatformGrok)
+}
+
+// openAIPromoteTempUnscheduleFailover lets an OpenAI upstream error that
+// shouldFailoverOpenAIUpstreamResponse already ruled out (e.g. treated as a
+// permanent, return-to-client error) still fail over this in-flight request
+// when it matches the account's configured error policy (custom error codes
+// or temp-unschedulable rules) via the same RateLimitService.CheckErrorPolicy
+// already wired into the Gemini/Antigravity gateways. Returns the (possibly
+// promoted) shouldFailover flag and whether the promotion happened through a
+// temp-unschedule match, so the caller can skip the redundant
+// handleOpenAIAccountUpstreamError call that would otherwise re-apply it.
+func (s *OpenAIGatewayService) openAIPromoteTempUnscheduleFailover(ctx context.Context, c *gin.Context, account *Account, statusCode int, responseBody []byte, shouldFailover bool, requestedModel ...string) (bool, bool) {
+	if shouldFailover || s == nil || account == nil || account.Platform == PlatformGrok ||
+		c == nil || IsResponseCommitted(c) || s.rateLimitService == nil {
+		return shouldFailover, false
+	}
+	if s.rateLimitService.CheckErrorPolicy(ctx, account, statusCode, responseBody, requestedModel...) == ErrorPolicyTempUnscheduled {
+		return true, true
+	}
+	return shouldFailover, false
 }
 
 func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) bool {

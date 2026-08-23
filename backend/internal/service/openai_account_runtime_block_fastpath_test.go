@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -327,4 +329,86 @@ func TestShouldStopOpenAIOAuth429Failover_OnlyDuringStorm(t *testing.T) {
 	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(apiKeyAccount, http.StatusTooManyRequests, 1))
 	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusInternalServerError, 1))
 	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusTooManyRequests, 0))
+}
+
+func TestOpenAIPromoteTempUnscheduleFailover_AlreadyFailoverIsNoop(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{}
+	account := openAIModelNotFoundTempAccount()
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	shouldFailover, tempUnscheduled := svc.openAIPromoteTempUnscheduleFailover(
+		context.Background(), c, account, http.StatusNotFound, []byte(`{"error":{"message":"not found"}}`), true, "gpt-5.4",
+	)
+
+	require.True(t, shouldFailover)
+	require.False(t, tempUnscheduled)
+}
+
+func TestOpenAIPromoteTempUnscheduleFailover_NilRateLimitService(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{}
+	account := openAIModelNotFoundTempAccount()
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	shouldFailover, tempUnscheduled := svc.openAIPromoteTempUnscheduleFailover(
+		context.Background(), c, account, http.StatusNotFound, []byte(`{"error":{"message":"not found"}}`), false, "gpt-5.4",
+	)
+
+	require.False(t, shouldFailover)
+	require.False(t, tempUnscheduled)
+}
+
+func TestOpenAIPromoteTempUnscheduleFailover_GrokExcluded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &errorPolicyRepoStub{}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	account := openAIModelNotFoundTempAccount()
+	account.Platform = PlatformGrok
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	shouldFailover, tempUnscheduled := svc.openAIPromoteTempUnscheduleFailover(
+		context.Background(), c, account, http.StatusNotFound, []byte(`{"error":{"message":"not found"}}`), false, "gpt-5.4",
+	)
+
+	require.False(t, shouldFailover)
+	require.False(t, tempUnscheduled)
+	require.Empty(t, repo.modelRateLimitCalls)
+}
+
+func TestOpenAIPromoteTempUnscheduleFailover_PromotesOnMatchingRule(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &errorPolicyRepoStub{}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	account := openAIModelNotFoundTempAccount()
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	shouldFailover, tempUnscheduled := svc.openAIPromoteTempUnscheduleFailover(
+		context.Background(), c, account, http.StatusNotFound, []byte(`{"error":{"message":"not found"}}`), false, "gpt-5.4",
+	)
+
+	require.True(t, shouldFailover)
+	require.True(t, tempUnscheduled)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "gpt-5.4", repo.modelRateLimitCalls[0].scope)
+}
+
+func TestOpenAIPromoteTempUnscheduleFailover_ResponseCommittedSkipsPromotion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &errorPolicyRepoStub{}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	account := openAIModelNotFoundTempAccount()
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set(ResponseCommittedKey, true)
+
+	shouldFailover, tempUnscheduled := svc.openAIPromoteTempUnscheduleFailover(
+		context.Background(), c, account, http.StatusNotFound, []byte(`{"error":{"message":"not found"}}`), false, "gpt-5.4",
+	)
+
+	require.False(t, shouldFailover)
+	require.False(t, tempUnscheduled)
+	require.Empty(t, repo.modelRateLimitCalls)
 }
