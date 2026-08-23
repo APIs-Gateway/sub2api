@@ -1951,6 +1951,35 @@ func TestOpenAIStreamingPassthroughResponseFailedAfterOutputSanitizesVerboseResp
 	assertVerboseResponseFailedIsSanitized(t, rec.Body.String())
 }
 
+func TestOpenAIStreamingWithReasoningResponseFailedAfterOutputSanitizesVerboseResponseForClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	failedPayload := verboseResponseFailedPayload(t)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_failed"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial"}`,
+			"",
+			"event: response.failed",
+			"data: " + failedPayload,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-reasoning-failed-after-output"}},
+	}
+
+	_, err := svc.handleStreamingResponseWithReasoning(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "", "", "")
+	require.Error(t, err)
+	assertVerboseResponseFailedIsSanitized(t, rec.Body.String())
+}
+
 func verboseResponseFailedPayload(t *testing.T) string {
 	t.Helper()
 	return fmt.Sprintf(
@@ -1963,11 +1992,77 @@ func assertVerboseResponseFailedIsSanitized(t *testing.T, body string) {
 	t.Helper()
 	require.Contains(t, body, "event: response.failed")
 	require.Contains(t, body, "context_length_exceeded")
+	require.Contains(t, body, `"type":"invalid_request_error"`)
 	require.Contains(t, body, "Your input exceeds the context window.")
 	require.NotContains(t, body, "You are running in the Codex CLI.")
 	require.NotContains(t, body, `"instructions"`)
 	require.NotContains(t, body, `"output"`)
 	require.NotContains(t, body, `"usage"`)
+}
+
+func TestSanitizeOpenAIResponseFailedEventForClient_ContextWindowEscalation(t *testing.T) {
+	contextWindowPayload := `{"type":"response.failed","response":{"id":"resp_1","error":{"code":"context_length_exceeded","message":"Your input exceeds the context window."}}}`
+
+	t.Run("client output already started rewrites error type/code", func(t *testing.T) {
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(contextWindowPayload), "response.failed", true)
+		require.True(t, sanitized)
+		require.Equal(t, "invalid_request_error", gjson.GetBytes(updated, "response.error.type").String())
+		require.Equal(t, "context_length_exceeded", gjson.GetBytes(updated, "response.error.code").String())
+	})
+
+	t.Run("client output not yet started leaves error untouched but still sanitizes verbose fields", func(t *testing.T) {
+		payload := `{"type":"response.failed","response":{"id":"resp_1","instructions":"verbose","error":{"code":"context_length_exceeded","message":"Your input exceeds the context window."}}}`
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(payload), "response.failed", false)
+		require.True(t, sanitized)
+		require.False(t, gjson.GetBytes(updated, "response.error.type").Exists(), "no escalation before client output has started")
+		require.False(t, gjson.GetBytes(updated, "response.instructions").Exists())
+	})
+
+	t.Run("non context-window error is not escalated even after output started", func(t *testing.T) {
+		payload := `{"type":"response.failed","response":{"id":"resp_1","error":{"code":"rate_limit_exceeded","message":"slow down"}}}`
+		updated, _ := sanitizeOpenAIResponseFailedEventForClient([]byte(payload), "response.failed", true)
+		require.False(t, gjson.GetBytes(updated, "response.error.type").Exists())
+	})
+
+	t.Run("bare top-level error without a response wrapper still gets escalated and reported as sanitized", func(t *testing.T) {
+		payload := `{"type":"response.failed","error":{"code":"context_length_exceeded","message":"Your input exceeds the context window."}}`
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(payload), "response.failed", true)
+		require.True(t, sanitized)
+		require.Equal(t, "invalid_request_error", gjson.GetBytes(updated, "error.type").String())
+		require.Equal(t, "context_length_exceeded", gjson.GetBytes(updated, "error.code").String())
+	})
+
+	t.Run("non response.failed event type is left untouched", func(t *testing.T) {
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(contextWindowPayload), "response.completed", true)
+		require.False(t, sanitized)
+		require.Equal(t, contextWindowPayload, string(updated))
+	})
+
+	t.Run("array-valued error field fails the sjson rewrite and leaves the payload untouched", func(t *testing.T) {
+		// response.error is an array here, not an object -- sjson can't set a
+		// ".type" sub-key inside a JSON array under a non-numeric key, so
+		// setSanitizedOpenAIJSONField reports ok=false and the whole rewrite
+		// must be abandoned rather than left half-applied.
+		payload := `{"type":"response.failed","message":"context_length_exceeded","response":{"error":[1,2,3]}}`
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(payload), "response.failed", true)
+		require.False(t, sanitized)
+		require.Equal(t, payload, string(updated))
+	})
+}
+
+func TestSetSanitizedOpenAIJSONField(t *testing.T) {
+	t.Run("valid string value succeeds", func(t *testing.T) {
+		updated, ok := setSanitizedOpenAIJSONField([]byte(`{"error":{}}`), "error.type", "invalid_request_error")
+		require.True(t, ok)
+		require.Equal(t, "invalid_request_error", gjson.GetBytes(updated, "error.type").String())
+	})
+
+	t.Run("unmarshalable value returns the original payload unmodified", func(t *testing.T) {
+		original := []byte(`{"error":{}}`)
+		updated, ok := setSanitizedOpenAIJSONField(original, "error.type", make(chan int))
+		require.False(t, ok)
+		require.Equal(t, original, updated)
+	})
 }
 
 func TestOpenAIStreamingPassthroughDeduplicatesRepeatedFunctionCallArguments(t *testing.T) {
@@ -2865,6 +2960,20 @@ func TestExtractOpenAIUsageFromJSONBytes_AcceptsResponseAndChatUsageShapes(t *te
 	require.Equal(t, 7, usage.OutputTokens)
 	require.Equal(t, 4, usage.CacheReadInputTokens)
 	require.Equal(t, 3, usage.CacheCreationInputTokens)
+}
+
+func TestExtractOpenAIUsageFromJSONBytes_IncludesGrokReasoningTokens(t *testing.T) {
+	usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{"usage":{"prompt_tokens":32,"completion_tokens":9,"total_tokens":135,"completion_tokens_details":{"reasoning_tokens":94}}}`))
+	require.True(t, ok)
+	require.Equal(t, 103, usage.OutputTokens, "Grok Chat usage bills visible completion plus reasoning tokens")
+
+	usage, ok = extractOpenAIUsageFromJSONBytes([]byte(`{"usage":{"input_tokens":32,"output_tokens":103,"total_tokens":135,"output_tokens_details":{"reasoning_tokens":94}}}`))
+	require.True(t, ok)
+	require.Equal(t, 103, usage.OutputTokens, "Responses output_tokens already includes reasoning when total confirms it")
+
+	usage, ok = extractOpenAIUsageFromJSONBytes([]byte(`{"usage":{"input_tokens":32,"output_tokens":9,"total_tokens":135,"output_tokens_details":{"reasoning_tokens":94}}}`))
+	require.True(t, ok)
+	require.Equal(t, 103, usage.OutputTokens, "Responses detail-only shape is normalized when total exposes the full output")
 }
 
 func TestCopyOpenAIUsageFromResponsesUsagePreservesCacheCreationTokens(t *testing.T) {
