@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,67 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning.effort").String())
 	_, err = patchGrokResponsesBody([]byte("not-json"), "grok-4.3")
 	require.EqualError(t, err, "invalid json request body")
+}
+
+// 上游同一 commit 的测试还覆盖了一个 "Responses Lite additional tools"（把
+// input 里 additional_tools 项的嵌套 tools 提升为顶层 tools）场景，但那是
+// patchGrokResponsesBodyBase 更大流水线里另一个步骤的行为，不属于
+// stripRedundantGrokViewImageTool 本身；fork 的 patchGrokResponsesBody 没有
+// 那个前置提升步骤，因此只移植顶层 tools 这一个场景。
+func TestPatchGrokResponsesBodyDropsRedundantViewImageForCurrentInlineImage(t *testing.T) {
+	t.Parallel()
+
+	body := `{
+		"model":"grok-4.6",
+		"input":[{"type":"message","role":"user","content":[
+			{"type":"input_text","text":"What text is in this image?"},
+			{"type":"input_image","image_url":"data:image/png;base64,AA=="}
+		]}],
+		"tools":[
+			{"type":"function","name":"view_image","parameters":{"type":"object"}},
+			{"type":"function","name":"shell_command","parameters":{"type":"object"}}
+		]
+	}`
+
+	patched, err := patchGrokResponsesBody([]byte(body), "grok-4.6")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(patched, `tools.#(name=="view_image")`).Exists())
+	require.Equal(t, "shell_command", gjson.GetBytes(patched, "tools.0.name").String())
+}
+
+func TestPatchGrokResponsesBodyKeepsNonRedundantViewImage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "current turn has no inline image",
+			body: `{"input":[{"role":"user","content":[{"type":"input_text","text":"Inspect a local image"}]}],"tools":[{"type":"function","name":"view_image"}]}`,
+		},
+		{
+			name: "inline image is only historical",
+			body: `{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]},{"role":"assistant","content":[{"type":"output_text","text":"Done"}]},{"role":"user","content":[{"type":"input_text","text":"Inspect another local image"}]}],"tools":[{"type":"function","name":"view_image"}]}`,
+		},
+		{
+			name: "view image is explicitly selected",
+			body: `{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}],"tools":[{"type":"function","name":"view_image"}],"tool_choice":{"type":"function","name":"view_image"}}`,
+		},
+		{
+			name: "required with view image as the only tool",
+			body: `{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}],"tools":[{"type":"function","name":"view_image"}],"tool_choice":"required"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			patched, err := patchGrokResponsesBody([]byte(tt.body), "grok-4.6")
+			require.NoError(t, err)
+			require.Equal(t, "view_image", gjson.GetBytes(patched, "tools.0.name").String())
+		})
+	}
 }
 
 func TestPatchGrokResponsesBodyDropsOrphanToolChoice(t *testing.T) {
@@ -76,6 +138,30 @@ func TestPatchGrokResponsesBodyDropsOrphanToolChoice(t *testing.T) {
 			require.Equal(t, tt.wantToolChoice, gjson.GetBytes(patched, "tool_choice").Exists())
 		})
 	}
+}
+
+// stripRedundantGrokViewImageTool 本身只清 tools/parallel_tool_calls，不碰
+// tool_choice——这与 Chat 侧的 stripRedundantGrokChatViewImageTool 不同（Chat
+// 侧额外在 tool_choice=="auto" 时把它也删掉），是上游这两个函数本身就有的差异，
+// 不是移植遗漏。但 patchGrokResponsesBody 的管线里，strip 之后紧接着有一段
+// orphan tool_choice 清理（tools 不存在但 tool_choice 存在时删除 tool_choice），
+// 所以 strip 把唯一的 view_image 工具连同 tools 一起删掉后，残留的 tool_choice
+// 会被这一步兜底清掉，而不是原样透传给 xAI（xAI 对「有 tool_choice、没有
+// tools」的 Responses 请求会直接 400）。
+func TestPatchGrokResponsesBodyDropsViewImageOnlyToolMetadata(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}],
+		"tools":[{"type":"function","name":"view_image"}],
+		"tool_choice":"auto",
+		"parallel_tool_calls":true
+	}`)
+	patched, err := patchGrokResponsesBody(body, "grok-4.6")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(patched, "tools").Exists())
+	require.False(t, gjson.GetBytes(patched, "tool_choice").Exists())
+	require.False(t, gjson.GetBytes(patched, "parallel_tool_calls").Exists())
 }
 
 func TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken(t *testing.T) {
@@ -898,4 +984,104 @@ func TestApplyGrokForbiddenPolicy_UsesRateLimitServiceAccountRepoWhenAvailable(t
 
 	require.True(t, handled)
 	require.Equal(t, 1, repo.setTempUnschedCalls, "should route through rateLimitService.tryTempUnschedulable -> accountRepo.SetTempUnschedulable")
+}
+
+// 覆盖 forwardGrokResponses 里新增的 maxLineSize 接线：reqStream=true 时用
+// s.cfg.Gateway.MaxLineSize（若配置了正值）而不是硬编码的 defaultMaxLineSize，
+// 传给 newGrokResponsesBillingPingFilterBody。
+func TestOpenAIGatewayServiceForwardGrokResponsesStreamingUsesConfiguredMaxLineSize(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := &Account{
+		ID:       706,
+		Name:     "grok-forward-stream",
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"base_url": "https://xai.test/v1",
+		},
+	}
+	provider := NewGrokTokenProvider(nil, &grokUnauthorizedCacheStub{}, nil)
+	upstreamBody := strings.Join([]string{
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"id":"resp-grok-stream-1","usage":{"input_tokens":3,"output_tokens":5}}}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamStub{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+			"X-Request-Id": []string{"req-grok-stream-1"},
+		},
+		Body: io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: provider,
+		toolCorrector:     NewCodexToolCorrector(),
+		cfg:               &config.Config{Gateway: config.GatewayConfig{MaxLineSize: 32 * 1024}},
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("OpenAI-Beta", "responses=v1")
+
+	result, err := svc.forwardGrokResponses(context.Background(), c, account, []byte(`{"model":"grok-4.3","stream":true}`), "grok-4.3", true, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "resp-grok-stream-1", result.ResponseID)
+	require.Equal(t, 3, result.Usage.InputTokens)
+	require.Equal(t, 5, result.Usage.OutputTokens)
+}
+
+func TestStripRedundantGrokViewImageToolLeavesEmptyOrMissingInputAlone(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "input is an empty array", body: `{"input":[]}`},
+		{name: "input is not an array", body: `{"input":"not-an-array"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			body := []byte(tt.body)
+			patched, err := stripRedundantGrokViewImageTool(body)
+			require.NoError(t, err)
+			require.Equal(t, body, patched)
+		})
+	}
+}
+
+// tool_choice.name 为空时回退读 tool_choice.function.name——与 Chat 侧
+// stripRedundantGrokChatViewImageTool 的回退顺序（function.name 优先、name 兜底）
+// 刚好相反，这是 Responses 与 Chat 两种 tool_choice 形状本身的差异，不是移植遗漏。
+func TestStripRedundantGrokViewImageToolFallsBackToFunctionName(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{
+		"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}],
+		"tools":[{"type":"function","name":"view_image"}],
+		"tool_choice":{"type":"function","function":{"name":"view_image"}}
+	}`)
+	patched, err := stripRedundantGrokViewImageTool(body)
+	require.NoError(t, err)
+	require.Equal(t, body, patched)
+}
+
+func TestStripRedundantGrokViewImageToolLeavesMissingOrNonArrayToolsAlone(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}]}`)
+	patched, err := stripRedundantGrokViewImageTool(body)
+	require.NoError(t, err)
+	require.Equal(t, body, patched)
+}
+
+func TestStripRedundantGrokViewImageToolNoViewImagePresentLeavesToolsUnchanged(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{
+		"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}],
+		"tools":[{"type":"function","name":"shell_command"}]
+	}`)
+	patched, err := stripRedundantGrokViewImageTool(body)
+	require.NoError(t, err)
+	require.Equal(t, body, patched)
 }
