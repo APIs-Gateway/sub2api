@@ -152,6 +152,9 @@ gateway:
   # OpenAI/Codex upstream response header timeout (seconds, 0=disabled)
   # OpenAI/Codex 等待上游响应头超时时间（秒，0=禁用本地响应头超时）
   openai_response_header_timeout: 0
+  # xAI/Grok upstream response header timeout (seconds, 1-1800; 0=use built-in default, not disabled)
+  # xAI/Grok 等待上游响应头超时时间（秒，1-1800；0表示使用内置默认值，而非禁用超时）
+  grok_response_header_timeout: 600
   # Native OpenAI Responses first semantic output timeout (seconds, 0=disabled)
   # Native OpenAI Responses 首个语义输出超时时间（秒，0=禁用）
   openai_first_output_timeout_seconds: 0
