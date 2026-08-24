@@ -7278,6 +7278,13 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	// 注：透传分支白名单可能写入了客户端 anthropic-beta，无条件 Del 一次再按 finalBeta
 	// 决定是否 set，确保 dropSet 过滤后的结果一定覆盖客户端原始值。
 	account.ApplyHeaderOverrides(req.Header)
+	deleteHeadlyClaudeCodeMimicHeaders(req, reqStream)
+	}
+
+	// 写入最终 anthropic-beta header
+	// 注：透传分支白名单可能写入了客户端 anthropic-beta，无条件 Del 一次再按 finalBeta
+	// 决定是否 set，确保 dropSet 过滤后的结果一定覆盖客户端原始值。
+	account.ApplyHeaderOverrides(req.Header)
 	deleteHeaderAllForms(req.Header, "anthropic-beta")
 	if finalBetaShouldSet {
 		setHeaderRaw(req.Header, "anthropic-beta", finalBetaHeader)
@@ -9064,13 +9071,19 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 			patch.hasCacheReadInput = true
 		}
 		if cc, ok := usageObj["cache_creation"].(map[string]any); ok {
-			if v, exists := parseSSEUsageInt(cc["ephemeral_5m_input_tokens"]); exists && v > 0 {
-				patch.cacheCreation5mTokens = v
-				patch.hasCacheCreation5m = true
-			}
-			if v, exists := parseSSEUsageInt(cc["ephemeral_1h_input_tokens"]); exists && v > 0 {
-				patch.cacheCreation1hTokens = v
-				patch.hasCacheCreation1h = true
+			// 明细有一项为正时视为权威明细，存在的字段（含显式 0）全部覆盖，避免与
+			// message_start 的旧明细叠加导致 5m/1h 重复计费；全 0 明细不重置已有明细。
+			v5m, has5m := parseSSEUsageInt(cc["ephemeral_5m_input_tokens"])
+			v1h, has1h := parseSSEUsageInt(cc["ephemeral_1h_input_tokens"])
+			if (has5m && v5m > 0) || (has1h && v1h > 0) {
+				if has5m {
+					patch.cacheCreation5mTokens = v5m
+					patch.hasCacheCreation5m = true
+				}
+				if has1h {
+					patch.cacheCreation1hTokens = v1h
+					patch.hasCacheCreation1h = true
+				}
 			}
 		}
 		return patch
