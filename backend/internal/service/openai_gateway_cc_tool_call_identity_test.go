@@ -102,6 +102,13 @@ func TestStripEmptyChatToolCallIdentity_Passthrough(t *testing.T) {
 		{"tool_calls not array", `{"choices":[{"index":0,"delta":{"tool_calls":{"foo":1}}}]}`},
 		{"invalid JSON", `{"choices":[{`},
 		{"empty string", ``},
+		// 下面几个都带 "tool_calls" 字样，绕过热路径快速失败，才能真正
+		// 走到各自要测的分支（否则会在 bytes.Contains 那一步就提前返回）。
+		{"invalid JSON but mentions tool_calls", `{"choices":[{"delta":{"tool_calls":`},
+		{"no choices field but mentions tool_calls", `{"note":"no tool_calls here"}`},
+		{"choices exists but not array, mentions tool_calls", `{"choices":"tool_calls placeholder"}`},
+		{"delta missing but mentions tool_calls", `{"choices":[{"index":0}],"note":"tool_calls"}`},
+		{"delta not object but mentions tool_calls", `{"choices":[{"index":0,"delta":"tool_calls"}]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

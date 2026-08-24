@@ -102,6 +102,28 @@ func TestNormalizeResponsesStreamingTerminalOutputRepairsTruncatedOutput(t *test
 		"the id the stream reported must replace the fabricated one")
 }
 
+// Observe must ignore malformed done events instead of recording garbage: a
+// missing item, a non-object item, or a non-done event type are all no-ops.
+func TestResponsesStreamOutputItemsObserveIgnoresMalformedEvents(t *testing.T) {
+	doneItems := newResponsesStreamOutputItems()
+	doneItems.Observe([]byte(`{"type":"response.output_item.done","output_index":0,"item":"not-an-object"}`))
+	doneItems.Observe([]byte(`{"type":"response.output_item.done","output_index":1}`))
+	doneItems.Observe([]byte(`not json`))
+	require.False(t, doneItems.HasItems())
+	require.Equal(t, 0, doneItems.Count())
+}
+
+// A nil *responsesStreamOutputItems (the zero value callers get before the
+// first Observe, or a defensive nil check elsewhere) must behave like an
+// empty collector rather than panicking.
+func TestResponsesStreamOutputItemsNilReceiverIsSafe(t *testing.T) {
+	var doneItems *responsesStreamOutputItems
+	require.Equal(t, 0, doneItems.Count())
+	require.False(t, doneItems.HasItems())
+	_, ok := doneItems.BuildOutput()
+	require.False(t, ok)
+}
+
 // A terminal output that is already complete is never rewritten.
 func TestNormalizeResponsesStreamingTerminalOutputLeavesCompleteOutputAlone(t *testing.T) {
 	doneItems := newResponsesStreamOutputItems()
