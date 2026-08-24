@@ -566,8 +566,9 @@
     ">钉</text>"
   ],
   "components/auth/LoginAgreementPrompt.vue": [
-    "if (title.includes('国家') || title.includes('地区')) {",
-    "if (title.includes('政策') || title.includes('隐私')) {"
+    "// 标题由管理员自由填写，简繁两种写法都要能命中对应图标",
+    "const PRIVACY_TITLE_HINTS = ['政策', '隐私', '私隱', '隱私']",
+    "const REGION_TITLE_HINTS = ['国家', '地区', '國家', '地區']"
   ],
   "components/channels/AvailableChannelsTable.vue": [
     "/** 用户专属倍率（group_id → multiplier）；无专属时由 GroupBadge 仅显示默认倍率。 */",
@@ -1934,8 +1935,9 @@
     "<!-- 随处接入 -->"
   ],
   "views/public/LegalDocumentView.vue": [
-    "if (title.includes('国家') || title.includes('地区')) {",
-    "if (title.includes('政策') || title.includes('隐私')) {",
+    "// 标题由管理员自由填写，简繁两种写法都要能命中对应图标",
+    "const PRIVACY_TITLE_HINTS = ['政策', '隐私', '私隱', '隱私']",
+    "const REGION_TITLE_HINTS = ['国家', '地区', '國家', '地區']",
     "if (title.includes('特定')) {"
   ],
   "views/user/AvailableChannelsView.vue": [
