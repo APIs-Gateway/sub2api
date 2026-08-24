@@ -266,12 +266,17 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)
+			// apicompat.AnthropicUsage doesn't carry CN Anthropic-compatible
+			// providers' OpenAI-style prompt/cache aliases (Kimi/GLM/DeepSeek);
+			// re-derive the mutually-exclusive buckets from the raw event.
+			normalizeAnthropicCompatiblePromptUsage(gjson.Get(payload, "message.usage"), &usage)
 		}
 
 		// message_delta carries final usage and stop_reason
 		if event.Type == "message_delta" {
 			if event.Usage != nil {
 				mergeAnthropicUsage(&usage, *event.Usage)
+				normalizeAnthropicCompatiblePromptUsage(gjson.Get(payload, "usage"), &usage)
 			}
 			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
 				finalResp.StopReason = apicompat.AnthropicStopReasonPtr(event.Delta.StopReason)
@@ -419,7 +424,11 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		return false
 	}
 
-	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent) bool {
+	// rawEvent is the event's original JSON so CN Anthropic-compatible
+	// providers' OpenAI-style prompt/cache aliases (not carried by
+	// apicompat.AnthropicUsage) can still be normalized into the
+	// mutually-exclusive usage buckets billing expects.
+	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent, rawEvent string) bool {
 		if firstChunk {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
@@ -429,10 +438,12 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		// Extract usage from message_delta
 		if event.Type == "message_delta" && event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
+			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "usage"), &usage)
 		}
 		// Also capture usage from message_start (carries cache fields)
 		if event.Type == "message_start" && event.Message != nil {
 			mergeAnthropicUsage(&usage, event.Message.Usage)
+			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "message.usage"), &usage)
 		}
 
 		// Chain: Anthropic event → Responses events → CC chunks
@@ -469,7 +480,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			continue
 		}
 
-		if processAnthropicEvent(&event) {
+		if processAnthropicEvent(&event, payload) {
 			return resultWithUsage(), nil
 		}
 	}
