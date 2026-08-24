@@ -656,6 +656,23 @@ func TestResponsesToChatCompletionsRequest_RejectsToolSearchNameConflict(t *test
 	assert.Equal(t, "tool_search", out.Tools[0].Function.Name)
 }
 
+func TestResponsesToChatCompletionsRequest_RejectsDuplicateTopLevelExecutableNames(t *testing.T) {
+	for _, tools := range [][]ResponsesTool{
+		{{Type: "custom", Name: "exec"}, {Type: "function", Name: "exec"}},
+		{{Type: "function", Name: "exec"}, {Type: "function", Name: "exec"}},
+		{{Type: "custom", Name: "exec"}, {Type: "custom", Name: "exec"}},
+	} {
+		_, err := ResponsesToChatCompletionsRequest(&ResponsesRequest{
+			Model: "glm-5.2",
+			Input: json.RawMessage(`"hi"`),
+			Tools: tools,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exec")
+		assert.Contains(t, err.Error(), "cannot disambiguate")
+	}
+}
+
 // tool_choice 指向被转换丢弃的工具（如 web_search）或不存在的名字时不能原样转发，
 // chat 上游会因选择项指向未声明工具而 400；字符串形式与指向幸存工具的选择保持转发。
 func TestResponsesToChatCompletionsRequest_DropsToolChoiceForDroppedTool(t *testing.T) {

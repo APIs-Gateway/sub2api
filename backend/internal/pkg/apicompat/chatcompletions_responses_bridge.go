@@ -827,6 +827,9 @@ func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
 	topLevel := make(map[string]bool)
 	for _, tool := range tools {
 		if (tool.Type == "function" || tool.Type == "custom") && tool.Name != "" {
+			if topLevel[tool.Name] {
+				return nil, fmt.Errorf("duplicate top-level executable tool name %q; this upstream cannot disambiguate duplicate names, rename one of the tools", tool.Name)
+			}
 			topLevel[tool.Name] = true
 		}
 	}
