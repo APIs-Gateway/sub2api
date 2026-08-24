@@ -61,14 +61,14 @@ var (
 	)
 )
 
-const defaultLocaleFallback = "zh-CN"
+const defaultLocaleFallback = "zh-HK"
 
 func normalizeDefaultLocale(value string) string {
 	switch strings.TrimSpace(value) {
 	case "zh-CN", "zh-HK", "en":
 		return strings.TrimSpace(value)
 	case "zh":
-		return defaultLocaleFallback
+		return "zh-CN"
 	default:
 		return defaultLocaleFallback
 	}

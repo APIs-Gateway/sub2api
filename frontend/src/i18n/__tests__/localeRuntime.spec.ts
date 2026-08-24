@@ -145,6 +145,6 @@ describe('i18n runtime behavior', () => {
     )
 
     i18n.global.locale.value = 'unsupported-locale'
-    expect(getLocale()).toBe('zh-CN')
+    expect(getLocale()).toBe('zh-HK')
   })
 })

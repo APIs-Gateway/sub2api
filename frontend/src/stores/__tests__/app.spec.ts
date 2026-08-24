@@ -490,14 +490,14 @@ describe('useAppStore', () => {
       expect(localStorage.getItem('table-page-size-source')).toBeNull()
     })
 
-    it('returns zh-CN as the loaded public settings fallback default locale', async () => {
+    it('returns zh-HK as the loaded public settings fallback default locale', async () => {
       const store = useAppStore()
       store.publicSettingsLoaded = true
       store.cachedPublicSettings = null
 
       const settings = await store.fetchPublicSettings()
 
-      expect(settings?.default_locale).toBe('zh-CN')
+      expect(settings?.default_locale).toBe('zh-HK')
     })
   })
 })

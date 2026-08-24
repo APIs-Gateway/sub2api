@@ -161,104 +161,52 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: [] }>()
 
-const { locale } = useI18n()
-const isZh = computed(() => String(locale.value).toLowerCase().startsWith('zh'))
+const { t } = useI18n()
 
-// 自包含中英文案（避免改动共享 i18n 文件）
-const TXT = {
-  zh: {
-    title: '一键接入',
-    currentKey: '当前密钥',
-    endpoint: 'API 端点',
-    copy: '复制',
-    copied: '已复制',
-    intro: '推荐用 CC Switch 一键导入，自动完成各客户端配置；也可手动配置或用脚本。',
-    recommended: '推荐',
-    envVars: '环境变量',
-    genericSdk: '通用 OpenAI SDK（任意兼容客户端）',
-    // CC Switch
-    ccsIntro: 'CC Switch 是客户端配置管理器：点击下方按钮即可把本密钥与端点一键导入，自动写好配置，最省心。',
-    ccsSupports: '支持导入：',
-    ccsImport: '导入到 CC Switch',
-    ccsHint: '若未弹出 CC Switch，说明尚未安装或未关联协议；先安装 CC Switch，或复制下方链接手动导入。',
-    ccsManualLink: '导入链接',
-    // Claude Code
-    claudeIntro: 'Claude Code 是 Anthropic 官方命令行客户端。配置好端点与密钥后即可使用：',
-    claudeSteps: [
-      '把下面的环境变量写入终端，或保存到 ~/.claude/settings.json。',
-      '重启终端 / 客户端，让配置生效。',
-      '在项目目录运行 claude 开始对话。',
-    ],
-    claudeHint: '提示：settings.json 方式无需每次设置环境变量；修改后需重启客户端。',
-    // Codex / OpenAI
-    codexIntro: 'Codex CLI 推荐用 CC Switch 一键导入（见上面的「CC Switch」标签）。若要手动配置，写入 ~/.codex/config.toml 并设置密钥环境变量：',
-    codexSteps: [
-      '把下面内容写入 ~/.codex/config.toml（自定义模型供应商指向本端点）。',
-      '设置环境变量 OPENAI_API_KEY 为你的密钥。',
-      '重启终端后运行 codex 即可。',
-    ],
-    // 脚本
-    scriptIntro: '复制下面这段脚本到终端执行，自动写入本地配置（脚本完全可见、不联网下载）。',
-    scriptHint: '执行后重启客户端即可。脚本仅写入本地配置文件，可先通读再运行。',
-    // 手动
-    manualIntro: '以上方式都不行？用下面的原始值手动填写客户端配置，并对照排障清单。',
-    troubleshootTitle: '排障清单',
-    troubleshoot: [
-      '确认 base_url 完整且无多余斜杠，OpenAI 系客户端通常需要带 /v1。',
-      '确认密钥完整复制（以 sk- 开头），无空格或换行。',
-      '修改环境变量或配置文件后，需重启客户端使其生效。',
-      '检查本地网络 / 代理是否能访问该端点。',
-      '确认客户端为较新版本，老版本可能不支持自定义端点。',
-    ],
-    viewDocs: '查看文档',
-    model: '推荐模型',
-    apiKeyFull: 'API 密钥',
-  },
-  en: {
-    title: 'Quick connect',
-    currentKey: 'Current key',
-    endpoint: 'API endpoint',
-    copy: 'Copy',
-    copied: 'Copied',
-    intro: 'Recommended: import via CC Switch for automatic per-client setup — or configure manually / via script.',
-    recommended: 'Recommended',
-    envVars: 'Environment variables',
-    genericSdk: 'Generic OpenAI SDK (any compatible client)',
-    ccsIntro: 'CC Switch is a client config manager: click below to import this key and endpoint in one click — it writes the config for you. Easiest option.',
-    ccsSupports: 'Imports into:',
-    ccsImport: 'Import to CC Switch',
-    ccsHint: 'If CC Switch did not open, it may not be installed or the protocol is unregistered — install CC Switch, or copy the link below to import manually.',
-    ccsManualLink: 'Import link',
-    claudeIntro: 'Claude Code is Anthropic’s official CLI. After pointing it at the endpoint and key:',
-    claudeSteps: [
-      'Set the env vars below, or save them to ~/.claude/settings.json.',
-      'Restart your terminal / client so the config takes effect.',
-      'Run claude in your project to start.',
-    ],
-    claudeHint: 'Tip: settings.json avoids exporting env vars each time; restart the client after editing.',
-    codexIntro: 'For Codex CLI we recommend CC Switch (see the “CC Switch” tab). To configure manually, write ~/.codex/config.toml and set the key env var:',
-    codexSteps: [
-      'Write the block below to ~/.codex/config.toml (a custom model provider pointing at this endpoint).',
-      'Set the OPENAI_API_KEY env var to your key.',
-      'Restart your terminal, then run codex.',
-    ],
-    scriptIntro: 'Copy this script into your terminal to write the local config (fully visible, no network download).',
-    scriptHint: 'Restart your client afterwards. The script only writes a local config file — read it before running.',
-    manualIntro: 'None of the above worked? Fill your client config manually with the raw values and follow the checklist.',
-    troubleshootTitle: 'Troubleshooting',
-    troubleshoot: [
-      'Confirm base_url is complete with no trailing slash; OpenAI-style clients usually need /v1.',
-      'Confirm the key is copied in full (starts with sk-), no spaces or line breaks.',
-      'Restart the client after changing env vars or config files.',
-      'Check that your local network / proxy can reach the endpoint.',
-      'Make sure the client is up to date; older versions may not support custom endpoints.',
-    ],
-    viewDocs: 'View docs',
-    model: 'Suggested model',
-    apiKeyFull: 'API key',
-  },
-}
-const tx = computed(() => (isZh.value ? TXT.zh : TXT.en))
+// 接入指引文案（i18n: keyOnboarding.*）
+const tx = computed(() => ({
+  title: t('keyOnboarding.title'),
+  currentKey: t('keyOnboarding.currentKey'),
+  endpoint: t('keyOnboarding.endpoint'),
+  copy: t('keyOnboarding.copy'),
+  copied: t('keyOnboarding.copied'),
+  intro: t('keyOnboarding.intro'),
+  recommended: t('keyOnboarding.recommended'),
+  envVars: t('keyOnboarding.envVars'),
+  genericSdk: t('keyOnboarding.genericSdk'),
+  ccsIntro: t('keyOnboarding.ccsIntro'),
+  ccsSupports: t('keyOnboarding.ccsSupports'),
+  ccsImport: t('keyOnboarding.ccsImport'),
+  ccsHint: t('keyOnboarding.ccsHint'),
+  ccsManualLink: t('keyOnboarding.ccsManualLink'),
+  claudeIntro: t('keyOnboarding.claudeIntro'),
+  claudeSteps: [
+    t('keyOnboarding.claudeStep1'),
+    t('keyOnboarding.claudeStep2'),
+    t('keyOnboarding.claudeStep3'),
+  ],
+  claudeHint: t('keyOnboarding.claudeHint'),
+  codexIntro: t('keyOnboarding.codexIntro'),
+  codexSteps: [
+    t('keyOnboarding.codexStep1'),
+    t('keyOnboarding.codexStep2'),
+    t('keyOnboarding.codexStep3'),
+  ],
+  scriptIntro: t('keyOnboarding.scriptIntro'),
+  scriptHint: t('keyOnboarding.scriptHint'),
+  manualIntro: t('keyOnboarding.manualIntro'),
+  troubleshootTitle: t('keyOnboarding.troubleshootTitle'),
+  troubleshoot: [
+    t('keyOnboarding.troubleshoot1'),
+    t('keyOnboarding.troubleshoot2'),
+    t('keyOnboarding.troubleshoot3'),
+    t('keyOnboarding.troubleshoot4'),
+    t('keyOnboarding.troubleshoot5'),
+  ],
+  viewDocs: t('keyOnboarding.viewDocs'),
+  model: t('keyOnboarding.model'),
+  apiKeyFull: t('keyOnboarding.apiKeyFull'),
+}))
 
 const base = computed(() => (props.baseUrl || '').replace(/\/+$/, ''))
 const openaiBase = computed(() => `${base.value}/v1`)
@@ -285,8 +233,8 @@ const methods = computed(() => [
   { id: 'ccswitch', label: 'CC Switch' },
   { id: 'claude', label: 'Claude Code' },
   { id: 'openai', label: 'Codex / OpenAI SDK' },
-  { id: 'script', label: isZh.value ? '一键脚本' : 'Script' },
-  { id: 'manual', label: isZh.value ? '手动 / 排障' : 'Manual' },
+  { id: 'script', label: t('keyOnboarding.methodScript') },
+  { id: 'manual', label: t('keyOnboarding.methodManual') },
 ])
 
 const active = ref<string>('ccswitch')
@@ -323,9 +271,9 @@ const openaiCurl = computed(
 
 const script = computed(() => {
   if (platform.value === 'openai') {
-    return `# 写入 Codex 配置 + 密钥环境变量\nmkdir -p ~/.codex\ncat > ~/.codex/config.toml <<'EOF'\nmodel = "gpt-5.5"\nmodel_provider = "${providerId.value}"\n\n[model_providers.${providerId.value}]\nname = "${(props.siteName || 'sub2api').trim() || 'sub2api'}"\nbase_url = "${openaiBase.value}"\nwire_api = "chat"\nEOF\ncat >> ~/.zshrc <<'EOF'\nexport OPENAI_API_KEY="${fullKey.value}"\nEOF\nsource ~/.zshrc\necho "✓ Codex 已配置，运行 codex 开始"`
+    return `# ${t('keyOnboarding.scriptCommentCodex')}\nmkdir -p ~/.codex\ncat > ~/.codex/config.toml <<'EOF'\nmodel = "gpt-5.5"\nmodel_provider = "${providerId.value}"\n\n[model_providers.${providerId.value}]\nname = "${(props.siteName || 'sub2api').trim() || 'sub2api'}"\nbase_url = "${openaiBase.value}"\nwire_api = "chat"\nEOF\ncat >> ~/.zshrc <<'EOF'\nexport OPENAI_API_KEY="${fullKey.value}"\nEOF\nsource ~/.zshrc\necho "✓ ${t('keyOnboarding.scriptDoneCodex')}"`
   }
-  return `mkdir -p ~/.claude\ncat > ~/.claude/settings.json <<'EOF'\n{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${base.value}",\n    "ANTHROPIC_AUTH_TOKEN": "${fullKey.value}"\n  }\n}\nEOF\necho "✓ Claude Code 已配置完成，请重启客户端"`
+  return `mkdir -p ~/.claude\ncat > ~/.claude/settings.json <<'EOF'\n{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${base.value}",\n    "ANTHROPIC_AUTH_TOKEN": "${fullKey.value}"\n  }\n}\nEOF\necho "✓ ${t('keyOnboarding.scriptDoneClaude')}"`
 })
 
 const usageScript = `({

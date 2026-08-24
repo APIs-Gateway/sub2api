@@ -179,10 +179,10 @@
         v-if="!sidebarCollapsed"
         @click="copyQQ"
         class="mt-2 w-full rounded-md border-t border-gray-100 px-4 pb-1 pt-3 text-left transition-colors hover:bg-gray-100 dark:border-dark-800 dark:hover:bg-dark-800"
-        title="点击复制"
+        :title="t('common.clickToCopy')"
       >
-        <span class="block text-xs text-gray-500 dark:text-dark-400">售后 Q 群</span>
-        <span class="block font-mono text-sm tabular-nums text-gray-700 dark:text-gray-300">{{ qqCopied ? '已复制 ✓' : QQ_GROUP }}</span>
+        <span class="block text-xs text-gray-500 dark:text-dark-400">{{ t('nav.supportQqGroup') }}</span>
+        <span class="block font-mono text-sm tabular-nums text-gray-700 dark:text-gray-300">{{ qqCopied ? `${t('common.copied')} ✓` : QQ_GROUP }}</span>
       </button>
     </div>
   </aside>

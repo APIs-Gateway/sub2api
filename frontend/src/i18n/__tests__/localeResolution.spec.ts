@@ -9,14 +9,14 @@ import {
 } from '../index'
 
 describe('i18n locale resolution', () => {
-  it('uses simplified Chinese as the built-in fallback', () => {
-    expect(DEFAULT_LOCALE).toBe('zh-CN')
+  it('uses traditional Chinese (Hong Kong) as the built-in fallback', () => {
+    expect(DEFAULT_LOCALE).toBe('zh-HK')
     expect(LOCALE_KEY).toBe('sub2api_locale')
-    expect(resolveInitialLocale({ storedLocale: null, publicDefaultLocale: null }).locale).toBe('zh-CN')
+    expect(resolveInitialLocale({ storedLocale: null, publicDefaultLocale: null }).locale).toBe('zh-HK')
   })
 
   it('uses the admin-configured public default when no local preference exists', () => {
-    expect(resolveInitialLocale({ storedLocale: null, publicDefaultLocale: 'zh-HK' }).locale).toBe('zh-HK')
+    expect(resolveInitialLocale({ storedLocale: null, publicDefaultLocale: 'zh-CN' }).locale).toBe('zh-CN')
     expect(resolveInitialLocale({ storedLocale: null, publicDefaultLocale: 'en' }).locale).toBe('en')
   })
 
@@ -50,7 +50,7 @@ describe('i18n locale resolution', () => {
   it('ignores invalid stored and public locale values', () => {
     const resolved = resolveInitialLocale({ storedLocale: 'fr', publicDefaultLocale: 'ja' })
 
-    expect(resolved.locale).toBe('zh-CN')
+    expect(resolved.locale).toBe('zh-HK')
     expect(resolved.clearStoredLocale).toBe(true)
   })
 })

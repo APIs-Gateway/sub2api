@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import en from '../locales/en'
 import zhCN from '../locales/zh-CN'
 import zhHK from '../locales/zh-HK'
-import { completeLocaleMessages } from '../index'
+import { FALLBACK_LOCALES, completeLocaleMessages } from '../index'
+import type { LocaleCode } from '@/types'
 
 type LocaleObject = Record<string, unknown>
 
@@ -48,9 +49,14 @@ describe('locale key coverage', () => {
   })
 
   it('keeps en, zh-CN, and zh-HK effective leaf key sets aligned after fallback completion', () => {
-    const effectiveEn = completeLocaleMessages(en, [zhCN])
-    const effectiveZhCN = completeLocaleMessages(zhCN, [en])
-    const effectiveZhHK = completeLocaleMessages(zhHK, [en, zhCN])
+    // 兜底链与运行时保持同一份定义，避免测试和 loadLocaleMessages 漂移
+    const sources: Record<LocaleCode, LocaleObject> = { en, 'zh-CN': zhCN, 'zh-HK': zhHK }
+    const complete = (locale: LocaleCode) =>
+      completeLocaleMessages(sources[locale], FALLBACK_LOCALES[locale].map((code) => sources[code]))
+
+    const effectiveEn = complete('en')
+    const effectiveZhCN = complete('zh-CN')
+    const effectiveZhHK = complete('zh-HK')
 
     expectSameKeys('en', effectiveEn, 'zh-CN', effectiveZhCN)
     expectSameKeys('zh-CN', effectiveZhCN, 'zh-HK', effectiveZhHK)

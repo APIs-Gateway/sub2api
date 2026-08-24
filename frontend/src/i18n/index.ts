@@ -7,12 +7,20 @@ export { isChineseLocale, normalizeLocaleCode } from './localeUtils'
 type LocaleMessages = Record<string, unknown>
 
 export const LOCALE_KEY = 'sub2api_locale'
-export const DEFAULT_LOCALE: LocaleCode = 'zh-CN'
+export const DEFAULT_LOCALE: LocaleCode = 'zh-HK'
 
 const localeLoaders: Record<LocaleCode, () => Promise<{ default: LocaleMessages }>> = {
   'zh-CN': () => import('./locales/zh-CN'),
   'zh-HK': () => import('./locales/zh-HK'),
   en: () => import('./locales/en')
+}
+
+// 补全缺失文案时使用的兜底链，数组靠后的优先级更高。
+// 两个中文 locale 互为兜底，个别 key 漏翻时中文界面不会直接掉成英文。
+export const FALLBACK_LOCALES: Record<LocaleCode, readonly LocaleCode[]> = {
+  'zh-CN': ['en', 'zh-HK'],
+  'zh-HK': ['en', 'zh-CN'],
+  en: ['zh-CN']
 }
 
 export interface InitialLocaleResolutionInput {
@@ -137,11 +145,8 @@ export async function loadLocaleMessages(locale: LocaleCode): Promise<void> {
 
   const module = await localeLoaders[locale]()
   const fallbacks: LocaleMessages[] = []
-  if (locale !== 'en') {
-    fallbacks.push((await localeLoaders.en()).default)
-  }
-  if (locale !== DEFAULT_LOCALE) {
-    fallbacks.push((await localeLoaders[DEFAULT_LOCALE]()).default)
+  for (const fallbackLocale of FALLBACK_LOCALES[locale]) {
+    fallbacks.push((await localeLoaders[fallbackLocale]()).default)
   }
 
   i18n.global.setLocaleMessage(locale, completeLocaleMessages(module.default, fallbacks))

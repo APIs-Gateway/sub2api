@@ -110,6 +110,39 @@
     },
     footer: {
       allRightsReserved: '保留所有权利。'
+    },
+    // 落地页营销文案（原先写死在 HomeView.vue 内，已收归 i18n）
+    marketing: {
+      eyebrow: '订阅制 · 每日刷新额度 · 可透支',
+      endpointNote: '// OpenAI 兼容 · 一个密钥即用',
+      valueTitle: '订阅一次，每天都满',
+      valueDesc: '不是预存余额慢慢扣，而是订阅制：额度每日自动刷新。平均每天约 ¥3.6（≈ $0.5），即可调用相当于官方 $2700 的用量。',
+      stat1Value: '$90 / 日',
+      stat1Label: '每日刷新额度',
+      stat2Value: '¥3.6 / 日',
+      stat2Label: '平均每日成本 ≈ $0.5',
+      stat3Value: '$2700 / 月',
+      stat3Label: '相当于官方用量',
+      feature1Title: '极速稳定',
+      feature1Desc: '高可用网关与智能调度，低延迟、高成功率，稳定可靠。',
+      feature2Title: '简单接入',
+      feature2Desc: '兼容主流 OpenAI / Anthropic 协议，获取一个密钥即可开始。',
+      feature3Title: '透明可计量',
+      feature3Desc: '每一次调用的耗时、Token 与费用都精确记录，用量实时可视。',
+      integrateTitle: '随处接入',
+      integrateDesc: '兼容主流协议，几分钟内接入你的 IDE 或 Agent；一个密钥，多端通用。',
+      clientAnySdk: '任意 OpenAI SDK',
+      compareTitle: '和传统按量付费有什么不同',
+      paygTitle: '传统按量付费',
+      paygPoint1: '余额扣完即停，需要不断充值',
+      paygPoint2: '高强度使用时账单不可预期',
+      paygPoint3: '价格随用量浮动，难以估算',
+      subTitle: '本平台（订阅制）',
+      subPoint1: '额度每日刷新，用量重置不烧余额',
+      subPoint2: '固定周期费用，成本清晰可预期',
+      subPoint3: '高可用网关 + 智能调度，稳定可靠',
+      overdraftTitle: '支持透支，临时超额也不断流',
+      overdraftDesc: '当日额度用超时可在透支额度内继续调用，按「往后预支天数」计量，不会因为一次高强度使用就瞬间停摆——赶进度时尤其省心。'
     }
   },
 
@@ -300,6 +333,8 @@
     more: '更多',
     close: '关闭',
     toggleMenu: '切换菜单',
+    clickToCopy: '点击复制',
+    failed: '失败',
     userMenu: '用户菜单',
     enabled: '已启用',
     disabled: '已禁用',
@@ -356,7 +391,7 @@
 
   regionNotice: {
     title: '服务提示',
-    description: '当前地区暂不支持访问用户后台。请切换到受支持的网络环境后重试。'
+    description: '很抱歉，您所在的地区不在我们的服务范围内。'
   },
 
   adminCompliance: {
@@ -425,6 +460,7 @@
     logout: '退出登录',
     github: 'GitHub',
     mySubscriptions: '我的订阅',
+    supportQqGroup: '售后 Q 群',
     buySubscription: '充值/订阅',
     docs: '文档',
     myOrders: '我的订单',
@@ -610,6 +646,8 @@
       wechatSystemBrowserOnly: '当前微信登录流程仅支持在系统浏览器中继续。',
       wechatBrowserOnly: '当前微信登录流程仅支持在微信内置浏览器中继续。',
       wechatNotConfigured: '微信登录尚未配置。'
+      ,
+      wechatNativeAppOnly: '当前仅配置微信移动应用登录，需要在原生 App 中通过微信 SDK 发起授权。'
     },
     linuxdoCallbackPageTitle: 'LinuxDo 登录回调',
     dingtalkCallbackPageTitle: '钉钉登录回调',
@@ -663,6 +701,27 @@
     invalidResetLinkHint: '此密码重置链接无效或已过期。请重新请求一个新链接。',
     requestNewResetLink: '请求新的重置链接',
     invalidOrExpiredToken: '密码重置链接无效或已过期。请重新请求一个新链接。'
+    ,
+    defaultSiteSubtitle: '快速稳定的大模型 API 服务',
+    dingtalkProviderName: '钉钉',
+    // 登录/注册页的条款同意提示（原先写死在组件内，已收归 i18n）
+    agreement: {
+      consentPrefix: '我已阅读并同意',
+      separator: '、',
+      blockedTitle: '继续登录前需要先同意最新条款。',
+      blockedDesc: '未同意前，账号密码输入和快捷登录会保持禁用。',
+      viewTerms: '查看条款',
+      updateTitle: '条款更新通知',
+      updateDesc: '我们的服务条款已于 {date} 更新。在继续使用服务之前，请仔细阅读并同意以下条款。',
+      recently: '近期',
+      relatedDocs: '相关文档',
+      reject: '拒绝',
+      acceptAndContinue: '同意并继续',
+      loginBlockedWarning: '未同意最新条款前，无法输入账号密码或使用快捷登录。',
+      loginRequiredWarning: '请先阅读并同意最新条款后再登录。',
+      registerBlockedWarning: '未同意最新条款前，无法注册或使用快捷登录。',
+      registerRequiredWarning: '请先阅读并同意最新条款后再注册。'
+    }
   },
 
   // Step-up（敏感操作二次验证）
@@ -739,6 +798,52 @@
   groups: {
     subscription: '订阅',
     rateMultiplierTip: '「Nx 倍率」是该分组相对官方价的扣额度速度：数字越大、池子越稳定，同样的用量扣得也越多；它是系统扣费的系数，不是最终价格。叠加套餐折扣后你实际相当于官方价几折，见分组描述。'
+    ,
+    rateMultiplierLabel: '{rate}x 倍率'
+  },
+
+  // 密钥一键接入弹窗（原先写死在 KeyOnboardingModal.vue 内，已收归 i18n）
+  keyOnboarding: {
+    title: '一键接入',
+    currentKey: '当前密钥',
+    endpoint: 'API 端点',
+    copy: '复制',
+    copied: '已复制',
+    intro: '推荐用 CC Switch 一键导入，自动完成各客户端配置；也可手动配置或用脚本。',
+    recommended: '推荐',
+    envVars: '环境变量',
+    genericSdk: '通用 OpenAI SDK（任意兼容客户端）',
+    methodScript: '一键脚本',
+    methodManual: '手动 / 排障',
+    ccsIntro: 'CC Switch 是客户端配置管理器：点击下方按钮即可把本密钥与端点一键导入，自动写好配置，最省心。',
+    ccsSupports: '支持导入：',
+    ccsImport: '导入到 CC Switch',
+    ccsHint: '若未弹出 CC Switch，说明尚未安装或未关联协议；先安装 CC Switch，或复制下方链接手动导入。',
+    ccsManualLink: '导入链接',
+    claudeIntro: 'Claude Code 是 Anthropic 官方命令行客户端。配置好端点与密钥后即可使用：',
+    claudeStep1: '把下面的环境变量写入终端，或保存到 ~/.claude/settings.json。',
+    claudeStep2: '重启终端 / 客户端，让配置生效。',
+    claudeStep3: '在项目目录运行 claude 开始对话。',
+    claudeHint: '提示：settings.json 方式无需每次设置环境变量；修改后需重启客户端。',
+    codexIntro: 'Codex CLI 推荐用 CC Switch 一键导入（见上面的「CC Switch」标签）。若要手动配置，写入 ~/.codex/config.toml 并设置密钥环境变量：',
+    codexStep1: '把下面内容写入 ~/.codex/config.toml（自定义模型供应商指向本端点）。',
+    codexStep2: '设置环境变量 OPENAI_API_KEY 为你的密钥。',
+    codexStep3: '重启终端后运行 codex 即可。',
+    scriptIntro: '复制下面这段脚本到终端执行，自动写入本地配置（脚本完全可见、不联网下载）。',
+    scriptHint: '执行后重启客户端即可。脚本仅写入本地配置文件，可先通读再运行。',
+    scriptCommentCodex: '写入 Codex 配置 + 密钥环境变量',
+    scriptDoneCodex: 'Codex 已配置，运行 codex 开始',
+    scriptDoneClaude: 'Claude Code 已配置完成，请重启客户端',
+    manualIntro: '以上方式都不行？用下面的原始值手动填写客户端配置，并对照排障清单。',
+    troubleshootTitle: '排障清单',
+    troubleshoot1: '确认 base_url 完整且无多余斜杠，OpenAI 系客户端通常需要带 /v1。',
+    troubleshoot2: '确认密钥完整复制（以 sk- 开头），无空格或换行。',
+    troubleshoot3: '修改环境变量或配置文件后，需重启客户端使其生效。',
+    troubleshoot4: '检查本地网络 / 代理是否能访问该端点。',
+    troubleshoot5: '确认客户端为较新版本，老版本可能不支持自定义端点。',
+    viewDocs: '查看文档',
+    model: '推荐模型',
+    apiKeyFull: 'API 密钥'
   },
 
   // API Keys
@@ -7460,6 +7565,7 @@
     notFoundDesc: '该自定义页面不存在或已被删除。',
     notConfiguredTitle: '页面链接未配置',
     notConfiguredDesc: '该自定义页面的 URL 未正确配置。',
+    toc: '目录',
   },
 
   // Announcements Page

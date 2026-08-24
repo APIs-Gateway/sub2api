@@ -89,11 +89,11 @@ func TestSettingService_GetPublicSettings_DefaultLocaleFallbackAndCompatibility(
 		raw  string
 		want string
 	}{
-		{name: "empty settings default to simplified Chinese", want: "zh-CN"},
+		{name: "empty settings default to Hong Kong traditional Chinese", want: "zh-HK"},
 		{name: "configured Hong Kong traditional Chinese is exposed", raw: "zh-HK", want: "zh-HK"},
 		{name: "configured English is exposed", raw: "en", want: "en"},
 		{name: "legacy zh is migrated to simplified Chinese", raw: "zh", want: "zh-CN"},
-		{name: "invalid settings fall back to simplified Chinese", raw: "fr", want: "zh-CN"},
+		{name: "invalid settings fall back to Hong Kong traditional Chinese", raw: "fr", want: "zh-HK"},
 	}
 
 	for _, tt := range tests {

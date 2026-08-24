@@ -169,7 +169,7 @@ func TestContentModerationFallbackEmailTemplatesUseResolvedLocale(t *testing.T) 
 	}
 	cfg := &ContentModerationConfig{BanThreshold: 3}
 
-	require.Equal(t, "zh-CN", contentModerationFallbackLocale(nil, ctx, log))
+	require.Equal(t, "zh-HK", contentModerationFallbackLocale(nil, ctx, log))
 	notificationSvc.RememberRecipientLocale(ctx, userID, log.UserEmail, "en-US")
 	require.Equal(t, "en", contentModerationFallbackLocale(notificationSvc, ctx, log))
 	require.Equal(t, log.UserEmail, contentModerationEmailAddress(log))

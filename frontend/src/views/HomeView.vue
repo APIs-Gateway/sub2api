@@ -248,65 +248,43 @@ import Icon from '@/components/icons/Icon.vue'
 import BrandMark from '@/components/common/BrandMark.vue'
 import { sanitizeUrl } from '@/utils/url'
 
-const { t, locale } = useI18n()
-const isZh = computed(() => String(locale.value).toLowerCase().startsWith('zh'))
+const { t } = useI18n()
 
-// 落地页营销文案（自包含中英；数字为占位示例，待确认后替换）
-const MK = {
-  zh: {
-    eyebrow: '订阅制 · 每日刷新额度 · 可透支',
-    endpointNote: '// OpenAI 兼容 · 一个密钥即用',
-    valueTitle: '订阅一次，每天都满',
-    valueDesc: '不是预存余额慢慢扣，而是订阅制：额度每日自动刷新。平均每天约 ¥3.6（≈ $0.5），即可调用相当于官方 $2700 的用量。',
-    stats: [
-      { value: '$90 / 日', label: '每日刷新额度' },
-      { value: '¥3.6 / 日', label: '平均每日成本 ≈ $0.5' },
-      { value: '$2700 / 月', label: '相当于官方用量' },
-    ],
-    features: [
-      { title: '极速稳定', desc: '高可用网关与智能调度，低延迟、高成功率，稳定可靠。' },
-      { title: '简单接入', desc: '兼容主流 OpenAI / Anthropic 协议，获取一个密钥即可开始。' },
-      { title: '透明可计量', desc: '每一次调用的耗时、Token 与费用都精确记录，用量实时可视。' },
-    ],
-    integrateTitle: '随处接入',
-    integrateDesc: '兼容主流协议，几分钟内接入你的 IDE 或 Agent；一个密钥，多端通用。',
-    clients: ['Claude Code', 'Codex', 'OpenClaw', 'Hermes', 'Cherry Studio', '任意 OpenAI SDK'],
-    compareTitle: '和传统按量付费有什么不同',
-    paygTitle: '传统按量付费',
-    paygPoints: ['余额扣完即停，需要不断充值', '高强度使用时账单不可预期', '价格随用量浮动，难以估算'],
-    subTitle: '本平台（订阅制）',
-    subPoints: ['额度每日刷新，用量重置不烧余额', '固定周期费用，成本清晰可预期', '高可用网关 + 智能调度，稳定可靠'],
-    overdraftTitle: '支持透支，临时超额也不断流',
-    overdraftDesc: '当日额度用超时可在透支额度内继续调用，按「往后预支天数」计量，不会因为一次高强度使用就瞬间停摆——赶进度时尤其省心。',
-  },
-  en: {
-    eyebrow: 'Subscription · Daily-refreshing quota · Overdraft-friendly',
-    endpointNote: '// OpenAI-compatible · one key',
-    valueTitle: 'Subscribe once, full every day',
-    valueDesc: 'Not a prepaid balance that drains away — a subscription whose quota refreshes daily. About ¥3.6 (≈ $0.5) a day unlocks usage equivalent to $2700 of official spend.',
-    stats: [
-      { value: '$90 / day', label: 'Daily refreshing quota' },
-      { value: '¥3.6 / day', label: 'Avg daily cost ≈ $0.5' },
-      { value: '$2700 / mo', label: 'Equivalent official usage' },
-    ],
-    features: [
-      { title: 'Fast & stable', desc: 'High-availability gateway and smart routing — low latency, high success rate.' },
-      { title: 'Simple to connect', desc: 'Compatible with mainstream OpenAI / Anthropic protocols — one key to start.' },
-      { title: 'Transparent metering', desc: 'Every call’s latency, tokens and cost are recorded — usage visible in real time.' },
-    ],
-    integrateTitle: 'Connect anywhere',
-    integrateDesc: 'Standard-compatible — plug into your IDE or agent in minutes. One key, many clients.',
-    clients: ['Claude Code', 'Codex', 'OpenClaw', 'Hermes', 'Cherry Studio', 'Any OpenAI SDK'],
-    compareTitle: 'How it differs from pay-as-you-go',
-    paygTitle: 'Pay-as-you-go',
-    paygPoints: ['Stops when balance runs out; constant top-ups', 'Unpredictable bills under heavy use', 'Price floats with usage, hard to estimate'],
-    subTitle: 'This platform (subscription)',
-    subPoints: ['Quota refreshes daily — usage resets, no balance burn', 'Fixed per-cycle cost, clear and predictable', 'High-availability gateway + smart routing'],
-    overdraftTitle: 'Overdraft supported — bursts don’t cut you off',
-    overdraftDesc: 'When the daily quota is exceeded, you keep calling within an overdraft allowance, metered as days drawn forward — so a single heavy session never stalls you mid-task.',
-  },
-}
-const mk = computed(() => (isZh.value ? MK.zh : MK.en))
+// 落地页营销文案（i18n: home.marketing.*；数字为占位示例，待确认后替换）
+const mk = computed(() => ({
+  eyebrow: t('home.marketing.eyebrow'),
+  endpointNote: t('home.marketing.endpointNote'),
+  valueTitle: t('home.marketing.valueTitle'),
+  valueDesc: t('home.marketing.valueDesc'),
+  stats: [
+    { value: t('home.marketing.stat1Value'), label: t('home.marketing.stat1Label') },
+    { value: t('home.marketing.stat2Value'), label: t('home.marketing.stat2Label') },
+    { value: t('home.marketing.stat3Value'), label: t('home.marketing.stat3Label') },
+  ],
+  features: [
+    { title: t('home.marketing.feature1Title'), desc: t('home.marketing.feature1Desc') },
+    { title: t('home.marketing.feature2Title'), desc: t('home.marketing.feature2Desc') },
+    { title: t('home.marketing.feature3Title'), desc: t('home.marketing.feature3Desc') },
+  ],
+  integrateTitle: t('home.marketing.integrateTitle'),
+  integrateDesc: t('home.marketing.integrateDesc'),
+  clients: ['Claude Code', 'Codex', 'OpenClaw', 'Hermes', 'Cherry Studio', t('home.marketing.clientAnySdk')],
+  compareTitle: t('home.marketing.compareTitle'),
+  paygTitle: t('home.marketing.paygTitle'),
+  paygPoints: [
+    t('home.marketing.paygPoint1'),
+    t('home.marketing.paygPoint2'),
+    t('home.marketing.paygPoint3'),
+  ],
+  subTitle: t('home.marketing.subTitle'),
+  subPoints: [
+    t('home.marketing.subPoint1'),
+    t('home.marketing.subPoint2'),
+    t('home.marketing.subPoint3'),
+  ],
+  overdraftTitle: t('home.marketing.overdraftTitle'),
+  overdraftDesc: t('home.marketing.overdraftDesc'),
+}))
 
 const authStore = useAuthStore()
 const appStore = useAppStore()
