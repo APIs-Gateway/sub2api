@@ -54,6 +54,18 @@ func TestAccountSupportsOpenAIEndpointCapability_EmptyContainer(t *testing.T) {
 		require.True(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityChatCompletions))
 	})
 
+	t.Run("空 openai_capabilities（map[string]bool{}）与未配置一致，不排除 OAuth 文本调度", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Credentials: map[string]any{
+				"openai_capabilities": map[string]bool{},
+			},
+		}
+
+		require.True(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityChatCompletions))
+	})
+
 	t.Run("非空但全 false 的 map 仍按显式禁用处理，不默认放行", func(t *testing.T) {
 		account := &Account{
 			Platform: PlatformOpenAI,
