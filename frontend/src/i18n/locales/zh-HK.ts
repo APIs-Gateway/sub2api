@@ -110,6 +110,39 @@
     },
     footer: {
       allRightsReserved: '保留所有權利。'
+    },
+    // 落地頁營銷文案（原先寫死在 HomeView.vue 內，已收歸 i18n）
+    marketing: {
+      eyebrow: '訂閱制 · 每日刷新額度 · 可透支',
+      endpointNote: '// OpenAI 兼容 · 一個金鑰即用',
+      valueTitle: '訂閱一次，每天都滿',
+      valueDesc: '不是預存餘額慢慢扣，而是訂閱制：額度每日自動刷新。平均每天約 ¥3.6（≈ $0.5），即可調用相當於官方 $2700 的用量。',
+      stat1Value: '$90 / 日',
+      stat1Label: '每日刷新額度',
+      stat2Value: '¥3.6 / 日',
+      stat2Label: '平均每日成本 ≈ $0.5',
+      stat3Value: '$2700 / 月',
+      stat3Label: '相當於官方用量',
+      feature1Title: '極速穩定',
+      feature1Desc: '高可用網關與智能調度，低延遲、高成功率，穩定可靠。',
+      feature2Title: '簡單接入',
+      feature2Desc: '兼容主流 OpenAI / Anthropic 協議，獲取一個金鑰即可開始。',
+      feature3Title: '透明可計量',
+      feature3Desc: '每一次調用的耗時、Token 與費用都精確記錄，用量實時可視。',
+      integrateTitle: '隨處接入',
+      integrateDesc: '兼容主流協議，幾分鐘內接入你的 IDE 或 Agent；一個金鑰，多端通用。',
+      clientAnySdk: '任意 OpenAI SDK',
+      compareTitle: '和傳統按量付費有甚麼不同',
+      paygTitle: '傳統按量付費',
+      paygPoint1: '餘額扣完即停，需要不斷充值',
+      paygPoint2: '高強度使用時賬單不可預期',
+      paygPoint3: '價格隨用量浮動，難以估算',
+      subTitle: '本平台（訂閱制）',
+      subPoint1: '額度每日刷新，用量重置不燒餘額',
+      subPoint2: '固定週期費用，成本清晰可預期',
+      subPoint3: '高可用網關 + 智能調度，穩定可靠',
+      overdraftTitle: '支持透支，臨時超額也不斷流',
+      overdraftDesc: '當日額度用超時可在透支額度內繼續調用，按「往後預支天數」計量，不會因為一次高強度使用就瞬間停擺——趕進度時尤其省心。'
     }
   },
 
@@ -300,6 +333,8 @@
     more: '更多',
     close: '關閉',
     toggleMenu: '切換選單',
+    clickToCopy: '點擊複製',
+    failed: '失敗',
     userMenu: '用戶選單',
     enabled: '已啟用',
     disabled: '已停用',
@@ -356,7 +391,7 @@
 
   regionNotice: {
     title: '服務提示',
-    description: '目前所在地區暫不支援存取用戶後台。請切換至受支援的網絡環境後再試。'
+    description: '很抱歉，您所在的地區不在我們的服務範圍內。'
   },
 
   adminCompliance: {
@@ -425,6 +460,7 @@
     logout: '退出登入',
     github: 'GitHub',
     mySubscriptions: '我的訂閱',
+    supportQqGroup: '售後 Q 群',
     buySubscription: '充值/訂閱',
     docs: '文件',
     myOrders: '我的訂單',
@@ -610,6 +646,8 @@
       wechatSystemBrowserOnly: '當前微信登入流程僅支持在系統瀏覽器中繼續。',
       wechatBrowserOnly: '當前微信登入流程僅支持在微信內置瀏覽器中繼續。',
       wechatNotConfigured: '微信登入尚未配置。'
+      ,
+      wechatNativeAppOnly: '當前僅配置微信移動應用登入，需要在原生 App 中通過微信 SDK 發起授權。'
     },
     linuxdoCallbackPageTitle: 'LinuxDo 登入回調',
     dingtalkCallbackPageTitle: '釘釘登入回調',
@@ -663,6 +701,27 @@
     invalidResetLinkHint: '此密碼重置連結無效或已過期。請重新請求一個新連結。',
     requestNewResetLink: '請求新的重置連結',
     invalidOrExpiredToken: '密碼重置連結無效或已過期。請重新請求一個新連結。'
+    ,
+    defaultSiteSubtitle: '快速穩定的大模型 API 服務',
+    dingtalkProviderName: '釘釘',
+    // 登入/註冊頁的條款同意提示（原先寫死在組件內，已收歸 i18n）
+    agreement: {
+      consentPrefix: '我已閱讀並同意',
+      separator: '、',
+      blockedTitle: '繼續登入前需要先同意最新條款。',
+      blockedDesc: '未同意前，帳號密碼輸入和快捷登入會保持禁用。',
+      viewTerms: '查看條款',
+      updateTitle: '條款更新通知',
+      updateDesc: '我們的服務條款已於 {date} 更新。在繼續使用服務之前，請仔細閱讀並同意以下條款。',
+      recently: '近期',
+      relatedDocs: '相關文檔',
+      reject: '拒絕',
+      acceptAndContinue: '同意並繼續',
+      loginBlockedWarning: '未同意最新條款前，無法輸入帳號密碼或使用快捷登入。',
+      loginRequiredWarning: '請先閱讀並同意最新條款後再登入。',
+      registerBlockedWarning: '未同意最新條款前，無法註冊或使用快捷登入。',
+      registerRequiredWarning: '請先閱讀並同意最新條款後再註冊。'
+    }
   },
 
   // Step-up（敏感操作二次驗證）
@@ -739,6 +798,52 @@
   groups: {
     subscription: '訂閱',
     rateMultiplierTip: '「Nx 倍率」是該分組相對官方價的扣額度速度：數字越大、池子越穩定，同樣的用量扣得也越多；它是系統扣費的系數，不是最終價格。疊加套餐折扣後你實際相當於官方價幾折，見分組描述。'
+    ,
+    rateMultiplierLabel: '{rate}x 倍率'
+  },
+
+  // 金鑰一鍵接入彈窗（原先寫死在 KeyOnboardingModal.vue 內，已收歸 i18n）
+  keyOnboarding: {
+    title: '一鍵接入',
+    currentKey: '當前金鑰',
+    endpoint: 'API 端點',
+    copy: '複製',
+    copied: '已複製',
+    intro: '推薦用 CC Switch 一鍵導入，自動完成各客戶端配置；也可手動配置或用腳本。',
+    recommended: '推薦',
+    envVars: '環境變量',
+    genericSdk: '通用 OpenAI SDK（任意兼容客戶端）',
+    methodScript: '一鍵腳本',
+    methodManual: '手動 / 排障',
+    ccsIntro: 'CC Switch 是客戶端配置管理器：點擊下方按鈕即可把本金鑰與端點一鍵導入，自動寫好配置，最省心。',
+    ccsSupports: '支持導入：',
+    ccsImport: '導入到 CC Switch',
+    ccsHint: '若未彈出 CC Switch，說明尚未安裝或未關聯協議；先安裝 CC Switch，或複製下方連結手動導入。',
+    ccsManualLink: '導入連結',
+    claudeIntro: 'Claude Code 是 Anthropic 官方命令行客戶端。配置好端點與金鑰後即可使用：',
+    claudeStep1: '把下面的環境變量寫入終端，或儲存到 ~/.claude/settings.json。',
+    claudeStep2: '重啟終端 / 客戶端，讓配置生效。',
+    claudeStep3: '在項目目錄運行 claude 開始對話。',
+    claudeHint: '提示：settings.json 方式無需每次設置環境變量；修改後需重啟客戶端。',
+    codexIntro: 'Codex CLI 推薦用 CC Switch 一鍵導入（見上面的「CC Switch」標籤）。若要手動配置，寫入 ~/.codex/config.toml 並設置金鑰環境變量：',
+    codexStep1: '把下面內容寫入 ~/.codex/config.toml（自定義模型供應商指向本端點）。',
+    codexStep2: '設置環境變量 OPENAI_API_KEY 為你的金鑰。',
+    codexStep3: '重啟終端後運行 codex 即可。',
+    scriptIntro: '複製下面這段腳本到終端執行，自動寫入本地配置（腳本完全可見、不聯網下載）。',
+    scriptHint: '執行後重啟客戶端即可。腳本僅寫入本地配置文件，可先通讀再運行。',
+    scriptCommentCodex: '寫入 Codex 配置 + 金鑰環境變量',
+    scriptDoneCodex: 'Codex 已配置，運行 codex 開始',
+    scriptDoneClaude: 'Claude Code 已配置完成，請重啟客戶端',
+    manualIntro: '以上方式都不行？用下面的原始值手動填寫客戶端配置，並對照排障清單。',
+    troubleshootTitle: '排障清單',
+    troubleshoot1: '確認 base_url 完整且無多餘斜杠，OpenAI 系客戶端通常需要帶 /v1。',
+    troubleshoot2: '確認金鑰完整複製（以 sk- 開頭），無空格或換行。',
+    troubleshoot3: '修改環境變量或配置文件後，需重啟客戶端使其生效。',
+    troubleshoot4: '檢查本地網絡 / 代理是否能訪問該端點。',
+    troubleshoot5: '確認客戶端為較新版本，舊版本可能不支持自定義端點。',
+    viewDocs: '查看文檔',
+    model: '推薦模型',
+    apiKeyFull: 'API 金鑰'
   },
 
   // API Keys
@@ -2596,6 +2701,7 @@
         openai: 'OpenAI',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        grok: 'Grok',
       },
       saving: '儲存中...',
       noGroups: '暫無分組',
@@ -3748,6 +3854,7 @@
         anthropic: 'Anthropic',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        grok: 'Grok',
       },
       types: {
         oauth: 'OAuth',
@@ -3757,6 +3864,7 @@
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
+        grokOauth: 'Grok OAuth',
         antigravityApikey: '通過 Base URL + API Key 連接',
         antigravityProjectIdLabel: 'GCP Project ID（可選）',
         antigravityProjectIdPlaceholder: 'your-gcp-project-id',
@@ -3840,6 +3948,10 @@
         gemini3Flash: 'G3F',
         gemini3Image: 'G31FI',
         claude: 'Claude',
+        grokRequests: '請求',
+        grokTokens: 'Token',
+        grokUnknown: 'Grok 配額需等待首次上游回應返回 xAI rate-limit 頭後顯示。',
+        grokRetryAfter: '{time} 後重試',
         passiveSampled: '被動采樣',
         activeQuery: '查詢'
       },
@@ -4085,10 +4197,18 @@
         testModeCompact: 'Compact 探測',
         modelRestrictionDisabledByPassthrough: '已開啟自動透傳：模型白名單/映射不會生效。',
       },
+      grok: {
+        baseUrlHint: 'Grok OAuth 帳號會轉發到官方 xAI API Base URL。',
+        apiKeyHint: 'Grok 訂閱支持使用 OAuth refresh token；API Key 帳號不在本次範圍內。'
+      },
       anthropic: {
         apiKeyPassthrough: '自動透傳（僅替換認證）',
         apiKeyPassthroughDesc:
           '僅對 Anthropic API Key 生效。開啟後，messages/count_tokens 請求將透傳上游并僅替換認證，保留計費/并發/審計及必要安全過濾；關閉即可回滾到現有兼容鏈路。',
+        apiKeyAuthScheme: '上游認證方式',
+        apiKeyAuthSchemeDesc: '選擇轉發到 Anthropic 兼容上游時使用的 API Key 認證頭。Ollama Cloud 使用 Authorization: Bearer。',
+        apiKeyAuthSchemeXApiKey: 'x-api-key',
+        apiKeyAuthSchemeBearer: 'Authorization: Bearer',
         webSearchEmulation: 'Web Search 模擬',
         webSearchEmulationDesc:
           '為該 API Key 帳號啟用 web search 模擬。客戶端發送純 web_search 請求時，由網關調用第三方搜索 API 并構造回應返回。預設跟隨渠道配置。',
@@ -4136,6 +4256,23 @@
       customErrorCodes: '自定義錯誤碼',
       customErrorCodesHint: '僅對選中的錯誤碼停止調度',
       customErrorCodesWarning: '僅選中的錯誤碼會停止調度，其他錯誤將返回 500。',
+      headerOverride: {
+        title: '請求頭覆寫',
+        hint: '為兼容的 API Key 上游帳號設置靜態請求頭。',
+        info: '認證、傳輸和單次請求會話頭由網關管理，不能覆寫。',
+        namePlaceholder: '請求頭名稱',
+        valuePlaceholder: '請求頭值',
+        addRow: '添加請求頭',
+        emptyValueHint: '值留空的行只作為佔位，不會參與覆寫。',
+        bulkDisableHint: '儲存後將關閉所選帳號的請求頭覆寫並清空已有配置。',
+        bulkReplaceHint: '儲存後將用下方配置整體替換所選帳號已有的請求頭覆寫配置。',
+        bulkEmptyRows: '請至少添加一行請求頭再儲存；如需清空已有配置，請關閉上方開關。',
+        invalidName: '請求頭名稱格式不正確',
+        blockedName: '該請求頭由系統管理，不允許覆寫。',
+        duplicateName: '存在重複的請求頭名稱（匹配不區分大小寫）',
+        invalidValue: '請求頭值格式不正確或長度超限',
+        tooManyEntries: '最多允許 64 個請求頭覆寫'
+      },
       customErrorCodes429Warning:
         '429 已有內置的限流處理機制。添加到自定義錯誤碼後，將直接停止調度而非臨時限流。確定要添加嗎？',
       customErrorCodes529Warning:
@@ -4412,6 +4549,31 @@
           pleaseEnterRefreshToken: '請輸入 Refresh Token',
           pleaseEnterSessionToken: '請輸入 Session Token'
         },
+        grok: {
+          title: 'Grok 帳號授權',
+          followSteps: '請按照以下步驟授權您的 xAI/Grok 帳號：',
+          step1GenerateUrl: '生成 xAI 授權連結',
+          generateAuthUrl: '生成授權連結',
+          step2OpenUrl: '在瀏覽器中打開連結並完成授權',
+          openUrlDesc: '在新標簽頁中打開授權連結，登入 xAI 並授權 API 訪問。',
+          importantNotice: '當瀏覽器跳轉到本地 callback URL 後，請複製完整 URL 或 code 參數回填到這裡。',
+          step3EnterCode: '輸入授權連結或 Code',
+          authCodeDesc: '授權完成後，粘貼 callback URL、查詢字符串或授權碼：',
+          authCode: '授權連結或 Code',
+          authCodePlaceholder: '粘貼完整 callback URL、?code=... 查詢字符串或 code 值',
+          authCodeHint: '支持完整 callback URL、查詢字符串或裸 code。',
+          refreshTokenAuth: '手動輸入 RT',
+          refreshTokenDesc: '輸入已有的 xAI refresh token，支持批量輸入（每行一個）。',
+          refreshTokenPlaceholder: '粘貼您的 xAI refresh token...\n支持多個，每行一個',
+          validating: '驗證中...',
+          validateAndCreate: '驗證並創建帳號',
+          pleaseEnterRefreshToken: '請輸入 Refresh Token',
+          failedToGenerateUrl: '生成 Grok 授權連結失敗',
+          missingExchangeParams: '缺少授權碼、state 或 OAuth 會話',
+          failedToExchangeCode: 'Grok 授權碼兌換失敗',
+          failedToValidateRT: '驗證 Grok refresh token 失敗',
+          oauthOnlyHint: '首版 Grok 支持僅包含 OAuth 訂閱文本/推理轉發。'
+        },
         // Gemini specific
         gemini: {
           title: 'Gemini 帳戶授權',
@@ -4628,6 +4790,7 @@
       openaiAccount: 'OpenAI 帳號',
       geminiAccount: 'Gemini 帳號',
       antigravityAccount: 'Antigravity 帳號',
+      grokAccount: 'Grok 帳號',
       inputMethod: '輸入方式',
       reAuthorizedSuccess: '帳號重新授權成功',
       // Test Modal
@@ -6423,6 +6586,8 @@
         anthropicCacheTTL1hInjectionHint: '開啟後，對 Anthropic OAuth/Setup Token 請求體中已有的 ephemeral 緩存塊強制寫入 1h；回應 usage 預設按 5m 回寫計費，帳號級 TTL 計費設定優先。',
         rewriteMessageCacheControl: '改寫消息緩存斷點',
         rewriteMessageCacheControlHint: '預設關閉，保留客戶端在 messages 內容塊中的 cache_control。開啟後會清除客戶端斷點并注入代理斷點，適合不自行管理緩存策略的客戶端。',
+        clientDatelineNormalization: '歸一化 Anthropic 客戶端日期',
+        clientDatelineNormalizationHint: '僅作用於 Anthropic OAuth 和 Setup Token 請求，將客戶端日期中的非 ASCII 撇號和斜杠日期格式還原，避免上游指紋識別。預設開啟。',
         antigravityUserAgentVersion: 'Antigravity UA 版本',
         antigravityUserAgentVersionPlaceholder: '1.23.2',
         antigravityUserAgentVersionHint: '留空時使用 ANTIGRAVITY_USER_AGENT_VERSION 或內置預設值 1.23.2；填寫後後台設定優先。',
@@ -6617,6 +6782,8 @@
         cancelRateLimitWindowModeFixed: '固定',
         alipayForceQRCode: '支付寶強制二維碼支付',
         alipayForceQRCodeHint: '啟用後，移動端支付寶用戶將統一使用二維碼掃碼支付，不再跳轉至手機網站支付',
+        alipayMobilePrecreateDeepLink: '支付寶移動端當面付喚起',
+        alipayMobilePrecreateDeepLinkHint: '官方支付寶移動端使用當面付二維碼喚起 App；喚起失敗時顯示二維碼',
         helpText: '幫助文本',
         helpImageUrl: '幫助圖片連結',
         manageProviders: '管理服務商',
@@ -7398,6 +7565,7 @@
     notFoundDesc: '該自定義頁面不存在或已被刪除。',
     notConfiguredTitle: '頁面連結未配置',
     notConfiguredDesc: '該自定義頁面的 URL 未正確配置。',
+    toc: '目錄',
   },
 
   // Announcements Page

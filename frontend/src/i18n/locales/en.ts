@@ -110,6 +110,39 @@
     },
     footer: {
       allRightsReserved: 'All rights reserved.'
+    },
+    // Landing page marketing copy (previously hardcoded in HomeView.vue)
+    marketing: {
+      eyebrow: 'Subscription · Daily-refreshing quota · Overdraft-friendly',
+      endpointNote: '// OpenAI-compatible · one key',
+      valueTitle: 'Subscribe once, full every day',
+      valueDesc: 'Not a prepaid balance that drains away — a subscription whose quota refreshes daily. About ¥3.6 (≈ $0.5) a day unlocks usage equivalent to $2700 of official spend.',
+      stat1Value: '$90 / day',
+      stat1Label: 'Daily refreshing quota',
+      stat2Value: '¥3.6 / day',
+      stat2Label: 'Avg daily cost ≈ $0.5',
+      stat3Value: '$2700 / mo',
+      stat3Label: 'Equivalent official usage',
+      feature1Title: 'Fast & stable',
+      feature1Desc: 'High-availability gateway and smart routing — low latency, high success rate.',
+      feature2Title: 'Simple to connect',
+      feature2Desc: 'Compatible with mainstream OpenAI / Anthropic protocols — one key to start.',
+      feature3Title: 'Transparent metering',
+      feature3Desc: 'Every call’s latency, tokens and cost are recorded — usage visible in real time.',
+      integrateTitle: 'Connect anywhere',
+      integrateDesc: 'Standard-compatible — plug into your IDE or agent in minutes. One key, many clients.',
+      clientAnySdk: 'Any OpenAI SDK',
+      compareTitle: 'How it differs from pay-as-you-go',
+      paygTitle: 'Pay-as-you-go',
+      paygPoint1: 'Stops when balance runs out; constant top-ups',
+      paygPoint2: 'Unpredictable bills under heavy use',
+      paygPoint3: 'Price floats with usage, hard to estimate',
+      subTitle: 'This platform (subscription)',
+      subPoint1: 'Quota refreshes daily — usage resets, no balance burn',
+      subPoint2: 'Fixed per-cycle cost, clear and predictable',
+      subPoint3: 'High-availability gateway + smart routing',
+      overdraftTitle: 'Overdraft supported — bursts don’t cut you off',
+      overdraftDesc: 'When the daily quota is exceeded, you keep calling within an overdraft allowance, metered as days drawn forward — so a single heavy session never stalls you mid-task.'
     }
   },
 
@@ -300,6 +333,8 @@
     more: 'More',
     close: 'Close',
     toggleMenu: 'Toggle menu',
+    clickToCopy: 'Click to copy',
+    failed: 'Failed',
     userMenu: 'User menu',
     enabled: 'Enabled',
     disabled: 'Disabled',
@@ -356,7 +391,7 @@
 
   regionNotice: {
     title: 'Service notice',
-    description: 'This account area is not available from your current region. Please switch to a supported network environment and try again.'
+    description: "Sorry, your region is outside our service area."
   },
 
   adminCompliance: {
@@ -425,6 +460,7 @@
     logout: 'Logout',
     github: 'GitHub',
     mySubscriptions: 'My Subscriptions',
+    supportQqGroup: 'Support QQ Group',
     buySubscription: 'Recharge / Subscription',
     docs: 'Docs',
     myOrders: 'My Orders',
@@ -612,6 +648,8 @@
       wechatSystemBrowserOnly: 'This WeChat sign-in flow is only available in your system browser.',
       wechatBrowserOnly: 'This WeChat sign-in flow is only available inside the WeChat browser.',
       wechatNotConfigured: 'WeChat sign-in is not configured yet.'
+      ,
+      wechatNativeAppOnly: 'This site only has WeChat mobile app login configured. Continue from the native app through the WeChat SDK.'
     },
     linuxdoCallbackPageTitle: 'LinuxDo Sign-In Callback',
     dingtalkCallbackPageTitle: 'DingTalk Sign-In Callback',
@@ -664,6 +702,27 @@
     invalidResetLinkHint: 'This password reset link is invalid or has expired. Please request a new one.',
     requestNewResetLink: 'Request New Reset Link',
     invalidOrExpiredToken: 'The password reset link is invalid or has expired. Please request a new one.'
+    ,
+    defaultSiteSubtitle: 'Fast, reliable LLM API service',
+    dingtalkProviderName: 'DingTalk',
+    // Terms consent prompts on the login/register pages (previously hardcoded)
+    agreement: {
+      consentPrefix: 'I have read and agree to',
+      separator: ', ',
+      blockedTitle: 'You need to accept the latest terms before signing in.',
+      blockedDesc: 'Until you accept, password entry and social sign-in stay disabled.',
+      viewTerms: 'View terms',
+      updateTitle: 'Terms updated',
+      updateDesc: 'Our terms of service were updated on {date}. Please read and accept them before continuing.',
+      recently: 'recently',
+      relatedDocs: 'Related documents',
+      reject: 'Decline',
+      acceptAndContinue: 'Accept and continue',
+      loginBlockedWarning: 'Until you accept the latest terms, password entry and social sign-in are unavailable.',
+      loginRequiredWarning: 'Please read and accept the latest terms before signing in.',
+      registerBlockedWarning: 'Until you accept the latest terms, registration and social sign-in are unavailable.',
+      registerRequiredWarning: 'Please read and accept the latest terms before registering.'
+    }
   },
 
   // Step-up (sudo) 2FA prompt
@@ -740,6 +799,52 @@
   groups: {
     subscription: 'Sub',
     rateMultiplierTip: 'The "Nx rate" is how fast this group burns your balance relative to official pricing: a higher number means a more stable pool but also more balance consumed for the same usage. It is the billing coefficient, not the final price. See the group description for your effective fraction of official pricing after the plan discount.'
+    ,
+    rateMultiplierLabel: '{rate}x rate'
+  },
+
+  // Key onboarding dialog (previously hardcoded in KeyOnboardingModal.vue)
+  keyOnboarding: {
+    title: 'Quick connect',
+    currentKey: 'Current key',
+    endpoint: 'API endpoint',
+    copy: 'Copy',
+    copied: 'Copied',
+    intro: 'Recommended: import via CC Switch for automatic per-client setup — or configure manually / via script.',
+    recommended: 'Recommended',
+    envVars: 'Environment variables',
+    genericSdk: 'Generic OpenAI SDK (any compatible client)',
+    methodScript: 'Script',
+    methodManual: 'Manual',
+    ccsIntro: 'CC Switch is a client config manager: click below to import this key and endpoint in one click — it writes the config for you. Easiest option.',
+    ccsSupports: 'Imports into:',
+    ccsImport: 'Import to CC Switch',
+    ccsHint: 'If CC Switch did not open, it may not be installed or the protocol is unregistered — install CC Switch, or copy the link below to import manually.',
+    ccsManualLink: 'Import link',
+    claudeIntro: 'Claude Code is Anthropic’s official CLI. After pointing it at the endpoint and key:',
+    claudeStep1: 'Set the env vars below, or save them to ~/.claude/settings.json.',
+    claudeStep2: 'Restart your terminal / client so the config takes effect.',
+    claudeStep3: 'Run claude in your project to start.',
+    claudeHint: 'Tip: settings.json avoids exporting env vars each time; restart the client after editing.',
+    codexIntro: 'For Codex CLI we recommend CC Switch (see the “CC Switch” tab). To configure manually, write ~/.codex/config.toml and set the key env var:',
+    codexStep1: 'Write the block below to ~/.codex/config.toml (a custom model provider pointing at this endpoint).',
+    codexStep2: 'Set the OPENAI_API_KEY env var to your key.',
+    codexStep3: 'Restart your terminal, then run codex.',
+    scriptIntro: 'Copy this script into your terminal to write the local config (fully visible, no network download).',
+    scriptHint: 'Restart your client afterwards. The script only writes a local config file — read it before running.',
+    scriptCommentCodex: 'Write Codex config + key env var',
+    scriptDoneCodex: 'Codex configured — run codex to start',
+    scriptDoneClaude: 'Claude Code configured — please restart the client',
+    manualIntro: 'None of the above worked? Fill your client config manually with the raw values and follow the checklist.',
+    troubleshootTitle: 'Troubleshooting',
+    troubleshoot1: 'Confirm base_url is complete with no trailing slash; OpenAI-style clients usually need /v1.',
+    troubleshoot2: 'Confirm the key is copied in full (starts with sk-), no spaces or line breaks.',
+    troubleshoot3: 'Restart the client after changing env vars or config files.',
+    troubleshoot4: 'Check that your local network / proxy can reach the endpoint.',
+    troubleshoot5: 'Make sure the client is up to date; older versions may not support custom endpoints.',
+    viewDocs: 'View docs',
+    model: 'Suggested model',
+    apiKeyFull: 'API key'
   },
 
   // API Keys
@@ -7465,6 +7570,7 @@
     notFoundDesc: 'This custom page does not exist or has been removed.',
     notConfiguredTitle: 'Page URL not configured',
     notConfiguredDesc: 'The URL for this custom page has not been properly configured.',
+    toc: 'Contents',
   },
 
   // Announcements Page

@@ -159,12 +159,16 @@ const renderedHtml = computed(() => {
   return DOMPurify.sanitize(html)
 })
 
+// 标题由管理员自由填写，简繁两种写法都要能命中对应图标
+const PRIVACY_TITLE_HINTS = ['政策', '隐私', '私隱', '隱私']
+const REGION_TITLE_HINTS = ['国家', '地区', '國家', '地區']
+
 const documentIcon = computed<LegalDocumentIcon>(() => {
   const title = currentDocument.value?.title || ''
-  if (title.includes('政策') || title.includes('隐私')) {
+  if (PRIVACY_TITLE_HINTS.some((hint) => title.includes(hint))) {
     return 'shield'
   }
-  if (title.includes('国家') || title.includes('地区')) {
+  if (REGION_TITLE_HINTS.some((hint) => title.includes(hint))) {
     return 'globe'
   }
   if (title.includes('特定')) {

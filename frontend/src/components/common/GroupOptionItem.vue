@@ -31,7 +31,7 @@
           <span class="font-bold">{{ userRateMultiplier }}x</span>
         </template>
         <template v-else>
-          {{ rateMultiplier }}x 倍率
+          {{ t('groups.rateMultiplierLabel', { rate: rateMultiplier }) }}
         </template>
       </span>
       <!-- Checkmark -->

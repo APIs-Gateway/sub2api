@@ -257,6 +257,8 @@
     "// Bedrock 类型",
     "// Bedrock 类型不需要 OAuth 流程",
     "// Gemini OAuth 授权码兑换",
+    "// Grok OAuth 授权码兑换",
+    "// Grok 手动 RT 批量验证和创建",
     "// OpenAI OAuth 授权码兑换",
     "// OpenAI RT 批量验证和创建（共享逻辑）",
     "// OpenAI 手动 RT 批量验证和创建",
@@ -564,20 +566,9 @@
     ">钉</text>"
   ],
   "components/auth/LoginAgreementPrompt.vue": [
-    "<p class=\"font-medium\">继续登录前需要先同意最新条款。</p>",
-    "<p class=\"text-sm font-semibold text-gray-900 dark:text-white\">相关文档</p>",
-    "if (title.includes('国家') || title.includes('地区')) {",
-    "if (title.includes('政策') || title.includes('隐私')) {",
-    "同意并继续",
-    "我们的服务条款已于 {{ updatedAt || '近期' }} 更新。在继续使用服务之前，请仔细阅读并同意以下条款。",
-    "我已阅读并同意",
-    "拒绝",
-    "未同意前，账号密码输入和快捷登录会保持禁用。",
-    "条款更新通知",
-    "查看条款"
-  ],
-  "components/auth/WechatOAuthSection.vue": [
-    "'当前仅配置微信移动应用登录，需要在原生 App 中通过微信 SDK 发起授权。',"
+    "// 标题由管理员自由填写，简繁两种写法都要能命中对应图标",
+    "const PRIVACY_TITLE_HINTS = ['政策', '隐私', '私隱', '隱私']",
+    "const REGION_TITLE_HINTS = ['国家', '地区', '國家', '地區']"
   ],
   "components/channels/AvailableChannelsTable.vue": [
     "/** 用户专属倍率（group_id → multiplier）；无专属时由 GroupBadge 仅显示默认倍率。 */",
@@ -722,9 +713,6 @@
     "<!-- 会话数 -->",
     "<!-- 并发槽位 -->"
   ],
-  "components/common/GroupOptionItem.vue": [
-    "{{ rateMultiplier }}x 倍率"
-  ],
   "components/common/GroupSelector.vue": [
     "// antigravity 账户启用混合调度后，可选择 anthropic/gemini 分组",
     "// 默认：只能选择同 platform 的分组"
@@ -748,12 +736,8 @@
     "// 正常/在线：实心墨点"
   ],
   "components/common/SubscriptionProgressMini.vue": [
-    "// burndownRemainingWidth 返回 burn-down 订阅剩余余额占发放总额的百分比宽度。",
     "// windowsOf 返回该订阅已配置（limit>0）的三窗口（限额挂卡）。limit 为 null/0 = 该窗口不限，不展示进度条。",
-    "<!-- Burn-down 余额进度（新模型） -->",
-    "<!-- Progress bars for limited subscriptions（限额挂卡，逐窗口展示已配置的 日/周/月） -->",
-    "<span class=\"w-8 flex-shrink-0 text-[10px] text-gray-600 dark:text-gray-400\">余额</span>",
-    "第{{ burndownCalendarDay(subscription) }}天·剩${{"
+    "<!-- Progress bars for limited subscriptions（限额挂卡，逐窗口展示已配置的 日/周/月） -->"
   ],
   "components/Guide/steps.ts": [
     "* @param isSimpleMode 是否为简易模式（简易模式下会过滤分组相关步骤）",
@@ -788,15 +772,11 @@
     "// 条目顺序：密钥 → 用量 → 可用渠道 → 渠道状态 → 订阅/支付 → 兑换/资料。",
     "// 简单模式下，在系统设置前插入 API密钥",
     "<!-- 品牌标记：自定义 logo 优先；否则用黏土星芒（同时充当呼吸签名） -->",
-    "<!-- 售后 Q 群（点击复制） -->",
-    "<span class=\"block font-mono text-sm tabular-nums text-gray-700 dark:text-gray-300\">{{ qqCopied ? '已复制 ✓' : QQ_GROUP }}</span>",
-    "<span class=\"block text-xs text-gray-500 dark:text-dark-400\">售后 Q 群</span>",
-    "title=\"点击复制\""
+    "<!-- 售后 Q 群（点击复制） -->"
   ],
   "components/layout/AuthLayout.vue": [
     "<!-- Card Container：扁平发丝卡片，去胶囊圆角与阴影 -->",
-    "<!-- 品牌标记：自定义 logo 优先；否则黏土星芒 -->",
-    "const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || '快速稳定的大模型 API 服务')"
+    "<!-- 品牌标记：自定义 logo 优先；否则黏土星芒 -->"
   ],
   "components/layout/TablePageLayout.vue": [
     "/* 保持默认 table-row-group 显示，不使用 block */",
@@ -864,15 +844,13 @@
   ],
   "components/subscription/UserSubscriptionCard.vue": [
     "// Date.UTC 月份 0-indexed：传入 1-indexed 当前月 = 下个月 1 日（自动跨年）；东八区 00:00 = UTC −8h。",
-    "// endOfTodaySHms 返回「今天结束」= 东八区明日 00:00 的时间戳（ms）。",
     "// nextWindowReset 返回下一个东八区自然窗口重置时刻。",
     "// resetsAt = 下一个东八区自然窗口边界（日/周用固定时长精确，月按自然月，避免 720h 近似在 2 月 / 31 天月份算错）。",
-    "// ─── 手动透支「借一天」（三窗口模型）─────────────────────────────────────────",
+    "// ─── 手动透支（刷新当日额度；三窗口模型）─────────────────────────────────────────",
     "// 三窗口用量 vs 限额（限额挂卡；limit 为 null/0 = 该窗口不限）。",
     "// 与迷你进度统一口径：两处都只展示已配置（limit>0）的窗口，三窗口全空 → ∞ 不限额徽标。",
     "// 东八区常量：窗口/有效期边界一律按东八区自然日算（东八区无 DST，固定 +08:00）。",
     "// 仅在「生效卡 + 配了日额度」时出现按钮（无日限额永远撞不满，透支无意义）。",
-    "// 仍有可借的未来天：expires_at 晚于「今天结束」（东八区明日 00:00）。",
     "// 当日额度已撞满（先看后端惰性重置后的 daily_usage；无日限额则谈不上撞满）。",
     "// 把后端错误码映射为本地化文案；未知码回退到服务端 message,再回退到通用文案。",
     "// 支付成功由后端回调履约（延长/换卡），不在此同步扣费。",
@@ -888,9 +866,10 @@
     "中性次按钮（透支非错误，clay/primary 保留给 Signal）；代价提示交确认框。 -->"
   ],
   "components/user/dashboard/CheckinCard.vue": [
+    "// POST 可能已在服务端提交，只是成功响应在弱网或重启时丢失。先回查",
     "// Turnstile token 单次有效，无论成败都重置以便下次领取",
     "// notActive：基础签到被\"当日活跃度门槛\"拦住（未领、当日 Token 未达标、且无其他可领项）。",
-    "// 余额已变动，刷新用户信息让仪表盘余额同步更新",
+    "// 原子签到状态；确认领取计数前进时按成功处理，绝不重放 POST。",
     "<!-- Turnstile 人机校验：开启且仍可领取时显示 -->",
     "<!-- 右：进度 + 领取按钮 -->",
     "<!-- 左：标题 + 说明 -->",
@@ -919,23 +898,10 @@
     "<!-- 每日签到条（在按平台拆分上方） -->"
   ],
   "components/user/KeyOnboardingModal.vue": [
-    "'修改环境变量或配置文件后，需重启客户端使其生效。',",
-    "'在项目目录运行 claude 开始对话。',",
-    "'把下面内容写入 ~/.codex/config.toml（自定义模型供应商指向本端点）。',",
-    "'把下面的环境变量写入终端，或保存到 ~/.claude/settings.json。',",
-    "'检查本地网络 / 代理是否能访问该端点。',",
-    "'确认 base_url 完整且无多余斜杠，OpenAI 系客户端通常需要带 /v1。',",
-    "'确认客户端为较新版本，老版本可能不支持自定义端点。',",
-    "'确认密钥完整复制（以 sk- 开头），无空格或换行。',",
-    "'设置环境变量 OPENAI_API_KEY 为你的密钥。',",
-    "'重启终端 / 客户端，让配置生效。',",
-    "'重启终端后运行 codex 即可。',",
     "/* 用户可手动复制链接 */",
     "// CC Switch 为推荐方式",
     "// 供应商 id（用于 config.toml 的表名，需为安全标识符）",
-    "// 手动",
-    "// 脚本",
-    "// 自包含中英文案（避免改动共享 i18n 文件）",
+    "// 接入指引文案（i18n: keyOnboarding.*）",
     "// 轻量内联代码块组件（带复制按钮）",
     "<!-- ===== CC Switch（推荐） ===== -->",
     "<!-- ===== 一键脚本 ===== -->",
@@ -944,35 +910,7 @@
     "<!-- 支持导入的客户端 -->",
     "<!-- 方式选择（下划线 tab） -->",
     "`curl ${openaiBase.value}/chat/completions \\\\\\n -H \"Authorization: Bearer ${fullKey.value}\" \\\\\\n -H \"Content-Type: application/json\" \\\\\\n -d '{\"model\":\"gpt-5.5\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}'`",
-    "`from openai import OpenAI\\n\\nclient = OpenAI(\\n base_url=\"${openaiBase.value}\",\\n api_key=\"${fullKey.value}\",\\n)\\nresp = client.chat.completions.create(\\n model=\"gpt-5.5\",\\n messages=[{\"role\": \"user\", \"content\": \"你好\"}],\\n)\\nprint(resp.choices[0].message.content)`",
-    "apiKeyFull: 'API 密钥',",
-    "ccsHint: '若未弹出 CC Switch，说明尚未安装或未关联协议；先安装 CC Switch，或复制下方链接手动导入。',",
-    "ccsImport: '导入到 CC Switch',",
-    "ccsIntro: 'CC Switch 是客户端配置管理器：点击下方按钮即可把本密钥与端点一键导入，自动写好配置，最省心。',",
-    "ccsManualLink: '导入链接',",
-    "ccsSupports: '支持导入：',",
-    "claudeHint: '提示：settings.json 方式无需每次设置环境变量；修改后需重启客户端。',",
-    "claudeIntro: 'Claude Code 是 Anthropic 官方命令行客户端。配置好端点与密钥后即可使用：',",
-    "codexIntro: 'Codex CLI 推荐用 CC Switch 一键导入（见上面的「CC Switch」标签）。若要手动配置，写入 ~/.codex/config.toml 并设置密钥环境变量：',",
-    "copied: '已复制',",
-    "copy: '复制',",
-    "currentKey: '当前密钥',",
-    "endpoint: 'API 端点',",
-    "envVars: '环境变量',",
-    "genericSdk: '通用 OpenAI SDK（任意兼容客户端）',",
-    "intro: '推荐用 CC Switch 一键导入，自动完成各客户端配置；也可手动配置或用脚本。',",
-    "manualIntro: '以上方式都不行？用下面的原始值手动填写客户端配置，并对照排障清单。',",
-    "model: '推荐模型',",
-    "recommended: '推荐',",
-    "return `# 写入 Codex 配置 + 密钥环境变量\\nmkdir -p ~/.codex\\ncat > ~/.codex/config.toml <<'EOF'\\nmodel = \"gpt-5.5\"\\nmodel_provider = \"${providerId.value}\"\\n\\n[model_providers.${providerId.value}]\\nname = \"${(props.siteName || 'sub2api').trim() || 'sub2api'}\"\\nbase_url = \"${openaiBase.value}\"\\nwire_api = \"chat\"\\nEOF\\ncat >> ~/.zshrc <<'EOF'\\nexport OPENAI_API_KEY=\"${fullKey.value}\"\\nEOF\\nsource ~/.zshrc\\necho \"✓ Codex 已配置，运行 codex 开始\"`",
-    "return `mkdir -p ~/.claude\\ncat > ~/.claude/settings.json <<'EOF'\\n{\\n \"env\": {\\n \"ANTHROPIC_BASE_URL\": \"${base.value}\",\\n \"ANTHROPIC_AUTH_TOKEN\": \"${fullKey.value}\"\\n }\\n}\\nEOF\\necho \"✓ Claude Code 已配置完成，请重启客户端\"`",
-    "scriptHint: '执行后重启客户端即可。脚本仅写入本地配置文件，可先通读再运行。',",
-    "scriptIntro: '复制下面这段脚本到终端执行，自动写入本地配置（脚本完全可见、不联网下载）。',",
-    "title: '一键接入',",
-    "troubleshootTitle: '排障清单',",
-    "viewDocs: '查看文档',",
-    "{ id: 'manual', label: isZh.value ? '手动 / 排障' : 'Manual' },",
-    "{ id: 'script', label: isZh.value ? '一键脚本' : 'Script' },"
+    "`from openai import OpenAI\\n\\nclient = OpenAI(\\n base_url=\"${openaiBase.value}\",\\n api_key=\"${fullKey.value}\",\\n)\\nresp = client.chat.completions.create(\\n model=\"gpt-5.5\",\\n messages=[{\"role\": \"user\", \"content\": \"你好\"}],\\n)\\nprint(resp.choices[0].message.content)`"
   ],
   "components/user/monitor/MonitorTimeline.vue": [
     "// 4 级高度 + 颜色双重编码：高=好+绿，短=坏+红，灰=未测试。",
@@ -1156,7 +1094,9 @@
     "// 确保页码在有效范围内"
   ],
   "i18n/index.ts": [
+    "// 两个中文 locale 互为兜底，个别 key 漏翻时中文界面不会直接掉成英文。",
     "// 同步更新浏览器页签标题，使其跟随语言切换",
+    "// 补全缺失文案时使用的兜底链，数组靠后的优先级更高。",
     "{ code: 'zh-CN', name: '简体中文', flag: '简' },",
     "{ code: 'zh-HK', name: '繁體中文（香港）', flag: '繁' },"
   ],
@@ -1374,6 +1314,7 @@
     "* 格式化数字（支持 K/M/B 单位）",
     "* 格式化日期",
     "* 格式化日期时间（完整格式）",
+    "* 格式化日期时间（精确到分钟）",
     "* 格式化日期（只显示日期部分）",
     "* 格式化时间（显示时分秒）",
     "* 格式化相对时间",
@@ -1389,8 +1330,9 @@
     "// 超过1天：显示 \"Xd Yh\""
   ],
   "utils/formatters.ts": [
+    "* 但至少保留 2 位小数（0.035 -> \"0.035\"，0.3 -> \"0.30\"，1 -> \"1.00\"）",
     "* 格式化缓存 token 数量（1K/1M 缩写）",
-    "* 自适应精度格式化倍率（确保小数值如 0.001 不被截断）"
+    "* 自适应精度格式化倍率：保留至多 4 位小数并去掉末尾多余的 0，"
   ],
   "utils/oauthAffiliate.ts": [
     "// 忽略浏览器存储异常。"
@@ -1554,6 +1496,12 @@
     "已选 {{ editModelsListSelectedCount }} /",
     "账号过滤控制"
   ],
+  "views/admin/ops/components/OpsAlertEventsCard.vue": [
+    "// 与 DataTable 一致：< 768px 切换为卡片视图，避免宽表在移动端被截断。"
+  ],
+  "views/admin/ops/components/OpsAlertRulesCard.vue": [
+    "// 与 DataTable 一致：< 768px 切换为卡片视图，避免宽表在移动端被截断。"
+  ],
   "views/admin/ops/components/OpsConcurrencyCard.vue": [
     "// 优先显示异常账号",
     "// 分组维度汇总",
@@ -1609,6 +1557,7 @@
     "thresholds?: OpsMetricThresholds | null // 阈值配置"
   ],
   "views/admin/ops/components/OpsOpenAITokenStatsCard.vue": [
+    "// 与 DataTable 一致：< 768px 切换为卡片视图，避免宽表在移动端被截断。",
     "// 先只重置页码，等待下一次 watch（仅 page 变化）再发起请求。",
     "// 避免“筛选变化 -> 重置页码 -> 触发两次请求”：",
     "// 防御：若 total 变化导致当前页超出最大页，则回退到末页并重新拉取一次。"
@@ -1668,15 +1617,16 @@
     "<th class=\"px-3 py-2 text-left text-[11px] font-semibold text-gray-500\">日志详细信息</th>",
     "<th class=\"w-[170px] px-3 py-2 text-left text-[11px] font-semibold text-gray-500\">时间</th>",
     "<th class=\"w-[80px] px-3 py-2 text-left text-[11px] font-semibold text-gray-500\">级别</th>",
+    "OPS_SYSTEM_LOG_CLEANUP_FILTER_REQUIRED: '清理需要至少一个筛选条件（起止时间或其他字段）'",
     "appStore.showError(err?.response?.data?.detail || '保存日志配置失败')",
     "appStore.showError(err?.response?.data?.detail || '回滚日志配置失败')",
-    "appStore.showError(err?.response?.data?.detail || '清理系统日志失败')",
     "appStore.showError(err?.response?.data?.detail || '系统日志加载失败')",
     "appStore.showSuccess('已回滚到启动日志配置')",
     "appStore.showSuccess('日志运行时配置已生效')",
     "appStore.showSuccess(`清理完成，删除 ${res.deleted || 0} 条日志`)",
     "const ok = window.confirm('确认回滚为启动配置（env/yaml）并立即生效？')",
     "const ok = window.confirm('确认按当前筛选条件清理系统日志？该操作不可撤销。')",
+    "extractApiErrorMessage(err, err?.response?.data?.detail || '清理系统日志失败', {",
     "{ value: '', label: '全部' },",
     "{{ runtimeSaving ? '保存中...' : '保存并生效' }}",
     "保留天数",
@@ -1764,7 +1714,7 @@
     "timing: \"用户请求命中内容审计或风控规则、但尚未被禁用时发送。\",",
     "timing: \"用户请求密码重置链接时发送。\",",
     "timing: \"订阅订单完成支付并成功开通或续期后发送。\",",
-    "timing: \"运维日报、周报、错误摘要或账号健康报表到达配置的发送时间时发送。\",",
+    "timing: \"运维日报、周报、错误摘要或账号健康报表到达配置的发送时间时发送；日报和周报的完整指标均可在模板中编辑。\",",
     "timing: \"运维监控规则触发告警并满足邮件通知配置时发送给运维收件人。\",",
     "{{ selectedEventMeta.optional ? localText(\"可退订通知\", \"Optional\") : localText(\"事务邮件\", \"Transactional\") }}"
   ],
@@ -1793,6 +1743,7 @@
     "'密钥已配置，留空以保留当前值。',",
     "'微信开放平台 PC 应用 AppID',",
     "'微信开放平台 PC 应用 AppSecret',",
+    "'普通充值手续费率'",
     "'移动应用 AppID',",
     "'移动应用 AppSecret',",
     "/* ============ 系统设置 Tab 导航 ============ */",
@@ -1853,6 +1804,8 @@
     "<!-- 每日签到 feature card -->",
     "<!-- 订阅到期提醒 -->",
     "<!-- 身份同步开关（仅 internal_only 模式下可见） -->",
+    "<label class=\"input-label\">加密货币手续费率</label>",
+    "<p class=\"mt-0.5 text-xs text-gray-400\">仅用于 Crypto Pay，普通充值手续费不受影响。</p>",
     "? \"https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md#支持的支付方式\"",
     "? localText(\"复选框会显示在登录按钮下方，未勾选前所有登录入口禁用。\", \"The checkbox appears below the login button and gates all login actions.\")",
     "? localText('密钥已配置，留空以保留当前值。', 'Secret configured. Leave empty to keep the current value.')",
@@ -1951,8 +1904,7 @@
   "views/auth/DingTalkCallbackView.vue": [
     "// step=email_completion: 用户无邮箱，需要跳到补邮箱页面",
     "// 用户从补邮箱页\"我已有账户\"按钮跳回时携带 bind=1，跳过 email_completion 自动 redirect，",
-    "// 直接进入 bind_login 输入密码绑定已有账户。",
-    "const providerName = '钉钉'"
+    "// 直接进入 bind_login 输入密码绑定已有账户。"
   ],
   "views/auth/DingTalkEmailCompletionView.vue": [
     "// 全局\"开放注册\"关闭且未开启钉钉企业模式豁免时，引导用户去绑定已有账户而非死路",
@@ -1962,14 +1914,8 @@
     "// Reset turnstile state（token 已使用，清除以避免重复使用）",
     "// 优先使用重发时新获取的 token（因为初始 token 可能已被使用）"
   ],
-  "views/auth/LoginView.vue": [
-    "appStore.showWarning('未同意最新条款前，无法输入账号密码或使用快捷登录。')",
-    "appStore.showWarning('请先阅读并同意最新条款后再登录。')"
-  ],
   "views/auth/RegisterView.vue": [
-    "// 根据错误码显示对应的翻译",
-    "appStore.showWarning('未同意最新条款前，无法注册或使用快捷登录。')",
-    "appStore.showWarning('请先阅读并同意最新条款后再注册。')"
+    "// 根据错误码显示对应的翻译"
   ],
   "views/HomeView.vue": [
     "/* ===== Quiet Ledger 暖中性调色板（落地页自带变量，与全站主题一致） ===== */",
@@ -1978,7 +1924,7 @@
     "/* 弱化 ink（ink 非 Tailwind 颜色，/NN 透明度修饰符不生效，这里显式补齐） */",
     "/* 深墨色对比带：打破全象牙、增加节奏 */",
     "/* 载入淡入上浮（带 --d 错峰；尊重 reduce-motion 由全局规则收敛） */",
-    "// 落地页营销文案（自包含中英；数字为占位示例，待确认后替换）",
+    "// 落地页营销文案（i18n: home.marketing.*；数字为占位示例，待确认后替换）",
     "<!-- Default Home Page — Quiet Ledger: 编辑式、单张纸、发丝线、无光晕/无假终端 -->",
     "<!-- Editorial numbered list（次级亮点，下移到底部） -->",
     "<!-- Signature: mono 端点（OpenAI 兼容） -->",
@@ -1986,37 +1932,12 @@
     "<!-- 签名：大号几何星芒，低透明、缓慢呼吸（填补右侧留白、增加张力） -->",
     "<!-- 订阅价值：深墨色对比带 + 大号 Fraunces 黏土数字（重要信息上移） -->",
     "<!-- 订阅制 vs 传统按量付费 -->",
-    "<!-- 随处接入 -->",
-    "clients: ['Claude Code', 'Codex', 'OpenClaw', 'Hermes', 'Cherry Studio', '任意 OpenAI SDK'],",
-    "compareTitle: '和传统按量付费有什么不同',",
-    "endpointNote: '// OpenAI 兼容 · 一个密钥即用',",
-    "eyebrow: '订阅制 · 每日刷新额度 · 可透支',",
-    "integrateDesc: '兼容主流协议，几分钟内接入你的 IDE 或 Agent；一个密钥，多端通用。',",
-    "integrateTitle: '随处接入',",
-    "overdraftDesc: '当日额度用超时可在透支额度内继续调用，按「往后预支天数」计量，不会因为一次高强度使用就瞬间停摆——赶进度时尤其省心。',",
-    "overdraftTitle: '支持透支，临时超额也不断流',",
-    "paygPoints: ['余额扣完即停，需要不断充值', '高强度使用时账单不可预期', '价格随用量浮动，难以估算'],",
-    "paygTitle: '传统按量付费',",
-    "subPoints: ['额度每日刷新，用量重置不烧余额', '固定周期费用，成本清晰可预期', '高可用网关 + 智能调度，稳定可靠'],",
-    "subTitle: '本平台（订阅制）',",
-    "valueDesc: '不是预存余额慢慢扣，而是订阅制：额度每日自动刷新。平均每天约 ¥3.6（≈ $0.5），即可调用相当于官方 $2700 的用量。',",
-    "valueTitle: '订阅一次，每天都满',",
-    "{ title: '极速稳定', desc: '高可用网关与智能调度，低延迟、高成功率，稳定可靠。' },",
-    "{ title: '简单接入', desc: '兼容主流 OpenAI / Anthropic 协议，获取一个密钥即可开始。' },",
-    "{ title: '透明可计量', desc: '每一次调用的耗时、Token 与费用都精确记录，用量实时可视。' },",
-    "{ value: '$2700 / 月', label: '相当于官方用量' },",
-    "{ value: '$90 / 日', label: '每日刷新额度' },",
-    "{ value: '¥3.6 / 日', label: '平均每日成本 ≈ $0.5' },"
-  ],
-  "views/KeyUsageView.vue": [
-    "const windowMap: Record<string, string> = { '5h': '5H', '1d': locale.value === 'zh' ? '日' : 'D', '7d': '7D' }",
-    "label: `${t('keyUsage.usedQuota')} (${locale.value === 'zh' ? '周' : 'W'})`, value: `${usd(sub.weekly_usage_usd)} / ${usd(sub.weekly_limit_usd)}`, valueClass: getUsageColor(pct),",
-    "label: `${t('keyUsage.usedQuota')} (${locale.value === 'zh' ? '日' : 'D'})`, value: `${usd(sub.daily_usage_usd)} / ${usd(sub.daily_limit_usd)}`, valueClass: getUsageColor(pct),",
-    "label: `${t('keyUsage.usedQuota')} (${locale.value === 'zh' ? '月' : 'M'})`, value: `${usd(sub.monthly_usage_usd)} / ${usd(sub.monthly_limit_usd)}`, valueClass: getUsageColor(pct),"
+    "<!-- 随处接入 -->"
   ],
   "views/public/LegalDocumentView.vue": [
-    "if (title.includes('国家') || title.includes('地区')) {",
-    "if (title.includes('政策') || title.includes('隐私')) {",
+    "// 标题由管理员自由填写，简繁两种写法都要能命中对应图标",
+    "const PRIVACY_TITLE_HINTS = ['政策', '隐私', '私隱', '隱私']",
+    "const REGION_TITLE_HINTS = ['国家', '地区', '國家', '地區']",
     "if (title.includes('特定')) {"
   ],
   "views/user/AvailableChannelsView.vue": [
@@ -2027,13 +1948,7 @@
     "<!-- 选中分组的说明 + 实付提示 -->"
   ],
   "views/user/CustomPageView.vue": [
-    ".replace(/[^\\w一-鿿]+/g, '-')",
-    "<span class=\"ml-1 text-xs\">目录</span>",
-    "<span class=\"toc-title\">目录</span>",
-    "btn.textContent = '复制'",
-    "btn.textContent = '失败'",
-    "btn.textContent = '已复制 ✓'",
-    "setTimeout(() => { btn.textContent = '复制' }, 2000)"
+    ".replace(/[^\\w一-鿿]+/g, '-')"
   ],
   "views/user/KeysView.vue": [
     "* 优化：错误处理改进，优先显示后端返回的具体错误消息（如权限不足等），",
