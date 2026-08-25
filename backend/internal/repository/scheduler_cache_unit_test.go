@@ -649,3 +649,46 @@ func TestSchedulerCacheSetAccountDeletesStaleEntryOnUnencodablePayload(t *testin
 	require.NoError(t, err)
 	require.Nil(t, cached, "a stale cache entry must not survive a failed re-encode")
 }
+
+// TestSchedulerCacheSetAccountPropagatesWriteAccountsError covers the
+// SetAccount branch that surfaces a genuine writeAccounts error (as opposed
+// to the unencodable-payload case above, which is swallowed and converted
+// into a cache-delete instead of an error).
+func TestSchedulerCacheSetAccountPropagatesWriteAccountsError(t *testing.T) {
+	ctx := context.Background()
+	cache, mr := newSchedulerCacheUnitWithRedis(t)
+	account := service.Account{ID: 9301, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+
+	mr.SetError("ERR simulated redis failure")
+	t.Cleanup(func() { mr.SetError("") })
+
+	err := cache.SetAccount(ctx, &account)
+	require.Error(t, err, "a real redis failure while flushing the pipeline must be propagated, not swallowed")
+}
+
+// TestSchedulerCacheWriteAccountsReturnsErrorWhenMidBatchFlushFails covers
+// the chunked-flush branch inside writeAccounts: once pending reaches
+// writeChunkSize mid-loop, a pipeline flush failure there must abort the
+// whole write (as opposed to the final post-loop flush, which is already
+// exercised elsewhere).
+func TestSchedulerCacheWriteAccountsReturnsErrorWhenMidBatchFlushFails(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	cache, ok := newSchedulerCacheWithChunkSizes(rdb, defaultSchedulerSnapshotMGetChunkSize, 2).(*schedulerCache)
+	require.True(t, ok)
+
+	accounts := []service.Account{
+		{ID: 9401, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+		{ID: 9402, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+		{ID: 9403, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+	}
+
+	mr.SetError("ERR simulated redis failure")
+	t.Cleanup(func() { mr.SetError("") })
+
+	cacheable, err := cache.writeAccounts(ctx, accounts)
+	require.Error(t, err, "a pipeline flush failure at the writeChunkSize boundary must abort the batch")
+	require.Nil(t, cacheable)
+}
