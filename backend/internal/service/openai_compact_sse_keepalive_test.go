@@ -1,8 +1,10 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -13,6 +15,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// compactKeepaliveHijackableWriter lets tests exercise the delegate branches of
+// Hijack/CloseNotify/Pusher without relying on httptest.ResponseRecorder, which
+// does not implement http.Hijacker and would panic inside gin's own wrapper.
+type compactKeepaliveHijackableWriter struct {
+	gin.ResponseWriter
+	hijackErr error
+}
+
+func (w *compactKeepaliveHijackableWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, w.hijackErr
+}
+
+func (w *compactKeepaliveHijackableWriter) CloseNotify() <-chan bool {
+	return make(chan bool, 1)
+}
+
+func (w *compactKeepaliveHijackableWriter) Pusher() http.Pusher {
+	return nil
+}
 
 type compactKeepaliveFailWriter struct {
 	gin.ResponseWriter
@@ -357,6 +379,25 @@ func TestOpenAICompactKeepaliveWriter_NilInnerWriter_NoPanic(t *testing.T) {
 	assert.NotPanics(t, func() {
 		assert.Nil(t, w.Pusher())
 	})
+}
+
+// upstream(2f4478fd32a1): once released (k == nil), Hijack/CloseNotify/Pusher
+// must delegate to the underlying gin.ResponseWriter rather than taking the
+// nil-guard path (that path is covered by TestOpenAICompactKeepaliveWriter_NilInnerWriter_NoPanic).
+func TestOpenAICompactKeepaliveWriter_HijackCloseNotifyPusherDelegateWhenReleased(t *testing.T) {
+	c, _ := newCompactBridgeTestContext(t, true)
+	mock := &compactKeepaliveHijackableWriter{ResponseWriter: c.Writer, hijackErr: errors.New("mock hijack")}
+	w := &openAICompactKeepaliveWriter{ResponseWriter: mock}
+
+	conn, rw, err := w.Hijack()
+	require.Nil(t, conn)
+	require.Nil(t, rw)
+	require.EqualError(t, err, "mock hijack")
+
+	ch := w.CloseNotify()
+	require.NotNil(t, ch)
+
+	require.Nil(t, w.Pusher())
 }
 
 func TestOpenAICompactKeepaliveWriter_NilKeepalive_NoPanic(t *testing.T) {
