@@ -585,3 +585,67 @@ func TestSchedulerCacheGroupLifecycleLeasePropagatesRedisErrors(t *testing.T) {
 		OwnerToken: "owner",
 	}))
 }
+
+// unencodableSchedulerCacheTime is out of encoding/json's supported year range
+// ([0,9999]) and makes json.Marshal fail on the account's CreatedAt field —
+// the same failure mode reported for scheduler cache writes with corrupt
+// account rows (invalid stored timestamps).
+var unencodableSchedulerCacheTime = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+func TestSchedulerCacheWriteAccountsSkipsUnencodableAccount(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+
+	good := service.Account{ID: 9001, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+	bad := service.Account{ID: 9002, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, CreatedAt: unencodableSchedulerCacheTime}
+
+	cacheable, err := cache.writeAccounts(ctx, []service.Account{good, bad})
+	require.NoError(t, err, "one unencodable account must not fail the whole batch")
+	require.Len(t, cacheable, 1)
+	require.Equal(t, good.ID, cacheable[0].ID)
+
+	got, err := cache.GetAccount(ctx, good.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got, "the encodable account in the same batch must still be cached")
+
+	missing, err := cache.GetAccount(ctx, bad.ID)
+	require.NoError(t, err)
+	require.Nil(t, missing, "the unencodable account must not leave a partial cache entry")
+}
+
+func TestSchedulerCacheSetSnapshotOmitsUnencodableAccountFromZSet(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 51, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+
+	good := service.Account{ID: 9101, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+	bad := service.Account{ID: 9102, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, CreatedAt: unencodableSchedulerCacheTime}
+
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{good, bad}))
+
+	snapshot, ok, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, snapshot, 1, "the snapshot ZSET must not reference an account that was never written to sched:acc:*")
+	require.Equal(t, good.ID, snapshot[0].ID)
+}
+
+func TestSchedulerCacheSetAccountDeletesStaleEntryOnUnencodablePayload(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	account := service.Account{ID: 9201, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+
+	require.NoError(t, cache.SetAccount(ctx, &account))
+	cached, err := cache.GetAccount(ctx, account.ID)
+	require.NoError(t, err)
+	require.NotNil(t, cached)
+
+	account.CreatedAt = unencodableSchedulerCacheTime
+	require.NoError(t, cache.SetAccount(ctx, &account), "an unencodable payload must delete the stale entry, not error out")
+
+	cached, err = cache.GetAccount(ctx, account.ID)
+	require.NoError(t, err)
+	require.Nil(t, cached, "a stale cache entry must not survive a failed re-encode")
+}
