@@ -7,6 +7,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestEnsureCodexIdentityHeaders(t *testing.T) {
+	t.Run("补齐缺失身份头", func(t *testing.T) {
+		h := make(http.Header)
+
+		ensureCodexIdentityHeaders(h)
+		enforceCodexIdentityHeaders(h)
+
+		require.Equal(t, "codex_cli_rs", h.Get("originator"))
+		require.Equal(t, codexCLIUserAgent, h.Get("user-agent"))
+		require.Equal(t, codexCLIVersion, h.Get("version"))
+		require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
+	})
+
+	t.Run("保留已有官方UA和合法version并重新配对", func(t *testing.T) {
+		const tuiUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
+		h := make(http.Header)
+		h.Set("user-agent", tuiUA)
+		h.Set("version", "9.9.9")
+		h.Set("OpenAI-Beta", "assistants=v2")
+
+		ensureCodexIdentityHeaders(h)
+		enforceCodexIdentityHeaders(h)
+
+		require.Equal(t, "codex-tui", h.Get("originator"))
+		require.Equal(t, tuiUA, h.Get("user-agent"))
+		require.Equal(t, "9.9.9", h.Get("version"))
+		require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
+	})
+}
+
 func TestEnforceCodexIdentityHeaders(t *testing.T) {
 	tests := []struct {
 		name           string
