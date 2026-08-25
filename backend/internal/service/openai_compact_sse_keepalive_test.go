@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -302,4 +303,89 @@ func TestOpsStreamError_PreservesFirstFailureAndRejectsInvalidValues(t *testing.
 	c.Set(OpsStreamErrorKey, "wrong-type")
 	_, recorded = GetOpsStreamError(c)
 	require.False(t, recorded)
+}
+
+// upstream(2f4478fd32a1): a keepalive writer must never panic even when its
+// inner gin.ResponseWriter or the keepalive controller is unset.
+func TestOpenAICompactKeepaliveWriter_NilInnerWriter_NoPanic(t *testing.T) {
+	w := &openAICompactKeepaliveWriter{
+		k: &openAICompactSSEKeepalive{stop: make(chan struct{})},
+	}
+	w.ResponseWriter = nil
+
+	assert.NotPanics(t, func() {
+		assert.Equal(t, 0, w.Status())
+	})
+	assert.NotPanics(t, func() {
+		assert.Equal(t, 0, w.Size())
+	})
+	assert.NotPanics(t, func() {
+		assert.False(t, w.Written())
+	})
+	assert.NotPanics(t, func() {
+		assert.NotNil(t, w.Header())
+	})
+	assert.NotPanics(t, func() {
+		n, err := w.Write([]byte("test"))
+		assert.Equal(t, 0, n)
+		assert.NoError(t, err)
+	})
+	assert.NotPanics(t, func() {
+		n, err := w.WriteString("test")
+		assert.Equal(t, 0, n)
+		assert.NoError(t, err)
+	})
+	assert.NotPanics(t, func() {
+		w.WriteHeader(http.StatusOK)
+	})
+	assert.NotPanics(t, func() {
+		w.WriteHeaderNow()
+	})
+	assert.NotPanics(t, func() {
+		w.Flush()
+	})
+	assert.NotPanics(t, func() {
+		conn, rw, err := w.Hijack()
+		assert.Nil(t, conn)
+		assert.Nil(t, rw)
+		assert.Error(t, err)
+	})
+	assert.NotPanics(t, func() {
+		ch := w.CloseNotify()
+		assert.NotNil(t, ch)
+	})
+	assert.NotPanics(t, func() {
+		assert.Nil(t, w.Pusher())
+	})
+}
+
+func TestOpenAICompactKeepaliveWriter_NilKeepalive_NoPanic(t *testing.T) {
+	c, rec := newCompactBridgeTestContext(t, true)
+	w := &openAICompactKeepaliveWriter{ResponseWriter: c.Writer}
+
+	assert.NotPanics(t, func() {
+		assert.Equal(t, 0, w.Status())
+	})
+	assert.NotPanics(t, func() {
+		assert.Equal(t, 0, w.Size())
+	})
+	assert.NotPanics(t, func() {
+		assert.False(t, w.Written())
+	})
+	assert.NotPanics(t, func() {
+		w.Header().Set("X-Test", "ok")
+	})
+	assert.NotPanics(t, func() {
+		w.WriteHeader(http.StatusAccepted)
+	})
+	assert.NotPanics(t, func() {
+		n, err := w.WriteString("ok")
+		assert.Equal(t, 2, n)
+		assert.NoError(t, err)
+	})
+	assert.NotPanics(t, func() {
+		w.Flush()
+	})
+	require.Equal(t, "ok", rec.Header().Get("X-Test"))
+	require.Equal(t, "ok", rec.Body.String())
 }
