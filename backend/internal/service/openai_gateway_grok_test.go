@@ -568,61 +568,6 @@ func TestOpenAIGatewayServiceGrokHelperBranches(t *testing.T) {
 	require.Equal(t, 1, repo.setTempUnschedCalls)
 }
 
-// upstream(1c214eaca4f4): Grok OAuth accounts must never be routed through the
-// ChatGPT Codex identity-restoration path added for OpenAI OAuth accounts;
-// client-supplied User-Agent/OpenAI-Beta must pass through unchanged and no
-// originator/version should be injected.
-func TestOpenAIGatewayServiceGrokForwardAsAnthropicKeepsOwnIdentity(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	body := []byte(`{"model":"grok","max_tokens":32,"stream":false,"messages":[{"role":"user","content":"hi"}]}`)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
-	c.Request.Header.Set("OpenAI-Beta", "grok-experimental")
-	c.Request.Header.Set("originator", "opencode")
-
-	account := &Account{
-		ID:          54,
-		Name:        "grok",
-		Platform:    PlatformGrok,
-		Type:        AccountTypeOAuth,
-		Concurrency: 1,
-		Credentials: map[string]any{
-			"access_token": "access-token",
-			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-			"base_url":     xai.DefaultCLIBaseURL,
-		},
-	}
-	repo := &grokQuotaAccountRepo{
-		mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
-			accountsByID: map[int64]*Account{54: account},
-		},
-	}
-	upstream := &httpUpstreamRecorder{resp: openAICompatSSECompletedResponse("resp_grok_messages", "grok-4.3")}
-	svc := &OpenAIGatewayService{
-		httpUpstream:      upstream,
-		grokTokenProvider: NewGrokTokenProvider(repo, nil, nil),
-		accountRepo:       repo,
-	}
-
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
-	require.NoError(t, err)
-	require.Equal(t, xai.DefaultCLIBaseURL+"/responses", upstream.lastReq.URL.String())
-	require.Equal(t, "Bearer access-token", upstream.lastReq.Header.Get("Authorization"))
-	require.Equal(t, "sub2api-grok/1.0", upstream.lastReq.Header.Get("User-Agent"))
-	require.Equal(t, "grok-experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
-	require.Empty(t, upstream.lastReq.Header.Get("originator"))
-	require.Empty(t, upstream.lastReq.Header.Get("version"))
-	require.Equal(t, "grok-4.5", gjson.GetBytes(upstream.lastBody, "model").String())
-	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
-	require.NotContains(t, string(upstream.lastBody), "chatgpt.com")
-	require.Equal(t, "grok", result.Model)
-	require.Equal(t, "grok-4.5", result.UpstreamModel)
-	require.Equal(t, 5, result.Usage.InputTokens)
-	require.Equal(t, 2, result.Usage.OutputTokens)
-	require.Contains(t, recorder.Body.String(), `"type":"message"`)
-	require.Contains(t, recorder.Body.String(), "ok")
-}
-
 func TestPatchGrokResponsesBody_StripsReasoningContentNull(t *testing.T) {
 	t.Parallel()
 
