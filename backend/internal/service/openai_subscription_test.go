@@ -125,3 +125,85 @@ func TestShouldApplyChatGPTAccountInfoPlanType(t *testing.T) {
 	require.False(t, shouldApplyChatGPTAccountInfoPlanType("", ""))
 	require.True(t, shouldApplyChatGPTAccountInfoPlanType("", "pro"))
 }
+
+func TestFetchChatGPTAccountInfo_AppliesUsableDirectOrgMatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/backend-api/accounts/check/v4-2023-04-27", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"accounts": map[string]any{
+				"org-healthy-workspace": map[string]any{
+					"account": map[string]any{
+						"plan_type": "team",
+					},
+				},
+				"personal-account": map[string]any{
+					"account": map[string]any{
+						"plan_type": "free",
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	oldURL := chatGPTAccountsCheckURL
+	chatGPTAccountsCheckURL = server.URL + "/backend-api/accounts/check/v4-2023-04-27"
+	t.Cleanup(func() { chatGPTAccountsCheckURL = oldURL })
+
+	got := fetchChatGPTAccountInfo(context.Background(), func(proxyURL string) (*req.Client, error) {
+		return req.C().SetTimeout(5 * time.Second), nil
+	}, "access-token", "", "org-healthy-workspace")
+
+	require.NotNil(t, got)
+	require.Equal(t, "team", got.PlanType)
+}
+
+func TestIsUsableChatGPTAccountCandidate(t *testing.T) {
+	now := time.Now()
+
+	require.False(t, isUsableChatGPTAccountCandidate(nil, now))
+
+	require.False(t, isUsableChatGPTAccountCandidate(map[string]any{
+		"is_deactivated": true,
+	}, now))
+
+	require.True(t, isUsableChatGPTAccountCandidate(map[string]any{
+		"entitlement": map[string]any{
+			"expires_at": "not-a-valid-timestamp",
+		},
+	}, now))
+
+	require.True(t, isUsableChatGPTAccountCandidate(map[string]any{
+		"entitlement": map[string]any{
+			"expires_at": now.Add(24 * time.Hour).UTC().Format(time.RFC3339),
+		},
+	}, now))
+
+	require.False(t, isUsableChatGPTAccountCandidate(map[string]any{
+		"entitlement": map[string]any{
+			"expires_at": now.Add(-24 * time.Hour).UTC().Format(time.RFC3339),
+		},
+	}, now))
+}
+
+func TestHasChatGPTAccountDeactivatedMarker(t *testing.T) {
+	require.False(t, hasChatGPTAccountDeactivatedMarker(map[string]any{}))
+
+	require.True(t, hasChatGPTAccountDeactivatedMarker(map[string]any{
+		"is_disabled": true,
+	}))
+
+	require.True(t, hasChatGPTAccountDeactivatedMarker(map[string]any{
+		"deactivated_at": "2026-01-01T00:00:00Z",
+	}))
+
+	require.True(t, hasChatGPTAccountDeactivatedMarker(map[string]any{
+		"status": "suspended",
+	}))
+
+	require.False(t, hasChatGPTAccountDeactivatedMarker(map[string]any{
+		"status": "active",
+	}))
+}
