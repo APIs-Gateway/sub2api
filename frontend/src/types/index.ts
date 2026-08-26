@@ -229,6 +229,8 @@ export interface PublicSettings {
   balance_low_notify_enabled: boolean
   account_quota_notify_enabled: boolean
   balance_low_notify_threshold: number
+  /** 1 单位法币充值可兑多少站内额度，用于把额度折算回法币展示。缺省/损坏为 1（不折算）。 */
+  balance_recharge_multiplier?: number
   channel_monitor_enabled: boolean
   channel_monitor_default_interval_seconds: number
   available_channels_enabled: boolean
@@ -1304,6 +1306,13 @@ export interface UsageLog {
   total_cost: number
   actual_cost: number
   rate_multiplier: number
+  /**
+   * actual_cost 折算成法币后的金额，以及折算所用单价（法币/额度）。
+   * 由服务端按这笔用量的额度来源算出——钱包按充值倍率、订阅按该卡的 u(D)——
+   * 前端不重算定价公式。折算不可用时为 0/缺省，此时应回落到只显示额度。
+   */
+  fiat_cost?: number
+  fiat_per_credit?: number
   billing_type: number
 
   request_type?: UsageRequestType

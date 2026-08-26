@@ -1054,6 +1054,16 @@
     totalCost: '总消费',
     standardCost: '标准',
     actualCost: '实际',
+    // 三个概念要分清：官方价（真美元，可对照模型官网）→ 扣除额度（站内记账单位）
+    // → 你的花费（真金白银）。以前只显示中间那个还带 $ 符号，最容易被误读。
+    creditUnit: '额度',
+    officialPrice: '官方价',
+    creditsDeducted: '扣除额度',
+    yourSpend: '你的花费',
+    fiatTotalApprox: '按充值价估算',
+    currencyFiat: '¥',
+    currencyCredit: '额度',
+    currencySwitchLabel: '切换计价单位',
     accountCost: '成本',
     userBilled: '用户扣费',
     accountBilled: '账号计费',

@@ -152,11 +152,38 @@ func (h *UsageHandler) List(c *gin.Context) {
 		return
 	}
 
+	// 把本页额度折算成法币：用户看到的 actual_cost 是站内额度，「扣了 5」既不是
+	// 5 美元也不是 5 元，必须给出法币锚点才不会被误读。折算按额度来源区分——
+	// 钱包按充值倍率、订阅按该卡的 u(D)，因为订阅额度显著更便宜。
+	rate := h.creditFiatRate(c, subject.UserID, records)
+
 	out := make([]dto.UsageLog, 0, len(records))
 	for i := range records {
-		out = append(out, *dto.UsageLogFromService(&records[i]))
+		item := *dto.UsageLogFromService(&records[i])
+		item.FiatPerCredit = rate.FiatPerCredit(item.BillingType, item.SubscriptionID)
+		item.FiatCost = rate.Convert(item.ActualCost, item.BillingType, item.SubscriptionID)
+		out = append(out, item)
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
+}
+
+// creditFiatRate 装配当前用户这批用量记录的额度→法币折算器。
+// 设置读取失败时返回按默认倍率构造的折算器（等价于不折算），而不是让请求失败：
+// 法币折算是展示增强，不该成为用量列表的新故障点。
+func (h *UsageHandler) creditFiatRate(c *gin.Context, userID int64, records []service.UsageLog) *service.CreditFiatRate {
+	ctx := c.Request.Context()
+
+	multiplier := 1.0
+	cfg := service.DefaultSubscriptionPricingConfig()
+	if h.settingService != nil {
+		// 一次查询同时拿到充值倍率和定价公式——settings 没有缓存，这个接口高频。
+		multiplier, cfg = h.settingService.CreditFiatPricing(ctx)
+	}
+
+	if h.usageService == nil {
+		return service.NewCreditFiatRate(multiplier)
+	}
+	return h.usageService.BuildCreditFiatRate(ctx, userID, multiplier, cfg, records)
 }
 
 // ListErrors handles listing the current user's failed requests (redacted).

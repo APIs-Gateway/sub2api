@@ -471,6 +471,13 @@ type UsageLog struct {
 	ActualCost        float64 `json:"actual_cost"`
 	RateMultiplier    float64 `json:"rate_multiplier"`
 
+	// FiatCost 是 ActualCost 折算成法币后的金额，FiatPerCredit 是折算所用的单价
+	// （法币/额度）。两者由服务端按这笔用量的额度来源算出——钱包扣费按充值倍率、
+	// 订阅扣费按该卡的 u(D)——前端不重算，避免定价公式在前后端各存一份而漂移。
+	// 折算不可用时为 0，前端应据此回落到只显示额度。
+	FiatCost      float64 `json:"fiat_cost"`
+	FiatPerCredit float64 `json:"fiat_per_credit"`
+
 	BillingType  int8   `json:"billing_type"`
 	RequestType  string `json:"request_type"`
 	Stream       bool   `json:"stream"`
