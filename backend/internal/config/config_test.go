@@ -15,6 +15,9 @@ import (
 func resetViperWithJWTSecret(t *testing.T) {
 	t.Helper()
 	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("DATA_DIR", "")
 	t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
 }
 
@@ -27,8 +30,45 @@ func TestLoadRedisUsernameFromEnvironment(t *testing.T) {
 	require.Equal(t, "app-user", cfg.Redis.Username)
 }
 
+func TestLoadHonorsExplicitConfigFile(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	configFile := filepath.Join(t.TempDir(), "reporter-config.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("server:\n  host: 192.0.2.10\n  port: 9001\n"), 0o600))
+	t.Setenv("CONFIG_FILE", configFile)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "192.0.2.10", cfg.Server.Host)
+	require.Equal(t, 9001, cfg.Server.Port)
+}
+
+func TestConfigFileTakesPrecedenceOverDataDir(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	dataDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.yaml"), []byte("server:\n  host: 192.0.2.20\n"), 0o600))
+	configFile := filepath.Join(t.TempDir(), "explicit.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("server:\n  host: 192.0.2.30\n"), 0o600))
+	t.Setenv("DATA_DIR", dataDir)
+	t.Setenv("CONFIG_FILE", configFile)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "192.0.2.30", cfg.Server.Host)
+}
+
+func TestLoadReturnsErrorForMissingConfigFile(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("CONFIG_FILE", filepath.Join(t.TempDir(), "missing.yaml"))
+
+	_, err := Load()
+	require.ErrorContains(t, err, "read config error")
+}
+
 func TestLoadForBootstrapAllowsMissingJWTSecret(t *testing.T) {
 	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("DATA_DIR", "")
 	t.Setenv("JWT_SECRET", "")
 
 	cfg, err := LoadForBootstrap()
@@ -954,11 +994,27 @@ func TestNormalizeStringSlice(t *testing.T) {
 }
 
 func TestGetServerAddressFromEnv(t *testing.T) {
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("DATA_DIR", "")
 	t.Setenv("SERVER_HOST", "127.0.0.1")
 	t.Setenv("SERVER_PORT", "9090")
 
 	address := GetServerAddress()
 	if address != "127.0.0.1:9090" {
+		t.Fatalf("GetServerAddress() = %q", address)
+	}
+}
+
+func TestGetServerAddressFromConfigFile(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "setup.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("server:\n  host: 192.0.2.40\n  port: 9191\n"), 0o600))
+	t.Setenv("CONFIG_FILE", configFile)
+	t.Setenv("DATA_DIR", "")
+	t.Setenv("SERVER_HOST", "")
+	t.Setenv("SERVER_PORT", "")
+
+	address := GetServerAddress()
+	if address != "192.0.2.40:9191" {
 		t.Fatalf("GetServerAddress() = %q", address)
 	}
 }
