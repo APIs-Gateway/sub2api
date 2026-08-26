@@ -251,6 +251,9 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if cfg.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost != 0 {
 		t.Fatalf("Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost = %v, want 0", cfg.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost)
 	}
+	if cfg.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom != 0 {
+		t.Fatalf("Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom = %v, want 0", cfg.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom)
+	}
 	if !cfg.Gateway.OpenAIWS.StoreDisabledForceNewConn {
 		t.Fatalf("Gateway.OpenAIWS.StoreDisabledForceNewConn = false, want true")
 	}
@@ -1906,6 +1909,21 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be non-negative",
 		},
 		{
+			name:    "scheduler_score_weights.quota_headroom 不能为 NaN",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom = math.NaN() },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
+		},
+		{
+			name:    "scheduler_score_weights.quota_headroom 不能为 Inf",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom = math.Inf(1) },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
+		},
+		{
+			name:    "scheduler_score_weights.quota_headroom 不能为负数",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom = -0.1 },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be non-negative",
+		},
+		{
 			name: "scheduler_score_weights 不能全为 0",
 			mutate: func(c *Config) {
 				c.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 0
@@ -1954,6 +1972,18 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 		weights.ErrorRate = 0
 		weights.TTFT = 0
 		weights.UpstreamCost = 1
+		require.NoError(t, cfg.Validate())
+	})
+
+	t.Run("quota_headroom 可以作为唯一基础权重", func(t *testing.T) {
+		cfg := buildValid(t)
+		weights := &cfg.Gateway.OpenAIWS.SchedulerScoreWeights
+		weights.Priority = 0
+		weights.Load = 0
+		weights.Queue = 0
+		weights.ErrorRate = 0
+		weights.TTFT = 0
+		weights.QuotaHeadroom = 0.1
 		require.NoError(t, cfg.Validate())
 	})
 }
