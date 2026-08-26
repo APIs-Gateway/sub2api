@@ -4,15 +4,18 @@ import { nextTick } from 'vue'
 
 import UsageView from '../UsageView.vue'
 
-const { query, getStatsByDateRange, list, showError, showWarning, showSuccess, showInfo } = vi.hoisted(() => ({
-  query: vi.fn(),
-  getStatsByDateRange: vi.fn(),
-  list: vi.fn(),
-  showError: vi.fn(),
-  showWarning: vi.fn(),
-  showSuccess: vi.fn(),
-  showInfo: vi.fn(),
-}))
+const { query, getStatsByDateRange, list, showError, showWarning, showSuccess, showInfo, publicSettings } =
+  vi.hoisted(() => ({
+    query: vi.fn(),
+    getStatsByDateRange: vi.fn(),
+    list: vi.fn(),
+    showError: vi.fn(),
+    showWarning: vi.fn(),
+    showSuccess: vi.fn(),
+    showInfo: vi.fn(),
+    // 充值倍率决定法币折算，也决定切换器是否出现（倍率为 1 时两个口径同值，隐藏）。
+    publicSettings: { value: { balance_recharge_multiplier: 13 } as Record<string, unknown> | null },
+  }))
 
 const messages: Record<string, string> = {
   'usage.costDetails': 'Cost Breakdown',
@@ -63,6 +66,15 @@ const messages: Record<string, string> = {
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per request',
   'admin.usage.billingModeImage': 'Image',
+  'usage.officialPrice': 'Official price',
+  'usage.creditsDeducted': 'Credits deducted',
+  'usage.yourSpend': 'Your spend',
+  'usage.creditUnit': 'credits',
+  'usage.fiatTotalApprox': 'estimated at top-up rate',
+  'usage.currencyFiat': '¥',
+  'usage.currencyCredit': 'Credits',
+  'usage.currencySwitchLabel': 'Switch display unit',
+  'usage.totalCost': 'Total Cost',
 }
 
 vi.mock('@/api', () => ({
@@ -76,7 +88,15 @@ vi.mock('@/api', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError, showWarning, showSuccess, showInfo }),
+  useAppStore: () => ({
+    showError,
+    showWarning,
+    showSuccess,
+    showInfo,
+    get cachedPublicSettings() {
+      return publicSettings.value
+    },
+  }),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -214,7 +234,9 @@ describe('user UsageView tooltip', () => {
     expect(text).toContain('Fast')
     expect(text).toContain('Rate')
     expect(text).toContain('1.00x')
-    expect(text).toContain('Billed')
+    // tooltip 原本这行叫 Billed 且带 $ 前缀，但站内扣的是额度不是美元，
+    // 已拆成「官方价 / 扣除额度 / 你的花费」三行。
+    expect(text).toContain('Credits deducted')
     expect(text).toContain('$0.092883')
     expect(text).toContain('$5.0000 / 1M tokens')
     expect(text).toContain('$30.0000 / 1M tokens')
@@ -551,5 +573,151 @@ describe('user UsageView tooltip', () => {
     expect(text).toContain('Output size')
     expect(text).toContain('3840x2160')
     expect(text).toContain('4K x 2')
+  })
+})
+
+describe('user UsageView currency display', () => {
+  // 一笔订阅扣费：官方价 $1.666667，3x 倍率扣 5 额度。这张卡 u(D)=0.05，
+  // 所以真实花费是 ¥0.25——按充值价 1/13 估算会得到 ¥0.385，差了一半多。
+  const subscriptionRow = {
+    request_id: 'req-sub-1',
+    actual_cost: 5,
+    total_cost: 1.666667,
+    fiat_cost: 0.25,
+    fiat_per_credit: 0.05,
+    rate_multiplier: 3,
+    billing_type: 1,
+    subscription_id: 202,
+    input_cost: 0,
+    output_cost: 0,
+    cache_creation_cost: 0,
+    cache_read_cost: 0,
+    input_tokens: 10,
+    output_tokens: 20,
+    cache_creation_tokens: 0,
+    cache_read_tokens: 0,
+    cache_creation_5m_tokens: 0,
+    cache_creation_1h_tokens: 0,
+    image_count: 0,
+    image_size: null,
+    first_token_ms: null,
+    duration_ms: 1,
+    created_at: '2026-03-08T00:00:00Z',
+  }
+
+  beforeEach(() => {
+    query.mockReset()
+    getStatsByDateRange.mockReset()
+    list.mockReset()
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    window.localStorage.clear()
+    ;(globalThis as any).ResizeObserver = class {
+      observe() {}
+      disconnect() {}
+    }
+  })
+
+  async function mountView() {
+    query.mockResolvedValue({ items: [subscriptionRow], total: 1, pages: 1 })
+    getStatsByDateRange.mockResolvedValue({
+      total_requests: 1,
+      total_tokens: 100,
+      total_cost: 1.666667,
+      total_actual_cost: 5,
+      avg_duration_ms: 1,
+    })
+    list.mockResolvedValue({ items: [] })
+
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Pagination: true,
+          EmptyState: true,
+          Select: true,
+          DateRangePicker: true,
+          DataTable: DataTableStub,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+    await flushPromises()
+    await nextTick()
+    // 展示口径是模块级单例，跨用例会串味，每次挂载后显式复位成默认的法币口径。
+    ;(wrapper.vm as any).$?.setupState?.setCurrencyMode('fiat')
+    await nextTick()
+    return wrapper
+  }
+
+  /** 去掉 Intl 插入的不间断空格，断言只关心数字。 */
+  function plain(wrapper: { text: () => string }): string {
+    return wrapper.text().replace(/ | /g, ' ')
+  }
+
+  it('默认按法币展示，且明细用服务端精确折算值而不是按充值倍率估算', async () => {
+    const wrapper = await mountView()
+
+    const text = plain(wrapper)
+    // 明细：服务端按这张卡的 u(D)=0.05 算出 ¥0.25，是真实花费。
+    expect(text).toContain('0.250')
+    // 总计：本轮走聚合 SQL，仍按充值价 1/13 估算成 ¥0.385，并显式标注为估算。
+    // 两个数并存是当前的已知取舍，不是 bug——所以这里断言标注必须在。
+    expect(text).toContain('estimated at top-up rate')
+  })
+
+  it('切到额度口径后展示原始额度', async () => {
+    const wrapper = await mountView()
+
+    ;(wrapper.vm as any).$?.setupState?.setCurrencyMode('credit')
+    await nextTick()
+
+    expect(wrapper.text()).toContain('5.000000')
+  })
+
+  it('倍率为 1 时隐藏切换器——两个口径数字相同', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 1 }
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[role="group"]').exists()).toBe(false)
+  })
+
+  it('倍率不为 1 时渲染切换器', async () => {
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[role="group"]').exists()).toBe(true)
+  })
+
+  it('tooltip 把官方价、扣除额度、你的花费拆成三行', async () => {
+    const wrapper = await mountView()
+    const setupState = (wrapper.vm as any).$?.setupState
+
+    setupState.tooltipData = subscriptionRow
+    setupState.tooltipVisible = true
+    await nextTick()
+
+    const text = plain(wrapper)
+    // 三个概念必须同时可见：官方价是外部锚点，额度是站内记账，花费才是真钱。
+    expect(text).toContain('Official price')
+    expect(text).toContain('Credits deducted')
+    expect(text).toContain('Your spend')
+    expect(text).toContain('1.666667')
+    expect(text).toContain('5.000000')
+    expect(text).toContain('0.250')
+  })
+
+  it('缺少服务端折算值时回落到按充值倍率估算', async () => {
+    const wrapper = await mountView()
+    const setupState = (wrapper.vm as any).$?.setupState
+
+    // 用 3.9 额度而不是 5，是为了让回落值 0.300 与总计卡片的估算值 0.385 区分开，
+    // 否则断言会被总计那个数「假通过」。
+    setupState.tooltipData = { ...subscriptionRow, actual_cost: 3.9, fiat_cost: undefined }
+    setupState.tooltipVisible = true
+    await nextTick()
+
+    // 3.9 ÷ 13 = 0.3
+    expect(plain(wrapper)).toContain('0.300')
   })
 })

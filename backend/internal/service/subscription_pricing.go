@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"math"
 
@@ -49,6 +50,58 @@ func DefaultSubscriptionPricingConfig() SubscriptionPricingConfig {
 		TMax:   360,
 		TStep:  30,
 	}
+}
+
+// subscriptionPricingSettingKeys 是装载定价公式所需的全部 setting key。
+var subscriptionPricingSettingKeys = []string{
+	SettingSubscriptionMinDaily,
+	SettingSubscriptionMinRatioStartDaily,
+	SettingSubscriptionMaxDaily,
+	SettingSubscriptionMaxDays,
+	SettingSubscriptionMinRatio,
+	SettingSubscriptionMaxRatio,
+}
+
+// creditFiatPricingSettingKeys = 定价公式所需的 key 再加上充值倍率。
+var creditFiatPricingSettingKeys = append(
+	append([]string{}, subscriptionPricingSettingKeys...),
+	SettingBalanceRechargeMult,
+)
+
+// CreditFiatPricing 一次性读出把站内额度折算成法币所需的全部参数：钱包侧的充值
+// 倍率，以及订阅侧的定价公式（用来算每张卡的 u(D)）。
+//
+// 合并成一次 settings 查询是刻意的：用量列表是高频接口，而 settingRepo.GetMultiple
+// 每次都直接打库、没有任何缓存，分两次读会给每一次翻页都多加一趟往返。
+// 读取失败时返回默认值（倍率 1 = 不折算），不让展示功能变成新的故障点。
+func (s *SettingService) CreditFiatPricing(ctx context.Context) (float64, SubscriptionPricingConfig) {
+	if s == nil || s.settingRepo == nil {
+		return defaultBalanceRechargeMultiplier, DefaultSubscriptionPricingConfig()
+	}
+	vals, err := s.settingRepo.GetMultiple(ctx, creditFiatPricingSettingKeys)
+	if err != nil {
+		return defaultBalanceRechargeMultiplier, DefaultSubscriptionPricingConfig()
+	}
+	multiplier := normalizeBalanceRechargeMultiplier(
+		pcParseFloat(vals[SettingBalanceRechargeMult], defaultBalanceRechargeMultiplier),
+	)
+	return multiplier, subscriptionPricingConfigFromSettings(vals)
+}
+
+// SubscriptionPricingConfig 读取当前生效的订阅定价配置。
+// 原本这段装载逻辑只藏在 SubscriptionService 内部，但展示层把订阅额度折算回
+// 法币时也需要 u(D)（见 CreditFiatRate），所以提到 SettingService 上共用，
+// 避免两处各自解析同一批 setting 而漂移。
+// 任何一步失败都回落到默认配置：折算是展示功能，不该让用量页整个报错。
+func (s *SettingService) SubscriptionPricingConfig(ctx context.Context) SubscriptionPricingConfig {
+	if s == nil || s.settingRepo == nil {
+		return DefaultSubscriptionPricingConfig()
+	}
+	vals, err := s.settingRepo.GetMultiple(ctx, subscriptionPricingSettingKeys)
+	if err != nil {
+		return DefaultSubscriptionPricingConfig()
+	}
+	return subscriptionPricingConfigFromSettings(vals)
 }
 
 func subscriptionPricingConfigFromSettings(vals map[string]string) SubscriptionPricingConfig {

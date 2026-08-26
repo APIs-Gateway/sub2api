@@ -343,6 +343,9 @@ type PublicSettings struct {
 	BalanceLowNotifyThreshold        float64                  `json:"balance_low_notify_threshold"`
 	BalanceLowNotifyRechargeURL      string                   `json:"balance_low_notify_recharge_url"`
 
+	// BalanceRechargeMultiplier 让前端把站内额度折算回法币展示（额度 ÷ 倍率）。
+	BalanceRechargeMultiplier float64 `json:"balance_recharge_multiplier"`
+
 	ChannelMonitorEnabled                bool `json:"channel_monitor_enabled"`
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
 

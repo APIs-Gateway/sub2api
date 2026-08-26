@@ -7,6 +7,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
@@ -365,6 +366,78 @@ func (s *UsageService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs [
 		return nil, fmt.Errorf("get batch api key usage stats: %w", err)
 	}
 	return stats, nil
+}
+
+// collectSubscriptionIDs 从一批用量记录里挑出需要查卡的订阅 ID 并去重。
+//
+// 独立成纯函数是为了能直接测：它决定了「哪些记录按订阅单价折算、哪些走钱包价」，
+// 判错的后果是用户看到的花费偏离真实值近一倍。
+func collectSubscriptionIDs(logs []UsageLog) []int64 {
+	seen := make(map[int64]struct{})
+	ids := make([]int64, 0, 4)
+	for i := range logs {
+		if logs[i].BillingType != BillingTypeSubscription {
+			continue
+		}
+		// SubscriptionID 是 *int64——钱包扣费的记录这里就是 nil。
+		ref := logs[i].SubscriptionID
+		if ref == nil || *ref <= 0 {
+			continue
+		}
+		id := *ref
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// BuildCreditFiatRate 为一批用量记录构造「站内额度 → 法币」折算器。
+//
+// 记录里的 actual_cost 是站内额度而不是法币，同一页记录还可能混着钱包扣费和
+// 若干张不同订阅卡的扣费——每张卡的额度单价 u(D) 各不相同（D 越大越便宜）。
+// 这里一次性把本页涉及到的卡查出来登记进折算器，避免逐条查库。
+//
+// userID 把查询限制在调用者自己的卡上：subscription_id 虽然取自该用户自己的
+// 用量记录，但多一道过滤能保证即使上游的用户过滤出错，也不会把别人卡的定价
+// 泄露出去。
+func (s *UsageService) BuildCreditFiatRate(
+	ctx context.Context,
+	userID int64,
+	multiplier float64,
+	cfg SubscriptionPricingConfig,
+	logs []UsageLog,
+) *CreditFiatRate {
+	rate := NewCreditFiatRate(multiplier)
+	if s == nil || s.entClient == nil || userID <= 0 {
+		return rate
+	}
+
+	ids := collectSubscriptionIDs(logs)
+	if len(ids) == 0 {
+		// 整页都是钱包扣费——不查库，这是常见情况，不该白付一次往返。
+		return rate
+	}
+
+	// 故意不加 deleted_at IS NULL：历史用量记录常常指向已经过期或已删除的卡，
+	// 那些记录同样需要按当初那张卡的单价折算，否则老账单会突然变贵。
+	cards, err := s.entClient.UserSubscription.Query().
+		Where(
+			usersubscription.IDIn(ids...),
+			usersubscription.UserIDEQ(userID),
+		).
+		All(ctx)
+	if err != nil {
+		// 查不到卡就整批回落到充值价折算。宁可让订阅用户看到偏高的估算，
+		// 也不要因为一个展示字段让整个用量列表失败。
+		return rate
+	}
+	for _, card := range cards {
+		rate.RegisterSubscription(card.ID, card.DailyAmountUsd, cfg)
+	}
+	return rate
 }
 
 // ListWithFilters lists usage logs with admin filters.

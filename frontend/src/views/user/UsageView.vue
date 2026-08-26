@@ -61,15 +61,56 @@
             <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
               {{ t('usage.totalCost') }}
             </p>
-            <Icon name="dollar" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
+            <!-- 切换器就放在最容易被误读的那个数字旁边，而不是藏进设置页 -->
+            <div
+              v-if="currencyCanSwitch"
+              class="flex items-center gap-0.5 rounded-md bg-gray-100 p-0.5 dark:bg-dark-700"
+              role="group"
+              :aria-label="t('usage.currencySwitchLabel')"
+            >
+              <button
+                v-for="opt in currencyOptions"
+                :key="opt.value"
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors"
+                :class="
+                  currencyMode === opt.value
+                    ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-white'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                "
+                :aria-pressed="currencyMode === opt.value"
+                @click="setCurrencyMode(opt.value)"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+            <Icon
+              v-else
+              name="dollar"
+              size="sm"
+              class="text-gray-300 dark:text-dark-600"
+              :stroke-width="1.5"
+            />
           </div>
           <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
-            ${{ (usageStats?.total_actual_cost || 0).toFixed(4) }}
+            <template v-if="currencyIsFiat">
+              ≈{{ formatFiat(creditToFiat(usageStats?.total_actual_cost || 0)) }}
+            </template>
+            <template v-else>
+              {{ formatCredit(usageStats?.total_actual_cost || 0) }}
+              <span class="text-base font-normal text-gray-500 dark:text-gray-400">{{
+                t('usage.creditUnit')
+              }}</span>
+            </template>
           </p>
+          <!--
+            官方价这一行以前是加删除线的「标准价」。但站内扣费是官方价 × 分组倍率，
+            倍率 >1 时被划掉的数反而比实扣更小，删除线等于在暗示用户占了便宜。
+            这里改成中性标注：官方价是可以对照模型官网的外部锚点，不是被优惠掉的原价。
+          -->
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('usage.actualCost') }} /
-            <span class="line-through">${{ (usageStats?.total_cost || 0).toFixed(4) }}</span>
-            {{ t('usage.standardCost') }}
+            <template v-if="currencyIsFiat">{{ t('usage.fiatTotalApprox') }} · </template>
+            {{ t('usage.officialPrice') }} ${{ (usageStats?.total_cost || 0).toFixed(4) }}
           </p>
         </div>
 
@@ -304,8 +345,12 @@
 
           <template #cell-cost="{ row }">
             <div class="flex items-center gap-1.5 text-sm">
+              <!--
+                法币金额用服务端下发的 fiat_cost：钱包扣费按充值倍率、订阅扣费按该卡
+                的 u(D)，两者单价差 54%~92%，前端不能一律按充值倍率折算。
+              -->
               <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                ${{ (row.actual_cost ?? 0).toFixed(6) }}
+                {{ formatAmount(row.actual_cost ?? 0, row.fiat_cost, 6) }}
               </span>
               <!-- Cost Detail Tooltip -->
               <div
@@ -582,15 +627,32 @@
               >{{ formatMultiplier(tooltipData?.rate_multiplier || 1) }}x</span
             >
           </div>
+          <!--
+            三行拆开三个不同的概念，这是整个改动的核心：
+            官方价（真美元，可对照模型官网）→ 扣除额度（官方价 × 分组倍率的站内记账）
+            → 你的花费（真金白银）。以前只显示中间那个还带着 $ 符号，所以「扣了 5」
+            会被读成「花了 5 美元」，实际只有几毛钱。
+          -->
           <div class="flex items-center justify-between gap-6">
-            <span class="text-gray-400">{{ t('usage.original') }}</span>
-            <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData?.total_cost.toFixed(6) }}</span>
+            <span class="text-gray-400">{{ t('usage.officialPrice') }}</span>
+            <span class="font-mono tabular-nums font-medium text-white"
+              >${{ tooltipData?.total_cost.toFixed(6) }}</span
+            >
           </div>
           <div class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5">
-            <span class="text-gray-400">{{ t('usage.billed') }}</span>
-            <span class="font-mono tabular-nums font-semibold text-white"
-              >${{ tooltipData?.actual_cost.toFixed(6) }}</span
-            >
+            <span class="text-gray-400">{{ t('usage.creditsDeducted') }}</span>
+            <span class="font-mono tabular-nums font-medium text-white">{{
+              formatCredit(tooltipData?.actual_cost ?? 0, 6)
+            }}</span>
+          </div>
+          <div
+            v-if="tooltipFiatCost !== null"
+            class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5"
+          >
+            <span class="text-gray-400">{{ t('usage.yourSpend') }}</span>
+            <span class="font-mono tabular-nums font-semibold text-white">{{
+              formatFiat(tooltipFiatCost)
+            }}</span>
           </div>
         </div>
         <!-- Tooltip Arrow (left side) -->
@@ -620,6 +682,7 @@ import type { UsageLog, ApiKey, UsageQueryParams, UsageStatsResponse, UserErrorR
 import type { Column } from '@/components/common/types'
 import { formatDateTime, formatReasoningEffort } from '@/utils/format'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
@@ -645,13 +708,43 @@ import {
 
 const { t } = useI18n()
 const appStore = useAppStore()
+// 解构出来的 ref 在模板里会自动 unwrap，比 currency.isFiat.value 这种写法干净。
+const {
+  isFiat: currencyIsFiat,
+  canSwitch: currencyCanSwitch,
+  mode: currencyMode,
+  setMode: setCurrencyMode,
+  creditToFiat,
+  formatFiat,
+  formatCredit,
+  formatAmount
+} = useCurrencyDisplay()
 
 let abortController: AbortController | null = null
 
 // Tooltip state
 const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
+const currencyOptions = computed(() => [
+  { value: 'fiat' as const, label: t('usage.currencyFiat') },
+  { value: 'credit' as const, label: t('usage.currencyCredit') }
+])
+
 const tooltipData = ref<UsageLog | null>(null)
+
+/**
+ * 这笔用量的法币花费。优先用服务端下发的 fiat_cost（按额度来源精确折算），
+ * 老后端不返回该字段时回落到按充值倍率估算；额度本身为 0 则整行不显示。
+ */
+const tooltipFiatCost = computed<number | null>(() => {
+  const row = tooltipData.value
+  if (!row) return null
+  if (typeof row.fiat_cost === 'number' && Number.isFinite(row.fiat_cost) && row.fiat_cost !== 0) {
+    return row.fiat_cost
+  }
+  const credits = row.actual_cost ?? 0
+  return credits === 0 ? null : creditToFiat(credits)
+})
 
 // Token tooltip state
 const tokenTooltipVisible = ref(false)
@@ -984,8 +1077,11 @@ const exportToCSV = async () => {
       'Cache Read Tokens',
       'Cache Creation Tokens',
       'Rate Multiplier',
-      'Billed Cost',
-      'Original Cost',
+      // 列名如实说明单位：以前叫 Billed Cost / Original Cost，会让人以为
+      // 前者是花掉的钱、后者是被优惠掉的原价，两个理解都不对。
+      'Credits Deducted',
+      'Official Cost (USD)',
+      'Your Spend (CNY)',
       'First Token (ms)',
       'Duration (ms)'
     ]
@@ -1005,6 +1101,7 @@ const exportToCSV = async () => {
         log.rate_multiplier,
         (log.actual_cost ?? 0).toFixed(8),
         (log.total_cost ?? 0).toFixed(8),
+        (log.fiat_cost ?? creditToFiat(log.actual_cost ?? 0)).toFixed(8),
         log.first_token_ms ?? '',
         log.duration_ms
       ].map(escapeCSVValue)

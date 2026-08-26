@@ -60,19 +60,10 @@ func (s *SubscriptionService) QuoteSubscription(ctx context.Context, d float64, 
 }
 
 func (s *SubscriptionService) subscriptionPricingConfig(ctx context.Context) SubscriptionPricingConfig {
-	if s == nil || s.settingService == nil || s.settingService.settingRepo == nil {
+	if s == nil {
 		return DefaultSubscriptionPricingConfig()
 	}
-	vals, err := s.settingService.settingRepo.GetMultiple(ctx, []string{
-		SettingSubscriptionMinDaily,
-		SettingSubscriptionMinRatioStartDaily,
-		SettingSubscriptionMaxDaily,
-		SettingSubscriptionMaxDays,
-		SettingSubscriptionMinRatio,
-		SettingSubscriptionMaxRatio,
-	})
-	if err != nil {
-		return DefaultSubscriptionPricingConfig()
-	}
-	return subscriptionPricingConfigFromSettings(vals)
+	// 装载逻辑统一收在 SettingService.SubscriptionPricingConfig，避免下单报价与
+	// 展示层折算各解析一份同样的 setting 而漂移。nil 接收者已在那侧兜住。
+	return s.settingService.SubscriptionPricingConfig(ctx)
 }

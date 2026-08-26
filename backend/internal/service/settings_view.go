@@ -303,6 +303,12 @@ type PublicSettings struct {
 	BalanceLowNotifyThreshold   float64
 	BalanceLowNotifyRechargeURL string
 
+	// BalanceRechargeMultiplier 是「1 单位法币充值可兑多少站内额度」的倍率
+	// （BALANCE_RECHARGE_MULTIPLIER）。站内额度历史上以 "$" 呈现，但它既不是
+	// 美元也不是官方价美元，用户很容易把「本次扣 5」误读成「花了 5 美元」。
+	// 公开出来是为了让前端能把额度折算回法币展示。
+	BalanceRechargeMultiplier float64
+
 	// Channel Monitor feature
 	ChannelMonitorEnabled                bool `json:"channel_monitor_enabled"`
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
