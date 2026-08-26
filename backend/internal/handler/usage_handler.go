@@ -160,8 +160,14 @@ func (h *UsageHandler) List(c *gin.Context) {
 	out := make([]dto.UsageLog, 0, len(records))
 	for i := range records {
 		item := *dto.UsageLogFromService(&records[i])
-		item.FiatPerCredit = rate.FiatPerCredit(item.BillingType, item.SubscriptionID)
-		item.FiatCost = rate.Convert(item.ActualCost, item.BillingType, item.SubscriptionID)
+		// SubscriptionID 是 *int64，钱包扣费的记录为 nil。传 0 表示「没有卡」，
+		// 折算器据此走钱包单价。
+		subID := int64(0)
+		if item.SubscriptionID != nil {
+			subID = *item.SubscriptionID
+		}
+		item.FiatPerCredit = rate.FiatPerCredit(item.BillingType, subID)
+		item.FiatCost = rate.Convert(item.ActualCost, item.BillingType, subID)
 		out = append(out, item)
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)

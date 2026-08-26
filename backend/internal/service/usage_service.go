@@ -395,10 +395,12 @@ func (s *UsageService) BuildCreditFiatRate(
 		if logs[i].BillingType != BillingTypeSubscription {
 			continue
 		}
-		id := logs[i].SubscriptionID
-		if id <= 0 {
+		// SubscriptionID 是 *int64——钱包扣费的记录这里就是 nil。
+		ref := logs[i].SubscriptionID
+		if ref == nil || *ref <= 0 {
 			continue
 		}
+		id := *ref
 		if _, ok := seen[id]; ok {
 			continue
 		}
