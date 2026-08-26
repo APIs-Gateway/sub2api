@@ -664,6 +664,80 @@ func TestGetKyrenWebhookSecret_ReturnsTrimmedConfiguredSecret(t *testing.T) {
 	}
 }
 
+// upstream sync (#5133): UpdatePaymentConfig 此前无条件写入全部设置键,
+// 未在本次请求中携带的字段会被 derefStr(nil)/formatBoolOrEmpty(nil) 转成的空串
+// 覆盖。管理员保存与可见支付方式无关的其它系统设置时,会静默清空
+// 已配置的支付宝/微信可见支付方式路由。回归测试:仅更新一个不相关字段,
+// 断言已存的可见支付方式路由与其它未提及字段维持原值不变。
+func TestUpdatePaymentConfig_UnrelatedFieldUpdateDoesNotWipeUntouchedFields(t *testing.T) {
+	repo := &paymentConfigSettingRepoStub{values: map[string]string{
+		SettingPaymentVisibleMethodAlipayEnabled: "true",
+		SettingPaymentVisibleMethodAlipaySource:  VisibleMethodSourceEasyPayAlipay,
+		SettingPaymentVisibleMethodWxpayEnabled:  "true",
+		SettingPaymentVisibleMethodWxpaySource:   VisibleMethodSourceOfficialWechat,
+		SettingHelpText:                          "existing help text",
+		SettingEnabledPaymentTypes:               "alipay,wxpay",
+	}}
+	svc := &PaymentConfigService{settingRepo: repo}
+
+	enabled := true
+	if err := svc.UpdatePaymentConfig(context.Background(), UpdatePaymentConfigRequest{
+		Enabled: &enabled,
+	}); err != nil {
+		t.Fatalf("UpdatePaymentConfig returned error: %v", err)
+	}
+
+	// The only field the request touched should be written.
+	if repo.values[SettingPaymentEnabled] != "true" {
+		t.Fatalf("payment enabled = %q, want true", repo.values[SettingPaymentEnabled])
+	}
+	// Nothing else in the request should appear in the SetMultiple payload.
+	if _, wroteAlipayEnabled := repo.updates[SettingPaymentVisibleMethodAlipayEnabled]; wroteAlipayEnabled {
+		t.Fatalf("unrelated update must not touch %s", SettingPaymentVisibleMethodAlipayEnabled)
+	}
+	if _, wroteHelpText := repo.updates[SettingHelpText]; wroteHelpText {
+		t.Fatalf("unrelated update must not touch %s", SettingHelpText)
+	}
+	if _, wroteEnabledTypes := repo.updates[SettingEnabledPaymentTypes]; wroteEnabledTypes {
+		t.Fatalf("unrelated update must not touch %s", SettingEnabledPaymentTypes)
+	}
+	// Previously stored values must survive untouched.
+	if repo.values[SettingPaymentVisibleMethodAlipayEnabled] != "true" {
+		t.Fatalf("alipay enabled = %q, want true (preserved)", repo.values[SettingPaymentVisibleMethodAlipayEnabled])
+	}
+	if repo.values[SettingPaymentVisibleMethodAlipaySource] != VisibleMethodSourceEasyPayAlipay {
+		t.Fatalf("alipay source = %q, want preserved", repo.values[SettingPaymentVisibleMethodAlipaySource])
+	}
+	if repo.values[SettingPaymentVisibleMethodWxpayEnabled] != "true" {
+		t.Fatalf("wxpay enabled = %q, want true (preserved)", repo.values[SettingPaymentVisibleMethodWxpayEnabled])
+	}
+	if repo.values[SettingHelpText] != "existing help text" {
+		t.Fatalf("help text = %q, want preserved", repo.values[SettingHelpText])
+	}
+	if repo.values[SettingEnabledPaymentTypes] != "alipay,wxpay" {
+		t.Fatalf("enabled payment types = %q, want preserved", repo.values[SettingEnabledPaymentTypes])
+	}
+}
+
+// EnabledTypes 传显式空切片(而非 nil)仍必须能清空已保存的启用支付方式列表——
+// 这是唯一一个允许"显式清空"语义的例外字段。
+func TestUpdatePaymentConfig_ExplicitEmptyEnabledTypesStillClears(t *testing.T) {
+	repo := &paymentConfigSettingRepoStub{values: map[string]string{
+		SettingEnabledPaymentTypes: "alipay,wxpay",
+	}}
+	svc := &PaymentConfigService{settingRepo: repo}
+
+	if err := svc.UpdatePaymentConfig(context.Background(), UpdatePaymentConfigRequest{
+		EnabledTypes: []string{},
+	}); err != nil {
+		t.Fatalf("UpdatePaymentConfig returned error: %v", err)
+	}
+
+	if repo.values[SettingEnabledPaymentTypes] != "" {
+		t.Fatalf("enabled payment types = %q, want cleared", repo.values[SettingEnabledPaymentTypes])
+	}
+}
+
 func paymentConfigStrPtr(value string) *string {
 	return &value
 }
