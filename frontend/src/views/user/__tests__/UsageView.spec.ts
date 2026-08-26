@@ -67,12 +67,12 @@ const messages: Record<string, string> = {
   'admin.usage.billingModePerRequest': 'Per request',
   'admin.usage.billingModeImage': 'Image',
   'usage.officialPrice': 'Official price',
-  'usage.creditsDeducted': 'Credits deducted',
+  'usage.balanceDeducted': 'Balance deducted',
+  'usage.subscriptionDeducted': 'Plan quota deducted',
   'usage.yourSpend': 'Your spend',
-  'usage.creditUnit': 'credits',
   'usage.fiatTotalApprox': 'estimated at top-up rate',
   'usage.currencyFiat': '¥',
-  'usage.currencyCredit': 'Credits',
+  'usage.currencyUsd': '$',
   'usage.currencySwitchLabel': 'Switch display unit',
   'usage.totalCost': 'Total Cost',
 }
@@ -234,9 +234,9 @@ describe('user UsageView tooltip', () => {
     expect(text).toContain('Fast')
     expect(text).toContain('Rate')
     expect(text).toContain('1.00x')
-    // tooltip 原本这行叫 Billed 且带 $ 前缀，但站内扣的是额度不是美元，
-    // 已拆成「官方价 / 扣除额度 / 你的花费」三行。
-    expect(text).toContain('Credits deducted')
+    // tooltip 原本只有一行叫 Billed，已拆成「官方价 / 扣除余额 / 你的花费」三行。
+    // 这条 fixture 没有 billing_type，按钱包扣费展示。
+    expect(text).toContain('Balance deducted')
     expect(text).toContain('$0.092883')
     expect(text).toContain('$5.0000 / 1M tokens')
     expect(text).toContain('$30.0000 / 1M tokens')
@@ -667,10 +667,10 @@ describe('user UsageView currency display', () => {
     expect(text).toContain('estimated at top-up rate')
   })
 
-  it('切到额度口径后展示原始额度', async () => {
+  it('切到美元口径后展示原始美元金额', async () => {
     const wrapper = await mountView()
 
-    ;(wrapper.vm as any).$?.setupState?.setCurrencyMode('credit')
+    ;(wrapper.vm as any).$?.setupState?.setCurrencyMode('usd')
     await nextTick()
 
     expect(wrapper.text()).toContain('5.000000')
@@ -689,7 +689,25 @@ describe('user UsageView currency display', () => {
     expect(wrapper.find('[role="group"]').exists()).toBe(true)
   })
 
-  it('tooltip 把官方价、扣除额度、你的花费拆成三行', async () => {
+  // 订阅扣费不经过钱包余额。这一行统一写「扣除余额」的话，订阅用户会去对账户
+  // 余额、发现没变而来问，所以措辞必须跟着 billing_type 走。
+  it('扣除行的措辞跟着计费类型走：钱包说余额，订阅说套餐额度', async () => {
+    const wrapper = await mountView()
+    const setupState = (wrapper.vm as any).$?.setupState
+
+    setupState.tooltipData = subscriptionRow
+    setupState.tooltipVisible = true
+    await nextTick()
+    expect(plain(wrapper)).toContain('Plan quota deducted')
+
+    setupState.tooltipData = { ...subscriptionRow, billing_type: 0 }
+    await nextTick()
+    const walletText = plain(wrapper)
+    expect(walletText).toContain('Balance deducted')
+    expect(walletText).not.toContain('Plan quota deducted')
+  })
+
+  it('tooltip 把官方价、扣除金额、你的花费拆成三行', async () => {
     const wrapper = await mountView()
     const setupState = (wrapper.vm as any).$?.setupState
 
@@ -698,9 +716,10 @@ describe('user UsageView currency display', () => {
     await nextTick()
 
     const text = plain(wrapper)
-    // 三个概念必须同时可见：官方价是外部锚点，额度是站内记账，花费才是真钱。
+    // 三个概念必须同时可见：官方价是外部锚点，扣除金额是站内记账，花费才是真钱。
+    // 这是订阅扣费，所以中间那行说的是套餐额度而不是余额。
     expect(text).toContain('Official price')
-    expect(text).toContain('Credits deducted')
+    expect(text).toContain('Plan quota deducted')
     expect(text).toContain('Your spend')
     expect(text).toContain('1.666667')
     expect(text).toContain('5.000000')

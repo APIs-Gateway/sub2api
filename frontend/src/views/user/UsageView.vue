@@ -94,13 +94,10 @@
           </div>
           <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
             <template v-if="currencyIsFiat">
-              ≈{{ formatFiat(creditToFiat(usageStats?.total_actual_cost || 0)) }}
+              ≈{{ formatFiat(usdToFiat(usageStats?.total_actual_cost || 0)) }}
             </template>
             <template v-else>
-              {{ formatCredit(usageStats?.total_actual_cost || 0) }}
-              <span class="text-base font-normal text-gray-500 dark:text-gray-400">{{
-                t('usage.creditUnit')
-              }}</span>
+              {{ formatUsd(usageStats?.total_actual_cost || 0) }}
             </template>
           </p>
           <!--
@@ -629,9 +626,9 @@
           </div>
           <!--
             三行拆开三个不同的概念，这是整个改动的核心：
-            官方价（真美元，可对照模型官网）→ 扣除额度（官方价 × 分组倍率的站内记账）
-            → 你的花费（真金白银）。以前只显示中间那个还带着 $ 符号，所以「扣了 5」
-            会被读成「花了 5 美元」，实际只有几毛钱。
+            官方价（可对照模型官网的真实价）→ 实际扣除（官方价 × 分组倍率，同样以
+            美元计价）→ 你的花费（真金白银的人民币）。以前只有中间那一行，所以
+            「扣了 $5」会被读成「花了三十多块」，实际只有几毛钱。
           -->
           <div class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.officialPrice') }}</span>
@@ -640,9 +637,9 @@
             >
           </div>
           <div class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5">
-            <span class="text-gray-400">{{ t('usage.creditsDeducted') }}</span>
+            <span class="text-gray-400">{{ tooltipDeductedLabel }}</span>
             <span class="font-mono tabular-nums font-medium text-white">{{
-              formatCredit(tooltipData?.actual_cost ?? 0, 6)
+              formatUsd(tooltipData?.actual_cost ?? 0, 6)
             }}</span>
           </div>
           <div
@@ -714,9 +711,9 @@ const {
   canSwitch: currencyCanSwitch,
   mode: currencyMode,
   setMode: setCurrencyMode,
-  creditToFiat,
+  usdToFiat,
   formatFiat,
-  formatCredit,
+  formatUsd,
   formatAmount
 } = useCurrencyDisplay()
 
@@ -727,7 +724,7 @@ const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
 const currencyOptions = computed(() => [
   { value: 'fiat' as const, label: t('usage.currencyFiat') },
-  { value: 'credit' as const, label: t('usage.currencyCredit') }
+  { value: 'usd' as const, label: t('usage.currencyUsd') }
 ])
 
 const tooltipData = ref<UsageLog | null>(null)
@@ -742,9 +739,20 @@ const tooltipFiatCost = computed<number | null>(() => {
   if (typeof row.fiat_cost === 'number' && Number.isFinite(row.fiat_cost) && row.fiat_cost !== 0) {
     return row.fiat_cost
   }
-  const credits = row.actual_cost ?? 0
-  return credits === 0 ? null : creditToFiat(credits)
+  const usd = row.actual_cost ?? 0
+  return usd === 0 ? null : usdToFiat(usd)
 })
+
+/**
+ * 扣除行的措辞跟着计费类型走：订阅扣费不经过钱包余额，统一写「扣除余额」会让
+ * 订阅用户去对账户余额、发现没变而来问。billing_type 1 = 订阅套餐，0 = 钱包余额，
+ * 与 admin.usage.billingType* 的取值一致。
+ */
+const tooltipDeductedLabel = computed(() =>
+  tooltipData.value?.billing_type === 1
+    ? t('usage.subscriptionDeducted')
+    : t('usage.balanceDeducted')
+)
 
 // Token tooltip state
 const tokenTooltipVisible = ref(false)
@@ -1079,7 +1087,7 @@ const exportToCSV = async () => {
       'Rate Multiplier',
       // 列名如实说明单位：以前叫 Billed Cost / Original Cost，会让人以为
       // 前者是花掉的钱、后者是被优惠掉的原价，两个理解都不对。
-      'Credits Deducted',
+      'Deducted (USD)',
       'Official Cost (USD)',
       'Your Spend (CNY)',
       'First Token (ms)',
@@ -1101,7 +1109,7 @@ const exportToCSV = async () => {
         log.rate_multiplier,
         (log.actual_cost ?? 0).toFixed(8),
         (log.total_cost ?? 0).toFixed(8),
-        (log.fiat_cost ?? creditToFiat(log.actual_cost ?? 0)).toFixed(8),
+        (log.fiat_cost ?? usdToFiat(log.actual_cost ?? 0)).toFixed(8),
         log.first_token_ms ?? '',
         log.duration_ms
       ].map(escapeCSVValue)
