@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -336,6 +337,19 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 	}
 	if apiKeyUpstream {
 		body = convertOpenAIModelListToCodexManifest(body)
+		adjusted, adjustErr := adjustAPIKeyCodexModelsManifest(body)
+		if adjustErr != nil {
+			return nil, &codexModelsManifestUpstreamError{
+				err: infraerrors.Newf(
+					http.StatusBadGateway,
+					"OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST",
+					"codex models manifest upstream could not be adjusted: %v",
+					adjustErr,
+				),
+				retryable: true,
+			}
+		}
+		body = adjusted
 	}
 	if err := validateCodexModelsManifestEnvelope(body); err != nil {
 		return nil, &codexModelsManifestUpstreamError{
@@ -395,6 +409,72 @@ func convertOpenAIModelListToCodexManifest(body []byte) []byte {
 		return body
 	}
 	return converted
+}
+
+// apiKeyCodexModelsWithoutResponsesLite lists the models for which custom API
+// key Codex clients must not use Responses Lite: those clients do not install
+// web.run in Lite mode, so selecting it silently drops web search.
+var apiKeyCodexModelsWithoutResponsesLite = map[string]struct{}{
+	"gpt-5.6-sol":   {},
+	"gpt-5.6-terra": {},
+	"gpt-5.6-luna":  {},
+}
+
+// adjustAPIKeyCodexModelsManifest forces use_responses_lite to false for the
+// targeted models when a custom API-key upstream's manifest already carries a
+// Codex-native "models" envelope (e.g. another Codex-compatible gateway used
+// as the account's base URL). Bodies without a targeted true value, or that
+// fail to parse as the expected shape, are returned unchanged so the caller's
+// existing envelope validation reports the original payload.
+func adjustAPIKeyCodexModelsManifest(body []byte) ([]byte, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return body, nil
+	}
+	var models []json.RawMessage
+	if err := json.Unmarshal(envelope["models"], &models); err != nil {
+		return body, nil
+	}
+
+	changed := false
+	for i, rawModel := range models {
+		var model map[string]json.RawMessage
+		if err := json.Unmarshal(rawModel, &model); err != nil || model == nil {
+			continue
+		}
+		var slug string
+		if err := json.Unmarshal(model["slug"], &slug); err != nil {
+			continue
+		}
+		if _, targeted := apiKeyCodexModelsWithoutResponsesLite[slug]; !targeted {
+			continue
+		}
+		var useResponsesLite bool
+		if err := json.Unmarshal(model["use_responses_lite"], &useResponsesLite); err != nil || !useResponsesLite {
+			continue
+		}
+		model["use_responses_lite"] = json.RawMessage("false")
+		adjusted, err := json.Marshal(model)
+		if err != nil {
+			return nil, fmt.Errorf("encode model %q: %w", slug, err)
+		}
+		models[i] = adjusted
+		changed = true
+	}
+	if !changed {
+		return body, nil
+	}
+
+	adjustedModels, err := json.Marshal(models)
+	if err != nil {
+		return nil, fmt.Errorf("encode top-level models array: %w", err)
+	}
+	envelope["models"] = adjustedModels
+	adjusted, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("encode JSON object: %w", err)
+	}
+	return adjusted, nil
 }
 
 func validateCodexModelsManifestEnvelope(body []byte) error {

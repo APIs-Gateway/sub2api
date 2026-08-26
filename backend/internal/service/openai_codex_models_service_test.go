@@ -168,6 +168,67 @@ func TestConvertOpenAIModelListToCodexManifest(t *testing.T) {
 	}
 }
 
+func TestAdjustAPIKeyCodexModelsManifest(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "targeted model with responses lite flipped off",
+			body: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+		},
+		{
+			name: "multiple targeted models all adjusted",
+			body: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":true},{"slug":"gpt-5.6-luna","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false},{"slug":"gpt-5.6-luna","use_responses_lite":false}]}`,
+		},
+		{
+			name: "untargeted model unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-nova","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-nova","use_responses_lite":true}]}`,
+		},
+		{
+			name: "targeted model already false unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+		},
+		{
+			name: "targeted model without the field unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-sol"}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol"}]}`,
+		},
+		{
+			name: "converted manifest without the field unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.6-luna"}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.6-luna"}]}`,
+		},
+		{
+			name: "malformed body returned unchanged, not an error",
+			body: `not json`,
+			want: `not json`,
+		},
+		{
+			name: "missing models field returned unchanged, not an error",
+			body: `{"object":"list"}`,
+			want: `{"object":"list"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := adjustAPIKeyCodexModelsManifest([]byte(tt.body))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFetchCodexModelsManifestRejectsInvalidEnvelope(t *testing.T) {
 	tests := []struct {
 		name string
