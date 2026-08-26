@@ -337,7 +337,7 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 	}
 	if apiKeyUpstream {
 		body = convertOpenAIModelListToCodexManifest(body)
-		adjusted, adjustErr := adjustAPIKeyCodexModelsManifest(body)
+		adjusted, adjustErr := adjustAPIKeyCodexModelsManifestFunc(body)
 		if adjustErr != nil {
 			return nil, &codexModelsManifestUpstreamError{
 				err: infraerrors.Newf(
@@ -419,6 +419,12 @@ var apiKeyCodexModelsWithoutResponsesLite = map[string]struct{}{
 	"gpt-5.6-terra": {},
 	"gpt-5.6-luna":  {},
 }
+
+// adjustAPIKeyCodexModelsManifestFunc is a seam over adjustAPIKeyCodexModelsManifest
+// so tests can force its (in practice unreachable, since it only fails when
+// re-marshaling already-validated json.RawMessage values) error path and
+// exercise the caller's error-wrapping branch.
+var adjustAPIKeyCodexModelsManifestFunc = adjustAPIKeyCodexModelsManifest
 
 // adjustAPIKeyCodexModelsManifest forces use_responses_lite to false for the
 // targeted models when a custom API-key upstream's manifest already carries a

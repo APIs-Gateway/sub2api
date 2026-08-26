@@ -738,6 +738,75 @@ func TestUpdatePaymentConfig_ExplicitEmptyEnabledTypesStillClears(t *testing.T) 
 	}
 }
 
+// upstream sync (#5133) 的 PATCH 语义把每个字段的写入拆成独立的
+// "if req.X != nil { m[key] = ... }" 分支；逐个字段单独起一个测试函数太啰嗦，
+// 这里一次性把此前未被任何测试覆盖到的标量字段全部显式传入并断言其落盘值。
+func TestUpdatePaymentConfig_PersistsRemainingScalarSettings(t *testing.T) {
+	repo := &paymentConfigSettingRepoStub{values: map[string]string{}}
+	svc := &PaymentConfigService{settingRepo: repo}
+
+	balanceDisabled := true
+	cancelEnabled := true
+	alipayForceQRCode := true
+	alipayDeepLink := false
+
+	err := svc.UpdatePaymentConfig(context.Background(), UpdatePaymentConfigRequest{
+		MinAmount:                     paymentConfigFloatPtr(10),
+		MaxAmount:                     paymentConfigFloatPtr(5000),
+		DailyLimit:                    paymentConfigFloatPtr(20000),
+		OrderTimeoutMin:               paymentConfigIntPtr(45),
+		MaxPendingOrders:              paymentConfigIntPtr(5),
+		BalanceDisabled:               &balanceDisabled,
+		BalanceRechargeMultiplier:     paymentConfigFloatPtr(1.5),
+		RechargeFeeRate:               paymentConfigFloatPtr(0.6),
+		CryptoRechargeFeeRate:         paymentConfigFloatPtr(1.2),
+		LoadBalanceStrategy:           paymentConfigStrPtr("round_robin"),
+		ProductNamePrefix:             paymentConfigStrPtr("【Sub2API】"),
+		ProductNameSuffix:             paymentConfigStrPtr("充值"),
+		HelpImageURL:                  paymentConfigStrPtr("https://example.com/help.png"),
+		HelpText:                      paymentConfigStrPtr("scan to pay"),
+		CancelRateLimitEnabled:        &cancelEnabled,
+		CancelRateLimitMax:            paymentConfigIntPtr(3),
+		CancelRateLimitWindow:         paymentConfigIntPtr(60),
+		CancelRateLimitUnit:           paymentConfigStrPtr("minute"),
+		CancelRateLimitMode:           paymentConfigStrPtr("sliding"),
+		AlipayForceQRCode:             &alipayForceQRCode,
+		AlipayMobilePrecreateDeepLink: &alipayDeepLink,
+	})
+	if err != nil {
+		t.Fatalf("UpdatePaymentConfig returned error: %v", err)
+	}
+
+	want := map[string]string{
+		SettingMinRechargeAmount:             "10.00",
+		SettingMaxRechargeAmount:             "5000.00",
+		SettingDailyRechargeLimit:            "20000.00",
+		SettingOrderTimeoutMinutes:           "45",
+		SettingMaxPendingOrders:              "5",
+		SettingBalancePayDisabled:            "true",
+		SettingBalanceRechargeMult:           "1.50",
+		SettingRechargeFeeRate:               "0.60",
+		SettingCryptoRechargeFeeRate:         "1.20",
+		SettingLoadBalanceStrategy:           "round_robin",
+		SettingProductNamePrefix:             "【Sub2API】",
+		SettingProductNameSuffix:             "充值",
+		SettingHelpImageURL:                  "https://example.com/help.png",
+		SettingHelpText:                      "scan to pay",
+		SettingCancelRateLimitOn:             "true",
+		SettingCancelRateLimitMax:            "3",
+		SettingCancelWindowSize:              "60",
+		SettingCancelWindowUnit:              "minute",
+		SettingCancelWindowMode:              "sliding",
+		SettingAlipayForceQRCode:             "true",
+		SettingAlipayMobilePrecreateDeepLink: "false",
+	}
+	for key, expected := range want {
+		if repo.values[key] != expected {
+			t.Fatalf("%s stored as %q, want %q", key, repo.values[key], expected)
+		}
+	}
+}
+
 func paymentConfigStrPtr(value string) *string {
 	return &value
 }
