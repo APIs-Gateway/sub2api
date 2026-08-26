@@ -203,27 +203,23 @@ const smtpDialTimeout = 10 * time.Second
 const smtpIOTimeout = 20 * time.Second
 
 // SendEmailWithConfig 使用指定配置发送邮件
+// upstream sync (#4993): 邮件正文改走标准化 MIME 构造(buildSMTPMessage)，
+// 补齐 Date/Message-ID、Subject 走 RFC 2047 编码、正文走 quoted-printable，
+// 收件人与发件人经 net/mail 校验为合法地址，避免生成不合规 SMTP 消息。
 func (s *EmailService) SendEmailWithConfig(config *SMTPConfig, to, subject, body string) error {
-	// Sanitize all SMTP header fields to prevent header injection (CR/LF removal).
-	to = sanitizeEmailHeader(to)
-	subject = sanitizeEmailHeader(subject)
-
-	from := sanitizeEmailHeader(config.From)
-	if config.FromName != "" {
-		from = fmt.Sprintf("%s <%s>", sanitizeEmailHeader(config.FromName), sanitizeEmailHeader(config.From))
+	message, err := buildSMTPMessage(config, to, subject, body)
+	if err != nil {
+		return err
 	}
-
-	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
-		from, to, subject, body)
 
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
 	auth := smtp.PlainAuth("", config.Username, config.Password, config.Host)
 
 	if config.UseTLS {
-		return s.sendMailTLS(addr, auth, config.From, to, []byte(msg), config.Host)
+		return s.sendMailTLS(addr, auth, message.envelopeFrom, message.envelopeTo, message.data, config.Host)
 	}
 
-	return s.sendMailPlain(addr, auth, config.From, to, []byte(msg), config.Host)
+	return s.sendMailPlain(addr, auth, message.envelopeFrom, message.envelopeTo, message.data, config.Host)
 }
 
 // sendMailPlain sends mail without TLS using a dialer with timeout.
