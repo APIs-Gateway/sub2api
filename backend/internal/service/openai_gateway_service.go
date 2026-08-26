@@ -4342,8 +4342,33 @@ func (s *OpenAIGatewayService) recordOpenAIStreamUpstreamError(
 	return message
 }
 
+// isOpenAIUpstreamCapacityShedEvent 判断流内 failed 事件是否为上游容量降载信号。
+// 上游在容量紧张时会把请求丢进降载路径：HTTP 200 之后立刻推 event: error
+// （code=server_is_overloaded / slow_down）并以 response.failed 收尾。
+func isOpenAIUpstreamCapacityShedEvent(payload []byte) bool {
+	code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.code").String()))
+	if code == "" {
+		code = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.code").String()))
+	}
+	switch code {
+	case "server_is_overloaded", "slow_down":
+		return true
+	default:
+		return false
+	}
+}
+
 func openAIStreamFailedEventRetryableOnSameAccount(account *Account, payload []byte, message string) bool {
-	if account == nil || !account.IsPoolMode() {
+	if account == nil {
+		return false
+	}
+	// 容量降载是请求级信号，不是账号级故障：换账号并不改变被降载的因素
+	// （客户端身份、模型容量都与账号无关），只会把整池账号逐个消耗掉，最终仍以
+	// 同一个错误告终。因此先在同一账号上做有界重试，用尽后才按常规流程切号。
+	if isOpenAIUpstreamCapacityShedEvent(payload) {
+		return true
+	}
+	if !account.IsPoolMode() {
 		return false
 	}
 	semanticStatus := openAIStreamFailedEventSemanticStatus(payload, message)
@@ -4396,6 +4421,7 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 		ResponseBody:           body,
 		ResponseHeaders:        headers,
 		RetryableOnSameAccount: openAIStreamFailedEventRetryableOnSameAccount(account, payload, message),
+		RequestScopedTransient: isOpenAIUpstreamCapacityShedEvent(payload),
 	}
 }
 
