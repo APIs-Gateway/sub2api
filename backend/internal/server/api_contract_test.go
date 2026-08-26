@@ -567,6 +567,8 @@ func TestAPIContracts(t *testing.T) {
 						"total_cost": 0.5,
 						"actual_cost": 0.5,
 						"rate_multiplier": 1,
+						"fiat_cost": 0.5,
+						"fiat_per_credit": 1,
 						"billing_type": 0,
 							"stream": true,
 							"duration_ms": 100,
