@@ -92,9 +92,13 @@ func parseSMTPAddress(value, field string) (*mail.Address, error) {
 	return address, nil
 }
 
+// randRead is a seam over crypto/rand.Read so tests can force the (in
+// practice unreachable on any real OS entropy source) error path.
+var randRead = rand.Read
+
 func generateEmailMessageID(fromAddress, smtpHost string) (string, error) {
 	randomID := make([]byte, 16)
-	if _, err := rand.Read(randomID); err != nil {
+	if _, err := randRead(randomID); err != nil {
 		return "", err
 	}
 

@@ -4,6 +4,7 @@ package service
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"mime"
 	"mime/quotedprintable"
@@ -114,4 +115,33 @@ func TestBuildSMTPMessageUsesUniqueMessageIDs(t *testing.T) {
 	secondParsed, err := mail.ReadMessage(bytes.NewReader(second.data))
 	require.NoError(t, err)
 	require.NotEqual(t, firstParsed.Header.Get("Message-ID"), secondParsed.Header.Get("Message-ID"))
+}
+
+func TestGenerateEmailMessageIDPropagatesRandError(t *testing.T) {
+	randErr := errors.New("entropy source unavailable")
+	prev := randRead
+	randRead = func([]byte) (int, error) { return 0, randErr }
+	t.Cleanup(func() { randRead = prev })
+
+	_, err := generateEmailMessageID("reply@example.com", "smtp.example.com")
+	require.ErrorIs(t, err, randErr)
+}
+
+func TestBuildSMTPMessagePropagatesMessageIDError(t *testing.T) {
+	randErr := errors.New("entropy source unavailable")
+	prev := randRead
+	randRead = func([]byte) (int, error) { return 0, randErr }
+	t.Cleanup(func() { randRead = prev })
+
+	_, err := buildSMTPMessage(&SMTPConfig{Host: "smtp.example.com", From: "reply@example.com"}, "user@example.net", "subject", "body")
+	require.ErrorContains(t, err, "generate message ID")
+	require.ErrorIs(t, err, randErr)
+}
+
+func TestGenerateEmailMessageIDFallsBackToLocalhostDomain(t *testing.T) {
+	// fromAddress 缺少 '@' 且 smtpHost 为空时，两条域名来源都取不到值，
+	// 必须兜底成 localhost，否则会产生形如 "<hex@>" 的非法 Message-ID。
+	id, err := generateEmailMessageID("malformed-address-without-at-sign", "")
+	require.NoError(t, err)
+	require.Regexp(t, regexp.MustCompile(`^<[0-9a-f]{32}@localhost>$`), id)
 }

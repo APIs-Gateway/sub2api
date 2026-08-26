@@ -58,6 +58,13 @@ type fakeSMTPServer struct {
 	tlsConfig         *tls.Config
 	advertiseStartTLS bool
 
+	// 故障注入开关，供覆盖 email_service.go 里各条错误分支的测试使用。
+	rejectMail            bool // MAIL FROM 回错误响应
+	rejectRcpt            bool // RCPT TO 回错误响应
+	closeOnData           bool // 回复 354 后立即断连，模拟写正文失败
+	rejectAuth            bool // AUTH 回错误响应
+	failStartTLSHandshake bool // STARTTLS 回 220 后不完成真实握手，直接断连
+
 	mu       sync.Mutex
 	commands []string
 	conns    atomic.Int64
@@ -161,6 +168,11 @@ func (srv *fakeSMTPServer) serve(conn net.Conn, allowStartTLS bool) {
 			if !writeLine("220 2.0.0 ready to start TLS") {
 				return
 			}
+			if srv.failStartTLSHandshake {
+				// 通告支持 STARTTLS 并接受命令，但拒绝完成真实握手——
+				// 模拟握手阶段失败（证书/协议问题等），而非拒绝命令本身。
+				return
+			}
 			tlsConn := tls.Server(conn, srv.tlsConfig)
 			if err := tlsConn.Handshake(); err != nil {
 				return
@@ -168,14 +180,46 @@ func (srv *fakeSMTPServer) serve(conn net.Conn, allowStartTLS bool) {
 			srv.serveUpgraded(tlsConn)
 			return
 		case strings.HasPrefix(upper, "AUTH"):
+			if srv.rejectAuth {
+				if !writeLine("535 5.7.8 authentication failed") {
+					return
+				}
+				break
+			}
 			if !writeLine("235 2.7.0 authentication successful") {
 				return
 			}
-		case strings.HasPrefix(upper, "MAIL"), strings.HasPrefix(upper, "RCPT"):
+		case strings.HasPrefix(upper, "MAIL"):
+			if srv.rejectMail {
+				if !writeLine("550 5.1.0 sender rejected") {
+					return
+				}
+				break
+			}
+			if !writeLine("250 ok") {
+				return
+			}
+		case strings.HasPrefix(upper, "RCPT"):
+			if srv.rejectRcpt {
+				if !writeLine("550 5.1.1 recipient rejected") {
+					return
+				}
+				break
+			}
 			if !writeLine("250 ok") {
 				return
 			}
 		case upper == "DATA":
+			if srv.closeOnData {
+				// 回复 354 后立即断连,不再读取正文——模拟消息体写入阶段连接中断。
+				// 用 SetLinger(0) 触发 RST 而非平滑 FIN，让客户端后续的
+				// 写入/关闭操作能可靠地观察到连接已失效，而不是被内核缓冲掩盖。
+				_ = writeLine("354 go ahead")
+				if tcpConn, ok := conn.(*net.TCPConn); ok {
+					_ = tcpConn.SetLinger(0)
+				}
+				return
+			}
 			if !writeLine("354 go ahead") {
 				return
 			}
@@ -379,5 +423,197 @@ func TestSendEmailWithConfigImplicitTLS(t *testing.T) {
 	}
 	if !srv.sawCommand("DATA") {
 		t.Fatal("expected send path to reach DATA")
+	}
+}
+
+// buildSMTPMessage 失败（消息构造阶段）必须原样透传，不发起任何网络连接。
+func TestSendEmailWithConfigPropagatesMessageBuildError(t *testing.T) {
+	svc := &EmailService{}
+	err := svc.SendEmailWithConfig(&SMTPConfig{Host: "smtp.example.com"}, "user@example.net", "subject", "body")
+	if err == nil {
+		t.Fatal("expected error when From address is missing")
+	}
+	if !strings.Contains(err.Error(), "invalid SMTP from address") {
+		t.Fatalf("expected message-build error to propagate unwrapped, got: %v", err)
+	}
+}
+
+// MAIL FROM 被服务器拒绝时必须原样透传错误。
+func TestSendEmailWithConfigPropagatesMailCommandError(t *testing.T) {
+	srv, port := startFakeSMTPServer(t, false, false)
+	srv.rejectMail = true
+	svc := &EmailService{}
+
+	err := svc.SendEmailWithConfig(smtpTestConfig(port, false), "rcpt@example.com", "subject", "<p>body</p>")
+	if err == nil {
+		t.Fatal("expected MAIL FROM rejection to surface as an error")
+	}
+	if !strings.Contains(err.Error(), "smtp mail") {
+		t.Fatalf("expected 'smtp mail' error, got: %v", err)
+	}
+}
+
+// RCPT TO 被服务器拒绝时必须原样透传错误。
+func TestSendEmailWithConfigPropagatesRcptCommandError(t *testing.T) {
+	srv, port := startFakeSMTPServer(t, false, false)
+	srv.rejectRcpt = true
+	svc := &EmailService{}
+
+	err := svc.SendEmailWithConfig(smtpTestConfig(port, false), "rcpt@example.com", "subject", "<p>body</p>")
+	if err == nil {
+		t.Fatal("expected RCPT TO rejection to surface as an error")
+	}
+	if !strings.Contains(err.Error(), "smtp rcpt") {
+		t.Fatalf("expected 'smtp rcpt' error, got: %v", err)
+	}
+}
+
+// DATA 阶段连接中断（写正文失败）必须原样透传错误，而不是被吞掉。
+func TestSendEmailWithConfigPropagatesWriteError(t *testing.T) {
+	srv, port := startFakeSMTPServer(t, false, false)
+	srv.closeOnData = true
+	svc := &EmailService{}
+
+	err := svc.SendEmailWithConfig(smtpTestConfig(port, false), "rcpt@example.com", "subject", "<p>body</p>")
+	if err == nil {
+		t.Fatal("expected write failure after server drops the connection mid-DATA")
+	}
+}
+
+// AUTH 被服务器拒绝时，TestSMTPConnectionWithConfig 必须原样透传错误。
+func TestSMTPConnectionWithConfigPropagatesAuthError(t *testing.T) {
+	srv, port := startFakeSMTPServer(t, false, false)
+	srv.rejectAuth = true
+	svc := &EmailService{}
+
+	err := svc.TestSMTPConnectionWithConfig(smtpTestConfig(port, false))
+	if err == nil {
+		t.Fatal("expected AUTH rejection to surface as an error")
+	}
+	if !strings.Contains(err.Error(), "smtp authentication failed") {
+		t.Fatalf("expected 'smtp authentication failed' error, got: %v", err)
+	}
+}
+
+// 服务器证书链不受信任时，隐式 TLS 拨号必须报出真实的证书错误（tls dial），
+// 而不是被误判成 RecordHeaderError 并降级尝试 STARTTLS。
+func TestConnectSMTPRejectsUntrustedCertificate(t *testing.T) {
+	serverCert, _ := newSMTPTestCert(t)
+	_, untrustedPool := newSMTPTestCert(t) // 与 serverCert 无关的另一份自签 CA
+
+	prevPool := smtpTestRootCAs
+	smtpTestRootCAs = untrustedPool
+	t.Cleanup(func() { smtpTestRootCAs = prevPool })
+
+	rawListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	tlsListener := tls.NewListener(rawListener, &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		MinVersion:   tls.VersionTLS12,
+	})
+	t.Cleanup(func() { _ = tlsListener.Close() })
+	go func() {
+		for {
+			conn, err := tlsListener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	port := rawListener.Addr().(*net.TCPAddr).Port
+	svc := &EmailService{}
+	err = svc.TestSMTPConnectionWithConfig(smtpTestConfig(port, true))
+	if err == nil {
+		t.Fatal("expected certificate verification failure")
+	}
+	if !strings.Contains(err.Error(), "tls dial") {
+		t.Fatalf("expected a 'tls dial' error (non-RecordHeaderError path), got: %v", err)
+	}
+}
+
+// 明文连接建立后服务器不发送问候（直接断连），smtp.NewClient 读 banner 失败
+// 必须原样透传，覆盖 connectSMTPStartTLS 里 newSMTPClient 的错误分支。
+func TestConnectSMTPStartTLSPropagatesNewClientError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close() // 不发送 220 问候，直接断连
+		}
+	}()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	svc := &EmailService{}
+	err = svc.TestSMTPConnectionWithConfig(smtpTestConfig(port, false))
+	if err == nil {
+		t.Fatal("expected smtp client creation to fail without a greeting")
+	}
+	if !strings.Contains(err.Error(), "new smtp client") {
+		t.Fatalf("expected 'new smtp client' error, got: %v", err)
+	}
+}
+
+// 服务器通告并接受 STARTTLS 命令，但拒绝完成真实握手：client.StartTLS 的
+// 错误必须原样透传，覆盖 connectSMTPStartTLS 里 StartTLS 失败的分支。
+func TestConnectSMTPStartTLSPropagatesHandshakeError(t *testing.T) {
+	srv, port := startFakeSMTPServer(t, false, true)
+	srv.failStartTLSHandshake = true
+	svc := &EmailService{}
+
+	err := svc.TestSMTPConnectionWithConfig(smtpTestConfig(port, false))
+	if err == nil {
+		t.Fatal("expected STARTTLS handshake failure to propagate")
+	}
+	if !strings.Contains(err.Error(), "starttls") {
+		t.Fatalf("expected 'starttls' error, got: %v", err)
+	}
+}
+
+// 目标端口没有任何服务监听（TCP 拨号本身失败）时，connectSMTPStartTLS 的
+// dial 错误必须一路透传到 SendEmailWithConfig，两处 "if err != nil" 分支都
+// 依赖这条路径才能被覆盖。
+func TestSendEmailWithConfigPropagatesDialError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+
+	svc := &EmailService{}
+	err = svc.SendEmailWithConfig(smtpTestConfig(port, false), "rcpt@example.com", "subject", "<p>body</p>")
+	if err == nil {
+		t.Fatal("expected dialing a closed port to fail")
+	}
+	if !strings.Contains(err.Error(), "smtp dial") {
+		t.Fatalf("expected 'smtp dial' error, got: %v", err)
+	}
+}
+
+// DATA 阶段连接被 RST 且正文足够大（迫使 dotWriter 内部多次 flush）时，
+// 失败必须发生在 w.Write 本身，而不仅仅是随后的 w.Close——覆盖两者各自
+// 独立的错误分支。
+func TestSendEmailWithConfigPropagatesLargeWriteError(t *testing.T) {
+	srv, port := startFakeSMTPServer(t, false, false)
+	srv.closeOnData = true
+	svc := &EmailService{}
+
+	largeBody := strings.Repeat("<p>filler content to force multiple dotWriter flushes</p>\n", 2000)
+	err := svc.SendEmailWithConfig(smtpTestConfig(port, false), "rcpt@example.com", "subject", largeBody)
+	if err == nil {
+		t.Fatal("expected write failure after server RSTs the connection mid-DATA")
 	}
 }
