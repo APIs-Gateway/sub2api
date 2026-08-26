@@ -7,6 +7,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -421,14 +422,18 @@ func (s *UsageService) BuildCreditFiatRate(
 		return rate
 	}
 
-	// 故意不加 deleted_at IS NULL：历史用量记录常常指向已经过期或已删除的卡，
-	// 那些记录同样需要按当初那张卡的单价折算，否则老账单会突然变贵。
+	// 历史用量记录常常指向已经过期、甚至已被软删除的卡，那些记录同样要按当初
+	// 那张卡的单价折算，否则老账单会因为回落到充值价而突然变贵。
+	// UserSubscription 带 SoftDeleteMixin，它的 interceptor 默认给所有查询加上
+	// deleted_at IS NULL，所以这里必须显式 SkipSoftDelete 才能把软删的卡读回来。
+	// 这个查询只落在 user_subscriptions 一张表上、不加载任何关联边，
+	// 不存在 SkipSoftDelete 穿透到其他软删实体的问题。
 	cards, err := s.entClient.UserSubscription.Query().
 		Where(
 			usersubscription.IDIn(ids...),
 			usersubscription.UserIDEQ(userID),
 		).
-		All(ctx)
+		All(mixins.SkipSoftDelete(ctx))
 	if err != nil {
 		// 查不到卡就整批回落到充值价折算。宁可让订阅用户看到偏高的估算，
 		// 也不要因为一个展示字段让整个用量列表失败。
