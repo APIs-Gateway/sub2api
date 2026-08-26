@@ -21,7 +21,7 @@ import { useCurrencyDisplay } from '../useCurrencyDisplay'
 
 /** 去掉 Intl 可能插入的不间断空格，断言只关心数字和币种符号。 */
 function normalize(text: string): string {
-  return text.replace(/ | /g, ' ')
+  return text.replace(/[\u00a0\u202f]/g, ' ')
 }
 
 describe('useCurrencyDisplay', () => {
