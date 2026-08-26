@@ -2132,6 +2132,74 @@ func setDefaults() {
 	viper.SetDefault("subscription_maintenance.worker_count", 2)
 	viper.SetDefault("subscription_maintenance.queue_size", 1024)
 
+	setEnvReachableDefaults()
+}
+
+// setEnvReachableDefaults 为「已在 Config 结构体里声明、但从未调用过 SetDefault」的键补注册一个默认值。
+//
+// viper.Unmarshal 只会解码 AllKeys() 里的键，AllKeys() 是 SetDefault 键、配置文件里出现过的键、
+// 显式 BindEnv 键的并集。AutomaticEnv 能让已经在这个并集里的键被环境变量覆盖，但它本身
+// 不会往并集里新增键。也就是说：只写在 mapstructure 标签里、从未 SetDefault 过的字段，
+// 只要部署方式是纯环境变量（没有对应的 config.yaml 条目），设置的环境变量会被 viper 直接
+// 丢弃——运维会以为配置生效了，实际上字段永远是 Go 零值。deploy/docker-compose.yml 这类
+// 纯环境变量驱动的部署对这个问题尤其敏感。
+//
+// 下面的值统一注册为字段的零值：未注册默认值时，缺省状态本来就是零值，所以补注册零值
+// 不改变现有行为，只是让这个键变得可以被环境变量寻址。TestConfigKeysAreEnvReachable
+// 会遍历整个 Config 结构体核实这一点；新增字段忘记 SetDefault 会在那个测试里报出来。
+func setEnvReachableDefaults() {
+	viper.SetDefault("gateway.forced_codex_instructions_template_file", "")
+	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
+	viper.SetDefault("gateway.user_message_queue.mode", "")
+	viper.SetDefault("update.proxy_url", "")
+
+	// sticky_escape_enabled 是零值规则的例外：它在 load() 里有一段兼容旧配置的 IsSet 兜底
+	// （`if !StickyEscapeEnabled && !viper.IsSet(...) { StickyEscapeEnabled = true }`），
+	// 语义上的生效默认值是 true。如果在这里注册 false，会让 viper.IsSet 永远返回 true
+	// （SetDefault 注册过的键，IsSet 不看是否显式设置，只看有没有值），那条兜底就永远不会
+	// 触发，等于把 sticky escape 永久关掉。所以这里直接注册生效默认值本身，兜底逻辑保留、
+	// 但正常情况下不会再触发，只在这行被误删时兜底。
+	viper.SetDefault("gateway.openai_scheduler.sticky_escape_enabled", true)
+	viper.SetDefault("gateway.openai_scheduler.sticky_escape_error_rate", 0.0)
+	viper.SetDefault("gateway.openai_scheduler.sticky_escape_ttft_ms", 0)
+
+	// 第三方登录（GitHub / Google OAuth）此前完全没有注册过默认值：client_secret 这类值
+	// 恰恰是运维最希望只用环境变量注入、不落 config.yaml 明文的配置，之前全部不可达。
+	for _, provider := range []string{"github_oauth", "google_oauth"} {
+		viper.SetDefault(provider+".enabled", false)
+		viper.SetDefault(provider+".client_id", "")
+		viper.SetDefault(provider+".client_secret", "")
+		viper.SetDefault(provider+".authorize_url", "")
+		viper.SetDefault(provider+".token_url", "")
+		viper.SetDefault(provider+".userinfo_url", "")
+		viper.SetDefault(provider+".emails_url", "")
+		viper.SetDefault(provider+".scopes", "")
+		viper.SetDefault(provider+".redirect_url", "")
+		viper.SetDefault(provider+".frontend_redirect_url", "")
+	}
+
+	// 钉钉登录：enabled/authorize_url/token_url/userinfo_url/scopes/frontend_redirect_url/
+	// dingtalk_app_kind/app_type/corp_restriction_policy/require_email/username_overwrite_policy
+	// 已经有默认值，这里只补此前从未注册过、同样不可达的键。
+	viper.SetDefault("dingtalk_connect.client_id", "")
+	viper.SetDefault("dingtalk_connect.client_secret", "")
+	viper.SetDefault("dingtalk_connect.internal_corp_id", "")
+	viper.SetDefault("dingtalk_connect.redirect_url", "")
+	viper.SetDefault("dingtalk_connect.bypass_registration", false)
+	viper.SetDefault("dingtalk_connect.username_attribute_key", "")
+	viper.SetDefault("dingtalk_connect.enable_attribute_matching", false)
+	viper.SetDefault("dingtalk_connect.enable_attribute_sync", false)
+	viper.SetDefault("dingtalk_connect.attribute_sync_fields", []string{})
+	viper.SetDefault("dingtalk_connect.attribute_sync_overwrite_policy", "")
+	viper.SetDefault("dingtalk_connect.sync_display_name", false)
+	viper.SetDefault("dingtalk_connect.sync_display_name_attr_key", "")
+	viper.SetDefault("dingtalk_connect.sync_display_name_attr_name", "")
+	viper.SetDefault("dingtalk_connect.sync_dept", false)
+	viper.SetDefault("dingtalk_connect.sync_dept_attr_key", "")
+	viper.SetDefault("dingtalk_connect.sync_dept_attr_name", "")
+	viper.SetDefault("dingtalk_connect.sync_corp_email", false)
+	viper.SetDefault("dingtalk_connect.sync_corp_email_attr_key", "")
+	viper.SetDefault("dingtalk_connect.sync_corp_email_attr_name", "")
 }
 
 func (c *Config) Validate() error {
