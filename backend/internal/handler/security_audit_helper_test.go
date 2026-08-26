@@ -12,6 +12,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type stagePromptEngine struct {
@@ -185,6 +187,44 @@ func TestRunSecurityAuditDoesNotCacheFlaggedWebSocketDecision(t *testing.T) {
 	second := runSecurityAudit(ctx, nil, coordinator, nil, apiKey, subject, securityauditProtocolResponses, "gpt-test", payload, "subsequent_turn")
 	require.Equal(t, securityaudit.DecisionAllow, second.Kind)
 	require.Equal(t, 2, engine.evaluateCount(), "retrying after a flagged decision must re-run the audit engine")
+}
+
+// TestRunSecurityAuditLogsWebSocketChecksAndCacheHits 是 upstream #5511
+// （fix(security-audit): restore websocket audit logs，本批次 item 6 / upstream
+// #5234 的后续修正）在 fork 手写去重实现上的等价验证：修复前，
+// isSecurityAuditWebSocketStage 分支内无论是命中 (stage,turn,body) 去重缓存
+// 直接复用上次结果，还是缓存未命中真正调用 coordinator.Check，两条路径都会在
+// 走到下方 gateway_check_start/done 日志之前直接 return，导致所有 WS 多轮安全
+// 审计请求完全没有审计日志留痕。这个测试验证：第一次调用产生 start(cached=false)
+// + done(cached=false)；同一 turn 内的重复 payload 命中缓存后，仍必须产生
+// done(cached=true) 记录（且不再重复产生 start），同时底层审计引擎只被真正调用一次。
+func TestRunSecurityAuditLogsWebSocketChecksAndCacheHits(t *testing.T) {
+	ctx, apiKey, subject := newSecurityAuditDedupeTestContext()
+	engine := &turnCountingPromptEngine{}
+	coordinator := securityaudit.NewCoordinator(nil, engine)
+	core, logs := observer.New(zap.InfoLevel)
+	reqLog := zap.New(core)
+	payload := []byte(`{"type":"response.create","response":{"input":"same turn"}}`)
+
+	ctx.Set(securityAuditWSTurnContextKey, 2)
+	first := runSecurityAudit(ctx, reqLog, coordinator, nil, apiKey, subject, securityauditProtocolResponses, "gpt-test", payload, "subsequent_turn")
+	second := runSecurityAudit(ctx, reqLog, coordinator, nil, apiKey, subject, securityauditProtocolResponses, "gpt-test", payload, "subsequent_turn")
+	require.NotNil(t, first)
+	require.NotNil(t, second)
+	require.True(t, first.AllowNextStage)
+	require.True(t, second.AllowNextStage)
+	require.Equal(t, 1, engine.evaluateCount(), "cache hit must not re-trigger the audit engine")
+
+	startLogs := logs.FilterMessage("security_audit.gateway_check_start").All()
+	require.Len(t, startLogs, 1, "cache hit must not produce a second start log")
+	require.Equal(t, false, startLogs[0].ContextMap()["cached"])
+
+	doneLogs := logs.FilterMessage("security_audit.gateway_check_done").All()
+	require.Len(t, doneLogs, 2, "both the fresh check and the cache hit must produce a done log")
+	require.Equal(t, false, doneLogs[0].ContextMap()["cached"])
+	require.Equal(t, true, doneLogs[1].ContextMap()["cached"])
+	require.Equal(t, "allow", doneLogs[1].ContextMap()["decision"])
+	require.Equal(t, "subsequent_turn", doneLogs[1].ContextMap()["stage"])
 }
 
 const securityauditProtocolResponses = "openai_responses"
