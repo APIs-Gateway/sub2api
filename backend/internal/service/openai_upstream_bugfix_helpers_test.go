@@ -83,16 +83,18 @@ func TestOpenAIImagesDiagnosticsHelpers(t *testing.T) {
 	}, "\n")
 
 	// 纯方案性文字（不带安全/审核关键词）应被 extractOpenAIImagesModelText 完整收集，
-	// 但 extractOpenAIImagesModelRefusal 只在命中内容策略信号时才返回文本。
+	// 但 isOpenAIImagesContentPolicyRefusal 只在命中内容策略信号时才判定为拒绝。
 	text := extractOpenAIImagesModelText([]byte(body))
 	require.Equal(t, "first second third", text)
-	require.Empty(t, extractOpenAIImagesModelRefusal([]byte(body)))
+	require.False(t, isOpenAIImagesContentPolicyRefusal(text))
 
 	refusalBody := strings.Join([]string{
 		`data: {"type":"response.completed","response":{"id":"resp_2","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"内容审核：不适合生成"}]}]}}`,
 		"",
 	}, "\n")
-	require.Equal(t, "内容审核：不适合生成", extractOpenAIImagesModelRefusal([]byte(refusalBody)))
+	refusalText := extractOpenAIImagesModelText([]byte(refusalBody))
+	require.True(t, isOpenAIImagesContentPolicyRefusal(refusalText))
+	require.Equal(t, "内容审核：不适合生成", refusalText)
 
 	summary := summarizeOpenAIImagesNoOutputBody([]byte(body))
 	require.Contains(t, summary, "no_image_output")

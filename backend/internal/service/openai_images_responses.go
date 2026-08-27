@@ -704,16 +704,6 @@ func isOpenAIImagesContentPolicyRefusal(text string) bool {
 	return false
 }
 
-// extractOpenAIImagesModelRefusal 从上游响应体提取「模型未出图、改用文字拒绝」的拒绝
-// 文本（内容审核场景）。只有命中安全/审核关键词的文本才会返回，普通的文字建议返回空串。
-func extractOpenAIImagesModelRefusal(body []byte) string {
-	text := extractOpenAIImagesModelText(body)
-	if !isOpenAIImagesContentPolicyRefusal(text) {
-		return ""
-	}
-	return text
-}
-
 // openAIImagesTextFallbackError 处理「上游只输出文字、没有产出图片」的软失败，区分两种
 // 情形（实测真因，见下）：
 //
