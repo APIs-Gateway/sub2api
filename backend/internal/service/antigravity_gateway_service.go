@@ -154,12 +154,14 @@ type antigravityRetryLoopResult struct {
 
 // resolveAntigravityForwardBaseURL 解析转发用 base URL。
 //
-// 默认使用生产端点 cloudcode-pa.googleapis.com（antigravity.BaseURLs 的首个地址，
-// 与账号 OAuth 登录/测试连接所用的 antigravity.BaseURL 一致）。
+// 显式环境变量优先。未配置时，LoadCodeAssist 返回 paidTier 的付费账号（plan_type
+// 为 pro/ultra）使用 daily 端点，其他账号继续使用生产端点 cloudcode-pa.googleapis.com
+// （antigravity.BaseURLs 的首个地址，与账号 OAuth 登录/测试连接所用的
+// antigravity.BaseURL 一致），避免免费账号的 OAuth token 在 daily 端点上出现 401。
 //
-// daily/sandbox 端点仅供内部联调，需显式设置
-// GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=daily（或 sandbox）才启用。
-func resolveAntigravityForwardBaseURL() string {
+// daily/sandbox 端点也可通过显式设置 GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=daily
+// （或 sandbox/prod）强制启用/禁用，环境变量优先级高于按账号档位的自动判断。
+func resolveAntigravityForwardBaseURL(account *Account) string {
 	baseURLs := antigravity.BaseURLs
 	if len(baseURLs) == 0 {
 		return ""
@@ -168,7 +170,25 @@ func resolveAntigravityForwardBaseURL() string {
 	if (mode == "daily" || mode == "sandbox") && len(baseURLs) > 1 {
 		return baseURLs[1]
 	}
+	if mode == "" && accountHasAntigravityPaidTier(account) && len(baseURLs) > 1 {
+		return baseURLs[1]
+	}
 	return baseURLs[0]
+}
+
+// accountHasAntigravityPaidTier 判断账号是否为付费档位（plan_type: pro/ultra）。
+// plan_type 来自 LoadCodeAssist 响应中的 paidTier，见 antigravity_subscription_service.go
+// 的 NormalizeAntigravitySubscription。
+func accountHasAntigravityPaidTier(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(account.GetCredential("plan_type"))) {
+	case "pro", "ultra":
+		return true
+	default:
+		return false
+	}
 }
 
 // smartRetryAction 智能重试的处理结果
@@ -600,7 +620,7 @@ func (s *AntigravityGatewayService) antigravityRetryLoop(p antigravityRetryLoopP
 		}
 	}
 
-	baseURL := resolveAntigravityForwardBaseURL()
+	baseURL := resolveAntigravityForwardBaseURL(p.account)
 	if baseURL == "" {
 		return nil, errors.New("no antigravity forward base url configured")
 	}
