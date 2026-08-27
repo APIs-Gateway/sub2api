@@ -188,6 +188,7 @@ func ProvideHandlers(
 	availableChannelHandler *AvailableChannelHandler,
 	checkinHandler *CheckinHandler,
 	pointsHandler *PointsHandler,
+	legacyInviteHandler *LegacyInviteHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 ) *Handlers {
@@ -211,6 +212,7 @@ func ProvideHandlers(
 		AvailableChannel: availableChannelHandler,
 		Checkin:          checkinHandler,
 		Points:           pointsHandler,
+		LegacyInvite:     legacyInviteHandler,
 	}
 }
 
@@ -235,6 +237,7 @@ var ProviderSet = wire.NewSet(
 	NewAvailableChannelHandler,
 	NewCheckinHandler,
 	NewPointsHandler,
+	NewLegacyInviteHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

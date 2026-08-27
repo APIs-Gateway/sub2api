@@ -342,10 +342,34 @@ func (s *EmailService) GenerateVerifyCode() (string, error) {
 	return string(code), nil
 }
 
-// SendVerifyCode 发送验证码邮件
+// scopedVerifyCodeKey 把验证码放进一个独立命名空间。
+//
+// 默认的验证码 key 就是邮箱本身，注册流程一直这么用。但同一个邮箱可能同时处在
+// 多个互不相干的验证流程里——比如先在领码页证明邮箱归属拿邀请码，几分钟后又拿这个码来注册——
+// 共用 key 会让后发的验证码把前一个覆盖掉，用户就会遇到「刚收到的码提示无效」。
+func scopedVerifyCodeKey(scope, email string) string {
+	if strings.TrimSpace(scope) == "" {
+		return email
+	}
+	return scope + ":" + email
+}
+
+// SendVerifyCode 发送注册验证码邮件（使用默认命名空间，即邮箱本身）。
 func (s *EmailService) SendVerifyCode(ctx context.Context, email, siteName string, locale ...string) error {
+	return s.sendVerifyCode(ctx, email, email, siteName, locale...)
+}
+
+// SendScopedVerifyCode 在指定命名空间下发送验证码邮件。
+// 收件人仍然是 email，只有 Redis 里的存放位置带上了 scope 前缀。
+func (s *EmailService) SendScopedVerifyCode(ctx context.Context, scope, email, siteName string, locale ...string) error {
+	return s.sendVerifyCode(ctx, scopedVerifyCodeKey(scope, email), email, siteName, locale...)
+}
+
+// sendVerifyCode 是发码的实现体。cacheKey 决定验证码存在哪，email 决定信发给谁，
+// 两者分开是为了支持同一邮箱下多条并行的验证流程。
+func (s *EmailService) sendVerifyCode(ctx context.Context, cacheKey, email, siteName string, locale ...string) error {
 	// 检查是否在冷却期内
-	existing, err := s.cache.GetVerificationCode(ctx, email)
+	existing, err := s.cache.GetVerificationCode(ctx, cacheKey)
 	if err == nil && existing != nil {
 		if time.Since(existing.CreatedAt) < verifyCodeCooldown {
 			return ErrVerifyCodeTooFrequent
@@ -365,7 +389,7 @@ func (s *EmailService) SendVerifyCode(ctx context.Context, email, siteName strin
 		CreatedAt: time.Now(),
 		ExpiresAt: time.Now().Add(verifyCodeTTL),
 	}
-	if err := s.cache.SetVerificationCode(ctx, email, data, verifyCodeTTL); err != nil {
+	if err := s.cache.SetVerificationCode(ctx, cacheKey, data, verifyCodeTTL); err != nil {
 		return fmt.Errorf("save verify code: %w", err)
 	}
 
@@ -401,9 +425,19 @@ func (s *EmailService) SendVerifyCode(ctx context.Context, email, siteName strin
 	return nil
 }
 
-// VerifyCode 验证验证码
+// VerifyCode 验证注册验证码（默认命名空间）。
 func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error {
-	data, err := s.cache.GetVerificationCode(ctx, email)
+	return s.verifyCode(ctx, email, code)
+}
+
+// VerifyScopedCode 验证指定命名空间下的验证码，与 SendScopedVerifyCode 成对使用。
+func (s *EmailService) VerifyScopedCode(ctx context.Context, scope, email, code string) error {
+	return s.verifyCode(ctx, scopedVerifyCodeKey(scope, email), code)
+}
+
+// verifyCode 是校验的实现体，cacheKey 语义同 sendVerifyCode。
+func (s *EmailService) verifyCode(ctx context.Context, cacheKey, code string) error {
+	data, err := s.cache.GetVerificationCode(ctx, cacheKey)
 	if err != nil || data == nil {
 		return ErrInvalidVerifyCode
 	}
@@ -420,8 +454,8 @@ func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error
 		if remaining <= 0 {
 			return ErrInvalidVerifyCode
 		}
-		if err := s.cache.SetVerificationCode(ctx, email, data, remaining); err != nil {
-			slog.Error("failed to update verification attempt count", "email", email, "error", err)
+		if err := s.cache.SetVerificationCode(ctx, cacheKey, data, remaining); err != nil {
+			slog.Error("failed to update verification attempt count", "email", cacheKey, "error", err)
 		}
 		if data.Attempts >= maxVerifyCodeAttempts {
 			return ErrVerifyCodeMaxAttempts
@@ -430,8 +464,8 @@ func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error
 	}
 
 	// 验证成功，删除验证码
-	if err := s.cache.DeleteVerificationCode(ctx, email); err != nil {
-		slog.Error("failed to delete verification code after success", "email", email, "error", err)
+	if err := s.cache.DeleteVerificationCode(ctx, cacheKey); err != nil {
+		slog.Error("failed to delete verification code after success", "email", cacheKey, "error", err)
 	}
 	return nil
 }
