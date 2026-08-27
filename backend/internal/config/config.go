@@ -96,6 +96,7 @@ type Config struct {
 	Gemini                  GeminiConfig                  `mapstructure:"gemini"`
 	Update                  UpdateConfig                  `mapstructure:"update"`
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
+	LegacyInvite            LegacyInviteConfig            `mapstructure:"legacy_invite"`
 }
 
 type LogConfig struct {
@@ -1277,6 +1278,51 @@ func (d *DatabaseConfig) DSNWithTimezone(tz string) string {
 	)
 }
 
+// LegacyInviteConfig 配置「旧站付费用户领取本站邀请码」入口。
+//
+// 面向的是从旧主站迁过来的付费用户：他们在旧站消费达到门槛后，可以在本站用旧站邮箱
+// 换一个一次性邀请码来注册。达标与否是实时查旧站数据库得出的，所以这里要填一组
+// **旧站库的只读账号**——不要把本站主库的凭据填进来，也不要给这个账号写权限。
+//
+// Enabled 为 false（默认）时功能整体关闭：接口仍然存在但一律返回「未开放」，
+// 也不会建立任何到旧站库的连接。这样单站部署可以完全无视这一节配置。
+type LegacyInviteConfig struct {
+	Enabled  bool   `mapstructure:"enabled"`
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	User     string `mapstructure:"user"`
+	Password string `mapstructure:"password"`
+	DBName   string `mapstructure:"dbname"`
+	SSLMode  string `mapstructure:"sslmode"`
+
+	// MinPaidAmount 是达标门槛，单位与旧站 payment_orders.pay_amount 一致（元）。
+	// 统计口径是「实付金额合计，扣除已退款部分」，余额充值和订阅购买都算。
+	MinPaidAmount float64 `mapstructure:"min_paid_amount"`
+	// QueryTimeoutSeconds 限制单次跨库查询的耗时。旧站库抖动时宁可快速失败让用户重试，
+	// 也不能让领码请求把本站的连接和 goroutine 拖住。
+	QueryTimeoutSeconds int `mapstructure:"query_timeout_seconds"`
+	// MaxOpenConns 限制到旧站库的连接数。这条链路只服务领码这一个低频入口，
+	// 池子给小一点，避免占用旧站库的连接位影响它自己的线上服务。
+	MaxOpenConns int `mapstructure:"max_open_conns"`
+	// CodeExpiresDays 是发出去的邀请码有效期天数；0 表示永不过期。
+	CodeExpiresDays int `mapstructure:"code_expires_days"`
+}
+
+// DSN 返回旧站库的连接串。与主库不同，这里不追加 TimeZone：
+// 判定只做金额求和，不依赖时区，少一个可能配错的参数。
+func (c *LegacyInviteConfig) DSN() string {
+	if c.Password == "" {
+		return fmt.Sprintf(
+			"host=%s port=%d user=%s dbname=%s sslmode=%s",
+			c.Host, c.Port, c.User, c.DBName, c.SSLMode,
+		)
+	}
+	return fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		c.Host, c.Port, c.User, c.Password, c.DBName, c.SSLMode,
+	)
+}
+
 // RedisConfig Redis 连接配置
 // 性能优化：新增连接池和超时参数，提升高并发场景下的吞吐量
 type RedisConfig struct {
@@ -1837,6 +1883,16 @@ func setDefaults() {
 	viper.SetDefault("database.max_idle_conns", 128)
 	viper.SetDefault("database.conn_max_lifetime_minutes", 30)
 	viper.SetDefault("database.conn_max_idle_time_minutes", 5)
+
+	// 旧站付费用户领码：默认关闭，单站部署无需关心这一节
+	viper.SetDefault("legacy_invite.enabled", false)
+	viper.SetDefault("legacy_invite.host", "localhost")
+	viper.SetDefault("legacy_invite.port", 5432)
+	viper.SetDefault("legacy_invite.sslmode", "prefer")
+	viper.SetDefault("legacy_invite.min_paid_amount", 300)
+	viper.SetDefault("legacy_invite.query_timeout_seconds", 5)
+	viper.SetDefault("legacy_invite.max_open_conns", 4)
+	viper.SetDefault("legacy_invite.code_expires_days", 0)
 	viper.SetDefault("database.user_platform_quota_flusher_enabled", false)
 	viper.SetDefault("database.user_platform_quota_flush_interval_ms", 2000)
 	viper.SetDefault("database.user_platform_quota_flush_batch_size", 1000)

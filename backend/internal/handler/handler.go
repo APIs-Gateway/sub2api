@@ -64,6 +64,7 @@ type Handlers struct {
 	AvailableChannel *AvailableChannelHandler
 	Checkin          *CheckinHandler
 	Points           *PointsHandler
+	LegacyInvite     *LegacyInviteHandler
 }
 
 // BuildInfo contains build-time information
