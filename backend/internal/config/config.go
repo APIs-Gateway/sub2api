@@ -1888,7 +1888,17 @@ func setDefaults() {
 	viper.SetDefault("legacy_invite.enabled", false)
 	viper.SetDefault("legacy_invite.host", "localhost")
 	viper.SetDefault("legacy_invite.port", 5432)
-	viper.SetDefault("legacy_invite.sslmode", "prefer")
+	// 下面三项即使默认值是空串也必须在这里注册。viper 的 AutomaticEnv 只对「已知的 key」
+	// 生效，没注册过的 key 不会去查环境变量——漏掉任何一个，对应的
+	// LEGACY_INVITE_USER / _PASSWORD / _DBNAME 就读不进来，拼出的 DSN 缺字段，
+	// lib/pq 会把后一个键值对当成用户名，报出 user "dbname=" 这种完全看不懂的错。
+	viper.SetDefault("legacy_invite.user", "")
+	viper.SetDefault("legacy_invite.password", "")
+	viper.SetDefault("legacy_invite.dbname", "")
+	// sslmode 只能取 lib/pq 认识的四个值。它比 libpq 少，prefer / allow 都不支持，
+	// 填了会在 sql.Open 阶段直接报 unsupported sslmode。默认给 require：
+	// 跨库连接大多要出本机，明文传旧站凭据不合适。
+	viper.SetDefault("legacy_invite.sslmode", "require")
 	viper.SetDefault("legacy_invite.min_paid_amount", 300)
 	viper.SetDefault("legacy_invite.query_timeout_seconds", 5)
 	viper.SetDefault("legacy_invite.max_open_conns", 4)

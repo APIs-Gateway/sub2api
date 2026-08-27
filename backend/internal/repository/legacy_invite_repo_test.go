@@ -240,3 +240,109 @@ func TestLegacyInviteClaimRepository_Create(t *testing.T) {
 		require.Error(t, repo.Create(context.Background(), nil))
 	})
 }
+
+// TestValidateLegacyInviteConfig 覆盖连库前的配置校验。
+//
+// 这组用例的存在是因为一次真实的线上故障：漏填 user 时 lib/pq 报的是
+// `user "dbname="`，完全指不到根因。校验的价值就在于把错误说清楚。
+func TestValidateLegacyInviteConfig(t *testing.T) {
+	t.Parallel()
+
+	complete := func() config.LegacyInviteConfig {
+		return config.LegacyInviteConfig{
+			Host: "10.0.0.1", Port: 5432,
+			User: "ro", Password: "x", DBName: "legacy", SSLMode: "require",
+		}
+	}
+
+	t.Run("complete config passes", func(t *testing.T) {
+		cfg := complete()
+		require.NoError(t, validateLegacyInviteConfig(&cfg))
+	})
+
+	t.Run("empty sslmode is allowed", func(t *testing.T) {
+		// 留空表示交给驱动取默认值，不算配置错误
+		cfg := complete()
+		cfg.SSLMode = ""
+		require.NoError(t, validateLegacyInviteConfig(&cfg))
+	})
+
+	t.Run("missing fields are named", func(t *testing.T) {
+		cases := map[string]func(*config.LegacyInviteConfig){
+			"host":   func(c *config.LegacyInviteConfig) { c.Host = "  " },
+			"port":   func(c *config.LegacyInviteConfig) { c.Port = 0 },
+			"user":   func(c *config.LegacyInviteConfig) { c.User = "" },
+			"dbname": func(c *config.LegacyInviteConfig) { c.DBName = "" },
+		}
+		for field, mutate := range cases {
+			t.Run(field, func(t *testing.T) {
+				cfg := complete()
+				mutate(&cfg)
+				err := validateLegacyInviteConfig(&cfg)
+				require.Error(t, err)
+				// 错误信息必须点名是哪一项缺了，否则这层校验就白加了
+				require.Contains(t, err.Error(), field)
+			})
+		}
+	})
+
+	t.Run("rejects sslmode values lib/pq cannot parse", func(t *testing.T) {
+		// prefer 是 libpq 的默认值，照着 PostgreSQL 文档填很自然，
+		// 但 lib/pq 不认——线上就是栽在这个值上。
+		for _, mode := range []string{"prefer", "allow", "verify"} {
+			cfg := complete()
+			cfg.SSLMode = mode
+			require.Error(t, validateLegacyInviteConfig(&cfg), "sslmode=%s 必须被拒", mode)
+		}
+	})
+
+	t.Run("accepts every mode lib/pq supports", func(t *testing.T) {
+		for _, mode := range []string{"disable", "require", "verify-ca", "verify-full"} {
+			cfg := complete()
+			cfg.SSLMode = mode
+			require.NoError(t, validateLegacyInviteConfig(&cfg), "sslmode=%s 应被接受", mode)
+		}
+	})
+}
+
+// TestInitLegacyInviteDB_DegradesInsteadOfFailing 是这组测试里最重要的一条。
+//
+// 领码是附属入口，它的配置问题绝不能变成整站起不来。启动阶段一旦返回非 nil error，
+// 依赖注入会失败、进程退出、容器反复重启——同一版本里其他完全正常的功能会被一起拖下线。
+// 所以这里断言的是：无论配置多离谱，都只降级不报错。
+func TestInitLegacyInviteDB_DegradesInsteadOfFailing(t *testing.T) {
+	t.Parallel()
+
+	newCfg := func(mutate func(*config.LegacyInviteConfig)) *config.Config {
+		cfg := &config.Config{}
+		cfg.LegacyInvite = config.LegacyInviteConfig{
+			Enabled: true,
+			Host:    "127.0.0.1", Port: 1,
+			User: "ro", Password: "x", DBName: "legacy", SSLMode: "require",
+			QueryTimeoutSeconds: 1,
+		}
+		if mutate != nil {
+			mutate(&cfg.LegacyInvite)
+		}
+		return cfg
+	}
+
+	t.Run("incomplete config", func(t *testing.T) {
+		db, err := InitLegacyInviteDB(newCfg(func(c *config.LegacyInviteConfig) { c.User = "" }))
+		require.NoError(t, err, "配置漏填不能阻断启动")
+		require.Nil(t, db)
+	})
+
+	t.Run("unsupported sslmode", func(t *testing.T) {
+		db, err := InitLegacyInviteDB(newCfg(func(c *config.LegacyInviteConfig) { c.SSLMode = "prefer" }))
+		require.NoError(t, err, "非法 sslmode 不能阻断启动")
+		require.Nil(t, db)
+	})
+
+	t.Run("unreachable database", func(t *testing.T) {
+		// 端口 1 上不会有 postgres，Ping 会立刻被拒
+		db, err := InitLegacyInviteDB(newCfg(nil))
+		require.NoError(t, err, "旧站库连不上不能阻断启动")
+		require.Nil(t, db)
+	})
+}

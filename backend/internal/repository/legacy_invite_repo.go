@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/lib/pq"
@@ -21,21 +23,79 @@ type LegacyInviteDB struct {
 	*sql.DB
 }
 
+// legacyInvitePqSSLModes 是 lib/pq 认识的 sslmode 取值。
+//
+// 特意列出来而不是直接透传：lib/pq 支持的比 libpq 少，prefer 和 allow 都不认。
+// 照着 PostgreSQL 官方文档填 prefer 是很自然的动作，但它会在 sql.Open 阶段就失败。
+var legacyInvitePqSSLModes = map[string]bool{
+	"disable":     true,
+	"require":     true,
+	"verify-ca":   true,
+	"verify-full": true,
+}
+
+// validateLegacyInviteConfig 在连库之前检查配置的完整性。
+//
+// 这一步存在的唯一理由是让错误信息可读。DSN 里少了 user 时，lib/pq 会把下一个键值对
+// 整个当成用户名，报出 `no pg_hba.conf entry for host "...", user "dbname="`——
+// 从这句话根本看不出是配置漏填，只会让人去翻 pg_hba.conf。
+func validateLegacyInviteConfig(cfg *config.LegacyInviteConfig) error {
+	var missing []string
+	if strings.TrimSpace(cfg.Host) == "" {
+		missing = append(missing, "host")
+	}
+	if cfg.Port <= 0 {
+		missing = append(missing, "port")
+	}
+	if strings.TrimSpace(cfg.User) == "" {
+		missing = append(missing, "user")
+	}
+	if strings.TrimSpace(cfg.DBName) == "" {
+		missing = append(missing, "dbname")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("缺少必填项: %s", strings.Join(missing, ", "))
+	}
+
+	// 空串留给 lib/pq 自己取默认（require），不算错。
+	if mode := strings.TrimSpace(cfg.SSLMode); mode != "" && !legacyInvitePqSSLModes[mode] {
+		return fmt.Errorf("sslmode=%q 不被支持，只能是 disable / require / verify-ca / verify-full", mode)
+	}
+	return nil
+}
+
+// logLegacyInviteDisabled 把一次「旧站库不可用」记成醒目的日志。
+func logLegacyInviteDisabled(reason string, err error) {
+	logger.LegacyPrintf("repository.legacy_invite",
+		"[LegacyInvite] 旧站付费领码功能已自动关闭：%s：%v", reason, err)
+}
+
 // InitLegacyInviteDB 按配置建立到旧站库的连接。
 //
 // 功能未启用时返回 (nil, nil)：这是正常路径，不是错误。单站部署压根不需要这条链路，
 // 不应该因为没填旧站配置就让整个进程起不来。
 //
-// 启用时会立刻 Ping 一次做快速失败：配置写错要在启动阶段就暴露，
-// 而不是等到第一个用户来领码才发现连不上。
+// 启用但配置有问题或旧站库不可达时，同样返回 (nil, nil)，只在日志里记一条错误。
+// 这里刻意**不**把错误往上抛去阻断启动：领码只是一个附属入口，它连不上旧站库
+// 不该拖垮整个站点。2026-08-27 上线时就是反面教材——sslmode 默认值写成了 lib/pq
+// 不认的 prefer，加上漏注册三个环境变量键，Ping 失败让进程反复重启，
+// 把同一版本里两个本来完全正常的功能一起打下线。
+//
+// 降级之后站点照常服务，领码页显示「暂未开放」，运维从日志里那条记录定位问题。
 func InitLegacyInviteDB(cfg *config.Config) (*LegacyInviteDB, error) {
 	if cfg == nil || !cfg.LegacyInvite.Enabled {
 		return nil, nil
 	}
 
+	if err := validateLegacyInviteConfig(&cfg.LegacyInvite); err != nil {
+		logLegacyInviteDisabled("配置不完整", err)
+		return nil, nil
+	}
+
 	db, err := sql.Open("postgres", cfg.LegacyInvite.DSN())
 	if err != nil {
-		return nil, fmt.Errorf("open legacy site database: %w", err)
+		logLegacyInviteDisabled("连接参数无法解析", err)
+		return nil, nil
 	}
 
 	maxConns := cfg.LegacyInvite.MaxOpenConns
@@ -52,7 +112,8 @@ func InitLegacyInviteDB(cfg *config.Config) (*LegacyInviteDB, error) {
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("ping legacy site database: %w", err)
+		logLegacyInviteDisabled("旧站库不可达", err)
+		return nil, nil
 	}
 
 	return &LegacyInviteDB{DB: db}, nil
