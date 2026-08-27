@@ -219,3 +219,67 @@ func TestGetAffiliateSignupRewardEnabled_DefaultsOff(t *testing.T) {
 	require.False(t, empty.GetAffiliateSignupRewardEnabled(context.Background()))
 	require.Zero(t, empty.GetAffiliateSignupRewardAmount(context.Background()))
 }
+
+// signupRewardAccruerStub 记录注册流程把发放请求转给了谁。
+type signupRewardAccruerStub struct {
+	calls []int64
+	err   error
+	got   int64
+}
+
+func (s *signupRewardAccruerStub) AccrueSignupReward(_ context.Context, inviteeUserID int64) (int64, error) {
+	s.calls = append(s.calls, inviteeUserID)
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.got, nil
+}
+
+// TestAuthServiceGrantSignupReward 覆盖注册流程侧的那层薄封装。
+//
+// 这段代码的全部价值在于「不出事」：走到这里时用户已经注册成功、邀请关系也已经落库，
+// 都是不可回滚的既成事实。此时无论奖励发放是压根没配、还是发到一半报错，
+// 都不允许把异常捅回注册流程。
+func TestAuthServiceGrantSignupReward(t *testing.T) {
+	t.Parallel()
+
+	t.Run("未注入发放器时安静跳过", func(t *testing.T) {
+		// 单站部署不开积分，这是常态而非异常
+		svc := &AuthService{}
+		require.NotPanics(t, func() { svc.grantSignupReward(context.Background(), 7) })
+	})
+
+	t.Run("nil 接收者不 panic", func(t *testing.T) {
+		var svc *AuthService
+		require.NotPanics(t, func() { svc.grantSignupReward(context.Background(), 7) })
+	})
+
+	t.Run("非法用户 ID 不触达发放器", func(t *testing.T) {
+		stub := &signupRewardAccruerStub{}
+		svc := &AuthService{}
+		svc.SetSignupRewardAccruer(stub)
+		svc.grantSignupReward(context.Background(), 0)
+		require.Empty(t, stub.calls)
+	})
+
+	t.Run("正常发放", func(t *testing.T) {
+		stub := &signupRewardAccruerStub{got: 50}
+		svc := &AuthService{}
+		svc.SetSignupRewardAccruer(stub)
+		svc.grantSignupReward(context.Background(), 7)
+		require.Equal(t, []int64{7}, stub.calls, "传下去的必须是被邀请人的 ID")
+	})
+
+	t.Run("发放报错被吞掉，不影响注册", func(t *testing.T) {
+		stub := &signupRewardAccruerStub{err: errors.New("points db down")}
+		svc := &AuthService{}
+		svc.SetSignupRewardAccruer(stub)
+		require.NotPanics(t, func() { svc.grantSignupReward(context.Background(), 7) })
+		require.Len(t, stub.calls, 1, "报错前确实调用过一次")
+	})
+
+	t.Run("SetSignupRewardAccruer 对 nil 接收者安全", func(t *testing.T) {
+		var svc *AuthService
+		require.NotPanics(t, func() { svc.SetSignupRewardAccruer(&signupRewardAccruerStub{}) })
+	})
+}
