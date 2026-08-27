@@ -6304,6 +6304,8 @@
           durationDaysDesc: '被邀请用户注册后多少天内的付款产生积分。0 = 永久有效。',
           perInviteeCap: '单人积分上限',
           perInviteeCapDesc: '每个被邀请用户最多产生的积分价值。0 = 无上限。',
+          weeklyInviteLimit: '每周邀请人数上限',
+          weeklyInviteLimitDesc: '单个邀请码在每个自然周（周一 00:00 起）最多可成功邀请的人数，超出后再用该邀请码注册会被拒绝。0 = 不限。管理员的邀请码不受此限制。',
           customUsers: {
             title: '专属用户配置',
             description: '为指定用户设置专属邀请码或专属邀请积分比例。仅展示已设置过专属配置的用户。',
@@ -6354,6 +6356,9 @@
         description: '控制用户注册和验证',
         enableRegistration: '开放注册',
         enableRegistrationHint: '允许新用户注册',
+        signupSources: '可注册的渠道',
+        signupSourcesHint: '关闭某个渠道后，该渠道仍可登录已有账号，但不能再注册新用户。「开放注册」关闭时所有渠道都不能注册。',
+        signupSourceEmail: '账号密码注册',
         emailVerification: '邮箱验证',
         emailVerificationHint: '新用户注册时需要验证邮箱',
         gmailAliasFilter: 'Gmail 别名过滤',

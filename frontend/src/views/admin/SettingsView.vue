@@ -1498,6 +1498,36 @@
                 <Toggle v-model="form.registration_enabled" />
               </div>
 
+              <!-- Signup Sources: 分渠道注册开关（总开关之下的细分控制） -->
+              <div
+                class="border-t border-gray-100 pt-4 dark:border-dark-700"
+                :class="{ 'pointer-events-none opacity-50': !form.registration_enabled }"
+              >
+                <div>
+                  <label class="font-medium text-gray-900 dark:text-white">{{
+                    t("admin.settings.registration.signupSources")
+                  }}</label>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.registration.signupSourcesHint") }}
+                  </p>
+                </div>
+                <div class="mt-3 space-y-3">
+                  <div
+                    v-for="source in SIGNUP_SOURCES"
+                    :key="source"
+                    class="flex items-center justify-between"
+                  >
+                    <span class="text-sm text-gray-700 dark:text-gray-300">{{
+                      signupSourceLabel(source)
+                    }}</span>
+                    <Toggle
+                      :model-value="isSignupSourceEnabled(source)"
+                      @update:model-value="setSignupSourceEnabled(source, $event)"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <!-- Email Verification -->
               <div
                 class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700"
@@ -6073,6 +6103,23 @@
                 </p>
               </div>
 
+              <div>
+                <label class="input-label">
+                  {{ t('admin.settings.features.affiliate.weeklyInviteLimit') }}
+                </label>
+                <input
+                  v-model.number="form.affiliate_weekly_invite_limit"
+                  type="number"
+                  step="1"
+                  min="0"
+                  max="10000"
+                  class="input"
+                />
+                <p class="mt-1 text-xs text-gray-400">
+                  {{ t('admin.settings.features.affiliate.weeklyInviteLimitDesc') }}
+                </p>
+              </div>
+
               <!-- 专属用户管理 -->
               <div class="border-t border-gray-100 pt-6 dark:border-dark-700">
                 <div class="mb-3 flex items-center justify-between">
@@ -8368,8 +8415,55 @@ type SettingsForm = Omit<
   forwarded_client_ip_headers_input: string;
 };
 
+// 与后端 service.SignupSources 保持一致；email 代表账号密码注册，其余为第三方渠道。
+const SIGNUP_SOURCES = [
+  "email",
+  "github",
+  "google",
+  "linuxdo",
+  "wechat",
+  "oidc",
+  "dingtalk",
+] as const;
+
+// 第三方渠道用固定品牌名，不进 i18n；只有 email（账号密码注册）需要翻译。
+const SIGNUP_SOURCE_LABELS: Record<string, string> = {
+  github: "GitHub",
+  google: "Google",
+  linuxdo: "LinuxDo",
+  wechat: "WeChat",
+  oidc: "OIDC",
+  dingtalk: "DingTalk",
+};
+
+// 缺省一律视为允许，与后端 IsSignupSourceEnabled 的判定保持一致。
+function defaultSignupSourceEnabled(): Record<string, boolean> {
+  return SIGNUP_SOURCES.reduce<Record<string, boolean>>((acc, source) => {
+    acc[source] = true;
+    return acc;
+  }, {});
+}
+
+function signupSourceLabel(source: string): string {
+  return source === "email"
+    ? t("admin.settings.registration.signupSourceEmail")
+    : SIGNUP_SOURCE_LABELS[source] || source;
+}
+
+function isSignupSourceEnabled(source: string): boolean {
+  return form.signup_source_enabled?.[source] !== false;
+}
+
+function setSignupSourceEnabled(source: string, enabled: boolean) {
+  if (!form.signup_source_enabled) {
+    form.signup_source_enabled = defaultSignupSourceEnabled();
+  }
+  form.signup_source_enabled[source] = enabled;
+}
+
 const form = reactive<SettingsForm>({
   registration_enabled: true,
+  signup_source_enabled: defaultSignupSourceEnabled(),
   email_verify_enabled: false,
   gmail_alias_filter_enabled: true,
   registration_email_suffix_whitelist: [],
@@ -8390,6 +8484,7 @@ const form = reactive<SettingsForm>({
   affiliate_rebate_freeze_hours: 0,
   affiliate_rebate_duration_days: 0,
   affiliate_rebate_per_invitee_cap: 0,
+  affiliate_weekly_invite_limit: 0,
   default_concurrency: 1,
   default_subscriptions: [],
   force_email_on_third_party_signup: false,
@@ -9560,6 +9655,14 @@ async function saveSettings() {
 
     const payload: UpdateSettingsRequest = {
       registration_enabled: form.registration_enabled,
+      signup_source_enabled: SIGNUP_SOURCES.reduce<Record<string, boolean>>(
+        (acc, source) => {
+          // 缺省视为允许，避免把"没配过"提交成关闭
+          acc[source] = form.signup_source_enabled?.[source] !== false;
+          return acc;
+        },
+        {},
+      ),
       email_verify_enabled: form.email_verify_enabled,
       gmail_alias_filter_enabled: form.gmail_alias_filter_enabled,
       registration_email_suffix_whitelist:
@@ -9584,6 +9687,10 @@ async function saveSettings() {
       affiliate_rebate_freeze_hours: Math.max(0, Math.min(720, Number(form.affiliate_rebate_freeze_hours) || 0)),
       affiliate_rebate_duration_days: Math.max(0, Math.min(3650, Math.floor(Number(form.affiliate_rebate_duration_days) || 0))),
       affiliate_rebate_per_invitee_cap: Math.max(0, Number(form.affiliate_rebate_per_invitee_cap) || 0),
+      affiliate_weekly_invite_limit: Math.max(
+        0,
+        Math.min(10000, Math.floor(Number(form.affiliate_weekly_invite_limit) || 0)),
+      ),
       default_concurrency: form.default_concurrency,
       default_subscriptions: normalizedDefaultSubscriptions,
       force_email_on_third_party_signup: form.force_email_on_third_party_signup,

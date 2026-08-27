@@ -43,6 +43,10 @@ var (
 	ErrInvitationCodeRequired  = infraerrors.BadRequest("INVITATION_CODE_REQUIRED", "invitation code is required")
 	ErrInvitationCodeInvalid   = infraerrors.BadRequest("INVITATION_CODE_INVALID", "invalid or used invitation code")
 	ErrOAuthInvitationRequired = infraerrors.Forbidden("OAUTH_INVITATION_REQUIRED", "invitation code required to complete oauth registration")
+	// ErrSignupSourceDisabled 表示总注册开关是开的，但该来源被单独关掉了
+	// （例如只保留 GitHub 注册、关闭账号密码注册）。与 ErrRegDisabled 区分开，
+	// 便于前端提示用户改用其它渠道，而不是笼统地说"站点关闭注册"。
+	ErrSignupSourceDisabled = infraerrors.Forbidden("SIGNUP_SOURCE_DISABLED", "registration via this source is currently disabled")
 )
 
 // maxTokenLength 限制 token 大小，避免超长 header 触发解析时的异常内存分配。
@@ -147,6 +151,10 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	// 检查是否开放注册（默认关闭：settingService 未配置时不允许注册）
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		return "", nil, ErrRegDisabled
+	}
+	// 总闸之外，账号密码注册还受 email 这个来源的独立开关控制
+	if !s.settingService.IsSignupSourceEnabled(ctx, SignupSourceEmail) {
+		return "", nil, ErrSignupSourceDisabled
 	}
 
 	// 防止用户注册 LinuxDo OAuth 合成邮箱，避免第三方登录与本地账号发生碰撞。
@@ -298,6 +306,10 @@ func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale .
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		return ErrRegDisabled
 	}
+	// 账号密码注册关闭时不再发注册验证码，避免白发一封邮件最后仍被拒
+	if !s.settingService.IsSignupSourceEnabled(ctx, SignupSourceEmail) {
+		return ErrSignupSourceDisabled
+	}
 
 	if isReservedEmail(email) {
 		return ErrEmailReserved
@@ -338,6 +350,11 @@ func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, loc
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		logger.LegacyPrintf("service.auth", "%s", "[Auth] Registration is disabled")
 		return nil, ErrRegDisabled
+	}
+	// 账号密码注册关闭时不再发注册验证码，避免白发一封邮件最后仍被拒
+	if !s.settingService.IsSignupSourceEnabled(ctx, SignupSourceEmail) {
+		logger.LegacyPrintf("service.auth", "%s", "[Auth] Email signup source is disabled")
+		return nil, ErrSignupSourceDisabled
 	}
 
 	if isReservedEmail(email) {
@@ -639,6 +656,17 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 				return nil, nil, ErrRegDisabled
 			}
 
+			// 优先用 caller 显式传入的 signupSource（如 "dingtalk" / "linuxdo" / "oidc" / "wechat"），
+			// 否则才按邮箱后缀推断——避免有真实邮箱的 OAuth 用户被推断为 "email" 渠道，导致渠道授权错读。
+			// 这一步必须放在渠道开关判断之前，否则判断的渠道会和最终落库的 signup_source 不一致。
+			if strings.TrimSpace(signupSource) == "" {
+				signupSource = inferLegacySignupSource(email)
+			}
+			// 渠道级注册开关：总闸开着，但该渠道被单独关掉时同样拒绝
+			if !s.settingService.IsSignupSourceEnabled(ctx, signupSource) {
+				return nil, nil, ErrSignupSourceDisabled
+			}
+
 			// 检查是否需要邀请码
 			var invitationRedeemCode *RedeemCode
 			if s.settingService != nil && s.settingService.IsInvitationCodeEnabled(ctx) {
@@ -665,11 +693,7 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 				return nil, nil, fmt.Errorf("hash password: %w", err)
 			}
 
-			// 优先用 caller 显式传入的 signupSource（如 "dingtalk" / "linuxdo" / "oidc" / "wechat"），
-			// 否则才按邮箱后缀推断——避免有真实邮箱的 OAuth 用户被推断为 "email" 渠道，导致渠道授权错读。
-			if strings.TrimSpace(signupSource) == "" {
-				signupSource = inferLegacySignupSource(email)
-			}
+			// signupSource 已在上面的渠道开关判断前完成推断，这里直接使用
 			grantPlan := s.resolveSignupGrantPlan(ctx, signupSource)
 			var defaultRPMLimit int
 			if s.settingService != nil {

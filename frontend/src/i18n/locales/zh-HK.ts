@@ -6302,6 +6302,8 @@
           durationDaysDesc: '被邀請用戶註冊後多少天內的付款產生積分。0 = 永久有效。',
           perInviteeCap: '單人積分上限',
           perInviteeCapDesc: '每個被邀請用戶最多產生的積分價值。0 = 無上限。',
+          weeklyInviteLimit: '每週邀請人數上限',
+          weeklyInviteLimitDesc: '單個邀請碼在每個自然週（週一 00:00 起）最多可成功邀請的人數，超出後再用該邀請碼註冊會被拒絕。0 = 不限。管理員的邀請碼不受此限制。',
           customUsers: {
             title: '專屬用戶配置',
             description: '為指定用戶設定專屬邀請碼或專屬邀請積分比例。僅展示已設定過專屬配置的用戶。',
@@ -6352,6 +6354,9 @@
         description: '控制用戶註冊和驗證',
         enableRegistration: '開放註冊',
         enableRegistrationHint: '允許新用戶註冊',
+        signupSources: '可註冊的渠道',
+        signupSourcesHint: '關閉某個渠道後，該渠道仍可登入已有帳號，但不能再註冊新用戶。「開放註冊」關閉時所有渠道都不能註冊。',
+        signupSourceEmail: '帳號密碼註冊',
         emailVerification: '郵箱驗證',
         emailVerificationHint: '新用戶註冊時需要驗證郵箱',
         gmailAliasFilter: 'Gmail 別名過濾',

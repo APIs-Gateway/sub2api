@@ -33,6 +33,8 @@ const (
 	AffiliateRebateDurationDaysDefault  = 0     // 0 = 永久有效
 	AffiliateRebateDurationDaysMax      = 3650  // ~10 年
 	AffiliateRebatePerInviteeCapDefault = 0.0   // 0 = 无上限
+	AffiliateWeeklyInviteLimitDefault   = 0     // 0 = 每自然周不限邀请人数
+	AffiliateWeeklyInviteLimitMax       = 10000 // 防止误填成天文数字
 )
 
 // Points（邀请返利积分制，issue #11）settings 默认值
@@ -178,6 +180,13 @@ const (
 	SettingKeyAffiliateRebateFreezeHours       = "affiliate_rebate_freeze_hours"       // 返利冻结期（小时，0=不冻结）
 	SettingKeyAffiliateRebateDurationDays      = "affiliate_rebate_duration_days"      // 返利有效期（天，0=永久）
 	SettingKeyAffiliateRebatePerInviteeCap     = "affiliate_rebate_per_invitee_cap"    // 单人返利上限（0=无上限）
+	SettingKeyAffiliateWeeklyInviteLimit       = "affiliate_weekly_invite_limit"       // 邀请码每自然周可成功邀请的人数上限（0=不限；管理员不受限）
+
+	// 分渠道注册开关：auth_source_<source>_signup_enabled
+	// <source> 取值与 normalizeOAuthSignupSource 一致，其中 email 代表账号密码注册。
+	// 设置缺省时视为允许，保证既有站点升级后行为不变；registration_enabled 仍是总闸。
+	SettingKeySignupSourcePrefix = "auth_source_"
+	SettingKeySignupSourceSuffix = "_signup_enabled"
 	// 邀请返利积分制（issue #11）
 	SettingKeyPointsEnabled               = "points_enabled"                  // 积分功能总开关
 	SettingKeyPointsPeg                   = "points_peg"                      // 积分面值：1 积分 = ? balance 单位（默认 0.01）

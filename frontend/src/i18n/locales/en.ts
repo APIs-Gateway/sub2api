@@ -6299,6 +6299,8 @@
           durationDaysDesc: 'Rebate relationship expires after this many days since invitee registration. 0 = permanent.',
           perInviteeCap: 'Per-Invitee Rebate Cap',
           perInviteeCapDesc: 'Maximum total rebate from a single invitee. 0 = no limit.',
+          weeklyInviteLimit: 'Weekly invite limit',
+          weeklyInviteLimitDesc: 'Maximum successful invites a single invite code can make per calendar week (starting Monday 00:00). Sign-ups with that code are rejected once the limit is reached. 0 = no limit. Admin invite codes are exempt.',
           customUsers: {
             title: 'Per-User Overrides',
             description: 'Set a custom invite code or exclusive rebate rate for specific users. Lists only users that have an override applied.',
@@ -6349,6 +6351,9 @@
         description: 'Control user registration and verification',
         enableRegistration: 'Enable Registration',
         enableRegistrationHint: 'Allow new users to register',
+        signupSources: 'Sources allowed to sign up',
+        signupSourcesHint: 'Disabling a source keeps existing accounts able to sign in, but blocks new sign-ups through it. When registration is off, no source can sign up.',
+        signupSourceEmail: 'Email & password',
         emailVerification: 'Email Verification',
         emailVerificationHint: 'Require email verification for new registrations',
         gmailAliasFilter: 'Gmail Alias Filter',

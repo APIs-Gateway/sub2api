@@ -14,16 +14,30 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
+// SignupSourceEmail 是账号密码注册对应的来源标识。
+const SignupSourceEmail = "email"
+
+// SignupSources 列出所有可独立控制的注册来源，取值与 users.signup_source 的落库值一致。
+// 它同时是 normalizeOAuthSignupSource 的白名单，避免两处列表各自漂移。
+var SignupSources = []string{SignupSourceEmail, "github", "google", "linuxdo", "wechat", "oidc", "dingtalk"}
+
+// SignupSourceEnabledSettingKey 返回某注册来源的开关设置键（auth_source_<source>_signup_enabled）。
+// 传入的未知来源会被归一成 email，与实际落库的 signup_source 保持一致。
+func SignupSourceEnabledSettingKey(source string) string {
+	return SettingKeySignupSourcePrefix + normalizeOAuthSignupSource(source) + SettingKeySignupSourceSuffix
+}
+
 func normalizeOAuthSignupSource(signupSource string) string {
 	signupSource = strings.TrimSpace(strings.ToLower(signupSource))
-	switch signupSource {
-	case "", "email":
-		return "email"
-	case "linuxdo", "wechat", "oidc", "github", "google", "dingtalk":
-		return signupSource
-	default:
-		return "email"
+	if signupSource == "" {
+		return SignupSourceEmail
 	}
+	for _, known := range SignupSources {
+		if known == signupSource {
+			return signupSource
+		}
+	}
+	return SignupSourceEmail
 }
 
 // SendPendingOAuthVerifyCode sends a local verification code for pending OAuth
@@ -113,6 +127,10 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 	if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
 		return nil, nil, ErrRegDisabled
 	}
+	// 该第三方渠道被单独关闭注册时，即便总闸开着也不放行
+	if !s.settingService.IsSignupSourceEnabled(ctx, signupSource) {
+		return nil, nil, ErrSignupSourceDisabled
+	}
 
 	email = strings.TrimSpace(strings.ToLower(email))
 	if isReservedEmail(email) {
@@ -189,6 +207,10 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 	}
 	if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
 		return nil, nil, ErrRegDisabled
+	}
+	// 该第三方渠道被单独关闭注册时，即便总闸开着也不放行
+	if !s.settingService.IsSignupSourceEnabled(ctx, signupSource) {
+		return nil, nil, ErrSignupSourceDisabled
 	}
 
 	email = strings.TrimSpace(strings.ToLower(email))

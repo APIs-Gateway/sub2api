@@ -157,8 +157,14 @@ type SystemSettings struct {
 	AffiliateRebateFreezeHours   int
 	AffiliateRebateDurationDays  int
 	AffiliateRebatePerInviteeCap float64
-	DefaultUserRPMLimit          int
-	DefaultSubscriptions         []DefaultSubscriptionSetting
+	// AffiliateWeeklyInviteLimit 是单个邀请码每自然周可成功邀请的人数上限（0=不限，管理员不受限）
+	AffiliateWeeklyInviteLimit int
+	DefaultUserRPMLimit        int
+	DefaultSubscriptions       []DefaultSubscriptionSetting
+
+	// SignupSourceEnabled 是各注册来源的独立开关，key 取值见 service.SignupSources
+	// （email 即账号密码注册）。缺省视为允许，registration_enabled 仍是总闸。
+	SignupSourceEnabled map[string]bool
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`
@@ -252,7 +258,10 @@ type DefaultSubscriptionSetting struct {
 }
 
 type PublicSettings struct {
-	RegistrationEnabled              bool
+	RegistrationEnabled bool
+	// SignupSourceEnabled 让注册页知道哪些来源当前可用（email 即账号密码注册），
+	// 从而只展示还开着的入口，而不是等用户填完表单再报 SIGNUP_SOURCE_DISABLED。
+	SignupSourceEnabled              map[string]bool
 	EmailVerifyEnabled               bool
 	ForceEmailOnThirdPartySignup     bool
 	RegistrationEmailSuffixWhitelist []string
