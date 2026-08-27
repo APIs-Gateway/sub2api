@@ -815,6 +815,16 @@ func TestAPIContracts(t *testing.T) {
 					"affiliate_rebate_freeze_hours": 0,
 					"affiliate_rebate_duration_days": 0,
 					"affiliate_rebate_per_invitee_cap": 0,
+					"affiliate_weekly_invite_limit": 0,
+					"signup_source_enabled": {
+						"email": true,
+						"github": true,
+						"google": true,
+						"linuxdo": true,
+						"wechat": true,
+						"oidc": true,
+						"dingtalk": true
+					},
 					"default_user_rpm_limit": 0,
 					"default_subscriptions": [],
 					"enable_model_fallback": false,
@@ -1082,6 +1092,16 @@ func TestAPIContracts(t *testing.T) {
 					"affiliate_rebate_freeze_hours": 0,
 					"affiliate_rebate_duration_days": 0,
 					"affiliate_rebate_per_invitee_cap": 0,
+					"affiliate_weekly_invite_limit": 0,
+					"signup_source_enabled": {
+						"email": true,
+						"github": true,
+						"google": true,
+						"linuxdo": true,
+						"wechat": true,
+						"oidc": true,
+						"dingtalk": true
+					},
 					"default_user_rpm_limit": 0,
 					"default_subscriptions": [],
 					"enable_model_fallback": false,

@@ -237,6 +237,10 @@ func (s *AffiliateService) BindInviterByCodeStrict(ctx context.Context, userID i
 		return ErrAffiliateInviteCodeInvalid
 	}
 
+	if err := s.ensureWeeklyInviteQuota(ctx, inviterSummary.UserID); err != nil {
+		return err
+	}
+
 	bound, err := s.repo.BindInviter(ctx, userID, inviterSummary.UserID)
 	if err != nil {
 		return err

@@ -973,6 +973,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 
 	return &PublicSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
+		SignupSourceEnabled:              parseSignupSourceEnabled(settings),
 		EmailVerifyEnabled:               emailVerifyEnabled,
 		ForceEmailOnThirdPartySignup:     settings[SettingKeyForceEmailOnThirdPartySignup] == "true",
 		RegistrationEmailSuffixWhitelist: registrationEmailSuffixWhitelist,
@@ -1305,6 +1306,7 @@ func (s *SettingService) SetVersion(version string) {
 // drift automatically (see setting_service_injection_test.go).
 type PublicSettingsInjectionPayload struct {
 	RegistrationEnabled              bool                     `json:"registration_enabled"`
+	SignupSourceEnabled              map[string]bool          `json:"signup_source_enabled"`
 	EmailVerifyEnabled               bool                     `json:"email_verify_enabled"`
 	RegistrationEmailSuffixWhitelist []string                 `json:"registration_email_suffix_whitelist"`
 	PromoCodeEnabled                 bool                     `json:"promo_code_enabled"`
@@ -1374,6 +1376,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 
 	return &PublicSettingsInjectionPayload{
 		RegistrationEnabled:              settings.RegistrationEnabled,
+		SignupSourceEnabled:              settings.SignupSourceEnabled,
 		EmailVerifyEnabled:               settings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist: settings.RegistrationEmailSuffixWhitelist,
 		PromoCodeEnabled:                 settings.PromoCodeEnabled,
@@ -2049,6 +2052,20 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		settings.AffiliateRebatePerInviteeCap = AffiliateRebatePerInviteeCapDefault
 	}
 	updates[SettingKeyAffiliateRebatePerInviteeCap] = strconv.FormatFloat(settings.AffiliateRebatePerInviteeCap, 'f', 8, 64)
+	if settings.AffiliateWeeklyInviteLimit < 0 {
+		settings.AffiliateWeeklyInviteLimit = AffiliateWeeklyInviteLimitDefault
+	}
+	if settings.AffiliateWeeklyInviteLimit > AffiliateWeeklyInviteLimitMax {
+		settings.AffiliateWeeklyInviteLimit = AffiliateWeeklyInviteLimitMax
+	}
+	updates[SettingKeyAffiliateWeeklyInviteLimit] = strconv.Itoa(settings.AffiliateWeeklyInviteLimit)
+	// 分渠道注册开关：只写入本次显式给出的来源，未出现在 map 里的保持原值，
+	// 这样老版本前端提交完整设置时不会把新开关意外重置掉。
+	for _, source := range SignupSources {
+		if enabled, ok := settings.SignupSourceEnabled[source]; ok {
+			updates[SignupSourceEnabledSettingKey(source)] = strconv.FormatBool(enabled)
+		}
+	}
 	updates[SettingKeyDefaultUserRPMLimit] = strconv.Itoa(settings.DefaultUserRPMLimit)
 	defaultSubsJSON, err := json.Marshal(settings.DefaultSubscriptions)
 	if err != nil {
@@ -2742,6 +2759,49 @@ func (s *SettingService) GetAffiliateRebatePerInviteeCap(ctx context.Context) fl
 	return cap
 }
 
+// GetAffiliateWeeklyInviteLimit 返回单个邀请码每自然周可成功邀请的人数上限。
+// 返回 0 表示不限；解析失败或为负一律回退到默认值（不限），避免配置写坏时把注册全部卡死。
+func (s *SettingService) GetAffiliateWeeklyInviteLimit(ctx context.Context) int {
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateWeeklyInviteLimit)
+	if err != nil {
+		return AffiliateWeeklyInviteLimitDefault
+	}
+	limit, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || limit < 0 {
+		return AffiliateWeeklyInviteLimitDefault
+	}
+	if limit > AffiliateWeeklyInviteLimitMax {
+		return AffiliateWeeklyInviteLimitMax
+	}
+	return limit
+}
+
+// parseSignupSourceEnabled 从一批原始设置里读出各注册来源的开关。
+// 缺省（键不存在或值为空）一律视为允许，与 IsSignupSourceEnabled 的判定保持一致，
+// 保证「读出来展示的状态」和「实际放行的行为」不会出现分歧。
+func parseSignupSourceEnabled(settings map[string]string) map[string]bool {
+	result := make(map[string]bool, len(SignupSources))
+	for _, source := range SignupSources {
+		result[source] = strings.TrimSpace(settings[SignupSourceEnabledSettingKey(source)]) != "false"
+	}
+	return result
+}
+
+// IsSignupSourceEnabled 判断某个注册来源是否允许注册（email 即账号密码注册）。
+// 与其他开关相反，这里缺省放行：设置项不存在时说明站点还没配过分渠道开关，
+// 此时应保持升级前的行为，由 registration_enabled 这个总闸继续把关。
+func (s *SettingService) IsSignupSourceEnabled(ctx context.Context, source string) bool {
+	value, err := s.settingRepo.GetValue(ctx, SignupSourceEnabledSettingKey(source))
+	if err != nil {
+		return true
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return true
+	}
+	return value != "false"
+}
+
 // IsPasswordResetEnabled 检查是否启用密码重置功能
 // 要求：必须同时开启邮件验证
 func (s *SettingService) IsPasswordResetEnabled(ctx context.Context) bool {
@@ -3054,6 +3114,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAffiliateRebateFreezeHours:                strconv.Itoa(AffiliateRebateFreezeHoursDefault),
 		SettingKeyAffiliateRebateDurationDays:               strconv.Itoa(AffiliateRebateDurationDaysDefault),
 		SettingKeyAffiliateRebatePerInviteeCap:              strconv.FormatFloat(AffiliateRebatePerInviteeCapDefault, 'f', 2, 64),
+		SettingKeyAffiliateWeeklyInviteLimit:                strconv.Itoa(AffiliateWeeklyInviteLimitDefault),
 		SettingKeyDefaultUserRPMLimit:                       "0",
 		SettingKeyDefaultSubscriptions:                      "[]",
 		SettingKeyAuthSourceDefaultEmailBalance:             "0",
@@ -3186,6 +3247,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result := &SystemSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
+		SignupSourceEnabled:              parseSignupSourceEnabled(settings),
 		EmailVerifyEnabled:               emailVerifyEnabled,
 		GmailAliasFilterEnabled:          settings[SettingKeyGmailAliasFilterEnabled] != "false", // 默认启用
 		RegistrationEmailSuffixWhitelist: ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
@@ -3273,6 +3335,12 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	if perInviteeCap, err := strconv.ParseFloat(settings[SettingKeyAffiliateRebatePerInviteeCap], 64); err == nil && perInviteeCap >= 0 {
 		result.AffiliateRebatePerInviteeCap = perInviteeCap
+	}
+	if weeklyInviteLimit, err := strconv.Atoi(settings[SettingKeyAffiliateWeeklyInviteLimit]); err == nil && weeklyInviteLimit >= 0 {
+		if weeklyInviteLimit > AffiliateWeeklyInviteLimitMax {
+			weeklyInviteLimit = AffiliateWeeklyInviteLimitMax
+		}
+		result.AffiliateWeeklyInviteLimit = weeklyInviteLimit
 	}
 	result.DefaultSubscriptions = parseDefaultSubscriptions(settings[SettingKeyDefaultSubscriptions])
 

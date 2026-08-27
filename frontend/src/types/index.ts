@@ -186,6 +186,8 @@ export type LocaleCode = 'zh-CN' | 'zh-HK' | 'en'
 
 export interface PublicSettings {
   registration_enabled: boolean
+  /** 各注册来源当前是否开放（email 即账号密码注册），缺省视为开放 */
+  signup_source_enabled?: Record<string, boolean>
   email_verify_enabled: boolean
   force_email_on_third_party_signup: boolean
   registration_email_suffix_whitelist: string[]

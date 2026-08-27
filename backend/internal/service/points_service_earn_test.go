@@ -92,6 +92,12 @@ func (r *pointsEarnAffiliateRepo) GetAffiliateByCode(ctx context.Context, code s
 func (r *pointsEarnAffiliateRepo) BindInviter(ctx context.Context, userID, inviterID int64) (bool, error) {
 	panic("unexpected BindInviter call")
 }
+func (r *pointsEarnAffiliateRepo) CountInviteesRegisteredSince(ctx context.Context, inviterID int64, since time.Time) (int, error) {
+	panic("unexpected CountInviteesRegisteredSince call")
+}
+func (r *pointsEarnAffiliateRepo) IsUserAdmin(ctx context.Context, userID int64) (bool, error) {
+	panic("unexpected IsUserAdmin call")
+}
 func (r *pointsEarnAffiliateRepo) ListInvitees(ctx context.Context, inviterID int64, limit int) ([]AffiliateInvitee, error) {
 	panic("unexpected ListInvitees call")
 }

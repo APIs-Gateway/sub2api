@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -210,6 +211,12 @@ func (r *fakeAffRepo) GetAffiliateByCode(ctx context.Context, code string) (*ser
 	return nil, nil
 }
 func (r *fakeAffRepo) BindInviter(ctx context.Context, userID, inviterID int64) (bool, error) {
+	return false, nil
+}
+func (r *fakeAffRepo) CountInviteesRegisteredSince(ctx context.Context, inviterID int64, since time.Time) (int, error) {
+	return 0, nil
+}
+func (r *fakeAffRepo) IsUserAdmin(ctx context.Context, userID int64) (bool, error) {
 	return false, nil
 }
 func (r *fakeAffRepo) UpdateUserAffCode(ctx context.Context, userID int64, newCode string) error {

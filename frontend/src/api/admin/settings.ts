@@ -359,6 +359,11 @@ export function deriveWeChatConnectStoredMode(
 export interface SystemSettings {
   // Registration settings
   registration_enabled: boolean;
+  /**
+   * 各注册来源的独立开关（email 即账号密码注册）。
+   * 缺省视为允许；registration_enabled 仍是总闸。
+   */
+  signup_source_enabled: Record<string, boolean>;
   email_verify_enabled: boolean;
   gmail_alias_filter_enabled: boolean;
   registration_email_suffix_whitelist: string[];
@@ -380,6 +385,8 @@ export interface SystemSettings {
   affiliate_rebate_freeze_hours: number;
   affiliate_rebate_duration_days: number;
   affiliate_rebate_per_invitee_cap: number;
+  /** 单个邀请码每自然周可成功邀请的人数上限（0=不限，管理员不受限） */
+  affiliate_weekly_invite_limit: number;
   default_concurrency: number;
   default_user_rpm_limit: number;
   default_subscriptions: DefaultSubscriptionSetting[];
@@ -650,6 +657,8 @@ export interface SystemSettings {
 
 export interface UpdateSettingsRequest {
   registration_enabled?: boolean;
+  /** 省略表示不改动现有的分渠道开关 */
+  signup_source_enabled?: Record<string, boolean>;
   email_verify_enabled?: boolean;
   gmail_alias_filter_enabled?: boolean;
   registration_email_suffix_whitelist?: string[];
@@ -669,6 +678,7 @@ export interface UpdateSettingsRequest {
   affiliate_rebate_freeze_hours?: number;
   affiliate_rebate_duration_days?: number;
   affiliate_rebate_per_invitee_cap?: number;
+  affiliate_weekly_invite_limit?: number;
   default_concurrency?: number;
   default_user_rpm_limit?: number;
   default_subscriptions?: DefaultSubscriptionSetting[];
