@@ -280,6 +280,46 @@ func (s *PointsService) AccrueEarnForRedeem(ctx context.Context, inviteeUserID i
 	return pts, nil
 }
 
+// AccrueSignupReward 在被邀请人完成注册并绑定邀请人后，给邀请人发一笔固定积分。
+//
+// 与 AccrueEarnForOrder / AccrueEarnForRedeem 的根本区别是它不看被邀请人花了多少钱——
+// 触发条件就是「有一个新用户通过你的邀请码注册成功」，金额取自站点配置的固定值。
+//
+// 返回实际发放的积分数。积分总开关关闭、奖励开关关闭、配置金额为 0、
+// 该用户没有邀请人、或这个被邀请人已经发过奖励，都返回 0 且不报错——
+// 这些都是正常状态，不是异常。
+func (s *PointsService) AccrueSignupReward(ctx context.Context, inviteeUserID int64) (int64, error) {
+	if s == nil || inviteeUserID <= 0 || s.affiliateService == nil || s.settingService == nil {
+		return 0, nil
+	}
+	if !s.IsEnabled(ctx) || !s.settingService.GetAffiliateSignupRewardEnabled(ctx) {
+		return 0, nil
+	}
+	pts := s.settingService.GetAffiliateSignupRewardAmount(ctx)
+	if pts <= 0 {
+		return 0, nil
+	}
+	invitee, err := s.affiliateService.EnsureUserAffiliate(ctx, inviteeUserID)
+	if err != nil {
+		return 0, err
+	}
+	if invitee == nil || invitee.InviterID == nil || *invitee.InviterID <= 0 || *invitee.InviterID == inviteeUserID {
+		return 0, nil
+	}
+	inviterID := *invitee.InviterID
+	applied, err := s.repo.GrantSignupReward(ctx, SignupRewardInput{
+		InviterID:    inviterID,
+		SourceUserID: inviteeUserID,
+		Points:       pts,
+		PegAt:        s.peg(ctx),
+	})
+	if err != nil || !applied {
+		return 0, err
+	}
+	s.invalidateCaches(ctx, inviterID)
+	return pts, nil
+}
+
 // ClawbackForOrder 退款撤回积分（仅由退款最终落单点调用）。按实退比例 floor 撤、可转负、一单一撤幂等。
 func (s *PointsService) ClawbackForOrder(ctx context.Context, sourceOrderID int64, refundAmount, originalAmount float64) (int64, error) {
 	if !s.IsEnabled(ctx) {

@@ -816,6 +816,8 @@ func TestAPIContracts(t *testing.T) {
 					"affiliate_rebate_duration_days": 0,
 					"affiliate_rebate_per_invitee_cap": 0,
 					"affiliate_weekly_invite_limit": 0,
+					"affiliate_signup_reward_enabled": false,
+					"affiliate_signup_reward_amount": 0,
 					"signup_source_enabled": {
 						"email": true,
 						"github": true,
@@ -1093,6 +1095,8 @@ func TestAPIContracts(t *testing.T) {
 					"affiliate_rebate_duration_days": 0,
 					"affiliate_rebate_per_invitee_cap": 0,
 					"affiliate_weekly_invite_limit": 0,
+					"affiliate_signup_reward_enabled": false,
+					"affiliate_signup_reward_amount": 0,
 					"signup_source_enabled": {
 						"email": true,
 						"github": true,

@@ -525,6 +525,27 @@ func ProvideBillingCacheService(
 	return NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo, settingService)
 }
 
+// ProvidePointsService 构造积分服务，并把「邀请注册即得」的发放能力接回认证服务。
+//
+// 注册奖励的触发点在注册流程里，而发放逻辑属于积分服务；两者的构造顺序又是认证服务在前。
+// 在这里用 setter 把它们接上，既保住了依赖方向（积分 → 邀请，不反过来），
+// 也不必给 NewAuthService 加一个所有既有调用点和测试都得跟着改的构造参数。
+func ProvidePointsService(
+	repo PointsRepository,
+	settingService *SettingService,
+	entClient *dbent.Client,
+	subscriptionSvc *SubscriptionService,
+	groupRepo GroupRepository,
+	affiliateService *AffiliateService,
+	authCacheInvalidator APIKeyAuthCacheInvalidator,
+	billingCacheService *BillingCacheService,
+	authService *AuthService,
+) *PointsService {
+	svc := NewPointsService(repo, settingService, entClient, subscriptionSvc, groupRepo, affiliateService, authCacheInvalidator, billingCacheService)
+	authService.SetSignupRewardAccruer(svc)
+	return svc
+}
+
 // ProvideAPIKeyService wires APIKeyService and connects rate-limit cache invalidation.
 func ProvideAPIKeyService(
 	apiKeyRepo APIKeyRepository,
@@ -639,7 +660,7 @@ var ProviderSet = wire.NewSet(
 	NewModelPricingResolver,
 	NewContentModerationService,
 	NewAffiliateService,
-	NewPointsService,
+	ProvidePointsService,
 	ProvidePaymentConfigService,
 	ProvidePaymentService,
 	ProvidePaymentOrderExpiryService,

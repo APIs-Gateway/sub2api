@@ -6339,6 +6339,10 @@
           perInviteeCapDesc: 'Maximum total rebate from a single invitee. 0 = no limit.',
           weeklyInviteLimit: 'Weekly invite limit',
           weeklyInviteLimitDesc: 'Maximum successful invites a single invite code can make per calendar week (starting Monday 00:00). Sign-ups with that code are rejected once the limit is reached. 0 = no limit. Admin invite codes are exempt.',
+          signupReward: 'Reward on signup',
+          signupRewardHint: 'Give the inviter a fixed number of points the moment an invited user signs up — no payment required. Off by default.',
+          signupRewardAmount: 'Points per invited user',
+          signupRewardAmountDesc: 'Points the inviter receives as soon as an invited user completes signup, regardless of whether they ever pay. Granted only once per invited user. 0 = disabled.',
           customUsers: {
             title: 'Per-User Overrides',
             description: 'Set a custom invite code or exclusive rebate rate for specific users. Lists only users that have an override applied.',

@@ -387,6 +387,10 @@ export interface SystemSettings {
   affiliate_rebate_per_invitee_cap: number;
   /** 单个邀请码每自然周可成功邀请的人数上限（0=不限，管理员不受限） */
   affiliate_weekly_invite_limit: number;
+  /** 被邀请人注册成功即给邀请人发一笔固定积分（不需要对方付款） */
+  affiliate_signup_reward_enabled: boolean;
+  /** 上述奖励的积分数（0=不发放） */
+  affiliate_signup_reward_amount: number;
   default_concurrency: number;
   default_user_rpm_limit: number;
   default_subscriptions: DefaultSubscriptionSetting[];
@@ -679,6 +683,8 @@ export interface UpdateSettingsRequest {
   affiliate_rebate_duration_days?: number;
   affiliate_rebate_per_invitee_cap?: number;
   affiliate_weekly_invite_limit?: number;
+  affiliate_signup_reward_enabled?: boolean;
+  affiliate_signup_reward_amount?: number;
   default_concurrency?: number;
   default_user_rpm_limit?: number;
   default_subscriptions?: DefaultSubscriptionSetting[];

@@ -2059,6 +2059,14 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		settings.AffiliateWeeklyInviteLimit = AffiliateWeeklyInviteLimitMax
 	}
 	updates[SettingKeyAffiliateWeeklyInviteLimit] = strconv.Itoa(settings.AffiliateWeeklyInviteLimit)
+	updates[SettingKeyAffiliateSignupRewardEnabled] = strconv.FormatBool(settings.AffiliateSignupRewardEnabled)
+	if settings.AffiliateSignupRewardAmount < 0 {
+		settings.AffiliateSignupRewardAmount = AffiliateSignupRewardAmountDefault
+	}
+	if settings.AffiliateSignupRewardAmount > AffiliateSignupRewardAmountMax {
+		settings.AffiliateSignupRewardAmount = AffiliateSignupRewardAmountMax
+	}
+	updates[SettingKeyAffiliateSignupRewardAmount] = strconv.FormatInt(settings.AffiliateSignupRewardAmount, 10)
 	// 分渠道注册开关：只写入本次显式给出的来源，未出现在 map 里的保持原值，
 	// 这样老版本前端提交完整设置时不会把新开关意外重置掉。
 	for _, source := range SignupSources {
@@ -2776,6 +2784,40 @@ func (s *SettingService) GetAffiliateWeeklyInviteLimit(ctx context.Context) int 
 	return limit
 }
 
+// GetAffiliateSignupRewardEnabled 返回「邀请注册即得积分」是否开启。
+//
+// 默认关闭：这笔奖励不要求被邀请人付出任何成本，一旦误开就直接变成刷号的收益来源，
+// 所以读不到或读坏都必须回落到关闭，而不是沿用某个"看起来合理"的值。
+func (s *SettingService) GetAffiliateSignupRewardEnabled(ctx context.Context) bool {
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateSignupRewardEnabled)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(raw) == "true"
+}
+
+// GetAffiliateSignupRewardAmount 返回每成功邀请一人给邀请人的积分数。
+//
+// 用 ParseFloat 而不是 Atoi：这个键在历史部署里是以 numeric 形式落库的，
+// 取出来长这样 "50.00000000"，Atoi 会直接失败并把奖励静默降为 0。
+// 积分本身是整数，小数部分向下取整丢弃。
+// 解析失败或为负一律回退到 0（不发放），避免配置写坏时凭空发出积分。
+func (s *SettingService) GetAffiliateSignupRewardAmount(ctx context.Context) int64 {
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateSignupRewardAmount)
+	if err != nil {
+		return AffiliateSignupRewardAmountDefault
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || v <= 0 {
+		return AffiliateSignupRewardAmountDefault
+	}
+	amount := int64(v)
+	if amount > AffiliateSignupRewardAmountMax {
+		return AffiliateSignupRewardAmountMax
+	}
+	return amount
+}
+
 // parseSignupSourceEnabled 从一批原始设置里读出各注册来源的开关。
 // 缺省（键不存在或值为空）一律视为允许，与 IsSignupSourceEnabled 的判定保持一致，
 // 保证「读出来展示的状态」和「实际放行的行为」不会出现分歧。
@@ -3115,6 +3157,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAffiliateRebateDurationDays:               strconv.Itoa(AffiliateRebateDurationDaysDefault),
 		SettingKeyAffiliateRebatePerInviteeCap:              strconv.FormatFloat(AffiliateRebatePerInviteeCapDefault, 'f', 2, 64),
 		SettingKeyAffiliateWeeklyInviteLimit:                strconv.Itoa(AffiliateWeeklyInviteLimitDefault),
+		SettingKeyAffiliateSignupRewardEnabled:              "false",
+		SettingKeyAffiliateSignupRewardAmount:               strconv.FormatInt(AffiliateSignupRewardAmountDefault, 10),
 		SettingKeyDefaultUserRPMLimit:                       "0",
 		SettingKeyDefaultSubscriptions:                      "[]",
 		SettingKeyAuthSourceDefaultEmailBalance:             "0",
@@ -3341,6 +3385,16 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 			weeklyInviteLimit = AffiliateWeeklyInviteLimitMax
 		}
 		result.AffiliateWeeklyInviteLimit = weeklyInviteLimit
+	}
+	result.AffiliateSignupRewardEnabled = strings.TrimSpace(settings[SettingKeyAffiliateSignupRewardEnabled]) == "true"
+	// 按浮点解析而不是 Atoi：历史部署里这个键以 numeric 形式落库，取出来是 "50.00000000"，
+	// 用 Atoi 会解析失败，把一个已经配好的奖励静默清零。
+	if signupReward, err := strconv.ParseFloat(strings.TrimSpace(settings[SettingKeyAffiliateSignupRewardAmount]), 64); err == nil && signupReward >= 0 {
+		amount := int64(signupReward)
+		if amount > AffiliateSignupRewardAmountMax {
+			amount = AffiliateSignupRewardAmountMax
+		}
+		result.AffiliateSignupRewardAmount = amount
 	}
 	result.DefaultSubscriptions = parseDefaultSubscriptions(settings[SettingKeyDefaultSubscriptions])
 

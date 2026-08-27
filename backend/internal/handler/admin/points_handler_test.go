@@ -39,6 +39,13 @@ func (r *fakeAdminPtsRepo) EnsureAccount(ctx context.Context, userID int64) (*se
 func (r *fakeAdminPtsRepo) GetAccount(ctx context.Context, userID int64) (*service.PointsAccount, error) {
 	return &service.PointsAccount{UserID: userID}, nil
 }
+
+// GrantSignupReward 服务于「邀请注册即得积分」。本组用例不走那条路径，
+// 返回「未入账」即可——万一将来被意外调用到，也不会因为这里的零值把断言误判成成功。
+func (r *fakeAdminPtsRepo) GrantSignupReward(context.Context, service.SignupRewardInput) (bool, error) {
+	return false, nil
+}
+
 func (r *fakeAdminPtsRepo) EarnPoints(ctx context.Context, in service.EarnPointsInput) (bool, error) {
 	return true, nil
 }
