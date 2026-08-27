@@ -427,6 +427,18 @@ func (r *oauthEmailAffiliateRepoStub) GetAffiliateUserOverview(context.Context, 
 	panic("unexpected GetAffiliateUserOverview call")
 }
 
+// 以下两个方法服务于邀请码自然周上限：本组用例没有配置 affiliate_weekly_invite_limit，
+// 配额检查会在"上限为 0（不限）"时提前短路，所以它们实际不会被调用。
+// 这里返回零值而不是 panic —— 万一将来用例配上了上限，也只是走到"未用满且非管理员"的正常分支，
+// 而不会让一个与本用例无关的改动把测试炸掉。
+func (r *oauthEmailAffiliateRepoStub) CountInviteesRegisteredSince(context.Context, int64, time.Time) (int, error) {
+	return 0, nil
+}
+
+func (r *oauthEmailAffiliateRepoStub) IsUserAdmin(context.Context, int64) (bool, error) {
+	return false, nil
+}
+
 func findSetCookieValue(cookies []*http.Cookie, name string) string {
 	for _, cookie := range cookies {
 		if cookie != nil && strings.EqualFold(cookie.Name, name) && cookie.MaxAge >= 0 {
