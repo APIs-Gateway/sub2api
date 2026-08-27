@@ -283,3 +283,20 @@ func TestAuthServiceGrantSignupReward(t *testing.T) {
 		require.NotPanics(t, func() { svc.SetSignupRewardAccruer(&signupRewardAccruerStub{}) })
 	})
 }
+
+// TestProvidePointsService_WiresAccruerIntoAuthService 守住那条 setter 接线。
+//
+// 这个 provider 存在的唯一理由就是把积分服务接回认证服务；一旦接线掉了，
+// 注册奖励会静默地永远不发放——没有报错、没有日志，只是不发。
+// 所以哪怕它只有几行，也值得钉一颗钉子。
+func TestProvidePointsService_WiresAccruerIntoAuthService(t *testing.T) {
+	t.Parallel()
+
+	auth := &AuthService{}
+	require.Nil(t, auth.signupRewardAccruer, "接线前应当是空的")
+
+	svc := ProvidePointsService(nil, nil, nil, nil, nil, nil, nil, nil, auth)
+	require.NotNil(t, svc)
+	require.NotNil(t, auth.signupRewardAccruer, "provider 必须把发放能力接回认证服务")
+	require.Same(t, svc, auth.signupRewardAccruer, "接进去的应当正是刚构造出来的这个积分服务")
+}
