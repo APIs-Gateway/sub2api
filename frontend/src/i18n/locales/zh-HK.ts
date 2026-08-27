@@ -6342,6 +6342,10 @@
           perInviteeCapDesc: '每個被邀請用戶最多產生的積分價值。0 = 無上限。',
           weeklyInviteLimit: '每週邀請人數上限',
           weeklyInviteLimitDesc: '單個邀請碼在每個自然週（週一 00:00 起）最多可成功邀請的人數，超出後再用該邀請碼註冊會被拒絕。0 = 不限。管理員的邀請碼不受此限制。',
+          signupReward: '註冊即得積分',
+          signupRewardHint: '被邀請用戶註冊成功後，立即給邀請人發放一筆固定積分，不需要對方付款。預設關閉。',
+          signupRewardAmount: '每邀請一人可得積分',
+          signupRewardAmountDesc: '被邀請用戶註冊成功時邀請人立即獲得的積分數，與對方是否付款無關。同一個被邀請用戶只發放一次。0 = 不發放。',
           customUsers: {
             title: '專屬用戶配置',
             description: '為指定用戶設定專屬邀請碼或專屬邀請積分比例。僅展示已設定過專屬配置的用戶。',

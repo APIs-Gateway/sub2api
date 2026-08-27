@@ -6344,6 +6344,10 @@
           perInviteeCapDesc: '每个被邀请用户最多产生的积分价值。0 = 无上限。',
           weeklyInviteLimit: '每周邀请人数上限',
           weeklyInviteLimitDesc: '单个邀请码在每个自然周（周一 00:00 起）最多可成功邀请的人数，超出后再用该邀请码注册会被拒绝。0 = 不限。管理员的邀请码不受此限制。',
+          signupReward: '注册即得积分',
+          signupRewardHint: '被邀请用户注册成功后，立即给邀请人发放一笔固定积分，不需要对方付款。默认关闭。',
+          signupRewardAmount: '每邀请一人可得积分',
+          signupRewardAmountDesc: '被邀请用户注册成功时邀请人立即获得的积分数，与对方是否付款无关。同一个被邀请用户只发放一次。0 = 不发放。',
           customUsers: {
             title: '专属用户配置',
             description: '为指定用户设置专属邀请码或专属邀请积分比例。仅展示已设置过专属配置的用户。',

@@ -213,7 +213,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	registry := payment.ProvideRegistry()
 	defaultLoadBalancer := payment.ProvideDefaultLoadBalancer(client, encryptionKey)
 	pointsRepository := repository.NewPointsRepository(client, db)
-	pointsService := service.NewPointsService(pointsRepository, settingService, client, subscriptionService, groupRepository, affiliateService, apiKeyAuthCacheInvalidator, billingCacheService)
+	pointsService := service.ProvidePointsService(pointsRepository, settingService, client, subscriptionService, groupRepository, affiliateService, apiKeyAuthCacheInvalidator, billingCacheService, authService)
 	paymentService := service.ProvidePaymentService(client, registry, defaultLoadBalancer, redeemService, subscriptionService, paymentConfigService, userRepository, groupRepository, affiliateService, pointsService, notificationEmailService)
 	settingHandler := handler.ProvideAdminSettingHandler(settingService, emailService, turnstileService, opsService, paymentConfigService, paymentService, userAttributeService, notificationEmailService, totpService, userService)
 	opsHandler := admin.NewOpsHandler(opsService)

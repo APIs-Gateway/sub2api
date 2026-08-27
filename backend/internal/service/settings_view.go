@@ -159,8 +159,13 @@ type SystemSettings struct {
 	AffiliateRebatePerInviteeCap float64
 	// AffiliateWeeklyInviteLimit 是单个邀请码每自然周可成功邀请的人数上限（0=不限，管理员不受限）
 	AffiliateWeeklyInviteLimit int
-	DefaultUserRPMLimit        int
-	DefaultSubscriptions       []DefaultSubscriptionSetting
+	// AffiliateSignupRewardEnabled 决定被邀请人注册成功后，是否立即给邀请人发一笔固定积分。
+	// 这笔奖励不要求被邀请人付费，默认关闭。
+	AffiliateSignupRewardEnabled bool
+	// AffiliateSignupRewardAmount 是上述奖励的积分数（0=不发放）
+	AffiliateSignupRewardAmount int64
+	DefaultUserRPMLimit         int
+	DefaultSubscriptions        []DefaultSubscriptionSetting
 
 	// SignupSourceEnabled 是各注册来源的独立开关，key 取值见 service.SignupSources
 	// （email 即账号密码注册）。缺省视为允许，registration_enabled 仍是总闸。

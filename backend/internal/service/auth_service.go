@@ -81,6 +81,37 @@ type AuthService struct {
 	affiliateService      *AffiliateService
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	signupRewardAccruer   SignupRewardAccruer
+}
+
+// SignupRewardAccruer 发放「邀请注册即得」积分。
+//
+// 用窄接口而不是直接依赖 *PointsService，是为了让认证流程只看见它真正需要的那一个能力，
+// 也避开构造期的先后问题：认证服务先于积分服务构造，两者由 wire 用 setter 接上。
+type SignupRewardAccruer interface {
+	AccrueSignupReward(ctx context.Context, inviteeUserID int64) (int64, error)
+}
+
+// SetSignupRewardAccruer 注入注册奖励发放器。未注入时注册流程照常，只是不发奖励。
+func (s *AuthService) SetSignupRewardAccruer(accruer SignupRewardAccruer) {
+	if s == nil {
+		return
+	}
+	s.signupRewardAccruer = accruer
+}
+
+// grantSignupReward 在邀请关系刚绑定成功后发一笔注册奖励。
+//
+// 刻意只记日志不返回错误：用户此刻已经注册成功、邀请关系也已经落库，
+// 发不出奖励是运营侧的问题，不该把人卡在注册流程里。绑定关系留在库里，
+// 事后要补发也查得到依据。
+func (s *AuthService) grantSignupReward(ctx context.Context, inviteeUserID int64) {
+	if s == nil || s.signupRewardAccruer == nil || inviteeUserID <= 0 {
+		return
+	}
+	if _, err := s.signupRewardAccruer.AccrueSignupReward(ctx, inviteeUserID); err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] Failed to grant signup reward for user %d: %v", inviteeUserID, err)
+	}
 }
 
 type DefaultSubscriptionAssigner interface {
@@ -263,6 +294,7 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 			if err := s.affiliateService.BindInviterByCodeStrict(ctx, user.ID, code); err != nil {
 				return "", nil, err
 			}
+			s.grantSignupReward(ctx, user.ID)
 		}
 	}
 
@@ -933,6 +965,7 @@ func (s *AuthService) bindOAuthAffiliate(ctx context.Context, userID int64, affi
 			logger.LegacyPrintf("service.auth", "[Auth] Failed to bind affiliate inviter for user %d: %v", userID, err)
 			return err
 		}
+		s.grantSignupReward(ctx, userID)
 	}
 	return nil
 }

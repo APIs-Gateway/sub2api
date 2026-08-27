@@ -6120,6 +6120,35 @@
                 </p>
               </div>
 
+              <div class="flex items-center justify-between">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('admin.settings.features.affiliate.signupReward') }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('admin.settings.features.affiliate.signupRewardHint') }}
+                  </p>
+                </div>
+                <Toggle v-model="form.affiliate_signup_reward_enabled" />
+              </div>
+
+              <div v-if="form.affiliate_signup_reward_enabled">
+                <label class="input-label">
+                  {{ t('admin.settings.features.affiliate.signupRewardAmount') }}
+                </label>
+                <input
+                  v-model.number="form.affiliate_signup_reward_amount"
+                  type="number"
+                  step="1"
+                  min="0"
+                  max="100000"
+                  class="input"
+                />
+                <p class="mt-1 text-xs text-gray-400">
+                  {{ t('admin.settings.features.affiliate.signupRewardAmountDesc') }}
+                </p>
+              </div>
+
               <!-- 专属用户管理 -->
               <div class="border-t border-gray-100 pt-6 dark:border-dark-700">
                 <div class="mb-3 flex items-center justify-between">
@@ -8485,6 +8514,8 @@ const form = reactive<SettingsForm>({
   affiliate_rebate_duration_days: 0,
   affiliate_rebate_per_invitee_cap: 0,
   affiliate_weekly_invite_limit: 0,
+  affiliate_signup_reward_enabled: false,
+  affiliate_signup_reward_amount: 0,
   default_concurrency: 1,
   default_subscriptions: [],
   force_email_on_third_party_signup: false,
@@ -9690,6 +9721,11 @@ async function saveSettings() {
       affiliate_weekly_invite_limit: Math.max(
         0,
         Math.min(10000, Math.floor(Number(form.affiliate_weekly_invite_limit) || 0)),
+      ),
+      affiliate_signup_reward_enabled: form.affiliate_signup_reward_enabled,
+      affiliate_signup_reward_amount: Math.max(
+        0,
+        Math.min(100000, Math.floor(Number(form.affiliate_signup_reward_amount) || 0)),
       ),
       default_concurrency: form.default_concurrency,
       default_subscriptions: normalizedDefaultSubscriptions,
