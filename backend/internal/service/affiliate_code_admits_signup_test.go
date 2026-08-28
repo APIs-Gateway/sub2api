@@ -492,6 +492,19 @@ func TestRegisterWithVerificationAdmitsByAffiliateCode(t *testing.T) {
 		require.Empty(t, repo.deletedIDs)
 	})
 
+	t.Run("回滚删号本身也失败时不掩盖原始错误", func(t *testing.T) {
+		// 补偿式回滚的固有风险：补偿自己也会失败，那就真留下孤儿账号了。
+		// 这时候能做的只有把它记下来，但绝不能因为删不掉就假装注册成功。
+		repo := &userRepoStub{nextID: 16, deleteErr: errors.New("delete exploded")}
+		affRepo := admitRepoWithQuota(1)
+		affRepo.bindErr = errors.New("bind exploded")
+		svc := admitRegisterService(repo, admitRegisterSettings("true", "5"), validCode, affRepo)
+
+		_, _, err := svc.RegisterWithVerification(ctx, "delfail@test.com", "password", "", "", "", admitTestCode)
+		require.Error(t, err)
+		require.Equal(t, []int64{16}, repo.deletedIDs, "回滚要尝试过，哪怕失败")
+	})
+
 	t.Run("绑定邀请人失败时把已经建出来的账号删掉", func(t *testing.T) {
 		// 账号此刻已经落库，不删的话这个邮箱就被半成品账号占死了
 		repo := &userRepoStub{nextID: 15}
