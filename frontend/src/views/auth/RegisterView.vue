@@ -227,18 +227,6 @@
           />
         </div>
 
-        <LoginAgreementPrompt
-          v-if="loginAgreementEnabled"
-          :accepted="agreementAccepted"
-          :documents="loginAgreementDocuments"
-          :mode="loginAgreementMode"
-          :updated-at="loginAgreementUpdatedAt"
-          :visible="showAgreementModal"
-          @accept="acceptLoginAgreement"
-          @reject="rejectLoginAgreement"
-          @open="showAgreementModal = true"
-        />
-
         <!-- Submit Button -->
         <button
           type="submit"
@@ -275,6 +263,20 @@
         </button>
 
       </form>
+
+      <!-- 协议门控对所有注册渠道生效，必须放在邮箱表单之外，
+           否则关闭邮箱注册后没人能同意协议，OAuth 按钮会被永久禁用 -->
+      <LoginAgreementPrompt
+        v-if="loginAgreementEnabled && registrationEnabled && anySignupAvailable"
+        :accepted="agreementAccepted"
+        :documents="loginAgreementDocuments"
+        :mode="loginAgreementMode"
+        :updated-at="loginAgreementUpdatedAt"
+        :visible="showAgreementModal"
+        @accept="acceptLoginAgreement"
+        @reject="rejectLoginAgreement"
+        @open="showAgreementModal = true"
+      />
 
       <div v-if="showOAuthLogin" class="space-y-3 pt-1">
         <div v-if="emailSignupEnabled" class="flex items-center gap-3">

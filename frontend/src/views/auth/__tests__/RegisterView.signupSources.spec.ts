@@ -128,6 +128,58 @@ describe('RegisterView 的注册来源开关', () => {
   })
 })
 
+describe('RegisterView 的登录协议门控', () => {
+  const agreementSettings = (overrides: Record<string, unknown> = {}) =>
+    baseSettings({
+      login_agreement_enabled: true,
+      login_agreement_mode: 'modal',
+      login_agreement_updated_at: '2026-08-27',
+      login_agreement_revision: 'rev-1',
+      login_agreement_documents: [{ id: 'terms', title: '服务条款', content_md: '# 服务条款' }],
+      ...overrides
+    })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    routeState.query = {}
+    window.localStorage.clear()
+    getLegacyInviteStatusMock.mockResolvedValue({ enabled: false })
+  })
+
+  it('账号密码注册关掉后，协议提示仍然渲染', async () => {
+    // 线上踩过：协议组件当时放在表单内部，邮箱注册一关表单就不渲染，
+    // 协议弹窗根本挂不上，用户无从同意，第三方按钮就被永久禁用。
+    const wrapper = await mountRegisterView(
+      agreementSettings({
+        signup_source_enabled: { email: false, github: true },
+        github_oauth_enabled: true
+      })
+    )
+    expect(wrapper.find('form').exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'LoginAgreementPrompt' }).exists()).toBe(true)
+  })
+
+  it('只剩第三方注册时，同意协议前禁用、同意后放行', async () => {
+    const wrapper = await mountRegisterView(
+      agreementSettings({
+        signup_source_enabled: { email: false, github: true },
+        github_oauth_enabled: true
+      })
+    )
+    const oauth = wrapper.findComponent({ name: 'EmailOAuthButtons' })
+    expect(oauth.props('disabled')).toBe(true)
+
+    await wrapper.findComponent({ name: 'LoginAgreementPrompt' }).vm.$emit('accept')
+    await flushPromises()
+    expect(oauth.props('disabled')).toBe(false)
+  })
+
+  it('注册总闸关闭时不渲染协议提示', async () => {
+    const wrapper = await mountRegisterView(agreementSettings({ registration_enabled: false }))
+    expect(wrapper.findComponent({ name: 'LoginAgreementPrompt' }).exists()).toBe(false)
+  })
+})
+
 describe('RegisterView 的邀请码准入提示', () => {
   beforeEach(() => {
     vi.clearAllMocks()
