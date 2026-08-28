@@ -270,3 +270,109 @@ func TestGetPublicSettingsReadsSignupSourceKeys(t *testing.T) {
 	require.True(t, got.SignupSourceEnabled["github"], "没配过的来源默认视为可用")
 	require.True(t, got.AffiliateCodeAdmitsSignup, "准入开关要透给注册页，它据此决定注册码那栏是否必填")
 }
+
+func oauthAdmitAuthService(admits, weeklyLimit string, repo *admitAffRepoStub, codes map[string]*RedeemCode) *AuthService {
+	settings := &SettingService{settingRepo: signupSourceSettingRepoStub{values: map[string]string{
+		SettingKeyInvitationCodeEnabled:      "true",
+		SettingKeyAffiliateCodeAdmitsSignup:  admits,
+		SettingKeyAffiliateWeeklyInviteLimit: weeklyLimit,
+	}}}
+	return &AuthService{
+		settingService:   settings,
+		redeemRepo:       &redeemCodeRepoStub{codesByCode: codes},
+		affiliateService: &AffiliateService{repo: repo, settingService: settings},
+	}
+}
+
+func admitRepoWithQuota(count int) *admitAffRepoStub {
+	repo := &admitAffRepoStub{summary: &AffiliateSummary{UserID: 9}}
+	repo.count = count
+	return repo
+}
+
+// TestValidateOAuthRegistrationInvitation 覆盖第三方注册那条路的准入判定。
+//
+// 它和邮箱注册那条路必须给出一致的结论：同一个码在两个入口结果不同，用户只会觉得
+// 系统在随机拒绝自己。返回值有三段语义——放行并带出真正生效的推荐码、拒绝并给出
+// 比「注册码无效」更有解释力的错误、以及沿用注册码那边的原始错误。
+func TestValidateOAuthRegistrationInvitation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	validCode := map[string]*RedeemCode{
+		"INVITE1": {ID: 7, Code: "INVITE1", Type: RedeemTypeInvitation, Status: StatusUnused},
+	}
+
+	t.Run("邀请码功能没开时直接放行", func(t *testing.T) {
+		svc := &AuthService{settingService: &SettingService{settingRepo: signupSourceSettingRepoStub{
+			values: map[string]string{SettingKeyInvitationCodeEnabled: "false"},
+		}}}
+		code, aff, err := svc.validateOAuthRegistrationInvitation(ctx, "", "  AFF  ")
+		require.NoError(t, err)
+		require.Nil(t, code)
+		require.Equal(t, "AFF", aff, "推荐码要原样带出去，后面绑定邀请人还要用")
+	})
+
+	t.Run("没有任何注册码来源时报服务不可用", func(t *testing.T) {
+		svc := &AuthService{settingService: &SettingService{settingRepo: signupSourceSettingRepoStub{
+			values: map[string]string{SettingKeyInvitationCodeEnabled: "true"},
+		}}}
+		_, _, err := svc.validateOAuthRegistrationInvitation(ctx, "INVITE1", "")
+		require.ErrorIs(t, err, ErrServiceUnavailable)
+	})
+
+	t.Run("注册码有效时返回它，推荐码不变", func(t *testing.T) {
+		svc := oauthAdmitAuthService("false", "5", admitRepoWithQuota(0), validCode)
+		code, aff, err := svc.validateOAuthRegistrationInvitation(ctx, "INVITE1", "AFF456")
+		require.NoError(t, err)
+		require.NotNil(t, code)
+		require.Equal(t, "INVITE1", code.Code)
+		require.Equal(t, "AFF456", aff)
+	})
+
+	t.Run("没填注册码且准入关闭时要求补填", func(t *testing.T) {
+		svc := oauthAdmitAuthService("false", "5", admitRepoWithQuota(0), validCode)
+		_, _, err := svc.validateOAuthRegistrationInvitation(ctx, "", "HC3YPBNP7LRU")
+		require.ErrorIs(t, err, ErrInvitationCodeRequired)
+	})
+
+	t.Run("没填注册码但有有效推荐码且准入开启时放行", func(t *testing.T) {
+		// 顺着邀请链接进来的人手上只有邀请人的码，不该再被要求一张注册码
+		svc := oauthAdmitAuthService("true", "5", admitRepoWithQuota(1), validCode)
+		code, aff, err := svc.validateOAuthRegistrationInvitation(ctx, "", "HC3YPBNP7LRU")
+		require.NoError(t, err)
+		require.Nil(t, code, "这条路没有消耗任何一次性注册码")
+		require.Equal(t, admitTestCode, aff)
+	})
+
+	t.Run("把邀请人邀请码填进注册码栏也能放行", func(t *testing.T) {
+		// 用户分不清两个输入框是常态，能认出来就别拒绝
+		svc := oauthAdmitAuthService("true", "5", admitRepoWithQuota(1), validCode)
+		code, aff, err := svc.validateOAuthRegistrationInvitation(ctx, "HC3YPBNP7LRU", "")
+		require.NoError(t, err)
+		require.Nil(t, code)
+		require.Equal(t, admitTestCode, aff)
+	})
+
+	t.Run("注册码无效且没有可用推荐码时保留原始错误", func(t *testing.T) {
+		svc := oauthAdmitAuthService("true", "5", &admitAffRepoStub{summaryErr: ErrAffiliateProfileNotFound}, validCode)
+		_, _, err := svc.validateOAuthRegistrationInvitation(ctx, "NOPE", "ALSONOPE")
+		require.ErrorIs(t, err, ErrInvitationCodeInvalid)
+	})
+
+	t.Run("注册码类型不对时同样按无效处理", func(t *testing.T) {
+		codes := map[string]*RedeemCode{
+			"BALANCE1": {ID: 8, Code: "BALANCE1", Type: RedeemTypeBalance, Status: StatusUnused},
+		}
+		svc := oauthAdmitAuthService("false", "5", admitRepoWithQuota(0), codes)
+		_, _, err := svc.validateOAuthRegistrationInvitation(ctx, "BALANCE1", "")
+		require.ErrorIs(t, err, ErrInvitationCodeInvalid)
+	})
+
+	t.Run("推荐码本周名额已满时抛限额错误而不是无效码", func(t *testing.T) {
+		// 退化成「注册码无效」的话，用户完全看不懂自己撞了什么
+		svc := oauthAdmitAuthService("true", "5", admitRepoWithQuota(5), validCode)
+		_, _, err := svc.validateOAuthRegistrationInvitation(ctx, "", "HC3YPBNP7LRU")
+		require.ErrorIs(t, err, ErrAffiliateWeeklyInviteLimitReached)
+	})
+}
