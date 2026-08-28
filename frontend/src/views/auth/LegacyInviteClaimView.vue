@@ -192,7 +192,7 @@ const isClaiming = ref<boolean>(false)
 const isCodeSent = ref<boolean>(false)
 const isCopied = ref<boolean>(false)
 
-const status = reactive<LegacyInviteStatus>({ enabled: false, min_paid_amount: 0 })
+const status = reactive<LegacyInviteStatus>({ enabled: false, min_paid_amount: 0, min_usage_cost: 0 })
 
 const claimedCode = ref<string>('')
 const alreadyClaimed = ref<boolean>(false)
@@ -213,8 +213,15 @@ const formData = reactive({
 
 // ==================== Computed ====================
 
+// 用量口径开着的时候必须把两条门槛都写出来：付费没达标的重度用户如果只看到
+// 「满 {amount} 元」，会以为自己没资格而直接走人。
 const subtitleText = computed(() =>
-  t('legacyInvite.subtitle', { amount: formatAmount(status.min_paid_amount) })
+  status.min_usage_cost > 0
+    ? t('legacyInvite.subtitleWithUsage', {
+        amount: formatAmount(status.min_paid_amount),
+        usage: formatAmount(status.min_usage_cost)
+      })
+    : t('legacyInvite.subtitle', { amount: formatAmount(status.min_paid_amount) })
 )
 
 const sendCodeButtonText = computed(() => {
@@ -240,6 +247,7 @@ onMounted(async () => {
     ])
     status.enabled = inviteStatus.enabled
     status.min_paid_amount = inviteStatus.min_paid_amount
+    status.min_usage_cost = inviteStatus.min_usage_cost ?? 0
     if (settings) {
       turnstileEnabled.value = settings.turnstile_enabled
       turnstileSiteKey.value = settings.turnstile_site_key || ''
@@ -278,6 +286,17 @@ function formatAmount(amount: number): string {
   return Number.isInteger(amount) ? String(amount) : amount.toFixed(2)
 }
 
+/** 「不达标」得把当前生效的口径都列出来，否则用户不知道还有第二条路可走 */
+function notEligibleMessage(): string {
+  if (status.min_usage_cost > 0) {
+    return t('legacyInvite.errors.notEligibleWithUsage', {
+      amount: formatAmount(status.min_paid_amount),
+      usage: formatAmount(status.min_usage_cost)
+    })
+  }
+  return t('legacyInvite.errors.notEligible', { amount: formatAmount(status.min_paid_amount) })
+}
+
 function startCountdown(seconds: number): void {
   stopCountdown()
   countdown.value = seconds
@@ -311,7 +330,7 @@ function resolveErrorMessage(error: unknown, fallbackKey: string): string {
     case 'LEGACY_INVITE_DISABLED':
       return t('legacyInvite.errors.disabled')
     case 'LEGACY_INVITE_NOT_ELIGIBLE':
-      return t('legacyInvite.errors.notEligible', { amount: formatAmount(status.min_paid_amount) })
+      return notEligibleMessage()
     case 'LEGACY_INVITE_ALREADY_CLAIMED':
       return t('legacyInvite.errors.alreadyClaimed')
     case 'LEGACY_INVITE_LOOKUP_FAILED':

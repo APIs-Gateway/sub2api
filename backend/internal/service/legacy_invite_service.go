@@ -35,13 +35,18 @@ type LegacyPaidUser struct {
 	Email  string
 	// PaidAmount 是实付金额合计（已扣除退款），单位与旧站 payment_orders.pay_amount 一致。
 	PaidAmount float64
+	// UsageCost 是累计用量消费（USD），口径为旧站 usage_logs.actual_cost 合计。
+	//
+	// 查不到（旧站库没给这张表的读权限、或查询本身失败）时为 0，
+	// 达标判定会自动退化成只看 PaidAmount，不会因此把人误拒成「查询失败」。
+	UsageCost float64
 }
 
 // LegacyPaidLookup 只读地查询旧站的付费情况。
 //
 // 实现方连的是旧站数据库，因此约定：查询失败一律返回 error，绝不用「查不到」冒充「不达标」。
 type LegacyPaidLookup interface {
-	// FindPaidUser 返回该邮箱在旧站的付费合计；旧站没有这个邮箱时返回 (nil, nil)。
+	// FindPaidUser 返回该邮箱在旧站的付费与用量合计；旧站没有这个邮箱时返回 (nil, nil)。
 	FindPaidUser(ctx context.Context, email string) (*LegacyPaidUser, error)
 	// Ping 用于健康检查，判断旧站库当前是否可达。
 	Ping(ctx context.Context) error
@@ -53,9 +58,12 @@ type LegacyInviteClaim struct {
 	Email        string
 	LegacyUserID int64
 	PaidAmount   float64
-	RedeemCode   string
-	ClaimedIP    string
-	CreatedAt    time.Time
+	// UsageCost 是领取当时算出的旧站累计用量消费（USD）。
+	// 与 PaidAmount 一起留档，才能事后看出这个人是靠哪条口径达标的。
+	UsageCost  float64
+	RedeemCode string
+	ClaimedIP  string
+	CreatedAt  time.Time
 }
 
 // LegacyInviteClaimRepository 存取本站这一侧的发放流水。
@@ -69,8 +77,11 @@ type LegacyInviteClaimRepository interface {
 
 // LegacyInviteOptions 是功能的静态配置快照，来自 config.LegacyInviteConfig。
 type LegacyInviteOptions struct {
-	Enabled         bool
-	MinPaidAmount   float64
+	Enabled       bool
+	MinPaidAmount float64
+	// MinUsageCost 是第二条达标口径（USD 用量消费），与 MinPaidAmount 是「或」的关系。
+	// 0 表示这条口径没开。
+	MinUsageCost    float64
 	CodeExpiresDays int
 }
 
@@ -82,6 +93,8 @@ type LegacyInviteOptions struct {
 //     在证明邮箱归属之前就告诉调用方，等于开放一个「谁在旧站花过 300」的枚举接口。
 //  2. Claim：校验验证码（证明邮箱确实是他的），再查旧站达标情况，
 //     达标就生成一个一次性邀请码并记账。
+//
+// 达标有两条并列的口径（见 isEligible）：旧站实付金额，或者旧站累计用量消费。
 type LegacyInviteService struct {
 	lookup       LegacyPaidLookup
 	claimRepo    LegacyInviteClaimRepository
@@ -114,6 +127,8 @@ func NewLegacyInviteService(
 type LegacyInviteStatus struct {
 	Enabled       bool    `json:"enabled"`
 	MinPaidAmount float64 `json:"min_paid_amount"`
+	// MinUsageCost 为 0 时前端只展示实付金额那一条门槛。
+	MinUsageCost float64 `json:"min_usage_cost"`
 }
 
 // LegacyInviteClaimResult 是领码成功后的返回。
@@ -141,7 +156,29 @@ func (s *LegacyInviteService) Status() LegacyInviteStatus {
 	if !s.IsEnabled() {
 		return LegacyInviteStatus{Enabled: false}
 	}
-	return LegacyInviteStatus{Enabled: true, MinPaidAmount: s.opts.MinPaidAmount}
+	return LegacyInviteStatus{
+		Enabled:       true,
+		MinPaidAmount: s.opts.MinPaidAmount,
+		MinUsageCost:  s.opts.MinUsageCost,
+	}
+}
+
+// isEligible 判定这个旧站账号够不够格领码。
+//
+// 两条口径是「或」的关系：实付金额达标，或者用量消费达标，满足任意一条即可。
+// 订阅制用户的实付人民币可能不高，但按量折算的消费额很大，只看实付会把他们挡在门外。
+//
+// MinUsageCost 为 0 表示这条口径没开，必须先判正数——否则「用量 0 >= 门槛 0」
+// 会把所有人都放进来。MinPaidAmount 不加这层保护：它是主口径，
+// 把它显式设成 0 本来就等于「谁都放行」。
+func (s *LegacyInviteService) isEligible(paid *LegacyPaidUser) bool {
+	if s == nil || paid == nil {
+		return false
+	}
+	if paid.PaidAmount >= s.opts.MinPaidAmount {
+		return true
+	}
+	return s.opts.MinUsageCost > 0 && paid.UsageCost >= s.opts.MinUsageCost
 }
 
 // SendClaimCode 向旧站邮箱发送领码验证码。
@@ -200,7 +237,7 @@ func (s *LegacyInviteService) Claim(ctx context.Context, email, verifyCode, clie
 		// 旧站库不可达时明确报「暂时查不了」，不要退化成「不达标」。
 		return nil, ErrLegacyInviteLookupFailed
 	}
-	if paid == nil || paid.PaidAmount < s.opts.MinPaidAmount {
+	if !s.isEligible(paid) {
 		return nil, ErrLegacyInviteNotEligible
 	}
 
@@ -230,6 +267,7 @@ func (s *LegacyInviteService) Claim(ctx context.Context, email, verifyCode, clie
 		Email:        normalized,
 		LegacyUserID: paid.UserID,
 		PaidAmount:   paid.PaidAmount,
+		UsageCost:    paid.UsageCost,
 		RedeemCode:   code,
 		ClaimedIP:    clientIP,
 	}
@@ -268,6 +306,7 @@ func ProvideLegacyInviteOptions(cfg *config.Config) LegacyInviteOptions {
 	return LegacyInviteOptions{
 		Enabled:         cfg.LegacyInvite.Enabled,
 		MinPaidAmount:   cfg.LegacyInvite.MinPaidAmount,
+		MinUsageCost:    cfg.LegacyInvite.MinUsageCost,
 		CodeExpiresDays: cfg.LegacyInvite.CodeExpiresDays,
 	}
 }

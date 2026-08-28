@@ -480,6 +480,7 @@
   legacyInvite: {
     title: 'Claim your invite code',
     subtitle: 'If you have spent at least {amount} CNY on the main site, you can claim one invite code here with your main-site email.',
+    subtitleWithUsage: 'If you have paid at least {amount} CNY or used at least {usage} USD worth of API credit on the main site, you can claim one invite code here with your main-site email.',
     emailLabel: 'Main-site email',
     emailPlaceholder: 'Enter the email you use on the main site',
     sendCode: 'Send verification code',
@@ -504,6 +505,7 @@
     errors: {
       disabled: 'Invite code claiming is currently closed.',
       notEligible: 'This email has not reached {amount} CNY of spending on the main site.',
+      notEligibleWithUsage: 'This email has neither paid {amount} CNY nor used {usage} USD worth of API credit on the main site.',
       alreadyClaimed: 'An invite code has already been issued for this email.',
       lookupFailed: 'Cannot verify your main-site account right now, please try again later.',
       invalidCode: 'The verification code is incorrect or has expired.',

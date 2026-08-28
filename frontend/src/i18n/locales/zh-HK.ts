@@ -480,6 +480,7 @@
   legacyInvite: {
     title: '舊用戶領取邀請碼',
     subtitle: '在主站累計消費滿 {amount} 元的用戶，可以用主站電郵領取一個本站邀請碼。',
+    subtitleWithUsage: '在主站累計付費滿 {amount} 元，或累計用量消費滿 {usage} 美元的用戶，可以用主站電郵領取一個本站邀請碼。',
     emailLabel: '主站電郵',
     emailPlaceholder: '請輸入你在主站使用的電郵',
     sendCode: '傳送驗證碼',
@@ -504,6 +505,7 @@
     errors: {
       disabled: '舊用戶領取入口目前沒有開放。',
       notEligible: '這個電郵在主站的累計消費未達到 {amount} 元。',
+      notEligibleWithUsage: '這個電郵在主站的累計付費未滿 {amount} 元，累計用量消費也未滿 {usage} 美元。',
       alreadyClaimed: '這個電郵已經領取過邀請碼了。',
       lookupFailed: '暫時無法核對主站帳戶，請稍後再試。',
       invalidCode: '驗證碼不正確或已過期。',

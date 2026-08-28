@@ -184,7 +184,44 @@ GROUP BY u.id, u.email
 		return nil, fmt.Errorf("query legacy paid user: %w", err)
 	}
 
-	return &service.LegacyPaidUser{UserID: userID, Email: found, PaidAmount: paid}, nil
+	return &service.LegacyPaidUser{
+		UserID:     userID,
+		Email:      found,
+		PaidAmount: paid,
+		UsageCost:  r.findUsageCost(ctx, userID),
+	}, nil
+}
+
+// legacyUsageCostQuery 是第二条达标口径的数据来源：旧站的累计用量消费。
+//
+// 口径取 actual_cost 而非 total_cost。前者是按本站定价实际计费的金额，和用户在旧站
+// 「使用统计」里看到的总消费、以及签到里「每消费满 X 解锁一次额外签到」用的是同一个字段；
+// total_cost 是按标准价折算的参考值，跟用户认知里的「我花了多少」对不上。
+const legacyUsageCostQuery = `
+SELECT COALESCE(SUM(actual_cost), 0)::double precision
+FROM usage_logs
+WHERE user_id = $1`
+
+// findUsageCost 查这个旧站用户的累计用量消费（USD）。
+//
+// 查询失败一律返回 0 而不是把错误往上抛：用量口径是后加的**第二条**通道，
+// 旧站的只读账号很可能根本没被授予 usage_logs 的 SELECT 权限——那是一次独立的部署侧
+// 授权动作（GRANT SELECT ON usage_logs TO <只读账号>），漏做是很自然的事。
+// 一旦让它把错误抛上去，整个领码流程会报「暂时查不了」，等于用一条可选的新口径
+// 废掉了原本工作正常的实付口径。降级成 0 之后，判定自动退回只看实付金额，
+// 运维从这条日志定位授权缺口。
+func (r *legacyPaidLookup) findUsageCost(ctx context.Context, userID int64) float64 {
+	queryCtx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+
+	var cost float64
+	if err := r.db.QueryRowContext(queryCtx, legacyUsageCostQuery, userID).Scan(&cost); err != nil {
+		logger.LegacyPrintf("repository.legacy_invite",
+			"[LegacyInvite] 查询旧站用量消费失败，本次判定按 0 处理（检查只读账号是否有 usage_logs 的 SELECT 权限）：legacy_user_id=%d：%v",
+			userID, err)
+		return 0
+	}
+	return cost
 }
 
 // Ping 检查旧站库是否可达。
@@ -207,7 +244,7 @@ func NewLegacyInviteClaimRepository(db *sql.DB) service.LegacyInviteClaimReposit
 func (r *legacyInviteClaimRepository) GetByEmail(ctx context.Context, email string) (*service.LegacyInviteClaim, error) {
 	var claim service.LegacyInviteClaim
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, email, legacy_user_id, paid_amount, redeem_code, claimed_ip, created_at
+SELECT id, email, legacy_user_id, paid_amount, usage_cost, redeem_code, claimed_ip, created_at
 FROM legacy_invite_claims
 WHERE LOWER(email) = $1
 `, email).Scan(
@@ -215,6 +252,7 @@ WHERE LOWER(email) = $1
 		&claim.Email,
 		&claim.LegacyUserID,
 		&claim.PaidAmount,
+		&claim.UsageCost,
 		&claim.RedeemCode,
 		&claim.ClaimedIP,
 		&claim.CreatedAt,
@@ -233,10 +271,10 @@ func (r *legacyInviteClaimRepository) Create(ctx context.Context, claim *service
 		return errors.New("legacy invite claim is nil")
 	}
 	err := r.db.QueryRowContext(ctx, `
-INSERT INTO legacy_invite_claims (email, legacy_user_id, paid_amount, redeem_code, claimed_ip)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO legacy_invite_claims (email, legacy_user_id, paid_amount, usage_cost, redeem_code, claimed_ip)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, created_at
-`, claim.Email, claim.LegacyUserID, claim.PaidAmount, claim.RedeemCode, claim.ClaimedIP).
+`, claim.Email, claim.LegacyUserID, claim.PaidAmount, claim.UsageCost, claim.RedeemCode, claim.ClaimedIP).
 		Scan(&claim.ID, &claim.CreatedAt)
 	if err != nil {
 		// lower(email) 上的唯一索引是「每人一个码」的最终闸门：

@@ -8,11 +8,16 @@
 import { apiClient } from './client'
 
 /**
- * 领码入口的开放状态。min_paid_amount 是达标门槛（元），用于渲染页面文案。
+ * 领码入口的开放状态，用于渲染页面文案。
+ *
+ * 达标有两条并列的口径：min_paid_amount 是主站累计付费（元），
+ * min_usage_cost 是主站累计用量消费（美元），满足任意一条即可领码。
+ * min_usage_cost 为 0 表示后一条口径没开，页面只展示付费门槛。
  */
 export interface LegacyInviteStatus {
   enabled: boolean
   min_paid_amount: number
+  min_usage_cost: number
 }
 
 export interface LegacyInviteSendCodeRequest {

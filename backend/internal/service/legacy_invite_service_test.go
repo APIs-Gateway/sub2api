@@ -203,7 +203,7 @@ func (f *legacyInviteFixture) seedVerifyCode(email, code string) {
 }
 
 func enabledOptions() LegacyInviteOptions {
-	return LegacyInviteOptions{Enabled: true, MinPaidAmount: 300}
+	return LegacyInviteOptions{Enabled: true, MinPaidAmount: 300, MinUsageCost: 7500}
 }
 
 // ---------------------------------------------------------------- tests
@@ -230,7 +230,7 @@ func TestLegacyInviteService_IsEnabled(t *testing.T) {
 
 	f := newLegacyInviteFixture(enabledOptions())
 	require.True(t, f.svc.IsEnabled())
-	require.Equal(t, LegacyInviteStatus{Enabled: true, MinPaidAmount: 300}, f.svc.Status())
+	require.Equal(t, LegacyInviteStatus{Enabled: true, MinPaidAmount: 300, MinUsageCost: 7500}, f.svc.Status())
 
 	// 配置里关掉
 	off := newLegacyInviteFixture(LegacyInviteOptions{Enabled: false, MinPaidAmount: 300})
@@ -367,7 +367,7 @@ func TestLegacyInviteService_Claim_Success(t *testing.T) {
 
 	f := newLegacyInviteFixture(enabledOptions())
 	f.seedVerifyCode("user@example.com", "654321")
-	f.lookup.user = &LegacyPaidUser{UserID: 42, Email: "user@example.com", PaidAmount: 512.5}
+	f.lookup.user = &LegacyPaidUser{UserID: 42, Email: "user@example.com", PaidAmount: 512.5, UsageCost: 88.25}
 
 	// 大小写和空白都应被归一化后再用于查询与落库
 	result, err := f.svc.Claim(context.Background(), "  User@Example.com ", "654321", "9.9.9.9")
@@ -389,6 +389,7 @@ func TestLegacyInviteService_Claim_Success(t *testing.T) {
 	require.Equal(t, "user@example.com", claim.Email)
 	require.Equal(t, int64(42), claim.LegacyUserID)
 	require.InDelta(t, 512.5, claim.PaidAmount, 0.001)
+	require.InDelta(t, 88.25, claim.UsageCost, 0.001, "两条口径都要留档，事后才看得出是靠哪条达标的")
 	require.Equal(t, "9.9.9.9", claim.ClaimedIP)
 	require.Equal(t, result.InvitationCode, claim.RedeemCode)
 
@@ -485,8 +486,71 @@ func TestProvideLegacyInviteOptions(t *testing.T) {
 	cfg.LegacyInvite = config.LegacyInviteConfig{
 		Enabled:         true,
 		MinPaidAmount:   300,
+		MinUsageCost:    7500,
 		CodeExpiresDays: 30,
 	}
-	require.Equal(t, LegacyInviteOptions{Enabled: true, MinPaidAmount: 300, CodeExpiresDays: 30},
+	require.Equal(t,
+		LegacyInviteOptions{Enabled: true, MinPaidAmount: 300, MinUsageCost: 7500, CodeExpiresDays: 30},
 		ProvideLegacyInviteOptions(cfg))
+}
+
+// TestLegacyInviteService_IsEligible 把两条达标口径的组合钉死。
+//
+// 重点是最后一组：用量口径没开（MinUsageCost 为 0）时，一个用量为 0 的账号
+// 绝不能因为「0 >= 0」被放进来——那等于把领码入口对所有人敞开。
+func TestLegacyInviteService_IsEligible(t *testing.T) {
+	t.Parallel()
+
+	both := newLegacyInviteFixture(enabledOptions()).svc
+	require.False(t, both.isEligible(nil))
+	// 只有付费达标
+	require.True(t, both.isEligible(&LegacyPaidUser{PaidAmount: 300}))
+	// 只有用量达标——订阅制重度用户就是这一档
+	require.True(t, both.isEligible(&LegacyPaidUser{PaidAmount: 12, UsageCost: 7500}))
+	// 两条都差一点
+	require.False(t, both.isEligible(&LegacyPaidUser{PaidAmount: 299.99, UsageCost: 7499.99}))
+	// 两条都达标
+	require.True(t, both.isEligible(&LegacyPaidUser{PaidAmount: 1000, UsageCost: 9000}))
+
+	// 用量口径关闭时只看付费，且不能被 0 >= 0 击穿
+	paidOnly := newLegacyInviteFixture(LegacyInviteOptions{Enabled: true, MinPaidAmount: 300}).svc
+	require.False(t, paidOnly.isEligible(&LegacyPaidUser{PaidAmount: 0, UsageCost: 0}))
+	require.False(t, paidOnly.isEligible(&LegacyPaidUser{PaidAmount: 0, UsageCost: 999999}))
+	require.True(t, paidOnly.isEligible(&LegacyPaidUser{PaidAmount: 300}))
+
+	var nilSvc *LegacyInviteService
+	require.False(t, nilSvc.isEligible(&LegacyPaidUser{PaidAmount: 1e9}))
+}
+
+// TestLegacyInviteService_Claim_EligibleByUsage 覆盖「付费没到但用量到了」这条新通道的完整发放。
+//
+// 这正是加第二条口径的原因：订阅制用户实付人民币不高，按量折算的消费额却很大，
+// 只看实付会把这批真正的重度用户挡在门外。
+func TestLegacyInviteService_Claim_EligibleByUsage(t *testing.T) {
+	t.Parallel()
+
+	f := newLegacyInviteFixture(enabledOptions())
+	f.seedVerifyCode("heavy@example.com", "123456")
+	f.lookup.user = &LegacyPaidUser{UserID: 9, Email: "heavy@example.com", PaidAmount: 30, UsageCost: 7500}
+
+	result, err := f.svc.Claim(context.Background(), "heavy@example.com", "123456", "2.2.2.2")
+	require.NoError(t, err)
+	require.NotEmpty(t, result.InvitationCode)
+
+	require.Len(t, f.claims.created, 1)
+	require.InDelta(t, 30, f.claims.created[0].PaidAmount, 0.001)
+	require.InDelta(t, 7500, f.claims.created[0].UsageCost, 0.001)
+}
+
+// TestLegacyInviteService_Claim_UsageBelowThreshold 验证用量差一点也不放行。
+func TestLegacyInviteService_Claim_UsageBelowThreshold(t *testing.T) {
+	t.Parallel()
+
+	f := newLegacyInviteFixture(enabledOptions())
+	f.seedVerifyCode("heavy@example.com", "123456")
+	f.lookup.user = &LegacyPaidUser{UserID: 9, PaidAmount: 30, UsageCost: 7499.99}
+
+	_, err := f.svc.Claim(context.Background(), "heavy@example.com", "123456", "")
+	require.ErrorIs(t, err, ErrLegacyInviteNotEligible)
+	require.Empty(t, f.redeems.created)
 }

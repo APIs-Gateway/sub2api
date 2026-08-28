@@ -480,6 +480,7 @@
   legacyInvite: {
     title: '老用户领取邀请码',
     subtitle: '在主站累计消费满 {amount} 元的用户，可以用主站邮箱领取一个本站邀请码。',
+    subtitleWithUsage: '在主站累计付费满 {amount} 元，或累计用量消费满 {usage} 美元的用户，可以用主站邮箱领取一个本站邀请码。',
     emailLabel: '主站邮箱',
     emailPlaceholder: '请输入你在主站使用的邮箱',
     sendCode: '发送验证码',
@@ -504,6 +505,7 @@
     errors: {
       disabled: '老用户领取入口当前没有开放。',
       notEligible: '这个邮箱在主站的累计消费未达到 {amount} 元。',
+      notEligibleWithUsage: '这个邮箱在主站的累计付费未满 {amount} 元，累计用量消费也未满 {usage} 美元。',
       alreadyClaimed: '这个邮箱已经领取过邀请码了。',
       lookupFailed: '暂时无法核对主站账户，请稍后再试。',
       invalidCode: '验证码不正确或已过期。',

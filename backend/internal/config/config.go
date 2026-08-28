@@ -1298,6 +1298,15 @@ type LegacyInviteConfig struct {
 	// MinPaidAmount 是达标门槛，单位与旧站 payment_orders.pay_amount 一致（元）。
 	// 统计口径是「实付金额合计，扣除已退款部分」，余额充值和订阅购买都算。
 	MinPaidAmount float64 `mapstructure:"min_paid_amount"`
+	// MinUsageCost 是第二条达标口径：旧站的累计用量消费（USD）。
+	// 与 MinPaidAmount 是「或」的关系——任一达标即可领码。
+	//
+	// 之所以需要它：订阅制用户按套餐付费，实付人民币未必高，但按量折算的消费额可能很大，
+	// 只看实付金额会把这批真正的重度用户挡在门外。
+	// 口径取旧站 usage_logs.actual_cost 合计，与站内「使用统计」里的总消费、
+	// 以及签到的「每消费满 X 解锁一次额外签到」是同一个口径。
+	// 0 表示不启用这条口径，只按 MinPaidAmount 判定。
+	MinUsageCost float64 `mapstructure:"min_usage_cost"`
 	// QueryTimeoutSeconds 限制单次跨库查询的耗时。旧站库抖动时宁可快速失败让用户重试，
 	// 也不能让领码请求把本站的连接和 goroutine 拖住。
 	QueryTimeoutSeconds int `mapstructure:"query_timeout_seconds"`
@@ -1900,6 +1909,7 @@ func setDefaults() {
 	// 跨库连接大多要出本机，明文传旧站凭据不合适。
 	viper.SetDefault("legacy_invite.sslmode", "require")
 	viper.SetDefault("legacy_invite.min_paid_amount", 300)
+	viper.SetDefault("legacy_invite.min_usage_cost", 7500)
 	viper.SetDefault("legacy_invite.query_timeout_seconds", 5)
 	viper.SetDefault("legacy_invite.max_open_conns", 4)
 	viper.SetDefault("legacy_invite.code_expires_days", 0)
