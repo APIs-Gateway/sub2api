@@ -1862,14 +1862,31 @@ func resolvedTokenVersion(user *User) int64 {
 	return user.TokenVersion ^ fingerprint
 }
 
-// snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas（4 platform × 3 window）以
-// BulkInsertInitial 形式写入 user_platform_quotas 表。失败 fail-open（仅 warn log）。
+// snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas（platform × 3 window）以
+// BulkInsertInitial 形式写入 user_platform_quotas 表。
+//
+// 下面那个 fail-open 只在调用方不处于数据库事务里时才真的成立，而注册路径恰恰是在事务内
+// 调用它的：PostgreSQL 一旦有语句违反约束就会把整个事务标记为 aborted，之后的语句一律
+// 被拒，所以这里就算吞掉错误返回 nil，调用方后续的写操作照样会失败。2026-08-28 线上就是
+// 这么炸的——建表迁移的 CHECK 约束不认 grok，这批插入失败后毒化了整个注册事务，紧随其后的
+// 「初始化返利档案」和「绑定邀请人」全部被拒，OAuth 注册返回 500，邀请关系一条都没建起来。
+//
+// 因此真正的防线是不要产生注定失败的语句：这里按 AllowedQuotaPlatforms 过滤，保证写出去的
+// platform 一定来自权威白名单；白名单与数据库 CHECK 约束的一致性由
+// TestQuotaPlatformWhitelistStaysInSync 钉住。
 func (s *AuthService) snapshotPlatformQuotaDefaults(ctx context.Context, userID int64, plan *signupGrantPlan) error {
 	if s.userPlatformQuotaRepo == nil || plan == nil || len(plan.PlatformQuotas) == 0 {
 		return nil
 	}
 	records := make([]UserPlatformQuotaRecord, 0, len(plan.PlatformQuotas))
 	for platform, q := range plan.PlatformQuotas {
+		if !IsAllowedQuotaPlatform(platform) {
+			// 设置里混进了未知平台。跳过它，而不是让它去撞数据库的 CHECK 约束——
+			// 在事务里那一撞会连坐掉调用方后面所有的写操作。
+			logger.LegacyPrintf("service.auth",
+				"[Auth] Skip unknown quota platform %q for user %d (not in AllowedQuotaPlatforms)", platform, userID)
+			continue
+		}
 		rec := UserPlatformQuotaRecord{
 			UserID:   userID,
 			Platform: platform,
@@ -1880,6 +1897,9 @@ func (s *AuthService) snapshotPlatformQuotaDefaults(ctx context.Context, userID 
 			rec.MonthlyLimitUSD = q.MonthlyLimitUSD
 		}
 		records = append(records, rec)
+	}
+	if len(records) == 0 {
+		return nil
 	}
 	if err := s.userPlatformQuotaRepo.BulkInsertInitial(ctx, records); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Warning: snapshot platform quota failed user=%d: %v (fail-open)", userID, err)
