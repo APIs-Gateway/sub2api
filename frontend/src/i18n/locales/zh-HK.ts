@@ -590,6 +590,9 @@
     invitationCodeInvalid: '邀請碼無效或已被使用',
     invitationCodeValidating: '正在驗證邀請碼...',
     invitationCodeInvalidCannotRegister: '邀請碼無效，請檢查後重試',
+    invitationOrAffiliateCodeRequired: '請填寫邀請碼，或填寫邀請人邀請碼',
+    invitationOrAffiliateCodeHint: '已填寫邀請人邀請碼時，這一欄可以留空',
+    claimInvitationCodeLink: '沒有邀請碼？去領取',
     affiliateCodeLabel: '邀請人邀請碼',
     affiliateCodePlaceholder: '請輸入邀請人邀請碼（可選）',
     affiliateCodeValid: '邀請人邀請碼有效',
@@ -6346,6 +6349,8 @@
           signupRewardHint: '被邀請用戶註冊成功後，立即給邀請人發放一筆固定積分，不需要對方付款。預設關閉。',
           signupRewardAmount: '每邀請一人可得積分',
           signupRewardAmountDesc: '被邀請用戶註冊成功時邀請人立即獲得的積分數，與對方是否付款無關。同一個被邀請用戶只發放一次。0 = 不發放。',
+          codeAdmitsSignup: '邀請人邀請碼可放行註冊',
+          codeAdmitsSignupHint: '開啟後，註冊時填了有效的邀請人邀請碼即可完成註冊，無需另外一張邀請碼，且不消耗任何邀請碼。關閉時只有管理員發出的邀請碼才能註冊。',
           customUsers: {
             title: '專屬用戶配置',
             description: '為指定用戶設定專屬邀請碼或專屬邀請積分比例。僅展示已設定過專屬配置的用戶。',

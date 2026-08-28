@@ -590,6 +590,9 @@
     invitationCodeInvalid: '邀请码无效或已被使用',
     invitationCodeValidating: '正在验证邀请码...',
     invitationCodeInvalidCannotRegister: '邀请码无效，请检查后重试',
+    invitationOrAffiliateCodeRequired: '请填写邀请码，或填写邀请人邀请码',
+    invitationOrAffiliateCodeHint: '已填写邀请人邀请码时，这一栏可以留空',
+    claimInvitationCodeLink: '没有邀请码？去领取',
     affiliateCodeLabel: '邀请人邀请码',
     affiliateCodePlaceholder: '请输入邀请人邀请码（可选）',
     affiliateCodeValid: '邀请人邀请码有效',
@@ -6348,6 +6351,8 @@
           signupRewardHint: '被邀请用户注册成功后，立即给邀请人发放一笔固定积分，不需要对方付款。默认关闭。',
           signupRewardAmount: '每邀请一人可得积分',
           signupRewardAmountDesc: '被邀请用户注册成功时邀请人立即获得的积分数，与对方是否付款无关。同一个被邀请用户只发放一次。0 = 不发放。',
+          codeAdmitsSignup: '邀请人邀请码可放行注册',
+          codeAdmitsSignupHint: '开启后，注册时填了有效的邀请人邀请码即可完成注册，无需另外一张邀请码，且不消耗任何邀请码。关闭时只有管理员发出的邀请码才能注册。',
           customUsers: {
             title: '专属用户配置',
             description: '为指定用户设置专属邀请码或专属邀请积分比例。仅展示已设置过专属配置的用户。',

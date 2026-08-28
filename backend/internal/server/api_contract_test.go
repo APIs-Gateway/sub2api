@@ -818,6 +818,7 @@ func TestAPIContracts(t *testing.T) {
 					"affiliate_weekly_invite_limit": 0,
 					"affiliate_signup_reward_enabled": false,
 					"affiliate_signup_reward_amount": 0,
+					"affiliate_code_admits_signup": false,
 					"signup_source_enabled": {
 						"email": true,
 						"github": true,
@@ -1097,6 +1098,7 @@ func TestAPIContracts(t *testing.T) {
 					"affiliate_weekly_invite_limit": 0,
 					"affiliate_signup_reward_enabled": false,
 					"affiliate_signup_reward_amount": 0,
+					"affiliate_code_admits_signup": false,
 					"signup_source_enabled": {
 						"email": true,
 						"github": true,

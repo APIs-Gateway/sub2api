@@ -591,6 +591,9 @@
     invitationCodeInvalid: 'Invalid or used invitation code',
     invitationCodeValidating: 'Validating invitation code...',
     invitationCodeInvalidCannotRegister: 'Invalid invitation code. Please check and try again',
+    invitationOrAffiliateCodeRequired: 'Enter an invitation code, or an inviter invite code',
+    invitationOrAffiliateCodeHint: 'An inviter invite code is filled in, so you can leave this blank',
+    claimInvitationCodeLink: 'No invitation code? Claim one',
     affiliateCodeLabel: 'Inviter Code',
     affiliateCodePlaceholder: 'Enter inviter code (optional)',
     affiliateCodeValid: 'Inviter code is valid',
@@ -6343,6 +6346,8 @@
           signupRewardHint: 'Give the inviter a fixed number of points the moment an invited user signs up — no payment required. Off by default.',
           signupRewardAmount: 'Points per invited user',
           signupRewardAmountDesc: 'Points the inviter receives as soon as an invited user completes signup, regardless of whether they ever pay. Granted only once per invited user. 0 = disabled.',
+          codeAdmitsSignup: 'Inviter invite code admits signup',
+          codeAdmitsSignupHint: 'When enabled, a valid inviter invite code is enough to complete signup — no separate invitation code is required, and no invitation code is consumed. When disabled, only admin-issued invitation codes can admit a signup.',
           customUsers: {
             title: 'Per-User Overrides',
             description: 'Set a custom invite code or exclusive rebate rate for specific users. Lists only users that have an override applied.',

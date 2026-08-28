@@ -13,7 +13,7 @@
 
       <!-- Registration Disabled Message -->
       <div
-        v-if="!registrationEnabled && settingsLoaded"
+        v-if="(!registrationEnabled || !anySignupAvailable) && settingsLoaded"
         class="rounded-md border border-primary-600/30 bg-transparent p-4 dark:border-primary-400/30"
       >
         <div class="flex items-start gap-3">
@@ -27,7 +27,7 @@
       </div>
 
       <!-- Registration Form -->
-      <form v-else @submit.prevent="handleRegister" class="space-y-5">
+      <form v-else-if="emailSignupEnabled" @submit.prevent="handleRegister" class="space-y-5">
         <!-- Email Input -->
         <div>
           <label for="email" class="input-label">
@@ -83,6 +83,11 @@
         <div v-if="invitationCodeEnabled">
           <label for="invitation_code" class="input-label">
             {{ t('auth.invitationCodeLabel') }}
+            <span
+              v-if="affiliateCodeAdmitsSignup"
+              class="ml-1 text-xs font-normal text-gray-400 dark:text-dark-500"
+              >({{ t('common.optional') }})</span
+            >
           </label>
           <div class="relative">
             <input
@@ -120,6 +125,9 @@
               </span>
             </div>
           </transition>
+          <p v-if="affiliateCodeAdmitsSignup" class="mt-2 text-xs text-gray-500 dark:text-dark-400">
+            {{ t('auth.invitationOrAffiliateCodeHint') }}
+          </p>
         </div>
 
         <!-- Promo Code Input (Optional) -->
@@ -219,18 +227,6 @@
           />
         </div>
 
-        <LoginAgreementPrompt
-          v-if="loginAgreementEnabled"
-          :accepted="agreementAccepted"
-          :documents="loginAgreementDocuments"
-          :mode="loginAgreementMode"
-          :updated-at="loginAgreementUpdatedAt"
-          :visible="showAgreementModal"
-          @accept="acceptLoginAgreement"
-          @reject="rejectLoginAgreement"
-          @open="showAgreementModal = true"
-        />
-
         <!-- Submit Button -->
         <button
           type="submit"
@@ -268,8 +264,22 @@
 
       </form>
 
+      <!-- 协议门控对所有注册渠道生效，必须放在邮箱表单之外，
+           否则关闭邮箱注册后没人能同意协议，OAuth 按钮会被永久禁用 -->
+      <LoginAgreementPrompt
+        v-if="loginAgreementEnabled && registrationEnabled && anySignupAvailable"
+        :accepted="agreementAccepted"
+        :documents="loginAgreementDocuments"
+        :mode="loginAgreementMode"
+        :updated-at="loginAgreementUpdatedAt"
+        :visible="showAgreementModal"
+        @accept="acceptLoginAgreement"
+        @reject="rejectLoginAgreement"
+        @open="showAgreementModal = true"
+      />
+
       <div v-if="showOAuthLogin" class="space-y-3 pt-1">
-        <div class="flex items-center gap-3">
+        <div v-if="emailSignupEnabled" class="flex items-center gap-3">
           <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
           <span class="text-xs text-gray-500 dark:text-dark-400">
             {{ t('auth.oauthOrContinue') }}
@@ -305,6 +315,20 @@
           :show-divider="false"
         />
       </div>
+
+      <!-- 老用户领码入口。必须放在表单外面：账号密码注册一旦关掉，上面整个表单都不渲染，
+           而恰恰是那种情况下用户最需要它——走第三方注册同样得先有一张邀请码。 -->
+      <p
+        v-if="registrationEnabled && invitationCodeEnabled && legacyInviteEnabled"
+        class="text-center text-xs text-gray-500 dark:text-dark-400"
+      >
+        <router-link
+          to="/claim-invite"
+          class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+        >
+          {{ t('auth.claimInvitationCodeLink') }}
+        </router-link>
+      </p>
     </div>
 
     <!-- Footer -->
@@ -342,6 +366,7 @@ import {
   validateInvitationCode,
   validateAffiliateCode
 } from '@/api/auth'
+import { getLegacyInviteStatus } from '@/api/legacyInvite'
 import { buildAuthErrorMessage } from '@/utils/authError'
 import {
   formatRegistrationEmailSuffixWhitelistForMessage,
@@ -377,6 +402,13 @@ const registrationEnabled = ref<boolean>(true)
 const emailVerifyEnabled = ref<boolean>(false)
 const promoCodeEnabled = ref<boolean>(true)
 const invitationCodeEnabled = ref<boolean>(false)
+// 账号密码注册是独立于注册总闸的来源开关，关掉后整个表单都不该再出现——
+// 否则用户填完一整页才会撞上 SIGNUP_SOURCE_DISABLED。
+const emailSignupEnabled = ref<boolean>(true)
+// 开启后，填了有效的邀请人邀请码就不必再填一张注册用的邀请码
+const affiliateCodeAdmitsSignup = ref<boolean>(false)
+// 老用户领码入口是否开放，决定要不要在注册页上给出「去领一个」的链接
+const legacyInviteEnabled = ref<boolean>(false)
 const turnstileEnabled = ref<boolean>(false)
 const turnstileSiteKey = ref<string>('')
 const siteName = ref<string>('Sub2API')
@@ -463,6 +495,9 @@ const showOAuthLogin = computed(
     googleOAuthEnabled.value
 )
 
+// 总闸开着，但账号密码和第三方来源全被关掉时，页面等价于不能注册
+const anySignupAvailable = computed(() => emailSignupEnabled.value || showOAuthLogin.value)
+
 const agreementGateActive = computed(
   () => loginAgreementEnabled.value && !agreementAccepted.value
 )
@@ -476,6 +511,17 @@ watch(validationToastMessage, (value, previousValue) => {
     appStore.showError(value)
   }
 })
+
+// 领码入口由独立开关控制，探测失败一律当作没开——
+// 给出一个点进去只会看到「暂未开放」的链接，比不给还糟。
+async function refreshLegacyInviteEntry(): Promise<void> {
+  try {
+    const status = await getLegacyInviteStatus()
+    legacyInviteEnabled.value = status.enabled === true
+  } catch {
+    legacyInviteEnabled.value = false
+  }
+}
 
 function syncAffiliateReferralCode(): string {
   const code = resolveAffiliateReferralCode(route.query.aff, route.query.aff_code)
@@ -497,6 +543,8 @@ onMounted(async () => {
     emailVerifyEnabled.value = settings.email_verify_enabled
     promoCodeEnabled.value = settings.promo_code_enabled
     invitationCodeEnabled.value = settings.invitation_code_enabled
+    emailSignupEnabled.value = settings.signup_source_enabled?.email !== false
+    affiliateCodeAdmitsSignup.value = settings.affiliate_code_admits_signup === true
     turnstileEnabled.value = settings.turnstile_enabled
     turnstileSiteKey.value = settings.turnstile_site_key || ''
     siteName.value = settings.site_name || 'Sub2API'
@@ -521,6 +569,9 @@ onMounted(async () => {
       }
     }
     syncAffiliateReferralCode()
+    if (invitationCodeEnabled.value && registrationEnabled.value) {
+      void refreshLegacyInviteEntry()
+    }
   } catch (error) {
     console.error('Failed to load public settings:', error)
     loginAgreementEnabled.value = false
@@ -869,8 +920,14 @@ function validateForm(): boolean {
 
   // Invitation code validation (required when enabled)
   if (invitationCodeEnabled.value) {
-    if (!formData.invitation_code.trim()) {
-      errors.invitation_code = t('auth.invitationCodeRequired')
+    // 开启「邀请人邀请码可放行注册」后两栏填其一即可：
+    // 顺着邀请链接进来的人手上只有邀请人邀请码，不该再被要求一张注册用的邀请码。
+    const admittedByAffiliate =
+      affiliateCodeAdmitsSignup.value && formData.aff_code.trim() !== ''
+    if (!formData.invitation_code.trim() && !admittedByAffiliate) {
+      errors.invitation_code = affiliateCodeAdmitsSignup.value
+        ? t('auth.invitationOrAffiliateCodeRequired')
+        : t('auth.invitationCodeRequired')
       isValid = false
     }
   }

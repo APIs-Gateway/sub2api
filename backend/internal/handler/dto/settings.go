@@ -159,6 +159,7 @@ type SystemSettings struct {
 	AffiliateWeeklyInviteLimit   int                          `json:"affiliate_weekly_invite_limit"`
 	AffiliateSignupRewardEnabled bool                         `json:"affiliate_signup_reward_enabled"`
 	AffiliateSignupRewardAmount  int64                        `json:"affiliate_signup_reward_amount"`
+	AffiliateCodeAdmitsSignup    bool                         `json:"affiliate_code_admits_signup"`
 	DefaultUserRPMLimit          int                          `json:"default_user_rpm_limit"`
 	DefaultSubscriptions         []DefaultSubscriptionSetting `json:"default_subscriptions"`
 
@@ -309,6 +310,7 @@ type PublicSettings struct {
 	PromoCodeEnabled                 bool                     `json:"promo_code_enabled"`
 	PasswordResetEnabled             bool                     `json:"password_reset_enabled"`
 	InvitationCodeEnabled            bool                     `json:"invitation_code_enabled"`
+	AffiliateCodeAdmitsSignup        bool                     `json:"affiliate_code_admits_signup"`
 	TotpEnabled                      bool                     `json:"totp_enabled"` // TOTP 双因素认证
 	LoginAgreementEnabled            bool                     `json:"login_agreement_enabled"`
 	LoginAgreementMode               string                   `json:"login_agreement_mode"`

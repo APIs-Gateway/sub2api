@@ -203,6 +203,30 @@ func (s *AffiliateService) ValidateInviteCodeForSignup(ctx context.Context, rawC
 	return nil
 }
 
+// CanInviteMoreThisWeek 判断某个邀请码本周还有没有剩余名额。
+//
+// 单独抽出来是给「准入」用的：邀请码现在是注册的准入凭证，而周限额原本只在
+// 绑定邀请人那一步才检查——那时账号已经落库了，用户会看到「本周已满」的报错，
+// 但邮箱其实已经被这个半成品账号占住，换个码重试只会撞 EMAIL_EXISTS。
+// 在建号之前先查一次，就能把这种情况挡在门外。
+func (s *AffiliateService) CanInviteMoreThisWeek(ctx context.Context, rawCode string) error {
+	code := strings.ToUpper(strings.TrimSpace(rawCode))
+	if s == nil || s.repo == nil || code == "" {
+		return nil
+	}
+	summary, err := s.repo.GetAffiliateByCode(ctx, code)
+	if err != nil {
+		if errors.Is(err, ErrAffiliateProfileNotFound) {
+			return ErrAffiliateInviteCodeInvalid
+		}
+		return err
+	}
+	if summary == nil || summary.UserID <= 0 {
+		return ErrAffiliateInviteCodeInvalid
+	}
+	return s.ensureWeeklyInviteQuota(ctx, summary.UserID)
+}
+
 func (s *AffiliateService) BindInviterByCodeStrict(ctx context.Context, userID int64, rawCode string) error {
 	code := strings.ToUpper(strings.TrimSpace(rawCode))
 	if code == "" {

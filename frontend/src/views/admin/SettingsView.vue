@@ -6149,6 +6149,18 @@
                 </p>
               </div>
 
+              <div class="flex items-center justify-between">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('admin.settings.features.affiliate.codeAdmitsSignup') }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('admin.settings.features.affiliate.codeAdmitsSignupHint') }}
+                  </p>
+                </div>
+                <Toggle v-model="form.affiliate_code_admits_signup" />
+              </div>
+
               <!-- 专属用户管理 -->
               <div class="border-t border-gray-100 pt-6 dark:border-dark-700">
                 <div class="mb-3 flex items-center justify-between">
@@ -8516,6 +8528,7 @@ const form = reactive<SettingsForm>({
   affiliate_weekly_invite_limit: 0,
   affiliate_signup_reward_enabled: false,
   affiliate_signup_reward_amount: 0,
+  affiliate_code_admits_signup: false,
   default_concurrency: 1,
   default_subscriptions: [],
   force_email_on_third_party_signup: false,
@@ -9727,6 +9740,7 @@ async function saveSettings() {
         0,
         Math.min(100000, Math.floor(Number(form.affiliate_signup_reward_amount) || 0)),
       ),
+      affiliate_code_admits_signup: form.affiliate_code_admits_signup,
       default_concurrency: form.default_concurrency,
       default_subscriptions: normalizedDefaultSubscriptions,
       force_email_on_third_party_signup: form.force_email_on_third_party_signup,
