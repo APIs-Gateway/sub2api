@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -170,4 +171,67 @@ func TestCompleteEmailOAuthRegistrationLeavesNoAccountWhenInvitationInvalid(t *t
 	leftover, err := client.User.Query().Where(dbuser.EmailEQ(email)).Count(rawCtx)
 	require.NoError(t, err)
 	require.Zero(t, leftover, "注册码没通过，这个邮箱不该被任何一行占住，包括软删的")
+}
+
+// 收养决策取不到时，注册要在开事务之前就失败。
+//
+// 这条对应 completeEmailOAuthRegistration 里那句注释：「收养决策只认 session，不依赖新账号，
+// 所以放在建号之前取：它失败时连事务都不必开。」顺序写反了也能跑通正常路径，只有在决策
+// 存取真的出问题时才看得出差别——那时账号已经建好，又得靠回滚去收拾。
+//
+// 触发手法是把 identity_adoption_decisions 表删掉，让决策读写失败而 session 读取照常。
+// 测完在 Cleanup 里用 Schema.Create 建回来，不影响同包的其他用例。
+func TestCompleteEmailOAuthRegistrationFailsBeforeCreatingUserWhenAdoptionDecisionUnavailable(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{})
+	ctx := context.Background()
+
+	const email = "adoption-broken@example.com"
+	session, err := client.PendingAuthSession.Create().
+		SetSessionToken("email-oauth-adoption-broken-token").
+		SetIntent(oauthIntentLogin).
+		SetProviderType("google").
+		SetProviderKey("google").
+		SetProviderSubject("google-adoption-broken-user").
+		SetResolvedEmail(email).
+		SetRedirectTo("/dashboard").
+		SetBrowserSessionKey("browser-adoption-broken-key").
+		SetUpstreamIdentityClaims(map[string]any{
+			"email":            email,
+			"email_verified":   true,
+			"username":         "adoption-broken",
+			"provider":         "google",
+			"provider_key":     "google",
+			"provider_subject": "google-adoption-broken-user",
+		}).
+		SetLocalFlowState(map[string]any{"step": oauthPendingChoiceStep}).
+		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	raw, err := sql.Open("sqlite", "file:auth_oauth_pending_flow_handler?mode=memory&cache=shared")
+	require.NoError(t, err)
+	defer func() { _ = raw.Close() }()
+	_, err = raw.Exec("DROP TABLE IF EXISTS identity_adoption_decisions")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, client.Schema.Create(context.Background()))
+	})
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/google/complete-registration",
+		strings.NewReader(`{"password":"secret-123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(session.SessionToken)})
+	req.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("browser-adoption-broken-key")})
+	c.Request = req
+
+	handler.completeEmailOAuthRegistration(c, "google")
+
+	require.NotEqual(t, http.StatusOK, recorder.Code, "决策取不到就不该继续注册")
+
+	rawCtx := mixins.SkipSoftDelete(ctx)
+	leftover, err := client.User.Query().Where(dbuser.EmailEQ(email)).Count(rawCtx)
+	require.NoError(t, err)
+	require.Zero(t, leftover, "决策是在建号之前取的，失败时库里不该有任何账号痕迹")
 }
