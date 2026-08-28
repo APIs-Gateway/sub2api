@@ -8,15 +8,38 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 // admitAffRepoStub 在周上限那套 stub 之上放开 GetAffiliateByCode：
 // 准入判断必须先把邀请码解析成邀请人，才谈得上查他本周还剩多少名额。
 type admitAffRepoStub struct {
 	weeklyInviteAffRepoStub
-	summary    *AffiliateSummary
-	summaryErr error
-	codeSeen   string
+	summary     *AffiliateSummary
+	summaryErr  error
+	codeSeen    string
+	bindErr     error
+	bindCalls   []admitBindCall
+	ensureCalls []int64
+}
+
+type admitBindCall struct {
+	userID    int64
+	inviterID int64
+}
+
+func (r *admitAffRepoStub) EnsureUserAffiliate(_ context.Context, userID int64) (*AffiliateSummary, error) {
+	r.ensureCalls = append(r.ensureCalls, userID)
+	return &AffiliateSummary{UserID: userID, AffCode: "SELFCODE0001"}, nil
+}
+
+func (r *admitAffRepoStub) BindInviter(_ context.Context, userID, inviterID int64) (bool, error) {
+	r.bindCalls = append(r.bindCalls, admitBindCall{userID: userID, inviterID: inviterID})
+	if r.bindErr != nil {
+		return false, r.bindErr
+	}
+	return true, nil
 }
 
 func (r *admitAffRepoStub) GetAffiliateByCode(_ context.Context, code string) (*AffiliateSummary, error) {
@@ -374,5 +397,111 @@ func TestValidateOAuthRegistrationInvitation(t *testing.T) {
 		svc := oauthAdmitAuthService("true", "5", admitRepoWithQuota(5), validCode)
 		_, _, err := svc.validateOAuthRegistrationInvitation(ctx, "", "HC3YPBNP7LRU")
 		require.ErrorIs(t, err, ErrAffiliateWeeklyInviteLimitReached)
+	})
+}
+
+func admitRegisterSettings(admits, weeklyLimit string) map[string]string {
+	return map[string]string{
+		SettingKeyRegistrationEnabled:                    "true",
+		SignupSourceEnabledSettingKey(SignupSourceEmail): "true",
+		SettingKeyInvitationCodeEnabled:                  "true",
+		SettingKeyAffiliateEnabled:                       "true",
+		SettingKeyAffiliateCodeAdmitsSignup:              admits,
+		SettingKeyAffiliateWeeklyInviteLimit:             weeklyLimit,
+		SettingKeyAuthSourceDefaultEmailGrantOnSignup:    "false",
+	}
+}
+
+func admitRegisterService(
+	repo *userRepoStub,
+	settings map[string]string,
+	codes map[string]*RedeemCode,
+	affRepo *admitAffRepoStub,
+) *AuthService {
+	cfg := &config.Config{
+		JWT:     config.JWTConfig{Secret: "test-secret", ExpireHour: 1},
+		Default: config.DefaultConfig{UserBalance: 3.5, UserConcurrency: 2},
+	}
+	settingService := NewSettingService(&settingRepoStub{values: settings}, cfg)
+	return NewAuthService(
+		nil, repo, &redeemCodeRepoStub{codesByCode: codes}, nil, cfg,
+		settingService, nil, nil, nil, nil, nil,
+		&AffiliateService{repo: affRepo, settingService: settingService},
+		nil,
+	)
+}
+
+// TestRegisterWithVerificationAdmitsByAffiliateCode 覆盖邮箱注册这条路上的准入与回滚。
+//
+// 这里关心的不只是「能不能注册成功」，还有失败时账号有没有被留下：周限额必须在建号
+// 之前查掉，绑定邀请人失败则必须把已经落库的账号删掉。否则用户的邮箱会被一个半成品
+// 账号占死，换个码重试只会撞 EMAIL_EXISTS，而他根本不知道发生了什么。
+func TestRegisterWithVerificationAdmitsByAffiliateCode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	validCode := map[string]*RedeemCode{
+		"INVITE1": {ID: 7, Code: "INVITE1", Type: RedeemTypeInvitation, Status: StatusUnused},
+	}
+
+	t.Run("准入开启时只填邀请人邀请码即可注册并绑定邀请人", func(t *testing.T) {
+		repo := &userRepoStub{nextID: 11}
+		affRepo := admitRepoWithQuota(1)
+		svc := admitRegisterService(repo, admitRegisterSettings("true", "5"), validCode, affRepo)
+
+		token, user, err := svc.RegisterWithVerification(ctx, "invitee@test.com", "password", "", "", "", admitTestCode)
+		require.NoError(t, err)
+		require.NotEmpty(t, token)
+		require.NotNil(t, user)
+		require.Equal(t, int64(11), user.ID)
+		require.Equal(t, []admitBindCall{{userID: 11, inviterID: 9}}, affRepo.bindCalls)
+		require.Empty(t, repo.deletedIDs, "注册成功了就不该有任何回滚")
+	})
+
+	t.Run("把邀请人邀请码填进注册码那一栏也能放行", func(t *testing.T) {
+		// 注册页把两栏并列摆着，用户填错格子是常态，能认出来就别拒绝
+		repo := &userRepoStub{nextID: 12}
+		affRepo := admitRepoWithQuota(1)
+		svc := admitRegisterService(repo, admitRegisterSettings("true", "5"), validCode, affRepo)
+
+		_, user, err := svc.RegisterWithVerification(ctx, "wrongfield@test.com", "password", "", "", admitTestCode, "")
+		require.NoError(t, err)
+		require.Equal(t, int64(12), user.ID)
+		require.Equal(t, []admitBindCall{{userID: 12, inviterID: 9}}, affRepo.bindCalls)
+	})
+
+	t.Run("准入关闭时只有邀请人邀请码不够，且不建号", func(t *testing.T) {
+		repo := &userRepoStub{nextID: 13}
+		affRepo := admitRepoWithQuota(1)
+		svc := admitRegisterService(repo, admitRegisterSettings("false", "5"), validCode, affRepo)
+
+		_, _, err := svc.RegisterWithVerification(ctx, "noadmit@test.com", "password", "", "", "", admitTestCode)
+		require.ErrorIs(t, err, ErrInvitationCodeRequired)
+		require.Empty(t, repo.created, "被拒绝的注册不该在库里留下账号")
+	})
+
+	t.Run("本周名额已满时提前拒绝，账号根本不落库", func(t *testing.T) {
+		// 这正是把限额检查从「绑定时」挪到「建号前」的理由
+		repo := &userRepoStub{nextID: 14}
+		affRepo := admitRepoWithQuota(5)
+		svc := admitRegisterService(repo, admitRegisterSettings("true", "5"), validCode, affRepo)
+
+		_, _, err := svc.RegisterWithVerification(ctx, "quotafull@test.com", "password", "", "", "", admitTestCode)
+		require.ErrorIs(t, err, ErrAffiliateWeeklyInviteLimitReached)
+		require.Empty(t, repo.created, "名额满是可以提前判定的，不该先把账号建出来再说")
+		require.Empty(t, repo.deletedIDs)
+	})
+
+	t.Run("绑定邀请人失败时把已经建出来的账号删掉", func(t *testing.T) {
+		// 账号此刻已经落库，不删的话这个邮箱就被半成品账号占死了
+		repo := &userRepoStub{nextID: 15}
+		affRepo := admitRepoWithQuota(1)
+		affRepo.bindErr = errors.New("bind exploded")
+		svc := admitRegisterService(repo, admitRegisterSettings("true", "5"), validCode, affRepo)
+
+		_, _, err := svc.RegisterWithVerification(ctx, "bindfail@test.com", "password", "", "", "", admitTestCode)
+		require.Error(t, err)
+		require.Len(t, repo.created, 1, "失败发生在建号之后")
+		require.Equal(t, []int64{15}, repo.deletedIDs, "必须把半成品账号回滚掉")
 	})
 }
