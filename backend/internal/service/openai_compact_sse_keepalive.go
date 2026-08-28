@@ -29,7 +29,20 @@ type openAICompactSSEKeepalive struct {
 // compact streams. The first beat is delayed so fast failures retain their HTTP
 // status-code response.
 func StartOpenAICompactSSEKeepalive(c *gin.Context, interval time.Duration) func() {
-	if c == nil || c.Writer == nil || interval <= 0 || !openAICompactClientWantsStream(c) {
+	if !openAICompactClientWantsStream(c) {
+		return func() {}
+	}
+	return startOpenAISSEKeepalive(c, interval)
+}
+
+// startOpenAISSEKeepalive 是不检查 compact 标记的内部入口，供【已经确定处于
+// SSE 流式上下文】的调用方使用（例如 /v1/responses 透传：进入流式循环时上游
+// 已返回 text/event-stream，SSE 响应头也已设好）。
+//
+// 心跳字节由 OpenAICompactKeepaliveAdjustedWrittenSize 统一排除，因此不会污染
+// "是否已向客户端写出语义响应"的 failover 判定（见 #3887）。
+func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
+	if c == nil || c.Writer == nil || interval <= 0 {
 		return func() {}
 	}
 	k := &openAICompactSSEKeepalive{writer: c.Writer, stop: make(chan struct{})}

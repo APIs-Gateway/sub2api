@@ -4777,6 +4777,16 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	upstreamModelChecked := false
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
+
+	// pendingLines 会延迟首个可见输出前的前导事件；此期间发出 SSE 注释，
+	// 以提交响应头并避免中间代理因空闲超时而关闭连接。心跳字节会从
+	// openAIStreamClientOutputStarted 的写入量判定中扣除，因此不会破坏
+	// pre-output failover。首个真实输出前停止心跳，随后由本循环独占 writer。
+	stopKeepalive := func() {}
+	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
+		stopKeepalive = startOpenAISSEKeepalive(c,
+			time.Duration(s.cfg.Gateway.StreamKeepaliveInterval)*time.Second)
+	}
 	// flushPending 表示已写入但未到 SSE 空行边界的脏状态；defer 兜底函数退出前的残留，断连后不再 Flush。
 	flushPending := false
 	flushPendingOutput := func() {
@@ -4787,6 +4797,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		flushPending = false
 	}
 	defer flushPendingOutput()
+	defer stopKeepalive()
 	// sendResponsesFailedEvent 在流已经产生输出、HTTP 状态码已固化为 200 之后补一个
 	// Responses 协议的终止事件。Codex CLI 只认 response.completed/failed/incomplete/
 	// cancelled，缺终止事件会让它报 "stream closed before response.completed"。
@@ -4977,6 +4988,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if !clientOutputStarted && !lineStartsClientOutput {
 				pendingLines = append(pendingLines, line)
 				continue
+			}
+			if !clientOutputStarted {
+				// Stop waits for a concurrent beat under the helper lock, so after
+				// this point the streaming loop owns the response writer exclusively.
+				stopKeepalive()
 			}
 			if !clientOutputStarted && len(pendingLines) > 0 {
 				if !writePendingLines() {
