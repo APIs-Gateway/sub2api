@@ -369,8 +369,41 @@ func (h *AuthHandler) completeEmailOAuthRegistration(c *gin.Context, provider st
 		affiliateCode = pendingSessionStringValue(session.UpstreamIdentityClaims, "aff_code")
 	}
 
+	client := h.entClient()
+	if client == nil {
+		response.ErrorFrom(c, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready"))
+		return
+	}
+	// 收养决策只认 session，不依赖新账号，所以放在建号之前取：它失败时连事务都不必开。
+	decision, err := h.ensurePendingOAuthAdoptionDecision(c, session.ID, oauthAdoptionDecisionRequest{})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	// 账号在事务内创建，整个注册流程走完才随事务一起提交。
+	//
+	// 这里原先是先在事务外把账号建出来并提交，之后每一步失败再显式调用
+	// RollbackOAuthEmailAccountCreation 去软删它、归还注册码。那种补偿式回滚有三个毛病：
+	// 自增 ID 已经被消耗掉；users 表里堆一串软删行，让「这个邮箱到底注册了没」难以判断；
+	// 补偿本身一旦失败就会留下真正的孤儿账号。2026-08-28 线上一次 CHECK 约束故障连续
+	// 触发八次注册失败，把这三点一次性全暴露了。
+	//
+	// 建号改走 txCtx 之后，失败路径只需要让事务回滚，注册码的占用也随之撤销，
+	// 补偿代码就整体不需要了。
+	tx, err := client.Tx(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, infraerrors.InternalServer("PENDING_AUTH_BIND_APPLY_FAILED", "failed to consume pending oauth session").WithCause(err))
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	txCtx := dbent.NewTxContext(c.Request.Context(), tx)
+
+	// 唯一一处事务管不住的副作用是 tokenPair 里的 refresh token——它写在 Redis 上，
+	// 回滚撤不掉。这不构成风险：失败时响应体是错误，调用方根本拿不到这对 token，
+	// 而它指向的用户会随事务一起消失，拿它去刷新只会失败，最后由 TTL 清掉。
 	tokenPair, user, err := h.authService.RegisterVerifiedOAuthEmailAccount(
-		c.Request.Context(),
+		txCtx,
 		strings.TrimSpace(session.ResolvedEmail),
 		req.Password,
 		strings.TrimSpace(req.InvitationCode),
@@ -382,33 +415,12 @@ func (h *AuthHandler) completeEmailOAuthRegistration(c *gin.Context, provider st
 		return
 	}
 
-	client := h.entClient()
-	if client == nil {
-		response.ErrorFrom(c, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready"))
-		return
-	}
-	tx, err := client.Tx(c.Request.Context())
-	if err != nil {
-		response.ErrorFrom(c, infraerrors.InternalServer("PENDING_AUTH_BIND_APPLY_FAILED", "failed to consume pending oauth session").WithCause(err))
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
-	txCtx := dbent.NewTxContext(c.Request.Context(), tx)
 	sessionForBinding := *session
 	sessionForBinding.UpstreamIdentityClaims = clonePendingMap(session.UpstreamIdentityClaims)
 	if strings.TrimSpace(req.InvitationCode) != "" {
 		sessionForBinding.UpstreamIdentityClaims["invitation_code"] = strings.TrimSpace(req.InvitationCode)
 	}
-	decision, err := h.ensurePendingOAuthAdoptionDecision(c, session.ID, oauthAdoptionDecisionRequest{})
-	if err != nil {
-		_ = tx.Rollback()
-		_ = h.authService.RollbackOAuthEmailAccountCreation(c.Request.Context(), user.ID, strings.TrimSpace(req.InvitationCode))
-		response.ErrorFrom(c, err)
-		return
-	}
 	if err := applyPendingOAuthBinding(txCtx, client, h.authService, h.userService, &sessionForBinding, decision, &user.ID, true, false); err != nil {
-		_ = tx.Rollback()
-		_ = h.authService.RollbackOAuthEmailAccountCreation(c.Request.Context(), user.ID, strings.TrimSpace(req.InvitationCode))
 		respondPendingOAuthBindingApplyError(c, err)
 		return
 	}
@@ -419,20 +431,15 @@ func (h *AuthHandler) completeEmailOAuthRegistration(c *gin.Context, provider st
 		strings.TrimSpace(session.ProviderType),
 		affiliateCode,
 	); err != nil {
-		_ = tx.Rollback()
-		_ = h.authService.RollbackOAuthEmailAccountCreation(c.Request.Context(), user.ID, strings.TrimSpace(req.InvitationCode))
 		response.ErrorFrom(c, err)
 		return
 	}
 	if err := consumePendingOAuthBrowserSessionTx(c.Request.Context(), tx, session); err != nil {
-		_ = tx.Rollback()
-		_ = h.authService.RollbackOAuthEmailAccountCreation(c.Request.Context(), user.ID, strings.TrimSpace(req.InvitationCode))
 		clearCookies()
 		response.ErrorFrom(c, err)
 		return
 	}
 	if err := tx.Commit(); err != nil {
-		_ = h.authService.RollbackOAuthEmailAccountCreation(c.Request.Context(), user.ID, strings.TrimSpace(req.InvitationCode))
 		response.ErrorFrom(c, infraerrors.InternalServer("PENDING_AUTH_BIND_APPLY_FAILED", "failed to consume pending oauth session").WithCause(err))
 		return
 	}

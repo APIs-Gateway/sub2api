@@ -2951,8 +2951,18 @@ type oauthPendingFlowUserRepoOptions struct {
 	rejectDeleteWhileAuthIdentityExists bool
 }
 
+// clientFor 让 stub 跟真实的 userRepository 一样尊重 ctx 里的外部事务。
+// 少了这一步，「注册失败时账号不入库」这类断言在 stub 上永远测不出真实行为：
+// 建号会绕过调用方的事务自行提交，外层回滚也收不回来。
+func (r *oauthPendingFlowUserRepo) clientFor(ctx context.Context) *dbent.Client {
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		return tx.Client()
+	}
+	return r.client
+}
+
 func (r *oauthPendingFlowUserRepo) Create(ctx context.Context, user *service.User) error {
-	entity, err := r.client.User.Create().
+	entity, err := r.clientFor(ctx).User.Create().
 		SetEmail(user.Email).
 		SetUsername(user.Username).
 		SetNotes(user.Notes).
@@ -3034,8 +3044,9 @@ func (r *oauthPendingFlowUserRepo) UpdateUserLastActiveAt(ctx context.Context, u
 }
 
 func (r *oauthPendingFlowUserRepo) Delete(ctx context.Context, id int64) error {
+	client := r.clientFor(ctx)
 	if r.options.rejectDeleteWhileAuthIdentityExists {
-		count, err := r.client.AuthIdentity.Query().Where(authidentity.UserIDEQ(id)).Count(ctx)
+		count, err := client.AuthIdentity.Query().Where(authidentity.UserIDEQ(id)).Count(ctx)
 		if err != nil {
 			return err
 		}
@@ -3043,7 +3054,7 @@ func (r *oauthPendingFlowUserRepo) Delete(ctx context.Context, id int64) error {
 			return errors.New("cannot delete user while auth identities still exist")
 		}
 	}
-	return r.client.User.DeleteOneID(id).Exec(ctx)
+	return client.User.DeleteOneID(id).Exec(ctx)
 }
 
 func (r *oauthPendingFlowUserRepo) GetUserAvatar(ctx context.Context, userID int64) (*service.UserAvatar, error) {
