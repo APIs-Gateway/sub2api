@@ -104,3 +104,70 @@ func TestCompleteEmailOAuthRegistrationLeavesNoAccountWhenFinalizeFails(t *testi
 	require.Nil(t, storedInvitation.UsedBy, "注册失败时一次性注册码不能被占用")
 	require.Equal(t, service.StatusUnused, storedInvitation.Status)
 }
+
+// 与上一个用例对照：这次失败发生在建号那一步本身，而不是建号之后。
+//
+// 两条路径都必须做到零残留，但走到的代码分支不同：这里 RegisterVerifiedOAuthEmailAccount
+// 直接返回错误，事务里连一行都没写过；上面那个用例则是账号已经写进事务、靠回滚撤销。
+// 分开测是因为「注册码无效」是线上最常见的失败原因，它必须干净利落地失败，
+// 不能顺手把邮箱占掉——否则用户拿到正确的码回来重试，只会撞 EMAIL_EXISTS。
+func TestCompleteEmailOAuthRegistrationLeavesNoAccountWhenInvitationInvalid(t *testing.T) {
+	affiliateRepo := newOAuthEmailAffiliateRepoStub(map[string]int64{"AFF456": 2002})
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		invitationEnabled: true,
+		settingValues: map[string]string{
+			service.SettingKeyAffiliateEnabled: "true",
+		},
+		affiliateFactory: func(_ *dbent.Client, settingSvc *service.SettingService) *service.AffiliateService {
+			return service.NewAffiliateService(affiliateRepo, settingSvc, nil, nil)
+		},
+	})
+	ctx := context.Background()
+
+	const email = "invalid-invite@example.com"
+	session, err := client.PendingAuthSession.Create().
+		SetSessionToken("email-oauth-invalid-invite-token").
+		SetIntent(oauthIntentLogin).
+		SetProviderType("google").
+		SetProviderKey("google").
+		SetProviderSubject("google-invalid-invite-user").
+		SetResolvedEmail(email).
+		SetRedirectTo("/dashboard").
+		SetBrowserSessionKey("browser-invalid-invite-key").
+		SetUpstreamIdentityClaims(map[string]any{
+			"email":            email,
+			"email_verified":   true,
+			"username":         "invalid-invite",
+			"provider":         "google",
+			"provider_key":     "google",
+			"provider_subject": "google-invalid-invite-user",
+		}).
+		SetLocalFlowState(map[string]any{
+			"step":  oauthPendingChoiceStep,
+			"error": "invitation_required",
+		}).
+		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	// 这个码库里根本不存在，注册码校验那一步就会挡下来
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/google/complete-registration",
+		strings.NewReader(`{"password":"secret-123","invitation_code":"NO-SUCH-INVITE"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(session.SessionToken)})
+	req.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("browser-invalid-invite-key")})
+	c.Request = req
+
+	handler.completeEmailOAuthRegistration(c, "google")
+
+	require.NotEqual(t, http.StatusOK, recorder.Code, "注册码无效不能算注册成功")
+	require.Empty(t, affiliateRepo.ensureUserIDs,
+		"这个用例要覆盖的是「建号那一步就失败」，返利档案不该被初始化——否则说明失败发生得比预期晚")
+
+	rawCtx := mixins.SkipSoftDelete(ctx)
+	leftover, err := client.User.Query().Where(dbuser.EmailEQ(email)).Count(rawCtx)
+	require.NoError(t, err)
+	require.Zero(t, leftover, "注册码没通过，这个邮箱不该被任何一行占住，包括软删的")
+}
