@@ -52,6 +52,7 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		PromoCodeEnabled:                 settings.PromoCodeEnabled,
 		PasswordResetEnabled:             settings.PasswordResetEnabled,
 		InvitationCodeEnabled:            settings.InvitationCodeEnabled,
+		AffiliateCodeAdmitsSignup:        settings.AffiliateCodeAdmitsSignup,
 		TotpEnabled:                      settings.TotpEnabled,
 		LoginAgreementEnabled:            settings.LoginAgreementEnabled,
 		LoginAgreementMode:               settings.LoginAgreementMode,

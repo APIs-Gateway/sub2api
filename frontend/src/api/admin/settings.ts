@@ -391,6 +391,7 @@ export interface SystemSettings {
   affiliate_signup_reward_enabled: boolean;
   /** 上述奖励的积分数（0=不发放） */
   affiliate_signup_reward_amount: number;
+  affiliate_code_admits_signup: boolean;
   default_concurrency: number;
   default_user_rpm_limit: number;
   default_subscriptions: DefaultSubscriptionSetting[];
@@ -685,6 +686,7 @@ export interface UpdateSettingsRequest {
   affiliate_weekly_invite_limit?: number;
   affiliate_signup_reward_enabled?: boolean;
   affiliate_signup_reward_amount?: number;
+  affiliate_code_admits_signup?: boolean;
   default_concurrency?: number;
   default_user_rpm_limit?: number;
   default_subscriptions?: DefaultSubscriptionSetting[];

@@ -254,6 +254,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		AffiliateWeeklyInviteLimit:             settings.AffiliateWeeklyInviteLimit,
 		AffiliateSignupRewardEnabled:           settings.AffiliateSignupRewardEnabled,
 		AffiliateSignupRewardAmount:            settings.AffiliateSignupRewardAmount,
+		AffiliateCodeAdmitsSignup:              settings.AffiliateCodeAdmitsSignup,
 		DefaultUserRPMLimit:                    settings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
 		EnableModelFallback:                    settings.EnableModelFallback,
@@ -567,6 +568,7 @@ type UpdateSettingsRequest struct {
 	AffiliateWeeklyInviteLimit                *int                              `json:"affiliate_weekly_invite_limit"`
 	AffiliateSignupRewardEnabled              *bool                             `json:"affiliate_signup_reward_enabled"`
 	AffiliateSignupRewardAmount               *int64                            `json:"affiliate_signup_reward_amount"`
+	AffiliateCodeAdmitsSignup                 *bool                             `json:"affiliate_code_admits_signup"`
 	DefaultUserRPMLimit                       int                               `json:"default_user_rpm_limit"`
 	DefaultSubscriptions                      []dto.DefaultSubscriptionSetting  `json:"default_subscriptions"`
 	AuthSourceDefaultEmailBalance             *float64                          `json:"auth_source_default_email_balance"`
@@ -844,6 +846,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if affiliateSignupRewardAmount > service.AffiliateSignupRewardAmountMax {
 		affiliateSignupRewardAmount = service.AffiliateSignupRewardAmountMax
+	}
+	affiliateCodeAdmitsSignup := previousSettings.AffiliateCodeAdmitsSignup
+	if req.AffiliateCodeAdmitsSignup != nil {
+		affiliateCodeAdmitsSignup = *req.AffiliateCodeAdmitsSignup
 	}
 	// 分渠道注册开关：nil 表示本次不改动，沿用库里已有的开关状态。
 	signupSourceEnabled := req.SignupSourceEnabled
@@ -1747,6 +1753,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateWeeklyInviteLimit:             affiliateWeeklyInviteLimit,
 		AffiliateSignupRewardEnabled:           affiliateSignupRewardEnabled,
 		AffiliateSignupRewardAmount:            affiliateSignupRewardAmount,
+		AffiliateCodeAdmitsSignup:              affiliateCodeAdmitsSignup,
 		SignupSourceEnabled:                    signupSourceEnabled,
 		DefaultUserRPMLimit:                    req.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
@@ -2270,6 +2277,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateWeeklyInviteLimit:             updatedSettings.AffiliateWeeklyInviteLimit,
 		AffiliateSignupRewardEnabled:           updatedSettings.AffiliateSignupRewardEnabled,
 		AffiliateSignupRewardAmount:            updatedSettings.AffiliateSignupRewardAmount,
+		AffiliateCodeAdmitsSignup:              updatedSettings.AffiliateCodeAdmitsSignup,
 		DefaultUserRPMLimit:                    updatedSettings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   updatedDefaultSubscriptions,
 		EnableModelFallback:                    updatedSettings.EnableModelFallback,
@@ -2728,6 +2736,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.AffiliateSignupRewardAmount != after.AffiliateSignupRewardAmount {
 		changed = append(changed, "affiliate_signup_reward_amount")
+	}
+	if before.AffiliateCodeAdmitsSignup != after.AffiliateCodeAdmitsSignup {
+		changed = append(changed, "affiliate_code_admits_signup")
 	}
 	for _, source := range service.SignupSources {
 		// 缺省视为允许，与 IsSignupSourceEnabled 同口径，避免把"没配过"误报成一次变更

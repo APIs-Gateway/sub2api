@@ -186,6 +186,7 @@ const (
 	SettingKeyAffiliateWeeklyInviteLimit       = "affiliate_weekly_invite_limit"       // 邀请码每自然周可成功邀请的人数上限（0=不限；管理员不受限）
 	SettingKeyAffiliateSignupRewardEnabled     = "affiliate_signup_reward_enabled"     // 邀请注册即得积分开关（被邀请人无需付费）
 	SettingKeyAffiliateSignupRewardAmount      = "affiliate_signup_reward_amount"      // 每成功邀请一人，邀请人立即获得的积分数
+	SettingKeyAffiliateCodeAdmitsSignup        = "affiliate_code_admits_signup"        // 开启后，填了有效的邀请人邀请码即可放行注册，不再另需一张注册码
 
 	// 分渠道注册开关：auth_source_<source>_signup_enabled
 	// <source> 取值与 normalizeOAuthSignupSource 一致，其中 email 代表账号密码注册。

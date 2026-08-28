@@ -69,27 +69,44 @@ func (s *AuthService) SendPendingOAuthVerifyCode(ctx context.Context, email stri
 	}, nil
 }
 
-func (s *AuthService) validateOAuthRegistrationInvitation(ctx context.Context, invitationCode string) (*RedeemCode, error) {
+// validateOAuthRegistrationInvitation 校验 OAuth 注册的准入条件。
+//
+// 第二个返回值是「真正生效的邀请人邀请码」：注册码不可用但邀请人邀请码放行了这次注册时，
+// 用户填在注册码栏里的值会被提升成推荐码，调用方必须用它去绑定邀请关系，
+// 否则人进来了却没挂到邀请人名下，邀请奖励就发不出去。
+func (s *AuthService) validateOAuthRegistrationInvitation(ctx context.Context, invitationCode, affiliateCode string) (*RedeemCode, string, error) {
+	effectiveAffiliateCode := strings.TrimSpace(affiliateCode)
 	if s == nil || s.settingService == nil || !s.settingService.IsInvitationCodeEnabled(ctx) {
-		return nil, nil
+		return nil, effectiveAffiliateCode, nil
 	}
 	if s.redeemRepo == nil && s.oauthEmailFlowClient(ctx) == nil {
-		return nil, ErrServiceUnavailable
+		return nil, effectiveAffiliateCode, ErrServiceUnavailable
 	}
 
 	invitationCode = strings.TrimSpace(invitationCode)
+	admitByAffiliate := func(admitErr error) (*RedeemCode, string, error) {
+		promoted, quotaErr := s.admitSignupByAffiliateCode(ctx, effectiveAffiliateCode, invitationCode)
+		if quotaErr != nil {
+			return nil, effectiveAffiliateCode, quotaErr
+		}
+		if promoted == "" {
+			return nil, effectiveAffiliateCode, admitErr
+		}
+		return nil, promoted, nil
+	}
+
 	if invitationCode == "" {
-		return nil, ErrInvitationCodeRequired
+		return admitByAffiliate(ErrInvitationCodeRequired)
 	}
 
 	redeemCode, err := s.loadOAuthRegistrationInvitation(ctx, invitationCode)
 	if err != nil {
-		return nil, ErrInvitationCodeInvalid
+		return admitByAffiliate(ErrInvitationCodeInvalid)
 	}
 	if redeemCode.Type != RedeemTypeInvitation || !redeemCode.CanUse() {
-		return nil, ErrInvitationCodeInvalid
+		return admitByAffiliate(ErrInvitationCodeInvalid)
 	}
-	return redeemCode, nil
+	return redeemCode, effectiveAffiliateCode, nil
 }
 
 // VerifyOAuthEmailCode verifies the locally entered email verification code for
@@ -120,6 +137,7 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 	verifyCode string,
 	invitationCode string,
 	signupSource string,
+	affiliateCode string,
 ) (*TokenPair, *User, error) {
 	if s == nil {
 		return nil, nil, ErrServiceUnavailable
@@ -145,7 +163,7 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		return nil, nil, err
 	}
 
-	if _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode); err != nil {
+	if _, _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode, affiliateCode); err != nil {
 		slog.Error("oauth email register: invitation failed", "email", email, "error", err.Error())
 		return nil, nil, err
 	}
@@ -201,6 +219,7 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 	password string,
 	invitationCode string,
 	signupSource string,
+	affiliateCode string,
 ) (*TokenPair, *User, error) {
 	if s == nil {
 		return nil, nil, ErrServiceUnavailable
@@ -229,7 +248,7 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 	if strings.TrimSpace(password) == "" {
 		return nil, nil, infraerrors.BadRequest("PASSWORD_REQUIRED", "password is required")
 	}
-	if _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode); err != nil {
+	if _, _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode, affiliateCode); err != nil {
 		return nil, nil, err
 	}
 
@@ -292,7 +311,7 @@ func (s *AuthService) FinalizeOAuthEmailAccount(
 	}
 
 	signupSource = normalizeOAuthSignupSource(signupSource)
-	invitationRedeemCode, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode)
+	invitationRedeemCode, effectiveAffiliateCode, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode, affiliateCode)
 	if err != nil {
 		return err
 	}
@@ -307,7 +326,7 @@ func (s *AuthService) FinalizeOAuthEmailAccount(
 	s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
 	// snapshot user × platform quota（fail-open）
 	_ = s.snapshotPlatformQuotaDefaults(ctx, user.ID, &grantPlan)
-	return s.bindOAuthAffiliate(ctx, user.ID, affiliateCode)
+	return s.bindOAuthAffiliate(ctx, user.ID, effectiveAffiliateCode)
 }
 
 // RollbackOAuthEmailAccountCreation removes a partially-created local account

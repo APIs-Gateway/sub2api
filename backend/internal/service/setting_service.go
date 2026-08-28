@@ -844,6 +844,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyPromoCodeEnabled,
 		SettingKeyPasswordResetEnabled,
 		SettingKeyInvitationCodeEnabled,
+		SettingKeyAffiliateCodeAdmitsSignup,
 		SettingKeyTotpEnabled,
 		SettingKeyLoginAgreementEnabled,
 		SettingKeyLoginAgreementMode,
@@ -907,6 +908,12 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
 		SettingKeyAllowUserViewErrorRequests,
+	}
+	// 各注册来源的独立开关必须一并取出：漏掉它们的话 parseSignupSourceEnabled 读到的全是空值，
+	// 会把已经关掉的来源一律报成「可用」，注册页照旧把表单画出来，用户填完整页才撞上
+	// SIGNUP_SOURCE_DISABLED——正是这个公开接口本该避免的情况。
+	for _, source := range SignupSources {
+		keys = append(keys, SignupSourceEnabledSettingKey(source))
 	}
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -980,6 +987,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		PromoCodeEnabled:                 settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
 		PasswordResetEnabled:             passwordResetEnabled,
 		InvitationCodeEnabled:            settings[SettingKeyInvitationCodeEnabled] == "true",
+		AffiliateCodeAdmitsSignup:        settings[SettingKeyAffiliateCodeAdmitsSignup] == "true",
 		TotpEnabled:                      settings[SettingKeyTotpEnabled] == "true",
 		LoginAgreementEnabled:            settings[SettingKeyLoginAgreementEnabled] == "true" && len(loginAgreementDocuments) > 0,
 		LoginAgreementMode:               normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
@@ -1312,6 +1320,7 @@ type PublicSettingsInjectionPayload struct {
 	PromoCodeEnabled                 bool                     `json:"promo_code_enabled"`
 	PasswordResetEnabled             bool                     `json:"password_reset_enabled"`
 	InvitationCodeEnabled            bool                     `json:"invitation_code_enabled"`
+	AffiliateCodeAdmitsSignup        bool                     `json:"affiliate_code_admits_signup"`
 	TotpEnabled                      bool                     `json:"totp_enabled"`
 	LoginAgreementEnabled            bool                     `json:"login_agreement_enabled"`
 	LoginAgreementMode               string                   `json:"login_agreement_mode"`
@@ -1382,6 +1391,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		PromoCodeEnabled:                 settings.PromoCodeEnabled,
 		PasswordResetEnabled:             settings.PasswordResetEnabled,
 		InvitationCodeEnabled:            settings.InvitationCodeEnabled,
+		AffiliateCodeAdmitsSignup:        settings.AffiliateCodeAdmitsSignup,
 		TotpEnabled:                      settings.TotpEnabled,
 		LoginAgreementEnabled:            settings.LoginAgreementEnabled,
 		LoginAgreementMode:               settings.LoginAgreementMode,
@@ -2067,6 +2077,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		settings.AffiliateSignupRewardAmount = AffiliateSignupRewardAmountMax
 	}
 	updates[SettingKeyAffiliateSignupRewardAmount] = strconv.FormatInt(settings.AffiliateSignupRewardAmount, 10)
+	updates[SettingKeyAffiliateCodeAdmitsSignup] = strconv.FormatBool(settings.AffiliateCodeAdmitsSignup)
 	// 分渠道注册开关：只写入本次显式给出的来源，未出现在 map 里的保持原值，
 	// 这样老版本前端提交完整设置时不会把新开关意外重置掉。
 	for _, source := range SignupSources {
@@ -2686,6 +2697,19 @@ func (s *SettingService) IsInvitationCodeEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
+// IsAffiliateCodeAdmitsSignupEnabled 返回「邀请人邀请码本身可放行注册」是否开启。
+//
+// 默认关闭：打开之后，任何拿得到一个有效邀请码的人都能注册，站点就从"管理员发码才能进"
+// 变成了"有邀请链接就能进"。这是产品口径的放宽，必须由管理员显式开启，
+// 所以读不到或读坏一律回落到关闭。
+func (s *SettingService) IsAffiliateCodeAdmitsSignupEnabled(ctx context.Context) bool {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateCodeAdmitsSignup)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(value) == "true"
+}
+
 // GetCustomMenuItemsRaw returns the raw JSON string of custom_menu_items setting.
 func (s *SettingService) GetCustomMenuItemsRaw(ctx context.Context) string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyCustomMenuItems)
@@ -3159,6 +3183,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAffiliateWeeklyInviteLimit:                strconv.Itoa(AffiliateWeeklyInviteLimitDefault),
 		SettingKeyAffiliateSignupRewardEnabled:              "false",
 		SettingKeyAffiliateSignupRewardAmount:               strconv.FormatInt(AffiliateSignupRewardAmountDefault, 10),
+		SettingKeyAffiliateCodeAdmitsSignup:                 "false",
 		SettingKeyDefaultUserRPMLimit:                       "0",
 		SettingKeyDefaultSubscriptions:                      "[]",
 		SettingKeyAuthSourceDefaultEmailBalance:             "0",
@@ -3299,6 +3324,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		PasswordResetEnabled:             emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
 		FrontendURL:                      settings[SettingKeyFrontendURL],
 		InvitationCodeEnabled:            settings[SettingKeyInvitationCodeEnabled] == "true",
+		AffiliateCodeAdmitsSignup:        settings[SettingKeyAffiliateCodeAdmitsSignup] == "true",
 		TotpEnabled:                      settings[SettingKeyTotpEnabled] == "true",
 		SessionBindingEnabled:            settings[SettingKeySessionBindingEnabled] == "true", // 默认关闭
 		StepUpEnabled:                    settings[SettingKeyStepUpEnabled] == "true",         // 默认关闭
@@ -3387,6 +3413,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		result.AffiliateWeeklyInviteLimit = weeklyInviteLimit
 	}
 	result.AffiliateSignupRewardEnabled = strings.TrimSpace(settings[SettingKeyAffiliateSignupRewardEnabled]) == "true"
+	result.AffiliateCodeAdmitsSignup = strings.TrimSpace(settings[SettingKeyAffiliateCodeAdmitsSignup]) == "true"
 	// 按浮点解析而不是 Atoi：历史部署里这个键以 numeric 形式落库，取出来是 "50.00000000"，
 	// 用 Atoi 会解析失败，把一个已经配好的奖励静默清零。
 	if signupReward, err := strconv.ParseFloat(strings.TrimSpace(settings[SettingKeyAffiliateSignupRewardAmount]), 64); err == nil && signupReward >= 0 {
