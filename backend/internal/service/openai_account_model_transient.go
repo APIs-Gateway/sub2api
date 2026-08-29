@@ -130,6 +130,12 @@ func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model 
 }
 
 // recordSuccess clears any tracked failure streak/cooldown for (accountID, model).
+// Not yet wired into any production call site (see openai_account_model_transient_wiring_test.go
+// for why: the natural symmetric hook would be the handler-layer success report
+// ReportOpenAIAccountScheduleResult, which has ~27 call sites outside this
+// package's scope). Exercised directly by TestOpenAIModelTransient_SuccessClearsStreakAndBlock.
+//
+//nolint:unused // 仅被 //go:build unit 测试文件引用；CI 的 golangci-lint 步骤没带 -tags unit 跑，看不到该测试文件里的调用点。
 func (s *openAIAccountModelTransientState) recordSuccess(accountID int64, model string) {
 	key, ok := openAIAccountModelTransientKey(accountID, model)
 	if s == nil || !ok {
@@ -167,6 +173,10 @@ func (s *openAIAccountModelTransientState) isBlocked(accountID int64, model stri
 	return !entry.blockUntil.IsZero() && now.Before(entry.blockUntil)
 }
 
+// size reports the current entry count; used by tests to verify the
+// bounded-eviction guarantee (see newOpenAIAccountModelTransientState).
+//
+//nolint:unused // 仅被 //go:build unit 测试文件引用；CI 的 golangci-lint 步骤没带 -tags unit 跑，看不到该测试文件里的调用点。
 func (s *openAIAccountModelTransientState) size() int {
 	if s == nil {
 		return 0
