@@ -130,3 +130,80 @@ func TestOpenAIModelTransient_StateIsBoundedAndConcurrencySafe(t *testing.T) {
 
 	assert.LessOrEqual(t, state.size(), maxEntries)
 }
+
+func TestNewOpenAIAccountModelTransientState_NonPositiveMaxEntriesDefaults(t *testing.T) {
+	zero := newOpenAIAccountModelTransientState(0)
+	negative := newOpenAIAccountModelTransientState(-5)
+
+	assert.Equal(t, openAIModelTransientDefaultMax, zero.maxEntries)
+	assert.Equal(t, openAIModelTransientDefaultMax, negative.maxEntries)
+}
+
+func TestOpenAIModelTransient_RecordFailureZeroTimeDefaultsToNow(t *testing.T) {
+	state := newOpenAIAccountModelTransientState(128)
+
+	decision := state.recordFailure(35, "gpt-5.5", time.Time{})
+
+	assert.Equal(t, 1, decision.FailureStreak)
+	assert.False(t, state.isBlocked(35, "gpt-5.5", time.Now().Add(time.Second)))
+}
+
+func TestOpenAIModelTransient_RecordFailureLazyInitializesZeroValueState(t *testing.T) {
+	// A zero-value state (bypassing the constructor) must still lazily
+	// initialize its entries map and maxEntries default on first use.
+	state := &openAIAccountModelTransientState{}
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+
+	decision := state.recordFailure(35, "gpt-5.5", now)
+
+	assert.Equal(t, 1, decision.FailureStreak)
+	assert.Equal(t, openAIModelTransientDefaultMax, state.maxEntries)
+	assert.Equal(t, 1, state.size())
+}
+
+func TestOpenAIModelTransient_RecordSuccessIgnoresInvalidKey(t *testing.T) {
+	state := newOpenAIAccountModelTransientState(128)
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	state.recordFailure(35, "gpt-5.5", now)
+	state.recordFailure(35, "gpt-5.5", now.Add(time.Second))
+	require.Equal(t, 1, state.size())
+
+	// Neither an invalid account ID nor an empty model should touch existing entries.
+	state.recordSuccess(0, "gpt-5.5")
+	state.recordSuccess(35, "")
+
+	assert.Equal(t, 1, state.size())
+	assert.True(t, state.isBlocked(35, "gpt-5.5", now.Add(2*time.Second)))
+}
+
+func TestOpenAIModelTransient_IsBlockedZeroTimeDefaultsToNow(t *testing.T) {
+	state := newOpenAIAccountModelTransientState(128)
+	state.recordFailure(35, "gpt-5.5", time.Now())
+	state.recordFailure(35, "gpt-5.5", time.Now().Add(time.Millisecond))
+
+	assert.True(t, state.isBlocked(35, "gpt-5.5", time.Time{}))
+}
+
+func TestOpenAIModelTransient_IsBlockedEvictsStaleEntryOnDirectQuery(t *testing.T) {
+	// Regression for the lazy-eviction branch inside isBlocked itself: a
+	// failure streak recorded long ago (with recordFailure never called
+	// again since) must be treated as not-blocked and dropped from the
+	// map the first time isBlocked is asked about it directly, without
+	// requiring another recordFailure call to reset the streak first.
+	state := newOpenAIAccountModelTransientState(128)
+	now := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	state.recordFailure(35, "gpt-5.5", now)
+	state.recordFailure(35, "gpt-5.5", now.Add(time.Second))
+	require.True(t, state.isBlocked(35, "gpt-5.5", now.Add(2*time.Second)))
+
+	blocked := state.isBlocked(35, "gpt-5.5", now.Add(openAIModelTransientFailureWindow+5*time.Second))
+
+	assert.False(t, blocked)
+	assert.Equal(t, 0, state.size())
+}
+
+func TestOpenAIModelTransient_SizeNilReceiver(t *testing.T) {
+	var state *openAIAccountModelTransientState
+
+	assert.Equal(t, 0, state.size())
+}

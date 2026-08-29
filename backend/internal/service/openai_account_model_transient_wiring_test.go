@@ -110,3 +110,47 @@ func TestIsOpenAIAccountRequestRuntimeBlocked_NilSafe(t *testing.T) {
 	svc = &OpenAIGatewayService{}
 	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(nil, "gpt-5.5"))
 }
+
+func TestGetOpenAIAccountModelTransientState_NilReceiver(t *testing.T) {
+	var svc *OpenAIGatewayService
+	require.Nil(t, svc.getOpenAIAccountModelTransientState())
+}
+
+func TestCanonicalOpenAIAccountSchedulingModel_EmptyMappedValueFallsBackToOriginal(t *testing.T) {
+	// An explicit-but-empty model_mapping entry (matched=true, mappedModel="")
+	// must not turn into an empty transient-cooldown key; fall back to the
+	// original requested model instead.
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"gpt-5.5": "",
+			},
+		},
+	}
+
+	require.Equal(t, "gpt-5.5", canonicalOpenAIAccountSchedulingModel(account, "gpt-5.5"))
+}
+
+func TestRecordOpenAIAccountModelTransientFailure_NilSafe(t *testing.T) {
+	var svc *OpenAIGatewayService
+	require.Zero(t, svc.recordOpenAIAccountModelTransientFailure(&Account{ID: 1}, "gpt-5.5", time.Now()).FailureStreak)
+
+	svc = &OpenAIGatewayService{}
+	require.Zero(t, svc.recordOpenAIAccountModelTransientFailure(nil, "gpt-5.5", time.Now()).FailureStreak)
+}
+
+func TestRecordOpenAIAccountModelTransientFailure_NilStateAfterOnceFired(t *testing.T) {
+	// Simulate the lazy-init sync.Once having already fired without ever
+	// assigning openaiModelTransient (defensive scenario the code guards
+	// against explicitly), so getOpenAIAccountModelTransientState returns nil
+	// even though s itself is non-nil.
+	svc := &OpenAIGatewayService{}
+	svc.openaiModelTransientOnce.Do(func() {})
+	require.Nil(t, svc.getOpenAIAccountModelTransientState())
+
+	account := &Account{ID: 91104}
+	decision := svc.recordOpenAIAccountModelTransientFailure(account, "gpt-5.5", time.Now())
+	require.Zero(t, decision.FailureStreak)
+	require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.5"))
+}
