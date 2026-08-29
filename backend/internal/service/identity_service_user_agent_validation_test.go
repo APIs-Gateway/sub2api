@@ -231,3 +231,66 @@ func TestGetOrCreateFingerprintMissingUserAgentKeepsDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, defaultFingerprint.UserAgent, fp.UserAgent)
 }
+
+// TTL 续期分支：既未触发自愈也未触发版本升级时，距上次写入超过 24 小时仍需
+// 续期缓存 TTL。这条路径的判断条件从原来的 else-if 改成了独立的 if
+// !needWrite && ...，必须单独验证它在“健康缓存 + 无升级”场景下依然生效。
+func TestGetOrCreateFingerprintRenewsTTLAfterMoreThan24Hours(t *testing.T) {
+	staleUpdatedAt := time.Now().Add(-25 * time.Hour).Unix()
+	cache := &stubIdentityCache{fingerprint: &Fingerprint{
+		UserAgent: "claude-cli/2.1.220 (external, cli)",
+		ClientID:  "cid-1",
+		UpdatedAt: staleUpdatedAt,
+	}}
+	svc := NewIdentityService(cache)
+
+	fp, err := svc.GetOrCreateFingerprint(
+		context.Background(), 1,
+		headersWithUA("claude-cli/2.1.220 (external, cli)"),
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "claude-cli/2.1.220 (external, cli)", fp.UserAgent)
+	require.Equal(t, 1, cache.setCalls, "距上次写入超过 24 小时应触发一次 TTL 续期写入")
+	require.Greater(t, fp.UpdatedAt, staleUpdatedAt)
+}
+
+// 请求完全没有携带 User-Agent 头时（clientUA == ""），拒绝日志与自愈/升级判断
+// 里 "clientUA != \"\"" 这一子条件必须短路为 false，已缓存的健康指纹不应被
+// 触碰或重写。
+func TestGetOrCreateFingerprintKeepsCachedFingerprintWhenRequestHasNoUserAgent(t *testing.T) {
+	cache := &stubIdentityCache{fingerprint: &Fingerprint{
+		UserAgent: "claude-cli/2.1.220 (external, cli)",
+		ClientID:  "cid-1",
+		UpdatedAt: time.Now().Unix(),
+	}}
+	svc := NewIdentityService(cache)
+
+	fp, err := svc.GetOrCreateFingerprint(context.Background(), 1, http.Header{})
+
+	require.NoError(t, err)
+	require.Equal(t, "claude-cli/2.1.220 (external, cli)", fp.UserAgent)
+	require.Zero(t, cache.setCalls, "无 User-Agent 头不应触发任何写入")
+}
+
+// 客户端 UA 畸形但版本号并不比缓存更新（isNewerVersion 为 false）：三个子
+// 条件中只有前两个为真，整体 && 链条必须整体短路为 false，既不记录拒绝日志
+// 也不触发自愈重写，缓存中的健康指纹原样保留。
+func TestGetOrCreateFingerprintIgnoresMalformedNonNewerUserAgentOnUpgrade(t *testing.T) {
+	cache := &stubIdentityCache{fingerprint: &Fingerprint{
+		UserAgent: "claude-cli/2.1.220 (external, cli)",
+		ClientID:  "cid-1",
+		UpdatedAt: time.Now().Unix(),
+	}}
+	svc := NewIdentityService(cache)
+
+	fp, err := svc.GetOrCreateFingerprint(
+		context.Background(), 1,
+		headersWithUA("claude-cli/1.0.0-dev (external, cli)"),
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "claude-cli/2.1.220 (external, cli)", fp.UserAgent,
+		"版本号并不更新的畸形 UA 不应替换健康缓存")
+	require.Zero(t, cache.setCalls)
+}
