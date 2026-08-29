@@ -1208,7 +1208,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			filterStats.exclude("platform_mismatch")
 			continue
 		}
-		if s.service.isOpenAIAccountRuntimeBlocked(account) {
+		if s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
 			filterStats.exclude("runtime_blocked")
 			continue
 		}
@@ -1345,7 +1345,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if account == nil {
 		return false, "account_nil"
 	}
-	if s != nil && s.service != nil && s.service.isOpenAIAccountRuntimeBlocked(account) {
+	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
 		return false, "runtime_blocked"
 	}
 	// Quota auto-pause must be evaluated during the initial filter too. Without it the
@@ -1723,7 +1723,7 @@ func (s *OpenAIGatewayService) selectForcedOpenAIAccount(
 		!isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, requireCompact, requiredCapability) ||
 		!accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability) ||
 		!s.isOpenAIAccountTransportCompatible(account, requiredTransport) ||
-		s.isOpenAIAccountRuntimeBlocked(account) {
+		s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 		return nil, forcedOpenAINoAvailableError(requestedModel)
 	}
 
@@ -1731,7 +1731,7 @@ func (s *OpenAIGatewayService) selectForcedOpenAIAccount(
 	if account == nil ||
 		!accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability) ||
 		!s.isOpenAIAccountTransportCompatible(account, requiredTransport) ||
-		s.isOpenAIAccountRuntimeBlocked(account) {
+		s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 		return nil, forcedOpenAINoAvailableError(requestedModel)
 	}
 
