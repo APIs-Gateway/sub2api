@@ -3412,7 +3412,7 @@ func TestResolveFreshSchedulableOpenAIAccount_UnblockedModelStaysSchedulable(t *
 func TestRecheckSelectedOpenAIAccountFromDB_ModelBlockedReturnsNilViaRepo(t *testing.T) {
 	account := &Account{ID: 36003, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1}
 	repo := stubOpenAIAccountRepo{accounts: []Account{*account}}
-	schedulerSnapshot := NewSchedulerSnapshotService(&snapshotHydrationCache{}, nil, nil, nil, nil)
+	schedulerSnapshot := NewSchedulerSnapshotService(nil, nil, nil, nil, nil)
 	svc := &OpenAIGatewayService{
 		schedulerSnapshot:    schedulerSnapshot,
 		accountRepo:          repo,
