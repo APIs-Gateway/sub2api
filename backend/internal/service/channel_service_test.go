@@ -1315,6 +1315,48 @@ func TestInvalidateCache(t *testing.T) {
 	require.Equal(t, 2, callCount) // rebuilt
 }
 
+// TestInvalidateCache_ExportedMethod 验证导出的 InvalidateCache()（供
+// adminServiceImpl 通过 ChannelCacheInvalidator 接口调用，见分组 platform
+// 变更场景）与内部 invalidateCache() 行为一致：失效并立即重建缓存。
+func TestInvalidateCache_ExportedMethod(t *testing.T) {
+	callCount := 0
+	ch := Channel{
+		ID:       1,
+		Status:   StatusActive,
+		GroupIDs: []int64{10},
+		ModelPricing: []ChannelModelPricing{
+			{ID: 100, Platform: "anthropic", Models: []string{"claude-opus-4"}},
+		},
+	}
+	repo := &mockChannelRepository{
+		listAllFn: func(_ context.Context) ([]Channel, error) {
+			callCount++
+			return []Channel{ch}, nil
+		},
+		getGroupPlatformsFn: func(_ context.Context, _ []int64) (map[int64]string, error) {
+			return map[int64]string{10: "anthropic"}, nil
+		},
+	}
+	svc := newTestChannelService(repo)
+
+	// 确认 *ChannelService 满足 ChannelCacheInvalidator 接口。
+	var _ ChannelCacheInvalidator = svc
+
+	result := svc.GetChannelModelPricing(context.Background(), 10, "claude-opus-4")
+	require.NotNil(t, result)
+	require.Equal(t, 1, callCount)
+
+	result = svc.GetChannelModelPricing(context.Background(), 10, "claude-opus-4")
+	require.NotNil(t, result)
+	require.Equal(t, 1, callCount) // 命中缓存，无新 DB 调用
+
+	svc.InvalidateCache()
+
+	result = svc.GetChannelModelPricing(context.Background(), 10, "claude-opus-4")
+	require.NotNil(t, result)
+	require.Equal(t, 2, callCount) // 已重建
+}
+
 // ===========================================================================
 // 5. CRUD Methods
 // ===========================================================================

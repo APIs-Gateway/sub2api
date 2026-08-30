@@ -342,6 +342,14 @@ func isPlatformPricingMatch(groupPlatform, pricingPlatform string) bool {
 func matchingPlatforms(groupPlatform string) []string {
 	return []string{groupPlatform}
 }
+
+// InvalidateCache 失效并重建渠道缓存。
+// 供渠道以外、但会影响渠道缓存内容的变更调用（如分组 platform 变更，见
+// adminServiceImpl.UpdateGroup 与 ChannelCacheInvalidator）。
+func (s *ChannelService) InvalidateCache() {
+	s.invalidateCache()
+}
+
 func (s *ChannelService) invalidateCache() {
 	s.cache.Store((*channelCache)(nil))
 	s.cacheSF.Forget("channel_cache")

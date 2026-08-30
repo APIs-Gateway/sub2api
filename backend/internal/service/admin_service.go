@@ -568,6 +568,35 @@ type adminServiceImpl struct {
 	userSubRepo          UserSubscriptionRepository
 	privacyClientFactory PrivacyClientFactory
 	runtimeBlocker       AccountRuntimeBlocker
+	// 分组 platform 变更后用来失效渠道缓存；可为 nil（缓存会在 TTL 到期后自然重建）。
+	// 通过 AdminServiceOption 注入而非构造函数定参，见下方 AdminServiceOption 注释。
+	channelCacheInvalidator ChannelCacheInvalidator
+}
+
+// ChannelCacheInvalidator 失效渠道缓存。
+// 窄接口，避免 admin 服务依赖整个 ChannelService——与 APIKeyAuthCacheInvalidator 同一思路。
+type ChannelCacheInvalidator interface {
+	InvalidateCache()
+}
+
+// AdminServiceOption 为 adminServiceImpl 注入本次吸收新增的可选依赖，
+// 不改动 NewAdminService 现有的固定参数列表。
+//
+// 吸收自上游 #5543：本批次 scope 限定在 backend/internal/service/**，
+// cmd/server/wire_gen.go（生成代码）与 backend/internal/server/api_contract_test.go
+// 是既有调用点、不在本批次可改范围内。若直接给 NewAdminService 加一个新的定参，
+// 这两处调用会因参数个数不匹配而编译失败。变长可选参数不影响已有调用点的签名匹配，
+// 因此改用这种方式注入。
+type AdminServiceOption func(*adminServiceImpl)
+
+// WithChannelCacheInvalidator 注入分组 platform 变更后使用的渠道缓存失效器。
+// 不注入时（nil）UpdateGroup 不做任何失效动作，缓存靠自身 TTL 自然重建，
+// 与吸收前行为一致。把它接入生产环境的依赖注入图（cmd/server/wire.go 的
+// injector 与 wire_gen.go）留给后续、可以改 cmd/server 层的批次。
+func WithChannelCacheInvalidator(inv ChannelCacheInvalidator) AdminServiceOption {
+	return func(s *adminServiceImpl) {
+		s.channelCacheInvalidator = inv
+	}
 }
 
 type userGroupRateBatchReader interface {
@@ -594,8 +623,9 @@ func NewAdminService(
 	userSubRepo UserSubscriptionRepository,
 	privacyClientFactory PrivacyClientFactory,
 	runtimeBlocker AccountRuntimeBlocker,
+	opts ...AdminServiceOption,
 ) AdminService {
-	return &adminServiceImpl{
+	s := &adminServiceImpl{
 		userRepo:             userRepo,
 		groupRepo:            groupRepo,
 		accountRepo:          accountRepo,
@@ -615,6 +645,10 @@ func NewAdminService(
 		privacyClientFactory: privacyClientFactory,
 		runtimeBlocker:       runtimeBlocker,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // User management implementations
@@ -2156,6 +2190,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		return nil, err
 	}
 
+	// 渠道缓存里存了 groupID → platform 的映射，改了平台要让它失效（见函数末尾）
+	previousPlatform := group.Platform
+
 	if input.Name != "" {
 		group.Name = input.Name
 	}
@@ -2299,6 +2336,13 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, id)
+	}
+
+	// 平台变了就失效渠道缓存：该缓存持有 groupID → platform，而渠道定价 / 模型映射 /
+	// 模型白名单都按平台严格隔离。不失效的话，缓存最长 10 分钟仍按旧平台匹配，
+	// 期间定价查不到会静默回落到 LiteLLM 价格表、映射与白名单也不生效。
+	if group.Platform != previousPlatform && s.channelCacheInvalidator != nil {
+		s.channelCacheInvalidator.InvalidateCache()
 	}
 
 	// 如果指定了复制账号的源分组，同步绑定（替换当前分组的账号）
