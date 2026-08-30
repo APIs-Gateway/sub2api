@@ -140,6 +140,7 @@ func TestSetOpenAICodexRoutingHintFromBody(t *testing.T) {
 func TestLogOpenAIRoutingDiagnostics_NoPanic(t *testing.T) {
 	// These are observability-only side effects; exercise every input branch
 	// (nil ctx, nil account, populated account) to ensure no panics.
+	//nolint:staticcheck // SA1012: intentionally passing nil ctx to exercise logOpenAIRoutingDiagnostics's own ctx==nil defensive guard
 	logOpenAIRoutingDiagnostics(nil, nil, "http", "gpt-5.6", "priority", true, "not_applicable")
 	logOpenAIRoutingDiagnostics(context.Background(), openAIOAuthAccountForRoutingHintTest(), "ws_v2", "gpt-5.6", "flex", false, "soft_routing_hint")
 }
