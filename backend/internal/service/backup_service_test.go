@@ -490,6 +490,16 @@ func TestBackupService_RunScheduledBackup_LeaderElection(t *testing.T) {
 		require.Equal(t, "completed", records[0].Status)
 		require.Empty(t, cache.heldBy(backupScheduledLeaderLockKey), "leader releases the lock when done")
 	})
+
+	t.Run("SetLeaderLock on nil receiver is a no-op", func(t *testing.T) {
+		// wire.go calls svc.SetLeaderLock(...) unconditionally right after
+		// construction; mirror the nil-receiver safety net already covered for
+		// the other leader-locked periodic services (see the nilService.SetLeaderLock
+		// assertion in TestUpstreamBillingProbeSettingsErrorsNormalizationAndServiceFacade,
+		// upstream_billing_probe_service_test.go).
+		var nilService *BackupService
+		nilService.SetLeaderLock(nil, nil)
+	})
 }
 
 func TestBackupService_RestoreBackup_Streaming(t *testing.T) {
