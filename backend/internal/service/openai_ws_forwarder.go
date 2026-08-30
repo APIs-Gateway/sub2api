@@ -1134,12 +1134,22 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		if v := strings.TrimSpace(c.Request.Header.Get("accept-language")); v != "" {
 			headers.Set("accept-language", v)
 		}
+		for _, value := range c.Request.Header.Values("x-codex-beta-features") {
+			if value = strings.TrimSpace(value); value != "" {
+				headers.Add("x-codex-beta-features", value)
+			}
+		}
 		for _, name := range [...]string{"x-codex-window-id", "x-codex-installation-id"} {
 			if value := strings.TrimSpace(c.Request.Header.Get(name)); value != "" {
 				headers.Set(name, value)
 			}
 		}
 	}
+	// 真实 Codex 的 WS 握手同样携带会话级 x-codex-beta-features
+	// （与 HTTP 出站的 applyOpenAICodexBetaFeatures 保持一致）。客户端未
+	// 声明时补成默认形态；放在客户端头拷贝之外，因为该头是账号/会话级属性，
+	// 也避免预热与实际请求因头差异落进不同的连接池兼容分桶。
+	applyOpenAICodexBetaFeatures(c, account, headers)
 	// OAuth 账号：将 apiKeyID 混入 session 标识符，防止跨用户会话碰撞。
 	if account != nil && account.Type == AccountTypeOAuth {
 		apiKeyID := getAPIKeyIDFromContext(c)
