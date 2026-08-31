@@ -509,6 +509,52 @@ func TestCodexAccountIndexUpsertReplacesSameAccount(t *testing.T) {
 	}
 }
 
+func TestCodexAccountIndexFindOnNilIndexReturnsNil(t *testing.T) {
+	var index *codexAccountIndex
+	got, matchedKey := index.Find([]string{"account:team-1"}, "user-1")
+	if got != nil || matchedKey != "" {
+		t.Fatalf("Find on nil index = (%v, %q), want (nil, \"\")", got, matchedKey)
+	}
+}
+
+func TestCodexAccountIndexAddInitializesNilAccountsByKeyMap(t *testing.T) {
+	index := &codexAccountIndex{}
+	index.Add(service.Account{
+		ID: 50,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "team-9",
+			"access_token":       "token-9",
+		},
+	})
+
+	got, matchedKey := index.Find([]string{"account:team-9"}, "")
+	if got == nil || got.ID != 50 {
+		t.Fatalf("Find after Add on zero-value index = (%v, %q), want account ID 50", got, matchedKey)
+	}
+}
+
+func TestUpsertCodexAccountReplacesExistingEntryInPlace(t *testing.T) {
+	accounts := []service.Account{
+		{ID: 1, Name: "first"},
+		{ID: 2, Name: "second-old"},
+	}
+	updated := service.Account{ID: 2, Name: "second-new"}
+
+	result := upsertCodexAccount(accounts, updated)
+
+	if len(result) != 2 {
+		t.Fatalf("len(result) = %d, want 2 (in-place replace, not append)", len(result))
+	}
+	if result[1].Name != "second-new" {
+		t.Fatalf("result[1] = %+v, want replaced in place with second-new", result[1])
+	}
+
+	appended := upsertCodexAccount(accounts, service.Account{ID: 3, Name: "third"})
+	if len(appended) != 3 || appended[2].ID != 3 {
+		t.Fatalf("upsertCodexAccount with new ID = %+v, want appended as third entry", appended)
+	}
+}
+
 func TestCodexIdentitySeenDistinguishesTeamMembers(t *testing.T) {
 	seen := map[string]codexSeenIdentity{}
 	member1 := buildCodexImportIdentityKeys("team-1", "user-1", "", "token-1", "refresh-1")
@@ -809,6 +855,47 @@ func TestImportCodexSessionsWithRefreshTokenKeepsExistingDedup(t *testing.T) {
 	}
 	if got := svc.updatedAccounts[0].input.Credentials["refresh_token"]; got != "refresh-new" {
 		t.Fatalf("updated refresh_token = %v, want refresh-new", got)
+	}
+}
+
+func TestImportCodexSessionsBackfillsMissingChatGPTUserIDWithWarning(t *testing.T) {
+	// 存量账号只记录 chatgpt_account_id，没有 chatgpt_user_id（历史数据），
+	// 本次导入携带 refresh_token 且能解析出 chatgpt_user_id，命中 account: 键。
+	svc := newCodexImportMemoryAdminService([]service.Account{{
+		ID:       15,
+		Name:     "existing",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "workspace-1",
+			"access_token":       "token-old",
+			"refresh_token":      "refresh-old",
+		},
+	}})
+	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	req := CodexSessionImportRequest{SkipDefaultGroupBind: boolPtr(true)}
+	entries := []codexImportEntry{
+		{Index: 1, Value: buildCodexRefreshImportValue(t, "workspace-1", "user-1", "refresh-new")},
+	}
+
+	result, err := handler.importCodexSessions(context.Background(), req, entries)
+	if err != nil {
+		t.Fatalf("importCodexSessions error = %v", err)
+	}
+	if result.Created != 0 || result.Updated != 1 || result.Failed != 0 {
+		t.Fatalf("result = %+v, want one updated account", result)
+	}
+	found := false
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning.Message, "chatgpt_user_id") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("warnings = %+v, want chatgpt_user_id backfill warning", result.Warnings)
+	}
+	if got := svc.updatedAccounts[0].input.Credentials["chatgpt_user_id"]; got != "user-1" {
+		t.Fatalf("updated chatgpt_user_id = %v, want user-1", got)
 	}
 }
 
