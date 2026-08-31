@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
@@ -413,7 +414,7 @@ func admitRegisterSettings(admits, weeklyLimit string) map[string]string {
 }
 
 func admitRegisterService(
-	repo *userRepoStub,
+	repo UserRepository,
 	settings map[string]string,
 	codes map[string]*RedeemCode,
 	affRepo *admitAffRepoStub,
@@ -516,5 +517,94 @@ func TestRegisterWithVerificationAdmitsByAffiliateCode(t *testing.T) {
 		require.Error(t, err)
 		require.Len(t, repo.created, 1, "失败发生在建号之后")
 		require.Equal(t, []int64{15}, repo.deletedIDs, "必须把半成品账号回滚掉")
+	})
+
+	t.Run("注册码有效时邀请人名额已满不该拦住注册", func(t *testing.T) {
+		// 顺着别人的邀请链接进来、手上又拿着单独发的注册码：放行本次注册的是注册码，
+		// 邀请人名额满只意味着这笔归因挂不上去。为此把整次注册回滚掉的话，用户会拿到
+		// 一句指向别人名额的报错，而他既看不见那个码也管不着那个人。
+		repo := &userRepoStub{nextID: 17}
+		affRepo := admitRepoWithQuota(5)
+		svc := admitRegisterService(repo, admitRegisterSettings("true", "5"), validCode, affRepo)
+
+		_, user, err := svc.RegisterWithVerification(ctx, "giftcode@test.com", "password", "", "", "INVITE1", admitTestCode)
+		require.NoError(t, err, "注册码有效就该放行，别人的周名额不是拒绝理由")
+		require.NotNil(t, user)
+		require.Empty(t, affRepo.bindCalls, "名额满时不该挂上邀请人")
+		require.Empty(t, repo.deletedIDs, "更不该把已经建好的账号回滚掉")
+	})
+
+	t.Run("回滚半成品账号走的是硬删而不是软删", func(t *testing.T) {
+		// 软删会把一个从来没注册成功过的账号永久留在库里，还占着一个用户 ID
+		repo := &purgeAwareUserRepoStub{}
+		repo.nextID = 18
+		affRepo := admitRepoWithQuota(1)
+		affRepo.bindErr = errors.New("bind exploded")
+		svc := admitRegisterService(repo, admitRegisterSettings("true", "5"), validCode, affRepo)
+
+		_, _, err := svc.RegisterWithVerification(ctx, "hardpurge@test.com", "password", "", "", "", admitTestCode)
+		require.Error(t, err)
+		require.Equal(t, []int64{18}, repo.hardDeleted, "回滚必须真删，不能留下软删记录")
+	})
+}
+
+// purgeAwareUserRepoStub 记录删号那一刻 context 里有没有带上「跳过软删除」的标记，
+// 用来把「回滚必须是硬删」这条约束钉在单元测试里，而不是等上线后去库里数孤儿账号。
+type purgeAwareUserRepoStub struct {
+	userRepoStub
+	hardDeleted []int64
+}
+
+func (s *purgeAwareUserRepoStub) Delete(ctx context.Context, id int64) error {
+	if mixins.IsSoftDeleteSkipped(ctx) {
+		s.hardDeleted = append(s.hardDeleted, id)
+	}
+	return s.userRepoStub.Delete(ctx, id)
+}
+
+func oauthBindAuthService(weeklyLimit string, repo *admitAffRepoStub) *AuthService {
+	settings := &SettingService{settingRepo: signupSourceSettingRepoStub{values: map[string]string{
+		SettingKeyAffiliateEnabled:           "true",
+		SettingKeyAffiliateCodeAdmitsSignup:  "true",
+		SettingKeyAffiliateWeeklyInviteLimit: weeklyLimit,
+	}}}
+	return &AuthService{
+		settingService:   settings,
+		affiliateService: &AffiliateService{repo: repo, settingService: settings},
+	}
+}
+
+// TestBindOAuthAffiliateWeeklyLimit 覆盖第三方注册收尾那一步的同一条规则。
+//
+// 这一步是整个注册流程的最后一环，此刻账号、订阅、注册码核销都已经落库；它返回
+// error，调用方就会把这些全部回滚掉。所以这里对「什么错该致命」的判断必须精确：
+// 名额满只是挂不上邀请人，推荐码是假的才说明这次注册本身不该发生。
+func TestBindOAuthAffiliateWeeklyLimit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("名额已满时跳过归因但不让注册失败", func(t *testing.T) {
+		affRepo := admitRepoWithQuota(5)
+		svc := oauthBindAuthService("5", affRepo)
+
+		require.NoError(t, svc.bindOAuthAffiliate(ctx, 42, admitTestCode),
+			"返回 error 会让调用方把刚建好的账号连同注册码一起回滚掉")
+		require.Empty(t, affRepo.bindCalls, "名额满就不该挂上邀请人")
+	})
+
+	t.Run("推荐码本身无效时仍然要挡住建号", func(t *testing.T) {
+		// 这是防止第三方登录绕开注册规则的既有语义，不在这次放宽的范围内
+		affRepo := &admitAffRepoStub{summaryErr: ErrAffiliateProfileNotFound}
+		svc := oauthBindAuthService("5", affRepo)
+
+		require.Error(t, svc.bindOAuthAffiliate(ctx, 42, admitTestCode))
+	})
+
+	t.Run("名额够用时正常绑定邀请人", func(t *testing.T) {
+		affRepo := admitRepoWithQuota(1)
+		svc := oauthBindAuthService("5", affRepo)
+
+		require.NoError(t, svc.bindOAuthAffiliate(ctx, 42, admitTestCode))
+		require.Equal(t, []admitBindCall{{userID: 42, inviterID: 9}}, affRepo.bindCalls)
 	})
 }
