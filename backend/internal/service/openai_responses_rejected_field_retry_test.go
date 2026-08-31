@@ -30,6 +30,34 @@ func TestOpenAIResponsesRejectedFieldRetryStateRejectsDuplicateBodyAndCap(t *tes
 	require.False(t, state.Allow([]byte(`{"model":"gpt-5.5","variant":"overflow"}`)))
 }
 
+// TestOpenAIResponsesRejectedFieldRetryStateRememberIsNilSafeAndLazilyInitializesHashSet
+// exercises remember()'s defensive guarantees directly. The only production
+// caller (openai_gateway_service.go) always goes through
+// newOpenAIResponsesRejectedFieldRetryState, which never leaves the receiver
+// nil or the hash set uninitialized, so these paths are never hit end to end
+// -- but remember is written to tolerate both cases, and that guarantee is
+// worth locking down on its own.
+func TestOpenAIResponsesRejectedFieldRetryStateRememberIsNilSafeAndLazilyInitializesHashSet(t *testing.T) {
+	var nilState *openAIResponsesRejectedFieldRetryState
+	require.NotPanics(t, func() {
+		nilState.remember([]byte(`{"model":"gpt-5.5"}`))
+	})
+
+	state := newOpenAIResponsesRejectedFieldRetryState([]byte(`{"model":"gpt-5.5"}`))
+	before := len(state.seenBodyHashes)
+	state.remember(nil)
+	state.remember([]byte{})
+	require.Equal(t, before, len(state.seenBodyHashes))
+
+	zero := &openAIResponsesRejectedFieldRetryState{}
+	body := []byte(`{"model":"gpt-5.5","variant":"lazy-init"}`)
+	require.NotPanics(t, func() {
+		zero.remember(body)
+	})
+	require.NotNil(t, zero.seenBodyHashes)
+	require.False(t, zero.Allow(body))
+}
+
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsAmbiguousErrors(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -307,6 +335,35 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsUnsafeIndexedMutat
 			name:         "content error only mentions null",
 			body:         []byte(`{"input":[{"type":"message","content":null}]}`),
 			responseBody: []byte(`{"error":{"code":"invalid_type","message":"content cannot be null","param":"input[0].content"}}`),
+		},
+		{
+			// Item type matches a tool-call kind, but the item never actually
+			// carried a "namespace" field, so there is nothing to strip.
+			name:         "namespace field is absent on matching item",
+			body:         []byte(`{"input":[{"type":"function_call","arguments":"{}"}]}`),
+			responseBody: []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[0].namespace'.","param":"input[0].namespace"}}`),
+		},
+		{
+			// Item is an object at the right index, but it never carried a
+			// "status" field, so there is nothing to strip.
+			name:         "status field is absent on matching item",
+			body:         []byte(`{"input":[{"type":"message","content":"hi"}]}`),
+			responseBody: []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[0].status'.","param":"input[0].status"}}`),
+		},
+		{
+			// Item is an object at the right index, but it never carried a
+			// "prompt_cache_breakpoint" field, so there is nothing to strip.
+			name:         "prompt_cache_breakpoint field is absent on matching item",
+			body:         []byte(`{"input":[{"type":"message","content":"hi"}]}`),
+			responseBody: []byte(`{"error":{"code":"invalid_parameter","message":"input[0].prompt_cache_breakpoint is not supported on this model"}}`),
+		},
+		{
+			// The indexed param's digits parse as a valid regex match but
+			// overflow int on strconv.Atoi, so the index cannot be trusted
+			// and no field is touched.
+			name:         "indexed param digits overflow int",
+			body:         []byte(`{"input":[{"type":"function_call","namespace":"keep","arguments":"{}"}]}`),
+			responseBody: []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[99999999999999999999].namespace'.","param":"input[99999999999999999999].namespace"}}`),
 		},
 	}
 	for _, tt := range tests {
