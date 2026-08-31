@@ -76,6 +76,15 @@ func SkipSoftDelete(parent context.Context) context.Context {
 	return context.WithValue(parent, softDeleteKey{}, true)
 }
 
+// IsSoftDeleteSkipped 报告 context 是否被 SkipSoftDelete 标记过。
+//
+// 标记键是包内私有的，包外无从判断一个 context 到底带没带这个标记；
+// 调用方想确认"我这次删除是真删还是软删"时只能靠它。
+func IsSoftDeleteSkipped(ctx context.Context) bool {
+	skip, _ := ctx.Value(softDeleteKey{}).(bool)
+	return skip
+}
+
 // Interceptors 返回查询拦截器列表。
 // 拦截器会自动为所有查询添加 deleted_at IS NULL 条件，
 // 确保软删除的记录不会出现在普通查询结果中。
@@ -83,7 +92,7 @@ func (d SoftDeleteMixin) Interceptors() []ent.Interceptor {
 	return []ent.Interceptor{
 		intercept.TraverseFunc(func(ctx context.Context, q intercept.Query) error {
 			// 检查是否需要跳过软删除过滤
-			if skip, _ := ctx.Value(softDeleteKey{}).(bool); skip {
+			if IsSoftDeleteSkipped(ctx) {
 				return nil
 			}
 			// 为查询添加 deleted_at IS NULL 条件
@@ -105,7 +114,7 @@ func (d SoftDeleteMixin) Hooks() []ent.Hook {
 					return next.Mutate(ctx, m)
 				}
 				// 检查是否需要执行真正的删除
-				if skip, _ := ctx.Value(softDeleteKey{}).(bool); skip {
+				if IsSoftDeleteSkipped(ctx) {
 					return next.Mutate(ctx, m)
 				}
 				// 类型断言，获取 mutation 的扩展接口
