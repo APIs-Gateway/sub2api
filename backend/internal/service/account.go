@@ -1159,6 +1159,13 @@ func (a *Account) IsOpenAIApiKey() bool {
 	return a.IsOpenAI() && a.Type == AccountTypeAPIKey
 }
 
+// UsesOpenAICodexProtocol reports whether the account speaks the ChatGPT Codex
+// protocol (OAuth / Setup Token) rather than a standard OpenAI-compatible API.
+// fork: upstream's IsOpenAIOAuthLike() corresponds to IsOpenAI() && IsOAuth().
+func (a *Account) UsesOpenAICodexProtocol() bool {
+	return a != nil && (a.Type == AccountTypeOAuth || (a.IsOpenAI() && a.IsOAuth()))
+}
+
 func (a *Account) GetOpenAIBaseURL() string {
 	if !a.IsOpenAI() {
 		return ""
