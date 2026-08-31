@@ -130,12 +130,12 @@ func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model 
 }
 
 // recordSuccess clears any tracked failure streak/cooldown for (accountID, model).
-// Not yet wired into any production call site (see openai_account_model_transient_wiring_test.go
-// for why: the natural symmetric hook would be the handler-layer success report
-// ReportOpenAIAccountScheduleResult, which has ~27 call sites outside this
-// package's scope). Exercised directly by TestOpenAIModelTransient_SuccessClearsStreakAndBlock.
-//
-//nolint:unused // 仅被 //go:build unit 测试文件引用；CI 的 golangci-lint 步骤没带 -tags unit 跑，看不到该测试文件里的调用点。
+// Wired into the handler-layer success report ReportOpenAIAccountScheduleResult
+// via recordOpenAIAccountModelTransientSuccess (see
+// openai_account_runtime_block_fastpath.go) so that a request that actually
+// succeeds resets the streak instead of letting an isolated earlier transient
+// failure linger in the window and get aggregated with a later, unrelated one.
+// Exercised directly by TestOpenAIModelTransient_SuccessClearsStreakAndBlock.
 func (s *openAIAccountModelTransientState) recordSuccess(accountID int64, model string) {
 	key, ok := openAIAccountModelTransientKey(accountID, model)
 	if s == nil || !ok {

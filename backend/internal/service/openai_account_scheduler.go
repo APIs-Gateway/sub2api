@@ -1798,7 +1798,20 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 	return s.getOpenAIWSProtocolResolver().Resolve(account).Transport == requiredTransport
 }
 
-func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int) {
+// ReportOpenAIAccountScheduleResult reports the outcome of a request against
+// accountID to the account scheduler's load-balancing stats. The optional
+// model variadic (kept variadic so the ~27 existing call sites remain
+// source-compatible) lets a successful result also clear the in-memory
+// per-model transient-failure streak recorded by handleOpenAIAccountUpstreamError,
+// so a genuinely healthy account/model pair does not accumulate two
+// non-consecutive transient failures into an unwarranted cooldown escalation.
+// Only the first model value is used; it is ignored on the failure path.
+func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int, model ...string) {
+	if success && len(model) > 0 {
+		if m := strings.TrimSpace(model[0]); m != "" {
+			s.recordOpenAIAccountModelTransientSuccess(accountID, m)
+		}
+	}
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
 	if scheduler == nil {
 		return

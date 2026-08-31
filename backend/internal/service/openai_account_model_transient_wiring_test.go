@@ -140,6 +140,55 @@ func TestRecordOpenAIAccountModelTransientFailure_NilSafe(t *testing.T) {
 	require.Zero(t, svc.recordOpenAIAccountModelTransientFailure(nil, "gpt-5.5", time.Now()).FailureStreak)
 }
 
+func TestReportOpenAIAccountScheduleResult_SuccessClearsModelTransientStreakSoNonConsecutiveFailuresDoNotEscalate(t *testing.T) {
+	// Regression for the fork gap where recordSuccess was never wired into
+	// the production success-reporting path: a single transient failure
+	// followed by a success (e.g. many healthy requests in between) must not
+	// linger in the failure window and get aggregated with a later,
+	// unrelated failure into an unwarranted cooldown escalation.
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 91105, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	now := time.Now()
+
+	// t=0: first transient failure on this model — recorded, streak=1, no cooldown yet.
+	decision := svc.recordOpenAIAccountModelTransientFailure(account, "gpt-5.5", now)
+	require.Equal(t, 1, decision.FailureStreak)
+	require.Zero(t, decision.Cooldown)
+	require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.5"))
+
+	// A later request against the same model succeeds. The production call
+	// site (handler layer) reports this via ReportOpenAIAccountScheduleResult
+	// with the requested model, which must clear the tracked failure streak.
+	svc.ReportOpenAIAccountScheduleResult(account.ID, true, nil, "gpt-5.5")
+
+	// t=40s: a second, non-consecutive transient failure within the same 60s
+	// window must restart the streak at 1 (not escalate to 2 and trigger the
+	// short cooldown), because the intervening success cleared the entry.
+	decision = svc.recordOpenAIAccountModelTransientFailure(account, "gpt-5.5", now.Add(40*time.Second))
+	require.Equal(t, 1, decision.FailureStreak)
+	require.Zero(t, decision.Cooldown)
+	require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.5"))
+}
+
+func TestReportOpenAIAccountScheduleResult_SuccessWithoutModelDoesNotTouchTransientState(t *testing.T) {
+	// The model parameter is a variadic for backward compatibility with the
+	// ~27 existing call sites; omitting it (as failure-reporting call sites
+	// do, and as any call site not passing a model still may) must be a
+	// pure no-op against the transient tracker rather than panicking or
+	// clearing an unrelated entry.
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 91106, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	now := time.Now()
+
+	svc.recordOpenAIAccountModelTransientFailure(account, "gpt-5.5", now)
+	svc.recordOpenAIAccountModelTransientFailure(account, "gpt-5.5", now.Add(time.Second))
+	require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.5"))
+
+	svc.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
+
+	require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.5"))
+}
+
 func TestRecordOpenAIAccountModelTransientFailure_NilStateAfterOnceFired(t *testing.T) {
 	// Simulate the lazy-init sync.Once having already fired without ever
 	// assigning openaiModelTransient (defensive scenario the code guards

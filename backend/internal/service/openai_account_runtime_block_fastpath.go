@@ -176,6 +176,28 @@ func (s *OpenAIGatewayService) recordOpenAIAccountModelTransientFailure(account 
 	return state.recordFailure(account.ID, canonicalOpenAIAccountSchedulingModel(account, requestedModel), now)
 }
 
+// recordOpenAIAccountModelTransientSuccess clears the in-memory transient
+// failure streak for (accountID, model) after a request against that model
+// actually succeeds. This is the success-side counterpart to
+// recordOpenAIAccountModelTransientFailure: without it, an isolated transient
+// failure never expires early and can get aggregated with a later, unrelated
+// failure within the same openAIModelTransientFailureWindow, escalating into
+// a cooldown even though the account is otherwise healthy. Reporting call
+// sites only have the accountID/model (not the *Account), so this does not
+// resolve model_mapping aliases the way recordOpenAIAccountModelTransientFailure
+// does; it is a best-effort clear keyed on whatever model string the caller
+// reports as succeeded.
+func (s *OpenAIGatewayService) recordOpenAIAccountModelTransientSuccess(accountID int64, model string) {
+	if s == nil || accountID <= 0 {
+		return
+	}
+	state := s.getOpenAIAccountModelTransientState()
+	if state == nil {
+		return
+	}
+	state.recordSuccess(accountID, model)
+}
+
 // isOpenAIAccountModelRuntimeBlocked reports whether account is currently
 // within an automatic transient cooldown for requestedModel specifically
 // (independent of the account-wide isOpenAIAccountRuntimeBlocked state).
