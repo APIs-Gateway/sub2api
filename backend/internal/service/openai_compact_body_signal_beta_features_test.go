@@ -128,7 +128,7 @@ func TestBuildOpenAIWSHeaders_CarriesSessionBetaFeatures(t *testing.T) {
 		if clientBeta != "" {
 			c.Request.Header.Set("x-codex-beta-features", clientBeta)
 		}
-		headers, _ := svc.buildOpenAIWSHeaders(c, account, "test-token", decision, true, "", "", "")
+		headers, _ := svc.buildOpenAIWSHeaders(c.Request.Context(), c, account, "test-token", decision, true, "", "", "", "", "")
 		return headers
 	}
 
