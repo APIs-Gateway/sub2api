@@ -499,6 +499,8 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CodexImageBridge
 	require.Equal(t, "collaboration", gjson.Get(litePayload, `input.#(type=="additional_tools").tools.1.name`).String())
 	require.Equal(t, "high", gjson.Get(litePayload, "reasoning.effort").String())
 	require.Equal(t, "all_turns", gjson.Get(litePayload, "reasoning.context").String())
+	require.True(t, gjson.Get(litePayload, "parallel_tool_calls").Exists())
+	require.False(t, gjson.Get(litePayload, "parallel_tool_calls").Bool())
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DedicatedModeDoesNotReuseConnAcrossSessions(t *testing.T) {
@@ -902,6 +904,8 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughHeade
 	require.Equal(t, "namespace", gjson.Get(forwarded, "tool_choice.type").String())
 	require.Equal(t, "medium", gjson.Get(forwarded, "reasoning.effort").String())
 	require.Equal(t, "all_turns", gjson.Get(forwarded, "reasoning.context").String())
+	require.True(t, gjson.Get(forwarded, "parallel_tool_calls").Exists())
+	require.False(t, gjson.Get(forwarded, "parallel_tool_calls").Bool())
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ModeOffReturnsPolicyViolation(t *testing.T) {
