@@ -1485,6 +1485,17 @@ func normalizeOpenAIWSPayloadWithoutInputAndPreviousResponseID(payload []byte) (
 	}
 	delete(decoded, "input")
 	delete(decoded, "previous_response_id")
+	// Codex changes transport-only metadata for every response.create. These fields
+	// do not alter the context referenced by previous_response_id and are excluded
+	// from Codex's own websocket reuse comparison.
+	delete(decoded, "client_metadata")
+	delete(decoded, "stream_options")
+	// Official Codex prewarms a connection with generate=false, then omits the
+	// field on the business request that continues from the prewarm response.
+	// Only normalize false so a meaningful generate=true change remains visible.
+	if generate, ok := decoded["generate"].(bool); ok && !generate {
+		delete(decoded, "generate")
+	}
 	return json.Marshal(decoded)
 }
 
@@ -1604,6 +1615,45 @@ func openAIWSRawItemsHaveToolCallContextForOutputs(items []json.RawMessage) bool
 	return true
 }
 
+// sanitizeOpenAIWSHistoricalReplayToolCalls 清洗历史 replay input 中的孤儿工具调用上下文项：
+// 如果某个工具调用上下文项（tool_call/function_call/custom_tool_call 等）的 call_id 在
+// previousItems 和 currentItems 里都找不到匹配的工具输出，说明这个调用已经在更早的轮次
+// 完成过一次回放（或本来就不完整），继续保留会在合并时把它重复带入下一轮 replay input，
+// 导致上游看到同一个 call_id 出现多次 tool_call 而拒绝请求或产生重复调用。
+func sanitizeOpenAIWSHistoricalReplayToolCalls(
+	previousItems []json.RawMessage,
+	currentItems []json.RawMessage,
+) []json.RawMessage {
+	if len(previousItems) == 0 {
+		return cloneOpenAIWSRawMessages(previousItems)
+	}
+	outputCallIDs := make(map[string]struct{})
+	collectOutputCallIDs := func(items []json.RawMessage) {
+		for _, item := range items {
+			if !isCodexToolCallOutputItemType(gjson.GetBytes(item, "type").String()) {
+				continue
+			}
+			if callID := strings.TrimSpace(gjson.GetBytes(item, "call_id").String()); callID != "" {
+				outputCallIDs[callID] = struct{}{}
+			}
+		}
+	}
+	collectOutputCallIDs(previousItems)
+	collectOutputCallIDs(currentItems)
+
+	sanitized := make([]json.RawMessage, 0, len(previousItems))
+	for _, item := range previousItems {
+		if isCodexToolCallContextItemType(gjson.GetBytes(item, "type").String()) {
+			callID := strings.TrimSpace(gjson.GetBytes(item, "call_id").String())
+			if _, paired := outputCallIDs[callID]; !paired {
+				continue
+			}
+		}
+		sanitized = append(sanitized, append(json.RawMessage(nil), item...))
+	}
+	return sanitized
+}
+
 func openAIWSRawPayloadHasToolCallOutput(payload []byte) bool {
 	if len(payload) == 0 {
 		return false
@@ -1642,6 +1692,7 @@ func buildOpenAIWSReplayInputSequence(
 	if !previousFullInputExists {
 		return cloneOpenAIWSRawMessages(currentItems), currentExists, nil
 	}
+	previousFullInput = sanitizeOpenAIWSHistoricalReplayToolCalls(previousFullInput, currentItems)
 	if !currentExists || len(currentItems) == 0 {
 		return cloneOpenAIWSRawMessages(previousFullInput), true, nil
 	}
@@ -2215,6 +2266,28 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 					pendingJSONDocuments = append(pendingJSONDocuments, documents[1:]...)
 				}
 			}
+		}
+		if readErr == nil && !json.Valid(message) {
+			// 上游偶发返回非法/截断的 Responses 事件 JSON（例如粘连了半截无法解析的尾部）。
+			// gjson 的宽松解析会静默吞掉这类畸形内容或误取到无关字段，必须显式拒绝并断开连接，
+			// 而不是把半个事件当正常事件继续处理。
+			invalidEventType, _, _ := parseOpenAIWSEventEnvelope(message)
+			if invalidEventType == "" {
+				invalidEventType = "unknown"
+			}
+			lease.MarkBroken()
+			logOpenAIWSModeInfo(
+				"invalid_event_json account_id=%d conn_id=%s event_type=%s bytes=%d wrote_downstream=%v",
+				account.ID,
+				truncateOpenAIWSLogValue(connID, openAIWSIDValueMaxLen),
+				truncateOpenAIWSLogValue(invalidEventType, openAIWSLogValueMaxLen),
+				len(message),
+				wroteDownstream,
+			)
+			if !wroteDownstream {
+				return nil, wrapOpenAIWSFallback("invalid_event_json", errors.New("upstream websocket returned malformed Responses event JSON"))
+			}
+			return nil, errors.New("upstream websocket returned malformed Responses event JSON after downstream output")
 		}
 		if readErr != nil {
 			lease.MarkBroken()
@@ -2947,7 +3020,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			bridgePayloadRaw := currentBridgePayload.payloadRaw
 			bridgePayloadBytes := currentBridgePayload.payloadBytes
-			needsBridgeReplay := currentBridgePayload.previousResponseID != "" || openAIWSRawPayloadHasToolCallOutput(currentBridgePayload.payloadRaw)
+			toolOutputCoverage := AnalyzeToolCallOutputContextCoverageBytes(currentBridgePayload.payloadRaw)
+			needsBridgeReplay := currentBridgePayload.previousResponseID != "" ||
+				(toolOutputCoverage.HasFunctionCallOutput && !toolOutputCoverage.ContextCoversAllCallIDs)
 			turnReplayInput, turnReplayInputExists, replayInputErr := buildOpenAIWSReplayInputSequence(
 				bridgeReplayInput,
 				bridgeReplayInputExists,
@@ -4473,7 +4548,7 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 		if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, latest); paused {
 			return nil, nil
 		}
-		if s.isOpenAIAccountRuntimeBlocked(latest) {
+		if s.isOpenAIAccountRequestRuntimeBlocked(latest, requestedModel) {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 			return nil, nil
 		}

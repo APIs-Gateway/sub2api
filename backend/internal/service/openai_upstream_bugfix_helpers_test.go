@@ -82,14 +82,42 @@ func TestOpenAIImagesDiagnosticsHelpers(t *testing.T) {
 		"",
 	}, "\n")
 
-	refusal := extractOpenAIImagesModelRefusal([]byte(body))
-	require.Equal(t, "first second third", refusal)
+	// 纯方案性文字（不带安全/审核关键词）应被 extractOpenAIImagesModelText 完整收集，
+	// 但 isOpenAIImagesContentPolicyRefusal 只在命中内容策略信号时才判定为拒绝。
+	text := extractOpenAIImagesModelText([]byte(body))
+	require.Equal(t, "first second third", text)
+	require.False(t, isOpenAIImagesContentPolicyRefusal(text))
+
+	refusalBody := strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_2","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"内容审核：不适合生成"}]}]}}`,
+		"",
+	}, "\n")
+	refusalText := extractOpenAIImagesModelText([]byte(refusalBody))
+	require.True(t, isOpenAIImagesContentPolicyRefusal(refusalText))
+	require.Equal(t, "内容审核：不适合生成", refusalText)
 
 	summary := summarizeOpenAIImagesNoOutputBody([]byte(body))
 	require.Contains(t, summary, "no_image_output")
 	require.Contains(t, summary, "last_event=response.completed")
 	require.Contains(t, summary, "status=completed")
 	require.Contains(t, summary, "body=data:")
+}
+
+func TestOpenAIImagesTextFallbackErrorForText(t *testing.T) {
+	require.Nil(t, openAIImagesTextFallbackErrorForText(""))
+	require.Nil(t, openAIImagesTextFallbackErrorForText("   "))
+
+	policyErr := openAIImagesTextFallbackErrorForText("很抱歉，这个请求被安全系统判定为不适合生成")
+	require.NotNil(t, policyErr)
+	require.Equal(t, 400, policyErr.StatusCode)
+	require.Equal(t, "content_policy_violation", policyErr.Code)
+	require.False(t, IsOpenAIImagesRetryableUpstreamError(policyErr))
+
+	capabilityErr := openAIImagesTextFallbackErrorForText("这是我为你准备的一个方案，你可以照着这个思路自己画")
+	require.NotNil(t, capabilityErr)
+	require.Equal(t, 502, capabilityErr.StatusCode)
+	require.Equal(t, "image_generation_unavailable", capabilityErr.Code)
+	require.True(t, IsOpenAIImagesRetryableUpstreamError(capabilityErr))
 }
 
 func TestOpenAIImagesIncompleteUpstreamError_Defaults(t *testing.T) {

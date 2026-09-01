@@ -131,6 +131,8 @@ func (s *AccountTestService) buildUpstreamModelsRequest(ctx context.Context, acc
 	switch {
 	case account.Platform == PlatformAntigravity:
 		return s.buildAntigravityAPIKeyModelsRequest(ctx, account)
+	case account.IsGrok():
+		return s.buildGrokUpstreamModelsRequest(ctx, account)
 	case account.IsOpenAI():
 		return s.buildOpenAIUpstreamModelsRequest(ctx, account)
 	case account.IsGemini():
@@ -142,6 +144,36 @@ func (s *AccountTestService) buildUpstreamModelsRequest(ctx context.Context, acc
 			fmt.Sprintf("Unsupported platform for upstream model sync: %s", account.Platform), nil,
 		)
 	}
+}
+
+func (s *AccountTestService) buildGrokUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
+	if account.Type != AccountTypeAPIKey {
+		return nil, newUpstreamModelSyncUnsupportedError(
+			fmt.Sprintf("Unsupported Grok account type for upstream model sync: %s", account.Type), nil,
+		)
+	}
+	apiKey := strings.TrimSpace(account.GetCredential("api_key"))
+	if apiKey == "" {
+		return nil, newUpstreamModelSyncConfigError("No Grok API key is available", nil)
+	}
+
+	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	if baseURL == "" {
+		baseURL = "https://api.x.ai"
+	}
+	normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid Grok base URL", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildOpenAIModelsURL(normalizedBaseURL), nil)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid Grok model list URL", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	account.ApplyHeaderOverrides(req.Header)
+	return req, nil
 }
 
 func (s *AccountTestService) buildAnthropicUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
@@ -253,6 +285,9 @@ func (s *AccountTestService) buildAntigravityAPIKeyModelsRequest(ctx context.Con
 }
 
 func (s *AccountTestService) buildOpenAIUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
+	if account.IsOpenAIOAuth() {
+		return s.buildOpenAIOAuthUpstreamModelsRequest(ctx, account)
+	}
 	if account.Type != AccountTypeAPIKey {
 		return nil, newUpstreamModelSyncUnsupportedError(
 			fmt.Sprintf("Unsupported OpenAI account type for upstream model sync: %s", account.Type), nil,
@@ -278,6 +313,53 @@ func (s *AccountTestService) buildOpenAIUpstreamModelsRequest(ctx context.Contex
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
+	account.ApplyHeaderOverrides(req.Header)
+	return req, nil
+}
+
+// buildOpenAIOAuthUpstreamModelsRequest fetches the ChatGPT Codex model
+// manifest for OpenAI OAuth accounts (including Agent Identity). OAuth
+// subscriptions do not expose the public Platform API /v1/models endpoint,
+// so treating them like API-key accounts made the admin "sync models" button
+// always fail with "Unsupported OpenAI account type". This reuses the same
+// manifest endpoint, identity headers and probe version already used by
+// fetchCodexModelsManifestUpstream (openai_codex_models_service.go) for the
+// gateway's own Codex model discovery path.
+func (s *AccountTestService) buildOpenAIOAuthUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, chatgptCodexModelsURL, nil)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid OpenAI Codex model list URL", err)
+	}
+	query := req.URL.Query()
+	query.Set("client_version", openAICodexProbeVersion)
+	req.URL.RawQuery = query.Encode()
+
+	if account.IsOpenAIAgentIdentity() {
+		authHeaders, authErr := BuildOpenAIAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, account)
+		if authErr != nil {
+			return nil, newUpstreamModelSyncUpstreamError("Failed to build OpenAI Agent Identity authentication", authErr)
+		}
+		for key, values := range authHeaders {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+	} else {
+		accessToken := strings.TrimSpace(account.GetOpenAIAccessToken())
+		if accessToken == "" {
+			return nil, newUpstreamModelSyncConfigError("No OpenAI access token is available", nil)
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Originator", "codex_cli_rs")
+	req.Header.Set("Version", openAICodexProbeVersion)
+	req.Header.Set("User-Agent", codexCLIUserAgent)
+	enforceCodexIdentityHeaders(req.Header)
+	if chatgptAccountID := account.GetChatGPTAccountID(); chatgptAccountID != "" {
+		req.Header.Set("chatgpt-account-id", chatgptAccountID)
+	}
 	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }
@@ -405,6 +487,7 @@ func buildGeminiModelsURL(base string) string {
 
 type upstreamModelEntry struct {
 	ID   string `json:"id"`
+	Slug string `json:"slug"`
 	Name string `json:"name"`
 }
 
@@ -448,6 +531,9 @@ func extractUpstreamModelIDs(body []byte) ([]string, error) {
 
 func upstreamModelEntryID(entry upstreamModelEntry) string {
 	modelID := strings.TrimSpace(entry.ID)
+	if modelID == "" {
+		modelID = strings.TrimSpace(entry.Slug)
+	}
 	if modelID == "" {
 		modelID = strings.TrimSpace(entry.Name)
 	}

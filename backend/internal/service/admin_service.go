@@ -1888,6 +1888,12 @@ func defaultModelsListCandidateIDs(platform string) []string {
 	}
 }
 
+func defaultAllowImageGenerationForPlatform(platform string) bool {
+	// Grok image and video generation routes share the legacy image-generation gate.
+	// Older clients send the false zero value, so Grok groups must default enabled.
+	return platform == PlatformGrok
+}
+
 func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
 	if input.RateMultiplier <= 0 {
 		return nil, errors.New("rate_multiplier must be > 0")
@@ -1954,6 +1960,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		mcpXMLInject = *input.MCPXMLInject
 	}
 
+	allowImageGeneration := input.AllowImageGeneration || defaultAllowImageGenerationForPlatform(platform)
+
 	// 如果指定了复制账号的源分组，先获取账号 ID 列表
 	var accountIDsToCopy []int64
 	if len(input.CopyAccountsFromGroupIDs) > 0 {
@@ -1997,7 +2005,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		DailyLimitUSD:                   dailyLimit,
 		WeeklyLimitUSD:                  weeklyLimit,
 		MonthlyLimitUSD:                 monthlyLimit,
-		AllowImageGeneration:            input.AllowImageGeneration,
+		AllowImageGeneration:            allowImageGeneration,
 		ImageRateIndependent:            input.ImageRateIndependent,
 		ImageRateMultiplier:             imageRateMultiplier,
 		ImagePrice1K:                    imagePrice1K,
@@ -3011,12 +3019,17 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		}
 	}
 
+	openAISettings, err := normalizeBulkOpenAISettings(input)
+	if err != nil {
+		return nil, err
+	}
+
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 
-	// 预加载账号平台信息（混合渠道检查需要）。
+	// 预加载账号平台信息（混合渠道检查/探测账号校验/OpenAI 专属设置校验共用，避免多次 DB 查询）。
 	platformByID := map[int64]string{}
 	var cachedTargets []*Account
-	if needMixedChannelCheck || input.ProbeEnabled != nil {
+	if needMixedChannelCheck || input.ProbeEnabled != nil || openAISettings.any() {
 		accounts, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -3028,21 +3041,26 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 		}
 	}
-	if input.ProbeEnabled != nil {
-		accountsByID := make(map[int64]*Account, len(cachedTargets))
-		for _, account := range cachedTargets {
-			if account != nil {
-				accountsByID[account.ID] = account
-			}
+	targetsByID := make(map[int64]*Account, len(cachedTargets))
+	for _, account := range cachedTargets {
+		if account != nil {
+			targetsByID[account.ID] = account
 		}
+	}
+	if input.ProbeEnabled != nil {
 		for _, accountID := range input.AccountIDs {
-			account, ok := accountsByID[accountID]
+			account, ok := targetsByID[accountID]
 			if !ok {
 				return nil, ErrAccountNotFound
 			}
 			if !isUpstreamBillingProbeAccount(account) {
 				return nil, ErrUpstreamBillingProbeAccountInvalid
 			}
+		}
+	}
+	if openAISettings.any() {
+		if err := validateBulkOpenAISettingsTargets(input, openAISettings, targetsByID); err != nil {
+			return nil, err
 		}
 	}
 

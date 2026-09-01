@@ -585,3 +585,110 @@ func TestSchedulerCacheGroupLifecycleLeasePropagatesRedisErrors(t *testing.T) {
 		OwnerToken: "owner",
 	}))
 }
+
+// unencodableSchedulerCacheTime is out of encoding/json's supported year range
+// ([0,9999]) and makes json.Marshal fail on the account's CreatedAt field —
+// the same failure mode reported for scheduler cache writes with corrupt
+// account rows (invalid stored timestamps).
+var unencodableSchedulerCacheTime = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+func TestSchedulerCacheWriteAccountsSkipsUnencodableAccount(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+
+	good := service.Account{ID: 9001, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+	bad := service.Account{ID: 9002, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, CreatedAt: unencodableSchedulerCacheTime}
+
+	cacheable, err := cache.writeAccounts(ctx, []service.Account{good, bad})
+	require.NoError(t, err, "one unencodable account must not fail the whole batch")
+	require.Len(t, cacheable, 1)
+	require.Equal(t, good.ID, cacheable[0].ID)
+
+	got, err := cache.GetAccount(ctx, good.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got, "the encodable account in the same batch must still be cached")
+
+	missing, err := cache.GetAccount(ctx, bad.ID)
+	require.NoError(t, err)
+	require.Nil(t, missing, "the unencodable account must not leave a partial cache entry")
+}
+
+func TestSchedulerCacheSetSnapshotOmitsUnencodableAccountFromZSet(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 51, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+
+	good := service.Account{ID: 9101, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+	bad := service.Account{ID: 9102, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, CreatedAt: unencodableSchedulerCacheTime}
+
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{good, bad}))
+
+	snapshot, ok, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, snapshot, 1, "the snapshot ZSET must not reference an account that was never written to sched:acc:*")
+	require.Equal(t, good.ID, snapshot[0].ID)
+}
+
+func TestSchedulerCacheSetAccountDeletesStaleEntryOnUnencodablePayload(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	account := service.Account{ID: 9201, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+
+	require.NoError(t, cache.SetAccount(ctx, &account))
+	cached, err := cache.GetAccount(ctx, account.ID)
+	require.NoError(t, err)
+	require.NotNil(t, cached)
+
+	account.CreatedAt = unencodableSchedulerCacheTime
+	require.NoError(t, cache.SetAccount(ctx, &account), "an unencodable payload must delete the stale entry, not error out")
+
+	cached, err = cache.GetAccount(ctx, account.ID)
+	require.NoError(t, err)
+	require.Nil(t, cached, "a stale cache entry must not survive a failed re-encode")
+}
+
+// TestSchedulerCacheSetAccountPropagatesWriteAccountsError covers the
+// SetAccount branch that surfaces a genuine writeAccounts error (as opposed
+// to the unencodable-payload case above, which is swallowed and converted
+// into a cache-delete instead of an error).
+func TestSchedulerCacheSetAccountPropagatesWriteAccountsError(t *testing.T) {
+	ctx := context.Background()
+	cache, mr := newSchedulerCacheUnitWithRedis(t)
+	account := service.Account{ID: 9301, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+
+	mr.SetError("ERR simulated redis failure")
+	t.Cleanup(func() { mr.SetError("") })
+
+	err := cache.SetAccount(ctx, &account)
+	require.Error(t, err, "a real redis failure while flushing the pipeline must be propagated, not swallowed")
+}
+
+// TestSchedulerCacheWriteAccountsReturnsErrorWhenMidBatchFlushFails covers
+// the chunked-flush branch inside writeAccounts: once pending reaches
+// writeChunkSize mid-loop, a pipeline flush failure there must abort the
+// whole write (as opposed to the final post-loop flush, which is already
+// exercised elsewhere).
+func TestSchedulerCacheWriteAccountsReturnsErrorWhenMidBatchFlushFails(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	cache, ok := newSchedulerCacheWithChunkSizes(rdb, defaultSchedulerSnapshotMGetChunkSize, 2).(*schedulerCache)
+	require.True(t, ok)
+
+	accounts := []service.Account{
+		{ID: 9401, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+		{ID: 9402, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+		{ID: 9403, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+	}
+
+	mr.SetError("ERR simulated redis failure")
+	t.Cleanup(func() { mr.SetError("") })
+
+	cacheable, err := cache.writeAccounts(ctx, accounts)
+	require.Error(t, err, "a pipeline flush failure at the writeChunkSize boundary must abort the batch")
+	require.Nil(t, cacheable)
+}
