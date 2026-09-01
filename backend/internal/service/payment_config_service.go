@@ -455,46 +455,115 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_MAX_PLAN_RATIO", "subscription maximum plan ratio must be greater than 0")
 		}
 	}
-	m := map[string]string{
-		SettingPaymentEnabled:                    formatBoolOrEmpty(req.Enabled),
-		SettingMinRechargeAmount:                 formatPositiveFloat(req.MinAmount),
-		SettingMaxRechargeAmount:                 formatPositiveFloat(req.MaxAmount),
-		SettingDailyRechargeLimit:                formatPositiveFloat(req.DailyLimit),
-		SettingOrderTimeoutMinutes:               formatPositiveInt(req.OrderTimeoutMin),
-		SettingMaxPendingOrders:                  formatPositiveInt(req.MaxPendingOrders),
-		SettingBalancePayDisabled:                formatBoolOrEmpty(req.BalanceDisabled),
-		SettingBalanceRechargeMult:               formatPositiveFloat(req.BalanceRechargeMultiplier),
-		SettingSubscriptionPayMult:               formatPositiveFloat(req.SubscriptionPayMultiplier),
-		SettingRechargeFeeRate:                   formatNonNegativeFloat(req.RechargeFeeRate),
-		SettingCryptoRechargeFeeRate:             formatNonNegativeFloat(req.CryptoRechargeFeeRate),
-		SettingRefundFeeRate:                     formatNonNegativeFloat(req.RefundFeeRate),
-		SettingSubscriptionMinDaily:              formatPositiveFloat(req.SubscriptionMinDaily),
-		SettingSubscriptionMinRatioStartDaily:    formatPositiveFloat(req.SubscriptionMinRatioStartDaily),
-		SettingSubscriptionMaxDaily:              formatPositiveFloat(req.SubscriptionMaxDaily),
-		SettingSubscriptionMaxDays:               formatPositiveInt(req.SubscriptionMaxDays),
-		SettingSubscriptionMinRatio:              formatPositiveFlexibleFloat(req.SubscriptionMinPlanRatio),
-		SettingSubscriptionMaxRatio:              formatPositiveFlexibleFloat(req.SubscriptionMaxPlanRatio),
-		SettingLoadBalanceStrategy:               derefStr(req.LoadBalanceStrategy),
-		SettingProductNamePrefix:                 derefStr(req.ProductNamePrefix),
-		SettingProductNameSuffix:                 derefStr(req.ProductNameSuffix),
-		SettingHelpImageURL:                      derefStr(req.HelpImageURL),
-		SettingHelpText:                          derefStr(req.HelpText),
-		SettingCancelRateLimitOn:                 formatBoolOrEmpty(req.CancelRateLimitEnabled),
-		SettingCancelRateLimitMax:                formatPositiveInt(req.CancelRateLimitMax),
-		SettingCancelWindowSize:                  formatPositiveInt(req.CancelRateLimitWindow),
-		SettingCancelWindowUnit:                  derefStr(req.CancelRateLimitUnit),
-		SettingCancelWindowMode:                  derefStr(req.CancelRateLimitMode),
-		SettingAlipayForceQRCode:                 formatBoolOrEmpty(req.AlipayForceQRCode),
-		SettingAlipayMobilePrecreateDeepLink:     formatBoolOrEmpty(req.AlipayMobilePrecreateDeepLink),
-		SettingPaymentVisibleMethodAlipaySource:  derefStr(req.VisibleMethodAlipaySource),
-		SettingPaymentVisibleMethodWxpaySource:   derefStr(req.VisibleMethodWxpaySource),
-		SettingPaymentVisibleMethodAlipayEnabled: formatBoolOrEmpty(req.VisibleMethodAlipayEnabled),
-		SettingPaymentVisibleMethodWxpayEnabled:  formatBoolOrEmpty(req.VisibleMethodWxpayEnabled),
+	// 仅写入调用方显式提供(非 nil)的字段,符合 PATCH 语义:未传的字段保留数据库
+	// 当前值,不会被 derefStr(nil)/formatBoolOrEmpty(nil) 转成的空串覆盖。
+	// upstream sync (#5133): UpdatePaymentConfig 此前无条件写入全部设置键,
+	// 导致管理员每次保存系统设置都会静默重置未在本次请求中携带的可见支付方式等配置。
+	m := make(map[string]string)
+	if req.Enabled != nil {
+		m[SettingPaymentEnabled] = formatBoolOrEmpty(req.Enabled)
+	}
+	if req.MinAmount != nil {
+		m[SettingMinRechargeAmount] = formatPositiveFloat(req.MinAmount)
+	}
+	if req.MaxAmount != nil {
+		m[SettingMaxRechargeAmount] = formatPositiveFloat(req.MaxAmount)
+	}
+	if req.DailyLimit != nil {
+		m[SettingDailyRechargeLimit] = formatPositiveFloat(req.DailyLimit)
+	}
+	if req.OrderTimeoutMin != nil {
+		m[SettingOrderTimeoutMinutes] = formatPositiveInt(req.OrderTimeoutMin)
+	}
+	if req.MaxPendingOrders != nil {
+		m[SettingMaxPendingOrders] = formatPositiveInt(req.MaxPendingOrders)
+	}
+	if req.BalanceDisabled != nil {
+		m[SettingBalancePayDisabled] = formatBoolOrEmpty(req.BalanceDisabled)
+	}
+	if req.BalanceRechargeMultiplier != nil {
+		m[SettingBalanceRechargeMult] = formatPositiveFloat(req.BalanceRechargeMultiplier)
+	}
+	if req.SubscriptionPayMultiplier != nil {
+		m[SettingSubscriptionPayMult] = formatPositiveFloat(req.SubscriptionPayMultiplier)
+	}
+	if req.RechargeFeeRate != nil {
+		m[SettingRechargeFeeRate] = formatNonNegativeFloat(req.RechargeFeeRate)
+	}
+	if req.CryptoRechargeFeeRate != nil {
+		m[SettingCryptoRechargeFeeRate] = formatNonNegativeFloat(req.CryptoRechargeFeeRate)
+	}
+	if req.RefundFeeRate != nil {
+		m[SettingRefundFeeRate] = formatNonNegativeFloat(req.RefundFeeRate)
+	}
+	if req.SubscriptionMinDaily != nil {
+		m[SettingSubscriptionMinDaily] = formatPositiveFloat(req.SubscriptionMinDaily)
+	}
+	if req.SubscriptionMinRatioStartDaily != nil {
+		m[SettingSubscriptionMinRatioStartDaily] = formatPositiveFloat(req.SubscriptionMinRatioStartDaily)
+	}
+	if req.SubscriptionMaxDaily != nil {
+		m[SettingSubscriptionMaxDaily] = formatPositiveFloat(req.SubscriptionMaxDaily)
+	}
+	if req.SubscriptionMaxDays != nil {
+		m[SettingSubscriptionMaxDays] = formatPositiveInt(req.SubscriptionMaxDays)
+	}
+	if req.SubscriptionMinPlanRatio != nil {
+		m[SettingSubscriptionMinRatio] = formatPositiveFlexibleFloat(req.SubscriptionMinPlanRatio)
+	}
+	if req.SubscriptionMaxPlanRatio != nil {
+		m[SettingSubscriptionMaxRatio] = formatPositiveFlexibleFloat(req.SubscriptionMaxPlanRatio)
+	}
+	if req.LoadBalanceStrategy != nil {
+		m[SettingLoadBalanceStrategy] = derefStr(req.LoadBalanceStrategy)
+	}
+	if req.ProductNamePrefix != nil {
+		m[SettingProductNamePrefix] = derefStr(req.ProductNamePrefix)
+	}
+	if req.ProductNameSuffix != nil {
+		m[SettingProductNameSuffix] = derefStr(req.ProductNameSuffix)
+	}
+	if req.HelpImageURL != nil {
+		m[SettingHelpImageURL] = derefStr(req.HelpImageURL)
+	}
+	if req.HelpText != nil {
+		m[SettingHelpText] = derefStr(req.HelpText)
+	}
+	if req.CancelRateLimitEnabled != nil {
+		m[SettingCancelRateLimitOn] = formatBoolOrEmpty(req.CancelRateLimitEnabled)
+	}
+	if req.CancelRateLimitMax != nil {
+		m[SettingCancelRateLimitMax] = formatPositiveInt(req.CancelRateLimitMax)
+	}
+	if req.CancelRateLimitWindow != nil {
+		m[SettingCancelWindowSize] = formatPositiveInt(req.CancelRateLimitWindow)
+	}
+	if req.CancelRateLimitUnit != nil {
+		m[SettingCancelWindowUnit] = derefStr(req.CancelRateLimitUnit)
+	}
+	if req.CancelRateLimitMode != nil {
+		m[SettingCancelWindowMode] = derefStr(req.CancelRateLimitMode)
+	}
+	if req.AlipayForceQRCode != nil {
+		m[SettingAlipayForceQRCode] = formatBoolOrEmpty(req.AlipayForceQRCode)
+	}
+	if req.AlipayMobilePrecreateDeepLink != nil {
+		m[SettingAlipayMobilePrecreateDeepLink] = formatBoolOrEmpty(req.AlipayMobilePrecreateDeepLink)
+	}
+	if req.VisibleMethodAlipaySource != nil {
+		m[SettingPaymentVisibleMethodAlipaySource] = derefStr(req.VisibleMethodAlipaySource)
+	}
+	if req.VisibleMethodWxpaySource != nil {
+		m[SettingPaymentVisibleMethodWxpaySource] = derefStr(req.VisibleMethodWxpaySource)
+	}
+	if req.VisibleMethodAlipayEnabled != nil {
+		m[SettingPaymentVisibleMethodAlipayEnabled] = formatBoolOrEmpty(req.VisibleMethodAlipayEnabled)
+	}
+	if req.VisibleMethodWxpayEnabled != nil {
+		m[SettingPaymentVisibleMethodWxpayEnabled] = formatBoolOrEmpty(req.VisibleMethodWxpayEnabled)
 	}
 	if req.EnabledTypes != nil {
 		m[SettingEnabledPaymentTypes] = strings.Join(req.EnabledTypes, ",")
-	} else {
-		m[SettingEnabledPaymentTypes] = ""
 	}
 	// Kyren webhook 密钥:仅在显式提供时写入(其余字段是「nil→空串覆盖」语义,密钥不能跟随被清空)。
 	if req.KyrenWebhookSecret != nil {
