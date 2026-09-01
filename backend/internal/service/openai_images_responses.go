@@ -1803,7 +1803,17 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	}
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("Accept", "text/event-stream")
-	upstreamReq.Header.Set("OpenAI-Beta", "responses=experimental")
+	if account.Type == AccountTypeOAuth {
+		// Codex OAuth HTTP (chatgpt.com/backend-api/codex) no longer negotiates
+		// the legacy Responses beta (see buildUpstreamRequest /
+		// buildUpstreamRequestOpenAIPassthrough), so only strip any
+		// client-supplied token here instead of synthesizing one.
+		stripOpenAILegacyResponsesBeta(upstreamReq.Header)
+	} else {
+		// API-key accounts routed through the OpenAI Platform Responses API
+		// still need this beta flag to keep the image_generation tool available.
+		upstreamReq.Header.Set("OpenAI-Beta", "responses=experimental")
+	}
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
