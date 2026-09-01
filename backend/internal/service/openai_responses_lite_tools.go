@@ -7,24 +7,44 @@ import (
 	"strings"
 )
 
+type openAIResponsesLiteValidationError struct {
+	param   string
+	message string
+}
+
+func (e *openAIResponsesLiteValidationError) Error() string { return e.message }
+
+func newOpenAIResponsesLiteValidationError(param, format string, args ...any) error {
+	return &openAIResponsesLiteValidationError{param: param, message: fmt.Sprintf(format, args...)}
+}
+
 // normalizeOpenAIResponsesLiteTools adapts namespace declarations to the
-// input.additional_tools carrier required by the Responses Lite endpoint.
+// input.additional_tools carrier required by the Responses Lite endpoint, and
+// enforces serial tool calls (parallel_tool_calls=false) whenever tools are
+// present, since the Responses Lite endpoint does not support parallel tool
+// calls.
 func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 	if reqBody == nil {
 		return false, nil
 	}
+	if parallel, exists := reqBody["parallel_tool_calls"]; exists {
+		if _, ok := parallel.(bool); !ok {
+			return false, newOpenAIResponsesLiteValidationError("parallel_tool_calls", "responses Lite requires parallel_tool_calls to be a boolean")
+		}
+	}
 	if rawReasoning, exists := reqBody["reasoning"]; exists && rawReasoning != nil {
 		if _, ok := rawReasoning.(map[string]any); !ok {
-			return false, fmt.Errorf("responses Lite requires reasoning to be an object")
+			return false, newOpenAIResponsesLiteValidationError("reasoning", "responses Lite requires reasoning to be an object")
 		}
 	}
 	rawTools, exists := reqBody["tools"]
 	if !exists || rawTools == nil {
-		return ensureOpenAIResponsesLiteReasoningContext(reqBody), nil
+		changed := ensureOpenAIResponsesLiteReasoningContext(reqBody)
+		return ensureOpenAIResponsesLiteParallelToolCalls(reqBody, changed), nil
 	}
 	tools, ok := rawTools.([]any)
 	if !ok {
-		return false, fmt.Errorf("responses Lite requires tools to be an array")
+		return false, newOpenAIResponsesLiteValidationError("tools", "responses Lite requires tools to be an array")
 	}
 
 	topLevelTools := make([]any, 0, len(tools))
@@ -54,7 +74,8 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 		}
 	}
 	if len(namespaceTools) == 0 {
-		return ensureOpenAIResponsesLiteReasoningContext(reqBody), nil
+		changed := ensureOpenAIResponsesLiteReasoningContext(reqBody)
+		return ensureOpenAIResponsesLiteParallelToolCalls(reqBody, changed), nil
 	}
 
 	input, err := appendOpenAIResponsesLiteAdditionalTools(reqBody["input"], namespaceTools)
@@ -68,7 +89,41 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 		reqBody["tools"] = topLevelTools
 	}
 	ensureOpenAIResponsesLiteReasoningContext(reqBody)
+	ensureOpenAIResponsesLiteParallelToolCalls(reqBody, true)
 	return true, nil
+}
+
+// ensureOpenAIResponsesLiteParallelToolCalls forces parallel_tool_calls to
+// false whenever the request still carries tools (top-level or moved into
+// input.additional_tools), since Responses Lite only supports serial tool
+// calls. The boolean-ness of an existing parallel_tool_calls value has
+// already been validated by the caller.
+func ensureOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any, changed bool) bool {
+	if !openAIResponsesLiteHasTools(reqBody) {
+		return changed
+	}
+	if parallel, ok := reqBody["parallel_tool_calls"].(bool); ok && !parallel {
+		return changed
+	}
+	reqBody["parallel_tool_calls"] = false
+	return true
+}
+
+func openAIResponsesLiteHasTools(reqBody map[string]any) bool {
+	if tools, ok := reqBody["tools"].([]any); ok && len(tools) > 0 {
+		return true
+	}
+	input, _ := reqBody["input"].([]any)
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok || strings.TrimSpace(firstNonEmptyString(item["type"])) != "additional_tools" {
+			continue
+		}
+		if tools, ok := item["tools"].([]any); ok && len(tools) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureOpenAIResponsesLiteReasoningContext(reqBody map[string]any) bool {

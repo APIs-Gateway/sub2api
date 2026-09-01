@@ -155,6 +155,56 @@ LIMIT $2`, inviterID, limit)
 	return invitees, nil
 }
 
+// CountInviteesRegisteredSince 统计邀请人名下、注册时间在 since 之后的被邀请人数。
+// 口径取 users.created_at（注册时间）而不是绑定时间：邀请码周上限要挡的是刷新注册，
+// 老用户事后补绑邀请码不应该占用邀请人当周的配额。
+func (r *affiliateRepository) CountInviteesRegisteredSince(ctx context.Context, inviterID int64, since time.Time) (int, error) {
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, `
+SELECT COUNT(*)
+FROM user_affiliates ua
+JOIN users u ON u.id = ua.user_id
+WHERE ua.inviter_id = $1
+  AND u.created_at >= $2`, inviterID, since)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var count int
+	if rows.Next() {
+		if err := rows.Scan(&count); err != nil {
+			return 0, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// IsUserAdmin 判断用户是否为管理员；管理员的邀请码不受自然周上限约束。
+// 查不到用户时返回 false，让调用方按普通用户处理（保守地继续限流）。
+func (r *affiliateRepository) IsUserAdmin(ctx context.Context, userID int64) (bool, error) {
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, `SELECT COALESCE(role, '') FROM users WHERE id = $1`, userID)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var role string
+	if rows.Next() {
+		if err := rows.Scan(&role); err != nil {
+			return false, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return role == service.RoleAdmin, nil
+}
+
 func (r *affiliateRepository) ListAffiliateInviteRecords(ctx context.Context, filter service.AffiliateRecordFilter) ([]service.AffiliateInviteRecord, int64, error) {
 	client := clientFromContext(ctx, r.client)
 	where, args := buildAffiliateRecordWhere(filter, "ua.created_at", []string{

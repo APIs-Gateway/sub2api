@@ -11,19 +11,34 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
+// SignupSourceEmail 是账号密码注册对应的来源标识。
+const SignupSourceEmail = "email"
+
+// SignupSources 列出所有可独立控制的注册来源，取值与 users.signup_source 的落库值一致。
+// 它同时是 normalizeOAuthSignupSource 的白名单，避免两处列表各自漂移。
+var SignupSources = []string{SignupSourceEmail, "github", "google", "linuxdo", "wechat", "oidc", "dingtalk"}
+
+// SignupSourceEnabledSettingKey 返回某注册来源的开关设置键（auth_source_<source>_signup_enabled）。
+// 传入的未知来源会被归一成 email，与实际落库的 signup_source 保持一致。
+func SignupSourceEnabledSettingKey(source string) string {
+	return SettingKeySignupSourcePrefix + normalizeOAuthSignupSource(source) + SettingKeySignupSourceSuffix
+}
+
 func normalizeOAuthSignupSource(signupSource string) string {
 	signupSource = strings.TrimSpace(strings.ToLower(signupSource))
-	switch signupSource {
-	case "", "email":
-		return "email"
-	case "linuxdo", "wechat", "oidc", "github", "google", "dingtalk":
-		return signupSource
-	default:
-		return "email"
+	if signupSource == "" {
+		return SignupSourceEmail
 	}
+	for _, known := range SignupSources {
+		if known == signupSource {
+			return signupSource
+		}
+	}
+	return SignupSourceEmail
 }
 
 // SendPendingOAuthVerifyCode sends a local verification code for pending OAuth
@@ -55,27 +70,44 @@ func (s *AuthService) SendPendingOAuthVerifyCode(ctx context.Context, email stri
 	}, nil
 }
 
-func (s *AuthService) validateOAuthRegistrationInvitation(ctx context.Context, invitationCode string) (*RedeemCode, error) {
+// validateOAuthRegistrationInvitation 校验 OAuth 注册的准入条件。
+//
+// 第二个返回值是「真正生效的邀请人邀请码」：注册码不可用但邀请人邀请码放行了这次注册时，
+// 用户填在注册码栏里的值会被提升成推荐码，调用方必须用它去绑定邀请关系，
+// 否则人进来了却没挂到邀请人名下，邀请奖励就发不出去。
+func (s *AuthService) validateOAuthRegistrationInvitation(ctx context.Context, invitationCode, affiliateCode string) (*RedeemCode, string, error) {
+	effectiveAffiliateCode := strings.TrimSpace(affiliateCode)
 	if s == nil || s.settingService == nil || !s.settingService.IsInvitationCodeEnabled(ctx) {
-		return nil, nil
+		return nil, effectiveAffiliateCode, nil
 	}
 	if s.redeemRepo == nil && s.oauthEmailFlowClient(ctx) == nil {
-		return nil, ErrServiceUnavailable
+		return nil, effectiveAffiliateCode, ErrServiceUnavailable
 	}
 
 	invitationCode = strings.TrimSpace(invitationCode)
+	admitByAffiliate := func(admitErr error) (*RedeemCode, string, error) {
+		promoted, quotaErr := s.admitSignupByAffiliateCode(ctx, effectiveAffiliateCode, invitationCode)
+		if quotaErr != nil {
+			return nil, effectiveAffiliateCode, quotaErr
+		}
+		if promoted == "" {
+			return nil, effectiveAffiliateCode, admitErr
+		}
+		return nil, promoted, nil
+	}
+
 	if invitationCode == "" {
-		return nil, ErrInvitationCodeRequired
+		return admitByAffiliate(ErrInvitationCodeRequired)
 	}
 
 	redeemCode, err := s.loadOAuthRegistrationInvitation(ctx, invitationCode)
 	if err != nil {
-		return nil, ErrInvitationCodeInvalid
+		return admitByAffiliate(ErrInvitationCodeInvalid)
 	}
 	if redeemCode.Type != RedeemTypeInvitation || !redeemCode.CanUse() {
-		return nil, ErrInvitationCodeInvalid
+		return admitByAffiliate(ErrInvitationCodeInvalid)
 	}
-	return redeemCode, nil
+	return redeemCode, effectiveAffiliateCode, nil
 }
 
 // VerifyOAuthEmailCode verifies the locally entered email verification code for
@@ -106,12 +138,17 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 	verifyCode string,
 	invitationCode string,
 	signupSource string,
+	affiliateCode string,
 ) (*TokenPair, *User, error) {
 	if s == nil {
 		return nil, nil, ErrServiceUnavailable
 	}
 	if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
 		return nil, nil, ErrRegDisabled
+	}
+	// 该第三方渠道被单独关闭注册时，即便总闸开着也不放行
+	if !s.settingService.IsSignupSourceEnabled(ctx, signupSource) {
+		return nil, nil, ErrSignupSourceDisabled
 	}
 
 	email = strings.TrimSpace(strings.ToLower(email))
@@ -127,7 +164,7 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		return nil, nil, err
 	}
 
-	if _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode); err != nil {
+	if _, _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode, affiliateCode); err != nil {
 		slog.Error("oauth email register: invitation failed", "email", email, "error", err.Error())
 		return nil, nil, err
 	}
@@ -183,12 +220,17 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 	password string,
 	invitationCode string,
 	signupSource string,
+	affiliateCode string,
 ) (*TokenPair, *User, error) {
 	if s == nil {
 		return nil, nil, ErrServiceUnavailable
 	}
 	if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
 		return nil, nil, ErrRegDisabled
+	}
+	// 该第三方渠道被单独关闭注册时，即便总闸开着也不放行
+	if !s.settingService.IsSignupSourceEnabled(ctx, signupSource) {
+		return nil, nil, ErrSignupSourceDisabled
 	}
 
 	email = strings.TrimSpace(strings.ToLower(email))
@@ -207,7 +249,7 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 	if strings.TrimSpace(password) == "" {
 		return nil, nil, infraerrors.BadRequest("PASSWORD_REQUIRED", "password is required")
 	}
-	if _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode); err != nil {
+	if _, _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode, affiliateCode); err != nil {
 		return nil, nil, err
 	}
 
@@ -270,7 +312,7 @@ func (s *AuthService) FinalizeOAuthEmailAccount(
 	}
 
 	signupSource = normalizeOAuthSignupSource(signupSource)
-	invitationRedeemCode, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode)
+	invitationRedeemCode, effectiveAffiliateCode, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode, affiliateCode)
 	if err != nil {
 		return err
 	}
@@ -285,7 +327,7 @@ func (s *AuthService) FinalizeOAuthEmailAccount(
 	s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
 	// snapshot user × platform quota（fail-open）
 	_ = s.snapshotPlatformQuotaDefaults(ctx, user.ID, &grantPlan)
-	return s.bindOAuthAffiliate(ctx, user.ID, affiliateCode)
+	return s.bindOAuthAffiliate(ctx, user.ID, effectiveAffiliateCode)
 }
 
 // RollbackOAuthEmailAccountCreation removes a partially-created local account
@@ -297,10 +339,25 @@ func (s *AuthService) RollbackOAuthEmailAccountCreation(ctx context.Context, use
 	if err := s.restoreOAuthRegistrationInvitation(ctx, invitationCode, userID); err != nil {
 		return err
 	}
-	if err := s.userRepo.Delete(ctx, userID); err != nil {
+	if err := s.purgeRolledBackUser(ctx, userID); err != nil {
 		return fmt.Errorf("delete created oauth user: %w", err)
 	}
 	return nil
+}
+
+// purgeRolledBackUser 物理删除一个建出来又要回滚掉的账号。
+//
+// 默认的 Delete 是软删：记录会带着 deleted_at 永远留在库里，占着一个用户 ID，
+// 而这个账号从来没有真正注册成功过。注册失败留下的半成品只应该彻底消失——
+// 留着既污染用户列表和 ID 序列，也让"这人到底注册成功没有"变得没法一眼看清。
+//
+// 此刻硬删是安全的：账号刚建出来，它的关联数据要么还没写，
+// 要么跟着调用方的事务一起回滚了，不存在需要级联清理的残留。
+func (s *AuthService) purgeRolledBackUser(ctx context.Context, userID int64) error {
+	if s == nil || s.userRepo == nil || userID <= 0 {
+		return nil
+	}
+	return s.userRepo.Delete(mixins.SkipSoftDelete(ctx), userID)
 }
 
 func (s *AuthService) restoreOAuthRegistrationInvitation(ctx context.Context, invitationCode string, userID int64) error {

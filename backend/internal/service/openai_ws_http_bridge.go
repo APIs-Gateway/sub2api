@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -182,6 +183,18 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		return nil, fmt.Errorf("prepare http bridge body: %w", err)
 	}
 
+	// Codex 0.147+ 在 WS HTTP bridge 场景下同样会声明 custom / tool_search /
+	// namespace 三类客户端工具；type=apikey 的二级中转商上游只认标准 function
+	// 工具，未降级会导致工具调用整体失效。出站前降级，回程流式还原。
+	var clientToolMapping apicompat.ResponsesClientToolMapping
+	if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
+		var adaptErr error
+		body, clientToolMapping, adaptErr = adaptOpenAIResponsesClientTools(body)
+		if adaptErr != nil {
+			return nil, fmt.Errorf("adapt openai ws http bridge client tools: %w", adaptErr)
+		}
+	}
+
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 	releaseUpstreamCtx()
@@ -297,11 +310,14 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		return result
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
+	if hasResponsesClientToolMapping(clientToolMapping) {
+		resp.Body = newResponsesClientToolStreamBody(resp.Body, clientToolMapping, maxLineSize)
+	}
+	scanner := bufio.NewScanner(resp.Body)
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 	defer putSSEScannerBuf64K(scanBuf)
@@ -385,8 +401,18 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			upstreamEventErr = errors.New(errMessage)
 		}
 
+		// 客户端写出副本改写容量降载码：Codex 对 error/response.failed 中的
+		// server_is_overloaded / slow_down 判致命并终止会话，改写后走客户端内置
+		// 重试。账号状态与终止事件判定（本函数内 shouldFailoverOpenAIUpstreamResponse
+		// 等逻辑）仍使用未改写的 upstreamMessage。
+		clientMessage := upstreamMessage
+		if eventType == "error" || eventType == "response.failed" {
+			if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
+				clientMessage = rewritten
+			}
+		}
 		if !clientDisconnected {
-			if err := writeClientMessage(upstreamMessage); err != nil {
+			if err := writeClientMessage(clientMessage); err != nil {
 				if isOpenAIWSClientDisconnectError(err) {
 					clientDisconnected = true
 					closeStatus, closeReason := summarizeOpenAIWSReadCloseError(err)

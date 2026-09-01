@@ -157,8 +157,24 @@ type SystemSettings struct {
 	AffiliateRebateFreezeHours   int
 	AffiliateRebateDurationDays  int
 	AffiliateRebatePerInviteeCap float64
-	DefaultUserRPMLimit          int
-	DefaultSubscriptions         []DefaultSubscriptionSetting
+	// AffiliateWeeklyInviteLimit 是单个邀请码每自然周可成功邀请的人数上限（0=不限，管理员不受限）
+	AffiliateWeeklyInviteLimit int
+	// AffiliateSignupRewardEnabled 决定被邀请人注册成功后，是否立即给邀请人发一笔固定积分。
+	// 这笔奖励不要求被邀请人付费，默认关闭。
+	AffiliateSignupRewardEnabled bool
+	// AffiliateSignupRewardAmount 是上述奖励的积分数（0=不发放）
+	AffiliateSignupRewardAmount int64
+	// AffiliateCodeAdmitsSignup 决定「邀请人邀请码」本身能不能放行一次注册。
+	// 注册码开关打开时，站点只有管理员发得出注册码，普通用户手上的邀请链接根本带不进人，
+	// 邀请奖励和每周邀请上限也就永远不会触发。打开这个开关后，填了有效邀请人邀请码的人
+	// 不再需要另一张注册码，且不消耗任何注册码。默认关闭，保持原有的纯邀请制行为。
+	AffiliateCodeAdmitsSignup bool
+	DefaultUserRPMLimit       int
+	DefaultSubscriptions      []DefaultSubscriptionSetting
+
+	// SignupSourceEnabled 是各注册来源的独立开关，key 取值见 service.SignupSources
+	// （email 即账号密码注册）。缺省视为允许，registration_enabled 仍是总闸。
+	SignupSourceEnabled map[string]bool
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`
@@ -252,30 +268,35 @@ type DefaultSubscriptionSetting struct {
 }
 
 type PublicSettings struct {
-	RegistrationEnabled              bool
+	RegistrationEnabled bool
+	// SignupSourceEnabled 让注册页知道哪些来源当前可用（email 即账号密码注册），
+	// 从而只展示还开着的入口，而不是等用户填完表单再报 SIGNUP_SOURCE_DISABLED。
+	SignupSourceEnabled              map[string]bool
 	EmailVerifyEnabled               bool
 	ForceEmailOnThirdPartySignup     bool
 	RegistrationEmailSuffixWhitelist []string
 	PromoCodeEnabled                 bool
 	PasswordResetEnabled             bool
 	InvitationCodeEnabled            bool
-	TotpEnabled                      bool // TOTP 双因素认证
-	LoginAgreementEnabled            bool
-	LoginAgreementMode               string
-	LoginAgreementUpdatedAt          string
-	LoginAgreementRevision           string
-	LoginAgreementDocuments          []LoginAgreementDocument
-	TurnstileEnabled                 bool
-	TurnstileSiteKey                 string
-	SiteName                         string
-	SiteLogo                         string
-	SiteSubtitle                     string
-	DefaultLocale                    string
-	APIBaseURL                       string
-	ContactInfo                      string
-	DocURL                           string
-	HomeContent                      string
-	HideCcsImportButton              bool
+	// AffiliateCodeAdmitsSignup 让注册页知道：填了有效的邀请人邀请码时，注册码那一栏可以留空。
+	AffiliateCodeAdmitsSignup bool
+	TotpEnabled               bool // TOTP 双因素认证
+	LoginAgreementEnabled     bool
+	LoginAgreementMode        string
+	LoginAgreementUpdatedAt   string
+	LoginAgreementRevision    string
+	LoginAgreementDocuments   []LoginAgreementDocument
+	TurnstileEnabled          bool
+	TurnstileSiteKey          string
+	SiteName                  string
+	SiteLogo                  string
+	SiteSubtitle              string
+	DefaultLocale             string
+	APIBaseURL                string
+	ContactInfo               string
+	DocURL                    string
+	HomeContent               string
+	HideCcsImportButton       bool
 
 	PurchaseSubscriptionEnabled bool
 	PurchaseSubscriptionURL     string
