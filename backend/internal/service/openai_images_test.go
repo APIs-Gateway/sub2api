@@ -27,6 +27,16 @@ type failingOpenAIImageWriter struct {
 	writes    int
 }
 
+// openAIImagesReadErrorBody simulates an http.Response.Body whose Read call
+// fails with a transport-level error (H2 stream reset, connection reset, ...)
+// after the upstream already answered with a 200 status.
+type openAIImagesReadErrorBody struct {
+	err error
+}
+
+func (b *openAIImagesReadErrorBody) Read([]byte) (int, error) { return 0, b.err }
+func (b *openAIImagesReadErrorBody) Close() error             { return nil }
+
 func TestBuildOpenAIImagesRequests_ApplyAPIKeyAccountOverrides(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -1127,6 +1137,182 @@ func TestOpenAIGatewayServiceForwardImages_OAuthNonStreamServerErrorReturnsFailo
 	require.Equal(t, "failover", events[0].Kind)
 	require.Equal(t, account.ID, events[0].AccountID)
 	require.Equal(t, http.StatusBadGateway, events[0].UpstreamStatusCode)
+}
+
+// TestOpenAIImagesOAuthBodyReadTransportErrorFailover 吸收上游 #5404：OAuth 图片
+// 请求在上游已返回 200 之后，读响应体时遇到传输层错误（H2 stream reset 等）应
+// 被分类识别并走 failover，而不是像之前那样原样透传给上层、丢失重试机会。
+func TestOpenAIImagesOAuthBodyReadTransportErrorFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"X-Request-Id": []string{"req_h2_read_failure"},
+			"X-Upstream":   []string{"preserved"},
+		},
+		Body: &openAIImagesReadErrorBody{err: errors.New("stream error: stream ID 11; INTERNAL_ERROR; received from peer")},
+	}
+	account := &Account{ID: 5400, Name: "openai-oauth", Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	svc := &OpenAIGatewayService{}
+
+	_, _, _, readErr := svc.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, "b64_json", "gpt-image-2")
+	require.Error(t, readErr)
+	err := svc.handleOpenAIImagesOAuthResponseError(context.Background(), c, account, "gpt-image-2", "https://api.openai.com/v1/responses", resp, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c), readErr)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.JSONEq(t, `{"error":{"type":"upstream_error","code":"upstream_http2_stream_error","message":"Upstream HTTP/2 stream failed"}}`, string(failoverErr.ResponseBody))
+	require.Equal(t, "req_h2_read_failure", failoverErr.ResponseHeaders.Get("x-request-id"))
+	require.Equal(t, "preserved", failoverErr.ResponseHeaders.Get("x-upstream"))
+	resp.Header.Set("X-Upstream", "mutated")
+	require.Equal(t, "preserved", failoverErr.ResponseHeaders.Get("x-upstream"))
+
+	rawEvents, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := rawEvents.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	require.Equal(t, "failover", events[0].Kind)
+	require.Equal(t, "req_h2_read_failure", events[0].UpstreamRequestID)
+	require.Equal(t, "Upstream HTTP/2 stream failed", events[0].Message)
+}
+
+// TestOpenAIImagesOAuthBodyReadErrorsNotMisclassified 确认取消/响应体过大/语义
+// 错误（*OpenAIImagesUpstreamError）不会被误判为可重试的传输层错误。
+func TestOpenAIImagesOAuthBodyReadErrorsNotMisclassified(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "context canceled", err: context.Canceled},
+		{name: "response too large", err: fmt.Errorf("%w: limit=1", ErrUpstreamResponseBodyTooLarge)},
+		{name: "semantic error", err: &OpenAIImagesUpstreamError{StatusCode: http.StatusBadRequest, ErrorType: "invalid_request_error", Code: "invalid_value", Message: "bad image request"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+			resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}
+			err := tt.err
+			if tt.name != "semantic error" && shouldClassifyOpenAIUpstreamStreamReadError(err, c.Request.Context()) {
+				err = newOpenAIUpstreamStreamReadError(err)
+			}
+
+			got := (&OpenAIGatewayService{}).handleOpenAIImagesOAuthResponseError(context.Background(), c, &Account{Platform: PlatformOpenAI}, "gpt-image-2", "", resp, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c), err)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(got, &failoverErr))
+			require.ErrorIs(t, got, tt.err)
+		})
+	}
+}
+
+// TestOpenAIImagesOAuthTransportErrorAfterDownstreamWriteDoesNotFailover 确认一旦
+// 真实图片字节已经写给客户端，即便识别出传输层错误也不能再切账号重试（会产生
+// 半截响应），只能把错误原样返回让上层结束请求。
+func TestOpenAIImagesOAuthTransportErrorAfterDownstreamWriteDoesNotFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	before := OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
+	_, writeErr := c.Writer.Write([]byte("downstream image bytes"))
+	require.NoError(t, writeErr)
+	classifiedErr := newOpenAIUpstreamStreamReadError(errors.New("unexpected EOF"))
+	account := &Account{ID: 5401, Name: "openai-oauth", Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	resp := &http.Response{Header: http.Header{"X-Request-Id": []string{"req_after_write"}}}
+
+	err := (&OpenAIGatewayService{}).handleOpenAIImagesOAuthResponseError(context.Background(), c, account, "gpt-image-2", "", resp, before, classifiedErr)
+
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.ErrorIs(t, err, classifiedErr)
+	rawEvents, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := rawEvents.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	require.Equal(t, "retry_exhausted_failover", events[0].Kind)
+}
+
+// TestShouldClassifyOpenAIUpstreamStreamReadErrorTransportStrings 覆盖
+// shouldClassifyOpenAIUpstreamStreamReadError 本身（该函数原先只在
+// openai_gateway_chat_completions.go 本地复刻，这次吸收 #5404 时挪到共享的
+// openai_stream_read_error.go，之前没有独立测试直接覆盖它）。
+func TestShouldClassifyOpenAIUpstreamStreamReadErrorTransportStrings(t *testing.T) {
+	for _, message := range []string{"unexpected EOF", "connection reset by peer", "broken pipe", "use of closed network connection"} {
+		t.Run(message, func(t *testing.T) {
+			require.True(t, shouldClassifyOpenAIUpstreamStreamReadError(errors.New(message)))
+		})
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.False(t, shouldClassifyOpenAIUpstreamStreamReadError(errors.New("unexpected EOF"), canceledCtx))
+}
+
+// TestOpenAIImagesOAuthStreamingBufioReadTransportErrorClassified 吸收上游
+// #5404 的第二处改动点：默认（未配置 stream interval/keepalive）的 bufio
+// 读取路径下，reader.ReadBytes 返回传输层错误时必须被分类识别，而不是像之前
+// 那样把裸 error 文本当 SSE "error" 事件直接写给客户端、丢失换账号重试的机会。
+func TestOpenAIImagesOAuthStreamingBufioReadTransportErrorClassified(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       &openAIImagesReadErrorBody{err: errors.New("connection reset by peer")},
+	}
+	svc := &OpenAIGatewayService{}
+
+	_, _, _, _, err := svc.handleOpenAIImagesOAuthStreamingResponse(resp, c, time.Now(), "b64_json", "image_generation", "gpt-image-2")
+
+	var classified *openAIUpstreamStreamReadError
+	require.ErrorAs(t, err, &classified)
+	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamStreamReadErrorCode, code)
+	require.Equal(t, "Upstream response stream was interrupted", message)
+}
+
+// TestOpenAIImagesOAuthStreamingIntervalPathReadTransportErrorClassified 覆盖
+// 同一分类逻辑在启用 stream data interval 配置后的另一条独立读取路径（后台
+// goroutine 通过 channel 上报读取事件），它与默认 bufio 路径是两套并行实现，
+// 必须分别验证传输层错误都会被正确分类而不是直接写给客户端。
+func TestOpenAIImagesOAuthStreamingIntervalPathReadTransportErrorClassified(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       &openAIImagesReadErrorBody{err: errors.New("connection reset by peer")},
+	}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{
+			Gateway: config.GatewayConfig{
+				ImageStreamDataIntervalTimeout: 60,
+			},
+		},
+	}
+
+	_, _, _, _, err := svc.handleOpenAIImagesOAuthStreamingResponse(resp, c, time.Now(), "b64_json", "image_generation", "gpt-image-2")
+
+	var classified *openAIUpstreamStreamReadError
+	require.ErrorAs(t, err, &classified)
+	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamStreamReadErrorCode, code)
+	require.Equal(t, "Upstream response stream was interrupted", message)
 }
 
 func TestOpenAIGatewayServiceForwardImages_OAuthStreamServerErrorAfterFlushDoesNotFailover(t *testing.T) {

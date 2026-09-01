@@ -3498,7 +3498,7 @@ func cleanToolSchema(schema any) any {
 			if key == "$schema" || key == "$id" || key == "$ref" ||
 				key == "$defs" || key == "definitions" ||
 				key == "additionalProperties" || key == "patternProperties" || key == "minLength" ||
-				key == "maxLength" || key == "minItems" || key == "maxItems" {
+				key == "maxLength" || key == "minItems" || key == "maxItems" || key == "exclusiveMinimum" {
 				continue
 			}
 			// 递归清理嵌套对象
@@ -3519,6 +3519,13 @@ func cleanToolSchema(schema any) any {
 				delete(cleaned, "type")
 			}
 		}
+		if cleaned["type"] == "INTEGER" {
+			if minimum, ok := incrementIntegralSchemaBound(v["exclusiveMinimum"]); ok {
+				if existing, exists := cleaned["minimum"]; !exists || schemaNumberLess(existing, minimum) {
+					cleaned["minimum"] = minimum
+				}
+			}
+		}
 		return cleaned
 	case []any:
 		cleaned := make([]any, len(v))
@@ -3528,6 +3535,61 @@ func cleanToolSchema(schema any) any {
 		return cleaned
 	default:
 		return v
+	}
+}
+
+// incrementIntegralSchemaBound 将 JSON Schema 的 exclusiveMinimum 换算为等价的
+// 整数 minimum（x > N 等价于 x >= N+1）。仅当输入是一个有限、无溢出风险的整数值时才转换，
+// 否则返回 false，调用方会直接丢弃该约束而不是生成错误的边界。
+func incrementIntegralSchemaBound(value any) (any, bool) {
+	switch v := value.(type) {
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) || v+1 <= v {
+			return nil, false
+		}
+		return v + 1, true
+	case int:
+		if v == math.MaxInt {
+			return nil, false
+		}
+		return v + 1, true
+	case int64:
+		if v == math.MaxInt64 {
+			return nil, false
+		}
+		return v + 1, true
+	case json.Number:
+		i, err := v.Int64()
+		if err != nil || i == math.MaxInt64 {
+			return nil, false
+		}
+		return json.Number(fmt.Sprintf("%d", i+1)), true
+	default:
+		return nil, false
+	}
+}
+
+// schemaNumberLess 比较两个可能类型不同的 JSON Schema 数值字段，用于判断是否需要
+// 用换算出的 minimum 覆盖已存在的 minimum（只在换算值更严格时才覆盖）。
+func schemaNumberLess(left, right any) bool {
+	leftNumber, leftOK := schemaNumberFloat64(left)
+	rightNumber, rightOK := schemaNumberFloat64(right)
+	return leftOK && rightOK && leftNumber < rightNumber
+}
+
+func schemaNumberFloat64(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, !math.IsNaN(v) && !math.IsInf(v, 0)
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case json.Number:
+		n, err := v.Float64()
+		return n, err == nil && !math.IsInf(n, 0)
+	default:
+		return 0, false
 	}
 }
 

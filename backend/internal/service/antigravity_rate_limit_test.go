@@ -1124,7 +1124,7 @@ func TestResolveAntigravityForwardBaseURL_DefaultProduction(t *testing.T) {
 	dailyURL := "https://daily.test"
 	withAntigravityBaseURLs(t, []string{prodURL, dailyURL})
 
-	resolved := resolveAntigravityForwardBaseURL()
+	resolved := resolveAntigravityForwardBaseURL(nil)
 	require.Equal(t, prodURL, resolved)
 }
 
@@ -1134,7 +1134,7 @@ func TestResolveAntigravityForwardBaseURL_DailyOptIn(t *testing.T) {
 	dailyURL := "https://daily.test"
 	withAntigravityBaseURLs(t, []string{prodURL, dailyURL})
 
-	resolved := resolveAntigravityForwardBaseURL()
+	resolved := resolveAntigravityForwardBaseURL(nil)
 	require.Equal(t, dailyURL, resolved)
 }
 
@@ -1144,7 +1144,7 @@ func TestResolveAntigravityForwardBaseURL_SandboxOptIn(t *testing.T) {
 	dailyURL := "https://daily.test"
 	withAntigravityBaseURLs(t, []string{prodURL, dailyURL})
 
-	resolved := resolveAntigravityForwardBaseURL()
+	resolved := resolveAntigravityForwardBaseURL(nil)
 	require.Equal(t, dailyURL, resolved)
 }
 
@@ -1154,8 +1154,53 @@ func TestResolveAntigravityForwardBaseURL_ProdModeUsesDefaultProduction(t *testi
 	dailyURL := "https://daily.test"
 	withAntigravityBaseURLs(t, []string{prodURL, dailyURL})
 
-	resolved := resolveAntigravityForwardBaseURL()
+	resolved := resolveAntigravityForwardBaseURL(nil)
 	require.Equal(t, prodURL, resolved)
+}
+
+func TestResolveAntigravityForwardBaseURL_PaidTierDefaultsToDaily(t *testing.T) {
+	prodURL := "https://prod.test"
+	dailyURL := "https://daily.test"
+	withAntigravityBaseURLs(t, []string{prodURL, dailyURL})
+
+	tests := []struct {
+		name    string
+		account *Account
+		want    string
+	}{
+		{name: "pro tier routes to daily", account: &Account{Credentials: map[string]any{"plan_type": " Pro "}}, want: dailyURL},
+		{name: "ultra tier routes to daily", account: &Account{Credentials: map[string]any{"plan_type": "ULTRA"}}, want: dailyURL},
+		{name: "free tier stays on production", account: &Account{Credentials: map[string]any{"plan_type": "free"}}, want: prodURL},
+		{name: "unknown plan stays on production", account: &Account{Credentials: map[string]any{"plan_type": "enterprise"}}, want: prodURL},
+		{name: "malformed plan_type stays on production", account: &Account{Credentials: map[string]any{"plan_type": 123}}, want: prodURL},
+		{name: "missing credentials stays on production", account: &Account{}, want: prodURL},
+		{name: "nil account stays on production", account: nil, want: prodURL},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(antigravityForwardBaseURLEnv, "")
+			require.Equal(t, tt.want, resolveAntigravityForwardBaseURL(tt.account))
+		})
+	}
+}
+
+func TestResolveAntigravityForwardBaseURL_EnvOverridesPaidTier(t *testing.T) {
+	prodURL := "https://prod.test"
+	dailyURL := "https://daily.test"
+	withAntigravityBaseURLs(t, []string{prodURL, dailyURL})
+
+	t.Run("daily override wins for free tier", func(t *testing.T) {
+		t.Setenv(antigravityForwardBaseURLEnv, "daily")
+		freeAccount := &Account{Credentials: map[string]any{"plan_type": "free"}}
+		require.Equal(t, dailyURL, resolveAntigravityForwardBaseURL(freeAccount))
+	})
+
+	t.Run("prod override wins for paid tier", func(t *testing.T) {
+		t.Setenv(antigravityForwardBaseURLEnv, "prod")
+		proAccount := &Account{Credentials: map[string]any{"plan_type": "pro"}}
+		require.Equal(t, prodURL, resolveAntigravityForwardBaseURL(proAccount))
+	})
 }
 
 func TestAntigravityAccountSwitchError_Error(t *testing.T) {
