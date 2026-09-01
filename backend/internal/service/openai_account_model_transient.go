@@ -1,0 +1,206 @@
+package service
+
+import (
+	"strings"
+	"sync"
+	"time"
+)
+
+// openAIModelTransientFailureWindow/Cooldown tunables govern the short-lived,
+// in-memory (account, model) failure tracker used to cool down a single model
+// on an OpenAI API-key account after repeated transient upstream errors
+// (5xx / overload) without disabling the whole account or requiring an
+// admin-configured temp-unschedulable rule (see shouldCooldownOpenAITransientUpstreamError
+// in openai_account_runtime_block_fastpath.go).
+const (
+	openAIModelTransientFailureWindow = time.Minute
+	openAIModelTransientShortCooldown = 10 * time.Second
+	openAIModelTransientLongCooldown  = 45 * time.Second
+	openAIModelTransientDefaultMax    = 4096
+	openAIModelTransientMaxModelBytes = 512
+)
+
+type openAIAccountModelKey struct {
+	AccountID int64
+	Model     string
+}
+
+type openAIAccountModelTransientEntry struct {
+	failureStreak int
+	lastFailure   time.Time
+	blockUntil    time.Time
+	lastTouched   time.Time
+}
+
+type openAIAccountModelTransientDecision struct {
+	FailureStreak int
+	Cooldown      time.Duration
+	BlockUntil    time.Time
+}
+
+// openAIAccountModelTransientState is a bounded, mutex-guarded map keyed by
+// (accountID, normalized model) that records short transient-failure streaks.
+// It is intentionally in-memory only (not persisted): entries self-expire
+// after openAIModelTransientFailureWindow of inactivity, and the map evicts
+// its least-recently-touched entry once maxEntries is reached.
+type openAIAccountModelTransientState struct {
+	mu         sync.Mutex
+	entries    map[openAIAccountModelKey]openAIAccountModelTransientEntry
+	maxEntries int
+}
+
+func newOpenAIAccountModelTransientState(maxEntries int) *openAIAccountModelTransientState {
+	if maxEntries <= 0 {
+		maxEntries = openAIModelTransientDefaultMax
+	}
+	return &openAIAccountModelTransientState{
+		entries:    make(map[openAIAccountModelKey]openAIAccountModelTransientEntry),
+		maxEntries: maxEntries,
+	}
+}
+
+func normalizeOpenAIAccountModelTransientModel(model string) string {
+	model = strings.TrimSpace(model)
+	if len(model) > openAIModelTransientMaxModelBytes {
+		return ""
+	}
+	return strings.ToLower(model)
+}
+
+func openAIAccountModelTransientKey(accountID int64, model string) (openAIAccountModelKey, bool) {
+	model = normalizeOpenAIAccountModelTransientModel(model)
+	if accountID <= 0 || model == "" {
+		return openAIAccountModelKey{}, false
+	}
+	return openAIAccountModelKey{AccountID: accountID, Model: model}, true
+}
+
+// recordFailure records a transient upstream failure for (accountID, model).
+// The second consecutive failure within openAIModelTransientFailureWindow
+// applies a short cooldown; the third and later ones apply a longer cooldown.
+// A gap longer than the window (or a success via recordSuccess) resets the streak.
+func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model string, now time.Time) openAIAccountModelTransientDecision {
+	key, ok := openAIAccountModelTransientKey(accountID, model)
+	if s == nil || !ok {
+		return openAIAccountModelTransientDecision{}
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entries == nil {
+		s.entries = make(map[openAIAccountModelKey]openAIAccountModelTransientEntry)
+	}
+	if s.maxEntries <= 0 {
+		s.maxEntries = openAIModelTransientDefaultMax
+	}
+
+	entry, exists := s.entries[key]
+	if !exists {
+		s.evictOldestLocked()
+	}
+	if !exists || entry.lastFailure.IsZero() || now.Sub(entry.lastFailure) > openAIModelTransientFailureWindow || now.Before(entry.lastFailure) {
+		entry.failureStreak = 0
+		entry.blockUntil = time.Time{}
+	}
+	entry.failureStreak++
+	entry.lastFailure = now
+	entry.lastTouched = now
+
+	cooldown := time.Duration(0)
+	switch {
+	case entry.failureStreak >= 3:
+		cooldown = openAIModelTransientLongCooldown
+	case entry.failureStreak == 2:
+		cooldown = openAIModelTransientShortCooldown
+	}
+	if cooldown > 0 {
+		entry.blockUntil = now.Add(cooldown)
+	} else {
+		entry.blockUntil = time.Time{}
+	}
+	s.entries[key] = entry
+	return openAIAccountModelTransientDecision{
+		FailureStreak: entry.failureStreak,
+		Cooldown:      cooldown,
+		BlockUntil:    entry.blockUntil,
+	}
+}
+
+// recordSuccess clears any tracked failure streak/cooldown for (accountID, model).
+// Wired into the handler-layer success report ReportOpenAIAccountScheduleResult
+// via recordOpenAIAccountModelTransientSuccess (see
+// openai_account_runtime_block_fastpath.go) so that a request that actually
+// succeeds resets the streak instead of letting an isolated earlier transient
+// failure linger in the window and get aggregated with a later, unrelated one.
+// Exercised directly by TestOpenAIModelTransient_SuccessClearsStreakAndBlock.
+func (s *openAIAccountModelTransientState) recordSuccess(accountID int64, model string) {
+	key, ok := openAIAccountModelTransientKey(accountID, model)
+	if s == nil || !ok {
+		return
+	}
+	s.mu.Lock()
+	delete(s.entries, key)
+	s.mu.Unlock()
+}
+
+// isBlocked reports whether (accountID, model) is currently within an active
+// cooldown window. A stale entry (no failure within openAIModelTransientFailureWindow)
+// is lazily evicted and treated as not blocked.
+func (s *openAIAccountModelTransientState) isBlocked(accountID int64, model string, now time.Time) bool {
+	key, ok := openAIAccountModelTransientKey(accountID, model)
+	if s == nil || !ok {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, exists := s.entries[key]
+	if !exists {
+		return false
+	}
+	if !entry.lastFailure.IsZero() && now.Sub(entry.lastFailure) > openAIModelTransientFailureWindow {
+		delete(s.entries, key)
+		return false
+	}
+	entry.lastTouched = now
+	s.entries[key] = entry
+	return !entry.blockUntil.IsZero() && now.Before(entry.blockUntil)
+}
+
+// size reports the current entry count; used by tests to verify the
+// bounded-eviction guarantee (see newOpenAIAccountModelTransientState).
+//
+//nolint:unused // 仅被 //go:build unit 测试文件引用；CI 的 golangci-lint 步骤没带 -tags unit 跑，看不到该测试文件里的调用点。
+func (s *openAIAccountModelTransientState) size() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.entries)
+}
+
+func (s *openAIAccountModelTransientState) evictOldestLocked() {
+	if len(s.entries) < s.maxEntries {
+		return
+	}
+	var oldestKey openAIAccountModelKey
+	var oldestTime time.Time
+	found := false
+	for key, entry := range s.entries {
+		if !found || entry.lastTouched.Before(oldestTime) {
+			oldestKey = key
+			oldestTime = entry.lastTouched
+			found = true
+		}
+	}
+	if found {
+		delete(s.entries, oldestKey)
+	}
+}
