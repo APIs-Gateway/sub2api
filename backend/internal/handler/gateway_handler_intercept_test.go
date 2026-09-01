@@ -49,7 +49,7 @@ func TestSendMockInterceptResponse_MaxTokensOneHaiku(t *testing.T) {
 
 	id, ok := response["id"].(string)
 	require.True(t, ok)
-	require.True(t, strings.HasPrefix(id, "msg_bdrk_"))
+	require.True(t, strings.HasPrefix(id, "msg_01"))
 
 	content, ok := response["content"].([]any)
 	require.True(t, ok)
@@ -62,4 +62,71 @@ func TestSendMockInterceptResponse_MaxTokensOneHaiku(t *testing.T) {
 	usage, ok := response["usage"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, float64(1), usage["output_tokens"])
+}
+
+func TestSendMockInterceptResponse_SuggestionMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+
+	sendMockInterceptResponse(ctx, "claude-sonnet-4-5", InterceptTypeSuggestionMode)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	require.Equal(t, "end_turn", response["stop_reason"])
+
+	id, ok := response["id"].(string)
+	require.True(t, ok)
+	require.True(t, strings.HasPrefix(id, "msg_01"))
+
+	content, ok := response["content"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, content)
+
+	firstBlock, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "", firstBlock["text"])
+
+	usage, ok := response["usage"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(1), usage["output_tokens"])
+}
+
+func TestSendMockInterceptStream_SuggestionMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	sendMockInterceptStream(ctx, "claude-sonnet-4-5", InterceptTypeSuggestionMode)
+
+	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
+	body := rec.Body.String()
+	require.Contains(t, body, "event: message_start")
+	require.Contains(t, body, `"id":"msg_01`)
+	require.Contains(t, body, "event: content_block_delta")
+	require.Contains(t, body, `"text":""`)
+	require.Contains(t, body, `"output_tokens":1`)
+	require.Contains(t, body, "event: message_stop")
+}
+
+func TestSendMockInterceptStream_Warmup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	sendMockInterceptStream(ctx, "claude-sonnet-4-5", InterceptTypeWarmup)
+
+	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
+	body := rec.Body.String()
+	require.Contains(t, body, "event: message_start")
+	require.Contains(t, body, `"id":"msg_01`)
+	require.Contains(t, body, "event: content_block_delta")
+	require.Contains(t, body, `"text":"New"`)
+	require.Contains(t, body, `"text":" Conversation"`)
+	require.Contains(t, body, `"output_tokens":2`)
+	require.Contains(t, body, "event: message_stop")
 }

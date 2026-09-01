@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/common"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/redis/go-redis/v9"
 )
@@ -442,14 +443,17 @@ func (c *schedulerCache) allocateSnapshotVersion(ctx context.Context, bucket ser
 
 func (c *schedulerCache) writeSnapshotVersion(ctx context.Context, bucket service.SchedulerBucket, version string, accounts []service.Account) error {
 	snapshotKey := schedulerSnapshotKey(bucket, version)
-	if err := c.writeAccounts(ctx, accounts); err != nil {
+	// cacheableAccounts 只包含成功编码写入的账号；跳过的账号不能出现在快照 ZSET 里，
+	// 否则调度器会读到指向不存在的 sched:acc:<id> 的悬空成员。
+	cacheableAccounts, err := c.writeAccounts(ctx, accounts)
+	if err != nil {
 		return err
 	}
 
-	if len(accounts) > 0 {
+	if len(cacheableAccounts) > 0 {
 		// 使用序号作为 score，保持数据库返回的排序语义。
-		members := make([]redis.Z, 0, len(accounts))
-		for idx, account := range accounts {
+		members := make([]redis.Z, 0, len(cacheableAccounts))
+		for idx, account := range cacheableAccounts {
 			members = append(members, redis.Z{
 				Score:  float64(idx),
 				Member: strconv.FormatInt(account.ID, 10),
@@ -532,7 +536,15 @@ func (c *schedulerCache) SetAccount(ctx context.Context, account *service.Accoun
 	if account == nil || account.ID <= 0 {
 		return nil
 	}
-	return c.writeAccounts(ctx, []service.Account{*account})
+	cacheableAccounts, err := c.writeAccounts(ctx, []service.Account{*account})
+	if err != nil {
+		return err
+	}
+	if len(cacheableAccounts) == 0 {
+		// 编码失败：不能留一个陈旧或半写的缓存条目，删除以让调用方回退到直连数据库读取。
+		return c.DeleteAccount(ctx, account.ID)
+	}
+	return nil
 }
 
 func (c *schedulerCache) DeleteAccount(ctx context.Context, accountID int64) error {
@@ -567,7 +579,10 @@ func (c *schedulerCache) UpdateLastUsed(ctx context.Context, updates map[int64]t
 		}
 		millis, err := schedulerLastUsedMillis(usedAt)
 		if err != nil {
-			return err
+			// 单个账号的时间戳无法编码不应该拖累这一批其余账号的 last_used 更新，
+			// 跳过它，下一轮心跳会再次尝试。
+			logger.LegacyPrintf("repository.scheduler_cache", "Warning: skip unencodable last_used for account %d: %v", id, err)
+			continue
 		}
 		idText := strconv.FormatInt(id, 10)
 		keys = append(keys, schedulerAccountKey(idText), schedulerLastUsedKey(idText))
@@ -705,12 +720,18 @@ func decodeCachedAccount(val any) (*service.Account, error) {
 	return &account, nil
 }
 
-func (c *schedulerCache) writeAccounts(ctx context.Context, accounts []service.Account) error {
+// writeAccounts 把账号写入 sched:acc:*/sched:meta:* 缓存，返回实际写入成功的账号子集。
+// 单个账号的字段编码失败（例如不可表示的时间值）不再让整批写入失败——那会导致同一批里
+// 其余完全健康的账号也丢失缓存更新。跳过的账号只记警告日志，调用方据此过滤后续依赖它们
+// ID 的操作（例如 writeSnapshotVersion 的 ZADD 成员列表），避免留下指向不存在缓存条目的
+// 悬空引用。
+func (c *schedulerCache) writeAccounts(ctx context.Context, accounts []service.Account) ([]service.Account, error) {
 	if len(accounts) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	pipe := c.rdb.Pipeline()
+	cacheableAccounts := make([]service.Account, 0, len(accounts))
 	pending := 0
 	flush := func() error {
 		if pending == 0 {
@@ -727,26 +748,32 @@ func (c *schedulerCache) writeAccounts(ctx context.Context, accounts []service.A
 	for _, account := range accounts {
 		fullPayload, err := common.Marshal(account)
 		if err != nil {
-			return err
+			logger.LegacyPrintf("repository.scheduler_cache", "Warning: skip unencodable account %d payload: %v", account.ID, err)
+			continue
 		}
 		metaPayload, err := common.Marshal(buildSchedulerMetadataAccount(account))
 		if err != nil {
-			return err
+			logger.LegacyPrintf("repository.scheduler_cache", "Warning: skip unencodable account %d metadata: %v", account.ID, err)
+			continue
 		}
 
 		id := strconv.FormatInt(account.ID, 10)
 		pipe.Set(ctx, schedulerAccountKey(id), fullPayload, 0)
 		pipe.Set(ctx, schedulerAccountMetaKey(id), metaPayload, 0)
+		cacheableAccounts = append(cacheableAccounts, account)
 		// Preserve a newer hot-field update during a lagging account or snapshot write.
 		pending++
 		if pending >= c.writeChunkSize {
 			if err := flush(); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
 
-	return flush()
+	if err := flush(); err != nil {
+		return nil, err
+	}
+	return cacheableAccounts, nil
 }
 
 func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any, error) {
