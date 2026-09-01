@@ -6440,6 +6440,79 @@ func (s *GatewayService) parseSSEUsagePassthrough(data string, usage *ClaudeUsag
 			usage.CacheCreationInputTokens = int(total)
 		}
 	}
+
+	// CN Anthropic-compatible providers (Kimi/GLM/DeepSeek, ...) additionally
+	// expose OpenAI-style prompt/cache aliases. Their input_tokens semantics
+	// are inconsistent across event types (e.g. Kimi's message_start reports
+	// a raw total while message_delta reports only the uncached portion), so
+	// re-derive the mutually-exclusive buckets from those aliases whenever
+	// present. Native Anthropic responses never populate these fields and are
+	// left untouched.
+	usageNode := parsed.Get("usage")
+	if parsed.Get("type").String() == "message_start" {
+		usageNode = parsed.Get("message.usage")
+	}
+	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)
+}
+
+// normalizeAnthropicCompatiblePromptUsage converts CN Anthropic-compatible
+// providers' OpenAI-style prompt/cache aliases (prompt_tokens, cached_tokens,
+// prompt_tokens_details.cached_tokens, prompt_cache_hit/miss_tokens) into
+// ClaudeUsage's mutually-exclusive input/cache buckets, so downstream billing
+// (which sums InputTokens + CacheReadInputTokens + CacheCreationInputTokens as
+// the total context, see BillingService.calculateTokenCost) does not double
+// count or drop tokens. Returns false (no-op) when none of those aliases are
+// present, i.e. for native Anthropic responses.
+func normalizeAnthropicCompatiblePromptUsage(usageNode gjson.Result, usage *ClaudeUsage) bool {
+	if usage == nil || !usageNode.Exists() {
+		return false
+	}
+	promptTokens := usageNode.Get("prompt_tokens")
+	promptCacheHitTokens := usageNode.Get("prompt_cache_hit_tokens")
+	promptCacheMissTokens := usageNode.Get("prompt_cache_miss_tokens")
+	if (!promptTokens.Exists() || promptTokens.Int() <= 0) &&
+		!promptCacheHitTokens.Exists() && !promptCacheMissTokens.Exists() {
+		return false
+	}
+
+	cacheReadTokens := usage.CacheReadInputTokens
+	if v := usageNode.Get("cache_read_input_tokens"); v.Exists() {
+		cacheReadTokens = int(v.Int())
+	}
+	if cacheReadTokens == 0 {
+		if v := usageNode.Get("cached_tokens"); v.Exists() {
+			cacheReadTokens = int(v.Int())
+		}
+	}
+	if cacheReadTokens == 0 {
+		if v := usageNode.Get("prompt_tokens_details.cached_tokens"); v.Exists() {
+			cacheReadTokens = int(v.Int())
+		}
+	}
+	if cacheReadTokens == 0 && promptCacheHitTokens.Exists() {
+		cacheReadTokens = max(int(promptCacheHitTokens.Int()), 0)
+	}
+
+	cacheCreationTokens := usage.CacheCreationInputTokens
+	if v := usageNode.Get("cache_creation_input_tokens"); v.Exists() {
+		cacheCreationTokens = int(v.Int())
+	}
+	if cacheCreationTokens == 0 {
+		cc5m := usageNode.Get("cache_creation.ephemeral_5m_input_tokens").Int()
+		cc1h := usageNode.Get("cache_creation.ephemeral_1h_input_tokens").Int()
+		if cc5m > 0 || cc1h > 0 {
+			cacheCreationTokens = int(cc5m + cc1h)
+		}
+	}
+
+	if promptCacheMissTokens.Exists() {
+		usage.InputTokens = max(int(promptCacheMissTokens.Int()), 0)
+	} else {
+		usage.InputTokens = max(int(promptTokens.Int())-cacheReadTokens-cacheCreationTokens, 0)
+	}
+	usage.CacheReadInputTokens = cacheReadTokens
+	usage.CacheCreationInputTokens = cacheCreationTokens
+	return true
 }
 
 func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
@@ -6473,6 +6546,7 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 			usage.CacheReadInputTokens = int(cached)
 		}
 	}
+	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)
 	return usage
 }
 

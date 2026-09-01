@@ -355,17 +355,27 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 			logger.LegacyPrintf("service.auth", "[Auth] Failed to initialize affiliate profile for user %d: %v", user.ID, err)
 		}
 		if code := effectiveAffiliateCode; code != "" {
-			if err := s.affiliateService.BindInviterByCodeStrict(ctx, user.ID, code); err != nil {
+			err := s.affiliateService.BindInviterByCodeStrict(ctx, user.ID, code)
+			switch {
+			case err == nil:
+				s.grantSignupReward(ctx, user.ID)
+			case errors.Is(err, ErrAffiliateWeeklyInviteLimitReached):
+				// 走到这里说明本次注册的准入凭证不是这张邀请人邀请码（否则建号前那道
+				// 预检就已经拦下了），名额满只影响返利归因。为此把一次已经放行的注册
+				// 整个回滚掉，代价完全不成比例：用户手上的注册码明明有效，却被一个他
+				// 看不见、也管不着的别人的名额挡在门外。跳过归因和奖励，注册照常完成。
+				logger.LegacyPrintf("service.auth",
+					"[Auth] Inviter code hit weekly limit for user %d; signup continues without inviter attribution", user.ID)
+			default:
 				// 账号此刻已经落库。不删掉的话这个邮箱就被一个半成品账号占死了，
 				// 用户换个码重试只会撞 EMAIL_EXISTS。第三方注册那条路本来就是这么回滚的，
 				// 这里补齐，两条路行为一致。此时注册码尚未标记为已用，无需归还。
-				if delErr := s.userRepo.Delete(ctx, user.ID); delErr != nil {
+				if delErr := s.purgeRolledBackUser(ctx, user.ID); delErr != nil {
 					logger.LegacyPrintf("service.auth",
 						"[Auth] Failed to roll back user %d after inviter binding failed: %v", user.ID, delErr)
 				}
 				return "", nil, err
 			}
-			s.grantSignupReward(ctx, user.ID)
 		}
 	}
 
@@ -1031,6 +1041,11 @@ func authSourceSignupSettings(defaults *AuthSourceDefaultSettings, signupSource 
 // bindOAuthAffiliate initializes the affiliate profile and binds the inviter
 // for an OAuth-registered user. Invalid non-empty invite codes block new
 // account creation so OAuth cannot bypass the email signup rule.
+//
+// 邀请人本周名额已满是唯一的例外：调用方拿到 error 会把整个注册回滚掉（软删刚建好
+// 的账号、退回注册码），而这个码往往是用户顺着别人的邀请链接一路带进来的 URL 参数，
+// 他既看不见也改不掉。为一条"挂不上邀请人"的归因信息把人挡在门外并不划算，
+// 何况准入本身是另一张有效的注册码给的。这里只跳过归因，注册照常完成。
 func (s *AuthService) bindOAuthAffiliate(ctx context.Context, userID int64, affiliateCode string) error {
 	if s.affiliateService == nil || userID <= 0 {
 		return nil
@@ -1039,11 +1054,17 @@ func (s *AuthService) bindOAuthAffiliate(ctx context.Context, userID int64, affi
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to initialize affiliate profile for user %d: %v", userID, err)
 	}
 	if code := strings.TrimSpace(affiliateCode); code != "" {
-		if err := s.affiliateService.BindInviterByCodeStrict(ctx, userID, code); err != nil {
+		err := s.affiliateService.BindInviterByCodeStrict(ctx, userID, code)
+		switch {
+		case err == nil:
+			s.grantSignupReward(ctx, userID)
+		case errors.Is(err, ErrAffiliateWeeklyInviteLimitReached):
+			logger.LegacyPrintf("service.auth",
+				"[Auth] Inviter code hit weekly limit for user %d; signup continues without inviter attribution", userID)
+		default:
 			logger.LegacyPrintf("service.auth", "[Auth] Failed to bind affiliate inviter for user %d: %v", userID, err)
 			return err
 		}
-		s.grantSignupReward(ctx, userID)
 	}
 	return nil
 }

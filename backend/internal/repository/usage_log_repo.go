@@ -3461,13 +3461,19 @@ func (r *usageLogRepository) GetAllGroupUsageSummary(ctx context.Context, todayS
 }
 
 // resolveModelDimensionExpression maps model source type to a safe SQL expression.
+//
+// When upstream_model is empty, it falls back to model (the actual
+// channel-mapped/billed model), not requested_model: requested_model is what
+// the caller asked for before channel mapping, so falling back to it would
+// misattribute channel-mapped usage under the pre-mapping model name.
 func resolveModelDimensionExpression(modelType string) string {
 	requestedExpr := "COALESCE(NULLIF(TRIM(requested_model), ''), model)"
+	upstreamExpr := "COALESCE(NULLIF(TRIM(upstream_model), ''), model)"
 	switch usagestats.NormalizeModelSource(modelType) {
 	case usagestats.ModelSourceUpstream:
-		return fmt.Sprintf("COALESCE(NULLIF(TRIM(upstream_model), ''), %s)", requestedExpr)
+		return upstreamExpr
 	case usagestats.ModelSourceMapping:
-		return fmt.Sprintf("(%s || ' -> ' || COALESCE(NULLIF(TRIM(upstream_model), ''), %s))", requestedExpr, requestedExpr)
+		return fmt.Sprintf("(%s || ' -> ' || %s)", requestedExpr, upstreamExpr)
 	default:
 		return requestedExpr
 	}
