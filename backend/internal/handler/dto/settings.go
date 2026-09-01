@@ -27,7 +27,10 @@ type CustomEndpoint struct {
 
 // SystemSettings represents the admin settings API response payload.
 type SystemSettings struct {
-	RegistrationEnabled              bool                     `json:"registration_enabled"`
+	RegistrationEnabled bool `json:"registration_enabled"`
+	// SignupSourceEnabled 是各注册来源的独立开关（key: email/github/google/linuxdo/wechat/oidc/dingtalk）。
+	// email 代表账号密码注册；缺省视为允许，registration_enabled 仍是总闸。
+	SignupSourceEnabled              map[string]bool          `json:"signup_source_enabled"`
 	EmailVerifyEnabled               bool                     `json:"email_verify_enabled"`
 	GmailAliasFilterEnabled          bool                     `json:"gmail_alias_filter_enabled"`
 	RegistrationEmailSuffixWhitelist []string                 `json:"registration_email_suffix_whitelist"`
@@ -153,6 +156,10 @@ type SystemSettings struct {
 	AffiliateRebateFreezeHours   int                          `json:"affiliate_rebate_freeze_hours"`
 	AffiliateRebateDurationDays  int                          `json:"affiliate_rebate_duration_days"`
 	AffiliateRebatePerInviteeCap float64                      `json:"affiliate_rebate_per_invitee_cap"`
+	AffiliateWeeklyInviteLimit   int                          `json:"affiliate_weekly_invite_limit"`
+	AffiliateSignupRewardEnabled bool                         `json:"affiliate_signup_reward_enabled"`
+	AffiliateSignupRewardAmount  int64                        `json:"affiliate_signup_reward_amount"`
+	AffiliateCodeAdmitsSignup    bool                         `json:"affiliate_code_admits_signup"`
 	DefaultUserRPMLimit          int                          `json:"default_user_rpm_limit"`
 	DefaultSubscriptions         []DefaultSubscriptionSetting `json:"default_subscriptions"`
 
@@ -294,13 +301,16 @@ type DefaultSubscriptionSetting struct {
 }
 
 type PublicSettings struct {
-	RegistrationEnabled              bool                     `json:"registration_enabled"`
+	RegistrationEnabled bool `json:"registration_enabled"`
+	// SignupSourceEnabled 让注册页只展示当前还开着的注册入口
+	SignupSourceEnabled              map[string]bool          `json:"signup_source_enabled"`
 	EmailVerifyEnabled               bool                     `json:"email_verify_enabled"`
 	ForceEmailOnThirdPartySignup     bool                     `json:"force_email_on_third_party_signup"`
 	RegistrationEmailSuffixWhitelist []string                 `json:"registration_email_suffix_whitelist"`
 	PromoCodeEnabled                 bool                     `json:"promo_code_enabled"`
 	PasswordResetEnabled             bool                     `json:"password_reset_enabled"`
 	InvitationCodeEnabled            bool                     `json:"invitation_code_enabled"`
+	AffiliateCodeAdmitsSignup        bool                     `json:"affiliate_code_admits_signup"`
 	TotpEnabled                      bool                     `json:"totp_enabled"` // TOTP 双因素认证
 	LoginAgreementEnabled            bool                     `json:"login_agreement_enabled"`
 	LoginAgreementMode               string                   `json:"login_agreement_mode"`

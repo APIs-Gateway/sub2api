@@ -1765,6 +1765,7 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 		strings.TrimSpace(req.VerifyCode),
 		strings.TrimSpace(req.InvitationCode),
 		strings.TrimSpace(session.ProviderType),
+		strings.TrimSpace(req.AffCode),
 	)
 	if err != nil {
 		if errors.Is(err, service.ErrEmailExists) {
@@ -1987,6 +1988,27 @@ func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 		return
 	}
 	if pendingSessionRequiresBindLogin(payload) {
+		response.Success(c, payload)
+		return
+	}
+	// ─── 安全修复（账号接管）────────────────────────────────────────────
+	// 非终态 session（例如 step == oauthPendingChoiceStep，也就是
+	// "choose_account_action_required"）的 TargetUserID 可能来自攻击者在
+	// SendPendingOAuthVerifyCode / createPendingOAuthAccount 提交的他人邮箱：
+	// 一旦该邮箱命中既有账户，transitionPendingOAuthAccountToChoiceState 会把
+	// 本 pending session 的 TargetUserID 指向该邮箱所属用户，全程没有密码、
+	// 没有邮箱验证码回填、没有任何账号所有权证明。此时若带着 adoption
+	// decision 继续往下走，shouldBindPendingOAuthIdentity 对 intent=="login"
+	// 恒真，下方 applyPendingOAuthAdoption 会把攻击者的 OAuth identity
+	// 直接绑定到 session.TargetUserID（受害者账号）；攻击者之后用同一 OAuth
+	// 身份再次登录，即会被系统识别为受害者本人——完整账号接管。
+	// 只有两类 session 允许在此处执行 adoption/binding：
+	//   1. canIssueTokenPair == true —— 登录终态，identity 已安全绑定该用户；
+	//   2. intent == bind_current_user —— 已登录用户主动发起绑定，
+	//      绑定目标来自其自身登录态而非攻击者可控的邮箱查找。
+	// 其余状态（包括 choice 步骤）一律只返回 payload，不绑定、不消费 session；
+	// 真正的"绑定既有账户"必须走 bindPendingOAuthLogin（要求密码验证）。
+	if !canIssueTokenPair && !strings.EqualFold(strings.TrimSpace(session.Intent), oauthIntentBindCurrentUser) {
 		response.Success(c, payload)
 		return
 	}

@@ -844,6 +844,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyPromoCodeEnabled,
 		SettingKeyPasswordResetEnabled,
 		SettingKeyInvitationCodeEnabled,
+		SettingKeyAffiliateCodeAdmitsSignup,
 		SettingKeyTotpEnabled,
 		SettingKeyLoginAgreementEnabled,
 		SettingKeyLoginAgreementMode,
@@ -907,6 +908,12 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
 		SettingKeyAllowUserViewErrorRequests,
+	}
+	// 各注册来源的独立开关必须一并取出：漏掉它们的话 parseSignupSourceEnabled 读到的全是空值，
+	// 会把已经关掉的来源一律报成「可用」，注册页照旧把表单画出来，用户填完整页才撞上
+	// SIGNUP_SOURCE_DISABLED——正是这个公开接口本该避免的情况。
+	for _, source := range SignupSources {
+		keys = append(keys, SignupSourceEnabledSettingKey(source))
 	}
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -973,12 +980,14 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 
 	return &PublicSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
+		SignupSourceEnabled:              parseSignupSourceEnabled(settings),
 		EmailVerifyEnabled:               emailVerifyEnabled,
 		ForceEmailOnThirdPartySignup:     settings[SettingKeyForceEmailOnThirdPartySignup] == "true",
 		RegistrationEmailSuffixWhitelist: registrationEmailSuffixWhitelist,
 		PromoCodeEnabled:                 settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
 		PasswordResetEnabled:             passwordResetEnabled,
 		InvitationCodeEnabled:            settings[SettingKeyInvitationCodeEnabled] == "true",
+		AffiliateCodeAdmitsSignup:        settings[SettingKeyAffiliateCodeAdmitsSignup] == "true",
 		TotpEnabled:                      settings[SettingKeyTotpEnabled] == "true",
 		LoginAgreementEnabled:            settings[SettingKeyLoginAgreementEnabled] == "true" && len(loginAgreementDocuments) > 0,
 		LoginAgreementMode:               normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
@@ -1305,11 +1314,13 @@ func (s *SettingService) SetVersion(version string) {
 // drift automatically (see setting_service_injection_test.go).
 type PublicSettingsInjectionPayload struct {
 	RegistrationEnabled              bool                     `json:"registration_enabled"`
+	SignupSourceEnabled              map[string]bool          `json:"signup_source_enabled"`
 	EmailVerifyEnabled               bool                     `json:"email_verify_enabled"`
 	RegistrationEmailSuffixWhitelist []string                 `json:"registration_email_suffix_whitelist"`
 	PromoCodeEnabled                 bool                     `json:"promo_code_enabled"`
 	PasswordResetEnabled             bool                     `json:"password_reset_enabled"`
 	InvitationCodeEnabled            bool                     `json:"invitation_code_enabled"`
+	AffiliateCodeAdmitsSignup        bool                     `json:"affiliate_code_admits_signup"`
 	TotpEnabled                      bool                     `json:"totp_enabled"`
 	LoginAgreementEnabled            bool                     `json:"login_agreement_enabled"`
 	LoginAgreementMode               string                   `json:"login_agreement_mode"`
@@ -1374,11 +1385,13 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 
 	return &PublicSettingsInjectionPayload{
 		RegistrationEnabled:              settings.RegistrationEnabled,
+		SignupSourceEnabled:              settings.SignupSourceEnabled,
 		EmailVerifyEnabled:               settings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist: settings.RegistrationEmailSuffixWhitelist,
 		PromoCodeEnabled:                 settings.PromoCodeEnabled,
 		PasswordResetEnabled:             settings.PasswordResetEnabled,
 		InvitationCodeEnabled:            settings.InvitationCodeEnabled,
+		AffiliateCodeAdmitsSignup:        settings.AffiliateCodeAdmitsSignup,
 		TotpEnabled:                      settings.TotpEnabled,
 		LoginAgreementEnabled:            settings.LoginAgreementEnabled,
 		LoginAgreementMode:               settings.LoginAgreementMode,
@@ -2049,6 +2062,29 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		settings.AffiliateRebatePerInviteeCap = AffiliateRebatePerInviteeCapDefault
 	}
 	updates[SettingKeyAffiliateRebatePerInviteeCap] = strconv.FormatFloat(settings.AffiliateRebatePerInviteeCap, 'f', 8, 64)
+	if settings.AffiliateWeeklyInviteLimit < 0 {
+		settings.AffiliateWeeklyInviteLimit = AffiliateWeeklyInviteLimitDefault
+	}
+	if settings.AffiliateWeeklyInviteLimit > AffiliateWeeklyInviteLimitMax {
+		settings.AffiliateWeeklyInviteLimit = AffiliateWeeklyInviteLimitMax
+	}
+	updates[SettingKeyAffiliateWeeklyInviteLimit] = strconv.Itoa(settings.AffiliateWeeklyInviteLimit)
+	updates[SettingKeyAffiliateSignupRewardEnabled] = strconv.FormatBool(settings.AffiliateSignupRewardEnabled)
+	if settings.AffiliateSignupRewardAmount < 0 {
+		settings.AffiliateSignupRewardAmount = AffiliateSignupRewardAmountDefault
+	}
+	if settings.AffiliateSignupRewardAmount > AffiliateSignupRewardAmountMax {
+		settings.AffiliateSignupRewardAmount = AffiliateSignupRewardAmountMax
+	}
+	updates[SettingKeyAffiliateSignupRewardAmount] = strconv.FormatInt(settings.AffiliateSignupRewardAmount, 10)
+	updates[SettingKeyAffiliateCodeAdmitsSignup] = strconv.FormatBool(settings.AffiliateCodeAdmitsSignup)
+	// 分渠道注册开关：只写入本次显式给出的来源，未出现在 map 里的保持原值，
+	// 这样老版本前端提交完整设置时不会把新开关意外重置掉。
+	for _, source := range SignupSources {
+		if enabled, ok := settings.SignupSourceEnabled[source]; ok {
+			updates[SignupSourceEnabledSettingKey(source)] = strconv.FormatBool(enabled)
+		}
+	}
 	updates[SettingKeyDefaultUserRPMLimit] = strconv.Itoa(settings.DefaultUserRPMLimit)
 	defaultSubsJSON, err := json.Marshal(settings.DefaultSubscriptions)
 	if err != nil {
@@ -2661,6 +2697,19 @@ func (s *SettingService) IsInvitationCodeEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
+// IsAffiliateCodeAdmitsSignupEnabled 返回「邀请人邀请码本身可放行注册」是否开启。
+//
+// 默认关闭：打开之后，任何拿得到一个有效邀请码的人都能注册，站点就从"管理员发码才能进"
+// 变成了"有邀请链接就能进"。这是产品口径的放宽，必须由管理员显式开启，
+// 所以读不到或读坏一律回落到关闭。
+func (s *SettingService) IsAffiliateCodeAdmitsSignupEnabled(ctx context.Context) bool {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateCodeAdmitsSignup)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(value) == "true"
+}
+
 // GetCustomMenuItemsRaw returns the raw JSON string of custom_menu_items setting.
 func (s *SettingService) GetCustomMenuItemsRaw(ctx context.Context) string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyCustomMenuItems)
@@ -2740,6 +2789,83 @@ func (s *SettingService) GetAffiliateRebatePerInviteeCap(ctx context.Context) fl
 		return AffiliateRebatePerInviteeCapDefault
 	}
 	return cap
+}
+
+// GetAffiliateWeeklyInviteLimit 返回单个邀请码每自然周可成功邀请的人数上限。
+// 返回 0 表示不限；解析失败或为负一律回退到默认值（不限），避免配置写坏时把注册全部卡死。
+func (s *SettingService) GetAffiliateWeeklyInviteLimit(ctx context.Context) int {
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateWeeklyInviteLimit)
+	if err != nil {
+		return AffiliateWeeklyInviteLimitDefault
+	}
+	limit, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || limit < 0 {
+		return AffiliateWeeklyInviteLimitDefault
+	}
+	if limit > AffiliateWeeklyInviteLimitMax {
+		return AffiliateWeeklyInviteLimitMax
+	}
+	return limit
+}
+
+// GetAffiliateSignupRewardEnabled 返回「邀请注册即得积分」是否开启。
+//
+// 默认关闭：这笔奖励不要求被邀请人付出任何成本，一旦误开就直接变成刷号的收益来源，
+// 所以读不到或读坏都必须回落到关闭，而不是沿用某个"看起来合理"的值。
+func (s *SettingService) GetAffiliateSignupRewardEnabled(ctx context.Context) bool {
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateSignupRewardEnabled)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(raw) == "true"
+}
+
+// GetAffiliateSignupRewardAmount 返回每成功邀请一人给邀请人的积分数。
+//
+// 用 ParseFloat 而不是 Atoi：这个键在历史部署里是以 numeric 形式落库的，
+// 取出来长这样 "50.00000000"，Atoi 会直接失败并把奖励静默降为 0。
+// 积分本身是整数，小数部分向下取整丢弃。
+// 解析失败或为负一律回退到 0（不发放），避免配置写坏时凭空发出积分。
+func (s *SettingService) GetAffiliateSignupRewardAmount(ctx context.Context) int64 {
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAffiliateSignupRewardAmount)
+	if err != nil {
+		return AffiliateSignupRewardAmountDefault
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || v <= 0 {
+		return AffiliateSignupRewardAmountDefault
+	}
+	amount := int64(v)
+	if amount > AffiliateSignupRewardAmountMax {
+		return AffiliateSignupRewardAmountMax
+	}
+	return amount
+}
+
+// parseSignupSourceEnabled 从一批原始设置里读出各注册来源的开关。
+// 缺省（键不存在或值为空）一律视为允许，与 IsSignupSourceEnabled 的判定保持一致，
+// 保证「读出来展示的状态」和「实际放行的行为」不会出现分歧。
+func parseSignupSourceEnabled(settings map[string]string) map[string]bool {
+	result := make(map[string]bool, len(SignupSources))
+	for _, source := range SignupSources {
+		result[source] = strings.TrimSpace(settings[SignupSourceEnabledSettingKey(source)]) != "false"
+	}
+	return result
+}
+
+// IsSignupSourceEnabled 判断某个注册来源是否允许注册（email 即账号密码注册）。
+// 与其他开关相反，这里缺省放行：设置项不存在时说明站点还没配过分渠道开关，
+// 此时应保持升级前的行为，由 registration_enabled 这个总闸继续把关。
+func (s *SettingService) IsSignupSourceEnabled(ctx context.Context, source string) bool {
+	value, err := s.settingRepo.GetValue(ctx, SignupSourceEnabledSettingKey(source))
+	if err != nil {
+		return true
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return true
+	}
+	return value != "false"
 }
 
 // IsPasswordResetEnabled 检查是否启用密码重置功能
@@ -3054,6 +3180,10 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAffiliateRebateFreezeHours:                strconv.Itoa(AffiliateRebateFreezeHoursDefault),
 		SettingKeyAffiliateRebateDurationDays:               strconv.Itoa(AffiliateRebateDurationDaysDefault),
 		SettingKeyAffiliateRebatePerInviteeCap:              strconv.FormatFloat(AffiliateRebatePerInviteeCapDefault, 'f', 2, 64),
+		SettingKeyAffiliateWeeklyInviteLimit:                strconv.Itoa(AffiliateWeeklyInviteLimitDefault),
+		SettingKeyAffiliateSignupRewardEnabled:              "false",
+		SettingKeyAffiliateSignupRewardAmount:               strconv.FormatInt(AffiliateSignupRewardAmountDefault, 10),
+		SettingKeyAffiliateCodeAdmitsSignup:                 "false",
 		SettingKeyDefaultUserRPMLimit:                       "0",
 		SettingKeyDefaultSubscriptions:                      "[]",
 		SettingKeyAuthSourceDefaultEmailBalance:             "0",
@@ -3186,6 +3316,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result := &SystemSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
+		SignupSourceEnabled:              parseSignupSourceEnabled(settings),
 		EmailVerifyEnabled:               emailVerifyEnabled,
 		GmailAliasFilterEnabled:          settings[SettingKeyGmailAliasFilterEnabled] != "false", // 默认启用
 		RegistrationEmailSuffixWhitelist: ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
@@ -3193,6 +3324,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		PasswordResetEnabled:             emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
 		FrontendURL:                      settings[SettingKeyFrontendURL],
 		InvitationCodeEnabled:            settings[SettingKeyInvitationCodeEnabled] == "true",
+		AffiliateCodeAdmitsSignup:        settings[SettingKeyAffiliateCodeAdmitsSignup] == "true",
 		TotpEnabled:                      settings[SettingKeyTotpEnabled] == "true",
 		SessionBindingEnabled:            settings[SettingKeySessionBindingEnabled] == "true", // 默认关闭
 		StepUpEnabled:                    settings[SettingKeyStepUpEnabled] == "true",         // 默认关闭
@@ -3273,6 +3405,23 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	if perInviteeCap, err := strconv.ParseFloat(settings[SettingKeyAffiliateRebatePerInviteeCap], 64); err == nil && perInviteeCap >= 0 {
 		result.AffiliateRebatePerInviteeCap = perInviteeCap
+	}
+	if weeklyInviteLimit, err := strconv.Atoi(settings[SettingKeyAffiliateWeeklyInviteLimit]); err == nil && weeklyInviteLimit >= 0 {
+		if weeklyInviteLimit > AffiliateWeeklyInviteLimitMax {
+			weeklyInviteLimit = AffiliateWeeklyInviteLimitMax
+		}
+		result.AffiliateWeeklyInviteLimit = weeklyInviteLimit
+	}
+	result.AffiliateSignupRewardEnabled = strings.TrimSpace(settings[SettingKeyAffiliateSignupRewardEnabled]) == "true"
+	result.AffiliateCodeAdmitsSignup = strings.TrimSpace(settings[SettingKeyAffiliateCodeAdmitsSignup]) == "true"
+	// 按浮点解析而不是 Atoi：历史部署里这个键以 numeric 形式落库，取出来是 "50.00000000"，
+	// 用 Atoi 会解析失败，把一个已经配好的奖励静默清零。
+	if signupReward, err := strconv.ParseFloat(strings.TrimSpace(settings[SettingKeyAffiliateSignupRewardAmount]), 64); err == nil && signupReward >= 0 {
+		amount := int64(signupReward)
+		if amount > AffiliateSignupRewardAmountMax {
+			amount = AffiliateSignupRewardAmountMax
+		}
+		result.AffiliateSignupRewardAmount = amount
 	}
 	result.DefaultSubscriptions = parseDefaultSubscriptions(settings[SettingKeyDefaultSubscriptions])
 
