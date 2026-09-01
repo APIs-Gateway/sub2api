@@ -22,6 +22,11 @@ func TestEnsureCodexIdentityHeaders(t *testing.T) {
 
 	t.Run("保留已有官方UA和合法version并重新配对", func(t *testing.T) {
 		const tuiUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
+		// codex-tui 命中 codexLoadShedOriginators 降载桶，enforceCodexIdentityHeaders
+		// 会把配对出的官方身份统一归一化为 codex_cli_rs：originator 与 UA 首段替换，
+		// 尾部与被归一化身份同名的 `(codex-tui; 9.9.9)` 客户端标识组被裁掉，
+		// version / OS / 架构 / 终端指纹（"9.9.9"、"Mac OS X 14.0; arm64"、"iTerm"）原样保留。
+		const wantUA = "codex_cli_rs/9.9.9 (Mac OS X 14.0; arm64) iTerm"
 		h := make(http.Header)
 		h.Set("user-agent", tuiUA)
 		h.Set("version", "9.9.9")
@@ -30,8 +35,8 @@ func TestEnsureCodexIdentityHeaders(t *testing.T) {
 		ensureCodexIdentityHeaders(h)
 		enforceCodexIdentityHeaders(h)
 
-		require.Equal(t, "codex-tui", h.Get("originator"))
-		require.Equal(t, tuiUA, h.Get("user-agent"))
+		require.Equal(t, "codex_cli_rs", h.Get("originator"))
+		require.Equal(t, wantUA, h.Get("user-agent"))
 		require.Equal(t, "9.9.9", h.Get("version"))
 		require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
 	})

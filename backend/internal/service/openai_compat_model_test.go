@@ -1034,6 +1034,10 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	const tuiUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
+	// codex-tui 命中 codexLoadShedOriginators 降载桶，配对后会被 enforceCodexIdentityHeaders
+	// 统一归一化为 codex_cli_rs：originator 与 UA 首段替换，尾部与被归一化身份同名的
+	// `(codex-tui; 9.9.9)` 客户端标识组被裁掉，version / OS / 架构 / 终端指纹原样保留。
+	const wantTuiNormalizedUA = "codex_cli_rs/9.9.9 (Mac OS X 14.0; arm64) iTerm"
 	tests := []struct {
 		name           string
 		userAgent      string
@@ -1045,8 +1049,8 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 			name:           "官方UA逐字保留并重新配对",
 			userAgent:      tuiUA,
 			originator:     "opencode",
-			wantUserAgent:  tuiUA,
-			wantOriginator: "codex-tui",
+			wantUserAgent:  wantTuiNormalizedUA,
+			wantOriginator: "codex_cli_rs",
 		},
 		{
 			name:           "第三方UA回退为默认Codex身份",
