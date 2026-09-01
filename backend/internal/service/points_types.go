@@ -52,6 +52,9 @@ const (
 	PointsKindWithdrawRefund = "withdraw_refund"
 	PointsKindToPlan         = "to_plan"
 	PointsKindAdjust         = "adjust"
+	// PointsKindSignupReward 是「邀请注册即得」奖励，与 earn 的区别在于它不对应任何付费行为：
+	// 只要被邀请人注册成功并绑定了邀请人就发放，因此也没有退款可撤回。
+	PointsKindSignupReward = "signup_reward"
 
 	PointsWithdrawalStatusPending  = "pending"
 	PointsWithdrawalStatusPaid     = "paid"
@@ -133,6 +136,17 @@ type EarnPointsInput struct {
 	PegAt              float64
 }
 
+// SignupRewardInput 一次「邀请注册即得」发放。
+//
+// 来源锚是 SourceUserID（被邀请人）而不是订单或兑换码——这笔奖励恰恰发生在
+// 被邀请人还没有产生任何付费行为的时候，没有订单可以拿来做幂等键。
+type SignupRewardInput struct {
+	InviterID    int64
+	SourceUserID int64
+	Points       int64
+	PegAt        float64
+}
+
 // CreateWithdrawalInput 创建一张提现单（金额由 service 用纯函数预算好）。
 type CreateWithdrawalInput struct {
 	UserID              int64
@@ -174,6 +188,9 @@ type PointsRepository interface {
 	GetAccount(ctx context.Context, userID int64) (*PointsAccount, error)
 	// EarnPoints 幂等返积分（partial-unique on (user_id, source_order_id) WHERE kind='earn'）。返回是否真正入账。
 	EarnPoints(ctx context.Context, in EarnPointsInput) (bool, error)
+	// GrantSignupReward 幂等发放邀请注册奖励（partial-unique on (source_user_id) WHERE kind='signup_reward'）。
+	// 返回是否真正入账；重复调用只会命中唯一索引并返回 false。
+	GrantSignupReward(ctx context.Context, in SignupRewardInput) (bool, error)
 	// ClawbackByOrder 退款撤回积分：读该单 earn 流水取 earned，floor 比例撤、可转负、一单一撤幂等。返回撤回积分数。
 	ClawbackByOrder(ctx context.Context, sourceOrderID int64, refundAmount, originalAmount float64) (int64, error)
 	// ThawDuePoints 到期冻结积分 → 可用，返回解冻数。

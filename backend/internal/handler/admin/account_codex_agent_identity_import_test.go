@@ -63,14 +63,14 @@ func TestCodexAgentIdentityIndexSeparatesTeamsAndMergesRuntimes(t *testing.T) {
 	}
 	index := buildCodexAccountIndex([]service.Account{existing})
 
-	matched := index.Find(buildCodexAgentIdentityKeys("team-b"))
+	matched, _ := index.Find(buildCodexAgentIdentityKeys("team-b"), "")
 	require.Nil(t, matched, "a shared ChatGPT user ID must not merge different Teams")
 
-	matched = index.Find(buildCodexAgentIdentityKeys("team-a"))
+	matched, _ = index.Find(buildCodexAgentIdentityKeys("team-a"), "")
 	require.NotNil(t, matched)
 	require.Equal(t, int64(1), matched.ID)
 
-	matched = index.Find(buildCodexAgentIdentityKeys("team-a"))
+	matched, _ = index.Find(buildCodexAgentIdentityKeys("team-a"), "")
 	require.NotNil(t, matched, "a new runtime must still match the same ChatGPT account")
 }
 

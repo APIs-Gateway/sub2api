@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // fakeInsertRecorder 记录 BulkInsertInitial 调用，实现 UserPlatformQuotaRepository port。
 type fakeInsertRecorder struct {
 	records []UserPlatformQuotaRecord
 	err     error
+	calls   int
 }
 
 func (f *fakeInsertRecorder) GetByUserPlatform(_ context.Context, _ int64, _ string) (*UserPlatformQuotaRecord, error) {
@@ -20,6 +23,7 @@ func (f *fakeInsertRecorder) GetByUserPlatform(_ context.Context, _ int64, _ str
 }
 
 func (f *fakeInsertRecorder) BulkInsertInitial(_ context.Context, recs []UserPlatformQuotaRecord) error {
+	f.calls++
 	if f.err != nil {
 		return f.err
 	}
@@ -158,4 +162,45 @@ func TestResolveSignupGrantPlan_DisabledAuthSourceStillCarriesGlobalQuota(t *tes
 	if _, ok := plan.PlatformQuotas["anthropic"]; !ok {
 		t.Error("P1 violated: disabled auth source path dropped global platform quota")
 	}
+}
+
+// TestSnapshotPlatformQuotaDefaultsFiltersByWhitelist 钉住 2026-08-28 线上事故的那道防线。
+//
+// 当时建表迁移的 CHECK 约束不认 grok，而后台校验放行了它，于是注册事务里这批插入必然违反
+// 约束。函数末尾那个「fail-open」在事务内是假的——PostgreSQL 一旦有语句失败就把整个事务标成
+// aborted，后续语句一律被拒，所以真正的防线是根本不产生注定失败的语句：按权威白名单过滤。
+func TestSnapshotPlatformQuotaDefaultsFiltersByWhitelist(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("白名单外的平台被跳过，白名单内的照常写入", func(t *testing.T) {
+		repo := &fakeInsertRecorder{}
+		s := &AuthService{userPlatformQuotaRepo: repo}
+		ten := 10.0
+		plan := &signupGrantPlan{PlatformQuotas: map[string]*DefaultPlatformQuotaSetting{
+			PlatformGrok: {DailyLimitUSD: &ten},
+			"wechat":     {},
+		}}
+
+		require.NoError(t, s.snapshotPlatformQuotaDefaults(ctx, 42, plan))
+		require.Len(t, repo.records, 1, "只有白名单内的平台该写出去")
+		require.Equal(t, PlatformGrok, repo.records[0].Platform)
+		require.Equal(t, int64(42), repo.records[0].UserID)
+		require.NotNil(t, repo.records[0].DailyLimitUSD)
+		require.InDelta(t, ten, *repo.records[0].DailyLimitUSD, 1e-9)
+	})
+
+	t.Run("全部都是白名单外的平台时一次都不写库", func(t *testing.T) {
+		// 过滤完为空还去 INSERT 一个空批次是没意义的，在事务里更没必要冒险
+		repo := &fakeInsertRecorder{}
+		s := &AuthService{userPlatformQuotaRepo: repo}
+		plan := &signupGrantPlan{PlatformQuotas: map[string]*DefaultPlatformQuotaSetting{
+			"wechat": {},
+			"qq":     nil,
+		}}
+
+		require.NoError(t, s.snapshotPlatformQuotaDefaults(ctx, 42, plan))
+		require.Zero(t, repo.calls, "没有可写的记录就不该调用仓储")
+		require.Empty(t, repo.records)
+	})
 }

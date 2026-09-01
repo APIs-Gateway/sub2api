@@ -131,6 +131,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 	payload := dto.SystemSettings{
 		RegistrationEnabled:                    settings.RegistrationEnabled,
+		SignupSourceEnabled:                    settings.SignupSourceEnabled,
 		EmailVerifyEnabled:                     settings.EmailVerifyEnabled,
 		GmailAliasFilterEnabled:                settings.GmailAliasFilterEnabled,
 		RegistrationEmailSuffixWhitelist:       settings.RegistrationEmailSuffixWhitelist,
@@ -250,6 +251,10 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		AffiliateRebateFreezeHours:             settings.AffiliateRebateFreezeHours,
 		AffiliateRebateDurationDays:            settings.AffiliateRebateDurationDays,
 		AffiliateRebatePerInviteeCap:           settings.AffiliateRebatePerInviteeCap,
+		AffiliateWeeklyInviteLimit:             settings.AffiliateWeeklyInviteLimit,
+		AffiliateSignupRewardEnabled:           settings.AffiliateSignupRewardEnabled,
+		AffiliateSignupRewardAmount:            settings.AffiliateSignupRewardAmount,
+		AffiliateCodeAdmitsSignup:              settings.AffiliateCodeAdmitsSignup,
 		DefaultUserRPMLimit:                    settings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
 		EnableModelFallback:                    settings.EnableModelFallback,
@@ -422,7 +427,10 @@ func loginAgreementDocumentsToService(items []dto.LoginAgreementDocument) []serv
 // UpdateSettingsRequest 更新设置请求
 type UpdateSettingsRequest struct {
 	// 注册设置
-	RegistrationEnabled              bool                         `json:"registration_enabled"`
+	RegistrationEnabled bool `json:"registration_enabled"`
+	// SignupSourceEnabled 是各注册来源的独立开关（email 即账号密码注册）。
+	// 用 map 而非固定字段，省略或传 nil 表示不改动现有开关，兼容老客户端。
+	SignupSourceEnabled              map[string]bool              `json:"signup_source_enabled"`
 	EmailVerifyEnabled               bool                         `json:"email_verify_enabled"`
 	GmailAliasFilterEnabled          bool                         `json:"gmail_alias_filter_enabled"`
 	RegistrationEmailSuffixWhitelist []string                     `json:"registration_email_suffix_whitelist"`
@@ -557,6 +565,10 @@ type UpdateSettingsRequest struct {
 	AffiliateRebateFreezeHours                *int                              `json:"affiliate_rebate_freeze_hours"`
 	AffiliateRebateDurationDays               *int                              `json:"affiliate_rebate_duration_days"`
 	AffiliateRebatePerInviteeCap              *float64                          `json:"affiliate_rebate_per_invitee_cap"`
+	AffiliateWeeklyInviteLimit                *int                              `json:"affiliate_weekly_invite_limit"`
+	AffiliateSignupRewardEnabled              *bool                             `json:"affiliate_signup_reward_enabled"`
+	AffiliateSignupRewardAmount               *int64                            `json:"affiliate_signup_reward_amount"`
+	AffiliateCodeAdmitsSignup                 *bool                             `json:"affiliate_code_admits_signup"`
 	DefaultUserRPMLimit                       int                               `json:"default_user_rpm_limit"`
 	DefaultSubscriptions                      []dto.DefaultSubscriptionSetting  `json:"default_subscriptions"`
 	AuthSourceDefaultEmailBalance             *float64                          `json:"auth_source_default_email_balance"`
@@ -808,6 +820,41 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if affiliateRebatePerInviteeCap < 0 {
 		affiliateRebatePerInviteeCap = service.AffiliateRebatePerInviteeCapDefault
+	}
+	// 邀请码自然周上限：字段缺省时沿用当前值，兼容不认识该字段的老客户端。
+	affiliateWeeklyInviteLimit := previousSettings.AffiliateWeeklyInviteLimit
+	if req.AffiliateWeeklyInviteLimit != nil {
+		affiliateWeeklyInviteLimit = *req.AffiliateWeeklyInviteLimit
+	}
+	if affiliateWeeklyInviteLimit < 0 {
+		affiliateWeeklyInviteLimit = service.AffiliateWeeklyInviteLimitDefault
+	}
+	if affiliateWeeklyInviteLimit > service.AffiliateWeeklyInviteLimitMax {
+		affiliateWeeklyInviteLimit = service.AffiliateWeeklyInviteLimitMax
+	}
+	// 邀请注册即得积分：字段缺省时沿用当前值，兼容不认识该字段的老客户端。
+	affiliateSignupRewardEnabled := previousSettings.AffiliateSignupRewardEnabled
+	if req.AffiliateSignupRewardEnabled != nil {
+		affiliateSignupRewardEnabled = *req.AffiliateSignupRewardEnabled
+	}
+	affiliateSignupRewardAmount := previousSettings.AffiliateSignupRewardAmount
+	if req.AffiliateSignupRewardAmount != nil {
+		affiliateSignupRewardAmount = *req.AffiliateSignupRewardAmount
+	}
+	if affiliateSignupRewardAmount < 0 {
+		affiliateSignupRewardAmount = service.AffiliateSignupRewardAmountDefault
+	}
+	if affiliateSignupRewardAmount > service.AffiliateSignupRewardAmountMax {
+		affiliateSignupRewardAmount = service.AffiliateSignupRewardAmountMax
+	}
+	affiliateCodeAdmitsSignup := previousSettings.AffiliateCodeAdmitsSignup
+	if req.AffiliateCodeAdmitsSignup != nil {
+		affiliateCodeAdmitsSignup = *req.AffiliateCodeAdmitsSignup
+	}
+	// 分渠道注册开关：nil 表示本次不改动，沿用库里已有的开关状态。
+	signupSourceEnabled := req.SignupSourceEnabled
+	if signupSourceEnabled == nil {
+		signupSourceEnabled = previousSettings.SignupSourceEnabled
 	}
 	// 通用表格配置：兼容旧客户端未传字段时保留当前值。
 	if req.TableDefaultPageSize <= 0 {
@@ -1703,6 +1750,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateRebateFreezeHours:             affiliateRebateFreezeHours,
 		AffiliateRebateDurationDays:            affiliateRebateDurationDays,
 		AffiliateRebatePerInviteeCap:           affiliateRebatePerInviteeCap,
+		AffiliateWeeklyInviteLimit:             affiliateWeeklyInviteLimit,
+		AffiliateSignupRewardEnabled:           affiliateSignupRewardEnabled,
+		AffiliateSignupRewardAmount:            affiliateSignupRewardAmount,
+		AffiliateCodeAdmitsSignup:              affiliateCodeAdmitsSignup,
+		SignupSourceEnabled:                    signupSourceEnabled,
 		DefaultUserRPMLimit:                    req.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
 		EnableModelFallback:                    req.EnableModelFallback,
@@ -2105,6 +2157,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 	payload := dto.SystemSettings{
 		RegistrationEnabled:                    updatedSettings.RegistrationEnabled,
+		SignupSourceEnabled:                    updatedSettings.SignupSourceEnabled,
 		EmailVerifyEnabled:                     updatedSettings.EmailVerifyEnabled,
 		GmailAliasFilterEnabled:                updatedSettings.GmailAliasFilterEnabled,
 		RegistrationEmailSuffixWhitelist:       updatedSettings.RegistrationEmailSuffixWhitelist,
@@ -2221,6 +2274,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateRebateFreezeHours:             updatedSettings.AffiliateRebateFreezeHours,
 		AffiliateRebateDurationDays:            updatedSettings.AffiliateRebateDurationDays,
 		AffiliateRebatePerInviteeCap:           updatedSettings.AffiliateRebatePerInviteeCap,
+		AffiliateWeeklyInviteLimit:             updatedSettings.AffiliateWeeklyInviteLimit,
+		AffiliateSignupRewardEnabled:           updatedSettings.AffiliateSignupRewardEnabled,
+		AffiliateSignupRewardAmount:            updatedSettings.AffiliateSignupRewardAmount,
+		AffiliateCodeAdmitsSignup:              updatedSettings.AffiliateCodeAdmitsSignup,
 		DefaultUserRPMLimit:                    updatedSettings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   updatedDefaultSubscriptions,
 		EnableModelFallback:                    updatedSettings.EnableModelFallback,
@@ -2670,6 +2727,32 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.AffiliateRebatePerInviteeCap != after.AffiliateRebatePerInviteeCap {
 		changed = append(changed, "affiliate_rebate_per_invitee_cap")
+	}
+	if before.AffiliateWeeklyInviteLimit != after.AffiliateWeeklyInviteLimit {
+		changed = append(changed, "affiliate_weekly_invite_limit")
+	}
+	if before.AffiliateSignupRewardEnabled != after.AffiliateSignupRewardEnabled {
+		changed = append(changed, "affiliate_signup_reward_enabled")
+	}
+	if before.AffiliateSignupRewardAmount != after.AffiliateSignupRewardAmount {
+		changed = append(changed, "affiliate_signup_reward_amount")
+	}
+	if before.AffiliateCodeAdmitsSignup != after.AffiliateCodeAdmitsSignup {
+		changed = append(changed, "affiliate_code_admits_signup")
+	}
+	for _, source := range service.SignupSources {
+		// 缺省视为允许，与 IsSignupSourceEnabled 同口径，避免把"没配过"误报成一次变更
+		beforeEnabled, okBefore := before.SignupSourceEnabled[source]
+		afterEnabled, okAfter := after.SignupSourceEnabled[source]
+		if !okBefore {
+			beforeEnabled = true
+		}
+		if !okAfter {
+			afterEnabled = true
+		}
+		if beforeEnabled != afterEnabled {
+			changed = append(changed, service.SignupSourceEnabledSettingKey(source))
+		}
 	}
 	if !equalDefaultSubscriptions(before.DefaultSubscriptions, after.DefaultSubscriptions) {
 		changed = append(changed, "default_subscriptions")
@@ -3990,7 +4073,7 @@ func slotOf(s *service.DefaultPlatformQuotaSetting, win string) *float64 {
 	return nil
 }
 
-// equalPlatformQuotaSettings reports whether two platform-quota maps are identical across all 12 slots.
+// equalPlatformQuotaSettings reports whether two platform-quota maps are identical across all allowed slots.
 func equalPlatformQuotaSettings(before, after map[string]*service.DefaultPlatformQuotaSetting) bool {
 	for _, platform := range service.AllowedQuotaPlatforms {
 		b := before[platform]

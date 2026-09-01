@@ -152,6 +152,62 @@ WHERE user_id = $3 AND kind = 'earn' AND %s = $4`, sourceCol), avail, frozen, in
 	return applied, err
 }
 
+// GrantSignupReward 发放「邀请注册即得」积分。
+//
+// 与 EarnPoints 的差别全在来源锚上：这里用 source_user_id（被邀请人）做幂等键，
+// 因为这笔奖励发生在被邀请人还没有任何付费行为的时候，没有订单号可用。
+// partial-unique on (source_user_id) WHERE kind='signup_reward' 保证同一个新用户
+// 只能为邀请人带来一次奖励，注册流程被重放或绑定接口被重复调用都不会重复发放。
+//
+// 奖励直接进 available 而不走冻结：冻结期的作用是对冲退款撤回的风险，
+// 而注册奖励没有对应的付款可退，冻结它只会平白延迟到账。
+func (r *pointsRepository) GrantSignupReward(ctx context.Context, in service.SignupRewardInput) (bool, error) {
+	if in.Points <= 0 || in.InviterID <= 0 || in.SourceUserID <= 0 {
+		return false, nil
+	}
+	var applied bool
+	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		if _, err := txClient.ExecContext(txCtx, `
+INSERT INTO user_points_accounts (user_id, created_at, updated_at)
+VALUES ($1, NOW(), NOW()) ON CONFLICT (user_id) DO NOTHING`, in.InviterID); err != nil {
+			return fmt.Errorf("ensure inviter points account: %w", err)
+		}
+		inserted, err := scanInt64(txCtx, txClient, `
+WITH ins AS (
+    INSERT INTO user_points_ledger (user_id, kind, points, peg_at, source_user_id, frozen_until, frozen_remaining, created_at, updated_at)
+    VALUES ($1, 'signup_reward', $2, $3, $4, NULL, 0, NOW(), NOW())
+    ON CONFLICT DO NOTHING
+    RETURNING 1
+)
+SELECT COUNT(*) FROM ins`, in.InviterID, in.Points, nullablePegArg(in.PegAt), in.SourceUserID)
+		if err != nil {
+			return fmt.Errorf("insert signup reward ledger: %w", err)
+		}
+		if inserted == 0 {
+			// 这个被邀请人已经发过奖励了。不是错误——重复调用就该安静地什么都不做。
+			applied = false
+			return nil
+		}
+		avail, frozen, ok, err := scanTwoInt64(txCtx, txClient, `
+UPDATE user_points_accounts SET available = available + $1, lifetime_earned = lifetime_earned + $1, updated_at = NOW()
+WHERE user_id = $2 RETURNING available, frozen`, in.Points, in.InviterID)
+		if err != nil {
+			return fmt.Errorf("bump points account for signup reward: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("points account missing after ensure")
+		}
+		if _, err := txClient.ExecContext(txCtx, `
+UPDATE user_points_ledger SET available_after = $1, frozen_after = $2, updated_at = NOW()
+WHERE kind = 'signup_reward' AND source_user_id = $3`, avail, frozen, in.SourceUserID); err != nil {
+			return fmt.Errorf("backfill signup reward ledger snapshot: %w", err)
+		}
+		applied = true
+		return nil
+	})
+	return applied, err
+}
+
 func (r *pointsRepository) ClawbackByOrder(ctx context.Context, sourceOrderID int64, refundAmount, originalAmount float64) (int64, error) {
 	if sourceOrderID <= 0 {
 		return 0, nil
