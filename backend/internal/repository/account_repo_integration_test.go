@@ -1233,6 +1233,34 @@ func (s *AccountRepoSuite) TestBulkUpdate_ProbeEnabledRequiresOpenAIAPIKeyAccoun
 	s.Require().Equal(true, gotValid.Extra[service.UpstreamBillingProbeEnabledExtraKey])
 }
 
+func (s *AccountRepoSuite) TestListOAuthRefreshCandidates_ExcludesPermanentlyUnschedulable() {
+	eligible := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:        "refresh-eligible",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"refresh_token": "refresh-eligible-token"},
+	})
+	unschedulable := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:        "refresh-unschedulable",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"refresh_token": "refresh-unschedulable-token"},
+	})
+	s.Require().NoError(s.repo.SetSchedulable(s.ctx, unschedulable.ID, false))
+
+	candidates, err := s.repo.ListOAuthRefreshCandidates(s.ctx)
+	s.Require().NoError(err)
+
+	ids := idsOfAccounts(candidates)
+	s.Require().Contains(ids, eligible.ID)
+	s.Require().NotContains(ids, unschedulable.ID,
+		"permanently unschedulable accounts must not remain OAuth refresh candidates")
+}
+
 func idsOfAccounts(accounts []service.Account) []int64 {
 	out := make([]int64, 0, len(accounts))
 	for i := range accounts {

@@ -439,7 +439,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
 	}
-	account = s.service.recheckSelectedOpenAIAccountFromDB(ctx, account, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
+	account = s.service.recheckSelectedOpenAIAccountFromDB(ctx, account, req.GroupID, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
 	if account == nil || !openAIStickyAccountMatchesGroup(account, req.GroupID) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
@@ -1044,7 +1044,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			release(result)
 			break
 		}
-		fresh = s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.Platform, req.RequestedModel, false, req.RequiredCapability)
+		fresh = s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.GroupID, req.Platform, req.RequestedModel, false, req.RequiredCapability)
 		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 			release(result)
 			continue
@@ -1104,7 +1104,7 @@ func (s *defaultOpenAIAccountScheduler) refreshFullOpenAISelectionCandidate(
 	if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 		return nil
 	}
-	return s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
+	return s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.GroupID, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
 }
 
 func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAIAccountSlot(
@@ -1208,7 +1208,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			filterStats.exclude("platform_mismatch")
 			continue
 		}
-		if s.service.isOpenAIAccountRuntimeBlocked(account) {
+		if s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
 			filterStats.exclude("runtime_blocked")
 			continue
 		}
@@ -1304,7 +1304,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 			continue
 		}
-		fresh = s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.Platform, req.RequestedModel, false, req.RequiredCapability)
+		fresh = s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.GroupID, req.Platform, req.RequestedModel, false, req.RequiredCapability)
 		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 			continue
 		}
@@ -1345,7 +1345,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if account == nil {
 		return false, "account_nil"
 	}
-	if s != nil && s.service != nil && s.service.isOpenAIAccountRuntimeBlocked(account) {
+	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
 		return false, "runtime_blocked"
 	}
 	// Quota auto-pause must be evaluated during the initial filter too. Without it the
@@ -1723,15 +1723,18 @@ func (s *OpenAIGatewayService) selectForcedOpenAIAccount(
 		!isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, requireCompact, requiredCapability) ||
 		!accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability) ||
 		!s.isOpenAIAccountTransportCompatible(account, requiredTransport) ||
-		s.isOpenAIAccountRuntimeBlocked(account) {
+		s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 		return nil, forcedOpenAINoAvailableError(requestedModel)
 	}
 
-	account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, platform, requestedModel, requireCompact, requiredCapability)
+	// selectForcedOpenAIAccount pins a specific accountID (e.g. continuing a previous_response_id
+	// session) and has no notion of "the caller's group", so it deliberately skips the
+	// group-membership recheck that other selection paths apply.
+	account = s.recheckSelectedOpenAIAccountFromDBIgnoringGroup(ctx, account, platform, requestedModel, requireCompact, requiredCapability)
 	if account == nil ||
 		!accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability) ||
 		!s.isOpenAIAccountTransportCompatible(account, requiredTransport) ||
-		s.isOpenAIAccountRuntimeBlocked(account) {
+		s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 		return nil, forcedOpenAINoAvailableError(requestedModel)
 	}
 
@@ -1798,7 +1801,20 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 	return s.getOpenAIWSProtocolResolver().Resolve(account).Transport == requiredTransport
 }
 
-func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int) {
+// ReportOpenAIAccountScheduleResult reports the outcome of a request against
+// accountID to the account scheduler's load-balancing stats. The optional
+// model variadic (kept variadic so the ~27 existing call sites remain
+// source-compatible) lets a successful result also clear the in-memory
+// per-model transient-failure streak recorded by handleOpenAIAccountUpstreamError,
+// so a genuinely healthy account/model pair does not accumulate two
+// non-consecutive transient failures into an unwarranted cooldown escalation.
+// Only the first model value is used; it is ignored on the failure path.
+func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int, model ...string) {
+	if success && len(model) > 0 {
+		if m := strings.TrimSpace(model[0]); m != "" {
+			s.recordOpenAIAccountModelTransientSuccess(accountID, m)
+		}
+	}
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
 	if scheduler == nil {
 		return

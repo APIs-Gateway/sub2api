@@ -2634,7 +2634,9 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 		wantUserAgent  string
 	}{
 		{name: "official desktop user agent pairs originator", userAgent: "Codex Desktop/1.2.3", originator: "codex_cli_rs", wantOriginator: "Codex Desktop", wantUserAgent: "Codex Desktop/1.2.3"},
-		{name: "official TUI user agent repairs mismatch", userAgent: "codex-tui/0.144.1", originator: "codex_cli_rs", wantOriginator: "codex-tui", wantUserAgent: "codex-tui/0.144.1"},
+		{name: "non load-shed official vscode identity is preserved and paired", userAgent: "codex_vscode/0.140.2 (Ubuntu 22.4.0; x86_64) vscode (codex_vscode; 0.140.2)", originator: "codex_cli_rs", wantOriginator: "codex_vscode", wantUserAgent: "codex_vscode/0.140.2 (Ubuntu 22.4.0; x86_64) vscode (codex_vscode; 0.140.2)"},
+		{name: "load-shed TUI identity repaired from ua is normalized to cli identity", userAgent: "codex-tui/0.144.1", originator: "codex_cli_rs", wantOriginator: "codex_cli_rs", wantUserAgent: "codex_cli_rs/0.144.1"},
+		{name: "load-shed TUI identity with full fingerprint drops trailing client-id group", userAgent: "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)", originator: "codex-tui", wantOriginator: "codex_cli_rs", wantUserAgent: "codex_cli_rs/0.140.2 (Mac OS X 14.0; arm64) iTerm"},
 		{name: "originator without user agent falls back", originator: "codex_vscode", wantOriginator: "codex_cli_rs", wantUserAgent: codexCLIUserAgent},
 	}
 
@@ -3382,4 +3384,130 @@ func TestHandleCompatErrorResponseCyberPolicyEarlyReturn(t *testing.T) {
 	require.Contains(t, gotMsg, "flagged for cyber policy")
 	require.NotContains(t, gotMsg, "Upstream request failed")
 	require.NotNil(t, GetOpsCyberPolicy(c))
+}
+
+func TestResolveFreshSchedulableOpenAIAccount_ModelBlockedReturnsNil(t *testing.T) {
+	account := &Account{ID: 36001, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1}
+	svc := &OpenAIGatewayService{openaiModelTransient: newOpenAIAccountModelTransientState(128)}
+	now := time.Now()
+	svc.openaiModelTransient.recordFailure(account.ID, "gpt-5.5", now)
+	svc.openaiModelTransient.recordFailure(account.ID, "gpt-5.5", now.Add(time.Millisecond))
+
+	got := svc.resolveFreshSchedulableOpenAIAccount(context.Background(), account, PlatformOpenAI, "gpt-5.5", false, "")
+
+	require.Nil(t, got, "model-cooled-down account must not be treated as fresh/schedulable")
+}
+
+func TestResolveFreshSchedulableOpenAIAccount_UnblockedModelStaysSchedulable(t *testing.T) {
+	account := &Account{ID: 36002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1}
+	svc := &OpenAIGatewayService{openaiModelTransient: newOpenAIAccountModelTransientState(128)}
+	now := time.Now()
+	svc.openaiModelTransient.recordFailure(account.ID, "gpt-5.5", now)
+	svc.openaiModelTransient.recordFailure(account.ID, "gpt-5.5", now.Add(time.Millisecond))
+
+	got := svc.resolveFreshSchedulableOpenAIAccount(context.Background(), account, PlatformOpenAI, "gpt-5.6-sol", false, "")
+
+	require.NotNil(t, got, "cooldown on gpt-5.5 must not affect an unrelated requested model")
+	require.Equal(t, account.ID, got.ID)
+}
+
+func TestRecheckSelectedOpenAIAccountFromDB_ModelBlockedReturnsNilViaRepo(t *testing.T) {
+	account := &Account{ID: 36003, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1}
+	repo := stubOpenAIAccountRepo{accounts: []Account{*account}}
+	schedulerSnapshot := NewSchedulerSnapshotService(nil, nil, nil, nil, nil)
+	svc := &OpenAIGatewayService{
+		schedulerSnapshot:    schedulerSnapshot,
+		accountRepo:          repo,
+		openaiModelTransient: newOpenAIAccountModelTransientState(128),
+	}
+	now := time.Now()
+	svc.openaiModelTransient.recordFailure(account.ID, "gpt-5.5", now)
+	svc.openaiModelTransient.recordFailure(account.ID, "gpt-5.5", now.Add(time.Millisecond))
+
+	// groupID is intentionally nil (ungrouped account): a non-nil groupID here
+	// would make openAIStickyAccountMatchesGroup reject the account before the
+	// model-cooldown check this test exists to cover is ever reached.
+	got := svc.recheckSelectedOpenAIAccountFromDB(context.Background(), account, nil, PlatformOpenAI, "gpt-5.5", false, "")
+
+	require.Nil(t, got, "DB-rechecked account cooling down for the requested model must not be reselected")
+}
+
+func TestOpenAISelectAccountForModelWithExclusions_StickyModelBlockedClearsSession(t *testing.T) {
+	sessionHash := "session-model-block"
+	repo := stubOpenAIAccountRepo{
+		accounts: []Account{
+			{ID: 36004, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1},
+			{ID: 36005, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1},
+		},
+	}
+	cache := &stubGatewayCache{
+		sessionBindings: map[string]int64{"openai:" + sessionHash: 36004},
+	}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:          repo,
+		cache:                cache,
+		openaiModelTransient: newOpenAIAccountModelTransientState(128),
+	}
+	now := time.Now()
+	svc.openaiModelTransient.recordFailure(36004, "gpt-4", now)
+	svc.openaiModelTransient.recordFailure(36004, "gpt-4", now.Add(time.Millisecond))
+
+	acc, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, sessionHash, "gpt-4", nil)
+	if err != nil {
+		t.Fatalf("SelectAccountForModelWithExclusions error: %v", err)
+	}
+	if acc == nil || acc.ID != 36005 {
+		t.Fatalf("expected account 36005, got %+v", acc)
+	}
+	if cache.deletedSessions["openai:"+sessionHash] != 1 {
+		t.Fatalf("expected sticky session to be deleted")
+	}
+	if cache.sessionBindings["openai:"+sessionHash] != 36005 {
+		t.Fatalf("expected sticky session to bind to account 36005")
+	}
+}
+
+func TestOpenAISelectAccountWithLoadAwareness_StickyModelBlockedClearsSession(t *testing.T) {
+	// groupID is intentionally nil (ungrouped accounts): a non-nil groupID
+	// here would make openAIStickyAccountMatchesGroup reject the sticky
+	// account before the layer-1 runtime-blocked check is even reached,
+	// masking the branch this test exists to cover.
+	sessionHash := "session-model-block-load-aware"
+	repo := stubOpenAIAccountRepo{
+		accounts: []Account{
+			{ID: 36006, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1},
+			{ID: 36007, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1},
+		},
+	}
+	cache := &stubGatewayCache{
+		sessionBindings: map[string]int64{"openai:" + sessionHash: 36006},
+	}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:          repo,
+		cache:                cache,
+		concurrencyService:   NewConcurrencyService(stubConcurrencyCache{}),
+		openaiModelTransient: newOpenAIAccountModelTransientState(128),
+	}
+	now := time.Now()
+	svc.openaiModelTransient.recordFailure(36006, "gpt-4", now)
+	svc.openaiModelTransient.recordFailure(36006, "gpt-4", now.Add(time.Millisecond))
+
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), nil, sessionHash, "gpt-4", nil)
+	if err != nil {
+		t.Fatalf("SelectAccountWithLoadAwareness error: %v", err)
+	}
+	if selection == nil || selection.Account == nil || selection.Account.ID != 36007 {
+		t.Fatalf("expected account 36007, got %+v", selection)
+	}
+	if cache.deletedSessions["openai:"+sessionHash] != 1 {
+		t.Fatalf("expected sticky session to be deleted")
+	}
+	if cache.sessionBindings["openai:"+sessionHash] != 36007 {
+		t.Fatalf("expected sticky session to bind to account 36007")
+	}
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
 }
