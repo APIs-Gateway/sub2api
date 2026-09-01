@@ -4336,6 +4336,65 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 	return !openAIStreamEventIsPreamble(eventType)
 }
 
+func openAIStreamItemHasVisibleOutput(item gjson.Result) bool {
+	if item.Get("arguments").String() != "" || item.Get("input").String() != "" || item.Get("result").String() != "" {
+		return true
+	}
+	for _, path := range []string{"content", "summary"} {
+		for _, part := range item.Get(path).Array() {
+			if part.Get("text").String() != "" || part.Get("transcript").String() != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// openAIStreamDataStartsVisibleOutput 判断某条 SSE 事件是否携带客户端可用的实际内容。
+// 结构性进度事件（如空 reasoning summary 的 output_item.added）可以提交尝试、解除
+// first-output 超时熔断，但 TTFT 只应该在流真正携带内容时才开始计时，否则会把
+// "上游还没吐字但已经建立结构" 误记成首字节延迟。
+func openAIStreamDataStartsVisibleOutput(data, eventType string) bool {
+	trimmed := strings.TrimSpace(data)
+	if trimmed == "" || trimmed == "[DONE]" || !gjson.Valid(trimmed) {
+		return false
+	}
+	eventType = strings.TrimSpace(eventType)
+	if eventType == "" {
+		eventType = strings.TrimSpace(gjson.Get(trimmed, "type").String())
+	}
+	if strings.HasSuffix(eventType, ".delta") {
+		delta := gjson.Get(trimmed, "delta")
+		return delta.Exists() && delta.String() != ""
+	}
+	switch eventType {
+	case "response.output_text.done",
+		"response.reasoning_summary_text.done",
+		"response.reasoning_text.done",
+		"response.audio_transcript.done":
+		return gjson.Get(trimmed, "text").String() != ""
+	case "response.function_call_arguments.done":
+		return gjson.Get(trimmed, "arguments").String() != ""
+	case "response.custom_tool_call_input.done":
+		return gjson.Get(trimmed, "input").String() != ""
+	case "response.image_generation_call.partial_image":
+		return gjson.Get(trimmed, "partial_image_b64").String() != ""
+	case "response.content_part.added", "response.content_part.done",
+		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
+		part := gjson.Get(trimmed, "part")
+		return part.Get("text").String() != "" || part.Get("transcript").String() != ""
+	case "response.output_item.added", "response.output_item.done":
+		return openAIStreamItemHasVisibleOutput(gjson.Get(trimmed, "item"))
+	case "response.completed", "response.done":
+		for _, item := range gjson.Get(trimmed, "response.output").Array() {
+			if openAIStreamItemHasVisibleOutput(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool {
 	if isOpenAIContextWindowError(message, payload) {
 		return false
@@ -4714,7 +4773,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				openAIResponsesCompletedEventIsEmpty(dataBytes, usage) {
 				return resultWithUsage(), newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
 			}
-			if firstTokenMs == nil && lineStartsClientOutput && trimmedData != "[DONE]" {
+			if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(trimmedData, eventType) {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
 			}
@@ -5495,6 +5554,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 	bufferedWriter := bufio.NewWriterSize(w, 4*1024)
 	var firstTokenMs *int
+	// firstOutputProgressObserved 跟踪"结构性进度"（能提交尝试、解除 first-output
+	// 超时的事件），与 firstTokenMs（仅在真正出现可见输出时才赋值）分离，避免把
+	// 空的 reasoning summary / 无内容的 output_item 误记成 TTFT。
+	firstOutputProgressObserved := false
 	var firstOutputStage *openAIFirstOutputStage
 	if guardFirstOutput {
 		firstOutputStage = newDefaultOpenAIFirstOutputStage()
@@ -5505,19 +5568,19 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}()
 	}
 	writePendingString := func(value string) (int, error) {
-		if firstOutputStage != nil && firstTokenMs == nil && !firstOutputStage.closed {
+		if firstOutputStage != nil && !firstOutputProgressObserved && !firstOutputStage.closed {
 			return firstOutputStage.WriteString(value)
 		}
 		return bufferedWriter.WriteString(value)
 	}
 	pendingBytes := func() int64 {
-		if firstOutputStage != nil && firstTokenMs == nil && !firstOutputStage.closed {
+		if firstOutputStage != nil && !firstOutputProgressObserved && !firstOutputStage.closed {
 			return firstOutputStage.Buffered()
 		}
 		return int64(bufferedWriter.Buffered())
 	}
 	flushBuffered := func() error {
-		if firstOutputStage != nil && firstTokenMs == nil && !firstOutputStage.closed {
+		if firstOutputStage != nil && !firstOutputProgressObserved && !firstOutputStage.closed {
 			if err := firstOutputStage.CommitTo(w); err != nil {
 				return err
 			}
@@ -5617,9 +5680,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var streamEarlyErr error
 	eventInProgress := false
 	eventStartsClientOutput := false
+	eventStartsVisibleOutput := false
 	eventShouldFlush := false
 	handlePendingWriteError := func(err error) {
-		if firstOutputStage != nil && firstTokenMs == nil && !firstOutputStage.closed {
+		if firstOutputStage != nil && !firstOutputProgressObserved && !firstOutputStage.closed {
 			message := "OpenAI first-output staging failed"
 			if errors.Is(err, errOpenAIFirstOutputStageLimit) {
 				message = "OpenAI first-output staging limit exceeded"
@@ -5634,11 +5698,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 	}
 	completeGuardedEvent := func(queueDrained bool) {
-		completedSemanticEvent := eventStartsClientOutput
+		completedProgressEvent := eventStartsClientOutput
+		completedVisibleEvent := eventStartsVisibleOutput
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
-			if completedSemanticEvent {
+			if completedProgressEvent {
 				applyAttemptResponseHeaders()
 			}
 			if shouldFlush {
@@ -5651,13 +5716,17 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				}
 			}
 		}
-		if completedSemanticEvent && firstTokenMs == nil {
+		if completedProgressEvent && !firstOutputProgressObserved {
 			firstOutputScanGuard.Store(false)
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
+			firstOutputProgressObserved = true
 			stopFirstOutputTimer()
 		}
+		if completedVisibleEvent && firstTokenMs == nil {
+			ms := int(time.Since(startTime).Milliseconds())
+			firstTokenMs = &ms
+		}
 		eventStartsClientOutput = false
+		eventStartsVisibleOutput = false
 		eventShouldFlush = false
 	}
 	sendErrorEvent := func(reason string) {
@@ -5733,12 +5802,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if scanErr == nil {
 			return nil, nil, false
 		}
-		if errors.Is(scanErr, errOpenAIFirstOutputScannerLimit) && firstTokenMs == nil {
+		if errors.Is(scanErr, errOpenAIFirstOutputScannerLimit) && !firstOutputProgressObserved {
 			failoverErr := s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, nil, "OpenAI SSE line exceeds guarded first-output limit")
 			failoverErr.SafeToFailoverAfterWrite = true
 			return resultWithUsage(), failoverErr, true
 		}
-		if errors.Is(scanErr, bufio.ErrTooLong) && guardFirstOutput && firstTokenMs == nil {
+		if errors.Is(scanErr, bufio.ErrTooLong) && guardFirstOutput && !firstOutputProgressObserved {
 			failoverErr := s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, nil, "OpenAI SSE line exceeds guarded first-output limit")
 			failoverErr.SafeToFailoverAfterWrite = true
 			return resultWithUsage(), failoverErr, true
@@ -5872,8 +5941,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
 			}
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
+			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
 			if guardFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
+				eventStartsVisibleOutput = eventStartsVisibleOutput || startsVisibleOutput
 			}
 			if startsClientOutput && !openAIStreamEventTypeIsTerminal(eventType) {
 				responsesSemanticOutputSeen = true
@@ -5894,7 +5965,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected {
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
-				if firstTokenMs == nil && startsClientOutput {
+				if firstTokenMs == nil && startsVisibleOutput {
 					// 保证首个 token 事件尽快出站，避免影响 TTFT。
 					shouldFlush = true
 				}
@@ -5919,7 +5990,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 
 			// Record first token time
-			if !guardFirstOutput && firstTokenMs == nil && startsClientOutput {
+			if !guardFirstOutput && firstTokenMs == nil && startsVisibleOutput {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
 				firstOutputScanGuard.Store(false)
@@ -6043,7 +6114,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 
 		case <-firstOutputCh:
-			if firstTokenMs != nil {
+			if firstOutputProgressObserved {
 				stopFirstOutputTimer()
 				continue
 			}
