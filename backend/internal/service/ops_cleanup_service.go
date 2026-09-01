@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/robfig/cron/v3"
+	"go.uber.org/zap"
 )
 
 const (
@@ -285,7 +286,12 @@ func (s *OpsCleanupService) runScheduled() {
 		return
 	}
 	s.recordHeartbeatSuccess(runAt, time.Since(startedAt), counts)
-	logger.LegacyPrintf("service.ops_cleanup", "[OpsCleanup] cleanup complete: %s", counts)
+	// upstream sync (#5030): 成功日志此前也走 LegacyPrintf，容易被当作调试噪音
+	// 淹没在日志里；改走结构化 info 级别，便于运维观测清理任务是否按计划完成。
+	logger.L().Info("[OpsCleanup] cleanup complete",
+		zap.String("component", "service.ops_cleanup"),
+		zap.String("deleted_counts", counts.String()),
+	)
 }
 
 func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDeletedCounts, error) {
