@@ -17,9 +17,15 @@ var (
 	ErrAffiliateCodeTaken       = infraerrors.Conflict("AFFILIATE_CODE_TAKEN", "affiliate code already in use")
 	ErrAffiliateAlreadyBound    = infraerrors.Conflict("AFFILIATE_ALREADY_BOUND", "affiliate inviter already bound")
 	ErrAffiliateQuotaEmpty      = infraerrors.BadRequest("AFFILIATE_QUOTA_EMPTY", "no affiliate quota available to transfer")
-	// ErrAffiliateWeeklyInviteLimitReached 表示该邀请码本自然周已用满配额。
-	// 按产品口径这会直接拒绝本次注册，而不是放行后静默不发奖励。
-	ErrAffiliateWeeklyInviteLimitReached = infraerrors.Forbidden("AFFILIATE_WEEKLY_INVITE_LIMIT_REACHED", "this invite code has reached its weekly limit")
+	// ErrAffiliateWeeklyInviteLimitReached 表示该邀请人邀请码本自然周已用满配额。
+	//
+	// 它只在「这次注册是靠邀请人邀请码放行的」时候才拒绝注册；注册本身已经被一次性
+	// 注册码放行时，名额满只意味着挂不上邀请人，不该反过来把人挡在门外。
+	//
+	// 文案里必须说清是「邀请人邀请码」（前端 affiliateCodeLabel）而不是「邀请码」
+	// （前端 invitationCodeLabel）：两栏在注册页上并排摆着，说错一个字，
+	// 用户会以为是自己刚填的那张一次性注册码作废了。
+	ErrAffiliateWeeklyInviteLimitReached = infraerrors.Forbidden("AFFILIATE_WEEKLY_INVITE_LIMIT_REACHED", "the inviter code has reached its weekly limit")
 )
 
 const (
