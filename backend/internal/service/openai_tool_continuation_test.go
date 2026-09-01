@@ -184,3 +184,86 @@ func TestValidateFunctionCallOutputContextBytesMatchesMapValidation(t *testing.T
 		})
 	}
 }
+
+func TestAnalyzeToolCallOutputContextCoverageBytes(t *testing.T) {
+	cases := []struct {
+		name         string
+		body         map[string]any
+		hasOutput    bool
+		coversAllIDs bool
+	}{
+		{
+			name: "empty_body",
+			body: map[string]any{},
+		},
+		{
+			name: "missing_call_id_never_covers",
+			body: map[string]any{"input": []any{
+				map[string]any{"type": "function_call_output"},
+			}},
+			hasOutput:    true,
+			coversAllIDs: false,
+		},
+		{
+			name: "output_without_context_is_not_covered",
+			body: map[string]any{"input": []any{
+				map[string]any{"type": "function_call_output", "call_id": "call_1"},
+			}},
+			hasOutput:    true,
+			coversAllIDs: false,
+		},
+		{
+			name: "output_paired_with_tool_call_context_is_covered",
+			body: map[string]any{"input": []any{
+				map[string]any{"type": "function_call", "call_id": "call_1"},
+				map[string]any{"type": "function_call_output", "call_id": "call_1"},
+			}},
+			hasOutput:    true,
+			coversAllIDs: true,
+		},
+		{
+			name: "output_paired_with_item_reference_is_covered",
+			body: map[string]any{"input": []any{
+				map[string]any{"type": "custom_tool_call_output", "call_id": "call_1"},
+				map[string]any{"type": "item_reference", "id": "call_1"},
+			}},
+			hasOutput:    true,
+			coversAllIDs: true,
+		},
+		{
+			name: "one_of_two_outputs_missing_context_is_not_covered",
+			body: map[string]any{"input": []any{
+				map[string]any{"type": "function_call", "call_id": "call_1"},
+				map[string]any{"type": "function_call_output", "call_id": "call_1"},
+				map[string]any{"type": "tool_search_output", "call_id": "call_2"},
+			}},
+			hasOutput:    true,
+			coversAllIDs: false,
+		},
+		{
+			name: "object_tool_output_requires_context_replay",
+			body: map[string]any{"input": map[string]any{
+				"type": "custom_tool_call_output", "call_id": "call_a",
+			}},
+			hasOutput:    true,
+			coversAllIDs: false,
+		},
+		{
+			name: "object_tool_call_context_has_no_output",
+			body: map[string]any{"input": map[string]any{
+				"type": "function_call", "call_id": "call_a",
+			}},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			bodyBytes, err := json.Marshal(tt.body)
+			require.NoError(t, err)
+
+			coverage := AnalyzeToolCallOutputContextCoverageBytes(bodyBytes)
+			require.Equal(t, tt.hasOutput, coverage.HasFunctionCallOutput)
+			require.Equal(t, tt.coversAllIDs, coverage.ContextCoversAllCallIDs)
+		})
+	}
+}
