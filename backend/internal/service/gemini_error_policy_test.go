@@ -419,6 +419,141 @@ func TestGeminiErrorPolicy_NilRateLimitService(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TestHandleGeminiUpstreamError_PoolMode429 — 池模式 Gemini 账号收到 429 时
+// 不应写账号级限流（SetRateLimited）：账号留在池内，由 failover / 同号重试消化。
+//
+// 429 的标记点分散在重试循环内（每次 429 都会先于 CheckErrorPolicy 调用一次
+// handleGeminiUpstreamError）和循环外的兜底分支，池模式豁免必须落在
+// handleGeminiUpstreamError 自身才能统一生效，否则一次上游 429 就会把账号锁到
+// PST 午夜，即便同账号重试已经成功返回客户端。
+//
+// 豁免只跳过 SetRateLimited；recordUpstream429AndShouldSwitch 滑窗记录必须
+// 照常执行——那是 shouldFailoverGeminiUpstreamError 判断本次请求要不要切号的
+// 唯一信号源，跳过记录会让池模式账号 429 时既不锁账号也切不了号，请求直接把
+// 429 透传给客户端，比修复前更差。
+//
+// 自定义错误码优先级高于池模式：显式配置 429 命中时仍写账号级限流。
+// ---------------------------------------------------------------------------
+
+func TestHandleGeminiUpstreamError_PoolMode429(t *testing.T) {
+	// 带 Retry-After 头，确保第一次调用就走"解析到显式重置时间"分支，
+	// 不依赖滑窗阈值，测试结果确定性更强。
+	headers := http.Header{"Retry-After": []string{"8"}}
+	body := []byte(`{"error":{"code":429,"message":"quota exceeded","status":"RESOURCE_EXHAUSTED"}}`)
+
+	tests := []struct {
+		name              string
+		account           *Account
+		expectRateLimited bool
+	}{
+		{
+			name: "pool_mode_apikey_stays_in_pool",
+			account: &Account{
+				ID:          700,
+				Platform:    PlatformGemini,
+				Type:        AccountTypeAPIKey,
+				Credentials: map[string]any{"pool_mode": true},
+			},
+			expectRateLimited: false,
+		},
+		{
+			name: "custom_error_codes_hit_overrides_pool_mode",
+			account: &Account{
+				ID:       701,
+				Platform: PlatformGemini,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"pool_mode":                  true,
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(429)},
+				},
+			},
+			expectRateLimited: true,
+		},
+		{
+			name: "non_pool_apikey_still_rate_limited",
+			account: &Account{
+				ID:       702,
+				Platform: PlatformGemini,
+				Type:     AccountTypeAPIKey,
+			},
+			expectRateLimited: true,
+		},
+		{
+			name: "oauth_account_ignores_pool_mode_flag",
+			account: &Account{
+				ID:          703,
+				Platform:    PlatformGemini,
+				Type:        AccountTypeOAuth,
+				Credentials: map[string]any{"pool_mode": true},
+			},
+			expectRateLimited: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetUpstream429TrackerForTest()
+			repo := &rateLimit429AccountRepoStub{}
+			svc := &GeminiMessagesCompatService{
+				accountRepo:      repo,
+				rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+			}
+
+			svc.handleGeminiUpstreamError(context.Background(), tt.account, http.StatusTooManyRequests, headers, body)
+
+			require.True(t, ShouldSwitchAccountOn429(tt.account.ID),
+				"429 must still be recorded into the sliding window regardless of pool mode")
+
+			if !tt.expectRateLimited {
+				require.Zero(t, repo.rateLimitCalls, "池模式账号不应被标记账号级限流")
+				return
+			}
+			require.Equal(t, 1, repo.rateLimitCalls)
+			require.Equal(t, tt.account.ID, repo.lastRateLimitID)
+			require.True(t, repo.lastRateLimitReset.After(time.Now()))
+		})
+	}
+}
+
+// TestHandleGeminiUpstreamError_PoolMode429_ThresholdCrossedStillSkipsAccountLock
+// 覆盖响应体解析不出显式重置时间、只能靠 429 滑窗/PST 兜底的分支：非池模式账号
+// 越过滑窗阈值后会被 SetRateLimited 锁到 PST 午夜（见
+// TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedUsesTierCooldownAfterThreshold）；
+// 池模式账号必须继续留在池内，同时滑窗记录仍要生效。
+func TestHandleGeminiUpstreamError_PoolMode429_ThresholdCrossedStillSkipsAccountLock(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &rateLimit429AccountRepoStub{}
+	quotaSvc := NewGeminiQuotaService(&config.Config{}, nil)
+	rlSvc := NewRateLimitService(repo, nil, &config.Config{}, quotaSvc, nil)
+	svc := &GeminiMessagesCompatService{
+		accountRepo:      repo,
+		rateLimitService: rlSvc,
+	}
+
+	account := &Account{
+		ID:          704,
+		Platform:    PlatformGemini,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"pool_mode": true},
+	}
+	body := []byte(`{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","domain":"cloudcode-pa.googleapis.com","metadata":{"model":"gemini-3.1-pro-preview"},"reason":"MODEL_CAPACITY_EXHAUSTED"}],"message":"No capacity available for model gemini-3.1-pro-preview on the server","status":"RESOURCE_EXHAUSTED"}}`)
+
+	for i := 0; i < upstream429MinAttempts; i++ {
+		recordUpstream429Attempt(account.ID)
+	}
+	for i := 0; i < upstream429MinAttempts/2-1; i++ {
+		svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+	}
+	require.Zero(t, repo.rateLimitCalls)
+
+	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+
+	require.Zero(t, repo.rateLimitCalls, "池模式账号越过 429 滑窗阈值也不应写账号级限流")
+	require.True(t, ShouldSwitchAccountOn429(account.ID), "滑窗记录仍要生效，否则本次请求既不锁账号也切不了号")
+}
+
+// ---------------------------------------------------------------------------
 // geminiErrorPolicyRepo — minimal AccountRepository stub for Gemini error
 // policy tests. Embeds mockAccountRepoForGemini and adds tracking.
 // ---------------------------------------------------------------------------

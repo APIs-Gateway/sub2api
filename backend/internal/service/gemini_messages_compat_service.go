@@ -2891,6 +2891,13 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 		return
 	}
 
+	// 池模式账号不写账号级限流：账号留在池内，由 failover / 同号重试消化 429。
+	// 注意仍要走下面的 recordUpstream429AndShouldSwitch 滑窗记录——那是
+	// shouldFailoverGeminiUpstreamError 判断本次请求要不要切号的唯一信号源，
+	// 跳过记录会让池模式账号 429 时既不锁账号、也切不了号，请求直接把 429 透传给客户端。
+	// 自定义错误码优先级高于池模式，开启后仍按其命中结果写账号级限流。
+	poolModeExempt := account.IsPoolMode() && !account.IsCustomErrorCodesEnabled()
+
 	oauthType := account.GeminiOAuthType()
 	tierID := account.GeminiTierID()
 	projectID := strings.TrimSpace(account.GetCredential("project_id"))
@@ -2906,6 +2913,10 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 	if resetAt == nil {
 		if !recordUpstream429AndShouldSwitch(account.ID, false) {
 			logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d below threshold, skip local cooldown", account.ID)
+			return
+		}
+		if poolModeExempt {
+			logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d pool mode, skip account-level rate limit", account.ID)
 			return
 		}
 
@@ -2940,6 +2951,10 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 
 	// 使用解析到的重置时间
 	recordUpstream429AndShouldSwitch(account.ID, true)
+	if poolModeExempt {
+		logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d pool mode, skip account-level rate limit", account.ID)
+		return
+	}
 	resetTime := time.Unix(*resetAt, 0)
 	_ = s.accountRepo.SetRateLimited(ctx, account.ID, resetTime)
 	logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d rate limited until %v (oauth_type=%s, tier=%s)",

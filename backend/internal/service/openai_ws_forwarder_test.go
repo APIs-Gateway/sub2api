@@ -27,10 +27,40 @@ func TestBuildOpenAIWSHeaders_AppliesAPIKeyAccountOverrides(t *testing.T) {
 	}
 
 	headers, _ := (&OpenAIGatewayService{}).buildOpenAIWSHeaders(
-		c, account, "upstream-key", OpenAIWSProtocolDecision{}, false, "", "", "",
+		c.Request.Context(), c, account, "upstream-key", OpenAIWSProtocolDecision{}, false, "", "", "", "", "",
 	)
 	require.Equal(t, "override-agent/2.0", headers.Get("User-Agent"))
 	require.Equal(t, "gateway", getHeaderRaw(headers, "x-vendor"))
+}
+
+func TestBuildOpenAIWSHeaders_SetsRoutingHintForOAuthAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+	}
+
+	headers, _ := (&OpenAIGatewayService{}).buildOpenAIWSHeaders(
+		c.Request.Context(), c, account, "oauth-token", OpenAIWSProtocolDecision{}, false, "", "", "", "gpt-5.6", "priority",
+	)
+	require.Equal(t, "model=gpt-5.6;tier=priority", headers.Get(openAICodexRoutingHintHeader))
+}
+
+func TestBuildOpenAIWSHeaders_OmitsRoutingHintForAPIKeyAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+	}
+
+	headers, _ := (&OpenAIGatewayService{}).buildOpenAIWSHeaders(
+		c.Request.Context(), c, account, "upstream-key", OpenAIWSProtocolDecision{}, false, "", "", "", "gpt-5.6", "priority",
+	)
+	require.Empty(t, headers.Get(openAICodexRoutingHintHeader))
 }
 
 // TestIsOpenAIWSTokenEvent_TerminalEventsExcluded 覆盖 isOpenAIWSTokenEvent 的回归用例。

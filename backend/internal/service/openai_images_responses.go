@@ -1803,6 +1803,11 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	}
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("Accept", "text/event-stream")
+	// The image_generation tool (both real Codex OAuth accounts and API-key
+	// accounts delegated here via the OpenAI Platform Responses API) still
+	// needs this legacy beta flag to stay available upstream, unlike the
+	// general chat/completions paths in buildUpstreamRequest /
+	// buildUpstreamRequestOpenAIPassthrough which stopped negotiating it.
 	upstreamReq.Header.Set("OpenAI-Beta", "responses=experimental")
 
 	proxyURL := ""
