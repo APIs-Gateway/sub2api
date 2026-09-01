@@ -86,14 +86,14 @@ func TestUpdateGroupWithoutChannelCacheInvalidator(t *testing.T) {
 	require.Equal(t, PlatformOpenAI, got.Platform)
 }
 
-// NewAdminService 的变长可选参数不应影响老式定参调用点的兼容性，
-// 且 WithChannelCacheInvalidator 必须把依赖正确注入到实例上。
-func TestNewAdminServiceWithChannelCacheInvalidatorOption(t *testing.T) {
+// AttachChannelCacheInvalidator 必须把依赖正确注入到已构造的 AdminService 实例上，
+// 且不影响 NewAdminService 固定参数列表的调用点兼容性。
+func TestAttachChannelCacheInvalidator(t *testing.T) {
 	spy := &channelCacheInvalidatorSpy{}
 	svc := NewAdminService(
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		WithChannelCacheInvalidator(spy),
 	)
+	AttachChannelCacheInvalidator(svc, spy)
 
 	impl, ok := svc.(*adminServiceImpl)
 	require.True(t, ok)
@@ -103,9 +103,9 @@ func TestNewAdminServiceWithChannelCacheInvalidatorOption(t *testing.T) {
 	require.Equal(t, 1, spy.calls)
 }
 
-// 不传 opts 时（现有调用点的形态）channelCacheInvalidator 必须保持 nil，
-// 不能因为加了变长参数就意外拿到非 nil 默认值。
-func TestNewAdminServiceWithoutOptionsLeavesChannelCacheInvalidatorNil(t *testing.T) {
+// 不调用 AttachChannelCacheInvalidator 时（现有调用点的形态）channelCacheInvalidator
+// 必须保持 nil，不能意外拿到非 nil 默认值。
+func TestNewAdminServiceLeavesChannelCacheInvalidatorNilByDefault(t *testing.T) {
 	svc := NewAdminService(
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)

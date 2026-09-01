@@ -408,15 +408,24 @@ func TestSweepExpiredProxyClearsProbeForBothFallbackModes(t *testing.T) {
 	})
 
 	t.Run("fallback target updates accounts and clears snapshots", func(t *testing.T) {
-		exec := &recordingSQLExecutor{result: rowsAffectedResult(2)}
+		db, mock := newSQLMock(t)
+		mock.ExpectExec(`UPDATE proxies SET status=\$1`).
+			WithArgs(service.StatusExpired, int64(9)).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		// The fallback-target branch of sweepOneExpiredProxyOnExec uses QueryContext with
+		// RETURNING id (not a plain Exec) so the caller can thread the actually-changed
+		// account IDs into a scoped scheduler_outbox account_bulk_changed event instead of
+		// a full rebuild.
+		mock.ExpectQuery(`(?s)UPDATE accounts.*proxy_id=\$2.*upstream_billing_probe.*RETURNING id`).
+			WithArgs(int64(9), int64(11)).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(21)).AddRow(int64(22)))
+
 		target := int64(11)
 		repo := &proxyRepository{}
-		changed, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, exec, 9, &target, true)
+		changed, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, 9, &target, true)
 		require.NoError(t, err)
-		require.EqualValues(t, 2, changed)
-		require.Len(t, exec.execQueries, 2)
-		require.Contains(t, exec.execQueries[1], "proxy_id=$2")
-		require.Contains(t, exec.execQueries[1], "- 'upstream_billing_probe'")
+		require.Equal(t, []int64{21, 22}, changed)
+		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
 

@@ -569,7 +569,7 @@ type adminServiceImpl struct {
 	privacyClientFactory PrivacyClientFactory
 	runtimeBlocker       AccountRuntimeBlocker
 	// 分组 platform 变更后用来失效渠道缓存；可为 nil（缓存会在 TTL 到期后自然重建）。
-	// 通过 AdminServiceOption 注入而非构造函数定参，见下方 AdminServiceOption 注释。
+	// 构造完成后通过 AttachChannelCacheInvalidator 旁路注入，见下方注释。
 	channelCacheInvalidator ChannelCacheInvalidator
 }
 
@@ -579,23 +579,21 @@ type ChannelCacheInvalidator interface {
 	InvalidateCache()
 }
 
-// AdminServiceOption 为 adminServiceImpl 注入本次吸收新增的可选依赖，
-// 不改动 NewAdminService 现有的固定参数列表。
+// AttachChannelCacheInvalidator 为已构造的 AdminService 事后注入分组 platform
+// 变更后使用的渠道缓存失效器。
 //
 // 吸收自上游 #5543：本批次 scope 限定在 backend/internal/service/**，
 // cmd/server/wire_gen.go（生成代码）与 backend/internal/server/api_contract_test.go
-// 是既有调用点、不在本批次可改范围内。若直接给 NewAdminService 加一个新的定参，
-// 这两处调用会因参数个数不匹配而编译失败。变长可选参数不影响已有调用点的签名匹配，
-// 因此改用这种方式注入。
-type AdminServiceOption func(*adminServiceImpl)
-
-// WithChannelCacheInvalidator 注入分组 platform 变更后使用的渠道缓存失效器。
-// 不注入时（nil）UpdateGroup 不做任何失效动作，缓存靠自身 TTL 自然重建，
-// 与吸收前行为一致。把它接入生产环境的依赖注入图（cmd/server/wire.go 的
-// injector 与 wire_gen.go）留给后续、可以改 cmd/server 层的批次。
-func WithChannelCacheInvalidator(inv ChannelCacheInvalidator) AdminServiceOption {
-	return func(s *adminServiceImpl) {
-		s.channelCacheInvalidator = inv
+// 是既有调用点、不在本批次可改范围内；NewAdminService 也不能追加变长可选参数——
+// wire 会把 variadic 形参当成必须解析的 []AdminServiceOption 输入，
+// ProviderSet 里没有对应 provider，导致 `wire check ./cmd/server` 失败。
+// 因此改为构造完成后的旁路 setter。不调用时行为与未注入一致（UpdateGroup 不做
+// 任何失效动作，缓存靠自身 TTL 自然重建，与吸收前行为一致）。把它接入生产环境的
+// 依赖注入图（cmd/server/wire.go 的 injector 与 wire_gen.go）留给后续、
+// 可以改 cmd/server 层的批次。
+func AttachChannelCacheInvalidator(svc AdminService, inv ChannelCacheInvalidator) {
+	if impl, ok := svc.(*adminServiceImpl); ok {
+		impl.channelCacheInvalidator = inv
 	}
 }
 
@@ -623,7 +621,6 @@ func NewAdminService(
 	userSubRepo UserSubscriptionRepository,
 	privacyClientFactory PrivacyClientFactory,
 	runtimeBlocker AccountRuntimeBlocker,
-	opts ...AdminServiceOption,
 ) AdminService {
 	s := &adminServiceImpl{
 		userRepo:             userRepo,
@@ -644,9 +641,6 @@ func NewAdminService(
 		userSubRepo:          userSubRepo,
 		privacyClientFactory: privacyClientFactory,
 		runtimeBlocker:       runtimeBlocker,
-	}
-	for _, opt := range opts {
-		opt(s)
 	}
 	return s
 }
@@ -1894,6 +1888,12 @@ func defaultModelsListCandidateIDs(platform string) []string {
 	}
 }
 
+func defaultAllowImageGenerationForPlatform(platform string) bool {
+	// Grok image and video generation routes share the legacy image-generation gate.
+	// Older clients send the false zero value, so Grok groups must default enabled.
+	return platform == PlatformGrok
+}
+
 func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
 	if input.RateMultiplier <= 0 {
 		return nil, errors.New("rate_multiplier must be > 0")
@@ -1960,6 +1960,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		mcpXMLInject = *input.MCPXMLInject
 	}
 
+	allowImageGeneration := input.AllowImageGeneration || defaultAllowImageGenerationForPlatform(platform)
+
 	// 如果指定了复制账号的源分组，先获取账号 ID 列表
 	var accountIDsToCopy []int64
 	if len(input.CopyAccountsFromGroupIDs) > 0 {
@@ -2003,7 +2005,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		DailyLimitUSD:                   dailyLimit,
 		WeeklyLimitUSD:                  weeklyLimit,
 		MonthlyLimitUSD:                 monthlyLimit,
-		AllowImageGeneration:            input.AllowImageGeneration,
+		AllowImageGeneration:            allowImageGeneration,
 		ImageRateIndependent:            input.ImageRateIndependent,
 		ImageRateMultiplier:             imageRateMultiplier,
 		ImagePrice1K:                    imagePrice1K,
@@ -3017,12 +3019,17 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		}
 	}
 
+	openAISettings, err := normalizeBulkOpenAISettings(input)
+	if err != nil {
+		return nil, err
+	}
+
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 
-	// 预加载账号平台信息（混合渠道检查需要）。
+	// 预加载账号平台信息（混合渠道检查/探测账号校验/OpenAI 专属设置校验共用，避免多次 DB 查询）。
 	platformByID := map[int64]string{}
 	var cachedTargets []*Account
-	if needMixedChannelCheck || input.ProbeEnabled != nil {
+	if needMixedChannelCheck || input.ProbeEnabled != nil || openAISettings.any() {
 		accounts, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -3034,21 +3041,26 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 		}
 	}
-	if input.ProbeEnabled != nil {
-		accountsByID := make(map[int64]*Account, len(cachedTargets))
-		for _, account := range cachedTargets {
-			if account != nil {
-				accountsByID[account.ID] = account
-			}
+	targetsByID := make(map[int64]*Account, len(cachedTargets))
+	for _, account := range cachedTargets {
+		if account != nil {
+			targetsByID[account.ID] = account
 		}
+	}
+	if input.ProbeEnabled != nil {
 		for _, accountID := range input.AccountIDs {
-			account, ok := accountsByID[accountID]
+			account, ok := targetsByID[accountID]
 			if !ok {
 				return nil, ErrAccountNotFound
 			}
 			if !isUpstreamBillingProbeAccount(account) {
 				return nil, ErrUpstreamBillingProbeAccountInvalid
 			}
+		}
+	}
+	if openAISettings.any() {
+		if err := validateBulkOpenAISettingsTargets(input, openAISettings, targetsByID); err != nil {
+			return nil, err
 		}
 	}
 

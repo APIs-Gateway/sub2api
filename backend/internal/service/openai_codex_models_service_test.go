@@ -168,6 +168,117 @@ func TestConvertOpenAIModelListToCodexManifest(t *testing.T) {
 	}
 }
 
+func TestAdjustAPIKeyCodexModelsManifest(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "targeted model with responses lite flipped off",
+			body: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+		},
+		{
+			name: "multiple targeted models all adjusted",
+			body: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":true},{"slug":"gpt-5.6-luna","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false},{"slug":"gpt-5.6-luna","use_responses_lite":false}]}`,
+		},
+		{
+			name: "untargeted model unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-nova","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-nova","use_responses_lite":true}]}`,
+		},
+		{
+			name: "targeted model already false unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+		},
+		{
+			name: "targeted model without the field unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-sol"}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol"}]}`,
+		},
+		{
+			name: "converted manifest without the field unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.6-luna"}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.6-luna"}]}`,
+		},
+		{
+			name: "malformed body returned unchanged, not an error",
+			body: `not json`,
+			want: `not json`,
+		},
+		{
+			name: "missing models field returned unchanged, not an error",
+			body: `{"object":"list"}`,
+			want: `{"object":"list"}`,
+		},
+		{
+			name: "non-object model entry skipped, valid siblings still adjusted",
+			body: `{"models":[null,"not-an-object",{"slug":"gpt-5.6-sol","use_responses_lite":true}]}`,
+			want: `{"models":[null,"not-an-object",{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := adjustAPIKeyCodexModelsManifest([]byte(tt.body))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// adjustAPIKeyCodexModelsManifest 本身在正常输入下不会返回错误（它只在重新
+// 序列化已校验过的 json.RawMessage 时才可能失败，而这实际不可能发生）；
+// 用 adjustAPIKeyCodexModelsManifestFunc 这个测试注入点强制其失败，
+// 单独验证调用方把该错误包装成 OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST
+// 且可重试的逻辑是正确的。
+func TestFetchCodexModelsManifestAPIKeyAdjustErrorWraps(t *testing.T) {
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"models":[{"slug":"gpt-5.6-sol"}]}`)),
+	}}
+
+	prev := adjustAPIKeyCodexModelsManifestFunc
+	adjustErr := errors.New("boom")
+	adjustAPIKeyCodexModelsManifestFunc = func(body []byte) ([]byte, error) {
+		return nil, adjustErr
+	}
+	defer func() { adjustAPIKeyCodexModelsManifestFunc = prev }()
+
+	s := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID:       1,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "test-api-key",
+			"base_url": "https://upstream.example/v1",
+		},
+	}
+
+	_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	if err == nil {
+		t.Fatal("expected adjust error to be wrapped and returned")
+	}
+	if got, want := infraerrors.Reason(err), "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST"; got != want {
+		t.Fatalf("error reason: got %q, want %q", got, want)
+	}
+	if !IsRetryableCodexModelsManifestError(err) {
+		t.Fatal("adjust-manifest wrapping error must be retryable")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected wrapped error to mention underlying cause, got: %v", err)
+	}
+}
+
 func TestFetchCodexModelsManifestRejectsInvalidEnvelope(t *testing.T) {
 	tests := []struct {
 		name string

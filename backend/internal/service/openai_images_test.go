@@ -1257,6 +1257,64 @@ func TestShouldClassifyOpenAIUpstreamStreamReadErrorTransportStrings(t *testing.
 	require.False(t, shouldClassifyOpenAIUpstreamStreamReadError(errors.New("unexpected EOF"), canceledCtx))
 }
 
+// TestOpenAIImagesOAuthStreamingBufioReadTransportErrorClassified 吸收上游
+// #5404 的第二处改动点：默认（未配置 stream interval/keepalive）的 bufio
+// 读取路径下，reader.ReadBytes 返回传输层错误时必须被分类识别，而不是像之前
+// 那样把裸 error 文本当 SSE "error" 事件直接写给客户端、丢失换账号重试的机会。
+func TestOpenAIImagesOAuthStreamingBufioReadTransportErrorClassified(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       &openAIImagesReadErrorBody{err: errors.New("connection reset by peer")},
+	}
+	svc := &OpenAIGatewayService{}
+
+	_, _, _, _, err := svc.handleOpenAIImagesOAuthStreamingResponse(resp, c, time.Now(), "b64_json", "image_generation", "gpt-image-2")
+
+	var classified *openAIUpstreamStreamReadError
+	require.ErrorAs(t, err, &classified)
+	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamStreamReadErrorCode, code)
+	require.Equal(t, "Upstream response stream was interrupted", message)
+}
+
+// TestOpenAIImagesOAuthStreamingIntervalPathReadTransportErrorClassified 覆盖
+// 同一分类逻辑在启用 stream data interval 配置后的另一条独立读取路径（后台
+// goroutine 通过 channel 上报读取事件），它与默认 bufio 路径是两套并行实现，
+// 必须分别验证传输层错误都会被正确分类而不是直接写给客户端。
+func TestOpenAIImagesOAuthStreamingIntervalPathReadTransportErrorClassified(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       &openAIImagesReadErrorBody{err: errors.New("connection reset by peer")},
+	}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{
+			Gateway: config.GatewayConfig{
+				ImageStreamDataIntervalTimeout: 60,
+			},
+		},
+	}
+
+	_, _, _, _, err := svc.handleOpenAIImagesOAuthStreamingResponse(resp, c, time.Now(), "b64_json", "image_generation", "gpt-image-2")
+
+	var classified *openAIUpstreamStreamReadError
+	require.ErrorAs(t, err, &classified)
+	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamStreamReadErrorCode, code)
+	require.Equal(t, "Upstream response stream was interrupted", message)
+}
+
 func TestOpenAIGatewayServiceForwardImages_OAuthStreamServerErrorAfterFlushDoesNotFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","stream":true,"response_format":"b64_json"}`)
