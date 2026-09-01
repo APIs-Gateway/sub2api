@@ -1610,6 +1610,132 @@ func TestOpenAIGatewayService_Forward_WSv2_RepairsConcatenatedJSONDocuments(t *t
 	require.Equal(t, "resp_concat_1", gjson.GetBytes(rec.Body.Bytes(), "id").String())
 }
 
+func TestOpenAIGatewayService_Forward_WSv2_RejectsMalformedEventBeforeWritingDownstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name    string
+		message []byte
+	}{
+		{name: "not_json_at_all", message: []byte("not-json")},
+		{name: "valid_json_with_trailing_garbage", message: []byte(`{"type":"response.in_progress"}unexpected-tail`)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Security.URLAllowlist.Enabled = false
+			cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+			cfg.Gateway.OpenAIWS.Enabled = true
+			cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+			cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+			cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+			cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
+			cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+			cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+			cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+
+			// 畸形事件之后紧跟一个正常 delta 和 completed，验证 Forward 在遇到畸形
+			// JSON 时立即返回、不会继续读取/处理后续消息。
+			delta := []byte(`{"type":"response.output_text.delta","delta":"ok","sequence_number":1}`)
+			completed := []byte(`{"type":"response.completed","response":{"id":"resp_malformed_before","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
+			captureConn := &openAIWSCaptureConn{events: [][]byte{tc.message, delta, completed}}
+			pool := newOpenAIWSConnPool(cfg)
+			pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: captureConn})
+			defer pool.Close()
+
+			svc := &OpenAIGatewayService{
+				cfg:              cfg,
+				httpUpstream:     &httpUpstreamRecorder{},
+				cache:            &stubGatewayCache{},
+				openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+				toolCorrector:    NewCodexToolCorrector(),
+				openaiWSPool:     pool,
+			}
+			account := &Account{
+				ID: 1402, Name: "openai-ws-malformed-before", Platform: PlatformOpenAI,
+				Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "sk-test",
+					"base_url": "https://api.example.test",
+				},
+				Extra: map[string]any{"responses_websockets_v2_enabled": true},
+			}
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+
+			result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+
+			require.Error(t, err)
+			var fallbackErr *openAIWSFallbackError
+			require.ErrorAs(t, err, &fallbackErr)
+			require.Equal(t, "invalid_event_json", fallbackErr.Reason)
+			require.Nil(t, result)
+			require.Empty(t, rec.Body.String())
+			require.True(t, captureConn.closed)
+		})
+	}
+}
+
+func TestOpenAIGatewayService_Forward_WSv2_RejectsMalformedEventAfterWritingDownstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+
+	// delta 先写入下游，再收到畸形事件：此时不能再走 HTTP 回退（已有半截流出去了），
+	// 必须以错误终止本次转发，且不能把畸形内容混入已下发的 SSE 流。
+	delta := []byte(`{"type":"response.output_text.delta","delta":"ok","sequence_number":1}`)
+	malformed := []byte(`{"type":"response.in_progress"}unexpected-tail`)
+	captureConn := &openAIWSCaptureConn{events: [][]byte{delta, malformed}}
+	pool := newOpenAIWSConnPool(cfg)
+	pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: captureConn})
+	defer pool.Close()
+
+	svc := &OpenAIGatewayService{
+		cfg:              cfg,
+		httpUpstream:     &httpUpstreamRecorder{},
+		cache:            &stubGatewayCache{},
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+		openaiWSPool:     pool,
+	}
+	account := &Account{
+		ID: 1403, Name: "openai-ws-malformed-after", Platform: PlatformOpenAI,
+		Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://api.example.test",
+		},
+		Extra: map[string]any{"responses_websockets_v2_enabled": true},
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "after downstream output")
+	require.Nil(t, result)
+	require.Contains(t, rec.Body.String(), `"delta":"ok"`)
+	require.NotContains(t, rec.Body.String(), "unexpected-tail")
+	require.NotContains(t, rec.Body.String(), "response.in_progress")
+	require.True(t, captureConn.closed)
+}
+
 type openAIWSCaptureDialer struct {
 	mu          sync.Mutex
 	conn        *openAIWSCaptureConn

@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"testing"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
@@ -341,4 +343,412 @@ func TestAdminServiceBulkUpdateTypedProbeSanitizesManagedExtra(t *testing.T) {
 	require.NotContains(t, repo.bulkUpdateInput.Extra, UpstreamBillingProbeExtraKey)
 	require.NotNil(t, repo.bulkUpdateInput.ProbeEnabled)
 	require.False(t, *repo.bulkUpdateInput.ProbeEnabled)
+}
+
+// ---- normalizeBulkOpenAIEndpointCapabilities ----
+
+func TestNormalizeBulkOpenAIEndpointCapabilities(t *testing.T) {
+	tests := []struct {
+		name        string
+		raw         any
+		wantValue   any
+		wantHasChat bool
+		wantErr     bool
+	}{
+		{name: "nil clears override", raw: nil, wantValue: nil, wantHasChat: true},
+		{name: "chat only", raw: []any{"chat_completions"}, wantValue: []string{"chat_completions"}, wantHasChat: true},
+		{name: "embeddings only", raw: []any{"embeddings"}, wantValue: []string{"embeddings"}, wantHasChat: false},
+		{name: "both collapse to nil", raw: []any{"chat_completions", "embeddings"}, wantValue: nil, wantHasChat: true},
+		{name: "typed string slice", raw: []string{"embeddings"}, wantValue: []string{"embeddings"}, wantHasChat: false},
+		{name: "non-string item", raw: []any{123}, wantErr: true},
+		{name: "unknown capability", raw: []any{"responses"}, wantErr: true},
+		{name: "empty list", raw: []any{}, wantErr: true},
+		{name: "wrong type", raw: "chat_completions", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, hasChat, err := normalizeBulkOpenAIEndpointCapabilities(tt.raw)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Equal(t, "OPENAI_ENDPOINT_CAPABILITIES_INVALID", infraerrors.FromError(err).Reason)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.wantValue, value)
+			require.Equal(t, tt.wantHasChat, hasChat)
+		})
+	}
+}
+
+// ---- normalizeBulkOpenAIResponsesMode ----
+
+func TestNormalizeBulkOpenAIResponsesMode(t *testing.T) {
+	tests := []struct {
+		name       string
+		raw        any
+		wantValue  any
+		wantForced bool
+		wantErr    bool
+	}{
+		{name: "nil keeps auto", raw: nil, wantValue: nil, wantForced: false},
+		{name: "auto normalizes to nil", raw: string(openai_compat.ResponsesSupportModeAuto), wantValue: nil, wantForced: false},
+		{name: "force responses", raw: string(openai_compat.ResponsesSupportModeForceResponses), wantValue: string(openai_compat.ResponsesSupportModeForceResponses), wantForced: true},
+		{name: "force chat completions", raw: string(openai_compat.ResponsesSupportModeForceChatCompletions), wantValue: string(openai_compat.ResponsesSupportModeForceChatCompletions), wantForced: true},
+		{name: "wrong type", raw: true, wantErr: true},
+		{name: "unknown value", raw: "sometimes", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, forced, err := normalizeBulkOpenAIResponsesMode(tt.raw)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Equal(t, "OPENAI_RESPONSES_MODE_INVALID", infraerrors.FromError(err).Reason)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.wantValue, value)
+			require.Equal(t, tt.wantForced, forced)
+		})
+	}
+}
+
+// ---- normalizeBulkOpenAISettings ----
+
+func TestNormalizeBulkOpenAISettings_NilInputIsNoop(t *testing.T) {
+	settings, err := normalizeBulkOpenAISettings(nil)
+	require.NoError(t, err)
+	require.False(t, settings.any())
+}
+
+func TestNormalizeBulkOpenAISettings_NoRelevantFieldsIsNoop(t *testing.T) {
+	input := &BulkUpdateAccountsInput{AccountIDs: []int64{1}}
+	settings, err := normalizeBulkOpenAISettings(input)
+	require.NoError(t, err)
+	require.False(t, settings.any())
+}
+
+func TestNormalizeBulkOpenAISettings_EmbeddingsOnlyClearsResponsesMode(t *testing.T) {
+	input := &BulkUpdateAccountsInput{
+		Credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: []any{"embeddings"}},
+	}
+
+	settings, err := normalizeBulkOpenAISettings(input)
+
+	require.NoError(t, err)
+	require.True(t, settings.endpointCapabilities)
+	require.False(t, settings.capabilitiesIncludeChat)
+	require.True(t, settings.responsesMode)
+	require.False(t, settings.forcedResponsesMode)
+	require.Contains(t, input.Extra, openai_compat.ExtraKeyResponsesMode)
+	require.Nil(t, input.Extra[openai_compat.ExtraKeyResponsesMode])
+}
+
+func TestNormalizeBulkOpenAISettings_EmbeddingsOnlyConflictsWithForcedResponsesMode(t *testing.T) {
+	input := &BulkUpdateAccountsInput{
+		Credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: []any{"embeddings"}},
+		Extra:       map[string]any{openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceResponses)},
+	}
+
+	_, err := normalizeBulkOpenAISettings(input)
+
+	require.Error(t, err)
+	require.Equal(t, "OPENAI_RESPONSES_MODE_INVALID", infraerrors.FromError(err).Reason)
+}
+
+func TestNormalizeBulkOpenAISettings_PropagatesCapabilitiesError(t *testing.T) {
+	input := &BulkUpdateAccountsInput{
+		Credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: "chat_completions"},
+	}
+
+	_, err := normalizeBulkOpenAISettings(input)
+
+	require.Error(t, err)
+	require.Equal(t, "OPENAI_ENDPOINT_CAPABILITIES_INVALID", infraerrors.FromError(err).Reason)
+}
+
+func TestNormalizeBulkOpenAISettings_PropagatesResponsesModeError(t *testing.T) {
+	input := &BulkUpdateAccountsInput{
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesMode: "sometimes"},
+	}
+
+	_, err := normalizeBulkOpenAISettings(input)
+
+	require.Error(t, err)
+	require.Equal(t, "OPENAI_RESPONSES_MODE_INVALID", infraerrors.FromError(err).Reason)
+}
+
+// ---- validateBulkOpenAISettingsTargets ----
+
+func TestValidateBulkOpenAISettingsTargets_NoopWhenSettingsEmpty(t *testing.T) {
+	err := validateBulkOpenAISettingsTargets(&BulkUpdateAccountsInput{AccountIDs: []int64{1}}, bulkOpenAISettings{}, nil)
+	require.NoError(t, err)
+}
+
+func TestValidateBulkOpenAISettingsTargets_NoopWhenInputNil(t *testing.T) {
+	err := validateBulkOpenAISettingsTargets(nil, bulkOpenAISettings{endpointCapabilities: true}, nil)
+	require.NoError(t, err)
+}
+
+func TestValidateBulkOpenAISettingsTargets_RejectsMissingAccount(t *testing.T) {
+	err := validateBulkOpenAISettingsTargets(
+		&BulkUpdateAccountsInput{AccountIDs: []int64{1}},
+		bulkOpenAISettings{endpointCapabilities: true},
+		map[int64]*Account{},
+	)
+
+	require.Error(t, err)
+	appErr := infraerrors.FromError(err)
+	require.Equal(t, "OPENAI_BULK_TARGET_INVALID", appErr.Reason)
+	require.Equal(t, "1", appErr.Metadata["account_id"])
+}
+
+func TestValidateBulkOpenAISettingsTargets_RejectsNonOpenAIPlatform(t *testing.T) {
+	err := validateBulkOpenAISettingsTargets(
+		&BulkUpdateAccountsInput{AccountIDs: []int64{1}},
+		bulkOpenAISettings{responsesMode: true},
+		map[int64]*Account{1: {ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}},
+	)
+
+	require.Error(t, err)
+	require.Equal(t, "OPENAI_BULK_TARGET_INVALID", infraerrors.FromError(err).Reason)
+}
+
+func TestValidateBulkOpenAISettingsTargets_RejectsNonAPIKeyType(t *testing.T) {
+	err := validateBulkOpenAISettingsTargets(
+		&BulkUpdateAccountsInput{AccountIDs: []int64{1}},
+		bulkOpenAISettings{endpointCapabilities: true},
+		map[int64]*Account{1: {ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}},
+	)
+
+	require.Error(t, err)
+	require.Equal(t, "OPENAI_BULK_TARGET_INVALID", infraerrors.FromError(err).Reason)
+}
+
+func TestValidateBulkOpenAISettingsTargets_ForcedResponsesRequiresCurrentChatCapability(t *testing.T) {
+	err := validateBulkOpenAISettingsTargets(
+		&BulkUpdateAccountsInput{AccountIDs: []int64{1}},
+		bulkOpenAISettings{responsesMode: true, forcedResponsesMode: true},
+		map[int64]*Account{1: {
+			ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: []string{"embeddings"}},
+		}},
+	)
+
+	require.Error(t, err)
+	require.Equal(t, "OPENAI_BULK_TARGET_INVALID", infraerrors.FromError(err).Reason)
+}
+
+func TestValidateBulkOpenAISettingsTargets_ForcedResponsesAllowsDefaultChatCapability(t *testing.T) {
+	err := validateBulkOpenAISettingsTargets(
+		&BulkUpdateAccountsInput{AccountIDs: []int64{1}},
+		bulkOpenAISettings{responsesMode: true, forcedResponsesMode: true},
+		map[int64]*Account{1: {ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}},
+	)
+
+	require.NoError(t, err)
+}
+
+func TestValidateBulkOpenAISettingsTargets_ForcedResponsesSkipsCurrentCapabilityCheckWhenUpdatingCapabilities(t *testing.T) {
+	err := validateBulkOpenAISettingsTargets(
+		&BulkUpdateAccountsInput{AccountIDs: []int64{1}},
+		bulkOpenAISettings{endpointCapabilities: true, capabilitiesIncludeChat: true, responsesMode: true, forcedResponsesMode: true},
+		map[int64]*Account{1: {
+			ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: []string{"embeddings"}},
+		}},
+	)
+
+	require.NoError(t, err)
+}
+
+// ---- BulkUpdateAccounts integration ----
+
+func TestAdminServiceBulkUpdateAccounts_NormalizesOpenAISettings(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{
+		{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+		{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+	}}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1, 2},
+		Credentials: map[string]any{
+			openAIEndpointCapabilitiesCredentialKey: []any{"chat_completions", "embeddings"},
+		},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeAuto),
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Success)
+	require.Equal(t, []int64{1, 2}, repo.bulkUpdateIDs)
+	require.Contains(t, repo.bulkUpdateInput.Credentials, openAIEndpointCapabilitiesCredentialKey)
+	require.Nil(t, repo.bulkUpdateInput.Credentials[openAIEndpointCapabilitiesCredentialKey])
+	require.Contains(t, repo.bulkUpdateInput.Extra, openai_compat.ExtraKeyResponsesMode)
+	require.Nil(t, repo.bulkUpdateInput.Extra[openai_compat.ExtraKeyResponsesMode])
+}
+
+func TestAdminServiceBulkUpdateAccounts_EmbeddingsOnlyResetsResponsesMode(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{
+		{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+	}}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	_, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1},
+		Credentials: map[string]any{
+			openAIEndpointCapabilitiesCredentialKey: []string{"embeddings"},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"embeddings"}, repo.bulkUpdateInput.Credentials[openAIEndpointCapabilitiesCredentialKey])
+	require.Contains(t, repo.bulkUpdateInput.Extra, openai_compat.ExtraKeyResponsesMode)
+	require.Nil(t, repo.bulkUpdateInput.Extra[openai_compat.ExtraKeyResponsesMode])
+}
+
+func TestAdminServiceBulkUpdateAccounts_RejectsInvalidOpenAISettingValuesBeforeWrite(t *testing.T) {
+	tests := []struct {
+		name        string
+		credentials map[string]any
+		extra       map[string]any
+		reason      string
+	}{
+		{name: "empty capabilities", credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: []any{}}, reason: "OPENAI_ENDPOINT_CAPABILITIES_INVALID"},
+		{name: "unknown capability", credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: []any{"responses"}}, reason: "OPENAI_ENDPOINT_CAPABILITIES_INVALID"},
+		{name: "capabilities type", credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: "chat_completions"}, reason: "OPENAI_ENDPOINT_CAPABILITIES_INVALID"},
+		{name: "responses mode value", extra: map[string]any{openai_compat.ExtraKeyResponsesMode: "sometimes"}, reason: "OPENAI_RESPONSES_MODE_INVALID"},
+		{name: "responses mode type", extra: map[string]any{openai_compat.ExtraKeyResponsesMode: true}, reason: "OPENAI_RESPONSES_MODE_INVALID"},
+		{
+			name:        "embeddings conflict",
+			credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: []any{"embeddings"}},
+			extra:       map[string]any{openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceResponses)},
+			reason:      "OPENAI_RESPONSES_MODE_INVALID",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &accountRepoStubForBulkUpdate{}
+			svc := &adminServiceImpl{accountRepo: repo}
+			result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+				AccountIDs:  []int64{1},
+				Credentials: tt.credentials,
+				Extra:       tt.extra,
+			})
+			require.Nil(t, result)
+			require.Equal(t, tt.reason, infraerrors.FromError(err).Reason)
+			require.Empty(t, repo.bulkUpdateIDs)
+		})
+	}
+}
+
+func TestAdminServiceBulkUpdateAccounts_RejectsInvalidOpenAITargetsBeforeWrite(t *testing.T) {
+	tests := []struct {
+		name     string
+		accounts []*Account
+		input    *BulkUpdateAccountsInput
+	}{
+		{
+			name:     "missing account",
+			accounts: []*Account{{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}},
+			input: &BulkUpdateAccountsInput{
+				AccountIDs:  []int64{1, 2},
+				Credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: []any{"chat_completions"}},
+			},
+		},
+		{
+			name:     "non-OpenAI platform",
+			accounts: []*Account{{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}},
+			input: &BulkUpdateAccountsInput{
+				AccountIDs: []int64{1},
+				Extra:      map[string]any{openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions)},
+			},
+		},
+		{
+			name:     "non-API-key account type",
+			accounts: []*Account{{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}},
+			input: &BulkUpdateAccountsInput{
+				AccountIDs:  []int64{1},
+				Credentials: map[string]any{openAIEndpointCapabilitiesCredentialKey: nil},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: tt.accounts}
+			svc := &adminServiceImpl{accountRepo: repo}
+			result, err := svc.BulkUpdateAccounts(context.Background(), tt.input)
+			require.Nil(t, result)
+			require.Equal(t, "OPENAI_BULK_TARGET_INVALID", infraerrors.FromError(err).Reason)
+			require.Empty(t, repo.bulkUpdateIDs)
+		})
+	}
+}
+
+func TestAdminServiceBulkUpdateAccounts_ForcedResponsesRequiresChatCapability(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{{
+		ID:       1,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			openAIEndpointCapabilitiesCredentialKey: []any{"embeddings"},
+		},
+	}}}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1},
+		Extra:      map[string]any{openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions)},
+	})
+
+	require.Nil(t, result)
+	require.Equal(t, "OPENAI_BULK_TARGET_INVALID", infraerrors.FromError(err).Reason)
+	require.Empty(t, repo.bulkUpdateIDs)
+}
+
+func TestAdminServiceBulkUpdateAccounts_ForcedResponsesAcceptsChatCapabilityUpdate(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{{
+		ID:       1,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			openAIEndpointCapabilitiesCredentialKey: []any{"embeddings"},
+		},
+	}}}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	_, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1},
+		Credentials: map[string]any{
+			openAIEndpointCapabilitiesCredentialKey: []any{"chat_completions"},
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceResponses)},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []int64{1}, repo.bulkUpdateIDs)
+}
+
+func TestAdminServiceBulkUpdateAccounts_ValidatesFilterResolvedOpenAITargets(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{
+		listData:         []Account{{ID: 7}},
+		listResult:       &pagination.PaginationResult{Total: 1},
+		getByIDsAccounts: []*Account{{ID: 7, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		Filters: &BulkUpdateAccountFilters{Platform: PlatformOpenAI},
+		Extra:   map[string]any{openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions)},
+	})
+
+	require.Nil(t, result)
+	require.Equal(t, "OPENAI_BULK_TARGET_INVALID", infraerrors.FromError(err).Reason)
+	require.Equal(t, []int64{7}, repo.getByIDsIDs)
+	require.Empty(t, repo.bulkUpdateIDs)
 }
