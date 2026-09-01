@@ -1,8 +1,13 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOpsCleanupPlan(t *testing.T) {
@@ -62,3 +67,53 @@ func TestIsMissingRelationError(t *testing.T) {
 type fakeErr string
 
 func (e fakeErr) Error() string { return string(e) }
+
+type opsCleanupRepoStub struct {
+	OpsRepository
+	heartbeatCalls int
+	sawSuccess     bool
+	lastError      string
+}
+
+func (r *opsCleanupRepoStub) UpsertJobHeartbeat(_ context.Context, input *OpsUpsertJobHeartbeatInput) error {
+	r.heartbeatCalls++
+	if input.LastSuccessAt != nil {
+		r.sawSuccess = true
+	}
+	if input.LastError != nil {
+		r.lastError = *input.LastError
+	}
+	return nil
+}
+
+// upstream sync (#5030): 清理任务成功日志改走结构化 info 级别。这里不关心
+// 日志本身的格式（logger 包已单独测试），只验证 runScheduled 在 leader lock
+// 与全部清理目标都被跳过（retention < 0）时，确实一路跑到"成功"分支并记了
+// 一次心跳——即触发了那条 info 日志所在的代码块，而不是提前从某个错误分支返回。
+func TestOpsCleanupRunScheduledReachesSuccessLogging(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	repo := &opsCleanupRepoStub{}
+	svc := &OpsCleanupService{
+		db:      db,
+		opsRepo: repo,
+		cfg: &config.Config{
+			RunMode: config.RunModeSimple,
+			Ops: config.OpsConfig{
+				Cleanup: config.OpsCleanupConfig{
+					ErrorLogRetentionDays:      -1,
+					MinuteMetricsRetentionDays: -1,
+					HourlyMetricsRetentionDays: -1,
+				},
+			},
+		},
+	}
+
+	svc.runScheduled()
+
+	require.Equal(t, 1, repo.heartbeatCalls)
+	require.True(t, repo.sawSuccess, "expected the success heartbeat, got error heartbeat: %q", repo.lastError)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
