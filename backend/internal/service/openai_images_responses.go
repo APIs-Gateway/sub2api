@@ -1319,6 +1319,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 ) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if shouldClassifyOpenAIUpstreamStreamReadError(err, c.Request.Context()) {
+			err = newOpenAIUpstreamStreamReadError(err)
+		}
 		return OpenAIUsage{}, 0, nil, err
 	}
 
@@ -1619,7 +1622,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 				} else if done {
 					return usage, imageCount, imageOutputSizes, firstTokenMs, nil
 				}
-				s.tryWriteOpenAIImagesStreamEvent(c, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", buildOpenAIImagesStreamErrorBody(err.Error()))
+				if shouldClassifyOpenAIUpstreamStreamReadError(err, c.Request.Context()) {
+					err = newOpenAIUpstreamStreamReadError(err)
+				}
 				return usage, imageCount, imageOutputSizes, firstTokenMs, err
 			}
 		}
@@ -1712,7 +1717,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 				} else if done {
 					return usage, imageCount, imageOutputSizes, firstTokenMs, nil
 				}
-				s.tryWriteOpenAIImagesStreamEvent(c, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", buildOpenAIImagesStreamErrorBody(ev.err.Error()))
+				if shouldClassifyOpenAIUpstreamStreamReadError(ev.err, c.Request.Context()) {
+					ev.err = newOpenAIUpstreamStreamReadError(ev.err)
+				}
 				return usage, imageCount, imageOutputSizes, firstTokenMs, ev.err
 			}
 			done, processErr := processLine(ev.line)
@@ -1954,13 +1961,54 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	writerSizeBeforeResponse int,
 	err error,
 ) error {
+	responseWritten := c != nil && c.Writer != nil && OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeResponse
+
+	// A body transport failure after a successful HTTP status (H2 stream reset,
+	// "unexpected EOF", connection reset, ...) is not an *OpenAIImagesUpstreamError
+	// and used to fall straight through to `return err` below with no failover and
+	// no ops logging. Classify it explicitly so it can retry on another account
+	// until real image bytes have actually reached the client.
+	if code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err); ok {
+		headers := http.Header(nil)
+		requestID := ""
+		statusCode := http.StatusBadGateway
+		if resp != nil {
+			headers = resp.Header.Clone()
+			requestID = strings.TrimSpace(resp.Header.Get("x-request-id"))
+		}
+		kind := "failover"
+		if responseWritten {
+			kind = "retry_exhausted_failover"
+		}
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: statusCode,
+			UpstreamRequestID:  requestID,
+			UpstreamURL:        upstreamURL,
+			Kind:               kind,
+			Message:            message,
+		})
+		if responseWritten {
+			return err
+		}
+		responseBody := []byte(fmt.Sprintf(`{"error":{"type":"upstream_error","code":%q,"message":%q}}`, code, message))
+		shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, headers, responseBody, requestedModel)
+		return &UpstreamFailoverError{
+			StatusCode:             statusCode,
+			ResponseBody:           responseBody,
+			ResponseHeaders:        headers,
+			RetryableOnSameAccount: openAIRetryableOnSameAccount(statusCode, message, responseBody, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)),
+		}
+	}
+
 	var upstreamErr *OpenAIImagesUpstreamError
 	if !errors.As(err, &upstreamErr) {
 		return err
 	}
 
 	retryable := IsOpenAIImagesRetryableUpstreamError(upstreamErr)
-	responseWritten := c != nil && c.Writer != nil && OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeResponse
 	kind := "http_error"
 	if retryable {
 		kind = "failover"

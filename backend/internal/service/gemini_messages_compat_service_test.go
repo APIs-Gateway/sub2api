@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -630,6 +631,154 @@ func TestCleanToolSchema_NormalizesGeminiUnsupportedSchemaFields(t *testing.T) {
 	empty, ok := properties["empty"].(map[string]any)
 	require.True(t, ok)
 	require.NotContains(t, empty, "type")
+}
+
+func TestCleanToolSchema_ConvertsNestedIntegerExclusiveMinimum(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"counts": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type":             "integer",
+					"exclusiveMinimum": float64(0),
+				},
+			},
+			"strict": map[string]any{
+				"type":             "integer",
+				"exclusiveMinimum": 0,
+				"minimum":          5,
+			},
+			"weak": map[string]any{
+				"type":             "integer",
+				"exclusiveMinimum": 2,
+				"minimum":          1,
+			},
+		},
+	}
+
+	cleaned, ok := cleanToolSchema(schema).(map[string]any)
+	require.True(t, ok)
+	properties, ok := cleaned["properties"].(map[string]any)
+	require.True(t, ok)
+	counts, ok := properties["counts"].(map[string]any)
+	require.True(t, ok)
+	items, ok := counts["items"].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, items, "exclusiveMinimum")
+	require.Equal(t, float64(1), items["minimum"])
+
+	strict, ok := properties["strict"].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, strict, "exclusiveMinimum")
+	require.Equal(t, 5, strict["minimum"])
+
+	weak, ok := properties["weak"].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, weak, "exclusiveMinimum")
+	require.Equal(t, 3, weak["minimum"])
+}
+
+func TestCleanToolSchema_DropsAmbiguousExclusiveMinimumWithoutConversion(t *testing.T) {
+	for name, schema := range map[string]map[string]any{
+		"number schema": {
+			"type":             "number",
+			"exclusiveMinimum": 0,
+		},
+		"fractional integer bound": {
+			"type":             "integer",
+			"exclusiveMinimum": 0.5,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cleaned, ok := cleanToolSchema(schema).(map[string]any)
+			require.True(t, ok)
+			require.NotContains(t, cleaned, "exclusiveMinimum")
+			require.NotContains(t, cleaned, "minimum")
+		})
+	}
+}
+
+// TestIncrementIntegralSchemaBound 直接覆盖 incrementIntegralSchemaBound 在
+// cleanToolSchema 场景之外仍需正确处理的类型分支：JSON 反序列化可能产生的
+// int/int64/json.Number，以及 float64 的 NaN/Inf/溢出等防御性拒绝路径。
+func TestIncrementIntegralSchemaBound(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     any
+		wantOK    bool
+		wantValue any
+	}{
+		{name: "float64 valid integer", input: float64(3), wantOK: true, wantValue: float64(4)},
+		{name: "float64 NaN", input: math.NaN(), wantOK: false},
+		{name: "float64 positive infinity", input: math.Inf(1), wantOK: false},
+		{name: "float64 negative infinity", input: math.Inf(-1), wantOK: false},
+		{name: "float64 fractional", input: 1.5, wantOK: false},
+		{name: "float64 overflow at max representable value", input: math.MaxFloat64, wantOK: false},
+		{name: "int valid", input: int(7), wantOK: true, wantValue: int(8)},
+		{name: "int overflow at MaxInt", input: math.MaxInt, wantOK: false},
+		{name: "int64 valid", input: int64(9), wantOK: true, wantValue: int64(10)},
+		{name: "int64 overflow at MaxInt64", input: int64(math.MaxInt64), wantOK: false},
+		{name: "json.Number valid", input: json.Number("5"), wantOK: true, wantValue: json.Number("6")},
+		{name: "json.Number invalid text", input: json.Number("not-a-number"), wantOK: false},
+		{name: "json.Number at MaxInt64", input: json.Number(fmt.Sprintf("%d", int64(math.MaxInt64))), wantOK: false},
+		{name: "unsupported type string", input: "5", wantOK: false},
+		{name: "unsupported type bool", input: true, wantOK: false},
+		{name: "nil value", input: nil, wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := incrementIntegralSchemaBound(tt.input)
+			require.Equal(t, tt.wantOK, ok)
+			if tt.wantOK {
+				require.Equal(t, tt.wantValue, got)
+			} else {
+				require.Nil(t, got)
+			}
+		})
+	}
+}
+
+// TestSchemaNumberFloat64 覆盖 schemaNumberFloat64 的所有类型分支及其
+// NaN/Inf 拒绝逻辑，这些分支之前只被 schemaNumberLess 用 int 值间接触发过。
+func TestSchemaNumberFloat64(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   any
+		wantOK  bool
+		wantNum float64
+	}{
+		{name: "float64 finite", input: float64(2.5), wantOK: true, wantNum: 2.5},
+		{name: "float64 NaN", input: math.NaN(), wantOK: false},
+		{name: "float64 positive infinity", input: math.Inf(1), wantOK: false},
+		{name: "float64 negative infinity", input: math.Inf(-1), wantOK: false},
+		{name: "int", input: int(3), wantOK: true, wantNum: 3},
+		{name: "int64", input: int64(4), wantOK: true, wantNum: 4},
+		{name: "json.Number valid", input: json.Number("6.5"), wantOK: true, wantNum: 6.5},
+		{name: "json.Number invalid text", input: json.Number("not-a-number"), wantOK: false},
+		{name: "json.Number infinity text", input: json.Number("Inf"), wantOK: false},
+		{name: "unsupported type", input: "5", wantOK: false},
+		{name: "nil value", input: nil, wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := schemaNumberFloat64(tt.input)
+			require.Equal(t, tt.wantOK, ok)
+			if tt.wantOK {
+				require.InDelta(t, tt.wantNum, got, 1e-9)
+			}
+		})
+	}
+}
+
+// TestSchemaNumberLess 覆盖 schemaNumberLess 在双方均可解析、以及任一方不可
+// 解析（应保守返回 false，不覆盖已有 minimum）时的行为。
+func TestSchemaNumberLess(t *testing.T) {
+	require.True(t, schemaNumberLess(1, 2))
+	require.False(t, schemaNumberLess(2, 1))
+	require.False(t, schemaNumberLess(1, 1))
+	require.False(t, schemaNumberLess("not-a-number", 2))
+	require.False(t, schemaNumberLess(1, "not-a-number"))
 }
 
 func TestGeminiHandleNativeNonStreamingResponse_DebugDisabledDoesNotEmitHeaderLogs(t *testing.T) {

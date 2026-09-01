@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -299,4 +300,144 @@ func TestRecordCyberPolicyEvent_DefaultCountsTowardBan(t *testing.T) {
 	logs := repo.snapshotLogs()
 	require.Len(t, logs, 1)
 	require.GreaterOrEqual(t, logs[0].ViolationCount, 1, "默认路径行为不变（现状回归）")
+}
+
+// TestRecordCyberPolicyEvent_RespectsContentModerationScope 吸收上游 #5514：
+// cyber_policy 硬阻断记录必须遵守内容审核配置里的 group/model scope，
+// 不该对被排除在审核范围外的 group/model 也记风控日志、发邮件、计违规。
+func TestRecordCyberPolicyEvent_RespectsContentModerationScope(t *testing.T) {
+	groupID := int64(7)
+	tests := []struct {
+		name       string
+		config     string
+		groupID    *int64
+		model      string
+		wantCalls  []bool
+		wantLogs   int
+		wantBanned bool
+	}{
+		{
+			name:     "excluded group",
+			config:   `{"all_groups":false,"group_ids":[8],"ban_threshold":1}`,
+			groupID:  &groupID,
+			model:    "gpt-5",
+			wantLogs: 0,
+		},
+		{
+			name:     "ungrouped excluded by selected groups",
+			config:   `{"all_groups":false,"group_ids":[7],"ban_threshold":1}`,
+			groupID:  nil,
+			model:    "gpt-5",
+			wantLogs: 0,
+		},
+		{
+			name:     "excluded model",
+			config:   `{"all_groups":true,"model_filter":{"type":"include","models":["gpt-4o"]},"ban_threshold":1}`,
+			groupID:  &groupID,
+			model:    "gpt-5",
+			wantLogs: 0,
+		},
+		{
+			name:       "included group and model, unaffected by Enabled/Mode/sample_rate",
+			config:     `{"enabled":false,"mode":"off","sample_rate":0,"all_groups":false,"group_ids":[7],"model_filter":{"type":"include","models":["gpt-5"]},"ban_threshold":1}`,
+			groupID:    &groupID,
+			model:      "gpt-5",
+			wantCalls:  []bool{false},
+			wantLogs:   1,
+			wantBanned: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &banCountArgsTestRepo{}
+			userRepo := &contentModerationTestUserRepo{user: &User{ID: 1, Role: RoleUser, Status: StatusActive}}
+			svc := NewContentModerationService(
+				&contentModerationTestSettingRepo{values: map[string]string{
+					SettingKeyRiskControlEnabled:      "true",
+					SettingKeyContentModerationConfig: tt.config,
+				}},
+				repo, nil, nil, userRepo, nil, nil,
+			)
+
+			svc.RecordCyberPolicyEvent(context.Background(), CyberPolicyRecordInput{
+				UserID:  1,
+				GroupID: tt.groupID,
+				Model:   tt.model,
+			})
+
+			if tt.wantCalls == nil {
+				require.Empty(t, repo.snapshotCountCalls())
+			} else {
+				require.Equal(t, tt.wantCalls, repo.snapshotCountCalls())
+			}
+			require.Len(t, repo.snapshotLogs(), tt.wantLogs)
+			require.Equal(t, tt.wantBanned, userRepo.user.Status == StatusDisabled)
+			if tt.wantBanned {
+				require.Len(t, userRepo.updated, 1)
+			} else {
+				require.Empty(t, userRepo.updated)
+			}
+		})
+	}
+}
+
+// TestRecordCyberPolicyEvent_InitialRuntimeSnapshotLoadFailureSkipsEvent 吸收上游 #5514：
+// 首次加载 runtime snapshot 就因配置 JSON 损坏而失败时，事件必须整体跳过
+// （不写日志、不计数），而不是退化为空 ContentModerationConfig 继续放行。
+func TestRecordCyberPolicyEvent_InitialRuntimeSnapshotLoadFailureSkipsEvent(t *testing.T) {
+	repo := &banCountArgsTestRepo{}
+	settingRepo := &contentModerationRuntimeSettingRepo{values: map[string]string{
+		SettingKeyRiskControlEnabled:      "true",
+		SettingKeyContentModerationConfig: `{invalid`,
+	}}
+	svc := NewContentModerationService(settingRepo, repo, nil, nil, nil, nil, nil)
+
+	svc.RecordCyberPolicyEvent(context.Background(), CyberPolicyRecordInput{
+		UserID: 1,
+		Model:  "gpt-5",
+	})
+
+	require.Empty(t, repo.snapshotCountCalls())
+	require.Empty(t, repo.snapshotLogs())
+	getValue, getMultiple := settingRepo.calls()
+	require.Zero(t, getValue)
+	require.GreaterOrEqual(t, getMultiple, 1)
+}
+
+// TestRecordCyberPolicyEvent_RuntimeSnapshotRefreshFailureKeepsStaleScope 吸收上游 #5514：
+// runtime snapshot 缓存过期后台刷新失败时，当次事件仍应沿用旧（stale）snapshot
+// 的 scope 判断继续记录，而不是因为后台刷新失败就整体丢事件；
+// 同时验证后台刷新确实被异步触发过。
+func TestRecordCyberPolicyEvent_RuntimeSnapshotRefreshFailureKeepsStaleScope(t *testing.T) {
+	repo := &banCountArgsTestRepo{}
+	settingRepo := &contentModerationRuntimeSettingRepo{values: map[string]string{
+		SettingKeyRiskControlEnabled:      "true",
+		SettingKeyContentModerationConfig: `{"all_groups":true,"model_filter":{"type":"include","models":["gpt-5"]}}`,
+	}}
+	svc := NewContentModerationService(settingRepo, repo, nil, nil, nil, nil, nil)
+	svc.runtimeCacheTTL = time.Minute
+
+	_, err := svc.loadRuntimeSnapshot(context.Background())
+	require.NoError(t, err)
+	current := svc.runtimeSnapshot.Load()
+	require.NotNil(t, current)
+	expired := *current
+	expired.loadedAt = time.Now().Add(-2 * time.Minute)
+	svc.runtimeSnapshot.Store(&expired)
+	settingRepo.failMultiple(errors.New("database unavailable"))
+
+	svc.RecordCyberPolicyEvent(context.Background(), CyberPolicyRecordInput{
+		UserID: 1,
+		Model:  "gpt-5",
+	})
+
+	require.Len(t, repo.snapshotLogs(), 1)
+	require.Eventually(t, func() bool {
+		_, calls := settingRepo.calls()
+		return calls == 2
+	}, time.Second, time.Millisecond)
+	getValue, getMultiple := settingRepo.calls()
+	require.Zero(t, getValue)
+	require.Equal(t, 2, getMultiple)
 }

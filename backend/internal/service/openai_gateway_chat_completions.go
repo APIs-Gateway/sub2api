@@ -545,23 +545,8 @@ func (s *OpenAIGatewayService) newOpenAICompatBufferedReadFailoverError(
 	return failoverErr
 }
 
-// shouldClassifyOpenAIUpstreamStreamReadError excludes cancellation and
-// response-size enforcement from upstream retry.
-//
-// 上游的等价函数定义在 openai_stream_read_error.go，但该文件不在本批次
-// scope（backend/internal/service/openai_gateway*）内，故在此本地复刻一份；
-// 未来若有批次改到 openai_stream_read_error.go，应把两处合并。
-func shouldClassifyOpenAIUpstreamStreamReadError(err error, contexts ...context.Context) bool {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
-		return false
-	}
-	for _, ctx := range contexts {
-		if ctx != nil && ctx.Err() != nil {
-			return false
-		}
-	}
-	return true
-}
+// shouldClassifyOpenAIUpstreamStreamReadError 定义在 openai_stream_read_error.go
+// （吸收上游 #5404 时把之前在本文件本地复刻的一份挪了过去，images 路径也需要用）。
 
 // handleChatStreamingResponse reads Responses SSE events from upstream,
 // converts each to Chat Completions SSE chunks, and writes them to the client.
