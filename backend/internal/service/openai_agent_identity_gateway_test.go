@@ -110,7 +110,7 @@ func TestOpenAIBuildOpenAIWSHeadersAgentIdentityUsesAssertion(t *testing.T) {
 	}
 
 	svc := &OpenAIGatewayService{}
-	headers, _ := svc.buildOpenAIWSHeaders(c, account, "AgentAssertion websocket", OpenAIWSProtocolDecision{}, false, "", "", "")
+	headers, _ := svc.buildOpenAIWSHeaders(c.Request.Context(), c, account, "AgentAssertion websocket", OpenAIWSProtocolDecision{}, false, "", "", "", "", "")
 	require.Equal(t, "AgentAssertion websocket", headers.Get("Authorization"))
 	require.NotContains(t, headers.Get("Authorization"), "Bearer ")
 	require.Equal(t, "chatgpt-agent", headers.Get("chatgpt-account-id"))
