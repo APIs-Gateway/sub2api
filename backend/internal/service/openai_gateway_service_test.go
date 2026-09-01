@@ -2634,7 +2634,9 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 		wantUserAgent  string
 	}{
 		{name: "official desktop user agent pairs originator", userAgent: "Codex Desktop/1.2.3", originator: "codex_cli_rs", wantOriginator: "Codex Desktop", wantUserAgent: "Codex Desktop/1.2.3"},
-		{name: "official TUI user agent repairs mismatch", userAgent: "codex-tui/0.144.1", originator: "codex_cli_rs", wantOriginator: "codex-tui", wantUserAgent: "codex-tui/0.144.1"},
+		{name: "non load-shed official vscode identity is preserved and paired", userAgent: "codex_vscode/0.140.2 (Ubuntu 22.4.0; x86_64) vscode (codex_vscode; 0.140.2)", originator: "codex_cli_rs", wantOriginator: "codex_vscode", wantUserAgent: "codex_vscode/0.140.2 (Ubuntu 22.4.0; x86_64) vscode (codex_vscode; 0.140.2)"},
+		{name: "load-shed TUI identity repaired from ua is normalized to cli identity", userAgent: "codex-tui/0.144.1", originator: "codex_cli_rs", wantOriginator: "codex_cli_rs", wantUserAgent: "codex_cli_rs/0.144.1"},
+		{name: "load-shed TUI identity with full fingerprint drops trailing client-id group", userAgent: "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)", originator: "codex-tui", wantOriginator: "codex_cli_rs", wantUserAgent: "codex_cli_rs/0.140.2 (Mac OS X 14.0; arm64) iTerm"},
 		{name: "originator without user agent falls back", originator: "codex_vscode", wantOriginator: "codex_cli_rs", wantUserAgent: codexCLIUserAgent},
 	}
 
