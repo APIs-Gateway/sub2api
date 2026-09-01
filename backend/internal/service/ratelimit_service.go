@@ -825,7 +825,35 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, upst
 	return true
 }
 
+// isHTMLResponse 粗略判断响应体是否是 HTML 文档而不是结构化 JSON 错误体。
+// 用于识别 CDN / 反向代理层在请求到达上游 API 之前就拦下的挑战页（例如无效子
+// 路径触发的 403）：这类响应描述的是链路/端点被拦截，不构成账号凭据或权限
+// 失效的证据。
+func isHTMLResponse(body []byte) bool {
+	trimmed := strings.TrimSpace(strings.ToLower(string(body)))
+	return strings.HasPrefix(trimmed, "<!doctype html") ||
+		strings.HasPrefix(trimmed, "<html")
+}
+
 func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
+	// 上游代理 / CDN 在请求到达 OpenAI API 之前就拦下时，回的是 HTML 403 页面而
+	// 不是 {"error":{...}} 结构化错误。这类响应描述的是「这条链路/这个端点被
+	// 挡了」，不构成账号凭据或权限失效的证据。
+	//
+	// 据此写账号状态会把请求级错误放大成账号级处罚：首次即 temp-unschedulable，
+	// 连续 openAI403DisableThreshold 次直接永久禁用；而 403 又在 failover 状态
+	// 集里，同一个坏请求会被逐个账号重放，足以把整组账号打下线。这里只跳过账号
+	// 处罚（也不计入连续 403 计数，避免污染后续真实账号级 403 的判定），不改变
+	// failover 行为——换个走不同代理的账号仍有可能成功。
+	if isHTMLResponse(responseBody) {
+		slog.Warn(
+			"openai_403_html_body_skips_account_penalty",
+			"account_id", account.ID,
+			"upstream_message", upstreamMsg,
+		)
+		return false
+	}
+
 	msg := buildForbiddenErrorMessage(
 		"Access forbidden (403):",
 		upstreamMsg,
