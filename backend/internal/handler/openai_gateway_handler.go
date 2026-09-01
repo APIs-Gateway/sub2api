@@ -1635,6 +1635,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
+				// 记录当前 turn 号供 runSecurityAudit 按 (stage,turn,bodyHash) 去重：
+				// 账号 failover 重试 / bridge 循环重放等路径可能对同一 turn 的
+				// 相同 payload 重复调用本回调，不去重会让审计被重复计费/记录。
+				c.Set(securityAuditWSTurnContextKey, turn)
 				if turn == 1 {
 					return nil
 				}

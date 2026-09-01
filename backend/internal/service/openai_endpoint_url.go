@@ -6,16 +6,42 @@ import (
 )
 
 func buildOpenAIEndpointURL(base string, endpoint string) string {
-	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
+	normalized := strings.TrimSpace(base)
 	endpoint = "/" + strings.TrimLeft(strings.TrimSpace(endpoint), "/")
 	relative := strings.TrimPrefix(endpoint, "/v1")
-	if strings.HasSuffix(normalized, endpoint) || strings.HasSuffix(normalized, relative) {
-		return normalized
+
+	// Base URLs that carry a query string or fragment (e.g. a probed
+	// Sub2API upstream exposing "?redirect=/" or "#anchor") must only be
+	// rewritten on the path component; naive suffix/concat used to splice
+	// the endpoint after the query string and corrupt the URL. This is done
+	// with raw substring slicing rather than url.Parse+String() round-trip
+	// because callers (e.g. async image-poll task ids) may pass endpoint
+	// segments that are already percent-encoded; re-serializing through
+	// net/url would double-escape them.
+	path, query := splitOpenAIBaseURLPathAndQuery(normalized)
+	path = strings.TrimRight(path, "/")
+	if !strings.HasSuffix(path, endpoint) && !strings.HasSuffix(path, relative) {
+		if openAIBaseURLHasVersionSuffix(path) {
+			path += relative
+		} else {
+			path += endpoint
+		}
 	}
-	if openAIBaseURLHasVersionSuffix(normalized) {
-		return normalized + relative
+	return path + query
+}
+
+// splitOpenAIBaseURLPathAndQuery splits a base URL into its path portion and
+// its "?query" suffix, dropping any "#fragment" entirely. It operates on raw
+// bytes only (no decode/re-encode) so percent-encoded path segments are left
+// untouched.
+func splitOpenAIBaseURLPathAndQuery(base string) (path string, query string) {
+	if frag := strings.IndexByte(base, '#'); frag >= 0 {
+		base = base[:frag]
 	}
-	return normalized + endpoint
+	if q := strings.IndexByte(base, '?'); q >= 0 {
+		return base[:q], base[q:]
+	}
+	return base, ""
 }
 
 func openAIBaseURLHasVersionSuffix(raw string) bool {
