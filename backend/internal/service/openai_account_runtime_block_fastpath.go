@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -98,7 +99,130 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	if shouldDisable && !modelTempMatched {
 		s.BlockAccountScheduling(account, time.Time{}, "upstream_disable")
 	}
+	// Neither the account-wide disable path nor an admin-configured
+	// temp-unschedulable rule already handled this error: for API-key OpenAI
+	// accounts, a transient 5xx/overload error should still cool down the
+	// failing model (not the whole account) instead of silently retrying
+	// the same model forever. See openai_account_model_transient.go.
+	if !shouldDisable && !modelTempMatched && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
+		shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) {
+		model := ""
+		if len(requestedModel) > 0 {
+			model = requestedModel[0]
+		}
+		decision := s.recordOpenAIAccountModelTransientFailure(account, model, time.Now())
+		if decision.FailureStreak > 0 {
+			slog.Warn("openai_model_transient_state",
+				"account_id", account.ID,
+				"model", openAIAccountModelTransientModel(canonicalOpenAIAccountSchedulingModel(account, model)),
+				"failure_streak", decision.FailureStreak,
+				"cooldown_ms", decision.Cooldown.Milliseconds(),
+				"block_scope", "account_model",
+			)
+		}
+	}
 	return shouldDisable
+}
+
+// shouldCooldownOpenAITransientUpstreamError reports whether statusCode/responseBody
+// looks like a transient upstream hiccup (generic 5xx, Cloudflare edge 52x, or an
+// OpenAI "overloaded"/processing-error style 400) worth a short automatic
+// per-model cooldown, as opposed to a permanent or already-classified error.
+func shouldCooldownOpenAITransientUpstreamError(statusCode int, responseBody []byte) bool {
+	switch statusCode {
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 520, 521, 522, 523, 524:
+		return true
+	case http.StatusBadRequest:
+		return isOpenAITransientProcessingError(statusCode, "", responseBody)
+	default:
+		return false
+	}
+}
+
+func (s *OpenAIGatewayService) getOpenAIAccountModelTransientState() *openAIAccountModelTransientState {
+	if s == nil {
+		return nil
+	}
+	s.openaiModelTransientOnce.Do(func() {
+		if s.openaiModelTransient == nil {
+			s.openaiModelTransient = newOpenAIAccountModelTransientState(openAIModelTransientDefaultMax)
+		}
+	})
+	return s.openaiModelTransient
+}
+
+// canonicalOpenAIAccountSchedulingModel resolves requestedModel through the
+// account's own model mapping (if any) so the transient-cooldown key matches
+// the model actually sent upstream rather than the client-facing alias.
+func canonicalOpenAIAccountSchedulingModel(account *Account, requestedModel string) string {
+	model := strings.TrimSpace(requestedModel)
+	if account == nil || model == "" {
+		return model
+	}
+	if mapped := strings.TrimSpace(account.GetMappedModel(model)); mapped != "" {
+		return mapped
+	}
+	return model
+}
+
+func openAIAccountModelTransientModel(canonicalModel string) string {
+	return normalizeOpenAIAccountModelTransientModel(canonicalModel)
+}
+
+func (s *OpenAIGatewayService) recordOpenAIAccountModelTransientFailure(account *Account, requestedModel string, now time.Time) openAIAccountModelTransientDecision {
+	if s == nil || account == nil {
+		return openAIAccountModelTransientDecision{}
+	}
+	state := s.getOpenAIAccountModelTransientState()
+	if state == nil {
+		return openAIAccountModelTransientDecision{}
+	}
+	return state.recordFailure(account.ID, canonicalOpenAIAccountSchedulingModel(account, requestedModel), now)
+}
+
+// recordOpenAIAccountModelTransientSuccess clears the in-memory transient
+// failure streak for (accountID, model) after a request against that model
+// actually succeeds. This is the success-side counterpart to
+// recordOpenAIAccountModelTransientFailure: without it, an isolated transient
+// failure never expires early and can get aggregated with a later, unrelated
+// failure within the same openAIModelTransientFailureWindow, escalating into
+// a cooldown even though the account is otherwise healthy. Reporting call
+// sites only have the accountID/model (not the *Account), so this does not
+// resolve model_mapping aliases the way recordOpenAIAccountModelTransientFailure
+// does; it is a best-effort clear keyed on whatever model string the caller
+// reports as succeeded.
+func (s *OpenAIGatewayService) recordOpenAIAccountModelTransientSuccess(accountID int64, model string) {
+	if s == nil || accountID <= 0 {
+		return
+	}
+	state := s.getOpenAIAccountModelTransientState()
+	if state == nil {
+		return
+	}
+	state.recordSuccess(accountID, model)
+}
+
+// isOpenAIAccountModelRuntimeBlocked reports whether account is currently
+// within an automatic transient cooldown for requestedModel specifically
+// (independent of the account-wide isOpenAIAccountRuntimeBlocked state).
+func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlocked(account *Account, requestedModel string) bool {
+	if s == nil || account == nil {
+		return false
+	}
+	state := s.getOpenAIAccountModelTransientState()
+	if state == nil {
+		return false
+	}
+	canonicalModel := canonicalOpenAIAccountSchedulingModel(account, requestedModel)
+	return state.isBlocked(account.ID, canonicalModel, time.Now())
+}
+
+// isOpenAIAccountRequestRuntimeBlocked combines the existing account-wide
+// runtime block with the new per-model transient cooldown; scheduling call
+// sites should prefer this over the bare account-only check whenever a
+// requested model is known.
+func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string) bool {
+	return s != nil && (s.isOpenAIAccountRuntimeBlocked(account) || s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel))
 }
 
 func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context, account *Account, headers http.Header, responseBody []byte) {

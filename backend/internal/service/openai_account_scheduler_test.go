@@ -1423,6 +1423,31 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyDBRuntimeR
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceSkipsModelTransientBlockedAccount(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10105)
+	blocked := Account{ID: 35001, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0}
+	available := Account{ID: 35002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:          schedulerTestOpenAIAccountRepo{accounts: []Account{blocked, available}},
+		cfg:                  &config.Config{},
+		rateLimitService:     newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService:   NewConcurrencyService(schedulerTestConcurrencyCache{}),
+		openaiModelTransient: newOpenAIAccountModelTransientState(128),
+	}
+	now := time.Now()
+	svc.openaiModelTransient.recordFailure(blocked.ID, "gpt-5.1", now)
+	svc.openaiModelTransient.recordFailure(blocked.ID, "gpt-5.1", now.Add(time.Millisecond))
+
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, available.ID, selection.Account.ID, "model-cooled-down account must be skipped by the load-balance layer")
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
 func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_DBRuntimeRecheckSkipsStaleCachedCandidate(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10104)

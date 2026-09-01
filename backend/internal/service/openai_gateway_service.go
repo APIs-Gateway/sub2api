@@ -373,11 +373,16 @@ type OpenAIGatewayService struct {
 	openaiWSStateStoreOnce        sync.Once
 	openaiSchedulerOnce           sync.Once
 	openaiWSPassthroughDialerOnce sync.Once
+	openaiModelTransientOnce      sync.Once
 	openaiWSPool                  *openAIWSConnPool
 	openaiWSStateStore            OpenAIWSStateStore
 	openaiScheduler               OpenAIAccountScheduler
 	openaiWSPassthroughDialer     openAIWSClientDialer
 	openaiAccountStats            *openAIAccountRuntimeStats
+	// openaiModelTransient tracks short-lived per (account, model) upstream
+	// failure streaks so a transient 5xx/overload error only cools the failing
+	// model down instead of the whole account (see openai_account_model_transient.go).
+	openaiModelTransient *openAIAccountModelTransientState
 
 	openaiWSFallbackUntil               sync.Map // key: int64(accountID), value: time.Time
 	openaiAccountRuntimeBlockUntil      sync.Map // key: int64(accountID), value: time.Time
@@ -1847,7 +1852,7 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 	if !isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, false, requiredCapability) {
 		return nil
 	}
-	if s.isOpenAIAccountRuntimeBlocked(account) {
+	if s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
@@ -2057,7 +2062,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else if !openAIStickyAccountMatchesGroup(account, groupID) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-					} else if s.isOpenAIAccountRuntimeBlocked(account) {
+					} else if s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, requestedModel, requireCompact) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -2101,7 +2106,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if !isOpenAICompatibleAccountEligibleForRequest(ctx, acc, platform, requestedModel, false, requiredCapability) {
 			continue
 		}
-		if s.isOpenAIAccountRuntimeBlocked(acc) {
+		if s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel) {
 			continue
 		}
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel, requireCompact) {
@@ -2352,7 +2357,7 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.
 	if !isOpenAICompatibleAccountEligibleForRequest(ctx, fresh, platform, requestedModel, requireCompact, requiredCapability) {
 		return nil
 	}
-	if s.isOpenAIAccountRuntimeBlocked(fresh) {
+	if s.isOpenAIAccountRequestRuntimeBlocked(fresh, requestedModel) {
 		return nil
 	}
 	return fresh
@@ -2401,7 +2406,7 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDBOptionalGroup(c
 	if !isOpenAICompatibleAccountEligibleForRequest(ctx, latest, platform, requestedModel, requireCompact, requiredCapability) {
 		return nil
 	}
-	if s.isOpenAIAccountRuntimeBlocked(latest) {
+	if s.isOpenAIAccountRequestRuntimeBlocked(latest, requestedModel) {
 		return nil
 	}
 	return latest
