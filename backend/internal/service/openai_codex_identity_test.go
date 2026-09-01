@@ -20,8 +20,15 @@ func TestEnsureCodexIdentityHeaders(t *testing.T) {
 		require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
 	})
 
-	t.Run("保留已有官方UA和合法version并重新配对", func(t *testing.T) {
+	t.Run("codex-tui命中降载桶后归一化为CLI身份，合法version原样保留", func(t *testing.T) {
+		// codex-tui 落在 codexLoadShedOriginators 降载桶集合内：上游按 originator 分桶调度容量，
+		// 命中该桶的请求即使 UA/version 都是合法官方值也会被立即判定为过载（见
+		// openai_codex_identity.go 顶部注释）。normalizeCodexLoadShedIdentity 因此无条件把它
+		// 改写为 codex_cli_rs（originator 与 UA 首段），只裁掉与被归一化身份同名的尾部
+		// `(name; version)` 客户端标识组，version/OS/架构/终端指纹原样保留——version 语义不变：
+		// >= codexUpstreamMinVersion 时不会被强制升级。
 		const tuiUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
+		const wantUA = "codex_cli_rs/9.9.9 (Mac OS X 14.0; arm64) iTerm"
 		h := make(http.Header)
 		h.Set("user-agent", tuiUA)
 		h.Set("version", "9.9.9")
@@ -30,8 +37,8 @@ func TestEnsureCodexIdentityHeaders(t *testing.T) {
 		ensureCodexIdentityHeaders(h)
 		enforceCodexIdentityHeaders(h)
 
-		require.Equal(t, "codex-tui", h.Get("originator"))
-		require.Equal(t, tuiUA, h.Get("user-agent"))
+		require.Equal(t, "codex_cli_rs", h.Get("originator"))
+		require.Equal(t, wantUA, h.Get("user-agent"))
 		require.Equal(t, "9.9.9", h.Get("version"))
 		require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
 	})
@@ -47,8 +54,11 @@ func TestEnforceCodexIdentityHeaders(t *testing.T) {
 		wantUserAgent  string
 		wantVersion    string
 	}{
-		{name: "official user agent repairs originator", originator: "codex_cli_rs", userAgent: "codex-tui/0.144.1", wantOriginator: "codex-tui", wantUserAgent: "codex-tui/0.144.1"},
-		{name: "trailer restores overridden identity", originator: "codex_cli_rs", userAgent: "cccc/0.142.0 (Linux) (codex-tui; 0.142.0)", wantOriginator: "codex-tui", wantUserAgent: "codex-tui/0.142.0 (Linux) (codex-tui; 0.142.0)"},
+		{name: "load-shed originator repaired from ua is normalized to cli identity", originator: "codex_cli_rs", userAgent: "codex-tui/0.144.1", wantOriginator: "codex_cli_rs", wantUserAgent: "codex_cli_rs/0.144.1"},
+		{name: "trailer restores overridden load-shed identity then normalizes it", originator: "codex_cli_rs", userAgent: "cccc/0.142.0 (Linux) (codex-tui; 0.142.0)", wantOriginator: "codex_cli_rs", wantUserAgent: "codex_cli_rs/0.142.0 (Linux)"},
+		{name: "load-shed identity with full fingerprint drops trailing client-id group", originator: "codex-tui", userAgent: "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)", wantOriginator: "codex_cli_rs", wantUserAgent: "codex_cli_rs/0.140.2 (Mac OS X 14.0; arm64) iTerm"},
+		{name: "load-shed identity without trailing client-id group keeps os/arch group", originator: "codex-tui", userAgent: "codex-tui/0.144.1 (Ubuntu 22.4.0; x86_64)", wantOriginator: "codex_cli_rs", wantUserAgent: "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64)"},
+		{name: "non load-shed official identity is preserved and paired", originator: "opencode", userAgent: "codex_vscode/1.2.3 (Ubuntu 22.4.0; x86_64) vscode (codex_vscode; 1.2.3)", wantOriginator: "codex_vscode", wantUserAgent: "codex_vscode/1.2.3 (Ubuntu 22.4.0; x86_64) vscode (codex_vscode; 1.2.3)"},
 		{name: "third party falls back", originator: "opencode", userAgent: "curl/8.0", wantOriginator: "codex_cli_rs", wantUserAgent: codexCLIUserAgent},
 		{name: "old version upgrades", originator: "codex_cli_rs", userAgent: codexCLIUserAgent, version: "0.137.0", wantOriginator: "codex_cli_rs", wantUserAgent: codexCLIUserAgent, wantVersion: codexCLIVersion},
 		{name: "new version remains", originator: "codex_cli_rs", userAgent: codexCLIUserAgent, version: "0.144.1", wantOriginator: "codex_cli_rs", wantUserAgent: codexCLIUserAgent, wantVersion: "0.144.1"},
@@ -107,4 +117,43 @@ func TestApplyOpenAICodexProbeHeaders(t *testing.T) {
 	require.Equal(t, codexCLIVersion, headers.Get("Version"))
 	require.Equal(t, "responses=experimental", headers.Get("OpenAI-Beta"))
 	require.NotEmpty(t, headers.Get("X-Codex-Window-ID"))
+}
+
+// 归一化必须是幂等的：重复收口（如透传路径先后经过多次改写）不得反复裁剪 UA。
+func TestEnforceCodexIdentityHeaders_LoadShedNormalizationIsIdempotent(t *testing.T) {
+	headers := make(http.Header)
+	headers.Set("originator", "codex-tui")
+	headers.Set("user-agent", "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)")
+
+	enforceCodexIdentityHeaders(headers)
+	first := headers.Get("user-agent")
+	require.Equal(t, "codex_cli_rs", headers.Get("originator"))
+
+	enforceCodexIdentityHeaders(headers)
+
+	require.Equal(t, first, headers.Get("user-agent"))
+	require.Equal(t, "codex_cli_rs", headers.Get("originator"))
+}
+
+func TestNormalizeCodexLoadShedIdentity(t *testing.T) {
+	tests := []struct {
+		name           string
+		originator     string
+		userAgent      string
+		wantOriginator string
+		wantUserAgent  string
+	}{
+		{name: "load-shed originator normalized and trailing client-id group dropped", originator: "codex-tui", userAgent: "codex-tui/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.144.1)", wantOriginator: "codex_cli_rs", wantUserAgent: "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"},
+		{name: "load-shed originator without version segment only swaps prefix", originator: "codex-tui", userAgent: "codex-tui", wantOriginator: "codex_cli_rs", wantUserAgent: "codex-tui"},
+		{name: "healthy identity returned unchanged", originator: "codex_cli_rs", userAgent: "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color", wantOriginator: "codex_cli_rs", wantUserAgent: "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"},
+		{name: "other official identity returned unchanged", originator: "codex_vscode", userAgent: "codex_vscode/1.0.0 (Ubuntu 22.4.0; x86_64) vscode (codex_vscode; 1.0.0)", wantOriginator: "codex_vscode", wantUserAgent: "codex_vscode/1.0.0 (Ubuntu 22.4.0; x86_64) vscode (codex_vscode; 1.0.0)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotOriginator, gotUA := normalizeCodexLoadShedIdentity(tt.originator, tt.userAgent)
+			require.Equal(t, tt.wantOriginator, gotOriginator)
+			require.Equal(t, tt.wantUserAgent, gotUA)
+		})
+	}
 }
