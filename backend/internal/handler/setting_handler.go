@@ -45,12 +45,14 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 
 	response.Success(c, dto.PublicSettings{
 		RegistrationEnabled:              settings.RegistrationEnabled,
+		SignupSourceEnabled:              settings.SignupSourceEnabled,
 		EmailVerifyEnabled:               settings.EmailVerifyEnabled,
 		ForceEmailOnThirdPartySignup:     settings.ForceEmailOnThirdPartySignup,
 		RegistrationEmailSuffixWhitelist: settings.RegistrationEmailSuffixWhitelist,
 		PromoCodeEnabled:                 settings.PromoCodeEnabled,
 		PasswordResetEnabled:             settings.PasswordResetEnabled,
 		InvitationCodeEnabled:            settings.InvitationCodeEnabled,
+		AffiliateCodeAdmitsSignup:        settings.AffiliateCodeAdmitsSignup,
 		TotpEnabled:                      settings.TotpEnabled,
 		LoginAgreementEnabled:            settings.LoginAgreementEnabled,
 		LoginAgreementMode:               settings.LoginAgreementMode,

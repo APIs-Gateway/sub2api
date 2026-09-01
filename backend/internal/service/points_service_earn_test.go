@@ -92,6 +92,12 @@ func (r *pointsEarnAffiliateRepo) GetAffiliateByCode(ctx context.Context, code s
 func (r *pointsEarnAffiliateRepo) BindInviter(ctx context.Context, userID, inviterID int64) (bool, error) {
 	panic("unexpected BindInviter call")
 }
+func (r *pointsEarnAffiliateRepo) CountInviteesRegisteredSince(ctx context.Context, inviterID int64, since time.Time) (int, error) {
+	panic("unexpected CountInviteesRegisteredSince call")
+}
+func (r *pointsEarnAffiliateRepo) IsUserAdmin(ctx context.Context, userID int64) (bool, error) {
+	panic("unexpected IsUserAdmin call")
+}
 func (r *pointsEarnAffiliateRepo) ListInvitees(ctx context.Context, inviterID int64, limit int) ([]AffiliateInvitee, error) {
 	panic("unexpected ListInvitees call")
 }
@@ -141,6 +147,29 @@ type pointsEarnRepo struct {
 	calls    []EarnPointsInput
 	seen     map[string]bool
 	forceErr error
+
+	// 「邀请注册即得积分」走的是另一条发放路径，这里单独记账，
+	// 免得和上面按订单/兑换码返积分的调用混在一起看不清。
+	signupCalls []SignupRewardInput
+	signupSeen  map[int64]bool
+	signupErr   error
+}
+
+// GrantSignupReward 模拟 (source_user_id) WHERE kind='signup_reward' 的 partial-unique：
+// 同一个被邀请人重复触发不会重复入账。
+func (r *pointsEarnRepo) GrantSignupReward(_ context.Context, in SignupRewardInput) (bool, error) {
+	r.signupCalls = append(r.signupCalls, in)
+	if r.signupErr != nil {
+		return false, r.signupErr
+	}
+	if r.signupSeen == nil {
+		r.signupSeen = map[int64]bool{}
+	}
+	if r.signupSeen[in.SourceUserID] {
+		return false, nil
+	}
+	r.signupSeen[in.SourceUserID] = true
+	return true, nil
 }
 
 func (r *pointsEarnRepo) EarnPoints(ctx context.Context, in EarnPointsInput) (bool, error) {

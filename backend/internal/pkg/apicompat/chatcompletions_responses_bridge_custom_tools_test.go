@@ -280,6 +280,18 @@ func TestResponsesToChatCompletionsRequest_ToolSearchToolBecomesProxyFunction(t 
 	assert.Contains(t, string(out.Tools[0].Function.Parameters), `"query"`)
 }
 
+func TestResponsesToChatCompletionsRequest_DropsDeferredFlagWithToolSearch(t *testing.T) {
+	var req ResponsesRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"model":"glm-5.2","input":"hi","tools":[{"type":"tool_search"},{"type":"function","name":"shell","defer_loading":true}]}`), &req))
+
+	out, err := ResponsesToChatCompletionsRequest(&req)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(out)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "defer_loading")
+	require.Contains(t, string(encoded), `"name":"tool_search"`)
+}
+
 // codex 只在 ResponseItem 为 tool_search_call 变体且 execution=client 时执行
 // tool search；同名 function_call 会命中 ToolSearchHandler 后因 payload 不匹配
 // 触发 FunctionCallError::Fatal，直接中止整个 turn，因此回程必须还原项类型。
@@ -642,6 +654,23 @@ func TestResponsesToChatCompletionsRequest_RejectsToolSearchNameConflict(t *test
 	require.NoError(t, err)
 	require.Len(t, out.Tools, 1)
 	assert.Equal(t, "tool_search", out.Tools[0].Function.Name)
+}
+
+func TestResponsesToChatCompletionsRequest_RejectsDuplicateTopLevelExecutableNames(t *testing.T) {
+	for _, tools := range [][]ResponsesTool{
+		{{Type: "custom", Name: "exec"}, {Type: "function", Name: "exec"}},
+		{{Type: "function", Name: "exec"}, {Type: "function", Name: "exec"}},
+		{{Type: "custom", Name: "exec"}, {Type: "custom", Name: "exec"}},
+	} {
+		_, err := ResponsesToChatCompletionsRequest(&ResponsesRequest{
+			Model: "glm-5.2",
+			Input: json.RawMessage(`"hi"`),
+			Tools: tools,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exec")
+		assert.Contains(t, err.Error(), "cannot disambiguate")
+	}
 }
 
 // tool_choice 指向被转换丢弃的工具（如 web_search）或不存在的名字时不能原样转发，

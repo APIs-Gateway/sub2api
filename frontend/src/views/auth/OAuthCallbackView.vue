@@ -64,6 +64,17 @@
               :disabled="isSubmitting"
               @keyup.enter="handleSubmitRegistration"
             />
+            <p v-if="admittedByAffiliate" class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+              {{ t('auth.invitationOrAffiliateCodeHint') }}
+            </p>
+            <p v-if="legacyInviteEnabled" class="mt-1 text-xs">
+              <router-link
+                to="/claim-invite"
+                class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+              >
+                {{ t('auth.claimInvitationCodeLink') }}
+              </router-link>
+            </p>
           </div>
           <p v-if="registrationError" class="text-sm text-red-600 dark:text-red-400">
             {{ registrationError }}
@@ -150,10 +161,12 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useClipboard } from '@/composables/useClipboard'
+import { getLegacyInviteStatus } from '@/api/legacyInvite'
 import { useAppStore, useAuthStore } from '@/stores'
 import { apiClient } from '@/api/client'
 import {
   exchangePendingOAuthCompletion,
+  getPublicSettings,
   persistOAuthTokenContext,
   type OAuthTokenResponse
 } from '@/api/auth'
@@ -177,6 +190,11 @@ const registrationEmail = ref('')
 const password = ref('')
 const confirmPassword = ref('')
 const invitationCode = ref('')
+// 开启后，手上带着的邀请人邀请码本身就能放行注册，注册码这一栏可以留空
+const affiliateCodeAdmitsSignup = ref(false)
+const storedAffiliateCode = ref('')
+// 老用户领码入口是否开放——这一页是唯一会强制要邀请码的地方，更该给出口
+const legacyInviteEnabled = ref(false)
 const registrationError = ref('')
 const pendingProvider = ref<'github' | 'google'>('github')
 const redirectTo = ref('/dashboard')
@@ -210,13 +228,36 @@ const registrationHint = computed(() =>
     ? t('auth.oidc.invitationRequired', { providerName: providerName.value })
     : t('auth.oidc.completeRegistration')
 )
+// 顺着邀请链接过来的人，邀请人邀请码在跳转前就存下来了，这里直接当作准入凭证
+const admittedByAffiliate = computed(
+  () => affiliateCodeAdmitsSignup.value && storedAffiliateCode.value.trim() !== ''
+)
+
 const canSubmitRegistration = computed(() => {
   if (!registrationEmail.value.trim()) return false
   if (password.value.length < 6) return false
   if (password.value !== confirmPassword.value) return false
-  if (invitationRequired.value && !invitationCode.value.trim()) return false
+  if (invitationRequired.value && !invitationCode.value.trim() && !admittedByAffiliate.value)
+    return false
   return true
 })
+
+// 读一次公开设置判断准入是否放宽。失败一律按未开启处理：
+// 宁可多要一张注册码，也不要把提交按钮放开却在后端被拒。
+async function refreshAffiliateAdmission(): Promise<void> {
+  try {
+    const settings = await getPublicSettings()
+    affiliateCodeAdmitsSignup.value = settings.affiliate_code_admits_signup === true
+  } catch {
+    affiliateCodeAdmitsSignup.value = false
+  }
+  try {
+    const status = await getLegacyInviteStatus()
+    legacyInviteEnabled.value = status.enabled === true
+  } catch {
+    legacyInviteEnabled.value = false
+  }
+}
 
 function parseFragmentParams(): URLSearchParams {
   const raw = typeof window !== 'undefined' ? window.location.hash : ''
@@ -306,6 +347,10 @@ async function resumePendingEmailOAuth() {
     if (completion.error === 'invitation_required' || completion.error === 'registration_completion_required') {
       invitationRequired.value = completion.error === 'invitation_required' || completion.invitation_required === true
       registrationEmail.value = String(completion.resolved_email || completion.email || '').trim()
+      storedAffiliateCode.value = (loadOAuthAffiliateCode() || '').trim()
+      if (invitationRequired.value) {
+        await refreshAffiliateAdmission()
+      }
       needsRegistrationCompletion.value = true
       isProcessing.value = false
       return
@@ -339,7 +384,7 @@ async function handleSubmitRegistration() {
     return
   }
   const code = invitationCode.value.trim()
-  if (invitationRequired.value && !code) return
+  if (invitationRequired.value && !code && !admittedByAffiliate.value) return
 
   isSubmitting.value = true
   try {
@@ -347,7 +392,7 @@ async function handleSubmitRegistration() {
       password: password.value,
       ...oauthAffiliatePayload(loadOAuthAffiliateCode())
     }
-    if (invitationRequired.value) {
+    if (invitationRequired.value && code) {
       payload.invitation_code = code
     }
     const { data } = await apiClient.post<OAuthTokenResponse>(

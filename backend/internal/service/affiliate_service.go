@@ -8,6 +8,7 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
 var (
@@ -16,6 +17,15 @@ var (
 	ErrAffiliateCodeTaken       = infraerrors.Conflict("AFFILIATE_CODE_TAKEN", "affiliate code already in use")
 	ErrAffiliateAlreadyBound    = infraerrors.Conflict("AFFILIATE_ALREADY_BOUND", "affiliate inviter already bound")
 	ErrAffiliateQuotaEmpty      = infraerrors.BadRequest("AFFILIATE_QUOTA_EMPTY", "no affiliate quota available to transfer")
+	// ErrAffiliateWeeklyInviteLimitReached 表示该邀请人邀请码本自然周已用满配额。
+	//
+	// 它只在「这次注册是靠邀请人邀请码放行的」时候才拒绝注册；注册本身已经被一次性
+	// 注册码放行时，名额满只意味着挂不上邀请人，不该反过来把人挡在门外。
+	//
+	// 文案里必须说清是「邀请人邀请码」（前端 affiliateCodeLabel）而不是「邀请码」
+	// （前端 invitationCodeLabel）：两栏在注册页上并排摆着，说错一个字，
+	// 用户会以为是自己刚填的那张一次性注册码作废了。
+	ErrAffiliateWeeklyInviteLimitReached = infraerrors.Forbidden("AFFILIATE_WEEKLY_INVITE_LIMIT_REACHED", "the inviter code has reached its weekly limit")
 )
 
 const (
@@ -98,6 +108,13 @@ type AffiliateRepository interface {
 	GetAffiliateByCode(ctx context.Context, code string) (*AffiliateSummary, error)
 	BindInviter(ctx context.Context, userID, inviterID int64) (bool, error)
 	ListInvitees(ctx context.Context, inviterID int64, limit int) ([]AffiliateInvitee, error)
+
+	// CountInviteesRegisteredSince 统计该邀请人名下、注册时间在 since 之后的被邀请人数。
+	// 用于邀请码的自然周使用次数上限：口径取被邀请人的注册时间而非绑定时间，
+	// 这样既能挡住刷注册奖励，又不会因为老用户事后补绑邀请码而误占本周配额。
+	CountInviteesRegisteredSince(ctx context.Context, inviterID int64, since time.Time) (int, error)
+	// IsUserAdmin 判断用户是否为管理员；管理员的邀请码不受自然周上限约束。
+	IsUserAdmin(ctx context.Context, userID int64) (bool, error)
 
 	// 管理端：用户级专属配置
 	UpdateUserAffCode(ctx context.Context, userID int64, newCode string) error
@@ -271,12 +288,45 @@ func (s *AffiliateService) BindInviterByCode(ctx context.Context, userID int64, 
 		return ErrAffiliateCodeInvalid
 	}
 
+	if err := s.ensureWeeklyInviteQuota(ctx, inviterSummary.UserID); err != nil {
+		return err
+	}
+
 	bound, err := s.repo.BindInviter(ctx, userID, inviterSummary.UserID)
 	if err != nil {
 		return err
 	}
 	if !bound {
 		return ErrAffiliateAlreadyBound
+	}
+	return nil
+}
+
+// ensureWeeklyInviteQuota 校验邀请人在本自然周还有没有剩余邀请配额。
+// 上限设为 0（默认）时不限；管理员的邀请码始终放行。
+// 自然周口径复用 timezone.StartOfWeek（周一 00:00，站点时区），与订阅计费的周窗口一致，
+// 避免同一个站点里出现两套"一周"的定义。
+func (s *AffiliateService) ensureWeeklyInviteQuota(ctx context.Context, inviterID int64) error {
+	if s == nil || s.settingService == nil || s.repo == nil || inviterID <= 0 {
+		return nil
+	}
+	limit := s.settingService.GetAffiliateWeeklyInviteLimit(ctx)
+	if limit <= 0 {
+		return nil
+	}
+	isAdmin, err := s.repo.IsUserAdmin(ctx, inviterID)
+	if err != nil {
+		return err
+	}
+	if isAdmin {
+		return nil
+	}
+	used, err := s.repo.CountInviteesRegisteredSince(ctx, inviterID, timezone.StartOfWeek(time.Now()))
+	if err != nil {
+		return err
+	}
+	if used >= limit {
+		return ErrAffiliateWeeklyInviteLimitReached
 	}
 	return nil
 }

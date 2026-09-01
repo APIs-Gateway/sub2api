@@ -170,12 +170,14 @@ func (s *GatewayService) ForwardAsResponses(
 				Kind:               "failover",
 				Message:            upstreamMsg,
 			})
+			shouldDisable := false
 			if s.rateLimitService != nil {
-				s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, mappedModel)
+				shouldDisable = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, mappedModel)
 			}
 			return nil, &UpstreamFailoverError{
-				StatusCode:   resp.StatusCode,
-				ResponseBody: respBody,
+				StatusCode:             resp.StatusCode,
+				ResponseBody:           respBody,
+				RetryableOnSameAccount: !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			}
 		}
 
@@ -352,12 +354,17 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)
+			// apicompat.AnthropicUsage doesn't carry CN Anthropic-compatible
+			// providers' OpenAI-style prompt/cache aliases (Kimi/GLM/DeepSeek);
+			// re-derive the mutually-exclusive buckets from the raw event.
+			normalizeAnthropicCompatiblePromptUsage(gjson.Get(payload, "message.usage"), &usage)
 		}
 
 		// message_delta carries final usage and stop_reason
 		if event.Type == "message_delta" {
 			if event.Usage != nil {
 				mergeAnthropicUsage(&usage, *event.Usage)
+				normalizeAnthropicCompatiblePromptUsage(gjson.Get(payload, "usage"), &usage)
 			}
 			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
 				finalResp.StopReason = apicompat.AnthropicStopReasonPtr(event.Delta.StopReason)
@@ -492,7 +499,11 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	}
 
 	// processEvent handles a single parsed Anthropic SSE event.
-	processEvent := func(event *apicompat.AnthropicStreamEvent) bool {
+	// rawEvent is the event's original JSON so CN Anthropic-compatible
+	// providers' OpenAI-style prompt/cache aliases (not carried by
+	// apicompat.AnthropicUsage) can still be normalized into the
+	// mutually-exclusive usage buckets billing expects.
+	processEvent := func(event *apicompat.AnthropicStreamEvent, rawEvent string) bool {
 		if firstChunk {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
@@ -502,10 +513,12 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		// Extract usage from message_delta
 		if event.Type == "message_delta" && event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
+			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "usage"), &usage)
 		}
 		// Also capture usage from message_start
 		if event.Type == "message_start" && event.Message != nil {
 			mergeAnthropicUsage(&usage, event.Message.Usage)
+			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "message.usage"), &usage)
 		}
 
 		// Convert to Responses events
@@ -587,7 +600,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			continue
 		}
 
-		if processEvent(&event) {
+		if processEvent(&event, payload) {
 			return resultWithUsage(), nil
 		}
 	}
