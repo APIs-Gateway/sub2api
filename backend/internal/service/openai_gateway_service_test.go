@@ -3422,7 +3422,10 @@ func TestRecheckSelectedOpenAIAccountFromDB_ModelBlockedReturnsNilViaRepo(t *tes
 	svc.openaiModelTransient.recordFailure(account.ID, "gpt-5.5", now)
 	svc.openaiModelTransient.recordFailure(account.ID, "gpt-5.5", now.Add(time.Millisecond))
 
-	got := svc.recheckSelectedOpenAIAccountFromDB(context.Background(), account, PlatformOpenAI, "gpt-5.5", false, "")
+	// groupID is intentionally nil (ungrouped account): a non-nil groupID here
+	// would make openAIStickyAccountMatchesGroup reject the account before the
+	// model-cooldown check this test exists to cover is ever reached.
+	got := svc.recheckSelectedOpenAIAccountFromDB(context.Background(), account, nil, PlatformOpenAI, "gpt-5.5", false, "")
 
 	require.Nil(t, got, "DB-rechecked account cooling down for the requested model must not be reselected")
 }
