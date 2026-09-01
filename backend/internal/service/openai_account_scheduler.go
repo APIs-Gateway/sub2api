@@ -1208,7 +1208,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			filterStats.exclude("platform_mismatch")
 			continue
 		}
-		if s.service.isOpenAIAccountRuntimeBlocked(account) {
+		if s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
 			filterStats.exclude("runtime_blocked")
 			continue
 		}
@@ -1345,7 +1345,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if account == nil {
 		return false, "account_nil"
 	}
-	if s != nil && s.service != nil && s.service.isOpenAIAccountRuntimeBlocked(account) {
+	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
 		return false, "runtime_blocked"
 	}
 	// Quota auto-pause must be evaluated during the initial filter too. Without it the
@@ -1723,7 +1723,7 @@ func (s *OpenAIGatewayService) selectForcedOpenAIAccount(
 		!isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, requireCompact, requiredCapability) ||
 		!accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability) ||
 		!s.isOpenAIAccountTransportCompatible(account, requiredTransport) ||
-		s.isOpenAIAccountRuntimeBlocked(account) {
+		s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 		return nil, forcedOpenAINoAvailableError(requestedModel)
 	}
 
@@ -1734,7 +1734,7 @@ func (s *OpenAIGatewayService) selectForcedOpenAIAccount(
 	if account == nil ||
 		!accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability) ||
 		!s.isOpenAIAccountTransportCompatible(account, requiredTransport) ||
-		s.isOpenAIAccountRuntimeBlocked(account) {
+		s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 		return nil, forcedOpenAINoAvailableError(requestedModel)
 	}
 
@@ -1801,7 +1801,20 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 	return s.getOpenAIWSProtocolResolver().Resolve(account).Transport == requiredTransport
 }
 
-func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int) {
+// ReportOpenAIAccountScheduleResult reports the outcome of a request against
+// accountID to the account scheduler's load-balancing stats. The optional
+// model variadic (kept variadic so the ~27 existing call sites remain
+// source-compatible) lets a successful result also clear the in-memory
+// per-model transient-failure streak recorded by handleOpenAIAccountUpstreamError,
+// so a genuinely healthy account/model pair does not accumulate two
+// non-consecutive transient failures into an unwarranted cooldown escalation.
+// Only the first model value is used; it is ignored on the failure path.
+func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int, model ...string) {
+	if success && len(model) > 0 {
+		if m := strings.TrimSpace(model[0]); m != "" {
+			s.recordOpenAIAccountModelTransientSuccess(accountID, m)
+		}
+	}
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
 	if scheduler == nil {
 		return
