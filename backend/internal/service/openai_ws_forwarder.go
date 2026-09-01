@@ -2216,6 +2216,28 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				}
 			}
 		}
+		if readErr == nil && !json.Valid(message) {
+			// 上游偶发返回非法/截断的 Responses 事件 JSON（例如粘连了半截无法解析的尾部）。
+			// gjson 的宽松解析会静默吞掉这类畸形内容或误取到无关字段，必须显式拒绝并断开连接，
+			// 而不是把半个事件当正常事件继续处理。
+			invalidEventType, _, _ := parseOpenAIWSEventEnvelope(message)
+			if invalidEventType == "" {
+				invalidEventType = "unknown"
+			}
+			lease.MarkBroken()
+			logOpenAIWSModeInfo(
+				"invalid_event_json account_id=%d conn_id=%s event_type=%s bytes=%d wrote_downstream=%v",
+				account.ID,
+				truncateOpenAIWSLogValue(connID, openAIWSIDValueMaxLen),
+				truncateOpenAIWSLogValue(invalidEventType, openAIWSLogValueMaxLen),
+				len(message),
+				wroteDownstream,
+			)
+			if !wroteDownstream {
+				return nil, wrapOpenAIWSFallback("invalid_event_json", errors.New("upstream websocket returned malformed Responses event JSON"))
+			}
+			return nil, errors.New("upstream websocket returned malformed Responses event JSON after downstream output")
+		}
 		if readErr != nil {
 			lease.MarkBroken()
 			closeStatus, closeReason := summarizeOpenAIWSReadCloseError(readErr)
