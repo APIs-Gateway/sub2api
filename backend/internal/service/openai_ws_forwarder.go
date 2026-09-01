@@ -1604,6 +1604,45 @@ func openAIWSRawItemsHaveToolCallContextForOutputs(items []json.RawMessage) bool
 	return true
 }
 
+// sanitizeOpenAIWSHistoricalReplayToolCalls 清洗历史 replay input 中的孤儿工具调用上下文项：
+// 如果某个工具调用上下文项（tool_call/function_call/custom_tool_call 等）的 call_id 在
+// previousItems 和 currentItems 里都找不到匹配的工具输出，说明这个调用已经在更早的轮次
+// 完成过一次回放（或本来就不完整），继续保留会在合并时把它重复带入下一轮 replay input，
+// 导致上游看到同一个 call_id 出现多次 tool_call 而拒绝请求或产生重复调用。
+func sanitizeOpenAIWSHistoricalReplayToolCalls(
+	previousItems []json.RawMessage,
+	currentItems []json.RawMessage,
+) []json.RawMessage {
+	if len(previousItems) == 0 {
+		return cloneOpenAIWSRawMessages(previousItems)
+	}
+	outputCallIDs := make(map[string]struct{})
+	collectOutputCallIDs := func(items []json.RawMessage) {
+		for _, item := range items {
+			if !isCodexToolCallOutputItemType(gjson.GetBytes(item, "type").String()) {
+				continue
+			}
+			if callID := strings.TrimSpace(gjson.GetBytes(item, "call_id").String()); callID != "" {
+				outputCallIDs[callID] = struct{}{}
+			}
+		}
+	}
+	collectOutputCallIDs(previousItems)
+	collectOutputCallIDs(currentItems)
+
+	sanitized := make([]json.RawMessage, 0, len(previousItems))
+	for _, item := range previousItems {
+		if isCodexToolCallContextItemType(gjson.GetBytes(item, "type").String()) {
+			callID := strings.TrimSpace(gjson.GetBytes(item, "call_id").String())
+			if _, paired := outputCallIDs[callID]; !paired {
+				continue
+			}
+		}
+		sanitized = append(sanitized, append(json.RawMessage(nil), item...))
+	}
+	return sanitized
+}
+
 func openAIWSRawPayloadHasToolCallOutput(payload []byte) bool {
 	if len(payload) == 0 {
 		return false
@@ -1642,6 +1681,7 @@ func buildOpenAIWSReplayInputSequence(
 	if !previousFullInputExists {
 		return cloneOpenAIWSRawMessages(currentItems), currentExists, nil
 	}
+	previousFullInput = sanitizeOpenAIWSHistoricalReplayToolCalls(previousFullInput, currentItems)
 	if !currentExists || len(currentItems) == 0 {
 		return cloneOpenAIWSRawMessages(previousFullInput), true, nil
 	}
@@ -2947,7 +2987,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			bridgePayloadRaw := currentBridgePayload.payloadRaw
 			bridgePayloadBytes := currentBridgePayload.payloadBytes
-			needsBridgeReplay := currentBridgePayload.previousResponseID != "" || openAIWSRawPayloadHasToolCallOutput(currentBridgePayload.payloadRaw)
+			toolOutputCoverage := AnalyzeToolCallOutputContextCoverageBytes(currentBridgePayload.payloadRaw)
+			needsBridgeReplay := currentBridgePayload.previousResponseID != "" ||
+				(toolOutputCoverage.HasFunctionCallOutput && !toolOutputCoverage.ContextCoversAllCallIDs)
 			turnReplayInput, turnReplayInputExists, replayInputErr := buildOpenAIWSReplayInputSequence(
 				bridgeReplayInput,
 				bridgeReplayInputExists,
