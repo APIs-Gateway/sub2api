@@ -146,28 +146,82 @@ func TestReportOpenAIAccountScheduleResult_SuccessClearsModelTransientStreakSoNo
 	// followed by a success (e.g. many healthy requests in between) must not
 	// linger in the failure window and get aggregated with a later,
 	// unrelated failure into an unwarranted cooldown escalation.
+	//
+	// This is also the round-2 regression for the follow-up fork gap: the
+	// account is configured with credentials.model_mapping (as real
+	// API-key/relay accounts commonly are), so the failure tracker's key is
+	// the *mapped* upstream model while the client keeps requesting the
+	// alias. Production handler call sites report success with
+	// account.GetMappedModel(reqModel) (see openai_chat_completions.go etc.),
+	// not the raw alias, so the test must mirror that call convention for
+	// the clear to land on the same key the failure recorded.
 	svc := &OpenAIGatewayService{}
-	account := &Account{ID: 91105, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	account := &Account{
+		ID:       91105,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"gpt-5.5-alias": "gpt-5.5",
+			},
+		},
+	}
 	now := time.Now()
+	const requestedModel = "gpt-5.5-alias"
+	mappedModel := account.GetMappedModel(requestedModel)
+	require.Equal(t, "gpt-5.5", mappedModel)
 
-	// t=0: first transient failure on this model — recorded, streak=1, no cooldown yet.
-	decision := svc.recordOpenAIAccountModelTransientFailure(account, "gpt-5.5", now)
+	// t=0: first transient failure on this model — recorded under the mapped
+	// upstream model key, streak=1, no cooldown yet.
+	decision := svc.recordOpenAIAccountModelTransientFailure(account, requestedModel, now)
 	require.Equal(t, 1, decision.FailureStreak)
 	require.Zero(t, decision.Cooldown)
-	require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.5"))
+	require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, requestedModel))
 
 	// A later request against the same model succeeds. The production call
 	// site (handler layer) reports this via ReportOpenAIAccountScheduleResult
-	// with the requested model, which must clear the tracked failure streak.
-	svc.ReportOpenAIAccountScheduleResult(account.ID, true, nil, "gpt-5.5")
+	// with account.GetMappedModel(reqModel) — the same normalization the
+	// failure path applies internally — which must clear the tracked
+	// failure streak even though the alias itself was never used as a key.
+	svc.ReportOpenAIAccountScheduleResult(account.ID, true, nil, mappedModel)
 
 	// t=40s: a second, non-consecutive transient failure within the same 60s
 	// window must restart the streak at 1 (not escalate to 2 and trigger the
 	// short cooldown), because the intervening success cleared the entry.
-	decision = svc.recordOpenAIAccountModelTransientFailure(account, "gpt-5.5", now.Add(40*time.Second))
+	decision = svc.recordOpenAIAccountModelTransientFailure(account, requestedModel, now.Add(40*time.Second))
 	require.Equal(t, 1, decision.FailureStreak)
 	require.Zero(t, decision.Cooldown)
-	require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.5"))
+	require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, requestedModel))
+}
+
+func TestReportOpenAIAccountScheduleResult_SuccessWithUnmappedRawModelDoesNotClearMappedModelStreak(t *testing.T) {
+	// Guards against regressing back to the round-1 bug: if a caller (or a
+	// future call site) reports success with the raw client-facing alias
+	// instead of the mapped upstream model, the clear must NOT reach the key
+	// the failure path actually recorded under, and the account stays
+	// blocked. This documents why call sites must pass
+	// account.GetMappedModel(reqModel) rather than reqModel.
+	svc := &OpenAIGatewayService{}
+	account := &Account{
+		ID:       91107,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"gpt-5.5-alias": "gpt-5.5",
+			},
+		},
+	}
+	now := time.Now()
+
+	svc.recordOpenAIAccountModelTransientFailure(account, "gpt-5.5-alias", now)
+	svc.recordOpenAIAccountModelTransientFailure(account, "gpt-5.5-alias", now.Add(time.Second))
+	require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.5-alias"))
+
+	// Reporting success with the unmapped raw alias (the pre-fix behavior)
+	// clears a key that was never written, so the block must persist.
+	svc.ReportOpenAIAccountScheduleResult(account.ID, true, nil, "gpt-5.5-alias")
+	require.True(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.5-alias"))
 }
 
 func TestReportOpenAIAccountScheduleResult_SuccessWithoutModelDoesNotTouchTransientState(t *testing.T) {
