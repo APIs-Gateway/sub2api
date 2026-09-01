@@ -43,6 +43,10 @@ var (
 	ErrInvitationCodeRequired  = infraerrors.BadRequest("INVITATION_CODE_REQUIRED", "invitation code is required")
 	ErrInvitationCodeInvalid   = infraerrors.BadRequest("INVITATION_CODE_INVALID", "invalid or used invitation code")
 	ErrOAuthInvitationRequired = infraerrors.Forbidden("OAUTH_INVITATION_REQUIRED", "invitation code required to complete oauth registration")
+	// ErrSignupSourceDisabled 表示总注册开关是开的，但该来源被单独关掉了
+	// （例如只保留 GitHub 注册、关闭账号密码注册）。与 ErrRegDisabled 区分开，
+	// 便于前端提示用户改用其它渠道，而不是笼统地说"站点关闭注册"。
+	ErrSignupSourceDisabled = infraerrors.Forbidden("SIGNUP_SOURCE_DISABLED", "registration via this source is currently disabled")
 )
 
 // maxTokenLength 限制 token 大小，避免超长 header 触发解析时的异常内存分配。
@@ -77,6 +81,101 @@ type AuthService struct {
 	affiliateService      *AffiliateService
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	signupRewardAccruer   SignupRewardAccruer
+}
+
+// SignupRewardAccruer 发放「邀请注册即得」积分。
+//
+// 用窄接口而不是直接依赖 *PointsService，是为了让认证流程只看见它真正需要的那一个能力，
+// 也避开构造期的先后问题：认证服务先于积分服务构造，两者由 wire 用 setter 接上。
+type SignupRewardAccruer interface {
+	AccrueSignupReward(ctx context.Context, inviteeUserID int64) (int64, error)
+}
+
+// SetSignupRewardAccruer 注入注册奖励发放器。未注入时注册流程照常，只是不发奖励。
+func (s *AuthService) SetSignupRewardAccruer(accruer SignupRewardAccruer) {
+	if s == nil {
+		return
+	}
+	s.signupRewardAccruer = accruer
+}
+
+// loadInvitationRedeemCode 校验一张注册码能不能用于这次注册。
+//
+// 抽出来是因为邮箱注册和 OAuth 首登两条路原本各写了一遍同样的判断，
+// 而「注册码不行时改判邀请人邀请码」这个新分支必须在两边行为一致，
+// 否则同一个码在两个入口会得到不同结果。
+func (s *AuthService) loadInvitationRedeemCode(ctx context.Context, invitationCode string) (*RedeemCode, error) {
+	code := strings.TrimSpace(invitationCode)
+	if code == "" {
+		return nil, ErrInvitationCodeRequired
+	}
+	if s.redeemRepo == nil {
+		return nil, ErrInvitationCodeInvalid
+	}
+	redeemCode, err := s.redeemRepo.GetByCode(ctx, code)
+	if err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] Invalid invitation code: %s, error: %v", code, err)
+		return nil, ErrInvitationCodeInvalid
+	}
+	if redeemCode.Type != RedeemTypeInvitation || !redeemCode.CanUse() {
+		logger.LegacyPrintf("service.auth", "[Auth] Invitation code invalid: type=%s, status=%s", redeemCode.Type, redeemCode.Status)
+		return nil, ErrInvitationCodeInvalid
+	}
+	return redeemCode, nil
+}
+
+// admitSignupByAffiliateCode 判断能否直接用「邀请人邀请码」放行这次注册。
+//
+// 注册码开关打开时，只有管理员发得出注册码，普通用户手上的邀请链接带不进任何人，
+// 邀请奖励和每周邀请上限也就永远不会触发。开关打开后，只要码确实指向一个真实用户
+// 就放行，并且不消耗任何注册码——推荐码是长期有效的身份标识，不是一次性凭证。
+//
+// candidates 按先后顺序尝试：先用显式传入的推荐码（通常来自邀请链接的 aff 参数），
+// 再退回用户手填在注册码那一栏里的值——注册页把两栏合并成一栏之后，
+// 用户很自然会把拿到的邀请码填进去，不该因为"填错了格子"被拒。
+// 返回真正生效的那个码，供调用方绑定邀请关系用。
+// 返回值三种情况：
+//   - (code, nil)  放行，code 是真正生效的推荐码
+//   - ("",   err)  拒绝，且这个 err 比「注册码无效」更有解释力（例如本周名额已满），应直接抛给用户
+//   - ("",   nil)  没有可用的候选码，调用方沿用注册码那边原本的错误
+func (s *AuthService) admitSignupByAffiliateCode(ctx context.Context, candidates ...string) (string, error) {
+	if s == nil || s.affiliateService == nil || s.settingService == nil {
+		return "", nil
+	}
+	if !s.settingService.IsAffiliateCodeAdmitsSignupEnabled(ctx) {
+		return "", nil
+	}
+	for _, raw := range candidates {
+		code := strings.TrimSpace(raw)
+		if code == "" {
+			continue
+		}
+		if err := s.affiliateService.ValidateInviteCodeForSignup(ctx, code); err != nil {
+			continue
+		}
+		// 码本身是真的，但名额要在建号之前就查掉，否则用户会在账号已经建出来之后
+		// 才撞上周限额，而那时邮箱已经被占住了。
+		if err := s.affiliateService.CanInviteMoreThisWeek(ctx, code); err != nil {
+			return "", err
+		}
+		return code, nil
+	}
+	return "", nil
+}
+
+// grantSignupReward 在邀请关系刚绑定成功后发一笔注册奖励。
+//
+// 刻意只记日志不返回错误：用户此刻已经注册成功、邀请关系也已经落库，
+// 发不出奖励是运营侧的问题，不该把人卡在注册流程里。绑定关系留在库里，
+// 事后要补发也查得到依据。
+func (s *AuthService) grantSignupReward(ctx context.Context, inviteeUserID int64) {
+	if s == nil || s.signupRewardAccruer == nil || inviteeUserID <= 0 {
+		return
+	}
+	if _, err := s.signupRewardAccruer.AccrueSignupReward(ctx, inviteeUserID); err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] Failed to grant signup reward for user %d: %v", inviteeUserID, err)
+	}
 }
 
 type DefaultSubscriptionAssigner interface {
@@ -148,6 +247,10 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		return "", nil, ErrRegDisabled
 	}
+	// 总闸之外，账号密码注册还受 email 这个来源的独立开关控制
+	if !s.settingService.IsSignupSourceEnabled(ctx, SignupSourceEmail) {
+		return "", nil, ErrSignupSourceDisabled
+	}
 
 	// 防止用户注册 LinuxDo OAuth 合成邮箱，避免第三方登录与本地账号发生碰撞。
 	if isReservedEmail(email) {
@@ -159,22 +262,22 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 
 	// 检查是否需要邀请码
 	var invitationRedeemCode *RedeemCode
+	effectiveAffiliateCode := strings.TrimSpace(affiliateCode)
 	if s.settingService != nil && s.settingService.IsInvitationCodeEnabled(ctx) {
-		if invitationCode == "" {
-			return "", nil, ErrInvitationCodeRequired
+		redeemCode, admitErr := s.loadInvitationRedeemCode(ctx, invitationCode)
+		if admitErr != nil {
+			// 注册码这条路走不通，再看填的邀请人邀请码本身能不能放行（开关关闭时恒不放行）。
+			promoted, quotaErr := s.admitSignupByAffiliateCode(ctx, effectiveAffiliateCode, invitationCode)
+			if quotaErr != nil {
+				return "", nil, quotaErr
+			}
+			if promoted == "" {
+				return "", nil, admitErr
+			}
+			effectiveAffiliateCode = promoted
+		} else {
+			invitationRedeemCode = redeemCode
 		}
-		// 验证邀请码
-		redeemCode, err := s.redeemRepo.GetByCode(ctx, invitationCode)
-		if err != nil {
-			logger.LegacyPrintf("service.auth", "[Auth] Invalid invitation code: %s, error: %v", invitationCode, err)
-			return "", nil, ErrInvitationCodeInvalid
-		}
-		// 检查类型和状态
-		if redeemCode.Type != RedeemTypeInvitation || !redeemCode.CanUse() {
-			logger.LegacyPrintf("service.auth", "[Auth] Invitation code invalid: type=%s, status=%s", redeemCode.Type, redeemCode.Status)
-			return "", nil, ErrInvitationCodeInvalid
-		}
-		invitationRedeemCode = redeemCode
 	}
 
 	// 检查是否需要邮件验证
@@ -205,7 +308,7 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	}
 
 	if s.affiliateService != nil {
-		if err := s.affiliateService.ValidateInviteCodeForSignup(ctx, affiliateCode); err != nil {
+		if err := s.affiliateService.ValidateInviteCodeForSignup(ctx, effectiveAffiliateCode); err != nil {
 			return "", nil, err
 		}
 	}
@@ -251,8 +354,26 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		if _, err := s.affiliateService.EnsureUserAffiliate(ctx, user.ID); err != nil {
 			logger.LegacyPrintf("service.auth", "[Auth] Failed to initialize affiliate profile for user %d: %v", user.ID, err)
 		}
-		if code := strings.TrimSpace(affiliateCode); code != "" {
-			if err := s.affiliateService.BindInviterByCodeStrict(ctx, user.ID, code); err != nil {
+		if code := effectiveAffiliateCode; code != "" {
+			err := s.affiliateService.BindInviterByCodeStrict(ctx, user.ID, code)
+			switch {
+			case err == nil:
+				s.grantSignupReward(ctx, user.ID)
+			case errors.Is(err, ErrAffiliateWeeklyInviteLimitReached):
+				// 走到这里说明本次注册的准入凭证不是这张邀请人邀请码（否则建号前那道
+				// 预检就已经拦下了），名额满只影响返利归因。为此把一次已经放行的注册
+				// 整个回滚掉，代价完全不成比例：用户手上的注册码明明有效，却被一个他
+				// 看不见、也管不着的别人的名额挡在门外。跳过归因和奖励，注册照常完成。
+				logger.LegacyPrintf("service.auth",
+					"[Auth] Inviter code hit weekly limit for user %d; signup continues without inviter attribution", user.ID)
+			default:
+				// 账号此刻已经落库。不删掉的话这个邮箱就被一个半成品账号占死了，
+				// 用户换个码重试只会撞 EMAIL_EXISTS。第三方注册那条路本来就是这么回滚的，
+				// 这里补齐，两条路行为一致。此时注册码尚未标记为已用，无需归还。
+				if delErr := s.purgeRolledBackUser(ctx, user.ID); delErr != nil {
+					logger.LegacyPrintf("service.auth",
+						"[Auth] Failed to roll back user %d after inviter binding failed: %v", user.ID, delErr)
+				}
 				return "", nil, err
 			}
 		}
@@ -298,6 +419,10 @@ func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale .
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		return ErrRegDisabled
 	}
+	// 账号密码注册关闭时不再发注册验证码，避免白发一封邮件最后仍被拒
+	if !s.settingService.IsSignupSourceEnabled(ctx, SignupSourceEmail) {
+		return ErrSignupSourceDisabled
+	}
 
 	if isReservedEmail(email) {
 		return ErrEmailReserved
@@ -338,6 +463,11 @@ func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, loc
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		logger.LegacyPrintf("service.auth", "%s", "[Auth] Registration is disabled")
 		return nil, ErrRegDisabled
+	}
+	// 账号密码注册关闭时不再发注册验证码，避免白发一封邮件最后仍被拒
+	if !s.settingService.IsSignupSourceEnabled(ctx, SignupSourceEmail) {
+		logger.LegacyPrintf("service.auth", "%s", "[Auth] Email signup source is disabled")
+		return nil, ErrSignupSourceDisabled
 	}
 
 	if isReservedEmail(email) {
@@ -639,20 +769,38 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 				return nil, nil, ErrRegDisabled
 			}
 
+			// 优先用 caller 显式传入的 signupSource（如 "dingtalk" / "linuxdo" / "oidc" / "wechat"），
+			// 否则才按邮箱后缀推断——避免有真实邮箱的 OAuth 用户被推断为 "email" 渠道，导致渠道授权错读。
+			// 这一步必须放在渠道开关判断之前，否则判断的渠道会和最终落库的 signup_source 不一致。
+			if strings.TrimSpace(signupSource) == "" {
+				signupSource = inferLegacySignupSource(email)
+			}
+			// 渠道级注册开关：总闸开着，但该渠道被单独关掉时同样拒绝
+			if !s.settingService.IsSignupSourceEnabled(ctx, signupSource) {
+				return nil, nil, ErrSignupSourceDisabled
+			}
+
 			// 检查是否需要邀请码
 			var invitationRedeemCode *RedeemCode
+			effectiveAffiliateCode := strings.TrimSpace(affiliateCode)
 			if s.settingService != nil && s.settingService.IsInvitationCodeEnabled(ctx) {
-				if invitationCode == "" {
-					return nil, nil, ErrOAuthInvitationRequired
+				redeemCode, admitErr := s.loadInvitationRedeemCode(ctx, invitationCode)
+				if admitErr != nil {
+					promoted, quotaErr := s.admitSignupByAffiliateCode(ctx, effectiveAffiliateCode, invitationCode)
+					if quotaErr != nil {
+						return nil, nil, quotaErr
+					}
+					if promoted == "" {
+						// 缺码和填错码在 OAuth 侧是两种前端处理：前者弹输入框，后者报错。
+						if errors.Is(admitErr, ErrInvitationCodeRequired) {
+							return nil, nil, ErrOAuthInvitationRequired
+						}
+						return nil, nil, admitErr
+					}
+					effectiveAffiliateCode = promoted
+				} else {
+					invitationRedeemCode = redeemCode
 				}
-				redeemCode, err := s.redeemRepo.GetByCode(ctx, invitationCode)
-				if err != nil {
-					return nil, nil, ErrInvitationCodeInvalid
-				}
-				if redeemCode.Type != RedeemTypeInvitation || !redeemCode.CanUse() {
-					return nil, nil, ErrInvitationCodeInvalid
-				}
-				invitationRedeemCode = redeemCode
 			}
 
 			randomPassword, err := randomHexString(32)
@@ -665,11 +813,7 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 				return nil, nil, fmt.Errorf("hash password: %w", err)
 			}
 
-			// 优先用 caller 显式传入的 signupSource（如 "dingtalk" / "linuxdo" / "oidc" / "wechat"），
-			// 否则才按邮箱后缀推断——避免有真实邮箱的 OAuth 用户被推断为 "email" 渠道，导致渠道授权错读。
-			if strings.TrimSpace(signupSource) == "" {
-				signupSource = inferLegacySignupSource(email)
-			}
+			// signupSource 已在上面的渠道开关判断前完成推断，这里直接使用
 			grantPlan := s.resolveSignupGrantPlan(ctx, signupSource)
 			var defaultRPMLimit int
 			if s.settingService != nil {
@@ -722,7 +866,7 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 					s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
 					// snapshot user × platform quota（fail-open）
 					_ = s.snapshotPlatformQuotaDefaults(ctx, user.ID, &grantPlan)
-					if err := s.bindOAuthAffiliate(ctx, user.ID, affiliateCode); err != nil {
+					if err := s.bindOAuthAffiliate(ctx, user.ID, effectiveAffiliateCode); err != nil {
 						return nil, nil, err
 					}
 				}
@@ -745,7 +889,7 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 					s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
 					// snapshot user × platform quota（fail-open）
 					_ = s.snapshotPlatformQuotaDefaults(ctx, user.ID, &grantPlan)
-					if err := s.bindOAuthAffiliate(ctx, user.ID, affiliateCode); err != nil {
+					if err := s.bindOAuthAffiliate(ctx, user.ID, effectiveAffiliateCode); err != nil {
 						return nil, nil, err
 					}
 					if invitationRedeemCode != nil {
@@ -897,6 +1041,11 @@ func authSourceSignupSettings(defaults *AuthSourceDefaultSettings, signupSource 
 // bindOAuthAffiliate initializes the affiliate profile and binds the inviter
 // for an OAuth-registered user. Invalid non-empty invite codes block new
 // account creation so OAuth cannot bypass the email signup rule.
+//
+// 邀请人本周名额已满是唯一的例外：调用方拿到 error 会把整个注册回滚掉（软删刚建好
+// 的账号、退回注册码），而这个码往往是用户顺着别人的邀请链接一路带进来的 URL 参数，
+// 他既看不见也改不掉。为一条"挂不上邀请人"的归因信息把人挡在门外并不划算，
+// 何况准入本身是另一张有效的注册码给的。这里只跳过归因，注册照常完成。
 func (s *AuthService) bindOAuthAffiliate(ctx context.Context, userID int64, affiliateCode string) error {
 	if s.affiliateService == nil || userID <= 0 {
 		return nil
@@ -905,7 +1054,14 @@ func (s *AuthService) bindOAuthAffiliate(ctx context.Context, userID int64, affi
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to initialize affiliate profile for user %d: %v", userID, err)
 	}
 	if code := strings.TrimSpace(affiliateCode); code != "" {
-		if err := s.affiliateService.BindInviterByCodeStrict(ctx, userID, code); err != nil {
+		err := s.affiliateService.BindInviterByCodeStrict(ctx, userID, code)
+		switch {
+		case err == nil:
+			s.grantSignupReward(ctx, userID)
+		case errors.Is(err, ErrAffiliateWeeklyInviteLimitReached):
+			logger.LegacyPrintf("service.auth",
+				"[Auth] Inviter code hit weekly limit for user %d; signup continues without inviter attribution", userID)
+		default:
 			logger.LegacyPrintf("service.auth", "[Auth] Failed to bind affiliate inviter for user %d: %v", userID, err)
 			return err
 		}
@@ -1727,14 +1883,31 @@ func resolvedTokenVersion(user *User) int64 {
 	return user.TokenVersion ^ fingerprint
 }
 
-// snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas（4 platform × 3 window）以
-// BulkInsertInitial 形式写入 user_platform_quotas 表。失败 fail-open（仅 warn log）。
+// snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas（platform × 3 window）以
+// BulkInsertInitial 形式写入 user_platform_quotas 表。
+//
+// 下面那个 fail-open 只在调用方不处于数据库事务里时才真的成立，而注册路径恰恰是在事务内
+// 调用它的：PostgreSQL 一旦有语句违反约束就会把整个事务标记为 aborted，之后的语句一律
+// 被拒，所以这里就算吞掉错误返回 nil，调用方后续的写操作照样会失败。2026-08-28 线上就是
+// 这么炸的——建表迁移的 CHECK 约束不认 grok，这批插入失败后毒化了整个注册事务，紧随其后的
+// 「初始化返利档案」和「绑定邀请人」全部被拒，OAuth 注册返回 500，邀请关系一条都没建起来。
+//
+// 因此真正的防线是不要产生注定失败的语句：这里按 AllowedQuotaPlatforms 过滤，保证写出去的
+// platform 一定来自权威白名单；白名单与数据库 CHECK 约束的一致性由
+// TestQuotaPlatformWhitelistStaysInSync 钉住。
 func (s *AuthService) snapshotPlatformQuotaDefaults(ctx context.Context, userID int64, plan *signupGrantPlan) error {
 	if s.userPlatformQuotaRepo == nil || plan == nil || len(plan.PlatformQuotas) == 0 {
 		return nil
 	}
 	records := make([]UserPlatformQuotaRecord, 0, len(plan.PlatformQuotas))
 	for platform, q := range plan.PlatformQuotas {
+		if !IsAllowedQuotaPlatform(platform) {
+			// 设置里混进了未知平台。跳过它，而不是让它去撞数据库的 CHECK 约束——
+			// 在事务里那一撞会连坐掉调用方后面所有的写操作。
+			logger.LegacyPrintf("service.auth",
+				"[Auth] Skip unknown quota platform %q for user %d (not in AllowedQuotaPlatforms)", platform, userID)
+			continue
+		}
 		rec := UserPlatformQuotaRecord{
 			UserID:   userID,
 			Platform: platform,
@@ -1745,6 +1918,9 @@ func (s *AuthService) snapshotPlatformQuotaDefaults(ctx context.Context, userID 
 			rec.MonthlyLimitUSD = q.MonthlyLimitUSD
 		}
 		records = append(records, rec)
+	}
+	if len(records) == 0 {
+		return nil
 	}
 	if err := s.userPlatformQuotaRepo.BulkInsertInitial(ctx, records); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Warning: snapshot platform quota failed user=%d: %v (fail-open)", userID, err)

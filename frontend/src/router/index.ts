@@ -61,6 +61,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/claim-invite',
+    name: 'LegacyInviteClaim',
+    component: () => import('@/views/auth/LegacyInviteClaimView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Claim Invite Code',
+      titleKey: 'legacyInvite.title'
+    }
+  },
+  {
     path: '/email-verify',
     name: 'EmailVerify',
     component: () => import('@/views/auth/EmailVerifyView.vue'),

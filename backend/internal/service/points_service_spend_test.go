@@ -66,6 +66,13 @@ func (r *fakePointsRepo) GetAccount(ctx context.Context, userID int64) (*PointsA
 	}
 	return &PointsAccount{UserID: userID}, nil
 }
+
+// GrantSignupReward 服务于「邀请注册即得积分」。本组用例不走那条路径，
+// 返回「未入账」即可——万一将来被意外调用到，也不会因为这里的零值把断言误判成成功。
+func (r *fakePointsRepo) GrantSignupReward(context.Context, SignupRewardInput) (bool, error) {
+	return false, nil
+}
+
 func (r *fakePointsRepo) EarnPoints(ctx context.Context, in EarnPointsInput) (bool, error) {
 	return true, nil
 }
