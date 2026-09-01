@@ -1,8 +1,10 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -10,8 +12,29 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// compactKeepaliveHijackableWriter lets tests exercise the delegate branches of
+// Hijack/CloseNotify/Pusher without relying on httptest.ResponseRecorder, which
+// does not implement http.Hijacker and would panic inside gin's own wrapper.
+type compactKeepaliveHijackableWriter struct {
+	gin.ResponseWriter
+	hijackErr error
+}
+
+func (w *compactKeepaliveHijackableWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, w.hijackErr
+}
+
+func (w *compactKeepaliveHijackableWriter) CloseNotify() <-chan bool {
+	return make(chan bool, 1)
+}
+
+func (w *compactKeepaliveHijackableWriter) Pusher() http.Pusher {
+	return nil
+}
 
 type compactKeepaliveFailWriter struct {
 	gin.ResponseWriter
@@ -302,4 +325,108 @@ func TestOpsStreamError_PreservesFirstFailureAndRejectsInvalidValues(t *testing.
 	c.Set(OpsStreamErrorKey, "wrong-type")
 	_, recorded = GetOpsStreamError(c)
 	require.False(t, recorded)
+}
+
+// upstream(2f4478fd32a1): a keepalive writer must never panic even when its
+// inner gin.ResponseWriter or the keepalive controller is unset.
+func TestOpenAICompactKeepaliveWriter_NilInnerWriter_NoPanic(t *testing.T) {
+	w := &openAICompactKeepaliveWriter{
+		k: &openAICompactSSEKeepalive{stop: make(chan struct{})},
+	}
+	w.ResponseWriter = nil
+
+	assert.NotPanics(t, func() {
+		assert.Equal(t, 0, w.Status())
+	})
+	assert.NotPanics(t, func() {
+		assert.Equal(t, 0, w.Size())
+	})
+	assert.NotPanics(t, func() {
+		assert.False(t, w.Written())
+	})
+	assert.NotPanics(t, func() {
+		assert.NotNil(t, w.Header())
+	})
+	assert.NotPanics(t, func() {
+		n, err := w.Write([]byte("test"))
+		assert.Equal(t, 0, n)
+		assert.NoError(t, err)
+	})
+	assert.NotPanics(t, func() {
+		n, err := w.WriteString("test")
+		assert.Equal(t, 0, n)
+		assert.NoError(t, err)
+	})
+	assert.NotPanics(t, func() {
+		w.WriteHeader(http.StatusOK)
+	})
+	assert.NotPanics(t, func() {
+		w.WriteHeaderNow()
+	})
+	assert.NotPanics(t, func() {
+		w.Flush()
+	})
+	assert.NotPanics(t, func() {
+		conn, rw, err := w.Hijack()
+		assert.Nil(t, conn)
+		assert.Nil(t, rw)
+		assert.Error(t, err)
+	})
+	assert.NotPanics(t, func() {
+		ch := w.CloseNotify()
+		assert.NotNil(t, ch)
+	})
+	assert.NotPanics(t, func() {
+		assert.Nil(t, w.Pusher())
+	})
+}
+
+// upstream(2f4478fd32a1): once released (k == nil), Hijack/CloseNotify/Pusher
+// must delegate to the underlying gin.ResponseWriter rather than taking the
+// nil-guard path (that path is covered by TestOpenAICompactKeepaliveWriter_NilInnerWriter_NoPanic).
+func TestOpenAICompactKeepaliveWriter_HijackCloseNotifyPusherDelegateWhenReleased(t *testing.T) {
+	c, _ := newCompactBridgeTestContext(t, true)
+	mock := &compactKeepaliveHijackableWriter{ResponseWriter: c.Writer, hijackErr: errors.New("mock hijack")}
+	w := &openAICompactKeepaliveWriter{ResponseWriter: mock}
+
+	conn, rw, err := w.Hijack()
+	require.Nil(t, conn)
+	require.Nil(t, rw)
+	require.EqualError(t, err, "mock hijack")
+
+	ch := w.CloseNotify()
+	require.NotNil(t, ch)
+
+	require.Nil(t, w.Pusher())
+}
+
+func TestOpenAICompactKeepaliveWriter_NilKeepalive_NoPanic(t *testing.T) {
+	c, rec := newCompactBridgeTestContext(t, true)
+	w := &openAICompactKeepaliveWriter{ResponseWriter: c.Writer}
+
+	assert.NotPanics(t, func() {
+		assert.Equal(t, 0, w.Status())
+	})
+	assert.NotPanics(t, func() {
+		assert.Equal(t, 0, w.Size())
+	})
+	assert.NotPanics(t, func() {
+		assert.False(t, w.Written())
+	})
+	assert.NotPanics(t, func() {
+		w.Header().Set("X-Test", "ok")
+	})
+	assert.NotPanics(t, func() {
+		w.WriteHeader(http.StatusAccepted)
+	})
+	assert.NotPanics(t, func() {
+		n, err := w.WriteString("ok")
+		assert.Equal(t, 2, n)
+		assert.NoError(t, err)
+	})
+	assert.NotPanics(t, func() {
+		w.Flush()
+	})
+	require.Equal(t, "ok", rec.Header().Get("X-Test"))
+	require.Equal(t, "ok", rec.Body.String())
 }

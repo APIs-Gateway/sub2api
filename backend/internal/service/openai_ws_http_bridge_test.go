@@ -574,6 +574,69 @@ func TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety(t *testing.T) {
 	}
 }
 
+// 桥接转发 error / response.failed 给 WS 客户端前必须把容量降载码改写为可重试
+// 的 server_error：Codex 对 server_is_overloaded/slow_down 判致命并终止会话。
+// 账号状态判定使用改写前的原始事件，不受影响。
+func TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name    string
+		turn    int
+		body    string
+		wantErr bool
+	}{
+		{
+			name:    "turn2_error_frame",
+			turn:    2,
+			body:    "data: {\"type\":\"error\",\"error\":{\"type\":\"service_unavailable_error\",\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded. Please try again later.\"}}\n\n",
+			wantErr: true,
+		},
+		{
+			// response.failed 不走 error 事件分支：即便 turn 1 也会被当终止事件
+			// 原样转发（不 failover），因此改写必须在这里同样生效。
+			name: "turn1_bare_response_failed",
+			turn: 1,
+			body: "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_shed\",\"status\":\"failed\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded. Please try again later.\"}}}\n\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(tt.body)),
+			}}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+			account := &Account{ID: 11, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1}
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+			payload := []byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`)
+			var writes [][]byte
+
+			_, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+				context.Background(), c, account, "sk-test", payload, len(payload),
+				"gpt-5", "", "", "", tt.turn,
+				func(message []byte) error {
+					writes = append(writes, append([]byte(nil), message...))
+					return nil
+				},
+			)
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Len(t, writes, 1)
+			require.Contains(t, string(writes[0]), `"code":"server_error"`)
+			require.NotContains(t, string(writes[0]), "server_is_overloaded")
+			require.Contains(t, string(writes[0]), "Our servers are currently overloaded")
+		})
+	}
+}
+
 func TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1158,4 +1221,104 @@ func TestOpenAIWSHTTPBridgeKeepsContinuationFramesOnHTTPWithoutPreviousResponseI
 	require.Equal(t, "call_bridge_1", secondInput[2].Get("call_id").String())
 	require.Equal(t, 0, captureDialer.DialCount())
 	require.Empty(t, captureConn.writes)
+}
+
+// Codex 0.147+ 在 WS HTTP bridge 场景下同样会声明 custom 工具，type=apikey
+// 的二级中转商上游只认标准 function 工具，出站前必须降级，回程流式还原。
+func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyAdaptsClientTools(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	sse := strings.Join([]string{
+		`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"item_exec","call_id":"call_exec","name":"exec","status":"in_progress"}}`,
+		"",
+		`data: {"type":"response.function_call_arguments.done","sequence_number":1,"item_id":"item_exec","output_index":0,"call_id":"call_exec","name":"exec","arguments":"{\"input\":\"pwd\"}"}`,
+		"",
+		`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"item_exec","call_id":"call_exec","name":"exec","arguments":"{\"input\":\"pwd\"}","status":"completed"}}`,
+		"",
+		`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_bridge_tools","status":"completed","output":[{"type":"function_call","id":"item_exec","call_id":"call_exec","name":"exec","arguments":"{\"input\":\"pwd\"}","status":"completed"}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{ID: 5659, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1}
+	payload := []byte(`{"type":"response.create","model":"gpt-5","stream":true,"tools":[{"type":"custom","name":"exec","description":"Run a command"}],"input":"pwd"}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+	var written [][]byte
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+		context.Background(), c, account, "sk-test", payload, len(payload),
+		"gpt-5", "", "", "", 1,
+		func(message []byte) error {
+			written = append(written, append([]byte(nil), message...))
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+
+	lines := make([]string, 0, len(written))
+	for _, message := range written {
+		lines = append(lines, string(message))
+	}
+	output := strings.Join(lines, "\n")
+	require.Contains(t, output, `"type":"custom_tool_call"`)
+	require.Contains(t, output, `"input":"pwd"`)
+	require.NotContains(t, output, `"input":{`)
+	require.True(t, result.wsReplayInputExists)
+	require.Len(t, result.wsReplayInput, 1)
+	require.Equal(t, "custom_tool_call", gjson.GetBytes(result.wsReplayInput[0], "type").String())
+	require.Equal(t, "pwd", gjson.GetBytes(result.wsReplayInput[0], "input").String())
+}
+
+// OAuth 账号走官方上游，官方原生认得 custom 工具，不该被降级/还原。
+func TestProxyOpenAIWSHTTPBridgeTurnOAuthLeavesClientToolsUntouched(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	sse := strings.Join([]string{
+		`data: {"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"type":"custom_tool_call","id":"item_exec","call_id":"call_exec","name":"exec","input":"pwd","status":"completed"}}`,
+		"",
+		`data: {"type":"response.completed","sequence_number":1,"response":{"id":"resp_bridge_oauth","status":"completed","output":[{"type":"custom_tool_call","id":"item_exec","call_id":"call_exec","name":"exec","input":"pwd","status":"completed"}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{ID: 5661, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1}
+	payload := []byte(`{"type":"response.create","model":"gpt-5","stream":true,"tools":[{"type":"custom","name":"exec","description":"Run a command"}],"input":"pwd"}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+	var written [][]byte
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+		context.Background(), c, account, "sk-test", payload, len(payload),
+		"gpt-5", "", "", "", 1,
+		func(message []byte) error {
+			written = append(written, append([]byte(nil), message...))
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "custom", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+
+	lines := make([]string, 0, len(written))
+	for _, message := range written {
+		lines = append(lines, string(message))
+	}
+	output := strings.Join(lines, "\n")
+	require.Contains(t, output, `"type":"custom_tool_call"`)
+	require.NotContains(t, output, `"type":"function_call"`)
 }

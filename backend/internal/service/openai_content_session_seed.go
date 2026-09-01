@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -13,49 +14,119 @@ const contentSessionSeedPrefix = "compat_cs_"
 
 // deriveOpenAIContentSessionSeed builds a stable session seed from an
 // OpenAI-format request body. Only fields constant across conversation turns
-// are included: model, tools/functions definitions, system/developer prompts,
-// instructions (Responses API), and the first user message.
+// are included: model, tools/functions definitions, the leading system/developer
+// prompt prefix in Chat messages, instructions (Responses API), and the first
+// user message.
 // Supports both Chat Completions (messages) and Responses API (input).
 func deriveOpenAIContentSessionSeed(body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}
 
+	const (
+		modelField = iota
+		toolsField
+		functionsField
+		instructionsField
+		messagesField
+		inputField
+		contentSessionSeedFieldCount
+		allContentSessionSeedFields = 1<<contentSessionSeedFieldCount - 1
+	)
+	var fields [contentSessionSeedFieldCount]gjson.Result
+	var seen uint8
+	// Match gjson.GetBytes by starting at the first root container, even when
+	// malformed input has a non-JSON prefix.
+	root := body
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '{':
+			root = body[i:]
+			goto scanRoot
+		case '[':
+			return ""
+		}
+	}
+	return ""
+
+scanRoot:
+	nextKeyOffset := 1
+	parseRawJSONView(root).ForEach(func(key, value gjson.Result) bool {
+		if key.Index < nextKeyOffset || key.Index > len(root) {
+			return false
+		}
+		// Result.ForEach can continue after the root '}' on malformed input.
+		// The separator range excludes braces inside the preceding parsed value.
+		if bytes.IndexByte(root[nextKeyOffset:key.Index], '}') >= 0 {
+			return false
+		}
+		nextKeyOffset = value.Index + len(value.Raw)
+
+		field := -1
+		switch key.Str {
+		case "model":
+			field = modelField
+		case "tools":
+			field = toolsField
+		case "functions":
+			field = functionsField
+		case "instructions":
+			field = instructionsField
+		case "messages":
+			field = messagesField
+		case "input":
+			field = inputField
+		}
+		if field < 0 {
+			return true
+		}
+		mask := uint8(1 << field)
+		if seen&mask == 0 {
+			fields[field] = value
+			seen |= mask
+		}
+		return seen != allContentSessionSeedFields
+	})
+
 	var b strings.Builder
 
-	if model := gjson.GetBytes(body, "model").String(); model != "" {
+	if model := fields[modelField].String(); model != "" {
 		_, _ = b.WriteString("model=")
 		_, _ = b.WriteString(model)
 	}
 
-	if tools := gjson.GetBytes(body, "tools"); tools.Exists() && tools.IsArray() && tools.Raw != "[]" {
+	if tools := fields[toolsField]; tools.Exists() && tools.IsArray() && tools.Raw != "[]" {
 		_, _ = b.WriteString("|tools=")
 		_, _ = b.WriteString(normalizeCompatSeedJSON(json.RawMessage(tools.Raw)))
 	}
 
-	if funcs := gjson.GetBytes(body, "functions"); funcs.Exists() && funcs.IsArray() && funcs.Raw != "[]" {
+	if funcs := fields[functionsField]; funcs.Exists() && funcs.IsArray() && funcs.Raw != "[]" {
 		_, _ = b.WriteString("|functions=")
 		_, _ = b.WriteString(normalizeCompatSeedJSON(json.RawMessage(funcs.Raw)))
 	}
 
-	if instr := gjson.GetBytes(body, "instructions").String(); instr != "" {
+	if instr := fields[instructionsField].String(); instr != "" {
 		_, _ = b.WriteString("|instructions=")
 		_, _ = b.WriteString(instr)
 	}
 
 	firstUserCaptured := false
 
-	msgs := gjson.GetBytes(body, "messages")
+	msgs := fields[messagesField]
 	if msgs.Exists() && msgs.IsArray() {
+		systemPrefixOpen := true
 		msgs.ForEach(func(_, msg gjson.Result) bool {
 			role := msg.Get("role").String()
 			switch role {
 			case "system", "developer":
-				_, _ = b.WriteString("|system=")
-				if c := msg.Get("content"); c.Exists() {
-					_, _ = b.WriteString(normalizeCompatSeedJSON(json.RawMessage(c.Raw)))
+				if systemPrefixOpen {
+					_, _ = b.WriteString("|system=")
+					if c := msg.Get("content"); c.Exists() {
+						_, _ = b.WriteString(normalizeCompatSeedJSON(json.RawMessage(c.Raw)))
+					}
 				}
 			case "user":
+				systemPrefixOpen = false
 				if !firstUserCaptured {
 					_, _ = b.WriteString("|first_user=")
 					if c := msg.Get("content"); c.Exists() {
@@ -63,10 +134,12 @@ func deriveOpenAIContentSessionSeed(body []byte) string {
 					}
 					firstUserCaptured = true
 				}
+			default:
+				systemPrefixOpen = false
 			}
 			return true
 		})
-	} else if inp := gjson.GetBytes(body, "input"); inp.Exists() {
+	} else if inp := fields[inputField]; inp.Exists() {
 		if inp.Type == gjson.String {
 			_, _ = b.WriteString("|input=")
 			_, _ = b.WriteString(inp.String())

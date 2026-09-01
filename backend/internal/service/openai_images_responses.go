@@ -827,6 +827,16 @@ func openAIImagesUpstreamErrorFromHTTP(statusCode int, header http.Header, body 
 // It returns an *OpenAIImagesUpstreamError (already written to the client) so
 // the images handler treats it as a terminal user-facing error rather than
 // re-writing a fallback response.
+//
+// This is the single funnel every /v1/images/generations and /v1/images/edits
+// upstream error (streaming and non-streaming) goes through, so it is also the
+// one place that marks ctx via WithOpenAIImagesEndpoint before delegating to
+// the shared handleOpenAIAccountUpstreamError/HandleUpstreamModelNotFound
+// path. That marker lets shouldSkipCodexPlanGatedImageModelCooldown tell a
+// genuine "account can't serve this image model" rejection (seen here, must
+// still cool down) apart from a plan-gated image model rejected by a text
+// endpoint like /v1/responses (must not cool down — see that function's
+// comment).
 func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 	ctx context.Context,
 	resp *http.Response,
@@ -907,7 +917,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 	if len(requestedModel) > 0 {
 		modelForCooldown = strings.TrimSpace(requestedModel[0])
 	}
-	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, modelForCooldown)
+	shouldDisable := s.handleOpenAIAccountUpstreamError(WithOpenAIImagesEndpoint(ctx), account, resp.StatusCode, resp.Header, body, modelForCooldown)
 	kind := "http_error"
 	if shouldDisable {
 		kind = "failover"

@@ -376,6 +376,67 @@ func TestBuildGenerationConfig_ThinkingDynamicBudget(t *testing.T) {
 	}
 }
 
+func TestBuildGenerationConfig_ReasoningModelSkipsUnsupportedParams(t *testing.T) {
+	temp := 0.7
+	topP := 0.9
+	topK := 40
+
+	tests := []struct {
+		name          string
+		model         string
+		wantReasoning bool
+	}{
+		{name: "reasoning model gemini-3.1-pro-high", model: "gemini-3.1-pro-high", wantReasoning: true},
+		{name: "reasoning model gemini-3-pro-high", model: "gemini-3-pro-high", wantReasoning: true},
+		{name: "non-reasoning model gemini-3.1-pro-low", model: "gemini-3.1-pro-low", wantReasoning: false},
+		{name: "non-reasoning model gemini-2.5-flash", model: "gemini-2.5-flash", wantReasoning: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ClaudeRequest{
+				Model:       tt.model,
+				Temperature: &temp,
+				TopP:        &topP,
+				TopK:        &topK,
+			}
+			cfg := buildGenerationConfig(req)
+			if cfg == nil {
+				t.Fatalf("expected non-nil generationConfig")
+			}
+
+			if tt.wantReasoning {
+				if len(cfg.StopSequences) != 0 {
+					t.Fatalf("expected StopSequences to be omitted for reasoning model, got %v", cfg.StopSequences)
+				}
+				if cfg.Temperature != nil {
+					t.Fatalf("expected Temperature to be omitted for reasoning model, got %v", *cfg.Temperature)
+				}
+				if cfg.TopP != nil {
+					t.Fatalf("expected TopP to be omitted for reasoning model, got %v", *cfg.TopP)
+				}
+				if cfg.TopK != nil {
+					t.Fatalf("expected TopK to be omitted for reasoning model, got %v", *cfg.TopK)
+				}
+				return
+			}
+
+			if len(cfg.StopSequences) == 0 {
+				t.Fatalf("expected StopSequences to be set for non-reasoning model")
+			}
+			if cfg.Temperature == nil || *cfg.Temperature != temp {
+				t.Fatalf("expected Temperature=%v to be preserved for non-reasoning model, got %v", temp, cfg.Temperature)
+			}
+			if cfg.TopP == nil || *cfg.TopP != topP {
+				t.Fatalf("expected TopP=%v to be preserved for non-reasoning model, got %v", topP, cfg.TopP)
+			}
+			if cfg.TopK == nil || *cfg.TopK != topK {
+				t.Fatalf("expected TopK=%v to be preserved for non-reasoning model, got %v", topK, cfg.TopK)
+			}
+		})
+	}
+}
+
 func TestTransformClaudeToGeminiWithOptions_PreservesBillingHeaderSystemBlock(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -564,4 +625,110 @@ func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions
 	require.Len(t, req.Request.Tools[0].FunctionDeclarations, 1)
 	require.Equal(t, "get_weather", req.Request.Tools[0].FunctionDeclarations[0].Name)
 	require.NotNil(t, req.Request.Tools[1].GoogleSearch)
+}
+
+func TestTransformClaudeToGeminiWithOptions_ReasoningModelToolConfig(t *testing.T) {
+	baseReq := func(tools []ClaudeTool) *ClaudeRequest {
+		return &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{
+					Role:    "user",
+					Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+				},
+			},
+			Tools: tools,
+		}
+	}
+
+	t.Run("reasoning model without tools omits toolConfig", func(t *testing.T) {
+		body, err := TransformClaudeToGeminiWithOptions(baseReq(nil), "project-1", "gemini-3.1-pro-high", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		require.Nil(t, req.Request.ToolConfig, "reasoning 模型在没有 tools 时不应强制设置 toolConfig")
+	})
+
+	t.Run("reasoning model with tools still sets toolConfig", func(t *testing.T) {
+		tools := []ClaudeTool{
+			{
+				Name:        "get_weather",
+				Description: "Get weather information",
+				InputSchema: map[string]any{"type": "object"},
+			},
+		}
+		body, err := TransformClaudeToGeminiWithOptions(baseReq(tools), "project-1", "gemini-3.1-pro-high", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		require.NotNil(t, req.Request.ToolConfig, "reasoning 模型有 tools 时仍应设置 toolConfig")
+		require.Equal(t, "VALIDATED", req.Request.ToolConfig.FunctionCallingConfig.Mode)
+	})
+
+	t.Run("non-reasoning model without tools still sets toolConfig", func(t *testing.T) {
+		body, err := TransformClaudeToGeminiWithOptions(baseReq(nil), "project-1", "gemini-2.5-flash", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		require.NotNil(t, req.Request.ToolConfig, "非 reasoning 模型应始终设置 toolConfig，与官方客户端一致")
+	})
+}
+
+func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
+	functionTool := ClaudeTool{
+		Name:        "get_weather",
+		Description: "Get weather information",
+		InputSchema: map[string]any{"type": "object"},
+	}
+	webSearchTool := ClaudeTool{
+		Type: "web_search_20250305",
+		Name: "web_search",
+	}
+
+	transform := func(t *testing.T, tools []ClaudeTool) (V1InternalRequest, string) {
+		t.Helper()
+		body, err := TransformClaudeToGeminiWithOptions(&ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{
+					Role:    "user",
+					Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+				},
+			},
+			Tools: tools,
+		}, "project-1", "gemini-2.5-flash", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		return req, string(body)
+	}
+
+	t.Run("mixed builtin and function tools enable server-side tool invocations", func(t *testing.T) {
+		req, raw := transform(t, []ClaudeTool{functionTool, webSearchTool})
+
+		require.NotNil(t, req.Request.ToolConfig)
+		require.NotNil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
+		require.True(t, *req.Request.ToolConfig.IncludeServerSideToolInvocations)
+		require.Contains(t, raw, `"includeServerSideToolInvocations":true`)
+	})
+
+	t.Run("function tools only leave the flag unset", func(t *testing.T) {
+		req, raw := transform(t, []ClaudeTool{functionTool})
+
+		require.NotNil(t, req.Request.ToolConfig)
+		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
+		require.NotContains(t, raw, "includeServerSideToolInvocations")
+	})
+
+	t.Run("web search only leaves the flag unset", func(t *testing.T) {
+		req, raw := transform(t, []ClaudeTool{webSearchTool})
+
+		require.NotNil(t, req.Request.ToolConfig)
+		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
+		require.NotContains(t, raw, "includeServerSideToolInvocations")
+	})
 }

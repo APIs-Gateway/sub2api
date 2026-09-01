@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -24,12 +25,23 @@ import (
 // ─── Mocks ───
 
 type mockSettingRepo struct {
-	mu   sync.Mutex
-	data map[string]string
+	mu          sync.Mutex
+	data        map[string]string
+	failSetKeys map[string]error // key -> 注入的 Set 失败，测试保存失败分支用
 }
 
 func newMockSettingRepo() *mockSettingRepo {
 	return &mockSettingRepo{data: make(map[string]string)}
+}
+
+// failSet 让后续对指定 key 的 Set 调用返回 err，用于覆盖保存失败的错误处理分支。
+func (m *mockSettingRepo) failSet(key string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failSetKeys == nil {
+		m.failSetKeys = make(map[string]error)
+	}
+	m.failSetKeys[key] = err
 }
 
 func (m *mockSettingRepo) Get(_ context.Context, key string) (*Setting, error) {
@@ -55,6 +67,9 @@ func (m *mockSettingRepo) GetValue(_ context.Context, key string) (string, error
 func (m *mockSettingRepo) Set(_ context.Context, key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err, ok := m.failSetKeys[key]; ok {
+		return err
+	}
 	m.data[key] = value
 	return nil
 }
@@ -135,6 +150,22 @@ func (m *mockDumper) Restore(_ context.Context, data io.Reader) error {
 	}
 	m.restored = d
 	return nil
+}
+
+// closeErrDumper 的 Dump() 返回的 ReadCloser 在 Close() 时报错，
+// 用于覆盖 createCompressedBackupFile 里 dumpReader.Close() 失败的分支。
+type closeErrDumper struct {
+	data     []byte
+	closeErr error
+}
+
+func (d *closeErrDumper) Dump(_ context.Context) (io.ReadCloser, error) {
+	return &closeErrReadCloser{Reader: bytes.NewReader(d.data), closeErr: d.closeErr}, nil
+}
+
+func (d *closeErrDumper) Restore(_ context.Context, data io.Reader) error {
+	_, err := io.ReadAll(data)
+	return err
 }
 
 // blockingDumper 可控延迟的 dumper，用于测试异步行为
@@ -248,6 +279,52 @@ func (m *mockObjectStore) PresignURL(_ context.Context, key string, _ time.Durat
 
 func (m *mockObjectStore) HeadBucket(_ context.Context) error {
 	return nil
+}
+
+// closeErrReadCloser 包一个 io.Reader，让 Close() 返回可配置的错误；
+// 用来覆盖各处 "读取成功但 Close 失败" 的错误处理分支。
+type closeErrReadCloser struct {
+	io.Reader
+	closeErr error
+}
+
+func (c *closeErrReadCloser) Close() error { return c.closeErr }
+
+// erroringDownloadStore 包一个 mockObjectStore，让指定 key 的 Download 要么读取失败、
+// 要么返回后 Close 失败，用于覆盖 downloadBackupParts 里对应的错误处理分支。
+type erroringDownloadStore struct {
+	*mockObjectStore
+	readErrAtKey  string
+	closeErrAtKey string
+}
+
+func (s *erroringDownloadStore) Download(ctx context.Context, key string) (io.ReadCloser, error) {
+	if s.readErrAtKey != "" && key == s.readErrAtKey {
+		return io.NopCloser(iotest.ErrReader(fmt.Errorf("simulated read failure"))), nil
+	}
+	body, err := s.mockObjectStore.Download(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if s.closeErrAtKey != "" && key == s.closeErrAtKey {
+		data, readErr := io.ReadAll(body)
+		if readErr != nil {
+			return nil, readErr
+		}
+		return &closeErrReadCloser{Reader: bytes.NewReader(data), closeErr: fmt.Errorf("simulated close failure")}, nil
+	}
+	return body, nil
+}
+
+// writeTempBackupFile 写一个临时文件供直接调用 uploadBackupArchive/restoreArchive 等私有方法测试用。
+func writeTempBackupFile(t *testing.T, data []byte) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "backup-svc-test-*.gz")
+	require.NoError(t, err)
+	_, err = f.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	return f.Name()
 }
 
 func newTestBackupService(repo *mockSettingRepo, dumper DBDumper, store *mockObjectStore) *BackupService {
@@ -557,6 +634,130 @@ func TestBackupService_UploadFailureCleanupUsesDetachedContext(t *testing.T) {
 	}
 }
 
+// TestBackupService_CreateCompressedBackupFile_CreateTempFailure 通过把 TMPDIR 指向一个
+// 不存在的目录，让 createCompressedBackupFile 里创建本地归档临时文件失败。
+func TestBackupService_CreateCompressedBackupFile_CreateTempFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{dumpData: []byte("data")}, newMockObjectStore())
+	t.Setenv("TMPDIR", "/nonexistent-xyz-dir-for-compress-test")
+
+	_, _, err := svc.createCompressedBackupFile(context.Background())
+	require.ErrorContains(t, err, "create backup archive")
+}
+
+// TestBackupService_CreateCompressedBackupFile_DumpCloseError 让 dumper 返回的 ReadCloser
+// 在 Close() 时报错，覆盖 gzip/dump 失败后清理归档并返回错误的分支。
+func TestBackupService_CreateCompressedBackupFile_DumpCloseError(t *testing.T) {
+	repo := newMockSettingRepo()
+	dumper := &closeErrDumper{data: []byte("data"), closeErr: fmt.Errorf("dump close boom")}
+	svc := newTestBackupService(repo, dumper, newMockObjectStore())
+
+	_, _, err := svc.createCompressedBackupFile(context.Background())
+	require.ErrorContains(t, err, "gzip/dump failed")
+}
+
+// TestBackupService_UploadBackupArchive_StatError 覆盖 uploadBackupArchive 里
+// 对本地归档文件 Stat 失败的分支（比如上一步产物已经不存在）。
+func TestBackupService_UploadBackupArchive_StatError(t *testing.T) {
+	repo := newMockSettingRepo()
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+	record := &BackupRecord{ID: "stat-err", S3Key: "backups/stat-err.sql.gz"}
+
+	err := svc.uploadBackupArchive(context.Background(), record, store, &BackupS3Config{Prefix: "backups"}, "/nonexistent/path/x.gz")
+	require.ErrorContains(t, err, "stat backup archive")
+}
+
+// TestBackupService_UploadBackupArchive_ZeroPartSizeDefaultsToConstant 验证
+// partSizeBytes<=0 时会回退到默认的 4GiB 阈值，小文件仍按单对象上传。
+func TestBackupService_UploadBackupArchive_ZeroPartSizeDefaultsToConstant(t *testing.T) {
+	repo := newMockSettingRepo()
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+	svc.partSizeBytes = 0
+	archivePath := writeTempBackupFile(t, []byte("hello"))
+	record := &BackupRecord{ID: "zero-partsize", S3Key: "backups/zero.sql.gz"}
+
+	err := svc.uploadBackupArchive(context.Background(), record, store, &BackupS3Config{Prefix: "backups"}, archivePath)
+	require.NoError(t, err)
+	require.Empty(t, record.Parts)
+	store.mu.Lock()
+	require.Contains(t, store.objects, record.S3Key)
+	store.mu.Unlock()
+}
+
+// TestBackupService_UploadBackupArchive_SingleFileUploadFailureCleansUp 覆盖单对象
+// (未拆分)上传失败时清理已上传对象并返回聚合错误的分支。
+func TestBackupService_UploadBackupArchive_SingleFileUploadFailureCleansUp(t *testing.T) {
+	repo := newMockSettingRepo()
+	store := newMockObjectStore()
+	store.failUploadAt = 1
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+	archivePath := writeTempBackupFile(t, []byte("hello"))
+	record := &BackupRecord{ID: "single-fail", S3Key: "backups/single-fail.sql.gz"}
+
+	err := svc.uploadBackupArchive(context.Background(), record, store, &BackupS3Config{Prefix: "backups"}, archivePath)
+	require.ErrorContains(t, err, "backup upload")
+	store.mu.Lock()
+	require.Contains(t, store.deletedKeys, record.S3Key)
+	store.mu.Unlock()
+}
+
+// TestBackupService_UploadBackupArchive_SplitFailurePropagates 让拆分阶段本身失败
+// (临时目录不可用)，验证错误会被包装成 "split backup archive" 往外传播。
+func TestBackupService_UploadBackupArchive_SplitFailurePropagates(t *testing.T) {
+	repo := newMockSettingRepo()
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+	svc.partSizeBytes = 4
+	archivePath := writeTempBackupFile(t, []byte("0123456789"))
+	record := &BackupRecord{ID: "split-fail", S3Key: "backups/split-fail.sql.gz"}
+
+	t.Setenv("TMPDIR", "/nonexistent-xyz-dir-for-upload-split-test")
+
+	err := svc.uploadBackupArchive(context.Background(), record, store, &BackupS3Config{Prefix: "backups"}, archivePath)
+	require.ErrorContains(t, err, "split backup archive")
+}
+
+// TestBackupService_UploadBackupArchive_SplitRequiresConfig 覆盖拆分上传但 S3 配置
+// 缺失（cfg==nil）时的显式报错分支。
+func TestBackupService_UploadBackupArchive_SplitRequiresConfig(t *testing.T) {
+	repo := newMockSettingRepo()
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+	svc.partSizeBytes = 4
+	archivePath := writeTempBackupFile(t, []byte("0123456789"))
+	record := &BackupRecord{ID: "nil-cfg", S3Key: "backups/nil-cfg.sql.gz"}
+
+	err := svc.uploadBackupArchive(context.Background(), record, store, nil, archivePath)
+	require.ErrorContains(t, err, "backup S3 config is unavailable")
+}
+
+// TestBackupService_UploadBackupArchive_SaveSplitPlanFailure 覆盖拆分计划保存
+// (saveRecord)失败时的错误分支。
+func TestBackupService_UploadBackupArchive_SaveSplitPlanFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+	svc.partSizeBytes = 4
+	archivePath := writeTempBackupFile(t, []byte("0123456789"))
+	record := &BackupRecord{ID: "save-plan-fail", S3Key: "backups/save-plan-fail.sql.gz"}
+
+	repo.failSet(settingKeyBackupRecords, fmt.Errorf("boom"))
+
+	err := svc.uploadBackupArchive(context.Background(), record, store, &BackupS3Config{Prefix: "backups"}, archivePath)
+	require.ErrorContains(t, err, "save split backup plan")
+}
+
+// TestBackupService_UploadBackupFile_OpenError 覆盖 uploadBackupFile 打开本地文件失败的分支。
+func TestBackupService_UploadBackupFile_OpenError(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+
+	err := svc.uploadBackupFile(context.Background(), newMockObjectStore(), "key", "/nonexistent/path.gz", "application/gzip")
+	require.ErrorContains(t, err, "open backup file")
+}
+
 func entropyBackupFixture(size int) []byte {
 	data := make([]byte, size)
 	for i := range data {
@@ -577,6 +778,34 @@ func TestBackupService_CreateBackup_DumpFailure(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "failed", record.Status)
 	require.Contains(t, record.ErrorMsg, "pg_dump")
+}
+
+// TestBackupService_CreateBackup_SaveInitialRecordFailure 覆盖 CreateBackup 里
+// "保存初始记录失败" 的错误分支：dump 成功后但落盘 running 记录失败应直接报错返回。
+func TestBackupService_CreateBackup_SaveInitialRecordFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	svc := newTestBackupService(repo, &mockDumper{dumpData: []byte("data")}, newMockObjectStore())
+
+	repo.failSet(settingKeyBackupRecords, fmt.Errorf("boom"))
+
+	_, err := svc.CreateBackup(context.Background(), "manual", 14)
+	require.ErrorContains(t, err, "save initial record")
+}
+
+// TestBackupService_CreateBackup_UploadFailure 覆盖 CreateBackup 里上传失败后
+// 标记记录为 failed 并保存的分支（区别于 dump 失败分支）。
+func TestBackupService_CreateBackup_UploadFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	store := newMockObjectStore()
+	store.failUploadAt = 1
+	svc := newTestBackupService(repo, &mockDumper{dumpData: []byte("data")}, store)
+
+	record, err := svc.CreateBackup(context.Background(), "manual", 14)
+	require.Error(t, err)
+	require.Equal(t, "failed", record.Status)
+	require.NotEmpty(t, record.ErrorMsg)
 }
 
 func TestBackupService_CreateBackup_NoS3Config(t *testing.T) {
@@ -704,6 +933,21 @@ func TestBackupService_DownloadBackupPartsRejectsMismatchedMetadata(t *testing.T
 			part: BackupPart{Index: 1, S3Key: "backups/mismatch/checksum", SizeBytes: 3, SHA256: "bad-checksum"},
 			want: "checksum mismatch",
 		},
+		{
+			name: "invalid-index",
+			part: BackupPart{Index: 2, S3Key: "backups/mismatch/bad-index", SizeBytes: 3},
+			want: "invalid backup part metadata",
+		},
+		{
+			name: "empty-key",
+			part: BackupPart{Index: 1, S3Key: "", SizeBytes: 3},
+			want: "invalid backup part metadata",
+		},
+		{
+			name: "non-positive-size",
+			part: BackupPart{Index: 1, S3Key: "backups/mismatch/zero-size", SizeBytes: 0},
+			want: "invalid backup part metadata",
+		},
 	}
 
 	for _, tt := range tests {
@@ -718,6 +962,82 @@ func TestBackupService_DownloadBackupPartsRejectsMismatchedMetadata(t *testing.T
 			require.ErrorContains(t, err, tt.want)
 		})
 	}
+}
+
+func TestBackupService_DownloadBackupParts_EmptyPartsRejected(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+
+	_, err := svc.downloadBackupParts(context.Background(), newMockObjectStore(), nil)
+	require.ErrorContains(t, err, "backup parts are empty")
+}
+
+// TestBackupService_DownloadBackupParts_CreateTempFailure 通过把 TMPDIR 指向一个不存在的
+// 目录，让拼接分卷用的本地临时文件创建失败。
+func TestBackupService_DownloadBackupParts_CreateTempFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+	t.Setenv("TMPDIR", "/nonexistent-xyz-dir-for-download-test")
+
+	parts := []BackupPart{{Index: 1, S3Key: "backups/x", SizeBytes: 3}}
+	_, err := svc.downloadBackupParts(context.Background(), newMockObjectStore(), parts)
+	require.ErrorContains(t, err, "create restore archive")
+}
+
+// TestBackupService_DownloadBackupParts_ReadFailure 覆盖读取分卷内容中途失败的分支。
+func TestBackupService_DownloadBackupParts_ReadFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	base := newMockObjectStore()
+	store := &erroringDownloadStore{mockObjectStore: base, readErrAtKey: "backups/read-fail/payload.part-000001"}
+	svc := newTestBackupService(repo, &mockDumper{}, base)
+
+	parts := []BackupPart{{Index: 1, S3Key: "backups/read-fail/payload.part-000001", SizeBytes: 3}}
+	_, err := svc.downloadBackupParts(context.Background(), store, parts)
+	require.ErrorContains(t, err, "read backup part")
+}
+
+// TestBackupService_DownloadBackupParts_CloseFailure 覆盖分卷 body Close() 失败的分支。
+func TestBackupService_DownloadBackupParts_CloseFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	base := newMockObjectStore()
+	base.objects["backups/close-fail/payload.part-000001"] = []byte("abc")
+	store := &erroringDownloadStore{mockObjectStore: base, closeErrAtKey: "backups/close-fail/payload.part-000001"}
+	svc := newTestBackupService(repo, &mockDumper{}, base)
+
+	parts := []BackupPart{{Index: 1, S3Key: "backups/close-fail/payload.part-000001", SizeBytes: 3}}
+	_, err := svc.downloadBackupParts(context.Background(), store, parts)
+	require.ErrorContains(t, err, "close backup part")
+}
+
+// TestBackupService_RestoreArchive_OpenError 覆盖 restoreArchive 打开本地归档失败的分支。
+func TestBackupService_RestoreArchive_OpenError(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+
+	err := svc.restoreArchive(context.Background(), "/nonexistent/path.gz")
+	require.ErrorContains(t, err, "open restore archive")
+}
+
+// TestBackupService_RestoreArchive_GzipReaderError 覆盖归档内容不是合法 gzip 流的分支。
+func TestBackupService_RestoreArchive_GzipReaderError(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+	path := writeTempBackupFile(t, []byte("not a gzip stream"))
+
+	err := svc.restoreArchive(context.Background(), path)
+	require.ErrorContains(t, err, "gzip reader")
+}
+
+// TestBackupService_RestoreArchive_DumperRestoreError 覆盖 gzip 流合法但 pg restore 本身
+// 失败的分支。
+func TestBackupService_RestoreArchive_DumperRestoreError(t *testing.T) {
+	repo := newMockSettingRepo()
+	dumper := &mockDumper{restErr: fmt.Errorf("restore boom")}
+	svc := newTestBackupService(repo, dumper, newMockObjectStore())
+	path := writeTempBackupFile(t, gzipBackupBytes(t, []byte("payload")))
+
+	err := svc.restoreArchive(context.Background(), path)
+	require.ErrorContains(t, err, "pg restore")
 }
 
 func gzipBackupBytes(t *testing.T, content []byte) []byte {
@@ -889,6 +1209,20 @@ func TestBackupService_GetDownloadURL_SplitParts_ReturnsExplicitUnsupportedError
 	require.Empty(t, url)
 }
 
+// TestBackupService_GetDownloadURL_EmptyS3KeyReturnsError 覆盖既没有 Parts 也没有
+// S3Key 的异常记录（理论上不应出现，但防御性拒绝而不是签出一个无效链接）。
+func TestBackupService_GetDownloadURL_EmptyS3KeyReturnsError(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+	record := &BackupRecord{ID: "empty-key", Status: "completed"}
+	require.NoError(t, svc.saveRecord(context.Background(), record))
+
+	url, err := svc.GetBackupDownloadURL(context.Background(), record.ID)
+	require.ErrorContains(t, err, "backup object key is empty")
+	require.Empty(t, url)
+}
+
 func TestBackupService_CleanupOldBackups_SplitParts(t *testing.T) {
 	repo := newMockSettingRepo()
 	seedS3Config(t, repo)
@@ -923,6 +1257,64 @@ func TestBackupService_CleanupOldBackups_SplitParts(t *testing.T) {
 		require.NotContains(t, store.objects, part.S3Key)
 	}
 	store.mu.Unlock()
+}
+
+// TestBackupService_CleanupOldBackups_DeleteFailureKeepsRecord 覆盖清理过期备份时
+// 对象删除失败应该保留记录（便于重试）并聚合错误的分支。
+func TestBackupService_CleanupOldBackups_DeleteFailureKeepsRecord(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+	now := time.Now()
+	part := BackupPart{Index: 1, S3Key: "backups/cleanup-fail/payload.part-000001", SizeBytes: 3}
+	store.objects[part.S3Key] = []byte("abc")
+	store.failDeleteKeys[part.S3Key] = fmt.Errorf("delete failed")
+
+	require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+		ID:        "new",
+		Status:    "completed",
+		StartedAt: now.Format(time.RFC3339),
+	}))
+	require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+		ID:        "old-fail",
+		Status:    "completed",
+		StartedAt: now.Add(-2 * time.Hour).Format(time.RFC3339),
+		Parts:     []BackupPart{part},
+	}))
+
+	err := svc.cleanupOldBackups(context.Background(), &BackupScheduleConfig{RetainCount: 1})
+	require.ErrorContains(t, err, "cleanup backup")
+
+	got, getErr := svc.GetBackupRecord(context.Background(), "old-fail")
+	require.NoError(t, getErr)
+	require.Equal(t, "old-fail", got.ID)
+}
+
+// TestBackupService_CleanupOldBackups_SaveAfterCleanupFailure 覆盖成功删除对象后
+// 保存清理结果（saveRecordsLocked）本身失败的分支。
+func TestBackupService_CleanupOldBackups_SaveAfterCleanupFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+	now := time.Now()
+
+	require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+		ID:        "new",
+		Status:    "completed",
+		StartedAt: now.Format(time.RFC3339),
+	}))
+	require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+		ID:        "old",
+		Status:    "completed",
+		StartedAt: now.Add(-2 * time.Hour).Format(time.RFC3339),
+	}))
+
+	repo.failSet(settingKeyBackupRecords, fmt.Errorf("save failed"))
+
+	err := svc.cleanupOldBackups(context.Background(), &BackupScheduleConfig{RetainCount: 1})
+	require.ErrorContains(t, err, "save backup records after cleanup")
 }
 
 func TestBackupService_ListBackups_Sorted(t *testing.T) {
@@ -1058,6 +1450,26 @@ func TestStartBackup_ShuttingDown(t *testing.T) {
 	require.Contains(t, err.Error(), "shutting down")
 }
 
+// TestStartBackup_DumpFailure 覆盖异步备份(executeBackup)里 pg_dump/压缩阶段失败的分支，
+// 与同步 CreateBackup 的 DumpFailure 用例分别对应两条独立的错误处理代码路径。
+func TestStartBackup_DumpFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	dumper := &mockDumper{dumpErr: fmt.Errorf("pg_dump failed")}
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, dumper, store)
+
+	record, err := svc.StartBackup(context.Background(), "manual", 14)
+	require.NoError(t, err)
+	require.Equal(t, "running", record.Status)
+	svc.wg.Wait()
+
+	final, err := svc.GetBackupRecord(context.Background(), record.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", final.Status)
+	require.Contains(t, final.ErrorMsg, "pg_dump")
+}
+
 func TestRecoverStaleRecords(t *testing.T) {
 	repo := newMockSettingRepo()
 	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
@@ -1117,6 +1529,27 @@ func TestBackupService_RecoverStaleRecords_CleansBackupObjects(t *testing.T) {
 		require.Contains(t, store.deletedKeys, part.S3Key)
 		require.NotContains(t, store.objects, part.S3Key)
 	}
+}
+
+// TestBackupService_RecoverStaleRecords_LogsSaveFailure 验证恢复孤立记录时，即便保存
+// 恢复后状态失败（saveRecoveredRecord 内部错误分支），也只是记日志，不会 panic 或中断恢复流程。
+func TestBackupService_RecoverStaleRecords_LogsSaveFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+	require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+		ID:        "stale-save-fail",
+		Status:    "running",
+		StartedAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+	}))
+
+	repo.failSet(settingKeyBackupRecords, fmt.Errorf("boom"))
+
+	require.NotPanics(t, func() { svc.recoverStaleRecords() })
+
+	// Set 一直失败，保存后的状态没能落盘，读回来仍是恢复前的原始记录。
+	rec, err := svc.GetBackupRecord(context.Background(), "stale-save-fail")
+	require.NoError(t, err)
+	require.Equal(t, "running", rec.Status)
 }
 
 func TestBackupService_RecoverStaleRecords_PreservesKeysWhenCleanupFails(t *testing.T) {
@@ -1243,4 +1676,161 @@ func TestBackupService_StartRestore_SplitParts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "completed", final.RestoreStatus)
 	require.Equal(t, dumpContent, dumper.restored)
+}
+
+// TestBackupService_StartRestore_SplitParts_DownloadFailure 覆盖异步恢复(executeRestore)
+// 分卷路径里下载某个分卷失败的分支——与同步 RestoreBackup 的等价用例是两条独立代码路径。
+func TestBackupService_StartRestore_SplitParts_DownloadFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+
+	parts := []BackupPart{{Index: 1, S3Key: "backups/async-missing/payload.part-000001", SizeBytes: 3}}
+	// 故意不在 store 中放入对应对象，触发 Download 失败
+	record := &BackupRecord{ID: "async-missing", Status: "completed", Parts: parts}
+	require.NoError(t, svc.saveRecord(context.Background(), record))
+
+	started, err := svc.StartRestore(context.Background(), record.ID)
+	require.NoError(t, err)
+	require.Equal(t, "running", started.RestoreStatus)
+	svc.wg.Wait()
+
+	final, err := svc.GetBackupRecord(context.Background(), record.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", final.RestoreStatus)
+	require.Contains(t, final.RestoreError, "download backup part")
+}
+
+// TestBackupService_StartRestore_SplitParts_RestoreFailure 覆盖异步恢复分卷路径里
+// pg restore 本身失败的分支。
+func TestBackupService_StartRestore_SplitParts_RestoreFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	dumper := &mockDumper{restErr: fmt.Errorf("pg restore boom")}
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, dumper, store)
+
+	dumpContent := entropyBackupFixture(64)
+	compressed := gzipBackupBytes(t, dumpContent)
+	parts := splitBackupBytes(compressed, 11)
+	recordParts := make([]BackupPart, 0, len(parts))
+	for i, data := range parts {
+		key := fmt.Sprintf("backups/async-restore-fail/payload.part-%06d", i+1)
+		store.objects[key] = data
+		recordParts = append(recordParts, BackupPart{
+			Index:     i + 1,
+			S3Key:     key,
+			SizeBytes: int64(len(data)),
+			SHA256:    fmt.Sprintf("%x", sha256.Sum256(data)),
+		})
+	}
+	record := &BackupRecord{ID: "async-restore-fail", Status: "completed", Parts: recordParts}
+	require.NoError(t, svc.saveRecord(context.Background(), record))
+
+	started, err := svc.StartRestore(context.Background(), record.ID)
+	require.NoError(t, err)
+	require.Equal(t, "running", started.RestoreStatus)
+	svc.wg.Wait()
+
+	final, err := svc.GetBackupRecord(context.Background(), record.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", final.RestoreStatus)
+	require.Contains(t, final.RestoreError, "pg restore")
+}
+
+// TestBackupService_StartRestore_SplitParts_FinalSaveFailureIsLogged 覆盖分卷恢复
+// 成功后、保存 completed 状态失败时只记日志不 panic 的分支。
+func TestBackupService_StartRestore_SplitParts_FinalSaveFailureIsLogged(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	dumper := &mockDumper{}
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, dumper, store)
+
+	dumpContent := entropyBackupFixture(64)
+	compressed := gzipBackupBytes(t, dumpContent)
+	parts := splitBackupBytes(compressed, 11)
+	recordParts := make([]BackupPart, 0, len(parts))
+	for i, data := range parts {
+		key := fmt.Sprintf("backups/async-save-fail/payload.part-%06d", i+1)
+		store.objects[key] = data
+		recordParts = append(recordParts, BackupPart{
+			Index:     i + 1,
+			S3Key:     key,
+			SizeBytes: int64(len(data)),
+			SHA256:    fmt.Sprintf("%x", sha256.Sum256(data)),
+		})
+	}
+	record := &BackupRecord{ID: "async-save-fail", Status: "completed", Parts: recordParts}
+	require.NoError(t, svc.saveRecord(context.Background(), record))
+
+	repo.failSet(settingKeyBackupRecords, fmt.Errorf("boom"))
+
+	started, err := svc.StartRestore(context.Background(), record.ID)
+	require.NoError(t, err) // StartRestore 里保存 running 状态失败的错误被忽略
+	require.Equal(t, "running", started.RestoreStatus)
+	svc.wg.Wait()
+
+	// Set 一直失败，completed 状态没能落盘；读回来的仍是保存失败前的原始记录。
+	final, err := svc.GetBackupRecord(context.Background(), record.ID)
+	require.NoError(t, err)
+	require.Equal(t, "", final.RestoreStatus)
+}
+
+// ─── backupObjectKeys / deleteBackupObjects 直接单测 ───
+
+func TestBackupObjectKeys_NilRecordReturnsNil(t *testing.T) {
+	require.Nil(t, backupObjectKeys(nil))
+}
+
+func TestBackupObjectKeys_DeduplicatesRepeatedKeys(t *testing.T) {
+	record := &BackupRecord{
+		S3Key: "backups/dup/payload.part-000001",
+		Parts: []BackupPart{
+			{Index: 1, S3Key: "backups/dup/payload.part-000001"},
+			{Index: 2, S3Key: "backups/dup/payload.part-000001"}, // 与 S3Key 及第一个分卷重复
+		},
+	}
+	keys := backupObjectKeys(record)
+	require.Equal(t, []string{"backups/dup/payload.part-000001"}, keys)
+}
+
+// TestBackupService_DeleteBackupObjects_NoKeysReturnsNilWithoutS3Lookup 覆盖记录既没有
+// S3Key 也没有 Parts 时提前返回、不查 S3 配置的分支。
+func TestBackupService_DeleteBackupObjects_NoKeysReturnsNilWithoutS3Lookup(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+
+	err := svc.deleteBackupObjects(context.Background(), &BackupRecord{ID: "no-keys"})
+	require.NoError(t, err)
+}
+
+// TestBackupService_DeleteBackupObjects_LoadS3ConfigError 覆盖 S3 配置数据损坏导致
+// loadS3Config 报错时的分支。
+func TestBackupService_DeleteBackupObjects_LoadS3ConfigError(t *testing.T) {
+	repo := newMockSettingRepo()
+	require.NoError(t, repo.Set(context.Background(), settingKeyBackupS3Config, "not json!!!"))
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+
+	err := svc.deleteBackupObjects(context.Background(), &BackupRecord{ID: "corrupt-cfg", S3Key: "backups/corrupt.sql.gz"})
+	require.ErrorIs(t, err, ErrBackupS3ConfigCorrupt)
+}
+
+// TestBackupService_DeleteBackupObjects_NoS3ConfigSkipsDeletion 覆盖旧记录带 S3Key
+// 但完全没有配置对象存储时，兼容性跳过删除的分支。
+func TestBackupService_DeleteBackupObjects_NoS3ConfigSkipsDeletion(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+
+	err := svc.deleteBackupObjects(context.Background(), &BackupRecord{ID: "legacy", S3Key: "backups/legacy.sql.gz"})
+	require.NoError(t, err)
+}
+
+func TestDeleteBackupObjectKeys_EmptyKeysNoOp(t *testing.T) {
+	store := newMockObjectStore()
+
+	err := deleteBackupObjectKeys(context.Background(), store, &BackupRecord{})
+	require.NoError(t, err)
+	require.Empty(t, store.deletedKeys)
 }

@@ -721,7 +721,8 @@ func TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator(t 
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, DefaultOpenAICodexUserAgent, upstream.lastReq.Header.Get("user-agent"))
-	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
+	// DefaultOpenAICodexUserAgent 现在是 CLI 身份（避开上游降载桶），originator 随之配套为 codex_cli_rs。
+	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("originator"))
 	require.NotEqual(t, "opencode", upstream.lastReq.Header.Get("originator"))
 }
 
@@ -1335,7 +1336,50 @@ func TestOpenAIGatewayService_OAuthPassthrough_NonCodexUAFallbackToCodexUA(t *te
 	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("originator"))
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_PreservesAndPairsOfficialTUI(t *testing.T) {
+// codex_vscode 不落在上游降载桶，透传模式下必须逐字保留身份并按最终 UA 重新配套
+// originator（issue #3901 回归覆盖）。codex-tui 会命中降载桶而被归一化，
+// 由 TestOpenAIGatewayService_OAuthPassthrough_NormalizesLoadShedTUIIdentity 单独覆盖。
+func TestOpenAIGatewayService_OAuthPassthrough_PreservesAndPairsNonLoadShedIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const vscodeUA = "codex_vscode/1.2.3 (Ubuntu 22.4.0; x86_64) vscode (codex_vscode; 1.2.3)"
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+	c.Request.Header.Set("User-Agent", vscodeUA)
+	c.Request.Header.Set("originator", "codex_cli_rs")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:             123,
+		Name:           "acc",
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeOAuth,
+		Concurrency:    1,
+		Credentials:    map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+		Extra:          map[string]any{"openai_passthrough": true},
+		Status:         StatusActive,
+		Schedulable:    true,
+		RateMultiplier: f64p(1),
+	}
+
+	_, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.2","stream":false,"input":[{"type":"text","text":"hi"}]}`))
+	require.NoError(t, err)
+	require.Equal(t, vscodeUA, upstream.lastReq.Header.Get("user-agent"))
+	require.Equal(t, "codex_vscode", upstream.lastReq.Header.Get("originator"))
+}
+
+// codex-tui 落在上游降载桶：命中会被回 server_is_overloaded 并触发账号冷却，
+// 透传模式下同样要归一化为 CLI 身份，只替换身份段、保留版本/OS/架构/终端指纹。
+func TestOpenAIGatewayService_OAuthPassthrough_NormalizesLoadShedTUIIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	const tuiUA = "codex-tui/0.144.1 (Mac OS X) (codex-tui; 0.144.1)"
@@ -1369,8 +1413,8 @@ func TestOpenAIGatewayService_OAuthPassthrough_PreservesAndPairsOfficialTUI(t *t
 
 	_, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.2","stream":false,"input":[{"type":"text","text":"hi"}]}`))
 	require.NoError(t, err)
-	require.Equal(t, tuiUA, upstream.lastReq.Header.Get("user-agent"))
-	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, "codex_cli_rs/0.144.1 (Mac OS X)", upstream.lastReq.Header.Get("user-agent"))
+	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("originator"))
 }
 
 func TestOpenAIGatewayService_CodexCLIOnly_RejectsNonCodexClient(t *testing.T) {

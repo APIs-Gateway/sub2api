@@ -79,6 +79,106 @@ func TestGeminiForwardAsChatCompletions_ErrorPolicyMatchedUsesMappedModel(t *tes
 	require.Equal(t, http.StatusInternalServerError, failoverErr.StatusCode)
 }
 
+// upstream sync (#5137): 模型名会被拼进上游 URL path，非法片段必须在真正发出
+// 请求前就被拒绝。护栏规则本身已在 upstream_path_guard_test.go 里穷举测试过，
+// 这里只验证 chat/completions 兼容路径确实把校验错误透传成网关错误响应，
+// 而不会带着未经校验的模型名继续构造上游请求。
+func TestGeminiForwardAsChatCompletions_RejectsUnsafeModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &GeminiMessagesCompatService{cfg: &config.Config{}}
+	account := &Account{
+		ID:       1,
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "test-key",
+		},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"../evil","messages":[{"role":"user","content":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body)
+	require.Error(t, err)
+	require.Nil(t, result)
+}
+
+// 同上，但覆盖 OAuth 账号在无 project_id 时的 AI Studio 直连分支。
+func TestGeminiForwardAsChatCompletions_OAuthAIStudioRejectsUnsafeModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &GeminiMessagesCompatService{
+		cfg:           &config.Config{},
+		tokenProvider: &GeminiTokenProvider{},
+	}
+	account := &Account{
+		ID:       1,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "test-access-token",
+			"expires_at":   time.Now().Add(time.Hour).Format(time.RFC3339),
+		},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"../evil","messages":[{"role":"user","content":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body)
+	require.Error(t, err)
+	require.Nil(t, result)
+}
+
+// 同样的路径校验，覆盖原生 /v1/messages 兼容路径（Forward，而不是
+// ForwardAsChatCompletions）的 API Key 分支。
+func TestGeminiForward_RejectsUnsafeModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &GeminiMessagesCompatService{cfg: &config.Config{}}
+	account := &Account{
+		ID:       1,
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "test-key",
+		},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"../evil","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.Error(t, err)
+	require.Nil(t, result)
+}
+
+// 覆盖 Forward 的 OAuth 账号在无 project_id 时的 AI Studio 直连分支。
+func TestGeminiForward_OAuthAIStudioRejectsUnsafeModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &GeminiMessagesCompatService{
+		cfg:           &config.Config{},
+		tokenProvider: &GeminiTokenProvider{},
+	}
+	account := &Account{
+		ID:       1,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "test-access-token",
+			"expires_at":   time.Now().Add(time.Hour).Format(time.RFC3339),
+		},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"../evil","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.Error(t, err)
+	require.Nil(t, result)
+}
+
 func TestGeminiMessagesCompatServiceForward_ErrorPolicyMatchedUsesMappedModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc, account := newGeminiPolicyCoverageService()
@@ -109,6 +209,90 @@ func TestGeminiMessagesCompatServiceForwardNative_ErrorPolicyMatchedUsesMappedMo
 	require.ErrorAs(t, err, &failoverErr)
 	require.Nil(t, result)
 	require.Equal(t, http.StatusInternalServerError, failoverErr.StatusCode)
+}
+
+// 覆盖 ForwardNative（原生 /v1beta/models/{model}:{action} 路径）的 API Key
+// 分支——同一条护栏规则，不同的调用入口。
+func TestGeminiForwardNative_RejectsUnsafeModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &GeminiMessagesCompatService{cfg: &config.Config{}}
+	account := &Account{
+		ID:       1,
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "test-key",
+		},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/../evil:generateContent", bytes.NewReader(body))
+
+	result, err := svc.ForwardNative(context.Background(), c, account, "../evil", "generateContent", false, body)
+	require.Error(t, err)
+	require.Nil(t, result)
+}
+
+// 覆盖 ForwardNative 的 OAuth 账号在无 project_id 时的 AI Studio 直连分支。
+func TestGeminiForwardNative_OAuthAIStudioRejectsUnsafeModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &GeminiMessagesCompatService{
+		cfg:           &config.Config{},
+		tokenProvider: &GeminiTokenProvider{},
+	}
+	account := &Account{
+		ID:       1,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "test-access-token",
+			"expires_at":   time.Now().Add(time.Hour).Format(time.RFC3339),
+		},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/../evil:generateContent", bytes.NewReader(body))
+
+	result, err := svc.ForwardNative(context.Background(), c, account, "../evil", "generateContent", false, body)
+	require.Error(t, err)
+	require.Nil(t, result)
+}
+
+// upstream sync (#5137): ForwardAIStudioGET 直接把调用方传入的 path 拼进上游
+// base URL，必须先过路径护栏——不合规的 path（不以 "/" 开头、含非法片段等）
+// 必须被拒绝，不能原样拼接。
+func TestGeminiForwardAIStudioGET_RejectsUnsafePath(t *testing.T) {
+	svc := &GeminiMessagesCompatService{cfg: &config.Config{}}
+	account := &Account{
+		ID:       1,
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "test-key",
+		},
+	}
+
+	_, err := svc.ForwardAIStudioGET(context.Background(), account, "not-a-path-suffix")
+	require.Error(t, err)
+}
+
+// 合规 path 必须真正穿过护栏继续往下走（拼 URL、按账号类型加鉴权头），
+// 而不是在 "invalid path" 分支被误伤。用一个没配 api_key 的账号断言错误
+// 换成了 api_key 缺失，证明护栏本身已经放行。
+func TestGeminiForwardAIStudioGET_AcceptsValidPath(t *testing.T) {
+	svc := &GeminiMessagesCompatService{cfg: &config.Config{}}
+	account := &Account{
+		ID:          1,
+		Platform:    PlatformGemini,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{},
+	}
+
+	_, err := svc.ForwardAIStudioGET(context.Background(), account, "/v1beta/models")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "api_key")
 }
 
 func (s *geminiCompatHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
