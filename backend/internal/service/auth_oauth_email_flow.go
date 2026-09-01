@@ -11,6 +11,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
@@ -338,10 +339,25 @@ func (s *AuthService) RollbackOAuthEmailAccountCreation(ctx context.Context, use
 	if err := s.restoreOAuthRegistrationInvitation(ctx, invitationCode, userID); err != nil {
 		return err
 	}
-	if err := s.userRepo.Delete(ctx, userID); err != nil {
+	if err := s.purgeRolledBackUser(ctx, userID); err != nil {
 		return fmt.Errorf("delete created oauth user: %w", err)
 	}
 	return nil
+}
+
+// purgeRolledBackUser 物理删除一个建出来又要回滚掉的账号。
+//
+// 默认的 Delete 是软删：记录会带着 deleted_at 永远留在库里，占着一个用户 ID，
+// 而这个账号从来没有真正注册成功过。注册失败留下的半成品只应该彻底消失——
+// 留着既污染用户列表和 ID 序列，也让"这人到底注册成功没有"变得没法一眼看清。
+//
+// 此刻硬删是安全的：账号刚建出来，它的关联数据要么还没写，
+// 要么跟着调用方的事务一起回滚了，不存在需要级联清理的残留。
+func (s *AuthService) purgeRolledBackUser(ctx context.Context, userID int64) error {
+	if s == nil || s.userRepo == nil || userID <= 0 {
+		return nil
+	}
+	return s.userRepo.Delete(mixins.SkipSoftDelete(ctx), userID)
 }
 
 func (s *AuthService) restoreOAuthRegistrationInvitation(ctx context.Context, invitationCode string, userID int64) error {
