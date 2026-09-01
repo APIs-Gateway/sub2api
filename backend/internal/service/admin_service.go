@@ -2981,12 +2981,17 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		}
 	}
 
+	openAISettings, err := normalizeBulkOpenAISettings(input)
+	if err != nil {
+		return nil, err
+	}
+
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 
-	// 预加载账号平台信息（混合渠道检查需要）。
+	// 预加载账号平台信息（混合渠道检查/探测账号校验/OpenAI 专属设置校验共用，避免多次 DB 查询）。
 	platformByID := map[int64]string{}
 	var cachedTargets []*Account
-	if needMixedChannelCheck || input.ProbeEnabled != nil {
+	if needMixedChannelCheck || input.ProbeEnabled != nil || openAISettings.any() {
 		accounts, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -2998,21 +3003,26 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 		}
 	}
-	if input.ProbeEnabled != nil {
-		accountsByID := make(map[int64]*Account, len(cachedTargets))
-		for _, account := range cachedTargets {
-			if account != nil {
-				accountsByID[account.ID] = account
-			}
+	targetsByID := make(map[int64]*Account, len(cachedTargets))
+	for _, account := range cachedTargets {
+		if account != nil {
+			targetsByID[account.ID] = account
 		}
+	}
+	if input.ProbeEnabled != nil {
 		for _, accountID := range input.AccountIDs {
-			account, ok := accountsByID[accountID]
+			account, ok := targetsByID[accountID]
 			if !ok {
 				return nil, ErrAccountNotFound
 			}
 			if !isUpstreamBillingProbeAccount(account) {
 				return nil, ErrUpstreamBillingProbeAccountInvalid
 			}
+		}
+	}
+	if openAISettings.any() {
+		if err := validateBulkOpenAISettingsTargets(input, openAISettings, targetsByID); err != nil {
+			return nil, err
 		}
 	}
 
