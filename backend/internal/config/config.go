@@ -722,6 +722,53 @@ type ProxyFallbackConfig struct {
 
 type ProxyProbeConfig struct {
 	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"` // 已禁用：禁止跳过 TLS 证书验证
+	// URLs 按优先级排列的自定义探测 URL 列表。
+	// 留空时使用内置默认列表（ip-api → ipify）。
+	// 某些 AI API 专用代理只允许访问特定域名，配置多个备选可提高探测成功率。
+	URLs []ProbeURLConfig `mapstructure:"urls"`
+}
+
+// ProbeURLConfig 描述一个探测端点及其响应解析方式。
+type ProbeURLConfig struct {
+	URL    string `mapstructure:"url"`
+	Parser string `mapstructure:"parser"` // "ip-api" / "ipify" / "chatgpt-trace"
+}
+
+func normalizeProxyProbeURLs(targets []ProbeURLConfig) ([]ProbeURLConfig, error) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+
+	normalized := make([]ProbeURLConfig, 0, len(targets))
+	for i, target := range targets {
+		rawURL := strings.TrimSpace(target.URL)
+		parser := strings.ToLower(strings.TrimSpace(target.Parser))
+		if rawURL == "" {
+			return nil, fmt.Errorf("entry %d: url is required", i)
+		}
+		if parser == "" {
+			return nil, fmt.Errorf("entry %d: parser is required", i)
+		}
+		switch parser {
+		case "ip-api", "ipify", "chatgpt-trace":
+		default:
+			return nil, fmt.Errorf("entry %d: unsupported parser %q", i, target.Parser)
+		}
+
+		parsed, err := url.Parse(rawURL)
+		if err != nil || parsed.Host == "" {
+			return nil, fmt.Errorf("entry %d: invalid url %q", i, target.URL)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return nil, fmt.Errorf("entry %d: url scheme must be http or https", i)
+		}
+
+		normalized = append(normalized, ProbeURLConfig{
+			URL:    rawURL,
+			Parser: parser,
+		})
+	}
+	return normalized, nil
 }
 
 type BillingConfig struct {
@@ -1077,6 +1124,8 @@ type GatewayOpenAIWSSchedulerScoreWeights struct {
 	// Reset 倾向「会话窗口最早重置」的账号（use-it-or-lose-it）。
 	// >0 时，剩余重置时间越短的账号得分越高，从而被优先用尽。默认 0（关闭，不改变原有行为）。
 	Reset float64 `mapstructure:"reset"`
+	// QuotaHeadroom 倾向 7d 剩余额度更健康的账号；默认 0（关闭，不改变原有行为）。
+	QuotaHeadroom float64 `mapstructure:"quota_headroom"`
 }
 
 // GatewayOpenAISchedulerConfig OpenAI 高级调度器配置。
@@ -1544,20 +1593,7 @@ func LoadForBootstrap() (*Config, error) {
 func load(allowMissingJWTSecret bool) (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
-
-	// Add config paths in priority order
-	// 1. DATA_DIR environment variable (highest priority)
-	if dataDir := os.Getenv("DATA_DIR"); dataDir != "" {
-		viper.AddConfigPath(dataDir)
-	}
-	// 2. Docker data directory
-	viper.AddConfigPath("/app/data")
-	// 3. Current directory
-	viper.AddConfigPath(".")
-	// 4. Config subdirectory
-	viper.AddConfigPath("./config")
-	// 5. System config directory
-	viper.AddConfigPath("/etc/sub2api")
+	configureConfigSource(viper.SetConfigFile, viper.AddConfigPath)
 
 	// 环境变量支持
 	viper.AutomaticEnv()
@@ -1715,6 +1751,22 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func configureConfigSource(setConfigFile, addConfigPath func(string)) {
+	if configFile := strings.TrimSpace(os.Getenv("CONFIG_FILE")); configFile != "" {
+		setConfigFile(configFile)
+		return
+	}
+
+	// Add config paths in priority order.
+	if dataDir := strings.TrimSpace(os.Getenv("DATA_DIR")); dataDir != "" {
+		addConfigPath(dataDir)
+	}
+	addConfigPath("/app/data")
+	addConfigPath(".")
+	addConfigPath("./config")
+	addConfigPath("/etc/sub2api")
 }
 
 func setDefaults() {
@@ -2093,6 +2145,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.ttft", 0.5)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.upstream_cost", 0.0)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.reset", 0.0)
+	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.quota_headroom", 0.0)
 	// OpenAI HTTP upstream protocol strategy
 	viper.SetDefault("gateway.openai_http2.enabled", true)
 	viper.SetDefault("gateway.openai_http2.allow_proxy_fallback_to_http1", true)
@@ -2195,6 +2248,74 @@ func setDefaults() {
 	viper.SetDefault("subscription_maintenance.worker_count", 2)
 	viper.SetDefault("subscription_maintenance.queue_size", 1024)
 
+	setEnvReachableDefaults()
+}
+
+// setEnvReachableDefaults 为「已在 Config 结构体里声明、但从未调用过 SetDefault」的键补注册一个默认值。
+//
+// viper.Unmarshal 只会解码 AllKeys() 里的键，AllKeys() 是 SetDefault 键、配置文件里出现过的键、
+// 显式 BindEnv 键的并集。AutomaticEnv 能让已经在这个并集里的键被环境变量覆盖，但它本身
+// 不会往并集里新增键。也就是说：只写在 mapstructure 标签里、从未 SetDefault 过的字段，
+// 只要部署方式是纯环境变量（没有对应的 config.yaml 条目），设置的环境变量会被 viper 直接
+// 丢弃——运维会以为配置生效了，实际上字段永远是 Go 零值。deploy/docker-compose.yml 这类
+// 纯环境变量驱动的部署对这个问题尤其敏感。
+//
+// 下面的值统一注册为字段的零值：未注册默认值时，缺省状态本来就是零值，所以补注册零值
+// 不改变现有行为，只是让这个键变得可以被环境变量寻址。TestConfigKeysAreEnvReachable
+// 会遍历整个 Config 结构体核实这一点；新增字段忘记 SetDefault 会在那个测试里报出来。
+func setEnvReachableDefaults() {
+	viper.SetDefault("gateway.forced_codex_instructions_template_file", "")
+	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
+	viper.SetDefault("gateway.user_message_queue.mode", "")
+	viper.SetDefault("update.proxy_url", "")
+
+	// sticky_escape_enabled 是零值规则的例外：它在 load() 里有一段兼容旧配置的 IsSet 兜底
+	// （`if !StickyEscapeEnabled && !viper.IsSet(...) { StickyEscapeEnabled = true }`），
+	// 语义上的生效默认值是 true。如果在这里注册 false，会让 viper.IsSet 永远返回 true
+	// （SetDefault 注册过的键，IsSet 不看是否显式设置，只看有没有值），那条兜底就永远不会
+	// 触发，等于把 sticky escape 永久关掉。所以这里直接注册生效默认值本身，兜底逻辑保留、
+	// 但正常情况下不会再触发，只在这行被误删时兜底。
+	viper.SetDefault("gateway.openai_scheduler.sticky_escape_enabled", true)
+	viper.SetDefault("gateway.openai_scheduler.sticky_escape_error_rate", 0.0)
+	viper.SetDefault("gateway.openai_scheduler.sticky_escape_ttft_ms", 0)
+
+	// 第三方登录（GitHub / Google OAuth）此前完全没有注册过默认值：client_secret 这类值
+	// 恰恰是运维最希望只用环境变量注入、不落 config.yaml 明文的配置，之前全部不可达。
+	for _, provider := range []string{"github_oauth", "google_oauth"} {
+		viper.SetDefault(provider+".enabled", false)
+		viper.SetDefault(provider+".client_id", "")
+		viper.SetDefault(provider+".client_secret", "")
+		viper.SetDefault(provider+".authorize_url", "")
+		viper.SetDefault(provider+".token_url", "")
+		viper.SetDefault(provider+".userinfo_url", "")
+		viper.SetDefault(provider+".emails_url", "")
+		viper.SetDefault(provider+".scopes", "")
+		viper.SetDefault(provider+".redirect_url", "")
+		viper.SetDefault(provider+".frontend_redirect_url", "")
+	}
+
+	// 钉钉登录：enabled/authorize_url/token_url/userinfo_url/scopes/frontend_redirect_url/
+	// dingtalk_app_kind/app_type/corp_restriction_policy/require_email/username_overwrite_policy
+	// 已经有默认值，这里只补此前从未注册过、同样不可达的键。
+	viper.SetDefault("dingtalk_connect.client_id", "")
+	viper.SetDefault("dingtalk_connect.client_secret", "")
+	viper.SetDefault("dingtalk_connect.internal_corp_id", "")
+	viper.SetDefault("dingtalk_connect.redirect_url", "")
+	viper.SetDefault("dingtalk_connect.bypass_registration", false)
+	viper.SetDefault("dingtalk_connect.username_attribute_key", "")
+	viper.SetDefault("dingtalk_connect.enable_attribute_matching", false)
+	viper.SetDefault("dingtalk_connect.enable_attribute_sync", false)
+	viper.SetDefault("dingtalk_connect.attribute_sync_fields", []string{})
+	viper.SetDefault("dingtalk_connect.attribute_sync_overwrite_policy", "")
+	viper.SetDefault("dingtalk_connect.sync_display_name", false)
+	viper.SetDefault("dingtalk_connect.sync_display_name_attr_key", "")
+	viper.SetDefault("dingtalk_connect.sync_display_name_attr_name", "")
+	viper.SetDefault("dingtalk_connect.sync_dept", false)
+	viper.SetDefault("dingtalk_connect.sync_dept_attr_key", "")
+	viper.SetDefault("dingtalk_connect.sync_dept_attr_name", "")
+	viper.SetDefault("dingtalk_connect.sync_corp_email", false)
+	viper.SetDefault("dingtalk_connect.sync_corp_email_attr_key", "")
+	viper.SetDefault("dingtalk_connect.sync_corp_email_attr_name", "")
 }
 
 func (c *Config) Validate() error {
@@ -2204,6 +2325,11 @@ func (c *Config) Validate() error {
 	}
 	c.Security.ForwardedClientIPHeaders = forwardedClientIPHeaders
 	c.SetForwardedClientIPSettings(c.Security.TrustForwardedIPForAPIKeyACL, forwardedClientIPHeaders)
+	proxyProbeURLs, err := normalizeProxyProbeURLs(c.Security.ProxyProbe.URLs)
+	if err != nil {
+		return fmt.Errorf("security.proxy_probe.urls: %w", err)
+	}
+	c.Security.ProxyProbe.URLs = proxyProbeURLs
 	if c.APIKeyAuth.InvalidAbuse.Enabled {
 		if c.APIKeyAuth.InvalidAbuse.Threshold < 10 {
 			return fmt.Errorf("api_key_auth_cache.invalid_abuse.threshold must be at least 10")
@@ -2919,7 +3045,8 @@ func (c *Config) Validate() error {
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate < 0 ||
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT < 0 ||
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost < 0 ||
-		c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset < 0 {
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset < 0 ||
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom < 0 {
 		return fmt.Errorf("gateway.openai_ws.scheduler_score_weights.* must be non-negative")
 	}
 	for _, weight := range []float64{
@@ -2930,6 +3057,7 @@ func (c *Config) Validate() error {
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT,
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost,
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset,
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom,
 	} {
 		if math.IsNaN(weight) || math.IsInf(weight, 0) {
 			return fmt.Errorf("gateway.openai_ws.scheduler_score_weights.* must be finite")
@@ -2941,7 +3069,8 @@ func (c *Config) Validate() error {
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate +
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT +
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost +
-		c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.Reset +
+		c.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom
 	if weightSum <= 0 {
 		return fmt.Errorf("gateway.openai_ws.scheduler_score_weights must not all be zero")
 	}
@@ -3146,14 +3275,12 @@ func generateJWTSecret(byteLength int) (string, error) {
 // GetServerAddress returns the server address (host:port) from config file or environment variable.
 // This is a lightweight function that can be used before full config validation,
 // such as during setup wizard startup.
-// Priority: config.yaml > environment variables > defaults
+// Priority: environment variables > config file > defaults.
 func GetServerAddress() string {
 	v := viper.New()
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
-	v.AddConfigPath(".")
-	v.AddConfigPath("./config")
-	v.AddConfigPath("/etc/sub2api")
+	configureConfigSource(v.SetConfigFile, v.AddConfigPath)
 
 	// Support SERVER_HOST and SERVER_PORT environment variables
 	v.AutomaticEnv()

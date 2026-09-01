@@ -344,7 +344,7 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	sweepRepo := &proxyRepository{client: client}
 	changed, err := sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, sweepProxy.ID, nil, true)
 	require.NoError(t, err)
-	require.EqualValues(t, 1, changed)
+	require.Equal(t, []int64{sweepAccount.ID}, changed)
 	sweptProxy, err := client.Proxy.Get(ctx, sweepProxy.ID)
 	require.NoError(t, err)
 	require.Equal(t, service.StatusExpired, sweptProxy.Status)
@@ -387,7 +387,7 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	targetProxyID := targetProxy.ID
 	changed, err = sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, redirectProxy.ID, &targetProxyID, true)
 	require.NoError(t, err)
-	require.EqualValues(t, 1, changed)
+	require.Equal(t, []int64{redirectAccount.ID}, changed)
 	redirected, err := client.Account.Get(ctx, redirectAccount.ID)
 	require.NoError(t, err)
 	require.Equal(t, targetProxy.ID, *redirected.ProxyID)

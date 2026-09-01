@@ -135,6 +135,33 @@ func OpenAIImageGenerationIntentFromContext(ctx context.Context) bool {
 	return ok && enabled
 }
 
+// openAIImagesEndpointCtxKey 标识请求是从 /v1/images/* 专用生图端点入站，而不只是
+// 携带生图意图（OpenAIImageGenerationIntent 在 /v1/responses 命中图片模型时也会
+// 置位，二者语义不同，见 shouldSkipCodexPlanGatedImageModelCooldown）。
+//
+// 这里没有像 OpenAIImageGenerationIntent 一样在 ctxkey 包里加常量，是因为读它的
+// 唯一消费者就在本包内（shouldSkipCodexPlanGatedImageModelCooldown），用一个仅本
+// 包可见的 key 类型即可，这也是本文件所在包里的既有写法（参见
+// httpUpstreamProfileContextKey、openAIForcedAccountRoutingContextKey 等）。
+type openAIImagesEndpointCtxKey struct{}
+
+// WithOpenAIImagesEndpoint 标记请求从 /v1/images/* 专用生图端点入站。
+func WithOpenAIImagesEndpoint(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, openAIImagesEndpointCtxKey{}, true)
+}
+
+// OpenAIImagesEndpointFromContext 报告请求是否来自 /v1/images/*。
+func OpenAIImagesEndpointFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, ok := ctx.Value(openAIImagesEndpointCtxKey{}).(bool)
+	return ok && enabled
+}
+
 func resolveFinalAntigravityModelKey(ctx context.Context, account *Account, requestedModel string) string {
 	modelKey := mapAntigravityModel(account, requestedModel)
 	if modelKey == "" {

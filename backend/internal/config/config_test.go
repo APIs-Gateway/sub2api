@@ -15,6 +15,9 @@ import (
 func resetViperWithJWTSecret(t *testing.T) {
 	t.Helper()
 	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("DATA_DIR", "")
 	t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
 }
 
@@ -27,8 +30,45 @@ func TestLoadRedisUsernameFromEnvironment(t *testing.T) {
 	require.Equal(t, "app-user", cfg.Redis.Username)
 }
 
+func TestLoadHonorsExplicitConfigFile(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	configFile := filepath.Join(t.TempDir(), "reporter-config.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("server:\n  host: 192.0.2.10\n  port: 9001\n"), 0o600))
+	t.Setenv("CONFIG_FILE", configFile)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "192.0.2.10", cfg.Server.Host)
+	require.Equal(t, 9001, cfg.Server.Port)
+}
+
+func TestConfigFileTakesPrecedenceOverDataDir(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	dataDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.yaml"), []byte("server:\n  host: 192.0.2.20\n"), 0o600))
+	configFile := filepath.Join(t.TempDir(), "explicit.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("server:\n  host: 192.0.2.30\n"), 0o600))
+	t.Setenv("DATA_DIR", dataDir)
+	t.Setenv("CONFIG_FILE", configFile)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "192.0.2.30", cfg.Server.Host)
+}
+
+func TestLoadReturnsErrorForMissingConfigFile(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("CONFIG_FILE", filepath.Join(t.TempDir(), "missing.yaml"))
+
+	_, err := Load()
+	require.ErrorContains(t, err, "read config error")
+}
+
 func TestLoadForBootstrapAllowsMissingJWTSecret(t *testing.T) {
 	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("DATA_DIR", "")
 	t.Setenv("JWT_SECRET", "")
 
 	cfg, err := LoadForBootstrap()
@@ -250,6 +290,9 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	}
 	if cfg.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost != 0 {
 		t.Fatalf("Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost = %v, want 0", cfg.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost)
+	}
+	if cfg.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom != 0 {
+		t.Fatalf("Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom = %v, want 0", cfg.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom)
 	}
 	if !cfg.Gateway.OpenAIWS.StoreDisabledForceNewConn {
 		t.Fatalf("Gateway.OpenAIWS.StoreDisabledForceNewConn = false, want true")
@@ -951,11 +994,27 @@ func TestNormalizeStringSlice(t *testing.T) {
 }
 
 func TestGetServerAddressFromEnv(t *testing.T) {
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("DATA_DIR", "")
 	t.Setenv("SERVER_HOST", "127.0.0.1")
 	t.Setenv("SERVER_PORT", "9090")
 
 	address := GetServerAddress()
 	if address != "127.0.0.1:9090" {
+		t.Fatalf("GetServerAddress() = %q", address)
+	}
+}
+
+func TestGetServerAddressFromConfigFile(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "setup.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("server:\n  host: 192.0.2.40\n  port: 9191\n"), 0o600))
+	t.Setenv("CONFIG_FILE", configFile)
+	t.Setenv("DATA_DIR", "")
+	t.Setenv("SERVER_HOST", "")
+	t.Setenv("SERVER_PORT", "")
+
+	address := GetServerAddress()
+	if address != "192.0.2.40:9191" {
 		t.Fatalf("GetServerAddress() = %q", address)
 	}
 }
@@ -1906,6 +1965,21 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be non-negative",
 		},
 		{
+			name:    "scheduler_score_weights.quota_headroom 不能为 NaN",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom = math.NaN() },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
+		},
+		{
+			name:    "scheduler_score_weights.quota_headroom 不能为 Inf",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom = math.Inf(1) },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be finite",
+		},
+		{
+			name:    "scheduler_score_weights.quota_headroom 不能为负数",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.SchedulerScoreWeights.QuotaHeadroom = -0.1 },
+			wantErr: "gateway.openai_ws.scheduler_score_weights.* must be non-negative",
+		},
+		{
 			name: "scheduler_score_weights 不能全为 0",
 			mutate: func(c *Config) {
 				c.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 0
@@ -1954,6 +2028,18 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 		weights.ErrorRate = 0
 		weights.TTFT = 0
 		weights.UpstreamCost = 1
+		require.NoError(t, cfg.Validate())
+	})
+
+	t.Run("quota_headroom 可以作为唯一基础权重", func(t *testing.T) {
+		cfg := buildValid(t)
+		weights := &cfg.Gateway.OpenAIWS.SchedulerScoreWeights
+		weights.Priority = 0
+		weights.Load = 0
+		weights.Queue = 0
+		weights.ErrorRate = 0
+		weights.TTFT = 0
+		weights.QuotaHeadroom = 0.1
 		require.NoError(t, cfg.Validate())
 	})
 }
