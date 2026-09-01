@@ -91,11 +91,11 @@ func TestSchedulerCacheLastUsedSideKeySurvivesStaleAccountWrites(t *testing.T) {
 	embedded := time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)
 	latest := embedded.Add(30 * time.Second)
 	account := service.Account{
-		ID:         9203,
-		Platform:   service.PlatformOpenAI,
-		Type:       service.AccountTypeOAuth,
+		ID:          9203,
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
 		Schedulable: true,
-		LastUsedAt: &embedded,
+		LastUsedAt:  &embedded,
 	}
 	require.NoError(t, cache.SetAccount(ctx, &account))
 	require.NoError(t, cache.UpdateLastUsed(ctx, map[int64]time.Time{account.ID: latest}))
@@ -148,7 +148,8 @@ func TestSchedulerCacheUpdateLastUsedChunksLargeBatches(t *testing.T) {
 		updates[id] = base.Add(time.Duration(i) * time.Millisecond)
 	}
 
-	require.NoError(t, cache.writeAccounts(ctx, accounts))
+	_, err := cache.writeAccounts(ctx, accounts)
+	require.NoError(t, err)
 	require.NoError(t, cache.UpdateLastUsed(ctx, updates))
 	for id, usedAt := range updates {
 		key := schedulerLastUsedKey(strconv.FormatInt(id, 10))
@@ -222,6 +223,26 @@ func TestSchedulerCacheLastUsedHelpersHandleCacheRepresentations(t *testing.T) {
 	millis, err := schedulerLastUsedMillis(base)
 	require.NoError(t, err)
 	require.Equal(t, base.UnixMilli(), millis)
+}
+
+func TestSchedulerCacheUpdateLastUsedSkipsUnencodableTimestamp(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	good := service.Account{ID: 9209, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth}
+	bad := service.Account{ID: 9210, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth}
+	require.NoError(t, cache.SetAccount(ctx, &good))
+	require.NoError(t, cache.SetAccount(ctx, &bad))
+
+	usedAt := time.Now().UTC().Truncate(time.Millisecond)
+	err := cache.UpdateLastUsed(ctx, map[int64]time.Time{
+		good.ID: usedAt,
+		bad.ID:  unencodableSchedulerCacheTime,
+	})
+	require.NoError(t, err, "one unencodable timestamp must not abort updates for the rest of the batch")
+
+	require.Equal(t, strconv.FormatInt(usedAt.UnixMilli(), 10), cache.rdb.Get(ctx, schedulerLastUsedKey(strconv.FormatInt(good.ID, 10))).Val())
+	_, err = cache.rdb.Get(ctx, schedulerLastUsedKey(strconv.FormatInt(bad.ID, 10))).Result()
+	require.ErrorIs(t, err, redis.Nil, "the unencodable entry must not write a side key")
 }
 
 func TestSchedulerCacheGetAccountHandlesMissingAccountAndAbsentSideKey(t *testing.T) {
