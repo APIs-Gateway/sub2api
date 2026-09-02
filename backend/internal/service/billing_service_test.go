@@ -1342,6 +1342,30 @@ func TestCalculateCostWithServiceTier_OpenAIPriorityUsesPriorityPricing(t *testi
 	require.InDelta(t, baseCost.TotalCost*2, priorityCost.TotalCost, 1e-10)
 }
 
+// TestCalculateCostWithServiceTier_GPT55PriorityIs2Point5xStandard 是 issue #806
+// （对齐上游 #6129 的口径）的端到端回归测试：gpt-5.5 / gpt-5.5-pro 在
+// service_tier=priority 下的实际计费必须是标准价的 2.5 倍，而不是此前误算的 2 倍
+// （fallback 定价表曾直接复用 gpt-5.4 的 2x priority 倍率）。
+func TestCalculateCostWithServiceTier_GPT55PriorityIs2Point5xStandard(t *testing.T) {
+	for _, model := range []string{"gpt-5.5", "gpt-5.5-pro"} {
+		t.Run(model, func(t *testing.T) {
+			svc := newTestBillingService()
+			tokens := UsageTokens{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 20}
+
+			baseCost, err := svc.CalculateCost(model, tokens, 1.0)
+			require.NoError(t, err)
+
+			priorityCost, err := svc.CalculateCostWithServiceTier(model, tokens, 1.0, "priority")
+			require.NoError(t, err)
+
+			require.InDelta(t, baseCost.InputCost*2.5, priorityCost.InputCost, 1e-10)
+			require.InDelta(t, baseCost.OutputCost*2.5, priorityCost.OutputCost, 1e-10)
+			require.InDelta(t, baseCost.CacheReadCost*2.5, priorityCost.CacheReadCost, 1e-10)
+			require.InDelta(t, baseCost.TotalCost*2.5, priorityCost.TotalCost, 1e-10)
+		})
+	}
+}
+
 func TestCalculateCostWithServiceTier_GPT56PriorityUsesCacheWritePriorityRate(t *testing.T) {
 	svc := newTestBillingService()
 	tokens := UsageTokens{CacheCreationTokens: 100}
@@ -1487,6 +1511,39 @@ func TestBillingServiceGetModelPricing_OpenAIFallbackGpt52Variants(t *testing.T)
 	require.InDelta(t, 1.75e-6, gpt52Codex.InputPricePerToken, 1e-12)
 	require.InDelta(t, 3.5e-6, gpt52Codex.InputPricePerTokenPriority, 1e-12)
 	require.InDelta(t, 28e-6, gpt52Codex.OutputPricePerTokenPriority, 1e-12)
+}
+
+// TestBillingServiceGetModelPricing_OpenAIFallbackGpt55PriorityRatio 是 issue #806
+// （对齐上游 #6129 的口径）的回归测试：GPT-5.5 / GPT-5.5 Pro 的 priority 档位倍率是
+// 标准价的 2.5x，此前 fallback 定价表把 gpt-5.5 / gpt-5.5-pro 直接指向 gpt-5.4 的
+// *ModelPricing，连带复用了 GPT-5.4 的 2x 倍率，导致 priority 档位少收 0.5 倍的钱。
+func TestBillingServiceGetModelPricing_OpenAIFallbackGpt55PriorityRatio(t *testing.T) {
+	svc := newTestBillingService()
+
+	for _, model := range []string{"gpt-5.5", "gpt-5.5-pro"} {
+		pricing, err := svc.GetModelPricing(model)
+		require.NoError(t, err, model)
+		require.NotNil(t, pricing, model)
+		require.InDelta(t, pricing.InputPricePerToken*2.5, pricing.InputPricePerTokenPriority, 1e-12, model)
+		require.InDelta(t, pricing.OutputPricePerToken*2.5, pricing.OutputPricePerTokenPriority, 1e-12, model)
+		require.InDelta(t, pricing.CacheReadPricePerToken*2.5, pricing.CacheReadPricePerTokenPriority, 1e-12, model)
+	}
+
+	// GPT-5.4 本身的 priority 倍率仍是 2x，这次修复不应该动它。
+	gpt54, err := svc.GetModelPricing("gpt-5.4")
+	require.NoError(t, err)
+	require.InDelta(t, gpt54.InputPricePerToken*2, gpt54.InputPricePerTokenPriority, 1e-12)
+	require.InDelta(t, gpt54.OutputPricePerToken*2, gpt54.OutputPricePerTokenPriority, 1e-12)
+
+	// gpt-5.5 / gpt-5.5-pro 不应再和 gpt-5.4 共享同一个 *ModelPricing 指针（此前三者
+	// 都指向同一份结构体，改一处会牵连另外两处）。
+	gpt55, err := svc.GetModelPricing("gpt-5.5")
+	require.NoError(t, err)
+	gpt55Pro, err := svc.GetModelPricing("gpt-5.5-pro")
+	require.NoError(t, err)
+	require.NotSame(t, gpt54, gpt55)
+	require.NotSame(t, gpt54, gpt55Pro)
+	require.NotSame(t, gpt55, gpt55Pro)
 }
 
 func TestCalculateCostWithServiceTier_PriorityFallsBackToTierMultiplierWhenExplicitPriceMissing(t *testing.T) {

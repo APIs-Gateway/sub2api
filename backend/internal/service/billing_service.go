@@ -125,6 +125,37 @@ const (
 	openAIGPT54LongContextOutputMultiplier = 1.5
 )
 
+// newOpenAIGPT55FallbackPricing 返回一份独立的（非共享指针的）GPT-5.5 家族兜底定价。
+//
+// GPT-5.5 / GPT-5.5 Pro 目前仍沿用 GPT-5.4 的基准价近似（官方独立定价未知），但
+// priority/Fast 档位的倍率不能照抄 GPT-5.4 的 2x —— 按 issue #806（对齐上游 #6129
+// 的口径）GPT-5.5 的 priority 倍率是标准价的 2.5x。之前 s.fallbackPrices["gpt-5.5"]
+// 和 ["gpt-5.5-pro"] 直接指向同一个 *ModelPricing（跟 GPT-5.4 共享指针），这会把
+// GPT-5.4 的 2x 倍率一并带过来，导致 priority 档位少收 0.5 倍的钱。这里改成每次
+// 返回全新的结构体，priority 价格按标准价 × 2.5 显式计算，不再通过共享引用复用
+// GPT-5.4 的倍率。
+func newOpenAIGPT55FallbackPricing() *ModelPricing {
+	const (
+		input     = 2.5e-6  // $2.5 per MTok（沿用 GPT-5.4 近似基准价）
+		output    = 15e-6   // $15 per MTok（沿用 GPT-5.4 近似基准价）
+		cacheRead = 0.25e-6 // $0.25 per MTok（沿用 GPT-5.4 近似基准价）
+		ratio     = 2.5     // priority/Fast 档倍率，issue #806 / 上游 #6129
+	)
+	return &ModelPricing{
+		InputPricePerToken:             input,
+		InputPricePerTokenPriority:     input * ratio,
+		OutputPricePerToken:            output,
+		OutputPricePerTokenPriority:    output * ratio,
+		CacheCreationPricePerToken:     input,
+		CacheReadPricePerToken:         cacheRead,
+		CacheReadPricePerTokenPriority: cacheRead * ratio,
+		SupportsCacheBreakdown:         false,
+		LongContextInputThreshold:      openAIGPT54LongContextInputThreshold,
+		LongContextInputMultiplier:     openAIGPT54LongContextInputMultiplier,
+		LongContextOutputMultiplier:    openAIGPT54LongContextOutputMultiplier,
+	}
+}
+
 func newOpenAIGPT56FallbackPricing(input, output, cacheRead float64) *ModelPricing {
 	return &ModelPricing{
 		InputPricePerToken:                 input,
@@ -322,9 +353,11 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputMultiplier:     openAIGPT54LongContextInputMultiplier,
 		LongContextOutputMultiplier:    openAIGPT54LongContextOutputMultiplier,
 	}
-	// GPT-5.5 / GPT-5.5 Pro 暂无独立定价，回退到 GPT-5.4。
-	s.fallbackPrices["gpt-5.5"] = s.fallbackPrices["gpt-5.4"]
-	s.fallbackPrices["gpt-5.5-pro"] = s.fallbackPrices["gpt-5.4"]
+	// GPT-5.5 / GPT-5.5 Pro 暂无独立基准价，仍近似回退到 GPT-5.4 的输入/输出价；
+	// 但 priority 档位倍率是 2.5x（不是 GPT-5.4 的 2x，见 issue #806），必须用独立
+	// 结构体显式定义，不能再通过共享指针复用 GPT-5.4 的 ModelPricing。
+	s.fallbackPrices["gpt-5.5"] = newOpenAIGPT55FallbackPricing()
+	s.fallbackPrices["gpt-5.5-pro"] = newOpenAIGPT55FallbackPricing()
 
 	// GPT-5.6 的三个 SKU 有独立输入/输出/cache-read 价格；cache-write 固定为输入价的 1.25 倍。
 	s.fallbackPrices["gpt-5.6-sol"] = newOpenAIGPT56FallbackPricing(5e-6, 30e-6, 0.5e-6)
