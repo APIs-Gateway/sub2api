@@ -259,6 +259,21 @@ func TestPricingService_Gemini36FlashTierSpecificPricingTakesPrecedence(t *testi
 	require.Same(t, tierPricing, svc.GetModelPricing("models/gemini-3.6-flash-low"))
 }
 
+// TestNormalizeModelNameForPricing_BareGPT56Alias 是 issue #788 的回归测试。
+// normalizeModelNameForPricing 此前只做拼写归一化(canonicalizeOpenAIModelAliasSpelling)，
+// 没有像 normalizeKnownOpenAICodexModel 那样把裸 "gpt-5.6" 重定向到 "gpt-5.6-sol"，
+// 导致裸别名在定价查找里绕开动态定价源、静默落到静态 fallback 表——今天两者价格
+// 恰好一致所以不影响计费结果，但产生噪音日志且与路由侧的别名解析逻辑不对称。
+func TestNormalizeModelNameForPricing_BareGPT56Alias(t *testing.T) {
+	require.Equal(t, "gpt-5.6-sol", normalizeModelNameForPricing("gpt-5.6"))
+	require.Equal(t, "gpt-5.6-sol", normalizeModelNameForPricing("openai/gpt-5.6"))
+	require.Equal(t, "gpt-5.6-sol", normalizeModelNameForPricing("models/gpt-5.6"))
+
+	// 已经带具体变体后缀的别名不应被这条裸别名重定向牵连改写。
+	require.Equal(t, "gpt-5.6-terra", normalizeModelNameForPricing("gpt-5.6-terra"))
+	require.Equal(t, "gpt-5.6-sol", normalizeModelNameForPricing("gpt-5.6-sol"))
+}
+
 // 反$0计费的核心保证：即便 pricingData(动态/远程目录)里完全没有 gemini-3.6-flash，
 // BillingService 也必须落到 getFallbackPricing 的静态兜底价，而不是记 $0。
 func TestBillingService_Gemini36FlashThinkingTierFallbacksAreBillable(t *testing.T) {
