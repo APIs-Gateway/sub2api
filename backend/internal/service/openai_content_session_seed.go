@@ -15,8 +15,8 @@ const contentSessionSeedPrefix = "compat_cs_"
 // deriveOpenAIContentSessionSeed builds a stable session seed from an
 // OpenAI-format request body. Only fields constant across conversation turns
 // are included: model, tools/functions definitions, the leading system/developer
-// prompt prefix in Chat messages, instructions (Responses API), and the first
-// user message.
+// prompt prefix in Chat messages or Responses input items, instructions
+// (Responses API), and the first user message.
 // Supports both Chat Completions (messages) and Responses API (input).
 func deriveOpenAIContentSessionSeed(body []byte) string {
 	if len(body) == 0 {
@@ -144,15 +144,19 @@ scanRoot:
 			_, _ = b.WriteString("|input=")
 			_, _ = b.WriteString(inp.String())
 		} else if inp.IsArray() {
+			systemPrefixOpen := true
 			inp.ForEach(func(_, item gjson.Result) bool {
 				role := item.Get("role").String()
 				switch role {
 				case "system", "developer":
-					_, _ = b.WriteString("|system=")
-					if c := item.Get("content"); c.Exists() {
-						_, _ = b.WriteString(normalizeCompatSeedJSON(json.RawMessage(c.Raw)))
+					if systemPrefixOpen {
+						_, _ = b.WriteString("|system=")
+						if c := item.Get("content"); c.Exists() {
+							_, _ = b.WriteString(normalizeCompatSeedJSON(json.RawMessage(c.Raw)))
+						}
 					}
 				case "user":
+					systemPrefixOpen = false
 					if !firstUserCaptured {
 						_, _ = b.WriteString("|first_user=")
 						if c := item.Get("content"); c.Exists() {
@@ -160,6 +164,8 @@ scanRoot:
 						}
 						firstUserCaptured = true
 					}
+				default:
+					systemPrefixOpen = false
 				}
 				if !firstUserCaptured && item.Get("type").String() == "input_text" {
 					_, _ = b.WriteString("|first_user=")
