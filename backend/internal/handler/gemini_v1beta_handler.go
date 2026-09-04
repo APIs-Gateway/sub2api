@@ -46,6 +46,14 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		return
 	}
 
+	// 分组启用自定义模型列表时直接返回配置的列表（/antigravity 强制路由不受影响）。
+	if forcePlatform != service.PlatformAntigravity {
+		if models, ok := customGeminiModelsList(apiKey.Group); ok {
+			c.JSON(http.StatusOK, models)
+			return
+		}
+	}
+
 	// Antigravity 账号按其有效模型映射暴露 Gemini 模型：/antigravity 强制路由直接列出，
 	// Gemini 分组仅统计开启混合调度的 Antigravity 账号（与实际可调度范围一致）。
 	agModelIDs, err := h.geminiCompatService.AntigravityGeminiModelIDs(c.Request.Context(), apiKey.GroupID, forcePlatform != service.PlatformAntigravity)
@@ -89,6 +97,17 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		}
 	}
 	writeUpstreamResponse(c, res)
+}
+
+func customGeminiModelsList(group *service.Group) (gemini.ModelsListResponse, bool) {
+	if group == nil || !group.CustomModelsListEnabled() {
+		return gemini.ModelsListResponse{}, false
+	}
+	models := make([]gemini.Model, 0, len(group.ModelsListConfig.Models))
+	for _, modelID := range group.ModelsListConfig.Models {
+		models = append(models, gemini.FallbackModel(modelID))
+	}
+	return gemini.ModelsListResponse{Models: models}, true
 }
 
 // mergeGeminiModelLists keeps native metadata when both sources advertise a model.
