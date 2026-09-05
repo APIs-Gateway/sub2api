@@ -2,11 +2,13 @@ package openai
 
 import "testing"
 
-func TestDefaultModelsIncludeGPT56SeriesFirst(t *testing.T) {
+func TestDefaultModelsIncludeNewestFlagshipSeriesFirst(t *testing.T) {
 	want := []struct {
 		id          string
 		displayName string
 	}{
+		{id: "gpt-6-astra", displayName: "GPT-6 Astra"},
+		{id: "gpt-6", displayName: "GPT-6 (Astra)"},
 		{id: "gpt-5.6", displayName: "GPT-5.6 (Sol)"},
 		{id: "gpt-5.6-sol", displayName: "GPT-5.6 Sol"},
 		{id: "gpt-5.6-terra", displayName: "GPT-5.6 Terra"},

@@ -21,3 +21,25 @@ func TestCodexUsageProbeModelIsRegistered(t *testing.T) {
 		t.Fatalf("CodexUsageProbeModel %q not found in DefaultModelIDs()", CodexUsageProbeModel)
 	}
 }
+
+// TestDefaultModelsIncludeGPT6Astra 保证 GPT-6 Astra 及其裸别名 gpt-6 都注册在
+// DefaultModels 目录里，避免账号/分组下拉列表漏掉新上线的模型。
+func TestDefaultModelsIncludeGPT6Astra(t *testing.T) {
+	ids := DefaultModelIDs()
+	found6Astra := false
+	found6 := false
+	for _, id := range ids {
+		if id == "gpt-6-astra" {
+			found6Astra = true
+		}
+		if id == "gpt-6" {
+			found6 = true
+		}
+	}
+	if !found6Astra {
+		t.Fatalf("gpt-6-astra not found in DefaultModelIDs()")
+	}
+	if !found6 {
+		t.Fatalf("gpt-6 not found in DefaultModelIDs()")
+	}
+}

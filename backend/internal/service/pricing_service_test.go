@@ -79,6 +79,57 @@ func TestParsePricingData_ParsesPriorityAndServiceTierFields(t *testing.T) {
 	require.True(t, pricing.SupportsServiceTier)
 }
 
+// TestGPT6AstraDedicatedFallbacksUseOfficialRates 验证 gpt-6-astra 无论走
+// billing_service.go 的硬编码 fallback（pricingService=nil）还是
+// pricing_service.go 的动态目录未命中 fallback（pricingData 为空 map），
+// 都落在同一套官方标准价 + 长上下文倍率上。
+//
+// 注意：本测试没有照抄上游 PR 里额外的
+// TestBillingServiceGPT6AstraUsesOfficialPricingAcrossTiersAndLongContext
+// （priority tier 叠加长上下文倍率的用例）。那个测试依赖上游
+// billing_service.go 里的 openAIModelFastPricingRatio/
+// enforceOpenAIFastPricingRatio 机制——fork 当前完全没有这套机制，
+// GPT-5.6 系列的 Fast 档倍率是在 fallback 结构体里直接写死 InputPricePerTokenPriority
+// 等字段，而不是运行时用倍率函数改写。照搬那个测试会绑死一个 fork 里不存在的
+// 内部函数，因此这里只保留不依赖该机制的基础费率断言。
+func TestGPT6AstraDedicatedFallbacksUseOfficialRates(t *testing.T) {
+	tests := []struct {
+		name string
+		svc  *BillingService
+	}{
+		{name: "pricing_service", svc: NewBillingService(&config.Config{}, &PricingService{pricingData: map[string]*LiteLLMModelPricing{}})},
+		{name: "billing_service", svc: NewBillingService(&config.Config{}, nil)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pricing, err := tt.svc.GetModelPricing("gpt-6-astra")
+			require.NoError(t, err)
+			require.InDelta(t, 10e-6, pricing.InputPricePerToken, 1e-12)
+			require.InDelta(t, 20e-6, pricing.InputPricePerTokenPriority, 1e-12)
+			require.InDelta(t, 50e-6, pricing.OutputPricePerToken, 1e-12)
+			require.InDelta(t, 100e-6, pricing.OutputPricePerTokenPriority, 1e-12)
+			require.InDelta(t, 12.5e-6, pricing.CacheCreationPricePerToken, 1e-12)
+			require.InDelta(t, 25e-6, pricing.CacheCreationPricePerTokenPriority, 1e-12)
+			require.InDelta(t, 1e-6, pricing.CacheReadPricePerToken, 1e-12)
+			require.InDelta(t, 2e-6, pricing.CacheReadPricePerTokenPriority, 1e-12)
+			require.Equal(t, 272_000, pricing.LongContextInputThreshold)
+			require.InDelta(t, 2.0, pricing.LongContextInputMultiplier, 1e-12)
+			require.InDelta(t, 1.5, pricing.LongContextOutputMultiplier, 1e-12)
+		})
+	}
+}
+
+// TestPricingServiceBareGPT6AliasUsesAstra 验证裸 "gpt-6"/"openai/gpt-6" 别名
+// 在动态价格目录里直接命中 "gpt-6-astra" 条目（而不是回退到静态兜底价）。
+func TestPricingServiceBareGPT6AliasUsesAstra(t *testing.T) {
+	astraPricing := &LiteLLMModelPricing{InputCostPerToken: 123e-6, OutputCostPerToken: 456e-6}
+	pricingSvc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{"gpt-6-astra": astraPricing}}
+	for _, model := range []string{"gpt-6", "openai/gpt-6"} {
+		pricing := pricingSvc.GetModelPricing(model)
+		require.Same(t, astraPricing, pricing)
+	}
+}
+
 func TestGetModelPricing_Gpt53CodexSparkUsesGpt51CodexPricing(t *testing.T) {
 	sparkPricing := &LiteLLMModelPricing{InputCostPerToken: 1}
 	gpt53Pricing := &LiteLLMModelPricing{InputCostPerToken: 9}

@@ -236,6 +236,8 @@ describe('UseKeyModal', () => {
     expect(codeBlock.text()).toContain('"name": "GPT-5.6 Luna"')
     expect(codeBlock.text()).toContain('"name": "GPT-5.4 Mini"')
     expect(codeBlock.text()).not.toContain('"name": "GPT-5.4 Nano"')
+    expect(codeBlock.text()).toContain('"name": "GPT-6 (Astra)"')
+    expect(codeBlock.text()).toContain('"name": "GPT-6 Astra"')
 
     const parsed = JSON.parse(codeBlock.text())
     expect(parsed.provider.openai.models['gpt-5.6'].name).toBe('GPT-5.6 (Sol)')
@@ -246,6 +248,12 @@ describe('UseKeyModal', () => {
     expect(parsed.provider.openai.models['gpt-5.6-sol'].variants.max).toEqual({})
     expect(parsed.provider.openai.models['gpt-5.6-terra'].variants.max).toEqual({})
     expect(parsed.provider.openai.models['gpt-5.6-luna'].variants.max).toEqual({})
+    expect(parsed.provider.openai.models['gpt-6'].name).toBe('GPT-6 (Astra)')
+    expect(parsed.provider.openai.models['gpt-6-astra'].name).toBe('GPT-6 Astra')
+    expect(parsed.provider.openai.models['gpt-6'].limit).toEqual({ context: 1050000, output: 128000 })
+    expect(parsed.provider.openai.models['gpt-6-astra'].limit).toEqual({ context: 1050000, output: 128000 })
+    expect(parsed.provider.openai.models['gpt-6'].variants.max).toEqual({})
+    expect(parsed.provider.openai.models['gpt-6-astra'].variants.max).toEqual({})
   })
 
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {
