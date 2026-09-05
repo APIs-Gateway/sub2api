@@ -802,6 +802,12 @@ func normalizeModelNameForPricing(model string) string {
 		if canonical == "gpt-6" {
 			return "gpt-6-astra"
 		}
+		// Mirror normalizeKnownOpenAICodexModel's bare "gpt-5.6" -> "gpt-5.6-sol"
+		// redirect so pricing lookups hit the dynamic pricing source instead of
+		// silently falling back to the static Go fallback table.
+		if canonical == "gpt-5.6" {
+			return "gpt-5.6-sol"
+		}
 		return canonical
 	}
 	return normalizeGeminiThinkingTierAlias(model)

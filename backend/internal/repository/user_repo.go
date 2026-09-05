@@ -50,7 +50,13 @@ func (r *userRepository) Create(ctx context.Context, userIn *service.User) error
 
 	// 统一使用 ent 的事务：保证用户与允许分组的更新原子化，
 	// 并避免基于 *sql.Tx 手动构造 ent client 导致的 ExecQuerier 断言错误。
-	tx, err := r.client.Tx(ctx)
+	//
+	// 必须从 ctx 里取 client 再开事务。ent 的 Client.Tx() 是靠检查 client 自身的 driver
+	// 是不是 txDriver 来返回 ErrTxStarted 的，它不看 ctx；直接写 r.client.Tx(ctx) 的话，
+	// 哪怕调用方已经开好事务并放进了 ctx，这里也会另开一个独立事务并在下面自行提交，
+	// 于是新用户绕过外层事务先落了库——外层再回滚也收不回来。下面那个「已处于外部事务中」
+	// 的分支正是为这种情况写的，但在 r.client 上它永远不会被触发。
+	tx, err := clientFromContext(ctx, r.client).Tx(ctx)
 	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
 		return err
 	}
@@ -188,7 +194,8 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User) error
 	}
 
 	// 使用 ent 事务包裹用户更新与 allowed_groups 同步，避免跨层事务不一致。
-	tx, err := r.client.Tx(ctx)
+	// 和 Create 同理，必须从 ctx 取 client 才能识别出外部事务，详见那边的说明。
+	tx, err := clientFromContext(ctx, r.client).Tx(ctx)
 	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
 		return err
 	}

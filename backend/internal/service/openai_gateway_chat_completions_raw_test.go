@@ -15,6 +15,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -124,19 +125,20 @@ func TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDown
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
-// 覆盖 forwardAsRawChatCompletions 新接线的 Grok 分支（stripRedundantGrokChatViewImageTool
-// 调用 + 成功赋值回 upstreamBody）。
+// 覆盖 forwardAsRawChatCompletions 处理 Grok+APIKey 账号的完整路径：Grok 专属的
+// stripRedundantGrokChatViewImageTool 分支（凭证解析之前执行）+ 凭证解析（issue #796
+// 修复后的行为）。
 //
-// 发现但未修的问题：这条分支执行完之后，函数会在稍后的 account.GetOpenAIApiKey() /
-// GetOpenAIBaseURL()（约 129/133 行）上失败——这两个方法内部都是
-// `if !a.IsOpenAI() { return "" }`，对 Platform==PlatformGrok 恒定返回空字符串，
-// 与本 PR 无关、是这条 Grok 分支落地之前就存在的代码。account.go 里已有
-// GetGrokAccessToken()/GetGrokBaseURL()，但 forwardGrokResponses（订阅转发路径）
-// 用的是带刷新能力的 grokTokenProvider 包装，不是直接调用它们；APIKey 类型的
-// Grok 账号在直转 Chat Completions 这条路径上该怎么取凭证，看起来是一个需要
-// 产品/架构决策的问题，不是这次补覆盖率可以顺手改的，本测试如实断言当前行为
-// （分支本身跑完，但函数最终因取不到凭证而报错），不伪造一个不存在的成功路径。
-func TestForwardAsRawChatCompletions_StripsRedundantGrokViewImageToolBeforeFailingOnMissingCredentials(t *testing.T) {
+// 背景（issue #796）：forwardAsRawChatCompletions 是 Grok+APIKey 账号在 Chat
+// Completions 端点的唯一转发路径——xAI 的 /v1/responses 仅 OAuth 支持（见
+// forwardGrokResponses 顶部的 account.Type != AccountTypeOAuth 检查），APIKey 账号没有
+// 对应的 Responses 端点，必然经这条直转路径。修复前，该函数用
+// account.GetOpenAIApiKey()/GetOpenAIBaseURL() 取凭证——两者内部都是
+// `if !a.IsOpenAI() { return "" }`，对 Platform==PlatformGrok 恒定返回空字符串，导致
+// Grok+APIKey 账号一旦落到这条路径就必然因 "missing api_key" 失败，与请求内容、上游
+// 状态无关。修复后凭证改走 s.GetAccessToken（其 AccountTypeAPIKey+PlatformGrok 分支读
+// GetCredential("api_key")）+ account.GetGrokBaseURL()，本测试锁定修复后的成功路径。
+func TestForwardAsRawChatCompletions_GrokAPIKeyUsesGrokCredentialsAndStripsViewImageTool(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	body := []byte(`{
@@ -174,13 +176,94 @@ func TestForwardAsRawChatCompletions_StripsRedundantGrokViewImageToolBeforeFaili
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
 		Credentials: map[string]any{
-			"api_key":  "sk-test",
+			"api_key":  "xai-test-key",
 			"base_url": "http://upstream.example",
 		},
 	}
 
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 5, result.Usage.InputTokens)
+	require.Equal(t, 2, result.Usage.OutputTokens)
+
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "Bearer xai-test-key", upstream.lastReq.Header.Get("Authorization"),
+		"api_key must come from Grok credential resolution, not the OpenAI-only accessor")
+	require.Equal(t, "http://upstream.example/v1/chat/completions", upstream.lastReq.URL.String(),
+		"base_url must come from GetGrokBaseURL, not the OpenAI default")
+
+	// The redundant view_image tool declaration (the image is already inline in the
+	// message content) must still be stripped before forwarding upstream, while an
+	// unrelated tool is preserved.
+	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(function.name=="view_image")`).Exists())
+	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(function.name=="shell_command")`).Exists())
+}
+
+// TestForwardAsRawChatCompletions_GrokAPIKeyDefaultsToXAIBaseURLWhenCredentialUnset 锁定
+// Grok+APIKey 账号在没有显式配置 base_url 凭证时，回退到 xAI 官方 base_url
+// （xai.DefaultBaseURL），而不是误用 GetOpenAIBaseURL 的默认值 "https://api.openai.com"。
+func TestForwardAsRawChatCompletions_GrokAPIKeyDefaultsToXAIBaseURLWhenCredentialUnset(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_grok_2","object":"chat.completion","model":"grok-4.6","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          103,
+		Name:        "raw-grok-apikey-no-base-url",
+		Platform:    PlatformGrok,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key": "xai-test-key",
+		},
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, xai.DefaultBaseURL+"/chat/completions", upstream.lastReq.URL.String())
+}
+
+// TestForwardAsRawChatCompletions_OpenAIAPIKeyMissingCredentialsErrorUnchanged 锁定
+// issue #796 的修复（凭证解析改走 s.GetAccessToken）没有改变已有 OpenAI+APIKey 账号在
+// 缺失 api_key 时的报错文案和"从不触达上游"行为。
+func TestForwardAsRawChatCompletions_OpenAIAPIKeyMissingCredentialsErrorUnchanged(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+	account := rawChatCompletionsTestAccount()
+	account.ID = 104
+	account.Credentials["api_key"] = ""
+
 	_, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
-	require.EqualError(t, err, "account 102 missing api_key")
+	require.EqualError(t, err, "account 104 missing api_key")
 	require.Nil(t, upstream.lastBody, "the request never reaches the upstream given the missing-credential error above")
 }
 

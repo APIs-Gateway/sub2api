@@ -197,6 +197,66 @@ func TestDeriveOpenAIContentSessionSeed_ResponsesAPI_InputArray(t *testing.T) {
 	require.Contains(t, seed, "|first_user=")
 }
 
+func TestDeriveOpenAIContentSessionSeed_ResponsesAPI_IgnoresLaterSystemItems(t *testing.T) {
+	turn1 := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{"role": "system", "content": "You are helpful."},
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "Hi there!"},
+			{"role": "user", "content": "How are you?"}
+		]
+	}`)
+	turn2 := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{"role": "system", "content": "You are helpful."},
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "Hi there!"},
+			{"role": "system", "content": "Return JSON for this turn."},
+			{"role": "user", "content": "How are you?"}
+		]
+	}`)
+
+	require.Equal(t, deriveOpenAIContentSessionSeed(turn1), deriveOpenAIContentSessionSeed(turn2),
+		"a system/developer item injected mid-conversation must not change the routing seed")
+}
+
+func TestDeriveOpenAIContentSessionSeed_ResponsesAPI_UsesLeadingSystemDeveloperPrefix(t *testing.T) {
+	firstSystem := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{"role": "system", "content": "System A"},
+			{"role": "developer", "content": "Developer B"},
+			{"role": "user", "content": "Hello"}
+		]
+	}`)
+	changedLaterSystem := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{"role": "system", "content": "System A"},
+			{"role": "developer", "content": "Developer C"},
+			{"role": "user", "content": "Hello"}
+		]
+	}`)
+
+	seed := deriveOpenAIContentSessionSeed(firstSystem)
+	require.Contains(t, seed, "System A")
+	require.Contains(t, seed, "Developer B")
+	require.NotEqual(t, seed, deriveOpenAIContentSessionSeed(changedLaterSystem))
+
+	withLaterSystem := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{"role": "system", "content": "System A"},
+			{"role": "developer", "content": "Developer B"},
+			{"role": "user", "content": "Hello"},
+			{"role": "system", "content": "Dynamic system"}
+		]
+	}`)
+	require.Equal(t, seed, deriveOpenAIContentSessionSeed(withLaterSystem))
+}
+
 func TestDeriveOpenAIContentSessionSeed_ResponsesAPI_WithInstructions(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-5.4",
