@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -85,11 +86,11 @@ func TestExtractOpenAIReasoningEffortModelCandidates(t *testing.T) {
 
 func TestNormalizeOpenAICodexCompactReasoningEffortForAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	body := []byte(`{"model":"gpt-5.6-sol","input":"compact me","reasoning":{"effort":"max","summary":"auto"}}`)
 
 	tests := []struct {
 		name    string
 		path    string
+		model   string
 		account *Account
 		changed bool
 		want    string
@@ -97,6 +98,7 @@ func TestNormalizeOpenAICodexCompactReasoningEffortForAccount(t *testing.T) {
 		{
 			name:    "OpenAI OAuth compact downgrades max",
 			path:    "/openai/v1/responses/compact",
+			model:   "gpt-5.6-sol",
 			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
 			changed: true,
 			want:    "xhigh",
@@ -104,19 +106,42 @@ func TestNormalizeOpenAICodexCompactReasoningEffortForAccount(t *testing.T) {
 		{
 			name:    "OpenAI OAuth regular Responses preserves max",
 			path:    "/openai/v1/responses",
+			model:   "gpt-5.6-sol",
 			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
 			want:    "max",
 		},
 		{
 			name:    "OpenAI API key compact preserves max",
 			path:    "/openai/v1/responses/compact",
+			model:   "gpt-5.6-sol",
 			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
 			want:    "max",
+		},
+		{
+			// Neither upstream GPT-6 Astra PR (#6572/#6620) speaks to this
+			// fork-only compact codepath. Astra is defensively downgraded the
+			// same way as GPT-5.6 since this reads as a limitation of the
+			// compact endpoint itself, not a GPT-5.6-specific quirk.
+			name:    "GPT-6 Astra compact defensively downgrades max",
+			path:    "/openai/v1/responses/compact",
+			model:   "gpt-6-astra",
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+			changed: true,
+			want:    "xhigh",
+		},
+		{
+			name:    "GPT-6 bare alias compact defensively downgrades max",
+			path:    "/openai/v1/responses/compact",
+			model:   "gpt-6",
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+			changed: true,
+			want:    "xhigh",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(fmt.Sprintf(`{"model":%q,"input":"compact me","reasoning":{"effort":"max","summary":"auto"}}`, tt.model))
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, tt.path, nil)

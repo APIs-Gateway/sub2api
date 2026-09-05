@@ -7635,12 +7635,19 @@ func normalizeOpenAICodexCompactReasoningEffortForAccount(c *gin.Context, accoun
 }
 
 func normalizeOpenAICodexCompactReasoningEffort(body []byte, effectiveModel string) ([]byte, bool, error) {
-	if !isOpenAIGPT56Model(effectiveModel) ||
+	if !(isOpenAIGPT6AstraModel(effectiveModel) || isOpenAIGPT56Model(effectiveModel)) ||
 		!strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()), "max") {
 		return body, false, nil
 	}
 
-	// Codex compact currently accepts xhigh rather than max for GPT-5.6.
+	// Codex compact currently accepts xhigh rather than max for GPT-5.6. Neither
+	// upstream GPT-6 Astra PR (#6572/#6620) speaks to this fork-only compact
+	// codepath, but Astra is treated as architecturally equivalent to GPT-5.6
+	// everywhere else max-capability is checked, and this limitation reads as a
+	// property of the compact endpoint itself rather than a GPT-5.6-specific
+	// quirk. Applying the same downgrade defensively avoids a hard 400 from
+	// upstream on first use; if Astra's compact endpoint turns out to accept
+	// max after all, the only cost is a soft xhigh downgrade instead of an error.
 	normalized, err := sjson.SetBytes(body, "reasoning.effort", "xhigh")
 	if err != nil {
 		return body, false, fmt.Errorf("normalize codex compact reasoning effort: %w", err)
