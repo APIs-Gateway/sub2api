@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, authState } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
-  checkMixedChannelRiskMock: vi.fn()
+  checkMixedChannelRiskMock: vi.fn(),
+  authState: { isSimpleMode: true }
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -17,7 +18,9 @@ vi.mock('@/stores/app', () => ({
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
-    isSimpleMode: true
+    get isSimpleMode() {
+      return authState.isSimpleMode
+    }
   })
 }))
 
@@ -192,7 +195,7 @@ function buildAntigravityAccount(projectId = 'configured-project') {
   } as any
 }
 
-function mountModal(account = buildAccount()) {
+function mountModal(account = buildAccount(), renderGroupSelector = false) {
   return mount(EditAccountModal, {
     props: {
       show: true,
@@ -206,7 +209,7 @@ function mountModal(account = buildAccount()) {
         Select: SelectStub,
         Icon: true,
         ProxySelector: true,
-        GroupSelector: true,
+        GroupSelector: !renderGroupSelector,
         ModelWhitelistSelector: ModelWhitelistSelectorStub
       }
     }
@@ -214,6 +217,56 @@ function mountModal(account = buildAccount()) {
 }
 
 describe('EditAccountModal', () => {
+  afterEach(() => {
+    authState.isSimpleMode = true
+  })
+
+  it('allows removing assigned inactive groups and undoing the selection before saving', async () => {
+    authState.isSimpleMode = false
+    const account = buildAccount()
+    const activeGroup = {
+      id: 1,
+      name: 'Active group',
+      platform: 'openai',
+      status: 'active',
+      subscription_type: 'standard',
+      rate_multiplier: 1
+    }
+    const inactiveGroup = { ...activeGroup, id: 2, name: 'Paused group', status: 'inactive' }
+    account.group_ids = [1, 2]
+    account.groups = [
+      { ...activeGroup, name: 'Outdated name' },
+      inactiveGroup,
+      inactiveGroup,
+      { ...inactiveGroup, id: 3, name: 'Unassigned paused group' }
+    ]
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account, true)
+    await wrapper.setProps({ groups: [activeGroup] as any })
+    const selector = wrapper.get('[data-tour="account-form-groups"]')
+    expect(selector.findAll('input[type="checkbox"]').map(input => input.attributes('value')))
+      .toEqual(['1', '2'])
+    expect(selector.text()).toContain('Active group')
+    expect(selector.text()).not.toContain('Outdated name')
+    const pausedCheckbox = selector.get<HTMLInputElement>('input[value="2"]')
+    expect(pausedCheckbox.element.checked).toBe(true)
+
+    await pausedCheckbox.setValue(false)
+    expect(selector.get<HTMLInputElement>('input[value="2"]').element.checked).toBe(false)
+    await pausedCheckbox.setValue(true)
+    expect(pausedCheckbox.element.checked).toBe(true)
+    await pausedCheckbox.setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.group_ids).toEqual([1])
+    expect(account.group_ids).toEqual([1, 2])
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()
