@@ -21,6 +21,8 @@ func TestNormalizeOpenAIReasoningEffortForGPT56(t *testing.T) {
 		model string
 		want  string
 	}{
+		{name: "Astra preserves max", raw: "max", model: "gpt-6-astra", want: "max"},
+		{name: "Astra bare alias preserves max", raw: "max", model: "gpt-6", want: "max"},
 		{name: "Sol preserves max", raw: "max", model: "gpt-5.6-sol", want: "max"},
 		{name: "Terra alias preserves max", raw: "max", model: "openai/gpt-5.6-terra", want: "max"},
 		{name: "Luna suffix preserves max", raw: "max", model: "gpt-5.6-luna-2026-07-10", want: "max"},

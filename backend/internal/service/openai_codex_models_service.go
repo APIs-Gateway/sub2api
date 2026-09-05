@@ -415,6 +415,7 @@ func convertOpenAIModelListToCodexManifest(body []byte) []byte {
 // key Codex clients must not use Responses Lite: those clients do not install
 // web.run in Lite mode, so selecting it silently drops web search.
 var apiKeyCodexModelsWithoutResponsesLite = map[string]struct{}{
+	"gpt-6-astra":   {},
 	"gpt-5.6-sol":   {},
 	"gpt-5.6-terra": {},
 	"gpt-5.6-luna":  {},

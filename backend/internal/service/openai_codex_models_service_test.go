@@ -185,6 +185,11 @@ func TestAdjustAPIKeyCodexModelsManifest(t *testing.T) {
 			want: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false},{"slug":"gpt-5.6-luna","use_responses_lite":false}]}`,
 		},
 		{
+			name: "gpt-6-astra targeted model with responses lite flipped off",
+			body: `{"models":[{"slug":"gpt-6-astra","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-6-astra","use_responses_lite":false}]}`,
+		},
+		{
 			name: "untargeted model unchanged",
 			body: `{"models":[{"slug":"gpt-5.6-nova","use_responses_lite":true}]}`,
 			want: `{"models":[{"slug":"gpt-5.6-nova","use_responses_lite":true}]}`,

@@ -51,6 +51,28 @@ var (
 		Mode:                    "chat",
 		SupportsPromptCaching:   true,
 	}
+	// openAIGPT6AstraFallbackPricing 有意不设置 *Above272KTokens 绝对值字段：
+	// gpt-6-astra 的 priority 与长上下文倍率是叠加关系（不像 GPT-5.6 那样互斥），
+	// computeTokenBreakdown 在 Above272K 字段 >0 时会用它直接覆盖 inputPrice，
+	// 从而丢弃已经生效的 priority 价；只设置 LongContextInput/OutputCostMultiplier
+	// 才能让长上下文倍率在任意 tier 上都正确地乘算在当前价格之上。
+	openAIGPT6AstraFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   1e-05,
+		InputCostPerTokenPriority:           2e-05,
+		OutputCostPerToken:                  5e-05,
+		OutputCostPerTokenPriority:          1e-04,
+		CacheCreationInputTokenCost:         1.25e-05,
+		CacheCreationInputTokenCostPriority: 2.5e-05,
+		CacheReadInputTokenCost:             1e-06,
+		CacheReadInputTokenCostPriority:     2e-06,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
 	openAIGPT56SolFallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:                          5e-06,
 		InputCostPerTokenAbove272KTokens:           1e-05,
@@ -777,6 +799,9 @@ func normalizeModelNameForPricing(model string) string {
 
 	model = strings.TrimLeft(model, "/")
 	if canonical := canonicalizeOpenAIModelAliasSpelling(model); canonical != "" {
+		if canonical == "gpt-6" {
+			return "gpt-6-astra"
+		}
 		return canonical
 	}
 	return normalizeGeminiThinkingTierAlias(model)
@@ -970,8 +995,10 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 		}
 	}
 
-	// GPT-5.6 的三个 SKU 必须保留各自的离线定价，不能回退到 GPT-5.4。
+	// GPT-6 Astra 与 GPT-5.6 的三个 SKU 必须保留各自的离线定价，不能回退到 GPT-5.4。
 	switch normalizeKnownOpenAICodexModel(model) {
+	case "gpt-6-astra":
+		return openAIGPT6AstraFallbackPricing
 	case "gpt-5.6-sol":
 		return openAIGPT56SolFallbackPricing
 	case "gpt-5.6-terra":
