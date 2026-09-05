@@ -44,6 +44,11 @@ const (
 
 	// codexUpstreamStatusOverloaded 是 Anthropic 系上游用来表示过载的非标准状态码。
 	codexUpstreamStatusOverloaded = 529
+
+	// codexCanonicalErrorType 沿用仓库既有的上游错误 envelope 类型
+	// （MapUpstreamErrorDefault 用的也是它）。/responses 上并不只有 Codex 一种客户端，
+	// 归一化只该换掉文案，不该把错误结构换成另一种形状。
+	codexCanonicalErrorType = "upstream_error"
 )
 
 // CodexCanonicalError 描述一次上游失败要以什么形态呈现给 Codex CLI。
@@ -141,8 +146,16 @@ func codexCanonicalHTTPResponse(upstreamStatus int, upstreamBody []byte) (int, [
 		return http.StatusTooManyRequests, []byte(`{"error":{"type":"usage_not_included"}}`)
 	}
 
-	switch {
-	case upstreamStatus == http.StatusUnauthorized:
+	// 上下文超长是唯一一类「上游原文比官方文案更有用」的错误：Codex 的 HTTP 分支根本
+	// 不认 context_length_exceeded，没有对应的官方文案可换，换成 "Unknown error" 只会
+	// 让用户丢掉唯一可操作的线索。本仓库既有的 context-window 放行就是为它设计的。
+	// 判据只看上游 message 是否本身就是英文的 context-window 提示——仅靠 error.code
+	// 命中、message 是中文的情况仍然走下面的归一化，不会泄露上游原文。
+	if isOpenAIContextWindowError(codexUpstreamErrorField(upstreamBody, "message").String(), nil) {
+		return 0, nil
+	}
+
+	if upstreamStatus == http.StatusUnauthorized {
 		// 上游账号鉴权失败是网关侧的问题，但 Codex 的 is_recoverable_auth_error 只对 401
 		// 成立：把 401 原样透回去，它会以为是用户自己的 ChatGPT token 失效，去跑 token
 		// 刷新流程并提示重新登录，把人引到完全错误的方向。503 是唯一既能立刻失败、又能
@@ -151,20 +164,45 @@ func codexCanonicalHTTPResponse(upstreamStatus int, upstreamBody []byte) (int, [
 		// 只作用于「上游返回的 401」。网关自身的 401（API key 无效等）不会走到归一化层
 		// ——那些路径不调用 SetCodexCanonicalUpstream，文案照旧。
 		return http.StatusServiceUnavailable, codexServerOverloadedBody()
-	case upstreamStatus == http.StatusBadRequest:
-		// Codex 对 400 的处理是原样打印整个响应体（api_bridge.rs InvalidRequest(body_text)），
-		// 协议上没有官方文案可用；本仓库 400 的文案本来就是固定英文，保持现状。
-		return 0, nil
-	case upstreamStatus == http.StatusServiceUnavailable || upstreamStatus == codexUpstreamStatusOverloaded:
-		// 529 不是标准状态码，Codex 会渲染成 "unexpected status 529 <unknown status code>"；
-		// 它的语义就是 overloaded，映射到 503 能拿到语义完全对应的官方文案。
-		return http.StatusServiceUnavailable, codexServerOverloadedBody()
-	case upstreamStatus >= 400 && upstreamStatus <= 599:
-		return upstreamStatus, codexUnknownErrorBody()
-	default:
+	}
+
+	if upstreamStatus < 400 || upstreamStatus > 599 {
 		// 传输错误 / 断流 / 未知：兜底 429，Codex 显示
 		// "exceeded retry limit, last status: 429 Too Many Requests"。
 		return http.StatusTooManyRequests, codexUnknownErrorBody()
+	}
+
+	switch status := codexCanonicalStatus(upstreamStatus); status {
+	case http.StatusBadRequest:
+		// Codex 对 400 的处理是原样打印整个响应体（api_bridge.rs InvalidRequest(body_text)），
+		// 协议上没有官方文案可用；本仓库 400 的文案本来就是固定英文，保持现状。
+		return 0, nil
+	case http.StatusServiceUnavailable:
+		return http.StatusServiceUnavailable, codexServerOverloadedBody()
+	default:
+		return status, codexUnknownErrorBody()
+	}
+}
+
+// codexCanonicalStatus 只在上游状态码不在 IANA 注册表里时才替换它。
+//
+// Go 的 http.StatusText 和 Codex 用的 Rust http::StatusCode 认同一张注册表，未注册的
+// 状态码会被 Codex 渲染成 "unexpected status 520 <unknown status code>"，客户端等于
+// 什么都没拿到。已注册的状态码一律 1:1 原样保留，不做任何合并。
+func codexCanonicalStatus(upstreamStatus int) int {
+	if http.StatusText(upstreamStatus) != "" {
+		return upstreamStatus
+	}
+	switch upstreamStatus {
+	case 522, 524:
+		// Cloudflare 522 Connection Timed Out / 524 A Timeout Occurred，语义等价 504。
+		return http.StatusGatewayTimeout
+	case codexUpstreamStatusOverloaded:
+		// 529 Site is overloaded（Anthropic 系上游也用它），语义等价 503。
+		return http.StatusServiceUnavailable
+	default:
+		// 其余非标准码（Cloudflare 520/521/523/525/526/527 等）都表示边缘或源站故障。
+		return http.StatusBadGateway
 	}
 }
 
@@ -219,11 +257,11 @@ func codexUsageLimitReachedBody(upstreamBody []byte) []byte {
 }
 
 func codexServerOverloadedBody() []byte {
-	return []byte(`{"error":{"code":"` + CodexErrCodeServerOverloaded + `"}}`)
+	return []byte(`{"error":{"code":"` + CodexErrCodeServerOverloaded + `","type":"` + codexCanonicalErrorType + `"}}`)
 }
 
 func codexUnknownErrorBody() []byte {
-	return []byte(`{"error":{"message":"` + codexUnknownErrorMessage + `"}}`)
+	return []byte(`{"error":{"message":"` + codexUnknownErrorMessage + `","type":"` + codexCanonicalErrorType + `"}}`)
 }
 
 // codexUpstreamErrorField 同时兼容普通 JSON 错误体和 Responses 的 response.failed 事件。

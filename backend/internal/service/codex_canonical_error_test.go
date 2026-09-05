@@ -42,22 +42,24 @@ func TestCodexCanonicalErrorFor_HTTPStatusMapping(t *testing.T) {
 		wantStatus     int
 		wantBody       string
 	}{
-		{"上游 401 必须改写，否则 Codex 会去刷新用户自己的 token", 401, "", 503, `{"error":{"code":"server_is_overloaded"}}`},
-		{"402 保留状态码", 402, "", 402, `{"error":{"message":"Unknown error"}}`},
-		{"403 保留状态码", 403, "", 403, `{"error":{"message":"Unknown error"}}`},
-		{"404 保留状态码", 404, "", 404, `{"error":{"message":"Unknown error"}}`},
-		{"408 保留状态码", 408, "", 408, `{"error":{"message":"Unknown error"}}`},
-		{"422 保留状态码", 422, "", 422, `{"error":{"message":"Unknown error"}}`},
-		{"429 非额度类走 Codex 的 retry-limit 文案", 429, `{"error":{"message":"慢一点"}}`, 429, `{"error":{"message":"Unknown error"}}`},
-		{"500 保留，Codex 有硬编码的高需求文案", 500, "", 500, `{"error":{"message":"Unknown error"}}`},
-		{"502 保留状态码", 502, "", 502, `{"error":{"message":"Unknown error"}}`},
-		{"503 带 server_is_overloaded 才能命中官方文案", 503, "", 503, `{"error":{"code":"server_is_overloaded"}}`},
-		{"504 保留状态码", 504, "", 504, `{"error":{"message":"Unknown error"}}`},
-		{"529 非标准状态码，语义等价于 503", 529, "", 503, `{"error":{"code":"server_is_overloaded"}}`},
-		{"无上游状态码时兜底 429", 0, "", 429, `{"error":{"message":"Unknown error"}}`},
-		{"未知上游状态码兜底 429", -1, "", 429, `{"error":{"message":"Unknown error"}}`},
+		{"上游 401 必须改写，否则 Codex 会去刷新用户自己的 token", 401, "", 503, `{"error":{"code":"server_is_overloaded","type":"upstream_error"}}`},
+		{"402 保留状态码", 402, "", 402, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"403 保留状态码", 403, "", 403, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"404 保留状态码", 404, "", 404, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"408 保留状态码", 408, "", 408, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"422 保留状态码", 422, "", 422, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"429 非额度类走 Codex 的 retry-limit 文案", 429, `{"error":{"message":"慢一点"}}`, 429, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"500 保留，Codex 有硬编码的高需求文案", 500, "", 500, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"502 保留状态码", 502, "", 502, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"503 带 server_is_overloaded 才能命中官方文案", 503, "", 503, `{"error":{"code":"server_is_overloaded","type":"upstream_error"}}`},
+		{"504 保留状态码", 504, "", 504, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"529 非标准状态码，语义等价于 503", 529, "", 503, `{"error":{"code":"server_is_overloaded","type":"upstream_error"}}`},
+		{"520 非标准状态码，Codex 渲染不出 reason phrase", 520, "", 502, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"522 非标准状态码，语义等价于 504", 522, "", 504, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"无上游状态码时兜底 429", 0, "", 429, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
+		{"未知上游状态码兜底 429", -1, "", 429, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
 		{"429 usage_not_included", 429, `{"error":{"type":"usage_not_included"}}`, 429, `{"error":{"type":"usage_not_included"}}`},
-		{"上游中文 response.failed 也被彻底替换", 0, upstreamChineseFailedEvent, 429, `{"error":{"message":"Unknown error"}}`},
+		{"上游中文 response.failed 也被彻底替换", 0, upstreamChineseFailedEvent, 429, `{"error":{"message":"Unknown error","type":"upstream_error"}}`},
 	}
 
 	for _, tc := range cases {
@@ -86,6 +88,22 @@ func TestCodexCanonicalErrorFor_HTTPNotOverridden(t *testing.T) {
 		got := CodexCanonicalErrorFor(http.StatusForbidden, []byte(`{"error":{"code":"misalignment_policy_violation"}}`))
 		require.Zero(t, got.HTTPStatus)
 		require.Empty(t, got.SSEErrCode)
+	})
+
+	t.Run("上下文超长的英文提示比 Unknown error 有用，放行", func(t *testing.T) {
+		body := []byte(`{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","type":"upstream_error"}}`)
+		got := CodexCanonicalErrorFor(http.StatusBadGateway, body)
+		require.Zero(t, got.HTTPStatus)
+		require.Nil(t, got.Body)
+		// 流内仍然要换成 Codex 认得的 code，走的是它自己的官方文案。
+		require.Equal(t, CodexErrCodeContextLengthExceeded, got.SSEErrCode)
+	})
+
+	t.Run("只有 code 命中、message 是中文时不放行", func(t *testing.T) {
+		body := []byte(`{"error":{"code":"context_length_exceeded","message":"上下文超长，请缩短输入"}}`)
+		got := CodexCanonicalErrorFor(http.StatusBadGateway, body)
+		require.Equal(t, http.StatusBadGateway, got.HTTPStatus)
+		require.False(t, containsHan(string(got.Body)))
 	})
 }
 
