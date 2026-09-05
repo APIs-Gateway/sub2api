@@ -4139,6 +4139,11 @@ func validOpenAIPassthroughRetryAfter(raw string, now time.Time) bool {
 }
 
 func writeSanitizedOpenAIPassthroughError(c *gin.Context, upstreamStatus int, upstreamHeaders http.Header) {
+	// Codex/Responses 端点：直接写 Codex 能用自己官方文案渲染的响应体。
+	if canonical := CodexCanonicalResponsesError(c, upstreamStatus, nil); canonical != nil {
+		writeOpenAIPassthroughErrorBody(c, canonical.HTTPStatus, upstreamHeaders, canonical.Body)
+		return
+	}
 	downstreamStatus := upstreamStatus
 	message := "Upstream request failed"
 	switch upstreamStatus {
@@ -4170,6 +4175,15 @@ func writeOpenAIPassthroughErrorEnvelope(c *gin.Context, downstreamStatus int, u
 	})
 	if err != nil {
 		body = []byte(`{"error":{"type":"upstream_error","message":"failed to encode upstream error"}}`)
+	}
+	writeOpenAIPassthroughErrorBody(c, downstreamStatus, upstreamHeaders, body)
+}
+
+// writeOpenAIPassthroughErrorBody 与 writeOpenAIPassthroughErrorEnvelope 共用写出逻辑，
+// 区别是直接给定已经序列化好的响应体。
+func writeOpenAIPassthroughErrorBody(c *gin.Context, downstreamStatus int, upstreamHeaders http.Header, body []byte) {
+	if c == nil {
+		return
 	}
 	if writeOpenAICompactSSEBridge(c, downstreamStatus, body) {
 		return
@@ -4701,6 +4715,27 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		flushPending = false
 	}
 	defer flushPendingOutput()
+	// sendResponsesFailedEvent 在流已经产生输出、HTTP 状态码已固化为 200 之后补一个
+	// Responses 协议的终止事件。Codex CLI 只认 response.completed/failed/incomplete/
+	// cancelled，缺终止事件会让它报 "stream closed before response.completed"。
+	sendResponsesFailedEvent := func() {
+		if clientDisconnected || !InboundIsResponses(c) {
+			return
+		}
+		if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+			return
+		}
+		data := codexResponsesFailedEventData(c, CodexErrCodeServerOverloaded)
+		if data == "" {
+			return
+		}
+		if _, err := fmt.Fprintf(w, "event: response.failed\ndata: %s\n\n", data); err != nil {
+			clientDisconnected = true
+			return
+		}
+		flusher.Flush()
+		flushPending = false
+	}
 	writePendingLines := func() bool {
 		for _, pending := range pendingLines {
 			if _, err := fmt.Fprintln(w, pending); err != nil {
@@ -4808,7 +4843,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
 			}
 			imageCounter.AddSSEData(dataBytes)
-			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(dataBytes, eventType, openAIStreamClientOutputStarted(c, clientOutputStarted)); sanitized {
+			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(c, dataBytes, eventType, openAIStreamClientOutputStarted(c, clientOutputStarted)); sanitized {
 				dataBytes = sanitizedData
 				trimmedData = strings.TrimSpace(string(sanitizedData))
 				line = "data: " + string(sanitizedData)
@@ -4867,6 +4902,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 		if errors.Is(err, bufio.ErrTooLong) {
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, err)
+			sendResponsesFailedEvent()
 			return resultWithUsage(), err
 		}
 		if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
@@ -4886,6 +4922,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			upstreamRequestID,
 			err,
 		)
+		sendResponsesFailedEvent()
 		return resultWithUsage(), fmt.Errorf("stream read error: %w", err)
 	}
 	if sawFailedEvent {
@@ -4901,6 +4938,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return resultWithUsage(),
 				s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, nil, "OpenAI stream ended before a terminal event")
 		}
+		sendResponsesFailedEvent()
 		return resultWithUsage(), errors.New("stream usage incomplete: missing terminal event")
 	}
 
@@ -5386,12 +5424,18 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		errMsg = upstreamMsg
 	}
 
-	c.JSON(statusCode, gin.H{
-		"error": gin.H{
-			"type":    errType,
-			"message": errMsg,
-		},
-	})
+	// Codex/Responses 端点：改写成 Codex 能用官方文案渲染的形态，上游原文只留在
+	// 上面已经写入的 ops 错误日志里。
+	if canonical := CodexCanonicalResponsesError(c, resp.StatusCode, body); canonical != nil {
+		c.Data(canonical.HTTPStatus, "application/json; charset=utf-8", canonical.Body)
+	} else {
+		c.JSON(statusCode, gin.H{
+			"error": gin.H{
+				"type":    errType,
+				"message": errMsg,
+			},
+		})
+	}
 
 	if upstreamMsg == "" {
 		return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
@@ -5807,6 +5851,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		errorEventSent = true
 		payload := `{"type":"error","sequence_number":0,"error":{"type":"upstream_error","message":` + strconv.Quote(reason) + `,"code":` + strconv.Quote(reason) + `}}`
+		// Codex CLI 只解析带顶层 "type" 的 data 行，并且只把 response.completed/failed/
+		// incomplete/cancelled 当作终止事件；通用 {"type":"error"} 帧会被它静默丢弃。
+		if InboundIsResponses(c) {
+			if data := codexResponsesFailedEventData(c, CodexErrCodeServerOverloaded); data != "" {
+				payload = data
+			}
+		}
 		if err := flushBuffered(); err != nil {
 			clientDisconnected = true
 			return
@@ -6002,7 +6053,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				line = "data: " + data
 				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			}
-			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(dataBytes, eventType, openAIStreamClientOutputStarted(c, clientOutputStarted)); sanitized {
+			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(c, dataBytes, eventType, openAIStreamClientOutputStarted(c, clientOutputStarted)); sanitized {
 				dataBytes = sanitizedData
 				data = string(sanitizedData)
 				line = "data: " + data
@@ -6823,7 +6874,25 @@ func setSanitizedOpenAIJSONField(payload []byte, path string, value any) ([]byte
 	return next, true
 }
 
-func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string, clientOutputStarted bool) ([]byte, bool) {
+// rewriteOpenAIResponseFailedErrorForCodex 把 response.failed 里的 error 对象换成
+// 指定的 Codex CLI 认识的 code，并丢掉上游 message。
+//
+// Codex 对绝大多数 code 都用自己硬编码的官方文案渲染，只有没命中任何 code 时才会走
+// "stream disconnected before completion: {message}" ——那正是上游中文报错泄露到用户
+// 终端的路径。errCode 为空表示保持原样（例如 cyber_policy 这类上游已经给出 Codex 原生
+// code、且文案本就是网关自己的场景）。
+func rewriteOpenAIResponseFailedErrorForCodex(payload []byte, errCode string) ([]byte, bool) {
+	if errCode == "" {
+		return payload, false
+	}
+	errorPath := "response.error"
+	if !gjson.GetBytes(payload, "response").Exists() && gjson.GetBytes(payload, "error").Exists() {
+		errorPath = "error"
+	}
+	return setSanitizedOpenAIJSONField(payload, errorPath, map[string]any{"code": errCode})
+}
+
+func sanitizeOpenAIResponseFailedEventForClient(c *gin.Context, payload []byte, eventType string, clientOutputStarted bool) ([]byte, bool) {
 	eventType = strings.TrimSpace(eventType)
 	isFailedEvent := eventType == "response.failed"
 	if (!isFailedEvent && eventType != "error") || len(payload) == 0 || !gjson.ValidBytes(payload) {
@@ -6834,13 +6903,27 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 	// 容量降载码对 Codex CLI 是致命错误；事件既然要写给客户端（failover 已不可用），
 	// 就改写为客户端可重试的错误码。error 帧与 response.failed 都要改：上游降载
 	// 总是先推 error 帧再收 failed，两帧携带同一个错误。
+	capacityShed := false
 	if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(updated); changed {
 		updated = rewritten
+		capacityShed = true
 	}
 	if !isFailedEvent {
 		return updated, !bytes.Equal(updated, payload)
 	}
-	if clientOutputStarted && isOpenAIContextWindowError(extractOpenAISSEErrorMessage(payload), payload) {
+	if InboundIsResponses(c) {
+		// Codex 端点：把 error 对象整体换成 Codex 认识的 code 并丢掉上游 message，
+		// 否则上游（可能是中文的）原文会被 Codex 原样拼进自己的错误模板里。
+		errCode := codexCanonicalSSEErrCode(openAIStreamFailedEventSemanticStatus(updated, ""), updated)
+		if capacityShed {
+			// 上面已按容量降载策略改写成可重试码，这里不能再拉回
+			// server_is_overloaded（那会让 Codex 就地终止会话）；只抹掉上游 message。
+			errCode = openAICapacityShedRetryableClientCode
+		}
+		if next, ok := rewriteOpenAIResponseFailedErrorForCodex(updated, errCode); ok {
+			updated = next
+		}
+	} else if clientOutputStarted && isOpenAIContextWindowError(extractOpenAISSEErrorMessage(payload), payload) {
 		// The client has already consumed output from this stream, so we can no
 		// longer fail it over or replace it with a fresh HTTP error -- but a
 		// strict SDK parsing the terminal event still needs a recognizable

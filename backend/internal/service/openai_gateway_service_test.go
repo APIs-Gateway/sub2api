@@ -2004,7 +2004,7 @@ func TestSanitizeOpenAIResponseFailedEventForClient_ContextWindowEscalation(t *t
 	contextWindowPayload := `{"type":"response.failed","response":{"id":"resp_1","error":{"code":"context_length_exceeded","message":"Your input exceeds the context window."}}}`
 
 	t.Run("client output already started rewrites error type/code", func(t *testing.T) {
-		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(contextWindowPayload), "response.failed", true)
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient(nil, []byte(contextWindowPayload), "response.failed", true)
 		require.True(t, sanitized)
 		require.Equal(t, "invalid_request_error", gjson.GetBytes(updated, "response.error.type").String())
 		require.Equal(t, "context_length_exceeded", gjson.GetBytes(updated, "response.error.code").String())
@@ -2012,7 +2012,7 @@ func TestSanitizeOpenAIResponseFailedEventForClient_ContextWindowEscalation(t *t
 
 	t.Run("client output not yet started leaves error untouched but still sanitizes verbose fields", func(t *testing.T) {
 		payload := `{"type":"response.failed","response":{"id":"resp_1","instructions":"verbose","error":{"code":"context_length_exceeded","message":"Your input exceeds the context window."}}}`
-		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(payload), "response.failed", false)
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient(nil, []byte(payload), "response.failed", false)
 		require.True(t, sanitized)
 		require.False(t, gjson.GetBytes(updated, "response.error.type").Exists(), "no escalation before client output has started")
 		require.False(t, gjson.GetBytes(updated, "response.instructions").Exists())
@@ -2020,20 +2020,20 @@ func TestSanitizeOpenAIResponseFailedEventForClient_ContextWindowEscalation(t *t
 
 	t.Run("non context-window error is not escalated even after output started", func(t *testing.T) {
 		payload := `{"type":"response.failed","response":{"id":"resp_1","error":{"code":"rate_limit_exceeded","message":"slow down"}}}`
-		updated, _ := sanitizeOpenAIResponseFailedEventForClient([]byte(payload), "response.failed", true)
+		updated, _ := sanitizeOpenAIResponseFailedEventForClient(nil, []byte(payload), "response.failed", true)
 		require.False(t, gjson.GetBytes(updated, "response.error.type").Exists())
 	})
 
 	t.Run("bare top-level error without a response wrapper still gets escalated and reported as sanitized", func(t *testing.T) {
 		payload := `{"type":"response.failed","error":{"code":"context_length_exceeded","message":"Your input exceeds the context window."}}`
-		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(payload), "response.failed", true)
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient(nil, []byte(payload), "response.failed", true)
 		require.True(t, sanitized)
 		require.Equal(t, "invalid_request_error", gjson.GetBytes(updated, "error.type").String())
 		require.Equal(t, "context_length_exceeded", gjson.GetBytes(updated, "error.code").String())
 	})
 
 	t.Run("non response.failed event type is left untouched", func(t *testing.T) {
-		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(contextWindowPayload), "response.completed", true)
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient(nil, []byte(contextWindowPayload), "response.completed", true)
 		require.False(t, sanitized)
 		require.Equal(t, contextWindowPayload, string(updated))
 	})
@@ -2044,7 +2044,7 @@ func TestSanitizeOpenAIResponseFailedEventForClient_ContextWindowEscalation(t *t
 		// setSanitizedOpenAIJSONField reports ok=false and the whole rewrite
 		// must be abandoned rather than left half-applied.
 		payload := `{"type":"response.failed","message":"context_length_exceeded","response":{"error":[1,2,3]}}`
-		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient([]byte(payload), "response.failed", true)
+		updated, sanitized := sanitizeOpenAIResponseFailedEventForClient(nil, []byte(payload), "response.failed", true)
 		require.False(t, sanitized)
 		require.Equal(t, payload, string(updated))
 	})
