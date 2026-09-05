@@ -2413,19 +2413,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 		imageCounter.AddSSEData(message)
 
-		if eventType == "response.failed" {
-			if hit, code, msg := detectOpenAICyberPolicy(message); hit {
-				MarkOpsCyberPolicy(c, CyberPolicyMark{
-					Code:                     code,
-					Message:                  msg,
-					Body:                     truncateString(string(rawMessage), 4096),
-					UpstreamStatus:           http.StatusOK,
-					UpstreamInTok:            usage.InputTokens,
-					UpstreamOutTok:           usage.OutputTokens,
-					UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
-					UpstreamCacheReadTok:     usage.CacheReadInputTokens,
-				})
-			}
+		// error 与 response.failed 都要落 cyber 标记（上游 2da31290a）；body 用对齐前的上游原文。
+		if eventType == "error" || eventType == "response.failed" {
+			markOpenAICyberPolicyEvent(c, rawMessage, http.StatusOK, usage)
 		}
 
 		if eventType == "error" {
@@ -3450,6 +3440,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 				lastEventType = eventType
 			}
+			// usage 解析与 cyber 标记前移到 error 分支之前：下面的重试 / failover 早返回
+			// 不能漏记 cyber_policy（上游 2da31290a）。
+			if openAIWSEventShouldParseUsage(eventType) {
+				parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &usage)
+			}
+			if eventType == "error" || eventType == "response.failed" {
+				markOpenAICyberPolicyEvent(c, upstreamMessage, http.StatusOK, &usage)
+			}
 			if eventType == "error" {
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(upstreamMessage)
 				s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw)
@@ -3549,25 +3547,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				ms := int(time.Since(turnStart).Milliseconds())
 				firstTokenMs = &ms
 			}
-			if openAIWSEventShouldParseUsage(eventType) {
-				parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &usage)
-			}
 			imageCounter.AddSSEData(upstreamMessage)
-
-			if eventType == "response.failed" {
-				if hit, code, msg := detectOpenAICyberPolicy(upstreamMessage); hit {
-					MarkOpsCyberPolicy(c, CyberPolicyMark{
-						Code:                     code,
-						Message:                  msg,
-						Body:                     truncateString(string(upstreamMessage), 4096),
-						UpstreamStatus:           http.StatusOK,
-						UpstreamInTok:            usage.InputTokens,
-						UpstreamOutTok:           usage.OutputTokens,
-						UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
-						UpstreamCacheReadTok:     usage.CacheReadInputTokens,
-					})
-				}
-			}
 
 			if !clientDisconnected {
 				// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型

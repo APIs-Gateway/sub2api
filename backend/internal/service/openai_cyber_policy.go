@@ -105,3 +105,27 @@ func detectOpenAICyberPolicy(payload []byte) (bool, string, string) {
 	}
 	return true, "cyber_policy", strings.TrimSpace(msg)
 }
+
+// markOpenAICyberPolicyEvent 检测 payload 是否为 cyber_policy 并记录标记（首个写入生效）。
+// fork 的 CyberPolicyMark 额外带缓存 token 字段，原内联实现会一并记录，这里保持不变，
+// 避免风控记录的 cache 用量回退为 0。
+func markOpenAICyberPolicyEvent(c *gin.Context, payload []byte, upstreamStatus int, usage *OpenAIUsage) bool {
+	hit, code, message := detectOpenAICyberPolicy(payload)
+	if !hit {
+		return false
+	}
+	mark := CyberPolicyMark{
+		Code:           code,
+		Message:        message,
+		Body:           truncateString(string(payload), 4096),
+		UpstreamStatus: upstreamStatus,
+	}
+	if usage != nil {
+		mark.UpstreamInTok = usage.InputTokens
+		mark.UpstreamOutTok = usage.OutputTokens
+		mark.UpstreamCacheCreationTok = usage.CacheCreationInputTokens
+		mark.UpstreamCacheReadTok = usage.CacheReadInputTokens
+	}
+	MarkOpsCyberPolicy(c, mark)
+	return true
+}
