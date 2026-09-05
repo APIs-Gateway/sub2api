@@ -463,8 +463,10 @@ func TestOpenAIEnsureForwardErrorResponse_ResponsesRouteAfterWrittenEmitsRespons
 	assert.Contains(t, body, ":\n\n", "earlier ping bytes preserved")
 	assert.Contains(t, body, "event: response.failed\n", "appended a Responses terminal event")
 	assert.Contains(t, body, `"type":"response.failed"`)
-	assert.Contains(t, body, `"code":"upstream_error"`)
-	assert.Contains(t, body, "Upstream request failed")
+	// Codex 端点的上游错误统一归一化：error.code 用 Codex 认识的常量，
+	// message 留空，由 Codex 自己渲染官方文案。
+	assert.Contains(t, body, `"code":"server_is_overloaded"`)
+	assert.NotContains(t, body, "Upstream request failed")
 }
 
 func TestShouldLogOpenAIForwardFailureAsWarn(t *testing.T) {
@@ -521,8 +523,10 @@ func TestOpenAIRecoverResponsesPanic_WritesFallbackResponse(t *testing.T) {
 
 	errorObj, ok := parsed["error"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "upstream_error", errorObj["type"])
-	assert.Equal(t, "Upstream request failed", errorObj["message"])
+	// /v1/responses 上走 Codex 归一化：状态码保留 502，文案退回 Codex 自己在
+	// 空响应体时渲染的 "Unknown error"，不暴露网关内部细节。
+	assert.Equal(t, "Unknown error", errorObj["message"])
+	assert.NotContains(t, w.Body.String(), "Upstream request failed")
 }
 
 func TestOpenAIRecoverResponsesPanic_NoPanicNoWrite(t *testing.T) {

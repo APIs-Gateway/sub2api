@@ -2030,12 +2030,14 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		)
 		return
 	}
+	service.SetCodexCanonicalUpstream(c, failoverErr.StatusCode, failoverErr.ResponseBody)
 	status, errType, errMsg := service.ResolveUpstreamErrorResponse(c, service.PlatformOpenAI, failoverErr.StatusCode, failoverErr.ResponseBody)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况(走同一策略,nil body)。
 func (h *OpenAIGatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCode int, streamStarted bool) {
+	service.SetCodexCanonicalUpstream(c, statusCode, nil)
 	status, errType, errMsg := service.ResolveUpstreamErrorResponse(c, service.PlatformOpenAI, statusCode, nil)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
@@ -2059,6 +2061,11 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
 		streamStarted = true
 	}
+	// Codex/Responses 端点：把上游失败换成 Codex CLI 能用自己官方文案渲染的形态，
+	// 否则上游（可能是中文的）原始报错会被 Codex 原样拼进
+	// "stream disconnected before completion: ..." 里显示给用户。
+	// 上游原文仍然通过 MarkOpsStream* / SetOpsUpstreamError 进 ops 错误日志。
+	canonical, useCanonical := codexCanonicalErrorForResponses(c, status)
 	if streamStarted {
 		if countTowardsSLA {
 			service.MarkOpsStreamFailure(c, errType, code, message, status)
@@ -2070,7 +2077,12 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		// 通用 `event: error` 帧不被识别为终止事件，会导致
 		// "stream closed before response.completed"。
 		if inboundIsResponses(c) {
-			if writeResponsesFailedSSE(c, errType, message) {
+			if useCanonical && canonical.SSEErrCode != "" {
+				// Codex 按 error.code 选官方文案，message 一律不读，故留空。
+				if writeResponsesFailedSSEWithCode(c, canonical.SSEErrCode, "") {
+					return
+				}
+			} else if writeResponsesFailedSSE(c, errType, message) {
 				return
 			}
 		}
@@ -2094,6 +2106,11 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		return
 	}
 
+	if useCanonical && canonical.HTTPStatus > 0 {
+		c.Data(canonical.HTTPStatus, "application/json; charset=utf-8", canonical.Body)
+		return
+	}
+
 	// Normal case: return JSON response with proper status code
 	if code == "" {
 		h.errorResponse(c, status, errType, message)
@@ -2104,6 +2121,18 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 	}})
 }
 
+// codexCanonicalErrorForResponses 判断本次错误是否要归一化成 Codex 官方文案。
+//
+// 只在两个条件同时成立时生效：请求落在 /responses 路由上，且本次失败确实来自上游
+// （由写出方显式调用 service.SetCodexCanonicalUpstream 标记）。网关自身的鉴权、
+// 参数校验、并发限流文案对用户是有用信息，不能被替换成 Codex 的 "Unknown error"。
+func codexCanonicalErrorForResponses(c *gin.Context, status int) (service.CodexCanonicalError, bool) {
+	if !inboundIsResponses(c) || !service.HasCodexCanonicalUpstream(c) {
+		return service.CodexCanonicalError{}, false
+	}
+	return service.CodexCanonicalErrorForContext(c, status), true
+}
+
 func (h *OpenAIGatewayHandler) ensureOpenAIStreamReadErrorResponse(c *gin.Context, err error, streamStarted bool) bool {
 	code, message, ok := service.OpenAIUpstreamStreamReadErrorDetails(err)
 	if !ok || c == nil || c.Writer == nil || service.IsResponseCommitted(c) {
@@ -2112,6 +2141,7 @@ func (h *OpenAIGatewayHandler) ensureOpenAIStreamReadErrorResponse(c *gin.Contex
 	if c.Writer.Written() {
 		streamStarted = true
 	}
+	service.SetCodexCanonicalUpstream(c, http.StatusBadGateway, nil)
 	h.handleStreamingAwareErrorWithCode(
 		c, http.StatusBadGateway, "upstream_error", code, message, streamStarted, true,
 	)
@@ -2145,6 +2175,7 @@ func (h *OpenAIGatewayHandler) ensureForwardErrorResponse(c *gin.Context, stream
 	if c.Writer.Written() && !imageKeepalivePaddingOnly {
 		streamStarted = true
 	}
+	service.SetCodexCanonicalUpstream(c, http.StatusBadGateway, nil)
 	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed", streamStarted)
 	return true
 }

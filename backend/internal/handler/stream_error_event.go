@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -53,6 +54,12 @@ type responsesFailedEvent struct {
 // 此时 caller 也无法回退到 JSON（HTTP 200 已固化），通常意味着连接已经损坏，
 // 应当让请求处理函数 return，由上层关闭连接。
 func writeResponsesFailedSSE(c *gin.Context, errType, message string) bool {
+	return writeResponsesFailedSSEWithCode(c, mapResponsesErrorCode(errType), message)
+}
+
+// writeResponsesFailedSSEWithCode 是 writeResponsesFailedSSE 的底层实现，直接指定
+// error.code。归一化成 Codex 官方文案时用它：Codex 只按 code 选文案，message 留空。
+func writeResponsesFailedSSEWithCode(c *gin.Context, errCode, message string) bool {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		return false
@@ -67,7 +74,7 @@ func writeResponsesFailedSSE(c *gin.Context, errType, message string) bool {
 			Status: "failed",
 			Output: []any{},
 			Error: responsesFailedError{
-				Code:    mapResponsesErrorCode(errType),
+				Code:    errCode,
 				Message: message,
 			},
 		},
@@ -85,34 +92,10 @@ func writeResponsesFailedSSE(c *gin.Context, errType, message string) bool {
 	return true
 }
 
-// inboundIsResponses 判断当前请求是否落在任何 /responses 路由上。
-//
-// 不能直接用 GetInboundEndpoint(c) == EndpointResponses 比较，因为
-// NormalizeInboundEndpoint 只识别包含 "/v1/responses" 子串的路径；
-// 项目里实际注册了多组路由（gateway_v1、top-level bare、codex direct），
-// 其中 r.POST("/responses", ...) 和 codexDirect.POST("/responses", ...)
-// 的 c.FullPath() 不含 "/v1/" 前缀，会被归一化为原始路径，
-// 导致协议合规终止事件没法发出去。
-//
-// 这里用 FullPath 的后缀判断，覆盖所有变体：
-//   - /v1/responses
-//   - /v1/responses/compact
-//   - /responses
-//   - /responses/compact
-//   - /backend-api/codex/responses
-//   - /backend-api/codex/responses/compact
+// inboundIsResponses 是 service.InboundIsResponses 的包内别名。判定逻辑放在 service
+// 包，因为 service 层的流式转发也要用同一套路由判断。
 func inboundIsResponses(c *gin.Context) bool {
-	if c == nil {
-		return false
-	}
-	p := strings.TrimRight(c.FullPath(), "/")
-	if p == "" && c.Request != nil && c.Request.URL != nil {
-		p = strings.TrimRight(c.Request.URL.Path, "/")
-	}
-	if p == "" {
-		return false
-	}
-	return strings.HasSuffix(p, "/responses") || strings.Contains(p, "/responses/")
+	return service.InboundIsResponses(c)
 }
 
 // synthesizeResponseID 为合成的 response.failed 事件生成一个稳定的 id。
