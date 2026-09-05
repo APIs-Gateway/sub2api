@@ -41,8 +41,12 @@ var openaiCCRawAllowedHeaders = map[string]bool{
 // forwardAsRawChatCompletions 直转客户端的 Chat Completions 请求到上游
 // `{base_url}/v1/chat/completions`，**不**做 CC↔Responses 协议转换。
 //
-// 适用场景：account.platform=openai && account.type=apikey && 上游已被探测确认
-// 不支持 /v1/responses 端点（如 DeepSeek/Kimi/GLM/Qwen 等第三方 OpenAI 兼容上游）。
+// 适用场景：account.type=apikey && 上游已被探测确认不支持 /v1/responses 端点，覆盖
+// 两类账号：
+//   - account.platform=openai（如 DeepSeek/Kimi/GLM/Qwen 等第三方 OpenAI 兼容上游）
+//   - account.platform=grok（xAI 的 /v1/responses 仅 OAuth 走 forwardGrokResponses；
+//     APIKey 账号没有对应的 Responses 端点，Chat Completions 请求必然经这条直转路径，
+//     凭证需按 platform 分流读取，见下方「5. Build upstream request」）
 //
 // 与 ForwardAsChatCompletions 的关键差异：
 //
@@ -126,11 +130,22 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	)
 
 	// 5. Build upstream request
-	apiKey := account.GetOpenAIApiKey()
-	if apiKey == "" {
+	//
+	// account.Type 在这里恒为 AccountTypeAPIKey（本函数只服务 APIKey 账号，见函数
+	// 顶部注释）。GetOpenAIApiKey()/GetOpenAIBaseURL() 内部按 Platform==PlatformOpenAI
+	// 硬门控，对 Platform==PlatformGrok 恒返回空字符串——必须走 s.GetAccessToken
+	// （其 AccountTypeAPIKey+PlatformGrok 分支读 GetCredential("api_key")，与
+	// forwardGrokResponses 共用同一个中心化 token resolver）+ account.GetGrokBaseURL()
+	// 取凭证，否则 Grok+APIKey 账号一旦被路由到这条直转路径就会必然因凭证为空失败。
+	// 详见 issue #796。
+	apiKey, _, err := s.GetAccessToken(ctx, account)
+	if err != nil || apiKey == "" {
 		return nil, fmt.Errorf("account %d missing api_key", account.ID)
 	}
 	baseURL := account.GetOpenAIBaseURL()
+	if account.Platform == PlatformGrok {
+		baseURL = account.GetGrokBaseURL()
+	}
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
 	}
