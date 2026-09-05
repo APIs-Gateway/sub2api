@@ -4,10 +4,12 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -625,30 +627,45 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 		{
 			name:              "deepseek v4 pro",
 			model:             "deepseek-v4-pro",
-			expectedInput:     4.35e-7,
-			expectedOutput:    floatPtr(8.7e-7),
-			expectedCacheRead: floatPtr(3.625e-9),
+			expectedInput:     6.6e-7,
+			expectedOutput:    floatPtr(1.98e-6),
+			expectedCacheRead: floatPtr(2.2e-8),
 		},
 		{
 			name:              "deepseek v4 flash",
 			model:             "deepseek-v4-flash",
-			expectedInput:     1.4e-7,
-			expectedOutput:    floatPtr(2.8e-7),
-			expectedCacheRead: floatPtr(2.8e-9),
+			expectedInput:     2.2e-7,
+			expectedOutput:    floatPtr(6.6e-7),
+			expectedCacheRead: floatPtr(7e-9),
 		},
 		{
-			name:              "deepseek chat alias → flash",
+			name:              "deepseek v4 flash vision exp",
+			model:             "deepseek-v4-flash-vision-exp",
+			expectedInput:     2.2e-7,
+			expectedOutput:    floatPtr(6.6e-7),
+			expectedCacheRead: floatPtr(7e-9),
+		},
+		{
+			// deepseek-chat / deepseek-reasoner 已停止服务，统一按 flash 价兜底。
+			name:              "deepseek chat discontinued maps to flash",
 			model:             "deepseek-chat",
-			expectedInput:     1.4e-7,
-			expectedOutput:    floatPtr(2.8e-7),
-			expectedCacheRead: floatPtr(2.8e-9),
+			expectedInput:     2.2e-7,
+			expectedOutput:    floatPtr(6.6e-7),
+			expectedCacheRead: floatPtr(7e-9),
 		},
 		{
-			name:              "deepseek reasoner alias → flash",
+			name:              "deepseek reasoner discontinued maps to flash",
 			model:             "deepseek-reasoner",
-			expectedInput:     1.4e-7,
-			expectedOutput:    floatPtr(2.8e-7),
-			expectedCacheRead: floatPtr(2.8e-9),
+			expectedInput:     2.2e-7,
+			expectedOutput:    floatPtr(6.6e-7),
+			expectedCacheRead: floatPtr(7e-9),
+		},
+		{
+			name:              "unknown deepseek maps to flash",
+			model:             "deepseek-foo",
+			expectedInput:     2.2e-7,
+			expectedOutput:    floatPtr(6.6e-7),
+			expectedCacheRead: floatPtr(7e-9),
 		},
 
 		// ---- 智谱 GLM（z.ai USD 口径）----
@@ -1789,4 +1806,76 @@ func TestComputeTokenBreakdown_NonExplicitZeroImagePrice_FallsBackToOutput(t *te
 	require.InDelta(t, 50*15e-6, bd.ImageOutputCost, 1e-12)
 	// textOutputTokens = 200 - 50 = 150
 	require.InDelta(t, 150*15e-6, bd.OutputCost, 1e-12)
+}
+
+// ---------------------------------------------------------------------------
+// DeepSeek 官方峰谷计价：默认价卡强制覆盖旧价并叠加峰谷倍率；
+// 分组/渠道自定义定价既不强制覆盖也不叠加峰谷倍率。
+// 峰谷边界/周末低谷/跨日边界/vision-exp/大小写/前缀匹配等细节见 deepseek_pricing_test.go；
+// 这里补充端到端场景：默认价卡走 ModelPricingResolver.Resolve 动态解析（而非
+// newTestBillingService 内置的硬编码 fallback 表），验证"强制覆盖 stale JSON 价"
+// 在 CalculateCostUnified 全链路里生效，不仅仅是 GetModelPricing 单元级别；
+// 渠道场景用明显偏离官方价的自定义价，确认既不被强制覆盖也不叠加峰谷倍率。
+// ---------------------------------------------------------------------------
+
+func TestCalculateCostUnified_DeepseekDefaultCardForcesStaleJSONPriceAndAppliesPeak(t *testing.T) {
+	pricingSvc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		// 模拟远端旧价（官方峰谷价格调整前的过期条目）。
+		"deepseek-v4-flash": {InputCostPerToken: 1e-6, OutputCostPerToken: 2e-6, CacheReadInputTokenCost: 1e-8},
+	}}
+	bs := NewBillingService(&config.Config{}, pricingSvc)
+	resolver := NewModelPricingResolver(nil, bs)
+
+	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 1000}
+	offPeakTotal := 1000*2.2e-7 + 500*6.6e-7 + 1000*7e-9
+
+	withDeepseekNow(t, time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)) // 周一低谷
+	offPeak, err := bs.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "deepseek-v4-flash", Tokens: tokens,
+		RateMultiplier: 1.0, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, offPeakTotal, offPeak.TotalCost, 1e-10,
+		"应强制覆盖 JSON 里的旧价为官方低谷价，而不是按 stale JSON 价计费")
+
+	withDeepseekNow(t, time.Date(2026, 8, 24, 2, 0, 0, 0, time.UTC)) // 周一高峰
+	peak, err := bs.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "deepseek-v4-flash", Tokens: tokens,
+		RateMultiplier: 1.0, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, offPeakTotal*2, peak.TotalCost, 1e-10)
+}
+
+func TestCalculateCostUnified_DeepseekProChannelPricingNotForcedOrScaled(t *testing.T) {
+	bs := newTestBillingService()
+	resolver := NewModelPricingResolver(nil, bs)
+
+	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 1000}
+	// 渠道自定义价（明显偏离官方价，用于确认不会被强制覆盖为官方价）：
+	channelTotal := 1000*9e-7 + 500*2.5e-6 + 1000*3e-8
+
+	resolved := &ResolvedPricing{
+		Mode:   BillingModeToken,
+		Source: PricingSourceChannel,
+		BasePricing: &ModelPricing{
+			InputPricePerToken:     9e-7,
+			OutputPricePerToken:    2.5e-6,
+			CacheReadPricePerToken: 3e-8,
+		},
+	}
+
+	for _, at := range []time.Time{
+		time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC), // 低谷
+		time.Date(2026, 8, 24, 2, 0, 0, 0, time.UTC),  // 高峰
+	} {
+		withDeepseekNow(t, at)
+		cost, err := bs.CalculateCostUnified(CostInput{
+			Ctx: context.Background(), Model: "deepseek-v4-pro",
+			Tokens: tokens, RateMultiplier: 1.0, Resolver: resolver, Resolved: resolved,
+		})
+		require.NoError(t, err)
+		require.InDelta(t, channelTotal, cost.TotalCost, 1e-10,
+			"渠道自定义定价既不应被强制覆盖为官方价，也不应叠加峰谷倍率（now=%v）", at)
+	}
 }
