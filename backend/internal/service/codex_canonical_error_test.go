@@ -1,11 +1,15 @@
 package service
 
 import (
+	"bytes"
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"unicode"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -262,4 +266,55 @@ func TestCodexResponsesFailedEventData(t *testing.T) {
 	require.Equal(t, "failed", gjson.Get(data, "response.status").String())
 	require.Equal(t, CodexErrCodeServerOverloaded, gjson.Get(data, "response.error.code").String())
 	require.True(t, gjson.Get(data, "response.output").IsArray())
+}
+
+func TestCodexCanonicalUpstreamHintHandlesMissingContext(t *testing.T) {
+	require.NotPanics(t, func() { SetCodexCanonicalUpstream(nil, http.StatusBadGateway, nil) })
+	require.False(t, HasCodexCanonicalUpstream(nil))
+
+	// 没记录过上游错误时退回调用方给的状态码。
+	c, _ := newResponsesTestContext(t, "/v1/responses")
+	require.Equal(t, http.StatusNotFound, CodexCanonicalErrorForContext(c, http.StatusNotFound).HTTPStatus)
+}
+
+func TestCodexSynthesizedResponseID_ReusesServerRequestID(t *testing.T) {
+	// 合成的 response id 复用服务端 request_id，方便把客户端看到的报错关联回日志。
+	c, _ := newResponsesTestContext(t, "/v1/responses")
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.RequestID, "20260905-abc-def"))
+
+	require.Equal(t, "resp_20260905abcdef", codexSynthesizedResponseID(c))
+}
+
+func TestRewriteOpenAIResponseFailedErrorForCodex_TopLevelErrorPayload(t *testing.T) {
+	// 有的上游把错误放在顶层 error 而不是 response.error 下。
+	payload := []byte(`{"type":"response.failed","error":{"message":"上游服务暂时不可用"}}`)
+
+	updated, ok := rewriteOpenAIResponseFailedErrorForCodex(payload, CodexErrCodeServerOverloaded)
+	require.True(t, ok)
+	require.Equal(t, CodexErrCodeServerOverloaded, gjson.GetBytes(updated, "error.code").String())
+	require.False(t, containsHan(string(updated)))
+
+	unchanged, ok := rewriteOpenAIResponseFailedErrorForCodex(payload, "")
+	require.False(t, ok)
+	require.Equal(t, payload, unchanged)
+}
+
+func TestOpenAIHandleErrorResponse_ResponsesRouteReplacesUpstreamBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusNotFound,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader([]byte(upstreamChineseFailedEvent))),
+	}
+	account := &Account{ID: 14, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	_, err := (&OpenAIGatewayService{}).handleErrorResponse(context.Background(), resp, c, account, nil)
+
+	require.Error(t, err)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Equal(t, "Unknown error", gjson.Get(rec.Body.String(), "error.message").String())
+	require.False(t, containsHan(rec.Body.String()), "上游中文不能出现在对外响应里")
 }
