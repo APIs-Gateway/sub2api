@@ -960,10 +960,18 @@ const loadUsageLogs = async () => {
   }
 }
 
+// 用量 / 错误记录的 API Key 筛选要覆盖全部 key，而不只是第一页 100 个：按页拉取直到
+// 达到总页数或遇到空页（防止过期的 pages 计数导致死循环 / 多余请求）。
 const loadApiKeys = async () => {
   try {
-    const response = await keysAPI.list(1, 100)
-    apiKeys.value = response.items
+    const firstPage = await keysAPI.list(1, 100)
+    const keys = [...firstPage.items]
+    for (let page = 2; page <= (firstPage.pages ?? 1) && keys.length > 0; page++) {
+      const response = await keysAPI.list(page, 100)
+      if (response.items.length === 0) break
+      keys.push(...response.items)
+    }
+    apiKeys.value = keys
   } catch (error) {
     console.error('Failed to load API keys:', error)
   }

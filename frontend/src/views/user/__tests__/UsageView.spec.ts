@@ -929,3 +929,97 @@ describe('user UsageView currency display', () => {
     expect(plain(wrapper)).toContain('0.300')
   })
 })
+
+// 上游 dc6b318c3：筛选器需要加载全部 API Key（分页拉取），不止第一页 100 个。
+describe('user UsageView API key filter pagination', () => {
+  beforeEach(() => {
+    query.mockReset()
+    getStatsByDateRange.mockReset()
+    list.mockReset()
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    query.mockResolvedValue({ items: [], total: 0, pages: 0 })
+    getStatsByDateRange.mockResolvedValue({
+      total_requests: 0,
+      total_tokens: 0,
+      total_cost: 0,
+      avg_duration_ms: 0,
+    })
+    ;(globalThis as any).ResizeObserver = class {
+      observe() {}
+      disconnect() {}
+    }
+  })
+
+  function mountWithRealSelect() {
+    return mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Pagination: true,
+          EmptyState: true,
+          DateRangePicker: true,
+          DataTable: DataTableStub,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+  }
+
+  function apiKeySelect(wrapper: ReturnType<typeof mountWithRealSelect>) {
+    return wrapper.findAllComponents(Select).find((select) =>
+      (select.props('options') as SelectOption[]).some((option) => option.label === 'All API Keys')
+    )!
+  }
+
+  it('includes API keys after the first page in the usage key filter', async () => {
+    const firstPageKeys = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      name: `key-${index + 1}`,
+    }))
+    const laterKey = { id: 101, name: 'key-from-second-page' }
+    list
+      .mockResolvedValueOnce({ items: firstPageKeys, total: 101, page: 1, page_size: 100, pages: 2 })
+      .mockResolvedValueOnce({ items: [laterKey], total: 101, page: 2, page_size: 100, pages: 2 })
+
+    const wrapper = mountWithRealSelect()
+    await flushPromises()
+
+    expect(list.mock.calls).toEqual([[1, 100], [2, 100]])
+    const select = apiKeySelect(wrapper)
+    expect(select.props('options')).toHaveLength(102)
+    expect(select.props('options')).toContainEqual({ value: laterKey.id, label: laterKey.name })
+    wrapper.unmount()
+  })
+
+  it('does not request another API key page when the user has no keys', async () => {
+    list.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 100, pages: 0 })
+
+    const wrapper = mountWithRealSelect()
+    await flushPromises()
+
+    expect(list.mock.calls).toEqual([[1, 100]])
+    expect(apiKeySelect(wrapper).props('options')).toEqual([{ value: null, label: 'All API Keys' }])
+    wrapper.unmount()
+  })
+
+  it('stops loading API keys when a later page is empty despite an outdated page count', async () => {
+    const firstPageKeys = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      name: `key-${index + 1}`,
+    }))
+    list
+      .mockResolvedValueOnce({ items: firstPageKeys, total: 201, page: 1, page_size: 100, pages: 3 })
+      .mockResolvedValueOnce({ items: [], total: 201, page: 2, page_size: 100, pages: 3 })
+
+    const wrapper = mountWithRealSelect()
+    await flushPromises()
+
+    expect(list.mock.calls).toEqual([[1, 100], [2, 100]])
+    const select = apiKeySelect(wrapper)
+    expect(select.props('options')).toHaveLength(101)
+    expect(select.props('options')).toContainEqual({ value: 100, label: 'key-100' })
+    wrapper.unmount()
+  })
+})
