@@ -36,25 +36,25 @@ describe('useCurrencyDisplay', () => {
     expect(useCurrencyDisplay().isFiat.value).toBe(true)
   })
 
-  it('按充值倍率把额度折算成法币', () => {
-    const { creditToFiat } = useCurrencyDisplay()
+  it('按充值倍率把美元金额折算成人民币', () => {
+    const { usdToFiat } = useCurrencyDisplay()
 
     // 这条就是整个功能要解决的误读：看到「扣了 5」，其实只花了三毛八。
-    expect(creditToFiat(5)).toBeCloseTo(5 / 13, 10)
-    expect(creditToFiat(0)).toBe(0)
+    expect(usdToFiat(5)).toBeCloseTo(5 / 13, 10)
+    expect(usdToFiat(0)).toBe(0)
   })
 
   it('倍率缺失或损坏时折算退化为恒等，绝不除以 0', () => {
     for (const broken of [undefined, 0, -13, Number.NaN]) {
       publicSettings.value = { balance_recharge_multiplier: broken }
-      const { creditToFiat, rechargeMultiplier } = useCurrencyDisplay()
+      const { usdToFiat, rechargeMultiplier } = useCurrencyDisplay()
 
       expect(rechargeMultiplier.value).toBe(1)
-      expect(creditToFiat(5)).toBe(5)
+      expect(usdToFiat(5)).toBe(5)
     }
 
     publicSettings.value = null
-    expect(useCurrencyDisplay().creditToFiat(5)).toBe(5)
+    expect(useCurrencyDisplay().usdToFiat(5)).toBe(5)
   })
 
   it('倍率为 1 时隐藏切换器——两个口径数字相同，切换没有意义', () => {
@@ -74,13 +74,13 @@ describe('useCurrencyDisplay', () => {
     expect(normalize(formatFiat(null))).toContain('0.00')
   })
 
-  it('额度保持定宽小数，便于逐条对账', () => {
-    const { formatCredit } = useCurrencyDisplay()
+  it('美元保持定宽小数并显式带 $，便于逐条对账', () => {
+    const { formatUsd } = useCurrencyDisplay()
 
-    expect(formatCredit(5)).toBe('5.0000')
-    expect(formatCredit(5, 6)).toBe('5.000000')
-    expect(formatCredit(null)).toBe('0.0000')
-    expect(formatCredit(Number.NaN)).toBe('0.0000')
+    expect(formatUsd(5)).toBe('$5.0000')
+    expect(formatUsd(5, 6)).toBe('$5.000000')
+    expect(formatUsd(null)).toBe('$0.0000')
+    expect(formatUsd(Number.NaN)).toBe('$0.0000')
   })
 
   it('法币模式优先用服务端算好的精确值，而不是按充值倍率估算', () => {
@@ -95,35 +95,35 @@ describe('useCurrencyDisplay', () => {
     expect(normalize(formatAmount(5))).toContain('0.385')
   })
 
-  it('额度模式下展示原始额度，不做任何折算', () => {
+  it('美元模式下展示原始美元金额，不做任何折算', () => {
     const { formatAmount, setMode } = useCurrencyDisplay()
-    setMode('credit')
+    setMode('usd')
 
-    expect(formatAmount(5, 0.25, 6)).toBe('5.000000')
+    expect(formatAmount(5, 0.25, 6)).toBe('$5.000000')
   })
 
   it('切换会持久化，且 toggle 在两个口径间往返', () => {
     const { setMode, toggle, mode } = useCurrencyDisplay()
 
-    setMode('credit')
-    expect(mode.value).toBe('credit')
-    expect(window.localStorage.getItem('currency-display-mode')).toBe('credit')
+    setMode('usd')
+    expect(mode.value).toBe('usd')
+    expect(window.localStorage.getItem('currency-display-mode')).toBe('usd')
 
     toggle()
     expect(mode.value).toBe('fiat')
     expect(window.localStorage.getItem('currency-display-mode')).toBe('fiat')
 
     toggle()
-    expect(mode.value).toBe('credit')
+    expect(mode.value).toBe('usd')
   })
 
   it('多个调用方共享同一份状态——切换器改一次要全站生效', () => {
     const a = useCurrencyDisplay()
     const b = useCurrencyDisplay()
 
-    a.setMode('credit')
+    a.setMode('usd')
 
     expect(b.isFiat.value).toBe(false)
-    expect(b.mode.value).toBe('credit')
+    expect(b.mode.value).toBe('usd')
   })
 })
