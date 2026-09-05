@@ -132,7 +132,7 @@ func TestValidatePaymentRedeemCode(t *testing.T) {
 }
 
 func TestPublicRedeemStillEnforcesFailureLimit(t *testing.T) {
-	cache := &redeemIsolationCacheStub{count: redeemMaxErrorsPerHour}
+	cache := &redeemIsolationCacheStub{count: redeemMaxFailedAttempts}
 	svc := &RedeemService{cache: cache}
 
 	result, err := svc.Redeem(context.Background(), 42, "PUBLIC-CODE")
@@ -169,7 +169,7 @@ func TestPaymentRedeemDoesNotIncrementFailureLimit(t *testing.T) {
 
 	for name, code := range cases {
 		t.Run(name, func(t *testing.T) {
-			cache := &redeemIsolationCacheStub{count: redeemMaxErrorsPerHour}
+			cache := &redeemIsolationCacheStub{count: redeemMaxFailedAttempts}
 			repo := &redeemIsolationRepo{redeemCodeRepoStub: redeemCodeRepoStub{codesByCode: map[string]*RedeemCode{code.Code: code}}}
 			svc := &RedeemService{redeemRepo: repo, cache: cache}
 
@@ -185,7 +185,7 @@ func TestPaymentRedeemDoesNotIncrementFailureLimit(t *testing.T) {
 	}
 
 	t.Run("missing", func(t *testing.T) {
-		cache := &redeemIsolationCacheStub{count: redeemMaxErrorsPerHour}
+		cache := &redeemIsolationCacheStub{count: redeemMaxFailedAttempts}
 		svc := &RedeemService{redeemRepo: &redeemIsolationRepo{}, cache: cache}
 
 		result, err := svc.RedeemForAdminFulfillment(ctx, 42, "ADMIN-MISSING")
@@ -210,7 +210,7 @@ func TestExecuteBalanceFulfillmentBypassesUserRedeemRateLimit(t *testing.T) {
 		credited += amount
 		return nil
 	}
-	cache := &redeemIsolationCacheStub{count: redeemMaxErrorsPerHour}
+	cache := &redeemIsolationCacheStub{count: redeemMaxFailedAttempts}
 	redeemService := NewRedeemService(redeemRepo, userRepo, nil, cache, nil, client, nil, nil)
 	svc := &PaymentService{entClient: client, redeemService: redeemService, userRepo: userRepo}
 
@@ -339,7 +339,7 @@ func TestAdminFulfillmentBypassesRedeemRateLimit(t *testing.T) {
 		credited += amount
 		return nil
 	}
-	cache := &redeemIsolationCacheStub{count: redeemMaxErrorsPerHour}
+	cache := &redeemIsolationCacheStub{count: redeemMaxFailedAttempts}
 	svc := NewRedeemService(redeemRepo, userRepo, nil, cache, nil, client, nil, nil)
 
 	result, err := svc.RedeemForAdminFulfillment(ctx, userID, code.Code)
