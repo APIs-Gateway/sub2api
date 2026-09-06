@@ -3,6 +3,8 @@ package service
 import (
 	"net/http"
 	"strings"
+
+	"github.com/tidwall/gjson"
 )
 
 var upstreamModelNotFoundKeywords = []string{"model not found", "unknown model", "not found"}
@@ -44,6 +46,40 @@ func isOpenAICodexPlanGatedModelError(statusCode int, body []byte) bool {
 		return false
 	}
 	return strings.Contains(normalized, openAICodexPlanGatedModelPhrase)
+}
+
+// isOpenAICompatibleModelNotFound400 reports whether an OpenAI-compatible 400
+// says the selected account/provider cannot serve the requested model. Such a
+// response is account availability, not a malformed request, so a managed
+// gateway fails it over to another account.
+func isOpenAICompatibleModelNotFound400(respBody []byte) bool {
+	return isOpenAICompatibleModelNotFoundBody(respBody)
+}
+
+// IsOpenAICompatibleModelNotFound400 exposes the 400 model-not-found
+// classification to handlers that render exhausted failovers.
+func IsOpenAICompatibleModelNotFound400(respBody []byte) bool {
+	return isOpenAICompatibleModelNotFound400(respBody)
+}
+
+// isOpenAICompatibleModelNotFoundBody classifies the body only (status-agnostic).
+// A structured error code is authoritative: any code other than model_not_found
+// keeps the response terminal even if its message mentions a missing model.
+// Only error-message fields are inspected so echoed request content cannot
+// trigger a match; a non-JSON plain-text body is inspected as a whole.
+func isOpenAICompatibleModelNotFoundBody(respBody []byte) bool {
+	code := strings.TrimSpace(extractUpstreamErrorCode(respBody))
+	if code != "" {
+		return strings.EqualFold(code, "model_not_found")
+	}
+
+	msg := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+	if msg == "" && !gjson.ValidBytes(respBody) {
+		msg = strings.ToLower(strings.TrimSpace(string(respBody)))
+	}
+	return strings.Contains(msg, "unknown provider for model") ||
+		strings.Contains(msg, "model not found") ||
+		strings.Contains(msg, "model is not supported")
 }
 
 func containsModelNotFoundKeyword(normalizedBody string) bool {

@@ -146,13 +146,28 @@ func ResolveUpstreamErrorResponse(c *gin.Context, platform string, upstreamStatu
 
 	// ④ 默认映射:请求形 4xx 保留真实状态码 + 安全文案,其余保留 502/429/503。
 	status, errType, message, passthrough := MapUpstreamErrorDefault(upstreamStatus)
-	if passthrough {
+	if passthrough || isOpenAIExhaustedModelNotFound400(platform, upstreamStatus, responseBody) {
+		fallback := message
 		message = sanitizeClientVisibleUpstreamMessage(upstreamMsg)
 		if strings.TrimSpace(message) == "" {
-			message = "Upstream rejected the request"
+			message = fallback
+			if strings.TrimSpace(message) == "" {
+				message = "Upstream rejected the request"
+			}
 		}
 	}
 	return status, errType, message
+}
+
+// isOpenAIExhaustedModelNotFound400 marks the one request-shaped 4xx whose
+// sanitized upstream message is shown by default: an OpenAI-compatible 400
+// model-not-found that survived account failover. The generic "invalid request
+// parameters" text would send the caller hunting for a body bug when the real
+// cause is that no eligible account serves the requested model. The status code
+// stays 400 and explicit passthrough rules (step ③) still take precedence.
+func isOpenAIExhaustedModelNotFound400(platform string, upstreamStatus int, responseBody []byte) bool {
+	return platform == PlatformOpenAI && upstreamStatus == http.StatusBadRequest &&
+		isOpenAICompatibleModelNotFound400(responseBody)
 }
 
 // BindErrorPassthroughService 将错误透传服务绑定到请求上下文，供 service 层在非 failover 场景下复用规则。

@@ -2086,7 +2086,13 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	}
 	service.SetCodexCanonicalUpstream(c, failoverErr.StatusCode, failoverErr.ResponseBody)
 	status, errType, errMsg := service.ResolveUpstreamErrorResponse(c, service.PlatformOpenAI, failoverErr.StatusCode, failoverErr.ResponseBody)
-	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+	// 400 model-not-found 切号用尽：保留结构化 code，让 OpenAI SDK 能按 model_not_found 分支处理。
+	code := ""
+	if status == http.StatusBadRequest && failoverErr.StatusCode == http.StatusBadRequest &&
+		service.IsOpenAICompatibleModelNotFound400(failoverErr.ResponseBody) {
+		code = "model_not_found"
+	}
+	h.handleStreamingAwareErrorWithCode(c, status, errType, code, errMsg, streamStarted, false)
 }
 
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况(走同一策略,nil body)。
