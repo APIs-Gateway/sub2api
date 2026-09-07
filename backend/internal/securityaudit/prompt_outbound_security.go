@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,16 @@ import (
 )
 
 const maxGuardResponseBytes int64 = 256 * 1024
+
+// adminTrustedHostsEnv names an operator-controlled, comma-separated allowlist
+// of literal hostnames or IP addresses that may bypass the private-network
+// (RFC1918/ULA) destination-class rejection below. It intentionally does NOT
+// bypass the categorical blocks in isBlockedAddress (cloud metadata hosts,
+// multicast, link-local, documentation/reserved ranges): those destinations
+// are never legitimate Guard node targets, whitelisted or not. Entries are
+// exact-match only (no wildcards or CIDR) so an admin must name each trusted
+// intranet Guard node explicitly. Empty/unset preserves prior behavior.
+const adminTrustedHostsEnv = "SUB2API_PROMPT_AUDIT_TRUSTED_HOSTS"
 
 var (
 	errRedirectBlocked = errors.New("prompt guard redirect blocked")
@@ -71,18 +82,20 @@ func NormalizeBaseURL(raw string) (string, error) {
 	if _, blocked := metadataHosts[host]; blocked || strings.HasSuffix(host, ".metadata.google.internal") {
 		return "", infraerrors.BadRequest("prompt_audit_unsafe_base_url", "审计节点地址不在允许范围")
 	}
-	allowPrivate := isExplicitPrivateHost(host)
+	trustedHost := isAdminTrustedHost(host)
+	allowPrivate := isExplicitPrivateHost(host) || trustedHost
 	if addr, err := netip.ParseAddr(host); err == nil {
 		if isBlockedAddress(addr) {
 			return "", infraerrors.BadRequest("prompt_audit_unsafe_base_url", "审计节点地址不在允许范围")
 		}
 		// Loopback literals remain available for local Guard nodes and tests.
-		// RFC1918 literals are rejected so an admin session cannot pivot into
-		// arbitrary private-network services; use a hostname allowlist instead.
-		if addr.IsPrivate() {
+		// RFC1918/ULA literals are rejected unless the exact address was named
+		// by an administrator via adminTrustedHostsEnv; use a hostname or IP
+		// allowlist entry instead of loosening this check for every endpoint.
+		if addr.IsPrivate() && !trustedHost {
 			return "", infraerrors.BadRequest("prompt_audit_unsafe_base_url", "审计节点地址不在允许范围")
 		}
-		allowPrivate = addr.IsLoopback()
+		allowPrivate = addr.IsLoopback() || (trustedHost && addr.IsPrivate())
 	}
 	if parsed.Scheme == "http" && !allowPrivate {
 		return "", infraerrors.BadRequest("prompt_audit_https_required", "公网审计节点必须使用 HTTPS")
@@ -119,9 +132,12 @@ func NewSecureHTTPClient(endpoint ActiveEndpoint) (*http.Client, error) {
 	}
 	parsed, _ := url.Parse(normalized)
 	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	trustedHost := isAdminTrustedHost(host)
 	allowPrivate := isExplicitPrivateHost(host)
+	allowResolvedPrivate := trustedHost
 	if addr, parseErr := netip.ParseAddr(host); parseErr == nil {
 		allowPrivate = addr.IsLoopback()
+		allowResolvedPrivate = trustedHost && addr.IsPrivate()
 	}
 	resolver := netResolver{resolver: net.DefaultResolver}
 	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
@@ -138,7 +154,7 @@ func NewSecureHTTPClient(endpoint ActiveEndpoint) (*http.Client, error) {
 		ExpectContinueTimeout: time.Second,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 	}
-	transport.DialContext = secureDialContext(dialer, resolver, allowPrivate)
+	transport.DialContext = secureDialContext(dialer, resolver, allowPrivate, allowResolvedPrivate)
 	timeout := time.Duration(endpoint.TimeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = DefaultTimeoutMS * time.Millisecond
@@ -152,7 +168,15 @@ func NewSecureHTTPClient(endpoint ActiveEndpoint) (*http.Client, error) {
 	}, nil
 }
 
-func secureDialContext(dialer *net.Dialer, resolver DNSResolver, allowPrivate bool) func(context.Context, string, string) (net.Conn, error) {
+// secureDialContext gates outbound Guard dials by resolved address class.
+// allowPrivate is the pre-existing "localhost family" trust: it only ever
+// permits loopback-resolved addresses, guarding against a hosts/DNS mapping
+// that resolves "localhost" to an RFC1918 address. allowResolvedPrivate is
+// the new, narrower admin-allowlist trust (see adminTrustedHostsEnv): it
+// permits private and loopback resolved addresses for that one named
+// destination, but never bypasses isBlockedAddress's categorical blocks
+// (cloud metadata, multicast, link-local, documentation/reserved ranges).
+func secureDialContext(dialer *net.Dialer, resolver DNSResolver, allowPrivate bool, allowResolvedPrivate bool) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
@@ -168,16 +192,22 @@ func secureDialContext(dialer *net.Dialer, resolver DNSResolver, allowPrivate bo
 				lastErr = fmt.Errorf("prompt guard resolved address blocked")
 				continue
 			}
-			if allowPrivate {
+			switch {
+			case allowPrivate:
 				// localhost / *.localhost may only resolve to loopback. A hosts or
 				// DNS mapping from localhost to RFC1918 must not become an SSRF pivot.
 				if !addr.IsLoopback() {
 					lastErr = fmt.Errorf("prompt guard resolved address blocked")
 					continue
 				}
-			} else if addr.IsPrivate() || addr.IsLoopback() {
-				lastErr = fmt.Errorf("prompt guard resolved address blocked")
-				continue
+			case allowResolvedPrivate:
+				// Admin explicitly named this destination as trusted; private and
+				// loopback resolved addresses are both acceptable for it.
+			default:
+				if addr.IsPrivate() || addr.IsLoopback() {
+					lastErr = fmt.Errorf("prompt guard resolved address blocked")
+					continue
+				}
 			}
 			if !addr.IsGlobalUnicast() && !addr.IsLoopback() {
 				lastErr = fmt.Errorf("prompt guard resolved address blocked")
@@ -194,6 +224,47 @@ func secureDialContext(dialer *net.Dialer, resolver DNSResolver, allowPrivate bo
 		}
 		return nil, lastErr
 	}
+}
+
+// adminTrustedHosts parses adminTrustedHostsEnv into a lookup set, normalizing
+// IP literals to their canonical netip.Addr string form and hostnames to
+// lowercase with any trailing dot trimmed (matching the normalization already
+// applied to the host before these helpers are consulted).
+func adminTrustedHosts() map[string]struct{} {
+	raw := strings.TrimSpace(os.Getenv(adminTrustedHostsEnv))
+	if raw == "" {
+		return nil
+	}
+	set := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		entry := strings.ToLower(strings.TrimSpace(part))
+		if entry == "" {
+			continue
+		}
+		if addr, err := netip.ParseAddr(entry); err == nil {
+			set[addr.String()] = struct{}{}
+			continue
+		}
+		set[strings.TrimSuffix(entry, ".")] = struct{}{}
+	}
+	return set
+}
+
+// isAdminTrustedHost reports whether host (already lowercased/dot-trimmed by
+// the caller) was explicitly named by an administrator via adminTrustedHostsEnv.
+func isAdminTrustedHost(host string) bool {
+	trusted := adminTrustedHosts()
+	if len(trusted) == 0 {
+		return false
+	}
+	if _, ok := trusted[host]; ok {
+		return true
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		_, ok := trusted[addr.String()]
+		return ok
+	}
+	return false
 }
 
 func isExplicitPrivateHost(host string) bool {
