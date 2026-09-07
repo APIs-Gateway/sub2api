@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -691,4 +692,193 @@ func TestSchedulerCacheWriteAccountsReturnsErrorWhenMidBatchFlushFails(t *testin
 	cacheable, err := cache.writeAccounts(ctx, accounts)
 	require.Error(t, err, "a pipeline flush failure at the writeChunkSize boundary must abort the batch")
 	require.Nil(t, cacheable)
+}
+
+// TestSchedulerCacheSnapshotAccountIDReusePreservesPayloadAndMembers covers the core
+// contract behind SetSnapshotAndReturnAccountIDs/SetSnapshotByAccountIDs: the first,
+// full publish returns the actual (post-filtering) encoded account IDs in the order
+// writeAccounts accepted them, including duplicates; a second bucket that republishes
+// by those IDs alone must not rewrite the full account/metadata payload, and must still
+// end up with the exact same ordered snapshot membership as a full publish would have
+// produced.
+func TestSchedulerCacheSnapshotAccountIDReusePreservesPayloadAndMembers(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+
+	validOne := service.Account{
+		ID:          9501,
+		Name:        "first",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Credentials: map[string]any{"model_mapping": map[string]any{"z": "last", "a": "first"}},
+		Extra:       map[string]any{"mixed_scheduling": true},
+	}
+	validTwo := service.Account{ID: 9502, Name: "second", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+	invalid := service.Account{ID: 9503, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, CreatedAt: unencodableSchedulerCacheTime}
+	// validOne repeats to prove duplicate account IDs survive the reuse round trip and
+	// that the unencodable account never shows up in the returned ID list.
+	accounts := []service.Account{validOne, invalid, validTwo, validOne}
+
+	single := service.SchedulerBucket{GroupID: 61, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	singleToken, err := cache.CaptureBucketWriteToken(ctx, single)
+	require.NoError(t, err)
+	accountIDs, err := cache.SetSnapshotAndReturnAccountIDs(ctx, single, singleToken, accounts)
+	require.NoError(t, err)
+	require.Equal(t, []int64{validOne.ID, validTwo.ID, validOne.ID}, accountIDs,
+		"must preserve order and duplicates of the accounts writeAccounts actually accepted, skipping the unencodable one")
+
+	fullBefore, err := cache.rdb.Get(ctx, schedulerAccountKey(strconv.FormatInt(validOne.ID, 10))).Bytes()
+	require.NoError(t, err)
+	metaBefore, err := cache.rdb.Get(ctx, schedulerAccountMetaKey(strconv.FormatInt(validOne.ID, 10))).Bytes()
+	require.NoError(t, err)
+
+	forced := service.SchedulerBucket{GroupID: 61, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeForced}
+	forcedToken, err := cache.CaptureBucketWriteToken(ctx, forced)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshotByAccountIDs(ctx, forced, forcedToken, accountIDs))
+
+	fullAfter, err := cache.rdb.Get(ctx, schedulerAccountKey(strconv.FormatInt(validOne.ID, 10))).Bytes()
+	require.NoError(t, err)
+	metaAfter, err := cache.rdb.Get(ctx, schedulerAccountMetaKey(strconv.FormatInt(validOne.ID, 10))).Bytes()
+	require.NoError(t, err)
+	require.Equal(t, fullBefore, fullAfter, "an ID-only publish must not rewrite the full account payload")
+	require.Equal(t, metaBefore, metaAfter, "an ID-only publish must not rewrite the scheduler metadata payload")
+
+	// Both buckets must end up with the exact same ordered membership: the duplicate
+	// validOne collapses onto its last (highest) score via ZADD, same as a full publish.
+	for _, bucket := range []service.SchedulerBucket{single, forced} {
+		version, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerActivePrefix, bucket)).Result()
+		require.NoError(t, err)
+		members, err := cache.rdb.ZRange(ctx, schedulerSnapshotKey(bucket, version), 0, -1).Result()
+		require.NoError(t, err)
+		require.Equal(t, []string{strconv.FormatInt(validTwo.ID, 10), strconv.FormatInt(validOne.ID, 10)}, members, bucket.String())
+	}
+
+	missing, err := cache.GetAccount(ctx, invalid.ID)
+	require.NoError(t, err)
+	require.Nil(t, missing, "the unencodable account must never be cached, reused or not")
+}
+
+// TestSchedulerCacheSnapshotAccountIDReuseKeepsEmptySnapshotSemantics covers the case
+// where every account in the batch is unencodable: both the full publish and the
+// ID-only republish must keep the existing "ready but no data" semantics (bucket marked
+// ready, GetSnapshot reports a miss) instead of erroring out or leaving ready unset.
+func TestSchedulerCacheSnapshotAccountIDReuseKeepsEmptySnapshotSemantics(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	accounts := []service.Account{{ID: 9601, Platform: service.PlatformOpenAI, CreatedAt: unencodableSchedulerCacheTime}}
+
+	single := service.SchedulerBucket{GroupID: 62, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	singleToken, err := cache.CaptureBucketWriteToken(ctx, single)
+	require.NoError(t, err)
+	accountIDs, err := cache.SetSnapshotAndReturnAccountIDs(ctx, single, singleToken, accounts)
+	require.NoError(t, err)
+	require.Empty(t, accountIDs)
+
+	forced := service.SchedulerBucket{GroupID: 62, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeForced}
+	forcedToken, err := cache.CaptureBucketWriteToken(ctx, forced)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshotByAccountIDs(ctx, forced, forcedToken, accountIDs))
+
+	for _, bucket := range []service.SchedulerBucket{single, forced} {
+		ready, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerReadyPrefix, bucket)).Result()
+		require.NoError(t, err)
+		require.Equal(t, "1", ready, bucket.String())
+		snapshot, hit, err := cache.GetSnapshot(ctx, bucket)
+		require.NoError(t, err)
+		require.False(t, hit, bucket.String())
+		require.Nil(t, snapshot)
+	}
+}
+
+// TestSchedulerCacheSetSnapshotByAccountIDsKeepsFencing covers that SetSnapshotByAccountIDs
+// enforces the exact same fencing contract as SetSnapshot: an invalid/mismatched token is
+// rejected before touching Redis, and a retired bucket's captured token is rejected too.
+func TestSchedulerCacheSetSnapshotByAccountIDsKeepsFencing(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 63, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeForced}
+
+	err := cache.SetSnapshotByAccountIDs(ctx, bucket, service.SchedulerBucketWriteToken{}, []int64{9701})
+	require.ErrorIs(t, err, service.ErrSchedulerBucketWriteFenced)
+	_, err = cache.rdb.Get(ctx, schedulerBucketKey(schedulerVersionPrefix, bucket)).Result()
+	require.ErrorIs(t, err, redis.Nil, "a fenced call must never touch Redis")
+
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.RetireBucket(ctx, bucket))
+	err = cache.SetSnapshotByAccountIDs(ctx, bucket, token, []int64{9701})
+	require.ErrorIs(t, err, service.ErrSchedulerBucketRetired)
+}
+
+// TestSchedulerCacheSetSnapshotAndReturnAccountIDsKeepsFencing mirrors the fencing
+// coverage above for the other new method: SetSnapshotAndReturnAccountIDs must reject an
+// invalid token before doing any work and must surface retirement the same way SetSnapshot
+// does.
+func TestSchedulerCacheSetSnapshotAndReturnAccountIDsKeepsFencing(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 64, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	account := service.Account{ID: 9801, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+
+	ids, err := cache.SetSnapshotAndReturnAccountIDs(ctx, bucket, service.SchedulerBucketWriteToken{}, []service.Account{account})
+	require.ErrorIs(t, err, service.ErrSchedulerBucketWriteFenced)
+	require.Nil(t, ids)
+	_, err = cache.rdb.Get(ctx, schedulerBucketKey(schedulerVersionPrefix, bucket)).Result()
+	require.ErrorIs(t, err, redis.Nil, "a fenced call must never touch Redis")
+
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.RetireBucket(ctx, bucket))
+	ids, err = cache.SetSnapshotAndReturnAccountIDs(ctx, bucket, token, []service.Account{account})
+	require.ErrorIs(t, err, service.ErrSchedulerBucketRetired)
+	require.Nil(t, ids)
+}
+
+// TestSchedulerCacheSetSnapshotByAccountIDsDoesNotResurrectDeletedAccount covers the
+// safety requirement called out in issue #646: once the account behind a reused ID is
+// deleted, an ID-only publish must not bring back a stale sched:acc:*/sched:meta:* entry,
+// and a bucket relying on that stale ID must safely fall back to a cache miss instead of
+// serving an incomplete snapshot.
+func TestSchedulerCacheSetSnapshotByAccountIDsDoesNotResurrectDeletedAccount(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	account := service.Account{ID: 9901, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth}
+	single := service.SchedulerBucket{GroupID: 65, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	singleToken, err := cache.CaptureBucketWriteToken(ctx, single)
+	require.NoError(t, err)
+	accountIDs, err := cache.SetSnapshotAndReturnAccountIDs(ctx, single, singleToken, []service.Account{account})
+	require.NoError(t, err)
+	require.Equal(t, []int64{account.ID}, accountIDs)
+	require.NoError(t, cache.DeleteAccount(ctx, account.ID))
+
+	forced := service.SchedulerBucket{GroupID: 65, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeForced}
+	forcedToken, err := cache.CaptureBucketWriteToken(ctx, forced)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshotByAccountIDs(ctx, forced, forcedToken, accountIDs))
+
+	full, err := cache.GetAccount(ctx, account.ID)
+	require.NoError(t, err)
+	require.Nil(t, full, "an ID-only publish must not resurrect a deleted account's full payload")
+
+	snapshot, hit, err := cache.GetSnapshot(ctx, forced)
+	require.NoError(t, err)
+	require.False(t, hit, "a snapshot member whose metadata is missing must be treated as a safe cache miss")
+	require.Nil(t, snapshot)
+}
+
+// TestSchedulerSnapshotMembersMatchesAccountOrderAndDedup unit-tests the pure ID->ZSET
+// member conversion in isolation: score follows slice index and a repeated ID keeps only
+// the member's last (highest) score, matching the behavior of building members directly
+// from an account slice.
+func TestSchedulerSnapshotMembersMatchesAccountOrderAndDedup(t *testing.T) {
+	require.Nil(t, schedulerSnapshotMembers(nil))
+	require.Nil(t, schedulerSnapshotMembers([]int64{}))
+
+	members := schedulerSnapshotMembers([]int64{701, 702, 701})
+	require.Equal(t, []redis.Z{
+		{Score: 0, Member: "701"},
+		{Score: 1, Member: "702"},
+		{Score: 2, Member: "701"},
+	}, members)
 }

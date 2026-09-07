@@ -426,6 +426,47 @@ func (c *schedulerCache) SetSnapshot(ctx context.Context, bucket service.Schedul
 	return c.activateSnapshotVersion(ctx, bucket, token, version)
 }
 
+// SetSnapshotAndReturnAccountIDs 与 SetSnapshot 的 fencing、版本分配与激活语义完全一致，
+// 额外返回 writeAccounts 实际成功编码写入的有序账号 ID。调用方可以在同一次重建批次内，
+// 把这份 ID 列表交给共享同一份账号数据的后续桶通过 SetSnapshotByAccountIDs 发布，从而
+// 避免对相同账号重复做一次完整 JSON 编码与 Redis 全量键写入。
+func (c *schedulerCache) SetSnapshotAndReturnAccountIDs(ctx context.Context, bucket service.SchedulerBucket, token service.SchedulerBucketWriteToken, accounts []service.Account) ([]int64, error) {
+	if !token.ValidFor(bucket) {
+		return nil, fmt.Errorf("%w: bucket=%s", service.ErrSchedulerBucketWriteFenced, bucket.String())
+	}
+	version, err := c.allocateSnapshotVersion(ctx, bucket, token)
+	if err != nil {
+		return nil, err
+	}
+	accountIDs, err := c.writeSnapshotVersionAndReturnAccountIDs(ctx, bucket, version, accounts)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.activateSnapshotVersion(ctx, bucket, token, version); err != nil {
+		return nil, err
+	}
+	return accountIDs, nil
+}
+
+// SetSnapshotByAccountIDs 复用 SetSnapshotAndReturnAccountIDs 返回的账号 ID 发布快照成员，
+// 不重新编码、也不重写 sched:acc:*/sched:meta:* 账号键。调用方必须保证这些 ID 来自同一批次
+// 里已经成功完整发布过的账号数据；本方法自身仍然独立分配版本并执行 fencing 与激活校验，
+// 因此每个桶各自的 epoch/retired/active 语义与 SetSnapshot 完全一致——只是跳过了对已经
+// 写入过的完整账号 payload 的重复编码与写入。
+func (c *schedulerCache) SetSnapshotByAccountIDs(ctx context.Context, bucket service.SchedulerBucket, token service.SchedulerBucketWriteToken, accountIDs []int64) error {
+	if !token.ValidFor(bucket) {
+		return fmt.Errorf("%w: bucket=%s", service.ErrSchedulerBucketWriteFenced, bucket.String())
+	}
+	version, err := c.allocateSnapshotVersion(ctx, bucket, token)
+	if err != nil {
+		return err
+	}
+	if err := c.writeSnapshotAccountIDs(ctx, bucket, version, accountIDs); err != nil {
+		return err
+	}
+	return c.activateSnapshotVersion(ctx, bucket, token, version)
+}
+
 func (c *schedulerCache) allocateSnapshotVersion(ctx context.Context, bucket service.SchedulerBucket, token service.SchedulerBucketWriteToken) (string, error) {
 	result, err := allocateSnapshotVersionScript.Run(ctx, c.rdb, []string{
 		schedulerBucketKey(schedulerEpochPrefix, bucket),
@@ -442,37 +483,81 @@ func (c *schedulerCache) allocateSnapshotVersion(ctx context.Context, bucket ser
 }
 
 func (c *schedulerCache) writeSnapshotVersion(ctx context.Context, bucket service.SchedulerBucket, version string, accounts []service.Account) error {
-	snapshotKey := schedulerSnapshotKey(bucket, version)
 	// cacheableAccounts 只包含成功编码写入的账号；跳过的账号不能出现在快照 ZSET 里，
 	// 否则调度器会读到指向不存在的 sched:acc:<id> 的悬空成员。
 	cacheableAccounts, err := c.writeAccounts(ctx, accounts)
 	if err != nil {
 		return err
 	}
+	return c.writeSnapshotAccounts(ctx, bucket, version, cacheableAccounts)
+}
 
-	if len(cacheableAccounts) > 0 {
-		// 使用序号作为 score，保持数据库返回的排序语义。
-		members := make([]redis.Z, 0, len(cacheableAccounts))
-		for idx, account := range cacheableAccounts {
-			members = append(members, redis.Z{
-				Score:  float64(idx),
-				Member: strconv.FormatInt(account.ID, 10),
-			})
-		}
-		pipe := c.rdb.Pipeline()
-		for start := 0; start < len(members); start += c.writeChunkSize {
-			end := start + c.writeChunkSize
-			if end > len(members) {
-				end = len(members)
-			}
-			pipe.ZAdd(ctx, snapshotKey, members[start:end]...)
-		}
-		if _, err := pipe.Exec(ctx); err != nil {
-			return err
-		}
+// writeSnapshotVersionAndReturnAccountIDs 与 writeSnapshotVersion 等价，但只保留成功编码
+// 账号的有序 ID，避免调用方为了拿到可复用 ID 而多物化一份完整账号切片。
+func (c *schedulerCache) writeSnapshotVersionAndReturnAccountIDs(ctx context.Context, bucket service.SchedulerBucket, version string, accounts []service.Account) ([]int64, error) {
+	accountIDs, err := c.writeAccountIDs(ctx, accounts)
+	if err != nil {
+		return nil, err
 	}
+	if err := c.writeSnapshotAccountIDs(ctx, bucket, version, accountIDs); err != nil {
+		return nil, err
+	}
+	return accountIDs, nil
+}
 
-	return nil
+func (c *schedulerCache) writeSnapshotAccounts(ctx context.Context, bucket service.SchedulerBucket, version string, accounts []service.Account) error {
+	if len(accounts) == 0 {
+		return nil
+	}
+	// 使用序号作为 score，保持数据库返回的排序语义。
+	members := make([]redis.Z, 0, len(accounts))
+	for idx, account := range accounts {
+		members = append(members, redis.Z{
+			Score:  float64(idx),
+			Member: strconv.FormatInt(account.ID, 10),
+		})
+	}
+	return c.writeSnapshotMembers(ctx, bucket, version, members)
+}
+
+// writeSnapshotAccountIDs 与 writeSnapshotAccounts 等价，直接从已知的有序账号 ID 构造
+// ZADD 成员，跳过账号切片到 ID 的重复转换。
+func (c *schedulerCache) writeSnapshotAccountIDs(ctx context.Context, bucket service.SchedulerBucket, version string, accountIDs []int64) error {
+	return c.writeSnapshotMembers(ctx, bucket, version, schedulerSnapshotMembers(accountIDs))
+}
+
+// schedulerSnapshotMembers 把有序账号 ID 转换成 ZADD 成员列表，序号作为 score，
+// 与直接从账号切片构造成员时的排序语义保持一致：重复 ID 仍交由 Redis ZADD
+// 按最后一次写入的 score 覆盖。
+func schedulerSnapshotMembers(accountIDs []int64) []redis.Z {
+	if len(accountIDs) == 0 {
+		return nil
+	}
+	members := make([]redis.Z, 0, len(accountIDs))
+	for idx, accountID := range accountIDs {
+		members = append(members, redis.Z{
+			Score:  float64(idx),
+			Member: strconv.FormatInt(accountID, 10),
+		})
+	}
+	return members
+}
+
+func (c *schedulerCache) writeSnapshotMembers(ctx context.Context, bucket service.SchedulerBucket, version string, members []redis.Z) error {
+	if len(members) == 0 {
+		return nil
+	}
+	snapshotKey := schedulerSnapshotKey(bucket, version)
+	pipe := c.rdb.Pipeline()
+	for start := 0; start < len(members); start += c.writeChunkSize {
+		end := start + c.writeChunkSize
+		if end > len(members) {
+			end = len(members)
+		}
+		pipe.ZAdd(ctx, snapshotKey, members[start:end]...)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (c *schedulerCache) activateSnapshotVersion(ctx context.Context, bucket service.SchedulerBucket, token service.SchedulerBucketWriteToken, version string) error {
@@ -726,12 +811,34 @@ func decodeCachedAccount(val any) (*service.Account, error) {
 // ID 的操作（例如 writeSnapshotVersion 的 ZADD 成员列表），避免留下指向不存在缓存条目的
 // 悬空引用。
 func (c *schedulerCache) writeAccounts(ctx context.Context, accounts []service.Account) ([]service.Account, error) {
+	cacheableAccounts, _, err := c.writeAccountPayloads(ctx, accounts, false)
+	return cacheableAccounts, err
+}
+
+// writeAccountIDs 与 writeAccounts 行为一致（同样跳过不可编码账号、同样分片写入），
+// 但只收集成功编码账号的有序 ID，供批次内的 ID 复用发布使用，避免多保留一份完整
+// 账号切片。
+func (c *schedulerCache) writeAccountIDs(ctx context.Context, accounts []service.Account) ([]int64, error) {
+	_, accountIDs, err := c.writeAccountPayloads(ctx, accounts, true)
+	return accountIDs, err
+}
+
+// writeAccountPayloads 是 writeAccounts 与 writeAccountIDs 的共同实现。collectIDs 为
+// false 时保持原有行为收集完整账号子集；为 true 时只收集有序 ID，跳过完整账号切片
+// 的物化。
+func (c *schedulerCache) writeAccountPayloads(ctx context.Context, accounts []service.Account, collectIDs bool) ([]service.Account, []int64, error) {
 	if len(accounts) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	pipe := c.rdb.Pipeline()
-	cacheableAccounts := make([]service.Account, 0, len(accounts))
+	var cacheableAccounts []service.Account
+	var accountIDs []int64
+	if collectIDs {
+		accountIDs = make([]int64, 0, len(accounts))
+	} else {
+		cacheableAccounts = make([]service.Account, 0, len(accounts))
+	}
 	pending := 0
 	flush := func() error {
 		if pending == 0 {
@@ -760,20 +867,25 @@ func (c *schedulerCache) writeAccounts(ctx context.Context, accounts []service.A
 		id := strconv.FormatInt(account.ID, 10)
 		pipe.Set(ctx, schedulerAccountKey(id), fullPayload, 0)
 		pipe.Set(ctx, schedulerAccountMetaKey(id), metaPayload, 0)
-		cacheableAccounts = append(cacheableAccounts, account)
+		// ID 复用路径只保留有序 ID，避免先物化完整账号切片再做第二次扫描。
+		if collectIDs {
+			accountIDs = append(accountIDs, account.ID)
+		} else {
+			cacheableAccounts = append(cacheableAccounts, account)
+		}
 		// Preserve a newer hot-field update during a lagging account or snapshot write.
 		pending++
 		if pending >= c.writeChunkSize {
 			if err := flush(); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
 
 	if err := flush(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return cacheableAccounts, nil
+	return cacheableAccounts, accountIDs, nil
 }
 
 func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any, error) {

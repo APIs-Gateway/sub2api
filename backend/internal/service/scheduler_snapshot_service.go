@@ -820,10 +820,76 @@ func (s *SchedulerSnapshotService) rebuildBucketWithToken(ctx context.Context, t
 	return s.rebuildBucketWithTokenPolicy(ctx, task, reason, false)
 }
 
+// schedulerSnapshotAccountIDWriter is an optional SchedulerCache capability. When the
+// configured cache implements it, rebuildPreparedBucketTasks publishes the full account
+// payload once per unique account-load key within a single batch, then lets every other
+// bucket that resolves to the exact same account list republish by account ID only,
+// instead of re-marshalling and rewriting identical account JSON into Redis for every
+// bucket. Caches that do not implement it are unaffected: every bucket keeps going
+// through the unconditional SetSnapshot path.
+type schedulerSnapshotAccountIDWriter interface {
+	SetSnapshotAndReturnAccountIDs(ctx context.Context, bucket SchedulerBucket, token SchedulerBucketWriteToken, accounts []Account) ([]int64, error)
+	SetSnapshotByAccountIDs(ctx context.Context, bucket SchedulerBucket, token SchedulerBucketWriteToken, accountIDs []int64) error
+}
+
+// schedulerAccountLoadKey identifies the buckets that loadAccountsFromDB resolves to the
+// exact same account list: same group, same platform, same mixed-scheduling flag.
+// SchedulerModeSingle and SchedulerModeForced buckets for one group+platform always
+// share a key because loadAccountsFromDB never looks at bucket.Mode itself, only at the
+// derived "useMixed" flag; SchedulerModeMixed buckets always get their own key (there is
+// only ever one per group+platform), so they never become reuse candidates.
+type schedulerAccountLoadKey struct {
+	groupID  int64
+	platform string
+	mixed    bool
+}
+
+func schedulerAccountLoadKeyForBucket(bucket SchedulerBucket) schedulerAccountLoadKey {
+	return schedulerAccountLoadKey{groupID: bucket.GroupID, platform: bucket.Platform, mixed: bucket.Mode == SchedulerModeMixed}
+}
+
+// schedulerBucketRebuildBatch tracks account-ID reuse across the buckets processed by one
+// rebuildPreparedBucketTasks call. It is created fresh for every call and never stored on
+// the service, so reuse never leaks across unrelated rebuild batches.
+type schedulerBucketRebuildBatch struct {
+	writer     schedulerSnapshotAccountIDWriter
+	remaining  map[schedulerAccountLoadKey]int
+	accountIDs map[schedulerAccountLoadKey][]int64
+}
+
+// newSchedulerBucketRebuildBatch returns nil when cache does not support account-ID
+// reuse, so callers can treat a nil batch and "no reuse available" identically.
+func newSchedulerBucketRebuildBatch(cache SchedulerCache, tasks []schedulerBucketWriteTask) *schedulerBucketRebuildBatch {
+	writer, ok := cache.(schedulerSnapshotAccountIDWriter)
+	if !ok {
+		return nil
+	}
+	batch := &schedulerBucketRebuildBatch{
+		writer:     writer,
+		remaining:  make(map[schedulerAccountLoadKey]int, len(tasks)),
+		accountIDs: make(map[schedulerAccountLoadKey][]int64),
+	}
+	for _, task := range tasks {
+		batch.remaining[schedulerAccountLoadKeyForBucket(task.bucket)]++
+	}
+	return batch
+}
+
+// consume marks bucket's turn in the batch as taken. hasMore reports whether any other
+// task later in this same batch still shares bucket's account-load key, which is what
+// decides whether it is worth publishing through the ID-returning writer method instead
+// of the plain one.
+func (b *schedulerBucketRebuildBatch) consume(bucket SchedulerBucket) (key schedulerAccountLoadKey, hasMore bool) {
+	key = schedulerAccountLoadKeyForBucket(bucket)
+	b.remaining[key]--
+	return key, b.remaining[key] > 0
+}
+
 func (s *SchedulerSnapshotService) rebuildPreparedBucketTasks(ctx context.Context, tasks []schedulerBucketWriteTask, reason string, strict bool) error {
 	var firstErr error
+	batch := newSchedulerBucketRebuildBatch(s.cache, tasks)
 	for _, task := range tasks {
-		if err := s.rebuildBucketWithTokenPolicy(ctx, task, reason, strict); err != nil && firstErr == nil {
+		if err := s.rebuildBucketWithTokenPolicyAndBatch(ctx, task, reason, strict, batch); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -831,10 +897,31 @@ func (s *SchedulerSnapshotService) rebuildPreparedBucketTasks(ctx context.Contex
 }
 
 func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicy(ctx context.Context, task schedulerBucketWriteTask, reason string, strict bool) error {
+	return s.rebuildBucketWithTokenPolicyAndBatch(ctx, task, reason, strict, nil)
+}
+
+// rebuildBucketWithTokenPolicyAndBatch rebuilds one bucket. When batch is non-nil and the
+// configured cache supports it, a bucket that shares its account-load key with an already
+// successfully published bucket earlier in the same batch republishes by account ID only
+// (SetSnapshotByAccountIDs). A bucket that is the first in the batch to see its key, and
+// that still has at least one more task sharing that key, publishes the full payload
+// through SetSnapshotAndReturnAccountIDs and records the returned IDs for later reuse. Any
+// other bucket (batch is nil, cache lacks the capability, or no future task shares its
+// key) keeps going through the original SetSnapshot path. A failed publish never marks a
+// key as reusable, so a later bucket sharing that key always retries its own full publish
+// instead of silently reusing a partial or non-existent result.
+func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicyAndBatch(ctx context.Context, task schedulerBucketWriteTask, reason string, strict bool, batch *schedulerBucketRebuildBatch) error {
 	if s.cache == nil {
 		return ErrSchedulerCacheNotReady
 	}
 	bucket := task.bucket
+
+	var key schedulerAccountLoadKey
+	var hasMore bool
+	if batch != nil {
+		key, hasMore = batch.consume(bucket)
+	}
+
 	ok, err := s.cache.TryLockBucket(ctx, bucket, 30*time.Second)
 	if err != nil {
 		return err
@@ -852,24 +939,52 @@ func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicy(ctx context.Cont
 	rebuildCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	if batch != nil {
+		if reuseIDs, exists := batch.accountIDs[key]; exists {
+			if err := batch.writer.SetSnapshotByAccountIDs(rebuildCtx, bucket, task.token, reuseIDs); err != nil {
+				return s.handleRebuildWriteErr(err, bucket, reason, strict)
+			}
+			slog.Debug("[Scheduler] rebuild ok", "bucket", bucket.String(), "reason", reason, "size", len(reuseIDs), "reused", true)
+			return nil
+		}
+	}
+
 	accounts, err := s.loadAccountsFromDB(rebuildCtx, bucket, bucket.Mode == SchedulerModeMixed)
 	if err != nil {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild failed: bucket=%s reason=%s err=%v", bucket.String(), reason, err)
 		return err
 	}
-	if err := s.cache.SetSnapshot(rebuildCtx, bucket, task.token, accounts); err != nil {
-		if errors.Is(err, ErrSchedulerBucketRetired) || errors.Is(err, ErrSchedulerBucketWriteFenced) {
-			slog.Debug("[Scheduler] rebuild fenced", "bucket", bucket.String(), "reason", reason)
-			if strict {
-				return err
-			}
-			return nil
+
+	if batch != nil && hasMore {
+		accountIDs, err := batch.writer.SetSnapshotAndReturnAccountIDs(rebuildCtx, bucket, task.token, accounts)
+		if err != nil {
+			return s.handleRebuildWriteErr(err, bucket, reason, strict)
 		}
-		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild cache failed: bucket=%s reason=%s err=%v", bucket.String(), reason, err)
-		return err
+		batch.accountIDs[key] = accountIDs
+		slog.Debug("[Scheduler] rebuild ok", "bucket", bucket.String(), "reason", reason, "size", len(accounts))
+		return nil
+	}
+
+	if err := s.cache.SetSnapshot(rebuildCtx, bucket, task.token, accounts); err != nil {
+		return s.handleRebuildWriteErr(err, bucket, reason, strict)
 	}
 	slog.Debug("[Scheduler] rebuild ok", "bucket", bucket.String(), "reason", reason, "size", len(accounts))
 	return nil
+}
+
+// handleRebuildWriteErr applies the shared fenced-vs-fatal policy for a bucket snapshot
+// write failure, regardless of whether SetSnapshot, SetSnapshotAndReturnAccountIDs or
+// SetSnapshotByAccountIDs produced it.
+func (s *SchedulerSnapshotService) handleRebuildWriteErr(err error, bucket SchedulerBucket, reason string, strict bool) error {
+	if errors.Is(err, ErrSchedulerBucketRetired) || errors.Is(err, ErrSchedulerBucketWriteFenced) {
+		slog.Debug("[Scheduler] rebuild fenced", "bucket", bucket.String(), "reason", reason)
+		if strict {
+			return err
+		}
+		return nil
+	}
+	logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild cache failed: bucket=%s reason=%s err=%v", bucket.String(), reason, err)
+	return err
 }
 
 func (s *SchedulerSnapshotService) triggerFullRebuild(reason string) error {
