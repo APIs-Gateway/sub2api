@@ -2755,6 +2755,27 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 
+	// API-key 透传路径下，Codex CLI 等客户端可能回放此前保存的 item id（如
+	// item_<uuid>）。上游按 item 类型校验 id 前缀（message 需 "msg"、reasoning
+	// 需 "rs"、function_call 等 tool-call 需 "fc"），不匹配会被 400 拒绝；同时
+	// 保留不属于该前缀规则的 id 也会把内部 item id 结构泄漏给上游/客户端。
+	// 因此在转发前统一脱敏：不符合前缀规则的 id 直接删除（而不是改写），避免
+	// 伪造出一个指向错误上游对象的 id。此逻辑仅作用于 API-key 账号，独立于
+	// OAuth 账号在 filterCodexInputWithOptions 中的 reasoning/id 处理。
+	if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
+		sanitizedBody, sanitizedChanged, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
+		if sanitizeErr != nil {
+			return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs: %w", sanitizeErr)
+		}
+		if sanitizedChanged {
+			body = sanitizedBody
+			originalBody = sanitizedBody
+			requestView = newOpenAIRequestView(sanitizedBody)
+			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
+			originalModel = reqModel
+		}
+	}
+
 	compatMessagesBridge := isOpenAICompatMessagesBridgeBody(body)
 	setOpenAICompatMessagesBridgeContext(c, compatMessagesBridge)
 
