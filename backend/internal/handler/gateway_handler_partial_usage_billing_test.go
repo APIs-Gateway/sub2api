@@ -1,0 +1,396 @@
+//go:build unit
+
+package handler
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	middleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+// 本文件覆盖 issue #764：GatewayHandler.Messages() 在 Forward 中途出错但已经
+// 探测到部分 usage 时，必须照常提交计费记录；同时 failover 重试成功后不得对
+// 已失败的前序尝试重复计费。
+
+// partialUsageBillingUsageLogRepo 记录每次 usageLogRepo.Create 调用，用于统计
+// 计费记录被提交的次数（验证不重复计费）以及校验提交内容。
+type partialUsageBillingUsageLogRepo struct {
+	service.UsageLogRepository
+	created chan *service.UsageLog
+}
+
+func (s *partialUsageBillingUsageLogRepo) Create(ctx context.Context, log *service.UsageLog) (bool, error) {
+	if s.created != nil {
+		s.created <- log
+	}
+	return true, nil
+}
+
+// partialUsageStreamBody 模拟一个流式响应体：先吐出一段已携带 usage 的 SSE
+// 事件，随后在下一次 Read 时返回错误（模拟连接中断/newapi 类上游缺失 terminal
+// 事件）。
+type partialUsageStreamBody struct {
+	payload []byte
+	sent    bool
+	err     error
+}
+
+func (r *partialUsageStreamBody) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		n := copy(p, r.payload)
+		return n, nil
+	}
+	if r.err != nil {
+		return 0, r.err
+	}
+	return 0, io.EOF
+}
+
+func (r *partialUsageStreamBody) Close() error { return nil }
+
+type partialUsageBillingUpstream struct {
+	resp *http.Response
+}
+
+func (u *partialUsageBillingUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	return u.resp, nil
+}
+
+func (u *partialUsageBillingUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, "", 0, 0)
+}
+
+func newPartialUsageBillingGatewayHandler(t *testing.T, group *service.Group, accounts []*service.Account, upstream service.HTTPUpstream, cache service.GatewayCache, usageLogRepo service.UsageLogRepository) (*GatewayHandler, func()) {
+	t.Helper()
+
+	schedulerCache := &fakeSchedulerCache{accounts: accounts}
+	schedulerSnapshot := service.NewSchedulerSnapshotService(schedulerCache, nil, nil, nil, nil)
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	accountRepo := &forceCacheBillingAccountRepo{}
+
+	gwSvc := service.NewGatewayService(
+		accountRepo,
+		&fakeGroupRepo{group: group},
+		usageLogRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		cache,
+		cfg,
+		schedulerSnapshot,
+		nil,
+		// billingService：RecordUsage 的计费路径（calculateTokenCost 等）会无条件
+		// 调用 billingService.CalculateCost，传 nil 会在 GetModelPricing 里 panic
+		// 掉整个异步 usage 记录任务，且被 submitUsageRecordTask 的 recover 静默吞掉——
+		// 现象就是本文件两个用例里 usageLogRepo.Create 永远等不到调用。生产环境
+		// wire_gen.go 里 GatewayService 总是注入真实 BillingService，这里补上同样的
+		// 依赖，让测试路径与生产路径一致。
+		service.NewBillingService(cfg, nil),
+		service.NewRateLimitService(accountRepo, nil, cfg, nil, nil),
+		nil,
+		nil,
+		upstream,
+		&service.DeferredService{},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
+	h := &GatewayHandler{
+		gatewayService:           gwSvc,
+		billingCacheService:      billingCacheSvc,
+		concurrencyHelper:        NewConcurrencyHelper(service.NewConcurrencyService(&fakeConcurrencyCache{}), SSEPingFormatClaude, 0),
+		maxAccountSwitches:       1,
+		maxAccountSwitchesGemini: 1,
+		cfg:                      cfg,
+	}
+
+	return h, func() { billingCacheSvc.Stop() }
+}
+
+// TestGatewayHandlerMessages_StreamReadErrorRecordsPartialUsage 验证：流式转发
+// 中途出错（已写出 message_start 后连接中断，非 failover 类错误）时，handler
+// 必须照常提交已探测到的 usage，而不是随错误一起整体丢弃（issue #764）。
+func TestGatewayHandlerMessages_StreamReadErrorRecordsPartialUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(9151)
+	accountID := int64(9251)
+	group := &service.Group{
+		ID:       groupID,
+		Hydrated: true,
+		Platform: service.PlatformAnthropic,
+		Status:   service.StatusActive,
+	}
+	account := &service.Account{
+		ID:       accountID,
+		Name:     "anthropic-partial-usage",
+		Platform: service.PlatformAnthropic,
+		Type:     service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "test-key",
+		},
+		Extra:       map[string]any{"anthropic_passthrough": true},
+		Concurrency: 1,
+		Priority:    1,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		AccountGroups: []service.AccountGroup{{
+			AccountID: accountID,
+			GroupID:   groupID,
+		}},
+	}
+
+	upstream := &partialUsageBillingUpstream{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid-handler-partial"}},
+			Body: &partialUsageStreamBody{
+				payload: []byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":13,\"output_tokens\":2}}}\n\n"),
+				err:     io.ErrUnexpectedEOF,
+			},
+		},
+	}
+	usageRepo := &partialUsageBillingUsageLogRepo{created: make(chan *service.UsageLog, 1)}
+	cache := &forceCacheBillingGatewayCache{accountID: accountID}
+	h, cleanup := newPartialUsageBillingGatewayHandler(t, group, []*service.Account{account}, upstream, cache, usageRepo)
+	defer cleanup()
+
+	body := []byte(`{"model":"claude-sonnet-4-5","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), ctxkey.Group, group))
+	c.Request = req
+
+	apiKey := &service.APIKey{
+		ID:      9351,
+		UserID:  9451,
+		GroupID: &groupID,
+		Status:  service.StatusActive,
+		User: &service.User{
+			ID:          9451,
+			Concurrency: 10,
+			Balance:     100,
+		},
+		Group: group,
+	}
+	c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.UserID, Concurrency: 10})
+
+	h.Messages(c)
+
+	select {
+	case usageLog := <-usageRepo.created:
+		require.NotNil(t, usageLog)
+		require.Equal(t, 13, usageLog.InputTokens)
+		// message_start 的 usage 块里即便携带 output_tokens，也不代表已经产生真实输出——
+		// 真实 Anthropic 上游此时输出尚未开始，output_tokens 只在 message_delta 里才有意义。
+		// parseSSEUsagePassthrough/parseSSEUsage 对 message_start 都只提取
+		// input/cache 相关字段、不提取 output_tokens，这里的 payload 故意在 message_start
+		// 中塞了 output_tokens 只是为了确认解析器不会误采信它；断言应为 0，不是 2。
+		require.Equal(t, 0, usageLog.OutputTokens)
+	case <-time.After(3 * time.Second):
+		t.Fatal("等待 partial usage 写入超时——流式错误路径未提交已探测到的 usage")
+	}
+}
+
+// TestGatewayHandlerMessages_StreamReadErrorWithThinkingEnabledBackfillsReasoningEffort
+// 验证：流式转发中途出错但已探测到部分 usage 时，若该次尝试未从 output_config.effort
+// 解析出 ReasoningEffort（result.ReasoningEffort==nil）且请求开启了 thinking，
+// submitForwardUsage 必须按 DefaultEffortForThinkingEnabled 对称回填 ReasoningEffort
+// （与非重试路径 gateway_handler.go:516 附近的同名逻辑保持一致）。
+func TestGatewayHandlerMessages_StreamReadErrorWithThinkingEnabledBackfillsReasoningEffort(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(9153)
+	accountID := int64(9254)
+	group := &service.Group{
+		ID:       groupID,
+		Hydrated: true,
+		Platform: service.PlatformAnthropic,
+		Status:   service.StatusActive,
+	}
+	account := &service.Account{
+		ID:       accountID,
+		Name:     "anthropic-partial-usage-thinking",
+		Platform: service.PlatformAnthropic,
+		Type:     service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "test-key",
+		},
+		Extra:       map[string]any{"anthropic_passthrough": true},
+		Concurrency: 1,
+		Priority:    1,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		AccountGroups: []service.AccountGroup{{
+			AccountID: accountID,
+			GroupID:   groupID,
+		}},
+	}
+
+	upstream := &partialUsageBillingUpstream{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid-handler-partial-thinking"}},
+			Body: &partialUsageStreamBody{
+				payload: []byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":13,\"output_tokens\":2}}}\n\n"),
+				err:     io.ErrUnexpectedEOF,
+			},
+		},
+	}
+	usageRepo := &partialUsageBillingUsageLogRepo{created: make(chan *service.UsageLog, 1)}
+	cache := &forceCacheBillingGatewayCache{accountID: accountID}
+	h, cleanup := newPartialUsageBillingGatewayHandler(t, group, []*service.Account{account}, upstream, cache, usageRepo)
+	defer cleanup()
+
+	// glm-4.6 落在 ResolveThinkingProtocol 的 passback-required 白名单内（且不是
+	// DeepSeek），DefaultEffortForThinkingEnabled 对其返回非 nil "high"，用它断言
+	// 回填分支确实生效，而不只是走到条件判断。
+	body := []byte(`{"model":"glm-4.6","stream":true,"max_tokens":64,"thinking":{"type":"enabled"},"messages":[{"role":"user","content":"hello"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), ctxkey.Group, group))
+	c.Request = req
+
+	apiKey := &service.APIKey{
+		ID:      9353,
+		UserID:  9453,
+		GroupID: &groupID,
+		Status:  service.StatusActive,
+		User: &service.User{
+			ID:          9453,
+			Concurrency: 10,
+			Balance:     100,
+		},
+		Group: group,
+	}
+	c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.UserID, Concurrency: 10})
+
+	h.Messages(c)
+
+	select {
+	case usageLog := <-usageRepo.created:
+		require.NotNil(t, usageLog)
+		require.NotNil(t, usageLog.ReasoningEffort, "ThinkingEnabled 且无 output_config.effort 时应回填 ReasoningEffort")
+		require.Equal(t, "high", *usageLog.ReasoningEffort)
+	case <-time.After(3 * time.Second):
+		t.Fatal("等待 partial usage 写入超时——ThinkingEnabled 回填分支未提交 usage")
+	}
+}
+
+// TestGatewayHandlerMessages_FailoverRetrySuccessDoesNotDoubleRecordUsage 验证：
+// 第一个账号在未写出任何字节前失败（走 UpstreamFailoverError 换号重试），
+// 第二个账号成功后，usage 只能被提交一次——第一次失败的尝试不得重复计费。
+func TestGatewayHandlerMessages_FailoverRetrySuccessDoesNotDoubleRecordUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(9152)
+	firstAccountID := int64(9252)
+	secondAccountID := int64(9253)
+	group := &service.Group{
+		ID:       groupID,
+		Hydrated: true,
+		Platform: service.PlatformAnthropic,
+		Status:   service.StatusActive,
+	}
+	account := func(id int64) *service.Account {
+		return &service.Account{
+			ID:       id,
+			Name:     "anthropic-failover",
+			Platform: service.PlatformAnthropic,
+			Type:     service.AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":   "test-key",
+				"pool_mode": true,
+			},
+			Extra:       map[string]any{"anthropic_passthrough": true},
+			Concurrency: 1,
+			Priority:    1,
+			Status:      service.StatusActive,
+			Schedulable: true,
+			AccountGroups: []service.AccountGroup{{
+				AccountID: id,
+				GroupID:   groupID,
+			}},
+		}
+	}
+	upstream := &forceCacheBillingUpstream{
+		firstStatus: http.StatusInternalServerError,
+		successBody: `{"id":"msg_ok","type":"message","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":5,"output_tokens":3}}`,
+	}
+	usageRepo := &partialUsageBillingUsageLogRepo{created: make(chan *service.UsageLog, 4)}
+	cache := &forceCacheBillingGatewayCache{accountID: firstAccountID}
+	h, cleanup := newPartialUsageBillingGatewayHandler(t, group, []*service.Account{account(firstAccountID), account(secondAccountID)}, upstream, cache, usageRepo)
+	defer cleanup()
+
+	body := []byte(`{"model":"claude-sonnet-4-5","stream":false,"max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), ctxkey.Group, group))
+	c.Request = req
+
+	apiKey := &service.APIKey{
+		ID:      9352,
+		UserID:  9452,
+		GroupID: &groupID,
+		Status:  service.StatusActive,
+		User: &service.User{
+			ID:          9452,
+			Concurrency: 10,
+			Balance:     100,
+		},
+		Group: group,
+	}
+	c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.UserID, Concurrency: 10})
+
+	h.Messages(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	select {
+	case usageLog := <-usageRepo.created:
+		require.NotNil(t, usageLog)
+	case <-time.After(3 * time.Second):
+		t.Fatal("等待成功请求的 usage 写入超时")
+	}
+
+	upstream.mu.Lock()
+	callNum := upstream.callNum
+	upstream.mu.Unlock()
+	require.Equal(t, 2, callNum, "应先失败一次再在第二个账号上成功")
+
+	select {
+	case extra := <-usageRepo.created:
+		t.Fatalf("失败的第一次尝试不应再提交一次 usage 记录，但收到了额外记录: %+v", extra)
+	case <-time.After(200 * time.Millisecond):
+		// 期望：没有额外记录。
+	}
+}

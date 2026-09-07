@@ -750,6 +750,44 @@ type sseStreamErrorEventError struct {
 
 func (e *sseStreamErrorEventError) Error() string { return "have error in stream" }
 
+// hasObservedTokens 报告流式转发过程中是否已观测到任何上游计量 token。
+func (u *ClaudeUsage) hasObservedTokens() bool {
+	if u == nil {
+		return false
+	}
+	return u.InputTokens > 0 || u.OutputTokens > 0 ||
+		u.CacheCreationInputTokens > 0 || u.CacheReadInputTokens > 0 ||
+		u.CacheCreation5mTokens > 0 || u.CacheCreation1hTokens > 0 ||
+		u.ImageOutputTokens > 0
+}
+
+// partialStreamUsageResult 在流式转发中途出错时，把已观测到的 usage 部分结果包装为
+// ForwardResult（与错误一起返回给 handler 记录）。上游一旦下发过 message_start，
+// input/cache token 就已计量，直接丢弃会让请求完全漏计流式计费（issue #764）。
+// 无已观测 usage 时返回 nil。
+//
+// 不变式：UpstreamFailoverError 必须保持 result=nil——failover 重试成功后按成功请求
+// 计费，若同时返回部分 usage 会造成双重记账，此处显式兜底防御。
+func partialStreamUsageResult(resp *http.Response, streamResult *streamingResult, model, upstreamModel string, startTime time.Time, err error) *ForwardResult {
+	if streamResult == nil || !streamResult.usage.hasObservedTokens() {
+		return nil
+	}
+	var failoverErr *UpstreamFailoverError
+	if errors.As(err, &failoverErr) {
+		return nil
+	}
+	return &ForwardResult{
+		RequestID:        resp.Header.Get("x-request-id"),
+		Usage:            *streamResult.usage,
+		Model:            model,
+		UpstreamModel:    upstreamModel,
+		Stream:           true,
+		Duration:         time.Since(startTime),
+		FirstTokenMs:     streamResult.firstTokenMs,
+		ClientDisconnect: streamResult.clientDisconnect,
+	}
+}
+
 // TempUnscheduleRetryableError 对 RetryableOnSameAccount 类型的 failover 错误触发临时封禁。
 // 由 handler 层在同账号重试全部用尽、切换账号时调用。
 func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accountID int64, failoverErr *UpstreamFailoverError) {
@@ -5772,6 +5810,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					ResponseBody: body,
 				}
 			}
+			// 流中断（缺失 terminal 事件、读错误、数据间隔超时等）时保留已探测到的
+			// usage 与错误一起返回，handler 在错误处理完成后照常提交 usage 记录（#764）。
+			if partial := partialStreamUsageResult(resp, streamResult, originalModel, mappedModel, startTime, err); partial != nil {
+				return partial, err
+			}
 			return nil, err
 		}
 		usage = streamResult.usage
@@ -6035,6 +6078,11 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	if input.RequestStream {
 		streamResult, err := s.handleStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.StartTime, input.RequestModel)
 		if err != nil {
+			// 流中断时保留已探测到的 usage 与错误一起返回，避免上游已产生消耗的
+			// 透传请求完全漏计流式计费（#764）。
+			if partial := partialStreamUsageResult(resp, streamResult, input.OriginalModel, input.RequestModel, input.StartTime, err); partial != nil {
+				return partial, err
+			}
 			return nil, err
 		}
 		usage = streamResult.usage
@@ -10146,6 +10194,12 @@ func (s *GatewayService) calculateTokenCost(
 	multiplier float64,
 	opts *recordUsageOpts,
 ) *CostBreakdown {
+	// billingService 未注入（如轻量部署/测试场景下 GatewayService 未接入完整计费依赖）时，
+	// 与 hasResolvableTokenPricing 的既有 nil 处理保持一致：不计价，避免 nil 解引用 panic。
+	if s.billingService == nil {
+		return &CostBreakdown{ActualCost: 0}
+	}
+
 	tokens := UsageTokens{
 		InputTokens:           result.Usage.InputTokens,
 		OutputTokens:          result.Usage.OutputTokens,
