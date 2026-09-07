@@ -3,6 +3,7 @@ package securityaudit
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -36,6 +37,7 @@ func TestPromptEventRepositoryListEvents(t *testing.T) {
 	require.Equal(t, 2, page.Pages)
 	require.Len(t, page.Items, 1)
 	require.Empty(t, page.Items[0].Snapshot.ScanText)
+	require.Empty(t, page.Items[0].Snapshot.FullPrompt, "list responses must never carry full_prompt")
 }
 
 func TestPromptEventRepositoryListEventsNormalizesBoundsAndEmptyPages(t *testing.T) {
@@ -118,15 +120,38 @@ func TestPromptEventRepositoryGetEventMapsNotFound(t *testing.T) {
 	db, mock := newPromptStorageSQLMock(t)
 	repo := NewPostgreSQLRepository(db)
 
-	mock.ExpectQuery("SELECT").WithArgs(int64(21)).WillReturnRows(promptEventRows())
+	mock.ExpectQuery("SELECT").WithArgs(int64(21)).WillReturnRows(promptEventDetailRows(""))
 	event, err := repo.GetEvent(context.Background(), 21)
 	require.NoError(t, err)
 	require.Equal(t, int64(21), event.ID)
 	require.Equal(t, "redacted", event.Snapshot.RedactedPreview)
+	require.Empty(t, event.Snapshot.FullPrompt)
 
 	mock.ExpectQuery("SELECT").WithArgs(int64(99)).WillReturnError(sql.ErrNoRows)
 	_, err = repo.GetEvent(context.Background(), 99)
 	require.ErrorIs(t, err, ErrEventNotFound)
+}
+
+// TestPromptEventRepositoryGetEventReturnsFullPromptOnDetailReadOnly proves
+// GetEvent is the only repository read that can surface an unredacted
+// full_prompt (issue #585 point 4): it selects one extra column beyond
+// eventColumns, and only GetEvent's query does so.
+func TestPromptEventRepositoryGetEventReturnsFullPromptOnDetailReadOnly(t *testing.T) {
+	require.Contains(t, eventDetailColumns("e"), "e.full_prompt")
+	require.NotContains(t, eventColumns("e"), "full_prompt")
+
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	canary := "PROMPT_CANARY_full_prompt_detail_only"
+
+	mock.ExpectQuery("(?s)SELECT.*full_prompt").WithArgs(int64(21)).WillReturnRows(promptEventDetailRows(canary))
+	event, err := repo.GetEvent(context.Background(), 21)
+	require.NoError(t, err)
+	require.Equal(t, canary, event.Snapshot.FullPrompt)
+
+	raw, err := json.Marshal(event)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), canary, "an authenticated detail read must expose the enabled full_prompt")
 }
 
 func TestBuildEventWhereCanonicalizesFiltersWithoutRawPrompt(t *testing.T) {

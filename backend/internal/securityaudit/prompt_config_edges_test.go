@@ -1,6 +1,7 @@
 package securityaudit
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -34,6 +35,32 @@ func TestParseStorageConfigNormalizesEndpointDefaults(t *testing.T) {
 		ID: "one", Name: "Guard", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:18080/",
 		Model: DefaultGuardModel, TimeoutMS: DefaultTimeoutMS, InputLimit: DefaultInputLimit, Enabled: true,
 	}, cfg.Endpoints[0])
+}
+
+// TestParseStorageConfigStoreFullPromptsDefaultsFalseAndRoundTrips proves
+// store_full_prompts defaults to off (redacted-by-default, matching
+// store_pass_events' own default) and survives a JSON round trip
+// independently of store_pass_events, since issue #585 asks for the two
+// settings to be distinct/orthogonal rather than coupled.
+func TestParseStorageConfigStoreFullPromptsDefaultsFalseAndRoundTrips(t *testing.T) {
+	defaultCfg, err := ParseStorageConfig("")
+	require.NoError(t, err)
+	require.False(t, defaultCfg.StoreFullPrompts)
+	require.False(t, DefaultStorageConfig().StoreFullPrompts)
+
+	// enabled stays false here on purpose: this test only cares about
+	// store_full_prompts parsing/round-tripping independently of
+	// store_pass_events, not full endpoint validation (enabling audit
+	// requires at least one configured endpoint, which is unrelated to and
+	// covered separately from this setting).
+	cfg, err := ParseStorageConfig(`{"enabled":false,"store_pass_events":false,"store_full_prompts":true}`)
+	require.NoError(t, err)
+	require.True(t, cfg.StoreFullPrompts)
+	require.False(t, cfg.StorePassEvents)
+
+	raw, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"store_full_prompts":true`)
 }
 
 func TestParseStorageConfigRejectsMalformedAndInvalidValues(t *testing.T) {

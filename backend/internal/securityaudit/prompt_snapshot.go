@@ -50,6 +50,7 @@ func ExtractPromptSnapshot(req Request) (PromptSnapshot, error) {
 		GroupID: cloneInt64Ptr(req.GroupID), GroupName: req.GroupName, Provider: req.Provider,
 		Endpoint: req.Endpoint, Protocol: req.Protocol, Model: req.Model,
 		PromptHash: hex.EncodeToString(digest[:]), RedactedPreview: BuildPromptPreview(metadataText, DefaultPromptPreviewMaxRunes),
+		FullPrompt:   BuildFullPrompt(metadataText, DefaultFullPromptMaxRunes),
 		PromptLength: utf8.RuneCountInString(metadataText), MessageCount: len(segments), Stage: stage,
 		ScanText: scanText,
 	}, nil
@@ -58,6 +59,37 @@ func ExtractPromptSnapshot(req Request) (PromptSnapshot, error) {
 // DefaultPromptPreviewMaxRunes caps how much sanitized prompt text may be
 // considered before BuildPromptPreview withholds the majority for storage/UI.
 const DefaultPromptPreviewMaxRunes = 96
+
+// DefaultFullPromptMaxRunes caps how much unredacted prompt text may be
+// durably persisted on a prompt audit event when the store_full_prompts
+// setting is enabled. It is deliberately generous so realistic prompts stay
+// intact while still bounding per-row storage.
+const DefaultFullPromptMaxRunes = 65536
+
+// BuildFullPrompt returns the complete prompt text for the optional,
+// explicitly opted-in audit-event storage path. Unlike BuildPromptPreview it
+// performs no secret/PII redaction, so callers must only persist the result
+// when store_full_prompts is enabled and must only surface it through an
+// authenticated single-event detail read. NUL bytes are stripped because
+// PostgreSQL, MySQL, and SQLite TEXT columns all reject them, and the result
+// is capped at maxRunes.
+func BuildFullPrompt(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		maxRunes = DefaultFullPromptMaxRunes
+	}
+	value = strings.ReplaceAll(value, "\x00", "")
+	return TrimRunes(strings.TrimSpace(value), maxRunes)
+}
+
+// FullPromptFromScanText reconstructs the display prompt from the worker's
+// Redis scan payload for async jobs, where PromptSnapshot.FullPrompt does not
+// survive the prompt_audit_jobs round trip (the jobs table never has a
+// full_prompt column). buildPrioritizedScanText inserts exactly one priority
+// separator between the prioritized segment and the remainder, so replacing
+// it with the metadata joiner reconstructs the original multi-segment text.
+func FullPromptFromScanText(scanText string) string {
+	return BuildFullPrompt(strings.ReplaceAll(scanText, promptAuditPrioritySeparator, "\n\n"), DefaultFullPromptMaxRunes)
+}
 
 func extractProtocolSegments(protocol string, document any) []promptSegment {
 	root, _ := document.(map[string]any)

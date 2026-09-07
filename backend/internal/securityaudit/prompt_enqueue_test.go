@@ -59,7 +59,7 @@ func (*enqueueTestRepo) ClaimNextJob(context.Context, time.Time) (*Job, bool, er
 	return nil, false, nil
 }
 func (*enqueueTestRepo) RefreshLease(context.Context, int64, int64, time.Time) error { return nil }
-func (*enqueueTestRepo) Complete(context.Context, *Job, *NormalizedResult, bool) (*Event, error) {
+func (*enqueueTestRepo) Complete(context.Context, *Job, *NormalizedResult, bool, bool) (*Event, error) {
 	return nil, nil
 }
 func (*enqueueTestRepo) Retry(context.Context, int64, int64, time.Time, string, string) error {
@@ -70,7 +70,7 @@ func (*enqueueTestRepo) ReclaimStale(context.Context, time.Time, time.Time, int)
 	return 0, nil
 }
 func (*enqueueTestRepo) QueueStats(context.Context) (QueueStats, error) { return QueueStats{}, nil }
-func (*enqueueTestRepo) RecordBlocking(context.Context, PromptSnapshot, int64, *NormalizedResult, bool) (*Event, error) {
+func (*enqueueTestRepo) RecordBlocking(context.Context, PromptSnapshot, int64, *NormalizedResult, bool, bool) (*Event, error) {
 	return nil, nil
 }
 

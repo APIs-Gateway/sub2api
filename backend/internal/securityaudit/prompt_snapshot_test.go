@@ -54,6 +54,49 @@ func TestSnapshotRedactsCanariesAndPreservesHashOfScanText(t *testing.T) {
 	require.Empty(t, snapshot.Redacted().ScanText)
 }
 
+// TestSnapshotFullPromptKeepsUnredactedText proves FullPrompt is a distinct,
+// deliberately unredacted field: unlike RedactedPreview it is not built by
+// RedactPreview, so secrets/PII stay intact for admin review. Persisting it
+// is gated separately (store_full_prompts, tested in prompt_storage_test.go);
+// this test only covers the in-memory snapshot extraction and that
+// Redacted() (used before any durable write) does not also wipe it, since
+// only the storage layer's storeFullPrompt gate decides whether it lands in
+// prompt_audit_events.full_prompt.
+func TestSnapshotFullPromptKeepsUnredactedText(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"PROMPT_CANARY_ABC123 email@example.com sk-secretvalue123"}]}`
+	snapshot, err := ExtractPromptSnapshot(Request{Protocol: "openai_chat_completions", Body: []byte(body)})
+	require.NoError(t, err)
+	require.Contains(t, snapshot.FullPrompt, "PROMPT_CANARY_ABC123 email@example.com sk-secretvalue123")
+	require.NotContains(t, snapshot.RedactedPreview, "PROMPT_CANARY_ABC123")
+	require.Equal(t, snapshot.FullPrompt, snapshot.Redacted().FullPrompt, "Redacted() only clears ScanText, not FullPrompt")
+	require.Empty(t, snapshot.Redacted().ScanText)
+}
+
+func TestBuildFullPromptStripsNULAndTruncates(t *testing.T) {
+	require.Equal(t, "abcd", BuildFullPrompt("ab\x00cd", 0))
+	require.Equal(t, "", BuildFullPrompt("\x00\x00", 0))
+	require.Equal(t, "trimmed", BuildFullPrompt("  trimmed  ", 0))
+
+	long := strings.Repeat("é", DefaultFullPromptMaxRunes+10)
+	trimmed := BuildFullPrompt(long, DefaultFullPromptMaxRunes)
+	require.Equal(t, DefaultFullPromptMaxRunes+1, utf8.RuneCountInString(trimmed))
+	require.True(t, strings.HasSuffix(trimmed, "…"))
+
+	require.Equal(t, "short", BuildFullPrompt("short", DefaultFullPromptMaxRunes))
+}
+
+func TestFullPromptFromScanTextRestoresMultiSegmentLayout(t *testing.T) {
+	scanText, metadataText := buildPrioritizedScanText([]string{"latest user", "system policy", "earlier user"})
+	require.Contains(t, scanText, promptAuditPrioritySeparator)
+	require.Equal(t, metadataText, FullPromptFromScanText(scanText))
+
+	singleScan, singleMeta := buildPrioritizedScanText([]string{"only segment"})
+	require.NotContains(t, singleScan, promptAuditPrioritySeparator)
+	require.Equal(t, singleMeta, FullPromptFromScanText(singleScan))
+
+	require.Equal(t, "", FullPromptFromScanText("\x00"))
+}
+
 func TestSplitRunesDoesNotSplitUTF8(t *testing.T) {
 	chunks := SplitRunes("中文😀éabc", 2)
 	require.Equal(t, []string{"中文", "😀e", "́a", "bc"}, chunks)

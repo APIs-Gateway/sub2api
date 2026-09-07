@@ -40,6 +40,16 @@ func promptEventRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{"id", "job_id", "request_id", "user_id", "username_snapshot", "user_email_snapshot", "api_key_id", "api_key_name_snapshot", "group_id", "group_name", "provider", "endpoint", "protocol", "model", "prompt_hash", "redacted_preview", "decision", "risk_level", "action", "categories", "matched_scanners", "scanner_scores", "scanner_evidence", "scanner_backend", "scanner_version", "guard_endpoint_id", "policy_id", "policy_version", "config_version", "chunk_total", "latency_ms", "created_at"}).AddRow(21, 11, "request-11", 2, "user", "user@example.test", 3, "key", 4, "group", "openai", "/v1/chat/completions", "openai_chat", "guard-model", strings.Repeat("a", 64), "redacted", string(EventCritical), string(RiskCritical), string(ActionBlock), []byte(`["pii"]`), []byte(`["pii"]`), []byte(`{"pii":1}`), []byte(`{"pii":"email"}`), "qwen3guard-openai", "guard-model", "guard-1", "priority", 1, 7, 1, 3, now)
 }
 
+// promptEventDetailRows mirrors promptEventRows but adds the full_prompt
+// column that eventDetailColumns/scanEvent(row, true) select only for the
+// single-event detail read (PostgreSQLRepository.GetEvent). fullPrompt is
+// typically empty (store_full_prompts disabled) or a canary string
+// (store_full_prompts enabled) depending on what the test is asserting.
+func promptEventDetailRows(fullPrompt string) *sqlmock.Rows {
+	now := time.Unix(1700000000, 0).UTC()
+	return sqlmock.NewRows([]string{"id", "job_id", "request_id", "user_id", "username_snapshot", "user_email_snapshot", "api_key_id", "api_key_name_snapshot", "group_id", "group_name", "provider", "endpoint", "protocol", "model", "prompt_hash", "redacted_preview", "decision", "risk_level", "action", "categories", "matched_scanners", "scanner_scores", "scanner_evidence", "scanner_backend", "scanner_version", "guard_endpoint_id", "policy_id", "policy_version", "config_version", "chunk_total", "latency_ms", "created_at", "full_prompt"}).AddRow(21, 11, "request-11", 2, "user", "user@example.test", 3, "key", 4, "group", "openai", "/v1/chat/completions", "openai_chat", "guard-model", strings.Repeat("a", 64), "redacted", string(EventCritical), string(RiskCritical), string(ActionBlock), []byte(`["pii"]`), []byte(`["pii"]`), []byte(`{"pii":1}`), []byte(`{"pii":"email"}`), "qwen3guard-openai", "guard-model", "guard-1", "priority", 1, 7, 1, 3, now, fullPrompt)
+}
+
 func newPromptStorageSQLite(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
@@ -59,18 +69,51 @@ func newPromptStorageSQLite(t *testing.T) *sql.DB {
 	return db
 }
 
+// promptAuditMigrationFiles lists, in apply order, every migration these
+// tests replay directly against a bare test database. Extend this list
+// whenever a new migration touches prompt_audit_jobs/prompt_audit_events.
+var promptAuditMigrationFiles = []string{
+	"181_prompt_audit.sql",
+	"189_prompt_audit_full_prompt.sql",
+}
+
 func applyPromptAuditMigration(t *testing.T, db *sql.DB) {
 	t.Helper()
-	contents, err := os.ReadFile("../../migrations/181_prompt_audit.sql")
+	for _, name := range promptAuditMigrationFiles {
+		applyPromptAuditMigrationFile(t, db, name)
+	}
+}
+
+// applyPromptAuditMigrationFile replays one migration file's statements
+// directly, bypassing the schema_migrations checksum tracking that gives the
+// real migration runner (backend/internal/repository/migrations_runner.go)
+// its idempotency in production. Tests call this more than once per file
+// (see TestPromptAuditStoragePostgreSQLIntegration) to prove each migration
+// tolerates a retried/interrupted deployment, so "already applied" errors
+// from a bare ADD COLUMN (used instead of the non-portable
+// ADD COLUMN IF NOT EXISTS - see 189_prompt_audit_full_prompt.sql) are
+// swallowed here rather than in the migration itself.
+func applyPromptAuditMigrationFile(t *testing.T, db *sql.DB, name string) {
+	t.Helper()
+	contents, err := os.ReadFile("../../migrations/" + name)
 	require.NoError(t, err)
 	for _, statement := range strings.Split(string(contents), ";") {
 		statement = strings.TrimSpace(statement)
-		if statement == "" || strings.HasPrefix(statement, "--") && !strings.Contains(statement, "\nCREATE") && !strings.Contains(statement, "\nINSERT") {
+		if statement == "" || strings.HasPrefix(statement, "--") && !strings.Contains(statement, "\nCREATE") && !strings.Contains(statement, "\nINSERT") && !strings.Contains(statement, "\nALTER") {
 			continue
 		}
-		_, err := db.Exec(statement)
-		require.NoError(t, err, statement)
+		if _, err := db.Exec(statement); err != nil && !isAlreadyAppliedMigrationError(err) {
+			require.NoError(t, err, statement)
+		}
 	}
+}
+
+// isAlreadyAppliedMigrationError recognizes the dialect-specific "column
+// already exists" errors a bare ADD COLUMN raises when replayed a second
+// time outside production's schema_migrations tracking.
+func isAlreadyAppliedMigrationError(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "duplicate column") || strings.Contains(message, "already exists")
 }
 
 func storageSnapshot() PromptSnapshot {
@@ -94,7 +137,7 @@ func TestPromptAuditSQLiteRepositoryLifecycleAndPrivacy(t *testing.T) {
 	snapshot := storageSnapshot()
 	snapshot.ScanText = "raw prompt must stay outside durable storage"
 
-	event, err := repo.RecordBlocking(ctx, snapshot, 7, storageResult(), true)
+	event, err := repo.RecordBlocking(ctx, snapshot, 7, storageResult(), true, false)
 	require.NoError(t, err)
 	require.NotNil(t, event)
 	raw, err := json.Marshal(event)
@@ -103,6 +146,9 @@ func TestPromptAuditSQLiteRepositoryLifecycleAndPrivacy(t *testing.T) {
 	var stored string
 	require.NoError(t, db.QueryRow(`SELECT scanner_evidence FROM prompt_audit_events WHERE id = ?`, event.ID).Scan(&stored))
 	require.NotContains(t, stored, snapshot.ScanText)
+	var storedFullPrompt string
+	require.NoError(t, db.QueryRow(`SELECT full_prompt FROM prompt_audit_events WHERE id = ?`, event.ID).Scan(&storedFullPrompt))
+	require.Empty(t, storedFullPrompt, "store_full_prompts defaults to false, so full_prompt must stay redacted-empty")
 
 	job, err := repo.CreateStagingWithCapacity(ctx, snapshot, 7, 2, 10)
 	require.NoError(t, err)
@@ -113,13 +159,108 @@ func TestPromptAuditSQLiteRepositoryLifecycleAndPrivacy(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, job.ID, claimed.ID)
 	require.NoError(t, repo.RefreshLease(ctx, claimed.ID, claimed.ClaimVersion, time.Now()))
-	completed, err := repo.Complete(ctx, claimed, storageResult(), true)
+	completed, err := repo.Complete(ctx, claimed, storageResult(), true, false)
 	require.NoError(t, err)
 	require.NotNil(t, completed)
+	require.NoError(t, db.QueryRow(`SELECT full_prompt FROM prompt_audit_events WHERE id = ?`, completed.ID).Scan(&storedFullPrompt))
+	require.Empty(t, storedFullPrompt, "async completion must also leave full_prompt redacted-empty when disabled")
 	stats, err := repo.QueueStats(ctx)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), stats.Done)
 	require.Zero(t, stats.Active)
+}
+
+// TestPromptAuditSQLiteRepositoryStoreFullPromptsCombinations exercises the
+// four combinations issue #585 calls out explicitly: store_full_prompts is a
+// gate on the full_prompt column only, independent of store_pass_events'
+// existing gate on whether the row is written at all, for both the blocking
+// (RecordBlocking) and async (Complete) paths.
+func TestPromptAuditSQLiteRepositoryStoreFullPromptsCombinations(t *testing.T) {
+	db := newPromptStorageSQLite(t)
+	repo := NewSQLRepository(db)
+	ctx := context.Background()
+
+	passSnapshot := storageSnapshot()
+	passSnapshot.RequestID = "request-pass-full-prompt"
+	passSnapshot.FullPrompt = "PROMPT_CANARY_pass_event_full_prompt"
+	passResult := &NormalizedResult{Decision: EventPass}
+
+	// pass event, store_pass_events=false, store_full_prompts=true: the row
+	// is still skipped entirely, because store_full_prompts only controls
+	// what a stored row contains, not whether pass events get stored.
+	skipped, err := repo.RecordBlocking(ctx, passSnapshot, 7, passResult, false, true)
+	require.NoError(t, err)
+	require.Nil(t, skipped)
+
+	// pass event, store_pass_events=true, store_full_prompts=true: stored,
+	// and full_prompt is populated on the durable row (but not on the
+	// returned object, nor via ListEvents).
+	passStored, err := repo.RecordBlocking(ctx, passSnapshot, 7, passResult, true, true)
+	require.NoError(t, err)
+	require.NotNil(t, passStored)
+	raw, err := json.Marshal(passStored)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), passSnapshot.FullPrompt)
+	var storedPassFullPrompt string
+	require.NoError(t, db.QueryRow(`SELECT full_prompt FROM prompt_audit_events WHERE id = ?`, passStored.ID).Scan(&storedPassFullPrompt))
+	require.Equal(t, passSnapshot.FullPrompt, storedPassFullPrompt)
+	passDetail, err := repo.GetEvent(ctx, passStored.ID)
+	require.NoError(t, err)
+	require.Equal(t, passSnapshot.FullPrompt, passDetail.Snapshot.FullPrompt)
+	passPage, err := repo.ListEvents(ctx, EventFilter{RequestID: passSnapshot.RequestID}, 1, 20)
+	require.NoError(t, err)
+	require.Len(t, passPage.Items, 1)
+	require.Empty(t, passPage.Items[0].Snapshot.FullPrompt)
+
+	// risk event, store_pass_events=false, store_full_prompts=true, via the
+	// async CreateStagingWithCapacity -> Complete path: always stored
+	// (risk events ignore store_pass_events), and full_prompt is populated
+	// even though the job row itself never carried it. prompt_audit_jobs has
+	// no full_prompt column, so claiming the job back from the database does
+	// not restore riskSnapshot.FullPrompt; the worker reconstructs it from
+	// the Redis scan payload before calling Complete (see processJob in
+	// prompt_worker.go), so this test reproduces that same step by hand.
+	riskSnapshot := storageSnapshot()
+	riskSnapshot.RequestID = "request-risk-full-prompt"
+	riskSnapshot.FullPrompt = "PROMPT_CANARY_risk_event_full_prompt"
+	job, err := repo.CreateStagingWithCapacity(ctx, riskSnapshot, 7, 2, 10)
+	require.NoError(t, err)
+	require.NoError(t, repo.PublishQueued(ctx, job.ID))
+	claimed, ok, err := repo.ClaimNextJob(ctx, time.Now().Add(time.Second))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Empty(t, claimed.Snapshot.FullPrompt, "prompt_audit_jobs has no full_prompt column to claim back")
+	claimed.Snapshot.FullPrompt = riskSnapshot.FullPrompt
+	riskStored, err := repo.Complete(ctx, claimed, storageResult(), false, true)
+	require.NoError(t, err)
+	require.NotNil(t, riskStored)
+	var storedRiskFullPrompt string
+	require.NoError(t, db.QueryRow(`SELECT full_prompt FROM prompt_audit_events WHERE id = ?`, riskStored.ID).Scan(&storedRiskFullPrompt))
+	require.Equal(t, riskSnapshot.FullPrompt, storedRiskFullPrompt)
+}
+
+// TestShouldStorePromptAuditEvent mirrors upstream's own table test for the
+// helper that keeps store_pass_events scoped to safe results: risk events
+// (flag/critical) are always stored once Prompt Audit is enabled, while pass
+// events are only stored when explicitly opted in.
+func TestShouldStorePromptAuditEvent(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		decision        EventDecision
+		storePassEvents bool
+		want            bool
+	}{
+		{"pass_disabled", EventPass, false, false},
+		{"pass_enabled", EventPass, true, true},
+		{"flag_disabled", EventFlag, false, true},
+		{"flag_enabled", EventFlag, true, true},
+		{"critical_disabled", EventCritical, false, true},
+		{"critical_enabled", EventCritical, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, shouldStorePromptAuditEvent(tc.decision, tc.storePassEvents))
+		})
+	}
 }
 
 func TestPromptAuditSQLiteRepositoryCapacityLeaseAndReclaim(t *testing.T) {
@@ -173,6 +314,46 @@ func TestPromptAuditMigrationIsPortableAndIdempotent(t *testing.T) {
 	for _, forbidden := range []string{"raw_prompt", "raw_request", "payload", "token", "authorization", "credential", "ciphertext"} {
 		require.NotContains(t, strings.Join(nonCommentSQL, "\n"), forbidden)
 	}
+}
+
+// TestPromptAuditFullPromptMigrationIsPortableAndIdempotent mirrors
+// TestPromptAuditMigrationIsPortableAndIdempotent for 189_prompt_audit_full_prompt.sql:
+// the column must land on prompt_audit_events only, via a bare ADD COLUMN
+// (portable across PostgreSQL/MySQL 5.7/SQLite, unlike upstream's Postgres-only
+// ADD COLUMN IF NOT EXISTS), and applying it twice (idempotency via
+// schema_migrations in production, tolerated here via
+// isAlreadyAppliedMigrationError) must not fail or touch prompt_audit_jobs.
+// Like the 181 test above, the forbidden-syntax/scope checks only look at
+// non-comment SQL lines: the explanatory comment is free to name
+// "ADD COLUMN IF NOT EXISTS" and "prompt_audit_jobs" in prose (it does, to
+// explain why this migration avoids both), only the executable statement
+// itself must avoid them.
+func TestPromptAuditFullPromptMigrationIsPortableAndIdempotent(t *testing.T) {
+	db := newPromptStorageSQLite(t)
+	applyPromptAuditMigrationFile(t, db, "189_prompt_audit_full_prompt.sql")
+
+	contents, err := os.ReadFile("../../migrations/189_prompt_audit_full_prompt.sql")
+	require.NoError(t, err)
+	raw := strings.ToLower(string(contents))
+	nonCommentSQL := make([]string, 0)
+	for _, line := range strings.Split(raw, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+			nonCommentSQL = append(nonCommentSQL, line)
+		}
+	}
+	sqlOnly := strings.Join(nonCommentSQL, "\n")
+	for _, forbidden := range []string{"if not exists", "bigserial", "timestamptz", "jsonb", "::json", "pg_", "prompt_audit_jobs"} {
+		require.NotContains(t, sqlOnly, forbidden)
+	}
+	require.Contains(t, sqlOnly, "alter table prompt_audit_events add column full_prompt")
+
+	var columnCount int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('prompt_audit_events') WHERE name = 'full_prompt'`).Scan(&columnCount))
+	require.Equal(t, 1, columnCount, "full_prompt must exist exactly once on prompt_audit_events")
+
+	var jobsColumnCount int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('prompt_audit_jobs') WHERE name = 'full_prompt'`).Scan(&jobsColumnCount))
+	require.Zero(t, jobsColumnCount, "prompt_audit_jobs must never gain a full_prompt column")
 }
 
 func TestPromptAuditRepositoryUsesQuestionMarkDialectForSQLite(t *testing.T) {
@@ -263,7 +444,7 @@ func TestPromptAuditPostgreSQLRepositoryAdmissionAndCompletion(t *testing.T) {
 	mock.ExpectExec("INSERT INTO prompt_audit_events").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT prompt_audit_events.id").WithArgs(int64(21)).WillReturnRows(promptEventRows())
 	mock.ExpectCommit()
-	event, err := repo.Complete(ctx, job, storageResult(), true)
+	event, err := repo.Complete(ctx, job, storageResult(), true, false)
 	require.NoError(t, err)
 	require.Equal(t, int64(21), event.ID)
 }
@@ -317,7 +498,7 @@ func TestPromptAuditPostgreSQLRepositorySkipsPassEventWhenDisabled(t *testing.T)
 	mock.ExpectQuery("SELECT prompt_audit_jobs.id").WithArgs(int64(11)).WillReturnRows(promptJobRows("done"))
 	mock.ExpectCommit()
 
-	event, err := repo.RecordBlocking(context.Background(), storageSnapshot(), 7, &NormalizedResult{Decision: EventPass}, false)
+	event, err := repo.RecordBlocking(context.Background(), storageSnapshot(), 7, &NormalizedResult{Decision: EventPass}, false, false)
 	require.NoError(t, err)
 	require.Nil(t, event)
 }
@@ -365,11 +546,11 @@ func TestPromptAuditRepositoryValidationAndPassCompletion(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = unavailable.ClaimNextJob(ctx, time.Now())
 	require.Error(t, err)
-	_, err = unavailable.Complete(ctx, nil, nil, false)
+	_, err = unavailable.Complete(ctx, nil, nil, false, false)
 	require.Error(t, err)
 	_, err = unavailable.ReclaimStale(ctx, time.Now(), time.Now(), 1)
 	require.Error(t, err)
-	_, err = unavailable.RecordBlocking(ctx, storageSnapshot(), 7, nil, false)
+	_, err = unavailable.RecordBlocking(ctx, storageSnapshot(), 7, nil, false, false)
 	require.Error(t, err)
 
 	db, mock := newPromptStorageSQLMock(t)
@@ -378,7 +559,7 @@ func TestPromptAuditRepositoryValidationAndPassCompletion(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE prompt_audit_jobs SET status='done'").WithArgs(int64(11), int64(5)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	event, err := repo.Complete(ctx, job, &NormalizedResult{Decision: EventPass}, false)
+	event, err := repo.Complete(ctx, job, &NormalizedResult{Decision: EventPass}, false, false)
 	require.NoError(t, err)
 	require.Nil(t, event)
 
@@ -397,6 +578,8 @@ func TestPromptStorageHelpersAndPayloadStore(t *testing.T) {
 	require.Equal(t, int64(7), nullableID(7))
 	require.Contains(t, jobColumns("j"), "j.id")
 	require.Contains(t, eventColumns("e"), "e.id")
+	require.NotContains(t, eventColumns("e"), "full_prompt")
+	require.Contains(t, eventDetailColumns("e"), "e.full_prompt")
 
 	require.Equal(t, "redacted_error", stableErrorCode("raw response; secret"))
 	require.Equal(t, "unknown_error", stableErrorCode(""))
