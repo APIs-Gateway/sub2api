@@ -218,9 +218,9 @@ func TestProvideOpsIngressRejectAggregatorWiresIntoOpsServiceAndStops(t *testing
 	svc.RecordIngressReject("invalid_api_key", "messages", "anthropic", "203.0.113.1", 0, 0)
 	agg.snapshotAndEnqueue(true)
 	agg.flushPending()
-	mock.ingressRejectRepoStub.mu.Lock()
-	require.Equal(t, int64(1), mock.ingressRejectRepoStub.requests)
-	mock.ingressRejectRepoStub.mu.Unlock()
+	mock.mu.Lock()
+	require.Equal(t, int64(1), mock.requests)
+	mock.mu.Unlock()
 
 	agg.Stop()
 	require.False(t, svc.GetIngressRejectHealth().Accepting)
