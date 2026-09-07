@@ -48,7 +48,12 @@ func TestParseStorageConfigStoreFullPromptsDefaultsFalseAndRoundTrips(t *testing
 	require.False(t, defaultCfg.StoreFullPrompts)
 	require.False(t, DefaultStorageConfig().StoreFullPrompts)
 
-	cfg, err := ParseStorageConfig(`{"enabled":true,"store_pass_events":false,"store_full_prompts":true}`)
+	// enabled stays false here on purpose: this test only cares about
+	// store_full_prompts parsing/round-tripping independently of
+	// store_pass_events, not full endpoint validation (enabling audit
+	// requires at least one configured endpoint, which is unrelated to and
+	// covered separately from this setting).
+	cfg, err := ParseStorageConfig(`{"enabled":false,"store_pass_events":false,"store_full_prompts":true}`)
 	require.NoError(t, err)
 	require.True(t, cfg.StoreFullPrompts)
 	require.False(t, cfg.StorePassEvents)

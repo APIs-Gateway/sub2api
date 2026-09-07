@@ -215,7 +215,11 @@ func TestPromptAuditSQLiteRepositoryStoreFullPromptsCombinations(t *testing.T) {
 	// risk event, store_pass_events=false, store_full_prompts=true, via the
 	// async CreateStagingWithCapacity -> Complete path: always stored
 	// (risk events ignore store_pass_events), and full_prompt is populated
-	// even though the job row itself never carried it.
+	// even though the job row itself never carried it. prompt_audit_jobs has
+	// no full_prompt column, so claiming the job back from the database does
+	// not restore riskSnapshot.FullPrompt; the worker reconstructs it from
+	// the Redis scan payload before calling Complete (see processJob in
+	// prompt_worker.go), so this test reproduces that same step by hand.
 	riskSnapshot := storageSnapshot()
 	riskSnapshot.RequestID = "request-risk-full-prompt"
 	riskSnapshot.FullPrompt = "PROMPT_CANARY_risk_event_full_prompt"
@@ -225,6 +229,8 @@ func TestPromptAuditSQLiteRepositoryStoreFullPromptsCombinations(t *testing.T) {
 	claimed, ok, err := repo.ClaimNextJob(ctx, time.Now().Add(time.Second))
 	require.NoError(t, err)
 	require.True(t, ok)
+	require.Empty(t, claimed.Snapshot.FullPrompt, "prompt_audit_jobs has no full_prompt column to claim back")
+	claimed.Snapshot.FullPrompt = riskSnapshot.FullPrompt
 	riskStored, err := repo.Complete(ctx, claimed, storageResult(), false, true)
 	require.NoError(t, err)
 	require.NotNil(t, riskStored)
@@ -317,6 +323,11 @@ func TestPromptAuditMigrationIsPortableAndIdempotent(t *testing.T) {
 // ADD COLUMN IF NOT EXISTS), and applying it twice (idempotency via
 // schema_migrations in production, tolerated here via
 // isAlreadyAppliedMigrationError) must not fail or touch prompt_audit_jobs.
+// Like the 181 test above, the forbidden-syntax/scope checks only look at
+// non-comment SQL lines: the explanatory comment is free to name
+// "ADD COLUMN IF NOT EXISTS" and "prompt_audit_jobs" in prose (it does, to
+// explain why this migration avoids both), only the executable statement
+// itself must avoid them.
 func TestPromptAuditFullPromptMigrationIsPortableAndIdempotent(t *testing.T) {
 	db := newPromptStorageSQLite(t)
 	applyPromptAuditMigrationFile(t, db, "189_prompt_audit_full_prompt.sql")
@@ -324,11 +335,17 @@ func TestPromptAuditFullPromptMigrationIsPortableAndIdempotent(t *testing.T) {
 	contents, err := os.ReadFile("../../migrations/189_prompt_audit_full_prompt.sql")
 	require.NoError(t, err)
 	raw := strings.ToLower(string(contents))
-	for _, forbidden := range []string{"if not exists", "bigserial", "timestamptz", "jsonb", "::json", "pg_"} {
-		require.NotContains(t, raw, forbidden)
+	nonCommentSQL := make([]string, 0)
+	for _, line := range strings.Split(raw, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+			nonCommentSQL = append(nonCommentSQL, line)
+		}
 	}
-	require.Contains(t, raw, "alter table prompt_audit_events add column full_prompt")
-	require.NotContains(t, raw, "prompt_audit_jobs")
+	sqlOnly := strings.Join(nonCommentSQL, "\n")
+	for _, forbidden := range []string{"if not exists", "bigserial", "timestamptz", "jsonb", "::json", "pg_", "prompt_audit_jobs"} {
+		require.NotContains(t, sqlOnly, forbidden)
+	}
+	require.Contains(t, sqlOnly, "alter table prompt_audit_events add column full_prompt")
 
 	var columnCount int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('prompt_audit_events') WHERE name = 'full_prompt'`).Scan(&columnCount))
