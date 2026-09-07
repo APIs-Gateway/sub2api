@@ -6,5 +6,12 @@
 -- schema_migrations makes this migration idempotent. Keep the ALTER TABLE
 -- syntax portable, since SQLite and MySQL 5.7 do not support
 -- ADD COLUMN IF NOT EXISTS (see 177_add_subscription_plan_currency.sql and
--- 178_usage_log_image_input_tokens.sql for the same pattern).
-ALTER TABLE prompt_audit_events ADD COLUMN full_prompt TEXT NOT NULL DEFAULT '';
+-- 178_usage_log_image_input_tokens.sql for the same pattern). The column is
+-- nullable with no DEFAULT, not "NOT NULL DEFAULT ''", because MySQL 5.7
+-- rejects a DEFAULT value on BLOB/TEXT/GEOMETRY/JSON columns entirely (error
+-- 1101), even DEFAULT '' -- see 184_auth_cache_invalidation_outbox_mysql.sql's
+-- "last_error TEXT NULL" for the same pattern already used in this repo. The
+-- application (insertEvent) always writes an explicit value, either the full
+-- prompt or an empty string, so it never relies on this column's default. It
+-- is also fine for reads to normalize SQL NULL to "" for any pre-migration row.
+ALTER TABLE prompt_audit_events ADD COLUMN full_prompt TEXT NULL;

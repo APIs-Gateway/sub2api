@@ -703,3 +703,14 @@ func nullableInt64Ptr(value sql.NullInt64) *int64 {
 	result := value.Int64
 	return &result
 }
+
+// nullableStringValue normalizes a nullable TEXT column (full_prompt is
+// nullable because MySQL 5.7 rejects DEFAULT values on TEXT/BLOB/GEOMETRY/JSON
+// columns) to an empty string, matching insertEvent's own choice to write ""
+// rather than NULL for every row it writes.
+func nullableStringValue(value sql.NullString) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
+}

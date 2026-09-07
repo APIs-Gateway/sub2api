@@ -30,6 +30,7 @@ func eventDetailColumns(alias string) string {
 func scanEvent(row rowScanner, withFullPrompt ...bool) (*Event, error) {
 	event := &Event{}
 	var userID, apiKeyID, groupID sql.NullInt64
+	var fullPrompt sql.NullString
 	var categories, matched, scores, evidence []byte
 	dest := []any{&event.ID, &event.JobID, &event.Snapshot.RequestID, &userID,
 		&event.Snapshot.UsernameSnapshot, &event.Snapshot.UserEmailSnapshot, &apiKeyID,
@@ -40,7 +41,13 @@ func scanEvent(row rowScanner, withFullPrompt ...bool) (*Event, error) {
 		&event.ScannerVersion, &event.GuardEndpointID, &event.PolicyID, &event.PolicyVersion,
 		&event.ConfigVersion, &event.ChunkTotal, &event.LatencyMS, &event.CreatedAt}
 	if len(withFullPrompt) > 0 && withFullPrompt[0] {
-		dest = append(dest, &event.Snapshot.FullPrompt)
+		// full_prompt is nullable (MySQL 5.7 rejects a DEFAULT on TEXT/BLOB
+		// columns, so migration 189 adds it without one); rows written before
+		// that migration, or any row a future backfill leaves untouched, read
+		// back as SQL NULL here rather than empty string, so scan into
+		// sql.NullString and normalize below instead of scanning directly
+		// into the string field.
+		dest = append(dest, &fullPrompt)
 	}
 	if err := row.Scan(dest...); err != nil {
 		return nil, err
@@ -48,6 +55,7 @@ func scanEvent(row rowScanner, withFullPrompt ...bool) (*Event, error) {
 	event.Snapshot.UserID = nullableInt64Value(userID)
 	event.Snapshot.APIKeyID = nullableInt64Value(apiKeyID)
 	event.Snapshot.GroupID = nullableInt64Ptr(groupID)
+	event.Snapshot.FullPrompt = nullableStringValue(fullPrompt)
 	_ = json.Unmarshal(categories, &event.Categories)
 	_ = json.Unmarshal(matched, &event.MatchedScanners)
 	_ = json.Unmarshal(scores, &event.ScannerScores)
