@@ -148,7 +148,7 @@ func TestSchedulerCacheUpdateLastUsedChunksLargeBatches(t *testing.T) {
 		updates[id] = base.Add(time.Duration(i) * time.Millisecond)
 	}
 
-	_, err := cache.writeAccounts(ctx, accounts)
+	_, err := cache.writeAccountIDs(ctx, accounts)
 	require.NoError(t, err)
 	require.NoError(t, cache.UpdateLastUsed(ctx, updates))
 	for id, usedAt := range updates {
