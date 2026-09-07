@@ -269,7 +269,7 @@ func (a *OpsIngressRejectAggregator) ensureBucket(bucket time.Time) {
 func (a *OpsIngressRejectAggregator) reserveDimension() bool {
 	for {
 		current := a.cardinality.Load()
-		if current >= ingressRejectMaxEntries-1 {
+		if current >= ingressRejectMaxEntries {
 			return false
 		}
 		if a.cardinality.CompareAndSwap(current, current+1) {
@@ -392,12 +392,13 @@ func (a *OpsIngressRejectAggregator) Health() OpsIngressRejectHealth {
 	if a == nil {
 		return h
 	}
+	// Cardinality reflects only the number of distinct real dimension keys
+	// reserved via reserveDimension (bounded at ingressRejectMaxEntries). The
+	// overflow bucket (see recordOverflow) is a catch-all row for events that
+	// arrive once that budget is exhausted, not an extra dimension slot, so it
+	// must not be added on top of an already-full cardinality count; doing so
+	// would report a cardinality above Capacity as soon as overflow begins.
 	h.Cardinality = a.cardinality.Load()
-	a.overflowMu.Lock()
-	if a.overflow != nil {
-		h.Cardinality++
-	}
-	a.overflowMu.Unlock()
 	a.pendingMu.Lock()
 	h.PendingBatches = len(a.pending)
 	for _, batch := range a.pending {

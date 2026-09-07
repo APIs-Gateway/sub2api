@@ -20,10 +20,21 @@ func TestOpsIngressRejectAggregatesMigrationStoresOnlyMaskedAggregates(t *testin
 	require.Contains(t, sql, "idx_ops_ingress_reject_aggregates_ip_bucket")
 
 	// Aggregation-only guarantee: no columns for raw request bodies, headers or
-	// credentials should ever be introduced into this rollup table.
+	// credentials should ever be introduced into this rollup table. Only the
+	// non-comment SQL statements are checked, matching the pattern used by
+	// 181_prompt_audit.sql's migration test: the explanatory comment above
+	// intentionally documents this guarantee in prose (using the word
+	// "headers"), which must not itself trip the forbidden-keyword check.
 	lower := strings.ToLower(sql)
+	nonCommentLines := make([]string, 0)
+	for _, line := range strings.Split(lower, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+			nonCommentLines = append(nonCommentLines, line)
+		}
+	}
+	nonCommentSQL := strings.Join(nonCommentLines, "\n")
 	for _, forbidden := range []string{"request_body", "header", "authorization", "credential", "raw_ip", "user_agent"} {
-		require.NotContains(t, lower, forbidden)
+		require.NotContains(t, nonCommentSQL, forbidden)
 	}
 }
 
