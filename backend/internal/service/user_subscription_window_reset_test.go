@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -42,4 +43,98 @@ func TestSubscriptionWindowReset_NaturalBoundaries(t *testing.T) {
 	require.False(t, (&UserSubscription{}).NeedsMonthlyResetAt(now))
 	require.Nil(t, (&UserSubscription{}).WeeklyResetTimeAt(now))
 	require.Nil(t, (&UserSubscription{}).MonthlyResetTimeAt(now))
+}
+
+// weeklyMonthlyResetTrackingUserSubRepo records the window-start values passed to
+// ResetWeeklyUsage/ResetMonthlyUsage so tests can assert on what CheckAndResetWindows
+// actually persists, without touching a real repository.
+type weeklyMonthlyResetTrackingUserSubRepo struct {
+	userSubRepoNoop
+
+	resetWeeklyCalled  bool
+	weeklyWindowStart  time.Time
+	resetMonthlyCalled bool
+	monthlyWindowStart time.Time
+}
+
+func (r *weeklyMonthlyResetTrackingUserSubRepo) ResetWeeklyUsage(_ context.Context, _ int64, _ *time.Time, newWindowStart time.Time) error {
+	r.resetWeeklyCalled = true
+	r.weeklyWindowStart = newWindowStart
+	return nil
+}
+
+func (r *weeklyMonthlyResetTrackingUserSubRepo) ResetMonthlyUsage(_ context.Context, _ int64, _ *time.Time, newWindowStart time.Time) error {
+	r.resetMonthlyCalled = true
+	r.monthlyWindowStart = newWindowStart
+	return nil
+}
+
+// Issue #737 audit: upstream d29acc29a580 fixed a rolling-anchor bug where an automatic
+// window reset could compute a new window start at or after the subscription's ExpiresAt,
+// handing the user a "new" quota window they could never actually use. The two tests below
+// pin down why the fork's natural-calendar-boundary model does not have an equivalent bug:
+// ValidateAndCheckLimits always checks IsExpired() strictly before it evaluates
+// Needs{Weekly,Monthly}Reset, and the only production callers of CheckAndResetWindows
+// (EnsureWindowMaintenance, invoked from api_key_auth.go / api_key_auth_google.go) only run
+// once that gate has already passed for the current request.
+
+// TestValidateAndCheckLimits_ExpiredSubscriptionNeverTriggersAutomaticWindowReset asserts
+// that an already-expired subscription is rejected before any window is touched, even when
+// its weekly/monthly windows are stale enough that Needs{Weekly,Monthly}ResetAt would
+// otherwise say a reset is due.
+func TestValidateAndCheckLimits_ExpiredSubscriptionNeverTriggersAutomaticWindowReset(t *testing.T) {
+	now := time.Now()
+	staleWeekStart := timezone.StartOfWeek(now).AddDate(0, 0, -14)
+	staleMonthStart := timezone.StartOfMonth(now).AddDate(0, -2, 0)
+	sub := &UserSubscription{
+		Status:             SubscriptionStatusActive,
+		ExpiresAt:          now.Add(-time.Minute), // already past expiry
+		WeeklyWindowStart:  &staleWeekStart,
+		WeeklyUsageUSD:     42,
+		MonthlyWindowStart: &staleMonthStart,
+		MonthlyUsageUSD:    99,
+	}
+	// userSubRepoNoop panics on any call: ValidateAndCheckLimits must be a pure in-memory
+	// check that never reaches the repository for an already-expired subscription.
+	svc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil, nil, nil, nil)
+
+	needsMaintenance, err := svc.ValidateAndCheckLimits(sub, &Group{})
+
+	require.ErrorIs(t, err, ErrSubscriptionExpired)
+	require.False(t, needsMaintenance, "expired subscriptions must never request window maintenance")
+	require.Equal(t, 42.0, sub.WeeklyUsageUSD, "expired subscription's weekly usage must not be zeroed by a stale-window reset")
+	require.Equal(t, 99.0, sub.MonthlyUsageUSD, "expired subscription's monthly usage must not be zeroed by a stale-window reset")
+}
+
+// TestCheckAndResetWindows_AutomaticResetNearExpiryNeverStartsPastExpiresAt documents the
+// complementary positive case: a still-active subscription whose ExpiresAt falls shortly
+// after a stale natural-calendar boundary is allowed to reset, and the new window start
+// (startOfDay(now)) is always <= now < ExpiresAt at this call site.
+func TestCheckAndResetWindows_AutomaticResetNearExpiryNeverStartsPastExpiresAt(t *testing.T) {
+	now := time.Now()
+	expiresAt := now.Add(2 * time.Hour) // still active, expires later today
+	staleWeekStart := timezone.StartOfWeek(now).AddDate(0, 0, -7)
+	staleMonthStart := timezone.StartOfMonth(now).AddDate(0, -1, 0)
+	repo := &weeklyMonthlyResetTrackingUserSubRepo{}
+	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil, nil, nil, nil)
+	sub := &UserSubscription{
+		ID:                 1,
+		UserID:             10,
+		GroupID:            20,
+		ExpiresAt:          expiresAt,
+		WeeklyWindowStart:  &staleWeekStart,
+		WeeklyUsageUSD:     42,
+		MonthlyWindowStart: &staleMonthStart,
+		MonthlyUsageUSD:    99,
+	}
+
+	err := svc.CheckAndResetWindows(context.Background(), sub)
+
+	require.NoError(t, err)
+	require.True(t, repo.resetWeeklyCalled)
+	require.True(t, repo.resetMonthlyCalled)
+	require.False(t, repo.weeklyWindowStart.After(expiresAt), "automatic weekly reset must not start a window after ExpiresAt")
+	require.False(t, repo.monthlyWindowStart.After(expiresAt), "automatic monthly reset must not start a window after ExpiresAt")
+	require.Zero(t, sub.WeeklyUsageUSD)
+	require.Zero(t, sub.MonthlyUsageUSD)
 }
