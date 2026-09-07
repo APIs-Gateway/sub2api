@@ -121,11 +121,11 @@ func TestSecureDialAdminTrustedHostRejectsCategoricalBlockRegardless(t *testing.
 func TestSecureDialAdminTrustedHostAllowsResolvedPrivateAddress(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	go func() {
 		conn, acceptErr := listener.Accept()
 		if acceptErr == nil {
-			conn.Close()
+			_ = conn.Close()
 		}
 	}()
 
@@ -136,7 +136,7 @@ func TestSecureDialAdminTrustedHostAllowsResolvedPrivateAddress(t *testing.T) {
 	dial := secureDialContext(dialer, staticResolver{addresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")}}, false, true)
 	conn, err := dial(context.Background(), "tcp", net.JoinHostPort("guard.intranet.corp", port))
 	require.NoError(t, err)
-	conn.Close()
+	_ = conn.Close()
 }
 
 func TestSecureHTTPClientDoesNotBypassDestinationValidationThroughEnvironmentProxy(t *testing.T) {
