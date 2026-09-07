@@ -129,6 +129,11 @@ func TestValidateEasyPayCustomMethods(t *testing.T) {
 			supportedTypes: "alipay,wxpay,ldc",
 		},
 		{
+			name:           "nil config behaves like empty config",
+			config:         nil,
+			supportedTypes: "alipay,wxpay",
+		},
+		{
 			name:           "malformed custom methods json",
 			config:         map[string]string{"customMethods": `not-json`},
 			supportedTypes: "alipay,wxpay,ldc",
@@ -352,6 +357,62 @@ func TestCreateProviderInstanceAllowsVisibleMethodProvidersFromDifferentSources(
 		Enabled:        true,
 	})
 	require.NoError(t, err)
+}
+
+func TestCreateProviderInstanceRejectsInvalidEasyPayCustomMethods(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	svc := &PaymentConfigService{entClient: client}
+
+	_, err := svc.CreateProviderInstance(ctx, CreateProviderInstanceRequest{
+		ProviderKey: "easypay",
+		Name:        "Invalid EasyPay",
+		Config: map[string]string{
+			"customMethods": `not-a-json-array`,
+		},
+		SupportedTypes: []string{"alipay", "wxpay"},
+		Enabled:        false,
+	})
+	require.Error(t, err)
+	appErr := infraerrors.FromError(err)
+	require.Equal(t, "VALIDATION_ERROR", appErr.Reason)
+	require.Contains(t, err.Error(), "customMethods must be a JSON array")
+}
+
+func TestUpdateProviderInstanceRejectsInvalidEasyPayCustomMethods(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	svc := &PaymentConfigService{
+		entClient:     client,
+		encryptionKey: []byte("0123456789abcdef0123456789abcdef"),
+	}
+
+	instance, err := svc.CreateProviderInstance(ctx, CreateProviderInstanceRequest{
+		ProviderKey: "easypay",
+		Name:        "EasyPay Custom",
+		Config: map[string]string{
+			"pid":       "5001",
+			"pkey":      "pkey-5001",
+			"apiBase":   "https://pay.example.com",
+			"notifyUrl": "https://merchant.example.com/notify",
+			"returnUrl": "https://merchant.example.com/return",
+		},
+		SupportedTypes: []string{"alipay", "wxpay"},
+		Enabled:        false,
+	})
+	require.NoError(t, err)
+
+	_, err = svc.UpdateProviderInstance(ctx, instance.ID, UpdateProviderInstanceRequest{
+		Config: map[string]string{"customMethods": `not-a-json-array`},
+	})
+	require.Error(t, err)
+	appErr := infraerrors.FromError(err)
+	require.Equal(t, "VALIDATION_ERROR", appErr.Reason)
+	require.Contains(t, err.Error(), "customMethods must be a JSON array")
 }
 
 func TestUpdateProviderInstanceAllowsEnablingVisibleMethodProviderFromDifferentSource(t *testing.T) {
