@@ -577,7 +577,12 @@ func TestHandleStreamingResponse_PropagatesNamespaceRestoreError(t *testing.T) {
 	}
 
 	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
-	require.Nil(t, result)
+	// Unlike the other five restore call sites, every error path in this
+	// handler (scan errors, disconnects, and this restore error) returns
+	// resultWithUsage() alongside the error instead of nil: the caller still
+	// needs the usage collected so far for billing even when the stream ends
+	// in error. Assert the error, not nilness, to match that contract.
+	require.NotNil(t, result)
 	require.ErrorContains(t, err, "restore OpenAI namespace response")
 }
 
