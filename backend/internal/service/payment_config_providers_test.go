@@ -114,6 +114,107 @@ func TestValidateProviderRequest(t *testing.T) {
 	}
 }
 
+func TestValidateEasyPayCustomMethods(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		config         map[string]string
+		supportedTypes string
+		wantErr        string
+	}{
+		{
+			name:           "valid custom methods",
+			config:         map[string]string{"customMethods": `[{"type":"ldc","upstreamType":"epay","displayName":"LDC"}]`},
+			supportedTypes: "alipay,wxpay,ldc",
+		},
+		{
+			name:           "nil config behaves like empty config",
+			config:         nil,
+			supportedTypes: "alipay,wxpay",
+		},
+		{
+			name:           "malformed custom methods json",
+			config:         map[string]string{"customMethods": `not-json`},
+			supportedTypes: "alipay,wxpay,ldc",
+			wantErr:        "customMethods must be a JSON array",
+		},
+		{
+			name:           "missing upstream type",
+			config:         map[string]string{"customMethods": `[{"type":"ldc","displayName":"LDC"}]`},
+			supportedTypes: "alipay,wxpay,ldc",
+			wantErr:        "customMethods upstreamType is required",
+		},
+		{
+			name:           "duplicate custom type",
+			config:         map[string]string{"customMethods": `[{"type":"ldc","upstreamType":"epay"},{"type":"ldc","upstreamType":"epay2"}]`},
+			supportedTypes: "alipay,wxpay,ldc",
+			wantErr:        "duplicate customMethods type",
+		},
+		{
+			name:           "custom type must already be lowercase",
+			config:         map[string]string{"customMethods": `[{"type":"LDC","upstreamType":"epay"}]`},
+			supportedTypes: "alipay,wxpay,ldc",
+			wantErr:        "customMethods type may only contain lowercase letters",
+		},
+		{
+			name:           "upstream type must already be lowercase",
+			config:         map[string]string{"customMethods": `[{"type":"ldc","upstreamType":"ALIPAY"}]`},
+			supportedTypes: "alipay,wxpay,ldc",
+			wantErr:        "customMethods upstreamType may only contain lowercase letters",
+		},
+		{
+			name:           "custom type uses alipay prefix",
+			config:         map[string]string{"customMethods": `[{"type":"alipay_hk","upstreamType":"hkpay"}]`},
+			supportedTypes: "alipay,wxpay,alipay_hk",
+			wantErr:        "customMethods type cannot start with alipay, wxpay, or crypto",
+		},
+		{
+			name:           "custom type uses wxpay prefix",
+			config:         map[string]string{"customMethods": `[{"type":"wxpay_usdt","upstreamType":"usdt"}]`},
+			supportedTypes: "alipay,wxpay,wxpay_usdt",
+			wantErr:        "customMethods type cannot start with alipay, wxpay, or crypto",
+		},
+		{
+			// Fork-specific: unlike upstream, this fork has a built-in "crypto" (BEpusdt)
+			// payment type. GetBasePaymentType prefix-collapses any "crypto*" type into
+			// "crypto", so a custom EasyPay method starting with "crypto" would silently
+			// merge its limits/visibility into the unrelated crypto provider.
+			name:           "custom type uses crypto prefix",
+			config:         map[string]string{"customMethods": `[{"type":"crypto_usdt","upstreamType":"usdt"}]`},
+			supportedTypes: "alipay,wxpay,crypto_usdt",
+			wantErr:        "customMethods type cannot start with alipay, wxpay, or crypto",
+		},
+		{
+			name:           "supported custom type missing mapping",
+			config:         map[string]string{"customMethods": `[{"type":"ldc","upstreamType":"epay"}]`},
+			supportedTypes: "alipay,wxpay,ldc,usdt_trc20",
+			wantErr:        "supported EasyPay custom type usdt_trc20 has no customMethods mapping",
+		},
+		{
+			name:           "supported custom type must already be lowercase",
+			config:         map[string]string{"customMethods": `[{"type":"ldc","upstreamType":"epay"}]`},
+			supportedTypes: "alipay,wxpay,LDC",
+			wantErr:        "supported EasyPay custom type LDC may only contain lowercase letters",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateEasyPayCustomMethods(tc.config, tc.supportedTypes)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
 func TestIsSensitiveProviderConfigField(t *testing.T) {
 	t.Parallel()
 
@@ -256,6 +357,62 @@ func TestCreateProviderInstanceAllowsVisibleMethodProvidersFromDifferentSources(
 		Enabled:        true,
 	})
 	require.NoError(t, err)
+}
+
+func TestCreateProviderInstanceRejectsInvalidEasyPayCustomMethods(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	svc := &PaymentConfigService{entClient: client}
+
+	_, err := svc.CreateProviderInstance(ctx, CreateProviderInstanceRequest{
+		ProviderKey: "easypay",
+		Name:        "Invalid EasyPay",
+		Config: map[string]string{
+			"customMethods": `not-a-json-array`,
+		},
+		SupportedTypes: []string{"alipay", "wxpay"},
+		Enabled:        false,
+	})
+	require.Error(t, err)
+	appErr := infraerrors.FromError(err)
+	require.Equal(t, "VALIDATION_ERROR", appErr.Reason)
+	require.Contains(t, err.Error(), "customMethods must be a JSON array")
+}
+
+func TestUpdateProviderInstanceRejectsInvalidEasyPayCustomMethods(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	svc := &PaymentConfigService{
+		entClient:     client,
+		encryptionKey: []byte("0123456789abcdef0123456789abcdef"),
+	}
+
+	instance, err := svc.CreateProviderInstance(ctx, CreateProviderInstanceRequest{
+		ProviderKey: "easypay",
+		Name:        "EasyPay Custom",
+		Config: map[string]string{
+			"pid":       "5001",
+			"pkey":      "pkey-5001",
+			"apiBase":   "https://pay.example.com",
+			"notifyUrl": "https://merchant.example.com/notify",
+			"returnUrl": "https://merchant.example.com/return",
+		},
+		SupportedTypes: []string{"alipay", "wxpay"},
+		Enabled:        false,
+	})
+	require.NoError(t, err)
+
+	_, err = svc.UpdateProviderInstance(ctx, instance.ID, UpdateProviderInstanceRequest{
+		Config: map[string]string{"customMethods": `not-a-json-array`},
+	})
+	require.Error(t, err)
+	appErr := infraerrors.FromError(err)
+	require.Equal(t, "VALIDATION_ERROR", appErr.Reason)
+	require.Contains(t, err.Error(), "customMethods must be a JSON array")
 }
 
 func TestUpdateProviderInstanceAllowsEnablingVisibleMethodProviderFromDifferentSource(t *testing.T) {
