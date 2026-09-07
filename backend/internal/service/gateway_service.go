@@ -10579,8 +10579,11 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 
 	// 处理错误响应
 	if resp.StatusCode >= 400 {
-		// 标记账号状态（429/529等）
-		s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		// 标记账号状态（429/529等）；反代/网关在到达上游 API 之前拦下的 HTML
+		// 拦截页/挑战页不构成账号凭据或权限失效的证据，跳过冷却（见 isHTMLUpstreamCountTokensResponse）。
+		if !isHTMLUpstreamCountTokensResponse(resp.Header, respBody) {
+			s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		}
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -10679,7 +10682,7 @@ func (s *GatewayService) forwardCountTokensAnthropicAPIKeyPassthrough(ctx contex
 	}
 
 	if resp.StatusCode >= 400 {
-		if s.rateLimitService != nil {
+		if s.rateLimitService != nil && !isHTMLUpstreamCountTokensResponse(resp.Header, respBody) {
 			s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 		}
 
@@ -10984,6 +10987,45 @@ func (s *GatewayService) countTokensError(c *gin.Context, status int, errType, m
 			"message": message,
 		},
 	})
+}
+
+// isHTMLUpstreamCountTokensResponse 判断 count_tokens 上游错误响应是否是一个 HTML
+// 页面（例如反向代理/网关在请求到达真正的平台 API 之前就拦下、返回的挑战页或
+// 错误页），而不是结构化的 JSON API 错误。
+//
+// count_tokens 是一个本地便捷端点：它的失败不应该影响账号健康度判断，但一个
+// 被链路中间层拦截、内容是 HTML 而非 JSON 的响应尤其如此——它描述的是"这条
+// 链路/这个端点被挡了"，不构成账号凭据或权限失效的证据。据此调用
+// HandleUpstreamError 会把请求级、甚至链路级的噪声放大成账号级处罚（temp
+// unschedulable / disable），可能连累同账号后续正常的请求。
+//
+// 判断依据（满足任一即可）：
+//   - 响应头 Content-Type 的 media type 是 text/html（忽略 charset 等参数、大小写）；
+//   - 响应体去除首尾空白后以 <!doctype html 或 <html 开头（大小写不敏感），复用
+//     ratelimit_service.go 中既有的 isHTMLResponse 判定，不重新发明检测逻辑。
+//
+// 该 guard 只影响是否调用 HandleUpstreamError（即是否冷却账号），不影响错误
+// 本身是否正常返回给调用方——上游状态码与错误信息仍然原样透传。
+//
+// 作用范围：仅用于 count_tokens 转发路径（ForwardCountTokens /
+// forwardCountTokensAnthropicAPIKeyPassthrough），覆盖所有平台/账号类型，不
+// 局限于 OpenAI OAuth。HandleUpstreamError 内部已有的、专门针对 OpenAI 403 的
+// isHTMLResponse 判定（见 ratelimit_service.go handleOpenAI403）保持不变，服务
+// 于更广的（非 count_tokens）请求路径。
+func isHTMLUpstreamCountTokensResponse(headers http.Header, body []byte) bool {
+	if headers != nil {
+		contentType := strings.TrimSpace(headers.Get("Content-Type"))
+		if contentType != "" {
+			mediaType := contentType
+			if idx := strings.IndexByte(mediaType, ';'); idx >= 0 {
+				mediaType = mediaType[:idx]
+			}
+			if strings.EqualFold(strings.TrimSpace(mediaType), "text/html") {
+				return true
+			}
+		}
+	}
+	return isHTMLResponse(body)
 }
 
 // buildCustomRelayURL 构建自定义中继转发 URL
