@@ -615,6 +615,24 @@ func TestSchedulerCacheWriteAccountIDsSkipsUnencodableAccount(t *testing.T) {
 	require.Nil(t, missing, "the unencodable account must not leave a partial cache entry")
 }
 
+// TestSchedulerCacheWriteAccountIDsReturnsNilForEmptyInput covers the len(accounts) == 0
+// early return that the perf refactor merged directly into writeAccountIDs (previously
+// this same guard lived in the now-removed writeAccountPayloads). No pipeline should be
+// touched and the result must be a nil slice with no error, matching writeSnapshotMembers'
+// and writeSnapshotAccountIDs' own empty-input no-ops.
+func TestSchedulerCacheWriteAccountIDsReturnsNilForEmptyInput(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+
+	ids, err := cache.writeAccountIDs(ctx, nil)
+	require.NoError(t, err)
+	require.Nil(t, ids)
+
+	ids, err = cache.writeAccountIDs(ctx, []service.Account{})
+	require.NoError(t, err)
+	require.Nil(t, ids)
+}
+
 func TestSchedulerCacheSetSnapshotOmitsUnencodableAccountFromZSet(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -666,6 +684,30 @@ func TestSchedulerCacheSetAccountPropagatesWriteAccountIDsError(t *testing.T) {
 
 	err := cache.SetAccount(ctx, &account)
 	require.Error(t, err, "a real redis failure while flushing the pipeline must be propagated, not swallowed")
+}
+
+// TestSchedulerCacheSetSnapshotPropagatesWriteErrorAfterVersionAllocation covers the
+// branch in SetSnapshot that only exists once allocateSnapshotVersion has already
+// succeeded and writeSnapshotVersionAndReturnAccountIDs itself fails. A blanket
+// mr.SetError (as used above for SetAccount) cannot isolate this: it would also fail
+// the earlier allocateSnapshotVersion Lua-script call, so SetSnapshot would return
+// through its first, already-covered error branch instead. Pre-seeding the snapshot
+// ZSET key that the (deterministic, freshly-allocated) version "1" resolves to with a
+// non-ZSET value lets allocateSnapshotVersion and the account-payload writes succeed
+// normally, and fails only the final ZADD inside writeSnapshotAccountIDs with a
+// WRONGTYPE error, exercising the err != nil path after a successful allocation.
+func TestSchedulerCacheSetSnapshotPropagatesWriteErrorAfterVersionAllocation(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 67, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	account := service.Account{ID: 9561, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.rdb.Set(ctx, schedulerSnapshotKey(bucket, "1"), "not-a-zset", 0).Err())
+
+	err = cache.SetSnapshot(ctx, bucket, token, []service.Account{account})
+	require.Error(t, err, "a write failure after a successful version allocation must be propagated, not swallowed")
 }
 
 // TestSchedulerCacheWriteAccountIDsReturnsErrorWhenMidBatchFlushFails covers
