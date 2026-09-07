@@ -287,7 +287,7 @@ func normalizeMetricName(name string) string {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			_, _ = b.WriteRune(r)
 		case r == '_' || r == '-':
-			_, _ = b.WriteByte('_')
+			_ = b.WriteByte('_')
 		}
 	}
 	return strings.Trim(b.String(), "_")
