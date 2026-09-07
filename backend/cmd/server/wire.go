@@ -105,6 +105,7 @@ func provideCleanup(
 	channelMonitorRunner *service.ChannelMonitorRunner,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
 	authCacheInvalidationWorker *service.AuthCacheInvalidationWorker,
+	opsIngressRejectAggregator *service.OpsIngressRejectAggregator,
 	promptAudit *securityaudit.PromptService,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 ) func() {
@@ -280,6 +281,12 @@ func provideCleanup(
 			{"AuthCacheInvalidationWorker", func() error {
 				if authCacheInvalidationWorker != nil {
 					authCacheInvalidationWorker.Stop()
+				}
+				return nil
+			}},
+			{"OpsIngressRejectAggregator", func() error {
+				if opsIngressRejectAggregator != nil {
+					opsIngressRejectAggregator.Stop()
 				}
 				return nil
 			}},

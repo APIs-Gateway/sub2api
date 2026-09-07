@@ -59,6 +59,13 @@ const authCacheInvalidationOutboxMigration = "184_auth_cache_invalidation_outbox
 const latestAPIKeyIPIndexMigration = "185_add_usage_logs_api_key_latest_ip_index_notx.sql"
 const latestAPIKeyIPIndex = "idx_usage_logs_api_key_latest_ip"
 
+// opsIngressRejectAggregatesMigration is the default (Postgres) migration file for the
+// ops_ingress_reject_aggregates rollup table. Like authCacheInvalidationOutboxMigration
+// above, it is gated to the Postgres dialect only because
+// 183_ops_ingress_reject_aggregates_mysql.sql / _sqlite.sql are the dialect-specific
+// replacements applied on those drivers instead (see migrationAppliesToDatabase).
+const opsIngressRejectAggregatesMigration = "183_ops_ingress_reject_aggregates.sql"
+
 type migrationDatabaseDialect uint8
 
 const (
@@ -96,7 +103,7 @@ func migrationAppliesToDatabase(name string, dialect migrationDatabaseDialect) b
 		return dialect == migrationDatabaseMySQL
 	case strings.HasSuffix(name, "_sqlite.sql"):
 		return dialect == migrationDatabaseSQLite
-	case name == authCacheInvalidationOutboxMigration || name == latestAPIKeyIPIndexMigration:
+	case name == authCacheInvalidationOutboxMigration || name == latestAPIKeyIPIndexMigration || name == opsIngressRejectAggregatesMigration:
 		return dialect == migrationDatabasePostgres
 	default:
 		return true

@@ -445,6 +445,23 @@ func ProvideAuthCacheInvalidationWorker(
 	return worker
 }
 
+// ProvideOpsIngressRejectAggregator creates and starts the in-process ops_ingress_reject
+// aggregator, then wires it into OpsService via SetIngressRejectAggregator. opsRepo's
+// concrete dynamic type (*repository.opsRepository) already implements
+// OpsIngressRejectRepository (see internal/repository/ops_ingress_reject_repo.go); the
+// type assertion below is what lets that capability ride along on the same instance
+// without widening the broad OpsRepository interface. Follows the same
+// construction-order decoupling as ProvideOpsCleanupService/SetCleanupReloader.
+func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsService) *OpsIngressRejectAggregator {
+	repo, _ := opsRepo.(OpsIngressRejectRepository)
+	agg := NewOpsIngressRejectAggregator(repo)
+	agg.Start()
+	if opsService != nil {
+		opsService.SetIngressRejectAggregator(agg)
+	}
+	return agg
+}
+
 // ProvideBackupService creates and starts BackupService
 func ProvideBackupService(
 	settingRepo SettingRepository,
@@ -619,6 +636,7 @@ var ProviderSet = wire.NewSet(
 	ProvideBackupService,
 	ProvideOpsSystemLogSink,
 	ProvideOpsService,
+	ProvideOpsIngressRejectAggregator,
 	ProvideOpsMetricsCollector,
 	ProvideOpsAggregationService,
 	ProvideOpsAlertEvaluatorService,
