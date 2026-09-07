@@ -66,12 +66,17 @@ type JobRepository interface {
 	MarkStagingFailed(ctx context.Context, jobID int64, code, message string) error
 	ClaimNextJob(ctx context.Context, now time.Time) (*Job, bool, error)
 	RefreshLease(ctx context.Context, jobID, claimVersion int64, now time.Time) error
-	Complete(ctx context.Context, job *Job, result *NormalizedResult, storePass bool) (*Event, error)
+	// Complete and RecordBlocking take storePassEvents and storeFullPrompts as
+	// separate opt-ins: storeFullPrompts only takes effect for an event that
+	// storePassEvents/the decision already causes to be stored, and it is the
+	// single gate that decides whether the (already bounded) full prompt text
+	// is written to the durable full_prompt column at all.
+	Complete(ctx context.Context, job *Job, result *NormalizedResult, storePassEvents, storeFullPrompts bool) (*Event, error)
 	Retry(ctx context.Context, jobID, claimVersion int64, next time.Time, code, message string) error
 	Fail(ctx context.Context, jobID, claimVersion int64, code, message string) error
 	ReclaimStale(ctx context.Context, stagingBefore, processingBefore time.Time, limit int) (int64, error)
 	QueueStats(ctx context.Context) (QueueStats, error)
-	RecordBlocking(ctx context.Context, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult, storePass bool) (*Event, error)
+	RecordBlocking(ctx context.Context, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult, storePassEvents, storeFullPrompts bool) (*Event, error)
 }
 
 type promptAuditDialect uint8
@@ -297,7 +302,7 @@ func (r *PostgreSQLRepository) RefreshLease(ctx context.Context, jobID, claimVer
 	return err
 }
 
-func (r *PostgreSQLRepository) Complete(ctx context.Context, job *Job, result *NormalizedResult, storePass bool) (*Event, error) {
+func (r *PostgreSQLRepository) Complete(ctx context.Context, job *Job, result *NormalizedResult, storePassEvents, storeFullPrompts bool) (*Event, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("prompt audit database unavailable")
 	}
@@ -318,8 +323,8 @@ func (r *PostgreSQLRepository) Complete(ctx context.Context, job *Job, result *N
 		return nil, err
 	}
 	var event *Event
-	if storePass || result.Decision != EventPass {
-		event, err = r.insertEvent(ctx, tx, job.ID, job.Snapshot.Redacted(), job.ConfigVersion, result)
+	if shouldStorePromptAuditEvent(result.Decision, storePassEvents) {
+		event, err = r.insertEvent(ctx, tx, job.ID, job.Snapshot.Redacted(), job.ConfigVersion, result, storeFullPrompts)
 		if err != nil {
 			return nil, err
 		}
@@ -469,7 +474,7 @@ func (r *PostgreSQLRepository) QueueStats(ctx context.Context) (QueueStats, erro
 	return stats, rows.Err()
 }
 
-func (r *PostgreSQLRepository) RecordBlocking(ctx context.Context, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult, storePass bool) (*Event, error) {
+func (r *PostgreSQLRepository) RecordBlocking(ctx context.Context, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult, storePassEvents, storeFullPrompts bool) (*Event, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("prompt audit database unavailable")
 	}
@@ -486,8 +491,8 @@ func (r *PostgreSQLRepository) RecordBlocking(ctx context.Context, snapshot Prom
 		return nil, err
 	}
 	var event *Event
-	if storePass || result.Decision != EventPass {
-		event, err = r.insertEvent(ctx, tx, job.ID, snapshot.Redacted(), configVersion, result)
+	if shouldStorePromptAuditEvent(result.Decision, storePassEvents) {
+		event, err = r.insertEvent(ctx, tx, job.ID, snapshot.Redacted(), configVersion, result, storeFullPrompts)
 		if err != nil {
 			return nil, err
 		}
@@ -538,7 +543,20 @@ func (r *PostgreSQLRepository) insertJob(ctx context.Context, tx sqlTransaction,
 	return r.selectJob(ctx, tx, " WHERE id="+p(1), id)
 }
 
-func (r *PostgreSQLRepository) insertEvent(ctx context.Context, tx sqlTransaction, jobID int64, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult) (*Event, error) {
+// shouldStorePromptAuditEvent keeps store_pass_events scoped to safe results:
+// risk events (flag/critical) are always persisted once Prompt Audit itself
+// is enabled, while pass events are only persisted when explicitly opted in.
+func shouldStorePromptAuditEvent(decision EventDecision, storePassEvents bool) bool {
+	return decision != EventPass || storePassEvents
+}
+
+// insertEvent persists a redacted event row. storeFullPrompt is the single
+// gate for the optional full_prompt column: even if snapshot.FullPrompt is
+// populated (e.g. by ExtractPromptSnapshot or the worker's async
+// reconstruction), it is only written to durable storage when
+// storeFullPrompt is true; otherwise the column is written empty so the
+// existing redacted-by-default behavior is unchanged.
+func (r *PostgreSQLRepository) insertEvent(ctx context.Context, tx sqlTransaction, jobID int64, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult, storeFullPrompt bool) (*Event, error) {
 	id, err := r.reserveID(ctx, tx, "event")
 	if err != nil {
 		return nil, err
@@ -551,20 +569,26 @@ func (r *PostgreSQLRepository) insertEvent(ctx context.Context, tx sqlTransactio
 		evidence[key] = RedactPreview(value, 160)
 	}
 	evidenceJSON, _ := json.Marshal(evidence)
+	fullPrompt := ""
+	if storeFullPrompt {
+		fullPrompt = BuildFullPrompt(snapshot.FullPrompt, DefaultFullPromptMaxRunes)
+	}
 	p := r.placeholder
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO prompt_audit_events (
 			id,job_id,request_id,user_id,username_snapshot,user_email_snapshot,api_key_id,api_key_name_snapshot,
 			group_id,group_name,provider,endpoint,protocol,model,prompt_hash,redacted_preview,
 			decision,risk_level,action,categories,matched_scanners,scanner_scores,scanner_evidence,
-			scanner_backend,scanner_version,guard_endpoint_id,policy_id,policy_version,config_version,chunk_total,latency_ms
-		) VALUES (`+p(1)+`,`+p(2)+`,`+p(3)+`,`+p(4)+`,`+p(5)+`,`+p(6)+`,`+p(7)+`,`+p(8)+`,`+p(9)+`,`+p(10)+`,`+p(11)+`,`+p(12)+`,`+p(13)+`,`+p(14)+`,`+p(15)+`,`+p(16)+`,`+p(17)+`,`+p(18)+`,`+p(19)+`,`+p(20)+`,`+p(21)+`,`+p(22)+`,`+p(23)+`,`+p(24)+`,`+p(25)+`,`+p(26)+`,`+p(27)+`,`+p(28)+`,`+p(29)+`,`+p(30)+`,`+p(31)+`)`,
+			scanner_backend,scanner_version,guard_endpoint_id,policy_id,policy_version,config_version,chunk_total,latency_ms,
+			full_prompt
+		) VALUES (`+p(1)+`,`+p(2)+`,`+p(3)+`,`+p(4)+`,`+p(5)+`,`+p(6)+`,`+p(7)+`,`+p(8)+`,`+p(9)+`,`+p(10)+`,`+p(11)+`,`+p(12)+`,`+p(13)+`,`+p(14)+`,`+p(15)+`,`+p(16)+`,`+p(17)+`,`+p(18)+`,`+p(19)+`,`+p(20)+`,`+p(21)+`,`+p(22)+`,`+p(23)+`,`+p(24)+`,`+p(25)+`,`+p(26)+`,`+p(27)+`,`+p(28)+`,`+p(29)+`,`+p(30)+`,`+p(31)+`,`+p(32)+`)`,
 		id, jobID, snapshot.RequestID, nullableID(snapshot.UserID), snapshot.UsernameSnapshot, snapshot.UserEmailSnapshot,
 		nullableID(snapshot.APIKeyID), snapshot.APIKeyNameSnapshot, snapshot.GroupID, snapshot.GroupName,
 		snapshot.Provider, snapshot.Endpoint, snapshot.Protocol, snapshot.Model, snapshot.PromptHash,
 		snapshot.RedactedPreview, string(result.Decision), string(result.RiskLevel), string(result.Action),
 		string(categories), string(matched), string(scores), string(evidenceJSON), result.ScannerBackend, result.ScannerVersion,
-		result.GuardEndpointID, result.PolicyID, result.PolicyVersion, configVersion, result.ChunkTotal, result.LatencyMS)
+		result.GuardEndpointID, result.PolicyID, result.PolicyVersion, configVersion, result.ChunkTotal, result.LatencyMS,
+		fullPrompt)
 	if err != nil {
 		return nil, err
 	}

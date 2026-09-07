@@ -90,6 +90,13 @@ func (r Request) Clone() Request {
 	return r
 }
 
+// PromptSnapshot.FullPrompt carries the unredacted prompt text only when the
+// store_full_prompts setting is enabled and only along the code path that
+// just persisted or loaded a single event (see BuildFullPrompt,
+// FullPromptFromScanText, and PostgreSQLRepository.GetEvent). It is empty by
+// default: job rows never populate it, list queries never select it, and the
+// disabled (default) storage path never sets it, so the omitempty tag keeps
+// it out of any response built from those paths.
 type PromptSnapshot struct {
 	RequestID          string `json:"request_id"`
 	UserID             int64  `json:"user_id"`
@@ -105,6 +112,7 @@ type PromptSnapshot struct {
 	Model              string `json:"model"`
 	PromptHash         string `json:"prompt_hash"`
 	RedactedPreview    string `json:"redacted_preview"`
+	FullPrompt         string `json:"full_prompt,omitempty"`
 	PromptLength       int    `json:"prompt_length"`
 	MessageCount       int    `json:"message_count"`
 	Stage              string `json:"stage"`

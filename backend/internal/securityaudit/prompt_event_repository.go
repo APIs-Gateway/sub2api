@@ -35,6 +35,9 @@ type EventPage struct {
 
 // EventRepository is deliberately read-only. Destructive retention operations
 // are outside this child issue and must not become part of this dependency.
+// ListEvents always returns redacted-only snapshots. GetEvent may return an
+// unredacted Snapshot.FullPrompt when store_full_prompts was enabled at
+// storage time; it is empty otherwise.
 type EventRepository interface {
 	ListEvents(ctx context.Context, filter EventFilter, page, pageSize int) (*EventPage, error)
 	GetEvent(ctx context.Context, id int64) (*Event, error)
@@ -93,7 +96,7 @@ func (r *PostgreSQLRepository) GetEvent(ctx context.Context, id int64) (*Event, 
 		return nil, errors.New("prompt audit database unavailable")
 	}
 	event, err := scanEvent(r.db.QueryRowContext(ctx,
-		`SELECT `+eventColumns("e")+` FROM prompt_audit_events e WHERE e.id=`+r.placeholder(1), id))
+		`SELECT `+eventDetailColumns("e")+` FROM prompt_audit_events e WHERE e.id=`+r.placeholder(1), id), true)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrEventNotFound
 	}
