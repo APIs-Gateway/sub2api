@@ -277,6 +277,51 @@ func TestGetAvailableMethodLimitsIncludesEasyPayCustomMethodDisplayName(t *testi
 	require.Equal(t, "LDC Pay", limits.DisplayName)
 }
 
+func TestGetMethodLimitsIncludesEasyPayCustomMethodDisplayName(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+
+	_, err := client.PaymentProviderInstance.Create().
+		SetProviderKey(payment.TypeEasyPay).
+		SetName("EasyPay Custom").
+		SetConfig(`{"customMethods":"[{\"type\":\"ldc\",\"upstreamType\":\"ldc\",\"displayName\":\"LDC Pay\"}]"}`).
+		SetSupportedTypes("alipay,wxpay,ldc").
+		SetEnabled(true).
+		Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentConfigService{entClient: client}
+	limits, err := svc.GetMethodLimits(ctx, []string{"ldc"})
+	require.NoError(t, err)
+	require.Len(t, limits, 1)
+	require.Equal(t, "LDC Pay", limits[0].DisplayName)
+}
+
+func TestPcAggregateMethodDisplayNameEmptyPaymentTypeReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
+	svc := &PaymentConfigService{}
+	if got := svc.pcAggregateMethodDisplayName("", nil); got != "" {
+		t.Fatalf("pcAggregateMethodDisplayName(\"\", nil) = %q, want empty", got)
+	}
+	if got := svc.pcAggregateMethodDisplayName("   ", nil); got != "" {
+		t.Fatalf("pcAggregateMethodDisplayName(whitespace, nil) = %q, want empty", got)
+	}
+}
+
+func TestPcInstanceEasyPayCustomMethodDisplayNameMalformedJSONReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
+	svc := &PaymentConfigService{}
+	inst := &dbent.PaymentProviderInstance{
+		ProviderKey: payment.TypeEasyPay,
+		Config:      `{"customMethods":"not-a-json-array"}`,
+	}
+	if got := svc.pcInstanceEasyPayCustomMethodDisplayName(inst, "ldc"); got != "" {
+		t.Fatalf("pcInstanceEasyPayCustomMethodDisplayName with malformed customMethods = %q, want empty", got)
+	}
+}
+
 func TestPcComputeGlobalRange(t *testing.T) {
 	t.Parallel()
 
