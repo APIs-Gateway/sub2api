@@ -409,7 +409,8 @@ func TestSchedulerCacheActivationIsFencedAfterRetire(t *testing.T) {
 	require.NoError(t, err)
 	version, err := cache.allocateSnapshotVersion(ctx, bucket, token)
 	require.NoError(t, err)
-	require.NoError(t, cache.writeSnapshotVersion(ctx, bucket, version, []service.Account{account}))
+	_, err = cache.writeSnapshotVersionAndReturnAccountIDs(ctx, bucket, version, []service.Account{account})
+	require.NoError(t, err)
 
 	// Deterministic race C: retirement and authoritative reopen both happen after
 	// INCR/write but before the old writer activates.
@@ -519,7 +520,8 @@ func TestSchedulerCacheBucketLifecyclePropagatesRedisErrors(t *testing.T) {
 	require.Error(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{{ID: 5401}}))
 	_, err = cache.allocateSnapshotVersion(ctx, bucket, token)
 	require.Error(t, err)
-	require.Error(t, cache.writeSnapshotVersion(ctx, bucket, "1", []service.Account{{ID: 5401}}))
+	_, err = cache.writeSnapshotVersionAndReturnAccountIDs(ctx, bucket, "1", []service.Account{{ID: 5401}})
+	require.Error(t, err)
 	require.Error(t, cache.activateSnapshotVersion(ctx, bucket, token, "1"))
 
 	invalid := service.SchedulerBucket{GroupID: 55, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
@@ -593,17 +595,16 @@ func TestSchedulerCacheGroupLifecycleLeasePropagatesRedisErrors(t *testing.T) {
 // account rows (invalid stored timestamps).
 var unencodableSchedulerCacheTime = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
 
-func TestSchedulerCacheWriteAccountsSkipsUnencodableAccount(t *testing.T) {
+func TestSchedulerCacheWriteAccountIDsSkipsUnencodableAccount(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
 
 	good := service.Account{ID: 9001, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
 	bad := service.Account{ID: 9002, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, CreatedAt: unencodableSchedulerCacheTime}
 
-	cacheable, err := cache.writeAccounts(ctx, []service.Account{good, bad})
+	accountIDs, err := cache.writeAccountIDs(ctx, []service.Account{good, bad})
 	require.NoError(t, err, "one unencodable account must not fail the whole batch")
-	require.Len(t, cacheable, 1)
-	require.Equal(t, good.ID, cacheable[0].ID)
+	require.Equal(t, []int64{good.ID}, accountIDs)
 
 	got, err := cache.GetAccount(ctx, good.ID)
 	require.NoError(t, err)
@@ -612,6 +613,24 @@ func TestSchedulerCacheWriteAccountsSkipsUnencodableAccount(t *testing.T) {
 	missing, err := cache.GetAccount(ctx, bad.ID)
 	require.NoError(t, err)
 	require.Nil(t, missing, "the unencodable account must not leave a partial cache entry")
+}
+
+// TestSchedulerCacheWriteAccountIDsReturnsNilForEmptyInput covers the len(accounts) == 0
+// early return that the perf refactor merged directly into writeAccountIDs (previously
+// this same guard lived in the now-removed writeAccountPayloads). No pipeline should be
+// touched and the result must be a nil slice with no error, matching writeSnapshotMembers'
+// and writeSnapshotAccountIDs' own empty-input no-ops.
+func TestSchedulerCacheWriteAccountIDsReturnsNilForEmptyInput(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+
+	ids, err := cache.writeAccountIDs(ctx, nil)
+	require.NoError(t, err)
+	require.Nil(t, ids)
+
+	ids, err = cache.writeAccountIDs(ctx, []service.Account{})
+	require.NoError(t, err)
+	require.Nil(t, ids)
 }
 
 func TestSchedulerCacheSetSnapshotOmitsUnencodableAccountFromZSet(t *testing.T) {
@@ -651,11 +670,11 @@ func TestSchedulerCacheSetAccountDeletesStaleEntryOnUnencodablePayload(t *testin
 	require.Nil(t, cached, "a stale cache entry must not survive a failed re-encode")
 }
 
-// TestSchedulerCacheSetAccountPropagatesWriteAccountsError covers the
-// SetAccount branch that surfaces a genuine writeAccounts error (as opposed
+// TestSchedulerCacheSetAccountPropagatesWriteAccountIDsError covers the
+// SetAccount branch that surfaces a genuine writeAccountIDs error (as opposed
 // to the unencodable-payload case above, which is swallowed and converted
 // into a cache-delete instead of an error).
-func TestSchedulerCacheSetAccountPropagatesWriteAccountsError(t *testing.T) {
+func TestSchedulerCacheSetAccountPropagatesWriteAccountIDsError(t *testing.T) {
 	ctx := context.Background()
 	cache, mr := newSchedulerCacheUnitWithRedis(t)
 	account := service.Account{ID: 9301, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
@@ -667,12 +686,36 @@ func TestSchedulerCacheSetAccountPropagatesWriteAccountsError(t *testing.T) {
 	require.Error(t, err, "a real redis failure while flushing the pipeline must be propagated, not swallowed")
 }
 
-// TestSchedulerCacheWriteAccountsReturnsErrorWhenMidBatchFlushFails covers
-// the chunked-flush branch inside writeAccounts: once pending reaches
+// TestSchedulerCacheSetSnapshotPropagatesWriteErrorAfterVersionAllocation covers the
+// branch in SetSnapshot that only exists once allocateSnapshotVersion has already
+// succeeded and writeSnapshotVersionAndReturnAccountIDs itself fails. A blanket
+// mr.SetError (as used above for SetAccount) cannot isolate this: it would also fail
+// the earlier allocateSnapshotVersion Lua-script call, so SetSnapshot would return
+// through its first, already-covered error branch instead. Pre-seeding the snapshot
+// ZSET key that the (deterministic, freshly-allocated) version "1" resolves to with a
+// non-ZSET value lets allocateSnapshotVersion and the account-payload writes succeed
+// normally, and fails only the final ZADD inside writeSnapshotAccountIDs with a
+// WRONGTYPE error, exercising the err != nil path after a successful allocation.
+func TestSchedulerCacheSetSnapshotPropagatesWriteErrorAfterVersionAllocation(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 67, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	account := service.Account{ID: 9561, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.rdb.Set(ctx, schedulerSnapshotKey(bucket, "1"), "not-a-zset", 0).Err())
+
+	err = cache.SetSnapshot(ctx, bucket, token, []service.Account{account})
+	require.Error(t, err, "a write failure after a successful version allocation must be propagated, not swallowed")
+}
+
+// TestSchedulerCacheWriteAccountIDsReturnsErrorWhenMidBatchFlushFails covers
+// the chunked-flush branch inside writeAccountIDs: once pending reaches
 // writeChunkSize mid-loop, a pipeline flush failure there must abort the
 // whole write (as opposed to the final post-loop flush, which is already
 // exercised elsewhere).
-func TestSchedulerCacheWriteAccountsReturnsErrorWhenMidBatchFlushFails(t *testing.T) {
+func TestSchedulerCacheWriteAccountIDsReturnsErrorWhenMidBatchFlushFails(t *testing.T) {
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -689,15 +732,15 @@ func TestSchedulerCacheWriteAccountsReturnsErrorWhenMidBatchFlushFails(t *testin
 	mr.SetError("ERR simulated redis failure")
 	t.Cleanup(func() { mr.SetError("") })
 
-	cacheable, err := cache.writeAccounts(ctx, accounts)
+	accountIDs, err := cache.writeAccountIDs(ctx, accounts)
 	require.Error(t, err, "a pipeline flush failure at the writeChunkSize boundary must abort the batch")
-	require.Nil(t, cacheable)
+	require.Nil(t, accountIDs)
 }
 
 // TestSchedulerCacheSnapshotAccountIDReusePreservesPayloadAndMembers covers the core
 // contract behind SetSnapshotAndReturnAccountIDs/SetSnapshotByAccountIDs: the first,
 // full publish returns the actual (post-filtering) encoded account IDs in the order
-// writeAccounts accepted them, including duplicates; a second bucket that republishes
+// writeAccountIDs accepted them, including duplicates; a second bucket that republishes
 // by those IDs alone must not rewrite the full account/metadata payload, and must still
 // end up with the exact same ordered snapshot membership as a full publish would have
 // produced.
@@ -725,7 +768,7 @@ func TestSchedulerCacheSnapshotAccountIDReusePreservesPayloadAndMembers(t *testi
 	accountIDs, err := cache.SetSnapshotAndReturnAccountIDs(ctx, single, singleToken, accounts)
 	require.NoError(t, err)
 	require.Equal(t, []int64{validOne.ID, validTwo.ID, validOne.ID}, accountIDs,
-		"must preserve order and duplicates of the accounts writeAccounts actually accepted, skipping the unencodable one")
+		"must preserve order and duplicates of the accounts writeAccountIDs actually accepted, skipping the unencodable one")
 
 	fullBefore, err := cache.rdb.Get(ctx, schedulerAccountKey(strconv.FormatInt(validOne.ID, 10))).Bytes()
 	require.NoError(t, err)
@@ -757,6 +800,62 @@ func TestSchedulerCacheSnapshotAccountIDReusePreservesPayloadAndMembers(t *testi
 	missing, err := cache.GetAccount(ctx, invalid.ID)
 	require.NoError(t, err)
 	require.Nil(t, missing, "the unencodable account must never be cached, reused or not")
+}
+
+// TestSchedulerCacheSetSnapshotMatchesIDPublishing covers the perf refactor that made
+// SetSnapshot publish through the same writeSnapshotVersionAndReturnAccountIDs path as
+// SetSnapshotAndReturnAccountIDs, instead of first materializing a throwaway
+// []service.Account subset just to rebuild ZSET members from it. A plain SetSnapshot and
+// a subsequent SetSnapshotAndReturnAccountIDs call over the identical account set must
+// therefore write byte-identical account/metadata payloads and produce identical ordered
+// snapshot membership.
+func TestSchedulerCacheSetSnapshotMatchesIDPublishing(t *testing.T) {
+	ctx := context.Background()
+	cache, _ := newSchedulerCacheUnitWithRedis(t)
+
+	validOne := service.Account{
+		ID:          9551,
+		Name:        "first",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Credentials: map[string]any{"model_mapping": map[string]any{"source": "target"}},
+		Extra:       map[string]any{"mixed_scheduling": true},
+	}
+	validTwo := service.Account{ID: 9552, Name: "second", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+	invalid := service.Account{ID: 9553, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, CreatedAt: unencodableSchedulerCacheTime}
+	accounts := []service.Account{validOne, invalid, validTwo, validOne}
+
+	normal := service.SchedulerBucket{GroupID: 66, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	normalToken, err := cache.CaptureBucketWriteToken(ctx, normal)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, normal, normalToken, accounts))
+
+	fullBefore, err := cache.rdb.Get(ctx, schedulerAccountKey(strconv.FormatInt(validOne.ID, 10))).Bytes()
+	require.NoError(t, err)
+	metaBefore, err := cache.rdb.Get(ctx, schedulerAccountMetaKey(strconv.FormatInt(validOne.ID, 10))).Bytes()
+	require.NoError(t, err)
+
+	idOnly := service.SchedulerBucket{GroupID: 66, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeForced}
+	idOnlyToken, err := cache.CaptureBucketWriteToken(ctx, idOnly)
+	require.NoError(t, err)
+	accountIDs, err := cache.SetSnapshotAndReturnAccountIDs(ctx, idOnly, idOnlyToken, accounts)
+	require.NoError(t, err)
+	require.Equal(t, []int64{validOne.ID, validTwo.ID, validOne.ID}, accountIDs)
+
+	fullAfter, err := cache.rdb.Get(ctx, schedulerAccountKey(strconv.FormatInt(validOne.ID, 10))).Bytes()
+	require.NoError(t, err)
+	metaAfter, err := cache.rdb.Get(ctx, schedulerAccountMetaKey(strconv.FormatInt(validOne.ID, 10))).Bytes()
+	require.NoError(t, err)
+	require.Equal(t, fullBefore, fullAfter, "SetSnapshot and SetSnapshotAndReturnAccountIDs must write the identical full account payload")
+	require.Equal(t, metaBefore, metaAfter, "SetSnapshot and SetSnapshotAndReturnAccountIDs must write the identical metadata payload")
+
+	for _, bucket := range []service.SchedulerBucket{normal, idOnly} {
+		version, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerActivePrefix, bucket)).Result()
+		require.NoError(t, err)
+		members, err := cache.rdb.ZRange(ctx, schedulerSnapshotKey(bucket, version), 0, -1).Result()
+		require.NoError(t, err)
+		require.Equal(t, []string{strconv.FormatInt(validTwo.ID, 10), strconv.FormatInt(validOne.ID, 10)}, members, bucket.String())
+	}
 }
 
 // TestSchedulerCacheSnapshotAccountIDReuseKeepsEmptySnapshotSemantics covers the case
