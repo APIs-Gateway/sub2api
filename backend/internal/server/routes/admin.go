@@ -18,6 +18,8 @@ func RegisterAdminRoutes(
 ) {
 	admin := v1.Group("/admin")
 	admin.Use(gin.HandlerFunc(adminAuth))
+	// Server-Timing 可观测性：仅接入 admin 场景，不挂载到用户端/网关路由。
+	admin.Use(middleware.ServerTiming())
 	admin.Use(middleware.AdminComplianceGuard(settingService))
 	{
 		// 部署与运营合规确认
