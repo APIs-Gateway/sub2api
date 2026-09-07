@@ -60,6 +60,13 @@ func newPartialUsageTestContext(t *testing.T) (*gin.Context, *httptest.ResponseR
 	return c, rec
 }
 
+// --- ClaudeUsage.hasObservedTokens 纯函数单测 ---
+
+func TestClaudeUsage_HasObservedTokens_NilReceiver(t *testing.T) {
+	var usage *ClaudeUsage
+	require.False(t, usage.hasObservedTokens(), "nil *ClaudeUsage 不应被误判为已观测到 token")
+}
+
 // --- partialStreamUsageResult 纯函数单测 ---
 
 func TestPartialStreamUsageResult_NilStreamResult_ReturnsNil(t *testing.T) {

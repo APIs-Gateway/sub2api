@@ -217,6 +217,93 @@ func TestGatewayHandlerMessages_StreamReadErrorRecordsPartialUsage(t *testing.T)
 	}
 }
 
+// TestGatewayHandlerMessages_StreamReadErrorWithThinkingEnabledBackfillsReasoningEffort
+// 验证：流式转发中途出错但已探测到部分 usage 时，若该次尝试未从 output_config.effort
+// 解析出 ReasoningEffort（result.ReasoningEffort==nil）且请求开启了 thinking，
+// submitForwardUsage 必须按 DefaultEffortForThinkingEnabled 对称回填 ReasoningEffort
+// （与非重试路径 gateway_handler.go:516 附近的同名逻辑保持一致）。
+func TestGatewayHandlerMessages_StreamReadErrorWithThinkingEnabledBackfillsReasoningEffort(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(9153)
+	accountID := int64(9254)
+	group := &service.Group{
+		ID:       groupID,
+		Hydrated: true,
+		Platform: service.PlatformAnthropic,
+		Status:   service.StatusActive,
+	}
+	account := &service.Account{
+		ID:       accountID,
+		Name:     "anthropic-partial-usage-thinking",
+		Platform: service.PlatformAnthropic,
+		Type:     service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "test-key",
+		},
+		Extra:       map[string]any{"anthropic_passthrough": true},
+		Concurrency: 1,
+		Priority:    1,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		AccountGroups: []service.AccountGroup{{
+			AccountID: accountID,
+			GroupID:   groupID,
+		}},
+	}
+
+	upstream := &partialUsageBillingUpstream{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid-handler-partial-thinking"}},
+			Body: &partialUsageStreamBody{
+				payload: []byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":13,\"output_tokens\":2}}}\n\n"),
+				err:     io.ErrUnexpectedEOF,
+			},
+		},
+	}
+	usageRepo := &partialUsageBillingUsageLogRepo{created: make(chan *service.UsageLog, 1)}
+	cache := &forceCacheBillingGatewayCache{accountID: accountID}
+	h, cleanup := newPartialUsageBillingGatewayHandler(t, group, []*service.Account{account}, upstream, cache, usageRepo)
+	defer cleanup()
+
+	// glm-4.6 落在 ResolveThinkingProtocol 的 passback-required 白名单内（且不是
+	// DeepSeek），DefaultEffortForThinkingEnabled 对其返回非 nil "high"，用它断言
+	// 回填分支确实生效，而不只是走到条件判断。
+	body := []byte(`{"model":"glm-4.6","stream":true,"max_tokens":64,"thinking":{"type":"enabled"},"messages":[{"role":"user","content":"hello"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), ctxkey.Group, group))
+	c.Request = req
+
+	apiKey := &service.APIKey{
+		ID:      9353,
+		UserID:  9453,
+		GroupID: &groupID,
+		Status:  service.StatusActive,
+		User: &service.User{
+			ID:          9453,
+			Concurrency: 10,
+			Balance:     100,
+		},
+		Group: group,
+	}
+	c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.UserID, Concurrency: 10})
+
+	h.Messages(c)
+
+	select {
+	case usageLog := <-usageRepo.created:
+		require.NotNil(t, usageLog)
+		require.NotNil(t, usageLog.ReasoningEffort, "ThinkingEnabled 且无 output_config.effort 时应回填 ReasoningEffort")
+		require.Equal(t, "high", *usageLog.ReasoningEffort)
+	case <-time.After(3 * time.Second):
+		t.Fatal("等待 partial usage 写入超时——ThinkingEnabled 回填分支未提交 usage")
+	}
+}
+
 // TestGatewayHandlerMessages_FailoverRetrySuccessDoesNotDoubleRecordUsage 验证：
 // 第一个账号在未写出任何字节前失败（走 UpstreamFailoverError 换号重试），
 // 第二个账号成功后，usage 只能被提交一次——第一次失败的尝试不得重复计费。

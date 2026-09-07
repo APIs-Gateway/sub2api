@@ -7,8 +7,42 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/alitto/pond/v2"
 	"github.com/stretchr/testify/require"
 )
+
+// stoppedRaceStubPool 模拟"提交过程中池子恰好停止"的真实竞态窗口：Submit() 里第一次
+// Stopped() 检查时池仍在运行（false），TrySubmit 因其他原因失败（ok=false），
+// 第二次 Stopped() 检查时池已经停止（true）。真实并发下这个窗口极窄、在 CI 里几乎不
+// 可能稳定复现，这里用确定性的桩替代。内嵌真实 pond.Pool 值，未显式覆盖的方法都
+// 委托给内嵌值的真实实现，避免其余接口方法 panic。
+type stoppedRaceStubPool struct {
+	pond.Pool
+	stoppedCalls int
+}
+
+func (s *stoppedRaceStubPool) Stopped() bool {
+	s.stoppedCalls++
+	return s.stoppedCalls > 1
+}
+
+func (s *stoppedRaceStubPool) TrySubmit(task func()) (pond.Task, bool) {
+	return nil, false
+}
+
+func TestUsageRecordWorkerPool_Submit_StoppedRaceWindowAfterTrySubmitFails(t *testing.T) {
+	realPool := pond.NewPool(1)
+	t.Cleanup(realPool.StopAndWait)
+
+	pool := &UsageRecordWorkerPool{
+		pool: &stoppedRaceStubPool{Pool: realPool},
+	}
+
+	mode := pool.Submit(func(ctx context.Context) {})
+	require.Equal(t, UsageRecordSubmitModeDroppedStopped, mode)
+	require.True(t, mode.Dropped())
+	require.Equal(t, uint64(1), pool.droppedPoolStopped.Load())
+}
 
 func TestUsageRecordWorkerPool_SubmitEnqueued(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{
