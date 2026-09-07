@@ -443,3 +443,180 @@ func TestOpenAIGatewayService_Forward_NamespaceCollisionReturnsBadRequest(t *tes
 	require.Equal(t, "tools", gjson.Get(rec.Body.String(), "error.param").String())
 	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "conflicts with a top-level tool")
 }
+
+// ---------------------------------------------------------------------------
+// Error-branch coverage: the guard clauses above only exercise the "no error"
+// side of each internal error check (decode/encode/nil-context/restore). The
+// tests below drive the other side of each branch directly.
+// ---------------------------------------------------------------------------
+
+func TestFlattenOpenAIResponsesNamespaces_PropagatesDecodeError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	// Contains the "namespace" substring (passes the bytes.Contains fast path)
+	// but is not valid JSON, so json.Unmarshal fails.
+	body := []byte(`{"tools":[{"type":"namespace"`)
+
+	got, err := flattenOpenAIResponsesNamespaces(c, body)
+	require.ErrorContains(t, err, "decode OpenAI namespace body")
+	require.Equal(t, body, got)
+	require.Nil(t, openAIResponsesNamespaceNames(c))
+}
+
+func TestOpenAIResponsesNamespaceNames_NilContextIsNoop(t *testing.T) {
+	require.Nil(t, openAIResponsesNamespaceNames(nil))
+}
+
+func TestRestoreOpenAIResponsesNamespacePayload_NoopOnNilContext(t *testing.T) {
+	payload := []byte(`{"type":"function_call","name":"collaboration__spawn_agent"}`)
+
+	got, err := restoreOpenAIResponsesNamespacePayload(nil, payload)
+	require.NoError(t, err)
+	require.Equal(t, payload, got)
+}
+
+func TestRestoreOpenAIResponsesNamespacePayload_PropagatesRestoreError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	setOpenAIResponsesNamespaceNames(c, namespaceTestNames())
+	// Syntactically valid JSON (json.Valid passes the guard) but the number
+	// literal overflows float64, so apicompat.RestoreResponsesNamespaceCalls'
+	// internal json.Unmarshal fails and the error propagates unchanged.
+	payload := []byte(`{"type":"function_call","name":"collaboration__spawn_agent","call_id":"call_1","broken":1e400}`)
+
+	got, err := restoreOpenAIResponsesNamespacePayload(c, payload)
+	require.Error(t, err)
+	require.Equal(t, payload, got)
+}
+
+// ---------------------------------------------------------------------------
+// Response-side restore wiring: the six call sites above only exercise the
+// "no error" branch of restoreOpenAIResponsesNamespacePayload. Each test
+// below feeds a response payload with an out-of-range JSON number so the
+// restore call fails and the handler's wrapped-error branch actually runs.
+// ---------------------------------------------------------------------------
+
+func TestHandleStreamingResponsePassthrough_PropagatesNamespaceRestoreError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	setOpenAIResponsesNamespaceNames(c, namespaceTestNames())
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.output_item.done","item":{"type":"function_call","name":"collaboration__spawn_agent","call_id":"call_1","arguments":"{}","broken":1e400}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"x-request-id": []string{"rid"}},
+	}
+
+	_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "m", "m")
+	require.ErrorContains(t, err, "restore OpenAI passthrough namespace response")
+}
+
+func TestHandleNonStreamingResponsePassthrough_PropagatesNamespaceRestoreError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+	setOpenAIResponsesNamespaceNames(c, namespaceTestNames())
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[{"type":"function_call","name":"collaboration__spawn_agent","call_id":"call_1","arguments":"{}","broken":1e400}],"usage":{"input_tokens":1,"output_tokens":1}}`)),
+	}
+
+	result, err := (&OpenAIGatewayService{cfg: &config.Config{}}).handleNonStreamingResponsePassthrough(
+		context.Background(), resp, c, "gpt-5.5", "",
+	)
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "restore OpenAI passthrough namespace response")
+}
+
+func TestHandlePassthroughSSEToJSON_PropagatesNamespaceRestoreError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	setOpenAIResponsesNamespaceNames(c, namespaceTestNames())
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
+	body := []byte(strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"function_call","name":"collaboration__spawn_agent","call_id":"call_1","arguments":"{}","broken":1e400}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+		`data: [DONE]`,
+	}, "\n"))
+
+	result, err := svc.handlePassthroughSSEToJSON(resp, c, body, "gpt-5.5", "gpt-5.5")
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "restore OpenAI passthrough namespace response")
+}
+
+func TestHandleStreamingResponse_PropagatesNamespaceRestoreError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}
+	svc := &OpenAIGatewayService{cfg: cfg}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	setOpenAIResponsesNamespaceNames(c, namespaceTestNames())
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.created","response":{"id":"resp_ns"}}`,
+			"",
+			`data: {"type":"response.output_item.done","item":{"type":"function_call","name":"collaboration__spawn_agent","call_id":"call_1","arguments":"{}","broken":1e400}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-ns"}},
+	}
+
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "restore OpenAI namespace response")
+}
+
+func TestHandleNonStreamingResponse_PropagatesNamespaceRestoreError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	setOpenAIResponsesNamespaceNames(c, namespaceTestNames())
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[{"type":"function_call","name":"collaboration__spawn_agent","call_id":"call_1","arguments":"{}","broken":1e400}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)),
+	}
+	account := &Account{ID: 146, Type: AccountTypeOAuth}
+
+	result, err := svc.handleNonStreamingResponse(context.Background(), resp, c, account, "gpt-5.4", "gpt-5.4")
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "restore OpenAI namespace response")
+}
+
+func TestHandleSSEToJSON_PropagatesNamespaceRestoreError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	setOpenAIResponsesNamespaceNames(c, namespaceTestNames())
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+	body := []byte(strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_2","model":"gpt-4o","output":[{"type":"function_call","name":"collaboration__spawn_agent","call_id":"call_1","arguments":"{}","broken":1e400}],"usage":{"input_tokens":7,"output_tokens":9}}}`,
+		`data: [DONE]`,
+	}, "\n"))
+
+	usage, err := svc.handleSSEToJSON(resp, c, nil, body, "gpt-4o", "gpt-4o")
+	require.Nil(t, usage)
+	require.ErrorContains(t, err, "restore OpenAI namespace response")
+}
