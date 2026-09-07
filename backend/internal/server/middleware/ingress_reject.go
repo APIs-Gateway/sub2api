@@ -64,11 +64,16 @@ func recordInvalidAuthFailure(c *gin.Context, apiKeyService interface {
 }
 
 // MarkIngressRejected marks a request as rejected before gateway admission.
+// It also feeds a bounded, sanitized telemetry capture (see
+// ingress_reject_capture.go) so this admission-boundary signal is not a
+// complete blind spot even though it is intentionally excluded from the ops
+// error log (see OpsErrorLoggerMiddleware.shouldCapture).
 func MarkIngressRejected(c *gin.Context, reason IngressRejectReason) {
 	if c == nil || reason == "" {
 		return
 	}
 	c.Set(ingressRejectReasonContextKey, reason)
+	captureIngressReject(c, reason)
 }
 
 // GetIngressRejectReason returns the admission rejection reason, if any.
