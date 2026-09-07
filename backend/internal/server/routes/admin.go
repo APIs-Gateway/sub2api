@@ -231,6 +231,12 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.GET("/upstream-errors/:id", h.Admin.Ops.GetUpstreamError)
 		ops.PUT("/upstream-errors/:id/resolve", h.Admin.Ops.ResolveUpstreamError)
 
+		// Ingress reject aggregates (bounded, pre-aggregated counters; never raw
+		// request bodies, headers, or credentials; client_ip is a masked network
+		// prefix, not a raw per-device address)
+		ops.GET("/ingress-rejections", h.Admin.Ops.ListIngressRejects)
+		ops.GET("/ingress-rejections/health", h.Admin.Ops.GetIngressRejectHealth)
+
 		// Request drilldown (success + error)
 		ops.GET("/requests", h.Admin.Ops.ListRequestDetails)
 
