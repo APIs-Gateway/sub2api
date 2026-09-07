@@ -182,3 +182,34 @@ func TestServerTimingNotMountedOnOtherRouteGroups(t *testing.T) {
 		t.Fatalf("user route group must not receive Server-Timing header, got %q", got)
 	}
 }
+
+// --- Coverage gap follow-ups: the request-nil bypass, the WriteString
+// finalize trigger, and the nil-receiver defensive guard on finalize(). ---
+
+func TestServerTimingSkipsWhenRequestIsNil(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = nil
+
+	ServerTiming()(c)
+
+	if got := recorder.Header().Get(servertiming.HeaderName); got != "" {
+		t.Fatalf("expected no Server-Timing header when Request is nil, got %q", got)
+	}
+}
+
+func TestServerTimingFinalizesOnWriteString(t *testing.T) {
+	recorder := runServerTimingRequest(t, "admin", func(c *gin.Context) {
+		if _, err := c.Writer.WriteString("hello"); err != nil {
+			t.Fatalf("WriteString() error = %v", err)
+		}
+	})
+	if got := recorder.Header().Get(servertiming.HeaderName); got == "" {
+		t.Fatal("timing header was not written before WriteString commit")
+	}
+}
+
+func TestServerTimingResponseWriterFinalizeNilSafety(t *testing.T) {
+	var w *serverTimingResponseWriter
+	w.finalize() // must not panic on a nil receiver
+}

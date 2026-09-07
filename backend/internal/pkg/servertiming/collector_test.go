@@ -193,3 +193,168 @@ func TestRecordIgnoresInvalidIntervals(t *testing.T) {
 		t.Fatalf("expected no database spans recorded, got %q", header)
 	}
 }
+
+// --- Coverage gap follow-ups (see PR discussion): defensive nil/zero-value
+// branches and interval-clipping edge cases that the tests above did not
+// exercise. ---
+
+func TestNewDefaultsZeroStartTime(t *testing.T) {
+	before := time.Now()
+	collector := New(time.Time{})
+	after := time.Now()
+
+	if collector.startedAt.Before(before) || collector.startedAt.After(after) {
+		t.Fatalf("New(time.Time{}).startedAt = %v, want between %v and %v", collector.startedAt, before, after)
+	}
+}
+
+func TestWithCollectorHandlesNilContext(t *testing.T) {
+	var nilCtx context.Context
+	collector := New(time.Unix(800, 0))
+
+	ctx := WithCollector(nilCtx, collector)
+	if ctx == nil {
+		t.Fatal("WithCollector(nil, collector) returned a nil context")
+	}
+	got, ok := FromContext(ctx)
+	if !ok || got != collector {
+		t.Fatalf("FromContext() = (%v, %v), want (%v, true)", got, ok, collector)
+	}
+}
+
+func TestFromContextAndActiveHandleNilContext(t *testing.T) {
+	var nilCtx context.Context
+
+	if got, ok := FromContext(nilCtx); got != nil || ok {
+		t.Fatalf("FromContext(nil) = (%v, %v), want (nil, false)", got, ok)
+	}
+	if Active(nilCtx) {
+		t.Fatal("Active(nil) reported true")
+	}
+}
+
+func TestRecordAndRecordIntervalNoopWithoutCollector(t *testing.T) {
+	ctx := context.Background() // deliberately no collector attached
+
+	// Must not panic and must be pure no-ops.
+	Record(ctx, MetricDatabase, time.Now(), time.Now().Add(time.Millisecond), 1)
+	RecordInterval(ctx, MetricDatabase, time.Now(), time.Now().Add(time.Millisecond))
+
+	if Active(ctx) {
+		t.Fatal("context unexpectedly reports an active collector")
+	}
+}
+
+func TestCollectorRecordClampsNonPositiveCount(t *testing.T) {
+	startedAt := time.Unix(900, 0)
+	collector := New(startedAt)
+
+	collector.Record(MetricDatabase, startedAt, startedAt.Add(time.Millisecond), 0)
+	collector.Record(MetricDatabase, startedAt.Add(time.Millisecond), startedAt.Add(2*time.Millisecond), -5)
+
+	header := collector.HeaderValue(startedAt.Add(3*time.Millisecond), "bypass")
+	if !strings.Contains(header, `db;dur=2.0;desc="queries=2"`) {
+		t.Fatalf("header %q: want each non-positive count clamped to 1 (2 total)", header)
+	}
+}
+
+func TestRecordClampsNegativeCountDirectly(t *testing.T) {
+	startedAt := time.Unix(950, 0)
+	collector := New(startedAt)
+
+	// Bypass the public Record wrapper (which floors non-positive counts to
+	// 1) to exercise record()'s own defensive clamp for negative counts.
+	collector.record(MetricDatabase, startedAt, startedAt.Add(time.Millisecond), -3)
+
+	header := collector.HeaderValue(startedAt.Add(2*time.Millisecond), "bypass")
+	if !strings.Contains(header, `db;dur=1.0;desc="queries=0"`) {
+		t.Fatalf("header %q: want negative count clamped to 0 while the interval is still recorded", header)
+	}
+}
+
+func TestSetCacheStatusNoopWithoutCollector(t *testing.T) {
+	ctx := context.Background() // deliberately no collector attached
+	SetCacheStatus(ctx, "hit")  // must not panic
+	if Active(ctx) {
+		t.Fatal("context unexpectedly reports an active collector")
+	}
+}
+
+func TestSetCacheStatusIgnoresInvalidStatus(t *testing.T) {
+	startedAt := time.Unix(1000, 0)
+	collector := New(startedAt)
+	ctx := WithCollector(context.Background(), collector)
+
+	SetCacheStatus(ctx, "not-a-real-status")
+
+	if got := HeaderValue(ctx, startedAt.Add(time.Millisecond), ""); !strings.Contains(got, `cache;desc="bypass"`) {
+		t.Fatalf("HeaderValue() = %q, want the invalid status left unset (bypass fallback)", got)
+	}
+}
+
+func TestHeaderValueNilCollectorReceiver(t *testing.T) {
+	var collector *Collector
+	if got := collector.HeaderValue(time.Now(), "hit"); got != "" {
+		t.Fatalf("HeaderValue() on nil collector = %q, want empty", got)
+	}
+}
+
+func TestHeaderValueDefaultsZeroEndedAt(t *testing.T) {
+	startedAt := time.Now().Add(-5 * time.Millisecond)
+	collector := New(startedAt)
+
+	header := collector.HeaderValue(time.Time{}, "bypass")
+	if strings.Contains(header, "total;dur=0.0") {
+		t.Fatalf("header %q: zero endedAt was not defaulted to time.Now()", header)
+	}
+	if !strings.Contains(header, "total;dur=") {
+		t.Fatalf("header %q missing total entry", header)
+	}
+}
+
+func TestHeaderValueClampsEndedAtBeforeStart(t *testing.T) {
+	startedAt := time.Unix(1100, 0)
+	collector := New(startedAt)
+
+	header := collector.HeaderValue(startedAt.Add(-10*time.Millisecond), "bypass")
+	if !strings.Contains(header, "total;dur=0.0") {
+		t.Fatalf("header %q: want endedAt before startedAt clamped to a zero total duration", header)
+	}
+}
+
+func TestNormalizeMetricNameTruncatesLongNames(t *testing.T) {
+	longName := strings.Repeat("a", maxMetricNameLength+20)
+	got := normalizeMetricName(longName)
+	if len(got) != maxMetricNameLength {
+		t.Fatalf("normalizeMetricName(long) length = %d, want %d", len(got), maxMetricNameLength)
+	}
+	if got != strings.Repeat("a", maxMetricNameLength) {
+		t.Fatalf("normalizeMetricName(long) = %q, want %d 'a' characters", got, maxMetricNameLength)
+	}
+}
+
+func TestUnionDurationClipsIntervalsToRequestWindow(t *testing.T) {
+	startedAt := time.Unix(1200, 0)
+	collector := New(startedAt)
+
+	// Starts before the window: clipped to startedAt, remains a valid span.
+	collector.Record("early", startedAt.Add(-20*time.Millisecond), startedAt.Add(10*time.Millisecond), 1)
+	// Ends after the window: clipped to the HeaderValue endedAt below.
+	collector.Record("late", startedAt.Add(50*time.Millisecond), startedAt.Add(500*time.Millisecond), 1)
+	// Entirely before the window: clipped start/end collapse and is dropped.
+	collector.Record("stale", startedAt.Add(-50*time.Millisecond), startedAt.Add(-30*time.Millisecond), 1)
+
+	header := collector.HeaderValue(startedAt.Add(100*time.Millisecond), "bypass")
+	if !strings.Contains(header, "total;dur=100.0") {
+		t.Fatalf("header %q: want total;dur=100.0", header)
+	}
+	if !strings.Contains(header, "app;dur=40.0") {
+		t.Fatalf("header %q: want app;dur=40.0 (100ms window minus 60ms of clipped blocked time)", header)
+	}
+}
+
+func TestFormatDurationClampsNegativeDirectly(t *testing.T) {
+	if got := formatDuration(-5 * time.Millisecond); got != "0.0" {
+		t.Fatalf("formatDuration(negative) = %q, want %q", got, "0.0")
+	}
+}
