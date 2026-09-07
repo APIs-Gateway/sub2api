@@ -93,7 +93,13 @@ func newPartialUsageBillingGatewayHandler(t *testing.T, group *service.Group, ac
 		cfg,
 		schedulerSnapshot,
 		nil,
-		nil,
+		// billingService：RecordUsage 的计费路径（calculateTokenCost 等）会无条件
+		// 调用 billingService.CalculateCost，传 nil 会在 GetModelPricing 里 panic
+		// 掉整个异步 usage 记录任务，且被 submitUsageRecordTask 的 recover 静默吞掉——
+		// 现象就是本文件两个用例里 usageLogRepo.Create 永远等不到调用。生产环境
+		// wire_gen.go 里 GatewayService 总是注入真实 BillingService，这里补上同样的
+		// 依赖，让测试路径与生产路径一致。
+		service.NewBillingService(cfg, nil),
 		service.NewRateLimitService(accountRepo, nil, cfg, nil, nil),
 		nil,
 		nil,
@@ -200,7 +206,12 @@ func TestGatewayHandlerMessages_StreamReadErrorRecordsPartialUsage(t *testing.T)
 	case usageLog := <-usageRepo.created:
 		require.NotNil(t, usageLog)
 		require.Equal(t, 13, usageLog.InputTokens)
-		require.Equal(t, 2, usageLog.OutputTokens)
+		// message_start 的 usage 块里即便携带 output_tokens，也不代表已经产生真实输出——
+		// 真实 Anthropic 上游此时输出尚未开始，output_tokens 只在 message_delta 里才有意义。
+		// parseSSEUsagePassthrough/parseSSEUsage 对 message_start 都只提取
+		// input/cache 相关字段、不提取 output_tokens，这里的 payload 故意在 message_start
+		// 中塞了 output_tokens 只是为了确认解析器不会误采信它；断言应为 0，不是 2。
+		require.Equal(t, 0, usageLog.OutputTokens)
 	case <-time.After(3 * time.Second):
 		t.Fatal("等待 partial usage 写入超时——流式错误路径未提交已探测到的 usage")
 	}

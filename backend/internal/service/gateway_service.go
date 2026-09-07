@@ -10194,6 +10194,12 @@ func (s *GatewayService) calculateTokenCost(
 	multiplier float64,
 	opts *recordUsageOpts,
 ) *CostBreakdown {
+	// billingService 未注入（如轻量部署/测试场景下 GatewayService 未接入完整计费依赖）时，
+	// 与 hasResolvableTokenPricing 的既有 nil 处理保持一致：不计价，避免 nil 解引用 panic。
+	if s.billingService == nil {
+		return &CostBreakdown{ActualCost: 0}
+	}
+
 	tokens := UsageTokens{
 		InputTokens:           result.Usage.InputTokens,
 		OutputTokens:          result.Usage.OutputTokens,
