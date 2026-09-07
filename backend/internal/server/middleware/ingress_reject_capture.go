@@ -240,7 +240,7 @@ func sanitizeIngressRejectUserAgent(raw string) string {
 		if r == utf8.RuneError || unicode.IsControl(r) {
 			continue
 		}
-		b.WriteRune(r)
+		_, _ = b.WriteRune(r)
 	}
 	value := strings.TrimSpace(b.String())
 	if len(value) <= ingressRejectCaptureUserAgentMaxBytes {
