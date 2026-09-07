@@ -67,6 +67,22 @@ func (r *batchLoadCountingAccountRepo) ListSchedulableByPlatform(_ context.Conte
 	return append([]Account(nil), r.accounts[key]...), nil
 }
 
+// ListSchedulableByGroupIDAndPlatforms backs SchedulerModeMixed buckets (groupID > 0):
+// loadAccountsFromDB fans a mixed-mode load out across bucket.Platform plus
+// PlatformAntigravity. Each underlying platform is tracked under its own
+// (groupID, platform) key, same as the singular method.
+func (r *batchLoadCountingAccountRepo) ListSchedulableByGroupIDAndPlatforms(_ context.Context, groupID int64, platforms []string) ([]Account, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []Account
+	for _, platform := range platforms {
+		key := batchAccountLoadKey{groupID: groupID, platform: platform}
+		r.calls[key]++
+		out = append(out, r.accounts[key]...)
+	}
+	return out, nil
+}
+
 func (r *batchLoadCountingAccountRepo) callCount(groupID int64, platform string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
