@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -86,4 +87,46 @@ func TestUpdateSettingsWithAuthSourceDefaultsOmitting_PropagatesBuildError(t *te
 	require.Error(t, err)
 	require.Equal(t, "INVALID_REGISTRATION_EMAIL_SUFFIX_WHITELIST", infraerrors.Reason(err))
 	require.Empty(t, repo.data, "nothing should be persisted when validation fails")
+}
+
+// TestUpdateSettingsWithAuthSourceDefaultsOmitting_PropagatesAuthSourceBuildError confirms
+// validation errors from buildAuthSourceDefaultUpdates also abort the update
+// before anything is persisted, mirroring the buildSystemSettingsUpdates case above.
+func TestUpdateSettingsWithAuthSourceDefaultsOmitting_PropagatesAuthSourceBuildError(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := NewSettingService(repo, &config.Config{})
+
+	next := &SystemSettings{SiteName: "Site"}
+	authDefaults := &AuthSourceDefaultSettings{
+		Email: ProviderDefaultGrantSettings{
+			PlatformQuotas: map[string]*DefaultPlatformQuotaSetting{
+				"not-a-real-platform": {},
+			},
+		},
+	}
+	omitted := NewOmittedSettingKeys(SettingKeyRegistrationEnabled)
+
+	err := svc.UpdateSettingsWithAuthSourceDefaultsOmitting(context.Background(), next, authDefaults, omitted)
+	require.Error(t, err)
+	require.Equal(t, "INVALID_DEFAULT_PLATFORM_QUOTA", infraerrors.Reason(err))
+	require.Empty(t, repo.data, "nothing should be persisted when auth-source validation fails")
+}
+
+// TestUpdateSettingsWithAuthSourceDefaultsOmitting_PropagatesReloadError confirms
+// a GetAllSettings failure during the post-write cache-refresh reload (only
+// reached when some keys were omitted) surfaces to the caller instead of
+// being silently swallowed, leaving in-process caches on their prior value.
+func TestUpdateSettingsWithAuthSourceDefaultsOmitting_PropagatesReloadError(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := NewSettingService(repo, &config.Config{})
+
+	reloadErr := errors.New("boom")
+	repo.failGetAll(reloadErr)
+
+	next := &SystemSettings{SiteName: "Site"}
+	omitted := NewOmittedSettingKeys(SettingKeyRegistrationEnabled)
+
+	err := svc.UpdateSettingsWithAuthSourceDefaultsOmitting(context.Background(), next, &AuthSourceDefaultSettings{}, omitted)
+	require.Error(t, err)
+	require.ErrorIs(t, err, reloadErr)
 }
