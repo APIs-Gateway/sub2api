@@ -109,6 +109,114 @@ func TestOpenAIGatewayServiceForward_ServerPolicyRejectsImageGenerationAfterMode
 	}
 }
 
+// TestOpenAIGatewayServiceForward_ImageIntentHintStaysStickyAcrossFailoverAttempts
+// covers the #754 scenario: the same logical request is retried against a
+// second account after the first attempt's own account-specific body handling
+// no longer surfaces the same image-generation signal in its local copy of the
+// body. The canonical, request-scoped hint (seeded from the client's original
+// body on the first attempt) must keep the disabled gate consistent across
+// both attempts instead of letting the second attempt's narrower local reading
+// silently bypass the site-wide disable.
+func TestOpenAIGatewayServiceForward_ImageIntentHintStaysStickyAcrossFailoverAttempts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstream := &httpUpstreamRecorder{}
+	svc := newOpenAIImageGenerationControlTestService(upstream)
+	svc.cfg.Gateway.DisableOpenAIResponsesImageGeneration = true
+	c, recorder := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.147.1")
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+
+	// Attempt 1: the client's original body carries the passive Codex
+	// "image_gen" namespace tool advertisement. IsExplicitImageGenerationIntent
+	// ignores this at the handler layer (#483), so the retry loop is entered,
+	// but IsImageGenerationIntent -- used by the openAIResponsesImageGenerationDisabled
+	// gate inside Forward() -- still flags it.
+	namespaceBody := []byte(`{"model":"gpt-5.4","input":"list files","tools":[{"type":"namespace","name":"image_gen"}]}`)
+	accountA := newOpenAIImageGenerationControlTestAccount()
+	result, err := svc.Forward(context.Background(), c, accountA, namespaceBody)
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Nil(t, upstream.lastReq)
+
+	cached, known := getOpenAIImageIntentHint(c)
+	require.True(t, known)
+	require.True(t, cached)
+
+	// Attempt 2 (failover to a different account): the body handed to this
+	// attempt no longer carries the namespace tool (simulating a different
+	// account's own pre-Forward normalization producing a narrower local
+	// view of the same logical request). Without the sticky canonical hint,
+	// this attempt's fresh local classification would read false and let the
+	// disabled gate be silently bypassed on retry.
+	accountB := newOpenAIImageGenerationControlTestAccount()
+	accountB.ID = accountA.ID + 1
+	plainBody := []byte(`{"model":"gpt-5.4","input":"list files"}`)
+	result, err = svc.Forward(context.Background(), c, accountB, plainBody)
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Nil(t, upstream.lastReq, "second attempt must still be blocked before reaching upstream")
+
+	cached, known = getOpenAIImageIntentHint(c)
+	require.True(t, known)
+	require.True(t, cached)
+}
+
+// TestOpenAIGatewayServiceForward_ImageIntentHintDoesNotSuppressAccountModelMapping
+// guards the flip side: the canonical hint only covers signals present in the
+// client-supplied body. An account-specific model mapping that legitimately
+// resolves the request to an image-capable upstream model must still gate that
+// specific attempt, even when an earlier attempt (a different, unmapped
+// account) established a false canonical hint from the original body. See
+// TestOpenAIGatewayService_Forward_MappedImageModelUsesImageGate and
+// TestOpenAIGatewayServiceForward_ServerPolicyRejectsImageGenerationAfterModelMapping
+// for the pre-existing, single-attempt versions of this expectation.
+func TestOpenAIGatewayServiceForward_ImageIntentHintDoesNotSuppressAccountModelMapping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstream := &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"id":"resp_text","model":"gpt-5.4","usage":{"input_tokens":3,"output_tokens":2}}`,
+			)),
+		},
+	}
+	svc := newOpenAIImageGenerationControlTestService(upstream)
+	svc.cfg.Gateway.DisableOpenAIResponsesImageGeneration = true
+	c, _ := newOpenAIImageGenerationControlTestContext(true, "unit-test-agent/1.0")
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+
+	// Attempt 1: plain text request against an account with no model mapping.
+	// Establishes a false canonical hint from the (genuinely text-only) body.
+	plainBody := []byte(`{"model":"gpt-5.4","input":"list files"}`)
+	accountA := newOpenAIImageGenerationControlTestAccount()
+	result, err := svc.Forward(context.Background(), c, accountA, plainBody)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.requests, 1)
+
+	cached, known := getOpenAIImageIntentHint(c)
+	require.True(t, known)
+	require.False(t, cached)
+
+	// Attempt 2 (failover to a different account): identical client body, but
+	// this account's own model mapping resolves it to an image-capable
+	// upstream model. The stale false canonical hint from attempt 1 must not
+	// suppress this attempt's own, independently-correct gate rejection.
+	accountB := newOpenAIImageGenerationControlTestAccount()
+	accountB.ID = accountA.ID + 1
+	accountB.Credentials = map[string]any{
+		"api_key":       "sk-test",
+		"model_mapping": map[string]any{"gpt-5.4": "gpt-image-2"},
+	}
+	result, err = svc.Forward(context.Background(), c, accountB, plainBody)
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Len(t, upstream.requests, 1, "attempt 2 must be rejected before reaching upstream, not forwarded")
+}
+
 func TestOpenAIGatewayServiceForward_DisabledGroupAllowsTextOnlyResponses(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

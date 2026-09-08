@@ -2729,7 +2729,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	requestView := newOpenAIRequestView(body)
 	reqModel, reqStream, promptCacheKey := requestView.Model, requestView.Stream, requestView.PromptCacheKey
 	originalModel := reqModel
-	if s.openAIResponsesImageGenerationDisabled() && IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body) {
+	if s.openAIResponsesImageGenerationDisabled() && resolveOpenAIResponsesImageIntentHint(c, originalModel, originalBody) {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": OpenAIResponsesImageGenerationDisabledMessage()}})
 		return nil, errors.New("OpenAI Responses image generation is disabled")
@@ -2911,7 +2911,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	imageIntent = imageIntent || IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, nil) || isOpenAIImageGenerationModel(upstreamModel)
-	if imageIntent && s.openAIResponsesImageGenerationDisabled() {
+	// canonicalImageIntent 只覆盖客户端原始请求本身携带的信号（不吸收本 attempt 的账号级
+	// model 映射/Codex 桥接/Spark 剥离结果），并在本请求的多次账号 failover 重试之间保持
+	// sticky-true：一旦任意一次 attempt 从原始 body 判定出图片意图，后续账号即使本地
+	// strip/normalize 后读不出该信号，也不能让这个门禁悄悄放行。imageIntent 里由账号级
+	// model 映射带来的判定（比如映射到图片模型）仍然按 attempt 独立生效，见
+	// TestOpenAIGatewayService_Forward_MappedImageModelUsesImageGate /
+	// TestOpenAIGatewayServiceForward_ServerPolicyRejectsImageGenerationAfterModelMapping，
+	// 因此这里用 || 叠加而不是替换 imageIntent。
+	canonicalImageIntent := resolveOpenAIResponsesImageIntentHint(c, originalModel, originalBody)
+	if (imageIntent || canonicalImageIntent) && s.openAIResponsesImageGenerationDisabled() {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": OpenAIResponsesImageGenerationDisabledMessage()}})
 		return nil, errors.New("OpenAI Responses image generation is disabled")
