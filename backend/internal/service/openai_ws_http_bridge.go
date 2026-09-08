@@ -128,6 +128,26 @@ func (c *openAIWSToolCallReplayCollector) addItem(item gjson.Result) {
 	c.items = append(c.items, json.RawMessage(raw))
 }
 
+// openAIWSHTTPBridgeToolState carries the client-tool lowering mapping and
+// the resulting "tools" declaration actually sent upstream across the turns
+// of a single WS HTTP bridge session, so that a follow-up turn which omits
+// "tools" (because the client trusts the upstream to remember what it
+// declared earlier in the same session) can still be lowered and restored
+// correctly instead of being treated as if it declared no client tools.
+//
+// This is deliberately plain per-connection state, not a registry keyed by
+// session/connection ID: proxyOpenAIWSHTTPBridgeTurn is called from a turn
+// loop that lives entirely inside the single request handler goroutine
+// owning one WS connection (see the http bridge loop in
+// openai_ws_forwarder.go), so a zero value is always the correct "nothing
+// negotiated yet" state for a new connection, and the state is discarded
+// automatically together with that goroutine's stack -- no separate
+// lifecycle management or explicit cleanup is required.
+type openAIWSHTTPBridgeToolState struct {
+	ClientMapping apicompat.ResponsesClientToolMapping
+	LoweredTools  []any
+}
+
 func buildOpenAIWSHTTPBridgeErrorEvent(statusCode int, message string) []byte {
 	message = strings.TrimSpace(message)
 	if message == "" {
@@ -163,6 +183,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	imageSizeTier string,
 	imageInputSize string,
 	turn int,
+	previousToolState openAIWSHTTPBridgeToolState,
 	writeClientMessage func([]byte) error,
 ) (*OpenAIForwardResult, error) {
 	if s == nil {
@@ -187,9 +208,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	// namespace 三类客户端工具；type=apikey 的二级中转商上游只认标准 function
 	// 工具，未降级会导致工具调用整体失效。出站前降级，回程流式还原。
 	var clientToolMapping apicompat.ResponsesClientToolMapping
+	var loweredClientTools []any
 	if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
 		var adaptErr error
-		body, clientToolMapping, adaptErr = adaptOpenAIResponsesClientTools(body)
+		body, clientToolMapping, loweredClientTools, adaptErr = adaptOpenAIResponsesClientToolsWithInheritedMapping(
+			body, previousToolState.ClientMapping, previousToolState.LoweredTools,
+		)
 		if adaptErr != nil {
 			return nil, fmt.Errorf("adapt openai ws http bridge client tools: %w", adaptErr)
 		}
@@ -299,6 +323,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if replayInput := replayCollector.Items(); len(replayInput) > 0 {
 			result.wsReplayInput = replayInput
 			result.wsReplayInputExists = true
+		}
+		if hasResponsesClientToolMapping(clientToolMapping) {
+			result.wsClientToolState = openAIWSHTTPBridgeToolState{
+				ClientMapping: clientToolMapping,
+				LoweredTools:  loweredClientTools,
+			}
 		}
 		if imageCount > 0 {
 			result.ImageCount = imageCount

@@ -144,6 +144,67 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 	return adapter, changed, nil
 }
 
+// hasResponsesClientToolMapping reports whether mapping carries any lowering
+// that requires downstream restoration.
+func hasResponsesClientToolMapping(mapping ResponsesClientToolMapping) bool {
+	return len(mapping.CustomTools) > 0 || mapping.ToolSearch || len(mapping.NamespaceTools) > 0
+}
+
+// AdaptResponsesClientToolsWithInheritedMapping behaves exactly like
+// AdaptResponsesClientTools when req declares its own "tools" field. Some
+// callers -- the OpenAI WS HTTP bridge chief among them -- issue follow-up
+// requests that omit "tools" entirely because the client trusts the
+// upstream to remember what it declared on an earlier turn of the same
+// session. Treating that omission as "this turn has no client tools" would
+// let this turn's unlowered custom/tool_search/namespace input history and
+// tool_choice reach a function-only upstream unmodified. When req omits
+// "tools" and a previous turn recorded a mapping plus the declaration it
+// lowered to, this reinstates both and applies the same downgrades to this
+// turn's input history and tool_choice so restoration keeps working for
+// this turn's response too.
+func AdaptResponsesClientToolsWithInheritedMapping(
+	req map[string]any,
+	previousMapping ResponsesClientToolMapping,
+	previousLoweredTools []any,
+) (ResponsesClientToolMapping, bool, error) {
+	if req == nil {
+		return ResponsesClientToolMapping{}, false, nil
+	}
+	if _, hasTools := req["tools"]; hasTools {
+		return AdaptResponsesClientTools(req)
+	}
+	if !hasResponsesClientToolMapping(previousMapping) || len(previousLoweredTools) == 0 {
+		return ResponsesClientToolMapping{}, false, nil
+	}
+
+	adapter := previousMapping
+	req["tools"] = cloneResponsesToolDeclarations(previousLoweredTools)
+
+	if len(adapter.NamespaceTools) > 0 {
+		rewriteNamespaceQualifiedCalls(req["input"], adapter.NamespaceTools)
+		if choice, ok := req["tool_choice"].(map[string]any); ok {
+			if strings.TrimSpace(stringValue(choice["type"])) == "namespace" {
+				req["tool_choice"] = "auto"
+			} else {
+				rewriteNamespaceQualifiedCall(choice, adapter.NamespaceTools)
+			}
+		}
+	}
+
+	if _, err := rewriteClientToolHistory(req["input"], &adapter); err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	rewriteClientToolChoice(req, &adapter)
+
+	return adapter, true, nil
+}
+
+func cloneResponsesToolDeclarations(tools []any) []any {
+	cloned := make([]any, len(tools))
+	copy(cloned, tools)
+	return cloned
+}
+
 // stripResponsesDeferredToolFlags removes defer_loading only when the final
 // declaration list no longer contains the built-in tool_search it requires.
 func stripResponsesDeferredToolFlags(tools []any) bool {

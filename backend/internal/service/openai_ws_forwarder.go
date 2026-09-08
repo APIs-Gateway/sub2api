@@ -3039,6 +3039,15 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		currentBridgePayload := firstPayload
 		var bridgeReplayInput []json.RawMessage
 		bridgeReplayInputExists := false
+		// bridgeToolState carries the client-tool lowering mapping across
+		// turns of this WS HTTP bridge session so a follow-up turn that
+		// omits "tools" (the client relies on the upstream to remember an
+		// earlier turn's declaration) still gets lowered/restored
+		// correctly. It is plain function-local state: it lives only for
+		// this turn loop's stack frame, which is scoped 1:1 to this single
+		// WS connection, so it never needs explicit cleanup and can never
+		// leak into another connection or account's turns.
+		var bridgeToolState openAIWSHTTPBridgeToolState
 		for turn := 1; ; turn++ {
 			if turn > 1 && hooks != nil && hooks.BeforeRequest != nil {
 				if err := hooks.BeforeRequest(turn, currentBridgePayload.payloadRaw, currentBridgePayload.originalModel); err != nil {
@@ -3099,6 +3108,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				currentBridgePayload.imageSizeTier,
 				currentBridgePayload.imageInputSize,
 				turn,
+				bridgeToolState,
 				writeClientMessage,
 			)
 			if hooks != nil && hooks.AfterTurn != nil {
@@ -3116,6 +3126,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				bridgeReplayInput = append(bridgeReplayInput, cloneOpenAIWSRawMessages(result.wsReplayInput)...)
 				bridgeReplayInputExists = true
 			}
+			bridgeToolState = result.wsClientToolState
 			if bridgeTurnState := strings.TrimSpace(result.ResponseHeaders.Get(openAIWSTurnStateHeader)); bridgeTurnState != "" {
 				turnState = bridgeTurnState
 				if stateStore != nil && sessionHash != "" {

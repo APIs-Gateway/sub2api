@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -100,7 +101,7 @@ func TestOpenAIWSHTTPBridgeHTTP429FailsOverBeforeWrite(t *testing.T) {
 		"",
 		"",
 		"",
-		1,
+		1, openAIWSHTTPBridgeToolState{},
 		func(message []byte) error {
 			written = append(written, append([]byte(nil), message...))
 			return nil
@@ -141,7 +142,7 @@ func TestOpenAIWSHTTPBridgeTransportErrorOnlyFailsOverBeforeDownstreamWrite(t *t
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test",
 				[]byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`),
-				64, "gpt-5", "", "", "", tt.turn,
+				64, "gpt-5", "", "", "", tt.turn, openAIWSHTTPBridgeToolState{},
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
 					return nil
@@ -192,7 +193,7 @@ func TestOpenAIWSHTTPBridgeHTTPErrorOnlyFailsOverBeforeDownstreamWrite(t *testin
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test",
 				[]byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`),
-				64, "gpt-5", "", "", "", tt.turn,
+				64, "gpt-5", "", "", "", tt.turn, openAIWSHTTPBridgeToolState{},
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
 					return nil
@@ -238,7 +239,7 @@ func TestOpenAIWSHTTPBridgeStreamReadErrorOnlyFailsOverBeforeDownstreamWrite(t *
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test",
 				[]byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`),
-				64, "gpt-5", "", "", "", turn,
+				64, "gpt-5", "", "", "", turn, openAIWSHTTPBridgeToolState{},
 				func([]byte) error { return nil },
 			)
 
@@ -279,7 +280,7 @@ func TestOpenAIWSHTTPBridgeSSEErrorOnlyFailsOverBeforeDownstreamWrite(t *testing
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test",
 				[]byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`),
-				64, "gpt-5", "", "", "", turn,
+				64, "gpt-5", "", "", "", turn, openAIWSHTTPBridgeToolState{},
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
 					return nil
@@ -335,7 +336,7 @@ func TestOpenAIWSHTTPBridgeDoneWithoutTerminalEventIsIncomplete(t *testing.T) {
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test",
 				[]byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`),
-				64, "gpt-5", "", "", "", 1,
+				64, "gpt-5", "", "", "", 1, openAIWSHTTPBridgeToolState{},
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
 					return nil
@@ -400,7 +401,7 @@ func TestOpenAIWSHTTPBridgeHTTP429WithResetReturnsFailoverBeforeWrite(t *testing
 		"",
 		"",
 		"",
-		1,
+		1, openAIWSHTTPBridgeToolState{},
 		func(message []byte) error {
 			written = append(written, append([]byte(nil), message...))
 			return nil
@@ -450,7 +451,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety(t *testing.T) {
 
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test", payload, len(payload),
-				"gpt-5", "", "", "", tt.turn,
+				"gpt-5", "", "", "", tt.turn, openAIWSHTTPBridgeToolState{},
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
 					return nil
@@ -508,7 +509,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety(t *testing.T) {
 
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test", payload, len(payload),
-				"gpt-5", "", "", "", tt.turn,
+				"gpt-5", "", "", "", tt.turn, openAIWSHTTPBridgeToolState{},
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
 					return nil
@@ -551,7 +552,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety(t *testing.T) {
 
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test", payload, len(payload),
-				"gpt-5", "", "", "", turn,
+				"gpt-5", "", "", "", turn, openAIWSHTTPBridgeToolState{},
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
 					return nil
@@ -617,7 +618,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient(t *testing
 
 			_, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test", payload, len(payload),
-				"gpt-5", "", "", "", tt.turn,
+				"gpt-5", "", "", "", tt.turn, openAIWSHTTPBridgeToolState{},
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
 					return nil
@@ -671,7 +672,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent(t *testing.T) {
 
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test", payload, len(payload),
-				"gpt-5", "", "", "", 1,
+				"gpt-5", "", "", "", 1, openAIWSHTTPBridgeToolState{},
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
 					return nil
@@ -714,7 +715,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnStreamReadErrorFailsOverBeforeWrite(t *testi
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 		context.Background(), c, account, "sk-test",
 		[]byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`),
-		64, "gpt-5", "", "", "", 1,
+		64, "gpt-5", "", "", "", 1, openAIWSHTTPBridgeToolState{},
 		func([]byte) error { return nil },
 	)
 
@@ -741,7 +742,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnFallsBackToStatusText(t *testing.T) {
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 		context.Background(), c, account, "sk-test",
 		[]byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`),
-		64, "gpt-5", "", "", "", 2,
+		64, "gpt-5", "", "", "", 2, openAIWSHTTPBridgeToolState{},
 		func(message []byte) error {
 			writes = append(writes, append([]byte(nil), message...))
 			return nil
@@ -772,7 +773,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnSSEServerErrorFailsOver(t *testing.T) {
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 		context.Background(), c, account, "sk-test",
 		[]byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`),
-		64, "gpt-5", "", "", "", 1,
+		64, "gpt-5", "", "", "", 1, openAIWSHTTPBridgeToolState{},
 		func([]byte) error { return nil },
 	)
 
@@ -862,7 +863,7 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 			"",
 			"",
 			"",
-			1,
+			1, openAIWSHTTPBridgeToolState{},
 			writeClient,
 		)
 		resultCh <- bridgeResult{result: result, err: bridgeErr}
@@ -1447,7 +1448,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyAdaptsClientTools(t *testing.T) {
 	var written [][]byte
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 		context.Background(), c, account, "sk-test", payload, len(payload),
-		"gpt-5", "", "", "", 1,
+		"gpt-5", "", "", "", 1, openAIWSHTTPBridgeToolState{},
 		func(message []byte) error {
 			written = append(written, append([]byte(nil), message...))
 			return nil
@@ -1497,7 +1498,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnOAuthLeavesClientToolsUntouched(t *testing.T
 	var written [][]byte
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 		context.Background(), c, account, "sk-test", payload, len(payload),
-		"gpt-5", "", "", "", 1,
+		"gpt-5", "", "", "", 1, openAIWSHTTPBridgeToolState{},
 		func(message []byte) error {
 			written = append(written, append([]byte(nil), message...))
 			return nil
@@ -1515,4 +1516,118 @@ func TestProxyOpenAIWSHTTPBridgeTurnOAuthLeavesClientToolsUntouched(t *testing.T
 	output := strings.Join(lines, "\n")
 	require.Contains(t, output, `"type":"custom_tool_call"`)
 	require.NotContains(t, output, `"type":"function_call"`)
+}
+
+// 续接（follow-up）请求省略 tools 声明字段时，必须从上一轮记录的
+// openAIWSHTTPBridgeToolState 反推出这一轮该用的映射，而不是把它当成
+// "没有客户端工具" 处理 -- 否则未降级的 custom_tool_call 历史/回程还原会整体失效。
+func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyInheritsClientToolMappingWhenToolsOmitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	sse := strings.Join([]string{
+		`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"item_exec","call_id":"call_exec","name":"exec","status":"in_progress"}}`,
+		"",
+		`data: {"type":"response.function_call_arguments.done","sequence_number":1,"item_id":"item_exec","output_index":0,"call_id":"call_exec","name":"exec","arguments":"{\"input\":\"ls\"}"}`,
+		"",
+		`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"item_exec","call_id":"call_exec","name":"exec","arguments":"{\"input\":\"ls\"}","status":"completed"}}`,
+		"",
+		`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_bridge_tools_turn2","status":"completed","output":[{"type":"function_call","id":"item_exec","call_id":"call_exec","name":"exec","arguments":"{\"input\":\"ls\"}","status":"completed"}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{ID: 5662, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1}
+	// Turn 2's payload relies on the WS session remembering what turn 1
+	// declared: it omits "tools" entirely instead of repeating it.
+	payload := []byte(`{"type":"response.create","model":"gpt-5","stream":true,"input":"list files"}`)
+	previousToolState := openAIWSHTTPBridgeToolState{
+		ClientMapping: apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}},
+		LoweredTools: []any{
+			map[string]any{"type": "function", "name": "exec", "description": "Run a command", "parameters": map[string]any{"type": "object"}},
+		},
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+	var written [][]byte
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+		context.Background(), c, account, "sk-test", payload, len(payload),
+		"gpt-5", "", "", "", 2, previousToolState,
+		func(message []byte) error {
+			written = append(written, append([]byte(nil), message...))
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// The lowered declaration from the previous turn must be reinstated
+	// upstream even though this turn's payload never declared it.
+	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+	require.Equal(t, "exec", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
+
+	lines := make([]string, 0, len(written))
+	for _, message := range written {
+		lines = append(lines, string(message))
+	}
+	output := strings.Join(lines, "\n")
+	require.Contains(t, output, `"type":"custom_tool_call"`)
+	require.NotContains(t, output, `"type":"function_call"`)
+
+	// The mapping keeps holding for a possible turn 3 that also omits "tools".
+	require.True(t, result.wsClientToolState.ClientMapping.CustomTools["exec"])
+	require.Len(t, result.wsClientToolState.LoweredTools, 1)
+}
+
+// 没有上一轮会话状态（例如第一轮请求就省略了 tools，或上一轮从未声明过客户端工具）
+// 时，省略 tools 字段必须继续按“没有客户端工具”处理，原样透传给上游。
+func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyNoPreviousStateTreatsOmittedToolsAsNoClientTools(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	sse := strings.Join([]string{
+		`data: {"type":"response.completed","sequence_number":0,"response":{"id":"resp_bridge_no_state","status":"completed","output":[{"type":"function_call","id":"item_plain","call_id":"call_plain","name":"plain_tool","arguments":"{}","status":"completed"}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{ID: 5663, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1}
+	payload := []byte(`{"type":"response.create","model":"gpt-5","stream":true,"input":"list files"}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+	var written [][]byte
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+		context.Background(), c, account, "sk-test", payload, len(payload),
+		"gpt-5", "", "", "", 1, openAIWSHTTPBridgeToolState{},
+		func(message []byte) error {
+			written = append(written, append([]byte(nil), message...))
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
+
+	lines := make([]string, 0, len(written))
+	for _, message := range written {
+		lines = append(lines, string(message))
+	}
+	output := strings.Join(lines, "\n")
+	require.Contains(t, output, `"type":"function_call"`)
+	require.NotContains(t, output, `"type":"custom_tool_call"`)
+
+	require.False(t, hasResponsesClientToolMapping(result.wsClientToolState.ClientMapping))
+	require.Nil(t, result.wsClientToolState.LoweredTools)
 }
