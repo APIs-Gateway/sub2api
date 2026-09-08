@@ -181,6 +181,16 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	// Route to platform-specific test method
+	//
+	// CN 供应商（国产模型中转）账号显式配置 api_protocol=anthropic 时，走专门的原生
+	// Anthropic 端点探测，而不是落到 platform=openai 的分支或最终的通用 Claude 测试器
+	// （后者会拼接 ?beta=true 并在 base_url 缺失时误打到官方 Anthropic API，参见
+	// issue #804）。ChatCompletions / Responses 协议的显式选择在
+	// testOpenAIAccountConnection 内部处理（issue #771 / #804）。
+	if account.IsCNProvider() && account.GetAPIProtocol() == APIProtocolAnthropic {
+		return s.testCNProviderAnthropicConnection(c, account, modelID)
+	}
+
 	if account.IsOpenAI() {
 		return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
 	}
@@ -552,7 +562,14 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		useResponsesAPI := openai_compat.ShouldUseResponsesAPI(account.Extra)
+		// CN 供应商账号显式配置了 api_protocol 时，以管理员的显式选择为准，不再走
+		// 探测/兼容性启发式判断（issue #771：应该强制 Chat Completions；
+		// issue #804：DeepSeek 等走 Responses 协议时应该强制 Responses）。
+		if account.IsCNProvider() {
+			useResponsesAPI = account.GetAPIProtocol() == APIProtocolResponses
+		}
+		if !useResponsesAPI {
 			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
 		}
 		apiURL = buildOpenAIResponsesURL(normalizedBaseURL)
