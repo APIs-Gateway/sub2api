@@ -635,27 +635,29 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, client
 		rows *sql.Rows
 		err  error
 	)
+	// Match the current proxy even after an earlier fallback. Keep the first
+	// origin so manual revert still restores the originally assigned proxy.
 	if target == nil {
 		rows, err = exec.QueryContext(ctx, `
 			UPDATE accounts
 			SET proxy_id=NULL,
-				proxy_fallback_origin_id=$1,
+				proxy_fallback_origin_id=COALESCE(proxy_fallback_origin_id, $1),
 				extra = CASE WHEN platform='openai' AND type='apikey'
 					THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe'
 					ELSE extra END,
 				updated_at=NOW()
-			WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL
+			WHERE proxy_id=$1 AND deleted_at IS NULL
 			RETURNING id`, proxyID)
 	} else {
 		rows, err = exec.QueryContext(ctx, `
 			UPDATE accounts
 			SET proxy_id=$2,
-				proxy_fallback_origin_id=$1,
+				proxy_fallback_origin_id=COALESCE(proxy_fallback_origin_id, $1),
 				extra = CASE WHEN platform='openai' AND type='apikey'
 					THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe'
 					ELSE extra END,
 				updated_at=NOW()
-			WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL
+			WHERE proxy_id=$1 AND deleted_at IS NULL
 			RETURNING id`, proxyID, *target)
 	}
 	if err != nil {
@@ -697,7 +699,6 @@ func (r *proxyRepository) sweepOneExpiredProxyOnEnt(ctx context.Context, client 
 
 	accounts, err := client.Account.Query().Where(
 		dbaccount.ProxyIDEQ(proxyID),
-		dbaccount.ProxyFallbackOriginIDIsNil(),
 		dbaccount.DeletedAtIsNil(),
 	).All(ctx)
 	if err != nil {
@@ -708,7 +709,11 @@ func (r *proxyRepository) sweepOneExpiredProxyOnEnt(ctx context.Context, client 
 	}
 	accountIDs := make([]int64, 0, len(accounts))
 	for _, account := range accounts {
-		builder := client.Account.UpdateOneID(account.ID).SetProxyFallbackOriginID(proxyID)
+		builder := client.Account.UpdateOneID(account.ID)
+		// 与 Postgres 路径的 COALESCE 保持一致：重复回退时保留最初来源。
+		if account.ProxyFallbackOriginID == nil {
+			builder.SetProxyFallbackOriginID(proxyID)
+		}
 		if target == nil {
 			builder.ClearProxyID()
 		} else {
