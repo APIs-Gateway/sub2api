@@ -21,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
 
 // semverPattern 预编译 semver 格式校验正则
@@ -760,11 +761,22 @@ func (h *SettingHandler) ensureActorTotpForStepUp(c *gin.Context) bool {
 }
 
 func (h *SettingHandler) UpdateSettings(c *gin.Context) {
-	var req UpdateSettingsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// Bind the raw JSON body first (cached by gin so it can be re-read below)
+	// so we can tell which top-level fields the caller actually provided,
+	// as opposed to fields UpdateSettingsRequest's Go zero value makes
+	// indistinguishable from "omitted". See detectOmittedSettingKeys.
+	var raw map[string]json.RawMessage
+	if err := c.ShouldBindBodyWith(&raw, binding.JSON); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+
+	var req UpdateSettingsRequest
+	if err := c.ShouldBindBodyWith(&req, binding.JSON); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	omittedSettingKeys := detectOmittedSettingKeys(raw)
 
 	previousSettings, err := h.settingService.GetAllSettings(c.Request.Context())
 	if err != nil {
@@ -2065,7 +2077,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		},
 		ForceEmailOnThirdPartySignup: boolValueOrDefault(req.ForceEmailOnThirdPartySignup, previousAuthSourceDefaults.ForceEmailOnThirdPartySignup),
 	}
-	if err := h.settingService.UpdateSettingsWithAuthSourceDefaults(c.Request.Context(), settings, authSourceDefaults); err != nil {
+	if err := h.settingService.UpdateSettingsWithAuthSourceDefaultsOmitting(c.Request.Context(), settings, authSourceDefaults, omittedSettingKeys); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -2394,6 +2406,169 @@ func mapDingTalkValidateError(err error) string {
 	default:
 		return "dingtalk_corp_config_invalid"
 	}
+}
+
+// settingsOmittableKeys maps UpdateSettingsRequest's top-level JSON field
+// names to the underlying setting storage key, for every plain
+// (non-pointer) field that buildSystemSettingsUpdates writes
+// unconditionally from *service.SystemSettings. detectOmittedSettingKeys
+// uses it to figure out which of those keys a partial-update request never
+// mentioned, so UpdateSettingsWithAuthSourceDefaultsOmitting can leave the
+// stored value alone instead of clobbering it with the request's Go zero
+// value for that field (see service.OmittedSettingKeys).
+//
+// Pointer-typed UpdateSettingsRequest fields (e.g. *bool, *string) already
+// distinguish "omitted" (nil) from "explicitly zero" without needing this
+// table — UpdateSettings resolves them against previousSettings inline
+// above. payment_* fields are intentionally excluded too: they flow through
+// the already pointer-based UpdatePaymentConfigRequest (see
+// hasPaymentFields), not through SystemSettings/buildSystemSettingsUpdates.
+var settingsOmittableKeys = map[string]string{
+	// 注册 / 登录设置
+	"registration_enabled":                service.SettingKeyRegistrationEnabled,
+	"email_verify_enabled":                service.SettingKeyEmailVerifyEnabled,
+	"gmail_alias_filter_enabled":          service.SettingKeyGmailAliasFilterEnabled,
+	"registration_email_suffix_whitelist": service.SettingKeyRegistrationEmailSuffixWhitelist,
+	"promo_code_enabled":                  service.SettingKeyPromoCodeEnabled,
+	"password_reset_enabled":              service.SettingKeyPasswordResetEnabled,
+	"frontend_url":                        service.SettingKeyFrontendURL,
+	"invitation_code_enabled":             service.SettingKeyInvitationCodeEnabled,
+	"totp_enabled":                        service.SettingKeyTotpEnabled,
+	"login_agreement_enabled":             service.SettingKeyLoginAgreementEnabled,
+	"login_agreement_mode":                service.SettingKeyLoginAgreementMode,
+	"login_agreement_updated_at":          service.SettingKeyLoginAgreementUpdatedAt,
+	"login_agreement_documents":           service.SettingKeyLoginAgreementDocuments,
+
+	// SMTP
+	"smtp_host":       service.SettingKeySMTPHost,
+	"smtp_port":       service.SettingKeySMTPPort,
+	"smtp_username":   service.SettingKeySMTPUsername,
+	"smtp_from_email": service.SettingKeySMTPFrom,
+	"smtp_from_name":  service.SettingKeySMTPFromName,
+	"smtp_use_tls":    service.SettingKeySMTPUseTLS,
+
+	// Cloudflare Turnstile
+	"turnstile_enabled":  service.SettingKeyTurnstileEnabled,
+	"turnstile_site_key": service.SettingKeyTurnstileSiteKey,
+
+	// LinuxDo Connect OAuth
+	"linuxdo_connect_enabled":      service.SettingKeyLinuxDoConnectEnabled,
+	"linuxdo_connect_client_id":    service.SettingKeyLinuxDoConnectClientID,
+	"linuxdo_connect_redirect_url": service.SettingKeyLinuxDoConnectRedirectURL,
+
+	// DingTalk Connect OAuth
+	"dingtalk_connect_enabled":                     service.SettingKeyDingTalkConnectEnabled,
+	"dingtalk_connect_client_id":                   service.SettingKeyDingTalkConnectClientID,
+	"dingtalk_connect_redirect_url":                service.SettingKeyDingTalkConnectRedirectURL,
+	"dingtalk_connect_corp_restriction_policy":     service.SettingKeyDingTalkConnectCorpRestrictionPolicy,
+	"dingtalk_connect_internal_corp_id":            service.SettingKeyDingTalkConnectInternalCorpID,
+	"dingtalk_connect_bypass_registration":         service.SettingKeyDingTalkConnectBypassRegistration,
+	"dingtalk_connect_sync_corp_email":             service.SettingKeyDingTalkConnectSyncCorpEmail,
+	"dingtalk_connect_sync_display_name":           service.SettingKeyDingTalkConnectSyncDisplayName,
+	"dingtalk_connect_sync_dept":                   service.SettingKeyDingTalkConnectSyncDept,
+	"dingtalk_connect_sync_corp_email_attr_key":    service.SettingKeyDingTalkConnectSyncCorpEmailAttrKey,
+	"dingtalk_connect_sync_display_name_attr_key":  service.SettingKeyDingTalkConnectSyncDisplayNameAttrKey,
+	"dingtalk_connect_sync_dept_attr_key":          service.SettingKeyDingTalkConnectSyncDeptAttrKey,
+	"dingtalk_connect_sync_corp_email_attr_name":   service.SettingKeyDingTalkConnectSyncCorpEmailAttrName,
+	"dingtalk_connect_sync_display_name_attr_name": service.SettingKeyDingTalkConnectSyncDisplayNameAttrName,
+	"dingtalk_connect_sync_dept_attr_name":         service.SettingKeyDingTalkConnectSyncDeptAttrName,
+
+	// WeChat Connect OAuth
+	"wechat_connect_enabled":               service.SettingKeyWeChatConnectEnabled,
+	"wechat_connect_app_id":                service.SettingKeyWeChatConnectAppID,
+	"wechat_connect_open_app_id":           service.SettingKeyWeChatConnectOpenAppID,
+	"wechat_connect_mp_app_id":             service.SettingKeyWeChatConnectMPAppID,
+	"wechat_connect_mobile_app_id":         service.SettingKeyWeChatConnectMobileAppID,
+	"wechat_connect_open_enabled":          service.SettingKeyWeChatConnectOpenEnabled,
+	"wechat_connect_mp_enabled":            service.SettingKeyWeChatConnectMPEnabled,
+	"wechat_connect_mobile_enabled":        service.SettingKeyWeChatConnectMobileEnabled,
+	"wechat_connect_mode":                  service.SettingKeyWeChatConnectMode,
+	"wechat_connect_scopes":                service.SettingKeyWeChatConnectScopes,
+	"wechat_connect_redirect_url":          service.SettingKeyWeChatConnectRedirectURL,
+	"wechat_connect_frontend_redirect_url": service.SettingKeyWeChatConnectFrontendRedirectURL,
+
+	// Generic OIDC OAuth (pointer-typed use_pkce/validate_id_token are excluded)
+	"oidc_connect_enabled":                service.SettingKeyOIDCConnectEnabled,
+	"oidc_connect_provider_name":          service.SettingKeyOIDCConnectProviderName,
+	"oidc_connect_client_id":              service.SettingKeyOIDCConnectClientID,
+	"oidc_connect_issuer_url":             service.SettingKeyOIDCConnectIssuerURL,
+	"oidc_connect_discovery_url":          service.SettingKeyOIDCConnectDiscoveryURL,
+	"oidc_connect_authorize_url":          service.SettingKeyOIDCConnectAuthorizeURL,
+	"oidc_connect_token_url":              service.SettingKeyOIDCConnectTokenURL,
+	"oidc_connect_userinfo_url":           service.SettingKeyOIDCConnectUserInfoURL,
+	"oidc_connect_jwks_url":               service.SettingKeyOIDCConnectJWKSURL,
+	"oidc_connect_scopes":                 service.SettingKeyOIDCConnectScopes,
+	"oidc_connect_redirect_url":           service.SettingKeyOIDCConnectRedirectURL,
+	"oidc_connect_frontend_redirect_url":  service.SettingKeyOIDCConnectFrontendRedirectURL,
+	"oidc_connect_token_auth_method":      service.SettingKeyOIDCConnectTokenAuthMethod,
+	"oidc_connect_allowed_signing_algs":   service.SettingKeyOIDCConnectAllowedSigningAlgs,
+	"oidc_connect_clock_skew_seconds":     service.SettingKeyOIDCConnectClockSkewSeconds,
+	"oidc_connect_require_email_verified": service.SettingKeyOIDCConnectRequireEmailVerified,
+	"oidc_connect_userinfo_email_path":    service.SettingKeyOIDCConnectUserInfoEmailPath,
+	"oidc_connect_userinfo_id_path":       service.SettingKeyOIDCConnectUserInfoIDPath,
+	"oidc_connect_userinfo_username_path": service.SettingKeyOIDCConnectUserInfoUsernamePath,
+
+	// GitHub / Google 邮箱快捷登录
+	"github_oauth_enabled":               service.SettingKeyGitHubOAuthEnabled,
+	"github_oauth_client_id":             service.SettingKeyGitHubOAuthClientID,
+	"github_oauth_redirect_url":          service.SettingKeyGitHubOAuthRedirectURL,
+	"github_oauth_frontend_redirect_url": service.SettingKeyGitHubOAuthFrontendRedirectURL,
+	"google_oauth_enabled":               service.SettingKeyGoogleOAuthEnabled,
+	"google_oauth_client_id":             service.SettingKeyGoogleOAuthClientID,
+	"google_oauth_redirect_url":          service.SettingKeyGoogleOAuthRedirectURL,
+	"google_oauth_frontend_redirect_url": service.SettingKeyGoogleOAuthFrontendRedirectURL,
+
+	// OEM 设置
+	"site_name":               service.SettingKeySiteName,
+	"site_logo":               service.SettingKeySiteLogo,
+	"site_subtitle":           service.SettingKeySiteSubtitle,
+	"api_base_url":            service.SettingKeyAPIBaseURL,
+	"contact_info":            service.SettingKeyContactInfo,
+	"doc_url":                 service.SettingKeyDocURL,
+	"home_content":            service.SettingKeyHomeContent,
+	"hide_ccs_import_button":  service.SettingKeyHideCcsImportButton,
+	"table_default_page_size": service.SettingKeyTableDefaultPageSize,
+	"table_page_size_options": service.SettingKeyTablePageSizeOptions,
+
+	// 默认配置
+	"default_concurrency":    service.SettingKeyDefaultConcurrency,
+	"default_balance":        service.SettingKeyDefaultBalance,
+	"default_user_rpm_limit": service.SettingKeyDefaultUserRPMLimit,
+	"default_subscriptions":  service.SettingKeyDefaultSubscriptions,
+
+	// Model fallback
+	"enable_model_fallback":      service.SettingKeyEnableModelFallback,
+	"fallback_model_anthropic":   service.SettingKeyFallbackModelAnthropic,
+	"fallback_model_openai":      service.SettingKeyFallbackModelOpenAI,
+	"fallback_model_gemini":      service.SettingKeyFallbackModelGemini,
+	"fallback_model_antigravity": service.SettingKeyFallbackModelAntigravity,
+
+	// Identity patch
+	"enable_identity_patch": service.SettingKeyEnableIdentityPatch,
+	"identity_patch_prompt": service.SettingKeyIdentityPatchPrompt,
+
+	// Claude Code version gate
+	"min_claude_code_version": service.SettingKeyMinClaudeCodeVersion,
+	"max_claude_code_version": service.SettingKeyMaxClaudeCodeVersion,
+
+	// 分组隔离 / Backend Mode
+	"allow_ungrouped_key_scheduling": service.SettingKeyAllowUngroupedKeyScheduling,
+	"backend_mode_enabled":           service.SettingKeyBackendModeEnabled,
+}
+
+// detectOmittedSettingKeys returns the settingsOmittableKeys entries whose
+// JSON field was absent from the raw admin settings request body. A field
+// that was present in the body (even with an explicit zero value, e.g.
+// `"registration_enabled": false`) is never included, regardless of what it
+// decoded to.
+func detectOmittedSettingKeys(raw map[string]json.RawMessage) service.OmittedSettingKeys {
+	omitted := make(service.OmittedSettingKeys, len(settingsOmittableKeys))
+	for jsonKey, settingKey := range settingsOmittableKeys {
+		if _, present := raw[jsonKey]; !present {
+			omitted[settingKey] = struct{}{}
+		}
+	}
+	return omitted
 }
 
 func hasPaymentFields(req UpdateSettingsRequest) bool {
