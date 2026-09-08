@@ -89,18 +89,9 @@ func adaptOpenAIResponsesClientTools(body []byte) ([]byte, apicompat.ResponsesCl
 		return body, apicompat.ResponsesClientToolMapping{}, nil
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	var requestBody map[string]any
-	if err := decoder.Decode(&requestBody); err != nil {
-		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("decode OpenAI Responses client tools: %w", err)
-	}
-	var trailingValue any
-	if err := decoder.Decode(&trailingValue); !errors.Is(err, io.EOF) {
-		if err == nil {
-			err = errors.New("multiple JSON values")
-		}
-		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("decode OpenAI Responses client tools trailing data: %w", err)
+	requestBody, err := decodeOpenAIResponsesClientToolsRequestBody(body)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, err
 	}
 
 	mapping, changed, err := apicompat.AdaptResponsesClientTools(requestBody)
@@ -112,6 +103,65 @@ func adaptOpenAIResponsesClientTools(body []byte) ([]byte, apicompat.ResponsesCl
 		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("encode OpenAI Responses client tools: %w", err)
 	}
 	return rebuilt, mapping, nil
+}
+
+// adaptOpenAIResponsesClientToolsWithInheritedMapping behaves like
+// adaptOpenAIResponsesClientTools when body declares its own "tools" field.
+// OpenAI WS HTTP bridge follow-up turns, whose client relies on the upstream
+// to remember what it declared on an earlier turn of the same session, omit
+// "tools" entirely instead of repeating the declaration. Treating that
+// omission as "no client tools" would forward this turn's unlowered
+// custom/tool_search/namespace input history and tool_choice to a
+// function-only upstream unmodified. When body omits "tools" and a previous
+// turn recorded a mapping plus what it lowered "tools" to, this reinstates
+// both instead. It also returns the "tools" declaration actually sent
+// upstream this turn (freshly lowered or inherited) so the caller can
+// remember it for a possible next turn.
+func adaptOpenAIResponsesClientToolsWithInheritedMapping(
+	body []byte,
+	previousMapping apicompat.ResponsesClientToolMapping,
+	previousLoweredTools []any,
+) ([]byte, apicompat.ResponsesClientToolMapping, []any, error) {
+	canInherit := hasResponsesClientToolMapping(previousMapping) && len(previousLoweredTools) > 0
+	if !needsOpenAIResponsesClientToolAdaptation(body) && !canInherit {
+		return body, apicompat.ResponsesClientToolMapping{}, nil, nil
+	}
+
+	requestBody, err := decodeOpenAIResponsesClientToolsRequestBody(body)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, nil, err
+	}
+
+	mapping, changed, err := apicompat.AdaptResponsesClientToolsWithInheritedMapping(requestBody, previousMapping, previousLoweredTools)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, nil, err
+	}
+	loweredTools, _ := requestBody["tools"].([]any)
+	if !changed {
+		return body, mapping, loweredTools, nil
+	}
+	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, nil, fmt.Errorf("encode OpenAI Responses client tools: %w", err)
+	}
+	return rebuilt, mapping, loweredTools, nil
+}
+
+func decodeOpenAIResponsesClientToolsRequestBody(body []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var requestBody map[string]any
+	if err := decoder.Decode(&requestBody); err != nil {
+		return nil, fmt.Errorf("decode OpenAI Responses client tools: %w", err)
+	}
+	var trailingValue any
+	if err := decoder.Decode(&trailingValue); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		return nil, fmt.Errorf("decode OpenAI Responses client tools trailing data: %w", err)
+	}
+	return requestBody, nil
 }
 
 // restoreOpenAIResponsesClientToolPayload 还原非流式响应里的降级工具调用。

@@ -766,3 +766,191 @@ func TestResponsesClientToolStreamRestorer_IdentifiesRelevantWireEvents(t *testi
 	require.True(t, custom.clientToolEventPayload([]byte(`{"call_id":"call"}`)))
 	require.True(t, custom.clientToolEventPayload([]byte(`{"output_index":4}`)))
 }
+
+func TestAdaptResponsesClientToolsWithInheritedMapping_NilRequestReturnsZeroValue(t *testing.T) {
+	mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(nil, ResponsesClientToolMapping{}, nil)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, ResponsesClientToolMapping{}, mapping)
+}
+
+func TestAdaptResponsesClientToolsWithInheritedMapping_DelegatesWhenToolsDeclared(t *testing.T) {
+	req := map[string]any{
+		"tools": []any{
+			map[string]any{"type": "custom", "name": "exec"},
+		},
+	}
+	// A previous turn's tool_search state must not leak into a turn that
+	// declares its own fresh tools.
+	previousMapping := ResponsesClientToolMapping{ToolSearch: true}
+	previousLoweredTools := []any{map[string]any{"type": "function", "name": toolSearchProxyName}}
+
+	mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(req, previousMapping, previousLoweredTools)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, mapping.CustomTools["exec"])
+	require.False(t, mapping.ToolSearch)
+	tools := requireResponsesClientToolValue[[]any](t, req["tools"])
+	require.Len(t, tools, 1)
+	require.Equal(t, "function", requireResponsesClientToolValue[map[string]any](t, tools[0])["type"])
+}
+
+func TestAdaptResponsesClientToolsWithInheritedMapping_NoPreviousStateTreatsOmittedToolsAsNoClientTools(t *testing.T) {
+	req := map[string]any{"input": []any{map[string]any{"type": "message", "role": "user"}}}
+
+	mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(req, ResponsesClientToolMapping{}, nil)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, ResponsesClientToolMapping{}, mapping)
+	require.NotContains(t, req, "tools")
+
+	// A recorded mapping without a remembered lowered declaration can't be
+	// reinstated either -- there is nothing to put back into "tools".
+	mapping, changed, err = AdaptResponsesClientToolsWithInheritedMapping(req, ResponsesClientToolMapping{ToolSearch: true}, nil)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, ResponsesClientToolMapping{}, mapping)
+	require.NotContains(t, req, "tools")
+}
+
+func TestAdaptResponsesClientToolsWithInheritedMapping_ReinstatesCustomToolMappingWhenToolsOmitted(t *testing.T) {
+	previousMapping := ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}}
+	previousLoweredTools := []any{
+		map[string]any{"type": "function", "name": "exec", "parameters": json.RawMessage(customToolInputSchema)},
+	}
+	req := map[string]any{
+		"tool_choice": map[string]any{"type": "custom", "name": "exec"},
+		"input": []any{
+			map[string]any{"type": "custom_tool_call", "id": "ctc_client", "call_id": "c1", "name": "exec", "input": "dir"},
+			map[string]any{"type": "custom_tool_call_output", "id": "ctco_client", "call_id": "c1", "output": "ok"},
+		},
+	}
+
+	mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(req, previousMapping, previousLoweredTools)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, previousMapping, mapping)
+
+	tools := requireResponsesClientToolValue[[]any](t, req["tools"])
+	require.Len(t, tools, 1)
+	require.Equal(t, "exec", requireResponsesClientToolValue[map[string]any](t, tools[0])["name"])
+
+	choice := requireResponsesClientToolValue[map[string]any](t, req["tool_choice"])
+	require.Equal(t, "function", choice["type"])
+
+	input := requireResponsesClientToolValue[[]any](t, req["input"])
+	call := requireResponsesClientToolValue[map[string]any](t, input[0])
+	require.Equal(t, "function_call", call["type"])
+	require.JSONEq(t, `{"input":"dir"}`, requireResponsesClientToolValue[string](t, call["arguments"]))
+	output := requireResponsesClientToolValue[map[string]any](t, input[1])
+	require.Equal(t, "function_call_output", output["type"])
+}
+
+func TestAdaptResponsesClientToolsWithInheritedMapping_ReinstatesToolSearchMappingWhenToolsOmitted(t *testing.T) {
+	previousMapping := ResponsesClientToolMapping{ToolSearch: true}
+	previousLoweredTools := []any{
+		map[string]any{"type": "function", "name": toolSearchProxyName},
+	}
+	req := map[string]any{
+		"tool_choice": map[string]any{"type": "tool_search"},
+		"input": []any{
+			map[string]any{"type": "tool_search_call", "id": "tsc_client", "call_id": "s1", "arguments": map[string]any{"query": "git"}},
+			map[string]any{"type": "tool_search_output", "id": "tso_client", "call_id": "s1", "output": map[string]any{"groups": []string{"git"}}},
+		},
+	}
+
+	mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(req, previousMapping, previousLoweredTools)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, previousMapping, mapping)
+
+	choice := requireResponsesClientToolValue[map[string]any](t, req["tool_choice"])
+	require.Equal(t, "function", choice["type"])
+	require.Equal(t, toolSearchProxyName, choice["name"])
+
+	input := requireResponsesClientToolValue[[]any](t, req["input"])
+	call := requireResponsesClientToolValue[map[string]any](t, input[0])
+	require.Equal(t, "function_call", call["type"])
+	require.Equal(t, toolSearchProxyName, call["name"])
+	output := requireResponsesClientToolValue[map[string]any](t, input[1])
+	require.Equal(t, "function_call_output", output["type"])
+}
+
+func TestAdaptResponsesClientToolsWithInheritedMapping_ReinstatesNamespaceMappingWhenToolsOmitted(t *testing.T) {
+	previousMapping := ResponsesClientToolMapping{
+		NamespaceTools: map[string]ResponsesNamespaceName{"team__send": {Namespace: "team", Name: "send"}},
+	}
+	previousLoweredTools := []any{
+		map[string]any{"type": "function", "name": "team__send"},
+	}
+	req := map[string]any{
+		"tool_choice": map[string]any{"type": "namespace", "name": "team"},
+		"input": []any{
+			map[string]any{"type": "function_call", "call_id": "n1", "namespace": "team", "name": "send", "arguments": "{}"},
+		},
+	}
+
+	mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(req, previousMapping, previousLoweredTools)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, previousMapping, mapping)
+
+	// A namespace-level tool_choice cannot survive flattening; it collapses to "auto",
+	// matching FlattenResponsesNamespacesExcept's behavior for a fresh declaration.
+	require.Equal(t, "auto", req["tool_choice"])
+
+	input := requireResponsesClientToolValue[[]any](t, req["input"])
+	call := requireResponsesClientToolValue[map[string]any](t, input[0])
+	require.Equal(t, "team__send", call["name"])
+	require.NotContains(t, call, "namespace")
+}
+
+func TestAdaptResponsesClientToolsWithInheritedMapping_RewritesNonNamespaceChoiceReferencingNamespaceTool(t *testing.T) {
+	previousMapping := ResponsesClientToolMapping{
+		NamespaceTools: map[string]ResponsesNamespaceName{"team__send": {Namespace: "team", Name: "send"}},
+	}
+	previousLoweredTools := []any{map[string]any{"type": "function", "name": "team__send"}}
+	req := map[string]any{
+		"tool_choice": map[string]any{"type": "function", "namespace": "team", "name": "send"},
+		"input":       []any{},
+	}
+
+	_, changed, err := AdaptResponsesClientToolsWithInheritedMapping(req, previousMapping, previousLoweredTools)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	choice := requireResponsesClientToolValue[map[string]any](t, req["tool_choice"])
+	require.Equal(t, "team__send", choice["name"])
+	require.NotContains(t, choice, "namespace")
+}
+
+func TestAdaptResponsesClientToolsWithInheritedMapping_PropagatesHistoryRewriteError(t *testing.T) {
+	previousMapping := ResponsesClientToolMapping{ToolSearch: true}
+	previousLoweredTools := []any{map[string]any{"type": "function", "name": toolSearchProxyName}}
+	req := map[string]any{
+		"input": []any{
+			map[string]any{"type": "tool_search_output", "call_id": "", "output": "ok"},
+		},
+	}
+
+	mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(req, previousMapping, previousLoweredTools)
+	require.Error(t, err)
+	require.False(t, changed)
+	require.Equal(t, ResponsesClientToolMapping{}, mapping)
+}
+
+func TestAdaptResponsesClientToolsWithInheritedMapping_ClonesLoweredToolsSlice(t *testing.T) {
+	previousMapping := ResponsesClientToolMapping{ToolSearch: true}
+	previousLoweredTools := []any{map[string]any{"type": "function", "name": toolSearchProxyName}}
+	req := map[string]any{}
+
+	_, changed, err := AdaptResponsesClientToolsWithInheritedMapping(req, previousMapping, previousLoweredTools)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	tools := requireResponsesClientToolValue[[]any](t, req["tools"])
+	tools = append(tools, map[string]any{"type": "function", "name": "extra"})
+	req["tools"] = tools
+
+	require.Len(t, previousLoweredTools, 1, "appending to the returned tools slice must not mutate the caller's remembered declaration")
+}
