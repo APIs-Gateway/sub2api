@@ -106,12 +106,14 @@ func TestContentModerationHandler_UpdateConfig_ProxyIDRoundTrip(t *testing.T) {
 
 	rec, body = doJSONRequest(t, router, http.MethodGet, "/config", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
-	data = body["data"].(map[string]any)
+	data, ok = body["data"].(map[string]any)
+	require.True(t, ok, "response must contain a data object")
 	require.EqualValues(t, 11, data["proxy_id"], "GetConfig must reflect the previously saved proxy_id")
 
 	rec, body = doJSONRequest(t, router, http.MethodPut, "/config", map[string]any{"proxy_id": 0})
 	require.Equal(t, http.StatusOK, rec.Code)
-	data = body["data"].(map[string]any)
+	data, ok = body["data"].(map[string]any)
+	require.True(t, ok, "response must contain a data object")
 	require.Nil(t, data["proxy_id"], "proxy_id <= 0 must clear the saved proxy")
 
 	rec, _ = doJSONRequest(t, router, http.MethodPut, "/config", map[string]any{"proxy_id": 999})
