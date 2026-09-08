@@ -2815,6 +2815,10 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		args = append(args, int16(*filters.BillingType))
 	}
 	conditions, args = appendUsageLogBillingModeWhereCondition(conditions, args, filters.BillingMode)
+	if filters.RequestID != "" {
+		conditions = append(conditions, fmt.Sprintf("request_id = $%d", len(args)+1))
+		args = append(args, filters.RequestID)
+	}
 	if filters.StartTime != nil {
 		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", len(args)+1))
 		args = append(args, *filters.StartTime)
@@ -2849,8 +2853,9 @@ func shouldUseFastUsageLogTotal(filters UsageLogFilters) bool {
 	if filters.ExactTotal {
 		return false
 	}
-	// 强选择过滤下记录集通常较小，保留精确总数。
-	return filters.UserID == 0 && filters.APIKeyID == 0 && filters.AccountID == 0
+	// 强选择过滤下记录集通常较小，保留精确总数。request_id 命中至多一条记录，
+	// 选择性比 user/api_key/account 更强，同样归为强选择过滤。
+	return filters.UserID == 0 && filters.APIKeyID == 0 && filters.AccountID == 0 && filters.RequestID == ""
 }
 
 // UsageStats represents usage statistics
