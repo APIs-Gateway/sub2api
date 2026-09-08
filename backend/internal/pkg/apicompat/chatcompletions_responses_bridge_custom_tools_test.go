@@ -34,6 +34,69 @@ func TestResponsesToChatCompletionsRequest_CustomToolBecomesFunctionTool(t *test
 	assert.Equal(t, "wait", out.Tools[1].Function.Name)
 }
 
+// customToolCallName 恢复的场景：chat 模型有时会把 custom 工具（降级为 function
+// 工具透传）的调用，误按相邻摊平 namespace 子工具的命名规则加上前缀（例如把 exec
+// 调用成 functions__exec，因为附近有摊平的 functions__wait）。这类别名调用必须
+// 被识别为 custom_tool_call 并还原为原始 custom 工具名，而非被当成一次指向
+// 不存在的摊平 function_call。
+func TestResponsesChatBridge_MixedCustomAndNamespaceToolNames(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "deepseek-test",
+		Input: json.RawMessage(`"run pwd"`),
+		Tools: []ResponsesTool{
+			{Type: "custom", Name: "exec", Description: "Runs a command"},
+			{Type: "namespace", Name: "functions", Tools: []ResponsesTool{
+				{Type: "function", Name: "wait", Parameters: json.RawMessage(`{"type":"object"}`)},
+			}},
+		},
+	}
+
+	chatReq, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Len(t, chatReq.Tools, 2)
+	assert.Equal(t, "exec", chatReq.Tools[0].Function.Name)
+	assert.Equal(t, "functions__wait", chatReq.Tools[1].Function.Name)
+
+	customTools := CustomToolNames(req.Tools)
+	namespaceTools := NamespaceToolNames(req.Tools)
+	resp := &ChatCompletionsResponse{Choices: []ChatChoice{{Message: ChatMessage{ToolCalls: []ChatToolCall{
+		{ID: "call_exact", Function: ChatFunctionCall{Name: "exec", Arguments: `{"input":"pwd"}`}},
+		{ID: "call_wait", Function: ChatFunctionCall{Name: "functions__wait", Arguments: `{"cell_id":"1"}`}},
+		{ID: "call_alias", Function: ChatFunctionCall{Name: "functions__exec", Arguments: `not-json`}},
+	}}}}}
+
+	out := ChatCompletionsResponseToResponses(resp, req.Model, customTools, FunctionToolNames(req.Tools), false, namespaceTools)
+	require.Len(t, out.Output, 3)
+	assert.Equal(t, "custom_tool_call", out.Output[0].Type)
+	assert.Equal(t, "exec", out.Output[0].Name)
+	assert.Equal(t, "pwd", out.Output[0].Input)
+	assert.Equal(t, "function_call", out.Output[1].Type)
+	assert.Equal(t, "functions", out.Output[1].Namespace)
+	assert.Equal(t, "wait", out.Output[1].Name)
+	assert.Equal(t, "custom_tool_call", out.Output[2].Type)
+	assert.Equal(t, "exec", out.Output[2].Name)
+	assert.Equal(t, "not-json", out.Output[2].Input)
+}
+
+// 摊平名撞上真实声明的 function 工具时，那个声明才是唯一合法归属：即便它与某个
+// custom 工具名摊平后恰好同名，也绝不能被误判为 custom 别名（否则会把一次合法的
+// function 调用错误地劫持成 custom_tool_call，且 arguments 会被错误地按 custom
+// 工具的 {"input":...} 包装格式解析）。
+func TestChatCompletionsResponseToResponses_ExplicitFunctionOwnsCustomAliasCollision(t *testing.T) {
+	resp := &ChatCompletionsResponse{Choices: []ChatChoice{{Message: ChatMessage{ToolCalls: []ChatToolCall{{
+		ID: "call_function", Function: ChatFunctionCall{Name: "functions__exec", Arguments: `{"path":"/tmp"}`},
+	}}}}}}
+
+	out := ChatCompletionsResponseToResponses(resp, "deepseek-test",
+		map[string]bool{"exec": true}, map[string]bool{"functions__exec": true}, false,
+		map[string]NamespacedToolName{"functions__wait": {Namespace: "functions", Name: "wait"}})
+
+	require.Len(t, out.Output, 1)
+	assert.Equal(t, "function_call", out.Output[0].Type)
+	assert.Equal(t, "functions__exec", out.Output[0].Name)
+	assert.Equal(t, `{"path":"/tmp"}`, out.Output[0].Arguments)
+}
+
 func TestResponsesToChatCompletionsRequest_AdditionalToolsItem(t *testing.T) {
 	req := &ResponsesRequest{
 		Model: "gpt-test",
@@ -173,7 +236,7 @@ func TestChatCompletionsResponseToResponses_CustomToolCallOutputItem(t *testing.
 		}},
 	}
 
-	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", map[string]bool{"exec": true}, false, nil)
+	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", map[string]bool{"exec": true}, nil, false, nil)
 	require.Len(t, out.Output, 2)
 
 	assert.Equal(t, "custom_tool_call", out.Output[0].Type)
@@ -264,6 +327,72 @@ func TestChatCompletionsChunkToResponsesEvents_CustomToolCallStream(t *testing.T
 	assert.True(t, foundCustom, "response.completed 缺少 custom_tool_call 输出项")
 }
 
+// 流式路径必须复现缓冲路径同样的别名恢复行为：晚到的名字命中摊平别名时按
+// custom_tool_call 生命周期宣告/收尾，且 Name 还原为原始 custom 工具名。
+func TestChatCompletionsChunkToResponsesEvents_MixedCustomNamespaceAliasStream(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamState("deepseek-test")
+	state.CustomTools = map[string]bool{"exec": true}
+	state.NamespaceTools = map[string]NamespacedToolName{
+		"functions__wait": {Namespace: "functions", Name: "wait"},
+	}
+
+	idx := 0
+	chunk := &ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{ToolCalls: []ChatToolCall{{
+		Index: &idx, ID: "call_alias", Function: ChatFunctionCall{Name: "functions__exec", Arguments: `not-json`},
+	}}}}}}
+	events := ChatCompletionsChunkToResponsesEvents(chunk, state)
+	events = append(events, FinalizeChatCompletionsResponsesStream(state)...)
+
+	for _, evt := range events {
+		if evt.Type == "response.output_item.added" && evt.Item != nil && evt.Item.Type == "custom_tool_call" {
+			assert.Equal(t, "exec", evt.Item.Name)
+		}
+		if evt.Type == "response.custom_tool_call_input.done" {
+			assert.Equal(t, "exec", evt.Name)
+			assert.Equal(t, "not-json", evt.Input)
+		}
+		if evt.Type == "response.output_item.done" && evt.Item != nil && evt.Item.Type == "custom_tool_call" {
+			assert.Equal(t, "exec", evt.Item.Name)
+			assert.Equal(t, "not-json", evt.Item.Input)
+		}
+	}
+
+	final := events[len(events)-1]
+	require.Equal(t, "response.completed", final.Type)
+	require.Len(t, final.Response.Output, 1)
+	assert.Equal(t, "custom_tool_call", final.Response.Output[0].Type)
+	assert.Equal(t, "exec", final.Response.Output[0].Name)
+	assert.Equal(t, "not-json", final.Response.Output[0].Input)
+}
+
+// 真实声明的 function 工具即便摊平后与某个 custom 工具名相同，流式路径同样必须
+// 保持 function_call 生命周期，不产出任何 custom_tool_call_input 事件。
+func TestChatCompletionsChunkToResponsesEvents_ExplicitFunctionOwnsCustomAliasCollision(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamState("deepseek-test")
+	state.CustomTools = map[string]bool{"exec": true}
+	state.FunctionTools = map[string]bool{"functions__exec": true}
+	state.NamespaceTools = map[string]NamespacedToolName{
+		"functions__wait": {Namespace: "functions", Name: "wait"},
+	}
+
+	idx := 0
+	chunk := &ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{ToolCalls: []ChatToolCall{{
+		Index: &idx, ID: "call_function", Function: ChatFunctionCall{Name: "functions__exec", Arguments: `{"path":"/tmp"}`},
+	}}}}}}
+	events := ChatCompletionsChunkToResponsesEvents(chunk, state)
+	events = append(events, FinalizeChatCompletionsResponsesStream(state)...)
+
+	for _, evt := range events {
+		assert.NotEqual(t, "response.custom_tool_call_input.done", evt.Type)
+	}
+	final := events[len(events)-1]
+	require.Equal(t, "response.completed", final.Type)
+	require.Len(t, final.Response.Output, 1)
+	assert.Equal(t, "function_call", final.Response.Output[0].Type)
+	assert.Equal(t, "functions__exec", final.Response.Output[0].Name)
+	assert.Equal(t, `{"path":"/tmp"}`, final.Response.Output[0].Arguments)
+}
+
 func TestResponsesToChatCompletionsRequest_ToolSearchToolBecomesProxyFunction(t *testing.T) {
 	req := &ResponsesRequest{
 		Model: "glm-5.2",
@@ -308,7 +437,7 @@ func TestChatCompletionsResponseToResponses_ToolSearchCallOutputItem(t *testing.
 		}},
 	}
 
-	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, true, nil)
+	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, nil, true, nil)
 	require.Len(t, out.Output, 1)
 
 	item := out.Output[0]
@@ -340,7 +469,7 @@ func TestChatCompletionsResponseToResponses_ToolSearchNotDeclaredKeepsFunctionCa
 	}
 
 	// 客户端未声明 type=tool_search 时，同名普通 function 工具不受影响。
-	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, false, nil)
+	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, nil, false, nil)
 	require.Len(t, out.Output, 1)
 	assert.Equal(t, "function_call", out.Output[0].Type)
 }
@@ -810,7 +939,7 @@ func TestChatCompletionsResponseToResponses_NamespacedToolCallRestored(t *testin
 		"mcp__svc__echo": {Namespace: "mcp__svc", Name: "echo"},
 	}
 
-	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, false, nsTools)
+	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, nil, false, nsTools)
 	require.Len(t, out.Output, 2)
 
 	item := out.Output[0]

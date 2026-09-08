@@ -57,6 +57,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	// tool_search_call 项；namespace 子工具（如 MCP 工具）摊平转发，回程按映射还原
 	// 为带 namespace 字段的 function_call 项。
 	customTools := apicompat.CustomToolNames(responsesReq.Tools)
+	functionTools := apicompat.FunctionToolNames(responsesReq.Tools)
 	toolSearch := apicompat.HasToolSearchTool(responsesReq.Tools)
 	namespaceTools := apicompat.NamespaceToolNames(responsesReq.Tools)
 
@@ -203,9 +204,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	}
 
 	if clientStream {
-		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
-	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, customTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
@@ -213,6 +214,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	resp *http.Response,
 	originalModel string,
 	customTools map[string]bool,
+	functionTools map[string]bool,
 	toolSearch bool,
 	namespaceTools map[string]apicompat.NamespacedToolName,
 	billingModel string,
@@ -245,7 +247,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 		})
 		return nil, fmt.Errorf("parse chat completions response: %w", err)
 	}
-	responsesResp := apicompat.ChatCompletionsResponseToResponses(&ccResp, originalModel, customTools, toolSearch, namespaceTools)
+	responsesResp := apicompat.ChatCompletionsResponseToResponses(&ccResp, originalModel, customTools, functionTools, toolSearch, namespaceTools)
 
 	usage := OpenAIUsage{}
 	if parsed, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
@@ -274,6 +276,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	resp *http.Response,
 	originalModel string,
 	customTools map[string]bool,
+	functionTools map[string]bool,
 	toolSearch bool,
 	namespaceTools map[string]apicompat.NamespacedToolName,
 	billingModel string,
@@ -301,6 +304,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 
 	state := apicompat.NewChatCompletionsToResponsesStreamState(originalModel)
 	state.CustomTools = customTools
+	state.FunctionTools = functionTools
 	state.ToolSearchDeclared = toolSearch
 	state.NamespaceTools = namespaceTools
 	var usage OpenAIUsage
@@ -394,6 +398,28 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			Duration:        time.Since(startTime),
 			FirstTokenMs:    firstTokenMs,
 		}, fmt.Errorf("stream usage incomplete: %w", err)
+	}
+
+	// A tool call whose argument stream was truncated (e.g. an upstream SSE parse
+	// failure or an output-limit interruption) must not be emitted as a completed
+	// Responses item: Codex would persist it and replay it on the next turn, where
+	// a Chat Completions provider rejects the whole request. Reject before
+	// finalizing so no function_call_arguments.done / output_item.done / [DONE] is
+	// sent for the poisoned call; already-streamed deltas for other calls stay on
+	// the wire (best effort), but this response never completes cleanly.
+	if err := state.ValidateToolCallArguments(); err != nil {
+		return &OpenAIForwardResult{
+			RequestID:       requestID,
+			Usage:           usage,
+			Model:           originalModel,
+			BillingModel:    billingModel,
+			UpstreamModel:   upstreamModel,
+			ReasoningEffort: reasoningEffort,
+			ServiceTier:     serviceTier,
+			Stream:          true,
+			Duration:        time.Since(startTime),
+			FirstTokenMs:    firstTokenMs,
+		}, fmt.Errorf("invalid tool call arguments from upstream: %w", err)
 	}
 
 	writeEvents(apicompat.FinalizeChatCompletionsResponsesStream(state))
