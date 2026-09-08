@@ -276,8 +276,10 @@ type UsageLogFilters struct {
 	Stream            *bool
 	BillingType       *int8
 	BillingMode       string
-	StartTime         *time.Time
-	EndTime           *time.Time
+	// RequestID filters by the exact upstream request id (non-empty to enable).
+	RequestID string
+	StartTime *time.Time
+	EndTime   *time.Time
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
 }
