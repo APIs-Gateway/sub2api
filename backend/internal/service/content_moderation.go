@@ -94,6 +94,13 @@ const (
 
 	contentModerationRuntimeCacheTTL       = time.Second
 	contentModerationRuntimeRefreshTimeout = 5 * time.Second
+
+	// contentModerationProxyClientCacheTTL 控制按代理 ID 缓存的 *http.Client 复用时长，
+	// 避免每次审核请求都查一次 proxyRepo；配置更新后最多延迟这个时长才会用到新的代理地址，
+	// 与 websearch 模块的代理解析缓存策略保持一致的量级。
+	contentModerationProxyClientCacheTTL           = time.Minute
+	contentModerationProxyTransportMaxIdleConns    = 20
+	contentModerationProxyTransportIdleConnTimeout = 90 * time.Second
 )
 
 var contentModerationCategoryOrder = []string{
@@ -141,6 +148,7 @@ type ContentModerationConfig struct {
 	Mode                 string                       `json:"mode"`
 	BaseURL              string                       `json:"base_url"`
 	Model                string                       `json:"model"`
+	ProxyID              *int64                       `json:"proxy_id"`
 	APIKey               string                       `json:"api_key,omitempty"`
 	APIKeys              []string                     `json:"api_keys,omitempty"`
 	TimeoutMS            int                          `json:"timeout_ms"`
@@ -175,6 +183,7 @@ type ContentModerationConfigView struct {
 	Mode                           string                          `json:"mode"`
 	BaseURL                        string                          `json:"base_url"`
 	Model                          string                          `json:"model"`
+	ProxyID                        *int64                          `json:"proxy_id"`
 	APIKeyConfigured               bool                            `json:"api_key_configured"`
 	APIKeyMasked                   string                          `json:"api_key_masked"`
 	APIKeyCount                    int                             `json:"api_key_count"`
@@ -241,6 +250,9 @@ type TestContentModerationAPIKeysInput struct {
 	TimeoutMS int      `json:"timeout_ms"`
 	Prompt    string   `json:"prompt"`
 	Images    []string `json:"images"`
+	// ProxyID 覆盖测试请求使用的代理：nil 表示沿用已保存配置的代理；<=0 表示强制直连（忽略已保存代理）；
+	// >0 表示使用指定代理 ID（无需先保存配置）。
+	ProxyID *int64 `json:"proxy_id"`
 }
 
 type TestContentModerationAPIKeysResult struct {
@@ -259,10 +271,12 @@ type ContentModerationTestAuditResult struct {
 }
 
 type UpdateContentModerationConfigInput struct {
-	Enabled                        *bool                         `json:"enabled"`
-	Mode                           *string                       `json:"mode"`
-	BaseURL                        *string                       `json:"base_url"`
-	Model                          *string                       `json:"model"`
+	Enabled *bool   `json:"enabled"`
+	Mode    *string `json:"mode"`
+	BaseURL *string `json:"base_url"`
+	Model   *string `json:"model"`
+	// ProxyID 更新配置里使用的代理：nil 表示不修改；<=0 表示清除代理（改为直连）；>0 表示设置为指定代理 ID。
+	ProxyID                        *int64                        `json:"proxy_id"`
 	APIKey                         *string                       `json:"api_key"`
 	APIKeys                        *[]string                     `json:"api_keys"`
 	APIKeysMode                    string                        `json:"api_keys_mode"`
@@ -495,7 +509,10 @@ type ContentModerationService struct {
 	userRepo                 UserRepository
 	authCacheInvalidator     APIKeyAuthCacheInvalidator
 	emailService             *EmailService
+	proxyRepo                ProxyRepository
 	httpClient               *http.Client
+	proxyClientMu            sync.Mutex
+	proxyClients             map[int64]*contentModerationProxyClientEntry
 	asyncQueue               chan contentModerationTask
 	workerCount              int
 	apiKeyCursor             atomic.Uint64
@@ -558,6 +575,13 @@ type contentModerationKeyHealth struct {
 	SyncLatencyMS  int64
 }
 
+// contentModerationProxyClientEntry 缓存某个代理 ID 解析出的 *http.Client，避免高频审核请求
+// 反复查询 proxyRepo / 反复建立 Transport。
+type contentModerationProxyClientEntry struct {
+	client    *http.Client
+	expiresAt time.Time
+}
+
 func NewContentModerationService(
 	settingRepo SettingRepository,
 	repo ContentModerationRepository,
@@ -566,6 +590,7 @@ func NewContentModerationService(
 	userRepo UserRepository,
 	authCacheInvalidator APIKeyAuthCacheInvalidator,
 	emailService *EmailService,
+	proxyRepo ProxyRepository,
 ) *ContentModerationService {
 	svc := &ContentModerationService{
 		settingRepo:          settingRepo,
@@ -575,6 +600,7 @@ func NewContentModerationService(
 		userRepo:             userRepo,
 		authCacheInvalidator: authCacheInvalidator,
 		emailService:         emailService,
+		proxyRepo:            proxyRepo,
 		httpClient:           &http.Client{},
 		workerCount:          maxContentModerationWorkerCount,
 		asyncQueue:           make(chan contentModerationTask, maxContentModerationQueueSize),
@@ -613,6 +639,14 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 	}
 	if input.Model != nil {
 		cfg.Model = strings.TrimSpace(*input.Model)
+	}
+	if input.ProxyID != nil {
+		if *input.ProxyID > 0 {
+			proxyID := *input.ProxyID
+			cfg.ProxyID = &proxyID
+		} else {
+			cfg.ProxyID = nil
+		}
 	}
 	if input.TimeoutMS != nil {
 		cfg.TimeoutMS = *input.TimeoutMS
@@ -736,6 +770,14 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 	}
 	if input.TimeoutMS > 0 {
 		cfg.TimeoutMS = input.TimeoutMS
+	}
+	if input.ProxyID != nil {
+		if *input.ProxyID > 0 {
+			proxyID := *input.ProxyID
+			cfg.ProxyID = &proxyID
+		} else {
+			cfg.ProxyID = nil
+		}
 	}
 	cfg.normalize()
 	testInput, imageCount, err := buildModerationTestInput(input.Prompt, input.Images)
@@ -1641,6 +1683,11 @@ func (s *ContentModerationService) validateConfig(ctx context.Context, cfg *Cont
 			}
 		}
 	}
+	if cfg.ProxyID != nil && *cfg.ProxyID > 0 && s.proxyRepo != nil {
+		if _, err := s.proxyRepo.GetByID(ctx, *cfg.ProxyID); err != nil {
+			return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_PROXY", fmt.Sprintf("代理不存在: %d", *cfg.ProxyID))
+		}
+	}
 	return nil
 }
 
@@ -1695,6 +1742,65 @@ func (s *ContentModerationService) callModeration(ctx context.Context, cfg *Cont
 	return nil, lastErr
 }
 
+// resolveModerationHTTPClient 返回用于审核请求的 *http.Client。proxyID 为 nil 或 <=0 时直连；
+// 否则解析代理并按 proxyID 缓存 Transport。代理解析失败时降级为直连并记录告警日志，
+// 与本仓库其它使用 proxyRepo 的服务（如 oauth_service.go / websearch_config.go）的失败处理方式一致，
+// 不因代理临时不可用而让内容审核整体不可用。
+func (s *ContentModerationService) resolveModerationHTTPClient(ctx context.Context, proxyID *int64) *http.Client {
+	direct := s.httpClient
+	if direct == nil {
+		direct = http.DefaultClient
+	}
+	if proxyID == nil || *proxyID <= 0 || s.proxyRepo == nil {
+		return direct
+	}
+	id := *proxyID
+	now := time.Now()
+
+	s.proxyClientMu.Lock()
+	if entry, ok := s.proxyClients[id]; ok && entry != nil && now.Before(entry.expiresAt) {
+		client := entry.client
+		s.proxyClientMu.Unlock()
+		return client
+	}
+	s.proxyClientMu.Unlock()
+
+	proxy, err := s.proxyRepo.GetByID(ctx, id)
+	if err != nil || proxy == nil {
+		slog.Warn("content_moderation: resolve proxy failed, falling back to direct connection", "proxy_id", id, "error", err)
+		return direct
+	}
+	rawURL := strings.TrimSpace(proxy.URL())
+	if rawURL == "" {
+		return direct
+	}
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		slog.Warn("content_moderation: invalid proxy url, falling back to direct connection", "proxy_id", id, "error", err)
+		return direct
+	}
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy:               http.ProxyURL(parsedURL),
+			MaxIdleConns:        contentModerationProxyTransportMaxIdleConns,
+			MaxIdleConnsPerHost: contentModerationProxyTransportMaxIdleConns,
+			IdleConnTimeout:     contentModerationProxyTransportIdleConnTimeout,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}
+
+	s.proxyClientMu.Lock()
+	if s.proxyClients == nil {
+		s.proxyClients = make(map[int64]*contentModerationProxyClientEntry)
+	}
+	s.proxyClients[id] = &contentModerationProxyClientEntry{
+		client:    client,
+		expiresAt: now.Add(contentModerationProxyClientCacheTTL),
+	}
+	s.proxyClientMu.Unlock()
+	return client
+}
+
 func (s *ContentModerationService) callModerationOnceWithInput(ctx context.Context, cfg *ContentModerationConfig, apiKey string, input any, httpStatus *int) (*moderationAPIResult, error) {
 	base := strings.TrimRight(cfg.BaseURL, "/")
 	endpoint, err := url.JoinPath(base, "/v1/moderations")
@@ -1720,10 +1826,7 @@ func (s *ContentModerationService) callModerationOnceWithInput(ctx context.Conte
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := s.httpClient
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := s.resolveModerationHTTPClient(ctx, cfg.ProxyID)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -2012,6 +2115,7 @@ func cloneContentModerationConfig(cfg *ContentModerationConfig) *ContentModerati
 		return nil
 	}
 	clone := *cfg
+	clone.ProxyID = cloneInt64Ptr(cfg.ProxyID)
 	clone.APIKeys = append([]string(nil), cfg.APIKeys...)
 	clone.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
 	clone.BlockedKeywords = append([]string(nil), cfg.BlockedKeywords...)
@@ -2304,6 +2408,7 @@ func (s *ContentModerationService) configView(cfg *ContentModerationConfig) *Con
 		Mode:                           cfg.Mode,
 		BaseURL:                        cfg.BaseURL,
 		Model:                          cfg.Model,
+		ProxyID:                        cloneInt64Ptr(cfg.ProxyID),
 		APIKeyConfigured:               len(keys) > 0,
 		APIKeyMasked:                   apiKeyMasked,
 		APIKeyCount:                    len(keys),

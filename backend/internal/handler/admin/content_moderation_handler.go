@@ -24,6 +24,7 @@ type contentModerationConfigRequest struct {
 	Mode                 *string             `json:"mode"`
 	BaseURL              *string             `json:"base_url"`
 	Model                *string             `json:"model"`
+	ProxyID              *int64              `json:"proxy_id"`
 	APIKey               *string             `json:"api_key"`
 	APIKeys              *[]string           `json:"api_keys"`
 	APIKeysMode          string              `json:"api_keys_mode"`
@@ -62,6 +63,8 @@ type contentModerationAPIKeyTestRequest struct {
 	TimeoutMS int      `json:"timeout_ms"`
 	Prompt    string   `json:"prompt"`
 	Images    []string `json:"images"`
+	// ProxyID: nil 沿用已保存配置的代理；<=0 强制直连；>0 使用指定代理 ID 测试。
+	ProxyID *int64 `json:"proxy_id"`
 }
 
 type contentModerationHashRequest struct {
@@ -88,6 +91,7 @@ func (h *ContentModerationHandler) UpdateConfig(c *gin.Context) {
 		Mode:                           req.Mode,
 		BaseURL:                        req.BaseURL,
 		Model:                          req.Model,
+		ProxyID:                        req.ProxyID,
 		APIKey:                         req.APIKey,
 		APIKeys:                        req.APIKeys,
 		APIKeysMode:                    req.APIKeysMode,
@@ -136,6 +140,7 @@ func (h *ContentModerationHandler) TestAPIKeys(c *gin.Context) {
 		TimeoutMS: req.TimeoutMS,
 		Prompt:    req.Prompt,
 		Images:    req.Images,
+		ProxyID:   req.ProxyID,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
