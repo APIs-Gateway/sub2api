@@ -37,6 +37,19 @@ func (o OmittedSettingKeys) Has(key string) bool {
 	return ok
 }
 
+// NewOmittedSettingKeys builds an OmittedSettingKeys set from the given
+// keys, skipping empty strings.
+func NewOmittedSettingKeys(keys ...string) OmittedSettingKeys {
+	set := make(OmittedSettingKeys, len(keys))
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		set[k] = struct{}{}
+	}
+	return set
+}
+
 // UpdateSettingsWithAuthSourceDefaultsOmitting behaves like
 // UpdateSettingsWithAuthSourceDefaults, except it does not persist any
 // setting key present in omitted.
