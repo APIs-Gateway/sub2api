@@ -225,6 +225,7 @@ type LiteLLMModelPricing struct {
 	OutputCostPerImage                         float64 `json:"output_cost_per_image"`       // 图片生成模型每张图片价格
 	OutputCostPerImageToken                    float64 `json:"output_cost_per_image_token"` // 图片输出 token 价格
 	InputCostPerImageToken                     float64 `json:"input_cost_per_image_token"`  // 图片输入 token 价格
+	CacheReadInputImageTokenCost               float64 `json:"cache_read_input_image_token_cost"`
 }
 
 // PricingRemoteClient 远程价格数据获取接口
@@ -258,6 +259,7 @@ type LiteLLMRawEntry struct {
 	OutputCostPerImage                         *float64 `json:"output_cost_per_image"`
 	OutputCostPerImageToken                    *float64 `json:"output_cost_per_image_token"`
 	InputCostPerImageToken                     *float64 `json:"input_cost_per_image_token"`
+	CacheReadInputImageTokenCost               *float64 `json:"cache_read_input_image_token_cost"`
 }
 
 // PricingService 动态价格服务
@@ -607,6 +609,9 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		}
 		if entry.InputCostPerImageToken != nil {
 			pricing.InputCostPerImageToken = *entry.InputCostPerImageToken
+		}
+		if entry.CacheReadInputImageTokenCost != nil {
+			pricing.CacheReadInputImageTokenCost = *entry.CacheReadInputImageTokenCost
 		}
 
 		result[modelName] = pricing
