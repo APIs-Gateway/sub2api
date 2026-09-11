@@ -17,7 +17,7 @@ type OpenAIOAuthService struct {
 	sessionStore         *openai.SessionStore
 	proxyRepo            ProxyRepository
 	oauthClient          OpenAIOAuthClient
-	privacyClientFactory PrivacyClientFactory // 用于调用 chatgpt.com/backend-api（ImpersonateChrome）
+	privacyClientFactory PrivacyClientFactory // 用于调用 chatgpt.com/backend-api（浏览器指纹伪装，当前为 Firefox）
 }
 
 // NewOpenAIOAuthService creates a new OpenAI OAuth service
@@ -29,7 +29,7 @@ func NewOpenAIOAuthService(proxyRepo ProxyRepository, oauthClient OpenAIOAuthCli
 	}
 }
 
-// SetPrivacyClientFactory 注入 ImpersonateChrome 客户端工厂，
+// SetPrivacyClientFactory 注入浏览器指纹伪装（Firefox）客户端工厂，
 // 用于调用 chatgpt.com/backend-api 获取账号信息（plan_type 等）。
 func (s *OpenAIOAuthService) SetPrivacyClientFactory(factory PrivacyClientFactory) {
 	s.privacyClientFactory = factory
