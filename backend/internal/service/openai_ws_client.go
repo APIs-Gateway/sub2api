@@ -40,6 +40,28 @@ type openAIWSClientConn interface {
 	Close() error
 }
 
+// openAIWSIdlePingCapable is intentionally separate from openAIWSClientConn.
+// A pool probe happens while no goroutine is reading an idle connection, which
+// is not safe for every WebSocket implementation.
+type openAIWSIdlePingCapable interface {
+	SupportsIdlePingWithoutReader() bool
+}
+
+// openAIWSReaderLoopCapable declares that control frames are only processed
+// while ReadMessage is blocked. The pool keeps a resident reader for those
+// connections so an idle socket can reply to upstream keepalive pings.
+type openAIWSReaderLoopCapable interface {
+	RequiresReaderLoop() bool
+}
+
+type openAIWSUpstreamPingCounter interface {
+	UpstreamPingCount() int64
+}
+
+type openAIWSForceCloser interface {
+	CloseNow() error
+}
+
 // openAIWSClientDialer 抽象 WS 建连器。
 type openAIWSClientDialer interface {
 	Dial(ctx context.Context, wsURL string, headers http.Header, proxyURL string) (openAIWSClientConn, int, http.Header, error)
@@ -336,6 +358,12 @@ func (c *coderOpenAIWSClientConn) Ping(ctx context.Context) error {
 	return c.conn.Ping(ctx)
 }
 
+// coder/websocket consumes control frames only while Read is active. A pool
+// resident reader loop is therefore required before this connection is idle.
+func (*coderOpenAIWSClientConn) SupportsIdlePingWithoutReader() bool { return false }
+
+func (*coderOpenAIWSClientConn) RequiresReaderLoop() bool { return true }
+
 func (c *coderOpenAIWSClientConn) Close() error {
 	if c == nil || c.conn == nil {
 		return nil
@@ -344,4 +372,14 @@ func (c *coderOpenAIWSClientConn) Close() error {
 	_ = c.conn.Close(coderws.StatusNormalClosure, "")
 	_ = c.conn.CloseNow()
 	return nil
+}
+
+// CloseNow tears down the transport without waiting for the websocket close
+// handshake. Reader-loop timeout handling uses it so retry is not delayed by
+// an unresponsive upstream peer.
+func (c *coderOpenAIWSClientConn) CloseNow() error {
+	if c == nil || c.conn == nil {
+		return nil
+	}
+	return c.conn.CloseNow()
 }
