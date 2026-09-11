@@ -6963,7 +6963,7 @@
         validationFieldRequired: '{field} 不能為空',
         validationEasyPayCustomMethodRequired: '每個易支付自定義方式都必須填寫支付方式和上游 type',
         validationEasyPayCustomMethodTypeInvalid: '易支付自定義支付方式只能包含小寫字母、數字、下劃線和短橫線',
-        validationEasyPayCustomMethodUpstreamTypeInvalid: '易支付上游 type 只能包含小寫字母、數字、下劃線和短橫線',
+        validationEasyPayCustomMethodUpstreamTypeInvalid: '易支付上游 type 只能包含小寫字母、數字、點號、下劃線和短橫線',
         validationEasyPayCustomMethodReserved: '易支付自定義支付方式不能使用內置的 alipay 或 wxpay',
         validationEasyPayCustomMethodPrefixReserved: '易支付自定義支付方式不能以 alipay、wxpay 或 crypto 開頭',
         validationEasyPayCustomMethodDuplicate: '易支付自定義支付方式不能重複',
