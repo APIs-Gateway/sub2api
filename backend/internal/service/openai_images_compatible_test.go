@@ -48,7 +48,7 @@ func TestCompatibleImagesGeminiModels(t *testing.T) {
 
 func TestCompatibleImagesForwardGemini(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, kind := range []string{"generation", "json_edit", "multipart_edit", "composite_multipart_alias", "channel_mapping", "account_mapping"} {
+	for _, kind := range []string{"generation", "json_edit", "multipart_edit", "channel_mapping", "account_mapping"} {
 		t.Run(kind, func(t *testing.T) {
 			model := "gemini-3.1-flash-image"
 			endpoint := openAIImagesGenerationsEndpoint
@@ -70,9 +70,6 @@ func TestCompatibleImagesForwardGemini(t *testing.T) {
 			}
 			if strings.Contains(kind, "multipart") {
 				endpoint = openAIImagesEditsEndpoint
-				if kind == "composite_multipart_alias" {
-					requestModel = "public-image"
-				}
 				var buf bytes.Buffer
 				writer := multipart.NewWriter(&buf)
 				require.NoError(t, writer.WriteField("model", requestModel))
@@ -89,15 +86,13 @@ func TestCompatibleImagesForwardGemini(t *testing.T) {
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 			c.Request.Header.Set("Content-Type", contentType)
-			if kind == "composite_multipart_alias" {
-				ctx := WithResolvedTargetPlatform(c.Request.Context(), PlatformOpenAI)
-				ctx = WithCompositeRouteDecision(ctx, CompositeRouteDecision{Matched: true, TargetPlatform: PlatformOpenAI, UpstreamModel: model, PublicModel: requestModel})
-				c.Request = c.Request.WithContext(ctx)
-			}
 			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"data":[{"b64_json":"aW1hZ2U="}]}`))}}
 			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 			parsed, err := svc.ParseOpenAIImagesRequest(c, body)
 			require.NoError(t, err)
+			if kind == "channel_mapping" {
+				require.Equal(t, OpenAIImagesCapabilityAPIKey, parsed.RequiredCapabilityForModel(channelModel))
+			}
 			result, err := svc.ForwardImages(c.Request.Context(), c, &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: credentials}, body, parsed, channelModel)
 			require.NoError(t, err)
 			require.Equal(t, 1, result.ImageCount)
@@ -126,7 +121,9 @@ func TestCompatibleImagesForwardGemini(t *testing.T) {
 }
 
 func TestCompatibleImagesNativeAccountsRejectGeminiBeforeForwarding(t *testing.T) {
-	for _, typ := range []string{AccountTypeOAuth, AccountTypeSetupToken} {
+	// fork 的 OpenAI 平台只有 OAuth / API Key 两类账号（ForwardImages 不接受 setup-token），
+	// 因此只校验 OAuth 原生路径在转发前拒绝兼容 Gemini 图片模型。
+	for _, typ := range []string{AccountTypeOAuth} {
 		for _, mapping := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/mapping=%t", typ, mapping), func(t *testing.T) {
 				model := "gemini-3-pro-image"
@@ -145,4 +142,17 @@ func TestCompatibleImagesNativeAccountsRejectGeminiBeforeForwarding(t *testing.T
 			})
 		}
 	}
+}
+
+// fork 专属：直连 API Key 模式（directOpenAIImagesCapability）不应改写 API-key 专属能力，
+// 非 Gemini 兼容模型的渠道映射保持原能力分类。
+func TestCompatibleImagesCapabilityForkSemantics(t *testing.T) {
+	require.Equal(t, OpenAIImagesCapabilityAPIKey, directOpenAIImagesCapability(OpenAIImagesCapabilityAPIKey))
+	req := &OpenAIImagesRequest{Model: "gpt-image-2", RequiredCapability: OpenAIImagesCapabilityBasic}
+	require.Equal(t, OpenAIImagesCapabilityBasic, req.RequiredCapabilityForModel(""))
+	require.Equal(t, OpenAIImagesCapabilityBasic, req.RequiredCapabilityForModel("gpt-image-1"))
+	require.Equal(t, OpenAIImagesCapabilityAPIKey, req.RequiredCapabilityForModel(" Gemini-2.5-Flash-Image-Preview "))
+	require.False(t, (&Account{Platform: PlatformAnthropic, Type: AccountTypeAPIKey}).SupportsOpenAIImageCapability(OpenAIImagesCapabilityAPIKey))
+	require.False(t, (&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}).SupportsOpenAIImageCapability(OpenAIImagesCapabilityAPIKey))
+	require.True(t, (&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}).SupportsOpenAIImageCapability(OpenAIImagesCapabilityAPIKey))
 }
