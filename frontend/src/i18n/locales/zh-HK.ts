@@ -4277,7 +4277,7 @@
         wsModePassthrough: '透傳（passthrough）',
         wsModeShared: '共享（shared）',
         wsModeDedicated: '獨享（dedicated）',
-        wsModeConcurrencyHint: '啟用 WS mode 後，該帳號并發數將作為該帳號 WS 連接池上限。',
+        wsModeConcurrencyHint: '帳號並發數限制同時執行的請求數；上下文池的連接上限由網關連接池配置決定。',
         wsModePassthroughHint: 'passthrough 模式不使用 WS 連接池。',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:

@@ -1946,14 +1946,8 @@ func (p *openAIWSConnPool) effectiveMaxConnsByAccount(account *Account) int {
 	if hardCap <= 0 {
 		return 0
 	}
-	if p.modeRouterV2Enabled() {
-		if account == nil {
-			return hardCap
-		}
-		if account.Concurrency <= 0 {
-			return 0
-		}
-		return account.Concurrency
+	if p.modeRouterV2Enabled() && account != nil && account.Concurrency <= 0 {
+		return 0
 	}
 	if account == nil || !p.dynamicMaxConnsEnabled() {
 		return hardCap
