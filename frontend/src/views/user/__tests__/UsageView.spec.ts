@@ -3,6 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
 import UsageView from '../UsageView.vue'
+import Select, { type SelectOption } from '@/components/common/Select.vue'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
 
 const { query, getStatsByDateRange, list, showError, showWarning, showSuccess, showInfo, publicSettings } =
   vi.hoisted(() => ({
@@ -344,6 +346,112 @@ describe('user UsageView tooltip', () => {
     window.URL.createObjectURL = originalCreateObjectURL
     window.URL.revokeObjectURL = originalRevokeObjectURL
     clickSpy.mockRestore()
+  })
+
+  it('keeps the initial filters, sort, and filename while exporting multiple pages', async () => {
+    const exportRow = {
+      request_id: 'req-user-export-pages',
+      actual_cost: 0.1,
+      total_cost: 0.1,
+      rate_multiplier: 1,
+      input_tokens: 1,
+      output_tokens: 1,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      image_count: 0,
+      image_size: null,
+      first_token_ms: null,
+      duration_ms: 1,
+      created_at: '2026-03-08T00:00:00Z',
+      model: 'gpt-5.4',
+      reasoning_effort: null,
+      api_key: { name: 'demo-key' },
+    }
+    const pageResponse = { items: [exportRow], total: 101, pages: 2 }
+    query.mockResolvedValue(pageResponse)
+    getStatsByDateRange.mockResolvedValue({
+      total_requests: 101,
+      total_tokens: 202,
+      total_cost: 10.1,
+      avg_duration_ms: 1,
+    })
+    list.mockResolvedValue({ items: [{ id: 1, name: 'demo-key' }] })
+
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Pagination: true,
+          EmptyState: true,
+          Select: true,
+          DateRangePicker: true,
+          DataTable: DataTableStub,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    const datePicker = wrapper.findComponent(DateRangePicker)
+    datePicker.vm.$emit('change', { startDate: '2026-03-01', endDate: '2026-03-08', preset: null })
+    await flushPromises()
+
+    let resolveFirstPage!: (value: typeof pageResponse) => void
+    const firstPage = new Promise<typeof pageResponse>((resolve) => { resolveFirstPage = resolve })
+    query.mockClear()
+    query.mockImplementation((params: { page?: number }, options?: unknown) =>
+      !options && params.page === 1 ? firstPage : Promise.resolve(pageResponse)
+    )
+    const originalCreateObjectURL = window.URL.createObjectURL
+    const originalRevokeObjectURL = window.URL.revokeObjectURL
+    window.URL.createObjectURL = vi.fn(() => 'blob:usage-export') as typeof window.URL.createObjectURL
+    window.URL.revokeObjectURL = vi.fn(() => {}) as typeof window.URL.revokeObjectURL
+    let filename = ''
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      filename = this.download
+    })
+
+    try {
+      const setupState = (wrapper.vm as any).$?.setupState
+      const exporting = setupState.exportToCSV() as Promise<void>
+      await nextTick()
+      const initialParams = { ...query.mock.calls[0][0] }
+      expect(initialParams).toMatchObject({
+        page: 1, page_size: 100, start_date: '2026-03-01', end_date: '2026-03-08',
+        sort_by: 'created_at', sort_order: 'desc',
+      })
+
+      // 导出进行中用户改了 API Key、日期和排序：后续页仍必须沿用导出开始时的条件。
+      const keySelect = wrapper.findAllComponents(Select).find((select) =>
+        (select.props('options') as SelectOption[]).some((option) => option.label === 'All API Keys')
+      )!
+      keySelect.vm.$emit('update:modelValue', 1)
+      keySelect.vm.$emit('change', 1)
+      datePicker.vm.$emit('change', { startDate: '2026-04-01', endDate: '2026-04-08', preset: null })
+      setupState.handleSort('actual_cost', 'asc')
+      await flushPromises()
+      expect(query).toHaveBeenCalledWith(expect.objectContaining({
+        api_key_id: 1, start_date: '2026-04-01', end_date: '2026-04-08',
+        sort_by: 'actual_cost', sort_order: 'asc',
+      }), expect.anything())
+
+      resolveFirstPage(pageResponse)
+      await exporting
+      await flushPromises()
+
+      const exportCalls = query.mock.calls.filter((call) => call.length === 1)
+      expect(exportCalls).toEqual([[initialParams], [{ ...initialParams, page: 2 }]])
+      expect(filename).toBe('usage_2026-03-01_to_2026-03-08.csv')
+      expect(showSuccess).toHaveBeenCalledWith('usage.exportSuccess')
+      expect(showError).not.toHaveBeenCalled()
+    } finally {
+      window.URL.createObjectURL = originalCreateObjectURL
+      window.URL.revokeObjectURL = originalRevokeObjectURL
+      clickSpy.mockRestore()
+      wrapper.unmount()
+    }
   })
 
   it('exports historical image rows with image billing mode derived from image_count', async () => {
