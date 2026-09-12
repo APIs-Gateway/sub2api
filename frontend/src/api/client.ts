@@ -178,6 +178,7 @@ apiClient.interceptors.response.use(
 
         // If we have a refresh token and this is not an auth endpoint, try to refresh
         if (refreshToken && !isAuthEndpoint) {
+          const refreshSessionUser = localStorage.getItem('auth_user')
           if (isRefreshing) {
             // Wait for the ongoing refresh to complete
             return new Promise((resolve, reject) => {
@@ -247,6 +248,29 @@ apiClient.interceptors.response.use(
             // Refresh failed - notify subscribers with empty token
             onTokenRefreshed('')
             isRefreshing = false
+            // A stale request must never destroy a session that was logged out or replaced while
+            // its refresh was in flight (for example, when another tab signs in as another user).
+            const sessionChanged =
+              localStorage.getItem('refresh_token') !== refreshToken ||
+              localStorage.getItem('auth_user') !== refreshSessionUser
+            if (sessionChanged) {
+              return Promise.reject({
+                status: 401,
+                code: 'AUTH_SESSION_CHANGED',
+                message: 'Authentication session changed while refreshing.'
+              })
+            }
+
+            if (axios.isAxiosError(refreshError)) {
+              const refreshStatus = refreshError.response?.status ?? 0
+              if (refreshStatus === 0 || refreshStatus === 429 || refreshStatus >= 500) {
+                return Promise.reject({
+                  status: refreshStatus,
+                  code: 'TOKEN_REFRESH_UNAVAILABLE',
+                  message: refreshError.response?.data?.message || refreshError.message
+                })
+              }
+            }
 
             // Clear tokens and redirect to login
             localStorage.removeItem('auth_token')
