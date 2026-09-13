@@ -5074,6 +5074,14 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 		}
 		usage = s.parseSSEUsageFromBody(bodyText)
+		// 上游模型不一致拦截：没有 response.completed/done（如 response.incomplete 收尾）时，
+		// 取首个带 model 的事件比对，同样在模型反向替换、写出之前完成。
+		if got := extractUpstreamSSEResponseModel(bodyText); got != "" {
+			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				return nil, ferr
+			}
+		}
 		if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)
 		}
@@ -6835,6 +6843,13 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		if parsedUsage, parsed := extractOpenAIUsageFromJSONBytes(finalResponse); parsed {
 			*usage = parsedUsage
 		}
+		// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
+		if got := extractUpstreamResponseModel(finalResponse); got != "" {
+			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				return nil, ferr
+			}
+		}
 		// When the terminal event has an empty output array, reconstruct
 		// output from accumulated delta events so the client gets full content.
 		// gjson Array() returns empty slice for null, missing, or empty arrays.
@@ -6843,13 +6858,6 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 				if patched, err := sjson.SetRawBytes(finalResponse, "output", outputJSON); err == nil {
 					finalResponse = patched
 				}
-			}
-		}
-		// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
-		if got := extractUpstreamResponseModel(finalResponse); got != "" {
-			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
-				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
-				return nil, ferr
 			}
 		}
 		finalResponse = supplementCompactionItemFromSSE(c, finalResponse, bodyText)
@@ -6869,6 +6877,14 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 		}
 		usage = s.parseSSEUsageFromBody(bodyText)
+		// 上游模型不一致拦截：没有 response.completed/done（如 response.incomplete 收尾）时，
+		// 取首个带 model 的事件比对，同样在模型反向替换、写出之前完成。
+		if got := extractUpstreamSSEResponseModel(bodyText); got != "" {
+			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				return nil, ferr
+			}
+		}
 		if originalModel != mappedModel {
 			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)
 		}
@@ -6916,6 +6932,23 @@ func extractOpenAISSETerminalEvent(body string) (string, []byte, bool) {
 		return terminalType, terminalPayload, true
 	}
 	return "", nil, false
+}
+
+// extractUpstreamSSEResponseModel 取 SSE 里首个带 model 的 data 事件的模型（B）。
+// 跳过 response.failed：失败事件由专用处理（cyber 打标 + 真实 usage）优先，与 ok 分支的钩子一致。
+// 用于没有 response.completed/done 终止事件的 SSE→JSON 分支。
+func extractUpstreamSSEResponseModel(body string) string {
+	model := ""
+	forEachOpenAISSEDataPayload(body, func(data []byte) {
+		if model != "" {
+			return
+		}
+		if strings.TrimSpace(gjson.GetBytes(data, "type").String()) == "response.failed" {
+			return
+		}
+		model = extractUpstreamResponseModel(data)
+	})
+	return model
 }
 
 func extractOpenAISSEErrorMessage(payload []byte) string {

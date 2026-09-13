@@ -298,12 +298,15 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	// 上游模型不一致只在首个带 model 的 chunk 上比对一次。
 	upstreamModelChecked := false
+	// 首个 data 行经过模型比对之前，注释行 / 空行（如中转站的 ": OPENROUTER PROCESSING"）
+	// 先进 pendingLines 暂存，避免提前写响应头把 clientOutputStarted 置位、让拦截退化为观察模式。
+	holdPreDataLines := true
 
 	writeLine := func(line string) {
 		if clientDisconnected {
 			return
 		}
-		if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
+		if !clientOutputStarted && (holdPreDataLines || !refusalDetector.ShouldReleaseClientOutput()) {
 			pendingLines = append(pendingLines, line)
 			return
 		}
@@ -357,6 +360,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 					}
 				}
 			}
+			// 首个 data 行已经过比对（或根本不带 model），之后的非 data 行不再暂存。
+			holdPreDataLines = false
 		}
 		line = stripEmptyChatToolCallIdentityFromSSELine(line)
 

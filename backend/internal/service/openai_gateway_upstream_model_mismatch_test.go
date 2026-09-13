@@ -34,6 +34,14 @@ func upstreamModelMismatchSSEBody(createdModel, completedModel, delta string) st
 		"data: " + completed + "\n\n"
 }
 
+// 没有 response.completed/done 的 SSE：以 response.incomplete 收尾（带 usage），
+// extractCodexFinalResponse 找不到终止事件，SSE→JSON 会走原样回写的 !ok 分支。
+func upstreamModelMismatchIncompleteSSEBody(model, delta string) string {
+	return "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"" + model + "\"}}\n\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"" + delta + "\"}\n\n" +
+		"data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"r1\",\"object\":\"response\",\"status\":\"incomplete\",\"model\":\"" + model + "\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":596,\"output_tokens\":5,\"total_tokens\":601}}}\n\n"
+}
+
 func newUpstreamModelMismatchSSEUpstream(body string) *httpUpstreamRecorder {
 	return &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -226,6 +234,75 @@ func TestUpstreamModelMismatch_PassthroughSSEToJSONFailsOver(t *testing.T) {
 	require.NotNil(t, mark)
 	require.Equal(t, "gpt-6-sol", mark.ResponseModel)
 	require.False(t, mark.Stream)
+}
+
+// 非流式请求但上游回 SSE 且没有 completed/done（response.incomplete 收尾，handleSSEToJSON !ok 分支）：
+// 首个带 model 的事件不一致 → failover，原始 SSE 一个字节都不写给客户端
+func TestUpstreamModelMismatch_SSEToJSONIncompleteFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := newUpstreamModelMismatchSSEUpstream(upstreamModelMismatchIncompleteSSEBody("gpt-6-sol", "leak"))
+	svc := newOpenAIImageGenerationControlTestService(upstream)
+	c, recorder := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.144.1")
+	account := newOpenAIImageGenerationControlTestAccount()
+
+	_, err := svc.Forward(context.Background(), c, account, []byte(upstreamModelMismatchTestNonStreamRequestBody))
+	requireUpstreamModelMismatchFailover(t, err)
+	require.Empty(t, recorder.Body.String(), "raw SSE must not be written to the client")
+
+	mark := GetOpsUpstreamModelMismatch(c)
+	require.NotNil(t, mark)
+	require.Equal(t, "gpt-5.6-sol", mark.SentModel)
+	require.Equal(t, "gpt-6-sol", mark.ResponseModel)
+	require.False(t, mark.Stream)
+	require.Equal(t, 596, mark.Usage.InputTokens, "usage parsed from response.incomplete must be carried on the mark")
+}
+
+// passthrough 非流式请求但上游回 SSE 且没有 completed/done（handlePassthroughSSEToJSON !ok 分支）：同样 failover、零泄漏
+func TestUpstreamModelMismatch_PassthroughSSEToJSONIncompleteFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := newUpstreamModelMismatchSSEUpstream(upstreamModelMismatchIncompleteSSEBody("gpt-6-sol", "leak"))
+	svc := newOpenAIImageGenerationControlTestService(upstream)
+	c, recorder := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.144.1")
+	account := newOpenAIImageGenerationControlTestAccount()
+	account.Extra = map[string]any{"openai_responses_supported": true, "openai_passthrough": true}
+
+	_, err := svc.Forward(context.Background(), c, account, []byte(upstreamModelMismatchTestNonStreamRequestBody))
+	requireUpstreamModelMismatchFailover(t, err)
+	require.Empty(t, recorder.Body.String(), "raw SSE must not be written to the client")
+
+	mark := GetOpsUpstreamModelMismatch(c)
+	require.NotNil(t, mark)
+	require.Equal(t, "gpt-5.6-sol", mark.SentModel)
+	require.Equal(t, "gpt-6-sol", mark.ResponseModel)
+	require.False(t, mark.Stream)
+	require.Equal(t, 596, mark.Usage.InputTokens, "usage parsed from response.incomplete must be carried on the mark")
+}
+
+// 同样的 incomplete SSE 但模型一致 → 原样回写（!ok 分支行为不变），主路径 + passthrough
+func TestUpstreamModelMismatch_SSEToJSONIncompleteMatchPassesThrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, passthrough := range []bool{false, true} {
+		name := "codex"
+		if passthrough {
+			name = "passthrough"
+		}
+		t.Run(name, func(t *testing.T) {
+			upstream := newUpstreamModelMismatchSSEUpstream(upstreamModelMismatchIncompleteSSEBody("gpt-5.6-sol", "fine"))
+			svc := newOpenAIImageGenerationControlTestService(upstream)
+			c, recorder := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.144.1")
+			account := newOpenAIImageGenerationControlTestAccount()
+			if passthrough {
+				account.Extra = map[string]any{"openai_responses_supported": true, "openai_passthrough": true}
+			}
+
+			result, err := svc.Forward(context.Background(), c, account, []byte(upstreamModelMismatchTestNonStreamRequestBody))
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Contains(t, recorder.Body.String(), "fine")
+			require.Contains(t, recorder.Body.String(), "response.incomplete")
+			require.Nil(t, GetOpsUpstreamModelMismatch(c))
+		})
+	}
 }
 
 // response.failed 自带不一致的 model：失败事件专用处理（cyber 打标 + 真实 usage）优先，不被模型比对抢跑

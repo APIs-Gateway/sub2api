@@ -89,7 +89,7 @@ func upstreamModelMismatchChatJSON(model string) string {
 	return `{"id":"chatcmpl_mm","object":"chat.completion","model":"` + model + `","choices":[{"index":0,"message":{"role":"assistant","content":"leak"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}`
 }
 
-func requireUpstreamModelMismatchFailover(t *testing.T, c *gin.Context, rec *httptest.ResponseRecorder, err error, sent, got string, stream bool) {
+func requireUpstreamModelMismatchPathFailover(t *testing.T, c *gin.Context, rec *httptest.ResponseRecorder, err error, sent, got string, stream bool) {
 	t.Helper()
 	var failoverErr *UpstreamFailoverError
 	require.True(t, errors.As(err, &failoverErr), "expected UpstreamFailoverError, got %v", err)
@@ -119,7 +119,7 @@ func TestUpstreamModelMismatch_HandleChatStreamingResponseFailsOver(t *testing.T
 		upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, time.Now(), 0)
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, upstreamModelMismatchSentModel, upstreamModelMismatchGotModel, true)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, upstreamModelMismatchSentModel, upstreamModelMismatchGotModel, true)
 }
 
 func TestUpstreamModelMismatch_HandleChatStreamingResponseMatchPasses(t *testing.T) {
@@ -189,7 +189,7 @@ func TestUpstreamModelMismatch_HandleChatBufferedStreamingResponseFailsOver(t *t
 		upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, time.Now())
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, upstreamModelMismatchSentModel, upstreamModelMismatchGotModel, false)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, upstreamModelMismatchSentModel, upstreamModelMismatchGotModel, false)
 	require.Equal(t, 5, GetOpsUpstreamModelMismatch(c).Usage.InputTokens, "buffered path must carry parsed usage into the mark")
 }
 
@@ -219,7 +219,7 @@ func TestUpstreamModelMismatch_StreamRawChatCompletionsFailsOver(t *testing.T) {
 	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, "gpt-5.5", upstreamModelMismatchGotModel, true)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "gpt-5.5", upstreamModelMismatchGotModel, true)
 }
 
 func TestUpstreamModelMismatch_StreamRawChatCompletionsMatchPasses(t *testing.T) {
@@ -238,6 +238,44 @@ func TestUpstreamModelMismatch_StreamRawChatCompletionsMatchPasses(t *testing.T)
 	require.Nil(t, GetOpsUpstreamModelMismatch(c))
 }
 
+// 中转站先发 ": OPENROUTER PROCESSING" 注释行再发首个 chunk：注释行必须暂存到首块过完模型比对，
+// 否则响应头已写出、clientOutputStarted 置位，拦截退化为观察模式。
+func TestUpstreamModelMismatch_StreamRawChatCompletionsCommentPreambleFailsOver(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", body)
+	upstreamBody := ": OPENROUTER PROCESSING\n\n" + upstreamModelMismatchChatSSE(upstreamModelMismatchGotModel)
+	upstream := &httpUpstreamRecorder{resp: upstreamModelMismatchHTTPResponse("text/event-stream", "rid_raw_stream_comment", upstreamBody)}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+
+	require.Nil(t, result)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "gpt-5.5", upstreamModelMismatchGotModel, true)
+}
+
+// 同样的注释行前导，模型一致 → 注释行与首个 chunk 按原顺序都到客户端
+func TestUpstreamModelMismatch_StreamRawChatCompletionsCommentPreambleMatchPasses(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", body)
+	upstreamBody := ": OPENROUTER PROCESSING\n\n" + upstreamModelMismatchChatSSE("gpt-5.5")
+	upstream := &httpUpstreamRecorder{resp: upstreamModelMismatchHTTPResponse("text/event-stream", "rid_raw_stream_comment_ok", upstreamBody)}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	out := rec.Body.String()
+	require.True(t, strings.HasPrefix(out, ": OPENROUTER PROCESSING\n\n"), "comment preamble must reach the client first, got: %q", out)
+	commentIdx := strings.Index(out, ": OPENROUTER PROCESSING")
+	firstChunkIdx := strings.Index(out, `"delta":{"role":"assistant"}`)
+	require.Greater(t, firstChunkIdx, commentIdx, "first chunk must follow the comment line")
+	require.Contains(t, out, `"content":"leak"`)
+	require.Contains(t, out, "data: [DONE]")
+	require.Equal(t, 4, result.Usage.InputTokens)
+	require.Nil(t, GetOpsUpstreamModelMismatch(c))
+}
+
 func TestUpstreamModelMismatch_BufferRawChatCompletionsFailsOver(t *testing.T) {
 	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", nil)
 	resp := upstreamModelMismatchHTTPResponse("application/json", "rid_raw_json", upstreamModelMismatchChatJSON(upstreamModelMismatchGotModel))
@@ -246,7 +284,7 @@ func TestUpstreamModelMismatch_BufferRawChatCompletionsFailsOver(t *testing.T) {
 	result, err := svc.bufferRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now())
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, "gpt-5.5", upstreamModelMismatchGotModel, false)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "gpt-5.5", upstreamModelMismatchGotModel, false)
 	require.Equal(t, 4, GetOpsUpstreamModelMismatch(c).Usage.InputTokens)
 }
 
@@ -274,7 +312,7 @@ func TestUpstreamModelMismatch_HandleAnthropicStreamingResponseFailsOver(t *test
 	_, err := svc.handleAnthropicStreamingResponse(resp, c, upstreamModelMismatchTestAccount(),
 		upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, time.Now())
 
-	requireUpstreamModelMismatchFailover(t, c, rec, err, upstreamModelMismatchSentModel, upstreamModelMismatchGotModel, true)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, upstreamModelMismatchSentModel, upstreamModelMismatchGotModel, true)
 }
 
 func TestUpstreamModelMismatch_HandleAnthropicStreamingResponseMatchPasses(t *testing.T) {
@@ -301,7 +339,7 @@ func TestUpstreamModelMismatch_HandleAnthropicBufferedStreamingResponseFailsOver
 		upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, time.Now())
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, upstreamModelMismatchSentModel, upstreamModelMismatchGotModel, false)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, upstreamModelMismatchSentModel, upstreamModelMismatchGotModel, false)
 }
 
 func TestUpstreamModelMismatch_HandleAnthropicBufferedStreamingResponseMatchPasses(t *testing.T) {
@@ -330,7 +368,7 @@ func TestUpstreamModelMismatch_StreamChatCompletionsAsAnthropicFailsOver(t *test
 	result, err := svc.forwardAnthropicViaRawChatCompletions(context.Background(), c, forceChatMessagesFallbackAccount(), body, "")
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, "gpt-5.4", upstreamModelMismatchGotModel, true)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "gpt-5.4", upstreamModelMismatchGotModel, true)
 }
 
 func TestUpstreamModelMismatch_StreamChatCompletionsAsAnthropicMatchPasses(t *testing.T) {
@@ -356,7 +394,7 @@ func TestUpstreamModelMismatch_BufferChatCompletionsAsAnthropicFailsOver(t *test
 	result, err := svc.forwardAnthropicViaRawChatCompletions(context.Background(), c, forceChatMessagesFallbackAccount(), body, "")
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, "gpt-5.4", upstreamModelMismatchGotModel, false)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "gpt-5.4", upstreamModelMismatchGotModel, false)
 	require.Equal(t, 4, GetOpsUpstreamModelMismatch(c).Usage.InputTokens)
 }
 
@@ -386,7 +424,7 @@ func TestUpstreamModelMismatch_StreamChatCompletionsAsResponsesFailsOver(t *test
 	result, err := svc.forwardResponsesViaRawChatCompletions(context.Background(), c, forceChatResponsesFallbackAccount(), body)
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, "gpt-5.4", upstreamModelMismatchGotModel, true)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "gpt-5.4", upstreamModelMismatchGotModel, true)
 }
 
 func TestUpstreamModelMismatch_StreamChatCompletionsAsResponsesMatchPasses(t *testing.T) {
@@ -414,7 +452,7 @@ func TestUpstreamModelMismatch_BufferChatCompletionsAsResponsesFailsOver(t *test
 	result, err := svc.forwardResponsesViaRawChatCompletions(context.Background(), c, forceChatResponsesFallbackAccount(), body)
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, "gpt-5.4", upstreamModelMismatchGotModel, false)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "gpt-5.4", upstreamModelMismatchGotModel, false)
 	require.Equal(t, 4, GetOpsUpstreamModelMismatch(c).Usage.InputTokens)
 }
 
@@ -472,7 +510,7 @@ func TestUpstreamModelMismatch_ForwardGrokResponsesStreamFailsOver(t *testing.T)
 		[]byte(`{"model":"grok-4.3","input":"hi","stream":true}`), "grok-4.3", true, time.Now())
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, "grok-4.3", "grok-3", true)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "grok-4.3", "grok-3", true)
 }
 
 func TestUpstreamModelMismatch_ForwardGrokResponsesStreamMatchPasses(t *testing.T) {
@@ -508,7 +546,7 @@ func TestUpstreamModelMismatch_ForwardGrokResponsesNonStreamFailsOver(t *testing
 		[]byte(`{"model":"grok-4.3","input":"hi"}`), "grok-4.3", false, time.Now())
 
 	require.Nil(t, result)
-	requireUpstreamModelMismatchFailover(t, c, rec, err, "grok-4.3", "grok-3", false)
+	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "grok-4.3", "grok-3", false)
 	require.Equal(t, 3, GetOpsUpstreamModelMismatch(c).Usage.InputTokens)
 }
 
