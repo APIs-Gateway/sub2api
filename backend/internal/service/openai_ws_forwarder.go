@@ -2186,6 +2186,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	responseID := ""
 	var finalResponse []byte
 	wroteDownstream := false
+	upstreamModelChecked := false
 	needModelReplace := originalModel != mappedModel
 	var mappedModelBytes []byte
 	if needModelReplace && mappedModel != "" {
@@ -2368,6 +2369,23 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 		if responseID == "" && eventResponseID != "" {
 			responseID = eventResponseID
+		}
+
+		// 上游模型不一致拦截：只看首个带 model 的事件，且必须在 replaceOpenAIWSMessageModel
+		// 改写之前比对，否则 B 已被覆盖。命中时上游仍会继续推本 turn 的事件，连接不能回池。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel(message); got != "" {
+				upstreamModelChecked = true
+				// 首个带 model 的事件若本身就是 completed 类事件，审计 usage 取该事件里的值。
+				checkUsage := *usage
+				if openAIWSEventShouldParseUsage(eventType) {
+					parseOpenAIWSResponseUsageFromCompletedEvent(message, &checkUsage)
+				}
+				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, sentModelForCheck(mappedModel, originalModel), got, reqStream, !wroteDownstream, checkUsage); ferr != nil {
+					lease.MarkBroken()
+					return nil, ferr
+				}
+			}
 		}
 
 		isTokenEvent := isOpenAIWSTokenEvent(eventType)
@@ -3333,6 +3351,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		turnStart := time.Now()
 		wroteDownstream := false
+		upstreamModelChecked := false
 		if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); err != nil {
 			return nil, wrapOpenAIWSIngressTurnError(
 				"write_upstream",
@@ -3470,6 +3489,22 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 							ResponseBody:    append([]byte(nil), upstreamMessage...),
 							ResponseHeaders: cloneHeader(lease.HandshakeHeaders()),
 						}
+					}
+				}
+			}
+			// 上游模型不一致拦截：首个带 model 的事件、改写前比对；命中时本 turn 上游仍在推事件，连接不能回池。
+			// 与 bridge 及本函数其它 failover 一致，只有首轮且未向客户端写出时才拦截并换号
+			// （handler 换号后会用 wsFirstMessage 重放第 1 轮）；turn>=2 只打标不拦截。
+			if !upstreamModelChecked {
+				if got := extractUpstreamResponseModel(upstreamMessage); got != "" {
+					upstreamModelChecked = true
+					checkUsage := usage
+					if openAIWSEventShouldParseUsage(eventType) {
+						parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &checkUsage)
+					}
+					if ferr := s.checkUpstreamModelMismatch(c, account, responseID, sentModelForCheck(mappedModel, originalModel), got, reqStream, turn == 1 && !wroteDownstream, checkUsage); ferr != nil {
+						lease.MarkBroken()
+						return nil, ferr
 					}
 				}
 			}

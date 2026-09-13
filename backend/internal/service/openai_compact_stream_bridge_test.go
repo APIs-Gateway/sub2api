@@ -336,7 +336,7 @@ func TestHandleNonStreamingResponsePassthrough_CompactClientStreamBridgesToSSE(t
 		Body:       io.NopCloser(strings.NewReader(compactBridgeResponse("resp_compact_pt", "compact-pt-payload", 7, 3))),
 	}
 
-	result, err := svc.handleNonStreamingResponsePassthrough(context.Background(), resp, c, "gpt-5.5", "")
+	result, err := svc.handleNonStreamingResponsePassthrough(context.Background(), resp, c, &Account{ID: 1, Type: AccountTypeAPIKey}, "gpt-5.5", "")
 	require.NoError(t, err)
 	events := parseCompactBridgeSSE(t, rec.Body.String())
 	require.Equal(t, "compaction", gjson.Get(events[0][1], "item.type").String())
@@ -354,7 +354,7 @@ func TestHandlePassthroughSSEToJSON_CompactClientStreamBridgesToSSE(t *testing.T
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 	}
 
-	result, err := svc.handlePassthroughSSEToJSON(resp, c, []byte(upstreamSSE), "gpt-5.5", "")
+	result, err := svc.handlePassthroughSSEToJSON(resp, c, &Account{ID: 1, Type: AccountTypeAPIKey}, []byte(upstreamSSE), "gpt-5.5", "")
 	require.NoError(t, err)
 	events := parseCompactBridgeSSE(t, rec.Body.String())
 	require.Equal(t, "compact-pt-sse-payload", gjson.Get(events[0][1], "item.encrypted_content").String())

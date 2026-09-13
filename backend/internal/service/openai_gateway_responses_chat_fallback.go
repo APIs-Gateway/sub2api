@@ -203,14 +203,15 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	}
 
 	if clientStream {
-		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+		return s.streamChatCompletionsAsResponses(c, resp, account, originalModel, customTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
-	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, customTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+	return s.bufferChatCompletionsAsResponses(c, resp, account, originalModel, customTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	originalModel string,
 	customTools map[string]bool,
 	toolSearch bool,
@@ -251,6 +252,13 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	if parsed, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
 		usage = parsed
 	}
+	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
+	if got := extractUpstreamResponseModel(respBody); got != "" {
+		if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
+			return nil, ferr
+		}
+	}
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
@@ -272,6 +280,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	originalModel string,
 	customTools map[string]bool,
 	toolSearch bool,
@@ -307,6 +316,8 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawDone := false
+	// 上游模型不一致只在首个带 model 的 chunk 上比对一次。
+	upstreamModelChecked := false
 
 	writeEvents := func(events []apicompat.ResponsesStreamEvent) {
 		if clientDisconnected || len(events) == 0 {
@@ -358,6 +369,18 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 
 		if u := extractCCStreamUsage(payload); u != nil {
 			usage = *u
+		}
+
+		// 上游模型不一致拦截：在 chunk 转成 Responses 事件并写出之前比对；
+		// 响应头尚未写出即客户端零输出，此时按 failover 切号。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
+				upstreamModelChecked = true
+				if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+					sentModelForCheck(upstreamModel, originalModel), got, true, !headersWritten, usage); ferr != nil {
+					return nil, ferr
+				}
+			}
 		}
 
 		var chunk apicompat.ChatCompletionsChunk

@@ -3845,7 +3845,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		imageCount = result.imageCount
 		imageOutputSizes = result.imageOutputSizes
 	} else {
-		result, err := s.handleNonStreamingResponsePassthrough(ctx, resp, c, reqModel, upstreamPassthroughModel)
+		result, err := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 		if err != nil {
 			return nil, err
 		}
@@ -4703,6 +4703,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	failedMessage := ""
 	clientOutputStarted := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	// 上游模型不一致只在首个带 model 的事件上比对一次（无论结果如何）。
+	upstreamModelChecked := false
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
 	// flushPending 表示已写入但未到 SSE 空行边界的脏状态；defer 兜底函数退出前的残留，断连后不再 Flush。
@@ -4776,6 +4778,24 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
+			// 上游模型不一致拦截：必须在模型反向替换之前比对，否则 B 已被改写。
+			// preamble 事件此时仍在 pendingLines 里未写出（首个非 preamble 事件才 writePendingLines），
+			// 直接 return 即零泄漏；已开始输出则只打标不拦截。
+			// response.failed 交给下面的失败事件专用处理（cyber 打标 / 透传规则），不在此比对。
+			if !upstreamModelChecked && gjson.GetBytes(dataBytes, "type").String() != "response.failed" {
+				if got := extractUpstreamResponseModel(dataBytes); got != "" {
+					upstreamModelChecked = true
+					canBlock := !openAIStreamClientOutputStarted(c, clientOutputStarted)
+					// 首个带 model 的事件若本身就是 completed 类终止事件，审计 usage 取该事件里的值
+					// （*usage 此时还没解析到它）；parseSSEUsageBytes 自带终止事件类型判断。
+					checkUsage := *usage
+					s.parseSSEUsageBytes(dataBytes, &checkUsage)
+					if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestID,
+						sentModelForCheck(mappedModel, originalModel), got, true, canBlock, checkUsage); ferr != nil {
+						return resultWithUsage(), ferr
+					}
+				}
+			}
 			if needModelReplace && strings.Contains(data, mappedModel) {
 				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
 				if replacedData, replaced := extractOpenAISSEDataLine(line); replaced {
@@ -4949,6 +4969,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	ctx context.Context,
 	resp *http.Response,
 	c *gin.Context,
+	account *Account,
 	originalModel string,
 	mappedModel string,
 ) (*openaiNonStreamingResultPassthrough, error) {
@@ -4962,7 +4983,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// stream=false was requested. Without this conversion the client would
 	// receive raw SSE text or a terminal event with empty output.
 	if isEventStreamResponse(resp.Header) {
-		return s.handlePassthroughSSEToJSON(resp, c, body, originalModel, mappedModel)
+		return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 
 	usage := &OpenAIUsage{}
@@ -4976,6 +4997,14 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if !usageParsed {
 		// 兜底：尝试从 SSE 文本中解析 usage
 		usage = s.parseSSEUsageFromBody(string(body))
+	}
+
+	// 上游模型不一致拦截：在写 header / 模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
+	if got := extractUpstreamResponseModel(body); got != "" {
+		if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+			sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+			return nil, ferr
+		}
 	}
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -5007,7 +5036,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 // response for the passthrough path. It mirrors handleSSEToJSON while
 // preserving passthrough payloads, except compact-only model remapping may
 // rewrite model fields back to the original requested model.
-func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c *gin.Context, body []byte, originalModel string, mappedModel string) (*openaiNonStreamingResultPassthrough, error) {
+func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel string, mappedModel string) (*openaiNonStreamingResultPassthrough, error) {
 	bodyText := string(body)
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 
@@ -5015,6 +5044,13 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 	if ok {
 		if parsedUsage, parsed := extractOpenAIUsageFromJSONBytes(finalResponse); parsed {
 			*usage = parsedUsage
+		}
+		// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
+		if got := extractUpstreamResponseModel(finalResponse); got != "" {
+			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				return nil, ferr
+			}
 		}
 		// When the terminal event has an empty output array, reconstruct
 		// output from accumulated delta events so the client gets full content.
@@ -5042,6 +5078,14 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 		}
 		usage = s.parseSSEUsageFromBody(bodyText)
+		// 上游模型不一致拦截：没有 response.completed/done（如 response.incomplete 收尾）时，
+		// 取首个带 model 的事件比对，同样在模型反向替换、写出之前完成。
+		if got := extractUpstreamSSEResponseModel(bodyText); got != "" {
+			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				return nil, ferr
+			}
+		}
 		if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)
 		}
@@ -5794,6 +5838,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	clientOutputStarted := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	var streamEarlyErr error
+	// 上游模型不一致只在首个带 model 的事件上比对一次（无论结果如何）。
+	upstreamModelChecked := false
 	eventInProgress := false
 	eventStartsClientOutput := false
 	eventStartsVisibleOutput := false
@@ -5980,6 +6026,28 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			eventType := strings.TrimSpace(eventTypeRaw)
 			if responseID == "" {
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
+			}
+			// 上游模型不一致拦截：必须在下面的模型反向替换（replaceModelInSSELine）之前比对，
+			// 否则 B 已被改写成 originalModel。response.created / in_progress 是 preamble，
+			// 此时尚未 flush 给客户端（普通模式在 bufferedWriter，守卫模式在 staging），
+			// 直接走 streamEarlyErr 即零泄漏；已开始输出则只打标不拦截。
+			// response.failed 交给下面的失败事件专用处理（cyber 打标 / 透传规则），不在此比对。
+			if !upstreamModelChecked && eventType != "response.failed" {
+				if got := extractUpstreamResponseModel(dataBytes); got != "" {
+					upstreamModelChecked = true
+					canBlock := !openAIStreamClientOutputStarted(c, clientOutputStarted)
+					// 首个带 model 的事件若本身就是 completed 类终止事件，审计 usage 取该事件里的值
+					// （*usage 此时还没解析到它）；parseSSEUsageBytes 自带终止事件类型判断。
+					checkUsage := *usage
+					s.parseSSEUsageBytes(dataBytes, &checkUsage)
+					if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestID,
+						sentModelForCheck(mappedModel, originalModel), got, true, canBlock, checkUsage); ferr != nil {
+						// 阻止 finalizeStream 再包一层 "missing terminal event"
+						sawTerminalEvent = true
+						streamEarlyErr = ferr
+						return
+					}
+				}
 			}
 			forceFlushFailedEvent := false
 			if eventType == "response.failed" {
@@ -6732,6 +6800,14 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	}
 	usage := &usageValue
 
+	// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
+	if got := extractUpstreamResponseModel(body); got != "" {
+		if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+			sentModelForCheck(mappedModel, originalModel), got, false, true, usageValue); ferr != nil {
+			return nil, ferr
+		}
+	}
+
 	// Replace model in response if needed
 	if originalModel != mappedModel {
 		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
@@ -6775,6 +6851,13 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		if parsedUsage, parsed := extractOpenAIUsageFromJSONBytes(finalResponse); parsed {
 			*usage = parsedUsage
 		}
+		// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
+		if got := extractUpstreamResponseModel(finalResponse); got != "" {
+			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				return nil, ferr
+			}
+		}
 		// When the terminal event has an empty output array, reconstruct
 		// output from accumulated delta events so the client gets full content.
 		// gjson Array() returns empty slice for null, missing, or empty arrays.
@@ -6802,6 +6885,14 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 		}
 		usage = s.parseSSEUsageFromBody(bodyText)
+		// 上游模型不一致拦截：没有 response.completed/done（如 response.incomplete 收尾）时，
+		// 取首个带 model 的事件比对，同样在模型反向替换、写出之前完成。
+		if got := extractUpstreamSSEResponseModel(bodyText); got != "" {
+			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				return nil, ferr
+			}
+		}
 		if originalModel != mappedModel {
 			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)
 		}
@@ -6849,6 +6940,23 @@ func extractOpenAISSETerminalEvent(body string) (string, []byte, bool) {
 		return terminalType, terminalPayload, true
 	}
 	return "", nil, false
+}
+
+// extractUpstreamSSEResponseModel 取 SSE 里首个带 model 的 data 事件的模型（B）。
+// 跳过 response.failed：失败事件由专用处理（cyber 打标 + 真实 usage）优先，与 ok 分支的钩子一致。
+// 用于没有 response.completed/done 终止事件的 SSE→JSON 分支。
+func extractUpstreamSSEResponseModel(body string) string {
+	model := ""
+	forEachOpenAISSEDataPayload(body, func(data []byte) {
+		if model != "" {
+			return
+		}
+		if strings.TrimSpace(gjson.GetBytes(data, "type").String()) == "response.failed" {
+			return
+		}
+		model = extractUpstreamResponseModel(data)
+	})
+	return model
 }
 
 func extractOpenAISSEErrorMessage(payload []byte) string {
@@ -7834,6 +7942,12 @@ type OpenAIRecordUsageInput struct {
 	APIKeyService      APIKeyQuotaUpdater
 	// CyberBlocked 为 true 时把该用量行标记为 cyber（request_type=cyber），计费逻辑不变。
 	CyberBlocked bool
+	// UpstreamModelMismatchBlocked 为 true 时：本次尝试因上游模型不一致被拦截（审计行），强制零成本、
+	// 不扣费、不占 billing 去重键，request_id 加 ":mismatch:<accountID>" 后缀。
+	UpstreamModelMismatchBlocked bool
+	// UpstreamResponseModel 非空时写入 usage_logs.upstream_response_model，并把该行标记为
+	// upstream_model_mismatch=true（观察模式 / 晚到 model 的成功路径也会带，照常计费，仅用于后台筛选）。
+	UpstreamResponseModel string
 	ChannelUsageFields
 
 	// 稳定优先方案 Y：兜底到高倍率档位组时，按实际服务组的倍率向用户计费。
@@ -7929,6 +8043,78 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 		StableServedImagePrice4K:         in.StableServedImagePrice4K,
 	}); err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "cyber usage record failed: request_id=%s err=%v", in.RequestID, err)
+	}
+}
+
+// UpstreamModelMismatchUsageInput 是被「上游模型不一致」拦截、未走正常 RecordUsage 的尝试
+// 记录审计用量行的入参。token 取自 Mark.Usage（上游已报的 usage，可能为零值），
+// 该行强制零成本、不扣费。
+type UpstreamModelMismatchUsageInput struct {
+	APIKey       *APIKey
+	Account      *Account
+	Subscription *UserSubscription
+	RequestID    string
+	Model        string
+	Mark         UpstreamModelMismatchMark
+	// 请求级 meta，使审计行与正常 RecordUsage 行口径一致（渠道维度统计不遗漏）。
+	InboundEndpoint    string
+	UpstreamEndpoint   string
+	UserAgent          string
+	IPAddress          string
+	RequestPayloadHash string
+	APIKeyService      APIKeyQuotaUpdater
+	ChannelUsageFields
+}
+
+// usage_logs.upstream_response_model 为 VARCHAR(100)；usage_logs.request_id 为 VARCHAR(64)。
+const (
+	usageLogUpstreamResponseModelMaxBytes = 100
+	usageLogRequestIDMaxBytes             = 64
+)
+
+// upstreamModelMismatchAuditRequestID 生成审计行 request_id：<原 request_id>:mismatch:<accountID>。
+// 总长超过列宽时截原 request_id 部分，后缀必须保留（它是与 failover 重试成功行不同键的依据）。
+func upstreamModelMismatchAuditRequestID(requestID string, accountID int64) string {
+	suffix := ":mismatch:" + strconv.FormatInt(accountID, 10)
+	if len(requestID)+len(suffix) > usageLogRequestIDMaxBytes {
+		requestID = truncateString(requestID, usageLogRequestIDMaxBytes-len(suffix))
+	}
+	return requestID + suffix
+}
+
+// RecordUpstreamModelMismatchUsageLog 为被上游模型不一致拦截（handler failover 路径，
+// result==nil，正常 RecordUsage 不会跑）的尝试写一条审计用量行：
+// upstream_model_mismatch=true、upstream_response_model=上游返回的 model 原文、token 原样记录、
+// 成本清零且不扣任何余额/额度（由 RecordUsage 的 UpstreamModelMismatchBlocked 分支保证）。
+// 观察模式（开关关闭）下请求被放行、正常 RecordUsage 会跑，不应调用本函数，避免重复落行。
+func (s *OpenAIGatewayService) RecordUpstreamModelMismatchUsageLog(ctx context.Context, in UpstreamModelMismatchUsageInput) {
+	if s == nil || in.APIKey == nil || in.APIKey.User == nil || in.Account == nil || strings.TrimSpace(in.Model) == "" {
+		return
+	}
+	result := &OpenAIForwardResult{
+		RequestID:     in.RequestID,
+		Model:         in.Model,
+		UpstreamModel: in.Mark.SentModel,
+		Stream:        in.Mark.Stream,
+		Usage:         in.Mark.Usage,
+	}
+	if err := s.RecordUsage(ctx, &OpenAIRecordUsageInput{
+		Result:                       result,
+		APIKey:                       in.APIKey,
+		User:                         in.APIKey.User,
+		Account:                      in.Account,
+		Subscription:                 in.Subscription,
+		InboundEndpoint:              in.InboundEndpoint,
+		UpstreamEndpoint:             in.UpstreamEndpoint,
+		UserAgent:                    in.UserAgent,
+		IPAddress:                    in.IPAddress,
+		RequestPayloadHash:           in.RequestPayloadHash,
+		APIKeyService:                in.APIKeyService,
+		ChannelUsageFields:           in.ChannelUsageFields,
+		UpstreamModelMismatchBlocked: true,
+		UpstreamResponseModel:        in.Mark.ResponseModel,
+	}); err != nil {
+		logger.LegacyPrintf("service.openai_gateway", "upstream model mismatch usage record failed: request_id=%s err=%v", in.RequestID, err)
 	}
 }
 
@@ -8063,6 +8249,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		).Warn("openai_usage.pricing_missing_record_zero_cost", zap.Error(err))
 		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
 	}
+	if input.UpstreamModelMismatchBlocked {
+		// 被拦截的尝试不计费：保留 token 供审计，成本清零。后面的 applyUsageBilling / postUsageBilling
+		// 全部以 ActualCost>0 / TotalCost>0 为前提，cost 为零值时不会扣任何余额、订阅额度、key 额度或账号额度。
+		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
+	}
 
 	// 计费识别（per-day）：是否订阅计费 = 用户有生效订阅卡，与 group 类型无关（取代 IsSubscriptionType()）。
 	isSubscriptionBilling := subscription != nil
@@ -8079,6 +8270,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		if upstreamRequestID := strings.TrimSpace(result.RequestID); upstreamRequestID != "" {
 			requestID = upstreamRequestID
 		}
+	}
+	if input.UpstreamModelMismatchBlocked {
+		// 审计行与随后 failover 重试成功的真实请求共享同一个 ctx request id；若同键落库，
+		// usage_logs 的 (request_id, api_key_id) 唯一索引会把第二行静默丢掉。这里给审计行加
+		// ":mismatch:<accountID>" 后缀保证键不同，同时保留原 request id 作前缀便于后台检索。
+		requestID = upstreamModelMismatchAuditRequestID(requestID, account.ID)
 	}
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
@@ -8140,6 +8337,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// 设置渠道信息
 	usageLog.ChannelID = optionalInt64Ptr(input.ChannelID)
 	usageLog.ModelMappingChain = optionalTrimmedStringPtr(input.ModelMappingChain)
+	// 上游模型不一致审计列：被拦截的审计行与观察模式 / 晚到 model 的放行行都标记为不一致，
+	// 后台「仅不一致」筛选才能看到观察模式的命中；计费差异只由 UpstreamModelMismatchBlocked 决定。
+	usageLog.UpstreamModelMismatch = input.UpstreamModelMismatchBlocked || strings.TrimSpace(input.UpstreamResponseModel) != ""
+	usageLog.UpstreamResponseModel = optionalTrimmedStringPtr(truncateString(strings.TrimSpace(input.UpstreamResponseModel), usageLogUpstreamResponseModelMaxBytes))
 	// 设置计费模式
 	if cost != nil && cost.BillingMode != "" {
 		billingMode := cost.BillingMode
@@ -8170,6 +8371,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）。
 	// 账号统计成本反映账号实际所在/服务组的渠道与定价规则；稳定优先兜底时须用 served 组（与 billingAPIKey 同口径）。
+	// 上游模型不一致审计行：这里仍按真实 token 计算账号侧统计成本（反映该账号实际消耗的上游用量），
+	// 这是账号维度的统计口径而非向用户计费，不构成计费泄漏；用户侧 total_cost/actual_cost 已为 0 且不扣费。
 	if billingAPIKey.GroupID != nil {
 		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *billingAPIKey.GroupID, result.UpstreamModel, result.Model,
@@ -8180,6 +8383,15 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
+		s.deferredService.ScheduleLastUsedUpdate(account.ID)
+		return nil
+	}
+
+	if input.UpstreamModelMismatchBlocked {
+		// 审计行无可计费内容，完全跳过 applyUsageBilling：既不扣费，也不占用 billing 去重键
+		// （fingerprint 含 AccountID 与零成本，若占用会让随后 failover 重试成功的真实请求撞键
+		// 返回 ErrUsageBillingRequestConflict，导致真实请求既不计费也不落 usage_log）。
+		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
 	}

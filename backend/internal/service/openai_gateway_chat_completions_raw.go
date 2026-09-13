@@ -296,12 +296,17 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	clientOutputStarted := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
+	// 上游模型不一致只在首个带 model 的 chunk 上比对一次。
+	upstreamModelChecked := false
+	// 首个 data 行经过模型比对之前，注释行 / 空行（如中转站的 ": OPENROUTER PROCESSING"）
+	// 先进 pendingLines 暂存，避免提前写响应头把 clientOutputStarted 置位、让拦截退化为观察模式。
+	holdPreDataLines := true
 
 	writeLine := func(line string) {
 		if clientDisconnected {
 			return
 		}
-		if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
+		if !clientOutputStarted && (holdPreDataLines || !refusalDetector.ShouldReleaseClientOutput()) {
 			pendingLines = append(pendingLines, line)
 			return
 		}
@@ -343,7 +348,20 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 					elapsed := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &elapsed
 				}
+				// 上游模型不一致拦截：在写出（含 pendingLines 暂存）之前比对；
+				// 客户端尚无输出时按 failover 切号，零泄漏。
+				if !upstreamModelChecked {
+					if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
+						upstreamModelChecked = true
+						if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+							sentModelForCheck(upstreamModel, originalModel), got, true, !clientOutputStarted, usage); ferr != nil {
+							return nil, ferr
+						}
+					}
+				}
 			}
+			// 首个 data 行已经过比对（或根本不带 model），之后的非 data 行不再暂存。
+			holdPreDataLines = false
 		}
 		line = stripEmptyChatToolCallIdentityFromSSELine(line)
 
@@ -467,6 +485,13 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	}
 
 	responseModel := gjson.GetBytes(respBody, "model").String()
+	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
+	if got := strings.TrimSpace(responseModel); got != "" {
+		if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
+			return nil, ferr
+		}
+	}
 	if requiresBillableGrokChatUsage(account, billingModel, upstreamModel, responseModel) && !hasBillableGrokChatUsage(usage) {
 		upstreamRequestID := firstNonEmpty(requestID, resp.Header.Get("xai-request-id"))
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)

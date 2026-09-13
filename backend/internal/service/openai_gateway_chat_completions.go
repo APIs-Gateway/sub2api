@@ -473,6 +473,14 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 		return nil, fmt.Errorf("upstream response failed: %s", message)
 	}
 
+	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
+	if got := strings.TrimSpace(finalResponse.Model); got != "" {
+		if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
+			return nil, ferr
+		}
+	}
+
 	if requiresBillableGrokChatUsage(account, billingModel, upstreamModel, finalResponse.Model) && !hasBillableGrokChatUsage(usage) {
 		upstreamRequestID := firstNonEmpty(requestID, resp.Header.Get("xai-request-id"))
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
@@ -593,6 +601,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
 	var streamNonFailoverErr error
+	// 上游模型不一致只在首个带 model 的事件上比对一次（通常是 response.created）。
+	upstreamModelChecked := false
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -725,6 +735,20 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", defaultMsg)
 			return true
+		}
+
+		// 上游模型不一致拦截：必须在事件转成 chat chunk 并写出之前比对。
+		// 客户端尚无输出（pendingSSE 也未刷出）时按 failover 切号，零泄漏；
+		// 已有输出（model 只在终止事件才出现）时仅打标不中断。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
+				upstreamModelChecked = true
+				if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+					sentModelForCheck(upstreamModel, originalModel), got, true, !clientOutputStarted, usage); ferr != nil {
+					streamFailoverErr = ferr
+					return true
+				}
+			}
 		}
 
 		chunks := apicompat.ResponsesEventToChatChunks(&event, state)

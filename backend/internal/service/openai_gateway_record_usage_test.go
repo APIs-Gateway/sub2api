@@ -127,6 +127,294 @@ func TestRecordCyberPolicyUsageLog_SkipsWhenIncomplete(t *testing.T) {
 	require.Equal(t, 0, usageRepo.calls, "APIKey/User/Account 缺失或 Model 空时跳过，不记不扣费")
 }
 
+func TestRecordUpstreamModelMismatchUsageLog_ZeroCostAndFlags(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	quota := &openAIRecordUsageAPIKeyQuotaStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+
+	// 被拦截的尝试（failover 路径 result==nil）：token 原样记供审计，成本清零、不扣任何余额/额度。
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{
+		APIKey:    &APIKey{ID: 2, Quota: 100, User: &User{ID: 1}},
+		Account:   &Account{ID: 9, Platform: PlatformOpenAI},
+		RequestID: "req-mm",
+		Model:     "gpt-5.6-sol",
+		Mark: UpstreamModelMismatchMark{
+			SentModel:     "gpt-5.6-sol",
+			ResponseModel: "gpt-6-sol",
+			AccountID:     9,
+			Stream:        true,
+			Usage:         OpenAIUsage{InputTokens: 596, OutputTokens: 5},
+		},
+		InboundEndpoint:    "/v1/responses",
+		UpstreamEndpoint:   "https://upstream.example/v1/responses",
+		APIKeyService:      quota,
+		ChannelUsageFields: ChannelUsageFields{OriginalModel: "gpt-5.6-sol", ChannelMappedModel: "gpt-5.6-sol"},
+	})
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.True(t, log.UpstreamModelMismatch)
+	require.NotNil(t, log.UpstreamResponseModel)
+	require.Equal(t, "gpt-6-sol", *log.UpstreamResponseModel)
+	require.Equal(t, "gpt-5.6-sol", log.Model)
+	require.Equal(t, "req-mm:mismatch:9", log.RequestID, "审计行 request_id 加 :mismatch:<accountID> 后缀，与 failover 重试的真实请求不同键")
+	require.Equal(t, 596, log.InputTokens, "token 原样记，便于审计")
+	require.Equal(t, 5, log.OutputTokens)
+	require.Zero(t, log.TotalCost, "不计费")
+	require.Zero(t, log.ActualCost)
+	require.Zero(t, log.InputCost)
+	require.Zero(t, log.OutputCost)
+	require.Equal(t, RequestTypeStream, log.EffectiveRequestType(), "request_type 由 repo 层按 Stream 推导；mismatch 行不覆盖真实 stream")
+	require.True(t, log.Stream)
+	require.NotNil(t, log.InboundEndpoint)
+	require.Equal(t, "/v1/responses", *log.InboundEndpoint)
+	require.Equal(t, 0, userRepo.deductCalls, "审计行不扣余额")
+	require.Equal(t, 0, subRepo.incrementCalls, "审计行不扣订阅额度")
+	require.Equal(t, 0, quota.quotaCalls, "审计行不扣 key 额度")
+	require.Equal(t, 0, quota.rateLimitCalls)
+}
+
+func TestRecordUpstreamModelMismatchUsageLog_SubscriptionNotCharged(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{
+		APIKey:       &APIKey{ID: 2, User: &User{ID: 1}},
+		Account:      &Account{ID: 9, Platform: PlatformOpenAI},
+		Subscription: &UserSubscription{ID: 7},
+		RequestID:    "req-mm-sub",
+		Model:        "gpt-5.1",
+		Mark: UpstreamModelMismatchMark{
+			SentModel:     "gpt-5.1",
+			ResponseModel: "gpt-5.1-codex",
+			Usage:         OpenAIUsage{InputTokens: 1200, OutputTokens: 300},
+		},
+	})
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.True(t, log.UpstreamModelMismatch)
+	require.Equal(t, BillingTypeSubscription, log.BillingType)
+	require.Equal(t, 1200, log.InputTokens)
+	require.Zero(t, log.TotalCost)
+	require.Zero(t, log.ActualCost)
+	require.Equal(t, 0, subRepo.incrementCalls, "订阅计费下审计行同样不扣额度")
+	require.Equal(t, 0, userRepo.deductCalls)
+}
+
+func TestRecordUpstreamModelMismatchUsageLog_SkipsWhenIncomplete(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	acct := &Account{ID: 9}
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{Account: acct, Model: "gpt-5"})                              // APIKey nil
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{APIKey: &APIKey{ID: 2}, Account: acct, Model: "gpt-5"})      // User nil
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{APIKey: &APIKey{ID: 2, User: &User{ID: 1}}, Model: "gpt-5"}) // Account nil
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{APIKey: &APIKey{ID: 2, User: &User{ID: 1}}, Account: acct})  // Model 空
+	require.Equal(t, 0, usageRepo.calls, "APIKey/User/Account 缺失或 Model 空时跳过")
+}
+
+func TestRecordUpstreamModelMismatchUsageLog_ProductionBillingPathSkipsBillingAndSuffixesRequestID(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	quota := &openAIRecordUsageAPIKeyQuotaStub{}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, userRepo, subRepo, nil)
+
+	// 生产计费路径（usageBillingRepo 非 nil）+ ctx 带 request id：审计行不得调用 billing repo
+	// （否则会占住 (request_id, api_key_id) 去重键，随后 failover 到账号 B 的真实请求会撞键失败），
+	// 且落库 request_id 必须与真实请求不同键（后缀 :mismatch:<accountID>）。
+	ctx := context.WithValue(context.Background(), ctxkey.RequestID, "req-ctx-1")
+	svc.RecordUpstreamModelMismatchUsageLog(ctx, UpstreamModelMismatchUsageInput{
+		APIKey:        &APIKey{ID: 2, Quota: 100, User: &User{ID: 1}},
+		Account:       &Account{ID: 9, Platform: PlatformOpenAI},
+		RequestID:     "resp_upstream_ignored",
+		Model:         "gpt-5.6-sol",
+		APIKeyService: quota,
+		Mark: UpstreamModelMismatchMark{
+			SentModel:     "gpt-5.6-sol",
+			ResponseModel: "gpt-6-sol",
+			AccountID:     9,
+			Usage:         OpenAIUsage{InputTokens: 596, OutputTokens: 5},
+		},
+	})
+
+	require.Equal(t, 0, billingRepo.calls, "审计行不得进入 billing repo，避免占用去重键")
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.Equal(t, "local:req-ctx-1:mismatch:9", log.RequestID)
+	require.True(t, log.UpstreamModelMismatch)
+	require.Equal(t, 596, log.InputTokens)
+	require.Equal(t, 5, log.OutputTokens)
+	require.Zero(t, log.TotalCost)
+	require.Zero(t, log.ActualCost)
+	require.Equal(t, 0, userRepo.deductCalls)
+	require.Equal(t, 0, subRepo.incrementCalls)
+	require.Equal(t, 0, quota.quotaCalls)
+	require.Equal(t, 0, quota.rateLimitCalls)
+}
+
+func TestRecordUpstreamModelMismatchUsageLog_RecordsSentModelAsUpstreamModel(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	// 渠道映射后实际发送模型 ≠ 用户请求模型：upstream_model 记 SentModel，response_model 记上游回包 model。
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{
+		APIKey:    &APIKey{ID: 2, User: &User{ID: 1}},
+		Account:   &Account{ID: 9, Platform: PlatformOpenAI},
+		RequestID: "req-mm-mapped",
+		Model:     "gpt-5.1",
+		Mark: UpstreamModelMismatchMark{
+			SentModel:     "gpt-5.1-codex",
+			ResponseModel: "gpt-5-mini",
+			Usage:         OpenAIUsage{InputTokens: 10, OutputTokens: 2},
+		},
+		ChannelUsageFields: ChannelUsageFields{OriginalModel: "gpt-5.1", ChannelMappedModel: "gpt-5.1-codex"},
+	})
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.Equal(t, "gpt-5.1", log.Model)
+	require.NotNil(t, log.UpstreamModel)
+	require.Equal(t, "gpt-5.1-codex", *log.UpstreamModel)
+	require.NotNil(t, log.UpstreamResponseModel)
+	require.Equal(t, "gpt-5-mini", *log.UpstreamResponseModel)
+	require.True(t, log.UpstreamModelMismatch)
+	require.Zero(t, log.ActualCost)
+}
+
+func TestRecordUsage_MismatchObserveModeFlagsRowButBillsNormally(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+	usage := OpenAIUsage{InputTokens: 10, OutputTokens: 5}
+
+	// 观察模式（开关关闭）/ model 晚到的正常成功路径也会带 mark：行标记为不一致（后台「仅不一致」筛选可见）
+	// 并写 upstream_response_model 列，但计费与 request_id 与普通行完全一致。
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:                &OpenAIForwardResult{RequestID: "req-observe", Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: usage},
+		APIKey:                &APIKey{ID: 2, User: &User{ID: 1}},
+		User:                  &User{ID: 1},
+		Account:               &Account{ID: 9, Platform: PlatformOpenAI},
+		UpstreamResponseModel: " gpt-6-sol ",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.True(t, log.UpstreamModelMismatch, "观察模式行也要标记，否则后台筛选/徽标看不到")
+	require.NotNil(t, log.UpstreamResponseModel)
+	require.Equal(t, "gpt-6-sol", *log.UpstreamResponseModel)
+	require.NotContains(t, log.RequestID, ":mismatch:", "只有被拦截的审计行才加后缀")
+	require.Greater(t, log.TotalCost, 0.0)
+	expected := expectedOpenAICost(t, svc, "gpt-5.1", usage, 1.1)
+	require.InDelta(t, expected.ActualCost, log.ActualCost, 1e-12)
+	require.Equal(t, 1, userRepo.deductCalls, "观察模式正常扣费")
+	require.InDelta(t, expected.ActualCost, userRepo.lastAmount, 1e-12)
+}
+
+func TestRecordUsage_MismatchFlagForcesZeroCostAndNoDeduction(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:                       &OpenAIForwardResult{Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: OpenAIUsage{InputTokens: 1200, OutputTokens: 300}},
+		APIKey:                       &APIKey{ID: 2, User: &User{ID: 1}},
+		User:                         &User{ID: 1},
+		Account:                      &Account{ID: 9, Platform: PlatformOpenAI},
+		UpstreamModelMismatchBlocked: true,
+		UpstreamResponseModel:        "gpt-5.1-codex",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.True(t, log.UpstreamModelMismatch)
+	require.Equal(t, "gpt-5.1-codex", *log.UpstreamResponseModel)
+	require.Equal(t, 1200, log.InputTokens)
+	require.Equal(t, 300, log.OutputTokens)
+	require.Zero(t, log.TotalCost)
+	require.Zero(t, log.ActualCost)
+	require.NotNil(t, log.BillingMode)
+	require.Equal(t, string(BillingModeToken), *log.BillingMode)
+	require.Equal(t, 0, userRepo.deductCalls, "mismatch 行不扣费")
+	require.Equal(t, 0, subRepo.incrementCalls)
+}
+
+func TestRecordUsage_NoMismatchLeavesResponseModelNil(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:  &OpenAIForwardResult{Model: "gpt-5.1", Usage: OpenAIUsage{InputTokens: 10, OutputTokens: 5}},
+		APIKey:  &APIKey{ID: 2, User: &User{ID: 1}},
+		User:    &User{ID: 1},
+		Account: &Account{ID: 9, Platform: PlatformOpenAI},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.False(t, usageRepo.lastLog.UpstreamModelMismatch)
+	require.Nil(t, usageRepo.lastLog.UpstreamResponseModel, "一致时列保持 NULL")
+}
+
+func TestRecordUpstreamModelMismatchUsageLog_LongRequestIDKeepsSuffixWithinColumn(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	// usage_logs.request_id 为 VARCHAR(64)：ctx request id 过长时截前缀、保留 :mismatch:<accountID> 后缀。
+	longID := strings.Repeat("r", 70)
+	ctx := context.WithValue(context.Background(), ctxkey.RequestID, longID)
+	svc.RecordUpstreamModelMismatchUsageLog(ctx, UpstreamModelMismatchUsageInput{
+		APIKey:    &APIKey{ID: 2, User: &User{ID: 1}},
+		Account:   &Account{ID: 9, Platform: PlatformOpenAI},
+		RequestID: "resp_ignored",
+		Model:     "gpt-5.6-sol",
+		Mark:      UpstreamModelMismatchMark{SentModel: "gpt-5.6-sol", ResponseModel: "gpt-6-sol"},
+	})
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.LessOrEqual(t, len(log.RequestID), 64)
+	require.True(t, strings.HasSuffix(log.RequestID, ":mismatch:9"), log.RequestID)
+	require.True(t, strings.HasPrefix(log.RequestID, "local:rrr"), log.RequestID)
+}
+
+func TestRecordUsage_TruncatesUpstreamResponseModelToColumnWidth(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	// usage_logs.upstream_response_model 为 VARCHAR(100)：上游回显异常长的 model 不能把整行插入打挂。
+	longModel := "gpt-" + strings.Repeat("x", 120)
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:                &OpenAIForwardResult{Model: "gpt-5.1", Usage: OpenAIUsage{InputTokens: 10, OutputTokens: 5}},
+		APIKey:                &APIKey{ID: 2, User: &User{ID: 1}},
+		User:                  &User{ID: 1},
+		Account:               &Account{ID: 9, Platform: PlatformOpenAI},
+		UpstreamResponseModel: longModel,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.NotNil(t, usageRepo.lastLog.UpstreamResponseModel)
+	require.Len(t, *usageRepo.lastLog.UpstreamResponseModel, 100)
+	require.Equal(t, longModel[:100], *usageRepo.lastLog.UpstreamResponseModel)
+	require.True(t, usageRepo.lastLog.UpstreamModelMismatch)
+}
+
 type openAIRecordUsageUserRepoStub struct {
 	UserRepository
 
