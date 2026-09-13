@@ -7901,6 +7901,10 @@ type OpenAIRecordUsageInput struct {
 	APIKeyService      APIKeyQuotaUpdater
 	// CyberBlocked 为 true 时把该用量行标记为 cyber（request_type=cyber），计费逻辑不变。
 	CyberBlocked bool
+	// UpstreamModelMismatch 为 true 时：该行标记为上游模型不一致，且强制零成本、不扣费（审计行）。
+	UpstreamModelMismatch bool
+	// UpstreamResponseModel 非空时写入 usage_logs.upstream_response_model（观察模式下成功路径也会带）。
+	UpstreamResponseModel string
 	ChannelUsageFields
 
 	// 稳定优先方案 Y：兜底到高倍率档位组时，按实际服务组的倍率向用户计费。
@@ -7996,6 +8000,62 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 		StableServedImagePrice4K:         in.StableServedImagePrice4K,
 	}); err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "cyber usage record failed: request_id=%s err=%v", in.RequestID, err)
+	}
+}
+
+// UpstreamModelMismatchUsageInput 是被「上游模型不一致」拦截、未走正常 RecordUsage 的尝试
+// 记录审计用量行的入参。token 取自 Mark.Usage（上游已报的 usage，可能为零值），
+// 该行强制零成本、不扣费。
+type UpstreamModelMismatchUsageInput struct {
+	APIKey       *APIKey
+	Account      *Account
+	Subscription *UserSubscription
+	RequestID    string
+	Model        string
+	Mark         UpstreamModelMismatchMark
+	// 请求级 meta，使审计行与正常 RecordUsage 行口径一致（渠道维度统计不遗漏）。
+	InboundEndpoint    string
+	UpstreamEndpoint   string
+	UserAgent          string
+	IPAddress          string
+	RequestPayloadHash string
+	APIKeyService      APIKeyQuotaUpdater
+	ChannelUsageFields
+}
+
+// RecordUpstreamModelMismatchUsageLog 为被上游模型不一致拦截（handler failover 路径，
+// result==nil，正常 RecordUsage 不会跑）的尝试写一条审计用量行：
+// upstream_model_mismatch=true、upstream_response_model=上游返回的 model 原文、token 原样记录、
+// 成本清零且不扣任何余额/额度（由 RecordUsage 的 UpstreamModelMismatch 分支保证）。
+// 观察模式（开关关闭）下请求被放行、正常 RecordUsage 会跑，不应调用本函数，避免重复落行。
+func (s *OpenAIGatewayService) RecordUpstreamModelMismatchUsageLog(ctx context.Context, in UpstreamModelMismatchUsageInput) {
+	if s == nil || in.APIKey == nil || in.APIKey.User == nil || in.Account == nil || strings.TrimSpace(in.Model) == "" {
+		return
+	}
+	result := &OpenAIForwardResult{
+		RequestID:     in.RequestID,
+		Model:         in.Model,
+		UpstreamModel: in.Mark.SentModel,
+		Stream:        in.Mark.Stream,
+		Usage:         in.Mark.Usage,
+	}
+	if err := s.RecordUsage(ctx, &OpenAIRecordUsageInput{
+		Result:                result,
+		APIKey:                in.APIKey,
+		User:                  in.APIKey.User,
+		Account:               in.Account,
+		Subscription:          in.Subscription,
+		InboundEndpoint:       in.InboundEndpoint,
+		UpstreamEndpoint:      in.UpstreamEndpoint,
+		UserAgent:             in.UserAgent,
+		IPAddress:             in.IPAddress,
+		RequestPayloadHash:    in.RequestPayloadHash,
+		APIKeyService:         in.APIKeyService,
+		ChannelUsageFields:    in.ChannelUsageFields,
+		UpstreamModelMismatch: true,
+		UpstreamResponseModel: in.Mark.ResponseModel,
+	}); err != nil {
+		logger.LegacyPrintf("service.openai_gateway", "upstream model mismatch usage record failed: request_id=%s err=%v", in.RequestID, err)
 	}
 }
 
@@ -8130,6 +8190,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		).Warn("openai_usage.pricing_missing_record_zero_cost", zap.Error(err))
 		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
 	}
+	if input.UpstreamModelMismatch {
+		// 被拦截的尝试不计费：保留 token 供审计，成本清零。后面的 applyUsageBilling / postUsageBilling
+		// 全部以 ActualCost>0 / TotalCost>0 为前提，cost 为零值时不会扣任何余额、订阅额度、key 额度或账号额度。
+		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
+	}
 
 	// 计费识别（per-day）：是否订阅计费 = 用户有生效订阅卡，与 group 类型无关（取代 IsSubscriptionType()）。
 	isSubscriptionBilling := subscription != nil
@@ -8207,6 +8272,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// 设置渠道信息
 	usageLog.ChannelID = optionalInt64Ptr(input.ChannelID)
 	usageLog.ModelMappingChain = optionalTrimmedStringPtr(input.ModelMappingChain)
+	// 上游模型不一致审计列
+	usageLog.UpstreamModelMismatch = input.UpstreamModelMismatch
+	usageLog.UpstreamResponseModel = optionalTrimmedStringPtr(input.UpstreamResponseModel)
 	// 设置计费模式
 	if cost != nil && cost.BillingMode != "" {
 		billingMode := cost.BillingMode
