@@ -93,7 +93,7 @@ func TestRecordUpstreamModelMismatchIfMarked_NoMarkNoop(t *testing.T) {
 	apiKey, account, sub := upstreamModelMismatchTestFixtures()
 	rec := newFakeUpstreamModelMismatchRecorder()
 
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "hash-1")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "hash-1", nil)
 
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
 	requireNeverRecorded(t, rec, 0, "gatewayService must not be called when no mark is present")
@@ -115,7 +115,7 @@ func TestRecordUpstreamModelMismatchIfMarked_RecordsAndClears(t *testing.T) {
 	service.MarkOpsUpstreamModelMismatch(c, mark)
 	channelFields := service.ChannelUsageFields{}
 
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", channelFields, "hash-2")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", channelFields, "hash-2", nil)
 
 	// 清标必须是同步的：failover 换号后的下一次 Forward 要能重新打标。
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
@@ -134,7 +134,7 @@ func TestRecordUpstreamModelMismatchIfMarked_RecordsAndClears(t *testing.T) {
 	require.Equal(t, channelFields, in.ChannelUsageFields)
 
 	// 标记已清：再调一次不会再记（每次拦截只落一行）。
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", channelFields, "hash-2")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", channelFields, "hash-2", nil)
 	requireNeverRecorded(t, rec, 1, "cleared mark must not be recorded again")
 }
 
@@ -148,7 +148,7 @@ func TestRecordUpstreamModelMismatchIfMarked_UnblockedMarkDoesNotRecord(t *testi
 		SentModel: "gpt-5", ResponseModel: "gpt-4.1-mini", AccountID: account.ID, Blocked: false,
 	})
 
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "hash-3")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "hash-3", nil)
 
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
 	requireNeverRecorded(t, rec, 0, "unblocked (observe-mode) mark must not produce an audit row")
@@ -161,7 +161,7 @@ func TestRecordUpstreamModelMismatchIfMarked_MissingSubjectClearsOnly(t *testing
 	rec := newFakeUpstreamModelMismatchRecorder()
 	service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "a", ResponseModel: "b", Blocked: true})
 
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, nil, account, nil, "gpt-5", service.ChannelUsageFields{}, "")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, nil, account, nil, "gpt-5", service.ChannelUsageFields{}, "", nil)
 
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
 	requireNeverRecorded(t, rec, 0, "missing apiKey must not record")
@@ -175,7 +175,7 @@ func TestOpenAIGatewayHandler_RecordUpstreamModelMismatchIfMarked_NilServicesCle
 
 	h := &OpenAIGatewayHandler{}
 	require.NotPanics(t, func() {
-		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "")
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "", nil)
 	})
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
 }
@@ -191,7 +191,7 @@ func TestRecordUpstreamModelMismatchIfMarked_SameAccountRetriesCountAttempts(t *
 	}
 
 	service.MarkOpsUpstreamModelMismatch(c, mark(account))
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", nil)
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
 	first := rec.waitNth(t, 1)
 	require.Equal(t, 0, first.Attempt, "首次拦截 Attempt=0，request_id 保持原格式")
@@ -199,7 +199,7 @@ func TestRecordUpstreamModelMismatchIfMarked_SameAccountRetriesCountAttempts(t *
 
 	// 同账号重试后再次被拦截（handler 的 pool-mode continue 分支不换号）。
 	service.MarkOpsUpstreamModelMismatch(c, mark(account))
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", nil)
 	second := rec.waitNth(t, 2)
 	require.Equal(t, 1, second.Attempt, "同账号第二次被拦截 Attempt=1")
 	require.Same(t, account, second.Account)
@@ -208,14 +208,14 @@ func TestRecordUpstreamModelMismatchIfMarked_SameAccountRetriesCountAttempts(t *
 	// 切到另一账号：计数按账号隔离，从 0 开始。
 	other := &service.Account{ID: 13, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
 	service.MarkOpsUpstreamModelMismatch(c, mark(other))
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, other, sub, "gpt-5", service.ChannelUsageFields{}, "h")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, other, sub, "gpt-5", service.ChannelUsageFields{}, "h", nil)
 	third := rec.waitNth(t, 3)
 	require.Equal(t, 0, third.Attempt, "换账号后从 0 重新计数")
 	require.Same(t, other, third.Account)
 
 	// 再回到原账号（理论上不会发生，但计数必须继续而不是重置，保证键不撞）。
 	service.MarkOpsUpstreamModelMismatch(c, mark(account))
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", nil)
 	fourth := rec.waitNth(t, 4)
 	require.Equal(t, 2, fourth.Attempt)
 }
@@ -226,14 +226,53 @@ func TestRecordUpstreamModelMismatchIfMarked_AttemptCountsOnlyRecordedRows(t *te
 	apiKey, account, sub := upstreamModelMismatchTestFixtures()
 	rec := newFakeUpstreamModelMismatchRecorder()
 
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", nil)
 	service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "a", ResponseModel: "b", AccountID: account.ID, Blocked: false})
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", nil)
 	service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "a", ResponseModel: "b", AccountID: account.ID, Blocked: true})
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, nil, account, sub, "gpt-5", service.ChannelUsageFields{}, "h")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, nil, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", nil)
 	requireNeverRecorded(t, rec, 0, "none of the above should record")
 
 	service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "a", ResponseModel: "b", AccountID: account.ID, Blocked: true})
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", nil)
 	require.Equal(t, 0, rec.waitNth(t, 1).Attempt)
+}
+
+// 流式拦截发生在 response.created（不带 usage）时 Mark.Usage 全零：按请求体估算 input_tokens，
+// 让审计行 token 列反映已发出的 prompt；上游已回报 usage 时原样保留，不覆盖。
+func TestRecordUpstreamModelMismatchIfMarked_EstimatesInputTokensWhenUsageMissing(t *testing.T) {
+	body := []byte(`{"model":"gpt-5","messages":[{"role":"user","content":"` + strings.Repeat("abcd", 50) + `"}]}`)
+	apiKey, account, sub := upstreamModelMismatchTestFixtures()
+
+	t.Run("zero usage -> estimated from body", func(t *testing.T) {
+		c := newUpstreamModelMismatchTestContext(t)
+		rec := newFakeUpstreamModelMismatchRecorder()
+		service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "gpt-5", ResponseModel: "gpt-4.1-mini", AccountID: account.ID, Blocked: true})
+		recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", body)
+		in := rec.waitNth(t, 1)
+		require.Equal(t, service.EstimateOpenAIRequestInputTokens(body), in.Mark.Usage.InputTokens)
+		require.Greater(t, in.Mark.Usage.InputTokens, 0)
+		require.Zero(t, in.Mark.Usage.OutputTokens, "只估输入侧")
+	})
+
+	t.Run("upstream usage present -> kept", func(t *testing.T) {
+		c := newUpstreamModelMismatchTestContext(t)
+		rec := newFakeUpstreamModelMismatchRecorder()
+		service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{
+			SentModel: "gpt-5", ResponseModel: "gpt-4.1-mini", AccountID: account.ID, Blocked: true,
+			Usage: service.OpenAIUsage{InputTokens: 596, OutputTokens: 5},
+		})
+		recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", body)
+		in := rec.waitNth(t, 1)
+		require.Equal(t, 596, in.Mark.Usage.InputTokens)
+		require.Equal(t, 5, in.Mark.Usage.OutputTokens)
+	})
+
+	t.Run("zero usage and empty body -> stays zero", func(t *testing.T) {
+		c := newUpstreamModelMismatchTestContext(t)
+		rec := newFakeUpstreamModelMismatchRecorder()
+		service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "gpt-5", ResponseModel: "gpt-4.1-mini", AccountID: account.ID, Blocked: true})
+		recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", nil)
+		require.Zero(t, rec.waitNth(t, 1).Mark.Usage.InputTokens)
+	})
 }

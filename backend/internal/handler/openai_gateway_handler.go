@@ -487,7 +487,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
 			upstreamResponseModel = mark.ResponseModel
 		}
-		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMapping.ToUsageFields(reqModel, ""), requestPayloadHash)
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMapping.ToUsageFields(reqModel, ""), requestPayloadHash, body)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1013,7 +1013,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
 			upstreamResponseModel = mark.ResponseModel
 		}
-		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingMsg.ToUsageFields(reqModel, ""), requestPayloadHash)
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingMsg.ToUsageFields(reqModel, ""), requestPayloadHash, body)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1648,6 +1648,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		)
 
 		var requestPayloadHash string
+		// 首包只给第 1 轮的模型不一致审计估算 input_tokens 用（拦截只发生在第 1 轮），
+		// AfterTurn 用完即置 nil，避免闭包在整个连接期间保活首包。
+		var wsMismatchRequestBody []byte
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
@@ -1722,7 +1725,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
 					upstreamResponseModel = mark.ResponseModel
 				}
-				h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash)
+				mismatchRequestBody := wsMismatchRequestBody
+				wsMismatchRequestBody = nil
+				h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash, mismatchRequestBody)
 				if service.GetOpsCyberPolicy(c) != nil {
 					cyberBlockedThisConn = true
 				}
@@ -1798,6 +1803,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 		// WebSocket 首包可能很大，hash 必须在 hooks 外算成字符串，避免 AfterTurn 闭包保活请求体。
 		requestPayloadHash = service.HashUsageRequestPayload(wsFirstMessage)
+		wsMismatchRequestBody = wsFirstMessage
 
 		if err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
 			var failoverErr *service.UpstreamFailoverError
@@ -2782,7 +2788,7 @@ type upstreamModelMismatchUsageRecorder interface {
 // 路径的 RecordUsage（UpstreamResponseModel）落库，这里只清标；不看 forward 是否报错，
 // 避免「未拦截 + 其他错误带部分 result」时审计行与正常行双写。
 // 注意调用顺序：成功路径若需读取 mark.ResponseModel 透传给 RecordUsage，必须在本方法之前读。
-func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string, requestBody []byte) {
 	var recorder upstreamModelMismatchUsageRecorder
 	if h.gatewayService != nil {
 		recorder = h.gatewayService
@@ -2791,7 +2797,7 @@ func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Contex
 	if h.apiKeyService != nil {
 		apiKeySvc = h.apiKeyService
 	}
-	recordUpstreamModelMismatchIfMarked(c, recorder, apiKeySvc, apiKey, account, subscription, model, channelFields, requestPayloadHash)
+	recordUpstreamModelMismatchIfMarked(c, recorder, apiKeySvc, apiKey, account, subscription, model, channelFields, requestPayloadHash, requestBody)
 }
 
 // upstreamModelMismatchAttemptsKey 在 gin context 里存 map[int64]int：同一请求内每个账号已落审计行的
@@ -2813,7 +2819,10 @@ func nextUpstreamModelMismatchAttempt(c *gin.Context, accountID int64) int {
 	return attempt
 }
 
-func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelMismatchUsageRecorder, apiKeySvc service.APIKeyQuotaUpdater, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+// requestBody 是本次发往上游的请求体：拦截发生在 response.created（不带 usage）时 mark.Usage 全零，
+// 但 prompt 已经发出、输入侧消耗真实发生，此时按请求体估算 input_tokens 记入审计行（成本仍为 0）；
+// 上游已回报 usage（InputTokens>0）时不覆盖。
+func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelMismatchUsageRecorder, apiKeySvc service.APIKeyQuotaUpdater, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string, requestBody []byte) {
 	mark := service.GetOpsUpstreamModelMismatch(c)
 	if mark == nil {
 		return
@@ -2825,6 +2834,15 @@ func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelM
 	}
 	// 池模式同账号重试：同一账号在同一请求内可能连续被拦截多次，按账号计数让每行 request_id 不同键。
 	attempt := nextUpstreamModelMismatchAttempt(c, account.ID)
+	if mark.Usage.InputTokens == 0 {
+		if estimated := service.EstimateOpenAIRequestInputTokens(requestBody); estimated > 0 {
+			mark.Usage.InputTokens = estimated
+			requestLogger(c, "handler.openai_gateway").Info("openai.upstream_model_mismatch_input_tokens_estimated",
+				zap.Int64("account_id", account.ID),
+				zap.Int("estimated_input_tokens", estimated),
+			)
+		}
+	}
 	var userAgent, clientIP string
 	if c.Request != nil {
 		userAgent = c.GetHeader("User-Agent")

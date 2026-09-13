@@ -252,7 +252,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
 			upstreamResponseModel = mark.ResponseModel
 		}
-		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, effectiveMapping.ToUsageFields(reqModel, ""), requestPayloadHash)
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, effectiveMapping.ToUsageFields(reqModel, ""), requestPayloadHash, body)
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)

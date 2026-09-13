@@ -26,6 +26,7 @@
 - WS v2 的 HTTP 桥与 ingress 代理只在会话第 1 轮拦截（后续轮次 handler 会用首条消息重放，拦截会导致重复输出），其余轮次只记录。
 - 池模式账号（`pool_mode = true`，中转自身是一池多 key）：偷换模型的多半只是池里某个坏节点，所以 `UpstreamFailoverError` 带 `RetryableOnSameAccount`，走 handler 现有的池模式分支——先在同一账号上重试，最多 `pool_mode_retry_count` 次（默认 3），用尽后再切号并降权。`502` 不加入 `pool_mode_retry_status_codes` 默认列表。非池模式账号与 WS v2 路径（HTTP 桥 / ingress 代理）没有同账号重试机制，行为不变，直接切号。
 - 被拦截的尝试记一行 `usage_logs`：`upstream_model_mismatch = true`、`upstream_response_model = B`、`total_cost / actual_cost = 0`、不扣余额 / 订阅 / 配额；token 原样记录；`request_id` 为 `<原 request_id>:mismatch:<account_id>`，避免与随后成功重试的行撞唯一索引与计费去重键。池模式同账号重试后再次被拦截的第 n 次（n ≥ 1）记为 `<原 request_id>:mismatch:<account_id>:<n>`，同一账号的多行也不撞键；超过 64 字节时截原 request_id 部分、后缀保留。
+- 拦截行的 `input_tokens`：流式拦截多发生在 `response.created`（上游尚未回报 usage），此时 `Mark.Usage` 全零，但 prompt 已经发出、输入侧消耗真实发生。网关按请求体估算（`EstimateOpenAIRequestInputTokens`：Responses `instructions` / `input`、Chat `messages`、Anthropic `system` / `messages` 里的文本 ≈ 4 字符/token，每条消息另加 4 token 结构开销，`tools[]` 的 `description` / `parameters` 也按文本估；图片 / 文件等非文本跳过）写入 `input_tokens`，并打 Info 日志 `openai.upstream_model_mismatch_input_tokens_estimated`。上游已回报 usage（`input_tokens > 0`）时原样记录、不覆盖。估算值仅供评估上游侧消耗，不是上游口径；`output_tokens` 不估；成本列恒为 0、不扣费。
 - 成功路径（观察模式、晚到的 `model`、grok 观察）照常计费，`request_id` 不加后缀，但该行同样标记 `upstream_model_mismatch = true` 并写 `upstream_response_model = B`，后台「仅不一致」筛选与徽标可见；是否计费看成本列而不是标记列。
 
 ## 开关
