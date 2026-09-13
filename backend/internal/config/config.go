@@ -852,6 +852,8 @@ type GatewayConfig struct {
 	// DisableOpenAIResponsesImageGeneration: 禁止通过 OpenAI Responses API 触发生图，并让 Images API 仅走 API Key 的上游 Images 端点。
 	// 默认关闭，保持既有的 Responses/OAuth 图片桥接兼容行为。
 	DisableOpenAIResponsesImageGeneration bool `mapstructure:"disable_openai_responses_image_generation"`
+	// DisableUpstreamModelMismatchBlock 为 true 时只记录、不拦截上游返回模型 ≠ 请求模型的响应（观察模式 / 线上止血开关）。
+	DisableUpstreamModelMismatchBlock bool `mapstructure:"disable_upstream_model_mismatch_block"`
 	// ForcedCodexInstructionsTemplateFile: 服务端强制附加到 Codex 顶层 instructions 的模板文件路径。
 	// 模板渲染后会直接覆盖最终 instructions；若需要保留客户端 system 转换结果，请在模板中显式引用 {{ .ExistingInstructions }}。
 	ForcedCodexInstructionsTemplateFile string `mapstructure:"forced_codex_instructions_template_file"`
@@ -2101,6 +2103,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.disable_openai_images_streaming", false)
 	viper.SetDefault("gateway.disable_openai_responses_image_generation", false)
+	viper.SetDefault("gateway.disable_upstream_model_mismatch_block", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
 	viper.SetDefault("gateway.openai_ws.enabled", true)
