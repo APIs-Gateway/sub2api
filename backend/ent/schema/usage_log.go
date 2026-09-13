@@ -53,6 +53,8 @@ func (UsageLog) Fields() []ent.Field {
 			MaxLen(100).
 			Optional().
 			Nillable(),
+		field.Bool("upstream_model_mismatch").Default(false).Comment("上游返回模型与实际发送模型不一致"),
+		field.String("upstream_response_model").MaxLen(100).Optional().Nillable().Comment("上游响应体 model 原文（仅不一致时记录）"),
 		field.Int64("channel_id").Optional().Nillable().Comment("渠道 ID"),
 		field.String("model_mapping_chain").MaxLen(500).Optional().Nillable().Comment("模型映射链"),
 		field.String("billing_tier").MaxLen(50).Optional().Nillable().Comment("计费层级标签"),
