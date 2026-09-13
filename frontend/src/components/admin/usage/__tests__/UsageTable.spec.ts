@@ -208,6 +208,86 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('claude-sonnet-4-20250514')
   })
 
+  it('renders the upstream model mismatch badge and upstream response model when upstream_model_mismatch is true', () => {
+    const row = {
+      request_id: 'req-admin-model-mismatch',
+      model: 'claude-sonnet-4',
+      upstream_model: 'claude-sonnet-4-20250514',
+      upstream_response_model: 'gpt-6-sol',
+      upstream_model_mismatch: true,
+      actual_cost: 0,
+      total_cost: 0,
+      account_rate_multiplier: 1,
+      rate_multiplier: 1,
+      input_cost: 0,
+      output_cost: 0,
+      cache_creation_cost: 0,
+      cache_read_cost: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+    }
+
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [row],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('gpt-6-sol')
+    expect(text).toContain('usage.upstreamModelMismatch')
+  })
+
+  it('does not render the upstream model mismatch badge when upstream_model_mismatch is false', () => {
+    const row = {
+      request_id: 'req-admin-model-match',
+      model: 'claude-sonnet-4',
+      upstream_model: 'claude-sonnet-4-20250514',
+      upstream_response_model: 'claude-sonnet-4-20250514',
+      upstream_model_mismatch: false,
+      actual_cost: 0,
+      total_cost: 0,
+      account_rate_multiplier: 1,
+      rate_multiplier: 1,
+      input_cost: 0,
+      output_cost: 0,
+      cache_creation_cost: 0,
+      cache_read_cost: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+    }
+
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [row],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    const text = wrapper.text()
+    expect(text).not.toContain('usage.upstreamModelMismatch')
+    expect(text).not.toContain('gpt-6-sol')
+  })
+
   it.each([
     {
       name: 'defaulted row',
