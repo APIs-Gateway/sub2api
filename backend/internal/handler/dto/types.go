@@ -523,6 +523,11 @@ type AdminUsageLog struct {
 	// Omitted when no mapping was applied (requested model was used as-is).
 	UpstreamModel *string `json:"upstream_model,omitempty"`
 
+	// UpstreamModelMismatch 为 true 表示上游返回模型 ≠ 实际发送模型（被拦截或观察模式放行的审计行）。
+	UpstreamModelMismatch bool `json:"upstream_model_mismatch"`
+	// UpstreamResponseModel 上游响应体 model 原文，仅不一致时有值。
+	UpstreamResponseModel *string `json:"upstream_response_model,omitempty"`
+
 	// ChannelID 渠道 ID
 	ChannelID *int64 `json:"channel_id,omitempty"`
 	// ModelMappingChain 模型映射链，如 "a→b→c"

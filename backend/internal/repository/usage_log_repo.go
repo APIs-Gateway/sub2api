@@ -2836,6 +2836,10 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", len(args)+1))
 		args = append(args, int16(*filters.BillingType))
 	}
+	if filters.UpstreamModelMismatch != nil {
+		conditions = append(conditions, fmt.Sprintf("upstream_model_mismatch = $%d", len(args)+1))
+		args = append(args, *filters.UpstreamModelMismatch)
+	}
 	conditions, args = appendUsageLogBillingModeWhereCondition(conditions, args, filters.BillingMode)
 	if filters.StartTime != nil {
 		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", len(args)+1))
@@ -3574,6 +3578,10 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 	if filters.BillingType != nil {
 		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", len(args)+1))
 		args = append(args, int16(*filters.BillingType))
+	}
+	if filters.UpstreamModelMismatch != nil {
+		conditions = append(conditions, fmt.Sprintf("upstream_model_mismatch = $%d", len(args)+1))
+		args = append(args, *filters.UpstreamModelMismatch)
 	}
 	conditions, args = appendUsageLogBillingModeWhereCondition(conditions, args, filters.BillingMode)
 	if filters.StartTime != nil {
