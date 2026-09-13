@@ -2376,7 +2376,12 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if !upstreamModelChecked {
 			if got := extractUpstreamResponseModel(message); got != "" {
 				upstreamModelChecked = true
-				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, sentModelForCheck(mappedModel, originalModel), got, reqStream, !wroteDownstream, *usage); ferr != nil {
+				// 首个带 model 的事件若本身就是 completed 类事件，审计 usage 取该事件里的值。
+				checkUsage := *usage
+				if openAIWSEventShouldParseUsage(eventType) {
+					parseOpenAIWSResponseUsageFromCompletedEvent(message, &checkUsage)
+				}
+				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, sentModelForCheck(mappedModel, originalModel), got, reqStream, !wroteDownstream, checkUsage); ferr != nil {
 					lease.MarkBroken()
 					return nil, ferr
 				}
@@ -3488,10 +3493,16 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 			}
 			// 上游模型不一致拦截：首个带 model 的事件、改写前比对；命中时本 turn 上游仍在推事件，连接不能回池。
+			// 与 bridge 及本函数其它 failover 一致，只有首轮且未向客户端写出时才拦截并换号
+			// （handler 换号后会用 wsFirstMessage 重放第 1 轮）；turn>=2 只打标不拦截。
 			if !upstreamModelChecked {
 				if got := extractUpstreamResponseModel(upstreamMessage); got != "" {
 					upstreamModelChecked = true
-					if ferr := s.checkUpstreamModelMismatch(c, account, responseID, sentModelForCheck(mappedModel, originalModel), got, reqStream, !wroteDownstream, usage); ferr != nil {
+					checkUsage := usage
+					if openAIWSEventShouldParseUsage(eventType) {
+						parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &checkUsage)
+					}
+					if ferr := s.checkUpstreamModelMismatch(c, account, responseID, sentModelForCheck(mappedModel, originalModel), got, reqStream, turn == 1 && !wroteDownstream, checkUsage); ferr != nil {
 						lease.MarkBroken()
 						return nil, ferr
 					}

@@ -46,6 +46,13 @@ func upstreamModelMismatchWSEvents(responseModel string) [][]byte {
 	}
 }
 
+// 上游没有 response.created，model 首次出现在 completed 事件里（同时带 usage）。
+func upstreamModelMismatchWSCompletedOnlyEvents(responseModel string) [][]byte {
+	return [][]byte{
+		[]byte(`{"type":"response.completed","response":{"id":"resp_model_check_1","model":"` + responseModel + `","usage":{"input_tokens":7,"output_tokens":3}}}`),
+	}
+}
+
 // forwardOpenAIWSV2（HTTP 入站 → WS 上游）
 func TestUpstreamModelMismatch_WSForwardV2(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -54,16 +61,22 @@ func TestUpstreamModelMismatch_WSForwardV2(t *testing.T) {
 		name          string
 		stream        bool
 		responseModel string
+		completedOnly bool
 		wantBlock     bool
 	}{
 		{name: "stream_mismatch_blocks", stream: true, responseModel: "gpt-4o-mini", wantBlock: true},
 		{name: "nonstream_mismatch_blocks", stream: false, responseModel: "gpt-4o-mini", wantBlock: true},
 		{name: "stream_match_passes", stream: true, responseModel: "gpt-5.1", wantBlock: false},
+		{name: "completed_only_mismatch_carries_usage", stream: false, responseModel: "gpt-4o-mini", completedOnly: true, wantBlock: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := newUpstreamModelMismatchWSConfig()
-			captureConn := &openAIWSCaptureConn{events: upstreamModelMismatchWSEvents(tc.responseModel)}
+			events := upstreamModelMismatchWSEvents(tc.responseModel)
+			if tc.completedOnly {
+				events = upstreamModelMismatchWSCompletedOnlyEvents(tc.responseModel)
+			}
+			captureConn := &openAIWSCaptureConn{events: events}
 			pool := newOpenAIWSConnPool(cfg)
 			pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: captureConn})
 			defer pool.Close()
@@ -117,6 +130,12 @@ func TestUpstreamModelMismatch_WSForwardV2(t *testing.T) {
 			require.Equal(t, "gpt-4o-mini", mark.ResponseModel)
 			require.Equal(t, int64(1601), mark.AccountID)
 			require.Equal(t, tc.stream, mark.Stream)
+			if tc.completedOnly {
+				require.Equal(t, 7, mark.Usage.InputTokens, "model 首次出现在 completed 事件时审计 usage 应取该事件的值")
+				require.Equal(t, 3, mark.Usage.OutputTokens)
+			} else {
+				require.Equal(t, OpenAIUsage{}, mark.Usage)
+			}
 		})
 	}
 }
@@ -128,15 +147,27 @@ func TestUpstreamModelMismatch_WSIngressProxy(t *testing.T) {
 	cases := []struct {
 		name          string
 		responseModel string
+		completedOnly bool
+		// turn2Mismatch：首轮模型一致，第二轮上游换模型——只打标不拦截，事件照常下发。
+		turn2Mismatch bool
 		wantBlock     bool
 	}{
 		{name: "mismatch_blocks", responseModel: "gpt-4o-mini", wantBlock: true},
 		{name: "match_passes", responseModel: "gpt-5.1", wantBlock: false},
+		{name: "completed_only_mismatch_carries_usage", responseModel: "gpt-4o-mini", completedOnly: true, wantBlock: true},
+		{name: "turn2_mismatch_only_marks", responseModel: "gpt-5.1", turn2Mismatch: true, wantBlock: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := newUpstreamModelMismatchWSConfig()
-			captureConn := &openAIWSCaptureConn{events: upstreamModelMismatchWSEvents(tc.responseModel)}
+			events := upstreamModelMismatchWSEvents(tc.responseModel)
+			if tc.completedOnly {
+				events = upstreamModelMismatchWSCompletedOnlyEvents(tc.responseModel)
+			}
+			if tc.turn2Mismatch {
+				events = append(events, upstreamModelMismatchWSEvents("gpt-4o-mini")...)
+			}
+			captureConn := &openAIWSCaptureConn{events: events}
 			captureDialer := &openAIWSCaptureDialer{conn: captureConn}
 			pool := newOpenAIWSConnPool(cfg)
 			pool.setClientDialerForTest(captureDialer)
@@ -193,9 +224,12 @@ func TestUpstreamModelMismatch_WSIngressProxy(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = clientConn.CloseNow() }()
 
-			writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
-			require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":true,"input":"hello"}`)))
-			cancelWrite()
+			writeMessage := func(payload string) {
+				writeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, []byte(payload)))
+			}
+			writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":true,"input":"hello"}`)
 
 			readMessage := func() ([]byte, error) {
 				readCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -203,17 +237,25 @@ func TestUpstreamModelMismatch_WSIngressProxy(t *testing.T) {
 				_, message, readErr := clientConn.Read(readCtx)
 				return message, readErr
 			}
-
-			if !tc.wantBlock {
+			readTurn := func(wantModel string) {
 				created, readErr := readMessage()
 				require.NoError(t, readErr)
 				require.Equal(t, "response.created", gjson.GetBytes(created, "type").String())
+				require.Equal(t, wantModel, gjson.GetBytes(created, "response.model").String())
 				delta, readErr := readMessage()
 				require.NoError(t, readErr)
 				require.Equal(t, "hello", gjson.GetBytes(delta, "delta").String())
 				completed, readErr := readMessage()
 				require.NoError(t, readErr)
 				require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
+			}
+
+			if !tc.wantBlock {
+				readTurn("gpt-5.1")
+				if tc.turn2Mismatch {
+					writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":true,"previous_response_id":"resp_model_check_1","input":"again"}`)
+					readTurn("gpt-4o-mini")
+				}
 				_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 				select {
 				case serverErr := <-serverErrCh:
@@ -221,7 +263,15 @@ func TestUpstreamModelMismatch_WSIngressProxy(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("等待 ingress websocket 结束超时")
 				}
-				require.Nil(t, <-markCh)
+				mark := <-markCh
+				if !tc.turn2Mismatch {
+					require.Nil(t, mark)
+					return
+				}
+				require.NotNil(t, mark, "turn>=2 命中应只打标")
+				require.Equal(t, "gpt-5.1", mark.SentModel)
+				require.Equal(t, "gpt-4o-mini", mark.ResponseModel)
+				require.True(t, mark.Stream)
 				return
 			}
 
@@ -247,6 +297,12 @@ func TestUpstreamModelMismatch_WSIngressProxy(t *testing.T) {
 			require.Equal(t, "gpt-4o-mini", mark.ResponseModel)
 			require.Equal(t, int64(1602), mark.AccountID)
 			require.True(t, mark.Stream)
+			if tc.completedOnly {
+				require.Equal(t, 7, mark.Usage.InputTokens, "model 首次出现在 completed 事件时审计 usage 应取该事件的值")
+				require.Equal(t, 3, mark.Usage.OutputTokens)
+			} else {
+				require.Equal(t, OpenAIUsage{}, mark.Usage)
+			}
 		})
 	}
 }
@@ -257,11 +313,15 @@ func TestUpstreamModelMismatch_WSHTTPBridge(t *testing.T) {
 
 	cases := []struct {
 		name          string
+		turn          int
 		responseModel string
 		wantBlock     bool
+		wantMark      bool
 	}{
-		{name: "mismatch_blocks", responseModel: "gpt-4o-mini", wantBlock: true},
-		{name: "match_passes", responseModel: "gpt-5.1", wantBlock: false},
+		{name: "mismatch_blocks", turn: 1, responseModel: "gpt-4o-mini", wantBlock: true, wantMark: true},
+		{name: "match_passes", turn: 1, responseModel: "gpt-5.1", wantBlock: false},
+		// turn>=2 命中只打标：handler 换号会用首包重放第 1 轮，后续轮不能触发 failover。
+		{name: "turn2_mismatch_only_marks", turn: 2, responseModel: "gpt-4o-mini", wantBlock: false, wantMark: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,7 +343,7 @@ func TestUpstreamModelMismatch_WSHTTPBridge(t *testing.T) {
 
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 				context.Background(), c, account, "sk-test", payload, len(payload),
-				"gpt-5.1", "", "", "", 1,
+				"gpt-5.1", "", "", "", tc.turn,
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
 					return nil
@@ -296,7 +356,15 @@ func TestUpstreamModelMismatch_WSHTTPBridge(t *testing.T) {
 				require.Equal(t, "resp_bridge_model_1", result.RequestID)
 				require.Len(t, writes, 3)
 				require.Equal(t, "hello", gjson.GetBytes(writes[1], "delta").String())
-				require.Nil(t, GetOpsUpstreamModelMismatch(c))
+				mark := GetOpsUpstreamModelMismatch(c)
+				if !tc.wantMark {
+					require.Nil(t, mark)
+					return
+				}
+				require.NotNil(t, mark, "turn>=2 命中应只打标")
+				require.Equal(t, "gpt-5.1", mark.SentModel)
+				require.Equal(t, "gpt-4o-mini", mark.ResponseModel)
+				require.True(t, mark.Stream)
 				return
 			}
 
