@@ -1372,11 +1372,6 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 		requestIDArg = requestID
 	}
 
-	var upstreamResponseModelArg any
-	if log.UpstreamResponseModel != nil {
-		upstreamResponseModelArg = *log.UpstreamResponseModel
-	}
-
 	return usageLogInsertPrepared{
 		createdAt:      createdAt,
 		requestID:      requestID,
@@ -1436,7 +1431,7 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 			log.AccountStatsCost, // account_stats_cost
 			createdAt,
 			log.UpstreamModelMismatch,
-			upstreamResponseModelArg, // upstream_response_model
+			nullString(log.UpstreamResponseModel), // upstream_response_model
 		},
 	}
 }

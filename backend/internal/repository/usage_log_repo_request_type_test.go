@@ -255,7 +255,7 @@ func TestPrepareUsageLogInsert_PersistsUpstreamModelMismatch(t *testing.T) {
 	})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 	require.Contains(t, prepared.args, true)
-	require.Contains(t, prepared.args, "gpt-6-sol")
+	require.Contains(t, prepared.args, sql.NullString{String: "gpt-6-sol", Valid: true})
 }
 
 func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
