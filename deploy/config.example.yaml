@@ -173,6 +173,9 @@ gateway:
   # Enable Gemini upstream response header debug logs (default: false)
   # 是否开启 Gemini 上游响应头调试日志（默认 false）
   gemini_debug_response_headers: false
+  # Only record (do not block) when an OpenAI upstream returns a model different from the one sent (default: false = block and fail over)
+  # 上游返回的 model 与实际发送的 model 不一致时只记录不拦截（默认 false = 拦截并切换账号重试；线上误杀可设 true 止血，env GATEWAY_DISABLE_UPSTREAM_MODEL_MISMATCH_BLOCK）
+  disable_upstream_model_mismatch_block: false
   # Sora max request body size in bytes (0=use max_body_size)
   # Sora 请求体最大字节数（0=使用 max_body_size）
   sora_max_body_size: 268435456
