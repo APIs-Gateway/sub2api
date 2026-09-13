@@ -2186,6 +2186,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	responseID := ""
 	var finalResponse []byte
 	wroteDownstream := false
+	upstreamModelChecked := false
 	needModelReplace := originalModel != mappedModel
 	var mappedModelBytes []byte
 	if needModelReplace && mappedModel != "" {
@@ -2368,6 +2369,18 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 		if responseID == "" && eventResponseID != "" {
 			responseID = eventResponseID
+		}
+
+		// 上游模型不一致拦截：只看首个带 model 的事件，且必须在 replaceOpenAIWSMessageModel
+		// 改写之前比对，否则 B 已被覆盖。命中时上游仍会继续推本 turn 的事件，连接不能回池。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel(message); got != "" {
+				upstreamModelChecked = true
+				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, sentModelForCheck(mappedModel, originalModel), got, reqStream, !wroteDownstream, *usage); ferr != nil {
+					lease.MarkBroken()
+					return nil, ferr
+				}
+			}
 		}
 
 		isTokenEvent := isOpenAIWSTokenEvent(eventType)
@@ -3333,6 +3346,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		turnStart := time.Now()
 		wroteDownstream := false
+		upstreamModelChecked := false
 		if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); err != nil {
 			return nil, wrapOpenAIWSIngressTurnError(
 				"write_upstream",
@@ -3470,6 +3484,16 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 							ResponseBody:    append([]byte(nil), upstreamMessage...),
 							ResponseHeaders: cloneHeader(lease.HandshakeHeaders()),
 						}
+					}
+				}
+			}
+			// 上游模型不一致拦截：首个带 model 的事件、改写前比对；命中时本 turn 上游仍在推事件，连接不能回池。
+			if !upstreamModelChecked {
+				if got := extractUpstreamResponseModel(upstreamMessage); got != "" {
+					upstreamModelChecked = true
+					if ferr := s.checkUpstreamModelMismatch(c, account, responseID, sentModelForCheck(mappedModel, originalModel), got, reqStream, !wroteDownstream, usage); ferr != nil {
+						lease.MarkBroken()
+						return nil, ferr
 					}
 				}
 			}

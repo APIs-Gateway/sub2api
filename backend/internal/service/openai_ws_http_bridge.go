@@ -269,6 +269,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	lastEventType := ""
 	sawDone := false
 	wroteDownstream := false
+	upstreamModelChecked := false
 	clientDisconnected := false
 	mappedModel := ""
 	needModelReplace := false
@@ -363,6 +364,17 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &usage)
 		}
 		imageCounter.AddSSEData(upstreamMessage)
+
+		// 上游模型不一致拦截：首个带 model 的 SSE 事件、模型改写前比对；
+		// 未向客户端写出任何事件时才可中断并走 failover 换号。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel(upstreamMessage); got != "" {
+				upstreamModelChecked = true
+				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, sentModelForCheck(mappedModel, originalModel), got, reqStream, !wroteDownstream, usage); ferr != nil {
+					return nil, ferr
+				}
+			}
+		}
 
 		if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && strings.Contains(trimmedData, mappedModel) {
 			upstreamMessage = replaceOpenAIWSMessageModel(upstreamMessage, mappedModel, originalModel)
