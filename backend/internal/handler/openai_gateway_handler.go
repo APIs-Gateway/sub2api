@@ -481,6 +481,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			cyberBlockKeyHTTP = service.CyberSessionBlockKey(apiKey.ID, c, sessionHashBody)
 		}
 		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyHTTP, channelMapping.ToUsageFields(reqModel, ""), service.HashUsageRequestPayload(body))
+		// 上游模型不一致：先读 B（成功路径 RecordUsage 透传），再记审计行并清标（下一次尝试可重新打标）。
+		upstreamResponseModel := ""
+		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
+			upstreamResponseModel = mark.ResponseModel
+		}
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, err != nil, channelMapping.ToUsageFields(reqModel, ""), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -505,19 +511,20 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:             res,
-					APIKey:             apiKey,
-					User:               apiKey.User,
-					Account:            account,
-					Subscription:       subscription,
-					InboundEndpoint:    inboundEndpoint,
-					UpstreamEndpoint:   upstreamEndpoint,
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
-					RequestPayloadHash: requestPayloadHash,
-					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: channelMapping.ToUsageFields(reqModel, res.UpstreamModel),
-					CyberBlocked:       cyberBlocked,
+					Result:                res,
+					APIKey:                apiKey,
+					User:                  apiKey.User,
+					Account:               account,
+					Subscription:          subscription,
+					InboundEndpoint:       inboundEndpoint,
+					UpstreamEndpoint:      upstreamEndpoint,
+					UserAgent:             userAgent,
+					IPAddress:             clientIP,
+					RequestPayloadHash:    requestPayloadHash,
+					APIKeyService:         h.apiKeyService,
+					ChannelUsageFields:    channelMapping.ToUsageFields(reqModel, res.UpstreamModel),
+					CyberBlocked:          cyberBlocked,
+					UpstreamResponseModel: upstreamResponseModel,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.responses"),
@@ -999,6 +1006,12 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			cyberBlockKeyMsg = service.CyberSessionBlockKey(apiKey.ID, c, body)
 		}
 		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyMsg, channelMappingMsg.ToUsageFields(reqModel, ""), service.HashUsageRequestPayload(body))
+		// 上游模型不一致：先读 B（成功路径 RecordUsage 透传），再记审计行并清标（下一次尝试可重新打标）。
+		upstreamResponseModel := ""
+		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
+			upstreamResponseModel = mark.ResponseModel
+		}
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, err != nil, channelMappingMsg.ToUsageFields(reqModel, ""), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1023,19 +1036,20 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:             res,
-					APIKey:             apiKey,
-					User:               apiKey.User,
-					Account:            account,
-					Subscription:       subscription,
-					InboundEndpoint:    inboundEndpoint,
-					UpstreamEndpoint:   upstreamEndpoint,
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
-					RequestPayloadHash: requestPayloadHash,
-					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: channelMappingMsg.ToUsageFields(reqModel, res.UpstreamModel),
-					CyberBlocked:       cyberBlocked,
+					Result:                res,
+					APIKey:                apiKey,
+					User:                  apiKey.User,
+					Account:               account,
+					Subscription:          subscription,
+					InboundEndpoint:       inboundEndpoint,
+					UpstreamEndpoint:      upstreamEndpoint,
+					UserAgent:             userAgent,
+					IPAddress:             clientIP,
+					RequestPayloadHash:    requestPayloadHash,
+					APIKeyService:         h.apiKeyService,
+					ChannelUsageFields:    channelMappingMsg.ToUsageFields(reqModel, res.UpstreamModel),
+					CyberBlocked:          cyberBlocked,
+					UpstreamResponseModel: upstreamResponseModel,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.messages"),
@@ -1700,6 +1714,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				defer clearCyberPolicyTurnState(c)
 				releaseTurnSlots()
 				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, turnErr != nil, cyberBlockKey, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash)
+				// 上游模型不一致标记按 turn 生命周期：先读 B 供本 turn 的 RecordUsage 透传，
+				// 再记审计行并清标，turn N+1 才能重新打标。
+				upstreamResponseModel := ""
+				if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
+					upstreamResponseModel = mark.ResponseModel
+				}
+				h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, turnErr != nil, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash)
 				if service.GetOpsCyberPolicy(c) != nil {
 					cyberBlockedThisConn = true
 				}
@@ -1730,19 +1751,20 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
-						Result:             result,
-						APIKey:             apiKey,
-						User:               apiKey.User,
-						Account:            account,
-						Subscription:       subscription,
-						InboundEndpoint:    inboundEndpoint,
-						UpstreamEndpoint:   upstreamEndpoint,
-						UserAgent:          userAgent,
-						IPAddress:          clientIP,
-						RequestPayloadHash: requestPayloadHash,
-						APIKeyService:      h.apiKeyService,
-						ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
-						CyberBlocked:       cyberBlocked,
+						Result:                result,
+						APIKey:                apiKey,
+						User:                  apiKey.User,
+						Account:               account,
+						Subscription:          subscription,
+						InboundEndpoint:       inboundEndpoint,
+						UpstreamEndpoint:      upstreamEndpoint,
+						UserAgent:             userAgent,
+						IPAddress:             clientIP,
+						RequestPayloadHash:    requestPayloadHash,
+						APIKeyService:         h.apiKeyService,
+						ChannelUsageFields:    channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
+						CyberBlocked:          cyberBlocked,
+						UpstreamResponseModel: upstreamResponseModel,
 					}); err != nil {
 						reqLog.Error("openai.websocket_record_usage_failed",
 							zap.Int64("account_id", account.ID),
@@ -2741,6 +2763,67 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		if opsSvc != nil {
 			enqueueOpsErrorLog(opsSvc, buildCyberPolicyOpsErrorEntry(opsMeta, mark))
 		}
+	}()
+}
+
+// upstreamModelMismatchUsageRecorder 是 *service.OpenAIGatewayService 上审计行写入方法的最小接口，
+// 便于单测注入假实现验证调用与入参。
+type upstreamModelMismatchUsageRecorder interface {
+	RecordUpstreamModelMismatchUsageLog(ctx context.Context, in service.UpstreamModelMismatchUsageInput)
+}
+
+// recordUpstreamModelMismatchIfMarked 在每次 Forward 返回后调用：service 层因上游模型不一致
+// 触发 failover 时（result==nil，正常 RecordUsage 不会跑），补一行不计费的审计 usage_log，
+// 然后清标——failover 换号后的下一次尝试还要能重新打标。
+// forwardErrored=false 表示观察模式放行（或客户端已收到输出无法拦截），B 已由成功路径的
+// RecordUsage（UpstreamResponseModel）落库，这里只清标。
+// 注意调用顺序：成功路径若需读取 mark.ResponseModel 透传给 RecordUsage，必须在本方法之前读。
+func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+	var recorder upstreamModelMismatchUsageRecorder
+	if h.gatewayService != nil {
+		recorder = h.gatewayService
+	}
+	var apiKeySvc service.APIKeyQuotaUpdater
+	if h.apiKeyService != nil {
+		apiKeySvc = h.apiKeyService
+	}
+	recordUpstreamModelMismatchIfMarked(c, recorder, apiKeySvc, apiKey, account, subscription, model, forwardErrored, channelFields, requestPayloadHash)
+}
+
+func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelMismatchUsageRecorder, apiKeySvc service.APIKeyQuotaUpdater, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+	mark := service.GetOpsUpstreamModelMismatch(c)
+	if mark == nil {
+		return
+	}
+	// 先清标（同步）：无论是否落审计行，下一次尝试 / 下一 turn 都要能重新打标。
+	service.ClearOpsUpstreamModelMismatch(c)
+	if !forwardErrored || apiKey == nil || account == nil || recorder == nil {
+		return
+	}
+	var userAgent, clientIP string
+	if c.Request != nil {
+		userAgent = c.GetHeader("User-Agent")
+		clientIP = ip.GetClientIP(c)
+	}
+	in := service.UpstreamModelMismatchUsageInput{
+		APIKey:             apiKey,
+		Account:            account,
+		Subscription:       subscription,
+		RequestID:          c.Writer.Header().Get("X-Request-Id"),
+		Model:              model,
+		Mark:               *mark,
+		InboundEndpoint:    GetInboundEndpoint(c),
+		UpstreamEndpoint:   resolveOpenAIUpstreamEndpoint(c, account),
+		UserAgent:          userAgent,
+		IPAddress:          clientIP,
+		RequestPayloadHash: requestPayloadHash,
+		APIKeyService:      apiKeySvc,
+		ChannelUsageFields: channelFields,
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		recorder.RecordUpstreamModelMismatchUsageLog(ctx, in)
 	}()
 }
 
