@@ -909,8 +909,8 @@
     "<!-- 当前密钥 + 端点 -->",
     "<!-- 支持导入的客户端 -->",
     "<!-- 方式选择（下划线 tab） -->",
-    "`curl ${openaiBase.value}/chat/completions \\\\\\n -H \"Authorization: Bearer ${fullKey.value}\" \\\\\\n -H \"Content-Type: application/json\" \\\\\\n -d '{\"model\":\"gpt-5.5\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}'`",
-    "`from openai import OpenAI\\n\\nclient = OpenAI(\\n base_url=\"${openaiBase.value}\",\\n api_key=\"${fullKey.value}\",\\n)\\nresp = client.chat.completions.create(\\n model=\"gpt-5.5\",\\n messages=[{\"role\": \"user\", \"content\": \"你好\"}],\\n)\\nprint(resp.choices[0].message.content)`"
+    "`curl ${openaiBase.value}/chat/completions \\\\\\n -H \"Authorization: Bearer ${fullKey.value}\" \\\\\\n -H \"Content-Type: application/json\" \\\\\\n -d '{\"model\":\"gpt-5.6-sol\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}'`",
+    "`from openai import OpenAI\\n\\nclient = OpenAI(\\n base_url=\"${openaiBase.value}\",\\n api_key=\"${fullKey.value}\",\\n)\\nresp = client.chat.completions.create(\\n model=\"gpt-5.6-sol\",\\n messages=[{\"role\": \"user\", \"content\": \"你好\"}],\\n)\\nprint(resp.choices[0].message.content)`"
   ],
   "components/user/monitor/MonitorTimeline.vue": [
     "// 4 级高度 + 颜色双重编码：高=好+绿，短=坏+红，灰=未测试。",
