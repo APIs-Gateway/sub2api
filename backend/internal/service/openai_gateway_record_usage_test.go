@@ -394,6 +394,48 @@ func TestRecordUpstreamModelMismatchUsageLog_LongRequestIDKeepsSuffixWithinColum
 	require.True(t, strings.HasPrefix(log.RequestID, "local:rrr"), log.RequestID)
 }
 
+// 审计行 request_id：attempt 0（首次拦截）保持 <id>:mismatch:<accountID> 原格式；池模式同账号重试的
+// 第 n 次拦截追加 ":<n>"，否则同一请求同一账号的两行会撞 (request_id, api_key_id) 唯一索引被静默丢弃。
+func TestUpstreamModelMismatchAuditRequestID(t *testing.T) {
+	require.Equal(t, "req-1:mismatch:9", upstreamModelMismatchAuditRequestID("req-1", 9, 0))
+	require.Equal(t, "req-1:mismatch:9:1", upstreamModelMismatchAuditRequestID("req-1", 9, 1))
+	require.Equal(t, "req-1:mismatch:9:2", upstreamModelMismatchAuditRequestID("req-1", 9, 2))
+	require.Equal(t, "req-1:mismatch:9", upstreamModelMismatchAuditRequestID("req-1", 9, -1), "非法 attempt 按 0 处理")
+
+	longID := strings.Repeat("r", 70)
+	got := upstreamModelMismatchAuditRequestID(longID, 9, 2)
+	require.Equal(t, usageLogRequestIDMaxBytes, len(got))
+	require.True(t, strings.HasSuffix(got, ":mismatch:9:2"), got)
+	require.True(t, strings.HasPrefix(got, "rrr"), got)
+	got0 := upstreamModelMismatchAuditRequestID(longID, 9, 0)
+	require.Equal(t, usageLogRequestIDMaxBytes, len(got0))
+	require.True(t, strings.HasSuffix(got0, ":mismatch:9"), got0)
+	require.NotEqual(t, got, got0)
+}
+
+func TestRecordUpstreamModelMismatchUsageLog_AttemptSuffixDistinguishesSameAccountRetries(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	in := UpstreamModelMismatchUsageInput{
+		APIKey:    &APIKey{ID: 2, User: &User{ID: 1}},
+		Account:   &Account{ID: 9, Platform: PlatformOpenAI},
+		RequestID: "req-mm",
+		Model:     "gpt-5.6-sol",
+		Mark:      UpstreamModelMismatchMark{SentModel: "gpt-5.6-sol", ResponseModel: "gpt-6-sol", AccountID: 9},
+	}
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), in)
+	require.Equal(t, 1, usageRepo.calls)
+	require.Equal(t, "req-mm:mismatch:9", usageRepo.lastLog.RequestID, "首次拦截保持原格式")
+
+	in.Attempt = 1
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), in)
+	require.Equal(t, 2, usageRepo.calls)
+	require.Equal(t, "req-mm:mismatch:9:1", usageRepo.lastLog.RequestID, "同账号第 1 次重试再被拦截：request_id 不同键")
+	require.Zero(t, usageRepo.lastLog.TotalCost)
+	require.True(t, usageRepo.lastLog.UpstreamModelMismatch)
+}
+
 func TestRecordUsage_TruncatesUpstreamResponseModelToColumnWidth(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)

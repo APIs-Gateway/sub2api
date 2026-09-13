@@ -213,5 +213,13 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	body, _ := json.Marshal(map[string]any{"error": map[string]any{
 		"type": "upstream_error", "code": "upstream_model_mismatch", "message": upstreamModelMismatchMessage,
 	}})
-	return &UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: body, ResponseHeaders: headers}
+	// 池模式账号（中转自身是一池多 key，一个凭证背后有很多上游节点）：偷换模型的多半只是池里
+	// 某个坏节点，立刻切号并降权会把整个凭证一起摘掉。标 RetryableOnSameAccount 后走 handler
+	// 现有的池模式分支：同账号最多重试 pool_mode_retry_count 次，用尽再切号 + 降权。
+	// 不把 502 加进 defaultPoolModeRetryableStatusCodes——那会让所有 502 都同账号重试。
+	// 非池模式（单 key / OAuth）保持直接切号。
+	return &UpstreamFailoverError{
+		StatusCode: http.StatusBadGateway, ResponseBody: body, ResponseHeaders: headers,
+		RetryableOnSameAccount: account != nil && account.IsPoolMode(),
+	}
 }

@@ -135,3 +135,33 @@ func TestCheckUpstreamModelMismatch_GrokObserveOnly(t *testing.T) {
 	require.Equal(t, "grok-4.3", mark.SentModel)
 	require.Equal(t, "grok-4.3-0709", mark.ResponseModel)
 }
+
+// 池模式账号（中转自身是一池多 key）：单个内部节点偷换模型不应立刻把整个凭证换掉并降权，
+// 先走 handler 现有的同账号重试（pool_mode_retry_count 次）；非池模式 / 无账号保持直接切号。
+func TestCheckUpstreamModelMismatch_PoolModeRetryableOnSameAccount(t *testing.T) {
+	cases := []struct {
+		name    string
+		account *Account
+		want    bool
+	}{
+		{"pool mode", &Account{ID: 7, Type: AccountTypeAPIKey, Platform: PlatformOpenAI, Credentials: map[string]any{"pool_mode": true}}, true},
+		{"pool mode off", &Account{ID: 7, Type: AccountTypeAPIKey, Platform: PlatformOpenAI, Credentials: map[string]any{"pool_mode": false}}, false},
+		{"api key without pool flag", &Account{ID: 7, Type: AccountTypeAPIKey, Platform: PlatformOpenAI}, false},
+		{"oauth", &Account{ID: 7, Type: AccountTypeOAuth, Platform: PlatformOpenAI}, false},
+		{"nil account", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			err := svc.checkUpstreamModelMismatch(c, tc.account, "req", "gpt-5.6-sol", "gpt-6-sol", true, true, OpenAIUsage{})
+			require.NotNil(t, err, "不一致仍必须拦截并返回 failover")
+			require.Equal(t, http.StatusBadGateway, err.StatusCode)
+			require.Equal(t, tc.want, err.RetryableOnSameAccount)
+			require.False(t, err.RequestScopedTransient)
+			mark := GetOpsUpstreamModelMismatch(c)
+			require.NotNil(t, mark)
+			require.True(t, mark.Blocked)
+		})
+	}
+}

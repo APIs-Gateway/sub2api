@@ -2794,6 +2794,25 @@ func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Contex
 	recordUpstreamModelMismatchIfMarked(c, recorder, apiKeySvc, apiKey, account, subscription, model, channelFields, requestPayloadHash)
 }
 
+// upstreamModelMismatchAttemptsKey 在 gin context 里存 map[int64]int：同一请求内每个账号已落审计行的
+// 被拦截次数。池模式同账号重试时同一账号会连续被拦截多次，每行 request_id 需要不同的 attempt 后缀。
+const upstreamModelMismatchAttemptsKey = "ops_upstream_model_mismatch_attempts"
+
+// nextUpstreamModelMismatchAttempt 返回该账号本次拦截的 attempt 序号（从 0 起）并累加计数。
+func nextUpstreamModelMismatchAttempt(c *gin.Context, accountID int64) int {
+	var attempts map[int64]int
+	if v, ok := c.Get(upstreamModelMismatchAttemptsKey); ok {
+		attempts, _ = v.(map[int64]int)
+	}
+	if attempts == nil {
+		attempts = map[int64]int{}
+		c.Set(upstreamModelMismatchAttemptsKey, attempts)
+	}
+	attempt := attempts[accountID]
+	attempts[accountID] = attempt + 1
+	return attempt
+}
+
 func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelMismatchUsageRecorder, apiKeySvc service.APIKeyQuotaUpdater, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string) {
 	mark := service.GetOpsUpstreamModelMismatch(c)
 	if mark == nil {
@@ -2804,6 +2823,8 @@ func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelM
 	if !mark.Blocked || apiKey == nil || account == nil || recorder == nil {
 		return
 	}
+	// 池模式同账号重试：同一账号在同一请求内可能连续被拦截多次，按账号计数让每行 request_id 不同键。
+	attempt := nextUpstreamModelMismatchAttempt(c, account.ID)
 	var userAgent, clientIP string
 	if c.Request != nil {
 		userAgent = c.GetHeader("User-Agent")
@@ -2823,6 +2844,7 @@ func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelM
 		RequestPayloadHash: requestPayloadHash,
 		APIKeyService:      apiKeySvc,
 		ChannelUsageFields: channelFields,
+		Attempt:            attempt,
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

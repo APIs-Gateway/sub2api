@@ -24,7 +24,8 @@
 - 只在客户端尚未收到任何字节时拦截：返回 `UpstreamFailoverError`（502，`error.code = upstream_model_mismatch`），走现有切号重试；全部账号耗尽后客户端收到 502（流式已开始则补 `response.failed`）。
 - 客户端已收到输出（上游把 `model` 放在 `response.completed` 才首次给出）时不拦截，只打标记录。
 - WS v2 的 HTTP 桥与 ingress 代理只在会话第 1 轮拦截（后续轮次 handler 会用首条消息重放，拦截会导致重复输出），其余轮次只记录。
-- 被拦截的尝试记一行 `usage_logs`：`upstream_model_mismatch = true`、`upstream_response_model = B`、`total_cost / actual_cost = 0`、不扣余额 / 订阅 / 配额；token 原样记录；`request_id` 为 `<原 request_id>:mismatch:<account_id>`，避免与随后成功重试的行撞唯一索引与计费去重键。
+- 池模式账号（`pool_mode = true`，中转自身是一池多 key）：偷换模型的多半只是池里某个坏节点，所以 `UpstreamFailoverError` 带 `RetryableOnSameAccount`，走 handler 现有的池模式分支——先在同一账号上重试，最多 `pool_mode_retry_count` 次（默认 3），用尽后再切号并降权。`502` 不加入 `pool_mode_retry_status_codes` 默认列表。非池模式账号与 WS v2 路径（HTTP 桥 / ingress 代理）没有同账号重试机制，行为不变，直接切号。
+- 被拦截的尝试记一行 `usage_logs`：`upstream_model_mismatch = true`、`upstream_response_model = B`、`total_cost / actual_cost = 0`、不扣余额 / 订阅 / 配额；token 原样记录；`request_id` 为 `<原 request_id>:mismatch:<account_id>`，避免与随后成功重试的行撞唯一索引与计费去重键。池模式同账号重试后再次被拦截的第 n 次（n ≥ 1）记为 `<原 request_id>:mismatch:<account_id>:<n>`，同一账号的多行也不撞键；超过 64 字节时截原 request_id 部分、后缀保留。
 - 成功路径（观察模式、晚到的 `model`、grok 观察）照常计费，`request_id` 不加后缀，但该行同样标记 `upstream_model_mismatch = true` 并写 `upstream_response_model = B`，后台「仅不一致」筛选与徽标可见；是否计费看成本列而不是标记列。
 
 ## 开关

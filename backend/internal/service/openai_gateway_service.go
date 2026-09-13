@@ -7945,6 +7945,9 @@ type OpenAIRecordUsageInput struct {
 	// UpstreamModelMismatchBlocked 为 true 时：本次尝试因上游模型不一致被拦截（审计行），强制零成本、
 	// 不扣费、不占 billing 去重键，request_id 加 ":mismatch:<accountID>" 后缀。
 	UpstreamModelMismatchBlocked bool
+	// UpstreamModelMismatchAttempt 是同一请求内该账号第几次（从 0 起）被拦截：池模式同账号重试时
+	// 每次拦截各落一行，attempt≥1 的行 request_id 再追加 ":<attempt>"，否则撞唯一索引被静默丢弃。
+	UpstreamModelMismatchAttempt int
 	// UpstreamResponseModel 非空时写入 usage_logs.upstream_response_model，并把该行标记为
 	// upstream_model_mismatch=true（观察模式 / 晚到 model 的成功路径也会带，照常计费，仅用于后台筛选）。
 	UpstreamResponseModel string
@@ -8064,6 +8067,9 @@ type UpstreamModelMismatchUsageInput struct {
 	RequestPayloadHash string
 	APIKeyService      APIKeyQuotaUpdater
 	ChannelUsageFields
+	// Attempt：同一请求内该账号第几次（从 0 起）被拦截，由 handler 按账号计数；
+	// 池模式同账号重试再次被拦截时 ≥1，审计行 request_id 据此加 ":<attempt>" 后缀区分。
+	Attempt int
 }
 
 // usage_logs.upstream_response_model 为 VARCHAR(100)；usage_logs.request_id 为 VARCHAR(64)。
@@ -8072,10 +8078,14 @@ const (
 	usageLogRequestIDMaxBytes             = 64
 )
 
-// upstreamModelMismatchAuditRequestID 生成审计行 request_id：<原 request_id>:mismatch:<accountID>。
-// 总长超过列宽时截原 request_id 部分，后缀必须保留（它是与 failover 重试成功行不同键的依据）。
-func upstreamModelMismatchAuditRequestID(requestID string, accountID int64) string {
+// upstreamModelMismatchAuditRequestID 生成审计行 request_id：<原 request_id>:mismatch:<accountID>；
+// attempt≥1（池模式同账号重试后再次被拦截）再追加 ":<attempt>"，attempt 0 保持原格式不变。
+// 总长超过列宽时截原 request_id 部分，后缀必须保留（它是与 failover 重试成功行 / 同账号其他尝试不同键的依据）。
+func upstreamModelMismatchAuditRequestID(requestID string, accountID int64, attempt int) string {
 	suffix := ":mismatch:" + strconv.FormatInt(accountID, 10)
+	if attempt > 0 {
+		suffix += ":" + strconv.Itoa(attempt)
+	}
 	if len(requestID)+len(suffix) > usageLogRequestIDMaxBytes {
 		requestID = truncateString(requestID, usageLogRequestIDMaxBytes-len(suffix))
 	}
@@ -8112,6 +8122,7 @@ func (s *OpenAIGatewayService) RecordUpstreamModelMismatchUsageLog(ctx context.C
 		APIKeyService:                in.APIKeyService,
 		ChannelUsageFields:           in.ChannelUsageFields,
 		UpstreamModelMismatchBlocked: true,
+		UpstreamModelMismatchAttempt: in.Attempt,
 		UpstreamResponseModel:        in.Mark.ResponseModel,
 	}); err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "upstream model mismatch usage record failed: request_id=%s err=%v", in.RequestID, err)
@@ -8274,8 +8285,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if input.UpstreamModelMismatchBlocked {
 		// 审计行与随后 failover 重试成功的真实请求共享同一个 ctx request id；若同键落库，
 		// usage_logs 的 (request_id, api_key_id) 唯一索引会把第二行静默丢掉。这里给审计行加
-		// ":mismatch:<accountID>" 后缀保证键不同，同时保留原 request id 作前缀便于后台检索。
-		requestID = upstreamModelMismatchAuditRequestID(requestID, account.ID)
+		// ":mismatch:<accountID>" 后缀保证键不同，同时保留原 request id 作前缀便于后台检索；
+		// 池模式同账号重试的第 n 次拦截再追加 ":<n>"，同账号多行也不撞键。
+		requestID = upstreamModelMismatchAuditRequestID(requestID, account.ID, input.UpstreamModelMismatchAttempt)
 	}
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
