@@ -245,13 +245,14 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockKeyChat = service.CyberSessionBlockKey(apiKey.ID, c, body)
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyChat, effectiveMapping.ToUsageFields(reqModel, ""), service.HashUsageRequestPayload(body), scheduleDecision)
+		requestPayloadHash := service.HashUsageRequestPayload(body)
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyChat, effectiveMapping.ToUsageFields(reqModel, ""), requestPayloadHash, scheduleDecision)
 		// 上游模型不一致：先读 B（成功路径 RecordUsage 透传），再记审计行并清标（下一次尝试可重新打标）。
 		upstreamResponseModel := ""
 		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
 			upstreamResponseModel = mark.ResponseModel
 		}
-		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, err != nil, effectiveMapping.ToUsageFields(reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, effectiveMapping.ToUsageFields(reqModel, ""), requestPayloadHash)
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)

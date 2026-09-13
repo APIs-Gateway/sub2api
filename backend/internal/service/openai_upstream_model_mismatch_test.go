@@ -81,3 +81,31 @@ func TestCheckUpstreamModelMismatch_EnabledReturnsFailover(t *testing.T) {
 	require.Equal(t, "gpt-5.6-sol", mark.SentModel)
 	require.Equal(t, "gpt-6-sol", mark.ResponseModel)
 }
+
+// Blocked 只在 checkUpstreamModelMismatch 真正返回 failover（本次尝试被拦截）时为 true；
+// 开关关闭 / canBlock=false 仍打标但 Blocked=false，handler 据此决定是否落审计行。
+func TestCheckUpstreamModelMismatch_SetsBlockedOnlyWhenReturningFailover(t *testing.T) {
+	cases := []struct {
+		name        string
+		disable     bool
+		canBlock    bool
+		wantErr     bool
+		wantBlocked bool
+	}{
+		{"blocked", false, true, true, true},
+		{"switch disabled", true, true, false, false},
+		{"cannot block", false, false, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			svc.cfg.Gateway.DisableUpstreamModelMismatchBlock = tc.disable
+			err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", "gpt-5.6-sol", "gpt-6-sol", true, tc.canBlock, OpenAIUsage{})
+			require.Equal(t, tc.wantErr, err != nil)
+			mark := GetOpsUpstreamModelMismatch(c)
+			require.NotNil(t, mark)
+			require.Equal(t, tc.wantBlocked, mark.Blocked)
+		})
+	}
+}

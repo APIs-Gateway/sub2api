@@ -71,6 +71,10 @@ type UpstreamModelMismatchMark struct {
 	ResponseModel string
 	AccountID     int64
 	Stream        bool
+	// Blocked 为 true 表示本次尝试因模型不一致被 checkUpstreamModelMismatch 拦截并返回 failover
+	//（handler 据此落审计行）；开关关闭 / canBlock=false 的观察性打标为 false。
+	// 标记首个生效，所以必须在打标时就带上，不能事后补写。
+	Blocked bool
 	// 上游在被拦截前已报的 usage（通常为 0；非流式路径可能非 0），仅用于审计行 token 字段，不计费。
 	Usage OpenAIUsage
 }
@@ -110,7 +114,8 @@ func (s *OpenAIGatewayService) upstreamModelMismatchBlockEnabled() bool {
 }
 
 // checkUpstreamModelMismatch 一站式：比对 + 打标 + 记 ops 错误 + 构造 failover error。
-// 返回 nil 表示一致/豁免/开关关闭/canBlock=false（后两种仍打标，供 RecordUsage 落 upstream_response_model）。
+// 返回 nil 表示一致/豁免/开关关闭/canBlock=false（后两种仍打标但 Blocked=false，供 RecordUsage 落 upstream_response_model）；
+// 返回非 nil 时 mark.Blocked=true，handler 据此落审计行。
 // canBlock=false 用于「客户端已收到输出、无法收回」的场景（上游把 model 放在 response.completed 才给）。
 func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	c *gin.Context, account *Account, upstreamRequestID string,
@@ -123,10 +128,10 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	if account != nil {
 		accountID, accountName, platform = account.ID, account.Name, account.Platform
 	}
-	MarkOpsUpstreamModelMismatch(c, UpstreamModelMismatchMark{
-		SentModel: sentModel, ResponseModel: responseModel, AccountID: accountID, Stream: stream, Usage: usage,
-	})
 	blocked := canBlock && s.upstreamModelMismatchBlockEnabled()
+	MarkOpsUpstreamModelMismatch(c, UpstreamModelMismatchMark{
+		SentModel: sentModel, ResponseModel: responseModel, AccountID: accountID, Stream: stream, Blocked: blocked, Usage: usage,
+	})
 	logger.L().Warn("openai.upstream_model_mismatch",
 		zap.Int64("account_id", accountID), zap.String("sent_model", sentModel),
 		zap.String("response_model", responseModel), zap.Bool("blocked", blocked), zap.Bool("can_block", canBlock))

@@ -68,20 +68,24 @@ func upstreamModelMismatchTestFixtures() (*service.APIKey, *service.Account, *se
 	return apiKey, account, sub
 }
 
+func requireNeverRecorded(t *testing.T, rec *fakeUpstreamModelMismatchRecorder, above int, msg string) {
+	t.Helper()
+	require.Never(t, func() bool { return rec.callCount() > above }, 100*time.Millisecond, 10*time.Millisecond, msg)
+}
+
 // 未打标：不调用 gatewayService，也不改 context。
 func TestRecordUpstreamModelMismatchIfMarked_NoMarkNoop(t *testing.T) {
 	c := newUpstreamModelMismatchTestContext(t)
 	apiKey, account, sub := upstreamModelMismatchTestFixtures()
 	rec := newFakeUpstreamModelMismatchRecorder()
 
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", true, service.ChannelUsageFields{}, "hash-1")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "hash-1")
 
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
-	require.Never(t, func() bool { return rec.callCount() > 0 }, 100*time.Millisecond, 10*time.Millisecond,
-		"gatewayService must not be called when no mark is present")
+	requireNeverRecorded(t, rec, 0, "gatewayService must not be called when no mark is present")
 }
 
-// 打标 + forward 报错（被拦截走 failover）：异步调用一次，入参 Mark/元数据正确，随后标记被清。
+// 打标且 Blocked=true（本次尝试被拦截走 failover）：异步调用一次，入参 Mark/元数据正确，随后标记被清。
 func TestRecordUpstreamModelMismatchIfMarked_RecordsAndClears(t *testing.T) {
 	c := newUpstreamModelMismatchTestContext(t)
 	apiKey, account, sub := upstreamModelMismatchTestFixtures()
@@ -91,12 +95,13 @@ func TestRecordUpstreamModelMismatchIfMarked_RecordsAndClears(t *testing.T) {
 		ResponseModel: "gpt-4.1-mini",
 		AccountID:     account.ID,
 		Stream:        true,
+		Blocked:       true,
 		Usage:         service.OpenAIUsage{InputTokens: 11, OutputTokens: 2},
 	}
 	service.MarkOpsUpstreamModelMismatch(c, mark)
 	channelFields := service.ChannelUsageFields{}
 
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", true, channelFields, "hash-2")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", channelFields, "hash-2")
 
 	// 清标必须是同步的：failover 换号后的下一次 Forward 要能重新打标。
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
@@ -115,49 +120,48 @@ func TestRecordUpstreamModelMismatchIfMarked_RecordsAndClears(t *testing.T) {
 	require.Equal(t, channelFields, in.ChannelUsageFields)
 
 	// 标记已清：再调一次不会再记（每次拦截只落一行）。
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", true, channelFields, "hash-2")
-	require.Never(t, func() bool { return rec.callCount() > 1 }, 100*time.Millisecond, 10*time.Millisecond)
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", channelFields, "hash-2")
+	requireNeverRecorded(t, rec, 1, "cleared mark must not be recorded again")
 }
 
-// 打标但 forward 成功（观察模式放行 / 客户端已收到输出无法拦截）：
-// B 由成功路径的 RecordUsage 落库，这里不记审计行，只清标。
-func TestRecordUpstreamModelMismatchIfMarked_ObserveModeSuccessDoesNotRecord(t *testing.T) {
+// 打标但 Blocked=false（观察模式放行 / 客户端已收到输出无法拦截）：
+// 即使随后 forward 因其他原因报错，也不记审计行，只清标；B 由成功/部分结果路径的 RecordUsage 落库。
+func TestRecordUpstreamModelMismatchIfMarked_UnblockedMarkDoesNotRecord(t *testing.T) {
 	c := newUpstreamModelMismatchTestContext(t)
 	apiKey, account, sub := upstreamModelMismatchTestFixtures()
 	rec := newFakeUpstreamModelMismatchRecorder()
 	service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{
-		SentModel: "gpt-5", ResponseModel: "gpt-4.1-mini", AccountID: account.ID,
+		SentModel: "gpt-5", ResponseModel: "gpt-4.1-mini", AccountID: account.ID, Blocked: false,
 	})
 
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", false, service.ChannelUsageFields{}, "hash-3")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "hash-3")
 
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
-	require.Never(t, func() bool { return rec.callCount() > 0 }, 100*time.Millisecond, 10*time.Millisecond,
-		"observe-mode success must not produce an audit row")
+	requireNeverRecorded(t, rec, 0, "unblocked (observe-mode) mark must not produce an audit row")
 }
 
-// 打标 + forward 报错但缺 apiKey/account（无法归属计费主体）：只清标，不记。
+// Blocked=true 但缺 apiKey/account（无法归属计费主体）：只清标，不记。
 func TestRecordUpstreamModelMismatchIfMarked_MissingSubjectClearsOnly(t *testing.T) {
 	c := newUpstreamModelMismatchTestContext(t)
 	_, account, _ := upstreamModelMismatchTestFixtures()
 	rec := newFakeUpstreamModelMismatchRecorder()
-	service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "a", ResponseModel: "b"})
+	service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "a", ResponseModel: "b", Blocked: true})
 
-	recordUpstreamModelMismatchIfMarked(c, rec, nil, nil, account, nil, "gpt-5", true, service.ChannelUsageFields{}, "")
+	recordUpstreamModelMismatchIfMarked(c, rec, nil, nil, account, nil, "gpt-5", service.ChannelUsageFields{}, "")
 
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
-	require.Never(t, func() bool { return rec.callCount() > 0 }, 100*time.Millisecond, 10*time.Millisecond)
+	requireNeverRecorded(t, rec, 0, "missing apiKey must not record")
 }
 
 // handler 方法包装：gatewayService 为 nil 时不 panic，且仍然清标（照 cyber 测试的 nil services 约定）。
 func TestOpenAIGatewayHandler_RecordUpstreamModelMismatchIfMarked_NilServicesClearMark(t *testing.T) {
 	c := newUpstreamModelMismatchTestContext(t)
 	apiKey, account, sub := upstreamModelMismatchTestFixtures()
-	service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "a", ResponseModel: "b"})
+	service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "a", ResponseModel: "b", Blocked: true})
 
 	h := &OpenAIGatewayHandler{}
 	require.NotPanics(t, func() {
-		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, sub, "gpt-5", true, service.ChannelUsageFields{}, "")
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "")
 	})
 	require.Nil(t, service.GetOpsUpstreamModelMismatch(c))
 }
