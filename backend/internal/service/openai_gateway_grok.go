@@ -1,10 +1,12 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -119,6 +121,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 
 	s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
 
+	upstreamRequestID := firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
 	var usage *OpenAIUsage
 	var firstTokenMs *int
 	responseID := ""
@@ -128,6 +131,12 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			maxLineSize = s.cfg.Gateway.MaxLineSize
 		}
 		resp.Body = newGrokResponsesBillingPingFilterBody(resp.Body, account, maxLineSize)
+		// 上游模型不一致拦截：把流交给通用 Responses 处理器之前，只预读 preamble
+		// （response.created / in_progress）拿 response.model 比对；此时客户端零输出，
+		// 命中直接 failover；预读的字节原样回放给后续处理器。
+		if ferr := s.checkGrokStreamUpstreamModelMismatch(c, account, resp, upstreamRequestID, upstreamModel, originalModel); ferr != nil {
+			return nil, ferr
+		}
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
 		if err != nil {
 			return nil, err
@@ -136,6 +145,19 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		firstTokenMs = streamResult.firstTokenMs
 		responseID = strings.TrimSpace(streamResult.responseID)
 	} else {
+		// 上游模型不一致拦截：整包读完先比对，再交给通用非流式处理器（其内部会再读一次 body）。
+		body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+		if err != nil {
+			return nil, err
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		if got := grokUpstreamResponseModelFromBody(resp.Header, body); got != "" {
+			usageValue, _ := extractOpenAIUsageFromJSONBytes(body)
+			if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestID,
+				sentModelForCheck(upstreamModel, originalModel), got, false, true, usageValue); ferr != nil {
+				return nil, ferr
+			}
+		}
 		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 		if err != nil {
 			return nil, err
@@ -161,6 +183,72 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		Duration:        time.Since(startTime),
 		FirstTokenMs:    firstTokenMs,
 	}, nil
+}
+
+// grokUpstreamModelPeekMaxBytes 限制流式预读的字节数：preamble 事件很小，超出即放弃预读，
+// 交给通用处理器（其自身也有同样的比对钩子）。
+const grokUpstreamModelPeekMaxBytes = 64 * 1024
+
+// grokUpstreamResponseModelFromBody 从非流式整包里取 B：JSON 整包取 response.model / 顶层 model；
+// 上游即便 stream=false 也可能回 SSE（handleSSEToJSON 场景），此时取首个带 model 的 data 事件。
+func grokUpstreamResponseModelFromBody(header http.Header, body []byte) string {
+	if isEventStreamResponse(header) || bodyHasSSEFraming(body) {
+		model, _ := peekResponsesSSEPreambleModel(bufio.NewReader(bytes.NewReader(body)), len(body)+1)
+		return model
+	}
+	return extractUpstreamResponseModel(body)
+}
+
+// peekResponsesSSEPreambleModel 逐行预读 Responses SSE，直到首个带 model 的 data 事件、
+// 首个非 preamble 事件、[DONE]、超出 maxBytes 或 EOF 为止。返回找到的 model（可能为空）
+// 与已消费的原始字节，调用方负责回放。
+func peekResponsesSSEPreambleModel(r *bufio.Reader, maxBytes int) (string, []byte) {
+	consumed := make([]byte, 0, 1024)
+	for {
+		line, err := r.ReadBytes('\n')
+		consumed = append(consumed, line...)
+		if payload, ok := extractOpenAISSEDataLine(strings.TrimRight(string(line), "\r\n")); ok {
+			payload = strings.TrimSpace(payload)
+			if payload == "[DONE]" {
+				return "", consumed
+			}
+			if payload != "" {
+				if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
+					return got, consumed
+				}
+				if !openAIStreamEventIsPreamble(gjson.Get(payload, "type").String()) {
+					return "", consumed
+				}
+			}
+		}
+		if err != nil || len(consumed) >= maxBytes {
+			return "", consumed
+		}
+	}
+}
+
+type grokPeekedBody struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (b *grokPeekedBody) Close() error { return b.closer.Close() }
+
+// checkGrokStreamUpstreamModelMismatch 预读流式 preamble 做上游模型比对；无论结果如何，
+// 预读的字节都通过 resp.Body 回放，后续处理器看到的字节流与未预读时完全一致。
+func (s *OpenAIGatewayService) checkGrokStreamUpstreamModelMismatch(
+	c *gin.Context, account *Account, resp *http.Response,
+	upstreamRequestID, upstreamModel, originalModel string,
+) *UpstreamFailoverError {
+	original := resp.Body
+	reader := bufio.NewReader(original)
+	got, consumed := peekResponsesSSEPreambleModel(reader, grokUpstreamModelPeekMaxBytes)
+	resp.Body = &grokPeekedBody{Reader: io.MultiReader(bytes.NewReader(consumed), reader), closer: original}
+	if got == "" {
+		return nil
+	}
+	return s.checkUpstreamModelMismatch(c, account, upstreamRequestID,
+		sentModelForCheck(upstreamModel, originalModel), got, true, true, OpenAIUsage{})
 }
 
 func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {

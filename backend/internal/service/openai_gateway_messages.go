@@ -537,6 +537,14 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 		return nil, fmt.Errorf("upstream response failed: %s", message)
 	}
 
+	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
+	if got := strings.TrimSpace(finalResponse.Model); got != "" {
+		if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
+			return nil, ferr
+		}
+	}
+
 	// When the terminal event has an empty output array, reconstruct from
 	// accumulated delta events so the client receives the full content.
 	acc.SupplementResponseOutput(finalResponse)
@@ -812,6 +820,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	clientOutputStarted := false
 	var streamFailoverErr error
 	var streamNonFailoverErr error
+	// 上游模型不一致只在首个带 model 的事件上比对一次（通常是 response.created）。
+	upstreamModelChecked := false
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -936,6 +946,19 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				}
 				streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", errMsg)
 				return true
+			}
+		}
+
+		// 上游模型不一致拦截：必须在事件转成 Anthropic SSE 并写出之前比对。
+		// 客户端尚无输出时按 failover 切号，零泄漏；已有输出时仅打标不中断。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
+				upstreamModelChecked = true
+				if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+					sentModelForCheck(upstreamModel, originalModel), got, true, !clientOutputStarted, usage); ferr != nil {
+					streamFailoverErr = ferr
+					return true
+				}
 			}
 		}
 

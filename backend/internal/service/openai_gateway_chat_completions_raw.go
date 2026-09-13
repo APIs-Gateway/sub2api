@@ -296,6 +296,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	clientOutputStarted := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
+	// 上游模型不一致只在首个带 model 的 chunk 上比对一次。
+	upstreamModelChecked := false
 
 	writeLine := func(line string) {
 		if clientDisconnected {
@@ -342,6 +344,17 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				if firstTokenMs == nil && !usageOnlyChunk {
 					elapsed := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &elapsed
+				}
+				// 上游模型不一致拦截：在写出（含 pendingLines 暂存）之前比对；
+				// 客户端尚无输出时按 failover 切号，零泄漏。
+				if !upstreamModelChecked {
+					if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
+						upstreamModelChecked = true
+						if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+							sentModelForCheck(upstreamModel, originalModel), got, true, !clientOutputStarted, usage); ferr != nil {
+							return nil, ferr
+						}
+					}
 				}
 			}
 		}
@@ -467,6 +480,13 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	}
 
 	responseModel := gjson.GetBytes(respBody, "model").String()
+	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
+	if got := strings.TrimSpace(responseModel); got != "" {
+		if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
+			return nil, ferr
+		}
+	}
 	if requiresBillableGrokChatUsage(account, billingModel, upstreamModel, responseModel) && !hasBillableGrokChatUsage(usage) {
 		upstreamRequestID := firstNonEmpty(requestID, resp.Header.Get("xai-request-id"))
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)

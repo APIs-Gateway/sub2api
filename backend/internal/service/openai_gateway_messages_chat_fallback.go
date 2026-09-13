@@ -226,9 +226,9 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	}
 
 	if clientStream {
-		return s.streamChatCompletionsAsAnthropic(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, directBridge)
+		return s.streamChatCompletionsAsAnthropic(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, directBridge)
 	}
-	return s.bufferChatCompletionsAsAnthropic(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, directBridge)
+	return s.bufferChatCompletionsAsAnthropic(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, directBridge)
 }
 
 func shouldUseDirectAnthropicChatBridge(account *Account) bool {
@@ -242,6 +242,7 @@ func shouldUseDirectAnthropicChatBridge(account *Account) bool {
 func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	originalModel string,
 	billingModel string,
 	upstreamModel string,
@@ -276,6 +277,14 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 		usage = parsed
 	}
 
+	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
+	if got := extractUpstreamResponseModel(respBody); got != "" {
+		if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
+			return nil, ferr
+		}
+	}
+
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
@@ -297,6 +306,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	originalModel string,
 	billingModel string,
 	upstreamModel string,
@@ -336,6 +346,8 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawDone := false
+	// 上游模型不一致只在首个带 model 的 chunk 上比对一次。
+	upstreamModelChecked := false
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -361,6 +373,18 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 
 		if u := extractCCStreamUsage(payload); u != nil {
 			usage = *u
+		}
+
+		// 上游模型不一致拦截：在 chunk 转成 Anthropic 事件并写出之前比对；
+		// 响应头尚未写出即客户端零输出，此时按 failover 切号。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
+				upstreamModelChecked = true
+				if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+					sentModelForCheck(upstreamModel, originalModel), got, true, !headersWritten, usage); ferr != nil {
+					return nil, ferr
+				}
+			}
 		}
 
 		var chunk apicompat.ChatCompletionsChunk
