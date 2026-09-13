@@ -32,9 +32,11 @@ var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8})$`
 //  2. got == sent + "-" + 日期快照（YYYY-MM-DD / YYYYMMDD）；sent 以 -latest 结尾且 got 以其前缀开头。
 //  3. provider 前缀容忍：去掉 "provider/" 前缀后（lastOpenAIModelSegment）再做 1、2 的比对，
 //     覆盖 "openai/gpt-5.6-sol" 与 "gpt-5.6-sol" 互相回显的中转。
-//  4. codex 别名归一化：网关自己的 codex 归一化（normalizeKnownCodexModel）会把 gpt-5.4-high → gpt-5.4、
-//     gpt-5.3 → gpt-5.3-codex，上游按归一化后的名字回显视为一致；反向（上游回显带 reasoning 后缀）
-//     只认精确别名表，不用 Contains 启发式，避免 gpt-5.6-sol-mini 被折叠成 gpt-5.6-sol 而漏拦。
+//  4. codex 别名，只认升级方向：sent 是精确别名表（codexModelMap）里的键且 got 正是它的目标
+//     （gpt-5.3 → gpt-5.3-codex、gpt-5.1 → gpt-5.4）放行；反向（sent 是目标、got 是别名）不放行，
+//     否则 gpt-5.4 被偷换成 gpt-5-mini / gpt-5 这类降级会漏拦。
+//  5. 同族 reasoning / 日期后缀剥离：任一方去掉已知后缀（codexVersionModelPrefixes + isKnownCodexModelSuffix）
+//     后等于另一方放行（gpt-5.4-high ↔ gpt-5.4）。不用任何 Contains 启发式。
 func upstreamModelMatches(sent, got string) bool {
 	sent = strings.ToLower(strings.TrimSpace(sent))
 	got = strings.ToLower(strings.TrimSpace(got))
@@ -49,10 +51,10 @@ func upstreamModelMatches(sent, got string) bool {
 	if upstreamModelSegmentMatches(sentSeg, gotSeg) {
 		return true
 	}
-	if normalized, ok := normalizeKnownCodexModel(sent); ok && strings.EqualFold(normalized, gotSeg) {
+	if target, ok := codexModelMap[codexModelLookupKey(sentSeg)]; ok && target == gotSeg {
 		return true
 	}
-	if normalized, ok := strictCodexModelAlias(gotSeg); ok && strings.EqualFold(normalized, sentSeg) {
+	if stripCodexModelSuffix(sentSeg) == gotSeg || stripCodexModelSuffix(gotSeg) == sentSeg {
 		return true
 	}
 	return false
@@ -72,30 +74,23 @@ func upstreamModelSegmentMatches(sent, got string) bool {
 	return false
 }
 
-// strictCodexModelAlias 是 normalizeKnownCodexModel 的保守子集：只查精确别名表（codexModelMap）
-// 与「版本前缀 + 已知 reasoning/日期后缀」（codexVersionModelPrefixes），不走
-// normalizeKnownOpenAICodexModel 里的 Contains 启发式。用于反向豁免（上游回显 gpt-5.4-high 而我们发的是 gpt-5.4）。
-func strictCodexModelAlias(model string) (string, bool) {
-	modelID := lastOpenAIModelSegment(model)
-	if normalized := canonicalizeOpenAIModelAliasSpelling(modelID); normalized != "" {
-		modelID = normalized
-	}
-	key := codexModelLookupKey(modelID)
+// stripCodexModelSuffix 去掉 codex 版本前缀之后的已知 reasoning / 日期后缀
+// （gpt-5.4-high → gpt-5.4、gpt-5.3-codex-2026-01-01 → gpt-5.3-codex）；不是已知前缀 + 已知后缀的原样返回。
+// 只做同族剥离，不查别名表，所以 gpt-5-mini / gpt-5.1-codex-mini 这类不同族模型不会被折叠。
+func stripCodexModelSuffix(model string) string {
+	key := codexModelLookupKey(model)
 	if key == "" {
-		return "", false
-	}
-	if mapped, ok := codexModelMap[key]; ok && mapped != "" {
-		return mapped, true
+		return model
 	}
 	for _, item := range codexVersionModelPrefixes {
 		if key == item.prefix {
-			return item.target, true
+			return item.prefix
 		}
 		if suffix, ok := strings.CutPrefix(key, item.prefix+"-"); ok && isKnownCodexModelSuffix(suffix) {
-			return item.target, true
+			return item.prefix
 		}
 	}
-	return "", false
+	return key
 }
 
 // upstreamModelObserveOnly：xAI 的 grok 系列用带日期的模型名（grok-4.3-0709 等），现有豁免覆盖不了，

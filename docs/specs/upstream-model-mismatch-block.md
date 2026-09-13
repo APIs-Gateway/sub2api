@@ -15,7 +15,8 @@
 - `B` 为空放行。
 - 日期快照：`B == A + "-" + 日期`（`YYYY-MM-DD` / `YYYYMMDD`）放行；`A` 以 `-latest` 结尾且 `B` 以去掉 `-latest` 的前缀开头放行。
 - provider 前缀：去掉 `provider/` 前缀（`lastOpenAIModelSegment`）后再做上面两条比对，`openai/gpt-5.6-sol` 与 `gpt-5.6-sol` 互相回显视为一致；前缀不掩盖真正的换模（`openai/gpt-5.6-sol` vs `gpt-6-sol`、`gpt-5.6-sol` vs `anthropic/gpt-5.6-sol-mini` 仍拦截）。
-- codex 别名归一化：网关自己的 codex 归一化（`normalizeKnownCodexModel`）把 `A` 归一化后等于 `B` 视为一致（`gpt-5.4-high → gpt-5.4`、`gpt-5.3 → gpt-5.3-codex`）；反向（上游回显 `gpt-5.4-high` 而 `A = gpt-5.4`）只认精确别名表和「版本前缀 + 已知 reasoning / 日期后缀」，不走 `Contains` 启发式，避免 `gpt-5.6-sol-mini` 被折叠成 `gpt-5.6-sol` 漏拦。
+- codex 别名，只认升级方向：`A` 是精确别名表（`codexModelMap`）里的键且 `B` 正是它的目标才放行（`gpt-5.3 → gpt-5.3-codex`、`gpt-5.1 → gpt-5.4`、`gpt-5.4-high → gpt-5.4`）；反向不放行，`A = gpt-5.4` 收到 `gpt-5-mini` / `gpt-5` / `gpt-5.4` 收到别的降级仍拦截。
+- 同族 reasoning / 日期后缀剥离：任一方去掉已知后缀（`codexVersionModelPrefixes` + `isKnownCodexModelSuffix`，即 `none/minimal/low/medium/high/xhigh` 与 `YYYY-MM-DD`）后等于另一方放行（`gpt-5.4 ↔ gpt-5.4-high`）。不用任何 `Contains` 启发式，`gpt-5.6-sol-mini`、`gpt-5.8 → gpt-5.4` 都不会被折叠放行。
 - grok 只记录不拦截：`A` 以 `grok` 开头时不一致只打标（`Blocked=false`）、照常透传计费。xAI 用带日期的模型名（如 `grok-4.3-0709`），上述豁免覆盖不了，真实回显尚未验证，先观察。
 
 ## 拦截行为

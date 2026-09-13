@@ -34,8 +34,13 @@ func TestUpstreamModelMatches(t *testing.T) {
 		{"codex alias reasoning suffix", "gpt-5.4-high", "gpt-5.4", true},
 		{"codex alias bare version", "gpt-5.3", "gpt-5.3-codex", true},
 		{"codex alias reverse: upstream echoes suffix", "gpt-5.4", "gpt-5.4-high", true},
+		{"codex alias upgrade via table", "gpt-5.1", "gpt-5.4", true},
 		{"provider prefix does not hide swapped family", "openai/gpt-5.6-sol", "gpt-6-sol", false},
 		{"provider prefix does not hide non-date suffix", "gpt-5.6-sol", "anthropic/gpt-5.6-sol-mini", false},
+		{"downgrade to mini is not an alias", "gpt-5.4", "gpt-5-mini", false},
+		{"downgrade to bare family is not an alias", "gpt-5.4", "gpt-5", false},
+		{"downgrade codex to older mini is not an alias", "gpt-5.3-codex", "gpt-5.1-codex-mini", false},
+		{"unknown newer model downgraded", "gpt-5.8", "gpt-5.4", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
