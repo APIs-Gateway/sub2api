@@ -160,7 +160,7 @@ func TestRecordUpstreamModelMismatchUsageLog_ZeroCostAndFlags(t *testing.T) {
 	require.NotNil(t, log.UpstreamResponseModel)
 	require.Equal(t, "gpt-6-sol", *log.UpstreamResponseModel)
 	require.Equal(t, "gpt-5.6-sol", log.Model)
-	require.Equal(t, "req-mm", log.RequestID)
+	require.Equal(t, "req-mm:mismatch:9", log.RequestID, "审计行 request_id 加 :mismatch:<accountID> 后缀，与 failover 重试的真实请求不同键")
 	require.Equal(t, 596, log.InputTokens, "token 原样记，便于审计")
 	require.Equal(t, 5, log.OutputTokens)
 	require.Zero(t, log.TotalCost, "不计费")
@@ -218,6 +218,78 @@ func TestRecordUpstreamModelMismatchUsageLog_SkipsWhenIncomplete(t *testing.T) {
 	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{APIKey: &APIKey{ID: 2, User: &User{ID: 1}}, Model: "gpt-5"}) // Account nil
 	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{APIKey: &APIKey{ID: 2, User: &User{ID: 1}}, Account: acct})  // Model 空
 	require.Equal(t, 0, usageRepo.calls, "APIKey/User/Account 缺失或 Model 空时跳过")
+}
+
+func TestRecordUpstreamModelMismatchUsageLog_ProductionBillingPathSkipsBillingAndSuffixesRequestID(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	quota := &openAIRecordUsageAPIKeyQuotaStub{}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, userRepo, subRepo, nil)
+
+	// 生产计费路径（usageBillingRepo 非 nil）+ ctx 带 request id：审计行不得调用 billing repo
+	// （否则会占住 (request_id, api_key_id) 去重键，随后 failover 到账号 B 的真实请求会撞键失败），
+	// 且落库 request_id 必须与真实请求不同键（后缀 :mismatch:<accountID>）。
+	ctx := context.WithValue(context.Background(), ctxkey.RequestID, "req-ctx-1")
+	svc.RecordUpstreamModelMismatchUsageLog(ctx, UpstreamModelMismatchUsageInput{
+		APIKey:        &APIKey{ID: 2, Quota: 100, User: &User{ID: 1}},
+		Account:       &Account{ID: 9, Platform: PlatformOpenAI},
+		RequestID:     "resp_upstream_ignored",
+		Model:         "gpt-5.6-sol",
+		APIKeyService: quota,
+		Mark: UpstreamModelMismatchMark{
+			SentModel:     "gpt-5.6-sol",
+			ResponseModel: "gpt-6-sol",
+			AccountID:     9,
+			Usage:         OpenAIUsage{InputTokens: 596, OutputTokens: 5},
+		},
+	})
+
+	require.Equal(t, 0, billingRepo.calls, "审计行不得进入 billing repo，避免占用去重键")
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.Equal(t, "local:req-ctx-1:mismatch:9", log.RequestID)
+	require.True(t, log.UpstreamModelMismatch)
+	require.Equal(t, 596, log.InputTokens)
+	require.Equal(t, 5, log.OutputTokens)
+	require.Zero(t, log.TotalCost)
+	require.Zero(t, log.ActualCost)
+	require.Equal(t, 0, userRepo.deductCalls)
+	require.Equal(t, 0, subRepo.incrementCalls)
+	require.Equal(t, 0, quota.quotaCalls)
+	require.Equal(t, 0, quota.rateLimitCalls)
+}
+
+func TestRecordUpstreamModelMismatchUsageLog_RecordsSentModelAsUpstreamModel(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	// 渠道映射后实际发送模型 ≠ 用户请求模型：upstream_model 记 SentModel，response_model 记上游回包 model。
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{
+		APIKey:    &APIKey{ID: 2, User: &User{ID: 1}},
+		Account:   &Account{ID: 9, Platform: PlatformOpenAI},
+		RequestID: "req-mm-mapped",
+		Model:     "gpt-5.1",
+		Mark: UpstreamModelMismatchMark{
+			SentModel:     "gpt-5.1-codex",
+			ResponseModel: "gpt-5-mini",
+			Usage:         OpenAIUsage{InputTokens: 10, OutputTokens: 2},
+		},
+		ChannelUsageFields: ChannelUsageFields{OriginalModel: "gpt-5.1", ChannelMappedModel: "gpt-5.1-codex"},
+	})
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.Equal(t, "gpt-5.1", log.Model)
+	require.NotNil(t, log.UpstreamModel)
+	require.Equal(t, "gpt-5.1-codex", *log.UpstreamModel)
+	require.NotNil(t, log.UpstreamResponseModel)
+	require.Equal(t, "gpt-5-mini", *log.UpstreamResponseModel)
+	require.True(t, log.UpstreamModelMismatch)
+	require.Zero(t, log.ActualCost)
 }
 
 func TestRecordUsage_MismatchObserveModeWritesResponseModelButBillsNormally(t *testing.T) {

@@ -8212,6 +8212,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			requestID = upstreamRequestID
 		}
 	}
+	if input.UpstreamModelMismatch {
+		// 审计行与随后 failover 重试成功的真实请求共享同一个 ctx request id；若同键落库，
+		// usage_logs 的 (request_id, api_key_id) 唯一索引会把第二行静默丢掉。这里给审计行加
+		// ":mismatch:<accountID>" 后缀保证键不同，同时保留原 request id 作前缀便于后台检索。
+		requestID = requestID + ":mismatch:" + strconv.FormatInt(account.ID, 10)
+	}
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
@@ -8305,6 +8311,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）。
 	// 账号统计成本反映账号实际所在/服务组的渠道与定价规则；稳定优先兜底时须用 served 组（与 billingAPIKey 同口径）。
+	// 上游模型不一致审计行：这里仍按真实 token 计算账号侧统计成本（反映该账号实际消耗的上游用量），
+	// 这是账号维度的统计口径而非向用户计费，不构成计费泄漏；用户侧 total_cost/actual_cost 已为 0 且不扣费。
 	if billingAPIKey.GroupID != nil {
 		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *billingAPIKey.GroupID, result.UpstreamModel, result.Model,
@@ -8315,6 +8323,15 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
+		s.deferredService.ScheduleLastUsedUpdate(account.ID)
+		return nil
+	}
+
+	if input.UpstreamModelMismatch {
+		// 审计行无可计费内容，完全跳过 applyUsageBilling：既不扣费，也不占用 billing 去重键
+		// （fingerprint 含 AccountID 与零成本，若占用会让随后 failover 重试成功的真实请求撞键
+		// 返回 ErrUsageBillingRequestConflict，导致真实请求既不计费也不落 usage_log）。
+		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
 	}
