@@ -28,6 +28,14 @@ func TestUpstreamModelMatches(t *testing.T) {
 		{"swapped tier", "gpt-5.6-sol", "gpt-5.6-luna", false},
 		{"non-date suffix", "gpt-5.6-sol", "gpt-5.6-sol-mini", false},
 		{"empty sent never blocks", "", "gpt-6-sol", true},
+		{"provider prefix on sent", "openai/gpt-5.6-sol", "gpt-5.6-sol", true},
+		{"provider prefix on got", "gpt-5.6-sol", "openai/gpt-5.6-sol", true},
+		{"provider prefix + date snapshot", "openai/gpt-5.6-sol", "gpt-5.6-sol-2026-09-01", true},
+		{"codex alias reasoning suffix", "gpt-5.4-high", "gpt-5.4", true},
+		{"codex alias bare version", "gpt-5.3", "gpt-5.3-codex", true},
+		{"codex alias reverse: upstream echoes suffix", "gpt-5.4", "gpt-5.4-high", true},
+		{"provider prefix does not hide swapped family", "openai/gpt-5.6-sol", "gpt-6-sol", false},
+		{"provider prefix does not hide non-date suffix", "gpt-5.6-sol", "anthropic/gpt-5.6-sol-mini", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,4 +116,17 @@ func TestCheckUpstreamModelMismatch_SetsBlockedOnlyWhenReturningFailover(t *test
 			require.Equal(t, tc.wantBlocked, mark.Blocked)
 		})
 	}
+}
+
+// grok 系列只记录不拦截：xAI 用带日期的模型名，豁免规则覆盖不了，真实回显未验证，先观察。
+func TestCheckUpstreamModelMismatch_GrokObserveOnly(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformGrok}, "req", "grok-4.3", "grok-4.3-0709", true, true, OpenAIUsage{})
+	require.Nil(t, err, "grok 不一致只打标不 failover")
+	mark := GetOpsUpstreamModelMismatch(c)
+	require.NotNil(t, mark)
+	require.False(t, mark.Blocked)
+	require.Equal(t, "grok-4.3", mark.SentModel)
+	require.Equal(t, "grok-4.3-0709", mark.ResponseModel)
 }

@@ -413,3 +413,25 @@ func TestUpstreamModelMismatch_StreamMatchPassesThrough(t *testing.T) {
 		})
 	}
 }
+
+// 主路径流式：上游没有 response.created，首个带 model 的事件就是 response.completed（且此前无输出）
+// → 仍在 completed 之前拦截，且审计 usage 取自该 completed 事件（而不是解析前的 0）。
+func TestUpstreamModelMismatch_CodexStreamCompletedIsFirstModelEventCapturesUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-6-sol\",\"output\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":3,\"total_tokens\":10}}}\n\n"
+	upstream := newUpstreamModelMismatchSSEUpstream(body)
+	svc := newOpenAIImageGenerationControlTestService(upstream)
+	c, recorder := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.144.1")
+	account := newOpenAIImageGenerationControlTestAccount()
+
+	_, err := svc.Forward(context.Background(), c, account, []byte(upstreamModelMismatchTestRequestBody))
+	requireUpstreamModelMismatchFailover(t, err)
+	require.Empty(t, recorder.Body.String(), "no upstream bytes may leak")
+
+	mark := GetOpsUpstreamModelMismatch(c)
+	require.NotNil(t, mark)
+	require.True(t, mark.Blocked)
+	require.Equal(t, "gpt-6-sol", mark.ResponseModel)
+	require.Equal(t, 7, mark.Usage.InputTokens)
+	require.Equal(t, 3, mark.Usage.OutputTokens)
+}

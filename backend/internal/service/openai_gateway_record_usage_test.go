@@ -292,16 +292,17 @@ func TestRecordUpstreamModelMismatchUsageLog_RecordsSentModelAsUpstreamModel(t *
 	require.Zero(t, log.ActualCost)
 }
 
-func TestRecordUsage_MismatchObserveModeWritesResponseModelButBillsNormally(t *testing.T) {
+func TestRecordUsage_MismatchObserveModeFlagsRowButBillsNormally(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	subRepo := &openAIRecordUsageSubRepoStub{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
 	usage := OpenAIUsage{InputTokens: 10, OutputTokens: 5}
 
-	// 观察模式（开关关闭）下正常成功路径也会带 mark：只写 upstream_response_model 列，不改计费。
+	// 观察模式（开关关闭）/ model 晚到的正常成功路径也会带 mark：行标记为不一致（后台「仅不一致」筛选可见）
+	// 并写 upstream_response_model 列，但计费与 request_id 与普通行完全一致。
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-		Result:                &OpenAIForwardResult{Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: usage},
+		Result:                &OpenAIForwardResult{RequestID: "req-observe", Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: usage},
 		APIKey:                &APIKey{ID: 2, User: &User{ID: 1}},
 		User:                  &User{ID: 1},
 		Account:               &Account{ID: 9, Platform: PlatformOpenAI},
@@ -312,9 +313,10 @@ func TestRecordUsage_MismatchObserveModeWritesResponseModelButBillsNormally(t *t
 	require.Equal(t, 1, usageRepo.calls)
 	log := usageRepo.lastLog
 	require.NotNil(t, log)
-	require.False(t, log.UpstreamModelMismatch)
+	require.True(t, log.UpstreamModelMismatch, "观察模式行也要标记，否则后台筛选/徽标看不到")
 	require.NotNil(t, log.UpstreamResponseModel)
 	require.Equal(t, "gpt-6-sol", *log.UpstreamResponseModel)
+	require.NotContains(t, log.RequestID, ":mismatch:", "只有被拦截的审计行才加后缀")
 	require.Greater(t, log.TotalCost, 0.0)
 	expected := expectedOpenAICost(t, svc, "gpt-5.1", usage, 1.1)
 	require.InDelta(t, expected.ActualCost, log.ActualCost, 1e-12)
@@ -329,12 +331,12 @@ func TestRecordUsage_MismatchFlagForcesZeroCostAndNoDeduction(t *testing.T) {
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
 
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-		Result:                &OpenAIForwardResult{Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: OpenAIUsage{InputTokens: 1200, OutputTokens: 300}},
-		APIKey:                &APIKey{ID: 2, User: &User{ID: 1}},
-		User:                  &User{ID: 1},
-		Account:               &Account{ID: 9, Platform: PlatformOpenAI},
-		UpstreamModelMismatch: true,
-		UpstreamResponseModel: "gpt-5.1-codex",
+		Result:                       &OpenAIForwardResult{Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: OpenAIUsage{InputTokens: 1200, OutputTokens: 300}},
+		APIKey:                       &APIKey{ID: 2, User: &User{ID: 1}},
+		User:                         &User{ID: 1},
+		Account:                      &Account{ID: 9, Platform: PlatformOpenAI},
+		UpstreamModelMismatchBlocked: true,
+		UpstreamResponseModel:        "gpt-5.1-codex",
 	})
 	require.NoError(t, err)
 
@@ -367,6 +369,50 @@ func TestRecordUsage_NoMismatchLeavesResponseModelNil(t *testing.T) {
 	require.NotNil(t, usageRepo.lastLog)
 	require.False(t, usageRepo.lastLog.UpstreamModelMismatch)
 	require.Nil(t, usageRepo.lastLog.UpstreamResponseModel, "一致时列保持 NULL")
+}
+
+func TestRecordUpstreamModelMismatchUsageLog_LongRequestIDKeepsSuffixWithinColumn(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	// usage_logs.request_id 为 VARCHAR(64)：ctx request id 过长时截前缀、保留 :mismatch:<accountID> 后缀。
+	longID := strings.Repeat("r", 70)
+	ctx := context.WithValue(context.Background(), ctxkey.RequestID, longID)
+	svc.RecordUpstreamModelMismatchUsageLog(ctx, UpstreamModelMismatchUsageInput{
+		APIKey:    &APIKey{ID: 2, User: &User{ID: 1}},
+		Account:   &Account{ID: 9, Platform: PlatformOpenAI},
+		RequestID: "resp_ignored",
+		Model:     "gpt-5.6-sol",
+		Mark:      UpstreamModelMismatchMark{SentModel: "gpt-5.6-sol", ResponseModel: "gpt-6-sol"},
+	})
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.LessOrEqual(t, len(log.RequestID), 64)
+	require.True(t, strings.HasSuffix(log.RequestID, ":mismatch:9"), log.RequestID)
+	require.True(t, strings.HasPrefix(log.RequestID, "local:rrr"), log.RequestID)
+}
+
+func TestRecordUsage_TruncatesUpstreamResponseModelToColumnWidth(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	// usage_logs.upstream_response_model 为 VARCHAR(100)：上游回显异常长的 model 不能把整行插入打挂。
+	longModel := "gpt-" + strings.Repeat("x", 120)
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:                &OpenAIForwardResult{Model: "gpt-5.1", Usage: OpenAIUsage{InputTokens: 10, OutputTokens: 5}},
+		APIKey:                &APIKey{ID: 2, User: &User{ID: 1}},
+		User:                  &User{ID: 1},
+		Account:               &Account{ID: 9, Platform: PlatformOpenAI},
+		UpstreamResponseModel: longModel,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.NotNil(t, usageRepo.lastLog.UpstreamResponseModel)
+	require.Len(t, *usageRepo.lastLog.UpstreamResponseModel, 100)
+	require.Equal(t, longModel[:100], *usageRepo.lastLog.UpstreamResponseModel)
+	require.True(t, usageRepo.lastLog.UpstreamModelMismatch)
 }
 
 type openAIRecordUsageUserRepoStub struct {

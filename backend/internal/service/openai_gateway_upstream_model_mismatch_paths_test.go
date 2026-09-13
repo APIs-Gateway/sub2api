@@ -492,7 +492,8 @@ func newUpstreamModelMismatchGrokService(resp *http.Response) *OpenAIGatewayServ
 	return &OpenAIGatewayService{httpUpstream: &httpUpstreamStub{resp: resp}, grokTokenProvider: provider}
 }
 
-func TestUpstreamModelMismatch_ForwardGrokResponsesStreamFailsOver(t *testing.T) {
+// grok 系列只记录不拦截（xAI 带日期模型名，豁免覆盖不了，真实回显未验证）：不一致时照常透传并打标 Blocked=false。
+func TestUpstreamModelMismatch_ForwardGrokResponsesStreamMismatchOnlyMarks(t *testing.T) {
 	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/responses", nil)
 	upstreamBody := strings.Join([]string{
 		`data: {"type":"response.created","response":{"id":"resp_grok","object":"response","model":"grok-3","status":"in_progress"}}`,
@@ -509,8 +510,16 @@ func TestUpstreamModelMismatch_ForwardGrokResponsesStreamFailsOver(t *testing.T)
 	result, err := svc.forwardGrokResponses(context.Background(), c, upstreamModelMismatchGrokAccount(),
 		[]byte(`{"model":"grok-4.3","input":"hi","stream":true}`), "grok-4.3", true, time.Now())
 
-	require.Nil(t, result)
-	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "grok-4.3", "grok-3", true)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "resp_grok", result.ResponseID)
+	require.Contains(t, rec.Body.String(), `"delta":"leak"`)
+	mark := GetOpsUpstreamModelMismatch(c)
+	require.NotNil(t, mark)
+	require.False(t, mark.Blocked)
+	require.Equal(t, "grok-4.3", mark.SentModel)
+	require.Equal(t, "grok-3", mark.ResponseModel)
+	require.True(t, mark.Stream)
 }
 
 func TestUpstreamModelMismatch_ForwardGrokResponsesStreamMatchPasses(t *testing.T) {
@@ -537,7 +546,7 @@ func TestUpstreamModelMismatch_ForwardGrokResponsesStreamMatchPasses(t *testing.
 	require.Nil(t, GetOpsUpstreamModelMismatch(c))
 }
 
-func TestUpstreamModelMismatch_ForwardGrokResponsesNonStreamFailsOver(t *testing.T) {
+func TestUpstreamModelMismatch_ForwardGrokResponsesNonStreamMismatchOnlyMarks(t *testing.T) {
 	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/responses", nil)
 	svc := newUpstreamModelMismatchGrokService(upstreamModelMismatchHTTPResponse("application/json", "rid_grok_json",
 		`{"id":"resp_grok_json","object":"response","model":"grok-3","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"leak"}]}],"usage":{"input_tokens":3,"output_tokens":2}}`))
@@ -545,9 +554,17 @@ func TestUpstreamModelMismatch_ForwardGrokResponsesNonStreamFailsOver(t *testing
 	result, err := svc.forwardGrokResponses(context.Background(), c, upstreamModelMismatchGrokAccount(),
 		[]byte(`{"model":"grok-4.3","input":"hi"}`), "grok-4.3", false, time.Now())
 
-	require.Nil(t, result)
-	requireUpstreamModelMismatchPathFailover(t, c, rec, err, "grok-4.3", "grok-3", false)
-	require.Equal(t, 3, GetOpsUpstreamModelMismatch(c).Usage.InputTokens)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "resp_grok_json", result.ResponseID)
+	require.Contains(t, rec.Body.String(), "resp_grok_json")
+	mark := GetOpsUpstreamModelMismatch(c)
+	require.NotNil(t, mark)
+	require.False(t, mark.Blocked)
+	require.Equal(t, "grok-4.3", mark.SentModel)
+	require.Equal(t, "grok-3", mark.ResponseModel)
+	require.False(t, mark.Stream)
+	require.Equal(t, 3, mark.Usage.InputTokens)
 }
 
 func TestUpstreamModelMismatch_ForwardGrokResponsesNonStreamMatchPasses(t *testing.T) {

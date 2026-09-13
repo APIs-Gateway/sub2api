@@ -27,9 +27,39 @@ const upstreamModelMismatchMessage = "upstream returned a different model than r
 
 var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8})$`)
 
+// upstreamModelMatches 判断上游返回的 got 是否可视为与发送的 sent 一致。豁免规则依次为：
+//  1. 忽略大小写与首尾空白；任一为空放行。
+//  2. got == sent + "-" + 日期快照（YYYY-MM-DD / YYYYMMDD）；sent 以 -latest 结尾且 got 以其前缀开头。
+//  3. provider 前缀容忍：去掉 "provider/" 前缀后（lastOpenAIModelSegment）再做 1、2 的比对，
+//     覆盖 "openai/gpt-5.6-sol" 与 "gpt-5.6-sol" 互相回显的中转。
+//  4. codex 别名归一化：网关自己的 codex 归一化（normalizeKnownCodexModel）会把 gpt-5.4-high → gpt-5.4、
+//     gpt-5.3 → gpt-5.3-codex，上游按归一化后的名字回显视为一致；反向（上游回显带 reasoning 后缀）
+//     只认精确别名表，不用 Contains 启发式，避免 gpt-5.6-sol-mini 被折叠成 gpt-5.6-sol 而漏拦。
 func upstreamModelMatches(sent, got string) bool {
 	sent = strings.ToLower(strings.TrimSpace(sent))
 	got = strings.ToLower(strings.TrimSpace(got))
+	if sent == "" || got == "" {
+		return true
+	}
+	if upstreamModelSegmentMatches(sent, got) {
+		return true
+	}
+	sentSeg := strings.ToLower(lastOpenAIModelSegment(sent))
+	gotSeg := strings.ToLower(lastOpenAIModelSegment(got))
+	if upstreamModelSegmentMatches(sentSeg, gotSeg) {
+		return true
+	}
+	if normalized, ok := normalizeKnownCodexModel(sent); ok && strings.EqualFold(normalized, gotSeg) {
+		return true
+	}
+	if normalized, ok := strictCodexModelAlias(gotSeg); ok && strings.EqualFold(normalized, sentSeg) {
+		return true
+	}
+	return false
+}
+
+// upstreamModelSegmentMatches：精确相等 / 日期快照 / -latest 三条基础规则，入参已小写去空白。
+func upstreamModelSegmentMatches(sent, got string) bool {
 	if sent == "" || got == "" || sent == got {
 		return true
 	}
@@ -40,6 +70,38 @@ func upstreamModelMatches(sent, got string) bool {
 		return true
 	}
 	return false
+}
+
+// strictCodexModelAlias 是 normalizeKnownCodexModel 的保守子集：只查精确别名表（codexModelMap）
+// 与「版本前缀 + 已知 reasoning/日期后缀」（codexVersionModelPrefixes），不走
+// normalizeKnownOpenAICodexModel 里的 Contains 启发式。用于反向豁免（上游回显 gpt-5.4-high 而我们发的是 gpt-5.4）。
+func strictCodexModelAlias(model string) (string, bool) {
+	modelID := lastOpenAIModelSegment(model)
+	if normalized := canonicalizeOpenAIModelAliasSpelling(modelID); normalized != "" {
+		modelID = normalized
+	}
+	key := codexModelLookupKey(modelID)
+	if key == "" {
+		return "", false
+	}
+	if mapped, ok := codexModelMap[key]; ok && mapped != "" {
+		return mapped, true
+	}
+	for _, item := range codexVersionModelPrefixes {
+		if key == item.prefix {
+			return item.target, true
+		}
+		if suffix, ok := strings.CutPrefix(key, item.prefix+"-"); ok && isKnownCodexModelSuffix(suffix) {
+			return item.target, true
+		}
+	}
+	return "", false
+}
+
+// upstreamModelObserveOnly：xAI 的 grok 系列用带日期的模型名（grok-4.3-0709 等），现有豁免覆盖不了，
+// 且真实回显尚未验证，先只记录不拦截，避免误杀。
+func upstreamModelObserveOnly(sentModel string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(sentModel)), "grok")
 }
 
 // sentModelForCheck：A 的取值。passthrough 路径的 mappedModel 可能为空（body 原样转发），此时 A 就是 originalModel。
@@ -116,13 +178,17 @@ func (s *OpenAIGatewayService) upstreamModelMismatchBlockEnabled() bool {
 // checkUpstreamModelMismatch 一站式：比对 + 打标 + 记 ops 错误 + 构造 failover error。
 // 返回 nil 表示一致/豁免/开关关闭/canBlock=false（后两种仍打标但 Blocked=false，供 RecordUsage 落 upstream_response_model）；
 // 返回非 nil 时 mark.Blocked=true，handler 据此落审计行。
-// canBlock=false 用于「客户端已收到输出、无法收回」的场景（上游把 model 放在 response.completed 才给）。
+// canBlock=false 用于「客户端已收到输出、无法收回」的场景（上游把 model 放在 response.completed 才给）；
+// grok 系列模型（upstreamModelObserveOnly）无论 canBlock 如何都只记录不拦截。
 func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	c *gin.Context, account *Account, upstreamRequestID string,
 	sentModel, responseModel string, stream, canBlock bool, usage OpenAIUsage,
 ) *UpstreamFailoverError {
 	if upstreamModelMatches(sentModel, responseModel) {
 		return nil
+	}
+	if upstreamModelObserveOnly(sentModel) {
+		canBlock = false
 	}
 	accountID, accountName, platform := int64(0), "", PlatformOpenAI
 	if account != nil {
