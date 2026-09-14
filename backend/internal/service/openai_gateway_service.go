@@ -6074,7 +6074,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						streamEarlyErr = s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, dataBytes, failedMessage, resp.Header)
 						return
 					}
-					if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
+					// 透传规则改写成 JSON 错误体只在响应头尚未提交时可行；只写过心跳（响应头已是
+					// 200 SSE）时不能再写 JSON，退回下面的原样转发 response.failed（流内收尾）。
+					if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched && !c.Writer.Written() {
 						sawFailedEvent = true
 						s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "http_error", dataBytes, failedMessage)
 						MarkResponseCommitted(c)
@@ -6345,26 +6347,34 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if time.Since(lastDownstreamWriteAt) < keepaliveInterval {
 				continue
 			}
+			// 心跳是客户端会丢弃的 SSE 注释行，不算内容交付：每次真正写出后计入
+			// addOpenAIStreamKeepaliveBytes，openAIStreamClientOutputStarted 会把它扣掉，
+			// 使上游模型不一致等 pre-output failover 在心跳后仍能零泄漏地切号。
 			if guardFirstOutput {
-				if _, err := w.Write([]byte(":\n\n")); err != nil {
+				n, err := w.Write([]byte(":\n\n"))
+				if err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 					continue
 				}
+				addOpenAIStreamKeepaliveBytes(c, n)
 				flusher.Flush()
 				lastDownstreamWriteAt = time.Now()
 				continue
 			}
-			if _, err := writePendingString(":\n\n"); err != nil {
+			n, err := writePendingString(":\n\n")
+			if err != nil {
 				handlePendingWriteError(err)
 				clientDisconnected = true
 				logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 				continue
 			}
+			// 进的是 pending 缓冲，只有 flushBuffered 成功才算真正写出。
 			if err := flushBuffered(); err != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.openai_gateway", "Client disconnected during keepalive flush, continuing to drain upstream for billing")
 			} else {
+				addOpenAIStreamKeepaliveBytes(c, n)
 				lastDownstreamWriteAt = time.Now()
 			}
 		}

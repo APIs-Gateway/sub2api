@@ -21,7 +21,7 @@
 
 ## 拦截行为
 
-- 只在客户端尚未收到任何字节时拦截：返回 `UpstreamFailoverError`（502，`error.code = upstream_model_mismatch`），走现有切号重试；全部账号耗尽后客户端收到 502（流式已开始则补 `response.failed`）。
+- 只在客户端尚未收到任何业务字节时拦截：返回 `UpstreamFailoverError`（502，`error.code = upstream_model_mismatch`），走现有切号重试；全部账号耗尽后客户端收到 502（流式已开始则补 `response.failed`）。等待上游期间写出的 SSE 心跳（注释行 / Anthropic `ping`）不算业务字节，见「已知边界」。
 - 客户端已收到输出（上游把 `model` 放在 `response.completed` 才首次给出）时不拦截，只打标记录。
 - WS v2 的 HTTP 桥与 ingress 代理只在会话第 1 轮拦截（后续轮次 handler 会用首条消息重放，拦截会导致重复输出），其余轮次只记录。
 - 池模式账号（`pool_mode = true`，中转自身是一池多 key）：偷换模型的多半只是池里某个坏节点，所以 `UpstreamFailoverError` 带 `RetryableOnSameAccount`，走 handler 现有的池模式分支——先在同一账号上重试，最多 `pool_mode_retry_count` 次（默认 3），用尽后再切号并降权。`502` 不加入 `pool_mode_retry_status_codes` 默认列表。非池模式账号行为不变，直接切号。WS v2：HTTP→WS v2 桥（`forwardOpenAIWSV2` / HTTP 桥）的 failover 错误经 `Forward` 抛回 HTTP Responses handler，随该 handler 的池模式分支走同账号重试；只有 WS ingress 代理（`ProxyResponsesWebSocketFromClient`）没有同账号重试机制，直接切号（不变）。成本提醒：对一个稳定偷换模型的池模式凭证，每个请求会向该上游发 1 + `pool_mode_retry_count` 次完整 prompt 后才切号，上线后关注该类账号的不一致行数 × 估算 `input_tokens`。
@@ -58,7 +58,7 @@
 
 ## 已知边界
 
-- **keepalive / 注释行先于首个带 `model` 的事件**：Responses 主路径、Anthropic 入站、Chat 入站在等待上游首个事件期间会按 `gateway.stream_keepalive_interval`（默认 10 秒，0 关闭）向客户端发 SSE 注释行；上游本身也可能先发注释行。这些字节一旦写出，响应头就已提交、无法收回，随后即使检测到不一致也只能记录不拦截：mark 打标、`upstream_model_mismatch = true`、照常计费。排查看 WARN 日志 `openai.upstream_model_mismatch`，字段 `can_block=false`、`blocked=false`。
+- **keepalive 先于首个带 `model` 的事件：仍然拦截**。Responses 主路径、Anthropic 入站、Chat 入站在等待上游首个事件期间会按 `gateway.stream_keepalive_interval`（默认 10 秒，0 关闭）向客户端写心跳（Responses / Chat 是 SSE 注释行 `:\n\n`，Anthropic 入站是 `event: ping`）。心跳是客户端丢弃的非语义字节，「只发过心跳」≠「内容已交付」：service 层按 context 累计心跳字节数（`addOpenAIStreamKeepaliveBytes`），`OpenAICompactKeepaliveAdjustedWrittenSize` 扣掉这些字节后仍视为「未写」，所以 `canBlock` 仍为 true，不一致照常拦截、打标 `Blocked=true`、记审计行、不计费；此时 `UpstreamFailoverError.SafeToFailoverAfterWrite = true`（与首输出超时 failover 同机制）。客户端表现：同一条 SSE 连接（响应头已是 200）不断开，直接继续下一账号的事件；全部账号耗尽时在流内收到终止事件（Responses / Chat 入站 `response.failed` / `error`，Anthropic 入站 `event: error`），不会再写 JSON 错误体。Responses 入站的心跳后切号与首输出超时共用 `openAIFirstOutputFailoverExhausted` 的单次切号额度（每请求最多再切 1 个账号）。只有真正向客户端转发过上游业务事件（任何 `data:` 事件已 flush）之后才只记录不拦截：mark 打标、`upstream_model_mismatch = true`、照常计费，WARN 日志 `openai.upstream_model_mismatch` 字段 `can_block=false`、`blocked=false`。
 - grok 系列始终只记录（见豁免）。
 - WS v2 第 2 轮及以后只记录（见拦截行为）。
 
