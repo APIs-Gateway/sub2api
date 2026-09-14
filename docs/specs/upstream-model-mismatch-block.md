@@ -29,6 +29,19 @@
 - 拦截行的 `input_tokens`：流式拦截多发生在 `response.created`（上游尚未回报 usage），此时 `Mark.Usage` 全零，但 prompt 已经发出、输入侧消耗真实发生。网关按请求体估算（`EstimateOpenAIRequestInputTokens`：Responses `instructions` / `input`、Chat `messages`、Anthropic `system` / `messages` 里的文本 ≈ 4 字符/token，每条消息另加 4 token 结构开销，`tools[]` 的 `description` / `parameters` 也按文本估；图片 / 文件等非文本跳过）写入 `input_tokens`，并打 Info 日志 `openai.upstream_model_mismatch_input_tokens_estimated`。上游已回报 usage（`input_tokens > 0`）时原样记录、不覆盖。估算值仅供评估上游侧消耗，不是上游口径；`output_tokens` 不估；成本列恒为 0、不扣费。
 - 成功路径（观察模式、晚到的 `model`、grok 观察）照常计费，`request_id` 不加后缀，但该行同样标记 `upstream_model_mismatch = true` 并写 `upstream_response_model = B`，后台「仅不一致」筛选与徽标可见；是否计费看成本列而不是标记列。
 
+## 对外 / 对内文案分工
+
+对外笼统、对内详尽：终端用户看到的错误文案不带任何内部名词（"upstream"、模型名、账号、request id）；内部记录一个不省。
+
+- 对外固定文案：`UpstreamFailoverError.ResponseBody` 的 `error.message` = `UpstreamModelMismatchClientMessage`（`"Service temporarily unavailable, please retry later"`，沿用产品既有句，不新造）；`error.type = upstream_error`、`error.code = upstream_model_mismatch` 保留供内部识别与透传规则匹配。failover 耗尽后各入口都经 `ResolveUpstreamErrorResponse`：默认 502 映射给 `"Upstream service temporarily unavailable"`、Codex / Responses 入站给 Codex 官方文案（`response.failed` 的 `error.message` 留空）、Anthropic 入站同默认映射、WS v2 关闭帧用按状态码的固定串；管理员配置「透传 body」规则时客户端拿到的是 `ResponseBody.message` 原文，所以这句本身必须是笼统文案。`response.failed` 事件里的 `response.model` 是客户端自己请求的模型（Responses 协议字段），不是上游返回的模型。
+- 对内字段清单（`ops_error_logs`、日志、`usage_logs`）：`ops_upstream_error_message` 与 `upstream_errors[].message` = `"upstream returned a different model than requested: sent=<A> got=<B>"`；`upstream_errors[]` 另带 `account_id`、`account_name`、`upstream_status_code = 502`、`upstream_request_id`、`upstream_headers`（白名单指纹）、`kind = failover`；WARN 日志 `openai.upstream_model_mismatch` 带 `account_id`、`sent_model`、`response_model`、`blocked`、`can_block`；审计 `usage_logs` 行带 `upstream_model`（A）、`upstream_response_model`（B）、`request_id` 后缀。
+
+## 运维口径：如何判断某个上游是否掺假
+
+- 只能用线上 `usage_logs` / ops 日志做被动统计：同一凭据、足够长窗口内的不一致比例（后台用量页「仅不一致」筛选，或 `upstream_model_mismatch = true` 按 `account_id` 聚合）。
+- 不能靠发探测请求：一次探测只是账号池里某个节点的样本。同一凭据一次探测 24/24 全不一致、同一小时线上 127 次全部正常，两者曾同时出现过——探测抽到了池里的坏节点。这也是池模式账号先同账号重试而不是立刻切号的依据。
+- 只有一家的全部凭据在足够长的窗口里持续不一致，才谈得上平台级重定向，再考虑对该上游做账号级处置。
+
 ## 上游 request id 与上游头指纹
 
 - 上游 request id 头名兼容：第三方中转不一定发 `x-request-id`（one-api / new-api 系如 a6api、rivoapi 发 `x-oneapi-request-id`，rix-api 系如 platform.ephone.chat 发 `x-rixapi-request-id`，Bedrock 发 `x-amzn-requestid`，过 Cloudflare 的有 `cf-ray`）。service 层统一用 `upstreamRequestIDFromHeader` 按 `x-request-id` → `x-oneapi-request-id` → `x-rixapi-request-id` → `x-amzn-requestid` → `cf-ray` 的顺序取第一个非空值，写入 `ops_error_logs.upstream_errors[].upstream_request_id`、`OpenAIForwardResult.RequestID` 等；只作用于读上游响应头，回写给客户端的 `x-request-id` 透传与客户端请求头不变。

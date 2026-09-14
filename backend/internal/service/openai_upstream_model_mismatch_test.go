@@ -5,11 +5,13 @@ package service
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestUpstreamModelMatches(t *testing.T) {
@@ -93,6 +95,49 @@ func TestCheckUpstreamModelMismatch_EnabledReturnsFailover(t *testing.T) {
 	mark := GetOpsUpstreamModelMismatch(c)
 	require.Equal(t, "gpt-5.6-sol", mark.SentModel)
 	require.Equal(t, "gpt-6-sol", mark.ResponseModel)
+}
+
+// 对外笼统、对内详尽：ResponseBody 的 message 是固定笼统文案，不带 "upstream" / sent / got / 模型名；
+// ops 事件与 ops upstream error 里 sent=… got=…、账号、request id 一个不少。
+func TestCheckUpstreamModelMismatch_ClientMessageGenericInternalDetailed(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	h := http.Header{}
+	h.Set("Server", "nginx")
+	h.Set("X-Oneapi-Request-Id", "one-9")
+	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Name: "a6-key-1", Platform: PlatformOpenAI}, "one-9", h, "gpt-6-astra", "gpt-5.6-terra", true, true, OpenAIUsage{})
+	require.NotNil(t, err)
+
+	body := string(err.ResponseBody)
+	require.Equal(t, UpstreamModelMismatchClientMessage, gjson.Get(body, "error.message").String())
+	require.Equal(t, "upstream_error", gjson.Get(body, "error.type").String(), "type/code 保留供内部识别")
+	require.Equal(t, "upstream_model_mismatch", gjson.Get(body, "error.code").String())
+	msg := gjson.Get(body, "error.message").String()
+	require.NotContains(t, strings.ToLower(msg), "upstream")
+	require.NotContains(t, strings.ToLower(msg), "model")
+	require.NotContains(t, body, "gpt-6-astra")
+	require.NotContains(t, body, "gpt-5.6-terra")
+	require.NotContains(t, body, "sent=")
+	require.NotContains(t, body, "got=")
+	require.NotContains(t, body, "a6-key-1")
+
+	events, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	ev := events.([]*OpsUpstreamErrorEvent)[0]
+	require.Contains(t, ev.Message, "sent=gpt-6-astra")
+	require.Contains(t, ev.Message, "got=gpt-5.6-terra")
+	require.Equal(t, int64(7), ev.AccountID)
+	require.Equal(t, "a6-key-1", ev.AccountName)
+	require.Equal(t, "one-9", ev.UpstreamRequestID)
+	require.Equal(t, "nginx", ev.UpstreamHeaders["server"])
+	require.Equal(t, "one-9", ev.UpstreamHeaders["x-oneapi-request-id"])
+	require.Equal(t, "failover", ev.Kind)
+	require.Equal(t, http.StatusBadGateway, ev.UpstreamStatusCode)
+
+	opsMsg, _ := c.Get(OpsUpstreamErrorMessageKey)
+	require.Contains(t, opsMsg.(string), "sent=gpt-6-astra got=gpt-5.6-terra")
+	opsStatus, _ := c.Get(OpsUpstreamStatusCodeKey)
+	require.Equal(t, http.StatusBadGateway, opsStatus.(int))
 }
 
 // Blocked 只在 checkUpstreamModelMismatch 真正返回 failover（本次尝试被拦截）时为 true；

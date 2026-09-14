@@ -21,9 +21,23 @@ import (
 //
 // 命中后按 UpstreamFailoverError 走现有切号流程（同 issue #5009 空 completed），
 // 并在 gin context 打标，handler 侧据此记一行不计费的审计 usage_log。
+//
+// 文案分工——对外笼统、对内详尽：
+//   - 对外（UpstreamFailoverError.ResponseBody 的 error.message，以及 failover 耗尽后经
+//     ResolveUpstreamErrorResponse / 透传规则可能原样给到客户端的那句）只用
+//     UpstreamModelMismatchClientMessage，不带 "upstream"、模型名、账号等任何内部名词；
+//     error.type / error.code（upstream_error / upstream_model_mismatch）保留供内部识别。
+//   - 对内（setOpsUpstreamError、appendOpsUpstreamError 事件、WARN 日志、审计 usage_log）
+//     一个都不省：sent / got 模型、账号 ID / 名称、上游 request id、上游头指纹。
 
 const opsUpstreamModelMismatchKey = "ops_upstream_model_mismatch"
+
+// upstreamModelMismatchMessage 只用于内部记录（ops 事件 / 日志），会再拼上 sent=… got=…。
 const upstreamModelMismatchMessage = "upstream returned a different model than requested"
+
+// UpstreamModelMismatchClientMessage 是拦截后给终端用户的唯一文案，沿用产品既有的笼统句
+// （handler/concurrency_error_response.go 同款），不新造、不含内部名词。
+const UpstreamModelMismatchClientMessage = "Service temporarily unavailable, please retry later"
 
 var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8})$`)
 
@@ -212,8 +226,10 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	if rid := strings.TrimSpace(upstreamRequestID); rid != "" {
 		headers.Set("x-request-id", rid)
 	}
+	// 对外 body：message 用笼统文案。管理员配了「透传 body」的错误透传规则时这句会经
+	// sanitizeClientVisibleUpstreamMessage 原样给到客户端，所以这里绝不能带 sent/got。
 	body, _ := json.Marshal(map[string]any{"error": map[string]any{
-		"type": "upstream_error", "code": "upstream_model_mismatch", "message": upstreamModelMismatchMessage,
+		"type": "upstream_error", "code": "upstream_model_mismatch", "message": UpstreamModelMismatchClientMessage,
 	}})
 	// 池模式账号（中转自身是一池多 key，一个凭证背后有很多上游节点）：偷换模型的多半只是池里
 	// 某个坏节点，立刻切号并降权会把整个凭证一起摘掉。标 RetryableOnSameAccount 后走 handler

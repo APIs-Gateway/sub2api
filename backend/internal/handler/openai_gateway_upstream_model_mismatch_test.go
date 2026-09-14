@@ -12,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // fakeUpstreamModelMismatchRecorder 替代 *service.OpenAIGatewayService 接收审计行调用，
@@ -274,5 +275,87 @@ func TestRecordUpstreamModelMismatchIfMarked_EstimatesInputTokensWhenUsageMissin
 		service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "gpt-5", ResponseModel: "gpt-4.1-mini", AccountID: account.ID, Blocked: true})
 		recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-5", service.ChannelUsageFields{}, "h", nil)
 		require.Zero(t, rec.waitNth(t, 1).Mark.Usage.InputTokens)
+	})
+}
+
+// upstreamModelMismatchFailoverErr 按 service.checkUpstreamModelMismatch 的形态构造被拦截后的 failover 错误
+// （service 侧单测已断言 body 结构；这里复用同一常量保证口径一致）。
+func upstreamModelMismatchFailoverErr() *service.UpstreamFailoverError {
+	return &service.UpstreamFailoverError{
+		StatusCode:      http.StatusBadGateway,
+		ResponseBody:    []byte(`{"error":{"type":"upstream_error","code":"upstream_model_mismatch","message":"` + service.UpstreamModelMismatchClientMessage + `"}}`),
+		ResponseHeaders: http.Header{"X-Request-Id": []string{"one-9"}},
+	}
+}
+
+func requireNoUpstreamModelMismatchInternals(t *testing.T, body string) {
+	t.Helper()
+	require.NotContains(t, body, "gpt-6-astra", "不能泄露发给上游的模型名")
+	require.NotContains(t, body, "gpt-5.6-terra", "不能泄露上游偷换后的模型名")
+	require.NotContains(t, body, "sent=")
+	require.NotContains(t, body, "got=")
+	require.NotContains(t, body, "different model")
+	require.NotContains(t, body, "one-9", "不能泄露上游 request id")
+}
+
+// 端到端出口：被拦截且无可切账号 → handleFailoverExhausted。三种入站的最终响应都不含内部名词；
+// ops 上游错误记录（内部）仍保留。
+func TestOpenAIHandleFailoverExhausted_UpstreamModelMismatchClientMessageGeneric(t *testing.T) {
+	t.Run("responses route (codex canonical) 502", func(t *testing.T) {
+		c, rec := newCodexTestCtx("/v1/responses")
+		(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, upstreamModelMismatchFailoverErr(), false)
+		require.Equal(t, http.StatusBadGateway, rec.Code)
+		body := rec.Body.String()
+		requireNoUpstreamModelMismatchInternals(t, body)
+		msg := gjson.Get(body, "error.message").String()
+		require.NotContains(t, strings.ToLower(msg), "upstream")
+		require.NotContains(t, strings.ToLower(msg), "model")
+	})
+
+	t.Run("chat completions route 502 default mapping", func(t *testing.T) {
+		c, rec := newCodexTestCtx("/v1/chat/completions")
+		(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, upstreamModelMismatchFailoverErr(), false)
+		require.Equal(t, http.StatusBadGateway, rec.Code)
+		body := rec.Body.String()
+		requireNoUpstreamModelMismatchInternals(t, body)
+		require.Equal(t, "Upstream service temporarily unavailable", gjson.Get(body, "error.message").String(), "沿用产品既有 502 默认文案")
+	})
+
+	t.Run("anthropic messages route 502", func(t *testing.T) {
+		c, rec := newCodexTestCtx("/v1/messages")
+		(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, upstreamModelMismatchFailoverErr(), false)
+		require.Equal(t, http.StatusBadGateway, rec.Code)
+		requireNoUpstreamModelMismatchInternals(t, rec.Body.String())
+	})
+
+	t.Run("responses stream started -> response.failed without model names", func(t *testing.T) {
+		c, rec := newCodexTestCtx("/v1/responses")
+		(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, upstreamModelMismatchFailoverErr(), true)
+		body := rec.Body.String()
+		require.Contains(t, body, "event: response.failed")
+		requireNoUpstreamModelMismatchInternals(t, body)
+		data := body[len("event: response.failed\ndata: "):]
+		require.Equal(t, "response.failed", gjson.Get(data, "type").String())
+		require.Equal(t, "failed", gjson.Get(data, "response.status").String())
+		require.NotContains(t, strings.ToLower(gjson.Get(data, "response.error.message").String()), "upstream")
+	})
+
+	t.Run("chat stream started -> event: error without model names", func(t *testing.T) {
+		c, rec := newCodexTestCtx("/v1/chat/completions")
+		(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, upstreamModelMismatchFailoverErr(), true)
+		body := rec.Body.String()
+		require.Contains(t, body, "event: error")
+		requireNoUpstreamModelMismatchInternals(t, body)
+	})
+
+	t.Run("passthrough-body rule exposes only the generic message", func(t *testing.T) {
+		// 管理员配「透传 body」规则时，客户端拿到的就是 ResponseBody.message 原文——必须已是笼统文案。
+		c, rec := newCodexTestCtx("/v1/chat/completions")
+		status, errType, msg := service.ResolveUpstreamErrorResponse(c, service.PlatformOpenAI, http.StatusBadGateway, upstreamModelMismatchFailoverErr().ResponseBody)
+		require.Equal(t, http.StatusBadGateway, status)
+		require.Equal(t, "upstream_error", errType)
+		require.Equal(t, "Upstream service temporarily unavailable", msg)
+		require.Equal(t, service.UpstreamModelMismatchClientMessage, service.ExtractUpstreamErrorMessage(upstreamModelMismatchFailoverErr().ResponseBody))
+		_ = rec
 	})
 }
