@@ -1045,13 +1045,17 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			// Send SSE comment as keepalive
 			writeStreamHeaders()
-			if _, err := fmt.Fprint(c.Writer, ":\n\n"); err != nil {
+			n, err := fmt.Fprint(c.Writer, ":\n\n")
+			if err != nil {
 				logger.L().Info("openai chat_completions stream: client disconnected during keepalive",
 					zap.String("request_id", requestID),
 				)
 				clientDisconnected = true
 				continue
 			}
+			// 注释行是客户端会丢弃的心跳，不算内容交付：只计入心跳字节（clientOutputStarted 本就不置位），
+			// 让上游模型不一致等 pre-output failover 在心跳后仍可拦截并切号。
+			addOpenAIStreamKeepaliveBytes(c, n)
 			c.Writer.Flush()
 		}
 	}
