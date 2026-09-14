@@ -6460,36 +6460,6 @@ func openAICompatPayloadWithEventType(payload, eventType string) string {
 	return patched
 }
 
-func (s *OpenAIGatewayService) replaceModelInSSELine(line, fromModel, toModel string) string {
-	data, ok := extractOpenAISSEDataLine(line)
-	if !ok {
-		return line
-	}
-	if data == "" || data == "[DONE]" {
-		return line
-	}
-
-	// 使用 gjson 精确检查 model 字段，避免全量 JSON 反序列化
-	if m := gjson.Get(data, "model"); m.Exists() && m.Str == fromModel {
-		newData, err := sjson.Set(data, "model", toModel)
-		if err != nil {
-			return line
-		}
-		return "data: " + newData
-	}
-
-	// 检查嵌套的 response.model 字段
-	if m := gjson.Get(data, "response.model"); m.Exists() && m.Str == fromModel {
-		newData, err := sjson.Set(data, "response.model", toModel)
-		if err != nil {
-			return line
-		}
-		return "data: " + newData
-	}
-
-	return line
-}
-
 // correctToolCallsInResponseBody 修正响应体中的工具调用
 func (s *OpenAIGatewayService) correctToolCallsInResponseBody(body []byte) []byte {
 	if len(body) == 0 {
@@ -7488,17 +7458,6 @@ func (s *OpenAIGatewayService) parseSSEUsageFromBody(body string) *OpenAIUsage {
 	return usage
 }
 
-func (s *OpenAIGatewayService) replaceModelInSSEBody(body, fromModel, toModel string) string {
-	lines := strings.Split(body, "\n")
-	for i, line := range lines {
-		if _, ok := extractOpenAISSEDataLine(line); !ok {
-			continue
-		}
-		lines[i] = s.replaceModelInSSELine(line, fromModel, toModel)
-	}
-	return strings.Join(lines, "\n")
-}
-
 func (s *OpenAIGatewayService) validateUpstreamBaseURL(raw string) (string, error) {
 	if s.cfg != nil && !s.cfg.Security.URLAllowlist.Enabled {
 		normalized, err := urlvalidator.ValidateURLFormat(raw, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
@@ -7909,18 +7868,6 @@ func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
 		return trimmedBase
 	}
 	return trimmedBase + trimmedSuffix
-}
-
-func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
-	// 使用 gjson/sjson 精确替换 model 字段，避免全量 JSON 反序列化
-	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {
-		newBody, err := sjson.SetBytes(body, "model", toModel)
-		if err != nil {
-			return body
-		}
-		return newBody
-	}
-	return body
 }
 
 // OpenAIRecordUsageInput input for recording usage

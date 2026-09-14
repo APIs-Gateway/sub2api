@@ -320,38 +320,6 @@ func shouldLogOpenAIWSBufferedEvent(idx int) bool {
 	return false
 }
 
-func openAIWSEventMayContainModel(eventType string) bool {
-	switch eventType {
-	case "response.created",
-		"response.in_progress",
-		"response.completed",
-		"response.done",
-		"response.failed",
-		"response.incomplete",
-		"response.cancelled",
-		"response.canceled":
-		return true
-	default:
-		trimmed := strings.TrimSpace(eventType)
-		if trimmed == eventType {
-			return false
-		}
-		switch trimmed {
-		case "response.created",
-			"response.in_progress",
-			"response.completed",
-			"response.done",
-			"response.failed",
-			"response.incomplete",
-			"response.cancelled",
-			"response.canceled":
-			return true
-		default:
-			return false
-		}
-	}
-}
-
 func openAIWSEventMayContainToolCalls(eventType string) bool {
 	eventType = strings.TrimSpace(eventType)
 	if eventType == "" {
@@ -4463,36 +4431,6 @@ func isOpenAIWSTokenEvent(eventType string) bool {
 	// 不能把它们当作 token event，否则当上游没有可识别的 delta 时，
 	// firstTokenMs 会被填到终止时刻，等于把"总耗时"误报为"首 token 延迟"。
 	return false
-}
-
-func replaceOpenAIWSMessageModel(message []byte, fromModel, toModel string) []byte {
-	if len(message) == 0 {
-		return message
-	}
-	if strings.TrimSpace(fromModel) == "" || strings.TrimSpace(toModel) == "" || fromModel == toModel {
-		return message
-	}
-	if !bytes.Contains(message, []byte(`"model"`)) || !bytes.Contains(message, []byte(fromModel)) {
-		return message
-	}
-	modelValues := gjson.GetManyBytes(message, "model", "response.model")
-	replaceModel := modelValues[0].Exists() && modelValues[0].Str == fromModel
-	replaceResponseModel := modelValues[1].Exists() && modelValues[1].Str == fromModel
-	if !replaceModel && !replaceResponseModel {
-		return message
-	}
-	updated := message
-	if replaceModel {
-		if next, err := sjson.SetBytes(updated, "model", toModel); err == nil {
-			updated = next
-		}
-	}
-	if replaceResponseModel {
-		if next, err := sjson.SetBytes(updated, "response.model", toModel); err == nil {
-			updated = next
-		}
-	}
-	return updated
 }
 
 func populateOpenAIUsageFromResponseJSON(body []byte, usage *OpenAIUsage) {
