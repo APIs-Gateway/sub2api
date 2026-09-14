@@ -563,18 +563,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						streamStarted = true
 					}
 					// 池模式：同账号重试
-					if retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount); ok {
-						reqLog.Warn("openai.pool_mode_same_account_retry",
-							zap.Int64("account_id", account.ID),
-							zap.Int("upstream_status", failoverErr.StatusCode),
-							zap.Int("retry_limit", retryLimit),
-							zap.Int("retry_count", retryCount),
-						)
-						select {
-						case <-c.Request.Context().Done():
-							return
-						case <-time.After(sameAccountRetryDelay):
-						}
+					if retry, canceled := waitPoolModeSameAccountRetry(c, reqLog, "openai.pool_mode_same_account_retry", account, failoverErr, sameAccountRetryCount); canceled {
+						return
+					} else if retry {
 						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
@@ -1082,18 +1073,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 					// 池模式：同账号重试
-					if retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount); ok {
-						reqLog.Warn("openai_messages.pool_mode_same_account_retry",
-							zap.Int64("account_id", account.ID),
-							zap.Int("upstream_status", failoverErr.StatusCode),
-							zap.Int("retry_limit", retryLimit),
-							zap.Int("retry_count", retryCount),
-						)
-						select {
-						case <-c.Request.Context().Done():
-							return
-						case <-time.After(sameAccountRetryDelay):
-						}
+					if retry, canceled := waitPoolModeSameAccountRetry(c, reqLog, "openai_messages.pool_mode_same_account_retry", account, failoverErr, sameAccountRetryCount); canceled {
+						return
+					} else if retry {
 						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
@@ -2806,6 +2788,38 @@ func poolModeSameAccountRetry(account *service.Account, failoverErr *service.Ups
 	}
 	sameAccountRetryCount[account.ID]++
 	return sameAccountRetryCount[account.ID], retryLimit, true
+}
+
+// waitPoolModeSameAccountRetry 池模式同账号重试的公共步骤：判定是否还能重试、记日志、等待重试间隔。
+// retry=true 表示调用方应在同一账号上再试一次；canceled=true 表示等待期间客户端已断开，调用方应直接返回。
+func waitPoolModeSameAccountRetry(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	logEvent string,
+	account *service.Account,
+	failoverErr *service.UpstreamFailoverError,
+	sameAccountRetryCount map[int64]int,
+) (retry bool, canceled bool) {
+	retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount)
+	if !ok {
+		return false, false
+	}
+	if reqLog != nil {
+		reqLog.Warn(logEvent,
+			zap.Int64("account_id", account.ID),
+			zap.Int("upstream_status", failoverErr.StatusCode),
+			zap.Int("retry_limit", retryLimit),
+			zap.Int("retry_count", retryCount),
+		)
+	}
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	if !sleepWithContext(ctx, sameAccountRetryDelay) {
+		return true, true
+	}
+	return true, false
 }
 
 // upstreamModelMismatchAttemptsKey 在 gin context 里存 map[int64]int：同一请求内每个账号已落审计行的

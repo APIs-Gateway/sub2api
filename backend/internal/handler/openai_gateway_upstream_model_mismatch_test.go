@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
 )
 
 // fakeUpstreamModelMismatchRecorder 替代 *service.OpenAIGatewayService 接收审计行调用，
@@ -474,4 +475,46 @@ func TestPoolModeSameAccountRetry_OtherFailoversFollowAccountConfig(t *testing.T
 	require.False(t, ok)
 	_, _, ok = poolModeSameAccountRetry(pool, nil, counts)
 	require.False(t, ok)
+}
+
+func TestWaitPoolModeSameAccountRetry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	poolAccount := func() *service.Account {
+		return &service.Account{ID: 3230, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Credentials: map[string]any{"pool_mode": true, "pool_mode_retry_count": 1}}
+	}
+	newCtx := func(ctx context.Context) *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+		return c
+	}
+
+	t.Run("retries once under the account limit, then hands over to account switching", func(t *testing.T) {
+		counts := map[int64]int{}
+		c := newCtx(context.Background())
+		retry, canceled := waitPoolModeSameAccountRetry(c, zap.NewNop(), "openai.pool_mode_same_account_retry", poolAccount(), &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true}, counts)
+		require.True(t, retry)
+		require.False(t, canceled)
+		require.Equal(t, 1, counts[3230])
+
+		retry, canceled = waitPoolModeSameAccountRetry(c, zap.NewNop(), "openai.pool_mode_same_account_retry", poolAccount(), &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true}, counts)
+		require.False(t, retry, "limit reached: caller must switch account")
+		require.False(t, canceled)
+		require.Equal(t, 1, counts[3230])
+	})
+
+	t.Run("client disconnect during the retry delay reports canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		c := newCtx(ctx)
+		retry, canceled := waitPoolModeSameAccountRetry(c, nil, "openai.pool_mode_same_account_retry", poolAccount(), &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true}, map[int64]int{})
+		require.True(t, retry)
+		require.True(t, canceled)
+	})
+
+	t.Run("non-retryable failover never waits", func(t *testing.T) {
+		c := newCtx(context.Background())
+		retry, canceled := waitPoolModeSameAccountRetry(c, zap.NewNop(), "openai.pool_mode_same_account_retry", poolAccount(), &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}, map[int64]int{})
+		require.False(t, retry)
+		require.False(t, canceled)
+	})
 }
