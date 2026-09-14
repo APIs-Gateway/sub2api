@@ -332,9 +332,10 @@ func TestRecordUsage_IdentityMappingWithoutMismatchKeepsUpstreamModelNil(t *test
 	require.Nil(t, usageRepo.lastLog.UpstreamModel, "普通行恒等映射省列")
 }
 
-// 观察模式（DisableUpstreamModelMismatchBlock=true）放行的行：标记为不一致、写 upstream_response_model、
-// request_id 不加后缀，但同样零计费——只要确认 B != A，用户就不该为被换掉的模型买单。
-func TestRecordUsage_MismatchObserveModeWritesResponseModelAndZeroCost(t *testing.T) {
+// 观察模式（DisableUpstreamModelMismatchBlock=true，用于误杀止血）放行的行：标记为不一致、写
+// upstream_response_model、request_id 不加后缀，但照常计费——开关关闭时不确定是否真的换了模型，
+// 零计费只覆盖「本应拦截但拦不住」的场景。
+func TestRecordUsage_MismatchObserveModeWritesResponseModelButBillsNormally(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	subRepo := &openAIRecordUsageSubRepoStub{}
@@ -360,30 +361,58 @@ func TestRecordUsage_MismatchObserveModeWritesResponseModelAndZeroCost(t *testin
 	require.NotContains(t, log.RequestID, ":mismatch:", "只有被拦截的审计行才加后缀")
 	require.NotNil(t, log.UpstreamModel, "不一致行（含观察模式）必写 upstream_model")
 	require.Equal(t, "gpt-5.1", *log.UpstreamModel)
-	require.Equal(t, 10, log.InputTokens, "token 原样保留供审计")
+	require.Equal(t, 10, log.InputTokens)
 	require.Equal(t, 5, log.OutputTokens)
-	require.Zero(t, log.TotalCost, "观察模式放行行零计费")
-	require.Zero(t, log.ActualCost)
-	require.NotNil(t, log.BillingMode)
-	require.Equal(t, string(BillingModeToken), *log.BillingMode)
-	require.Equal(t, 0, userRepo.deductCalls, "不扣余额")
-	require.Equal(t, 0, subRepo.incrementCalls, "不扣订阅额度")
+	expected := expectedOpenAICost(t, svc, "gpt-5.1", usage, 1.1)
+	require.Greater(t, log.TotalCost, 0.0, "总开关关闭时晚到行照常计费")
+	require.InDelta(t, expected.ActualCost, log.ActualCost, 1e-12)
+	require.Equal(t, 1, userRepo.deductCalls, "观察模式正常扣费")
+	require.InDelta(t, expected.ActualCost, userRepo.lastAmount, 1e-12)
+}
 
-	// 对照：同样的行不带 UpstreamResponseModel（上游没换模型）照常计费，确认零计费只由 B != A 触发。
+// grok 这类 upstreamModelObserveOnly 的模型只记录不拦截，判定本身未验证：带 B 的行照常计费、只标记。
+func TestRecordUsage_GrokObserveOnlyMismatchBillsNormally(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+	require.False(t, svc.cfg.Gateway.DisableUpstreamModelMismatchBlock, "拦截开启，仅因 grok 豁免而不零计费")
+	usage := OpenAIUsage{InputTokens: 10, OutputTokens: 5}
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:                &OpenAIForwardResult{RequestID: "req-grok", Model: "grok-4.3", UpstreamModel: "grok-4.3", Usage: usage},
+		APIKey:                &APIKey{ID: 2, User: &User{ID: 1}},
+		User:                  &User{ID: 1},
+		Account:               &Account{ID: 9, Platform: PlatformOpenAI},
+		UpstreamResponseModel: "grok-4.3-0709",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.True(t, log.UpstreamModelMismatch)
+	require.Equal(t, "grok-4.3-0709", *log.UpstreamResponseModel)
+	require.NotContains(t, log.RequestID, ":mismatch:")
+	expected := expectedOpenAICost(t, svc, "grok-4.3", usage, 1.1)
+	require.Greater(t, log.TotalCost, 0.0, "grok 观察行照常计费")
+	require.InDelta(t, expected.ActualCost, log.ActualCost, 1e-12)
+	require.Equal(t, 1, userRepo.deductCalls)
+	require.InDelta(t, expected.ActualCost, userRepo.lastAmount, 1e-12)
+
+	// UpstreamModel 为空时用 Model 判定 grok 豁免。
 	usageRepo2 := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo2 := &openAIRecordUsageUserRepoStub{}
 	svc2 := newOpenAIRecordUsageServiceForTest(usageRepo2, userRepo2, &openAIRecordUsageSubRepoStub{}, nil)
 	require.NoError(t, svc2.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-		Result:  &OpenAIForwardResult{RequestID: "req-plain", Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: usage},
-		APIKey:  &APIKey{ID: 2, User: &User{ID: 1}},
-		User:    &User{ID: 1},
-		Account: &Account{ID: 9, Platform: PlatformOpenAI},
+		Result:                &OpenAIForwardResult{RequestID: "req-grok-2", Model: "grok-4.3", Usage: usage},
+		APIKey:                &APIKey{ID: 2, User: &User{ID: 1}},
+		User:                  &User{ID: 1},
+		Account:               &Account{ID: 9, Platform: PlatformOpenAI},
+		UpstreamResponseModel: "grok-4.3-0709",
 	}))
-	expected := expectedOpenAICost(t, svc2, "gpt-5.1", usage, 1.1)
 	require.Greater(t, usageRepo2.lastLog.TotalCost, 0.0)
-	require.InDelta(t, expected.ActualCost, usageRepo2.lastLog.ActualCost, 1e-12)
 	require.Equal(t, 1, userRepo2.deductCalls)
-	require.InDelta(t, expected.ActualCost, userRepo2.lastAmount, 1e-12)
 }
 
 // 晚到 model：上游把 model 放在 response.completed 才给、内容已交付无法拦截（Blocked=false、
