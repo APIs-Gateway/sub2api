@@ -1821,10 +1821,11 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		}
 	}
 
-	requestID := upstreamRequestIDFromHeader(resp.Header)
-	if requestID != "" {
-		c.Header("x-request-id", requestID)
+	// 客户端 x-request-id 只回显上游同名头；ops / ForwardResult 用兼容多家头名的 helper。
+	if v := resp.Header.Get("x-request-id"); v != "" {
+		c.Header("x-request-id", v)
 	}
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int
@@ -2463,10 +2464,11 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 			goto handleSuccess
 		}
 
-		requestID := upstreamRequestIDFromHeader(resp.Header)
-		if requestID != "" {
-			c.Header("x-request-id", requestID)
+		// 客户端 x-request-id 只回显上游同名头；ops 事件用兼容多家头名的 helper。
+		if v := resp.Header.Get("x-request-id"); v != "" {
+			c.Header("x-request-id", v)
 		}
+		requestID := upstreamRequestIDFromHeader(resp.Header)
 
 		unwrapped, unwrapErr := s.unwrapV1InternalResponse(respBody)
 		unwrappedForOps := unwrapped
@@ -2530,10 +2532,11 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	}
 
 handleSuccess:
-	requestID := upstreamRequestIDFromHeader(resp.Header)
-	if requestID != "" {
-		c.Header("x-request-id", requestID)
+	// 客户端 x-request-id 只回显上游同名头；ops / ForwardResult 用兼容多家头名的 helper。
+	if v := resp.Header.Get("x-request-id"); v != "" {
+		c.Header("x-request-id", v)
 	}
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int

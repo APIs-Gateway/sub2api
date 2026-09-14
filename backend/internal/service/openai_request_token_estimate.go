@@ -15,9 +15,12 @@ const openAIRequestMessageOverheadTokens = 4
 //
 // 覆盖三种入站形态，文本以外（图片 / 文件 / 音频等）一律跳过：
 //   - Responses：instructions 字符串；input 为字符串（视为一条消息）或数组，元素的 content 为
-//     字符串或 [{type: input_text/output_text/text, text}]；
-//   - Chat Completions：messages[].content 为字符串或 [{type: text, text}]；
-//   - Anthropic Messages：system 为字符串或 [{text}]；messages[].content 同上。
+//     字符串或 [{type: input_text/output_text/text, text}]；type=function_call_output 的 output
+//     （字符串或文本块数组）、type=function_call 的 arguments 也计入（agent 场景往往是 prompt 大头）；
+//   - Chat Completions：messages[].content 为字符串或 [{type: text, text}]；messages[].tool_calls[]
+//     .function.arguments 计入；
+//   - Anthropic Messages：system 为字符串或 [{text}]；messages[].content 同上，其中 type=tool_result
+//     的 content（字符串或文本块数组）、type=tool_use 的 input（JSON 原文）计入。
 //
 // tools[] 的 description 与 parameters（JSON 原文）同样占 prompt，按文本估算；兼容 Responses 扁平
 // 形态与 Chat 的 tools[].function 嵌套形态。非法 JSON / 空体返回 0。
@@ -71,16 +74,28 @@ func EstimateOpenAIRequestInputTokens(body []byte) int {
 	return total
 }
 
-// estimateOpenAIRequestMessageTokens 一条消息：content 文本 + 固定结构开销。
+// estimateOpenAIRequestMessageTokens 一条消息：content 文本 + 工具调用 / 工具输出文本 + 固定结构开销。
 func estimateOpenAIRequestMessageTokens(msg gjson.Result) int {
 	if !msg.IsObject() {
 		return 0
 	}
-	return estimateOpenAIRequestTextOrBlocks(msg.Get("content")) + openAIRequestMessageOverheadTokens
+	total := estimateOpenAIRequestTextOrBlocks(msg.Get("content"))
+	// Responses input：function_call_output.output / function_call.arguments。
+	total += estimateOpenAIRequestTextOrBlocks(msg.Get("output"))
+	total += estimateTokensForText(msg.Get("arguments").String())
+	// Chat Completions：assistant 消息里的 tool_calls[].function.arguments。
+	if calls := msg.Get("tool_calls"); calls.IsArray() {
+		calls.ForEach(func(_, call gjson.Result) bool {
+			total += estimateTokensForText(call.Get("function.arguments").String())
+			return true
+		})
+	}
+	return total + openAIRequestMessageOverheadTokens
 }
 
-// estimateOpenAIRequestTextOrBlocks 字符串直接估；数组只累加文本块（input_text / output_text / text，
-// 或任何带 text 字段的块），图片、文件、音频等跳过；其他类型返回 0。
+// estimateOpenAIRequestTextOrBlocks 字符串直接估；数组累加文本块（input_text / output_text / text，
+// 或任何带 text 字段的块）、Anthropic tool_result 的 content（递归）与 tool_use 的 input（JSON 原文），
+// 图片、文件、音频等跳过；其他类型返回 0。
 func estimateOpenAIRequestTextOrBlocks(v gjson.Result) int {
 	switch {
 	case !v.Exists():
@@ -100,6 +115,12 @@ func estimateOpenAIRequestTextOrBlocks(v gjson.Result) int {
 			switch block.Get("type").String() {
 			case "", "text", "input_text", "output_text":
 				total += estimateTokensForText(block.Get("text").String())
+			case "tool_result":
+				total += estimateOpenAIRequestTextOrBlocks(block.Get("content"))
+			case "tool_use":
+				if input := block.Get("input"); input.Exists() {
+					total += estimateTokensForText(input.Raw)
+				}
 			}
 			return true
 		})

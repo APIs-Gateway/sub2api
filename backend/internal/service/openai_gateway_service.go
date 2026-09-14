@@ -5662,7 +5662,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	if guardFirstOutput {
 		if s.responseHeaderFilter != nil {
 			attemptResponseHeaders = responseheaders.FilterHeaders(resp.Header, s.responseHeaderFilter)
-		} else if requestID := upstreamRequestIDFromHeader(resp.Header); requestID != "" {
+		} else if requestID := resp.Header.Get("x-request-id"); requestID != "" {
+			// 客户端 x-request-id 只回显上游同名头（与下方非守卫分支一致），不用兼容 helper。
 			attemptResponseHeaders = http.Header{"X-Request-Id": []string{requestID}}
 		}
 	} else if s.responseHeaderFilter != nil {

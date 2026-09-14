@@ -245,3 +245,24 @@ func TestCheckUpstreamModelMismatch_RecordsUpstreamHeaderFingerprint(t *testing.
 	events2, _ := c2.Get(OpsUpstreamErrorsKey)
 	require.Nil(t, events2.([]*OpsUpstreamErrorEvent)[0].UpstreamHeaders)
 }
+
+// failover 耗尽后 ResolveUpstreamErrorResponse 不得用对外笼统文案覆盖 ops 顶层内部消息（含 sent/got）。
+func TestResolveUpstreamErrorResponse_KeepsOpsMessageForUpstreamModelMismatchBody(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	ferr := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", nil, "gpt-6-astra", "gpt-5.6-terra", true, true, OpenAIUsage{})
+	require.NotNil(t, ferr)
+	require.True(t, IsUpstreamModelMismatchErrorBody(ferr.ResponseBody))
+	require.False(t, IsUpstreamModelMismatchErrorBody([]byte(`{"error":{"code":"other"}}`)))
+	require.False(t, IsUpstreamModelMismatchErrorBody(nil))
+	require.False(t, IsUpstreamModelMismatchErrorBody([]byte(`not json`)))
+
+	status, errType, msg := ResolveUpstreamErrorResponse(c, PlatformOpenAI, ferr.StatusCode, ferr.ResponseBody)
+	require.Equal(t, http.StatusBadGateway, status)
+	require.Equal(t, "upstream_error", errType)
+	require.Equal(t, "Upstream service temporarily unavailable", msg)
+	opsMsg, _ := c.Get(OpsUpstreamErrorMessageKey)
+	require.Contains(t, opsMsg.(string), "sent=gpt-6-astra got=gpt-5.6-terra", "内部消息不能被笼统文案覆盖")
+	opsStatus, _ := c.Get(OpsUpstreamStatusCodeKey)
+	require.Equal(t, http.StatusBadGateway, opsStatus.(int))
+}

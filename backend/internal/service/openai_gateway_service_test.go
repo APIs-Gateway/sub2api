@@ -2351,6 +2351,42 @@ func TestOpenAIStreamingHeadersOverride(t *testing.T) {
 	}
 }
 
+// 首输出守卫模式（attemptResponseHeaders 暂存后提交）与非守卫模式一样：客户端 x-request-id 只回显
+// 上游同名头，上游只给 cf-ray / x-oneapi-request-id 时客户端头为空。
+func TestOpenAIStreamingClientRequestIDHeaderOnlyEchoesUpstreamXRequestID(t *testing.T) {
+	for _, guard := range []bool{false, true} {
+		t.Run(map[bool]string{false: "no first-output guard", true: "first-output guard"}[guard], func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			cfg := &config.Config{
+				Security: config.SecurityConfig{ResponseHeaders: config.ResponseHeaderConfig{Enabled: false}},
+				Gateway:  config.GatewayConfig{MaxLineSize: defaultMaxLineSize},
+			}
+			if guard {
+				cfg.Gateway.OpenAIFirstOutputTimeoutSeconds = 30
+			}
+			svc := &OpenAIGatewayService{cfg: cfg}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+			pr, pw := io.Pipe()
+			resp := &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       pr,
+				Header:     http.Header{"Cf-Ray": []string{"ray-1"}, "X-Oneapi-Request-Id": []string{"one-1"}},
+			}
+			go func() {
+				defer func() { _ = pw.Close() }()
+				_, _ = pw.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"model\":\"model\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"))
+			}()
+			_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+			_ = pr.Close()
+			require.NoError(t, err)
+			require.Empty(t, rec.Header().Get("X-Request-Id"), "上游没有 x-request-id 时客户端头不能被 cf-ray / oneapi id 顶替")
+		})
+	}
+}
+
 func TestOpenAIStreamingReuseScannerBufferAndStillWorks(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{

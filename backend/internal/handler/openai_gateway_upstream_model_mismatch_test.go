@@ -301,8 +301,22 @@ func requireNoUpstreamModelMismatchInternals(t *testing.T, body string) {
 // 端到端出口：被拦截且无可切账号 → handleFailoverExhausted。三种入站的最终响应都不含内部名词；
 // ops 上游错误记录（内部）仍保留。
 func TestOpenAIHandleFailoverExhausted_UpstreamModelMismatchClientMessageGeneric(t *testing.T) {
+	// checkUpstreamModelMismatch 在拦截时写入的 ops 顶层内部消息（含 sent/got）；耗尽出口不得覆盖。
+	const internalOpsMessage = "upstream returned a different model than requested: sent=gpt-6-astra got=gpt-5.6-terra"
+	requireOpsMessageKept := func(t *testing.T, c *gin.Context) {
+		t.Helper()
+		v, ok := c.Get(service.OpsUpstreamErrorMessageKey)
+		require.True(t, ok)
+		require.Contains(t, v.(string), "sent=")
+		require.Contains(t, v.(string), "got=")
+		status, ok := c.Get(service.OpsUpstreamStatusCodeKey)
+		require.True(t, ok)
+		require.Equal(t, http.StatusBadGateway, status.(int))
+	}
+
 	t.Run("responses route (codex canonical) 502", func(t *testing.T) {
 		c, rec := newCodexTestCtx("/v1/responses")
+		service.SetOpsUpstreamError(c, http.StatusBadGateway, internalOpsMessage, "")
 		(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, upstreamModelMismatchFailoverErr(), false)
 		require.Equal(t, http.StatusBadGateway, rec.Code)
 		body := rec.Body.String()
@@ -310,15 +324,33 @@ func TestOpenAIHandleFailoverExhausted_UpstreamModelMismatchClientMessageGeneric
 		msg := gjson.Get(body, "error.message").String()
 		require.NotContains(t, strings.ToLower(msg), "upstream")
 		require.NotContains(t, strings.ToLower(msg), "model")
+		requireOpsMessageKept(t, c)
 	})
 
 	t.Run("chat completions route 502 default mapping", func(t *testing.T) {
 		c, rec := newCodexTestCtx("/v1/chat/completions")
+		service.SetOpsUpstreamError(c, http.StatusBadGateway, internalOpsMessage, "")
 		(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, upstreamModelMismatchFailoverErr(), false)
 		require.Equal(t, http.StatusBadGateway, rec.Code)
 		body := rec.Body.String()
 		requireNoUpstreamModelMismatchInternals(t, body)
 		require.Equal(t, "Upstream service temporarily unavailable", gjson.Get(body, "error.message").String(), "沿用产品既有 502 默认文案")
+		requireOpsMessageKept(t, c)
+	})
+
+	t.Run("anthropic route keeps ops message", func(t *testing.T) {
+		c, _ := newCodexTestCtx("/v1/messages")
+		service.SetOpsUpstreamError(c, http.StatusBadGateway, internalOpsMessage, "")
+		(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, upstreamModelMismatchFailoverErr(), false)
+		requireOpsMessageKept(t, c)
+	})
+
+	t.Run("other 502 bodies still overwrite ops message (unchanged behaviour)", func(t *testing.T) {
+		c, _ := newCodexTestCtx("/v1/chat/completions")
+		service.SetOpsUpstreamError(c, http.StatusBadGateway, "earlier attempt message", "")
+		(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: []byte(`{"error":{"message":"gateway boom"}}`)}, false)
+		v, _ := c.Get(service.OpsUpstreamErrorMessageKey)
+		require.Equal(t, "gateway boom", v.(string))
 	})
 
 	t.Run("anthropic messages route 502", func(t *testing.T) {
@@ -358,4 +390,82 @@ func TestOpenAIHandleFailoverExhausted_UpstreamModelMismatchClientMessageGeneric
 		require.Equal(t, service.UpstreamModelMismatchClientMessage, service.ExtractUpstreamErrorMessage(upstreamModelMismatchFailoverErr().ResponseBody))
 		_ = rec
 	})
+}
+
+// 模拟 handler failover 循环：池模式账号 pool_mode_retry_count=2，上游连续返回模型不一致。
+// 期望同账号共 3 次尝试（首发 + 2 次重试）各落一行审计（attempt 0/1/2），第 3 次被拦截后不再同账号重试、切号。
+func TestPoolModeSameAccountRetry_UpstreamModelMismatchRetriesUpToAccountLimitThenSwitches(t *testing.T) {
+	c := newUpstreamModelMismatchTestContext(t)
+	apiKey, _, sub := upstreamModelMismatchTestFixtures()
+	account := &service.Account{
+		ID: 21, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Credentials: map[string]any{"pool_mode": true, "pool_mode_retry_count": float64(2)},
+	}
+	require.True(t, account.IsPoolMode())
+	require.Equal(t, 2, account.GetPoolModeRetryCount())
+	rec := newFakeUpstreamModelMismatchRecorder()
+	sameAccountRetryCount := map[int64]int{}
+
+	// 与 service.checkUpstreamModelMismatch 对池模式账号返回的 failover 同形态。
+	mismatchFailover := func() *service.UpstreamFailoverError {
+		ferr := upstreamModelMismatchFailoverErr()
+		ferr.RetryableOnSameAccount = account.IsPoolMode()
+		return ferr
+	}
+
+	attempts := 0
+	switched := false
+	for !switched {
+		attempts++
+		require.LessOrEqual(t, attempts, 10, "循环必须终止")
+		// Forward 被拦截：service 打标 + 返回 failover。
+		service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{SentModel: "gpt-6-astra", ResponseModel: "gpt-5.6-terra", AccountID: account.ID, Blocked: true})
+		ferr := mismatchFailover()
+		// handler：Forward 返回后先落审计行并清标。
+		recordUpstreamModelMismatchIfMarked(c, rec, nil, apiKey, account, sub, "gpt-6-astra", service.ChannelUsageFields{}, "h", nil)
+		require.Equal(t, attempts-1, rec.waitNth(t, attempts).Attempt, "每次尝试各落一行，attempt 递增")
+		// handler：failover 分支的池模式决策。
+		retryCount, retryLimit, ok := poolModeSameAccountRetry(account, ferr, sameAccountRetryCount)
+		if ok {
+			require.Equal(t, 2, retryLimit)
+			require.Equal(t, attempts, retryCount)
+			continue
+		}
+		switched = true
+	}
+	require.Equal(t, 3, attempts, "首发 + pool_mode_retry_count 次重试后才切号")
+	require.Equal(t, 2, sameAccountRetryCount[account.ID])
+	require.Equal(t, 3, rec.callCount())
+
+	// 切到新账号后计数与审计 attempt 都从 0 开始；同一 map 里原账号的计数不影响新账号。
+	other := &service.Account{ID: 22, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Credentials: map[string]any{"pool_mode": true}}
+	_, _, ok := poolModeSameAccountRetry(other, mismatchFailover(), sameAccountRetryCount)
+	require.True(t, ok)
+	require.Equal(t, 1, sameAccountRetryCount[other.ID])
+}
+
+// 非池模式账号的模型不一致（RetryableOnSameAccount=false）不做同账号重试；
+// 其他 failover 类型（RetryableOnSameAccount=true、未设额外上限）仍按账号 pool_mode_retry_count（默认 3）重试。
+func TestPoolModeSameAccountRetry_OtherFailoversFollowAccountConfig(t *testing.T) {
+	counts := map[int64]int{}
+	nonPool := &service.Account{ID: 31, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth}
+	_, _, ok := poolModeSameAccountRetry(nonPool, &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: nonPool.IsPoolMode()}, counts)
+	require.False(t, ok)
+	require.Zero(t, counts[nonPool.ID])
+
+	pool := &service.Account{ID: 32, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Credentials: map[string]any{"pool_mode": true}}
+	ferr429 := &service.UpstreamFailoverError{StatusCode: http.StatusTooManyRequests, RetryableOnSameAccount: true}
+	for i := 1; i <= 3; i++ {
+		retryCount, retryLimit, ok := poolModeSameAccountRetry(pool, ferr429, counts)
+		require.True(t, ok, "第 %d 次重试在默认上限 3 内", i)
+		require.Equal(t, 3, retryLimit)
+		require.Equal(t, i, retryCount)
+	}
+	_, _, ok = poolModeSameAccountRetry(pool, ferr429, counts)
+	require.False(t, ok, "用尽后切号")
+
+	_, _, ok = poolModeSameAccountRetry(nil, ferr429, counts)
+	require.False(t, ok)
+	_, _, ok = poolModeSameAccountRetry(pool, nil, counts)
+	require.False(t, ok)
 }

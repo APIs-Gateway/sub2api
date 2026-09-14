@@ -563,23 +563,19 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						streamStarted = true
 					}
 					// 池模式：同账号重试
-					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
-						if sameAccountRetryCount[account.ID] < retryLimit {
-							sameAccountRetryCount[account.ID]++
-							reqLog.Warn("openai.pool_mode_same_account_retry",
-								zap.Int64("account_id", account.ID),
-								zap.Int("upstream_status", failoverErr.StatusCode),
-								zap.Int("retry_limit", retryLimit),
-								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
-							)
-							select {
-							case <-c.Request.Context().Done():
-								return
-							case <-time.After(sameAccountRetryDelay):
-							}
-							continue
+					if retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount); ok {
+						reqLog.Warn("openai.pool_mode_same_account_retry",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.Int("retry_limit", retryLimit),
+							zap.Int("retry_count", retryCount),
+						)
+						select {
+						case <-c.Request.Context().Done():
+							return
+						case <-time.After(sameAccountRetryDelay):
 						}
+						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
@@ -1086,23 +1082,19 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 					// 池模式：同账号重试
-					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
-						if sameAccountRetryCount[account.ID] < retryLimit {
-							sameAccountRetryCount[account.ID]++
-							reqLog.Warn("openai_messages.pool_mode_same_account_retry",
-								zap.Int64("account_id", account.ID),
-								zap.Int("upstream_status", failoverErr.StatusCode),
-								zap.Int("retry_limit", retryLimit),
-								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
-							)
-							select {
-							case <-c.Request.Context().Done():
-								return
-							case <-time.After(sameAccountRetryDelay):
-							}
-							continue
+					if retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount); ok {
+						reqLog.Warn("openai_messages.pool_mode_same_account_retry",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.Int("retry_limit", retryLimit),
+							zap.Int("retry_count", retryCount),
+						)
+						select {
+						case <-c.Request.Context().Done():
+							return
+						case <-time.After(sameAccountRetryDelay):
 						}
+						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
@@ -2798,6 +2790,22 @@ func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Contex
 		apiKeySvc = h.apiKeyService
 	}
 	recordUpstreamModelMismatchIfMarked(c, recorder, apiKeySvc, apiKey, account, subscription, model, channelFields, requestPayloadHash, requestBody)
+}
+
+// poolModeSameAccountRetry 池模式同账号重试的决策：failoverErr 标了 RetryableOnSameAccount 且该账号
+// 本次请求内的重试次数还没到 account.GetPoolModeRetryCount()，就把计数 +1 并返回 ok=true（调用方 sleep 后
+// continue，不切号、不降权）；否则 ok=false，走正常切号。三个 OpenAI 入站 handler 共用，便于单测锁定
+// 「上限 = pool_mode_retry_count，用尽才切号」。
+func poolModeSameAccountRetry(account *service.Account, failoverErr *service.UpstreamFailoverError, sameAccountRetryCount map[int64]int) (retryCount, retryLimit int, ok bool) {
+	if account == nil || failoverErr == nil || !failoverErr.RetryableOnSameAccount {
+		return 0, 0, false
+	}
+	retryLimit = account.GetPoolModeRetryCount()
+	if sameAccountRetryCount[account.ID] >= retryLimit {
+		return sameAccountRetryCount[account.ID], retryLimit, false
+	}
+	sameAccountRetryCount[account.ID]++
+	return sameAccountRetryCount[account.ID], retryLimit, true
 }
 
 // upstreamModelMismatchAttemptsKey 在 gin context 里存 map[int64]int：同一请求内每个账号已落审计行的
