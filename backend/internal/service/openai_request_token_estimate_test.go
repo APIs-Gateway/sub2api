@@ -68,8 +68,36 @@ func TestEstimateOpenAIRequestInputTokens(t *testing.T) {
 			// tool2 描述 8 + `{"type":"object"}` 17 字符 → 5
 			want: 12 + 8 + 14 + 8 + 5,
 		},
+		{
+			name: "anthropic tools: input_schema counts as text (flat + function nested)",
+			// input_schema JSON 原文 `{"type":"object","properties":{"q":{"type":"string"}}}` 54 字符 → 14；
+			// 嵌套在 function 里的 input_schema 同样计入；description 缺省不加。
+			body: `{"messages":[{"role":"user","content":"` + text32 + `"}],"tools":[{"name":"f","input_schema":{"type":"object","properties":{"q":{"type":"string"}}}},{"type":"function","function":{"name":"g","input_schema":{"type":"object","properties":{"q":{"type":"string"}}}}}]}`,
+			want: 12 + 14 + 14,
+		},
+		{
+			name: "content array with bare string blocks and non-object blocks",
+			// 字符串块直接按文本估：8 + 8；数字块 / null 块跳过；+4 结构开销。
+			body: `{"messages":[{"role":"user","content":["` + text32 + `","` + text32 + `",42,null]}]}`,
+			want: 20,
+		},
+		{
+			name: "responses input array with non-object items is skipped",
+			// 非对象元素返回 0（不加结构开销），对象元素照常。
+			body: `{"input":["` + text32 + `",7,{"role":"user","content":"` + text32 + `"}]}`,
+			want: 12,
+		},
+		{
+			name: "unknown block types and non-text content are ignored",
+			body: `{"instructions":{"nested":"object"},"system":123,"messages":[{"role":"user","content":{"type":"text","text":"` + text32 + `"}}]}`,
+			// instructions / system 非字符串非数组 → 0；content 为对象 → 0；只剩一条消息的 4 结构开销。
+			want: 4,
+		},
 		{name: "empty body", body: ``, want: 0},
 		{name: "invalid json", body: `{"messages":[`, want: 0},
+		{name: "non-object root: array", body: `[{"role":"user","content":"` + text32 + `"}]`, want: 0},
+		{name: "non-object root: string", body: `"` + text32 + `"`, want: 0},
+		{name: "non-object root: number", body: `42`, want: 0},
 		{name: "no text fields", body: `{"model":"gpt-5","stream":true}`, want: 0},
 	}
 	for _, tc := range cases {
