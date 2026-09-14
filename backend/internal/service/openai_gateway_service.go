@@ -8301,7 +8301,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		// 供审计，成本清零。后面的 applyUsageBilling / postUsageBilling / buildUsageBillingCommand 全部以
 		// ActualCost>0 / TotalCost>0 为前提，cost 为零值时不会扣任何余额、订阅额度、key 额度、账号额度或平台额度。
 		if !input.UpstreamModelMismatchBlocked {
-			logger.L().Info("openai.upstream_model_mismatch_late_zero_cost",
+			logger.FromContext(ctx).Info("openai.upstream_model_mismatch_late_zero_cost",
 				zap.Int64("account_id", account.ID),
 				zap.String("sent", firstNonEmpty(strings.TrimSpace(result.UpstreamModel), result.Model)),
 				zap.String("got", strings.TrimSpace(input.UpstreamResponseModel)),

@@ -220,7 +220,10 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	MarkOpsUpstreamModelMismatch(c, UpstreamModelMismatchMark{
 		SentModel: sentModel, ResponseModel: responseModel, AccountID: accountID, Stream: stream, Blocked: blocked, Usage: usage,
 	})
-	logger.L().Warn("openai.upstream_model_mismatch",
+	// 用请求级 logger（带 request_id / client_request_id / path 等字段）而不是全局 logger.L()：
+	// 线上全局 logger 只落文件 sink，handler 的请求级事件才进容器 stdout；排障时要能在
+	// docker logs 里按 request_id 把本事件和同请求的重试 / 切号事件串起来。
+	upstreamModelMismatchLogger(c).Warn("openai.upstream_model_mismatch",
 		zap.Int64("account_id", accountID), zap.String("sent_model", sentModel),
 		zap.String("response_model", responseModel), zap.Bool("blocked", blocked), zap.Bool("can_block", canBlock))
 	if !blocked {
@@ -259,4 +262,12 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 		StatusCode: http.StatusBadGateway, ResponseBody: body, ResponseHeaders: headers,
 		RetryableOnSameAccount: account != nil && account.IsPoolMode(),
 	}
+}
+
+// upstreamModelMismatchLogger 取请求级 logger；没有 gin 请求上下文时退回全局 logger。
+func upstreamModelMismatchLogger(c *gin.Context) *zap.Logger {
+	if c == nil || c.Request == nil {
+		return logger.L()
+	}
+	return logger.FromContext(c.Request.Context())
 }
