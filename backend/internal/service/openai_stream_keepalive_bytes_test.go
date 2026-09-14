@@ -47,6 +47,7 @@ func TestOpenAICompactKeepaliveAdjustedWrittenSize_NoStreamKeepaliveUnchanged(t 
 	// 计数 0 / 空 context / 错误类型都不影响原有语义
 	addOpenAIStreamKeepaliveBytes(c, 0)
 	addOpenAIStreamKeepaliveBytes(nil, 3)
+	require.Equal(t, 0, openAIStreamKeepaliveBytesWritten(nil), "空 context 读计数返回 0，不 panic")
 	require.Equal(t, len("direct"), OpenAICompactKeepaliveAdjustedWrittenSize(c))
 	c.Set(openAIStreamKeepaliveBytesKey, "wrong-type")
 	require.Equal(t, 0, openAIStreamKeepaliveBytesWritten(c))
