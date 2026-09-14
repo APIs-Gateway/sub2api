@@ -6074,7 +6074,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						streamEarlyErr = s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, dataBytes, failedMessage, resp.Header)
 						return
 					}
-					if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
+					// 透传规则改写成 JSON 错误体只在响应头尚未提交时可行；只写过心跳（响应头已是
+					// 200 SSE）时不能再写 JSON，退回下面的原样转发 response.failed（流内收尾）。
+					if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched && !c.Writer.Written() {
 						sawFailedEvent = true
 						s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "http_error", dataBytes, failedMessage)
 						MarkResponseCommitted(c)
@@ -6345,26 +6347,34 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if time.Since(lastDownstreamWriteAt) < keepaliveInterval {
 				continue
 			}
+			// 心跳是客户端会丢弃的 SSE 注释行，不算内容交付：每次真正写出后计入
+			// addOpenAIStreamKeepaliveBytes，openAIStreamClientOutputStarted 会把它扣掉，
+			// 使上游模型不一致等 pre-output failover 在心跳后仍能零泄漏地切号。
 			if guardFirstOutput {
-				if _, err := w.Write([]byte(":\n\n")); err != nil {
+				n, err := w.Write([]byte(":\n\n"))
+				if err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 					continue
 				}
+				addOpenAIStreamKeepaliveBytes(c, n)
 				flusher.Flush()
 				lastDownstreamWriteAt = time.Now()
 				continue
 			}
-			if _, err := writePendingString(":\n\n"); err != nil {
+			n, err := writePendingString(":\n\n")
+			if err != nil {
 				handlePendingWriteError(err)
 				clientDisconnected = true
 				logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 				continue
 			}
+			// 进的是 pending 缓冲，只有 flushBuffered 成功才算真正写出。
 			if err := flushBuffered(); err != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.openai_gateway", "Client disconnected during keepalive flush, continuing to drain upstream for billing")
 			} else {
+				addOpenAIStreamKeepaliveBytes(c, n)
 				lastDownstreamWriteAt = time.Now()
 			}
 		}
@@ -7950,7 +7960,9 @@ type OpenAIRecordUsageInput struct {
 	// 每次拦截各落一行，attempt≥1 的行 request_id 再追加 ":<attempt>"，否则撞唯一索引被静默丢弃。
 	UpstreamModelMismatchAttempt int
 	// UpstreamResponseModel 非空时写入 usage_logs.upstream_response_model，并把该行标记为
-	// upstream_model_mismatch=true（观察模式 / 晚到 model 的成功路径也会带，照常计费，仅用于后台筛选）。
+	// upstream_model_mismatch=true。只在 B != A（上游确认换了模型）时由 mark 传入：观察模式
+	// （DisableUpstreamModelMismatchBlock=true）、grok 观察与晚到 model（内容已交付、无法拦截）的
+	// 成功路径都会带。其中只有「本应拦截但拦不住」的晚到行零计费，见 upstreamModelMismatchZeroCost。
 	UpstreamResponseModel string
 	ChannelUsageFields
 
@@ -8091,6 +8103,28 @@ func upstreamModelMismatchAuditRequestID(requestID string, accountID int64, atte
 		requestID = truncateString(requestID, usageLogRequestIDMaxBytes-len(suffix))
 	}
 	return requestID + suffix
+}
+
+// upstreamModelMismatchZeroCost 判定非拦截路径上的行是否零计费。UpstreamResponseModel 只在
+// checkUpstreamModelMismatch 判定 B != A 后由 mark 传入（handler 读 mark.ResponseModel），非空即
+// 「上游确认换了模型」。带 B 的行分三种：
+//  1. 晚到 model（拦截开启、模型不在观察豁免、只因内容已交付无法拦截）：本应拦截的行，零计费——
+//     用户不该为被换掉的模型买单。
+//  2. grok 这类 upstreamModelObserveOnly 的模型：只记录不拦截，判定本身未经验证（xAI 带日期模型名），
+//     照常计费、只标记。
+//  3. 总开关 DisableUpstreamModelMismatchBlock=true（观察模式，用于线上误杀止血）：照常计费、只标记，
+//     否则误杀时开关止得住拦截、止不住漏收费。
+//
+// 被拦截的审计行由 RecordUsage 的 UpstreamModelMismatchBlocked 分支处理，不经此函数。
+func (s *OpenAIGatewayService) upstreamModelMismatchZeroCost(input *OpenAIRecordUsageInput) bool {
+	if input == nil || input.Result == nil || strings.TrimSpace(input.UpstreamResponseModel) == "" {
+		return false
+	}
+	if !s.upstreamModelMismatchBlockEnabled() {
+		return false
+	}
+	sentModel := firstNonEmpty(strings.TrimSpace(input.Result.UpstreamModel), input.Result.Model)
+	return !upstreamModelObserveOnly(sentModel)
 }
 
 // RecordUpstreamModelMismatchUsageLog 为被上游模型不一致拦截（handler failover 路径，
@@ -8261,9 +8295,19 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		).Warn("openai_usage.pricing_missing_record_zero_cost", zap.Error(err))
 		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
 	}
-	if input.UpstreamModelMismatchBlocked {
-		// 被拦截的尝试不计费：保留 token 供审计，成本清零。后面的 applyUsageBilling / postUsageBilling
-		// 全部以 ActualCost>0 / TotalCost>0 为前提，cost 为零值时不会扣任何余额、订阅额度、key 额度或账号额度。
+	if input.UpstreamModelMismatchBlocked || s.upstreamModelMismatchZeroCost(input) {
+		// 不计费的两类行：被拦截的审计行，以及「本应拦截但因内容已交付而拦不住」的晚到 model 行
+		// （grok 观察与总开关关闭的观察模式照常计费，见 upstreamModelMismatchZeroCost）。保留 token
+		// 供审计，成本清零。后面的 applyUsageBilling / postUsageBilling / buildUsageBillingCommand 全部以
+		// ActualCost>0 / TotalCost>0 为前提，cost 为零值时不会扣任何余额、订阅额度、key 额度、账号额度或平台额度。
+		if !input.UpstreamModelMismatchBlocked {
+			logger.L().Info("openai.upstream_model_mismatch_late_zero_cost",
+				zap.Int64("account_id", account.ID),
+				zap.String("sent", firstNonEmpty(strings.TrimSpace(result.UpstreamModel), result.Model)),
+				zap.String("got", strings.TrimSpace(input.UpstreamResponseModel)),
+				zap.String("request_id", result.RequestID),
+			)
+		}
 		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
 	}
 
@@ -8351,7 +8395,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	usageLog.ChannelID = optionalInt64Ptr(input.ChannelID)
 	usageLog.ModelMappingChain = optionalTrimmedStringPtr(input.ModelMappingChain)
 	// 上游模型不一致审计列：被拦截的审计行与观察模式 / 晚到 model 的放行行都标记为不一致，
-	// 后台「仅不一致」筛选才能看到观察模式的命中；计费差异只由 UpstreamModelMismatchBlocked 决定。
+	// 后台「仅不一致」筛选才能看到观察模式的命中；是否计费由 UpstreamModelMismatchBlocked /
+	// upstreamModelMismatchZeroCost 决定，标记列不参与计费判断。
 	usageLog.UpstreamModelMismatch = input.UpstreamModelMismatchBlocked || strings.TrimSpace(input.UpstreamResponseModel) != ""
 	usageLog.UpstreamResponseModel = optionalTrimmedStringPtr(truncateString(strings.TrimSpace(input.UpstreamResponseModel), usageLogUpstreamResponseModelMaxBytes))
 	// 不一致行必写 upstream_model（A）：普通行为省列只在 A != Model 时写，恒等映射时为 NULL，

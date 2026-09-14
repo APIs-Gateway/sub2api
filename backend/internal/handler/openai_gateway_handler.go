@@ -562,19 +562,15 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
 						streamStarted = true
 					}
+					// 只写过 SSE 心跳字节（Size 扣除心跳后仍等于转发前）也已把响应头提交为 200：
+					// 后续耗尽必须在同一连接内以 response.failed 收尾，不能再写 JSON 错误体。
+					if openAIForwardWroteKeepaliveOnly(c, writerSizeBeforeForward) {
+						streamStarted = true
+					}
 					// 池模式：同账号重试
-					if retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount); ok {
-						reqLog.Warn("openai.pool_mode_same_account_retry",
-							zap.Int64("account_id", account.ID),
-							zap.Int("upstream_status", failoverErr.StatusCode),
-							zap.Int("retry_limit", retryLimit),
-							zap.Int("retry_count", retryCount),
-						)
-						select {
-						case <-c.Request.Context().Done():
-							return
-						case <-time.After(sameAccountRetryDelay):
-						}
+					if retry, canceled := waitPoolModeSameAccountRetry(c, reqLog, "openai.pool_mode_same_account_retry", account, failoverErr, sameAccountRetryCount); canceled {
+						return
+					} else if retry {
 						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
@@ -989,7 +985,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		defaultMappedModel := strings.TrimSpace(effectiveMappedModel)
 		// 应用渠道模型映射到请求体
 		forwardBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
-		writerSizeBeforeForward := c.Writer.Size()
+		// 心跳字节（Anthropic ping）不算内容交付：与 Responses 入口同口径取扣除心跳后的 Size。
+		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -1077,23 +1074,22 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						)
 						return
 					}
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
 						return
 					}
+					// 与 Responses 入口一致：只写过心跳（Anthropic ping）或 SafeToFailoverAfterWrite 的
+					// failover 已提交 200 SSE，耗尽时走流内 error 事件。
+					if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
+						streamStarted = true
+					}
+					if openAIForwardWroteKeepaliveOnly(c, writerSizeBeforeForward) {
+						streamStarted = true
+					}
 					// 池模式：同账号重试
-					if retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount); ok {
-						reqLog.Warn("openai_messages.pool_mode_same_account_retry",
-							zap.Int64("account_id", account.ID),
-							zap.Int("upstream_status", failoverErr.StatusCode),
-							zap.Int("retry_limit", retryLimit),
-							zap.Int("retry_count", retryCount),
-						)
-						select {
-						case <-c.Request.Context().Done():
-							return
-						case <-time.After(sameAccountRetryDelay):
-						}
+					if retry, canceled := waitPoolModeSameAccountRetry(c, reqLog, "openai_messages.pool_mode_same_account_retry", account, failoverErr, sameAccountRetryCount); canceled {
+						return
+					} else if retry {
 						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
@@ -2264,6 +2260,16 @@ func openAIForwardMayFailover(c *gin.Context, writerSizeBeforeForward int, failo
 	return failoverErr != nil && failoverErr.SafeToFailoverAfterWrite
 }
 
+// openAIForwardWroteKeepaliveOnly 判断本次 Forward 只向客户端写过心跳字节（SSE 注释行 /
+// Anthropic ping / compact keepalive）：gin 已提交响应，但扣除心跳后的 Size 与转发前相同。
+// 这类字节客户端会丢弃，不算内容交付，允许切号；但响应头已是 200 SSE，耗尽时必须走流内错误。
+func openAIForwardWroteKeepaliveOnly(c *gin.Context, writerSizeBeforeForward int) bool {
+	if c == nil || c.Writer == nil || !c.Writer.Written() {
+		return false
+	}
+	return service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward
+}
+
 func openAIRequestAllowsFailoverReplay(c *gin.Context) bool {
 	if c == nil || c.Request == nil {
 		return false
@@ -2806,6 +2812,38 @@ func poolModeSameAccountRetry(account *service.Account, failoverErr *service.Ups
 	}
 	sameAccountRetryCount[account.ID]++
 	return sameAccountRetryCount[account.ID], retryLimit, true
+}
+
+// waitPoolModeSameAccountRetry 池模式同账号重试的公共步骤：判定是否还能重试、记日志、等待重试间隔。
+// retry=true 表示调用方应在同一账号上再试一次；canceled=true 表示等待期间客户端已断开，调用方应直接返回。
+func waitPoolModeSameAccountRetry(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	logEvent string,
+	account *service.Account,
+	failoverErr *service.UpstreamFailoverError,
+	sameAccountRetryCount map[int64]int,
+) (retry bool, canceled bool) {
+	retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount)
+	if !ok {
+		return false, false
+	}
+	if reqLog != nil {
+		reqLog.Warn(logEvent,
+			zap.Int64("account_id", account.ID),
+			zap.Int("upstream_status", failoverErr.StatusCode),
+			zap.Int("retry_limit", retryLimit),
+			zap.Int("retry_count", retryCount),
+		)
+	}
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	if !sleepWithContext(ctx, sameAccountRetryDelay) {
+		return true, true
+	}
+	return true, false
 }
 
 // upstreamModelMismatchAttemptsKey 在 gin context 里存 map[int64]int：同一请求内每个账号已落审计行的

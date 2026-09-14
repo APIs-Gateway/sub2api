@@ -934,7 +934,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					MarkResponseCommitted(c)
 				}
 				if !clientDisconnected {
-					if !clientOutputStarted {
+					// 心跳 ping 不置 clientOutputStarted，但已提交 200 SSE 响应头（headersWritten），
+					// 此时只能以流内 error 事件收尾，不能再写 JSON 错误体。
+					if !clientOutputStarted && !headersWritten {
 						writeAnthropicError(c, errStatus, errType, errMsg)
 						clientOutputStarted = true
 					} else {
@@ -1184,7 +1186,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			}
 			// Send Anthropic-format ping event
 			writeStreamHeaders()
-			if _, err := fmt.Fprint(c.Writer, "event: ping\ndata: {\"type\":\"ping\"}\n\n"); err != nil {
+			n, err := fmt.Fprint(c.Writer, "event: ping\ndata: {\"type\":\"ping\"}\n\n")
+			if err != nil {
 				// Client disconnected
 				logger.L().Info("openai messages stream: client disconnected during keepalive",
 					zap.String("request_id", requestID),
@@ -1192,7 +1195,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				clientDisconnected = true
 				continue
 			}
-			clientOutputStarted = true
+			// ping 是 Anthropic 协议里客户端会丢弃的心跳事件，不算内容交付：不置 clientOutputStarted，
+			// 只计入心跳字节，让上游模型不一致等 pre-output failover 在心跳后仍可拦截并切号。
+			addOpenAIStreamKeepaliveBytes(c, n)
 			c.Writer.Flush()
 		}
 	}

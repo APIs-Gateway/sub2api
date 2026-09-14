@@ -247,6 +247,14 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	// 现有的池模式分支：同账号最多重试 pool_mode_retry_count 次，用尽再切号 + 降权。
 	// 不把 502 加进 defaultPoolModeRetryableStatusCodes——那会让所有 502 都同账号重试。
 	// 非池模式（单 key / OAuth）保持直接切号。
+	//
+	// 走到这里 canBlock 已保证客户端没收到任何业务字节。等待上游首事件期间的 SSE 心跳
+	// （注释行 / Anthropic ping，见 addOpenAIStreamKeepaliveBytes）可能已把响应头提交为 200，
+	// 但心跳是客户端丢弃的非语义字节：handler 的 openAIForwardMayFailover 用扣除心跳后的
+	// OpenAICompactKeepaliveAdjustedWrittenSize 判定「未写」而放行切号，并由
+	// openAIForwardWroteKeepaliveOnly 把 streamStarted 置位，耗尽时在同一 SSE 连接内以
+	// response.failed / error 事件收尾。这里刻意不置 SafeToFailoverAfterWrite：那是首输出超时
+	// failover 的标记，会把本请求的后续切号压到 1 次（openAIFirstOutputFailoverExhausted）。
 	return &UpstreamFailoverError{
 		StatusCode: http.StatusBadGateway, ResponseBody: body, ResponseHeaders: headers,
 		RetryableOnSameAccount: account != nil && account.IsPoolMode(),
