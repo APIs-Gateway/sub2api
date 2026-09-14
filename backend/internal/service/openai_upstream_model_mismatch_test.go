@@ -9,9 +9,11 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
 )
 
 func TestUpstreamModelMatches(t *testing.T) {
@@ -270,4 +272,14 @@ func TestResolveUpstreamErrorResponse_KeepsOpsMessageForUpstreamModelMismatchBod
 	require.Equal(t, "upstream returned a different model than requested: sent=gpt-6-astra got=gpt-5.6-terra", opsMsg, "内部消息不能被笼统文案覆盖")
 	opsStatus, _ := c.Get(OpsUpstreamStatusCodeKey)
 	require.Equal(t, http.StatusBadGateway, opsStatus)
+}
+
+func TestUpstreamModelMismatchLogger_UsesRequestScopedLogger(t *testing.T) {
+	require.NotNil(t, upstreamModelMismatchLogger(nil))
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	require.NotNil(t, upstreamModelMismatchLogger(c), "context without request falls back to the global logger")
+	reqLogger := logger.L().With(zap.String("scoped", "yes"))
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request = req.WithContext(logger.IntoContext(req.Context(), reqLogger))
+	require.Same(t, reqLogger, upstreamModelMismatchLogger(c))
 }

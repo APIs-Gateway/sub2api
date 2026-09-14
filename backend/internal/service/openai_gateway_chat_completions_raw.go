@@ -359,6 +359,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 						}
 					}
 				}
+				// 客户端可见 model 对齐：每个 chunk 顶层 model 都改成客户端原始请求模型
+				//（上游真实值已在上面的比对里进了审计；model_mapping 的反向改写也由此覆盖）。
+				line = alignClientVisibleModelInSSELine(line, originalModel)
 			}
 			// 首个 data 行已经过比对（或根本不带 model），之后的非 data 行不再暂存。
 			holdPreDataLines = false
@@ -506,7 +509,8 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		c.Writer.Header().Set("Content-Type", "application/json")
 	}
 	c.Writer.WriteHeader(http.StatusOK)
-	_, _ = c.Writer.Write(respBody)
+	// 客户端可见 model 对齐（审计已在上面的比对里取走真实值；model_mapping 的反向改写也由此覆盖）。
+	_, _ = c.Writer.Write(alignClientVisibleModel(respBody, originalModel))
 
 	return &OpenAIForwardResult{
 		RequestID:       requestID,

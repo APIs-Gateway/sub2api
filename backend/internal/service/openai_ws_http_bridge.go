@@ -272,14 +272,8 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	upstreamModelChecked := false
 	clientDisconnected := false
 	mappedModel := ""
-	needModelReplace := false
-	var mappedModelBytes []byte
 	if originalModel != "" {
 		mappedModel = normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
-		needModelReplace = mappedModel != "" && mappedModel != originalModel
-		if needModelReplace {
-			mappedModelBytes = []byte(mappedModel)
-		}
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
@@ -377,9 +371,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			}
 		}
 
-		if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && strings.Contains(trimmedData, mappedModel) {
-			upstreamMessage = replaceOpenAIWSMessageModel(upstreamMessage, mappedModel, originalModel)
-		}
+		// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
+		//（turn>=2 只打标不拦截时尤其重要：上游真实值只进审计 mark）。
+		upstreamMessage = alignClientVisibleModel(upstreamMessage, originalModel)
 		if s.toolCorrector != nil && openAIWSEventMayContainToolCalls(eventType) && openAIWSMessageLikelyContainsToolCalls(upstreamMessage) {
 			if corrected, changed := s.toolCorrector.CorrectToolCallsInSSEBytes(upstreamMessage); changed {
 				upstreamMessage = corrected
