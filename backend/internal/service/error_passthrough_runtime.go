@@ -118,7 +118,13 @@ func ResolveUpstreamErrorResponse(c *gin.Context, platform string, upstreamStatu
 
 	upstreamMsg := ExtractUpstreamErrorMessage(responseBody)
 	// ② 记录真实上游状态码,便于 ops 错误日志捕获(A2 归因据此区分 client-caused upstream 4xx)。
-	SetOpsUpstreamError(c, upstreamStatus, upstreamMsg, "")
+	// 模型不一致的 body 里 message 是对外笼统文案，checkUpstreamModelMismatch 已把含 sent/got 的
+	// 内部消息写进 ops 顶层 message，这里只记状态码、不覆盖。
+	if IsUpstreamModelMismatchErrorBody(responseBody) {
+		SetOpsUpstreamError(c, upstreamStatus, "", "")
+	} else {
+		SetOpsUpstreamError(c, upstreamStatus, upstreamMsg, "")
+	}
 
 	// ③ 透传规则命中则按规则改写(code/body/custom/skip)。
 	if svc := getBoundErrorPassthroughService(c); svc != nil && len(responseBody) > 0 {

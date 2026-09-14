@@ -1801,3 +1801,93 @@ func generateLargeUnwrapJSON(minSize int) []byte {
 	b, _ := json.Marshal(outer)
 	return b
 }
+
+// 客户端 x-request-id 只回显上游同名头：上游只给 cf-ray / x-oneapi-request-id 时客户端头为空，
+// 而 ForwardResult.RequestID（进 ops / usage_logs）用兼容多家头名的 helper 取到值。
+func TestAntigravityGatewayService_ClientRequestIDHeaderOnlyEchoesUpstreamXRequestID(t *testing.T) {
+	newSvc := func(resp *http.Response) *AntigravityGatewayService {
+		return &AntigravityGatewayService{
+			settingService: NewSettingService(&antigravitySettingRepoStub{}, &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}),
+			tokenProvider:  &AntigravityTokenProvider{},
+			httpUpstream:   &httpUpstreamStub{resp: resp},
+		}
+	}
+	account := func(id int64) *Account {
+		return &Account{
+			ID: id, Name: "acc-rid", Platform: PlatformAntigravity, Type: AccountTypeOAuth, Status: StatusActive, Concurrency: 1,
+			Credentials: map[string]any{"access_token": "token", "project_id": "proj"},
+		}
+	}
+	upstreamBody := func() io.ReadCloser {
+		return io.NopCloser(bytes.NewReader([]byte("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":8,\"candidatesTokenCount\":3}}}\n\n")))
+	}
+	onlyRelayHeaders := func() http.Header {
+		return http.Header{"Cf-Ray": []string{"ray-1"}, "X-Oneapi-Request-Id": []string{"one-1"}}
+	}
+
+	t.Run("Forward (claude)", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		writer := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(writer)
+		body, err := json.Marshal(map[string]any{"model": "claude-sonnet-4-5", "messages": []map[string]any{{"role": "user", "content": "hello"}}, "max_tokens": 16, "stream": true})
+		require.NoError(t, err)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+
+		result, err := newSvc(&http.Response{StatusCode: http.StatusOK, Header: onlyRelayHeaders(), Body: upstreamBody()}).Forward(context.Background(), c, account(7), body, false)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Empty(t, writer.Header().Get("X-Request-Id"), "上游没有 x-request-id 时客户端头不能被 cf-ray / oneapi id 顶替")
+		require.Equal(t, "one-1", result.RequestID, "内部记录用兼容头名取值")
+	})
+
+	t.Run("ForwardGemini", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		writer := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(writer)
+		body, err := json.Marshal(map[string]any{"contents": []map[string]any{{"role": "user", "parts": []map[string]any{{"text": "hello"}}}}})
+		require.NoError(t, err)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:generateContent", bytes.NewReader(body))
+
+		result, err := newSvc(&http.Response{StatusCode: http.StatusOK, Header: onlyRelayHeaders(), Body: upstreamBody()}).ForwardGemini(context.Background(), c, account(8), "gemini-2.5-flash", "generateContent", true, body, false)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Empty(t, writer.Header().Get("X-Request-Id"))
+		require.Equal(t, "one-1", result.RequestID)
+	})
+
+	t.Run("ForwardGemini upstream error event keeps request id internally", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		writer := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(writer)
+		body, err := json.Marshal(map[string]any{"contents": []map[string]any{{"role": "user", "parts": []map[string]any{{"text": "hello"}}}}})
+		require.NoError(t, err)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:generateContent", bytes.NewReader(body))
+
+		// 422：不重试、不 failover、不走限流处理，直接进 http_error 分支。
+		resp := &http.Response{StatusCode: http.StatusUnprocessableEntity, Header: onlyRelayHeaders(), Body: io.NopCloser(bytes.NewReader([]byte(`{"error":{"message":"boom"}}`)))}
+		_, _ = newSvc(resp).ForwardGemini(context.Background(), c, account(9), "gemini-2.5-flash", "generateContent", false, body, false)
+		require.Equal(t, http.StatusUnprocessableEntity, writer.Code)
+		require.Empty(t, writer.Header().Get("X-Request-Id"))
+		events, ok := c.Get(OpsUpstreamErrorsKey)
+		require.True(t, ok)
+		list, ok := events.([]*OpsUpstreamErrorEvent)
+		require.True(t, ok)
+		require.NotEmpty(t, list)
+		require.Equal(t, "one-1", list[len(list)-1].UpstreamRequestID)
+	})
+
+	t.Run("upstream x-request-id still echoed", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		writer := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(writer)
+		body, err := json.Marshal(map[string]any{"model": "claude-sonnet-4-5", "messages": []map[string]any{{"role": "user", "content": "hello"}}, "max_tokens": 16, "stream": true})
+		require.NoError(t, err)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+		h := onlyRelayHeaders()
+		h.Set("X-Request-Id", "req-real")
+		result, err := newSvc(&http.Response{StatusCode: http.StatusOK, Header: h, Body: upstreamBody()}).Forward(context.Background(), c, account(10), body, false)
+		require.NoError(t, err)
+		require.Equal(t, "req-real", writer.Header().Get("X-Request-Id"))
+		require.Equal(t, "req-real", result.RequestID)
+	})
+}

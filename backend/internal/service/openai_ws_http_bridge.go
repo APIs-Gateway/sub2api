@@ -371,7 +371,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if !upstreamModelChecked {
 			if got := extractUpstreamResponseModel(upstreamMessage); got != "" {
 				upstreamModelChecked = true
-				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, sentModelForCheck(mappedModel, originalModel), got, reqStream, turn == 1 && !wroteDownstream, usage); ferr != nil {
+				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, nil, sentModelForCheck(mappedModel, originalModel), got, reqStream, turn == 1 && !wroteDownstream, usage); ferr != nil {
 					return nil, ferr
 				}
 			}

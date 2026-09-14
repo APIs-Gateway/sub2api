@@ -487,7 +487,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
 			upstreamResponseModel = mark.ResponseModel
 		}
-		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMapping.ToUsageFields(reqModel, ""), requestPayloadHash)
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMapping.ToUsageFields(reqModel, ""), requestPayloadHash, body)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -563,23 +563,19 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						streamStarted = true
 					}
 					// 池模式：同账号重试
-					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
-						if sameAccountRetryCount[account.ID] < retryLimit {
-							sameAccountRetryCount[account.ID]++
-							reqLog.Warn("openai.pool_mode_same_account_retry",
-								zap.Int64("account_id", account.ID),
-								zap.Int("upstream_status", failoverErr.StatusCode),
-								zap.Int("retry_limit", retryLimit),
-								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
-							)
-							select {
-							case <-c.Request.Context().Done():
-								return
-							case <-time.After(sameAccountRetryDelay):
-							}
-							continue
+					if retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount); ok {
+						reqLog.Warn("openai.pool_mode_same_account_retry",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.Int("retry_limit", retryLimit),
+							zap.Int("retry_count", retryCount),
+						)
+						select {
+						case <-c.Request.Context().Done():
+							return
+						case <-time.After(sameAccountRetryDelay):
 						}
+						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
@@ -1013,7 +1009,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
 			upstreamResponseModel = mark.ResponseModel
 		}
-		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingMsg.ToUsageFields(reqModel, ""), requestPayloadHash)
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingMsg.ToUsageFields(reqModel, ""), requestPayloadHash, body)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1086,23 +1082,19 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 					// 池模式：同账号重试
-					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
-						if sameAccountRetryCount[account.ID] < retryLimit {
-							sameAccountRetryCount[account.ID]++
-							reqLog.Warn("openai_messages.pool_mode_same_account_retry",
-								zap.Int64("account_id", account.ID),
-								zap.Int("upstream_status", failoverErr.StatusCode),
-								zap.Int("retry_limit", retryLimit),
-								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
-							)
-							select {
-							case <-c.Request.Context().Done():
-								return
-							case <-time.After(sameAccountRetryDelay):
-							}
-							continue
+					if retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount); ok {
+						reqLog.Warn("openai_messages.pool_mode_same_account_retry",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.Int("retry_limit", retryLimit),
+							zap.Int("retry_count", retryCount),
+						)
+						select {
+						case <-c.Request.Context().Done():
+							return
+						case <-time.After(sameAccountRetryDelay):
 						}
+						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
@@ -1648,6 +1640,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		)
 
 		var requestPayloadHash string
+		// 首包只给第 1 轮的模型不一致审计估算 input_tokens 用（拦截只发生在第 1 轮），
+		// AfterTurn 用完即置 nil，避免闭包在整个连接期间保活首包。
+		var wsMismatchRequestBody []byte
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
@@ -1722,7 +1717,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
 					upstreamResponseModel = mark.ResponseModel
 				}
-				h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash)
+				mismatchRequestBody := wsMismatchRequestBody
+				wsMismatchRequestBody = nil
+				h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash, mismatchRequestBody)
 				if service.GetOpsCyberPolicy(c) != nil {
 					cyberBlockedThisConn = true
 				}
@@ -1798,6 +1795,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 		// WebSocket 首包可能很大，hash 必须在 hooks 外算成字符串，避免 AfterTurn 闭包保活请求体。
 		requestPayloadHash = service.HashUsageRequestPayload(wsFirstMessage)
+		wsMismatchRequestBody = wsFirstMessage
 
 		if err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
 			var failoverErr *service.UpstreamFailoverError
@@ -2782,7 +2780,7 @@ type upstreamModelMismatchUsageRecorder interface {
 // 路径的 RecordUsage（UpstreamResponseModel）落库，这里只清标；不看 forward 是否报错，
 // 避免「未拦截 + 其他错误带部分 result」时审计行与正常行双写。
 // 注意调用顺序：成功路径若需读取 mark.ResponseModel 透传给 RecordUsage，必须在本方法之前读。
-func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string, requestBody []byte) {
 	var recorder upstreamModelMismatchUsageRecorder
 	if h.gatewayService != nil {
 		recorder = h.gatewayService
@@ -2791,10 +2789,48 @@ func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Contex
 	if h.apiKeyService != nil {
 		apiKeySvc = h.apiKeyService
 	}
-	recordUpstreamModelMismatchIfMarked(c, recorder, apiKeySvc, apiKey, account, subscription, model, channelFields, requestPayloadHash)
+	recordUpstreamModelMismatchIfMarked(c, recorder, apiKeySvc, apiKey, account, subscription, model, channelFields, requestPayloadHash, requestBody)
 }
 
-func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelMismatchUsageRecorder, apiKeySvc service.APIKeyQuotaUpdater, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+// poolModeSameAccountRetry 池模式同账号重试的决策：failoverErr 标了 RetryableOnSameAccount 且该账号
+// 本次请求内的重试次数还没到 account.GetPoolModeRetryCount()，就把计数 +1 并返回 ok=true（调用方 sleep 后
+// continue，不切号、不降权）；否则 ok=false，走正常切号。三个 OpenAI 入站 handler 共用，便于单测锁定
+// 「上限 = pool_mode_retry_count，用尽才切号」。
+func poolModeSameAccountRetry(account *service.Account, failoverErr *service.UpstreamFailoverError, sameAccountRetryCount map[int64]int) (retryCount, retryLimit int, ok bool) {
+	if account == nil || failoverErr == nil || !failoverErr.RetryableOnSameAccount {
+		return 0, 0, false
+	}
+	retryLimit = account.GetPoolModeRetryCount()
+	if sameAccountRetryCount[account.ID] >= retryLimit {
+		return sameAccountRetryCount[account.ID], retryLimit, false
+	}
+	sameAccountRetryCount[account.ID]++
+	return sameAccountRetryCount[account.ID], retryLimit, true
+}
+
+// upstreamModelMismatchAttemptsKey 在 gin context 里存 map[int64]int：同一请求内每个账号已落审计行的
+// 被拦截次数。池模式同账号重试时同一账号会连续被拦截多次，每行 request_id 需要不同的 attempt 后缀。
+const upstreamModelMismatchAttemptsKey = "ops_upstream_model_mismatch_attempts"
+
+// nextUpstreamModelMismatchAttempt 返回该账号本次拦截的 attempt 序号（从 0 起）并累加计数。
+func nextUpstreamModelMismatchAttempt(c *gin.Context, accountID int64) int {
+	var attempts map[int64]int
+	if v, ok := c.Get(upstreamModelMismatchAttemptsKey); ok {
+		attempts, _ = v.(map[int64]int)
+	}
+	if attempts == nil {
+		attempts = map[int64]int{}
+		c.Set(upstreamModelMismatchAttemptsKey, attempts)
+	}
+	attempt := attempts[accountID]
+	attempts[accountID] = attempt + 1
+	return attempt
+}
+
+// requestBody 是本次发往上游的请求体：拦截发生在 response.created（不带 usage）时 mark.Usage 全零，
+// 但 prompt 已经发出、输入侧消耗真实发生，此时按请求体估算 input_tokens 记入审计行（成本仍为 0）；
+// 上游已回报 usage（InputTokens>0）时不覆盖。
+func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelMismatchUsageRecorder, apiKeySvc service.APIKeyQuotaUpdater, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string, requestBody []byte) {
 	mark := service.GetOpsUpstreamModelMismatch(c)
 	if mark == nil {
 		return
@@ -2803,6 +2839,17 @@ func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelM
 	service.ClearOpsUpstreamModelMismatch(c)
 	if !mark.Blocked || apiKey == nil || account == nil || recorder == nil {
 		return
+	}
+	// 池模式同账号重试：同一账号在同一请求内可能连续被拦截多次，按账号计数让每行 request_id 不同键。
+	attempt := nextUpstreamModelMismatchAttempt(c, account.ID)
+	if mark.Usage.InputTokens == 0 {
+		if estimated := service.EstimateOpenAIRequestInputTokens(requestBody); estimated > 0 {
+			mark.Usage.InputTokens = estimated
+			requestLogger(c, "handler.openai_gateway").Info("openai.upstream_model_mismatch_input_tokens_estimated",
+				zap.Int64("account_id", account.ID),
+				zap.Int("estimated_input_tokens", estimated),
+			)
+		}
 	}
 	var userAgent, clientIP string
 	if c.Request != nil {
@@ -2823,6 +2870,7 @@ func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelM
 		RequestPayloadHash: requestPayloadHash,
 		APIKeyService:      apiKeySvc,
 		ChannelUsageFields: channelFields,
+		Attempt:            attempt,
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

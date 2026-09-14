@@ -252,7 +252,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
 			upstreamResponseModel = mark.ResponseModel
 		}
-		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, effectiveMapping.ToUsageFields(reqModel, ""), requestPayloadHash)
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, effectiveMapping.ToUsageFields(reqModel, ""), requestPayloadHash, body)
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
@@ -286,23 +286,19 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						return
 					}
 					// Pool mode: retry on the same account
-					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
-						if sameAccountRetryCount[account.ID] < retryLimit {
-							sameAccountRetryCount[account.ID]++
-							reqLog.Warn("openai_chat_completions.pool_mode_same_account_retry",
-								zap.Int64("account_id", account.ID),
-								zap.Int("upstream_status", failoverErr.StatusCode),
-								zap.Int("retry_limit", retryLimit),
-								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
-							)
-							select {
-							case <-c.Request.Context().Done():
-								return
-							case <-time.After(sameAccountRetryDelay):
-							}
-							continue
+					if retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount); ok {
+						reqLog.Warn("openai_chat_completions.pool_mode_same_account_retry",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.Int("retry_limit", retryLimit),
+							zap.Int("retry_count", retryCount),
+						)
+						select {
+						case <-c.Request.Context().Done():
+							return
+						case <-time.After(sameAccountRetryDelay):
 						}
+						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)

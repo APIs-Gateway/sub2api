@@ -292,6 +292,46 @@ func TestRecordUpstreamModelMismatchUsageLog_RecordsSentModelAsUpstreamModel(t *
 	require.Zero(t, log.ActualCost)
 }
 
+// 不一致行必写 upstream_model：恒等映射（Model == SentModel）时普通行省列为 NULL，审计行仍要写 A。
+func TestRecordUpstreamModelMismatchUsageLog_IdentityMappingStillWritesUpstreamModel(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), UpstreamModelMismatchUsageInput{
+		APIKey:    &APIKey{ID: 2, User: &User{ID: 1}},
+		Account:   &Account{ID: 9, Platform: PlatformOpenAI},
+		RequestID: "req-mm-identity",
+		Model:     "gpt-6-astra",
+		Mark:      UpstreamModelMismatchMark{SentModel: "gpt-6-astra", ResponseModel: "gpt-5.6-terra"},
+	})
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.True(t, log.UpstreamModelMismatch)
+	require.NotNil(t, log.UpstreamModel, "审计行必写 upstream_model，即使与 model 相等")
+	require.Equal(t, "gpt-6-astra", *log.UpstreamModel)
+	require.NotNil(t, log.UpstreamResponseModel)
+	require.Equal(t, "gpt-5.6-terra", *log.UpstreamResponseModel)
+}
+
+// 普通行（无不一致标记）恒等映射时 upstream_model 仍为 NULL，行为不变。
+func TestRecordUsage_IdentityMappingWithoutMismatchKeepsUpstreamModelNil(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:  &OpenAIForwardResult{RequestID: "req-plain", Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: OpenAIUsage{InputTokens: 10, OutputTokens: 5}},
+		APIKey:  &APIKey{ID: 2, User: &User{ID: 1}},
+		User:    &User{ID: 1},
+		Account: &Account{ID: 9, Platform: PlatformOpenAI},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, usageRepo.calls)
+	require.False(t, usageRepo.lastLog.UpstreamModelMismatch)
+	require.Nil(t, usageRepo.lastLog.UpstreamModel, "普通行恒等映射省列")
+}
+
 func TestRecordUsage_MismatchObserveModeFlagsRowButBillsNormally(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}
@@ -317,6 +357,8 @@ func TestRecordUsage_MismatchObserveModeFlagsRowButBillsNormally(t *testing.T) {
 	require.NotNil(t, log.UpstreamResponseModel)
 	require.Equal(t, "gpt-6-sol", *log.UpstreamResponseModel)
 	require.NotContains(t, log.RequestID, ":mismatch:", "只有被拦截的审计行才加后缀")
+	require.NotNil(t, log.UpstreamModel, "不一致行（含观察模式）必写 upstream_model")
+	require.Equal(t, "gpt-5.1", *log.UpstreamModel)
 	require.Greater(t, log.TotalCost, 0.0)
 	expected := expectedOpenAICost(t, svc, "gpt-5.1", usage, 1.1)
 	require.InDelta(t, expected.ActualCost, log.ActualCost, 1e-12)
@@ -392,6 +434,48 @@ func TestRecordUpstreamModelMismatchUsageLog_LongRequestIDKeepsSuffixWithinColum
 	require.LessOrEqual(t, len(log.RequestID), 64)
 	require.True(t, strings.HasSuffix(log.RequestID, ":mismatch:9"), log.RequestID)
 	require.True(t, strings.HasPrefix(log.RequestID, "local:rrr"), log.RequestID)
+}
+
+// 审计行 request_id：attempt 0（首次拦截）保持 <id>:mismatch:<accountID> 原格式；池模式同账号重试的
+// 第 n 次拦截追加 ":<n>"，否则同一请求同一账号的两行会撞 (request_id, api_key_id) 唯一索引被静默丢弃。
+func TestUpstreamModelMismatchAuditRequestID(t *testing.T) {
+	require.Equal(t, "req-1:mismatch:9", upstreamModelMismatchAuditRequestID("req-1", 9, 0))
+	require.Equal(t, "req-1:mismatch:9:1", upstreamModelMismatchAuditRequestID("req-1", 9, 1))
+	require.Equal(t, "req-1:mismatch:9:2", upstreamModelMismatchAuditRequestID("req-1", 9, 2))
+	require.Equal(t, "req-1:mismatch:9", upstreamModelMismatchAuditRequestID("req-1", 9, -1), "非法 attempt 按 0 处理")
+
+	longID := strings.Repeat("r", 70)
+	got := upstreamModelMismatchAuditRequestID(longID, 9, 2)
+	require.Equal(t, usageLogRequestIDMaxBytes, len(got))
+	require.True(t, strings.HasSuffix(got, ":mismatch:9:2"), got)
+	require.True(t, strings.HasPrefix(got, "rrr"), got)
+	got0 := upstreamModelMismatchAuditRequestID(longID, 9, 0)
+	require.Equal(t, usageLogRequestIDMaxBytes, len(got0))
+	require.True(t, strings.HasSuffix(got0, ":mismatch:9"), got0)
+	require.NotEqual(t, got, got0)
+}
+
+func TestRecordUpstreamModelMismatchUsageLog_AttemptSuffixDistinguishesSameAccountRetries(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	in := UpstreamModelMismatchUsageInput{
+		APIKey:    &APIKey{ID: 2, User: &User{ID: 1}},
+		Account:   &Account{ID: 9, Platform: PlatformOpenAI},
+		RequestID: "req-mm",
+		Model:     "gpt-5.6-sol",
+		Mark:      UpstreamModelMismatchMark{SentModel: "gpt-5.6-sol", ResponseModel: "gpt-6-sol", AccountID: 9},
+	}
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), in)
+	require.Equal(t, 1, usageRepo.calls)
+	require.Equal(t, "req-mm:mismatch:9", usageRepo.lastLog.RequestID, "首次拦截保持原格式")
+
+	in.Attempt = 1
+	svc.RecordUpstreamModelMismatchUsageLog(context.Background(), in)
+	require.Equal(t, 2, usageRepo.calls)
+	require.Equal(t, "req-mm:mismatch:9:1", usageRepo.lastLog.RequestID, "同账号第 1 次重试再被拦截：request_id 不同键")
+	require.Zero(t, usageRepo.lastLog.TotalCost)
+	require.True(t, usageRepo.lastLog.UpstreamModelMismatch)
 }
 
 func TestRecordUsage_TruncatesUpstreamResponseModelToColumnWidth(t *testing.T) {
