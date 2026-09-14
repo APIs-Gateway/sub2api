@@ -248,16 +248,15 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	// 不把 502 加进 defaultPoolModeRetryableStatusCodes——那会让所有 502 都同账号重试。
 	// 非池模式（单 key / OAuth）保持直接切号。
 	//
-	// SafeToFailoverAfterWrite：走到这里 canBlock 已保证客户端没收到任何业务字节，
-	// 但等待上游首事件期间的 SSE 心跳（注释行 / Anthropic ping，见 addOpenAIStreamKeepaliveBytes）
-	// 可能已把响应头提交为 200。心跳是客户端丢弃的非语义字节，此时断流换号对用户等价于一次
-	// 干净的上游失败，与首输出超时 failover（newOpenAIFirstOutputTimeoutError）同机制：handler 的
-	// openAIForwardMayFailover 据此放行，并把 streamStarted 置位，耗尽时在同一 SSE 连接内以
-	// response.failed / error 事件收尾。只在确已写过字节时置位，未写过时保持原有的普通切号
-	// 语义（不占用 openAIFirstOutputFailoverExhausted 的单次切号额度）。
+	// 走到这里 canBlock 已保证客户端没收到任何业务字节。等待上游首事件期间的 SSE 心跳
+	// （注释行 / Anthropic ping，见 addOpenAIStreamKeepaliveBytes）可能已把响应头提交为 200，
+	// 但心跳是客户端丢弃的非语义字节：handler 的 openAIForwardMayFailover 用扣除心跳后的
+	// OpenAICompactKeepaliveAdjustedWrittenSize 判定「未写」而放行切号，并由
+	// openAIForwardWroteKeepaliveOnly 把 streamStarted 置位，耗尽时在同一 SSE 连接内以
+	// response.failed / error 事件收尾。这里刻意不置 SafeToFailoverAfterWrite：那是首输出超时
+	// failover 的标记，会把本请求的后续切号压到 1 次（openAIFirstOutputFailoverExhausted）。
 	return &UpstreamFailoverError{
 		StatusCode: http.StatusBadGateway, ResponseBody: body, ResponseHeaders: headers,
-		RetryableOnSameAccount:   account != nil && account.IsPoolMode(),
-		SafeToFailoverAfterWrite: c != nil && c.Writer != nil && c.Writer.Written(),
+		RetryableOnSameAccount: account != nil && account.IsPoolMode(),
 	}
 }
