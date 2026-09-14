@@ -7950,7 +7950,9 @@ type OpenAIRecordUsageInput struct {
 	// 每次拦截各落一行，attempt≥1 的行 request_id 再追加 ":<attempt>"，否则撞唯一索引被静默丢弃。
 	UpstreamModelMismatchAttempt int
 	// UpstreamResponseModel 非空时写入 usage_logs.upstream_response_model，并把该行标记为
-	// upstream_model_mismatch=true（观察模式 / 晚到 model 的成功路径也会带，照常计费，仅用于后台筛选）。
+	// upstream_model_mismatch=true。只在 B != A（上游确认换了模型）时由 mark 传入：观察模式
+	// （DisableUpstreamModelMismatchBlock=true）与晚到 model（内容已交付、无法拦截）的成功路径也会带。
+	// 这类行同样零计费（见 upstreamModelMismatchZeroCost）：用户不该为被换掉的模型买单。
 	UpstreamResponseModel string
 	ChannelUsageFields
 
@@ -8091,6 +8093,15 @@ func upstreamModelMismatchAuditRequestID(requestID string, accountID int64, atte
 		requestID = truncateString(requestID, usageLogRequestIDMaxBytes-len(suffix))
 	}
 	return requestID + suffix
+}
+
+// upstreamModelMismatchZeroCost：非拦截路径上「上游确认换了模型」的行也零计费。
+// UpstreamResponseModel 只在 checkUpstreamModelMismatch 判定 B != A 后由 mark 传入（handler 读
+// mark.ResponseModel），所以它非空即等价于「上游换了模型」——无论是观察模式
+// （DisableUpstreamModelMismatchBlock=true）放行，还是内容已交付无法拦截的晚到 model。
+// 这两种情况用户拿到的都不是自己要的模型，不该为此买单；token 原样记录供审计与对账。
+func upstreamModelMismatchZeroCost(input *OpenAIRecordUsageInput) bool {
+	return input != nil && strings.TrimSpace(input.UpstreamResponseModel) != ""
 }
 
 // RecordUpstreamModelMismatchUsageLog 为被上游模型不一致拦截（handler failover 路径，
@@ -8261,9 +8272,19 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		).Warn("openai_usage.pricing_missing_record_zero_cost", zap.Error(err))
 		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
 	}
-	if input.UpstreamModelMismatchBlocked {
-		// 被拦截的尝试不计费：保留 token 供审计，成本清零。后面的 applyUsageBilling / postUsageBilling
-		// 全部以 ActualCost>0 / TotalCost>0 为前提，cost 为零值时不会扣任何余额、订阅额度、key 额度或账号额度。
+	if input.UpstreamModelMismatchBlocked || upstreamModelMismatchZeroCost(input) {
+		// 上游换了模型的行一律不计费：被拦截的审计行、以及因内容已交付而无法拦截的晚到 model 行、
+		// 观察模式放行行（只要确认 B != A）。保留 token 供审计，成本清零。后面的 applyUsageBilling /
+		// postUsageBilling / buildUsageBillingCommand 全部以 ActualCost>0 / TotalCost>0 为前提，cost 为
+		// 零值时不会扣任何余额、订阅额度、key 额度、账号额度或平台额度。
+		if !input.UpstreamModelMismatchBlocked {
+			logger.L().Info("openai.upstream_model_mismatch_late_zero_cost",
+				zap.Int64("account_id", account.ID),
+				zap.String("sent", firstNonEmpty(strings.TrimSpace(result.UpstreamModel), result.Model)),
+				zap.String("got", strings.TrimSpace(input.UpstreamResponseModel)),
+				zap.String("request_id", result.RequestID),
+			)
+		}
 		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
 	}
 
@@ -8351,7 +8372,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	usageLog.ChannelID = optionalInt64Ptr(input.ChannelID)
 	usageLog.ModelMappingChain = optionalTrimmedStringPtr(input.ModelMappingChain)
 	// 上游模型不一致审计列：被拦截的审计行与观察模式 / 晚到 model 的放行行都标记为不一致，
-	// 后台「仅不一致」筛选才能看到观察模式的命中；计费差异只由 UpstreamModelMismatchBlocked 决定。
+	// 后台「仅不一致」筛选才能看到观察模式的命中；两类行都零计费（见上），区别只在
+	// request_id 后缀与是否走 applyUsageBilling 占去重键。
 	usageLog.UpstreamModelMismatch = input.UpstreamModelMismatchBlocked || strings.TrimSpace(input.UpstreamResponseModel) != ""
 	usageLog.UpstreamResponseModel = optionalTrimmedStringPtr(truncateString(strings.TrimSpace(input.UpstreamResponseModel), usageLogUpstreamResponseModelMaxBytes))
 	// 不一致行必写 upstream_model（A）：普通行为省列只在 A != Model 时写，恒等映射时为 NULL，

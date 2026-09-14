@@ -332,15 +332,16 @@ func TestRecordUsage_IdentityMappingWithoutMismatchKeepsUpstreamModelNil(t *test
 	require.Nil(t, usageRepo.lastLog.UpstreamModel, "普通行恒等映射省列")
 }
 
-func TestRecordUsage_MismatchObserveModeFlagsRowButBillsNormally(t *testing.T) {
+// 观察模式（DisableUpstreamModelMismatchBlock=true）放行的行：标记为不一致、写 upstream_response_model、
+// request_id 不加后缀，但同样零计费——只要确认 B != A，用户就不该为被换掉的模型买单。
+func TestRecordUsage_MismatchObserveModeWritesResponseModelAndZeroCost(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	subRepo := &openAIRecordUsageSubRepoStub{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+	svc.cfg.Gateway.DisableUpstreamModelMismatchBlock = true
 	usage := OpenAIUsage{InputTokens: 10, OutputTokens: 5}
 
-	// 观察模式（开关关闭）/ model 晚到的正常成功路径也会带 mark：行标记为不一致（后台「仅不一致」筛选可见）
-	// 并写 upstream_response_model 列，但计费与 request_id 与普通行完全一致。
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
 		Result:                &OpenAIForwardResult{RequestID: "req-observe", Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: usage},
 		APIKey:                &APIKey{ID: 2, User: &User{ID: 1}},
@@ -359,11 +360,75 @@ func TestRecordUsage_MismatchObserveModeFlagsRowButBillsNormally(t *testing.T) {
 	require.NotContains(t, log.RequestID, ":mismatch:", "只有被拦截的审计行才加后缀")
 	require.NotNil(t, log.UpstreamModel, "不一致行（含观察模式）必写 upstream_model")
 	require.Equal(t, "gpt-5.1", *log.UpstreamModel)
-	require.Greater(t, log.TotalCost, 0.0)
-	expected := expectedOpenAICost(t, svc, "gpt-5.1", usage, 1.1)
-	require.InDelta(t, expected.ActualCost, log.ActualCost, 1e-12)
-	require.Equal(t, 1, userRepo.deductCalls, "观察模式正常扣费")
-	require.InDelta(t, expected.ActualCost, userRepo.lastAmount, 1e-12)
+	require.Equal(t, 10, log.InputTokens, "token 原样保留供审计")
+	require.Equal(t, 5, log.OutputTokens)
+	require.Zero(t, log.TotalCost, "观察模式放行行零计费")
+	require.Zero(t, log.ActualCost)
+	require.NotNil(t, log.BillingMode)
+	require.Equal(t, string(BillingModeToken), *log.BillingMode)
+	require.Equal(t, 0, userRepo.deductCalls, "不扣余额")
+	require.Equal(t, 0, subRepo.incrementCalls, "不扣订阅额度")
+
+	// 对照：同样的行不带 UpstreamResponseModel（上游没换模型）照常计费，确认零计费只由 B != A 触发。
+	usageRepo2 := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo2 := &openAIRecordUsageUserRepoStub{}
+	svc2 := newOpenAIRecordUsageServiceForTest(usageRepo2, userRepo2, &openAIRecordUsageSubRepoStub{}, nil)
+	require.NoError(t, svc2.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:  &OpenAIForwardResult{RequestID: "req-plain", Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: usage},
+		APIKey:  &APIKey{ID: 2, User: &User{ID: 1}},
+		User:    &User{ID: 1},
+		Account: &Account{ID: 9, Platform: PlatformOpenAI},
+	}))
+	expected := expectedOpenAICost(t, svc2, "gpt-5.1", usage, 1.1)
+	require.Greater(t, usageRepo2.lastLog.TotalCost, 0.0)
+	require.InDelta(t, expected.ActualCost, usageRepo2.lastLog.ActualCost, 1e-12)
+	require.Equal(t, 1, userRepo2.deductCalls)
+	require.InDelta(t, expected.ActualCost, userRepo2.lastAmount, 1e-12)
+}
+
+// 晚到 model：上游把 model 放在 response.completed 才给、内容已交付无法拦截（Blocked=false、
+// UpstreamResponseModel 非空）。这一行也不向用户计费：成本清零、token 保留、标记为不一致；
+// 走正常 applyUsageBilling 路径但零成本不扣任何余额 / 订阅 / key 额度。
+func TestRecordUsage_LateModelMismatchZeroCostKeepsTokens(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+	require.False(t, svc.cfg.Gateway.DisableUpstreamModelMismatchBlock, "拦截开启（非观察模式）")
+	usage := OpenAIUsage{InputTokens: 1200, OutputTokens: 300, CacheReadInputTokens: 100}
+
+	apiKey := &APIKey{ID: 2, Quota: 50, User: &User{ID: 1}}
+	apiKeySvc := &openAIRecordUsageAPIKeyQuotaStub{}
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:                       &OpenAIForwardResult{RequestID: "req-late", Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: usage},
+		APIKey:                       apiKey,
+		User:                         &User{ID: 1},
+		Account:                      &Account{ID: 9, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+		APIKeyService:                apiKeySvc,
+		UpstreamModelMismatchBlocked: false,
+		UpstreamResponseModel:        "gpt-4o-mini",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, usageRepo.calls)
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.True(t, log.UpstreamModelMismatch)
+	require.NotNil(t, log.UpstreamResponseModel)
+	require.Equal(t, "gpt-4o-mini", *log.UpstreamResponseModel)
+	require.NotNil(t, log.UpstreamModel)
+	require.Equal(t, "gpt-5.1", *log.UpstreamModel)
+	require.Equal(t, "req-late", log.RequestID, "晚到 model 行是真实请求行，request_id 不加 :mismatch: 后缀")
+	require.Equal(t, 1100, log.InputTokens, "OpenAI input_tokens 含缓存命中，落库时拆出 cache_read（既有口径）")
+	require.Equal(t, 300, log.OutputTokens)
+	require.Equal(t, 100, log.CacheReadTokens)
+	require.Zero(t, log.TotalCost)
+	require.Zero(t, log.ActualCost)
+	require.NotNil(t, log.BillingMode)
+	require.Equal(t, string(BillingModeToken), *log.BillingMode)
+	require.Equal(t, 0, userRepo.deductCalls, "零成本不扣余额")
+	require.Equal(t, 0, subRepo.incrementCalls, "零成本不扣订阅")
+	require.Equal(t, 0, apiKeySvc.quotaCalls, "零成本不扣 key 额度")
 }
 
 func TestRecordUsage_MismatchFlagForcesZeroCostAndNoDeduction(t *testing.T) {
