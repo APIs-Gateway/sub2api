@@ -123,7 +123,9 @@ func TestCheckUpstreamModelMismatch_ClientMessageGenericInternalDetailed(t *test
 
 	events, ok := c.Get(OpsUpstreamErrorsKey)
 	require.True(t, ok)
-	ev := events.([]*OpsUpstreamErrorEvent)[0]
+	evList, ok := events.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	ev := evList[0]
 	require.Contains(t, ev.Message, "sent=gpt-6-astra")
 	require.Contains(t, ev.Message, "got=gpt-5.6-terra")
 	require.Equal(t, int64(7), ev.AccountID)
@@ -135,9 +137,9 @@ func TestCheckUpstreamModelMismatch_ClientMessageGenericInternalDetailed(t *test
 	require.Equal(t, http.StatusBadGateway, ev.UpstreamStatusCode)
 
 	opsMsg, _ := c.Get(OpsUpstreamErrorMessageKey)
-	require.Contains(t, opsMsg.(string), "sent=gpt-6-astra got=gpt-5.6-terra")
+	require.Equal(t, "upstream returned a different model than requested: sent=gpt-6-astra got=gpt-5.6-terra", opsMsg)
 	opsStatus, _ := c.Get(OpsUpstreamStatusCodeKey)
-	require.Equal(t, http.StatusBadGateway, opsStatus.(int))
+	require.Equal(t, http.StatusBadGateway, opsStatus)
 }
 
 // Blocked 只在 checkUpstreamModelMismatch 真正返回 failover（本次尝试被拦截）时为 true；
@@ -226,7 +228,8 @@ func TestCheckUpstreamModelMismatch_RecordsUpstreamHeaderFingerprint(t *testing.
 
 	events, ok := c.Get(OpsUpstreamErrorsKey)
 	require.True(t, ok)
-	list := events.([]*OpsUpstreamErrorEvent)
+	list, ok := events.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
 	require.Len(t, list, 1)
 	ev := list[0]
 	require.Equal(t, int64(7), ev.AccountID)
@@ -243,7 +246,9 @@ func TestCheckUpstreamModelMismatch_RecordsUpstreamHeaderFingerprint(t *testing.
 	c2, _ := gin.CreateTestContext(httptest.NewRecorder())
 	require.NotNil(t, svc.checkUpstreamModelMismatch(c2, &Account{ID: 7, Platform: PlatformOpenAI}, "", nil, "gpt-6-astra", "gpt-5.6-terra", true, true, OpenAIUsage{}))
 	events2, _ := c2.Get(OpsUpstreamErrorsKey)
-	require.Nil(t, events2.([]*OpsUpstreamErrorEvent)[0].UpstreamHeaders)
+	list2, ok := events2.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Nil(t, list2[0].UpstreamHeaders)
 }
 
 // failover 耗尽后 ResolveUpstreamErrorResponse 不得用对外笼统文案覆盖 ops 顶层内部消息（含 sent/got）。
@@ -262,7 +267,7 @@ func TestResolveUpstreamErrorResponse_KeepsOpsMessageForUpstreamModelMismatchBod
 	require.Equal(t, "upstream_error", errType)
 	require.Equal(t, "Upstream service temporarily unavailable", msg)
 	opsMsg, _ := c.Get(OpsUpstreamErrorMessageKey)
-	require.Contains(t, opsMsg.(string), "sent=gpt-6-astra got=gpt-5.6-terra", "内部消息不能被笼统文案覆盖")
+	require.Equal(t, "upstream returned a different model than requested: sent=gpt-6-astra got=gpt-5.6-terra", opsMsg, "内部消息不能被笼统文案覆盖")
 	opsStatus, _ := c.Get(OpsUpstreamStatusCodeKey)
-	require.Equal(t, http.StatusBadGateway, opsStatus.(int))
+	require.Equal(t, http.StatusBadGateway, opsStatus)
 }

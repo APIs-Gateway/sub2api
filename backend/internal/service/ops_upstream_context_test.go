@@ -196,7 +196,9 @@ func TestAppendOpsUpstreamError_FallsBackToRequestIDInErrorBody(t *testing.T) {
 	events := func(c *gin.Context) []*OpsUpstreamErrorEvent {
 		v, ok := c.Get(OpsUpstreamErrorsKey)
 		require.True(t, ok)
-		return v.([]*OpsUpstreamErrorEvent)
+		list, ok := v.([]*OpsUpstreamErrorEvent)
+		require.True(t, ok)
+		return list
 	}
 
 	// 头里没有：从响应体兜底。

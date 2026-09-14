@@ -307,11 +307,15 @@ func TestOpenAIHandleFailoverExhausted_UpstreamModelMismatchClientMessageGeneric
 		t.Helper()
 		v, ok := c.Get(service.OpsUpstreamErrorMessageKey)
 		require.True(t, ok)
-		require.Contains(t, v.(string), "sent=")
-		require.Contains(t, v.(string), "got=")
+		msg, ok := v.(string)
+		require.True(t, ok)
+		require.Contains(t, msg, "sent=")
+		require.Contains(t, msg, "got=")
 		status, ok := c.Get(service.OpsUpstreamStatusCodeKey)
 		require.True(t, ok)
-		require.Equal(t, http.StatusBadGateway, status.(int))
+		statusCode, ok := status.(int)
+		require.True(t, ok)
+		require.Equal(t, http.StatusBadGateway, statusCode)
 	}
 
 	t.Run("responses route (codex canonical) 502", func(t *testing.T) {
@@ -350,7 +354,9 @@ func TestOpenAIHandleFailoverExhausted_UpstreamModelMismatchClientMessageGeneric
 		service.SetOpsUpstreamError(c, http.StatusBadGateway, "earlier attempt message", "")
 		(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: []byte(`{"error":{"message":"gateway boom"}}`)}, false)
 		v, _ := c.Get(service.OpsUpstreamErrorMessageKey)
-		require.Equal(t, "gateway boom", v.(string))
+		msg, ok := v.(string)
+		require.True(t, ok)
+		require.Equal(t, "gateway boom", msg)
 	})
 
 	t.Run("anthropic messages route 502", func(t *testing.T) {
