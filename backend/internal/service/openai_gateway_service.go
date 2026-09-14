@@ -4760,7 +4760,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	defer putSSEScannerBuf64K(scanBuf)
 	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
 
-	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
 		return &openaiStreamingResultPassthrough{
 			usage:            usage,
@@ -4796,11 +4795,16 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					}
 				}
 			}
-			if needModelReplace && strings.Contains(data, mappedModel) {
-				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
-				if replacedData, replaced := extractOpenAISSEDataLine(line); replaced {
-					dataBytes = []byte(replacedData)
-					trimmedData = strings.TrimSpace(replacedData)
+			// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
+			//（上游真实值已在上面的比对里进了审计）。rawDataBytes 保留对齐前的上游原文，
+			// 下面 response.failed 分支写 cyber 标记 / ops 事件 / failover 错误体时用它，
+			// 保证审计里看到的仍是上游真实 model（mismatch 比对跳过 response.failed）。
+			rawDataBytes := dataBytes
+			if aligned := alignClientVisibleModelInSSELine(line, originalModel); aligned != line {
+				line = aligned
+				if alignedData, isData := extractOpenAISSEDataLine(line); isData {
+					dataBytes = []byte(alignedData)
+					trimmedData = strings.TrimSpace(alignedData)
 				}
 			}
 			if normalizedData, normalized := normalizeOpenAIResponsesFunctionCallArguments(dataBytes); normalized {
@@ -4825,7 +4829,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
 						Code:                     code,
 						Message:                  msg,
-						Body:                     truncateString(string(dataBytes), 4096),
+						Body:                     truncateString(string(rawDataBytes), 4096),
 						UpstreamStatus:           http.StatusOK,
 						UpstreamInTok:            usage.InputTokens,
 						UpstreamOutTok:           usage.OutputTokens,
@@ -4835,10 +4839,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				} else if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
 					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
 						return resultWithUsage(),
-							s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, dataBytes, failedMessage, resp.Header)
+							s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, rawDataBytes, failedMessage, resp.Header)
 					}
 					if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
-						s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", dataBytes, failedMessage)
+						s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", rawDataBytes, failedMessage)
 						MarkResponseCommitted(c)
 						c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 						c.JSON(status, gin.H{
@@ -5013,9 +5017,8 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
-		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
-	}
+	// 客户端可见 model 对齐（审计已在上面的比对里取走真实值）。
+	body = alignClientVisibleModel(body, originalModel)
 	body, err = restoreOpenAIResponsesClientToolPayload(c, body)
 	if err != nil {
 		return nil, err
@@ -5062,10 +5065,8 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			}
 		}
 		finalResponse = supplementCompactionItemFromSSE(c, finalResponse, bodyText)
-		body = finalResponse
-		if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
-			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
-		}
+		// 客户端可见 model 对齐（审计已在上面的比对里取走真实值）。
+		body = alignClientVisibleModel(finalResponse, originalModel)
 		// Correct tool calls in final response
 		body = s.correctToolCallsInResponseBody(body)
 	} else {
@@ -5086,10 +5087,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 				return nil, ferr
 			}
 		}
-		if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
-			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)
-		}
-		body = []byte(bodyText)
+		body = []byte(alignClientVisibleModelInSSEBody(bodyText, originalModel))
 	}
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -5922,7 +5920,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		lastDownstreamWriteAt = time.Now()
 	}
 
-	needModelReplace := originalModel != mappedModel
 	streamOutputAccumulator := apicompat.NewBufferedResponseAccumulator()
 	streamDoneItems := newResponsesStreamOutputItems()
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
@@ -6028,7 +6025,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if responseID == "" {
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
 			}
-			// 上游模型不一致拦截：必须在下面的模型反向替换（replaceModelInSSELine）之前比对，
+			// 上游模型不一致拦截：必须在下面的客户端可见 model 对齐（alignClientVisibleModelInSSELine）之前比对，
 			// 否则 B 已被改写成 originalModel。response.created / in_progress 是 preamble，
 			// 此时尚未 flush 给客户端（普通模式在 bufferedWriter，守卫模式在 staging），
 			// 直接走 streamEarlyErr 即零泄漏；已开始输出则只打标不拦截。
@@ -6129,11 +6126,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				data = string(sanitizedData)
 				line = "data: " + data
 			}
-			// Replace model in response if needed.
-			// Fast path: most events do not contain model field values.
-			if needModelReplace && mappedModel != "" && strings.Contains(line, mappedModel) {
-				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
-			}
+			// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
+			//（上游真实值已在上面的比对里进了审计；助手内部有 "model" 子串快速路径）。
+			line = alignClientVisibleModelInSSELine(line, originalModel)
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
 			if guardFirstOutput {
@@ -6468,36 +6463,6 @@ func openAICompatPayloadWithEventType(payload, eventType string) string {
 	return patched
 }
 
-func (s *OpenAIGatewayService) replaceModelInSSELine(line, fromModel, toModel string) string {
-	data, ok := extractOpenAISSEDataLine(line)
-	if !ok {
-		return line
-	}
-	if data == "" || data == "[DONE]" {
-		return line
-	}
-
-	// 使用 gjson 精确检查 model 字段，避免全量 JSON 反序列化
-	if m := gjson.Get(data, "model"); m.Exists() && m.Str == fromModel {
-		newData, err := sjson.Set(data, "model", toModel)
-		if err != nil {
-			return line
-		}
-		return "data: " + newData
-	}
-
-	// 检查嵌套的 response.model 字段
-	if m := gjson.Get(data, "response.model"); m.Exists() && m.Str == fromModel {
-		newData, err := sjson.Set(data, "response.model", toModel)
-		if err != nil {
-			return line
-		}
-		return "data: " + newData
-	}
-
-	return line
-}
-
 // correctToolCallsInResponseBody 修正响应体中的工具调用
 func (s *OpenAIGatewayService) correctToolCallsInResponseBody(body []byte) []byte {
 	if len(body) == 0 {
@@ -6819,10 +6784,8 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		}
 	}
 
-	// Replace model in response if needed
-	if originalModel != mappedModel {
-		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
-	}
+	// 客户端可见 model 对齐（审计已在上面的比对里取走真实值）。
+	body = alignClientVisibleModel(body, originalModel)
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	// Codex 协议要求 /responses/compact JSON 响应携带 x-codex-turn-state，显式回传。
@@ -6880,10 +6843,8 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			}
 		}
 		finalResponse = supplementCompactionItemFromSSE(c, finalResponse, bodyText)
-		body = finalResponse
-		if originalModel != mappedModel {
-			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
-		}
+		// 客户端可见 model 对齐（审计已在上面的比对里取走真实值）。
+		body = alignClientVisibleModel(finalResponse, originalModel)
 		// Correct tool calls in final response
 		body = s.correctToolCallsInResponseBody(body)
 	} else {
@@ -6904,10 +6865,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 				return nil, ferr
 			}
 		}
-		if originalModel != mappedModel {
-			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)
-		}
-		body = []byte(bodyText)
+		body = []byte(alignClientVisibleModelInSSEBody(bodyText, originalModel))
 	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -7503,17 +7461,6 @@ func (s *OpenAIGatewayService) parseSSEUsageFromBody(body string) *OpenAIUsage {
 	return usage
 }
 
-func (s *OpenAIGatewayService) replaceModelInSSEBody(body, fromModel, toModel string) string {
-	lines := strings.Split(body, "\n")
-	for i, line := range lines {
-		if _, ok := extractOpenAISSEDataLine(line); !ok {
-			continue
-		}
-		lines[i] = s.replaceModelInSSELine(line, fromModel, toModel)
-	}
-	return strings.Join(lines, "\n")
-}
-
 func (s *OpenAIGatewayService) validateUpstreamBaseURL(raw string) (string, error) {
 	if s.cfg != nil && !s.cfg.Security.URLAllowlist.Enabled {
 		normalized, err := urlvalidator.ValidateURLFormat(raw, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
@@ -7924,18 +7871,6 @@ func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
 		return trimmedBase
 	}
 	return trimmedBase + trimmedSuffix
-}
-
-func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
-	// 使用 gjson/sjson 精确替换 model 字段，避免全量 JSON 反序列化
-	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {
-		newBody, err := sjson.SetBytes(body, "model", toModel)
-		if err != nil {
-			return body
-		}
-		return newBody
-	}
-	return body
 }
 
 // OpenAIRecordUsageInput input for recording usage

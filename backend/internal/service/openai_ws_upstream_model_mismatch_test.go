@@ -148,7 +148,7 @@ func TestUpstreamModelMismatch_WSIngressProxy(t *testing.T) {
 		name          string
 		responseModel string
 		completedOnly bool
-		// turn2Mismatch：首轮模型一致，第二轮上游换模型——只打标不拦截，事件照常下发。
+		// turn2Mismatch：首轮模型一致，第二轮上游换模型——只打标不拦截，事件照常下发（model 对齐为请求值）。
 		turn2Mismatch bool
 		wantBlock     bool
 	}{
@@ -254,7 +254,8 @@ func TestUpstreamModelMismatch_WSIngressProxy(t *testing.T) {
 				readTurn("gpt-5.1")
 				if tc.turn2Mismatch {
 					writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":true,"previous_response_id":"resp_model_check_1","input":"again"}`)
-					readTurn("gpt-4o-mini")
+					// 只打标不拦截，但客户端可见的 response.model 仍必须对齐为请求的 gpt-5.1（真实值只进审计 mark）。
+					readTurn("gpt-5.1")
 				}
 				_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 				select {

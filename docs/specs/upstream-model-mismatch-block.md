@@ -72,6 +72,20 @@
 - grok 系列始终只记录（见豁免）。
 - WS v2 第 2 轮及以后只记录（见拦截行为）。
 
+## 客户端可见 model 对齐（v0.1.151）
+
+拦不住的场景——内容已开始下发（model 只在 `response.completed` 才出现）、观察模式、grok 只记录不拦截、WS v2 第 2 轮及以后——客户端不能看到上游真实返回的模型名。规则：
+
+- **发给客户端的一切响应里，`model` / `response.model` 一律等于下游客户端原始请求的模型名（originalModel）**，无论上游返回什么、无论是否配置 `model_mapping`。实现为 `alignClientVisibleModel` / `alignClientVisibleModelInSSELine` / `alignClientVisibleModelInSSEBody`（`openai_client_model_align.go`），无条件调用，替代原先只在「响应 model == mappedModel」时才反向改写的 `replaceModelIn*` / `replaceOpenAIWSMessageModel`（已删除）。originalModel 为空原样返回；字段不存在不添加；字段已相等零拷贝；`[DONE]` / 非 `data:` 行不动；非字符串类型的 `model` 不动。
+- **界线：只改发给客户端的字节，审计保留真实值**。各路径都是「先比对、后对齐」：`checkUpstreamModelMismatch` 读到的 B、`UpstreamModelMismatchMark.ResponseModel`、`usage_logs.upstream_response_model`、ops 事件里的 sent/got、`OpenAIForwardResult.UpstreamModel` 全部不受对齐影响。拦截 / 切号行为不变。
+- 覆盖路径（全部为 OpenAI 平台网关；Anthropic 平台 `gateway_service.go` 与 images 不在范围）：
+  - Responses 主路径流式 `handleStreamingResponseWithReasoning`、passthrough 流式 `handleStreamingResponsePassthrough`：每个带 `response.model` / 顶层 `model` 的事件（created / in_progress / completed / failed / incomplete …）。
+  - Responses 非流式 `handleNonStreamingResponse`、`handleNonStreamingResponsePassthrough`、SSE→JSON `handleSSEToJSON` / `handlePassthroughSSEToJSON`（含无终止事件、原样回写 SSE 的分支）。
+  - Chat Completions 入站：Responses SSE→chat chunk 转换（`handleChatStreamingResponse` / `handleChatBufferedStreamingResponse`，转换器一直以请求侧 `originalModel` 为准）；raw 直转 `streamRawChatCompletions` 逐 chunk、`bufferRawChatCompletions` 整包（此前 raw 路径连 `model_mapping` 都不反向改写，现在一并对齐）。
+  - Messages 入站 `openai_gateway_messages.go`（`message_start` 的 `message.model`、非流式 JSON `model`）、`openai_gateway_messages_chat_fallback.go`、`openai_gateway_responses_chat_fallback.go`（转换器以 `originalModel` 为准）。
+  - grok `openai_gateway_grok.go`（复用 Responses 主路径处理函数）。
+  - WS v2：`forwardOpenAIWSV2` 逐事件与非流式最终 JSON、`ProxyResponsesWebSocketFromClient` 每轮逐事件、`proxyOpenAIWSHTTPBridgeTurn` 逐事件。
+
 ## 数据与后台
 
 - 迁移 `190_usage_log_upstream_model_mismatch.sql`：`usage_logs` 新增 `upstream_model_mismatch BOOLEAN NOT NULL DEFAULT FALSE`、`upstream_response_model VARCHAR(100)`。`upstream_model` 列语义不变（不一致行改为必写，见运维口径）。
