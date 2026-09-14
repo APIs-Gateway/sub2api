@@ -4760,7 +4760,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	defer putSSEScannerBuf64K(scanBuf)
 	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
 
-	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
 		return &openaiStreamingResultPassthrough{
 			usage:            usage,
@@ -4796,11 +4795,13 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					}
 				}
 			}
-			if needModelReplace && strings.Contains(data, mappedModel) {
-				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
-				if replacedData, replaced := extractOpenAISSEDataLine(line); replaced {
-					dataBytes = []byte(replacedData)
-					trimmedData = strings.TrimSpace(replacedData)
+			// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
+			//（上游真实值已在上面的比对里进了审计）。
+			if aligned := alignClientVisibleModelInSSELine(line, originalModel); aligned != line {
+				line = aligned
+				if alignedData, isData := extractOpenAISSEDataLine(line); isData {
+					dataBytes = []byte(alignedData)
+					trimmedData = strings.TrimSpace(alignedData)
 				}
 			}
 			if normalizedData, normalized := normalizeOpenAIResponsesFunctionCallArguments(dataBytes); normalized {
@@ -5013,9 +5014,8 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
-		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
-	}
+	// 客户端可见 model 对齐（审计已在上面的比对里取走真实值）。
+	body = alignClientVisibleModel(body, originalModel)
 	body, err = restoreOpenAIResponsesClientToolPayload(c, body)
 	if err != nil {
 		return nil, err
@@ -5062,10 +5062,8 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			}
 		}
 		finalResponse = supplementCompactionItemFromSSE(c, finalResponse, bodyText)
-		body = finalResponse
-		if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
-			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
-		}
+		// 客户端可见 model 对齐（审计已在上面的比对里取走真实值）。
+		body = alignClientVisibleModel(finalResponse, originalModel)
 		// Correct tool calls in final response
 		body = s.correctToolCallsInResponseBody(body)
 	} else {
@@ -5086,10 +5084,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 				return nil, ferr
 			}
 		}
-		if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
-			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)
-		}
-		body = []byte(bodyText)
+		body = []byte(alignClientVisibleModelInSSEBody(bodyText, originalModel))
 	}
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -5922,7 +5917,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		lastDownstreamWriteAt = time.Now()
 	}
 
-	needModelReplace := originalModel != mappedModel
 	streamOutputAccumulator := apicompat.NewBufferedResponseAccumulator()
 	streamDoneItems := newResponsesStreamOutputItems()
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
@@ -6028,7 +6022,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if responseID == "" {
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
 			}
-			// 上游模型不一致拦截：必须在下面的模型反向替换（replaceModelInSSELine）之前比对，
+			// 上游模型不一致拦截：必须在下面的客户端可见 model 对齐（alignClientVisibleModelInSSELine）之前比对，
 			// 否则 B 已被改写成 originalModel。response.created / in_progress 是 preamble，
 			// 此时尚未 flush 给客户端（普通模式在 bufferedWriter，守卫模式在 staging），
 			// 直接走 streamEarlyErr 即零泄漏；已开始输出则只打标不拦截。
@@ -6129,11 +6123,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				data = string(sanitizedData)
 				line = "data: " + data
 			}
-			// Replace model in response if needed.
-			// Fast path: most events do not contain model field values.
-			if needModelReplace && mappedModel != "" && strings.Contains(line, mappedModel) {
-				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
-			}
+			// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
+			//（上游真实值已在上面的比对里进了审计；助手内部有 "model" 子串快速路径）。
+			line = alignClientVisibleModelInSSELine(line, originalModel)
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
 			if guardFirstOutput {
@@ -6819,10 +6811,8 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		}
 	}
 
-	// Replace model in response if needed
-	if originalModel != mappedModel {
-		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
-	}
+	// 客户端可见 model 对齐（审计已在上面的比对里取走真实值）。
+	body = alignClientVisibleModel(body, originalModel)
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	// Codex 协议要求 /responses/compact JSON 响应携带 x-codex-turn-state，显式回传。
@@ -6880,10 +6870,8 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			}
 		}
 		finalResponse = supplementCompactionItemFromSSE(c, finalResponse, bodyText)
-		body = finalResponse
-		if originalModel != mappedModel {
-			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
-		}
+		// 客户端可见 model 对齐（审计已在上面的比对里取走真实值）。
+		body = alignClientVisibleModel(finalResponse, originalModel)
 		// Correct tool calls in final response
 		body = s.correctToolCallsInResponseBody(body)
 	} else {
@@ -6904,10 +6892,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 				return nil, ferr
 			}
 		}
-		if originalModel != mappedModel {
-			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)
-		}
-		body = []byte(bodyText)
+		body = []byte(alignClientVisibleModelInSSEBody(bodyText, originalModel))
 	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)

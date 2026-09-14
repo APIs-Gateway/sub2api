@@ -2187,11 +2187,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	var finalResponse []byte
 	wroteDownstream := false
 	upstreamModelChecked := false
-	needModelReplace := originalModel != mappedModel
-	var mappedModelBytes []byte
-	if needModelReplace && mappedModel != "" {
-		mappedModelBytes = []byte(mappedModel)
-	}
 	bufferedStreamEvents := make([][]byte, 0, 4)
 	eventCount := 0
 	tokenEventCount := 0
@@ -2371,7 +2366,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			responseID = eventResponseID
 		}
 
-		// 上游模型不一致拦截：只看首个带 model 的事件，且必须在 replaceOpenAIWSMessageModel
+		// 上游模型不一致拦截：只看首个带 model 的事件，且必须在 alignClientVisibleModel
 		// 改写之前比对，否则 B 已被覆盖。命中时上游仍会继续推本 turn 的事件，连接不能回池。
 		if !upstreamModelChecked {
 			if got := extractUpstreamResponseModel(message); got != "" {
@@ -2415,9 +2410,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 
 		if !clientDisconnected {
-			if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && bytes.Contains(message, mappedModelBytes) {
-				message = replaceOpenAIWSMessageModel(message, mappedModel, originalModel)
-			}
+			// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
+			//（上游真实值已在上面的比对里进了审计；助手内部有 "model" 子串快速路径）。
+			message = alignClientVisibleModel(message, originalModel)
 			if openAIWSEventMayContainToolCalls(eventType) && openAIWSMessageLikelyContainsToolCalls(message) {
 				if corrected, changed := s.toolCorrector.CorrectToolCallsInSSEBytes(message); changed {
 					message = corrected
@@ -2574,9 +2569,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			return nil, errors.New("ws finished without final response")
 		}
 
-		if needModelReplace {
-			finalResponse = s.replaceModelInResponseBody(finalResponse, mappedModel, originalModel)
-		}
+		// 客户端可见 model 对齐（审计已在事件循环里取走真实值）。
+		finalResponse = alignClientVisibleModel(finalResponse, originalModel)
 		finalResponse = s.correctToolCallsInResponseBody(finalResponse)
 		populateOpenAIUsageFromResponseJSON(finalResponse, usage)
 		if responseID == "" {
@@ -3385,16 +3379,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		replayCollector := &openAIWSToolCallReplayCollector{}
 		firstEventType := ""
 		lastEventType := ""
-		needModelReplace := false
 		clientDisconnected := false
 		mappedModel := ""
-		var mappedModelBytes []byte
 		if originalModel != "" {
 			mappedModel = normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
-			needModelReplace = mappedModel != "" && mappedModel != originalModel
-			if needModelReplace {
-				mappedModelBytes = []byte(mappedModel)
-			}
 		}
 		for {
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, s.openAIWSReadTimeout())
@@ -3541,9 +3529,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 
 			if !clientDisconnected {
-				if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && bytes.Contains(upstreamMessage, mappedModelBytes) {
-					upstreamMessage = replaceOpenAIWSMessageModel(upstreamMessage, mappedModel, originalModel)
-				}
+				// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
+				//（turn>=2 只打标不拦截时尤其重要：上游真实值只进审计 mark）。
+				upstreamMessage = alignClientVisibleModel(upstreamMessage, originalModel)
 				if openAIWSEventMayContainToolCalls(eventType) && openAIWSMessageLikelyContainsToolCalls(upstreamMessage) {
 					if corrected, changed := s.toolCorrector.CorrectToolCallsInSSEBytes(upstreamMessage); changed {
 						upstreamMessage = corrected
