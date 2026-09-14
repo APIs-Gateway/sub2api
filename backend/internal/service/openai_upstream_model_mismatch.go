@@ -175,8 +175,10 @@ func (s *OpenAIGatewayService) upstreamModelMismatchBlockEnabled() bool {
 // 返回非 nil 时 mark.Blocked=true，handler 据此落审计行。
 // canBlock=false 用于「客户端已收到输出、无法收回」的场景（上游把 model 放在 response.completed 才给）；
 // grok 系列模型（upstreamModelObserveOnly）无论 canBlock 如何都只记录不拦截。
+// upstreamHeaders 是上游响应头（HTTP 路径传 resp.Header，WS 路径传 nil）：只按白名单摘指纹进 ops 事件，
+// 便于识别中转实现并向厂商追责。
 func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
-	c *gin.Context, account *Account, upstreamRequestID string,
+	c *gin.Context, account *Account, upstreamRequestID string, upstreamHeaders http.Header,
 	sentModel, responseModel string, stream, canBlock bool, usage OpenAIUsage,
 ) *UpstreamFailoverError {
 	if upstreamModelMatches(sentModel, responseModel) {
@@ -204,7 +206,7 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform: platform, AccountID: accountID, AccountName: accountName,
 		UpstreamStatusCode: http.StatusBadGateway, UpstreamRequestID: upstreamRequestID,
-		Kind: "failover", Message: message,
+		UpstreamHeaders: opsUpstreamHeaderFingerprint(upstreamHeaders), Kind: "failover", Message: message,
 	})
 	headers := http.Header{}
 	if rid := strings.TrimSpace(upstreamRequestID); rid != "" {

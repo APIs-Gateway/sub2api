@@ -70,7 +70,7 @@ func TestCheckUpstreamModelMismatch_DisabledStillMarks(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}
 	svc.cfg.Gateway.DisableUpstreamModelMismatchBlock = true
-	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", "gpt-5.6-sol", "gpt-6-sol", true, true, OpenAIUsage{})
+	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", nil, "gpt-5.6-sol", "gpt-6-sol", true, true, OpenAIUsage{})
 	require.Nil(t, err)
 	require.NotNil(t, GetOpsUpstreamModelMismatch(c))
 }
@@ -78,7 +78,7 @@ func TestCheckUpstreamModelMismatch_DisabledStillMarks(t *testing.T) {
 func TestCheckUpstreamModelMismatch_CannotBlockOnlyMarks(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}
-	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", "gpt-5.6-sol", "gpt-6-sol", true, false, OpenAIUsage{})
+	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", nil, "gpt-5.6-sol", "gpt-6-sol", true, false, OpenAIUsage{})
 	require.Nil(t, err)
 	require.Equal(t, "gpt-6-sol", GetOpsUpstreamModelMismatch(c).ResponseModel)
 }
@@ -86,7 +86,7 @@ func TestCheckUpstreamModelMismatch_CannotBlockOnlyMarks(t *testing.T) {
 func TestCheckUpstreamModelMismatch_EnabledReturnsFailover(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}
-	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", "gpt-5.6-sol", "gpt-6-sol", true, true, OpenAIUsage{})
+	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", nil, "gpt-5.6-sol", "gpt-6-sol", true, true, OpenAIUsage{})
 	require.NotNil(t, err)
 	require.Equal(t, http.StatusBadGateway, err.StatusCode)
 	require.Contains(t, string(err.ResponseBody), "upstream_model_mismatch")
@@ -114,7 +114,7 @@ func TestCheckUpstreamModelMismatch_SetsBlockedOnlyWhenReturningFailover(t *test
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			svc := &OpenAIGatewayService{cfg: &config.Config{}}
 			svc.cfg.Gateway.DisableUpstreamModelMismatchBlock = tc.disable
-			err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", "gpt-5.6-sol", "gpt-6-sol", true, tc.canBlock, OpenAIUsage{})
+			err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", nil, "gpt-5.6-sol", "gpt-6-sol", true, tc.canBlock, OpenAIUsage{})
 			require.Equal(t, tc.wantErr, err != nil)
 			mark := GetOpsUpstreamModelMismatch(c)
 			require.NotNil(t, mark)
@@ -127,7 +127,7 @@ func TestCheckUpstreamModelMismatch_SetsBlockedOnlyWhenReturningFailover(t *test
 func TestCheckUpstreamModelMismatch_GrokObserveOnly(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}
-	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformGrok}, "req", "grok-4.3", "grok-4.3-0709", true, true, OpenAIUsage{})
+	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformGrok}, "req", nil, "grok-4.3", "grok-4.3-0709", true, true, OpenAIUsage{})
 	require.Nil(t, err, "grok 不一致只打标不 failover")
 	mark := GetOpsUpstreamModelMismatch(c)
 	require.NotNil(t, mark)
@@ -154,7 +154,7 @@ func TestCheckUpstreamModelMismatch_PoolModeRetryableOnSameAccount(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			svc := &OpenAIGatewayService{cfg: &config.Config{}}
-			err := svc.checkUpstreamModelMismatch(c, tc.account, "req", "gpt-5.6-sol", "gpt-6-sol", true, true, OpenAIUsage{})
+			err := svc.checkUpstreamModelMismatch(c, tc.account, "req", nil, "gpt-5.6-sol", "gpt-6-sol", true, true, OpenAIUsage{})
 			require.NotNil(t, err, "不一致仍必须拦截并返回 failover")
 			require.Equal(t, http.StatusBadGateway, err.StatusCode)
 			require.Equal(t, tc.want, err.RetryableOnSameAccount)
@@ -164,4 +164,39 @@ func TestCheckUpstreamModelMismatch_PoolModeRetryableOnSameAccount(t *testing.T)
 			require.True(t, mark.Blocked)
 		})
 	}
+}
+
+// 上游模型不一致事件记录上游响应头指纹（白名单），不带 set-cookie / authorization 等敏感头。
+func TestCheckUpstreamModelMismatch_RecordsUpstreamHeaderFingerprint(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	h := http.Header{}
+	h.Set("Server", "nginx/1.25")
+	h.Set("X-New-Api-Version", "v0.9.1")
+	h.Set("X-Oneapi-Request-Id", "  oneapi-abc  ")
+	h.Set("Set-Cookie", "session=secret")
+	h.Set("Authorization", "Bearer secret")
+	err := svc.checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "oneapi-abc", h, "gpt-6-astra", "gpt-5.6-terra", true, true, OpenAIUsage{})
+	require.NotNil(t, err)
+
+	events, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	list := events.([]*OpsUpstreamErrorEvent)
+	require.Len(t, list, 1)
+	ev := list[0]
+	require.Equal(t, int64(7), ev.AccountID)
+	require.Equal(t, "oneapi-abc", ev.UpstreamRequestID)
+	require.Equal(t, map[string]string{
+		"server":              "nginx/1.25",
+		"x-new-api-version":   "v0.9.1",
+		"x-oneapi-request-id": "oneapi-abc",
+	}, ev.UpstreamHeaders)
+	require.NotContains(t, ev.UpstreamHeaders, "set-cookie")
+	require.NotContains(t, ev.UpstreamHeaders, "authorization")
+
+	// WS 路径传 nil：事件不带 upstream_headers。
+	c2, _ := gin.CreateTestContext(httptest.NewRecorder())
+	require.NotNil(t, svc.checkUpstreamModelMismatch(c2, &Account{ID: 7, Platform: PlatformOpenAI}, "", nil, "gpt-6-astra", "gpt-5.6-terra", true, true, OpenAIUsage{}))
+	events2, _ := c2.Get(OpsUpstreamErrorsKey)
+	require.Nil(t, events2.([]*OpsUpstreamErrorEvent)[0].UpstreamHeaders)
 }

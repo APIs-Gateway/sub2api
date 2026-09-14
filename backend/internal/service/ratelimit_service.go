@@ -370,7 +370,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			account.ID,
 			account.Platform,
 			account.Type,
-			strings.TrimSpace(headers.Get("x-request-id")),
+			upstreamRequestIDFromHeader(headers),
 			strings.TrimSpace(headers.Get("cf-ray")),
 			upstreamMsg,
 			truncateForLog(responseBody, 1024),

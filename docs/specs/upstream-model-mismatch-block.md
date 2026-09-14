@@ -29,6 +29,11 @@
 - 拦截行的 `input_tokens`：流式拦截多发生在 `response.created`（上游尚未回报 usage），此时 `Mark.Usage` 全零，但 prompt 已经发出、输入侧消耗真实发生。网关按请求体估算（`EstimateOpenAIRequestInputTokens`：Responses `instructions` / `input`、Chat `messages`、Anthropic `system` / `messages` 里的文本 ≈ 4 字符/token，每条消息另加 4 token 结构开销，`tools[]` 的 `description` / `parameters` 也按文本估；图片 / 文件等非文本跳过）写入 `input_tokens`，并打 Info 日志 `openai.upstream_model_mismatch_input_tokens_estimated`。上游已回报 usage（`input_tokens > 0`）时原样记录、不覆盖。估算值仅供评估上游侧消耗，不是上游口径；`output_tokens` 不估；成本列恒为 0、不扣费。
 - 成功路径（观察模式、晚到的 `model`、grok 观察）照常计费，`request_id` 不加后缀，但该行同样标记 `upstream_model_mismatch = true` 并写 `upstream_response_model = B`，后台「仅不一致」筛选与徽标可见；是否计费看成本列而不是标记列。
 
+## 上游 request id 与上游头指纹
+
+- 上游 request id 头名兼容：第三方中转不一定发 `x-request-id`（one-api / new-api 系如 a6api、rivoapi 发 `x-oneapi-request-id`，rix-api 系如 platform.ephone.chat 发 `x-rixapi-request-id`，Bedrock 发 `x-amzn-requestid`，过 Cloudflare 的有 `cf-ray`）。service 层统一用 `upstreamRequestIDFromHeader` 按 `x-request-id` → `x-oneapi-request-id` → `x-rixapi-request-id` → `x-amzn-requestid` → `cf-ray` 的顺序取第一个非空值，写入 `ops_error_logs.upstream_errors[].upstream_request_id`、`OpenAIForwardResult.RequestID` 等；只作用于读上游响应头，回写给客户端的 `x-request-id` 透传与客户端请求头不变。
+- 上游头指纹：模型不一致的 ops 事件带 `upstream_headers`（白名单 `server`、`x-new-api-version`、`cf-ray`、`x-oneapi-request-id`、`x-rixapi-request-id`、`x-request-id`、`x-amzn-requestid`、`via`；只取非空，值截到 128 字节；WS 路径没有 HTTP 响应头，不带该字段），用于识别中转实现与向厂商追责。不含 cookie / 凭证类头。
+
 ## 开关
 
 `gateway.disable_upstream_model_mismatch_block`（env `GATEWAY_DISABLE_UPSTREAM_MODEL_MISMATCH_BLOCK`），默认 `false` = 拦截开启。设为 `true` 进入观察模式：仍解析 `B`、把行标记为不一致并写 `upstream_response_model`，只是不拦截、照常计费。线上误杀时可不发版止血。

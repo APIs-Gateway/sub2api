@@ -300,7 +300,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				Kind:               "failover",
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
@@ -423,7 +423,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	upstreamModel string,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
-	requestID := resp.Header.Get("x-request-id")
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 
 	finalResponse, usage, acc, err := s.readOpenAICompatBufferedTerminal(resp, "openai chat_completions buffered", requestID)
 	if err != nil {
@@ -475,7 +475,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 
 	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
 	if got := strings.TrimSpace(finalResponse.Model); got != "" {
-		if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+		if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
 			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
 			return nil, ferr
 		}
@@ -568,7 +568,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	startTime time.Time,
 	requestBodyLen int,
 ) (*OpenAIForwardResult, error) {
-	requestID := resp.Header.Get("x-request-id")
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 
 	headersWritten := false
 	writeStreamHeaders := func() {
@@ -743,7 +743,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if !upstreamModelChecked {
 			if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
 				upstreamModelChecked = true
-				if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+				if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
 					sentModelForCheck(upstreamModel, originalModel), got, true, !clientOutputStarted, usage); ferr != nil {
 					streamFailoverErr = ferr
 					return true

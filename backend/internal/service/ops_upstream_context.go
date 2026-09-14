@@ -2,11 +2,73 @@ package service
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+// upstreamRequestIDHeaderNames 上游 request id 的兼容头名，按优先级取第一个非空。
+// 第三方中转不一定发 x-request-id：one-api / new-api 系（a6api、rivoapi）发 x-oneapi-request-id，
+// rix-api 系（platform.ephone.chat）发 x-rixapi-request-id，Bedrock 发 x-amzn-requestid，
+// 过 Cloudflare 的至少有 cf-ray。取不到就无法向厂商追责。
+var upstreamRequestIDHeaderNames = []string{
+	"x-request-id",
+	"x-oneapi-request-id",
+	"x-rixapi-request-id",
+	"x-amzn-requestid",
+	"cf-ray",
+}
+
+// upstreamRequestIDFromHeader 从上游响应头取 request id（兼容多家中转的头名），nil / 都为空返回 ""。
+// 只用于读上游响应；客户端请求头 / 回写客户端的透传头不经此函数。
+func upstreamRequestIDFromHeader(h http.Header) string {
+	if h == nil {
+		return ""
+	}
+	for _, name := range upstreamRequestIDHeaderNames {
+		if v := strings.TrimSpace(h.Get(name)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// opsUpstreamHeaderFingerprintNames 记进 ops 事件的上游响应头白名单：用于识别中转实现与追责
+// （server / via / new-api 版本 / 各家 request id / cf-ray），不含任何凭证或 cookie。
+var opsUpstreamHeaderFingerprintNames = []string{
+	"server",
+	"x-new-api-version",
+	"cf-ray",
+	"x-oneapi-request-id",
+	"x-rixapi-request-id",
+	"x-request-id",
+	"x-amzn-requestid",
+	"via",
+}
+
+const opsUpstreamHeaderFingerprintValueMaxBytes = 128
+
+// opsUpstreamHeaderFingerprint 按白名单摘取非空上游响应头（值 TrimSpace 并截到 128 字节），
+// 一个都没有 / nil 返回 nil，序列化时 omitempty 不占字段。
+func opsUpstreamHeaderFingerprint(h http.Header) map[string]string {
+	if h == nil {
+		return nil
+	}
+	var out map[string]string
+	for _, name := range opsUpstreamHeaderFingerprintNames {
+		v := strings.TrimSpace(h.Get(name))
+		if v == "" {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, len(opsUpstreamHeaderFingerprintNames))
+		}
+		out[name] = truncateString(v, opsUpstreamHeaderFingerprintValueMaxBytes)
+	}
+	return out
+}
 
 // Gin context keys used by Ops error logger for capturing upstream error details.
 // These keys are set by gateway services and consumed by handler/ops_error_logger.go.
@@ -204,6 +266,10 @@ type OpsUpstreamErrorEvent struct {
 	// Outcome
 	UpstreamStatusCode int    `json:"upstream_status_code,omitempty"`
 	UpstreamRequestID  string `json:"upstream_request_id,omitempty"`
+
+	// UpstreamHeaders 上游响应头指纹（白名单：server / x-new-api-version / cf-ray / 各家 request id / via），
+	// 用于识别中转实现与向厂商追责。目前只在上游模型不一致事件里填充。
+	UpstreamHeaders map[string]string `json:"upstream_headers,omitempty"`
 
 	// UpstreamURL is the actual upstream URL that was called (host + path, query/fragment stripped).
 	// Helps debug 404/routing errors by showing which endpoint was targeted.

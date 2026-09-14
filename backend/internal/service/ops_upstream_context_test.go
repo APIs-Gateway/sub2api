@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -97,4 +98,65 @@ func TestMarkOpsStreamFailure_TrimsAndPreservesClassification(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "upstream_error", streamErr.ErrType)
 	require.Equal(t, "upstream_http2_stream_error", streamErr.Code)
+}
+
+func TestUpstreamRequestIDFromHeader(t *testing.T) {
+	mk := func(kv ...string) http.Header {
+		h := http.Header{}
+		for i := 0; i+1 < len(kv); i += 2 {
+			h.Set(kv[i], kv[i+1])
+		}
+		return h
+	}
+	cases := []struct {
+		name string
+		h    http.Header
+		want string
+	}{
+		{"nil header", nil, ""},
+		{"empty header", mk(), ""},
+		{"x-request-id first", mk("x-request-id", " req-1 ", "x-oneapi-request-id", "one-1", "cf-ray", "ray-1"), "req-1"},
+		{"blank x-request-id falls through", mk("x-request-id", "   ", "x-oneapi-request-id", "one-1"), "one-1"},
+		{"oneapi (a6api / rivoapi)", mk("X-Oneapi-Request-Id", "one-1", "cf-ray", "ray-1"), "one-1"},
+		{"rixapi (platform.ephone.chat)", mk("x-rixapi-request-id", "rix-1", "cf-ray", "ray-1"), "rix-1"},
+		{"bedrock", mk("x-amzn-requestid", "aws-1", "cf-ray", "ray-1"), "aws-1"},
+		{"cf-ray last resort", mk("cf-ray", "8a1b2c3d-HKG"), "8a1b2c3d-HKG"},
+		{"unknown headers only", mk("xai-request-id", "xai-1"), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, upstreamRequestIDFromHeader(tc.h))
+		})
+	}
+}
+
+func TestOpsUpstreamHeaderFingerprint(t *testing.T) {
+	require.Nil(t, opsUpstreamHeaderFingerprint(nil))
+	require.Nil(t, opsUpstreamHeaderFingerprint(http.Header{}))
+
+	h := http.Header{}
+	h.Set("Server", " cloudflare ")
+	h.Set("Via", "1.1 google")
+	h.Set("X-New-Api-Version", "")
+	h.Set("Cf-Ray", strings.Repeat("r", 200))
+	h.Set("Set-Cookie", "a=b")
+	h.Set("Authorization", "Bearer x")
+	h.Set("Content-Type", "application/json")
+	got := opsUpstreamHeaderFingerprint(h)
+	require.Equal(t, "cloudflare", got["server"])
+	require.Equal(t, "1.1 google", got["via"])
+	require.Len(t, got["cf-ray"], 128, "值截到 128 字节")
+	require.NotContains(t, got, "x-new-api-version", "空值不记")
+	require.NotContains(t, got, "set-cookie")
+	require.NotContains(t, got, "authorization")
+	require.NotContains(t, got, "content-type")
+	require.Len(t, got, 3)
+
+	// 序列化：omitempty，nil 不占字段。
+	raw, err := json.Marshal(OpsUpstreamErrorEvent{Kind: "failover"})
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "upstream_headers")
+	raw, err = json.Marshal(OpsUpstreamErrorEvent{Kind: "failover", UpstreamHeaders: got})
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"upstream_headers":{`)
 }

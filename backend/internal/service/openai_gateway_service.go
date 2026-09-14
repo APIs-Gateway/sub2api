@@ -3511,7 +3511,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					AccountID:          account.ID,
 					AccountName:        account.Name,
 					UpstreamStatusCode: resp.StatusCode,
-					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 					Kind:               "failover",
 					Message:            upstreamMsg,
 					Detail:             upstreamDetail,
@@ -3576,7 +3576,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 
 		forwardResult := &OpenAIForwardResult{
-			RequestID:       resp.Header.Get("x-request-id"),
+			RequestID:       upstreamRequestIDFromHeader(resp.Header),
 			ResponseID:      responseID,
 			Usage:           *usage,
 			Model:           originalModel,
@@ -3865,7 +3865,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	forwardResult := &OpenAIForwardResult{
-		RequestID:       resp.Header.Get("x-request-id"),
+		RequestID:       upstreamRequestIDFromHeader(resp.Header),
 		ResponseID:      responseID,
 		Usage:           *usage,
 		Model:           reqModel,
@@ -4221,7 +4221,7 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 		AccountID:            account.ID,
 		AccountName:          account.Name,
 		UpstreamStatusCode:   resp.StatusCode,
-		UpstreamRequestID:    resp.Header.Get("x-request-id"),
+		UpstreamRequestID:    upstreamRequestIDFromHeader(resp.Header),
 		Passthrough:          true,
 		Kind:                 "failover",
 		Message:              upstreamMsg,
@@ -4283,7 +4283,7 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 		AccountID:            account.ID,
 		AccountName:          account.Name,
 		UpstreamStatusCode:   resp.StatusCode,
-		UpstreamRequestID:    resp.Header.Get("x-request-id"),
+		UpstreamRequestID:    upstreamRequestIDFromHeader(resp.Header),
 		Passthrough:          true,
 		Kind:                 "http_error",
 		Message:              upstreamMsg,
@@ -4702,7 +4702,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	semanticOutputSeen := false
 	failedMessage := ""
 	clientOutputStarted := false
-	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	upstreamRequestID := upstreamRequestIDFromHeader(resp.Header)
 	// 上游模型不一致只在首个带 model 的事件上比对一次（无论结果如何）。
 	upstreamModelChecked := false
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
@@ -4790,7 +4790,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					// （*usage 此时还没解析到它）；parseSSEUsageBytes 自带终止事件类型判断。
 					checkUsage := *usage
 					s.parseSSEUsageBytes(dataBytes, &checkUsage)
-					if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestID,
+					if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestID, resp.Header,
 						sentModelForCheck(mappedModel, originalModel), got, true, canBlock, checkUsage); ferr != nil {
 						return resultWithUsage(), ferr
 					}
@@ -5001,7 +5001,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 
 	// 上游模型不一致拦截：在写 header / 模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
 	if got := extractUpstreamResponseModel(body); got != "" {
-		if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+		if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
 			sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
 			return nil, ferr
 		}
@@ -5047,7 +5047,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		}
 		// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
 		if got := extractUpstreamResponseModel(finalResponse); got != "" {
-			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+			if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
 				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
 				return nil, ferr
 			}
@@ -5081,7 +5081,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		// 上游模型不一致拦截：没有 response.completed/done（如 response.incomplete 收尾）时，
 		// 取首个带 model 的事件比对，同样在模型反向替换、写出之前完成。
 		if got := extractUpstreamSSEResponseModel(bodyText); got != "" {
-			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+			if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
 				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
 				return nil, ferr
 			}
@@ -5404,7 +5404,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
@@ -5440,7 +5440,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		AccountID:          account.ID,
 		AccountName:        account.Name,
 		UpstreamStatusCode: resp.StatusCode,
-		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 		Kind:               kind,
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
@@ -5568,7 +5568,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
@@ -5598,7 +5598,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		AccountID:          account.ID,
 		AccountName:        account.Name,
 		UpstreamStatusCode: resp.StatusCode,
-		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 		Kind:               kind,
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
@@ -5662,7 +5662,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	if guardFirstOutput {
 		if s.responseHeaderFilter != nil {
 			attemptResponseHeaders = responseheaders.FilterHeaders(resp.Header, s.responseHeaderFilter)
-		} else if requestID := strings.TrimSpace(resp.Header.Get("x-request-id")); requestID != "" {
+		} else if requestID := upstreamRequestIDFromHeader(resp.Header); requestID != "" {
 			attemptResponseHeaders = http.Header{"X-Request-Id": []string{requestID}}
 		}
 	} else if s.responseHeaderFilter != nil {
@@ -5836,7 +5836,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	responsesSemanticOutputSeen := false
 	failedMessage := ""
 	clientOutputStarted := false
-	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	upstreamRequestID := upstreamRequestIDFromHeader(resp.Header)
 	var streamEarlyErr error
 	// 上游模型不一致只在首个带 model 的事件上比对一次（无论结果如何）。
 	upstreamModelChecked := false
@@ -6040,7 +6040,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					// （*usage 此时还没解析到它）；parseSSEUsageBytes 自带终止事件类型判断。
 					checkUsage := *usage
 					s.parseSSEUsageBytes(dataBytes, &checkUsage)
-					if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestID,
+					if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestID, resp.Header,
 						sentModelForCheck(mappedModel, originalModel), got, true, canBlock, checkUsage); ferr != nil {
 						// 阻止 finalizeStream 再包一层 "missing terminal event"
 						sawTerminalEvent = true
@@ -6802,7 +6802,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 
 	// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
 	if got := extractUpstreamResponseModel(body); got != "" {
-		if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+		if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
 			sentModelForCheck(mappedModel, originalModel), got, false, true, usageValue); ferr != nil {
 			return nil, ferr
 		}
@@ -6853,7 +6853,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		}
 		// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
 		if got := extractUpstreamResponseModel(finalResponse); got != "" {
-			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+			if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
 				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
 				return nil, ferr
 			}
@@ -6888,7 +6888,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		// 上游模型不一致拦截：没有 response.completed/done（如 response.incomplete 收尾）时，
 		// 取首个带 model 的事件比对，同样在模型反向替换、写出之前完成。
 		if got := extractUpstreamSSEResponseModel(bodyText); got != "" {
-			if ferr := s.checkUpstreamModelMismatch(c, account, strings.TrimSpace(resp.Header.Get("x-request-id")),
+			if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
 				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
 				return nil, ferr
 			}

@@ -184,7 +184,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				Kind:               "failover",
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
@@ -222,7 +222,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	serviceTier *string,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
-	requestID := resp.Header.Get("x-request-id")
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
@@ -254,7 +254,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	}
 	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
 	if got := extractUpstreamResponseModel(respBody); got != "" {
-		if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+		if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
 			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
 			return nil, ferr
 		}
@@ -291,7 +291,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	serviceTier *string,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
-	requestID := resp.Header.Get("x-request-id")
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 	headersWritten := false
 	writeStreamHeaders := func() {
 		if headersWritten {
@@ -376,7 +376,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		if !upstreamModelChecked {
 			if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
 				upstreamModelChecked = true
-				if ferr := s.checkUpstreamModelMismatch(c, account, requestID,
+				if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
 					sentModelForCheck(upstreamModel, originalModel), got, true, !headersWritten, usage); ferr != nil {
 					return nil, ferr
 				}
