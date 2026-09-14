@@ -4796,7 +4796,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 			}
 			// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
-			//（上游真实值已在上面的比对里进了审计）。
+			//（上游真实值已在上面的比对里进了审计）。rawDataBytes 保留对齐前的上游原文，
+			// 下面 response.failed 分支写 cyber 标记 / ops 事件 / failover 错误体时用它，
+			// 保证审计里看到的仍是上游真实 model（mismatch 比对跳过 response.failed）。
+			rawDataBytes := dataBytes
 			if aligned := alignClientVisibleModelInSSELine(line, originalModel); aligned != line {
 				line = aligned
 				if alignedData, isData := extractOpenAISSEDataLine(line); isData {
@@ -4826,7 +4829,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
 						Code:                     code,
 						Message:                  msg,
-						Body:                     truncateString(string(dataBytes), 4096),
+						Body:                     truncateString(string(rawDataBytes), 4096),
 						UpstreamStatus:           http.StatusOK,
 						UpstreamInTok:            usage.InputTokens,
 						UpstreamOutTok:           usage.OutputTokens,
@@ -4836,10 +4839,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				} else if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
 					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
 						return resultWithUsage(),
-							s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, dataBytes, failedMessage, resp.Header)
+							s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, rawDataBytes, failedMessage, resp.Header)
 					}
 					if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
-						s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", dataBytes, failedMessage)
+						s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", rawDataBytes, failedMessage)
 						MarkResponseCommitted(c)
 						c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 						c.JSON(status, gin.H{

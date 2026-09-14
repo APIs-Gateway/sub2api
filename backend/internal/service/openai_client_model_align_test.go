@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -593,4 +594,28 @@ func TestClientModelAlign_WSHTTPBridgeTurn2(t *testing.T) {
 	require.Equal(t, "gpt-5.1", gjson.GetBytes(writes[2], "response.model").String())
 	require.Equal(t, "gpt-5.1", result.UpstreamModel)
 	requireClientModelAlignMark(t, c, "gpt-5.1", "gpt-4o-mini")
+}
+
+// passthrough 流式：上游以 response.failed（server_error，带 gpt-6-sol）收尾且客户端尚无输出 → 走 failover；
+// ops 事件里记录的上游原文必须仍是 gpt-6-sol（审计保留真实值），不能被客户端可见的对齐覆盖。
+func TestClientModelAlign_PassthroughStreamFailedEventKeepsRawModelInOpsEvent(t *testing.T) {
+	failed := `{"type":"response.failed","response":{"id":"r1","object":"response","status":"failed","model":"gpt-6-sol",` +
+		`"error":{"code":"server_error","message":"upstream exploded"},"usage":{"input_tokens":12,"output_tokens":0,"total_tokens":12}}}`
+	upstream := newUpstreamModelMismatchSSEUpstream("data: " + failed + "\n\n")
+	svc, c, recorder, account := newClientModelAlignResponsesService(t, upstream, true)
+	svc.cfg.Gateway.LogUpstreamErrorBody = true
+	svc.cfg.Gateway.LogUpstreamErrorBodyMaxBytes = 4096
+
+	_, err := svc.Forward(context.Background(), c, account, []byte(upstreamModelMismatchTestRequestBody))
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr), "response.failed(server_error) before output must fail over, got %v", err)
+	require.Empty(t, recorder.Body.String(), "no upstream bytes may leak")
+
+	raw, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := raw.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.NotEmpty(t, events)
+	require.Contains(t, events[len(events)-1].Detail, `"model":"gpt-6-sol"`, "ops detail must keep the raw upstream model")
+	require.NotContains(t, events[len(events)-1].Detail, `"model":"gpt-5.6-sol"`)
 }

@@ -2377,6 +2377,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			)
 		}
 
+		// rawMessage 保留对齐前的上游原文，供下面 response.failed 的 cyber 标记与 error 事件的
+		// failover 错误体使用，保证审计 / 切号记录里是上游真实 model。
+		rawMessage := message
 		if !clientDisconnected {
 			// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
 			//（上游真实值已在上面的比对里进了审计；助手内部有 "model" 子串快速路径）。
@@ -2397,7 +2400,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				MarkOpsCyberPolicy(c, CyberPolicyMark{
 					Code:                     code,
 					Message:                  msg,
-					Body:                     truncateString(string(message), 4096),
+					Body:                     truncateString(string(rawMessage), 4096),
 					UpstreamStatus:           http.StatusOK,
 					UpstreamInTok:            usage.InputTokens,
 					UpstreamOutTok:           usage.OutputTokens,
@@ -2458,7 +2461,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			if !wroteDownstream && isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw) && ShouldSwitchAccountOn429(account.ID) {
 				return nil, &UpstreamFailoverError{
 					StatusCode:      http.StatusTooManyRequests,
-					ResponseBody:    append([]byte(nil), message...),
+					ResponseBody:    append([]byte(nil), rawMessage...),
 					ResponseHeaders: cloneHeader(lease.HandshakeHeaders()),
 				}
 			}
