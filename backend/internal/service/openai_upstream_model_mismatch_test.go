@@ -23,9 +23,10 @@ func TestUpstreamModelMatches(t *testing.T) {
 	}{
 		{"exact", "gpt-5.6-sol", "gpt-5.6-sol", true},
 		{"case-insensitive", "GPT-5.6-Sol", "gpt-5.6-sol ", true},
-		{"codex auto routing is not substitution", "gpt-5.6-luna", "codex-auto-review", true},
-		{"codex auto routing case/prefix insensitive", "gpt-5.6-sol", "openai/Codex-Auto-Review", true},
-		{"auto-review only exempts the response side", "codex-auto-review", "gpt-5.6-terra", false},
+		{"requesting auto-review lets upstream pick any model", "codex-auto-review", "gpt-5.6-terra", true},
+		{"requesting auto-review case/prefix insensitive", "openai/Codex-Auto-Review", "gpt-5.4", true},
+		{"upstream answering auto-review to a concrete request is substitution", "gpt-5.6-luna", "codex-auto-review", false},
+		{"upstream answering auto-review with prefix is still substitution", "gpt-5.6-sol", "openai/codex-auto-review", false},
 		{"empty got passes", "gpt-5.6-sol", "", true},
 		{"mapped account 3233: sent luna got luna", "gpt-5.6-luna", "gpt-5.6-luna", true},
 		{"date snapshot dashed", "gpt-5.6-sol", "gpt-5.6-sol-2026-09-01", true},

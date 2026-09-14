@@ -17,7 +17,7 @@
 - provider 前缀：去掉 `provider/` 前缀（`lastOpenAIModelSegment`）后再做上面两条比对，`openai/gpt-5.6-sol` 与 `gpt-5.6-sol` 互相回显视为一致；前缀不掩盖真正的换模（`openai/gpt-5.6-sol` vs `gpt-6-sol`、`gpt-5.6-sol` vs `anthropic/gpt-5.6-sol-mini` 仍拦截）。
 - codex 别名，只认升级方向：`A` 是精确别名表（`codexModelMap`）里的键且 `B` 正是它的目标才放行（`gpt-5.3 → gpt-5.3-codex`、`gpt-5.1 → gpt-5.4`、`gpt-5.4-high → gpt-5.4`）；反向不放行，`A = gpt-5.4` 收到 `gpt-5-mini` / `gpt-5` / `gpt-5.4` 收到别的降级仍拦截。
 - 同族 reasoning / 日期后缀剥离：任一方去掉已知后缀（`codexVersionModelPrefixes` + `isKnownCodexModelSuffix`，即 `none/minimal/low/medium/high/xhigh` 与 `YYYY-MM-DD`）后等于另一方放行（`gpt-5.4 ↔ gpt-5.4-high`）。不用任何 `Contains` 启发式，`gpt-5.6-sol-mini`、`gpt-5.8 → gpt-5.4` 都不会被折叠放行。
-- Codex 自动路由放行：`B`（去掉 provider 前缀后）为 `codex-auto-review` 时一律视为一致——这是 Codex 平台按任务自动选择的模型，不是中转偷换（lly 2026-09-14 拍板）。不拦截、不打标、照常计费；客户端可见的 `model` 仍按「客户端可见 model 对齐」改回请求名。集合见 `upstreamAutoRoutedModels`。
+- Codex 自动路由放行（只看请求侧）：`A`（去掉 provider 前缀后）为 `codex-auto-review` 时一律视为一致——用户让平台自己选模型，上游回显任何模型都正常，不拦截、不打标、照常计费（lly 2026-09-14 拍板）。`B` 为 `codex-auto-review` 而 `A` 是具体模型时**不放行**：那是中转把请求改成了自动路由，按偷换处理；客户端可见的 `model` 仍按「客户端可见 model 对齐」改回请求名。集合见 `upstreamAutoRoutedModels`。
 - grok 只记录不拦截：`A` 以 `grok` 开头时不一致只打标（`Blocked=false`）、照常透传、照常计费（见「计费口径」）。xAI 用带日期的模型名（如 `grok-4.3-0709`），上述豁免覆盖不了，真实回显尚未验证，先观察。
 
 ## 拦截行为

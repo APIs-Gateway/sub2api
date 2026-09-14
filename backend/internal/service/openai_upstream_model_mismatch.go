@@ -44,9 +44,10 @@ func IsUpstreamModelMismatchErrorBody(body []byte) bool {
 }
 
 // upstreamModelMismatchMessage 只用于内部记录（ops 事件 / 日志），会再拼上 sent=… got=…。
-// upstreamAutoRoutedModels：Codex 平台自动路由的结果模型名。上游回显这些名字不是中转偷换，
-// 而是平台按任务自己选的模型（lly 2026-09-14 拍板：codex-auto-review 一律放行），
-// 与请求模型是否相同无关：不拦截、不打标、照常计费。客户端可见的 model 仍按对齐规则改回请求名。
+// upstreamAutoRoutedModels：Codex 平台的自动路由模型名（lly 2026-09-14 拍板）。
+// 只豁免请求侧：用户请求 codex-auto-review 就是让平台自己选模型，上游回显任何模型都不是偷换，
+// 不拦截、不打标、照常计费。响应侧不豁免：用户请求 luna/sol 却收到 codex-auto-review，
+// 是中转把请求改成了自动路由，按偷换处理。客户端可见的 model 仍按对齐规则改回请求名。
 var upstreamAutoRoutedModels = map[string]struct{}{
 	"codex-auto-review": {},
 }
@@ -69,7 +70,7 @@ var upstreamModelDateSuffixRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}|\d{8})$`
 //     否则 gpt-5.4 被偷换成 gpt-5-mini / gpt-5 这类降级会漏拦。
 //  5. 同族 reasoning / 日期后缀剥离：任一方去掉已知后缀（codexVersionModelPrefixes + isKnownCodexModelSuffix）
 //     后等于另一方放行（gpt-5.4-high ↔ gpt-5.4）。不用任何 Contains 启发式。
-//  6. Codex 自动路由：got（去 provider 前缀）在 upstreamAutoRoutedModels 里一律放行。
+//  6. Codex 自动路由：sent（去 provider 前缀）在 upstreamAutoRoutedModels 里一律放行；got 是它不放行。
 func upstreamModelMatches(sent, got string) bool {
 	sent = strings.ToLower(strings.TrimSpace(sent))
 	got = strings.ToLower(strings.TrimSpace(got))
@@ -81,7 +82,7 @@ func upstreamModelMatches(sent, got string) bool {
 	}
 	sentSeg := strings.ToLower(lastOpenAIModelSegment(sent))
 	gotSeg := strings.ToLower(lastOpenAIModelSegment(got))
-	if _, ok := upstreamAutoRoutedModels[gotSeg]; ok {
+	if _, ok := upstreamAutoRoutedModels[sentSeg]; ok {
 		return true
 	}
 	if upstreamModelSegmentMatches(sentSeg, gotSeg) {
