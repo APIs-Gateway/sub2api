@@ -41,6 +41,9 @@
 - 只能用线上 `usage_logs` / ops 日志做被动统计：同一凭据、足够长窗口内的不一致比例（后台用量页「仅不一致」筛选，或 `upstream_model_mismatch = true` 按 `account_id` 聚合）。
 - 不能靠发探测请求：一次探测只是账号池里某个节点的样本。同一凭据一次探测 24/24 全不一致、同一小时线上 127 次全部正常，两者曾同时出现过——探测抽到了池里的坏节点。这也是池模式账号先同账号重试而不是立刻切号的依据。
 - 只有一家的全部凭据在足够长的窗口里持续不一致，才谈得上平台级重定向，再考虑对该上游做账号级处置。
+- 向 a6（New API）追责时注意其 request id 的时间戳前缀是 UTC：去对方后台按时间搜要把北京时间减 8 小时。
+- New API 系中转的 request id 常只在错误体里（`error.request_id` / 顶层 `request_id` / `error.message` 末尾的 `request_id: …`），响应头里没有；`appendOpsUpstreamError` 已兜底从错误体提取进 `upstream_errors[].upstream_request_id`（头里有值不覆盖）。
+- 不一致相关的 `usage_logs` 行（审计行与观察模式行）必写 `upstream_model`（A），即使与 `model` 相等；普通行仍只在两者不同时写。
 
 ## 上游 request id 与上游头指纹
 
@@ -61,7 +64,7 @@
 
 ## 数据与后台
 
-- 迁移 `190_usage_log_upstream_model_mismatch.sql`：`usage_logs` 新增 `upstream_model_mismatch BOOLEAN NOT NULL DEFAULT FALSE`、`upstream_response_model VARCHAR(100)`。`upstream_model` 列语义不变。
+- 迁移 `190_usage_log_upstream_model_mismatch.sql`：`usage_logs` 新增 `upstream_model_mismatch BOOLEAN NOT NULL DEFAULT FALSE`、`upstream_response_model VARCHAR(100)`。`upstream_model` 列语义不变（不一致行改为必写，见运维口径）。
 - 管理员用量接口：`GET /api/v1/admin/usage` 与 `/stats` 支持 `upstream_model_mismatch=true|false` 筛选；`AdminUsageLog` 返回 `upstream_model_mismatch`、`upstream_response_model`。
 - 后台用量页：不一致的行在模型列标红显示上游返回的模型并带「模型不一致」徽标；筛选栏新增「全部 / 仅不一致 / 仅一致」下拉。
 

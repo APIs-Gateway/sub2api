@@ -3,10 +3,12 @@ package service
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // upstreamRequestIDHeaderNames 上游 request id 的兼容头名，按优先级取第一个非空。
@@ -31,6 +33,39 @@ func upstreamRequestIDFromHeader(h http.Header) string {
 		if v := strings.TrimSpace(h.Get(name)); v != "" {
 			return v
 		}
+	}
+	return ""
+}
+
+const (
+	// upstreamRequestIDFromErrorBodyMaxBytes 超过此长度的错误体不解析（避免对大响应体做 JSON 扫描）。
+	upstreamRequestIDFromErrorBodyMaxBytes = 64 * 1024
+	// upstreamRequestIDMaxBytes 从错误体提取的 request id 截断长度。
+	upstreamRequestIDMaxBytes = 128
+)
+
+// upstreamRequestIDInMessageRe 兜底：New API 系中转把 request id 拼在 message 末尾
+// （"... request_id: 2026091312450379..."）。
+var upstreamRequestIDInMessageRe = regexp.MustCompile(`request_id:\s*([A-Za-z0-9_.-]{8,})`)
+
+// upstreamRequestIDFromErrorBody 从上游错误 JSON 体里兜底取 request id：依次 error.request_id、
+// 顶层 request_id（字符串且非空），都没有再用正则在 error.message 里找 "request_id: xxx"。
+// a6 这类 New API 中转响应头里没有 request id，只在错误体里带；头里取不到时用这里的值。
+// 非 JSON / 空串 / 超过 64KB 返回 ""；返回值截到 128 字节。
+func upstreamRequestIDFromErrorBody(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" || len(body) > upstreamRequestIDFromErrorBodyMaxBytes || !gjson.Valid(body) {
+		return ""
+	}
+	for _, path := range []string{"error.request_id", "request_id"} {
+		if r := gjson.Get(body, path); r.Type == gjson.String {
+			if v := strings.TrimSpace(r.String()); v != "" {
+				return truncateString(v, upstreamRequestIDMaxBytes)
+			}
+		}
+	}
+	if m := upstreamRequestIDInMessageRe.FindStringSubmatch(gjson.Get(body, "error.message").String()); len(m) == 2 {
+		return truncateString(m[1], upstreamRequestIDMaxBytes)
 	}
 	return ""
 }
@@ -303,6 +338,10 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	ev.UpstreamURL = strings.TrimSpace(ev.UpstreamURL)
 	ev.Message = strings.TrimSpace(ev.Message)
 	ev.Detail = strings.TrimSpace(ev.Detail)
+	// 头里没有 request id 时从错误体兜底（New API 系中转只在错误 JSON 里带）；头里有值不覆盖。
+	if ev.UpstreamRequestID == "" {
+		ev.UpstreamRequestID = firstNonEmpty(upstreamRequestIDFromErrorBody(ev.UpstreamResponseBody), upstreamRequestIDFromErrorBody(ev.Detail))
+	}
 	if ev.Message != "" {
 		ev.Message = sanitizeUpstreamErrorMessage(ev.Message)
 	}

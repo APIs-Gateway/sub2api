@@ -8353,6 +8353,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// 后台「仅不一致」筛选才能看到观察模式的命中；计费差异只由 UpstreamModelMismatchBlocked 决定。
 	usageLog.UpstreamModelMismatch = input.UpstreamModelMismatchBlocked || strings.TrimSpace(input.UpstreamResponseModel) != ""
 	usageLog.UpstreamResponseModel = optionalTrimmedStringPtr(truncateString(strings.TrimSpace(input.UpstreamResponseModel), usageLogUpstreamResponseModelMaxBytes))
+	// 不一致行必写 upstream_model（A）：普通行为省列只在 A != Model 时写，恒等映射时为 NULL，
+	// 后台看审计行就对不出发给上游的模型是什么；不一致行无论是否与 Model 相等都写。
+	if usageLog.UpstreamModelMismatch && strings.TrimSpace(result.UpstreamModel) != "" {
+		usageLog.UpstreamModel = optionalTrimmedStringPtr(result.UpstreamModel)
+	}
 	// 设置计费模式
 	if cost != nil && cost.BillingMode != "" {
 		billingMode := cost.BillingMode

@@ -160,3 +160,62 @@ func TestOpsUpstreamHeaderFingerprint(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(raw), `"upstream_headers":{`)
 }
+
+func TestUpstreamRequestIDFromErrorBody(t *testing.T) {
+	const rid = "2026091312450379123456"
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"error.request_id", `{"error":{"code":"bad_response","message":"boom","request_id":" ` + rid + ` "}}`, rid},
+		{"top-level request_id", `{"request_id":"` + rid + `","error":{"message":"boom"}}`, rid},
+		{"only embedded in message", `{"error":{"message":"上游服务暂时不可用。 request_id: ` + rid + `"}}`, rid},
+		{"error.request_id wins over message", `{"error":{"message":"request_id: other-000001","request_id":"` + rid + `"}}`, rid},
+		{"message id too short is ignored", `{"error":{"message":"request_id: abc"}}`, ""},
+		{"non-string request_id ignored", `{"error":{"request_id":12345678}}`, ""},
+		{"not json", `upstream exploded request_id: ` + rid, ""},
+		{"empty", ``, ""},
+		{"blank", `   `, ""},
+		{"oversized body", `{"error":{"request_id":"` + rid + `","message":"` + strings.Repeat("x", 70*1024) + `"}}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, upstreamRequestIDFromErrorBody(tc.body))
+		})
+	}
+	long := upstreamRequestIDFromErrorBody(`{"request_id":"` + strings.Repeat("r", 300) + `"}`)
+	require.Len(t, long, upstreamRequestIDMaxBytes, "截到 128 字节")
+}
+
+func TestAppendOpsUpstreamError_FallsBackToRequestIDInErrorBody(t *testing.T) {
+	newCtx := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		return c
+	}
+	events := func(c *gin.Context) []*OpsUpstreamErrorEvent {
+		v, ok := c.Get(OpsUpstreamErrorsKey)
+		require.True(t, ok)
+		return v.([]*OpsUpstreamErrorEvent)
+	}
+
+	// 头里没有：从响应体兜底。
+	c := newCtx()
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{Kind: "http_error", UpstreamResponseBody: `{"error":{"message":"boom","request_id":"body-rid-0001"}}`})
+	require.Equal(t, "body-rid-0001", events(c)[0].UpstreamRequestID)
+
+	// 响应体没有、Detail 里有。
+	c = newCtx()
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{Kind: "http_error", UpstreamResponseBody: `not json`, Detail: `{"request_id":"detail-rid-0001"}`})
+	require.Equal(t, "detail-rid-0001", events(c)[0].UpstreamRequestID)
+
+	// 头里已有值：不覆盖。
+	c = newCtx()
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{Kind: "http_error", UpstreamRequestID: " header-rid ", UpstreamResponseBody: `{"error":{"request_id":"body-rid-0001"}}`})
+	require.Equal(t, "header-rid", events(c)[0].UpstreamRequestID)
+
+	// 都没有：保持空。
+	c = newCtx()
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{Kind: "http_error", UpstreamResponseBody: `{"error":{"message":"boom"}}`})
+	require.Empty(t, events(c)[0].UpstreamRequestID)
+}
