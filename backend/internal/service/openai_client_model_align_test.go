@@ -578,6 +578,7 @@ func TestClientModelAlign_WSHTTPBridgeTurn2(t *testing.T) {
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
 		context.Background(), c, account, "sk-test", payload, len(payload),
 		"gpt-5.1", "", "", "", 2,
+		openAIWSHTTPBridgeToolState{},
 		func(message []byte) error {
 			writes = append(writes, append([]byte(nil), message...))
 			return nil

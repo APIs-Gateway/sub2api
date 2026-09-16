@@ -202,7 +202,7 @@ func TestHandleNonStreamingResponsePassthrough_RestoresNamespaceCalls(t *testing
 	}
 
 	result, err := (&OpenAIGatewayService{cfg: &config.Config{}}).handleNonStreamingResponsePassthrough(
-		context.Background(), resp, c, "gpt-5.5", "",
+		context.Background(), resp, c, nil, "gpt-5.5", "",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -224,7 +224,7 @@ func TestHandlePassthroughSSEToJSON_RestoresNamespaceCalls(t *testing.T) {
 		`data: [DONE]`,
 	}, "\n"))
 
-	result, err := svc.handlePassthroughSSEToJSON(resp, c, body, "gpt-5.5", "gpt-5.5")
+	result, err := svc.handlePassthroughSSEToJSON(resp, c, nil, body, "gpt-5.5", "gpt-5.5")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotContains(t, rec.Body.String(), "collaboration__spawn_agent")
@@ -532,7 +532,7 @@ func TestHandleNonStreamingResponsePassthrough_PropagatesNamespaceRestoreError(t
 	}
 
 	result, err := (&OpenAIGatewayService{cfg: &config.Config{}}).handleNonStreamingResponsePassthrough(
-		context.Background(), resp, c, "gpt-5.5", "",
+		context.Background(), resp, c, nil, "gpt-5.5", "",
 	)
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "restore OpenAI passthrough namespace response")
@@ -551,7 +551,7 @@ func TestHandlePassthroughSSEToJSON_PropagatesNamespaceRestoreError(t *testing.T
 		`data: [DONE]`,
 	}, "\n"))
 
-	result, err := svc.handlePassthroughSSEToJSON(resp, c, body, "gpt-5.5", "gpt-5.5")
+	result, err := svc.handlePassthroughSSEToJSON(resp, c, nil, body, "gpt-5.5", "gpt-5.5")
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "restore OpenAI passthrough namespace response")
 }
