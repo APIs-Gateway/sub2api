@@ -42,6 +42,61 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 	require.EqualError(t, err, "invalid json request body")
 }
 
+func TestSanitizeGrokUnsupportedFields(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns original body when unsupported field is absent", func(t *testing.T) {
+		body := []byte(`{"model":"grok-4.6","settings":{"keep_setting":"present"}}`)
+
+		patched, err := sanitizeGrokUnsupportedFields(body)
+
+		require.NoError(t, err)
+		require.Equal(t, body, patched)
+	})
+
+	t.Run("keeps a string value that only mentions unsupported field", func(t *testing.T) {
+		body := []byte(`{"model":"grok-4.6","note":"external_web_access"}`)
+
+		patched, err := sanitizeGrokUnsupportedFields(body)
+
+		require.NoError(t, err)
+		require.Equal(t, body, patched)
+	})
+
+	t.Run("removes fields recursively", func(t *testing.T) {
+		body := []byte(`{"external_web_access":false,"nested":[{"external_web_access":true,"keep":1}]}`)
+
+		patched, err := sanitizeGrokUnsupportedFields(body)
+
+		require.NoError(t, err)
+		require.NotContains(t, string(patched), "external_web_access")
+		require.Equal(t, int64(1), gjson.GetBytes(patched, "nested.0.keep").Int())
+	})
+
+	t.Run("removes escaped unsupported field", func(t *testing.T) {
+		body := []byte(`{"external_web\u005faccess":true,"keep":1}`)
+
+		patched, err := sanitizeGrokUnsupportedFields(body)
+
+		require.NoError(t, err)
+		require.NotEqual(t, body, patched)
+		require.False(t, gjson.GetBytes(patched, "external_web_access").Exists())
+		require.Equal(t, int64(1), gjson.GetBytes(patched, "keep").Int())
+	})
+
+	t.Run("rejects malformed JSON when unsupported field is present", func(t *testing.T) {
+		_, err := sanitizeGrokUnsupportedFields([]byte(`{"external_web_access":`))
+
+		require.Error(t, err)
+	})
+
+	t.Run("rejects trailing data", func(t *testing.T) {
+		_, err := sanitizeGrokUnsupportedFields([]byte(`{"external_web_access":true} trailing`))
+
+		require.Error(t, err)
+	})
+}
+
 // 上游同一 commit 的测试还覆盖了一个 "Responses Lite additional tools"（把
 // input 里 additional_tools 项的嵌套 tools 提升为顶层 tools）场景，但那是
 // patchGrokResponsesBodyBase 更大流水线里另一个步骤的行为，不属于

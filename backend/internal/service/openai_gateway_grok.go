@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -198,6 +199,55 @@ func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 		}
 	}
 	return out, nil
+}
+
+var grokUnsupportedRecursiveFields = map[string]struct{}{
+	"external_web_access": {},
+}
+
+// sanitizeGrokUnsupportedFields recursively removes request fields rejected by
+// Grok. Callers opt in per endpoint so protocol-specific request behavior stays
+// unchanged elsewhere.
+func sanitizeGrokUnsupportedFields(body []byte) ([]byte, error) {
+	if !common.Valid(body) {
+		return nil, fmt.Errorf("invalid json request body")
+	}
+
+	var payload any
+	decoder := common.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	if !deleteJSONFields(payload, grokUnsupportedRecursiveFields) {
+		return body, nil
+	}
+	return marshalOpenAIUpstreamJSON(payload)
+}
+
+func deleteJSONFields(value any, fields map[string]struct{}) bool {
+	changed := false
+	switch typed := value.(type) {
+	case map[string]any:
+		for field := range fields {
+			if _, ok := typed[field]; ok {
+				delete(typed, field)
+				changed = true
+			}
+		}
+		for _, nested := range typed {
+			if deleteJSONFields(nested, fields) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if deleteJSONFields(nested, fields) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // An inline input_image is already visible to Grok. Keeping Codex's local
