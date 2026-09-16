@@ -571,6 +571,19 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		c.Request = c.Request.WithContext(ctx)
 	}
 
+	// 账号在选号阶段已注册会话槽。若请求在上游实际服务前失败，必须立即释放，
+	// 避免 max_sessions 限制下的失败请求占满整个空闲超时窗口。
+	sessionSlotAccounts := make(map[int64]*service.Account)
+	upstreamServedSession := false
+	defer func() {
+		if upstreamServedSession {
+			return
+		}
+		for _, account := range sessionSlotAccounts {
+			h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionKey)
+		}
+	}()
+
 	for {
 		fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
 		retryWithFallback := false
@@ -621,6 +634,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 			account := selection.Account
+			sessionSlotAccounts[account.ID] = account
 			setOpsSelectedAccount(c, account.ID, account.Platform)
 
 			// [DEBUG-STICKY] 打印账号选择结果
@@ -913,6 +927,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						currentSubscription = nil
 						fallbackUsed = true
 						retryWithFallback = true
+						for _, slotAccount := range sessionSlotAccounts {
+							h.gatewayService.ReleaseAccountSession(context.Background(), slotAccount, sessionKey)
+						}
+						sessionSlotAccounts = make(map[int64]*service.Account)
 						// per-day：分组仅管路由 → 兜底请求改用**兜底组自己的**渠道模型映射，
 						// 不再沿用原组的 channelMapping（否则原组 mapping 泄漏 / 兜底组所需 mapping 不生效）。
 						channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), fallbackAPIKey.GroupID, reqModel)
@@ -931,6 +949,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					action := fs.HandleFailoverErrorWithRetryLimit(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 					switch action {
 					case FailoverContinue:
+						h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionKey)
+						delete(sessionSlotAccounts, account.ID)
 						continue
 					case FailoverExhausted:
 						h.handleFailoverExhausted(c, fs.LastFailoverErr, account.Platform, streamStarted)
@@ -969,6 +989,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				// 不会走到这里重复计费。
 				if result != nil {
 					submitForwardUsage(result)
+					upstreamServedSession = true
 				}
 				return
 			}
@@ -994,6 +1015,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 
 			submitForwardUsage(result)
+			upstreamServedSession = true
 			return
 		}
 		if !retryWithFallback {
@@ -1957,6 +1979,7 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	if err := h.gatewayService.ForwardCountTokens(c.Request.Context(), c, account, parsedReq); err != nil {
 		reqLog.Error("gateway.count_tokens_forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		// 错误响应已在 ForwardCountTokens 中处理
+		h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionHash)
 		return
 	}
 }
