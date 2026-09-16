@@ -86,6 +86,18 @@ func (r *schedulerCancellationBoundaryRepo) ListSchedulableUngroupedByPlatform(c
 	return []Account{}, nil
 }
 
+type schedulerCancellationGetAccountRepo struct {
+	AccountRepository
+	cancel       context.CancelFunc
+	getByIDCalls int
+}
+
+func (r *schedulerCancellationGetAccountRepo) GetByID(context.Context, int64) (*Account, error) {
+	r.getByIDCalls++
+	r.cancel()
+	return &Account{ID: 42}, nil
+}
+
 func TestSchedulerSnapshotListStopsAfterRequestCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -182,4 +194,18 @@ func TestSchedulerSnapshotGetAccountStopsBeforeCacheForCanceledRequest(t *testin
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, account)
 	require.Zero(t, repo.getByIDCalls)
+}
+
+func TestSchedulerSnapshotGetAccountDropsResultAfterDBCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	repo := &schedulerCancellationGetAccountRepo{cancel: cancel}
+	svc := NewSchedulerSnapshotService(nil, nil, repo, nil, nil)
+
+	account, err := svc.GetAccount(ctx, 42)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, account)
+	require.Equal(t, 1, repo.getByIDCalls)
 }
