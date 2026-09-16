@@ -2,13 +2,13 @@ package service
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/gin-gonic/gin"
 )
@@ -64,7 +64,10 @@ func (s *AccountTestService) testCNProviderAnthropicConnection(c *gin.Context, a
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create Anthropic test payload")
 	}
-	payloadBytes, _ := json.Marshal(payload)
+	payloadBytes, err := common.Marshal(payload)
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to serialize Anthropic test payload")
+	}
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 
