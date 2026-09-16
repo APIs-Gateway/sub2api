@@ -160,6 +160,47 @@ func TestOpenAIGatewayHandlerSubmitMandatoryUsageRecordTask_DroppedTaskSyncFallb
 	require.True(t, called.Load(), "mandatory usage task must run synchronously when async submit is dropped")
 }
 
+// TestOpenAIGatewayHandlerSubmitMandatoryUsageRecordTask_EnqueuedReturnsAsyncWithoutSyncFallback
+// 验证 submitMandatoryUsageRecordTask 里 `!mode.Dropped()` 为 true（即 Submit 成功
+// 异步入队）时的分支：函数应立即返回、不等待任务执行完成，也不落入同步兜底路径。
+// 与 TestOpenAIGatewayHandlerSubmitMandatoryUsageRecordTask_DroppedTaskSyncFallback
+// （覆盖 Dropped()==true 的兜底分支）互补，合起来覆盖该条件的两个方向。
+func TestOpenAIGatewayHandlerSubmitMandatoryUsageRecordTask_EnqueuedReturnsAsyncWithoutSyncFallback(t *testing.T) {
+	pool := newUsageRecordTestPool(t)
+	h := &OpenAIGatewayHandler{usageRecordWorkerPool: pool}
+
+	release := make(chan struct{})
+	taskDone := make(chan struct{})
+	submitReturned := make(chan struct{})
+
+	go func() {
+		h.submitMandatoryUsageRecordTask(context.Background(), func(ctx context.Context) {
+			<-release
+			close(taskDone)
+		})
+		close(submitReturned)
+	}()
+
+	select {
+	case <-submitReturned:
+	case <-time.After(time.Second):
+		t.Fatal("submitMandatoryUsageRecordTask 在成功异步入队时应立即返回，不应阻塞等待任务执行")
+	}
+
+	select {
+	case <-taskDone:
+		t.Fatal("任务不应在 submitMandatoryUsageRecordTask 返回时就已经执行完成——它应仍阻塞在 release 上")
+	default:
+	}
+
+	close(release)
+	select {
+	case <-taskDone:
+	case <-time.After(time.Second):
+		t.Fatal("异步入队的任务从未执行")
+	}
+}
+
 func TestOpenAIGatewayHandlerSubmitOpenAIUsageRecordTask_ImageResultUsesMandatoryFallback(t *testing.T) {
 	pool := service.NewUsageRecordWorkerPoolWithOptions(service.UsageRecordWorkerPoolOptions{
 		WorkerCount:           1,
