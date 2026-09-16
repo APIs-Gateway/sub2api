@@ -75,6 +75,7 @@ const defaultFilters = () => ({
   user_id: undefined,
   api_key_id: undefined,
   account_id: undefined,
+  request_id: undefined,
   model: null,
   request_type: null,
   billing_type: null,
@@ -83,6 +84,22 @@ const defaultFilters = () => ({
   group_id: null,
   start_date: '',
   end_date: '',
+})
+
+describe('UsageFilters — request ID filter', () => {
+  it('trims and emits the exact request ID filter', async () => {
+    const filters = defaultFilters()
+    const wrapper = mountFilters(filters)
+
+    const requestIDInput = wrapper.find('input[placeholder="Request ID"]')
+    expect(requestIDInput.exists()).toBe(true)
+
+    await requestIDInput.setValue(' req-0123 ')
+    await requestIDInput.trigger('change')
+
+    expect(filters.request_id).toBe('req-0123')
+    expect(wrapper.emitted('change')).toBeTruthy()
+  })
 })
 
 function mountFilters(filters = defaultFilters()) {
