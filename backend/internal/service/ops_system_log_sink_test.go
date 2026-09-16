@@ -85,6 +85,25 @@ func TestOpsSystemLogSink_ShouldIndexAccessLogsOnlyWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestOpsSystemLogSinkRuntimeLogConfigRefresh(t *testing.T) {
+	sink := &OpsSystemLogSink{}
+	called := 0
+	sink.SetRuntimeLogConfigRefresh(func(context.Context) error {
+		called++
+		return nil
+	})
+	sink.refreshRuntimeLogConfig(context.Background())
+	if called != 1 {
+		t.Fatalf("refresh callback calls = %d, want 1", called)
+	}
+
+	sink.SetRuntimeLogConfigRefresh(nil)
+	sink.refreshRuntimeLogConfig(context.Background())
+	if called != 1 {
+		t.Fatalf("refresh callback calls after removal = %d, want 1", called)
+	}
+}
+
 func TestOpsSystemLogSink_WriteLogEvent_ShouldDropWhenQueueFull(t *testing.T) {
 	sink := &OpsSystemLogSink{
 		queue: make(chan *logger.LogEvent, 1),
