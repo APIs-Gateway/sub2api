@@ -641,13 +641,16 @@ func TestTransformClaudeToGeminiWithOptions_ReasoningModelToolConfig(t *testing.
 		}
 	}
 
-	t.Run("reasoning model without tools omits toolConfig", func(t *testing.T) {
+	t.Run("reasoning model without tools sets toolConfig", func(t *testing.T) {
 		body, err := TransformClaudeToGeminiWithOptions(baseReq(nil), "project-1", "gemini-3.1-pro-high", DefaultTransformOptions())
 		require.NoError(t, err)
 
 		var req V1InternalRequest
 		require.NoError(t, json.Unmarshal(body, &req))
-		require.Nil(t, req.Request.ToolConfig, "reasoning 模型在没有 tools 时不应强制设置 toolConfig")
+		require.NotNil(t, req.Request.ToolConfig, "reasoning 模型即使没有 tools 也必须设置 toolConfig")
+		require.NotNil(t, req.Request.ToolConfig.FunctionCallingConfig)
+		require.Equal(t, "VALIDATED", req.Request.ToolConfig.FunctionCallingConfig.Mode)
+		require.Empty(t, req.Request.Tools)
 	})
 
 	t.Run("reasoning model with tools still sets toolConfig", func(t *testing.T) {
@@ -665,6 +668,9 @@ func TestTransformClaudeToGeminiWithOptions_ReasoningModelToolConfig(t *testing.
 		require.NoError(t, json.Unmarshal(body, &req))
 		require.NotNil(t, req.Request.ToolConfig, "reasoning 模型有 tools 时仍应设置 toolConfig")
 		require.Equal(t, "VALIDATED", req.Request.ToolConfig.FunctionCallingConfig.Mode)
+		require.Len(t, req.Request.Tools, 1)
+		require.Len(t, req.Request.Tools[0].FunctionDeclarations, 1)
+		require.Equal(t, "get_weather", req.Request.Tools[0].FunctionDeclarations[0].Name)
 	})
 
 	t.Run("non-reasoning model without tools still sets toolConfig", func(t *testing.T) {
@@ -674,6 +680,8 @@ func TestTransformClaudeToGeminiWithOptions_ReasoningModelToolConfig(t *testing.
 		var req V1InternalRequest
 		require.NoError(t, json.Unmarshal(body, &req))
 		require.NotNil(t, req.Request.ToolConfig, "非 reasoning 模型应始终设置 toolConfig，与官方客户端一致")
+		require.Equal(t, "VALIDATED", req.Request.ToolConfig.FunctionCallingConfig.Mode)
+		require.Empty(t, req.Request.Tools)
 	})
 }
 
