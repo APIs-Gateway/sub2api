@@ -279,10 +279,14 @@ func expandMappingToCache(cache *channelCache, ch *Channel, gid int64, platform 
 
 // storeErrorCache 存入短 TTL 空缓存，防止 DB 错误后紧密重试。
 // 通过回退 loadedAt 使剩余 TTL = channelErrorTTL。
-func (s *ChannelService) storeErrorCache() {
+func (s *ChannelService) storeErrorCache(generation uint64) {
 	errorCache := newEmptyChannelCache()
 	errorCache.loadedAt = time.Now().Add(-(channelCacheTTL - channelErrorTTL))
-	s.cache.Store(errorCache)
+	s.cacheMu.Lock()
+	if s.cacheGeneration.Load() == generation {
+		s.cache.Store(errorCache)
+	}
+	s.cacheMu.Unlock()
 }
 
 // buildCache 从数据库构建渠道缓存。
@@ -294,6 +298,7 @@ func (s *ChannelService) buildCache(ctx context.Context) (*channelCache, error) 
 
 	channels, groupPlatforms, err := s.fetchChannelData(dbCtx)
 	if err != nil {
+		s.storeErrorCache(generation)
 		return nil, err
 	}
 
@@ -311,7 +316,6 @@ func (s *ChannelService) fetchChannelData(ctx context.Context) ([]Channel, map[i
 	channels, err := s.repo.ListAll(ctx)
 	if err != nil {
 		slog.Warn("failed to build channel cache", "error", err)
-		s.storeErrorCache()
 		return nil, nil, fmt.Errorf("list all channels: %w", err)
 	}
 
@@ -325,7 +329,6 @@ func (s *ChannelService) fetchChannelData(ctx context.Context) ([]Channel, map[i
 		groupPlatforms, err = s.repo.GetGroupPlatforms(ctx, allGroupIDs)
 		if err != nil {
 			slog.Warn("failed to load group platforms for channel cache", "error", err)
-			s.storeErrorCache()
 			return nil, nil, fmt.Errorf("get group platforms: %w", err)
 		}
 	}
