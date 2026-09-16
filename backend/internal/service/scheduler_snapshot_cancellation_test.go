@@ -46,6 +46,46 @@ func (r *schedulerCancellationAccountRepo) GetByID(ctx context.Context, _ int64)
 	return nil, ctx.Err()
 }
 
+type schedulerCancellationBoundaryCache struct {
+	SchedulerCache
+	cancel         context.CancelFunc
+	cancelOnToken  bool
+	published      int
+	snapshotReads  int
+	tokenCaptures  int
+}
+
+func (c *schedulerCancellationBoundaryCache) GetSnapshot(context.Context, SchedulerBucket) ([]*Account, bool, error) {
+	c.snapshotReads++
+	return nil, false, nil
+}
+
+func (c *schedulerCancellationBoundaryCache) CaptureBucketWriteToken(ctx context.Context, _ SchedulerBucket) (SchedulerBucketWriteToken, error) {
+	c.tokenCaptures++
+	if c.cancelOnToken {
+		c.cancel()
+		return SchedulerBucketWriteToken{}, ctx.Err()
+	}
+	return SchedulerBucketWriteToken{}, nil
+}
+
+func (c *schedulerCancellationBoundaryCache) SetSnapshot(context.Context, SchedulerBucket, SchedulerBucketWriteToken, []Account) error {
+	c.published++
+	return nil
+}
+
+type schedulerCancellationBoundaryRepo struct {
+	AccountRepository
+	cancel    context.CancelFunc
+	listCalls int
+}
+
+func (r *schedulerCancellationBoundaryRepo) ListSchedulableUngroupedByPlatform(context.Context, string) ([]Account, error) {
+	r.listCalls++
+	r.cancel()
+	return []Account{}, nil
+}
+
 func TestSchedulerSnapshotListStopsAfterRequestCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -76,4 +116,70 @@ func TestSchedulerSnapshotGetAccountStopsAfterRequestCancellation(t *testing.T) 
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, account)
 	require.Zero(t, repo.getByIDCalls, "canceled requests must not fall back to the database")
+}
+
+func TestSchedulerSnapshotListStopsBeforeCacheForCanceledRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cache := &schedulerCancellationBoundaryCache{cancel: cancel}
+	repo := &schedulerCancellationAccountRepo{}
+	svc := NewSchedulerSnapshotService(cache, nil, repo, nil, nil)
+
+	accounts, useMixed, err := svc.ListSchedulableAccounts(ctx, nil, PlatformOpenAI, false)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, accounts)
+	require.False(t, useMixed)
+	require.Zero(t, cache.snapshotReads)
+	require.Zero(t, repo.listCalls)
+}
+
+func TestSchedulerSnapshotListStopsAfterTokenCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	cache := &schedulerCancellationBoundaryCache{cancel: cancel, cancelOnToken: true}
+	repo := &schedulerCancellationAccountRepo{}
+	svc := NewSchedulerSnapshotService(cache, nil, repo, nil, nil)
+
+	accounts, useMixed, err := svc.ListSchedulableAccounts(ctx, nil, PlatformOpenAI, false)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, accounts)
+	require.False(t, useMixed)
+	require.Equal(t, 1, cache.tokenCaptures)
+	require.Zero(t, repo.listCalls, "canceled requests must not fall back after capturing a token")
+}
+
+func TestSchedulerSnapshotListStopsBeforePublishAfterDBCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	cache := &schedulerCancellationBoundaryCache{cancel: cancel}
+	repo := &schedulerCancellationBoundaryRepo{cancel: cancel}
+	svc := NewSchedulerSnapshotService(cache, nil, repo, nil, nil)
+
+	accounts, useMixed, err := svc.ListSchedulableAccounts(ctx, nil, PlatformOpenAI, false)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, accounts)
+	require.False(t, useMixed)
+	require.Equal(t, 1, repo.listCalls)
+	require.Zero(t, cache.published, "canceled requests must not publish a snapshot")
+}
+
+func TestSchedulerSnapshotGetAccountStopsBeforeCacheForCanceledRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cache := &schedulerCancellationCache{cancel: cancel}
+	repo := &schedulerCancellationAccountRepo{}
+	svc := NewSchedulerSnapshotService(cache, nil, repo, nil, nil)
+
+	account, err := svc.GetAccount(ctx, 42)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, account)
+	require.Zero(t, repo.getByIDCalls)
 }
