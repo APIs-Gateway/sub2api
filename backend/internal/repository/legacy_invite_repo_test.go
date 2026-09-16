@@ -81,6 +81,10 @@ func TestLegacyPaidLookup_FindPaidUser(t *testing.T) {
 			WithArgs("user@example.com", sqlmock.AnyArg()).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "email", "paid"}).
 				AddRow(int64(42), "user@example.com", 512.5))
+		// 用量口径是第二次查询，按旧站 user_id 而不是邮箱去查
+		mock.ExpectQuery("FROM usage_logs").
+			WithArgs(int64(42)).
+			WillReturnRows(sqlmock.NewRows([]string{"usage_cost"}).AddRow(1234.5))
 
 		lookup := &legacyPaidLookup{db: db, timeout: time.Second}
 		got, err := lookup.FindPaidUser(context.Background(), "user@example.com")
@@ -89,6 +93,30 @@ func TestLegacyPaidLookup_FindPaidUser(t *testing.T) {
 		require.Equal(t, int64(42), got.UserID)
 		require.Equal(t, "user@example.com", got.Email)
 		require.InDelta(t, 512.5, got.PaidAmount, 0.001)
+		require.InDelta(t, 1234.5, got.UsageCost, 0.001)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	// 旧站的只读账号很可能没被授予 usage_logs 的 SELECT 权限——那是一次独立的部署侧
+	// 授权动作，漏做很自然。此时用量口径按 0 处理、判定退回只看实付即可，
+	// 绝不能让这条可选的新口径把整个领码流程带成「暂时查不了」。
+	t.Run("usage query failure degrades to zero", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectQuery("SELECT u.id").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "email", "paid"}).
+				AddRow(int64(42), "user@example.com", 512.5))
+		mock.ExpectQuery("FROM usage_logs").
+			WillReturnError(errors.New("permission denied for table usage_logs"))
+
+		lookup := &legacyPaidLookup{db: db, timeout: time.Second}
+		got, err := lookup.FindPaidUser(context.Background(), "user@example.com")
+		require.NoError(t, err, "用量查不到不该拖垮整个领码流程")
+		require.NotNil(t, got)
+		require.InDelta(t, 512.5, got.PaidAmount, 0.001)
+		require.Zero(t, got.UsageCost)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -147,8 +175,8 @@ func TestLegacyInviteClaimRepository_GetByEmail(t *testing.T) {
 		mock.ExpectQuery("FROM legacy_invite_claims").
 			WithArgs("user@example.com").
 			WillReturnRows(sqlmock.NewRows([]string{
-				"id", "email", "legacy_user_id", "paid_amount", "redeem_code", "claimed_ip", "created_at",
-			}).AddRow(int64(1), "user@example.com", int64(42), 512.5, "CODE-1", "1.2.3.4", now))
+				"id", "email", "legacy_user_id", "paid_amount", "usage_cost", "redeem_code", "claimed_ip", "created_at",
+			}).AddRow(int64(1), "user@example.com", int64(42), 512.5, 1234.5, "CODE-1", "1.2.3.4", now))
 
 		repo := NewLegacyInviteClaimRepository(db)
 		got, err := repo.GetByEmail(context.Background(), "user@example.com")
@@ -156,6 +184,7 @@ func TestLegacyInviteClaimRepository_GetByEmail(t *testing.T) {
 		require.NotNil(t, got)
 		require.Equal(t, "CODE-1", got.RedeemCode)
 		require.Equal(t, int64(42), got.LegacyUserID)
+		require.InDelta(t, 1234.5, got.UsageCost, 0.001)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -166,7 +195,7 @@ func TestLegacyInviteClaimRepository_GetByEmail(t *testing.T) {
 
 		mock.ExpectQuery("FROM legacy_invite_claims").
 			WillReturnRows(sqlmock.NewRows([]string{
-				"id", "email", "legacy_user_id", "paid_amount", "redeem_code", "claimed_ip", "created_at",
+				"id", "email", "legacy_user_id", "paid_amount", "usage_cost", "redeem_code", "claimed_ip", "created_at",
 			}))
 
 		repo := NewLegacyInviteClaimRepository(db)
@@ -187,7 +216,7 @@ func TestLegacyInviteClaimRepository_Create(t *testing.T) {
 
 		now := time.Now()
 		mock.ExpectQuery("INSERT INTO legacy_invite_claims").
-			WithArgs("user@example.com", int64(42), 512.5, "CODE-1", "1.2.3.4").
+			WithArgs("user@example.com", int64(42), 512.5, 1234.5, "CODE-1", "1.2.3.4").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(7), now))
 
 		repo := NewLegacyInviteClaimRepository(db)
@@ -195,6 +224,7 @@ func TestLegacyInviteClaimRepository_Create(t *testing.T) {
 			Email:        "user@example.com",
 			LegacyUserID: 42,
 			PaidAmount:   512.5,
+			UsageCost:    1234.5,
 			RedeemCode:   "CODE-1",
 			ClaimedIP:    "1.2.3.4",
 		}

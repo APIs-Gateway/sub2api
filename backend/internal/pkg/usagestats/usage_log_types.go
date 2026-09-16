@@ -271,11 +271,12 @@ type UsageLogFilters struct {
 	GroupID   int64
 	Model     string
 	// ModelFilterSource controls which model dimension is used when Model is set.
-	ModelFilterSource string
-	RequestType       *int16
-	Stream            *bool
-	BillingType       *int8
-	BillingMode       string
+	ModelFilterSource     string
+	RequestType           *int16
+	Stream                *bool
+	BillingType           *int8
+	UpstreamModelMismatch *bool
+	BillingMode           string
 	// RequestID filters by the exact upstream request id (non-empty to enable).
 	RequestID string
 	StartTime *time.Time

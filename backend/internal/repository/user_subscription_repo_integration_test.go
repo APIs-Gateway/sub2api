@@ -568,6 +568,53 @@ func (s *UserSubscriptionRepoSuite) TestActivateWindows() {
 	s.Require().WithinDuration(activateAt, *got.DailyWindowStart, time.Microsecond)
 }
 
+// TestActivateWindows_StaleActivationPreservesExistingWindows covers the race between
+// two concurrent first-use requests: one that activates promptly, and a delayed/stale
+// one that still believes the windows are unactivated. Without the conditional update
+// (all three window starts NULL), the stale write would clobber window starts already
+// advanced by a manual reset, silently discarding the reset's usage bookkeeping.
+func (s *UserSubscriptionRepoSuite) TestActivateWindows_StaleActivationPreservesExistingWindows() {
+	user := s.mustCreateUser("activate-cas@test.com", service.RoleUser)
+	group := s.mustCreateGroup("g-activate-cas")
+	sub := s.mustCreateSubscription(user.ID, group.ID, nil)
+	activatedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	manualResetAt := activatedAt.Add(2 * time.Hour)
+
+	s.Require().NoError(s.repo.ActivateWindows(s.ctx, sub.ID, activatedAt))
+	s.Require().NoError(s.repo.ResetUsageWindows(s.ctx, sub.ID, true, true, true, manualResetAt))
+	// Simulate a concurrent request carrying the original unactivated snapshot.
+	s.Require().NoError(s.repo.ActivateWindows(s.ctx, sub.ID, activatedAt.Add(time.Hour)))
+
+	got, err := s.repo.GetByID(s.ctx, sub.ID)
+	s.Require().NoError(err)
+	s.Require().WithinDuration(manualResetAt, *got.DailyWindowStart, time.Microsecond)
+	s.Require().WithinDuration(manualResetAt, *got.WeeklyWindowStart, time.Microsecond)
+	s.Require().WithinDuration(manualResetAt, *got.MonthlyWindowStart, time.Microsecond)
+}
+
+// TestActivateWindows_ConcurrentFirstUseIsIdempotent covers the more common race: two
+// truly concurrent first-use requests both observe unactivated windows. The second
+// writer's conditional update must be a no-op rather than an error, and the winner's
+// window start must stick.
+func (s *UserSubscriptionRepoSuite) TestActivateWindows_ConcurrentFirstUseIsIdempotent() {
+	user := s.mustCreateUser("activate-cas-concurrent@test.com", service.RoleUser)
+	group := s.mustCreateGroup("g-activate-cas-concurrent")
+	sub := s.mustCreateSubscription(user.ID, group.ID, nil)
+
+	first := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	second := first.Add(50 * time.Millisecond)
+
+	s.Require().NoError(s.repo.ActivateWindows(s.ctx, sub.ID, first))
+	// The loser of the race must not error and must not overwrite the winner's window.
+	s.Require().NoError(s.repo.ActivateWindows(s.ctx, sub.ID, second))
+
+	got, err := s.repo.GetByID(s.ctx, sub.ID)
+	s.Require().NoError(err)
+	s.Require().WithinDuration(first, *got.DailyWindowStart, time.Microsecond)
+	s.Require().WithinDuration(first, *got.WeeklyWindowStart, time.Microsecond)
+	s.Require().WithinDuration(first, *got.MonthlyWindowStart, time.Microsecond)
+}
+
 func (s *UserSubscriptionRepoSuite) TestResetDailyUsage() {
 	user := s.mustCreateUser("resetd@test.com", service.RoleUser)
 	group := s.mustCreateGroup("g-resetd")

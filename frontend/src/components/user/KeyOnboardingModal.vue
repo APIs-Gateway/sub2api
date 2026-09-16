@@ -255,23 +255,23 @@ const claudeJson = computed(
 )
 const codexToml = computed(
   () =>
-    `model = "gpt-5.5"\nmodel_provider = "${providerId.value}"\n\n[model_providers.${providerId.value}]\nname = "${(props.siteName || 'sub2api').trim() || 'sub2api'}"\nbase_url = "${openaiBase.value}"\nwire_api = "chat"`
+    `model = "gpt-5.6-sol"\nmodel_provider = "${providerId.value}"\n\n[model_providers.${providerId.value}]\nname = "${(props.siteName || 'sub2api').trim() || 'sub2api'}"\nbase_url = "${openaiBase.value}"\nwire_api = "chat"`
 )
 const openaiEnv = computed(
   () => `export OPENAI_BASE_URL="${openaiBase.value}"\nexport OPENAI_API_KEY="${fullKey.value}"`
 )
 const openaiPy = computed(
   () =>
-    `from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${openaiBase.value}",\n    api_key="${fullKey.value}",\n)\nresp = client.chat.completions.create(\n    model="gpt-5.5",\n    messages=[{"role": "user", "content": "你好"}],\n)\nprint(resp.choices[0].message.content)`
+    `from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${openaiBase.value}",\n    api_key="${fullKey.value}",\n)\nresp = client.chat.completions.create(\n    model="gpt-5.6-sol",\n    messages=[{"role": "user", "content": "你好"}],\n)\nprint(resp.choices[0].message.content)`
 )
 const openaiCurl = computed(
   () =>
-    `curl ${openaiBase.value}/chat/completions \\\n  -H "Authorization: Bearer ${fullKey.value}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"gpt-5.5","messages":[{"role":"user","content":"你好"}]}'`
+    `curl ${openaiBase.value}/chat/completions \\\n  -H "Authorization: Bearer ${fullKey.value}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"你好"}]}'`
 )
 
 const script = computed(() => {
   if (platform.value === 'openai') {
-    return `# ${t('keyOnboarding.scriptCommentCodex')}\nmkdir -p ~/.codex\ncat > ~/.codex/config.toml <<'EOF'\nmodel = "gpt-5.5"\nmodel_provider = "${providerId.value}"\n\n[model_providers.${providerId.value}]\nname = "${(props.siteName || 'sub2api').trim() || 'sub2api'}"\nbase_url = "${openaiBase.value}"\nwire_api = "chat"\nEOF\ncat >> ~/.zshrc <<'EOF'\nexport OPENAI_API_KEY="${fullKey.value}"\nEOF\nsource ~/.zshrc\necho "✓ ${t('keyOnboarding.scriptDoneCodex')}"`
+    return `# ${t('keyOnboarding.scriptCommentCodex')}\nmkdir -p ~/.codex\ncat > ~/.codex/config.toml <<'EOF'\nmodel = "gpt-5.6-sol"\nmodel_provider = "${providerId.value}"\n\n[model_providers.${providerId.value}]\nname = "${(props.siteName || 'sub2api').trim() || 'sub2api'}"\nbase_url = "${openaiBase.value}"\nwire_api = "chat"\nEOF\ncat >> ~/.zshrc <<'EOF'\nexport OPENAI_API_KEY="${fullKey.value}"\nEOF\nsource ~/.zshrc\necho "✓ ${t('keyOnboarding.scriptDoneCodex')}"`
   }
   return `mkdir -p ~/.claude\ncat > ~/.claude/settings.json <<'EOF'\n{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${base.value}",\n    "ANTHROPIC_AUTH_TOKEN": "${fullKey.value}"\n  }\n}\nEOF\necho "✓ ${t('keyOnboarding.scriptDoneClaude')}"`
 })
@@ -317,7 +317,7 @@ const manualRows = computed(() => [
   { k: 'base_url', v: base.value },
   { k: 'OpenAI base_url', v: openaiBase.value },
   { k: tx.value.apiKeyFull, v: fullKey.value },
-  { k: tx.value.model, v: 'gpt-5.5' },
+  { k: tx.value.model, v: 'gpt-5.6-sol' },
 ])
 
 // ===== Copy =====

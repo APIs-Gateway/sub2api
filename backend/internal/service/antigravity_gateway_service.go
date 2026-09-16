@@ -749,7 +749,7 @@ urlFallbackLoop:
 							AccountID:          p.account.ID,
 							AccountName:        p.account.Name,
 							UpstreamStatusCode: resp.StatusCode,
-							UpstreamRequestID:  resp.Header.Get("x-request-id"),
+							UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 							UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 							Kind:               "retry",
 							Message:            upstreamMsg,
@@ -784,7 +784,7 @@ urlFallbackLoop:
 							AccountID:          p.account.ID,
 							AccountName:        p.account.Name,
 							UpstreamStatusCode: resp.StatusCode,
-							UpstreamRequestID:  resp.Header.Get("x-request-id"),
+							UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 							UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 							Kind:               "retry",
 							Message:            upstreamMsg,
@@ -1552,7 +1552,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				Kind:               "signature_error",
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
@@ -1648,7 +1648,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					AccountID:          account.ID,
 					AccountName:        account.Name,
 					UpstreamStatusCode: retryResp.StatusCode,
-					UpstreamRequestID:  retryResp.Header.Get("x-request-id"),
+					UpstreamRequestID:  upstreamRequestIDFromHeader(retryResp.Header),
 					Kind:               kind,
 					Message:            retryUpstreamMsg,
 					Detail:             retryUpstreamDetail,
@@ -1684,7 +1684,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					AccountID:          account.ID,
 					AccountName:        account.Name,
 					UpstreamStatusCode: resp.StatusCode,
-					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 					Kind:               "budget_constraint_error",
 					Message:            errMsg,
 					Detail:             s.getUpstreamErrorDetail(respBody),
@@ -1758,21 +1758,21 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				upstreamDetail := s.getUpstreamErrorDetail(respBody)
 				logBody, maxBytes := s.getLogConfig()
 				if logBody {
-					logger.LegacyPrintf("service.antigravity_gateway", "%s status=400 prompt_too_long=true upstream_message=%q request_id=%s body=%s", prefix, upstreamMsg, resp.Header.Get("x-request-id"), truncateForLog(respBody, maxBytes))
+					logger.LegacyPrintf("service.antigravity_gateway", "%s status=400 prompt_too_long=true upstream_message=%q request_id=%s body=%s", prefix, upstreamMsg, upstreamRequestIDFromHeader(resp.Header), truncateForLog(respBody, maxBytes))
 				}
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 					Platform:           account.Platform,
 					AccountID:          account.ID,
 					AccountName:        account.Name,
 					UpstreamStatusCode: resp.StatusCode,
-					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 					Kind:               "prompt_too_long",
 					Message:            upstreamMsg,
 					Detail:             upstreamDetail,
 				})
 				return nil, &PromptTooLongError{
 					StatusCode: resp.StatusCode,
-					RequestID:  resp.Header.Get("x-request-id"),
+					RequestID:  upstreamRequestIDFromHeader(resp.Header),
 					Body:       respBody,
 				}
 			}
@@ -1791,7 +1791,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 						AccountID:          account.ID,
 						AccountName:        account.Name,
 						UpstreamStatusCode: resp.StatusCode,
-						UpstreamRequestID:  resp.Header.Get("x-request-id"),
+						UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 						Kind:               "failover",
 						Message:            upstreamMsg,
 						Detail:             upstreamDetail,
@@ -1809,7 +1809,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					AccountID:          account.ID,
 					AccountName:        account.Name,
 					UpstreamStatusCode: resp.StatusCode,
-					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 					Kind:               "failover",
 					Message:            upstreamMsg,
 					Detail:             upstreamDetail,
@@ -1817,14 +1817,15 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody}
 			}
 
-			return nil, s.writeMappedClaudeError(c, account, resp.StatusCode, resp.Header.Get("x-request-id"), respBody)
+			return nil, s.writeMappedClaudeError(c, account, resp.StatusCode, upstreamRequestIDFromHeader(resp.Header), respBody)
 		}
 	}
 
-	requestID := resp.Header.Get("x-request-id")
-	if requestID != "" {
-		c.Header("x-request-id", requestID)
+	// 客户端 x-request-id 只回显上游同名头；ops / ForwardResult 用兼容多家头名的 helper。
+	if v := resp.Header.Get("x-request-id"); v != "" {
+		c.Header("x-request-id", v)
 	}
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int
@@ -2370,7 +2371,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				Kind:               "signature_error",
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
@@ -2415,7 +2416,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 							AccountID:          account.ID,
 							AccountName:        account.Name,
 							UpstreamStatusCode: retryResp.StatusCode,
-							UpstreamRequestID:  retryResp.Header.Get("x-request-id"),
+							UpstreamRequestID:  upstreamRequestIDFromHeader(retryResp.Header),
 							Kind:               "signature_retry",
 							Message:            sanitizeUpstreamErrorMessage(strings.TrimSpace(extractAntigravityErrorMessage(retryOpsBody))),
 							Detail:             s.getUpstreamErrorDetail(retryOpsBody),
@@ -2463,10 +2464,11 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 			goto handleSuccess
 		}
 
-		requestID := resp.Header.Get("x-request-id")
-		if requestID != "" {
-			c.Header("x-request-id", requestID)
+		// 客户端 x-request-id 只回显上游同名头；ops 事件用兼容多家头名的 helper。
+		if v := resp.Header.Get("x-request-id"); v != "" {
+			c.Header("x-request-id", v)
 		}
+		requestID := upstreamRequestIDFromHeader(resp.Header)
 
 		unwrapped, unwrapErr := s.unwrapV1InternalResponse(respBody)
 		unwrappedForOps := unwrapped
@@ -2530,10 +2532,11 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	}
 
 handleSuccess:
-	requestID := resp.Header.Get("x-request-id")
-	if requestID != "" {
-		c.Header("x-request-id", requestID)
+	// 客户端 x-request-id 只回显上游同名头；ops / ForwardResult 用兼容多家头名的 helper。
+	if v := resp.Header.Get("x-request-id"); v != "" {
+		c.Header("x-request-id", v)
 	}
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int
