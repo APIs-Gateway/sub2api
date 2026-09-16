@@ -28,6 +28,23 @@ type countTokensModelAvailabilityGroupRepo struct {
 	group *service.Group
 }
 
+type countTokensSessionLimitCacheStub struct {
+	service.SessionLimitCache
+	sessions     map[int64]map[string]struct{}
+	unregistered []string
+}
+
+func (s *countTokensSessionLimitCacheStub) UnregisterSession(_ context.Context, accountID int64, sessionID string) error {
+	s.unregistered = append(s.unregistered, sessionID)
+	delete(s.sessions[accountID], sessionID)
+	return nil
+}
+
+func (s *countTokensSessionLimitCacheStub) hasSession(accountID int64, sessionID string) bool {
+	_, ok := s.sessions[accountID][sessionID]
+	return ok
+}
+
 func (r countTokensModelAvailabilityGroupRepo) GetByID(context.Context, int64) (*service.Group, error) {
 	return r.group, nil
 }
@@ -156,6 +173,51 @@ func TestGatewayHandlerCountTokens_ModelAvailabilityClassification(t *testing.T)
 	}
 }
 
+func TestGatewayHandlerCountTokens_ForwardFailureKeepsExistingMessageSession(t *testing.T) {
+	const (
+		accountID = int64(23)
+		sessionID = "123e4567-e89b-12d3-a456-426614174000"
+	)
+	cache := &countTokensSessionLimitCacheStub{
+		sessions: map[int64]map[string]struct{}{
+			accountID: {sessionID: {}},
+		},
+	}
+	handler := newCountTokensSessionLimitHandler(t, []service.Account{{
+		ID:          accountID,
+		Platform:    service.PlatformAnthropic,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{"claude-supported": "claude-supported"},
+		},
+		Extra: map[string]any{"max_sessions": 1},
+	}}, cache)
+
+	groupID := int64(13)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/messages/count_tokens",
+		strings.NewReader(`{"model":"claude-supported","max_tokens":16,"metadata":{"user_id":"user_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2_account_550e8400-e29b-41d4-a716-446655440000_session_123e4567-e89b-12d3-a456-426614174000"},"messages":[{"role":"user","content":"hello"}]}`),
+	)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		ID:      11,
+		GroupID: &groupID,
+		Group:   &service.Group{ID: 13, Platform: service.PlatformAnthropic},
+		User:    &service.User{ID: 12},
+	})
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 12})
+
+	handler.CountTokens(c)
+
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.True(t, cache.hasSession(accountID, sessionID), "CountTokens did not register this Messages session and must not release it")
+	require.Empty(t, cache.unregistered)
+}
+
 func newCountTokensModelAvailabilityHandler(t *testing.T, accounts []service.Account) *GatewayHandler {
 	t.Helper()
 	cfg := &config.Config{RunMode: config.RunModeSimple}
@@ -166,6 +228,31 @@ func newCountTokensModelAvailabilityHandler(t *testing.T, accounts []service.Acc
 		groupRepo, nil, nil, nil, nil, nil, nil,
 		cfg,
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	billingService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
+	t.Cleanup(billingService.Stop)
+
+	return NewGatewayHandler(
+		gatewayService,
+		nil, nil, nil, nil, nil,
+		billingService,
+		nil, nil, nil, nil, nil, nil,
+		cfg,
+		nil,
+		nil,
+	)
+}
+
+func newCountTokensSessionLimitHandler(t *testing.T, accounts []service.Account, sessionLimitCache service.SessionLimitCache) *GatewayHandler {
+	t.Helper()
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	accountRepo := countTokensModelAvailabilityAccountRepo{accounts: accounts}
+	groupRepo := countTokensModelAvailabilityGroupRepo{group: &service.Group{ID: 13, Platform: service.PlatformAnthropic}}
+	gatewayService := service.NewGatewayService(
+		accountRepo,
+		groupRepo, nil, nil, nil, nil, nil, nil,
+		cfg,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, sessionLimitCache, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	billingService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 	t.Cleanup(billingService.Stop)
