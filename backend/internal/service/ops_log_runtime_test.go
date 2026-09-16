@@ -364,6 +364,40 @@ func TestApplyRuntimeLogConfigOnStartup(t *testing.T) {
 	}
 }
 
+func TestApplyRuntimeLogConfigOnStartup_EnablesPersistedAccessLogs(t *testing.T) {
+	repo := newRuntimeSettingRepoStub()
+	repo.values[SettingKeyOpsRuntimeLogConfig] = `{"level":"info","persist_access_logs":true,"enable_sampling":false,"sampling_initial":100,"sampling_thereafter":100,"caller":true,"stacktrace_level":"error","retention_days":30}`
+	sink := &OpsSystemLogSink{}
+	svc := &OpsService{
+		settingRepo:  repo,
+		systemLogSink: sink,
+		cfg: &config.Config{Log: config.LogConfig{
+			Level:           "info",
+			Caller:          true,
+			StacktraceLevel: "error",
+			Sampling: config.LogSamplingConfig{
+				Initial:    100,
+				Thereafter: 100,
+			},
+		}},
+	}
+
+	if err := logger.Init(logger.InitOptions{
+		Level:       "info",
+		Format:      "json",
+		ServiceName: "sub2api",
+		Environment: "test",
+		Output:      logger.OutputOptions{ToStdout: true},
+	}); err != nil {
+		t.Fatalf("init logger: %v", err)
+	}
+
+	svc.applyRuntimeLogConfigOnStartup(context.Background())
+	if !sink.persistAccessLogs.Load() {
+		t.Fatal("startup runtime setting should enable access-log persistence")
+	}
+}
+
 func TestDefaultNormalizeAndValidateRuntimeLogConfig(t *testing.T) {
 	defaults := defaultOpsRuntimeLogConfig(&config.Config{
 		Log: config.LogConfig{
