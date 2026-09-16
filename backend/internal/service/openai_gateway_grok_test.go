@@ -73,8 +73,25 @@ func TestSanitizeGrokUnsupportedFields(t *testing.T) {
 		require.Equal(t, int64(1), gjson.GetBytes(patched, "nested.0.keep").Int())
 	})
 
+	t.Run("removes escaped unsupported field", func(t *testing.T) {
+		body := []byte(`{"external_web\u005faccess":true,"keep":1}`)
+
+		patched, err := sanitizeGrokUnsupportedFields(body)
+
+		require.NoError(t, err)
+		require.NotEqual(t, body, patched)
+		require.False(t, gjson.GetBytes(patched, "external_web_access").Exists())
+		require.Equal(t, int64(1), gjson.GetBytes(patched, "keep").Int())
+	})
+
 	t.Run("rejects malformed JSON when unsupported field is present", func(t *testing.T) {
 		_, err := sanitizeGrokUnsupportedFields([]byte(`{"external_web_access":`))
+
+		require.Error(t, err)
+	})
+
+	t.Run("rejects trailing data", func(t *testing.T) {
+		_, err := sanitizeGrokUnsupportedFields([]byte(`{"external_web_access":true} trailing`))
 
 		require.Error(t, err)
 	})
