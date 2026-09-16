@@ -3181,7 +3181,6 @@ func TestOpenAIStreamingTerminalAndClientCancellationDoNotQuarantineProxy(t *tes
 	terminalResp := &http.Response{
 		StatusCode: http.StatusOK,
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
-			"event: response.completed",
 			`data: {"type":"response.completed","response":{"status":"completed","output":[]}}`,
 			"",
 		}, "\n"))),
