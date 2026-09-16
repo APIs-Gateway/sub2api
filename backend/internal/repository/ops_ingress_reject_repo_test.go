@@ -73,6 +73,35 @@ func TestOpsRepositoryBatchUpsertIngressRejectsPropagatesExecError(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestOpsIngressRejectUpsertQueryUsesEachDatabaseDialect(t *testing.T) {
+	postgres := opsIngressRejectUpsertQuery(migrationDatabasePostgres, 1)
+	require.Contains(t, postgres, "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+	require.Contains(t, postgres, "ON CONFLICT (bucket_start, reject_reason, route_family, protocol, client_ip, user_id, api_key_id)")
+	require.Contains(t, postgres, "EXCLUDED.request_count")
+	require.Contains(t, postgres, "updated_at = NOW()")
+
+	mysql := opsIngressRejectUpsertQuery(migrationDatabaseMySQL, 1)
+	require.Contains(t, mysql, "VALUES (?,?,?,?,?,?,?,?,?,?)")
+	require.Contains(t, mysql, "ON DUPLICATE KEY UPDATE")
+	require.Contains(t, mysql, "VALUES(request_count)")
+	require.Contains(t, mysql, "updated_at = CURRENT_TIMESTAMP")
+	require.NotContains(t, mysql, "$1")
+	require.NotContains(t, mysql, "EXCLUDED")
+
+	sqlite := opsIngressRejectUpsertQuery(migrationDatabaseSQLite, 1)
+	require.Contains(t, sqlite, "VALUES (?,?,?,?,?,?,?,?,?,?)")
+	require.Contains(t, sqlite, "ON CONFLICT (bucket_start, reject_reason, route_family, protocol, client_ip, user_id, api_key_id) DO UPDATE")
+	require.Contains(t, sqlite, "excluded.request_count")
+	require.Contains(t, sqlite, "MIN(ops_ingress_reject_aggregates.first_seen, excluded.first_seen)")
+	require.NotContains(t, sqlite, "$1")
+}
+
+func TestOpsIngressRejectPlaceholderUsesQuestionMarkOutsidePostgres(t *testing.T) {
+	require.Equal(t, "$4", opsIngressRejectPlaceholder(migrationDatabasePostgres, 4))
+	require.Equal(t, "?", opsIngressRejectPlaceholder(migrationDatabaseMySQL, 4))
+	require.Equal(t, "?", opsIngressRejectPlaceholder(migrationDatabaseSQLite, 4))
+}
+
 func TestOpsRepositoryListIngressRejectsAppliesFiltersAndPagination(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
