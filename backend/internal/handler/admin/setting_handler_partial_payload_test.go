@@ -18,14 +18,13 @@ import (
 // by the Go zero value used while decoding UpdateSettingsRequest.
 func TestSettingHandlerUpdateSettingsPartialPayloadKeepsUnsentSystemSettings(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &settingHandlerRepoStub{values: map[string]string{
-		service.SettingKeySiteName:             "Example Gateway",
-		service.SettingKeySMTPHost:             "smtp.example.com",
-		service.SettingKeyTurnstileEnabled:     "true",
-		service.SettingKeyDefaultConcurrency:   "7",
-		service.SettingKeyRiskControlEnabled:   "false",
-		service.SettingKeyAuthSourceDefaultEmailBalance: "12.50000000",
-	}}
+	repo := &settingHandlerRepoStub{values: map[string]string{}}
+	repo.values[service.SettingKeySiteName] = "Example Gateway"
+	repo.values[service.SettingKeySMTPHost] = "smtp.example.com"
+	repo.values[service.SettingKeyTurnstileEnabled] = "true"
+	repo.values[service.SettingKeyDefaultConcurrency] = "7"
+	repo.values[service.SettingKeyRiskControlEnabled] = "false"
+	repo.values[service.SettingKeyAuthSourceDefaultEmailBalance] = "12.50000000"
 	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
 	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
 
@@ -52,11 +51,10 @@ func TestSettingHandlerUpdateSettingsPartialPayloadKeepsUnsentSystemSettings(t *
 // string must all be written rather than treated as omissions.
 func TestSettingHandlerUpdateSettingsPartialPayloadWritesExplicitZeroValues(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &settingHandlerRepoStub{values: map[string]string{
-		service.SettingKeyRiskControlEnabled: "true",
-		service.SettingKeySMTPPort:           "587",
-		service.SettingKeySiteName:           "Example Gateway",
-	}}
+	repo := &settingHandlerRepoStub{values: map[string]string{}}
+	repo.values[service.SettingKeyRiskControlEnabled] = "true"
+	repo.values[service.SettingKeySMTPPort] = "587"
+	repo.values[service.SettingKeySiteName] = "Example Gateway"
 	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
 	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
 
@@ -77,4 +75,29 @@ func TestSettingHandlerUpdateSettingsPartialPayloadWritesExplicitZeroValues(t *t
 	require.Equal(t, "false", repo.values[service.SettingKeyRiskControlEnabled])
 	require.Equal(t, "0", repo.values[service.SettingKeySMTPPort])
 	require.Equal(t, "", repo.values[service.SettingKeySiteName])
+}
+
+func TestSettingHandlerUpdateSettingsPartialPayloadWritesExplicitEmptySMTPFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{values: map[string]string{}}
+	repo.values[service.SettingKeySMTPHost] = "smtp.example.com"
+	repo.values[service.SettingKeySMTPPort] = "587"
+	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
+	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
+
+	body, err := json.Marshal(map[string]any{
+		"smtp_host": "",
+		"smtp_port": 0,
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateSettings(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "", repo.values[service.SettingKeySMTPHost])
+	require.Equal(t, "0", repo.values[service.SettingKeySMTPPort])
 }
