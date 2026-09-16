@@ -10,10 +10,10 @@
 -- internal/repository/ops_ingress_reject_repo.go for the writer/reader and
 -- internal/handler/admin/ops_ingress_reject_handler.go for the read-only admin API.
 --
--- Postgres is the primary target for the ops_* subsystem (see ops_repo.go, which is
--- already Postgres-only). MySQL/SQLite variants of this migration exist purely so
--- migration replay does not fail on non-Postgres deployments; see
--- 183_ops_ingress_reject_aggregates_mysql.sql / _sqlite.sql.
+-- MySQL/SQLite variants of this migration use their native DDL while the
+-- repository keeps aggregate upsert/read semantics portable across all three
+-- supported databases; see 183_ops_ingress_reject_aggregates_mysql.sql and
+-- 183_ops_ingress_reject_aggregates_sqlite.sql.
 
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '10min';

@@ -12,11 +12,9 @@ import (
 )
 
 // This file implements the persistence + query side of the ops_ingress_reject
-// aggregation subsystem (issue #846). It intentionally does not depend on the
-// in-memory capture buffer added by issue #548's Phase A
-// (internal/server/middleware/ingress_reject_capture.go) because that branch had not
-// merged yet when this was written; RecordIngressReject below is the integration
-// point a future #548 follow-up PR can call from the capture buffer's drain loop.
+// aggregation subsystem (issue #846). The server installs this service as the
+// sink for issue #890's in-memory ingress capture buffer, so RecordIngressReject
+// receives only the buffer's sanitized request dimensions.
 //
 // Only aggregate counters are stored: reject_reason / route_family / protocol /
 // client_ip / user_id / api_key_id / request_count within a one-minute bucket. No
@@ -155,9 +153,9 @@ func NewOpsIngressRejectAggregator(repo OpsIngressRejectRepository) *OpsIngressR
 	return a
 }
 
-// Start begins the periodic flush loop. A nil repo (e.g. the OpsIngressRejectRepository
-// type assertion failed for a non-Postgres/test opsRepo) leaves the aggregator inert:
-// RecordIngressReject becomes a no-op so callers never need a nil check.
+// Start begins the periodic flush loop. A nil repository (for example, a test
+// double that does not implement the optional capability) leaves the aggregator
+// inert so callers never need a nil check.
 func (a *OpsIngressRejectAggregator) Start() {
 	if a == nil || a.repo == nil || !a.started.CompareAndSwap(false, true) {
 		return
