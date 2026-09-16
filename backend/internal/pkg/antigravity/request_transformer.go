@@ -147,22 +147,19 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 		SessionID: generateStableSessionID(contents),
 	}
 
-	// 针对 Gemini Reasoning 模型（如 gemini-3.1-pro-high等）过滤强制空 ToolConfig
-	isReasoning := IsGeminiReasoningModel(targetModel)
-	if !isReasoning || len(tools) > 0 {
-		// 总是设置 toolConfig，与官方客户端一致
-		innerRequest.ToolConfig = &GeminiToolConfig{
-			FunctionCallingConfig: &GeminiFunctionCallingConfig{
-				Mode: "VALIDATED",
-			},
-		}
-		// 内置工具（googleSearch）与函数调用混用时，上游要求显式开启
-		// includeServerSideToolInvocations，否则返回 400（issue #5709）。
-		// 与 raw 透传路的 enableMixedGeminiToolInvocations 注入保持同一语义。
-		if hasMixedToolInvocations(tools) {
-			enabled := true
-			innerRequest.ToolConfig.IncludeServerSideToolInvocations = &enabled
-		}
+	// toolConfig 必须始终存在：上游会拒绝缺少它的请求，
+	// 包括未附带任何 tools 的 reasoning 模型请求。
+	innerRequest.ToolConfig = &GeminiToolConfig{
+		FunctionCallingConfig: &GeminiFunctionCallingConfig{
+			Mode: "VALIDATED",
+		},
+	}
+	// 内置工具（googleSearch）与函数调用混用时，上游要求显式开启
+	// includeServerSideToolInvocations，否则返回 400（issue #5709）。
+	// 与 raw 透传路的 enableMixedGeminiToolInvocations 注入保持同一语义。
+	if hasMixedToolInvocations(tools) {
+		enabled := true
+		innerRequest.ToolConfig.IncludeServerSideToolInvocations = &enabled
 	}
 
 	if systemInstruction != nil {
