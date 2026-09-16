@@ -268,7 +268,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 	if directBridge {
 		anthropicResp = apicompat.ChatCompletionsResponseToAnthropic(&ccResp, originalModel)
 	} else {
-		responsesResp := apicompat.ChatCompletionsResponseToResponses(&ccResp, originalModel, nil, false, nil)
+		responsesResp := apicompat.ChatCompletionsResponseToResponses(&ccResp, originalModel, nil, nil, false, nil)
 		anthropicResp = apicompat.ResponsesToAnthropic(responsesResp, originalModel)
 	}
 
