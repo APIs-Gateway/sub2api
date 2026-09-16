@@ -4,6 +4,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,9 +15,65 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type panelRateLimitSettingHandlerRepoStub struct {
+	values map[string]string
+}
+
+func (s *panelRateLimitSettingHandlerRepoStub) Get(_ context.Context, key string) (*service.Setting, error) {
+	value, ok := s.values[key]
+	if !ok {
+		return nil, service.ErrSettingNotFound
+	}
+	return &service.Setting{Key: key, Value: value}, nil
+}
+
+func (s *panelRateLimitSettingHandlerRepoStub) GetValue(_ context.Context, key string) (string, error) {
+	return s.values[key], nil
+}
+
+func (s *panelRateLimitSettingHandlerRepoStub) Set(_ context.Context, key, value string) error {
+	if s.values == nil {
+		s.values = make(map[string]string)
+	}
+	s.values[key] = value
+	return nil
+}
+
+func (s *panelRateLimitSettingHandlerRepoStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	values := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := s.values[key]; ok {
+			values[key] = value
+		}
+	}
+	return values, nil
+}
+
+func (s *panelRateLimitSettingHandlerRepoStub) SetMultiple(_ context.Context, settings map[string]string) error {
+	for key, value := range settings {
+		if err := s.Set(context.Background(), key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *panelRateLimitSettingHandlerRepoStub) GetAll(_ context.Context) (map[string]string, error) {
+	values := make(map[string]string, len(s.values))
+	for key, value := range s.values {
+		values[key] = value
+	}
+	return values, nil
+}
+
+func (s *panelRateLimitSettingHandlerRepoStub) Delete(_ context.Context, key string) error {
+	delete(s.values, key)
+	return nil
+}
+
 func TestSettingHandlerPanelRateLimitSettingsRoundTrip(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &settingHandlerRepoStub{values: map[string]string{}}
+	repo := &panelRateLimitSettingHandlerRepoStub{values: map[string]string{}}
 	handler := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), nil, nil, nil, nil, nil, nil)
 
 	updateRecorder := httptest.NewRecorder()
@@ -42,7 +99,7 @@ func TestSettingHandlerPanelRateLimitSettingsRoundTrip(t *testing.T) {
 
 func TestSettingHandlerPanelRateLimitSettingsRejectsInvalidRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &settingHandlerRepoStub{values: map[string]string{}}
+	repo := &panelRateLimitSettingHandlerRepoStub{values: map[string]string{}}
 	handler := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), nil, nil, nil, nil, nil, nil)
 
 	recorder := httptest.NewRecorder()
