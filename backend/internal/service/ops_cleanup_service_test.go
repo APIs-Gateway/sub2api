@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"regexp"
 	"testing"
 	"time"
 
@@ -88,7 +89,7 @@ func (r *opsCleanupRepoStub) UpsertJobHeartbeat(_ context.Context, input *OpsUps
 
 // upstream sync (#5030): 清理任务成功日志改走结构化 info 级别。这里不关心
 // 日志本身的格式（logger 包已单独测试），只验证 runScheduled 在 leader lock
-// 与全部清理目标都被跳过（retention < 0）时，确实一路跑到"成功"分支并记了
+// 与仅限系统日志的强制保留清理完成后，确实一路跑到"成功"分支并记了
 // 一次心跳——即触发了那条 info 日志所在的代码块，而不是提前从某个错误分支返回。
 func TestOpsCleanupRunScheduledReachesSuccessLogging(t *testing.T) {
 	db, mock, err := sqlmock.New()
@@ -96,6 +97,12 @@ func TestOpsCleanupRunScheduledReachesSuccessLogging(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	repo := &opsCleanupRepoStub{}
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM ops_system_logs")).
+		WithArgs(sqlmock.AnyArg(), opsCleanupBatchSize).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM ops_system_log_cleanup_audits")).
+		WithArgs(sqlmock.AnyArg(), opsCleanupBatchSize).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	svc := &OpsCleanupService{
 		db:      db,
 		opsRepo: repo,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -177,7 +178,7 @@ func TestResetRuntimeLogConfig_ShouldFallbackToBaseline(t *testing.T) {
 			},
 			Ops: config.OpsConfig{
 				Cleanup: config.OpsCleanupConfig{
-					ErrorLogRetentionDays: 45,
+					SystemLogRetentionDays: 45,
 				},
 			},
 		},
@@ -364,6 +365,102 @@ func TestApplyRuntimeLogConfigOnStartup(t *testing.T) {
 	}
 }
 
+func TestApplyRuntimeLogConfigOnStartup_EnablesPersistedAccessLogs(t *testing.T) {
+	repo := newRuntimeSettingRepoStub()
+	repo.values[SettingKeyOpsRuntimeLogConfig] = `{"level":"info","persist_access_logs":true,"enable_sampling":false,"sampling_initial":100,"sampling_thereafter":100,"caller":true,"stacktrace_level":"error","retention_days":30}`
+	sink := &OpsSystemLogSink{}
+	svc := &OpsService{
+		settingRepo:   repo,
+		systemLogSink: sink,
+		cfg: &config.Config{
+			Log: config.LogConfig{
+				Level:           "info",
+				Caller:          true,
+				StacktraceLevel: "error",
+				Sampling: config.LogSamplingConfig{
+					Initial:    100,
+					Thereafter: 100,
+				},
+			},
+		},
+	}
+
+	if err := logger.Init(logger.InitOptions{
+		Level:       "info",
+		Format:      "json",
+		ServiceName: "sub2api",
+		Environment: "test",
+		Output: logger.OutputOptions{
+			ToStdout: true,
+		},
+	}); err != nil {
+		t.Fatalf("init logger: %v", err)
+	}
+
+	svc.applyRuntimeLogConfigOnStartup(context.Background())
+	if !sink.persistAccessLogs.Load() {
+		t.Fatal("startup runtime setting should enable access-log persistence")
+	}
+}
+
+func TestRuntimeLogConfigRefreshesAccessLogSinkFromSharedSetting(t *testing.T) {
+	repo := newRuntimeSettingRepoStub()
+	cfg := &config.Config{
+		Log: config.LogConfig{
+			Level:           "info",
+			Caller:          true,
+			StacktraceLevel: "error",
+			Sampling: config.LogSamplingConfig{
+				Initial:    100,
+				Thereafter: 100,
+			},
+		},
+	}
+	if err := logger.Init(logger.InitOptions{
+		Level:       "info",
+		Format:      "json",
+		ServiceName: "sub2api",
+		Environment: "test",
+		Output: logger.OutputOptions{
+			ToStdout: true,
+		},
+	}); err != nil {
+		t.Fatalf("init logger: %v", err)
+	}
+
+	firstSink := NewOpsSystemLogSink(&opsRepoMock{})
+	firstSink.runtimeLogConfigRefreshInterval = time.Millisecond
+	firstSink.Start()
+	defer firstSink.Stop()
+	first := NewOpsService(nil, repo, cfg, nil, nil, nil, nil, nil, nil, nil, firstSink)
+	secondSink := NewOpsSystemLogSink(&opsRepoMock{})
+	secondSink.runtimeLogConfigRefreshInterval = time.Millisecond
+	secondSink.Start()
+	defer secondSink.Stop()
+	_ = NewOpsService(nil, repo, cfg, nil, nil, nil, nil, nil, nil, nil, secondSink)
+
+	if _, err := first.UpdateRuntimeLogConfig(context.Background(), &OpsRuntimeLogConfig{
+		Level:             "info",
+		PersistAccessLogs: true,
+		SamplingInitial:   100,
+		SamplingNext:      100,
+		Caller:            true,
+		StacktraceLevel:   "error",
+		RetentionDays:     30,
+	}, 1); err != nil {
+		t.Fatalf("UpdateRuntimeLogConfig() error: %v", err)
+	}
+
+	deadline := time.After(time.Second)
+	for !secondSink.shouldIndex(&logger.LogEvent{Level: "info", Component: "http.access"}) {
+		select {
+		case <-deadline:
+			t.Fatal("access-log sink should refresh the shared runtime setting before indexing")
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
 func TestDefaultNormalizeAndValidateRuntimeLogConfig(t *testing.T) {
 	defaults := defaultOpsRuntimeLogConfig(&config.Config{
 		Log: config.LogConfig{
@@ -378,7 +475,7 @@ func TestDefaultNormalizeAndValidateRuntimeLogConfig(t *testing.T) {
 		},
 		Ops: config.OpsConfig{
 			Cleanup: config.OpsCleanupConfig{
-				ErrorLogRetentionDays: 7,
+				SystemLogRetentionDays: 7,
 			},
 		},
 	})

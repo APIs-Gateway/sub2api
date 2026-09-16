@@ -32,18 +32,18 @@ func TestOpsSystemLogSink_ShouldIndex(t *testing.T) {
 			want:  true,
 		},
 		{
-			name:  "access component",
+			name:  "access component disabled by default",
 			event: &logger.LogEvent{Level: "info", Component: "http.access"},
-			want:  true,
+			want:  false,
 		},
 		{
-			name: "access component from fields (real zap path)",
+			name: "access component from fields disabled by default",
 			event: &logger.LogEvent{
 				Level:     "info",
 				Component: "",
 				Fields:    map[string]any{"component": "http.access"},
 			},
-			want: true,
+			want: false,
 		},
 		{
 			name:  "audit component",
@@ -70,6 +70,37 @@ func TestOpsSystemLogSink_ShouldIndex(t *testing.T) {
 		if got := sink.shouldIndex(tc.event); got != tc.want {
 			t.Fatalf("%s: shouldIndex()=%v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestOpsSystemLogSink_ShouldIndexAccessLogsOnlyWhenEnabled(t *testing.T) {
+	sink := &OpsSystemLogSink{}
+	sink.SetPersistAccessLogs(true)
+
+	if !sink.shouldIndex(&logger.LogEvent{Level: "info", Component: "http.access"}) {
+		t.Fatal("access log should be indexed after explicit opt-in")
+	}
+	if !sink.shouldIndex(&logger.LogEvent{Level: "info", Fields: map[string]any{"component": "http.access"}}) {
+		t.Fatal("field-based access log should be indexed after explicit opt-in")
+	}
+}
+
+func TestOpsSystemLogSinkRuntimeLogConfigRefresh(t *testing.T) {
+	sink := &OpsSystemLogSink{}
+	called := 0
+	sink.SetRuntimeLogConfigRefresh(func(context.Context) error {
+		called++
+		return nil
+	})
+	sink.refreshRuntimeLogConfig(context.Background())
+	if called != 1 {
+		t.Fatalf("refresh callback calls = %d, want 1", called)
+	}
+
+	sink.SetRuntimeLogConfigRefresh(nil)
+	sink.refreshRuntimeLogConfig(context.Background())
+	if called != 1 {
+		t.Fatalf("refresh callback calls after removal = %d, want 1", called)
 	}
 }
 

@@ -106,8 +106,23 @@ func NewOpsService(
 		antigravityGatewayService: antigravityGatewayService,
 		systemLogSink:             systemLogSink,
 	}
+	svc.configureSystemLogSinkRuntimeLogConfigRefresh()
 	svc.applyRuntimeLogConfigOnStartup(context.Background())
 	return svc
+}
+
+func (s *OpsService) configureSystemLogSinkRuntimeLogConfigRefresh() {
+	if s == nil || s.systemLogSink == nil {
+		return
+	}
+	s.systemLogSink.SetRuntimeLogConfigRefresh(func(ctx context.Context) error {
+		cfg, err := s.GetRuntimeLogConfig(ctx)
+		if err != nil {
+			return err
+		}
+		s.systemLogSink.SetPersistAccessLogs(cfg.PersistAccessLogs)
+		return nil
+	})
 }
 
 func (s *OpsService) RequireMonitoringEnabled(ctx context.Context) error {

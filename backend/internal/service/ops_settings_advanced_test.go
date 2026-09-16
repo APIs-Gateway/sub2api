@@ -28,6 +28,20 @@ func TestGetOpsAdvancedSettings_DefaultHidesOpenAITokenStats(t *testing.T) {
 	}
 }
 
+func TestGetOpsAdvancedSettings_DefaultCleanupFollowsDeploymentConfig(t *testing.T) {
+	svc := &OpsService{cfg: &config.Config{Ops: config.OpsConfig{
+		Cleanup: config.OpsCleanupConfig{Enabled: false},
+	}}}
+
+	cfg, err := svc.GetOpsAdvancedSettings(context.Background())
+	if err != nil {
+		t.Fatalf("GetOpsAdvancedSettings() error = %v", err)
+	}
+	if cfg.DataRetention.CleanupEnabled {
+		t.Fatal("data cleanup should follow the disabled deployment baseline")
+	}
+}
+
 func TestUpdateOpsAdvancedSettings_PersistsOpenAITokenStatsVisibility(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	svc := &OpsService{settingRepo: repo}
