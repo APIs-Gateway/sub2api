@@ -19,11 +19,12 @@ var ingressRejectReasons = map[string]struct{}{
 
 var ingressRejectRouteFamilies = map[string]struct{}{
 	"antigravity": {}, "gemini": {}, "codex": {}, "messages": {}, "responses": {},
-	"chat_completions": {}, "images": {}, "videos": {}, "embeddings": {}, "models": {}, "other": {},
+	"chat_completions": {}, "images": {}, "videos": {}, "embeddings": {}, "models": {}, "usage": {},
+	"billing": {}, "alpha_search": {}, "antigravity_gemini": {}, "antigravity_models": {}, "other": {},
 }
 
 var ingressRejectProtocols = map[string]struct{}{
-	"google": {}, "anthropic": {}, "openai": {}, "gateway": {}, "other": {},
+	"google": {}, "anthropic": {}, "openai": {}, "gateway": {}, "http": {}, "ws": {}, "other": {},
 }
 
 // ListIngressRejects returns bounded, pre-aggregated ingress-reject counters
