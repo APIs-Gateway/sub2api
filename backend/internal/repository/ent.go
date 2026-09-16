@@ -18,7 +18,7 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	_ "github.com/lib/pq" // PostgreSQL 驱动，通过副作用导入注册驱动
+	"github.com/lib/pq" // PostgreSQL 驱动，通过副作用导入注册驱动
 )
 
 const (
