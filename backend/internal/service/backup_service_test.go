@@ -28,6 +28,7 @@ type mockSettingRepo struct {
 	mu          sync.Mutex
 	data        map[string]string
 	failSetKeys map[string]error // key -> 注入的 Set 失败，测试保存失败分支用
+	getAllErr   error            // 非 nil 时 GetAll 返回该错误，测试 GetAllSettings 失败分支用
 }
 
 func newMockSettingRepo() *mockSettingRepo {
@@ -42,6 +43,13 @@ func (m *mockSettingRepo) failSet(key string, err error) {
 		m.failSetKeys = make(map[string]error)
 	}
 	m.failSetKeys[key] = err
+}
+
+// failGetAll 让后续的 GetAll 调用返回 err，用于覆盖 GetAllSettings 失败分支。
+func (m *mockSettingRepo) failGetAll(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.getAllErr = err
 }
 
 func (m *mockSettingRepo) Get(_ context.Context, key string) (*Setting, error) {
@@ -98,6 +106,9 @@ func (m *mockSettingRepo) SetMultiple(_ context.Context, settings map[string]str
 func (m *mockSettingRepo) GetAll(_ context.Context) (map[string]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.getAllErr != nil {
+		return nil, m.getAllErr
+	}
 	result := make(map[string]string, len(m.data))
 	for k, v := range m.data {
 		result[k] = v

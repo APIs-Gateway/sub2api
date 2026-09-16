@@ -111,6 +111,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 
 	model := c.Query("model")
 	billingMode := strings.TrimSpace(c.Query("billing_mode"))
+	requestID := strings.TrimSpace(c.Query("request_id"))
 
 	var requestType *int16
 	var stream *bool
@@ -193,6 +194,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		BillingType:           billingType,
 		UpstreamModelMismatch: upstreamModelMismatch,
 		BillingMode:           billingMode,
+		RequestID:             requestID,
 		StartTime:             startTime,
 		EndTime:               endTime,
 		ExactTotal:            exactTotal,
