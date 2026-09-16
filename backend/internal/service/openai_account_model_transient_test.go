@@ -230,7 +230,7 @@ func TestOpenAIModelTransient_IsBlockedEvictsStaleEntryOnDirectQuery(t *testing.
 	state.recordFailure(35, "gpt-5.5", now.Add(time.Second))
 	require.True(t, state.isBlocked(35, "gpt-5.5", now.Add(2*time.Second)))
 
-	blocked := state.isBlocked(35, "gpt-5.5", now.Add(openAIModelTransientFailureWindow+5*time.Second))
+	blocked := state.isBlocked(35, "gpt-5.5", now.Add(openAIModelTransientStreakTTL+5*time.Second))
 
 	assert.False(t, blocked)
 	assert.Equal(t, 0, state.size())
