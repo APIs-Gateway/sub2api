@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -126,4 +128,77 @@ func TestOpenAIProxyStreamCircuitBoundsEntries(t *testing.T) {
 	require.Len(t, circuit.entries, 2)
 	_, oldestRetained := circuit.entries[1]
 	require.False(t, oldestRetained, "the oldest entry must be evicted at the bound")
+}
+
+func TestOpenAIProxyStreamCircuitSettingsAndGuards(t *testing.T) {
+	defaults := resolveOpenAIProxyStreamCircuitSettings(nil)
+	require.Equal(t, defaultOpenAIProxyStreamFailureThreshold, defaults.failureThreshold)
+	require.Equal(t, defaultOpenAIProxyStreamFailureWindow, defaults.failureWindow)
+
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIProxyStreamCircuit.Disabled = true
+	cfg.Gateway.OpenAIProxyStreamCircuit.FailureThreshold = 3
+	cfg.Gateway.OpenAIProxyStreamCircuit.WindowSeconds = 2
+	cfg.Gateway.OpenAIProxyStreamCircuit.TTLSeconds = 4
+	svc := &OpenAIGatewayService{cfg: cfg}
+	settings := resolveOpenAIProxyStreamCircuitSettings(svc)
+	require.True(t, settings.disabled)
+	require.Equal(t, 3, settings.failureThreshold)
+	require.Equal(t, 2*time.Second, settings.failureWindow)
+	require.Equal(t, 4*time.Second, settings.quarantineTTL)
+
+	normalized := newOpenAIProxyStreamCircuit(openAIProxyStreamCircuitSettings{collapseInterval: -time.Second})
+	require.Equal(t, defaultOpenAIProxyStreamFailureThreshold, normalized.settings.failureThreshold)
+	require.Equal(t, time.Duration(0), normalized.settings.collapseInterval)
+	require.Nil(t, (*OpenAIGatewayService)(nil).getOpenAIProxyStreamCircuit())
+	require.Same(t, svc.getOpenAIProxyStreamCircuit(), svc.getOpenAIProxyStreamCircuit())
+
+	base := time.Unix(1_800_000_000, 0)
+	tripped, _ := normalized.recordFailure(1, base)
+	require.False(t, tripped)
+	tripped, until := normalized.recordFailure(1, base.Add(time.Second))
+	require.True(t, tripped)
+	tripped, sameUntil := normalized.recordFailure(1, base.Add(2*time.Second))
+	require.False(t, tripped)
+	require.Equal(t, until, sameUntil)
+	require.False(t, normalized.recordSuccess(999))
+	require.False(t, normalized.recordSuccess(0))
+	require.False(t, normalized.isBlocked(0, base))
+	require.False(t, (*openAIProxyStreamCircuit)(nil).isBlocked(1, base))
+}
+
+func TestOpenAIProxyStreamCircuitPrunesAndClassifiesDisconnects(t *testing.T) {
+	base := time.Unix(1_800_000_000, 0)
+	circuit := newOpenAIProxyStreamCircuit(openAIProxyStreamCircuitSettings{
+		failureThreshold: 1,
+		failureWindow:    time.Minute,
+		quarantineTTL:    time.Minute,
+		maxEntries:       2,
+	})
+	circuit.entries[1] = openAIProxyStreamCircuitEntry{lastTouched: base.Add(-2 * time.Minute)}
+	circuit.entries[2] = openAIProxyStreamCircuitEntry{blockedUntil: base}
+	circuit.recordFailure(3, base)
+	require.Len(t, circuit.entries, 1)
+	require.True(t, circuit.isBlocked(3, base))
+
+	proxyID := int64(3)
+	account := &Account{ID: 3, Platform: PlatformOpenAI, ProxyID: &proxyID}
+	gotID, ok := openAIProxyStreamCircuitProxyID(account)
+	require.True(t, ok)
+	require.Equal(t, proxyID, gotID)
+	_, ok = openAIProxyStreamCircuitProxyID(&Account{Platform: PlatformAnthropic, ProxyID: &proxyID})
+	require.False(t, ok)
+	_, ok = openAIProxyStreamCircuitProxyID(nil)
+	require.False(t, ok)
+
+	svc := &OpenAIGatewayService{openaiProxyStreamCircuit: newOpenAIProxyStreamCircuit(openAIProxyStreamCircuitSettings{
+		failureThreshold: 1, failureWindow: time.Minute, quarantineTTL: time.Minute, maxEntries: 2,
+	})}
+	svc.recordOpenAIProxyStreamDisconnect(account, context.Canceled, "rid")
+	require.False(t, svc.isOpenAIProxyStreamQuarantined(context.Background(), account))
+	svc.recordOpenAIProxyStreamDisconnect(account, errors.New("connection reset"), "rid")
+	require.True(t, svc.isOpenAIProxyStreamQuarantined(context.Background(), account))
+	svc.clearOpenAIProxyStreamDisconnect(account)
+	require.False(t, svc.isOpenAIProxyStreamQuarantined(context.Background(), account))
+	require.False(t, openAIProxyStreamQuarantineBypassed(nil))
 }
