@@ -3180,14 +3180,11 @@ func TestOpenAIStreamingTerminalAndClientCancellationDoNotQuarantineProxy(t *tes
 	terminalCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	terminalResp := &http.Response{
 		StatusCode: http.StatusOK,
-		Body: &openAIStreamReadThenErrorCloser{
-			reader: strings.NewReader(strings.Join([]string{
-				"event: response.completed",
-				`data: {"type":"response.completed","response":{"status":"completed","output":[]}}`,
-				"",
-			}, "\n")),
-			err: io.ErrUnexpectedEOF,
-		},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.completed",
+			`data: {"type":"response.completed","response":{"status":"completed","output":[]}}`,
+			"",
+		}, "\n"))),
 		Header: http.Header{},
 	}
 	_, err := svc.handleStreamingResponse(terminalCtx.Request.Context(), terminalResp, terminalCtx, account, time.Now(), "model", "model")

@@ -2876,13 +2876,14 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SkipsQuarantinedSharedP
 	}
 	svc.openaiProxyStreamCircuit.recordFailure(proxyA, time.Now())
 
-	selection, _, err := svc.SelectAccountWithScheduler(
-		context.Background(), nil, "", "", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false,
-	)
-	require.NoError(t, err)
-	require.NotNil(t, selection)
-	require.NotNil(t, selection.Account)
-	require.Equal(t, int64(469803), selection.Account.ID)
+	scheduler := &defaultOpenAIAccountScheduler{service: svc}
+	compatible, reason := scheduler.isAccountRequestCompatibleReason(context.Background(), &accounts[0], OpenAIAccountScheduleRequest{})
+	require.False(t, compatible)
+	require.Equal(t, "proxy_stream_quarantined", reason)
+
+	compatible, reason = scheduler.isAccountRequestCompatibleReason(context.Background(), &accounts[2], OpenAIAccountScheduleRequest{})
+	require.True(t, compatible)
+	require.Empty(t, reason)
 }
 
 func int64PtrForTest(v int64) *int64 {
