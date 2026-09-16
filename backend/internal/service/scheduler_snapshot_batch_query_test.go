@@ -245,7 +245,8 @@ func TestSchedulerRebuildBucketsNeverLeaksReuseAcrossSeparateBatches(t *testing.
 // TestSchedulerRebuildBucketsFallsBackToPlainSetSnapshotAfterFirstWriteFailure covers
 // that a failed full publish never marks its key reusable: the following bucket that
 // shares the key must fall back to its own independent SetSnapshot instead of trying
-// (and failing again on) an ID-only publish for IDs that were never produced.
+// (and failing again on) an ID-only publish for IDs that were never produced. Its
+// already-loaded accounts may still be shared through the batch query cache.
 func TestSchedulerRebuildBucketsFallsBackToPlainSetSnapshotAfterFirstWriteFailure(t *testing.T) {
 	const groupID int64 = 303
 	single := SchedulerBucket{GroupID: groupID, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}
@@ -269,7 +270,7 @@ func TestSchedulerRebuildBucketsFallsBackToPlainSetSnapshotAfterFirstWriteFailur
 	require.Equal(t, 1, set, "forced must fall back to the original SetSnapshot after single's full publish failed")
 	require.Equal(t, 0, full)
 	require.Equal(t, 0, idOnly)
-	require.Equal(t, 2, repo.callCount(groupID, PlatformOpenAI), "forced must redo its own DB load since there is nothing to reuse")
+	require.Equal(t, 1, repo.callCount(groupID, PlatformOpenAI), "the batch query cache may reuse accounts even though the full publish failed")
 }
 
 // TestSchedulerRebuildBucketsPropagatesIDOnlyWriteFailureWithoutFallback covers that an
@@ -427,7 +428,7 @@ func (c *legacySetSnapshotOnlyCache) callCount(bucket SchedulerBucket) int {
 // TestSchedulerRebuildBucketsKeepsPlainSetSnapshotWhenCacheLacksReuseCapability covers
 // backward compatibility with SchedulerCache implementations that do not implement
 // schedulerSnapshotAccountIDWriter: both Single and Forced buckets must keep publishing
-// through SetSnapshot, exactly like before this feature existed.
+// through SetSnapshot, while the batch query cache may still reuse the loaded accounts.
 func TestSchedulerRebuildBucketsKeepsPlainSetSnapshotWhenCacheLacksReuseCapability(t *testing.T) {
 	const groupID int64 = 307
 	single := SchedulerBucket{GroupID: groupID, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}
@@ -441,5 +442,5 @@ func TestSchedulerRebuildBucketsKeepsPlainSetSnapshotWhenCacheLacksReuseCapabili
 
 	require.Equal(t, 1, cache.callCount(single))
 	require.Equal(t, 1, cache.callCount(forced))
-	require.Equal(t, 2, repo.callCount(groupID, PlatformOpenAI), "without the reuse capability, each bucket still does its own independent load")
+	require.Equal(t, 1, repo.callCount(groupID, PlatformOpenAI), "the batch query cache reuses the shared account load independently of cache capabilities")
 }
