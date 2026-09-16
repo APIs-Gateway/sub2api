@@ -46,6 +46,12 @@ type OpsService struct {
 	// UpdateOpsAdvancedSettings 写入新配置后调用，把最新的 quota auto-pause 全局默认阈值
 	// 立即同步到调度热路径读取的内存缓存，避免下次请求才能感知新值。
 	quotaAutoPauseSink func(OpsOpenAIAccountQuotaAutoPauseSettings)
+
+	// ingressRejectAggregator 由 wire.go 的 ProvideOpsIngressRejectAggregator 在构造完成后
+	// 通过 SetIngressRejectAggregator 注入，与 cleanupReloader 同样的解耦目的：其生命周期
+	// (Start/Stop) 由 cmd/server/wire.go 的 provideCleanup 管理，不属于 OpsService 自身。
+	// 参见 ops_ingress_reject.go。
+	ingressRejectAggregator *OpsIngressRejectAggregator
 }
 
 // CleanupReloader 由 OpsCleanupService 实现。

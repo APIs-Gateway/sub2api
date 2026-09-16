@@ -241,3 +241,45 @@ func TestMarkIngressRejectedWithEmptyReasonDoesNotCapture(t *testing.T) {
 
 	require.Empty(t, IngressRejectCaptureSnapshot())
 }
+
+type ingressRejectCaptureSinkRecorder struct {
+	reasons       []string
+	routeFamilies []string
+	protocols     []string
+	clientIPs     []string
+	userIDs       []int64
+	apiKeyIDs     []int64
+}
+
+func (r *ingressRejectCaptureSinkRecorder) RecordIngressReject(
+	reason, routeFamily, protocol, clientIP string,
+	userID, apiKeyID int64,
+) {
+	r.reasons = append(r.reasons, reason)
+	r.routeFamilies = append(r.routeFamilies, routeFamily)
+	r.protocols = append(r.protocols, protocol)
+	r.clientIPs = append(r.clientIPs, clientIP)
+	r.userIDs = append(r.userIDs, userID)
+	r.apiKeyIDs = append(r.apiKeyIDs, apiKeyID)
+}
+
+func TestMarkIngressRejectedForwardsCapturedEventToOpsSink(t *testing.T) {
+	restoreBuffer := setIngressRejectCaptureBufferForTest(newIngressRejectCaptureBuffer(4))
+	defer restoreBuffer()
+
+	sink := &ingressRejectCaptureSinkRecorder{}
+	restoreSink := setIngressRejectCaptureSinkForTest(sink)
+	defer restoreSink()
+
+	c := newIngressRejectCaptureTestContext(http.MethodPost, "/v1/responses", map[string]string{
+		"User-Agent": "TestAgent/1.0",
+	}, "")
+	MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+
+	require.Equal(t, []string{"invalid_api_key"}, sink.reasons)
+	require.Equal(t, []string{"responses"}, sink.routeFamilies)
+	require.Equal(t, []string{"http"}, sink.protocols)
+	require.Len(t, sink.clientIPs, 1)
+	require.Equal(t, []int64{0}, sink.userIDs)
+	require.Equal(t, []int64{0}, sink.apiKeyIDs)
+}

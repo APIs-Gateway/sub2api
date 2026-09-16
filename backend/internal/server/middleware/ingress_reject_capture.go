@@ -13,8 +13,9 @@ import (
 // This file adds structured, sanitized telemetry capture for ingress
 // rejections on top of the existing IngressRejectReason contract in
 // ingress_reject.go. It intentionally only captures/normalizes data into a
-// bounded in-memory buffer; it does not add any admin/query API or
-// persistence (that is deferred to a later, separately reviewed Ops PR).
+// bounded in-memory buffer. When the server installs an Ops sink, the same
+// sanitized metadata is also forwarded to the bounded Ops aggregator; no
+// request body, credential, or User-Agent value crosses that boundary.
 //
 // Hard constraints honored here:
 //   - never captures the raw API key, Authorization header, or request body;
@@ -126,6 +127,38 @@ func (b *ingressRejectCaptureBuffer) Len() int {
 
 var globalIngressRejectCapture = newIngressRejectCaptureBuffer(ingressRejectCaptureCapacity)
 
+// IngressRejectCaptureSink is the narrow boundary between ingress middleware
+// and the Ops aggregation service. Keeping this interface here avoids a
+// middleware-to-service package dependency while letting *service.OpsService
+// satisfy it at server construction time.
+type IngressRejectCaptureSink interface {
+	RecordIngressReject(reason, routeFamily, protocol, clientIP string, userID, apiKeyID int64)
+}
+
+var ingressRejectCaptureSink struct {
+	mu    sync.RWMutex
+	value IngressRejectCaptureSink
+}
+
+// SetIngressRejectCaptureSink installs the process-wide consumer for
+// sanitized ingress-rejection events. Passing nil disables forwarding while
+// preserving the bounded in-memory capture buffer.
+func SetIngressRejectCaptureSink(sink IngressRejectCaptureSink) {
+	ingressRejectCaptureSink.mu.Lock()
+	ingressRejectCaptureSink.value = sink
+	ingressRejectCaptureSink.mu.Unlock()
+}
+
+// setIngressRejectCaptureSinkForTest replaces the process-wide sink and
+// returns a restore function. Tests must not run in parallel while swapping it.
+func setIngressRejectCaptureSinkForTest(sink IngressRejectCaptureSink) func() {
+	ingressRejectCaptureSink.mu.Lock()
+	previous := ingressRejectCaptureSink.value
+	ingressRejectCaptureSink.value = sink
+	ingressRejectCaptureSink.mu.Unlock()
+	return func() { SetIngressRejectCaptureSink(previous) }
+}
+
 // IngressRejectCaptureSnapshot exposes the bounded in-memory ingress-reject
 // telemetry captured so far. It is intended as the data source for a later,
 // separately reviewed Ops aggregation PR (Phase C of #548) and is
@@ -157,6 +190,19 @@ func captureIngressReject(c *gin.Context, reason IngressRejectReason) {
 		return
 	}
 	globalIngressRejectCapture.add(event)
+	forwardIngressRejectCapture(event)
+}
+
+func forwardIngressRejectCapture(event IngressRejectEvent) {
+	ingressRejectCaptureSink.mu.RLock()
+	sink := ingressRejectCaptureSink.value
+	ingressRejectCaptureSink.mu.RUnlock()
+	if sink == nil {
+		return
+	}
+	// Admission rejections happen before a user/API key can be trusted, so the
+	// aggregation uses only the sanitized request dimensions and zero IDs.
+	sink.RecordIngressReject(string(event.Reason), event.RouteFamily, event.Protocol, event.ClientIP, 0, 0)
 }
 
 // buildIngressRejectEvent derives the structured, sanitized event fields

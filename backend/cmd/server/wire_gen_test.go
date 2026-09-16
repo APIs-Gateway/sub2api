@@ -105,6 +105,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // channelMonitorRunner
 		nil, // quotaFlusher
 		nil, // authCacheInvalidationWorker
+		nil, // opsIngressRejectAggregator
 		nil, // promptAudit
 		nil, // upstreamBillingProbe
 	)

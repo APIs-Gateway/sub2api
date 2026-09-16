@@ -99,6 +99,11 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
+	// The ingress middleware retains a bounded sanitized capture buffer and
+	// forwards the same safe dimensions to the Ops aggregator without a
+	// synchronous database write on rejected-request hot paths.
+	middleware2.SetIngressRejectCaptureSink(opsService)
+
 	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient)
 }
 
