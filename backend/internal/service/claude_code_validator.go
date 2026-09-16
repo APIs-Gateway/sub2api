@@ -104,6 +104,9 @@ func (v *ClaudeCodeValidator) Validate(r *http.Request, body map[string]any) boo
 	if isMaxTokensOneHaiku, ok := IsMaxTokensOneHaikuRequestFromContext(r.Context()); ok && isMaxTokensOneHaiku {
 		return true // 绕过 system prompt 检查，UA 已在 Step 1 验证
 	}
+	if isMaxTokensOneBody(body) && isAuthenticatedClaudeCodeProbe(r, body) {
+		return true
+	}
 
 	// Step 4: messages 路径，进行严格验证
 
@@ -152,6 +155,41 @@ func (v *ClaudeCodeValidator) Validate(r *http.Request, body map[string]any) boo
 
 func isMessagesCountTokensPath(path string) bool {
 	return strings.HasSuffix(path, "/messages/count_tokens")
+}
+
+func isMaxTokensOneBody(body map[string]any) bool {
+	if body == nil {
+		return false
+	}
+	switch maxTokens := body["max_tokens"].(type) {
+	case float64:
+		return maxTokens == 1
+	case int:
+		return maxTokens == 1
+	case int64:
+		return maxTokens == 1
+	default:
+		return false
+	}
+}
+
+// isAuthenticatedClaudeCodeProbe accepts the official one-token probe only
+// when it carries the same request identity markers required by normal
+// Claude Code messages. A User-Agent and max_tokens alone are client input
+// and must not grant access to Claude Code-only groups.
+func isAuthenticatedClaudeCodeProbe(r *http.Request, body map[string]any) bool {
+	if r.Header.Get("X-App") == "" ||
+		r.Header.Get("anthropic-beta") == "" ||
+		r.Header.Get("anthropic-version") == "" ||
+		body == nil {
+		return false
+	}
+	metadata, ok := body["metadata"].(map[string]any)
+	if !ok {
+		return false
+	}
+	userID, ok := metadata["user_id"].(string)
+	return ok && userID != "" && ParseMetadataUserID(userID) != nil
 }
 
 // hasClaudeCodeSystemPrompt 检查请求是否包含 Claude Code 系统提示词

@@ -47,9 +47,47 @@ func TestClaudeCodeValidator_MessagesWithoutProbeStillNeedStrictValidation(t *te
 
 	ok := validator.Validate(req, map[string]any{
 		"model":      "claude-haiku-4-5",
-		"max_tokens": 1,
+		"max_tokens": 2,
 	})
 	require.False(t, ok)
+}
+
+func TestClaudeCodeValidator_MaxTokensOneProbeRequiresClaudeCodeAuthentication(t *testing.T) {
+	validator := NewClaudeCodeValidator()
+	for _, model := range []string{"claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"} {
+		t.Run(model, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "http://example.com/v1/messages", nil)
+			req.Header.Set("User-Agent", "claude-cli/2.1.260 (external, cli)")
+			for _, maxTokens := range []any{float64(1), 1} {
+				require.False(t, validator.Validate(req, map[string]any{"model": model, "max_tokens": maxTokens}))
+			}
+		})
+	}
+}
+
+func TestClaudeCodeValidator_AuthenticatedMaxTokensOneProbeIsNotLimitedToHaiku(t *testing.T) {
+	validator := NewClaudeCodeValidator()
+	for _, model := range []string{"claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"} {
+		t.Run(model, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "http://example.com/v1/messages", nil)
+			req.Header.Set("User-Agent", "claude-cli/2.1.260 (external, cli)")
+			req.Header.Set("X-App", "claude-code")
+			req.Header.Set("anthropic-beta", "claude-code-20250219")
+			req.Header.Set("anthropic-version", "2023-06-01")
+			require.True(t, validator.Validate(req, map[string]any{
+				"model":      model,
+				"max_tokens": 1,
+				"metadata":   map[string]any{"user_id": claudeCodeMetadataUserIDJSON},
+			}))
+		})
+	}
+}
+
+func TestClaudeCodeValidator_MaxTokensOneProbeStillRequiresClaudeCodeUA(t *testing.T) {
+	validator := NewClaudeCodeValidator()
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/v1/messages", nil)
+	req.Header.Set("User-Agent", "python-requests/2.32")
+	require.False(t, validator.Validate(req, map[string]any{"model": "claude-sonnet-4-5", "max_tokens": 1}))
 }
 
 func TestClaudeCodeValidator_CountTokensPathUAOnly(t *testing.T) {

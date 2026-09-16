@@ -493,6 +493,30 @@ func TestAcquireAccountSlotWithWaitTimeout_ImmediateAttemptBeforeBackoff(t *test
 	require.GreaterOrEqual(t, cache.accountAcquireCalls, 1)
 }
 
+func TestSetClaudeCodeClientContext_ParsedRequestProbeRequiresAuthentication(t *testing.T) {
+	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	c.Request.Header.Set("User-Agent", "claude-cli/2.1.260 (external, cli)")
+	SetClaudeCodeClientContext(c, nil, &service.ParsedRequest{Model: "claude-sonnet-4-5", MaxTokens: 1})
+	require.False(t, service.IsClaudeCodeClient(c.Request.Context()), "spoofed UA plus max_tokens=1 must not unlock Claude Code-only groups")
+
+	c2, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	c2.Request.Header.Set("User-Agent", "claude-cli/2.1.260 (external, cli)")
+	SetClaudeCodeClientContext(c2, nil, &service.ParsedRequest{Model: "claude-sonnet-4-5", MaxTokens: 2})
+	require.False(t, service.IsClaudeCodeClient(c2.Request.Context()))
+
+	c3, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	c3.Request.Header.Set("User-Agent", "claude-cli/2.1.260 (external, cli)")
+	c3.Request.Header.Set("X-App", "claude-code")
+	c3.Request.Header.Set("anthropic-beta", "claude-code-20250219")
+	c3.Request.Header.Set("anthropic-version", "2023-06-01")
+	SetClaudeCodeClientContext(c3, nil, &service.ParsedRequest{
+		Model:          "claude-sonnet-4-5",
+		MaxTokens:      1,
+		MetadataUserID: `{"device_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","account_uuid":"","session_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}`,
+	})
+	require.True(t, service.IsClaudeCodeClient(c3.Request.Context()))
+}
+
 type helperConcurrencyCacheStubWithError struct {
 	helperConcurrencyCacheStub
 	err error
