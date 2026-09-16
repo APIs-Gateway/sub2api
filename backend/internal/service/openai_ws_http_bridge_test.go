@@ -41,6 +41,15 @@ func TestPrepareOpenAIWSHTTPBridgeBodyStripsWSFields(t *testing.T) {
 	require.Equal(t, "hi", gjson.GetBytes(body, "input").String())
 }
 
+func TestOpenAIWSHTTPBridgeSyntheticFailuresContinueObservedSequence(t *testing.T) {
+	sequence := openAIResponsesSequenceTracker{}
+	sequence.Observe([]byte(`{"type":"response.output_text.delta","sequence_number":11,"delta":"partial"}`))
+
+	errorEvent := buildOpenAIWSHTTPBridgeErrorEvent(http.StatusBadGateway, "upstream failed", sequence.Next())
+
+	require.Equal(t, int64(12), gjson.GetBytes(errorEvent, "sequence_number").Int())
+}
+
 func TestOpenAIWSHTTPBridgeDecisionKeepsSmallFramesOnWS(t *testing.T) {
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,9 +48,7 @@ func parseResponsesFailedSSE(t *testing.T, body string) (map[string]any, map[str
 	require.NoError(t, json.Unmarshal([]byte(jsonStr), &parsed), "data must be valid JSON: %s", jsonStr)
 
 	assert.Equal(t, "response.failed", parsed["type"])
-	// 故意不发 sequence_number，避免与后续真实事件的序号冲突。
-	_, hasSeq := parsed["sequence_number"]
-	assert.False(t, hasSeq, "synthetic event must not emit sequence_number")
+	assert.Equal(t, float64(0), parsed["sequence_number"], "first synthetic event must carry sequence_number")
 
 	resp, ok := parsed["response"].(map[string]any)
 	require.True(t, ok, "response object missing")
@@ -75,6 +74,19 @@ func TestOpenAIHandleStreamingAwareError_ResponsesStreamingEmitsResponseFailed(t
 	assert.True(t, strings.HasPrefix(id, "resp_"), "id should start with resp_, got %q", id)
 	assert.Equal(t, "rate_limit_exceeded", errObj["code"])
 	assert.Equal(t, "Concurrency limit exceeded for user, please retry later", errObj["message"])
+}
+
+func TestOpenAIHandleStreamingAwareError_ResponsesStreamingContinuesObservedSequence(t *testing.T) {
+	c, w := newGinContextForEndpoint(t, EndpointResponses)
+	service.ObserveResponsesStreamSequence(c, []byte(`{"type":"response.output_text.delta","sequence_number":7,"delta":"partial"}`))
+
+	h := &OpenAIGatewayHandler{}
+	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "boom", true)
+
+	var event map[string]any
+	data := strings.TrimPrefix(strings.SplitN(strings.TrimSuffix(w.Body.String(), "\n\n"), "\n", 2)[1], "data: ")
+	require.NoError(t, json.Unmarshal([]byte(data), &event))
+	assert.Equal(t, float64(8), event["sequence_number"])
 }
 
 // 当 setOpsRequestContext 写过 model，合成事件应回填该字段（与 codebase 已有 makeResponsesCompletedEvent 对齐）。

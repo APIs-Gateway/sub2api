@@ -6240,6 +6240,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				} else if _, err := writePendingString("\n"); err != nil {
 					handlePendingWriteError(err)
 				} else {
+					ObserveResponsesStreamSequence(c, dataBytes)
 					eventInProgress = true
 					if guardFirstOutput {
 						eventShouldFlush = eventShouldFlush || shouldFlush
