@@ -171,8 +171,8 @@ func createOpsIngressRejectAggregateTable(
 			user_id BIGINT NOT NULL DEFAULT 0,
 			api_key_id BIGINT NOT NULL DEFAULT 0,
 			request_count BIGINT NOT NULL DEFAULT 0,
-			first_seen TIMESTAMP NOT NULL,
-			last_seen TIMESTAMP NOT NULL,
+			first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			last_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE KEY ops_ingress_reject_dimensions (bucket_start, reject_reason, route_family, protocol, client_ip, user_id, api_key_id)
