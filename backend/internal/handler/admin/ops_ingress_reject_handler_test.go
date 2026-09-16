@@ -45,6 +45,28 @@ func TestListIngressRejectsReturnsAggregatesForValidFilters(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), `"items"`)
 }
 
+func TestListIngressRejectsAcceptsCapturedDimensions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, query := range []string{
+		"route_family=usage&protocol=http",
+		"route_family=billing&protocol=ws",
+		"route_family=alpha_search&protocol=http",
+		"route_family=antigravity_gemini&protocol=ws",
+		"route_family=antigravity_models&protocol=http",
+	} {
+		t.Run(query, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+			context.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/ops/ingress-rejections?"+query, nil)
+
+			newIngressRejectHandlerForTest().ListIngressRejects(context)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.Contains(t, recorder.Body.String(), `"items"`)
+		})
+	}
+}
+
 func TestListIngressRejectsServiceUnavailableWithoutOpsService(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
