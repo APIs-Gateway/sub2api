@@ -58,11 +58,11 @@ func TestSettingHandlerUpdateSettingsPartialPayloadWritesExplicitZeroValues(t *t
 	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
 	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
 
-	body, err := json.Marshal(map[string]any{
-		"risk_control_enabled": false,
-		"smtp_port":            0,
-		"site_name":            "",
-	})
+	payload := map[string]any{}
+	payload["risk_control_enabled"] = false
+	payload["smtp_port"] = 0
+	payload["site_name"] = ""
+	body, err := json.Marshal(payload)
 	require.NoError(t, err)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -85,10 +85,10 @@ func TestSettingHandlerUpdateSettingsPartialPayloadWritesExplicitEmptySMTPFields
 	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
 	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
 
-	body, err := json.Marshal(map[string]any{
-		"smtp_host": "",
-		"smtp_port": 0,
-	})
+	payload := map[string]any{}
+	payload["smtp_host"] = ""
+	payload["smtp_port"] = 0
+	body, err := json.Marshal(payload)
 	require.NoError(t, err)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
