@@ -12,6 +12,7 @@ import (
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,13 +41,13 @@ func TestDatabaseInitializationRetryUsesBoundedWaitPrimitives(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := initializeDatabaseWithRetry(ctx, func(context.Context) error {
-		return transientDatabaseError("57P03")
+		return &pq.Error{Code: pq.ErrorCode("57P03")}
 	})
 	require.ErrorIs(t, err, context.Canceled)
 
 	require.NoError(t, waitForDatabaseInitializationRetry(context.Background(), time.Nanosecond))
 	require.False(t, isTransientDatabaseInitializationError(errors.New("permanent migration failure")))
-	require.True(t, isTransientDatabaseInitializationError(transientDatabaseError("08006")))
+	require.True(t, isTransientDatabaseInitializationError(&pq.Error{Code: pq.ErrorCode("08006")}))
 }
 
 func TestLatestMigrationBaseline(t *testing.T) {
