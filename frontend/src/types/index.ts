@@ -1777,6 +1777,7 @@ export interface UsageQueryParams {
   user_id?: number
   account_id?: number
   group_id?: number
+  request_id?: string
   model?: string
   request_type?: UsageRequestType
   stream?: boolean
