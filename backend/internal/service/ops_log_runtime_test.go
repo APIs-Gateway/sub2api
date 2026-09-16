@@ -402,6 +402,53 @@ func TestApplyRuntimeLogConfigOnStartup_EnablesPersistedAccessLogs(t *testing.T)
 	}
 }
 
+func TestRuntimeLogConfigRefreshesAccessLogSinkFromSharedSetting(t *testing.T) {
+	repo := newRuntimeSettingRepoStub()
+	cfg := &config.Config{
+		Log: config.LogConfig{
+			Level:           "info",
+			Caller:          true,
+			StacktraceLevel: "error",
+			Sampling: config.LogSamplingConfig{
+				Initial:    100,
+				Thereafter: 100,
+			},
+		},
+	}
+	if err := logger.Init(logger.InitOptions{
+		Level:       "info",
+		Format:      "json",
+		ServiceName: "sub2api",
+		Environment: "test",
+		Output: logger.OutputOptions{
+			ToStdout: true,
+		},
+	}); err != nil {
+		t.Fatalf("init logger: %v", err)
+	}
+
+	firstSink := &OpsSystemLogSink{}
+	first := NewOpsService(nil, repo, cfg, nil, nil, nil, nil, nil, nil, nil, firstSink)
+	secondSink := &OpsSystemLogSink{}
+	_ = NewOpsService(nil, repo, cfg, nil, nil, nil, nil, nil, nil, nil, secondSink)
+
+	if _, err := first.UpdateRuntimeLogConfig(context.Background(), &OpsRuntimeLogConfig{
+		Level:             "info",
+		PersistAccessLogs: true,
+		SamplingInitial:   100,
+		SamplingNext:      100,
+		Caller:            true,
+		StacktraceLevel:   "error",
+		RetentionDays:     30,
+	}, 1); err != nil {
+		t.Fatalf("UpdateRuntimeLogConfig() error: %v", err)
+	}
+
+	if !secondSink.shouldIndex(&logger.LogEvent{Level: "info", Component: "http.access"}) {
+		t.Fatal("access-log sink should refresh the shared runtime setting before indexing")
+	}
+}
+
 func TestDefaultNormalizeAndValidateRuntimeLogConfig(t *testing.T) {
 	defaults := defaultOpsRuntimeLogConfig(&config.Config{
 		Log: config.LogConfig{
