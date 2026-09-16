@@ -80,6 +80,17 @@ func TestStripAnthropicMessageOutputConfigUnlessBeta_MalformedMessagesIsNoop(t *
 	require.Equal(t, string(body), string(out))
 }
 
+func TestStripAnthropicBodyFieldUnlessBeta_ComplexPathFailureIsNoop(t *testing.T) {
+	body := []byte(`{"context_management":[{"kind":"target"}]}`)
+
+	out, changed := stripAnthropicBodyFieldUnlessBeta(
+		body, `context_management.#(kind=="target")`, "", anthropicBetaContextManagementToken,
+	)
+
+	require.False(t, changed)
+	require.Equal(t, string(body), string(out))
+}
+
 func TestAnthropicMessageContentHasBody(t *testing.T) {
 	cases := []struct {
 		name string
