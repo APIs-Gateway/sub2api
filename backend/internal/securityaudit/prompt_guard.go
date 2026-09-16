@@ -151,7 +151,7 @@ func (g *GuardEvaluator) Evaluate(ctx context.Context, cfg ActiveConfig, snapsho
 		"status": "completed",
 	}))
 	if g.repo != nil {
-		if _, recordErr := g.repo.RecordBlocking(ctx, snapshot.Redacted(), cfg.ConfigVersion, aggregated, cfg.StorePassEvents); recordErr != nil {
+		if _, recordErr := g.repo.RecordBlocking(ctx, snapshot.Redacted(), cfg.ConfigVersion, aggregated, cfg.StorePassEvents, cfg.StoreFullPrompts); recordErr != nil {
 			if g.metrics != nil {
 				g.metrics.IncRecordFailed()
 			}

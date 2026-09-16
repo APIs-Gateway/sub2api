@@ -265,6 +265,32 @@ func TestGuardEvaluatorRecordsExistingResultOnceAndRecordFailureDoesNotChangeDec
 	}
 }
 
+// TestGuardEvaluatorThreadsStorePassEventsAndStoreFullPromptsIntoRecordBlocking
+// proves the blocking path forwards both independent gates from cfg into
+// RecordBlocking, and that snapshot.Redacted() (used for this call, per the
+// require.Empty(ScanText) assertion elsewhere in this file) still carries
+// FullPrompt through untouched, since only the storage layer's own gate
+// decides whether it is ever durably written.
+func TestGuardEvaluatorThreadsStorePassEventsAndStoreFullPromptsIntoRecordBlocking(t *testing.T) {
+	repo := &guardTestRepo{}
+	evaluator := newGuardEvaluator(PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+		return &NormalizedResult{Decision: EventCritical, RiskLevel: RiskCritical, Action: ActionBlock, Safety: "Unsafe", Categories: []string{"pii"}, MatchedScanners: []string{"pii"}, ScannerScores: map[string]float64{"pii": 1}, ScannerEvidence: map[string]string{"pii": "PII"}}, nil
+	}), repo, NewAtomicMetrics(), 2, 2)
+
+	cfg := guardConfig(ActiveEndpoint{ID: "one", Enabled: true, TimeoutMS: 1000, InputLimit: 100})
+	cfg.StorePassEvents = true
+	cfg.StoreFullPrompts = true
+	snapshot := PromptSnapshot{ScanText: "raw prompt", RedactedPreview: "raw***", PromptLength: 10, FullPrompt: "PROMPT_CANARY_guard_full_prompt"}
+	decision, err := evaluator.Evaluate(context.Background(), cfg, snapshot)
+	require.NoError(t, err)
+	require.Equal(t, DecisionBlock, decision.Kind)
+	require.Equal(t, 1, repo.recordBlockingCalls)
+	require.True(t, repo.recordBlockingStorePassEvents)
+	require.True(t, repo.recordBlockingStoreFullPrompts)
+	require.Empty(t, repo.recordBlockingSnapshot.ScanText, "Redacted() must still clear ScanText")
+	require.Equal(t, snapshot.FullPrompt, repo.recordBlockingSnapshot.FullPrompt, "Redacted() must not clear FullPrompt")
+}
+
 func TestGuardEvaluatorNilResultAndScannerPanicBecomeStableFailures(t *testing.T) {
 	tests := []struct {
 		name string
@@ -336,15 +362,19 @@ func (f PromptScannerFunc) Scan(ctx context.Context, endpoint ActiveEndpoint, ch
 
 type guardTestRepo struct {
 	enqueueTestRepo
-	recordBlockingErr      error
-	recordBlockingCalls    int
-	recordBlockingSnapshot PromptSnapshot
-	recordBlockingResult   *NormalizedResult
+	recordBlockingErr              error
+	recordBlockingCalls            int
+	recordBlockingSnapshot         PromptSnapshot
+	recordBlockingResult           *NormalizedResult
+	recordBlockingStorePassEvents  bool
+	recordBlockingStoreFullPrompts bool
 }
 
-func (r *guardTestRepo) RecordBlocking(_ context.Context, snapshot PromptSnapshot, _ int64, result *NormalizedResult, _ bool) (*Event, error) {
+func (r *guardTestRepo) RecordBlocking(_ context.Context, snapshot PromptSnapshot, _ int64, result *NormalizedResult, storePassEvents, storeFullPrompts bool) (*Event, error) {
 	r.recordBlockingCalls++
 	r.recordBlockingSnapshot = snapshot
 	r.recordBlockingResult = result
+	r.recordBlockingStorePassEvents = storePassEvents
+	r.recordBlockingStoreFullPrompts = storeFullPrompts
 	return nil, r.recordBlockingErr
 }
