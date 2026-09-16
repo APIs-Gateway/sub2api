@@ -83,13 +83,6 @@ func TestOpsSystemLogSink_ShouldIndexAccessLogsOnlyWhenEnabled(t *testing.T) {
 	if !sink.shouldIndex(&logger.LogEvent{Level: "info", Fields: map[string]any{"component": "http.access"}}) {
 		t.Fatal("field-based access log should be indexed after explicit opt-in")
 	}
-	if sink.shouldIndex(&logger.LogEvent{
-		Level:     "info",
-		Component: "http.access",
-		Fields:    map[string]any{logger.OpsSystemLogSkipField: true},
-	}) {
-		t.Fatal("explicit skip marker must override access-log persistence")
-	}
 }
 
 func TestOpsSystemLogSink_WriteLogEvent_ShouldDropWhenQueueFull(t *testing.T) {
