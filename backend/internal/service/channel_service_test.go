@@ -1441,6 +1441,53 @@ func TestClearCacheFencesAnInFlightBuild(t *testing.T) {
 	require.NotNil(t, svc.GetChannelModelPricing(context.Background(), 10, "new-model"))
 }
 
+func TestClearCacheFencesAnInFlightBuildErrorCache(t *testing.T) {
+	buildStarted := make(chan struct{})
+	releaseBuild := make(chan struct{})
+	var mu sync.Mutex
+	buildCount := 0
+	repo := &mockChannelRepository{
+		listAllFn: func(_ context.Context) ([]Channel, error) {
+			mu.Lock()
+			buildCount++
+			firstBuild := buildCount == 1
+			mu.Unlock()
+			if firstBuild {
+				close(buildStarted)
+				<-releaseBuild
+				return nil, errors.New("old build failed")
+			}
+			return []Channel{{
+				ID:       1,
+				Status:   StatusActive,
+				GroupIDs: []int64{10},
+				ModelPricing: []ChannelModelPricing{{
+					ID:       100,
+					Platform: PlatformAnthropic,
+					Models:   []string{"new-model"},
+				}},
+			}}, nil
+		},
+		getGroupPlatformsFn: func(_ context.Context, _ []int64) (map[int64]string, error) {
+			return map[int64]string{10: PlatformAnthropic}, nil
+		},
+	}
+	svc := newTestChannelService(repo)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = svc.loadCache(context.Background())
+	}()
+	<-buildStarted
+	svc.clearCache()
+	require.NotNil(t, svc.GetChannelModelPricing(context.Background(), 10, "new-model"))
+	close(releaseBuild)
+	<-done
+
+	require.NotNil(t, svc.GetChannelModelPricing(context.Background(), 10, "new-model"))
+}
+
 func TestInvalidateCacheKeepsLocalRefreshWhenPublishingFails(t *testing.T) {
 	updated := false
 	repo := &mockChannelRepository{
