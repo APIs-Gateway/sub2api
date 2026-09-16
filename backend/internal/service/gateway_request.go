@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
@@ -914,6 +915,9 @@ func sanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 	); deleted {
 		body, changed = b, true
 	}
+	if b, deleted := stripAnthropicMessageOutputConfigUnlessBeta(body, anthropicBetaHeader); deleted {
+		body, changed = b, true
+	}
 	return body, changed
 }
 
@@ -934,6 +938,94 @@ func stripAnthropicBodyFieldUnlessBeta(body []byte, field, anthropicBetaHeader s
 		return body, false
 	}
 	return b, true
+}
+
+func stripAnthropicMessageOutputConfigUnlessBeta(body []byte, anthropicBetaHeader string) ([]byte, bool) {
+	if anthropicBetaTokensContains(anthropicBetaHeader, claude.BetaMidConversationOutputConfig) ||
+		!bytes.Contains(body, []byte("output_config")) {
+		return body, false
+	}
+
+	messagesResult := gjson.GetBytes(body, "messages")
+	if !messagesResult.Exists() || !messagesResult.IsArray() {
+		return body, false
+	}
+	hasMessageOutputConfig := false
+	for _, message := range messagesResult.Array() {
+		if message.Get("output_config").Exists() {
+			hasMessageOutputConfig = true
+			break
+		}
+	}
+	if !hasMessageOutputConfig {
+		return body, false
+	}
+
+	var messages []common.RawMessage
+	if err := common.Unmarshal([]byte(messagesResult.Raw), &messages); err != nil {
+		return body, false
+	}
+
+	changed := false
+	rebuilt := make([]common.RawMessage, 0, len(messages))
+	for _, message := range messages {
+		if !gjson.GetBytes(message, "output_config").Exists() {
+			rebuilt = append(rebuilt, message)
+			continue
+		}
+		changed = true
+
+		if gjson.GetBytes(message, "role").String() == "system" &&
+			!anthropicMessageContentHasBody(gjson.GetBytes(message, "content")) {
+			continue
+		}
+
+		stripped, err := sjson.DeleteBytes(message, "output_config")
+		if err != nil {
+			rebuilt = append(rebuilt, message)
+			continue
+		}
+		rebuilt = append(rebuilt, common.RawMessage(stripped))
+	}
+	if !changed {
+		return body, false
+	}
+
+	rebuiltBytes, err := common.Marshal(rebuilt)
+	if err != nil {
+		return body, false
+	}
+	out, err := sjson.SetRawBytes(body, "messages", rebuiltBytes)
+	if err != nil {
+		return body, false
+	}
+	return out, true
+}
+
+func anthropicMessageContentHasBody(content gjson.Result) bool {
+	switch {
+	case !content.Exists(), content.Type == gjson.Null:
+		return false
+	case content.Type == gjson.String:
+		return content.String() != ""
+	case content.IsArray():
+		var blocks []any
+		if err := common.Unmarshal([]byte(content.Raw), &blocks); err != nil {
+			return true
+		}
+		for _, block := range blocks {
+			blockMap, ok := block.(map[string]any)
+			if !ok || blockMap["type"] != "text" {
+				return true
+			}
+			if text, _ := blockMap["text"].(string); text != "" {
+				return true
+			}
+		}
+		return false
+	default:
+		return true
+	}
 }
 
 // anthropicBetaTokensContains 检测逗号分隔的 anthropic-beta header 是否含指定 token。
