@@ -92,7 +92,7 @@ func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_StripsMessageOutputConfi
 	body := []byte(`{"output_config":{"effort":"high"},"messages":[{"role":"system","content":[],"output_config":{"effort":"high"}},{"role":"user","content":"hello"}]}`)
 
 	svc := &GatewayService{cfg: &config.Config{}}
-	req, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(
+	req, _, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(
 		context.Background(), c, newAnthropicAPIKeyPassthroughAccountForBetaTest(), body, "token",
 	)
 	require.NoError(t, err)
