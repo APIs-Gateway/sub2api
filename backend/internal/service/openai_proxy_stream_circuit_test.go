@@ -200,5 +200,5 @@ func TestOpenAIProxyStreamCircuitPrunesAndClassifiesDisconnects(t *testing.T) {
 	require.True(t, svc.isOpenAIProxyStreamQuarantined(context.Background(), account))
 	svc.clearOpenAIProxyStreamDisconnect(account)
 	require.False(t, svc.isOpenAIProxyStreamQuarantined(context.Background(), account))
-	require.False(t, openAIProxyStreamQuarantineBypassed(nil))
+	require.False(t, openAIProxyStreamQuarantineBypassed(context.TODO()))
 }
