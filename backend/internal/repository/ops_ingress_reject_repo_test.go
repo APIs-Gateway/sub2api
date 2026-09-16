@@ -90,7 +90,8 @@ func TestOpsIngressRejectUpsertQueryUsesEachDatabaseDialect(t *testing.T) {
 
 	sqlite := opsIngressRejectUpsertQuery(migrationDatabaseSQLite, 1)
 	require.Contains(t, sqlite, "VALUES (?,?,?,?,?,?,?,?,?,?)")
-	require.Contains(t, sqlite, "ON CONFLICT (bucket_start, reject_reason, route_family, protocol, client_ip, user_id, api_key_id) DO UPDATE")
+	require.Contains(t, sqlite, "ON CONFLICT (bucket_start, reject_reason, route_family, protocol, client_ip, user_id, api_key_id)")
+	require.Contains(t, sqlite, "DO UPDATE SET request_count")
 	require.Contains(t, sqlite, "excluded.request_count")
 	require.Contains(t, sqlite, "MIN(ops_ingress_reject_aggregates.first_seen, excluded.first_seen)")
 	require.NotContains(t, sqlite, "$1")
