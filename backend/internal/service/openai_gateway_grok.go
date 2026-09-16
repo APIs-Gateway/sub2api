@@ -209,8 +209,8 @@ var grokUnsupportedRecursiveFields = map[string]struct{}{
 // Grok. Callers opt in per endpoint so protocol-specific request behavior stays
 // unchanged elsewhere.
 func sanitizeGrokUnsupportedFields(body []byte) ([]byte, error) {
-	if !bytes.Contains(body, []byte(`"external_web_access"`)) {
-		return body, nil
+	if !common.Valid(body) {
+		return nil, fmt.Errorf("invalid json request body")
 	}
 
 	var payload any
