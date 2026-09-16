@@ -265,6 +265,7 @@ type OpenAIForwardResult struct {
 
 	wsReplayInput       []json.RawMessage
 	wsReplayInputExists bool
+	wsClientToolState   openAIWSHTTPBridgeToolState
 }
 
 type OpenAIWSRetryMetricsSnapshot struct {

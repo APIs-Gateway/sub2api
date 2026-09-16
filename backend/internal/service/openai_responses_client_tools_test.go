@@ -216,6 +216,94 @@ func TestOpenAIPassthroughAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 	require.NotContains(t, output, `"input":{`)
 }
 
+func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_DelegatesWhenBodyDeclaresTools(t *testing.T) {
+	body := openAIClientToolsRequest(false)
+	// A previous turn's tool_search state must not leak into a turn that
+	// declares its own fresh tools.
+	previousMapping := apicompat.ResponsesClientToolMapping{ToolSearch: true}
+	previousLoweredTools := []any{map[string]any{"type": "function", "name": "prior_tool_search_proxy"}}
+
+	adapted, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(body, previousMapping, previousLoweredTools)
+
+	require.NoError(t, err)
+	assertOpenAIClientToolsLowered(t, adapted)
+	require.True(t, mapping.CustomTools["exec"])
+	require.False(t, mapping.ToolSearch)
+	require.Len(t, loweredTools, 2)
+}
+
+func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_NoPreviousStateLeavesOmittedToolsBodyUnchanged(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","input":"continue please"}`)
+
+	adapted, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(body, apicompat.ResponsesClientToolMapping{}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, body, adapted)
+	require.Empty(t, mapping)
+	require.Nil(t, loweredTools)
+}
+
+func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_WithoutRememberedLoweredToolsBehavesAsNoClientTools(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","input":"continue please"}`)
+	previousMapping := apicompat.ResponsesClientToolMapping{ToolSearch: true}
+
+	adapted, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(body, previousMapping, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, body, adapted)
+	require.Empty(t, mapping)
+	require.Nil(t, loweredTools)
+}
+
+func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_BypassesMarkerPrefilterWhenInheritable(t *testing.T) {
+	// This turn's body carries no custom/tool_search/namespace markers at
+	// all -- it's exactly the shape a WS HTTP bridge follow-up turn takes
+	// when the client omits "tools" and simply continues the conversation,
+	// relying on the previous turn's negotiated mapping. The cheap
+	// gjson-based prefilter in needsOpenAIResponsesClientToolAdaptation
+	// would say "nothing to do" on its own; a recorded previous mapping
+	// must be able to override that.
+	body := []byte(`{"model":"gpt-5.5","input":"continue please"}`)
+	previousMapping := apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}}
+	previousLoweredTools := []any{map[string]any{"type": "function", "name": "exec", "parameters": map[string]any{"type": "object"}}}
+
+	adapted, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(body, previousMapping, previousLoweredTools)
+
+	require.NoError(t, err)
+	require.True(t, mapping.CustomTools["exec"])
+	require.Len(t, loweredTools, 1)
+	require.Equal(t, "function", gjson.GetBytes(adapted, "tools.0.type").String())
+	require.Equal(t, "exec", gjson.GetBytes(adapted, "tools.0.name").String())
+	require.Equal(t, "continue please", gjson.GetBytes(adapted, "input").String())
+}
+
+func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_ReinstatesMappingAndDowngradesInputHistoryWhenToolsOmitted(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","input":[{"type":"custom_tool_call","call_id":"c1","name":"exec","input":"pwd"}]}`)
+	previousMapping := apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}}
+	previousLoweredTools := []any{map[string]any{"type": "function", "name": "exec", "parameters": map[string]any{"type": "object"}}}
+
+	adapted, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(body, previousMapping, previousLoweredTools)
+
+	require.NoError(t, err)
+	require.True(t, mapping.CustomTools["exec"])
+	require.Len(t, loweredTools, 1)
+	require.Equal(t, "function", gjson.GetBytes(adapted, "tools.0.type").String())
+	require.Equal(t, "function_call", gjson.GetBytes(adapted, "input.0.type").String())
+	require.JSONEq(t, `{"input":"pwd"}`, gjson.GetBytes(adapted, "input.0.arguments").String())
+}
+
+func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_RejectsMalformedBodyWhenInheritable(t *testing.T) {
+	previousMapping := apicompat.ResponsesClientToolMapping{ToolSearch: true}
+	previousLoweredTools := []any{map[string]any{"type": "function", "name": "prior_tool_search_proxy"}}
+
+	adapted, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping([]byte(`not-json`), previousMapping, previousLoweredTools)
+
+	require.ErrorContains(t, err, "decode OpenAI Responses client tools")
+	require.Equal(t, []byte(`not-json`), adapted)
+	require.Empty(t, mapping)
+	require.Nil(t, loweredTools)
+}
+
 // OAuth 账号走官方上游，官方认得 custom / tool_search，不该被降级。
 func TestOpenAIPassthroughOAuthLeavesClientToolsUntouched(t *testing.T) {
 	gin.SetMode(gin.TestMode)
