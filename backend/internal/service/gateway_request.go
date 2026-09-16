@@ -11,8 +11,10 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -901,23 +903,129 @@ func sanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 	if len(body) == 0 {
 		return body, false
 	}
-	if !gjson.GetBytes(body, "context_management").Exists() {
+
+	changed := false
+	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
+		body, "context_management", anthropicBetaHeader, anthropicBetaContextManagementToken,
+	); deleted {
+		body, changed = b, true
+	}
+	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
+		body, "thinking.block_binding", anthropicBetaHeader, claude.BetaThinkingBindingControls,
+	); deleted {
+		body, changed = b, true
+	}
+	if b, deleted := stripAnthropicMessageOutputConfigUnlessBeta(body, anthropicBetaHeader); deleted {
+		body, changed = b, true
+	}
+	return body, changed
+}
+
+func stripAnthropicBodyFieldUnlessBeta(body []byte, field, anthropicBetaHeader string, requiredTokens ...string) ([]byte, bool) {
+	if !gjson.GetBytes(body, field).Exists() {
 		return body, false
 	}
-	if anthropicBetaTokensContains(anthropicBetaHeader, anthropicBetaContextManagementToken) {
-		return body, false
+	for _, token := range requiredTokens {
+		if anthropicBetaTokensContains(anthropicBetaHeader, token) {
+			return body, false
+		}
 	}
-	if b, err := sjson.DeleteBytes(body, "context_management"); err == nil {
-		return b, true
-	} else {
-		// 不应发生：gjson 刚验证过字段存在 + body 是合法 JSON。如果 sjson 仍报错，
-		// 调用方会拿到 (body, false)，但此前 computeFinalAnthropicBeta 已按“strip 后”
-		// 计算了 finalBeta——两侧会不一致。记录 warning 最小限度提醒运维。
+	b, err := sjson.DeleteBytes(body, field)
+	if err != nil {
 		logger.LegacyPrintf("service.gateway",
-			"[CtxMgmtSanitize] sjson.DeleteBytes failed unexpectedly: %v (body len=%d). "+
-				"body and final anthropic-beta header may be out of sync.", err, len(body))
+			"[BetaFieldSanitize] sjson.DeleteBytes(%s) failed unexpectedly: %v (body len=%d). "+
+				"body and final anthropic-beta header may be out of sync.", field, err, len(body))
+		return body, false
 	}
-	return body, false
+	return b, true
+}
+
+func stripAnthropicMessageOutputConfigUnlessBeta(body []byte, anthropicBetaHeader string) ([]byte, bool) {
+	if anthropicBetaTokensContains(anthropicBetaHeader, claude.BetaMidConversationOutputConfig) ||
+		!bytes.Contains(body, []byte("output_config")) {
+		return body, false
+	}
+
+	messagesResult := gjson.GetBytes(body, "messages")
+	if !messagesResult.Exists() || !messagesResult.IsArray() {
+		return body, false
+	}
+	hasMessageOutputConfig := false
+	for _, message := range messagesResult.Array() {
+		if message.Get("output_config").Exists() {
+			hasMessageOutputConfig = true
+			break
+		}
+	}
+	if !hasMessageOutputConfig {
+		return body, false
+	}
+
+	var messages []common.RawMessage
+	if err := common.Unmarshal([]byte(messagesResult.Raw), &messages); err != nil {
+		return body, false
+	}
+
+	changed := false
+	rebuilt := make([]common.RawMessage, 0, len(messages))
+	for _, message := range messages {
+		if !gjson.GetBytes(message, "output_config").Exists() {
+			rebuilt = append(rebuilt, message)
+			continue
+		}
+		changed = true
+
+		if gjson.GetBytes(message, "role").String() == "system" &&
+			!anthropicMessageContentHasBody(gjson.GetBytes(message, "content")) {
+			continue
+		}
+
+		stripped, err := sjson.DeleteBytes(message, "output_config")
+		if err != nil {
+			rebuilt = append(rebuilt, message)
+			continue
+		}
+		rebuilt = append(rebuilt, common.RawMessage(stripped))
+	}
+	if !changed {
+		return body, false
+	}
+
+	rebuiltBytes, err := common.Marshal(rebuilt)
+	if err != nil {
+		return body, false
+	}
+	out, err := sjson.SetRawBytes(body, "messages", rebuiltBytes)
+	if err != nil {
+		return body, false
+	}
+	return out, true
+}
+
+func anthropicMessageContentHasBody(content gjson.Result) bool {
+	switch {
+	case !content.Exists(), content.Type == gjson.Null:
+		return false
+	case content.Type == gjson.String:
+		return content.String() != ""
+	case content.IsArray():
+		var blocks []any
+		if err := common.Unmarshal([]byte(content.Raw), &blocks); err != nil {
+			return true
+		}
+		for _, block := range blocks {
+			blockMap, ok := block.(map[string]any)
+			if !ok || blockMap["type"] != "text" {
+				return true
+			}
+			if text, _ := blockMap["text"].(string); text != "" {
+				return true
+			}
+		}
+		return false
+	default:
+		return true
+	}
 }
 
 // anthropicBetaTokensContains 检测逗号分隔的 anthropic-beta header 是否含指定 token。
