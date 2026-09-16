@@ -5,6 +5,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+type chatFallbackReadError struct {
+	reader *strings.Reader
+	err    error
+}
+
+func (r *chatFallbackReadError) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if errors.Is(err, io.EOF) {
+		return 0, r.err
+	}
+	return n, err
+}
 
 func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -132,6 +146,47 @@ func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t
 	require.Equal(t, 3, result.Usage.OutputTokens)
 	require.True(t, result.Stream)
 	require.NotNil(t, result.FirstTokenMs)
+}
+
+func TestForwardResponses_ChatFallbackStreamErrorPreservesWrittenSequence(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","input":"hello","stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := `data: {"id":"chatcmpl_partial","object":"chat.completion.chunk","model":"gpt-5.4","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}` + "\n\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(&chatFallbackReadError{
+			reader: strings.NewReader(upstreamBody),
+			err:    errors.New("upstream read failed"),
+		}),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	_, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.ErrorContains(t, err, "stream usage incomplete: upstream read failed")
+
+	maxSequence := int64(-1)
+	for _, frame := range strings.Split(rec.Body.String(), "\n\n") {
+		dataIndex := strings.LastIndex(frame, "data: ")
+		if dataIndex < 0 {
+			continue
+		}
+		data := strings.TrimSpace(frame[dataIndex+len("data: "):])
+		if sequence := gjson.Get(data, "sequence_number"); sequence.Exists() && sequence.Int() > maxSequence {
+			maxSequence = sequence.Int()
+		}
+	}
+	require.Greater(t, maxSequence, int64(0))
+	require.Equal(t, int(maxSequence+1), NextResponsesStreamSequence(c))
 }
 
 // A truncated (invalid-JSON) function-call arguments stream at the output limit
