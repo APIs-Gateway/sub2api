@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -427,9 +428,15 @@ func TestRuntimeLogConfigRefreshesAccessLogSinkFromSharedSetting(t *testing.T) {
 		t.Fatalf("init logger: %v", err)
 	}
 
-	firstSink := &OpsSystemLogSink{}
+	firstSink := NewOpsSystemLogSink(&opsRepoMock{})
+	firstSink.runtimeLogConfigRefreshInterval = time.Millisecond
+	firstSink.Start()
+	defer firstSink.Stop()
 	first := NewOpsService(nil, repo, cfg, nil, nil, nil, nil, nil, nil, nil, firstSink)
-	secondSink := &OpsSystemLogSink{}
+	secondSink := NewOpsSystemLogSink(&opsRepoMock{})
+	secondSink.runtimeLogConfigRefreshInterval = time.Millisecond
+	secondSink.Start()
+	defer secondSink.Stop()
 	_ = NewOpsService(nil, repo, cfg, nil, nil, nil, nil, nil, nil, nil, secondSink)
 
 	if _, err := first.UpdateRuntimeLogConfig(context.Background(), &OpsRuntimeLogConfig{
@@ -444,8 +451,13 @@ func TestRuntimeLogConfigRefreshesAccessLogSinkFromSharedSetting(t *testing.T) {
 		t.Fatalf("UpdateRuntimeLogConfig() error: %v", err)
 	}
 
-	if !secondSink.shouldIndex(&logger.LogEvent{Level: "info", Component: "http.access"}) {
-		t.Fatal("access-log sink should refresh the shared runtime setting before indexing")
+	deadline := time.After(time.Second)
+	for !secondSink.shouldIndex(&logger.LogEvent{Level: "info", Component: "http.access"}) {
+		select {
+		case <-deadline:
+			t.Fatal("access-log sink should refresh the shared runtime setting before indexing")
+		case <-time.After(time.Millisecond):
+		}
 	}
 }
 

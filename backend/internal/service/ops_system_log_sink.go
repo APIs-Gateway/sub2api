@@ -48,6 +48,10 @@ type OpsSystemLogSink struct {
 	persistAccessLogs atomic.Bool
 
 	lastError atomic.Value
+
+	runtimeLogConfigRefreshMu       sync.RWMutex
+	runtimeLogConfigRefresh         func(context.Context) error
+	runtimeLogConfigRefreshInterval time.Duration
 }
 
 const (
@@ -55,6 +59,10 @@ const (
 	defaultOpsSystemLogFlushBackoff = 2 * time.Second
 	// 退避上限。日志是尽力而为的观测数据，不值得为它无限期占用连接池。
 	defaultOpsSystemLogFlushBackoffMax = 60 * time.Second
+	// Runtime settings are stored in the shared database. Refreshing in the
+	// sink loop keeps independently deployed replicas aligned without adding
+	// database reads to the request logging path.
+	defaultOpsSystemLogRuntimeConfigRefreshInterval = 5 * time.Second
 )
 
 func NewOpsSystemLogSink(opsRepo OpsRepository) *OpsSystemLogSink {
@@ -140,6 +148,31 @@ func (s *OpsSystemLogSink) SetPersistAccessLogs(enabled bool) {
 	s.persistAccessLogs.Store(enabled)
 }
 
+// SetRuntimeLogConfigRefresh configures the shared runtime-setting refresh
+// invoked by the sink's background loop. It is intentionally separate from
+// log writes so an unavailable settings store never delays request logging.
+func (s *OpsSystemLogSink) SetRuntimeLogConfigRefresh(refresh func(context.Context) error) {
+	if s == nil {
+		return
+	}
+	s.runtimeLogConfigRefreshMu.Lock()
+	s.runtimeLogConfigRefresh = refresh
+	s.runtimeLogConfigRefreshMu.Unlock()
+}
+
+func (s *OpsSystemLogSink) refreshRuntimeLogConfig(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	s.runtimeLogConfigRefreshMu.RLock()
+	refresh := s.runtimeLogConfigRefresh
+	s.runtimeLogConfigRefreshMu.RUnlock()
+	if refresh == nil {
+		return
+	}
+	_ = refresh(ctx)
+}
+
 func (s *OpsSystemLogSink) shouldIndex(event *logger.LogEvent) bool {
 	level := strings.ToLower(strings.TrimSpace(event.Level))
 	switch level {
@@ -168,6 +201,12 @@ func (s *OpsSystemLogSink) run() {
 
 	ticker := time.NewTicker(s.flushInterval)
 	defer ticker.Stop()
+	refreshInterval := s.runtimeLogConfigRefreshInterval
+	if refreshInterval <= 0 {
+		refreshInterval = defaultOpsSystemLogRuntimeConfigRefreshInterval
+	}
+	refreshTicker := time.NewTicker(refreshInterval)
+	defer refreshTicker.Stop()
 
 	batch := make([]*logger.LogEvent, 0, s.batchSize)
 	// 仅在本 goroutine 内读写，无需加锁。
@@ -240,6 +279,8 @@ func (s *OpsSystemLogSink) run() {
 			}
 		case <-ticker.C:
 			flush(s.ctx)
+		case <-refreshTicker.C:
+			s.refreshRuntimeLogConfig(s.ctx)
 		}
 	}
 }
