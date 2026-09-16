@@ -220,7 +220,7 @@ func TestOpenAIResponses_ChannelModelMappingRewritesForwardModel(t *testing.T) {
 			},
 		}},
 		groupPlatforms: map[int64]string{groupID: service.PlatformOpenAI},
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil)
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 	defer billingCacheSvc.Stop()
 	gatewaySvc := service.NewOpenAIGatewayService(
