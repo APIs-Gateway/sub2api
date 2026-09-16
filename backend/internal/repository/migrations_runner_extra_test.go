@@ -36,6 +36,19 @@ func TestApplyMigrations_DelegatesToApplyMigrationsFS(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDatabaseInitializationRetryUsesBoundedWaitPrimitives(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := initializeDatabaseWithRetry(ctx, func(context.Context) error {
+		return transientDatabaseError("57P03")
+	})
+	require.ErrorIs(t, err, context.Canceled)
+
+	require.NoError(t, waitForDatabaseInitializationRetry(context.Background(), time.Nanosecond))
+	require.False(t, isTransientDatabaseInitializationError(errors.New("permanent migration failure")))
+	require.True(t, isTransientDatabaseInitializationError(transientDatabaseError("08006")))
+}
+
 func TestLatestMigrationBaseline(t *testing.T) {
 	t.Run("empty_fs_returns_baseline", func(t *testing.T) {
 		version, description, hash, err := latestMigrationBaseline(fstest.MapFS{})
