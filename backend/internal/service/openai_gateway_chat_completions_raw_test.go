@@ -241,6 +241,60 @@ func TestForwardAsRawChatCompletions_GrokAPIKeyDefaultsToXAIBaseURLWhenCredentia
 	require.Equal(t, xai.DefaultBaseURL+"/chat/completions", upstream.lastReq.URL.String())
 }
 
+func TestForwardAsRawChatCompletions_OnlyGrokRemovesExternalWebAccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{
+		"model":"grok-4.6",
+		"messages":[{"role":"user","content":"hello"}],
+		"settings":{"external_web_access":true,"keep_setting":"present"},
+		"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"query":{"type":"string"},"browser":{"type":"object","external_web_access":true}}}}}],
+		"stream":false
+	}`)
+	upstreamResponse := `{"id":"chatcmpl_external_web_access","object":"chat.completion","model":"grok-4.6","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+
+	for _, tc := range []struct {
+		name       string
+		platform   string
+		wantAbsent bool
+	}{
+		{name: "Grok recursively removes unsupported field", platform: PlatformGrok, wantAbsent: true},
+		{name: "OpenAI-compatible raw chat retains field", platform: PlatformOpenAI, wantAbsent: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(upstreamResponse)),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			account := rawChatCompletionsTestAccount()
+			account.Platform = tc.platform
+			if tc.platform == PlatformGrok {
+				account.Credentials["api_key"] = "xai-test-key"
+			}
+
+			result, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, "present", gjson.GetBytes(upstream.lastBody, "settings.keep_setting").String())
+			require.True(t, gjson.GetBytes(upstream.lastBody, "tools.0.function.parameters.properties.query").Exists())
+			if tc.wantAbsent {
+				require.NotContains(t, string(upstream.lastBody), "external_web_access")
+				return
+			}
+			require.True(t, gjson.GetBytes(upstream.lastBody, "settings.external_web_access").Bool())
+			require.True(t, gjson.GetBytes(upstream.lastBody, "tools.0.function.parameters.properties.browser.external_web_access").Bool())
+		})
+	}
+}
+
 // TestForwardAsRawChatCompletions_OpenAIAPIKeyMissingCredentialsErrorUnchanged 锁定
 // issue #796 的修复（凭证解析改走 s.GetAccessToken）没有改变已有 OpenAI+APIKey 账号在
 // 缺失 api_key 时的报错文案和"从不触达上游"行为。
