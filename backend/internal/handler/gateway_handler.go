@@ -1979,7 +1979,6 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	if err := h.gatewayService.ForwardCountTokens(c.Request.Context(), c, account, parsedReq); err != nil {
 		reqLog.Error("gateway.count_tokens_forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		// 错误响应已在 ForwardCountTokens 中处理
-		h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionHash)
 		return
 	}
 }
