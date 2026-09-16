@@ -111,7 +111,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		if stripErr != nil {
 			return nil, fmt.Errorf("strip redundant Grok Chat view_image tool: %w", stripErr)
 		}
-		upstreamBody = strippedBody
+		upstreamBody, stripErr = sanitizeGrokUnsupportedFields(strippedBody)
+		if stripErr != nil {
+			return nil, fmt.Errorf("sanitize Grok unsupported fields: %w", stripErr)
+		}
 	}
 	if clientStream {
 		var usageErr error
