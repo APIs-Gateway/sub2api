@@ -10,14 +10,18 @@ const responsesStreamSequenceNextKey = "responses_stream_sequence_next"
 // ObserveResponsesStreamSequence records an already-forwarded Responses event
 // so a later gateway-generated terminal event can continue its ordering.
 func ObserveResponsesStreamSequence(c *gin.Context, payload []byte) {
-	if c == nil || !InboundIsResponses(c) {
-		return
-	}
 	sequence := gjson.GetBytes(payload, "sequence_number")
-	if !sequence.Exists() || sequence.Type != gjson.Number || sequence.Int() < 0 {
+	if !sequence.Exists() || sequence.Type != gjson.Number {
 		return
 	}
-	next := int(sequence.Int()) + 1
+	observeResponsesStreamSequence(c, int(sequence.Int()))
+}
+
+func observeResponsesStreamSequence(c *gin.Context, sequence int) {
+	if c == nil || !InboundIsResponses(c) || sequence < 0 {
+		return
+	}
+	next := sequence + 1
 	if current, ok := c.Get(responsesStreamSequenceNextKey); ok {
 		if value, ok := current.(int); ok && value > next {
 			return
