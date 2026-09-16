@@ -71,6 +71,26 @@ func TestSanitizeAnthropicBodyForBetaTokens_MessageOutputConfigNoopsWithoutMessa
 	}
 }
 
+func TestStripAnthropicBodyFieldUnlessBeta_MalformedBodyIsNoop(t *testing.T) {
+	body := []byte(`{"context_management":{},`)
+
+	out, changed := stripAnthropicBodyFieldUnlessBeta(
+		body, "context_management", "", anthropicBetaContextManagementToken,
+	)
+
+	require.False(t, changed)
+	require.Equal(t, string(body), string(out))
+}
+
+func TestStripAnthropicMessageOutputConfigUnlessBeta_MalformedMessagesIsNoop(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"user","output_config":{"effort":"high"}},`)
+
+	out, changed := stripAnthropicMessageOutputConfigUnlessBeta(body, "")
+
+	require.False(t, changed)
+	require.Equal(t, string(body), string(out))
+}
+
 func TestAnthropicMessageContentHasBody(t *testing.T) {
 	cases := []struct {
 		name string
