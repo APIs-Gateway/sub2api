@@ -35,6 +35,12 @@ func TestWire_IndexFieldsPresentAtZero(t *testing.T) {
 	require.Contains(t, r, "summary_index")
 }
 
+func TestWire_SequenceNumberPresentAtZero(t *testing.T) {
+	m := marshalEvent(t, ResponsesStreamEvent{Type: "response.created", SequenceNumber: 0})
+	require.Contains(t, m, "sequence_number")
+	require.EqualValues(t, 0, m["sequence_number"])
+}
+
 // TestWire_FunctionCallItemAlwaysComplete guards that a function_call item
 // always carries call_id/name/arguments, including arguments:"" on .added.
 func TestWire_FunctionCallItemAlwaysComplete(t *testing.T) {

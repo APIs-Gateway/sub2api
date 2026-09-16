@@ -345,6 +345,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 				)
 				return
 			}
+			observeResponsesStreamSequence(c, event.SequenceNumber)
 		}
 		c.Writer.Flush()
 	}

@@ -30,10 +30,11 @@ type responsesFailedBody struct {
 }
 
 // responsesFailedEvent 是写入 SSE data 行的顶层结构。
-// 故意不带 sequence_number：spec 标记可选，且本函数被调用时无法可靠拿到 last seq。
+// SequenceNumber 始终写出；已透传事件后续的合成终止帧从请求级序列继续编号。
 type responsesFailedEvent struct {
-	Type     string              `json:"type"`
-	Response responsesFailedBody `json:"response"`
+	Type           string              `json:"type"`
+	SequenceNumber int                 `json:"sequence_number"`
+	Response       responsesFailedBody `json:"response"`
 }
 
 // writeResponsesFailedSSE emits a `response.failed` SSE event in the OpenAI
@@ -46,8 +47,8 @@ type responsesFailedEvent struct {
 // 而抛出 "stream closed before response.completed"。
 //
 // 字段集对齐 apicompat.makeResponsesCompletedEvent：id/object/model/status/output/error。
-// 故意不写 sequence_number：本函数被调用时无法可靠拿到当前流的 last sequence，
-// 而 OpenAI spec 将 sequence_number 设为可选；省略避免破坏单调性约束。
+// sequence_number 始终写出。没有已透传事件时从零开始；否则紧随最后一个已写出的
+// 上游 sequence_number，避免破坏客户端要求的单调性。
 //
 // 返回 true 表示已尝试 SSE 写出（不论 Write 是否成功，caller 都应直接 return）。
 // 返回 false 表示 writer 不支持 Flusher，无法以 SSE 形式回报错误；
@@ -66,7 +67,8 @@ func writeResponsesFailedSSEWithCode(c *gin.Context, errCode, message string) bo
 	}
 
 	payload, err := json.Marshal(responsesFailedEvent{
-		Type: "response.failed",
+		Type:           "response.failed",
+		SequenceNumber: service.NextResponsesStreamSequence(c),
 		Response: responsesFailedBody{
 			ID:     synthesizeResponseID(c),
 			Object: "response",
