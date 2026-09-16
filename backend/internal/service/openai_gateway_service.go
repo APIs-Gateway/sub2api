@@ -385,9 +385,9 @@ type OpenAIGatewayService struct {
 	// openaiModelTransient tracks short-lived per (account, model) upstream
 	// failure streaks so a transient 5xx/overload error only cools the failing
 	// model down instead of the whole account (see openai_account_model_transient.go).
-	openaiModelTransient *openAIAccountModelTransientState
-	openaiProxyStreamCircuit *openAIProxyStreamCircuit
-	openaiProxyStreamFailOpenLogAt atomic.Int64
+	openaiModelTransient            *openAIAccountModelTransientState
+	openaiProxyStreamCircuit        *openAIProxyStreamCircuit
+	openaiProxyStreamFailOpenLogAt  atomic.Int64
 
 	openaiWSFallbackUntil               sync.Map // key: int64(accountID), value: time.Time
 	openaiAccountRuntimeBlockUntil      sync.Map // key: int64(accountID), value: time.Time
