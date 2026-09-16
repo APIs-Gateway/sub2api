@@ -6,14 +6,18 @@ import (
 	"time"
 )
 
-// openAIModelTransientFailureWindow/Cooldown tunables govern the short-lived,
-// in-memory (account, model) failure tracker used to cool down a single model
-// on an OpenAI API-key account after repeated transient upstream errors
-// (5xx / overload) without disabling the whole account or requiring an
-// admin-configured temp-unschedulable rule (see shouldCooldownOpenAITransientUpstreamError
-// in openai_account_runtime_block_fastpath.go).
 const (
-	openAIModelTransientFailureWindow = time.Minute
+	// openAIModelTransientStreakTTL bounds how long a failure streak survives
+	// without a new failure. It exists only so the map does not keep state for
+	// account+model pairs that stopped being used; a streak is otherwise reset
+	// by recordSuccess alone.
+	//
+	// It must stay well above the cooldowns. Resetting the streak on a short
+	// wall-clock window makes the breaker's sensitivity depend on request rate:
+	// a gateway called less often than the window never reaches streak 2, so a
+	// broken upstream is never cooled down and every request pays a failed
+	// attempt plus a failover before reaching a healthy account.
+	openAIModelTransientStreakTTL     = 30 * time.Minute
 	openAIModelTransientShortCooldown = 10 * time.Second
 	openAIModelTransientLongCooldown  = 45 * time.Second
 	openAIModelTransientDefaultMax    = 4096
@@ -41,8 +45,8 @@ type openAIAccountModelTransientDecision struct {
 // openAIAccountModelTransientState is a bounded, mutex-guarded map keyed by
 // (accountID, normalized model) that records short transient-failure streaks.
 // It is intentionally in-memory only (not persisted): entries self-expire
-// after openAIModelTransientFailureWindow of inactivity, and the map evicts
-// its least-recently-touched entry once maxEntries is reached.
+// after openAIModelTransientStreakTTL of inactivity, and the map evicts its
+// least-recently-touched entry once maxEntries is reached.
 type openAIAccountModelTransientState struct {
 	mu         sync.Mutex
 	entries    map[openAIAccountModelKey]openAIAccountModelTransientEntry
@@ -76,9 +80,9 @@ func openAIAccountModelTransientKey(accountID int64, model string) (openAIAccoun
 }
 
 // recordFailure records a transient upstream failure for (accountID, model).
-// The second consecutive failure within openAIModelTransientFailureWindow
-// applies a short cooldown; the third and later ones apply a longer cooldown.
-// A gap longer than the window (or a success via recordSuccess) resets the streak.
+// The second consecutive failure applies a short cooldown; the third and later
+// ones apply a longer cooldown. A success resets the streak; inactivity only
+// resets it after openAIModelTransientStreakTTL.
 func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model string, now time.Time) openAIAccountModelTransientDecision {
 	key, ok := openAIAccountModelTransientKey(accountID, model)
 	if s == nil || !ok {
@@ -101,7 +105,7 @@ func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model 
 	if !exists {
 		s.evictOldestLocked()
 	}
-	if !exists || entry.lastFailure.IsZero() || now.Sub(entry.lastFailure) > openAIModelTransientFailureWindow || now.Before(entry.lastFailure) {
+	if !exists || entry.lastFailure.IsZero() || now.Sub(entry.lastFailure) > openAIModelTransientStreakTTL || now.Before(entry.lastFailure) {
 		entry.failureStreak = 0
 		entry.blockUntil = time.Time{}
 	}
@@ -147,7 +151,7 @@ func (s *openAIAccountModelTransientState) recordSuccess(accountID int64, model 
 }
 
 // isBlocked reports whether (accountID, model) is currently within an active
-// cooldown window. A stale entry (no failure within openAIModelTransientFailureWindow)
+// cooldown window. A stale entry (no failure within openAIModelTransientStreakTTL)
 // is lazily evicted and treated as not blocked.
 func (s *openAIAccountModelTransientState) isBlocked(accountID int64, model string, now time.Time) bool {
 	key, ok := openAIAccountModelTransientKey(accountID, model)
@@ -164,7 +168,7 @@ func (s *openAIAccountModelTransientState) isBlocked(accountID int64, model stri
 	if !exists {
 		return false
 	}
-	if !entry.lastFailure.IsZero() && now.Sub(entry.lastFailure) > openAIModelTransientFailureWindow {
+	if !entry.lastFailure.IsZero() && now.Sub(entry.lastFailure) > openAIModelTransientStreakTTL {
 		delete(s.entries, key)
 		return false
 	}
