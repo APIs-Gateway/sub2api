@@ -1,3 +1,5 @@
+//go:build unit
+
 package repository
 
 import (
@@ -51,6 +53,27 @@ func TestInitializeDatabaseWithRetryEventuallySucceeds(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 4, attempts)
 	require.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, delays)
+}
+
+func TestInitializeDatabaseWithRetryUsesDefaultWait(t *testing.T) {
+	err := initializeDatabaseWithRetry(context.Background(), func(context.Context) error {
+		return nil
+	})
+
+	require.NoError(t, err)
+}
+
+func TestWaitForDatabaseInitializationRetry(t *testing.T) {
+	t.Run("returns when the retry timer fires", func(t *testing.T) {
+		require.NoError(t, waitForDatabaseInitializationRetry(context.Background(), 0))
+	})
+
+	t.Run("returns immediately when the context is already canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		require.ErrorIs(t, waitForDatabaseInitializationRetry(ctx, time.Hour), context.Canceled)
+	})
 }
 
 func TestInitializeDatabaseWithRetryFailsFastForPermanentError(t *testing.T) {
