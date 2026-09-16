@@ -162,7 +162,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				Kind:               "failover",
 				Message:            upstreamMsg,
 			})
@@ -229,7 +229,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	reasoningEffort *string,
 	startTime time.Time,
 ) (*ForwardResult, error) {
-	requestID := resp.Header.Get("x-request-id")
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -368,7 +368,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	startTime time.Time,
 	includeUsage bool,
 ) (*ForwardResult, error) {
-	requestID := resp.Header.Get("x-request-id")
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)

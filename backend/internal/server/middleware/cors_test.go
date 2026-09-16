@@ -269,6 +269,25 @@ func TestCORS_MultipleAllowedOrigins(t *testing.T) {
 	})
 }
 
+func TestCORS_AllowedOrigin_ExposesServerTimingHeader(t *testing.T) {
+	cfg := config.CORSConfig{
+		AllowedOrigins:   []string{"https://allowed.example.com"},
+		AllowCredentials: false,
+	}
+	middleware := CORS(cfg)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	c.Request.Header.Set("Origin", "https://allowed.example.com")
+
+	middleware(c)
+
+	// Server-Timing 必须随 ETag 一起对跨域请求暴露，前端才能读取管理端计时头。
+	assert.Equal(t, "ETag, Server-Timing", w.Header().Get("Access-Control-Expose-Headers"),
+		"允许的 origin 应暴露 ETag 与 Server-Timing")
+}
+
 func TestCORS_VaryHeader_SetForSpecificOrigin(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"https://allowed.example.com"},

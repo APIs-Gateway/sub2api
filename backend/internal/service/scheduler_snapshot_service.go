@@ -46,6 +46,72 @@ type schedulerBucketWriteTask struct {
 	token  SchedulerBucketWriteToken
 }
 
+// schedulerAccountQueryKey identifies one account-eligibility query. Single
+// and forced buckets for the same (groupID, platform) issue the exact same
+// DB query, so they can share a result within one rebuild batch. Mixed
+// buckets apply different platform filtering (see loadAccountsFromDB) and
+// are deliberately excluded.
+type schedulerAccountQueryKey struct {
+	groupID  int64
+	platform string
+}
+
+// schedulerAccountQueryCache reuses account-eligibility query results across
+// the single/forced buckets of one rebuildBuckets call. It is deliberately
+// scoped to that one batch: constructed from the batch's prepared tasks and
+// discarded once the batch finishes, never persisted or shared across
+// batches. It is not safe for concurrent use; rebuild batches are processed
+// sequentially.
+type schedulerAccountQueryCache struct {
+	remaining map[schedulerAccountQueryKey]int
+	accounts  map[schedulerAccountQueryKey][]Account
+}
+
+// newSchedulerAccountQueryCache builds the cache from the batch's prepared
+// write tasks (post token-capture), not the raw bucket list, so buckets
+// skipped during prepareBucketWriteTasks (retired/fenced) never inflate the
+// refcount of buckets that will actually be rebuilt.
+func newSchedulerAccountQueryCache(tasks []schedulerBucketWriteTask) *schedulerAccountQueryCache {
+	cache := &schedulerAccountQueryCache{
+		remaining: make(map[schedulerAccountQueryKey]int),
+		accounts:  make(map[schedulerAccountQueryKey][]Account),
+	}
+	for _, task := range tasks {
+		if key, ok := schedulerAccountQueryKeyForBucket(task.bucket); ok {
+			cache.remaining[key]++
+		}
+	}
+	return cache
+}
+
+func schedulerAccountQueryKeyForBucket(bucket SchedulerBucket) (schedulerAccountQueryKey, bool) {
+	if bucket.Mode != SchedulerModeSingle && bucket.Mode != SchedulerModeForced {
+		return schedulerAccountQueryKey{}, false
+	}
+	return schedulerAccountQueryKey{groupID: bucket.GroupID, platform: bucket.Platform}, true
+}
+
+// release accounts for one bucket having consumed (or skipped) its query
+// slot. Once every bucket sharing a key has been released, the cached
+// result is dropped immediately rather than lingering for the rest of the
+// batch.
+func (c *schedulerAccountQueryCache) release(bucket SchedulerBucket) {
+	if c == nil {
+		return
+	}
+	key, ok := schedulerAccountQueryKeyForBucket(bucket)
+	if !ok {
+		return
+	}
+	remaining, ok := c.remaining[key]
+	if !ok || remaining <= 1 {
+		delete(c.remaining, key)
+		delete(c.accounts, key)
+		return
+	}
+	c.remaining[key] = remaining - 1
+}
+
 type schedulerGroupLifecyclePlan struct {
 	active bool
 	tasks  []schedulerBucketWriteTask
@@ -788,7 +854,13 @@ func (s *SchedulerSnapshotService) bucketsForPlatform(platform string, groupIDs 
 
 func (s *SchedulerSnapshotService) rebuildBuckets(ctx context.Context, buckets []SchedulerBucket, reason string) error {
 	tasks, firstErr := s.prepareBucketWriteTasks(ctx, buckets)
-	if err := s.rebuildPreparedBucketTasks(ctx, tasks, reason, false); err != nil && firstErr == nil {
+	// The query cache is intentionally built and consumed only here, scoped to
+	// this one batch. It is not threaded into the full-rebuild path
+	// (prepareAndRebuildFullSnapshot), which processes buckets across many
+	// groups per rebuildPreparedBucketTasks call and has its own DB-call-count
+	// expectations tested separately.
+	queries := newSchedulerAccountQueryCache(tasks)
+	if err := s.rebuildPreparedBucketTasksWithQueryCache(ctx, tasks, reason, false, queries); err != nil && firstErr == nil {
 		firstErr = err
 	}
 	return firstErr
@@ -817,7 +889,7 @@ func (s *SchedulerSnapshotService) prepareBucketWriteTasks(ctx context.Context, 
 }
 
 func (s *SchedulerSnapshotService) rebuildBucketWithToken(ctx context.Context, task schedulerBucketWriteTask, reason string) error {
-	return s.rebuildBucketWithTokenPolicy(ctx, task, reason, false)
+	return s.rebuildBucketWithTokenPolicy(ctx, task, reason, false, nil, nil)
 }
 
 // schedulerSnapshotAccountIDWriter is an optional SchedulerCache capability. When the
@@ -885,22 +957,27 @@ func (b *schedulerBucketRebuildBatch) consume(bucket SchedulerBucket) (key sched
 	return key, b.remaining[key] > 0
 }
 
+// rebuildPreparedBucketTasks is the full-rebuild path's entry point and
+// deliberately runs without a query cache: prepareAndRebuildFullSnapshot
+// calls it once for reopened tasks and once for captured tasks that already
+// span many groups, and its DB-call-count behavior is pinned by
+// scheduler_snapshot_full_rebuild_lifecycle_test.go.
 func (s *SchedulerSnapshotService) rebuildPreparedBucketTasks(ctx context.Context, tasks []schedulerBucketWriteTask, reason string, strict bool) error {
+	return s.rebuildPreparedBucketTasksWithQueryCache(ctx, tasks, reason, strict, nil)
+}
+
+func (s *SchedulerSnapshotService) rebuildPreparedBucketTasksWithQueryCache(ctx context.Context, tasks []schedulerBucketWriteTask, reason string, strict bool, queries *schedulerAccountQueryCache) error {
 	var firstErr error
 	batch := newSchedulerBucketRebuildBatch(s.cache, tasks)
 	for _, task := range tasks {
-		if err := s.rebuildBucketWithTokenPolicyAndBatch(ctx, task, reason, strict, batch); err != nil && firstErr == nil {
+		if err := s.rebuildBucketWithTokenPolicy(ctx, task, reason, strict, batch, queries); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
 }
 
-func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicy(ctx context.Context, task schedulerBucketWriteTask, reason string, strict bool) error {
-	return s.rebuildBucketWithTokenPolicyAndBatch(ctx, task, reason, strict, nil)
-}
-
-// rebuildBucketWithTokenPolicyAndBatch rebuilds one bucket. When batch is non-nil and the
+// rebuildBucketWithTokenPolicy rebuilds one bucket. When batch is non-nil and the
 // configured cache supports it, a bucket that shares its account-load key with an already
 // successfully published bucket earlier in the same batch republishes by account ID only
 // (SetSnapshotByAccountIDs). A bucket that is the first in the batch to see its key, and
@@ -910,7 +987,10 @@ func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicy(ctx context.Cont
 // key) keeps going through the original SetSnapshot path. A failed publish never marks a
 // key as reusable, so a later bucket sharing that key always retries its own full publish
 // instead of silently reusing a partial or non-existent result.
-func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicyAndBatch(ctx context.Context, task schedulerBucketWriteTask, reason string, strict bool, batch *schedulerBucketRebuildBatch) error {
+func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicy(ctx context.Context, task schedulerBucketWriteTask, reason string, strict bool, batch *schedulerBucketRebuildBatch, queries *schedulerAccountQueryCache) error {
+	if queries != nil {
+		defer queries.release(task.bucket)
+	}
 	if s.cache == nil {
 		return ErrSchedulerCacheNotReady
 	}
@@ -949,7 +1029,7 @@ func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicyAndBatch(ctx cont
 		}
 	}
 
-	accounts, err := s.loadAccountsFromDB(rebuildCtx, bucket, bucket.Mode == SchedulerModeMixed)
+	accounts, err := s.loadAccountsForRebuild(rebuildCtx, bucket, queries)
 	if err != nil {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild failed: bucket=%s reason=%s err=%v", bucket.String(), reason, err)
 		return err
@@ -1453,6 +1533,34 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 		return s.accountRepo.ListSchedulableByPlatform(ctx, bucket.Platform)
 	}
 	return s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, bucket.Platform)
+}
+
+// loadAccountsForRebuild loads accounts for a single/forced bucket through
+// the batch's query cache when one is provided, reusing the same query's
+// result across every bucket in the batch that shares (groupID, platform).
+// Mixed buckets, and any call outside a cached batch (queries == nil, e.g.
+// the full-rebuild path or single-task rebuilds), always query the DB
+// directly. A failed query is never cached, so the next bucket sharing the
+// key retries it against the DB.
+func (s *SchedulerSnapshotService) loadAccountsForRebuild(ctx context.Context, bucket SchedulerBucket, queries *schedulerAccountQueryCache) ([]Account, error) {
+	key, cacheable := schedulerAccountQueryKeyForBucket(bucket)
+	if queries == nil || !cacheable {
+		return s.loadAccountsFromDB(ctx, bucket, bucket.Mode == SchedulerModeMixed)
+	}
+	if accounts, ok := queries.accounts[key]; ok {
+		return accounts, nil
+	}
+	if queries.remaining[key] <= 1 {
+		// Last (or only) bucket needing this key in the batch: no point
+		// caching a result nobody else will read.
+		return s.loadAccountsFromDB(ctx, bucket, false)
+	}
+	accounts, err := s.loadAccountsFromDB(ctx, bucket, false)
+	if err != nil {
+		return nil, err
+	}
+	queries.accounts[key] = accounts
+	return accounts, nil
 }
 
 func (s *SchedulerSnapshotService) bucketFor(groupID *int64, platform string, mode string) SchedulerBucket {

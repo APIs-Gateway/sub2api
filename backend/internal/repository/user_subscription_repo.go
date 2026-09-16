@@ -449,14 +449,26 @@ func (r *userSubscriptionRepository) UpdateNotes(ctx context.Context, subscripti
 	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 }
 
+// ActivateWindows sets the initial daily/weekly/monthly window starts on first use.
+// The update is conditioned on all three window starts still being NULL: concurrent
+// first-use requests can race to activate the same subscription, and an unconditional
+// write would let a delayed/stale request clobber window starts (and any usage already
+// recorded against them) set by a request that activated first or by a manual reset
+// that landed in between. affected==0 is therefore an expected no-op, not an error.
 func (r *userSubscriptionRepository) ActivateWindows(ctx context.Context, id int64, start time.Time) error {
 	client := clientFromContext(ctx, r.client)
-	_, err := client.UserSubscription.UpdateOneID(id).
+	affected, err := client.UserSubscription.Update().
+		Where(
+			usersubscription.IDEQ(id),
+			usersubscription.DailyWindowStartIsNil(),
+			usersubscription.WeeklyWindowStartIsNil(),
+			usersubscription.MonthlyWindowStartIsNil(),
+		).
 		SetDailyWindowStart(start).
 		SetWeeklyWindowStart(start).
 		SetMonthlyWindowStart(start).
 		Save(ctx)
-	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	return r.translateConditionalWindowReset(ctx, client, id, affected, err)
 }
 
 func (r *userSubscriptionRepository) ResetUsageWindows(ctx context.Context, id int64, resetDaily, resetWeekly, resetMonthly bool, newWindowStart time.Time) error {

@@ -741,7 +741,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 				Kind:               "failover",
 				Message:            upstreamMsg,
@@ -762,7 +762,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			ErrorType:         "upstream_error",
 			Code:              "unexpected_streaming_response",
 			Message:           "Upstream returned a streaming image response while streaming is disabled",
-			UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id")),
+			UpstreamRequestID: upstreamRequestIDFromHeader(resp.Header),
 		}
 		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
 		return nil, upErr
@@ -776,7 +776,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		if err != nil {
 			if streamCount > 0 {
 				return &OpenAIForwardResult{
-					RequestID:        resp.Header.Get("x-request-id"),
+					RequestID:        upstreamRequestIDFromHeader(resp.Header),
 					Usage:            streamUsage,
 					Model:            requestModel,
 					UpstreamModel:    upstreamModel,
@@ -797,7 +797,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		imageOutputSizes := streamSizes
 		firstTokenMs = ttft
 		return &OpenAIForwardResult{
-			RequestID:        resp.Header.Get("x-request-id"),
+			RequestID:        upstreamRequestIDFromHeader(resp.Header),
 			Usage:            usage,
 			Model:            requestModel,
 			UpstreamModel:    upstreamModel,
@@ -820,7 +820,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			imageCount = nonStreamCount
 		}
 		return &OpenAIForwardResult{
-			RequestID:        resp.Header.Get("x-request-id"),
+			RequestID:        upstreamRequestIDFromHeader(resp.Header),
 			Usage:            usage,
 			Model:            requestModel,
 			UpstreamModel:    upstreamModel,
@@ -900,7 +900,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKeyAsyncBridge(
 			ErrorType:         "upstream_error",
 			Code:              "missing_image_task_id",
 			Message:           "Upstream image async response did not include a task id",
-			UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id")),
+			UpstreamRequestID: upstreamRequestIDFromHeader(resp.Header),
 		}
 		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
 		return nil, upErr
@@ -1051,7 +1051,7 @@ func (s *OpenAIGatewayService) writeOpenAIImagesAsyncBridgeFinal(
 		imageCount = parsed.N
 	}
 	return &OpenAIForwardResult{
-		RequestID:        strings.TrimSpace(header.Get("x-request-id")),
+		RequestID:        upstreamRequestIDFromHeader(header),
 		Usage:            usage,
 		Model:            requestModel,
 		UpstreamModel:    upstreamModel,
@@ -1233,7 +1233,7 @@ func openAIImagesAsyncTaskFailedError(status string, header http.Header, body []
 	}
 	requestID := ""
 	if header != nil {
-		requestID = strings.TrimSpace(header.Get("x-request-id"))
+		requestID = upstreamRequestIDFromHeader(header)
 	}
 	return &OpenAIImagesUpstreamError{
 		StatusCode:        http.StatusBadGateway,
@@ -2165,7 +2165,7 @@ func newOpenAIImageStatusError(resp *req.Response, fallback string, errorBodyRea
 
 	if resp.Response != nil {
 		headers = resp.Header.Clone()
-		requestID = strings.TrimSpace(resp.Header.Get("x-request-id"))
+		requestID = upstreamRequestIDFromHeader(resp.Header)
 		if resp.Request != nil && resp.Request.URL != nil {
 			requestURL = resp.Request.URL.String()
 		}

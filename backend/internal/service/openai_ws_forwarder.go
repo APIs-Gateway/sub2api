@@ -320,38 +320,6 @@ func shouldLogOpenAIWSBufferedEvent(idx int) bool {
 	return false
 }
 
-func openAIWSEventMayContainModel(eventType string) bool {
-	switch eventType {
-	case "response.created",
-		"response.in_progress",
-		"response.completed",
-		"response.done",
-		"response.failed",
-		"response.incomplete",
-		"response.cancelled",
-		"response.canceled":
-		return true
-	default:
-		trimmed := strings.TrimSpace(eventType)
-		if trimmed == eventType {
-			return false
-		}
-		switch trimmed {
-		case "response.created",
-			"response.in_progress",
-			"response.completed",
-			"response.done",
-			"response.failed",
-			"response.incomplete",
-			"response.cancelled",
-			"response.canceled":
-			return true
-		default:
-			return false
-		}
-	}
-}
-
 func openAIWSEventMayContainToolCalls(eventType string) bool {
 	eventType = strings.TrimSpace(eventType)
 	if eventType == "" {
@@ -2186,11 +2154,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	responseID := ""
 	var finalResponse []byte
 	wroteDownstream := false
-	needModelReplace := originalModel != mappedModel
-	var mappedModelBytes []byte
-	if needModelReplace && mappedModel != "" {
-		mappedModelBytes = []byte(mappedModel)
-	}
+	upstreamModelChecked := false
 	bufferedStreamEvents := make([][]byte, 0, 4)
 	eventCount := 0
 	tokenEventCount := 0
@@ -2370,6 +2334,23 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			responseID = eventResponseID
 		}
 
+		// 上游模型不一致拦截：只看首个带 model 的事件，且必须在 alignClientVisibleModel
+		// 改写之前比对，否则 B 已被覆盖。命中时上游仍会继续推本 turn 的事件，连接不能回池。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel(message); got != "" {
+				upstreamModelChecked = true
+				// 首个带 model 的事件若本身就是 completed 类事件，审计 usage 取该事件里的值。
+				checkUsage := *usage
+				if openAIWSEventShouldParseUsage(eventType) {
+					parseOpenAIWSResponseUsageFromCompletedEvent(message, &checkUsage)
+				}
+				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, nil, sentModelForCheck(mappedModel, originalModel), got, reqStream, !wroteDownstream, checkUsage); ferr != nil {
+					lease.MarkBroken()
+					return nil, ferr
+				}
+			}
+		}
+
 		isTokenEvent := isOpenAIWSTokenEvent(eventType)
 		if isTokenEvent {
 			tokenEventCount++
@@ -2396,10 +2377,13 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			)
 		}
 
+		// rawMessage 保留对齐前的上游原文，供下面 response.failed 的 cyber 标记与 error 事件的
+		// failover 错误体使用，保证审计 / 切号记录里是上游真实 model。
+		rawMessage := message
 		if !clientDisconnected {
-			if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && bytes.Contains(message, mappedModelBytes) {
-				message = replaceOpenAIWSMessageModel(message, mappedModel, originalModel)
-			}
+			// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
+			//（上游真实值已在上面的比对里进了审计；助手内部有 "model" 子串快速路径）。
+			message = alignClientVisibleModel(message, originalModel)
 			if openAIWSEventMayContainToolCalls(eventType) && openAIWSMessageLikelyContainsToolCalls(message) {
 				if corrected, changed := s.toolCorrector.CorrectToolCallsInSSEBytes(message); changed {
 					message = corrected
@@ -2416,7 +2400,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				MarkOpsCyberPolicy(c, CyberPolicyMark{
 					Code:                     code,
 					Message:                  msg,
-					Body:                     truncateString(string(message), 4096),
+					Body:                     truncateString(string(rawMessage), 4096),
 					UpstreamStatus:           http.StatusOK,
 					UpstreamInTok:            usage.InputTokens,
 					UpstreamOutTok:           usage.OutputTokens,
@@ -2477,7 +2461,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			if !wroteDownstream && isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw) && ShouldSwitchAccountOn429(account.ID) {
 				return nil, &UpstreamFailoverError{
 					StatusCode:      http.StatusTooManyRequests,
-					ResponseBody:    append([]byte(nil), message...),
+					ResponseBody:    append([]byte(nil), rawMessage...),
 					ResponseHeaders: cloneHeader(lease.HandshakeHeaders()),
 				}
 			}
@@ -2556,9 +2540,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			return nil, errors.New("ws finished without final response")
 		}
 
-		if needModelReplace {
-			finalResponse = s.replaceModelInResponseBody(finalResponse, mappedModel, originalModel)
-		}
+		// 客户端可见 model 对齐（审计已在事件循环里取走真实值）。
+		finalResponse = alignClientVisibleModel(finalResponse, originalModel)
 		finalResponse = s.correctToolCallsInResponseBody(finalResponse)
 		populateOpenAIUsageFromResponseJSON(finalResponse, usage)
 		if responseID == "" {
@@ -3039,6 +3022,15 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		currentBridgePayload := firstPayload
 		var bridgeReplayInput []json.RawMessage
 		bridgeReplayInputExists := false
+		// bridgeToolState carries the client-tool lowering mapping across
+		// turns of this WS HTTP bridge session so a follow-up turn that
+		// omits "tools" (the client relies on the upstream to remember an
+		// earlier turn's declaration) still gets lowered/restored
+		// correctly. It is plain function-local state: it lives only for
+		// this turn loop's stack frame, which is scoped 1:1 to this single
+		// WS connection, so it never needs explicit cleanup and can never
+		// leak into another connection or account's turns.
+		var bridgeToolState openAIWSHTTPBridgeToolState
 		for turn := 1; ; turn++ {
 			if turn > 1 && hooks != nil && hooks.BeforeRequest != nil {
 				if err := hooks.BeforeRequest(turn, currentBridgePayload.payloadRaw, currentBridgePayload.originalModel); err != nil {
@@ -3099,6 +3091,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				currentBridgePayload.imageSizeTier,
 				currentBridgePayload.imageInputSize,
 				turn,
+				bridgeToolState,
 				writeClientMessage,
 			)
 			if hooks != nil && hooks.AfterTurn != nil {
@@ -3116,6 +3109,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				bridgeReplayInput = append(bridgeReplayInput, cloneOpenAIWSRawMessages(result.wsReplayInput)...)
 				bridgeReplayInputExists = true
 			}
+			bridgeToolState = result.wsClientToolState
 			if bridgeTurnState := strings.TrimSpace(result.ResponseHeaders.Get(openAIWSTurnStateHeader)); bridgeTurnState != "" {
 				turnState = bridgeTurnState
 				if stateStore != nil && sessionHash != "" {
@@ -3333,6 +3327,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		turnStart := time.Now()
 		wroteDownstream := false
+		upstreamModelChecked := false
 		if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); err != nil {
 			return nil, wrapOpenAIWSIngressTurnError(
 				"write_upstream",
@@ -3366,16 +3361,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		replayCollector := &openAIWSToolCallReplayCollector{}
 		firstEventType := ""
 		lastEventType := ""
-		needModelReplace := false
 		clientDisconnected := false
 		mappedModel := ""
-		var mappedModelBytes []byte
 		if originalModel != "" {
 			mappedModel = normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
-			needModelReplace = mappedModel != "" && mappedModel != originalModel
-			if needModelReplace {
-				mappedModelBytes = []byte(mappedModel)
-			}
 		}
 		for {
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, s.openAIWSReadTimeout())
@@ -3473,6 +3462,22 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					}
 				}
 			}
+			// 上游模型不一致拦截：首个带 model 的事件、改写前比对；命中时本 turn 上游仍在推事件，连接不能回池。
+			// 与 bridge 及本函数其它 failover 一致，只有首轮且未向客户端写出时才拦截并换号
+			// （handler 换号后会用 wsFirstMessage 重放第 1 轮）；turn>=2 只打标不拦截。
+			if !upstreamModelChecked {
+				if got := extractUpstreamResponseModel(upstreamMessage); got != "" {
+					upstreamModelChecked = true
+					checkUsage := usage
+					if openAIWSEventShouldParseUsage(eventType) {
+						parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &checkUsage)
+					}
+					if ferr := s.checkUpstreamModelMismatch(c, account, responseID, nil, sentModelForCheck(mappedModel, originalModel), got, reqStream, turn == 1 && !wroteDownstream, checkUsage); ferr != nil {
+						lease.MarkBroken()
+						return nil, ferr
+					}
+				}
+			}
 			isTokenEvent := isOpenAIWSTokenEvent(eventType)
 			if isTokenEvent {
 				tokenEventCount++
@@ -3506,9 +3511,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 
 			if !clientDisconnected {
-				if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && bytes.Contains(upstreamMessage, mappedModelBytes) {
-					upstreamMessage = replaceOpenAIWSMessageModel(upstreamMessage, mappedModel, originalModel)
-				}
+				// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
+				//（turn>=2 只打标不拦截时尤其重要：上游真实值只进审计 mark）。
+				upstreamMessage = alignClientVisibleModel(upstreamMessage, originalModel)
 				if openAIWSEventMayContainToolCalls(eventType) && openAIWSMessageLikelyContainsToolCalls(upstreamMessage) {
 					if corrected, changed := s.toolCorrector.CorrectToolCallsInSSEBytes(upstreamMessage); changed {
 						upstreamMessage = corrected
@@ -4440,36 +4445,6 @@ func isOpenAIWSTokenEvent(eventType string) bool {
 	// 不能把它们当作 token event，否则当上游没有可识别的 delta 时，
 	// firstTokenMs 会被填到终止时刻，等于把"总耗时"误报为"首 token 延迟"。
 	return false
-}
-
-func replaceOpenAIWSMessageModel(message []byte, fromModel, toModel string) []byte {
-	if len(message) == 0 {
-		return message
-	}
-	if strings.TrimSpace(fromModel) == "" || strings.TrimSpace(toModel) == "" || fromModel == toModel {
-		return message
-	}
-	if !bytes.Contains(message, []byte(`"model"`)) || !bytes.Contains(message, []byte(fromModel)) {
-		return message
-	}
-	modelValues := gjson.GetManyBytes(message, "model", "response.model")
-	replaceModel := modelValues[0].Exists() && modelValues[0].Str == fromModel
-	replaceResponseModel := modelValues[1].Exists() && modelValues[1].Str == fromModel
-	if !replaceModel && !replaceResponseModel {
-		return message
-	}
-	updated := message
-	if replaceModel {
-		if next, err := sjson.SetBytes(updated, "model", toModel); err == nil {
-			updated = next
-		}
-	}
-	if replaceResponseModel {
-		if next, err := sjson.SetBytes(updated, "response.model", toModel); err == nil {
-			updated = next
-		}
-	}
-	return updated
 }
 
 func populateOpenAIUsageFromResponseJSON(body []byte, usage *OpenAIUsage) {

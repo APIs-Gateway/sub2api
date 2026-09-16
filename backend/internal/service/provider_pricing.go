@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"math"
 	"net/url"
 	"strings"
@@ -18,9 +19,10 @@ const (
 
 var hvoyProviderPricingModels = []hvoyProviderPricingModelRef{
 	{modelName: "gpt-5.5", groupName: HvoyProviderPricingGroupName},
-	{modelName: "gpt-5.4", groupName: HvoyProviderPricingGroupName},
 	{modelName: "gpt-5.6-sol", groupName: HvoyProviderPricingGroupName},
 	{modelName: "gpt-5.6-terra", groupName: HvoyProviderPricingGroupName},
+	{modelName: "gpt-5.6-luna", groupName: HvoyProviderPricingGroupName},
+	{modelName: "gpt-6-astra", groupName: HvoyProviderPricingGroupName},
 }
 
 type hvoyProviderPricingModelRef struct {
@@ -57,7 +59,46 @@ type HvoyProviderPricingModel struct {
 	Note               string   `json:"note"`
 }
 
-func (s *PricingService) BuildHvoyProviderPricing(paymentMultiplier float64, siteName, frontendURL string, now time.Time) HvoyProviderPricingResponse {
+// HvoyProviderGroupLister is the slice of GroupRepository the provider pricing
+// endpoint needs to read each published group's rate multiplier.
+type HvoyProviderGroupLister interface {
+	ListActive(ctx context.Context) ([]Group, error)
+}
+
+// LoadHvoyProviderGroupMultipliers maps every published hvoy group name to the
+// rate multiplier of the matching active group. Names are matched after
+// collapsing whitespace and case so the public identifier stays stable even if
+// the admin-side group name carries extra spaces.
+func LoadHvoyProviderGroupMultipliers(ctx context.Context, lister HvoyProviderGroupLister) (map[string]float64, error) {
+	if lister == nil {
+		return map[string]float64{}, nil
+	}
+	groups, err := lister.ListActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]float64, len(groups))
+	for _, group := range groups {
+		byName[normalizeHvoyGroupName(group.Name)] = group.RateMultiplier
+	}
+	out := make(map[string]float64, len(hvoyProviderPricingModels))
+	for _, model := range hvoyProviderPricingModels {
+		if multiplier, ok := byName[normalizeHvoyGroupName(model.groupName)]; ok {
+			out[model.groupName] = multiplier
+		}
+	}
+	return out, nil
+}
+
+func normalizeHvoyGroupName(name string) string {
+	return strings.Join(strings.Fields(strings.ToLower(name)), " ")
+}
+
+// BuildHvoyProviderPricing renders the published price list. groupMultipliers
+// holds each group's rate multiplier (the "Nx" usage rate billing applies on
+// top of the official price); a missing or non-positive entry publishes the
+// model at 1x with a note so the gap is visible to hvoy.
+func (s *PricingService) BuildHvoyProviderPricing(paymentMultiplier float64, groupMultipliers map[string]float64, siteName, frontendURL string, now time.Time) HvoyProviderPricingResponse {
 	multiplier := normalizeBalanceRechargeMultiplier(paymentMultiplier)
 	updatedAt := s.LastUpdated()
 	if updatedAt.IsZero() {
@@ -80,16 +121,17 @@ func (s *PricingService) BuildHvoyProviderPricing(paymentMultiplier float64, sit
 			continue
 		}
 
+		rateMultiplier, note := hvoyGroupRateMultiplier(groupMultipliers, model.groupName)
 		models = append(models, HvoyProviderPricingModel{
 			ModelName:          model.modelName,
 			GroupName:          model.groupName,
-			InputPrice:         usdPerTokenToCNYPerMTok(pricing.InputCostPerToken, multiplier),
-			OutputPrice:        optionalUSDPerTokenToCNYPerMTok(pricing.OutputCostPerToken, multiplier),
-			CacheInputPrice:    optionalUSDPerTokenToCNYPerMTok(pricing.CacheReadInputTokenCost, multiplier),
-			CacheCreatePrice:   optionalUSDPerTokenToCNYPerMTok(pricing.CacheCreationInputTokenCost, multiplier),
-			CacheCreatePrice1H: optionalUSDPerTokenToCNYPerMTok(pricing.CacheCreationInputTokenCostAbove1hr, multiplier),
+			InputPrice:         usdPerTokenToCNYPerMTok(pricing.InputCostPerToken*rateMultiplier, multiplier),
+			OutputPrice:        optionalUSDPerTokenToCNYPerMTok(pricing.OutputCostPerToken*rateMultiplier, multiplier),
+			CacheInputPrice:    optionalUSDPerTokenToCNYPerMTok(pricing.CacheReadInputTokenCost*rateMultiplier, multiplier),
+			CacheCreatePrice:   optionalUSDPerTokenToCNYPerMTok(pricing.CacheCreationInputTokenCost*rateMultiplier, multiplier),
+			CacheCreatePrice1H: optionalUSDPerTokenToCNYPerMTok(pricing.CacheCreationInputTokenCostAbove1hr*rateMultiplier, multiplier),
 			Enabled:            true,
-			Note:               "",
+			Note:               note,
 		})
 	}
 
@@ -106,6 +148,17 @@ func (s *PricingService) BuildHvoyProviderPricing(paymentMultiplier float64, sit
 			Models:     models,
 		},
 	}
+}
+
+func hvoyGroupRateMultiplier(groupMultipliers map[string]float64, groupName string) (float64, string) {
+	rate, ok := groupMultipliers[groupName]
+	if !ok {
+		return 1, "group rate multiplier unavailable"
+	}
+	if math.IsNaN(rate) || math.IsInf(rate, 0) || rate <= 0 {
+		return 1, "group rate multiplier invalid"
+	}
+	return rate, ""
 }
 
 func (s *PricingService) LastUpdated() time.Time {

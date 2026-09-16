@@ -77,25 +77,29 @@ type fakeJobRepository struct {
 	retryErr    error
 	failErr     error
 
-	createdSnapshot PromptSnapshot
-	markedCode      string
-	completedResult *NormalizedResult
-	completedStore  bool
-	completeCount   int
-	eventCount      int
-	retryAt         time.Time
-	retryCode       string
-	retried         int
-	failedCode      string
-	failed          int
-	refreshes       int
+	createdSnapshot        PromptSnapshot
+	markedCode             string
+	completedJob           *Job
+	completedResult        *NormalizedResult
+	completedStore         bool
+	completedStoreFullText bool
+	completeCount          int
+	eventCount             int
+	retryAt                time.Time
+	retryCode              string
+	retried                int
+	failedCode             string
+	failed                 int
+	refreshes              int
 
 	claimQueue []*Job
 
-	recordBlockingCalls    int
-	recordBlockingSnapshot PromptSnapshot
-	recordBlockingResult   *NormalizedResult
-	recordBlockingErr      error
+	recordBlockingCalls            int
+	recordBlockingSnapshot         PromptSnapshot
+	recordBlockingResult           *NormalizedResult
+	recordBlockingErr              error
+	recordBlockingStorePassEvents  bool
+	recordBlockingStoreFullPrompts bool
 }
 
 func (r *fakeJobRepository) record(value string) {
@@ -146,11 +150,11 @@ func (r *fakeJobRepository) RefreshLease(context.Context, int64, int64, time.Tim
 	r.refreshes++
 	return r.refreshErr
 }
-func (r *fakeJobRepository) Complete(_ context.Context, _ *Job, result *NormalizedResult, storePass bool) (*Event, error) {
+func (r *fakeJobRepository) Complete(_ context.Context, job *Job, result *NormalizedResult, storePass, storeFullPrompts bool) (*Event, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.completeCount++
-	r.completedResult, r.completedStore = result, storePass
+	r.completedJob, r.completedResult, r.completedStore, r.completedStoreFullText = job, result, storePass, storeFullPrompts
 	if r.completeErr != nil {
 		return nil, r.completeErr
 	}
@@ -178,11 +182,12 @@ func (r *fakeJobRepository) ReclaimStale(context.Context, time.Time, time.Time, 
 	return 0, nil
 }
 func (r *fakeJobRepository) QueueStats(context.Context) (QueueStats, error) { return QueueStats{}, nil }
-func (r *fakeJobRepository) RecordBlocking(_ context.Context, snapshot PromptSnapshot, _ int64, result *NormalizedResult, _ bool) (*Event, error) {
+func (r *fakeJobRepository) RecordBlocking(_ context.Context, snapshot PromptSnapshot, _ int64, result *NormalizedResult, storePassEvents, storeFullPrompts bool) (*Event, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.recordBlockingCalls++
 	r.recordBlockingSnapshot, r.recordBlockingResult = snapshot, result
+	r.recordBlockingStorePassEvents, r.recordBlockingStoreFullPrompts = storePassEvents, storeFullPrompts
 	return nil, r.recordBlockingErr
 }
 
@@ -391,6 +396,39 @@ func TestWorkerCompletesPassWithoutEventRefreshesEveryChunkAndDeletesPayload(t *
 	require.Equal(t, []int64{51}, payload.deleted)
 	require.Equal(t, int64(1), metrics.Snapshot().Total)
 	require.Equal(t, int64(1), metrics.Snapshot().Allowed)
+}
+
+// TestWorkerThreadsStoreFullPromptsFromScanTextOnlyWhenEnabled proves the
+// async path reconstructs job.Snapshot.FullPrompt from the transient Redis
+// scan payload (the prompt_audit_jobs row itself never carries it) only when
+// cfg.StoreFullPrompts is enabled, and threads the same flag into Complete.
+func TestWorkerThreadsStoreFullPromptsFromScanTextOnlyWhenEnabled(t *testing.T) {
+	scanner := PromptScannerFunc(func(_ context.Context, endpoint ActiveEndpoint, _ string, _ []string) (*NormalizedResult, error) {
+		return &NormalizedResult{Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow, Safety: "Safe", Categories: []string{}, MatchedScanners: []string{}, ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{}, GuardEndpointID: endpoint.ID}, nil
+	})
+
+	t.Run("disabled leaves FullPrompt empty", func(t *testing.T) {
+		repo := &fakeJobRepository{}
+		payload := &fakePayloadStore{values: map[int64]string{51: "raw scan text"}}
+		runner := NewRunner(&fakeConfigStore{cfg: asyncConfig(), active: true}, repo, payload, scanner, NewAtomicMetrics())
+		runner.clock = fixedClock{now: time.Unix(100, 0).UTC()}
+		require.NoError(t, runner.processJob(context.Background(), 0, asyncConfig(), workerJob(1, 3)))
+		require.False(t, repo.completedStoreFullText)
+		require.Empty(t, repo.completedJob.Snapshot.FullPrompt)
+	})
+
+	t.Run("enabled reconstructs FullPrompt from the scan payload", func(t *testing.T) {
+		cfg := asyncConfig()
+		cfg.StoreFullPrompts = true
+		repo := &fakeJobRepository{}
+		payload := &fakePayloadStore{values: map[int64]string{51: "PROMPT_CANARY_worker_full_prompt scan text"}}
+		runner := NewRunner(&fakeConfigStore{cfg: cfg, active: true}, repo, payload, scanner, NewAtomicMetrics())
+		runner.clock = fixedClock{now: time.Unix(100, 0).UTC()}
+		require.NoError(t, runner.processJob(context.Background(), 0, cfg, workerJob(1, 3)))
+		require.True(t, repo.completedStoreFullText)
+		require.Equal(t, FullPromptFromScanText("PROMPT_CANARY_worker_full_prompt scan text"), repo.completedJob.Snapshot.FullPrompt)
+		require.Contains(t, repo.completedJob.Snapshot.FullPrompt, "PROMPT_CANARY_worker_full_prompt")
+	})
 }
 
 func TestWorkerRetryBackoffTerminalFailureAndFailover(t *testing.T) {

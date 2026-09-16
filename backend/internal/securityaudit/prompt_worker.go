@@ -140,6 +140,13 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 	if err != nil {
 		return r.finishFailure(ctx, job, &GuardError{Code: "payload_missing", Retryable: false, Cause: err})
 	}
+	// The job row only ever carries redacted metadata (prompt_audit_jobs has no
+	// full_prompt column); when store_full_prompts is enabled the full prompt
+	// for the audit event is reconstructed here, in memory, from the transient
+	// Redis scan payload and only flows into Complete below.
+	if cfg.StoreFullPrompts {
+		job.Snapshot.FullPrompt = FullPromptFromScanText(scanText)
+	}
 	endpoints := cfg.EnabledEndpoints()
 	if len(endpoints) == 0 {
 		return r.finishFailure(ctx, job, &GuardError{Code: "no_enabled_endpoint", Retryable: true})
@@ -186,7 +193,7 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 		"action": aggregated.Action, "chunk_total": aggregated.ChunkTotal,
 		"latency_ms": aggregated.LatencyMS, "guard_endpoint_id": aggregated.GuardEndpointID, "status": "completed",
 	}))
-	event, err := r.repo.Complete(ctx, job, aggregated, cfg.StorePassEvents)
+	event, err := r.repo.Complete(ctx, job, aggregated, cfg.StorePassEvents, cfg.StoreFullPrompts)
 	if err != nil {
 		return err
 	}

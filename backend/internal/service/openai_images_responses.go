@@ -868,7 +868,7 @@ func openAIImagesUpstreamErrorFromHTTP(statusCode int, header http.Header, body 
 	}
 	requestID := ""
 	if header != nil {
-		requestID = strings.TrimSpace(header.Get("x-request-id"))
+		requestID = upstreamRequestIDFromHeader(header)
 	}
 	return &OpenAIImagesUpstreamError{
 		StatusCode:        statusCode,
@@ -946,7 +946,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 			StatusCode:        status,
 			ErrorType:         errType,
 			Message:           errMsg,
-			UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id")),
+			UpstreamRequestID: upstreamRequestIDFromHeader(resp.Header),
 		}
 		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
 		return nil, upErr
@@ -961,7 +961,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
@@ -970,7 +970,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 			StatusCode:        http.StatusInternalServerError,
 			ErrorType:         "upstream_error",
 			Message:           "Upstream gateway error",
-			UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id")),
+			UpstreamRequestID: upstreamRequestIDFromHeader(resp.Header),
 		}
 		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
 		return nil, upErr
@@ -991,7 +991,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 		AccountID:          account.ID,
 		AccountName:        account.Name,
 		UpstreamStatusCode: resp.StatusCode,
-		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 		Kind:               kind,
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
@@ -1844,7 +1844,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 				Kind:               "failover",
 				Message:            upstreamMsg,
@@ -1872,7 +1872,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		if err != nil {
 			if imageCount > 0 {
 				return &OpenAIForwardResult{
-					RequestID:        resp.Header.Get("x-request-id"),
+					RequestID:        upstreamRequestIDFromHeader(resp.Header),
 					Usage:            usage,
 					Model:            requestModel,
 					UpstreamModel:    requestModel,
@@ -1916,7 +1916,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		imageCount = parsed.N
 	}
 	return &OpenAIForwardResult{
-		RequestID:        resp.Header.Get("x-request-id"),
+		RequestID:        upstreamRequestIDFromHeader(resp.Header),
 		Usage:            usage,
 		Model:            requestModel,
 		UpstreamModel:    requestModel,
@@ -1979,7 +1979,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 		statusCode := http.StatusBadGateway
 		if resp != nil {
 			headers = resp.Header.Clone()
-			requestID = strings.TrimSpace(resp.Header.Get("x-request-id"))
+			requestID = upstreamRequestIDFromHeader(resp.Header)
 		}
 		kind := "failover"
 		if responseWritten {
@@ -2027,7 +2027,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	if resp != nil {
 		headers = resp.Header.Clone()
 		if requestID == "" {
-			requestID = strings.TrimSpace(resp.Header.Get("x-request-id"))
+			requestID = upstreamRequestIDFromHeader(resp.Header)
 		}
 	}
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{

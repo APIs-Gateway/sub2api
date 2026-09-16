@@ -85,7 +85,8 @@ func TestOpenAIGatewayService_Forward_FailoverReparsesCachedBodyForNextAccount(t
 				{
 					StatusCode: http.StatusOK,
 					Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-ok-b"}},
-					Body:       io.NopCloser(strings.NewReader(`{"id":"resp_123","status":"completed","model":"ok","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)),
+					// 上游回显的 model 必须与第二个账号实际发出的模型一致，否则会被上游模型不一致拦截判为 failover。
+					Body: io.NopCloser(strings.NewReader(`{"id":"resp_123","status":"completed","model":"` + tt.wantSecond + `","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)),
 				},
 			}}
 			svc := &OpenAIGatewayService{httpUpstream: upstream}

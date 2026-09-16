@@ -74,3 +74,106 @@ func (s *AccountRepoSuite) TestListWithFilters_SortByUpstreamBillingRateWithNull
 		s.Require().Equal(tc.want, []string{accounts[0].Name, accounts[1].Name, accounts[2].Name, accounts[3].Name})
 	}
 }
+
+// TestListWithFilters_SortByUpstreamBillingRateIsPeakWindowAndTimezoneSafe covers the
+// dynamic (peak-window aware) branch of upstreamBillingRateSortExpression, which the
+// nulls-last test above does not exercise (it only covers the legacy
+// effective_rate_multiplier-only snapshot shape). It intentionally avoids any
+// assertion that depends on the current wall-clock time being inside/outside a peak
+// window: every non-trivial case here is deterministic regardless of when the test
+// runs, so it stays reliable in CI while still proving the sort expression fails
+// closed (NULL, sorted last) instead of erroring or misordering on malformed
+// peak-window/timezone/billing-scope data.
+func (s *AccountRepoSuite) TestListWithFilters_SortByUpstreamBillingRateIsPeakWindowAndTimezoneSafe() {
+	makeDynamicAccount := func(name string, data map[string]any) {
+		mustCreateAccount(s.T(), s.client, &service.Account{
+			Name:     name,
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeAPIKey,
+			Extra: map[string]any{
+				service.UpstreamBillingProbeExtraKey: map[string]any{
+					"status": service.UpstreamBillingProbeStatusOK,
+					"data":   data,
+				},
+			},
+		})
+	}
+
+	// Deterministic: peak rate disabled resolves directly to the resolved rate,
+	// independent of the current time.
+	makeDynamicAccount("peak-disabled", map[string]any{
+		"billing_scope":            "token",
+		"resolved_rate_multiplier": 0.5,
+		"peak_rate_enabled":        false,
+	})
+	// Everything below has a valid resolved_rate_multiplier but a broken piece of
+	// the peak-window/timezone/billing-scope contract, so the sort expression must
+	// null it out rather than crash or silently mis-sort it.
+	makeDynamicAccount("invalid-timezone", map[string]any{
+		"billing_scope":            "token",
+		"resolved_rate_multiplier": 0.5,
+		"peak_rate_enabled":        true,
+		"peak_start":               "09:00",
+		"peak_end":                 "18:00",
+		"peak_rate_multiplier":     1.5,
+		"timezone":                 "Not/ARealZone",
+	})
+	makeDynamicAccount("invalid-clock-format", map[string]any{
+		"billing_scope":            "token",
+		"resolved_rate_multiplier": 0.5,
+		"peak_rate_enabled":        true,
+		"peak_start":               "25:00",
+		"peak_end":                 "18:00",
+		"peak_rate_multiplier":     1.5,
+		"timezone":                 "UTC",
+	})
+	makeDynamicAccount("invalid-window-order", map[string]any{
+		"billing_scope":            "token",
+		"resolved_rate_multiplier": 0.5,
+		"peak_rate_enabled":        true,
+		"peak_start":               "18:00",
+		"peak_end":                 "09:00",
+		"peak_rate_multiplier":     1.5,
+		"timezone":                 "UTC",
+	})
+	makeDynamicAccount("negative-peak-multiplier", map[string]any{
+		"billing_scope":            "token",
+		"resolved_rate_multiplier": 0.5,
+		"peak_rate_enabled":        true,
+		"peak_start":               "09:00",
+		"peak_end":                 "18:00",
+		"peak_rate_multiplier":     -1,
+		"timezone":                 "UTC",
+	})
+	makeDynamicAccount("non-token-billing-scope", map[string]any{
+		"billing_scope":            "request",
+		"resolved_rate_multiplier": 0.5,
+		"peak_rate_enabled":        false,
+	})
+
+	accounts, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{
+		Page:      1,
+		PageSize:  10,
+		SortBy:    "upstream_billing_rate",
+		SortOrder: "asc",
+	}, "", "", "", "", 0, "")
+	s.Require().NoError(err)
+	s.Require().Len(accounts, 6)
+	s.Require().Equal("peak-disabled", accounts[0].Name, "the only account with a resolvable rate must sort first")
+
+	sortedLast := make([]string, 0, 5)
+	for _, account := range accounts[1:] {
+		sortedLast = append(sortedLast, account.Name)
+	}
+	s.Require().ElementsMatch(
+		[]string{
+			"invalid-timezone",
+			"invalid-clock-format",
+			"invalid-window-order",
+			"negative-peak-multiplier",
+			"non-token-billing-scope",
+		},
+		sortedLast,
+		"malformed peak-window/timezone/billing-scope data must sort last (NULL) rather than erroring",
+	)
+}

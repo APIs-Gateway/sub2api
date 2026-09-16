@@ -128,6 +128,26 @@ func (c *openAIWSToolCallReplayCollector) addItem(item gjson.Result) {
 	c.items = append(c.items, json.RawMessage(raw))
 }
 
+// openAIWSHTTPBridgeToolState carries the client-tool lowering mapping and
+// the resulting "tools" declaration actually sent upstream across the turns
+// of a single WS HTTP bridge session, so that a follow-up turn which omits
+// "tools" (because the client trusts the upstream to remember what it
+// declared earlier in the same session) can still be lowered and restored
+// correctly instead of being treated as if it declared no client tools.
+//
+// This is deliberately plain per-connection state, not a registry keyed by
+// session/connection ID: proxyOpenAIWSHTTPBridgeTurn is called from a turn
+// loop that lives entirely inside the single request handler goroutine
+// owning one WS connection (see the http bridge loop in
+// openai_ws_forwarder.go), so a zero value is always the correct "nothing
+// negotiated yet" state for a new connection, and the state is discarded
+// automatically together with that goroutine's stack -- no separate
+// lifecycle management or explicit cleanup is required.
+type openAIWSHTTPBridgeToolState struct {
+	ClientMapping apicompat.ResponsesClientToolMapping
+	LoweredTools  []any
+}
+
 func buildOpenAIWSHTTPBridgeErrorEvent(statusCode int, message string) []byte {
 	message = strings.TrimSpace(message)
 	if message == "" {
@@ -163,6 +183,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	imageSizeTier string,
 	imageInputSize string,
 	turn int,
+	previousToolState openAIWSHTTPBridgeToolState,
 	writeClientMessage func([]byte) error,
 ) (*OpenAIForwardResult, error) {
 	if s == nil {
@@ -187,9 +208,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	// namespace 三类客户端工具；type=apikey 的二级中转商上游只认标准 function
 	// 工具，未降级会导致工具调用整体失效。出站前降级，回程流式还原。
 	var clientToolMapping apicompat.ResponsesClientToolMapping
+	var loweredClientTools []any
 	if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
 		var adaptErr error
-		body, clientToolMapping, adaptErr = adaptOpenAIResponsesClientTools(body)
+		body, clientToolMapping, loweredClientTools, adaptErr = adaptOpenAIResponsesClientToolsWithInheritedMapping(
+			body, previousToolState.ClientMapping, previousToolState.LoweredTools,
+		)
 		if adaptErr != nil {
 			return nil, fmt.Errorf("adapt openai ws http bridge client tools: %w", adaptErr)
 		}
@@ -269,16 +293,11 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	lastEventType := ""
 	sawDone := false
 	wroteDownstream := false
+	upstreamModelChecked := false
 	clientDisconnected := false
 	mappedModel := ""
-	needModelReplace := false
-	var mappedModelBytes []byte
 	if originalModel != "" {
 		mappedModel = normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
-		needModelReplace = mappedModel != "" && mappedModel != originalModel
-		if needModelReplace {
-			mappedModelBytes = []byte(mappedModel)
-		}
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
@@ -299,6 +318,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if replayInput := replayCollector.Items(); len(replayInput) > 0 {
 			result.wsReplayInput = replayInput
 			result.wsReplayInputExists = true
+		}
+		if hasResponsesClientToolMapping(clientToolMapping) {
+			result.wsClientToolState = openAIWSHTTPBridgeToolState{
+				ClientMapping: clientToolMapping,
+				LoweredTools:  loweredClientTools,
+			}
 		}
 		if imageCount > 0 {
 			result.ImageCount = imageCount
@@ -364,9 +389,21 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		imageCounter.AddSSEData(upstreamMessage)
 
-		if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && strings.Contains(trimmedData, mappedModel) {
-			upstreamMessage = replaceOpenAIWSMessageModel(upstreamMessage, mappedModel, originalModel)
+		// 上游模型不一致拦截：首个带 model 的 SSE 事件、模型改写前比对；
+		// 与本函数其它 failover 一致，只有首轮且未向客户端写出时才中断换号
+		// （handler 换号后会用 wsFirstMessage 重放第 1 轮）；turn>=2 只打标不拦截。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel(upstreamMessage); got != "" {
+				upstreamModelChecked = true
+				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, nil, sentModelForCheck(mappedModel, originalModel), got, reqStream, turn == 1 && !wroteDownstream, usage); ferr != nil {
+					return nil, ferr
+				}
+			}
 		}
+
+		// 客户端可见 model 对齐：无条件把 model / response.model 改成客户端原始请求模型
+		//（turn>=2 只打标不拦截时尤其重要：上游真实值只进审计 mark）。
+		upstreamMessage = alignClientVisibleModel(upstreamMessage, originalModel)
 		if s.toolCorrector != nil && openAIWSEventMayContainToolCalls(eventType) && openAIWSMessageLikelyContainsToolCalls(upstreamMessage) {
 			if corrected, changed := s.toolCorrector.CorrectToolCallsInSSEBytes(upstreamMessage); changed {
 				upstreamMessage = corrected

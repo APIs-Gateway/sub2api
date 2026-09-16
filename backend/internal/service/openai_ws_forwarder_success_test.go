@@ -202,7 +202,7 @@ func TestOpenAIGatewayService_Forward_WSv2_UsesPatchedBodyAfterValidationDecode(
 			"type": "response.completed",
 			"response": map[string]any{
 				"id":    "resp_patched_ws_1",
-				"model": "gpt-5.3-codex-spark",
+				"model": "gpt-5.4",
 				"usage": map[string]any{"input_tokens": 1, "output_tokens": 1},
 			},
 		}); err != nil {
@@ -624,7 +624,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthStoreFalseByDefault(t *testing.T
 
 	captureConn := &openAIWSCaptureConn{
 		events: [][]byte{
-			[]byte(`{"type":"response.completed","response":{"id":"resp_oauth_1","model":"gpt-5.1","usage":{"input_tokens":3,"output_tokens":2}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_oauth_1","model":"gpt-5.4","usage":{"input_tokens":3,"output_tokens":2}}}`),
 		},
 	}
 	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
@@ -719,7 +719,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 
 			captureConn := &openAIWSCaptureConn{
 				events: [][]byte{
-					[]byte(`{"type":"response.completed","response":{"id":"resp_oauth_originator","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+					[]byte(`{"type":"response.completed","response":{"id":"resp_oauth_originator","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":1}}}`),
 				},
 			}
 			captureDialer := &openAIWSCaptureDialer{conn: captureConn}
@@ -781,7 +781,7 @@ func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheK
 
 	captureConn := &openAIWSCaptureConn{
 		events: [][]byte{
-			[]byte(`{"type":"response.completed","response":{"id":"resp_prompt_cache_key","model":"gpt-5.1","usage":{"input_tokens":2,"output_tokens":1}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_prompt_cache_key","model":"gpt-5.4","usage":{"input_tokens":2,"output_tokens":1}}}`),
 		},
 	}
 	captureDialer := &openAIWSCaptureDialer{conn: captureConn}

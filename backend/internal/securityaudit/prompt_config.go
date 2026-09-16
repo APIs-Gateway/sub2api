@@ -64,20 +64,21 @@ type StorageEndpoint struct {
 }
 
 type storageConfig struct {
-	Enabled         bool              `json:"enabled"`
-	BlockingEnabled bool              `json:"blocking_enabled"`
-	StorePassEvents bool              `json:"store_pass_events"`
-	Strategy        string            `json:"strategy"`
-	WorkerCount     int               `json:"worker_count"`
-	QueueCapacity   int               `json:"queue_capacity"`
-	Scanners        []string          `json:"scanners"`
-	AllGroups       bool              `json:"all_groups"`
-	GroupIDs        []int64           `json:"group_ids"`
-	Endpoints       []StorageEndpoint `json:"endpoints"`
-	ConfigVersion   int64             `json:"config_version"`
-	UpdatedAt       time.Time         `json:"updated_at"`
-	UpdatedBy       int64             `json:"updated_by"`
-	ChangeSummary   string            `json:"change_summary"`
+	Enabled          bool              `json:"enabled"`
+	BlockingEnabled  bool              `json:"blocking_enabled"`
+	StorePassEvents  bool              `json:"store_pass_events"`
+	StoreFullPrompts bool              `json:"store_full_prompts"`
+	Strategy         string            `json:"strategy"`
+	WorkerCount      int               `json:"worker_count"`
+	QueueCapacity    int               `json:"queue_capacity"`
+	Scanners         []string          `json:"scanners"`
+	AllGroups        bool              `json:"all_groups"`
+	GroupIDs         []int64           `json:"group_ids"`
+	Endpoints        []StorageEndpoint `json:"endpoints"`
+	ConfigVersion    int64             `json:"config_version"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+	UpdatedBy        int64             `json:"updated_by"`
+	ChangeSummary    string            `json:"change_summary"`
 }
 
 type ActiveEndpoint struct {
@@ -102,6 +103,7 @@ type ActiveConfig struct {
 	Enabled            bool
 	BlockingEnabled    bool
 	StorePassEvents    bool
+	StoreFullPrompts   bool
 	Strategy           string
 	WorkerCount        int
 	QueueCapacity      int
@@ -129,21 +131,22 @@ type PublicEndpoint struct {
 }
 
 type PublicConfig struct {
-	Enabled         bool             `json:"enabled"`
-	BlockingEnabled bool             `json:"blocking_enabled"`
-	StorePassEvents bool             `json:"store_pass_events"`
-	EffectiveMode   Mode             `json:"effective_mode"`
-	Strategy        string           `json:"strategy"`
-	WorkerCount     int              `json:"worker_count"`
-	QueueCapacity   int              `json:"queue_capacity"`
-	Scanners        []string         `json:"scanners"`
-	AllGroups       bool             `json:"all_groups"`
-	GroupIDs        []int64          `json:"group_ids"`
-	Endpoints       []PublicEndpoint `json:"endpoints"`
-	ConfigVersion   int64            `json:"config_version"`
-	UpdatedAt       time.Time        `json:"updated_at"`
-	UpdatedBy       int64            `json:"updated_by"`
-	ChangeSummary   string           `json:"change_summary"`
+	Enabled          bool             `json:"enabled"`
+	BlockingEnabled  bool             `json:"blocking_enabled"`
+	StorePassEvents  bool             `json:"store_pass_events"`
+	StoreFullPrompts bool             `json:"store_full_prompts"`
+	EffectiveMode    Mode             `json:"effective_mode"`
+	Strategy         string           `json:"strategy"`
+	WorkerCount      int              `json:"worker_count"`
+	QueueCapacity    int              `json:"queue_capacity"`
+	Scanners         []string         `json:"scanners"`
+	AllGroups        bool             `json:"all_groups"`
+	GroupIDs         []int64          `json:"group_ids"`
+	Endpoints        []PublicEndpoint `json:"endpoints"`
+	ConfigVersion    int64            `json:"config_version"`
+	UpdatedAt        time.Time        `json:"updated_at"`
+	UpdatedBy        int64            `json:"updated_by"`
+	ChangeSummary    string           `json:"change_summary"`
 }
 
 type UpdateEndpoint struct {
@@ -164,6 +167,7 @@ type UpdateConfigRequest struct {
 	Enabled               bool             `json:"enabled"`
 	BlockingEnabled       bool             `json:"blocking_enabled"`
 	StorePassEvents       bool             `json:"store_pass_events"`
+	StoreFullPrompts      bool             `json:"store_full_prompts"`
 	Strategy              string           `json:"strategy"`
 	WorkerCount           int              `json:"worker_count"`
 	QueueCapacity         int              `json:"queue_capacity"`
@@ -175,17 +179,18 @@ type UpdateConfigRequest struct {
 
 func DefaultStorageConfig() storageConfig {
 	return storageConfig{
-		Enabled:         false,
-		BlockingEnabled: false,
-		StorePassEvents: false,
-		Strategy:        "priority",
-		WorkerCount:     DefaultWorkerCount,
-		QueueCapacity:   DefaultQueueCapacity,
-		Scanners:        append([]string(nil), AllScannerIDs...),
-		AllGroups:       true,
-		GroupIDs:        []int64{},
-		Endpoints:       []StorageEndpoint{},
-		ConfigVersion:   1,
+		Enabled:          false,
+		BlockingEnabled:  false,
+		StorePassEvents:  false,
+		StoreFullPrompts: false,
+		Strategy:         "priority",
+		WorkerCount:      DefaultWorkerCount,
+		QueueCapacity:    DefaultQueueCapacity,
+		Scanners:         append([]string(nil), AllScannerIDs...),
+		AllGroups:        true,
+		GroupIDs:         []int64{},
+		Endpoints:        []StorageEndpoint{},
+		ConfigVersion:    1,
 	}
 }
 
@@ -408,7 +413,8 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 	active := ActiveConfig{RiskControlEnabled: riskControlEnabled, Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled}
 	return PublicConfig{
 		Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled, StorePassEvents: cfg.StorePassEvents,
-		EffectiveMode: active.EffectiveMode(), Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
+		StoreFullPrompts: cfg.StoreFullPrompts, EffectiveMode: active.EffectiveMode(),
+		Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		QueueCapacity: cfg.QueueCapacity, Scanners: scanners, AllGroups: cfg.AllGroups,
 		GroupIDs: groupIDs, Endpoints: endpoints, ConfigVersion: cfg.ConfigVersion,
 		UpdatedAt: cfg.UpdatedAt, UpdatedBy: cfg.UpdatedBy, ChangeSummary: cfg.ChangeSummary,
@@ -418,7 +424,7 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor SecretEncryptor) (ActiveConfig, error) {
 	active := ActiveConfig{
 		RiskControlEnabled: riskControlEnabled, Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled,
-		StorePassEvents: cfg.StorePassEvents, Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
+		StorePassEvents: cfg.StorePassEvents, StoreFullPrompts: cfg.StoreFullPrompts, Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		QueueCapacity: cfg.QueueCapacity, Scanners: append([]string(nil), cfg.Scanners...), AllGroups: cfg.AllGroups,
 		GroupIDs: append([]int64(nil), cfg.GroupIDs...), ConfigVersion: cfg.ConfigVersion,
 		UpdatedAt: cfg.UpdatedAt, UpdatedBy: cfg.UpdatedBy, ChangeSummary: cfg.ChangeSummary,
@@ -454,15 +460,16 @@ func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor Sec
 
 func changeSummary(cfg storageConfig) string {
 	summary := struct {
-		Enabled         bool   `json:"enabled"`
-		BlockingEnabled bool   `json:"blocking_enabled"`
-		StorePassEvents bool   `json:"store_pass_events"`
-		EndpointCount   int    `json:"endpoint_count"`
-		ScannerCount    int    `json:"scanner_count"`
-		AllGroups       bool   `json:"all_groups"`
-		GroupCount      int    `json:"group_count"`
-		GroupHash       string `json:"group_hash"`
-	}{cfg.Enabled, cfg.BlockingEnabled, cfg.StorePassEvents, len(cfg.Endpoints), len(cfg.Scanners), cfg.AllGroups, len(cfg.GroupIDs), ""}
+		Enabled          bool   `json:"enabled"`
+		BlockingEnabled  bool   `json:"blocking_enabled"`
+		StorePassEvents  bool   `json:"store_pass_events"`
+		StoreFullPrompts bool   `json:"store_full_prompts"`
+		EndpointCount    int    `json:"endpoint_count"`
+		ScannerCount     int    `json:"scanner_count"`
+		AllGroups        bool   `json:"all_groups"`
+		GroupCount       int    `json:"group_count"`
+		GroupHash        string `json:"group_hash"`
+	}{cfg.Enabled, cfg.BlockingEnabled, cfg.StorePassEvents, cfg.StoreFullPrompts, len(cfg.Endpoints), len(cfg.Scanners), cfg.AllGroups, len(cfg.GroupIDs), ""}
 	rawGroups, _ := json.Marshal(cfg.GroupIDs)
 	digest := sha256.Sum256(rawGroups)
 	summary.GroupHash = hex.EncodeToString(digest[:])

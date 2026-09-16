@@ -254,6 +254,32 @@ func TestConfigManagerBuildNextStoragePreservesAndChangesTokens(t *testing.T) {
 	require.Equal(t, "enc:old", next.Endpoints[0].TokenCiphertext)
 }
 
+// TestConfigManagerBuildNextStorageThreadsStoreFullPrompts proves
+// store_full_prompts flows through buildNextStorage independently of
+// store_pass_events (issue #585 asks for it to be "distinct from
+// store_pass_events"), defaults to false, and round-trips through
+// PublicFromStorage/ActiveFromStorage without requiring Enabled or
+// StorePassEvents to also be true.
+func TestConfigManagerBuildNextStorageThreadsStoreFullPrompts(t *testing.T) {
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, clock: fixedTestClock{now: time.Unix(1700000000, 0).UTC()}}
+	current := DefaultStorageConfig()
+	require.False(t, current.StoreFullPrompts)
+
+	req := promptAuditUpdateRequest(1, 2, "")
+	req.StorePassEvents = false
+	req.StoreFullPrompts = true
+	next, err := manager.buildNextStorage(current, req, 42)
+	require.NoError(t, err)
+	require.True(t, next.StoreFullPrompts)
+	require.False(t, next.StorePassEvents)
+
+	public := PublicFromStorage(next, true, nil)
+	require.True(t, public.StoreFullPrompts)
+	active, err := ActiveFromStorage(next, true, prefixEncryptor{})
+	require.NoError(t, err)
+	require.True(t, active.StoreFullPrompts)
+}
+
 func TestConfigManagerSaveFailurePaths(t *testing.T) {
 	validRequest := promptAuditUpdateRequest(1, 1, "")
 	validRaw := enabledStorageJSON(t, false)
