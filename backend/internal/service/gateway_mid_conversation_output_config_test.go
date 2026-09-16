@@ -60,6 +60,41 @@ func TestSanitizeAnthropicBodyForBetaTokens_TopLevelOutputConfigIsByteNoop(t *te
 	require.Equal(t, string(body), string(out))
 }
 
+func TestSanitizeAnthropicBodyForBetaTokens_MessageOutputConfigNoopsWithoutMessagesArray(t *testing.T) {
+	for _, body := range [][]byte{
+		[]byte(`{"output_config":{"effort":"high"}}`),
+		[]byte(`{"output_config":{"effort":"high"},"messages":{"role":"user","content":"hello"}}`),
+	} {
+		out, changed := sanitizeAnthropicBodyForBetaTokens(body, "oauth-2025-04-20")
+		require.False(t, changed)
+		require.Equal(t, string(body), string(out))
+	}
+}
+
+func TestAnthropicMessageContentHasBody(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "missing", body: `{}`, want: false},
+		{name: "null", body: `{"content":null}`, want: false},
+		{name: "empty string", body: `{"content":""}`, want: false},
+		{name: "text string", body: `{"content":"keep"}`, want: true},
+		{name: "empty array", body: `{"content":[]}`, want: false},
+		{name: "empty text block", body: `{"content":[{"type":"text","text":""}]}`, want: false},
+		{name: "text block", body: `{"content":[{"type":"text","text":"keep"}]}`, want: true},
+		{name: "non-text block", body: `{"content":[{"type":"tool_result","content":"keep"}]}`, want: true},
+		{name: "non-array value", body: `{"content":{"type":"text"}}`, want: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, anthropicMessageContentHasBody(gjson.Get(tc.body, "content")))
+		})
+	}
+}
+
 func TestBuildUpstreamRequestOAuthMimic_PreservesMessageOutputConfigWithInjectedBeta(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
@@ -100,5 +135,28 @@ func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_StripsMessageOutputConfi
 	outBody := readUpstreamBodyForTest(t, req)
 	require.Len(t, gjson.GetBytes(outBody, "messages").Array(), 1)
 	require.Equal(t, "hello", gjson.GetBytes(outBody, "messages.0.content").String())
+	require.Equal(t, "high", gjson.GetBytes(outBody, "output_config.effort").String())
+}
+
+func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_PreservesMessageOutputConfigWithClientBeta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("Anthropic-Beta", "oauth-2025-04-20,"+claude.BetaMidConversationOutputConfig)
+	body := []byte(`{"output_config":{"effort":"high"},"messages":[{"role":"system","content":[{"type":"text","text":""}],"output_config":{"effort":"high"}},{"role":"system","content":[{"type":"tool_result","content":"keep"}],"output_config":{"effort":"medium"}}]}`)
+
+	svc := &GatewayService{cfg: &config.Config{}}
+	req, _, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(
+		context.Background(), c, newAnthropicAPIKeyPassthroughAccountForBetaTest(), body, "token",
+	)
+	require.NoError(t, err)
+
+	outBody := readUpstreamBodyForTest(t, req)
+	outBeta := getHeaderRaw(req.Header, "anthropic-beta")
+	require.True(t, anthropicBetaTokensContains(outBeta, claude.BetaMidConversationOutputConfig))
+	require.Len(t, gjson.GetBytes(outBody, "messages").Array(), 2)
+	require.True(t, gjson.GetBytes(outBody, "messages.0.output_config").Exists())
+	require.True(t, gjson.GetBytes(outBody, "messages.1.output_config").Exists())
 	require.Equal(t, "high", gjson.GetBytes(outBody, "output_config.effort").String())
 }
