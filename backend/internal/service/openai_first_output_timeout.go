@@ -237,7 +237,7 @@ func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 		"OpenAI first output timeout: account=%d model=%s effort=%s phase=%s elapsed=%s limit=%s",
 		account.ID, originalModel, reasoningEffort, phase, elapsed, timeout,
 	)
-	requestID := strings.TrimSpace(responseHeaders.Get("x-request-id"))
+	requestID := upstreamRequestIDFromHeader(responseHeaders)
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
 		UpstreamStatusCode: http.StatusGatewayTimeout, UpstreamRequestID: requestID,

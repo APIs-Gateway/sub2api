@@ -3,10 +3,14 @@
 package repository
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -64,4 +68,62 @@ func TestBuildUsageLogBatchInsertQuery_UsesConflictDoNothing(t *testing.T) {
 
 	require.Contains(t, query, "ON CONFLICT (request_id, api_key_id) DO NOTHING")
 	require.NotContains(t, strings.ToUpper(query), "DO UPDATE")
+}
+
+func TestUsageLogRepositoryListWithFiltersUpstreamModelMismatch(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &usageLogRepository{sql: db}
+
+	mismatch := true
+	filters := usagestats.UsageLogFilters{
+		UpstreamModelMismatch: &mismatch,
+		ExactTotal:            true,
+	}
+
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM usage_logs WHERE upstream_model_mismatch = \\$1").
+		WithArgs(mismatch).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
+	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE upstream_model_mismatch = \\$1 ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
+		WithArgs(mismatch, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	logs, page, err := repo.ListWithFilters(context.Background(), pagination.PaginationParams{Page: 1, PageSize: 20}, filters)
+	require.NoError(t, err)
+	require.Empty(t, logs)
+	require.NotNil(t, page)
+	require.Equal(t, int64(0), page.Total)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageLogRepositoryGetStatsWithFiltersUpstreamModelMismatch(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &usageLogRepository{sql: db}
+
+	mismatch := true
+	filters := usagestats.UsageLogFilters{
+		UpstreamModelMismatch: &mismatch,
+	}
+
+	mock.ExpectQuery("(?s)FROM usage_logs\\s+WHERE upstream_model_mismatch = \\$1.*GROUP BY GROUPING SETS").
+		WithArgs(mismatch).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"inbound_grouped",
+			"upstream_grouped",
+			"inbound_endpoint",
+			"upstream_endpoint",
+			"requests",
+			"input_tokens",
+			"output_tokens",
+			"cache_creation_tokens",
+			"cache_read_tokens",
+			"cost",
+			"actual_cost",
+			"account_cost",
+			"avg_duration_ms",
+		}))
+
+	stats, err := repo.GetStatsWithFilters(context.Background(), filters)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), stats.TotalRequests)
+	require.NoError(t, mock.ExpectationsWereMet())
 }

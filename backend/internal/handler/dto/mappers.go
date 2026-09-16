@@ -659,6 +659,8 @@ func UsageLogFromServiceAdmin(l *service.UsageLog) *AdminUsageLog {
 	return &AdminUsageLog{
 		UsageLog:              usageLogFromServiceUser(l),
 		UpstreamModel:         l.UpstreamModel,
+		UpstreamModelMismatch: l.UpstreamModelMismatch,
+		UpstreamResponseModel: l.UpstreamResponseModel,
 		ChannelID:             l.ChannelID,
 		ModelMappingChain:     l.ModelMappingChain,
 		BillingTier:           l.BillingTier,

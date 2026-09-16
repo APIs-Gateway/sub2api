@@ -24,6 +24,7 @@ func TestLoadLegacyInviteFromEnvironment(t *testing.T) {
 	t.Setenv("LEGACY_INVITE_DBNAME", "legacydb")
 	t.Setenv("LEGACY_INVITE_SSLMODE", "disable")
 	t.Setenv("LEGACY_INVITE_MIN_PAID_AMOUNT", "300")
+	t.Setenv("LEGACY_INVITE_MIN_USAGE_COST", "7500")
 	t.Setenv("LEGACY_INVITE_QUERY_TIMEOUT_SECONDS", "7")
 	t.Setenv("LEGACY_INVITE_MAX_OPEN_CONNS", "3")
 
@@ -39,6 +40,7 @@ func TestLoadLegacyInviteFromEnvironment(t *testing.T) {
 	require.Equal(t, "legacydb", lc.DBName)
 	require.Equal(t, "disable", lc.SSLMode)
 	require.InDelta(t, 300, lc.MinPaidAmount, 0.001)
+	require.InDelta(t, 7500, lc.MinUsageCost, 0.001)
 	require.Equal(t, 7, lc.QueryTimeoutSeconds)
 	require.Equal(t, 3, lc.MaxOpenConns)
 
@@ -69,4 +71,17 @@ func TestLegacyInviteDefaultSSLModeIsSupportedByDriver(t *testing.T) {
 	)
 	// 默认关闭：单站部署不该因为这一节而去连任何东西
 	require.False(t, cfg.LegacyInvite.Enabled)
+}
+
+// TestLegacyInviteDefaultThresholds 钉死两条达标口径的默认门槛。
+//
+// min_usage_cost 必须有一个正数默认值，否则 isEligible 里的「大于 0 才启用」会让
+// 这条口径静默失效——功能上线了，但没人能靠用量领到码，而且不会有任何报错。
+func TestLegacyInviteDefaultThresholds(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.InDelta(t, 300, cfg.LegacyInvite.MinPaidAmount, 0.001)
+	require.InDelta(t, 7500, cfg.LegacyInvite.MinUsageCost, 0.001)
 }

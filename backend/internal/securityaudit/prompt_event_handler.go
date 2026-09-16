@@ -11,8 +11,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// PromptEventAdminHandler exposes only the redacted event read surface. Config
-// mutation, prompt probing, and event deletion belong to separate issues.
+// PromptEventAdminHandler exposes the event read surface. List responses stay
+// redacted; GetEvent may additionally include the unredacted full_prompt on
+// an authenticated single-event detail read, but only when store_full_prompts
+// is enabled and the repository populated it (see EventRepository.GetEvent).
+// Config mutation, prompt probing, and event deletion belong to separate
+// issues.
 type PromptEventAdminHandler struct {
 	repository EventRepository
 }

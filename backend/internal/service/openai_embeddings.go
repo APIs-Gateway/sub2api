@@ -126,7 +126,7 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				Kind:               "failover",
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
@@ -153,7 +153,7 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	writeOpenAIEmbeddingsUpstreamResponse(c, resp, respBody, s.responseHeaderFilter)
 
 	return &OpenAIForwardResult{
-		RequestID:     firstNonEmptyString(resp.Header.Get("x-request-id"), resp.Header.Get("request-id")),
+		RequestID:     firstNonEmptyString(upstreamRequestIDFromHeader(resp.Header), resp.Header.Get("request-id")),
 		Usage:         extractOpenAIEmbeddingsUsage(respBody),
 		Model:         originalModel,
 		BillingModel:  billingModel,

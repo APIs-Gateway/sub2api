@@ -93,6 +93,8 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
 			createdAt,
+			log.UpstreamModelMismatch,
+			sqlmock.AnyArg(), // upstream_response_model
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
 
@@ -178,6 +180,8 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
 			createdAt,
+			log.UpstreamModelMismatch,
+			sqlmock.AnyArg(), // upstream_response_model
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
 
@@ -240,6 +244,18 @@ func TestPrepareUsageLogInsert_ArgCountMatchesTypes(t *testing.T) {
 	})
 
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
+}
+
+func TestPrepareUsageLogInsert_PersistsUpstreamModelMismatch(t *testing.T) {
+	got := "gpt-6-sol"
+	prepared := prepareUsageLogInsert(&service.UsageLog{
+		UserID: 1, APIKeyID: 2, AccountID: 3, RequestID: "req-mm", Model: "gpt-5.6-sol",
+		UpstreamModelMismatch: true, UpstreamResponseModel: &got,
+		CreatedAt: time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC),
+	})
+	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
+	require.Contains(t, prepared.args, true)
+	require.Contains(t, prepared.args, sql.NullString{String: "gpt-6-sol", Valid: true})
 }
 
 func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
@@ -665,6 +681,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullFloat64{},
 			now,
+			false,            // upstream_model_mismatch
+			sql.NullString{}, // upstream_response_model
 		}})
 		require.NoError(t, err)
 		require.Equal(t, 2, log.ImageCount)
@@ -735,6 +753,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
 			now,
+			false,            // upstream_model_mismatch
+			sql.NullString{}, // upstream_response_model
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -788,6 +808,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
 			now,
+			false,            // upstream_model_mismatch
+			sql.NullString{}, // upstream_response_model
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -841,6 +863,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
 			now,
+			false,            // upstream_model_mismatch
+			sql.NullString{}, // upstream_response_model
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)

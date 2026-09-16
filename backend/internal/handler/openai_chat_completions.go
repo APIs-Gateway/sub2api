@@ -232,7 +232,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		if effectiveMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, effectiveMapping.MappedModel)
 		}
-		writerSizeBeforeForward := c.Writer.Size()
+		// 心跳字节（SSE 注释行）不算内容交付：与 Responses 入口同口径取扣除心跳后的 Size。
+		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -245,7 +246,14 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockKeyChat = service.CyberSessionBlockKey(apiKey.ID, c, body)
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyChat, effectiveMapping.ToUsageFields(reqModel, ""), service.HashUsageRequestPayload(body), scheduleDecision)
+		requestPayloadHash := service.HashUsageRequestPayload(body)
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyChat, effectiveMapping.ToUsageFields(reqModel, ""), requestPayloadHash, scheduleDecision)
+		// 上游模型不一致：先读 B（成功路径 RecordUsage 透传），再记审计行并清标（下一次尝试可重新打标）。
+		upstreamResponseModel := ""
+		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
+			upstreamResponseModel = mark.ResponseModel
+		}
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, effectiveMapping.ToUsageFields(reqModel, ""), requestPayloadHash, body)
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
@@ -274,28 +282,23 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						)
 						return
 					}
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
+					// 与 Responses 入口一致：只写过心跳或 SafeToFailoverAfterWrite 的 failover 已提交
+					// 200 SSE，耗尽时走流内 error 事件。
+					if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
+						streamStarted = true
+					}
+					if openAIForwardWroteKeepaliveOnly(c, writerSizeBeforeForward) {
+						streamStarted = true
+					}
 					// Pool mode: retry on the same account
-					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
-						if sameAccountRetryCount[account.ID] < retryLimit {
-							sameAccountRetryCount[account.ID]++
-							reqLog.Warn("openai_chat_completions.pool_mode_same_account_retry",
-								zap.Int64("account_id", account.ID),
-								zap.Int("upstream_status", failoverErr.StatusCode),
-								zap.Int("retry_limit", retryLimit),
-								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
-							)
-							select {
-							case <-c.Request.Context().Done():
-								return
-							case <-time.After(sameAccountRetryDelay):
-							}
-							continue
-						}
+					if retry, canceled := waitPoolModeSameAccountRetry(c, reqLog, "openai_chat_completions.pool_mode_same_account_retry", account, failoverErr, sameAccountRetryCount); canceled {
+						return
+					} else if retry {
+						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
@@ -374,6 +377,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				APIKeyService:                    h.apiKeyService,
 				ChannelUsageFields:               effectiveMapping.ToUsageFields(reqModel, result.UpstreamModel),
 				CyberBlocked:                     cyberBlocked,
+				UpstreamResponseModel:            upstreamResponseModel,
 				StableServedGroupID:              stableServedGroupID,
 				StableServedRateMultiplier:       stableServedRate,
 				StableServedImageRateIndependent: stableServedImageIndependent,

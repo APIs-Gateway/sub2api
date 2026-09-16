@@ -28,6 +28,10 @@ const messages: Record<string, string> = {
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per Request',
   'admin.usage.billingModeImage': 'Image',
+  'usage.upstreamModelMismatch': 'Model mismatch',
+  'admin.usage.allUpstreamModelStates': 'All (model consistency)',
+  'admin.usage.upstreamModelMismatchOnly': 'Mismatch only',
+  'admin.usage.upstreamModelMatchOnly': 'Match only',
   'admin.usage.group': 'Group',
   'admin.usage.allGroups': 'All Groups',
   'common.refresh': 'Refresh',
@@ -75,6 +79,7 @@ const defaultFilters = () => ({
   request_type: null,
   billing_type: null,
   billing_mode: null,
+  upstream_model_mismatch: null,
   group_id: null,
   start_date: '',
   end_date: '',
@@ -314,5 +319,57 @@ describe('UsageFilters — model options come from prop (no dup request)', () =>
 
     const opts = (wrapper.vm as any).modelOptions as Array<{ value: string | null; label: string }>
     expect(opts.map((o) => o.value)).toEqual([null, 'claude-3', 'gpt-4o'])
+  })
+})
+
+// --- Native <select> stub used only where real change/selection behavior is asserted ---
+const SelectStub = {
+  props: ['modelValue', 'options'],
+  emits: ['update:modelValue', 'change'],
+  setup(props: { options: Array<{ value: unknown; label: string }> }, { emit }: { emit: (event: string, ...args: unknown[]) => void }) {
+    const onChange = (event: Event) => {
+      const raw = (event.target as HTMLSelectElement).value
+      const option = props.options.find((item) => String(item.value ?? '') === raw)
+      const value = option ? option.value : raw
+      emit('update:modelValue', value)
+      emit('change', value, option ?? null)
+    }
+    return { onChange }
+  },
+  template: `
+    <select v-bind="$attrs" :value="modelValue ?? ''" @change="onChange">
+      <option v-for="option in options" :key="String(option.value ?? '')" :value="option.value ?? ''">
+        {{ option.label }}
+      </option>
+    </select>
+  `
+}
+
+describe('UsageFilters — upstream model mismatch filter', () => {
+  it('renders an upstream_model_mismatch dropdown and emits filters.upstream_model_mismatch = true on selection', async () => {
+    const filters = defaultFilters()
+    const wrapper = mount(UsageFilters, {
+      props: {
+        modelValue: filters,
+        exporting: false,
+        startDate: '2026-05-01',
+        endDate: '2026-05-28',
+        showActions: false,
+        modelOptions: [],
+      },
+      global: {
+        stubs: { Select: SelectStub, Teleport: true },
+      },
+    })
+
+    const selects = wrapper.findAll('select')
+    const mismatchSelect = selects.find((s) => s.text().includes('Mismatch only'))
+    expect(mismatchSelect).toBeTruthy()
+
+    await mismatchSelect!.setValue('true')
+
+    const changeEmits = wrapper.emitted('change')
+    expect(changeEmits).toBeTruthy()
+    expect(filters.upstream_model_mismatch).toBe(true)
   })
 })

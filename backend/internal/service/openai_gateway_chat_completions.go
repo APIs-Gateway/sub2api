@@ -300,7 +300,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				Kind:               "failover",
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
@@ -423,7 +423,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	upstreamModel string,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
-	requestID := resp.Header.Get("x-request-id")
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 
 	finalResponse, usage, acc, err := s.readOpenAICompatBufferedTerminal(resp, "openai chat_completions buffered", requestID)
 	if err != nil {
@@ -471,6 +471,14 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 		}
 		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
 		return nil, fmt.Errorf("upstream response failed: %s", message)
+	}
+
+	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
+	if got := strings.TrimSpace(finalResponse.Model); got != "" {
+		if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
+			return nil, ferr
+		}
 	}
 
 	if requiresBillableGrokChatUsage(account, billingModel, upstreamModel, finalResponse.Model) && !hasBillableGrokChatUsage(usage) {
@@ -560,7 +568,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	startTime time.Time,
 	requestBodyLen int,
 ) (*OpenAIForwardResult, error) {
-	requestID := resp.Header.Get("x-request-id")
+	requestID := upstreamRequestIDFromHeader(resp.Header)
 
 	headersWritten := false
 	writeStreamHeaders := func() {
@@ -593,6 +601,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
 	var streamNonFailoverErr error
+	// 上游模型不一致只在首个带 model 的事件上比对一次（通常是 response.created）。
+	upstreamModelChecked := false
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -725,6 +735,20 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", defaultMsg)
 			return true
+		}
+
+		// 上游模型不一致拦截：必须在事件转成 chat chunk 并写出之前比对。
+		// 客户端尚无输出（pendingSSE 也未刷出）时按 failover 切号，零泄漏；
+		// 已有输出（model 只在终止事件才出现）时仅打标不中断。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
+				upstreamModelChecked = true
+				if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
+					sentModelForCheck(upstreamModel, originalModel), got, true, !clientOutputStarted, usage); ferr != nil {
+					streamFailoverErr = ferr
+					return true
+				}
+			}
 		}
 
 		chunks := apicompat.ResponsesEventToChatChunks(&event, state)
@@ -1021,13 +1045,17 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			// Send SSE comment as keepalive
 			writeStreamHeaders()
-			if _, err := fmt.Fprint(c.Writer, ":\n\n"); err != nil {
+			n, err := fmt.Fprint(c.Writer, ":\n\n")
+			if err != nil {
 				logger.L().Info("openai chat_completions stream: client disconnected during keepalive",
 					zap.String("request_id", requestID),
 				)
 				clientDisconnected = true
 				continue
 			}
+			// 注释行是客户端会丢弃的心跳，不算内容交付：只计入心跳字节（clientOutputStarted 本就不置位），
+			// 让上游模型不一致等 pre-output failover 在心跳后仍可拦截并切号。
+			addOpenAIStreamKeepaliveBytes(c, n)
 			c.Writer.Flush()
 		}
 	}

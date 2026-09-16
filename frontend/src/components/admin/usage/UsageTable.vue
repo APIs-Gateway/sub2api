@@ -37,7 +37,20 @@
         </template>
 
         <template #cell-model="{ row }">
-          <div v-if="row.model_mapping_chain && row.model_mapping_chain.includes('→')" class="space-y-0.5 text-xs">
+          <div v-if="row.upstream_model_mismatch" class="space-y-0.5 text-xs">
+            <div class="break-all font-medium text-gray-900 dark:text-white">{{ row.model }}</div>
+            <div v-if="row.upstream_model && row.upstream_model !== row.model" class="break-all text-gray-500 dark:text-gray-400">
+              <span class="mr-0.5">↳</span>{{ row.upstream_model }}
+            </div>
+            <div class="break-all text-red-600 dark:text-red-400">
+              <span class="mr-0.5">✗</span>{{ row.upstream_response_model }}
+              <span :title="t('usage.upstreamModelMismatchHint')"
+                    class="ml-1 inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-red-100 text-red-800 ring-1 ring-inset ring-red-200 dark:bg-red-900 dark:text-red-200 dark:ring-red-500/30 cursor-help">
+                {{ t('usage.upstreamModelMismatch') }}
+              </span>
+            </div>
+          </div>
+          <div v-else-if="row.model_mapping_chain && row.model_mapping_chain.includes('→')" class="space-y-0.5 text-xs">
             <div v-for="(step, i) in row.model_mapping_chain.split('→')" :key="i"
                  class="break-all"
                  :class="i === 0 ? 'font-medium text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'"

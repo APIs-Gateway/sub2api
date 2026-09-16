@@ -90,7 +90,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
+			UpstreamRequestID:  firstNonEmpty(upstreamRequestIDFromHeader(resp.Header), resp.Header.Get("xai-request-id")),
 			Kind:               kind,
 			Message:            upstreamMsg,
 		})
@@ -149,7 +149,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	}
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(patchedBody, originalModel)
 	return &OpenAIForwardResult{
-		RequestID:       firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
+		RequestID:       firstNonEmpty(upstreamRequestIDFromHeader(resp.Header), resp.Header.Get("xai-request-id")),
 		ResponseID:      responseID,
 		Usage:           *usage,
 		Model:           originalModel,

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func exercisePromptAuditStorageIntegration(t *testing.T, ctx context.Context, db
 	repo := NewSQLRepository(db)
 	snapshot := storageSnapshot()
 	snapshot.ScanText = "raw prompt must stay outside durable storage"
-	event, err := repo.RecordBlocking(ctx, snapshot, 7, storageResult(), true)
+	event, err := repo.RecordBlocking(ctx, snapshot, 7, storageResult(), true, false)
 	require.NoError(t, err)
 	require.NotNil(t, event)
 	raw, err := json.Marshal(event)
@@ -93,9 +94,11 @@ func exercisePromptAuditStorageIntegration(t *testing.T, ctx context.Context, db
 	require.NoError(t, err)
 	require.Equal(t, int64(1), page.Total)
 	require.Len(t, page.Items, 1)
+	require.Empty(t, page.Items[0].Snapshot.FullPrompt)
 	loadedEvent, err := repo.GetEvent(ctx, event.ID)
 	require.NoError(t, err)
 	require.Equal(t, event.ID, loadedEvent.ID)
+	require.Empty(t, loadedEvent.Snapshot.FullPrompt, "store_full_prompts was disabled for this event")
 
 	job, err := repo.CreateStagingWithCapacity(ctx, snapshot, 7, 2, 10)
 	require.NoError(t, err)
@@ -104,11 +107,39 @@ func exercisePromptAuditStorageIntegration(t *testing.T, ctx context.Context, db
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.NoError(t, repo.RefreshLease(ctx, claimed.ID, claimed.ClaimVersion, time.Now().UTC()))
-	_, err = repo.Complete(ctx, claimed, storageResult(), true)
+	_, err = repo.Complete(ctx, claimed, storageResult(), true, false)
 	require.NoError(t, err)
 	stats, err := repo.QueueStats(ctx)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), stats.Done)
+
+	// store_full_prompts enabled: the durable full_prompt column and the
+	// authenticated single-event detail read (GetEvent) carry the unredacted
+	// text, but the list page and the object Complete/RecordBlocking return
+	// directly must not.
+	fullPromptSnapshot := storageSnapshot()
+	fullPromptSnapshot.RequestID = "request-full-prompt"
+	fullPromptSnapshot.FullPrompt = "PROMPT_CANARY_full_prompt_integration_" + strings.Repeat("x", 200)
+	fullPromptEvent, err := repo.RecordBlocking(ctx, fullPromptSnapshot, 7, storageResult(), true, true)
+	require.NoError(t, err)
+	require.NotNil(t, fullPromptEvent)
+	rawFullPromptEvent, err := json.Marshal(fullPromptEvent)
+	require.NoError(t, err)
+	require.NotContains(t, string(rawFullPromptEvent), fullPromptSnapshot.FullPrompt, "Complete/RecordBlocking must not return full_prompt directly")
+	fullPromptPlaceholder := "$1"
+	if promptAuditSQLDialect(db) == promptAuditQuestionMark {
+		fullPromptPlaceholder = "?"
+	}
+	var storedFullPrompt string
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT full_prompt FROM prompt_audit_events WHERE id = `+fullPromptPlaceholder, fullPromptEvent.ID).Scan(&storedFullPrompt))
+	require.Equal(t, fullPromptSnapshot.FullPrompt, storedFullPrompt)
+	fullPromptDetail, err := repo.GetEvent(ctx, fullPromptEvent.ID)
+	require.NoError(t, err)
+	require.Equal(t, fullPromptSnapshot.FullPrompt, fullPromptDetail.Snapshot.FullPrompt)
+	fullPromptPage, err := repo.ListEvents(ctx, EventFilter{RequestID: fullPromptSnapshot.RequestID}, 1, 20)
+	require.NoError(t, err)
+	require.Len(t, fullPromptPage.Items, 1)
+	require.Empty(t, fullPromptPage.Items[0].Snapshot.FullPrompt, "list responses must stay lean even when store_full_prompts is enabled")
 
 	manager := NewConfigManager(db, nil, nil, prefixEncryptor{})
 	first, err := manager.Save(ctx, promptAuditUpdateRequest(1, 1, "first-token"), 9)

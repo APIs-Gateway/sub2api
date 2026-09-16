@@ -750,6 +750,44 @@ type sseStreamErrorEventError struct {
 
 func (e *sseStreamErrorEventError) Error() string { return "have error in stream" }
 
+// hasObservedTokens 报告流式转发过程中是否已观测到任何上游计量 token。
+func (u *ClaudeUsage) hasObservedTokens() bool {
+	if u == nil {
+		return false
+	}
+	return u.InputTokens > 0 || u.OutputTokens > 0 ||
+		u.CacheCreationInputTokens > 0 || u.CacheReadInputTokens > 0 ||
+		u.CacheCreation5mTokens > 0 || u.CacheCreation1hTokens > 0 ||
+		u.ImageOutputTokens > 0
+}
+
+// partialStreamUsageResult 在流式转发中途出错时，把已观测到的 usage 部分结果包装为
+// ForwardResult（与错误一起返回给 handler 记录）。上游一旦下发过 message_start，
+// input/cache token 就已计量，直接丢弃会让请求完全漏计流式计费（issue #764）。
+// 无已观测 usage 时返回 nil。
+//
+// 不变式：UpstreamFailoverError 必须保持 result=nil——failover 重试成功后按成功请求
+// 计费，若同时返回部分 usage 会造成双重记账，此处显式兜底防御。
+func partialStreamUsageResult(resp *http.Response, streamResult *streamingResult, model, upstreamModel string, startTime time.Time, err error) *ForwardResult {
+	if streamResult == nil || !streamResult.usage.hasObservedTokens() {
+		return nil
+	}
+	var failoverErr *UpstreamFailoverError
+	if errors.As(err, &failoverErr) {
+		return nil
+	}
+	return &ForwardResult{
+		RequestID:        resp.Header.Get("x-request-id"),
+		Usage:            *streamResult.usage,
+		Model:            model,
+		UpstreamModel:    upstreamModel,
+		Stream:           true,
+		Duration:         time.Since(startTime),
+		FirstTokenMs:     streamResult.firstTokenMs,
+		ClientDisconnect: streamResult.clientDisconnect,
+	}
+}
+
 // TempUnscheduleRetryableError 对 RetryableOnSameAccount 类型的 failover 错误触发临时封禁。
 // 由 handler 层在同账号重试全部用尽、切换账号时调用。
 func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accountID int64, failoverErr *UpstreamFailoverError) {
@@ -5332,7 +5370,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						AccountID:          account.ID,
 						AccountName:        account.Name,
 						UpstreamStatusCode: resp.StatusCode,
-						UpstreamRequestID:  resp.Header.Get("x-request-id"),
+						UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 						UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 						Kind:               "signature_error",
 						Message:            extractUpstreamErrorMessage(respBody),
@@ -5394,7 +5432,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 									AccountID:          account.ID,
 									AccountName:        account.Name,
 									UpstreamStatusCode: retryResp.StatusCode,
-									UpstreamRequestID:  retryResp.Header.Get("x-request-id"),
+									UpstreamRequestID:  upstreamRequestIDFromHeader(retryResp.Header),
 									UpstreamURL:        safeUpstreamURL(retryReq.URL.String()),
 									Kind:               "signature_retry_thinking",
 									Message:            extractUpstreamErrorMessage(retryRespBody),
@@ -5474,7 +5512,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						AccountID:          account.ID,
 						AccountName:        account.Name,
 						UpstreamStatusCode: resp.StatusCode,
-						UpstreamRequestID:  resp.Header.Get("x-request-id"),
+						UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 						UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 						Kind:               "budget_constraint_error",
 						Message:            errMsg,
@@ -5546,7 +5584,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					AccountID:          account.ID,
 					AccountName:        account.Name,
 					UpstreamStatusCode: resp.StatusCode,
-					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 					UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 					Kind:               "retry",
 					Message:            extractUpstreamErrorMessage(respBody),
@@ -5592,7 +5630,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 			// 调试日志：打印重试耗尽后的错误响应
 			logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-				account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+				account.ID, account.Name, resp.StatusCode, upstreamRequestIDFromHeader(resp.Header), truncateString(string(respBody), 1000))
 
 			s.handleRetryExhaustedSideEffects(ctx, resp, account)
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -5600,7 +5638,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				Kind:               "retry_exhausted_failover",
 				Message:            extractUpstreamErrorMessage(respBody),
 				Detail: func() string {
@@ -5627,14 +5665,14 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 		// 调试日志：打印上游错误响应
 		logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-			account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+			account.ID, account.Name, resp.StatusCode, upstreamRequestIDFromHeader(resp.Header), truncateString(string(respBody), 1000))
 
 		s.handleFailoverSideEffects(ctx, resp, account, reqModel)
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
 			AccountID:          account.ID,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 			Kind:               "failover",
 			Message:            extractUpstreamErrorMessage(respBody),
 			Detail: func() string {
@@ -5677,7 +5715,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					AccountID:          account.ID,
 					AccountName:        account.Name,
 					UpstreamStatusCode: resp.StatusCode,
-					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 					Kind:               "failover_on_400",
 					Message:            upstreamMsg,
 					Detail:             upstreamDetail,
@@ -5755,7 +5793,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					AccountID:          account.ID,
 					AccountName:        account.Name,
 					UpstreamStatusCode: semanticStatus,
-					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 					Kind:               "stream_error",
 					Message:            upstreamMsg,
 					Detail:             upstreamDetail,
@@ -5763,7 +5801,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 				logger.LegacyPrintf("service.gateway",
 					"[Forward] SSE error event in stream: Account=%d(%s) RequestID=%s Body=%s",
-					account.ID, account.Name, resp.Header.Get("x-request-id"),
+					account.ID, account.Name, upstreamRequestIDFromHeader(resp.Header),
 					truncateString(sseErr.RawData, 1000),
 				)
 
@@ -5771,6 +5809,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					StatusCode:   semanticStatus,
 					ResponseBody: body,
 				}
+			}
+			// 流中断（缺失 terminal 事件、读错误、数据间隔超时等）时保留已探测到的
+			// usage 与错误一起返回，handler 在错误处理完成后照常提交 usage 记录（#764）。
+			if partial := partialStreamUsageResult(resp, streamResult, originalModel, mappedModel, startTime, err); partial != nil {
+				return partial, err
 			}
 			return nil, err
 		}
@@ -5785,7 +5828,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	}
 
 	return &ForwardResult{
-		RequestID:        resp.Header.Get("x-request-id"),
+		RequestID:        upstreamRequestIDFromHeader(resp.Header),
 		Usage:            *usage,
 		Model:            originalModel, // 使用原始模型用于计费和日志
 		UpstreamModel:    mappedModel,
@@ -5929,7 +5972,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 					AccountID:          account.ID,
 					AccountName:        account.Name,
 					UpstreamStatusCode: resp.StatusCode,
-					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 					UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 					Passthrough:        true,
 					Kind:               "retry",
@@ -5965,7 +6008,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 			logger.LegacyPrintf("service.gateway", "[Anthropic Passthrough] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-				account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+				account.ID, account.Name, resp.StatusCode, upstreamRequestIDFromHeader(resp.Header), truncateString(string(respBody), 1000))
 
 			s.handleRetryExhaustedSideEffects(ctx, resp, account)
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -5973,7 +6016,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 				Passthrough:        true,
 				Kind:               "retry_exhausted_failover",
 				Message:            extractUpstreamErrorMessage(respBody),
@@ -5999,7 +6042,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 		logger.LegacyPrintf("service.gateway", "[Anthropic Passthrough] Upstream error (failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-			account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+			account.ID, account.Name, resp.StatusCode, upstreamRequestIDFromHeader(resp.Header), truncateString(string(respBody), 1000))
 
 		s.handleFailoverSideEffects(ctx, resp, account, input.RequestModel)
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -6007,7 +6050,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 			Passthrough:        true,
 			Kind:               "failover",
 			Message:            extractUpstreamErrorMessage(respBody),
@@ -6035,6 +6078,11 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	if input.RequestStream {
 		streamResult, err := s.handleStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.StartTime, input.RequestModel)
 		if err != nil {
+			// 流中断时保留已探测到的 usage 与错误一起返回，避免上游已产生消耗的
+			// 透传请求完全漏计流式计费（#764）。
+			if partial := partialStreamUsageResult(resp, streamResult, input.OriginalModel, input.RequestModel, input.StartTime, err); partial != nil {
+				return partial, err
+			}
 			return nil, err
 		}
 		usage = streamResult.usage
@@ -6051,7 +6099,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	}
 
 	return &ForwardResult{
-		RequestID:        resp.Header.Get("x-request-id"),
+		RequestID:        upstreamRequestIDFromHeader(resp.Header),
 		Usage:            *usage,
 		Model:            input.OriginalModel,
 		UpstreamModel:    input.RequestModel,
@@ -6581,7 +6629,7 @@ func (s *GatewayService) invalidNonStreamingJSONFailoverError(
 		accountID,
 		accountName,
 		resp.StatusCode,
-		resp.Header.Get("x-request-id"),
+		upstreamRequestIDFromHeader(resp.Header),
 		parseErr,
 	)
 
@@ -8193,7 +8241,7 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 
 	// 调试日志：打印上游错误响应
 	logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (non-retryable): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-		account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(body), 1000))
+		account.ID, account.Name, resp.StatusCode, upstreamRequestIDFromHeader(resp.Header), truncateString(string(body), 1000))
 
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -8205,7 +8253,7 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 			if line, ok := v.(string); ok && strings.TrimSpace(line) != "" {
 				logger.LegacyPrintf("service.gateway", "[ClaudeMimicDebugOnError] status=%d request_id=%s %s",
 					resp.StatusCode,
-					resp.Header.Get("x-request-id"),
+					upstreamRequestIDFromHeader(resp.Header),
 					line,
 				)
 			}
@@ -8226,7 +8274,7 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		Platform:           account.Platform,
 		AccountID:          account.ID,
 		UpstreamStatusCode: resp.StatusCode,
-		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 		Kind:               "http_error",
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
@@ -8372,7 +8420,7 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 			if line, ok := v.(string); ok && strings.TrimSpace(line) != "" {
 				logger.LegacyPrintf("service.gateway", "[ClaudeMimicDebugOnError] status=%d request_id=%s %s",
 					resp.StatusCode,
-					resp.Header.Get("x-request-id"),
+					upstreamRequestIDFromHeader(resp.Header),
 					line,
 				)
 			}
@@ -8392,7 +8440,7 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 		Platform:           account.Platform,
 		AccountID:          account.ID,
 		UpstreamStatusCode: resp.StatusCode,
-		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 		Kind:               "retry_exhausted",
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
@@ -10146,6 +10194,12 @@ func (s *GatewayService) calculateTokenCost(
 	multiplier float64,
 	opts *recordUsageOpts,
 ) *CostBreakdown {
+	// billingService 未注入（如轻量部署/测试场景下 GatewayService 未接入完整计费依赖）时，
+	// 与 hasResolvableTokenPricing 的既有 nil 处理保持一致：不计价，避免 nil 解引用 panic。
+	if s.billingService == nil {
+		return &CostBreakdown{ActualCost: 0}
+	}
+
 	tokens := UsageTokens{
 		InputTokens:           result.Usage.InputTokens,
 		OutputTokens:          result.Usage.OutputTokens,
@@ -10579,8 +10633,11 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 
 	// 处理错误响应
 	if resp.StatusCode >= 400 {
-		// 标记账号状态（429/529等）
-		s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		// 标记账号状态（429/529等）；反代/网关在到达上游 API 之前拦下的 HTML
+		// 拦截页/挑战页不构成账号凭据或权限失效的证据，跳过冷却（见 isHTMLUpstreamCountTokensResponse）。
+		if !isHTMLUpstreamCountTokensResponse(resp.Header, respBody) {
+			s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		}
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -10679,7 +10736,7 @@ func (s *GatewayService) forwardCountTokensAnthropicAPIKeyPassthrough(ctx contex
 	}
 
 	if resp.StatusCode >= 400 {
-		if s.rateLimitService != nil {
+		if s.rateLimitService != nil && !isHTMLUpstreamCountTokensResponse(resp.Header, respBody) {
 			s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 		}
 
@@ -10711,7 +10768,7 @@ func (s *GatewayService) forwardCountTokensAnthropicAPIKeyPassthrough(ctx contex
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
 			UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 			Passthrough:        true,
 			Kind:               "http_error",
@@ -10984,6 +11041,45 @@ func (s *GatewayService) countTokensError(c *gin.Context, status int, errType, m
 			"message": message,
 		},
 	})
+}
+
+// isHTMLUpstreamCountTokensResponse 判断 count_tokens 上游错误响应是否是一个 HTML
+// 页面（例如反向代理/网关在请求到达真正的平台 API 之前就拦下、返回的挑战页或
+// 错误页），而不是结构化的 JSON API 错误。
+//
+// count_tokens 是一个本地便捷端点：它的失败不应该影响账号健康度判断，但一个
+// 被链路中间层拦截、内容是 HTML 而非 JSON 的响应尤其如此——它描述的是"这条
+// 链路/这个端点被挡了"，不构成账号凭据或权限失效的证据。据此调用
+// HandleUpstreamError 会把请求级、甚至链路级的噪声放大成账号级处罚（temp
+// unschedulable / disable），可能连累同账号后续正常的请求。
+//
+// 判断依据（满足任一即可）：
+//   - 响应头 Content-Type 的 media type 是 text/html（忽略 charset 等参数、大小写）；
+//   - 响应体去除首尾空白后以 <!doctype html 或 <html 开头（大小写不敏感），复用
+//     ratelimit_service.go 中既有的 isHTMLResponse 判定，不重新发明检测逻辑。
+//
+// 该 guard 只影响是否调用 HandleUpstreamError（即是否冷却账号），不影响错误
+// 本身是否正常返回给调用方——上游状态码与错误信息仍然原样透传。
+//
+// 作用范围：仅用于 count_tokens 转发路径（ForwardCountTokens /
+// forwardCountTokensAnthropicAPIKeyPassthrough），覆盖所有平台/账号类型，不
+// 局限于 OpenAI OAuth。HandleUpstreamError 内部已有的、专门针对 OpenAI 403 的
+// isHTMLResponse 判定（见 ratelimit_service.go handleOpenAI403）保持不变，服务
+// 于更广的（非 count_tokens）请求路径。
+func isHTMLUpstreamCountTokensResponse(headers http.Header, body []byte) bool {
+	if headers != nil {
+		contentType := strings.TrimSpace(headers.Get("Content-Type"))
+		if contentType != "" {
+			mediaType := contentType
+			if idx := strings.IndexByte(mediaType, ';'); idx >= 0 {
+				mediaType = mediaType[:idx]
+			}
+			if strings.EqualFold(strings.TrimSpace(mediaType), "text/html") {
+				return true
+			}
+		}
+	}
+	return isHTMLResponse(body)
 }
 
 // buildCustomRelayURL 构建自定义中继转发 URL

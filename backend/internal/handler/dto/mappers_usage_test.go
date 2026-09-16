@@ -207,6 +207,43 @@ func TestUsageLogFromService_PreservesHistoricalMissingImageSize(t *testing.T) {
 	require.NotContains(t, string(body), `"image_size":"2K"`)
 }
 
+func TestUsageLogFromServiceAdmin_IncludesUpstreamModelMismatchFields(t *testing.T) {
+	t.Parallel()
+
+	responseModel := "claude-sonnet-4-20250514"
+	mismatchLog := &service.UsageLog{
+		RequestID:             "req_mismatch",
+		Model:                 "claude-sonnet-4",
+		UpstreamModelMismatch: true,
+		UpstreamResponseModel: &responseModel,
+	}
+	matchLog := &service.UsageLog{
+		RequestID:             "req_match",
+		Model:                 "claude-sonnet-4",
+		UpstreamModelMismatch: false,
+		UpstreamResponseModel: nil,
+	}
+
+	mismatchDTO := UsageLogFromServiceAdmin(mismatchLog)
+	require.True(t, mismatchDTO.UpstreamModelMismatch)
+	require.NotNil(t, mismatchDTO.UpstreamResponseModel)
+	require.Equal(t, responseModel, *mismatchDTO.UpstreamResponseModel)
+
+	mismatchJSON, err := json.Marshal(mismatchDTO)
+	require.NoError(t, err)
+	require.Contains(t, string(mismatchJSON), `"upstream_model_mismatch":true`)
+	require.Contains(t, string(mismatchJSON), `"upstream_response_model":"claude-sonnet-4-20250514"`)
+
+	matchDTO := UsageLogFromServiceAdmin(matchLog)
+	require.False(t, matchDTO.UpstreamModelMismatch)
+	require.Nil(t, matchDTO.UpstreamResponseModel)
+
+	matchJSON, err := json.Marshal(matchDTO)
+	require.NoError(t, err)
+	require.Contains(t, string(matchJSON), `"upstream_model_mismatch":false`)
+	require.NotContains(t, string(matchJSON), `"upstream_response_model"`)
+}
+
 func f64Ptr(value float64) *float64 {
 	return &value
 }

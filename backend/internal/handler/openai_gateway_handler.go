@@ -480,7 +480,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockKeyHTTP = service.CyberSessionBlockKey(apiKey.ID, c, sessionHashBody)
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyHTTP, channelMapping.ToUsageFields(reqModel, ""), service.HashUsageRequestPayload(body))
+		requestPayloadHash := service.HashUsageRequestPayload(body)
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyHTTP, channelMapping.ToUsageFields(reqModel, ""), requestPayloadHash)
+		// 上游模型不一致：先读 B（成功路径 RecordUsage 透传），再记审计行并清标（下一次尝试可重新打标）。
+		upstreamResponseModel := ""
+		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
+			upstreamResponseModel = mark.ResponseModel
+		}
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMapping.ToUsageFields(reqModel, ""), requestPayloadHash, body)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -492,32 +499,33 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, int64(*result.FirstTokenMs))
 		}
 		// #5148 对齐：错误路径返回的部分 result（流中断前上游已计量的 usage）也要
-		// 正常入账；failover 错误固定 result == nil，不会重复计费。
+		// 正常入账；failover 错误由上方 failover 分支 continue/return，不会调用本闭包
+		//（流式路径已写出后 result 可能非 nil），不会重复计费。
 		submitResponsesUsage := func(res *service.OpenAIForwardResult) {
 			if res == nil {
 				return
 			}
 			userAgent := c.GetHeader("User-Agent")
 			clientIP := ip.GetClientIP(c)
-			requestPayloadHash := service.HashUsageRequestPayload(body)
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:             res,
-					APIKey:             apiKey,
-					User:               apiKey.User,
-					Account:            account,
-					Subscription:       subscription,
-					InboundEndpoint:    inboundEndpoint,
-					UpstreamEndpoint:   upstreamEndpoint,
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
-					RequestPayloadHash: requestPayloadHash,
-					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: channelMapping.ToUsageFields(reqModel, res.UpstreamModel),
-					CyberBlocked:       cyberBlocked,
+					Result:                res,
+					APIKey:                apiKey,
+					User:                  apiKey.User,
+					Account:               account,
+					Subscription:          subscription,
+					InboundEndpoint:       inboundEndpoint,
+					UpstreamEndpoint:      upstreamEndpoint,
+					UserAgent:             userAgent,
+					IPAddress:             clientIP,
+					RequestPayloadHash:    requestPayloadHash,
+					APIKeyService:         h.apiKeyService,
+					ChannelUsageFields:    channelMapping.ToUsageFields(reqModel, res.UpstreamModel),
+					CyberBlocked:          cyberBlocked,
+					UpstreamResponseModel: upstreamResponseModel,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.responses"),
@@ -554,24 +562,16 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
 						streamStarted = true
 					}
+					// 只写过 SSE 心跳字节（Size 扣除心跳后仍等于转发前）也已把响应头提交为 200：
+					// 后续耗尽必须在同一连接内以 response.failed 收尾，不能再写 JSON 错误体。
+					if openAIForwardWroteKeepaliveOnly(c, writerSizeBeforeForward) {
+						streamStarted = true
+					}
 					// 池模式：同账号重试
-					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
-						if sameAccountRetryCount[account.ID] < retryLimit {
-							sameAccountRetryCount[account.ID]++
-							reqLog.Warn("openai.pool_mode_same_account_retry",
-								zap.Int64("account_id", account.ID),
-								zap.Int("upstream_status", failoverErr.StatusCode),
-								zap.Int("retry_limit", retryLimit),
-								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
-							)
-							select {
-							case <-c.Request.Context().Done():
-								return
-							case <-time.After(sameAccountRetryDelay):
-							}
-							continue
-						}
+					if retry, canceled := waitPoolModeSameAccountRetry(c, reqLog, "openai.pool_mode_same_account_retry", account, failoverErr, sameAccountRetryCount); canceled {
+						return
+					} else if retry {
+						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
@@ -985,7 +985,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		defaultMappedModel := strings.TrimSpace(effectiveMappedModel)
 		// 应用渠道模型映射到请求体
 		forwardBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
-		writerSizeBeforeForward := c.Writer.Size()
+		// 心跳字节（Anthropic ping）不算内容交付：与 Responses 入口同口径取扣除心跳后的 Size。
+		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -998,7 +999,14 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockKeyMsg = service.CyberSessionBlockKey(apiKey.ID, c, body)
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyMsg, channelMappingMsg.ToUsageFields(reqModel, ""), service.HashUsageRequestPayload(body))
+		requestPayloadHash := service.HashUsageRequestPayload(body)
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyMsg, channelMappingMsg.ToUsageFields(reqModel, ""), requestPayloadHash)
+		// 上游模型不一致：先读 B（成功路径 RecordUsage 透传），再记审计行并清标（下一次尝试可重新打标）。
+		upstreamResponseModel := ""
+		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
+			upstreamResponseModel = mark.ResponseModel
+		}
+		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingMsg.ToUsageFields(reqModel, ""), requestPayloadHash, body)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1010,32 +1018,33 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, int64(*result.FirstTokenMs))
 		}
 		// #5148 对齐：错误路径返回的部分 result（流中断/客户端断开排水前上游已
-		// 计量的 usage）也要正常入账；failover 错误固定 result == nil，不会重复计费。
+		// 计量的 usage）也要正常入账；failover 错误由上方 failover 分支 continue/return，
+		// 不会调用本闭包（流式路径已写出后 result 可能非 nil），不会重复计费。
 		submitMessagesUsage := func(res *service.OpenAIForwardResult) {
 			if res == nil {
 				return
 			}
 			userAgent := c.GetHeader("User-Agent")
 			clientIP := ip.GetClientIP(c)
-			requestPayloadHash := service.HashUsageRequestPayload(body)
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:             res,
-					APIKey:             apiKey,
-					User:               apiKey.User,
-					Account:            account,
-					Subscription:       subscription,
-					InboundEndpoint:    inboundEndpoint,
-					UpstreamEndpoint:   upstreamEndpoint,
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
-					RequestPayloadHash: requestPayloadHash,
-					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: channelMappingMsg.ToUsageFields(reqModel, res.UpstreamModel),
-					CyberBlocked:       cyberBlocked,
+					Result:                res,
+					APIKey:                apiKey,
+					User:                  apiKey.User,
+					Account:               account,
+					Subscription:          subscription,
+					InboundEndpoint:       inboundEndpoint,
+					UpstreamEndpoint:      upstreamEndpoint,
+					UserAgent:             userAgent,
+					IPAddress:             clientIP,
+					RequestPayloadHash:    requestPayloadHash,
+					APIKeyService:         h.apiKeyService,
+					ChannelUsageFields:    channelMappingMsg.ToUsageFields(reqModel, res.UpstreamModel),
+					CyberBlocked:          cyberBlocked,
+					UpstreamResponseModel: upstreamResponseModel,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.messages"),
@@ -1065,28 +1074,23 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						)
 						return
 					}
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
 						return
 					}
+					// 与 Responses 入口一致：只写过心跳（Anthropic ping）或 SafeToFailoverAfterWrite 的
+					// failover 已提交 200 SSE，耗尽时走流内 error 事件。
+					if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
+						streamStarted = true
+					}
+					if openAIForwardWroteKeepaliveOnly(c, writerSizeBeforeForward) {
+						streamStarted = true
+					}
 					// 池模式：同账号重试
-					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
-						if sameAccountRetryCount[account.ID] < retryLimit {
-							sameAccountRetryCount[account.ID]++
-							reqLog.Warn("openai_messages.pool_mode_same_account_retry",
-								zap.Int64("account_id", account.ID),
-								zap.Int("upstream_status", failoverErr.StatusCode),
-								zap.Int("retry_limit", retryLimit),
-								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
-							)
-							select {
-							case <-c.Request.Context().Done():
-								return
-							case <-time.After(sameAccountRetryDelay):
-							}
-							continue
-						}
+					if retry, canceled := waitPoolModeSameAccountRetry(c, reqLog, "openai_messages.pool_mode_same_account_retry", account, failoverErr, sameAccountRetryCount); canceled {
+						return
+					} else if retry {
+						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
@@ -1632,6 +1636,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		)
 
 		var requestPayloadHash string
+		// 首包只给第 1 轮的模型不一致审计估算 input_tokens 用（拦截只发生在第 1 轮），
+		// AfterTurn 用完即置 nil，避免闭包在整个连接期间保活首包。
+		var wsMismatchRequestBody []byte
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
@@ -1700,6 +1707,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				defer clearCyberPolicyTurnState(c)
 				releaseTurnSlots()
 				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, turnErr != nil, cyberBlockKey, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash)
+				// 上游模型不一致标记按 turn 生命周期：先读 B 供本 turn 的 RecordUsage 透传，
+				// 再记审计行并清标，turn N+1 才能重新打标。
+				upstreamResponseModel := ""
+				if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
+					upstreamResponseModel = mark.ResponseModel
+				}
+				mismatchRequestBody := wsMismatchRequestBody
+				wsMismatchRequestBody = nil
+				h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash, mismatchRequestBody)
 				if service.GetOpsCyberPolicy(c) != nil {
 					cyberBlockedThisConn = true
 				}
@@ -1730,19 +1746,20 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
-						Result:             result,
-						APIKey:             apiKey,
-						User:               apiKey.User,
-						Account:            account,
-						Subscription:       subscription,
-						InboundEndpoint:    inboundEndpoint,
-						UpstreamEndpoint:   upstreamEndpoint,
-						UserAgent:          userAgent,
-						IPAddress:          clientIP,
-						RequestPayloadHash: requestPayloadHash,
-						APIKeyService:      h.apiKeyService,
-						ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
-						CyberBlocked:       cyberBlocked,
+						Result:                result,
+						APIKey:                apiKey,
+						User:                  apiKey.User,
+						Account:               account,
+						Subscription:          subscription,
+						InboundEndpoint:       inboundEndpoint,
+						UpstreamEndpoint:      upstreamEndpoint,
+						UserAgent:             userAgent,
+						IPAddress:             clientIP,
+						RequestPayloadHash:    requestPayloadHash,
+						APIKeyService:         h.apiKeyService,
+						ChannelUsageFields:    channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
+						CyberBlocked:          cyberBlocked,
+						UpstreamResponseModel: upstreamResponseModel,
 					}); err != nil {
 						reqLog.Error("openai.websocket_record_usage_failed",
 							zap.Int64("account_id", account.ID),
@@ -1774,6 +1791,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 		// WebSocket 首包可能很大，hash 必须在 hooks 外算成字符串，避免 AfterTurn 闭包保活请求体。
 		requestPayloadHash = service.HashUsageRequestPayload(wsFirstMessage)
+		wsMismatchRequestBody = wsFirstMessage
 
 		if err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
 			var failoverErr *service.UpstreamFailoverError
@@ -1939,10 +1957,16 @@ func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, tas
 	}
 	task = wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
-		h.usageRecordWorkerPool.Submit(task)
-		return
+		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDroppedStopped {
+			return
+		}
+		// 池已停止（进程关停窗口）：计费任务不能静默丢失，降级为内联同步执行。
+		// 显式配置的 drop/sample 溢出丢弃仍按配置语义保留。
+		logger.L().With(
+			zap.String("component", "handler.openai_gateway.responses"),
+		).Warn("openai.usage_record_task_stopped_sync_fallback")
 	}
-	// 回退路径：worker 池未注入时同步执行，避免退回到无界 goroutine 模式。
+	// 回退路径：worker 池未注入或已停止时同步执行，避免退回到无界 goroutine 模式。
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	defer func() {
@@ -1970,7 +1994,7 @@ func (h *OpenAIGatewayHandler) submitMandatoryUsageRecordTask(parent context.Con
 	}
 	task = wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
-		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDropped {
+		if mode := h.usageRecordWorkerPool.Submit(task); !mode.Dropped() {
 			return
 		}
 		logger.L().With(
@@ -2240,6 +2264,16 @@ func openAIForwardMayFailover(c *gin.Context, writerSizeBeforeForward int, failo
 		return true
 	}
 	return failoverErr != nil && failoverErr.SafeToFailoverAfterWrite
+}
+
+// openAIForwardWroteKeepaliveOnly 判断本次 Forward 只向客户端写过心跳字节（SSE 注释行 /
+// Anthropic ping / compact keepalive）：gin 已提交响应，但扣除心跳后的 Size 与转发前相同。
+// 这类字节客户端会丢弃，不算内容交付，允许切号；但响应头已是 200 SSE，耗尽时必须走流内错误。
+func openAIForwardWroteKeepaliveOnly(c *gin.Context, writerSizeBeforeForward int) bool {
+	if c == nil || c.Writer == nil || !c.Writer.Written() {
+		return false
+	}
+	return service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward
 }
 
 func openAIRequestAllowsFailoverReplay(c *gin.Context) bool {
@@ -2741,6 +2775,151 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		if opsSvc != nil {
 			enqueueOpsErrorLog(opsSvc, buildCyberPolicyOpsErrorEntry(opsMeta, mark))
 		}
+	}()
+}
+
+// upstreamModelMismatchUsageRecorder 是 *service.OpenAIGatewayService 上审计行写入方法的最小接口，
+// 便于单测注入假实现验证调用与入参。
+type upstreamModelMismatchUsageRecorder interface {
+	RecordUpstreamModelMismatchUsageLog(ctx context.Context, in service.UpstreamModelMismatchUsageInput)
+}
+
+// recordUpstreamModelMismatchIfMarked 在每次 Forward 返回后调用：service 层因上游模型不一致
+// 拦截本次尝试并返回 failover 时（mark.Blocked=true；handler 的 failover 分支 continue/return，
+// 不会为该尝试调用正常 RecordUsage——流式路径 result 可能非 nil，但同样不会入账），
+// 补一行不计费的审计 usage_log，然后清标——failover 换号后的下一次尝试还要能重新打标。
+// mark.Blocked=false 表示观察模式放行（或客户端已收到输出无法拦截），B 已由成功/部分结果
+// 路径的 RecordUsage（UpstreamResponseModel）落库，这里只清标；不看 forward 是否报错，
+// 避免「未拦截 + 其他错误带部分 result」时审计行与正常行双写。
+// 注意调用顺序：成功路径若需读取 mark.ResponseModel 透传给 RecordUsage，必须在本方法之前读。
+func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string, requestBody []byte) {
+	var recorder upstreamModelMismatchUsageRecorder
+	if h.gatewayService != nil {
+		recorder = h.gatewayService
+	}
+	var apiKeySvc service.APIKeyQuotaUpdater
+	if h.apiKeyService != nil {
+		apiKeySvc = h.apiKeyService
+	}
+	recordUpstreamModelMismatchIfMarked(c, recorder, apiKeySvc, apiKey, account, subscription, model, channelFields, requestPayloadHash, requestBody)
+}
+
+// poolModeSameAccountRetry 池模式同账号重试的决策：failoverErr 标了 RetryableOnSameAccount 且该账号
+// 本次请求内的重试次数还没到 account.GetPoolModeRetryCount()，就把计数 +1 并返回 ok=true（调用方 sleep 后
+// continue，不切号、不降权）；否则 ok=false，走正常切号。三个 OpenAI 入站 handler 共用，便于单测锁定
+// 「上限 = pool_mode_retry_count，用尽才切号」。
+func poolModeSameAccountRetry(account *service.Account, failoverErr *service.UpstreamFailoverError, sameAccountRetryCount map[int64]int) (retryCount, retryLimit int, ok bool) {
+	if account == nil || failoverErr == nil || !failoverErr.RetryableOnSameAccount {
+		return 0, 0, false
+	}
+	retryLimit = account.GetPoolModeRetryCount()
+	if sameAccountRetryCount[account.ID] >= retryLimit {
+		return sameAccountRetryCount[account.ID], retryLimit, false
+	}
+	sameAccountRetryCount[account.ID]++
+	return sameAccountRetryCount[account.ID], retryLimit, true
+}
+
+// waitPoolModeSameAccountRetry 池模式同账号重试的公共步骤：判定是否还能重试、记日志、等待重试间隔。
+// retry=true 表示调用方应在同一账号上再试一次；canceled=true 表示等待期间客户端已断开，调用方应直接返回。
+func waitPoolModeSameAccountRetry(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	logEvent string,
+	account *service.Account,
+	failoverErr *service.UpstreamFailoverError,
+	sameAccountRetryCount map[int64]int,
+) (retry bool, canceled bool) {
+	retryCount, retryLimit, ok := poolModeSameAccountRetry(account, failoverErr, sameAccountRetryCount)
+	if !ok {
+		return false, false
+	}
+	if reqLog != nil {
+		reqLog.Warn(logEvent,
+			zap.Int64("account_id", account.ID),
+			zap.Int("upstream_status", failoverErr.StatusCode),
+			zap.Int("retry_limit", retryLimit),
+			zap.Int("retry_count", retryCount),
+		)
+	}
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	if !sleepWithContext(ctx, sameAccountRetryDelay) {
+		return true, true
+	}
+	return true, false
+}
+
+// upstreamModelMismatchAttemptsKey 在 gin context 里存 map[int64]int：同一请求内每个账号已落审计行的
+// 被拦截次数。池模式同账号重试时同一账号会连续被拦截多次，每行 request_id 需要不同的 attempt 后缀。
+const upstreamModelMismatchAttemptsKey = "ops_upstream_model_mismatch_attempts"
+
+// nextUpstreamModelMismatchAttempt 返回该账号本次拦截的 attempt 序号（从 0 起）并累加计数。
+func nextUpstreamModelMismatchAttempt(c *gin.Context, accountID int64) int {
+	var attempts map[int64]int
+	if v, ok := c.Get(upstreamModelMismatchAttemptsKey); ok {
+		attempts, _ = v.(map[int64]int)
+	}
+	if attempts == nil {
+		attempts = map[int64]int{}
+		c.Set(upstreamModelMismatchAttemptsKey, attempts)
+	}
+	attempt := attempts[accountID]
+	attempts[accountID] = attempt + 1
+	return attempt
+}
+
+// requestBody 是本次发往上游的请求体：拦截发生在 response.created（不带 usage）时 mark.Usage 全零，
+// 但 prompt 已经发出、输入侧消耗真实发生，此时按请求体估算 input_tokens 记入审计行（成本仍为 0）；
+// 上游已回报 usage（InputTokens>0）时不覆盖。
+func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelMismatchUsageRecorder, apiKeySvc service.APIKeyQuotaUpdater, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string, requestBody []byte) {
+	mark := service.GetOpsUpstreamModelMismatch(c)
+	if mark == nil {
+		return
+	}
+	// 先清标（同步）：无论是否落审计行，下一次尝试 / 下一 turn 都要能重新打标。
+	service.ClearOpsUpstreamModelMismatch(c)
+	if !mark.Blocked || apiKey == nil || account == nil || recorder == nil {
+		return
+	}
+	// 池模式同账号重试：同一账号在同一请求内可能连续被拦截多次，按账号计数让每行 request_id 不同键。
+	attempt := nextUpstreamModelMismatchAttempt(c, account.ID)
+	if mark.Usage.InputTokens == 0 {
+		if estimated := service.EstimateOpenAIRequestInputTokens(requestBody); estimated > 0 {
+			mark.Usage.InputTokens = estimated
+			requestLogger(c, "handler.openai_gateway").Info("openai.upstream_model_mismatch_input_tokens_estimated",
+				zap.Int64("account_id", account.ID),
+				zap.Int("estimated_input_tokens", estimated),
+			)
+		}
+	}
+	var userAgent, clientIP string
+	if c.Request != nil {
+		userAgent = c.GetHeader("User-Agent")
+		clientIP = ip.GetClientIP(c)
+	}
+	in := service.UpstreamModelMismatchUsageInput{
+		APIKey:             apiKey,
+		Account:            account,
+		Subscription:       subscription,
+		RequestID:          c.Writer.Header().Get("X-Request-Id"),
+		Model:              model,
+		Mark:               *mark,
+		InboundEndpoint:    GetInboundEndpoint(c),
+		UpstreamEndpoint:   resolveOpenAIUpstreamEndpoint(c, account),
+		UserAgent:          userAgent,
+		IPAddress:          clientIP,
+		RequestPayloadHash: requestPayloadHash,
+		APIKeyService:      apiKeySvc,
+		ChannelUsageFields: channelFields,
+		Attempt:            attempt,
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		recorder.RecordUpstreamModelMismatchUsageLog(ctx, in)
 	}()
 }
 
