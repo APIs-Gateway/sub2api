@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -163,8 +164,10 @@ type ChannelService struct {
 	pricingService       *PricingService // 用于「可用渠道」展示时回落到全局定价；可为 nil（测试场景）
 	cachePubSub          ChannelCachePubSub
 
-	cache   atomic.Value // *channelCache
-	cacheSF singleflight.Group
+	cache           atomic.Value // *channelCache
+	cacheGeneration atomic.Uint64
+	cacheMu         sync.Mutex
+	cacheSF         singleflight.Group
 }
 
 // NewChannelService 创建渠道服务实例。
@@ -285,6 +288,7 @@ func (s *ChannelService) storeErrorCache() {
 // buildCache 从数据库构建渠道缓存。
 // 使用独立 context 避免请求取消导致空值被长期缓存。
 func (s *ChannelService) buildCache(ctx context.Context) (*channelCache, error) {
+	generation := s.cacheGeneration.Load()
 	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), channelCacheDBTimeout)
 	defer cancel()
 
@@ -294,7 +298,11 @@ func (s *ChannelService) buildCache(ctx context.Context) (*channelCache, error) 
 	}
 
 	cache := populateChannelCache(channels, groupPlatforms)
-	s.cache.Store(cache)
+	s.cacheMu.Lock()
+	if s.cacheGeneration.Load() == generation {
+		s.cache.Store(cache)
+	}
+	s.cacheMu.Unlock()
 	return cache, nil
 }
 
@@ -385,8 +393,11 @@ func (s *ChannelService) invalidateCache() {
 // invalidateCache prevents notifications received from Redis from being
 // published again in a loop.
 func (s *ChannelService) clearCache() {
+	s.cacheMu.Lock()
+	s.cacheGeneration.Add(1)
 	s.cache.Store((*channelCache)(nil))
 	s.cacheSF.Forget("channel_cache")
+	s.cacheMu.Unlock()
 }
 
 func (s *ChannelService) notifyCacheUpdate() {
