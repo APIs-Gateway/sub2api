@@ -389,7 +389,6 @@ func (s *ChannelService) clearCache() {
 	s.cacheSF.Forget("channel_cache")
 }
 
-
 func (s *ChannelService) notifyCacheUpdate() {
 	if s.cachePubSub == nil {
 		return
