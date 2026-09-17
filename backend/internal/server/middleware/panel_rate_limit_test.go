@@ -246,6 +246,16 @@ func TestPanelRateLimiterDisabledOrMissingSubject(t *testing.T) {
 	var nilLimiter *PanelRateLimiter
 	nilRouter := newPanelTestRouter(nilLimiter.Global(), &panelTestIdentity{userID: 3, role: service.RoleUser})
 	require.Equal(t, http.StatusOK, performPanelRequest(nilRouter, "127.0.0.1:1000").Code)
+
+	// 配置为零表示显式关闭该档位，不应占用用户额度。
+	zeroLimit := &PanelRateLimiter{
+		limiter:        &fakePanelAllower{},
+		settingService: newPanelRateLimitTestService(t, `{"enabled":true,"user_rpm":0,"heavy_rpm":1,"exempt_admin":false,"public_ip_rpm":1}`),
+	}
+	zeroLimitRouter := newPanelTestRouter(zeroLimit.Global(), &panelTestIdentity{userID: 3, role: service.RoleUser})
+	for i := 0; i < 3; i++ {
+		require.Equal(t, http.StatusOK, performPanelRequest(zeroLimitRouter, "127.0.0.1:1000").Code)
+	}
 }
 
 func TestPanelRateLimiterFailOpenOnRedisError(t *testing.T) {

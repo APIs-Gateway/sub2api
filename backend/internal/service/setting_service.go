@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/emailcanon"
@@ -4683,7 +4684,7 @@ func (s *SettingService) GetPanelRateLimitSettings(ctx context.Context) (*PanelR
 	}
 
 	settings := &PanelRateLimitSettings{}
-	if err := json.Unmarshal([]byte(value), settings); err != nil {
+	if err := common.Unmarshal([]byte(value), settings); err != nil {
 		slog.Warn("failed to unmarshal panel rate limit settings, falling back to defaults",
 			"error", err, "key", SettingKeyPanelRateLimitSettings)
 		return DefaultPanelRateLimitSettings(), nil
@@ -4705,7 +4706,7 @@ func (s *SettingService) SetPanelRateLimitSettings(ctx context.Context, settings
 		return fmt.Errorf("rate limit values must be at most %d", panelRateLimitRPMMax)
 	}
 
-	data, err := json.Marshal(settings)
+	data, err := common.Marshal(settings)
 	if err != nil {
 		return fmt.Errorf("marshal panel rate limit settings: %w", err)
 	}

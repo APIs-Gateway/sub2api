@@ -109,3 +109,18 @@ func TestSettingHandlerPanelRateLimitSettingsRejectsInvalidRequest(t *testing.T)
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.NotContains(t, repo.values, service.SettingKeyPanelRateLimitSettings)
 }
+
+func TestSettingHandlerPanelRateLimitSettingsRejectsMalformedJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &panelRateLimitSettingHandlerRepoStub{values: map[string]string{}}
+	handler := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), nil, nil, nil, nil, nil, nil)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings/panel-rate-limit", bytes.NewBufferString(`{"enabled":`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	handler.UpdatePanelRateLimitSettings(context)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.NotContains(t, repo.values, service.SettingKeyPanelRateLimitSettings)
+}

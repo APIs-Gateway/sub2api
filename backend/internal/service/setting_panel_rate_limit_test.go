@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -13,6 +15,7 @@ type panelRateLimitSettingRepo struct {
 	mu            sync.Mutex
 	values        map[string]string
 	getValueErr   error
+	setErr        error
 	getValueCalls int
 }
 
@@ -43,6 +46,9 @@ func (r *panelRateLimitSettingRepo) GetValue(_ context.Context, key string) (str
 func (r *panelRateLimitSettingRepo) Set(_ context.Context, key, value string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.setErr != nil {
+		return r.setErr
+	}
 	if r.values == nil {
 		r.values = make(map[string]string)
 	}
@@ -103,6 +109,24 @@ func TestGetPanelRateLimitSettingsDefaults(t *testing.T) {
 	require.Equal(t, DefaultPanelRateLimitSettings(), settings)
 }
 
+func TestGetPanelRateLimitSettingsEmptyValueFallsBack(t *testing.T) {
+	svc := newPanelRateLimitTestService(&panelRateLimitSettingRepo{values: map[string]string{
+		SettingKeyPanelRateLimitSettings: "  ",
+	}})
+
+	settings, err := svc.GetPanelRateLimitSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, DefaultPanelRateLimitSettings(), settings)
+}
+
+func TestGetPanelRateLimitSettingsReturnsRepositoryError(t *testing.T) {
+	want := errors.New("settings database unavailable")
+	svc := newPanelRateLimitTestService(&panelRateLimitSettingRepo{getValueErr: want})
+
+	_, err := svc.GetPanelRateLimitSettings(context.Background())
+	require.ErrorIs(t, err, want)
+}
+
 func TestGetPanelRateLimitSettingsInvalidJSONFallsBack(t *testing.T) {
 	repo := &panelRateLimitSettingRepo{values: map[string]string{
 		SettingKeyPanelRateLimitSettings: "{not-json",
@@ -127,6 +151,19 @@ func TestGetPanelRateLimitSettingsNormalizesValues(t *testing.T) {
 	require.Equal(t, panelRateLimitRPMMax, settings.HeavyRPM)
 	require.Equal(t, 10, settings.PublicIPRPM)
 	require.False(t, settings.ExemptAdmin)
+}
+
+func TestGetPanelRateLimitSettingsNormalizesRemainingBounds(t *testing.T) {
+	repo := &panelRateLimitSettingRepo{values: map[string]string{
+		SettingKeyPanelRateLimitSettings: `{"user_rpm":999999999,"heavy_rpm":-5,"public_ip_rpm":999999999}`,
+	}}
+	svc := newPanelRateLimitTestService(repo)
+
+	settings, err := svc.GetPanelRateLimitSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, panelRateLimitRPMMax, settings.UserRPM)
+	require.Zero(t, settings.HeavyRPM)
+	require.Equal(t, panelRateLimitRPMMax, settings.PublicIPRPM)
 }
 
 func TestSetPanelRateLimitSettingsValidation(t *testing.T) {
@@ -164,6 +201,14 @@ func TestSetPanelRateLimitSettingsRoundTripAndCacheRefresh(t *testing.T) {
 	require.Equal(t, want, stored)
 }
 
+func TestSetPanelRateLimitSettingsReturnsRepositoryError(t *testing.T) {
+	want := errors.New("settings write failed")
+	svc := newPanelRateLimitTestService(&panelRateLimitSettingRepo{setErr: want})
+
+	err := svc.SetPanelRateLimitSettings(context.Background(), &PanelRateLimitSettings{UserRPM: 1})
+	require.ErrorIs(t, err, want)
+}
+
 func TestGetPanelRateLimitSettingsCachedAvoidsRepeatedDBReads(t *testing.T) {
 	repo := &panelRateLimitSettingRepo{values: map[string]string{
 		SettingKeyPanelRateLimitSettings: `{"enabled":true,"user_rpm":100,"heavy_rpm":20,"exempt_admin":true,"public_ip_rpm":50}`,
@@ -184,4 +229,13 @@ func TestGetPanelRateLimitSettingsCachedAvoidsRepeatedDBReads(t *testing.T) {
 func TestGetPanelRateLimitSettingsCachedNilService(t *testing.T) {
 	var svc *SettingService
 	require.Equal(t, *DefaultPanelRateLimitSettings(), svc.GetPanelRateLimitSettingsCached(context.Background()))
+}
+
+func TestGetPanelRateLimitSettingsCachedRetainsLastKnownValueOnRefreshError(t *testing.T) {
+	svc := newPanelRateLimitTestService(&panelRateLimitSettingRepo{getValueErr: errors.New("settings database unavailable")})
+	stale := PanelRateLimitSettings{Enabled: true, UserRPM: 11, HeavyRPM: 3, PublicIPRPM: 5}
+	svc.storePanelRateLimitCache(stale, -time.Second)
+
+	got := svc.GetPanelRateLimitSettingsCached(context.Background())
+	require.Equal(t, stale, got)
 }
