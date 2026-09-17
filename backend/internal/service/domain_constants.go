@@ -466,6 +466,13 @@ const (
 	SettingKeyRateLimit429CooldownSettings = "rate_limit_429_cooldown_settings"
 
 	// =========================
+	// Panel API Rate Limiting
+	// =========================
+
+	// SettingKeyPanelRateLimitSettings 面板 API 限流设置（JSON：PanelRateLimitSettings）
+	SettingKeyPanelRateLimitSettings = "panel_rate_limit_settings"
+
+	// =========================
 	// Stream Timeout Handling
 	// =========================
 

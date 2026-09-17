@@ -14,7 +14,7 @@ func TestRegisterUserRoutesIncludesTotpStepUp(t *testing.T) {
 	handlers := &handler.Handlers{Totp: handler.NewTotpHandler(nil)}
 	noopAuth := middleware.JWTAuthMiddleware(func(c *gin.Context) { c.Next() })
 
-	RegisterUserRoutes(router.Group("/api/v1"), handlers, noopAuth, nil)
+	RegisterUserRoutes(router.Group("/api/v1"), handlers, noopAuth, nil, nil)
 
 	for _, route := range router.Routes() {
 		if route.Method == "POST" && route.Path == "/api/v1/user/totp/step-up" {

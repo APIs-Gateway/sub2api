@@ -19,7 +19,7 @@ func TestRegisterPromptAuditRoutes(t *testing.T) {
 
 	RegisterAdminRoutes(router.Group("/api/v1"), handlers, middleware.AdminAuthMiddleware(func(c *gin.Context) {
 		c.Next()
-	}), nil)
+	}), nil, nil)
 
 	routes := router.Routes()
 	paths := make(map[string]string)
