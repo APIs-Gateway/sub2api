@@ -777,6 +777,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 	omittedSettingKeys := detectOmittedSettingKeys(raw)
+	_, smtpHostProvided := raw["smtp_host"]
+	_, smtpPortProvided := raw["smtp_port"]
 
 	previousSettings, err := h.settingService.GetAllSettings(c.Request.Context())
 	if err != nil {
@@ -880,7 +882,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	req.SMTPPassword = strings.TrimSpace(req.SMTPPassword)
 	req.SMTPFrom = strings.TrimSpace(req.SMTPFrom)
 	req.SMTPFromName = strings.TrimSpace(req.SMTPFromName)
-	if req.SMTPPort <= 0 {
+	if !smtpPortProvided && req.SMTPPort <= 0 {
 		req.SMTPPort = 587
 	}
 	req.DefaultSubscriptions = normalizeDefaultSubscriptions(req.DefaultSubscriptions)
@@ -890,11 +892,13 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	req.AuthSourceDefaultWeChatSubscriptions = normalizeOptionalDefaultSubscriptions(req.AuthSourceDefaultWeChatSubscriptions)
 	req.AuthSourceDefaultDingTalkSubscriptions = normalizeOptionalDefaultSubscriptions(req.AuthSourceDefaultDingTalkSubscriptions)
 
-	// SMTP 配置保护：如果请求中 smtp_host 为空但数据库中已有配置，则保留已有 SMTP 配置
+	// SMTP 配置保护：如果请求未提供 smtp_host 且数据库中已有配置，则保留已有 SMTP 配置
 	// 防止前端加载设置失败时空表单覆盖已保存的 SMTP 配置
-	if req.SMTPHost == "" && previousSettings.SMTPHost != "" {
+	if !smtpHostProvided && req.SMTPHost == "" && previousSettings.SMTPHost != "" {
 		req.SMTPHost = previousSettings.SMTPHost
-		req.SMTPPort = previousSettings.SMTPPort
+		if !smtpPortProvided {
+			req.SMTPPort = previousSettings.SMTPPort
+		}
 		req.SMTPUsername = previousSettings.SMTPUsername
 		req.SMTPFrom = previousSettings.SMTPFrom
 		req.SMTPFromName = previousSettings.SMTPFromName
