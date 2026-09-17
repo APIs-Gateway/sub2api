@@ -303,4 +303,42 @@ describe('PaymentProviderDialog payment guide', () => {
 
     expect(wrapper.emitted('save')).toBeUndefined()
   })
+
+  it('rejects the built-in airwallex type as an EasyPay custom method', async () => {
+    const provider = providerFactory({
+      provider_key: 'easypay',
+      name: 'EasyPay',
+      config: {
+        pid: 'pid-1',
+        apiBase: 'https://pay.example.com',
+        notifyUrl: 'https://example.com/api/v1/payment/webhook/easypay',
+        returnUrl: 'https://example.com/payment/result',
+      },
+      supported_types: ['alipay', 'wxpay'],
+      payment_mode: 'qrcode',
+    })
+    const wrapper = mountDialog({ editing: provider })
+
+    ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
+    await nextTick()
+
+    await wrapper.find('button.btn-sm').trigger('click')
+    await nextTick()
+
+    const inputs = wrapper.findAll('input[type="text"]')
+    const customTypeInputs = inputs.filter(input => (input.element as HTMLInputElement).placeholder === 'credit_card')
+    const typeInput = customTypeInputs[0]
+    const upstreamTypeInput = customTypeInputs[1]
+    const displayNameInput = inputs.find(input => (input.element as HTMLInputElement).placeholder === '信用卡')
+    if (!typeInput || !upstreamTypeInput || !displayNameInput) {
+      throw new Error('custom method inputs not found')
+    }
+
+    await typeInput.setValue('airwallex')
+    await upstreamTypeInput.setValue('airwallex')
+    await displayNameInput.setValue('Airwallex')
+    await wrapper.find('form').trigger('submit.prevent')
+
+    expect(wrapper.emitted('save')).toBeUndefined()
+  })
 })
