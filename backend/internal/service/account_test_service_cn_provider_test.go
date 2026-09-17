@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
@@ -134,6 +135,12 @@ func TestAccountTestService_CNProviderAnthropicProbesNativeEndpoint(t *testing.T
 	require.Empty(t, req.URL.RawQuery)
 	require.Equal(t, "sk-anthropic-cn-test", req.Header.Get("x-api-key"))
 	require.Equal(t, "2023-06-01", req.Header.Get("anthropic-version"))
+	body, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, "glm-4.7", payload["model"])
+	require.Equal(t, true, payload["stream"])
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 }
 
