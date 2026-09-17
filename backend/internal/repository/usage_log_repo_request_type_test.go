@@ -375,7 +375,7 @@ func TestUsageLogRepositoryListWithFiltersRequestID(t *testing.T) {
 		WithArgs("req-0123").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
 	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE request_id = \\$1 ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
-		WithArgs("req-0123", 21, 0).
+		WithArgs("req-0123", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	logs, page, err := repo.ListWithFilters(context.Background(), pagination.PaginationParams{Page: 1, PageSize: 20}, filters)
