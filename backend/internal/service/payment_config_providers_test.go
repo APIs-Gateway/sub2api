@@ -189,19 +189,19 @@ func TestValidateEasyPayCustomMethods(t *testing.T) {
 			name:           "custom type cannot shadow stripe",
 			config:         map[string]string{"customMethods": `[{"type":"stripe","upstreamType":"epay"}]`},
 			supportedTypes: "alipay,wxpay,stripe",
-			wantErr:        "customMethods type cannot use the reserved stripe, card, or link payment types",
+			wantErr:        "customMethods type cannot use the reserved stripe, card, link, or airwallex payment types",
 		},
 		{
 			name:           "custom type cannot shadow card alias",
 			config:         map[string]string{"customMethods": `[{"type":"card","upstreamType":"epay"}]`},
 			supportedTypes: "alipay,wxpay,card",
-			wantErr:        "customMethods type cannot use the reserved stripe, card, or link payment types",
+			wantErr:        "customMethods type cannot use the reserved stripe, card, link, or airwallex payment types",
 		},
 		{
 			name:           "custom type cannot shadow link alias",
 			config:         map[string]string{"customMethods": `[{"type":"link","upstreamType":"epay"}]`},
 			supportedTypes: "alipay,wxpay,link",
-			wantErr:        "customMethods type cannot use the reserved stripe, card, or link payment types",
+			wantErr:        "customMethods type cannot use the reserved stripe, card, link, or airwallex payment types",
 		},
 		{
 			name:           "custom type cannot shadow airwallex",

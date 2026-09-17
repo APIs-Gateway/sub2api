@@ -260,8 +260,8 @@ func validateEasyPayCustomMethods(config map[string]string, supportedTypes strin
 			return infraerrors.BadRequest("VALIDATION_ERROR", "customMethods upstreamType may only contain lowercase letters, digits, underscores, and hyphens")
 		}
 		if easyPayCustomMethodTypeConflictsWithBuiltin(method.Type) {
-			if method.Type == payment.TypeStripe || method.Type == payment.TypeCard || method.Type == payment.TypeLink {
-				return infraerrors.BadRequest("VALIDATION_ERROR", "customMethods type cannot use the reserved stripe, card, or link payment types")
+			if method.Type == payment.TypeStripe || method.Type == payment.TypeCard || method.Type == payment.TypeLink || method.Type == payment.TypeAirwallex {
+				return infraerrors.BadRequest("VALIDATION_ERROR", "customMethods type cannot use the reserved stripe, card, link, or airwallex payment types")
 			}
 			return infraerrors.BadRequest("VALIDATION_ERROR", "customMethods type cannot start with alipay, wxpay, or crypto")
 		}
@@ -297,7 +297,8 @@ func easyPayCustomMethodTypeConflictsWithBuiltin(methodType string) bool {
 		strings.HasPrefix(methodType, payment.TypeCrypto) ||
 		methodType == payment.TypeStripe ||
 		methodType == payment.TypeCard ||
-		methodType == payment.TypeLink
+		methodType == payment.TypeLink ||
+		methodType == payment.TypeAirwallex
 }
 
 // UpdateProviderInstance updates a provider instance by ID (patch semantics).

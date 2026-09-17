@@ -762,7 +762,7 @@ function validateEasyPayCustomMethods(): string | null {
     if (!/^[a-z0-9_-]+$/.test(method.upstreamType)) {
       return t('admin.settings.payment.validationEasyPayCustomMethodUpstreamTypeInvalid')
     }
-    if ((PROVIDER_SUPPORTED_TYPES.easypay || []).includes(method.type)) {
+    if ((PROVIDER_SUPPORTED_TYPES.easypay || []).includes(method.type) || method.type === 'airwallex') {
       return t('admin.settings.payment.validationEasyPayCustomMethodReserved')
     }
     if (method.type.startsWith('alipay') || method.type.startsWith('wxpay') || method.type.startsWith('crypto')) {
