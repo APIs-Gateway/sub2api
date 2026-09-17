@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 )
 
@@ -228,7 +229,7 @@ func (e *EasyPay) customMethods() []easyPayCustomMethod {
 		return nil
 	}
 	var methods []easyPayCustomMethod
-	if err := json.Unmarshal([]byte(raw), &methods); err != nil {
+	if err := common.Unmarshal([]byte(raw), &methods); err != nil {
 		return nil
 	}
 	result := make([]easyPayCustomMethod, 0, len(methods))

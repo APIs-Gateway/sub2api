@@ -12,6 +12,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
+	"github.com/Wei-Shaw/sub2api/internal/common"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/payment/provider"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -240,7 +241,7 @@ func validateEasyPayCustomMethods(config map[string]string, supportedTypes strin
 	raw := strings.TrimSpace(config["customMethods"])
 	methods := make([]easyPayCustomMethodConfig, 0)
 	if raw != "" {
-		if err := json.Unmarshal([]byte(raw), &methods); err != nil {
+		if err := common.Unmarshal([]byte(raw), &methods); err != nil {
 			return infraerrors.BadRequest("VALIDATION_ERROR", "customMethods must be a JSON array")
 		}
 	}
