@@ -259,6 +259,9 @@ func validateEasyPayCustomMethods(config map[string]string, supportedTypes strin
 			return infraerrors.BadRequest("VALIDATION_ERROR", "customMethods upstreamType may only contain lowercase letters, digits, underscores, and hyphens")
 		}
 		if easyPayCustomMethodTypeConflictsWithBuiltin(method.Type) {
+			if method.Type == payment.TypeStripe || method.Type == payment.TypeCard || method.Type == payment.TypeLink {
+				return infraerrors.BadRequest("VALIDATION_ERROR", "customMethods type cannot use the reserved stripe, card, or link payment types")
+			}
 			return infraerrors.BadRequest("VALIDATION_ERROR", "customMethods type cannot start with alipay, wxpay, or crypto")
 		}
 		if _, exists := customTypes[method.Type]; exists {
