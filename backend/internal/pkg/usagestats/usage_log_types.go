@@ -269,6 +269,7 @@ type UsageLogFilters struct {
 	APIKeyID  int64
 	AccountID int64
 	GroupID   int64
+	RequestID string
 	Model     string
 	// ModelFilterSource controls which model dimension is used when Model is set.
 	ModelFilterSource     string

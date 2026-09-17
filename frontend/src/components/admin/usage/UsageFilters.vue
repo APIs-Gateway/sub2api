@@ -84,6 +84,18 @@
           <Select v-model="filters.model" :options="modelOptions" searchable @change="emitChange" />
         </div>
 
+        <!-- Request ID Filter -->
+        <div class="w-full sm:w-auto sm:min-w-[220px]">
+          <label class="input-label">{{ t('admin.usage.requestId') }}</label>
+          <input
+            v-model="filters.request_id"
+            type="text"
+            class="input"
+            :placeholder="t('admin.usage.requestId')"
+            @change="normalizeRequestID"
+          />
+        </div>
+
         <!-- Account Filter -->
         <div ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
           <label class="input-label">{{ t('admin.usage.account') }}</label>
@@ -264,6 +276,11 @@ const upstreamModelMismatchOptions = ref<SelectOption[]>([
 ])
 
 const emitChange = () => emit('change')
+
+const normalizeRequestID = () => {
+  filters.value.request_id = filters.value.request_id?.trim() || undefined
+  emitChange()
+}
 
 const clearPendingUserSearch = () => {
   if (userSearchTimeout) {
