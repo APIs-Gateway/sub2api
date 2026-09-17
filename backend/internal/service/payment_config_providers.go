@@ -290,7 +290,10 @@ func validateEasyPayCustomMethods(config map[string]string, supportedTypes strin
 func easyPayCustomMethodTypeConflictsWithBuiltin(methodType string) bool {
 	return strings.HasPrefix(methodType, payment.TypeAlipay) ||
 		strings.HasPrefix(methodType, payment.TypeWxpay) ||
-		strings.HasPrefix(methodType, payment.TypeCrypto)
+		strings.HasPrefix(methodType, payment.TypeCrypto) ||
+		methodType == payment.TypeStripe ||
+		methodType == payment.TypeCard ||
+		methodType == payment.TypeLink
 }
 
 // UpdateProviderInstance updates a provider instance by ID (patch semantics).
