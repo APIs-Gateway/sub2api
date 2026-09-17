@@ -2841,9 +2841,9 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		args = append(args, *filters.UpstreamModelMismatch)
 	}
 	conditions, args = appendUsageLogBillingModeWhereCondition(conditions, args, filters.BillingMode)
-	if filters.RequestID != "" {
+	if requestID := strings.TrimSpace(filters.RequestID); requestID != "" {
 		conditions = append(conditions, fmt.Sprintf("request_id = $%d", len(args)+1))
-		args = append(args, filters.RequestID)
+		args = append(args, requestID)
 	}
 	if filters.StartTime != nil {
 		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", len(args)+1))
