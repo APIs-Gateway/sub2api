@@ -176,6 +176,9 @@ gateway:
   # Only record (do not block) when an OpenAI upstream returns a model different from the one sent (default: false = block and fail over). Config/env only, no hot reload: restart the container after changing it
   # 上游返回的 model 与实际发送的 model 不一致时只记录不拦截（默认 false = 拦截并切换账号重试；线上误杀可设 true 止血，env GATEWAY_DISABLE_UPSTREAM_MODEL_MISMATCH_BLOCK）。仅配置/环境变量可改、不热加载，改完需重启容器生效
   disable_upstream_model_mismatch_block: false
+  # Account IDs that only record (never block) upstream model mismatch; other accounts keep blocking (default: empty). Meant for forced single-account routes (openai_forced_account_routes) where a block cannot fail over and turns into a client-facing 502
+  # 账号级观察名单：名单内账号的上游模型不一致只记录不拦截，其余账号照常拦截（默认空）。用于强制单账号路由（openai_forced_account_routes）的专线账号——拦截后无号可切，客户端会直接收到 502。同样仅配置/环境变量可改、不热加载
+  upstream_model_mismatch_observe_account_ids: []
   # Sora max request body size in bytes (0=use max_body_size)
   # Sora 请求体最大字节数（0=使用 max_body_size）
   sora_max_body_size: 268435456
