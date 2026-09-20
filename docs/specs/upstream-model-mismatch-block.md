@@ -67,6 +67,8 @@
 
 开关只有配置文件 / 环境变量两种来源，没有后台设置项，不做热加载：改完必须重启容器（`docker compose up -d` 重建或 `docker restart`）才生效。
 
+`gateway.upstream_model_mismatch_observe_account_ids`（`[]int64`，默认空）：账号级观察名单。名单内账号命中不一致时行为与全局观察模式完全一致（打标、写 `upstream_response_model`、不拦截、照常计费、不记 ops upstream error 事件），名单外账号不受影响仍拦截；`AccountID = 0`（无账号）永不豁免。用途是强制单账号路由（`openai_forced_account_routes`）的专线用户：拦截后切号无处可切，客户端直接收到 502，比不拦更糟——例如用户 513 的专线账号 3214（platform.ephone.chat）会把 `gpt-5.6-terra` 回显成 `gpt-5.6-terra-DataZone`。同样只有配置文件 / 环境变量来源、不热加载。
+
 ## 已知边界
 
 - **keepalive 先于首个带 `model` 的事件：仍然拦截**。Responses 主路径、Anthropic 入站、Chat 入站在等待上游首个事件期间会按 `gateway.stream_keepalive_interval`（默认 10 秒，0 关闭）向客户端写心跳（Responses / Chat 是 SSE 注释行 `:\n\n`，Anthropic 入站是 `event: ping`）。心跳是客户端丢弃的非语义字节，「只发过心跳」≠「内容已交付」：service 层按 context 累计心跳字节数（`addOpenAIStreamKeepaliveBytes`），`OpenAICompactKeepaliveAdjustedWrittenSize` 扣掉这些字节后仍视为「未写」，所以 `canBlock` 仍为 true，不一致照常拦截、打标 `Blocked=true`、记审计行、不计费；handler 按扣除心跳后的 Size 放行切号（不置 `SafeToFailoverAfterWrite`，不占首输出超时的单次切号额度，仍可切满 `max_account_switches`）。客户端表现：同一条 SSE 连接（响应头已是 200）不断开，直接继续下一账号的事件；全部账号耗尽时在流内收到终止事件（Responses / Chat 入站 `response.failed` / `error`，Anthropic 入站 `event: error`），不会再写 JSON 错误体。只有真正向客户端转发过上游业务事件（任何 `data:` 事件已 flush）之后才只记录不拦截：mark 打标、`upstream_model_mismatch = true`、作为晚到行零计费（见「计费口径」），WARN 日志 `openai.upstream_model_mismatch` 字段 `can_block=false`、`blocked=false`。

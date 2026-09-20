@@ -91,6 +91,43 @@ func TestCheckUpstreamModelMismatch_CannotBlockOnlyMarks(t *testing.T) {
 	require.Equal(t, "gpt-6-sol", GetOpsUpstreamModelMismatch(c).ResponseModel)
 }
 
+// 账号级观察名单（gateway.upstream_model_mismatch_observe_account_ids）：名单内账号只打标不拦截，
+// 语义同全局观察模式；名单外账号与 nil 账号（AccountID=0）不受影响，仍拦截。
+func TestCheckUpstreamModelMismatch_ObserveOnlyAccountStillMarks(t *testing.T) {
+	newSvc := func() *OpenAIGatewayService {
+		svc := &OpenAIGatewayService{cfg: &config.Config{}}
+		svc.cfg.Gateway.UpstreamModelMismatchObserveAccountIDs = []int64{3214}
+		return svc
+	}
+
+	t.Run("listed account observes only", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		err := newSvc().checkUpstreamModelMismatch(c, &Account{ID: 3214, Platform: PlatformOpenAI}, "req", nil, "gpt-6-astra", "gpt-5.6-luna", true, true, OpenAIUsage{})
+		require.Nil(t, err)
+		mark := GetOpsUpstreamModelMismatch(c)
+		require.NotNil(t, mark)
+		require.False(t, mark.Blocked)
+		require.Equal(t, "gpt-5.6-luna", mark.ResponseModel)
+		_, hasOpsErr := c.Get(OpsUpstreamErrorsKey)
+		require.False(t, hasOpsErr, "观察模式不记 ops upstream error 事件")
+	})
+
+	t.Run("unlisted account still blocks", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		err := newSvc().checkUpstreamModelMismatch(c, &Account{ID: 7, Platform: PlatformOpenAI}, "req", nil, "gpt-6-astra", "gpt-5.6-luna", true, true, OpenAIUsage{})
+		require.NotNil(t, err)
+		require.True(t, GetOpsUpstreamModelMismatch(c).Blocked)
+	})
+
+	t.Run("nil account is not exempted by zero id", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		svc := newSvc()
+		svc.cfg.Gateway.UpstreamModelMismatchObserveAccountIDs = []int64{0, 3214}
+		err := svc.checkUpstreamModelMismatch(c, nil, "req", nil, "gpt-6-astra", "gpt-5.6-luna", true, true, OpenAIUsage{})
+		require.NotNil(t, err)
+	})
+}
+
 func TestCheckUpstreamModelMismatch_EnabledReturnsFailover(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}

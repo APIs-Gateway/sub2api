@@ -207,6 +207,20 @@ func (s *OpenAIGatewayService) upstreamModelMismatchBlockEnabled() bool {
 	return s != nil && (s.cfg == nil || !s.cfg.Gateway.DisableUpstreamModelMismatchBlock)
 }
 
+// upstreamModelMismatchObserveOnlyAccount：账号在 gateway.upstream_model_mismatch_observe_account_ids 名单内时只记录不拦截。
+// accountID 为 0（无账号）永不豁免，避免名单里误写 0 把无账号路径整体放行。
+func (s *OpenAIGatewayService) upstreamModelMismatchObserveOnlyAccount(accountID int64) bool {
+	if s == nil || s.cfg == nil || accountID <= 0 {
+		return false
+	}
+	for _, id := range s.cfg.Gateway.UpstreamModelMismatchObserveAccountIDs {
+		if id == accountID {
+			return true
+		}
+	}
+	return false
+}
+
 // checkUpstreamModelMismatch 一站式：比对 + 打标 + 记 ops 错误 + 构造 failover error。
 // 返回 nil 表示一致/豁免/开关关闭/canBlock=false（后两种仍打标但 Blocked=false，供 RecordUsage 落 upstream_response_model）；
 // 返回非 nil 时 mark.Blocked=true，handler 据此落审计行。
@@ -228,7 +242,7 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	if account != nil {
 		accountID, accountName, platform = account.ID, account.Name, account.Platform
 	}
-	blocked := canBlock && s.upstreamModelMismatchBlockEnabled()
+	blocked := canBlock && s.upstreamModelMismatchBlockEnabled() && !s.upstreamModelMismatchObserveOnlyAccount(accountID)
 	MarkOpsUpstreamModelMismatch(c, UpstreamModelMismatchMark{
 		SentModel: sentModel, ResponseModel: responseModel, AccountID: accountID, Stream: stream, Blocked: blocked, Usage: usage,
 	})
