@@ -348,6 +348,87 @@ describe('user UsageView tooltip', () => {
     clickSpy.mockRestore()
   })
 
+  it('exports missing reasoning effort as a bare dash but still guards formula-like values', async () => {
+    query.mockResolvedValue({
+      items: [
+        {
+          request_id: 'req-user-export-dash',
+          actual_cost: 0.1,
+          total_cost: 0.1,
+          rate_multiplier: 1,
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_creation_tokens: 0,
+          cache_read_tokens: 0,
+          image_count: 0,
+          image_size: null,
+          first_token_ms: null,
+          duration_ms: 1,
+          created_at: '2026-03-08T00:00:00Z',
+          model: 'gpt-5.4',
+          reasoning_effort: null,
+          api_key: { name: '-1+1' },
+        },
+      ],
+      total: 1,
+      pages: 1,
+    })
+    getStatsByDateRange.mockResolvedValue({
+      total_requests: 1,
+      total_tokens: 2,
+      total_cost: 0.1,
+      avg_duration_ms: 1,
+    })
+    list.mockResolvedValue({ items: [] })
+
+    let exportedBlob: Blob | null = null
+    const originalCreateObjectURL = window.URL.createObjectURL
+    const originalRevokeObjectURL = window.URL.revokeObjectURL
+    window.URL.createObjectURL = vi.fn((blob: Blob | MediaSource) => {
+      exportedBlob = blob as Blob
+      return 'blob:usage-export'
+    }) as typeof window.URL.createObjectURL
+    window.URL.revokeObjectURL = vi.fn(() => {}) as typeof window.URL.revokeObjectURL
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Pagination: true,
+          EmptyState: true,
+          Select: true,
+          DateRangePicker: true,
+          DataTable: DataTableStub,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    const setupState = (wrapper.vm as any).$?.setupState
+    await setupState.exportToCSV()
+
+    expect(exportedBlob).not.toBeNull()
+    const csv = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(exportedBlob as Blob)
+    })
+    // Missing reasoning effort stays a plain "-" instead of the quoted "'-".
+    expect(csv).toContain(',"\'-1+1",gpt-5.4,-,')
+    expect(csv).not.toContain('"\'-"')
+    expect(showSuccess).toHaveBeenCalled()
+
+    window.URL.createObjectURL = originalCreateObjectURL
+    window.URL.revokeObjectURL = originalRevokeObjectURL
+    clickSpy.mockRestore()
+    wrapper.unmount()
+  })
+
   it('keeps the initial filters, sort, and filename while exporting multiple pages', async () => {
     const exportRow = {
       request_id: 'req-user-export-pages',

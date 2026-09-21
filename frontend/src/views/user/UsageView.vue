@@ -1035,6 +1035,10 @@ const escapeCSVValue = (value: unknown): string => {
   const str = String(value)
   const escaped = str.replace(/"/g, '""')
 
+  // A lone '-' is the missing-value marker (e.g. formatReasoningEffort);
+  // it cannot start a formula, so export it verbatim.
+  if (str === '-') return str
+
   // Prevent formula injection by prefixing dangerous characters with single quote
   if (/^[=+\-@\t\r]/.test(str)) {
     return `"\'${escaped}"`
