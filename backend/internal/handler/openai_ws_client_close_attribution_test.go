@@ -24,6 +24,7 @@ func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures
 		wantFailure bool
 	}{
 		{name: "bare_normal_1000_is_not_reported", proxyErr: coderws.CloseError{Code: coderws.StatusNormalClosure, Reason: "client done"}},
+		{name: "wrapped_normal_1000_is_not_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusNormalClosure, "client done", nil)},
 		{name: "request_cancellation_is_not_reported", proxyErr: context.Canceled},
 		{name: "upstream_1001_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusGoingAway, "upstream going away", errors.New("upstream closed session")), wantFailure: true},
 		{name: "upstream_1011_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "upstream proxy failed", errors.New("upstream failed")), wantFailure: true},

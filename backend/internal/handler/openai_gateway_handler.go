@@ -1834,25 +1834,23 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 			var closeErr *service.OpenAIWSClientCloseError
 			hasClientCloseErr := errors.As(err, &closeErr)
-			// A normal close (1000), including the bare coder/websocket error
-			// returned by the ingress reader, and request cancellation are client
-			// exits rather than upstream/account failures. Other close codes and
-			// deadline failures must continue to count against the account.
-			if (hasClientCloseErr && closeErr.StatusCode() == coderws.StatusNormalClosure) ||
-				coderws.CloseStatus(err) == coderws.StatusNormalClosure ||
-				errors.Is(err, context.Canceled) {
-				closedFields := []zap.Field{zap.Int64("account_id", account.ID)}
-				if hasClientCloseErr {
-					closedFields = append(closedFields, zap.String("reason", closeErr.Reason()))
-				} else {
-					closedFields = append(closedFields, zap.Error(err))
-				}
-				reqLog.Info("openai.websocket_ingress_closed_normally", closedFields...)
-				if hasClientCloseErr {
-					closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
-				} else {
-					closeOpenAIClientWS(wsConn, coderws.StatusNormalClosure, "")
-				}
+			// A service-wrapped normal close (1000) is an ingress exit, not an
+			// upstream/account failure.
+			if hasClientCloseErr && closeErr.StatusCode() == coderws.StatusNormalClosure {
+				reqLog.Info("openai.websocket_ingress_closed_normally",
+					zap.Int64("account_id", account.ID),
+					zap.String("reason", closeErr.Reason()),
+				)
+				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+				return
+			}
+
+			// The ingress reader returns bare 1000 close errors, and cancellation
+			// can surface with a 1001 close. Neither is an account failure.
+			if coderws.CloseStatus(err) == coderws.StatusNormalClosure || errors.Is(err, context.Canceled) {
+				reqLog.Info("openai.websocket_ingress_closed_normally",
+					zap.Int64("account_id", account.ID), zap.Error(err))
+				closeOpenAIClientWS(wsConn, coderws.StatusNormalClosure, "")
 				return
 			}
 
