@@ -5719,6 +5719,24 @@
           requestsWithFirstToken: '首 Token 样本数'
         }
       },
+      ingressRejects: {
+        title: '入口拒绝聚合',
+        description: '已脱敏的分钟级拒绝计数；客户端网络仅显示掩码前缀。',
+        allReasons: '全部原因',
+        allRouteFamilies: '全部路由',
+        allProtocols: '全部协议',
+        failedToLoad: '加载入口拒绝聚合数据失败',
+        empty: '当前筛选条件下暂无入口拒绝聚合数据',
+        table: {
+          bucket: '分钟桶',
+          reason: '原因',
+          routeFamily: '路由分类',
+          protocol: '协议',
+          clientNetwork: '客户端网络',
+          requests: '拒绝数',
+          lastSeen: '最后发生时间'
+        }
+      },
       customTimeRange: {
         startTime: '开始时间',
         endTime: '结束时间'

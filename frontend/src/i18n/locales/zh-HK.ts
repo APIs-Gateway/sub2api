@@ -5716,6 +5716,24 @@
           requestsWithFirstToken: '首 Token 樣本數'
         }
       },
+      ingressRejects: {
+        title: '入口拒絕聚合',
+        description: '已脫敏的分鐘級拒絕計數；客戶端網絡僅顯示遮罩前綴。',
+        allReasons: '全部原因',
+        allRouteFamilies: '全部路由',
+        allProtocols: '全部協議',
+        failedToLoad: '加載入口拒絕聚合數據失敗',
+        empty: '當前篩選條件下暫無入口拒絕聚合數據',
+        table: {
+          bucket: '分鐘桶',
+          reason: '原因',
+          routeFamily: '路由分類',
+          protocol: '協議',
+          clientNetwork: '客戶端網絡',
+          requests: '拒絕數',
+          lastSeen: '最後發生時間'
+        }
+      },
       customTimeRange: {
         startTime: '開始時間',
         endTime: '結束時間'

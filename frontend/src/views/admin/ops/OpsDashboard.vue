@@ -103,6 +103,12 @@
         :refresh-token="dashboardRefreshToken"
       />
 
+      <!-- Ingress rejects are sanitized minute-bucket aggregates, not raw auth logs. -->
+      <OpsIngressRejectTable
+        v-if="opsEnabled && !(loading && !hasLoadedOnce)"
+        :refresh-token="dashboardRefreshToken"
+      />
+
       <!-- Settings Dialog (hidden in fullscreen mode) -->
       <template v-if="!isFullscreen">
         <OpsSettingsDialog :show="showSettingsDialog" @close="showSettingsDialog = false" @saved="onSettingsSaved" />
@@ -165,6 +171,7 @@ import OpsThroughputTrendChart from './components/OpsThroughputTrendChart.vue'
 import OpsSwitchRateTrendChart from './components/OpsSwitchRateTrendChart.vue'
 import OpsAlertEventsCard from './components/OpsAlertEventsCard.vue'
 import OpsOpenAITokenStatsCard from './components/OpsOpenAITokenStatsCard.vue'
+import OpsIngressRejectTable from './components/OpsIngressRejectTable.vue'
 import OpsSystemLogTable from './components/OpsSystemLogTable.vue'
 import OpsRequestDetailsModal, { type OpsRequestDetailsPreset } from './components/OpsRequestDetailsModal.vue'
 import OpsSettingsDialog from './components/OpsSettingsDialog.vue'
