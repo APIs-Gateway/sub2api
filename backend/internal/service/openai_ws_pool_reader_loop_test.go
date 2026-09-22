@@ -162,7 +162,35 @@ func requireConnClosed(t *testing.T, conn *openAIWSConn) {
 }
 
 func TestCoderOpenAIWSClientConn_RequiresReaderLoop(t *testing.T) {
-	require.True(t, (&coderOpenAIWSClientConn{}).RequiresReaderLoop())
+	conn := &coderOpenAIWSClientConn{}
+	require.False(t, conn.SupportsIdlePingWithoutReader())
+	require.True(t, conn.RequiresReaderLoop())
+	require.NoError(t, conn.CloseNow())
+}
+
+func TestCoderOpenAIWSClientConn_CloseNowClosesLiveTransport(t *testing.T) {
+	closed := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srvConn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = srvConn.CloseNow() }()
+		defer close(closed)
+		_, _, _ = srvConn.Read(r.Context())
+	}))
+	defer server.Close()
+
+	ws, _, _, err := newDefaultOpenAIWSClientDialer().Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), nil, "")
+	require.NoError(t, err)
+	conn, ok := ws.(*coderOpenAIWSClientConn)
+	require.True(t, ok)
+	require.NoError(t, conn.CloseNow())
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("CloseNow should tear down the live websocket transport")
+	}
 }
 
 func TestOpenAIWSConnReaderLoop_NotStartedForPlainConn(t *testing.T) {
@@ -502,6 +530,22 @@ func TestOpenAIWSConnPool_BackgroundPingSweepSkipsLeasedConnOnFailure(t *testing
 	require.False(t, conn.isClosed(), "已借出的连接不应被巡检剔除")
 }
 
+// A failed idle probe owns the lease token and must evict the socket. This is
+// the normal failure path, distinct from the borrowed-while-probing race.
+func TestOpenAIWSConnPool_BackgroundPingSweepEvictsFailedIdleConn(t *testing.T) {
+	fake := newOpenAIWSReaderLoopFakeConn()
+	fake.pingErr = errors.New("pong lost")
+	conn := newOpenAIWSConn("rl_failed_idle_probe", 313, fake, nil)
+	pool, ap := newSweepTestPool(conn, 313)
+	require.Eventually(t, func() bool { return fake.readers.Load() == 1 }, time.Second, 5*time.Millisecond)
+
+	pool.runBackgroundPingSweep()
+
+	requireInPool(t, ap, conn.id, false)
+	requireConnClosed(t, conn)
+	require.EqualValues(t, 1, fake.pings.Load())
+}
+
 // 巡检判定失败到真正剔除之间若被借出，绝不能关闭借用者手里的连接：
 // 用 ap.mu 把 evictConn 卡在门口，在这个空隙里借出连接，复现"看一眼再动手"的竞态。
 func TestOpenAIWSConnPool_BackgroundPingSweepNeverClosesConnLeasedInEvictWindow(t *testing.T) {
@@ -631,6 +675,75 @@ func TestOpenAIWSConnPool_AcquireIdleHealthCheckStillAppliesWithoutReaderLoop(t 
 	defer second.Release()
 	require.NotEqual(t, firstID, second.ConnID(), "2 秒内无 pong 的旧式连接应被换掉")
 	require.GreaterOrEqual(t, time.Since(started), openAIWSConnHealthCheckTO)
+	require.Equal(t, 2, dialer.DialCount())
+}
+
+// Legacy clients without a resident reader still use the conservative idle
+// recycle policy so they cannot survive long enough to miss an upstream ping.
+func TestOpenAIWSConnPool_CleanupRecyclesIdleConnWithoutReaderLoop(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+	pool := &openAIWSConnPool{cfg: cfg}
+	accountID := int64(314)
+	conn := newOpenAIWSConn("plain_idle_recycle", accountID, &openAIWSFakeConn{}, nil)
+	conn.lastUsedNano.Store(time.Now().Add(-openAIWSConnIdleRecycleAfter - time.Second).UnixNano())
+	ap := &openAIWSAccountPool{conns: map[string]*openAIWSConn{conn.id: conn}}
+	pool.accounts.Store(accountID, ap)
+
+	pool.runBackgroundCleanupSweep(time.Now())
+
+	requireInPool(t, ap, conn.id, false)
+	requireConnClosed(t, conn)
+}
+
+// A waiter can observe a connection close after the pool has selected it as
+// the only saturated target. It must evict that target and retry once with a
+// new transport instead of returning a stale close error to the caller.
+func TestOpenAIWSConnPool_QueuedClosedConnRetriesWithFreshTransport(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 1
+	pool := newOpenAIWSConnPool(cfg)
+	defer pool.Close()
+	dialer := &openAIWSQueueDialer{conns: []openAIWSClientConn{
+		&openAIWSFakeConn{},
+		&openAIWSFakeConn{},
+	}}
+	pool.setClientDialerForTest(dialer)
+	req := openAIWSAcquireRequest{
+		Account: &Account{ID: 315, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+		WSURL:   "wss://example.com/v1/responses",
+	}
+
+	first, err := pool.Acquire(context.Background(), req)
+	require.NoError(t, err)
+	firstID := first.ConnID()
+
+	type result struct {
+		lease *openAIWSConnLease
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		lease, acquireErr := pool.Acquire(ctx, req)
+		done <- result{lease: lease, err: acquireErr}
+	}()
+	require.Eventually(t, func() bool { return first.conn.waiters.Load() == 1 }, time.Second, 5*time.Millisecond)
+	first.conn.close()
+
+	select {
+	case res := <-done:
+		require.NoError(t, res.err)
+		require.NotNil(t, res.lease)
+		defer res.lease.Release()
+		require.NotEqual(t, firstID, res.lease.ConnID())
+	case <-time.After(3 * time.Second):
+		t.Fatal("closed queued connection should be replaced without waiting for the request deadline")
+	}
 	require.Equal(t, 2, dialer.DialCount())
 }
 
