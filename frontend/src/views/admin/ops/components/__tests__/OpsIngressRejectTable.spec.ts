@@ -12,8 +12,8 @@ vi.mock('@/api/admin/ops', () => ({
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@vueuse/core', () => ({ useMediaQuery: () => true }))
 
-const SelectStub = defineComponent({
-  name: 'Select',
+const SelectControlStub = defineComponent({
+  name: 'SelectControlStub',
   props: { modelValue: { type: String, default: '' } },
   emits: ['update:modelValue'],
   template: '<div class="select-stub" />'
@@ -41,7 +41,7 @@ describe('OpsIngressRejectTable', () => {
     })
 
     const wrapper = mount(OpsIngressRejectTable, {
-      global: { stubs: { Select: SelectStub, EmptyState: EmptyStateStub, Pagination: PaginationStub } }
+      global: { stubs: { Select: SelectControlStub, EmptyState: EmptyStateStub, Pagination: PaginationStub } }
     })
     await flushPromises()
 
@@ -53,11 +53,11 @@ describe('OpsIngressRejectTable', () => {
   it('passes the selected reason filter to the aggregate endpoint', async () => {
     listIngressRejects.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
     const wrapper = mount(OpsIngressRejectTable, {
-      global: { stubs: { Select: SelectStub, EmptyState: EmptyStateStub, Pagination: PaginationStub } }
+      global: { stubs: { Select: SelectControlStub, EmptyState: EmptyStateStub, Pagination: PaginationStub } }
     })
     await flushPromises()
 
-    await wrapper.findAllComponents(SelectStub)[1].vm.$emit('update:modelValue', 'invalid_api_key')
+    await wrapper.findAllComponents(SelectControlStub)[1].vm.$emit('update:modelValue', 'invalid_api_key')
     await flushPromises()
 
     expect(listIngressRejects).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'invalid_api_key', page: 1 }))
