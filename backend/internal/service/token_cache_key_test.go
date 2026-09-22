@@ -104,14 +104,50 @@ func TestAntigravityTokenCacheKey(t *testing.T) {
 			expected: "ag:account:201",
 		},
 		{
-			name: "account_with_credentials",
+			name: "account_with_empty_credentials",
 			account: &Account{
 				ID: 202,
+				Credentials: map[string]any{},
+			},
+			expected: "ag:account:202",
+		},
+		{
+			name: "account_with_empty_project_id",
+			account: &Account{
+				ID: 203,
+				Credentials: map[string]any{
+					"project_id": "",
+				},
+			},
+			expected: "ag:account:203",
+		},
+		{
+			name: "account_with_whitespace_project_id",
+			account: &Account{
+				ID: 204,
+				Credentials: map[string]any{
+					"project_id": "   ",
+				},
+			},
+			expected: "ag:account:204",
+		},
+		{
+			name: "account_with_nil_credentials",
+			account: &Account{
+				ID:          205,
+				Credentials: nil,
+			},
+			expected: "ag:account:205",
+		},
+		{
+			name: "account_with_credentials",
+			account: &Account{
+				ID: 206,
 				Credentials: map[string]any{
 					"access_token": "test-token",
 				},
 			},
-			expected: "ag:account:202",
+			expected: "ag:account:206",
 		},
 		{
 			name: "account_id_zero",
