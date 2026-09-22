@@ -99,7 +99,10 @@ func TestCodexAccountIdentityHelpersPreserveUnscopedAndMalformedInputs(t *testin
 	require.False(t, applyCodexAccountIdentityFields(nil, oauth, 7))
 	fields := map[string]any{"session_id": 7, "thread_id": " ", "turn_id": "client-turn"}
 	require.True(t, applyCodexAccountIdentityFields(fields, oauth, 7))
-	require.Equal(t, "client-turn", scopeCodexAccountIdentityValue(oauth, 7, "turn", "client-turn"))
+	scopedTurnID, ok := fields["turn_id"].(string)
+	require.True(t, ok)
+	require.Equal(t, scopeCodexAccountIdentityValue(oauth, 7, "turn", "client-turn"), scopedTurnID)
+	require.NotEqual(t, "client-turn", scopedTurnID)
 	require.False(t, applyCodexAccountIdentityEmbeddedMetadata(map[string]any{}, oauth, 7))
 	require.False(t, applyCodexAccountIdentityEmbeddedMetadata(map[string]any{openAIWSTurnMetadataHeader: "not-json"}, oauth, 7))
 
