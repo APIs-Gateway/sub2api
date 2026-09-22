@@ -11,6 +11,7 @@
 package tlsfingerprint
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -331,6 +332,46 @@ func TestHTTPProxyDialerTimesOutWhenProxyStaysSilentDuringConnect(t *testing.T) 
 		}
 	case <-time.After(time.Second):
 		t.Fatal("CONNECT request remained blocked after its context deadline")
+	}
+}
+
+func TestHTTPProxyDialerClearsConnectDeadlineAfterTunnelSetup(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	proxyResult := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			proxyResult <- err
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		req, err := http.ReadRequest(bufio.NewReader(conn))
+		if err != nil {
+			proxyResult <- err
+			return
+		}
+		if req.Method != http.MethodConnect {
+			proxyResult <- errors.New("expected CONNECT request")
+			return
+		}
+		_, err = io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		proxyResult <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	dialer := NewHTTPProxyDialer(nil, mustParseURL("http://"+listener.Addr().String()))
+	_, err = dialer.DialTLSContext(ctx, "tcp", "example.com:443")
+	if err == nil {
+		t.Fatal("expected TLS handshake to fail after the test proxy closes the tunnel")
+	}
+	if err := <-proxyResult; err != nil {
+		t.Fatalf("proxy failed to establish CONNECT tunnel: %v", err)
 	}
 }
 
