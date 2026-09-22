@@ -4604,6 +4604,60 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 		strings.Contains(combined, "please retry")
 }
 
+// isOpenAIUpstreamAccessStateError recognizes provider-side credential state
+// failures only from explicit structured codes. Stream terminal messages can
+// echo user input, so they are not suitable evidence on their own.
+func isOpenAIUpstreamAccessStateError(_ string, body []byte) bool {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return false
+	}
+	for _, path := range []string{"error.code", "response.error.code", "detail.code", "code"} {
+		value := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, path).String()))
+		if value == "deactivated_workspace" {
+			return true
+		}
+		for _, subject := range []string{"workspace", "account", "organization", "org"} {
+			for _, state := range []string{"deactivated", "disabled", "suspended"} {
+				if value == subject+"_"+state || value == state+"_"+subject {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// openAIStream403AccountFailure distinguishes structured credential failures
+// from request-scoped 403 responses, which must not drain the account pool.
+func openAIStream403AccountFailure(payload []byte, message string) bool {
+	if isOpenAIUpstreamAccessStateError(message, payload) {
+		return true
+	}
+	if len(bytes.TrimSpace(payload)) == 0 || !gjson.ValidBytes(payload) {
+		return false
+	}
+	for _, path := range []string{"response.error.status_code", "error.status_code", "status_code"} {
+		if int(gjson.GetBytes(payload, path).Int()) == http.StatusUnauthorized {
+			return true
+		}
+	}
+	for _, path := range []string{"response.error.type", "error.type", "type"} {
+		errType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, path).String()))
+		if errType == "authentication_error" || errType == "authentication_failed" || errType == "unauthorized_error" {
+			return true
+		}
+	}
+	for _, path := range []string{"response.error.code", "error.code", "code"} {
+		switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, path).String())) {
+		case "invalid_api_key", "api_key_disabled", "unauthorized", "authentication_error",
+			"invalid_token", "access_token_invalid", "token_revoked", "token_invalidated",
+			"invalid_credentials", "credential_invalid":
+			return true
+		}
+	}
+	return false
+}
+
 func (s *OpenAIGatewayService) recordOpenAIStreamUpstreamError(
 	c *gin.Context,
 	account *Account,
