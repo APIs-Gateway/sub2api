@@ -137,6 +137,28 @@ func TestAntigravityTokenCacheKey(t *testing.T) {
 	}
 }
 
+func TestAntigravityTokenCacheKeyIsolatesSharedProjectID(t *testing.T) {
+	accountA := &Account{
+		ID: 203,
+		Credentials: map[string]any{
+			"project_id": "aicode-consumers",
+		},
+	}
+	accountB := &Account{
+		ID: 204,
+		Credentials: map[string]any{
+			"project_id": "aicode-consumers",
+		},
+	}
+
+	keyA := AntigravityTokenCacheKey(accountA)
+	keyB := AntigravityTokenCacheKey(accountB)
+
+	require.Equal(t, "ag:account:203", keyA)
+	require.Equal(t, "ag:account:204", keyB)
+	require.NotEqual(t, keyA, keyB)
+}
+
 func TestOpenAITokenCacheKey(t *testing.T) {
 	tests := []struct {
 		name     string
