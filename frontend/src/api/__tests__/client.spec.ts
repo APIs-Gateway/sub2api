@@ -409,6 +409,44 @@ describe('API Client', () => {
       expect(sessionStorage.getItem('auth_expired')).toBeNull()
     })
 
+    it('刷新被拒绝时并发等待请求仍返回自己的原始 401 错误', async () => {
+      window.history.replaceState({}, '', '/login')
+      localStorage.setItem('auth_token', 'expired-token')
+      localStorage.setItem('refresh_token', 'refresh-token')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+
+      let rejectRefresh!: (reason: unknown) => void
+      vi.spyOn(axios, 'post').mockImplementationOnce(
+        () => new Promise((_resolve, reject) => {
+          rejectRefresh = reject
+        })
+      )
+      apiClient.defaults.adapter = vi.fn()
+        .mockRejectedValueOnce({
+          response: { status: 401, data: { code: 'TOKEN_EXPIRED', message: 'Token expired' } },
+          config: { url: '/first', headers: { Authorization: 'Bearer expired-token' } },
+        })
+        .mockRejectedValueOnce({
+          response: { status: 401, data: { code: 'TOKEN_EXPIRED', message: 'Token expired' } },
+          config: { url: '/second', headers: { Authorization: 'Bearer expired-token' } },
+        })
+
+      const requests = [
+        apiClient.get('/first').catch((error) => error),
+        apiClient.get('/second').catch((error) => error),
+      ]
+      await vi.waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1))
+      rejectRefresh(Object.assign(new axios.AxiosError('Refresh rejected'), { response: { status: 401 } }))
+
+      await expect(Promise.all(requests)).resolves.toEqual([
+        expect.objectContaining({ status: 401, code: 'TOKEN_REFRESH_FAILED' }),
+        expect.objectContaining({ status: 401, code: 'TOKEN_EXPIRED', message: 'Token expired' }),
+      ])
+      expect(localStorage.getItem('auth_token')).toBeNull()
+      expect(localStorage.getItem('refresh_token')).toBeNull()
+      expect(sessionStorage.getItem('auth_expired')).toBe('1')
+    })
+
     it.each([401, 403, null])('刷新被拒绝（%s）时仍清除失效会话', async (status) => {
       window.history.replaceState({}, '', '/login')
       localStorage.setItem('auth_token', 'expired-token')
