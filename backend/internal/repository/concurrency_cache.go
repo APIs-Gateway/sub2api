@@ -689,6 +689,7 @@ func (c *concurrencyCache) CleanupExpiredAccountSlotKeys(ctx context.Context) er
 	if err != nil {
 		return fmt.Errorf("read active account index: %w", err)
 	}
+	var cleanupErr error
 	for _, member := range members {
 		accountID, err := strconv.ParseInt(member, 10, 64)
 		if err != nil || accountID <= 0 {
@@ -698,10 +699,13 @@ func (c *concurrencyCache) CleanupExpiredAccountSlotKeys(ctx context.Context) er
 			continue
 		}
 		if err := c.CleanupExpiredAccountSlots(ctx, accountID); err != nil {
-			return fmt.Errorf("cleanup expired slots for active account %d: %w", accountID, err)
+			// A malformed or unavailable slot key must not starve every later
+			// candidate in this pass. Keep the index entry for a future retry,
+			// but continue cleaning the remaining active accounts now.
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("cleanup expired slots for active account %d: %w", accountID, err))
 		}
 	}
-	return nil
+	return cleanupErr
 }
 
 func (c *concurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error {

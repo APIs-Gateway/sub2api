@@ -111,6 +111,36 @@ func TestCleanupExpiredAccountSlotKeysPrunesInvalidAndEmptyCandidates(t *testing
 	require.Zero(t, exists)
 }
 
+func TestCleanupExpiredAccountSlotKeysContinuesAfterOneCandidateFails(t *testing.T) {
+	cache, client := newConcurrencyCacheMiniRedis(t)
+	ctx := context.Background()
+	failingID := int64(46)
+	cleanableID := int64(47)
+	now := time.Now().Unix()
+
+	// A wrong Redis type makes the first account's Lua cleanup fail. The
+	// following candidate still has to be cleaned in the same worker pass.
+	require.NoError(t, client.Set(ctx, accountSlotKey(failingID), "not-a-zset", 0).Err())
+	require.NoError(t, client.ZAdd(ctx, accountSlotKey(cleanableID), redis.Z{
+		Score:  float64(now - 61),
+		Member: "expired-request",
+	}).Err())
+	require.NoError(t, client.ZAdd(ctx, accountActiveIndexKey,
+		redis.Z{Score: float64(now + 60), Member: strconv.FormatInt(failingID, 10)},
+		redis.Z{Score: float64(now + 60), Member: strconv.FormatInt(cleanableID, 10)},
+	).Err())
+
+	err := cache.CleanupExpiredAccountSlotKeys(ctx)
+	require.Error(t, err)
+	_, scoreErr := client.ZScore(ctx, accountActiveIndexKey, strconv.FormatInt(failingID, 10)).Result()
+	require.NoError(t, scoreErr)
+	_, scoreErr = client.ZScore(ctx, accountActiveIndexKey, strconv.FormatInt(cleanableID, 10)).Result()
+	require.ErrorIs(t, scoreErr, redis.Nil)
+	exists, existsErr := client.Exists(ctx, accountSlotKey(cleanableID)).Result()
+	require.NoError(t, existsErr)
+	require.Zero(t, exists)
+}
+
 func TestCleanupExpiredAccountSlotKeysReturnsRedisTimeError(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
