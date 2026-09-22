@@ -365,7 +365,7 @@ func TestGrokRateLimitResetAt(t *testing.T) {
 	past := now.Add(-time.Minute)
 	futureUnix := future.Unix()
 	pastUnix := past.Unix()
-	retryAfter := int64(90)
+	retryAfter := 90
 
 	for _, tt := range []struct {
 		name      string
