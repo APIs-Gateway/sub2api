@@ -242,8 +242,12 @@ func newOpenAIResponsesWebSocketAttributionHandler(t *testing.T, proxyErr error,
 		nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	cache := &concurrencyCacheMock{
-		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
-		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) {
+			return true, nil
+		},
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
+			return true, nil
+		},
 	}
 	return &OpenAIGatewayHandler{
 		gatewayService:      gatewaySvc,
