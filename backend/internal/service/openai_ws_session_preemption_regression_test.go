@@ -226,3 +226,17 @@ func TestOpenAIWSIngressPreemptionModeAndScopeIsolation(t *testing.T) {
 	require.True(t, IsOpenAIWSSessionPreemptedError(NewOpenAIWSSessionPreemptedError()))
 	require.False(t, IsOpenAIWSSessionPreemptedError(context.Canceled))
 }
+
+func TestOpenAIWSSessionPreemptionHelperFallbacks(t *testing.T) {
+	require.False(t, isOpenAIWSSessionPreempted(nil))
+	require.True(t, IsOpenAIWSSessionPreemptedError(&openAIWSFallbackError{Reason: " prewarm_session_preempted "}))
+	require.False(t, IsOpenAIWSSessionPreemptedError(&openAIWSFallbackError{Reason: "other"}))
+
+	state := &openAIWSSessionPreemptState{}
+	ctx := context.WithValue(context.Background(), openAIWSSessionPreemptContextKey{}, state)
+	svc := &OpenAIGatewayService{}
+	got, cleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(ctx, nil, nil, nil)
+	defer cleanup()
+	require.Same(t, ctx, got)
+	require.True(t, armed)
+}

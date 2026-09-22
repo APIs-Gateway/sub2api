@@ -51,6 +51,14 @@ func TestGatewayCacheOpenAIResponsesSessionWindowRejectsInvalidClaims(t *testing
 	require.Error(t, err)
 	require.False(t, deleted)
 
+	withoutRedis := &gatewayCache{}
+	_, err = withoutRedis.ClaimOpenAIResponsesSessionWindow(ctx, 7, "scope", []byte("owner"), time.Minute)
+	require.Error(t, err)
+	_, err = withoutRedis.CompareAndRefreshOpenAIResponsesSessionWindow(ctx, 7, "scope", []byte("owner"), time.Minute)
+	require.Error(t, err)
+	_, err = withoutRedis.CompareAndDeleteOpenAIResponsesSessionWindow(ctx, 7, "scope", []byte("owner"))
+	require.Error(t, err)
+
 	mr := miniredis.RunT(t)
 	cache := &gatewayCache{rdb: redis.NewClient(&redis.Options{Addr: mr.Addr()})}
 	_, err = cache.ClaimOpenAIResponsesSessionWindow(ctx, 7, " ", []byte("owner"), time.Minute)

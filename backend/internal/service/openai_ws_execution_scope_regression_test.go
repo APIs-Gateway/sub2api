@@ -87,4 +87,8 @@ func TestResolveOpenAIWSExecutionLaneAndScopeFallbacks(t *testing.T) {
 	require.NotEqual(t, bySession, executionScopeForTest(sessionHeaders, body, 12))
 	require.NotEqual(t, bySession, executionScopeForTest(map[string]string{"session_id": "session-a", openAIWSThreadIDHeader: "thread-a"}, body, 11))
 	require.Empty(t, executionScopeForTest(nil, body, 11))
+	require.Empty(t, resolveOpenAIWSClientThreadID(newOpenAIWSExecutionScopeContext(nil), nil))
+	require.Empty(t, openAIWSExecutionTurnMetadata(newOpenAIWSExecutionScopeContext(nil), nil))
+	require.Empty(t, openAIWSExecutionSubagent(nil, nil))
+	require.Equal(t, "openai_ws_exec:11|thread=t|kind=memory", openAIWSExecutionScopeSeed(11, "thread", "t", "kind=memory"))
 }
