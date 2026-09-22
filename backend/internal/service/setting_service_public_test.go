@@ -16,6 +16,19 @@ type settingPublicRepoStub struct {
 	getMultipleErr error
 }
 
+type siteNameLookupRepoStub struct {
+	SettingRepository
+	values map[string]string
+}
+
+func (s *siteNameLookupRepoStub) GetValue(_ context.Context, key string) (string, error) {
+	value, ok := s.values[key]
+	if !ok {
+		return "", ErrSettingNotFound
+	}
+	return value, nil
+}
+
 func (s *settingPublicRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
 	panic("unexpected Get call")
 }
@@ -81,6 +94,64 @@ func TestSettingService_GetPublicSettings_ExposesTablePreferences(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, 50, settings.TableDefaultPageSize)
 	require.Equal(t, []int{20, 50, 100}, settings.TablePageSizeOptions)
+}
+
+func TestSettingService_GetPublicSettings_UsesNeutralSiteNameDefaultAndConfiguredOverride(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string]string
+		want   string
+	}{
+		{name: "missing site name uses the neutral default", values: map[string]string{}, want: "API Gateway"},
+		{
+			name: "configured site name takes precedence",
+			values: map[string]string{
+				SettingKeySiteName: "Tenant Gateway",
+			},
+			want: "Tenant Gateway",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewSettingService(&settingPublicRepoStub{values: tt.values}, &config.Config{})
+
+			settings, err := svc.GetPublicSettings(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, tt.want, settings.SiteName)
+
+			payload, err := svc.GetPublicSettingsForInjection(context.Background())
+			require.NoError(t, err)
+			injected, ok := payload.(*PublicSettingsInjectionPayload)
+			require.True(t, ok)
+			require.Equal(t, tt.want, injected.SiteName)
+		})
+	}
+}
+
+func TestSettingService_GetSiteName_UsesNeutralDefaultAndConfiguredOverride(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string]string
+		want   string
+	}{
+		{name: "missing site name uses the neutral default", values: map[string]string{}, want: "API Gateway"},
+		{
+			name: "configured site name takes precedence",
+			values: map[string]string{
+				SettingKeySiteName: "Tenant Gateway",
+			},
+			want: "Tenant Gateway",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewSettingService(&siteNameLookupRepoStub{values: tt.values}, &config.Config{})
+
+			require.Equal(t, tt.want, svc.GetSiteName(context.Background()))
+		})
+	}
 }
 
 func TestSettingService_GetPublicSettings_DefaultLocaleFallbackAndCompatibility(t *testing.T) {
