@@ -657,12 +657,13 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
 	upstreamConn := &openAIWSCaptureConn{
-		// Leave the second upstream event pending long enough for the client
-		// follow-up response.create to traverse the relay first.
-		readDelays: []time.Duration{0, 150 * time.Millisecond},
+		// Leave each follow-up upstream event pending long enough for the client
+		// response.create to traverse the relay first.
+		readDelays: []time.Duration{0, 150 * time.Millisecond, 150 * time.Millisecond},
 		events: [][]byte{
 			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_1","model":"gpt-5.6-sol-max","output":[{"id":"ig_passthrough_1","type":"image_generation_call","status":"generating","result":"final-image"}],"usage":{"input_tokens":2,"output_tokens":3}}}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_2","model":"gpt-5.6-sol-max","usage":{"input_tokens":2,"output_tokens":3}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_3","model":"gpt-5.6-sol-max","usage":{"input_tokens":2,"output_tokens":3}}}`),
 		},
 	}
 	captureDialer := &openAIWSCaptureDialer{conn: upstreamConn}
@@ -692,7 +693,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	}
 
 	serverErrCh := make(chan error, 1)
-	resultCh := make(chan *OpenAIForwardResult, 2)
+	resultCh := make(chan *OpenAIForwardResult, 3)
 	hooks := &OpenAIWSIngressHooks{
 		AfterTurn: func(_ int, result *OpenAIForwardResult, turnErr error) {
 			if turnErr == nil && result != nil {
@@ -766,6 +767,16 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	cancelRead()
 	require.NoError(t, readErr)
 	require.Equal(t, "resp_passthrough_turn_2", gjson.GetBytes(event, "response.id").String())
+
+	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.6-sol-max","stream":false,"previous_response_id":"resp_passthrough_turn_2","input":[{"type":"message","role":"user","content":"follow up","internal_chat_message_metadata_passthrough":{"remove":true}}]}`))
+	cancelWrite()
+	require.NoError(t, err)
+	readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
+	_, event, readErr = clientConn.Read(readCtx)
+	cancelRead()
+	require.NoError(t, readErr)
+	require.Equal(t, "resp_passthrough_turn_3", gjson.GetBytes(event, "response.id").String())
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
 	select {
@@ -795,9 +806,10 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	}
 
 	require.Equal(t, 1, captureDialer.DialCount(), "passthrough 模式应直接建立上游 websocket")
-	require.Len(t, upstreamConn.writes, 2, "passthrough 模式应透传每条 response.create")
+	require.Len(t, upstreamConn.writes, 3, "passthrough 模式应透传每条 response.create")
 	require.False(t, gjson.Get(requestToJSONString(upstreamConn.writes[0]), "input.0."+openAIOAuthInputMetadataField).Exists())
 	require.False(t, gjson.Get(requestToJSONString(upstreamConn.writes[1]), "input.0."+openAIOAuthInputMetadataField).Exists())
+	require.False(t, gjson.Get(requestToJSONString(upstreamConn.writes[2]), "input.0."+openAIOAuthInputMetadataField).Exists())
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughHeadersUsePromptCacheAndTurnState(t *testing.T) {

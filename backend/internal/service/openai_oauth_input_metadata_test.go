@@ -90,9 +90,26 @@ func TestOAuthResponsesWebSocketBinaryInputMetadataCleanup(t *testing.T) {
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(out, "input.0."+openAIOAuthInputMetadataField).Exists())
 
+	out, changed = stripOpenAIOAuthResponsesWebSocketFrameMetadata(oauthAccount, coderws.MessageText, payload)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(out, "input.0."+openAIOAuthInputMetadataField).Exists())
+
 	out, changed = stripOpenAIOAuthResponsesWebSocketFrameMetadata(apiKeyAccount, coderws.MessageBinary, payload)
 	require.False(t, changed)
 	require.Equal(t, payload, out)
+
+	out, changed = stripOpenAIOAuthResponsesWebSocketFrameMetadata(nil, coderws.MessageBinary, payload)
+	require.False(t, changed)
+	require.Equal(t, payload, out)
+
+	out, changed = stripOpenAIOAuthResponsesWebSocketFrameMetadata(oauthAccount, coderws.MessageType(-1), payload)
+	require.False(t, changed)
+	require.Equal(t, payload, out)
+
+	nonResponseCreateJSON := []byte(`{"type":"response.cancel","input":[{"internal_chat_message_metadata_passthrough":{"keep":true}}]}`)
+	out, changed = stripOpenAIOAuthResponsesWebSocketFrameMetadata(oauthAccount, coderws.MessageBinary, nonResponseCreateJSON)
+	require.False(t, changed)
+	require.Equal(t, nonResponseCreateJSON, out)
 
 	nonJSONBinary := []byte{0x00, 0xff, 0x10}
 	out, changed = stripOpenAIOAuthResponsesWebSocketFrameMetadata(oauthAccount, coderws.MessageBinary, nonJSONBinary)
