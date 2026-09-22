@@ -48,6 +48,26 @@ func TestResolveOpenAIWSExecutionScopeIsolatesCodexThreadsAndLanes(t *testing.T)
 	require.NotEqual(t, rootScope, executionScopeForTest(rootHeaders, body, 10), "API keys are part of the execution isolation key")
 }
 
+func TestOpenAIWSExecutionScopeSeedSeparatesDelimitedThreadAndLane(t *testing.T) {
+	// This pair used to serialize to the same seed:
+	// "...|thread=a|kind=memory". Thread IDs come from clients, so delimiters
+	// in their values must not change the field boundary.
+	delimitedThreadSeed := openAIWSExecutionScopeSeed(9, "thread", "a|kind=memory", "")
+	memoryLaneSeed := openAIWSExecutionScopeSeed(9, "thread", "a", "kind=memory")
+	require.NotEqual(t, delimitedThreadSeed, memoryLaneSeed)
+
+	delimitedThreadScope, _ := deriveOpenAISessionHashes(delimitedThreadSeed)
+	memoryLaneScope, _ := deriveOpenAISessionHashes(memoryLaneSeed)
+	require.NotEqual(t, delimitedThreadScope, memoryLaneScope)
+
+	// Ordinary inputs remain deterministic so reconnects retain their scope.
+	plainSeed := openAIWSExecutionScopeSeed(9, "thread", "ordinary-thread", "kind=memory")
+	require.Equal(t, plainSeed, openAIWSExecutionScopeSeed(9, "thread", "ordinary-thread", "kind=memory"))
+	plainScope, _ := deriveOpenAISessionHashes(plainSeed)
+	repeatedPlainScope, _ := deriveOpenAISessionHashes(openAIWSExecutionScopeSeed(9, "thread", "ordinary-thread", "kind=memory"))
+	require.Equal(t, plainScope, repeatedPlainScope)
+}
+
 func executionScopeForTest(headers map[string]string, body []byte, apiKeyID int64) string {
 	scope, _ := resolveOpenAIWSExecutionScope(newOpenAIWSExecutionScopeContext(headers), body, apiKeyID)
 	return scope

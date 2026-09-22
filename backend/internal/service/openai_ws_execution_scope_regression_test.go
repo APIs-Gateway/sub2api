@@ -90,5 +90,5 @@ func TestResolveOpenAIWSExecutionLaneAndScopeFallbacks(t *testing.T) {
 	require.Empty(t, resolveOpenAIWSClientThreadID(newOpenAIWSExecutionScopeContext(nil), nil))
 	require.Empty(t, openAIWSExecutionTurnMetadata(newOpenAIWSExecutionScopeContext(nil), nil))
 	require.Empty(t, openAIWSExecutionSubagent(nil, nil))
-	require.Equal(t, "openai_ws_exec:11|thread=t|kind=memory", openAIWSExecutionScopeSeed(11, "thread", "t", "kind=memory"))
+	require.Equal(t, "openai_ws_exec:11|6:thread|1:t|11:kind=memory", openAIWSExecutionScopeSeed(11, "thread", "t", "kind=memory"))
 }

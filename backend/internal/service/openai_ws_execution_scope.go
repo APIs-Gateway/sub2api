@@ -110,11 +110,15 @@ func resolveOpenAIWSExecutionLane(c *gin.Context, body []byte) string {
 }
 
 func openAIWSExecutionScopeSeed(apiKeyID int64, identity, value, lane string) string {
-	seed := fmt.Sprintf("openai_ws_exec:%d|%s=%s", apiKeyID, identity, value)
-	if lane != "" {
-		seed += "|" + lane
-	}
-	return seed
+	// Length-prefix every user-controlled field. Separators alone are ambiguous:
+	// a thread id such as "a|kind=memory" must not share a seed with thread "a"
+	// in the "kind=memory" lane.
+	return fmt.Sprintf("openai_ws_exec:%d|%d:%s|%d:%s|%d:%s",
+		apiKeyID,
+		len(identity), identity,
+		len(value), value,
+		len(lane), lane,
+	)
 }
 
 // resolveOpenAIWSExecutionScope produces the key used only for WS-owned turn
