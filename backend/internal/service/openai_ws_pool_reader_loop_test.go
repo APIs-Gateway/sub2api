@@ -719,6 +719,78 @@ func TestOpenAIWSConnPool_DropDeadConnLockedEvictsOnlyDirtyConn(t *testing.T) {
 	closeOpenAIWSConns(evicted)
 }
 
+func TestOpenAIWSConnPool_AcquireSkipsClosedPreferredConn(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 2
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 2
+	pool := newOpenAIWSConnPool(cfg)
+	defer pool.Close()
+	account := &Account{ID: 317, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	ap := pool.getOrCreateAccountPool(account.ID)
+	dead := newOpenAIWSConn("preferred_dead", account.ID, &openAIWSFakeConn{}, nil)
+	live := newOpenAIWSConn("fallback_live", account.ID, &openAIWSFakeConn{}, nil)
+	dead.close()
+	ap.conns[dead.id] = dead
+	ap.conns[live.id] = live
+	ap.lastCleanupAt = time.Now()
+
+	lease, err := pool.Acquire(context.Background(), openAIWSAcquireRequest{
+		Account:         account,
+		WSURL:           "wss://example.com/v1/responses",
+		PreferredConnID: dead.id,
+	})
+	require.NoError(t, err)
+	defer lease.Release()
+	require.Equal(t, live.id, lease.ConnID())
+	requireConnGone(t, pool, account.ID, dead.id)
+}
+
+func TestOpenAIWSConnPool_ForcePreferredClosedConnIsUnavailable(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+	pool := newOpenAIWSConnPool(cfg)
+	defer pool.Close()
+	account := &Account{ID: 318, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	ap := pool.getOrCreateAccountPool(account.ID)
+	dead := newOpenAIWSConn("forced_preferred_dead", account.ID, &openAIWSFakeConn{}, nil)
+	dead.close()
+	ap.conns[dead.id] = dead
+	ap.lastCleanupAt = time.Now()
+
+	lease, err := pool.Acquire(context.Background(), openAIWSAcquireRequest{
+		Account:            account,
+		WSURL:              "wss://example.com/v1/responses",
+		PreferredConnID:    dead.id,
+		ForcePreferredConn: true,
+	})
+	require.Nil(t, lease)
+	require.ErrorIs(t, err, errOpenAIWSPreferredConnUnavailable)
+	requireConnGone(t, pool, account.ID, dead.id)
+}
+
+func TestOpenAIWSConnPool_BackgroundPingSweepEvictsClosedIdleCandidate(t *testing.T) {
+	conn := newOpenAIWSConn("rl_closed_idle_probe", 319, &openAIWSFakeConn{}, nil)
+	conn.close()
+	pool, ap := newSweepTestPool(conn, 319)
+
+	pool.runBackgroundPingSweep()
+
+	requireInPool(t, ap, conn.id, false)
+}
+
+func TestOpenAIWSConnReaderLoop_ClosedResultChannelUsesFallbackError(t *testing.T) {
+	conn := &openAIWSConn{
+		ws:                &openAIWSFakeConn{},
+		readerLoopResults: make(chan []byte),
+		closedCh:          make(chan struct{}),
+	}
+	close(conn.readerLoopResults)
+
+	_, err := conn.readMessageWithTimeout(time.Second)
+	require.ErrorIs(t, err, errOpenAIWSConnClosed)
+}
+
 // A waiter can observe a connection close after the pool has selected it as
 // the only saturated target. It must evict that target and retry once with a
 // new transport instead of returning a stale close error to the caller.
