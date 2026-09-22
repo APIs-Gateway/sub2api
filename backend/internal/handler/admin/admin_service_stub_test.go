@@ -490,7 +490,13 @@ func (s *stubAdminService) CreateProxy(ctx context.Context, input *service.Creat
 	s.mu.Lock()
 	s.createdProxies = append(s.createdProxies, input)
 	s.mu.Unlock()
-	proxy := service.Proxy{ID: 400, Name: input.Name, Status: service.StatusActive}
+	proxy := service.Proxy{
+		ID:       400,
+		Name:     input.Name,
+		Username: input.Username,
+		Password: input.Password,
+		Status:   service.StatusActive,
+	}
 	return &proxy, nil
 }
 
