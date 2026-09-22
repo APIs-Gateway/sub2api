@@ -802,6 +802,22 @@ describe("admin SettingsView payment visible method controls", () => {
     }
   });
 
+  it("uses the neutral site name in the payment product fallback", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      payment_enabled: true,
+      payment_product_name_prefix: "",
+      payment_product_name_suffix: "",
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    expect(wrapper.find('input[placeholder="API Gateway"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("API Gateway 100 CNY");
+  });
+
   it("does not submit legacy visible payment method settings", async () => {
     const wrapper = mountView();
 
