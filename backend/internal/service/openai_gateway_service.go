@@ -9218,10 +9218,7 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 	// Codex can attach internal message metadata when a custom provider is
 	// named OpenAI. ChatGPT rejects the field on Responses input items. Keep
 	// the operation shallow so identically named user content is untouched.
-	stripped, metadataChanged, err := stripOpenAIOAuthResponsesInputItemMetadata(normalized)
-	if err != nil {
-		return body, false, err
-	}
+	stripped, metadataChanged := stripOpenAIOAuthResponsesInputItemMetadata(normalized)
 	if metadataChanged {
 		normalized = stripped
 		changed = true
@@ -9305,10 +9302,10 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 // stripOpenAIOAuthResponsesInputItemMetadata strips only the exact internal
 // field from object items in an already-array-shaped Responses input. It is
 // shared by OAuth passthrough and WebSocket normalization paths.
-func stripOpenAIOAuthResponsesInputItemMetadata(body []byte) ([]byte, bool, error) {
+func stripOpenAIOAuthResponsesInputItemMetadata(body []byte) ([]byte, bool) {
 	input := gjson.GetBytes(body, "input")
 	if !input.IsArray() {
-		return body, false, nil
+		return body, false
 	}
 
 	normalized := body
@@ -9317,14 +9314,13 @@ func stripOpenAIOAuthResponsesInputItemMetadata(body []byte) ([]byte, bool, erro
 		if !item.IsObject() || !item.Get("internal_chat_message_metadata_passthrough").Exists() {
 			continue
 		}
-		next, err := sjson.DeleteBytes(normalized, fmt.Sprintf("input.%d.internal_chat_message_metadata_passthrough", i))
-		if err != nil {
-			return body, false, fmt.Errorf("strip oauth input item metadata: %w", err)
-		}
+		// The path is assembled solely from a parsed array index and a static
+		// object member, so DeleteBytes cannot reject it as a complex path.
+		next, _ := sjson.DeleteBytes(normalized, fmt.Sprintf("input.%d.internal_chat_message_metadata_passthrough", i))
 		normalized = next
 		changed = true
 	}
-	return normalized, changed, nil
+	return normalized, changed
 }
 
 func detectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byte) string {

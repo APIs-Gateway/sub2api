@@ -36,7 +36,10 @@ func TestOAuthResponsesInputInternalMetadataIsStrippedAtOAuthBoundaries(t *testi
 		}},
 		{"OAuth passthrough", func(b []byte) ([]byte, bool, error) { return normalizeOpenAIPassthroughOAuthBody(b, false) }},
 		{"OAuth compact", func(b []byte) ([]byte, bool, error) { return normalizeOpenAIPassthroughOAuthBody(b, true) }},
-		{"OAuth websocket", stripOpenAIOAuthResponsesInputItemMetadata},
+		{"OAuth websocket", func(b []byte) ([]byte, bool, error) {
+			out, changed := stripOpenAIOAuthResponsesInputItemMetadata(b)
+			return out, changed, nil
+		}},
 	}
 
 	for _, tt := range tests {
@@ -65,12 +68,16 @@ func TestOAuthResponsesInputInternalMetadataSkipsNonArrayInputAndPromptAlias(t *
 		`{"prompt":[{"role":"user","content":"hello","internal_chat_message_metadata_passthrough":{}}],"previous_response_id":"resp_123"}`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			out, changed, err := stripOpenAIOAuthResponsesInputItemMetadata([]byte(body))
-			require.NoError(t, err)
+			out, changed := stripOpenAIOAuthResponsesInputItemMetadata([]byte(body))
 			require.False(t, changed)
 			require.Equal(t, body, string(out))
 		})
 	}
+}
+
+func TestStripOpenAIOAuthInputInternalMetadataSkipsNonObjectItems(t *testing.T) {
+	input := []any{nil, "plain text", []any{"nested array"}}
+	require.False(t, stripOpenAIOAuthInputInternalMetadata(input))
 }
 
 func TestAPIKeyResponsesInputInternalMetadataIsPreserved(t *testing.T) {

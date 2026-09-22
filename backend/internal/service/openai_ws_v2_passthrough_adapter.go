@@ -643,10 +643,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		firstClientMessage = liteFirstMessage
 	}
 	if account.IsOpenAIOAuth() && strings.TrimSpace(gjson.GetBytes(firstClientMessage, "type").String()) == "response.create" {
-		stripped, changed, stripErr := stripOpenAIOAuthResponsesInputItemMetadata(firstClientMessage)
-		if stripErr != nil {
-			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", stripErr)
-		}
+		stripped, changed := stripOpenAIOAuthResponsesInputItemMetadata(firstClientMessage)
 		if changed {
 			firstClientMessage = stripped
 		}
@@ -915,10 +912,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				payload = litePayload
 			}
 			if isResponseCreate && account.IsOpenAIOAuth() {
-				stripped, changed, stripErr := stripOpenAIOAuthResponsesInputItemMetadata(payload)
-				if stripErr != nil {
-					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", stripErr)
-				}
+				stripped, changed := stripOpenAIOAuthResponsesInputItemMetadata(payload)
 				if changed {
 					payload = stripped
 				}

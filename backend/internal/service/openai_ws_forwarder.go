@@ -2825,10 +2825,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			normalized = litePayload
 		}
 		if account.IsOpenAIOAuth() && eventType == "response.create" {
-			stripped, changed, stripErr := stripOpenAIOAuthResponsesInputItemMetadata(normalized)
-			if stripErr != nil {
-				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", stripErr)
-			}
+			stripped, changed := stripOpenAIOAuthResponsesInputItemMetadata(normalized)
 			if changed {
 				normalized = stripped
 			}
