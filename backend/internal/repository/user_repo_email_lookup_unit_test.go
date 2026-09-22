@@ -10,6 +10,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/emailcanon"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 
@@ -70,6 +71,53 @@ func TestUserRepositoryExistsByEmailNormalizesLegacySpacingAndCase(t *testing.T)
 	exists, err := repo.ExistsByEmail(ctx, "  LEGACY@example.com  ")
 	require.NoError(t, err)
 	require.True(t, exists)
+}
+
+func TestEmailAliasOwnerHandlesDefensiveInputs(t *testing.T) {
+	repo, client := newUserEntRepo(t)
+	ctx := context.Background()
+
+	previousAliasFilterEnabled := emailcanon.Enabled()
+	emailcanon.SetEnabled(true)
+	t.Cleanup(func() { emailcanon.SetEnabled(previousAliasFilterEnabled) })
+
+	_, exists, err := emailAliasOwnerIDWithClient(ctx, nil, "owner@gmail.com", 0)
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	_, exists, err = emailAliasOwnerIDWithClient(ctx, client, "@gmail.com", 0)
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	require.ErrorIs(t, repo.UpdateEmailWithAliasGuard(ctx, 0, "owner@gmail.com", "hash"), service.ErrUserNotFound)
+	require.Error(t, repo.UpdateEmailWithAliasGuard(ctx, 1, "", "hash"))
+	require.Error(t, repo.UpdateEmailWithAliasGuard(ctx, 1, "owner@gmail.com", ""))
+	require.Error(t, repo.UpdateEmailWithAliasGuard(ctx, 1, "owner@gmail.com", "hash"))
+}
+
+func TestEmailAliasOwnerReportsQueryAndPersistenceErrors(t *testing.T) {
+	repo, client := newUserEntRepo(t)
+	ctx := context.Background()
+
+	previousAliasFilterEnabled := emailcanon.Enabled()
+	emailcanon.SetEnabled(true)
+	t.Cleanup(func() { emailcanon.SetEnabled(previousAliasFilterEnabled) })
+
+	require.NoError(t, client.Close())
+	_, _, err := emailAliasOwnerIDWithClient(ctx, client, "owner@gmail.com", 0)
+	require.Error(t, err)
+
+	// Use a separate fixture because the client above is intentionally closed.
+	repo, client = newUserEntRepo(t)
+	tx, err := client.Tx(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	txCtx := dbent.NewTxContext(ctx, tx)
+	require.ErrorIs(
+		t,
+		repo.UpdateEmailWithAliasGuard(txCtx, 999999, "missing-user@gmail.com", "hash"),
+		service.ErrUserNotFound,
+	)
 }
 
 func TestUserRepositoryCreateRejectsNormalizedEmailDuplicate(t *testing.T) {
