@@ -174,8 +174,10 @@ func (h *PromptEventAdminHandler) issueConfirmation(preview *DeletePreview, admi
 	now := h.now()
 	token := base64.RawURLEncoding.EncodeToString(bytes)
 	confirmation := deleteConfirmation{
-		filterHash: preview.FilterHash,
-		snapshotMaxID: preview.SnapshotMaxID, adminID: adminID, expiresAt: now.Add(5 * time.Minute),
+		filterHash:    preview.FilterHash,
+		snapshotMaxID: preview.SnapshotMaxID,
+		adminID:       adminID,
+		expiresAt:     now.Add(5 * time.Minute),
 	}
 	h.confirmationMu.Lock()
 	defer h.confirmationMu.Unlock()

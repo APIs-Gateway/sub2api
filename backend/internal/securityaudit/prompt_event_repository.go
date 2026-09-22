@@ -201,8 +201,8 @@ func (r *PostgreSQLRepository) deleteEventBatch(ctx context.Context, tx *sql.Tx,
 	limitPosition := maxPosition + 1
 	args = append(args, snapshotMaxID, batchSize)
 	rows, err := tx.QueryContext(ctx,
-		`SELECT e.id, e.job_id FROM prompt_audit_events e`+where+
-		` AND e.id <= `+r.placeholder(maxPosition)+` ORDER BY e.id LIMIT `+r.placeholder(limitPosition), args...)
+		`SELECT e.id, e.job_id FROM prompt_audit_events e` + where +
+			` AND e.id <= ` + r.placeholder(maxPosition) + ` ORDER BY e.id LIMIT ` + r.placeholder(limitPosition), args...)
 	if err != nil {
 		return nil, false, err
 	}
