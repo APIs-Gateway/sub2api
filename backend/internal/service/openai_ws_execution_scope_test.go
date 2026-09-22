@@ -13,7 +13,9 @@ import (
 func newOpenAIWSExecutionScopeContext(headers map[string]string) *gin.Context {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	for key, value := range headers { c.Request.Header.Set(key, value) }
+	for key, value := range headers {
+		c.Request.Header.Set(key, value)
+	}
 	return c
 }
 

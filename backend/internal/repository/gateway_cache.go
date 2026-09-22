@@ -83,28 +83,47 @@ return 1
 // owner and returns the previous one. The owner itself is intentionally opaque
 // to Redis; conditional refresh/delete below prevents stale cleanup races.
 func (c *gatewayCache) ClaimOpenAIResponsesSessionWindow(ctx context.Context, groupID int64, sessionHash string, owner []byte, ttl time.Duration) ([]byte, error) {
-	if c == nil || c.rdb == nil { return nil, errors.New("gateway cache unavailable") }
-	if len(owner) == 0 || strings.TrimSpace(sessionHash) == "" || ttl <= 0 { return nil, errors.New("invalid OpenAI Responses session-window claim") }
+	if c == nil || c.rdb == nil {
+		return nil, errors.New("gateway cache unavailable")
+	}
+	if len(owner) == 0 || strings.TrimSpace(sessionHash) == "" || ttl <= 0 {
+		return nil, errors.New("invalid OpenAI Responses session-window claim")
+	}
 	value, err := claimOpenAIResponsesSessionWindowScript.Run(ctx, c.rdb, []string{buildOpenAIResponsesSessionWindowKey(groupID, sessionHash)}, owner, ttl.Milliseconds()).Result()
-	if errors.Is(err, redis.Nil) || value == nil { return nil, nil }
-	if err != nil { return nil, err }
+	if errors.Is(err, redis.Nil) || value == nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
 	switch v := value.(type) {
-	case string: return []byte(v), nil
-	case []byte: return append([]byte(nil), v...), nil
-	default: return nil, fmt.Errorf("unexpected OpenAI Responses session-window claim result %T", value)
+	case string:
+		return []byte(v), nil
+	case []byte:
+		return append([]byte(nil), v...), nil
+	default:
+		return nil, fmt.Errorf("unexpected OpenAI Responses session-window claim result %T", value)
 	}
 }
 
 func (c *gatewayCache) CompareAndRefreshOpenAIResponsesSessionWindow(ctx context.Context, groupID int64, sessionHash string, expected []byte, ttl time.Duration) (bool, error) {
-	if c == nil || c.rdb == nil { return false, errors.New("gateway cache unavailable") }
-	if len(expected) == 0 || strings.TrimSpace(sessionHash) == "" || ttl <= 0 { return false, errors.New("invalid OpenAI Responses session-window refresh") }
+	if c == nil || c.rdb == nil {
+		return false, errors.New("gateway cache unavailable")
+	}
+	if len(expected) == 0 || strings.TrimSpace(sessionHash) == "" || ttl <= 0 {
+		return false, errors.New("invalid OpenAI Responses session-window refresh")
+	}
 	n, err := compareAndRefreshOpenAIResponsesSessionWindowScript.Run(ctx, c.rdb, []string{buildOpenAIResponsesSessionWindowKey(groupID, sessionHash)}, expected, ttl.Milliseconds()).Int()
 	return n == 1, err
 }
 
 func (c *gatewayCache) CompareAndDeleteOpenAIResponsesSessionWindow(ctx context.Context, groupID int64, sessionHash string, expected []byte) (bool, error) {
-	if c == nil || c.rdb == nil { return false, errors.New("gateway cache unavailable") }
-	if len(expected) == 0 || strings.TrimSpace(sessionHash) == "" { return false, errors.New("invalid OpenAI Responses session-window delete") }
+	if c == nil || c.rdb == nil {
+		return false, errors.New("gateway cache unavailable")
+	}
+	if len(expected) == 0 || strings.TrimSpace(sessionHash) == "" {
+		return false, errors.New("invalid OpenAI Responses session-window delete")
+	}
 	n, err := compareAndDeleteOpenAIResponsesSessionWindowScript.Run(ctx, c.rdb, []string{buildOpenAIResponsesSessionWindowKey(groupID, sessionHash)}, expected).Int()
 	return n == 1, err
 }
