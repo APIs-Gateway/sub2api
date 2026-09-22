@@ -42,6 +42,42 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 	require.EqualError(t, err, "invalid json request body")
 }
 
+func TestPatchGrokResponsesBodyNormalizesReasoningEffortForGrok46(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		body          string
+		upstreamModel string
+		path          string
+		want          string
+	}{
+		{name: "preserves xhigh for 4.6", body: `{"input":"hi","reasoning":{"effort":"x-high"}}`, upstreamModel: "grok-4.6", path: "reasoning.effort", want: "xhigh"},
+		{name: "preserves xhigh for provider-prefixed 4.6 latest", body: `{"input":"hi","reasoning_effort":"xhigh"}`, upstreamModel: "xai/grok-4.6-latest", path: "reasoning_effort", want: "xhigh"},
+		{name: "downgrades xhigh for 4.3", body: `{"input":"hi","reasoning_effort":"extra-high"}`, upstreamModel: "grok-4.3", path: "reasoning_effort", want: "high"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			patched, err := patchGrokResponsesBody([]byte(tt.body), tt.upstreamModel)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, gjson.GetBytes(patched, tt.path).String(), string(patched))
+		})
+	}
+}
+
+func TestNormalizeGrokChatReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	patched, err := normalizeGrokChatReasoningEffort([]byte(`{"reasoningEffort":"xhigh"}`), "grok-4.6")
+	require.NoError(t, err)
+	require.Equal(t, "xhigh", gjson.GetBytes(patched, "reasoning_effort").String())
+	require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
+
+	patched, err = normalizeGrokChatReasoningEffort([]byte(`{"reasoning_effort":"xhigh"}`), "grok-4.3")
+	require.NoError(t, err)
+	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning_effort").String())
+}
+
 func TestSanitizeGrokUnsupportedFields(t *testing.T) {
 	t.Parallel()
 

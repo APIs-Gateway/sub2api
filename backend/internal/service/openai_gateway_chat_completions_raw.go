@@ -107,6 +107,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 	upstreamBody = updatedBody
 	if account.Platform == PlatformGrok {
+		normalizedBody, normalizeErr := normalizeGrokChatReasoningEffort(upstreamBody, upstreamModel)
+		if normalizeErr != nil {
+			return nil, fmt.Errorf("normalize Grok Chat reasoning effort: %w", normalizeErr)
+		}
+		upstreamBody = normalizedBody
 		strippedBody, stripErr := stripRedundantGrokChatViewImageTool(upstreamBody)
 		if stripErr != nil {
 			return nil, fmt.Errorf("strip redundant Grok Chat view_image tool: %w", stripErr)
