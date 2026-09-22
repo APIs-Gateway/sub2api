@@ -450,7 +450,6 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			content, _ := json.Marshal(text)
 			messages = append(messages, ChatMessage{Role: "user", Content: content})
 			pendingReasoning = ""
-			lastTurnReasoning = ""
 			continue
 		case "input_text", "text":
 			content, _ := json.Marshal(rawString(item["text"]))
