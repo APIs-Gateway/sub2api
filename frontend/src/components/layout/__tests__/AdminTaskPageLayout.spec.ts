@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import { defineComponent } from 'vue'
+import { defineComponent, h } from 'vue'
 
 import AdminTaskPageLayout from '../AdminTaskPageLayout.vue'
 
@@ -31,7 +31,7 @@ describe('AdminTaskPageLayout worklist containment', () => {
       props: { title: 'Redeem codes' },
       slots: {
         filters: '<input aria-label="Search codes" />',
-        worklist: TableWorklist,
+        worklist: () => h(TableWorklist),
         footer: '<nav aria-label="Pagination">page controls</nav>'
       }
     })
