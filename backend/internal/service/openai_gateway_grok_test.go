@@ -114,12 +114,32 @@ func TestNormalizeGrokResponsesReasoningEffortGuardCases(t *testing.T) {
 		require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
 	})
 
+	t.Run("converts camel case when it is the only spelling", func(t *testing.T) {
+		patched, err := normalizeGrokResponsesReasoningEffort([]byte(`{"reasoningEffort":"high"}`), "grok-4.6")
+		require.NoError(t, err)
+		require.Equal(t, "high", gjson.GetBytes(patched, "reasoning_effort").String())
+		require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
+	})
+
 	t.Run("returns body without effort fields unchanged", func(t *testing.T) {
 		body := []byte(`{"input":"hi"}`)
 		patched, err := normalizeGrokResponsesReasoningEffort(body, "grok-4.6")
 		require.NoError(t, err)
 		require.Equal(t, body, patched)
 	})
+}
+
+func TestNormalizeGrokReasoningEffortRejectsMalformedBodies(t *testing.T) {
+	t.Parallel()
+
+	_, err := normalizeGrokResponsesReasoningEffort([]byte(`{"reasoning_effort":"high"`), "grok-4.6")
+	require.Error(t, err)
+
+	_, err = normalizeGrokResponsesReasoningEffort([]byte(`{"reasoningEffort":"high"`), "grok-4.6")
+	require.Error(t, err)
+
+	_, err = normalizeGrokChatReasoningEffort([]byte(`{"reasoningEffort":"high"`), "grok-4.6")
+	require.Error(t, err)
 }
 
 func TestGrokReasoningEffortCapabilities(t *testing.T) {
