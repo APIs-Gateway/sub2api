@@ -85,12 +85,19 @@ func (b *keepaliveMismatchGatedBody) Close() error { return nil }
 type keepaliveMismatchFlushSignalWriter struct {
 	gin.ResponseWriter
 	flushed chan struct{}
+	beats   chan<- struct{}
 	once    sync.Once
 }
 
 func (w *keepaliveMismatchFlushSignalWriter) Flush() {
 	w.ResponseWriter.Flush()
 	w.once.Do(func() { close(w.flushed) })
+	if w.beats != nil {
+		select {
+		case w.beats <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // keepaliveMismatchUpstream 按调用顺序出响应：bodies[i] 是第 i+1 次上游调用的 SSE；
@@ -101,6 +108,8 @@ type keepaliveMismatchUpstream struct {
 	bodies    []string
 	gateFirst bool
 	gate      chan struct{}
+	gateAttempts int
+	beats        <-chan struct{}
 	onFirstDo func()
 }
 
@@ -115,6 +124,8 @@ func (u *keepaliveMismatchUpstream) Do(_ *http.Request, _ string, accountID int6
 	var body io.ReadCloser = io.NopCloser(strings.NewReader(u.bodies[n-1]))
 	if n == 1 && u.gateFirst {
 		body = &keepaliveMismatchGatedBody{gate: u.gate, reader: strings.NewReader(u.bodies[0])}
+	} else if n <= u.gateAttempts {
+		body = &keepaliveMismatchGatedBody{gate: u.beats, reader: strings.NewReader(u.bodies[n-1])}
 	}
 	if n == 1 && u.onFirstDo != nil {
 		u.onFirstDo()
@@ -198,6 +209,7 @@ type keepaliveMismatchHarness struct {
 	router    *gin.Engine
 	usageLogs chan *service.UsageLog
 	flushed   chan struct{}
+	beats     chan struct{}
 	stop      func()
 }
 
@@ -271,14 +283,15 @@ func newKeepaliveMismatchHarness(t *testing.T, accounts []service.Account, upstr
 		},
 	}
 	flushed := make(chan struct{})
+	beats := make(chan struct{}, len(accounts)+1)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
-		c.Writer = &keepaliveMismatchFlushSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
+		c.Writer = &keepaliveMismatchFlushSignalWriter{ResponseWriter: c.Writer, flushed: flushed, beats: beats}
 		c.Next()
 	})
-	return &keepaliveMismatchHarness{handler: h, router: router, usageLogs: usageRepo.created, flushed: flushed, stop: billingCacheSvc.Stop}
+	return &keepaliveMismatchHarness{handler: h, router: router, usageLogs: usageRepo.created, flushed: flushed, beats: beats, stop: billingCacheSvc.Stop}
 }
 
 func (hs *keepaliveMismatchHarness) serve(t *testing.T, entry keepaliveMismatchEntry, reqCtx context.Context) *httptest.ResponseRecorder {
@@ -458,4 +471,81 @@ func TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient(t *te
 			requireKeepaliveMismatchAuditRow(t, logs, 9961)
 		})
 	}
+}
+
+func keepaliveRetryableResponseFailedSSE() string {
+	return `event: response.failed
+data: {"type":"response.failed","response":{"id":"resp_retryable","object":"response","status":"failed","output":[],"error":{"code":"rate_limit_exceeded","type":"rate_limit_error","message":"rate limit reached"}}}
+
+`
+}
+
+func keepaliveOutputThenRetryableResponseFailedSSE() string {
+	return strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"partial output"}`,
+		"",
+		strings.TrimSpace(keepaliveRetryableResponseFailedSSE()),
+		"",
+	}, "\n")
+}
+
+// A passthrough response may retry across several accounts while its first
+// visible event is still buffered. Each attempt starts a new keepalive, so the
+// handler must continue treating comments from *all* previous attempts as
+// non-semantic output. Otherwise the second 429 is incorrectly terminal and
+// the healthy third account is never reached.
+func TestOpenAIGateway_PassthroughKeepaliveAcrossPreOutputFailovers_ReachesThirdAccount(t *testing.T) {
+	accounts := []service.Account{
+		keepaliveMismatchAccount(9971, 1, nil),
+		keepaliveMismatchAccount(9972, 2, nil),
+		keepaliveMismatchAccount(9973, 3, nil),
+	}
+	upstream := &keepaliveMismatchUpstream{
+		bodies:       []string{keepaliveRetryableResponseFailedSSE(), keepaliveRetryableResponseFailedSSE(), keepaliveMismatchResponsesSSE(keepaliveMismatchRequestedModel, "served by third")},
+		gateAttempts: 2,
+	}
+	hs := newKeepaliveMismatchHarness(t, accounts, upstream)
+	defer hs.stop()
+	upstream.beats = hs.beats
+
+	entry := keepaliveMismatchEntries()[0] // Responses is the passthrough path.
+	rec := hs.serve(t, entry, nil)
+
+	require.Equal(t, []int64{9971, 9972, 9973}, upstream.accountCalls(),
+		"both pre-output retryable failures must reach the next account")
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Equal(t, 2, strings.Count(body, keepaliveMismatchSSEComment),
+		"the first two accounts must each write a keepalive before failing")
+	require.Contains(t, body, "served by third")
+	require.NotContains(t, body, "rate limit reached", "pre-output failures must not leak")
+}
+
+// Once an account has delivered a semantic SSE event, its later retryable
+// terminal event is client-visible and must not be replayed to a fourth
+// account. This complements the previous test's pre-output-only failover.
+func TestOpenAIGateway_PassthroughKeepaliveAfterSemanticOutput_DoesNotSwitchAgain(t *testing.T) {
+	accounts := []service.Account{
+		keepaliveMismatchAccount(9981, 1, nil),
+		keepaliveMismatchAccount(9982, 2, nil),
+		keepaliveMismatchAccount(9983, 3, nil),
+		keepaliveMismatchAccount(9984, 4, nil),
+	}
+	upstream := &keepaliveMismatchUpstream{
+		bodies:       []string{keepaliveRetryableResponseFailedSSE(), keepaliveRetryableResponseFailedSSE(), keepaliveOutputThenRetryableResponseFailedSSE(), keepaliveMismatchResponsesSSE(keepaliveMismatchRequestedModel, "must not be served")},
+		gateAttempts: 2,
+	}
+	hs := newKeepaliveMismatchHarness(t, accounts, upstream)
+	defer hs.stop()
+	upstream.beats = hs.beats
+
+	entry := keepaliveMismatchEntries()[0]
+	rec := hs.serve(t, entry, nil)
+
+	require.Equal(t, []int64{9981, 9982, 9983}, upstream.accountCalls(),
+		"semantic output from the third account must prevent another account switch")
+	body := rec.Body.String()
+	require.Contains(t, body, "partial output")
+	require.Contains(t, body, "response.failed")
+	require.NotContains(t, body, "must not be served")
 }

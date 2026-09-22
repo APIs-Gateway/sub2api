@@ -13,16 +13,33 @@ import (
 
 const openAICompactSSEKeepaliveKey = "openai_compact_sse_keepalive"
 
+// openAICompactSSEKeepaliveBytesKey keeps the bytes written by every compact
+// keepalive controller during one client request. A pre-output failover starts
+// a fresh controller for the next account, but the response writer (and its
+// Size) deliberately survives that retry. Accounting therefore has to survive
+// it too: subtracting only the most recent controller would turn an earlier
+// comment into apparent semantic output and block a later safe failover.
+const openAICompactSSEKeepaliveBytesKey = "openai_compact_sse_keepalive_bytes"
+
 // openAICompactSSEKeepalive writes ignorable SSE comments while a unary compact
 // request is pending, so downstream proxies do not timeout an otherwise silent
 // long-running request.
 type openAICompactSSEKeepalive struct {
+	context *gin.Context
 	mu      sync.Mutex
 	writer  gin.ResponseWriter
 	started bool
 	stopped bool
 	bytes   int
 	stop    chan struct{}
+}
+
+// openAICompactSSEKeepaliveBytes is request-scoped rather than
+// controller-scoped. It includes partial writes, because those bytes are still
+// SSE comments from the client's perspective.
+type openAICompactSSEKeepaliveBytes struct {
+	mu    sync.Mutex
+	bytes int
 }
 
 // StartOpenAICompactSSEKeepalive starts an SSE keepalive only for body-signalled
@@ -45,7 +62,7 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 	if c == nil || c.Writer == nil || interval <= 0 {
 		return func() {}
 	}
-	k := &openAICompactSSEKeepalive{writer: c.Writer, stop: make(chan struct{})}
+	k := &openAICompactSSEKeepalive{context: c, writer: c.Writer, stop: make(chan struct{})}
 	c.Set(openAICompactSSEKeepaliveKey, k)
 	c.Writer = &openAICompactKeepaliveWriter{ResponseWriter: c.Writer, k: k}
 
@@ -90,12 +107,47 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 	}
 	n, err := k.writer.Write([]byte(": keepalive\n\n"))
 	k.bytes += n
+	addOpenAICompactSSEKeepaliveBytes(k.context, n)
 	if err != nil {
 		k.stopped = true
 		return false
 	}
 	k.writer.Flush()
 	return true
+}
+
+func addOpenAICompactSSEKeepaliveBytes(c *gin.Context, n int) {
+	if c == nil || n <= 0 {
+		return
+	}
+	var counter *openAICompactSSEKeepaliveBytes
+	if value, ok := c.Get(openAICompactSSEKeepaliveBytesKey); ok {
+		counter, _ = value.(*openAICompactSSEKeepaliveBytes)
+	}
+	if counter == nil {
+		counter = &openAICompactSSEKeepaliveBytes{}
+		c.Set(openAICompactSSEKeepaliveBytesKey, counter)
+	}
+	counter.mu.Lock()
+	counter.bytes += n
+	counter.mu.Unlock()
+}
+
+func openAICompactSSEKeepaliveBytesWritten(c *gin.Context) int {
+	if c == nil {
+		return 0
+	}
+	value, ok := c.Get(openAICompactSSEKeepaliveBytesKey)
+	if !ok {
+		return 0
+	}
+	counter, ok := value.(*openAICompactSSEKeepaliveBytes)
+	if !ok || counter == nil {
+		return 0
+	}
+	counter.mu.Lock()
+	defer counter.mu.Unlock()
+	return counter.bytes
 }
 
 func (k *openAICompactSSEKeepalive) Stop() {
@@ -187,43 +239,18 @@ func openAIStreamKeepaliveBytesWritten(c *gin.Context) int {
 // from handler failover decisions. A response containing only comments is
 // equivalent to gin's unwritten sentinel (-1).
 //
-// 扣除顺序：先扣 compact keepalive 的字节（openAICompactSSEKeepalive.bytes），再扣流式
-// 心跳字节（addOpenAIStreamKeepaliveBytes）；扣完 <= 0 返回 -1。没有任何心跳时行为不变。
+// 扣除顺序：先扣本请求所有 compact keepalive 的字节（包括已 failover 的尝试），再扣
+// 流式心跳字节（addOpenAIStreamKeepaliveBytes）；扣完 <= 0 返回 -1。没有任何心跳时行为不变。
 func OpenAICompactKeepaliveAdjustedWrittenSize(c *gin.Context) int {
 	if c == nil || c.Writer == nil {
 		return -1
 	}
-	size := openAICompactKeepaliveOnlyAdjustedWrittenSize(c)
+	size := c.Writer.Size()
 	if size < 0 {
 		return size
 	}
-	streamKeepalive := openAIStreamKeepaliveBytesWritten(c)
-	if streamKeepalive <= 0 {
-		return size
-	}
-	if real := size - streamKeepalive; real > 0 {
-		return real
-	}
-	return -1
-}
-
-// openAICompactKeepaliveOnlyAdjustedWrittenSize 只扣 compact keepalive 字节（原有语义）。
-func openAICompactKeepaliveOnlyAdjustedWrittenSize(c *gin.Context) int {
-	value, ok := c.Get(openAICompactSSEKeepaliveKey)
-	if !ok {
-		return c.Writer.Size()
-	}
-	k, ok := value.(*openAICompactSSEKeepalive)
-	if !ok || k == nil {
-		return c.Writer.Size()
-	}
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	size := k.writer.Size()
-	if size < 0 {
-		return size
-	}
-	if real := size - k.bytes; real > 0 {
+	keepaliveBytes := openAICompactSSEKeepaliveBytesWritten(c) + openAIStreamKeepaliveBytesWritten(c)
+	if real := size - keepaliveBytes; real > 0 {
 		return real
 	}
 	return -1
