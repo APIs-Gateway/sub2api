@@ -236,7 +236,7 @@ func TestJWTAuth_UserLookupErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{JWT: config.JWTConfig{Secret: "test-secret", ExpireHour: 1}}
 	authSvc := service.NewAuthService(nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, nil)
-	token, err := authSvc.GenerateToken(context.Background(), &service.User{ID: 1, Role: service.RoleAdmin})
+	token, err := authSvc.GenerateToken(&service.User{ID: 1, Role: service.RoleAdmin})
 	require.NoError(t, err)
 
 	for _, tc := range []struct {
@@ -259,9 +259,9 @@ func TestJWTAuth_UserLookupErrors(t *testing.T) {
 				handler   gin.HandlerFunc
 				websocket bool
 			}{
-				{"user", gin.HandlerFunc(NewJWTAuthMiddleware(authSvc, userSvc, nil, nil)), false},
-				{"admin", gin.HandlerFunc(NewAdminAuthMiddleware(authSvc, userSvc, nil, nil)), false},
-				{"admin websocket", gin.HandlerFunc(NewAdminAuthMiddleware(authSvc, userSvc, nil, nil)), true},
+				{"user", gin.HandlerFunc(NewJWTAuthMiddleware(authSvc, userSvc)), false},
+				{"admin", gin.HandlerFunc(NewAdminAuthMiddleware(authSvc, userSvc, nil)), false},
+				{"admin websocket", gin.HandlerFunc(NewAdminAuthMiddleware(authSvc, userSvc, nil)), true},
 			} {
 				t.Run(route.name, func(t *testing.T) {
 					called := false
