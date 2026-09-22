@@ -207,8 +207,8 @@ func TestHandleStreamingResponsePassthrough_KeepsAliveBeforeFirstEventAndStopsBe
 	c, rec := newPassthroughKeepaliveTestContext(t)
 	flushed := make(chan struct{})
 	observer := &passthroughKeepaliveObservationWriter{
-		ResponseWriter:  c.Writer,
-		context:         c,
+		ResponseWriter:   c.Writer,
+		context:          c,
 		heartbeatFlushed: flushed,
 	}
 	c.Writer = observer
