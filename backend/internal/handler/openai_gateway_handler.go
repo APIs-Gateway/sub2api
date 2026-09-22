@@ -47,6 +47,8 @@ type OpenAIGatewayHandler struct {
 // fault. Keep this deliberately narrow: only normal close (1000) and request
 // cancellation are benign. A bare coder/websocket CloseError must be handled
 // too because the read path returns it without wrapping it in the service type.
+//
+//go:noinline
 func openAIWSIngressEndedByClient(err error) bool {
 	if err == nil {
 		return true
@@ -61,6 +63,7 @@ func openAIWSIngressEndedByClient(err error) bool {
 	return errors.Is(err, context.Canceled)
 }
 
+//go:noinline
 func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
 	return err != nil && !openAIWSIngressEndedByClient(err)
 }
