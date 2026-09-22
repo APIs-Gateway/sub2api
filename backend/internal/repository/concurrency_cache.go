@@ -668,6 +668,42 @@ func (c *concurrencyCache) CleanupExpiredAccountSlots(ctx context.Context, accou
 	return err
 }
 
+// CleanupExpiredAccountSlotKeys removes expired members only from accounts that
+// currently have an active slot or wait-queue entry. The active index is kept
+// alongside the slot operations, so this avoids loading every schedulable
+// account from the database merely to find Redis keys that do not exist.
+func (c *concurrencyCache) CleanupExpiredAccountSlotKeys(ctx context.Context) error {
+	now, err := c.rdb.Time(ctx).Result()
+	if err != nil {
+		return fmt.Errorf("redis TIME: %w", err)
+	}
+
+	// Index scores are the latest possible lifetime of the account's slot/wait
+	// state. An expired candidate cannot have a live backing entry, and removing
+	// it bounds the index after processes exit unexpectedly.
+	if err := c.rdb.ZRemRangeByScore(ctx, accountActiveIndexKey, "-inf", strconv.FormatInt(now.Unix(), 10)).Err(); err != nil {
+		return fmt.Errorf("prune active account index: %w", err)
+	}
+
+	members, err := c.rdb.ZRange(ctx, accountActiveIndexKey, 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("read active account index: %w", err)
+	}
+	for _, member := range members {
+		accountID, err := strconv.ParseInt(member, 10, 64)
+		if err != nil || accountID <= 0 {
+			if err := c.rdb.ZRem(ctx, accountActiveIndexKey, member).Err(); err != nil {
+				return fmt.Errorf("remove invalid active account index member %q: %w", member, err)
+			}
+			continue
+		}
+		if err := c.CleanupExpiredAccountSlots(ctx, accountID); err != nil {
+			return fmt.Errorf("cleanup expired slots for active account %d: %w", accountID, err)
+		}
+	}
+	return nil
+}
+
 func (c *concurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error {
 	if activeRequestPrefix == "" {
 		return nil

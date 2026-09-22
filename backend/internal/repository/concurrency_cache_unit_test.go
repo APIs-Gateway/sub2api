@@ -6,6 +6,7 @@ import (
 	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -59,6 +60,27 @@ func TestRefreshActiveIndexDropsInvalidInput(t *testing.T) {
 func TestCleanupStaleProcessSlotsWithEmptyIndexes(t *testing.T) {
 	cache, _ := newConcurrencyCacheMiniRedis(t)
 	require.NoError(t, cache.CleanupStaleProcessSlots(context.Background(), "active-"))
+}
+
+func TestCleanupExpiredAccountSlotKeysUsesOnlyActiveIndexCandidates(t *testing.T) {
+	cache, client := newConcurrencyCacheMiniRedis(t)
+	ctx := context.Background()
+	activeID := int64(43)
+	staleID := int64(44)
+	now := time.Now().Unix()
+
+	require.NoError(t, client.ZAdd(ctx, accountSlotKey(activeID), redis.Z{Score: float64(now), Member: "request"}).Err())
+	require.NoError(t, client.ZAdd(ctx, accountActiveIndexKey,
+		redis.Z{Score: float64(now + 60), Member: strconv.FormatInt(activeID, 10)},
+		redis.Z{Score: float64(now - 1), Member: strconv.FormatInt(staleID, 10)},
+	).Err())
+
+	require.NoError(t, cache.CleanupExpiredAccountSlotKeys(ctx))
+	activeMembers, err := client.ZRange(ctx, accountSlotKey(activeID), 0, -1).Result()
+	require.NoError(t, err)
+	require.Equal(t, []string{"request"}, activeMembers)
+	_, err = client.ZScore(ctx, accountActiveIndexKey, strconv.FormatInt(staleID, 10)).Result()
+	require.ErrorIs(t, err, redis.Nil)
 }
 
 func TestActiveIndexBestEffortWhenRedisUnavailable(t *testing.T) {
