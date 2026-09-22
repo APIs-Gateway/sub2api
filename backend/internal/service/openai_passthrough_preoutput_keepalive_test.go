@@ -181,11 +181,11 @@ func (w *passthroughKeepaliveObservationWriter) observeWrite(value string) {
 		return
 	}
 	w.dataWrites++
-	value, ok := w.context.Get(openAICompactSSEKeepaliveKey)
+	keepaliveValue, ok := w.context.Get(openAICompactSSEKeepaliveKey)
 	if !ok {
 		return
 	}
-	keepalive, ok := value.(*openAICompactSSEKeepalive)
+	keepalive, ok := keepaliveValue.(*openAICompactSSEKeepalive)
 	if !ok || keepalive == nil {
 		return
 	}
@@ -233,9 +233,9 @@ func TestHandleStreamingResponsePassthrough_KeepsAliveBeforeFirstEventAndStopsBe
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	body := rec.Body.String()
-	require.Less(t, strings.Index(t, body, ": keepalive\n\n"), strings.Index(t, body, "data: {\"type\":\"response.created\""),
+	require.Less(t, strings.Index(body, ": keepalive\n\n"), strings.Index(body, "data: {\"type\":\"response.created\""),
 		"the keepalive must reach the client before the first upstream SSE event")
-	require.Less(t, strings.Index(t, body, ": keepalive\n\n"), strings.Index(t, body, "response.output_text.delta"),
+	require.Less(t, strings.Index(body, ": keepalive\n\n"), strings.Index(body, "response.output_text.delta"),
 		"the keepalive must precede the first semantic event")
 	writes, stopped := observer.firstDataWriteStoppedKeepalive()
 	require.NotZero(t, writes, "the passthrough loop must hand off at least one SSE write")
