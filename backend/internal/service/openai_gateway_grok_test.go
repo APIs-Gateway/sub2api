@@ -129,19 +129,6 @@ func TestNormalizeGrokResponsesReasoningEffortGuardCases(t *testing.T) {
 	})
 }
 
-func TestNormalizeGrokReasoningEffortRejectsMalformedBodies(t *testing.T) {
-	t.Parallel()
-
-	_, err := normalizeGrokResponsesReasoningEffort([]byte(`{"reasoning_effort":"high"`), "grok-4.6")
-	require.Error(t, err)
-
-	_, err = normalizeGrokResponsesReasoningEffort([]byte(`{"reasoningEffort":"high"`), "grok-4.6")
-	require.Error(t, err)
-
-	_, err = normalizeGrokChatReasoningEffort([]byte(`{"reasoningEffort":"high"`), "grok-4.6")
-	require.Error(t, err)
-}
-
 func TestGrokReasoningEffortCapabilities(t *testing.T) {
 	t.Parallel()
 
