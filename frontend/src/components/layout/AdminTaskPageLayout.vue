@@ -29,7 +29,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, type CSSProperties } from 'vue'
 
 withDefaults(defineProps<{
   title: string
@@ -74,17 +74,17 @@ onUnmounted(() => {
   }
 })
 
-const pageStyle = computed(() => isDesktop.value
+const pageStyle = computed<CSSProperties>(() => isDesktop.value
   ? { height: 'calc(100vh - 64px - 4rem)' }
   : {}
 )
 
-const fixedSectionStyle = computed(() => isDesktop.value
+const fixedSectionStyle = computed<CSSProperties>(() => isDesktop.value
   ? { flex: '0 0 auto' }
   : {}
 )
 
-const worklistStyle = computed(() => isDesktop.value
+const worklistStyle = computed<CSSProperties>(() => isDesktop.value
   ? {
       display: 'flex',
       flex: '1 1 0%',
