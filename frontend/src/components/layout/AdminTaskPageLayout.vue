@@ -1,6 +1,6 @@
 <template>
-  <section class="admin-task-page">
-    <header class="admin-task-page__header">
+  <section class="admin-task-page" :style="pageStyle">
+    <header class="admin-task-page__header" :style="fixedSectionStyle">
       <div class="max-w-2xl">
         <p v-if="eyebrow" class="admin-task-page__eyebrow">{{ eyebrow }}</p>
         <h1 class="admin-task-page__title">{{ title }}</h1>
@@ -12,23 +12,25 @@
       </div>
     </header>
 
-    <div v-if="$slots.filters" class="admin-task-page__filters">
+    <div v-if="$slots.filters" class="admin-task-page__filters" :style="fixedSectionStyle">
       <slot name="filters" />
     </div>
 
-    <div class="admin-task-page__worklist">
-      <div class="admin-task-page__worklist-content">
+    <div class="admin-task-page__worklist" :style="worklistStyle">
+      <div class="admin-task-page__worklist-content" :style="worklistStyle">
         <slot name="worklist" />
       </div>
     </div>
 
-    <footer v-if="$slots.footer" class="admin-task-page__footer">
+    <footer v-if="$slots.footer" class="admin-task-page__footer" :style="fixedSectionStyle">
       <slot name="footer" />
     </footer>
   </section>
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+
 withDefaults(defineProps<{
   title: string
   description?: string
@@ -37,6 +39,65 @@ withDefaults(defineProps<{
   description: '',
   eyebrow: ''
 })
+
+const desktopBreakpoint = '(min-width: 1024px)'
+const isDesktop = ref(
+  typeof window === 'undefined' || typeof window.matchMedia !== 'function'
+    ? true
+    : window.matchMedia(desktopBreakpoint).matches
+)
+let desktopMediaQuery: MediaQueryList | null = null
+let desktopMediaQueryListener: ((event: MediaQueryListEvent) => void) | null = null
+
+const updateLayoutMode = (event?: MediaQueryListEvent) => {
+  isDesktop.value = event?.matches ?? desktopMediaQuery?.matches ?? true
+}
+
+onMounted(() => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+  desktopMediaQuery = window.matchMedia(desktopBreakpoint)
+  updateLayoutMode()
+  desktopMediaQueryListener = (event: MediaQueryListEvent) => updateLayoutMode(event)
+  if (typeof desktopMediaQuery.addEventListener === 'function') {
+    desktopMediaQuery.addEventListener('change', desktopMediaQueryListener)
+  } else {
+    desktopMediaQuery.addListener(desktopMediaQueryListener)
+  }
+})
+
+onUnmounted(() => {
+  if (!desktopMediaQuery || !desktopMediaQueryListener) return
+  if (typeof desktopMediaQuery.removeEventListener === 'function') {
+    desktopMediaQuery.removeEventListener('change', desktopMediaQueryListener)
+  } else {
+    desktopMediaQuery.removeListener(desktopMediaQueryListener)
+  }
+})
+
+const pageStyle = computed(() => isDesktop.value
+  ? { height: 'calc(100vh - 64px - 4rem)' }
+  : {}
+)
+
+const fixedSectionStyle = computed(() => isDesktop.value
+  ? { flex: '0 0 auto' }
+  : {}
+)
+
+const worklistStyle = computed(() => isDesktop.value
+  ? {
+      display: 'flex',
+      flex: '1 1 0%',
+      minHeight: '0',
+      flexDirection: 'column',
+      overflow: 'hidden'
+    }
+  : {
+      display: 'block',
+      minHeight: '0',
+      overflow: 'visible'
+    }
+)
 </script>
 
 <style scoped>

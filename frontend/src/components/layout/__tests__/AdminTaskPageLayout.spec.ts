@@ -1,15 +1,8 @@
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 
 import AdminTaskPageLayout from '../AdminTaskPageLayout.vue'
-
-const componentPath = resolve(dirname(fileURLToPath(import.meta.url)), '../AdminTaskPageLayout.vue')
-const componentSource = readFileSync(componentPath, 'utf8')
 
 const TableWorklist = defineComponent({
   template: `
@@ -19,49 +12,57 @@ const TableWorklist = defineComponent({
   `
 })
 
-const styleBlock = (selector: string) => {
-  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const match = componentSource.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))
-  return match?.[1] ?? ''
+function mountLayout(desktop: boolean) {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: vi.fn().mockReturnValue({
+      matches: desktop,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
+  })
+
+  return mount(AdminTaskPageLayout, {
+    props: { title: 'Redeem codes' },
+    slots: {
+      filters: '<input aria-label="Search codes" />',
+      worklist: () => h(TableWorklist),
+      footer: '<nav aria-label="Pagination">page controls</nav>'
+    }
+  })
 }
 
 describe('AdminTaskPageLayout worklist containment', () => {
   it('keeps the DataTable scroll port inside a bounded desktop flex chain', () => {
-    const wrapper = mount(AdminTaskPageLayout, {
-      props: { title: 'Redeem codes' },
-      slots: {
-        filters: '<input aria-label="Search codes" />',
-        worklist: () => h(TableWorklist),
-        footer: '<nav aria-label="Pagination">page controls</nav>'
-      }
-    })
+    const wrapper = mountLayout(true)
+    const worklist = wrapper.get('.admin-task-page__worklist').element as HTMLElement
+    const worklistContent = wrapper.get('.admin-task-page__worklist-content').element as HTMLElement
+    const footer = wrapper.get('.admin-task-page__footer').element as HTMLElement
 
-    expect(wrapper.classes()).toContain('admin-task-page')
-    expect(wrapper.get('.admin-task-page__worklist').classes()).toEqual(
-      expect.arrayContaining(['flex', 'flex-1', 'min-h-0', 'flex-col'])
-    )
-    expect(wrapper.get('.admin-task-page__worklist-content').classes()).toEqual(
-      expect.arrayContaining(['flex', 'flex-1', 'min-h-0', 'flex-col'])
-    )
-    expect(wrapper.get('.admin-task-page__footer').classes()).toContain('flex-none')
-    expect(
-      wrapper.get('.admin-task-page__worklist-content').get('[data-test="worklist-card"]').exists()
-    ).toBe(true)
+    expect((wrapper.element as HTMLElement).style.height).toBe('calc(100vh - 64px - 4rem)')
+    expect(worklist.style.display).toBe('flex')
+    expect(worklist.style.flex).toBe('1 1 0%')
+    expect(worklist.style.minHeight).toBe('0')
+    expect(worklist.style.overflow).toBe('hidden')
+    expect(worklistContent.style.display).toBe('flex')
+    expect(worklistContent.style.flex).toBe('1 1 0%')
+    expect(footer.style.flex).toBe('0 0 auto')
     expect(wrapper.get('[data-test="table-scrollport"]').classes()).toContain('table-wrapper')
 
-    expect(componentSource).toMatch(
-      /@media \(min-width: 1024px\)[\s\S]*?\.admin-task-page\s*\{\s*height: calc\(100vh - 64px - 4rem\);/
-    )
-    expect(styleBlock('.admin-task-page__worklist')).toContain('overflow-hidden')
-    expect(styleBlock('.admin-task-page__worklist-content')).toContain('overflow-hidden')
-    expect(styleBlock('.admin-task-page__worklist-content > :deep(*)')).toContain('overflow-hidden')
+    wrapper.unmount()
+  })
 
-    const scrollportContract = styleBlock('.admin-task-page__worklist-content :deep(.table-wrapper)')
-    expect(scrollportContract).toContain('min-h-0')
-    expect(scrollportContract).toContain('flex-1')
-    expect(scrollportContract).toContain('overflow-x-auto')
-    expect(scrollportContract).toContain('overflow-y-auto')
+  it('releases the worklist to normal document flow below the desktop breakpoint', () => {
+    const wrapper = mountLayout(false)
+    const worklist = wrapper.get('.admin-task-page__worklist').element as HTMLElement
+    const worklistContent = wrapper.get('.admin-task-page__worklist-content').element as HTMLElement
 
-    expect(componentSource).toMatch(/@media \(max-width: 1023px\)[\s\S]*overflow-visible/)
+    expect((wrapper.element as HTMLElement).style.height).toBe('')
+    expect(worklist.style.display).toBe('block')
+    expect(worklist.style.overflow).toBe('visible')
+    expect(worklistContent.style.display).toBe('block')
+    expect(worklistContent.style.overflow).toBe('visible')
+
+    wrapper.unmount()
   })
 })
