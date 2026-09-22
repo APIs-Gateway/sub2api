@@ -96,7 +96,7 @@ func TestEmailAliasOwnerHandlesDefensiveInputs(t *testing.T) {
 }
 
 func TestEmailAliasOwnerReportsQueryAndPersistenceErrors(t *testing.T) {
-	repo, client := newUserEntRepo(t)
+	_, client := newUserEntRepo(t)
 	ctx := context.Background()
 
 	previousAliasFilterEnabled := emailcanon.Enabled()
@@ -108,7 +108,7 @@ func TestEmailAliasOwnerReportsQueryAndPersistenceErrors(t *testing.T) {
 	require.Error(t, err)
 
 	// Use a separate fixture because the client above is intentionally closed.
-	repo, client = newUserEntRepo(t)
+	repo, client := newUserEntRepo(t)
 	tx, err := client.Tx(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
