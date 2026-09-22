@@ -336,42 +336,121 @@ func TestHTTPProxyDialerTimesOutWhenProxyStaysSilentDuringConnect(t *testing.T) 
 }
 
 func TestHTTPProxyDialerClearsConnectDeadlineAfterTunnelSetup(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = listener.Close() }()
-
-	proxyResult := make(chan error, 1)
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			proxyResult <- err
-			return
-		}
-		defer func() { _ = conn.Close() }()
-		req, err := http.ReadRequest(bufio.NewReader(conn))
-		if err != nil {
-			proxyResult <- err
-			return
-		}
-		if req.Method != http.MethodConnect {
-			proxyResult <- errors.New("expected CONNECT request")
-			return
-		}
-		_, err = io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
-		proxyResult <- err
-	}()
+	client, server := net.Pipe()
+	conn := &deadlineRecordingConn{Conn: client}
+	go serveSuccessfulCONNECT(server)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	dialer := NewHTTPProxyDialer(nil, mustParseURL("http://"+listener.Addr().String()))
-	_, err = dialer.DialTLSContext(ctx, "tcp", "example.com:443")
+	_, err := newHTTPProxyDialerWithConn(conn).DialTLSContext(ctx, "tcp", "example.com:443")
 	if err == nil {
 		t.Fatal("expected TLS handshake to fail after the test proxy closes the tunnel")
 	}
-	if err := <-proxyResult; err != nil {
-		t.Fatalf("proxy failed to establish CONNECT tunnel: %v", err)
+	if len(conn.deadlines) != 2 || conn.deadlines[0].IsZero() || !conn.deadlines[1].IsZero() {
+		t.Fatalf("expected setup deadline followed by a cleared deadline, got %#v", conn.deadlines)
+	}
+}
+
+type deadlineRecordingConn struct {
+	net.Conn
+	deadlines   []time.Time
+	deadlineErr func(time.Time) error
+	closed      bool
+}
+
+func (c *deadlineRecordingConn) SetDeadline(deadline time.Time) error {
+	c.deadlines = append(c.deadlines, deadline)
+	if c.deadlineErr != nil {
+		if err := c.deadlineErr(deadline); err != nil {
+			return err
+		}
+	}
+	return c.Conn.SetDeadline(deadline)
+}
+
+func (c *deadlineRecordingConn) Close() error {
+	c.closed = true
+	return c.Conn.Close()
+}
+
+func newHTTPProxyDialerWithConn(conn net.Conn) *HTTPProxyDialer {
+	dialer := NewHTTPProxyDialer(nil, mustParseURL("http://proxy.example:8080"))
+	dialer.dialContext = func(context.Context, string, string) (net.Conn, error) {
+		return conn, nil
+	}
+	return dialer
+}
+
+func serveSuccessfulCONNECT(conn net.Conn) {
+	defer func() { _ = conn.Close() }()
+	reader := bufio.NewReader(conn)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil || line == "\r\n" {
+			break
+		}
+	}
+	_, _ = io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
+}
+
+func TestHTTPProxyDialerClearsConnectDeadlineWithoutContextDeadline(t *testing.T) {
+	client, server := net.Pipe()
+	conn := &deadlineRecordingConn{Conn: client}
+	go serveSuccessfulCONNECT(server)
+
+	_, err := newHTTPProxyDialerWithConn(conn).DialTLSContext(context.Background(), "tcp", "example.com:443")
+	if err == nil {
+		t.Fatal("expected TLS handshake to fail after the test proxy closes the tunnel")
+	}
+	if len(conn.deadlines) != 1 || !conn.deadlines[0].IsZero() {
+		t.Fatalf("expected only a cleared deadline, got %#v", conn.deadlines)
+	}
+}
+
+func TestHTTPProxyDialerClosesConnectionWhenSettingConnectDeadlineFails(t *testing.T) {
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+	deadlineErr := errors.New("set deadline failed")
+	conn := &deadlineRecordingConn{
+		Conn: client,
+		deadlineErr: func(time.Time) error {
+			return deadlineErr
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := newHTTPProxyDialerWithConn(conn).DialTLSContext(ctx, "tcp", "example.com:443")
+	if !errors.Is(err, deadlineErr) {
+		t.Fatalf("expected deadline error, got %v", err)
+	}
+	if !conn.closed {
+		t.Fatal("expected connection to close after failing to set CONNECT deadline")
+	}
+}
+
+func TestHTTPProxyDialerClosesConnectionWhenClearingConnectDeadlineFails(t *testing.T) {
+	client, server := net.Pipe()
+	deadlineErr := errors.New("clear deadline failed")
+	conn := &deadlineRecordingConn{
+		Conn: client,
+		deadlineErr: func(deadline time.Time) error {
+			if deadline.IsZero() {
+				return deadlineErr
+			}
+			return nil
+		},
+	}
+	go serveSuccessfulCONNECT(server)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := newHTTPProxyDialerWithConn(conn).DialTLSContext(ctx, "tcp", "example.com:443")
+	if !errors.Is(err, deadlineErr) {
+		t.Fatalf("expected deadline error, got %v", err)
+	}
+	if !conn.closed {
+		t.Fatal("expected connection to close after failing to clear CONNECT deadline")
 	}
 }
 
