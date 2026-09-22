@@ -17,7 +17,9 @@
     </div>
 
     <div class="admin-task-page__worklist">
-      <slot name="worklist" />
+      <div class="admin-task-page__worklist-content">
+        <slot name="worklist" />
+      </div>
     </div>
 
     <footer v-if="$slots.footer" class="admin-task-page__footer">
@@ -42,8 +44,14 @@ withDefaults(defineProps<{
   @apply mx-auto flex w-full max-w-[1440px] flex-col gap-5 pb-4;
 }
 
+@media (min-width: 1024px) {
+  .admin-task-page {
+    height: calc(100vh - 64px - 4rem);
+  }
+}
+
 .admin-task-page__header {
-  @apply grid gap-5 border-b border-gray-200 pb-5 dark:border-dark-700 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end;
+  @apply flex-none grid gap-5 border-b border-gray-200 pb-5 dark:border-dark-700 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end;
 }
 
 .admin-task-page__eyebrow {
@@ -63,14 +71,30 @@ withDefaults(defineProps<{
 }
 
 .admin-task-page__filters {
-  @apply border-y border-gray-200 py-3 dark:border-dark-700;
+  @apply flex-none border-y border-gray-200 py-3 dark:border-dark-700;
 }
 
 .admin-task-page__worklist {
-  @apply min-h-0;
+  @apply flex min-h-0 flex-1 flex-col;
+}
+
+.admin-task-page__worklist-content {
+  @apply flex min-h-0 flex-1 flex-col;
+}
+
+.admin-task-page__worklist-content > :deep(*) {
+  @apply flex min-h-0 flex-1 flex-col;
 }
 
 .admin-task-page__footer {
-  @apply border-t border-gray-200 pt-4 dark:border-dark-700;
+  @apply flex-none border-t border-gray-200 pt-4 dark:border-dark-700;
+}
+
+@media (max-width: 1023px) {
+  .admin-task-page__worklist,
+  .admin-task-page__worklist-content,
+  .admin-task-page__worklist-content > :deep(*) {
+    @apply block min-h-0;
+  }
 }
 </style>
