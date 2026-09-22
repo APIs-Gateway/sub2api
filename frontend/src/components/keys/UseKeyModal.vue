@@ -593,15 +593,16 @@ $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
 }
 
 function generateGrokClaudeFiles(baseUrl: string, apiKey: string): FileConfig[] {
+  const model = 'grok-4.3'
   const environment = {
     ANTHROPIC_BASE_URL: baseUrl,
     ANTHROPIC_AUTH_TOKEN: apiKey,
-    ANTHROPIC_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_OPUS_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_SONNET_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_FABLE_MODEL: 'grok-4.5',
-    CLAUDE_CODE_SUBAGENT_MODEL: 'grok-4.5',
+    ANTHROPIC_MODEL: model,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+    ANTHROPIC_DEFAULT_FABLE_MODEL: model,
+    CLAUDE_CODE_SUBAGENT_MODEL: model,
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     CLAUDE_CODE_ATTRIBUTION_HEADER: '0'
   }
@@ -751,9 +752,9 @@ default = "grok"
 web_search = "grok"
 
 [model."grok"]
-model = "grok-4.5"
+model = "grok-4.3"
 base_url = "${baseUrl}"
-name = "Grok 4.5"
+name = "Grok 4.3"
 api_key = "${apiKey}"
 api_backend = "responses"
 context_window = 1000000
@@ -772,8 +773,8 @@ function generateGrokCodexFiles(baseUrl: string, apiKey: string): FileConfig[] {
     ? '%USERPROFILE%\\.codex\\config.toml'
     : '~/.codex/config.toml'
   const configContent = `model_provider = "sub2api_grok"
-model = "grok-4.5"
-review_model = "grok-4.5"
+model = "grok-4.3"
+review_model = "grok-4.3"
 model_reasoning_effort = "xhigh"
 model_context_window = 1000000
 
@@ -1301,6 +1302,28 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
       }
     }
   }
+  const grokModels = {
+    'grok-4.3': {
+      name: 'Grok 4.3',
+      limit: { context: 1000000, output: 128000 }
+    },
+    'grok-build-0.1': {
+      name: 'Grok Build 0.1',
+      limit: { context: 1000000, output: 128000 }
+    },
+    'grok-4.20-0309-reasoning': {
+      name: 'Grok 4.20 Reasoning',
+      limit: { context: 1000000, output: 128000 }
+    },
+    'grok-4.20-0309-non-reasoning': {
+      name: 'Grok 4.20 Non Reasoning',
+      limit: { context: 1000000, output: 128000 }
+    },
+    'grok-4.20-multi-agent-0309': {
+      name: 'Grok 4.20 Multi Agent',
+      limit: { context: 1000000, output: 128000 }
+    }
+  }
   const claudeModels = {
     'claude-fable-5': {
       name: 'Claude Fable 5',
@@ -1369,6 +1392,9 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     provider[platform].models = antigravityGeminiModels
   } else if (platform === 'openai') {
     provider[platform].models = openaiModels
+  } else if (platform === 'grok') {
+    provider[platform].npm = '@ai-sdk/openai'
+    provider[platform].models = grokModels
   }
 
   const agent =
