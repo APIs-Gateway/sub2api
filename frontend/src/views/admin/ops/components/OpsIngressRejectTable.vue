@@ -62,11 +62,11 @@ async function loadData() {
   try {
     const next = await opsAPI.listIngressRejects(buildParams())
     const totalPages = Math.max(1, Math.ceil(next.total / Math.max(1, next.page_size)))
+    response.value = next
     if (next.total > 0 && page.value > totalPages) {
       page.value = totalPages
       return
     }
-    response.value = next
   } catch (err: any) {
     response.value = null
     errorMessage.value = err?.message || t('admin.ops.ingressRejects.failedToLoad')
@@ -78,8 +78,11 @@ async function loadData() {
 watch(
   () => [timeRange.value, reason.value, routeFamily.value, protocol.value, page.value, pageSize.value, props.refreshToken] as const,
   (next, previous) => {
-    const filtersChanged = !!previous && next.slice(0, 6).some((value, index) => value !== previous[index])
-    if (filtersChanged && page.value !== 1) {
+    const queryChanged = !!previous && (
+      next.slice(0, 4).some((value, index) => value !== previous[index]) ||
+      next[5] !== previous[5]
+    )
+    if (queryChanged && page.value !== 1) {
       page.value = 1
       return
     }
@@ -113,7 +116,7 @@ watch(
       :title="t('common.noData')"
       :description="t('admin.ops.ingressRejects.empty')"
     />
-    <template v-else>
+    <div v-else>
       <div class="overflow-hidden rounded-xl border border-gray-200 dark:border-dark-700">
         <div class="max-h-[420px] overflow-auto">
           <div v-if="!isDesktopViewport" class="divide-y divide-gray-100 dark:divide-dark-800">
@@ -156,7 +159,7 @@ watch(
           </table>
         </div>
       </div>
-      <Pagination v-if="total > pageSize" v-model:page="page" v-model:page-size="pageSize" :total="total" />
-    </template>
+    </div>
+    <Pagination v-if="!loading && total > pageSize" v-model:page="page" v-model:page-size="pageSize" :total="total" />
   </section>
 </template>
