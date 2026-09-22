@@ -697,6 +697,28 @@ func TestOpenAIWSConnPool_CleanupRecyclesIdleConnWithoutReaderLoop(t *testing.T)
 	requireConnClosed(t, conn)
 }
 
+func TestOpenAIWSConnPool_DropDeadConnLockedEvictsOnlyDirtyConn(t *testing.T) {
+	pool := newOpenAIWSConnPool(&config.Config{})
+	accountID := int64(316)
+	healthy := newOpenAIWSConn("healthy", accountID, &openAIWSFakeConn{}, nil)
+	dirty := newOpenAIWSConn("dirty", accountID, &openAIWSFakeConn{}, nil)
+	ap := &openAIWSAccountPool{
+		conns:       map[string]*openAIWSConn{healthy.id: healthy, dirty.id: dirty},
+		pinnedConns: map[string]int{dirty.id: 1},
+	}
+	var evicted []*openAIWSConn
+
+	require.False(t, pool.dropDeadConnLocked(ap, healthy, &evicted))
+	require.Contains(t, ap.conns, healthy.id)
+
+	dirty.unusable.Store(true)
+	require.True(t, pool.dropDeadConnLocked(ap, dirty, &evicted))
+	require.NotContains(t, ap.conns, dirty.id)
+	require.NotContains(t, ap.pinnedConns, dirty.id)
+	require.Equal(t, []*openAIWSConn{dirty}, evicted)
+	closeOpenAIWSConns(evicted)
+}
+
 // A waiter can observe a connection close after the pool has selected it as
 // the only saturated target. It must evict that target and retry once with a
 // new transport instead of returning a stale close error to the caller.
