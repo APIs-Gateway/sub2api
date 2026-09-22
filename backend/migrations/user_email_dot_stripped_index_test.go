@@ -25,4 +25,7 @@ func TestUserEmailDotStrippedIndexMigrationsMatchAliasLookupExpression(t *testin
 	postgresContent, err := FS.ReadFile("191_add_users_email_dot_stripped_index_notx.sql")
 	require.NoError(t, err)
 	require.Contains(t, string(postgresContent), "CREATE INDEX CONCURRENTLY IF NOT EXISTS")
+	// Non-transactional migrations are split on semicolons by the runner, including
+	// semicolons in comments. Keep the DDL terminator as the file's only delimiter.
+	require.Equal(t, 1, strings.Count(string(postgresContent), ";"))
 }
