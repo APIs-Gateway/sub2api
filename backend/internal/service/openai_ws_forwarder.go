@@ -1810,6 +1810,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	c *gin.Context,
 	account *Account,
 	reqBody map[string]any,
+	executionScope string,
 	token string,
 	decision OpenAIWSProtocolDecision,
 	isCodexCLI bool,
@@ -1902,6 +1903,12 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		var legacySessionHash string
 		sessionHash, legacySessionHash = openAIWSSessionHashesFromID(promptCacheKey)
 		attachOpenAILegacySessionHashToGin(c, legacySessionHash)
+	}
+	// Forward computed this from the unmodified request. reqBody may now carry
+	// account-specific namespace/fingerprint values, which must not collapse
+	// independently declared Codex threads into one state key.
+	if executionScope = strings.TrimSpace(executionScope); executionScope != "" {
+		sessionHash = executionScope
 	}
 	if turnState == "" && stateStore != nil && sessionHash != "" {
 		if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
@@ -2620,7 +2627,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	token string,
 	firstClientMessage []byte,
 	hooks *OpenAIWSIngressHooks,
-) error {
+) (returnErr error) {
 	if s == nil {
 		return errors.New("service is nil")
 	}
@@ -2648,6 +2655,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if settings, err := s.settingService.GetOpenAIFastPolicySettings(ctx); err == nil && settings != nil {
 			ctx = withOpenAIFastPolicyContext(ctx, settings)
 		}
+	}
+
+	// Keep an ingress registration across the complete client session. A newer
+	// connection in the same execution scope first receives a retryable close
+	// frame, then this context is cancelled; sibling Codex threads use distinct
+	// scopes and remain independent.
+	if preemptCtx, cleanupPreempt, armed := s.BeginOpenAIWSIngressSessionPreemptionWithClient(ctx, c, account, firstClientMessage, clientConn); armed {
+		ctx = preemptCtx
+		defer cleanupPreempt()
+		defer func() {
+			if isOpenAIWSSessionPreempted(ctx) {
+				returnErr = errOpenAIWSSessionPreempted
+			}
+		}()
 	}
 
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
@@ -2981,12 +3002,16 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	turnState := strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
 	stateStore := s.getOpenAIWSStateStore()
 	groupID := getOpenAIGroupIDFromContext(c)
+	apiKeyID := getAPIKeyIDFromContext(c)
 	storeDisabledConnMode := s.openAIWSStoreDisabledConnMode()
 	sessionHash := ""
 	preferredConnID := ""
 	storeDisabled := false
 	refreshIngressRouteState := func(payload openAIWSClientPayload) {
 		sessionHash = s.GenerateSessionHash(c, payload.rawForHash)
+		if scope, _ := resolveOpenAIWSExecutionScope(c, payload.rawForHash, apiKeyID); scope != "" {
+			sessionHash = scope
+		}
 		if turnState == "" && stateStore != nil && sessionHash != "" {
 			if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
 				turnState = savedTurnState
