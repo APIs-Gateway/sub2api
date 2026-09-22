@@ -108,7 +108,9 @@ func TestCodexAccountIdentityHelpersPreserveUnscopedAndMalformedInputs(t *testin
 
 	request := map[string]any{"client_metadata": map[string]any{"session_id": "client-session"}, "prompt_cache_key": "client-session"}
 	require.True(t, applyCodexAccountIdentityClientMetadataMap(request, oauth, 7))
-	require.Equal(t, request["prompt_cache_key"], request["client_metadata"].(map[string]any)["session_id"])
+	clientMetadata, ok := request["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, request["prompt_cache_key"], clientMetadata["session_id"])
 	require.False(t, applyCodexAccountIdentityClientMetadataMap(nil, oauth, 7))
 	require.False(t, applyCodexAccountIdentityClientMetadataMap(map[string]any{"prompt_cache_key": "client-session"}, unscoped, 7))
 
