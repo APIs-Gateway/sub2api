@@ -23,7 +23,7 @@ func TestResolveOpenAIWSExecutionScopeIsolatesCodexThreadsAndLanes(t *testing.T)
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"type":"response.create","input":"hello"}`)
 	rootHeaders := map[string]string{
-		"session-id":                 "root-session",
+		"session-id":               "root-session",
 		openAIWSTurnMetadataHeader: `{"session_id":"root-session","thread_id":"root","request_kind":"turn"}`,
 	}
 	rootScope, rootThread := resolveOpenAIWSExecutionScope(newOpenAIWSExecutionScopeContext(rootHeaders), body, 9)
@@ -31,7 +31,7 @@ func TestResolveOpenAIWSExecutionScopeIsolatesCodexThreadsAndLanes(t *testing.T)
 	require.Len(t, rootScope, 16)
 
 	childHeaders := map[string]string{
-		"session-id":                 "root-session",
+		"session-id":               "root-session",
 		openAIWSTurnMetadataHeader: `{"session_id":"root-session","thread_id":"child","request_kind":"turn"}`,
 	}
 	childScope, childThread := resolveOpenAIWSExecutionScope(newOpenAIWSExecutionScopeContext(childHeaders), body, 9)
@@ -39,7 +39,7 @@ func TestResolveOpenAIWSExecutionScopeIsolatesCodexThreadsAndLanes(t *testing.T)
 	require.NotEqual(t, rootScope, childScope, "shared session-id must not join parent and child executions")
 
 	memoryHeaders := map[string]string{
-		"session-id":                 "root-session",
+		"session-id":               "root-session",
 		openAIWSTurnMetadataHeader: `{"session_id":"root-session","thread_id":"root","request_kind":"memory"}`,
 	}
 	memoryScope, _ := resolveOpenAIWSExecutionScope(newOpenAIWSExecutionScopeContext(memoryHeaders), body, 9)
@@ -58,7 +58,7 @@ func TestOpenAIWSIngressSessionPreemptionOnlyReplacesSameExecutionScope(t *testi
 	groupID := int64(7)
 	newContext := func(threadID string) *gin.Context {
 		c := newOpenAIWSExecutionScopeContext(map[string]string{
-			"session-id":                 "root-session",
+			"session-id":               "root-session",
 			openAIWSTurnMetadataHeader: `{"session_id":"root-session","thread_id":"` + threadID + `"}`,
 		})
 		c.Set("api_key", &APIKey{ID: 11, GroupID: &groupID})
