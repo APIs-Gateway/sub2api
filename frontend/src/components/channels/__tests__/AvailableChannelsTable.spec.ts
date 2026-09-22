@@ -48,7 +48,7 @@ describe('AvailableChannelsTable scroll integration', () => {
   })
 
   it('mounts the table on the .table-wrapper scroll hook', () => {
-    expect(componentSource).toMatch(/<div class="table-wrapper">\s*<table/)
+    expect(componentSource).toMatch(/<div :class="\['table-wrapper'\]">\s*<table/)
   })
 
   it('does not clip content with its own overflow-hidden card wrapper', () => {

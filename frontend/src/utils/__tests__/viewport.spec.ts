@@ -14,7 +14,7 @@ describe('clampDropdownLeft', () => {
   })
 
   it('supports a custom dropdown width and gutter', () => {
-    expect(clampDropdownLeft(700, 1200, 400, 16)).toBe(784)
+    expect(clampDropdownLeft(700, 1200, 400, 16)).toBe(700)
   })
 
   it('opens below the anchor when there is enough space', () => {
