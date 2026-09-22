@@ -657,6 +657,9 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
 	upstreamConn := &openAIWSCaptureConn{
+		// Leave the second upstream event pending long enough for the client
+		// follow-up response.create to traverse the relay first.
+		readDelays: []time.Duration{0, 150 * time.Millisecond},
 		events: [][]byte{
 			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_1","model":"gpt-5.6-sol-max","output":[{"id":"ig_passthrough_1","type":"image_generation_call","status":"generating","result":"final-image"}],"usage":{"input_tokens":2,"output_tokens":3}}}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_2","model":"gpt-5.6-sol-max","usage":{"input_tokens":2,"output_tokens":3}}}`),
