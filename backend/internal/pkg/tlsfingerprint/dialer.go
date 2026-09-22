@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"time"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
@@ -41,8 +42,9 @@ type Dialer struct {
 // HTTPProxyDialer creates TLS connections through HTTP/HTTPS proxies with custom fingerprints.
 // It handles the CONNECT tunnel establishment before performing TLS handshake.
 type HTTPProxyDialer struct {
-	profile  *Profile
-	proxyURL *url.URL
+	profile     *Profile
+	proxyURL    *url.URL
+	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // SOCKS5ProxyDialer creates TLS connections through SOCKS5 proxies with custom fingerprints.
@@ -160,15 +162,19 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 		proxyAddr = net.JoinHostPort(d.proxyURL.Hostname(), "1080") // Default SOCKS5 port
 	}
 
-	socksDialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, proxy.Direct)
+	// net.Dialer implements proxy.ContextDialer, allowing the caller's deadline
+	// to bound the TCP connection to the SOCKS proxy as well.
+	socksDialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, &net.Dialer{})
 	if err != nil {
 		slog.Debug("tls_fingerprint_socks5_dialer_failed", "error", err)
 		return nil, fmt.Errorf("create SOCKS5 dialer: %w", err)
 	}
 
-	// Step 2: Establish SOCKS5 tunnel to target
+	// Step 2: Establish SOCKS5 tunnel to target. Prefer the context-aware
+	// variant so callers can bound connection setup (including the forward
+	// connection to the SOCKS proxy).
 	slog.Debug("tls_fingerprint_socks5_establishing_tunnel", "target", addr)
-	conn, err := socksDialer.Dial("tcp", addr)
+	conn, err := dialSOCKS5Context(ctx, socksDialer, "tcp", addr)
 	if err != nil {
 		slog.Debug("tls_fingerprint_socks5_connect_failed", "error", err)
 		return nil, fmt.Errorf("SOCKS5 connect: %w", err)
@@ -177,6 +183,13 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 
 	// Step 3: Perform TLS handshake on the tunnel with utls fingerprint
 	return performTLSHandshake(ctx, conn, d.profile, addr)
+}
+
+func dialSOCKS5Context(ctx context.Context, dialer proxy.Dialer, network, addr string) (net.Conn, error) {
+	if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
+		return contextDialer.DialContext(ctx, network, addr)
+	}
+	return dialer.Dial(network, addr)
 }
 
 // DialTLSContext establishes a TLS connection through HTTP proxy with the configured fingerprint.
@@ -197,13 +210,27 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		}
 	}
 
-	dialer := &net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
+	dialContext := d.dialContext
+	if dialContext == nil {
+		dialContext = (&net.Dialer{}).DialContext
+	}
+	conn, err := dialContext(ctx, "tcp", proxyAddr)
 	if err != nil {
 		slog.Debug("tls_fingerprint_http_proxy_connect_failed", "error", err)
 		return nil, fmt.Errorf("connect to proxy: %w", err)
 	}
 	slog.Debug("tls_fingerprint_http_proxy_connected", "proxy_addr", proxyAddr)
+
+	// DialContext only applies the context deadline while opening the TCP
+	// connection. Apply that same deadline to the socket while the CONNECT
+	// tunnel is being established so a proxy that accepts but never responds
+	// cannot block the custom DialTLSContext indefinitely.
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("set CONNECT deadline: %w", err)
+		}
+	}
 
 	// Step 2: Send CONNECT request to establish tunnel
 	req := &http.Request{
@@ -243,6 +270,10 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		_ = conn.Close()
 		slog.Debug("tls_fingerprint_http_proxy_connect_failed_status", "status_code", resp.StatusCode, "status", resp.Status)
 		return nil, fmt.Errorf("proxy CONNECT failed: %s", resp.Status)
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("clear CONNECT deadline: %w", err)
 	}
 	slog.Debug("tls_fingerprint_http_proxy_tunnel_established")
 
