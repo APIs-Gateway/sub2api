@@ -59,7 +59,7 @@ func (s *OpenAIGatewayService) BeginOpenAIWSIngressSessionPreemptionWithClient(c
 	}
 	if s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled && account != nil {
 		switch account.ResolveOpenAIResponsesWebSocketV2Mode(s.cfg.Gateway.OpenAIWS.IngressModeDefault) {
-		case OpenAIWSIngressModePassthrough, OpenAIWSIngressModeHTTPBridge:
+		case OpenAIWSIngressModePassthrough:
 			return ctx, func() {}, false
 		}
 	}

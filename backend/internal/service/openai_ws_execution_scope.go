@@ -12,6 +12,7 @@ import (
 const (
 	openAIWSThreadIDHeader = "thread-id"
 	openAIWSWindowIDHeader = "x-codex-window-id"
+	openAIWSSubagentHeader = "x-openai-subagent"
 
 	openAIWSRequestKindTurn       = "turn"
 	openAIWSRequestKindPrewarm    = "prewarm"
@@ -83,11 +84,11 @@ func openAIWSExecutionTurnMetadata(c *gin.Context, body []byte) codexTurnMetadat
 
 func openAIWSExecutionSubagent(c *gin.Context, body []byte) string {
 	if c != nil && c.Request != nil {
-		if subagent := strings.TrimSpace(c.GetHeader(openAISubagentHeader)); subagent != "" {
+		if subagent := strings.TrimSpace(c.GetHeader(openAIWSSubagentHeader)); subagent != "" {
 			return strings.ToLower(subagent)
 		}
 	}
-	return strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "client_metadata."+openAISubagentHeader).String()))
+	return strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "client_metadata."+openAIWSSubagentHeader).String()))
 }
 
 // resolveOpenAIWSExecutionLane separates independent work that legitimately
@@ -126,7 +127,7 @@ func resolveOpenAIWSExecutionScope(c *gin.Context, body []byte, apiKeyID int64) 
 		scope, _ = deriveOpenAISessionHashes(openAIWSExecutionScopeSeed(apiKeyID, "thread", threadID, lane))
 		return scope, threadID
 	}
-	if sessionID := strings.TrimSpace(explicitOpenAIRequestSessionID(c, body)); sessionID != "" {
+	if sessionID := strings.TrimSpace(explicitOpenAISessionID(c, body)); sessionID != "" {
 		scope, _ = deriveOpenAISessionHashes(openAIWSExecutionScopeSeed(apiKeyID, "session", sessionID, lane))
 		return scope, ""
 	}
