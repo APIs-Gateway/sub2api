@@ -2638,9 +2638,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if account == nil {
 		return errors.New("account is nil")
 	}
-	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
-		return err
-	}
+	s.prepareCodexAccountIdentitySource(c, account)
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is empty")
 	}

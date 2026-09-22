@@ -2698,9 +2698,7 @@ func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, re
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
-	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
-		return nil, err
-	}
+	s.prepareCodexAccountIdentitySource(c, account)
 	startTime := time.Now()
 
 	restrictionResult := s.detectCodexClientRestriction(c, account)

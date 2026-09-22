@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -22,12 +21,12 @@ const codexAccountIdentitySourceContextKey = "openai_codex_account_identity_sour
 // entry point overwrites the source before projecting outbound identity. This
 // fork has no shadow-account model, so the selected account is already the
 // credential source.
-func (s *OpenAIGatewayService) prepareCodexAccountIdentitySource(ctx context.Context, c *gin.Context, account *Account) (*Account, error) {
+func (s *OpenAIGatewayService) prepareCodexAccountIdentitySource(c *gin.Context, account *Account) *Account {
 	source := account
 	if c != nil {
 		c.Set(codexAccountIdentitySourceContextKey, source)
 	}
-	return source, nil
+	return source
 }
 
 func codexAccountIdentitySource(c *gin.Context, fallback *Account) *Account {
