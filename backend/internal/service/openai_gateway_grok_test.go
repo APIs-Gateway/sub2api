@@ -66,6 +66,20 @@ func TestPatchGrokResponsesBodyKeepsPenaltyAndStopForNon45Models(t *testing.T) {
 	require.Len(t, gjson.GetBytes(patched, "stop").Array(), 1)
 }
 
+func TestStripGrok45ReasoningUnsupportedTopLevelFieldsScopesToFinalModel(t *testing.T) {
+	t.Parallel()
+
+	noUnsupportedFields := []byte(`{"model":"grok-4.5","input":"hello","temperature":0.2}`)
+	patched, err := stripGrok45ReasoningUnsupportedTopLevelFields(noUnsupportedFields, "grok-4.5")
+	require.NoError(t, err)
+	require.Equal(t, noUnsupportedFields, patched)
+
+	nonTargetModel := []byte(`{"model":"grok-4.3","presence_penalty":0.1,"frequencyPenalty":0.2,"stop":["done"]}`)
+	patched, err = stripGrok45ReasoningUnsupportedTopLevelFields(nonTargetModel, "grok-4.3")
+	require.NoError(t, err)
+	require.Equal(t, nonTargetModel, patched)
+}
+
 func TestSanitizeGrokUnsupportedFields(t *testing.T) {
 	t.Parallel()
 

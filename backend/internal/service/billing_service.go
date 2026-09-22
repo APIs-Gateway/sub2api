@@ -692,11 +692,11 @@ func (s *BillingService) initFallbackPricing() {
 		SupportsCacheBreakdown:  false,
 	}
 
-	// xAI Grok 4.5 (official docs: $2 input / $0.50 cached input / $6 output per MTok)
+	// xAI Grok 4.5 (official docs: $2 input / $0.30 cached input / $6 output per MTok)
 	s.fallbackPrices["grok-4.5"] = &ModelPricing{
 		InputPricePerToken:     2e-6,
 		OutputPricePerToken:    6e-6,
-		CacheReadPricePerToken: 0.5e-6,
+		CacheReadPricePerToken: 0.3e-6,
 		SupportsCacheBreakdown: false,
 	}
 

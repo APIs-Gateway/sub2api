@@ -1298,7 +1298,7 @@ func TestGetModelPricing_Grok45OfficialFallback(t *testing.T) {
 			require.NoError(t, err)
 			require.InDelta(t, 2e-6, pricing.InputPricePerToken, 1e-12)
 			require.InDelta(t, 6e-6, pricing.OutputPricePerToken, 1e-12)
-			require.InDelta(t, 0.5e-6, pricing.CacheReadPricePerToken, 1e-12)
+			require.Equal(t, 0.3e-6, pricing.CacheReadPricePerToken)
 			require.False(t, pricing.SupportsCacheBreakdown)
 		})
 	}
