@@ -164,6 +164,7 @@ func TestOpenAIWSSessionPreemptionCacheAndEligibility(t *testing.T) {
 	cache.mu.Lock()
 	require.Equal(t, "owner-b", string(cache.owners[cache.key(7, openAIWSSessionPreemptCacheHash(11, "scope"))]))
 	cache.mu.Unlock()
+	svc.releaseOpenAIWSSessionPreemptOwner(context.Background(), key, "owner-b")
 
 	oauth := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	apiKey := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
