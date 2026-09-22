@@ -913,6 +913,152 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughHeade
 	require.False(t, gjson.Get(forwarded, "parallel_tool_calls").Bool())
 }
 
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughFailoverReprojectsOAuthIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resetUpstream429TrackerForTest()
+	defer resetUpstream429TrackerForTest()
+
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+	cfg.Gateway.OpenAIWS.IngressModeDefault = OpenAIWSIngressModeCtxPool
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+
+	firstFrame := []byte(`{"type":"response.create","model":"gpt-5.1","stream":false,"prompt_cache_key":"client-session","client_metadata":{"session_id":"client-session","thread_id":"client-thread","x-codex-turn-metadata":"{\"turn_id\":\"client-turn-1\"}"}}`)
+	followupFrame := []byte(`{"type":"response.create","model":"gpt-5.1","stream":false,"prompt_cache_key":"client-session","client_metadata":{"session_id":"client-session","thread_id":"client-thread","x-codex-turn-metadata":"{\"turn_id\":\"client-turn-2\"}"}}`)
+
+	type attemptCapture struct {
+		headers http.Header
+		writes  []map[string]any
+		err     error
+	}
+	runAttempt := func(account *Account, upstreamEvents [][]byte, frames [][]byte) attemptCapture {
+		t.Helper()
+		upstreamConn := &openAIWSCaptureConn{events: upstreamEvents}
+		captureDialer := &openAIWSCaptureDialer{conn: upstreamConn}
+		svc := &OpenAIGatewayService{
+			cfg:                       cfg,
+			httpUpstream:              &httpUpstreamRecorder{},
+			cache:                     &stubGatewayCache{},
+			openaiWSResolver:          NewOpenAIWSProtocolResolver(cfg),
+			toolCorrector:             NewCodexToolCorrector(),
+			openaiWSPassthroughDialer: captureDialer,
+		}
+
+		serverErrCh := make(chan error, 1)
+		wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
+			if err != nil {
+				serverErrCh <- err
+				return
+			}
+			defer func() { _ = conn.CloseNow() }()
+
+			recorder := httptest.NewRecorder()
+			ginCtx, _ := gin.CreateTestContext(recorder)
+			req := r.Clone(r.Context())
+			req.Header = req.Header.Clone()
+			req.Header.Set("User-Agent", "codex_cli_rs/0.98.0")
+			ginCtx.Request = req
+
+			readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+			msgType, firstMessage, readErr := conn.Read(readCtx)
+			cancelRead()
+			if readErr != nil {
+				serverErrCh <- readErr
+				return
+			}
+			if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
+				serverErrCh <- errors.New("unsupported websocket client message type")
+				return
+			}
+			serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "oauth-token", firstMessage, nil)
+		}))
+		defer wsServer.Close()
+
+		dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+		clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+		cancelDial()
+		require.NoError(t, err)
+		defer func() { _ = clientConn.CloseNow() }()
+
+		for _, frame := range frames {
+			writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+			err = clientConn.Write(writeCtx, coderws.MessageText, frame)
+			cancelWrite()
+			require.NoError(t, err)
+			if len(upstreamEvents) == 1 && gjson.GetBytes(upstreamEvents[0], "type").String() == "error" {
+				break
+			}
+			readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+			_, _, readErr := clientConn.Read(readCtx)
+			cancelRead()
+			require.NoError(t, readErr)
+		}
+		_ = clientConn.Close(coderws.StatusNormalClosure, "done")
+
+		var serverErr error
+		select {
+		case serverErr = <-serverErrCh:
+		case <-time.After(5 * time.Second):
+			t.Fatal("等待 passthrough websocket 结束超时")
+		}
+		return attemptCapture{
+			headers: cloneHeader(captureDialer.lastHeaders),
+			writes:  append([]map[string]any(nil), upstreamConn.writes...),
+			err:     serverErr,
+		}
+	}
+
+	primary := &Account{ID: 454, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Credentials: map[string]any{
+		"access_token":       "oauth-token-primary",
+		"chatgpt_account_id": "primary-oauth-account",
+	}, Extra: map[string]any{"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough}}
+	// This is the retryable event that makes the outer failover loop select the
+	// second account. Seed the 429 gate as the production rate-limit path does.
+	recordUpstream429AndShouldSwitch(primary.ID, true)
+	primaryAttempt := runAttempt(primary, [][]byte{
+		[]byte(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"limited"}}`),
+	}, [][]byte{firstFrame})
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, primaryAttempt.err, &failoverErr)
+	require.Len(t, primaryAttempt.writes, 1)
+
+	failover := &Account{ID: 455, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Credentials: map[string]any{
+		"access_token":       "oauth-token-failover",
+		"chatgpt_account_id": "failover-oauth-account",
+	}, Extra: map[string]any{"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough}}
+	failoverAttempt := runAttempt(failover, [][]byte{
+		[]byte(`{"type":"response.completed","response":{"id":"resp_failover_1","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+		[]byte(`{"type":"response.completed","response":{"id":"resp_failover_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+	}, [][]byte{firstFrame, followupFrame})
+
+	assertAccountProjection := func(account *Account, headers http.Header, payload map[string]any, turnID string) {
+		t.Helper()
+		forwarded := requestToJSONString(payload)
+		require.Equal(t, isolateOpenAIUpstreamSessionID(0, account, "client-session"), headers.Get("session_id"))
+		require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "session", "client-session"), gjson.Get(forwarded, "prompt_cache_key").String())
+		require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "thread", "client-thread"), gjson.Get(forwarded, "client_metadata.thread_id").String())
+		metadata := gjson.Get(forwarded, "client_metadata.x-codex-turn-metadata").String()
+		require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "turn", turnID), gjson.Get(metadata, "turn_id").String())
+	}
+	assertAccountProjection(primary, primaryAttempt.headers, primaryAttempt.writes[0], "client-turn-1")
+	require.Len(t, failoverAttempt.writes, 2, "the failover account must project both the first and follow-up frames")
+	assertAccountProjection(failover, failoverAttempt.headers, failoverAttempt.writes[0], "client-turn-1")
+	assertAccountProjection(failover, failoverAttempt.headers, failoverAttempt.writes[1], "client-turn-2")
+	require.NotEqual(t, primaryAttempt.headers.Get("session_id"), failoverAttempt.headers.Get("session_id"))
+	primaryPayload := requestToJSONString(primaryAttempt.writes[0])
+	failoverPayload := requestToJSONString(failoverAttempt.writes[0])
+	require.NotEqual(t, gjson.Get(primaryPayload, "prompt_cache_key").String(), gjson.Get(failoverPayload, "prompt_cache_key").String())
+}
+
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ModeOffReturnsPolicyViolation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
