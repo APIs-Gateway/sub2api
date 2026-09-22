@@ -187,6 +187,8 @@ func TestForwardAsRawChatCompletions_GrokAPIKeyUsesGrokCredentialsAndStripsViewI
 	require.NotNil(t, result)
 	require.Equal(t, 5, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)
+	require.NotNil(t, result.ReasoningEffort)
+	require.Equal(t, "xhigh", *result.ReasoningEffort)
 
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, "Bearer xai-test-key", upstream.lastReq.Header.Get("Authorization"),

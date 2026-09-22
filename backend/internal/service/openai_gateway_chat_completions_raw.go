@@ -120,6 +120,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		if stripErr != nil {
 			return nil, fmt.Errorf("sanitize Grok unsupported fields: %w", stripErr)
 		}
+		// Usage metadata must reflect the normalized body actually sent to xAI.
+		// In particular, camelCase reasoningEffort is rewritten to snake_case
+		// above, so extracting it from the original client body would lose it.
+		reasoningEffort = extractOpenAIReasoningEffortFromBody(upstreamBody, upstreamModel, billingModel, originalModel)
+		reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, upstreamBody, billingModel)
 	}
 	if clientStream {
 		var usageErr error
