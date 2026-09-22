@@ -132,12 +132,22 @@ type trackingConcurrencyCache struct {
 	cleanupPrefix string
 }
 
+type activeIndexCleanerConcurrencyCache struct {
+	stubConcurrencyCacheForTest
+	cleanupCalls chan struct{}
+}
+
 type concurrencyCacheWithoutAPIKeyTracking struct {
 	ConcurrencyCache
 }
 
 func (c *trackingConcurrencyCache) CleanupStaleProcessSlots(_ context.Context, prefix string) error {
 	c.cleanupPrefix = prefix
+	return c.cleanupErr
+}
+
+func (c *activeIndexCleanerConcurrencyCache) CleanupExpiredAccountSlotKeys(_ context.Context) error {
+	c.cleanupCalls <- struct{}{}
 	return c.cleanupErr
 }
 
@@ -151,6 +161,31 @@ func TestCleanupStaleProcessSlots_DelegatesPrefix(t *testing.T) {
 	svc := NewConcurrencyService(cache)
 	require.NoError(t, svc.CleanupStaleProcessSlots(context.Background()))
 	require.Equal(t, RequestIDPrefix(), cache.cleanupPrefix)
+}
+
+func TestStartSlotCleanupWorkerUsesActiveIndexCleaner(t *testing.T) {
+	cache := &activeIndexCleanerConcurrencyCache{cleanupCalls: make(chan struct{}, 1)}
+	NewConcurrencyService(cache).StartSlotCleanupWorker(nil, time.Hour)
+
+	select {
+	case <-cache.cleanupCalls:
+	case <-time.After(time.Second):
+		t.Fatal("active-index cleaner was not invoked")
+	}
+}
+
+func TestStartSlotCleanupWorkerContinuesAfterActiveIndexCleanerError(t *testing.T) {
+	cache := &activeIndexCleanerConcurrencyCache{
+		cleanupCalls: make(chan struct{}, 1),
+		stubConcurrencyCacheForTest: stubConcurrencyCacheForTest{cleanupErr: errors.New("redis unavailable")},
+	}
+	NewConcurrencyService(cache).StartSlotCleanupWorker(nil, time.Hour)
+
+	select {
+	case <-cache.cleanupCalls:
+	case <-time.After(time.Second):
+		t.Fatal("active-index cleaner was not invoked")
+	}
 }
 
 func TestAcquireAccountSlot_Success(t *testing.T) {
