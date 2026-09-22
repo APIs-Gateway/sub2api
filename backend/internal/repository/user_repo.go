@@ -1083,7 +1083,7 @@ func (r *userRepository) UpdateEmailWithAliasGuard(
 //	REPLACE(LOWER(TRIM(email)), '.', '')
 //
 // 两侧都去点，因此一个域名探针即可同时覆盖 Gmail 点号变体与 FQDN 根点（user@gmail.com.）。
-// migrations/190 为同一表达式建了索引。
+// migrations/191 为同一表达式建了索引。
 func dotStrippedEmailExpr(b *entsql.Builder, s *entsql.Selector) *entsql.Builder {
 	return b.WriteString("REPLACE(LOWER(TRIM(").
 		Ident(s.C(dbuser.FieldEmail)).
