@@ -4574,6 +4574,31 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	return true
 }
 
+// openAIStreamErrorEventShouldFailover is deliberately narrower than the
+// response.failed classifier: a bare error frame only fails over when its
+// contents positively identify an account or transient upstream failure.
+func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
+	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
+		return false
+	}
+	if isOpenAIContextWindowError(message, payload) {
+		return false
+	}
+	switch openAIStreamFailedEventSemanticStatus(payload, message) {
+	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
+		return true
+	}
+	if isOpenAITransientProcessingError(http.StatusBadRequest, message, payload) {
+		return true
+	}
+	combined := strings.ToLower(strings.TrimSpace(message + " " +
+		gjson.GetBytes(payload, "error.message").String() + " " +
+		gjson.GetBytes(payload, "response.error.message").String()))
+	return strings.Contains(combined, "temporary") ||
+		strings.Contains(combined, "try again") ||
+		strings.Contains(combined, "please retry")
+}
+
 func (s *OpenAIGatewayService) recordOpenAIStreamUpstreamError(
 	c *gin.Context,
 	account *Account,
@@ -4733,6 +4758,41 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 		RetryableOnSameAccount: openAIStreamFailedEventRetryableOnSameAccount(account, payload, message),
 		RequestScopedTransient: isOpenAIUpstreamCapacityShedEvent(payload),
 	}
+}
+
+// nonStreamingTerminalFailureFailover applies the streaming path's terminal-event
+// verdict to a stream=false request whose upstream answered with SSE anyway.
+//
+// handleSSEToJSON and handlePassthroughSSEToJSON run this before writing a
+// protocol error, so the same terminal frame takes the same failover decision
+// as it does on the streaming path. A bare error frame intentionally uses the
+// streaming path's more conservative error classifier.
+func (s *OpenAIGatewayService) nonStreamingTerminalFailureFailover(
+	c *gin.Context,
+	resp *http.Response,
+	account *Account,
+	passthrough bool,
+	terminalType string,
+	payload []byte,
+	message string,
+) *UpstreamFailoverError {
+	if account == nil || IsResponseCommitted(c) {
+		return nil
+	}
+	shouldFailover := openAIStreamFailedEventShouldFailover(payload, message)
+	if terminalType == "error" {
+		shouldFailover = openAIStreamErrorEventShouldFailover(payload, message)
+	}
+	if !shouldFailover {
+		return nil
+	}
+	var headers http.Header
+	upstreamRequestID := ""
+	if resp != nil {
+		headers = resp.Header
+		upstreamRequestID = strings.TrimSpace(resp.Header.Get("x-request-id"))
+	}
+	return s.newOpenAIStreamFailoverError(c, account, passthrough, upstreamRequestID, payload, message, headers)
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
@@ -5162,10 +5222,13 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		body = s.correctToolCallsInResponseBody(body)
 	} else {
 		terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
-		if terminalOK && terminalType == "response.failed" {
+		if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
 			msg := extractOpenAISSEErrorMessage(terminalPayload)
 			if msg == "" {
 				msg = "Upstream compact response failed"
+			}
+			if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, true, terminalType, terminalPayload, msg); failoverErr != nil {
+				return nil, failoverErr
 			}
 			return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 		}
@@ -6972,10 +7035,13 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		body = restoredBody
 	} else {
 		terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
-		if terminalOK && terminalType == "response.failed" {
+		if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
 			msg := extractOpenAISSEErrorMessage(terminalPayload)
 			if msg == "" {
 				msg = "Upstream compact response failed"
+			}
+			if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, false, terminalType, terminalPayload, msg); failoverErr != nil {
+				return nil, failoverErr
 			}
 			return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 		}
@@ -7023,7 +7089,7 @@ func extractOpenAISSETerminalEvent(body string) (string, []byte, bool) {
 		}
 		eventType := strings.TrimSpace(gjson.GetBytes(data, "type").String())
 		switch eventType {
-		case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
+		case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":
 			terminalType = eventType
 			terminalPayload = append([]byte(nil), data...)
 		}
