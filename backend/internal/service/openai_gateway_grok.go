@@ -438,6 +438,7 @@ func grokRateLimitResetAt(snapshot *xai.QuotaSnapshot, now time.Time) (time.Time
 		return time.Time{}, false
 	}
 
+	retryAfterExpired := false
 	var resetAt time.Time
 	if snapshot.RetryAfterSeconds != nil && *snapshot.RetryAfterSeconds > 0 {
 		observedAt := now
@@ -446,6 +447,8 @@ func grokRateLimitResetAt(snapshot *xai.QuotaSnapshot, now time.Time) (time.Time
 		}
 		if candidate := observedAt.Add(time.Duration(*snapshot.RetryAfterSeconds) * time.Second); candidate.After(now) {
 			resetAt = candidate
+		} else {
+			retryAfterExpired = true
 		}
 	}
 
@@ -468,35 +471,61 @@ func grokRateLimitResetAt(snapshot *xai.QuotaSnapshot, now time.Time) (time.Time
 	if !resetAt.IsZero() {
 		return resetAt, true
 	}
+	// Retry-After is an absolute boundary once paired with its observation
+	// timestamp. Do not restart an expired persisted snapshot with a new
+	// fallback cooldown.
+	if retryAfterExpired {
+		return time.Time{}, false
+	}
 	if exhausted || snapshot.StatusCode == http.StatusTooManyRequests {
 		return now.Add(grokRateLimitFallbackCooldown), true
 	}
 	return time.Time{}, false
 }
 
+func normalizeGrokRateLimitResetAt(account *Account, resetAt, now time.Time) time.Time {
+	if !resetAt.After(now) {
+		resetAt = now.Add(grokRateLimitFallbackCooldown)
+	}
+	if account != nil && account.RateLimitResetAt != nil && account.RateLimitResetAt.After(resetAt) {
+		resetAt = *account.RateLimitResetAt
+	}
+	return resetAt
+}
+
+type grokRateLimitExtendingRepository interface {
+	SetRateLimitedIfLater(ctx context.Context, id int64, resetAt time.Time) error
+}
+
+func persistGrokRateLimit(ctx context.Context, repo AccountRepository, account *Account, resetAt time.Time) {
+	if repo == nil || account == nil || account.ID <= 0 {
+		return
+	}
+	resetAt = normalizeGrokRateLimitResetAt(account, resetAt, time.Now())
+	stateCtx, cancel := openAIAccountStateContext(ctx)
+	defer cancel()
+	var err error
+	if extendingRepo, ok := repo.(grokRateLimitExtendingRepository); ok {
+		err = extendingRepo.SetRateLimitedIfLater(stateCtx, account.ID, resetAt)
+	} else {
+		err = repo.SetRateLimited(stateCtx, account.ID, resetAt)
+	}
+	if err != nil {
+		slog.Warn("persist_grok_rate_limit_failed", "account_id", account.ID, "reset_at", resetAt.UTC(), "error", err)
+	}
+}
+
 func (s *OpenAIGatewayService) rateLimitGrok(ctx context.Context, account *Account, resetAt time.Time) {
 	if s == nil || account == nil {
 		return
 	}
-	if !resetAt.After(time.Now()) {
-		resetAt = time.Now().Add(grokRateLimitFallbackCooldown)
-	}
-	if account.RateLimitResetAt != nil && account.RateLimitResetAt.After(resetAt) {
-		resetAt = *account.RateLimitResetAt
-	}
+	resetAt = normalizeGrokRateLimitResetAt(account, resetAt, time.Now())
 	runtimeUntil := resetAt
 	if account.TempUnschedulableUntil != nil && account.TempUnschedulableUntil.After(runtimeUntil) {
 		runtimeUntil = *account.TempUnschedulableUntil
 	}
 	s.BlockAccountScheduling(account, runtimeUntil, "429")
-	if s.accountRepo == nil {
-		return
-	}
-	stateCtx, cancel := openAIAccountStateContext(ctx)
-	defer cancel()
-	if err := s.accountRepo.SetRateLimited(stateCtx, account.ID, resetAt); err != nil {
-		slog.Warn("persist_grok_rate_limit_failed", "account_id", account.ID, "reset_at", resetAt.UTC(), "error", err)
-	}
+	persistGrokRateLimit(ctx, s.accountRepo, account, resetAt)
 }
 
 func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) {

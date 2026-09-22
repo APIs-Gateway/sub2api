@@ -378,6 +378,7 @@ func TestGrokRateLimitResetAt(t *testing.T) {
 		{name: "future window reset", snapshot: &xai.QuotaSnapshot{Requests: &xai.QuotaWindow{Remaining: &zero, ResetUnix: &futureUnix}}, exhausted: true, wantAfter: future},
 		{name: "stale reset uses fallback", snapshot: &xai.QuotaSnapshot{Requests: &xai.QuotaWindow{Remaining: &zero, ResetUnix: &pastUnix}}, exhausted: true, wantAfter: now.Add(grokRateLimitFallbackCooldown)},
 		{name: "retry after honors observed timestamp", snapshot: &xai.QuotaSnapshot{RetryAfterSeconds: &retryAfter, UpdatedAt: now.Format(time.RFC3339)}, exhausted: true, wantAfter: now.Add(90 * time.Second)},
+		{name: "expired retry after is not renewed", snapshot: &xai.QuotaSnapshot{StatusCode: http.StatusTooManyRequests, RetryAfterSeconds: &retryAfter, UpdatedAt: now.Add(-2 * time.Minute).Format(time.RFC3339)}},
 		{name: "429 without quota headers uses fallback", snapshot: &xai.QuotaSnapshot{StatusCode: http.StatusTooManyRequests}, exhausted: true, wantAfter: now.Add(grokRateLimitFallbackCooldown)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -390,6 +391,44 @@ func TestGrokRateLimitResetAt(t *testing.T) {
 			require.WithinDuration(t, tt.wantAfter, resetAt, time.Second)
 		})
 	}
+}
+
+type grokRateLimitExtendingTestRepo struct {
+	snapshotUpdateAccountRepo
+	extendingCalls int
+	lastResetAt    time.Time
+	extendingErr   error
+}
+
+func (r *grokRateLimitExtendingTestRepo) SetRateLimitedIfLater(_ context.Context, _ int64, resetAt time.Time) error {
+	r.extendingCalls++
+	r.lastResetAt = resetAt
+	return r.extendingErr
+}
+
+func TestOpenAIGatewayServiceGrokRateLimitUsesAtomicExtension(t *testing.T) {
+	later := time.Now().Add(20 * time.Minute).UTC().Truncate(time.Second)
+	repo := &grokRateLimitExtendingTestRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 717, Platform: PlatformGrok, RateLimitResetAt: &later}
+
+	svc.rateLimitGrok(context.Background(), account, time.Now().Add(2*time.Minute))
+
+	require.Equal(t, 1, repo.extendingCalls)
+	require.Zero(t, repo.rateLimitCalls)
+	require.WithinDuration(t, later, repo.lastResetAt, time.Second)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAIGatewayServiceGrokRateLimitKeepsRuntimeBlockWhenPersistenceFails(t *testing.T) {
+	repo := &grokRateLimitExtendingTestRepo{extendingErr: errors.New("database unavailable")}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 718, Platform: PlatformGrok}
+
+	svc.rateLimitGrok(context.Background(), account, time.Now().Add(3*time.Minute))
+
+	require.Equal(t, 1, repo.extendingCalls)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
 func TestNormalizeGrokExhaustedWindowResets(t *testing.T) {
