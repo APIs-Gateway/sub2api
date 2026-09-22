@@ -14,19 +14,7 @@ import (
 type settingPublicRepoStub struct {
 	values         map[string]string
 	getMultipleErr error
-}
-
-type siteNameLookupRepoStub struct {
-	SettingRepository
-	values map[string]string
-}
-
-func (s *siteNameLookupRepoStub) GetValue(_ context.Context, key string) (string, error) {
-	value, ok := s.values[key]
-	if !ok {
-		return "", ErrSettingNotFound
-	}
-	return value, nil
+	allowGetValue  bool
 }
 
 func (s *settingPublicRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
@@ -34,6 +22,13 @@ func (s *settingPublicRepoStub) Get(ctx context.Context, key string) (*Setting, 
 }
 
 func (s *settingPublicRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	if s.allowGetValue {
+		value, ok := s.values[key]
+		if !ok {
+			return "", ErrSettingNotFound
+		}
+		return value, nil
+	}
 	panic("unexpected GetValue call")
 }
 
@@ -147,7 +142,7 @@ func TestSettingService_GetSiteName_UsesNeutralDefaultAndConfiguredOverride(t *t
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := NewSettingService(&siteNameLookupRepoStub{values: tt.values}, &config.Config{})
+			svc := NewSettingService(&settingPublicRepoStub{values: tt.values, allowGetValue: true}, &config.Config{})
 
 			require.Equal(t, tt.want, svc.GetSiteName(context.Background()))
 		})
