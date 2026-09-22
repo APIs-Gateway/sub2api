@@ -323,14 +323,38 @@ func TestBuildGrokResponsesRequestCopiesOpenAIBetaHeader(t *testing.T) {
 func TestOpenAIGatewayServiceUpdateGrokUsageSnapshot(t *testing.T) {
 	repo := &snapshotUpdateAccountRepo{updateExtraCalls: make(chan map[string]any, 1)}
 	svc := &OpenAIGatewayService{accountRepo: repo}
-	svc.updateGrokUsageSnapshot(context.Background(), 706, &xai.QuotaSnapshot{StatusCode: http.StatusOK})
+	account := &Account{ID: 706, Platform: PlatformGrok, Type: AccountTypeOAuth}
+	svc.updateGrokUsageSnapshot(context.Background(), account, &xai.QuotaSnapshot{StatusCode: http.StatusOK})
 	select {
 	case updates := <-repo.updateExtraCalls:
 		require.Contains(t, updates, grokQuotaSnapshotExtraKey)
 	default:
 		t.Fatal("expected Grok quota snapshot persistence")
 	}
-	svc.updateGrokUsageSnapshot(context.Background(), 0, nil)
+	svc.updateGrokUsageSnapshot(context.Background(), nil, nil)
+}
+
+func TestOpenAIGatewayServiceExhaustedGrokSuccessSetsRateLimit(t *testing.T) {
+	repo := &snapshotUpdateAccountRepo{updateExtraCalls: make(chan map[string]any, 1)}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 707, Platform: PlatformGrok, Type: AccountTypeOAuth}
+	resetAt := time.Now().Add(15 * time.Minute).UTC().Truncate(time.Second)
+	remaining := int64(0)
+	limit := int64(10)
+	resetUnix := resetAt.Unix()
+
+	svc.updateGrokUsageSnapshot(context.Background(), account, &xai.QuotaSnapshot{
+		StatusCode: http.StatusOK,
+		Requests: &xai.QuotaWindow{
+			Limit:     &limit,
+			Remaining: &remaining,
+			ResetUnix: &resetUnix,
+		},
+	})
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.WithinDuration(t, resetAt, repo.rateLimitResetAt, time.Second)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
 func TestOpenAIGatewayServiceGrokUpstreamErrorCooldowns(t *testing.T) {
@@ -607,7 +631,7 @@ func TestWriteGrokContentPolicyRejection(t *testing.T) {
 func TestOpenAIGatewayServiceGrokHelperBranches(t *testing.T) {
 	account := &Account{ID: 714, Platform: PlatformGrok, Type: AccountTypeOAuth}
 	(&OpenAIGatewayService{}).handleGrokAccountUpstreamError(context.Background(), nil, http.StatusUnauthorized, nil, nil)
-	(&OpenAIGatewayService{}).updateGrokUsageSnapshot(context.Background(), 1, nil)
+	(&OpenAIGatewayService{}).updateGrokUsageSnapshot(context.Background(), nil, nil)
 	(&OpenAIGatewayService{}).tempUnscheduleGrok(context.Background(), nil, time.Minute, "ignored")
 
 	service := &OpenAIGatewayService{}
