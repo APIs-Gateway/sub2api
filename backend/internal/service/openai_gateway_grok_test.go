@@ -357,6 +357,81 @@ func TestOpenAIGatewayServiceExhaustedGrokSuccessSetsRateLimit(t *testing.T) {
 	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
+func TestGrokRateLimitResetAt(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	zero := int64(0)
+	positive := int64(1)
+	future := now.Add(10 * time.Minute)
+	past := now.Add(-time.Minute)
+	futureUnix := future.Unix()
+	pastUnix := past.Unix()
+	retryAfter := int64(90)
+
+	for _, tt := range []struct {
+		name      string
+		snapshot  *xai.QuotaSnapshot
+		exhausted bool
+		wantAfter time.Time
+	}{
+		{name: "nil snapshot", snapshot: nil},
+		{name: "remaining capacity", snapshot: &xai.QuotaSnapshot{Requests: &xai.QuotaWindow{Remaining: &positive}}, wantAfter: time.Time{}},
+		{name: "future window reset", snapshot: &xai.QuotaSnapshot{Requests: &xai.QuotaWindow{Remaining: &zero, ResetUnix: &futureUnix}}, exhausted: true, wantAfter: future},
+		{name: "stale reset uses fallback", snapshot: &xai.QuotaSnapshot{Requests: &xai.QuotaWindow{Remaining: &zero, ResetUnix: &pastUnix}}, exhausted: true, wantAfter: now.Add(grokRateLimitFallbackCooldown)},
+		{name: "retry after honors observed timestamp", snapshot: &xai.QuotaSnapshot{RetryAfterSeconds: &retryAfter, UpdatedAt: now.Format(time.RFC3339)}, exhausted: true, wantAfter: now.Add(90 * time.Second)},
+		{name: "429 without quota headers uses fallback", snapshot: &xai.QuotaSnapshot{StatusCode: http.StatusTooManyRequests}, exhausted: true, wantAfter: now.Add(grokRateLimitFallbackCooldown)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resetAt, exhausted := grokRateLimitResetAt(tt.snapshot, now)
+			require.Equal(t, tt.exhausted, exhausted)
+			if tt.wantAfter.IsZero() {
+				require.True(t, resetAt.IsZero())
+				return
+			}
+			require.WithinDuration(t, tt.wantAfter, resetAt, time.Second)
+		})
+	}
+}
+
+func TestNormalizeGrokExhaustedWindowResets(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	resetAt := now.Add(12 * time.Minute)
+	zero := int64(0)
+	positive := int64(2)
+	pastUnix := now.Add(-time.Minute).Unix()
+	snapshot := &xai.QuotaSnapshot{
+		Requests: &xai.QuotaWindow{Remaining: &zero, ResetUnix: &pastUnix},
+		Tokens:   &xai.QuotaWindow{Remaining: &zero},
+	}
+
+	normalizeGrokExhaustedWindowResets(snapshot, resetAt, now)
+	require.Equal(t, resetAt.Unix(), *snapshot.Requests.ResetUnix)
+	require.Equal(t, resetAt.Format(time.RFC3339), snapshot.Requests.ResetAt)
+	require.Equal(t, resetAt.Unix(), *snapshot.Tokens.ResetUnix)
+	require.Equal(t, resetAt.Format(time.RFC3339), snapshot.Tokens.ResetAt)
+
+	unchanged := &xai.QuotaSnapshot{Requests: &xai.QuotaWindow{Remaining: &positive}}
+	normalizeGrokExhaustedWindowResets(unchanged, resetAt, now)
+	require.Nil(t, unchanged.Requests.ResetUnix)
+}
+
+func TestOpenAIGatewayServiceGrok429PersistsFallbackRateLimit(t *testing.T) {
+	repo := &snapshotUpdateAccountRepo{updateExtraCalls: make(chan map[string]any, 1)}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 716, Platform: PlatformGrok, Type: AccountTypeOAuth}
+
+	svc.handleGrokAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, nil)
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.True(t, repo.rateLimitResetAt.After(time.Now()))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	select {
+	case updates := <-repo.updateExtraCalls:
+		require.Contains(t, updates, grokQuotaSnapshotExtraKey)
+	default:
+		t.Fatal("expected fallback quota snapshot persistence")
+	}
+}
+
 func TestOpenAIGatewayServiceGrokUpstreamErrorCooldowns(t *testing.T) {
 	account := &Account{ID: 708, Platform: PlatformGrok, Type: AccountTypeOAuth}
 	svc := &OpenAIGatewayService{}
