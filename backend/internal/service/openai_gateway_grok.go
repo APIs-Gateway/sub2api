@@ -188,15 +188,9 @@ func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 			}
 		}
 	}
-	if strings.EqualFold(upstreamModel, "grok-4.5") {
-		for _, unsupportedField := range []string{"presence_penalty", "presencePenalty", "frequency_penalty", "frequencyPenalty", "stop"} {
-			if gjson.GetBytes(out, unsupportedField).Exists() {
-				out, err = sjson.DeleteBytes(out, unsupportedField)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
+	out, err = stripGrok45ReasoningUnsupportedTopLevelFields(out, upstreamModel)
+	if err != nil {
+		return nil, err
 	}
 	out, err = stripRedundantGrokViewImageTool(out)
 	if err != nil {
@@ -213,6 +207,37 @@ func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 
 var grokUnsupportedRecursiveFields = map[string]struct{}{
 	"external_web_access": {},
+}
+
+var grok45ReasoningUnsupportedTopLevelFields = [...]string{
+	"presence_penalty",
+	"presencePenalty",
+	"frequency_penalty",
+	"frequencyPenalty",
+	"stop",
+}
+
+// stripGrok45ReasoningUnsupportedTopLevelFields removes only the request
+// parameters xAI rejects for the Grok 4.5 reasoning model. They remain valid
+// for other upstream models, so the final resolved model—not the client alias—
+// decides whether this compatibility adjustment applies.
+func stripGrok45ReasoningUnsupportedTopLevelFields(body []byte, upstreamModel string) ([]byte, error) {
+	if !strings.EqualFold(strings.TrimSpace(upstreamModel), "grok-4.5") {
+		return body, nil
+	}
+
+	out := body
+	for _, field := range grok45ReasoningUnsupportedTopLevelFields {
+		if !gjson.GetBytes(out, field).Exists() {
+			continue
+		}
+		var err error
+		out, err = sjson.DeleteBytes(out, field)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // sanitizeGrokUnsupportedFields recursively removes request fields rejected by

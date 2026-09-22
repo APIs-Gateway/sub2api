@@ -115,6 +115,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		if stripErr != nil {
 			return nil, fmt.Errorf("sanitize Grok unsupported fields: %w", stripErr)
 		}
+		upstreamBody, stripErr = stripGrok45ReasoningUnsupportedTopLevelFields(upstreamBody, upstreamModel)
+		if stripErr != nil {
+			return nil, fmt.Errorf("strip Grok 4.5 unsupported fields: %w", stripErr)
+		}
 	}
 	if clientStream {
 		var usageErr error
