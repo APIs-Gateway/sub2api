@@ -1,6 +1,10 @@
 package openai
 
-import "strings"
+import (
+	"strings"
+
+	"golang.org/x/net/http/httpguts"
+)
 
 // CodexCLIUserAgentPrefixes matches Codex CLI User-Agent patterns
 // Examples: "codex_vscode/1.0.0", "codex_cli_rs/0.1.2"
@@ -112,6 +116,10 @@ const codexOriginatorMaxLen = 64
 // originator and User-Agent client name with 404, so callers must fall back to a
 // known Codex CLI identity when this returns ok=false.
 func PairCodexClientIdentity(userAgent string) (originator string, pairedUA string, ok bool) {
+	// Validate before trimming so control bytes cannot become a valid identity.
+	if !validCodexUserAgentValue(userAgent) {
+		return "", "", false
+	}
 	ua := strings.TrimSpace(userAgent)
 	slash := strings.IndexByte(ua, '/')
 	if slash <= 0 {
@@ -129,6 +137,15 @@ func PairCodexClientIdentity(userAgent string) (originator string, pairedUA stri
 		return trailer, trailer + ua[slash:], true
 	}
 	return "", "", false
+}
+
+func validCodexUserAgentValue(value string) bool {
+	if !httpguts.ValidHeaderFieldValue(value) {
+		return false
+	}
+	// httpguts follows the legacy field-value grammar and permits obs-fold.
+	// User-Agent is not an obs-folded header; reject CR/LF before forwarding.
+	return !strings.ContainsAny(value, "\r\n")
 }
 
 func codexUATrailerName(ua string) string {
