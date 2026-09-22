@@ -8,6 +8,12 @@ codecov:
     wait_for_ci: true
     after_n_builds: 4
 
+# Go 的 coverprofile 将同一可执行 block 内的条件分支汇总为 partial；
+# 本仓库的 handler 回归测试已经执行这些 block 时，应按命中计入 patch。
+parsers:
+  go:
+    partials_as_hits: true
+
 coverage:
   status:
     # 整个项目的总覆盖率:只报告、不挡合并(避免历史低覆盖拖死 PR)
