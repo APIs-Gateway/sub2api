@@ -1088,6 +1088,20 @@ func newUpstreamDialer() *net.Dialer {
 	}
 }
 
+// withUpstreamTLSHandshakeTimeout keeps custom DialTLSContext implementations
+// within the same bound as net/http.Transport's built-in TLS handshake.
+//
+// Transport.TLSHandshakeTimeout is not applied when DialTLSContext performs the
+// handshake itself, such as the TLS fingerprint transport. The context deadline
+// is therefore the only timeout seen by uTLS's HandshakeContext.
+func withUpstreamTLSHandshakeTimeout(dialTLSContext func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		timeoutCtx, cancel := context.WithTimeout(ctx, defaultUpstreamTLSHandshakeTimeout)
+		defer cancel()
+		return dialTLSContext(timeoutCtx, network, addr)
+	}
+}
+
 // buildUpstreamTransport 构建上游请求的 Transport
 // 使用配置文件中的连接池参数，支持生产环境调优
 //
@@ -1169,6 +1183,8 @@ func enableOpenAIHTTP2KeepAlive(transport *http.Transport) (*http2.Transport, er
 //   - socks5: SOCKS5 代理，使用 SOCKS5ProxyDialer（SOCKS5 隧道 + utls 握手）
 func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *url.URL, profile *tlsfingerprint.Profile) (*http.Transport, error) {
 	transport := &http.Transport{
+		DialContext:           newUpstreamDialer().DialContext,
+		TLSHandshakeTimeout:   defaultUpstreamTLSHandshakeTimeout,
 		MaxIdleConns:          settings.maxIdleConns,
 		MaxIdleConnsPerHost:   settings.maxIdleConnsPerHost,
 		MaxConnsPerHost:       settings.maxConnsPerHost,
@@ -1182,8 +1198,8 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 	if proxyURL == nil {
 		// 直连：使用 TLSFingerprintDialer
 		slog.Debug("tls_fingerprint_transport_direct")
-		dialer := tlsfingerprint.NewDialer(profile, nil)
-		transport.DialTLSContext = dialer.DialTLSContext
+		dialer := tlsfingerprint.NewDialer(profile, newUpstreamDialer().DialContext)
+		transport.DialTLSContext = withUpstreamTLSHandshakeTimeout(dialer.DialTLSContext)
 	} else {
 		scheme := strings.ToLower(proxyURL.Scheme)
 		switch scheme {
@@ -1191,12 +1207,12 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 			// SOCKS5 代理：使用 SOCKS5ProxyDialer
 			slog.Debug("tls_fingerprint_transport_socks5", "proxy", proxyURL.Host)
 			socks5Dialer := tlsfingerprint.NewSOCKS5ProxyDialer(profile, proxyURL)
-			transport.DialTLSContext = socks5Dialer.DialTLSContext
+			transport.DialTLSContext = withUpstreamTLSHandshakeTimeout(socks5Dialer.DialTLSContext)
 		case "http", "https":
 			// HTTP/HTTPS 代理：使用 HTTPProxyDialer（CONNECT 隧道）
 			slog.Debug("tls_fingerprint_transport_http_connect", "proxy", proxyURL.Host)
 			httpDialer := tlsfingerprint.NewHTTPProxyDialer(profile, proxyURL)
-			transport.DialTLSContext = httpDialer.DialTLSContext
+			transport.DialTLSContext = withUpstreamTLSHandshakeTimeout(httpDialer.DialTLSContext)
 		default:
 			// 未知代理类型，回退到普通代理配置（无 TLS 指纹）
 			slog.Debug("tls_fingerprint_transport_unknown_scheme_fallback", "scheme", scheme)

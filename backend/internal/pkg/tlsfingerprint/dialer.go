@@ -160,15 +160,24 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 		proxyAddr = net.JoinHostPort(d.proxyURL.Hostname(), "1080") // Default SOCKS5 port
 	}
 
-	socksDialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, proxy.Direct)
+	// net.Dialer implements proxy.ContextDialer, allowing the caller's deadline
+	// to bound the TCP connection to the SOCKS proxy as well.
+	socksDialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, &net.Dialer{})
 	if err != nil {
 		slog.Debug("tls_fingerprint_socks5_dialer_failed", "error", err)
 		return nil, fmt.Errorf("create SOCKS5 dialer: %w", err)
 	}
 
-	// Step 2: Establish SOCKS5 tunnel to target
+	// Step 2: Establish SOCKS5 tunnel to target. Prefer the context-aware
+	// variant so callers can bound connection setup (including the forward
+	// connection to the SOCKS proxy).
 	slog.Debug("tls_fingerprint_socks5_establishing_tunnel", "target", addr)
-	conn, err := socksDialer.Dial("tcp", addr)
+	var conn net.Conn
+	if contextDialer, ok := socksDialer.(proxy.ContextDialer); ok {
+		conn, err = contextDialer.DialContext(ctx, "tcp", addr)
+	} else {
+		conn, err = socksDialer.Dial("tcp", addr)
+	}
 	if err != nil {
 		slog.Debug("tls_fingerprint_socks5_connect_failed", "error", err)
 		return nil, fmt.Errorf("SOCKS5 connect: %w", err)

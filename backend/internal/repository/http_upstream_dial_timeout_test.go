@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/url"
 	"testing"
@@ -31,6 +32,29 @@ func TestNewUpstreamDialerHasBoundedTimeout(t *testing.T) {
 	require.Greater(t, dialer.Timeout, time.Duration(0), "建连超时必须有上限")
 	require.Equal(t, defaultUpstreamDialTimeout, dialer.Timeout)
 	require.Equal(t, defaultUpstreamDialKeepAlive, dialer.KeepAlive)
+}
+
+func TestWithUpstreamTLSHandshakeTimeoutAddsDeadline(t *testing.T) {
+	called := false
+	dialTLSContext := withUpstreamTLSHandshakeTimeout(func(ctx context.Context, _, _ string) (net.Conn, error) {
+		called = true
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok, "自定义 TLS dialer 必须收到握手 deadline")
+		require.WithinDuration(t, time.Now().Add(defaultUpstreamTLSHandshakeTimeout), deadline, time.Second)
+		return nil, errors.New("stub TLS dial")
+	})
+
+	_, err := dialTLSContext(context.Background(), "tcp", "example.com:443")
+	require.Error(t, err)
+	require.True(t, called)
+}
+
+func TestBuildUpstreamTransportWithTLSFingerprintSetsConnectionBounds(t *testing.T) {
+	transport, err := buildUpstreamTransportWithTLSFingerprint(defaultPoolSettings(nil), nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, transport.DialContext)
+	require.NotNil(t, transport.DialTLSContext)
+	require.Equal(t, defaultUpstreamTLSHandshakeTimeout, transport.TLSHandshakeTimeout)
 }
 
 // 建连超时对 HTTP 代理同样生效：Transport.Proxy 走的仍是 DialContext，
