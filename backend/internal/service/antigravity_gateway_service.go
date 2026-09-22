@@ -3318,7 +3318,9 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 			if strings.HasPrefix(trimmed, "data:") {
 				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 				if payload == "" || payload == "[DONE]" {
-					cw.Fprintf("%s\n", line)
+					// The upstream blank separator is skipped below, so special data
+					// events must terminate their own SSE frame as ordinary data does.
+					cw.Fprintf("%s\n\n", line)
 					continue
 				}
 

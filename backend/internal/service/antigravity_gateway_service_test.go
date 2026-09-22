@@ -1262,6 +1262,35 @@ func TestHandleGeminiStreamingResponse_EventSeparatorIsExactlyOneBlankLine(t *te
 	}
 }
 
+func TestHandleGeminiStreamingResponse_SpecialDataEventsTerminateFrames(t *testing.T) {
+	for _, newline := range []string{"\n", "\r\n"} {
+		t.Run(fmt.Sprintf("upstream %q", newline), func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			svc := newAntigravityTestService(&config.Config{
+				Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize},
+			})
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+			pr, pw := io.Pipe()
+			resp := &http.Response{StatusCode: http.StatusOK, Body: pr, Header: http.Header{}}
+			go func() {
+				defer func() { _ = pw.Close() }()
+				fmt.Fprintf(pw, "data: [DONE]%s%sdata:%s%s", newline, newline, newline, newline)
+			}()
+
+			result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now())
+			_ = pr.Close()
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, "data: [DONE]\n\ndata:\n\n", rec.Body.String())
+		})
+	}
+}
+
 func TestHandleGeminiStreamingResponse_ThoughtsTokenCount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newAntigravityTestService(&config.Config{
