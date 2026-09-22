@@ -92,7 +92,8 @@ describe('UseKeyModal', () => {
         show: true,
         apiKey: 'sk-grok-claude-test',
         baseUrl: 'https://example.com/v1',
-        platform: 'grok'
+        platform: 'grok',
+        allowMessagesDispatch: true
       },
       global: {
         stubs: {
@@ -173,6 +174,28 @@ describe('UseKeyModal', () => {
       expect.stringContaining('ANTHROPIC_AUTH_TOKEN="sk-grok-claude-test"'),
       'keys.copied'
     )
+  })
+
+  it('hides the Grok Claude Code setup when Messages dispatch is disabled', () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-grok-no-dispatch',
+        baseUrl: 'https://example.com/v1',
+        platform: 'grok',
+        allowMessagesDispatch: false
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: { template: '<span />' }
+        }
+      }
+    })
+
+    expect(wrapper.findAll('button').some((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.claudeCode')
+    )).toBe(false)
   })
 
   it('renders Codex custom provider setup through the Grok Responses gateway', async () => {

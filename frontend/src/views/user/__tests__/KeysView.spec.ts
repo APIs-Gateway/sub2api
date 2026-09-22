@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick, ref } from 'vue'
 
-import type { ApiKey } from '@/types'
+import type { ApiKey, Group } from '@/types'
 import KeysView from '../KeysView.vue'
 
 const {
@@ -43,6 +43,7 @@ const messages: Record<string, string> = {
   'keys.currentConcurrency': 'Current Concurrency',
   'keys.expiresAt': 'Expires',
   'keys.group': 'Group',
+  'keys.quickConnect': 'Quick connect',
   'keys.id': 'ID',
   'keys.lastUsedAt': 'Last Used',
   'keys.lastUsedIP': 'Last Used IP',
@@ -126,6 +127,35 @@ const createApiKey = (): ApiKey => ({
   stable_priority_enabled: false,
 })
 
+const createGrokGroup = (allowMessagesDispatch: boolean): Group => ({
+  id: 9,
+  name: 'Grok',
+  description: null,
+  platform: 'grok',
+  rate_multiplier: 1,
+  is_exclusive: false,
+  status: 'active',
+  subscription_type: 'standard',
+  daily_limit_usd: null,
+  weekly_limit_usd: null,
+  monthly_limit_usd: null,
+  allow_image_generation: false,
+  image_rate_independent: false,
+  image_rate_multiplier: 1,
+  image_price_1k: null,
+  image_price_2k: null,
+  image_price_4k: null,
+  claude_code_only: false,
+  fallback_group_id: null,
+  fallback_group_id_on_invalid_request: null,
+  stable_priority_fallback_group_id: null,
+  allow_messages_dispatch: allowMessagesDispatch,
+  require_oauth_only: false,
+  require_privacy_set: false,
+  created_at: '2026-06-27T00:00:00Z',
+  updated_at: '2026-06-27T00:00:00Z',
+})
+
 const DataTableStub = {
   props: ['columns', 'data'],
   template: `
@@ -134,6 +164,9 @@ const DataTableStub = {
       <div v-for="row in data" :key="row.id">
         <div v-if="columns.some((col) => col.key === 'id')" data-test="key-id">
           <slot name="cell-id" :value="row.id" :row="row" />
+        </div>
+        <div v-if="columns.some((col) => col.key === 'actions')" data-test="key-actions">
+          <slot name="cell-actions" :row="row" />
         </div>
       </div>
     </div>
@@ -156,7 +189,11 @@ const mountView = async () => {
         Select: true,
         SearchInput: true,
         Icon: { template: '<span />' },
-        KeyOnboardingModal: true,
+        UseKeyModal: {
+          name: 'UseKeyModal',
+          props: ['show', 'apiKey', 'baseUrl', 'platform', 'allowMessagesDispatch'],
+          template: '<div data-test="use-key-modal" />',
+        },
         EndpointPopover: true,
         GroupBadge: true,
         GroupOptionItem: true,
@@ -252,5 +289,24 @@ describe('user KeysView column settings', () => {
     expect(visibleColumnKeys(wrapper)).toContain('id')
     expect(localStorage.getItem('api-key-hidden-columns')).toBe(JSON.stringify(['group']))
     expect(localStorage.getItem('api-key-column-settings-version')).toBe('3')
+  })
+
+  it('opens the production key setup flow with the selected Grok group capability', async () => {
+    const apiKey = createApiKey()
+    apiKey.group = createGrokGroup(false)
+    listKeys.mockResolvedValueOnce({
+      items: [apiKey], total: 1, page: 1, page_size: 20, pages: 1,
+    })
+
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'Quick connect').trigger('click')
+
+    const modal = wrapper.getComponent({ name: 'UseKeyModal' })
+    expect(modal.props()).toMatchObject({
+      show: true,
+      apiKey: 'sk-test-key',
+      platform: 'grok',
+      allowMessagesDispatch: false,
+    })
   })
 })
