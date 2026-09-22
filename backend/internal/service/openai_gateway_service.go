@@ -2853,6 +2853,29 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			requestView = newOpenAIRequestView(body)
 		}
 	}
+	// Keep the established reactive cleanup for ordinary Responses requests. This
+	// proactive path is only needed once a real namespace declaration makes a
+	// historical tool-call namespace semantically significant (including Lite's
+	// input.additional_tools carrier).
+	if shouldStripOpenAIResponsesInputNamespaces(account, wsDecision.Transport, passthroughEnabled) &&
+		hasOpenAIResponsesNamespaceToolDeclaration(body) {
+		keepToolCallNamespaces := shouldKeepOpenAIResponsesToolCallNamespaces(
+			account, wsDecision.Transport, passthroughEnabled, isOpenAIResponsesCompactPath(c), body,
+		)
+		strippedBody, stripErr := stripOpenAIResponsesInputNamespaces(body, keepToolCallNamespaces)
+		if stripErr != nil {
+			setOpsUpstreamError(c, http.StatusBadRequest, stripErr.Error(), "")
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+				"type": "invalid_request_error", "message": stripErr.Error(), "param": "input",
+			}})
+			return nil, stripErr
+		}
+		if !bytes.Equal(strippedBody, body) {
+			body = strippedBody
+			originalBody = body
+			requestView = newOpenAIRequestView(body)
+		}
+	}
 	if passthroughEnabled {
 		// 透传分支只需要轻量提取字段，避免热路径全量 Unmarshal。
 		mappedModel := account.GetMappedModel(reqModel)

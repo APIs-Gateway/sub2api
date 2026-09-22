@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 const openAIResponsesNamespaceNamesContextKey = "openai_responses_namespace_names"
@@ -29,6 +32,140 @@ func shouldFlattenOpenAIResponsesNamespaces(account *Account, transport OpenAIUp
 		return false
 	}
 	return true
+}
+
+// shouldStripOpenAIResponsesInputNamespaces removes direct input-item namespace
+// fields for HTTP forwarding. Native WSv2 supports them without a round-trip.
+func shouldStripOpenAIResponsesInputNamespaces(account *Account, transport OpenAIUpstreamTransport, passthroughEnabled bool) bool {
+	if account == nil || (!account.IsOpenAIOAuth() && !account.IsOpenAIApiKey()) {
+		return false
+	}
+	return transport != OpenAIUpstreamTransportResponsesWebsocketV2 || passthroughEnabled
+}
+
+// shouldKeepOpenAIResponsesToolCallNamespaces keeps namespace only on historical
+// tool calls whose request also declares a real namespace tool. In particular,
+// Responses Lite carries those declarations in input.additional_tools rather
+// than the top-level tools array.
+func shouldKeepOpenAIResponsesToolCallNamespaces(
+	account *Account,
+	transport OpenAIUpstreamTransport,
+	passthroughEnabled bool,
+	compactPath bool,
+	body []byte,
+) bool {
+	if account == nil || compactPath {
+		return false
+	}
+	if account.IsOpenAIApiKey() {
+		return hasOpenAIResponsesNamespaceToolDeclaration(body)
+	}
+	if !account.IsOpenAIOAuth() {
+		return false
+	}
+	// This fork still flattens ordinary OAuth namespace declarations. Lite
+	// declarations have already moved to input.additional_tools at this point,
+	// so that flatten pass has no mapping to rewrite their historical calls.
+	return hasOpenAIResponsesNamespaceToolDeclaration(body) ||
+		!shouldFlattenOpenAIResponsesNamespaces(account, transport, passthroughEnabled)
+}
+
+func hasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
+	hasNamespaceTool := func(tools gjson.Result) bool {
+		if !tools.IsArray() {
+			return false
+		}
+		found := false
+		tools.ForEach(func(_, tool gjson.Result) bool {
+			if strings.EqualFold(strings.TrimSpace(tool.Get("type").String()), "namespace") {
+				found = true
+				return false
+			}
+			return true
+		})
+		return found
+	}
+	if hasNamespaceTool(gjson.GetBytes(body, "tools")) {
+		return true
+	}
+
+	// Responses Lite puts private namespace declarations in an
+	// input.additional_tools carrier. Only a namespace declaration is enough to
+	// opt in; a regular function that happens to contain a namespace field is not.
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return false
+	}
+	found := false
+	input.ForEach(func(_, item gjson.Result) bool {
+		if !strings.EqualFold(strings.TrimSpace(item.Get("type").String()), "additional_tools") {
+			return true
+		}
+		if hasNamespaceTool(item.Get("tools")) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func isOpenAIResponsesToolCallItemType(itemType string) bool {
+	switch strings.ToLower(strings.TrimSpace(itemType)) {
+	case "function_call", "tool_call", "custom_tool_call", "mcp_tool_call":
+		return true
+	default:
+		return false
+	}
+}
+
+// stripOpenAIResponsesInputNamespaces removes namespace from direct input items
+// while retaining historical tool-call namespace when the selected upstream
+// explicitly declared the matching namespace extension.
+func stripOpenAIResponsesInputNamespaces(body []byte, keepToolCallNamespaces bool) ([]byte, error) {
+	if !bytes.Contains(body, []byte(`"namespace"`)) {
+		return body, nil
+	}
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body, nil
+	}
+
+	var rebuilt bytes.Buffer
+	rebuilt.Grow(len(input.Raw))
+	_ = rebuilt.WriteByte('[')
+	changed := false
+	first := true
+	var stripErr error
+	input.ForEach(func(_, item gjson.Result) bool {
+		if !first {
+			_ = rebuilt.WriteByte(',')
+		}
+		first = false
+		itemBody := []byte(item.Raw)
+		if item.IsObject() && item.Get("namespace").Exists() &&
+			(!keepToolCallNamespaces || !isOpenAIResponsesToolCallItemType(item.Get("type").String())) {
+			itemBody, stripErr = sjson.DeleteBytes(itemBody, "namespace")
+			if stripErr != nil {
+				return false
+			}
+			changed = true
+		}
+		_, _ = rebuilt.Write(itemBody)
+		return true
+	})
+	_ = rebuilt.WriteByte(']')
+	if stripErr != nil {
+		return body, fmt.Errorf("delete OpenAI input namespace: %w", stripErr)
+	}
+	if !changed {
+		return body, nil
+	}
+	stripped, err := sjson.SetRawBytes(body, "input", rebuilt.Bytes())
+	if err != nil {
+		return body, fmt.Errorf("replace OpenAI input after namespace deletion: %w", err)
+	}
+	return stripped, nil
 }
 
 // flattenOpenAIResponsesNamespaces 摊平请求体里的 namespace 工具声明，并把摊平

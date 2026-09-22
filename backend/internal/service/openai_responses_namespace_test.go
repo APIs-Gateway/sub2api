@@ -48,6 +48,63 @@ func TestShouldFlattenOpenAIResponsesNamespaces(t *testing.T) {
 	}
 }
 
+func TestResponsesLiteNamespaceDeclarationsPreserveHistoricalToolCalls(t *testing.T) {
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	body := []byte(`{
+		"input":[
+			{"type":"function_call","namespace":"collaboration","name":"spawn_agent","call_id":"call_spawn","arguments":"{}"},
+			{"type":"function_call","namespace":"mcp__cua_repl","name":"js","call_id":"call_js","arguments":"{}"},
+			{"type":"message","role":"user","namespace":"leftover","content":[{"type":"input_text","text":"continue"}]},
+			{"type":" Additional_Tools ","role":"developer","tools":[
+				{"type":" Namespace ","name":"collaboration","tools":[{"type":"function","name":"spawn_agent"}]},
+				{"type":"namespace","name":"mcp__cua_repl","tools":[{"type":"function","name":"js"}]}
+			]}
+		]
+	}`)
+
+	require.True(t, hasOpenAIResponsesNamespaceToolDeclaration(body))
+	require.True(t, shouldKeepOpenAIResponsesToolCallNamespaces(
+		apiKey, OpenAIUpstreamTransportHTTPSSE, false, false, body,
+	))
+	require.True(t, shouldKeepOpenAIResponsesToolCallNamespaces(
+		oauth, OpenAIUpstreamTransportHTTPSSE, false, false, body,
+	))
+
+	forwarded, err := stripOpenAIResponsesInputNamespaces(body, true)
+	require.NoError(t, err)
+	require.Equal(t, "collaboration", gjson.GetBytes(forwarded, "input.0.namespace").String())
+	require.Equal(t, "mcp__cua_repl", gjson.GetBytes(forwarded, "input.1.namespace").String())
+	require.False(t, gjson.GetBytes(forwarded, "input.2.namespace").Exists())
+	require.Equal(t, " Namespace ", gjson.GetBytes(forwarded, "input.3.tools.0.type").String())
+
+	// compact does not support input[].namespace, including a real Lite namespace
+	// declaration, so it keeps the existing cleanup contract.
+	require.False(t, shouldKeepOpenAIResponsesToolCallNamespaces(
+		apiKey, OpenAIUpstreamTransportHTTPSSE, false, true, body,
+	))
+	compact, err := stripOpenAIResponsesInputNamespaces(body, false)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(compact, "input.0.namespace").Exists())
+	require.False(t, gjson.GetBytes(compact, "input.1.namespace").Exists())
+}
+
+func TestResponsesNamespaceDeclarationDoesNotTreatPlainFunctionAsNamespace(t *testing.T) {
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	body := []byte(`{
+		"tools":[{"type":"function","name":"js","namespace":"mcp__cua_repl"}],
+		"input":[{"type":"function_call","namespace":"mcp__cua_repl","name":"js","arguments":"{}"}]
+	}`)
+
+	require.False(t, hasOpenAIResponsesNamespaceToolDeclaration(body))
+	require.False(t, shouldKeepOpenAIResponsesToolCallNamespaces(
+		apiKey, OpenAIUpstreamTransportHTTPSSE, false, false, body,
+	))
+	forwarded, err := stripOpenAIResponsesInputNamespaces(body, false)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(forwarded, "input.0.namespace").Exists())
+}
+
 // ---------------------------------------------------------------------------
 // flattenOpenAIResponsesNamespaces / restoreOpenAIResponsesNamespacePayload
 // helper-level behavior, including the no-op fast paths.
