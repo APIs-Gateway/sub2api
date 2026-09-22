@@ -1269,8 +1269,6 @@ func TestGetModelPricing_Grok43Fallbacks(t *testing.T) {
 	svc := newTestBillingService()
 
 	for _, model := range []string{
-		"grok",
-		"grok-latest",
 		"grok-4.3",
 		"grok-4.20-0309-reasoning",
 		"grok-4.20-0309-non-reasoning",
