@@ -75,15 +75,30 @@ withDefaults(defineProps<{
 }
 
 .admin-task-page__worklist {
-  @apply flex min-h-0 flex-1 flex-col;
+  /*
+   * This is the desktop viewport for a task's table. Keep every flex ancestor
+   * shrinkable and clip here so DataTable's `.table-wrapper` receives the
+   * remaining height instead of growing the page past the footer.
+   */
+  @apply flex min-h-0 flex-1 flex-col overflow-hidden;
 }
 
 .admin-task-page__worklist-content {
-  @apply flex min-h-0 flex-1 flex-col;
+  @apply flex min-h-0 flex-1 flex-col overflow-hidden;
 }
 
 .admin-task-page__worklist-content > :deep(*) {
-  @apply flex min-h-0 flex-1 flex-col;
+  @apply flex min-h-0 flex-1 flex-col overflow-hidden;
+}
+
+/*
+ * DataTable owns the scrolling element and sticky-header/virtualizer state.
+ * Keeping that established class as the scroll port preserves the old
+ * TablePageLayout behaviour while the surrounding task layout owns its
+ * bounded viewport.
+ */
+.admin-task-page__worklist-content :deep(.table-wrapper) {
+  @apply min-h-0 flex-1 overflow-x-auto overflow-y-auto;
 }
 
 .admin-task-page__footer {
@@ -94,7 +109,7 @@ withDefaults(defineProps<{
   .admin-task-page__worklist,
   .admin-task-page__worklist-content,
   .admin-task-page__worklist-content > :deep(*) {
-    @apply block min-h-0;
+    @apply block min-h-0 overflow-visible;
   }
 }
 </style>
