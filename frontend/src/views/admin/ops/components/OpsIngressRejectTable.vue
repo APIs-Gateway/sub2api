@@ -60,7 +60,13 @@ async function loadData() {
   loading.value = true
   errorMessage.value = ''
   try {
-    response.value = await opsAPI.listIngressRejects(buildParams())
+    const next = await opsAPI.listIngressRejects(buildParams())
+    const totalPages = Math.max(1, Math.ceil(next.total / Math.max(1, next.page_size)))
+    if (next.total > 0 && page.value > totalPages) {
+      page.value = totalPages
+      return
+    }
+    response.value = next
   } catch (err: any) {
     response.value = null
     errorMessage.value = err?.message || t('admin.ops.ingressRejects.failedToLoad')
@@ -72,7 +78,7 @@ async function loadData() {
 watch(
   () => [timeRange.value, reason.value, routeFamily.value, protocol.value, page.value, pageSize.value, props.refreshToken] as const,
   (next, previous) => {
-    const filtersChanged = !!previous && next.slice(0, 4).some((value, index) => value !== previous[index])
+    const filtersChanged = !!previous && next.slice(0, 6).some((value, index) => value !== previous[index])
     if (filtersChanged && page.value !== 1) {
       page.value = 1
       return

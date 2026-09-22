@@ -19,7 +19,12 @@ const SelectControlStub = defineComponent({
   template: '<div class="select-stub" />'
 })
 const EmptyStateStub = defineComponent({ name: 'EmptyState', template: '<div class="empty-state" />' })
-const PaginationStub = defineComponent({ name: 'Pagination', template: '<div class="pagination-stub" />' })
+const PaginationStub = defineComponent({
+  name: 'PaginationStub',
+  props: { page: { type: Number, default: 1 }, pageSize: { type: Number, default: 20 } },
+  emits: ['update:page', 'update:pageSize'],
+  template: '<div class="pagination-stub" />'
+})
 
 describe('OpsIngressRejectTable', () => {
   it('loads sanitized aggregate rows from the existing admin endpoint', async () => {
@@ -61,5 +66,37 @@ describe('OpsIngressRejectTable', () => {
     await flushPromises()
 
     expect(listIngressRejects).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'invalid_api_key', page: 1 }))
+  })
+
+  it('returns to a valid first page when page size changes from a later page', async () => {
+    listIngressRejects.mockImplementation(async (params: { page?: number; page_size?: number }) => ({
+      items: [{
+        id: params.page ?? 1,
+        bucket_start: '2026-09-22T00:00:00Z',
+        reject_reason: 'invalid_api_key',
+        route_family: 'responses',
+        protocol: 'openai',
+        client_ip: '203.0.113.0/24',
+        request_count: 7,
+        first_seen: '2026-09-22T00:00:01Z',
+        last_seen: '2026-09-22T00:00:59Z'
+      }],
+      total: 100,
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20
+    }))
+    const wrapper = mount(OpsIngressRejectTable, {
+      global: { stubs: { Select: SelectControlStub, EmptyState: EmptyStateStub, Pagination: PaginationStub } }
+    })
+    await flushPromises()
+
+    const pagination = wrapper.findComponent(PaginationStub)
+    await pagination.vm.$emit('update:page', 4)
+    await flushPromises()
+    await pagination.vm.$emit('update:pageSize', 50)
+    await flushPromises()
+
+    expect(listIngressRejects).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, page_size: 50 }))
+    expect(wrapper.find('.pagination-stub').exists()).toBe(true)
   })
 })
