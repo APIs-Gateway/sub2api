@@ -278,6 +278,62 @@ func TestHTTPProxyDialerBasic(t *testing.T) {
 	}
 }
 
+// A TCP connect deadline does not apply to the subsequent CONNECT exchange.
+// The tunnel setup must therefore set a socket deadline so a proxy that
+// accepts a connection but never returns a CONNECT response cannot hang.
+func TestHTTPProxyDialerTimesOutWhenProxyStaysSilentDuringConnect(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	accepted := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		close(accepted)
+		<-release
+	}()
+
+	dialer := NewHTTPProxyDialer(nil, mustParseURL("http://"+listener.Addr().String()))
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	result := make(chan error, 1)
+	go func() {
+		conn, err := dialer.DialTLSContext(ctx, "tcp", "example.com:443")
+		if conn != nil {
+			_ = conn.Close()
+		}
+		result <- err
+	}()
+
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("proxy did not accept the connection")
+	}
+
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("expected CONNECT response timeout")
+		}
+		var netErr net.Error
+		if !errors.As(err, &netErr) || !netErr.Timeout() {
+			t.Fatalf("expected CONNECT timeout, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("CONNECT request remained blocked after its context deadline")
+	}
+}
+
 // TestSOCKS5ProxyDialerBasic tests SOCKS5 proxy dialer creation.
 // Note: This is a unit test - actual proxy testing requires a proxy server.
 func TestSOCKS5ProxyDialerBasic(t *testing.T) {

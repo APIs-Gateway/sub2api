@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"time"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
@@ -216,6 +217,17 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	}
 	slog.Debug("tls_fingerprint_http_proxy_connected", "proxy_addr", proxyAddr)
 
+	// DialContext only applies the context deadline while opening the TCP
+	// connection. Apply that same deadline to the socket while the CONNECT
+	// tunnel is being established so a proxy that accepts but never responds
+	// cannot block the custom DialTLSContext indefinitely.
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("set CONNECT deadline: %w", err)
+		}
+	}
+
 	// Step 2: Send CONNECT request to establish tunnel
 	req := &http.Request{
 		Method: "CONNECT",
@@ -254,6 +266,10 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		_ = conn.Close()
 		slog.Debug("tls_fingerprint_http_proxy_connect_failed_status", "status_code", resp.StatusCode, "status", resp.Status)
 		return nil, fmt.Errorf("proxy CONNECT failed: %s", resp.Status)
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("clear CONNECT deadline: %w", err)
 	}
 	slog.Debug("tls_fingerprint_http_proxy_tunnel_established")
 
