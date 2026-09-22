@@ -1,12 +1,16 @@
 package service
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -109,4 +113,132 @@ func TestPassthroughKeepaliveDisabledKeepsWriterUntouched(t *testing.T) {
 	stop()
 	require.Zero(t, rec.Body.Len())
 	require.False(t, StopOpenAICompactSSEKeepaliveCommitted(c))
+}
+
+// passthroughKeepaliveGatedBody holds the upstream stream until the test
+// observes the keepalive Flush. That makes the ordering assertion deterministic
+// without guessing when a one-second production keepalive ticker will fire.
+type passthroughKeepaliveGatedBody struct {
+	gate   <-chan struct{}
+	reader io.Reader
+	once   sync.Once
+}
+
+func (b *passthroughKeepaliveGatedBody) Read(p []byte) (int, error) {
+	b.once.Do(func() {
+		select {
+		case <-b.gate:
+		case <-time.After(5 * time.Second):
+		}
+	})
+	return b.reader.Read(p)
+}
+
+func (b *passthroughKeepaliveGatedBody) Close() error { return nil }
+
+// passthroughKeepaliveObservationWriter signals the first flushed heartbeat and
+// records whether the streaming loop had stopped it before writing a real SSE
+// event. The latter guards the writer-ownership handoff in the passthrough loop.
+type passthroughKeepaliveObservationWriter struct {
+	gin.ResponseWriter
+	context          *gin.Context
+	heartbeatFlushed chan struct{}
+	flushOnce        sync.Once
+	mu               sync.Mutex
+	heartbeatWritten bool
+	dataWrites       int
+	dataAfterStop    bool
+}
+
+func (w *passthroughKeepaliveObservationWriter) Write(p []byte) (int, error) {
+	w.observeWrite(string(p))
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *passthroughKeepaliveObservationWriter) WriteString(s string) (int, error) {
+	w.observeWrite(s)
+	return w.ResponseWriter.WriteString(s)
+}
+
+func (w *passthroughKeepaliveObservationWriter) Flush() {
+	w.ResponseWriter.Flush()
+	w.mu.Lock()
+	heartbeatWritten := w.heartbeatWritten
+	w.mu.Unlock()
+	if heartbeatWritten {
+		w.flushOnce.Do(func() { close(w.heartbeatFlushed) })
+	}
+}
+
+func (w *passthroughKeepaliveObservationWriter) observeWrite(value string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if value == ": keepalive\n\n" {
+		w.heartbeatWritten = true
+		return
+	}
+	if !strings.HasPrefix(value, "data: ") {
+		return
+	}
+	w.dataWrites++
+	value, ok := w.context.Get(openAICompactSSEKeepaliveKey)
+	if !ok {
+		return
+	}
+	keepalive, ok := value.(*openAICompactSSEKeepalive)
+	if !ok || keepalive == nil {
+		return
+	}
+	keepalive.mu.Lock()
+	w.dataAfterStop = keepalive.stopped
+	keepalive.mu.Unlock()
+}
+
+func (w *passthroughKeepaliveObservationWriter) firstDataWriteStoppedKeepalive() (int, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.dataWrites, w.dataAfterStop
+}
+
+// This exercises the actual passthrough loop rather than the helper in
+// isolation: a configured heartbeat must be written while preamble events are
+// still buffered, then the loop must stop it before it writes any SSE event.
+func TestHandleStreamingResponsePassthrough_KeepsAliveBeforeFirstEventAndStopsBeforeWriterHandoff(t *testing.T) {
+	c, rec := newPassthroughKeepaliveTestContext(t)
+	flushed := make(chan struct{})
+	observer := &passthroughKeepaliveObservationWriter{
+		ResponseWriter:  c.Writer,
+		context:         c,
+		heartbeatFlushed: flushed,
+	}
+	c.Writer = observer
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: &passthroughKeepaliveGatedBody{
+			gate: flushed,
+			reader: strings.NewReader("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_keepalive\"}}\n\n" +
+				"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ready\"}\n\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_keepalive\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"),
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+		MaxLineSize:             defaultMaxLineSize,
+		StreamKeepaliveInterval: 1,
+	}}}
+
+	result, err := svc.handleStreamingResponsePassthrough(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	body := rec.Body.String()
+	require.Less(t, strings.Index(t, body, ": keepalive\n\n"), strings.Index(t, body, "data: {\"type\":\"response.created\""),
+		"the keepalive must reach the client before the first upstream SSE event")
+	require.Less(t, strings.Index(t, body, ": keepalive\n\n"), strings.Index(t, body, "response.output_text.delta"),
+		"the keepalive must precede the first semantic event")
+	writes, stopped := observer.firstDataWriteStoppedKeepalive()
+	require.NotZero(t, writes, "the passthrough loop must hand off at least one SSE write")
+	require.True(t, stopped, "the passthrough loop must stop keepalive before taking over the writer")
+	require.Equal(t, 1, strings.Count(body, ": keepalive\n\n"), "no heartbeat may race with the loop-owned writer")
 }
