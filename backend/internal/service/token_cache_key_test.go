@@ -87,60 +87,81 @@ func TestAntigravityTokenCacheKey(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "with_project_id",
+			name: "basic_account",
 			account: &Account{
 				ID: 200,
-				Credentials: map[string]any{
-					"project_id": "ag-project-456",
-				},
 			},
-			expected: "ag:ag-project-456",
+			expected: "ag:account:200",
 		},
 		{
-			name: "project_id_with_whitespace",
+			name: "account_with_project_id_still_uses_account_id",
 			account: &Account{
 				ID: 201,
 				Credentials: map[string]any{
-					"project_id": "  ag-project-spaces  ",
+					"project_id": "aicode-consumers",
 				},
 			},
-			expected: "ag:ag-project-spaces",
+			expected: "ag:account:201",
 		},
 		{
-			name: "empty_project_id_fallback_to_account_id",
+			name: "account_with_empty_credentials",
 			account: &Account{
 				ID: 202,
-				Credentials: map[string]any{
-					"project_id": "",
-				},
+				Credentials: map[string]any{},
 			},
 			expected: "ag:account:202",
 		},
 		{
-			name: "whitespace_only_project_id_fallback_to_account_id",
+			name: "account_with_empty_project_id",
 			account: &Account{
 				ID: 203,
 				Credentials: map[string]any{
-					"project_id": "   ",
+					"project_id": "",
 				},
 			},
 			expected: "ag:account:203",
 		},
 		{
-			name: "no_project_id_key_fallback_to_account_id",
+			name: "account_with_whitespace_project_id",
 			account: &Account{
-				ID:          204,
-				Credentials: map[string]any{},
+				ID: 204,
+				Credentials: map[string]any{
+					"project_id": "   ",
+				},
 			},
 			expected: "ag:account:204",
 		},
 		{
-			name: "nil_credentials_fallback_to_account_id",
+			name: "account_with_nil_credentials",
 			account: &Account{
 				ID:          205,
 				Credentials: nil,
 			},
 			expected: "ag:account:205",
+		},
+		{
+			name: "account_with_credentials",
+			account: &Account{
+				ID: 206,
+				Credentials: map[string]any{
+					"access_token": "test-token",
+				},
+			},
+			expected: "ag:account:206",
+		},
+		{
+			name: "account_id_zero",
+			account: &Account{
+				ID: 0,
+			},
+			expected: "ag:account:0",
+		},
+		{
+			name: "large_account_id",
+			account: &Account{
+				ID: 9999999999,
+			},
+			expected: "ag:account:9999999999",
 		},
 	}
 
@@ -150,6 +171,28 @@ func TestAntigravityTokenCacheKey(t *testing.T) {
 			require.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestAntigravityTokenCacheKeyIsolatesSharedProjectID(t *testing.T) {
+	accountA := &Account{
+		ID: 203,
+		Credentials: map[string]any{
+			"project_id": "aicode-consumers",
+		},
+	}
+	accountB := &Account{
+		ID: 204,
+		Credentials: map[string]any{
+			"project_id": "aicode-consumers",
+		},
+	}
+
+	keyA := AntigravityTokenCacheKey(accountA)
+	keyB := AntigravityTokenCacheKey(accountB)
+
+	require.Equal(t, "ag:account:203", keyA)
+	require.Equal(t, "ag:account:204", keyB)
+	require.NotEqual(t, keyA, keyB)
 }
 
 func TestOpenAITokenCacheKey(t *testing.T) {
