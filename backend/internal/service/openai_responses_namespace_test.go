@@ -48,6 +48,190 @@ func TestShouldFlattenOpenAIResponsesNamespaces(t *testing.T) {
 	}
 }
 
+func TestShouldStripOpenAIResponsesInputNamespaces(t *testing.T) {
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	nonOpenAI := &Account{Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+
+	tests := []struct {
+		name               string
+		account            *Account
+		transport          OpenAIUpstreamTransport
+		passthroughEnabled bool
+		want               bool
+	}{
+		{name: "nil_account", transport: OpenAIUpstreamTransportHTTPSSE, want: false},
+		{name: "non_openai_account", account: nonOpenAI, transport: OpenAIUpstreamTransportHTTPSSE, want: false},
+		{name: "oauth_http", account: oauth, transport: OpenAIUpstreamTransportHTTPSSE, want: true},
+		{name: "apikey_http", account: apiKey, transport: OpenAIUpstreamTransportHTTPSSE, want: true},
+		{name: "oauth_wsv2", account: oauth, transport: OpenAIUpstreamTransportResponsesWebsocketV2, want: false},
+		{name: "apikey_wsv2_passthrough", account: apiKey, transport: OpenAIUpstreamTransportResponsesWebsocketV2, passthroughEnabled: true, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, shouldStripOpenAIResponsesInputNamespaces(tt.account, tt.transport, tt.passthroughEnabled))
+		})
+	}
+}
+
+func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	nonOpenAI := &Account{Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+	namespaceTool := []byte(`{"tools":[{"type":"namespace","name":"mcp__cua_repl","tools":[]}]}`)
+
+	tests := []struct {
+		name        string
+		account     *Account
+		transport   OpenAIUpstreamTransport
+		passthrough bool
+		compact     bool
+		body        []byte
+		want        bool
+	}{
+		{name: "nil_account", body: namespaceTool, want: false},
+		{name: "compact", account: apiKey, compact: true, body: namespaceTool, want: false},
+		{name: "apikey_without_declaration", account: apiKey, want: false},
+		{name: "apikey_with_declaration", account: apiKey, body: namespaceTool, want: true},
+		{name: "non_openai_account", account: nonOpenAI, body: namespaceTool, want: false},
+		{name: "oauth_http_without_declaration", account: oauth, transport: OpenAIUpstreamTransportHTTPSSE, want: false},
+		{name: "oauth_http_with_declaration", account: oauth, transport: OpenAIUpstreamTransportHTTPSSE, body: namespaceTool, want: true},
+		{name: "oauth_wsv2_without_declaration", account: oauth, transport: OpenAIUpstreamTransportResponsesWebsocketV2, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, shouldKeepOpenAIResponsesToolCallNamespaces(
+				tt.account, tt.transport, tt.passthrough, tt.compact, tt.body,
+			))
+		})
+	}
+}
+
+func TestOpenAIResponsesNamespaceHelpers_NoOpAndItemTypes(t *testing.T) {
+	for _, tt := range []struct {
+		body []byte
+		want bool
+	}{
+		{body: []byte(`{"tools":[{"type":"namespace","name":"mcp","tools":[]}]}`), want: true},
+		{body: []byte(`{"input":"not-an-array"}`), want: false},
+		{body: []byte(`{"input":[{"type":"message","tools":[{"type":"namespace"}]}]}`), want: false},
+	} {
+		require.Equal(t, tt.want, hasOpenAIResponsesNamespaceToolDeclaration(tt.body))
+	}
+
+	for _, itemType := range []string{"function_call", "tool_call", "custom_tool_call", "mcp_tool_call"} {
+		require.True(t, isOpenAIResponsesToolCallItemType(itemType))
+	}
+	require.False(t, isOpenAIResponsesToolCallItemType("message"))
+
+	for _, body := range [][]byte{
+		[]byte(`{"input":[]}`),
+		[]byte(`{"namespace":"top-level-only"}`),
+		[]byte(`{"input":[{"type":"function_call","namespace":"mcp"}]}`),
+	} {
+		stripped, err := stripOpenAIResponsesInputNamespaces(body, true)
+		require.NoError(t, err)
+		require.Equal(t, body, stripped)
+	}
+}
+
+func TestResponsesLiteNamespaceDeclarationsPreserveHistoricalToolCalls(t *testing.T) {
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	body := []byte(`{
+		"input":[
+			{"type":"function_call","namespace":"collaboration","name":"spawn_agent","call_id":"call_spawn","arguments":"{}"},
+			{"type":"function_call","namespace":"mcp__cua_repl","name":"js","call_id":"call_js","arguments":"{}"},
+			{"type":"message","role":"user","namespace":"leftover","content":[{"type":"input_text","text":"continue"}]},
+			{"type":" Additional_Tools ","role":"developer","tools":[
+				{"type":" Namespace ","name":"collaboration","tools":[{"type":"function","name":"spawn_agent"}]},
+				{"type":"namespace","name":"mcp__cua_repl","tools":[{"type":"function","name":"js"}]}
+			]}
+		]
+	}`)
+
+	require.True(t, hasOpenAIResponsesNamespaceToolDeclaration(body))
+	require.True(t, shouldKeepOpenAIResponsesToolCallNamespaces(
+		apiKey, OpenAIUpstreamTransportHTTPSSE, false, false, body,
+	))
+	require.True(t, shouldKeepOpenAIResponsesToolCallNamespaces(
+		oauth, OpenAIUpstreamTransportHTTPSSE, false, false, body,
+	))
+
+	forwarded, err := stripOpenAIResponsesInputNamespaces(body, true)
+	require.NoError(t, err)
+	require.Equal(t, "collaboration", gjson.GetBytes(forwarded, "input.0.namespace").String())
+	require.Equal(t, "mcp__cua_repl", gjson.GetBytes(forwarded, "input.1.namespace").String())
+	require.False(t, gjson.GetBytes(forwarded, "input.2.namespace").Exists())
+	require.Equal(t, " Namespace ", gjson.GetBytes(forwarded, "input.3.tools.0.type").String())
+
+	// compact does not support input[].namespace, including a real Lite namespace
+	// declaration, so it keeps the existing cleanup contract.
+	require.False(t, shouldKeepOpenAIResponsesToolCallNamespaces(
+		apiKey, OpenAIUpstreamTransportHTTPSSE, false, true, body,
+	))
+	compact, err := stripOpenAIResponsesInputNamespaces(body, false)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(compact, "input.0.namespace").Exists())
+	require.False(t, gjson.GetBytes(compact, "input.1.namespace").Exists())
+}
+
+func TestResponsesNamespaceDeclarationDoesNotTreatPlainFunctionAsNamespace(t *testing.T) {
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	body := []byte(`{
+		"tools":[{"type":"function","name":"js","namespace":"mcp__cua_repl"}],
+		"input":[{"type":"function_call","namespace":"mcp__cua_repl","name":"js","arguments":"{}"}]
+	}`)
+
+	require.False(t, hasOpenAIResponsesNamespaceToolDeclaration(body))
+	require.False(t, shouldKeepOpenAIResponsesToolCallNamespaces(
+		apiKey, OpenAIUpstreamTransportHTTPSSE, false, false, body,
+	))
+	forwarded, err := stripOpenAIResponsesInputNamespaces(body, false)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(forwarded, "input.0.namespace").Exists())
+}
+
+// Responses Lite carries namespace declarations in input.additional_tools.
+// Forward must preserve call namespaces for those declarations while still
+// removing a namespace accidentally attached to an ordinary input message.
+func TestOpenAIGatewayService_Forward_APIKeyPreservesLiteNamespaceToolCalls(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-5.6-terra",
+		"stream":false,
+		"input":[
+			{"type":"function_call","namespace":"collaboration","name":"spawn_agent","call_id":"call_spawn","arguments":"{}"},
+			{"type":"function_call","namespace":"mcp__cua_repl","name":"js","call_id":"call_js","arguments":"{}"},
+			{"type":"message","role":"user","namespace":"leftover","content":[{"type":"input_text","text":"hello"}]},
+			{"type":"additional_tools","role":"developer","tools":[
+				{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent","parameters":{"type":"object"}}]},
+				{"type":"namespace","name":"mcp__cua_repl","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]}
+			]}
+		]
+	}`)
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		newOpenAIRejectedFieldTestResponse(http.StatusOK, `{"output":[],"usage":{"input_tokens":1,"output_tokens":1,"input_tokens_details":{"cached_tokens":0}}}`),
+	}}
+	c := newOpenAIRejectedFieldTestContext(body)
+	c.Request.Header.Set(responsesLiteHeader, "true")
+
+	result, err := newOpenAIRejectedFieldTestService(upstream).Forward(
+		context.Background(), c, newOpenAIRejectedFieldTestAccount(), body,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.bodies, 1)
+	forwarded := upstream.bodies[0]
+	require.Equal(t, "collaboration", gjson.GetBytes(forwarded, "input.0.namespace").String())
+	require.Equal(t, "spawn_agent", gjson.GetBytes(forwarded, "input.0.name").String())
+	require.Equal(t, "mcp__cua_repl", gjson.GetBytes(forwarded, "input.1.namespace").String())
+	require.Equal(t, "js", gjson.GetBytes(forwarded, "input.1.name").String())
+	require.False(t, gjson.GetBytes(forwarded, "input.2.namespace").Exists())
+	require.Equal(t, "collaboration", gjson.GetBytes(forwarded, `input.#(type=="additional_tools").tools.0.name`).String())
+	require.Equal(t, "mcp__cua_repl", gjson.GetBytes(forwarded, `input.#(type=="additional_tools").tools.1.name`).String())
+}
+
 // ---------------------------------------------------------------------------
 // flattenOpenAIResponsesNamespaces / restoreOpenAIResponsesNamespacePayload
 // helper-level behavior, including the no-op fast paths.

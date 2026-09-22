@@ -963,6 +963,151 @@ func (r *userRepository) ExistsByEmail(ctx context.Context, email string) (bool,
 	return r.client.User.Query().Where(userEmailLookupPredicate(email)).Exist(ctx)
 }
 
+// ExistsByEmailAlias 判断是否已有账号使用同一 Gmail/Googlemail 收件箱。它与
+// emailcanon 的开关保持一致，并兼容别名过滤上线前写入的历史原始地址。
+func (r *userRepository) ExistsByEmailAlias(ctx context.Context, email string) (bool, error) {
+	_, exists, err := emailAliasOwnerIDWithClient(ctx, clientFromContext(ctx, r.client), email, 0)
+	return exists, err
+}
+
+func emailAliasOwnerIDWithClient(ctx context.Context, client *dbent.Client, email string, currentUserID int64) (int64, bool, error) {
+	if client == nil {
+		return 0, false, nil
+	}
+	identity := emailcanon.CanonicalizeEmail(email)
+	if !emailcanon.Enabled() || !strings.HasSuffix(identity, "@gmail.com") {
+		return 0, false, nil
+	}
+	local := strings.TrimSuffix(identity, "@gmail.com")
+	if local == "" {
+		return 0, false, nil
+	}
+
+	// Googlemail 与 Gmail 是同一收件箱族；对历史原始地址使用去点匹配，并覆盖 +tag。
+	preds := []predicate.User{
+		dotStrippedEmailEQ(local + "@gmailcom"),
+		dotStrippedEmailLike(escapeLikeWildcards(local) + "+%@gmailcom"),
+		dotStrippedEmailEQ(local + "@googlemailcom"),
+		dotStrippedEmailLike(escapeLikeWildcards(local) + "+%@googlemailcom"),
+	}
+	candidates, err := client.User.Query().
+		Where(dbuser.Or(preds...)).
+		Select(dbuser.FieldID, dbuser.FieldEmail).
+		All(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+
+	// 查询只缩小候选集；最终判定仍以与存储相同的 canonical 规则为准。
+	// 返回“其他用户”优先于当前用户，避免历史重复数据让调用方误判为仅当前用户占用。
+	var selfID int64
+	selfExists := false
+	for _, candidate := range candidates {
+		if emailcanon.CanonicalizeEmail(candidate.Email) != identity {
+			continue
+		}
+		if candidate.ID != 0 && candidate.ID != currentUserID {
+			return candidate.ID, true, nil
+		}
+		if candidate.ID == currentUserID {
+			selfID = candidate.ID
+			selfExists = true
+		}
+	}
+	return selfID, selfExists, nil
+}
+
+// UpdateEmailWithAliasGuard 在调用方事务内更新主邮箱与密码哈希。
+//
+// 邮箱换绑不能只依赖服务层前置查重：两个并发请求可能同时看到同一收件箱未被占用。
+// 这里先按“字面邮箱 + 收件箱身份”加锁，复查是否已被其他用户占用，再执行写入；
+// PostgreSQL 使用事务级 advisory lock 跨实例互斥，测试内存库则由进程内锁兜底。
+func (r *userRepository) UpdateEmailWithAliasGuard(
+	ctx context.Context,
+	userID int64,
+	email string,
+	passwordHash string,
+) error {
+	if userID <= 0 {
+		return service.ErrUserNotFound
+	}
+	if strings.TrimSpace(email) == "" || passwordHash == "" {
+		return fmt.Errorf("email identity update requires email and password hash")
+	}
+	tx := dbent.TxFromContext(ctx)
+	if tx == nil {
+		return fmt.Errorf("email identity update requires a transaction")
+	}
+	client := tx.Client()
+
+	releaseEmailLock, err := lockRepositoryScopedKeys(
+		ctx,
+		client,
+		txAwareSQLExecutor(ctx, r.sql, r.client),
+		normalizedEmailUniquenessLockKey(email),
+		emailAliasUniquenessLockKey(email),
+	)
+	if err != nil {
+		return err
+	}
+	defer releaseEmailLock()
+
+	if err := ensureNormalizedEmailAvailableWithClient(ctx, client, userID, email); err != nil {
+		return err
+	}
+	ownerID, exists, err := emailAliasOwnerIDWithClient(ctx, client, email, userID)
+	if err != nil {
+		return err
+	}
+	if exists && ownerID != userID {
+		return service.ErrEmailExists
+	}
+
+	if _, err := client.User.UpdateOneID(userID).
+		SetEmail(emailcanon.CanonicalizeEmailForStorage(email)).
+		SetPasswordHash(passwordHash).
+		Save(ctx); err != nil {
+		return translatePersistenceError(err, service.ErrUserNotFound, service.ErrEmailExists)
+	}
+	return nil
+}
+
+// dotStrippedEmailExpr 渲染下面的表达式：去掉存量邮箱的大小写、首尾空白（与
+// userEmailLookupPredicate 的精确匹配口径一致，历史数据存在带空白的行）以及全部点号。
+//
+//	REPLACE(LOWER(TRIM(email)), '.', '')
+//
+// 两侧都去点，因此一个域名探针即可同时覆盖 Gmail 点号变体与 FQDN 根点（user@gmail.com.）。
+// migrations/191 为同一表达式建了索引。
+func dotStrippedEmailExpr(b *entsql.Builder, s *entsql.Selector) *entsql.Builder {
+	return b.WriteString("REPLACE(LOWER(TRIM(").
+		Ident(s.C(dbuser.FieldEmail)).
+		WriteString(")), '.', '')")
+}
+
+func dotStrippedEmailEQ(value string) predicate.User {
+	return predicate.User(func(s *entsql.Selector) {
+		s.Where(entsql.P(func(b *entsql.Builder) {
+			dotStrippedEmailExpr(b, s).WriteString(" = ").Arg(value)
+		}))
+	})
+}
+
+func dotStrippedEmailLike(pattern string) predicate.User {
+	return predicate.User(func(s *entsql.Selector) {
+		s.Where(entsql.P(func(b *entsql.Builder) {
+			dotStrippedEmailExpr(b, s).WriteString(" LIKE ").Arg(pattern).WriteString(` ESCAPE '\'`)
+		}))
+	})
+}
+
+// escapeLikeWildcards 转义 LIKE 元字符：本地部分合法可含 % 与 _，不转义会扩大匹配面。
+var likeWildcardEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
+
+func escapeLikeWildcards(value string) string {
+	return likeWildcardEscaper.Replace(value)
+}
+
 func ensureNormalizedEmailAvailableWithClient(ctx context.Context, client *dbent.Client, userID int64, email string) error {
 	client = clientFromContext(ctx, client)
 	if client == nil {
@@ -1010,6 +1155,16 @@ func normalizedEmailUniquenessLockKey(email string) string {
 		return ""
 	}
 	return "users:normalized-email:" + normalized
+}
+
+// emailAliasUniquenessLockKey serializes Gmail/Googlemail aliases according to
+// the same configurable canonicalization used by lookup and storage.
+func emailAliasUniquenessLockKey(email string) string {
+	identity := emailcanon.CanonicalizeEmail(email)
+	if !emailcanon.Enabled() || !strings.HasSuffix(identity, "@gmail.com") {
+		return ""
+	}
+	return "users:email-alias-identity:" + identity
 }
 
 func (r *userRepository) AddGroupToAllowedGroups(ctx context.Context, userID int64, groupID int64) error {

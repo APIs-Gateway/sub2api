@@ -248,7 +248,7 @@ func TestProxyImportDataReusesAndTriggersLatencyProbe(t *testing.T) {
 					"port":      443,
 					"username":  "u",
 					"password":  "p",
-					"status":    "active",
+					"status":    "inactive",
 				},
 			},
 			"accounts": []map[string]any{},
@@ -271,8 +271,19 @@ func TestProxyImportDataReusesAndTriggersLatencyProbe(t *testing.T) {
 
 	adminSvc.mu.Lock()
 	updatedIDs := append([]int64(nil), adminSvc.updatedProxyIDs...)
+	updatedProxies := append([]*service.UpdateProxyInput(nil), adminSvc.updatedProxies...)
 	adminSvc.mu.Unlock()
 	require.Contains(t, updatedIDs, int64(1))
+	require.Contains(t, updatedIDs, int64(400))
+	require.Len(t, updatedProxies, 2)
+	require.NotNil(t, updatedProxies[0].Username)
+	require.NotNil(t, updatedProxies[0].Password)
+	require.NotNil(t, updatedProxies[1].Username)
+	require.NotNil(t, updatedProxies[1].Password)
+	require.Equal(t, "user", *updatedProxies[0].Username)
+	require.Equal(t, "pass", *updatedProxies[0].Password)
+	require.Equal(t, "u", *updatedProxies[1].Username)
+	require.Equal(t, "p", *updatedProxies[1].Password)
 
 	require.Eventually(t, func() bool {
 		adminSvc.mu.Lock()

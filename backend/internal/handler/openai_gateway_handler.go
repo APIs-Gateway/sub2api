@@ -28,18 +28,20 @@ import (
 
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
-	gatewayService           *service.OpenAIGatewayService
-	billingCacheService      *service.BillingCacheService
-	apiKeyService            *service.APIKeyService
-	usageRecordWorkerPool    *service.UsageRecordWorkerPool
-	errorPassthroughService  *service.ErrorPassthroughService
-	contentModerationService *service.ContentModerationService
-	securityAuditCoordinator *securityaudit.Coordinator
-	opsService               *service.OpsService
-	concurrencyHelper        *ConcurrencyHelper
-	imageLimiter             *imageConcurrencyLimiter
-	maxAccountSwitches       int
-	cfg                      *config.Config
+	gatewayService                *service.OpenAIGatewayService
+	billingCacheService           *service.BillingCacheService
+	apiKeyService                 *service.APIKeyService
+	usageRecordWorkerPool         *service.UsageRecordWorkerPool
+	errorPassthroughService       *service.ErrorPassthroughService
+	contentModerationService      *service.ContentModerationService
+	securityAuditCoordinator      *securityaudit.Coordinator
+	opsService                    *service.OpsService
+	concurrencyHelper             *ConcurrencyHelper
+	imageLimiter                  *imageConcurrencyLimiter
+	maxAccountSwitches            int
+	cfg                           *config.Config
+	responsesWebSocketProxy       func(context.Context, *gin.Context, *coderws.Conn, *service.Account, string, []byte, *service.OpenAIWSIngressHooks) error
+	onOpenAIAccountScheduleResult func(accountID int64, success bool)
 }
 
 func resolveOpenAIMessagesDispatchMappedModel(apiKey *service.APIKey, requestedModel string) string {
@@ -1793,7 +1795,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		requestPayloadHash = service.HashUsageRequestPayload(wsFirstMessage)
 		wsMismatchRequestBody = wsFirstMessage
 
-		if err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
+		proxyResponsesWebSocket := h.gatewayService.ProxyResponsesWebSocketFromClient
+		if h.responsesWebSocketProxy != nil {
+			proxyResponsesWebSocket = h.responsesWebSocketProxy
+		}
+		if err := proxyResponsesWebSocket(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				releaseAccountSlot()
@@ -1826,7 +1832,32 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				continue
 			}
 
+			var closeErr *service.OpenAIWSClientCloseError
+			hasClientCloseErr := errors.As(err, &closeErr)
+			// A service-wrapped normal close (1000) is an ingress exit, not an
+			// upstream/account failure.
+			if hasClientCloseErr && closeErr.StatusCode() == coderws.StatusNormalClosure {
+				reqLog.Info("openai.websocket_ingress_closed_normally",
+					zap.Int64("account_id", account.ID),
+					zap.String("reason", closeErr.Reason()),
+				)
+				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+				return
+			}
+
+			// The ingress reader returns bare 1000 close errors, and cancellation
+			// can surface with a 1001 close. Neither is an account failure.
+			if coderws.CloseStatus(err) == coderws.StatusNormalClosure || errors.Is(err, context.Canceled) {
+				reqLog.Info("openai.websocket_ingress_closed_normally",
+					zap.Int64("account_id", account.ID), zap.Error(err))
+				closeOpenAIClientWS(wsConn, coderws.StatusNormalClosure, "")
+				return
+			}
+
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+			if h.onOpenAIAccountScheduleResult != nil {
+				h.onOpenAIAccountScheduleResult(account.ID, false)
+			}
 			closeStatus, closeReason := summarizeWSCloseErrorForLog(err)
 			reqLog.With(appendOpenAIProxyLogFields(account)...).Warn("openai.websocket_proxy_failed",
 				zap.Int64("account_id", account.ID),
@@ -1834,8 +1865,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				zap.String("close_status", closeStatus),
 				zap.String("close_reason", closeReason),
 			)
-			var closeErr *service.OpenAIWSClientCloseError
-			if errors.As(err, &closeErr) {
+			if hasClientCloseErr {
 				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
 				return
 			}
@@ -2834,19 +2864,21 @@ func waitPoolModeSameAccountRetry(
 	if !ok {
 		return false, false
 	}
+	retryDelay := sameAccountRetryDelayFor(failoverErr, retryCount)
 	if reqLog != nil {
 		reqLog.Warn(logEvent,
 			zap.Int64("account_id", account.ID),
 			zap.Int("upstream_status", failoverErr.StatusCode),
 			zap.Int("retry_limit", retryLimit),
 			zap.Int("retry_count", retryCount),
+			zap.Duration("retry_delay", retryDelay),
 		)
 	}
 	ctx := context.Background()
 	if c != nil && c.Request != nil {
 		ctx = c.Request.Context()
 	}
-	if !sleepWithContext(ctx, sameAccountRetryDelay) {
+	if !sleepWithContext(ctx, retryDelay) {
 		return true, true
 	}
 	return true, false

@@ -15,9 +15,15 @@ func TestCanonicalizeEmail_Enabled(t *testing.T) {
 		{"  F.O.O+Tag@Gmail.Com  ", "foo@gmail.com"}, // 大小写+空格
 		{"foo@googlemail.com", "foo@gmail.com"},
 		{"f.o.o+x@googlemail.com", "foo@gmail.com"},
+		// A single FQDN trailing dot is valid in the domain and must not bypass
+		// Gmail-family alias canonicalization. The local part is unchanged before
+		// the existing Gmail dot/+ rules are applied.
+		{"f.o.o+tag@gmail.com.", "foo@gmail.com"},
+		{"f.o.o+tag@googlemail.com.", "foo@gmail.com"},
 		{"first.last@gmail.com", "firstlast@gmail.com"},
 		// 非 Gmail：只 lower+trim，保留点与 +
 		{"a.b+c@outlook.com", "a.b+c@outlook.com"},
+		{"A.B+c@Outlook.com.", "a.b+c@outlook.com."},
 		{"A.B@Example.COM", "a.b@example.com"},
 		// 退化/异常：原样（lower+trim）
 		{"+tag@gmail.com", "+tag@gmail.com"}, // 本地部分清空后退化
@@ -64,8 +70,10 @@ func TestCanonicalizeEmailForStorage(t *testing.T) {
 		// Gmail：归一化为规范地址
 		{"F.O.O+tag@Gmail.com", "foo@gmail.com"},
 		{"foo@googlemail.com", "foo@gmail.com"},
+		{"F.O.O+tag@Googlemail.com.", "foo@gmail.com"},
 		// 非 Gmail：原样落库（保留大小写/空格，去重交给查询端 LOWER(TRIM)）
 		{" Legacy@Example.com ", " Legacy@Example.com "},
+		{" Legacy@Example.com. ", " Legacy@Example.com. "},
 		{"A.B+c@outlook.com", "A.B+c@outlook.com"},
 		// 退化 gmail：原样
 		{"+tag@gmail.com", "+tag@gmail.com"},

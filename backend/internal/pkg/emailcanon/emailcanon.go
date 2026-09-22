@@ -41,6 +41,10 @@ func CanonicalizeEmail(email string) string {
 		return e // 无本地部分或无域名，原样返回
 	}
 	local, domain := e[:at], e[at+1:]
+	// mail.ParseAddress accepts an FQDN's single trailing dot. Strip it only
+	// while deciding whether this is a Gmail-family address: non-Gmail emails
+	// must retain their existing lower+trim-only semantics.
+	domain = strings.TrimSuffix(domain, ".")
 	if domain != "gmail.com" && domain != "googlemail.com" {
 		return e
 	}
@@ -66,7 +70,10 @@ func CanonicalizeEmailForStorage(email string) string {
 	if at <= 0 || at == len(e)-1 {
 		return email
 	}
-	domain := e[at+1:]
+	// Keep non-Gmail storage values byte-for-byte unchanged, including an FQDN
+	// trailing dot. Gmail-family aliases use the same FQDN-aware recognition as
+	// CanonicalizeEmail so their stored and lookup identities cannot diverge.
+	domain := strings.TrimSuffix(e[at+1:], ".")
 	if domain != "gmail.com" && domain != "googlemail.com" {
 		return email // 非 Gmail：原样落库
 	}

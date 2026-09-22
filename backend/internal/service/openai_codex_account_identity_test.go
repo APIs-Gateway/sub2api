@@ -172,6 +172,48 @@ func TestCodexAccountIdentitySourceOverwritesFailoverContext(t *testing.T) {
 	require.Same(t, next, codexAccountIdentitySource(c, first))
 }
 
+func TestCodexAccountIdentityFailoverReprojectsWSV2PassthroughPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	c.Set("api_key", &APIKey{ID: 77})
+
+	service := &OpenAIGatewayService{}
+	first := &Account{ID: 11, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{
+		"chatgpt_account_id": "primary-oauth-account",
+	}}
+	next := &Account{ID: 19, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{
+		"chatgpt_account_id": "failover-oauth-account",
+	}}
+	clientFrame := []byte(`{"type":"response.create","prompt_cache_key":"client-session","client_metadata":{"session_id":"client-session","thread_id":"client-thread","x-codex-turn-metadata":"{\"turn_id\":\"client-turn\"}"}}`)
+
+	project := func(account *Account) []byte {
+		t.Helper()
+		service.prepareCodexAccountIdentitySource(c, account)
+		projected, changed, err := applyCodexAccountIdentityClientMetadataRaw(clientFrame, codexAccountIdentitySource(c, nil), getAPIKeyIDFromContext(c))
+		require.NoError(t, err)
+		require.True(t, changed)
+		return projected
+	}
+
+	primary := project(first)
+	failover := project(next)
+	require.Same(t, next, codexAccountIdentitySource(c, first), "the next selected OAuth account must replace the prior attempt source")
+	for _, path := range []string{
+		"prompt_cache_key",
+		"client_metadata.session_id",
+		"client_metadata.thread_id",
+		"client_metadata.x-codex-turn-metadata",
+	} {
+		require.NotEqual(t, gjson.GetBytes(primary, path).String(), gjson.GetBytes(failover, path).String(), path)
+	}
+	require.Equal(t, scopeCodexAccountIdentityValue(next, 77, "session", "client-session"), gjson.GetBytes(failover, "prompt_cache_key").String())
+	require.Equal(t, scopeCodexAccountIdentityValue(next, 77, "thread", "client-thread"), gjson.GetBytes(failover, "client_metadata.thread_id").String())
+	turnMetadata := gjson.GetBytes(failover, "client_metadata.x-codex-turn-metadata").String()
+	require.Equal(t, scopeCodexAccountIdentityValue(next, 77, "turn", "client-turn"), gjson.Get(turnMetadata, "turn_id").String())
+}
+
 func TestBuildOpenAIWSHeadersNamespacesCodexIdentityByOAuthAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
