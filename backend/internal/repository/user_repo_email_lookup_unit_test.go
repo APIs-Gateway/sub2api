@@ -10,6 +10,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/emailcanon"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 
@@ -70,6 +71,153 @@ func TestUserRepositoryExistsByEmailNormalizesLegacySpacingAndCase(t *testing.T)
 	exists, err := repo.ExistsByEmail(ctx, "  LEGACY@example.com  ")
 	require.NoError(t, err)
 	require.True(t, exists)
+}
+
+func TestEmailAliasOwnerHandlesDefensiveInputs(t *testing.T) {
+	repo, client := newUserEntRepo(t)
+	ctx := context.Background()
+
+	previousAliasFilterEnabled := emailcanon.Enabled()
+	emailcanon.SetEnabled(true)
+	t.Cleanup(func() { emailcanon.SetEnabled(previousAliasFilterEnabled) })
+
+	_, exists, err := emailAliasOwnerIDWithClient(ctx, nil, "owner@gmail.com", 0)
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	_, exists, err = emailAliasOwnerIDWithClient(ctx, client, "@gmail.com", 0)
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	require.ErrorIs(t, repo.UpdateEmailWithAliasGuard(ctx, 0, "owner@gmail.com", "hash"), service.ErrUserNotFound)
+	require.Error(t, repo.UpdateEmailWithAliasGuard(ctx, 1, "", "hash"))
+	require.Error(t, repo.UpdateEmailWithAliasGuard(ctx, 1, "owner@gmail.com", ""))
+	require.Error(t, repo.UpdateEmailWithAliasGuard(ctx, 1, "owner@gmail.com", "hash"))
+}
+
+func TestEmailAliasOwnerRejectsMoreThanFiftyHistoricalAliases(t *testing.T) {
+	repo, client := newUserEntRepo(t)
+	ctx := context.Background()
+
+	previousAliasFilterEnabled := emailcanon.Enabled()
+	emailcanon.SetEnabled(true)
+	t.Cleanup(func() { emailcanon.SetEnabled(previousAliasFilterEnabled) })
+
+	// These rows model accounts created before alias filtering was enabled. Each
+	// spelling has the same canonical Gmail inbox but a distinct historical owner.
+	for i := 0; i < 51; i++ {
+		_, err := client.User.Create().
+			SetEmail(fmt.Sprintf("his.tory.owner+legacy-%d@googlemail.com", i)).
+			SetPasswordHash("hash").
+			SetUsername(fmt.Sprintf("historical-alias-owner-%d", i)).
+			Save(ctx)
+		require.NoError(t, err)
+	}
+
+	currentUser, err := client.User.Create().
+		SetEmail("current-owner@example.com").
+		SetPasswordHash("hash").
+		SetUsername("current-owner").
+		Save(ctx)
+	require.NoError(t, err)
+
+	ownerID, exists, err := emailAliasOwnerIDWithClient(ctx, client, "history.owner+new@gmail.com", currentUser.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NotEqual(t, currentUser.ID, ownerID)
+
+	tx, err := client.Tx(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	txCtx := dbent.NewTxContext(ctx, tx)
+	require.ErrorIs(
+		t,
+		repo.UpdateEmailWithAliasGuard(txCtx, currentUser.ID, "history.owner+new@gmail.com", "new-hash"),
+		service.ErrEmailExists,
+	)
+}
+
+func TestEmailAliasOwnerRejectsGmailFamilyFQDNTrailingDotAliases(t *testing.T) {
+	previousAliasFilterEnabled := emailcanon.Enabled()
+	emailcanon.SetEnabled(true)
+	t.Cleanup(func() { emailcanon.SetEnabled(previousAliasFilterEnabled) })
+
+	cases := []struct {
+		name       string
+		historical string
+		requested  string
+	}{
+		{
+			name:       "gmail trailing dot request matches googlemail dot tag history",
+			historical: "f.oo+legacy@googlemail.com",
+			requested:  "foo+new@gmail.com.",
+		},
+		{
+			name:       "googlemail trailing dot request matches gmail dot tag history",
+			historical: "f.oo+legacy@gmail.com.",
+			requested:  "foo+new@googlemail.com.",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, client := newUserEntRepo(t)
+			ctx := context.Background()
+
+			owner, err := client.User.Create().
+				SetEmail(tc.historical).
+				SetPasswordHash("hash").
+				SetUsername("historical-owner").
+				Save(ctx)
+			require.NoError(t, err)
+			currentUser, err := client.User.Create().
+				SetEmail("current-owner@example.com").
+				SetPasswordHash("hash").
+				SetUsername("current-owner").
+				Save(ctx)
+			require.NoError(t, err)
+
+			ownerID, exists, err := emailAliasOwnerIDWithClient(ctx, client, tc.requested, currentUser.ID)
+			require.NoError(t, err)
+			require.True(t, exists)
+			require.Equal(t, owner.ID, ownerID)
+
+			tx, err := client.Tx(ctx)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			txCtx := dbent.NewTxContext(ctx, tx)
+			require.ErrorIs(
+				t,
+				repo.UpdateEmailWithAliasGuard(txCtx, currentUser.ID, tc.requested, "new-hash"),
+				service.ErrEmailExists,
+			)
+		})
+	}
+}
+
+func TestEmailAliasOwnerReportsQueryAndPersistenceErrors(t *testing.T) {
+	_, client := newUserEntRepo(t)
+	ctx := context.Background()
+
+	previousAliasFilterEnabled := emailcanon.Enabled()
+	emailcanon.SetEnabled(true)
+	t.Cleanup(func() { emailcanon.SetEnabled(previousAliasFilterEnabled) })
+
+	require.NoError(t, client.Close())
+	_, _, err := emailAliasOwnerIDWithClient(ctx, client, "owner@gmail.com", 0)
+	require.Error(t, err)
+
+	// Use a separate fixture because the client above is intentionally closed.
+	repo, client := newUserEntRepo(t)
+	tx, err := client.Tx(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	txCtx := dbent.NewTxContext(ctx, tx)
+	require.ErrorIs(
+		t,
+		repo.UpdateEmailWithAliasGuard(txCtx, 999999, "missing-user@gmail.com", "hash"),
+		service.ErrUserNotFound,
+	)
 }
 
 func TestUserRepositoryCreateRejectsNormalizedEmailDuplicate(t *testing.T) {

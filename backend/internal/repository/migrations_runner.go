@@ -58,6 +58,7 @@ const schedulerOutboxPendingDedupKeyIndex = "idx_scheduler_outbox_pending_dedup_
 const authCacheInvalidationOutboxMigration = "184_auth_cache_invalidation_outbox.sql"
 const latestAPIKeyIPIndexMigration = "185_add_usage_logs_api_key_latest_ip_index_notx.sql"
 const latestAPIKeyIPIndex = "idx_usage_logs_api_key_latest_ip"
+const userEmailDotStrippedIndexMigration = "191_add_users_email_dot_stripped_index_notx.sql"
 
 // opsIngressRejectAggregatesMigration is the default (Postgres) migration file for the
 // ops_ingress_reject_aggregates rollup table. Like authCacheInvalidationOutboxMigration
@@ -103,7 +104,7 @@ func migrationAppliesToDatabase(name string, dialect migrationDatabaseDialect) b
 		return dialect == migrationDatabaseMySQL
 	case strings.HasSuffix(name, "_sqlite.sql"):
 		return dialect == migrationDatabaseSQLite
-	case name == authCacheInvalidationOutboxMigration || name == latestAPIKeyIPIndexMigration || name == opsIngressRejectAggregatesMigration:
+	case name == authCacheInvalidationOutboxMigration || name == latestAPIKeyIPIndexMigration || name == userEmailDotStrippedIndexMigration || name == opsIngressRejectAggregatesMigration:
 		return dialect == migrationDatabasePostgres
 	default:
 		return true
