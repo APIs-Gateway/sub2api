@@ -44,30 +44,6 @@ type OpenAIGatewayHandler struct {
 	onOpenAIAccountScheduleResult func(accountID int64, success bool)
 }
 
-//go:noinline
-func (h *OpenAIGatewayHandler) proxyResponsesWebSocketFromClient(
-	ctx context.Context,
-	c *gin.Context,
-	wsConn *coderws.Conn,
-	account *service.Account,
-	token string,
-	firstMessage []byte,
-	hooks *service.OpenAIWSIngressHooks,
-) error {
-	if h.responsesWebSocketProxy != nil {
-		return h.responsesWebSocketProxy(ctx, c, wsConn, account, token, firstMessage, hooks)
-	}
-	return h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, firstMessage, hooks)
-}
-
-//go:noinline
-func (h *OpenAIGatewayHandler) reportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int, model ...string) {
-	h.gatewayService.ReportOpenAIAccountScheduleResult(accountID, success, firstTokenMs, model...)
-	if h.onOpenAIAccountScheduleResult != nil {
-		h.onOpenAIAccountScheduleResult(accountID, success)
-	}
-}
-
 // openAIWSIngressEndedByClient reports whether an ingress WebSocket ended
 // normally at the client boundary rather than because of an upstream/account
 // fault. Keep this deliberately narrow: only normal close (1000) and request
@@ -1845,7 +1821,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		requestPayloadHash = service.HashUsageRequestPayload(wsFirstMessage)
 		wsMismatchRequestBody = wsFirstMessage
 
-		if err := h.proxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
+		proxyResponsesWebSocket := h.gatewayService.ProxyResponsesWebSocketFromClient
+		if h.responsesWebSocketProxy != nil {
+			proxyResponsesWebSocket = h.responsesWebSocketProxy
+		}
+		if err := proxyResponsesWebSocket(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				releaseAccountSlot()
@@ -1853,7 +1833,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					closeOpenAIWSFailoverExhausted(wsConn, failoverErr)
 					return
 				}
-				h.reportOpenAIAccountScheduleResult(account.ID, false, nil)
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
 				failedAccountIDs[account.ID] = struct{}{}
 				lastFailoverErr = failoverErr
 				if switchCount >= maxAccountSwitches {
@@ -1897,7 +1877,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			}
 
 			if shouldReportOpenAIWSProxyAccountFailure(err) {
-				h.reportOpenAIAccountScheduleResult(account.ID, false, nil)
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				if h.onOpenAIAccountScheduleResult != nil {
+					h.onOpenAIAccountScheduleResult(account.ID, false)
+				}
 			}
 			closeStatus, closeReason := summarizeWSCloseErrorForLog(err)
 			reqLog.With(appendOpenAIProxyLogFields(account)...).Warn("openai.websocket_proxy_failed",
