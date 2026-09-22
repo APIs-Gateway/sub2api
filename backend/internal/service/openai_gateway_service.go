@@ -379,6 +379,7 @@ type OpenAIGatewayService struct {
 	openaiModelTransientOnce      sync.Once
 	openaiWSPool                  *openAIWSConnPool
 	openaiWSStateStore            OpenAIWSStateStore
+	openaiWSSessionPreemptions    openAIWSSessionPreemptRegistry
 	openaiScheduler               OpenAIAccountScheduler
 	openaiWSPassthroughDialer     openAIWSClientDialer
 	openaiAccountStats            *openAIAccountRuntimeStats
@@ -2702,6 +2703,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	restrictionResult := s.detectCodexClientRestriction(c, account)
 	apiKeyID := getAPIKeyIDFromContext(c)
+	// The WS execution scope must be derived before account namespace and
+	// fingerprint normalization rewrite the client payload. Both HTTP-via-WS and
+	// WS ingress then use the original client identity for session state.
+	wsExecutionScope, _ := resolveOpenAIWSExecutionScope(c, body, apiKeyID)
 	logCodexCLIOnlyDetection(ctx, c, account, apiKeyID, restrictionResult, body)
 	if restrictionResult.Enabled && !restrictionResult.Matched {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
@@ -3351,6 +3356,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				c,
 				account,
 				wsReqBody,
+				wsExecutionScope,
 				token,
 				wsDecision,
 				isCodexCLI,
