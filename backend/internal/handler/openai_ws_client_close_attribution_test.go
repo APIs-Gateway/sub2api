@@ -199,7 +199,7 @@ func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures
 		t.Run(tt.name, func(t *testing.T) {
 			reports := make(chan bool, 1)
 			h := newOpenAIResponsesWebSocketAttributionHandler(t, tt.proxyErr, reports)
-			server, handlerDone := newOpenAIResponsesWebSocketAttributionServer(t, h)
+			server := newOpenAIResponsesWebSocketAttributionServer(t, h)
 			defer server.Close()
 
 			dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
@@ -217,11 +217,12 @@ func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures
 			cancelWrite()
 			require.NoError(t, err)
 
-			select {
-			case <-handlerDone:
-			case <-time.After(3 * time.Second):
-				t.Fatal("ResponsesWebSocket 未在代理退出后结束")
-			}
+			readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+			_, _, err = client.Read(readCtx)
+			cancelRead()
+			require.Error(t, err, "代理退出必须通过 handler 回写 WebSocket 关闭帧")
+			var closeErr coderws.CloseError
+			require.ErrorAs(t, err, &closeErr, "必须收到 handler 回写的关闭码")
 
 			select {
 			case success := <-reports:
@@ -291,7 +292,7 @@ func newOpenAIResponsesWebSocketAttributionHandler(t *testing.T, proxyErr error,
 	}
 }
 
-func newOpenAIResponsesWebSocketAttributionServer(t *testing.T, h *OpenAIGatewayHandler) (*httptest.Server, <-chan struct{}) {
+func newOpenAIResponsesWebSocketAttributionServer(t *testing.T, h *OpenAIGatewayHandler) *httptest.Server {
 	t.Helper()
 	groupID := int64(945)
 	apiKey := &service.APIKey{
@@ -300,14 +301,12 @@ func newOpenAIResponsesWebSocketAttributionServer(t *testing.T, h *OpenAIGateway
 		User:    &service.User{ID: 9451, Status: service.StatusActive},
 		Group:   &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive},
 	}
-	handlerDone := make(chan struct{})
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
 		c.Next()
-		close(handlerDone)
 	})
 	router.GET("/openai/v1/responses", h.ResponsesWebSocket)
-	return httptest.NewServer(router), handlerDone
+	return httptest.NewServer(router)
 }
