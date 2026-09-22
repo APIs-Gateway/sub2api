@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -197,6 +198,7 @@ func TestPromptEventAdminHandlerFilterDeleteRequiresBoundSingleUseConfirmation(t
 	handler.clock = promptEventHandlerTestClock{now: start}
 
 	c, recorder := newPromptEventJSONContext(t, "/admin/prompt-audit/events/delete-preview", `{"start_at":"2023-11-14T22:13:20Z","end_at":"2023-11-14T23:13:20Z"}`)
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 7})
 	handler.DeletePreview(c)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.NotEmpty(t, preview.ConfirmationToken)
@@ -206,6 +208,7 @@ func TestPromptEventAdminHandlerFilterDeleteRequiresBoundSingleUseConfirmation(t
 	requestBody, err := json.Marshal(request)
 	require.NoError(t, err)
 	c, recorder = newPromptEventJSONContext(t, "/admin/prompt-audit/events/delete-by-filter", string(requestBody))
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 7})
 	handler.DeleteByFilter(c)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, int64(42), repo.deleteSnapshotMaxID)
@@ -226,6 +229,7 @@ func TestPromptEventAdminHandlerFilterDeleteRejectsMalformedAndExpiredConfirmati
 	handler.clock = promptEventHandlerTestClock{now: end}
 
 	c, recorder := newPromptEventJSONContext(t, "/admin/prompt-audit/events/delete-by-filter", `{"filter":{"start_at":"2023-11-14T22:13:20Z"},"snapshot_max_id":42,"filter_hash":"hash","confirmation_token":"missing","confirm":true}`)
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 7})
 	handler.DeleteByFilter(c)
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.Zero(t, repo.deleteSnapshotMaxID)
@@ -236,6 +240,7 @@ func TestPromptEventAdminHandlerFilterDeleteRejectsMalformedAndExpiredConfirmati
 	request, err := json.Marshal(DeleteByFilterRequest{Filter: EventFilter{StartAt: &start, EndAt: &end}, SnapshotMaxID: 42, FilterHash: preview.FilterHash, ConfirmationToken: preview.ConfirmationToken, Confirm: true})
 	require.NoError(t, err)
 	c, recorder = newPromptEventJSONContext(t, "/admin/prompt-audit/events/delete-by-filter", string(request))
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 7})
 	handler.DeleteByFilter(c)
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.Zero(t, repo.deleteSnapshotMaxID)

@@ -11,6 +11,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -120,7 +121,12 @@ func (h *PromptEventAdminHandler) DeletePreview(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if err := h.issueConfirmation(preview, adminID(c)); err != nil {
+	adminID, ok := adminID(c)
+	if !ok {
+		response.Unauthorized(c, "Admin authentication required")
+		return
+	}
+	if err := h.issueConfirmation(preview, adminID); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -137,7 +143,12 @@ func (h *PromptEventAdminHandler) DeleteByFilter(c *gin.Context) {
 		response.ErrorFrom(c, errors.New("prompt audit event repository unavailable"))
 		return
 	}
-	if err := h.consumeConfirmation(request, adminID(c)); err != nil {
+	adminID, ok := adminID(c)
+	if !ok {
+		response.Unauthorized(c, "Admin authentication required")
+		return
+	}
+	if err := h.consumeConfirmation(request, adminID); err != nil {
 		response.ErrorFrom(c, infraerrors.BadRequest("prompt_audit_delete_confirmation_invalid", "删除确认无效或已过期"))
 		return
 	}
@@ -203,6 +214,18 @@ func (h *PromptEventAdminHandler) now() time.Time {
 		return h.clock.Now()
 	}
 	return realClock{}.Now()
+}
+
+// adminID returns the authenticated administrator identity installed by the
+// admin route middleware. Callers reject absent and invalid identities so the
+// destructive confirmation contract remains fail-closed if route wiring
+// changes.
+func adminID(c *gin.Context) (int64, bool) {
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		return 0, false
+	}
+	return subject.UserID, true
 }
 
 func eventFilterFromQuery(c *gin.Context) (EventFilter, error) {
