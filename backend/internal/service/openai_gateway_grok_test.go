@@ -483,7 +483,7 @@ func TestOpenAIGatewayServiceForwardGrokResponsesNonStreaming(t *testing.T) {
 		},
 	}
 	provider := NewGrokTokenProvider(nil, &grokUnauthorizedCacheStub{}, nil)
-	upstream := &httpUpstreamStub{resp: &http.Response{
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
 		Header: http.Header{
 			"Content-Type": []string{"application/json"},
@@ -497,13 +497,14 @@ func TestOpenAIGatewayServiceForwardGrokResponsesNonStreaming(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	c.Request.Header.Set("OpenAI-Beta", "responses=v1")
 
-	result, err := svc.forwardGrokResponses(context.Background(), c, account, []byte(`{"model":"grok-4.3","reasoning":{"effort":"high"}}`), "grok-4.3", false, time.Now())
+	result, err := svc.forwardGrokResponses(context.Background(), c, account, []byte(`{"model":"grok-4.6","reasoning":{"effort":"xhigh"}}`), "grok-4.6", false, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, "req-grok-1", result.RequestID)
 	require.Equal(t, "resp-grok-1", result.ResponseID)
 	require.Equal(t, 3, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)
-	require.Equal(t, "high", *result.ReasoningEffort)
+	require.Equal(t, "xhigh", *result.ReasoningEffort)
+	require.Equal(t, "xhigh", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
 	require.Contains(t, recorder.Body.String(), "resp-grok-1")
 }
 

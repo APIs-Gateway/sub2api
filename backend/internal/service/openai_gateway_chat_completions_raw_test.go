@@ -151,6 +151,7 @@ func TestForwardAsRawChatCompletions_GrokAPIKeyUsesGrokCredentialsAndStripsViewI
 			{"type":"function","function":{"name":"view_image"}},
 			{"type":"function","function":{"name":"shell_command"}}
 		],
+		"reasoningEffort":"xhigh",
 		"stream":false
 	}`)
 	rec := httptest.NewRecorder()
@@ -198,6 +199,8 @@ func TestForwardAsRawChatCompletions_GrokAPIKeyUsesGrokCredentialsAndStripsViewI
 	// unrelated tool is preserved.
 	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(function.name=="view_image")`).Exists())
 	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(function.name=="shell_command")`).Exists())
+	require.Equal(t, "xhigh", gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "reasoningEffort").Exists())
 }
 
 // TestForwardAsRawChatCompletions_GrokAPIKeyDefaultsToXAIBaseURLWhenCredentialUnset 锁定
