@@ -963,10 +963,6 @@ func (r *userRepository) ExistsByEmail(ctx context.Context, email string) (bool,
 	return r.client.User.Query().Where(userEmailLookupPredicate(email)).Exist(ctx)
 }
 
-// emailAliasCandidateLimit 限制一次别名查重最多取回的候选行数。探针以去点后的
-// Gmail 本地部分为前缀锚定；上限只是兜底，避免公开未鉴权的端点读入大表。
-const emailAliasCandidateLimit = 50
-
 // ExistsByEmailAlias 判断是否已有账号使用同一 Gmail/Googlemail 收件箱。它与
 // emailcanon 的开关保持一致，并兼容别名过滤上线前写入的历史原始地址。
 func (r *userRepository) ExistsByEmailAlias(ctx context.Context, email string) (bool, error) {
@@ -996,7 +992,6 @@ func emailAliasOwnerIDWithClient(ctx context.Context, client *dbent.Client, emai
 	}
 	candidates, err := client.User.Query().
 		Where(dbuser.Or(preds...)).
-		Limit(emailAliasCandidateLimit).
 		Select(dbuser.FieldID, dbuser.FieldEmail).
 		All(ctx)
 	if err != nil {

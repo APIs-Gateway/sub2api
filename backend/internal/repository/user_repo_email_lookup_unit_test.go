@@ -95,6 +95,48 @@ func TestEmailAliasOwnerHandlesDefensiveInputs(t *testing.T) {
 	require.Error(t, repo.UpdateEmailWithAliasGuard(ctx, 1, "owner@gmail.com", "hash"))
 }
 
+func TestEmailAliasOwnerRejectsMoreThanFiftyHistoricalAliases(t *testing.T) {
+	repo, client := newUserEntRepo(t)
+	ctx := context.Background()
+
+	previousAliasFilterEnabled := emailcanon.Enabled()
+	emailcanon.SetEnabled(true)
+	t.Cleanup(func() { emailcanon.SetEnabled(previousAliasFilterEnabled) })
+
+	// These rows model accounts created before alias filtering was enabled. Each
+	// spelling has the same canonical Gmail inbox but a distinct historical owner.
+	for i := 0; i < 51; i++ {
+		_, err := client.User.Create().
+			SetEmail(fmt.Sprintf("his.tory.owner+legacy-%d@googlemail.com", i)).
+			SetPasswordHash("hash").
+			SetUsername(fmt.Sprintf("historical-alias-owner-%d", i)).
+			Save(ctx)
+		require.NoError(t, err)
+	}
+
+	currentUser, err := client.User.Create().
+		SetEmail("current-owner@example.com").
+		SetPasswordHash("hash").
+		SetUsername("current-owner").
+		Save(ctx)
+	require.NoError(t, err)
+
+	ownerID, exists, err := emailAliasOwnerIDWithClient(ctx, client, "history.owner+new@gmail.com", currentUser.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NotEqual(t, currentUser.ID, ownerID)
+
+	tx, err := client.Tx(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	txCtx := dbent.NewTxContext(ctx, tx)
+	require.ErrorIs(
+		t,
+		repo.UpdateEmailWithAliasGuard(txCtx, currentUser.ID, "history.owner+new@gmail.com", "new-hash"),
+		service.ErrEmailExists,
+	)
+}
+
 func TestEmailAliasOwnerReportsQueryAndPersistenceErrors(t *testing.T) {
 	_, client := newUserEntRepo(t)
 	ctx := context.Background()
