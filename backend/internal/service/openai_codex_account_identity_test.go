@@ -76,6 +76,57 @@ func TestCodexAccountIdentityNamespaceUsesStableCredentialSource(t *testing.T) {
 	require.NotEqual(t, setupNamespace, codexAccountIdentityNamespace(setupTokenB))
 }
 
+func TestCodexAccountIdentityHelpersPreserveUnscopedAndMalformedInputs(t *testing.T) {
+	service := &OpenAIGatewayService{}
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"chatgpt_account_id": "account-1"}}
+	unscoped := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	resolved, err := service.prepareCodexAccountIdentitySource(context.Background(), nil, oauth)
+	require.NoError(t, err)
+	require.Same(t, oauth, resolved)
+	require.Same(t, oauth, codexAccountIdentitySource(nil, oauth))
+	require.Nil(t, codexAccountIdentitySource(nil, nil))
+
+	require.Empty(t, codexAccountIdentityNamespace(nil))
+	require.Empty(t, codexAccountIdentityNamespace(&Account{Platform: PlatformAnthropic, Type: AccountTypeOAuth}))
+	require.Empty(t, codexAccountIdentityNamespace(&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}))
+	require.Empty(t, codexAccountIdentityNamespace(&Account{Platform: PlatformOpenAI, Type: AccountTypeSetupToken}))
+	require.Empty(t, isolateOpenAIUpstreamSessionID(7, oauth, " "))
+	require.Equal(t, isolateOpenAISessionID(7, "client-session"), isolateOpenAIUpstreamSessionID(7, unscoped, "client-session"))
+	require.Equal(t, "", scopeCodexAccountIdentityValue(oauth, 7, "session", " "))
+	require.Equal(t, "client-session", scopeCodexAccountIdentityValue(unscoped, 7, "session", "client-session"))
+
+	require.False(t, applyCodexAccountIdentityFields(nil, oauth, 7))
+	fields := map[string]any{"session_id": 7, "thread_id": " ", "turn_id": "client-turn"}
+	require.True(t, applyCodexAccountIdentityFields(fields, oauth, 7))
+	require.Equal(t, "client-turn", scopeCodexAccountIdentityValue(oauth, 7, "turn", "client-turn"))
+	require.False(t, applyCodexAccountIdentityEmbeddedMetadata(map[string]any{}, oauth, 7))
+	require.False(t, applyCodexAccountIdentityEmbeddedMetadata(map[string]any{openAIWSTurnMetadataHeader: "not-json"}, oauth, 7))
+
+	request := map[string]any{"client_metadata": map[string]any{"session_id": "client-session"}, "prompt_cache_key": "client-session"}
+	require.True(t, applyCodexAccountIdentityClientMetadataMap(request, oauth, 7))
+	require.Equal(t, request["prompt_cache_key"], request["client_metadata"].(map[string]any)["session_id"])
+	require.False(t, applyCodexAccountIdentityClientMetadataMap(nil, oauth, 7))
+	require.False(t, applyCodexAccountIdentityClientMetadataMap(map[string]any{"prompt_cache_key": "client-session"}, unscoped, 7))
+
+	unchanged, changed, err := applyCodexAccountIdentityClientMetadataRaw([]byte("[]"), oauth, 7)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, "[]", string(unchanged))
+	unchanged, changed, err = applyCodexAccountIdentityClientMetadataRaw([]byte(`{"prompt_cache_key":"client-session"}`), unscoped, 7)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.JSONEq(t, `{"prompt_cache_key":"client-session"}`, string(unchanged))
+
+	applyCodexAccountIdentityHeaders(nil, oauth, 7)
+	headers := make(http.Header)
+	headers.Set("session-id", "client-session")
+	headers.Set(openAIWSTurnMetadataHeader, "not-json")
+	applyCodexAccountIdentityHeaders(headers, oauth, 7)
+	require.NotEqual(t, "client-session", headers.Get("session-id"))
+	require.Equal(t, "not-json", headers.Get(openAIWSTurnMetadataHeader))
+}
+
 func TestCodexAccountIdentitySourceOverwritesFailoverContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
