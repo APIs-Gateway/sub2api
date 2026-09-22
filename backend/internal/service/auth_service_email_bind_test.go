@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
 	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/emailcanon"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -70,6 +71,9 @@ func newAuthServiceForEmailBindWithRefreshCache(
 	refreshTokenCache service.RefreshTokenCache,
 ) (*service.AuthService, service.UserRepository, *dbent.Client) {
 	t.Helper()
+	previousAliasFilterEnabled := emailcanon.Enabled()
+	emailcanon.SetEnabled(true)
+	t.Cleanup(func() { emailcanon.SetEnabled(previousAliasFilterEnabled) })
 
 	dbName := fmt.Sprintf("file:auth_service_email_bind_%d?mode=memory&cache=shared", time.Now().UnixNano())
 	db, err := sql.Open("sqlite", dbName)
