@@ -143,7 +143,7 @@ func TestEmailAliasOwnerRejectsGmailFamilyFQDNTrailingDotAliases(t *testing.T) {
 	t.Cleanup(func() { emailcanon.SetEnabled(previousAliasFilterEnabled) })
 
 	cases := []struct {
-		name      string
+		name       string
 		historical string
 		requested  string
 	}{
