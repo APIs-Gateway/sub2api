@@ -48,6 +48,93 @@ func TestShouldFlattenOpenAIResponsesNamespaces(t *testing.T) {
 	}
 }
 
+func TestShouldStripOpenAIResponsesInputNamespaces(t *testing.T) {
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	nonOpenAI := &Account{Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+
+	tests := []struct {
+		name               string
+		account            *Account
+		transport          OpenAIUpstreamTransport
+		passthroughEnabled bool
+		want               bool
+	}{
+		{name: "nil_account", transport: OpenAIUpstreamTransportHTTPSSE, want: false},
+		{name: "non_openai_account", account: nonOpenAI, transport: OpenAIUpstreamTransportHTTPSSE, want: false},
+		{name: "oauth_http", account: oauth, transport: OpenAIUpstreamTransportHTTPSSE, want: true},
+		{name: "apikey_http", account: apiKey, transport: OpenAIUpstreamTransportHTTPSSE, want: true},
+		{name: "oauth_wsv2", account: oauth, transport: OpenAIUpstreamTransportResponsesWebsocketV2, want: false},
+		{name: "apikey_wsv2_passthrough", account: apiKey, transport: OpenAIUpstreamTransportResponsesWebsocketV2, passthroughEnabled: true, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, shouldStripOpenAIResponsesInputNamespaces(tt.account, tt.transport, tt.passthroughEnabled))
+		})
+	}
+}
+
+func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	nonOpenAI := &Account{Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+	namespaceTool := []byte(`{"tools":[{"type":"namespace","name":"mcp__cua_repl","tools":[]}]}`)
+
+	tests := []struct {
+		name        string
+		account     *Account
+		transport   OpenAIUpstreamTransport
+		passthrough bool
+		compact     bool
+		body        []byte
+		want        bool
+	}{
+		{name: "nil_account", body: namespaceTool, want: false},
+		{name: "compact", account: apiKey, compact: true, body: namespaceTool, want: false},
+		{name: "apikey_without_declaration", account: apiKey, want: false},
+		{name: "apikey_with_declaration", account: apiKey, body: namespaceTool, want: true},
+		{name: "non_openai_account", account: nonOpenAI, body: namespaceTool, want: false},
+		{name: "oauth_http_without_declaration", account: oauth, transport: OpenAIUpstreamTransportHTTPSSE, want: false},
+		{name: "oauth_http_with_declaration", account: oauth, transport: OpenAIUpstreamTransportHTTPSSE, body: namespaceTool, want: true},
+		{name: "oauth_wsv2_without_declaration", account: oauth, transport: OpenAIUpstreamTransportResponsesWebsocketV2, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, shouldKeepOpenAIResponsesToolCallNamespaces(
+				tt.account, tt.transport, tt.passthrough, tt.compact, tt.body,
+			))
+		})
+	}
+}
+
+func TestOpenAIResponsesNamespaceHelpers_NoOpAndItemTypes(t *testing.T) {
+	for _, tt := range []struct {
+		body []byte
+		want bool
+	}{
+		{body: []byte(`{"tools":[{"type":"namespace","name":"mcp","tools":[]}]}`), want: true},
+		{body: []byte(`{"input":"not-an-array"}`), want: false},
+		{body: []byte(`{"input":[{"type":"message","tools":[{"type":"namespace"}]}]}`), want: false},
+	} {
+		require.Equal(t, tt.want, hasOpenAIResponsesNamespaceToolDeclaration(tt.body))
+	}
+
+	for _, itemType := range []string{"function_call", "tool_call", "custom_tool_call", "mcp_tool_call"} {
+		require.True(t, isOpenAIResponsesToolCallItemType(itemType))
+	}
+	require.False(t, isOpenAIResponsesToolCallItemType("message"))
+
+	for _, body := range [][]byte{
+		[]byte(`{"input":[]}`),
+		[]byte(`{"namespace":"top-level-only"}`),
+		[]byte(`{"input":[{"type":"function_call","namespace":"mcp"}]}`),
+	} {
+		stripped, err := stripOpenAIResponsesInputNamespaces(body, true)
+		require.NoError(t, err)
+		require.Equal(t, body, stripped)
+	}
+}
+
 func TestResponsesLiteNamespaceDeclarationsPreserveHistoricalToolCalls(t *testing.T) {
 	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
