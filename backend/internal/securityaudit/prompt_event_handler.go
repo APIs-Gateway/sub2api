@@ -153,6 +153,13 @@ func (h *PromptEventAdminHandler) DeleteByFilter(c *gin.Context) {
 		return
 	}
 	result, err := h.repository.DeleteEventsByFilter(c.Request.Context(), request.Filter, request.SnapshotMaxID, 200)
+	if errors.Is(err, ErrDeleteNoMatches) {
+		// A separately-issued token can race this confirmation. Once its
+		// snapshot is gone, reject this stale confirmation rather than
+		// returning a misleading 200 with deleted_events=0.
+		response.ErrorFrom(c, infraerrors.BadRequest("prompt_audit_delete_confirmation_invalid", "删除确认无效或已过期"))
+		return
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

@@ -182,6 +182,13 @@ func (r *PostgreSQLRepository) DeleteEventsByFilter(ctx context.Context, filter 
 		result, done, err := r.deleteEventBatch(ctx, tx, canonical, snapshotMaxID, batchSize)
 		if err != nil {
 			_ = tx.Rollback()
+			// A confirmation is only successful when it removes at least one
+			// event. A later empty batch is the normal completion case after a
+			// full batch; an initial empty batch means another confirmation has
+			// already removed this preview's entire snapshot.
+			if errors.Is(err, ErrDeleteNoMatches) && total.DeletedEvents > 0 {
+				return total, nil
+			}
 			return nil, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -201,8 +208,8 @@ func (r *PostgreSQLRepository) deleteEventBatch(ctx context.Context, tx *sql.Tx,
 	limitPosition := maxPosition + 1
 	args = append(args, snapshotMaxID, batchSize)
 	rows, err := tx.QueryContext(ctx,
-		`SELECT e.id, e.job_id FROM prompt_audit_events e` + where +
-			` AND e.id <= ` + r.placeholder(maxPosition) + ` ORDER BY e.id LIMIT ` + r.placeholder(limitPosition), args...)
+		`SELECT e.id, e.job_id FROM prompt_audit_events e`+where+
+			` AND e.id <= `+r.placeholder(maxPosition)+` ORDER BY e.id LIMIT `+r.placeholder(limitPosition), args...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -211,7 +218,7 @@ func (r *PostgreSQLRepository) deleteEventBatch(ctx context.Context, tx *sql.Tx,
 		return nil, false, err
 	}
 	if len(ids) == 0 {
-		return &DeleteResult{}, true, nil
+		return nil, true, ErrDeleteNoMatches
 	}
 	deleteArgs := make([]any, len(ids))
 	for index, id := range ids {
@@ -225,6 +232,12 @@ func (r *PostgreSQLRepository) deleteEventBatch(ctx context.Context, tx *sql.Tx,
 	deletedEvents, err := deleted.RowsAffected()
 	if err != nil {
 		return nil, false, err
+	}
+	if deletedEvents == 0 {
+		// Another confirmation may have selected these IDs before this
+		// transaction acquired the delete lock. Do not report a successful
+		// deletion when it ultimately removed nothing.
+		return nil, false, ErrDeleteNoMatches
 	}
 	deletedJobs, err := r.deleteOrphanJobs(ctx, tx, jobIDs)
 	if err != nil {
