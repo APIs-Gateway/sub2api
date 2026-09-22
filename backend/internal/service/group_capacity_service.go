@@ -70,7 +70,15 @@ func (s *GroupCapacityService) GetAllGroupCapacity(ctx context.Context) ([]Group
 	}
 
 	if lister, ok := s.accountRepo.(groupCapacityAccountLister); ok {
-		return s.getGroupCapacitiesBatch(ctx, groupIDs, lister)
+		results, err := s.getGroupCapacitiesBatch(ctx, groupIDs, lister)
+		if err == nil {
+			return results, nil
+		}
+		// The pre-batch implementation was best-effort: a problem reading one
+		// group's accounts was skipped rather than turning the whole capacity
+		// endpoint into a 500. A failed projection query cannot identify the
+		// affected group, so preserve that contract with the per-group fallback.
+		return s.getGroupCapacitiesSequential(ctx, groupIDs), nil
 	}
 
 	return s.getGroupCapacitiesSequential(ctx, groupIDs), nil

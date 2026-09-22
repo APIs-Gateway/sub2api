@@ -11,9 +11,11 @@ import (
 
 type groupCapacityAccountRepoStub struct {
 	AccountRepository
-	rows      []GroupAccountCapacityRow
-	requested []int64
-	err       error
+	rows            []GroupAccountCapacityRow
+	requested       []int64
+	err             error
+	accountsByGroup map[int64][]Account
+	groupErrors     map[int64]error
 }
 
 func (s *groupCapacityAccountRepoStub) ListSchedulableCapacityByGroupIDs(_ context.Context, groupIDs []int64) ([]GroupAccountCapacityRow, error) {
@@ -22,6 +24,13 @@ func (s *groupCapacityAccountRepoStub) ListSchedulableCapacityByGroupIDs(_ conte
 		return nil, s.err
 	}
 	return append([]GroupAccountCapacityRow(nil), s.rows...), nil
+}
+
+func (s *groupCapacityAccountRepoStub) ListSchedulableByGroupID(_ context.Context, groupID int64) ([]Account, error) {
+	if err := s.groupErrors[groupID]; err != nil {
+		return nil, err
+	}
+	return append([]Account(nil), s.accountsByGroup[groupID]...), nil
 }
 
 type groupCapacityGroupRepoStub struct {
@@ -226,16 +235,24 @@ func TestGetAllGroupCapacityReturnsListerErrors(t *testing.T) {
 		require.ErrorIs(t, err, want)
 	})
 
-	t.Run("capacity rows", func(t *testing.T) {
-		want := errors.New("accounts unavailable")
+	t.Run("capacity rows fall back to per-group partial results", func(t *testing.T) {
+		batchErr := errors.New("accounts unavailable")
 		svc := NewGroupCapacityService(
-			&groupCapacityAccountRepoStub{err: want},
-			&groupCapacityGroupRepoStub{groupIDs: []int64{10}},
-			nil, nil, nil,
+			&groupCapacityAccountRepoStub{
+				err:             batchErr,
+				accountsByGroup: map[int64][]Account{10: []Account{{ID: 1, Concurrency: 3}}},
+				groupErrors:     map[int64]error{20: errors.New("skip one group")},
+			},
+			&groupCapacityGroupRepoStub{groupIDs: []int64{10, 20, 30}},
+			NewConcurrencyService(&groupCapacityConcurrencyCacheStub{counts: map[int64]int{1: 1}}), nil, nil,
 		)
 
-		_, err := svc.GetAllGroupCapacity(context.Background())
-		require.ErrorIs(t, err, want)
+		results, err := svc.GetAllGroupCapacity(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, []GroupCapacitySummary{
+			{GroupID: 10, ConcurrencyUsed: 1, ConcurrencyMax: 3},
+			{GroupID: 30},
+		}, results)
 	})
 }
 
