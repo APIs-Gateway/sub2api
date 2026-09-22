@@ -228,7 +228,7 @@ func TestOpenAIWSIngressPreemptionModeAndScopeIsolation(t *testing.T) {
 }
 
 func TestOpenAIWSSessionPreemptionHelperFallbacks(t *testing.T) {
-	require.False(t, isOpenAIWSSessionPreempted(nil))
+	require.False(t, isOpenAIWSSessionPreempted(context.Background()))
 	require.True(t, IsOpenAIWSSessionPreemptedError(&openAIWSFallbackError{Reason: " prewarm_session_preempted "}))
 	require.False(t, IsOpenAIWSSessionPreemptedError(&openAIWSFallbackError{Reason: "other"}))
 
