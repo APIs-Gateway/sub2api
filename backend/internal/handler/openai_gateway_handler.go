@@ -28,20 +28,20 @@ import (
 
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
-	gatewayService                  *service.OpenAIGatewayService
-	billingCacheService             *service.BillingCacheService
-	apiKeyService                   *service.APIKeyService
-	usageRecordWorkerPool           *service.UsageRecordWorkerPool
-	errorPassthroughService         *service.ErrorPassthroughService
-	contentModerationService        *service.ContentModerationService
-	securityAuditCoordinator        *securityaudit.Coordinator
-	opsService                      *service.OpsService
-	concurrencyHelper               *ConcurrencyHelper
-	imageLimiter                    *imageConcurrencyLimiter
-	maxAccountSwitches              int
-	cfg                             *config.Config
-	responsesWebSocketProxy         func(context.Context, *gin.Context, *coderws.Conn, *service.Account, string, []byte, *service.OpenAIWSIngressHooks) error
-	onOpenAIAccountScheduleResult   func(accountID int64, success bool)
+	gatewayService                *service.OpenAIGatewayService
+	billingCacheService           *service.BillingCacheService
+	apiKeyService                 *service.APIKeyService
+	usageRecordWorkerPool         *service.UsageRecordWorkerPool
+	errorPassthroughService       *service.ErrorPassthroughService
+	contentModerationService      *service.ContentModerationService
+	securityAuditCoordinator      *securityaudit.Coordinator
+	opsService                    *service.OpsService
+	concurrencyHelper             *ConcurrencyHelper
+	imageLimiter                  *imageConcurrencyLimiter
+	maxAccountSwitches            int
+	cfg                           *config.Config
+	responsesWebSocketProxy       func(context.Context, *gin.Context, *coderws.Conn, *service.Account, string, []byte, *service.OpenAIWSIngressHooks) error
+	onOpenAIAccountScheduleResult func(accountID int64, success bool)
 }
 
 //go:noinline
