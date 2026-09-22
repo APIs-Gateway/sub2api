@@ -57,6 +57,10 @@ func TestNeedsOpenAIResponsesClientToolAdaptation(t *testing.T) {
 			body: []byte(`{"model":"gpt-5.5","tools":[{"type":"tool_search"}]}`),
 			want: true,
 		},
+		"namespace declaration": {
+			body: []byte(`{"model":"gpt-5.5","tools":[{"type":"namespace","name":"code_tools","tools":[{"type":"function","name":"run"}]}]}`),
+			want: true,
+		},
 		"custom_tool_call in history": {
 			body: []byte(`{"model":"gpt-5.5","input":[{"type":"custom_tool_call","call_id":"c1","name":"exec"}]}`),
 			want: true,
@@ -78,7 +82,7 @@ func TestNeedsOpenAIResponsesClientToolAdaptation(t *testing.T) {
 	}
 }
 
-func TestAdaptOpenAIResponsesClientToolsLeavesNamespaceOnlyBodyUnchanged(t *testing.T) {
+func TestAdaptOpenAIResponsesClientToolsLowersNamespaceOnlyBody(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-5.5",
 		"tools": [{"type": "namespace", "name": "code_tools", "tools": [{"type": "function", "name": "run"}]}],
@@ -88,9 +92,11 @@ func TestAdaptOpenAIResponsesClientToolsLeavesNamespaceOnlyBodyUnchanged(t *test
 	adapted, mapping, err := adaptOpenAIResponsesClientTools(body)
 
 	require.NoError(t, err)
-	require.Equal(t, body, adapted)
+	require.Equal(t, "function", gjson.GetBytes(adapted, "tools.0.type").String())
+	require.Equal(t, "code_tools__run", gjson.GetBytes(adapted, "tools.0.name").String())
 	require.Empty(t, mapping.CustomTools)
-	require.Empty(t, mapping.NamespaceTools)
+	require.Equal(t, "code_tools", mapping.NamespaceTools["code_tools__run"].Namespace)
+	require.Equal(t, "run", mapping.NamespaceTools["code_tools__run"].Name)
 	require.False(t, mapping.ToolSearch)
 }
 
@@ -214,6 +220,75 @@ func TestOpenAIPassthroughAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 	require.Contains(t, output, `"type":"response.custom_tool_call_input.done"`)
 	require.Contains(t, output, `"input":"*** Begin Patch"`)
 	require.NotContains(t, output, `"input":{`)
+}
+
+func TestGrokResponsesClientToolsProtocolContracts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	requestBody := []byte(`{"model":"grok","input":"hello","tools":[{"type":"custom","name":"apply_patch"},{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"send_message","parameters":{"type":"object"}}]}]}`)
+
+	patched, mapping, err := patchGrokResponsesBodyWithClientTools(requestBody, "grok-4.5")
+	require.NoError(t, err)
+	require.Equal(t, "function", gjson.GetBytes(patched, "tools.0.type").String())
+	require.Equal(t, "collaboration__send_message", gjson.GetBytes(patched, "tools.1.name").String())
+	require.True(t, mapping.CustomTools["apply_patch"])
+	require.Equal(t, "collaboration", mapping.NamespaceTools["collaboration__send_message"].Namespace)
+
+	for name, upstream := range map[string]string{
+		"json": `{"id":"resp_tools","output":[{"type":"function_call","id":"i1","call_id":"c1","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\"}"}],"usage":{"input_tokens":1,"output_tokens":1}}`,
+		"sse": "event: response.completed\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_sse_tools\",\"output\":[{\"type\":\"function_call\",\"id\":\"i1\",\"call_id\":\"c1\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\"}\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			setOpenAIResponsesClientToolMapping(c, apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"apply_patch": true}})
+			contentType := "application/json"
+			if name == "sse" {
+				contentType = "text/event-stream"
+			}
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(upstream))}
+
+			_, err := (&OpenAIGatewayService{cfg: &config.Config{}}).handleNonStreamingResponse(context.Background(), resp, c, &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, "grok", "grok")
+
+			require.NoError(t, err)
+			require.Equal(t, "custom_tool_call", gjson.Get(recorder.Body.String(), "output.0.type").String())
+			require.Equal(t, "*** Begin Patch", gjson.Get(recorder.Body.String(), "output.0.input").String())
+		})
+	}
+}
+
+func TestForwardGrokResponsesClientToolsStreamAndRejectsAmbiguity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"grok","stream":true,"input":"hello","tools":[{"type":"custom","name":"apply_patch"}]}`)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"i1\",\"call_id\":\"c1\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\"}\",\"status\":\"completed\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tools\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\ndata: [DONE]\n\n")),
+	}}
+	account := &Account{ID: 778, Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{
+		"access_token": "token", "base_url": "https://xai.test/v1", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	}}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	svc := &OpenAIGatewayService{httpUpstream: upstream, grokTokenProvider: NewGrokTokenProvider(nil, nil, nil)}
+
+	_, err := svc.forwardGrokResponses(context.Background(), c, account, body, "grok", true, time.Now())
+
+	require.NoError(t, err)
+	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+	require.Contains(t, recorder.Body.String(), `"type":"custom_tool_call"`)
+
+	recorder = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ambiguous := []byte(`{"model":"grok","tools":[{"type":"custom","name":"duplicate"},{"type":"function","name":"duplicate","parameters":{"type":"object"}}]}`)
+	_, err = (&OpenAIGatewayService{}).forwardGrokResponses(context.Background(), c, &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, ambiguous, "grok", false, time.Now())
+
+	require.ErrorContains(t, err, "conflicts")
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, "invalid_request_error", gjson.Get(recorder.Body.String(), "error.type").String())
 }
 
 func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_DelegatesWhenBodyDeclaresTools(t *testing.T) {

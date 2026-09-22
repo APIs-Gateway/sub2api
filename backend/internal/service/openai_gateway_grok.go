@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/common"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -37,10 +38,17 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if isGrokImageGenerationModel(upstreamModel) {
 		return nil, fmt.Errorf("model %s is an image model and is not available on the Responses endpoint; use /v1/images/generations instead", upstreamModel)
 	}
-	patchedBody, err := patchGrokResponsesBody(body, upstreamModel)
+	patchedBody, clientToolMapping, err := patchGrokResponsesBodyWithClientTools(body, upstreamModel)
 	if err != nil {
+		setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
+		if c != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+				"type": "invalid_request_error", "message": err.Error(), "param": "tools",
+			}})
+		}
 		return nil, err
 	}
+	setOpenAIResponsesClientToolMapping(c, clientToolMapping)
 	// OpenAI /responses/compact is not a native xAI endpoint. Convert it into a
 	// normal Grok Responses turn that asks for a structured summary, then map the
 	// reply back to an OpenAI compaction item on the way out.
@@ -129,6 +137,9 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			maxLineSize = s.cfg.Gateway.MaxLineSize
 		}
 		resp.Body = newGrokResponsesBillingPingFilterBody(resp.Body, account, maxLineSize)
+		if hasResponsesClientToolMapping(clientToolMapping) {
+			resp.Body = newResponsesClientToolStreamBody(resp.Body, clientToolMapping, maxLineSize)
+		}
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
 		if err != nil {
 			return nil, err
@@ -164,41 +175,47 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	}, nil
 }
 
-func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
+// patchGrokResponsesBodyWithClientTools lowers Codex-only Responses tools for
+// xAI and returns the mapping needed to restore the downstream response.
+func patchGrokResponsesBodyWithClientTools(body []byte, upstreamModel string) ([]byte, apicompat.ResponsesClientToolMapping, error) {
 	if !json.Valid(body) {
-		return nil, fmt.Errorf("invalid json request body")
+		return nil, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("invalid json request body")
 	}
-	out, err := sjson.SetBytes(body, "model", upstreamModel)
+	adapted, mapping, err := adaptOpenAIResponsesClientTools(body)
 	if err != nil {
-		return nil, err
+		return nil, apicompat.ResponsesClientToolMapping{}, err
+	}
+	out, err := sjson.SetBytes(adapted, "model", upstreamModel)
+	if err != nil {
+		return nil, apicompat.ResponsesClientToolMapping{}, err
 	}
 	out, err = convertOpenAICompactInputsForGrok(out)
 	if err != nil {
-		return nil, err
+		return nil, apicompat.ResponsesClientToolMapping{}, err
 	}
 	out, err = sanitizeGrokReasoningNullContent(out)
 	if err != nil {
-		return nil, err
+		return nil, apicompat.ResponsesClientToolMapping{}, err
 	}
 	for _, unsupportedField := range []string{"prompt_cache_retention", "safety_identifier"} {
 		if gjson.GetBytes(out, unsupportedField).Exists() {
 			out, err = sjson.DeleteBytes(out, unsupportedField)
 			if err != nil {
-				return nil, err
+				return nil, apicompat.ResponsesClientToolMapping{}, err
 			}
 		}
 	}
 	out, err = stripRedundantGrokViewImageTool(out)
 	if err != nil {
-		return nil, err
+		return nil, apicompat.ResponsesClientToolMapping{}, err
 	}
 	if !gjson.GetBytes(out, "tools").Exists() && gjson.GetBytes(out, "tool_choice").Exists() {
 		out, err = sjson.DeleteBytes(out, "tool_choice")
 		if err != nil {
-			return nil, err
+			return nil, apicompat.ResponsesClientToolMapping{}, err
 		}
 	}
-	return out, nil
+	return out, mapping, nil
 }
 
 var grokUnsupportedRecursiveFields = map[string]struct{}{

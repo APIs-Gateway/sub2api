@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,11 +15,17 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
+	patched, _, err := patchGrokResponsesBodyWithClientTools(body, upstreamModel)
+	return patched, err
+}
 
 func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testing.T) {
 	t.Parallel()
@@ -40,6 +47,126 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning.effort").String())
 	_, err = patchGrokResponsesBody([]byte("not-json"), "grok-4.3")
 	require.EqualError(t, err, "invalid json request body")
+}
+
+func TestPatchGrokResponsesBodyWithClientToolsLowersAndRecordsMapping(t *testing.T) {
+	body := []byte(`{"model":"grok","input":"hello","tools":[
+		{"type":"custom","name":"apply_patch"},
+		{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"send_message","parameters":{"type":"object"}}]}
+	]}`)
+
+	patched, mapping, err := patchGrokResponsesBodyWithClientTools(body, "grok-4.5")
+
+	require.NoError(t, err)
+	require.Equal(t, "grok-4.5", gjson.GetBytes(patched, "model").String())
+	require.Equal(t, "function", gjson.GetBytes(patched, "tools.0.type").String())
+	require.Equal(t, "apply_patch", gjson.GetBytes(patched, "tools.0.name").String())
+	require.Equal(t, "function", gjson.GetBytes(patched, "tools.1.type").String())
+	require.Equal(t, "collaboration__send_message", gjson.GetBytes(patched, "tools.1.name").String())
+	require.True(t, mapping.CustomTools["apply_patch"])
+	require.Equal(t, "collaboration", mapping.NamespaceTools["collaboration__send_message"].Namespace)
+}
+
+func TestHandleNonStreamingResponseRestoresGrokClientTool(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	setOpenAIResponsesClientToolMapping(c, apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"apply_patch": true}})
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{"id":"resp_tools","output":[{"type":"function_call","id":"i1","call_id":"c1","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\"}"}],"usage":{"input_tokens":1,"output_tokens":1}}`)),
+	}
+
+	_, err := (&OpenAIGatewayService{cfg: &config.Config{}}).handleNonStreamingResponse(context.Background(), resp, c, &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, "grok", "grok")
+
+	require.NoError(t, err)
+	require.Equal(t, "custom_tool_call", gjson.Get(recorder.Body.String(), "output.0.type").String())
+	require.Equal(t, "*** Begin Patch", gjson.Get(recorder.Body.String(), "output.0.input").String())
+}
+
+func TestHandleSSEToJSONRestoresGrokClientTool(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	setOpenAIResponsesClientToolMapping(c, apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"apply_patch": true}})
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader("event: response.completed\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_sse_tools\",\"output\":[{\"type\":\"function_call\",\"id\":\"i1\",\"call_id\":\"c1\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\"}\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")),
+	}
+
+	_, err := (&OpenAIGatewayService{cfg: &config.Config{}}).handleNonStreamingResponse(context.Background(), resp, c, &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, "grok", "grok")
+
+	require.NoError(t, err)
+	require.Equal(t, "custom_tool_call", gjson.Get(recorder.Body.String(), "output.0.type").String())
+	require.Equal(t, "*** Begin Patch", gjson.Get(recorder.Body.String(), "output.0.input").String())
+}
+
+func TestForwardGrokResponsesRestoresClientToolStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"grok","stream":true,"input":"hello","tools":[{"type":"custom","name":"apply_patch"}]}`)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"i1\",\"call_id\":\"c1\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\"}\",\"status\":\"completed\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tools\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\ndata: [DONE]\n\n")),
+	}}
+	account := &Account{ID: 778, Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{
+		"access_token": "token", "base_url": "https://xai.test/v1", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	}}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	svc := &OpenAIGatewayService{httpUpstream: upstream, grokTokenProvider: NewGrokTokenProvider(nil, &grokUnauthorizedCacheStub{cacheMiss: true}, nil)}
+
+	_, err := svc.forwardGrokResponses(context.Background(), c, account, body, "grok", true, time.Now())
+
+	require.NoError(t, err)
+	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+	require.Contains(t, recorder.Body.String(), `"type":"custom_tool_call"`)
+}
+
+func TestForwardGrokResponsesRestoresNamespacedToolStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"grok","stream":true,"input":"hello","tools":[{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"send_message","parameters":{"type":"object"}}]}]}`)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"i1\",\"call_id\":\"c1\",\"name\":\"collaboration__send_message\",\"arguments\":\"{\\\"message\\\":\\\"hello\\\"}\",\"status\":\"completed\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_namespace\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\ndata: [DONE]\n\n")),
+	}}
+	account := &Account{ID: 779, Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{
+		"access_token": "token", "base_url": "https://xai.test/v1", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	}}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	svc := &OpenAIGatewayService{httpUpstream: upstream, grokTokenProvider: NewGrokTokenProvider(nil, &grokUnauthorizedCacheStub{cacheMiss: true}, nil)}
+
+	_, err := svc.forwardGrokResponses(context.Background(), c, account, body, "grok", true, time.Now())
+
+	require.NoError(t, err)
+	require.Equal(t, "collaboration__send_message", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
+	require.Contains(t, recorder.Body.String(), `"namespace":"collaboration"`)
+	require.Contains(t, recorder.Body.String(), `"name":"send_message"`)
+}
+
+func TestForwardGrokResponsesRejectsAmbiguousClientToolsBeforeUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	body := []byte(`{"model":"grok","tools":[{"type":"custom","name":"duplicate"},{"type":"function","name":"duplicate","parameters":{"type":"object"}}]}`)
+
+	_, err := (&OpenAIGatewayService{}).forwardGrokResponses(context.Background(), c, &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, body, "grok", false, time.Now())
+
+	require.ErrorContains(t, err, "conflicts")
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, "invalid_request_error", gjson.Get(recorder.Body.String(), "error.type").String())
 }
 
 func TestSanitizeGrokUnsupportedFields(t *testing.T) {
