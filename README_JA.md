@@ -151,9 +151,12 @@ Sub2API（または CRS）を Nginx でリバースプロキシし、Codex CLI �
 
 ```nginx
 underscores_in_headers on;
+# Codex のリクエストには大きな会話コンテキストが含まれることがあります。Nginx の既定値は 1 MiB です。
+client_max_body_size 50m;
 ```
 
 Nginx はデフォルトでアンダースコアを含むヘッダー（例: `session_id`）を破棄するため、マルチアカウント構成でのスティッキーセッションルーティングに支障をきたします。
+`413 Payload Too Large` を防ぐため、利用者の会話コンテキストに合った上限まで `client_max_body_size` を引き上げてください。上記の `50m` は例であり、アプリケーションの必須要件ではありません。
 
 ---
 
