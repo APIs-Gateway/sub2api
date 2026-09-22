@@ -185,6 +185,68 @@ func TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier(t *testi
 	})
 }
 
+// Bare error frames are intentionally stricter than response.failed.  Keep the
+// positive signals that are safe to retry and the client-actionable signals
+// that must stay on the current response path explicit: this is the fork-only
+// classifier used before either SSE-to-JSON adapter writes a response.
+func TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		message string
+		want    bool
+	}{
+		{
+			name:    "cyber policy stays client actionable",
+			payload: `{"error":{"code":"cyber_policy","message":"blocked"}}`,
+			message: "blocked",
+			want:    false,
+		},
+		{
+			name:    "context window stays client actionable",
+			payload: `{"error":{"message":"input exceeds the context window"}}`,
+			message: "input exceeds the context window",
+			want:    false,
+		},
+		{
+			name:    "expired credentials may switch accounts",
+			payload: `{"error":{"code":"invalid_api_key","message":"credential expired"}}`,
+			message: "credential expired",
+			want:    true,
+		},
+		{
+			name:    "rate limit may switch accounts",
+			payload: `{"error":{"type":"rate_limit_error","message":"slow down"}}`,
+			message: "slow down",
+			want:    true,
+		},
+		{
+			name:    "overloaded server is transient",
+			payload: `{"error":{"code":"server_is_overloaded","message":"unavailable"}}`,
+			message: "unavailable",
+			want:    true,
+		},
+		{
+			name:    "retry language is an explicit transient signal",
+			payload: `{"error":{"message":"please retry later"}}`,
+			message: "please retry later",
+			want:    true,
+		},
+		{
+			name:    "unclassified error does not spend another account",
+			payload: `{"error":{"message":"request rejected"}}`,
+			message: "request rejected",
+			want:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, openAIStreamErrorEventShouldFailover([]byte(tc.payload), tc.message))
+		})
+	}
+}
+
 // 透传路径必须与合成路径同步修复，否则又造出一处新的不对称。
 func TestNonStreamingPassthroughSSEToJSON_CapacityFailedEventFailsOver(t *testing.T) {
 	c, rec := newNonStreamingFailoverContext(t)
@@ -200,6 +262,50 @@ func TestNonStreamingPassthroughSSEToJSON_CapacityFailedEventFailsOver(t *testin
 	require.Contains(t, string(failoverErr.ResponseBody), "Selected model is at capacity")
 	require.False(t, c.Writer.Written())
 	require.Empty(t, rec.Body.String())
+}
+
+// The passthrough adapter receives the exact same upstream frame.  It must use
+// the bare-error classifier rather than broad response.failed fallback logic,
+// otherwise a generic error could incorrectly consume another account only for
+// passthrough users.
+func TestNonStreamingPassthroughSSEToJSON_BareErrorRespectsConservativeClassifier(t *testing.T) {
+	cases := []struct {
+		name         string
+		data         string
+		wantFailover bool
+	}{
+		{
+			name:         "generic error remains protocol error",
+			data:         `{"type":"error","error":{"message":"request rejected"}}`,
+			wantFailover: false,
+		},
+		{
+			name:         "rate limit can fail over before response is written",
+			data:         `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`,
+			wantFailover: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, rec := newNonStreamingFailoverContext(t)
+			svc := newNonStreamingFailoverService()
+
+			result, err := svc.handlePassthroughSSEToJSON(newNonStreamingSSEResponse(), c,
+				newNonStreamingFailoverAccount(), sseTerminalBody("error", tc.data), "model", "model")
+
+			require.Nil(t, result)
+			var failoverErr *UpstreamFailoverError
+			require.Equal(t, tc.wantFailover, errors.As(err, &failoverErr))
+			if tc.wantFailover {
+				require.False(t, c.Writer.Written())
+				require.Empty(t, rec.Body.String())
+				require.Equal(t, "rid-nonstreaming-failed", failoverErr.ResponseHeaders.Get("X-Request-Id"))
+				return
+			}
+			require.Equal(t, http.StatusBadGateway, rec.Code)
+		})
+	}
 }
 
 // 不变式：非流式的裁决必须与流式分类器逐项一致。任何一边以后改了判定，这条会红。
