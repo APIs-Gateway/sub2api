@@ -4574,6 +4574,36 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	return true
 }
 
+// openAIStreamErrorEventShouldFailover is deliberately narrower than the
+// response.failed classifier: a bare error frame only fails over when its
+// contents positively identify an account or transient upstream failure.
+func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
+	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
+		return false
+	}
+	if isOpenAIContextWindowError(message, payload) {
+		return false
+	}
+	if isOpenAIUpstreamAccessStateError(message, payload) {
+		return true
+	}
+	switch openAIStreamFailedEventSemanticStatus(payload, message) {
+	case http.StatusForbidden:
+		return openAIStream403AccountFailure(payload, message)
+	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
+		return true
+	}
+	if isOpenAITransientProcessingError(http.StatusBadRequest, message, payload) {
+		return true
+	}
+	combined := strings.ToLower(strings.TrimSpace(message + " " +
+		gjson.GetBytes(payload, "error.message").String() + " " +
+		gjson.GetBytes(payload, "response.error.message").String()))
+	return strings.Contains(combined, "temporary") ||
+		strings.Contains(combined, "try again") ||
+		strings.Contains(combined, "please retry")
+}
+
 func (s *OpenAIGatewayService) recordOpenAIStreamUpstreamError(
 	c *gin.Context,
 	account *Account,
