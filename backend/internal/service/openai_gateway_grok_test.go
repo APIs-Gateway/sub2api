@@ -76,6 +76,82 @@ func TestNormalizeGrokChatReasoningEffort(t *testing.T) {
 	patched, err = normalizeGrokChatReasoningEffort([]byte(`{"reasoning_effort":"xhigh"}`), "grok-4.3")
 	require.NoError(t, err)
 	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning_effort").String())
+
+	patched, err = normalizeGrokChatReasoningEffort([]byte(`{"reasoning_effort":"unsupported"}`), "grok-4.6")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(patched, "reasoning_effort").Exists())
+
+	patched, err = normalizeGrokChatReasoningEffort([]byte(`{"reasoningEffort":"high"}`), "grok-build-0.1")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
+	require.False(t, gjson.GetBytes(patched, "reasoning_effort").Exists())
+
+	patched, err = normalizeGrokChatReasoningEffort([]byte(`{"input":"hi"}`), "grok-4.6")
+	require.NoError(t, err)
+	require.Equal(t, `{"input":"hi"}`, string(patched))
+}
+
+func TestNormalizeGrokResponsesReasoningEffortGuardCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("drops unsupported value and empty reasoning object", func(t *testing.T) {
+		patched, err := normalizeGrokResponsesReasoningEffort([]byte(`{"reasoning":{"effort":"unsupported"}}`), "grok-4.6")
+		require.NoError(t, err)
+		require.False(t, gjson.GetBytes(patched, "reasoning").Exists())
+	})
+
+	t.Run("removes effort for unsupported model", func(t *testing.T) {
+		patched, err := normalizeGrokResponsesReasoningEffort([]byte(`{"reasoning_effort":"high","reasoningEffort":"low"}`), "grok-build-0.1")
+		require.NoError(t, err)
+		require.False(t, gjson.GetBytes(patched, "reasoning_effort").Exists())
+		require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
+	})
+
+	t.Run("keeps snake case when both spellings are present", func(t *testing.T) {
+		patched, err := normalizeGrokResponsesReasoningEffort([]byte(`{"reasoning_effort":"minimal","reasoningEffort":"high"}`), "grok-4.6")
+		require.NoError(t, err)
+		require.Equal(t, "low", gjson.GetBytes(patched, "reasoning_effort").String())
+		require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
+	})
+
+	t.Run("returns body without effort fields unchanged", func(t *testing.T) {
+		body := []byte(`{"input":"hi"}`)
+		patched, err := normalizeGrokResponsesReasoningEffort(body, "grok-4.6")
+		require.NoError(t, err)
+		require.Equal(t, body, patched)
+	})
+}
+
+func TestGrokReasoningEffortCapabilities(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name  string
+		raw   string
+		model string
+		want  string
+		keep  bool
+	}{
+		{name: "standard", raw: "medium", model: "grok-4.6", want: "medium", keep: true},
+		{name: "minimal", raw: "minimal", model: "grok-4.6", want: "low", keep: true},
+		{name: "xhigh supported", raw: "x-high", model: "grok-4.6", want: "xhigh", keep: true},
+		{name: "xhigh capped", raw: "extra_high", model: "grok-4.3", want: "high", keep: true},
+		{name: "max capped", raw: "max", model: "grok-4.6", want: "high", keep: true},
+		{name: "unknown", raw: "unsupported", model: "grok-4.6", keep: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, keep := normalizeGrokReasoningEffortValue(tt.raw, tt.model)
+			require.Equal(t, tt.want, got)
+			require.Equal(t, tt.keep, keep)
+		})
+	}
+
+	require.True(t, grokSupportsXHighReasoningEffort("xai/grok-4.6-latest"))
+	require.False(t, grokSupportsXHighReasoningEffort("grok-4.3"))
+	require.True(t, grokSupportsReasoningEffort("x-ai/grok-4.5"))
+	require.False(t, grokSupportsReasoningEffort("grok-build-0.1"))
+	require.Equal(t, "grok-4.6", grokReasoningModelID("grok/grok-4.6"))
+	require.Equal(t, "custom/grok-4.6", grokReasoningModelID("custom/grok-4.6"))
 }
 
 func TestSanitizeGrokUnsupportedFields(t *testing.T) {
