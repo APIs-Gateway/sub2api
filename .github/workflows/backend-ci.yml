@@ -22,7 +22,9 @@ jobs:
         run: |
           go version | grep -q 'go1.26.6'
       - name: Deployment shell contracts
-        run: /bin/sh deploy/tests/docker-compose-security-test.sh
+        run: |
+          /bin/sh deploy/tests/docker-compose-security-test.sh
+          /bin/sh deploy/test-caddyfile-cache.sh
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
