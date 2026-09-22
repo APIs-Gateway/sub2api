@@ -440,6 +440,36 @@ func TestParsePricingDataKeepsCodexAutoReviewOnInternalBaseRateContract(t *testi
 	require.False(t, got.SupportsServiceTier)
 }
 
+func TestApplyCodexAutoReviewPricingPolicyReplacesRemoteAliasAndAcceptsNil(t *testing.T) {
+	// A nil map is a defensive no-op; parsePricingData always supplies a map,
+	// but this keeps the policy safe if its call site is refactored later.
+	applyCodexAutoReviewPricingPolicy(nil)
+
+	remoteAlias := &LiteLLMModelPricing{InputCostPerToken: 2e-7}
+	remoteAlias.OutputCostPerToken = 1.2e-6
+	remoteAlias.CacheCreationInputTokenCost = 2.5e-7
+	remoteAlias.InputCostPerTokenAbove272KTokens = 4e-7
+	remoteAlias.OutputCostPerTokenPriority = 2.4e-6
+	remoteAlias.LongContextInputTokenThreshold = 272000
+	remoteAlias.LongContextInputCostMultiplier = 2
+	remoteAlias.LongContextOutputCostMultiplier = 1.5
+	remoteAlias.SupportsServiceTier = true
+	pricingData := map[string]*LiteLLMModelPricing{"codex-auto-review": remoteAlias}
+
+	applyCodexAutoReviewPricingPolicy(pricingData)
+
+	got := pricingData["codex-auto-review"]
+	require.NotNil(t, got)
+	require.InDelta(t, 0.2e-6, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 0.02e-6, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 1.2e-6, got.OutputCostPerToken, 1e-12)
+	require.Zero(t, got.CacheCreationInputTokenCost)
+	require.Zero(t, got.InputCostPerTokenAbove272KTokens)
+	require.Zero(t, got.OutputCostPerTokenPriority)
+	require.Zero(t, got.LongContextInputTokenThreshold)
+	require.False(t, got.SupportsServiceTier)
+}
+
 func TestDefaultPricingIncludesGPT56LongContextMetadata(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
 	require.NoError(t, err)
