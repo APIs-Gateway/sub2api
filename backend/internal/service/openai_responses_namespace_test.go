@@ -105,6 +105,46 @@ func TestResponsesNamespaceDeclarationDoesNotTreatPlainFunctionAsNamespace(t *te
 	require.False(t, gjson.GetBytes(forwarded, "input.0.namespace").Exists())
 }
 
+// Responses Lite carries namespace declarations in input.additional_tools.
+// Forward must preserve call namespaces for those declarations while still
+// removing a namespace accidentally attached to an ordinary input message.
+func TestOpenAIGatewayService_Forward_APIKeyPreservesLiteNamespaceToolCalls(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-5.6-terra",
+		"stream":false,
+		"input":[
+			{"type":"function_call","namespace":"collaboration","name":"spawn_agent","call_id":"call_spawn","arguments":"{}"},
+			{"type":"function_call","namespace":"mcp__cua_repl","name":"js","call_id":"call_js","arguments":"{}"},
+			{"type":"message","role":"user","namespace":"leftover","content":[{"type":"input_text","text":"hello"}]},
+			{"type":"additional_tools","role":"developer","tools":[
+				{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent","parameters":{"type":"object"}}]},
+				{"type":"namespace","name":"mcp__cua_repl","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]}
+			]}
+		]
+	}`)
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		newOpenAIRejectedFieldTestResponse(http.StatusOK, `{"output":[],"usage":{"input_tokens":1,"output_tokens":1,"input_tokens_details":{"cached_tokens":0}}}`),
+	}}
+	c := newOpenAIRejectedFieldTestContext(body)
+	c.Request.Header.Set(responsesLiteHeader, "true")
+
+	result, err := newOpenAIRejectedFieldTestService(upstream).Forward(
+		context.Background(), c, newOpenAIRejectedFieldTestAccount(), body,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.bodies, 1)
+	forwarded := upstream.bodies[0]
+	require.Equal(t, "collaboration", gjson.GetBytes(forwarded, "input.0.namespace").String())
+	require.Equal(t, "spawn_agent", gjson.GetBytes(forwarded, "input.0.name").String())
+	require.Equal(t, "mcp__cua_repl", gjson.GetBytes(forwarded, "input.1.namespace").String())
+	require.Equal(t, "js", gjson.GetBytes(forwarded, "input.1.name").String())
+	require.False(t, gjson.GetBytes(forwarded, "input.2.namespace").Exists())
+	require.Equal(t, "collaboration", gjson.GetBytes(forwarded, `input.#(type=="additional_tools").tools.0.name`).String())
+	require.Equal(t, "mcp__cua_repl", gjson.GetBytes(forwarded, `input.#(type=="additional_tools").tools.1.name`).String())
+}
+
 // ---------------------------------------------------------------------------
 // flattenOpenAIResponsesNamespaces / restoreOpenAIResponsesNamespacePayload
 // helper-level behavior, including the no-op fast paths.
