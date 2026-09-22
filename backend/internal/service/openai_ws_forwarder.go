@@ -2824,6 +2824,15 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			normalized = litePayload
 		}
+		if account.IsOpenAIOAuth() && eventType == "response.create" {
+			stripped, changed, stripErr := stripOpenAIOAuthResponsesInputItemMetadata(normalized)
+			if stripErr != nil {
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", stripErr)
+			}
+			if changed {
+				normalized = stripped
+			}
+		}
 		apiKey := getAPIKeyFromContext(c)
 		imageGenerationAllowed := GroupAllowsImageGeneration(apiKeyGroup(apiKey))
 		codexBridgeEnabled := isCodexCLI &&

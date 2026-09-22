@@ -152,6 +152,25 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact
 	})
 }
 
+// stripOpenAIOAuthInputInternalMetadata removes the client-only metadata that
+// Codex may attach to top-level Responses input items. ChatGPT rejects it on
+// OAuth requests. Do not walk nested content: user content may legitimately
+// contain the same key.
+func stripOpenAIOAuthInputInternalMetadata(input []any) bool {
+	modified := false
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, exists := item["internal_chat_message_metadata_passthrough"]; exists {
+			delete(item, "internal_chat_message_metadata_passthrough")
+			modified = true
+		}
+	}
+	return modified
+}
+
 func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuthTransformOptions) codexTransformResult {
 	result := codexTransformResult{}
 	// 工具续链需求会影响存储策略与 input 过滤逻辑。
@@ -290,6 +309,9 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 			PreserveReferences: needsToolContinuation,
 			PreserveCallIDs:    opts.PreserveToolCallIDs,
 		})
+		if stripOpenAIOAuthInputInternalMetadata(input) {
+			result.Modified = true
+		}
 		reqBody["input"] = input
 		result.Modified = true
 	} else if inputStr, ok := reqBody["input"].(string); ok {

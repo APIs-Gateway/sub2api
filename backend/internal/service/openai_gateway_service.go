@@ -9215,6 +9215,18 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 	normalized := body
 	changed := false
 
+	// Codex can attach internal message metadata when a custom provider is
+	// named OpenAI. ChatGPT rejects the field on Responses input items. Keep
+	// the operation shallow so identically named user content is untouched.
+	stripped, metadataChanged, err := stripOpenAIOAuthResponsesInputItemMetadata(normalized)
+	if err != nil {
+		return body, false, err
+	}
+	if metadataChanged {
+		normalized = stripped
+		changed = true
+	}
+
 	for _, field := range openAIChatGPTInternalUnsupportedFields {
 		if value := gjson.GetBytes(normalized, field); !value.Exists() {
 			continue
@@ -9287,6 +9299,31 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 		}
 	}
 
+	return normalized, changed, nil
+}
+
+// stripOpenAIOAuthResponsesInputItemMetadata strips only the exact internal
+// field from object items in an already-array-shaped Responses input. It is
+// shared by OAuth passthrough and WebSocket normalization paths.
+func stripOpenAIOAuthResponsesInputItemMetadata(body []byte) ([]byte, bool, error) {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body, false, nil
+	}
+
+	normalized := body
+	changed := false
+	for i, item := range input.Array() {
+		if !item.IsObject() || !item.Get("internal_chat_message_metadata_passthrough").Exists() {
+			continue
+		}
+		next, err := sjson.DeleteBytes(normalized, fmt.Sprintf("input.%d.internal_chat_message_metadata_passthrough", i))
+		if err != nil {
+			return body, false, fmt.Errorf("strip oauth input item metadata: %w", err)
+		}
+		normalized = next
+		changed = true
+	}
 	return normalized, changed, nil
 }
 

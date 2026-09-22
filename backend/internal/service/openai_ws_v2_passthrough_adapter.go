@@ -642,6 +642,15 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		}
 		firstClientMessage = liteFirstMessage
 	}
+	if account.IsOpenAIOAuth() && strings.TrimSpace(gjson.GetBytes(firstClientMessage, "type").String()) == "response.create" {
+		stripped, changed, stripErr := stripOpenAIOAuthResponsesInputItemMetadata(firstClientMessage)
+		if stripErr != nil {
+			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", stripErr)
+		}
+		if changed {
+			firstClientMessage = stripped
+		}
+	}
 	requestModel := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "model").String())
 	requestPreviousResponseID := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "previous_response_id").String())
 	logOpenAIWSV2Passthrough(
@@ -904,6 +913,15 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, liteErr.Error(), liteErr)
 				}
 				payload = litePayload
+			}
+			if isResponseCreate && account.IsOpenAIOAuth() {
+				stripped, changed, stripErr := stripOpenAIOAuthResponsesInputItemMetadata(payload)
+				if stripErr != nil {
+					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", stripErr)
+				}
+				if changed {
+					payload = stripped
+				}
 			}
 			if isResponseCreate && hooks != nil && hooks.BeforeRequest != nil {
 				turnNo := int(completedTurns.Load()) + 1
