@@ -134,7 +134,8 @@ type trackingConcurrencyCache struct {
 
 type activeIndexCleanerConcurrencyCache struct {
 	stubConcurrencyCacheForTest
-	cleanupCalls chan struct{}
+	cleanupCalls     chan struct{}
+	cleanupCallCount atomic.Int32
 }
 
 type concurrencyCacheWithoutAPIKeyTracking struct {
@@ -147,7 +148,9 @@ func (c *trackingConcurrencyCache) CleanupStaleProcessSlots(_ context.Context, p
 }
 
 func (c *activeIndexCleanerConcurrencyCache) CleanupExpiredAccountSlotKeys(_ context.Context) error {
-	c.cleanupCalls <- struct{}{}
+	if c.cleanupCallCount.Add(1) <= 2 {
+		c.cleanupCalls <- struct{}{}
+	}
 	return c.cleanupErr
 }
 
@@ -179,13 +182,19 @@ func TestStartSlotCleanupWorkerContinuesAfterActiveIndexCleanerError(t *testing.
 		cleanupCalls: make(chan struct{}, 1),
 		stubConcurrencyCacheForTest: stubConcurrencyCacheForTest{cleanupErr: errors.New("redis unavailable")},
 	}
-	NewConcurrencyService(cache).StartSlotCleanupWorker(nil, time.Hour)
+	NewConcurrencyService(cache).StartSlotCleanupWorker(nil, 10*time.Millisecond)
 
 	select {
 	case <-cache.cleanupCalls:
 	case <-time.After(time.Second):
 		t.Fatal("active-index cleaner was not invoked")
 	}
+	select {
+	case <-cache.cleanupCalls:
+	case <-time.After(time.Second):
+		t.Fatal("active-index cleaner did not continue after its first error")
+	}
+	require.GreaterOrEqual(t, cache.cleanupCallCount.Load(), int32(2))
 }
 
 func TestAcquireAccountSlot_Success(t *testing.T) {
