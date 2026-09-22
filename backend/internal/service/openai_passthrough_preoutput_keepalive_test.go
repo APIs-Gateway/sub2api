@@ -19,6 +19,12 @@ import (
 // 这个问题（见 openai_gateway_response_handling.go 中 lastDownstreamWriteAt 的注释），
 // 透传路径漏了。
 
+const passthroughKeepaliveTestInterval = time.Millisecond
+
+func waitForPassthroughKeepaliveBeats() {
+	time.Sleep(3 * passthroughKeepaliveTestInterval)
+}
+
 func newPassthroughKeepaliveTestContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -36,16 +42,16 @@ func TestStartOpenAISSEKeepalive_WorksWithoutCompactMarker(t *testing.T) {
 	c, rec := newPassthroughKeepaliveTestContext(t)
 
 	// 对照:带 compact 标记检查的入口在这里应当直接 no-op。
-	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
-	waitForKeepaliveBeats()
+	stop := StartOpenAICompactSSEKeepalive(c, passthroughKeepaliveTestInterval)
+	waitForPassthroughKeepaliveBeats()
 	stop()
 	require.Zero(t, rec.Body.Len(), "无 compact 标记时 StartOpenAICompactSSEKeepalive 应当 no-op")
 
 	// 内部入口不检查标记,应当真的开始打拍。
 	c, rec = newPassthroughKeepaliveTestContext(t)
-	stop = startOpenAISSEKeepalive(c, keepaliveTestInterval)
+	stop = startOpenAISSEKeepalive(c, passthroughKeepaliveTestInterval)
 	defer stop()
-	waitForKeepaliveBeats()
+	waitForPassthroughKeepaliveBeats()
 
 	require.True(t, StopOpenAICompactSSEKeepaliveCommitted(c), "心跳应当提交响应头")
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -59,9 +65,9 @@ func TestStartOpenAISSEKeepalive_WorksWithoutCompactMarker(t *testing.T) {
 // 透传路径的 pre-output failover 完全依赖它。
 func TestPassthroughKeepaliveDoesNotBlockPreOutputFailover(t *testing.T) {
 	c, rec := newPassthroughKeepaliveTestContext(t)
-	stop := startOpenAISSEKeepalive(c, keepaliveTestInterval)
+	stop := startOpenAISSEKeepalive(c, passthroughKeepaliveTestInterval)
 	defer stop()
-	waitForKeepaliveBeats()
+	waitForPassthroughKeepaliveBeats()
 	require.True(t, StopOpenAICompactSSEKeepaliveCommitted(c))
 	require.NotZero(t, rec.Body.Len(), "前提:心跳确实写出了字节")
 
@@ -79,18 +85,18 @@ func TestPassthroughKeepaliveDoesNotBlockPreOutputFailover(t *testing.T) {
 // 停拍之后不得再有心跳字节写出 —— 主循环接管 ResponseWriter 的前提。
 func TestPassthroughKeepaliveStopsBeforeHandingOverWriter(t *testing.T) {
 	c, rec := newPassthroughKeepaliveTestContext(t)
-	stop := startOpenAISSEKeepalive(c, keepaliveTestInterval)
-	waitForKeepaliveBeats()
+	stop := startOpenAISSEKeepalive(c, passthroughKeepaliveTestInterval)
+	waitForPassthroughKeepaliveBeats()
 	stop()
 
 	before := rec.Body.String()
-	waitForKeepaliveBeats()
+	waitForPassthroughKeepaliveBeats()
 	require.Equal(t, before, rec.Body.String(), "停拍后不应再有字节写出")
 
 	// 停拍后主循环写出的内容不应被心跳穿插。
 	_, err := c.Writer.Write([]byte("data: real\n\n"))
 	require.NoError(t, err)
-	waitForKeepaliveBeats()
+	waitForPassthroughKeepaliveBeats()
 	require.True(t, strings.HasSuffix(rec.Body.String(), "data: real\n\n"),
 		"停拍后写入应当是响应体的最后一段")
 }
@@ -99,9 +105,8 @@ func TestPassthroughKeepaliveStopsBeforeHandingOverWriter(t *testing.T) {
 func TestPassthroughKeepaliveDisabledKeepsWriterUntouched(t *testing.T) {
 	c, rec := newPassthroughKeepaliveTestContext(t)
 	stop := startOpenAISSEKeepalive(c, 0)
-	waitForKeepaliveBeats()
+	waitForPassthroughKeepaliveBeats()
 	stop()
 	require.Zero(t, rec.Body.Len())
 	require.False(t, StopOpenAICompactSSEKeepaliveCommitted(c))
-	_ = time.Now
 }
