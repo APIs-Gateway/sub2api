@@ -125,6 +125,8 @@ func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		events.GET("", h.Admin.PromptAudit.ListEvents)
 		events.GET("/:id", h.Admin.PromptAudit.GetEvent)
+		events.POST("/delete-preview", h.Admin.PromptAudit.DeletePreview)
+		events.POST("/delete-by-filter", h.Admin.PromptAudit.DeleteByFilter)
 	}
 }
 

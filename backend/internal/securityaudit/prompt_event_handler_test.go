@@ -1,6 +1,7 @@
 package securityaudit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,14 +15,20 @@ import (
 )
 
 type promptEventRepositoryStub struct {
-	page      *EventPage
-	event     *Event
-	listErr   error
-	getErr    error
-	filter    EventFilter
-	pageNum   int
-	pageSize  int
-	requested int64
+	page                *EventPage
+	event               *Event
+	listErr             error
+	getErr              error
+	preview             *DeletePreview
+	previewErr          error
+	deleteResult        *DeleteResult
+	deleteErr           error
+	filter              EventFilter
+	pageNum             int
+	pageSize            int
+	requested           int64
+	deleteFilter        EventFilter
+	deleteSnapshotMaxID int64
 }
 
 func (s *promptEventRepositoryStub) ListEvents(_ context.Context, filter EventFilter, page, pageSize int) (*EventPage, error) {
@@ -34,12 +41,32 @@ func (s *promptEventRepositoryStub) GetEvent(_ context.Context, id int64) (*Even
 	return s.event, s.getErr
 }
 
+func (s *promptEventRepositoryStub) PreviewDelete(_ context.Context, filter EventFilter) (*DeletePreview, error) {
+	s.filter = filter
+	return s.preview, s.previewErr
+}
+
+func (s *promptEventRepositoryStub) DeleteEventsByFilter(_ context.Context, filter EventFilter, snapshotMaxID int64, _ int) (*DeleteResult, error) {
+	s.deleteFilter, s.deleteSnapshotMaxID = filter, snapshotMaxID
+	return s.deleteResult, s.deleteErr
+}
+
 func newPromptEventTestContext(t *testing.T, target string) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodGet, target, nil)
+	return c, recorder
+}
+
+func newPromptEventJSONContext(t *testing.T, target string, body string) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, target, bytes.NewBufferString(body))
+	c.Request.Header.Set("Content-Type", "application/json")
 	return c, recorder
 }
 
@@ -152,4 +179,64 @@ func TestPromptEventAdminHandlerResponseEnvelopeIsJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
 	require.Zero(t, envelope.Code)
 	require.Equal(t, 20, envelope.Data.PageSize)
+}
+
+type promptEventHandlerTestClock struct{ now time.Time }
+
+func (c promptEventHandlerTestClock) Now() time.Time { return c.now }
+
+func TestPromptEventAdminHandlerFilterDeleteRequiresBoundSingleUseConfirmation(t *testing.T) {
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+	preview := &DeletePreview{
+		MatchedCount: 2, FilterSummary: EventFilter{StartAt: &start, EndAt: &end}, SnapshotMaxID: 42,
+		FilterHash: FilterHash(EventFilter{StartAt: &start, EndAt: &end}, 42),
+	}
+	repo := &promptEventRepositoryStub{preview: preview, deleteResult: &DeleteResult{DeletedEvents: 2}}
+	handler := NewPromptEventAdminHandler(repo)
+	handler.clock = promptEventHandlerTestClock{now: start}
+
+	c, recorder := newPromptEventJSONContext(t, "/admin/prompt-audit/events/delete-preview", `{"start_at":"2023-11-14T22:13:20Z","end_at":"2023-11-14T23:13:20Z"}`)
+	handler.DeletePreview(c)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NotEmpty(t, preview.ConfirmationToken)
+	require.Equal(t, start.Add(5*time.Minute), preview.ExpiresAt)
+
+	request := DeleteByFilterRequest{Filter: EventFilter{StartAt: &start, EndAt: &end}, SnapshotMaxID: 42, FilterHash: preview.FilterHash, ConfirmationToken: preview.ConfirmationToken, Confirm: true}
+	requestBody, err := json.Marshal(request)
+	require.NoError(t, err)
+	c, recorder = newPromptEventJSONContext(t, "/admin/prompt-audit/events/delete-by-filter", string(requestBody))
+	handler.DeleteByFilter(c)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, int64(42), repo.deleteSnapshotMaxID)
+	require.Equal(t, request.Filter, repo.deleteFilter)
+	require.Error(t, handler.consumeConfirmation(request, 0), "a consumed token must not be replayable")
+
+	otherAdminPreview := &DeletePreview{MatchedCount: 1, FilterSummary: EventFilter{StartAt: &start, EndAt: &end}, SnapshotMaxID: 42, FilterHash: preview.FilterHash}
+	require.NoError(t, handler.issueConfirmation(otherAdminPreview, 9))
+	request.ConfirmationToken = otherAdminPreview.ConfirmationToken
+	require.Error(t, handler.consumeConfirmation(request, 0), "confirmation tokens must be bound to the issuing admin")
+}
+
+func TestPromptEventAdminHandlerFilterDeleteRejectsMalformedAndExpiredConfirmation(t *testing.T) {
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+	repo := &promptEventRepositoryStub{deleteResult: &DeleteResult{}}
+	handler := NewPromptEventAdminHandler(repo)
+	handler.clock = promptEventHandlerTestClock{now: end}
+
+	c, recorder := newPromptEventJSONContext(t, "/admin/prompt-audit/events/delete-by-filter", `{"filter":{"start_at":"2023-11-14T22:13:20Z"},"snapshot_max_id":42,"filter_hash":"hash","confirmation_token":"missing","confirm":true}`)
+	handler.DeleteByFilter(c)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Zero(t, repo.deleteSnapshotMaxID)
+
+	preview := &DeletePreview{MatchedCount: 1, FilterSummary: EventFilter{StartAt: &start, EndAt: &end}, SnapshotMaxID: 42, FilterHash: FilterHash(EventFilter{StartAt: &start, EndAt: &end}, 42)}
+	require.NoError(t, handler.issueConfirmation(preview, 0))
+	handler.clock = promptEventHandlerTestClock{now: end.Add(6 * time.Minute)}
+	request, err := json.Marshal(DeleteByFilterRequest{Filter: EventFilter{StartAt: &start, EndAt: &end}, SnapshotMaxID: 42, FilterHash: preview.FilterHash, ConfirmationToken: preview.ConfirmationToken, Confirm: true})
+	require.NoError(t, err)
+	c, recorder = newPromptEventJSONContext(t, "/admin/prompt-audit/events/delete-by-filter", string(request))
+	handler.DeleteByFilter(c)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Zero(t, repo.deleteSnapshotMaxID)
 }

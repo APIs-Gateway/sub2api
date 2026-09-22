@@ -2,7 +2,10 @@ package securityaudit
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -33,14 +36,39 @@ type EventPage struct {
 	Pages    int      `json:"pages"`
 }
 
-// EventRepository is deliberately read-only. Destructive retention operations
-// are outside this child issue and must not become part of this dependency.
+// DeletePreview is a bounded, redacted-only description of the events a
+// filter-delete confirmation may remove. ConfirmationToken is populated by
+// PromptEventAdminHandler, rather than persisted with the audit event data.
+type DeletePreview struct {
+	MatchedCount      int64       `json:"matched_count"`
+	FilterSummary     EventFilter `json:"filter_summary"`
+	SnapshotMaxID     int64       `json:"snapshot_max_id"`
+	FilterHash        string      `json:"filter_hash"`
+	ConfirmationToken string      `json:"confirmation_token,omitempty"`
+	ExpiresAt         time.Time   `json:"expires_at,omitempty"`
+}
+
+type DeleteResult struct {
+	DeletedEvents int64 `json:"deleted_events"`
+	DeletedJobs   int64 `json:"deleted_jobs"`
+}
+
+var (
+	ErrInvalidDeleteFilter = errors.New("prompt audit filter delete requires a valid explicit time range")
+	ErrDeleteNoMatches     = errors.New("prompt audit filter delete matches no events")
+)
+
+// EventRepository intentionally exposes just the minimum retention contract
+// required by the two-step preview/confirm flow. It does not expose raw
+// prompts, individual deletion, or a UI-oriented batch-delete API.
 // ListEvents always returns redacted-only snapshots. GetEvent may return an
 // unredacted Snapshot.FullPrompt when store_full_prompts was enabled at
 // storage time; it is empty otherwise.
 type EventRepository interface {
 	ListEvents(ctx context.Context, filter EventFilter, page, pageSize int) (*EventPage, error)
 	GetEvent(ctx context.Context, id int64) (*Event, error)
+	PreviewDelete(ctx context.Context, filter EventFilter) (*DeletePreview, error)
+	DeleteEventsByFilter(ctx context.Context, filter EventFilter, snapshotMaxID int64, batchSize int) (*DeleteResult, error)
 }
 
 func (r *PostgreSQLRepository) ListEvents(ctx context.Context, filter EventFilter, page, pageSize int) (*EventPage, error) {
@@ -101,6 +129,164 @@ func (r *PostgreSQLRepository) GetEvent(ctx context.Context, id int64) (*Event, 
 		return nil, ErrEventNotFound
 	}
 	return event, err
+}
+
+func (r *PostgreSQLRepository) PreviewDelete(ctx context.Context, filter EventFilter) (*DeletePreview, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("prompt audit database unavailable")
+	}
+	if err := validateDeleteFilter(filter); err != nil {
+		return nil, err
+	}
+	canonical := canonicalEventFilter(filter)
+	where, args := buildEventWhere(canonical, 1, r.placeholder)
+	preview := &DeletePreview{FilterSummary: canonical}
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(MAX(e.id),0) FROM prompt_audit_events e`+where, args...).
+		Scan(&preview.MatchedCount, &preview.SnapshotMaxID); err != nil {
+		return nil, err
+	}
+	if preview.MatchedCount == 0 {
+		return nil, ErrDeleteNoMatches
+	}
+	preview.FilterHash = FilterHash(canonical, preview.SnapshotMaxID)
+	return preview, nil
+}
+
+// DeleteEventsByFilter removes only events that were already present at the
+// preview high-water mark. Filter columns are immutable after event creation,
+// so selecting the IDs and deleting them in the same transaction preserves the
+// preview's scope on PostgreSQL, SQLite, and MySQL without dialect-specific
+// SKIP LOCKED or RETURNING syntax.
+func (r *PostgreSQLRepository) DeleteEventsByFilter(ctx context.Context, filter EventFilter, snapshotMaxID int64, batchSize int) (*DeleteResult, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("prompt audit database unavailable")
+	}
+	if err := validateDeleteFilter(filter); err != nil {
+		return nil, err
+	}
+	if snapshotMaxID <= 0 {
+		return &DeleteResult{}, nil
+	}
+	if batchSize < 1 || batchSize > 500 {
+		batchSize = 200
+	}
+
+	canonical := canonicalEventFilter(filter)
+	total := &DeleteResult{}
+	for {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		result, done, err := r.deleteEventBatch(ctx, tx, canonical, snapshotMaxID, batchSize)
+		if err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		total.DeletedEvents += result.DeletedEvents
+		total.DeletedJobs += result.DeletedJobs
+		if done {
+			return total, nil
+		}
+	}
+}
+
+func (r *PostgreSQLRepository) deleteEventBatch(ctx context.Context, tx *sql.Tx, filter EventFilter, snapshotMaxID int64, batchSize int) (*DeleteResult, bool, error) {
+	where, args := buildEventWhere(filter, 1, r.placeholder)
+	maxPosition := len(args) + 1
+	limitPosition := maxPosition + 1
+	args = append(args, snapshotMaxID, batchSize)
+	rows, err := tx.QueryContext(ctx,
+		`SELECT e.id, e.job_id FROM prompt_audit_events e`+where+
+		` AND e.id <= `+r.placeholder(maxPosition)+` ORDER BY e.id LIMIT `+r.placeholder(limitPosition), args...)
+	if err != nil {
+		return nil, false, err
+	}
+	ids, jobIDs, err := scanEventAndJobIDs(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(ids) == 0 {
+		return &DeleteResult{}, true, nil
+	}
+	deleteArgs := make([]any, len(ids))
+	for index, id := range ids {
+		deleteArgs[index] = id
+	}
+	deleted, err := tx.ExecContext(ctx, `DELETE FROM prompt_audit_events WHERE id IN (`+
+		placeholderList(r.placeholder, 1, len(ids))+`)`, deleteArgs...)
+	if err != nil {
+		return nil, false, err
+	}
+	deletedEvents, err := deleted.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	deletedJobs, err := r.deleteOrphanJobs(ctx, tx, jobIDs)
+	if err != nil {
+		return nil, false, err
+	}
+	return &DeleteResult{DeletedEvents: deletedEvents, DeletedJobs: deletedJobs}, len(ids) < batchSize, nil
+}
+
+func (r *PostgreSQLRepository) deleteOrphanJobs(ctx context.Context, tx *sql.Tx, jobIDs []int64) (int64, error) {
+	jobIDs = canonicalInt64s(jobIDs)
+	if len(jobIDs) == 0 {
+		return 0, nil
+	}
+	args := make([]any, len(jobIDs))
+	for index, id := range jobIDs {
+		args[index] = id
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM prompt_audit_jobs WHERE id IN (`+
+		placeholderList(r.placeholder, 1, len(jobIDs))+`) AND status <> 'processing'`+
+		` AND NOT EXISTS (SELECT 1 FROM prompt_audit_events e WHERE e.job_id=prompt_audit_jobs.id)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func scanEventAndJobIDs(rows *sql.Rows) ([]int64, []int64, error) {
+	defer func() { _ = rows.Close() }()
+	ids, jobIDs := make([]int64, 0), make([]int64, 0)
+	for rows.Next() {
+		var id, jobID int64
+		if err := rows.Scan(&id, &jobID); err != nil {
+			return nil, nil, err
+		}
+		ids, jobIDs = append(ids, id), append(jobIDs, jobID)
+	}
+	return ids, jobIDs, rows.Err()
+}
+
+func placeholderList(placeholder func(int) string, firstPosition, count int) string {
+	values := make([]string, count)
+	for index := range values {
+		values[index] = placeholder(firstPosition + index)
+	}
+	return strings.Join(values, ",")
+}
+
+func FilterHash(filter EventFilter, snapshotMaxID int64) string {
+	payload := struct {
+		Filter        EventFilter `json:"filter"`
+		SnapshotMaxID int64       `json:"snapshot_max_id"`
+	}{Filter: canonicalEventFilter(filter), SnapshotMaxID: snapshotMaxID}
+	raw, _ := json.Marshal(payload)
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+func validateDeleteFilter(filter EventFilter) error {
+	if filter.StartAt == nil || filter.EndAt == nil || !filter.StartAt.Before(*filter.EndAt) {
+		return ErrInvalidDeleteFilter
+	}
+	return nil
 }
 
 func canonicalEventFilter(filter EventFilter) EventFilter {
