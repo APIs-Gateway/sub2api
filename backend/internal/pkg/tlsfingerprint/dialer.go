@@ -172,12 +172,7 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 	// variant so callers can bound connection setup (including the forward
 	// connection to the SOCKS proxy).
 	slog.Debug("tls_fingerprint_socks5_establishing_tunnel", "target", addr)
-	var conn net.Conn
-	if contextDialer, ok := socksDialer.(proxy.ContextDialer); ok {
-		conn, err = contextDialer.DialContext(ctx, "tcp", addr)
-	} else {
-		conn, err = socksDialer.Dial("tcp", addr)
-	}
+	conn, err := dialSOCKS5Context(ctx, socksDialer, "tcp", addr)
 	if err != nil {
 		slog.Debug("tls_fingerprint_socks5_connect_failed", "error", err)
 		return nil, fmt.Errorf("SOCKS5 connect: %w", err)
@@ -186,6 +181,13 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 
 	// Step 3: Perform TLS handshake on the tunnel with utls fingerprint
 	return performTLSHandshake(ctx, conn, d.profile, addr)
+}
+
+func dialSOCKS5Context(ctx context.Context, dialer proxy.Dialer, network, addr string) (net.Conn, error) {
+	if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
+		return contextDialer.DialContext(ctx, network, addr)
+	}
+	return dialer.Dial(network, addr)
 }
 
 // DialTLSContext establishes a TLS connection through HTTP proxy with the configured fingerprint.

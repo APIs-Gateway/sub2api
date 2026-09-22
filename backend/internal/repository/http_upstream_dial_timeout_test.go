@@ -50,11 +50,22 @@ func TestWithUpstreamTLSHandshakeTimeoutAddsDeadline(t *testing.T) {
 }
 
 func TestBuildUpstreamTransportWithTLSFingerprintSetsConnectionBounds(t *testing.T) {
-	transport, err := buildUpstreamTransportWithTLSFingerprint(defaultPoolSettings(nil), nil, nil)
-	require.NoError(t, err)
-	require.NotNil(t, transport.DialContext)
-	require.NotNil(t, transport.DialTLSContext)
-	require.Equal(t, defaultUpstreamTLSHandshakeTimeout, transport.TLSHandshakeTimeout)
+	for _, proxyRawURL := range []string{"", "http://127.0.0.1:1080", "socks5h://127.0.0.1:1080"} {
+		t.Run(proxyRawURL, func(t *testing.T) {
+			var proxyURL *url.URL
+			if proxyRawURL != "" {
+				var err error
+				proxyURL, err = url.Parse(proxyRawURL)
+				require.NoError(t, err)
+			}
+
+			transport, err := buildUpstreamTransportWithTLSFingerprint(defaultPoolSettings(nil), proxyURL, nil)
+			require.NoError(t, err)
+			require.NotNil(t, transport.DialContext)
+			require.NotNil(t, transport.DialTLSContext)
+			require.Equal(t, defaultUpstreamTLSHandshakeTimeout, transport.TLSHandshakeTimeout)
+		})
+	}
 }
 
 // 建连超时对 HTTP 代理同样生效：Transport.Proxy 走的仍是 DialContext，
