@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -78,6 +79,25 @@ func TestOAuthResponsesInputInternalMetadataSkipsNonArrayInputAndPromptAlias(t *
 func TestStripOpenAIOAuthInputInternalMetadataSkipsNonObjectItems(t *testing.T) {
 	input := []any{nil, "plain text", []any{"nested array"}}
 	require.False(t, stripOpenAIOAuthInputInternalMetadata(input))
+}
+
+func TestOAuthResponsesWebSocketBinaryInputMetadataCleanup(t *testing.T) {
+	payload := []byte(`{"type":"response.create","input":[{"role":"user","internal_chat_message_metadata_passthrough":{"remove":true}}]}`)
+	oauthAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	apiKeyAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	out, changed := stripOpenAIOAuthResponsesWebSocketFrameMetadata(oauthAccount, coderws.MessageBinary, payload)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(out, "input.0."+openAIOAuthInputMetadataField).Exists())
+
+	out, changed = stripOpenAIOAuthResponsesWebSocketFrameMetadata(apiKeyAccount, coderws.MessageBinary, payload)
+	require.False(t, changed)
+	require.Equal(t, payload, out)
+
+	nonJSONBinary := []byte{0x00, 0xff, 0x10}
+	out, changed = stripOpenAIOAuthResponsesWebSocketFrameMetadata(oauthAccount, coderws.MessageBinary, nonJSONBinary)
+	require.False(t, changed)
+	require.Equal(t, nonJSONBinary, out)
 }
 
 func TestAPIKeyResponsesInputInternalMetadataIsPreserved(t *testing.T) {

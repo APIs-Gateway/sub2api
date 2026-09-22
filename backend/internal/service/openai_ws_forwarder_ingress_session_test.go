@@ -758,7 +758,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	require.Equal(t, "completed", gjson.GetBytes(event, "response.output.0.status").String())
 
 	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.6-sol-max","stream":false,"previous_response_id":"resp_passthrough_turn_1","input":[{"type":"function_call_output","call_id":"call_1","output":"ok","internal_chat_message_metadata_passthrough":null}]}`))
+	err = clientConn.Write(writeCtx, coderws.MessageBinary, []byte(`{"type":"response.create","model":"gpt-5.6-sol-max","stream":false,"previous_response_id":"resp_passthrough_turn_1","input":[{"type":"function_call_output","call_id":"call_1","output":"ok","internal_chat_message_metadata_passthrough":null}]}`))
 	cancelWrite()
 	require.NoError(t, err)
 	readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
