@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,9 @@ import (
 // normalizeGrokResponsesReasoningEffort keeps the three OpenAI-compatible
 // spellings accepted at ingress, while emitting only xAI-supported values.
 func normalizeGrokResponsesReasoningEffort(body []byte, upstreamModel string) ([]byte, error) {
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("invalid json request body")
+	}
 	supportsEffort := grokSupportsReasoningEffort(upstreamModel)
 	out := body
 	var err error
@@ -52,6 +56,9 @@ func normalizeGrokResponsesReasoningEffort(body []byte, upstreamModel string) ([
 }
 
 func normalizeGrokChatReasoningEffort(body []byte, upstreamModel string) ([]byte, error) {
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("invalid json request body")
+	}
 	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
 	if raw == "" {
 		raw = strings.TrimSpace(gjson.GetBytes(body, "reasoningEffort").String())
