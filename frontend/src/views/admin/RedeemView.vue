@@ -1,10 +1,12 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <AdminTaskPageLayout
+      :title="t('admin.redeem.title')"
+      :description="t('admin.redeem.description')"
+    >
       <template #filters>
         <div class="flex flex-wrap items-center gap-3">
-          <!-- Left: Search + Filters -->
-          <div class="flex-1 sm:max-w-64">
+          <div class="min-w-0 flex-1 sm:max-w-64">
             <input
               v-model="searchQuery"
               type="text"
@@ -25,46 +27,46 @@
             class="w-36"
             @change="loadCodes"
           />
-
-          <!-- Right: Action buttons -->
-          <div class="flex flex-1 flex-wrap items-center justify-end gap-2">
-            <button
-              @click="loadCodes"
-              :disabled="loading"
-              class="btn btn-secondary"
-              :title="t('common.refresh')"
-            >
-              <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-            </button>
-            <button @click="handleExportCodes" class="btn btn-secondary">
-              {{ t('admin.redeem.exportCsv') }}
-            </button>
-            <button
-              data-test="batch-update-open"
-              @click="openBatchUpdateDialog"
-              :disabled="selectedCount === 0 || batchUpdating"
-              class="btn btn-secondary"
-            >
-              <Icon name="edit" size="md" class="mr-2" />
-              {{ t('admin.redeem.batchUpdate') }}
-            </button>
-            <button @click="showGenerateDialog = true" class="btn btn-primary">
-              {{ t('admin.redeem.generateCodes') }}
-            </button>
-          </div>
         </div>
       </template>
 
-      <template #table>
-        <DataTable
-          :columns="columns"
-          :data="codes"
-          :loading="loading"
-          :server-side-sort="true"
-          default-sort-key="id"
-          default-sort-order="desc"
-          @sort="handleSort"
+      <template #actions>
+        <button
+          @click="loadCodes"
+          :disabled="loading"
+          class="btn btn-secondary"
+          :title="t('common.refresh')"
         >
+          <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+        </button>
+        <button @click="handleExportCodes" class="btn btn-secondary">
+          {{ t('admin.redeem.exportCsv') }}
+        </button>
+        <button
+          data-test="batch-update-open"
+          @click="openBatchUpdateDialog"
+          :disabled="selectedCount === 0 || batchUpdating"
+          class="btn btn-secondary"
+        >
+          <Icon name="edit" size="md" class="mr-2" />
+          {{ t('admin.redeem.batchUpdate') }}
+        </button>
+        <button @click="showGenerateDialog = true" class="btn btn-primary">
+          {{ t('admin.redeem.generateCodes') }}
+        </button>
+      </template>
+
+      <template #worklist>
+        <div class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800/50">
+          <DataTable
+            :columns="columns"
+            :data="codes"
+            :loading="loading"
+            :server-side-sort="true"
+            default-sort-key="id"
+            default-sort-order="desc"
+            @sort="handleSort"
+          >
           <template #header-select>
             <input
               data-test="select-all-codes"
@@ -201,10 +203,11 @@
               <span v-else class="text-gray-400 dark:text-dark-500">-</span>
             </div>
           </template>
-        </DataTable>
+          </DataTable>
+        </div>
       </template>
 
-      <template #pagination>
+      <template #footer>
         <div
           v-if="selectedCount > 0"
           class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-primary-50 p-3 dark:bg-primary-900/20"
@@ -246,7 +249,7 @@
           </button>
         </div>
       </template>
-    </TablePageLayout>
+    </AdminTaskPageLayout>
 
     <!-- Delete Confirmation Dialog -->
     <ConfirmDialog
@@ -587,7 +590,7 @@ import type {
 } from '@/types'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import TablePageLayout from '@/components/layout/TablePageLayout.vue'
+import AdminTaskPageLayout from '@/components/layout/AdminTaskPageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
