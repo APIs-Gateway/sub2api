@@ -1129,7 +1129,7 @@
     "* 统一生成页面标题，避免多处写入 document.title 产生覆盖冲突。"
   ],
   "stores/adminCompliance.ts": [
-    "const FALLBACK_ZH_PHRASE = '我已阅读、理解并同意 Sub2API 部署与运营合规承诺'"
+    "const FALLBACK_ZH_PHRASE = '我已阅读、理解并同意本服务部署与运营合规承诺'"
   ],
   "stores/auth.ts": [
     "* @param newToken - 后端签发的 JWT access token",
@@ -1806,7 +1806,7 @@
     "<!-- 身份同步开关（仅 internal_only 模式下可见） -->",
     "<label class=\"input-label\">加密货币手续费率</label>",
     "<p class=\"mt-0.5 text-xs text-gray-400\">仅用于 Crypto Pay，普通充值手续费不受影响。</p>",
-    "? \"https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md#支持的支付方式\"",
+    "? \"https://github.com/APIs-Gateway/sub2api/blob/main/docs/PAYMENT_CN.md#支持的支付方式\"",
     "? localText(\"复选框会显示在登录按钮下方，未勾选前所有登录入口禁用。\", \"The checkbox appears below the login button and gates all login actions.\")",
     "? localText('密钥已配置，留空以保留当前值。', 'Secret configured. Leave empty to keep the current value.')",
     "`登录条款文档路由不能重复：/legal/${duplicateLoginAgreementDocumentId}`,",

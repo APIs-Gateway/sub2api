@@ -48,11 +48,12 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
 import BrandMark from '@/components/common/BrandMark.vue'
+import { DEFAULT_SITE_NAME } from '@/utils/branding'
 
 const { t } = useI18n()
 const appStore = useAppStore()
 
-const siteName = computed(() => appStore.siteName || 'Sub2API')
+const siteName = computed(() => appStore.siteName || DEFAULT_SITE_NAME)
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || t('auth.defaultSiteSubtitle'))
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
@@ -63,4 +64,3 @@ onMounted(() => {
   appStore.fetchPublicSettings()
 })
 </script>
-
