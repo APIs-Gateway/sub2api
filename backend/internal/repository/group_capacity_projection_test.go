@@ -46,10 +46,10 @@ func TestListSchedulableCapacityByGroupIDsProjectsCapacityFields(t *testing.T) {
 	mock.ExpectQuery("schedulable capacity projection").
 		WithArgs(groupCapacityGroupIDsMatcher{want: "{20,10}"}, service.StatusActive, nonZeroTimeArgument{}).
 		WillReturnRows(sqlmock.NewRows([]string{
-		"group_id", "account_id", "concurrency", "extra", "session_window_start", "session_window_end", "session_window_status",
-	}).
-		AddRow(int64(10), int64(101), 4, `{"max_sessions":3,"base_rpm":11}`, start, end, "active").
-		AddRow(int64(20), int64(102), 2, "{}", nil, nil, ""))
+			"group_id", "account_id", "concurrency", "extra", "session_window_start", "session_window_end", "session_window_status",
+		}).
+			AddRow(int64(10), int64(101), 4, `{"max_sessions":3,"base_rpm":11}`, start, end, "active").
+			AddRow(int64(20), int64(102), 2, "{}", nil, nil, ""))
 
 	repo := newAccountRepositoryWithSQL(nil, db, nil)
 	rows, err := repo.ListSchedulableCapacityByGroupIDs(context.Background(), []int64{20, 10, 20, 0, -1})
