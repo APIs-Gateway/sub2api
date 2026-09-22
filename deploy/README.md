@@ -24,6 +24,7 @@ This directory contains files for deploying Sub2API on Linux servers.
 | `sub2api-datamanagementd.service` | datamanagementd systemd service unit file |
 | `DATAMANAGEMENTD_CN.md` | datamanagementd 部署与联动说明（中文） |
 | `config.example.yaml` | Example configuration file |
+| `EDGE_SECURITY.md` | Edge proxy, CDN, trusted-proxy, and streaming contract |
 
 ---
 
