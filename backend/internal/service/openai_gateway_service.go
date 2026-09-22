@@ -4584,12 +4584,7 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	if isOpenAIContextWindowError(message, payload) {
 		return false
 	}
-	if isOpenAIUpstreamAccessStateError(message, payload) {
-		return true
-	}
 	switch openAIStreamFailedEventSemanticStatus(payload, message) {
-	case http.StatusForbidden:
-		return openAIStream403AccountFailure(payload, message)
 	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
 		return true
 	}
