@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -90,6 +91,10 @@ func TestForwardAsChatCompletions_CancelsUpstreamBeforeClosingBody(t *testing.T)
 
 	cfg := rawChatCompletionsTestConfig()
 	cfg.Gateway.StreamKeepaliveInterval = 1
+	account := rawChatCompletionsTestAccount()
+	// The regression covers the Responses-to-Chat bridge, not the raw
+	// Chat Completions compatibility path used when Responses support is unknown.
+	account.Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: true}
 	svc := &OpenAIGatewayService{
 		cfg:          cfg,
 		httpUpstream: &contextBoundHTTPUpstream{body: stream},
@@ -101,7 +106,7 @@ func TestForwardAsChatCompletions_CancelsUpstreamBeforeClosingBody(t *testing.T)
 	}
 	resultCh := make(chan forwardResult, 1)
 	go func() {
-		result, err := svc.ForwardAsChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "", "gpt-5.1")
+		result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
