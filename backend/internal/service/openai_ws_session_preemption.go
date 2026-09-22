@@ -258,7 +258,6 @@ func (s *OpenAIGatewayService) watchOpenAIWSSessionPreemptOwner(ctx context.Cont
 					return
 				}
 			}
-			}
 		}
 	}()
 	return func() {
