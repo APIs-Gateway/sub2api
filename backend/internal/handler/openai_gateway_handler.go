@@ -2864,19 +2864,21 @@ func waitPoolModeSameAccountRetry(
 	if !ok {
 		return false, false
 	}
+	retryDelay := sameAccountRetryDelayFor(failoverErr, retryCount)
 	if reqLog != nil {
 		reqLog.Warn(logEvent,
 			zap.Int64("account_id", account.ID),
 			zap.Int("upstream_status", failoverErr.StatusCode),
 			zap.Int("retry_limit", retryLimit),
 			zap.Int("retry_count", retryCount),
+			zap.Duration("retry_delay", retryDelay),
 		)
 	}
 	ctx := context.Background()
 	if c != nil && c.Request != nil {
 		ctx = c.Request.Context()
 	}
-	if !sleepWithContext(ctx, sameAccountRetryDelay) {
+	if !sleepWithContext(ctx, retryDelay) {
 		return true, true
 	}
 	return true, false
