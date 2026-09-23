@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -262,7 +261,7 @@ func openAIResponsesLiteToolIdentityForError(rawTool any) string {
 
 func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error) {
 	var requestBody map[string]any
-	if err := json.Unmarshal(body, &requestBody); err != nil {
+	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
 		return body, false, fmt.Errorf("decode responses Lite request body: %w", err)
 	}
 	changed, err := normalizeOpenAIResponsesLiteTools(requestBody)
@@ -284,7 +283,7 @@ func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error)
 // pinned here; tools and reasoning are forwarded unchanged.
 func normalizeOpenAIResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, bool, error) {
 	var requestBody map[string]any
-	if err := json.Unmarshal(body, &requestBody); err != nil {
+	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
 		return body, false, fmt.Errorf("decode responses Lite request body: %w", err)
 	}
 	if requestBody == nil {

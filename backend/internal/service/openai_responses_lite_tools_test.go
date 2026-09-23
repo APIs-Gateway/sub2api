@@ -389,6 +389,51 @@ func TestNormalizeOpenAIResponsesLiteToolsPayload_PreservesResponseCreateShape(t
 	require.False(t, gjson.GetBytes(updated, "parallel_tool_calls").Bool())
 }
 
+func TestNormalizeOpenAIResponsesLitePayloads_PreserveLargeSequence(t *testing.T) {
+	body := []byte(`{
+		"type":"response.create",
+		"sequence":900719925474099312345,
+		"metadata":{"trace_id":1234567890123456789},
+		"tools":[{"type":"function","name":"lookup"}],
+		"parallel_tool_calls":true
+	}`)
+	tests := []struct {
+		name      string
+		normalize func([]byte) ([]byte, bool, error)
+	}{
+		{name: "OAuth tools normalization", normalize: normalizeOpenAIResponsesLiteToolsPayload},
+		{name: "API key parallel normalization", normalize: normalizeOpenAIResponsesLiteParallelToolCallsPayload},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updated, changed, err := tt.normalize(body)
+
+			require.NoError(t, err)
+			require.True(t, changed)
+			require.Equal(t, "900719925474099312345", gjson.GetBytes(updated, "sequence").Raw)
+			require.Equal(t, "1234567890123456789", gjson.GetBytes(updated, "metadata.trace_id").Raw)
+			require.True(t, gjson.GetBytes(updated, "parallel_tool_calls").Exists())
+			require.False(t, gjson.GetBytes(updated, "parallel_tool_calls").Bool())
+		})
+	}
+}
+
+func TestDecodeOpenAIJSONUseNumberRejectsTrailingData(t *testing.T) {
+	var decoded map[string]any
+	require.NoError(t, decodeOpenAIJSONUseNumber([]byte(`{"n":12345678901234567890} `), &decoded))
+	require.Equal(t, "12345678901234567890", decoded["n"].(interface{ String() string }).String())
+
+	require.ErrorContains(t, decodeOpenAIJSONUseNumber([]byte(`{"a":1}{"b":2}`), &decoded), "multiple JSON values")
+	require.Error(t, decodeOpenAIJSONUseNumber([]byte(`{"a":1} x`), &decoded))
+	require.Error(t, decodeOpenAIJSONUseNumber([]byte(`{"a":`), &decoded))
+
+	updated, changed, err := normalizeOpenAIResponsesLiteToolsPayload([]byte(`{"parallel_tool_calls":true,"tools":[{"type":"function","name":"f"}]}{}`))
+	require.ErrorContains(t, err, "decode responses Lite request body")
+	require.False(t, changed)
+	require.Equal(t, `{"parallel_tool_calls":true,"tools":[{"type":"function","name":"f"}]}{}`, string(updated))
+}
+
 func TestApplyCodexOAuthTransform_PreservesLiteNamespaceToolChoice(t *testing.T) {
 	reqBody := map[string]any{
 		"input": []any{map[string]any{
