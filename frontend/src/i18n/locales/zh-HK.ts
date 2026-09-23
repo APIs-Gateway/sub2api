@@ -2449,6 +2449,8 @@
       failedToLoad: '加載用戶列表失敗',
       failedToCreate: '創建用戶失敗',
       failedToUpdate: '更新用戶失敗',
+      lastAdminDemoteForbidden: '不能降級最後一個管理員，請先將其他用戶設為管理員',
+      cannotDemoteSelf: '不能將自己降級為普通用戶',
       failedToDelete: '刪除用戶失敗',
       failedToToggle: '更新用戶狀態失敗',
       failedToLoadApiKeys: '加載用戶 API 金鑰失敗',

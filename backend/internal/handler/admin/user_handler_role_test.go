@@ -74,6 +74,7 @@ func TestUserHandlerUpdateMapsRoleAndPreventsSelfDowngrade(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "CANNOT_DEMOTE_SELF", "自我降级应返回稳定 reason 供前端本地化")
 	require.Nil(t, adminSvc.updatedUserInput)
 
 	rec = httptest.NewRecorder()
