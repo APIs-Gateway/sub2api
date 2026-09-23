@@ -835,7 +835,7 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 		Concurrency: 1,
 		Status:      StatusActive,
 	}
-	payload := []byte(`{"type":"response.create","generate":true,"model":"sol","stream":true,"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},"reasoning":{"effort":"max"},"input":"hi"}`)
+	payload := []byte(`{"type":"response.create","generate":true,"model":"sol","stream":true,"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},"reasoning":{"effort":"max"},"input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],"parallel_tool_calls":true}`)
 
 	type bridgeResult struct {
 		result *OpenAIForwardResult
@@ -923,6 +923,8 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 	require.False(t, gjson.GetBytes(upstream.lastBody, "generate").Exists())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
 	require.Equal(t, "true", upstream.lastReq.Header.Get(responsesLiteHeader))
+	require.True(t, gjson.GetBytes(upstream.lastBody, "parallel_tool_calls").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "parallel_tool_calls").Bool())
 }
 
 func TestOpenAIWSHTTPBridgeBodyPreservesNormalizedResponsesLiteTools(t *testing.T) {
@@ -1639,4 +1641,25 @@ func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyNoPreviousStateTreatsOmittedToolsAsNoC
 
 	require.False(t, hasResponsesClientToolMapping(result.wsClientToolState.ClientMapping))
 	require.Nil(t, result.wsClientToolState.LoweredTools)
+}
+
+func TestOpenAIWSHTTPBridgeRejectsInvalidResponsesLitePayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{ID: 8, Name: "api-key", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1, Status: StatusActive}
+	payload := []byte(`{"type":"response.create","model":"gpt-5","stream":true,"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},"input":"hi","parallel_tool_calls":"no"}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+		context.Background(), c, account, "sk-test", payload, len(payload),
+		"gpt-5", "", "", "", 1, openAIWSHTTPBridgeToolState{},
+		func([]byte) error { return nil },
+	)
+
+	require.ErrorContains(t, err, "normalize responses Lite payload")
+	require.ErrorContains(t, err, "parallel_tool_calls to be a boolean")
+	require.Nil(t, result)
+	require.Nil(t, upstream.lastReq)
 }
