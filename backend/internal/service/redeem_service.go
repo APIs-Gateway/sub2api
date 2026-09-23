@@ -681,7 +681,20 @@ func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID i
 		return ErrSubscriptionNotFound
 	}
 
-	now := time.Now()
+	// 兑换流程已持有外层事务（ctx 即 txCtx）。判定前先对卡行加 FOR UPDATE 并重读：
+	// 兑换码自身的锁只能串行化同一张码，不同的负数码、管理员调天数、续费都可能并发改同一张卡；
+	// 若按锁外读到的旧行判定「取消还是缩短」并回写旧备注，会丢掉并发的续费/备注，甚至把刚续费的卡取消。
+	locked, err := s.subscriptionService.userSubRepo.GetByIDForUpdate(ctx, sub.ID)
+	if err != nil {
+		return fmt.Errorf("lock subscription for reduction: %w", err)
+	}
+	// 锁内看到卡已被撤销（行已删）或已取消/过期：与「锁外就没读到生效卡」同口径。
+	if locked.Status != SubscriptionStatusActive {
+		return ErrSubscriptionNotFound
+	}
+	sub = locked
+
+	now := s.subscriptionService.currentTime()
 	remaining := int(sub.ExpiresAt.Sub(now).Hours() / 24)
 	if remaining < 0 {
 		remaining = 0
