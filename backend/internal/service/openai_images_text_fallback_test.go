@@ -213,13 +213,15 @@ func TestImagesOAuthNonStreaming_PlainTextPlanTriggersAccountCooldownFailover(t 
 	require.Empty(t, rec.Body.String())
 }
 
-// TestOpenAIGatewayServiceForwardImages_OAuthStreamingTextOnlyPlanCoolsAndFailsOver
+// TestOpenAIGatewayServiceForwardImages_OAuthStreamingTextOnlyPlanFailsOverWithoutCooling
 // exercises the streaming path end-to-end: the model streams
 // response.output_text.delta chunks (a plan, not a refusal) and then
 // completes with no image output. This must not be surfaced to the client as
-// an SSE error frame (it's retryable on another account); instead the tool is
-// cooled down on this account and a same-request failover is triggered.
-func TestOpenAIGatewayServiceForwardImages_OAuthStreamingTextOnlyPlanCoolsAndFailsOver(t *testing.T) {
+// an SSE error frame (it's retryable on another account); a same-request
+// failover is triggered, but the verdict is synthesized from the model's text
+// and therefore must not cool the account's image tool (upstream d077002eb,
+// Wei-Shaw/sub2api#6171).
+func TestOpenAIGatewayServiceForwardImages_OAuthStreamingTextOnlyPlanFailsOverWithoutCooling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","stream":true}`)
 
@@ -269,13 +271,11 @@ func TestOpenAIGatewayServiceForwardImages_OAuthStreamingTextOnlyPlanCoolsAndFai
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-	require.False(t, failoverErr.RetryableOnSameAccount, "must switch accounts, not retry the cooled-down one")
+	require.False(t, failoverErr.RetryableOnSameAccount, "must switch accounts, not retry the same one")
 
 	require.NotContains(t, rec.Body.String(), "event: error", "a retryable capability failure must not be surfaced to the client")
 
-	require.Len(t, repo.calls, 1, "should cool the account's image tool for a same-request failover")
-	require.Equal(t, account.ID, repo.calls[0].accountID)
-	require.Equal(t, openAIImageGenerationRateLimitKey, repo.calls[0].scope)
+	require.Empty(t, repo.calls, "a text-only reply is a per-turn verdict and must not cool the account's image tool")
 }
 
 // TestOpenAIGatewayServiceForwardImages_OAuthStreamingRefusalWritesClientError
@@ -400,6 +400,5 @@ func TestOpenAIGatewayServiceForwardImages_OAuthStreamingCompletedBodyOnlyTextFa
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.False(t, failoverErr.RetryableOnSameAccount)
 
-	require.Len(t, repo.calls, 1, "should cool the account's image tool for a same-request failover")
-	require.Equal(t, account.ID, repo.calls[0].accountID)
+	require.Empty(t, repo.calls, "a text-only reply is a per-turn verdict and must not cool the account's image tool")
 }
