@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import UserSubscriptionCard from '../UserSubscriptionCard.vue'
 import type { UserSubscription } from '@/types'
@@ -93,5 +93,66 @@ describe('UserSubscriptionCard lifecycle checkout', () => {
         charge: '72.60',
       },
     })
+  })
+})
+
+describe('UserSubscriptionCard expiry labels', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 6, 30, 9, 0))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function mountWithExpiry(expiresAt: string) {
+    return shallowMount(UserSubscriptionCard, {
+      props: {
+        subscription: { ...activeSubscriptionFixture(), expires_at: expiresAt },
+      },
+      global: {
+        stubs: {
+          ConfirmDialog: true,
+        },
+      },
+    })
+  }
+
+  it('labels a same-day expiry under 24 hours away as today, not tomorrow', () => {
+    const text = mountWithExpiry(new Date(2026, 6, 30, 18, 0).toISOString()).text()
+
+    expect(text).toContain('common.today')
+    expect(text).not.toContain('common.tomorrow')
+  })
+
+  it('labels a next-calendar-day expiry as tomorrow', () => {
+    const text = mountWithExpiry(new Date(2026, 6, 31, 8, 0).toISOString()).text()
+
+    expect(text).toContain('common.tomorrow')
+  })
+
+  it('labels an expiry that elapsed less than a day ago as expired', () => {
+    const wrapper = mountWithExpiry(new Date(2026, 6, 30, 8, 0).toISOString())
+
+    expect(wrapper.text()).toContain('userSubscriptions.status.expired')
+    expect(wrapper.text()).not.toContain('common.today')
+    expect(wrapper.find('span.font-medium.text-primary-700').exists()).toBe(true)
+  })
+
+  it('shows remaining days for expiries further out', () => {
+    const text = mountWithExpiry(new Date(2026, 7, 4, 9, 0).toISOString()).text()
+
+    expect(text).toContain('userSubscriptions.daysRemaining')
+    expect(text).not.toContain('common.today')
+    expect(text).not.toContain('common.tomorrow')
+  })
+
+  it('renders no expiry label for an invalid expiry timestamp', () => {
+    const text = mountWithExpiry('not-a-date').text()
+
+    expect(text).not.toContain('userSubscriptions.status.expired')
+    expect(text).not.toContain('common.today')
+    expect(text).not.toContain('common.tomorrow')
   })
 })
