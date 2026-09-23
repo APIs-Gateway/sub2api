@@ -73,6 +73,15 @@ func TestNormalizeClaudeOAuthRequestBody_KeepsInjectedSystemBreakpoint(t *testin
 // 用 setup-token 账号构造 mimic 分支：IsOAuth 认它，取 token 只读 credentials，
 // 不碰 DB。UA 非 claude-cli 且无 metadata.user_id，于是 shouldMimicClaudeCode 成立。
 func TestForwardCountTokens_EnforcesCacheControlLimitOnMimicPath(t *testing.T) {
+	// fork：两条 tools 断点注入分支（普通 tools[-1] / 工具名混淆重写）都要兜底。
+	for _, toolName := range []string{"probe", "sessions_list"} {
+		t.Run(toolName, func(t *testing.T) {
+			testForwardCountTokensEnforcesCacheControlLimit(t, toolName)
+		})
+	}
+}
+
+func testForwardCountTokensEnforcesCacheControlLimit(t *testing.T, toolName string) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -84,7 +93,7 @@ func TestForwardCountTokens_EnforcesCacheControlLimitOnMimicPath(t *testing.T) {
 	// 加上 mimic 注入的 tools[-1] 与 system blocks 自带的锚点，必然超过 4。
 	body := []byte(`{"model":"claude-sonnet-4-6",` +
 		`"system":[{"type":"text","text":"stable client prefix","cache_control":{"type":"ephemeral","ttl":"5m"}}],` +
-		`"tools":[{"name":"probe","description":"d","input_schema":{"type":"object"}}],` +
+		`"tools":[{"name":"` + toolName + `","description":"d","input_schema":{"type":"object"}}],` +
 		`"messages":[` +
 		`{"role":"user","content":[{"type":"text","text":"one","cache_control":{"type":"ephemeral"}}]},` +
 		`{"role":"assistant","content":[{"type":"text","text":"two","cache_control":{"type":"ephemeral"}}]},` +
@@ -119,6 +128,10 @@ func TestForwardCountTokens_EnforcesCacheControlLimitOnMimicPath(t *testing.T) {
 
 	_, messagePaths, toolPaths, systemPaths := collectCacheControlPaths(upstream.lastBody)
 	total := len(messagePaths) + len(toolPaths) + len(systemPaths)
+	if toolName == "sessions_list" {
+		require.NotEqual(t, toolName, gjson.GetBytes(upstream.lastBody, "tools.0.name").String(),
+			"tool-name rewrite branch must be exercised")
+	}
 	require.LessOrEqual(t, total, maxCacheControlBlocks,
 		"出站 body 的 cache_control 块数必须被砍到上限内，实测 %d 块", total)
 }
