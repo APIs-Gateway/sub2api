@@ -52,8 +52,8 @@ describe('Select highlight after result changes', () => {
     expect(wrapper.emitted('update:modelValue')).toEqual([['beta']])
   })
 
-  it('highlights the first enabled result when remote options arrive', async () => {
-    await open({ modelValue: null, remote: true, options: [] })
+  it('highlights the first enabled result when options are replaced while open', async () => {
+    await open({ modelValue: null, options: [] })
     await wrapper.setProps({ options: [
       { value: 'group', label: 'Group', kind: 'group', disabled: true },
       { value: 'result', label: 'Result' },
@@ -63,7 +63,7 @@ describe('Select highlight after result changes', () => {
   })
 
   it('does not retain an old index that now points to a disabled option', async () => {
-    await open({ remote: true })
+    await open()
     await wrapper.setProps({ options: [
       { value: 'result', label: 'Result' },
       { value: 'other', label: 'Other' },
