@@ -298,3 +298,79 @@ func TestPassthroughIngressBeforeTurnRejectionDoesNotForwardFollowUp(t *testing.
 	upstreamConn.mu.Unlock()
 	require.Equal(t, 1, upstreamWrites, "被 BeforeTurn 拒绝的 response.create 不应写入上游")
 }
+
+// TestPassthroughIngressBeforeRequestRejectionSkipsBeforeTurn 验证后续 turn 的
+// BeforeRequest（审计等）拒绝时不会进入 BeforeTurn 抢占槽位，也不会写入上游；
+// 同时覆盖客户端帧与会话均未携带 model 时 BeforeRequest 收到空模型的回退路径。
+func TestPassthroughIngressBeforeRequestRejectionSkipsBeforeTurn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstreamConn := &openAIWSCaptureConn{
+		readDelays: []time.Duration{0, 2 * time.Second},
+		events: [][]byte{
+			[]byte(`{"type":"response.completed","response":{"id":"resp_request_reject_1","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_request_reject_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+		},
+	}
+	svc, _ := newPassthroughBeforeTurnTestService(upstreamConn)
+
+	rejection := NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "request rejected by audit", nil)
+	var mu sync.Mutex
+	beforeRequestModels := []string{}
+	beforeTurnCalls := 0
+	afterTurnCalls := 0
+	hooks := &OpenAIWSIngressHooks{
+		BeforeRequest: func(_ int, _ []byte, originalModel string) error {
+			mu.Lock()
+			beforeRequestModels = append(beforeRequestModels, originalModel)
+			mu.Unlock()
+			return rejection
+		},
+		BeforeTurn: func(int) error {
+			mu.Lock()
+			beforeTurnCalls++
+			mu.Unlock()
+			return nil
+		},
+		AfterTurn: func(int, *OpenAIForwardResult, error) {
+			mu.Lock()
+			afterTurnCalls++
+			mu.Unlock()
+		},
+	}
+
+	server, serverErrCh := startPassthroughBeforeTurnTestServer(t, svc, newPassthroughBeforeTurnTestAccount(), hooks)
+	defer server.Close()
+	clientConn := dialPassthroughBeforeTurnTestClient(t, server)
+	defer func() { _ = clientConn.CloseNow() }()
+
+	writePassthroughBeforeTurnTestFrame(t, clientConn, `{"type":"response.create","input":[]}`)
+	require.Equal(t, "resp_request_reject_1", gjson.GetBytes(readPassthroughBeforeTurnTestFrame(t, clientConn), "response.id").String())
+	writePassthroughBeforeTurnTestFrame(t, clientConn, `{"type":"response.create","previous_response_id":"resp_request_reject_1","input":[]}`)
+
+	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	_, unexpected, readErr := clientConn.Read(readCtx)
+	cancelRead()
+	require.Error(t, readErr, "rejected turn must not receive upstream output: %s", unexpected)
+	require.Equal(t, coderws.StatusPolicyViolation, coderws.CloseStatus(readErr))
+
+	var serverErr error
+	select {
+	case serverErr = <-serverErrCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("passthrough ingress did not exit after BeforeRequest rejection")
+	}
+	require.ErrorIs(t, serverErr, rejection)
+
+	mu.Lock()
+	gotModels, gotBeforeTurn, gotAfter := append([]string(nil), beforeRequestModels...), beforeTurnCalls, afterTurnCalls
+	mu.Unlock()
+	require.Equal(t, []string{""}, gotModels, "帧与会话均无 model 时应以空模型回调 BeforeRequest")
+	require.Zero(t, gotBeforeTurn, "BeforeRequest 拒绝后不应再抢占并发槽位")
+	require.Equal(t, 2, gotAfter)
+
+	upstreamConn.mu.Lock()
+	upstreamWrites := len(upstreamConn.writes)
+	upstreamConn.mu.Unlock()
+	require.Equal(t, 1, upstreamWrites, "被 BeforeRequest 拒绝的 response.create 不应写入上游")
+}
