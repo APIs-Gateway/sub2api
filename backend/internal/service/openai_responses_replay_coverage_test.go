@@ -200,7 +200,8 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CtxPoolStripsRea
 
 	captureConn := &openAIWSCaptureConn{
 		events: [][]byte{
-			[]byte(`{"type":"response.completed","response":{"id":"resp_ctx_pool_reasoning","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+			[]byte(`{"type":"response.output_item.done","item":{"id":"msg_ctx_pool_reasoning","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_ctx_pool_reasoning","model":"gpt-5.1","output":[{"id":"msg_ctx_pool_reasoning","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
 	pool := newOpenAIWSConnPool(cfg)
@@ -234,11 +235,19 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CtxPoolStripsRea
 
 	writeOpenAIWSReasoningReplayFrame(t, clientConn, coderws.MessageText,
 		`{"type":"response.create","model":"gpt-5.1","stream":false,"input":[{"type":"message","role":"user","content":"hi"},`+replayReasoningWithContent+`]}`)
-	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
-	_, event, readErr := clientConn.Read(readCtx)
-	cancelRead()
-	require.NoError(t, readErr)
-	require.Equal(t, "resp_ctx_pool_reasoning", gjson.GetBytes(event, "response.id").String())
+	var completed []byte
+	for i := 0; i < 3 && completed == nil; i++ {
+		readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+		_, event, readErr := clientConn.Read(readCtx)
+		cancelRead()
+		if readErr != nil {
+			require.NoError(t, readErr, "server error: %v", waitOpenAIWSReasoningReplayServer(t, serverErrCh))
+		}
+		if gjson.GetBytes(event, "type").String() == "response.completed" {
+			completed = event
+		}
+	}
+	require.Equal(t, "resp_ctx_pool_reasoning", gjson.GetBytes(completed, "response.id").String())
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 	_ = waitOpenAIWSReasoningReplayServer(t, serverErrCh)
 
@@ -321,6 +330,12 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughRejec
 
 	writeOpenAIWSReasoningReplayFrame(t, clientConn, coderws.MessageText,
 		`{"type":"response.create","model":"gpt-5.6-sol","stream":false,"previous_response_id":"resp_passthrough_invalid_1","input":[`+replayReasoningWithContent+`]} {}`)
+	// The relay rejects the frame; closing the client lets the proxy finish
+	// even if the rejection is only logged.
+	readCtx, cancelRead = context.WithTimeout(context.Background(), time.Second)
+	_, _, _ = clientConn.Read(readCtx)
+	cancelRead()
+	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 	_ = waitOpenAIWSReasoningReplayServer(t, serverErrCh)
 	require.Len(t, upstreamConn.writes, 1, "the undecodable follow-up frame must not reach upstream")
 }
