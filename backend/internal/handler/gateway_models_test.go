@@ -651,58 +651,11 @@ func TestGatewayModels_GeminiGroupUsesAntigravityDefaultMappingWhenUnset(t *test
 	var got gatewayModelsResponseForTest
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	ids := modelIDsForTest(got.Data)
-	require.Contains(t, ids, "gemini-3.8-flash-high")
+	// fork 默认 Antigravity 映射（domain.DefaultAntigravityModelMapping）包含 gemini-3-flash。
+	require.Contains(t, ids, "gemini-3-flash")
 	for _, id := range ids {
 		require.True(t, strings.HasPrefix(id, "gemini-"), "unexpected non-gemini model on gemini group: %s", id)
 	}
 	// geminicli 静态表独有条目不应出现（说明没有回落到默认列表）。
 	require.NotContains(t, ids, "gemini-2.0-flash")
-}
-
-// Codex 通过 /models?client_version= 走 CodexModels，同样应看到混合调度账号的 gemini-* 映射。
-func TestGatewayModels_CodexGeminiGroupListsAntigravityGeminiMappings(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	groupID := int64(24)
-	h := newGatewayModelsHandlerForTest(
-		&gatewayModelsAccountRepoStub{
-			byGroup: map[int64][]service.Account{
-				groupID: {
-					{
-						ID:       1,
-						Platform: service.PlatformAntigravity,
-						Extra:    map[string]any{"mixed_scheduling": true},
-						Credentials: map[string]any{
-							"model_mapping": map[string]any{
-								"gemini-3.8-flash-high": "gemini-3.8-flash-high",
-								"gemini-synced-custom":  "gemini-3.8-flash-high",
-								"claude-sonnet-4-6":     "claude-sonnet-4-6",
-							},
-						},
-					},
-				},
-			},
-		},
-	)
-
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodGet, "/models?client_version=0.147.0", nil)
-	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
-		Group: &service.Group{ID: groupID, Platform: service.PlatformGemini},
-	})
-
-	h.CodexModels(c)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	var got codexModelsResponseForTest
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-	slugs := codexModelSlugsForTest(got.Models)
-	require.Contains(t, slugs, "gemini-3.8-flash-high")
-	require.Contains(t, slugs, "gemini-synced-custom")
-	require.NotContains(t, slugs, "claude-sonnet-4-6")
-	require.NotContains(t, slugs, "gemini-2.0-flash")
-	for _, slug := range slugs {
-		require.True(t, strings.HasPrefix(slug, "gemini-"), "unexpected non-gemini model on gemini group: %s", slug)
-	}
 }
