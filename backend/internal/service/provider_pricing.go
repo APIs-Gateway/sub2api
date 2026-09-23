@@ -23,6 +23,8 @@ var hvoyProviderPricingModels = []hvoyProviderPricingModelRef{
 	{modelName: "gpt-5.6-terra", groupName: HvoyProviderPricingGroupName},
 	{modelName: "gpt-5.6-luna", groupName: HvoyProviderPricingGroupName},
 	{modelName: "gpt-6-astra", groupName: HvoyProviderPricingGroupName},
+	{modelName: "gpt-6-sol", groupName: HvoyProviderPricingGroupName},
+	{modelName: "gpt-6-luna", groupName: HvoyProviderPricingGroupName},
 }
 
 type hvoyProviderPricingModelRef struct {

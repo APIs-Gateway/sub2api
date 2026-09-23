@@ -43,3 +43,25 @@ func TestDefaultModelsIncludeGPT6Astra(t *testing.T) {
 		t.Fatalf("gpt-6 not found in DefaultModelIDs()")
 	}
 }
+
+func TestGPT6SolLunaModelIdentity(t *testing.T) {
+	ids := map[string]bool{}
+	for _, id := range DefaultModelIDs() {
+		ids[id] = true
+	}
+	for _, model := range []string{"gpt-6-sol", "gpt-6-luna"} {
+		if !ids[model] {
+			t.Fatalf("%s not found in DefaultModelIDs()", model)
+		}
+	}
+	for _, model := range []string{"gpt-6-sol", "gpt-6-luna", "openai/gpt-6-sol-max", "GPT-6-Luna-openai-compact", "gpt_6_sol_high", "gpt-6-luna-2026-09-22"} {
+		if !IsGPT6SolOrLunaModelSpelling(model) {
+			t.Fatalf("IsGPT6SolOrLunaModelSpelling(%q) = false, want true", model)
+		}
+	}
+	for _, model := range []string{"gpt-6", "gpt-6-astra", "gpt-6-solitude", "gpt-6-luna-preview", "gpt-6-sol-2026-9-22", "gpt-5.6-sol", "gpt-5.6-luna"} {
+		if IsGPT6SolOrLunaModelSpelling(model) {
+			t.Fatalf("IsGPT6SolOrLunaModelSpelling(%q) = true, want false", model)
+		}
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -70,6 +71,58 @@ var (
 		LongContextOutputCostMultiplier:     1.5,
 		SupportsServiceTier:                 true,
 		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	// GPT-6 Sol / Luna 与 Astra 同理：priority 与长上下文倍率叠加，只设倍率字段，
+	// 不设 *Above272KTokens 绝对值字段。价格同步自上游 #7509（2026-09-22 官方价）。
+	openAIGPT6SolFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   2e-06,
+		InputCostPerTokenPriority:           4e-06,
+		OutputCostPerToken:                  1e-05,
+		OutputCostPerTokenPriority:          2e-05,
+		CacheCreationInputTokenCost:         2.5e-06,
+		CacheCreationInputTokenCostPriority: 5e-06,
+		CacheReadInputTokenCost:             2e-07,
+		CacheReadInputTokenCostPriority:     4e-07,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	openAIGPT6LunaFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   1e-07,
+		InputCostPerTokenPriority:           2e-07,
+		OutputCostPerToken:                  5e-07,
+		OutputCostPerTokenPriority:          1e-06,
+		CacheCreationInputTokenCost:         1.25e-07,
+		CacheCreationInputTokenCostPriority: 2.5e-07,
+		CacheReadInputTokenCost:             1e-08,
+		CacheReadInputTokenCostPriority:     2e-08,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	// Claude Opus 5.5 官方价（同步自上游 #7509）；priority 为标准价 2 倍（Fast）。
+	claudeOpus55FallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   4e-06,
+		OutputCostPerToken:                  2e-05,
+		CacheCreationInputTokenCost:         5e-06,
+		CacheCreationInputTokenCostAbove1hr: 8e-06,
+		CacheReadInputTokenCost:             2e-07,
+		InputCostPerTokenPriority:           8e-06,
+		OutputCostPerTokenPriority:          4e-05,
+		CacheCreationInputTokenCostPriority: 1e-05,
+		CacheReadInputTokenCostPriority:     4e-07,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "anthropic",
 		Mode:                                "chat",
 		SupportsPromptCaching:               true,
 	}
@@ -802,6 +855,11 @@ func normalizeModelNameForPricing(model string) string {
 		if canonical == "gpt-6" {
 			return "gpt-6-astra"
 		}
+		// gpt-6-sol-max / gpt-6-luna-openai-compact 等本地后缀写法归一到官方 ID，
+		// 让目录里的 gpt-6-sol / gpt-6-luna 条目（含自定义覆盖）优先命中。
+		if openai.IsGPT6SolOrLunaModelSpelling(canonical) {
+			return normalizeKnownOpenAICodexModel(canonical)
+		}
 		// Mirror normalizeKnownOpenAICodexModel's bare "gpt-5.6" -> "gpt-5.6-sol"
 		// redirect so pricing lookups hit the dynamic pricing source instead of
 		// silently falling back to the static Go fallback table.
@@ -855,6 +913,13 @@ func (s *PricingService) extractBaseName(model string) string {
 
 // matchByModelFamily 基于模型系列匹配
 func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
+	// Opus 5.5 有独立价格，不能被下面 "claude-opus-5" 的子串匹配归到 Opus 5。
+	if claude.IsOpus55(model) {
+		if pricing, ok := s.pricingData[claude.Opus55ModelID]; ok {
+			return pricing
+		}
+		return claudeOpus55FallbackPricing
+	}
 	// modelFamily 定义一个模型系列的匹配和定价查找规则。
 	type modelFamily struct {
 		name    string   // 系列名称
@@ -954,6 +1019,9 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 	for _, pattern := range lookups {
 		for key, pricing := range s.pricingData {
 			keyLower := strings.ToLower(key)
+			if matched.name == "opus-5" && claude.IsOpus55(keyLower) {
+				continue
+			}
 			if strings.Contains(keyLower, pattern) {
 				logger.LegacyPrintf("service.pricing", "[Pricing] Fuzzy matched %s -> %s", model, key)
 				return pricing
@@ -980,6 +1048,19 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 				Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.1-codex"))
 			return pricing
 		}
+	}
+
+	// GPT-6 Sol / Luna 必须在基础版本号回退之前处理：generateOpenAIModelVariants
+	// 会把 gpt-6-sol 截成 gpt-6，从而错误命中 Astra（gpt-6 别名）的价格。
+	if openai.IsGPT6SolOrLunaModelSpelling(model) {
+		base := normalizeKnownOpenAICodexModel(model)
+		if pricing, ok := s.pricingData[base]; ok {
+			return pricing
+		}
+		if base == "gpt-6-sol" {
+			return openAIGPT6SolFallbackPricing
+		}
+		return openAIGPT6LunaFallbackPricing
 	}
 
 	// 尝试的回退变体

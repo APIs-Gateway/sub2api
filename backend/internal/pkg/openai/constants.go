@@ -20,6 +20,8 @@ type Model struct {
 var DefaultModels = []Model{
 	{ID: "gpt-6-astra", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
 	{ID: "gpt-6", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 (Astra)"},
+	{ID: "gpt-6-sol", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Sol"},
+	{ID: "gpt-6-luna", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Luna"},
 	{ID: "gpt-5.6", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 (Sol)"},
 	{ID: "gpt-5.6-sol", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Sol"},
 	{ID: "gpt-5.6-terra", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Terra"},
@@ -104,4 +106,50 @@ func CodexBaseInstructionsForModel(model string) string {
 		}
 	}
 	return latestCodexInstructions()
+}
+
+// IsGPT6SolOrLunaModelSpelling recognizes the official GPT-6 Sol/Luna IDs and
+// the local effort/compact suffix spellings, including provider prefixes such
+// as "openai/gpt-6-sol-max". Unknown suffixes (gpt-6-solitude,
+// gpt-6-luna-preview) and GPT-6 Astra are deliberately excluded.
+func IsGPT6SolOrLunaModelSpelling(model string) bool {
+	canonical := strings.ToLower(strings.TrimSpace(model))
+	if idx := strings.LastIndex(canonical, "/"); idx >= 0 {
+		canonical = strings.TrimSpace(canonical[idx+1:])
+	}
+	canonical = strings.ReplaceAll(canonical, "_", "-")
+	canonical = strings.Join(strings.Fields(canonical), "-")
+	for _, base := range []string{"gpt-6-sol", "gpt-6-luna"} {
+		if canonical == base {
+			return true
+		}
+		if suffix, ok := strings.CutPrefix(canonical, base+"-"); ok {
+			switch suffix {
+			case "none", "low", "medium", "high", "xhigh", "max", "openai-compact":
+				return true
+			}
+			// 日期快照（gpt-6-luna-2026-09-22）与 codexVersionModelPrefixes 的路由口径一致，
+			// 否则上游按 Luna 处理、本地却回退到 gpt-6 / gpt-5.4 计价。
+			if isDateSnapshotSuffix(suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isDateSnapshotSuffix reports whether suffix has the YYYY-MM-DD shape.
+func isDateSnapshotSuffix(suffix string) bool {
+	parts := strings.Split(suffix, "-")
+	if len(parts) != 3 || len(parts[0]) != 4 || len(parts[1]) != 2 || len(parts[2]) != 2 {
+		return false
+	}
+	for _, part := range parts {
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
