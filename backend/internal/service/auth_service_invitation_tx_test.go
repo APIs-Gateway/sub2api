@@ -5,6 +5,7 @@ package service_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -47,10 +48,55 @@ func (r *stealingRedeemRepo) Use(ctx context.Context, id, userID int64) error {
 	return r.innerErr
 }
 
+// txFaultDriver 包一层 ent driver，按需让开事务或提交事务失败，
+// 用来覆盖注册事务自身出错（而非占码落空）的路径。
+type txFaultDriver struct {
+	dialect.Driver
+	beginErr  error
+	commitErr error
+}
+
+func (d *txFaultDriver) Tx(ctx context.Context) (dialect.Tx, error) {
+	if d.beginErr != nil {
+		return nil, d.beginErr
+	}
+	tx, err := d.Driver.Tx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &commitFaultTx{Tx: tx, commitErr: d.commitErr}, nil
+}
+
+type commitFaultTx struct {
+	dialect.Tx
+	commitErr error
+}
+
+func (t *commitFaultTx) Commit() error {
+	if t.commitErr != nil {
+		// 模拟提交失败：底层事务被撤销，已写入的用户和占码都不能生效。
+		_ = t.Tx.Rollback()
+		return t.commitErr
+	}
+	return t.Tx.Commit()
+}
+
 func newInvitationTxAuthService(
 	t *testing.T,
 	dsnName string,
 	wrapRedeem func(service.RedeemCodeRepository, *dbent.Client) service.RedeemCodeRepository,
+) (*service.AuthService, *dbent.Client) {
+	t.Helper()
+	return newInvitationTxAuthServiceWithTxDriver(t, dsnName, wrapRedeem, nil)
+}
+
+// newInvitationTxAuthServiceWithTxDriver 与 newInvitationTxAuthService 相同，但允许替换
+// AuthService 用来开注册事务的 ent client 的 driver（仓储仍用未包装的 client）。
+func newInvitationTxAuthServiceWithTxDriver(
+	t *testing.T,
+	dsnName string,
+	wrapRedeem func(service.RedeemCodeRepository, *dbent.Client) service.RedeemCodeRepository,
+	wrapTxDriver func(dialect.Driver) dialect.Driver,
 ) (*service.AuthService, *dbent.Client) {
 	t.Helper()
 
@@ -78,7 +124,11 @@ func newInvitationTxAuthService(
 	if wrapRedeem != nil {
 		redeemRepo = wrapRedeem(redeemRepo, client)
 	}
-	svc := service.NewAuthService(client, repository.NewUserRepository(client, db), redeemRepo, nil, cfg, settingSvc, nil, nil, nil, nil, nil, nil, nil)
+	txClient := client
+	if wrapTxDriver != nil {
+		txClient = dbent.NewClient(dbent.Driver(wrapTxDriver(drv)))
+	}
+	svc := service.NewAuthService(txClient, repository.NewUserRepository(client, db), redeemRepo, nil, cfg, settingSvc, nil, nil, nil, nil, nil, nil, nil)
 	return svc, client
 }
 
@@ -142,4 +192,48 @@ func TestRegisterWithInvitationRollsBackUserWhenClaimLost(t *testing.T) {
 	stored, err := client.RedeemCode.Query().Where(redeemcode.IDEQ(codeID)).Only(ctx)
 	require.NoError(t, err)
 	require.Nil(t, stored.UsedBy, "败者不能被记为 used_by")
+}
+
+// 事务路径：开不了注册事务时直接返回服务不可用，不建号、不占码。
+func TestRegisterWithInvitationFailsClosedWhenTxCannotStart(t *testing.T) {
+	svc, client := newInvitationTxAuthServiceWithTxDriver(t, "auth_invitation_tx_begin_fail", nil,
+		func(d dialect.Driver) dialect.Driver {
+			return &txFaultDriver{Driver: d, beginErr: errors.New("begin exploded")}
+		})
+	ctx := context.Background()
+	codeID := seedInvitationCode(t, client, "TXINV-BEGIN")
+
+	_, _, err := svc.RegisterWithVerification(ctx, "tx-begin@example.com", "password", "", "", "TXINV-BEGIN", "")
+	require.ErrorIs(t, err, service.ErrServiceUnavailable)
+
+	n, err := client.User.Query().Where(user.EmailEQ("tx-begin@example.com")).Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, n)
+
+	stored, err := client.RedeemCode.Query().Where(redeemcode.IDEQ(codeID)).Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, service.StatusUnused, stored.Status)
+	require.Nil(t, stored.UsedBy)
+}
+
+// 事务路径：建号和占码都成功但提交失败——返回服务不可用，账号和占码一起作废，码可再用。
+func TestRegisterWithInvitationFailsClosedWhenCommitFails(t *testing.T) {
+	svc, client := newInvitationTxAuthServiceWithTxDriver(t, "auth_invitation_tx_commit_fail", nil,
+		func(d dialect.Driver) dialect.Driver {
+			return &txFaultDriver{Driver: d, commitErr: errors.New("commit exploded")}
+		})
+	ctx := context.Background()
+	codeID := seedInvitationCode(t, client, "TXINV-COMMITFAIL")
+
+	_, _, err := svc.RegisterWithVerification(ctx, "tx-commitfail@example.com", "password", "", "", "TXINV-COMMITFAIL", "")
+	require.ErrorIs(t, err, service.ErrServiceUnavailable)
+
+	n, err := client.User.Query().Where(user.EmailEQ("tx-commitfail@example.com")).Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, n, "提交失败时账号不能落库")
+
+	stored, err := client.RedeemCode.Query().Where(redeemcode.IDEQ(codeID)).Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, service.StatusUnused, stored.Status, "提交失败时注册码不能被烧掉")
+	require.Nil(t, stored.UsedBy)
 }
