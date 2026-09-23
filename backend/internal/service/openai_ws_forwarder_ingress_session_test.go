@@ -818,6 +818,9 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 		payload         string
 		threshold       int64
 		wantRelayReject bool
+		// opaqueFrame marks payloads the capture conn cannot record (it only
+		// keeps JSON-decodable writes), so only the dial count is asserted.
+		opaqueFrame bool
 	}{
 		{
 			name:      "small response create",
@@ -835,10 +838,13 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 			threshold: 1,
 		},
 		{
-			name:            "malformed data",
-			payload:         `{"type":"response.create","padding":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`,
-			threshold:       1,
-			wantRelayReject: true,
+			// Upstream's passthrough relay rejects malformed JSON before dialing;
+			// the fork relays the raw frame unchanged. Either way it must not be
+			// bridged over HTTP, which is what this port adds.
+			name:        "malformed data",
+			payload:     `{"type":"response.create","padding":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`,
+			threshold:   1,
+			opaqueFrame: true,
 		},
 		{
 			name:      "duplicate type",
@@ -941,7 +947,9 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 				require.Empty(t, upstreamConn.writes)
 			} else {
 				require.Equal(t, 1, dialer.DialCount())
-				require.Len(t, upstreamConn.writes, 1)
+				if !tt.opaqueFrame {
+					require.Len(t, upstreamConn.writes, 1)
+				}
 			}
 		})
 	}
