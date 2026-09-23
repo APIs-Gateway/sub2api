@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -767,14 +768,24 @@ func TestCancelOrderStillClosesUnpaidUpstreamOrder(t *testing.T) {
 	require.Equal(t, OrderStatusCancelled, reloaded.Status)
 }
 
-func TestReconcilePendingPaymentOrdersBackfillsPaidOrder(t *testing.T) {
+type paidWxpayReconcileFixture struct {
+	svc        *PaymentService
+	order      *dbent.PaymentOrder
+	provider   *paymentOrderLifecycleQueryProvider
+	userRepo   *mockUserRepo
+	redeemRepo *paymentOrderLifecycleRedeemRepo
+}
+
+// newPaidWxpayReconcileFixture seeds one pending wxpay order whose provider
+// query reports it as paid, so a reconcile pass fulfills it.
+func newPaidWxpayReconcileFixture(t *testing.T, client *dbent.Client, prefix string) paidWxpayReconcileFixture {
+	t.Helper()
 	ctx := context.Background()
-	client := newPaymentOrderLifecycleTestClient(t)
 
 	user, err := client.User.Create().
-		SetEmail("wxpay-reconcile@example.com").
+		SetEmail(prefix + "@example.com").
 		SetPasswordHash("hash").
-		SetUsername("wxpay-reconcile-user").
+		SetUsername(prefix + "-user").
 		Save(ctx)
 	require.NoError(t, err)
 
@@ -785,8 +796,8 @@ func TestReconcilePendingPaymentOrdersBackfillsPaidOrder(t *testing.T) {
 		SetAmount(50).
 		SetPayAmount(50).
 		SetFeeRate(0).
-		SetRechargeCode("WXPAY-RECONCILE").
-		SetOutTradeNo("sub2_wxpay_reconcile").
+		SetRechargeCode(strings.ToUpper(prefix)).
+		SetOutTradeNo("sub2_" + strings.ReplaceAll(prefix, "-", "_")).
 		SetPaymentType(payment.TypeWxpay).
 		SetPaymentTradeNo("").
 		SetOrderType(payment.OrderTypeBalance).
@@ -855,18 +866,57 @@ func TestReconcilePendingPaymentOrdersBackfillsPaidOrder(t *testing.T) {
 		providersLoaded: true,
 	}
 
-	recovered, err := svc.ReconcilePendingPaymentOrders(ctx)
+	return paidWxpayReconcileFixture{svc: svc, order: order, provider: provider, userRepo: userRepo, redeemRepo: redeemRepo}
+}
+
+func TestReconcilePendingPaymentOrdersBackfillsPaidOrder(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentOrderLifecycleTestClient(t)
+	fx := newPaidWxpayReconcileFixture(t, client, "wxpay-reconcile")
+
+	recovered, err := fx.svc.ReconcilePendingPaymentOrders(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, recovered)
-	require.Equal(t, order.OutTradeNo, provider.lastQueryTradeNo)
-	require.Zero(t, provider.cancelCalls)
+	require.Equal(t, fx.order.OutTradeNo, fx.provider.lastQueryTradeNo)
+	require.Zero(t, fx.provider.cancelCalls)
 
-	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	reloaded, err := client.PaymentOrder.Get(ctx, fx.order.ID)
 	require.NoError(t, err)
 	require.Equal(t, OrderStatusCompleted, reloaded.Status)
 	require.Equal(t, "wxpay-upstream-trade-123", reloaded.PaymentTradeNo)
-	require.Equal(t, 50.0, userRepo.getByIDUser.Balance)
-	require.Len(t, redeemRepo.useCalls, 1)
+	require.Equal(t, 50.0, fx.userRepo.getByIDUser.Balance)
+	require.Len(t, fx.redeemRepo.useCalls, 1)
+}
+
+func TestPaymentOrderExpiryRunOnceReconcilesPaidOrder(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentOrderLifecycleTestClient(t)
+	fx := newPaidWxpayReconcileFixture(t, client, "wxpay-expiry-run-once")
+
+	// No leader-lock backend configured: runOnce runs ungated.
+	NewPaymentOrderExpiryService(fx.svc, time.Minute).runOnce()
+
+	require.Equal(t, 1, fx.provider.queryCalls)
+	reloaded, err := client.PaymentOrder.Get(ctx, fx.order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+	require.Len(t, fx.redeemRepo.useCalls, 1)
+}
+
+func TestReconcilePendingPaymentOrdersReturnsQueryError(t *testing.T) {
+	client := newPaymentOrderLifecycleTestClient(t)
+	svc := &PaymentService{entClient: client, registry: payment.NewRegistry(), providersLoaded: true}
+	require.NoError(t, client.Close())
+
+	recovered, err := svc.ReconcilePendingPaymentOrders(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "query pending payment orders")
+	require.Zero(t, recovered)
+
+	// runOnce logs the reconcile failure and still attempts expiry without panicking.
+	require.NotPanics(t, func() {
+		NewPaymentOrderExpiryService(svc, time.Minute).runOnce()
+	})
 }
 
 func TestReconcilePendingPaymentOrdersQueriesAlipayOrder(t *testing.T) {

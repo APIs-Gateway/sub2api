@@ -360,6 +360,31 @@ describe('PaymentStatusPanel', () => {
     wrapper.unmount()
   })
 
+  it('does not actively verify pending orders for non-Alipay/WeChat methods', async () => {
+    pollOrderStatus.mockResolvedValue({ ...orderFactory('PENDING'), payment_type: 'stripe' })
+
+    const wrapper = mount(PaymentStatusPanel, {
+      props: {
+        orderId: 42,
+        qrCode: 'https://pay.example.com/qr/42',
+        expiresAt: '2099-01-01T12:30:00Z',
+        paymentType: 'stripe',
+        orderType: 'balance',
+      },
+      global: { stubs: { Icon: true } },
+    })
+
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+
+    expect(pollOrderStatus).toHaveBeenCalledWith(42)
+    expect(verifyOrder).not.toHaveBeenCalled()
+    expect(wrapper.emitted('success')).toBeUndefined()
+
+    wrapper.unmount()
+  })
+
   it('does not overlap polls while the previous request is pending', async () => {
     const pending = deferred<ReturnType<typeof orderFactory>>()
     pollOrderStatus.mockReturnValue(pending.promise)

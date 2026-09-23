@@ -113,6 +113,12 @@ func TestResolveEasyPayReturnedRef(t *testing.T) {
 			ref:     "/api/pay/toapp/ORDER_ID",
 			want:    "/api/pay/toapp/ORDER_ID",
 		},
+		{
+			name:    "unparseable rooted reference is left alone",
+			apiBase: apiBase,
+			ref:     "/api/pay/%zz",
+			want:    "/api/pay/%zz",
+		},
 	}
 
 	for _, tt := range tests {
