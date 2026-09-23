@@ -56,6 +56,11 @@ func (s *OpenAIGatewayService) openAIPromoteTempUnscheduleFailover(ctx context.C
 }
 
 func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) bool {
+	// 容量降载描述的是这一次请求，不是账号健康：OAuth 账号保持可调度，
+	// 由请求内的同账号有界重试负责恢复（见 applyOpenAIRequestScopedCapacityFailover）。
+	if openAIAccountCapacityShedIsRequestScoped(account) && isOpenAIRequestScopedCapacityShed("", responseBody) {
+		return false
+	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
 
