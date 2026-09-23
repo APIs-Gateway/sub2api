@@ -1267,20 +1267,34 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 	return match(string(upstreamBody))
 }
 
-// ExtractSessionID extracts the raw session ID from headers or body without hashing.
-// Used by ForwardAsAnthropic to pass as prompt_cache_key for upstream cache.
-func (s *OpenAIGatewayService) ExtractSessionID(c *gin.Context, body []byte) string {
+// explicitOpenAIHeaderSessionNames lists stable conversation identifiers sent
+// by OpenAI-compatible clients, in priority order. Codex CLI sends the
+// hyphenated session-id header (canonicalized as Session-Id, a different header
+// from session_id). Keep this list limited to session-scoped fields:
+// request/message IDs rotate every turn and would defeat sticky routing and
+// upstream prompt caching.
+var explicitOpenAIHeaderSessionNames = []string{
+	"session-id",
+	"session_id",
+	"conversation_id",
+}
+
+func explicitOpenAIHeaderSessionID(c *gin.Context) string {
 	if c == nil {
 		return ""
 	}
-	sessionID := strings.TrimSpace(c.GetHeader("session_id"))
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(c.GetHeader("conversation_id"))
+	for _, header := range explicitOpenAIHeaderSessionNames {
+		if sessionID := strings.TrimSpace(c.GetHeader(header)); sessionID != "" {
+			return sessionID
+		}
 	}
-	if sessionID == "" && len(body) > 0 {
-		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
-	}
-	return sessionID
+	return ""
+}
+
+// ExtractSessionID extracts the raw session ID from headers or body without hashing.
+// Used by ForwardAsAnthropic to pass as prompt_cache_key for upstream cache.
+func (s *OpenAIGatewayService) ExtractSessionID(c *gin.Context, body []byte) string {
+	return explicitOpenAISessionID(c, body)
 }
 
 func explicitOpenAISessionID(c *gin.Context, body []byte) string {
@@ -1288,10 +1302,7 @@ func explicitOpenAISessionID(c *gin.Context, body []byte) string {
 		return ""
 	}
 
-	sessionID := strings.TrimSpace(c.GetHeader("session_id"))
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(c.GetHeader("conversation_id"))
-	}
+	sessionID := explicitOpenAIHeaderSessionID(c)
 	if sessionID == "" && len(body) > 0 {
 		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
 	}
@@ -1315,7 +1326,7 @@ func (s *OpenAIGatewayService) GenerateExplicitSessionHash(c *gin.Context, body 
 // GenerateSessionHash generates a sticky-session hash for OpenAI requests.
 //
 // Priority:
-//  1. Header: session_id
+//  1. Header: session-id / session_id
 //  2. Header: conversation_id
 //  3. Body:   prompt_cache_key (opencode)
 //  4. Body:   content-based fallback (model + system + tools + first user message)
@@ -2087,6 +2098,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 
 	// ============ Layer 1: Sticky session ============
+	// A healthy sticky account whose bounded wait queue is full may be used as a
+	// one-request capacity spillover in Layer 2. Keep that spillover temporary:
+	// rewriting the durable binding here would make a short burst migrate the
+	// whole conversation to a cache-cold account.
+	stickySpillover := false
 	if sessionHash != "" {
 		accountID := stickyAccountID
 		if accountID > 0 && !isExcluded(accountID) {
@@ -2126,6 +2142,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 								MaxWaiting:     cfg.StickySessionMaxWaiting,
 							})
 						}
+						stickySpillover = true
 					}
 				}
 			}
@@ -2266,7 +2283,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if selectErr != nil {
 					return nil, true, selectErr
 				}
-				if sessionHash != "" {
+				if sessionHash != "" && !stickySpillover {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
 				return selection, true, nil
@@ -2308,7 +2325,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if selectErr != nil {
 					return nil, selectErr
 				}
-				if sessionHash != "" {
+				if sessionHash != "" && !stickySpillover {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
 				return selection, nil
