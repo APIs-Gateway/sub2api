@@ -1406,7 +1406,7 @@ func TestFinishRefundPendingMarksOrderPendingAndRollsBackDeduction(t *testing.T)
 	require.Nil(t, reloaded.RefundAt)
 
 	pendingAudits, err := client.PaymentAuditLog.Query().
-		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("REFUND_PENDING")).
+		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionHasPrefix("REFUND_PENDING")).
 		Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, pendingAudits)
@@ -1478,7 +1478,7 @@ func TestFinishRefundSuccessStatusesFinalize(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, successAudits)
 			pendingAudits, err := client.PaymentAuditLog.Query().
-				Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("REFUND_PENDING")).
+				Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionHasPrefix("REFUND_PENDING")).
 				Count(ctx)
 			require.NoError(t, err)
 			require.Zero(t, pendingAudits)

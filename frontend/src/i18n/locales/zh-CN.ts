@@ -8373,7 +8373,7 @@
       markRefundFailed: '标记为退款失败',
       resolveRefundTitle: '手动处理待确认退款',
       resolveRefundSucceededConfirm: '请先在支付网关商户后台确认该退款已到账再操作。订单将按已退款结算，并执行原计划的余额/订阅扣回。',
-      resolveRefundFailedConfirm: '请先在支付网关商户后台确认该退款未到账且不会再到账再操作。订单将变为退款失败，重试时会按原金额重新提交。',
+      resolveRefundFailedConfirm: '请先登录支付网关商户后台核实：该退款未到账且不会再到账，再执行此操作。订单将变为退款失败，重试时按原金额重新提交；网关去重并不总能兜底（Stripe 幂等键 24 小时后失效），误标失败可能导致重复退款。',
       refundMarkedFailed: '已标记为退款失败',
       refundInfo: '退款信息',
       refundEnabled: '允许退款',

@@ -8370,7 +8370,7 @@
       markRefundFailed: '標記為退款失敗',
       resolveRefundTitle: '手動處理待確認退款',
       resolveRefundSucceededConfirm: '請先在支付網關商戶後台確認該退款已到賬再操作。訂單將按已退款結算，並執行原計劃的餘額/訂閱扣回。',
-      resolveRefundFailedConfirm: '請先在支付網關商戶後台確認該退款未到賬且不會再到賬再操作。訂單將變為退款失敗，重試時會按原金額重新提交。',
+      resolveRefundFailedConfirm: '請先登入支付網關商戶後台核實：該退款未到賬且不會再到賬，再執行此操作。訂單將變為退款失敗，重試時按原金額重新提交；網關去重並不總能兜底（Stripe 冪等鍵 24 小時後失效），誤標失敗可能導致重複退款。',
       refundMarkedFailed: '已標記為退款失敗',
       refundInfo: '退款信息',
       refundEnabled: '允許退款',

@@ -24,7 +24,7 @@ import (
 func setPendingRefundSnapshotForTest(t *testing.T, ctx context.Context, client *dbent.Client, orderID int64, detail string) {
 	t.Helper()
 	_, err := client.PaymentAuditLog.Delete().
-		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(orderID, 10)), paymentauditlog.ActionEQ("REFUND_PENDING")).
+		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(orderID, 10)), paymentauditlog.ActionHasPrefix("REFUND_PENDING")).
 		Exec(ctx)
 	require.NoError(t, err)
 	_, err = client.PaymentAuditLog.Create().
@@ -39,7 +39,7 @@ func setPendingRefundSnapshotForTest(t *testing.T, ctx context.Context, client *
 func countRefundAuditForTest(t *testing.T, ctx context.Context, client *dbent.Client, orderID int64, action string) int {
 	t.Helper()
 	n, err := client.PaymentAuditLog.Query().
-		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(orderID, 10)), paymentauditlog.ActionEQ(action)).
+		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(orderID, 10)), paymentauditlog.ActionHasPrefix(action)).
 		Count(ctx)
 	require.NoError(t, err)
 	return n

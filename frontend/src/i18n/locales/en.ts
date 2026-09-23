@@ -8349,7 +8349,7 @@
       markRefundFailed: 'Mark failed',
       resolveRefundTitle: 'Resolve pending refund',
       resolveRefundSucceededConfirm: 'Only do this after confirming in the payment gateway\'s merchant console that the refund has arrived. The order will be settled as refunded and the planned balance/subscription deduction applied.',
-      resolveRefundFailedConfirm: 'Only do this after confirming in the payment gateway\'s merchant console that the refund did not and will not arrive. The order becomes refund failed; a retry will resubmit the same amount.',
+      resolveRefundFailedConfirm: 'Only do this after checking the payment gateway\'s merchant console and confirming the refund did not and will not arrive. The order becomes refund failed and a retry resubmits the same amount; gateway deduplication is not guaranteed (Stripe idempotency keys expire after 24 hours), so a wrong "failed" can lead to a double refund.',
       refundMarkedFailed: 'Refund marked as failed',
       refundInfo: 'Refund Info',
       refundEnabled: 'Refund Enabled',
