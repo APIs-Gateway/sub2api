@@ -290,6 +290,12 @@
 
   // Common
   common: {
+    apply: 'Apply',
+    clear: 'Clear',
+    creating: 'Creating...',
+    required: 'Required',
+    sending: 'Sending...',
+    tryAgain: 'Please try again',
     loading: 'Loading...',
     submitting: 'Submitting...',
     justNow: 'just now',
@@ -2350,6 +2356,7 @@
 
     // Users
     users: {
+      passwordCopied: 'Password copied',
       title: 'User Management',
       description: 'Manage users and their permissions',
       createUser: 'Create User',
@@ -2719,7 +2726,7 @@
       accountsAvailable: 'Avail:',
       accountsRateLimited: 'Limited:',
       accountsTotal: 'Total:',
-      accountsUnit: '',
+      accountsUnit: 'accounts',
       rateAndAccounts: '{rate}x rate · {count} accounts',
       accountsCount: '{count} accounts',
       form: {
@@ -2994,6 +3001,8 @@
 
     // Channel Management
     channels: {
+      noGroupsSelected: 'Select at least one group for {platform}',
+      emptyModelsInPricing: 'Add at least one model to the {platform} pricing rule',
       title: 'Pricing Config',
       description: 'Manage channels and model pricing, and configure which groups / models appear on the user pricing page',
       searchChannels: 'Search channels...',
@@ -3762,6 +3771,11 @@
 
     // Accounts
     accounts: {
+      fromModel: 'Request model',
+      toModel: 'Target model',
+      antigravityProjectIdLabel: 'GCP Project ID (optional)',
+      antigravityProjectIdPlaceholder: 'your-gcp-project-id',
+      antigravityProjectIdHint: 'Antigravity standard-tier accounts that do not receive an automatic project_id need a user-owned GCP project.',
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',
@@ -6113,6 +6127,16 @@
         }
       },
       runtime: {
+        metricThresholds: 'Metric Thresholds',
+        metricThresholdsHint: 'Configure alert thresholds for metrics, values exceeding thresholds will be displayed in red',
+        slaMinPercent: 'SLA Minimum Percentage',
+        slaMinPercentHint: 'SLA below this value will be displayed in red (default: 99.5%)',
+        ttftP99MaxMs: 'TTFT P99 Maximum (ms)',
+        ttftP99MaxMsHint: 'TTFT P99 above this value will be displayed in red (default: 500ms)',
+        requestErrorRateMaxPercent: 'Request Error Rate Maximum (%)',
+        requestErrorRateMaxPercentHint: 'Request error rate above this value will be displayed in red (default: 5%)',
+        upstreamErrorRateMaxPercent: 'Upstream Error Rate Maximum (%)',
+        upstreamErrorRateMaxPercentHint: 'Upstream error rate above this value will be displayed in red (default: 5%)',
         title: 'Ops Runtime Settings',
         description: 'Stored in database; changes take effect without editing config files.',
         loading: 'Loading...',
@@ -7430,6 +7454,11 @@
         commonPatterns: 'Common patterns'
       },
       openaiFastPolicy: {
+        userIds: 'Specific user IDs',
+        userIdsHint: 'Leave empty to apply to all users. User-specific rules take precedence over global rules.',
+        userIdPlaceholder: 'e.g. 1001',
+        addUserId: 'Add user ID',
+        removeUserId: 'Remove user ID',
         title: 'OpenAI Fast/Flex Policy',
         description: 'Intercept, filter, or pass OpenAI fast(priority) / flex requests based on the request body service_tier field. Applies to the OpenAI gateway only.',
         empty: 'No rules configured. Click the button below to add one.',

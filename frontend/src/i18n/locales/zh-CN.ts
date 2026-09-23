@@ -290,6 +290,12 @@
 
   // Common
   common: {
+    apply: '应用',
+    clear: '清除',
+    creating: '创建中...',
+    required: '必填',
+    sending: '发送中...',
+    tryAgain: '请重试',
     loading: '加载中...',
     submitting: '提交中...',
     justNow: '刚刚',
@@ -2351,6 +2357,7 @@
 
     // Users Management
     users: {
+      passwordCopied: '密码已复制',
       title: '用户管理',
       description: '管理用户账户和权限',
       createUser: '创建用户',
@@ -2986,6 +2993,8 @@
 
     // Channel Management
     channels: {
+      noGroupsSelected: '请为 {platform} 至少选择一个分组',
+      emptyModelsInPricing: '请为 {platform} 定价规则至少添加一个模型',
       title: '价格配置',
       description: '管理渠道与模型定价，并配置用户价格页展示哪些分组 / 模型',
       searchChannels: '搜索渠道...',
@@ -3753,6 +3762,11 @@
 
     // Accounts Management
     accounts: {
+      fromModel: '请求模型',
+      toModel: '目标模型',
+      antigravityProjectIdLabel: 'GCP Project ID（可选）',
+      antigravityProjectIdPlaceholder: 'your-gcp-project-id',
+      antigravityProjectIdHint: 'standard-tier 且未自动返回 project_id 的 Antigravity 账号需要填写用户自有的 GCP project。',
       title: '账号管理',
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',
@@ -6118,6 +6132,16 @@
         }
       },
       runtime: {
+        metricThresholds: '指标阈值配置',
+        metricThresholdsHint: '配置各项指标的告警阈值，超出阈值时将以红色显示',
+        slaMinPercent: 'SLA最低百分比',
+        slaMinPercentHint: 'SLA低于此值时显示为红色（默认：99.5%）',
+        ttftP99MaxMs: 'TTFT P99最大值（毫秒）',
+        ttftP99MaxMsHint: 'TTFT P99高于此值时显示为红色（默认：500ms）',
+        requestErrorRateMaxPercent: '请求错误率最大值（%）',
+        requestErrorRateMaxPercentHint: '请求错误率高于此值时显示为红色（默认：5%）',
+        upstreamErrorRateMaxPercent: '上游错误率最大值（%）',
+        upstreamErrorRateMaxPercentHint: '上游错误率高于此值时显示为红色（默认：5%）',
         title: '运维监控运行设置',
         description: '配置存储在数据库中，无需修改 config 文件即可生效。',
         loading: '加载中...',
@@ -7429,6 +7453,11 @@
         commonPatterns: '常用模式'
       },
       openaiFastPolicy: {
+        userIds: '指定用户 ID',
+        userIdsHint: '留空表示对全部用户生效。指定用户规则优先于全局规则。',
+        userIdPlaceholder: '例如：1001',
+        addUserId: '添加用户 ID',
+        removeUserId: '移除用户 ID',
         title: 'OpenAI Fast/Flex 策略',
         description: '基于请求体 service_tier 字段拦截/过滤/透传 OpenAI fast(priority) 与 flex 请求；仅作用于 OpenAI 网关。',
         empty: '尚未配置任何规则。点击下方按钮新增。',
