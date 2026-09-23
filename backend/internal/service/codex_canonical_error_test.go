@@ -266,6 +266,7 @@ func TestCodexResponsesFailedEventData(t *testing.T) {
 	require.Equal(t, "failed", gjson.Get(data, "response.status").String())
 	require.Equal(t, CodexErrCodeServerOverloaded, gjson.Get(data, "response.error.code").String())
 	require.True(t, gjson.Get(data, "response.output").IsArray())
+	require.Greater(t, gjson.Get(data, "response.created_at").Int(), int64(0))
 }
 
 func TestCodexCanonicalUpstreamHintHandlesMissingContext(t *testing.T) {
