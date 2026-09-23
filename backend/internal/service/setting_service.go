@@ -2187,10 +2187,14 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
 	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
-	if settings.OpenAIOAuthSchedulingRateMultiplier < 0 || math.IsNaN(settings.OpenAIOAuthSchedulingRateMultiplier) || math.IsInf(settings.OpenAIOAuthSchedulingRateMultiplier, 0) {
-		return nil, infraerrors.BadRequest("INVALID_OPENAI_OAUTH_SCHEDULING_RATE_MULTIPLIER", "OAuth scheduling rate multiplier must be finite and non-negative")
+	// nil (stored as "") clears the OAuth override so accounts use their own rates.
+	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = ""
+	if rate := settings.OpenAIOAuthSchedulingRateMultiplier; rate != nil {
+		if *rate < 0 || math.IsNaN(*rate) || math.IsInf(*rate, 0) {
+			return nil, infraerrors.BadRequest("INVALID_OPENAI_OAUTH_SCHEDULING_RATE_MULTIPLIER", "OAuth scheduling rate multiplier must be finite and non-negative")
+		}
+		updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(*rate, 'f', -1, 64)
 	}
-	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(settings.OpenAIOAuthSchedulingRateMultiplier, 'f', -1, 64)
 	if settings.OpenAIAdvancedSchedulerWeightUpstreamCost != "" {
 		if _, err := parseNonNegativeFiniteSchedulerWeight(settings.OpenAIAdvancedSchedulerWeightUpstreamCost); err != nil {
 			return nil, err
@@ -2350,7 +2354,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 		enabled:                        settings.OpenAIAdvancedSchedulerEnabled,
 		lowUpstreamRatePriorityEnabled: settings.OpenAILowUpstreamRatePriorityEnabled,
-		oauthSchedulingRateMultiplier:  settings.OpenAIOAuthSchedulingRateMultiplier,
+		oauthSchedulingRateMultiplier:  cloneFloat64Ptr(settings.OpenAIOAuthSchedulingRateMultiplier),
 		upstreamCostWeightOverride:     strings.TrimSpace(settings.OpenAIAdvancedSchedulerWeightUpstreamCost),
 		expiresAt:                      time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
 	})
@@ -3893,7 +3897,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
 	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
-	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
+	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings)
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
 	result.OpenAIAdvancedSchedulerWeightUpstreamCost = strings.TrimSpace(settings[SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost])
 	result.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost = formatOpenAIAdvancedSchedulerFloat(resolveOpenAIAdvancedSchedulerWeight(

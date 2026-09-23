@@ -7525,7 +7525,8 @@
         lowRatePriorityTitle: '優先選擇上游倍率較低的帳號',
         lowRatePriorityDescription: '傳統調度模式下，優先選擇已觀測上游 Token 計費倍率較低的帳號。',
         oauthRateTitle: 'OAuth 調度參考倍率',
-        oauthRateDescription: '設定傳統低倍率調度使用的 OAuth 參考倍率，預設參考值為 1。',
+        oauthRateDescription: '設定傳統低倍率調度使用的 OAuth 參考倍率，預設參考值為 1；留空時 OAuth 帳號使用各自的帳號倍率。API Key 帳號優先使用有效探測倍率，無有效探測時使用帳號倍率。',
+        oauthRateInvalid: 'OAuth 調度參考倍率必須是非負數字，或留空以使用帳號倍率。',
         upstreamCostWeightTitle: '上游計費倍率權重',
         upstreamCostWeightDescription: '設定高級調度中上游 Token 計費信號的排序權重，填 0 可關閉該信號。'
       },
