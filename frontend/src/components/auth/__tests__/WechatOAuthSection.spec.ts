@@ -139,6 +139,27 @@ describe('WechatOAuthSection', () => {
     )
   })
 
+  it('passes a trimmed promo code to the WeChat OAuth start URL', async () => {
+    seedPublicSettings({
+      wechat_oauth_open_enabled: true,
+      wechat_oauth_mp_enabled: false,
+    })
+    const wrapper = mount(WechatOAuthSection, {
+      props: {
+        promoCode: ' WX&PROMO ',
+      },
+      global: {
+        plugins: [pinia],
+      },
+    })
+
+    await wrapper.get('button').trigger('click')
+
+    expect(locationState.current.href).toBe(
+      '/api/v1/auth/oauth/wechat/start?mode=open&redirect=%2Fbilling%3Fplan%3Dpro&promo_code=WX%26PROMO'
+    )
+  })
+
   it('uses mp mode inside the WeChat browser when mp mode is configured', async () => {
     Object.defineProperty(window.navigator, 'userAgent', {
       configurable: true,

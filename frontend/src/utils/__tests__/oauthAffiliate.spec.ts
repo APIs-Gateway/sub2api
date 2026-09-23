@@ -4,6 +4,7 @@ import {
   clearOAuthAffiliateCode,
   loadAffiliateReferralCode,
   loadOAuthAffiliateCode,
+  promoCodeQuery,
   resolveAffiliateReferralCode,
   storeAffiliateReferralCode,
   storeOAuthAffiliateCode
@@ -44,5 +45,13 @@ describe('oauthAffiliate', () => {
 
     clearAffiliateReferralCode()
     expect(loadAffiliateReferralCode()).toBe('')
+  })
+
+  it('builds an encoded promo_code query suffix and skips blank values', () => {
+    expect(promoCodeQuery(' PROMO 1 ')).toBe('&promo_code=PROMO%201')
+    expect(promoCodeQuery('   ')).toBe('')
+    expect(promoCodeQuery('')).toBe('')
+    expect(promoCodeQuery(undefined)).toBe('')
+    expect(promoCodeQuery(null)).toBe('')
   })
 })
