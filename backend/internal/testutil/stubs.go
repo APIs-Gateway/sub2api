@@ -136,3 +136,11 @@ func (c StubSessionLimitCache) SetWindowCost(_ context.Context, _ int64, _ float
 func (c StubSessionLimitCache) GetWindowCostBatch(_ context.Context, _ []int64) (map[int64]float64, error) {
 	return nil, nil
 }
+
+func (c StubGatewayCache) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c StubGatewayCache) GetReasoningContent(_ context.Context, _ string) (string, error) {
+	return "", service.ErrReasoningContentNotFound
+}
