@@ -2651,6 +2651,7 @@
         clearAllConfirm: '確認清空全部平台的日 / 周 / 月限額？所有平台將變為"無限額"，本地無法撤銷，需要在儲存前手動重填。',
         reset: {
           button: '重置該窗口',
+          unavailable: '該平台未配置限額，沒有可重置的用量窗口',
           confirm: '確認重置該用戶 {platform} 平台的 {window} 用量？此操作立即生效。',
           success: '已重置 {platform} {window} 用量',
           failed: '重置失敗',
@@ -6684,7 +6685,7 @@
         subscriptionGroup: '訂閱分組',
         subscriptionValidityDays: '有效期（天）',
         defaultPlatformQuotas: '預設平台限額（註冊時分配）',
-        defaultPlatformQuotasHint: '新用戶註冊時自動寫入平台限額記錄；已有用戶不受影響。留空 = 該平台該窗口不限制。',
+        defaultPlatformQuotasHint: '新用戶註冊時自動獲得這裡配置的限額；已有用戶不受影響。留空 = 該平台該窗口不限制。',
         platformQuotaNotice: '月限額為 30 天滾動窗口，非自然月',
       },
       platformQuota: {
