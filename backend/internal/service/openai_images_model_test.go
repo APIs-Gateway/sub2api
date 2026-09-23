@@ -154,8 +154,9 @@ func TestOpenAIImagesRejectedDriverPassthroughByAccountType(t *testing.T) {
 				require.Empty(t, repo.modelRateLimitCalls)
 				require.Zero(t, repo.tempCalls)
 			} else {
-				require.Len(t, repo.modelRateLimitCalls, 1,
-					"API key accounts do not use the Codex Responses driver, so a plan-gated rejection still cools the image model")
+				// API key accounts never use the Codex Responses driver, so the driver
+				// passthrough guard short-circuits and the generic error path handles it.
+				require.Empty(t, repo.modelRateLimitCalls, "plan-gated cooldown is OAuth-only")
 			}
 		})
 	}
