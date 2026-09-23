@@ -85,7 +85,8 @@ func TestQueryAndFinalizeRefundReplaysSnapshotDeduction(t *testing.T) {
 			require.Equal(t, tc.wantDeducted, deducted)
 			require.Equal(t, tc.wantDeducted, result.BalanceDeducted)
 			require.Equal(t, "95.00", prov.lastQuery.Amount, "query must reuse the gateway amount sent to Refund")
-			require.Equal(t, "rf_test", prov.lastQuery.RefundID)
+			require.Equal(t, order.OutTradeNo, prov.lastQuery.OrderID)
+			require.Equal(t, order.PaymentTradeNo, prov.lastQuery.TradeNo)
 			require.Equal(t, tc.wantShortfall, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_FINALIZE_BALANCE_SHORTFALL"))
 
 			reloaded, err := client.PaymentOrder.Get(ctx, order.ID)

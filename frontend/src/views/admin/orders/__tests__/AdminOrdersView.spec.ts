@@ -178,7 +178,7 @@ describe('AdminOrdersView refund management', () => {
       page: 1,
       page_size: 20,
       keyword: undefined,
-      status: 'REFUND_REQUESTED,REFUNDING,PARTIALLY_REFUNDED,REFUNDED,REFUND_FAILED',
+      status: 'REFUND_REQUESTED,REFUNDING,REFUND_PENDING,PARTIALLY_REFUNDED,REFUNDED,REFUND_FAILED',
       payment_type: undefined,
       order_type: undefined,
     })
