@@ -65,7 +65,7 @@ describe('UserAllowedGroupsModal load readiness', () => {
     await flushPromises()
     await wrapper.get('button.btn-primary').trigger('click')
     await flushPromises()
-    expect(mocks.update).toHaveBeenCalledWith(1, { allowed_groups: [7], restrict_public_groups: false, group_rates: { 7: 0.5 } })
+    expect(mocks.update).toHaveBeenCalledWith(1, { allowed_groups: [7], group_rates: { 7: 0.5 } })
     expect(wrapper.emitted('success')).toHaveLength(1)
   })
 })
