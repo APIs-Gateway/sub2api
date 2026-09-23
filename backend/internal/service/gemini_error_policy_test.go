@@ -701,6 +701,7 @@ func TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedUsesTierCooldownAft
 // Vertex（service_account）429 响应带 google.rpc.RetryInfo 时，应按 retryDelay 冷却，
 // 而不是回退到 PST 午夜。
 func TestHandleGeminiUpstreamError_VertexRetryInfoUsesParsedDelay(t *testing.T) {
+	resetUpstream429TrackerForTest()
 	repo := &rateLimit429AccountRepoStub{}
 	svc := &GeminiMessagesCompatService{accountRepo: repo}
 
@@ -726,6 +727,7 @@ func TestHandleGeminiUpstreamError_VertexRetryInfoUsesParsedDelay(t *testing.T) 
 // Vertex（service_account）429 响应不带任何可解析的重置时间时，走短冷却兜底，
 // 不再冷却到 PST 午夜（按量付费没有每日配额，长冷却会导致整组不可用）。
 func TestHandleGeminiUpstreamError_VertexFallbackUsesShortCooldown(t *testing.T) {
+	resetUpstream429TrackerForTest()
 	repo := &rateLimit429AccountRepoStub{}
 	svc := &GeminiMessagesCompatService{accountRepo: repo}
 
@@ -738,6 +740,7 @@ func TestHandleGeminiUpstreamError_VertexFallbackUsesShortCooldown(t *testing.T)
 		},
 	}
 	body := []byte(`{"error":{"code":429,"message":"Resource exhausted. Please try again later.","status":"RESOURCE_EXHAUSTED"}}`)
+	primeGemini429ThresholdForTest(t, svc, repo, account, body)
 
 	before := time.Now()
 	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
@@ -751,6 +754,7 @@ func TestHandleGeminiUpstreamError_VertexFallbackUsesShortCooldown(t *testing.T)
 
 // API Key（AI Studio）无法解析重置时间时仍冷却到 PST 午夜，行为保持不变。
 func TestHandleGeminiUpstreamError_APIKeyFallbackStillPSTMidnight(t *testing.T) {
+	resetUpstream429TrackerForTest()
 	repo := &rateLimit429AccountRepoStub{}
 	svc := &GeminiMessagesCompatService{accountRepo: repo}
 
@@ -760,6 +764,7 @@ func TestHandleGeminiUpstreamError_APIKeyFallbackStillPSTMidnight(t *testing.T) 
 		Type:     AccountTypeAPIKey,
 	}
 	body := []byte(`{"error":{"code":429,"message":"rate limit"}}`)
+	primeGemini429ThresholdForTest(t, svc, repo, account, body)
 
 	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
 
@@ -767,6 +772,19 @@ func TestHandleGeminiUpstreamError_APIKeyFallbackStillPSTMidnight(t *testing.T) 
 	require.Equal(t, int64(603), repo.lastRateLimitID)
 	expected := time.Unix(*nextGeminiDailyResetUnix(), 0)
 	require.WithinDuration(t, expected, repo.lastRateLimitReset, 5*time.Second)
+}
+
+// primeGemini429ThresholdForTest 让无重置时间的 429 越过 fork 的滑窗阈值：
+// 阈值以下只记录不冷却（fork 语义），下一次调用才会写账号级限流。
+func primeGemini429ThresholdForTest(t *testing.T, svc *GeminiMessagesCompatService, repo *rateLimit429AccountRepoStub, account *Account, body []byte) {
+	t.Helper()
+	for i := 0; i < upstream429MinAttempts; i++ {
+		recordUpstream429Attempt(account.ID)
+	}
+	for i := 0; i < upstream429MinAttempts/2-1; i++ {
+		svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+	}
+	require.Zero(t, repo.rateLimitCalls)
 }
 
 type geminiErrorPolicyRepo struct {
