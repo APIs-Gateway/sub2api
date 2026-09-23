@@ -91,6 +91,10 @@ func (userSubRepoNoop) GetLatestActiveStatusForUpdate(context.Context, int64) (*
 	panic("unexpected GetLatestActiveStatusForUpdate call")
 }
 
+func (userSubRepoNoop) GetByIDForUpdate(context.Context, int64) (*UserSubscription, error) {
+	panic("unexpected GetByIDForUpdate call")
+}
+
 func (userSubRepoNoop) ApplyManualOverdraft(context.Context, *UserSubscription) error {
 	panic("unexpected ApplyManualOverdraft call")
 }
