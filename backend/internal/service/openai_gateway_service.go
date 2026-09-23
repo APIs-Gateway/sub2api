@@ -2728,7 +2728,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		body = normalizedBody
 	}
 	// 在分流到 passthrough / Codex transform / 原生 ChatCompletions 之前统一修正
-	// 显式为 null 的工具 Schema type，否则该状态会被上游 400 归一成可重试的 502，
+	// 工具 Schema 里显式为 null 的 type / required，否则该状态会被上游 400 归一成可重试的 502，
 	// 同一份坏定义沉进多轮历史后在账号池里反复重放。
 	sanitizedToolBody, toolSchemaSanitized, toolSchemaErr := sanitizeOpenAIResponsesToolParameterTypes(body)
 	if toolSchemaErr != nil {

@@ -36,6 +36,14 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	s.prepareCodexAccountIdentitySource(c, account)
+	// 工具 Schema 清洗必须先于所有分流：下游每条路径（Chat Completions 直转、
+	// Responses 转换）都会把 tools 的 input_schema 原样带给上游，而 xAI /
+	// Moonshot 等严格校验方会因 required:null 或 type:null 直接 400。
+	if sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body); err != nil {
+		return nil, fmt.Errorf("sanitize Anthropic tool schemas: %w", err)
+	} else if changed {
+		body = sanitized
+	}
 	// API-key OpenAI-compatible upstreams that do not support /v1/responses
 	// must receive Anthropic /v1/messages traffic through /v1/chat/completions.
 	if shouldForwardAnthropicViaRawChatCompletions(account) {
