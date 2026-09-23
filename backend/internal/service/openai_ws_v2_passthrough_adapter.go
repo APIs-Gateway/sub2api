@@ -44,6 +44,19 @@ type openAIWSPolicyEnforcingFrameConn struct {
 
 var _ openaiwsv2.FrameConn = (*openAIWSPolicyEnforcingFrameConn)(nil)
 
+// stripOpenAIOAuthResponsesWebSocketFrameMetadata applies the Responses input
+// metadata cleanup to JSON carried by either text or binary WebSocket frames.
+// Non-JSON binary frames and API-key sessions must remain byte-for-byte intact.
+func stripOpenAIOAuthResponsesWebSocketFrameMetadata(account *Account, msgType coderws.MessageType, payload []byte) ([]byte, bool) {
+	if account == nil || !account.IsOpenAIOAuth() || (msgType != coderws.MessageText && msgType != coderws.MessageBinary) {
+		return payload, false
+	}
+	if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) != "response.create" {
+		return payload, false
+	}
+	return stripOpenAIOAuthResponsesInputItemMetadata(payload)
+}
+
 func (c *openAIWSPolicyEnforcingFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
 	if c == nil || c.inner == nil {
 		return coderws.MessageText, nil, errOpenAIWSConnClosed
@@ -408,7 +421,7 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) WriteFrame(ctx context.Context
 		return errOpenAIWSConnClosed
 	}
 	generation := uint64(0)
-	if msgType == coderws.MessageText && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
+	if (msgType == coderws.MessageText || msgType == coderws.MessageBinary) && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
 		generation = c.armDeadline(payload)
 	}
 	if err := c.inner.WriteFrame(ctx, msgType, payload); err != nil {
@@ -642,6 +655,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, liteErr.Error(), liteErr)
 		}
 		firstClientMessage = liteFirstMessage
+	}
+	if account.IsOpenAIOAuth() && strings.TrimSpace(gjson.GetBytes(firstClientMessage, "type").String()) == "response.create" {
+		stripped, changed := stripOpenAIOAuthResponsesInputItemMetadata(firstClientMessage)
+		if changed {
+			firstClientMessage = stripped
+		}
 	}
 	requestModel := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "model").String())
 	requestPreviousResponseID := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "previous_response_id").String())
@@ -901,7 +920,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
 				return payload, nil, err
 			}
-			if msgType != coderws.MessageText {
+			if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
 				return payload, nil, nil
 			}
 			if isResponseCreate && account.IsOpenAIOAuth() && isOpenAIResponsesLiteWebSocketPayload(payload) {
@@ -910,6 +929,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, liteErr.Error(), liteErr)
 				}
 				payload = litePayload
+			}
+			if stripped, changed := stripOpenAIOAuthResponsesWebSocketFrameMetadata(account, msgType, payload); changed {
+				payload = stripped
 			}
 			if isResponseCreate || eventType == "session.update" {
 				accountScopedPayload, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(payload, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
@@ -1009,7 +1031,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if readErr != nil {
 				return msgType, payload, readErr
 			}
-			if msgType == coderws.MessageText && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
+			if (msgType == coderws.MessageText || msgType == coderws.MessageBinary) && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
 				recordUpstream429Attempt(account.ID)
 				return msgType, payload, nil
 			}
