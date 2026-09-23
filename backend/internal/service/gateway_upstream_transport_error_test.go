@@ -61,7 +61,9 @@ func TestHandleUpstreamTransportError_TransientFailsOverWithoutEviction(t *testi
 	if string(failoverErr.ResponseBody) != string(gatewayTransportFailoverBody) {
 		t.Fatalf("ResponseBody = %s, want legacy 502 body", failoverErr.ResponseBody)
 	}
-	if !failoverErr.ShouldRetryNextAccount() {
+	// fork 没有上游的 NextAccountAction；任何 UpstreamFailoverError 都会换号，
+	// 这里断言它不是「同账号重试」/「请求级瞬态」类，确保直接切到下一个账号。
+	if failoverErr.RetryableOnSameAccount || failoverErr.RequestScopedTransient {
 		t.Fatal("transient transport error must allow retrying the next account")
 	}
 	if repo.calls != 0 {
