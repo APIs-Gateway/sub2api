@@ -69,6 +69,9 @@ var (
 	wxpayJSAPIPrepayWithRequestPayment = func(ctx context.Context, svc jsapi.JsapiApiService, req jsapi.PrepayRequest) (*jsapi.PrepayWithRequestPaymentResponse, *core.APIResult, error) {
 		return svc.PrepayWithRequestPayment(ctx, req)
 	}
+	wxpayQueryRefundByOutRefundNo = func(ctx context.Context, svc refunddomestic.RefundsApiService, req refunddomestic.QueryByOutRefundNoRequest) (*refunddomestic.Refund, *core.APIResult, error) {
+		return svc.QueryByOutRefundNo(ctx, req)
+	}
 )
 
 type Wxpay struct {
@@ -480,15 +483,56 @@ func (w *Wxpay) Refund(ctx context.Context, req payment.RefundRequest) (*payment
 	if err != nil {
 		return nil, fmt.Errorf("wxpay refund: %w", err)
 	}
-	rid := wxSV(res.RefundId)
-	if rid == "" {
-		rid = fmt.Sprintf("%s-refund", req.OrderID)
-	}
 	st := payment.ProviderStatusPending
 	if res.Status != nil && *res.Status == refunddomestic.STATUS_SUCCESS {
 		st = payment.ProviderStatusSuccess
 	}
+	rid := wxSV(res.RefundId)
+	if rid == "" {
+		rid = fmt.Sprintf("%s-refund", req.OrderID)
+	}
 	return &payment.RefundResponse{RefundID: rid, Status: st}, nil
+}
+
+func (w *Wxpay) QueryRefund(ctx context.Context, req payment.RefundQueryRequest) (*payment.RefundResponse, error) {
+	c, err := w.ensureClient()
+	if err != nil {
+		return nil, err
+	}
+	// Refund() submits a deterministic out_refund_no derived from the merchant
+	// order id and gateway amount; query by the same key. RefundID holds the
+	// WeChat-side refund_id, which is not accepted by this endpoint.
+	orderID := strings.TrimSpace(req.OrderID)
+	amount := strings.TrimSpace(req.Amount)
+	if orderID == "" || amount == "" {
+		return nil, fmt.Errorf("wxpay query refund: missing order id or refund amount")
+	}
+	outRefundNo := payment.DeterministicRefundNo(orderID, amount)
+	rs := refunddomestic.RefundsApiService{Client: c}
+	res, _, err := wxpayQueryRefundByOutRefundNo(ctx, rs, refunddomestic.QueryByOutRefundNoRequest{
+		OutRefundNo: core.String(outRefundNo),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("wxpay query refund: %w", err)
+	}
+	status := payment.ProviderStatusPending
+	if res != nil && res.Status != nil {
+		switch *res.Status {
+		case refunddomestic.STATUS_SUCCESS:
+			status = payment.ProviderStatusSuccess
+		case refunddomestic.STATUS_CLOSED, refunddomestic.STATUS_ABNORMAL:
+			status = payment.ProviderStatusFailed
+		default:
+			status = payment.ProviderStatusPending
+		}
+	}
+	refundID := outRefundNo
+	if res != nil {
+		if rid := wxSV(res.RefundId); rid != "" {
+			refundID = rid
+		}
+	}
+	return &payment.RefundResponse{RefundID: refundID, Status: status}, nil
 }
 
 func (w *Wxpay) queryOrderTotalFen(ctx context.Context, c *core.Client, orderID string) (int64, error) {

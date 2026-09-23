@@ -19,6 +19,7 @@ export interface AdminRefundResult {
   message?: string
   warning?: string
   require_force?: boolean
+  refund_pending?: boolean
 }
 
 /** Admin-facing payment config returned by GET /admin/payment/config */
@@ -120,6 +121,16 @@ export const adminPaymentAPI = {
   /** Process a refund. */
   refundOrder(id: number, data: { amount: number; reason: string; deduct_balance?: boolean; force?: boolean }) {
     return apiClient.post<AdminRefundResult>(`/admin/payment/orders/${id}/refund`, data)
+  },
+
+  /** Query the gateway for a REFUND_PENDING order and finalize it when settled */
+  queryRefund(id: number) {
+    return apiClient.post<AdminRefundResult>(`/admin/payment/orders/${id}/refund/query`)
+  },
+
+  /** Manually settle a REFUND_PENDING order after verifying the outcome with the gateway */
+  resolveRefund(id: number, data: { outcome: 'succeeded' | 'failed'; note?: string }) {
+    return apiClient.post<AdminRefundResult>(`/admin/payment/orders/${id}/refund/resolve`, data)
   },
 
   // ==================== Channels ====================
