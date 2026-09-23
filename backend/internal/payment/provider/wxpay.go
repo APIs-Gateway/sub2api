@@ -532,7 +532,6 @@ func (w *Wxpay) QueryRefund(ctx context.Context, req payment.RefundQueryRequest)
 	return &payment.RefundResponse{RefundID: refundID, Status: status}, nil
 }
 
-
 func (w *Wxpay) queryOrderTotalFen(ctx context.Context, c *core.Client, orderID string) (int64, error) {
 	svc := native.NativeApiService{Client: c}
 	tx, _, err := svc.QueryOrderByOutTradeNo(ctx, native.QueryOrderByOutTradeNoRequest{

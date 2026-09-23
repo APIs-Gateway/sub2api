@@ -1502,10 +1502,13 @@ func TestQueryAndFinalizeRefundFinalizesProviderStatuses(t *testing.T) {
 			svc := &PaymentService{
 				entClient:    client,
 				loadBalancer: &captureLoadBalancer{},
-				userRepo: &mockUserRepo{deductBalanceFn: func(ctx context.Context, id int64, amount float64) error {
-					deducted += amount
-					return nil
-				}},
+				userRepo: &mockUserRepo{
+					getByIDUser: &User{Balance: 500},
+					deductBalanceFn: func(ctx context.Context, id int64, amount float64) error {
+						deducted += amount
+						return nil
+					},
+				},
 			}
 			restore := replacePaymentProviderFactoryForTest(t, &refundQueryProviderTestDouble{
 				refundResponse: &payment.RefundResponse{RefundID: "rf_test", Status: tc.status},
@@ -1516,6 +1519,7 @@ func TestQueryAndFinalizeRefundFinalizesProviderStatuses(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Equal(t, tc.status == payment.ProviderStatusSuccess, result.Success)
+			require.Equal(t, tc.status == payment.ProviderStatusPending, result.RefundPending)
 			require.Equal(t, tc.wantDeduct, deducted)
 
 			reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
@@ -1626,8 +1630,18 @@ func (refundProviderTestDouble) Refund(context.Context, payment.RefundRequest) (
 type refundQueryProviderTestDouble struct {
 	refundProviderTestDouble
 	refundResponse *payment.RefundResponse
+	queryErr       error
+	lastQuery      payment.RefundQueryRequest
+	onQuery        func()
 }
 
-func (p *refundQueryProviderTestDouble) QueryRefund(context.Context, payment.RefundQueryRequest) (*payment.RefundResponse, error) {
+func (p *refundQueryProviderTestDouble) QueryRefund(_ context.Context, req payment.RefundQueryRequest) (*payment.RefundResponse, error) {
+	p.lastQuery = req
+	if p.onQuery != nil {
+		p.onQuery()
+	}
+	if p.queryErr != nil {
+		return nil, p.queryErr
+	}
 	return p.refundResponse, nil
 }

@@ -156,6 +156,7 @@ type RefundResult struct {
 	Success         bool    `json:"success"`
 	Warning         string  `json:"warning,omitempty"`
 	RequireForce    bool    `json:"require_force,omitempty"`
+	RefundPending   bool    `json:"refund_pending,omitempty"`
 	BalanceDeducted float64 `json:"balance_deducted,omitempty"`
 	SubDaysDeducted int     `json:"subscription_days_deducted,omitempty"`
 	GatewayAmount   float64 `json:"gateway_amount,omitempty"`
