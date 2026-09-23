@@ -30,6 +30,7 @@ func TestGPT6SolLunaModelNormalization(t *testing.T) {
 		"gpt-6-luna":                "gpt-6-luna",
 		"gpt-6-luna-none":           "gpt-6-luna",
 		"gpt-6-luna-openai-compact": "gpt-6-luna",
+		"gpt-6-luna-2026-09-22":     "gpt-6-luna",
 		"gpt-6":                     "gpt-6-astra",
 		"gpt-6-astra":               "gpt-6-astra",
 		"gpt-5.6-sol":               "gpt-5.6-sol",
@@ -111,7 +112,7 @@ func TestGPT6SolLunaDedicatedFallbacksUseOfficialRates(t *testing.T) {
 			{"gpt-6-luna", 0.1e-6, 0.5e-6, 0.125e-6, 0.01e-6},
 		} {
 			t.Run(source+"/"+tc.model, func(t *testing.T) {
-				for _, alias := range []string{tc.model, tc.model + "-max", "openai/" + tc.model} {
+				for _, alias := range []string{tc.model, tc.model + "-max", "openai/" + tc.model, tc.model + "-2026-09-22"} {
 					pricing, err := svc.GetModelPricing(alias)
 					require.NoError(t, err)
 					require.InDelta(t, tc.input, pricing.InputPricePerToken, 1e-15, alias)

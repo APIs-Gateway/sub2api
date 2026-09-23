@@ -128,7 +128,28 @@ func IsGPT6SolOrLunaModelSpelling(model string) bool {
 			case "none", "low", "medium", "high", "xhigh", "max", "openai-compact":
 				return true
 			}
+			// 日期快照（gpt-6-luna-2026-09-22）与 codexVersionModelPrefixes 的路由口径一致，
+			// 否则上游按 Luna 处理、本地却回退到 gpt-6 / gpt-5.4 计价。
+			if isDateSnapshotSuffix(suffix) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// isDateSnapshotSuffix reports whether suffix has the YYYY-MM-DD shape.
+func isDateSnapshotSuffix(suffix string) bool {
+	parts := strings.Split(suffix, "-")
+	if len(parts) != 3 || len(parts[0]) != 4 || len(parts[1]) != 2 || len(parts[2]) != 2 {
+		return false
+	}
+	for _, part := range parts {
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
