@@ -275,3 +275,25 @@ func (s *stolenOnUseRedeemRepo) Use(ctx context.Context, id, userID int64) error
 	s.mu.Unlock()
 	return s.raceSafeRedeemRepo.Use(ctx, id, userID)
 }
+
+// TestAuthService_Register_InvitationClaimLostPurgeFailureKeepsRejection 补偿删号本身失败时，
+// 仍必须拒绝注册（不能因为删不掉就放行），并且确实尝试过删号。
+func TestAuthService_Register_InvitationClaimLostPurgeFailureKeepsRejection(t *testing.T) {
+	const code = "INV-RACE-004"
+	userRepo := &userRepoStub{nextID: 5, deleteErr: errors.New("delete exploded")}
+	redeemRepo := &stolenOnUseRedeemRepo{raceSafeRedeemRepo: raceSafeRedeemRepo{codes: map[string]*RedeemCode{
+		code: {ID: 4, Code: code, Type: RedeemTypeInvitation, Status: StatusUnused},
+	}}}
+	svc := newOAuthEmailFlowAuthService(
+		userRepo,
+		redeemRepo,
+		&refreshTokenCacheStub{},
+		invitationRaceSettings(),
+		nil,
+		&userPlatformQuotaRepoStub{},
+	)
+
+	_, _, err := svc.RegisterWithVerification(context.Background(), "purgefail@example.com", "Password123!", "", "", code, "")
+	require.ErrorIs(t, err, ErrInvitationCodeInvalid)
+	require.Equal(t, []int64{5}, userRepo.deletedIDs, "删号失败也必须先尝试过")
+}
