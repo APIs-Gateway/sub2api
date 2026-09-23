@@ -10,7 +10,6 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	dbaccount "github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
-	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -705,22 +704,29 @@ func (r *proxyRepository) sweepOneExpiredProxyOnEnt(ctx context.Context, client 
 	if snapshot.ExpiresAt == nil {
 		return nil, nil
 	}
-	// 与 Postgres 路径一致：条件更新再次校验快照中的状态、有效期与回退配置，
+	// 与 Postgres 路径一致：再次校验快照中的状态、有效期与回退配置，
 	// 快照过时（续期、停用或改了回退配置）时不改写任何账号。
-	predicates := []predicate.Proxy{
-		proxy.IDEQ(proxyID),
-		proxy.DeletedAtIsNil(),
-		proxy.StatusEQ(service.StatusActive),
-		proxy.ExpiresAtLTE(now),
-		proxy.ExpiresAtEQ(*snapshot.ExpiresAt),
-		proxy.FallbackModeEQ(snapshot.FallbackMode),
+	// 非 Postgres（SQLite）下时间列以文本存储，SQL 等值比较会因时区 / 格式差异误判，
+	// 因此在 Go 里用 time.Equal 比较，再以 status=active 作条件更新防并发重复处理。
+	current, err := client.Proxy.Query().Where(proxy.IDEQ(proxyID), proxy.DeletedAtIsNil()).Only(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	if snapshot.BackupProxyID == nil {
-		predicates = append(predicates, proxy.BackupProxyIDIsNil())
-	} else {
-		predicates = append(predicates, proxy.BackupProxyIDEQ(*snapshot.BackupProxyID))
+	if current.Status != service.StatusActive ||
+		current.ExpiresAt == nil ||
+		!current.ExpiresAt.Equal(*snapshot.ExpiresAt) ||
+		current.ExpiresAt.After(now) ||
+		current.FallbackMode != snapshot.FallbackMode ||
+		!sameProxyIDPtr(current.BackupProxyID, snapshot.BackupProxyID) {
+		return nil, nil
 	}
-	changed, err := client.Proxy.Update().Where(predicates...).SetStatus(service.StatusExpired).Save(ctx)
+	changed, err := client.Proxy.Update().
+		Where(proxy.IDEQ(proxyID), proxy.DeletedAtIsNil(), proxy.StatusEQ(service.StatusActive)).
+		SetStatus(service.StatusExpired).
+		Save(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -785,4 +791,11 @@ func (r *proxyRepository) CountExpiringSoon(ctx context.Context, now time.Time) 
 		  AND expires_at > $2 AND expires_at <= $2 + (expiry_warn_days || ' days')::interval`,
 		[]any{service.StatusActive, now}, &c)
 	return c, err
+}
+
+func sameProxyIDPtr(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }

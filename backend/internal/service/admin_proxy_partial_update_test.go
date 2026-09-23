@@ -15,7 +15,7 @@ func TestAdminProxyPartialUpdatePreservesOmittedSettings(t *testing.T) {
 		expiry := time.Now().Add(24 * time.Hour)
 		backup := int64(10)
 		original := &Proxy{ID: 9, Name: "original", Host: "old.example", Status: StatusActive, ExpiresAt: &expiry, FallbackMode: FallbackModeProxy, BackupProxyID: &backup, ExpiryWarnDays: 7}
-		repo := &updatingProxyRepoStub{proxyRepoStub: &proxyRepoStub{}, proxy: original}
+		repo := &updatingProxyRepoStub{ProxyRepository: &proxyRepoStub{}, proxy: original}
 		svc := &adminServiceImpl{proxyRepo: repo}
 		got, err := svc.UpdateProxy(context.Background(), 9, input)
 		require.NoError(t, err)
@@ -31,7 +31,7 @@ func TestAdminProxyPartialUpdateClearsAndSetsSettings(t *testing.T) {
 	expiry := time.Now().Add(time.Hour)
 	backup := int64(10)
 	zero := 0
-	repo := &updatingProxyRepoStub{proxyRepoStub: &proxyRepoStub{}, proxy: &Proxy{ID: 9, ExpiresAt: &expiry, FallbackMode: FallbackModeProxy, BackupProxyID: &backup, ExpiryWarnDays: 7}}
+	repo := &updatingProxyRepoStub{ProxyRepository: &proxyRepoStub{}, proxy: &Proxy{ID: 9, ExpiresAt: &expiry, FallbackMode: FallbackModeProxy, BackupProxyID: &backup, ExpiryWarnDays: 7}}
 	svc := &adminServiceImpl{proxyRepo: repo}
 	got, err := svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{
 		ClearExpiresAt: true, FallbackMode: FallbackModeNone, ClearBackupID: true, ExpiryWarnDays: &zero,
@@ -67,7 +67,7 @@ func TestAdminProxyPartialUpdateValidatesMergedFallback(t *testing.T) {
 		{name: "negative warning", input: UpdateProxyInput{ExpiryWarnDays: &negative}, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := &updatingProxyRepoStub{proxyRepoStub: &proxyRepoStub{}, proxy: &Proxy{ID: 9, FallbackMode: FallbackModeProxy, BackupProxyID: &backup}}
+			repo := &updatingProxyRepoStub{ProxyRepository: &proxyRepoStub{}, proxy: &Proxy{ID: 9, FallbackMode: FallbackModeProxy, BackupProxyID: &backup}}
 			svc := &adminServiceImpl{proxyRepo: repo}
 			_, err := svc.UpdateProxy(context.Background(), 9, &tc.input)
 			if tc.wantError {

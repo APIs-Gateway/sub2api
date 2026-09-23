@@ -253,8 +253,6 @@ func TestProxyUpdateInvalidatesProbeSnapshotsAtomically(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 				AddRow("http", "old.example", 8080, "user", "pass", service.StatusActive))
 		mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
-			WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 		expectProxyReloadRow(mock, 9, "new.example", "user", "pass")
 		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 			WithArgs(int64(9)).
@@ -281,8 +279,6 @@ func TestProxyUpdateInvalidatesProbeSnapshotsAtomically(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 				AddRow("http", "same.example", 8080, "", "", service.StatusActive))
 		mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
-			WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 		expectProxyReloadRow(mock, 9, "same.example", "", "")
 		mock.ExpectCommit()
 
@@ -306,8 +302,6 @@ func TestProxyUpdateRollsBackWhenProbeOutboxFails(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 			AddRow("http", "old.example", 8080, "", "", service.StatusActive))
 	mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
-		WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectProxyReloadRow(mock, 9, "new.example", "", "")
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 		WithArgs(int64(9)).
@@ -338,8 +332,6 @@ func TestProxyUpdateUsesExistingTransaction(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 			AddRow("http", "old.example", 8080, "", "", service.StatusActive))
 	mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
-		WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectProxyReloadRow(mock, 9, "new.example", "", "")
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 		WithArgs(int64(9)).

@@ -30,7 +30,7 @@ func TestAdminProxyRejectsOutOfRangeExpiry(t *testing.T) {
 func TestAdminProxyAcceptsJSONExpiryBoundaries(t *testing.T) {
 	for _, year := range []int{0, 9999} {
 		expiry := time.Date(year, 12, 31, 23, 59, 59, 0, time.UTC)
-		repo := &updatingProxyRepoStub{proxyRepoStub: &proxyRepoStub{}, proxy: &Proxy{ID: 9}}
+		repo := &updatingProxyRepoStub{ProxyRepository: &proxyRepoStub{}, proxy: &Proxy{ID: 9}}
 		svc := &adminServiceImpl{proxyRepo: repo}
 		got, err := svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{ExpiresAt: &expiry})
 		require.NoError(t, err)
