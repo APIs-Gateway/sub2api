@@ -4555,6 +4555,7 @@
       billingRateMultiplierHint: '0 表示不计费，仅影响账号计费',
       expiresAt: '过期时间',
       expiresAtHint: '留空表示不过期',
+      expiresAtTimezoneHint: '输入按浏览器本地时区（{timezone}）解释。',
       higherPriorityFirst: '数值越小优先级越高',
       mixedScheduling: '在 /v1/messages 中使用',
       mixedSchedulingHint: '启用后可参与 Anthropic/Gemini 分组的调度',
@@ -5347,6 +5348,8 @@
       customExpiry: '自定义',
       customExpiryDays: '自定义天数',
       expiryDaysRequired: '请输入有效的过期天数',
+      expiryDateRequired: '请输入有效的过期日期和时间',
+      localTimeZoneHint: '自定义时间按浏览器本地时区（{timezone}）解释。',
       groupRequired: '请选择订阅分组',
       days: '天',
       status: {
