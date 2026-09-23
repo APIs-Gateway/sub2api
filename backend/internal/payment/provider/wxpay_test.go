@@ -19,6 +19,7 @@ import (
 	"github.com/wechatpay-apiv3/wechatpay-go/services/payments/h5"
 	"github.com/wechatpay-apiv3/wechatpay-go/services/payments/jsapi"
 	"github.com/wechatpay-apiv3/wechatpay-go/services/payments/native"
+	"github.com/wechatpay-apiv3/wechatpay-go/services/refunddomestic"
 )
 
 // generateTestKeyPair returns a fresh RSA 2048 key pair as PEM strings.
@@ -705,5 +706,69 @@ func TestCreatePaymentMobileH5ReturnsNoAuthErrorWithoutNativeFallback(t *testing
 	}
 	if !strings.Contains(err.Error(), "NO_AUTH") {
 		t.Fatalf("error = %v, want NO_AUTH", err)
+	}
+}
+
+func TestWxpayQueryRefundMapsStatusesAndUsesDeterministicRefundNo(t *testing.T) {
+	orig := wxpayQueryRefundByOutRefundNo
+	t.Cleanup(func() { wxpayQueryRefundByOutRefundNo = orig })
+
+	for _, tc := range []struct {
+		name       string
+		res        *refunddomestic.Refund
+		wantStatus string
+		wantID     string
+	}{
+		{name: "success", res: &refunddomestic.Refund{RefundId: core.String("wx-rf-1"), Status: refunddomestic.STATUS_SUCCESS.Ptr()}, wantStatus: payment.ProviderStatusSuccess, wantID: "wx-rf-1"},
+		{name: "closed", res: &refunddomestic.Refund{Status: refunddomestic.STATUS_CLOSED.Ptr()}, wantStatus: payment.ProviderStatusFailed},
+		{name: "abnormal", res: &refunddomestic.Refund{Status: refunddomestic.STATUS_ABNORMAL.Ptr()}, wantStatus: payment.ProviderStatusFailed},
+		{name: "processing", res: &refunddomestic.Refund{Status: refunddomestic.STATUS_PROCESSING.Ptr()}, wantStatus: payment.ProviderStatusPending},
+		{name: "nil response", res: nil, wantStatus: payment.ProviderStatusPending},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got refunddomestic.QueryByOutRefundNoRequest
+			wxpayQueryRefundByOutRefundNo = func(ctx context.Context, svc refunddomestic.RefundsApiService, req refunddomestic.QueryByOutRefundNoRequest) (*refunddomestic.Refund, *core.APIResult, error) {
+				got = req
+				return tc.res, nil, nil
+			}
+			w := &Wxpay{coreClient: &core.Client{}}
+			resp, err := w.QueryRefund(context.Background(), payment.RefundQueryRequest{OrderID: "sub2_wx_1", Amount: "9.90", RefundID: "ignored"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			wantNo := payment.DeterministicRefundNo("sub2_wx_1", "9.90")
+			if wxSV(got.OutRefundNo) != wantNo {
+				t.Fatalf("out_refund_no = %q, want %q", wxSV(got.OutRefundNo), wantNo)
+			}
+			if resp.Status != tc.wantStatus {
+				t.Fatalf("status = %q, want %q", resp.Status, tc.wantStatus)
+			}
+			wantID := tc.wantID
+			if wantID == "" {
+				wantID = wantNo
+			}
+			if resp.RefundID != wantID {
+				t.Fatalf("refund id = %q, want %q", resp.RefundID, wantID)
+			}
+		})
+	}
+}
+
+func TestWxpayQueryRefundErrors(t *testing.T) {
+	orig := wxpayQueryRefundByOutRefundNo
+	t.Cleanup(func() { wxpayQueryRefundByOutRefundNo = orig })
+
+	w := &Wxpay{coreClient: &core.Client{}}
+	if _, err := w.QueryRefund(context.Background(), payment.RefundQueryRequest{OrderID: "sub2_wx_2"}); err == nil {
+		t.Fatal("expected error for missing amount")
+	}
+	wxpayQueryRefundByOutRefundNo = func(ctx context.Context, svc refunddomestic.RefundsApiService, req refunddomestic.QueryByOutRefundNoRequest) (*refunddomestic.Refund, *core.APIResult, error) {
+		return nil, nil, errors.New("RESOURCE_NOT_EXISTS")
+	}
+	if _, err := w.QueryRefund(context.Background(), payment.RefundQueryRequest{OrderID: "sub2_wx_2", Amount: "1.00"}); err == nil || !strings.Contains(err.Error(), "wxpay query refund") {
+		t.Fatalf("expected wrapped gateway error, got %v", err)
+	}
+	if _, err := (&Wxpay{config: map[string]string{}}).QueryRefund(context.Background(), payment.RefundQueryRequest{OrderID: "x", Amount: "1.00"}); err == nil {
+		t.Fatal("expected client init error without credentials")
 	}
 }

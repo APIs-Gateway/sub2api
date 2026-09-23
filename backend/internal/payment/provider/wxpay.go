@@ -69,6 +69,9 @@ var (
 	wxpayJSAPIPrepayWithRequestPayment = func(ctx context.Context, svc jsapi.JsapiApiService, req jsapi.PrepayRequest) (*jsapi.PrepayWithRequestPaymentResponse, *core.APIResult, error) {
 		return svc.PrepayWithRequestPayment(ctx, req)
 	}
+	wxpayQueryRefundByOutRefundNo = func(ctx context.Context, svc refunddomestic.RefundsApiService, req refunddomestic.QueryByOutRefundNoRequest) (*refunddomestic.Refund, *core.APIResult, error) {
+		return svc.QueryByOutRefundNo(ctx, req)
+	}
 )
 
 type Wxpay struct {
@@ -506,7 +509,7 @@ func (w *Wxpay) QueryRefund(ctx context.Context, req payment.RefundQueryRequest)
 	}
 	outRefundNo := payment.DeterministicRefundNo(orderID, amount)
 	rs := refunddomestic.RefundsApiService{Client: c}
-	res, _, err := rs.QueryByOutRefundNo(ctx, refunddomestic.QueryByOutRefundNoRequest{
+	res, _, err := wxpayQueryRefundByOutRefundNo(ctx, rs, refunddomestic.QueryByOutRefundNoRequest{
 		OutRefundNo: core.String(outRefundNo),
 	})
 	if err != nil {
