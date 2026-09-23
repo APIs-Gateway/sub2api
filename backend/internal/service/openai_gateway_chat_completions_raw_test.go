@@ -1137,7 +1137,7 @@ func TestForwardAsRawChatCompletions_CommentOnlyStreamTriggersFailover(t *testin
 	}, "\n")
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_comment_only"}},
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid_comment_only"}},
 		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
 	}}
 
@@ -1169,7 +1169,7 @@ func TestForwardAsRawChatCompletions_TruncatedAfterOutputRecordsOpsUpstreamError
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_ops"}},
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid_ops"}},
 		Body: &openAIChatStreamReadErrorCloser{
 			payload: []byte(`data: {"id":"chatcmpl_ops","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"partial"}}]}` + "\n\n"),
 			err:     errors.New("read: connection reset by peer"),
