@@ -1207,8 +1207,8 @@ func (c *closeAfterWritesFrameConn) WriteFrame(ctx context.Context, msgType code
 	if err := c.passthroughTestFrameConn.WriteFrame(ctx, msgType, payload); err != nil {
 		return err
 	}
-	if len(c.passthroughTestFrameConn.Writes()) >= c.closeAfter {
-		_ = c.passthroughTestFrameConn.Close()
+	if len(c.Writes()) >= c.closeAfter {
+		_ = c.Close()
 	}
 	return nil
 }
