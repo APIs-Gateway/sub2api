@@ -155,3 +155,105 @@ func TestPgDumperRejectsNilDatabase(t *testing.T) {
 	require.Nil(t, reader)
 	require.ErrorContains(t, err, "nil sql db")
 }
+
+func TestPgDumperReportsConnectionAcquireFailure(t *testing.T) {
+	commandCreated := false
+	dumper, mock := newTestPgDumper(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		commandCreated = true
+		return exec.CommandContext(ctx, "sh", "-c", "true")
+	})
+	mock.ExpectClose()
+	require.NoError(t, dumper.db.Close())
+
+	reader, err := dumper.Dump(context.Background())
+	require.Nil(t, reader)
+	require.ErrorContains(t, err, "acquire backup migration lock connection")
+	require.False(t, commandCreated)
+}
+
+func expectBackupMigrationUnlockFailure(mock sqlmock.Sqlmock) {
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_unlock($1)")).
+		WithArgs(migrationsAdvisoryLockID).
+		WillReturnError(errors.New("unlock unavailable"))
+}
+
+func TestPgDumperJoinsUnlockFailureWhenStdoutPipeSetupFails(t *testing.T) {
+	dumper, mock := newTestPgDumper(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "sh", "-c", "true")
+		cmd.Stdout = io.Discard
+		return cmd
+	})
+	expectBackupMigrationLock(mock)
+	expectBackupMigrationUnlockFailure(mock)
+
+	reader, err := dumper.Dump(context.Background())
+	require.Nil(t, reader)
+	require.ErrorContains(t, err, "create stdout pipe")
+	require.ErrorContains(t, err, "release backup migration lock")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgDumperJoinsUnlockFailureWhenProcessStartFails(t *testing.T) {
+	dumper, mock := newTestPgDumper(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "/path/that/does/not/exist/pg_dump")
+	})
+	expectBackupMigrationLock(mock)
+	expectBackupMigrationUnlockFailure(mock)
+
+	reader, err := dumper.Dump(context.Background())
+	require.Nil(t, reader)
+	require.ErrorContains(t, err, "start pg_dump")
+	require.ErrorContains(t, err, "release backup migration lock")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgDumperCloseJoinsWaitAndUnlockErrors(t *testing.T) {
+	dumper, mock := newTestPgDumper(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sh", "-c", "printf partial-backup; exit 7")
+	})
+	expectBackupMigrationLock(mock)
+
+	reader, err := dumper.Dump(context.Background())
+	require.NoError(t, err)
+	_, err = io.ReadAll(reader)
+	require.NoError(t, err)
+	expectBackupMigrationUnlockFailure(mock)
+
+	closeErr := reader.Close()
+	require.ErrorContains(t, closeErr, "pg_dump exited with error")
+	require.ErrorContains(t, closeErr, "release backup migration lock")
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, closeErr, &exitErr)
+	require.Equal(t, 7, exitErr.ExitCode())
+	require.NoError(t, mock.ExpectationsWereMet())
+	require.Equal(t, closeErr, reader.Close(), "close result must be memoized")
+}
+
+func TestPgDumperDefaultsToExecCommandContext(t *testing.T) {
+	dumper, mock := newTestPgDumper(t, nil)
+	dumper.cfg.Password = ""
+	dumper.cfg.SSLMode = ""
+	// Empty PATH: the default exec.CommandContext cannot resolve pg_dump, so
+	// Start fails deterministically regardless of the host's PostgreSQL tools.
+	t.Setenv("PATH", t.TempDir())
+	expectBackupMigrationLock(mock)
+	expectBackupMigrationUnlock(mock)
+
+	reader, err := dumper.Dump(context.Background())
+	require.Nil(t, reader)
+	require.ErrorContains(t, err, "start pg_dump")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestNewPgDumperWiresConfigAndDatabase(t *testing.T) {
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	cfg := &config.Config{Database: config.DatabaseConfig{Host: "db.example.test", Port: 5432}}
+
+	dumper, ok := NewPgDumper(cfg, db).(*PgDumper)
+	require.True(t, ok)
+	require.Same(t, db, dumper.db)
+	require.Equal(t, "db.example.test", dumper.cfg.Host)
+	require.NotNil(t, dumper.commandContext)
+}
