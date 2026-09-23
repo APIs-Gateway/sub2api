@@ -220,6 +220,7 @@ func TestChatGPTAccountInfoBelongsToTokenAccount(t *testing.T) {
 		&OpenAITokenInfo{ChatGPTAccountID: "personal-a"}, &ChatGPTAccountInfo{}))
 }
 
+// accounts 的 map key 可能是 "default" 这类别名，account.account_id 才是账号标识。
 func TestFetchChatGPTAccountInfo_ReportsAccountID(t *testing.T) {
 	futureAt := time.Now().Add(720 * time.Hour).UTC().Format(time.RFC3339)
 
@@ -250,6 +251,10 @@ func TestFetchChatGPTAccountInfo_ReportsAccountID(t *testing.T) {
 	require.Equal(t, "personal-account-a", got.AccountID, "应优先取 account.account_id 而不是 map key")
 }
 
+// issue #5459：poid 指向的默认 Personal workspace 与 chatgpt_account_id 是两个不同的
+// 标识时，accounts/check 返回的是 workspace 的 entitlement.expires_at。plan_type 那侧
+// 已被 shouldApplyChatGPTAccountInfoPlanType 挡住（保留 JWT 里的个人套餐），到期时间
+// 这侧原先无条件覆盖，于是显示成「个人 Pro + workspace 到期时间」。
 func TestEnrichTokenInfo_WorkspaceEntitlementDoesNotOverridePersonalSubscription(t *testing.T) {
 	const (
 		personalAccountID   = "personal-account-a"
@@ -297,6 +302,8 @@ func TestEnrichTokenInfo_WorkspaceEntitlementDoesNotOverridePersonalSubscription
 	require.Equal(t, 1, subscriptionCalls)
 }
 
+// 单个人账号（poid == chatgpt_account_id）是绝大多数情况，行为必须保持不变：
+// 直接用 accounts/check 的 entitlement，不额外打订阅端点。
 func TestEnrichTokenInfo_KeepsEntitlementWhenAccountMatches(t *testing.T) {
 	const personalAccountID = "personal-account-a"
 	entitlementExpiresAt := time.Now().Add(720 * time.Hour).UTC().Format(time.RFC3339)
@@ -335,6 +342,8 @@ func TestEnrichTokenInfo_KeepsEntitlementWhenAccountMatches(t *testing.T) {
 	require.Zero(t, subscriptionCalls, "账号一致时不应额外请求订阅端点")
 }
 
+// 反向不变式：套餐本身就取自 accounts/check（JWT 没有 plan_type）时，到期时间必须
+// 跟着取同一条记录，否则会变成「workspace 套餐 + 个人到期时间」的另一种错配。
 func TestEnrichTokenInfo_WorkspacePlanTypeKeepsItsOwnExpiry(t *testing.T) {
 	const workspaceAccountID = "workspace-b"
 	workspaceExpiresAt := time.Now().Add(720 * time.Hour).UTC().Format(time.RFC3339)
@@ -380,6 +389,8 @@ type chatGPTBackendTestServerConfig struct {
 	onSubscription func(accountID string) map[string]any
 }
 
+// newChatGPTBackendTestServer 同时接管 accounts/check 与 subscriptions 两个端点，
+// 并在 t.Cleanup 里还原包级 URL 变量。
 func newChatGPTBackendTestServer(t *testing.T, cfg chatGPTBackendTestServerConfig) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -407,6 +418,9 @@ func newChatGPTBackendTestServer(t *testing.T, cfg chatGPTBackendTestServerConfi
 	return server
 }
 
+// enrichTokenInfo 收尾还会调用 disableOpenAITraining，它的 URL 是常量、指向真实
+// chatgpt.com，测试无法接管。给客户端一个短超时让它快速失败——该调用只写
+// PrivacyMode，不影响本组用例的断言。
 func newTestPrivacyClientFactory() PrivacyClientFactory {
 	return func(string) (*req.Client, error) {
 		return req.C().SetTimeout(time.Second), nil
