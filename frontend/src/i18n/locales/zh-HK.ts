@@ -6788,6 +6788,11 @@
         openaiAllowClaudeCodeCodexPlugin: '允許在 Claude Code 中使用 Codex 插件',
         openaiAllowClaudeCodeCodexPluginDesc:
           '全局開關，僅對已開啟「僅允許 Codex 官方客戶端」的 OpenAI OAuth 帳號生效。開啟後，所有此類帳號都額外放行通過 Claude Code 的 Codex 插件發起的請求（精確匹配 originator=Claude Code），無需逐帳號配置；上游請求仍保持透傳。',
+        claudeCodeClientVersion: 'Claude Code 客戶端版本號',
+        claudeCodeClientVersionHint: '網關偽裝為官方 Claude Code CLI 時對上游聲明的客戶端版本號。留空表示使用自動同步到的官方最新版本；填寫後固定為該版本，不再跟隨同步。僅在手填值和同步值均不可用時，才回退到環境變數 SUB2API_CLAUDE_CLI_VERSION 或內置版本。',
+        claudeCodeVersionAutoSync: '自動同步 Claude Code 版本號',
+        claudeCodeVersionAutoSyncHint: '每小時從官方發佈渠道獲取最新版本的 Claude Code 客戶端版本號，無需為了跟版本而升級本服務。關閉後停止獲取新版本，已同步的版本仍可使用；上方手填版本始終優先。',
+        claudeCodeVersionSyncedValue: '當前同步到：{version}',
       },
       webSearchEmulation: {
         title: 'Web Search 模擬',
