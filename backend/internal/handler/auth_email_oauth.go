@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -175,6 +176,10 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 		redirectOAuthError(c, frontendCallback, infraerrors.Reason(err), infraerrors.Message(err), "")
 		return
 	} else if shouldCreate {
+		if ageErr := h.ensureGitHubAccountOldEnough(c.Request.Context(), provider, emailOAuthProfileCreatedAt(profile)); ageErr != nil {
+			redirectOAuthError(c, frontendCallback, infraerrors.Reason(ageErr), infraerrors.Message(ageErr), "")
+			return
+		}
 		if pendingErr := h.createEmailOAuthRegistrationPendingSession(c, provider, frontendCallback, redirectTo, profile); pendingErr != nil {
 			redirectOAuthError(c, frontendCallback, infraerrors.Reason(pendingErr), infraerrors.Message(pendingErr), "")
 			return
@@ -192,6 +197,10 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 	)
 	if err != nil {
 		if errors.Is(err, service.ErrOAuthInvitationRequired) {
+			if ageErr := h.ensureGitHubAccountOldEnough(c.Request.Context(), provider, emailOAuthProfileCreatedAt(profile)); ageErr != nil {
+				redirectOAuthError(c, frontendCallback, infraerrors.Reason(ageErr), infraerrors.Message(ageErr), "")
+				return
+			}
 			if pendingErr := h.createEmailOAuthRegistrationPendingSession(c, provider, frontendCallback, redirectTo, profile); pendingErr != nil {
 				redirectOAuthError(c, frontendCallback, infraerrors.Reason(pendingErr), infraerrors.Message(pendingErr), "")
 				return
@@ -360,6 +369,15 @@ func (h *AuthHandler) completeEmailOAuthRegistration(c *gin.Context, provider st
 		return
 	}
 	if err := h.ensureBackendModeAllowsNewUserLogin(c.Request.Context()); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	if err := h.ensureGitHubAccountOldEnough(
+		c.Request.Context(),
+		session.ProviderType,
+		pendingSessionStringValue(session.UpstreamIdentityClaims, githubCreatedAtClaimKey),
+	); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -553,9 +571,47 @@ func parseGitHubOAuthProfile(ctx context.Context, cfg config.EmailOAuthProviderC
 		DisplayName:   firstNonEmpty(name, login),
 		AvatarURL:     strings.TrimSpace(gjson.Get(body, "avatar_url").String()),
 		Metadata: map[string]any{
-			"login": login,
+			"login":                 login,
+			githubCreatedAtClaimKey: strings.TrimSpace(gjson.Get(body, "created_at").String()),
 		},
 	}, nil
+}
+
+// githubCreatedAtClaimKey 是 GitHub 账号注册时间（/user 的 created_at）在
+// profile metadata 和 pending session claims 里的键名。
+const githubCreatedAtClaimKey = "github_created_at"
+
+func emailOAuthProfileCreatedAt(profile *emailOAuthProfile) string {
+	if profile == nil {
+		return ""
+	}
+	return pendingSessionStringValue(profile.Metadata, githubCreatedAtClaimKey)
+}
+
+// ensureGitHubAccountOldEnough 在新注册前校验 GitHub 账号的注册时长。
+// 只用于会新建本站用户的路径；已有用户的登录和绑定不走这里。
+func (h *AuthHandler) ensureGitHubAccountOldEnough(ctx context.Context, provider string, createdAt string) error {
+	if !strings.EqualFold(strings.TrimSpace(provider), "github") || h == nil || h.settingSvc == nil {
+		return nil
+	}
+	return checkGitHubAccountAge(createdAt, h.settingSvc.GetGitHubOAuthMinAccountAgeDays(ctx), time.Now())
+}
+
+// checkGitHubAccountAge 读不到或解析不了 created_at 时按不满足处理：
+// GitHub /user 总会返回这个字段，缺失只可能是上线前就已建好的 pending session，
+// 让用户重新走一次 GitHub 授权即可。
+func checkGitHubAccountAge(createdAt string, minDays int, now time.Time) error {
+	if minDays <= 0 {
+		return nil
+	}
+	created, err := time.Parse(time.RFC3339, strings.TrimSpace(createdAt))
+	if err != nil || now.Sub(created) < time.Duration(minDays)*24*time.Hour {
+		return infraerrors.Forbidden(
+			"GITHUB_ACCOUNT_TOO_NEW",
+			fmt.Sprintf("GitHub 账号注册满 %d 天后才能用于注册本站 (GitHub account must be at least %d days old to sign up)", minDays, minDays),
+		)
+	}
+	return nil
 }
 
 func fetchGitHubPrimaryVerifiedEmail(ctx context.Context, emailsURL string, accessToken string) (string, error) {
