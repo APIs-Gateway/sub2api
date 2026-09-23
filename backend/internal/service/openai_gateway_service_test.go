@@ -80,6 +80,8 @@ type stubOpenAIAccountRepo struct {
 type snapshotUpdateAccountRepo struct {
 	stubOpenAIAccountRepo
 	updateExtraCalls chan map[string]any
+	rateLimitCalls   int
+	rateLimitResetAt time.Time
 }
 
 func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
@@ -90,6 +92,12 @@ func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, u
 		}
 		r.updateExtraCalls <- copied
 	}
+	return nil
+}
+
+func (r *snapshotUpdateAccountRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
+	r.rateLimitCalls++
+	r.rateLimitResetAt = resetAt
 	return nil
 }
 
