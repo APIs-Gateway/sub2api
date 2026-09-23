@@ -122,3 +122,41 @@ func TestGPTImage25UsagePreservesImageInputTokens(t *testing.T) {
 	require.Equal(t, 1521, usage.ImageInputTokens)
 	require.Equal(t, 515, usage.ImageOutputTokens)
 }
+
+func TestOpenAIImagesRejectedDriverPassthroughByAccountType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("SUB2API_IMAGES_MAIN_MODEL", "gpt-5.4-mini")
+	body := `{"error":{"message":"The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.","type":"invalid_request_error"}}`
+	for _, tc := range []struct {
+		name        string
+		accountType string
+		passthrough bool
+	}{
+		{name: "setup_token_passes_through", accountType: AccountTypeSetupToken, passthrough: true},
+		{name: "apikey_is_not_driver_gated", accountType: AccountTypeAPIKey, passthrough: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &modelNotFoundAccountRepoStub{}
+			svc := &OpenAIGatewayService{rateLimitService: &RateLimitService{accountRepo: repo}}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, openAIImagesGenerationsEndpoint, nil)
+			account := openAICodexPlanGatedOAuthAccount()
+			account.Type = tc.accountType
+			resp := &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}
+			_, err := svc.handleOpenAIImagesErrorResponse(WithOpenAIImagesEndpoint(context.Background()), resp, c, account, "gpt-image-2.5-flare")
+			require.Error(t, err)
+			var upstreamErr *OpenAIImagesUpstreamError
+			if tc.passthrough {
+				require.ErrorAs(t, err, &upstreamErr)
+				require.Equal(t, http.StatusBadRequest, upstreamErr.StatusCode)
+				require.Contains(t, rec.Body.String(), "gpt-5.4-mini")
+				require.Empty(t, repo.modelRateLimitCalls)
+				require.Zero(t, repo.tempCalls)
+			} else {
+				require.Len(t, repo.modelRateLimitCalls, 1,
+					"API key accounts do not use the Codex Responses driver, so a plan-gated rejection still cools the image model")
+			}
+		})
+	}
+}
