@@ -825,6 +825,53 @@ func (s *AccountRepoSuite) TestClearRateLimit() {
 	s.Require().Nil(got.OverloadUntil)
 }
 
+func (s *AccountRepoSuite) TestResetQuotaUsedAndClearRateLimitCooldownPreservesOtherRuntimeState() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name: "acc-reset-quota-cooldown",
+		Extra: map[string]any{
+			"quota_used":        12.5,
+			"quota_daily_used":  5.0,
+			"quota_weekly_used": 9.0,
+			"model_rate_limits": map[string]any{
+				"claude-sonnet-4-5": map[string]any{"rate_limit_reset_at": "2026-09-01T10:00:00Z"},
+			},
+		},
+	})
+	until := time.Now().Add(1 * time.Hour)
+	s.Require().NoError(s.repo.SetOverloaded(s.ctx, account.ID, until))
+	s.Require().NoError(s.repo.SetRateLimited(s.ctx, account.ID, until))
+	s.Require().NoError(s.repo.SetTempUnschedulable(s.ctx, account.ID, until, "preserve-me"))
+
+	cacheRecorder := &schedulerCacheRecorder{}
+	s.repo.schedulerCache = cacheRecorder
+
+	s.Require().NoError(s.repo.ResetQuotaUsedAndClearRateLimitCooldown(s.ctx, account.ID))
+
+	got, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Nil(got.RateLimitedAt)
+	s.Require().Nil(got.RateLimitResetAt)
+	s.Require().NotNil(got.OverloadUntil)
+	s.Require().WithinDuration(until, *got.OverloadUntil, time.Second)
+	s.Require().NotNil(got.TempUnschedulableUntil)
+	s.Require().WithinDuration(until, *got.TempUnschedulableUntil, time.Second)
+	s.Require().Equal("preserve-me", got.TempUnschedulableReason)
+	s.Require().Contains(got.Extra, "model_rate_limits")
+	s.Require().Equal(float64(0), got.Extra["quota_used"])
+	s.Require().Equal(float64(0), got.Extra["quota_daily_used"])
+	s.Require().Equal(float64(0), got.Extra["quota_weekly_used"])
+
+	var pendingEventExists bool
+	s.Require().NoError(scanSingleRow(s.ctx, s.repo.sql, `
+		SELECT EXISTS (
+			SELECT 1 FROM scheduler_outbox
+			WHERE event_type = $1 AND account_id = $2 AND dedup_key IS NOT NULL
+		)`, []any{service.SchedulerOutboxEventAccountChanged, account.ID}, &pendingEventExists))
+	s.Require().True(pendingEventExists)
+	s.Require().Len(cacheRecorder.setAccounts, 1)
+	s.Require().Equal(account.ID, cacheRecorder.setAccounts[0].ID)
+}
+
 func (s *AccountRepoSuite) TestTempUnschedulableFieldsLoadedByGetByIDAndGetByIDs() {
 	acc1 := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-temp-1"})
 	acc2 := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-temp-2"})
@@ -1233,7 +1280,7 @@ func (s *AccountRepoSuite) TestBulkUpdate_ProbeEnabledRequiresOpenAIAPIKeyAccoun
 	s.Require().Equal(true, gotValid.Extra[service.UpstreamBillingProbeEnabledExtraKey])
 }
 
-func (s *AccountRepoSuite) TestListOAuthRefreshCandidates_ExcludesPermanentlyUnschedulable() {
+func (s *AccountRepoSuite) TestListOAuthRefreshCandidates_IncludesPausedActiveAccounts() {
 	eligible := mustCreateAccount(s.T(), s.client, &service.Account{
 		Name:        "refresh-eligible",
 		Platform:    service.PlatformOpenAI,
@@ -1242,23 +1289,36 @@ func (s *AccountRepoSuite) TestListOAuthRefreshCandidates_ExcludesPermanentlyUns
 		Schedulable: true,
 		Credentials: map[string]any{"refresh_token": "refresh-eligible-token"},
 	})
-	unschedulable := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name:        "refresh-unschedulable",
+	// Paused but active OAuth accounts (schedulable=false) must remain refresh
+	// candidates so their stored access_token does not silently expire.
+	paused := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:        "refresh-paused",
 		Platform:    service.PlatformOpenAI,
 		Type:        service.AccountTypeOAuth,
 		Status:      service.StatusActive,
 		Schedulable: true,
-		Credentials: map[string]any{"refresh_token": "refresh-unschedulable-token"},
+		Credentials: map[string]any{"refresh_token": "refresh-paused-token"},
 	})
-	s.Require().NoError(s.repo.SetSchedulable(s.ctx, unschedulable.ID, false))
+	s.Require().NoError(s.repo.SetSchedulable(s.ctx, paused.ID, false))
+	// Permanently rejected accounts drop out through status = 'active'.
+	errored := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:        "refresh-error",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusError,
+		Schedulable: false,
+		Credentials: map[string]any{"refresh_token": "refresh-error-token"},
+	})
 
 	candidates, err := s.repo.ListOAuthRefreshCandidates(s.ctx)
 	s.Require().NoError(err)
 
 	ids := idsOfAccounts(candidates)
 	s.Require().Contains(ids, eligible.ID)
-	s.Require().NotContains(ids, unschedulable.ID,
-		"permanently unschedulable accounts must not remain OAuth refresh candidates")
+	s.Require().Contains(ids, paused.ID,
+		"paused (schedulable=false) active accounts must remain OAuth refresh candidates")
+	s.Require().NotContains(ids, errored.ID,
+		"error accounts must not be OAuth refresh candidates")
 }
 
 func idsOfAccounts(accounts []service.Account) []int64 {

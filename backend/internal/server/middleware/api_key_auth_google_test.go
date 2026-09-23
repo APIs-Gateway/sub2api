@@ -145,6 +145,10 @@ func (f fakeGoogleSubscriptionRepo) GetLatestActiveStatusForUpdate(ctx context.C
 	return f.GetActiveByUserID(ctx, userID)
 }
 
+func (f fakeGoogleSubscriptionRepo) GetByIDForUpdate(ctx context.Context, id int64) (*service.UserSubscription, error) {
+	return f.GetByID(ctx, id)
+}
+
 func (f fakeGoogleSubscriptionRepo) ApplyManualOverdraft(ctx context.Context, sub *service.UserSubscription) error {
 	return nil
 }

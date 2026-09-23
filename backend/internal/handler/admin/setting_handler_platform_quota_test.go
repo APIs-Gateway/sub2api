@@ -263,9 +263,10 @@ func TestUpdateSettingsRejectsStepUpEnableWithoutCurrentGrant(t *testing.T) {
 
 func TestDiffSettings_DetectsOpenAISchedulingChanges(t *testing.T) {
 	before := &service.SystemSettings{}
+	oauthRate := 0.25
 	after := &service.SystemSettings{
 		OpenAILowUpstreamRatePriorityEnabled:      true,
-		OpenAIOAuthSchedulingRateMultiplier:       0.25,
+		OpenAIOAuthSchedulingRateMultiplier:       &oauthRate,
 		OpenAIAdvancedSchedulerWeightUpstreamCost: "1.5",
 	}
 

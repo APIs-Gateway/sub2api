@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -143,6 +144,105 @@ func TestRateLimitService_MatchTempUnschedulableRulesCoversGuardsAndTruncation(t
 	matches := matchTempUnschedulableRules(account, http.StatusServiceUnavailable, []byte(body))
 	require.Len(t, matches, 1)
 	require.Equal(t, "overloaded", matches[0].matchedKeyword)
+}
+
+func TestRateLimitService_HandleUpstreamError_APIKeyModel401UsesModelRateLimit(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	account := openAIModelNotFoundTempAccount()
+
+	handled := svc.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusUnauthorized,
+		http.Header{},
+		[]byte(`{"error":{"message":"unknown model definitely-not-real"}}`),
+		"definitely-not-real",
+	)
+
+	require.True(t, handled)
+	require.Zero(t, repo.tempCalls)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	call := repo.modelRateLimitCalls[0]
+	require.Equal(t, account.ID, call.accountID)
+	require.Equal(t, "definitely-not-real", call.scope)
+	require.Equal(t, upstreamModelNotFound401Reason, call.reason)
+	require.WithinDuration(t, time.Now().Add(upstreamModelNotFoundCooldown), call.resetAt, 5*time.Second)
+}
+
+// fork 回归：401 model-not-found 的模型级冷却只对 OpenAI 兼容的 API key 账号生效；
+// 其它 401 继续走既有鉴权失败语义（不能被一句 "unknown model" 洗成模型冷却）。
+func TestRateLimitService_Model401CooldownScope(t *testing.T) {
+	cases := []struct {
+		name    string
+		account *Account
+		body    string
+		want    bool
+	}{
+		{
+			name:    "openai api key structured model_not_found code",
+			account: &Account{ID: 201, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+			body:    `{"error":{"code":"model_not_found","message":"no such model"}}`,
+			want:    true,
+		},
+		{
+			name:    "grok api key unknown provider",
+			account: &Account{ID: 202, Platform: PlatformGrok, Type: AccountTypeAPIKey},
+			body:    `{"error":{"message":"Unknown provider for model claude-x"}}`,
+			want:    true,
+		},
+		{
+			name:    "openai oauth keeps oauth 401 handling",
+			account: &Account{ID: 203, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"refresh_token": "rt"}},
+			body:    `{"error":{"message":"unknown model definitely-not-real"}}`,
+		},
+		{
+			name:    "anthropic api key keeps auth failure",
+			account: &Account{ID: 204, Platform: PlatformAnthropic, Type: AccountTypeAPIKey},
+			body:    `{"error":{"message":"unknown model definitely-not-real"}}`,
+		},
+		{
+			name:    "structured auth code overrides model wording",
+			account: &Account{ID: 205, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+			body:    `{"error":{"code":"invalid_api_key","message":"unknown model or invalid key"}}`,
+		},
+		{
+			name:    "plain invalid key",
+			account: &Account{ID: 206, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+			body:    `{"error":{"message":"Incorrect API key provided"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &modelNotFoundAccountRepoStub{}
+			svc := &RateLimitService{accountRepo: repo}
+
+			got := svc.HandleUpstreamModelNotFound(context.Background(), tc.account, "definitely-not-real", http.StatusUnauthorized, []byte(tc.body))
+
+			require.Equal(t, tc.want, got)
+			if tc.want {
+				require.Len(t, repo.modelRateLimitCalls, 1)
+				require.Equal(t, upstreamModelNotFound401Reason, repo.modelRateLimitCalls[0].reason)
+			} else {
+				require.Empty(t, repo.modelRateLimitCalls)
+			}
+		})
+	}
+}
+
+// 无请求模型时无法做模型级冷却，401 仍按既有鉴权失败处理（API key → SetError）。
+func TestRateLimitService_HandleUpstreamError_APIKeyModel401WithoutModelKeepsAuthFailure(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{ID: 207, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	shouldDisable := svc.HandleUpstreamError(
+		context.Background(), account, http.StatusUnauthorized, http.Header{},
+		[]byte(`{"error":{"message":"unknown model definitely-not-real"}}`),
+	)
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.setErrorCalls)
 }
 
 func TestRateLimitService_HandleUpstreamError_ModelNotFoundWriteFailureDoesNotTempUnschedule(t *testing.T) {

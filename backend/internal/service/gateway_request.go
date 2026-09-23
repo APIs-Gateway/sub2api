@@ -223,7 +223,8 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	parsed.MetadataUserID = gjson.Get(jsonStr, "metadata.user_id").String()
 
 	thinkingType := gjson.Get(jsonStr, "thinking.type").String()
-	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive"
+	// Opus 5.5 恒为 adaptive thinking：省略 thinking 字段时上游仍按 adaptive 思考。
+	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive" || (protocol == domain.PlatformAnthropic && claude.IsOpus55(parsed.Model))
 
 	parsed.OutputEffort = strings.TrimSpace(gjson.Get(jsonStr, "output_config.effort").String())
 
@@ -578,7 +579,29 @@ func FilterThinkingBlocks(body []byte, mappedModel string) []byte {
 	if !ShouldPreFilterThinkingBlocks(mappedModel) {
 		return body
 	}
-	return filterThinkingBlocksInternal(body, false)
+	return filterThinkingBlocksInternal(body, claude.IsOpus55(mappedModel))
+}
+
+// validateClaudeOpus55Request rejects settings that Claude Opus 5.5 cannot
+// honor (manual/disabled thinking, forced tool_choice). Call it with the final
+// upstream model before OAuth mimicry can remove tool_choice or alter thinking
+// defaults, so the client gets a clear 400 instead of a silent rewrite.
+func validateClaudeOpus55Request(body []byte, model string) error {
+	if !claude.IsOpus55(model) {
+		return nil
+	}
+	switch gjson.GetBytes(body, "thinking.type").String() {
+	case "disabled", "enabled":
+		return fmt.Errorf("claude-opus-5-5 requires adaptive thinking; omit thinking or use thinking.type=adaptive and output_config.effort")
+	}
+	if gjson.GetBytes(body, "tool_choice").String() == "required" {
+		return fmt.Errorf("claude-opus-5-5 does not support forced tool_choice; use auto or none")
+	}
+	switch gjson.GetBytes(body, "tool_choice.type").String() {
+	case "any", "tool", "function", "custom", "namespace":
+		return fmt.Errorf("claude-opus-5-5 does not support forced tool_choice; use auto or none")
+	}
+	return nil
 }
 
 // FilterThinkingBlocksForRetry strips thinking-related constructs for retry scenarios.
@@ -893,9 +916,22 @@ const anthropicBetaContextManagementToken = "context-management-2025-06-27"
 //   - 若两侧不一致上游 Pydantic schema 拒收：
 //     "context_management: Extra inputs are not permitted"
 //
-// 本函数按最终发送的 anthropic-beta header 决定是否保留 body 中的
-// context_management 字段：缺 beta token → strip。这将限制完全建立在
-// "能力维度" 上，与 model 名 / token type / mimicry 子路径无关。
+// fallbacks 场景（与 context_management 同构）：
+//   - `fallbacks` / `fallback_credit_token` 是 beta Messages API 的
+//     server-side refusal fallback 字段；标准 Messages schema 没有它们，
+//     客户端（Claude Code / SDK / OpenCode 等）最近开始默认透传
+//     `"fallbacks":"default"`（或模型列表）
+//   - 上游接受的前提是 anthropic-beta 含 `server-side-fallback-2026-07-01`
+//     （fallback_credit_token 额外接受 credit beta，见下）
+//   - 缺 token 时上游 Pydantic extra='forbid' 拒收：
+//     "fallbacks: Extra inputs are not permitted"
+//   - 本仓不写入该字段，全部来自客户端透传；OAuth mimic 用
+//     FullClaudeCodeMimicryBetas 覆盖客户端 beta（该列表不含 fallback beta），
+//     若不 strip，body 字段与 header 不对称 → 所有模型 400
+//
+// 本函数按最终发送的 anthropic-beta header 决定是否保留 body 中的上述字段：
+// 缺对应 beta token → strip；客户端 header 已带对应 beta → 保留（不过度删除）。
+// 这将限制完全建立在 "能力维度" 上，与 model 名 / token type / mimicry 子路径无关。
 //
 // 返回 (sanitized, changed)：changed 表示是否发生实际删除，供调用方决定
 // 是否重用原 body 引用。
@@ -905,6 +941,8 @@ func sanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 	}
 
 	changed := false
+
+	// context_management：需要 context-management beta。
 	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
 		body, "context_management", anthropicBetaHeader, anthropicBetaContextManagementToken,
 	); deleted {
@@ -918,9 +956,29 @@ func sanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 	if b, deleted := stripAnthropicMessageOutputConfigUnlessBeta(body, anthropicBetaHeader); deleted {
 		body, changed = b, true
 	}
+
+	// fallbacks：server-side refusal fallback，仅接受 server-side-fallback beta。
+	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
+		body, "fallbacks", anthropicBetaHeader, claude.BetaServerSideFallback,
+	); deleted {
+		body, changed = b, true
+	}
+
+	// fallback_credit_token：server-side-fallback 或（新旧任一）fallback-credit beta
+	// 任意一个即可保留。
+	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
+		body, "fallback_credit_token", anthropicBetaHeader,
+		claude.BetaServerSideFallback, claude.BetaFallbackCredit, claude.BetaFallbackCreditLegacy,
+	); deleted {
+		body, changed = b, true
+	}
+
 	return body, changed
 }
 
+// stripAnthropicBodyFieldUnlessBeta 当 field 存在且 anthropic-beta header 不含
+// requiredTokens 中**任何一个** token 时删除该字段（保留条件：含任一 required token）。
+// 单 token 调用即「缺该 beta 则 strip」。返回 (newBody, deleted)。
 func stripAnthropicBodyFieldUnlessBeta(body []byte, field, anthropicBetaHeader string, requiredTokens ...string) ([]byte, bool) {
 	if !gjson.GetBytes(body, field).Exists() {
 		return body, false
@@ -932,6 +990,9 @@ func stripAnthropicBodyFieldUnlessBeta(body []byte, field, anthropicBetaHeader s
 	}
 	b, err := sjson.DeleteBytes(body, field)
 	if err != nil {
+		// 不应发生：gjson 刚验证过字段存在 + body 是合法 JSON。如果 sjson 仍报错，
+		// 调用方会拿到原 body（视为未删除），但此前 computeFinalAnthropicBeta 可能已按
+		// "strip 后" 计算了 finalBeta——两侧会不一致。记录 warning 最小限度提醒运维。
 		logger.LegacyPrintf("service.gateway",
 			"[BetaFieldSanitize] sjson.DeleteBytes(%s) failed unexpectedly: %v (body len=%d). "+
 				"body and final anthropic-beta header may be out of sync.", field, err, len(body))
@@ -1241,7 +1302,7 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte, mappedModel string) []b
 // 策略：
 //   - 当 thinking.type 不是 "enabled"/"adaptive"：移除所有 thinking 相关块
 //   - 当 thinking.type 是 "enabled"/"adaptive"：仅移除缺失/无效 signature 的 thinking 块
-func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
+func filterThinkingBlocksInternal(body []byte, alwaysThinking bool) []byte {
 	// Fast path: if body doesn't contain "thinking", skip parsing
 	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
 		!bytes.Contains(body, []byte(`"type": "thinking"`)) &&
@@ -1257,8 +1318,8 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 		return body
 	}
 
-	// Check if thinking is enabled
-	thinkingEnabled := false
+	// Check if thinking is enabled (Opus 5.5 always thinks, even when omitted)
+	thinkingEnabled := alwaysThinking
 	if thinking, ok := req["thinking"].(map[string]any); ok {
 		if thinkType, ok := thinking["type"].(string); ok && (thinkType == "enabled" || thinkType == "adaptive") {
 			thinkingEnabled = true
@@ -1299,6 +1360,13 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 				// When thinking is enabled and this is an assistant message,
 				// only keep thinking blocks with valid signatures
 				if thinkingEnabled && role == "assistant" {
+					// Opus 5.5: redacted_thinking carries its payload in data, not signature.
+					if alwaysThinking && blockType == "redacted_thinking" {
+						if data, ok := blockMap["data"].(string); ok && data != "" {
+							newContent = append(newContent, block)
+							continue
+						}
+					}
 					signature, _ := blockMap["signature"].(string)
 					if signature != "" && signature != antigravity.DummyThoughtSignature {
 						newContent = append(newContent, block)
@@ -1448,12 +1516,16 @@ const (
 
 // isThinkingBudgetConstraintError detects whether an upstream error message indicates
 // a budget_tokens constraint violation (e.g. "budget_tokens >= 1024").
-// Matches three conditions (all must be true):
+// Also recognizes Baseten's final-answer reserve constraint.
+// For the original budget constraint, all three conditions must be true:
 //  1. Contains "budget_tokens" or "budget tokens"
 //  2. Contains "thinking"
 //  3. Contains ">= 1024" or "greater than or equal to 1024" or ("1024" + "input should be")
 func isThinkingBudgetConstraintError(errMsg string) bool {
 	m := strings.ToLower(errMsg)
+	if isFinalAnswerReserveError(m) {
+		return true
+	}
 
 	// Condition 1: budget_tokens or budget tokens
 	hasBudget := strings.Contains(m, "budget_tokens") || strings.Contains(m, "budget tokens")
@@ -1475,6 +1547,14 @@ func isThinkingBudgetConstraintError(errMsg string) bool {
 	}
 
 	return false
+}
+
+// isFinalAnswerReserveError matches the specific reserve constraint, rather than
+// treating arbitrary reasoning quota or context-length errors as repairable.
+func isFinalAnswerReserveError(errMsg string) bool {
+	m := strings.ToLower(errMsg)
+	return strings.Contains(m, "must be greater than 1024 to reserve tokens for a final answer") &&
+		strings.Contains(m, "baseten reasoning is enabled")
 }
 
 // RectifyThinkingBudget modifies the request body to fix budget_tokens constraint errors.

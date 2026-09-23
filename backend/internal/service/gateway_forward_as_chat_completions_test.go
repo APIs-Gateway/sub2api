@@ -3,6 +3,7 @@
 package service
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,51 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestHandleCCBufferedFromAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	resp := &http.Response{Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_tool","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.5","usage":{"input_tokens":10}}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"Paris\"}"}}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`,
+		``,
+	}, "\n")))}
+
+	_, err := (&GatewayService{}).handleCCBufferedFromAnthropic(resp, c, "gpt-5", "claude-sonnet-4.5", nil, time.Now())
+	require.NoError(t, err)
+
+	var body struct {
+		Choices []struct {
+			Message struct {
+				ToolCalls []struct {
+					Function struct {
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Choices, 1)
+	require.Len(t, body.Choices[0].Message.ToolCalls, 1)
+	args := body.Choices[0].Message.ToolCalls[0].Function.Arguments
+	require.JSONEq(t, `{"city":"Paris"}`, args)
+}
 
 func TestExtractCCReasoningEffortFromBody(t *testing.T) {
 	t.Parallel()
@@ -189,4 +235,95 @@ func TestHandleCCStreamingFromAnthropic_PreservesMessageStartCacheUsageAndReason
 	require.NotNil(t, result.ReasoningEffort)
 	require.Equal(t, "medium", *result.ReasoningEffort)
 	require.Contains(t, rec.Body.String(), `[DONE]`)
+}
+
+// delayedReader blocks once before its first read, so a test can put a
+// measurable gap between two parts of an SSE body.
+type delayedReader struct {
+	r       io.Reader
+	delay   time.Duration
+	delayed bool
+}
+
+func (d *delayedReader) Read(p []byte) (int, error) {
+	if !d.delayed {
+		d.delayed = true
+		time.Sleep(d.delay)
+	}
+	return d.r.Read(p)
+}
+
+func TestHandleCCStreamingFromAnthropic_DropsPingKeepalives(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	const gap = 60 * time.Millisecond
+	// The ping arrives immediately; the real stream only after gap. If the ping
+	// still counted as the first chunk, FirstTokenMs would be ~0.
+	pingPart := strings.Join([]string{
+		`event: ping`,
+		`data: {"type":"ping"}`,
+		``,
+		``,
+	}, "\n")
+	streamPart := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_ping","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.5","stop_reason":"","usage":{"input_tokens":5}}}`,
+		``,
+		`event: ping`,
+		`data: {"type":"ping"}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"pong-free"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+	resp := &http.Response{
+		Header: http.Header{"x-request-id": []string{"rid_cc_stream_ping"}},
+		Body: io.NopCloser(io.MultiReader(
+			strings.NewReader(pingPart),
+			&delayedReader{r: strings.NewReader(streamPart), delay: gap},
+		)),
+	}
+
+	svc := &GatewayService{}
+	result, err := svc.handleCCStreamingFromAnthropic(resp, c, "claude-sonnet-4.5", "claude-sonnet-4.5", nil, time.Now(), true)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 5, result.Usage.InputTokens)
+	require.Equal(t, 3, result.Usage.OutputTokens)
+	require.NotNil(t, result.FirstTokenMs)
+	require.GreaterOrEqual(t, *result.FirstTokenMs, int((gap - 10*time.Millisecond).Milliseconds()),
+		"ping keepalive must not count as the first token")
+
+	body := rec.Body.String()
+	require.NotContains(t, body, "event: ping")
+	require.NotContains(t, body, `"ping"`)
+	require.Contains(t, body, "pong-free")
+	require.Contains(t, body, `[DONE]`)
+}
+
+func TestAppendRawJSON_TreatsEmptyObjectAsPlaceholder(t *testing.T) {
+	t.Parallel()
+
+	require.JSONEq(t, `{"a":1}`, string(appendRawJSON(nil, `{"a":1}`)))
+	require.JSONEq(t, `{"a":1}`, string(appendRawJSON(json.RawMessage(`{}`), `{"a":1}`)))
+	require.JSONEq(t, `{"a":1}`, string(appendRawJSON(json.RawMessage(" { \n } "), `{"a":1}`)))
+	require.Equal(t, `{"a":`+`1}`, string(appendRawJSON(json.RawMessage(`{"a":`), `1}`)))
+	require.Equal(t, `null{"a":1}`, string(appendRawJSON(json.RawMessage(`null`), `{"a":1}`)))
+	require.Equal(t, `{`+`}`, string(appendRawJSON(json.RawMessage(`{`), `}`)))
 }

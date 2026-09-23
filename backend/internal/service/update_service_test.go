@@ -35,6 +35,10 @@ func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, stri
 	return s.release, nil
 }
 
+func (s *updateServiceGitHubClientStub) FetchRecentReleases(context.Context, string, int) ([]*GitHubRelease, error) {
+	panic("FetchRecentReleases should not be called by UpdateService")
+}
+
 func (s *updateServiceGitHubClientStub) DownloadFile(context.Context, string, string, int64) error {
 	panic("DownloadFile should not be called when no update is available")
 }
@@ -61,4 +65,16 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNoUpdateAvailable))
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
+}
+
+func TestParseVersionStripsHyphenatedSuffix(t *testing.T) {
+	require.Equal(t, [3]int{0, 1, 183}, parseVersion("v0.1.183-custom"))
+	require.Equal(t, [3]int{1, 2, 3}, parseVersion("1.2.3-rc.1"))
+	require.Equal(t, [3]int{1, 2, 3}, parseVersion("v1.2.3"))
+}
+
+func TestCompareVersionsIgnoresHyphenatedSuffix(t *testing.T) {
+	require.Equal(t, 0, compareVersions("v0.1.183-custom", "v0.1.183"))
+	require.Equal(t, -1, compareVersions("v0.1.183-custom", "v0.1.184"))
+	require.Equal(t, 1, compareVersions("v0.1.184-rc.1", "v0.1.183"))
 }

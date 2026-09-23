@@ -2569,6 +2569,7 @@ func TestOpenAIGatewayServiceCalculateRecordUsageCost_ImageCandidateBeatsUpstrea
 		1.0,
 		UsageTokens{InputTokens: 3678, OutputTokens: 42},
 		"",
+		time.Time{},
 	)
 
 	require.NoError(t, err)

@@ -487,4 +487,16 @@ onUnmounted(() => {
   clearPendingUserSearch()
   document.removeEventListener('click', onDocumentClick)
 })
+
+// 供外部（如路由带 user_id 进入时）在程序化设置 user_id 后回显选中的用户邮箱
+const setUserKeyword = (email: string) => {
+  clearPendingUserSearch()
+  userKeyword.value = email
+  userResults.value = []
+  showUserDropdown.value = false
+}
+
+const getUserSearchRevision = () => userSearchSequence
+
+defineExpose({ getUserSearchRevision, setUserKeyword })
 </script>

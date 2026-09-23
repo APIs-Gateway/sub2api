@@ -228,6 +228,10 @@ func (r *refundUserSubRepoStub) GetLatestActiveStatusForUpdate(ctx context.Conte
 	return r.GetActiveByUserID(ctx, userID)
 }
 
+func (r *refundUserSubRepoStub) GetByIDForUpdate(ctx context.Context, id int64) (*UserSubscription, error) {
+	return r.GetByID(ctx, id)
+}
+
 func (r *refundUserSubRepoStub) ApplyManualOverdraft(ctx context.Context, sub *UserSubscription) error {
 	return nil
 }

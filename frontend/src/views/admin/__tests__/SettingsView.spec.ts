@@ -190,7 +190,8 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.openaiExperimentalScheduler.lowRatePriorityTitle": "优先选择上游倍率较低的账号",
     "admin.settings.openaiExperimentalScheduler.lowRatePriorityDescription": "传统调度模式下，优先选择已观测上游 Token 计费倍率较低的账号。",
     "admin.settings.openaiExperimentalScheduler.oauthRateTitle": "OAuth 调度参考倍率",
-    "admin.settings.openaiExperimentalScheduler.oauthRateDescription": "设置传统低倍率调度使用的 OAuth 参考倍率，默认参考值为 1。",
+    "admin.settings.openaiExperimentalScheduler.oauthRateDescription": "设置传统低倍率调度使用的 OAuth 参考倍率，默认参考值为 1；留空时 OAuth 账号使用各自的账号倍率。API Key 账号优先使用有效探测倍率，无有效探测时使用账号倍率。",
+    "admin.settings.openaiExperimentalScheduler.oauthRateInvalid": "OAuth 调度参考倍率必须是非负数字，或留空以使用账号倍率。",
     "admin.settings.openaiExperimentalScheduler.upstreamCostWeightTitle": "上游计费倍率权重",
     "admin.settings.openaiExperimentalScheduler.upstreamCostWeightDescription": "设置高级调度中上游 Token 计费信号的排序权重，填 0 可关闭该信号。",
     "admin.settings.openaiFastPolicy.actionForcePriority": "强制 priority",
@@ -1152,6 +1153,65 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(wrapper.get('[data-testid="openai-low-rate-priority-toggle"]').element).toBeTruthy();
     expect(wrapper.get('[data-testid="openai-oauth-scheduling-rate-multiplier"]').element).toHaveProperty("value", "0.25");
     expect(wrapper.find('[data-testid="openai-advanced-scheduler-weight-upstream-cost"]').exists()).toBe(false);
+  });
+
+  it("clears the OAuth rate without losing zero", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_low_upstream_rate_priority_enabled: true,
+      openai_advanced_scheduler_enabled: false,
+      openai_oauth_scheduling_rate_multiplier: 0.7,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const input = wrapper.get('[data-testid="openai-oauth-scheduling-rate-multiplier"]');
+    expect(input.attributes("required")).toBeUndefined();
+
+    await input.setValue("");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      openai_oauth_scheduling_rate_multiplier: null,
+    }));
+
+    await input.setValue("0");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      openai_oauth_scheduling_rate_multiplier: 0,
+    }));
+
+    updateSettings.mockClear();
+    await input.setValue("-1");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith("OAuth 调度参考倍率必须是非负数字，或留空以使用账号倍率。");
+  });
+
+  it("loads and preserves an explicitly cleared OAuth rate", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_low_upstream_rate_priority_enabled: true,
+      openai_advanced_scheduler_enabled: false,
+      openai_oauth_scheduling_rate_multiplier: null,
+    });
+    updateSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_low_upstream_rate_priority_enabled: true,
+      openai_oauth_scheduling_rate_multiplier: null,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const input = wrapper.get<HTMLInputElement>('[data-testid="openai-oauth-scheduling-rate-multiplier"]');
+    expect(input.element.value).toBe("");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      openai_oauth_scheduling_rate_multiplier: null,
+    }));
+    expect(input.element.value).toBe("");
   });
 
   it("submits upstream-cost scheduler settings and switches the advanced control", async () => {

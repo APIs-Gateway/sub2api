@@ -17,6 +17,54 @@ vi.mock('@/composables/useClipboard', () => ({
 import UseKeyModal from '../UseKeyModal.vue'
 
 describe('UseKeyModal', () => {
+  it('omits the attribution override from every standard Claude Code setup form', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-anthropic-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'anthropic'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    for (const [shell, trafficSetting] of [
+      ['macOS / Linux', 'export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1'],
+      ['Windows CMD', 'set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1'],
+      ['PowerShell', '$env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1']
+    ]) {
+      if (shell !== 'macOS / Linux') {
+        const shellTab = wrapper.findAll('button').find(
+          (button) => button.text().trim() === shell
+        )
+        expect(shellTab).toBeDefined()
+        await shellTab!.trigger('click')
+        await nextTick()
+      }
+
+      const codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
+      const allCode = codeBlocks.join('\n')
+      // fork 的 VSCode settings.json 模板没有 "$schema"，按 "env" 块定位
+      const settingsBlock = codeBlocks.find((content) => content.trimStart().startsWith('{') && content.includes('"env"'))
+      expect(settingsBlock).toBeDefined()
+      const settings = JSON.parse(settingsBlock!)
+
+      expect(allCode).not.toContain('CLAUDE_CODE_ATTRIBUTION_HEADER')
+      expect(allCode).toContain(trafficSetting)
+      expect(settings.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
+      expect(settings.env).not.toHaveProperty('CLAUDE_CODE_ATTRIBUTION_HEADER')
+    }
+  })
+
   it('renders GPT-5.5 and goals feature in OpenAI Codex config', () => {
     const wrapper = mount(UseKeyModal, {
       props: {
@@ -47,8 +95,12 @@ describe('UseKeyModal', () => {
     expect(configToml).not.toContain('model_context_window')
     expect(configToml).not.toContain('model_auto_compact_token_limit')
     expect(configToml).toContain('requires_openai_auth = true')
+    expect(configToml).not.toContain('experimental_bearer_token')
     expect(configToml).not.toContain('x-openai-actor-authorization')
     expect(configToml).toContain('[features]\ngoals = true')
+    // legacy 模式仍生成 auth.json
+    expect(codeBlocks).toContain('{\n  "OPENAI_API_KEY": "sk-test"\n}')
+    expect(wrapper.text()).toContain('auth.json')
   })
 
   it('renders GPT-5.5 and goals feature in OpenAI Codex WebSocket config', async () => {
@@ -89,8 +141,11 @@ describe('UseKeyModal', () => {
     expect(configToml).not.toContain('model_context_window')
     expect(configToml).not.toContain('model_auto_compact_token_limit')
     expect(configToml).toContain('requires_openai_auth = true')
+    expect(configToml).not.toContain('experimental_bearer_token')
     expect(configToml).not.toContain('x-openai-actor-authorization')
     expect(configToml).toContain('[features]\nresponses_websockets_v2 = true\ngoals = true')
+    expect(codeBlocks).toContain('{\n  "OPENAI_API_KEY": "sk-test"\n}')
+    expect(wrapper.text()).toContain('auth.json')
   })
 
   it('renders API Key Mode authorization in OpenAI Codex config', async () => {
@@ -123,7 +178,11 @@ describe('UseKeyModal', () => {
     expect(apiKeyMode.attributes('aria-checked')).toBe('true')
     expect(configToml).toBeDefined()
     expect(configToml).toContain('requires_openai_auth = false')
+    expect(configToml).toContain('experimental_bearer_token = "sk-test"')
     expect(configToml).toContain('http_headers = { "x-openai-actor-authorization" = "local-image-extension" }')
+    // API Key 模式凭证内联在 provider 块，不再生成 auth.json
+    expect(codeBlocks).not.toContain('{\n  "OPENAI_API_KEY": "sk-test"\n}')
+    expect(wrapper.text()).not.toContain('auth.json')
   })
 
   it('preserves API Key Mode when switching to OpenAI Codex WebSocket config', async () => {
@@ -161,7 +220,11 @@ describe('UseKeyModal', () => {
     expect(wrapper.get('[data-testid="codex-auth-mode-api-key"]').attributes('aria-checked')).toBe('true')
     expect(configToml).toBeDefined()
     expect(configToml).toContain('requires_openai_auth = false')
+    expect(configToml).toContain('experimental_bearer_token = "sk-test"')
     expect(configToml).toContain('http_headers = { "x-openai-actor-authorization" = "local-image-extension" }')
+    // API Key 模式凭证内联在 provider 块，不再生成 auth.json
+    expect(codeBlocks).not.toContain('{\n  "OPENAI_API_KEY": "sk-test"\n}')
+    expect(wrapper.text()).not.toContain('auth.json')
   })
 
   it('resets Codex authentication mode when the modal reopens or platform changes', async () => {
@@ -254,6 +317,13 @@ describe('UseKeyModal', () => {
     expect(parsed.provider.openai.models['gpt-6-astra'].limit).toEqual({ context: 1050000, output: 128000 })
     expect(parsed.provider.openai.models['gpt-6'].variants.max).toEqual({})
     expect(parsed.provider.openai.models['gpt-6-astra'].variants.max).toEqual({})
+    for (const model of ['gpt-6-sol', 'gpt-6-luna']) {
+      expect(parsed.provider.openai.models[model].limit).toEqual({ context: 1050000, output: 128000 })
+      expect(parsed.provider.openai.models[model].variants).toHaveProperty('none')
+      expect(parsed.provider.openai.models[model].variants).toHaveProperty('max')
+    }
+    expect(parsed.provider.openai.models['gpt-6-sol'].name).toBe('GPT-6 Sol')
+    expect(parsed.provider.openai.models['gpt-6-luna'].name).toBe('GPT-6 Luna')
   })
 
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {
@@ -296,5 +366,51 @@ describe('UseKeyModal', () => {
     expect(fable.limit).toEqual({ context: 1048576, output: 128000 })
     expect(fable.options.thinking).toEqual({ type: 'adaptive' })
     expect(fable.options.thinking).not.toHaveProperty('budgetTokens')
+  })
+
+  it('exports Opus 5.5 only on the Anthropic provider with adaptive defaults', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: { show: true, apiKey: 'sk-test', baseUrl: 'https://example.com/v1', platform: 'anthropic' },
+      global: { stubs: { BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }, Icon: { template: '<span />' } } }
+    })
+    const tab = wrapper.findAll('button').find(button => button.text().includes('keys.useKeyModal.cliTabs.opencode'))
+    expect(tab).toBeDefined()
+    await tab!.trigger('click')
+    await nextTick()
+    const model = JSON.parse(wrapper.find('pre code').text()).provider.anthropic.models['claude-opus-5-5']
+    expect(model.limit).toEqual({ context: 1000000, output: 128000 })
+    expect(model.options).toEqual({ thinking: { type: 'adaptive' }, effort: 'medium' })
+    expect(model.variants.xhigh.effort).toBe('xhigh')
+    expect(model.variants).not.toHaveProperty('none')
+  })
+
+  it('escapes the inline Codex bearer token as a TOML basic string', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-"quote\\slash',
+        baseUrl: 'https://example.com/v1',
+        platform: 'openai'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    await wrapper.get('[data-testid="codex-auth-mode-api-key"]').trigger('click')
+    await nextTick()
+
+    const configToml = wrapper
+      .findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.includes('model_provider = "OpenAI"'))
+    expect(configToml).toContain('experimental_bearer_token = "sk-\\"quote\\\\slash"')
   })
 })

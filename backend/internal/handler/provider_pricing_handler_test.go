@@ -93,7 +93,7 @@ func TestProviderPricingHandlerGetPricing(t *testing.T) {
 	require.True(t, resp.Success)
 	require.Equal(t, "Codex API", resp.Data.SiteName)
 	require.Equal(t, "codex.example.com", resp.Data.SiteDomain)
-	require.Len(t, resp.Data.Models, 5)
+	require.Len(t, resp.Data.Models, 7)
 	for _, model := range resp.Data.Models {
 		require.Equal(t, "codex plus", model.GroupName)
 		require.True(t, model.Enabled)
@@ -110,6 +110,10 @@ func TestProviderPricingHandlerGetPricing(t *testing.T) {
 	require.Equal(t, 0.56, resp.Data.Models[3].InputPrice)
 	require.Equal(t, "gpt-6-astra", resp.Data.Models[4].ModelName)
 	require.Equal(t, 28.0, resp.Data.Models[4].InputPrice)
+	require.Equal(t, "gpt-6-sol", resp.Data.Models[5].ModelName)
+	require.Equal(t, 5.6, resp.Data.Models[5].InputPrice)
+	require.Equal(t, "gpt-6-luna", resp.Data.Models[6].ModelName)
+	require.Equal(t, 0.28, resp.Data.Models[6].InputPrice)
 }
 
 func TestProviderPricingHandlerGetPricingGroupError(t *testing.T) {

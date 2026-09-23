@@ -78,6 +78,7 @@ export interface CreateParams {
   name: string
   provider: Provider
   api_mode?: APIMode
+  /** 上游 HTTPS base URL，可含路径前缀（如 https://host/openai/v1）；不允许 query / fragment */
   endpoint: string
   api_key: string
   primary_model: string

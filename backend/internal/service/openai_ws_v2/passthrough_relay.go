@@ -94,6 +94,15 @@ type relayState struct {
 	firstTokenMs      *int
 	turnTimingByID    map[string]*relayTurnTiming
 	activeTurn        *relayTurnTiming
+	// pendingTurn marks a response.create that has been written upstream but
+	// whose response id has not been observed yet. It is set from the
+	// client-to-upstream goroutine and cleared from the upstream reader.
+	pendingTurn atomic.Bool
+	// turnWroteDownstream tracks whether the current turn (since the latest
+	// response.create) has written anything to the client, so a later turn's
+	// pre-output error is not treated as mid-stream just because an earlier
+	// turn produced output.
+	turnWroteDownstream atomic.Bool
 }
 
 type relayExitSignal struct {
@@ -150,6 +159,9 @@ func Relay(
 	}
 	startAt := nowFn()
 	state := &relayState{requestModel: result.RequestModel}
+	// Mark the turn pending before the frame reaches upstream so a fast
+	// response.created can never race ahead of the marker.
+	state.markPendingTurn(firstClientMessage)
 	onTrace := options.OnTrace
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
@@ -223,7 +235,7 @@ func Relay(
 		if !clientReaderStarted.CompareAndSwap(false, true) {
 			return
 		}
-		go runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeUpstream, markActivity, clientToUpstreamFrames, onTrace, exitCh)
+		go runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeUpstream, markActivity, clientToUpstreamFrames, state, onTrace, exitCh)
 	}
 	if !options.StartClientAfterFirstDownstream {
 		startClientReader()
@@ -403,6 +415,7 @@ func runClientToUpstream(
 	writeUpstream func(msgType coderws.MessageType, payload []byte) error,
 	markActivity func(),
 	forwardedFrames *atomic.Int64,
+	state *relayState,
 	onTrace func(event RelayTraceEvent),
 	exitCh chan<- relayExitSignal,
 ) {
@@ -424,6 +437,7 @@ func runClientToUpstream(
 			return
 		}
 		markActivity()
+		state.markPendingTurn(payload)
 		if err := writeUpstream(msgType, payload); err != nil {
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:        "write_upstream_failed",
@@ -466,24 +480,37 @@ func runUpstreamToClient(
 	for {
 		msgType, payload, err := upstreamConn.ReadFrame(ctx)
 		if err != nil {
+			graceful := isDisconnectError(err)
+			// A clean WebSocket close only describes the transport handshake. Once
+			// the upstream has started a Responses turn, success still requires a
+			// terminal protocol event. Treat an early 1000/EOF as a relay failure so
+			// the adapter does not report relay_completed with an unfinished turn.
+			if graceful && state.hasUnfinishedTurn() {
+				graceful = false
+				err = errors.New("upstream websocket closed before terminal event: " + err.Error())
+			}
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:           "read_upstream_failed",
 				Direction:       "upstream_to_client",
 				Error:           err.Error(),
-				Graceful:        isDisconnectError(err),
+				Graceful:        graceful,
 				WroteDownstream: wroteDownstream,
 			})
 			exitCh <- relayExitSignal{
 				stage:           "read_upstream",
 				err:             err,
-				graceful:        isDisconnectError(err),
+				graceful:        graceful,
 				wroteDownstream: wroteDownstream,
 			}
 			return
 		}
 		markActivity()
 		if beforeWriteClient != nil {
-			if err := beforeWriteClient(msgType, payload, wroteDownstream); err != nil {
+			wroteDownstreamInTurn := wroteDownstream
+			if state != nil {
+				wroteDownstreamInTurn = state.turnWroteDownstream.Load()
+			}
+			if err := beforeWriteClient(msgType, payload, wroteDownstreamInTurn); err != nil {
 				emitRelayTrace(onTrace, RelayTraceEvent{
 					Stage:           "upstream_message_rejected",
 					Direction:       "upstream_to_client",
@@ -505,7 +532,16 @@ func runUpstreamToClient(
 		case coderws.MessageText:
 			observedEvent = observeUpstreamMessage(state, payload, startAt, nowFn, onUsageParseFailure)
 		case coderws.MessageBinary:
-			// binary frame 直接透传，不进入 JSON 观测路径（避免无效解析开销）。
+			// Binary frames remain opaque for usage/result observation, but a JSON
+			// terminal still settles relay lifecycle. Otherwise the pending-turn
+			// disconnect guard would turn an already-delivered terminal into a false
+			// missing-terminal failure when the upstream closes normally.
+			switch binaryEventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String()); {
+			case isTerminalEvent(binaryEventType):
+				state.settleTurnLifecycle()
+			case binaryEventType == "error":
+				state.settleTurnOnError()
+			}
 		}
 		emitTurnComplete(onTurnComplete, state, observedEvent)
 		if dropDownstreamWrites != nil && dropDownstreamWrites.Load() {
@@ -550,6 +586,9 @@ func runUpstreamToClient(
 			return
 		}
 		wroteDownstream = true
+		if state != nil {
+			state.turnWroteDownstream.Store(true)
+		}
 		if afterWriteClient != nil {
 			afterWriteClient(msgType, payload)
 		}
@@ -688,10 +727,23 @@ func observeUpstreamMessage(
 			}
 		}
 	}
+	if eventType == "error" {
+		// A bare error event ends the in-flight turn on the Responses WS
+		// protocol even though it is not billed as a terminal here. Keep the
+		// turn timing so a trailing response.failed for the same id still
+		// reports its real duration.
+		state.settleTurnOnError()
+	}
 	if !isTerminalEvent(eventType) {
 		return observed
 	}
 	observed.terminal = true
+	state.pendingTurn.Store(false)
+	if responseID == "" {
+		// A terminal without a response id cannot be matched to a turn timing;
+		// settle whatever turn is in flight so the close guard stays accurate.
+		state.settleTurnLifecycle()
+	}
 	state.terminalEventType = eventType
 	if responseID != "" {
 		state.lastResponseID = responseID
@@ -745,9 +797,63 @@ func openAIWSRelayGetOrInitTurnTiming(state *relayState, responseID string, now 
 		timing = &relayTurnTiming{startAt: now}
 		state.turnTimingByID[responseID] = timing
 		state.activeTurn = timing
+		state.pendingTurn.Store(false)
 		return timing
 	}
 	return timing
+}
+
+// markPendingTurn records that a response.create frame was written upstream.
+// Frames of any other type (session.update, response.cancel, ...) do not start
+// a turn and are ignored.
+func (s *relayState) markPendingTurn(payload []byte) {
+	if s == nil || len(payload) == 0 {
+		return
+	}
+	if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) != "response.create" {
+		return
+	}
+	s.pendingTurn.Store(true)
+	// Reset before the frame is written upstream so an immediate upstream
+	// response cannot race with the transport returning from WriteFrame.
+	s.turnWroteDownstream.Store(false)
+}
+
+// hasUnfinishedTurn reports whether a turn was started (pending response.create
+// or an observed response id) without a terminal event having been seen.
+func (s *relayState) hasUnfinishedTurn() bool {
+	if s == nil {
+		return false
+	}
+	return s.pendingTurn.Load() || s.activeTurn != nil
+}
+
+// settleTurnLifecycle clears the pending/active turn markers after a terminal
+// that cannot be matched to a turn timing by response id (binary terminal
+// frames, id-less terminals).
+func (s *relayState) settleTurnLifecycle() {
+	if s == nil {
+		return
+	}
+	s.pendingTurn.Store(false)
+	if s.activeTurn != nil {
+		for id, timing := range s.turnTimingByID {
+			if timing == s.activeTurn {
+				delete(s.turnTimingByID, id)
+			}
+		}
+		s.activeTurn = nil
+	}
+}
+
+// settleTurnOnError clears the pending/active markers for a bare error event
+// while keeping the turn timing for a trailing response.failed.
+func (s *relayState) settleTurnOnError() {
+	if s == nil {
+		return
+	}
+	s.pendingTurn.Store(false)
+	s.activeTurn = nil
 }
 
 func openAIWSRelayDeleteTurnTiming(state *relayState, responseID string) (relayTurnTiming, bool) {

@@ -4,7 +4,7 @@
       <!-- Filters -->
       <div class="rounded-md border border-stone-200 bg-white/80 p-3 dark:border-dark-700 dark:bg-dark-900">
         <div class="flex flex-wrap items-center gap-3">
-          <Select v-model="currentFilter" :options="statusFilters" class="w-36" @change="fetchOrders" />
+          <Select v-model="currentFilter" :options="statusFilters" class="w-36" @change="handlePageChange(1)" />
           <div class="flex flex-1 items-center justify-end gap-2">
             <button
               type="button"

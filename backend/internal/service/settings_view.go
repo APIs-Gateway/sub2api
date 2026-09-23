@@ -226,6 +226,9 @@ type SystemSettings struct {
 	AntigravityUserAgentVersion            string // Antigravity 上游 User-Agent 版本号；空值使用配置/默认值
 	OpenAICodexUserAgent                   string // OpenAI Codex 上游完整 User-Agent；空值使用内置默认
 	OpenAIAllowClaudeCodeCodexPlugin       bool   // 全局开关：是否额外放行 Claude Code 的 Codex 插件（默认 false）
+	ClaudeCodeClientVersion                string // 出站声明的 Claude Code CLI 客户端版本号（管理员覆写）；空值跟随自动同步值
+	ClaudeCodeClientVersionSynced          string // 自动同步到的官方最新版本号（只读展示）
+	ClaudeCodeVersionAutoSyncEnabled       bool   // 是否启用 Claude Code 客户端版本号自动同步（默认 true）
 
 	// Web Search Emulation
 	WebSearchEmulationEnabled bool // 是否启用 web search 模拟
@@ -238,7 +241,7 @@ type SystemSettings struct {
 
 	// OpenAI 账号调度
 	OpenAILowUpstreamRatePriorityEnabled               bool
-	OpenAIOAuthSchedulingRateMultiplier                float64
+	OpenAIOAuthSchedulingRateMultiplier                *float64 // nil: OAuth accounts use their own account rates
 	OpenAIAdvancedSchedulerEnabled                     bool
 	OpenAIAdvancedSchedulerWeightUpstreamCost          string
 	OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost string

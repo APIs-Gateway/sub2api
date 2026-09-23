@@ -71,11 +71,76 @@ func TestOpenAIResponsesTTFTStartsAtCompletedImage(t *testing.T) {
 	}
 }
 
-func TestOpenAINativeProgressDisarmsTimeoutWithoutStartingTTFT(t *testing.T) {
-	result := runSyntheticVisibleTTFTStream(t, false, 1200*time.Millisecond, 1,
-		`{"type":"response.output_text.delta","delta":"test output"}`)
-	require.NotNil(t, result.firstTokenMs)
-	require.GreaterOrEqual(t, *result.firstTokenMs, 1100)
+// 与上游一致：空 reasoning item 等结构元数据不是语义输出，不解除 first-output 超时，
+// 且在超时 failover 时不会泄漏给客户端。
+func TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+		MaxLineSize:                     defaultMaxLineSize,
+		OpenAIFirstOutputTimeoutSeconds: 1,
+	}}}
+	reader, writer := io.Pipe()
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		defer func() { _ = writer.Close() }()
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\"}}\n\n")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"item_test\",\"type\":\"reasoning\",\"summary\":[]}}\n\n")
+		time.Sleep(1200 * time.Millisecond)
+	}()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
+	account := &Account{ID: 1, Name: "account_test", Platform: PlatformOpenAI}
+
+	_, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "test-model", "test-model")
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.SafeToFailoverAfterWrite)
+	require.Empty(t, recorder.Body.String())
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatal("synthetic upstream writer did not exit")
+	}
+}
+
+// 传输层心跳不是语义输出：只有 created + keepalive 时，first-output 超时仍必须触发。
+func TestOpenAINativeKeepaliveDoesNotDisarmFirstOutputTimeout(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+		MaxLineSize:                     defaultMaxLineSize,
+		OpenAIFirstOutputTimeoutSeconds: 1,
+	}}}
+	reader, writer := io.Pipe()
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		defer func() { _ = writer.Close() }()
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\"}}\n\n")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"keepalive\"}\n\n")
+		time.Sleep(1200 * time.Millisecond)
+	}()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
+	account := &Account{ID: 1, Name: "account_test", Platform: PlatformOpenAI}
+
+	_, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "test-model", "test-model")
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusGatewayTimeout, failoverErr.StatusCode)
+	require.True(t, failoverErr.SafeToFailoverAfterWrite)
+	require.Empty(t, recorder.Body.String())
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatal("synthetic upstream writer did not exit")
+	}
 }
 
 func runSyntheticVisibleTTFTStream(t *testing.T, passthrough bool, visibleDelay time.Duration, timeoutSeconds int, visibleEvent string) *openaiStreamingResult {
