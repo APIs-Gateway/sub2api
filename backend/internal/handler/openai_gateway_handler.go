@@ -1495,6 +1495,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 	cyberBlockedThisConn := false
+	cyberBlockPendingAfterFailover := false
 
 	// 解析渠道级模型映射
 	channelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
@@ -1657,6 +1658,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 账号 failover 重试 / bridge 循环重放等路径可能对同一 turn 的
 				// 相同 payload 重复调用本回调，不去重会让审计被重复计费/记录。
 				c.Set(securityAuditWSTurnContextKey, turn)
+				// Passthrough ingress intentionally skips BeforeTurn, so enforce only
+				// the connection-level cyber session gate here as well. Native ingress
+				// visits this hook first and gets the same side-effect-free close error;
+				// its original BeforeTurn guard remains as defense in depth.
+				if cyberBlockedThisConn {
+					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
+				}
 				if turn == 1 {
 					return nil
 				}
@@ -1712,11 +1720,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return nil
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
-				// F1: cyber 标记按 turn 生命周期清理——defer 保证任意早返回路径都执行；
-				// CyberBlocked 必须在 submit 前同步预捕获（task 闭包由 worker 池异步执行，
-				// 届时 defer 已清除标记）。
-				defer clearCyberPolicyTurnState(c)
+				// 每次 attempt 都清 cyber mark；failover 链结束前保留 recorded guard，
+				// 避免同一逻辑 turn 换号后重复落风控。CyberBlocked 必须在 submit 前
+				// 同步预捕获（task 闭包由 worker 池异步执行，届时 mark 已清除）。
+				defer func() {
+					clearCyberPolicyAttemptState(c, !cyberBlockPendingAfterFailover)
+				}()
 				releaseTurnSlots()
+				cyberMarked := service.GetOpsCyberPolicy(c) != nil
 				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, turnErr != nil, cyberBlockKey, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash)
 				// 上游模型不一致标记按 turn 生命周期：先读 B 供本 turn 的 RecordUsage 透传，
 				// 再记审计行并清标，turn N+1 才能重新打标。
@@ -1727,9 +1738,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				mismatchRequestBody := wsMismatchRequestBody
 				wsMismatchRequestBody = nil
 				h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash, mismatchRequestBody)
-				if service.GetOpsCyberPolicy(c) != nil {
-					cyberBlockedThisConn = true
-				}
+				cyberBlockedThisConn, cyberBlockPendingAfterFailover = advanceOpenAIWSCyberBlockState(
+					cyberBlockedThisConn,
+					cyberBlockPendingAfterFailover,
+					cyberMarked,
+					turnErr,
+				)
 				if turnErr != nil {
 					if result == nil || result.ImageCount <= 0 {
 						return
@@ -2970,15 +2984,43 @@ func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelM
 	}()
 }
 
-// clearCyberPolicyTurnState resets the cyber mark and the per-request recorded
-// guard. WS-only: called at the END of AfterTurn, after recordCyberPolicyIfMarked
-// and RecordUsage (which reads CyberBlocked) have both consumed the mark.
+// advanceOpenAIWSCyberBlockState 推进 WS 连接级 cyber 封禁状态：本次 attempt 命中但以
+// failover 结束时只挂起，failover 链结束（非 failover 结果）后再生效，避免换号重试被
+// 提前拦截；未命中的非 failover 结果会把挂起的封禁落定。
+func advanceOpenAIWSCyberBlockState(blocked, pending, marked bool, turnErr error) (bool, bool) {
+	var failoverErr *service.UpstreamFailoverError
+	isFailover := errors.As(turnErr, &failoverErr)
+	if marked {
+		if isFailover {
+			return false, true
+		}
+		return true, false
+	}
+	if pending && !isFailover {
+		return true, false
+	}
+	return blocked, pending
+}
+
+// clearCyberPolicyTurnState resets the cyber mark and recorded guard after a
+// logical WS turn has finished.
 func clearCyberPolicyTurnState(c *gin.Context) {
+	clearCyberPolicyAttemptState(c, true)
+}
+
+// clearCyberPolicyAttemptState resets the cyber mark after each WS attempt
+// (called at the END of AfterTurn, after recordCyberPolicyIfMarked and
+// RecordUsage have consumed it). The per-request recorded guard is only reset
+// once the logical turn is finished (resetRecorded=true); during an account
+// failover chain it is kept so the same logical turn is not recorded twice.
+func clearCyberPolicyAttemptState(c *gin.Context, resetRecorded bool) {
 	if c == nil {
 		return
 	}
 	service.ClearOpsCyberPolicy(c)
-	c.Set(cyberPolicyRecordedKey, false)
+	if resetRecorded {
+		c.Set(cyberPolicyRecordedKey, false)
+	}
 }
 
 func summarizeWSCloseErrorForLog(err error) (string, string) {

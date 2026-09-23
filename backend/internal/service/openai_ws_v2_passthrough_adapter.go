@@ -1147,14 +1147,24 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if !ok {
 					return
 				}
+				// Match the handler close path and stay within the WebSocket control
+				// frame limit; an oversized reason makes coder/websocket skip the
+				// close frame, leaving the client with EOF instead of the status code.
+				reason = truncateString(reason, 120)
 				_ = clientConn.Close(status, reason)
 				_ = clientConn.CloseNow()
 			},
 			BeforeWriteClient: func(msgType coderws.MessageType, payload []byte, wroteDownstream bool) error {
-				if msgType != coderws.MessageText || wroteDownstream {
+				if msgType != coderws.MessageText {
 					return nil
 				}
-				if eventType, _, _ := parseOpenAIWSEventEnvelope(payload); eventType != "error" {
+				eventType, _, _ := parseOpenAIWSEventEnvelope(payload)
+				// cyber_policy 是请求级风控：每个 error/response.failed 都要检测并记录
+				// （含已开始下行后的事件），且命中时跳过下面的账号限流/failover 副作用。
+				if (eventType == "error" || eventType == "response.failed") && markOpenAIWSV2PassthroughCyberPolicy(c, payload) {
+					return nil
+				}
+				if wroteDownstream || eventType != "error" {
 					return nil
 				}
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(payload)
@@ -1324,6 +1334,12 @@ func openAIWSPassthroughRelayClientClose(exit openaiwsv2.RelayExit, completedTur
 		return coderws.StatusInternalError, "upstream websocket proxy failed", true
 	}
 	return 0, "", false
+}
+
+func markOpenAIWSV2PassthroughCyberPolicy(c *gin.Context, payload []byte) bool {
+	usage := OpenAIUsage{}
+	parseOpenAIWSResponseUsageFromCompletedEvent(payload, &usage)
+	return markOpenAICyberPolicyEvent(c, payload, http.StatusOK, &usage)
 }
 
 func (s *OpenAIGatewayService) mapOpenAIWSPassthroughDialError(
