@@ -74,11 +74,15 @@ func TestResolveGeminiThinkingVariant(t *testing.T) {
 		{"agy low (1000) -> -low", catalog, "gemini-3.8-flash", budget("1000"), "gemini-3.8-flash-low", true},
 		{"models/ prefix stripped", catalog, "models/gemini-3.8-flash", budget("1000"), "gemini-3.8-flash-low", true},
 		{"no thinkingConfig -> -high", catalog, "gemini-3.8-flash", []byte(`{"contents":[]}`), "gemini-3.8-flash-high", true},
-		// gemini-3.6/3.7/3.8-flash 的四个变体会被 resolveModelMapping 自动补齐，所以降级用一个不在默认表里的型号
+		// fork 的 resolveModelMapping 只补 gemini-3-flash / gemini-3.1-pro-high/-low 自映射，不补 3.x flash 变体
 		{"only -high exists: low request degrades to high", map[string]string{
 			"gemini-3.5-flash-high": "gemini-3.5-flash-high",
 		}, "gemini-3.5-flash", budget("1000"), "gemini-3.5-flash-high", true},
-		{"injected default variants are usable", catalog, "gemini-3.6-flash", budget("1000"), "gemini-3.6-flash-low", true},
+		{"missing preferred variant degrades to existing -high", catalog, "gemini-3.6-flash", budget("1000"), "gemini-3.6-flash-high", true},
+		{"runtime-injected pro variants are usable", map[string]string{
+			// credentials 里只有无关条目；gemini-3.1-pro-high/-low 由 ensureAntigravityDefaultPassthroughs 注入
+			"claude-sonnet-4-6": "claude-sonnet-4-6",
+		}, "gemini-3.1-pro", budget("1000"), "gemini-3.1-pro-low", true},
 		{"already suffixed: untouched", catalog, "gemini-3.8-flash-low", budget("-1"), "", false},
 		{"bare name explicitly mapped: untouched", catalog, "gemini-2.5-flash", budget("-1"), "", false},
 		{"no variants in mapping: untouched", catalog, "gemini-9.9-flash", budget("-1"), "", false},
@@ -95,12 +99,15 @@ func TestResolveGeminiThinkingVariant(t *testing.T) {
 			"gemini-3.8-flash-high": "gemini-3.8-flash-high",
 		}, "gemini-3.8-flash", budget("1000"), "", false},
 		{"runtime-injected bare passthrough (not in credentials): still resolved", map[string]string{
-			// resolveModelMapping 会补 gemini-3.7-flash → gemini-3.7-flash 的默认透传，
+			// fork 的 resolveModelMapping 会补 gemini-3-flash → gemini-3-flash 的默认透传，
 			// 但 credentials 里没有这条，应当继续推导变体。
-			"gemini-3.7-flash-medium": "gemini-3.7-flash-medium",
-		}, "gemini-3.7-flash", budget("4000"), "gemini-3.7-flash-medium", true},
-		// 空 credentials 映射 → 走 DefaultAntigravityModelMapping，其中同样只有带后缀的 3.8 flash
-		{"empty mapping falls back to default catalog", map[string]string{}, "gemini-3.8-flash", budget("-1"), "gemini-3.8-flash-high", true},
+			"gemini-3-flash-medium": "gemini-3-flash-medium",
+		}, "gemini-3-flash", budget("4000"), "gemini-3-flash-medium", true},
+		// 空 credentials 映射 → 走 DefaultAntigravityModelMapping（fork 目录只有 gemini-3.1-pro-high/-low，没有裸名）
+		{"empty mapping falls back to default catalog", map[string]string{}, "gemini-3.1-pro", budget("-1"), "gemini-3.1-pro-high", true},
+		{"empty mapping low budget picks default -low", map[string]string{}, "gemini-3.1-pro", budget("1000"), "gemini-3.1-pro-low", true},
+		// 默认目录里 gemini-3-flash 是裸名自映射且没有任何变体 → 不介入，保持原透传
+		{"default catalog bare passthrough without variants: untouched", map[string]string{}, "gemini-3-flash", budget("-1"), "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -209,4 +216,28 @@ func TestGetMappedModelResolvesBareGeminiModelForAllEntrypoints(t *testing.T) {
 	t.Run("unsupported model still reports unsupported", func(t *testing.T) {
 		require.Empty(t, svc.getMappedModel(account, "gemini-9.9-flash"))
 	})
+}
+
+// fork 回归：默认映射（空 credentials）下的入口行为。fork 的 DefaultAntigravityModelMapping
+// 只登记 gemini-3.1-pro-high/-low 与 gemini-3-flash 裸名，没有上游的 gemini-3.x-flash 变体目录。
+func TestGetMappedModelForkDefaultCatalog(t *testing.T) {
+	svc := &AntigravityGatewayService{}
+	account := newAntigravityAccountWithMapping(map[string]string{})
+
+	// 裸 gemini-3.1-pro 原本不在白名单（返回空），现在按档位解析到默认目录里的变体。
+	require.Equal(t, "gemini-3.1-pro-high", svc.getMappedModel(account, "gemini-3.1-pro"))
+	require.Equal(t, "gemini-3.1-pro-low",
+		svc.getMappedModelForThinkingLevel(account, "gemini-3.1-pro",
+			geminiThinkingLevelFromClaudeThinking(&antigravity.ThinkingConfig{Type: "disabled"})))
+	// medium 不存在 → 按 high → medium → low 降级到 high
+	require.Equal(t, "gemini-3.1-pro-high", svc.getMappedModelForThinkingLevel(account, "gemini-3.1-pro", "medium"))
+
+	// 已有显式映射 / 透传的模型保持原行为。
+	require.Equal(t, "gemini-3-flash", svc.getMappedModel(account, "gemini-3-flash"))
+	require.Equal(t, "gemini-3.1-pro-high", svc.getMappedModel(account, "gemini-3.1-pro-preview"))
+	require.Equal(t, "gemini-2.5-flash", svc.getMappedModel(account, "gemini-2.5-flash"))
+	require.Equal(t, "claude-sonnet-4-6", svc.getMappedModel(account, "claude-sonnet-4-6"))
+
+	// 调度侧的模型支持判定（mapAntigravityModel）不受影响：裸名仍视为不支持。
+	require.Empty(t, mapAntigravityModel(account, "gemini-3.1-pro"))
 }
