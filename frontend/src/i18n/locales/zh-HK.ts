@@ -1001,6 +1001,18 @@
         modelComment: '如果你有 Gemini 3 權限可以填：gemini-3-pro-preview',
         note: '這些環境變量將在當前終端會話中生效。如需永久配置，請將其添加到 ~/.bashrc、~/.zshrc 或相應的配置文件中。'
       },
+      grok: {
+        description: '配置 Grok Build、Claude Code、Codex 或 OpenCode，透過您的 Sub2API Grok 分組發送請求。',
+        claudeDescription: '配置 Claude Code，透過您的 Sub2API Grok 分組發送 Messages API 請求。',
+        codexDescription: '配置 Codex，透過您的 Sub2API Grok 分組發送 Responses API 請求。',
+        configTomlHint: '合併模型配置前請先備份已有的 config.toml；儲存後運行 grok inspect 驗證最終配置。',
+        codexConfigTomlHint: '合併 provider 配置前請先備份已有的 config.toml。',
+        note: '將檔案儲存為 ~/.grok/config.toml，然後運行 grok inspect 並在 /model 中選擇 grok。',
+        noteWindows: '將檔案儲存為 %USERPROFILE%\\.grok\\config.toml，然後運行 grok inspect 並在 /model 中選擇 grok。',
+        claudeNote: '二選一：為目前工作階段運行終端命令，或儲存 settings.json 作為使用者層級的持久配置。',
+        codexNote: '將 config.toml 儲存到 ~/.codex，並在啟動 Codex 前設定 SUB2API_API_KEY。',
+        codexNoteWindows: '將 config.toml 儲存到 %USERPROFILE%\\.codex，並在啟動 Codex 前在 PowerShell 設定 SUB2API_API_KEY。'
+      },
       opencode: {
         title: 'OpenCode 配置示例',
         subtitle: 'opencode.json',

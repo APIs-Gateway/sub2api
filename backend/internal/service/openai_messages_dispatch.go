@@ -6,6 +6,7 @@ const (
 	defaultOpenAIMessagesDispatchOpusMappedModel   = "gpt-5.4"
 	defaultOpenAIMessagesDispatchSonnetMappedModel = "gpt-5.3-codex"
 	defaultOpenAIMessagesDispatchHaikuMappedModel  = "gpt-5.4-mini"
+	defaultGrokMessagesDispatchMappedModel         = "grok-4.3"
 )
 
 func normalizeOpenAIMessagesDispatchMappedModel(model string) string {
@@ -74,15 +75,24 @@ func (g *Group) ResolveMessagesDispatchModel(requestedModel string) string {
 		if mappedModel := strings.TrimSpace(cfg.OpusMappedModel); mappedModel != "" {
 			return mappedModel
 		}
+		if g.Platform == PlatformGrok {
+			return defaultGrokMessagesDispatchMappedModel
+		}
 		return defaultOpenAIMessagesDispatchOpusMappedModel
 	case "sonnet":
 		if mappedModel := strings.TrimSpace(cfg.SonnetMappedModel); mappedModel != "" {
 			return mappedModel
 		}
+		if g.Platform == PlatformGrok {
+			return defaultGrokMessagesDispatchMappedModel
+		}
 		return defaultOpenAIMessagesDispatchSonnetMappedModel
 	case "haiku":
 		if mappedModel := strings.TrimSpace(cfg.HaikuMappedModel); mappedModel != "" {
 			return mappedModel
+		}
+		if g.Platform == PlatformGrok {
+			return defaultGrokMessagesDispatchMappedModel
 		}
 		return defaultOpenAIMessagesDispatchHaikuMappedModel
 	default:
@@ -91,7 +101,7 @@ func (g *Group) ResolveMessagesDispatchModel(requestedModel string) string {
 }
 
 func sanitizeGroupMessagesDispatchFields(g *Group) {
-	if g == nil || g.Platform == PlatformOpenAI {
+	if g == nil || g.Platform == PlatformOpenAI || g.Platform == PlatformGrok {
 		return
 	}
 	g.AllowMessagesDispatch = false

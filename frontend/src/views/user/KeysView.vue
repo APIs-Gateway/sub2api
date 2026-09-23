@@ -984,12 +984,12 @@
     />
 
     <!-- 一键接入 Modal -->
-    <KeyOnboardingModal
+    <UseKeyModal
       :show="showOnboardingModal"
-      :api-key="onboardingKey"
+      :api-key="onboardingKey?.key || ''"
       :base-url="publicSettings?.api_base_url || ''"
-      :site-name="publicSettings?.site_name || ''"
-      :doc-url="publicSettings?.doc_url || ''"
+      :platform="onboardingKey?.group?.platform || null"
+      :allow-messages-dispatch="onboardingKey?.group?.allow_messages_dispatch === true"
       @close="closeOnboarding"
     />
 
@@ -1080,7 +1080,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import Select from '@/components/common/Select.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Icon from '@/components/icons/Icon.vue'
-import KeyOnboardingModal from '@/components/user/KeyOnboardingModal.vue'
+import UseKeyModal from '@/components/keys/UseKeyModal.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'

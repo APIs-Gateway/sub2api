@@ -658,6 +658,26 @@ func TestOpenAIEnsureResponsesDependencies(t *testing.T) {
 	})
 }
 
+func TestOpenAIMessages_RejectsDisabledGrokMessagesDispatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[]}`))
+	c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{
+		ID: 1,
+		Group: &service.Group{
+			Platform:              service.PlatformGrok,
+			AllowMessagesDispatch: false,
+		},
+	})
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+
+	(&OpenAIGatewayHandler{}).Messages(c)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.JSONEq(t, `{"type":"error","error":{"type":"permission_error","message":"This group does not allow /v1/messages dispatch"}}`, w.Body.String())
+}
+
 func TestResolveOpenAIMessagesDispatchMappedModel(t *testing.T) {
 	t.Run("exact_claude_model_override_wins", func(t *testing.T) {
 		apiKey := &service.APIKey{

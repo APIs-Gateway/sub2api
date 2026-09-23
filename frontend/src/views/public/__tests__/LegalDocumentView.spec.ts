@@ -3,10 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import LegalDocumentView from '../LegalDocumentView.vue'
 
-const { currentLocale, getPublicSettings } = vi.hoisted(() => ({
-  currentLocale: { value: 'en' },
-  getPublicSettings: vi.fn()
-}))
+const { appStore, currentLocale, getPublicSettings } = vi.hoisted(() => {
+  const getPublicSettings = vi.fn()
+  return {
+    appStore: {
+      cachedPublicSettings: null,
+      fetchPublicSettings: getPublicSettings,
+    },
+    currentLocale: { value: 'en' },
+    getPublicSettings,
+  }
+})
 
 vi.mock('@/api/auth', () => ({
   getPublicSettings
@@ -14,6 +21,10 @@ vi.mock('@/api/auth', () => ({
 
 vi.mock('@/i18n', () => ({
   getLocale: () => currentLocale.value
+}))
+
+vi.mock('@/stores/app', () => ({
+  useAppStore: () => appStore,
 }))
 
 vi.mock('vue-router', () => ({
