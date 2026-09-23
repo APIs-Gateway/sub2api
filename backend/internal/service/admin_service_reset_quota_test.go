@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -65,4 +66,45 @@ func TestResetAccountQuota_MissingAccountReturnsNotFound(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrAccountNotFound)
 	require.Equal(t, 1, repo.resetCalls)
+}
+
+func TestResetAccountQuota_ClearsInProcessRuntimeBlockOnlyOnSuccess(t *testing.T) {
+	t.Run("success clears runtime block", func(t *testing.T) {
+		repo := &resetAccountQuotaRepoStub{}
+		blocker := &runtimeBlockRecorder{}
+		svc := &adminServiceImpl{accountRepo: repo, runtimeBlocker: blocker}
+
+		require.NoError(t, svc.ResetAccountQuota(context.Background(), 42))
+		require.Equal(t, []int64{42}, blocker.clearedIDs)
+		require.Empty(t, blocker.accounts)
+	})
+
+	t.Run("repository error keeps runtime block", func(t *testing.T) {
+		repo := &resetAccountQuotaRepoStub{resetErr: errors.New("atomic reset failed")}
+		blocker := &runtimeBlockRecorder{}
+		svc := &adminServiceImpl{accountRepo: repo, runtimeBlocker: blocker}
+
+		require.Error(t, svc.ResetAccountQuota(context.Background(), 42))
+		require.Empty(t, blocker.clearedIDs)
+	})
+
+	t.Run("missing account keeps runtime block", func(t *testing.T) {
+		repo := &resetAccountQuotaRepoStub{resetErr: ErrAccountNotFound}
+		blocker := &runtimeBlockRecorder{}
+		svc := &adminServiceImpl{accountRepo: repo, runtimeBlocker: blocker}
+
+		require.ErrorIs(t, svc.ResetAccountQuota(context.Background(), 404), ErrAccountNotFound)
+		require.Empty(t, blocker.clearedIDs)
+	})
+
+	t.Run("OpenAI gateway runtime block is lifted after reset", func(t *testing.T) {
+		gateway := &OpenAIGatewayService{}
+		account := &Account{ID: 77, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+		gateway.BlockAccountScheduling(account, time.Now().Add(time.Hour), "429")
+		require.True(t, gateway.isOpenAIAccountRuntimeBlocked(account))
+
+		svc := &adminServiceImpl{accountRepo: &resetAccountQuotaRepoStub{}, runtimeBlocker: gateway}
+		require.NoError(t, svc.ResetAccountQuota(context.Background(), account.ID))
+		require.False(t, gateway.isOpenAIAccountRuntimeBlocked(account))
+	})
 }
