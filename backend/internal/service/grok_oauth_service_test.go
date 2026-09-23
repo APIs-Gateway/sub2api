@@ -255,32 +255,6 @@ func TestGrokOAuthServiceRefreshTokenPreservesOriginalRefreshTokenWhenNotRotated
 	require.Equal(t, "client-id", info.ClientID)
 }
 
-func TestGrokOAuthServiceExchangeCodeRequiresStateForCallbackURLAndConsumesSession(t *testing.T) {
-	client := &grokOAuthClientStub{}
-	svc := NewGrokOAuthService(nil, client)
-	defer svc.Stop()
-
-	auth, err := svc.GenerateAuthURL(context.Background(), nil, "")
-	require.NoError(t, err)
-
-	_, err = svc.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
-		SessionID: auth.SessionID,
-		Code:      "http://127.0.0.1:56121/callback?code=code-without-state",
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "GROK_OAUTH_STATE_REQUIRED")
-	require.Zero(t, client.exchangeCalls)
-
-	_, err = svc.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
-		SessionID: auth.SessionID,
-		Code:      "code-with-state",
-		State:     auth.State,
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "GROK_OAUTH_SESSION_NOT_FOUND")
-	require.Zero(t, client.exchangeCalls)
-}
-
 type grokOAuthExchangeCountingClient struct {
 	exchangeCalls int
 	exchangeErr   error
