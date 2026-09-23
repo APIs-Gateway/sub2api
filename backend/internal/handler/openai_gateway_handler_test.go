@@ -2462,3 +2462,37 @@ data: {"type":"response.failed","error":{"message":"This content was flagged"}}
 		require.False(t, openAIForwardErrorAlreadyCommunicated(c, c.Writer.Size(), errors.New("openai cyber_policy: blocked")))
 	})
 }
+
+func TestOpenAIChannelForwardModelForScheduler(t *testing.T) {
+	tests := []struct {
+		name      string
+		mapping   service.ChannelMappingResult
+		requested string
+		want      string
+	}{
+		{
+			name:      "mapped model is used for capability filtering",
+			mapping:   service.ChannelMappingResult{Mapped: true, MappedModel: "  gpt-forward  "},
+			requested: "client-alias",
+			want:      "gpt-forward",
+		},
+		{
+			name:      "unmapped request preserves client model",
+			mapping:   service.ChannelMappingResult{MappedModel: "client-model"},
+			requested: "client-model",
+			want:      "client-model",
+		},
+		{
+			name:      "empty mapped model safely preserves client model",
+			mapping:   service.ChannelMappingResult{Mapped: true, MappedModel: "  "},
+			requested: "client-model",
+			want:      "client-model",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, openAIChannelForwardModel(tt.mapping, tt.requested))
+		})
+	}
+}
