@@ -122,25 +122,22 @@ func TestCompatibleImagesForwardGemini(t *testing.T) {
 
 func TestCompatibleImagesNativeAccountsRejectGeminiBeforeForwarding(t *testing.T) {
 	// fork 的 OpenAI 平台只有 OAuth / API Key 两类账号（ForwardImages 不接受 setup-token），
-	// 因此只校验 OAuth 原生路径在转发前拒绝兼容 Gemini 图片模型。
-	for _, typ := range []string{AccountTypeOAuth} {
-		for _, mapping := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/mapping=%t", typ, mapping), func(t *testing.T) {
-				model := "gemini-3-pro-image"
-				account := &Account{Platform: PlatformOpenAI, Type: typ, Credentials: map[string]any{"access_token": "unused"}}
-				if mapping {
-					account.Credentials["model_mapping"] = map[string]any{"gpt-image-2": model}
-					model = "gpt-image-2"
-				}
-				c, _ := gin.CreateTestContext(httptest.NewRecorder())
-				c.Request = httptest.NewRequest(http.MethodPost, openAIImagesGenerationsEndpoint, nil)
-				upstream := &httpUpstreamRecorder{}
-				svc := &OpenAIGatewayService{httpUpstream: upstream}
-				_, err := svc.ForwardImages(context.Background(), c, account, nil, &OpenAIImagesRequest{Model: model}, "")
-				require.ErrorContains(t, err, "images endpoint requires an image model")
-				require.Empty(t, upstream.requests)
-			})
-		}
+	// 且 OAuth Images 路径不应用账号级 model_mapping，因此只校验 OAuth 原生路径
+	// 在转发前直接拒绝兼容 Gemini 图片模型（直接请求与渠道映射两种来源）。
+	for _, tc := range []struct{ name, model, channelModel string }{
+		{"direct", "gemini-3-pro-image", ""},
+		{"channel_mapping", "gpt-image-2", "gemini-3-pro-image"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"access_token": "unused"}}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, openAIImagesGenerationsEndpoint, nil)
+			upstream := &httpUpstreamRecorder{}
+			svc := &OpenAIGatewayService{httpUpstream: upstream}
+			_, err := svc.ForwardImages(context.Background(), c, account, nil, &OpenAIImagesRequest{Model: tc.model}, tc.channelModel)
+			require.ErrorContains(t, err, "images endpoint requires an image model")
+			require.Empty(t, upstream.requests)
+		})
 	}
 }
 
