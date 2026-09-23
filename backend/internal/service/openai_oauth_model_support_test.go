@@ -28,6 +28,8 @@ func TestIsModelSupported_OpenAIOAuthEmptyMappingServableModels(t *testing.T) {
 		"gpt-image-1",
 		"claude-sonnet-4-6",
 		"claude-3-opus-20240229",
+		"gpt-4o",          // 保守 fail-open：非黑名单模型保持允许
+		"my-custom-alias", // 自定义别名可能由渠道级映射在转发前改写，保持允许
 	} {
 		require.True(t, account.IsModelSupported(model), "expected %q to be servable", model)
 	}
@@ -36,7 +38,21 @@ func TestIsModelSupported_OpenAIOAuthEmptyMappingServableModels(t *testing.T) {
 func TestIsModelSupported_OpenAIOAuthEmptyMappingRejectsForeignModels(t *testing.T) {
 	account := newOpenAIOAuthAccountForModelTest()
 
-	for _, model := range []string{"deepseek-v4", "deepseek-chat", "glm-4.7", "kimi-k2", "gemini-3.0-pro", "grok-4", "qwen3-max"} {
+	// Codex 上游必然以不可重试的 400 拒绝这些厂商家族；调度阶段就应跳过
+	// 该账号，让显式声明支持的 API Key 账号接手（#3662）。
+	for _, model := range []string{
+		"deepseek-v4",
+		"deepseek-chat",
+		"glm-4.7",
+		"kimi-k2",
+		"moonshot-v1-128k",
+		"gemini-3.0-pro",
+		"grok-4",
+		"qwen3-max",
+		"minimax-m2.5",
+		"llama-3.3-70b",
+		"provider/deepseek-v4", // vendor/model 形式取最后一段判定
+	} {
 		require.False(t, account.IsModelSupported(model), "expected %q to be rejected", model)
 	}
 }
@@ -83,7 +99,13 @@ func TestIsOpenAIOAuthServableModel(t *testing.T) {
 	require.True(t, isOpenAIOAuthServableModel("gpt-5.4_xhigh"))
 	require.True(t, isOpenAIOAuthServableModel("  gpt-5.3-codex  "))
 	require.True(t, isOpenAIOAuthServableModel("claude-3-5-haiku-20241022"))
-	require.False(t, isOpenAIOAuthServableModel("claude-unknown-family"))
-	require.False(t, isOpenAIOAuthServableModel("gpt-99-high"))
+	// 黑名单是保守 fail-open：未知 claude 家族 / 未知 gpt 版本 / 自定义别名都保持允许，
+	// 以兼容渠道级模型映射在账号选定之后才改写模型名。
+	require.True(t, isOpenAIOAuthServableModel("claude-unknown-family"))
+	require.True(t, isOpenAIOAuthServableModel("gpt-99-high"))
 	require.False(t, isOpenAIOAuthServableModel("deepseek-v4"))
+	require.True(t, isOpenAIOAuthServableModel("DeepThink-x"))  // 非黑名单前缀，保持允许
+	require.False(t, isOpenAIOAuthServableModel("DeepSeek-V4")) // 大小写不敏感
+	require.False(t, isOpenAIOAuthServableModel("qwen3-235b-thinking"))
+	require.True(t, isOpenAIOAuthServableModel("deepseekcoder")) // 无连字符 → 非黑名单前缀，保持允许
 }
