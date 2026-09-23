@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -343,6 +344,36 @@ func TestOpenAIGatewayService_BindHTTPResponseAccount(t *testing.T) {
 	require.Equal(t, account.ID, got)
 }
 
+func TestOpenAIGatewayService_BindHTTPResponseAccount_DetachesCanceledRequestContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	groupID := int64(4201)
+	c.Set("api_key", &APIKey{ID: 501, GroupID: &groupID})
+
+	cache := &responseBindContextProbeCache{}
+	svc := &OpenAIGatewayService{cache: cache}
+	account := &Account{ID: 37001, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	cancelRequest()
+	startedAt := time.Now()
+
+	svc.bindHTTPResponseAccount(requestCtx, c, account, "resp_http_canceled_001")
+
+	require.Len(t, cache.setContextErrors, 1)
+	for _, contextErr := range cache.setContextErrors {
+		require.NoError(t, contextErr, "response affinity writes must survive downstream cancellation")
+	}
+	require.Len(t, cache.setDeadlines, 1)
+	for _, deadline := range cache.setDeadlines {
+		require.True(t, deadline.After(startedAt))
+		require.LessOrEqual(t, deadline.Sub(startedAt), openAIWSStateStoreRedisTimeout+100*time.Millisecond)
+	}
+	require.Contains(t, cache.sessionBindings, openAIWSResponseAccountCacheKey("resp_http_canceled_001"))
+	require.Equal(t, account.ID, cache.sessionBindings[openAIWSResponseAccountCacheKey("resp_http_canceled_001")])
+}
+
 func TestOpenAIGatewayService_GenerateExplicitSessionHash_SkipsContentFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{}
@@ -462,6 +493,23 @@ func (c stubConcurrencyCache) GetAccountWaitingCount(ctx context.Context, accoun
 type stubGatewayCache struct {
 	sessionBindings map[string]int64
 	deletedSessions map[string]int
+}
+
+type responseBindContextProbeCache struct {
+	stubGatewayCache
+	setContextErrors []error
+	setDeadlines     []time.Time
+}
+
+func (c *responseBindContextProbeCache) SetSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) error {
+	c.setContextErrors = append(c.setContextErrors, ctx.Err())
+	if deadline, ok := ctx.Deadline(); ok {
+		c.setDeadlines = append(c.setDeadlines, deadline)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.stubGatewayCache.SetSessionAccountID(ctx, groupID, sessionHash, accountID, ttl)
 }
 
 func (c *stubGatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
@@ -3506,5 +3554,124 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyModelBlockedClearsSession(t 
 	}
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
+	}
+}
+
+// hangingOpenAISSEAfterTerminal 模拟上游在发完 terminal 事件后拖延关闭连接
+// （keep-alive/HTTP2 复用连接上观测到 8~46s 不 EOF）。只有 Close 才会放行 EOF。
+type hangingOpenAISSEAfterTerminal struct {
+	payload   []byte
+	sent      bool
+	release   chan struct{}
+	closeOnce sync.Once
+}
+
+func newHangingOpenAISSEAfterTerminal(payload string) *hangingOpenAISSEAfterTerminal {
+	return &hangingOpenAISSEAfterTerminal{payload: []byte(payload), release: make(chan struct{})}
+}
+
+func (r *hangingOpenAISSEAfterTerminal) Read(data []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		return copy(data, r.payload), nil
+	}
+	<-r.release
+	return 0, io.EOF
+}
+
+func (r *hangingOpenAISSEAfterTerminal) Close() error {
+	r.closeOnce.Do(func() { close(r.release) })
+	return nil
+}
+
+const openAITerminalWithoutEOFBody = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n" +
+	"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_terminal_1\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":5}}}\n\n"
+
+func requireOpenAIStreamEndsWithoutEOF(t *testing.T, reader *hangingOpenAISSEAfterTerminal, run func() (*OpenAIUsage, error)) {
+	t.Helper()
+	t.Cleanup(func() { _ = reader.Close() })
+	type outcome struct {
+		usage *OpenAIUsage
+		err   error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		usage, err := run()
+		done <- outcome{usage: usage, err: err}
+	}()
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		require.NotNil(t, got.usage)
+		require.Equal(t, 7, got.usage.InputTokens)
+		require.Equal(t, 5, got.usage.OutputTokens)
+	case <-time.After(3 * time.Second):
+		t.Fatal("stream did not end after terminal event; still waiting for upstream EOF")
+	}
+}
+
+func TestOpenAIStreaming_TerminalEventEndsStreamWithoutEOF(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name    string
+		gateway config.GatewayConfig
+	}{
+		{name: "sync", gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
+		{name: "async", gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize, StreamKeepaliveInterval: 1, StreamDataIntervalTimeout: 30}},
+		{name: "first_output_guard", gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize, OpenAIFirstOutputTimeoutSeconds: 30}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: tc.gateway}}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+			reader := newHangingOpenAISSEAfterTerminal(openAITerminalWithoutEOFBody)
+			resp := &http.Response{StatusCode: http.StatusOK, Body: reader, Header: http.Header{}}
+			account := &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}
+
+			responseID := ""
+			requireOpenAIStreamEndsWithoutEOF(t, reader, func() (*OpenAIUsage, error) {
+				result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+				if result == nil {
+					return nil, err
+				}
+				responseID = result.responseID
+				return result.usage, err
+			})
+			require.Equal(t, "resp_terminal_1", responseID)
+			require.Contains(t, rec.Body.String(), "response.completed")
+			require.True(t, strings.HasSuffix(rec.Body.String(), "\n\n"), "terminal frame must be fully flushed")
+		})
+	}
+}
+
+func TestOpenAIStreamingPassthrough_TerminalEventEndsStreamWithoutEOF(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	// passthrough 路径本身是同步扫描：terminal 帧连同空行刷出后即 break，
+	// 之后的 [DONE] 或上游迟迟不来的 EOF 都不再等待。
+	for _, name := range []string{"completed_only", "completed_then_done"} {
+		t.Run(name, func(t *testing.T) {
+			svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+			body := openAITerminalWithoutEOFBody
+			if name == "completed_then_done" {
+				body += "data: [DONE]\n\n"
+			}
+			reader := newHangingOpenAISSEAfterTerminal(body)
+			resp := &http.Response{StatusCode: http.StatusOK, Body: reader, Header: http.Header{}}
+
+			requireOpenAIStreamEndsWithoutEOF(t, reader, func() (*OpenAIUsage, error) {
+				result, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "", "")
+				if result == nil {
+					return nil, err
+				}
+				return result.usage, err
+			})
+			require.Contains(t, rec.Body.String(), "response.completed")
+			require.True(t, strings.HasSuffix(rec.Body.String(), "\n\n"), "terminal frame must be fully flushed")
+		})
 	}
 }
