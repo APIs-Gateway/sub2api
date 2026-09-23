@@ -2862,8 +2862,8 @@
         notConfigured: '未配置'
       },
       modelsList: {
-        title: '自定义 /v1/models 模型列表',
-        hint: '仅影响 /v1/models 展示结果，不影响白名单模型调用和账号调度。',
+        title: '自定义 {endpoint} 模型列表',
+        hint: '仅影响 {endpoint} 展示结果，不影响白名单模型调用和账号调度。',
         loading: '正在加载模型列表...',
         empty: '暂无可展示模型'
       },
