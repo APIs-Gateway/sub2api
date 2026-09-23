@@ -561,6 +561,9 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			content, _ := json.Marshal(text)
 			messages = append(messages, ChatMessage{Role: "user", Content: content})
 			pendingReasoning = ""
+			// agent_message 按 user 消息转发，同样开启新轮次，不得沿用上一轮 reasoning
+			// （与 input_text / input_image 一致）。
+			lastTurnReasoning = ""
 			continue
 		case "input_text", "text":
 			content, _ := json.Marshal(rawString(item["text"]))
