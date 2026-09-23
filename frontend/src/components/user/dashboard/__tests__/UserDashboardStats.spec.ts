@@ -3,8 +3,16 @@ import { mount } from '@vue/test-utils'
 
 import UserDashboardStats from '../UserDashboardStats.vue'
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key }),
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  return {
+    ...actual,
+    useI18n: () => ({ t: (key: string) => key }),
+  }
+})
+
+vi.mock('@/components/user/dashboard/CheckinCard.vue', () => ({
+  default: { name: 'CheckinCard', template: '<div />' },
 }))
 
 describe('UserDashboardStats', () => {
