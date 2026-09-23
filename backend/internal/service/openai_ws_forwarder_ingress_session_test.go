@@ -941,8 +941,12 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughFailo
 	}
 	runAttempt := func(account *Account, upstreamEvents [][]byte, frames [][]byte) attemptCapture {
 		t.Helper()
-		upstreamConn := &openAIWSCaptureConn{events: upstreamEvents}
-		captureDialer := &openAIWSCaptureDialer{conn: upstreamConn}
+		// Release each upstream event only after the matching client frame has
+		// been relayed upstream; otherwise the canned events drain immediately,
+		// the fake upstream returns EOF and the relay ends before the follow-up
+		// frame is forwarded.
+		upstreamConn := &openAIWSTurnGatedConn{openAIWSCaptureConn: &openAIWSCaptureConn{events: upstreamEvents}}
+		captureDialer := &openAIWSTurnGatedDialer{conn: upstreamConn}
 		svc := &OpenAIGatewayService{
 			cfg:                       cfg,
 			httpUpstream:              &httpUpstreamRecorder{},
@@ -1010,14 +1014,20 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughFailo
 		case <-time.After(5 * time.Second):
 			t.Fatal("等待 passthrough websocket 结束超时")
 		}
+		upstreamConn.mu.Lock()
+		writes := append([]map[string]any(nil), upstreamConn.writes...)
+		upstreamConn.mu.Unlock()
 		return attemptCapture{
-			headers: cloneHeader(captureDialer.lastHeaders),
-			writes:  append([]map[string]any(nil), upstreamConn.writes...),
+			headers: captureDialer.LastHeaders(),
+			writes:  writes,
 			err:     serverErr,
 		}
 	}
 
-	primary := &Account{ID: 454, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Credentials: map[string]any{
+	// Passthrough ingress needs the protocol resolver to choose ws_v2, which
+	// requires a positive account concurrency (account_concurrency_invalid
+	// otherwise falls back to http_sse).
+	primary := &Account{ID: 454, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{
 		"access_token":       "oauth-token-primary",
 		"chatgpt_account_id": "primary-oauth-account",
 	}, Extra: map[string]any{"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough}}
@@ -1031,7 +1041,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughFailo
 	require.ErrorAs(t, primaryAttempt.err, &failoverErr)
 	require.Len(t, primaryAttempt.writes, 1)
 
-	failover := &Account{ID: 455, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Credentials: map[string]any{
+	failover := &Account{ID: 455, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{
 		"access_token":       "oauth-token-failover",
 		"chatgpt_account_id": "failover-oauth-account",
 	}, Extra: map[string]any{"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough}}
@@ -1057,6 +1067,79 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughFailo
 	primaryPayload := requestToJSONString(primaryAttempt.writes[0])
 	failoverPayload := requestToJSONString(failoverAttempt.writes[0])
 	require.NotEqual(t, gjson.Get(primaryPayload, "prompt_cache_key").String(), gjson.Get(failoverPayload, "prompt_cache_key").String())
+}
+
+// openAIWSTurnGatedConn wraps openAIWSCaptureConn so that the i-th canned
+// upstream event is only returned after i+1 client frames have been written
+// upstream. This keeps multi-turn passthrough tests deterministic.
+type openAIWSTurnGatedConn struct {
+	*openAIWSCaptureConn
+	served int
+}
+
+func (c *openAIWSTurnGatedConn) waitForTurn(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		c.mu.Lock()
+		ready := len(c.events) == 0 || c.closed || len(c.writes) > c.served
+		c.mu.Unlock()
+		if ready {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+}
+
+func (c *openAIWSTurnGatedConn) ReadMessage(ctx context.Context) ([]byte, error) {
+	if err := c.waitForTurn(ctx); err != nil {
+		return nil, err
+	}
+	payload, err := c.openAIWSCaptureConn.ReadMessage(ctx)
+	if err == nil {
+		c.mu.Lock()
+		c.served++
+		c.mu.Unlock()
+	}
+	return payload, err
+}
+
+func (c *openAIWSTurnGatedConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
+	payload, err := c.ReadMessage(ctx)
+	if err != nil {
+		return coderws.MessageText, nil, err
+	}
+	return coderws.MessageText, payload, nil
+}
+
+type openAIWSTurnGatedDialer struct {
+	mu          sync.Mutex
+	conn        *openAIWSTurnGatedConn
+	lastHeaders http.Header
+}
+
+func (d *openAIWSTurnGatedDialer) Dial(
+	ctx context.Context,
+	wsURL string,
+	headers http.Header,
+	proxyURL string,
+) (openAIWSClientConn, int, http.Header, error) {
+	_, _, _ = ctx, wsURL, proxyURL
+	d.mu.Lock()
+	d.lastHeaders = cloneHeader(headers)
+	d.mu.Unlock()
+	return d.conn, 0, nil, nil
+}
+
+func (d *openAIWSTurnGatedDialer) LastHeaders() http.Header {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return cloneHeader(d.lastHeaders)
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ModeOffReturnsPolicyViolation(t *testing.T) {

@@ -3366,6 +3366,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				c,
 				account,
 				wsReqBody,
+				clientPromptCacheKey,
 				wsExecutionScope,
 				token,
 				wsDecision,
