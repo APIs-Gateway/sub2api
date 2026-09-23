@@ -73,6 +73,9 @@ func TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure(t *te
 		Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-test"},
 		Extra: map[string]any{
+			// fork: API-key accounts only use the Responses/WS transport when
+			// Responses support is known; otherwise Forward uses raw chat completions.
+			"openai_responses_supported":                 true,
 			"openai_apikey_responses_websockets_v2_mode": OpenAIWSIngressModeCtxPool,
 		},
 	}
