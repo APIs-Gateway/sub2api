@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/payment"
-	stripe "github.com/stripe/stripe-go/v85"
 	"github.com/stretchr/testify/require"
+	stripe "github.com/stripe/stripe-go/v85"
 )
 
 func newStripeWithTestBackend(t *testing.T, handler http.HandlerFunc) *Stripe {
