@@ -5393,6 +5393,7 @@
     announcements: {
       title: 'Announcements',
       description: 'Create announcements and target by conditions',
+      createFirstAnnouncement: 'No announcements yet. Create your first one.',
       createAnnouncement: 'Create Announcement',
       editAnnouncement: 'Edit Announcement',
       deleteAnnouncement: 'Delete Announcement',

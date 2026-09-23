@@ -154,3 +154,43 @@ describe('UserDashboardStats 按平台拆分', () => {
     expect(w.html()).not.toContain('dashboard.platformBreakdown')
   })
 })
+
+describe('UserDashboardStats token 明细', () => {
+  it('includes cache creation and read tokens in the token card breakdown', () => {
+    const w = mountStats(
+      makeStats({
+        today_tokens: 370,
+        today_input_tokens: 100,
+        today_output_tokens: 200,
+        today_cache_creation_tokens: 30,
+        today_cache_read_tokens: 40,
+        total_tokens: 911,
+        total_input_tokens: 400,
+        total_output_tokens: 500,
+        total_cache_creation_tokens: 5,
+        total_cache_read_tokens: 6,
+      })
+    )
+
+    const text = w.text()
+    expect(text).toContain('dashboard.input 100 · dashboard.output 200 · dashboard.cache 70')
+    expect(text).toContain('dashboard.input 400 · dashboard.output 500 · dashboard.cache 11')
+  })
+
+  it('treats missing cache token fields as zero', () => {
+    const stats: Partial<UserStatsType> = makeStats({
+      today_input_tokens: 1,
+      today_output_tokens: 2,
+      total_input_tokens: 3,
+      total_output_tokens: 4,
+    })
+    delete stats.today_cache_creation_tokens
+    delete stats.today_cache_read_tokens
+    delete stats.total_cache_creation_tokens
+    delete stats.total_cache_read_tokens
+
+    const text = mountStats(stats as UserStatsType).text()
+    expect(text).toContain('dashboard.output 2 · dashboard.cache 0')
+    expect(text).toContain('dashboard.output 4 · dashboard.cache 0')
+  })
+})

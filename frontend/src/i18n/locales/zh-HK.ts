@@ -5395,6 +5395,7 @@
     announcements: {
       title: '公告管理',
       description: '創建公告并按條件投放',
+      createFirstAnnouncement: '還沒有公告，創建您的第一條公告。',
       createAnnouncement: '創建公告',
       editAnnouncement: '編輯公告',
       deleteAnnouncement: '刪除公告',
