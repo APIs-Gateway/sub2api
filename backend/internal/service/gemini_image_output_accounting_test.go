@@ -196,7 +196,7 @@ func TestHandleNativeNonStreamingResponse_FeedsImageCounter(t *testing.T) {
 	}
 
 	svc := &GeminiMessagesCompatService{}
-	usage, err := svc.handleNativeNonStreamingResponse(c, resp, false)
+	usage, err := svc.handleNativeNonStreamingResponse(c, resp, false, nil, "")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 
@@ -223,7 +223,7 @@ func TestHandleNativeStreamingResponse_FeedsImageCounterWithoutDoubleCount(t *te
 	}
 
 	svc := &GeminiMessagesCompatService{}
-	result, err := svc.handleNativeStreamingResponse(c, resp, time.Now(), false)
+	result, err := svc.handleNativeStreamingResponse(c, resp, time.Now(), false, nil, "")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -269,7 +269,7 @@ func TestResolveGeminiImageCount_TextStreamStaysZero(t *testing.T) {
 	}
 
 	svc := &GeminiMessagesCompatService{}
-	_, err := svc.handleNativeStreamingResponse(c, resp, time.Now(), false)
+	_, err := svc.handleNativeStreamingResponse(c, resp, time.Now(), false, nil, "")
 	require.NoError(t, err)
 
 	require.Equal(t, 0, resolveGeminiImageCount(c, "gemini-2.5-flash", "gemini-2.5-flash"))
