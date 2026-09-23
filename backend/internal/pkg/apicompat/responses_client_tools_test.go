@@ -166,7 +166,8 @@ func TestAdaptResponsesClientTools_LowersDiscoveredToolSearchOutput(t *testing.T
 	require.Equal(t, toolSearchProxyName, call["name"])
 	require.JSONEq(t, `{"query":"codex app"}`, requireResponsesClientToolValue[string](t, call["arguments"]))
 	require.NotContains(t, call, "execution")
-	require.NotContains(t, call, "id")
+	// tsc_ call IDs map back to the upstream fc_ ID (upstream e0e5e45cd).
+	require.Equal(t, "fc_client", call["id"])
 
 	output := requireResponsesClientToolValue[map[string]any](t, firstInput[1])
 	require.Equal(t, "function_call_output", output["type"])
