@@ -136,3 +136,61 @@ func TestGrokOAuthServiceProxyAndTokenParsingErrors(t *testing.T) {
 	info = service.tokenInfoFromResponse(&xai.TokenResponse{AccessToken: "access", IDToken: "a.invalid"}, "client", nil)
 	require.Equal(t, "client", info.ClientID)
 }
+
+type grokOAuthRedirectCaptureClient struct {
+	exchangeCalls       int
+	exchangeRedirectURI string
+}
+
+func (c *grokOAuthRedirectCaptureClient) ExchangeCode(_ context.Context, _, _, _, redirectURI, _, _ string) (*xai.TokenResponse, error) {
+	c.exchangeCalls++
+	c.exchangeRedirectURI = redirectURI
+	return &xai.TokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token", ExpiresIn: 3600}, nil
+}
+
+func (c *grokOAuthRedirectCaptureClient) RefreshToken(context.Context, string, string, string) (*xai.TokenResponse, error) {
+	return &xai.TokenResponse{AccessToken: "refreshed-token", RefreshToken: "refresh-token", ExpiresIn: 3600}, nil
+}
+
+// redirect_uri 与授权会话绑定：客户端改写 redirect_uri 必须被拒绝且不消耗 session，
+// 一致或留空时交换一律使用 session 记录的值（upstream #5408）。
+func TestGrokOAuthServiceExchangeCodeBindsRedirectURIToSession(t *testing.T) {
+	client := &grokOAuthRedirectCaptureClient{}
+	service := NewGrokOAuthService(nil, client)
+	defer service.Stop()
+
+	authURL, err := service.GenerateAuthURL(context.Background(), nil, "http://localhost/callback")
+	require.NoError(t, err)
+
+	_, err = service.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
+		SessionID:   authURL.SessionID,
+		Code:        "authorization-code",
+		State:       authURL.State,
+		RedirectURI: "http://127.0.0.1:9999/callback",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "GROK_OAUTH_REDIRECT_URI_MISMATCH")
+	require.Zero(t, client.exchangeCalls)
+	_, ok := service.sessionStore.Get(authURL.SessionID)
+	require.True(t, ok, "mismatched redirect_uri must not consume the session")
+
+	_, err = service.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
+		SessionID:   authURL.SessionID,
+		Code:        "authorization-code",
+		State:       authURL.State,
+		RedirectURI: " http://localhost/callback ",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, client.exchangeCalls)
+	require.Equal(t, "http://localhost/callback", client.exchangeRedirectURI)
+
+	authURL, err = service.GenerateAuthURL(context.Background(), nil, "")
+	require.NoError(t, err)
+	_, err = service.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
+		SessionID: authURL.SessionID,
+		Code:      "authorization-code",
+		State:     authURL.State,
+	})
+	require.NoError(t, err)
+	require.Equal(t, xai.EffectiveRedirectURI(""), client.exchangeRedirectURI)
+}

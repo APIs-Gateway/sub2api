@@ -230,3 +230,56 @@ func TestGrokOAuthHandlerServiceAndAdminErrors(t *testing.T) {
 	})
 	require.Equal(t, http.StatusInternalServerError, createErr.Code)
 }
+
+type grokProxyLookupAdminService struct {
+	*stubAdminService
+	proxy *service.Proxy
+	err   error
+}
+
+func (s *grokProxyLookupAdminService) GetProxy(context.Context, int64) (*service.Proxy, error) {
+	return s.proxy, s.err
+}
+
+type grokRefreshCountingClient struct {
+	grokOAuthHandlerClientStub
+	refreshCalls int
+}
+
+func (c *grokRefreshCountingClient) RefreshToken(ctx context.Context, rt, proxyURL, clientID string) (*xai.TokenResponse, error) {
+	c.refreshCalls++
+	return c.grokOAuthHandlerClientStub.RefreshToken(ctx, rt, proxyURL, clientID)
+}
+
+// 指定 proxy_id 却查不到代理时必须失败关闭，不能静默直连 xAI（upstream #5408）。
+func TestGrokOAuthHandlerRefreshTokenFailsClosedOnMissingProxy(t *testing.T) {
+	cases := []struct {
+		name     string
+		proxy    *service.Proxy
+		err      error
+		wantCode int
+		wantBody string
+	}{
+		{name: "lookup error", err: service.ErrProxyNotFound, wantCode: http.StatusNotFound},
+		{name: "nil proxy", wantCode: http.StatusBadRequest, wantBody: "GROK_OAUTH_PROXY_NOT_FOUND"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &grokRefreshCountingClient{}
+			oauthService := service.NewGrokOAuthService(nil, client)
+			defer oauthService.Stop()
+			adminService := &grokProxyLookupAdminService{stubAdminService: newStubAdminService(), proxy: tc.proxy, err: tc.err}
+			router := setupGrokOAuthHandlerRouter(NewGrokOAuthHandler(oauthService, adminService))
+
+			rec := grokHandlerRequest(t, router, http.MethodPost, "/refresh", map[string]any{
+				"refresh_token": "refresh-token",
+				"proxy_id":      9,
+			})
+			require.Equal(t, tc.wantCode, rec.Code, rec.Body.String())
+			if tc.wantBody != "" {
+				require.Contains(t, rec.Body.String(), tc.wantBody)
+			}
+			require.Zero(t, client.refreshCalls, "must not fall back to a direct xAI connection")
+		})
+	}
+}

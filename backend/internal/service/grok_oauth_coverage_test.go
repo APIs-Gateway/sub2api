@@ -58,7 +58,7 @@ func TestGrokOAuthServiceCoversInputProxyAndClientErrors(t *testing.T) {
 		SessionID:   authURL.SessionID,
 		Code:        callback,
 		State:       "",
-		RedirectURI: "http://localhost/override",
+		RedirectURI: "http://localhost/redirect",
 		ProxyID:     ptrInt64(1),
 	})
 	require.NoError(t, err)

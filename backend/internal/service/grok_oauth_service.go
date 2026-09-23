@@ -121,6 +121,11 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 	if state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(session.State)) != 1 {
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_INVALID_STATE", "invalid oauth state")
 	}
+	// redirect_uri 与授权会话绑定：客户端传入的值必须与 session 一致，交换时始终用 session 记录的值。
+	if redirectURI := strings.TrimSpace(input.RedirectURI); redirectURI != "" &&
+		redirectURI != strings.TrimSpace(session.RedirectURI) {
+		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_REDIRECT_URI_MISMATCH", "redirect_uri does not match the OAuth session")
+	}
 
 	proxyURL := session.ProxyURL
 	if input.ProxyID != nil {
@@ -130,12 +135,8 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 			return nil, err
 		}
 	}
-	redirectURI := session.RedirectURI
-	if strings.TrimSpace(input.RedirectURI) != "" {
-		redirectURI = input.RedirectURI
-	}
 
-	tokenResp, err := s.oauthClient.ExchangeCode(ctx, code, session.CodeVerifier, session.CodeChallenge, redirectURI, proxyURL, session.ClientID)
+	tokenResp, err := s.oauthClient.ExchangeCode(ctx, code, session.CodeVerifier, session.CodeChallenge, session.RedirectURI, proxyURL, session.ClientID)
 	if err != nil {
 		return nil, err
 	}
