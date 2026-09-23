@@ -56,7 +56,7 @@ const UserAttributeFormStub = defineComponent({
 })
 
 const SelectStub = defineComponent({
-  name: 'Select',
+  name: 'SelectStub',
   props: ['modelValue', 'options', 'searchable'],
   emits: ['update:modelValue'],
   template: '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="o in options" :key="o.value" :value="o.value">{{ o.label }}</option></select>'
