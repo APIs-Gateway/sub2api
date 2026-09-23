@@ -339,3 +339,66 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughRejec
 	_ = waitOpenAIWSReasoningReplayServer(t, serverErrCh)
 	require.Len(t, upstreamConn.writes, 1, "the undecodable follow-up frame must not reach upstream")
 }
+
+func forwardOAuthResponsesCaptureForReplayTest(t *testing.T, body []byte) []byte {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID:          125,
+		Name:        "openai-oauth-replay",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.NotEmpty(t, upstream.lastBody)
+	return upstream.lastBody
+}
+
+// The compat messages bridge branch (Anthropic /v1/messages routed to OAuth
+// Responses) must also drop promoted system messages from input.
+func TestOpenAIGatewayService_OAuthCompatMessagesBridgePromotesSystemMessageWithoutDuplication(t *testing.T) {
+	const systemPrompt = "Unique bridge system prefix."
+	body := []byte(`{"model":"gpt-5.4","stream":false,"prompt_cache_key":"anthropic-cache-replay","input":[{"role":"system","content":"` + systemPrompt + `"},{"role":"user","content":"hello"}]}`)
+
+	upstreamBody := forwardOAuthResponsesCaptureForReplayTest(t, body)
+
+	require.Contains(t, gjson.GetBytes(upstreamBody, "instructions").String(), systemPrompt)
+	require.Equal(t, 1, strings.Count(string(upstreamBody), systemPrompt))
+	for _, item := range gjson.GetBytes(upstreamBody, "input").Array() {
+		require.NotEqual(t, "system", item.Get("role").String())
+	}
+}
+
+// json_object mode keeps the system message in input so the upstream JSON-mode
+// check still sees the JSON instruction.
+func TestOpenAIGatewayService_OAuthResponsesJSONObjectKeepsSystemMessageInInput(t *testing.T) {
+	const systemPrompt = "Reply in JSON."
+	body := []byte(`{"model":"gpt-5.4","stream":false,"text":{"format":{"type":"json_object"}},"input":[{"role":"system","content":"` + systemPrompt + `"},{"role":"user","content":"hello"}]}`)
+
+	upstreamBody := forwardOAuthResponsesCaptureForReplayTest(t, body)
+
+	foundSystem := false
+	for _, item := range gjson.GetBytes(upstreamBody, "input").Array() {
+		if item.Get("role").String() == "system" || item.Get("role").String() == "developer" {
+			foundSystem = true
+		}
+	}
+	require.True(t, foundSystem, "json_object mode must keep the system instruction in input")
+}
