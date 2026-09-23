@@ -93,17 +93,27 @@ func TestStripResponsesDeferredToolFlags_PreservesFlagsWithBuiltInToolSearch(t *
 	require.Equal(t, true, requireResponsesClientToolValue[map[string]any](t, tools[1])["defer_loading"])
 }
 
-func TestDropInvalidLoweredFunctionItemID_KeepsFcPrefixedID(t *testing.T) {
+func TestNormalizeLoweredFunctionItemID_KeepsFcAndRetypesKnownCallIDs(t *testing.T) {
 	kept := map[string]any{"id": "fc_client"}
-	dropInvalidLoweredFunctionItemID(kept)
+	normalizeLoweredFunctionItemID(kept)
 	require.Equal(t, "fc_client", kept["id"])
 
-	dropped := map[string]any{"id": "ctc_client"}
-	dropInvalidLoweredFunctionItemID(dropped)
+	// ctc_/tsc_ call IDs map back to the fc_ ID they were raised from.
+	retyped := map[string]any{"id": "ctc_client"}
+	normalizeLoweredFunctionItemID(retyped)
+	require.Equal(t, "fc_client", retyped["id"])
+
+	retypedSearch := map[string]any{"id": "tsc_client"}
+	normalizeLoweredFunctionItemID(retypedSearch)
+	require.Equal(t, "fc_client", retypedSearch["id"])
+
+	// IDs without a function-protocol counterpart are still dropped.
+	dropped := map[string]any{"id": "ctco_client_output"}
+	normalizeLoweredFunctionItemID(dropped)
 	require.NotContains(t, dropped, "id")
 
 	noID := map[string]any{}
-	dropInvalidLoweredFunctionItemID(noID)
+	normalizeLoweredFunctionItemID(noID)
 	require.NotContains(t, noID, "id")
 }
 
