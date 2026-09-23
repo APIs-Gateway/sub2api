@@ -70,6 +70,17 @@ type SubscriptionService struct {
 	subCacheJitter int // 抖动百分比
 
 	maintenanceQueue *SubscriptionMaintenanceQueue
+
+	// now 测试钩子：nil 时用 time.Now（生产路径不设置）。
+	now func() time.Time
+}
+
+// currentTime 返回当前时间；测试可通过 now 钩子固定时钟。
+func (s *SubscriptionService) currentTime() time.Time {
+	if s != nil && s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 // NewSubscriptionService 创建订阅服务
@@ -836,12 +847,6 @@ func (s *SubscriptionService) restoreSubscriptionForRefund(ctx context.Context, 
 
 // ExtendSubscription 调整订阅时长（正数延长，负数缩短）
 func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscriptionID int64, days int) (*UserSubscription, error) {
-	sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
-	if err != nil {
-		return nil, ErrSubscriptionNotFound
-	}
-	s.clearSubscriptionLockCache(sub.UserID)
-
 	// 限制调整天数范围
 	if days > MaxValidityDays {
 		days = MaxValidityDays
@@ -850,64 +855,80 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 		days = -MaxValidityDays
 	}
 
-	now := time.Now()
-	isExpired := !sub.ExpiresAt.After(now)
-
-	// 如果订阅已过期，不允许负向调整
-	if isExpired && days < 0 {
-		return nil, infraerrors.BadRequest("CANNOT_SHORTEN_EXPIRED", "cannot shorten an expired subscription")
-	}
-
-	// 计算新的过期时间
-	var newExpiresAt time.Time
-	if isExpired {
-		// 已过期：从当前时间开始增加天数
-		newExpiresAt = now.AddDate(0, 0, days)
-	} else {
-		// 未过期：从原过期时间增加/减少天数
-		newExpiresAt = sub.ExpiresAt.AddDate(0, 0, days)
-	}
-
-	if newExpiresAt.After(MaxExpiresAt) {
-		newExpiresAt = MaxExpiresAt
-	}
-
-	// 检查新的过期时间必须大于当前时间
-	if !newExpiresAt.After(now) {
-		return nil, ErrAdjustWouldExpire
-	}
-
-	// per-day：仅调整卡的 expire_day（服务窗口），**不动 users.balance**（卡价值在 today_remaining）。
-	//   days<0：缩短 → expire_day −= |days|（下限 today−1）；
-	//   days>0：延长 → expire_day = clamp(max(原, today−1) + days)（按续费口径并夹到上限）；
-	//   days==0：仅同步过期时间（一般不会发生）。
-	switch {
-	case days < 0:
-		if _, _, err := s.userSubRepo.ShortenSubscriptionWithReclaim(ctx, subscriptionID, -days, newExpiresAt, now); err != nil {
-			return nil, err
+	var userID, groupID int64
+	err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
+		// 先锁行再读过期时间并判定：否则并发调整（或与续费/兑换码扣减并发）会基于同一旧值
+		// 通过「不会缩到过期」等校验，叠加后把卡缩穿，或丢失其中一次调整。
+		sub, err := s.userSubRepo.GetByIDForUpdate(txCtx, subscriptionID)
+		if err != nil {
+			return ErrSubscriptionNotFound
 		}
-	case days > 0:
-		if _, _, err := s.userSubRepo.GrantSubscriptionDays(ctx, subscriptionID, days, newExpiresAt, now); err != nil {
-			return nil, err
-		}
-	default:
-		if err := s.userSubRepo.ExtendExpiry(ctx, subscriptionID, newExpiresAt); err != nil {
-			return nil, err
-		}
-	}
+		userID, groupID = sub.UserID, sub.GroupID
+		s.clearSubscriptionLockCache(sub.UserID)
 
-	// 如果订阅已过期，恢复为active状态
-	if sub.Status == SubscriptionStatusExpired {
-		if err := s.userSubRepo.UpdateStatus(ctx, subscriptionID, SubscriptionStatusActive); err != nil {
-			return nil, err
+		now := s.currentTime()
+		isExpired := !sub.ExpiresAt.After(now)
+
+		// 如果订阅已过期，不允许负向调整
+		if isExpired && days < 0 {
+			return infraerrors.BadRequest("CANNOT_SHORTEN_EXPIRED", "cannot shorten an expired subscription")
 		}
+
+		// 计算新的过期时间
+		var newExpiresAt time.Time
+		if isExpired {
+			// 已过期：从当前时间开始增加天数
+			newExpiresAt = now.AddDate(0, 0, days)
+		} else {
+			// 未过期：从原过期时间增加/减少天数
+			newExpiresAt = sub.ExpiresAt.AddDate(0, 0, days)
+		}
+
+		if newExpiresAt.After(MaxExpiresAt) {
+			newExpiresAt = MaxExpiresAt
+		}
+
+		// 检查新的过期时间必须大于当前时间
+		if !newExpiresAt.After(now) {
+			return ErrAdjustWouldExpire
+		}
+
+		// per-day：仅调整卡的 expire_day（服务窗口），**不动 users.balance**（卡价值在 today_remaining）。
+		//   days<0：缩短 → expire_day −= |days|（下限 today−1）；
+		//   days>0：延长 → expire_day = clamp(max(原, today−1) + days)（按续费口径并夹到上限）；
+		//   days==0：仅同步过期时间（一般不会发生）。
+		// 仓储方法在环境事务存在时复用它（reclaimTx），因此与上面的行锁处于同一事务。
+		switch {
+		case days < 0:
+			if _, _, err := s.userSubRepo.ShortenSubscriptionWithReclaim(txCtx, subscriptionID, -days, newExpiresAt, now); err != nil {
+				return err
+			}
+		case days > 0:
+			if _, _, err := s.userSubRepo.GrantSubscriptionDays(txCtx, subscriptionID, days, newExpiresAt, now); err != nil {
+				return err
+			}
+		default:
+			if err := s.userSubRepo.ExtendExpiry(txCtx, subscriptionID, newExpiresAt); err != nil {
+				return err
+			}
+		}
+
+		// 如果订阅已过期，恢复为active状态
+		if sub.Status == SubscriptionStatusExpired {
+			if err := s.userSubRepo.UpdateStatus(txCtx, subscriptionID, SubscriptionStatusActive); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	s.clearSubscriptionLockCache(sub.UserID)
+	s.clearSubscriptionLockCache(userID)
 
 	// 失效订阅缓存
-	s.InvalidateSubCache(sub.UserID, sub.GroupID)
+	s.InvalidateSubCache(userID, groupID)
 	if s.billingCacheService != nil {
-		userID, groupID := sub.UserID, sub.GroupID
 		go func() {
 			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -915,7 +936,7 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 		}()
 	}
 	// 额度/余额已变动，失效余额缓存
-	s.invalidateUserBalanceCacheAsync(sub.UserID)
+	s.invalidateUserBalanceCacheAsync(userID)
 
 	return s.userSubRepo.GetByID(ctx, subscriptionID)
 }

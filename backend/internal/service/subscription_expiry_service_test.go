@@ -44,6 +44,10 @@ func (r *subscriptionExpiryRepoStub) GetLatestActiveStatusForUpdate(context.Cont
 	return nil, ErrSubscriptionNotFound
 }
 
+func (r *subscriptionExpiryRepoStub) GetByIDForUpdate(context.Context, int64) (*UserSubscription, error) {
+	return nil, ErrSubscriptionNotFound
+}
+
 func (r *subscriptionExpiryRepoStub) ApplyManualOverdraft(context.Context, *UserSubscription) error {
 	return nil
 }

@@ -2113,6 +2113,10 @@ func (stubUserSubscriptionRepo) GetLatestActiveStatusForUpdate(ctx context.Conte
 	return nil, errors.New("not implemented")
 }
 
+func (stubUserSubscriptionRepo) GetByIDForUpdate(context.Context, int64) (*service.UserSubscription, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (stubUserSubscriptionRepo) ApplyManualOverdraft(ctx context.Context, sub *service.UserSubscription) error {
 	return errors.New("not implemented")
 }
