@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -1466,24 +1467,37 @@ func alignStoreDisabledPreviousResponseID(
 	return updated, true, nil
 }
 
-func cloneOpenAIWSPayloadBytes(payload []byte) []byte {
-	if len(payload) == 0 {
-		return nil
+// Replay 状态所有权不变式：replay 序列中的 json.RawMessage 正文一经放入即视为
+// 不可变，所有持有者共享同一份字节，任何修改都必须整体替换元素或重建 payload。
+// 序列头数组在跨持有者保存时必须新建（combineOpenAIWSReplayItems），禁止通过
+// 共享头 append，否则会写入其他持有者可见的底层数组。
+
+// combineOpenAIWSReplayItems 合并历史与增量为新头数组，正文共享不复制。
+func combineOpenAIWSReplayItems(history, delta []json.RawMessage) []json.RawMessage {
+	if len(delta) == 0 {
+		return history
 	}
-	cloned := make([]byte, len(payload))
-	copy(cloned, payload)
-	return cloned
+	combined := make([]json.RawMessage, 0, len(history)+len(delta))
+	combined = append(combined, history...)
+	return append(combined, delta...)
 }
 
-func cloneOpenAIWSRawMessages(items []json.RawMessage) []json.RawMessage {
-	if items == nil {
-		return nil
+// openAIWSPayloadStringView 返回与 payload 共享底层数组的零拷贝 string 视图，
+// 供 gjson.Get 使用（gjson.GetBytes 会整段复制结果 Raw，对 input 这类占
+// payload 主体的字段是每次 O(payload) 分配）。调用方必须保证 payload 在结果
+// 存活期间不可变（replay 所有权不变式）。
+func openAIWSPayloadStringView(payload []byte) string {
+	return unsafe.String(unsafe.SliceData(payload), len(payload))
+}
+
+// openAIWSRawMessageFromResult 优先返回 parent 的子切片（gjson 值零拷贝共享），
+// Index 不可用时回退为复制。共享要求 parent 遵守上面的不可变约定。
+func openAIWSRawMessageFromResult(parent []byte, value gjson.Result) json.RawMessage {
+	idx := value.Index
+	if idx > 0 && idx+len(value.Raw) <= len(parent) && string(parent[idx:idx+len(value.Raw)]) == value.Raw {
+		return json.RawMessage(parent[idx : idx+len(value.Raw)])
 	}
-	cloned := make([]json.RawMessage, 0, len(items))
-	for idx := range items {
-		cloned = append(cloned, json.RawMessage(cloneOpenAIWSPayloadBytes(items[idx])))
-	}
-	return cloned
+	return json.RawMessage(value.Raw)
 }
 
 func normalizeOpenAIWSJSONForCompare(raw []byte) ([]byte, error) {
@@ -1530,30 +1544,38 @@ func normalizeOpenAIWSPayloadWithoutInputAndPreviousResponseID(payload []byte) (
 	return json.Marshal(decoded)
 }
 
+// openAIWSExtractNormalizedInputSequence 拆出 input 序列。返回的正文尽可能与
+// payload 共享底层数组（零拷贝），受 replay 所有权不变式保护。
 func openAIWSExtractNormalizedInputSequence(payload []byte) ([]json.RawMessage, bool, error) {
 	if len(payload) == 0 {
 		return nil, false, nil
 	}
-	inputValue := gjson.GetBytes(payload, "input")
+	inputValue := gjson.Get(openAIWSPayloadStringView(payload), "input")
 	if !inputValue.Exists() {
 		return nil, false, nil
 	}
 	if inputValue.Type == gjson.JSON {
-		raw := strings.TrimSpace(inputValue.Raw)
-		if strings.HasPrefix(raw, "[") {
-			var items []json.RawMessage
-			if err := json.Unmarshal([]byte(raw), &items); err != nil {
-				return nil, true, err
+		if inputValue.IsArray() {
+			// gjson 宽容解析；数组整体先做零分配合法性校验，避免把断裂
+			// JSON 塞进 replay 历史。
+			arrayRaw := openAIWSRawMessageFromResult(payload, inputValue)
+			if !json.Valid(arrayRaw) {
+				return nil, true, errors.New("input array json is invalid")
+			}
+			elems := inputValue.Array()
+			items := make([]json.RawMessage, 0, len(elems))
+			for _, elem := range elems {
+				items = append(items, openAIWSRawMessageFromResult(payload, elem))
 			}
 			return items, true, nil
 		}
-		return []json.RawMessage{json.RawMessage(raw)}, true, nil
+		return []json.RawMessage{openAIWSRawMessageFromResult(payload, inputValue)}, true, nil
 	}
 	if inputValue.Type == gjson.String {
 		encoded, _ := json.Marshal(inputValue.String())
 		return []json.RawMessage{encoded}, true, nil
 	}
-	return []json.RawMessage{json.RawMessage(inputValue.Raw)}, true, nil
+	return []json.RawMessage{openAIWSRawMessageFromResult(payload, inputValue)}, true, nil
 }
 
 func openAIWSInputIsPrefixExtended(previousPayload, currentPayload []byte) (bool, error) {
@@ -1596,6 +1618,10 @@ func openAIWSRawItemsHasPrefix(items []json.RawMessage, prefix []json.RawMessage
 		return false
 	}
 	for idx := range prefix {
+		// 快路径：客户端逐字节重发历史时直接比较，避免整轮历史的解码/再编码。
+		if bytes.Equal(bytes.TrimSpace(prefix[idx]), bytes.TrimSpace(items[idx])) {
+			continue
+		}
 		previousNormalized := normalizeOpenAIWSJSONForCompareOrRaw(prefix[idx])
 		currentNormalized := normalizeOpenAIWSJSONForCompareOrRaw(items[idx])
 		if !bytes.Equal(previousNormalized, currentNormalized) {
@@ -1651,12 +1677,13 @@ func openAIWSRawItemsHaveToolCallContextForOutputs(items []json.RawMessage) bool
 // previousItems 和 currentItems 里都找不到匹配的工具输出，说明这个调用已经在更早的轮次
 // 完成过一次回放（或本来就不完整），继续保留会在合并时把它重复带入下一轮 replay input，
 // 导致上游看到同一个 call_id 出现多次 tool_call 而拒绝请求或产生重复调用。
+// sanitizeOpenAIWSHistoricalReplayToolCalls 返回的新头数组与 previousItems 共享正文。
 func sanitizeOpenAIWSHistoricalReplayToolCalls(
 	previousItems []json.RawMessage,
 	currentItems []json.RawMessage,
 ) []json.RawMessage {
 	if len(previousItems) == 0 {
-		return cloneOpenAIWSRawMessages(previousItems)
+		return previousItems
 	}
 	outputCallIDs := make(map[string]struct{})
 	collectOutputCallIDs := func(items []json.RawMessage) {
@@ -1680,7 +1707,7 @@ func sanitizeOpenAIWSHistoricalReplayToolCalls(
 				continue
 			}
 		}
-		sanitized = append(sanitized, append(json.RawMessage(nil), item...))
+		sanitized = append(sanitized, item)
 	}
 	return sanitized
 }
@@ -1689,7 +1716,7 @@ func openAIWSRawPayloadHasToolCallOutput(payload []byte) bool {
 	if len(payload) == 0 {
 		return false
 	}
-	input := gjson.GetBytes(payload, "input")
+	input := gjson.Get(openAIWSPayloadStringView(payload), "input")
 	if !input.Exists() {
 		return false
 	}
@@ -1707,6 +1734,33 @@ func openAIWSRawPayloadHasToolCallOutput(payload []byte) bool {
 	return false
 }
 
+// buildOpenAIWSReplayInputSequenceFromItems 基于已解析的当前 turn input 构建
+// replay 序列。返回序列的正文与 previousFullInput/currentItems 共享所有权
+// （见 combineOpenAIWSReplayItems 上方的所有权不变式），头数组可能直接转移自
+// currentItems。
+func buildOpenAIWSReplayInputSequenceFromItems(
+	previousFullInput []json.RawMessage,
+	previousFullInputExists bool,
+	currentItems []json.RawMessage,
+	currentExists bool,
+	hasPreviousResponseID bool,
+) ([]json.RawMessage, bool) {
+	if !hasPreviousResponseID || !previousFullInputExists {
+		return currentItems, currentExists
+	}
+	previousFullInput = sanitizeOpenAIWSHistoricalReplayToolCalls(previousFullInput, currentItems)
+	if !currentExists || len(currentItems) == 0 {
+		return previousFullInput, true
+	}
+	if openAIWSRawItemsHasPrefix(currentItems, previousFullInput) {
+		return currentItems, true
+	}
+	merged := make([]json.RawMessage, 0, len(previousFullInput)+len(currentItems))
+	merged = append(merged, previousFullInput...)
+	merged = append(merged, currentItems...)
+	return merged, true
+}
+
 func buildOpenAIWSReplayInputSequence(
 	previousFullInput []json.RawMessage,
 	previousFullInputExists bool,
@@ -1717,23 +1771,14 @@ func buildOpenAIWSReplayInputSequence(
 	if currentErr != nil {
 		return nil, false, currentErr
 	}
-	if !hasPreviousResponseID {
-		return cloneOpenAIWSRawMessages(currentItems), currentExists, nil
-	}
-	if !previousFullInputExists {
-		return cloneOpenAIWSRawMessages(currentItems), currentExists, nil
-	}
-	previousFullInput = sanitizeOpenAIWSHistoricalReplayToolCalls(previousFullInput, currentItems)
-	if !currentExists || len(currentItems) == 0 {
-		return cloneOpenAIWSRawMessages(previousFullInput), true, nil
-	}
-	if openAIWSRawItemsHasPrefix(currentItems, previousFullInput) {
-		return cloneOpenAIWSRawMessages(currentItems), true, nil
-	}
-	merged := make([]json.RawMessage, 0, len(previousFullInput)+len(currentItems))
-	merged = append(merged, cloneOpenAIWSRawMessages(previousFullInput)...)
-	merged = append(merged, cloneOpenAIWSRawMessages(currentItems)...)
-	return merged, true, nil
+	items, exists := buildOpenAIWSReplayInputSequenceFromItems(
+		previousFullInput,
+		previousFullInputExists,
+		currentItems,
+		currentExists,
+		hasPreviousResponseID,
+	)
+	return items, exists, nil
 }
 
 func setOpenAIWSPayloadInputSequence(
@@ -3224,29 +3269,52 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if turnState != "" && c != nil && c.Request != nil {
 				c.Request.Header.Set(openAIWSTurnStateHeader, turnState)
 			}
+			if c != nil && sessionHash != "" {
+				c.Set(openAIWSIngressSessionHashContextKey, sessionHash)
+			}
+			// 剥离本会话已知失效的加密项，阻断同一失效密文随历史反复触发上游拒绝。
+			// 历史序列须同步剥离，否则与已剥离的当前 input 项错位，prefix 复用失配。
+			if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, sessionHash); len(invalidDigests) > 0 {
+				strippedPayload, strippedCount := s.stripSessionInvalidEncryptedContentLogged(
+					currentBridgePayload.payloadRaw, invalidDigests, "ingress_ws_http_bridge_invalid_encrypted_lineage_strip", account.ID, turn,
+				)
+				if strippedCount > 0 {
+					currentBridgePayload.payloadRaw = strippedPayload
+					currentBridgePayload.payloadBytes = len(strippedPayload)
+				}
+				if bridgeReplayInputExists {
+					bridgeReplayInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(bridgeReplayInput, invalidDigests)
+				}
+				if bridgeAccountFailoverInputExists {
+					bridgeAccountFailoverInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(bridgeAccountFailoverInput, invalidDigests)
+				}
+			}
 			bridgePayloadRaw := currentBridgePayload.payloadRaw
 			bridgePayloadBytes := currentBridgePayload.payloadBytes
 			toolOutputCoverage := AnalyzeToolCallOutputContextCoverageBytes(currentBridgePayload.payloadRaw)
 			needsBridgeReplay := currentBridgePayload.previousResponseID != "" ||
 				(toolOutputCoverage.HasFunctionCallOutput && !toolOutputCoverage.ContextCoversAllCallIDs)
-			turnReplayInput, turnReplayInputExists, replayInputErr := buildOpenAIWSReplayInputSequence(
+			// 一次解析当前 input，正常 replay 与 account-failover 两份序列共享同一批正文。
+			bridgeCurrentItems, bridgeCurrentItemsExist, extractErr := openAIWSExtractNormalizedInputSequence(
+				currentBridgePayload.payloadRaw,
+			)
+			if extractErr != nil {
+				return fmt.Errorf("build websocket http bridge replay input: %w", extractErr)
+			}
+			turnReplayInput, turnReplayInputExists := buildOpenAIWSReplayInputSequenceFromItems(
 				bridgeReplayInput,
 				bridgeReplayInputExists,
-				currentBridgePayload.payloadRaw,
+				bridgeCurrentItems,
+				bridgeCurrentItemsExist,
 				needsBridgeReplay,
 			)
-			if replayInputErr != nil {
-				return fmt.Errorf("build websocket http bridge replay input: %w", replayInputErr)
-			}
-			turnAccountFailoverInput, turnAccountFailoverInputExists, failoverInputErr := buildOpenAIWSReplayInputSequence(
+			turnAccountFailoverInput, turnAccountFailoverInputExists := buildOpenAIWSReplayInputSequenceFromItems(
 				bridgeAccountFailoverInput,
 				bridgeAccountFailoverInputExists,
-				currentBridgePayload.payloadRaw,
+				bridgeCurrentItems,
+				bridgeCurrentItemsExist,
 				needsBridgeReplay,
 			)
-			if failoverInputErr != nil {
-				return fmt.Errorf("build websocket account failover input: %w", failoverInputErr)
-			}
 			if needsBridgeReplay && turnReplayInputExists {
 				updatedPayload, setInputErr := setOpenAIWSPayloadInputSequence(
 					currentBridgePayload.payloadRaw,
@@ -3307,18 +3375,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if result == nil {
 				return errors.New("websocket http bridge turn result is nil")
 			}
-			bridgeReplayInput = cloneOpenAIWSRawMessages(turnReplayInput)
+			// turnReplayInput/turnAccountFailoverInput 可能共享同一头数组（转移自
+			// bridgeCurrentItems），保存历史必须经 combine 新建头，禁止就地 append。
+			bridgeReplayInput = turnReplayInput
 			bridgeReplayInputExists = turnReplayInputExists
 			if result.wsReplayInputExists {
-				bridgeReplayInput = append(bridgeReplayInput, cloneOpenAIWSRawMessages(result.wsReplayInput)...)
+				bridgeReplayInput = combineOpenAIWSReplayItems(bridgeReplayInput, result.wsReplayInput)
 				bridgeReplayInputExists = true
 			}
-			bridgeAccountFailoverInput = cloneOpenAIWSRawMessages(turnAccountFailoverInput)
+			bridgeAccountFailoverInput = turnAccountFailoverInput
 			bridgeAccountFailoverInputExists = turnAccountFailoverInputExists
 			if len(result.wsAccountFailoverReplayInput) > 0 {
-				bridgeAccountFailoverInput = append(
+				bridgeAccountFailoverInput = combineOpenAIWSReplayItems(
 					bridgeAccountFailoverInput,
-					cloneOpenAIWSRawMessages(result.wsAccountFailoverReplayInput)...,
+					result.wsAccountFailoverReplayInput,
 				)
 				bridgeAccountFailoverInputExists = true
 			}
@@ -3622,6 +3692,18 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(upstreamMessage)
 				s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw)
 				fallbackReason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
+				if fallbackReason == openAIWSFallbackReasonInvalidEncryptedContent {
+					// 记录被上游拒绝的密文摘要；错误照旧透传，下一轮进场时按摘要预剥离。
+					if digests := collectOpenAIEncryptedContentDigestsRaw(payload); len(digests) > 0 {
+						s.markOpenAIWSInvalidEncryptedContentLineage(groupID, sessionHash, digests)
+						logOpenAIWSModeInfo(
+							"ingress_ws_invalid_encrypted_lineage_mark account_id=%d turn=%d digests=%d",
+							account.ID,
+							turn,
+							len(digests),
+						)
+					}
+				}
 				errCode, errType, errMessage := summarizeOpenAIWSErrorEventFieldsFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
 				recoverablePrevNotFound := fallbackReason == openAIWSIngressStagePreviousResponseNotFound &&
 					turnPreviousResponseID != "" &&
@@ -4020,6 +4102,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 		}
 		skipBeforeTurn = false
+		// 剥离本会话已知失效的加密项，阻断同一失效密文随历史反复触发上游拒绝。
+		// 历史序列须同步剥离，否则与已剥离的当前 input 项错位，prefix 复用失配。
+		if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, sessionHash); len(invalidDigests) > 0 {
+			strippedPayload, strippedCount := s.stripSessionInvalidEncryptedContentLogged(
+				currentPayload, invalidDigests, "ingress_ws_invalid_encrypted_lineage_strip", account.ID, turn,
+			)
+			if strippedCount > 0 {
+				currentPayload = strippedPayload
+				currentPayloadBytes = len(strippedPayload)
+			}
+			if lastTurnReplayInputExists {
+				lastTurnReplayInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(lastTurnReplayInput, invalidDigests)
+			}
+		}
 		currentPreviousResponseID := openAIWSPayloadStringFromRaw(currentPayload, "previous_response_id")
 		expectedPrev := strings.TrimSpace(lastTurnResponseID)
 		toolSignals := ToolContinuationSignals{
@@ -4347,16 +4443,19 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		responseID := strings.TrimSpace(result.RequestID)
 		lastTurnResponseID = responseID
-		lastTurnPayload = cloneOpenAIWSPayloadBytes(currentPayload)
-		lastTurnReplayInput = cloneOpenAIWSRawMessages(currentTurnReplayInput)
+		// 正文共享：currentPayload/currentTurnReplayInput 均不可变，历史直接引用；
+		// collector 增量经 combine 合并（新头数组）。
+		lastTurnReplayInput = currentTurnReplayInput
 		lastTurnReplayInputExists = currentTurnReplayInputExists
 		if result.wsReplayInputExists {
-			lastTurnReplayInput = append(lastTurnReplayInput, cloneOpenAIWSRawMessages(result.wsReplayInput)...)
+			lastTurnReplayInput = combineOpenAIWSReplayItems(lastTurnReplayInput, result.wsReplayInput)
 			lastTurnReplayInputExists = true
 		}
 		nextStrictState, strictStateErr := buildOpenAIWSIngressPreviousTurnStrictState(currentPayload)
 		if strictStateErr != nil {
 			lastTurnStrictState = nil
+			// strict 状态不可用时保留整份上一轮 payload 供慢路径比较。
+			lastTurnPayload = currentPayload
 			logOpenAIWSModeInfo(
 				"ingress_ws_prev_response_strict_state_skip account_id=%d turn=%d conn_id=%s reason=build_error cause=%s",
 				account.ID,
@@ -4366,6 +4465,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			)
 		} else {
 			lastTurnStrictState = nextStrictState
+			lastTurnPayload = nil
 		}
 
 		if responseID != "" && stateStore != nil {

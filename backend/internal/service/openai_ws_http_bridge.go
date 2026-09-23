@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -223,12 +224,14 @@ func (c *openAIWSToolCallReplayCollector) AddEvent(eventType string, message []b
 	}
 }
 
+// Items/AllItems 返回浅拷贝头数组；正文由 collector 独立分配且此后不可变，
+// 调用方按 replay 所有权不变式共享持有。
 func (c *openAIWSToolCallReplayCollector) Items() []json.RawMessage {
-	return cloneOpenAIWSRawMessages(c.items)
+	return slices.Clone(c.items)
 }
 
 func (c *openAIWSToolCallReplayCollector) AllItems() []json.RawMessage {
-	return cloneOpenAIWSRawMessages(c.allItems)
+	return slices.Clone(c.allItems)
 }
 
 func (c *openAIWSToolCallReplayCollector) addAllItem(item gjson.Result) {
@@ -427,6 +430,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, openAIWSHTTPBridgeErrorBodyLimitBytes))
 		markOpenAICyberPolicyEvent(c, respBody, resp.StatusCode, nil)
+		if resp.StatusCode == http.StatusBadRequest &&
+			extractUpstreamErrorCode(respBody) == openAIWSFallbackReasonInvalidEncryptedContent {
+			s.markOpenAIWSInvalidEncryptedContentLineageFromPayload(
+				c, body, "ingress_ws_http_bridge_invalid_encrypted_lineage_mark", account.ID, turn,
+			)
+		}
 		upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		if upstreamMsg == "" {
 			upstreamMsg = http.StatusText(resp.StatusCode)
@@ -604,6 +613,11 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			errMessage := strings.TrimSpace(errMsgRaw)
 			if errMessage == "" {
 				errMessage = "upstream error event"
+			}
+			if reason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMessage); reason == openAIWSFallbackReasonInvalidEncryptedContent {
+				s.markOpenAIWSInvalidEncryptedContentLineageFromPayload(
+					c, body, "ingress_ws_http_bridge_invalid_encrypted_lineage_mark", account.ID, turn,
+				)
 			}
 			statusCode := openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
 			shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(account, statusCode, errMessage, upstreamMessage)
