@@ -10488,6 +10488,20 @@ func (s *GatewayService) isStickyAccountUpstreamRestricted(ctx context.Context, 
 	return s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, requestedModel)
 }
 
+// applyCountTokensMimicToolBreakpoints 为 count_tokens 的 Claude OAuth mimic 路径
+// 注入 tools 断点（工具名混淆重写或普通 tools[-1]），再兜底 4 块 cache_control 上限。
+//
+// 4 块上限的兜底：其余四条出口都在自己的转发路径上调过一次，只有这里没有。
+// 不再剥离客户端 system 断点之后，「客户端 system + 客户端 messages +
+// 刚注入的 tools[-1]」可以直接顶到 5 块，而上游对超限是 400。
+// fork：上游在注入后单独 replaceBody 一次；这里合成纯函数，语义等价。
+func applyCountTokensMimicToolBreakpoints(body []byte) []byte {
+	if rw := buildToolNameRewriteFromBody(body); rw != nil {
+		return enforceCacheControlLimit(applyToolNameRewriteToBody(body, rw))
+	}
+	return enforceCacheControlLimit(applyToolsLastCacheBreakpoint(body))
+}
+
 // ForwardCountTokens 转发 count_tokens 请求到上游 API
 // 特点：不记录使用量、仅支持非流式响应
 func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) error {
@@ -10542,21 +10556,8 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 			return err
 		}
 
-		if err := replaceBody(s.rewriteMessageCacheControlIfEnabled(ctx, body)); err != nil {
+		if err := replaceBody(applyCountTokensMimicToolBreakpoints(s.rewriteMessageCacheControlIfEnabled(ctx, body))); err != nil {
 			return err
-		}
-		// 4 块上限的兜底：其余四条出口都在自己的转发路径上调过一次，只有这里没有。
-		// 不再剥离客户端 system 断点之后，「客户端 system + 客户端 messages +
-		// 刚注入的 tools[-1]」可以直接顶到 5 块，而上游对超限是 400。
-		// fork：直接包在两条 tools 断点注入的结果上，与上游「注入后再兜底」语义等价。
-		if rw := buildToolNameRewriteFromBody(body); rw != nil {
-			if err := replaceBody(enforceCacheControlLimit(applyToolNameRewriteToBody(body, rw))); err != nil {
-				return err
-			}
-		} else {
-			if err := replaceBody(enforceCacheControlLimit(applyToolsLastCacheBreakpoint(body))); err != nil {
-				return err
-			}
 		}
 	}
 
