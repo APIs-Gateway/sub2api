@@ -3533,11 +3533,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			baseAcquireReq.Headers = updatedHeaders
 		}
 		logOpenAIWSModeInfo(
-			"ingress_ws_upstream_connected account_id=%d turn=%d conn_id=%s conn_reused=%v conn_pick_ms=%d queue_wait_ms=%d preferred_conn_id=%s",
+			"ingress_ws_upstream_connected account_id=%d turn=%d conn_id=%s conn_reused=%v conn_idle_ms=%d conn_age_ms=%d upstream_pings=%d conn_pick_ms=%d queue_wait_ms=%d preferred_conn_id=%s",
 			account.ID,
 			turn,
 			truncateOpenAIWSLogValue(connID, openAIWSIDValueMaxLen),
 			lease.Reused(),
+			lease.IdleBefore().Milliseconds(),
+			lease.AgeBefore().Milliseconds(),
+			lease.UpstreamPingCount(),
 			lease.ConnPickDuration().Milliseconds(),
 			lease.QueueWaitDuration().Milliseconds(),
 			truncateOpenAIWSLogValue(preferred, openAIWSIDValueMaxLen),
