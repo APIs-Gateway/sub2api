@@ -541,6 +541,96 @@ func TestOpenAIGatewayService_RetriesRejectedIndexedNamespaceField(t *testing.T)
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "input.1.namespace").Exists())
 }
 
+func TestOpenAIGatewayServiceProactivelyStripsCrossProviderReasoningContent(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","stream":false,"store":true,"input":[` +
+		`{"type":"message","role":"user","content":"one"},` +
+		`{"type":"message","role":"assistant","content":"two"},` +
+		`{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"ok"},` +
+		`{"type":"message","role":"user","content":"five"},` +
+		`{"type":"reasoning","summary":[{"type":"summary_text","text":"keep"}],"content":[{"type":"reasoning_text","text":"remove"}]}` +
+		`]}`)
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		newOpenAIRejectedFieldTestResponse(http.StatusOK, `{"output":[],"usage":{"input_tokens":1,"output_tokens":1,"input_tokens_details":{"cached_tokens":0}}}`),
+	}}
+
+	result, err := newOpenAIRejectedFieldTestService(upstream).Forward(
+		context.Background(),
+		newOpenAIRejectedFieldTestContext(body),
+		newOpenAIRejectedFieldTestAccount(),
+		body,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.bodies, 1, "reasoning content should be normalized before the first upstream request")
+	require.Equal(t, "reasoning", gjson.GetBytes(upstream.bodies[0], "input.5.type").String())
+	require.False(t, gjson.GetBytes(upstream.bodies[0], "input.5.content").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(upstream.bodies[0], "input.5.summary.0.text").String())
+}
+
+func TestNormalizeOpenAIResponsesReasoningContentReplayStripsCrossProviderArray(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","input":[` +
+		`{"type":"message","role":"user","content":"one"},` +
+		`{"type":"message","role":"assistant","content":"two"},` +
+		`{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"ok"},` +
+		`{"type":"message","role":"user","content":"five"},` +
+		`{"type":"reasoning","id":"rs_provider","summary":[{"type":"summary_text","text":"portable"}],"content":[{"type":"reasoning_text","text":"visible reasoning"}],"opaque":9007199254740993},` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}` +
+		`]}`)
+
+	normalized, changed, err := normalizeOpenAIResponsesReasoningContentReplay(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "reasoning", gjson.GetBytes(normalized, "input.5.type").String())
+	require.False(t, gjson.GetBytes(normalized, "input.5.content").Exists())
+	require.Equal(t, "portable", gjson.GetBytes(normalized, "input.5.summary.0.text").String())
+	require.Equal(t, "9007199254740993", gjson.GetBytes(normalized, "input.5.opaque").Raw)
+	require.Equal(t, "answer", gjson.GetBytes(normalized, "input.6.content.0.text").String())
+}
+
+func TestNormalizeOpenAIResponsesReasoningContentReplayKeepsPortableShapes(t *testing.T) {
+	for _, body := range []string{
+		`{"input":[{"type":"reasoning","summary":[]}]}`,
+		`{"input":[{"type":"reasoning","content":[],"summary":[]}]}`,
+		`{"input":[{"type":"message","content":[{"type":"input_text","text":"keep"}]}]}`,
+	} {
+		normalized, changed, err := normalizeOpenAIResponsesReasoningContentReplay([]byte(body))
+		require.NoError(t, err)
+		require.False(t, changed)
+		require.JSONEq(t, body, string(normalized))
+	}
+}
+
+// Upstream tests normalizeOpenAIResponsesWebSocketCompatibilityBody; the fork
+// runs the same normalization through normalizeOpenAIWSIngressReasoningContentReplay
+// on the WebSocket ingress path.
+func TestNormalizeOpenAIWSIngressReasoningContentReplayOnlyForOpenAI(t *testing.T) {
+	body := []byte(`{"type":"response.create","model":"gpt-5.6-sol","store":true,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"keep"}],"content":[{"type":"reasoning_text","text":"remove"}]}]}`)
+	for _, accountType := range []string{AccountTypeAPIKey, AccountTypeOAuth} {
+		normalized, changed, err := normalizeOpenAIWSIngressReasoningContentReplay(body, &Account{
+			Platform: PlatformOpenAI,
+			Type:     accountType,
+		})
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.False(t, gjson.GetBytes(normalized, "input.0.content").Exists())
+		require.Equal(t, "keep", gjson.GetBytes(normalized, "input.0.summary.0.text").String())
+	}
+
+	for _, account := range []*Account{
+		nil,
+		{Platform: PlatformAnthropic, Type: AccountTypeAPIKey},
+	} {
+		normalized, changed, err := normalizeOpenAIWSIngressReasoningContentReplay(body, account)
+		require.NoError(t, err)
+		require.False(t, changed)
+		require.JSONEq(t, string(body), string(normalized))
+	}
+}
+
 func TestOpenAIGatewayService_RetriesExplicitMaxOutputTokensRejection(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"max_output_tokens":4096,"input":[{"type":"message","role":"user","content":{"max_output_tokens":"keep"}}]}`)
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{

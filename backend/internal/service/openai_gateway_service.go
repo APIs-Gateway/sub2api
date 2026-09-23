@@ -2839,6 +2839,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// 因此在转发前统一脱敏：不符合前缀规则的 id 直接删除（而不是改写），避免
 	// 伪造出一个指向错误上游对象的 id。此逻辑仅作用于 API-key 账号，独立于
 	// OAuth 账号在 filterCodexInputWithOptions 中的 reasoning/id 处理。
+	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuth()) {
+		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
+		if reasoningErr != nil {
+			return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
+		}
+		if reasoningChanged {
+			body = normalizedReasoningBody
+			originalBody = normalizedReasoningBody
+			requestView = newOpenAIRequestView(normalizedReasoningBody)
+			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
+			originalModel = reqModel
+		}
+	}
 	if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
 		sanitizedBody, sanitizedChanged, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
 		if sanitizeErr != nil {
