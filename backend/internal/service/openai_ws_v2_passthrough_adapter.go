@@ -1193,6 +1193,16 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if !ShouldSwitchAccountOn429(account.ID) {
 					return nil
 				}
+				if completedTurns.Load() > 0 {
+					// A later turn cannot be replayed on another account inside this
+					// connection; ask the client to reconnect so scheduling can pick a
+					// different account for the retried turn.
+					return NewOpenAIWSClientCloseError(
+						coderws.StatusTryAgainLater,
+						"upstream rate limit exceeded; please reconnect",
+						errors.New("later passthrough turn was rate limited before output"),
+					)
+				}
 				return &UpstreamFailoverError{
 					StatusCode:      http.StatusTooManyRequests,
 					ResponseBody:    append([]byte(nil), payload...),
