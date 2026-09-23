@@ -412,3 +412,79 @@ func TestOpenAIPromoteTempUnscheduleFailover_ResponseCommittedSkipsPromotion(t *
 	require.False(t, tempUnscheduled)
 	require.Empty(t, repo.modelRateLimitCalls)
 }
+
+func newOpenAI429FallbackTestService(t *testing.T, fallbackSettingsJSON string) (*OpenAIGatewayService, *rateLimit429AccountRepoStub) {
+	t.Helper()
+	resetUpstream429TrackerForTest()
+	t.Cleanup(resetUpstream429TrackerForTest)
+	repo := &rateLimit429AccountRepoStub{}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	if fallbackSettingsJSON != "" {
+		settingRepo := newMockSettingRepo()
+		settingRepo.data[SettingKeyRateLimit429CooldownSettings] = fallbackSettingsJSON
+		rateLimitService.SetSettingService(NewSettingService(settingRepo, &config.Config{}))
+	}
+	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	rateLimitService.SetAccountRuntimeBlocker(svc)
+	return svc, repo
+}
+
+// openAI429GateOpeningCalls primes the fork's 429 sliding-window gate so the
+// next upstream429MinAttempts/2 hits cross upstream429RatioThreshold, which
+// is what lets the configurable fallback (and the OAuth runtime block) run.
+func openAI429GateOpeningCalls(accountID int64) int {
+	for i := 0; i < upstream429MinAttempts; i++ {
+		recordUpstream429Attempt(accountID)
+	}
+	return upstream429MinAttempts / 2
+}
+
+func openAIRuntimeBlockUntilForTest(t *testing.T, svc *OpenAIGatewayService, account *Account) time.Time {
+	t.Helper()
+	raw, ok := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.True(t, ok, "expected an OpenAI runtime block")
+	until, ok := raw.(time.Time)
+	require.True(t, ok)
+	return until
+}
+
+func openAINonExhaustedCodexHeaders() http.Header {
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "37")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	headers.Set("x-codex-secondary-used-percent", "20")
+	headers.Set("x-codex-secondary-reset-after-seconds", "3600")
+	headers.Set("x-codex-secondary-window-minutes", "300")
+	return headers
+}
+
+func openAIExhaustedSevenDayCodexHeaders() http.Header {
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "100")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	return headers
+}
+
+func TestOpenAIWSErrorEvent_IgnoresHandshakeQuotaHeaders(t *testing.T) {
+	svc, repo := newOpenAI429FallbackTestService(t, "")
+	account := &Account{ID: 430, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	payload := []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
+
+	svc.persistOpenAIWSRateLimitSignal(context.Background(), account, openAIExhaustedSevenDayCodexHeaders(), payload, "rate_limit_exceeded", "rate_limit_error", "quota exhausted")
+
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account), "a semantic WS 429 must not inherit the handshake quota snapshot")
+	require.Zero(t, repo.rateLimitCalls)
+}
+
+func TestOpenAIWSDial429_KeepsResponseQuotaHeaders(t *testing.T) {
+	svc, repo := newOpenAI429FallbackTestService(t, "")
+	account := &Account{ID: 431, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	svc.persistOpenAIWSRateLimitSignal(context.Background(), account, openAIExhaustedSevenDayCodexHeaders(), nil, "rate_limit_exceeded", "rate_limit_error", "websocket dial 429")
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Greater(t, time.Until(repo.lastRateLimitReset), 6*24*time.Hour)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
