@@ -467,6 +467,72 @@ func openAIExhaustedSevenDayCodexHeaders() http.Header {
 	return headers
 }
 
+func TestOpenAI429FastPath_DoesNotBlockOAuthWhenFallbackDisabled(t *testing.T) {
+	svc, repo := newOpenAI429FallbackTestService(t, `{"enabled":false,"cooldown_seconds":12}`)
+	account := &Account{ID: 425, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	calls := openAI429GateOpeningCalls(account.ID)
+	for i := 0; i < calls; i++ {
+		_ = svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, []byte(`{"detail":"Rate limit exceeded"}`))
+	}
+
+	require.True(t, ShouldSwitchAccountOn429(account.ID), "the 429 gate must be open so the disabled fallback is what keeps the account schedulable")
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account), "disabled 429 fallback must not create an OAuth runtime cooldown")
+	require.Zero(t, repo.rateLimitCalls, "disabled 429 fallback must not persist a scheduler cooldown")
+}
+
+func TestOpenAI429FastPath_UsesConfiguredFallbackWhenEnabled(t *testing.T) {
+	svc, _ := newOpenAI429FallbackTestService(t, `{"enabled":true,"cooldown_seconds":12}`)
+	account := &Account{ID: 427, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	calls := openAI429GateOpeningCalls(account.ID)
+	for i := 0; i < calls; i++ {
+		_ = svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, []byte(`{"detail":"Rate limit exceeded"}`))
+	}
+
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	until := openAIRuntimeBlockUntilForTest(t, svc, account)
+	require.WithinDuration(t, time.Now().Add(12*time.Second), until, 3*time.Second)
+}
+
+func TestOpenAI429FastPath_DoesNotBlockOAuthWhenQuotaWindowIsNotExhausted(t *testing.T) {
+	svc, repo := newOpenAI429FallbackTestService(t, `{"enabled":false,"cooldown_seconds":12}`)
+	account := &Account{ID: 426, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	calls := openAI429GateOpeningCalls(account.ID)
+	for i := 0; i < calls; i++ {
+		_ = svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, openAINonExhaustedCodexHeaders(), []byte(`{"detail":"Rate limit exceeded"}`))
+	}
+
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account), "non-exhausted quota headers must use the configurable fallback")
+	require.Zero(t, repo.rateLimitCalls, "disabled 429 fallback must not persist a scheduler cooldown")
+}
+
+func TestOpenAI429FastPath_NonExhaustedQuotaWindowUsesShortFallbackInsteadOfWindowReset(t *testing.T) {
+	svc, repo := newOpenAI429FallbackTestService(t, `{"enabled":true,"cooldown_seconds":12}`)
+	account := &Account{ID: 428, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	calls := openAI429GateOpeningCalls(account.ID)
+	for i := 0; i < calls; i++ {
+		_ = svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, openAINonExhaustedCodexHeaders(), []byte(`{"detail":"Rate limit exceeded"}`))
+	}
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.WithinDuration(t, time.Now().Add(12*time.Second), repo.lastRateLimitReset, 3*time.Second, "non-exhausted windows must not cool the account until the 5h/7d reset")
+	require.WithinDuration(t, time.Now().Add(12*time.Second), openAIRuntimeBlockUntilForTest(t, svc, account), 3*time.Second)
+}
+
+func TestOpenAI429FastPath_ExhaustedQuotaWindowStillUsesResetHeader(t *testing.T) {
+	svc, repo := newOpenAI429FallbackTestService(t, `{"enabled":false,"cooldown_seconds":12}`)
+	account := &Account{ID: 429, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	_ = svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, openAIExhaustedSevenDayCodexHeaders(), []byte(`{"detail":"Rate limit exceeded"}`))
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Greater(t, time.Until(repo.lastRateLimitReset), 6*24*time.Hour)
+	require.Greater(t, time.Until(openAIRuntimeBlockUntilForTest(t, svc, account)), 6*24*time.Hour)
+}
+
 func TestOpenAIWSErrorEvent_IgnoresHandshakeQuotaHeaders(t *testing.T) {
 	svc, repo := newOpenAI429FallbackTestService(t, "")
 	account := &Account{ID: 430, Platform: PlatformOpenAI, Type: AccountTypeOAuth}

@@ -242,7 +242,13 @@ func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context
 			if resetAt := time.Unix(*resetUnix, 0); resetAt.After(time.Now()) {
 				cooldownUntil = resetAt
 			}
-		} else if cooldown, ok := s.rateLimitService.get429FallbackCooldown(ctx, account); ok && cooldown > 0 {
+		} else {
+			// 没有明确的配额 reset 时走可配置兜底；后台关闭 429 默认回避时
+			// 不能再写入运行时冷却，否则未耗尽额度的账号仍会被退避。
+			cooldown, ok := s.rateLimitService.get429FallbackCooldown(ctx, account)
+			if !ok || cooldown <= 0 {
+				return
+			}
 			cooldownUntil = time.Now().Add(cooldown)
 		}
 	}
