@@ -2840,16 +2840,6 @@ func openAIWSNextAttemptMessage(current, retryPayload []byte, retryCurrentTurn b
 	return append([]byte(nil), retryPayload...), true
 }
 
-func openAIWSNextAttemptMessage(current, retryPayload []byte, retryCurrentTurn bool) ([]byte, bool) {
-	if !retryCurrentTurn {
-		return append([]byte(nil), current...), true
-	}
-	if len(retryPayload) == 0 {
-		return nil, false
-	}
-	return append([]byte(nil), retryPayload...), true
-}
-
 func closeOpenAIWSFailoverExhausted(conn *coderws.Conn, failoverErr *service.UpstreamFailoverError) {
 	if failoverErr == nil {
 		closeOpenAIClientWS(conn, coderws.StatusInternalError, "upstream websocket proxy failed")
