@@ -29,6 +29,14 @@ func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures
 		{name: "upstream_1001_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusGoingAway, "upstream going away", errors.New("upstream closed session")), wantFailure: true},
 		{name: "upstream_1011_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "upstream proxy failed", errors.New("upstream failed")), wantFailure: true},
 		{name: "upstream_deadline_is_reported", proxyErr: fmt.Errorf("upstream stalled: %w", context.DeadlineExceeded), wantFailure: true},
+		// 网关自身的准入拒绝（后续 turn 的用户/账号并发槽位、cyber gate、审计）不是账号故障。
+		{name: "gateway_admission_user_slot_1013_is_not_reported", proxyErr: newOpenAIWSGatewayAdmissionCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)},
+		{name: "gateway_admission_account_busy_1013_is_not_reported", proxyErr: newOpenAIWSGatewayAdmissionCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)},
+		{name: "gateway_admission_cyber_1008_is_not_reported", proxyErr: newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)},
+		{name: "gateway_admission_slot_error_1011_is_not_reported", proxyErr: newOpenAIWSGatewayAdmissionCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", errors.New("redis down"))},
+		// 同样是 1013/1008，但来自上游（429 忙、握手鉴权失败）的必须照常上报，防止按状态码一刀切。
+		{name: "upstream_busy_1013_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "upstream websocket is busy, please retry later", errors.New("upstream 429")), wantFailure: true},
+		{name: "upstream_auth_1008_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "upstream websocket authentication failed", errors.New("upstream 401")), wantFailure: true},
 	}
 
 	for _, tt := range tests {
@@ -69,6 +77,26 @@ func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures
 
 func newOpenAIResponsesWebSocketAttributionHandler(t *testing.T, proxyErr error, reports chan<- bool) *OpenAIGatewayHandler {
 	t.Helper()
+	cache := &concurrencyCacheMock{
+		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) {
+			return true, nil
+		},
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
+			return true, nil
+		},
+	}
+	return newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, cache, func(context.Context, *gin.Context, *coderws.Conn, *service.Account, string, []byte, *service.OpenAIWSIngressHooks) error {
+		return proxyErr
+	}, reports)
+}
+
+func newOpenAIResponsesWebSocketAttributionHandlerWithProxy(
+	t *testing.T,
+	cache *concurrencyCacheMock,
+	proxy func(context.Context, *gin.Context, *coderws.Conn, *service.Account, string, []byte, *service.OpenAIWSIngressHooks) error,
+	reports chan<- bool,
+) *OpenAIGatewayHandler {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
@@ -102,28 +130,24 @@ func newOpenAIResponsesWebSocketAttributionHandler(t *testing.T, proxyErr error,
 		service.NewBillingService(cfg, nil), nil, billingCacheSvc, nil, &service.DeferredService{},
 		nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
-	cache := &concurrencyCacheMock{
-		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) {
-			return true, nil
-		},
-		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
-			return true, nil
-		},
-	}
 	return &OpenAIGatewayHandler{
-		gatewayService:      gatewaySvc,
-		billingCacheService: billingCacheSvc,
-		apiKeyService:       &service.APIKeyService{},
-		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
-		cfg:                 cfg,
-		responsesWebSocketProxy: func(context.Context, *gin.Context, *coderws.Conn, *service.Account, string, []byte, *service.OpenAIWSIngressHooks) error {
-			return proxyErr
-		},
+		gatewayService:                gatewaySvc,
+		billingCacheService:           billingCacheSvc,
+		apiKeyService:                 &service.APIKeyService{},
+		concurrencyHelper:             NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
+		cfg:                           cfg,
+		responsesWebSocketProxy:       proxy,
 		onOpenAIAccountScheduleResult: func(_ int64, success bool) { reports <- success },
 	}
 }
 
 func newOpenAIResponsesWebSocketAttributionServer(t *testing.T, h *OpenAIGatewayHandler) *httptest.Server {
+	t.Helper()
+	return newOpenAIResponsesWebSocketAttributionServerWithDone(t, h, nil)
+}
+
+// newOpenAIResponsesWebSocketAttributionServerWithDone 在 handler 返回后关闭 handlerDone（非 nil 时）。
+func newOpenAIResponsesWebSocketAttributionServerWithDone(t *testing.T, h *OpenAIGatewayHandler, handlerDone chan<- struct{}) *httptest.Server {
 	t.Helper()
 	groupID := int64(945)
 	apiKey := &service.APIKey{
@@ -138,6 +162,11 @@ func newOpenAIResponsesWebSocketAttributionServer(t *testing.T, h *OpenAIGateway
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
 		c.Next()
 	})
-	router.GET("/openai/v1/responses", h.ResponsesWebSocket)
+	router.GET("/openai/v1/responses", func(c *gin.Context) {
+		if handlerDone != nil {
+			defer close(handlerDone)
+		}
+		h.ResponsesWebSocket(c)
+	})
 	return httptest.NewServer(router)
 }
