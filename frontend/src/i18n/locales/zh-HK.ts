@@ -561,6 +561,7 @@
     reloginRequired: '會話已過期，請重新登入。',
     turnstileExpired: '驗證已過期，請重試',
     turnstileFailed: '驗證失敗，請重試',
+    captchaLoading: '正在載入驗證碼…',
     completeVerification: '請完成驗證',
     verifyYourEmail: '驗證您的郵箱',
     sessionExpired: '會話已過期',
