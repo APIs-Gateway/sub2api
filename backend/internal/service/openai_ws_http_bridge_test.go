@@ -323,10 +323,11 @@ func TestOpenAIWSHTTPBridgeDoneWithoutTerminalEventIsIncomplete(t *testing.T) {
 	}{
 		{name: "done_without_events", body: "data: [DONE]\n\n", wantFailover: true},
 		{
+			// response.created 在首个语义输出前被暂存，未写出任何事件，仍可安全 failover。
 			name: "created_then_done",
 			body: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_truncated\"}}\n\n" +
 				"data: [DONE]\n\n",
-			wantWrites: 1,
+			wantFailover: true,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1048,7 +1049,8 @@ func TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver(t *t
 			var failoverErr *UpstreamFailoverError
 			require.False(t, errors.As(err, &failoverErr))
 			require.Len(t, writes, 1)
-			require.Equal(t, "response.created", gjson.GetBytes(writes[0], "type").String())
+			// response.created 在首个语义输出前暂存；心跳不暂存，是第一个写给客户端的帧。
+			require.Equal(t, "keepalive", gjson.GetBytes(writes[0], "type").String())
 			require.Nil(t, result.FirstTokenMs)
 			if tc.wantTerminal {
 				require.NoError(t, err)

@@ -3434,9 +3434,12 @@ func TestOpenAIStreamingPostOutputDisconnectQuarantinesSharedProxyWithoutSameStr
 		resp := &http.Response{
 			StatusCode: http.StatusOK,
 			Body: &openAIStreamReadThenErrorCloser{
+				// 事件以空行完整结束后才算提交给客户端（OpenAI 首输出暂存）；
+				// 这里模拟的是「语义输出已送达后」的断流。
 				reader: strings.NewReader(strings.Join([]string{
 					"event: response.output_text.delta",
 					`data: {"type":"response.output_text.delta","delta":"partial"}`,
+					"",
 					"",
 				}, "\n")),
 				err: readErr,

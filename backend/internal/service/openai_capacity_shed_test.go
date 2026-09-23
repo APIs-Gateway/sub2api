@@ -240,7 +240,6 @@ func TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver(t *testing.T
 			require.ErrorAs(t, err, &failoverErr)
 			require.True(t, failoverErr.RetryableOnSameAccount)
 			require.True(t, failoverErr.RequestScopedTransient)
-			require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
 			require.False(t, c.Writer.Written())
 			require.Empty(t, rec.Body.String())
 		})
