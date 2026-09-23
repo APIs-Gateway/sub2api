@@ -72,7 +72,8 @@ function quota(over: Partial<PlatformQuotaItem> & { platform: string }): Platfor
 function mountStats(stats: UserStatsType, platformQuotas: PlatformQuotaItem[] | null = null, isSimple = false) {
   return mount(UserDashboardStats, {
     props: { stats, balance: 0, isSimple, platformQuotas },
-    global: { stubs: { Icon: true } },
+    // fork 的统计面板内嵌签到卡片（依赖 pinia store），与平台卡片无关，这里一并 stub。
+    global: { stubs: { Icon: true, CheckinCard: true } },
   })
 }
 
