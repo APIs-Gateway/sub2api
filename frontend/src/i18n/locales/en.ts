@@ -3880,6 +3880,7 @@
       status: {
         active: 'Active',
         inactive: 'Inactive',
+        expired: 'Expired',
         error: 'Error',
         cooldown: 'Cooldown',
         paused: 'Paused',

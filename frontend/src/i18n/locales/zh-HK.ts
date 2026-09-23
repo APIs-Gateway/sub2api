@@ -4017,6 +4017,7 @@
       status: {
         active: '正常',
         inactive: '停用',
+        expired: '已過期',
         error: '錯誤',
         cooldown: '冷卻中',
         paused: '暫停',
