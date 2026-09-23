@@ -254,6 +254,13 @@ describe('UseKeyModal', () => {
     expect(parsed.provider.openai.models['gpt-6-astra'].limit).toEqual({ context: 1050000, output: 128000 })
     expect(parsed.provider.openai.models['gpt-6'].variants.max).toEqual({})
     expect(parsed.provider.openai.models['gpt-6-astra'].variants.max).toEqual({})
+    for (const model of ['gpt-6-sol', 'gpt-6-luna']) {
+      expect(parsed.provider.openai.models[model].limit).toEqual({ context: 1050000, output: 128000 })
+      expect(parsed.provider.openai.models[model].variants).toHaveProperty('none')
+      expect(parsed.provider.openai.models[model].variants).toHaveProperty('max')
+    }
+    expect(parsed.provider.openai.models['gpt-6-sol'].name).toBe('GPT-6 Sol')
+    expect(parsed.provider.openai.models['gpt-6-luna'].name).toBe('GPT-6 Luna')
   })
 
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {
@@ -296,5 +303,21 @@ describe('UseKeyModal', () => {
     expect(fable.limit).toEqual({ context: 1048576, output: 128000 })
     expect(fable.options.thinking).toEqual({ type: 'adaptive' })
     expect(fable.options.thinking).not.toHaveProperty('budgetTokens')
+  })
+
+  it('exports Opus 5.5 only on the Anthropic provider with adaptive defaults', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: { show: true, apiKey: 'sk-test', baseUrl: 'https://example.com/v1', platform: 'anthropic' },
+      global: { stubs: { BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }, Icon: { template: '<span />' } } }
+    })
+    const tab = wrapper.findAll('button').find(button => button.text().includes('keys.useKeyModal.cliTabs.opencode'))
+    expect(tab).toBeDefined()
+    await tab!.trigger('click')
+    await nextTick()
+    const model = JSON.parse(wrapper.find('pre code').text()).provider.anthropic.models['claude-opus-5-5']
+    expect(model.limit).toEqual({ context: 1000000, output: 128000 })
+    expect(model.options).toEqual({ thinking: { type: 'adaptive' }, effort: 'medium' })
+    expect(model.variants.xhigh.effort).toBe('xhigh')
+    expect(model.variants).not.toHaveProperty('none')
   })
 })

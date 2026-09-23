@@ -8068,7 +8068,7 @@ func normalizeOpenAICodexCompactReasoningEffortForAccount(c *gin.Context, accoun
 }
 
 func normalizeOpenAICodexCompactReasoningEffort(body []byte, effectiveModel string) ([]byte, bool, error) {
-	if (!isOpenAIGPT6AstraModel(effectiveModel) && !isOpenAIGPT56Model(effectiveModel)) ||
+	if (!isOpenAIGPT6Model(effectiveModel) && !isOpenAIGPT56Model(effectiveModel)) ||
 		!strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()), "max") {
 		return body, false, nil
 	}
@@ -10093,7 +10093,11 @@ func normalizeOpenAIReasoningEffort(raw string) string {
 }
 
 func normalizeOpenAIReasoningEffortForModel(raw, model string) string {
-	if strings.EqualFold(strings.TrimSpace(raw), "max") && (isOpenAIGPT6AstraModel(model) || isOpenAIGPT56Model(model)) {
+	// GPT-6 Sol/Luna 官方支持 reasoning.effort=none，保留原值而不是折叠为空。
+	if strings.EqualFold(strings.TrimSpace(raw), "none") && openai.IsGPT6SolOrLunaModelSpelling(model) {
+		return "none"
+	}
+	if strings.EqualFold(strings.TrimSpace(raw), "max") && (isOpenAIGPT6Model(model) || isOpenAIGPT56Model(model)) {
 		return "max"
 	}
 	return normalizeOpenAIReasoningEffort(raw)

@@ -20,6 +20,8 @@ type Model struct {
 var DefaultModels = []Model{
 	{ID: "gpt-6-astra", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
 	{ID: "gpt-6", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 (Astra)"},
+	{ID: "gpt-6-sol", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Sol"},
+	{ID: "gpt-6-luna", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Luna"},
 	{ID: "gpt-5.6", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 (Sol)"},
 	{ID: "gpt-5.6-sol", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Sol"},
 	{ID: "gpt-5.6-terra", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Terra"},
@@ -104,4 +106,29 @@ func CodexBaseInstructionsForModel(model string) string {
 		}
 	}
 	return latestCodexInstructions()
+}
+
+// IsGPT6SolOrLunaModelSpelling recognizes the official GPT-6 Sol/Luna IDs and
+// the local effort/compact suffix spellings, including provider prefixes such
+// as "openai/gpt-6-sol-max". Unknown suffixes (gpt-6-solitude,
+// gpt-6-luna-preview) and GPT-6 Astra are deliberately excluded.
+func IsGPT6SolOrLunaModelSpelling(model string) bool {
+	canonical := strings.ToLower(strings.TrimSpace(model))
+	if idx := strings.LastIndex(canonical, "/"); idx >= 0 {
+		canonical = strings.TrimSpace(canonical[idx+1:])
+	}
+	canonical = strings.ReplaceAll(canonical, "_", "-")
+	canonical = strings.Join(strings.Fields(canonical), "-")
+	for _, base := range []string{"gpt-6-sol", "gpt-6-luna"} {
+		if canonical == base {
+			return true
+		}
+		if suffix, ok := strings.CutPrefix(canonical, base+"-"); ok {
+			switch suffix {
+			case "none", "low", "medium", "high", "xhigh", "max", "openai-compact":
+				return true
+			}
+		}
+	}
+	return false
 }

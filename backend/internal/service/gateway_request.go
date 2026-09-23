@@ -223,7 +223,8 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	parsed.MetadataUserID = gjson.Get(jsonStr, "metadata.user_id").String()
 
 	thinkingType := gjson.Get(jsonStr, "thinking.type").String()
-	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive"
+	// Opus 5.5 恒为 adaptive thinking：省略 thinking 字段时上游仍按 adaptive 思考。
+	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive" || (protocol == domain.PlatformAnthropic && claude.IsOpus55(parsed.Model))
 
 	parsed.OutputEffort = strings.TrimSpace(gjson.Get(jsonStr, "output_config.effort").String())
 
@@ -578,7 +579,29 @@ func FilterThinkingBlocks(body []byte, mappedModel string) []byte {
 	if !ShouldPreFilterThinkingBlocks(mappedModel) {
 		return body
 	}
-	return filterThinkingBlocksInternal(body, false)
+	return filterThinkingBlocksInternal(body, claude.IsOpus55(mappedModel))
+}
+
+// validateClaudeOpus55Request rejects settings that Claude Opus 5.5 cannot
+// honor (manual/disabled thinking, forced tool_choice). Call it with the final
+// upstream model before OAuth mimicry can remove tool_choice or alter thinking
+// defaults, so the client gets a clear 400 instead of a silent rewrite.
+func validateClaudeOpus55Request(body []byte, model string) error {
+	if !claude.IsOpus55(model) {
+		return nil
+	}
+	switch gjson.GetBytes(body, "thinking.type").String() {
+	case "disabled", "enabled":
+		return fmt.Errorf("claude-opus-5-5 requires adaptive thinking; omit thinking or use thinking.type=adaptive and output_config.effort")
+	}
+	if gjson.GetBytes(body, "tool_choice").String() == "required" {
+		return fmt.Errorf("claude-opus-5-5 does not support forced tool_choice; use auto or none")
+	}
+	switch gjson.GetBytes(body, "tool_choice.type").String() {
+	case "any", "tool", "function", "custom", "namespace":
+		return fmt.Errorf("claude-opus-5-5 does not support forced tool_choice; use auto or none")
+	}
+	return nil
 }
 
 // FilterThinkingBlocksForRetry strips thinking-related constructs for retry scenarios.
@@ -1241,7 +1264,7 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte, mappedModel string) []b
 // 策略：
 //   - 当 thinking.type 不是 "enabled"/"adaptive"：移除所有 thinking 相关块
 //   - 当 thinking.type 是 "enabled"/"adaptive"：仅移除缺失/无效 signature 的 thinking 块
-func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
+func filterThinkingBlocksInternal(body []byte, alwaysThinking bool) []byte {
 	// Fast path: if body doesn't contain "thinking", skip parsing
 	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
 		!bytes.Contains(body, []byte(`"type": "thinking"`)) &&
@@ -1257,8 +1280,8 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 		return body
 	}
 
-	// Check if thinking is enabled
-	thinkingEnabled := false
+	// Check if thinking is enabled (Opus 5.5 always thinks, even when omitted)
+	thinkingEnabled := alwaysThinking
 	if thinking, ok := req["thinking"].(map[string]any); ok {
 		if thinkType, ok := thinking["type"].(string); ok && (thinkType == "enabled" || thinkType == "adaptive") {
 			thinkingEnabled = true
@@ -1299,6 +1322,13 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 				// When thinking is enabled and this is an assistant message,
 				// only keep thinking blocks with valid signatures
 				if thinkingEnabled && role == "assistant" {
+					// Opus 5.5: redacted_thinking carries its payload in data, not signature.
+					if alwaysThinking && blockType == "redacted_thinking" {
+						if data, ok := blockMap["data"].(string); ok && data != "" {
+							newContent = append(newContent, block)
+							continue
+						}
+					}
 					signature, _ := blockMap["signature"].(string)
 					if signature != "" && signature != antigravity.DummyThoughtSignature {
 						newContent = append(newContent, block)
