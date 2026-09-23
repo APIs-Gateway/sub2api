@@ -27,10 +27,8 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 	if reqBody == nil {
 		return false, nil
 	}
-	if parallel, exists := reqBody["parallel_tool_calls"]; exists {
-		if _, ok := parallel.(bool); !ok {
-			return false, newOpenAIResponsesLiteValidationError("parallel_tool_calls", "responses Lite requires parallel_tool_calls to be a boolean")
-		}
+	if err := validateOpenAIResponsesLiteParallelToolCalls(reqBody); err != nil {
+		return false, err
 	}
 	if rawReasoning, exists := reqBody["reasoning"]; exists && rawReasoning != nil {
 		if _, ok := rawReasoning.(map[string]any); !ok {
@@ -107,6 +105,20 @@ func ensureOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any, changed 
 	}
 	reqBody["parallel_tool_calls"] = false
 	return true
+}
+
+// validateOpenAIResponsesLiteParallelToolCalls rejects a present but
+// non-boolean parallel_tool_calls before any Lite normalization mutates the
+// request, so the client gets a 400 instead of a silently rewritten value.
+func validateOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any) error {
+	parallel, exists := reqBody["parallel_tool_calls"]
+	if !exists {
+		return nil
+	}
+	if _, ok := parallel.(bool); !ok {
+		return newOpenAIResponsesLiteValidationError("parallel_tool_calls", "responses Lite requires parallel_tool_calls to be a boolean")
+	}
+	return nil
 }
 
 func openAIResponsesLiteHasTools(reqBody map[string]any) bool {
@@ -262,4 +274,45 @@ func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error)
 		return body, false, fmt.Errorf("encode responses Lite request body: %w", err)
 	}
 	return rebuilt, true, nil
+}
+
+// normalizeOpenAIResponsesLiteParallelToolCallsPayload is the API-key
+// counterpart of normalizeOpenAIResponsesLiteToolsPayload. OpenAI API-key
+// upstreams accept the Lite header as well and reject it with 400 unless
+// parallel_tool_calls is false, but they do not use the ChatGPT-internal
+// additional_tools carrier, so only parallel_tool_calls is validated and
+// pinned here; tools and reasoning are forwarded unchanged.
+func normalizeOpenAIResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, bool, error) {
+	var requestBody map[string]any
+	if err := json.Unmarshal(body, &requestBody); err != nil {
+		return body, false, fmt.Errorf("decode responses Lite request body: %w", err)
+	}
+	if requestBody == nil {
+		return body, false, nil
+	}
+	if err := validateOpenAIResponsesLiteParallelToolCalls(requestBody); err != nil {
+		return body, false, err
+	}
+	if !ensureOpenAIResponsesLiteParallelToolCalls(requestBody, false) {
+		return body, false, nil
+	}
+	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return body, false, fmt.Errorf("encode responses Lite request body: %w", err)
+	}
+	return rebuilt, true, nil
+}
+
+// normalizeOpenAIResponsesLitePayloadForAccount applies the Responses Lite
+// request contract for the selected account: OAuth accounts get the full
+// ChatGPT-internal tool normalization, OpenAI API-key accounts only get the
+// parallel_tool_calls pin. Non-OpenAI platforms (e.g. Grok) are untouched.
+func normalizeOpenAIResponsesLitePayloadForAccount(body []byte, account *Account) ([]byte, bool, error) {
+	if account == nil || !account.IsOpenAI() {
+		return body, false, nil
+	}
+	if account.IsOpenAIOAuth() {
+		return normalizeOpenAIResponsesLiteToolsPayload(body)
+	}
+	return normalizeOpenAIResponsesLiteParallelToolCallsPayload(body)
 }

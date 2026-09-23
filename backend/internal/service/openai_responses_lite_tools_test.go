@@ -485,3 +485,135 @@ func TestOpenAIGatewayServiceForward_NormalizesResponsesLiteToolsForOAuth(t *tes
 		require.Equal(t, malformed.wantParam, gjson.Get(rec.Body.String(), "error.param").String())
 	}
 }
+
+func TestOpenAIGatewayServiceForward_DisablesParallelToolCallsForResponsesLiteAPIKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, passthrough := range []bool{false, true} {
+		name := "managed"
+		if passthrough {
+			name = "passthrough"
+		}
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+			c.Request.Header.Set("User-Agent", "codex_cli_rs/0.144.1")
+			c.Request.Header.Set(responsesLiteHeader, "true")
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body: io.NopCloser(strings.NewReader(
+					"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_lite\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n" +
+						"data: [DONE]\n\n",
+				)),
+			}}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+			account := &Account{
+				ID: 503, Name: "responses-lite-api-key", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Concurrency: 1, Status: StatusActive, Schedulable: true, RateMultiplier: f64p(1),
+				Credentials: map[string]any{"api_key": "sk-test"},
+				Extra:       map[string]any{"openai_passthrough": passthrough},
+			}
+			body := []byte(`{
+				"model":"gpt-5.6-terra","stream":true,"instructions":"test",
+				"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],
+				"parallel_tool_calls":true,
+				"input":[{"type":"message","role":"user","content":"hello"}]
+			}`)
+
+			result, err := svc.Forward(context.Background(), c, account, body)
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, "true", upstream.lastReq.Header.Get(responsesLiteHeader))
+			require.True(t, gjson.GetBytes(upstream.lastBody, "tools").IsArray())
+			require.True(t, gjson.GetBytes(upstream.lastBody, "parallel_tool_calls").Exists())
+			require.False(t, gjson.GetBytes(upstream.lastBody, "parallel_tool_calls").Bool())
+		})
+	}
+}
+
+func TestOpenAIGatewayServiceForward_RejectsNonBooleanParallelToolCallsForResponsesLiteAPIKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+	c.Request.Header.Set(responsesLiteHeader, "true")
+	upstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID: 504, Name: "responses-lite-api-key-invalid", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Concurrency: 1, Status: StatusActive, Schedulable: true, RateMultiplier: f64p(1),
+		Credentials: map[string]any{"api_key": "sk-test"},
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.6-terra","tools":[{"type":"function","name":"lookup"}],"parallel_tool_calls":"false"}`))
+
+	require.ErrorContains(t, err, "parallel_tool_calls to be a boolean")
+	require.Nil(t, result)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "parallel_tool_calls", gjson.Get(rec.Body.String(), "error.param").String())
+	require.Nil(t, upstream.lastReq)
+}
+
+func TestNormalizeOpenAIResponsesLitePayloadForAccount(t *testing.T) {
+	body := []byte(`{"tools":[{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent"}]}],"parallel_tool_calls":true}`)
+
+	t.Run("non OpenAI accounts are untouched", func(t *testing.T) {
+		for _, account := range []*Account{nil, {Platform: PlatformGrok, Type: AccountTypeAPIKey}, {Platform: PlatformGrok, Type: AccountTypeOAuth}} {
+			updated, changed, err := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
+			require.NoError(t, err)
+			require.False(t, changed)
+			require.Equal(t, body, updated)
+		}
+	})
+
+	t.Run("OAuth moves namespace tools", func(t *testing.T) {
+		updated, changed, err := normalizeOpenAIResponsesLitePayloadForAccount(body, &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth})
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.False(t, gjson.GetBytes(updated, "tools").Exists())
+		require.Equal(t, "collaboration", gjson.GetBytes(updated, `input.#(type=="additional_tools").tools.0.name`).String())
+		require.Equal(t, gjson.False, gjson.GetBytes(updated, "parallel_tool_calls").Type)
+	})
+
+	t.Run("API key only pins parallel_tool_calls", func(t *testing.T) {
+		updated, changed, err := normalizeOpenAIResponsesLitePayloadForAccount(body, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.Equal(t, "namespace", gjson.GetBytes(updated, "tools.0.type").String())
+		require.False(t, gjson.GetBytes(updated, "input").Exists())
+		require.False(t, gjson.GetBytes(updated, "reasoning").Exists())
+		require.Equal(t, gjson.False, gjson.GetBytes(updated, "parallel_tool_calls").Type)
+
+		again, changed, err := normalizeOpenAIResponsesLitePayloadForAccount(updated, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
+		require.NoError(t, err)
+		require.False(t, changed)
+		require.Equal(t, updated, again)
+	})
+
+	t.Run("API key validation and malformed bodies", func(t *testing.T) {
+		account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+		invalid := []byte(`{"tools":[{"type":"function","name":"lookup"}],"parallel_tool_calls":1}`)
+		updated, changed, err := normalizeOpenAIResponsesLitePayloadForAccount(invalid, account)
+		var validationErr *openAIResponsesLiteValidationError
+		require.ErrorAs(t, err, &validationErr)
+		require.Equal(t, "parallel_tool_calls", validationErr.param)
+		require.False(t, changed)
+		require.Equal(t, invalid, updated)
+
+		malformed := []byte(`{"tools":[`)
+		updated, changed, err = normalizeOpenAIResponsesLitePayloadForAccount(malformed, account)
+		require.ErrorContains(t, err, "decode responses Lite request body")
+		require.False(t, changed)
+		require.Equal(t, malformed, updated)
+
+		null := []byte(`null`)
+		updated, changed, err = normalizeOpenAIResponsesLitePayloadForAccount(null, account)
+		require.NoError(t, err)
+		require.False(t, changed)
+		require.Equal(t, null, updated)
+	})
+}
