@@ -249,6 +249,44 @@ func TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver(t *testing.T
 	}
 }
 
+// 与上游 newOpenAIUpstreamFailoverError 一致：images / alpha search / embeddings 等
+// HTTP failover 构造点同样把容量降载标成请求级失败。
+func TestOpenAIImagesCapacityShedFailoverIsRequestScoped(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 21, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	run := func(upstreamErr *OpenAIImagesUpstreamError) *UpstreamFailoverError {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+		err := svc.handleOpenAIImagesOAuthResponseError(
+			context.Background(), c, account, "gpt-image-2", "https://chatgpt.com/backend-api/codex/responses",
+			&http.Response{StatusCode: upstreamErr.StatusCode, Header: http.Header{}},
+			OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c),
+			upstreamErr,
+		)
+		var failoverErr *UpstreamFailoverError
+		require.ErrorAs(t, err, &failoverErr)
+		return failoverErr
+	}
+
+	shed := run(&OpenAIImagesUpstreamError{
+		StatusCode: http.StatusServiceUnavailable,
+		ErrorType:  "server_error",
+		Message:    "Our servers are currently overloaded. Please try again later.",
+	})
+	require.True(t, shed.RetryableOnSameAccount)
+	require.True(t, shed.RequestScopedTransient)
+
+	other := run(&OpenAIImagesUpstreamError{
+		StatusCode: http.StatusBadGateway,
+		ErrorType:  "server_error",
+		Message:    "upstream exploded",
+	})
+	require.False(t, other.RequestScopedTransient)
+}
+
 // 裸 error 帧命中错误透传规则时，与 response.failed 一样在未输出前改写为 JSON 错误。
 func TestOpenAIStreamErrorFramePassthroughRuleBeforeOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)

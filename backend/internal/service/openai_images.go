@@ -776,11 +776,11 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 				Message:            upstreamMsg,
 			})
 			shouldDisable := s.handleFailoverSideEffects(upstreamCtx, resp, account, respBody, upstreamModel)
-			return nil, &UpstreamFailoverError{
+			return nil, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)),
-			}
+			}, upstreamMsg, respBody)
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
 	}
