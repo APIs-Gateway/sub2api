@@ -6477,13 +6477,18 @@ func (s *GatewayService) parseSSEUsagePassthrough(data string, usage *ClaudeUsag
 				usage.CacheReadInputTokens = int(v)
 			}
 
+			// 只要 message_delta 的 5m/1h 明细有一项为正，就视为权威明细：存在的字段（含显式 0）
+			// 全部覆盖，避免与 message_start 的旧明细叠加成超过聚合值的矛盾明细而重复计费。
+			// 全 0 明细视为占位默认值，不重置 message_start 已记录的明细。
 			cc5m := deltaUsage.Get("cache_creation.ephemeral_5m_input_tokens")
 			cc1h := deltaUsage.Get("cache_creation.ephemeral_1h_input_tokens")
-			if cc5m.Exists() && cc5m.Int() > 0 {
-				usage.CacheCreation5mTokens = int(cc5m.Int())
-			}
-			if cc1h.Exists() && cc1h.Int() > 0 {
-				usage.CacheCreation1hTokens = int(cc1h.Int())
+			if cc5m.Int() > 0 || cc1h.Int() > 0 {
+				if cc5m.Exists() {
+					usage.CacheCreation5mTokens = int(cc5m.Int())
+				}
+				if cc1h.Exists() {
+					usage.CacheCreation1hTokens = int(cc1h.Int())
+				}
 			}
 		}
 	}
@@ -7272,13 +7277,6 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	// （user-agent/x-stainless-*/x-app/Accept/x-stainless-helper-method/x-client-request-id）
 	if tokenType == "oauth" && mimicClaudeCode {
 		applyClaudeCodeMimicHeaders(req, reqStream)
-	}
-
-	// 写入最终 anthropic-beta header
-	// 注：透传分支白名单可能写入了客户端 anthropic-beta，无条件 Del 一次再按 finalBeta
-	// 决定是否 set，确保 dropSet 过滤后的结果一定覆盖客户端原始值。
-	account.ApplyHeaderOverrides(req.Header)
-	deleteHeadlyClaudeCodeMimicHeaders(req, reqStream)
 	}
 
 	// 写入最终 anthropic-beta header
