@@ -2872,6 +2872,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				normalized = stripped
 			}
 		}
+		if next, reasoningChanged, reasoningErr := normalizeOpenAIWSIngressReasoningContentReplay(normalized, account); reasoningErr != nil {
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", reasoningErr)
+		} else if reasoningChanged {
+			normalized = next
+		}
 		apiKey := getAPIKeyFromContext(c)
 		imageGenerationAllowed := GroupAllowsImageGeneration(apiKeyGroup(apiKey))
 		codexBridgeEnabled := isCodexCLI &&

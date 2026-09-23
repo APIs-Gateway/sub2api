@@ -626,6 +626,27 @@ func (c *openAIWSClientFrameConn) Close() error {
 	return nil
 }
 
+// normalizeOpenAIWSV2PassthroughReasoningContentFrame strips non-portable
+// reasoning.content arrays from a client frame relayed through the WS v2
+// passthrough adapter when the account is a real OpenAI destination. Upstream
+// runs the same normalization (via normalizeOpenAIResponsesWebSocketCompatibilityBody)
+// on both the first frame and every subsequent client frame; the fork routes
+// both call sites through this helper. Non-JSON frame types pass through
+// untouched; malformed JSON is rejected with a policy-violation close.
+func normalizeOpenAIWSV2PassthroughReasoningContentFrame(account *Account, msgType coderws.MessageType, payload []byte) ([]byte, error) {
+	if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
+		return payload, nil
+	}
+	normalized, changed, err := normalizeOpenAIWSIngressReasoningContentReplay(payload, account)
+	if err != nil {
+		return payload, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", err)
+	}
+	if !changed {
+		return payload, nil
+	}
+	return normalized, nil
+}
+
 func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	ctx context.Context,
 	c *gin.Context,
@@ -662,6 +683,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			firstClientMessage = stripped
 		}
 	}
+	normalizedFirst, reasoningErr := normalizeOpenAIWSV2PassthroughReasoningContentFrame(account, coderws.MessageText, firstClientMessage)
+	if reasoningErr != nil {
+		return reasoningErr
+	}
+	firstClientMessage = normalizedFirst
 	requestModel := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "model").String())
 	requestPreviousResponseID := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "previous_response_id").String())
 	logOpenAIWSV2Passthrough(
@@ -933,6 +959,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if stripped, changed := stripOpenAIOAuthResponsesWebSocketFrameMetadata(account, msgType, payload); changed {
 				payload = stripped
 			}
+			normalizedPayload, reasoningErr := normalizeOpenAIWSV2PassthroughReasoningContentFrame(account, msgType, payload)
+			if reasoningErr != nil {
+				return payload, nil, reasoningErr
+			}
+			payload = normalizedPayload
 			if isResponseCreate || eventType == "session.update" {
 				accountScopedPayload, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(payload, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 				if scopeErr != nil {

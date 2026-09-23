@@ -2888,6 +2888,22 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 
+	// 发往真实 OpenAI Responses（API Key / OAuth）前，去掉跨厂商回放的
+	// reasoning.content 非空数组（上游 32064d39e）。
+	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuth()) {
+		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
+		if reasoningErr != nil {
+			return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
+		}
+		if reasoningChanged {
+			body = normalizedReasoningBody
+			originalBody = normalizedReasoningBody
+			requestView = newOpenAIRequestView(normalizedReasoningBody)
+			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
+			originalModel = reqModel
+		}
+	}
+
 	// API-key 透传路径下，Codex CLI 等客户端可能回放此前保存的 item id（如
 	// item_<uuid>）。上游按 item 类型校验 id 前缀（message 需 "msg"、reasoning
 	// 需 "rs"、function_call 等 tool-call 需 "fc"），不匹配会被 400 拒绝；同时
@@ -3203,13 +3219,29 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if decodeErr != nil {
 			return nil, decodeErr
 		}
+		// Responses OAuth 与 Chat 兼容入口保持一致：纯文本 system 可以无损提升后删除，
+		// JSON object 模式仍需在 input 中保留 JSON 指令供上游兼容校验。
+		omitPromotedSystemMessages := !strings.EqualFold(
+			strings.TrimSpace(gjson.GetBytes(body, "text.format.type").String()),
+			"json_object",
+		)
 		codexResult := codexTransformResult{}
 		if compatMessagesBridge {
-			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{IsCodexCLI: isCodexCLI, IsCompact: isCompactRequest, SkipDefaultInstructions: true, PreserveToolCallIDs: true})
+			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
+				IsCodexCLI:                          isCodexCLI,
+				IsCompact:                           isCompactRequest,
+				SkipDefaultInstructions:             true,
+				PreserveToolCallIDs:                 true,
+				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
+			})
 			ensureCodexOAuthInstructionsField(decoded)
 			markDecodedModified()
 		} else {
-			codexResult = applyCodexOAuthTransform(decoded, isCodexCLI, isCompactRequest)
+			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
+				IsCodexCLI:                          isCodexCLI,
+				IsCompact:                           isCompactRequest,
+				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
+			})
 		}
 		if codexResult.Modified {
 			markDecodedModified()
