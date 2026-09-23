@@ -228,8 +228,8 @@ func TestPassthroughIngressBeforeTurnRejectionDoesNotForwardFollowUp(t *testing.
 	gin.SetMode(gin.TestMode)
 
 	upstreamConn := &openAIWSCaptureConn{
-		// 第二个事件长时间挂起，确保被拒的 turn 2 不会因上游 EOF 提前结束连接。
-		readDelays: []time.Duration{0, 5 * time.Second},
+		// 第二个事件延迟到达，确保被拒的 turn 2 不会因上游 EOF 提前结束连接。
+		readDelays: []time.Duration{0, 2 * time.Second},
 		events: [][]byte{
 			[]byte(`{"type":"response.completed","response":{"id":"resp_reject_1","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_reject_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
@@ -268,10 +268,17 @@ func TestPassthroughIngressBeforeTurnRejectionDoesNotForwardFollowUp(t *testing.
 	require.Equal(t, "resp_reject_1", gjson.GetBytes(readPassthroughBeforeTurnTestFrame(t, clientConn), "response.id").String())
 	writePassthroughBeforeTurnTestFrame(t, clientConn, `{"type":"response.create","model":"gpt-5.1","previous_response_id":"resp_reject_1","input":[]}`)
 
+	// 客户端必须继续读取以完成 close 握手；被拒 turn 应以 TryAgainLater 关闭连接。
+	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	_, unexpected, readErr := clientConn.Read(readCtx)
+	cancelRead()
+	require.Error(t, readErr, "rejected turn must not receive upstream output: %s", unexpected)
+	require.Equal(t, coderws.StatusTryAgainLater, coderws.CloseStatus(readErr))
+
 	var serverErr error
 	select {
 	case serverErr = <-serverErrCh:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("passthrough ingress did not exit after BeforeTurn rejection")
 	}
 	require.Error(t, serverErr)
