@@ -38,7 +38,8 @@ const (
 type cachedOpenAIAdvancedSchedulerSetting struct {
 	enabled                        bool
 	lowUpstreamRatePriorityEnabled bool
-	oauthSchedulingRateMultiplier  float64
+	// nil means OAuth accounts fall back to their own account rate.
+	oauthSchedulingRateMultiplier  *float64
 	upstreamCostWeightOverride     string
 	expiresAt                      int64
 }
@@ -1448,7 +1449,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerSettings(ctx context.Conte
 
 		enabled := false
 		lowUpstreamRatePriorityEnabled := false
-		oauthSchedulingRateMultiplier := defaultOpenAIOAuthSchedulingRateMultiplier
+		oauthSchedulingRateMultiplier := parseOpenAIOAuthSchedulingRateMultiplier(nil)
 		upstreamCostWeightOverride := ""
 		if repo := s.openAIAdvancedSchedulerSettingRepo(); repo != nil {
 			dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAIAdvancedSchedulerSettingDBTimeout)
@@ -1462,7 +1463,11 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerSettings(ctx context.Conte
 				lowUpstreamRatePriorityEnabled = strings.EqualFold(strings.TrimSpace(value), "true")
 			}
 			if value, err := repo.GetValue(dbCtx, SettingKeyOpenAIOAuthSchedulingRateMultiplier); err == nil {
-				oauthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(value)
+				// A stored empty value means the administrator explicitly cleared the
+				// override; an absent key keeps the legacy default reference rate.
+				oauthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(map[string]string{
+					SettingKeyOpenAIOAuthSchedulingRateMultiplier: value,
+				})
 			}
 			if value, err := repo.GetValue(dbCtx, SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost); err == nil {
 				upstreamCostWeightOverride = strings.TrimSpace(value)
@@ -1483,7 +1488,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerSettings(ctx context.Conte
 	if cached, ok := result.(*cachedOpenAIAdvancedSchedulerSetting); ok && cached != nil {
 		return cached
 	}
-	return &cachedOpenAIAdvancedSchedulerSetting{oauthSchedulingRateMultiplier: defaultOpenAIOAuthSchedulingRateMultiplier}
+	return &cachedOpenAIAdvancedSchedulerSetting{oauthSchedulingRateMultiplier: parseOpenAIOAuthSchedulingRateMultiplier(nil)}
 }
 
 func (s *OpenAIGatewayService) isOpenAILowUpstreamRatePriorityEnabled(ctx context.Context) bool {
@@ -1491,12 +1496,15 @@ func (s *OpenAIGatewayService) isOpenAILowUpstreamRatePriorityEnabled(ctx contex
 	return !settings.enabled && settings.lowUpstreamRatePriorityEnabled
 }
 
-func (s *OpenAIGatewayService) openAIOAuthSchedulingRateMultiplier(ctx context.Context) float64 {
-	settings := s.openAIAdvancedSchedulerSettings(ctx)
-	if settings.oauthSchedulingRateMultiplier < 0 || math.IsNaN(settings.oauthSchedulingRateMultiplier) || math.IsInf(settings.oauthSchedulingRateMultiplier, 0) {
-		return defaultOpenAIOAuthSchedulingRateMultiplier
+// openAIOAuthSchedulingRateMultiplier returns the configured OAuth reference
+// rate, or nil when OAuth accounts should use their own account rates.
+func (s *OpenAIGatewayService) openAIOAuthSchedulingRateMultiplier(ctx context.Context) *float64 {
+	rate := s.openAIAdvancedSchedulerSettings(ctx).oauthSchedulingRateMultiplier
+	if rate == nil || *rate < 0 || math.IsNaN(*rate) || math.IsInf(*rate, 0) {
+		return nil
 	}
-	return settings.oauthSchedulingRateMultiplier
+	value := *rate
+	return &value
 }
 
 func (s *OpenAIGatewayService) getOpenAIAccountScheduler(ctx context.Context) OpenAIAccountScheduler {
@@ -1970,7 +1978,7 @@ type openAILegacyUpstreamRateOrder struct {
 	rates   map[int64]float64
 }
 
-func newOpenAILegacyUpstreamRateOrder(accounts []*Account, now time.Time, oauthSchedulingRateMultiplier float64) openAILegacyUpstreamRateOrder {
+func newOpenAILegacyUpstreamRateOrder(accounts []*Account, now time.Time, oauthSchedulingRateMultiplier *float64) openAILegacyUpstreamRateOrder {
 	rates := make(map[int64]float64, len(accounts))
 	var first float64
 	distinct := false
@@ -1989,14 +1997,23 @@ func newOpenAILegacyUpstreamRateOrder(accounts []*Account, now time.Time, oauthS
 	return openAILegacyUpstreamRateOrder{enabled: len(rates) >= 2 && distinct, rates: rates}
 }
 
-func openAISchedulingRate(account *Account, now time.Time, oauthSchedulingRateMultiplier float64) (float64, bool) {
-	if account != nil && account.IsOpenAIOAuth() {
-		if oauthSchedulingRateMultiplier < 0 || math.IsNaN(oauthSchedulingRateMultiplier) || math.IsInf(oauthSchedulingRateMultiplier, 0) {
-			return 0, false
-		}
-		return oauthSchedulingRateMultiplier, true
+// openAISchedulingRate returns the rate used to order OpenAI accounts by cost.
+// OAuth accounts use the configured reference rate when set; API Key accounts
+// use a fresh upstream billing probe when available. Both fall back to the
+// account's own rate multiplier otherwise.
+func openAISchedulingRate(account *Account, now time.Time, oauthSchedulingRateMultiplier *float64) (float64, bool) {
+	if account == nil || (!account.IsOpenAIApiKey() && !account.IsOpenAIOAuth()) {
+		return 0, false
 	}
-	return openAIFreshUpstreamBillingRate(account, now)
+	if account.IsOpenAIOAuth() {
+		if rate := oauthSchedulingRateMultiplier; rate != nil && *rate >= 0 && !math.IsNaN(*rate) && !math.IsInf(*rate, 0) {
+			return *rate, true
+		}
+	} else if rate, ok := openAIFreshUpstreamBillingRate(account, now); ok {
+		return rate, true
+	}
+	rate := account.BillingRateMultiplier()
+	return rate, !math.IsNaN(rate) && !math.IsInf(rate, 0)
 }
 
 // compare returns -1 when a should be selected before b, 1 when b should be selected first.
@@ -2021,7 +2038,7 @@ func (o openAILegacyUpstreamRateOrder) compare(a, b *Account) int {
 	return 1
 }
 
-func openAIUpstreamCostFactors(accounts []*Account, now time.Time, oauthSchedulingRateMultiplier float64) map[int64]float64 {
+func openAIUpstreamCostFactors(accounts []*Account, now time.Time, oauthSchedulingRateMultiplier *float64) map[int64]float64 {
 	type rateSample struct {
 		accountID int64
 		rate      float64
