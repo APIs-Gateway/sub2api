@@ -636,12 +636,22 @@ func appendRawJSON(existing json.RawMessage, fragment string) json.RawMessage {
 	// Anthropic initializes tool_use.input to {} in content_block_start, then
 	// streams the actual input through input_json_delta events. Treat that empty
 	// object as a placeholder instead of prefixing it to the streamed JSON.
-	var existingObject map[string]json.RawMessage
-	isEmptyObject := json.Unmarshal(existing, &existingObject) == nil && existingObject != nil && len(existingObject) == 0
-	if len(existing) == 0 || isEmptyObject {
+	if len(existing) == 0 || isEmptyRawJSONObject(existing) {
 		return json.RawMessage(fragment)
 	}
 	return json.RawMessage(string(existing) + fragment)
+}
+
+// isEmptyRawJSONObject reports whether raw is `{}` (whitespace allowed). It is
+// called once per streamed delta on the accumulated buffer, so it only looks
+// at the edges instead of decoding the whole buffer (which would make large
+// tool arguments quadratic).
+func isEmptyRawJSONObject(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		return false
+	}
+	return len(bytes.TrimSpace(trimmed[1:len(trimmed)-1])) == 0
 }
 
 // writeResponsesError writes an error response in OpenAI Responses API format.
