@@ -4263,6 +4263,9 @@
         oauthPassthrough: '自動透傳（僅替換認證）',
         oauthPassthroughDesc:
           '開啟後，該 OpenAI 帳號將自動透傳請求與回應，僅替換認證并保留計費/并發/審計及必要安全過濾；如遇兼容性問題可隨時關閉回滾。',
+        flattenNamespaces: '攤平 Codex namespace 工具（相容）',
+        flattenNamespacesDesc:
+          '預設關閉：/responses 上的 namespace 工具宣告原樣轉發，這正是 ChatGPT Codex 後端期望的形態。僅當該 OAuth 帳號指向不認識 namespace 的相容上游時才開啟——攤平會把工具改名為 namespace__tool，使按 functions.<命名空間>.<工具> 定址的模型（如 gpt-5.6 多智能體）無法呼叫。壓縮（compact）請求不受該開關影響，始終攤平。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           '預設關閉。開啟後可啟用 responses_websockets_v2 協議能力（受網關全局開關與帳號類型開關約束）。',

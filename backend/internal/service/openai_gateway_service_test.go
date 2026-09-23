@@ -3912,3 +3912,11 @@ func TestOpenAIStreamingPassthrough_TerminalEventEndsStreamWithoutEOF(t *testing
 		})
 	}
 }
+
+func (c *stubGatewayCache) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *stubGatewayCache) GetReasoningContent(_ context.Context, _ string) (string, error) {
+	return "", ErrReasoningContentNotFound
+}

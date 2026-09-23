@@ -28,6 +28,7 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 		"input": "hello",
 		"prompt_cache_retention": "24h",
 		"safety_identifier": "user-1",
+		"metadata": {"user_id": "{\"session_id\":\"abc\"}", "large_id": 9007199254740993},
 		"reasoning": {"effort": "high"}
 	}`)
 
@@ -37,7 +38,10 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 	require.Equal(t, "grok-4.3", gjson.GetBytes(patched, "model").String())
 	require.False(t, gjson.GetBytes(patched, "prompt_cache_retention").Exists())
 	require.False(t, gjson.GetBytes(patched, "safety_identifier").Exists())
+	// xAI Responses 不接受 metadata（Codex / Claude Code 经 Responses 会携带），上游前必须剔除。
+	require.False(t, gjson.GetBytes(patched, "metadata").Exists())
 	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning.effort").String())
+	require.Equal(t, "hello", gjson.GetBytes(patched, "input").String())
 	_, err = patchGrokResponsesBody([]byte("not-json"), "grok-4.3")
 	require.EqualError(t, err, "invalid json request body")
 }
