@@ -219,6 +219,18 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			return nil, fmt.Errorf("adapt openai ws http bridge client tools: %w", adaptErr)
 		}
 	}
+	// The bridge forwards Lite turns with the Lite header over HTTP, so the
+	// payload must satisfy the same Lite contract as the HTTP and WS paths
+	// (OAuth tool carrier, parallel_tool_calls=false for every OpenAI account).
+	if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
+		liteBody, liteChanged, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
+		if liteErr != nil {
+			return nil, fmt.Errorf("normalize responses Lite payload: %w", liteErr)
+		}
+		if liteChanged {
+			body = liteBody
+		}
+	}
 
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
@@ -228,6 +240,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 	if isOpenAIResponsesLiteWebSocketPayload(payload) {
 		upstreamReq.Header.Set(responsesLiteHeader, "true")
+	}
+	if err := applyMappedGPT55LiteCompatibility(upstreamReq, account, body); err != nil {
+		return nil, err
 	}
 
 	proxyURL := ""

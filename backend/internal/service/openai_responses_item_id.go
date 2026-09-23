@@ -20,6 +20,10 @@ import (
 // keeps sub2api/Codex-internal item id structure from leaking to the
 // upstream (and, transitively, back to the client via any echoed fields).
 //
+// Ids longer than the upstream 64-character limit are stripped as well, even
+// with the right prefix: OpenAI rejects them with 400 before looking at the
+// prefix.
+//
 // Invalid replayed ids are removed rather than rewritten because a fabricated
 // msg/rs/fc id may point at a different upstream object.
 //
@@ -33,14 +37,23 @@ func shouldStripOpenAIResponsesInputItemID(itemType, id string) bool {
 	}
 	switch itemType {
 	case "message":
-		return !strings.HasPrefix(id, "msg")
+		return !isValidOpenAIResponsesInputItemID(id, "msg")
 	case "reasoning":
-		return !strings.HasPrefix(id, "rs")
+		return !isValidOpenAIResponsesInputItemID(id, "rs")
 	}
 	if isCodexToolCallInputType(itemType) {
-		return !strings.HasPrefix(id, "fc")
+		return !isValidOpenAIResponsesInputItemID(id, "fc")
 	}
 	return false
+}
+
+// openAIResponsesInputItemIDMaxLength is the upstream limit on input item
+// ids; a longer id with the right prefix is still rejected with 400
+// ("string too long"), so it is stripped like a wrong-prefix id.
+const openAIResponsesInputItemIDMaxLength = 64
+
+func isValidOpenAIResponsesInputItemID(id, prefix string) bool {
+	return len(id) <= openAIResponsesInputItemIDMaxLength && strings.HasPrefix(id, prefix)
 }
 
 // sanitizeOpenAIResponsesInputItemIDs strips invalid input item ids (see

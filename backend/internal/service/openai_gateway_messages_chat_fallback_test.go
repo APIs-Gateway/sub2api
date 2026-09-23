@@ -865,3 +865,36 @@ func TestForwardAsAnthropic_ResponsesSupportedAccountStillUsesResponsesEndpoint(
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Equal(t, "ok", gjson.Get(rec.Body.String(), "content.0.text").String())
 }
+
+// 回归锁：/v1/messages 在分流前就要清洗 input_schema 里的 required:null /
+// type:null，否则 Chat Completions 直转路径会把它原样带给严格校验的上游。
+func TestForwardAsAnthropic_SanitizesToolSchemaBeforeRawChatDispatch(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"stream":false,
+		"messages":[{"role":"user","content":"hello"}],
+		"tools":[{"name":"read_file","description":"read","input_schema":{"type":null,"properties":{"path":{"type":"string"}},"required":null}}]}`)
+	c, rec := newMessagesChatFallbackContext(t, body)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_schema","object":"chat.completion","model":"gpt-5.4","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, forceChatMessagesFallbackAccount(), body, "", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusOK, rec.Code)
+	tool := gjson.GetBytes(upstream.lastBody, "tools.0")
+	require.True(t, tool.Exists(), string(upstream.lastBody))
+	parameters := tool.Get("function.parameters")
+	if !parameters.Exists() {
+		parameters = tool.Get("parameters")
+	}
+	require.True(t, parameters.IsObject(), string(upstream.lastBody))
+	require.Equal(t, "object", parameters.Get("type").String())
+	require.False(t, parameters.Get("required").Exists(), string(upstream.lastBody))
+	require.Equal(t, "string", parameters.Get("properties.path.type").String())
+}
