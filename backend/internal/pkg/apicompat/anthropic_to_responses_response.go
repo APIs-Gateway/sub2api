@@ -339,6 +339,11 @@ func anthToResHandleContentBlockStart(evt *AnthropicStreamEvent, state *Anthropi
 	case "text":
 		// If we don't have an open message item, open one
 		if state.CurrentItemType != "message" {
+			// 走到这里时 CurrentItemType 只可能是 ""（前一个 reasoning/function_call
+			// 已在自己的 content_block_stop 里关闭）；保留这次关闭是为了让三个分支
+			// 的「开新 item 前先关旧的」保持同一条不变式，而不是留一个仅 text 例外。
+			events = append(events, closeCurrentResponsesItem(state)...)
+
 			state.CurrentItemID = generateItemID()
 			state.CurrentItemType = "message"
 			state.ContentIndex = 0
@@ -463,13 +468,19 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 		return events
 
 	case "function_call":
-		// Emit function_call_arguments.done + output item done
+		// Emit function_call_arguments.done + output item done.
+		// arguments must repeat exactly what the deltas already streamed for this
+		// item: clients reconcile the done event against the accumulated
+		// function_call_arguments.delta payloads and reject the call as
+		// inconsistent_tool_call when the two disagree. Omitting the field left it
+		// empty while the deltas carried the whole JSON.
 		events := []ResponsesStreamEvent{
 			makeResponsesEvent(state, "response.function_call_arguments.done", &ResponsesStreamEvent{
 				OutputIndex: state.OutputIndex,
 				ItemID:      state.CurrentItemID,
 				CallID:      state.CurrentCallID,
 				Name:        state.CurrentName,
+				Arguments:   state.CurrentArgs,
 			}),
 		}
 		events = append(events, closeCurrentResponsesItem(state)...)
@@ -481,17 +492,25 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 		// item itself stays open since more blocks may follow.
 		text := state.TextAccum
 		state.TextAccum = ""
+		contentIndex := state.ContentIndex
 		state.CurrentContent = append(state.CurrentContent, ResponsesContentPart{Type: "output_text", Text: text})
+		// 关掉一个 part 就推进 content_index：上面那句注释说的「item 保持打开，
+		// 因为后面可能还有块」正是这里的触发条件。不推进的话，同一 item 里第二个
+		// text 块会再发一次 content_part.added(content_index=0)，与第一个 part 撞在
+		// 同一下标上——SDK 的累积式 stream helper 按 content[content_index] 写入，
+		// 后一个 part 直接覆盖前一个，可见文本丢失。
+		// 只在这里推进：新 item 的 content_index 由 closeCurrentResponsesItem 归 0。
+		state.ContentIndex++
 		return []ResponsesStreamEvent{
 			makeResponsesEvent(state, "response.output_text.done", &ResponsesStreamEvent{
 				OutputIndex:  state.OutputIndex,
-				ContentIndex: state.ContentIndex,
+				ContentIndex: contentIndex,
 				ItemID:       state.CurrentItemID,
 				Text:         text,
 			}),
 			makeResponsesEvent(state, "response.content_part.done", &ResponsesStreamEvent{
 				OutputIndex:  state.OutputIndex,
-				ContentIndex: state.ContentIndex,
+				ContentIndex: contentIndex,
 				ItemID:       state.CurrentItemID,
 				Part:         &ResponsesContentPart{Type: "output_text", Text: text},
 			}),
