@@ -1295,14 +1295,14 @@ func isOpenAIRequestScopedCapacityShed(upstreamMsg string, upstreamBody []byte) 
 		isOpenAICapacityShedMessage(string(upstreamBody))
 }
 
-// openAIAccountCapacityShedIsRequestScoped 限定请求级容量恢复的适用账号：只有
-// OpenAI OAuth 账号的容量降载按请求级处理（同账号有界重试、不落账号级冷却）。
-// API Key 账号保留 fork 既有的「按模型瞬时冷却」策略（openai_account_model_transient.go）。
+// openAIAccountCapacityShedIsRequestScoped 限定请求级容量恢复的适用账号：与上游一致，
+// 所有 OpenAI 账号（OAuth / API Key）的容量降载都按请求级处理（同账号有界重试、
+// 不落账号级冷却 / 按模型瞬时冷却）。
 func openAIAccountCapacityShedIsRequestScoped(account *Account) bool {
-	return account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth
+	return account != nil && account.Platform == PlatformOpenAI
 }
 
-// applyOpenAIRequestScopedCapacityFailover 把 OAuth 账号 HTTP 层的容量降载标记为
+// applyOpenAIRequestScopedCapacityFailover 把 OpenAI 账号 HTTP 层的容量降载标记为
 // 请求级瞬时失败：允许同账号重试，且 RequestScopedTransient 阻止据此临时封禁账号。
 // 请求体过大（账号级上限）不适用。
 func applyOpenAIRequestScopedCapacityFailover(account *Account, failoverErr *UpstreamFailoverError, upstreamMsg string, upstreamBody []byte) *UpstreamFailoverError {
@@ -4626,17 +4626,6 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 	return !openAIStreamEventIsMetadata(eventType)
 }
 
-// openAIStreamEventIsStructuralProgress 标识结构性进度事件：即便尚无语义内容
-// （不算客户端输出、不提交暂存），也说明上游已开始生成，可解除 first-output 超时。
-func openAIStreamEventIsStructuralProgress(eventType string) bool {
-	switch strings.TrimSpace(eventType) {
-	case "response.output_item.added", "response.content_part.added", "response.reasoning_summary_part.added":
-		return true
-	default:
-		return false
-	}
-}
-
 // openAIStreamAddedEventStartsClientOutput 判断 *.added 结构事件是否已携带客户端语义内容。
 // 空 reasoning summary / 空 output_text part 等只是结构元数据：上游降载经常在它们之后
 // 才推 error / response.failed，把它们当首输出会固化 clientOutputStarted，使本可安全
@@ -6346,13 +6335,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	upstreamModelChecked := false
 	eventInProgress := false
 	eventStartsClientOutput := false
-	eventStartsProgress := false
 	eventStartsVisibleOutput := false
 	eventShouldFlush := false
-	// firstOutputStillStaged 表示本次尝试尚未向客户端提交任何事件（仍在暂存区）。
-	firstOutputStillStaged := func() bool {
-		return firstOutputStage != nil && !firstOutputStage.closed
-	}
 	handlePendingWriteError := func(err error) {
 		if firstOutputStage != nil && !firstOutputStage.closed {
 			message := "OpenAI first-output staging failed"
@@ -6369,13 +6353,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 	}
 	completeGuardedEvent := func(queueDrained bool) {
-		completedClientOutputEvent := eventStartsClientOutput
-		completedProgressEvent := eventStartsProgress
+		completedProgressEvent := eventStartsClientOutput
 		completedVisibleEvent := eventStartsVisibleOutput
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
-			if completedClientOutputEvent {
+			if completedProgressEvent {
 				applyAttemptResponseHeaders()
 			}
 			if shouldFlush {
@@ -6388,13 +6371,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				}
 			}
 		}
-		if completedClientOutputEvent {
-			firstOutputScanGuard.Store(false)
-		}
-		// fork 语义：结构性进度（含空 reasoning item 等 *.added 结构事件）即解除
-		// first-output 超时，避免长思考被误判超时；但这些结构事件仍留在暂存区，
-		// 直到首个语义输出才提交，期间的容量失败仍可安全 failover。
 		if completedProgressEvent && !firstOutputProgressObserved {
+			firstOutputScanGuard.Store(false)
 			firstOutputProgressObserved = true
 			stopFirstOutputTimer()
 		}
@@ -6403,7 +6381,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			firstTokenMs = &ms
 		}
 		eventStartsClientOutput = false
-		eventStartsProgress = false
 		eventStartsVisibleOutput = false
 		eventShouldFlush = false
 	}
@@ -6496,12 +6473,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if scanErr == nil {
 			return nil, nil, false
 		}
-		if errors.Is(scanErr, errOpenAIFirstOutputScannerLimit) && firstOutputStillStaged() {
+		if errors.Is(scanErr, errOpenAIFirstOutputScannerLimit) && !firstOutputProgressObserved {
 			failoverErr := s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, nil, "OpenAI SSE line exceeds guarded first-output limit")
 			failoverErr.SafeToFailoverAfterWrite = true
 			return resultWithUsage(), failoverErr, true
 		}
-		if errors.Is(scanErr, bufio.ErrTooLong) && stageFirstOutput && firstOutputStillStaged() {
+		if errors.Is(scanErr, bufio.ErrTooLong) && stageFirstOutput && !firstOutputProgressObserved {
 			failoverErr := s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, nil, "OpenAI SSE line exceeds guarded first-output limit")
 			failoverErr.SafeToFailoverAfterWrite = true
 			return resultWithUsage(), failoverErr, true
@@ -6708,7 +6685,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
 			if stageFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
-				eventStartsProgress = eventStartsProgress || startsClientOutput || openAIStreamEventIsStructuralProgress(eventType)
 				eventStartsVisibleOutput = eventStartsVisibleOutput || startsVisibleOutput
 				if startsClientOutput {
 					// 语义输出之后不再需要逐事件同步与超限保护。

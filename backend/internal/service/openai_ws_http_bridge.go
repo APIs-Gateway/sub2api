@@ -457,6 +457,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			// A disconnected client needs this attempt drained for usage, not replayed,
 			// even when only non-semantic heartbeats were delivered.
 			if turn == 1 && !clientDisconnected && !wroteDownstream && shouldFailover {
+				if account.Platform == PlatformOpenAI && !accountErrorHandled {
+					// 与上游一致：OpenAI 流内 error 帧按流式失败构造 failover（容量降载带
+					// RequestScopedTransient + 同账号重试）。fork 独有的 429 持久化分支
+					// （accountErrorHandled）保留原构造，不重复写 429 切号闸门。
+					return nil, s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, upstreamMessage, errMessage, resp.Header)
+				}
 				failoverErr := &UpstreamFailoverError{
 					StatusCode:      statusCode,
 					ResponseBody:    append([]byte(nil), upstreamMessage...),

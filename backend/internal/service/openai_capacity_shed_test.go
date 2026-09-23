@@ -107,15 +107,18 @@ func TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthAccounts(t *testing.T) {
 	require.Zero(t, repo.tempUnschedCalls)
 }
 
-// fork 适配：API Key 账号保留既有的按模型瞬时冷却语义，不被标成请求级；
-// 非容量错误、请求体过大（账号级上限）同样不受影响。
+// 与上游一致，API Key 账号的容量降载同样按请求级处理（不再落按模型瞬时冷却）；
+// 非容量错误、请求体过大（账号级上限）、非 OpenAI 平台不受影响。
 func TestOpenAIHTTPCapacityShedRequestScopeBoundaries(t *testing.T) {
 	overloaded := []byte(`{"error":{"message":"Server is overloaded. Please try again later."}}`)
 
 	apiKey := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	got := applyOpenAIRequestScopedCapacityFailover(apiKey, &UpstreamFailoverError{StatusCode: http.StatusServiceUnavailable}, "", overloaded)
-	require.False(t, got.RetryableOnSameAccount)
-	require.False(t, got.RequestScopedTransient)
+	require.True(t, got.RetryableOnSameAccount)
+	require.True(t, got.RequestScopedTransient)
+	gateway := &OpenAIGatewayService{}
+	require.False(t, gateway.handleOpenAIAccountUpstreamError(context.Background(), apiKey, http.StatusServiceUnavailable, nil, overloaded, "gpt-5"))
+	require.Zero(t, gateway.getOpenAIAccountModelTransientState().size(), "request-scoped capacity shedding must not cool down the model")
 
 	oauth := &Account{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	other := []byte(`{"error":{"message":"upstream exploded"}}`)
@@ -244,36 +247,6 @@ func TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver(t *testing.T
 			require.Empty(t, rec.Body.String())
 		})
 	}
-}
-
-// fork 语义：空 reasoning item 等结构事件解除 first-output 超时，但仍留在暂存区；
-// 超时之后才到达的容量失败依然零泄漏地 failover。
-func TestOpenAIStreamStructuralProgressDisarmsTimeoutButStaysStaged(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		MaxLineSize:                     defaultMaxLineSize,
-		OpenAIFirstOutputTimeoutSeconds: 1,
-	}}}
-	reader, writer := io.Pipe()
-	go func() {
-		defer func() { _ = writer.Close() }()
-		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_progress\"}}\n\n")
-		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"reasoning\",\"summary\":[]}}\n\n")
-		time.Sleep(1300 * time.Millisecond)
-		_, _ = io.WriteString(writer, "data: {\"type\":\"error\",\"error\":{\"message\":\"Our servers are currently overloaded. Please try again later.\"}}\n\n")
-	}()
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
-	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
-
-	_, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "model", "model")
-	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.NotEqual(t, http.StatusGatewayTimeout, failoverErr.StatusCode, "structural progress must disarm the first-output timeout")
-	require.True(t, failoverErr.RequestScopedTransient)
-	require.Empty(t, rec.Body.String())
 }
 
 // 裸 error 帧命中错误透传规则时，与 response.failed 一样在未输出前改写为 JSON 错误。

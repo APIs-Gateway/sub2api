@@ -647,7 +647,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient(t *testing
 	}
 }
 
-func proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t *testing.T, account *Account, turn int, header http.Header, body string) (*OpenAIForwardResult, error, [][]byte) {
+func proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t *testing.T, account *Account, turn int, header http.Header, body string) (*OpenAIForwardResult, [][]byte, error) {
 	t.Helper()
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -668,7 +668,7 @@ func proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t *testing.T, account *Account, 
 			return nil
 		},
 	)
-	return result, err, writes
+	return result, writes, err
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurnStagesMetadataBeforeCapacityFailover(t *testing.T) {
@@ -685,7 +685,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnStagesMetadataBeforeCapacityFailover(t *test
 	}, "\n")
 	account := &Account{ID: 12, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1}
 
-	result, err, writes := proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t, account, 1,
+	result, writes, err := proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t, account, 1,
 		http.Header{"X-Request-Id": []string{"rid-ws-bridge-capacity"}}, body)
 
 	require.Nil(t, result)
@@ -706,7 +706,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnCapacityErrorFrameIsRequestScoped(t *testing
 	}, "\n")
 	account := &Account{ID: 14, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1}
 
-	result, err, writes := proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t, account, 1, http.Header{}, body)
+	result, writes, err := proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t, account, 1, http.Header{}, body)
 
 	require.Nil(t, result)
 	var failoverErr *UpstreamFailoverError
@@ -730,7 +730,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnDoesNotReplayCapacityAfterSemanticOutput(t *
 	}, "\n")
 	account := &Account{ID: 13, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1}
 
-	result, err, writes := proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t, account, 1,
+	result, writes, err := proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t, account, 1,
 		http.Header{"X-Request-Id": []string{"rid-ws-bridge-post-output"}}, body)
 
 	require.NotNil(t, result)
@@ -759,7 +759,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnCommitsStagedMetadataWithTerminalEvent(t *te
 	}, "\n")
 	account := &Account{ID: 15, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1}
 
-	result, err, writes := proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t, account, 1, http.Header{}, body)
+	result, writes, err := proxyOpenAIWSHTTPBridgeTurnForCapacityTest(t, account, 1, http.Header{}, body)
 
 	require.NotNil(t, result)
 	require.NoError(t, err)
