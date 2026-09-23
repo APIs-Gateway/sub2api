@@ -38,8 +38,7 @@ const (
 type cachedOpenAIAdvancedSchedulerSetting struct {
 	enabled                        bool
 	lowUpstreamRatePriorityEnabled bool
-	// nil means OAuth accounts fall back to their own account rate.
-	oauthSchedulingRateMultiplier  *float64
+	oauthSchedulingRateMultiplier  *float64 // nil: OAuth accounts use their own account rate
 	upstreamCostWeightOverride     string
 	expiresAt                      int64
 }
