@@ -4329,8 +4329,6 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_APIKeyResponsesL
 				"type":"response.create","model":"gpt-5.1","stream":false,
 				"previous_response_id":"resp_lite_apikey_1",
 				"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},
-				"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],
-				"parallel_tool_calls":true,
 				"input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}]
 			}`, "resp_lite_apikey_2")
 			_ = clientConn.Close(coderws.StatusNormalClosure, "done")
@@ -4348,8 +4346,10 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_APIKeyResponsesL
 			for i, write := range upstreamConn.writes {
 				payload := requestToJSONString(write)
 				require.Equal(t, gjson.False, gjson.Get(payload, "parallel_tool_calls").Type, "turn %d: %s", i+1, payload)
-				require.Equal(t, "lookup", gjson.Get(payload, "tools.0.name").String(), "turn %d: %s", i+1, payload)
 			}
+			require.Equal(t, "lookup", gjson.Get(requestToJSONString(upstreamConn.writes[0]), "tools.0.name").String())
+			// The follow-up turn carries no tools; Lite still requires the pin.
+			require.False(t, gjson.Get(requestToJSONString(upstreamConn.writes[1]), "tools").Exists())
 		})
 	}
 }

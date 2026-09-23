@@ -19,9 +19,8 @@ func newOpenAIResponsesLiteValidationError(param, format string, args ...any) er
 
 // normalizeOpenAIResponsesLiteTools adapts namespace declarations to the
 // input.additional_tools carrier required by the Responses Lite endpoint, and
-// enforces serial tool calls (parallel_tool_calls=false) whenever tools are
-// present, since the Responses Lite endpoint does not support parallel tool
-// calls.
+// pins parallel_tool_calls=false, since the Responses Lite endpoint rejects
+// any other value.
 func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 	if reqBody == nil {
 		return false, nil
@@ -90,51 +89,18 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 	return true, nil
 }
 
-// ensureOpenAIResponsesLiteParallelToolCalls forces parallel_tool_calls to
-// false whenever the request still carries tools (top-level or moved into
-// input.additional_tools), since Responses Lite only supports serial tool
-// calls. The boolean-ness of an existing parallel_tool_calls value has
-// already been validated by the caller.
+// ensureOpenAIResponsesLiteParallelToolCalls pins parallel_tool_calls to
+// false on every Responses Lite request, with or without tools: the Lite
+// endpoint rejects any other value (including the implicit default true when
+// the field is absent) with 400 "X-OpenAI-Internal-Codex-Responses-Lite
+// requires parallel_tool_calls to be false". The boolean-ness of an existing
+// value has already been validated by the caller.
 func ensureOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any, changed bool) bool {
-	if !openAIResponsesLiteHasTools(reqBody) {
-		return changed
-	}
 	if parallel, ok := reqBody["parallel_tool_calls"].(bool); ok && !parallel {
 		return changed
 	}
 	reqBody["parallel_tool_calls"] = false
 	return true
-}
-
-// validateOpenAIResponsesLiteParallelToolCalls rejects a present but
-// non-boolean parallel_tool_calls before any Lite normalization mutates the
-// request, so the client gets a 400 instead of a silently rewritten value.
-func validateOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any) error {
-	parallel, exists := reqBody["parallel_tool_calls"]
-	if !exists {
-		return nil
-	}
-	if _, ok := parallel.(bool); !ok {
-		return newOpenAIResponsesLiteValidationError("parallel_tool_calls", "responses Lite requires parallel_tool_calls to be a boolean")
-	}
-	return nil
-}
-
-func openAIResponsesLiteHasTools(reqBody map[string]any) bool {
-	if tools, ok := reqBody["tools"].([]any); ok && len(tools) > 0 {
-		return true
-	}
-	input, _ := reqBody["input"].([]any)
-	for _, rawItem := range input {
-		item, ok := rawItem.(map[string]any)
-		if !ok || strings.TrimSpace(firstNonEmptyString(item["type"])) != "additional_tools" {
-			continue
-		}
-		if tools, ok := item["tools"].([]any); ok && len(tools) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func ensureOpenAIResponsesLiteReasoningContext(reqBody map[string]any) bool {

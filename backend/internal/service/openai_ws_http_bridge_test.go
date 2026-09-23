@@ -835,7 +835,7 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 		Concurrency: 1,
 		Status:      StatusActive,
 	}
-	payload := []byte(`{"type":"response.create","generate":true,"model":"sol","stream":true,"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},"reasoning":{"effort":"max"},"input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],"parallel_tool_calls":true}`)
+	payload := []byte(`{"type":"response.create","generate":true,"model":"sol","stream":true,"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},"reasoning":{"effort":"max"},"input":"hi","parallel_tool_calls":true}`)
 
 	type bridgeResult struct {
 		result *OpenAIForwardResult
