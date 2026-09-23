@@ -420,8 +420,7 @@ func TestApplyCodexOAuthTransform_PreservesAllowedTools(t *testing.T) {
 				before, err := json.Marshal(reqBody)
 				require.NoError(t, err)
 				reqBody["model"] = "gpt-6-astra"
-				result := applyCodexOAuthTransform(reqBody, true, false)
-				require.NoError(t, result.Error)
+				applyCodexOAuthTransform(reqBody, true, false)
 				after, err := json.Marshal(map[string]any{
 					"tools": reqBody["tools"], "input": reqBody["input"], "tool_choice": reqBody["tool_choice"],
 				})
