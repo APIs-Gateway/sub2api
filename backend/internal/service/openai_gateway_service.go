@@ -2628,11 +2628,20 @@ func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool 
 	}
 }
 
-func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Account, statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
 		return false
 	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, upstreamBody) {
+		return true
+	}
+	// A missing model is account/provider availability, not a malformed client
+	// request: another OpenAI-compatible account may serve it. Only a managed
+	// gateway (with an account repository, i.e. a handler that can exclude this
+	// account and select another) consumes the failover sentinel; a bare
+	// forwarding service keeps the deterministic upstream 400.
+	if s != nil && s.accountRepo != nil && account.IsOpenAICompatible() &&
+		statusCode == http.StatusBadRequest && isOpenAICompatibleModelNotFound400(upstreamBody) {
 		return true
 	}
 	if s.shouldFailoverUpstreamError(statusCode) {
@@ -3624,7 +3633,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying non-WSv2 request after %s (account: %s)", reason, account.Name)
 				continue
 			}
-			if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+			if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
 				upstreamDetail := ""
 				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes

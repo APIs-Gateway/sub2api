@@ -145,11 +145,13 @@ func TestOpenAIResponseFailedContextWindowDetection(t *testing.T) {
 	}
 }
 
+var openAIOAuthFailoverTestAccount = &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Name: "acct"}
+
 func TestOpenAIContextWindowErrorDoesNotFailover(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	contextBody := []byte(`{"error":{"code":"context_length_exceeded","message":"` + responseFailedContextMessage + `"}}`)
-	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, responseFailedContextMessage, contextBody))
-	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, "upstream unavailable", []byte(`{"error":{"message":"upstream unavailable"}}`)))
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(openAIOAuthFailoverTestAccount, http.StatusBadGateway, responseFailedContextMessage, contextBody))
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(openAIOAuthFailoverTestAccount, http.StatusBadGateway, "upstream unavailable", []byte(`{"error":{"message":"upstream unavailable"}}`)))
 }
 
 func TestOpenAIRequestBodyTooLargeFailsOverButContextWindowDoesNot(t *testing.T) {
@@ -161,12 +163,14 @@ func TestOpenAIRequestBodyTooLargeFailsOverButContextWindowDoesNot(t *testing.T)
 	}
 
 	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(
+		openAIOAuthFailoverTestAccount,
 		http.StatusRequestEntityTooLarge,
 		"request entity too large",
 		bodyLimitBody,
 	))
 	require.True(t, IsOpenAIRequestBodyTooLargeFailover(bodyLimitFailover))
 	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(
+		openAIOAuthFailoverTestAccount,
 		http.StatusRequestEntityTooLarge,
 		responseFailedContextMessage,
 		[]byte(`{"error":{"code":"context_length_exceeded","message":"`+responseFailedContextMessage+`"}}`),
