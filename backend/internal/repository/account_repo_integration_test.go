@@ -1233,7 +1233,7 @@ func (s *AccountRepoSuite) TestBulkUpdate_ProbeEnabledRequiresOpenAIAPIKeyAccoun
 	s.Require().Equal(true, gotValid.Extra[service.UpstreamBillingProbeEnabledExtraKey])
 }
 
-func (s *AccountRepoSuite) TestListOAuthRefreshCandidates_ExcludesPermanentlyUnschedulable() {
+func (s *AccountRepoSuite) TestListOAuthRefreshCandidates_IncludesPausedActiveAccounts() {
 	eligible := mustCreateAccount(s.T(), s.client, &service.Account{
 		Name:        "refresh-eligible",
 		Platform:    service.PlatformOpenAI,
@@ -1242,23 +1242,36 @@ func (s *AccountRepoSuite) TestListOAuthRefreshCandidates_ExcludesPermanentlyUns
 		Schedulable: true,
 		Credentials: map[string]any{"refresh_token": "refresh-eligible-token"},
 	})
-	unschedulable := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name:        "refresh-unschedulable",
+	// Paused but active OAuth accounts (schedulable=false) must remain refresh
+	// candidates so their stored access_token does not silently expire.
+	paused := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:        "refresh-paused",
 		Platform:    service.PlatformOpenAI,
 		Type:        service.AccountTypeOAuth,
 		Status:      service.StatusActive,
 		Schedulable: true,
-		Credentials: map[string]any{"refresh_token": "refresh-unschedulable-token"},
+		Credentials: map[string]any{"refresh_token": "refresh-paused-token"},
 	})
-	s.Require().NoError(s.repo.SetSchedulable(s.ctx, unschedulable.ID, false))
+	s.Require().NoError(s.repo.SetSchedulable(s.ctx, paused.ID, false))
+	// Permanently rejected accounts drop out through status = 'active'.
+	errored := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:        "refresh-error",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusError,
+		Schedulable: false,
+		Credentials: map[string]any{"refresh_token": "refresh-error-token"},
+	})
 
 	candidates, err := s.repo.ListOAuthRefreshCandidates(s.ctx)
 	s.Require().NoError(err)
 
 	ids := idsOfAccounts(candidates)
 	s.Require().Contains(ids, eligible.ID)
-	s.Require().NotContains(ids, unschedulable.ID,
-		"permanently unschedulable accounts must not remain OAuth refresh candidates")
+	s.Require().Contains(ids, paused.ID,
+		"paused (schedulable=false) active accounts must remain OAuth refresh candidates")
+	s.Require().NotContains(ids, errored.ID,
+		"error accounts must not be OAuth refresh candidates")
 }
 
 func idsOfAccounts(accounts []service.Account) []int64 {
