@@ -6793,6 +6793,11 @@
         openaiAllowClaudeCodeCodexPlugin: "Allow using the Codex plugin in Claude Code",
         openaiAllowClaudeCodeCodexPluginDesc:
           "Global switch; only affects OpenAI OAuth accounts that have 'Codex official clients only' enabled. When on, all such accounts additionally allow requests from the Claude Code Codex plugin (exact match on originator=Claude Code) without per-account config; upstream requests remain pass-through.",
+        claudeCodeClientVersion: 'Claude Code client version',
+        claudeCodeClientVersionHint: "The client version this gateway declares upstream when impersonating the official Claude Code CLI. Leave empty to use the auto-synced latest official release; setting a value pins it and stops following auto-sync. The SUB2API_CLAUDE_CLI_VERSION environment variable or built-in version is used only when neither the manual nor synced value is valid.",
+        claudeCodeVersionAutoSync: 'Auto-sync Claude Code version',
+        claudeCodeVersionAutoSyncHint: 'Fetches the latest Claude Code client version from the official release channel every hour, so you never need to upgrade this service just to keep the version current. When disabled, fetching stops but the previously synced version remains available. The manual version above always takes priority.',
+        claudeCodeVersionSyncedValue: 'Currently synced: {version}',
       },
       webSearchEmulation: {
         title: 'Web Search Emulation',

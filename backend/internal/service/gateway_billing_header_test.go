@@ -138,7 +138,7 @@ func TestBuildOAuthRequest_BillingMatchesWireUserAgent(t *testing.T) {
 				defer func() { _ = req.Body.Close() }()
 				wantUA := cachedUA
 				if tc.mimic {
-					wantUA = claude.DefaultHeaders["User-Agent"]
+					wantUA = claude.DefaultHeaders()["User-Agent"]
 				}
 				require.Equal(t, wantUA, getHeaderRaw(req.Header, "User-Agent"))
 				version := ExtractCLIVersion(wantUA)
