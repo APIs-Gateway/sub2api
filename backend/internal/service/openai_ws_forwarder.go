@@ -2181,6 +2181,54 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	flushedBufferedEventCount := 0
 	firstEventType := ""
 	lastEventType := ""
+	clientDisconnected := false
+	clientDisconnectDrainStartedAt := time.Time{}
+	readTimeout := s.openAIWSReadTimeout()
+	upstreamReadCtx := ctx
+	upstreamReadDetached := false
+	clientRequestCanceled := func() bool {
+		return ctx != nil && errors.Is(ctx.Err(), context.Canceled)
+	}
+	markClientDisconnected := func(cause string) {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		clientDisconnectDrainStartedAt = time.Now()
+		if !upstreamReadDetached {
+			upstreamReadCtx = context.WithoutCancel(ctx)
+			upstreamReadDetached = true
+		}
+		logOpenAIWSModeInfo(
+			"client_disconnected account_id=%d conn_id=%s cause=%s events=%d token_events=%d",
+			account.ID,
+			connID,
+			cause,
+			eventCount,
+			tokenEventCount,
+		)
+	}
+	markClientRequestCanceled := func() {
+		if clientRequestCanceled() {
+			markClientDisconnected("request_context_canceled")
+		}
+	}
+	resultWithUsage := func() *OpenAIForwardResult {
+		return &OpenAIForwardResult{
+			RequestID:        responseID,
+			Usage:            *usage,
+			Model:            originalModel,
+			UpstreamModel:    mappedModel,
+			ServiceTier:      extractOpenAIServiceTier(reqBody),
+			ReasoningEffort:  extractOpenAIReasoningEffort(reqBody, mappedModel, originalModel),
+			Stream:           reqStream,
+			OpenAIWSMode:     true,
+			ResponseHeaders:  lease.HandshakeHeaders(),
+			Duration:         time.Since(startTime),
+			FirstTokenMs:     firstTokenMs,
+			ClientDisconnect: clientDisconnected,
+		}
+	}
 
 	var flusher http.Flusher
 	if reqStream {
@@ -2199,7 +2247,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		flusher = f
 	}
 
-	clientDisconnected := false
 	flushBatchSize := s.openAIWSEventFlushBatchSize()
 	flushInterval := s.openAIWSEventFlushInterval()
 	pendingFlushEvents := 0
@@ -2232,7 +2279,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			flushStreamWriter(forceFlush)
 			return
 		}
-		clientDisconnected = true
+		markClientDisconnected("downstream_write_error")
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI WS Mode] client disconnected, continue draining upstream: account=%d", account.ID)
 	}
 	flushBufferedStreamEvents := func(reason string) {
@@ -2259,17 +2306,32 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
-	readTimeout := s.openAIWSReadTimeout()
+	// Keep per-read timeouts unchanged for connected clients. Once a client
+	// disconnects, use the same timeout as a bounded total drain budget.
 	var pendingJSONDocuments [][]byte
 
+readLoop:
 	for {
+		markClientRequestCanceled()
 		var message []byte
 		var readErr error
+		readUsedDetachedContext := upstreamReadDetached
 		if len(pendingJSONDocuments) > 0 {
 			message = pendingJSONDocuments[0]
 			pendingJSONDocuments = pendingJSONDocuments[1:]
 		} else {
-			message, readErr = lease.ReadMessageWithContextTimeout(ctx, readTimeout)
+			currentReadTimeout := readTimeout
+			if clientDisconnected && !clientDisconnectDrainStartedAt.IsZero() {
+				remaining := readTimeout - time.Since(clientDisconnectDrainStartedAt)
+				if remaining <= 0 {
+					lease.MarkBroken()
+					break readLoop
+				}
+				if remaining < currentReadTimeout {
+					currentReadTimeout = remaining
+				}
+			}
+			message, readErr = lease.ReadMessageWithContextTimeout(upstreamReadCtx, currentReadTimeout)
 			if readErr == nil {
 				if documents, repaired := splitOpenAIConcatenatedJSONDocuments(message); repaired {
 					logOpenAIWSModeInfo(
@@ -2284,6 +2346,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				}
 			}
 		}
+		markClientRequestCanceled()
 		if readErr == nil && !json.Valid(message) {
 			// 上游偶发返回非法/截断的 Responses 事件 JSON（例如粘连了半截无法解析的尾部）。
 			// gjson 的宽松解析会静默吞掉这类畸形内容或误取到无关字段，必须显式拒绝并断开连接，
@@ -2325,11 +2388,14 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				truncateOpenAIWSLogValue(firstEventType, openAIWSLogValueMaxLen),
 				truncateOpenAIWSLogValue(lastEventType, openAIWSLogValueMaxLen),
 			)
+			if clientDisconnected {
+				if !readUsedDetachedContext && errors.Is(readErr, context.Canceled) && clientRequestCanceled() {
+					continue
+				}
+				break
+			}
 			if !wroteDownstream {
 				return nil, wrapOpenAIWSFallback(classifyOpenAIWSReadFallbackReason(readErr), readErr)
-			}
-			if clientDisconnected {
-				break
 			}
 			setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(readErr.Error()), "")
 			return nil, fmt.Errorf("openai ws read event: %w", readErr)
@@ -2531,7 +2597,13 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
+	if clientDisconnected && terminalEventCount == 0 {
+		return resultWithUsage(), fmt.Errorf("openai ws stream incomplete after client disconnect: %w", context.Canceled)
+	}
 	if !reqStream {
+		if clientDisconnected {
+			return resultWithUsage(), nil
+		}
 		if len(finalResponse) == 0 {
 			logOpenAIWSModeInfo(
 				"missing_final_response account_id=%d conn_id=%s events=%d token_events=%d terminal_events=%d wrote_downstream=%v",
@@ -2592,21 +2664,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		clientDisconnected,
 	)
 
-	return &OpenAIForwardResult{
-		RequestID:        responseID,
-		Usage:            *usage,
-		Model:            originalModel,
-		UpstreamModel:    mappedModel,
-		ImageCount:       imageCounter.Count(),
-		ImageOutputSizes: imageCounter.Sizes(),
-		ServiceTier:      extractOpenAIServiceTier(reqBody),
-		ReasoningEffort:  extractOpenAIReasoningEffort(reqBody, mappedModel, originalModel),
-		Stream:           reqStream,
-		OpenAIWSMode:     true,
-		ResponseHeaders:  lease.HandshakeHeaders(),
-		Duration:         time.Since(startTime),
-		FirstTokenMs:     firstTokenMs,
-	}, nil
+	result := resultWithUsage()
+	result.ImageCount = imageCounter.Count()
+	result.ImageOutputSizes = imageCounter.Sizes()
+	return result, nil
 }
 
 // ProxyResponsesWebSocketFromClient 处理客户端入站 WebSocket（OpenAI Responses WS Mode）并转发到上游。
@@ -3564,7 +3625,21 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					}
 				}
 				replayCollector.AddEvent(eventType, upstreamMessage)
-				if err := writeClientMessage(upstreamMessage); err != nil {
+				// 客户端写出副本改写容量降载码：Codex 对 error/response.failed 中的
+				// server_is_overloaded / slow_down 判致命并终止会话，改写后走客户端
+				// 内置退避重试。HTTP/SSE 与 http_bridge 两条路径早已这么做，
+				// ctx_pool 的 ingress 直写路径是唯一漏掉的一条。
+				//
+				// 必须写进独立变量而不是原地改 upstreamMessage：后续账号状态判定
+				// 仍要按未改写的原始 payload 进行，这正是
+				// sanitizeOpenAICapacityShedErrorCodeForClient 注释里写明的前提。
+				clientMessage := upstreamMessage
+				if eventType == "error" || eventType == "response.failed" {
+					if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
+						clientMessage = rewritten
+					}
+				}
+				if err := writeClientMessage(clientMessage); err != nil {
 					if isOpenAIWSClientDisconnectError(err) {
 						clientDisconnected = true
 						closeStatus, closeReason := summarizeOpenAIWSReadCloseError(err)
