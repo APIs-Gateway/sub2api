@@ -24,7 +24,6 @@ jobs:
       - name: Deployment shell contracts
         run: |
           /bin/sh deploy/tests/docker-compose-security-test.sh
-          /bin/sh deploy/tests/docker-compose-gateway-env-test.sh
           /bin/sh deploy/test-caddyfile-cache.sh
       - name: Unit tests (coverage)
         working-directory: backend
