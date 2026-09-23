@@ -22,11 +22,18 @@ import (
 )
 
 const (
-	// 1M 输入 token 下，渠道价与官方兜底价的期望费用（USD）
+	// 渠道价与官方兜底价的每 1M 输入 token 单价（USD）
 	channelPricingExpectedChannelCost  = 0.4
 	channelPricingExpectedOfficialCost = 0.2
 	// 用于验证「不相关的渠道配置不会被误命中」的对照价
 	channelPricingUnrelatedCost = 0.9
+
+	// fork 适配：fork 对 GPT-5.6 族在输入超过长上下文阈值（272k）后按整次会话
+	// 2 倍输入价计费，渠道价同样叠加。上游用例的 1M 输入 token 会让所有期望值翻倍，
+	// 与本用例要验证的「渠道价是否命中」无关，因此改用阈值以下的 100k token，
+	// 期望费用按比例缩放（上面的常量仍表示每 1M token 的单价）。
+	channelPricingTestInputTokens = 100_000
+	channelPricingTestCostScale   = float64(channelPricingTestInputTokens) / 1e6
 )
 
 // tokenPricingForModels 构造 token 计费模式的渠道定价；inputPerMillion 单位为 USD/1M token。
@@ -81,7 +88,7 @@ func recordUsageWithChannelPricing(t *testing.T, requestedModel string, subscrip
 			Model:        requestedModel,
 			BillingModel: requestedModel,
 			Usage: OpenAIUsage{
-				InputTokens:  1_000_000,
+				InputTokens:  channelPricingTestInputTokens,
 				OutputTokens: 0,
 			},
 			Duration: time.Second,
@@ -108,7 +115,7 @@ func TestChannelPricing_ExactModelMatch(t *testing.T) {
 	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna", false, []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
 	})
-	require.InDelta(t, channelPricingExpectedChannelCost, log.InputCost, 1e-9)
+	require.InDelta(t, channelPricingExpectedChannelCost*channelPricingTestCostScale, log.InputCost, 1e-9)
 }
 
 // issue #5256 主回归：请求模型带 effort 后缀、渠道只配基名（无通配符）→ 仍应按渠道价计。
@@ -117,9 +124,9 @@ func TestChannelPricing_SuffixedModelUsesNormalizedChannelPricing(t *testing.T) 
 	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-high", false, []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
 	})
-	require.InDelta(t, channelPricingExpectedChannelCost, log.InputCost, 1e-9,
+	require.InDelta(t, channelPricingExpectedChannelCost*channelPricingTestCostScale, log.InputCost, 1e-9,
 		"suffixed request model should fall back to the normalized channel pricing; got %v (%v = official fallback)",
-		log.InputCost, channelPricingExpectedOfficialCost)
+		log.InputCost, channelPricingExpectedOfficialCost*channelPricingTestCostScale)
 }
 
 // 同一根因的另一种变体名：上游返回带日期后缀的模型名
@@ -128,7 +135,7 @@ func TestChannelPricing_DateSuffixedModelUsesNormalizedChannelPricing(t *testing
 	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-2026-08-01", false, []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
 	})
-	require.InDelta(t, channelPricingExpectedChannelCost, log.InputCost, 1e-9,
+	require.InDelta(t, channelPricingExpectedChannelCost*channelPricingTestCostScale, log.InputCost, 1e-9,
 		"date-suffixed request model should fall back to the normalized channel pricing; got %v", log.InputCost)
 }
 
@@ -139,7 +146,7 @@ func TestChannelPricing_ExactVariantWinsOverNormalizedBaseName(t *testing.T) {
 		tokenPricingForModels([]string{"gpt-5.6-luna-high"}, channelPricingUnrelatedCost),
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
 	})
-	require.InDelta(t, channelPricingUnrelatedCost, log.InputCost, 1e-9,
+	require.InDelta(t, channelPricingUnrelatedCost*channelPricingTestCostScale, log.InputCost, 1e-9,
 		"explicit per-variant channel pricing must win over the normalized base name")
 }
 
@@ -148,7 +155,7 @@ func TestChannelPricing_SuffixedModelSubscriptionGroup(t *testing.T) {
 	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-high", true, []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
 	})
-	require.InDelta(t, channelPricingExpectedChannelCost, log.InputCost, 1e-9)
+	require.InDelta(t, channelPricingExpectedChannelCost*channelPricingTestCostScale, log.InputCost, 1e-9)
 }
 
 // 反向保护：渠道只配了不相关的模型时，归一化查找不得误命中该配置，
@@ -157,6 +164,6 @@ func TestChannelPricing_UnrelatedChannelModelNotMatched(t *testing.T) {
 	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-high", false, []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.4"}, channelPricingUnrelatedCost),
 	})
-	require.InDelta(t, channelPricingExpectedOfficialCost, log.InputCost, 1e-9,
+	require.InDelta(t, channelPricingExpectedOfficialCost*channelPricingTestCostScale, log.InputCost, 1e-9,
 		"normalized lookup must not match an unrelated channel pricing entry")
 }
