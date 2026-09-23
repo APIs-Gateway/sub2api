@@ -1830,7 +1830,8 @@ func (h *AccountHandler) ResetQuota(c *gin.Context) {
 	}
 
 	if err := h.adminService.ResetAccountQuota(c.Request.Context(), accountID); err != nil {
-		response.InternalError(c, "Failed to reset account quota: "+err.Error())
+		// ErrAccountNotFound → 404；其它错误按 infraerrors 映射（未知错误为 500）。
+		response.ErrorFrom(c, err)
 		return
 	}
 
