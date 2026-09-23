@@ -4,7 +4,7 @@ package repository
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -24,7 +24,8 @@ func TestUserCreateJoinsOuterTransactionWithInvitationClaim(t *testing.T) {
 	redeemRepo := NewRedeemCodeRepository(client)
 
 	ctx := context.Background()
-	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	// redeem_codes.code 有长度上限，后缀用 36 进制纳秒时间戳保持简短且唯一。
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
 
 	// 清理：本测试会真实提交少量数据，确保不影响同包其它集成测试。
 	var committedUserIDs []int64
@@ -39,7 +40,8 @@ func TestUserCreateJoinsOuterTransactionWithInvitationClaim(t *testing.T) {
 		}
 	})
 
-	seedCode := func(code string) int64 {
+	seedCode := func(t *testing.T, code string) int64 {
+		t.Helper()
 		c, err := client.RedeemCode.Create().
 			SetCode(code).
 			SetType(service.RedeemTypeInvitation).
@@ -63,7 +65,7 @@ func TestUserCreateJoinsOuterTransactionWithInvitationClaim(t *testing.T) {
 	}
 
 	t.Run("rollback removes user and releases claim", func(t *testing.T) {
-		codeID := seedCode("ITX-RACE-ROLLBACK-" + suffix)
+		codeID := seedCode(t, "ITXR-" + suffix)
 		email := "itx-rollback-" + suffix + "@example.com"
 		tx, err := client.Tx(ctx)
 		require.NoError(t, err)
@@ -86,7 +88,7 @@ func TestUserCreateJoinsOuterTransactionWithInvitationClaim(t *testing.T) {
 	})
 
 	t.Run("commit persists user and claim together", func(t *testing.T) {
-		codeID := seedCode("ITX-RACE-COMMIT-" + suffix)
+		codeID := seedCode(t, "ITXC-" + suffix)
 		email := "itx-commit-" + suffix + "@example.com"
 		tx, err := client.Tx(ctx)
 		require.NoError(t, err)
@@ -110,7 +112,7 @@ func TestUserCreateJoinsOuterTransactionWithInvitationClaim(t *testing.T) {
 	})
 
 	t.Run("second claim in another transaction is rejected", func(t *testing.T) {
-		codeID := seedCode("ITX-RACE-SECOND-" + suffix)
+		codeID := seedCode(t, "ITXS-" + suffix)
 
 		tx1, err := client.Tx(ctx)
 		require.NoError(t, err)
