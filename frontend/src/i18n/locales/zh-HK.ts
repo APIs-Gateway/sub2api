@@ -3651,7 +3651,9 @@
       quotaEndsInMinutes: '額度將在 {minutes} 分鐘後結束',
       quotaEndsInHoursMinutes: '額度將在 {hours} 小時 {minutes} 分鐘後結束',
       quotaEndsInDaysHours: '額度將在 {days} 天 {hours} 小時後結束',
-      daysRemaining: '天剩餘',
+      daysRemaining: '剩餘 {days} 天',
+      hoursMinutesRemaining: '剩餘 {hours} 小時 {minutes} 分鐘',
+      minutesRemaining: '剩餘 {minutes} 分鐘',
       remainingDays: '剩餘天數',
       noExpiration: '無過期時間',
       status: {

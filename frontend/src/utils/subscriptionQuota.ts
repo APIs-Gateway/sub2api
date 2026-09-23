@@ -4,6 +4,10 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
 export type ExpirationDateRelation = 'expired' | 'today' | 'tomorrow' | 'later'
 
+export type RemainingExpiryDuration =
+  | { unit: 'days'; days: number }
+  | { unit: 'hoursMinutes'; hours: number; minutes: number }
+
 export interface RemainingDurationParts {
   days: number
   hours: number
@@ -61,4 +65,27 @@ export function getExpirationDateRelation(
   if (calendarDays === 0) return 'today'
   if (calendarDays === 1) return 'tomorrow'
   return 'later'
+}
+
+export function getRemainingExpiryDuration(
+  targetAt: Date | string,
+  now: Date = new Date()
+): RemainingExpiryDuration | null {
+  const targetTime = targetAt instanceof Date ? targetAt.getTime() : new Date(targetAt).getTime()
+  const nowTime = now.getTime()
+
+  if (!Number.isFinite(targetTime) || !Number.isFinite(nowTime)) return null
+
+  const diffMs = targetTime - nowTime
+  if (diffMs <= 0) return null
+  if (diffMs >= ONE_DAY_MS) {
+    return { unit: 'days', days: Math.ceil(diffMs / ONE_DAY_MS) }
+  }
+
+  const totalMinutes = Math.ceil(diffMs / (60 * 1000))
+  return {
+    unit: 'hoursMinutes',
+    hours: Math.floor(totalMinutes / 60),
+    minutes: totalMinutes % 60
+  }
 }
