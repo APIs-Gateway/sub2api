@@ -1850,11 +1850,11 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				Message:            upstreamMsg,
 			})
 			shouldDisable := s.handleFailoverSideEffects(upstreamCtx, resp, account, respBody, requestModel)
-			return nil, &UpstreamFailoverError{
+			return nil, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)),
-			}
+			}, upstreamMsg, respBody)
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, requestModel)
 	}
@@ -2000,12 +2000,12 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 		}
 		responseBody := []byte(fmt.Sprintf(`{"error":{"type":"upstream_error","code":%q,"message":%q}}`, code, message))
 		shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, headers, responseBody, requestedModel)
-		return &UpstreamFailoverError{
+		return applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 			StatusCode:             statusCode,
 			ResponseBody:           responseBody,
 			ResponseHeaders:        headers,
 			RetryableOnSameAccount: openAIRetryableOnSameAccount(statusCode, message, responseBody, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)),
-		}
+		}, message, responseBody)
 	}
 
 	var upstreamErr *OpenAIImagesUpstreamError
@@ -2064,10 +2064,10 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	}
 
 	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, upstreamErr.StatusCode, headers, responseBody, requestedModel)
-	return &UpstreamFailoverError{
+	return applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 		StatusCode:             upstreamErr.StatusCode,
 		ResponseBody:           responseBody,
 		ResponseHeaders:        headers,
 		RetryableOnSameAccount: openAIRetryableOnSameAccount(upstreamErr.StatusCode, upstreamErr.clientMessage(), responseBody, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(upstreamErr.StatusCode)),
-	}
+	}, upstreamErr.clientMessage(), responseBody)
 }
