@@ -1850,9 +1850,11 @@ func (p *openAIWSConnPool) UnpinConn(accountID int64, connID string) {
 	count := ap.pinnedConns[connID]
 	if count <= 1 {
 		delete(ap.pinnedConns, connID)
+		ap.signalChangedLocked()
 		return
 	}
 	ap.pinnedConns[connID] = count - 1
+	ap.signalChangedLocked()
 }
 
 func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequest) (*openAIWSConn, error) {
