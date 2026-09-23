@@ -272,6 +272,129 @@ describe('PaymentResultView', () => {
     expect(wrapper.text()).not.toContain('payment.result.failed')
   })
 
+  it('does not refresh the user balance for completed subscription orders', async () => {
+    routeState.query = {
+      resume_token: 'resume-subscription',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: {
+        ...orderFactory('COMPLETED'),
+        order_type: 'subscription',
+      },
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('payment.result.success')
+  })
+
+  it('does not refresh the user balance before fulfillment completes', async () => {
+    routeState.query = {
+      resume_token: 'resume-paid-only',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('PAID'),
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('payment.result.success')
+  })
+
+  it('does not refresh the user balance for failed orders', async () => {
+    routeState.query = {
+      resume_token: 'resume-failed',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('FAILED'),
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('payment.result.failed')
+  })
+
+  it('refreshes the user balance once for a normalized completed status', async () => {
+    routeState.query = {
+      resume_token: 'resume-lowercase',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory(' completed '),
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('payment.result.success')
+  })
+
+  it('refreshes the user balance for a completed minimal public verification result', async () => {
+    routeState.query = {
+      out_trade_no: 'legacy-minimal-completed',
+      trade_status: 'TRADE_SUCCESS',
+    }
+    verifyOrder.mockRejectedValue(new Error('auth required'))
+    verifyOrderPublic.mockResolvedValue({
+      data: {
+        out_trade_no: 'legacy-minimal-completed',
+        status: 'COMPLETED',
+        paid: true,
+        created_at: '2026-04-20T12:00:00Z',
+        expires_at: '2026-04-20T12:30:00Z',
+      },
+    })
+    refreshUser.mockRejectedValueOnce(new Error('Not authenticated'))
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('payment.result.success')
+    expect(wrapper.text()).toContain('legacy-minimal-completed')
+  })
+
   it('falls back to order_id polling when resume-token recovery fails', async () => {
     routeState.query = {
       resume_token: 'resume-fail',
