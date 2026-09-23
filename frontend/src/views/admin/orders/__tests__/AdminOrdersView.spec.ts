@@ -269,8 +269,8 @@ describe('AdminOrdersView refund management', () => {
 
     const wrapper = mountView()
     await flushPromises()
-    const button = () => wrapper.find('[data-test="order-row-46"] button')
-    expect(button().text()).toContain('payment.admin.queryRefundStatus')
+    const button = () => wrapper.findAll('[data-test="order-row-46"] button').find((b) => b.text().includes('payment.admin.queryRefundStatus'))!
+    expect(button().exists()).toBe(true)
 
     mocks.queryRefund.mockResolvedValueOnce({ data: { success: true } })
     mocks.getOrders.mockClear()
