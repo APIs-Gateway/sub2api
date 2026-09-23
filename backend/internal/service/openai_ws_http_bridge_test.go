@@ -296,18 +296,13 @@ func TestOpenAIWSHTTPBridgeSSEErrorOnlyFailsOverBeforeDownstreamWrite(t *testing
 				},
 			)
 
+			// 429 before any downstream write fails over on every turn so later
+			// turns can resume on a replacement account (upstream 82cbe6aff).
 			var failoverErr *UpstreamFailoverError
-			if turn == 1 {
-				require.Nil(t, result)
-				require.ErrorAs(t, err, &failoverErr)
-				require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
-				require.Empty(t, writes)
-			} else {
-				require.NotNil(t, result)
-				require.Error(t, err)
-				require.False(t, errors.As(err, &failoverErr))
-				require.Len(t, writes, 1)
-			}
+			require.Nil(t, result)
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+			require.Empty(t, writes)
 		})
 	}
 }
