@@ -393,7 +393,7 @@ func (a *Alipay) queryRefundWithClient(ctx context.Context, client *alipay.Clien
 	if err != nil {
 		return nil, fmt.Errorf("alipay TradeFastPayRefundQuery: %w", err)
 	}
-	status := payment.ProviderStatusFailed
+	status := payment.ProviderStatusPending
 	refundID := outRequestNo
 	if result != nil {
 		status = alipayRefundQueryStatus(result.RefundStatus)
@@ -405,14 +405,17 @@ func (a *Alipay) queryRefundWithClient(ctx context.Context, client *alipay.Clien
 }
 
 // alipayRefundQueryStatus maps alipay.trade.fastpay.refund.query refund_status.
-// Per Alipay, a missing refund_status means the refund request was not received
-// or the refund failed; retrying Refund reuses the same out_request_no, so the
-// failed state cannot cause a double refund.
+// Alipay only ever reports REFUND_SUCCESS; a missing refund_status means the
+// refund has not been confirmed yet (not received, still processing, or failed)
+// and is indistinguishable from an in-flight refund. It is therefore reported
+// as pending, never as failed: marking it failed would re-open the order for a
+// new refund while the original one may still land. Admins settle such orders
+// manually (ResolvePendingRefund) after checking the Alipay merchant console.
 func alipayRefundQueryStatus(status string) string {
 	if strings.TrimSpace(status) == alipayRefundStatusOK {
 		return payment.ProviderStatusSuccess
 	}
-	return payment.ProviderStatusFailed
+	return payment.ProviderStatusPending
 }
 
 // CancelPayment closes a pending trade on Alipay.

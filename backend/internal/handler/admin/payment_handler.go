@@ -7,6 +7,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -257,6 +258,41 @@ func (h *PaymentHandler) QueryAndFinalizeRefund(c *gin.Context) {
 	}
 
 	result, err := h.paymentService.QueryAndFinalizeRefund(c.Request.Context(), orderID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// AdminResolveRefundRequest is the request body for manually resolving a
+// REFUND_PENDING order.
+type AdminResolveRefundRequest struct {
+	Outcome string `json:"outcome"` // "succeeded" | "failed"
+	Note    string `json:"note"`
+}
+
+// ResolvePendingRefund manually settles a REFUND_PENDING order after the admin
+// verified the outcome with the gateway (exit for persistent query errors or
+// providers that cannot be queried).
+// POST /api/v1/admin/payment/orders/:id/refund/resolve
+func (h *PaymentHandler) ResolvePendingRefund(c *gin.Context) {
+	orderID, ok := parseIDParam(c, "id")
+	if !ok {
+		return
+	}
+
+	var req AdminResolveRefundRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	operator := "admin"
+	if subject, ok := middleware2.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
+		operator = "admin:" + strconv.FormatInt(subject.UserID, 10)
+	}
+	result, err := h.paymentService.ResolvePendingRefund(c.Request.Context(), orderID, req.Outcome, req.Note, operator)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

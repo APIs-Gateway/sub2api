@@ -128,6 +128,11 @@ export const adminPaymentAPI = {
     return apiClient.post<AdminRefundResult>(`/admin/payment/orders/${id}/refund/query`)
   },
 
+  /** Manually settle a REFUND_PENDING order after verifying the outcome with the gateway */
+  resolveRefund(id: number, data: { outcome: 'succeeded' | 'failed'; note?: string }) {
+    return apiClient.post<AdminRefundResult>(`/admin/payment/orders/${id}/refund/resolve`, data)
+  },
+
   // ==================== Channels ====================
 
   /** Get all payment channels */

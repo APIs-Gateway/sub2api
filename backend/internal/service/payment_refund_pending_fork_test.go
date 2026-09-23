@@ -188,11 +188,27 @@ func TestQueryAndFinalizeRefundGuards(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, OrderStatusRefundPending, reloaded.Status, "query errors must leave the order pending")
 
+	// Unknown or missing statuses are not a gateway failure: the refund may
+	// still land, so the order must stay pending (no retry possible).
 	prov.queryErr = nil
-	prov.refundResponse = &payment.RefundResponse{Status: "weird"}
+	for _, resp := range []*payment.RefundResponse{{Status: "weird"}, nil} {
+		prov.refundResponse = resp
+		result, err := svc.QueryAndFinalizeRefund(ctx, order.ID)
+		require.NoError(t, err)
+		require.False(t, result.Success)
+		require.True(t, result.RefundPending)
+		require.Contains(t, result.Warning, "not final")
+		reloaded, err = client.PaymentOrder.Get(ctx, order.ID)
+		require.NoError(t, err)
+		require.Equal(t, OrderStatusRefundPending, reloaded.Status)
+	}
+	require.NotZero(t, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_QUERY_PENDING"))
+
+	prov.refundResponse = &payment.RefundResponse{Status: payment.ProviderStatusFailed}
 	result, err := svc.QueryAndFinalizeRefund(ctx, order.ID)
 	require.NoError(t, err)
 	require.False(t, result.Success)
+	require.False(t, result.RefundPending)
 	reloaded, err = client.PaymentOrder.Get(ctx, order.ID)
 	require.NoError(t, err)
 	require.Equal(t, OrderStatusRefundFailed, reloaded.Status)
@@ -484,8 +500,10 @@ func TestApplyRefundFinalDeductionEdgeCases(t *testing.T) {
 		subscriptionSnapshotKey: map[string]any{"intent": SubscriptionIntentRenew, "target_subscription_id": 5.0, "validity_days": 30.0, "daily_amount_usd": 1.0},
 	}
 	svc.subscriptionSvc = NewSubscriptionService(groupRepoNoop{}, newRefundUserSubRepoStub(nil), nil, nil, nil, nil, nil, nil)
-	p = &RefundPlan{OrderID: order.ID, Order: &renewOrder, DeductionType: payment.DeductionTypeSubscription, SubscriptionID: 5}
-	require.ErrorContains(t, svc.applyRefundFinalDeduction(ctx, p), "renew refund days missing")
+	p = &RefundPlan{OrderID: order.ID, Order: &renewOrder, DeductionType: payment.DeductionTypeSubscription, SubscriptionID: 5, SubDaysToDeduct: -1}
+	require.NoError(t, svc.applyRefundFinalDeduction(ctx, p), "zero/negative renew days means nothing to deduct")
+	require.Zero(t, p.SubDaysToDeduct)
+	require.Equal(t, 1, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_FINALIZE_NO_RENEW_DAYS"))
 }
 
 func TestQueryAndFinalizeRefundProviderLookupFailure(t *testing.T) {

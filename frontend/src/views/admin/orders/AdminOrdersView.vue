@@ -45,10 +45,20 @@
               <Icon name="refresh" size="sm" />
               {{ t('payment.admin.retryRefund') }}
             </button>
-            <button v-else-if="row.status === 'REFUND_PENDING'" :disabled="refundQueryingIds.has(row.id)" @click="handleQueryRefund(row)" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-orange-600 hover:bg-orange-50 disabled:opacity-60 dark:text-orange-400 dark:hover:bg-orange-900/20">
-              <Icon name="refresh" size="sm" :class="refundQueryingIds.has(row.id) ? 'animate-spin' : ''" />
-              {{ t('payment.admin.queryRefundStatus') }}
-            </button>
+            <template v-else-if="row.status === 'REFUND_PENDING'">
+              <button :disabled="refundQueryingIds.has(row.id)" @click="handleQueryRefund(row)" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-orange-600 hover:bg-orange-50 disabled:opacity-60 dark:text-orange-400 dark:hover:bg-orange-900/20">
+                <Icon name="refresh" size="sm" :class="refundQueryingIds.has(row.id) ? 'animate-spin' : ''" />
+                {{ t('payment.admin.queryRefundStatus') }}
+              </button>
+              <button data-test="resolve-refund-succeeded" @click="openResolveRefund(row, 'succeeded')" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20">
+                <Icon name="check" size="sm" />
+                {{ t('payment.admin.markRefundSucceeded') }}
+              </button>
+              <button data-test="resolve-refund-failed" @click="openResolveRefund(row, 'failed')" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20">
+                <Icon name="x" size="sm" />
+                {{ t('payment.admin.markRefundFailed') }}
+              </button>
+            </template>
             <span v-else-if="isRefundSettled(row) && row.refund_amount" class="rounded-full bg-red-50 px-1.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-300">
               {{ t('payment.admin.alreadyRefunded') }} {{ row.order_type === 'balance' ? '$' : '¥' }}{{ row.refund_amount.toFixed(2) }}
             </span>
@@ -139,6 +149,16 @@
       @confirm="handleRefund"
       @cancel="closeRefundDialog"
     />
+
+    <ConfirmDialog
+      :show="resolveTarget !== null"
+      :title="t('payment.admin.resolveRefundTitle')"
+      :message="resolveTarget?.outcome === 'succeeded' ? t('payment.admin.resolveRefundSucceededConfirm') : t('payment.admin.resolveRefundFailedConfirm')"
+      :confirm-text="resolveTarget?.outcome === 'succeeded' ? t('payment.admin.markRefundSucceeded') : t('payment.admin.markRefundFailed')"
+      :danger="resolveTarget?.outcome === 'failed'"
+      @confirm="handleResolveRefund"
+      @cancel="resolveTarget = null"
+    />
   </AppLayout>
 </template>
 
@@ -155,6 +175,7 @@ import type { PaymentOrder } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AdminRefundDialog from '@/components/admin/payment/AdminRefundDialog.vue'
@@ -186,6 +207,8 @@ const refundRequireForce = ref(false)
 const refundWarning = ref('')
 const refundFeeRate = ref(0)
 const refundQueryingIds = ref(new Set<number>())
+const resolveTarget = ref<{ order: PaymentOrder; outcome: 'succeeded' | 'failed' } | null>(null)
+const resolveSubmitting = ref(false)
 const orderAuditLogs = ref<AuditLog[]>([])
 const refundOverviewStatuses = ['REFUND_REQUESTED', 'REFUNDING', 'REFUND_PENDING', 'PARTIALLY_REFUNDED', 'REFUNDED', 'REFUND_FAILED']
 const isRefundOverview = computed(() => route.meta.refundOverview === true)
@@ -321,6 +344,30 @@ async function handleQueryRefund(order: PaymentOrder) {
     const next = new Set(refundQueryingIds.value)
     next.delete(order.id)
     refundQueryingIds.value = next
+  }
+}
+
+function openResolveRefund(order: PaymentOrder, outcome: 'succeeded' | 'failed') {
+  resolveTarget.value = { order, outcome }
+}
+
+async function handleResolveRefund() {
+  const target = resolveTarget.value
+  if (!target || resolveSubmitting.value) return
+  resolveSubmitting.value = true
+  try {
+    const res = await adminPaymentAPI.resolveRefund(target.order.id, { outcome: target.outcome })
+    if (res.data?.success) {
+      appStore.showSuccess(t('payment.admin.refundSuccess'))
+    } else {
+      appStore.showSuccess(t('payment.admin.refundMarkedFailed'))
+    }
+    resolveTarget.value = null
+    loadOrders()
+  } catch (err: unknown) {
+    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+  } finally {
+    resolveSubmitting.value = false
   }
 }
 

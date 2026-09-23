@@ -473,22 +473,35 @@ func TestAlipayQueryRefundUsesDeterministicRequestNo(t *testing.T) {
 	}
 }
 
-func TestAlipayQueryRefundMapsMissingStatusToFailed(t *testing.T) {
+func TestAlipayQueryRefundMapsMissingOrUnknownStatusToPending(t *testing.T) {
 	orig := alipayTradeFastPayRefundQuery
 	t.Cleanup(func() { alipayTradeFastPayRefundQuery = orig })
-	alipayTradeFastPayRefundQuery = func(ctx context.Context, client *alipay.Client, param alipay.TradeFastPayRefundQuery) (*alipay.TradeFastPayRefundQueryRsp, error) {
-		return &alipay.TradeFastPayRefundQueryRsp{}, nil
-	}
 
-	resp, err := (&Alipay{}).queryRefundWithClient(context.Background(), &alipay.Client{}, payment.RefundQueryRequest{OrderID: "sub2_refund_2", Amount: "1.00"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.Status != payment.ProviderStatusFailed {
-		t.Fatalf("status = %q, want failed", resp.Status)
-	}
-	if resp.RefundID != payment.DeterministicRefundNo("sub2_refund_2", "1.00") {
-		t.Fatalf("refund id = %q", resp.RefundID)
+	for _, tc := range []struct {
+		name string
+		rsp  *alipay.TradeFastPayRefundQueryRsp
+	}{
+		{name: "missing refund_status", rsp: &alipay.TradeFastPayRefundQueryRsp{}},
+		{name: "unknown refund_status", rsp: &alipay.TradeFastPayRefundQueryRsp{RefundStatus: "REFUND_PROCESSING"}},
+		{name: "nil response", rsp: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rsp := tc.rsp
+			alipayTradeFastPayRefundQuery = func(ctx context.Context, client *alipay.Client, param alipay.TradeFastPayRefundQuery) (*alipay.TradeFastPayRefundQueryRsp, error) {
+				return rsp, nil
+			}
+
+			resp, err := (&Alipay{}).queryRefundWithClient(context.Background(), &alipay.Client{}, payment.RefundQueryRequest{OrderID: "sub2_refund_2", Amount: "1.00"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.Status != payment.ProviderStatusPending {
+				t.Fatalf("status = %q, want pending (never failed without an explicit gateway failure)", resp.Status)
+			}
+			if resp.RefundID != payment.DeterministicRefundNo("sub2_refund_2", "1.00") {
+				t.Fatalf("refund id = %q", resp.RefundID)
+			}
+		})
 	}
 }
 
