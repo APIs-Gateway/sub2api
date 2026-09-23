@@ -1494,7 +1494,8 @@ func normalizeClaudeOAuthRequestBody(body []byte, modelID string, opts claudeOAu
 	// temperature：真实 Claude Code CLI 总是发送 temperature（默认 1，客户端可覆盖）。
 	// 之前的实现直接 delete 会导致 payload 缺字段，与真实 CLI 字节级不一致。
 	// 策略：客户端传了什么就透传；没传则补默认 1。
-	if !gjson.GetBytes(out, "temperature").Exists() {
+	// Opus 5.5 不接受补默认 temperature，保持客户端原样。
+	if !gjson.GetBytes(out, "temperature").Exists() && !claude.IsOpus55(modelID) {
 		if next, ok := setJSONValueBytes(out, "temperature", 1); ok {
 			out = next
 			modified = true
@@ -1535,7 +1536,7 @@ func normalizeClaudeOAuthRequestBody(body []byte, modelID string, opts claudeOAu
 	// - 其他形态（auto/any/none）原样透传
 	// 如果 body 里完全没有 tools（空数组），tool_choice 没意义时才删除
 	if !gjson.GetBytes(out, "tools").IsArray() || len(gjson.GetBytes(out, "tools").Array()) == 0 {
-		if gjson.GetBytes(out, "tool_choice").Exists() {
+		if !claude.IsOpus55(modelID) && gjson.GetBytes(out, "tool_choice").Exists() {
 			if next, ok := deleteJSONPathBytes(out, "tool_choice"); ok {
 				out = next
 				modified = true
@@ -5082,6 +5083,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if parsed == nil {
 		return nil, fmt.Errorf("parse request: empty request")
 	}
+	// Opus 5.5 参数校验：API-key 映射后的模型与 OAuth 原生 ID 都在伪装改写前判定。
+	if err := validateClaudeOpus55ForAccount(account, parsed); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"type": "error", "error": gin.H{"type": "invalid_request_error", "message": err.Error()}})
+		return nil, err
+	}
 
 	// Web Search 模拟：纯 web_search 请求时，直接调用搜索 API 构造响应
 	if account != nil && s.shouldEmulateWebSearch(ctx, account, parsed.GroupID, parsed.Body.Bytes()) {
@@ -6477,13 +6483,18 @@ func (s *GatewayService) parseSSEUsagePassthrough(data string, usage *ClaudeUsag
 				usage.CacheReadInputTokens = int(v)
 			}
 
+			// 只要 message_delta 的 5m/1h 明细有一项为正，就视为权威明细：存在的字段（含显式 0）
+			// 全部覆盖，避免与 message_start 的旧明细叠加成超过聚合值的矛盾明细而重复计费。
+			// 全 0 明细视为占位默认值，不重置 message_start 已记录的明细。
 			cc5m := deltaUsage.Get("cache_creation.ephemeral_5m_input_tokens")
 			cc1h := deltaUsage.Get("cache_creation.ephemeral_1h_input_tokens")
-			if cc5m.Exists() && cc5m.Int() > 0 {
-				usage.CacheCreation5mTokens = int(cc5m.Int())
-			}
-			if cc1h.Exists() && cc1h.Int() > 0 {
-				usage.CacheCreation1hTokens = int(cc1h.Int())
+			if cc5m.Int() > 0 || cc1h.Int() > 0 {
+				if cc5m.Exists() {
+					usage.CacheCreation5mTokens = int(cc5m.Int())
+				}
+				if cc1h.Exists() {
+					usage.CacheCreation1hTokens = int(cc1h.Int())
+				}
 			}
 		}
 	}
@@ -9064,13 +9075,19 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 			patch.hasCacheReadInput = true
 		}
 		if cc, ok := usageObj["cache_creation"].(map[string]any); ok {
-			if v, exists := parseSSEUsageInt(cc["ephemeral_5m_input_tokens"]); exists && v > 0 {
-				patch.cacheCreation5mTokens = v
-				patch.hasCacheCreation5m = true
-			}
-			if v, exists := parseSSEUsageInt(cc["ephemeral_1h_input_tokens"]); exists && v > 0 {
-				patch.cacheCreation1hTokens = v
-				patch.hasCacheCreation1h = true
+			// 明细有一项为正时视为权威明细，存在的字段（含显式 0）全部覆盖，避免与
+			// message_start 的旧明细叠加导致 5m/1h 重复计费；全 0 明细不重置已有明细。
+			v5m, has5m := parseSSEUsageInt(cc["ephemeral_5m_input_tokens"])
+			v1h, has1h := parseSSEUsageInt(cc["ephemeral_1h_input_tokens"])
+			if (has5m && v5m > 0) || (has1h && v1h > 0) {
+				if has5m {
+					patch.cacheCreation5mTokens = v5m
+					patch.hasCacheCreation5m = true
+				}
+				if has1h {
+					patch.cacheCreation1hTokens = v1h
+					patch.hasCacheCreation1h = true
+				}
 			}
 		}
 		return patch
@@ -10470,6 +10487,10 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		s.countTokensError(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return fmt.Errorf("parse request: empty request")
 	}
+	if err := validateClaudeOpus55ForAccount(account, parsed); err != nil {
+		s.countTokensError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return err
+	}
 
 	if account != nil && account.IsAnthropicAPIKeyPassthroughEnabled() {
 		passthroughBody := parsed.Body.Bytes()
@@ -11354,4 +11375,18 @@ func (s *GatewayService) debugLogGatewaySnapshot(tag string, headers http.Header
 
 	// 写入文件（调试用，并发写入可能交错但不影响可读性）
 	_, _ = f.WriteString(buf.String())
+}
+
+// validateClaudeOpus55ForAccount resolves the model an Anthropic account will
+// actually receive (API-key mapping applied) and validates Opus 5.5 constraints.
+// Bedrock and Vertex service accounts use their own request shapes and are skipped.
+func validateClaudeOpus55ForAccount(account *Account, parsed *ParsedRequest) error {
+	if account == nil || parsed == nil || account.Platform != PlatformAnthropic || account.IsBedrock() || account.Type == AccountTypeServiceAccount {
+		return nil
+	}
+	model := parsed.Model
+	if account.Type == AccountTypeAPIKey {
+		model = account.GetMappedModel(model)
+	}
+	return validateClaudeOpus55Request(parsed.Body.Bytes(), model)
 }

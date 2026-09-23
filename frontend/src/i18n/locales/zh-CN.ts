@@ -2452,6 +2452,8 @@
       failedToLoad: '加载用户列表失败',
       failedToCreate: '创建用户失败',
       failedToUpdate: '更新用户失败',
+      lastAdminDemoteForbidden: '不能降级最后一个管理员，请先将其他用户设为管理员',
+      cannotDemoteSelf: '不能将自己降级为普通用户',
       failedToDelete: '删除用户失败',
       failedToToggle: '更新用户状态失败',
       failedToLoadApiKeys: '加载用户 API 密钥失败',
@@ -4020,6 +4022,7 @@
       status: {
         active: '正常',
         inactive: '停用',
+        expired: '已过期',
         error: '错误',
         cooldown: '冷却中',
         paused: '暂停',

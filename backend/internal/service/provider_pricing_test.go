@@ -35,7 +35,7 @@ func TestBuildHvoyProviderPricingUsesRechargeMultiplier(t *testing.T) {
 	require.Equal(t, "Test Site", resp.Data.SiteName)
 	require.Equal(t, "api.example.com", resp.Data.SiteDomain)
 	require.Equal(t, updatedAt.Format(time.RFC3339), resp.Data.UpdatedAt)
-	require.Len(t, resp.Data.Models, 5)
+	require.Len(t, resp.Data.Models, 7)
 
 	gpt55 := resp.Data.Models[0]
 	require.Equal(t, "gpt-5.5", gpt55.ModelName)
@@ -96,13 +96,31 @@ func TestBuildHvoyProviderPricingUsesRechargeMultiplier(t *testing.T) {
 	require.NotNil(t, gpt6Astra.CacheCreatePrice)
 	require.Equal(t, 25.0, *gpt6Astra.CacheCreatePrice)
 	require.Nil(t, gpt6Astra.CacheCreatePrice1H)
+
+	// GPT-6 Sol / Luna：官方 USD/M ÷ 0.5 充值倍率。
+	gpt6Sol := resp.Data.Models[5]
+	require.Equal(t, "gpt-6-sol", gpt6Sol.ModelName)
+	require.Equal(t, "codex plus", gpt6Sol.GroupName)
+	require.True(t, gpt6Sol.Enabled)
+	require.Equal(t, 4.0, gpt6Sol.InputPrice)
+	require.Equal(t, 20.0, *gpt6Sol.OutputPrice)
+	require.Equal(t, 0.4, *gpt6Sol.CacheInputPrice)
+	require.Equal(t, 5.0, *gpt6Sol.CacheCreatePrice)
+	gpt6Luna := resp.Data.Models[6]
+	require.Equal(t, "gpt-6-luna", gpt6Luna.ModelName)
+	require.Equal(t, "codex plus", gpt6Luna.GroupName)
+	require.True(t, gpt6Luna.Enabled)
+	require.Equal(t, 0.2, gpt6Luna.InputPrice)
+	require.Equal(t, 1.0, *gpt6Luna.OutputPrice)
+	require.Equal(t, 0.02, *gpt6Luna.CacheInputPrice)
+	require.Equal(t, 0.25, *gpt6Luna.CacheCreatePrice)
 }
 
 func TestBuildHvoyProviderPricingUsesStaticFallbackWithoutCatalog(t *testing.T) {
 	svc := NewPricingService(nil, nil)
 	resp := svc.BuildHvoyProviderPricing(1, map[string]float64{"codex plus": 1}, "", "", time.Date(2026, 7, 9, 10, 0, 0, 0, time.UTC))
 
-	require.Len(t, resp.Data.Models, 5)
+	require.Len(t, resp.Data.Models, 7)
 	require.True(t, resp.Data.Models[0].Enabled)
 	require.Equal(t, "gpt-5.5", resp.Data.Models[0].ModelName)
 	require.Equal(t, 2.5, resp.Data.Models[0].InputPrice)
@@ -155,7 +173,7 @@ func TestBuildHvoyProviderPricingAppliesGroupRateMultiplier(t *testing.T) {
 	svc := NewPricingService(nil, nil)
 	resp := svc.BuildHvoyProviderPricing(0.5, map[string]float64{"codex plus": 1.4}, "", "", time.Time{})
 
-	require.Len(t, resp.Data.Models, 5)
+	require.Len(t, resp.Data.Models, 7)
 	for _, model := range resp.Data.Models {
 		require.True(t, model.Enabled, model.ModelName)
 		require.Empty(t, model.Note, model.ModelName)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/handler/quotaview"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -293,6 +294,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		Concurrency:   req.Concurrency,
 		RPMLimit:      req.RPMLimit,
 		AllowedGroups: req.AllowedGroups,
+		ActorAdminID:  getAdminIDFromContext(c),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -329,7 +331,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 	}
 	if req.Role == service.RoleUser {
 		if userID == getAdminIDFromContext(c) {
-			response.BadRequest(c, "cannot demote yourself from admin")
+			response.ErrorFrom(c, infraerrors.BadRequest("CANNOT_DEMOTE_SELF", "cannot demote yourself from admin"))
 			return
 		}
 	}
@@ -347,6 +349,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		Role:          req.Role,
 		AllowedGroups: req.AllowedGroups,
 		GroupRates:    req.GroupRates,
+		ActorAdminID:  getAdminIDFromContext(c),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

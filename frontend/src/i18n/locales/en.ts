@@ -2471,6 +2471,8 @@
       failedToLoad: 'Failed to load users',
       failedToCreate: 'Failed to create user',
       failedToUpdate: 'Failed to update user',
+      lastAdminDemoteForbidden: 'Cannot demote the last admin. Promote another user to admin first.',
+      cannotDemoteSelf: 'You cannot demote yourself from admin.',
       failedToDelete: 'Failed to delete user',
       failedToToggle: 'Failed to update user status',
       failedToLoadApiKeys: 'Failed to load user API keys',
@@ -3880,6 +3882,7 @@
       status: {
         active: 'Active',
         inactive: 'Inactive',
+        expired: 'Expired',
         error: 'Error',
         cooldown: 'Cooldown',
         paused: 'Paused',

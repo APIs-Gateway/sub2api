@@ -15,6 +15,12 @@ describe('API Client', () => {
     localStorage.clear()
     sessionStorage.clear()
     window.history.replaceState({}, '', '/')
+    // Simulate a browser with the Web Locks API (jsdom has none) so refresh failures only use the
+    // short peer-reconciliation window instead of the uncoordinated-tab recovery window.
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: { request: (_name: string, callback: () => Promise<unknown>) => callback() },
+    })
     // 每次测试重新导入以获取干净的模块状态
     vi.resetModules()
     const mod = await import('@/api/client')
@@ -24,6 +30,7 @@ describe('API Client', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
   })
 
   // --- 请求拦截器 ---
@@ -467,6 +474,57 @@ describe('API Client', () => {
         expect(localStorage.getItem(key)).toBeNull()
       }
       expect(sessionStorage.getItem('auth_expired')).toBe('1')
+    })
+
+    it('主动刷新与 401 刷新并发时只提交一次 refresh_token', async () => {
+      localStorage.setItem('auth_token', 'expired-token')
+      localStorage.setItem('refresh_token', 'refresh-token')
+      localStorage.setItem('token_expires_at', String(Date.now() + 60_000))
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+
+      let resolveRefresh!: (value: unknown) => void
+      const refresh = vi.spyOn(axios, 'post').mockImplementation(
+        () => new Promise((resolve) => {
+          resolveRefresh = resolve
+        })
+      )
+      const adapter = vi.fn()
+        .mockRejectedValueOnce({
+          response: { status: 401, data: { code: 'TOKEN_EXPIRED', message: 'Token expired' } },
+          config: { url: '/test', headers: { Authorization: 'Bearer expired-token' } },
+          code: 'ERR_BAD_REQUEST',
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          data: { code: 0, data: { ok: true } },
+          headers: {},
+          config: {},
+          statusText: 'OK',
+        })
+      apiClient.defaults.adapter = adapter
+      const { refreshToken: proactiveRefresh } = await import('@/api/auth')
+
+      const scheduled = proactiveRefresh()
+      const request = apiClient.get('/test')
+      await vi.waitFor(() => expect(adapter).toHaveBeenCalledTimes(1))
+      resolveRefresh({
+        data: {
+          code: 0,
+          message: 'ok',
+          data: {
+            access_token: 'new-token',
+            refresh_token: 'new-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          },
+        },
+      })
+
+      await expect(scheduled).resolves.toMatchObject({ access_token: 'new-token' })
+      await expect(request).resolves.toMatchObject({ data: { ok: true } })
+      expect(refresh).toHaveBeenCalledTimes(1)
+      expect(localStorage.getItem('refresh_token')).toBe('new-refresh-token')
+      expect(adapter.mock.calls[1][0].headers.get('Authorization')).toBe('Bearer new-token')
     })
 
     it('刷新期间换号时旧请求不会清除新会话', async () => {
