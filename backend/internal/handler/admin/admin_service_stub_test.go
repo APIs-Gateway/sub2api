@@ -72,6 +72,12 @@ type stubAdminService struct {
 		sortOrder string
 		calls     int
 	}
+
+	// getAccountResult overrides GetAccount's default account when set.
+	getAccountResult       *service.Account
+	updateAccountCalls     int
+	lastUpdateAccountInput *service.UpdateAccountInput
+
 	mu sync.Mutex
 }
 
@@ -344,6 +350,10 @@ func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int,
 }
 
 func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.Account, error) {
+	if s.getAccountResult != nil {
+		account := *s.getAccountResult
+		return &account, nil
+	}
 	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
 	return &account, nil
 }
@@ -369,6 +379,10 @@ func (s *stubAdminService) CreateAccount(ctx context.Context, input *service.Cre
 }
 
 func (s *stubAdminService) UpdateAccount(ctx context.Context, id int64, input *service.UpdateAccountInput) (*service.Account, error) {
+	s.mu.Lock()
+	s.updateAccountCalls++
+	s.lastUpdateAccountInput = input
+	s.mu.Unlock()
 	if s.updateAccountErr != nil {
 		return nil, s.updateAccountErr
 	}

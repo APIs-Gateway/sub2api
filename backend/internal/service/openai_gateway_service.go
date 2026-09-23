@@ -1267,20 +1267,34 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 	return match(string(upstreamBody))
 }
 
-// ExtractSessionID extracts the raw session ID from headers or body without hashing.
-// Used by ForwardAsAnthropic to pass as prompt_cache_key for upstream cache.
-func (s *OpenAIGatewayService) ExtractSessionID(c *gin.Context, body []byte) string {
+// explicitOpenAIHeaderSessionNames lists stable conversation identifiers sent
+// by OpenAI-compatible clients, in priority order. Codex CLI sends the
+// hyphenated session-id header (canonicalized as Session-Id, a different header
+// from session_id). Keep this list limited to session-scoped fields:
+// request/message IDs rotate every turn and would defeat sticky routing and
+// upstream prompt caching.
+var explicitOpenAIHeaderSessionNames = []string{
+	"session-id",
+	"session_id",
+	"conversation_id",
+}
+
+func explicitOpenAIHeaderSessionID(c *gin.Context) string {
 	if c == nil {
 		return ""
 	}
-	sessionID := strings.TrimSpace(c.GetHeader("session_id"))
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(c.GetHeader("conversation_id"))
+	for _, header := range explicitOpenAIHeaderSessionNames {
+		if sessionID := strings.TrimSpace(c.GetHeader(header)); sessionID != "" {
+			return sessionID
+		}
 	}
-	if sessionID == "" && len(body) > 0 {
-		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
-	}
-	return sessionID
+	return ""
+}
+
+// ExtractSessionID extracts the raw session ID from headers or body without hashing.
+// Used by ForwardAsAnthropic to pass as prompt_cache_key for upstream cache.
+func (s *OpenAIGatewayService) ExtractSessionID(c *gin.Context, body []byte) string {
+	return explicitOpenAISessionID(c, body)
 }
 
 func explicitOpenAISessionID(c *gin.Context, body []byte) string {
@@ -1288,10 +1302,7 @@ func explicitOpenAISessionID(c *gin.Context, body []byte) string {
 		return ""
 	}
 
-	sessionID := strings.TrimSpace(c.GetHeader("session_id"))
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(c.GetHeader("conversation_id"))
-	}
+	sessionID := explicitOpenAIHeaderSessionID(c)
 	if sessionID == "" && len(body) > 0 {
 		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
 	}
@@ -1315,7 +1326,7 @@ func (s *OpenAIGatewayService) GenerateExplicitSessionHash(c *gin.Context, body 
 // GenerateSessionHash generates a sticky-session hash for OpenAI requests.
 //
 // Priority:
-//  1. Header: session_id
+//  1. Header: session-id / session_id
 //  2. Header: conversation_id
 //  3. Body:   prompt_cache_key (opencode)
 //  4. Body:   content-based fallback (model + system + tools + first user message)
@@ -2087,6 +2098,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 
 	// ============ Layer 1: Sticky session ============
+	// A healthy sticky account whose bounded wait queue is full may be used as a
+	// one-request capacity spillover in Layer 2. Keep that spillover temporary:
+	// rewriting the durable binding here would make a short burst migrate the
+	// whole conversation to a cache-cold account.
+	stickySpillover := false
 	if sessionHash != "" {
 		accountID := stickyAccountID
 		if accountID > 0 && !isExcluded(accountID) {
@@ -2126,6 +2142,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 								MaxWaiting:     cfg.StickySessionMaxWaiting,
 							})
 						}
+						stickySpillover = true
 					}
 				}
 			}
@@ -2266,7 +2283,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if selectErr != nil {
 					return nil, true, selectErr
 				}
-				if sessionHash != "" {
+				if sessionHash != "" && !stickySpillover {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
 				return selection, true, nil
@@ -2308,7 +2325,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if selectErr != nil {
 					return nil, selectErr
 				}
-				if sessionHash != "" {
+				if sessionHash != "" && !stickySpillover {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
 				return selection, nil
@@ -2699,6 +2716,7 @@ func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, re
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	s.prepareCodexAccountIdentitySource(c, account)
 	startTime := time.Now()
 
 	restrictionResult := s.detectCodexClientRestriction(c, account)
@@ -2758,6 +2776,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	originalBody := body
 	requestView := newOpenAIRequestView(body)
 	reqModel, reqStream, promptCacheKey := requestView.Model, requestView.Stream, requestView.PromptCacheKey
+	clientPromptCacheKey := promptCacheKey
 	originalModel := reqModel
 	if s.openAIResponsesImageGenerationDisabled() && resolveOpenAIResponsesImageIntentHint(c, originalModel, originalBody) {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
@@ -3110,10 +3129,18 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if !isCompactRequest && applyCodexClientMetadata(decoded, account) {
 			markDecodedModified()
 		}
+		if currentClientPromptCacheKey, ok := decoded["prompt_cache_key"].(string); ok {
+			clientPromptCacheKey = currentClientPromptCacheKey
+		}
+		if !isCompactRequest && applyCodexAccountIdentityClientMetadataMap(decoded, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c)) {
+			markDecodedModified()
+		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
 		}
-		if codexResult.PromptCacheKey != "" {
+		if strings.TrimSpace(clientPromptCacheKey) != "" {
+			promptCacheKey = clientPromptCacheKey
+		} else if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
 		}
 	}
@@ -3356,6 +3383,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				c,
 				account,
 				wsReqBody,
+				clientPromptCacheKey,
 				wsExecutionScope,
 				token,
 				wsDecision,
@@ -3751,6 +3779,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			body = normalizedBody
 		}
 		reqStream = gjson.GetBytes(body, "stream").Bool()
+
+		accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		if accountScoped {
+			body = accountScopedBody
+		}
 	}
 
 	sanitizedBody, sanitized, err := sanitizeEmptyBase64InputImagesInOpenAIBody(body)
@@ -4101,10 +4137,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			clientConversationID = promptCacheKey
 		}
 		if clientSessionID != "" {
-			req.Header.Set("session_id", isolateOpenAISessionID(apiKeyID, clientSessionID))
+			req.Header.Set("session_id", isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), clientSessionID))
 		}
 		if clientConversationID != "" {
-			req.Header.Set("conversation_id", isolateOpenAISessionID(apiKeyID, clientConversationID))
+			req.Header.Set("conversation_id", isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), clientConversationID))
 		}
 	}
 	if account.Type != AccountTypeOAuth && isOpenAIResponsesCompactPath(c) {
@@ -4127,6 +4163,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	if account.Type == AccountTypeOAuth {
 		enforceCodexIdentityHeaders(req.Header)
 	}
+	applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 
 	if req.Header.Get("content-type") == "" {
 		req.Header.Set("content-type", "application/json")
@@ -4473,9 +4510,10 @@ func openAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
 	return OpenAICompactKeepaliveAdjustedWrittenSize(c) >= 0
 }
 
-func openAIStreamEventIsPreamble(eventType string) bool {
+// Lifecycle metadata and transport heartbeats are not model output.
+func openAIStreamEventIsMetadata(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "response.created", "response.in_progress":
+	case "response.created", "response.in_progress", "keepalive":
 		return true
 	default:
 		return false
@@ -4499,7 +4537,7 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 		payload := []byte(trimmed)
 		return !openAIStreamFailedEventShouldFailover(payload, extractOpenAISSEErrorMessage(payload))
 	}
-	return !openAIStreamEventIsPreamble(eventType)
+	return !openAIStreamEventIsMetadata(eventType)
 }
 
 func openAIStreamItemHasVisibleOutput(item gjson.Result) bool {
@@ -5448,12 +5486,12 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 				req.Header.Set("version", codexCLIVersion)
 			}
 			compactSession := resolveOpenAICompactSessionID(c)
-			req.Header.Set("session_id", isolateOpenAISessionID(apiKeyID, compactSession))
+			req.Header.Set("session_id", isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), compactSession))
 		} else {
 			req.Header.Set("accept", "text/event-stream")
 		}
 		if promptCacheKey != "" {
-			isolated := isolateOpenAISessionID(apiKeyID, promptCacheKey)
+			isolated := isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey)
 			req.Header.Set("session_id", isolated)
 			if !compatMessagesBridge || clientConversationID != "" {
 				req.Header.Set("conversation_id", isolated)
@@ -5480,6 +5518,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// 浏览器型 UA 兜底：仅 OAuth（ChatGPT 内部接口）账号生效，若最终 user-agent 仍为浏览器
 	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。
 	s.overrideBrowserUserAgent(ctx, account, req)
+	applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 	if account.Type == AccountTypeOAuth && !isOpenAICompatMessagesBridgeContext(c) && !isOpenAICompatMessagesBridgeBody(body) {
 		enforceCodexIdentityHeaders(req.Header)
 	}
@@ -6100,16 +6139,20 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		eventStartsVisibleOutput = false
 		eventShouldFlush = false
 	}
-	sendErrorEvent := func(reason string) {
+	sendErrorEvent := func(code, message string) {
 		if errorEventSent || clientDisconnected {
 			return
 		}
 		errorEventSent = true
-		payload := `{"type":"error","sequence_number":0,"error":{"type":"upstream_error","message":` + strconv.Quote(reason) + `,"code":` + strconv.Quote(reason) + `}}`
+		// Responses error events use top-level code/message/param fields. A nested
+		// Chat Completions error envelope loses the classification in strict clients.
+		eventName := "error"
+		payload := `{"type":"error","sequence_number":0,"code":` + strconv.Quote(code) + `,"message":` + strconv.Quote(message) + `,"param":null}`
 		// Codex CLI 只解析带顶层 "type" 的 data 行，并且只把 response.completed/failed/
 		// incomplete/cancelled 当作终止事件；通用 {"type":"error"} 帧会被它静默丢弃。
 		if InboundIsResponses(c) {
 			if data := codexResponsesFailedEventData(c, CodexErrCodeServerOverloaded); data != "" {
+				eventName = "response.failed"
 				payload = data
 			}
 		}
@@ -6117,7 +6160,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			clientDisconnected = true
 			return
 		}
-		if _, err := writePendingString("data: " + payload + "\n\n"); err != nil {
+		if _, err := writePendingString("event: " + eventName + "\ndata: " + payload + "\n\n"); err != nil {
 			handlePendingWriteError(err)
 			clientDisconnected = true
 			return
@@ -6128,6 +6171,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		clientOutputStarted = true
 		lastDownstreamWriteAt = time.Now()
+		// The handler must not append its generic failure after this terminal event.
+		MarkResponseCommitted(c)
 	}
 
 	streamOutputAccumulator := apicompat.NewBufferedResponseAccumulator()
@@ -6208,7 +6253,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		if errors.Is(scanErr, bufio.ErrTooLong) {
 			logger.LegacyPrintf("service.openai_gateway", "SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, scanErr)
-			sendErrorEvent("response_too_large")
+			sendErrorEvent("response_too_large", "Upstream response exceeded the size limit")
 			return resultWithUsage(), scanErr, true
 		}
 		if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
@@ -6223,7 +6268,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect: %w", scanErr), true
 		}
 		s.recordOpenAIProxyStreamDisconnect(account, scanErr, upstreamRequestID)
-		sendErrorEvent("stream_read_error")
+		readErrCode, readErrMessage := classifyOpenAIUpstreamStreamReadError(scanErr)
+		sendErrorEvent(readErrCode, readErrMessage)
 		return resultWithUsage(), fmt.Errorf("stream read error: %w", scanErr), true
 	}
 	processSSELine := func(line string, queueDrained bool) {
@@ -6569,7 +6615,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
 			}
-			sendErrorEvent("stream_timeout")
+			sendErrorEvent("stream_timeout", "Upstream response stream timed out")
 			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:

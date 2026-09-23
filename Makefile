@@ -1,6 +1,7 @@
 .PHONY: build build-backend build-frontend build-datamanagementd dev-db dev-local test test-backend test-frontend test-frontend-critical test-datamanagementd secret-scan
 
 FRONTEND_CRITICAL_VITEST := \
+	src/components/admin/user/__tests__/UserPlatformQuotaModal.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \
 	src/views/user/__tests__/PaymentView.spec.ts \
