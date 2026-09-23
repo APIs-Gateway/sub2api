@@ -103,6 +103,20 @@ func ensureOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any, changed 
 	return true
 }
 
+// validateOpenAIResponsesLiteParallelToolCalls rejects a present but
+// non-boolean parallel_tool_calls before any Lite normalization mutates the
+// request, so the client gets a 400 instead of a silently rewritten value.
+func validateOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any) error {
+	parallel, exists := reqBody["parallel_tool_calls"]
+	if !exists {
+		return nil
+	}
+	if _, ok := parallel.(bool); !ok {
+		return newOpenAIResponsesLiteValidationError("parallel_tool_calls", "responses Lite requires parallel_tool_calls to be a boolean")
+	}
+	return nil
+}
+
 func ensureOpenAIResponsesLiteReasoningContext(reqBody map[string]any) bool {
 	rawReasoning, exists := reqBody["reasoning"]
 	if !exists || rawReasoning == nil {
