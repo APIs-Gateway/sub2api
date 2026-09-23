@@ -15,6 +15,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func mixedToolsSlice(t *testing.T, v any) []any {
+	t.Helper()
+	out, ok := v.([]any)
+	require.True(t, ok, "expected JSON array, got %T", v)
+	return out
+}
+
+func mixedToolsMap(t *testing.T, v any) map[string]any {
+	t.Helper()
+	out, ok := v.(map[string]any)
+	require.True(t, ok, "expected JSON object, got %T", v)
+	return out
+}
+
 func TestEnableMixedGeminiToolInvocations(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -26,10 +40,10 @@ func TestEnableMixedGeminiToolInvocations(t *testing.T) {
 			name: "mixed function and googleSearch drops built-in and flag",
 			body: `{"tools":[{"functionDeclarations":[{"name":"shell"}]},{"googleSearch":{}}],"toolConfig":{"includeServerSideToolInvocations":true,"functionCallingConfig":{"mode":"VALIDATED"}}}`,
 			check: func(t *testing.T, request map[string]any) {
-				tools := request["tools"].([]any)
+				tools := mixedToolsSlice(t, request["tools"])
 				require.Len(t, tools, 1)
-				require.Contains(t, tools[0].(map[string]any), "functionDeclarations")
-				toolConfig := request["toolConfig"].(map[string]any)
+				require.Contains(t, mixedToolsMap(t, tools[0]), "functionDeclarations")
+				toolConfig := mixedToolsMap(t, request["toolConfig"])
 				require.NotContains(t, toolConfig, "includeServerSideToolInvocations")
 				require.Contains(t, toolConfig, "functionCallingConfig")
 			},
@@ -38,9 +52,9 @@ func TestEnableMixedGeminiToolInvocations(t *testing.T) {
 			name: "codeExecution and snake_case flag are removed and empty toolConfig dropped",
 			body: `{"tools":[{"functionDeclarations":[{"name":"shell"}],"codeExecution":{}}],"toolConfig":{"include_server_side_tool_invocations":true}}`,
 			check: func(t *testing.T, request map[string]any) {
-				tools := request["tools"].([]any)
+				tools := mixedToolsSlice(t, request["tools"])
 				require.Len(t, tools, 1)
-				tool := tools[0].(map[string]any)
+				tool := mixedToolsMap(t, tools[0])
 				require.Contains(t, tool, "functionDeclarations")
 				require.NotContains(t, tool, "codeExecution")
 				require.NotContains(t, request, "toolConfig")
@@ -50,7 +64,7 @@ func TestEnableMixedGeminiToolInvocations(t *testing.T) {
 			name: "non-object tool entries are preserved",
 			body: `{"tools":["opaque",{"functionDeclarations":[{"name":"shell"}]},{"googleSearch":{}}]}`,
 			check: func(t *testing.T, request map[string]any) {
-				tools := request["tools"].([]any)
+				tools := mixedToolsSlice(t, request["tools"])
 				require.Len(t, tools, 2)
 				require.Equal(t, "opaque", tools[0])
 			},
