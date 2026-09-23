@@ -2,13 +2,18 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RegisterView from '@/views/auth/RegisterView.vue'
 
-const { routeState, getPublicSettingsMock, getLegacyInviteStatusMock } = vi.hoisted(() => ({
+const { routeState, getPublicSettingsMock, getLegacyInviteStatusMock, appStoreMock } = vi.hoisted(() => ({
   routeState: {
     path: '/register',
     query: {} as Record<string, unknown>
   },
   getPublicSettingsMock: vi.fn(),
-  getLegacyInviteStatusMock: vi.fn()
+  getLegacyInviteStatusMock: vi.fn(),
+  appStoreMock: {
+    cachedPublicSettings: null as { promo_code_enabled?: boolean } | null,
+    showError: vi.fn(),
+    showSuccess: vi.fn()
+  }
 }))
 
 vi.mock('vue-router', () => ({
@@ -27,7 +32,7 @@ vi.mock('vue-i18n', async importOriginal => {
 
 vi.mock('@/stores', () => ({
   useAuthStore: () => ({ setToken: vi.fn() }),
-  useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn() })
+  useAppStore: () => appStoreMock
 }))
 
 vi.mock('@/api/auth', async () => {
@@ -243,5 +248,41 @@ describe('RegisterView 的老用户领码入口', () => {
   it('注册总闸关闭时不去探测领码状态', async () => {
     await mountRegisterView(baseSettings({ registration_enabled: false }))
     expect(getLegacyInviteStatusMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('RegisterView 的优惠码输入框首屏', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    routeState.query = {}
+    appStoreMock.cachedPublicSettings = null
+    getLegacyInviteStatusMock.mockResolvedValue({ enabled: false })
+  })
+
+  it('does not flash the promo-code field before disabled settings finish loading', async () => {
+    let resolveSettings!: (settings: ReturnType<typeof baseSettings>) => void
+    getPublicSettingsMock.mockReturnValueOnce(
+      new Promise<ReturnType<typeof baseSettings>>((resolve) => {
+        resolveSettings = resolve
+      })
+    )
+
+    const wrapper = mount(RegisterView, { global: { stubs } })
+
+    expect(wrapper.find('#promo_code').exists()).toBe(false)
+
+    resolveSettings(baseSettings({ promo_code_enabled: false }))
+    await flushPromises()
+
+    expect(wrapper.find('#promo_code').exists()).toBe(false)
+  })
+
+  it('uses injected public settings to show an enabled promo-code field on first render', () => {
+    appStoreMock.cachedPublicSettings = { promo_code_enabled: true }
+    getPublicSettingsMock.mockReturnValueOnce(new Promise(() => {}))
+
+    const wrapper = mount(RegisterView, { global: { stubs } })
+
+    expect(wrapper.find('#promo_code').exists()).toBe(true)
   })
 })
