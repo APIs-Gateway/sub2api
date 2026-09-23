@@ -98,6 +98,11 @@ type relayState struct {
 	// whose response id has not been observed yet. It is set from the
 	// client-to-upstream goroutine and cleared from the upstream reader.
 	pendingTurn atomic.Bool
+	// turnWroteDownstream tracks whether the current turn (since the latest
+	// response.create) has written anything to the client, so a later turn's
+	// pre-output error is not treated as mid-stream just because an earlier
+	// turn produced output.
+	turnWroteDownstream atomic.Bool
 }
 
 type relayExitSignal struct {
@@ -501,7 +506,11 @@ func runUpstreamToClient(
 		}
 		markActivity()
 		if beforeWriteClient != nil {
-			if err := beforeWriteClient(msgType, payload, wroteDownstream); err != nil {
+			wroteDownstreamInTurn := wroteDownstream
+			if state != nil {
+				wroteDownstreamInTurn = state.turnWroteDownstream.Load()
+			}
+			if err := beforeWriteClient(msgType, payload, wroteDownstreamInTurn); err != nil {
 				emitRelayTrace(onTrace, RelayTraceEvent{
 					Stage:           "upstream_message_rejected",
 					Direction:       "upstream_to_client",
@@ -577,6 +586,9 @@ func runUpstreamToClient(
 			return
 		}
 		wroteDownstream = true
+		if state != nil {
+			state.turnWroteDownstream.Store(true)
+		}
 		if afterWriteClient != nil {
 			afterWriteClient(msgType, payload)
 		}
@@ -802,6 +814,9 @@ func (s *relayState) markPendingTurn(payload []byte) {
 		return
 	}
 	s.pendingTurn.Store(true)
+	// Reset before the frame is written upstream so an immediate upstream
+	// response cannot race with the transport returning from WriteFrame.
+	s.turnWroteDownstream.Store(false)
 }
 
 // hasUnfinishedTurn reports whether a turn was started (pending response.create
