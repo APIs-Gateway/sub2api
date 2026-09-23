@@ -181,16 +181,9 @@ func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *te
 			strings.Contains(logs[0].Error, "upstream_usage=in:11,out:3")
 	}, 3*time.Second, 10*time.Millisecond, "handler AfterTurn must call recordCyberPolicyIfMarked and write the risk-control event")
 
-	keyCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	keyCtx.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(requestPayload))
-	blockKey := service.CyberSessionBlockKey(harness.apiKey.ID, keyCtx, []byte(requestPayload))
-	require.NotEmpty(t, blockKey)
-	store, ok := harness.gatewayCache.(service.CyberSessionBlockStore)
-	require.True(t, ok)
-	require.Eventually(t, func() bool {
-		blocked, findErr := store.IsCyberSessionBlocked(context.Background(), blockKey)
-		return findErr == nil && blocked
-	}, 3*time.Second, 10*time.Millisecond, "handler AfterTurn must write the cyber session block table")
+	// fork 的 WS 会话屏蔽 key 只取握手 header 的显式会话标识（F5a），不按每轮 body 的
+	// prompt_cache_key 派生（上游的逐轮 body 派生来自本批次以外的提交），因此这里不断言
+	// 屏蔽表写入，只验证连接级 cyber 闸门拦截下一轮。
 
 	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
 	err = harness.clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","prompt_cache_key":"cyber-session-1","input":"follow-up"}`))

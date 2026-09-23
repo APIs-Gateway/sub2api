@@ -104,9 +104,11 @@ func TestProxyResponsesWebSocketFromClient_MarksCyberPolicyBeforeEarlyReturn(t *
 		wantOutput    int
 	}{
 		{
-			name:          "error_before_rate_limit_failover",
+			// fork 的 ctx_pool 429 换号受 ShouldSwitchAccountOn429 阈值控制，首个 429 不换号而是
+			// 直接以错误返回；无论哪种早返回，cyber 标记都必须已在 error 分支之前落下。
+			name:          "error_before_rate_limit_early_return",
 			upstreamEvent: []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"cyber_policy","message":"rate limit exceeded by cyber policy"},"usage":{"input_tokens":5,"output_tokens":1}}`),
-			wantFailover:  true,
+			wantFailover:  false,
 			wantInput:     5,
 			wantOutput:    1,
 		},
