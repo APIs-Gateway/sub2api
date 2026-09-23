@@ -244,7 +244,7 @@ func TestGetOrCreateFingerprintMissingUserAgentKeepsDefault(t *testing.T) {
 func TestGetOrCreateFingerprintRenewsTTLAfterMoreThan24Hours(t *testing.T) {
 	staleUpdatedAt := time.Now().Add(-25 * time.Hour).Unix()
 	cache := &stubIdentityCache{fingerprint: &Fingerprint{
-		UserAgent: "claude-cli/"+claude.CLICurrentVersion+" (external, cli)",
+		UserAgent: "claude-cli/" + claude.CLICurrentVersion + " (external, cli)",
 		ClientID:  "cid-1",
 		UpdatedAt: staleUpdatedAt,
 	}}
@@ -266,7 +266,7 @@ func TestGetOrCreateFingerprintRenewsTTLAfterMoreThan24Hours(t *testing.T) {
 // 触碰或重写。
 func TestGetOrCreateFingerprintKeepsCachedFingerprintWhenRequestHasNoUserAgent(t *testing.T) {
 	cache := &stubIdentityCache{fingerprint: &Fingerprint{
-		UserAgent: "claude-cli/"+claude.CLICurrentVersion+" (external, cli)",
+		UserAgent: "claude-cli/" + claude.CLICurrentVersion + " (external, cli)",
 		ClientID:  "cid-1",
 		UpdatedAt: time.Now().Unix(),
 	}}
@@ -284,7 +284,7 @@ func TestGetOrCreateFingerprintKeepsCachedFingerprintWhenRequestHasNoUserAgent(t
 // 也不触发自愈重写，缓存中的健康指纹原样保留。
 func TestGetOrCreateFingerprintIgnoresMalformedNonNewerUserAgentOnUpgrade(t *testing.T) {
 	cache := &stubIdentityCache{fingerprint: &Fingerprint{
-		UserAgent: "claude-cli/"+claude.CLICurrentVersion+" (external, cli)",
+		UserAgent: "claude-cli/" + claude.CLICurrentVersion + " (external, cli)",
 		ClientID:  "cid-1",
 		UpdatedAt: time.Now().Unix(),
 	}}
