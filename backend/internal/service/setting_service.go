@@ -272,6 +272,11 @@ type DefaultPlatformQuotaSetting struct {
 	MonthlyLimitUSD *float64 `json:"monthly"`
 }
 
+// HasAnyLimit 报告是否至少配置了一档限额（0 也算配置）。nil receiver 视为未配置。
+func (q *DefaultPlatformQuotaSetting) HasAnyLimit() bool {
+	return q != nil && (q.DailyLimitUSD != nil || q.WeeklyLimitUSD != nil || q.MonthlyLimitUSD != nil)
+}
+
 type ProviderDefaultGrantSettings struct {
 	Balance          float64
 	Concurrency      int
@@ -2187,10 +2192,14 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
 	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
-	if settings.OpenAIOAuthSchedulingRateMultiplier < 0 || math.IsNaN(settings.OpenAIOAuthSchedulingRateMultiplier) || math.IsInf(settings.OpenAIOAuthSchedulingRateMultiplier, 0) {
-		return nil, infraerrors.BadRequest("INVALID_OPENAI_OAUTH_SCHEDULING_RATE_MULTIPLIER", "OAuth scheduling rate multiplier must be finite and non-negative")
+	// nil (stored as "") clears the OAuth override so accounts use their own rates.
+	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = ""
+	if rate := settings.OpenAIOAuthSchedulingRateMultiplier; rate != nil {
+		if *rate < 0 || math.IsNaN(*rate) || math.IsInf(*rate, 0) {
+			return nil, infraerrors.BadRequest("INVALID_OPENAI_OAUTH_SCHEDULING_RATE_MULTIPLIER", "OAuth scheduling rate multiplier must be finite and non-negative")
+		}
+		updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(*rate, 'f', -1, 64)
 	}
-	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(settings.OpenAIOAuthSchedulingRateMultiplier, 'f', -1, 64)
 	if settings.OpenAIAdvancedSchedulerWeightUpstreamCost != "" {
 		if _, err := parseNonNegativeFiniteSchedulerWeight(settings.OpenAIAdvancedSchedulerWeightUpstreamCost); err != nil {
 			return nil, err
@@ -2350,7 +2359,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 		enabled:                        settings.OpenAIAdvancedSchedulerEnabled,
 		lowUpstreamRatePriorityEnabled: settings.OpenAILowUpstreamRatePriorityEnabled,
-		oauthSchedulingRateMultiplier:  settings.OpenAIOAuthSchedulingRateMultiplier,
+		oauthSchedulingRateMultiplier:  cloneFloat64Ptr(settings.OpenAIOAuthSchedulingRateMultiplier),
 		upstreamCostWeightOverride:     strings.TrimSpace(settings.OpenAIAdvancedSchedulerWeightUpstreamCost),
 		expiresAt:                      time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
 	})
@@ -2729,6 +2738,21 @@ func (s *SettingService) IsAffiliateCodeAdmitsSignupEnabled(ctx context.Context)
 		return false
 	}
 	return strings.TrimSpace(value) == "true"
+}
+
+// GetGitHubOAuthMinAccountAgeDays 返回 GitHub 新注册要求的 GitHub 账号最短注册天数。
+//
+// 缺省、读不到或读坏都回落到 0（不限），保证既有站点升级后行为不变。
+func (s *SettingService) GetGitHubOAuthMinAccountAgeDays(ctx context.Context) int {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyGitHubOAuthMinAccountAgeDays)
+	if err != nil {
+		return 0
+	}
+	days, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || days < 0 {
+		return 0
+	}
+	return days
 }
 
 // GetCustomMenuItemsRaw returns the raw JSON string of custom_menu_items setting.
@@ -3893,7 +3917,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
 	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
-	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
+	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings)
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
 	result.OpenAIAdvancedSchedulerWeightUpstreamCost = strings.TrimSpace(settings[SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost])
 	result.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost = formatOpenAIAdvancedSchedulerFloat(resolveOpenAIAdvancedSchedulerWeight(

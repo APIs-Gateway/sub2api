@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/stretchr/testify/require"
 )
@@ -25,8 +26,8 @@ func TestGrokOAuthClientExchangeAndRefreshUseFormFields(t *testing.T) {
 			require.Equal(t, "auth-code", r.Form.Get("code"))
 			require.Equal(t, "http://127.0.0.1:56121/callback", r.Form.Get("redirect_uri"))
 			require.Equal(t, "verifier", r.Form.Get("code_verifier"))
-			require.Equal(t, "challenge", r.Form.Get("code_challenge"))
-			require.Equal(t, "S256", r.Form.Get("code_challenge_method"))
+			require.Empty(t, r.Form.Get("code_challenge"))
+			require.Empty(t, r.Form.Get("code_challenge_method"))
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  "exchange-access",
 				"refresh_token": "exchange-refresh",
@@ -55,7 +56,6 @@ func TestGrokOAuthClientExchangeAndRefreshUseFormFields(t *testing.T) {
 		context.Background(),
 		"auth-code",
 		"verifier",
-		"challenge",
 		"http://127.0.0.1:56121/callback",
 		"",
 		"client-id",
@@ -85,4 +85,25 @@ func TestGrokOAuthClientRefreshForbiddenClassifiesEntitlement(t *testing.T) {
 	_, err := client.RefreshToken(context.Background(), "refresh-token", "", "client-id")
 	require.Error(t, err)
 	require.Contains(t, strings.ToUpper(err.Error()), "GROK_OAUTH_ENTITLEMENT_DENIED")
+}
+
+func TestGrokOAuthClientStatusErrorRedactsSensitiveResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant","access_token":"access-secret","refresh_token":"refresh-secret","code_verifier":"verifier-secret"}`))
+	}))
+	defer server.Close()
+	t.Setenv(xai.EnvTokenURL, server.URL)
+
+	client := NewGrokOAuthClient()
+	_, err := client.RefreshToken(context.Background(), "refresh-secret", "", "client-id")
+	require.Error(t, err)
+
+	// fork 的 infraerrors.Error() 用 %q 输出 message，引号会被转义，所以在 message 上断言脱敏结果。
+	errText := infraerrors.Message(err)
+	require.Contains(t, errText, "status 400")
+	require.Contains(t, errText, `"refresh_token":"***"`)
+	require.NotContains(t, errText, "access-secret")
+	require.NotContains(t, errText, "refresh-secret")
+	require.NotContains(t, errText, "verifier-secret")
 }

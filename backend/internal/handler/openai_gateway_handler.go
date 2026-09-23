@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -911,7 +910,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
-	sessionHash, promptCacheKey = resolveOpenAIMessagesMetadataSession(sessionHash, promptCacheKey, reqModel, body)
+	sessionHash, promptCacheKey = resolveOpenAIMessagesMetadataSession(c, sessionHash, promptCacheKey, reqModel, body)
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatAnthropic) {
 		return
 	}
@@ -1157,10 +1156,19 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	}
 }
 
-func resolveOpenAIMessagesMetadataSession(sessionHash, promptCacheKey, reqModel string, body []byte) (string, string) {
+func resolveOpenAIMessagesMetadataSession(c *gin.Context, sessionHash, promptCacheKey, reqModel string, body []byte) (string, string) {
 	// Anthropic metadata.user_id 只作为账号粘性信号。上游 GPT/Codex 缓存键
 	// 交给 ForwardAsAnthropic 从 cache_control 或完整消息 digest 派生，避免
 	// 固定 metadata key 压住后续 turn 的缓存滚动。
+	//
+	// Claude Code 的 X-Claude-Code-Session-Id 是比 body content fallback 更稳定的
+	// 会话边界，但它只用于本地账号粘性；不要把它提升为 prompt_cache_key 或上游
+	// session_id，否则会改变现有 Messages→Codex 缓存滚动语义。
+	if promptCacheKey == "" {
+		if claudeSessionID := service.ClaudeCodeSessionIDFromHeader(c); claudeSessionID != "" {
+			return service.DeriveSessionHashFromSeed(claudeSessionID), promptCacheKey
+		}
+	}
 	if sessionHash != "" {
 		return sessionHash, promptCacheKey
 	}
@@ -1487,9 +1495,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, reqModel, cyberBlockKey)
 		return
 	}
-	// 由 AfterTurn（上游读 goroutine / 退出路径）写、BeforeTurn（客户端读 goroutine）读，
-	// relay 退出时客户端 goroutine 可能尚未 join，用 atomic 避免数据竞争。
-	var cyberBlockedThisConn atomic.Bool
+	// 连接级 cyber 状态由 AfterTurn（上游读 goroutine / 退出路径）写、BeforeRequest/BeforeTurn
+	// （客户端读 goroutine）读；relay 退出时客户端 goroutine 可能尚未 join，统一由 cyberStateMu 保护。
+	var cyberStateMu sync.Mutex
+	cyberBlockedThisConn := false
+	cyberBlockPendingAfterFailover := false
+	isCyberBlockedThisConn := func() bool {
+		cyberStateMu.Lock()
+		defer cyberStateMu.Unlock()
+		return cyberBlockedThisConn
+	}
 
 	// 解析渠道级模型映射
 	channelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
@@ -1709,6 +1724,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 账号 failover 重试 / bridge 循环重放等路径可能对同一 turn 的
 				// 相同 payload 重复调用本回调，不去重会让审计被重复计费/记录。
 				c.Set(securityAuditWSTurnContextKey, turn)
+				// Enforce the connection-level cyber session gate before any audit side
+				// effects. Both native and passthrough ingress visit this hook first and
+				// get the same side-effect-free close error; the BeforeTurn guard remains
+				// as defense in depth. Gateway-side rejection, not an account failure.
+				if isCyberBlockedThisConn() {
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
+				}
 				if turn == 1 {
 					return nil
 				}
@@ -1732,7 +1754,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// native 与 ws_v2 passthrough ingress 都会在后续 turn 写入上游前回调本钩子，
 				// 用于重新抢占上一 turn 在 AfterTurn 中释放的并发槽位。
 				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
-				if cyberBlockedThisConn.Load() {
+				if isCyberBlockedThisConn() {
 					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
 				}
 				if turn == 1 {
@@ -1768,11 +1790,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return nil
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
-				// F1: cyber 标记按 turn 生命周期清理——defer 保证任意早返回路径都执行；
-				// CyberBlocked 必须在 submit 前同步预捕获（task 闭包由 worker 池异步执行，
-				// 届时 defer 已清除标记）。
-				defer clearCyberPolicyTurnState(c)
+				// 每次 attempt 都清 cyber mark；failover 链结束前保留 recorded guard，
+				// 避免同一逻辑 turn 换号后重复落风控。CyberBlocked 必须在 submit 前
+				// 同步预捕获（task 闭包由 worker 池异步执行，届时 mark 已清除）。
+				defer func() {
+					cyberStateMu.Lock()
+					pending := cyberBlockPendingAfterFailover
+					cyberStateMu.Unlock()
+					clearCyberPolicyAttemptState(c, !pending)
+				}()
 				releaseTurnSlots()
+				cyberMarked := service.GetOpsCyberPolicy(c) != nil
 				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, turnErr != nil, cyberBlockKey, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash)
 				// 上游模型不一致标记按 turn 生命周期：先读 B 供本 turn 的 RecordUsage 透传，
 				// 再记审计行并清标，turn N+1 才能重新打标。
@@ -1783,9 +1811,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				mismatchRequestBody := wsMismatchRequestBody
 				wsMismatchRequestBody = nil
 				h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash, mismatchRequestBody)
-				if service.GetOpsCyberPolicy(c) != nil {
-					cyberBlockedThisConn.Store(true)
-				}
+				cyberStateMu.Lock()
+				cyberBlockedThisConn, cyberBlockPendingAfterFailover = advanceOpenAIWSCyberBlockState(
+					cyberBlockedThisConn,
+					cyberBlockPendingAfterFailover,
+					cyberMarked,
+					turnErr,
+				)
+				cyberStateMu.Unlock()
 				if turnErr != nil {
 					if result == nil || result.ImageCount <= 0 {
 						return
@@ -2170,7 +2203,13 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	}
 	service.SetCodexCanonicalUpstream(c, failoverErr.StatusCode, failoverErr.ResponseBody)
 	status, errType, errMsg := service.ResolveUpstreamErrorResponse(c, service.PlatformOpenAI, failoverErr.StatusCode, failoverErr.ResponseBody)
-	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+	// 400 model-not-found 切号用尽：保留结构化 code，让 OpenAI SDK 能按 model_not_found 分支处理。
+	code := ""
+	if status == http.StatusBadRequest && failoverErr.StatusCode == http.StatusBadRequest &&
+		service.IsOpenAICompatibleModelNotFound400(failoverErr.ResponseBody) {
+		code = "model_not_found"
+	}
+	h.handleStreamingAwareErrorWithCode(c, status, errType, code, errMsg, streamStarted, false)
 }
 
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况(走同一策略,nil body)。
@@ -3039,15 +3078,43 @@ func recordUpstreamModelMismatchIfMarked(c *gin.Context, recorder upstreamModelM
 	}()
 }
 
-// clearCyberPolicyTurnState resets the cyber mark and the per-request recorded
-// guard. WS-only: called at the END of AfterTurn, after recordCyberPolicyIfMarked
-// and RecordUsage (which reads CyberBlocked) have both consumed the mark.
+// advanceOpenAIWSCyberBlockState 推进 WS 连接级 cyber 封禁状态：本次 attempt 命中但以
+// failover 结束时只挂起，failover 链结束（非 failover 结果）后再生效，避免换号重试被
+// 提前拦截；未命中的非 failover 结果会把挂起的封禁落定。
+func advanceOpenAIWSCyberBlockState(blocked, pending, marked bool, turnErr error) (bool, bool) {
+	var failoverErr *service.UpstreamFailoverError
+	isFailover := errors.As(turnErr, &failoverErr)
+	if marked {
+		if isFailover {
+			return false, true
+		}
+		return true, false
+	}
+	if pending && !isFailover {
+		return true, false
+	}
+	return blocked, pending
+}
+
+// clearCyberPolicyTurnState resets the cyber mark and recorded guard after a
+// logical WS turn has finished.
 func clearCyberPolicyTurnState(c *gin.Context) {
+	clearCyberPolicyAttemptState(c, true)
+}
+
+// clearCyberPolicyAttemptState resets the cyber mark after each WS attempt
+// (called at the END of AfterTurn, after recordCyberPolicyIfMarked and
+// RecordUsage have consumed it). The per-request recorded guard is only reset
+// once the logical turn is finished (resetRecorded=true); during an account
+// failover chain it is kept so the same logical turn is not recorded twice.
+func clearCyberPolicyAttemptState(c *gin.Context, resetRecorded bool) {
 	if c == nil {
 		return
 	}
 	service.ClearOpsCyberPolicy(c)
-	c.Set(cyberPolicyRecordedKey, false)
+	if resetRecorded {
+		c.Set(cyberPolicyRecordedKey, false)
+	}
 }
 
 func summarizeWSCloseErrorForLog(err error) (string, string) {

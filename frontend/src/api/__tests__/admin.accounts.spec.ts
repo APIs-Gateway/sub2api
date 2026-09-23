@@ -18,6 +18,7 @@ import {
   getUpstreamBillingProbeSettings,
   probeUpstreamBilling,
   probeUpstreamBillingBatch,
+  refreshCredentials,
   setUpstreamBillingProbeEnabled,
   syncFromCrs,
   updateUpstreamBillingProbeSettings,
@@ -82,5 +83,20 @@ describe('admin accounts api', () => {
     expect(post).toHaveBeenCalledWith('/admin/accounts/upstream-billing-probe/batch', {
       account_ids: [7, 8]
     })
+  })
+
+  it('normalizes refresh responses with and without a partial refresh warning', async () => {
+    const account = { id: 42, name: 'antigravity' }
+    post.mockResolvedValueOnce({ data: account })
+    await expect(refreshCredentials(42)).resolves.toEqual({ account })
+    expect(post).toHaveBeenLastCalledWith('/admin/accounts/42/refresh')
+
+    const warned = {
+      account,
+      message: 'Token refreshed successfully, but project_id could not be retrieved (will retry automatically)',
+      warning: 'missing_project_id_temporary',
+    }
+    post.mockResolvedValueOnce({ data: warned })
+    await expect(refreshCredentials(42)).resolves.toEqual(warned)
   })
 })

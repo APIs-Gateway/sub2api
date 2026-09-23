@@ -166,7 +166,11 @@ import subscriptionsAPI from '@/api/subscriptions'
 import { useAppStore } from '@/stores'
 import type { UserSubscription } from '@/types'
 import { formatDateTimeToMinute } from '@/utils/format'
-import { getRemainingDurationParts, type RemainingDurationParts } from '@/utils/subscriptionQuota'
+import {
+  getExpirationDateRelation,
+  getRemainingDurationParts,
+  type RemainingDurationParts
+} from '@/utils/subscriptionQuota'
 
 const props = withDefaults(defineProps<{
   subscription: UserSubscription
@@ -417,17 +421,20 @@ function formatExpirationDate(expiresAt: string): string {
   const expires = new Date(expiresAt)
   const diff = expires.getTime() - now.getTime()
   const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
+  const relation = getExpirationDateRelation(expires, now)
 
-  if (days < 0) {
+  if (relation === null) return ''
+
+  if (relation === 'expired') {
     return t('userSubscriptions.status.expired')
   }
 
   const dateStr = formatDateTimeToMinute(expires)
 
-  if (days === 0) {
+  if (relation === 'today') {
     return `${dateStr} (${t('common.today')})`
   }
-  if (days === 1) {
+  if (relation === 'tomorrow') {
     return `${dateStr} (${t('common.tomorrow')})`
   }
 
@@ -440,7 +447,7 @@ function getExpirationClass(expiresAt: string): string {
   const diff = expires.getTime() - now.getTime()
   const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
 
-  if (days <= 0) return 'font-mono tabular-nums text-primary-700 dark:text-primary-300 font-medium'
+  if (diff <= 0) return 'font-mono tabular-nums text-primary-700 dark:text-primary-300 font-medium'
   if (days <= 3) return 'font-mono tabular-nums text-primary-700 dark:text-primary-300'
   return 'font-mono tabular-nums text-gray-700 dark:text-gray-300'
 }

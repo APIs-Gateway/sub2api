@@ -28,9 +28,15 @@ var (
 )
 
 const (
-	redeemMaxErrorsPerHour  = 20
-	redeemRateLimitDuration = time.Hour
+	redeemMaxFailedAttempts = 30
 	redeemLockDuration      = 10 * time.Second // 锁超时时间，防止死锁
+)
+
+type redeemRateLimitPolicy uint8
+
+const (
+	enforceRedeemRateLimit redeemRateLimitPolicy = iota
+	bypassRedeemRateLimit
 )
 
 type ctxKeySkipRedeemAffiliate struct{}
@@ -346,7 +352,7 @@ func (s *RedeemService) checkRedeemRateLimit(ctx context.Context, userID int64) 
 		return nil
 	}
 
-	if count >= redeemMaxErrorsPerHour {
+	if count >= redeemMaxFailedAttempts {
 		return ErrRedeemRateLimited
 	}
 
@@ -403,9 +409,30 @@ func invalidSubscriptionRedeemPreflight(code *RedeemCode) bool {
 
 // Redeem 使用兑换码
 func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
-	// 检查限流
-	if err := s.checkRedeemRateLimit(ctx, userID); err != nil {
-		return nil, err
+	return s.redeem(ctx, userID, code, enforceRedeemRateLimit)
+}
+
+// redeemForPaymentFulfillment is restricted to trusted payment fulfillment.
+// Payment retries must not be blocked by, or contribute to, a user's public
+// redeem failure counter. All code validation and transactional updates remain
+// identical to the public redemption path.
+func (s *RedeemService) redeemForPaymentFulfillment(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
+	return s.redeem(ContextSkipRedeemAffiliate(ctx), userID, code, bypassRedeemRateLimit)
+}
+
+// RedeemForAdminFulfillment is restricted to trusted admin fulfillment.
+// Admin retries must not be blocked by, or contribute to, a user's public
+// redeem failure counter. Unlike payment fulfillment, the normal redeem-level
+// affiliate rebate remains enabled.
+func (s *RedeemService) RedeemForAdminFulfillment(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
+	return s.redeem(ctx, userID, code, bypassRedeemRateLimit)
+}
+
+func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, rateLimitPolicy redeemRateLimitPolicy) (*RedeemCode, error) {
+	if rateLimitPolicy == enforceRedeemRateLimit {
+		if err := s.checkRedeemRateLimit(ctx, userID); err != nil {
+			return nil, err
+		}
 	}
 
 	// 获取分布式锁，防止同一兑换码并发使用
@@ -418,7 +445,9 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	redeemCode, err := s.redeemRepo.GetByCode(ctx, code)
 	if err != nil {
 		if errors.Is(err, ErrRedeemCodeNotFound) {
-			s.incrementRedeemErrorCount(ctx, userID)
+			if rateLimitPolicy == enforceRedeemRateLimit {
+				s.incrementRedeemErrorCount(ctx, userID)
+			}
 			return nil, ErrRedeemCodeNotFound
 		}
 		return nil, fmt.Errorf("get redeem code: %w", err)
@@ -426,11 +455,15 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 
 	// 检查兑换码状态和码本身的过期时间
 	if redeemCode.IsExpired() {
-		s.incrementRedeemErrorCount(ctx, userID)
+		if rateLimitPolicy == enforceRedeemRateLimit {
+			s.incrementRedeemErrorCount(ctx, userID)
+		}
 		return nil, ErrRedeemCodeExpired
 	}
 	if !redeemCode.CanUse() {
-		s.incrementRedeemErrorCount(ctx, userID)
+		if rateLimitPolicy == enforceRedeemRateLimit {
+			s.incrementRedeemErrorCount(ctx, userID)
+		}
 		return nil, ErrRedeemCodeUsed
 	}
 	switch redeemCode.Type {
@@ -674,30 +707,44 @@ func (s *RedeemService) GetUserHistory(ctx context.Context, userID int64, limit 
 	return codes, nil
 }
 
-// reduceOrCancelSubscription 缩短用户唯一订阅天数，剩余天数 <= 0 时取消订阅。
+// reduceOrCancelSubscription 缩短用户唯一订阅天数；扣减后不再覆盖今天（expire_day < today）时取消订阅。
 func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID int64, reduceDays int, code string) error {
 	sub, err := s.subscriptionService.userSubRepo.GetActiveByUserID(ctx, userID)
 	if err != nil {
 		return ErrSubscriptionNotFound
 	}
 
-	now := time.Now()
-	remaining := int(sub.ExpiresAt.Sub(now).Hours() / 24)
-	if remaining < 0 {
-		remaining = 0
+	// 兑换流程已持有外层事务（ctx 即 txCtx）。判定前先对卡行加 FOR UPDATE 并重读：
+	// 兑换码自身的锁只能串行化同一张码，不同的负数码、管理员调天数、续费都可能并发改同一张卡；
+	// 若按锁外读到的旧行判定「取消还是缩短」并回写旧备注，会丢掉并发的续费/备注，甚至把刚续费的卡取消。
+	locked, err := s.subscriptionService.userSubRepo.GetByIDForUpdate(ctx, sub.ID)
+	if err != nil {
+		return fmt.Errorf("lock subscription for reduction: %w", err)
 	}
+	// 锁内看到卡已被撤销（行已删）或已取消/过期：与「锁外就没读到生效卡」同口径。
+	if locked.Status != SubscriptionStatusActive {
+		return ErrSubscriptionNotFound
+	}
+	sub = locked
+
+	now := s.subscriptionService.currentTime()
+	// per-day：卡服务到 expire_day 当日结束（expires_at = expire_day 次日 0 点，东八区）。
+	// 按自然日扣减后若仍覆盖今天（newExpireDay ≥ today）就缩短，保留今天剩余的不足一天时长；
+	// 否则整卡取消。不再用 int((expires_at-now)/24h) 取整判定——那会把「今天剩余 + 整天」
+	// 截掉不足一天的部分（例如剩 1.5 天扣 1 天被误判为取消）。
+	// 以 expire_day 判定，与 ShortenSubscriptionWithReclaim 实际写入的口径一致。
+	newExpireDay := sub.ExpireDay - reduceDays
 
 	notes := fmt.Sprintf("通过兑换码 %s 退款扣减 %d 天", code, reduceDays)
 
-	if remaining <= reduceDays {
-		// 剩余天数不足，整卡取消：置 expired + 回收未花的发放余额（burn-down）。
+	if newExpireDay < EastDayNumber(now) {
+		// 扣减后不再覆盖今天：整卡取消（status=expired、today_remaining=0、expire_day<today；不动钱包）。
 		if _, _, err := s.subscriptionService.userSubRepo.CloseSubscriptionWithReclaim(ctx, sub.ID, now, false); err != nil {
 			return fmt.Errorf("cancel subscription: %w", err)
 		}
 	} else {
-		// 缩短天数并回收对应未花额度（burn-down）。
-		newExpiresAt := sub.ExpiresAt.AddDate(0, 0, -reduceDays)
-		if _, _, err := s.subscriptionService.userSubRepo.ShortenSubscriptionWithReclaim(ctx, sub.ID, reduceDays, newExpiresAt, now); err != nil {
+		// 缩短 expire_day（expires_at 由仓储从 expire_day 派生；不动钱包）。
+		if _, _, err := s.subscriptionService.userSubRepo.ShortenSubscriptionWithReclaim(ctx, sub.ID, reduceDays, ExpireDayToExpiresAt(newExpireDay), now); err != nil {
 			return fmt.Errorf("reduce subscription: %w", err)
 		}
 	}

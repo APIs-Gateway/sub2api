@@ -338,13 +338,19 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		Status:       StatusActive,
 	}
 
-	if err := s.userRepo.Create(ctx, user); err != nil {
+	// 建号与占用注册码在同一个事务里完成：占码失败（并发下被别人抢先）时连同用户一起回滚，
+	// 此时还没有发放任何赠送、订阅、配额快照，也没有绑定邀请人，不会留下半成品。
+	if err := s.createUserAndClaimInvitation(ctx, user, invitationRedeemCode); err != nil {
 		// 优先检查邮箱冲突错误（竞态条件下可能发生）
-		if errors.Is(err, ErrEmailExists) {
+		switch {
+		case errors.Is(err, ErrEmailExists):
 			return "", nil, ErrEmailExists
+		case errors.Is(err, ErrInvitationCodeInvalid):
+			return "", nil, ErrInvitationCodeInvalid
+		default:
+			logger.LegacyPrintf("service.auth", "[Auth] Database error creating user: %v", err)
+			return "", nil, ErrServiceUnavailable
 		}
-		logger.LegacyPrintf("service.auth", "[Auth] Database error creating user: %v", err)
-		return "", nil, ErrServiceUnavailable
 	}
 	s.postAuthUserBootstrap(ctx, user, "email", true)
 	s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
@@ -369,7 +375,14 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 			default:
 				// 账号此刻已经落库。不删掉的话这个邮箱就被一个半成品账号占死了，
 				// 用户换个码重试只会撞 EMAIL_EXISTS。第三方注册那条路本来就是这么回滚的，
-				// 这里补齐，两条路行为一致。此时注册码尚未标记为已用，无需归还。
+				// 这里补齐，两条路行为一致。注册码已随建号在同一事务里占用，先按
+				// used_by=本账号 条件归还，再删号，避免一次失败的注册把一次性注册码烧掉。
+				if invitationRedeemCode != nil {
+					if restoreErr := s.restoreOAuthRegistrationInvitation(ctx, invitationRedeemCode.Code, user.ID); restoreErr != nil {
+						logger.LegacyPrintf("service.auth",
+							"[Auth] Failed to restore invitation code for user %d after inviter binding failed: %v", user.ID, restoreErr)
+					}
+				}
 				if delErr := s.purgeRolledBackUser(ctx, user.ID); delErr != nil {
 					logger.LegacyPrintf("service.auth",
 						"[Auth] Failed to roll back user %d after inviter binding failed: %v", user.ID, delErr)
@@ -379,13 +392,8 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		}
 	}
 
-	// 标记邀请码为已使用（如果使用了邀请码）
-	if invitationRedeemCode != nil {
-		if err := s.redeemRepo.Use(ctx, invitationRedeemCode.ID, user.ID); err != nil {
-			// 邀请码标记失败不影响注册，只记录日志
-			logger.LegacyPrintf("service.auth", "[Auth] Failed to mark invitation code as used for user %d: %v", user.ID, err)
-		}
-	}
+	// 邀请码占用已由 createUserAndClaimInvitation 在“用户创建 + 邀请码占用”的
+	// 同一个数据库事务内原子完成（一次性约束，见函数注释），此处不再单独标记。
 	// 应用优惠码（如果提供且功能已启用）
 	if promoCode != "" && s.promoService != nil && s.settingService != nil && s.settingService.IsPromoCodeEnabled(ctx) {
 		if err := s.promoService.ApplyPromoCode(ctx, user.ID, promoCode); err != nil {
@@ -1285,6 +1293,70 @@ func (s *AuthService) validateRegistrationEmailPolicy(ctx context.Context, email
 	return nil
 }
 
+// createUserAndClaimInvitation 原子化完成“用户创建 + 邀请码占用”。
+//
+// 背景：邀请码属于一次性凭证，必须保证“一个邀请码最多注册一个账号”。旧实现先检查
+// CanUse()、再创建用户、最后才 redeemRepo.Use()（且失败仅记日志），检查与消耗分离且
+// 不在同一事务，并发注册可在同一邀请码上同时通过检查并各自创建账号（TOCTOU 竞态）。
+//
+// 本实现把两者放入同一个数据库事务：
+//   - 占用走 redeemRepo.Use 的条件更新（WHERE status='unused'，乐观锁）；
+//   - 并发下只有一个事务能占用成功，其余事务回滚——既不产生多余账号，也不让码被烧掉；
+//   - 事务回滚同时撤销用户创建（userRepository.Create 会加入 ctx 中的外部事务）。
+//
+// 无邀请码时保持原单次创建路径（不开事务）。entClient 缺失的异常配置下退化为顺序执行：
+// 占用仍由 Use 的条件更新兜底，占用失败时硬删刚建出的账号，不放行第二个注册。
+func (s *AuthService) createUserAndClaimInvitation(ctx context.Context, user *User, invitation *RedeemCode) error {
+	commitUser := func(execCtx context.Context) error {
+		if err := s.userRepo.Create(execCtx, user); err != nil {
+			return err
+		}
+		if invitation == nil {
+			return nil
+		}
+		// Create 会回填 user.ID，直接以其原子占用邀请码。
+		if err := s.redeemRepo.Use(execCtx, invitation.ID, user.ID); err != nil {
+			// 并发下唯一的合法失败路径：另一个注册已占用该码
+			logger.LegacyPrintf("service.auth",
+				"[Auth] Rejected registration: invitation code %d already claimed (user_id=%d err=%v)",
+				invitation.ID, user.ID, err)
+			return ErrInvitationCodeInvalid
+		}
+		return nil
+	}
+
+	if invitation == nil {
+		return commitUser(ctx)
+	}
+	if s.entClient == nil {
+		err := commitUser(ctx)
+		if errors.Is(err, ErrInvitationCodeInvalid) && user.ID > 0 {
+			if delErr := s.purgeRolledBackUser(ctx, user.ID); delErr != nil {
+				logger.LegacyPrintf("service.auth",
+					"[Auth] Failed to roll back user %d after invitation claim failed: %v", user.ID, delErr)
+			}
+		}
+		return err
+	}
+
+	tx, err := s.entClient.Tx(ctx)
+	if err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] Failed to start registration transaction: %v", err)
+		return ErrServiceUnavailable
+	}
+	// defer 回滚：事务内 panic 也不会泄漏连接；Commit 成功后 Rollback 为空操作。
+	defer func() { _ = tx.Rollback() }()
+	execCtx := dbent.NewTxContext(ctx, tx)
+	if err := commitUser(execCtx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] Failed to commit registration transaction: %v", err)
+		return ErrServiceUnavailable
+	}
+	return nil
+}
+
 func buildEmailSuffixNotAllowedError(whitelist []string) error {
 	if len(whitelist) == 0 {
 		return ErrEmailSuffixNotAllowed
@@ -1883,7 +1955,7 @@ func resolvedTokenVersion(user *User) int64 {
 	return user.TokenVersion ^ fingerprint
 }
 
-// snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas（platform × 3 window）以
+// snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas 中至少配置了一档限额的平台以
 // BulkInsertInitial 形式写入 user_platform_quotas 表。
 //
 // 下面那个 fail-open 只在调用方不处于数据库事务里时才真的成立，而注册路径恰恰是在事务内
@@ -1899,8 +1971,13 @@ func (s *AuthService) snapshotPlatformQuotaDefaults(ctx context.Context, userID 
 	if s.userPlatformQuotaRepo == nil || plan == nil || len(plan.PlatformQuotas) == 0 {
 		return nil
 	}
+	// 仅为至少配置了一档限额的平台建行：user_platform_quotas 中不存在的行等价于不限额，
+	// 三档全空的记录不携带任何可执行的限额。
 	records := make([]UserPlatformQuotaRecord, 0, len(plan.PlatformQuotas))
 	for platform, q := range plan.PlatformQuotas {
+		if !q.HasAnyLimit() {
+			continue
+		}
 		if !IsAllowedQuotaPlatform(platform) {
 			// 设置里混进了未知平台。跳过它，而不是让它去撞数据库的 CHECK 约束——
 			// 在事务里那一撞会连坐掉调用方后面所有的写操作。
@@ -1908,16 +1985,13 @@ func (s *AuthService) snapshotPlatformQuotaDefaults(ctx context.Context, userID 
 				"[Auth] Skip unknown quota platform %q for user %d (not in AllowedQuotaPlatforms)", platform, userID)
 			continue
 		}
-		rec := UserPlatformQuotaRecord{
-			UserID:   userID,
-			Platform: platform,
-		}
-		if q != nil {
-			rec.DailyLimitUSD = q.DailyLimitUSD
-			rec.WeeklyLimitUSD = q.WeeklyLimitUSD
-			rec.MonthlyLimitUSD = q.MonthlyLimitUSD
-		}
-		records = append(records, rec)
+		records = append(records, UserPlatformQuotaRecord{
+			UserID:          userID,
+			Platform:        platform,
+			DailyLimitUSD:   q.DailyLimitUSD,
+			WeeklyLimitUSD:  q.WeeklyLimitUSD,
+			MonthlyLimitUSD: q.MonthlyLimitUSD,
+		})
 	}
 	if len(records) == 0 {
 		return nil

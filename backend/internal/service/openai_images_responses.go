@@ -37,6 +37,13 @@ type OpenAIImagesUpstreamError struct {
 	Message           string
 	Param             string
 	UpstreamRequestID string
+
+	// SynthesizedFromModelText marks an error the gateway inferred from the
+	// model's plain-text output instead of reading it off a structured upstream
+	// error frame. Such a verdict describes this one turn ("the model answered
+	// with words instead of an image"), not the account — see
+	// shouldCoolOpenAIImagesToolForError.
+	SynthesizedFromModelText bool
 }
 
 func (e *OpenAIImagesUpstreamError) Error() string {
@@ -328,8 +335,28 @@ func openAIImageUploadToDataURL(upload OpenAIImagesUpload) (string, error) {
 	return "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(upload.Data), nil
 }
 
+// openAIImagesSelfBuiltRequestContextKey marks a request whose upstream body was
+// fully constructed by buildOpenAIImagesResponsesRequest, i.e. tool_choice and the
+// matching image_generation tool are always both present and never client-controlled.
+type openAIImagesSelfBuiltRequestContextKey struct{}
+
+func withOpenAIImagesSelfBuiltRequest(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, openAIImagesSelfBuiltRequestContextKey{}, true)
+}
+
+func isOpenAIImagesSelfBuiltRequest(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	selfBuilt, _ := ctx.Value(openAIImagesSelfBuiltRequestContextKey{}).(bool)
+	return selfBuilt
+}
+
 func buildOpenAIImagesResponsesRequest(parsed *OpenAIImagesRequest, toolModel string) ([]byte, error) {
-	return buildOpenAIImagesResponsesRequestWithMainModel(parsed, toolModel, openAIImagesResponsesMainModel)
+	return buildOpenAIImagesResponsesRequestWithMainModel(parsed, toolModel, openAIImagesResponsesMainModelValue())
 }
 
 func buildOpenAIImagesResponsesRequestWithMainModel(parsed *OpenAIImagesRequest, toolModel string, mainModel string) ([]byte, error) {
@@ -361,7 +388,7 @@ func buildOpenAIImagesResponsesRequestWithMainModel(parsed *OpenAIImagesRequest,
 	req := []byte(`{"instructions":"","stream":true,"reasoning":{"effort":"medium","summary":"auto"},"parallel_tool_calls":true,"include":["reasoning.encrypted_content"],"model":"","store":false,"tool_choice":{"type":"image_generation"}}`)
 	mainModel = strings.TrimSpace(mainModel)
 	if mainModel == "" {
-		mainModel = openAIImagesResponsesMainModel
+		mainModel = openAIImagesResponsesMainModelValue()
 	}
 	req, _ = sjson.SetBytes(req, "model", mainModel)
 
@@ -740,6 +767,10 @@ func openAIImagesTextFallbackErrorForText(text string) *OpenAIImagesUpstreamErro
 		ErrorType:  "upstream_error",
 		Code:       "image_generation_unavailable",
 		Message:    "Upstream did not execute image generation",
+		// Inferred from the model's own words, not from an upstream error frame:
+		// good enough to fail this turn over to another account, not evidence that
+		// this account's image tool is down for the next 30 minutes.
+		SynthesizedFromModelText: true,
 	}
 }
 
@@ -976,6 +1007,18 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 		return nil, upErr
 	}
 
+	// A retired/configured Responses driver is not an image-model quota failure.
+	// Surface the actionable upstream error instead of cooling every image account
+	// and eventually hiding the configuration problem behind a generic 503.
+	// fork: IsOpenAI()+IsOAuth() covers OAuth and Setup Token accounts (upstream IsOpenAIOAuthLike).
+	if account.IsOpenAI() && account.IsOAuth() &&
+		isOpenAICodexPlanGatedModelError(resp.StatusCode, body) &&
+		strings.Contains(extractUpstreamErrorMessage(body), "'"+openAIImagesResponsesMainModelValue()+"'") {
+		upErr := openAIImagesUpstreamErrorFromHTTP(resp.StatusCode, resp.Header, body)
+		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
+		return nil, upErr
+	}
+
 	// Track rate limits / decide whether to disable the account (secondary failover).
 	var modelForCooldown string
 	if len(requestedModel) > 0 {
@@ -1172,8 +1215,13 @@ func openAIImagesToolUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	if !inputOK || !outputOK || !imageOutputOK {
 		return OpenAIUsage{}, false
 	}
+	imageInputTokens, _ := boundedJSONNonNegativeInt(value.Get("input_tokens_details.image_tokens"))
+	if imageInputTokens > inputTokens {
+		imageInputTokens = inputTokens
+	}
 	return OpenAIUsage{
 		InputTokens:       inputTokens,
+		ImageInputTokens:  imageInputTokens,
 		OutputTokens:      outputTokens,
 		ImageOutputTokens: imageOutputTokens,
 	}, true
@@ -1789,7 +1837,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		return nil, err
 	}
 
-	mainModel := openAIImagesResponsesMainModel
+	mainModel := openAIImagesResponsesMainModelValue()
 	if account.Type == AccountTypeAPIKey {
 		mainModel = requestModel
 	}
@@ -1797,6 +1845,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	if err != nil {
 		return nil, err
 	}
+	upstreamCtx = withOpenAIImagesSelfBuiltRequest(upstreamCtx)
 	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, parsed.StickySessionSeed(), false)
 	if err != nil {
 		return nil, err
@@ -1838,7 +1887,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
 				AccountID:          account.ID,
@@ -1850,11 +1899,11 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				Message:            upstreamMsg,
 			})
 			shouldDisable := s.handleFailoverSideEffects(upstreamCtx, resp, account, respBody, requestModel)
-			return nil, &UpstreamFailoverError{
+			return nil, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)),
-			}
+			}, upstreamMsg, respBody)
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, requestModel)
 	}
@@ -1940,6 +1989,26 @@ const (
 	openAIImagesOAuthUnavailableReason   = "openai_images_oauth_tool_unavailable"
 )
 
+// shouldCoolOpenAIImagesToolForError decides whether an image_generation_unavailable
+// verdict is durable enough to park the account's image tool for
+// openAIImagesOAuthUnavailableCooldown.
+//
+// Only an upstream error frame that names the condition qualifies. A verdict the
+// gateway synthesized from the model's plain-text reply does not: it merely says
+// this prompt produced words instead of an image, which is prompt-dependent and
+// happens on healthy accounts. Writing a 30-minute account-level cooldown from it
+// is doubly wrong because the very same error is classified retryable
+// (IsOpenAIImagesRetryableUpstreamError: status >= 500) and drives
+// newOpenAIAccountFailoverError — so one such reply walks the pool and cools every
+// account the retry touches.
+//
+// This mirrors the rule the alpha/search path already states in words: a
+// tool-endpoint failure "仍允许本次请求换号，但不修改任何账号状态"
+// (see shouldApplyOpenAIAlphaSearchAccountErrorSideEffects).
+func shouldCoolOpenAIImagesToolForError(upstreamErr *OpenAIImagesUpstreamError) bool {
+	return upstreamErr != nil && !upstreamErr.SynthesizedFromModelText
+}
+
 // coolOpenAIImagesOAuthTool 复用现有的模型限流表（openAIImageGenerationRateLimitKey），
 // 给该账号的图片生成能力设置一段冷却期，而不是直接禁用整个账号。
 func (s *OpenAIGatewayService) coolOpenAIImagesOAuthTool(ctx context.Context, account *Account) {
@@ -2000,12 +2069,12 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 		}
 		responseBody := []byte(fmt.Sprintf(`{"error":{"type":"upstream_error","code":%q,"message":%q}}`, code, message))
 		shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, headers, responseBody, requestedModel)
-		return &UpstreamFailoverError{
+		return applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 			StatusCode:             statusCode,
 			ResponseBody:           responseBody,
 			ResponseHeaders:        headers,
 			RetryableOnSameAccount: openAIRetryableOnSameAccount(statusCode, message, responseBody, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)),
-		}
+		}, message, responseBody)
 	}
 
 	var upstreamErr *OpenAIImagesUpstreamError
@@ -2047,7 +2116,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	// 的能力性失败。给该账号图片能力打冷却后强制换账号重试；若已经写出过响应（例如同账号
 	// 重试用尽），就没法再透明换账号了，原样返回错误。
 	if upstreamErr.Code == "image_generation_unavailable" {
-		s.coolOpenAIImagesOAuthTool(ctx, account)
+		if shouldCoolOpenAIImagesToolForError(upstreamErr) {
+			s.coolOpenAIImagesOAuthTool(ctx, account)
+		}
 		if responseWritten {
 			return err
 		}
@@ -2064,10 +2135,10 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	}
 
 	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, upstreamErr.StatusCode, headers, responseBody, requestedModel)
-	return &UpstreamFailoverError{
+	return applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 		StatusCode:             upstreamErr.StatusCode,
 		ResponseBody:           responseBody,
 		ResponseHeaders:        headers,
 		RetryableOnSameAccount: openAIRetryableOnSameAccount(upstreamErr.StatusCode, upstreamErr.clientMessage(), responseBody, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(upstreamErr.StatusCode)),
-	}
+	}, upstreamErr.clientMessage(), responseBody)
 }

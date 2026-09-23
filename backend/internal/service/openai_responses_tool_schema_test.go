@@ -291,3 +291,209 @@ func TestOpenAIGatewayServiceForward_SanitizesResponsesToolParameterNullType(t *
 	require.Equal(t, "object", gjson.GetBytes(upstream.lastBody, "tools.0.parameters.type").String())
 	require.Equal(t, "automation_update", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
 }
+
+// 回归锁：客户端把 "required" 发成 null 时，xAI 返回
+// `/required: null is not of type "array"`，Moonshot 返回
+// `parameters is not a valid moonshot flavored json schema`，均为 400。
+func TestSanitizeOpenAIResponsesToolParameterTypes_DropsNullRequired(t *testing.T) {
+	body := []byte(`{
+		"model": "grok-4.7",
+		"tools": [
+			{
+				"type": "function",
+				"name": "read_file",
+				"parameters": {
+					"type": "object",
+					"properties": {"path": {"type": "string"}},
+					"required": null
+				}
+			}
+		]
+	}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, json.Valid(sanitized), string(sanitized))
+	// null 的 required 被整键删除：JSON Schema 里缺省 required 等价于无必填项。
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.parameters.required").Exists())
+	// 其余定义原样保留。
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.parameters.type").String())
+	require.Equal(t, "string", gjson.GetBytes(sanitized, "tools.0.parameters.properties.path.type").String())
+	require.Equal(t, "read_file", gjson.GetBytes(sanitized, "tools.0.name").String())
+	require.Equal(t, "grok-4.7", gjson.GetBytes(sanitized, "model").String())
+}
+
+func TestSanitizeOpenAIResponsesToolParameterTypes_KeepsValidRequired(t *testing.T) {
+	body := []byte(`{
+		"tools": [
+			{
+				"type": "function",
+				"name": "read_file",
+				"parameters": {
+					"type": "object",
+					"properties": {"path": {"type": "string"}},
+					"required": ["path"]
+				}
+			}
+		]
+	}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(body), string(sanitized))
+}
+
+// 删除成员时要连带处理逗号：required 可能位于对象开头、中间、末尾，或是唯一成员，
+// 甚至以重复键出现；无论哪种位置，输出都必须仍是合法 JSON 且只少了 required。
+func TestSanitizeOpenAIResponsesToolParameterTypes_NullRequiredMemberPositions(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema string
+		want   string
+	}{
+		{"only", `{"required":null}`, `{}`},
+		{"only_spaced", `{ "required" : null }`, `{}`},
+		{"first", `{"required":null,"type":"object"}`, `{"type":"object"}`},
+		{"middle", `{"type":"object", "required" : null ,"properties":{}}`, `{"type":"object","properties":{}}`},
+		{"last", `{"type":"object","properties":{},"required":null}`, `{"type":"object","properties":{}}`},
+		{"duplicate_leading", `{"required":null,"required":null,"type":"object"}`, `{"type":"object"}`},
+		{"duplicate_trailing", `{"type":"object","required":null,"required":null}`, `{"type":"object"}`},
+		{"all_duplicates", `{"required":null,"required":null}`, `{}`},
+		{"split", `{"required":null,"type":"object","required":null,"properties":{}}`, `{"type":"object","properties":{}}`},
+		{"with_null_type", `{"type":null,"required":null}`, `{"type":"object"}`},
+		{"multiline", "{\n  \"type\": \"object\",\n  \"required\": null\n}", `{"type":"object"}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"tools":[{"type":"function","name":"f","parameters":` + tc.schema + `}]}`)
+
+			sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+			require.NoError(t, err)
+			require.True(t, changed)
+			require.True(t, json.Valid(sanitized), string(sanitized))
+			require.JSONEq(t, tc.want, gjson.GetBytes(sanitized, "tools.0.parameters").Raw)
+		})
+	}
+}
+
+// required:null 可能出现在任意层级的子 schema 里，也可能出现在历史 input 的
+// 工具定义与 ChatCompletions 形态的 function.parameters 里。
+func TestSanitizeOpenAIResponsesToolParameterTypes_DropsNestedNullRequired(t *testing.T) {
+	body := []byte(`{
+		"tools":[{"type":"function","function":{"name":"chat","parameters":{"type":"object","required":null}}},
+			{"type":"function","name":"nested","parameters":{
+				"type":"object",
+				"properties":{"cfg":{"type":"object","required":null,"properties":{"inner":{"type":"object","required":null}}}},
+				"items":[{"required":null}],
+				"anyOf":[{"required":null},{"required":["a"]}],
+				"$defs":{"d":{"required":null}},
+				"additionalProperties":{"required":null},
+				"dependencies":{"a":["b"]},
+				"required":["cfg"]
+			}}],
+		"input":[{"type":"additional_tools","tools":[{"type":"function","name":"hist","parameters":{"type":"object","properties":{"x":{"items":{"required":null}}}}}]}]
+	}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, json.Valid(sanitized), string(sanitized))
+	for _, path := range []string{
+		"tools.0.function.parameters.required",
+		"tools.1.parameters.properties.cfg.required",
+		"tools.1.parameters.properties.cfg.properties.inner.required",
+		"tools.1.parameters.items.0.required",
+		"tools.1.parameters.anyOf.0.required",
+		"tools.1.parameters.$defs.d.required",
+		"tools.1.parameters.additionalProperties.required",
+		"input.0.tools.0.parameters.properties.x.items.required",
+	} {
+		require.False(t, gjson.GetBytes(sanitized, path).Exists(), path)
+	}
+	require.Equal(t, `["a"]`, gjson.GetBytes(sanitized, "tools.1.parameters.anyOf.1.required").Raw)
+	require.Equal(t, `["cfg"]`, gjson.GetBytes(sanitized, "tools.1.parameters.required").Raw)
+	require.Equal(t, `["b"]`, gjson.GetBytes(sanitized, "tools.1.parameters.dependencies.a").Raw)
+}
+
+// 回归锁：/v1/messages 的工具 schema 在 input_schema 下，早前只认 parameters，
+// 导致 Anthropic 协议的工具请求绕过清理，裸 null 直达上游触发 400。
+func TestSanitizeOpenAIResponsesToolParameterTypes_AnthropicInputSchema(t *testing.T) {
+	body := []byte(`{
+		"model": "grok-4.7",
+		"tools": [
+			{
+				"name": "read_file",
+				"description": "read",
+				"input_schema": {
+					"type": "object",
+					"properties": {"path": {"type": "string"}},
+					"required": null
+				}
+			}
+		]
+	}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.input_schema.required").Exists())
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.input_schema.type").String())
+	require.Equal(t, "string", gjson.GetBytes(sanitized, "tools.0.input_schema.properties.path.type").String())
+	require.Equal(t, "read_file", gjson.GetBytes(sanitized, "tools.0.name").String())
+}
+
+func TestSanitizeOpenAIResponsesToolParameterTypes_AnthropicInputSchemaNullType(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"f","input_schema":{"type":null,"properties":{}}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.input_schema.type").String())
+}
+
+// contentSchema 同样承载子 schema，其中的 null required 必须一并修掉。
+func TestSanitizeOpenAIResponsesToolParameterTypes_ContentSchema(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"f","input_schema":{"type":"object","contentSchema":{"required":null}}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.input_schema.contentSchema.required").Exists())
+}
+
+// default / examples / const / enum 里装的是实例数据，其中字面量 {"required": null}
+// 是客户端 payload，不能当成 schema 修改；tools 之外的 required:null 同理。
+func TestSanitizeOpenAIResponsesToolParameterTypes_PreservesInstanceData(t *testing.T) {
+	body := []byte(`{"metadata":{"required":null},"tools":[{"name":"f","input_schema":{"type":"object","properties":{"cfg":{"type":"object","default":{"required":null},"examples":[{"required":null}],"const":{"required":null},"enum":[{"required":null}]}}}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(body), string(sanitized))
+}
+
+// Schema 嵌套深度守卫：超深 properties 链只截断，不递归到栈溢出。
+func TestSanitizeOpenAIResponsesToolParameterTypes_SchemaDepthGuard(t *testing.T) {
+	schema := `{"required":null}`
+	for i := 0; i < openAIResponsesToolSchemaMaxSchemaDepth+10; i++ {
+		schema = `{"type":"object","properties":{"p":` + schema + `}}`
+	}
+	body := []byte(`{"tools":[{"type":"function","name":"deep","parameters":` + schema + `}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.False(t, changed, "超出深度上限的 required:null 保持原样")
+	require.Equal(t, string(body), string(sanitized))
+}

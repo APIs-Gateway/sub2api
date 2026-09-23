@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
@@ -245,6 +246,12 @@ func (a *Account) IsGeminiCodeAssist() bool {
 		return strings.TrimSpace(a.GetCredential("project_id")) != ""
 	}
 	return oauthType == "code_assist"
+}
+
+// IsGeminiGoogleOne reports whether this account uses the legacy consumer
+// Gemini CLI / Code Assist OAuth channel.
+func (a *Account) IsGeminiGoogleOne() bool {
+	return a.Platform == PlatformGemini && a.Type == AccountTypeOAuth && a.GeminiOAuthType() == "google_one"
 }
 
 func (a *Account) CanGetUsage() bool {
@@ -545,6 +552,9 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 		return nil
 	}
 	if len(rawMapping) == 0 {
+		if a.IsGeminiGoogleOne() {
+			return geminicli.GoogleOneModelMapping()
+		}
 		// Antigravity 平台使用默认映射
 		if a.Platform == domain.PlatformAntigravity {
 			return domain.DefaultAntigravityModelMapping
@@ -567,12 +577,20 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 				"gemini-3-flash",
 				"gemini-3.1-pro-high",
 				"gemini-3.1-pro-low",
+				"gemini-3.6-flash",
+				"gemini-3.6-flash-high",
+				"gemini-3.6-flash-low",
+				"gemini-3.6-flash-medium",
+				"gemini-3.6-flash-tiered",
 			})
 		}
 		return result
 	}
 
 	// Antigravity 平台使用默认映射
+	if a.IsGeminiGoogleOne() {
+		return geminicli.GoogleOneModelMapping()
+	}
 	if a.Platform == domain.PlatformAntigravity {
 		return domain.DefaultAntigravityModelMapping
 	}
@@ -675,9 +693,11 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 
 // IsModelSupported 检查模型是否在 model_mapping 中（支持通配符）。
 //
-// OpenAI OAuth 账号的空映射不能视为“允许所有”：未知第三方模型会被原样
-// 转发给 Codex 上游并得到不可重试的 400，阻断后续 failover。透传模式和
-// 其它账号类型仍保留空映射允许所有的既有语义。
+// 例外：OpenAI OAuth 账号（Codex 上游）的空映射会排除明确属于其他厂商
+// 家族的模型（deepseek-*/glm-* 等）——转发阶段 normalizeOpenAIModelForUpstream
+// 会把未知模型原样透传，Codex 上游对这类模型必然返回不可重试的 400，导致
+// 请求卡死在该账号上、无法 failover 到真正支持该模型的 API Key 账号（#3662）。
+// 未知/自定义别名仍保持允许（兼容渠道级映射），见 isOpenAIOAuthServableModel。
 func (a *Account) IsModelSupported(requestedModel string) bool {
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
@@ -1369,6 +1389,8 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 		return false
 	}
 	switch capability {
+	case OpenAIImagesCapabilityAPIKey:
+		return a.Type == AccountTypeAPIKey
 	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
 		return a.Type == AccountTypeOAuth || a.Type == AccountTypeAPIKey
 	case OpenAIImagesCapabilityDirectBasic, OpenAIImagesCapabilityDirectNative:
@@ -1611,6 +1633,22 @@ func (a *Account) IsOpenAIWSForceHTTPEnabled() bool {
 		return false
 	}
 	enabled, ok := a.Extra["openai_ws_force_http"].(bool)
+	return ok && enabled
+}
+
+// IsOpenAIResponsesFlattenNamespacesEnabled 返回账号级"摊平 Codex namespace 工具"开关。
+// 字段：accounts.extra.openai_responses_flatten_namespaces，缺省 false（原样保留）。
+//
+// namespace 是 Codex 后端定义的私有扩展，OAuth 出口恒为 chatgpt.com/backend-api/codex
+// （buildUpstreamRequest 只对 API Key 账号取 base_url），即定义方本身，因此默认保留。
+// 该开关只为把流量转发到不认识 namespace 的兼容上游的部署保留退路：打开后恢复
+// 0.1.166 及更早版本的摊平行为。仅对 OpenAI OAuth 账号有效——API Key 走 chat
+// completions 回退桥时由桥自行摊平，Grok/Anthropic 出口有各自的适配链路。
+func (a *Account) IsOpenAIResponsesFlattenNamespacesEnabled() bool {
+	if a == nil || !a.IsOpenAI() || a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra["openai_responses_flatten_namespaces"].(bool)
 	return ok && enabled
 }
 

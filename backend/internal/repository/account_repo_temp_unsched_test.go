@@ -3,12 +3,14 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,6 +24,65 @@ func TestAccountRepository_SetTempUnschedulable_NoRowsAffectedDoesNotWriteOutbox
 	require.Len(t, exec.execQueries, 1)
 	require.Contains(t, exec.execQueries[0], "UPDATE accounts")
 	require.NotContains(t, strings.Join(exec.execQueries, "\n"), "scheduler_outbox")
+}
+
+func TestAccountRepository_ResetQuotaUsedAndClearRateLimitCooldown_NoRowsAffectedReturnsNotFoundWithoutOutbox(t *testing.T) {
+	exec := &recordingSQLExecutor{result: rowsAffectedResult(0)}
+	repo := newAccountRepositoryWithSQL(nil, exec, nil)
+
+	err := repo.ResetQuotaUsedAndClearRateLimitCooldown(context.Background(), 42)
+
+	require.ErrorIs(t, err, service.ErrAccountNotFound)
+	require.Len(t, exec.execQueries, 1)
+	require.Contains(t, exec.execQueries[0], "UPDATE accounts")
+	require.NotContains(t, strings.Join(exec.execQueries, "\n"), "scheduler_outbox")
+}
+
+type rowsAffectedErrResult struct{ err error }
+
+func (r rowsAffectedErrResult) LastInsertId() (int64, error) { return 0, nil }
+func (r rowsAffectedErrResult) RowsAffected() (int64, error) { return 0, r.err }
+
+func TestAccountRepository_ResetQuotaUsedAndClearRateLimitCooldown_ErrorsSkipOutbox(t *testing.T) {
+	t.Run("exec error", func(t *testing.T) {
+		execErr := errors.New("update failed")
+		exec := &recordingSQLExecutor{err: execErr}
+		repo := newAccountRepositoryWithSQL(nil, exec, nil)
+
+		err := repo.ResetQuotaUsedAndClearRateLimitCooldown(context.Background(), 42)
+
+		require.ErrorIs(t, err, execErr)
+		require.Len(t, exec.execQueries, 1)
+		require.NotContains(t, strings.Join(exec.execQueries, "\n"), "scheduler_outbox")
+	})
+
+	t.Run("rows affected error", func(t *testing.T) {
+		rowsErr := errors.New("rows affected unavailable")
+		exec := &recordingSQLExecutor{result: rowsAffectedErrResult{err: rowsErr}}
+		repo := newAccountRepositoryWithSQL(nil, exec, nil)
+
+		err := repo.ResetQuotaUsedAndClearRateLimitCooldown(context.Background(), 42)
+
+		require.ErrorIs(t, err, rowsErr)
+		require.Len(t, exec.execQueries, 1)
+		require.NotContains(t, strings.Join(exec.execQueries, "\n"), "scheduler_outbox")
+	})
+
+	t.Run("success clears account cooldown and enqueues outbox", func(t *testing.T) {
+		exec := &recordingSQLExecutor{result: rowsAffectedResult(1)}
+		repo := newAccountRepositoryWithSQL(nil, exec, nil)
+
+		err := repo.ResetQuotaUsedAndClearRateLimitCooldown(context.Background(), 42)
+
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(exec.execQueries), 1)
+		update := normalizeSQLWhitespace(exec.execQueries[0])
+		require.Contains(t, update, "rate_limited_at = NULL, rate_limit_reset_at = NULL")
+		require.NotContains(t, update, "overload_until")
+		require.NotContains(t, update, "temp_unschedulable")
+		require.NotContains(t, update, "model_rate_limits")
+		require.Contains(t, strings.Join(exec.execQueries, "\n"), "scheduler_outbox")
+	})
 }
 
 func TestAccountRepository_ListOAuthRefreshCandidates_SQLFilter(t *testing.T) {
@@ -43,8 +104,8 @@ func TestAccountRepository_ListOAuthRefreshCandidates_SQLFilter(t *testing.T) {
 	normalized := normalizeSQLWhitespace(capturedSQL)
 	require.Contains(t, normalized, "deleted_at IS NULL")
 	require.Contains(t, normalized, "status = 'active'")
-	require.Contains(t, normalized, "schedulable = TRUE",
-		"permanently unschedulable accounts must not remain OAuth refresh candidates")
+	require.NotContains(t, normalized, "schedulable = TRUE",
+		"paused (schedulable=false, status=active) accounts must remain OAuth refresh candidates: excluding them lets their stored access_token expire and the usage-window probe then reports a false 'needs re-auth'; permanent rejection is already covered by status = 'active' and refresh failures are bounded by the retry-cooldown exclusion")
 	require.Contains(t, normalized, "type IN ('oauth', 'setup-token')")
 	require.Contains(t, normalized, "platform IN ('anthropic', 'openai', 'gemini', 'antigravity')")
 	require.Contains(t, normalized, "credentials ? 'refresh_token'")

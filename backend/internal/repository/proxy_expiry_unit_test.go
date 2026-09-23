@@ -27,12 +27,11 @@ func TestSweepOneExpiredProxyOnExecReturnsErrorWhenUpdateProxiesExecFails(t *tes
 	t.Cleanup(func() { _ = db.Close() })
 
 	execErr := errors.New("update proxies exec failed")
-	mock.ExpectExec(`(?s)UPDATE proxies SET status=\$1.*WHERE id=\$2`).
-		WithArgs(service.StatusExpired, int64(9601)).
+	expectConditionalProxyExpiry(mock, expiredProxySnapshot(9601)).
 		WillReturnError(execErr)
 
 	repo := &proxyRepository{}
-	accountIDs, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, 9601, nil, true)
+	accountIDs, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, expiredProxySnapshot(9601), sweepTestNow, nil, true)
 
 	require.ErrorIs(t, err, execErr)
 	require.Nil(t, accountIDs)
@@ -45,15 +44,14 @@ func TestSweepOneExpiredProxyOnExecReturnsErrorWhenAccountsQueryFails(t *testing
 	t.Cleanup(func() { _ = db.Close() })
 
 	queryErr := errors.New("update accounts query failed")
-	mock.ExpectExec(`(?s)UPDATE proxies SET status=\$1`).
-		WithArgs(service.StatusExpired, int64(9602)).
+	expectConditionalProxyExpiry(mock, expiredProxySnapshot(9602)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 		WithArgs(int64(9602)).
 		WillReturnError(queryErr)
 
 	repo := &proxyRepository{}
-	accountIDs, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, 9602, nil, true)
+	accountIDs, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, expiredProxySnapshot(9602), sweepTestNow, nil, true)
 
 	require.ErrorIs(t, err, queryErr)
 	require.Nil(t, accountIDs)
@@ -65,15 +63,14 @@ func TestSweepOneExpiredProxyOnExecReturnsErrorWhenAccountIDScanFails(t *testing
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	mock.ExpectExec(`(?s)UPDATE proxies SET status=\$1`).
-		WithArgs(service.StatusExpired, int64(9603)).
+	expectConditionalProxyExpiry(mock, expiredProxySnapshot(9603)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 		WithArgs(int64(9603)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("not-an-id"))
 
 	repo := &proxyRepository{}
-	accountIDs, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, 9603, nil, true)
+	accountIDs, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, expiredProxySnapshot(9603), sweepTestNow, nil, true)
 
 	require.Error(t, err)
 	require.Nil(t, accountIDs)
@@ -86,15 +83,14 @@ func TestSweepOneExpiredProxyOnExecReturnsErrorWhenRowsIterationFails(t *testing
 	t.Cleanup(func() { _ = db.Close() })
 
 	rowsErr := errors.New("rows iteration failed")
-	mock.ExpectExec(`(?s)UPDATE proxies SET status=\$1`).
-		WithArgs(service.StatusExpired, int64(9604)).
+	expectConditionalProxyExpiry(mock, expiredProxySnapshot(9604)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 		WithArgs(int64(9604)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(70001)).RowError(0, rowsErr))
 
 	repo := &proxyRepository{}
-	accountIDs, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, 9604, nil, true)
+	accountIDs, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, expiredProxySnapshot(9604), sweepTestNow, nil, true)
 
 	require.ErrorIs(t, err, rowsErr)
 	require.Nil(t, accountIDs)
@@ -132,7 +128,7 @@ func TestSweepOneExpiredProxyReturnsErrorWhenBeginTxFails(t *testing.T) {
 	mock.ExpectBegin().WillReturnError(beginErr)
 
 	repo := &proxyRepository{client: client}
-	accountIDs, err := repo.sweepOneExpiredProxy(context.Background(), 9611, nil, true)
+	accountIDs, err := repo.sweepOneExpiredProxy(context.Background(), expiredProxySnapshot(9611), sweepTestNow, nil, true)
 
 	require.Error(t, err)
 	require.NotErrorIs(t, err, dbent.ErrTxStarted)
@@ -149,8 +145,7 @@ func TestSweepOneExpiredProxyReturnsErrorWhenCommitFails(t *testing.T) {
 
 	commitErr := errors.New("commit failed")
 	mock.ExpectBegin()
-	mock.ExpectExec(`(?s)UPDATE proxies SET status=\$1`).
-		WithArgs(service.StatusExpired, int64(9612)).
+	expectConditionalProxyExpiry(mock, expiredProxySnapshot(9612)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 		WithArgs(int64(9612)).
@@ -158,7 +153,7 @@ func TestSweepOneExpiredProxyReturnsErrorWhenCommitFails(t *testing.T) {
 	mock.ExpectCommit().WillReturnError(commitErr)
 
 	repo := &proxyRepository{client: client}
-	accountIDs, err := repo.sweepOneExpiredProxy(context.Background(), 9612, nil, true)
+	accountIDs, err := repo.sweepOneExpiredProxy(context.Background(), expiredProxySnapshot(9612), sweepTestNow, nil, true)
 
 	require.Error(t, err)
 	require.Nil(t, accountIDs)
@@ -180,13 +175,15 @@ func TestSweepOneExpiredProxyOnEntReturnsErrorWhenProxyUpdateFails(t *testing.T)
 		SetHost("ent-update-fail.example").
 		SetPort(8080).
 		SetStatus(service.StatusActive).
+		SetExpiresAt(time.Now().Add(-time.Hour)).
 		Save(ctx)
 	require.NoError(t, err)
+	snapshot := *proxyEntityToService(proxyRow)
 
 	require.NoError(t, db.Close())
 
 	repo := &proxyRepository{client: client}
-	accountIDs, err := repo.sweepOneExpiredProxyOnEnt(ctx, client, proxyRow.ID, nil, true)
+	accountIDs, err := repo.sweepOneExpiredProxyOnEnt(ctx, client, snapshot, time.Now(), nil, true)
 
 	require.Error(t, err)
 	require.Nil(t, accountIDs)
@@ -202,14 +199,16 @@ func TestSweepOneExpiredProxyOnEntReturnsErrorWhenAccountsQueryFails(t *testing.
 		SetHost("ent-query-fail.example").
 		SetPort(8080).
 		SetStatus(service.StatusActive).
+		SetExpiresAt(time.Now().Add(-time.Hour)).
 		Save(ctx)
 	require.NoError(t, err)
+	snapshot := *proxyEntityToService(proxyRow)
 
 	_, err = db.Exec("DROP TABLE accounts")
 	require.NoError(t, err)
 
 	repo := &proxyRepository{client: client}
-	accountIDs, err := repo.sweepOneExpiredProxyOnEnt(ctx, client, proxyRow.ID, nil, true)
+	accountIDs, err := repo.sweepOneExpiredProxyOnEnt(ctx, client, snapshot, time.Now(), nil, true)
 
 	require.Error(t, err)
 	require.Nil(t, accountIDs)
@@ -231,8 +230,10 @@ func TestSweepOneExpiredProxyOnEntReturnsErrorWhenAccountSaveFails(t *testing.T)
 		SetHost("ent-save-fail.example").
 		SetPort(8080).
 		SetStatus(service.StatusActive).
+		SetExpiresAt(time.Now().Add(-time.Hour)).
 		Save(ctx)
 	require.NoError(t, err)
+	snapshot := *proxyEntityToService(proxyRow)
 
 	_, err = client.Account.Create().
 		SetName("ent-save-fail-account").
@@ -256,7 +257,7 @@ func TestSweepOneExpiredProxyOnEntReturnsErrorWhenAccountSaveFails(t *testing.T)
 	bogusTarget := int64(9999999)
 
 	repo := &proxyRepository{client: client}
-	accountIDs, err := repo.sweepOneExpiredProxyOnEnt(ctx, client, proxyRow.ID, &bogusTarget, true)
+	accountIDs, err := repo.sweepOneExpiredProxyOnEnt(ctx, client, snapshot, time.Now(), &bogusTarget, true)
 
 	require.Error(t, err)
 	require.Nil(t, accountIDs)
@@ -302,4 +303,140 @@ func TestSweepExpiredProxiesLogsOutboxErrorAndReturnsChangedCount(t *testing.T) 
 
 	require.NoError(t, err, "a scheduler-outbox enqueue failure must be logged, not propagated")
 	require.EqualValues(t, 1, changed)
+}
+
+// ---------------------------------------------------------------------------
+// Stale snapshot guard: the conditional UPDATE must skip account rewrites when
+// the proxy was renewed / disabled / reconfigured after the snapshot was taken.
+// ---------------------------------------------------------------------------
+
+func TestSweepOneExpiredProxyOnExecSkipsAccountsWhenSnapshotIsStale(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	backupID := int64(9702)
+	snapshot := expiredProxySnapshot(9701)
+	snapshot.FallbackMode = service.FallbackModeProxy
+	snapshot.BackupProxyID = &backupID
+	expectConditionalProxyExpiry(mock, snapshot).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	repo := &proxyRepository{}
+	target := backupID
+	accountIDs, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, snapshot, sweepTestNow, &target, true)
+
+	require.NoError(t, err)
+	require.Nil(t, accountIDs)
+	require.NoError(t, mock.ExpectationsWereMet(), "no account UPDATE may run for a stale snapshot")
+}
+
+func TestSweepOneExpiredProxyOnExecReturnsRowsAffectedError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	affectedErr := errors.New("rows affected failed")
+	expectConditionalProxyExpiry(mock, expiredProxySnapshot(9703)).WillReturnResult(sqlmock.NewErrorResult(affectedErr))
+
+	repo := &proxyRepository{}
+	accountIDs, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, expiredProxySnapshot(9703), sweepTestNow, nil, true)
+
+	require.ErrorIs(t, err, affectedErr)
+	require.Nil(t, accountIDs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSweepOneExpiredProxyOnEntHonorsSnapshotAndPreservesOrigin(t *testing.T) {
+	_, client := newSQLiteProbePersistenceClient(t)
+	ctx := context.Background()
+	now := time.Now()
+	past := now.Add(-time.Hour)
+
+	mkProxy := func(name string, expiresAt *time.Time) *dbent.Proxy {
+		builder := client.Proxy.Create().
+			SetName(name).
+			SetProtocol("http").
+			SetHost(name + ".example").
+			SetPort(8080).
+			SetStatus(service.StatusActive)
+		if expiresAt != nil {
+			builder.SetExpiresAt(*expiresAt)
+		}
+		row, err := builder.Save(ctx)
+		require.NoError(t, err)
+		return row
+	}
+	mkAccount := func(name string, proxyID int64) *dbent.Account {
+		row, err := client.Account.Create().
+			SetName(name).
+			SetPlatform(service.PlatformAnthropic).
+			SetType(service.AccountTypeAPIKey).
+			SetCredentials(map[string]any{"api_key": "sk-" + name}).
+			SetExtra(map[string]any{}).
+			SetProxyID(proxyID).
+			SetConcurrency(1).
+			SetPriority(0).
+			SetStatus(service.StatusActive).
+			SetSchedulable(true).
+			SetAutoPauseOnExpired(false).
+			Save(ctx)
+		require.NoError(t, err)
+		return row
+	}
+	repo := &proxyRepository{client: client}
+
+	t.Run("snapshot without expiry is ignored", func(t *testing.T) {
+		row := mkProxy("no-expiry", nil)
+		accountIDs, err := repo.sweepOneExpiredProxyOnEnt(ctx, client, *proxyEntityToService(row), now, nil, true)
+		require.NoError(t, err)
+		require.Nil(t, accountIDs)
+		got, err := client.Proxy.Get(ctx, row.ID)
+		require.NoError(t, err)
+		require.Equal(t, service.StatusActive, got.Status)
+	})
+
+	t.Run("renewed proxy keeps accounts", func(t *testing.T) {
+		row := mkProxy("renewed", &past)
+		account := mkAccount("renewed-account", row.ID)
+		snapshot := *proxyEntityToService(row)
+		_, err := client.Proxy.UpdateOneID(row.ID).SetExpiresAt(now.Add(24 * time.Hour)).Save(ctx)
+		require.NoError(t, err)
+
+		accountIDs, err := repo.sweepOneExpiredProxyOnEnt(ctx, client, snapshot, now, nil, true)
+		require.NoError(t, err)
+		require.Nil(t, accountIDs)
+		got, err := client.Proxy.Get(ctx, row.ID)
+		require.NoError(t, err)
+		require.Equal(t, service.StatusActive, got.Status)
+		gotAccount, err := client.Account.Get(ctx, account.ID)
+		require.NoError(t, err)
+		require.Equal(t, row.ID, *gotAccount.ProxyID)
+		require.Nil(t, gotAccount.ProxyFallbackOriginID)
+	})
+
+	t.Run("repeated fallback keeps first origin", func(t *testing.T) {
+		original := mkProxy("origin", &past)
+		last := mkProxy("last", nil)
+		middle := mkProxy("middle", &past)
+		_, err := client.Proxy.UpdateOneID(middle.ID).SetFallbackMode(service.FallbackModeProxy).SetBackupProxyID(last.ID).Save(ctx)
+		require.NoError(t, err)
+		middle, err = client.Proxy.Get(ctx, middle.ID)
+		require.NoError(t, err)
+		account := mkAccount("repeat-account", original.ID)
+
+		middleID := middle.ID
+		accountIDs, err := repo.sweepOneExpiredProxyOnEnt(ctx, client, *proxyEntityToService(original), now, &middleID, true)
+		require.NoError(t, err)
+		require.Equal(t, []int64{account.ID}, accountIDs)
+
+		lastID := last.ID
+		accountIDs, err = repo.sweepOneExpiredProxyOnEnt(ctx, client, *proxyEntityToService(middle), now, &lastID, true)
+		require.NoError(t, err)
+		require.Equal(t, []int64{account.ID}, accountIDs, "accounts already in fallback must still be rerouted")
+
+		gotAccount, err := client.Account.Get(ctx, account.ID)
+		require.NoError(t, err)
+		require.Equal(t, last.ID, *gotAccount.ProxyID)
+		require.Equal(t, original.ID, *gotAccount.ProxyFallbackOriginID)
+	})
 }

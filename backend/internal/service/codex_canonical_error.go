@@ -3,6 +3,7 @@ package service
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/gin-gonic/gin"
@@ -296,9 +297,11 @@ func codexResponsesFailedEventData(c *gin.Context, errCode string) string {
 		"response": gin.H{
 			"id":     codexSynthesizedResponseID(c),
 			"object": "response",
-			"status": "failed",
-			"output": []any{},
-			"error":  gin.H{"code": errCode},
+			// 严格客户端把 created_at 当必填字段（上游 #5601），与其它合成的 response.failed 帧对齐。
+			"created_at": time.Now().Unix(),
+			"status":     "failed",
+			"output":     []any{},
+			"error":      gin.H{"code": errCode},
 		},
 	})
 	if err != nil {

@@ -290,6 +290,12 @@
 
   // Common
   common: {
+    apply: 'Apply',
+    clear: 'Clear',
+    creating: 'Creating...',
+    required: 'Required',
+    sending: 'Sending...',
+    tryAgain: 'Please try again',
     loading: 'Loading...',
     submitting: 'Submitting...',
     justNow: 'just now',
@@ -2350,6 +2356,7 @@
 
     // Users
     users: {
+      passwordCopied: 'Password copied',
       title: 'User Management',
       description: 'Manage users and their permissions',
       createUser: 'Create User',
@@ -2411,6 +2418,8 @@
         statusLabel: 'Status',
         selectStatus: 'Select status',
         rpmLimit: 'Requests Per Minute (RPM)',
+        concurrencyPlaceholder: '0 = unlimited',
+        concurrencyHint: 'Max concurrent requests for this user; 0 = unlimited.',
         rpmLimitPlaceholder: '0 = unlimited',
         rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.'
       },
@@ -2471,11 +2480,13 @@
       failedToLoad: 'Failed to load users',
       failedToCreate: 'Failed to create user',
       failedToUpdate: 'Failed to update user',
+      lastAdminDemoteForbidden: 'Cannot demote the last admin. Promote another user to admin first.',
+      cannotDemoteSelf: 'You cannot demote yourself from admin.',
       failedToDelete: 'Failed to delete user',
       failedToToggle: 'Failed to update user status',
       failedToLoadApiKeys: 'Failed to load user API keys',
       emailRequired: 'Please enter email',
-      concurrencyMin: 'Concurrency must be at least 1',
+      concurrencyNonNegative: 'Concurrency cannot be negative; 0 = unlimited',
       soraStorageQuota: 'Sora Storage Quota',
       soraStorageQuotaHint: 'In GB, 0 means use group or system default quota',
       amountRequired: 'Please enter a valid amount',
@@ -2652,6 +2663,7 @@
         clearAllConfirm: 'Clear daily / weekly / monthly limits for ALL platforms? All platforms will become "unlimited" with no local undo — you must manually re-enter values before saving.',
         reset: {
           button: 'Reset window',
+          unavailable: 'No limit configured for this platform, so there is no usage window to reset',
           confirm: 'Reset the {window} usage for {platform} for this user? This is effective immediately.',
           success: 'Reset {platform} {window} usage',
           failed: 'Reset failed',
@@ -2717,7 +2729,7 @@
       accountsAvailable: 'Avail:',
       accountsRateLimited: 'Limited:',
       accountsTotal: 'Total:',
-      accountsUnit: '',
+      accountsUnit: 'accounts',
       rateAndAccounts: '{rate}x rate · {count} accounts',
       accountsCount: '{count} accounts',
       form: {
@@ -2992,6 +3004,8 @@
 
     // Channel Management
     channels: {
+      noGroupsSelected: 'Select at least one group for {platform}',
+      emptyModelsInPricing: 'Add at least one model to the {platform} pricing rule',
       title: 'Pricing Config',
       description: 'Manage channels and model pricing, and configure which groups / models appear on the user pricing page',
       searchChannels: 'Search channels...',
@@ -3411,7 +3425,7 @@
       workerActive: 'Processing an async audit or record task',
       workerIdle: 'Started, idle and ready',
       workerDisabled: 'Risk control or content audit is disabled',
-      processed: 'Processed',
+      processed: 'Async processed',
       droppedErrors: 'Dropped / Errors',
       autoRefresh: 'Auto refresh every 15s',
       lastCleanup: 'Last cleanup: {time}',
@@ -3662,7 +3676,9 @@
       quotaEndsInMinutes: 'Quota ends in {minutes}m',
       quotaEndsInHoursMinutes: 'Quota ends in {hours}h {minutes}m',
       quotaEndsInDaysHours: 'Quota ends in {days}d {hours}h',
-      daysRemaining: 'days remaining',
+      daysRemaining: '{days} days remaining',
+      hoursMinutesRemaining: '{hours}h {minutes}m remaining',
+      minutesRemaining: '{minutes}m remaining',
       remainingDays: 'Remaining days',
       noExpiration: 'No expiration',
       status: {
@@ -3758,6 +3774,11 @@
 
     // Accounts
     accounts: {
+      fromModel: 'Request model',
+      toModel: 'Target model',
+      antigravityProjectIdLabel: 'GCP Project ID (optional)',
+      antigravityProjectIdPlaceholder: 'your-gcp-project-id',
+      antigravityProjectIdHint: 'Antigravity standard-tier accounts that do not receive an automatic project_id need a user-owned GCP project.',
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',
@@ -3878,6 +3899,7 @@
       status: {
         active: 'Active',
         inactive: 'Inactive',
+        expired: 'Expired',
         error: 'Error',
         cooldown: 'Cooldown',
         paused: 'Paused',
@@ -4180,6 +4202,9 @@
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:
           'When enabled, this OpenAI account uses automatic passthrough: the gateway forwards request/response as-is and only swaps auth, while keeping billing/concurrency/audit and necessary safety filtering.',
+        flattenNamespaces: 'Flatten Codex namespace tools (compatibility)',
+        flattenNamespacesDesc:
+          'Disabled by default: Codex namespace tool declarations are forwarded as-is on /responses, which is what the ChatGPT Codex backend expects. Enable only when this OAuth account is routed to a relay that rejects namespace tools — flattening renames them to namespace__tool, which breaks models that address collaboration tools as functions.<namespace>.<tool>. Compaction requests always flatten regardless of this switch.',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           'Disabled by default. Enable to allow responses_websockets_v2 capability (still gated by global and account-type switches).',
@@ -4191,9 +4216,9 @@
         wsModePassthrough: 'Passthrough (passthrough)',
         wsModeShared: 'Shared (shared)',
         wsModeDedicated: 'Dedicated (dedicated)',
-        wsModeConcurrencyHint:
-          'When WS mode is enabled, account concurrency becomes the WS connection pool limit for this account.',
-        wsModePassthroughHint: 'Passthrough mode does not use the WS connection pool.',
+        wsModeCtxPoolHint:
+          'Gateway → acquire upstream WS connections from the pool; capacity is determined by configuration.',
+        wsModePassthroughHint: 'Gateway → upstream WS, without a connection pool.',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           'Only applies to OpenAI OAuth. This account can use OpenAI WebSocket Mode only when enabled.',
@@ -6105,6 +6130,16 @@
         }
       },
       runtime: {
+        metricThresholds: 'Metric Thresholds',
+        metricThresholdsHint: 'Configure alert thresholds for metrics, values exceeding thresholds will be displayed in red',
+        slaMinPercent: 'SLA Minimum Percentage',
+        slaMinPercentHint: 'SLA below this value will be displayed in red (default: 99.5%)',
+        ttftP99MaxMs: 'TTFT P99 Maximum (ms)',
+        ttftP99MaxMsHint: 'TTFT P99 above this value will be displayed in red (default: 500ms)',
+        requestErrorRateMaxPercent: 'Request Error Rate Maximum (%)',
+        requestErrorRateMaxPercentHint: 'Request error rate above this value will be displayed in red (default: 5%)',
+        upstreamErrorRateMaxPercent: 'Upstream Error Rate Maximum (%)',
+        upstreamErrorRateMaxPercentHint: 'Upstream error rate above this value will be displayed in red (default: 5%)',
         title: 'Ops Runtime Settings',
         description: 'Stored in database; changes take effect without editing config files.',
         loading: 'Loading...',
@@ -6677,7 +6712,7 @@
         subscriptionGroup: 'Subscription Group',
         subscriptionValidityDays: 'Validity (days)',
         defaultPlatformQuotas: 'Default Platform Quotas (on signup)',
-        defaultPlatformQuotasHint: 'Automatically assigned to new users on signup; existing users are not affected. Leave blank = unlimited.',
+        defaultPlatformQuotasHint: 'Applied to new users on signup; existing users are not affected. Leave blank = no limit for that platform and window.',
         platformQuotaNotice: 'Monthly quota uses a 30-day rolling window, not a calendar month.',
       },
       platformQuota: {
@@ -6964,7 +6999,7 @@
         validationFieldRequired: '{field} is required',
         validationEasyPayCustomMethodRequired: 'Each custom EasyPay method requires both a payment type and an upstream type',
         validationEasyPayCustomMethodTypeInvalid: 'Custom EasyPay payment types may only contain lowercase letters, digits, underscores, and hyphens',
-        validationEasyPayCustomMethodUpstreamTypeInvalid: 'EasyPay upstream types may only contain lowercase letters, digits, underscores, and hyphens',
+        validationEasyPayCustomMethodUpstreamTypeInvalid: 'EasyPay upstream types may only contain lowercase letters, digits, periods, underscores, and hyphens',
         validationEasyPayCustomMethodReserved: 'Custom EasyPay payment types cannot use built-in alipay or wxpay',
         validationEasyPayCustomMethodPrefixReserved: 'Custom EasyPay payment types cannot start with alipay, wxpay, or crypto',
         validationEasyPayCustomMethodDuplicate: 'Custom EasyPay payment types must be unique',
@@ -7021,6 +7056,7 @@
         customMethodType: 'Payment type',
         customMethodUpstreamType: 'Upstream type',
         customMethodDisplayName: 'Display name',
+        customMethodDisplayNamePlaceholder: 'e.g. Credit card',
         stripeWebhookHint: 'Configure the following URL as a Webhook endpoint in Stripe Dashboard:',
         stripeWebhookApiVersionHint: 'Set this Webhook endpoint API version to match the integrated Stripe SDK. Recommended: {version}. A mismatch can cause webhook parsing errors.',
         airwallexWebhookHint: 'Configure the following URL as a Webhook endpoint in Airwallex. Select at least Payment Intent -> Succeeded (payment_intent.succeeded), preferably also Payment Intent -> Cancelled (payment_intent.cancelled). Use the account default or latest stable API version.',
@@ -7421,6 +7457,11 @@
         commonPatterns: 'Common patterns'
       },
       openaiFastPolicy: {
+        userIds: 'Specific user IDs',
+        userIdsHint: 'Leave empty to apply to all users. User-specific rules take precedence over global rules.',
+        userIdPlaceholder: 'e.g. 1001',
+        addUserId: 'Add user ID',
+        removeUserId: 'Remove user ID',
         title: 'OpenAI Fast/Flex Policy',
         description: 'Intercept, filter, or pass OpenAI fast(priority) / flex requests based on the request body service_tier field. Applies to the OpenAI gateway only.',
         empty: 'No rules configured. Click the button below to add one.',
@@ -7523,7 +7564,8 @@
         lowRatePriorityTitle: 'Prefer lower upstream billing rates',
         lowRatePriorityDescription: 'Legacy scheduler mode prefers accounts with a lower observed upstream token-cost multiplier.',
         oauthRateTitle: 'OAuth scheduling rate multiplier',
-        oauthRateDescription: 'Set the OAuth reference rate used by legacy low-rate scheduling. Use 1 for the default reference.',
+        oauthRateDescription: 'Set the OAuth reference rate used by legacy low-rate scheduling. Use 1 for the default reference, or leave blank to use each OAuth account\'s own rate. API Key accounts use a valid probed rate when available, otherwise their account rate.',
+        oauthRateInvalid: 'The OAuth scheduling reference rate must be a non-negative number, or blank to use account rates.',
         upstreamCostWeightTitle: 'Upstream-cost score weight',
         upstreamCostWeightDescription: 'Weight the observed upstream token-cost signal in advanced scheduler ranking. Set 0 to disable it.',
       },

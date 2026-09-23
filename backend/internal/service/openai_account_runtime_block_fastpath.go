@@ -31,6 +31,10 @@ func isOpenAIOAuthAccount(account *Account) bool {
 	return account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth
 }
 
+func isGrokOAuthAccount(account *Account) bool {
+	return account != nil && account.Platform == PlatformGrok && account.Type == AccountTypeOAuth
+}
+
 func isOpenAIAccount(account *Account) bool {
 	return account != nil && (account.Platform == PlatformOpenAI || account.Platform == PlatformGrok)
 }
@@ -56,6 +60,11 @@ func (s *OpenAIGatewayService) openAIPromoteTempUnscheduleFailover(ctx context.C
 }
 
 func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) bool {
+	// 容量降载描述的是这一次请求，不是账号健康：OpenAI 账号保持可调度，
+	// 由请求内的同账号有界重试负责恢复（见 applyOpenAIRequestScopedCapacityFailover）。
+	if openAIAccountCapacityShedIsRequestScoped(account) && isOpenAIRequestScopedCapacityShed("", responseBody) {
+		return false
+	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
 
@@ -63,6 +72,17 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		recordUpstream429AndShouldSwitch(account.ID, true)
 		if s != nil && s.rateLimitService != nil {
 			_ = s.rateLimitService.HandleOpenAIImageRateLimit(stateCtx, account, statusCode, headers, responseBody)
+		}
+		return false
+	}
+
+	// Self-built images requests always carry a matching image_generation tool, so a
+	// "tool choice not found in 'tools'" 400 means upstream revoked this account's
+	// image capability. Gated on the self-built marker: passthrough clients control
+	// their own tools/tool_choice and could otherwise poison a healthy account.
+	if isOpenAIImagesSelfBuiltRequest(ctx) && isOpenAIImageCapabilityLossError(statusCode, responseBody) {
+		if s != nil && s.rateLimitService != nil {
+			_ = s.rateLimitService.HandleOpenAIImageCapabilityLoss(stateCtx, account, statusCode, responseBody)
 		}
 		return false
 	}
@@ -242,7 +262,13 @@ func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context
 			if resetAt := time.Unix(*resetUnix, 0); resetAt.After(time.Now()) {
 				cooldownUntil = resetAt
 			}
-		} else if cooldown, ok := s.rateLimitService.get429FallbackCooldown(ctx, account); ok && cooldown > 0 {
+		} else {
+			// 没有明确的配额 reset 时走可配置兜底；后台关闭 429 默认回避时
+			// 不能再写入运行时冷却，否则未耗尽额度的账号仍会被退避。
+			cooldown, ok := s.rateLimitService.get429FallbackCooldown(ctx, account)
+			if !ok || cooldown <= 0 {
+				return
+			}
 			cooldownUntil = time.Now().Add(cooldown)
 		}
 	}
@@ -341,6 +367,9 @@ func (s *OpenAIGatewayService) isOpenAIOAuth429Storm() bool {
 func (s *OpenAIGatewayService) ShouldStopOpenAIOAuth429Failover(account *Account, statusCode int, failedSwitches int) bool {
 	if statusCode != http.StatusTooManyRequests || failedSwitches < openAIOAuth429StormMaxAccountSwitches {
 		return false
+	}
+	if isGrokOAuthAccount(account) {
+		return true
 	}
 	if !isOpenAIOAuthAccount(account) {
 		return false

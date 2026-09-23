@@ -652,6 +652,17 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 
 		status := c.Writer.Status()
 		if status < 400 {
+			// 请求级带内结果与上游归因的带内失败（如 Gemini 2xx 正文里的内容策略截停、错误信封、
+			// 空响应）无论是否存在上游错误上下文都按带内错误落库；请求级结果不承载上游归因，
+			// 本请求此前尝试的上游错误仍落到下方的恢复行。
+			streamErrLogged := false
+			if streamErr, ok := service.GetOpsStreamError(c); ok && (streamErr.RequestScoped || streamErr.UpstreamAttributed) {
+				logOpsStreamError(c, ops, status)
+				if !streamErr.RequestScoped {
+					return
+				}
+				streamErrLogged = true
+			}
 			// Even when the client request succeeds, we still want to persist upstream error attempts
 			// (retries/failover) so ops can observe upstream instability that gets "covered" by retries.
 			var events []*service.OpsUpstreamErrorEvent
@@ -690,7 +701,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				// 没有上游错误上下文，但网关可能在已固化的 200 流上就地补发了 SSE 错误帧
 				// （如 ping 等待后并发超限、Wait 后二次计费校验失败）。这类失败若不在此补记，
 				// 会因 wire 状态码为 200 而在错误看板里彻底隐形。
-				logOpsStreamError(c, ops, status)
+				if !streamErrLogged {
+					logOpsStreamError(c, ops, status)
+				}
 				return
 			}
 			service.MarkOpsUpstreamFailoverRecovered(c)
@@ -1057,6 +1070,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				}
 			}
 		}
+		suppressOpsUpstreamAttributionForLocalModelConfiguration(c, entry)
 
 		if apiKey != nil {
 			entry.APIKeyID = &apiKey.ID
@@ -1100,13 +1114,14 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 	}
 }
 
-// logOpsStreamError 记录一次挂在已固化 HTTP 200 SSE 流上的就地错误。
-// 由于 wire 状态码停留在 200，常规的 status>=400 捕获路径永远不会触发；
-// handleStreamingAwareError 通过 service.MarkOpsStreamError 标记这类错误，
-// 此函数据此补记一条错误日志，让并发限流/流内失败在错误看板里可见。
+// logOpsStreamError 记录挂在 2xx 响应上的带内错误（就地 SSE error 帧、上游 2xx 正文里的
+// 错误结果等）。由于 wire 状态码停留在 2xx，常规的 status>=400 捕获路径不会触发；
+// 标记方通过 service.MarkOpsStreamError / MarkOpsStreamFailure / MarkOpsStreamErrorValue
+// 登记，此函数据此补记一条错误日志，让并发限流/流内失败在错误看板里可见。
 //
-// 仅在 status<400 且不存在上游错误上下文时调用：上游透传错误已由中间件的
-// upstream-context 分支落库，无需在此重复记录。
+// 普通标记仅在 status<400 且不存在上游错误上下文时调用：上游透传错误已由中间件的
+// upstream-context 分支落库，无需在此重复记录。RequestScoped / UpstreamAttributed
+// 标记不受此限制，前者不带上游归因，后者带上游错误上下文里的归因。
 func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) {
 	streamErr, ok := service.GetOpsStreamError(c)
 	if !ok {
@@ -1114,9 +1129,12 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 	}
 
 	// 命中 skip_monitoring=true 透传规则的请求跳过落库，与其它分支一致。
-	if v, ok := c.Get(service.OpsSkipPassthroughKey); ok {
-		if skip, _ := v.(bool); skip {
-			return
+	// 请求级带内结果与此前尝试无关，不继承透传规则的 skip_monitoring。
+	if !streamErr.RequestScoped {
+		if v, ok := c.Get(service.OpsSkipPassthroughKey); ok {
+			if skip, _ := v.(bool); skip {
+				return
+			}
 		}
 	}
 
@@ -1131,9 +1149,19 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 		classifyStatus = wireStatus
 	}
 	normalizedType := normalizeOpsErrorType(streamErr.ErrType, streamErr.Code)
-	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, normalizedType, streamErr.Message, streamErr.Code, classifyStatus)
+	var phase, errorOwner, errorSource string
+	var isBusinessLimited bool
+	if streamErr.RequestScoped {
+		// 请求级带内结果只按错误类型分类，此前尝试残留的上游错误上下文不参与判定。
+		phase = classifyOpsPhase(normalizedType, streamErr.Message, streamErr.Code)
+		isBusinessLimited = true
+		errorOwner = classifyOpsErrorOwner(phase, streamErr.Message)
+		errorSource = classifyOpsErrorSource(phase, streamErr.Message)
+	} else {
+		phase, isBusinessLimited, errorOwner, errorSource = classifyOpsErrorLog(c, normalizedType, streamErr.Message, streamErr.Code, classifyStatus)
+	}
 	recordedStatus := wireStatus
-	if streamErr.CountTowardsSLA && streamErr.IntendedStatus >= 400 {
+	if streamErr.IntendedStatus >= 400 && (streamErr.CountTowardsSLA || streamErr.RequestScoped) {
 		recordedStatus = streamErr.IntendedStatus
 	}
 	errorBody := ""
@@ -1180,8 +1208,8 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 			}
 			return ""
 		}(),
-		// 就地 SSE 错误只出现在流式请求上。
-		Stream:           true,
+		// 带内错误默认挂在 SSE 流上；NonStream 标记的来自非流式 2xx 响应体。
+		Stream:           !streamErr.NonStream,
 		InboundEndpoint:  GetInboundEndpoint(c),
 		UpstreamEndpoint: GetUpstreamEndpoint(c, platform),
 		RequestedModel:   modelName,
@@ -1222,6 +1250,9 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 		CreatedAt: time.Now(),
 	}
 	applyOpsLatencyFieldsFromContext(c, entry)
+	if streamErr.UpstreamAttributed && !streamErr.RequestScoped {
+		applyOpsStreamErrorUpstreamContext(c, entry)
+	}
 
 	if apiKey != nil {
 		entry.APIKeyID = &apiKey.ID
@@ -1244,6 +1275,47 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 	enqueueOpsErrorLog(ops, entry)
 }
 
+// applyOpsStreamErrorUpstreamContext 把上游错误上下文（标记方写入的上游状态、消息、详情与
+// 尝试事件）附到带内错误行上，并优先归因到最后一次出错的上游账号。
+func applyOpsStreamErrorUpstreamContext(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
+	if c == nil || entry == nil {
+		return
+	}
+	if v, ok := c.Get(service.OpsUpstreamErrorsKey); ok {
+		if events, ok := v.([]*service.OpsUpstreamErrorEvent); ok && len(events) > 0 {
+			entry.UpstreamErrors = events
+			if last := events[len(events)-1]; last != nil && last.AccountID > 0 {
+				accountID := last.AccountID
+				entry.AccountID = &accountID
+			}
+		}
+	}
+	if v, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
+		code := 0
+		switch t := v.(type) {
+		case int:
+			code = t
+		case int64:
+			code = int(t)
+		}
+		if code > 0 {
+			entry.UpstreamStatusCode = &code
+		}
+	}
+	if v, ok := c.Get(service.OpsUpstreamErrorMessageKey); ok {
+		if msg, ok := v.(string); ok && strings.TrimSpace(msg) != "" {
+			msg = strings.TrimSpace(msg)
+			entry.UpstreamErrorMessage = &msg
+		}
+	}
+	if v, ok := c.Get(service.OpsUpstreamErrorDetailKey); ok {
+		if detail, ok := v.(string); ok && strings.TrimSpace(detail) != "" {
+			detail = strings.TrimSpace(detail)
+			entry.UpstreamErrorDetail = &detail
+		}
+	}
+}
+
 // isCountTokensRequest checks if the request is a count_tokens request
 func isCountTokensRequest(c *gin.Context) bool {
 	if c == nil || c.Request == nil || c.Request.URL == nil {
@@ -1261,6 +1333,22 @@ func applyOpsLatencyFieldsFromContext(c *gin.Context, entry *service.OpsInsertEr
 	entry.UpstreamLatencyMs = getContextLatencyMs(c, service.OpsUpstreamLatencyMsKey)
 	entry.ResponseLatencyMs = getContextLatencyMs(c, service.OpsResponseLatencyMsKey)
 	entry.TimeToFirstTokenMs = getContextLatencyMs(c, service.OpsTimeToFirstTokenMsKey)
+}
+
+// suppressOpsUpstreamAttributionForLocalModelConfiguration drops stale upstream
+// attribution (from earlier failover attempts) when the request finally failed
+// because no account in the group is configured for the requested model.
+func suppressOpsUpstreamAttributionForLocalModelConfiguration(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
+	if entry == nil || !service.HasOpsClientBusinessLimited(c) || service.OpsClientBusinessLimitedReason(c) != service.OpsClientBusinessLimitedReasonLocalModelConfiguration {
+		return
+	}
+	entry.AccountID = nil
+	entry.UpstreamEndpoint = ""
+	entry.UpstreamModel = ""
+	entry.UpstreamStatusCode = nil
+	entry.UpstreamErrorMessage = nil
+	entry.UpstreamErrorDetail = nil
+	entry.UpstreamErrors = nil
 }
 
 func getContextLatencyMs(c *gin.Context, key string) *int64 {
@@ -1472,27 +1560,31 @@ func classifyOpsErrorLog(c *gin.Context, errType, message, code string, status i
 	phase = classifyOpsPhase(errType, message, code)
 	routingCapacityLimited := isOpsRoutingCapacityLimited(c)
 	clientBusinessLimited := service.HasOpsClientBusinessLimited(c)
+	localModelConfiguration := clientBusinessLimited && service.OpsClientBusinessLimitedReason(c) == service.OpsClientBusinessLimitedReasonLocalModelConfiguration
 	upstreamError := hasOpsUpstreamErrorContext(c)
-	if upstreamError && !routingCapacityLimited {
+	if localModelConfiguration {
+		phase = "routing"
+	} else if upstreamError && !routingCapacityLimited {
 		phase = "upstream"
 	}
-	if clientBusinessLimited && !upstreamError && !routingCapacityLimited {
+	if clientBusinessLimited && !upstreamError && !routingCapacityLimited && !localModelConfiguration {
 		phase = "auth"
 	}
 	if routingCapacityLimited {
 		phase = "routing"
 	}
 	msg := strings.ToLower(message)
-	localClientAuthError := !upstreamError && phase == "auth" && isOpsClientAuthError(code, msg)
-	localBusinessLimited := !upstreamError && classifyOpsIsBusinessLimited(errType, phase, code, status, message, localClientAuthError)
-	isBusinessLimited = routingCapacityLimited || (clientBusinessLimited && !upstreamError) || localBusinessLimited
+	effectiveUpstreamError := upstreamError && !localModelConfiguration
+	localClientAuthError := !effectiveUpstreamError && phase == "auth" && isOpsClientAuthError(code, msg)
+	localBusinessLimited := !effectiveUpstreamError && classifyOpsIsBusinessLimited(errType, phase, code, status, message, localClientAuthError)
+	isBusinessLimited = localModelConfiguration || routingCapacityLimited || (clientBusinessLimited && !effectiveUpstreamError) || localBusinessLimited
 	errorOwner = classifyOpsErrorOwner(phase, message)
 	// A2(issue #16 Part B):上游「请求本身的问题」4xx(400/404/422 等,换账号也救不了)归
 	// client_via_upstream,而非笼统的 provider。否则透传真实状态码不会自动纠正归因,SLA 仍误计。
 	// 与 service.IsRequestShapedUpstream4xx 同源,保证「透传什么」与「归因到 client 的是什么」一致。
 	// 守卫:仅重归「真正由上游拒绝的畸形请求」;命中本地业务限制白名单的(平台能力/策略类 message,
 	// 如「token counting 不支持」)即便携带上游状态码也保持既有 provider 归因,不误判为客户端错。
-	if upstreamError && errorOwner == "provider" &&
+	if effectiveUpstreamError && errorOwner == "provider" &&
 		service.IsRequestShapedUpstream4xx(opsUpstreamStatusCode(c)) &&
 		!isOpsLocalBusinessLimitError(code, msg) {
 		errorOwner = opsErrorOwnerClientViaUpstream

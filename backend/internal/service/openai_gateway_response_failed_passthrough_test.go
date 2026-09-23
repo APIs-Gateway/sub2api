@@ -145,11 +145,13 @@ func TestOpenAIResponseFailedContextWindowDetection(t *testing.T) {
 	}
 }
 
+var openAIOAuthFailoverTestAccount = &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Name: "acct"}
+
 func TestOpenAIContextWindowErrorDoesNotFailover(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	contextBody := []byte(`{"error":{"code":"context_length_exceeded","message":"` + responseFailedContextMessage + `"}}`)
-	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, responseFailedContextMessage, contextBody))
-	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, "upstream unavailable", []byte(`{"error":{"message":"upstream unavailable"}}`)))
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(openAIOAuthFailoverTestAccount, http.StatusBadGateway, responseFailedContextMessage, contextBody))
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(openAIOAuthFailoverTestAccount, http.StatusBadGateway, "upstream unavailable", []byte(`{"error":{"message":"upstream unavailable"}}`)))
 }
 
 func TestOpenAIRequestBodyTooLargeFailsOverButContextWindowDoesNot(t *testing.T) {
@@ -161,12 +163,14 @@ func TestOpenAIRequestBodyTooLargeFailsOverButContextWindowDoesNot(t *testing.T)
 	}
 
 	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(
+		openAIOAuthFailoverTestAccount,
 		http.StatusRequestEntityTooLarge,
 		"request entity too large",
 		bodyLimitBody,
 	))
 	require.True(t, IsOpenAIRequestBodyTooLargeFailover(bodyLimitFailover))
 	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(
+		openAIOAuthFailoverTestAccount,
 		http.StatusRequestEntityTooLarge,
 		responseFailedContextMessage,
 		[]byte(`{"error":{"code":"context_length_exceeded","message":"`+responseFailedContextMessage+`"}}`),
@@ -247,6 +251,78 @@ func TestOpenAIStreamFailedEventSemanticStatus(t *testing.T) {
 			require.Equal(t, tt.want, openAIStreamFailedEventSemanticStatus(tt.payload, tt.message))
 		})
 	}
+}
+
+// 不少 OpenAI 兼容上游在流内错误对象里用 status 而不是 status_code 报告状态码。
+// 不读它会把 401/403/429/529 降级成关键词推断的通用 502，账号健康与 failover 判定随之失效。
+func TestOpenAIStreamSemanticStatusHonorsErrorStatusAlias(t *testing.T) {
+	tests := []struct {
+		name              string
+		body              string
+		semanticStatus    int
+		failureStatus     int
+		wantErrorFailover bool
+	}{
+		{
+			name:              "response.error.status unauthorized",
+			body:              `{"type":"response.failed","response":{"error":{"code":"server_error","status":401,"message":"upstream rejected the key"}}}`,
+			semanticStatus:    http.StatusUnauthorized,
+			failureStatus:     http.StatusBadGateway,
+			wantErrorFailover: true,
+		},
+		{
+			name:              "error.status rate limited",
+			body:              `{"type":"error","error":{"code":"server_error","status":429,"message":"upstream is busy"}}`,
+			semanticStatus:    http.StatusTooManyRequests,
+			failureStatus:     http.StatusTooManyRequests,
+			wantErrorFailover: true,
+		},
+		{
+			name:              "error.status_code rate limited",
+			body:              `{"type":"error","error":{"code":"server_error","status_code":429,"message":"upstream is busy"}}`,
+			semanticStatus:    http.StatusTooManyRequests,
+			failureStatus:     http.StatusTooManyRequests,
+			wantErrorFailover: true,
+		},
+		{
+			name:              "error.status overloaded",
+			body:              `{"type":"error","error":{"code":"server_error","status":529,"message":"upstream is overloaded"}}`,
+			semanticStatus:    529,
+			failureStatus:     http.StatusBadGateway,
+			wantErrorFailover: true,
+		},
+		{
+			name:           "response.error.status forbidden without account signal",
+			body:           `{"type":"response.failed","response":{"error":{"code":"server_error","status":403,"message":"request was rejected"}}}`,
+			semanticStatus: http.StatusForbidden,
+			failureStatus:  http.StatusBadGateway,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := []byte(tt.body)
+			message := extractOpenAISSEErrorMessage(payload)
+			require.Equal(t, tt.semanticStatus, openAIStreamFailedEventSemanticStatus(payload, message))
+			require.Equal(t, tt.failureStatus, openAIStreamFailureStatus(payload, message))
+			require.Equal(t, tt.wantErrorFailover, openAIStreamErrorEventShouldFailover(payload, message))
+		})
+	}
+}
+
+// 上游把 status 报成 5xx 时仍然是通用上游故障：不冒充认证/限流，保持既有归因。
+func TestOpenAIStreamErrorStatusAliasKeepsGeneric5xxUnclassified(t *testing.T) {
+	payload := []byte(`{"type":"response.failed","response":{"error":{"code":"server_error","status":500,"type":"server_error","message":"rv_shape_invalid: temporary response validation failure after partial output; retry your request if your client can recover partial output."},"id":"resp_0","object":"response","status":"failed"},"sequence_number":80}`)
+	message := extractOpenAISSEErrorMessage(payload)
+
+	require.Equal(t, http.StatusBadGateway, openAIStreamFailedEventSemanticStatus(payload, message))
+	require.Equal(t, http.StatusBadGateway, openAIStreamFailureStatus(payload, message))
+	require.True(t, openAIStreamFailedEventShouldFailover(payload, message))
+}
+
+// response.status 是字符串 "failed"，不能被误读为状态码。
+func TestOpenAIStreamErrorStatusAliasIgnoresResponseLifecycleStatus(t *testing.T) {
+	payload := []byte(`{"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"code":"server_is_overloaded","message":"overloaded"}}}`)
+	require.Equal(t, http.StatusServiceUnavailable, openAIStreamFailedEventSemanticStatus(payload, ""))
 }
 
 func TestOpenAIStreamFailedEventPassthroughBody(t *testing.T) {

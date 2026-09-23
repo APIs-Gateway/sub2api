@@ -20,6 +20,10 @@ import (
 // keeps sub2api/Codex-internal item id structure from leaking to the
 // upstream (and, transitively, back to the client via any echoed fields).
 //
+// Ids longer than the upstream 64-character limit are stripped as well, even
+// with the right prefix: OpenAI rejects them with 400 before looking at the
+// prefix.
+//
 // Invalid replayed ids are removed rather than rewritten because a fabricated
 // msg/rs/fc id may point at a different upstream object.
 //
@@ -33,14 +37,23 @@ func shouldStripOpenAIResponsesInputItemID(itemType, id string) bool {
 	}
 	switch itemType {
 	case "message":
-		return !strings.HasPrefix(id, "msg")
+		return !isValidOpenAIResponsesInputItemID(id, "msg")
 	case "reasoning":
-		return !strings.HasPrefix(id, "rs")
+		return !isValidOpenAIResponsesInputItemID(id, "rs")
 	}
 	if isCodexToolCallInputType(itemType) {
-		return !strings.HasPrefix(id, "fc")
+		return !isValidOpenAIResponsesInputItemID(id, "fc")
 	}
 	return false
+}
+
+// openAIResponsesInputItemIDMaxLength is the upstream limit on input item
+// ids; a longer id with the right prefix is still rejected with 400
+// ("string too long"), so it is stripped like a wrong-prefix id.
+const openAIResponsesInputItemIDMaxLength = 64
+
+func isValidOpenAIResponsesInputItemID(id, prefix string) bool {
+	return len(id) <= openAIResponsesInputItemIDMaxLength && strings.HasPrefix(id, prefix)
 }
 
 // sanitizeOpenAIResponsesInputItemIDs strips invalid input item ids (see
@@ -104,4 +117,77 @@ func sanitizeOpenAIResponsesInputItemIDs(body []byte) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("replace sanitized input: %w", err)
 	}
 	return sanitized, true, nil
+}
+
+// normalizeOpenAIResponsesReasoningContentReplay removes non-portable
+// reasoning.content arrays before history is sent to a real OpenAI Responses
+// endpoint. Compatible providers may return visible reasoning blocks there,
+// while OpenAI accepts only an empty array when the item is replayed.
+//
+// Keep the reasoning item and its portable fields (summary, encrypted_content,
+// ids, and opaque extensions). Callers scope this normalization to OpenAI
+// destinations; compatible providers may still consume their own content.
+func normalizeOpenAIResponsesReasoningContentReplay(body []byte) ([]byte, bool, error) {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body, false, nil
+	}
+
+	needsNormalization := false
+	input.ForEach(func(_, item gjson.Result) bool {
+		if strings.TrimSpace(item.Get("type").String()) != "reasoning" {
+			return true
+		}
+		content := item.Get("content")
+		if content.IsArray() && len(content.Array()) > 0 {
+			needsNormalization = true
+			return false
+		}
+		return true
+	})
+	if !needsNormalization {
+		return body, false, nil
+	}
+
+	var reqBody map[string]any
+	if err := decodeOpenAIJSONUseNumber(body, &reqBody); err != nil {
+		return body, false, fmt.Errorf("normalize OpenAI reasoning content replay: %w", err)
+	}
+	items, ok := reqBody["input"].([]any)
+	if !ok {
+		return body, false, nil
+	}
+	changed := false
+	for _, rawItem := range items {
+		item, ok := rawItem.(map[string]any)
+		if !ok || strings.TrimSpace(firstNonEmptyString(item["type"])) != "reasoning" {
+			continue
+		}
+		content, ok := item["content"].([]any)
+		if !ok || len(content) == 0 {
+			continue
+		}
+		delete(item, "content")
+		changed = true
+	}
+	if !changed {
+		return body, false, nil
+	}
+	normalized, err := marshalOpenAIUpstreamJSON(reqBody)
+	if err != nil {
+		return body, false, fmt.Errorf("serialize normalized OpenAI reasoning content replay: %w", err)
+	}
+	return normalized, true, nil
+}
+
+// normalizeOpenAIWSIngressReasoningContentReplay applies
+// normalizeOpenAIResponsesReasoningContentReplay to a client WebSocket payload
+// when the selected account is a real OpenAI destination (API key or OAuth).
+// Upstream performs the same step inside its WebSocket compatibility
+// normalization; the fork has no such helper, so the ingress path calls this.
+func normalizeOpenAIWSIngressReasoningContentReplay(payload []byte, account *Account) ([]byte, bool, error) {
+	if account == nil || !account.IsOpenAI() || (!account.IsOpenAIApiKey() && !account.IsOpenAIOAuth()) {
+		return payload, false, nil
+	}
+	return normalizeOpenAIResponsesReasoningContentReplay(payload)
 }

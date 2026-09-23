@@ -141,13 +141,14 @@ const (
 	// ensureForwardErrorResponse 检查此 key，为 true 时跳过兜底写入，避免在已完成的 JSON 后追加 SSE。
 	ResponseCommittedKey = "response_committed"
 
-	OpsClientBusinessLimitedKey                          = "ops_client_business_limited"
-	OpsClientBusinessLimitedReasonKey                    = "ops_client_business_limited_reason"
-	OpsClientBusinessLimitedReasonIPRestriction          = "api_key_ip_restriction"
-	OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable = "api_key_group_unavailable"
-	OpsClientBusinessLimitedReasonAPIKeyGroupUnassigned  = "api_key_group_unassigned"
-	OpsClientBusinessLimitedReasonLocalFeatureGate       = "local_feature_gate"
-	OpsClientBusinessLimitedReasonLocalPolicyDenied      = "local_policy_denied"
+	OpsClientBusinessLimitedKey                           = "ops_client_business_limited"
+	OpsClientBusinessLimitedReasonKey                     = "ops_client_business_limited_reason"
+	OpsClientBusinessLimitedReasonIPRestriction           = "api_key_ip_restriction"
+	OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable  = "api_key_group_unavailable"
+	OpsClientBusinessLimitedReasonAPIKeyGroupUnassigned   = "api_key_group_unassigned"
+	OpsClientBusinessLimitedReasonLocalFeatureGate        = "local_feature_gate"
+	OpsClientBusinessLimitedReasonLocalPolicyDenied       = "local_policy_denied"
+	OpsClientBusinessLimitedReasonLocalModelConfiguration = "local_model_configuration"
 )
 
 func MarkResponseCommitted(c *gin.Context) { c.Set(ResponseCommittedKey, true) }
@@ -190,12 +191,23 @@ func HasOpsClientBusinessLimited(c *gin.Context) bool {
 	return marked
 }
 
-// OpsStreamError 描述网关在「响应状态已固化为 200」之后（keepalive ping 或部分数据
-// 已 flush）就地以 SSE error 帧形式返回的错误。由于 HTTP 状态码停留在 200，
-// 而 ops_error_logger 以 status>=400 为采集触发条件，这类流内失败
-// （并发限流回退、Wait 后二次计费校验失败、流开始后才无可用账号等）本会在错误看板里
-// 完全隐形。handler.handleStreamingAwareError 负责标记，ops_error_logger 中间件在
-// status<400 分支消费它并补记一条错误日志。
+func OpsClientBusinessLimitedReason(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	v, ok := c.Get(OpsClientBusinessLimitedReasonKey)
+	if !ok {
+		return ""
+	}
+	reason, _ := v.(string)
+	return strings.TrimSpace(reason)
+}
+
+// OpsStreamError 描述承载在 2xx 响应上的带内错误：网关在响应状态已固化为 200 之后
+// 就地以 SSE error 帧返回的错误（并发限流回退、Wait 后二次计费校验失败、流开始后才无
+// 可用账号等），以及上游 2xx 正文或事件里携带的错误结果（NonStream 标记非流式正文）。
+// 由于 HTTP 状态码停留在 2xx，ops_error_logger 中间件在 status<400 分支消费该标记并
+// 补记错误日志；标记方是 handler.handleStreamingAwareError 或各 service 的带内检测。
 type OpsStreamError struct {
 	// ErrType 是写入 SSE 帧的对客错误类型（如 rate_limit_error / upstream_error / api_error）。
 	ErrType string
@@ -205,11 +217,22 @@ type OpsStreamError struct {
 	// Message 是写入 SSE 帧的对客错误消息。
 	Message string
 	// IntendedStatus 是流若未固化本应返回的 HTTP 状态码（如并发限流的 429）。
-	// 默认仅用于错误分级；CountTowardsSLA=true 时也作为 Ops 的逻辑状态码。
+	// 默认仅用于错误分级；CountTowardsSLA 或 RequestScoped 为 true 时也作为 Ops 的逻辑状态码。
 	IntendedStatus int
 	// CountTowardsSLA 表示虽然 wire 状态已固化为 200，请求在应用语义上仍然失败，
 	// Ops 应使用 IntendedStatus 计入错误率/SLA。
 	CountTowardsSLA bool
+	// RequestScoped 表示该带内失败是请求级结果（如上游内容策略截停），与本请求此前的
+	// 上游尝试无关：分类不受上游错误上下文影响、不落库上游归因、不继承透传规则的
+	// skip_monitoring，按业务限制计，落库状态取 IntendedStatus 以便进入错误列表。
+	// 本请求此前的上游尝试（若有）仍按恢复行另记一条。
+	RequestScoped bool
+	// NonStream 表示带内信号来自非流式 2xx 响应体，落库 stream=false。
+	NonStream bool
+	// UpstreamAttributed 表示该带内失败本身就是上游失败（如 2xx 正文里的错误信封、空响应），
+	// 标记方已写入上游错误上下文：即使存在上游错误上下文，也按带内错误落库并带上上游归因，
+	// 而不是记成「Recovered upstream error」恢复行。
+	UpstreamAttributed bool
 }
 
 // MarkOpsStreamError 记录一次就地 SSE 错误，供 ops 日志采集。
@@ -234,6 +257,12 @@ func MarkOpsStreamFailure(c *gin.Context, errType, code, message string, intende
 		IntendedStatus:  intendedStatus,
 		CountTowardsSLA: true,
 	})
+}
+
+// MarkOpsStreamErrorValue 以完整的 OpsStreamError 记录一次带内错误，供需要
+// RequestScoped / NonStream / UpstreamAttributed 等附加语义的调用方使用；首个标记生效的规则不变。
+func MarkOpsStreamErrorValue(c *gin.Context, streamErr OpsStreamError) {
+	markOpsStreamError(c, streamErr)
 }
 
 func markOpsStreamError(c *gin.Context, streamErr OpsStreamError) {

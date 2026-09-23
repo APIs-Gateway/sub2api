@@ -144,6 +144,14 @@ func TestTokenRefreshService_ProcessRefreshUsesOAuthRefreshCandidates(t *testing
 				TempUnschedulableUntil:  &future,
 				TempUnschedulableReason: "OAuth 401: unauthorized",
 			},
+			{
+				ID:          7,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Status:      StatusActive,
+				Schedulable: false,
+				Credentials: map[string]any{"refresh_token": "paused-account-token"},
+			},
 		},
 	}
 	svc := &TokenRefreshService{
@@ -156,7 +164,9 @@ func TestTokenRefreshService_ProcessRefreshUsesOAuthRefreshCandidates(t *testing
 	svc.processRefresh()
 
 	require.Zero(t, repo.listActiveCalls, "TokenRefreshService should not use the broad active-account query")
-	require.Equal(t, []int64{1, 6}, repo.updatedCredentialIDs)
+	// Account 7 is paused (schedulable=false) but active: it must still be
+	// refreshed so its stored access_token does not silently expire.
+	require.ElementsMatch(t, []int64{1, 6, 7}, repo.updatedCredentialIDs)
 	require.Equal(t, 1, repo.clearTempCalls)
 }
 

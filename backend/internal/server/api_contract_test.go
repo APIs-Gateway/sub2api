@@ -1914,7 +1914,7 @@ func (s *stubAccountRepo) IncrementQuotaUsed(ctx context.Context, id int64, amou
 	return errors.New("not implemented")
 }
 
-func (s *stubAccountRepo) ResetQuotaUsed(ctx context.Context, id int64) error {
+func (s *stubAccountRepo) ResetQuotaUsedAndClearRateLimitCooldown(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
 
@@ -2110,6 +2110,10 @@ func (stubUserSubscriptionRepo) GetLatestActiveStatusByUserID(ctx context.Contex
 }
 
 func (stubUserSubscriptionRepo) GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubUserSubscriptionRepo) GetByIDForUpdate(context.Context, int64) (*service.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 

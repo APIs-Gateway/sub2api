@@ -290,6 +290,12 @@
 
   // Common
   common: {
+    apply: '應用',
+    clear: '清除',
+    creating: '創建中...',
+    required: '必填',
+    sending: '發送中...',
+    tryAgain: '請重試',
     loading: '加載中...',
     submitting: '提交中...',
     justNow: '剛剛',
@@ -2348,6 +2354,7 @@
 
     // Users Management
     users: {
+      passwordCopied: '密碼已複製',
       title: '用戶管理',
       description: '管理用戶帳戶和權限',
       createUser: '創建用戶',
@@ -2449,6 +2456,8 @@
       failedToLoad: '加載用戶列表失敗',
       failedToCreate: '創建用戶失敗',
       failedToUpdate: '更新用戶失敗',
+      lastAdminDemoteForbidden: '不能降級最後一個管理員，請先將其他用戶設為管理員',
+      cannotDemoteSelf: '不能將自己降級為普通用戶',
       failedToDelete: '刪除用戶失敗',
       failedToToggle: '更新用戶狀態失敗',
       failedToLoadApiKeys: '加載用戶 API 金鑰失敗',
@@ -2474,6 +2483,8 @@
         statusLabel: '狀態',
         selectStatus: '選擇狀態',
         rpmLimit: '每分鐘請求數 (RPM)',
+        concurrencyPlaceholder: '0 表示不限制',
+        concurrencyHint: '該用戶的最大並發請求數，0 = 不限制',
         rpmLimitPlaceholder: '0 表示不限制',
         rpmLimitHint: '該用戶每分鐘最大請求數，0 = 不限制；僅在所用分組未設定 rpm_limit 時作為兜底生效'
       },
@@ -2494,7 +2505,7 @@
       failedToSave: '儲存用戶失敗',
       failedToAdjust: '調整失敗',
       emailRequired: '請輸入郵箱',
-      concurrencyMin: '并發數不能小於1',
+      concurrencyNonNegative: '並發數不能為負數，0 表示不限制',
       soraStorageQuota: 'Sora 存儲配額',
       soraStorageQuotaHint: '單位 GB，0 表示使用分組或系統預設配額',
       amountRequired: '請輸入有效金額',
@@ -2647,6 +2658,7 @@
         clearAllConfirm: '確認清空全部平台的日 / 周 / 月限額？所有平台將變為"無限額"，本地無法撤銷，需要在儲存前手動重填。',
         reset: {
           button: '重置該窗口',
+          unavailable: '該平台未配置限額，沒有可重置的用量窗口',
           confirm: '確認重置該用戶 {platform} 平台的 {window} 用量？此操作立即生效。',
           success: '已重置 {platform} {window} 用量',
           failed: '重置失敗',
@@ -2981,6 +2993,8 @@
 
     // Channel Management
     channels: {
+      noGroupsSelected: '請為 {platform} 至少選擇一個分組',
+      emptyModelsInPricing: '請為 {platform} 定價規則至少添加一個模型',
       title: '價格配置',
       description: '管理渠道與模型定價，并配置用戶價格頁展示哪些分組 / 模型',
       searchChannels: '搜索渠道...',
@@ -3400,7 +3414,7 @@
       workerActive: '正在處理異步審計或記錄任務',
       workerIdle: '已啟動，當前空閒可用',
       workerDisabled: '風控或內容審計未啟用',
-      processed: '已處理',
+      processed: '異步已處理',
       droppedErrors: '丟棄/異常',
       autoRefresh: '每 15 秒自動刷新',
       lastCleanup: '上次清理：{time}',
@@ -3651,7 +3665,9 @@
       quotaEndsInMinutes: '額度將在 {minutes} 分鐘後結束',
       quotaEndsInHoursMinutes: '額度將在 {hours} 小時 {minutes} 分鐘後結束',
       quotaEndsInDaysHours: '額度將在 {days} 天 {hours} 小時後結束',
-      daysRemaining: '天剩餘',
+      daysRemaining: '剩餘 {days} 天',
+      hoursMinutesRemaining: '剩餘 {hours} 小時 {minutes} 分鐘',
+      minutesRemaining: '剩餘 {minutes} 分鐘',
       remainingDays: '剩餘天數',
       noExpiration: '無過期時間',
       status: {
@@ -3746,6 +3762,11 @@
 
     // Accounts Management
     accounts: {
+      fromModel: '請求模型',
+      toModel: '目標模型',
+      antigravityProjectIdLabel: 'GCP Project ID（可選）',
+      antigravityProjectIdPlaceholder: 'your-gcp-project-id',
+      antigravityProjectIdHint: 'standard-tier 且未自動返回 project_id 的 Antigravity 帳號需要填寫用戶自有的 GCP project。',
       title: '帳號管理',
       description: '管理 AI 平台帳號和 Cookie',
       createAccount: '添加帳號',
@@ -4015,6 +4036,7 @@
       status: {
         active: '正常',
         inactive: '停用',
+        expired: '已過期',
         error: '錯誤',
         cooldown: '冷卻中',
         paused: '暫停',
@@ -4258,6 +4280,9 @@
         oauthPassthrough: '自動透傳（僅替換認證）',
         oauthPassthroughDesc:
           '開啟後，該 OpenAI 帳號將自動透傳請求與回應，僅替換認證并保留計費/并發/審計及必要安全過濾；如遇兼容性問題可隨時關閉回滾。',
+        flattenNamespaces: '攤平 Codex namespace 工具（相容）',
+        flattenNamespacesDesc:
+          '預設關閉：/responses 上的 namespace 工具宣告原樣轉發，這正是 ChatGPT Codex 後端期望的形態。僅當該 OAuth 帳號指向不認識 namespace 的相容上游時才開啟——攤平會把工具改名為 namespace__tool，使按 functions.<命名空間>.<工具> 定址的模型（如 gpt-5.6 多智能體）無法呼叫。壓縮（compact）請求不受該開關影響，始終攤平。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           '預設關閉。開啟後可啟用 responses_websockets_v2 協議能力（受網關全局開關與帳號類型開關約束）。',
@@ -4269,8 +4294,8 @@
         wsModePassthrough: '透傳（passthrough）',
         wsModeShared: '共享（shared）',
         wsModeDedicated: '獨享（dedicated）',
-        wsModeConcurrencyHint: '啟用 WS mode 後，該帳號并發數將作為該帳號 WS 連接池上限。',
-        wsModePassthroughHint: 'passthrough 模式不使用 WS 連接池。',
+        wsModeCtxPoolHint: '網關 → 從連接池獲取上游 WS 連接，數量由配置決定。',
+        wsModePassthroughHint: '網關 → 上游 WS，不使用連接池。',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           '僅對 OpenAI OAuth 生效。開啟後該帳號才允許使用 OpenAI WebSocket Mode 協議。',
@@ -6107,6 +6132,16 @@
         }
       },
       runtime: {
+        metricThresholds: '指標閾值配置',
+        metricThresholdsHint: '配置各項指標的告警閾值，超出閾值時將以紅色顯示',
+        slaMinPercent: 'SLA最低百分比',
+        slaMinPercentHint: 'SLA低於此值時顯示為紅色（預設：99.5%）',
+        ttftP99MaxMs: 'TTFT P99最大值（毫秒）',
+        ttftP99MaxMsHint: 'TTFT P99高於此值時顯示為紅色（預設：500ms）',
+        requestErrorRateMaxPercent: '請求錯誤率最大值（%）',
+        requestErrorRateMaxPercentHint: '請求錯誤率高於此值時顯示為紅色（預設：5%）',
+        upstreamErrorRateMaxPercent: '上游錯誤率最大值（%）',
+        upstreamErrorRateMaxPercentHint: '上游錯誤率高於此值時顯示為紅色（預設：5%）',
         title: '運維監控運行設定',
         description: '配置存儲在數據庫中，無需修改 config 文件即可生效。',
         loading: '加載中...',
@@ -6674,7 +6709,7 @@
         subscriptionGroup: '訂閱分組',
         subscriptionValidityDays: '有效期（天）',
         defaultPlatformQuotas: '預設平台限額（註冊時分配）',
-        defaultPlatformQuotasHint: '新用戶註冊時自動寫入平台限額記錄；已有用戶不受影響。留空 = 該平台該窗口不限制。',
+        defaultPlatformQuotasHint: '新用戶註冊時自動獲得這裡配置的限額；已有用戶不受影響。留空 = 該平台該窗口不限制。',
         platformQuotaNotice: '月限額為 30 天滾動窗口，非自然月',
       },
       platformQuota: {
@@ -6961,7 +6996,7 @@
         validationFieldRequired: '{field} 不能為空',
         validationEasyPayCustomMethodRequired: '每個易支付自定義方式都必須填寫支付方式和上游 type',
         validationEasyPayCustomMethodTypeInvalid: '易支付自定義支付方式只能包含小寫字母、數字、下劃線和短橫線',
-        validationEasyPayCustomMethodUpstreamTypeInvalid: '易支付上游 type 只能包含小寫字母、數字、下劃線和短橫線',
+        validationEasyPayCustomMethodUpstreamTypeInvalid: '易支付上游 type 只能包含小寫字母、數字、點號、下劃線和短橫線',
         validationEasyPayCustomMethodReserved: '易支付自定義支付方式不能使用內置的 alipay 或 wxpay',
         validationEasyPayCustomMethodPrefixReserved: '易支付自定義支付方式不能以 alipay、wxpay 或 crypto 開頭',
         validationEasyPayCustomMethodDuplicate: '易支付自定義支付方式不能重複',
@@ -7018,6 +7053,7 @@
         customMethodType: '支付方式',
         customMethodUpstreamType: '上游 type',
         customMethodDisplayName: '顯示名稱',
+        customMethodDisplayNamePlaceholder: '如：信用卡',
         stripeWebhookHint: '請在 Stripe Dashboard 中將以下地址配置為 Webhook 端點：',
         stripeWebhookApiVersionHint: 'Webhook 端點的 API 版本請與當前集成的 Stripe SDK 對齊，建議選擇 {version}；版本不一致可能導致回調事件解析失敗。',
         airwallexWebhookHint: '請在 Airwallex 後台將以下地址配置為 Webhook 端點；事件至少選擇 Payment Intent -> Succeeded（payment_intent.succeeded），建議同時選擇 Payment Intent -> Cancelled（payment_intent.cancelled）；API version 選擇帳戶預設或最新穩定版本。',
@@ -7417,6 +7453,11 @@
         commonPatterns: '常用模式'
       },
       openaiFastPolicy: {
+        userIds: '指定用戶 ID',
+        userIdsHint: '留空表示對全部用戶生效。指定用戶規則優先於全局規則。',
+        userIdPlaceholder: '例如：1001',
+        addUserId: '添加用戶 ID',
+        removeUserId: '移除用戶 ID',
         title: 'OpenAI Fast/Flex 策略',
         description: '基於請求體 service_tier 字段攔截/過濾/透傳 OpenAI fast(priority) 與 flex 請求；僅作用於 OpenAI 網關。',
         empty: '尚未配置任何規則。點擊下方按鈕新增。',
@@ -7519,7 +7560,8 @@
         lowRatePriorityTitle: '優先選擇上游倍率較低的帳號',
         lowRatePriorityDescription: '傳統調度模式下，優先選擇已觀測上游 Token 計費倍率較低的帳號。',
         oauthRateTitle: 'OAuth 調度參考倍率',
-        oauthRateDescription: '設定傳統低倍率調度使用的 OAuth 參考倍率，預設參考值為 1。',
+        oauthRateDescription: '設定傳統低倍率調度使用的 OAuth 參考倍率，預設參考值為 1；留空時 OAuth 帳號使用各自的帳號倍率。API Key 帳號優先使用有效探測倍率，無有效探測時使用帳號倍率。',
+        oauthRateInvalid: 'OAuth 調度參考倍率必須是非負數字，或留空以使用帳號倍率。',
         upstreamCostWeightTitle: '上游計費倍率權重',
         upstreamCostWeightDescription: '設定高級調度中上游 Token 計費信號的排序權重，填 0 可關閉該信號。'
       },
