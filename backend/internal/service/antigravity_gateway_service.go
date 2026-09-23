@@ -1353,6 +1353,78 @@ func extractTextFromSSEResponse(respBody []byte) string {
 
 // injectIdentityPatchToGeminiRequest 为 Gemini 格式请求注入身份提示词
 // 如果请求中已包含 "You are Antigravity" 则不重复注入
+// enableMixedGeminiToolInvocations reconciles Antigravity v1internal tool payloads
+// on the native Gemini forwarding path.
+//
+// Antigravity's cloudcode-pa v1internal endpoint rejects mixing built-in tools
+// (googleSearch / codeExecution) with client functionDeclarations — even when
+// includeServerSideToolInvocations is set (upstream issue #6464). Prefer client
+// function tools (Codex/agent workflows) and drop the incompatible built-ins,
+// clearing the now-meaningless includeServerSideToolInvocations flag. Requests
+// with only built-in tools, or only function tools, are returned unchanged.
+func enableMixedGeminiToolInvocations(body []byte) ([]byte, error) {
+	var request map[string]any
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, err
+	}
+
+	tools, ok := request["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		return body, nil
+	}
+
+	hasFunctionDeclarations := false
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		declarations, hasFunctions := tool["functionDeclarations"].([]any)
+		if hasFunctions && len(declarations) > 0 {
+			hasFunctionDeclarations = true
+			break
+		}
+	}
+	if !hasFunctionDeclarations {
+		return body, nil
+	}
+
+	filtered := make([]any, 0, len(tools))
+	droppedBuiltin := false
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			filtered = append(filtered, rawTool)
+			continue
+		}
+		if _, hasSearch := tool["googleSearch"]; hasSearch {
+			delete(tool, "googleSearch")
+			droppedBuiltin = true
+		}
+		if _, hasCodeExecution := tool["codeExecution"]; hasCodeExecution {
+			delete(tool, "codeExecution")
+			droppedBuiltin = true
+		}
+		if len(tool) == 0 {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	if !droppedBuiltin {
+		return body, nil
+	}
+
+	request["tools"] = filtered
+	if toolConfig, ok := request["toolConfig"].(map[string]any); ok {
+		delete(toolConfig, "includeServerSideToolInvocations")
+		delete(toolConfig, "include_server_side_tool_invocations")
+		if len(toolConfig) == 0 {
+			delete(request, "toolConfig")
+		}
+	}
+	return json.Marshal(request)
+}
+
 func injectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
 	var request map[string]any
 	if err := json.Unmarshal(body, &request); err != nil {
@@ -2290,6 +2362,11 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		logger.LegacyPrintf("service.antigravity_gateway", "[Antigravity] Cleaned request schema in forwarded request for account %s", account.Name)
 	} else {
 		logger.LegacyPrintf("service.antigravity_gateway", "[Antigravity] Failed to clean schema: %v", err)
+	}
+
+	// Antigravity v1internal 拒绝内置工具与 functionDeclarations 混用（上游 #6464）。
+	if reconciled, err := enableMixedGeminiToolInvocations(injectedBody); err == nil {
+		injectedBody = reconciled
 	}
 
 	// 包装请求
@@ -3288,6 +3365,11 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 	keepaliveInterval := time.Duration(0)
 	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.settingService.cfg.Gateway.StreamKeepaliveInterval) * time.Second
+	}
+	// go-genai / python-genai 不会忽略 SSE 注释行，收到 ":\n\n" 会直接把整个流判成
+	// invalid stream chunk 而中断（Antigravity CLI 在用 go-genai）。对这类客户端宁可不发心跳。
+	if keepaliveInterval > 0 && downstreamRejectsSSEComments(c) {
+		keepaliveInterval = 0
 	}
 	var keepaliveTicker *time.Ticker
 	if keepaliveInterval > 0 {

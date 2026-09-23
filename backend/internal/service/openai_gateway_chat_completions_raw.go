@@ -241,11 +241,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 			if !tempUnscheduled {
 				shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 			}
-			return nil, &UpstreamFailoverError{
+			return nil, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody))),
-			}
+			}, upstreamMsg, respBody)
 		}
 		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 	}

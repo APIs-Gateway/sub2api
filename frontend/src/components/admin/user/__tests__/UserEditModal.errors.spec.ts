@@ -40,8 +40,16 @@ const BaseDialogStub = defineComponent({
   template: '<div v-if="show"><slot /><slot name="footer" /></div>'
 })
 
+const SelectStub = defineComponent({
+  name: 'SelectStub',
+  props: ['modelValue', 'options', 'searchable'],
+  emits: ['update:modelValue'],
+  template: '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="o in options" :key="o.value" :value="o.value">{{ o.label }}</option></select>'
+})
+
 const stubs = {
   BaseDialog: BaseDialogStub,
+  Select: SelectStub,
   Icon: true,
   UserAttributeForm: defineComponent({ name: 'UserAttributeForm', template: '<div />' })
 }

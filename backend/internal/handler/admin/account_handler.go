@@ -1830,7 +1830,8 @@ func (h *AccountHandler) ResetQuota(c *gin.Context) {
 	}
 
 	if err := h.adminService.ResetAccountQuota(c.Request.Context(), accountID); err != nil {
-		response.InternalError(c, "Failed to reset account quota: "+err.Error())
+		// ErrAccountNotFound → 404；其它错误按 infraerrors 映射（未知错误为 500）。
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -2039,8 +2040,14 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle Gemini accounts
 	if account.IsGemini() {
-		// For OAuth accounts: return default Gemini models
+		// Consumer Google One OAuth still uses the legacy Gemini CLI / Code
+		// Assist channel. Do not advertise newer 3.x or image models that the
+		// channel cannot serve.
 		if account.IsOAuth() {
+			if account.IsGeminiGoogleOne() {
+				response.Success(c, geminicli.GoogleOneModels)
+				return
+			}
 			response.Success(c, geminicli.DefaultModels)
 			return
 		}

@@ -41,10 +41,13 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 		id = generateResponsesID()
 	}
 
+	// Anthropic responses carry no creation timestamp, so stamp now — the same
+	// synthesize-what-the-client-requires rule the generated id above follows.
 	out := &ResponsesResponse{
-		ID:     id,
-		Object: "response",
-		Model:  resp.Model,
+		ID:        id,
+		Object:    "response",
+		CreatedAt: time.Now().Unix(),
+		Model:     resp.Model,
 	}
 
 	var outputs []ResponsesOutput
@@ -625,11 +628,12 @@ func makeResponsesCreatedEvent(state *AnthropicEventToResponsesState) ResponsesS
 		Type:           "response.created",
 		SequenceNumber: seq,
 		Response: &ResponsesResponse{
-			ID:     state.ResponseID,
-			Object: "response",
-			Model:  state.Model,
-			Status: "in_progress",
-			Output: []ResponsesOutput{},
+			ID:        state.ResponseID,
+			Object:    "response",
+			CreatedAt: state.Created,
+			Model:     state.Model,
+			Status:    "in_progress",
+			Output:    []ResponsesOutput{},
 		},
 	}
 }
@@ -676,6 +680,7 @@ func makeResponsesCompletedEvent(
 		Response: &ResponsesResponse{
 			ID:                state.ResponseID,
 			Object:            "response",
+			CreatedAt:         state.Created,
 			Model:             state.Model,
 			Status:            status,
 			Output:            outputs,

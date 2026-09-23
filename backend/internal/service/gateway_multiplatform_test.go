@@ -194,7 +194,7 @@ func (m *mockAccountRepoForPlatform) IncrementQuotaUsed(ctx context.Context, id 
 	return nil
 }
 
-func (m *mockAccountRepoForPlatform) ResetQuotaUsed(ctx context.Context, id int64) error {
+func (m *mockAccountRepoForPlatform) ResetQuotaUsedAndClearRateLimitCooldown(ctx context.Context, id int64) error {
 	return nil
 }
 
@@ -3399,4 +3399,12 @@ func TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle(t *testing.T) {
 	require.Nil(t, gotGroup)
 	require.Nil(t, gotID)
 	require.Contains(t, err.Error(), "fallback group cycle")
+}
+
+func (c *mockGatewayCacheForPlatform) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *mockGatewayCacheForPlatform) GetReasoningContent(_ context.Context, _ string) (string, error) {
+	return "", ErrReasoningContentNotFound
 }

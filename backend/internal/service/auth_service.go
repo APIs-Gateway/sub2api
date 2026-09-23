@@ -1955,7 +1955,7 @@ func resolvedTokenVersion(user *User) int64 {
 	return user.TokenVersion ^ fingerprint
 }
 
-// snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas（platform × 3 window）以
+// snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas 中至少配置了一档限额的平台以
 // BulkInsertInitial 形式写入 user_platform_quotas 表。
 //
 // 下面那个 fail-open 只在调用方不处于数据库事务里时才真的成立，而注册路径恰恰是在事务内
@@ -1971,8 +1971,13 @@ func (s *AuthService) snapshotPlatformQuotaDefaults(ctx context.Context, userID 
 	if s.userPlatformQuotaRepo == nil || plan == nil || len(plan.PlatformQuotas) == 0 {
 		return nil
 	}
+	// 仅为至少配置了一档限额的平台建行：user_platform_quotas 中不存在的行等价于不限额，
+	// 三档全空的记录不携带任何可执行的限额。
 	records := make([]UserPlatformQuotaRecord, 0, len(plan.PlatformQuotas))
 	for platform, q := range plan.PlatformQuotas {
+		if !q.HasAnyLimit() {
+			continue
+		}
 		if !IsAllowedQuotaPlatform(platform) {
 			// 设置里混进了未知平台。跳过它，而不是让它去撞数据库的 CHECK 约束——
 			// 在事务里那一撞会连坐掉调用方后面所有的写操作。
@@ -1980,16 +1985,13 @@ func (s *AuthService) snapshotPlatformQuotaDefaults(ctx context.Context, userID 
 				"[Auth] Skip unknown quota platform %q for user %d (not in AllowedQuotaPlatforms)", platform, userID)
 			continue
 		}
-		rec := UserPlatformQuotaRecord{
-			UserID:   userID,
-			Platform: platform,
-		}
-		if q != nil {
-			rec.DailyLimitUSD = q.DailyLimitUSD
-			rec.WeeklyLimitUSD = q.WeeklyLimitUSD
-			rec.MonthlyLimitUSD = q.MonthlyLimitUSD
-		}
-		records = append(records, rec)
+		records = append(records, UserPlatformQuotaRecord{
+			UserID:          userID,
+			Platform:        platform,
+			DailyLimitUSD:   q.DailyLimitUSD,
+			WeeklyLimitUSD:  q.WeeklyLimitUSD,
+			MonthlyLimitUSD: q.MonthlyLimitUSD,
+		})
 	}
 	if len(records) == 0 {
 		return nil

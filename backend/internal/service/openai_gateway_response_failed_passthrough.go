@@ -107,7 +107,7 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 		return http.StatusUnauthorized
 	case strings.Contains(combined, "permission") || strings.Contains(combined, "forbidden") || strings.Contains(combined, "access denied"):
 		return http.StatusForbidden
-	case code == "server_is_overloaded" || code == "slow_down":
+	case isOpenAIUpstreamCapacityShedEvent(payload):
 		return http.StatusServiceUnavailable
 	default:
 		return http.StatusBadGateway

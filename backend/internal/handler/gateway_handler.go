@@ -1047,12 +1047,12 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
 		fallbackModels := defaultModelIDsForPlatform(platform)
 		availableModels = filterModelsByCustomList(customModelsListSource(platform, availableModels, fallbackModels), fallbackModels, apiKey.Group.ModelsListConfig.Models)
-		writeCustomModelsList(c, platform, availableModels)
+		writeModelsList(c, platform, availableModels)
 		return
 	}
 
 	if len(availableModels) > 0 {
-		writeModelsList(c, availableModels)
+		writeModelsList(c, platform, availableModels)
 		return
 	}
 
@@ -1079,7 +1079,11 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	})
 }
 
-func writeModelsList(c *gin.Context, modelIDs []string) {
+func writeModelsList(c *gin.Context, platform string, modelIDs []string) {
+	if platform == service.PlatformOpenAI {
+		writeOpenAIModelsList(c, modelIDs)
+		return
+	}
 	models := make([]claude.Model, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
 		models = append(models, claude.Model{
@@ -1093,14 +1097,6 @@ func writeModelsList(c *gin.Context, modelIDs []string) {
 		"object": "list",
 		"data":   models,
 	})
-}
-
-func writeCustomModelsList(c *gin.Context, platform string, modelIDs []string) {
-	if platform == service.PlatformOpenAI {
-		writeOpenAIModelsList(c, modelIDs)
-		return
-	}
-	writeModelsList(c, modelIDs)
 }
 
 func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
