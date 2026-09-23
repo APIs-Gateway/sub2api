@@ -187,6 +187,7 @@ const (
 	SettingKeyAffiliateSignupRewardEnabled     = "affiliate_signup_reward_enabled"     // 邀请注册即得积分开关（被邀请人无需付费）
 	SettingKeyAffiliateSignupRewardAmount      = "affiliate_signup_reward_amount"      // 每成功邀请一人，邀请人立即获得的积分数
 	SettingKeyAffiliateCodeAdmitsSignup        = "affiliate_code_admits_signup"        // 开启后，填了有效的邀请人邀请码即可放行注册，不再另需一张注册码
+	SettingKeyGitHubOAuthMinAccountAgeDays     = "github_oauth_min_account_age_days"   // GitHub 注册要求的 GitHub 账号最短注册天数（0=不限；只管新注册，不影响已有用户登录/绑定）
 
 	// 分渠道注册开关：auth_source_<source>_signup_enabled
 	// <source> 取值与 normalizeOAuthSignupSource 一致，其中 email 代表账号密码注册。
