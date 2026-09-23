@@ -240,3 +240,246 @@ func TestCleanJSONSchema_EmptyPrefixItems(t *testing.T) {
 	require.True(t, ok, "empty_tuple.items must be an object")
 	assert.Equal(t, "string", emptyTupleItems["type"])
 }
+
+func cleanedProp(t *testing.T, cleaned map[string]any, name string) map[string]any {
+	t.Helper()
+	props, ok := cleaned["properties"].(map[string]any)
+	require.True(t, ok, "properties must be an object")
+	prop, ok := props[name].(map[string]any)
+	require.True(t, ok, "property %q must be an object", name)
+	return prop
+}
+
+func TestCleanJSONSchema_ConstTypeInference(t *testing.T) {
+	cases := []struct {
+		name     string
+		constVal any
+		wantType string
+	}{
+		{name: "int", constVal: 7, wantType: "integer"},
+		{name: "int64", constVal: int64(7), wantType: "integer"},
+		{name: "float64", constVal: float64(1.5), wantType: "number"},
+		{name: "bool", constVal: true, wantType: "boolean"},
+		{name: "fallback", constVal: []any{"x"}, wantType: "string"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleaned := CleanJSONSchema(map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"v": map[string]any{"const": tc.constVal},
+				},
+			})
+			v := cleanedProp(t, cleaned, "v")
+			assert.Equal(t, tc.wantType, v["type"])
+			assert.Equal(t, []any{tc.constVal}, v["enum"])
+			assert.NotContains(t, v, "const")
+			assert.NotContains(t, v, "properties", "const scalar must not be turned into an object")
+		})
+	}
+}
+
+func TestCleanJSONSchema_ConstKeepsExistingEnumAndType(t *testing.T) {
+	cleaned := CleanJSONSchema(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"v": map[string]any{
+				"type":  "integer",
+				"const": float64(3),
+				"enum":  []any{float64(3), float64(4)},
+			},
+		},
+	})
+	v := cleanedProp(t, cleaned, "v")
+	assert.Equal(t, "integer", v["type"])
+	assert.Equal(t, []any{float64(3), float64(4)}, v["enum"])
+	assert.NotContains(t, v, "const")
+}
+
+func TestCleanJSONSchema_EnumOnlyTypeInference(t *testing.T) {
+	cases := []struct {
+		name     string
+		enum     []any
+		wantType string
+	}{
+		{name: "int", enum: []any{1, 2}, wantType: "integer"},
+		{name: "float64", enum: []any{float64(1), float64(2)}, wantType: "number"},
+		{name: "bool", enum: []any{true, false}, wantType: "boolean"},
+		{name: "string", enum: []any{"a"}, wantType: "string"},
+		{name: "empty", enum: []any{}, wantType: "string"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleaned := CleanJSONSchema(map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"v": map[string]any{"enum": tc.enum},
+				},
+			})
+			v := cleanedProp(t, cleaned, "v")
+			assert.Equal(t, tc.wantType, v["type"])
+			assert.NotContains(t, v, "properties", "enum-only schema must not get a reason property")
+		})
+	}
+}
+
+func TestCleanJSONSchema_ItemsWithoutTypeInfersArray(t *testing.T) {
+	cleaned := CleanJSONSchema(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"list": map[string]any{
+				"items": map[string]any{"type": "integer"},
+			},
+		},
+	})
+	list := cleanedProp(t, cleaned, "list")
+	assert.Equal(t, "array", list["type"])
+	items, ok := list["items"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "integer", items["type"])
+}
+
+func TestCleanJSONSchema_ArrayInvalidItemsFallback(t *testing.T) {
+	cases := []struct {
+		name  string
+		items any
+	}{
+		{name: "nil", items: nil},
+		{name: "empty object", items: map[string]any{}},
+		{name: "bool true", items: true},
+		{name: "bool false", items: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleaned := CleanJSONSchema(map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"arr": map[string]any{"type": "array", "items": tc.items},
+				},
+			})
+			arr := cleanedProp(t, cleaned, "arr")
+			items, ok := arr["items"].(map[string]any)
+			require.True(t, ok, "arr.items must be replaced with a schema object")
+			assert.Equal(t, "string", items["type"])
+		})
+	}
+}
+
+func TestCleanJSONSchema_PrefixItemsClosedTuple(t *testing.T) {
+	// Draft 2020-12 closed tuple: items:false must be replaced by the best prefixItems entry.
+	cleaned := CleanJSONSchema(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"pair": map[string]any{
+				"type": "array",
+				"prefixItems": []any{
+					map[string]any{"type": "string"},
+					map[string]any{"type": "object", "properties": map[string]any{"k": map[string]any{"type": "string"}}},
+				},
+				"items": false,
+			},
+		},
+	})
+	pair := cleanedProp(t, cleaned, "pair")
+	assert.NotContains(t, pair, "prefixItems")
+	items, ok := pair["items"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "object", items["type"], "highest-scoring tuple member should win")
+	itemProps, ok := items["properties"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, itemProps, "k")
+}
+
+func TestCleanJSONSchema_PrefixItemsKeepsExistingItems(t *testing.T) {
+	cleaned := CleanJSONSchema(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"tuple": map[string]any{
+				"type":        "array",
+				"prefixItems": []any{map[string]any{"type": "string"}},
+				"items":       map[string]any{"type": "integer"},
+			},
+		},
+	})
+	tuple := cleanedProp(t, cleaned, "tuple")
+	assert.NotContains(t, tuple, "prefixItems")
+	items, ok := tuple["items"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "integer", items["type"])
+}
+
+func TestCleanJSONSchema_PrefixItemsWithoutSchemaMembers(t *testing.T) {
+	// No usable tuple member: fall back to a string items schema.
+	cleaned := CleanJSONSchema(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"tuple": map[string]any{
+				"type":        "array",
+				"prefixItems": []any{nil},
+			},
+		},
+	})
+	tuple := cleanedProp(t, cleaned, "tuple")
+	assert.NotContains(t, tuple, "prefixItems")
+	items, ok := tuple["items"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "string", items["type"])
+}
+
+func TestCleanJSONSchema_PropertiesAndItemsBothCleaned(t *testing.T) {
+	// A schema declaring both properties and items must have both subtrees cleaned.
+	cleaned := CleanJSONSchema(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"odd": map[string]any{
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "format": "uuid"},
+				},
+				"items": map[string]any{
+					"type":        "array",
+					"prefixItems": []any{map[string]any{"type": "boolean"}},
+				},
+			},
+		},
+	})
+	odd := cleanedProp(t, cleaned, "odd")
+	items, ok := odd["items"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, items, "prefixItems")
+	inner, ok := items["items"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "boolean", inner["type"])
+}
+
+func TestCleanJSONSchema_AnyOfMergedItemsCleaned(t *testing.T) {
+	cleaned := CleanJSONSchema(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"v": map[string]any{
+				"anyOf": []any{
+					map[string]any{"type": "null"},
+					map[string]any{
+						"type":  "array",
+						"items": map[string]any{"type": "array", "prefixItems": []any{map[string]any{"type": "number"}}},
+					},
+				},
+			},
+		},
+	})
+	v := cleanedProp(t, cleaned, "v")
+	assert.NotContains(t, v, "anyOf")
+	assert.Equal(t, "array", v["type"])
+	items, ok := v["items"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, items, "prefixItems")
+	inner, ok := items["items"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "number", inner["type"])
+}
+
+func TestScoreSchemaOption_EnumAndConst(t *testing.T) {
+	assert.Equal(t, 1, scoreSchemaOption(map[string]any{"enum": []any{"a"}}))
+	assert.Equal(t, 1, scoreSchemaOption(map[string]any{"const": "a"}))
+	assert.Equal(t, 0, scoreSchemaOption(map[string]any{"type": "null"}))
+	assert.Equal(t, 0, scoreSchemaOption("not a schema"))
+}
