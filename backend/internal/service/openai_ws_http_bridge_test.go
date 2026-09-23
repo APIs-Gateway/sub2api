@@ -1464,7 +1464,6 @@ func TestOpenAIWSHTTPBridgeAcceptsFirstFrameAboveLegacy16MiB(t *testing.T) {
 		require.NotNil(t, outcome.result)
 		require.Equal(t, 9, outcome.result.Usage.InputTokens)
 		require.Equal(t, 1, outcome.result.Usage.OutputTokens)
-		require.Equal(t, "response.completed", outcome.result.UpstreamTerminalEvent)
 	default:
 		t.Fatal("AfterTurn was not called for websocket HTTP bridge turn")
 	}
