@@ -2845,6 +2845,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			normalized = litePayload
 		}
+		if account.IsOpenAIOAuth() && eventType == "response.create" {
+			stripped, changed := stripOpenAIOAuthResponsesInputItemMetadata(normalized)
+			if changed {
+				normalized = stripped
+			}
+		}
 		apiKey := getAPIKeyFromContext(c)
 		imageGenerationAllowed := GroupAllowsImageGeneration(apiKeyGroup(apiKey))
 		codexBridgeEnabled := isCodexCLI &&
