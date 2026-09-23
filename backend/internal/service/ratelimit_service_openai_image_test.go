@@ -156,6 +156,7 @@ func TestOpenAIGatewayServiceForwardImages_CapabilityLossCoolsImageScope(t *test
 		},
 	}
 
+	before := time.Now()
 	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
 
 	require.Nil(t, result)
