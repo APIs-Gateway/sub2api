@@ -2744,6 +2744,9 @@ func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, re
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	// Failover retries reuse the same gin.Context; drop the previous attempt's
+	// flatten mapping so a namespace-preserving account never restores with it.
+	clearOpenAIResponsesNamespaceNames(c)
 	s.prepareCodexAccountIdentitySource(c, account)
 	startTime := time.Now()
 
@@ -2890,7 +2893,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("openai ws v1 is temporarily unsupported; use ws v2")
 	}
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
-	if shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled) {
+	compactPath := isOpenAIResponsesCompactPath(c)
+	if shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
 		flattenedBody, flattenErr := flattenOpenAIResponsesNamespaces(c, body)
 		if flattenErr != nil {
 			setOpsUpstreamError(c, http.StatusBadRequest, flattenErr.Error(), "")
@@ -2905,14 +2909,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			requestView = newOpenAIRequestView(body)
 		}
 	}
-	// Keep the established reactive cleanup for ordinary Responses requests. This
-	// proactive path is only needed once a real namespace declaration makes a
-	// historical tool-call namespace semantically significant (including Lite's
-	// input.additional_tools carrier).
-	if shouldStripOpenAIResponsesInputNamespaces(account, wsDecision.Transport, passthroughEnabled) &&
-		hasOpenAIResponsesNamespaceToolDeclaration(body) {
+	// Proactively remove residual input-item namespaces for HTTP forwarding,
+	// keeping them on tool-call items when the selected upstream round-trips them
+	// (OAuth non-compact, or a request that declares namespace tools).
+	if shouldStripOpenAIResponsesInputNamespaces(account, wsDecision.Transport, passthroughEnabled) {
 		keepToolCallNamespaces := shouldKeepOpenAIResponsesToolCallNamespaces(
-			account, wsDecision.Transport, passthroughEnabled, isOpenAIResponsesCompactPath(c), body,
+			account, wsDecision.Transport, passthroughEnabled, compactPath, body,
 		)
 		strippedBody, stripErr := stripOpenAIResponsesInputNamespaces(body, keepToolCallNamespaces)
 		if stripErr != nil {
@@ -3017,7 +3019,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		markPatchSet("model", billingModel)
 	}
 	upstreamModel := billingModel
-	isCompactRequest := isOpenAIResponsesCompactPath(c)
+	isCompactRequest := compactPath
 	compactMapped := false
 	if isCompactRequest {
 		compactMappedModel := resolveOpenAICompactForwardModel(account, billingModel)
