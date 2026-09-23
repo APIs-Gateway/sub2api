@@ -1278,21 +1278,31 @@ func TestGatewayService_ParseSSEUsagePassthrough_MessageStartFallbacks(t *testin
 
 func TestGatewayService_ParseSSEUsagePassthrough_MessageDeltaSelectiveOverwrite(t *testing.T) {
 	svc := &GatewayService{}
-	usage := &ClaudeUsage{
-		InputTokens:           10,
-		CacheCreation5mTokens: 2,
-		CacheCreation1hTokens: 6,
-	}
-	data := `{"type":"message_delta","usage":{"input_tokens":0,"output_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":0,"cached_tokens":11,"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":0}}}`
+	usage := &ClaudeUsage{}
+	start := `{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":463184,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":463184}}}}`
+	svc.parseSSEUsagePassthrough(start, usage)
+
+	data := `{"type":"message_delta","usage":{"input_tokens":0,"output_tokens":5,"cache_creation_input_tokens":463184,"cache_read_input_tokens":0,"cached_tokens":11,"cache_creation":{"ephemeral_5m_input_tokens":463184,"ephemeral_1h_input_tokens":0}}}`
 
 	svc.parseSSEUsagePassthrough(data, usage)
 
 	require.Equal(t, 10, usage.InputTokens, "message_delta 中 0 值不应覆盖已有 input_tokens")
 	require.Equal(t, 5, usage.OutputTokens)
-	require.Equal(t, 8, usage.CacheCreationInputTokens)
+	require.Equal(t, 463184, usage.CacheCreationInputTokens)
 	require.Equal(t, 11, usage.CacheReadInputTokens, "cache_read_input_tokens 为空时应回退到 cached_tokens")
-	require.Equal(t, 1, usage.CacheCreation5mTokens)
-	require.Equal(t, 6, usage.CacheCreation1hTokens, "message_delta 中 0 值不应覆盖已有 1h 明细")
+	require.Equal(t, 463184, usage.CacheCreation5mTokens)
+	require.Equal(t, 0, usage.CacheCreation1hTokens)
+}
+
+func TestGatewayService_ParseSSEUsagePassthrough_MessageDeltaZeroBreakdownKeepsStart(t *testing.T) {
+	svc := &GatewayService{}
+	usage := &ClaudeUsage{}
+	svc.parseSSEUsagePassthrough(`{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_creation":{"ephemeral_5m_input_tokens":30,"ephemeral_1h_input_tokens":70}}}}`, usage)
+	svc.parseSSEUsagePassthrough(`{"type":"message_delta","usage":{"output_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}}}`, usage)
+
+	require.Equal(t, 100, usage.CacheCreationInputTokens)
+	require.Equal(t, 30, usage.CacheCreation5mTokens, "全 0 占位明细不应重置 message_start 的 5m 明细")
+	require.Equal(t, 70, usage.CacheCreation1hTokens, "全 0 占位明细不应重置 message_start 的 1h 明细")
 }
 
 func TestGatewayService_ParseSSEUsagePassthrough_NoopCases(t *testing.T) {

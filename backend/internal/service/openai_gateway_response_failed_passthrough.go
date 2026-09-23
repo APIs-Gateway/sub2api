@@ -56,6 +56,19 @@ func isOpenAIContextWindowError(upstreamMsg string, upstreamBody []byte) bool {
 	return match(string(upstreamBody))
 }
 
+// openAIStreamErrorStatusPaths 覆盖流内 error / response.failed 事件里上游状态码的
+// 两种拼写：OpenAI 用 status_code，而不少 OpenAI 兼容上游（含二级中转）只写 status。
+// 不读这些字段会把 401/403/429/529 一律降级成关键词推断（通常落到通用 502），
+// 账号健康、failover 与状态码条件的透传规则判定随之失效。
+var openAIStreamErrorStatusPaths = []string{
+	"response.error.status_code",
+	"response.error.status",
+	"error.status_code",
+	"error.status",
+	"status_code",
+	"status",
+}
+
 // openAIStreamFailedEventSemanticStatus derives the status hidden by an HTTP
 // 200 SSE response so status-code-conditioned passthrough rules can match.
 func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
@@ -65,6 +78,15 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 	}
 	if isOpenAIContextWindowError(message, payload) {
 		return http.StatusBadRequest
+	}
+	// An explicit upstream status is authoritative for the account/credential and
+	// rate-limit classes. 5xx stays on the keyword path below so a generic
+	// upstream failure keeps its existing (502/503) attribution.
+	for _, path := range openAIStreamErrorStatusPaths {
+		if status := int(gjson.GetBytes(payload, path).Int()); status == http.StatusUnauthorized ||
+			status == http.StatusForbidden || status == http.StatusTooManyRequests || status == 529 {
+			return status
+		}
 	}
 
 	code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.code").String()))
