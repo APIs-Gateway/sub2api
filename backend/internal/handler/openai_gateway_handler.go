@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -1896,30 +1897,95 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, reqModel, cyberBlockKey)
 		return
 	}
+	// 连接级 cyber 状态由 AfterTurn（上游读 goroutine / 退出路径）写、BeforeRequest/BeforeTurn
+	// （客户端读 goroutine）读；relay 退出时客户端 goroutine 可能尚未 join，统一由 cyberStateMu 保护。
+	var cyberStateMu sync.Mutex
 	cyberBlockedThisConn := false
 	cyberBlockPendingAfterFailover := false
+	isCyberBlockedThisConn := func() bool {
+		cyberStateMu.Lock()
+		defer cyberStateMu.Unlock()
+		return cyberBlockedThisConn
+	}
 
 	// 解析渠道级模型映射
 	channelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
 	wsForwardModel := openAIChannelForwardModel(channelMappingWS, reqModel)
 
+	// currentUserRelease/currentAccountRelease 会被多个 goroutine 访问：握手/failover 路径
+	// （handler goroutine）、ingress 的 BeforeTurn（客户端读 goroutine）、AfterTurn（上游读
+	// goroutine 或退出路径）。passthrough relay 首次退出后只等客户端 goroutine 一小段时间、
+	// 不 join，因此统一由 turnSlotsMu 保护；handler 返回后 turnSlotsClosed=true，迟到的
+	// BeforeTurn 抢到的槽位立即归还，不会挂到已结束的连接上。
+	var turnSlotsMu sync.Mutex
 	var currentUserRelease func()
 	var currentAccountRelease func()
+	turnSlotsClosed := false
+	setUserRelease := func(release func()) {
+		turnSlotsMu.Lock()
+		currentUserRelease = release
+		turnSlotsMu.Unlock()
+	}
+	setAccountRelease := func(release func()) {
+		turnSlotsMu.Lock()
+		currentAccountRelease = release
+		turnSlotsMu.Unlock()
+	}
+	hasUserRelease := func() bool {
+		turnSlotsMu.Lock()
+		defer turnSlotsMu.Unlock()
+		return currentUserRelease != nil
+	}
 	releaseAccountSlot := func() {
-		if currentAccountRelease != nil {
-			currentAccountRelease()
-			currentAccountRelease = nil
+		turnSlotsMu.Lock()
+		release := currentAccountRelease
+		currentAccountRelease = nil
+		turnSlotsMu.Unlock()
+		if release != nil {
+			release()
 		}
 	}
 	releaseTurnSlots := func() {
 		releaseAccountSlot()
-		if currentUserRelease != nil {
-			currentUserRelease()
-			currentUserRelease = nil
+		turnSlotsMu.Lock()
+		release := currentUserRelease
+		currentUserRelease = nil
+		turnSlotsMu.Unlock()
+		if release != nil {
+			release()
 		}
 	}
+	// storeTurnSlots 在锁内挂上 BeforeTurn 新抢到的槽位；连接已结束时立即归还并返回 false。
+	storeTurnSlots := func(userRelease, accountRelease func()) bool {
+		turnSlotsMu.Lock()
+		if turnSlotsClosed {
+			turnSlotsMu.Unlock()
+			if accountRelease != nil {
+				accountRelease()
+			}
+			if userRelease != nil {
+				userRelease()
+			}
+			return false
+		}
+		prevUser, prevAccount := currentUserRelease, currentAccountRelease
+		currentUserRelease, currentAccountRelease = userRelease, accountRelease
+		turnSlotsMu.Unlock()
+		if prevAccount != nil {
+			prevAccount()
+		}
+		if prevUser != nil {
+			prevUser()
+		}
+		return true
+	}
 	// 必须尽早注册，确保任何 early return 都能释放已获取的并发槽位。
-	defer releaseTurnSlots()
+	defer func() {
+		turnSlotsMu.Lock()
+		turnSlotsClosed = true
+		turnSlotsMu.Unlock()
+		releaseTurnSlots()
+	}()
 
 	userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
 	if err != nil {
@@ -1931,9 +1997,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "too many concurrent requests, please retry later")
 		return
 	}
-	currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
+	setUserRelease(wrapReleaseOnDone(ctx, userReleaseFunc))
 	ensureUserSlotHeld := func() bool {
-		if currentUserRelease != nil {
+		if hasUserRelease() {
 			return true
 		}
 		userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
@@ -1946,7 +2012,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "too many concurrent requests, please retry later")
 			return false
 		}
-		currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
+		setUserRelease(wrapReleaseOnDone(ctx, userReleaseFunc))
 		return true
 	}
 
@@ -2032,7 +2098,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			}
 			accountReleaseFunc = fastReleaseFunc
 		}
-		currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
+		setAccountRelease(wrapReleaseOnDone(ctx, accountReleaseFunc))
 		if err := h.gatewayService.BindStickySession(ctx, apiKey.GroupID, sessionHash, account.ID); err != nil {
 			reqLog.Warn("openai.websocket_bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
@@ -2062,18 +2128,18 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 账号 failover 重试 / bridge 循环重放等路径可能对同一 turn 的
 				// 相同 payload 重复调用本回调，不去重会让审计被重复计费/记录。
 				c.Set(securityAuditWSTurnContextKey, turn)
-				// Passthrough ingress intentionally skips BeforeTurn, so enforce only
-				// the connection-level cyber session gate here as well. Native ingress
-				// visits this hook first and gets the same side-effect-free close error;
-				// its original BeforeTurn guard remains as defense in depth.
-				if cyberBlockedThisConn {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
+				// Enforce the connection-level cyber session gate before any audit side
+				// effects. Both native and passthrough ingress visit this hook first and
+				// get the same side-effect-free close error; the BeforeTurn guard remains
+				// as defense in depth. Gateway-side rejection, not an account failure.
+				if isCyberBlockedThisConn() {
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
 				}
 				if turn == 1 {
 					return nil
 				}
 				if !gjson.ValidBytes(payload) {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
 				}
 				model := strings.TrimSpace(originalModel)
 				if model == "" {
@@ -2084,14 +2150,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				if decision := h.checkSecurityAuditStage(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, model, payload, "subsequent_turn"); decision != nil && !decision.AllowNextStage {
 					writeSecurityAuditWSError(ctx, wsConn, decision)
-					return service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
+					return newOpenAIWSGatewayAdmissionCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 				}
 				return nil
 			},
 			BeforeTurn: func(turn int) error {
+				// native 与 ws_v2 passthrough ingress 都会在后续 turn 写入上游前回调本钩子，
+				// 用于重新抢占上一 turn 在 AfterTurn 中释放的并发槽位。
 				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
-				if cyberBlockedThisConn {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
+				if isCyberBlockedThisConn() {
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
 				}
 				if turn == 1 {
 					return nil
@@ -2101,26 +2169,28 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 非首轮 turn 需要重新抢占并发槽位，避免长连接空闲占槽。
 				userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
 				if err != nil {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
 				}
 				if !userAcquired {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
 				}
 				accountReleaseFunc, accountAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
 				if err != nil {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
 					}
-					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire account concurrency slot", err)
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusInternalError, "failed to acquire account concurrency slot", err)
 				}
 				if !accountAcquired {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
 					}
-					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)
 				}
-				currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
-				currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
+				if !storeTurnSlots(wrapReleaseOnDone(ctx, userReleaseFunc), wrapReleaseOnDone(ctx, accountReleaseFunc)) {
+					// handler 已退出（relay 退出后客户端 goroutine 迟到），槽位已立即归还。
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusGoingAway, "websocket connection closed", nil)
+				}
 				return nil
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
@@ -2128,7 +2198,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 避免同一逻辑 turn 换号后重复落风控。CyberBlocked 必须在 submit 前
 				// 同步预捕获（task 闭包由 worker 池异步执行，届时 mark 已清除）。
 				defer func() {
-					clearCyberPolicyAttemptState(c, !cyberBlockPendingAfterFailover)
+					cyberStateMu.Lock()
+					pending := cyberBlockPendingAfterFailover
+					cyberStateMu.Unlock()
+					clearCyberPolicyAttemptState(c, !pending)
 				}()
 				releaseTurnSlots()
 				cyberMarked := service.GetOpsCyberPolicy(c) != nil
@@ -2142,12 +2215,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				mismatchRequestBody := wsMismatchRequestBody
 				wsMismatchRequestBody = nil
 				h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash, mismatchRequestBody)
+				cyberStateMu.Lock()
 				cyberBlockedThisConn, cyberBlockPendingAfterFailover = advanceOpenAIWSCyberBlockState(
 					cyberBlockedThisConn,
 					cyberBlockPendingAfterFailover,
 					cyberMarked,
 					turnErr,
 				)
+				cyberStateMu.Unlock()
 				if turnErr != nil {
 					if result == nil || result.ImageCount <= 0 {
 						return
@@ -2293,6 +2368,25 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				reqLog.Info("openai.websocket_ingress_closed_normally",
 					zap.Int64("account_id", account.ID), zap.Error(err))
 				closeOpenAIClientWS(wsConn, coderws.StatusNormalClosure, "")
+				return
+			}
+
+			// 网关自身的准入拒绝（BeforeRequest 的审计/非法载荷、BeforeTurn 的用户/账号并发
+			// 槽位与连接级 cyber gate）不是上游/账号故障：只照常关闭连接，不计入账号调度失败。
+			// 注意不能按 1013/1008 状态码判断——上游 429 忙、连接超时、鉴权失败同样映射为
+			// 1013/1008，那些仍须上报。
+			if errors.Is(err, errOpenAIWSGatewayAdmissionRejected) {
+				closeStatus, closeReason := coderws.StatusPolicyViolation, "request rejected"
+				if hasClientCloseErr {
+					closeStatus, closeReason = closeErr.StatusCode(), closeErr.Reason()
+				}
+				reqLog.Info("openai.websocket_gateway_admission_rejected",
+					zap.Int64("account_id", account.ID),
+					zap.Int("close_status", int(closeStatus)),
+					zap.String("close_reason", closeReason),
+					zap.Error(err),
+				)
+				closeOpenAIClientWS(wsConn, closeStatus, closeReason)
 				return
 			}
 
@@ -3474,4 +3568,18 @@ func summarizeWSCloseErrorForLog(err error) (string, string) {
 		}
 	}
 	return closeStatus, closeReason
+}
+
+// errOpenAIWSGatewayAdmissionRejected 标记由网关自身准入逻辑（WS 后续 turn 的审计、
+// 并发槽位、cyber gate 等）产生的关闭错误，用于和上游/账号故障区分归因。
+var errOpenAIWSGatewayAdmissionRejected = errors.New("openai ws gateway admission rejected")
+
+// newOpenAIWSGatewayAdmissionCloseError 构造带网关准入标记的客户端关闭错误；
+// 关闭码与文案保持原样，仅在错误链上附加 errOpenAIWSGatewayAdmissionRejected。
+func newOpenAIWSGatewayAdmissionCloseError(statusCode coderws.StatusCode, reason string, cause error) error {
+	marked := errOpenAIWSGatewayAdmissionRejected
+	if cause != nil {
+		marked = fmt.Errorf("%w: %w", errOpenAIWSGatewayAdmissionRejected, cause)
+	}
+	return service.NewOpenAIWSClientCloseError(statusCode, reason, marked)
 }

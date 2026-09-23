@@ -973,17 +973,28 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					payload = accountScopedPayload
 				}
 			}
-			if isResponseCreate && hooks != nil && hooks.BeforeRequest != nil {
+			if isResponseCreate && hooks != nil {
 				turnNo := int(completedTurns.Load()) + 1
 				if turnNo < 2 {
 					turnNo = 2
 				}
-				requestModel := usageMeta.requestModelForFrame(payload)
-				if requestModel == "" {
-					requestModel = capturedSessionModel
+				if hooks.BeforeRequest != nil {
+					requestModel := usageMeta.requestModelForFrame(payload)
+					if requestModel == "" {
+						requestModel = capturedSessionModel
+					}
+					if err := hooks.BeforeRequest(turnNo, payload, requestModel); err != nil {
+						return payload, nil, err
+					}
 				}
-				if err := hooks.BeforeRequest(turnNo, payload, requestModel); err != nil {
-					return payload, nil, err
+				// 首轮准入（含并发槽位）由握手路径完成；后续 response.create 在写入
+				// 上游前回调 BeforeTurn，重新抢占上一 turn 在 AfterTurn 中释放的
+				// 用户/账号并发槽位并执行连接级 cyber gate。失败时关闭连接，
+				// 由退出路径的 AfterTurn 统一释放。
+				if hooks.BeforeTurn != nil {
+					if err := hooks.BeforeTurn(turnNo); err != nil {
+						return payload, nil, err
+					}
 				}
 			}
 			// 在评估策略前先刷新 capturedSessionModel：客户端可能通过

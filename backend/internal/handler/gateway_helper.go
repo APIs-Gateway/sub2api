@@ -166,20 +166,16 @@ func wrapReleaseOnDone(ctx context.Context, releaseFunc func()) func() {
 		return nil
 	}
 	var once sync.Once
-	var stop func() bool
+	releaseOnce := func() { once.Do(releaseFunc) }
 
-	release := func() {
-		once.Do(func() {
-			if stop != nil {
-				_ = stop()
-			}
-			releaseFunc()
-		})
+	// ctx 已结束时 AfterFunc 会立即在新 goroutine 里回调；回调只做 releaseOnce，
+	// 不读取 stop，避免与下方 stop 赋值产生数据竞争。
+	stop := context.AfterFunc(ctx, releaseOnce)
+
+	return func() {
+		_ = stop()
+		releaseOnce()
 	}
-
-	stop = context.AfterFunc(ctx, release)
-
-	return release
 }
 
 // IncrementWaitCount increments the wait count for a user
