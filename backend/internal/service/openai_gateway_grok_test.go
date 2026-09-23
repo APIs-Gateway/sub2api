@@ -28,7 +28,7 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 		"input": "hello",
 		"prompt_cache_retention": "24h",
 		"safety_identifier": "user-1",
-		"metadata": {"user_id": "{\\"session_id\\":\\"abc\\"}", "large_id": 9007199254740993},
+		"metadata": {"user_id": "{\"session_id\":\"abc\"}", "large_id": 9007199254740993},
 		"reasoning": {"effort": "high"}
 	}`)
 
