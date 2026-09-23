@@ -541,15 +541,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			})
 		}
 		if err != nil {
-			if result != nil && result.ClientDisconnect {
-				reqLog.Info("openai.client_disconnected",
-					zap.Int64("account_id", account.ID),
-					zap.Error(err),
-				)
-				submitResponsesUsage(result)
-				return
-			}
-			if failoverClientGone(c) {
+			// Client went away: record the observed usage and stop; never report
+			// the cancellation as an upstream failure. (Upstream spells this as two
+			// identical branches; merged here with the same evaluation order.)
+			if (result != nil && result.ClientDisconnect) || failoverClientGone(c) {
 				reqLog.Info("openai.client_disconnected",
 					zap.Int64("account_id", account.ID),
 					zap.Error(err),

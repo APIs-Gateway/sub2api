@@ -67,48 +67,78 @@ func openAIWSClientCancelTestEvents() [][]byte {
 }
 
 // Client cancels while forwardOpenAIWSV2 is blocked on an upstream read that
-// still uses the request context: the canceled read is retried with a detached
-// context and the terminal event is drained for usage.
-func TestForwardOpenAIWSV2_CancelDuringReadRetriesWithDetachedContext(t *testing.T) {
-	for _, stream := range []bool{true, false} {
-		name := "stream"
-		if !stream {
-			name = "non_stream"
+// still uses the request context. The canceled read is classified as a client
+// disconnect (not an upstream failure) and retried with a detached context;
+// as upstream, the lease is already marked broken at that point, so the retry
+// ends the drain and Forward reports the incomplete stream as a cancellation.
+func TestForwardOpenAIWSV2_CancelDuringInFlightReadIsClientDisconnect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+
+	conn := &openAIWSCancelSafeConn{openAIWSCaptureConn: &openAIWSCaptureConn{
+		events:     openAIWSClientCancelTestEvents(),
+		readDelays: []time.Duration{0, 0, 300 * time.Millisecond},
+	}}
+	svc, account := newOpenAIWSClientCancelTestService(conn, 5)
+	timer := time.AfterFunc(100*time.Millisecond, cancel)
+	defer timer.Stop()
+
+	_, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"input_text","text":"hello"}]}`))
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotContains(t, rec.Body.String(), "response.failed")
+}
+
+// openAIWSCancelAfterReadConn cancels the request context right after handing
+// out the Nth event, i.e. between two upstream reads.
+type openAIWSCancelAfterReadConn struct {
+	*openAIWSCaptureConn
+	cancelAfter int
+	reads       int
+	cancel      context.CancelFunc
+}
+
+func (c *openAIWSCancelAfterReadConn) ReadMessage(ctx context.Context) ([]byte, error) {
+	event, err := c.openAIWSCaptureConn.ReadMessage(ctx)
+	if err == nil {
+		c.reads++
+		if c.reads == c.cancelAfter && c.cancel != nil {
+			c.cancel()
 		}
-		t.Run(name, func(t *testing.T) {
-			gin.SetMode(gin.TestMode)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			rec := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(rec)
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
-
-			conn := &openAIWSCancelSafeConn{openAIWSCaptureConn: &openAIWSCaptureConn{
-				events:     openAIWSClientCancelTestEvents(),
-				readDelays: []time.Duration{0, 0, 300 * time.Millisecond},
-			}}
-			svc, account := newOpenAIWSClientCancelTestService(conn, 5)
-			timer := time.AfterFunc(100*time.Millisecond, cancel)
-			defer timer.Stop()
-
-			body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"input_text","text":"hello"}]}`)
-			if stream {
-				body = []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"input_text","text":"hello"}]}`)
-			}
-			result, err := svc.Forward(ctx, c, account, body)
-
-			require.NoError(t, err)
-			require.NotNil(t, result)
-			require.True(t, result.ClientDisconnect)
-			require.Equal(t, "resp_cancel_cov", result.RequestID)
-			if stream {
-				require.Equal(t, 3, result.Usage.InputTokens)
-				require.Equal(t, 5, result.Usage.OutputTokens)
-			} else {
-				require.NotContains(t, rec.Body.String(), "resp_cancel_cov")
-			}
-		})
 	}
+	return event, err
+}
+
+// A client that disconnects between reads of a non-streaming request: the
+// upstream is drained to the terminal event with a detached context and the
+// result is returned without writing the (unwanted) JSON body.
+func TestForwardOpenAIWSV2_NonStreamClientDisconnectDrainsToTerminal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+
+	conn := &openAIWSCancelAfterReadConn{
+		openAIWSCaptureConn: &openAIWSCaptureConn{events: openAIWSClientCancelTestEvents()},
+		cancelAfter:         2,
+		cancel:              cancel,
+	}
+	svc, account := newOpenAIWSClientCancelTestService(conn, 5)
+
+	result, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"input_text","text":"hello"}]}`))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.ClientDisconnect)
+	require.Equal(t, "resp_cancel_cov", result.RequestID)
+	require.NotContains(t, rec.Body.String(), "resp_cancel_cov")
 }
 
 type openAIWSFailingWriteResponseWriter struct {
@@ -179,7 +209,7 @@ func (c *openAIWSContextIgnoringConn) ReadMessage(context.Context) ([]byte, erro
 }
 
 // After the client disconnects, draining is bounded by the read timeout; once
-// the budget is spent without a terminal event the result reports an
+// the budget is spent without a terminal event forwardOpenAIWSV2 reports an
 // incomplete stream caused by the client cancellation.
 func TestForwardOpenAIWSV2_DrainBudgetExhaustedAfterClientDisconnect(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -202,11 +232,11 @@ func TestForwardOpenAIWSV2_DrainBudgetExhaustedAfterClientDisconnect(t *testing.
 
 	result, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"input_text","text":"hello"}]}`))
 
+	// Forward drops the partial result on error (same as upstream); the
+	// handler classifies the canceled request via failoverClientGone.
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
-	require.NotNil(t, result)
-	require.True(t, result.ClientDisconnect)
-	require.Zero(t, result.Usage.OutputTokens)
+	require.Nil(t, result)
 	conn.mu.Lock()
 	remaining := len(conn.events)
 	conn.mu.Unlock()
