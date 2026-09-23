@@ -180,34 +180,26 @@ func TestIsGeminiEmptyResponseBody(t *testing.T) {
 	require.False(t, isGeminiEmptyResponseBody([]byte(`not json`)))
 }
 
-func TestMarkOpsStreamErrorValue_RequestScopedSkipsUpstreamSnapshot(t *testing.T) {
+// fork 适配：上游此用例校验 OpsStreamError 的上游上下文快照字段（UpstreamStatus / SkipMonitoring 等），
+// fork 的 OpsStreamError 没有快照，上游归因在 handler 落库时从请求上下文读取（见 handler 侧用例）。
+// 这里只校验 MarkOpsStreamErrorValue 原样保留附加语义并沿用首个标记生效。
+func TestMarkOpsStreamErrorValue_KeepsFlagsAndFirstMarkWins(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	newCtx := func() *gin.Context {
-		c, _ := gin.CreateTestContext(httptest.NewRecorder())
-		c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.7-flash:generateContent", nil)
-		setOpsUpstreamError(c, http.StatusTooManyRequests, "earlier attempt was rate limited", "detail")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{UpstreamStatusCode: http.StatusTooManyRequests, Message: "earlier attempt was rate limited", SkipMonitoring: true})
-		return c
-	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.7-flash:generateContent", nil)
 
-	scoped := newCtx()
-	MarkOpsStreamErrorValue(scoped, OpsStreamError{ErrType: "invalid_request_error", Code: "SAFETY", Message: "m", IntendedStatus: http.StatusBadRequest, RequestScoped: true})
-	got, ok := GetOpsStreamError(scoped)
-	require.True(t, ok)
-	require.Zero(t, got.UpstreamStatus)
-	require.Empty(t, got.UpstreamMessage)
-	require.Empty(t, got.UpstreamDetail)
-	require.Nil(t, got.UpstreamErrors)
-	require.False(t, got.SkipMonitoring)
+	MarkOpsStreamErrorValue(c, OpsStreamError{ErrType: " invalid_request_error ", Code: " SAFETY ", Message: " m ", IntendedStatus: http.StatusBadRequest, RequestScoped: true, NonStream: true})
+	MarkOpsStreamErrorValue(c, OpsStreamError{ErrType: "upstream_error", Message: "later", IntendedStatus: http.StatusBadGateway, CountTowardsSLA: true, UpstreamAttributed: true})
 
-	plain := newCtx()
-	MarkOpsStreamErrorValue(plain, OpsStreamError{ErrType: "rate_limit_error", Code: "RESOURCE_EXHAUSTED", Message: "m", IntendedStatus: http.StatusTooManyRequests, CountTowardsSLA: true})
-	got, ok = GetOpsStreamError(plain)
+	got, ok := GetOpsStreamError(c)
 	require.True(t, ok)
-	require.Equal(t, http.StatusTooManyRequests, got.UpstreamStatus)
-	require.Equal(t, "earlier attempt was rate limited", got.UpstreamMessage)
-	require.Len(t, got.UpstreamErrors, 1)
-	require.True(t, got.SkipMonitoring)
+	require.Equal(t, "invalid_request_error", got.ErrType)
+	require.Equal(t, "SAFETY", got.Code)
+	require.Equal(t, "m", got.Message)
+	require.True(t, got.RequestScoped)
+	require.True(t, got.NonStream)
+	require.False(t, got.UpstreamAttributed)
+	require.False(t, got.CountTowardsSLA)
 }
 
 func TestGeminiSSEFallbackBody(t *testing.T) {
@@ -229,4 +221,21 @@ func TestGeminiSSEFallbackBody(t *testing.T) {
 	nilBody.AddLine("x")
 	require.Nil(t, nilBody.Bytes())
 	require.False(t, nilBody.Truncated())
+}
+
+// fork 适配：403 映射到 fork ops 白名单里的 forbidden_error。
+func TestGeminiSignalOpsErrorType(t *testing.T) {
+	cases := map[int]string{
+		http.StatusBadRequest:          "invalid_request_error",
+		http.StatusUnauthorized:        "authentication_error",
+		http.StatusForbidden:           "forbidden_error",
+		http.StatusNotFound:            "not_found_error",
+		http.StatusTooManyRequests:     "rate_limit_error",
+		http.StatusBadGateway:          "upstream_error",
+		http.StatusServiceUnavailable:  "upstream_error",
+		http.StatusInternalServerError: "upstream_error",
+	}
+	for status, want := range cases {
+		require.Equal(t, want, geminiSignalOpsErrorType(status), status)
+	}
 }

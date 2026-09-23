@@ -1423,8 +1423,7 @@ func TestLogOpsStreamError_NonStreamInBandContentPolicy(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.7-flash:generateContent", nil)
-	c.Set(opsModelKey, "gemini-3.7-flash")
-	c.Set(opsStreamKey, false)
+	setOpsRequestContext(c, "gemini-3.7-flash", false)
 
 	service.MarkOpsStreamErrorValue(c, service.OpsStreamError{
 		ErrType:        "invalid_request_error",
@@ -1460,15 +1459,15 @@ func TestLogOpsStreamError_RequestScopedIgnoresResidualUpstreamContext(t *testin
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.7-flash:streamGenerateContent", nil)
-	c.Set(opsModelKey, "gemini-3.7-flash")
-	c.Set(opsStreamKey, true)
+	setOpsRequestContext(c, "gemini-3.7-flash", true)
 	c.Set(service.OpsUpstreamStatusCodeKey, http.StatusTooManyRequests)
 	c.Set(service.OpsUpstreamErrorMessageKey, "earlier attempt was rate limited")
 	c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
 		UpstreamStatusCode: http.StatusTooManyRequests,
 		Message:            "earlier attempt was rate limited",
-		SkipMonitoring:     true,
 	}})
+	// fork 适配：fork 的上游尝试事件没有 SkipMonitoring，透传规则的跳过标记在 OpsSkipPassthroughKey 上。
+	c.Set(service.OpsSkipPassthroughKey, true)
 
 	service.MarkOpsStreamErrorValue(c, service.OpsStreamError{
 		ErrType:        "invalid_request_error",
@@ -1506,8 +1505,7 @@ func TestOpsErrorLoggerMiddleware_RequestScopedInBandErrorKeepsRecoveredTelemetr
 	router := gin.New()
 	router.Use(OpsErrorLoggerMiddleware(ops))
 	router.POST("/v1beta/models/gemini-3.7-flash:generateContent", func(c *gin.Context) {
-		c.Set(opsModelKey, "gemini-3.7-flash")
-	c.Set(opsStreamKey, false)
+		setOpsRequestContext(c, "gemini-3.7-flash", false)
 		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
 			UpstreamStatusCode: http.StatusTooManyRequests,
 			Message:            "earlier attempt was rate limited",
@@ -1555,8 +1553,7 @@ func TestOpsErrorLoggerMiddleware_UpstreamAttributedInBandFailureSingleRow(t *te
 	router := gin.New()
 	router.Use(OpsErrorLoggerMiddleware(ops))
 	router.POST("/v1beta/models/gemini-3.7-flash:streamGenerateContent", func(c *gin.Context) {
-		c.Set(opsModelKey, "gemini-3.7-flash")
-	c.Set(opsStreamKey, true)
+		setOpsRequestContext(c, "gemini-3.7-flash", true)
 		service.SetOpsUpstreamError(c, http.StatusTooManyRequests, "quota", "")
 		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
 			UpstreamStatusCode: http.StatusTooManyRequests,
@@ -1589,9 +1586,10 @@ func TestOpsErrorLoggerMiddleware_UpstreamAttributedInBandFailureSingleRow(t *te
 }
 
 // Gemini 带内信号登记使用的错误类型必须都在 ops 白名单里，否则会被归一化成 api_error。
+// fork 适配：403 用 fork 白名单里的 forbidden_error。
 func TestNormalizeOpsErrorType_KeepsGeminiInBandSignalTypes(t *testing.T) {
 	for _, errType := range []string{
-		"invalid_request_error", "authentication_error", "permission_error",
+		"invalid_request_error", "authentication_error", "forbidden_error",
 		"not_found_error", "rate_limit_error", "upstream_error",
 	} {
 		require.Equal(t, errType, normalizeOpsErrorType(errType, "PROHIBITED_CONTENT"), errType)
@@ -1608,8 +1606,7 @@ func TestOpsErrorLoggerMiddleware_PlainStreamErrorWithUpstreamContextKeepsRecove
 	router := gin.New()
 	router.Use(OpsErrorLoggerMiddleware(ops))
 	router.POST("/v1/responses", func(c *gin.Context) {
-		c.Set(opsModelKey, "gpt-5.6")
-		c.Set(opsStreamKey, true)
+		setOpsRequestContext(c, "gpt-5.6", true)
 		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
 			UpstreamStatusCode: http.StatusBadGateway,
 			Message:            "stream reset",

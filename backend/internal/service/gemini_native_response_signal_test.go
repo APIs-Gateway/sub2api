@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -69,6 +70,24 @@ func geminiSignalTestRequest() []byte {
 	return []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)
 }
 
+// fork 适配：fork 的 ops 带内错误是单条首个标记生效（GetOpsStreamError），没有上游的
+// GetOpsStreamErrors 多行结构；这里包成 0/1 长度的切片，沿用上游断言。
+func opsStreamErrorsForTest(c *gin.Context) []OpsStreamError {
+	if streamErr, ok := GetOpsStreamError(c); ok {
+		return []OpsStreamError{streamErr}
+	}
+	return nil
+}
+
+// fork 适配：上游该 helper 定义在 fork 没有的 gemini_error_policy_skipped_write_test.go 里。
+func newGeminiNativeTestContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:generateContent", strings.NewReader("{}"))
+	return c, rec
+}
+
 func upstreamErrorEventsFromContext(t *testing.T, c *gin.Context) []*OpsUpstreamErrorEvent {
 	t.Helper()
 	v, ok := c.Get(OpsUpstreamErrorsKey)
@@ -100,13 +119,14 @@ func TestGeminiForwardNative_StreamProhibitedContentMarksInBandErrorAndKeepsBill
 	require.NotNil(t, result.FirstTokenMs)
 
 	// 带内错误登记为请求级内容策略：不计 SLA、不归因上游账号。
-	streamErrs := GetOpsStreamErrors(c)
+	streamErrs := opsStreamErrorsForTest(c)
 	require.Len(t, streamErrs, 1)
 	require.Equal(t, "invalid_request_error", streamErrs[0].ErrType)
 	require.Equal(t, "PROHIBITED_CONTENT", streamErrs[0].Code)
 	require.Equal(t, http.StatusBadRequest, streamErrs[0].IntendedStatus)
 	require.False(t, streamErrs[0].CountTowardsSLA)
 	require.True(t, streamErrs[0].RequestScoped)
+	require.False(t, streamErrs[0].UpstreamAttributed)
 	require.False(t, streamErrs[0].NonStream)
 	require.Contains(t, streamErrs[0].Message, "finishReason=PROHIBITED_CONTENT")
 	require.Contains(t, streamErrs[0].Message, "Prohibited Use policy")
@@ -134,13 +154,14 @@ data: {"error":{"code":429,"message":"Resource has been exhausted (e.g. check qu
 	require.Equal(t, 10, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)
 
-	streamErrs := GetOpsStreamErrors(c)
+	streamErrs := opsStreamErrorsForTest(c)
 	require.Len(t, streamErrs, 1)
 	require.Equal(t, "rate_limit_error", streamErrs[0].ErrType)
 	require.Equal(t, "RESOURCE_EXHAUSTED", streamErrs[0].Code)
 	require.Equal(t, http.StatusTooManyRequests, streamErrs[0].IntendedStatus)
 	require.True(t, streamErrs[0].CountTowardsSLA)
 	require.False(t, streamErrs[0].RequestScoped)
+	require.True(t, streamErrs[0].UpstreamAttributed)
 	require.False(t, streamErrs[0].NonStream)
 	require.Equal(t, "Resource has been exhausted (e.g. check quota).", streamErrs[0].Message)
 
@@ -171,7 +192,7 @@ func TestGeminiForwardNative_StreamPromptBlockedMarksContentPolicy(t *testing.T)
 	require.Equal(t, body, rec.Body.String())
 	require.Equal(t, 10, result.Usage.InputTokens)
 
-	streamErrs := GetOpsStreamErrors(c)
+	streamErrs := opsStreamErrorsForTest(c)
 	require.Len(t, streamErrs, 1)
 	require.Equal(t, "invalid_request_error", streamErrs[0].ErrType)
 	require.Equal(t, "SAFETY", streamErrs[0].Code)
@@ -193,7 +214,7 @@ func TestGeminiForwardNative_EmptyStreamMarksUpstreamFailure(t *testing.T) {
 	require.Zero(t, rec.Body.Len())
 	require.Nil(t, result.FirstTokenMs)
 
-	streamErrs := GetOpsStreamErrors(c)
+	streamErrs := opsStreamErrorsForTest(c)
 	require.Len(t, streamErrs, 1)
 	require.Equal(t, "upstream_error", streamErrs[0].ErrType)
 	require.Equal(t, geminiSignalEmptyStreamReason, streamErrs[0].Code)
@@ -216,7 +237,7 @@ func TestGeminiForwardNative_NormalStreamLeavesNoMark(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, geminiSignalTestStopSSE, rec.Body.String())
 	require.Equal(t, 4, result.Usage.OutputTokens)
-	require.Empty(t, GetOpsStreamErrors(c))
+	require.Empty(t, opsStreamErrorsForTest(c))
 	require.Empty(t, upstreamErrorEventsFromContext(t, c))
 	_, hasUpstreamStatus := c.Get(OpsUpstreamStatusCodeKey)
 	require.False(t, hasUpstreamStatus)
@@ -237,12 +258,13 @@ func TestGeminiForwardNative_NonStreamProhibitedContentMarksInBandError(t *testi
 	require.Equal(t, 900, result.Usage.InputTokens)
 	require.Equal(t, 150, result.Usage.OutputTokens)
 
-	streamErrs := GetOpsStreamErrors(c)
+	streamErrs := opsStreamErrorsForTest(c)
 	require.Len(t, streamErrs, 1)
 	require.Equal(t, "invalid_request_error", streamErrs[0].ErrType)
 	require.Equal(t, "PROHIBITED_CONTENT", streamErrs[0].Code)
 	require.False(t, streamErrs[0].CountTowardsSLA)
 	require.True(t, streamErrs[0].RequestScoped)
+	require.False(t, streamErrs[0].UpstreamAttributed)
 	require.True(t, streamErrs[0].NonStream)
 	require.Empty(t, upstreamErrorEventsFromContext(t, c))
 }
@@ -259,7 +281,7 @@ func TestGeminiForwardNative_NonStreamErrorEnvelopeOn200MarksUpstreamFailure(t *
 	require.NotNil(t, result)
 	require.Equal(t, body, rec.Body.String())
 
-	streamErrs := GetOpsStreamErrors(c)
+	streamErrs := opsStreamErrorsForTest(c)
 	require.Len(t, streamErrs, 1)
 	require.Equal(t, "upstream_error", streamErrs[0].ErrType)
 	require.Equal(t, "INTERNAL", streamErrs[0].Code)
@@ -288,7 +310,7 @@ data: {"error":{"code":503,"message":"The model is overloaded. Please try again 
 	require.NoError(t, err)
 	require.Equal(t, body, rec.Body.String())
 
-	streamErrs := GetOpsStreamErrors(c)
+	streamErrs := opsStreamErrorsForTest(c)
 	require.Len(t, streamErrs, 1)
 	require.Equal(t, "UNAVAILABLE", streamErrs[0].Code, "错误信封优先于内容过滤")
 	require.Equal(t, "upstream_error", streamErrs[0].ErrType)
@@ -316,7 +338,7 @@ func TestGeminiForwardNative_StreamNonSSEJSONBodyIsInspected(t *testing.T) {
 			"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
 		require.NoError(t, err)
 		require.Equal(t, body, rec.Body.String())
-		streamErrs := GetOpsStreamErrors(c)
+		streamErrs := opsStreamErrorsForTest(c)
 		require.Len(t, streamErrs, 1)
 		require.Equal(t, "PROHIBITED_CONTENT", streamErrs[0].Code)
 		require.True(t, streamErrs[0].RequestScoped)
@@ -328,7 +350,7 @@ func TestGeminiForwardNative_StreamNonSSEJSONBodyIsInspected(t *testing.T) {
 		_, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
 			"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
 		require.NoError(t, err)
-		streamErrs := GetOpsStreamErrors(c)
+		streamErrs := opsStreamErrorsForTest(c)
 		require.Len(t, streamErrs, 1)
 		require.Equal(t, "RESOURCE_EXHAUSTED", streamErrs[0].Code)
 		require.True(t, streamErrs[0].CountTowardsSLA)
@@ -340,7 +362,7 @@ func TestGeminiForwardNative_StreamNonSSEJSONBodyIsInspected(t *testing.T) {
 		_, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
 			"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
 		require.NoError(t, err)
-		require.Empty(t, GetOpsStreamErrors(c))
+		require.Empty(t, opsStreamErrorsForTest(c))
 		require.Empty(t, upstreamErrorEventsFromContext(t, c))
 	})
 }
@@ -355,7 +377,7 @@ func TestGeminiForwardNative_StreamOversizedNonSSEBodyLeavesNoMark(t *testing.T)
 		"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
 	require.NoError(t, err)
 	require.Equal(t, len(body), rec.Body.Len())
-	require.Empty(t, GetOpsStreamErrors(c), "超限的兜底体放弃判定，不得记成空流")
+	require.Empty(t, opsStreamErrorsForTest(c), "超限的兜底体放弃判定，不得记成空流")
 	require.Empty(t, upstreamErrorEventsFromContext(t, c))
 }
 
@@ -374,7 +396,7 @@ func TestGeminiForwardNative_StreamNonSSEEmptyBodyIsEmpty(t *testing.T) {
 				"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
 			require.NoError(t, err)
 			require.Equal(t, body, rec.Body.String())
-			streamErrs := GetOpsStreamErrors(c)
+			streamErrs := opsStreamErrorsForTest(c)
 			require.Len(t, streamErrs, 1)
 			require.Equal(t, geminiSignalEmptyStreamReason, streamErrs[0].Code)
 			require.True(t, streamErrs[0].CountTowardsSLA)
@@ -397,7 +419,7 @@ func TestGeminiForwardNative_StreamWithoutDataEventsIsEmpty(t *testing.T) {
 				"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
 			require.NoError(t, err)
 			require.Equal(t, body, rec.Body.String())
-			streamErrs := GetOpsStreamErrors(c)
+			streamErrs := opsStreamErrorsForTest(c)
 			require.Len(t, streamErrs, 1)
 			require.Equal(t, geminiSignalEmptyStreamReason, streamErrs[0].Code)
 			require.True(t, streamErrs[0].CountTowardsSLA)
@@ -417,7 +439,7 @@ func TestGeminiForwardNative_StreamOtherFinishReasonLeavesNoMark(t *testing.T) {
 		"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
 	require.NoError(t, err)
 	require.Equal(t, 2, result.Usage.OutputTokens)
-	require.Empty(t, GetOpsStreamErrors(c))
+	require.Empty(t, opsStreamErrorsForTest(c))
 	require.Empty(t, upstreamErrorEventsFromContext(t, c))
 }
 
@@ -432,7 +454,7 @@ func TestGeminiForwardNative_StreamMalformedFunctionCallLeavesNoMark(t *testing.
 		"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
 	require.NoError(t, err)
 	require.Equal(t, 2, result.Usage.OutputTokens)
-	require.Empty(t, GetOpsStreamErrors(c))
+	require.Empty(t, opsStreamErrorsForTest(c))
 	require.Empty(t, upstreamErrorEventsFromContext(t, c))
 }
 
@@ -451,7 +473,7 @@ func TestGeminiForwardNative_NonStreamEmptyBodyMarksEmptyResponse(t *testing.T) 
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Equal(t, body, rec.Body.String())
-			streamErrs := GetOpsStreamErrors(c)
+			streamErrs := opsStreamErrorsForTest(c)
 			require.Len(t, streamErrs, 1)
 			require.Equal(t, geminiSignalEmptyResponseReason, streamErrs[0].Code)
 			require.Equal(t, "upstream_error", streamErrs[0].ErrType)
@@ -472,7 +494,7 @@ func TestGeminiForwardNative_CountTokensBodyLeavesNoMark(t *testing.T) {
 		"gemini-3.7-flash", "countTokens", false, geminiSignalTestRequest())
 	require.NoError(t, err)
 	require.Equal(t, `{"totalTokens":12}`, rec.Body.String())
-	require.Empty(t, GetOpsStreamErrors(c))
+	require.Empty(t, opsStreamErrorsForTest(c))
 	require.Empty(t, upstreamErrorEventsFromContext(t, c))
 }
 

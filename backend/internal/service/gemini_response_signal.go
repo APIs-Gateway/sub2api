@@ -271,7 +271,8 @@ func geminiSignalOpsErrorType(status int) string {
 	case http.StatusUnauthorized:
 		return "authentication_error"
 	case http.StatusForbidden:
-		return "permission_error"
+		// fork: ops 白名单里 403 对应 forbidden_error（上游为 permission_error，fork 白名单没有）。
+		return "forbidden_error"
 	case http.StatusNotFound:
 		return "not_found_error"
 	case http.StatusTooManyRequests:
@@ -352,8 +353,6 @@ func (s *GeminiMessagesCompatService) markGeminiResponseSignal(c *gin.Context, a
 		kind = "stream_failed"
 	}
 	event := OpsUpstreamErrorEvent{
-		ProxyID:            opsUpstreamProxyID(account),
-		ProxyName:          opsUpstreamProxyName(account),
 		Platform:           PlatformGemini,
 		UpstreamStatusCode: sig.Status,
 		UpstreamRequestID:  strings.TrimSpace(upstreamRequestID),
