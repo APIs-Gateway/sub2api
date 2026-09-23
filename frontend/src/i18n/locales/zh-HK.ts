@@ -3405,7 +3405,7 @@
       workerActive: '正在處理異步審計或記錄任務',
       workerIdle: '已啟動，當前空閒可用',
       workerDisabled: '風控或內容審計未啟用',
-      processed: '已處理',
+      processed: '異步已處理',
       droppedErrors: '丟棄/異常',
       autoRefresh: '每 15 秒自動刷新',
       lastCleanup: '上次清理：{time}',
