@@ -30,6 +30,9 @@ type testTransport struct {
 func (t *testTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Rewrite the URL to point to our test server
 	testURL := t.testServerURL + req.URL.Path
+	if req.URL.RawQuery != "" {
+		testURL += "?" + req.URL.RawQuery
+	}
 	newReq, err := http.NewRequestWithContext(req.Context(), req.Method, testURL, req.Body)
 	if err != nil {
 		return nil, err
