@@ -661,7 +661,15 @@ func stripSQLLineComment(s string) string {
 // pgAdvisoryLock 获取 PostgreSQL Advisory Lock。
 // Advisory Lock 是一种轻量级的锁机制，不与任何特定的数据库对象关联。
 // 它非常适合用于应用层面的分布式锁场景，如迁移序列化。
-func pgAdvisoryLock(ctx context.Context, db *sql.DB) error {
+//
+// advisoryLockConnection 同时由 *sql.DB 与 *sql.Conn 满足：备份 pg_dump 在独占
+// *sql.Conn 上持有同一把会话级锁（上游 95023e7d4）。
+type advisoryLockConnection interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func pgAdvisoryLock(ctx context.Context, db advisoryLockConnection) error {
 	ticker := time.NewTicker(migrationsLockRetryInterval)
 	defer ticker.Stop()
 
@@ -683,7 +691,7 @@ func pgAdvisoryLock(ctx context.Context, db *sql.DB) error {
 
 // pgAdvisoryUnlock 释放 PostgreSQL Advisory Lock。
 // 必须在获取锁后确保释放，否则会阻塞其他实例的迁移操作。
-func pgAdvisoryUnlock(ctx context.Context, db *sql.DB) error {
+func pgAdvisoryUnlock(ctx context.Context, db advisoryLockConnection) error {
 	_, err := db.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", migrationsAdvisoryLockID)
 	if err != nil {
 		return fmt.Errorf("release migrations lock: %w", err)
