@@ -546,6 +546,25 @@ func TestRegisterWithVerificationAdmitsByAffiliateCode(t *testing.T) {
 		require.Error(t, err)
 		require.Equal(t, []int64{18}, repo.hardDeleted, "回滚必须真删，不能留下软删记录")
 	})
+
+	t.Run("注册码已随建号占用时绑定邀请人失败要归还注册码", func(t *testing.T) {
+		// 注册码和建号在同一个事务里占用，绑定邀请人发生在事务提交之后；
+		// 这时回滚账号必须顺带把注册码退回 unused，否则一次失败的注册就把一次性码烧掉了。
+		codes := map[string]*RedeemCode{
+			"INVITE2": {ID: 8, Code: "INVITE2", Type: RedeemTypeInvitation, Status: StatusUnused},
+		}
+		repo := &userRepoStub{nextID: 19}
+		affRepo := admitRepoWithQuota(1)
+		affRepo.bindErr = errors.New("bind exploded")
+		svc := admitRegisterService(repo, admitRegisterSettings("true", "5"), codes, affRepo)
+
+		_, _, err := svc.RegisterWithVerification(ctx, "restorecode@test.com", "password", "", "", "INVITE2", admitTestCode)
+		require.Error(t, err)
+		require.Equal(t, []int64{19}, repo.deletedIDs, "必须把半成品账号回滚掉")
+		require.Equal(t, StatusUnused, codes["INVITE2"].Status, "注册码必须归还为 unused")
+		require.Nil(t, codes["INVITE2"].UsedBy)
+		require.Nil(t, codes["INVITE2"].UsedAt)
+	})
 }
 
 // purgeAwareUserRepoStub 记录删号那一刻 context 里有没有带上「跳过软删除」的标记，
