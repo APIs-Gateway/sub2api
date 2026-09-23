@@ -2139,7 +2139,7 @@ func TestOpenAIStreamingMissingTerminalEventReturnsIncompleteError(t *testing.T)
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\"},\"output_index\":0}\n\n"))
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\",\"output_index\":0}\n\n"))
 	}()
 
 	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "model", "model")
@@ -2171,7 +2171,7 @@ func TestOpenAIStreamingPassthroughMissingTerminalEventReturnsIncompleteError(t 
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\"},\"output_index\":0}\n\n"))
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\",\"output_index\":0}\n\n"))
 	}()
 
 	_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "", "")
@@ -3434,9 +3434,12 @@ func TestOpenAIStreamingPostOutputDisconnectQuarantinesSharedProxyWithoutSameStr
 		resp := &http.Response{
 			StatusCode: http.StatusOK,
 			Body: &openAIStreamReadThenErrorCloser{
+				// 事件以空行完整结束后才算提交给客户端（OpenAI 首输出暂存）；
+				// 这里模拟的是「语义输出已送达后」的断流。
 				reader: strings.NewReader(strings.Join([]string{
 					"event: response.output_text.delta",
 					`data: {"type":"response.output_text.delta","delta":"partial"}`,
+					"",
 					"",
 				}, "\n")),
 				err: readErr,
@@ -3911,4 +3914,12 @@ func TestOpenAIStreamingPassthrough_TerminalEventEndsStreamWithoutEOF(t *testing
 			require.True(t, strings.HasSuffix(rec.Body.String(), "\n\n"), "terminal frame must be fully flushed")
 		})
 	}
+}
+
+func (c *stubGatewayCache) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *stubGatewayCache) GetReasoningContent(_ context.Context, _ string) (string, error) {
+	return "", ErrReasoningContentNotFound
 }

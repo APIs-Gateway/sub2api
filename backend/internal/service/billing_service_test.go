@@ -422,10 +422,10 @@ func TestCalculateCost_OpenAIGPT56DynamicCatalogPrefersExplicitLongContextPrices
 func TestApplyModelSpecificPricingPolicy_GPT56CacheWritePolicy(t *testing.T) {
 	svc := newTestBillingService()
 
-	derived := svc.applyModelSpecificPricingPolicy("gpt-5.6-terra", &ModelPricing{
+	derived := svc.applyModelSpecificPricingPolicyEx("gpt-5.6-terra", &ModelPricing{
 		InputPricePerToken:         2.5e-6,
 		InputPricePerTokenPriority: 5e-6,
-	})
+	}, true, time.Time{})
 	require.InDelta(t, 3.125e-6, derived.CacheCreationPricePerToken, 1e-12)
 	require.InDelta(t, 6.25e-6, derived.CacheCreationPricePerTokenPriority, 1e-12)
 	require.Equal(t, 272000, derived.LongContextInputThreshold)
@@ -433,18 +433,18 @@ func TestApplyModelSpecificPricingPolicy_GPT56CacheWritePolicy(t *testing.T) {
 	require.InDelta(t, 1.5, derived.LongContextOutputMultiplier, 1e-12)
 	require.True(t, derived.PriorityExcludesLongContext)
 
-	explicitZero := svc.applyModelSpecificPricingPolicy("gpt-5.6-terra", &ModelPricing{
+	explicitZero := svc.applyModelSpecificPricingPolicyEx("gpt-5.6-terra", &ModelPricing{
 		InputPricePerToken:                 2.5e-6,
 		CacheCreationPriceExplicit:         true,
 		CacheCreationPricePerToken:         0,
 		CacheCreationPricePerTokenPriority: 0,
-	})
+	}, true, time.Time{})
 	require.Zero(t, explicitZero.CacheCreationPricePerToken)
 	require.Zero(t, explicitZero.CacheCreationPricePerTokenPriority)
 
-	legacy := svc.applyModelSpecificPricingPolicy("gpt-5.4", &ModelPricing{
+	legacy := svc.applyModelSpecificPricingPolicyEx("gpt-5.4", &ModelPricing{
 		InputPricePerToken: 2.5e-6,
-	})
+	}, true, time.Time{})
 	require.Equal(t, 272000, legacy.LongContextInputThreshold)
 	require.InDelta(t, 2.0, legacy.LongContextInputMultiplier, 1e-12)
 	require.InDelta(t, 1.5, legacy.LongContextOutputMultiplier, 1e-12)
@@ -632,43 +632,65 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			expectedCacheRead: floatPtr(2.2e-8),
 		},
 		{
+			// V4.1-Flash 新名，与旧名 deepseek-v4-flash 同价（2026-09-10 官方价）。
+			name:              "deepseek flash",
+			model:             "deepseek-flash",
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
+		},
+		{
 			name:              "deepseek v4 flash",
 			model:             "deepseek-v4-flash",
-			expectedInput:     2.2e-7,
-			expectedOutput:    floatPtr(6.6e-7),
-			expectedCacheRead: floatPtr(7e-9),
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
 		},
 		{
 			name:              "deepseek v4 flash vision exp",
 			model:             "deepseek-v4-flash-vision-exp",
-			expectedInput:     2.2e-7,
-			expectedOutput:    floatPtr(6.6e-7),
-			expectedCacheRead: floatPtr(7e-9),
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
 		},
 		{
 			// deepseek-chat / deepseek-reasoner 已停止服务，统一按 flash 价兜底。
 			name:              "deepseek chat discontinued maps to flash",
 			model:             "deepseek-chat",
-			expectedInput:     2.2e-7,
-			expectedOutput:    floatPtr(6.6e-7),
-			expectedCacheRead: floatPtr(7e-9),
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
 		},
 		{
 			name:              "deepseek reasoner discontinued maps to flash",
 			model:             "deepseek-reasoner",
-			expectedInput:     2.2e-7,
-			expectedOutput:    floatPtr(6.6e-7),
-			expectedCacheRead: floatPtr(7e-9),
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
 		},
 		{
 			name:              "unknown deepseek maps to flash",
 			model:             "deepseek-foo",
-			expectedInput:     2.2e-7,
-			expectedOutput:    floatPtr(6.6e-7),
-			expectedCacheRead: floatPtr(7e-9),
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
 		},
 
 		// ---- 智谱 GLM（z.ai USD 口径）----
+		{
+			name:              "glm 5.3 flagship",
+			model:             "glm-5.3",
+			expectedInput:     1.4e-6,
+			expectedOutput:    floatPtr(4.4e-6),
+			expectedCacheRead: floatPtr(0.26e-6),
+		},
+		{
+			name:              "glm 5.3 flash",
+			model:             "glm-5.3-flash",
+			expectedInput:     0.15e-6,
+			expectedOutput:    floatPtr(0.5e-6),
+			expectedCacheRead: floatPtr(0.03e-6),
+		},
 		{
 			name:              "glm 5.2 flagship",
 			model:             "glm-5.2",
@@ -759,7 +781,21 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			expectedInput:  0.1e-6,
 			expectedOutput: floatPtr(0.1e-6),
 		},
-		// 关键：5.1 / 5.2 必须先于 5 匹配（避免被 glm-5 抢走）
+		// 关键：5.1 / 5.2 / 5.3 必须先于 5 匹配（避免被 glm-5 抢走）
+		{
+			name:              "glm 5.3-flash vs glm 5.3 ordering (verbatim 5.3-flash)",
+			model:             "glm-5.3-flash",
+			expectedInput:     0.15e-6, // = glm-5.3-flash 价格（不是 glm-5.3 的 1.4e-6，更不是 glm-5 的 1e-6）
+			expectedOutput:    floatPtr(0.5e-6),
+			expectedCacheRead: floatPtr(0.03e-6),
+		},
+		{
+			name:              "glm 5.3 vs glm 5 ordering (verbatim 5.3)",
+			model:             "glm-5.3",
+			expectedInput:     1.4e-6, // = glm-5.3 价格（不是 glm-5 的 1e-6）
+			expectedOutput:    floatPtr(4.4e-6),
+			expectedCacheRead: floatPtr(0.26e-6),
+		},
 		{
 			name:              "glm 5.1 vs glm 5 ordering (verbatim 5.1)",
 			model:             "glm-5.1",
@@ -2135,7 +2171,7 @@ func TestCalculateCostUnified_DeepseekDefaultCardForcesStaleJSONPriceAndAppliesP
 	resolver := NewModelPricingResolver(nil, bs)
 
 	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 1000}
-	offPeakTotal := 1000*2.2e-7 + 500*6.6e-7 + 1000*7e-9
+	offPeakTotal := 1000*1.5e-7 + 500*6e-7 + 1000*3e-9
 
 	withDeepseekNow(t, time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)) // 周一低谷
 	offPeak, err := bs.CalculateCostUnified(CostInput{

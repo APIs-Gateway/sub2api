@@ -190,3 +190,11 @@ func TestCyberSessionBlock_RoundTrip(t *testing.T) {
 	// Different key: still not blocked.
 	require.False(t, svc.IsCyberSessionBlocked(ctx, "other-key"))
 }
+
+func (c *comboCacheAndStore) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *comboCacheAndStore) GetReasoningContent(_ context.Context, _ string) (string, error) {
+	return "", ErrReasoningContentNotFound
+}

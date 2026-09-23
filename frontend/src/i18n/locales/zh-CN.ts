@@ -2479,6 +2479,8 @@
         statusLabel: '状态',
         selectStatus: '选择状态',
         rpmLimit: '每分钟请求数 (RPM)',
+        concurrencyPlaceholder: '0 表示不限制',
+        concurrencyHint: '该用户的最大并发请求数，0 = 不限制',
         rpmLimitPlaceholder: '0 表示不限制',
         rpmLimitHint: '该用户每分钟最大请求数，0 = 不限制；仅在所用分组未设置 rpm_limit 时作为兜底生效'
       },
@@ -2499,7 +2501,7 @@
       failedToSave: '保存用户失败',
       failedToAdjust: '调整失败',
       emailRequired: '请输入邮箱',
-      concurrencyMin: '并发数不能小于1',
+      concurrencyNonNegative: '并发数不能为负数，0 表示不限制',
       soraStorageQuota: 'Sora 存储配额',
       soraStorageQuotaHint: '单位 GB，0 表示使用分组或系统默认配额',
       amountRequired: '请输入有效金额',
@@ -2652,6 +2654,7 @@
         clearAllConfirm: '确认清空全部平台的日 / 周 / 月限额？所有平台将变为"无限额"，本地无法撤销，需要在保存前手动重填。',
         reset: {
           button: '重置该窗口',
+          unavailable: '该平台未配置限额，没有可重置的用量窗口',
           confirm: '确认重置该用户 {platform} 平台的 {window} 用量？此操作立即生效。',
           success: '已重置 {platform} {window} 用量',
           failed: '重置失败',
@@ -3405,7 +3408,7 @@
       workerActive: '正在处理异步审计或记录任务',
       workerIdle: '已启动，当前空闲可用',
       workerDisabled: '风控或内容审计未启用',
-      processed: '已处理',
+      processed: '异步已处理',
       droppedErrors: '丢弃/异常',
       autoRefresh: '每 15 秒自动刷新',
       lastCleanup: '上次清理：{time}',
@@ -4266,6 +4269,9 @@
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:
           '开启后，该 OpenAI 账号将自动透传请求与响应，仅替换认证并保留计费/并发/审计及必要安全过滤；如遇兼容性问题可随时关闭回滚。',
+        flattenNamespaces: '摊平 Codex namespace 工具（兼容）',
+        flattenNamespacesDesc:
+          '默认关闭：/responses 上的 namespace 工具声明原样转发，这正是 ChatGPT Codex 后端期望的形态。仅当该 OAuth 账号指向不认识 namespace 的兼容上游时才开启——摊平会把工具改名为 namespace__tool，使按 functions.<命名空间>.<工具> 寻址的模型（如 gpt-5.6 多智能体）无法调用。压缩（compact）请求不受该开关影响，始终摊平。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           '默认关闭。开启后可启用 responses_websockets_v2 协议能力（受网关全局开关与账号类型开关约束）。',
@@ -4277,8 +4283,8 @@
         wsModePassthrough: '透传（passthrough）',
         wsModeShared: '共享（shared）',
         wsModeDedicated: '独享（dedicated）',
-        wsModeConcurrencyHint: '启用 WS mode 后，该账号并发数将作为该账号 WS 连接池上限。',
-        wsModePassthroughHint: 'passthrough 模式不使用 WS 连接池。',
+        wsModeCtxPoolHint: '网关 → 从连接池获取上游 WS 连接，数量由配置决定。',
+        wsModePassthroughHint: '网关 → 上游 WS，不使用连接池。',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           '仅对 OpenAI OAuth 生效。开启后该账号才允许使用 OpenAI WebSocket Mode 协议。',
@@ -6683,7 +6689,7 @@
         subscriptionGroup: '订阅分组',
         subscriptionValidityDays: '有效期（天）',
         defaultPlatformQuotas: '默认平台限额（注册时分配）',
-        defaultPlatformQuotasHint: '新用户注册时自动写入平台限额记录；已有用户不受影响。留空 = 该平台该窗口不限制。',
+        defaultPlatformQuotasHint: '新用户注册时自动获得这里配置的限额；已有用户不受影响。留空 = 该平台该窗口不限制。',
         platformQuotaNotice: '月限额为 30 天滚动窗口，非自然月',
       },
       platformQuota: {

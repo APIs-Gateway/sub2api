@@ -74,11 +74,12 @@ func TestResolveGeminiThinkingVariant(t *testing.T) {
 		{"agy low (1000) -> -low", catalog, "gemini-3.8-flash", budget("1000"), "gemini-3.8-flash-low", true},
 		{"models/ prefix stripped", catalog, "models/gemini-3.8-flash", budget("1000"), "gemini-3.8-flash-low", true},
 		{"no thinkingConfig -> -high", catalog, "gemini-3.8-flash", []byte(`{"contents":[]}`), "gemini-3.8-flash-high", true},
-		// fork 的 resolveModelMapping 只补 gemini-3-flash / gemini-3.1-pro-high/-low 自映射，不补 3.x flash 变体
+		// fork 的 resolveModelMapping 会补 gemini-3-flash、gemini-3.1-pro-high/-low 与 gemini-3.6-flash 四个变体的自映射，
+		// 所以降级用一个不在默认表里的型号
 		{"only -high exists: low request degrades to high", map[string]string{
 			"gemini-3.5-flash-high": "gemini-3.5-flash-high",
 		}, "gemini-3.5-flash", budget("1000"), "gemini-3.5-flash-high", true},
-		{"missing preferred variant degrades to existing -high", catalog, "gemini-3.6-flash", budget("1000"), "gemini-3.6-flash-high", true},
+		{"injected default variants are usable", catalog, "gemini-3.6-flash", budget("1000"), "gemini-3.6-flash-low", true},
 		{"runtime-injected pro variants are usable", map[string]string{
 			// credentials 里只有无关条目；gemini-3.1-pro-high/-low 由 ensureAntigravityDefaultPassthroughs 注入
 			"claude-sonnet-4-6": "claude-sonnet-4-6",
@@ -219,7 +220,7 @@ func TestGetMappedModelResolvesBareGeminiModelForAllEntrypoints(t *testing.T) {
 }
 
 // fork 回归：默认映射（空 credentials）下的入口行为。fork 的 DefaultAntigravityModelMapping
-// 只登记 gemini-3.1-pro-high/-low 与 gemini-3-flash 裸名，没有上游的 gemini-3.x-flash 变体目录。
+// 登记 gemini-3.1-pro-high/-low、gemini-3-flash 裸名与 gemini-3.6-flash 系列，没有上游其余的 gemini-3.x-flash 变体目录。
 func TestGetMappedModelForkDefaultCatalog(t *testing.T) {
 	svc := &AntigravityGatewayService{}
 	account := newAntigravityAccountWithMapping(map[string]string{})

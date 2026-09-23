@@ -358,6 +358,134 @@ func TestParseGitHubOAuthProfileRejectsPublicEmailWhenEmailsEndpointFails(t *tes
 	require.Contains(t, err.Error(), "github emails endpoint status 403")
 }
 
+func TestCheckGitHubAccountAge(t *testing.T) {
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+
+	require.NoError(t, checkGitHubAccountAge("", 0, now))
+	require.NoError(t, checkGitHubAccountAge("2026-08-24T11:59:59Z", 30, now))
+	require.Error(t, checkGitHubAccountAge("2026-08-24T12:00:01Z", 30, now))
+	require.Error(t, checkGitHubAccountAge("", 30, now))
+	require.Error(t, checkGitHubAccountAge("not-a-time", 30, now))
+}
+
+func TestEmailOAuthCallbackRejectsNewGitHubAccountBeforePendingSession(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		settingValues: map[string]string{
+			service.SettingKeyGitHubOAuthMinAccountAgeDays: "30",
+		},
+	})
+	ctx := context.Background()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/github/callback", nil)
+
+	handler.emailOAuthCallbackWithProfile(c, "github", config.EmailOAuthProviderConfig{
+		Enabled:             true,
+		FrontendRedirectURL: "/auth/oauth/callback",
+	}, "/auth/oauth/callback", "/dashboard", &emailOAuthProfile{
+		Subject:       "github-fresh-user",
+		Email:         "fresh-github@example.com",
+		EmailVerified: true,
+		Username:      "fresh-github",
+		Metadata: map[string]any{
+			githubCreatedAtClaimKey: time.Now().Add(-2 * 24 * time.Hour).UTC().Format(time.RFC3339),
+		},
+	})
+
+	require.Equal(t, http.StatusFound, recorder.Code)
+	require.Contains(t, recorder.Header().Get("Location"), "error=GITHUB_ACCOUNT_TOO_NEW")
+	sessionCount, err := client.PendingAuthSession.Query().Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, sessionCount)
+	userCount, err := client.User.Query().Where(dbuser.EmailEQ("fresh-github@example.com")).Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, userCount)
+}
+
+// 回调之外，两个建号入口也要各自拦一次：pending session 可能是上线前建的（没有
+// github_created_at），也可能被人拿着旧 cookie 直接调完成注册接口。
+func TestGitHubRegistrationEndpointsRejectNewGitHubAccount(t *testing.T) {
+	young := time.Now().Add(-2 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	cases := []struct {
+		name      string
+		createdAt any
+		call      func(h *AuthHandler, c *gin.Context)
+		path      string
+		body      string
+	}{
+		{
+			name:      "complete registration with young account",
+			createdAt: young,
+			call:      func(h *AuthHandler, c *gin.Context) { h.completeEmailOAuthRegistration(c, "github") },
+			path:      "/api/v1/auth/oauth/github/complete-registration",
+			body:      `{"password":"secret123"}`,
+		},
+		{
+			name:      "pending create account without created_at claim",
+			createdAt: nil,
+			call:      func(h *AuthHandler, c *gin.Context) { h.CreatePendingOAuthAccount(c) },
+			path:      "/api/v1/auth/oauth/pending/create-account",
+			body:      `{"email":"young-github@example.com","password":"secret123"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+				settingValues: map[string]string{
+					service.SettingKeyGitHubOAuthMinAccountAgeDays: "30",
+				},
+			})
+			ctx := context.Background()
+
+			claims := map[string]any{
+				"email":            "young-github@example.com",
+				"email_verified":   true,
+				"username":         "young-github",
+				"provider":         "github",
+				"provider_key":     "github",
+				"provider_subject": "github-young-user",
+			}
+			if tc.createdAt != nil {
+				claims[githubCreatedAtClaimKey] = tc.createdAt
+			}
+			session, err := client.PendingAuthSession.Create().
+				SetSessionToken("young-github-session-token").
+				SetIntent(oauthIntentLogin).
+				SetProviderType("github").
+				SetProviderKey("github").
+				SetProviderSubject("github-young-user").
+				SetResolvedEmail("young-github@example.com").
+				SetRedirectTo("/dashboard").
+				SetBrowserSessionKey("browser-young-key").
+				SetUpstreamIdentityClaims(claims).
+				SetLocalFlowState(map[string]any{
+					"step":  oauthPendingChoiceStep,
+					"error": "registration_completion_required",
+				}).
+				SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+				Save(ctx)
+			require.NoError(t, err)
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(session.SessionToken)})
+			req.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("browser-young-key")})
+			c.Request = req
+
+			tc.call(handler, c)
+
+			require.Equal(t, http.StatusForbidden, recorder.Code)
+			require.Contains(t, recorder.Body.String(), "GITHUB_ACCOUNT_TOO_NEW")
+			userCount, err := client.User.Query().Where(dbuser.EmailEQ("young-github@example.com")).Count(ctx)
+			require.NoError(t, err)
+			require.Zero(t, userCount)
+		})
+	}
+}
+
 type oauthEmailAffiliateBindCall struct {
 	userID    int64
 	inviterID int64

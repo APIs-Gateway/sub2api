@@ -10,6 +10,7 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"github.com/imroc/req/v3"
 )
 
@@ -21,7 +22,7 @@ func NewGrokOAuthClient() service.GrokOAuthClient {
 	return &grokOAuthClient{tokenURL: xai.EffectiveTokenURL()}
 }
 
-func (c *grokOAuthClient) ExchangeCode(ctx context.Context, code, codeVerifier, codeChallenge, redirectURI, proxyURL, clientID string) (*xai.TokenResponse, error) {
+func (c *grokOAuthClient) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI, proxyURL, clientID string) (*xai.TokenResponse, error) {
 	client, err := createGrokReqClient(proxyURL)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "GROK_OAUTH_CLIENT_INIT_FAILED", "create HTTP client: %v", err)
@@ -38,8 +39,6 @@ func (c *grokOAuthClient) ExchangeCode(ctx context.Context, code, codeVerifier, 
 	formData.Set("code", code)
 	formData.Set("redirect_uri", xai.EffectiveRedirectURI(redirectURI))
 	formData.Set("code_verifier", codeVerifier)
-	formData.Set("code_challenge", codeChallenge)
-	formData.Set("code_challenge_method", "S256")
 
 	var tokenResp xai.TokenResponse
 	resp, err := client.R().
@@ -107,7 +106,7 @@ func grokOAuthStatusError(code, message string, resp *req.Response) error {
 	body := ""
 	if resp != nil {
 		upstreamStatus = resp.StatusCode
-		body = resp.String()
+		body = logredact.RedactText(resp.String())
 	}
 	return infraerrors.Newf(statusCode, errorCode, "%s: status %d, body: %s", message, upstreamStatus, body)
 }

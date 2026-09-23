@@ -105,6 +105,26 @@ describe('Ops SLA-scoped error charts', () => {
     })
   })
 
+  it('错误分布图图例同时显示分类名和数量', () => {
+    const wrapper = mount(OpsErrorDistributionChart, {
+      props: {
+        loading: false,
+        data: {
+          total: 9,
+          items: [
+            { status_code: 502, total: 4, sla: 4, business_limited: 0 },
+            { status_code: 429, total: 3, sla: 3, business_limited: 0 },
+            { status_code: 500, total: 2, sla: 2, business_limited: 0 },
+          ],
+        },
+      },
+      global: globalStubs,
+    })
+
+    const legend = wrapper.findAll('.flex-wrap > div').map((item) => item.text())
+    expect(legend).toEqual(['admin.ops.upstream 4', 'admin.ops.client 3', 'admin.ops.system 2'])
+  })
+
   it('错误分布图在只有业务限制错误时显示为空态', () => {
     const wrapper = mount(OpsErrorDistributionChart, {
       props: {

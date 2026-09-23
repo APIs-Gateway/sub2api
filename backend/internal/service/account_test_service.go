@@ -33,8 +33,9 @@ import (
 var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
 
 const (
-	testClaudeAPIURL   = "https://api.anthropic.com/v1/messages?beta=true"
-	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
+	testClaudeAPIURL            = "https://api.anthropic.com/v1/messages?beta=true"
+	chatgptCodexAPIURL          = "https://chatgpt.com/backend-api/codex/responses"
+	defaultAntigravityTestModel = "claude-sonnet-4-6"
 )
 
 // TestEvent represents a SSE event for account testing
@@ -972,11 +973,7 @@ func (s *AccountTestService) routeAntigravityTest(c *gin.Context, account *Accou
 func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, account *Account, modelID string) error {
 	ctx := c.Request.Context()
 
-	// 默认模型：Claude 使用 claude-sonnet-4-5，Gemini 使用 gemini-3-pro-preview
-	testModelID := modelID
-	if testModelID == "" {
-		testModelID = "claude-sonnet-4-5"
-	}
+	testModelID := antigravityConnectionTestModel(modelID)
 
 	if s.antigravityGatewayService == nil {
 		return s.sendErrorAndEnd(c, "Antigravity gateway service not configured")
@@ -1005,6 +1002,13 @@ func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, ac
 
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 	return nil
+}
+
+func antigravityConnectionTestModel(modelID string) string {
+	if modelID == "" {
+		return defaultAntigravityTestModel
+	}
+	return modelID
 }
 
 // buildGeminiAPIKeyRequest builds request for Gemini API Key accounts
@@ -1754,6 +1758,8 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	}
 	applyOpenAIImagesDefaults(parsed)
 
+	s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Responses driver: %s; image model: %s\n", openAIImagesResponsesMainModelValue(), parsed.Model)})
+
 	responsesBody, err := buildOpenAIImagesResponsesRequest(parsed, parsed.Model)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build image request: %s", err.Error()))
@@ -1810,6 +1816,12 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to parse image response: %s", err.Error()))
 	}
 	if len(results) == 0 {
+		if upstreamErr := extractOpenAIImagesUpstreamError(body); upstreamErr != nil {
+			return s.sendErrorAndEnd(c, upstreamErr.clientMessage())
+		}
+		if textErr := openAIImagesTextFallbackError(body); textErr != nil {
+			return s.sendErrorAndEnd(c, textErr.clientMessage())
+		}
 		return s.sendErrorAndEnd(c, "No images returned from responses API")
 	}
 

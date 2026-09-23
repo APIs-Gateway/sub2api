@@ -2476,6 +2476,8 @@
         statusLabel: '狀態',
         selectStatus: '選擇狀態',
         rpmLimit: '每分鐘請求數 (RPM)',
+        concurrencyPlaceholder: '0 表示不限制',
+        concurrencyHint: '該用戶的最大並發請求數，0 = 不限制',
         rpmLimitPlaceholder: '0 表示不限制',
         rpmLimitHint: '該用戶每分鐘最大請求數，0 = 不限制；僅在所用分組未設定 rpm_limit 時作為兜底生效'
       },
@@ -2496,7 +2498,7 @@
       failedToSave: '儲存用戶失敗',
       failedToAdjust: '調整失敗',
       emailRequired: '請輸入郵箱',
-      concurrencyMin: '并發數不能小於1',
+      concurrencyNonNegative: '並發數不能為負數，0 表示不限制',
       soraStorageQuota: 'Sora 存儲配額',
       soraStorageQuotaHint: '單位 GB，0 表示使用分組或系統預設配額',
       amountRequired: '請輸入有效金額',
@@ -2649,6 +2651,7 @@
         clearAllConfirm: '確認清空全部平台的日 / 周 / 月限額？所有平台將變為"無限額"，本地無法撤銷，需要在儲存前手動重填。',
         reset: {
           button: '重置該窗口',
+          unavailable: '該平台未配置限額，沒有可重置的用量窗口',
           confirm: '確認重置該用戶 {platform} 平台的 {window} 用量？此操作立即生效。',
           success: '已重置 {platform} {window} 用量',
           failed: '重置失敗',
@@ -3402,7 +3405,7 @@
       workerActive: '正在處理異步審計或記錄任務',
       workerIdle: '已啟動，當前空閒可用',
       workerDisabled: '風控或內容審計未啟用',
-      processed: '已處理',
+      processed: '異步已處理',
       droppedErrors: '丟棄/異常',
       autoRefresh: '每 15 秒自動刷新',
       lastCleanup: '上次清理：{time}',
@@ -4263,6 +4266,9 @@
         oauthPassthrough: '自動透傳（僅替換認證）',
         oauthPassthroughDesc:
           '開啟後，該 OpenAI 帳號將自動透傳請求與回應，僅替換認證并保留計費/并發/審計及必要安全過濾；如遇兼容性問題可隨時關閉回滾。',
+        flattenNamespaces: '攤平 Codex namespace 工具（相容）',
+        flattenNamespacesDesc:
+          '預設關閉：/responses 上的 namespace 工具宣告原樣轉發，這正是 ChatGPT Codex 後端期望的形態。僅當該 OAuth 帳號指向不認識 namespace 的相容上游時才開啟——攤平會把工具改名為 namespace__tool，使按 functions.<命名空間>.<工具> 定址的模型（如 gpt-5.6 多智能體）無法呼叫。壓縮（compact）請求不受該開關影響，始終攤平。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           '預設關閉。開啟後可啟用 responses_websockets_v2 協議能力（受網關全局開關與帳號類型開關約束）。',
@@ -4274,8 +4280,8 @@
         wsModePassthrough: '透傳（passthrough）',
         wsModeShared: '共享（shared）',
         wsModeDedicated: '獨享（dedicated）',
-        wsModeConcurrencyHint: '啟用 WS mode 後，該帳號并發數將作為該帳號 WS 連接池上限。',
-        wsModePassthroughHint: 'passthrough 模式不使用 WS 連接池。',
+        wsModeCtxPoolHint: '網關 → 從連接池獲取上游 WS 連接，數量由配置決定。',
+        wsModePassthroughHint: '網關 → 上游 WS，不使用連接池。',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           '僅對 OpenAI OAuth 生效。開啟後該帳號才允許使用 OpenAI WebSocket Mode 協議。',
@@ -6680,7 +6686,7 @@
         subscriptionGroup: '訂閱分組',
         subscriptionValidityDays: '有效期（天）',
         defaultPlatformQuotas: '預設平台限額（註冊時分配）',
-        defaultPlatformQuotasHint: '新用戶註冊時自動寫入平台限額記錄；已有用戶不受影響。留空 = 該平台該窗口不限制。',
+        defaultPlatformQuotasHint: '新用戶註冊時自動獲得這裡配置的限額；已有用戶不受影響。留空 = 該平台該窗口不限制。',
         platformQuotaNotice: '月限額為 30 天滾動窗口，非自然月',
       },
       platformQuota: {

@@ -618,6 +618,7 @@ func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx cont
 }
 
 func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*ForwardResult, error) {
+	beginGeminiImageOutputObservation(c)
 	startTime := time.Now()
 
 	var req struct {
@@ -1111,6 +1112,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 				return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
 			}
 			collectedBytes, _ := json.Marshal(collected)
+			observeGeminiImageOutputs(c, collectedBytes)
 			claudeResp, usageObj2 := convertGeminiToClaudeMessage(collected, originalModel, collectedBytes, false)
 			c.JSON(http.StatusOK, claudeResp)
 			usage = usageObj2
@@ -1126,12 +1128,9 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	}
 
 	// 图片生成计费
-	imageCount := 0
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
-	if isImageGenerationModel(originalModel) {
-		imageCount = 1
-	}
+	imageCount := resolveGeminiImageCount(c, originalModel, mappedModel)
 
 	return &ForwardResult{
 		RequestID:      requestID,
@@ -1156,6 +1155,7 @@ func isGeminiSignatureRelatedError(respBody []byte) bool {
 }
 
 func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.Context, account *Account, originalModel string, action string, stream bool, body []byte) (*ForwardResult, error) {
+	beginGeminiImageOutputObservation(c)
 	startTime := time.Now()
 
 	if strings.TrimSpace(originalModel) == "" {
@@ -1644,6 +1644,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				return nil, s.writeGoogleError(c, http.StatusBadGateway, "Failed to read upstream stream")
 			}
 			b, _ := json.Marshal(collected)
+			observeGeminiImageOutputs(c, b)
 			c.Data(http.StatusOK, "application/json", b)
 			usage = usageObj
 		} else {
@@ -1660,12 +1661,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	}
 
 	// 图片生成计费
-	imageCount := 0
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
-	if isImageGenerationModel(originalModel) {
-		imageCount = 1
-	}
+	imageCount := resolveGeminiImageCount(c, originalModel, mappedModel)
 
 	return &ForwardResult{
 		RequestID:      requestID,
@@ -2009,6 +2007,7 @@ func (s *GeminiMessagesCompatService) handleNonStreamingResponse(c *gin.Context,
 	if err != nil {
 		return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 	}
+	observeGeminiImageOutputs(c, unwrappedBody)
 
 	var geminiResp map[string]any
 	if err := json.Unmarshal(unwrappedBody, &geminiResp); err != nil {
@@ -2092,6 +2091,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 		if err != nil {
 			continue
 		}
+		observeGeminiImageOutputs(c, unwrappedBytes)
 
 		var geminiResp map[string]any
 		if err := json.Unmarshal(unwrappedBytes, &geminiResp); err != nil {
@@ -2578,6 +2578,7 @@ func (s *GeminiMessagesCompatService) handleNativeNonStreamingResponse(c *gin.Co
 			respBody = unwrappedBody
 		}
 	}
+	observeGeminiImageOutputs(c, respBody)
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 
@@ -2656,6 +2657,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					if u := extractGeminiUsage(rawBytes); u != nil {
 						usage = u
 					}
+					observeGeminiImageOutputs(c, rawBytes)
 
 					if firstTokenMs == nil {
 						ms := int(time.Since(startTime).Milliseconds())
@@ -3544,11 +3546,19 @@ func cleanToolSchema(schema any) any {
 			if key == "$schema" || key == "$id" || key == "$ref" ||
 				key == "$defs" || key == "definitions" ||
 				key == "additionalProperties" || key == "patternProperties" || key == "minLength" ||
-				key == "maxLength" || key == "minItems" || key == "maxItems" || key == "exclusiveMinimum" {
+				key == "maxLength" || key == "minItems" || key == "maxItems" || key == "exclusiveMinimum" ||
+				key == "deprecated" {
 				continue
 			}
 			// 递归清理嵌套对象
 			cleaned[key] = cleanToolSchema(value)
+		}
+		if enum, ok := cleaned["enum"].([]any); ok {
+			if normalized, ok := normalizeGeminiEnum(enum); ok {
+				cleaned["enum"] = normalized
+			} else {
+				delete(cleaned, "enum")
+			}
 		}
 		// 规范化 type 字段为大写
 		if typeVal, ok := cleaned["type"].(string); ok {
@@ -3582,6 +3592,28 @@ func cleanToolSchema(schema any) any {
 	default:
 		return v
 	}
+}
+
+func normalizeGeminiEnum(values []any) ([]any, bool) {
+	normalized := make([]any, len(values))
+	for i, value := range values {
+		if stringValue, ok := value.(string); ok {
+			normalized[i] = stringValue
+			continue
+		}
+
+		switch value.(type) {
+		case nil, bool, float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return nil, false
+			}
+			normalized[i] = string(encoded)
+		default:
+			return nil, false
+		}
+	}
+	return normalized, true
 }
 
 // incrementIntegralSchemaBound 将 JSON Schema 的 exclusiveMinimum 换算为等价的

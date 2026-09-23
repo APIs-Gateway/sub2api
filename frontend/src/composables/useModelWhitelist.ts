@@ -19,7 +19,7 @@ const openaiModels = [
   'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'codex-auto-review',
   'gpt-4o-audio-preview', 'gpt-4o-realtime-preview',
   // GPT Image 系列
-  'gpt-image-1', 'gpt-image-1.5', 'gpt-image-2'
+  'gpt-image-1', 'gpt-image-1.5', 'gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'
 ]
 
 // Anthropic Claude
@@ -92,7 +92,10 @@ const antigravityModels = [
 const zhipuModels = [
   'glm-4', 'glm-4v', 'glm-4-plus', 'glm-4-0520',
   'glm-4-air', 'glm-4-airx', 'glm-4-long', 'glm-4-flash',
-  'glm-4v-plus', 'glm-4.5', 'glm-4.6',
+  'glm-4v-plus', 'glm-4.5', 'glm-4.5-x', 'glm-4.5-air', 'glm-4.5-flash',
+  'glm-4.6', 'glm-4.7', 'glm-4.7-flash', 'glm-4.7-flashx',
+  'glm-5', 'glm-5-turbo', 'glm-5.1', 'glm-5.2',
+  'glm-5.3', 'glm-5.3-flash',
   'glm-3-turbo', 'glm-4-alltools',
   'chatglm_turbo', 'chatglm_pro', 'chatglm_std', 'chatglm_lite',
   'cogview-3', 'cogvideo'
@@ -111,7 +114,7 @@ const qwenModels = [
 
 // DeepSeek
 const deepseekModels = [
-  'deepseek-chat', 'deepseek-coder', 'deepseek-reasoner',
+  'deepseek-chat', 'deepseek-coder', 'deepseek-reasoner', 'deepseek-flash',
   'deepseek-v3', 'deepseek-v3-0324',
   'deepseek-r1', 'deepseek-r1-0528',
   'deepseek-r1-distill-qwen-32b', 'deepseek-r1-distill-qwen-14b', 'deepseek-r1-distill-qwen-7b',

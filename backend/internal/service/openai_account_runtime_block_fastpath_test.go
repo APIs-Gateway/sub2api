@@ -56,6 +56,34 @@ func TestOpenAIAccountUpstreamError_NilRateLimitService(t *testing.T) {
 	))
 }
 
+func TestOpenAI429FastPath_OpenCodeGoUsageLimitUsesMessageResetDuration(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &rateLimit429AccountRepoStub{}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	rateLimitService.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 48, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	body := []byte(`{"type":"error","error":{"type":"GoUsageLimitError","message":"5-hour usage limit reached. Resets in 4hr 59min. To continue using this model now, enable usage from your available balance: https://opencode.ai/workspace/wrk_test/go"},"metadata":{"workspace":"wrk_test","limitName":"5 hour"}}`)
+
+	before := time.Now()
+	shouldDisable := svc.handleOpenAIAccountUpstreamError(
+		context.Background(),
+		account,
+		http.StatusTooManyRequests,
+		http.Header{},
+		body,
+	)
+	after := time.Now()
+
+	require.False(t, shouldDisable)
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Equal(t, account.ID, repo.lastRateLimitID)
+	expectedResetAfter := 4*time.Hour + 59*time.Minute
+	require.False(t, repo.lastRateLimitReset.Before(before.Add(expectedResetAfter-time.Second)))
+	require.False(t, repo.lastRateLimitReset.After(after.Add(expectedResetAfter)))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
 func TestOpenAIRuntimeBlock_AppliesToOpenAIAPIKeyWhenRateLimitServiceStopsScheduling(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	account := &Account{ID: 44, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
@@ -553,4 +581,15 @@ func TestOpenAIWSDial429_KeepsResponseQuotaHeaders(t *testing.T) {
 	require.Equal(t, 1, repo.rateLimitCalls)
 	require.Greater(t, time.Until(repo.lastRateLimitReset), 6*24*time.Hour)
 	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestShouldStopOpenAIOAuth429Failover_StopsGrokAfterFirst429Switch(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 44, Platform: PlatformGrok, Type: AccountTypeOAuth}
+	apiKeyAccount := &Account{ID: 45, Platform: PlatformGrok, Type: AccountTypeAPIKey}
+
+	require.True(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusTooManyRequests, 1))
+	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusTooManyRequests, 0))
+	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(apiKeyAccount, http.StatusTooManyRequests, 1))
+	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusInternalServerError, 1))
 }

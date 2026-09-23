@@ -33,11 +33,12 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { resolveWeChatOAuthStart } from '@/api/auth'
 import { useAppStore } from '@/stores'
-import { resolveAffiliateReferralCode, storeOAuthAffiliateCode } from '@/utils/oauthAffiliate'
+import { promoCodeQuery, resolveAffiliateReferralCode, storeOAuthAffiliateCode } from '@/utils/oauthAffiliate'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
   affCode?: string
+  promoCode?: string
   showDivider?: boolean
 }>(), {
   showDivider: true,
@@ -83,7 +84,7 @@ function startLogin(): void {
   const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '/api/v1'
   const normalized = apiBase.replace(/\/$/, '')
   const mode = resolvedStart.value.mode
-  const startURL = `${normalized}/auth/oauth/wechat/start?mode=${mode}&redirect=${encodeURIComponent(redirectTo)}`
+  const startURL = `${normalized}/auth/oauth/wechat/start?mode=${mode}&redirect=${encodeURIComponent(redirectTo)}${promoCodeQuery(props.promoCode)}`
   window.location.href = startURL
 }
 </script>

@@ -545,6 +545,14 @@ var proxyQualityTargets = []proxyQualityTarget{
 			http.StatusOK: {},
 		},
 	},
+	{
+		Target: "grok",
+		URL:    "https://api.x.ai/v1/models",
+		Method: http.MethodGet,
+		AllowedStatuses: map[int]struct{}{
+			http.StatusUnauthorized: {},
+		},
+	},
 }
 
 const (
@@ -4124,7 +4132,15 @@ func (e *MixedChannelError) Error() string {
 }
 
 func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) error {
-	return s.accountRepo.ResetQuotaUsed(ctx, id)
+	if err := s.accountRepo.ResetQuotaUsedAndClearRateLimitCooldown(ctx, id); err != nil {
+		return err
+	}
+	// fork: OpenAI 网关在进程内还有一份 429 冷却（openaiAccountRuntimeBlockUntil），
+	// 只清数据库字段时账号仍会被本进程调度跳过，直到旧的 reset 时间。与 ClearAccountError 一致一并清掉。
+	if s.runtimeBlocker != nil {
+		s.runtimeBlocker.ClearAccountSchedulingBlock(id)
+	}
+	return nil
 }
 
 // EnsureOpenAIPrivacy 检查 OpenAI OAuth 账号是否已设置 privacy_mode，
