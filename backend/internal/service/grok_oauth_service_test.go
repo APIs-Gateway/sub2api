@@ -194,3 +194,37 @@ func TestGrokOAuthServiceExchangeCodeBindsRedirectURIToSession(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, xai.EffectiveRedirectURI(""), client.exchangeRedirectURI)
 }
+
+type grokOAuthEmptyTokenClient struct{}
+
+func (grokOAuthEmptyTokenClient) ExchangeCode(context.Context, string, string, string, string, string, string) (*xai.TokenResponse, error) {
+	return &xai.TokenResponse{}, nil
+}
+
+func (grokOAuthEmptyTokenClient) RefreshToken(context.Context, string, string, string) (*xai.TokenResponse, error) {
+	return nil, nil
+}
+
+// 上游返回缺 access_token（或空）的 token 响应时必须报错，不能生成空凭证（upstream #5408）。
+func TestGrokOAuthServiceRejectsEmptyUpstreamTokenResponse(t *testing.T) {
+	service := NewGrokOAuthService(nil, grokOAuthEmptyTokenClient{})
+	defer service.Stop()
+
+	require.NotPanics(t, func() {
+		info, err := service.RefreshToken(context.Background(), "refresh-token", "", "client-id")
+		require.Nil(t, info)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "GROK_OAUTH_INVALID_TOKEN_RESPONSE")
+	})
+
+	authURL, err := service.GenerateAuthURL(context.Background(), nil, "")
+	require.NoError(t, err)
+	info, err := service.ExchangeCode(context.Background(), &GrokExchangeCodeInput{
+		SessionID: authURL.SessionID,
+		Code:      "authorization-code",
+		State:     authURL.State,
+	})
+	require.Nil(t, info)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "GROK_OAUTH_INVALID_TOKEN_RESPONSE")
+}
