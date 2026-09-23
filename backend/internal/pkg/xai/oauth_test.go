@@ -139,10 +139,11 @@ func TestXAIEnvironmentOverridesAndAuthorizationInputEdges(t *testing.T) {
 	require.Equal(t, "https://override.example.test", EffectiveBaseURL(" https://override.example.test/ "))
 
 	require.Equal(t, AuthorizationInput{}, ParseAuthorizationInput(""))
-	require.Equal(t, AuthorizationInput{Code: "abc"}, ParseAuthorizationInput("code=abc&state="))
-	require.Equal(t, AuthorizationInput{Code: "abc"}, ParseAuthorizationInput("?code=abc&state="))
+	// 解析出回调 query 的 code 时一律要求 state（上游 f29ccc7df）：空 state 由服务层拒绝。
+	require.Equal(t, AuthorizationInput{Code: "abc", RequiresState: true}, ParseAuthorizationInput("code=abc&state="))
+	require.Equal(t, AuthorizationInput{Code: "abc", RequiresState: true}, ParseAuthorizationInput("?code=abc&state="))
 
-	require.Equal(t, AuthorizationInput{Code: "abc", State: "state"}, ParseAuthorizationInput("https://callback.test/?code=abc&state=state"))
+	require.Equal(t, AuthorizationInput{Code: "abc", State: "state", RequiresState: true}, ParseAuthorizationInput("https://callback.test/?code=abc&state=state"))
 	require.NotEmpty(t, BuildAuthorizationURL("state", "challenge", "", "nonce"))
 	require.Equal(t, "https://api.x.ai/v1/responses", BuildResponsesURL("https://api.x.ai/v1/"))
 }
