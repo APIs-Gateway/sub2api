@@ -4551,6 +4551,7 @@
       billingRateMultiplierHint: '0 表示不計費，僅影響帳號計費',
       expiresAt: '過期時間',
       expiresAtHint: '留空表示不過期',
+      expiresAtTimezoneHint: '輸入按瀏覽器本地時區（{timezone}）解釋。',
       higherPriorityFirst: '數值越小優先級越高',
       mixedScheduling: '在 /v1/messages 中使用',
       mixedSchedulingHint: '啟用後可參與 Anthropic/Gemini 分組的調度',
@@ -5343,6 +5344,8 @@
       customExpiry: '自定義',
       customExpiryDays: '自定義天數',
       expiryDaysRequired: '請輸入有效的過期天數',
+      expiryDateRequired: '請輸入有效的過期日期和時間',
+      localTimeZoneHint: '自定義時間按瀏覽器本地時區（{timezone}）解釋。',
       groupRequired: '請選擇訂閱分組',
       days: '天',
       status: {
