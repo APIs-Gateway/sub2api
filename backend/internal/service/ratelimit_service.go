@@ -2081,6 +2081,7 @@ func parseOpenAIImageTryAgainCooldown(body []byte) time.Duration {
 
 const upstreamModelNotFoundCooldown = 30 * time.Minute
 const upstreamModelNotFoundReason = "upstream_404_model_not_found"
+const upstreamModelNotFound401Reason = "upstream_401_model_not_found"
 const upstreamCodexPlanGatedModelCooldown = 30 * time.Minute
 const upstreamCodexPlanGatedModelReason = "upstream_400_codex_plan_gated_model"
 const tempUnschedBodyMaxBytes = 64 << 10
@@ -2088,7 +2089,8 @@ const tempUnschedMessageMaxBytes = 2048
 
 // HandleUpstreamModelNotFound marks the requested model as temporarily
 // unavailable on the account when the upstream deterministically reports it
-// cannot serve that model: a 404 model-not-found, or the Codex 400 rejecting a
+// cannot serve that model: a 404 model-not-found, an OpenAI-compatible API-key
+// 401 whose body is a model-not-found error, or the Codex 400 rejecting a
 // plan-gated model on a ChatGPT OAuth account. Returning true tells the caller
 // to fail the current attempt over to another account; the scheduler skips the
 // (account, model) pair via IsSchedulableForModelWithContext until the
@@ -2106,6 +2108,11 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 	switch {
 	case isUpstreamModelNotFoundError(statusCode, responseBody):
 		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFoundReason
+	case statusCode == http.StatusUnauthorized && account.Type == AccountTypeAPIKey && account.IsOpenAICompatible() &&
+		isOpenAICompatibleModelNotFoundBody(responseBody):
+		// 部分 OpenAI 兼容上游对未知模型回 401（而非 404）。这是模型可用性而不是
+		// API key 失效：只冷却 (account, model)，不走 401 鉴权失败的 SetError 永久停用。
+		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFound401Reason
 	case isOpenAIOAuthAccount(account) && isOpenAICodexPlanGatedModelError(statusCode, responseBody):
 		cooldown, reason = upstreamCodexPlanGatedModelCooldown, upstreamCodexPlanGatedModelReason
 	default:
