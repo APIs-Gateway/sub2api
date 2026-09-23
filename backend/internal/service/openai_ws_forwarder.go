@@ -4720,6 +4720,12 @@ func (s *OpenAIGatewayService) persistOpenAIWSRateLimitSignal(ctx context.Contex
 	if !isOpenAIWSRateLimitError(codeRaw, errTypeRaw, msgRaw) {
 		return
 	}
+	// 非空 responseBody 表示已建立连接后收到的语义错误事件；握手响应头
+	// 可能只是成功连接时的全局快照，不能用于 429 账号级限流。
+	// 实际拨号 HTTP 429 使用 nil responseBody，必须保留响应头。
+	if len(responseBody) > 0 {
+		headers = nil
+	}
 	s.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, headers, responseBody)
 }
 

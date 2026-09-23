@@ -1788,11 +1788,11 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 	secondHitCh := make(chan []byte, 1)
 
 	firstUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Strong cooldown signal: usage-limit events without reset headers stay
-		// on the current account until the 429 sliding-window threshold is hit.
-		w.Header().Set("x-codex-primary-used-percent", "100")
-		w.Header().Set("x-codex-primary-reset-after-seconds", "7200")
-		w.Header().Set("x-codex-primary-window-minutes", "10080")
+		// Handshake quota headers are only a snapshot of the successful
+		// connection and are ignored for semantic 429 events, so the strong
+		// cooldown signal must come from the error event itself (resets_in_seconds);
+		// usage-limit events without a reset stay on the current account until the
+		// 429 sliding-window threshold is hit.
 		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
 		if err != nil {
 			return
@@ -1807,7 +1807,7 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 		}
 
 		writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
-		_ = conn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached"}}`))
+		_ = conn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached","resets_in_seconds":7200}}`))
 		cancelWrite()
 	}))
 	defer firstUpstream.Close()
