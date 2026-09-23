@@ -456,6 +456,11 @@ func TestOpenAIWSPassthroughFirstMessageBridgeDecision(t *testing.T) {
 		{name: "oversized response cancel stays passthrough", payload: `{"type":"response.cancel","padding":"` + strings.Repeat("x", 100) + `"}`},
 		{name: "oversized other event stays passthrough", payload: `{"type":"session.update","padding":"` + strings.Repeat("x", 100) + `"}`},
 		{name: "oversized malformed JSON stays passthrough", payload: `{"type":"response.create","padding":"` + strings.Repeat("x", 100)},
+		{name: "top-level array stays passthrough", payload: `[{"type":"response.create","padding":"` + strings.Repeat("x", 100) + `"}]`},
+		{name: "non-string previous response id stays passthrough", payload: `{"type":"response.create","previous_response_id":123,"padding":"` + strings.Repeat("x", 100) + `"}`},
+		{name: "nested values and escapes are skipped", payload: `{"input":[{"type":"input_text","text":"say \"}]\" and {x}"}],"meta":{"a":[1,{"b":"]"}]},"n":1,"type":"response.create","padding":"` + strings.Repeat("x", 100) + `"}`, want: true},
+		{name: "nested previous response id is ignored", payload: `{"metadata":{"previous_response_id":"resp_nested"},"type":"response.create","padding":"` + strings.Repeat("x", 100) + `"}`, want: true},
+		{name: "escaped top-level previous response id key stays passthrough", payload: `{"type":"response.create","previous_response_\u0069d":"resp_escaped","padding":"` + strings.Repeat("x", 100) + `"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
