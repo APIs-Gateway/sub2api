@@ -236,3 +236,55 @@ func TestHandleCCStreamingFromAnthropic_PreservesMessageStartCacheUsageAndReason
 	require.Equal(t, "medium", *result.ReasoningEffort)
 	require.Contains(t, rec.Body.String(), `[DONE]`)
 }
+
+func TestHandleCCStreamingFromAnthropic_DropsPingKeepalives(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	resp := &http.Response{
+		Header: http.Header{"x-request-id": []string{"rid_cc_stream_ping"}},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`event: ping`,
+			`data: {"type":"ping"}`,
+			``,
+			`event: message_start`,
+			`data: {"type":"message_start","message":{"id":"msg_ping","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.5","stop_reason":"","usage":{"input_tokens":5}}}`,
+			``,
+			`event: ping`,
+			`data: {"type":"ping"}`,
+			``,
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			``,
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"pong-free"}}`,
+			``,
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":0}`,
+			``,
+			`event: message_delta`,
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`,
+			``,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
+		}, "\n"))),
+	}
+
+	svc := &GatewayService{}
+	result, err := svc.handleCCStreamingFromAnthropic(resp, c, "claude-sonnet-4.5", "claude-sonnet-4.5", nil, time.Now(), true)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 5, result.Usage.InputTokens)
+	require.Equal(t, 3, result.Usage.OutputTokens)
+	require.NotNil(t, result.FirstTokenMs)
+
+	body := rec.Body.String()
+	require.NotContains(t, body, "event: ping")
+	require.NotContains(t, body, `"ping"`)
+	require.Contains(t, body, "pong-free")
+	require.Contains(t, body, `[DONE]`)
+}

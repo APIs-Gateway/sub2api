@@ -429,9 +429,6 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	// apicompat.AnthropicUsage) can still be normalized into the
 	// mutually-exclusive usage buckets billing expects.
 	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent, rawEvent string) bool {
-		if event == nil {
-			return false
-		}
 		// Drop Anthropic keepalive pings before OpenAI conversion:
 		// leaking `event: ping` frames crashes OpenAI-stream clients.
 		// Error events must still forward — they carry upstream failures.
