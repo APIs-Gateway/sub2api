@@ -979,7 +979,8 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 	// A retired/configured Responses driver is not an image-model quota failure.
 	// Surface the actionable upstream error instead of cooling every image account
 	// and eventually hiding the configuration problem behind a generic 503.
-	if account.IsOpenAIOAuthLike() &&
+	// fork: IsOpenAI()+IsOAuth() covers OAuth and Setup Token accounts (upstream IsOpenAIOAuthLike).
+	if account.IsOpenAI() && account.IsOAuth() &&
 		isOpenAICodexPlanGatedModelError(resp.StatusCode, body) &&
 		strings.Contains(extractUpstreamErrorMessage(body), "'"+openAIImagesResponsesMainModelValue()+"'") {
 		upErr := openAIImagesUpstreamErrorFromHTTP(resp.StatusCode, resp.Header, body)

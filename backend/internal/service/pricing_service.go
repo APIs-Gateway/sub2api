@@ -23,8 +23,8 @@ import (
 )
 
 var (
-	openAIModelDatePattern     = regexp.MustCompile(`-\d{8}$`)
-	openAIModelBasePattern     = regexp.MustCompile(`^(gpt-\d+(?:\.\d+)?)(?:-|$)`)
+	openAIModelDatePattern = regexp.MustCompile(`-\d{8}$`)
+	openAIModelBasePattern = regexp.MustCompile(`^(gpt-\d+(?:\.\d+)?)(?:-|$)`)
 	// Official GPT Image 2.5 token rates (2026-09-08):
 	// https://developers.openai.com/api/docs/pricing#image-generation-models
 	openAIGPTImage25FallbackPricing = &LiteLLMModelPricing{

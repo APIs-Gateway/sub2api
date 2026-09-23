@@ -67,6 +67,13 @@ func TestGPT6SolLunaModelIdentity(t *testing.T) {
 }
 
 func TestDefaultModelsIncludeGPTImage25(t *testing.T) {
-	require.Contains(t, DefaultModelIDs(), "gpt-image-2.5-flare")
-	require.Contains(t, DefaultModelIDs(), "gpt-image-2.5-sunburst")
+	ids := make(map[string]bool)
+	for _, id := range DefaultModelIDs() {
+		ids[id] = true
+	}
+	for _, want := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"} {
+		if !ids[want] {
+			t.Fatalf("DefaultModelIDs() missing %q", want)
+		}
+	}
 }
