@@ -130,7 +130,8 @@ describe('UserDashboardStats 按平台拆分', () => {
       makeStats({ total_actual_cost: 0.5, today_actual_cost: 0, by_platform: [usage('kimi', 0.3), usage('anthropic', 0.2)] })
     )
     expect(cardPlatforms(w)).toEqual(['anthropic', 'kimi'])
-    expect(w.text()).toContain('Kimi')
+    // fork 的 PLATFORM_LABELS 未收录 kimi（上游在别的提交里补了显示名），未知平台按原始 key 展示。
+    expect(w.text()).toContain('kimi')
   })
 
   it('总值大于各平台之和时追加"其他"卡片，且不计入平台计数', () => {
