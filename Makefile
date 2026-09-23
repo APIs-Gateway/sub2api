@@ -1,6 +1,7 @@
 .PHONY: build build-backend build-frontend build-datamanagementd dev-db dev-local test test-backend test-frontend test-frontend-critical test-datamanagementd secret-scan
 
 FRONTEND_CRITICAL_VITEST := \
+	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
 	src/api/__tests__/client.spec.ts \
 	src/api/__tests__/tokenRefresh.spec.ts \
 	src/components/admin/user/__tests__/UserPlatformQuotaModal.spec.ts \
