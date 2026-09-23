@@ -55,8 +55,16 @@ const UserAttributeFormStub = defineComponent({
   template: '<div />'
 })
 
+const SelectStub = defineComponent({
+  name: 'Select',
+  props: ['modelValue', 'options', 'searchable'],
+  emits: ['update:modelValue'],
+  template: '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="o in options" :key="o.value" :value="o.value">{{ o.label }}</option></select>'
+})
+
 const commonStubs = {
   BaseDialog: BaseDialogStub,
+  Select: SelectStub,
   Icon: true,
   UserAttributeForm: UserAttributeFormStub
 }
@@ -97,6 +105,14 @@ describe('user role modal payloads', () => {
       },
       global: { stubs: commonStubs }
     })
+
+    const roleSelect = wrapper.findComponent(SelectStub)
+    expect(roleSelect.props('searchable')).toBe(false)
+    expect(roleSelect.props('options')).toEqual([
+      { value: 'user', label: 'admin.users.roles.user' },
+      { value: 'admin', label: 'admin.users.roles.admin' }
+    ])
+    expect(roleSelect.props('modelValue')).toBe('admin')
 
     await wrapper.find('select').setValue('user')
     await wrapper.find('form').trigger('submit')
