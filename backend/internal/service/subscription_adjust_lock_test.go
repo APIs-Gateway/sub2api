@@ -21,7 +21,13 @@ type lockingAdjustRepo struct {
 	current UserSubscription
 	lockErr error
 
+	shortenErr error
+	grantErr   error
+	extendErr  error
+	statusErr  error
+
 	lockReads      int
+	extendCalls    int
 	closeCalls     int
 	shortenCalls   int
 	grantCalls     int
@@ -71,6 +77,9 @@ func (r *lockingAdjustRepo) CloseSubscriptionWithReclaim(_ context.Context, _ in
 
 func (r *lockingAdjustRepo) ShortenSubscriptionWithReclaim(_ context.Context, _ int64, reduceDays int, _, now time.Time) (int64, float64, error) {
 	r.shortenCalls++
+	if r.shortenErr != nil {
+		return 0, 0, r.shortenErr
+	}
 	r.lastReduceDays = reduceDays
 	newExpireDay := r.current.ExpireDay - reduceDays
 	if floor := EastDayNumber(now) - 1; newExpireDay < floor {
@@ -83,6 +92,9 @@ func (r *lockingAdjustRepo) ShortenSubscriptionWithReclaim(_ context.Context, _ 
 
 func (r *lockingAdjustRepo) GrantSubscriptionDays(_ context.Context, _ int64, addDays int, _, now time.Time) (int64, float64, error) {
 	r.grantCalls++
+	if r.grantErr != nil {
+		return 0, 0, r.grantErr
+	}
 	r.lastGrantDays = addDays
 	base := r.current.ExpireDay
 	if today := EastDayNumber(now); base < today-1 {
@@ -93,7 +105,19 @@ func (r *lockingAdjustRepo) GrantSubscriptionDays(_ context.Context, _ int64, ad
 	return r.current.UserID, 0, nil
 }
 
+func (r *lockingAdjustRepo) ExtendExpiry(_ context.Context, _ int64, newExpiresAt time.Time) error {
+	r.extendCalls++
+	if r.extendErr != nil {
+		return r.extendErr
+	}
+	r.current.ExpiresAt = newExpiresAt
+	return nil
+}
+
 func (r *lockingAdjustRepo) UpdateStatus(_ context.Context, _ int64, status string) error {
+	if r.statusErr != nil {
+		return r.statusErr
+	}
 	r.current.Status = status
 	return nil
 }
@@ -104,7 +128,7 @@ func (r *lockingAdjustRepo) UpdateNotes(_ context.Context, _ int64, notes string
 }
 
 func (r *lockingAdjustRepo) writeCalls() int {
-	return r.closeCalls + r.shortenCalls + r.grantCalls
+	return r.closeCalls + r.shortenCalls + r.grantCalls + r.extendCalls
 }
 
 // 2026-09-22 12:00 东八区；today = EastDayNumber(adjustTestNow)。
@@ -218,4 +242,67 @@ func TestExtendSubscriptionLockFailureDoesNotWrite(t *testing.T) {
 	require.ErrorIs(t, err, ErrSubscriptionNotFound)
 	require.Zero(t, repo.writeCalls())
 	require.Equal(t, today+9, repo.current.ExpireDay)
+}
+
+func TestExtendSubscriptionZeroDaysOnlySyncsExpiry(t *testing.T) {
+	today := EastDayNumber(adjustTestNow)
+	repo := &lockingAdjustRepo{current: perDaySub(37, 41, today+9, SubscriptionStatusActive)}
+	svc := newAdjustTestService(repo)
+
+	updated, err := svc.ExtendSubscription(context.Background(), 37, 0)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.extendCalls)
+	require.Zero(t, repo.shortenCalls+repo.grantCalls)
+	require.Equal(t, today+9, updated.ExpireDay)
+}
+
+func TestExtendSubscriptionClampsDaysAndMaxExpiry(t *testing.T) {
+	today := EastDayNumber(adjustTestNow)
+
+	repo := &lockingAdjustRepo{current: perDaySub(37, 41, today+9, SubscriptionStatusActive)}
+	svc := newAdjustTestService(repo)
+	_, err := svc.ExtendSubscription(context.Background(), 37, MaxValidityDays+100)
+	require.NoError(t, err)
+	require.Equal(t, MaxValidityDays, repo.lastGrantDays)
+
+	repo = &lockingAdjustRepo{current: perDaySub(37, 41, today+9, SubscriptionStatusActive)}
+	svc = newAdjustTestService(repo)
+	_, err = svc.ExtendSubscription(context.Background(), 37, -MaxValidityDays-100)
+	require.ErrorIs(t, err, ErrAdjustWouldExpire)
+	require.Zero(t, repo.writeCalls())
+}
+
+func TestExtendSubscriptionPropagatesWriteErrors(t *testing.T) {
+	today := EastDayNumber(adjustTestNow)
+	boom := errors.New("write failed")
+	for _, tc := range []struct {
+		name string
+		days int
+		sub  UserSubscription
+		set  func(*lockingAdjustRepo)
+	}{
+		{name: "shorten", days: -1, sub: perDaySub(37, 41, today+9, SubscriptionStatusActive), set: func(r *lockingAdjustRepo) { r.shortenErr = boom }},
+		{name: "grant", days: 1, sub: perDaySub(37, 41, today+9, SubscriptionStatusActive), set: func(r *lockingAdjustRepo) { r.grantErr = boom }},
+		{name: "extend expiry", days: 0, sub: perDaySub(37, 41, today+9, SubscriptionStatusActive), set: func(r *lockingAdjustRepo) { r.extendErr = boom }},
+		{name: "reactivate", days: 3, sub: perDaySub(37, 41, today-3, SubscriptionStatusExpired), set: func(r *lockingAdjustRepo) { r.statusErr = boom }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &lockingAdjustRepo{current: tc.sub}
+			tc.set(repo)
+			svc := newAdjustTestService(repo)
+
+			updated, err := svc.ExtendSubscription(context.Background(), 37, tc.days)
+
+			require.ErrorIs(t, err, boom)
+			require.Nil(t, updated)
+		})
+	}
+}
+
+func TestSubscriptionServiceCurrentTimeDefaultsToWallClock(t *testing.T) {
+	var nilSvc *SubscriptionService
+	before := time.Now()
+	require.False(t, nilSvc.currentTime().Before(before))
+	require.False(t, (&SubscriptionService{}).currentTime().Before(before))
 }
