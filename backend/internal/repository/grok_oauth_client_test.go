@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/stretchr/testify/require"
 )
@@ -98,7 +99,8 @@ func TestGrokOAuthClientStatusErrorRedactsSensitiveResponseBody(t *testing.T) {
 	_, err := client.RefreshToken(context.Background(), "refresh-secret", "", "client-id")
 	require.Error(t, err)
 
-	errText := err.Error()
+	// fork 的 infraerrors.Error() 用 %q 输出 message，引号会被转义，所以在 message 上断言脱敏结果。
+	errText := infraerrors.Message(err)
 	require.Contains(t, errText, "status 400")
 	require.Contains(t, errText, `"refresh_token":"***"`)
 	require.NotContains(t, errText, "access-secret")
