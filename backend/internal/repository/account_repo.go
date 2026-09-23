@@ -2479,8 +2479,8 @@ func (r *accountRepository) RevertProxyFallback(ctx context.Context, accountID i
 	// Probe snapshots belong to the network identity; invalidate only on a real proxy change.
 	res, err := r.sql.ExecContext(ctx, `
 		UPDATE accounts SET
-			extra=CASE WHEN type='apikey' AND proxy_id IS DISTINCT FROM proxy_fallback_origin_id
-				THEN extra - 'upstream_billing_probe' ELSE extra END,
+			extra=CASE WHEN platform='openai' AND type='apikey' AND proxy_id IS DISTINCT FROM proxy_fallback_origin_id
+				THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe' ELSE extra END,
 			proxy_id=proxy_fallback_origin_id, proxy_fallback_origin_id=NULL, updated_at=NOW()
 		WHERE id=$1 AND proxy_fallback_origin_id IS NOT NULL AND deleted_at IS NULL`, accountID)
 	if err != nil {

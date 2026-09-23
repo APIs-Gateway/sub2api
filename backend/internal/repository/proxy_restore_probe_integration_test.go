@@ -4,6 +4,7 @@ package repository
 
 import (
 	"encoding/json"
+
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -11,7 +12,7 @@ func (s *ProxyExpirySuite) TestRevertClearsBillingProbe() {
 	original := s.mkProxy("original", service.FallbackModeDirect, nil, nil)
 	backup := s.mkProxy("backup", service.FallbackModeNone, nil, nil)
 	account := s.mkAccountWithProxy(backup)
-	_, err := s.tx.ExecContext(s.ctx, `UPDATE accounts SET type='apikey',proxy_fallback_origin_id=$1,extra='{"upstream_billing_probe_enabled":true,"upstream_billing_probe":{"status":"ok","data":{"balance":123}},"keep_me":true}'::jsonb WHERE id=$2`, original, account)
+	_, err := s.tx.ExecContext(s.ctx, `UPDATE accounts SET platform='openai',type='apikey',proxy_fallback_origin_id=$1,extra='{"upstream_billing_probe_enabled":true,"upstream_billing_probe":{"status":"ok","data":{"balance":123}},"keep_me":true}'::jsonb WHERE id=$2`, original, account)
 	s.Require().NoError(err)
 	repo := newAccountRepositoryWithSQL(s.tx.Client(), s.tx, nil)
 	s.Require().NoError(repo.RevertProxyFallback(s.ctx, account))
@@ -26,13 +27,15 @@ func (s *ProxyExpirySuite) TestRevertClearsBillingProbe() {
 
 func (s *ProxyExpirySuite) TestRevertProbeInvalidationScope() {
 	for _, tc := range []struct {
-		name, kind          string
-		same, direct, clear bool
+		name, platform, kind string
+		same, direct, clear  bool
 	}{
-		{"changed API key", "apikey", false, false, true},
-		{"direct API key", "apikey", false, true, true},
-		{"same proxy", "apikey", true, false, false},
-		{"oauth metadata", "oauth", false, false, false},
+		{"changed API key", "openai", "apikey", false, false, true},
+		{"direct API key", "openai", "apikey", false, true, true},
+		{"same proxy", "openai", "apikey", true, false, false},
+		{"oauth metadata", "openai", "oauth", false, false, false},
+		// fork: 上游计费探测只对 OpenAI API Key 账号生效，与过期回退路径的清理谓词保持一致。
+		{"non-openai API key", "anthropic", "apikey", false, false, false},
 	} {
 		s.Run(tc.name, func() {
 			original := s.mkProxy("origin", service.FallbackModeNone, nil, nil)
@@ -41,7 +44,7 @@ func (s *ProxyExpirySuite) TestRevertProbeInvalidationScope() {
 				current = original
 			}
 			account := s.mkAccountWithProxy(current)
-			_, err := s.tx.ExecContext(s.ctx, `UPDATE accounts SET type=$1,proxy_fallback_origin_id=$2,extra='{"upstream_billing_probe_enabled":true,"upstream_billing_probe":{"status":"ok"},"keep_me":true}'::jsonb WHERE id=$3`, tc.kind, original, account)
+			_, err := s.tx.ExecContext(s.ctx, `UPDATE accounts SET platform=$1,type=$2,proxy_fallback_origin_id=$3,extra='{"upstream_billing_probe_enabled":true,"upstream_billing_probe":{"status":"ok"},"keep_me":true}'::jsonb WHERE id=$4`, tc.platform, tc.kind, original, account)
 			s.Require().NoError(err)
 			if tc.direct {
 				_, err = s.tx.ExecContext(s.ctx, `UPDATE accounts SET proxy_id=NULL WHERE id=$1`, account)
