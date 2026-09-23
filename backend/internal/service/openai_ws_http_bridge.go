@@ -430,7 +430,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			if shouldFailover && !accountErrorHandled {
 				s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, resp.Header, upstreamMessage, originalModel)
 			}
-			if turn == 1 && !wroteDownstream && shouldFailover {
+			// A disconnected client needs this attempt drained for usage, not replayed,
+			// even when only non-semantic heartbeats were delivered.
+			if turn == 1 && !clientDisconnected && !wroteDownstream && shouldFailover {
 				return nil, &UpstreamFailoverError{
 					StatusCode:      statusCode,
 					ResponseBody:    append([]byte(nil), upstreamMessage...),
@@ -471,7 +473,11 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 				}
 			} else {
 				sequence.Observe(clientMessage)
-				wroteDownstream = true
+				// Transport heartbeats keep the client connection alive but are not
+				// semantic output, so they must not block a pre-output failover.
+				if eventType != "keepalive" {
+					wroteDownstream = true
+				}
 			}
 		}
 
@@ -504,7 +510,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 	if err := scanner.Err(); err != nil {
 		streamErr := fmt.Errorf("read upstream http bridge stream: %w", err)
-		if turn == 1 && !wroteDownstream {
+		if turn == 1 && !clientDisconnected && !wroteDownstream {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, streamErr, true)
 		}
 		return resultWithUsage(), streamErr
@@ -513,7 +519,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	if sawDone {
 		terminalErr = errors.New("upstream http bridge stream sent [DONE] before terminal event")
 	}
-	if turn == 1 && !wroteDownstream {
+	if turn == 1 && !clientDisconnected && !wroteDownstream {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, terminalErr, true)
 	}
 	return resultWithUsage(), terminalErr
