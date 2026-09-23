@@ -564,7 +564,7 @@ func TestTryModelFilePricing_AppliesServiceTierPricing(t *testing.T) {
 func TestTryModelFilePricing_CombinesPriorityAndLongContextPricing(t *testing.T) {
 	// 用 "claude-sonnet-4"：它是本文件里已验证过的、getFallbackPricing 会
 	// 精确解析出同名 key 的型号（"sonnet"+"4"+非"3" 分支），且不落在
-	// gpt-5.6/gpt-5.4 家族——那两个家族会被 applyModelSpecificPricingPolicy
+	// gpt-5.6/gpt-5.4 家族——那两个家族会被 applyModelSpecificPricingPolicyEx
 	// 强制 PriorityExcludesLongContext=true（priority 与长上下文互斥，不叠加），
 	// 会让本用例想验证的"两者叠加"场景失真。
 	// 注意：getFallbackPricing 不是任意字符串的直接 map 查找，而是按固定的

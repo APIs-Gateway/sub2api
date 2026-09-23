@@ -422,10 +422,10 @@ func TestCalculateCost_OpenAIGPT56DynamicCatalogPrefersExplicitLongContextPrices
 func TestApplyModelSpecificPricingPolicy_GPT56CacheWritePolicy(t *testing.T) {
 	svc := newTestBillingService()
 
-	derived := svc.applyModelSpecificPricingPolicy("gpt-5.6-terra", &ModelPricing{
+	derived := svc.applyModelSpecificPricingPolicyEx("gpt-5.6-terra", &ModelPricing{
 		InputPricePerToken:         2.5e-6,
 		InputPricePerTokenPriority: 5e-6,
-	})
+	}, true, time.Time{})
 	require.InDelta(t, 3.125e-6, derived.CacheCreationPricePerToken, 1e-12)
 	require.InDelta(t, 6.25e-6, derived.CacheCreationPricePerTokenPriority, 1e-12)
 	require.Equal(t, 272000, derived.LongContextInputThreshold)
@@ -433,18 +433,18 @@ func TestApplyModelSpecificPricingPolicy_GPT56CacheWritePolicy(t *testing.T) {
 	require.InDelta(t, 1.5, derived.LongContextOutputMultiplier, 1e-12)
 	require.True(t, derived.PriorityExcludesLongContext)
 
-	explicitZero := svc.applyModelSpecificPricingPolicy("gpt-5.6-terra", &ModelPricing{
+	explicitZero := svc.applyModelSpecificPricingPolicyEx("gpt-5.6-terra", &ModelPricing{
 		InputPricePerToken:                 2.5e-6,
 		CacheCreationPriceExplicit:         true,
 		CacheCreationPricePerToken:         0,
 		CacheCreationPricePerTokenPriority: 0,
-	})
+	}, true, time.Time{})
 	require.Zero(t, explicitZero.CacheCreationPricePerToken)
 	require.Zero(t, explicitZero.CacheCreationPricePerTokenPriority)
 
-	legacy := svc.applyModelSpecificPricingPolicy("gpt-5.4", &ModelPricing{
+	legacy := svc.applyModelSpecificPricingPolicyEx("gpt-5.4", &ModelPricing{
 		InputPricePerToken: 2.5e-6,
-	})
+	}, true, time.Time{})
 	require.Equal(t, 272000, legacy.LongContextInputThreshold)
 	require.InDelta(t, 2.0, legacy.LongContextInputMultiplier, 1e-12)
 	require.InDelta(t, 1.5, legacy.LongContextOutputMultiplier, 1e-12)

@@ -1458,18 +1458,9 @@ func (s *BillingService) calculateCostInternal(model string, tokens UsageTokens,
 	return s.computeTokenBreakdown(pricing, tokens, rateMultiplier, serviceTier, true), nil
 }
 
-// applyModelSpecificPricingPolicy 应用模型特定定价策略（GPT-5.6 长上下文/缓存写入、
-// DeepSeek 官方价强制覆盖等）。强制 DeepSeek 官方价且无显式计费时点（pro→Flash
-// 切换按当前时刻判定），供无既有时点的策略修正场景与测试使用；计费/展示主路径
-// 分别经 calculateTokenCost 与 getModelPricingAt 显式传时点，分组/渠道自定义定价
-// 用 applyModelSpecificPricingPolicyEx 关闭强制，保留运营者配置。
-func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *ModelPricing) *ModelPricing {
-	return s.applyModelSpecificPricingPolicyEx(model, pricing, true, time.Time{})
-}
-
-// applyModelSpecificPricingPolicyEx 与 applyModelSpecificPricingPolicy 相同，
-// 但由调用方控制是否强制 DeepSeek 官方价（forceDeepSeekRates），并显式传入
-// 计费时点 pricingAt（零值表示按当前时刻判定）。
+// applyModelSpecificPricingPolicyEx 应用模型特定定价策略（GPT-5.6 长上下文/缓存写入、
+// DeepSeek 官方价强制覆盖等）。由调用方控制是否强制 DeepSeek 官方价
+// （forceDeepSeekRates），并显式传入计费时点 pricingAt（零值表示按当前时刻判定）。
 // calculateTokenCost 对分组/渠道自定义定价（Source 非 LiteLLM）传 false：
 // 强制覆盖会把运营者配置的售价盖回官方价，违反自定义定价语义。
 func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing *ModelPricing, forceDeepSeekRates bool, pricingAt time.Time) *ModelPricing {
