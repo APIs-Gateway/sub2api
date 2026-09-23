@@ -3111,7 +3111,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// matching the client-requested name.
 	instructions := gjson.GetBytes(body, "instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
-	if instructionsEmpty && !compatMessagesBridge {
+	if instructionsEmpty && account.UsesOpenAICodexProtocol() && !compatMessagesBridge {
 		instructionsModel := upstreamModel
 		if strings.TrimSpace(instructionsModel) == "" {
 			instructionsModel = reqModel
