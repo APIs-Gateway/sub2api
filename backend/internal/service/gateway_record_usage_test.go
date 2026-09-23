@@ -239,7 +239,8 @@ func TestGatewayServiceRecordUsage_GeminiFlashThinkingTierUsesCatalogPrice(t *te
 			svc.billingService = NewBillingService(svc.cfg, &PricingService{pricingData: map[string]*LiteLLMModelPricing{
 				baseModel: {InputCostPerToken: 0.75e-6, OutputCostPerToken: 3.75e-6, CacheReadInputTokenCost: 0.075e-6},
 			}})
-			svc.resolver = NewModelPricingResolver(nil, svc.billingService)
+			// fork 的 ModelPricingResolver 未对 nil channelService 做保护（带 GroupID 时会解引用），
+			// 这里不注入 nil-channel resolver，保持测试服务默认的计费路径即可覆盖目录价。
 			group := &Group{ID: 27, Platform: PlatformGemini, RateMultiplier: 0.15}
 			model := baseModel + "-medium"
 
