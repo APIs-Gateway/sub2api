@@ -58,7 +58,7 @@ func TestOpenAIResponsesWebSocket_BeforeTurnAdmissionRejectionIsNotAccountFailur
 			var rejecting atomic.Bool
 			cache := &concurrencyCacheMock{
 				acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) {
-					return !(tt.rejectUser && rejecting.Load()), nil
+					return !tt.rejectUser || !rejecting.Load(), nil
 				},
 				acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
 					return tt.rejectUser || !rejecting.Load(), nil
