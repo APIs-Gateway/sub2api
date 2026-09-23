@@ -49,3 +49,17 @@ func TestAntigravityAccount_Gemini36FlashPassthroughWithCustomMapping(t *testing
 	}
 	require.False(t, account.IsModelSupported("gemini-2.0-pro"))
 }
+
+// On the forwarding path the bare gemini-3.6-flash ID (a runtime default
+// self-map, not user intent) resolves to a thinking-tier variant, while the
+// explicit tier IDs pass through unchanged.
+func TestAntigravityGatewayGetMappedModel_Gemini36FlashDefaultCatalog(t *testing.T) {
+	svc := &AntigravityGatewayService{}
+	account := newAntigravityAccountWithMapping(map[string]string{})
+
+	require.Equal(t, "gemini-3.6-flash-high", svc.getMappedModel(account, "gemini-3.6-flash"))
+	require.Equal(t, "gemini-3.6-flash-low", svc.getMappedModelForThinkingLevel(account, "gemini-3.6-flash", "low"))
+	for _, model := range antigravityGemini36FlashModels[1:] {
+		require.Equal(t, model, svc.getMappedModel(account, model), model)
+	}
+}
