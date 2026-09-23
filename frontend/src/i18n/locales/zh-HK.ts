@@ -7023,6 +7023,7 @@
         customMethodType: '支付方式',
         customMethodUpstreamType: '上游 type',
         customMethodDisplayName: '顯示名稱',
+        customMethodDisplayNamePlaceholder: '如：信用卡',
         stripeWebhookHint: '請在 Stripe Dashboard 中將以下地址配置為 Webhook 端點：',
         stripeWebhookApiVersionHint: 'Webhook 端點的 API 版本請與當前集成的 Stripe SDK 對齊，建議選擇 {version}；版本不一致可能導致回調事件解析失敗。',
         airwallexWebhookHint: '請在 Airwallex 後台將以下地址配置為 Webhook 端點；事件至少選擇 Payment Intent -> Succeeded（payment_intent.succeeded），建議同時選擇 Payment Intent -> Cancelled（payment_intent.cancelled）；API version 選擇帳戶預設或最新穩定版本。',
