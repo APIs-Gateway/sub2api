@@ -905,7 +905,7 @@ func TestForwardAsRawChatCompletions_EmptyStreamBeforeOutputTriggersFailover(t *
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Equal(t, OpenAIUpstreamStreamTruncatedCode,
 		gjson.GetBytes(failoverErr.ResponseBody, "error.code").String())
-	require.True(t, failoverErr.ShouldRetryNextAccount())
+	require.False(t, failoverErr.RetryableOnSameAccount, "截断应直接换号，而非同账号重试")
 	require.False(t, c.Writer.Written(), "换号重试前不得提交 200 响应头")
 	require.Empty(t, rec.Body.String())
 }

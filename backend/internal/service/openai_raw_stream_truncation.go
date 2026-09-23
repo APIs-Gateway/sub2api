@@ -32,7 +32,7 @@ const openAIRawStreamTruncatedUpstreamMessage = "Upstream Chat Completions strea
 type openAIRawStreamTerminalState struct {
 	// sawDataLine 表示上游至少发过一行 `data:`，即响应确实是 SSE 语义流。
 	// 非 SSE 响应体（上游对 stream 请求返回裸 JSON）不参与截断判定，保持既有透传行为。
-	sawDataLine     bool
+	sawDataLine bool
 	// sawNonSSEBody 表示上游发过既非 data:、也非 SSE 注释/字段的非空行，即上游对
 	// stream 请求回了裸 JSON 等非 SSE 响应体。fork 在首个 data 行之前会把非 data 行
 	// 暂存进 pendingLines（holdPreDataLines），这类响应体直到收尾 flush 才写给客户端，
