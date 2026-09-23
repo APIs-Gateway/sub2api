@@ -111,6 +111,7 @@ func TestOpenAIWSToolCallReplayCollectorAllItems(t *testing.T) {
 	require.Equal(t, "reasoning", gjson.GetBytes(all[2], "type").String())
 	require.Equal(t, "msg_2", gjson.GetBytes(all[3], "id").String())
 
-	all[0][0] = 'x'
-	require.Equal(t, byte('{'), collector.AllItems()[0][0], "AllItems must return clones")
+	// Bodies are shared immutable replay items; only the header slice is fresh.
+	all[0] = nil
+	require.Equal(t, "msg_1", gjson.GetBytes(collector.AllItems()[0], "id").String(), "AllItems must return a fresh header slice")
 }
