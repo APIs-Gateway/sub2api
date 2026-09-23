@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -318,12 +319,14 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	require.NoError(t, accountRepo.Update(ctx, accountForUpdate))
 
 	// Exercise the SQLite expiry/fallback path without PostgreSQL JSON operators.
+	expiredAt := time.Now().Add(-time.Hour)
 	sweepProxy, err := client.Proxy.Create().
 		SetName("sweep-proxy").
 		SetProtocol("http").
 		SetHost("sweep.example").
 		SetPort(8081).
 		SetStatus(service.StatusActive).
+		SetExpiresAt(expiredAt).
 		Save(ctx)
 	require.NoError(t, err)
 	sweepAccount, err := client.Account.Create().
@@ -342,7 +345,7 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 	require.NoError(t, err)
 
 	sweepRepo := &proxyRepository{client: client}
-	changed, err := sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, sweepProxy.ID, nil, true)
+	changed, err := sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, *proxyEntityToService(sweepProxy), time.Now(), nil, true)
 	require.NoError(t, err)
 	require.Equal(t, []int64{sweepAccount.ID}, changed)
 	sweptProxy, err := client.Proxy.Get(ctx, sweepProxy.ID)
@@ -368,6 +371,7 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 		SetHost("redirect.example").
 		SetPort(8083).
 		SetStatus(service.StatusActive).
+		SetExpiresAt(expiredAt).
 		Save(ctx)
 	require.NoError(t, err)
 	redirectAccount, err := client.Account.Create().
@@ -385,7 +389,7 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 		Save(ctx)
 	require.NoError(t, err)
 	targetProxyID := targetProxy.ID
-	changed, err = sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, redirectProxy.ID, &targetProxyID, true)
+	changed, err = sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, *proxyEntityToService(redirectProxy), time.Now(), &targetProxyID, true)
 	require.NoError(t, err)
 	require.Equal(t, []int64{redirectAccount.ID}, changed)
 	redirected, err := client.Account.Get(ctx, redirectAccount.ID)
@@ -400,6 +404,7 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 		SetHost("clear.example").
 		SetPort(8084).
 		SetStatus(service.StatusActive).
+		SetExpiresAt(expiredAt).
 		Save(ctx)
 	require.NoError(t, err)
 	clearAccount, err := client.Account.Create().
@@ -416,7 +421,7 @@ func TestProbePersistenceSQLiteCoversEntEdgePaths(t *testing.T) {
 		SetAutoPauseOnExpired(false).
 		Save(ctx)
 	require.NoError(t, err)
-	changed, err = sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, clearProxy.ID, nil, false)
+	changed, err = sweepRepo.sweepOneExpiredProxyOnExec(ctx, client, client, *proxyEntityToService(clearProxy), time.Now(), nil, false)
 	require.NoError(t, err)
 	require.Zero(t, changed)
 	cleared, err := client.Account.Get(ctx, clearAccount.ID)
@@ -471,17 +476,19 @@ func TestSchedulerOutboxMySQLDedupUsesPortablePlaceholderSQL(t *testing.T) {
 func TestSweepExpiredProxyWrapperUsesTransactionAndRollsBackOnError(t *testing.T) {
 	db, client := newSQLiteProbePersistenceClient(t)
 	ctx := context.Background()
+	expiredAt := time.Now().Add(-time.Hour)
 	proxyRow, err := client.Proxy.Create().
 		SetName("wrapper-proxy").
 		SetProtocol("http").
 		SetHost("wrapper.example").
 		SetPort(8080).
 		SetStatus(service.StatusActive).
+		SetExpiresAt(expiredAt).
 		Save(ctx)
 	require.NoError(t, err)
 
 	repo := &proxyRepository{client: client}
-	changed, err := repo.sweepOneExpiredProxy(ctx, proxyRow.ID, nil, true)
+	changed, err := repo.sweepOneExpiredProxy(ctx, *proxyEntityToService(proxyRow), time.Now(), nil, true)
 	require.NoError(t, err)
 	require.Zero(t, changed)
 	updated, err := client.Proxy.Get(ctx, proxyRow.ID)
@@ -494,6 +501,7 @@ func TestSweepExpiredProxyWrapperUsesTransactionAndRollsBackOnError(t *testing.T
 		SetHost("rollback.example").
 		SetPort(8081).
 		SetStatus(service.StatusActive).
+		SetExpiresAt(expiredAt).
 		Save(ctx)
 	require.NoError(t, err)
 	_, err = client.Account.Create().
@@ -514,6 +522,6 @@ func TestSweepExpiredProxyWrapperUsesTransactionAndRollsBackOnError(t *testing.T
 		_, err := db.Exec("DROP TABLE scheduler_outbox")
 		return err
 	}())
-	_, err = repo.sweepOneExpiredProxy(ctx, proxyWithSnapshot.ID, nil, false)
+	_, err = repo.sweepOneExpiredProxy(ctx, *proxyEntityToService(proxyWithSnapshot), time.Now(), nil, false)
 	require.Error(t, err)
 }
