@@ -52,6 +52,14 @@ type ConcurrencyCache interface {
 	CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error
 }
 
+// ExpiredAccountSlotKeyCleaner is an optional cache capability for periodic
+// cleanup. Keeping it separate preserves compatibility with lightweight cache
+// implementations while allowing Redis-backed caches to use their active-key
+// index instead of enumerating every schedulable account from the database.
+type ExpiredAccountSlotKeyCleaner interface {
+	CleanupExpiredAccountSlotKeys(ctx context.Context) error
+}
+
 // APIKeyConcurrencyCache is an optional stats-only extension. API key slots
 // never enforce a separate limit; they only expose live per-key request counts.
 type APIKeyConcurrencyCache interface {
@@ -550,11 +558,23 @@ func (s *ConcurrencyService) CleanupExpiredAccountSlots(ctx context.Context, acc
 
 // StartSlotCleanupWorker starts a background cleanup worker for expired account slots.
 func (s *ConcurrencyService) StartSlotCleanupWorker(accountRepo AccountRepository, interval time.Duration) {
-	if s == nil || s.cache == nil || accountRepo == nil || interval <= 0 {
+	if s == nil || s.cache == nil || interval <= 0 {
 		return
 	}
 
 	runCleanup := func() {
+		if cleaner, ok := s.cache.(ExpiredAccountSlotKeyCleaner); ok {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := cleaner.CleanupExpiredAccountSlotKeys(cleanupCtx)
+			cancel()
+			if err != nil {
+				logger.LegacyPrintf("service.concurrency", "Warning: cleanup expired active account slots failed: %v", err)
+			}
+			return
+		}
+		if accountRepo == nil {
+			return
+		}
 		listCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		accounts, err := accountRepo.ListSchedulable(listCtx)
 		cancel()
