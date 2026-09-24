@@ -107,6 +107,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 	upstreamBody = updatedBody
 	if account.Platform == PlatformGrok {
+		normalizedBody, normalizeErr := normalizeGrokChatReasoningEffort(upstreamBody, upstreamModel)
+		if normalizeErr != nil {
+			return nil, fmt.Errorf("normalize Grok Chat reasoning effort: %w", normalizeErr)
+		}
+		upstreamBody = normalizedBody
 		strippedBody, stripErr := stripRedundantGrokChatViewImageTool(upstreamBody)
 		if stripErr != nil {
 			return nil, fmt.Errorf("strip redundant Grok Chat view_image tool: %w", stripErr)
@@ -115,6 +120,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		if stripErr != nil {
 			return nil, fmt.Errorf("sanitize Grok unsupported fields: %w", stripErr)
 		}
+		// Usage metadata must reflect the normalized body actually sent to xAI.
+		// In particular, camelCase reasoningEffort is rewritten to snake_case
+		// above, so extracting it from the original client body would lose it.
+		reasoningEffort = extractOpenAIReasoningEffortFromBody(upstreamBody, upstreamModel, billingModel, originalModel)
+		reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, upstreamBody, billingModel)
 	}
 	if clientStream {
 		var usageErr error
