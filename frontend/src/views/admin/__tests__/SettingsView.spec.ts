@@ -779,7 +779,7 @@ describe("admin SettingsView payment visible method controls", () => {
     );
   });
 
-  it("links payment guidance to README sections instead of removed payment docs", async () => {
+  it("links payment guidance to this project's payment docs", async () => {
     const wrapper = mountView();
 
     await flushPromises();
@@ -793,14 +793,30 @@ describe("admin SettingsView payment visible method controls", () => {
 
     expect(paymentLinks).toHaveLength(2);
     expect(paymentLinks[0]?.attributes("href")).toBe(
-      "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md",
+      "https://github.com/APIs-Gateway/sub2api/blob/main/docs/PAYMENT_CN.md",
     );
     expect(paymentLinks[1]?.attributes("href")).toBe(
-      "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md#支持的支付方式",
+      "https://github.com/APIs-Gateway/sub2api/blob/main/docs/PAYMENT_CN.md#支持的支付方式",
     );
     for (const link of paymentLinks) {
       expect(link.attributes("href")).toContain("docs/PAYMENT");
     }
+  });
+
+  it("uses the neutral site name in the payment product fallback", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      payment_enabled: true,
+      payment_product_name_prefix: "",
+      payment_product_name_suffix: "",
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    expect(wrapper.find('input[placeholder="API Gateway"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("API Gateway 100 CNY");
   });
 
   it("does not submit legacy visible payment method settings", async () => {

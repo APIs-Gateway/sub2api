@@ -57,4 +57,25 @@ describe('LegalDocumentView locale rendering', () => {
     expect(wrapper.text()).toContain('adminCompliance.title')
     expect(wrapper.find('.legal-document-content').exists()).toBe(true)
   })
+
+  it('renders the neutral service name when legal settings omit a site name', async () => {
+    getPublicSettings.mockResolvedValue({
+      site_name: '',
+      site_logo: '',
+      login_agreement_documents: []
+    })
+
+    const wrapper = mount(LegalDocumentView, {
+      global: {
+        stubs: {
+          RouterLink: { template: '<a><slot /></a>' },
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('API Gateway')
+  })
 })

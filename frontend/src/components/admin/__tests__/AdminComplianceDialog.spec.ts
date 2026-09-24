@@ -47,6 +47,7 @@ describe('AdminComplianceDialog locale rendering', () => {
   beforeEach(() => {
     currentLocale.value = 'en'
     complianceStore.shouldShow = true
+    complianceStore.status.version = 'v2026.06.10'
     complianceStore.status.document_url_zh = 'https://example.com/admin-compliance.zh.md'
     complianceStore.status.document_url_en = 'https://example.com/admin-compliance.en.md'
   })
@@ -71,5 +72,32 @@ describe('AdminComplianceDialog locale rendering', () => {
 
     expect(wrapper.find('a').attributes('href')).toBe('https://example.com/admin-compliance.zh.md')
     expect(wrapper.find('.legal-document-content').exists()).toBe(true)
+  })
+
+  it('uses the application legal page and current version when the API omits optional metadata', () => {
+    complianceStore.status.version = ''
+    complianceStore.status.document_url_zh = ''
+    complianceStore.status.document_url_en = ''
+
+    const wrapper = mount(AdminComplianceDialog, {
+      global: {
+        stubs: {
+          BaseDialog: {
+            props: ['show'],
+            template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+          },
+          Icon: true,
+          Input: {
+            template: '<input />'
+          }
+        }
+      }
+    })
+
+    expect(wrapper.text()).toContain('v2026.09.22')
+    expect(wrapper.find('a').attributes('href')).toBe('/legal/admin-compliance')
+
+    currentLocale.value = 'zh-HK'
+    expect(wrapper.find('a').attributes('href')).toBe('/legal/admin-compliance')
   })
 })

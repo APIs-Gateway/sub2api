@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { updateFavicon } from '@/utils/branding'
+import { DEFAULT_SITE_NAME, updateFavicon } from '@/utils/branding'
 
 describe('updateFavicon', () => {
   beforeEach(() => {
@@ -38,5 +38,11 @@ describe('updateFavicon', () => {
     const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
     expect(link?.getAttribute('href')).toBe(dataUrl)
     expect(link?.type).toBe('image/x-icon')
+  })
+})
+
+describe('DEFAULT_SITE_NAME', () => {
+  it('is a neutral fallback for deployments without a configured site name', () => {
+    expect(DEFAULT_SITE_NAME).toBe('API Gateway')
   })
 })
