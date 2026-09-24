@@ -295,6 +295,92 @@ func TestForwardAsRawChatCompletions_OnlyGrokRemovesExternalWebAccess(t *testing
 	}
 }
 
+func TestForwardAsRawChatCompletions_Grok45OnlyStripsReasoningUnsupportedFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{
+		"model":"grok",
+		"messages":[{"role":"user","content":"hello"}],
+		"presence_penalty":0.1,
+		"presencePenalty":0.2,
+		"frequency_penalty":0.3,
+		"frequencyPenalty":0.4,
+		"stop":["done"],
+		"stream":false
+	}`)
+	for _, tc := range []struct {
+		name          string
+		platform      string
+		mappedModel   string
+		wantStripped  bool
+	}{
+		{name: "Grok 4.5 final model", platform: PlatformGrok, mappedModel: "grok-4.5", wantStripped: true},
+		{name: "Grok 4.3 final model", platform: PlatformGrok, mappedModel: "grok-4.3", wantStripped: false},
+		{name: "OpenAI-compatible final model", platform: PlatformOpenAI, mappedModel: "gpt-5.4", wantStripped: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(
+					`{"id":"chatcmpl_grok_fields","object":"chat.completion","model":"` + tc.mappedModel + `","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+				)),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			account := rawChatCompletionsTestAccount()
+			account.Platform = tc.platform
+			account.Credentials["model_mapping"] = map[string]any{"grok": tc.mappedModel}
+			if tc.platform == PlatformGrok {
+				account.Credentials["api_key"] = "xai-test-key"
+			}
+
+			result, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, tc.mappedModel, gjson.GetBytes(upstream.lastBody, "model").String())
+			for _, field := range grok45ReasoningUnsupportedTopLevelFields {
+				require.Equal(t, !tc.wantStripped, gjson.GetBytes(upstream.lastBody, field).Exists(), field)
+			}
+		})
+	}
+}
+
+func TestForwardAsChatCompletions_GrokAPIKeyRawStripsGrok45Fields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"grok","messages":[{"role":"user","content":"hello"}],"presence_penalty":0.1,"frequencyPenalty":0.2,"stop":"done","stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_grok_45_public","object":"chat.completion","model":"grok-4.5","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+	account := rawChatCompletionsTestAccount()
+	account.Platform = PlatformGrok
+	account.Credentials["api_key"] = "xai-test-key"
+	account.Credentials["model_mapping"] = map[string]any{"grok": "grok-4.5"}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "grok-4.5", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "presence_penalty").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "frequencyPenalty").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "stop").Exists())
+}
+
 // TestForwardAsRawChatCompletions_OpenAIAPIKeyMissingCredentialsErrorUnchanged 锁定
 // issue #796 的修复（凭证解析改走 s.GetAccessToken）没有改变已有 OpenAI+APIKey 账号在
 // 缺失 api_key 时的报错文案和"从不触达上游"行为。
