@@ -5744,6 +5744,24 @@
           requestsWithFirstToken: 'Requests With First Token'
         }
       },
+      ingressRejects: {
+        title: 'Ingress Rejections',
+        description: 'Sanitized, minute-bucketed rejection counters. Client networks are masked prefixes.',
+        allReasons: 'All reasons',
+        allRouteFamilies: 'All routes',
+        allProtocols: 'All protocols',
+        failedToLoad: 'Failed to load ingress rejection aggregates',
+        empty: 'No ingress rejection aggregates for the current filters',
+        table: {
+          bucket: 'Minute bucket',
+          reason: 'Reason',
+          routeFamily: 'Route family',
+          protocol: 'Protocol',
+          clientNetwork: 'Client network',
+          requests: 'Rejections',
+          lastSeen: 'Last seen'
+        }
+      },
       customTimeRange: {
         startTime: 'Start Time',
         endTime: 'End Time'
