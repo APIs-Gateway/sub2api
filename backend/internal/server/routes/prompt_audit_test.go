@@ -24,12 +24,15 @@ func TestRegisterPromptAuditRoutes(t *testing.T) {
 	routes := router.Routes()
 	paths := make(map[string]string)
 	for _, route := range routes {
-		if route.Path == "/api/v1/admin/prompt-audit/events" || route.Path == "/api/v1/admin/prompt-audit/events/:id" {
+		if route.Path == "/api/v1/admin/prompt-audit/events" || route.Path == "/api/v1/admin/prompt-audit/events/:id" ||
+			route.Path == "/api/v1/admin/prompt-audit/events/delete-preview" || route.Path == "/api/v1/admin/prompt-audit/events/delete-by-filter" {
 			paths[route.Path] = route.Method
 		}
 	}
 	require.Equal(t, map[string]string{
-		"/api/v1/admin/prompt-audit/events":     "GET",
-		"/api/v1/admin/prompt-audit/events/:id": "GET",
+		"/api/v1/admin/prompt-audit/events":                  "GET",
+		"/api/v1/admin/prompt-audit/events/:id":              "GET",
+		"/api/v1/admin/prompt-audit/events/delete-preview":   "POST",
+		"/api/v1/admin/prompt-audit/events/delete-by-filter": "POST",
 	}, paths)
 }
