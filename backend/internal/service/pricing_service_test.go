@@ -365,7 +365,7 @@ func TestGetModelPricing_Gpt56CompactAliasWithDateUsesStaticFallback(t *testing.
 	require.InDelta(t, 2e-7, got.CacheReadInputTokenCost, 1e-12)
 }
 
-func TestDefaultPricingIncludesCodexAutoReview(t *testing.T) {
+func TestDefaultPricingUsesCurrentCodexAutoReviewBaseRates(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
 	require.NoError(t, err)
 
@@ -376,9 +376,96 @@ func TestDefaultPricingIncludesCodexAutoReview(t *testing.T) {
 
 	got := svc.GetModelPricing("codex-auto-review")
 	require.NotNil(t, got)
-	require.InDelta(t, 5e-6, got.InputCostPerToken, 1e-12)
-	require.InDelta(t, 3e-5, got.OutputCostPerToken, 1e-12)
-	require.InDelta(t, 5e-7, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 0.2e-6, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 1.2e-6, got.OutputCostPerToken, 1e-12)
+	require.InDelta(t, 0.02e-6, got.CacheReadInputTokenCost, 1e-12)
+
+	// Auto-review is an internal Codex model. Do not infer public GPT-5.6 API
+	// service-tier, cache-write, or long-context pricing without an upstream
+	// usage contract for this dedicated model.
+	require.Zero(t, got.InputCostPerTokenPriority)
+	require.Zero(t, got.OutputCostPerTokenPriority)
+	require.Zero(t, got.CacheReadInputTokenCostPriority)
+	require.Zero(t, got.CacheCreationInputTokenCost)
+	require.Zero(t, got.CacheCreationInputTokenCostPriority)
+	require.Zero(t, got.LongContextInputTokenThreshold)
+}
+
+func TestParsePricingDataKeepsCodexAutoReviewOnInternalBaseRateContract(t *testing.T) {
+	// The default online catalog currently describes this internal model as a
+	// complete gpt-5.6-luna alias. Verify that a hash-triggered remote refresh
+	// cannot reintroduce public cache-write, long-context, or service-tier fees.
+	data := []byte(`{
+		"codex-auto-review": {
+			"input_cost_per_token": 2e-7,
+			"input_cost_per_token_above_272k_tokens": 4e-7,
+			"input_cost_per_token_priority": 4e-7,
+			"output_cost_per_token": 1.2e-6,
+			"output_cost_per_token_above_272k_tokens": 1.8e-6,
+			"output_cost_per_token_priority": 2.4e-6,
+			"cache_creation_input_token_cost": 2.5e-7,
+			"cache_creation_input_token_cost_above_272k_tokens": 5e-7,
+			"cache_creation_input_token_cost_priority": 5e-7,
+			"cache_read_input_token_cost": 2e-8,
+			"cache_read_input_token_cost_above_272k_tokens": 4e-8,
+			"cache_read_input_token_cost_priority": 4e-8,
+			"long_context_input_token_threshold": 272000,
+			"long_context_input_cost_multiplier": 2,
+			"long_context_output_cost_multiplier": 1.5,
+			"supports_service_tier": true
+		}
+	}`)
+
+	pricingData, err := (&PricingService{}).parsePricingData(data)
+	require.NoError(t, err)
+	got := pricingData["codex-auto-review"]
+	require.NotNil(t, got)
+	require.InDelta(t, 0.2e-6, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 0.02e-6, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 1.2e-6, got.OutputCostPerToken, 1e-12)
+	require.Zero(t, got.CacheCreationInputTokenCost)
+	require.Zero(t, got.CacheCreationInputTokenCostAbove272KTokens)
+	require.Zero(t, got.CacheCreationInputTokenCostPriority)
+	require.Zero(t, got.CacheReadInputTokenCostAbove272KTokens)
+	require.Zero(t, got.CacheReadInputTokenCostPriority)
+	require.Zero(t, got.InputCostPerTokenAbove272KTokens)
+	require.Zero(t, got.InputCostPerTokenPriority)
+	require.Zero(t, got.OutputCostPerTokenAbove272KTokens)
+	require.Zero(t, got.OutputCostPerTokenPriority)
+	require.Zero(t, got.LongContextInputTokenThreshold)
+	require.Zero(t, got.LongContextInputCostMultiplier)
+	require.Zero(t, got.LongContextOutputCostMultiplier)
+	require.False(t, got.SupportsServiceTier)
+}
+
+func TestApplyCodexAutoReviewPricingPolicyReplacesRemoteAliasAndAcceptsNil(t *testing.T) {
+	// A nil map is a defensive no-op; parsePricingData always supplies a map,
+	// but this keeps the policy safe if its call site is refactored later.
+	applyCodexAutoReviewPricingPolicy(nil)
+
+	remoteAlias := &LiteLLMModelPricing{InputCostPerToken: 2e-7}
+	remoteAlias.OutputCostPerToken = 1.2e-6
+	remoteAlias.CacheCreationInputTokenCost = 2.5e-7
+	remoteAlias.InputCostPerTokenAbove272KTokens = 4e-7
+	remoteAlias.OutputCostPerTokenPriority = 2.4e-6
+	remoteAlias.LongContextInputTokenThreshold = 272000
+	remoteAlias.LongContextInputCostMultiplier = 2
+	remoteAlias.LongContextOutputCostMultiplier = 1.5
+	remoteAlias.SupportsServiceTier = true
+	pricingData := map[string]*LiteLLMModelPricing{"codex-auto-review": remoteAlias}
+
+	applyCodexAutoReviewPricingPolicy(pricingData)
+
+	got := pricingData["codex-auto-review"]
+	require.NotNil(t, got)
+	require.InDelta(t, 0.2e-6, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 0.02e-6, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 1.2e-6, got.OutputCostPerToken, 1e-12)
+	require.Zero(t, got.CacheCreationInputTokenCost)
+	require.Zero(t, got.InputCostPerTokenAbove272KTokens)
+	require.Zero(t, got.OutputCostPerTokenPriority)
+	require.Zero(t, got.LongContextInputTokenThreshold)
+	require.False(t, got.SupportsServiceTier)
 }
 
 func TestDefaultPricingIncludesGPT56LongContextMetadata(t *testing.T) {

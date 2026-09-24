@@ -625,7 +625,29 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		return nil, fmt.Errorf("no valid pricing entries found")
 	}
 
+	applyCodexAutoReviewPricingPolicy(result)
+
 	return result, nil
+}
+
+// applyCodexAutoReviewPricingPolicy keeps the internal auto-review model on
+// its documented base-rate contract even when the shared remote catalog maps
+// it to a public GPT-5.6 variant. That catalog is loaded on normal startup,
+// so applying this at parse time covers local fallback, initial remote sync,
+// and every later hash-triggered refresh without changing other model data.
+func applyCodexAutoReviewPricingPolicy(pricingData map[string]*LiteLLMModelPricing) {
+	if pricingData == nil {
+		return
+	}
+
+	pricingData["codex-auto-review"] = &LiteLLMModelPricing{
+		InputCostPerToken:       0.2e-6,
+		CacheReadInputTokenCost: 0.02e-6,
+		OutputCostPerToken:      1.2e-6,
+		LiteLLMProvider:         "openai",
+		Mode:                    "chat",
+		SupportsPromptCaching:   true,
+	}
 }
 
 // loadPricingData 从本地文件加载价格数据
