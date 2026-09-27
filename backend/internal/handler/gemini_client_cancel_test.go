@@ -5,9 +5,11 @@ package handler
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -25,11 +27,19 @@ type clientCancelUpstream struct {
 	service.HTTPUpstream
 	cancel context.CancelFunc
 	calls  atomic.Int32
+	status int
 }
 
 func (u *clientCancelUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	u.calls.Add(1)
 	u.cancel()
+	if u.status != 0 {
+		return &http.Response{
+			StatusCode: u.status,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"upstream unavailable"}}`)),
+		}, nil
+	}
 	return nil, &url.Error{Op: "Post", URL: req.URL.String(), Err: context.Canceled}
 }
 
@@ -127,4 +137,23 @@ func TestGatewayChatCompletions_GeminiClientCancelBeforeUpstreamResponseMarks499
 	require.Equal(t, statusClientClosedRequest, rec.Code)
 	require.Zero(t, rec.Body.Len())
 	require.Zero(t, opsQueued)
+}
+
+// 已收到真实上游 503 后客户端断开：保留上游失败的 ops 记录，停止等待和后续重试。
+func TestGatewayChatCompletions_GeminiClientCancelDuringRetryBackoff(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	f := newGeminiClientCancelFixture(t)
+	f.upstream.status = http.StatusServiceUnavailable
+
+	rec, opsQueued := f.serve(t,
+		"/v1/chat/completions",
+		"/v1/chat/completions",
+		`{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hi"}],"stream":true}`,
+		f.handler.ChatCompletions,
+	)
+
+	require.Equal(t, int32(1), f.upstream.calls.Load())
+	require.Equal(t, statusClientClosedRequest, rec.Code)
+	require.Zero(t, rec.Body.Len())
+	require.Equal(t, int64(1), opsQueued)
 }
