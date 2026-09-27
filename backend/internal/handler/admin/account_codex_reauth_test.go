@@ -1,13 +1,17 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 func newCodexReauthTestAccount(accessToken string, extraCreds map[string]any) service.Account {
@@ -46,6 +50,70 @@ func buildCodexAuthJSON(t *testing.T, accessToken, refreshToken string) string {
 		t.Fatalf("marshal auth.json: %v", err)
 	}
 	return string(raw)
+}
+
+func postCodexReauthTestRequest(handler *AccountHandler, accountID, body string) *httptest.ResponseRecorder {
+	router := gin.New()
+	router.POST("/accounts/:id/reauth/codex-session", handler.ReauthCodexSession)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/accounts/"+accountID+"/reauth/codex-session", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func TestReauthCodexSessionHTTPRejectsWrongTargetAndMalformedInput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	token := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(time.Hour))
+	validBody, _ := json.Marshal(CodexSessionReauthRequest{Content: buildCodexAuthJSON(t, token, "rt-new")})
+	base := newCodexReauthTestAccount(token, nil)
+	wrongPlatform := base
+	wrongPlatform.Platform = service.PlatformAnthropic
+	wrongType := base
+	wrongType.Type = service.AccountTypeAPIKey
+	agentIdentity := base
+	agentIdentity.Credentials = map[string]any{"auth_mode": service.OpenAIAuthModeAgentIdentity}
+
+	cases := []struct {
+		name      string
+		accountID string
+		body      string
+		account   service.Account
+	}{
+		{"invalid ID", "not-an-id", string(validBody), base},
+		{"malformed JSON", "10", "{", base},
+		{"missing content", "10", `{}`, base},
+		{"wrong platform", "10", string(validBody), wrongPlatform},
+		{"wrong type", "10", string(validBody), wrongType},
+		{"agent identity", "10", string(validBody), agentIdentity},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newCodexImportMemoryAdminService([]service.Account{tc.account})
+			handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			recorder := postCodexReauthTestRequest(handler, tc.accountID, tc.body)
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", recorder.Code, recorder.Body.String())
+			}
+			if len(svc.updatedAccounts) != 0 {
+				t.Fatalf("updated accounts = %d, want 0", len(svc.updatedAccounts))
+			}
+		})
+	}
+}
+
+func TestReauthCodexSessionHTTPUpdatesSelectedAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldToken := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(time.Hour))
+	existing := newCodexReauthTestAccount(oldToken, map[string]any{"refresh_token": "rt-old"})
+	svc := &codexReauthRecordingService{codexImportMemoryAdminService: newCodexImportMemoryAdminService([]service.Account{existing})}
+	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	newToken := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(2*time.Hour))
+	body, _ := json.Marshal(CodexSessionReauthRequest{Content: buildCodexAuthJSON(t, newToken, "rt-new")})
+	recorder := postCodexReauthTestRequest(handler, "10", string(body))
+	if recorder.Code != http.StatusOK || len(svc.updatedAccounts) != 1 || svc.updatedAccounts[0].id != existing.ID || svc.clearCalls != 1 {
+		t.Fatalf("status = %d, updates = %+v, clear calls = %d; body = %s", recorder.Code, svc.updatedAccounts, svc.clearCalls, recorder.Body.String())
+	}
 }
 
 func TestReauthCodexSessionReplacesCredentialsOfTargetAccountOnly(t *testing.T) {
@@ -117,10 +185,10 @@ func TestReauthCodexSessionRejectsConflictingJSONAndTokenIdentity(t *testing.T) 
 	// A Team workspace ID is shared; JSON metadata must not hide a different JWT user.
 	otherToken := buildCodexAccessToken(t, "workspace-1", "user-2", time.Now().Add(time.Hour))
 	content, _ := json.Marshal(map[string]any{
-		"access_token": otherToken,
-		"refresh_token": "rt-other",
+		"access_token":       otherToken,
+		"refresh_token":      "rt-other",
 		"chatgpt_account_id": "workspace-1",
-		"chatgpt_user_id": "user-1",
+		"chatgpt_user_id":    "user-1",
 	})
 	_, err := handler.reauthCodexSession(context.Background(), &existing, string(content))
 	if err == nil || !strings.Contains(err.Error(), "accessToken") {
@@ -139,14 +207,14 @@ func TestReauthCodexSessionRequiresBothStoredJWTIdentities(t *testing.T) {
 
 	// Raw JSON claims a matching user, but the JWT proves only the workspace.
 	token := buildCodexImportTestJWT(t, time.Now().Add(time.Hour), map[string]any{
-		"sub": "",
+		"sub":                         "",
 		"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "workspace-1"},
 	})
 	content, _ := json.Marshal(map[string]any{
-		"access_token": token,
-		"refresh_token": "rt-new",
+		"access_token":       token,
+		"refresh_token":      "rt-new",
 		"chatgpt_account_id": "workspace-1",
-		"chatgpt_user_id": "user-1",
+		"chatgpt_user_id":    "user-1",
 	})
 	_, err := handler.reauthCodexSession(context.Background(), &existing, string(content))
 	if err == nil || !strings.Contains(err.Error(), "chatgpt_user_id") {
@@ -154,6 +222,42 @@ func TestReauthCodexSessionRequiresBothStoredJWTIdentities(t *testing.T) {
 	}
 	if len(svc.updatedAccounts) != 0 {
 		t.Fatalf("updated accounts = %d, want 0", len(svc.updatedAccounts))
+	}
+}
+
+func TestCheckCodexReauthIdentityRejectsIncompleteOrConflictingProof(t *testing.T) {
+	now := time.Now().Add(time.Hour)
+	matching := buildCodexAccessToken(t, "workspace-1", "user-1", now)
+	otherWorkspace := buildCodexAccessToken(t, "workspace-2", "user-1", now)
+	noWorkspace := buildCodexImportTestJWT(t, now, map[string]any{"sub": "user-1"})
+	withEmail := buildCodexImportTestJWT(t, now, map[string]any{"sub": "user-1", "email": "user@example.com"})
+
+	cases := []struct {
+		name         string
+		credentials  map[string]any
+		item         codexImportAccount
+		wantFragment string
+	}{
+		{"unreadable token", map[string]any{"chatgpt_account_id": "workspace-1"}, codexImportAccount{AccessToken: "opaque"}, "无法解析"},
+		{"workspace differs from JSON", map[string]any{"chatgpt_account_id": "workspace-1"}, codexImportAccount{AccessToken: otherWorkspace, AccountID: "workspace-1"}, "accessToken"},
+		{"workspace differs from stored", map[string]any{"chatgpt_account_id": "workspace-1"}, codexImportAccount{AccessToken: otherWorkspace, AccountID: "workspace-2"}, "chatgpt_account_id"},
+		{"workspace missing from JWT", map[string]any{"chatgpt_account_id": "workspace-1"}, codexImportAccount{AccessToken: noWorkspace, AccountID: "workspace-1"}, "缺少可验证的 chatgpt_account_id"},
+		{"email differs from JSON", map[string]any{"email": "user@example.com"}, codexImportAccount{AccessToken: withEmail, Email: "other@example.com"}, "accessToken"},
+		{"email differs from stored", map[string]any{"email": "other@example.com"}, codexImportAccount{AccessToken: withEmail, Email: "user@example.com"}, "邮箱与当前账号"},
+		{"no comparable identity", map[string]any{}, codexImportAccount{AccessToken: matching}, "无法确认"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkCodexReauthIdentity(&service.Account{Credentials: tc.credentials}, &tc.item)
+			if err == nil || !strings.Contains(err.Error(), tc.wantFragment) {
+				t.Fatalf("err = %v, want %q", err, tc.wantFragment)
+			}
+		})
+	}
+
+	if err := checkCodexReauthIdentity(&service.Account{Credentials: map[string]any{"email": "user@example.com"}},
+		&codexImportAccount{AccessToken: withEmail, Email: "user@example.com"}); err != nil {
+		t.Fatalf("matching JWT email fallback should be accepted: %v", err)
 	}
 }
 
