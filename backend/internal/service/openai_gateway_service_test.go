@@ -2952,7 +2952,7 @@ func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing
 	c, _ := gin.CreateTestContext(rec)
 	body := []byte(`{"model":"gpt-5.5","prompt_cache_key":"anthropic-metadata-session-1","input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"<sub2api-claude-code-todo-guard>"}]},{"type":"message","role":"user","content":"hello"}]}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-	c.Request.Header.Set("OpenAI-Beta", "responses=experimental")
+	c.Request.Header.Set("OpenAI-Beta", "responses=experimental, responses_multi_agent=v1")
 	c.Request.Header.Set("originator", "codex_cli_rs")
 
 	svc := &OpenAIGatewayService{}
@@ -2967,6 +2967,52 @@ func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing
 	require.Empty(t, req.Header.Get("Conversation_Id"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"))
 	require.Empty(t, req.Header.Get("originator"))
+}
+
+func TestOpenAIBuildUpstreamRequestPreservesCallerResponsesBeta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const body = `{"model":"gpt-5.5","input":"hello"}`
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"}}
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test-api-key"}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}}
+
+	for _, tc := range []struct {
+		name       string
+		path       string
+		account    *Account
+		betaValues []string
+		want       []string
+	}{
+		{name: "OAuth preserves caller beta", path: "/v1/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1"}, want: []string{"responses_multi_agent=v1"}},
+		{name: "OAuth removes only legacy token across multiple values", path: "/v1/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1, responses=experimental", "future_feature=v2"}, want: []string{"responses_multi_agent=v1", "future_feature=v2"}},
+		{name: "OAuth leaves absent beta absent", path: "/v1/responses", account: oauth},
+		{name: "OpenAI prefixed Responses alias", path: "/openai/v1/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1"}, want: []string{"responses_multi_agent=v1"}},
+		{name: "bare Responses alias", path: "/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1"}, want: []string{"responses_multi_agent=v1"}},
+		{name: "Codex Responses alias", path: "/backend-api/codex/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1"}, want: []string{"responses_multi_agent=v1"}},
+		{name: "API key preserves caller beta unchanged", path: "/v1/responses", account: apiKey, betaValues: []string{"responses=experimental, responses_multi_agent=v1"}, want: []string{"responses=experimental, responses_multi_agent=v1"}},
+		{name: "compact OAuth preserves independent beta", path: "/v1/responses/compact", account: oauth, betaValues: []string{"responses=experimental, future_feature=v1"}, want: []string{"future_feature=v1"}},
+		{name: "nested compact alias preserves beta", path: "/openai/v1/responses/compact/detail", account: oauth, betaValues: []string{"future_feature=v1"}, want: []string{"future_feature=v1"}},
+		{name: "custom Responses subpath preserves beta", path: "/v1/responses/future", account: oauth, betaValues: []string{"future_feature=v1"}, want: []string{"future_feature=v1"}},
+		{name: "similar non-Responses prefix drops beta", path: "/v1/responses_extra", account: oauth, betaValues: []string{"future_feature=v1"}},
+		{name: "Chat conversion drops caller beta", path: "/v1/chat/completions", account: oauth, betaValues: []string{"responses_multi_agent=v1"}},
+		{name: "API key Chat conversion drops caller beta", path: "/v1/chat/completions", account: apiKey, betaValues: []string{"responses_multi_agent=v1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(body))
+			for _, value := range tc.betaValues {
+				c.Request.Header.Add("oPeNaI-bEtA", value)
+			}
+			req, err := svc.buildUpstreamRequest(c.Request.Context(), c, tc.account, []byte(body), "token", false, "", false)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, req.Header.Values("OpenAI-Beta"))
+		})
+	}
+}
+
+func TestIsOpenAIResponsesInboundPathWithoutRequest(t *testing.T) {
+	require.False(t, isOpenAIResponsesInboundPath(nil))
+	require.False(t, isOpenAIResponsesInboundPath(&gin.Context{}))
 }
 
 func TestOpenAIBuildUpstreamRequestPreservesCompactPathForAPIKeyBaseURL(t *testing.T) {
