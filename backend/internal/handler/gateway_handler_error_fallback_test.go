@@ -105,7 +105,8 @@ func TestGatewayEnsureForwardErrorResponse_CanceledClientAfterStreamStartedAppen
 	require.False(t, wrote)
 	require.Equal(t, http.StatusOK, c.Writer.Status())
 	require.Equal(t, ":\n\n", w.Body.String())
-	require.Empty(t, service.GetOpsStreamErrors(c))
+	_, streamErrRecorded := service.GetOpsStreamError(c)
+	require.False(t, streamErrRecorded)
 }
 
 // case B 回归：Anthropic-backed /responses，Writer 已被写过时
