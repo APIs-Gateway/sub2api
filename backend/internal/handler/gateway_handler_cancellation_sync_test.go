@@ -59,10 +59,6 @@ func TestGatewayPreCanceledCompatibleRequestsMark499(t *testing.T) {
 			c.Request = req
 			c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.UserID, Concurrency: 10})
-			if tc.route == "native" {
-				c.Params = gin.Params{{Key: "modelAction", Value: "/gemini-2.5-flash:generateContent"}}
-			}
-
 			tc.call(c)
 
 			_, selected := c.Get(opsAccountIDKey)
@@ -108,6 +104,9 @@ func TestGatewayClientCancelDuringAccountSelectionMarks499(t *testing.T) {
 			c.Request.Header.Set("Content-Type", "application/json")
 			c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.UserID, Concurrency: 10})
+			if tc.route == "native" {
+				c.Params = gin.Params{{Key: "modelAction", Value: "/gemini-2.5-flash:generateContent"}}
+			}
 
 			switch tc.route {
 			case "messages":
