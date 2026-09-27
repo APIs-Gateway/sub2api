@@ -773,6 +773,29 @@ func (s *BillingService) initFallbackPricing() {
 		SupportsCacheBreakdown: false,
 	}
 
+	// ---- 硅基流动 Qwen3 Embedding（纯文本向量化）----
+	// 国际站官方模型页（2026-09-27）：
+	// https://www.siliconflow.com/models/qwen3-embedding-8b
+	// https://www.siliconflow.com/models/qwen3-embedding-4b
+	// https://www.siliconflow.com/models/qwen3-embedding-0-6b
+	// Input Price 分别为 $0.04 / $0.02 / $0.01 per MTok；embedding 无输出 token 价格。
+	// 此表仅在动态目录及调用方覆盖价均未提供时兜底；未知尺寸不猜价。
+	s.fallbackPrices["qwen3-embedding-8b"] = &ModelPricing{
+		InputPricePerToken:     0.04e-6,
+		OutputPricePerToken:    0,
+		SupportsCacheBreakdown: false,
+	}
+	s.fallbackPrices["qwen3-embedding-4b"] = &ModelPricing{
+		InputPricePerToken:     0.02e-6,
+		OutputPricePerToken:    0,
+		SupportsCacheBreakdown: false,
+	}
+	s.fallbackPrices["qwen3-embedding-0.6b"] = &ModelPricing{
+		InputPricePerToken:     0.01e-6,
+		OutputPricePerToken:    0,
+		SupportsCacheBreakdown: false,
+	}
+
 	// ---- 火山方舟 豆包 Embedding（多模态向量化）----
 	// doubao-embedding-vision 图文向量化：上游 usage 回传 prompt_tokens_details.{text_tokens,image_tokens}，
 	// 按量付费官方价 文本 ¥0.7/MTok、图片 ¥1.8/MTok；汇率口径 ÷7.14（与本表其他国产模型一致，¥1≈$0.14）。
@@ -971,6 +994,17 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	}
 	if strings.Contains(modelLower, "minimax-m2") || strings.Contains(modelLower, "minimax-m-2") {
 		return s.fallbackPrices["minimax-m2"]
+	}
+
+	// 仅匹配官方 Qwen3 Embedding 型号本身或以其为最后路径段的模型名。
+	// 排除未知尺寸和带额外后缀的 SKU，避免把不同定价的模型误算为已知价。
+	for _, key := range []string{"qwen3-embedding-8b", "qwen3-embedding-4b", "qwen3-embedding-0.6b"} {
+		if modelLower == key || strings.HasSuffix(modelLower, "/"+key) {
+			return s.fallbackPrices[key]
+		}
+	}
+	if modelLower == "qwen3-embedding-0-6b" || strings.HasSuffix(modelLower, "/qwen3-embedding-0-6b") {
+		return s.fallbackPrices["qwen3-embedding-0.6b"]
 	}
 
 	// 火山方舟 豆包 Embedding（多模态向量化）。

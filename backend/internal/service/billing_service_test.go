@@ -949,6 +949,13 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			expectedCacheRead: floatPtr(0.03e-6),
 		},
 
+		// ---- 硅基流动 Qwen3 Embedding（仅输入计费）----
+		{name: "qwen3 embedding 8b vendor prefix", model: "Qwen/Qwen3-Embedding-8B", expectedInput: 0.04e-6, expectedOutput: floatPtr(0)},
+		{name: "qwen3 embedding 8b bare", model: "qwen3-embedding-8b", expectedInput: 0.04e-6, expectedOutput: floatPtr(0)},
+		{name: "qwen3 embedding 4b vendor prefix", model: "Qwen/Qwen3-Embedding-4B", expectedInput: 0.02e-6, expectedOutput: floatPtr(0)},
+		{name: "qwen3 embedding 0.6b vendor prefix", model: "Qwen/Qwen3-Embedding-0.6B", expectedInput: 0.01e-6, expectedOutput: floatPtr(0)},
+		{name: "qwen3 embedding 0.6b hyphen alias", model: "qwen3-embedding-0-6b", expectedInput: 0.01e-6, expectedOutput: floatPtr(0)},
+
 		// ---- 火山方舟 豆包 Embedding（多模态向量化）----
 		{
 			name:           "doubao embedding vision text rate",
@@ -964,6 +971,10 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 
 		// ---- 负向用例 ----
 		{name: "qwen unknown no fallback", model: "qwen-max", expectNilPricing: true},
+		{name: "qwen3 embedding unknown size no fallback", model: "Qwen/Qwen3-Embedding-2B", expectNilPricing: true},
+		{name: "qwen3 embedding unknown suffix no fallback", model: "Qwen/Qwen3-Embedding-8B-Pro", expectNilPricing: true},
+		{name: "qwen3 embedding embedded name no fallback", model: "other-qwen3-embedding-8b", expectNilPricing: true},
+		{name: "qwen3 reranker absent endpoint no fallback", model: "Qwen/Qwen3-Reranker-8B", expectNilPricing: true},
 		// doubao-pro / doubao-embedding（纯文本）不在白名单，不回退；仅 doubao-embedding-vision 显式命中。
 		{name: "doubao unknown no fallback", model: "doubao-pro", expectNilPricing: true},
 		{name: "doubao text embedding no fallback", model: "doubao-embedding-text-240515", expectNilPricing: true},
@@ -1009,6 +1020,49 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQwen3EmbeddingPricing_FallbackAndOverrides(t *testing.T) {
+	const model = "Qwen/Qwen3-Embedding-8B"
+	svc := newTestBillingService()
+
+	pricing, err := svc.GetModelPricing(model)
+	require.NoError(t, err)
+	require.InDelta(t, 0.04e-6, pricing.InputPricePerToken, 1e-12)
+	require.Zero(t, pricing.OutputPricePerToken)
+
+	usage := UsageTokens{InputTokens: 1000}
+	cost, err := svc.CalculateCost(model, usage, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, 1000*0.04e-6, cost.TotalCost, 1e-12)
+
+	channelPrice := 0.07e-6
+	channelPricing, err := svc.GetModelPricingWithChannel(model, &ChannelModelPricing{InputPrice: &channelPrice})
+	require.NoError(t, err)
+	require.InDelta(t, channelPrice, channelPricing.InputPricePerToken, 1e-12)
+	// Request-level overrides must not mutate the shared fallback price.
+	require.InDelta(t, 0.04e-6, svc.fallbackPrices["qwen3-embedding-8b"].InputPricePerToken, 1e-12)
+
+	dynamic := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		strings.ToLower(model): {InputCostPerToken: 0.09e-6},
+	}}
+	withCatalog := NewBillingService(&config.Config{}, dynamic)
+	catalogPricing, err := withCatalog.GetModelPricing(model)
+	require.NoError(t, err)
+	require.InDelta(t, 0.09e-6, catalogPricing.InputPricePerToken, 1e-12)
+}
+
+func TestCalculateOpenAIRecordUsageCost_Qwen3EmbeddingFallback(t *testing.T) {
+	const model = "Qwen/Qwen3-Embedding-8B"
+	svc := &OpenAIGatewayService{billingService: newTestBillingService()}
+	apiKey := &APIKey{Group: &Group{ID: 1, Platform: PlatformOpenAI}}
+	cost, err := svc.calculateOpenAIRecordUsageCost(
+		context.Background(), &OpenAIForwardResult{Model: model}, apiKey, []string{model},
+		1.0, 1.0, UsageTokens{InputTokens: 1000}, "", time.Time{},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, cost)
+	require.InDelta(t, 1000*0.04e-6, cost.TotalCost, 1e-12)
 }
 
 // doubao-embedding-vision 是首个图文不同价的 embedding：文本 ¥0.7/MTok、图片 ¥1.8/MTok。
