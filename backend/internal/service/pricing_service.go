@@ -425,9 +425,19 @@ func (s *PricingService) checkAndUpdatePricing() error {
 
 // syncWithRemote 与远程同步（基于哈希校验）
 func (s *PricingService) syncWithRemote() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-s.stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
 	// 如果配置了哈希URL，从远程获取哈希进行比对
 	if s.cfg.Pricing.HashURL != "" {
-		remoteHash, err := s.fetchRemoteHashWithContext(context.Background(), pricingPeriodicHashBudget, nil)
+		remoteHash, err := s.fetchRemoteHashWithContext(ctx, pricingPeriodicHashBudget, nil)
 		if err != nil {
 			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to fetch remote hash: %v", err)
 			return nil // 哈希获取失败不影响正常使用
@@ -440,7 +450,7 @@ func (s *PricingService) syncWithRemote() error {
 		if localHash == "" || remoteHash != localHash {
 			logger.LegacyPrintf("service.pricing", "[Pricing] Remote hash differs (local=%s remote=%s), downloading new version...",
 				localHash[:min(8, len(localHash))], remoteHash[:min(8, len(remoteHash))])
-			return s.downloadPricingData()
+			return s.downloadPricingDataWithParentContext(ctx)
 		}
 		logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Hash check passed, no update needed")
 		return nil
@@ -450,7 +460,7 @@ func (s *PricingService) syncWithRemote() error {
 	pricingFile := s.getPricingFilePath()
 	info, err := os.Stat(pricingFile)
 	if err != nil {
-		return s.downloadPricingData()
+		return s.downloadPricingDataWithParentContext(ctx)
 	}
 
 	fileAge := time.Since(info.ModTime())
@@ -458,7 +468,7 @@ func (s *PricingService) syncWithRemote() error {
 
 	if fileAge > maxAge {
 		logger.LegacyPrintf("service.pricing", "[Pricing] File is %v old, downloading...", fileAge.Round(time.Hour))
-		return s.downloadPricingData()
+		return s.downloadPricingDataWithParentContext(ctx)
 	}
 
 	return nil
@@ -466,9 +476,13 @@ func (s *PricingService) syncWithRemote() error {
 
 // downloadPricingData 从远程下载价格数据
 func (s *PricingService) downloadPricingData() error {
+	return s.downloadPricingDataWithParentContext(context.Background())
+}
+
+func (s *PricingService) downloadPricingDataWithParentContext(parent context.Context) error {
 	// The existing 30-second budget begins before the optional hash probe. Keep
 	// the hash, catalog attempts, and retry waits inside this one deadline.
-	ctx, cancel := context.WithTimeout(context.Background(), pricingDownloadBudget)
+	ctx, cancel := context.WithTimeout(parent, pricingDownloadBudget)
 	defer cancel()
 	return s.downloadPricingDataWithContext(ctx, nil)
 }

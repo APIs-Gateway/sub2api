@@ -189,3 +189,71 @@ func TestPricingRetryStopsAtParentCancellation(t *testing.T) {
 	require.True(t, errors.Is(err, io.EOF) || errors.Is(err, context.Canceled))
 	require.Equal(t, 1, calls)
 }
+
+func TestPricingStopCancelsActivePeriodicSync(t *testing.T) {
+	tests := []struct {
+		name string
+		hash func(context.Context, chan<- struct{}) (string, error)
+		json func(context.Context, chan<- struct{}) ([]byte, error)
+	}{
+		{
+			name: "hash request",
+			hash: func(ctx context.Context, started chan<- struct{}) (string, error) {
+				started <- struct{}{}
+				<-ctx.Done()
+				return "", ctx.Err()
+			},
+		},
+		{
+			name: "catalog request after changed hash",
+			hash: func(context.Context, chan<- struct{}) (string, error) {
+				return "changed", nil
+			},
+			json: func(ctx context.Context, started chan<- struct{}) ([]byte, error) {
+				started <- struct{}{}
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			started := make(chan struct{}, 1)
+			jsonCalls := 0
+			svc := retryPricingService(t, pricingRemoteClientStub{
+				hash: func(ctx context.Context) (string, error) { return tt.hash(ctx, started) },
+				json: func(ctx context.Context) ([]byte, error) {
+					jsonCalls++
+					return tt.json(ctx, started)
+				},
+			})
+			svc.localHash = "old"
+			svc.wg.Add(1)
+			go func() {
+				defer svc.wg.Done()
+				_ = svc.syncWithRemote()
+			}()
+
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("periodic request did not start")
+			}
+			stopped := make(chan struct{})
+			go func() {
+				svc.Stop()
+				close(stopped)
+			}()
+			select {
+			case <-stopped:
+			case <-time.After(time.Second):
+				t.Fatal("Stop must cancel the active remote request")
+			}
+			if tt.json == nil {
+				require.Zero(t, jsonCalls)
+			} else {
+				require.Equal(t, 1, jsonCalls)
+			}
+		})
+	}
+}
