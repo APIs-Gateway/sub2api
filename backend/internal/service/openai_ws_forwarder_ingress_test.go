@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -142,6 +143,91 @@ func TestDropPreviousResponseIDFromRawPayload(t *testing.T) {
 		require.True(t, removed)
 		require.False(t, gjson.GetBytes(updated, "previous_response_id").Exists())
 	})
+}
+
+func TestNormalizeOpenAIWSContextWindowBoundary(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		payload          string
+		previousWindowID string
+		wantWindowID     string
+		wantChanged      bool
+		wantRemoved      bool
+	}{
+		{
+			name:             "same_window_keeps_continuation",
+			payload:          `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-window-id":"window-a"}}`,
+			previousWindowID: "window-a",
+			wantWindowID:     "window-a",
+		},
+		{
+			name:             "new_window_breaks_continuation",
+			payload:          `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-window-id":"window-b"}}`,
+			previousWindowID: "window-a",
+			wantWindowID:     "window-b",
+			wantChanged:      true,
+			wantRemoved:      true,
+		},
+		{
+			name:             "new_window_without_continuation_is_still_boundary",
+			payload:          `{"type":"response.create","client_metadata":{"x-codex-window-id":"window-b"}}`,
+			previousWindowID: "window-a",
+			wantWindowID:     "window-b",
+			wantChanged:      true,
+		},
+		{
+			name:             "embedded_turn_metadata_is_fallback",
+			payload:          `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-turn-metadata":"{\"window_id\":\"window-b\"}"}}`,
+			previousWindowID: "window-a",
+			wantWindowID:     "window-b",
+			wantChanged:      true,
+			wantRemoved:      true,
+		},
+		{
+			name:             "direct_window_id_takes_precedence",
+			payload:          `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-window-id":"window-a","x-codex-turn-metadata":"{\"window_id\":\"window-b\"}"}}`,
+			previousWindowID: "window-a",
+			wantWindowID:     "window-a",
+		},
+		{
+			name:             "missing_window_id_preserves_continuation",
+			payload:          `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-turn-metadata":"invalid-json"}}`,
+			previousWindowID: "window-a",
+		},
+		{
+			name:         "first_window_preserves_continuation",
+			payload:      `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-window-id":"window-a"}}`,
+			wantWindowID: "window-a",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			payload := []byte(test.payload)
+			updated, boundary, err := normalizeOpenAIWSContextWindowBoundary(payload, test.previousWindowID)
+			require.NoError(t, err)
+			require.Equal(t, test.wantWindowID, boundary.WindowID)
+			require.Equal(t, test.wantChanged, boundary.Changed)
+			require.Equal(t, test.wantRemoved, boundary.PreviousResponseIDRemoved)
+			if test.wantRemoved {
+				require.False(t, gjson.GetBytes(updated, "previous_response_id").Exists())
+			} else {
+				require.Equal(t, test.payload, string(updated))
+			}
+		})
+	}
+}
+
+func TestNormalizeOpenAIWSContextWindowBoundaryRejectsIncompleteRemoval(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"type":"response.create"` + strings.Repeat(`,"previous_response_id":"resp_old"`, openAIWSMaxPrevResponseIDDeletePasses+1) + `,"client_metadata":{"x-codex-window-id":"window-b"}}`)
+	updated, boundary, err := normalizeOpenAIWSContextWindowBoundary(payload, "window-a")
+	require.ErrorContains(t, err, "previous_response_id remains")
+	require.True(t, boundary.Changed)
+	require.False(t, boundary.PreviousResponseIDRemoved)
+	require.Equal(t, string(payload), string(updated), "an incomplete deletion must never be forwarded")
 }
 
 func TestStripCodexSparkImageGenerationToolFromRawPayload(t *testing.T) {
