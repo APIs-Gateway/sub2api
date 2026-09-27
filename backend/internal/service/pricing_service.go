@@ -759,7 +759,7 @@ func isTransientPricingRemoteError(err error) bool {
 		return true
 	}
 	var netErr net.Error
-	return errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary())
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func retryPricingRemote(ctx context.Context, label string, wait pricingRetryWaitFunc, op func(context.Context) error) (int, error) {
