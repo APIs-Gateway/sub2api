@@ -97,12 +97,12 @@ func TestAnthropicEventToResponses_ToolInputOnContentBlockStart(t *testing.T) {
 	assert.Equal(t, args, concatArgumentDeltas(events),
 		"argument deltas must reconstruct the full arguments JSON")
 
-	done := findEvent(events, "response.function_call_arguments.done")
+	done := firstEventOfType(events, "response.function_call_arguments.done")
 	require.NotNil(t, done, "function_call_arguments.done must be emitted")
 	assert.Equal(t, args, done.Arguments,
 		"function_call_arguments.done must carry the complete arguments")
 
-	completed := findEvent(events, "response.completed")
+	completed := firstEventOfType(events, "response.completed")
 	require.NotNil(t, completed)
 	require.NotNil(t, completed.Response)
 	require.Len(t, completed.Response.Output, 1)
@@ -138,7 +138,7 @@ func TestAnthropicEventToResponses_ToolInputFromDeltasUnchanged(t *testing.T) {
 func TestAnthropicEventToResponses_ToolInputSeedNotDuplicatedByDeltas(t *testing.T) {
 	const args = `{"language":"py","code":"print(1)"}`
 
-	events := collectToolCallStreamEvents(t, json.RawMessage(args),
+	events := collectToolCallStreamEvents(t, json.RawMessage(`{"ignored":true}`),
 		[]string{`{"language":"py",`, `"code":"print(1)"}`})
 
 	item := findFunctionCallOutput(events)
@@ -154,6 +154,7 @@ func TestAnthropicEventToResponses_ToolInputEmptyStaysEmptyObject(t *testing.T) 
 	for name, input := range map[string]json.RawMessage{
 		"absent": nil,
 		"empty":  json.RawMessage(`{}`),
+		"null":   json.RawMessage(`null`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			events := collectToolCallStreamEvents(t, input, nil)
@@ -163,6 +164,47 @@ func TestAnthropicEventToResponses_ToolInputEmptyStaysEmptyObject(t *testing.T) 
 			assert.Equal(t, "{}", item.Arguments)
 			assert.Empty(t, concatArgumentDeltas(events),
 				"no argument delta should be synthesized when there are no arguments")
+		})
+	}
+}
+
+// An incomplete relay stream can close without content_block_stop. The
+// response item still needs the complete inline arguments already received.
+func TestAnthropicEventToResponses_InlineToolInputSurvivesIncompleteClose(t *testing.T) {
+	const args = `{"language":"py","code":"print(1)"}`
+	for name, end := range map[string]func(*AnthropicEventToResponsesState) []ResponsesStreamEvent{
+		"message_stop": func(state *AnthropicEventToResponsesState) []ResponsesStreamEvent {
+			return AnthropicEventToResponsesEvents(&AnthropicStreamEvent{Type: "message_stop"}, state)
+		},
+		"transport_finalization": FinalizeAnthropicResponsesStream,
+	} {
+		t.Run(name, func(t *testing.T) {
+			state := NewAnthropicEventToResponsesState()
+			var events []ResponsesStreamEvent
+			events = append(events, AnthropicEventToResponsesEvents(&AnthropicStreamEvent{
+				Type: "message_start",
+				Message: &AnthropicResponse{
+					ID: "msg_incomplete_tool",
+				},
+			}, state)...)
+			events = append(events, AnthropicEventToResponsesEvents(&AnthropicStreamEvent{
+				Type: "content_block_start",
+				ContentBlock: &AnthropicContentBlock{
+					Type: "tool_use", ID: "toolu_incomplete", Name: "eval", Input: json.RawMessage(args),
+				},
+			}, state)...)
+			events = append(events, end(state)...)
+
+			item := findFunctionCallOutput(events)
+			require.NotNil(t, item)
+			assert.Equal(t, args, item.Arguments)
+			assert.Equal(t, args, concatArgumentDeltas(events))
+
+			completed := firstEventOfType(events, "response.completed")
+			require.NotNil(t, completed)
+			require.NotNil(t, completed.Response)
+			require.Len(t, completed.Response.Output, 1)
+			assert.Equal(t, args, completed.Response.Output[0].Arguments)
 		})
 	}
 }

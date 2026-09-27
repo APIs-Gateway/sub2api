@@ -487,21 +487,9 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 		return events
 
 	case "function_call":
-		var events []ResponsesStreamEvent
-		// No delta ever arrived, so the arguments the upstream put on
-		// content_block_start are all there is. Emit them as one delta here so
-		// the done event below still repeats exactly what the deltas streamed.
-		if state.CurrentArgs == "" && state.PendingToolInput != "" {
-			state.CurrentArgs = state.PendingToolInput
-			events = append(events, makeResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
-				OutputIndex: state.OutputIndex,
-				Delta:       state.PendingToolInput,
-				ItemID:      state.CurrentItemID,
-				CallID:      state.CurrentCallID,
-				Name:        state.CurrentName,
-			}))
-		}
-		state.PendingToolInput = ""
+		// Flush complete inline arguments before done, so done exactly repeats
+		// the argument deltas delivered to the client.
+		events := flushPendingToolInput(state)
 
 		// Emit function_call_arguments.done + output item done.
 		// arguments must repeat exactly what the deltas already streamed for this
@@ -609,10 +597,33 @@ func seedToolArguments(input json.RawMessage) string {
 	return trimmed
 }
 
+// flushPendingToolInput emits complete arguments supplied on
+// content_block_start only if no real input_json_delta arrived. It also runs
+// when an incomplete stream closes an item without content_block_stop, so
+// finalization cannot discard arguments already available from the relay.
+func flushPendingToolInput(state *AnthropicEventToResponsesState) []ResponsesStreamEvent {
+	pending := state.PendingToolInput
+	state.PendingToolInput = ""
+	if state.CurrentItemType != "function_call" || state.CurrentArgs != "" || pending == "" {
+		return nil
+	}
+	state.CurrentArgs = pending
+	return []ResponsesStreamEvent{makeResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
+		OutputIndex: state.OutputIndex,
+		Delta:       pending,
+		ItemID:      state.CurrentItemID,
+		CallID:      state.CurrentCallID,
+		Name:        state.CurrentName,
+	})}
+}
+
 func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []ResponsesStreamEvent {
 	if state.CurrentItemType == "" {
 		return nil
 	}
+	// This path also serves missing content_block_stop and stream finalization.
+	// A normal tool stop has already flushed the pending input before its done.
+	events := flushPendingToolInput(state)
 
 	// Assemble the full item: both output_item.done and response.completed must
 	// carry its content. Emitting only {type,id,status} makes SDK-side
@@ -659,10 +670,11 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 	state.OutputIndex++
 	state.ContentIndex = 0
 
-	return []ResponsesStreamEvent{makeResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
+	events = append(events, makeResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 		OutputIndex: state.OutputIndex - 1, // Use the index before increment
 		Item:        &item,
-	})}
+	}))
+	return events
 }
 
 func makeResponsesCreatedEvent(state *AnthropicEventToResponsesState) ResponsesStreamEvent {
