@@ -271,6 +271,7 @@ func TestOpus55RejectsUnsupportedParametersBeforeMimicry(t *testing.T) {
 func TestOpus55ThinkingDefaultPreservesSignedHistory(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-5-5","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"signed"},{"type":"redacted_thinking","data":"encrypted"},{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}],"tool_choice":{"type":"none"},"thinking":{"type":"adaptive","display":"omitted"}}`)
 	require.Equal(t, string(body), string(FilterThinkingBlocks(body, "claude-opus-5-5")))
+	require.Equal(t, string(body), string(FilterThinkingBlocks(body, "anthropic/claude-opus-5.5")))
 	withoutThinking, _ := deleteJSONPathBytes(body, "thinking")
 	require.Equal(t, string(withoutThinking), string(FilterThinkingBlocks(withoutThinking, "claude-opus-5-5")))
 	out, _ := normalizeClaudeOAuthRequestBody(body, "claude-opus-5-5", claudeOAuthNormalizeOptions{})
@@ -282,6 +283,10 @@ func TestOpus55ThinkingDefaultPreservesSignedHistory(t *testing.T) {
 	parsed, err := ParseGatewayRequest(NewRequestBodyRef([]byte(`{"model":"claude-opus-5-5","messages":[{"role":"user","content":"hi"}]}`)), PlatformAnthropic)
 	require.NoError(t, err)
 	require.True(t, parsed.ThinkingEnabled)
+	aliasParsed, err := ParseGatewayRequest(NewRequestBodyRef([]byte(`{"model":"anthropic/claude-opus-5.5","messages":[{"role":"user","content":"hi"}]}`)), PlatformAnthropic)
+	require.NoError(t, err)
+	require.True(t, aliasParsed.ThinkingEnabled)
+	require.Error(t, validateClaudeOpus55Request([]byte(`{"thinking":{"type":"enabled"}}`), "anthropic/claude-opus-5.5"))
 }
 
 func TestOpus55ResponsesSignedThinkingBufferedAndStreamed(t *testing.T) {
@@ -368,7 +373,7 @@ func TestOpus55PricingIsIndependentFromOpus5(t *testing.T) {
 	}
 	for name, svc := range sources {
 		t.Run(name, func(t *testing.T) {
-			for _, model := range []string{"claude-opus-5-5", "claude-opus-5-5-20260922", "anthropic/claude-opus-5-5"} {
+			for _, model := range []string{"claude-opus-5-5", "claude-opus-5-5-20260922", "anthropic/claude-opus-5-5", "anthropic/claude-opus-5.5"} {
 				pricing, err := svc.GetModelPricing(model)
 				require.NoError(t, err)
 				require.InDelta(t, 4e-6, pricing.InputPricePerToken, 1e-15, model)
@@ -378,14 +383,18 @@ func TestOpus55PricingIsIndependentFromOpus5(t *testing.T) {
 				require.InDelta(t, 8e-6, pricing.CacheCreation1hPrice, 1e-15, model)
 				require.True(t, pricing.SupportsCacheBreakdown, model)
 			}
+			// 300K input tokens must still use the normal Opus 5.5 price; this fork
+			// has no separate long-context flag in CostBreakdown.
 			tokens := UsageTokens{InputTokens: 300000, OutputTokens: 500, CacheReadTokens: 1000, CacheCreationTokens: 1000, CacheCreation5mTokens: 400, CacheCreation1hTokens: 600}
-			for tier, mult := range map[string]float64{"": 1, "priority": 2} {
-				cost, err := svc.CalculateCostWithServiceTier("claude-opus-5-5", tokens, 1, tier)
-				require.NoError(t, err)
-				require.InDelta(t, 1.2*mult, cost.InputCost, 1e-10, tier)
-				require.InDelta(t, (400*5e-6+600*8e-6)*mult, cost.CacheCreationCost, 1e-10, tier)
-				require.InDelta(t, 1000*0.2e-6*mult, cost.CacheReadCost, 1e-10, tier)
-				require.InDelta(t, 500*20e-6*mult, cost.OutputCost, 1e-10, tier)
+			for _, model := range []string{"claude-opus-5-5", "anthropic/claude-opus-5.5"} {
+				for tier, mult := range map[string]float64{"": 1, "priority": 2} {
+					cost, err := svc.CalculateCostWithServiceTier(model, tokens, 1, tier)
+					require.NoError(t, err)
+					require.InDelta(t, 1.2*mult, cost.InputCost, 1e-10, model+"/"+tier)
+					require.InDelta(t, (400*5e-6+600*8e-6)*mult, cost.CacheCreationCost, 1e-10, model+"/"+tier)
+					require.InDelta(t, 1000*0.2e-6*mult, cost.CacheReadCost, 1e-10, model+"/"+tier)
+					require.InDelta(t, 500*20e-6*mult, cost.OutputCost, 1e-10, model+"/"+tier)
+				}
 			}
 			old, err := svc.GetModelPricing("claude-opus-5")
 			require.NoError(t, err)
