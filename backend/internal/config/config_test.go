@@ -30,6 +30,27 @@ func TestLoadRedisUsernameFromEnvironment(t *testing.T) {
 	require.Equal(t, "app-user", cfg.Redis.Username)
 }
 
+func TestLoadGatewayUpstreamIPMode(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	loaded, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, UpstreamIPModeAuto, loaded.Gateway.UpstreamIPMode)
+
+	t.Setenv("GATEWAY_UPSTREAM_IP_MODE", UpstreamIPModeIPv4)
+	loaded, err = Load()
+	require.NoError(t, err)
+	require.Equal(t, UpstreamIPModeIPv4, loaded.Gateway.UpstreamIPMode)
+
+	t.Setenv("GATEWAY_UPSTREAM_IP_MODE", UpstreamIPModeIPv6)
+	loaded, err = Load()
+	require.NoError(t, err)
+	require.Equal(t, UpstreamIPModeIPv6, loaded.Gateway.UpstreamIPMode)
+
+	t.Setenv("GATEWAY_UPSTREAM_IP_MODE", "invalid")
+	_, err = Load()
+	require.ErrorContains(t, err, "gateway.upstream_ip_mode")
+}
+
 func TestLoadHonorsExplicitConfigFile(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	configFile := filepath.Join(t.TempDir(), "reporter-config.yaml")

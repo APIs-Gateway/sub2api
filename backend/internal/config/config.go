@@ -814,6 +814,12 @@ const (
 	ImageConcurrencyOverflowModeWait   = "wait"
 )
 
+const (
+	UpstreamIPModeAuto = "auto"
+	UpstreamIPModeIPv4 = "ipv4"
+	UpstreamIPModeIPv6 = "ipv6"
+)
+
 // GatewayConfig API网关相关配置
 type GatewayConfig struct {
 	// 等待上游响应头的超时时间（秒），0表示无超时
@@ -840,6 +846,9 @@ type GatewayConfig struct {
 	GeminiDebugResponseHeaders bool `mapstructure:"gemini_debug_response_headers"`
 	// ConnectionPoolIsolation: 上游连接池隔离策略（proxy/account/account_proxy）
 	ConnectionPoolIsolation string `mapstructure:"connection_pool_isolation"`
+	// UpstreamIPMode selects the address family for direct upstream connections.
+	// Proxy connections retain their own address resolution.
+	UpstreamIPMode string `mapstructure:"upstream_ip_mode"`
 	// ForceCodexCLI: 强制将 OpenAI `/v1/responses` 请求按 Codex CLI 处理。
 	// 用于网关未透传/改写 User-Agent 时的兼容兜底（默认关闭，避免影响其他客户端）。
 	ForceCodexCLI bool `mapstructure:"force_codex_cli"`
@@ -2201,6 +2210,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.image_nonstream_keepalive_interval", 0)
 	viper.SetDefault("gateway.gemini_debug_response_headers", false)
 	viper.SetDefault("gateway.connection_pool_isolation", ConnectionPoolIsolationAccountProxy)
+	viper.SetDefault("gateway.upstream_ip_mode", UpstreamIPModeAuto)
 	viper.SetDefault("gateway.openai_forced_account_routes", []OpenAIForcedAccountRoute{})
 	// HTTP 上游连接池配置（针对 5000+ 并发用户优化）
 	viper.SetDefault("gateway.max_idle_conns", 2560)          // 最大空闲连接总数（高并发场景可调大）
@@ -2877,6 +2887,12 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("gateway.connection_pool_isolation must be one of: %s/%s/%s",
 				ConnectionPoolIsolationProxy, ConnectionPoolIsolationAccount, ConnectionPoolIsolationAccountProxy)
 		}
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Gateway.UpstreamIPMode)) {
+	case "", UpstreamIPModeAuto, UpstreamIPModeIPv4, UpstreamIPModeIPv6:
+	default:
+		return fmt.Errorf("gateway.upstream_ip_mode must be one of: %s/%s/%s",
+			UpstreamIPModeAuto, UpstreamIPModeIPv4, UpstreamIPModeIPv6)
 	}
 	if c.Gateway.ImageConcurrency.MaxConcurrentRequests < 0 {
 		return fmt.Errorf("gateway.image_concurrency.max_concurrent_requests must be non-negative")

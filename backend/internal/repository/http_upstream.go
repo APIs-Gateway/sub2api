@@ -88,6 +88,7 @@ var errUpstreamClientLimitReached = errors.New("upstream client cache limit reac
 // poolSettings 连接池配置参数
 // 封装 Transport 所需的各项连接池参数
 type poolSettings struct {
+	ipMode                string        // Address family for direct upstream connections
 	maxIdleConns          int           // 最大空闲连接总数
 	maxIdleConnsPerHost   int           // 每主机最大空闲连接数
 	maxConnsPerHost       int           // 每主机最大连接数（含活跃）
@@ -729,10 +730,11 @@ func buildPoolKey(settings poolSettings, protocolMode string) string {
 		settings.idleConnTimeout,
 		settings.responseHeaderTimeout,
 	)
-	if protocolMode == "" || protocolMode == upstreamProtocolModeDefault {
-		return base
+	base += "|ip:" + normalizeUpstreamIPMode(settings.ipMode)
+	if protocolMode != "" && protocolMode != upstreamProtocolModeDefault {
+		base += "|proto:" + protocolMode
 	}
-	return base + "|proto:" + protocolMode
+	return base
 }
 
 // buildCacheKey 构建客户端缓存键
@@ -1049,8 +1051,10 @@ func defaultPoolSettings(cfg *config.Config) poolSettings {
 	maxConnsPerHost := defaultMaxConnsPerHost
 	idleConnTimeout := defaultIdleConnTimeout
 	responseHeaderTimeout := defaultResponseHeaderTimeout
+	ipMode := config.UpstreamIPModeAuto
 
 	if cfg != nil {
+		ipMode = normalizeUpstreamIPMode(cfg.Gateway.UpstreamIPMode)
 		if cfg.Gateway.MaxIdleConns > 0 {
 			maxIdleConns = cfg.Gateway.MaxIdleConns
 		}
@@ -1069,6 +1073,7 @@ func defaultPoolSettings(cfg *config.Config) poolSettings {
 	}
 
 	return poolSettings{
+		ipMode:                ipMode,
 		maxIdleConns:          maxIdleConns,
 		maxIdleConnsPerHost:   maxIdleConnsPerHost,
 		maxConnsPerHost:       maxConnsPerHost,
@@ -1085,6 +1090,35 @@ func newUpstreamDialer() *net.Dialer {
 	return &net.Dialer{
 		Timeout:   defaultUpstreamDialTimeout,
 		KeepAlive: defaultUpstreamDialKeepAlive,
+	}
+}
+
+func normalizeUpstreamIPMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case config.UpstreamIPModeIPv4:
+		return config.UpstreamIPModeIPv4
+	case config.UpstreamIPModeIPv6:
+		return config.UpstreamIPModeIPv6
+	default:
+		return config.UpstreamIPModeAuto
+	}
+}
+
+// newUpstreamDialContext preserves the existing connection timeout and keepalive
+// while constraining address selection for direct upstream connections.
+func newUpstreamDialContext(ipMode string) func(context.Context, string, string) (net.Conn, error) {
+	dial := newUpstreamDialer().DialContext
+	switch normalizeUpstreamIPMode(ipMode) {
+	case config.UpstreamIPModeIPv4:
+		return func(ctx context.Context, _ string, addr string) (net.Conn, error) {
+			return dial(ctx, "tcp4", addr)
+		}
+	case config.UpstreamIPModeIPv6:
+		return func(ctx context.Context, _ string, addr string) (net.Conn, error) {
+			return dial(ctx, "tcp6", addr)
+		}
+	default:
+		return dial
 	}
 }
 
@@ -1122,8 +1156,12 @@ func withUpstreamTLSHandshakeTimeout(dialTLSContext func(context.Context, string
 //   - IdleConnTimeout: 空闲连接超时（超时后关闭）
 //   - ResponseHeaderTimeout: 等待响应头超时（不影响流式传输）
 func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL, protocolMode string) (*http.Transport, error) {
+	dialContext := newUpstreamDialer().DialContext
+	if proxyURL == nil {
+		dialContext = newUpstreamDialContext(settings.ipMode)
+	}
 	transport := &http.Transport{
-		DialContext:           newUpstreamDialer().DialContext,
+		DialContext:           dialContext,
 		TLSHandshakeTimeout:   defaultUpstreamTLSHandshakeTimeout,
 		MaxIdleConns:          settings.maxIdleConns,
 		MaxIdleConnsPerHost:   settings.maxIdleConnsPerHost,
@@ -1198,7 +1236,7 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 	if proxyURL == nil {
 		// 直连：使用 TLSFingerprintDialer
 		slog.Debug("tls_fingerprint_transport_direct")
-		dialer := tlsfingerprint.NewDialer(profile, newUpstreamDialer().DialContext)
+		dialer := tlsfingerprint.NewDialer(profile, newUpstreamDialContext(settings.ipMode))
 		transport.DialTLSContext = withUpstreamTLSHandshakeTimeout(dialer.DialTLSContext)
 	} else {
 		scheme := strings.ToLower(proxyURL.Scheme)
