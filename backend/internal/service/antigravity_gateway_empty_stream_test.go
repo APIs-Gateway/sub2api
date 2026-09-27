@@ -18,9 +18,9 @@ import (
 func antigravityEmptyStreamTestResponse(payloads ...string) *http.Response {
 	var body strings.Builder
 	for _, payload := range payloads {
-		body.WriteString("data: ")
-		body.WriteString(payload)
-		body.WriteString("\n\n")
+		_, _ = body.WriteString("data: ")
+		_, _ = body.WriteString(payload)
+		_, _ = body.WriteString("\n\n")
 	}
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body.String()))}
 }
