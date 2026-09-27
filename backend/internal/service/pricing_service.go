@@ -5,13 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -234,6 +238,18 @@ type PricingRemoteClient interface {
 	FetchHashText(ctx context.Context, url string) (string, error)
 }
 
+// ErrPricingRemoteProxySetup marks a configuration failure that must not be retried.
+var ErrPricingRemoteProxySetup = errors.New("proxy client init failed and direct fallback is disabled; set security.proxy_fallback.allow_direct_on_error=true to allow fallback")
+
+// PricingRemoteHTTPStatusError preserves the remote status for retry classification.
+type PricingRemoteHTTPStatusError struct {
+	StatusCode int
+}
+
+func (e *PricingRemoteHTTPStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d", e.StatusCode)
+}
+
 // LiteLLMRawEntry 用于解析原始JSON数据
 type LiteLLMRawEntry struct {
 	InputCostPerToken                          *float64 `json:"input_cost_per_token"`
@@ -411,7 +427,7 @@ func (s *PricingService) checkAndUpdatePricing() error {
 func (s *PricingService) syncWithRemote() error {
 	// 如果配置了哈希URL，从远程获取哈希进行比对
 	if s.cfg.Pricing.HashURL != "" {
-		remoteHash, err := s.fetchRemoteHash()
+		remoteHash, err := s.fetchRemoteHashWithContext(context.Background(), pricingPeriodicHashBudget, nil)
 		if err != nil {
 			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to fetch remote hash: %v", err)
 			return nil // 哈希获取失败不影响正常使用
@@ -450,25 +466,30 @@ func (s *PricingService) syncWithRemote() error {
 
 // downloadPricingData 从远程下载价格数据
 func (s *PricingService) downloadPricingData() error {
+	// The existing 30-second budget begins before the optional hash probe. Keep
+	// the hash, catalog attempts, and retry waits inside this one deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), pricingDownloadBudget)
+	defer cancel()
+	return s.downloadPricingDataWithContext(ctx, nil)
+}
+
+func (s *PricingService) downloadPricingDataWithContext(ctx context.Context, wait pricingRetryWaitFunc) error {
 	remoteURL, err := s.validatePricingURL(s.cfg.Pricing.RemoteURL)
 	if err != nil {
 		return err
 	}
 	logger.LegacyPrintf("service.pricing", "[Pricing] Downloading from %s", remoteURL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	// 获取远程哈希（用于同步锚点，不作为完整性校验）
 	var remoteHash string
 	if strings.TrimSpace(s.cfg.Pricing.HashURL) != "" {
-		remoteHash, err = s.fetchRemoteHash()
+		remoteHash, err = s.fetchRemoteHashWithContext(ctx, pricingStartupHashBudget, wait)
 		if err != nil {
 			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to fetch remote hash (continuing): %v", err)
 		}
 	}
 
-	body, err := s.remoteClient.FetchPricingJSON(ctx, remoteURL)
+	body, err := s.fetchPricingJSONWithContext(ctx, remoteURL, wait)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
@@ -687,19 +708,110 @@ func (s *PricingService) useFallbackPricing() error {
 
 // fetchRemoteHash 从远程获取哈希值
 func (s *PricingService) fetchRemoteHash() (string, error) {
+	return s.fetchRemoteHashWithContext(context.Background(), pricingStartupHashBudget, nil)
+}
+
+const (
+	pricingRemoteAttempts     = 3
+	pricingRetryBaseBackoff   = 250 * time.Millisecond
+	pricingStartupHashBudget  = 10 * time.Second
+	pricingPeriodicHashBudget = 25 * time.Second
+	pricingDownloadBudget     = 30 * time.Second
+)
+
+type pricingRetryWaitFunc func(context.Context, time.Duration) error
+
+func waitForPricingRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isTransientPricingRemoteError(err error) bool {
+	if err == nil || errors.Is(err, ErrPricingRemoteProxySetup) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var statusErr *PricingRemoteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.StatusCode == 408 || statusErr.StatusCode == 429 || statusErr.StatusCode >= 500
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary())
+}
+
+func retryPricingRemote(ctx context.Context, label string, wait pricingRetryWaitFunc, op func(context.Context) error) (int, error) {
+	if wait == nil {
+		wait = waitForPricingRetry
+	}
+	for attempt := 1; attempt <= pricingRemoteAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return attempt - 1, err
+		}
+		err := op(ctx)
+		if err == nil {
+			return attempt, nil
+		}
+		if !isTransientPricingRemoteError(err) || attempt == pricingRemoteAttempts || ctx.Err() != nil {
+			return attempt, err
+		}
+		delay := pricingRetryBaseBackoff * time.Duration(1<<(attempt-1))
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= delay {
+			return attempt, err
+		}
+		logger.LegacyPrintf("service.pricing", "[Pricing] %s attempt %d/%d failed, retrying in %v: %v",
+			label, attempt, pricingRemoteAttempts, delay, err)
+		if waitErr := wait(ctx, delay); waitErr != nil {
+			return attempt, waitErr
+		}
+	}
+	return pricingRemoteAttempts, errors.New("remote pricing retry exhausted")
+}
+
+func (s *PricingService) fetchRemoteHashWithContext(parent context.Context, budget time.Duration, wait pricingRetryWaitFunc) (string, error) {
 	hashURL, err := s.validatePricingURL(s.cfg.Pricing.HashURL)
 	if err != nil {
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(parent, budget)
 	defer cancel()
 
-	hash, err := s.remoteClient.FetchHashText(ctx, hashURL)
+	var hash string
+	attempts, err := retryPricingRemote(ctx, "remote hash fetch", wait, func(ctx context.Context) error {
+		value, fetchErr := s.remoteClient.FetchHashText(ctx, hashURL)
+		if fetchErr == nil {
+			hash = value
+		}
+		return fetchErr
+	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("remote hash fetch stopped after %d attempt(s): %w", attempts, err)
 	}
 	return strings.TrimSpace(hash), nil
+}
+
+func (s *PricingService) fetchPricingJSONWithContext(ctx context.Context, remoteURL string, wait pricingRetryWaitFunc) ([]byte, error) {
+	var body []byte
+	attempts, err := retryPricingRemote(ctx, "pricing download", wait, func(ctx context.Context) error {
+		value, fetchErr := s.remoteClient.FetchPricingJSON(ctx, remoteURL)
+		if fetchErr == nil {
+			body = value
+		}
+		return fetchErr
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pricing download stopped after %d attempt(s): %w", attempts, err)
+	}
+	return body, nil
 }
 
 func (s *PricingService) validatePricingURL(raw string) (string, error) {
