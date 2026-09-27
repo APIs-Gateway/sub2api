@@ -206,6 +206,25 @@ type codexReauthRecordingService struct {
 	extra      map[string]any
 }
 
+func (s *codexReauthRecordingService) UpdateAccount(ctx context.Context, id int64, input *service.UpdateAccountInput) (*service.Account, error) {
+	account, err := s.codexImportMemoryAdminService.UpdateAccount(ctx, id, input)
+	if err != nil {
+		return nil, err
+	}
+	if input.ExpiresAt != nil {
+		if *input.ExpiresAt <= 0 {
+			account.ExpiresAt = nil
+		} else {
+			expiresAt := time.Unix(*input.ExpiresAt, 0)
+			account.ExpiresAt = &expiresAt
+		}
+	}
+	if input.AutoPauseOnExpired != nil {
+		account.AutoPauseOnExpired = *input.AutoPauseOnExpired
+	}
+	return account, nil
+}
+
 func (s *codexReauthRecordingService) UpdateAccountExtra(_ context.Context, _ int64, updates map[string]any) error {
 	s.extra = updates
 	return nil
@@ -254,5 +273,43 @@ func TestReauthCodexSessionClearsErrorAndInvalidatesTokenCache(t *testing.T) {
 	}
 	if svc.extra["import_source"] != "codex_session" || svc.updatedAccounts[0].input.Extra != nil {
 		t.Fatalf("extra must be merged by key; updates = %v, update input = %+v", svc.extra, svc.updatedAccounts[0].input)
+	}
+}
+
+func TestReauthCodexSessionClearsOnlyAutoTokenExpiryAfterNewRefreshToken(t *testing.T) {
+	oldExpiry := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	oldToken := buildCodexAccessToken(t, "workspace-1", "user-1", oldExpiry)
+	existing := newCodexReauthTestAccount(oldToken, map[string]any{"expires_at": oldExpiry.Format(time.RFC3339)})
+	existing.ExpiresAt = &oldExpiry
+	existing.AutoPauseOnExpired = true
+	existing.Schedulable = true
+	svc := &codexReauthRecordingService{codexImportMemoryAdminService: newCodexImportMemoryAdminService([]service.Account{existing})}
+	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	newToken := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(time.Hour))
+	_, err := handler.reauthCodexSession(context.Background(), &existing, buildCodexAuthJSON(t, newToken, "rt-new"))
+	if err != nil {
+		t.Fatalf("reauthCodexSession error = %v", err)
+	}
+	input := svc.updatedAccounts[0].input
+	if input.ExpiresAt == nil || *input.ExpiresAt != 0 || input.AutoPauseOnExpired == nil || *input.AutoPauseOnExpired {
+		t.Fatalf("obsolete AT-only expiry was not cleared: %+v", input)
+	}
+	if !svc.accounts[0].IsSchedulable() {
+		t.Fatalf("account remains unschedulable after fresh refresh token: %+v", svc.accounts[0])
+	}
+
+	// A separate administrator expiry must remain untouched.
+	manualExpiry := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
+	existing.ExpiresAt = &manualExpiry
+	svc = &codexReauthRecordingService{codexImportMemoryAdminService: newCodexImportMemoryAdminService([]service.Account{existing})}
+	handler = NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	_, err = handler.reauthCodexSession(context.Background(), &existing, buildCodexAuthJSON(t, newToken, "rt-new"))
+	if err != nil {
+		t.Fatalf("reauthCodexSession with manual expiry error = %v", err)
+	}
+	input = svc.updatedAccounts[0].input
+	if input.ExpiresAt != nil || input.AutoPauseOnExpired != nil || svc.accounts[0].ExpiresAt == nil || !svc.accounts[0].ExpiresAt.Equal(manualExpiry) {
+		t.Fatalf("administrator expiry should be preserved: %+v", input)
 	}
 }

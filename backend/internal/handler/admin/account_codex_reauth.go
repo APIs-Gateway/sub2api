@@ -104,6 +104,13 @@ func (h *AccountHandler) reauthCodexSession(ctx context.Context, existing *servi
 		expiresAt = nil
 		autoPauseOnExpired = nil
 	}
+	if item.RefreshToken != "" && expiresAt == nil && codexReauthHasAutoTokenExpiry(existing) {
+		// A previous accessToken-only import set account expiry to that token's
+		// expiry. A fresh refresh_token makes that automatic stop obsolete.
+		clearExpiry, disableAutoPause := int64(0), false
+		expiresAt = &clearExpiry
+		autoPauseOnExpired = &disableAutoPause
+	}
 
 	credentials := mergeCodexImportCredentials(existing.Credentials, item.Credentials, item)
 	updated, err := h.adminService.UpdateAccount(ctx, existing.ID, &service.UpdateAccountInput{
@@ -136,6 +143,15 @@ func (h *AccountHandler) reauthCodexSession(ctx context.Context, existing *servi
 		Account:  h.buildAccountResponseWithRuntime(ctx, updated),
 		Warnings: warnings,
 	}, nil
+}
+
+func codexReauthHasAutoTokenExpiry(existing *service.Account) bool {
+	if existing == nil || existing.ExpiresAt == nil || !existing.AutoPauseOnExpired ||
+		codexCredentialString(existing.Credentials, "refresh_token") != "" {
+		return false
+	}
+	tokenExpiry, err := time.Parse(time.RFC3339Nano, codexCredentialString(existing.Credentials, "expires_at"))
+	return err == nil && existing.ExpiresAt.Unix() == tokenExpiry.Unix()
 }
 
 // checkCodexReauthIdentity 确认导入凭据与目标账号的所有已有稳定身份一致。
