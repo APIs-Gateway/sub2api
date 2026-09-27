@@ -15,12 +15,12 @@ func TestDefaultModelsContainsOpus55(t *testing.T) {
 }
 
 func TestIsOpus55(t *testing.T) {
-	for _, model := range []string{"claude-opus-5-5", "Claude-Opus-5-5", "anthropic/claude-opus-5-5", "claude-opus-5-5-20260922", "claude-opus-5-5-thinking", "models/claude-opus-5-5"} {
+	for _, model := range []string{"claude-opus-5-5", "Claude-Opus-5-5", "anthropic/claude-opus-5-5", "claude-opus-5-5-20260922", "claude-opus-5-5-thinking", "models/claude-opus-5-5", "anthropic/claude-opus-5.5", "claude-opus-5.5"} {
 		if !IsOpus55(model) {
 			t.Fatalf("IsOpus55(%q) = false, want true", model)
 		}
 	}
-	for _, model := range []string{"claude-opus-5", "claude-opus-4-5", "claude-opus-4-5-20251101", "claude-opus-5-50", "claude-sonnet-5", ""} {
+	for _, model := range []string{"claude-opus-5", "claude-opus-4-5", "claude-opus-4-5-20251101", "claude-opus-5-50", "anthropic/claude-opus-5.6", "anthropic/claude-opus-5.5-preview", "claude-sonnet-5", ""} {
 		if IsOpus55(model) {
 			t.Fatalf("IsOpus55(%q) = true, want false", model)
 		}

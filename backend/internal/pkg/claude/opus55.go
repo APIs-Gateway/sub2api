@@ -23,6 +23,10 @@ func normalizeClaudeModelIDForFamily(model string) string {
 	}
 	id = strings.TrimPrefix(id, "anthropic.")
 	id = strings.TrimSuffix(id, "-thinking")
+	// OpenRouter uses this exact dotted alias for Opus 5.5.
+	if id == "claude-opus-5.5" {
+		id = Opus55ModelID
+	}
 	if mapped, ok := ModelIDReverseOverrides[id]; ok {
 		id = mapped
 	}
