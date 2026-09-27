@@ -118,7 +118,7 @@ func TestReauthCodexSessionHTTPUpdatesSelectedAccount(t *testing.T) {
 
 func TestReauthCodexSessionReplacesCredentialsOfTargetAccountOnly(t *testing.T) {
 	oldToken := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(time.Hour))
-	existing := newCodexReauthTestAccount(oldToken, map[string]any{"refresh_token": "rt-old", "client_id": "old-client"})
+	existing := newCodexReauthTestAccount(oldToken, map[string]any{"refresh_token": "rt-old", "client_id": "old-client", "id_token": "old-id-token"})
 	svc := newCodexImportMemoryAdminService([]service.Account{existing})
 	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -142,6 +142,9 @@ func TestReauthCodexSessionReplacesCredentialsOfTargetAccountOnly(t *testing.T) 
 	}
 	if got := input.Credentials["refresh_token"]; got != "rt-new" {
 		t.Fatalf("refresh_token = %v, want rt-new", got)
+	}
+	if got := service.MergePreservingSensitiveCreds(existing.Credentials, input.Credentials)["id_token"]; got != "" {
+		t.Fatalf("stale ID token survived UpdateAccount sensitive-key merge: %v", got)
 	}
 	if _, ok := input.Credentials["model_mapping"]; !ok {
 		t.Fatal("model_mapping should be preserved")
@@ -415,5 +418,30 @@ func TestReauthCodexSessionClearsOnlyAutoTokenExpiryAfterNewRefreshToken(t *test
 	input = svc.updatedAccounts[0].input
 	if input.ExpiresAt != nil || input.AutoPauseOnExpired != nil || svc.accounts[0].ExpiresAt == nil || !svc.accounts[0].ExpiresAt.Equal(manualExpiry) {
 		t.Fatalf("administrator expiry should be preserved: %+v", input)
+	}
+}
+
+func TestReauthCodexSessionAccessTokenOnlyAdvancesSafeExpiry(t *testing.T) {
+	oldExpiry := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	oldToken := buildCodexAccessToken(t, "workspace-1", "user-1", oldExpiry)
+	existing := newCodexReauthTestAccount(oldToken, map[string]any{"expires_at": oldExpiry.Format(time.RFC3339)})
+	existing.ExpiresAt = &oldExpiry
+	existing.AutoPauseOnExpired = true
+	existing.Schedulable = true
+	svc := &codexReauthRecordingService{codexImportMemoryAdminService: newCodexImportMemoryAdminService([]service.Account{existing})}
+	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	newExpiry := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	newToken := buildCodexAccessToken(t, "workspace-1", "user-1", newExpiry)
+	_, err := handler.reauthCodexSession(context.Background(), &existing, newToken)
+	if err != nil {
+		t.Fatalf("reauthCodexSession error = %v", err)
+	}
+	input := svc.updatedAccounts[0].input
+	if input.ExpiresAt == nil || *input.ExpiresAt != newExpiry.Unix() || input.AutoPauseOnExpired == nil || !*input.AutoPauseOnExpired {
+		t.Fatalf("accessToken-only expiry not advanced to new token expiry: %+v", input)
+	}
+	if !svc.accounts[0].IsSchedulable() {
+		t.Fatalf("account should be schedulable until new token expiry: %+v", svc.accounts[0])
 	}
 }

@@ -113,6 +113,11 @@ func (h *AccountHandler) reauthCodexSession(ctx context.Context, existing *servi
 	}
 
 	credentials := mergeCodexImportCredentials(existing.Credentials, item.Credentials, item)
+	if item.IDToken == "" {
+		// UpdateAccount preserves omitted sensitive keys. Explicitly clear the
+		// previous ID token so it cannot be paired with newly imported AT/RT.
+		credentials["id_token"] = ""
+	}
 	updated, err := h.adminService.UpdateAccount(ctx, existing.ID, &service.UpdateAccountInput{
 		Type:               service.AccountTypeOAuth,
 		Credentials:        credentials,
