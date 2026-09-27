@@ -17,7 +17,7 @@ import (
 func TestUpstreamIPModeDialFamilies(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	for _, mode := range []string{"", config.UpstreamIPModeAuto, config.UpstreamIPModeIPv4} {
 		t.Run(mode, func(t *testing.T) {
@@ -77,14 +77,14 @@ func TestUpstreamIPModeDoesNotChangeHTTPProxyDial(t *testing.T) {
 
 	resp, err := (&http.Client{Transport: transport}).Get("http://upstream.invalid/path")
 	require.NoError(t, err, "the IPv4 proxy must remain reachable in IPv6 upstream mode")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 }
 
 func TestUpstreamIPModeDoesNotChangeSOCKSProxyDial(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	proxyDone := make(chan error, 1)
 	go func() {
@@ -93,7 +93,7 @@ func TestUpstreamIPModeDoesNotChangeSOCKSProxyDial(t *testing.T) {
 			proxyDone <- err
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		greeting := make([]byte, 3)
 		if _, err = io.ReadFull(conn, greeting); err != nil {
 			proxyDone <- err
