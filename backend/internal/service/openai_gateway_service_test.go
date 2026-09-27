@@ -2985,8 +2985,13 @@ func TestOpenAIBuildUpstreamRequestPreservesCallerResponsesBeta(t *testing.T) {
 		{name: "OAuth preserves caller beta", path: "/v1/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1"}, want: []string{"responses_multi_agent=v1"}},
 		{name: "OAuth removes only legacy token across multiple values", path: "/v1/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1, responses=experimental", "future_feature=v2"}, want: []string{"responses_multi_agent=v1", "future_feature=v2"}},
 		{name: "OAuth leaves absent beta absent", path: "/v1/responses", account: oauth},
+		{name: "OpenAI prefixed Responses alias", path: "/openai/v1/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1"}, want: []string{"responses_multi_agent=v1"}},
+		{name: "bare Responses alias", path: "/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1"}, want: []string{"responses_multi_agent=v1"}},
+		{name: "Codex Responses alias", path: "/backend-api/codex/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1"}, want: []string{"responses_multi_agent=v1"}},
 		{name: "API key preserves caller beta unchanged", path: "/v1/responses", account: apiKey, betaValues: []string{"responses=experimental, responses_multi_agent=v1"}, want: []string{"responses=experimental, responses_multi_agent=v1"}},
 		{name: "compact OAuth preserves independent beta", path: "/v1/responses/compact", account: oauth, betaValues: []string{"responses=experimental, future_feature=v1"}, want: []string{"future_feature=v1"}},
+		{name: "Chat conversion drops caller beta", path: "/v1/chat/completions", account: oauth, betaValues: []string{"responses_multi_agent=v1"}},
+		{name: "API key Chat conversion drops caller beta", path: "/v1/chat/completions", account: apiKey, betaValues: []string{"responses_multi_agent=v1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())

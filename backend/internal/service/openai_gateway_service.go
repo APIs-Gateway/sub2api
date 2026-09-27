@@ -76,7 +76,6 @@ var openaiAllowedHeaders = map[string]bool{
 	"accept-language":         true,
 	"content-type":            true,
 	"conversation_id":         true,
-	"openai-beta":             true,
 	"user-agent":              true,
 	"originator":              true,
 	"session_id":              true,
@@ -5769,10 +5768,13 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		setOpenAIChatGPTAccountHeaders(req.Header, account)
 	}
 
+	// Only original Responses requests may negotiate a Responses beta. This
+	// builder also serves Chat, Messages, and image conversion paths.
+	allowCallerResponsesBeta := isOpenAIResponsesInboundPath(c)
 	// Whitelist passthrough headers
 	for key, values := range c.Request.Header {
 		lowerKey := strings.ToLower(key)
-		if openaiAllowedHeaders[lowerKey] {
+		if openaiAllowedHeaders[lowerKey] || (lowerKey == "openai-beta" && allowCallerResponsesBeta) {
 			for _, v := range values {
 				req.Header.Add(key, v)
 			}
@@ -8407,6 +8409,19 @@ func NormalizeOpenAICompactRequestBodyForTest(body []byte) ([]byte, bool, error)
 func isOpenAIResponsesCompactPath(c *gin.Context) bool {
 	suffix := strings.TrimSpace(openAIResponsesRequestPathSuffix(c))
 	return suffix == "/compact" || strings.HasPrefix(suffix, "/compact/")
+}
+
+func isOpenAIResponsesInboundPath(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	path := strings.TrimRight(strings.TrimSpace(c.Request.URL.Path), "/")
+	for _, root := range []string{"/v1/responses", "/openai/v1/responses", "/responses", "/backend-api/codex/responses"} {
+		if path == root || path == root+"/compact" || strings.HasPrefix(path, root+"/compact/") {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
