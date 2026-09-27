@@ -68,6 +68,24 @@ describe('UsageProgressBar', () => {
     expect(wrapper.text()).not.toContain('NaN')
   })
 
+  it.each([
+    { utilization: 18, showNowWhenIdle: true },
+    { utilization: 0, showNowWhenIdle: false }
+  ])('没有 resetsAt 且非空闲展示条件时隐藏重置文案 (%o)', ({ utilization, showNowWhenIdle }) => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization,
+        resetsAt: null,
+        showNowWhenIdle,
+        color: 'indigo'
+      }
+    })
+
+    expect(wrapper.text()).not.toContain('usage.resetNow')
+    expect(wrapper.text()).not.toContain('usage.resetPending')
+  })
+
   it('无效 resetsAt 不显示 NaN 或“现在”', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {

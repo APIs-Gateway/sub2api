@@ -148,8 +148,8 @@ const shouldShowResetTime = computed(() => {
 // Format reset time
 const formatResetTime = computed(() => {
   if (!props.resetsAt) {
-    // Idle rolling window without a known reset time: treat as immediately available.
-    return props.showNowWhenIdle && props.utilization <= 0 ? t('usage.resetNow') : '-'
+    // With no reset time, shouldShowResetTime only displays an idle rolling window.
+    return t('usage.resetNow')
   }
 
   const date = new Date(props.resetsAt)
