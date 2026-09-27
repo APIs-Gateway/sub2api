@@ -475,6 +475,40 @@ func TestForwardAsRawChatCompletions_PreservesMappedGPT56MaxEffort(t *testing.T)
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+func TestForwardAsRawChatCompletions_MappedGPTCacheHints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name, mappedModel string
+		strip             bool
+	}{
+		{name: "GPT destination", mappedModel: "gpt-6-sol", strip: true},
+		{name: "non-GPT destination", mappedModel: "custom-model", strip: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"public","stream":false,"prompt_cache_options":{"mode":"explicit"},"prompt_cache_key":"keep","messages":[{"role":"user","content":[{"type":"text","text":"hello","prompt_cache_breakpoint":true}]}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"prompt_cache_breakpoint":{"type":"string"}}}}}]}`)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"stop before response parsing"}}`)),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			account := rawChatCompletionsTestAccount()
+			account.Credentials["model_mapping"] = map[string]any{"public": tc.mappedModel}
+
+			_, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+			require.Error(t, err) // Deliberate recorder response after the request is captured.
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, tc.mappedModel, gjson.GetBytes(upstream.lastBody, "model").String())
+			require.Equal(t, !tc.strip, gjson.GetBytes(upstream.lastBody, "prompt_cache_options").Exists())
+			require.Equal(t, !tc.strip, gjson.GetBytes(upstream.lastBody, "messages.0.content.0.prompt_cache_breakpoint").Exists())
+			require.Equal(t, "keep", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+			require.True(t, gjson.GetBytes(upstream.lastBody, "tools.0.function.parameters.properties.prompt_cache_breakpoint").Exists())
+		})
+	}
+}
+
 func TestForwardAsRawChatCompletions_NormalizesGLMReasoningEffortForUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

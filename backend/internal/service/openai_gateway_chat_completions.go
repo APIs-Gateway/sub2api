@@ -252,6 +252,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	// Apply the GPT compatibility rule after final model mapping and the OAuth
+	// transform, so an alias cannot leave unsupported explicit cache hints.
+	responsesBody, _ = sanitizeGPTPromptCacheHints(responsesBody, upstreamModel)
 
 	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
