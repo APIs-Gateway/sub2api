@@ -40,6 +40,7 @@ type StreamingProcessor struct {
 	outputTokens      int
 	cacheReadTokens   int
 	imageOutputTokens int
+	hasContent        bool
 }
 
 // NewStreamingProcessor 创建流式响应处理器
@@ -175,6 +176,12 @@ func (p *StreamingProcessor) MessageStartSent() bool {
 	return p.messageStartSent
 }
 
+// HasContent reports whether a user-visible text, thinking, or tool payload was emitted.
+// A message_start, stop reason, or thought signature alone is not a completion.
+func (p *StreamingProcessor) HasContent() bool {
+	return p.hasContent
+}
+
 // emitMessageStart 发送 message_start 事件
 func (p *StreamingProcessor) emitMessageStart(v1Resp *V1InternalResponse) []byte {
 	if p.messageStartSent {
@@ -296,6 +303,7 @@ func (p *StreamingProcessor) processThinking(text, signature string) []byte {
 	}
 
 	if text != "" {
+		p.hasContent = true
 		_, _ = result.Write(p.emitDelta("thinking_delta", map[string]any{
 			"thinking": text,
 		}))
@@ -320,6 +328,7 @@ func (p *StreamingProcessor) processText(text, signature string) []byte {
 		}
 		return nil
 	}
+	p.hasContent = true
 
 	// 处理之前的 trailingSignature
 	if p.trailingSignature != "" {
@@ -362,6 +371,7 @@ func (p *StreamingProcessor) processFunctionCall(fc *GeminiFunctionCall, signatu
 	var result bytes.Buffer
 
 	p.usedTool = true
+	p.hasContent = true
 
 	toolID := fc.ID
 	if toolID == "" {
@@ -499,6 +509,7 @@ func (p *StreamingProcessor) emitFinish(finishReason string) []byte {
 			GroundingChunks:  p.groundingChunks,
 		})
 		if groundingText != "" {
+			p.hasContent = true
 			_, _ = result.Write(p.startBlock(BlockTypeText, map[string]any{
 				"type": "text",
 				"text": "",
