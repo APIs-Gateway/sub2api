@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -207,6 +208,16 @@ func TestNormalizeOpenAIWSContextWindowBoundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNormalizeOpenAIWSContextWindowBoundaryRejectsIncompleteRemoval(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"type":"response.create"` + strings.Repeat(`,"previous_response_id":"resp_old"`, openAIWSMaxPrevResponseIDDeletePasses+1) + `,"client_metadata":{"x-codex-window-id":"window-b"}}`)
+	updated, boundary, err := normalizeOpenAIWSContextWindowBoundary(payload, "window-a")
+	require.ErrorContains(t, err, "previous_response_id remains")
+	require.True(t, boundary.Changed)
+	require.False(t, boundary.PreviousResponseIDRemoved)
+	require.Equal(t, string(payload), string(updated), "an incomplete deletion must never be forwarded")
 }
 
 func TestStripCodexSparkImageGenerationToolFromRawPayload(t *testing.T) {

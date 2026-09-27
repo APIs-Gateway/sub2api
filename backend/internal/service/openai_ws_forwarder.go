@@ -1394,9 +1394,13 @@ func normalizeOpenAIWSContextWindowBoundary(
 		return payload, boundary, nil
 	}
 	boundary.Changed = true
+	hadPreviousResponseID := gjson.GetBytes(payload, "previous_response_id").Exists()
 	updated, removed, err := dropPreviousResponseIDFromRawPayload(payload)
 	if err != nil {
 		return payload, boundary, err
+	}
+	if hadPreviousResponseID && !removed {
+		return payload, boundary, errors.New("previous_response_id remains after context-window rollover")
 	}
 	boundary.PreviousResponseIDRemoved = removed
 	return updated, boundary, nil
