@@ -624,6 +624,52 @@ func TestTransformClaudeToGeminiWithOptions_MessageRoles(t *testing.T) {
 		require.Equal(t, "turn counter", req.Request.Contents[2].Parts[0].Text)
 	})
 
+	t.Run("user after mid conversation system keeps roles alternating", func(t *testing.T) {
+		base := []ClaudeMessage{
+			{Role: "user", Content: json.RawMessage(`"question"`)},
+			{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+			{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+		}
+		before := transform(t, &ClaudeRequest{Model: "claude-3-5-sonnet-latest", Messages: base})
+		after := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: append(append([]ClaudeMessage{}, base...),
+				ClaudeMessage{Role: "user", Content: json.RawMessage(`"next question"`)}),
+		})
+
+		require.Len(t, before.Request.Contents, 3)
+		require.Len(t, after.Request.Contents, 3)
+		require.Equal(t, []string{"user", "model", "user"}, []string{
+			after.Request.Contents[0].Role,
+			after.Request.Contents[1].Role,
+			after.Request.Contents[2].Role,
+		})
+		require.Equal(t, "turn counter", after.Request.Contents[2].Parts[0].Text)
+		require.Equal(t, "next question", after.Request.Contents[2].Parts[1].Text)
+		require.Equal(t, before.Request.Contents[:2], after.Request.Contents[:2],
+			"coalescing the next user may change only the last synthetic turn")
+		require.Equal(t, systemText(before.Request.SystemInstruction), systemText(after.Request.SystemInstruction))
+	})
+
+	t.Run("system between ordinary users stays in one user turn", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{Role: "user", Content: json.RawMessage(`"first"`)},
+				{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+				{Role: "user", Content: json.RawMessage(`"second"`)},
+			},
+		})
+
+		require.Len(t, req.Request.Contents, 1)
+		require.Equal(t, "user", req.Request.Contents[0].Role)
+		require.Equal(t, []string{"first", "turn counter", "second"}, []string{
+			req.Request.Contents[0].Parts[0].Text,
+			req.Request.Contents[0].Parts[1].Text,
+			req.Request.Contents[0].Parts[2].Text,
+		})
+	})
+
 	t.Run("appending a turn never rewrites the existing prefix", func(t *testing.T) {
 		base := []ClaudeMessage{
 			{Role: "user", Content: json.RawMessage(`"question"`)},

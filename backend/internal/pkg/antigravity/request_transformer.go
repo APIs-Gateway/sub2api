@@ -418,6 +418,7 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 	var contents []GeminiContent
 	var systemParts []GeminiPart
 	strippedThinking := false
+	lastUserHasMidSystem := false
 
 	for i, msg := range messages {
 		role := msg.Role
@@ -445,9 +446,11 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 			// 保持角色交替：优先并入前一个 user 轮次，否则单独成为一个 user 轮次。
 			if last := &contents[len(contents)-1]; last.Role == "user" {
 				last.Parts = append(last.Parts, parts...)
+				lastUserHasMidSystem = lastUserHasMidSystem || len(parts) > 0
 				continue
 			}
 			role = "user"
+			lastUserHasMidSystem = len(parts) > 0
 		}
 
 		// 只有 Gemini 模型支持 dummy thinking block workaround
@@ -474,11 +477,21 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 		if len(parts) == 0 {
 			continue
 		}
+		if role == "user" && lastUserHasMidSystem && len(contents) > 0 && contents[len(contents)-1].Role == "user" {
+			// A subsequent ordinary user turn must share the mid-system user turn.
+			// This may invalidate that last turn's cache entry, but leaves all older
+			// contents intact and avoids consecutive user roles in Gemini history.
+			contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, parts...)
+			continue
+		}
 
 		contents = append(contents, GeminiContent{
 			Role:  role,
 			Parts: parts,
 		})
+		if role != "user" {
+			lastUserHasMidSystem = false
+		}
 	}
 
 	return contents, systemParts, strippedThinking, nil
