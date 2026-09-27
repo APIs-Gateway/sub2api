@@ -157,3 +157,56 @@ func TestGatewayChatCompletions_GeminiClientCancelDuringRetryBackoff(t *testing.
 	require.Zero(t, rec.Body.Len())
 	require.Equal(t, int64(1), opsQueued)
 }
+
+func TestGatewayMessages_GeminiClientCancelBeforeUpstreamResponseMarks499(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	f := newGeminiClientCancelFixture(t)
+
+	rec, opsQueued := f.serve(t,
+		"/v1/messages",
+		"/v1/messages",
+		`{"model":"gemini-2.5-flash","max_tokens":8,"messages":[{"role":"user","content":"hi"}],"stream":true}`,
+		f.handler.Messages,
+	)
+
+	require.Equal(t, int32(1), f.upstream.calls.Load())
+	require.Equal(t, statusClientClosedRequest, rec.Code)
+	require.Zero(t, rec.Body.Len())
+	require.Zero(t, opsQueued)
+}
+
+func TestGatewayMessages_GeminiClientCancelDuringRetryBackoff(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	f := newGeminiClientCancelFixture(t)
+	f.upstream.status = http.StatusServiceUnavailable
+
+	rec, opsQueued := f.serve(t,
+		"/v1/messages",
+		"/v1/messages",
+		`{"model":"gemini-2.5-flash","max_tokens":8,"messages":[{"role":"user","content":"hi"}],"stream":true}`,
+		f.handler.Messages,
+	)
+
+	require.Equal(t, int32(1), f.upstream.calls.Load())
+	require.Equal(t, statusClientClosedRequest, rec.Code)
+	require.Zero(t, rec.Body.Len())
+	require.Equal(t, int64(1), opsQueued)
+}
+
+func TestGeminiV1BetaModels_ClientCancelDuringRetryBackoff(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	f := newGeminiClientCancelFixture(t)
+	f.upstream.status = http.StatusServiceUnavailable
+
+	rec, opsQueued := f.serve(t,
+		"/v1beta/models/*modelAction",
+		"/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+		`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`,
+		f.handler.GeminiV1BetaModels,
+	)
+
+	require.Equal(t, int32(1), f.upstream.calls.Load())
+	require.Equal(t, statusClientClosedRequest, rec.Code)
+	require.Zero(t, rec.Body.Len())
+	require.Equal(t, int64(1), opsQueued)
+}

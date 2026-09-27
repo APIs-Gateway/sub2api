@@ -25,6 +25,8 @@ type alphaSearchHTTPUpstream struct {
 	mu         sync.Mutex
 	accountIDs []int64
 	responses  []*http.Response
+	onDo       func()
+	doErr      error
 }
 
 type alphaSearchReadErrorBody struct{}
@@ -39,6 +41,12 @@ func (u *alphaSearchHTTPUpstream) Do(_ *http.Request, _ string, accountID int64,
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.accountIDs = append(u.accountIDs, accountID)
+	if u.onDo != nil {
+		u.onDo()
+	}
+	if u.doErr != nil {
+		return nil, u.doErr
+	}
 	if len(u.responses) == 0 {
 		return nil, io.EOF
 	}
@@ -469,4 +477,42 @@ func TestOpenAIGatewayHandlerAlphaSearchStopsAtMaxAccountSwitches(t *testing.T) 
 	require.Equal(t, http.StatusBadGateway, recorder.Code)
 	require.Equal(t, "upstream_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
 	require.Equal(t, []int64{41, 42}, upstream.calls())
+}
+
+func TestOpenAIGatewayHandlerAlphaSearchClientCancelStopsFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	accounts := []service.Account{
+		{ID: 51, Name: "alpha-primary", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true, Credentials: map[string]any{"access_token": "token-1"}},
+		{ID: 52, Name: "alpha-secondary", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true, Priority: 1, Credentials: map[string]any{"access_token": "token-2"}},
+	}
+	for _, tc := range []struct {
+		name     string
+		response *http.Response
+		doErr    error
+	}{
+		{name: "canceled transport", doErr: context.Canceled},
+		{name: "genuine upstream response", response: &http.Response{StatusCode: http.StatusInternalServerError, Header: make(http.Header), Body: io.NopCloser(bytes.NewBufferString(`{"error":{"message":"upstream failed"}}`))}},
+		{name: "genuine transport error", doErr: io.EOF},
+		{name: "response body read error", response: &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: alphaSearchReadErrorBody{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := &alphaSearchHTTPUpstream{doErr: tc.doErr}
+			if tc.response != nil {
+				upstream.responses = []*http.Response{tc.response}
+			}
+			handler := newAlphaSearchGatewayHandler(t, accounts, upstream)
+			apiKey := alphaSearchAPIKey(service.PlatformOpenAI, 5102)
+			c, recorder := newAlphaSearchContext(`{"id":"cancel-during-forward","model":"gpt-5.6-sol"}`, apiKey, &middleware2.AuthSubject{UserID: 100})
+			ctx, cancel := context.WithCancel(c.Request.Context())
+			defer cancel()
+			c.Request = c.Request.WithContext(ctx)
+			upstream.onDo = cancel
+
+			handler.AlphaSearch(c)
+
+			require.Equal(t, statusClientClosedRequest, recorder.Code)
+			require.Zero(t, recorder.Body.Len())
+			require.Equal(t, []int64{51}, upstream.calls())
+		})
+	}
 }
