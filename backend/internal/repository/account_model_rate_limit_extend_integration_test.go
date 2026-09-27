@@ -22,6 +22,7 @@ func newExtendModelRateLimitTestAccount(t *testing.T) int64 {
 	account, err := testEntClient(t).Account.Create().
 		SetName(fmt.Sprintf("image-balance-reset-%d", time.Now().UnixNano())).
 		SetPlatform(service.PlatformOpenAI).
+		SetType(service.AccountTypeAPIKey).
 		Save(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() {
