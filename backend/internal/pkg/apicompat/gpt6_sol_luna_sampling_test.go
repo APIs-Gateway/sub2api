@@ -29,8 +29,23 @@ func TestGPT6SolLunaChatSamplingParameters(t *testing.T) {
 			}
 		}
 	}
-	// GPT-6 Astra 及非推理模型保持原行为。
-	for _, model := range []string{"gpt-6-astra", "gpt-4o"} {
+	// Astra 和公开别名 gpt-6 不支持自定义采样参数，即使客户端送出 none。
+	for _, model := range []string{"gpt-6-astra", "gpt-6"} {
+		for _, effort := range []string{"", "none"} {
+			out, err := ChatCompletionsToResponses(&ChatCompletionsRequest{
+				Model:           model,
+				ReasoningEffort: effort,
+				Temperature:     &temperature,
+				TopP:            &temperature,
+				Messages:        []ChatMessage{{Role: "user", Content: json.RawMessage(`"hello"`)}},
+			})
+			require.NoError(t, err)
+			require.Nil(t, out.Temperature, model+"/"+effort)
+			require.Nil(t, out.TopP, model+"/"+effort)
+		}
+	}
+	// GPT-4 系列保持采样参数透传。
+	for _, model := range []string{"gpt-4o", "gpt-4.1"} {
 		out, err := ChatCompletionsToResponses(&ChatCompletionsRequest{
 			Model:       model,
 			Temperature: &temperature,

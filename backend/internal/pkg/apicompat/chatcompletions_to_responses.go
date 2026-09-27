@@ -39,7 +39,7 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 		ParallelToolCalls:  req.ParallelToolCalls,
 	}
 
-	// Reasoning models (gpt-5.x, GPT-6 Sol/Luna) do not accept sampling
+	// GPT-5 and later reasoning models do not accept sampling
 	// parameters. See isReasoningModel in anthropic_to_responses.go.
 	// GPT-6 Sol/Luna accept them again when reasoning_effort is "none".
 	if !isReasoningModel(req.Model) || (openai.IsGPT6SolOrLunaModelSpelling(req.Model) && req.ReasoningEffort == "none") {
