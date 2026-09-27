@@ -25,6 +25,7 @@ jobs:
         run: |
           /bin/sh deploy/tests/docker-compose-security-test.sh
           /bin/sh deploy/test-caddyfile-cache.sh
+          python3 deploy/tests/docker-compose-redis-command-test.py
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
