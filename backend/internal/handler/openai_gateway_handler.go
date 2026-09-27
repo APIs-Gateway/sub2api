@@ -2371,6 +2371,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return
 			}
 
+			// A client blocked by this account's local admission policy has not
+			// contacted upstream. Keep the account's scheduler health unchanged.
+			if hasClientCloseErr && errors.Is(err, service.ErrCodexClientRestricted) {
+				writeCodexClientRestrictedWSError(ctx, wsConn, closeErr.Reason())
+				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+				return
+			}
+
 			// 网关自身的准入拒绝（BeforeRequest 的审计/非法载荷、BeforeTurn 的用户/账号并发
 			// 槽位与连接级 cyber gate）不是上游/账号故障：只照常关闭连接，不计入账号调度失败。
 			// 注意不能按 1013/1008 状态码判断——上游 429 忙、连接超时、鉴权失败同样映射为
@@ -2989,6 +2997,26 @@ func writeContentModerationWSError(ctx context.Context, conn *coderws.Conn, deci
 	if err != nil {
 		payload = []byte(`{"event_id":"evt_content_moderation_blocked","type":"error","error":{"type":"invalid_request_error","code":"content_policy_violation","message":"content moderation blocked this request"}}`)
 	}
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_ = conn.Write(writeCtx, coderws.MessageText, payload)
+}
+
+func writeCodexClientRestrictedWSError(ctx context.Context, conn *coderws.Conn, message string) {
+	if conn == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	payload, _ := json.Marshal(gin.H{
+		"event_id": "evt_codex_client_restricted",
+		"type":     "error",
+		"error": gin.H{
+			"type":    "forbidden_error",
+			"message": message,
+		},
+	})
 	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_ = conn.Write(writeCtx, coderws.MessageText, payload)
