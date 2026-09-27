@@ -16,8 +16,10 @@ var geminiTransportFailoverBody = []byte(`{"error":{"code":502,"message":"Upstre
 // has returned an HTTP response. Once an upstream response is received, the
 // existing HTTP status and streaming paths own retries and client output.
 func (s *GeminiMessagesCompatService) handleGeminiUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error) error {
-	if isClientCanceledTransportError(ctx, err) {
-		return err
+	// The request's own cancellation or deadline says nothing about the provider.
+	// Check before recording an ops upstream error or changing account state.
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
 	}
 
 	safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -34,9 +36,6 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamTransportError(ctx con
 	// A provider or proxy may cancel its own operation while the client request
 	// remains live. That failure must still fail over, or the handler would see
 	// a plain error without a response to send.
-	if ctx != nil && ctx.Err() != nil {
-		return ctx.Err()
-	}
 	if classifyUpstreamTransportError(err).Persistent {
 		tempUnscheduleAccountForTransportError(ctx, s.accountRepo, account, safeErr)
 	}

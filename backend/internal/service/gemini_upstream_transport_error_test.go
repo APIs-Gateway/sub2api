@@ -80,6 +80,7 @@ func TestGeminiTransportError_ThreeEntryPathsFailOverBeforeClientOutput(t *testi
 		}{
 			{name: "EOF", err: errors.New("read tcp: EOF")},
 			{name: "provider_canceled", err: context.Canceled},
+			{name: "provider_deadline", err: context.DeadlineExceeded},
 		} {
 			t.Run(tc.name+"/"+upstreamErr.name, func(t *testing.T) {
 				svc, upstream, repo := newGeminiTransportErrorService(upstreamErr.err)
@@ -134,6 +135,26 @@ func TestGeminiTransportError_ClientCancellationDoesNotFailOverOrLog(t *testing.
 
 	require.Nil(t, result)
 	require.ErrorIs(t, err, context.Canceled)
+	var failover *UpstreamFailoverError
+	require.False(t, errors.As(err, &failover))
+	require.Equal(t, 1, upstream.calls)
+	require.Zero(t, repo.calls)
+	require.Empty(t, upstreamErrorEventsFromContext(t, c))
+	require.False(t, c.Writer.Written())
+}
+
+func TestGeminiTransportError_RequestDeadlineDoesNotFailOverOrLog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc, upstream, repo := newGeminiTransportErrorService(context.DeadlineExceeded)
+	body := geminiSignalTestRequest()
+	c := newGeminiTransportContext(t, "/v1beta/models/gemini-2.5-flash:generateContent", body)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	result, err := svc.ForwardNative(ctx, c, geminiSignalTestAccount(), "gemini-2.5-flash", "generateContent", false, body)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	var failover *UpstreamFailoverError
 	require.False(t, errors.As(err, &failover))
 	require.Equal(t, 1, upstream.calls)
