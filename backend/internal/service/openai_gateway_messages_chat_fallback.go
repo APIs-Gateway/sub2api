@@ -90,8 +90,12 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	// sees; prefer it when it finds something, and fall back to the bridge's own
 	// chatReq.ReasoningEffort (always populated, defaults to "medium") otherwise.
 	baseEffort := chatReq.ReasoningEffort
-	if extracted := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel); extracted != nil {
-		baseEffort = *extracted
+	// Explicitly disabled thinking wins over fork-only raw effort metadata too,
+	// so the usage result describes the effort actually sent upstream.
+	if baseEffort != "none" {
+		if extracted := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel); extracted != nil {
+			baseEffort = *extracted
+		}
 	}
 	convertedEffort := openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, baseEffort)
 	reasoningEffort := &convertedEffort
