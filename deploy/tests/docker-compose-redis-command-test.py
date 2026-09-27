@@ -28,46 +28,47 @@ def run(*args, env=None, check=True):
     )
 
 
-def compose_redis_service(compose_file, password):
+def assert_redis_auth(compose_file, password):
     env = os.environ.copy()
     env.update(POSTGRES_PASSWORD="ci-only", REDIS_PASSWORD=password)
-    result = run("docker", "compose", "-f", compose_file, "config", "--format", "json", env=env)
-    return json.loads(result.stdout)["services"]["redis"]
-
-
-def assert_redis_auth(service, password):
-    name = f"sub2api-redis-command-test-{uuid.uuid4().hex[:12]}"
-    run("docker", "run", "--detach", "--rm", "--name", name, service["image"], *service["command"])
+    project = f"sub2api-redis-command-{uuid.uuid4().hex[:12]}"
+    compose = ("docker", "compose", "-f", compose_file, "-p", project)
     try:
+        run(*compose, "up", "-d", "--no-deps", "redis", env=env)
+        container_id = run(*compose, "ps", "-q", "redis", env=env).stdout.strip()
+        assert container_id, f"{compose_file}: Redis container did not start"
+        # `docker compose config` escapes a literal `$` as `$$` for re-parsing.
+        # Inspect the created container to verify the arguments Docker received.
+        details = json.loads(run("docker", "inspect", container_id).stdout)[0]["Config"]
+        expected = BASE_COMMAND + [password]
+        assert details["Cmd"] == expected, (
+            f"{compose_file}: command={details['Cmd']!r}, expected={expected!r}"
+        )
+        assert f"REDISCLI_AUTH={password}" in details["Env"], compose_file
+
         for _ in range(40):
-            response = run("docker", "exec", "-e", f"REDISCLI_AUTH={password}", name, "redis-cli", "ping", check=False)
+            response = run("docker", "exec", "-e", f"REDISCLI_AUTH={password}", container_id, "redis-cli", "ping", check=False)
             if response.stdout.strip() == "PONG":
                 break
             time.sleep(0.25)
         else:
-            logs = run("docker", "logs", name, check=False)
+            logs = run("docker", "logs", container_id, check=False)
             raise AssertionError(f"Redis did not accept configured password: {logs.stdout}\n{logs.stderr}")
 
-        unauthenticated = run("docker", "exec", name, "redis-cli", "ping", check=False)
+        unauthenticated = run("docker", "exec", container_id, "redis-cli", "ping", check=False)
         output = (unauthenticated.stdout + unauthenticated.stderr).strip()
         if password:
             assert "NOAUTH Authentication required." in output, output
         else:
             assert output == "PONG", output
     finally:
-        run("docker", "rm", "--force", name, check=False)
+        run(*compose, "down", "--volumes", "--remove-orphans", env=env, check=False)
 
 
 def main():
     for compose_file in COMPOSE_FILES:
         for password in PASSWORDS:
-            service = compose_redis_service(compose_file, password)
-            expected = BASE_COMMAND + [password]
-            assert service["command"] == expected, (
-                f"{compose_file}: command={service['command']!r}, expected={expected!r}"
-            )
-            assert service["environment"]["REDISCLI_AUTH"] == password, compose_file
-            assert_redis_auth(service, password)
+            assert_redis_auth(compose_file, password)
             print(f"{compose_file}: Redis command and authentication passed ({'empty' if not password else 'special'} password)")
 
 
