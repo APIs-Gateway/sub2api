@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestHandleCCBufferedFromAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
@@ -326,4 +329,45 @@ func TestAppendRawJSON_TreatsEmptyObjectAsPlaceholder(t *testing.T) {
 	require.Equal(t, `{"a":`+`1}`, string(appendRawJSON(json.RawMessage(`{"a":`), `1}`)))
 	require.Equal(t, `null{"a":1}`, string(appendRawJSON(json.RawMessage(`null`), `{"a":1}`)))
 	require.Equal(t, `{`+`}`, string(appendRawJSON(json.RawMessage(`{`), `}`)))
+}
+
+func TestForwardAsChatCompletionsAppliesTurnFollowingCacheBreakpoints(t *testing.T) {
+	body := `{"model":"public-opus","messages":[
+		{"role":"user","content":"turn one"},
+		{"role":"assistant","content":"answer one"},
+		{"role":"user","content":"turn two"},
+		{"role":"assistant","content":"answer two"},
+		{"role":"user","content":"turn three"}
+	]}`
+	for _, tc := range []struct {
+		name, mappedModel string
+		wantInject        bool
+	}{
+		{"claude model mapping", "claude-opus-5-5", true},
+		{"non claude model mapping", "deepseek-v4-flash", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+			upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(namespaceToolAnthropicStream()))}}
+			account := &Account{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "fixture-key", "model_mapping": map[string]any{"public-opus": tc.mappedModel}}}
+			svc := &GatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+			result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, []byte(body), nil)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, tc.mappedModel, gjson.GetBytes(upstream.lastBody, "model").String())
+			require.Len(t, gjson.GetBytes(upstream.lastBody, "messages").Array(), 5)
+			if tc.wantInject {
+				require.Equal(t, "ephemeral", gjson.GetBytes(upstream.lastBody, "messages.4.content.0.cache_control.type").String())
+				require.Equal(t, "ephemeral", gjson.GetBytes(upstream.lastBody, "messages.2.content.0.cache_control.type").String())
+				require.LessOrEqual(t, countAnthropicCacheBreakpoints(upstream.lastBody), maxCacheControlBlocks)
+			} else {
+				require.Zero(t, countAnthropicCacheBreakpoints(upstream.lastBody))
+			}
+		})
+	}
 }
