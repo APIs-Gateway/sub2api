@@ -100,6 +100,35 @@ func TestHandleClaudeStreamingResponse_GroundingAtEOFReleasesPrelude(t *testing.
 	require.Contains(t, body, "event: message_stop")
 }
 
+func TestHandleClaudeStreamingResponse_KeepaliveDoesNotCommitEmptyStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{
+		MaxLineSize: defaultMaxLineSize, StreamKeepaliveInterval: 1,
+	}})
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	reader, writer := io.Pipe()
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(writer, "data: "+geminiMalformedFunctionCall+"\n\n")
+		if err == nil {
+			time.Sleep(2200 * time.Millisecond) // Wait past two keepalive ticks before upstream EOF.
+		}
+		writeErr <- err
+		_ = writer.Close()
+	}()
+	resp := &http.Response{StatusCode: http.StatusOK, Body: reader}
+
+	result, err := svc.handleClaudeStreamingResponse(c, resp, time.Now(), "gemini-3.8-flash")
+	require.NoError(t, <-writeErr)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Empty(t, rec.Body.String(), "pre-content keepalive must not commit HTTP 200")
+	require.False(t, c.Writer.Written())
+}
+
 func TestHandleClaudeStreamingResponse_CanceledEmptyStreamDoesNotFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
