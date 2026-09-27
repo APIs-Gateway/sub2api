@@ -923,7 +923,19 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}
 
 		// Skip logging if the error should be filtered based on settings
-		if shouldSkipOpsErrorLog(c.Request.Context(), ops, parsed.Message, string(body), c.Request.URL.Path) {
+		preserveClientClosedUpstream := status == statusClientClosedRequest && hasOpsClientClosedUpstreamErrorContext(c)
+		filterCtx := c.Request.Context()
+		if status == statusClientClosedRequest {
+			// The request context is canceled for a real disconnect. Keep the
+			// settings lookup alive briefly so every configured filter still applies.
+			var cancel context.CancelFunc
+			filterCtx, cancel = context.WithTimeout(context.WithoutCancel(filterCtx), 2*time.Second)
+			defer cancel()
+		}
+		if shouldSkipOpsErrorLog(filterCtx, ops, parsed.Message, string(body), c.Request.URL.Path, preserveClientClosedUpstream) {
+			return
+		}
+		if shouldSkipOpsClientClosed(c, ops, status) {
 			return
 		}
 
@@ -1788,7 +1800,7 @@ func strconvItoa(v int) string {
 
 // shouldSkipOpsErrorLog determines if an error should be skipped from logging based on settings.
 // Returns true for errors that should be filtered according to OpsAdvancedSettings.
-func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message, body, requestPath string) bool {
+func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message, body, requestPath string, preserveClientClosedUpstream ...bool) bool {
 	if ops == nil {
 		return false
 	}
@@ -1809,7 +1821,7 @@ func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message
 	}
 
 	// Check if context canceled errors should be ignored (client disconnects)
-	if settings.IgnoreContextCanceled {
+	if settings.IgnoreContextCanceled && (len(preserveClientClosedUpstream) == 0 || !preserveClientClosedUpstream[0]) {
 		if strings.Contains(msgLower, opsErrContextCanceled) || strings.Contains(bodyLower, opsErrContextCanceled) {
 			return true
 		}
@@ -1838,6 +1850,43 @@ func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message
 		}
 	}
 
+	return false
+}
+
+// shouldSkipOpsClientClosed 按 IgnoreContextCanceled 过滤纯客户端取消的 499。
+// 499 表示客户端在响应提交前断开（见 failoverClientGone），通常不带
+// "context canceled" 文案，shouldSkipOpsErrorLog 的文本过滤命中不了。
+// 本次请求未观察到上游错误时是纯客户端取消；已有上游错误的 499 表示上游失败后
+// 客户端没等到换号结果就离开，仍按上游失败落库。
+func shouldSkipOpsClientClosed(c *gin.Context, ops *service.OpsService, status int) bool {
+	if status != statusClientClosedRequest || ops == nil {
+		return false
+	}
+	if c == nil || c.Request == nil {
+		return false
+	}
+	// The client context is already canceled. Read the setting with a bounded
+	// context so the cancellation does not turn the configured filter into a miss.
+	settingsCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 2*time.Second)
+	defer cancel()
+	settings, err := ops.GetOpsAdvancedSettings(settingsCtx)
+	if err != nil || settings == nil || !settings.IgnoreContextCanceled {
+		return false
+	}
+	return !hasOpsClientClosedUpstreamErrorContext(c)
+}
+
+func hasOpsClientClosedUpstreamErrorContext(c *gin.Context) bool {
+	if hasOpsUpstreamErrorContext(c) {
+		return true
+	}
+	for _, key := range []string{service.OpsUpstreamErrorMessageKey, service.OpsUpstreamErrorDetailKey} {
+		if v, ok := c.Get(key); ok {
+			if message, ok := v.(string); ok && strings.TrimSpace(message) != "" {
+				return true
+			}
+		}
+	}
 	return false
 }
 

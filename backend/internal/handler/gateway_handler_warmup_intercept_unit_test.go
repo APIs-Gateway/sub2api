@@ -155,15 +155,19 @@ func (f *fakeConcurrencyCache) GetAccountConcurrencyBatch(_ context.Context, acc
 func (f *fakeConcurrencyCache) CleanupExpiredAccountSlots(context.Context, int64) error { return nil }
 func (f *fakeConcurrencyCache) CleanupStaleProcessSlots(context.Context, string) error  { return nil }
 
-func newTestGatewayHandler(t *testing.T, group *service.Group, accounts []*service.Account) (*GatewayHandler, func()) {
+func newTestGatewayHandler(t *testing.T, group *service.Group, accounts []*service.Account, groupRepos ...service.GroupRepository) (*GatewayHandler, func()) {
 	t.Helper()
 
 	schedulerCache := &fakeSchedulerCache{accounts: accounts}
 	schedulerSnapshot := service.NewSchedulerSnapshotService(schedulerCache, nil, nil, nil, nil)
+	var groupRepo service.GroupRepository = &fakeGroupRepo{group: group}
+	if len(groupRepos) > 0 {
+		groupRepo = groupRepos[0]
+	}
 
 	gwSvc := service.NewGatewayService(
 		nil, // accountRepo (not used: scheduler snapshot hit)
-		&fakeGroupRepo{group: group},
+		groupRepo,
 		nil, // usageLogRepo
 		nil, // usageBillingRepo
 		nil, // userRepo
