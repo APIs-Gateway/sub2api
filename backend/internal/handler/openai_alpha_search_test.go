@@ -510,9 +510,26 @@ func TestOpenAIGatewayHandlerAlphaSearchClientCancelStopsFailover(t *testing.T) 
 
 			handler.AlphaSearch(c)
 
-			require.Equal(t, statusClientClosedRequest, recorder.Code)
+			require.Equal(t, statusClientClosedRequest, c.Writer.Status())
 			require.Zero(t, recorder.Body.Len())
 			require.Equal(t, []int64{51}, upstream.calls())
 		})
 	}
+}
+
+func TestOpenAIGatewayHandlerAlphaSearchPreCanceledSkipsUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &alphaSearchHTTPUpstream{}
+	handler := newAlphaSearchGatewayHandler(t, nil, upstream)
+	apiKey := alphaSearchAPIKey(service.PlatformOpenAI, 5102)
+	c, recorder := newAlphaSearchContext(`{"model":"gpt-5.6-sol"}`, apiKey, &middleware2.AuthSubject{UserID: 100})
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	cancel()
+	c.Request = c.Request.WithContext(ctx)
+
+	handler.AlphaSearch(c)
+
+	require.Equal(t, statusClientClosedRequest, c.Writer.Status())
+	require.Zero(t, recorder.Body.Len())
+	require.Empty(t, upstream.calls())
 }
