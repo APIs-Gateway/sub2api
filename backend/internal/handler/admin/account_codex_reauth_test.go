@@ -3,7 +3,13 @@ package admin
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -113,6 +119,54 @@ func TestReauthCodexSessionHTTPUpdatesSelectedAccount(t *testing.T) {
 	recorder := postCodexReauthTestRequest(handler, "10", string(body))
 	if recorder.Code != http.StatusOK || len(svc.updatedAccounts) != 1 || svc.updatedAccounts[0].id != existing.ID || svc.clearCalls != 1 {
 		t.Fatalf("status = %d, updates = %+v, clear calls = %d; body = %s", recorder.Code, svc.updatedAccounts, svc.clearCalls, recorder.Body.String())
+	}
+}
+
+func TestReauthCodexSessionRejectsMalformedAndAgentIdentityContent(t *testing.T) {
+	oldToken := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(time.Hour))
+	existing := newCodexReauthTestAccount(oldToken, nil)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate Agent Identity key: %v", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatalf("marshal Agent Identity key: %v", err)
+	}
+	agentContent := fmt.Sprintf(`{"auth_mode":"agentIdentity","agent_identity":{"agent_runtime_id":"runtime-1","agent_private_key":%q,"account_id":"workspace-1","chatgpt_user_id":"user-1"}}`, base64.StdEncoding.EncodeToString(der))
+
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{"malformed JSON", "{"},
+		{"empty content", ""},
+		{"missing access token", `{"access_token":""}`},
+		{"Agent Identity credential", agentContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newCodexImportMemoryAdminService([]service.Account{existing})
+			handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			_, err := handler.reauthCodexSession(context.Background(), &existing, tc.content)
+			if err == nil || len(svc.updatedAccounts) != 0 {
+				t.Fatalf("err = %v, updated accounts = %d; want rejection without mutation", err, len(svc.updatedAccounts))
+			}
+		})
+	}
+}
+
+func TestReauthCodexSessionDoesNotClearErrorWhenCredentialSaveFails(t *testing.T) {
+	oldToken := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(time.Hour))
+	existing := newCodexReauthTestAccount(oldToken, nil)
+	svc := &codexReauthRecordingService{codexImportMemoryAdminService: newCodexImportMemoryAdminService([]service.Account{existing})}
+	svc.updateAccountErr = errors.New("storage unavailable")
+	cache := &codexReauthTokenInvalidator{}
+	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, cache)
+	newToken := buildCodexAccessToken(t, "workspace-1", "user-1", time.Now().Add(2*time.Hour))
+
+	_, err := handler.reauthCodexSession(context.Background(), &existing, buildCodexAuthJSON(t, newToken, "rt-new"))
+	if err == nil || !strings.Contains(err.Error(), "storage unavailable") || svc.clearCalls != 0 || cache.calls != 0 {
+		t.Fatalf("err = %v, clear calls = %d, invalidations = %d; want save error without clear/invalidation", err, svc.clearCalls, cache.calls)
 	}
 }
 
