@@ -2974,6 +2974,7 @@ func TestOpenAIBuildUpstreamRequestPreservesCallerResponsesBeta(t *testing.T) {
 	const body = `{"model":"gpt-5.5","input":"hello"}`
 	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"}}
 	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test-api-key"}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}}
 
 	for _, tc := range []struct {
 		name       string
@@ -2999,7 +3000,7 @@ func TestOpenAIBuildUpstreamRequestPreservesCallerResponsesBeta(t *testing.T) {
 			for _, value := range tc.betaValues {
 				c.Request.Header.Add("oPeNaI-bEtA", value)
 			}
-			req, err := (&OpenAIGatewayService{}).buildUpstreamRequest(c.Request.Context(), c, tc.account, []byte(body), "token", false, "", false)
+			req, err := svc.buildUpstreamRequest(c.Request.Context(), c, tc.account, []byte(body), "token", false, "", false)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, req.Header.Values("OpenAI-Beta"))
 		})
