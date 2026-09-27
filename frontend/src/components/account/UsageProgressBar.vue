@@ -153,6 +153,7 @@ const formatResetTime = computed(() => {
   }
 
   const date = new Date(props.resetsAt)
+  if (Number.isNaN(date.getTime())) return '-'
   const diffMs = date.getTime() - now.value.getTime()
 
   // resetsAt 已过期：utilization>0 说明后端窗口数据还没刷新（active poll 没回写），

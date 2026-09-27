@@ -53,6 +53,37 @@ describe('UsageProgressBar', () => {
     expect(wrapper.text()).not.toContain('usage.resetPending')
   })
 
+  it('showNowWhenIdle=true 且没有 resetsAt 时显示“现在”', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization: 0,
+        resetsAt: null,
+        showNowWhenIdle: true,
+        color: 'indigo'
+      }
+    })
+
+    expect(wrapper.text()).toContain('usage.resetNow')
+    expect(wrapper.text()).not.toContain('NaN')
+  })
+
+  it('无效 resetsAt 不显示 NaN 或“现在”', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization: 0,
+        resetsAt: 'invalid-date',
+        showNowWhenIdle: true,
+        color: 'indigo'
+      }
+    })
+
+    expect(wrapper.text()).toContain('-')
+    expect(wrapper.text()).not.toContain('NaN')
+    expect(wrapper.text()).not.toContain('usage.resetNow')
+  })
+
   it('showNowWhenIdle=false 时保持原有倒计时行为', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {
@@ -89,6 +120,7 @@ describe('UsageProgressBar', () => {
         label: '5h',
         utilization: 0,
         resetsAt: '2026-03-16T22:00:00Z',
+        showNowWhenIdle: true,
         color: 'indigo'
       }
     })
