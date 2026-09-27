@@ -46,7 +46,7 @@ func NewPricingRemoteClient(proxyURL string, allowDirectOnProxyError bool) servi
 	if err != nil {
 		if strings.TrimSpace(proxyURL) != "" && !allowDirectOnProxyError {
 			slog.Warn("proxy client init failed, all requests will fail", "service", "pricing", "error", err)
-			return &pricingRemoteClientError{err: fmt.Errorf("proxy client init failed and direct fallback is disabled; set security.proxy_fallback.allow_direct_on_error=true to allow fallback: %w", err)}
+			return &pricingRemoteClientError{err: fmt.Errorf("%w: %w", service.ErrPricingRemoteProxySetup, err)}
 		}
 		sharedClient = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -68,7 +68,7 @@ func (c *pricingRemoteClient) FetchPricingJSON(ctx context.Context, url string) 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, &service.PricingRemoteHTTPStatusError{StatusCode: resp.StatusCode}
 	}
 
 	return io.ReadAll(resp.Body)
@@ -87,7 +87,7 @@ func (c *pricingRemoteClient) FetchHashText(ctx context.Context, url string) (st
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+		return "", &service.PricingRemoteHTTPStatusError{StatusCode: resp.StatusCode}
 	}
 
 	body, err := io.ReadAll(resp.Body)

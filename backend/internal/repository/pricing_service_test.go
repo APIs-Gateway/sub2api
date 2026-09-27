@@ -2,10 +2,12 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -57,6 +59,10 @@ func (s *PricingServiceSuite) TestFetchPricingJSON_NonOKStatus() {
 
 	_, err := s.client.FetchPricingJSON(s.ctx, s.srv.URL+"/err")
 	require.Error(s.T(), err, "expected error for non-200 status")
+	var statusErr *service.PricingRemoteHTTPStatusError
+	require.ErrorAs(s.T(), err, &statusErr)
+	require.Equal(s.T(), http.StatusInternalServerError, statusErr.StatusCode)
+	require.EqualError(s.T(), err, "HTTP 500")
 }
 
 func (s *PricingServiceSuite) TestFetchHashText_ParsesFields() {
@@ -89,6 +95,10 @@ func (s *PricingServiceSuite) TestFetchHashText_NonOKStatus() {
 
 	_, err := s.client.FetchHashText(s.ctx, s.srv.URL+"/nope")
 	require.Error(s.T(), err, "expected error for non-200 status")
+	var statusErr *service.PricingRemoteHTTPStatusError
+	require.ErrorAs(s.T(), err, &statusErr)
+	require.Equal(s.T(), http.StatusNotFound, statusErr.StatusCode)
+	require.EqualError(s.T(), err, "HTTP 404")
 }
 
 func (s *PricingServiceSuite) TestFetchPricingJSON_InvalidURL() {
@@ -148,6 +158,7 @@ func TestNewPricingRemoteClient_InvalidProxy_NoFallback(t *testing.T) {
 	_, err := client.FetchPricingJSON(context.Background(), "http://example.com")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "proxy client init failed")
+	require.True(t, errors.Is(err, service.ErrPricingRemoteProxySetup))
 }
 
 func TestNewPricingRemoteClient_InvalidProxy_WithFallback(t *testing.T) {
