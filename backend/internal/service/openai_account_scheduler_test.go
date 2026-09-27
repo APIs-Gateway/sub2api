@@ -1403,6 +1403,44 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_StaleExhausted
 	}
 }
 
+func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_StaleRelativeResetWindow(t *testing.T) {
+	for _, window := range []string{"5h", "7d"} {
+		for _, tc := range []struct {
+			name           string
+			resetAfter     int
+			wantSelectedID int64
+		}{
+			{name: "future reset pauses", resetAfter: 4 * 3600, wantSelectedID: 35912},
+			{name: "past reset self heals", resetAfter: 2 * 3600, wantSelectedID: 35911},
+		} {
+			t.Run(window+"/"+tc.name, func(t *testing.T) {
+				primary := Account{
+					ID:          35911,
+					Platform:    PlatformOpenAI,
+					Type:        AccountTypeAPIKey,
+					Status:      StatusActive,
+					Schedulable: true,
+					Concurrency: 1,
+					Priority:    0,
+					Extra: map[string]any{
+						"codex_usage_updated_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+					},
+				}
+				primary.Extra["auto_pause_"+window+"_threshold"] = 0.95
+				primary.Extra["codex_"+window+"_used_percent"] = 99.0
+				primary.Extra["codex_"+window+"_reset_after_seconds"] = tc.resetAfter
+				secondary := Account{ID: 35912, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+				svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
+
+				account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gpt-5.1", nil)
+				require.NoError(t, err)
+				require.NotNil(t, account)
+				require.Equal(t, tc.wantSelectedID, account.ID)
+			})
+		}
+	}
+}
+
 // Issue #2994 guardrail: a genuinely-exhausted account whose snapshot was refreshed recently
 // (codex_usage_updated_at fresh) must STILL be auto-paused. The stale self-heal must not let a
 // real 99%-used account escape pause.

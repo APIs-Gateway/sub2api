@@ -1705,11 +1705,20 @@ func resolveOpenAIQuotaUtilization(extra map[string]any, window string, now time
 	if openAIQuotaWindowReset(extra, window, now) {
 		return 0, false
 	}
-	// An explicit future reset still describes an exhausted window. The two-hour
+	// A known future reset still describes an exhausted window. The two-hour
 	// snapshot guard must not release it early and cause repeated upstream 429s.
 	if resetAtRaw, ok := extra["codex_"+window+"_reset_at"]; ok {
 		if resetAt, err := parseTime(fmt.Sprint(resetAtRaw)); err == nil && now.Before(resetAt) {
 			return usedPercent / 100, true
+		}
+	}
+	// Older snapshots may have only the relative reset. Anchor it to the saved
+	// snapshot time, never to now, or an idle account could stay paused forever.
+	if resetAfter := parseExtraInt(extra["codex_"+window+"_reset_after_seconds"]); resetAfter > 0 {
+		if updatedAtRaw, ok := extra["codex_usage_updated_at"]; ok {
+			if updatedAt, err := parseTime(fmt.Sprint(updatedAtRaw)); err == nil && now.Before(updatedAt.Add(time.Duration(resetAfter)*time.Second)) {
+				return usedPercent / 100, true
+			}
 		}
 	}
 	// Without a usable future reset, let an old snapshot self-heal on the next

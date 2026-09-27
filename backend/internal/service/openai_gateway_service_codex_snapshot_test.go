@@ -106,6 +106,47 @@ func TestResolveOpenAIQuotaUtilization_StaleSnapshotRespectsFutureAbsoluteReset(
 	}
 }
 
+func TestResolveOpenAIQuotaUtilization_StaleSnapshotRespectsFutureRelativeReset(t *testing.T) {
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	for _, window := range []string{"5h", "7d"} {
+		for _, tc := range []struct {
+			name       string
+			resetAfter any
+			resetAt    any
+			wantOK     bool
+		}{
+			{name: "relative future", resetAfter: 4 * 3600, wantOK: true},
+			{name: "relative reset at now", resetAfter: 3 * 3600},
+			{name: "relative past", resetAfter: 2 * 3600},
+			{name: "relative zero", resetAfter: 0},
+			{name: "relative invalid", resetAfter: "invalid"},
+			{name: "relative missing"},
+			{name: "invalid absolute falls back to relative", resetAt: "invalid", resetAfter: 4 * 3600, wantOK: true},
+			{name: "future absolute wins over past relative", resetAt: now.Add(time.Hour).Format(time.RFC3339), resetAfter: 2 * 3600, wantOK: true},
+			{name: "past absolute wins over future relative", resetAt: now.Add(-time.Minute).Format(time.RFC3339), resetAfter: 4 * 3600},
+		} {
+			t.Run(window+"/"+tc.name, func(t *testing.T) {
+				extra := map[string]any{
+				"codex_usage_updated_at": now.Add(-3 * time.Hour).Format(time.RFC3339),
+			}
+			extra["codex_"+window+"_used_percent"] = 99.0
+			if tc.resetAfter != nil {
+				extra["codex_"+window+"_reset_after_seconds"] = tc.resetAfter
+			}
+			if tc.resetAt != nil {
+				extra["codex_"+window+"_reset_at"] = tc.resetAt
+			}
+			utilization, ok := resolveOpenAIQuotaUtilization(extra, window, now)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if tc.wantOK && utilization != 0.99 {
+				t.Fatalf("utilization = %v, want 0.99", utilization)
+			}
+		})
+	}
+}
+
 func TestBuildCodexUsageExtraUpdates_UsesSnapshotUpdatedAt(t *testing.T) {
 	primaryUsed := 88.0
 	primaryReset := 86400
