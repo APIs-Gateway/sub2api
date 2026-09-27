@@ -239,7 +239,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -279,6 +279,12 @@ const pageSize = ref(10)
 const batchFactor = ref<number | null>(null)
 
 let searchTimeout: ReturnType<typeof setTimeout>
+let searchGeneration = 0
+
+const cancelPendingSearch = () => {
+  clearTimeout(searchTimeout)
+  searchGeneration++
+}
 
 const platformColorClass = computed(() => {
   switch (props.group?.platform) {
@@ -350,6 +356,9 @@ watch(() => props.show, (val) => {
     selectedUser.value = null
     newRate.value = null
     loadEntries()
+  } else if (!val) {
+    cancelPendingSearch()
+    showDropdown.value = false
   }
 })
 
@@ -359,7 +368,8 @@ const handlePageSizeChange = (newSize: number) => {
 }
 
 const handleSearchUsers = () => {
-  clearTimeout(searchTimeout)
+  cancelPendingSearch()
+  const generation = searchGeneration
   selectedUser.value = null
   if (!searchQuery.value.trim()) {
     searchResults.value = []
@@ -367,11 +377,14 @@ const handleSearchUsers = () => {
     return
   }
   searchTimeout = setTimeout(async () => {
+    if (generation !== searchGeneration || !props.show) return
     try {
       const res = await adminAPI.users.list(1, 10, { search: searchQuery.value.trim() })
+      if (generation !== searchGeneration || !props.show) return
       searchResults.value = res.items
       showDropdown.value = true
     } catch {
+      if (generation !== searchGeneration || !props.show) return
       searchResults.value = []
     }
   }, 300)
@@ -487,9 +500,25 @@ const handleClickOutside = () => {
   showDropdown.value = false
 }
 
-if (typeof document !== 'undefined') {
-  document.addEventListener('click', handleClickOutside)
+let clickListenerRegistered = false
+const removeClickListener = () => {
+  if (clickListenerRegistered && typeof document !== 'undefined') {
+    document.removeEventListener('click', handleClickOutside)
+    clickListenerRegistered = false
+  }
 }
+watch(() => props.show, (visible) => {
+  if (!visible) {
+    removeClickListener()
+  } else if (!clickListenerRegistered && typeof document !== 'undefined') {
+    document.addEventListener('click', handleClickOutside)
+    clickListenerRegistered = true
+  }
+}, { immediate: true })
+onUnmounted(() => {
+  cancelPendingSearch()
+  removeClickListener()
+})
 </script>
 
 <style scoped>
