@@ -46,21 +46,21 @@ func TestProxyResponsesWebSocketFromClient_CodexCLIOnlyGate(t *testing.T) {
 			wantDenied: true,
 		},
 		{
-			name:    "official Codex client reaches mode routing",
-			header:  http.Header{
+			name: "official Codex client reaches mode routing",
+			header: http.Header{
 				"User-Agent": []string{"codex_cli_rs/0.153.4 (Windows 11; x86_64) WindowsTerminal"},
 				"Originator": []string{"codex_cli_rs"},
 			},
 			account: account,
 		},
 		{
-			name:    "unrestricted account allows unofficial client",
-			header:  http.Header{"User-Agent": []string{"ws-probe/1"}},
+			name:   "unrestricted account allows unofficial client",
+			header: http.Header{"User-Agent": []string{"ws-probe/1"}},
 			account: &Account{
 				ID: 952, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 				Status: StatusActive, Schedulable: true, Concurrency: 1,
 				Credentials: map[string]any{"access_token": "oauth-token"},
-				Extra: map[string]any{"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModeOff},
+				Extra:       map[string]any{"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModeOff},
 			},
 		},
 	}
