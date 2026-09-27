@@ -27,7 +27,7 @@ type openAIImagesBalanceSwitchAccountRepo struct {
 	cooled []int64
 }
 
-func (r *openAIImagesBalanceSwitchAccountRepo) SetModelRateLimit(_ context.Context, accountID int64, _ string, _ time.Time, _ ...string) error {
+func (r *openAIImagesBalanceSwitchAccountRepo) ExtendModelRateLimit(_ context.Context, accountID int64, _ string, _ time.Time, _ ...string) error {
 	r.cooled = append(r.cooled, accountID)
 	return nil
 }

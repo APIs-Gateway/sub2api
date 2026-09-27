@@ -58,6 +58,10 @@ func newOpenAIImagesBalanceTestService(responseBody string) (*OpenAIGatewayServi
 	return &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream, accountRepo: repo}, upstream, repo
 }
 
+func (r *openAIImagesCooldownAccountRepoStub) ExtendModelRateLimit(ctx context.Context, id int64, scope string, resetAt time.Time, reason ...string) error {
+	return r.SetModelRateLimit(ctx, id, scope, resetAt, reason...)
+}
+
 func openAIImagesBalanceTestAccount() *Account {
 	return &Account{
 		ID: 7, Name: "image-account", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,

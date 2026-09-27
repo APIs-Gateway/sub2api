@@ -18,6 +18,14 @@ const (
 	openAIImagesBalanceRateLimitReason     = "openai_images_insufficient_balance"
 )
 
+// The production account repository implements this without replacing a later
+// reset already stored for the same image scope. Other repository substitutes
+// must opt in explicitly; a failed cooldown must never block this request's
+// account failover.
+type openAIImagesBalanceRateLimitExtender interface {
+	ExtendModelRateLimit(context.Context, int64, string, time.Time, ...string) error
+}
+
 // Only explicit machine-readable error fields may trigger account cooling.
 // Messages can contain a client's prompt or arbitrary upstream prose.
 func isOpenAIImagesInsufficientBalance(body []byte) bool {
@@ -73,10 +81,15 @@ func (s *OpenAIGatewayService) coolOpenAIImagesInsufficientBalance(ctx context.C
 	if s == nil || s.accountRepo == nil || account == nil {
 		return
 	}
+	extender, ok := s.accountRepo.(openAIImagesBalanceRateLimitExtender)
+	if !ok {
+		slog.Warn("openai_images_balance_cooldown_unsupported", "account_id", account.ID)
+		return
+	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
 	until := time.Now().Add(openAIImagesBalanceCooldown)
-	if err := s.accountRepo.SetModelRateLimit(stateCtx, account.ID, openAIImageGenerationRateLimitKey, until, openAIImagesBalanceRateLimitReason); err != nil {
+	if err := extender.ExtendModelRateLimit(stateCtx, account.ID, openAIImageGenerationRateLimitKey, until, openAIImagesBalanceRateLimitReason); err != nil {
 		slog.Warn("openai_images_balance_cooldown_failed", "account_id", account.ID, "error", err)
 	}
 }
