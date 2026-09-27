@@ -45,7 +45,7 @@ func alphaSearchResponsesSSE(output string) string {
 		"event: response.output_text.annotation.added\n" +
 		`data: {"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","url":"https://example.com/news","title":"Example News"}}` + "\n\n" +
 		"event: response.completed\n" +
-		`data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":` + strconv.Quote(output) + `}]}]}}` + "\n\n"
+		`data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":` + strconv.Quote(output) + `}]}]}}` + "\n\n"
 }
 
 func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
@@ -648,7 +648,7 @@ func TestBuildOpenAIAlphaSearchResponsesWebSearchBodyRequiresModel(t *testing.T)
 
 func TestOpenAIAlphaSearchResponsesSSEUsesCompletedOutputWhenNoDelta(t *testing.T) {
 	body := "event: response.completed\n" +
-		`data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"completed result"}]}]}}` + "\n\n"
+		`data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"completed result"}]}]}}` + "\n\n"
 	converted, err := openAIAlphaSearchResponseFromResponsesSSE([]byte(body))
 	require.NoError(t, err)
 	require.JSONEq(t, `{"output":"completed result"}`, string(converted))
@@ -762,8 +762,9 @@ func TestOpenAIAlphaSearchHelperEdgeCases(t *testing.T) {
 
 	sse := "data: {invalid}\n\n" + "data: [DONE]\n\n" +
 		`data: {"type":"response.output_text.delta","delta":"ok"}` + "\n\n"
-	output, results := parseOpenAIResponsesSSEForAlphaSearch([]byte(sse))
-	require.Equal(t, "ok", output)
+	output, results, parseErr := parseOpenAIResponsesSSEForAlphaSearch([]byte(sse))
+	require.Error(t, parseErr)
+	require.Empty(t, output)
 	require.Empty(t, results)
 
 	completed := map[string]any{"output": []any{
