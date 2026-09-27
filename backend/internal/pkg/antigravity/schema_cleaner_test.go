@@ -283,7 +283,7 @@ func TestCleanJSONSchema_ConstNonStringValues(t *testing.T) {
 	}
 }
 
-func TestCleanJSONSchema_ConstKeepsExistingEnum(t *testing.T) {
+func TestCleanJSONSchema_ConstIntersectsExistingEnum(t *testing.T) {
 	cleaned := CleanJSONSchema(map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -296,7 +296,7 @@ func TestCleanJSONSchema_ConstKeepsExistingEnum(t *testing.T) {
 	})
 	v := cleanedProp(t, cleaned, "v")
 	assert.Equal(t, "string", v["type"])
-	assert.Equal(t, []any{"a", "b"}, v["enum"], "existing enum must not be overwritten by const")
+	assert.Equal(t, []any{"a"}, v["enum"], "const and enum constraints must both apply")
 	assert.NotContains(t, v, "const")
 }
 
