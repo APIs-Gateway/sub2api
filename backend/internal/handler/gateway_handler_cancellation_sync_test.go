@@ -29,8 +29,10 @@ func TestGatewayPreCanceledCompatibleRequestsMark499(t *testing.T) {
 		User: &service.User{ID: 9103, Concurrency: 10, Balance: 100},
 	}
 	cases := []struct {
-		name, path, body string
-		call             func(*gin.Context)
+		name	string
+		path	string
+		body	string
+		call	func(*gin.Context)
 	}{
 		{"responses", "/v1/responses", `{"model":"claude-test","input":"hello","stream":false}`, h.Responses},
 		{"chat completions", "/v1/chat/completions", `{"model":"claude-test","messages":[{"role":"user","content":"hello"}],"stream":false}`, h.ChatCompletions},
