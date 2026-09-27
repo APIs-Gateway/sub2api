@@ -130,6 +130,35 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
+  it('keeps whitelist save independent of mapping rows left in the other mode', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['apikey']
+    })
+
+    await wrapper.get('#bulk-edit-model-restriction-enabled').setValue(true)
+    const mappingTab = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')
+    await mappingTab!.trigger('click')
+    const addMapping = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.addMapping')
+    await addMapping!.trigger('click')
+    await wrapper.get('input[placeholder="admin.accounts.requestModel"]').setValue('gpt-6')
+    await wrapper.get('input[placeholder="admin.accounts.actualModel"]').setValue('different-target')
+
+    const whitelistTab = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelWhitelist')
+    await whitelistTab!.trigger('click')
+    const selector = wrapper.getComponent(ModelWhitelistSelector)
+    expect(selector.props('modelMappings')).toBeUndefined()
+    await selector.get('input[placeholder="admin.accounts.enterCustomModelName"]').setValue('gpt-6')
+    const addModel = selector.findAll('button').find(button => button.text() === 'admin.accounts.addModel')
+    await addModel!.trigger('click')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      credentials: { model_mapping: { 'gpt-6': 'gpt-6' } }
+    })
+  })
+
   it('OpenAI 账号批量编辑可开启自动透传', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],

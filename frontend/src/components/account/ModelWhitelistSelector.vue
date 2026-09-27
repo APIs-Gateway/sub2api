@@ -136,12 +136,13 @@ import { accountsAPI } from '@/api/admin/accounts'
 import type { SyncUpstreamPreviewParams } from '@/api/admin/accounts'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { allModels, getModelsByPlatform } from '@/composables/useModelWhitelist'
+import { allModels, findModelMappingConflict, getModelsByPlatform } from '@/composables/useModelWhitelist'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: string[]
+  modelMappings?: { from: string; to: string }[]
   platform?: string
   platforms?: string[]
   accountId?: number
@@ -225,10 +226,22 @@ const removeModel = (model: string) => {
   emit('update:modelValue', props.modelValue.filter(m => m !== model))
 }
 
+const mappingConflict = (model: string) =>
+  findModelMappingConflict(model, props.modelMappings ?? [])
+
+const showMappingConflict = (model: string, target: string) => {
+  appStore.showInfo(t('admin.accounts.modelMappingConflict', { from: model, to: target.trim() }))
+}
+
 const toggleModel = (model: string) => {
   if (props.modelValue.includes(model)) {
     removeModel(model)
   } else {
+    const conflict = mappingConflict(model)
+    if (conflict) {
+      showMappingConflict(model, conflict.to)
+      return
+    }
     emit('update:modelValue', [...props.modelValue, model])
   }
 }
@@ -238,6 +251,11 @@ const addCustom = () => {
   if (!model) return
   if (props.modelValue.includes(model)) {
     appStore.showInfo(t('admin.accounts.modelExists'))
+    return
+  }
+  const conflict = mappingConflict(model)
+  if (conflict) {
+    showMappingConflict(model, conflict.to)
     return
   }
   emit('update:modelValue', [...props.modelValue, model])
@@ -250,13 +268,20 @@ const handleEnter = () => {
 
 const fillRelated = () => {
   const newModels = [...props.modelValue]
+  let firstConflict: { model: string; target: string } | null = null
   for (const platform of normalizedPlatforms.value) {
     for (const model of getModelsByPlatform(platform)) {
       if (!newModels.includes(model)) {
+        const conflict = mappingConflict(model)
+        if (conflict) {
+          firstConflict ??= { model, target: conflict.to }
+          continue
+        }
         newModels.push(model)
       }
     }
   }
+  if (firstConflict) showMappingConflict(firstConflict.model, firstConflict.target)
   emit('update:modelValue', newModels)
 }
 
@@ -283,17 +308,24 @@ const syncUpstreamModels = async () => {
 
     const newModels = [...props.modelValue]
     let addedCount = 0
+    let firstConflict: { model: string; target: string } | null = null
     for (const model of upstreamModels) {
       if (!newModels.includes(model)) {
+        const conflict = mappingConflict(model)
+        if (conflict) {
+          firstConflict ??= { model, target: conflict.to }
+          continue
+        }
         newModels.push(model)
         addedCount += 1
       }
     }
 
+    if (firstConflict) showMappingConflict(firstConflict.model, firstConflict.target)
     emit('update:modelValue', newModels)
     if (addedCount > 0) {
       appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: addedCount, total: upstreamModels.length }))
-    } else {
+    } else if (!firstConflict) {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
     }
   } catch (error) {

@@ -4335,6 +4335,7 @@
       enterCustomModelName: 'Enter custom model name',
       addModel: 'Add',
       modelExists: 'Model already exists',
+      modelMappingConflict: 'Model Mapping sends {from} to {to}. Change or remove that mapping to keep {from} in the whitelist',
       modelCount: '{count} models',
       poolMode: 'Pool Mode',
       poolModeHint: 'Enable when upstream is an account pool; errors won\'t mark local account status',
