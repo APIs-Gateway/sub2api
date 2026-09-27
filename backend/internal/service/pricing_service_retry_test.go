@@ -42,6 +42,58 @@ func retryPricingService(t *testing.T, client PricingRemoteClient) *PricingServi
 
 func noPricingRetryDelay(_ context.Context, _ time.Duration) error { return nil }
 
+func TestPricingRetryWaitHonorsTimerAndCancellation(t *testing.T) {
+	require.NoError(t, waitForPricingRetry(context.Background(), time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, waitForPricingRetry(ctx, time.Hour), context.Canceled)
+}
+
+func TestPricingRetryStopsBeforeAttemptOrBackoffWhenBudgetEnds(t *testing.T) {
+	t.Run("already canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		calls := 0
+		attempts, err := retryPricingRemote(ctx, "hash", noPricingRetryDelay, func(context.Context) error {
+			calls++
+			return io.EOF
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Zero(t, attempts)
+		require.Zero(t, calls)
+	})
+	t.Run("deadline shorter than next backoff", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		calls, waits := 0, 0
+		attempts, err := retryPricingRemote(ctx, "hash", func(context.Context, time.Duration) error {
+			waits++
+			return nil
+		}, func(context.Context) error {
+			calls++
+			return io.EOF
+		})
+		require.ErrorIs(t, err, io.EOF)
+		require.Equal(t, 1, attempts)
+		require.Equal(t, 1, calls)
+		require.Zero(t, waits)
+	})
+	t.Run("canceled during backoff", func(t *testing.T) {
+		calls, waits := 0, 0
+		attempts, err := retryPricingRemote(context.Background(), "hash", func(context.Context, time.Duration) error {
+			waits++
+			return context.Canceled
+		}, func(context.Context) error {
+			calls++
+			return io.EOF
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, attempts)
+		require.Equal(t, 1, calls)
+		require.Equal(t, 1, waits)
+	})
+}
+
 func TestPricingRemoteRetryTransientAndPermanentErrors(t *testing.T) {
 	timeoutError := &net.DNSError{IsTimeout: true}
 	tests := []struct {
@@ -254,6 +306,40 @@ func TestPricingStopCancelsActivePeriodicSync(t *testing.T) {
 			} else {
 				require.Equal(t, 1, jsonCalls)
 			}
+		})
+	}
+}
+
+func TestPricingPeriodicSyncWithoutHashDownloadsMissingOrStaleCatalog(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		name := "missing"
+		if stale {
+			name = "stale"
+		}
+		t.Run(name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			if stale {
+				path := filepath.Join(dataDir, "model_pricing.json")
+				require.NoError(t, os.WriteFile(path, []byte(`{"old":{"input_cost_per_token":0.000001}}`), 0644))
+				old := time.Now().Add(-2 * time.Hour)
+				require.NoError(t, os.Chtimes(path, old, old))
+			}
+			jsonCalls := 0
+			svc := NewPricingService(&config.Config{
+				Pricing: config.PricingConfig{
+					DataDir:             dataDir,
+					RemoteURL:           "https://example.com/pricing.json",
+					UpdateIntervalHours: 1,
+				},
+			}, pricingRemoteClientStub{
+				json: func(context.Context) ([]byte, error) {
+					jsonCalls++
+					return []byte(`{"new":{"input_cost_per_token":0.000002}}`), nil
+				},
+			})
+			require.NoError(t, svc.syncWithRemote())
+			require.Equal(t, 1, jsonCalls)
+			require.InDelta(t, 0.000002, svc.GetModelPricing("new").InputCostPerToken, 1e-12)
 		})
 	}
 }

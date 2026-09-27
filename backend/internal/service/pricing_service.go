@@ -766,7 +766,7 @@ func retryPricingRemote(ctx context.Context, label string, wait pricingRetryWait
 	if wait == nil {
 		wait = waitForPricingRetry
 	}
-	for attempt := 1; attempt <= pricingRemoteAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return attempt - 1, err
 		}
@@ -787,7 +787,6 @@ func retryPricingRemote(ctx context.Context, label string, wait pricingRetryWait
 			return attempt, waitErr
 		}
 	}
-	return pricingRemoteAttempts, errors.New("remote pricing retry exhausted")
 }
 
 func (s *PricingService) fetchRemoteHashWithContext(parent context.Context, budget time.Duration, wait pricingRetryWaitFunc) (string, error) {
