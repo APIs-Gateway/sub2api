@@ -2992,6 +2992,8 @@ func TestOpenAIBuildUpstreamRequestPreservesCallerResponsesBeta(t *testing.T) {
 		{name: "API key preserves caller beta unchanged", path: "/v1/responses", account: apiKey, betaValues: []string{"responses=experimental, responses_multi_agent=v1"}, want: []string{"responses=experimental, responses_multi_agent=v1"}},
 		{name: "compact OAuth preserves independent beta", path: "/v1/responses/compact", account: oauth, betaValues: []string{"responses=experimental, future_feature=v1"}, want: []string{"future_feature=v1"}},
 		{name: "nested compact alias preserves beta", path: "/openai/v1/responses/compact/detail", account: oauth, betaValues: []string{"future_feature=v1"}, want: []string{"future_feature=v1"}},
+		{name: "custom Responses subpath preserves beta", path: "/v1/responses/future", account: oauth, betaValues: []string{"future_feature=v1"}, want: []string{"future_feature=v1"}},
+		{name: "similar non-Responses prefix drops beta", path: "/v1/responses_extra", account: oauth, betaValues: []string{"future_feature=v1"}},
 		{name: "Chat conversion drops caller beta", path: "/v1/chat/completions", account: oauth, betaValues: []string{"responses_multi_agent=v1"}},
 		{name: "API key Chat conversion drops caller beta", path: "/v1/chat/completions", account: apiKey, betaValues: []string{"responses_multi_agent=v1"}},
 	} {

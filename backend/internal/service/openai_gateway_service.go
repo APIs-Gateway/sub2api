@@ -8417,7 +8417,7 @@ func isOpenAIResponsesInboundPath(c *gin.Context) bool {
 	}
 	path := strings.TrimRight(strings.TrimSpace(c.Request.URL.Path), "/")
 	for _, root := range []string{"/v1/responses", "/openai/v1/responses", "/responses", "/backend-api/codex/responses"} {
-		if path == root || path == root+"/compact" || strings.HasPrefix(path, root+"/compact/") {
+		if path == root || strings.HasPrefix(path, root+"/") {
 			return true
 		}
 	}
