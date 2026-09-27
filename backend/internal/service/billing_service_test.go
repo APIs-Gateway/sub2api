@@ -2074,8 +2074,9 @@ func TestGetModelPricingWithChannel_UnknownModelReturnsError(t *testing.T) {
 	require.Contains(t, err.Error(), "pricing not found")
 }
 
-func TestGetModelPricingWithChannel_NilImageOutputPriceZerosAndMarksExplicit(t *testing.T) {
+func TestGetModelPricingWithChannel_NilImageOutputPriceInheritsCatalog(t *testing.T) {
 	svc := newTestBillingService()
+	svc.fallbackPrices["claude-sonnet-4"].ImageOutputPricePerToken = 30e-6
 
 	chPricing := &ChannelModelPricing{
 		InputPrice:  testPtrFloat64(10e-6),
@@ -2085,8 +2086,52 @@ func TestGetModelPricingWithChannel_NilImageOutputPriceZerosAndMarksExplicit(t *
 	pricing, err := svc.GetModelPricingWithChannel("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	require.Equal(t, 0.0, pricing.ImageOutputPricePerToken)
+	require.InDelta(t, 30e-6, pricing.ImageOutputPricePerToken, 1e-12)
+	require.False(t, pricing.ImageOutputPriceExplicit)
+	breakdown := svc.computeTokenBreakdown(pricing, UsageTokens{OutputTokens: 10, ImageOutputTokens: 10}, 1, "", true)
+	require.InDelta(t, 10*30e-6, breakdown.ImageOutputCost, 1e-12)
+}
+
+func TestGetModelPricingWithChannel_ExplicitZeroImageOutputPriceRemainsFree(t *testing.T) {
+	svc := newTestBillingService()
+	svc.fallbackPrices["claude-sonnet-4"].ImageOutputPricePerToken = 30e-6
+	pricing, err := svc.GetModelPricingWithChannel("claude-sonnet-4", &ChannelModelPricing{
+		ImageOutputPrice: testPtrFloat64(0),
+	})
+	require.NoError(t, err)
 	require.True(t, pricing.ImageOutputPriceExplicit)
+	require.Zero(t, pricing.ImageOutputPricePerToken)
+	breakdown := svc.computeTokenBreakdown(pricing, UsageTokens{OutputTokens: 10, ImageOutputTokens: 10}, 1, "", true)
+	require.Zero(t, breakdown.ImageOutputCost)
+}
+
+func TestGetModelPricingWithChannel_UnsetImagePriceUsesDynamicCatalogOrTextFallback(t *testing.T) {
+	svc := NewBillingService(&config.Config{}, newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+		"image-with-catalog-price": {
+			InputCostPerToken: 5e-6, OutputCostPerToken: 10e-6,
+			InputCostPerImageToken: 8e-6, OutputCostPerImageToken: 30e-6,
+		},
+		"image-without-catalog-price": {
+			InputCostPerToken: 5e-6, OutputCostPerToken: 10e-6,
+		},
+	}))
+	for _, tc := range []struct {
+		model string
+		want  float64
+	}{
+		{model: "image-with-catalog-price", want: 30e-6},
+		{model: "image-without-catalog-price", want: 20e-6},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			pricing, err := svc.GetModelPricingWithChannel(tc.model, &ChannelModelPricing{
+				OutputPrice: testPtrFloat64(20e-6),
+			})
+			require.NoError(t, err)
+			require.False(t, pricing.ImageOutputPriceExplicit)
+			cost := svc.computeTokenBreakdown(pricing, UsageTokens{OutputTokens: 10, ImageOutputTokens: 10}, 1, "", false)
+			require.InDelta(t, 10*tc.want, cost.ImageOutputCost, 1e-12)
+		})
+	}
 }
 
 func TestGetModelPricingWithChannel_DoesNotPolluteFallbackPricing(t *testing.T) {
@@ -2100,7 +2145,7 @@ func TestGetModelPricingWithChannel_DoesNotPolluteFallbackPricing(t *testing.T) 
 	require.NoError(t, err)
 	require.InDelta(t, 10e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 50e-6, pricing.OutputPricePerToken, 1e-12)
-	require.True(t, pricing.ImageOutputPriceExplicit)
+	require.False(t, pricing.ImageOutputPriceExplicit)
 
 	fallback := svc.fallbackPrices["claude-sonnet-4"]
 	require.InDelta(t, 3e-6, fallback.InputPricePerToken, 1e-12)
