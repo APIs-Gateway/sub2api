@@ -147,14 +147,13 @@ const shouldShowResetTime = computed(() => {
 
 // Format reset time
 const formatResetTime = computed(() => {
-  // For rolling windows, when utilization is 0%, treat as immediately available.
-  if (props.showNowWhenIdle && props.utilization <= 0) {
+  if (!props.resetsAt) {
+    // With no reset time, shouldShowResetTime only displays an idle rolling window.
     return t('usage.resetNow')
   }
 
-  if (!props.resetsAt) return '-'
-
   const date = new Date(props.resetsAt)
+  if (Number.isNaN(date.getTime())) return '-'
   const diffMs = date.getTime() - now.value.getTime()
 
   // resetsAt 已过期：utilization>0 说明后端窗口数据还没刷新（active poll 没回写），

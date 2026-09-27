@@ -22,7 +22,7 @@ describe('UsageProgressBar', () => {
     vi.useRealTimers()
   })
 
-  it('showNowWhenIdle=true 且利用率为 0 时显示“现在”', () => {
+  it('showNowWhenIdle=true 且利用率为 0 但有未来 resetsAt 时显示倒计时', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {
         label: '5h',
@@ -33,8 +33,8 @@ describe('UsageProgressBar', () => {
       }
     })
 
-    expect(wrapper.text()).toContain('usage.resetNow')
-    expect(wrapper.text()).not.toContain('2h 30m')
+    expect(wrapper.text()).toContain('2h 30m')
+    expect(wrapper.text()).not.toContain('usage.resetNow')
   })
 
   it('showNowWhenIdle=true 但利用率大于 0 时显示倒计时', () => {
@@ -51,6 +51,55 @@ describe('UsageProgressBar', () => {
     expect(wrapper.text()).toContain('2h 30m')
     expect(wrapper.text()).not.toContain('usage.resetNow')
     expect(wrapper.text()).not.toContain('usage.resetPending')
+  })
+
+  it('showNowWhenIdle=true 且没有 resetsAt 时显示“现在”', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization: 0,
+        resetsAt: null,
+        showNowWhenIdle: true,
+        color: 'indigo'
+      }
+    })
+
+    expect(wrapper.text()).toContain('usage.resetNow')
+    expect(wrapper.text()).not.toContain('NaN')
+  })
+
+  it.each([
+    { utilization: 18, showNowWhenIdle: true },
+    { utilization: 0, showNowWhenIdle: false }
+  ])('没有 resetsAt 且非空闲展示条件时隐藏重置文案 (%o)', ({ utilization, showNowWhenIdle }) => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization,
+        resetsAt: null,
+        showNowWhenIdle,
+        color: 'indigo'
+      }
+    })
+
+    expect(wrapper.text()).not.toContain('usage.resetNow')
+    expect(wrapper.text()).not.toContain('usage.resetPending')
+  })
+
+  it('无效 resetsAt 不显示 NaN 或“现在”', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization: 0,
+        resetsAt: 'invalid-date',
+        showNowWhenIdle: true,
+        color: 'indigo'
+      }
+    })
+
+    expect(wrapper.text()).toContain('-')
+    expect(wrapper.text()).not.toContain('NaN')
+    expect(wrapper.text()).not.toContain('usage.resetNow')
   })
 
   it('showNowWhenIdle=false 时保持原有倒计时行为', () => {
@@ -89,6 +138,7 @@ describe('UsageProgressBar', () => {
         label: '5h',
         utilization: 0,
         resetsAt: '2026-03-16T22:00:00Z',
+        showNowWhenIdle: true,
         color: 'indigo'
       }
     })
