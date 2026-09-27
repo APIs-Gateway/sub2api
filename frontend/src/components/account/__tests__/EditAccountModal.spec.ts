@@ -336,7 +336,7 @@ describe('EditAccountModal', () => {
     const account = buildAccount()
     account.credentials.model_mapping = {
       'gpt-5.2': 'gpt-5.2',
-      'gpt-latest': 'gpt-5.2'
+      'gpt-latest': 'gpt-5.4'
     }
     updateAccountMock.mockReset()
     showErrorMock.mockReset()
@@ -351,6 +351,29 @@ describe('EditAccountModal', () => {
 
     expect(updateAccountMock).not.toHaveBeenCalled()
     expect(showErrorMock).toHaveBeenCalledWith('admin.accounts.modelMappingConflict')
+  })
+
+  it('saves an identity mapping for a selected whitelist model', async () => {
+    const account = buildAccount()
+    account.credentials.model_mapping = {
+      'gpt-5.2': 'gpt-5.2',
+      'gpt-latest': 'gpt-5.2'
+    }
+    updateAccountMock.mockReset()
+    updateAccountMock.mockResolvedValue(account)
+    showErrorMock.mockReset()
+    const wrapper = mountModal(account)
+
+    const mappingTab = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')
+    await mappingTab!.trigger('click')
+    await wrapper.get('input[placeholder="admin.accounts.requestModel"]').setValue('gpt-5.2')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(showErrorMock).not.toHaveBeenCalledWith('admin.accounts.modelMappingConflict')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
+      'gpt-5.2': 'gpt-5.2'
+    })
   })
 
   it('loads and clears the OAuth-only Codex namespace flatten toggle', async () => {
