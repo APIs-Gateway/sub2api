@@ -924,7 +924,15 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 
 		// Skip logging if the error should be filtered based on settings
 		preserveClientClosedUpstream := status == statusClientClosedRequest && hasOpsClientClosedUpstreamErrorContext(c)
-		if shouldSkipOpsErrorLog(c.Request.Context(), ops, parsed.Message, string(body), c.Request.URL.Path, preserveClientClosedUpstream) {
+		filterCtx := c.Request.Context()
+		if status == statusClientClosedRequest {
+			// The request context is canceled for a real disconnect. Keep the
+			// settings lookup alive briefly so every configured filter still applies.
+			var cancel context.CancelFunc
+			filterCtx, cancel = context.WithTimeout(context.WithoutCancel(filterCtx), 2*time.Second)
+			defer cancel()
+		}
+		if shouldSkipOpsErrorLog(filterCtx, ops, parsed.Message, string(body), c.Request.URL.Path, preserveClientClosedUpstream) {
 			return
 		}
 		if shouldSkipOpsClientClosed(c, ops, status) {

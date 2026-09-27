@@ -1659,7 +1659,10 @@ type opsAdvancedSettingsRepoStub struct {
 	advanced string
 }
 
-func (r *opsAdvancedSettingsRepoStub) GetValue(_ context.Context, key string) (string, error) {
+func (r *opsAdvancedSettingsRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if key == service.SettingKeyOpsAdvancedSettings {
 		return r.advanced, nil
 	}
@@ -1748,6 +1751,28 @@ func TestOpsErrorLoggerMiddleware_RecordsPriorUpstreamFailureDespiteCanceledBody
 	require.Equal(t, "upstream", job.entry.ErrorPhase)
 	require.NotNil(t, job.entry.UpstreamStatusCode)
 	require.Equal(t, 524, *job.entry.UpstreamStatusCode)
+}
+
+func TestOpsErrorLoggerMiddleware_ClientClosedWithUpstreamStillHonorsOtherFilters(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	settings := &opsAdvancedSettingsRepoStub{advanced: `{"ignore_context_canceled":true,"ignore_count_tokens_errors":true}`}
+	ops := service.NewOpsService(nil, settings, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/messages/count_tokens", func(c *gin.Context) {
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			AccountID: 7, UpstreamStatusCode: 524, Kind: "failover", Message: "upstream timeout",
+		}})
+		googleError(c, statusClientClosedRequest, "context canceled")
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil).WithContext(ctx))
+
+	require.Equal(t, statusClientClosedRequest, recorder.Code)
+	require.Zero(t, OpsErrorLogQueueLength(), "the other configured filter must still run despite canceled request context")
 }
 
 func TestOpsErrorLoggerMiddleware_RecordsClientClosedWhenIgnoreContextCanceledDisabled(t *testing.T) {
