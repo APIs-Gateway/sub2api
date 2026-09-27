@@ -140,6 +140,20 @@ func TestApplyResponsesAnthropicCacheBreakpoints_SkipsThinkingBlocks(t *testing.
 	require.JSONEq(t, string(onlyThinking), string(applyResponsesAnthropicCacheBreakpoints(onlyThinking, "claude-opus-5-5")))
 }
 
+func TestApplyResponsesAnthropicCacheBreakpoints_SkipsUnknownBlocks(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"messages":[{"role":"user","content":[
+		{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"},
+		{"type":"future_extension","data":"opaque"}
+	]}]}`)
+	out := applyResponsesAnthropicCacheBreakpoints(body, "claude-opus-5-5")
+	require.Equal(t, "ephemeral", gjson.GetBytes(out, "messages.0.content.0.cache_control.type").String())
+	require.False(t, gjson.GetBytes(out, "messages.0.content.1.cache_control").Exists())
+
+	onlyUnknown := []byte(`{"messages":[{"role":"user","content":[{"type":"future_extension","data":"opaque"}]}]}`)
+	require.JSONEq(t, string(onlyUnknown), string(applyResponsesAnthropicCacheBreakpoints(onlyUnknown, "claude-opus-5-5")))
+}
+
 // DeepSeek / Kimi 等 Anthropic 兼容端点不保证接受 cache_control.ttl，保持原样透传。
 func TestApplyResponsesAnthropicCacheBreakpoints_NonClaudeModelsUntouched(t *testing.T) {
 	t.Parallel()

@@ -188,15 +188,13 @@ func injectCacheControlOnLastContentBlock(body []byte, idx int, msg *gjson.Resul
 }
 
 // lastCacheableContentBlockIndex 返回可承载 cache_control 的最后一个 content block
-// 下标。thinking / redacted_thinking 不允许带 cache_control（上游会直接 400，
-// enforceCacheControlLimit 也会把它当非法断点清掉），因此需要向前回退。
+// 下标。仅在转换器能产出且 Anthropic 允许的 text/image/tool_use/tool_result
+// 上注入；thinking、redacted_thinking 和未知类型都向前回退，避免上游 400。
 // 整条 content 都不适合打点时返回 -1。
 func lastCacheableContentBlockIndex(blocks []gjson.Result) int {
 	for i := len(blocks) - 1; i >= 0; i-- {
 		switch blocks[i].Get("type").String() {
-		case "thinking", "redacted_thinking":
-			continue
-		default:
+		case "text", "image", "tool_use", "tool_result":
 			return i
 		}
 	}
