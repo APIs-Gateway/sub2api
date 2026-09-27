@@ -128,3 +128,131 @@ func TestProbeOpenAIAPIKeyResponsesSupportAddsCodexHeaders(t *testing.T) {
 		t.Fatal("expected probe result to be persisted")
 	}
 }
+
+func TestOfficialOpenAIResponsesProbeURL(t *testing.T) {
+	tests := []struct {
+		baseURL string
+		want    bool
+	}{
+		{"https://api.openai.com", true},
+		{"https://api.openai.com/v1", true},
+		{"https://API.OPENAI.COM:443/v1/", true},
+		{"https://api.openai.com.example/v1", false},
+		{"https://api.openai.com:8443/v1", false},
+		{"https://api.openai.com/custom", false},
+		{"http://api.openai.com/v1", false},
+		{"https://user@api.openai.com/v1", false},
+		{"https://api.openai.com/v1?proxy=1", false},
+		{"https://api.openai.com/v1#fragment", false},
+		{"not a url", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.baseURL, func(t *testing.T) {
+			require.Equal(t, tc.want, isOfficialOpenAIResponsesProbeURL(tc.baseURL))
+		})
+	}
+}
+
+func TestProbeOpenAIAPIKeyResponsesSupportOfficialEndpointSkipsModelProbe(t *testing.T) {
+	tests := []struct {
+		name             string
+		baseURL          string
+		allowlistEnabled bool
+	}{
+		{"default", "", false},
+		{"root", "https://api.openai.com", false},
+		{"v1", "https://api.openai.com/v1", false},
+		// With the allowlist enabled, URL validation canonicalizes this escaped
+		// spelling to /v1 before the official-endpoint check.
+		{"normalized escaped v1", "https://api.openai.com/%76%31", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// The fork prefers general gpt-* probes. o4-mini is Responses-capable
+			// but leaves the legacy model first among non-gpt mappings.
+			account := Account{
+				ID: 97, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key": "sk-test", "base_url": tc.baseURL,
+					"model_mapping": map[string]any{"legacy": "babbage-002", "current": "o4-mini"},
+				},
+				Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false},
+			}
+			require.Equal(t, "babbage-002", selectResponsesProbeModel(&account))
+			updates := make(chan map[string]any, 1)
+			repo := &snapshotUpdateAccountRepo{
+				stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
+				updateExtraCalls:      updates,
+			}
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"model_not_found"}}`)),
+			}}
+			svc := &AccountTestService{
+				accountRepo: repo, httpUpstream: upstream,
+				cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{
+					Enabled: tc.allowlistEnabled, UpstreamHosts: []string{"api.openai.com"},
+				}}},
+			}
+
+			svc.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), account.ID)
+
+			require.Nil(t, upstream.lastReq, "official endpoint must not be judged by a legacy model")
+			select {
+			case got := <-updates:
+				require.Equal(t, true, got[openai_compat.ExtraKeyResponsesSupported])
+				require.True(t, openai_compat.ShouldUseResponsesAPI(got), "persisted cache should route through Responses")
+			case <-time.After(time.Second):
+				t.Fatal("expected official endpoint capability to be persisted")
+			}
+		})
+	}
+}
+
+func TestProbeOpenAIAPIKeyResponsesSupportCustomEndpointKeepsModelUnavailableUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		baseURL          string
+		wantProbeURL     string
+		allowlistEnabled bool
+	}{
+		{"lookalike host", "https://api.openai.com.example/v1", "https://api.openai.com.example/v1/responses", false},
+		{"custom port", "https://api.openai.com:8443/v1", "https://api.openai.com:8443/v1/responses", true},
+		{"custom path", "https://api.openai.com/custom", "https://api.openai.com/custom/v1/responses", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			account := Account{
+				ID: 98, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key": "sk-test", "base_url": tc.baseURL,
+					"model_mapping": map[string]any{"legacy": "babbage-002", "current": "o4-mini"},
+				},
+			}
+			updates := make(chan map[string]any, 1)
+			repo := &snapshotUpdateAccountRepo{
+				stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
+				updateExtraCalls:      updates,
+			}
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"model_not_found"}}`)),
+			}}
+			svc := &AccountTestService{
+				accountRepo: repo, httpUpstream: upstream,
+				cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{
+					Enabled: tc.allowlistEnabled, UpstreamHosts: []string{"api.openai.com"},
+				}}},
+			}
+
+			svc.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), account.ID)
+
+			require.NotNil(t, upstream.lastReq, "custom endpoint must retain the capability probe")
+			require.Equal(t, tc.wantProbeURL, upstream.lastReq.URL.String())
+			select {
+			case <-updates:
+				t.Fatal("model-not-found does not prove a custom endpoint lacks Responses")
+			default:
+			}
+		})
+	}
+}

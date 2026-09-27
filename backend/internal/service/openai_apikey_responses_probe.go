@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -160,6 +161,17 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		logger.LegacyPrintf("service.openai_probe", "probe_invalid_baseurl: account_id=%d base_url=%q err=%v", accountID, baseURL, err)
 		return
 	}
+	// The official API supports Responses independently of the model chosen for
+	// this probe. A legacy completion-only model in model_mapping can return 404;
+	// the fork then leaves support unknown and routes through Chat Completions.
+	if isOfficialOpenAIResponsesProbeURL(normalizedBaseURL) {
+		if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
+			openai_compat.ExtraKeyResponsesSupported: true,
+		}); err != nil {
+			logger.LegacyPrintf("service.openai_probe", "probe_persist_failed: account_id=%d supported=true err=%v", accountID, err)
+		}
+		return
+	}
 
 	probeURL := buildOpenAIResponsesURL(normalizedBaseURL)
 	probeModel := selectResponsesProbeModel(account)
@@ -240,6 +252,25 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		"probe_done: account_id=%d base_url=%s probe_model=%s status=%d supported=%v",
 		accountID, normalizedBaseURL, probeModel, resp.StatusCode, supported,
 	)
+}
+
+// Only the public API endpoint gets the model-independent capability verdict.
+// Other URLs, including custom paths and ports on the same host, retain the
+// existing probe because they may expose a different Responses implementation.
+func isOfficialOpenAIResponsesProbeURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") ||
+		!strings.EqualFold(parsed.Hostname(), "api.openai.com") ||
+		(parsed.Port() != "" && parsed.Port() != "443") ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawPath != "" {
+		return false
+	}
+	switch parsed.Path {
+	case "", "/", "/v1", "/v1/":
+		return true
+	default:
+		return false
+	}
 }
 
 // responsesProbeVerdictIsConclusive 判断本次探测响应是否足以对「上游是否支持带工具的
