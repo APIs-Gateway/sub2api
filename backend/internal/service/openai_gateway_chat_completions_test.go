@@ -444,7 +444,7 @@ func TestForwardAsChatCompletions_MappedGPTStripsExplicitCacheHints(t *testing.T
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 
-	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "keep", "")
 	require.Error(t, err) // Deliberate recorder response after the request is captured.
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, "gpt-6-sol", gjson.GetBytes(upstream.lastBody, "model").String())
