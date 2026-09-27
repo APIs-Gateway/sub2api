@@ -2991,6 +2991,7 @@ func TestOpenAIBuildUpstreamRequestPreservesCallerResponsesBeta(t *testing.T) {
 		{name: "Codex Responses alias", path: "/backend-api/codex/responses", account: oauth, betaValues: []string{"responses_multi_agent=v1"}, want: []string{"responses_multi_agent=v1"}},
 		{name: "API key preserves caller beta unchanged", path: "/v1/responses", account: apiKey, betaValues: []string{"responses=experimental, responses_multi_agent=v1"}, want: []string{"responses=experimental, responses_multi_agent=v1"}},
 		{name: "compact OAuth preserves independent beta", path: "/v1/responses/compact", account: oauth, betaValues: []string{"responses=experimental, future_feature=v1"}, want: []string{"future_feature=v1"}},
+		{name: "nested compact alias preserves beta", path: "/openai/v1/responses/compact/detail", account: oauth, betaValues: []string{"future_feature=v1"}, want: []string{"future_feature=v1"}},
 		{name: "Chat conversion drops caller beta", path: "/v1/chat/completions", account: oauth, betaValues: []string{"responses_multi_agent=v1"}},
 		{name: "API key Chat conversion drops caller beta", path: "/v1/chat/completions", account: apiKey, betaValues: []string{"responses_multi_agent=v1"}},
 	} {
@@ -3005,6 +3006,11 @@ func TestOpenAIBuildUpstreamRequestPreservesCallerResponsesBeta(t *testing.T) {
 			require.Equal(t, tc.want, req.Header.Values("OpenAI-Beta"))
 		})
 	}
+}
+
+func TestIsOpenAIResponsesInboundPathWithoutRequest(t *testing.T) {
+	require.False(t, isOpenAIResponsesInboundPath(nil))
+	require.False(t, isOpenAIResponsesInboundPath(&gin.Context{}))
 }
 
 func TestOpenAIBuildUpstreamRequestPreservesCompactPathForAPIKeyBaseURL(t *testing.T) {
