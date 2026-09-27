@@ -16,7 +16,7 @@ COMPOSE_FILES = (
     "deploy/docker-compose.local.yml",
     "deploy/docker-compose.dev.yml",
 )
-PASSWORDS = ("", 'quote"dollar$back`tick')
+PASSWORDS = ("", "single'double\"dollar$back`tick")
 BASE_COMMAND = [
     "redis-server", "--save", "60", "1", "--appendonly", "yes",
     "--appendfsync", "everysec", "--requirepass",
@@ -45,7 +45,8 @@ def assert_redis_auth(compose_file, password, from_env_file=False):
     if from_env_file:
         env.pop("REDIS_PASSWORD", None)
         env_file = Path(temp_dir.name) / ".env"
-        env_file.write_text(f"REDIS_PASSWORD='{password}'\n")
+        quoted_password = password.replace("'", "\\'")
+        env_file.write_text(f"REDIS_PASSWORD='{quoted_password}'\n")
         env_file_args = ("--env-file", str(env_file))
     else:
         env["REDIS_PASSWORD"] = password
