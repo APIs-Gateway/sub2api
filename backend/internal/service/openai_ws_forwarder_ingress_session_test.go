@@ -41,6 +41,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 			[]byte(`{"type":"response.output_item.done","item":{"id":"ig_ingress_1","type":"image_generation_call","status":"generating","result":"iVBORw0KGgoAAAANSUhEUg/+=="}}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_1","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_3","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
 	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
@@ -73,7 +74,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	}
 
 	serverErrCh := make(chan error, 1)
-	turnWSModeCh := make(chan bool, 2)
+	turnWSModeCh := make(chan bool, 3)
 	hooks := &OpenAIWSIngressHooks{
 		AfterTurn: func(_ int, result *OpenAIForwardResult, turnErr error) {
 			if turnErr == nil && result != nil {
@@ -138,7 +139,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 		return message
 	}
 
-	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"keep nested metadata","internal_chat_message_metadata_passthrough":{"keep":true}}],"internal_chat_message_metadata_passthrough":{"remove":true}}]}`)
+	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"client_metadata":{"x-codex-window-id":"window-a"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"keep nested metadata","internal_chat_message_metadata_passthrough":{"keep":true}}],"internal_chat_message_metadata_passthrough":{"remove":true}}]}`)
 	firstTurnImageEvent := readMessage()
 	require.Equal(t, "response.output_item.done", gjson.GetBytes(firstTurnImageEvent, "type").String())
 	require.Equal(t, "completed", gjson.GetBytes(firstTurnImageEvent, "item.status").String())
@@ -147,12 +148,18 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	require.Equal(t, "response.completed", gjson.GetBytes(firstTurnEvent, "type").String())
 	require.Equal(t, "resp_ingress_turn_1", gjson.GetBytes(firstTurnEvent, "response.id").String())
 
-	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"previous_response_id":"resp_ingress_turn_1","input":[{"type":"function_call_output","call_id":"call_1","output":"ok","internal_chat_message_metadata_passthrough":null}]}`)
+	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"client_metadata":{"x-codex-window-id":"window-a"},"previous_response_id":"resp_ingress_turn_1","input":[{"type":"function_call_output","call_id":"call_1","output":"ok","internal_chat_message_metadata_passthrough":null}]}`)
 	secondTurnEvent := readMessage()
 	require.Equal(t, "response.completed", gjson.GetBytes(secondTurnEvent, "type").String())
 	require.Equal(t, "resp_ingress_turn_2", gjson.GetBytes(secondTurnEvent, "response.id").String())
+
+	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"client_metadata":{"x-codex-window-id":"window-b"},"previous_response_id":"resp_ingress_turn_2","input":[{"type":"message","role":"user","content":"new window"}]}`)
+	thirdTurnEvent := readMessage()
+	require.Equal(t, "response.completed", gjson.GetBytes(thirdTurnEvent, "type").String())
+	require.Equal(t, "resp_ingress_turn_3", gjson.GetBytes(thirdTurnEvent, "response.id").String())
 	require.True(t, <-turnWSModeCh, "首轮 turn 应标记为 WS 模式")
 	require.True(t, <-turnWSModeCh, "第二轮 turn 应标记为 WS 模式")
+	require.True(t, <-turnWSModeCh, "第三轮 turn 应标记为 WS 模式")
 
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
@@ -166,10 +173,15 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	metrics := svc.SnapshotOpenAIWSPoolMetrics()
 	require.Equal(t, int64(1), metrics.AcquireTotal, "同一 ingress 会话多 turn 应只获取一次上游 lease")
 	require.Equal(t, 1, captureDialer.DialCount(), "同一 ingress 会话应保持同一上游连接")
-	require.Len(t, captureConn.writes, 2, "应向同一上游连接发送两轮 response.create")
+	require.Len(t, captureConn.writes, 3, "应向同一上游连接发送三轮 response.create")
 	require.False(t, gjson.Get(requestToJSONString(captureConn.writes[0]), "input.0."+openAIOAuthInputMetadataField).Exists())
 	require.True(t, gjson.Get(requestToJSONString(captureConn.writes[0]), "input.0.content.0."+openAIOAuthInputMetadataField+".keep").Bool())
 	require.False(t, gjson.Get(requestToJSONString(captureConn.writes[1]), "input.0."+openAIOAuthInputMetadataField).Exists())
+	require.Equal(t, "resp_ingress_turn_1", gjson.Get(requestToJSONString(captureConn.writes[1]), "previous_response_id").String())
+	thirdWrite := requestToJSONString(captureConn.writes[2])
+	require.False(t, gjson.Get(thirdWrite, "previous_response_id").Exists(), "新窗口不得继续引用旧窗口的响应")
+	require.Equal(t, "new window", gjson.Get(thirdWrite, "input.0.content").String())
+	require.Len(t, gjson.Get(thirdWrite, "input").Array(), 1, "新窗口不得重放旧窗口输入")
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateCanOmitModel(t *testing.T) {
