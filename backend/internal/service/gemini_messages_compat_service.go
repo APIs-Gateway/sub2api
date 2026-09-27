@@ -1866,6 +1866,10 @@ func (s *GeminiMessagesCompatService) writeGeminiMappedError(c *gin.Context, acc
 		if errMsg == "" {
 			errMsg = "Upstream rate limit exceeded, please retry later"
 		}
+	case http.StatusRequestEntityTooLarge:
+		// The HTTP status describes the actual request failure. A contradictory
+		// Gemini body status must not turn a 413 into 429 or expose its message.
+		statusCode, errType, errMsg, _ = MapUpstreamErrorDefault(upstreamStatus)
 	case 529:
 		if statusCode == 0 {
 			statusCode = http.StatusServiceUnavailable
