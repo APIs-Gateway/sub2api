@@ -19,11 +19,6 @@ export interface CcSwitchImportDeeplinkInput {
   usageScript: string
 }
 
-function withV1Endpoint(baseUrl: string): string {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
-  return normalizedBaseUrl.endsWith('/v1') ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`
-}
-
 function withoutTrailingSlashes(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '')
 }
