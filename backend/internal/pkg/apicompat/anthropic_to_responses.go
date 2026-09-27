@@ -3,6 +3,7 @@ package apicompat
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -30,7 +31,7 @@ func AnthropicToResponses(req *AnthropicRequest) (*ResponsesRequest, error) {
 		Include: []string{"reasoning.encrypted_content"},
 	}
 
-	// Reasoning models (gpt-5.x) served via the Responses API do not accept
+	// GPT-5 and later reasoning models served via the Responses API do not accept
 	// sampling parameters. Sending temperature or top_p causes a 400
 	// "Unsupported parameter" error, so we only forward them for non-reasoning
 	// models.
@@ -482,22 +483,45 @@ func isReasoningModel(model string) bool {
 }
 
 // openAIModelGeneration extracts N from a "gpt-N[.M][-suffix]" model id.
-// ok is false for non-GPT ids and for GPT families that carry no numeric
-// generation (gpt-image-1, gpt-audio, ...).
+// ok is false for non-GPT ids, malformed numeric generations, and GPT
+// families that carry no numeric generation (gpt-image-1, gpt-audio, ...).
 func openAIModelGeneration(model string) (int, bool) {
 	rest, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-")
 	if !ok {
 		return 0, false
 	}
-	major, digits := 0, 0
-	for _, r := range rest {
-		if r < '0' || r > '9' {
-			break
-		}
-		major = major*10 + int(r-'0')
+	digits := 0
+	for digits < len(rest) && rest[digits] >= '0' && rest[digits] <= '9' {
 		digits++
 	}
 	if digits == 0 {
+		return 0, false
+	}
+	suffix := rest[digits:]
+	switch {
+	case suffix == "":
+	case strings.HasPrefix(suffix, "-"):
+		if len(suffix) == 1 {
+			return 0, false
+		}
+	case strings.HasPrefix(suffix, "."):
+		minor := suffix[1:]
+		minorDigits := 0
+		for minorDigits < len(minor) && minor[minorDigits] >= '0' && minor[minorDigits] <= '9' {
+			minorDigits++
+		}
+		if minorDigits == 0 {
+			return 0, false
+		}
+		minorSuffix := minor[minorDigits:]
+		if minorSuffix != "" && (!strings.HasPrefix(minorSuffix, "-") || len(minorSuffix) == 1) {
+			return 0, false
+		}
+	default:
+		return 0, false
+	}
+	major, err := strconv.Atoi(rest[:digits])
+	if err != nil {
 		return 0, false
 	}
 	return major, true

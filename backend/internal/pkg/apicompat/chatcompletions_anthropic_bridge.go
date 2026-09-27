@@ -57,7 +57,7 @@ func AnthropicToChatCompletionsRequest(req *AnthropicRequest) (*ChatCompletionsR
 		Stream:   req.Stream,
 	}
 
-	// Sampling params: reasoning models (gpt-5.x) reject temperature/top_p.
+	// Sampling params: GPT-5 and later reasoning models reject temperature/top_p.
 	if !isReasoningModel(req.Model) {
 		out.Temperature = req.Temperature
 		out.TopP = req.TopP
