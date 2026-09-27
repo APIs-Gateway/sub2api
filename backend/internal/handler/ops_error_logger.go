@@ -923,7 +923,8 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}
 
 		// Skip logging if the error should be filtered based on settings
-		if shouldSkipOpsErrorLog(c.Request.Context(), ops, parsed.Message, string(body), c.Request.URL.Path) {
+		preserveClientClosedUpstream := status == statusClientClosedRequest && hasOpsClientClosedUpstreamErrorContext(c)
+		if shouldSkipOpsErrorLog(c.Request.Context(), ops, parsed.Message, string(body), c.Request.URL.Path, preserveClientClosedUpstream) {
 			return
 		}
 		if shouldSkipOpsClientClosed(c, ops, status) {
@@ -1791,7 +1792,7 @@ func strconvItoa(v int) string {
 
 // shouldSkipOpsErrorLog determines if an error should be skipped from logging based on settings.
 // Returns true for errors that should be filtered according to OpsAdvancedSettings.
-func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message, body, requestPath string) bool {
+func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message, body, requestPath string, preserveClientClosedUpstream ...bool) bool {
 	if ops == nil {
 		return false
 	}
@@ -1812,7 +1813,7 @@ func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message
 	}
 
 	// Check if context canceled errors should be ignored (client disconnects)
-	if settings.IgnoreContextCanceled {
+	if settings.IgnoreContextCanceled && (len(preserveClientClosedUpstream) == 0 || !preserveClientClosedUpstream[0]) {
 		if strings.Contains(msgLower, opsErrContextCanceled) || strings.Contains(bodyLower, opsErrContextCanceled) {
 			return true
 		}
@@ -1864,17 +1865,21 @@ func shouldSkipOpsClientClosed(c *gin.Context, ops *service.OpsService, status i
 	if err != nil || settings == nil || !settings.IgnoreContextCanceled {
 		return false
 	}
+	return !hasOpsClientClosedUpstreamErrorContext(c)
+}
+
+func hasOpsClientClosedUpstreamErrorContext(c *gin.Context) bool {
 	if hasOpsUpstreamErrorContext(c) {
-		return false
+		return true
 	}
 	for _, key := range []string{service.OpsUpstreamErrorMessageKey, service.OpsUpstreamErrorDetailKey} {
 		if v, ok := c.Get(key); ok {
 			if message, ok := v.(string); ok && strings.TrimSpace(message) != "" {
-				return false
+				return true
 			}
 		}
 	}
-	return true
+	return false
 }
 
 // shouldSkipOpsErrorLogForCyber：cyber_policy 命中的请求由 recordCyberPolicyIfMarked

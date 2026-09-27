@@ -1725,6 +1725,31 @@ func TestOpsErrorLoggerMiddleware_RecordsClientClosedAfterUpstreamFailure(t *tes
 	require.Equal(t, 524, *job.entry.UpstreamStatusCode)
 }
 
+func TestOpsErrorLoggerMiddleware_RecordsPriorUpstreamFailureDespiteCanceledBody(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1beta/models/gemini-test:generateContent", func(c *gin.Context) {
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			AccountID: 7, UpstreamStatusCode: 524, Kind: "failover", Message: "upstream timeout",
+		}})
+		googleError(c, statusClientClosedRequest, "context canceled")
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-test:generateContent", nil).WithContext(ctx))
+
+	require.Equal(t, statusClientClosedRequest, recorder.Code)
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.Equal(t, "upstream", job.entry.ErrorPhase)
+	require.NotNil(t, job.entry.UpstreamStatusCode)
+	require.Equal(t, 524, *job.entry.UpstreamStatusCode)
+}
+
 func TestOpsErrorLoggerMiddleware_RecordsClientClosedWhenIgnoreContextCanceledDisabled(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 	gin.SetMode(gin.TestMode)
