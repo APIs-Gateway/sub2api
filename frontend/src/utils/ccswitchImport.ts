@@ -19,9 +19,8 @@ export interface CcSwitchImportDeeplinkInput {
   usageScript: string
 }
 
-function withV1Endpoint(baseUrl: string): string {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
-  return normalizedBaseUrl.endsWith('/v1') ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`
+function withoutTrailingSlashes(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '')
 }
 
 export function resolveCcSwitchImportConfig(
@@ -38,7 +37,9 @@ export function resolveCcSwitchImportConfig(
     case 'openai':
       return {
         app: 'codex',
-        endpoint: withV1Endpoint(baseUrl),
+        // CC Switch handles Codex request paths; preserve the provider's chosen prefix.
+        // Adding /v1 to a root URL here can produce duplicate path segments.
+        endpoint: withoutTrailingSlashes(baseUrl),
         model: OPENAI_CC_SWITCH_CODEX_MODEL
       }
     case 'gemini':
