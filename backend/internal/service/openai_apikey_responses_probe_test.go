@@ -168,11 +168,13 @@ func TestProbeOpenAIAPIKeyResponsesSupportOfficialEndpointSkipsModelProbe(t *tes
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// The fork prefers general gpt-* probes. o4-mini is Responses-capable
+			// but leaves the legacy model first among non-gpt mappings.
 			account := Account{
 				ID: 97, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 				Credentials: map[string]any{
 					"api_key": "sk-test", "base_url": tc.baseURL,
-					"model_mapping": map[string]any{"legacy": "babbage-002", "current": "gpt-6-sol"},
+					"model_mapping": map[string]any{"legacy": "babbage-002", "current": "o4-mini"},
 				},
 				Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false},
 			}
@@ -223,7 +225,7 @@ func TestProbeOpenAIAPIKeyResponsesSupportCustomEndpointKeepsModelUnavailableUnk
 				ID: 98, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 				Credentials: map[string]any{
 					"api_key": "sk-test", "base_url": tc.baseURL,
-					"model_mapping": map[string]any{"legacy": "babbage-002", "current": "gpt-6-sol"},
+					"model_mapping": map[string]any{"legacy": "babbage-002", "current": "o4-mini"},
 				},
 			}
 			updates := make(chan map[string]any, 1)
