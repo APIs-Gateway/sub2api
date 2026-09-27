@@ -42,6 +42,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_1","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_3","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_4","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
 	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
@@ -74,7 +75,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	}
 
 	serverErrCh := make(chan error, 1)
-	turnWSModeCh := make(chan bool, 3)
+	turnWSModeCh := make(chan bool, 4)
 	hooks := &OpenAIWSIngressHooks{
 		AfterTurn: func(_ int, result *OpenAIForwardResult, turnErr error) {
 			if turnErr == nil && result != nil {
@@ -157,9 +158,15 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	thirdTurnEvent := readMessage()
 	require.Equal(t, "response.completed", gjson.GetBytes(thirdTurnEvent, "type").String())
 	require.Equal(t, "resp_ingress_turn_3", gjson.GetBytes(thirdTurnEvent, "response.id").String())
+
+	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"client_metadata":{"x-codex-window-id":"window-b"},"previous_response_id":"resp_ingress_turn_3","input":[{"type":"message","role":"user","content":"same new window"}]}`)
+	fourthTurnEvent := readMessage()
+	require.Equal(t, "response.completed", gjson.GetBytes(fourthTurnEvent, "type").String())
+	require.Equal(t, "resp_ingress_turn_4", gjson.GetBytes(fourthTurnEvent, "response.id").String())
 	require.True(t, <-turnWSModeCh, "首轮 turn 应标记为 WS 模式")
 	require.True(t, <-turnWSModeCh, "第二轮 turn 应标记为 WS 模式")
 	require.True(t, <-turnWSModeCh, "第三轮 turn 应标记为 WS 模式")
+	require.True(t, <-turnWSModeCh, "第四轮 turn 应标记为 WS 模式")
 
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
@@ -173,7 +180,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	metrics := svc.SnapshotOpenAIWSPoolMetrics()
 	require.Equal(t, int64(1), metrics.AcquireTotal, "同一 ingress 会话多 turn 应只获取一次上游 lease")
 	require.Equal(t, 1, captureDialer.DialCount(), "同一 ingress 会话应保持同一上游连接")
-	require.Len(t, captureConn.writes, 3, "应向同一上游连接发送三轮 response.create")
+	require.Len(t, captureConn.writes, 4, "应向同一上游连接发送四轮 response.create")
 	require.False(t, gjson.Get(requestToJSONString(captureConn.writes[0]), "input.0."+openAIOAuthInputMetadataField).Exists())
 	require.True(t, gjson.Get(requestToJSONString(captureConn.writes[0]), "input.0.content.0."+openAIOAuthInputMetadataField+".keep").Bool())
 	require.False(t, gjson.Get(requestToJSONString(captureConn.writes[1]), "input.0."+openAIOAuthInputMetadataField).Exists())
@@ -182,6 +189,8 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	require.False(t, gjson.Get(thirdWrite, "previous_response_id").Exists(), "新窗口不得继续引用旧窗口的响应")
 	require.Equal(t, "new window", gjson.Get(thirdWrite, "input.0.content").String())
 	require.Len(t, gjson.Get(thirdWrite, "input").Array(), 1, "新窗口不得重放旧窗口输入")
+	fourthWrite := requestToJSONString(captureConn.writes[3])
+	require.Equal(t, "resp_ingress_turn_3", gjson.Get(fourthWrite, "previous_response_id").String(), "新窗口下一轮应恢复正常续链")
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateCanOmitModel(t *testing.T) {
