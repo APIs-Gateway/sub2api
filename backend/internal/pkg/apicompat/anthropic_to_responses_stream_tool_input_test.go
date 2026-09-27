@@ -153,6 +153,12 @@ func TestAnthropicEventToResponses_ToolInputFromDeltasUnchanged(t *testing.T) {
 	}
 	assert.Equal(t, []string{`{"language":"py",`, `"code":"print(1)"}`}, deltas,
 		"canonical delta streaming must not gain or lose events")
+	assert.Equal(t, []string{
+		"response.function_call_arguments.delta",
+		"response.function_call_arguments.delta",
+		"response.function_call_arguments.done",
+		"response.output_item.done",
+	}, toolArgumentLifecycle(events, "eval"))
 }
 
 // An upstream that sends both a populated content_block_start and real deltas
@@ -232,6 +238,55 @@ func TestAnthropicEventToResponses_InlineToolInputSurvivesIncompleteClose(t *tes
 				"response.function_call_arguments.done",
 				"response.output_item.done",
 			}, toolArgumentLifecycle(events, "eval"))
+		})
+	}
+}
+
+// The missing-stop close must also emit arguments.done when input arrived as
+// real deltas, even though there is no inline seed to flush.
+func TestAnthropicEventToResponses_DeltaToolInputSurvivesIncompleteClose(t *testing.T) {
+	const args = `{"query":"weather"}`
+	for name, end := range map[string]func(*AnthropicEventToResponsesState) []ResponsesStreamEvent{
+		"message_stop": func(state *AnthropicEventToResponsesState) []ResponsesStreamEvent {
+			return AnthropicEventToResponsesEvents(&AnthropicStreamEvent{Type: "message_stop"}, state)
+		},
+		"transport_finalization": FinalizeAnthropicResponsesStream,
+	} {
+		t.Run(name, func(t *testing.T) {
+			state := NewAnthropicEventToResponsesState()
+			var events []ResponsesStreamEvent
+			events = append(events, AnthropicEventToResponsesEvents(&AnthropicStreamEvent{
+				Type:    "message_start",
+				Message: &AnthropicResponse{ID: "msg_incomplete_delta_tool"},
+			}, state)...)
+			events = append(events, AnthropicEventToResponsesEvents(&AnthropicStreamEvent{
+				Type: "content_block_start",
+				ContentBlock: &AnthropicContentBlock{
+					Type: "tool_use", ID: "toolu_incomplete_delta", Name: "eval", Input: json.RawMessage(`{}`),
+				},
+			}, state)...)
+			events = append(events, AnthropicEventToResponsesEvents(&AnthropicStreamEvent{
+				Type:  "content_block_delta",
+				Delta: &AnthropicDelta{Type: "input_json_delta", PartialJSON: args},
+			}, state)...)
+			events = append(events, end(state)...)
+
+			assert.Equal(t, []string{
+				"response.function_call_arguments.delta",
+				"response.function_call_arguments.done",
+				"response.output_item.done",
+			}, toolArgumentLifecycle(events, "eval"))
+			done := firstEventOfType(events, "response.function_call_arguments.done")
+			require.NotNil(t, done)
+			assert.Equal(t, args, done.Arguments)
+			item := findFunctionCallOutput(events)
+			require.NotNil(t, item)
+			assert.Equal(t, args, item.Arguments)
+			completed := firstEventOfType(events, "response.completed")
+			require.NotNil(t, completed)
+			require.NotNil(t, completed.Response)
+			require.Len(t, completed.Response.Output, 1)
+			assert.Equal(t, args, completed.Response.Output[0].Arguments)
 		})
 	}
 }

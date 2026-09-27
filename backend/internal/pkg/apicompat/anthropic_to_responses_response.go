@@ -202,6 +202,11 @@ type AnthropicEventToResponsesState struct {
 	CurrentContent []ResponsesContentPart // message
 	CurrentArgs    string                 // function_call
 	CurrentSummary string                 // reasoning
+
+	// CurrentArgsDone tracks whether the current function_call already emitted
+	// arguments.done, so implicit close can complete the event sequence once.
+	CurrentArgsDone bool
+
 	// CurrentThinking holds the open Anthropic thinking block; when
 	// PreserveThinkingSignatures is set (Opus 5.5) its signature is carried in
 	// an opaque encrypted_content envelope, never in visible text.
@@ -393,6 +398,7 @@ func anthToResHandleContentBlockStart(evt *AnthropicStreamEvent, state *Anthropi
 		state.CurrentItemType = "function_call"
 		state.CurrentCallID = toResponsesCallID(evt.ContentBlock.ID)
 		state.CurrentName = evt.ContentBlock.Name
+		state.CurrentArgsDone = false
 		// The canonical Anthropic stream leaves input empty here and streams the
 		// arguments as input_json_delta, but Anthropic-compatible relays may put
 		// the complete arguments on this event and never send a delta. Keep them
@@ -504,6 +510,7 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 			Name:        state.CurrentName,
 			Arguments:   state.CurrentArgs,
 		}))
+		state.CurrentArgsDone = true
 		events = append(events, closeCurrentResponsesItem(state)...)
 		return events
 
@@ -624,9 +631,9 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 	// This path also serves missing content_block_stop and stream finalization.
 	// A normal tool stop has already flushed the pending input before its done.
 	events := flushPendingToolInput(state)
-	if len(events) != 0 {
-		// The implicit close skipped anthToResHandleContentBlockStop, so complete
-		// the same argument event sequence before closing the output item.
+	if state.CurrentItemType == "function_call" && !state.CurrentArgsDone {
+		// The implicit close skipped anthToResHandleContentBlockStop. Complete
+		// the argument event sequence whether input came inline or as deltas.
 		events = append(events, makeResponsesEvent(state, "response.function_call_arguments.done", &ResponsesStreamEvent{
 			OutputIndex: state.OutputIndex,
 			ItemID:      state.CurrentItemID,
@@ -674,6 +681,7 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 	state.CurrentName = ""
 	state.CurrentContent = nil
 	state.CurrentArgs = ""
+	state.CurrentArgsDone = false
 	state.PendingToolInput = ""
 	state.CurrentSummary = ""
 	state.CurrentThinking = AnthropicContentBlock{}
