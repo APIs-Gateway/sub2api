@@ -20,6 +20,8 @@ func TestResponsesProbeModelUnavailableKeepsCapabilityUnchanged(t *testing.T) {
 		{"nested_error_type", 404, `{"response":{"error":{"type":"unsupported_model"}}}`},
 		{"invalid_model", 400, `{"error":{"code":"invalid_model"}}`},
 		{"named_model_message", 404, `{"error":{"message":"The model missing does not exist"}}`},
+		{"named_model_not_found_404", 404, `{"error":{"message":"The model gpt-5.5 not found"}}`},
+		{"named_model_not_found_400", 400, `{"error":{"message":"model gpt-5.5 not found"}}`},
 		{"nested_message", 404, `{"response":{"error":{"message":"The model missing is unavailable"}}}`},
 	}
 	for _, tc := range cases {
@@ -41,6 +43,7 @@ func TestResponsesProbeOtherErrorsRetainExistingVerdicts(t *testing.T) {
 	}{
 		{"plain_404", http.StatusNotFound, `{"error":{"message":"Not Found"}}`, false},
 		{"endpoint_unsupported_404", http.StatusNotFound, `{"error":{"message":"The /v1/responses endpoint is not supported"}}`, false},
+		{"endpoint_not_found_404", http.StatusNotFound, `{"error":{"message":"The /v1/responses endpoint was not found"}}`, false},
 		{"method_not_allowed", http.StatusMethodNotAllowed, `{"error":{"code":"model_not_found"}}`, false},
 		{"unrelated_400", http.StatusBadRequest, `{"error":{"message":"Model output is not supported"}}`, true},
 		{"server_error", http.StatusInternalServerError, `{"error":{"code":"model_not_found"}}`, true},
@@ -56,10 +59,23 @@ func TestResponsesProbeOtherErrorsRetainExistingVerdicts(t *testing.T) {
 
 func TestSelectResponsesProbeModelPrefersGeneralTextModel(t *testing.T) {
 	account := &Account{Credentials: map[string]any{"model_mapping": map[string]any{
-		"review": "codex-auto-review",
-		"image":  "gpt-image-2",
-		"text":   "gpt-5.5",
-		"later":  "gpt-6-sol",
+		"review":     "codex-auto-review",
+		"image":      "gpt-image-2",
+		"audio":      "gpt-audio",
+		"audio4o":    "gpt-4o-audio-preview",
+		"realtime":   "gpt-4o-mini-realtime-preview",
+		"transcribe": "gpt-4o-mini-transcribe",
+		"tts":        "gpt-4o-mini-tts",
+		"search":     "gpt-4o-mini-search-preview",
+		"instruct":   "gpt-3.5-turbo-instruct",
+		"text":       "gpt-5.5",
+		"later":      "gpt-6-sol",
 	}}}
 	require.Equal(t, "gpt-5.5", selectResponsesProbeModel(account))
+
+	// Without a suitable GPT text model, preserve the original lexical fallback.
+	account.Credentials["model_mapping"] = map[string]any{
+		"audio": "gpt-audio", "image": "gpt-image-2",
+	}
+	require.Equal(t, "gpt-audio", selectResponsesProbeModel(account))
 }

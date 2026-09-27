@@ -95,14 +95,27 @@ func selectResponsesProbeModel(account *Account) string {
 		return openai.DefaultTestModel
 	}
 	sort.Strings(candidates)
-	// Prefer a general text model over auxiliary entries such as
-	// codex-auto-review or image-only models, which cannot prove tool support.
+	// Prefer a general text model over auxiliary or endpoint-specific models,
+	// which cannot prove Responses tool support for the account.
 	for _, candidate := range candidates {
-		if strings.HasPrefix(candidate, "gpt-") && !isOpenAIImageGenerationModel(candidate) {
+		if isGeneralResponsesProbeTextModel(candidate) {
 			return candidate
 		}
 	}
 	return candidates[0]
+}
+
+func isGeneralResponsesProbeTextModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if !strings.HasPrefix(model, "gpt-") || isOpenAIImageGenerationModel(model) {
+		return false
+	}
+	for _, fragment := range []string{"-audio", "-realtime", "-transcribe", "-tts", "-search", "-instruct"} {
+		if strings.Contains(model, fragment) {
+			return false
+		}
+	}
+	return true
 }
 
 // ProbeOpenAIAPIKeyResponsesSupport 探测 OpenAI APIKey 账号上游是否支持
@@ -341,7 +354,7 @@ func isExplicitResponsesProbeModelAvailabilityMessage(message string) bool {
 	}
 	if strings.HasPrefix(message, "the model ") || strings.HasPrefix(message, "model ") {
 		return strings.Contains(message, " does not exist") ||
-			strings.Contains(message, " was not found") ||
+			strings.Contains(message, " not found") ||
 			strings.Contains(message, " is unavailable") ||
 			strings.Contains(message, " is not available") ||
 			strings.Contains(message, " is not supported by any configured account")
