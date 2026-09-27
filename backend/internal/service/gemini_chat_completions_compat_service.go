@@ -259,6 +259,12 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		if err != nil {
 			return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !hasGeminiChatCompletionContent(collected) {
+			return nil, emptyGeminiCompletionFailoverError()
+		}
 		collectedBytes, _ := json.Marshal(collected)
 		chatResp, usageObj2, err := geminiResponseToChatCompletions(collected, originalModel, collectedBytes, usageObj)
 		if err != nil {
@@ -469,10 +475,37 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsNonStreamingResponseF
 	if err != nil {
 		return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 	}
+	if err := c.Request.Context().Err(); err != nil {
+		return nil, err
+	}
+	if !hasGeminiChatCompletionContent(geminiResp) {
+		return nil, emptyGeminiCompletionFailoverError()
+	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	c.JSON(http.StatusOK, chatResp)
 	return usage, nil
+}
+
+// Match convertGeminiToClaudeMessage's visible content rules. A valid Gemini
+// response containing only thoughtSignature is still an empty completion.
+func hasGeminiChatCompletionContent(geminiResp map[string]any) bool {
+	for _, part := range extractGeminiParts(geminiResp) {
+		if text, _ := part["text"].(string); text != "" {
+			return true
+		}
+		if _, ok := part["functionCall"].(map[string]any); ok {
+			return true
+		}
+		if inlineData, ok := part["inlineData"].(map[string]any); ok {
+			mimeType, _ := inlineData["mimeType"].(string)
+			data, _ := inlineData["data"].(string)
+			if isGeminiInlineImageMIMEType(mimeType) && isValidBase64(data) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func geminiResponseToChatCompletions(
@@ -560,20 +593,25 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 		return false
 	}
 
-	messageID := "msg_" + randomHex(12)
-	if emitAnthropicEvent(&apicompat.AnthropicStreamEvent{
-		Type: "message_start",
-		Message: &apicompat.AnthropicResponse{
-			ID:         messageID,
-			Type:       "message",
-			Role:       "assistant",
-			Model:      originalModel,
-			Content:    []apicompat.AnthropicContentBlock{},
-			StopReason: nil,
-			Usage:      apicompat.AnthropicUsage{},
-		},
-	}) {
-		return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
+	messageStarted := false
+	startMessage := func() bool {
+		if messageStarted {
+			return false
+		}
+		messageStarted = true
+		messageID := "msg_" + randomHex(12)
+		return emitAnthropicEvent(&apicompat.AnthropicStreamEvent{
+			Type: "message_start",
+			Message: &apicompat.AnthropicResponse{
+				ID:         messageID,
+				Type:       "message",
+				Role:       "assistant",
+				Model:      originalModel,
+				Content:    []apicompat.AnthropicContentBlock{},
+				StopReason: nil,
+				Usage:      apicompat.AnthropicUsage{},
+			},
+		})
 	}
 
 	finishReason := ""
@@ -647,6 +685,12 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 								if delta == "" {
 									continue
 								}
+								if err := c.Request.Context().Err(); err != nil {
+									return nil, err
+								}
+								if startMessage() {
+									return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
+								}
 								if openBlockType != "text" {
 									if closeOpenBlock() {
 										return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
@@ -679,6 +723,12 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 							}
 
 							if fc, ok := part["functionCall"].(map[string]any); ok && fc != nil {
+								if err := c.Request.Context().Err(); err != nil {
+									return nil, err
+								}
+								if startMessage() {
+									return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
+								}
 								name, _ := fc["name"].(string)
 								if strings.TrimSpace(name) == "" {
 									name = "tool"
@@ -749,6 +799,12 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 		if err != nil {
 			return nil, fmt.Errorf("stream read error: %w", err)
 		}
+	}
+	if !messageStarted {
+		if err := c.Request.Context().Err(); err != nil {
+			return nil, err
+		}
+		return nil, emptyGeminiCompletionFailoverError()
 	}
 
 	if closeOpenBlock() {
