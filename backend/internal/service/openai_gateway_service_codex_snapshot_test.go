@@ -88,9 +88,9 @@ func TestResolveOpenAIQuotaUtilization_StaleSnapshotRespectsFutureAbsoluteReset(
 		} {
 			t.Run(window+"/"+tc.name, func(t *testing.T) {
 				extra := map[string]any{
-					"codex_" + window + "_used_percent": 100.0,
-					"codex_usage_updated_at":           now.Add(-3 * time.Hour).Format(time.RFC3339),
+					"codex_usage_updated_at": now.Add(-3 * time.Hour).Format(time.RFC3339),
 				}
+				extra["codex_"+window+"_used_percent"] = 100.0
 				if tc.resetAt != nil {
 					extra["codex_"+window+"_reset_at"] = tc.resetAt
 				}
