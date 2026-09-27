@@ -74,24 +74,32 @@ func TestGeminiTransportError_ThreeEntryPathsFailOverBeforeClientOutput(t *testi
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			svc, upstream, repo := newGeminiTransportErrorService(errors.New("read tcp: EOF"))
-			c := newGeminiTransportContext(t, tc.path, tc.body)
-			account := geminiSignalTestAccount()
+		for _, upstreamErr := range []struct {
+			name string
+			err  error
+		}{
+			{name: "EOF", err: errors.New("read tcp: EOF")},
+			{name: "provider_canceled", err: context.Canceled},
+		} {
+			t.Run(tc.name+"/"+upstreamErr.name, func(t *testing.T) {
+				svc, upstream, repo := newGeminiTransportErrorService(upstreamErr.err)
+				c := newGeminiTransportContext(t, tc.path, tc.body)
+				account := geminiSignalTestAccount()
 
-			result, err := tc.forward(svc, context.Background(), c, account, tc.body)
+				result, err := tc.forward(svc, context.Background(), c, account, tc.body)
 
-			require.Nil(t, result)
-			requireGeminiTransportFailover(t, err)
-			require.Equal(t, 1, upstream.calls, "transport failure must not retry the same account")
-			require.Zero(t, repo.calls, "transient failure must not unschedule the account")
-			require.False(t, c.Writer.Written(), "the handler owns the failover response")
-			events := upstreamErrorEventsFromContext(t, c)
-			require.Len(t, events, 1)
-			require.Equal(t, "request_error", events[0].Kind)
-			require.Equal(t, account.ID, events[0].AccountID)
-			require.Zero(t, events[0].UpstreamStatusCode)
-		})
+				require.Nil(t, result)
+				requireGeminiTransportFailover(t, err)
+				require.Equal(t, 1, upstream.calls, "transport failure must not retry the same account")
+				require.Zero(t, repo.calls, "transient failure must not unschedule the account")
+				require.False(t, c.Writer.Written(), "the handler owns the failover response")
+				events := upstreamErrorEventsFromContext(t, c)
+				require.Len(t, events, 1)
+				require.Equal(t, "request_error", events[0].Kind)
+				require.Equal(t, account.ID, events[0].AccountID)
+				require.Zero(t, events[0].UpstreamStatusCode)
+			})
+		}
 	}
 }
 

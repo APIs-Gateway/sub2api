@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -32,8 +31,11 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamTransportError(ctx con
 		Message:            safeErr,
 	})
 
-	if errors.Is(err, context.Canceled) || (errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded)) {
-		return err
+	// A provider or proxy may cancel its own operation while the client request
+	// remains live. That failure must still fail over, or the handler would see
+	// a plain error without a response to send.
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if classifyUpstreamTransportError(err).Persistent {
 		tempUnscheduleAccountForTransportError(ctx, s.accountRepo, account, safeErr)

@@ -30,6 +30,35 @@ func failover422() *service.UpstreamFailoverError {
 	}
 }
 
+// A provider-side context.Canceled with a live client is converted by the
+// Gemini service to this failover error. Once accounts are exhausted, each
+// inbound protocol must send an actual error body instead of an empty 200.
+func TestGeminiTransportFailoverExhaustedWritesErrorForEveryEntry(t *testing.T) {
+	failover := &service.UpstreamFailoverError{
+		StatusCode:   http.StatusBadGateway,
+		ResponseBody: []byte(`{"error":{"code":502,"message":"Upstream request failed","status":"INTERNAL"}}`),
+	}
+	for _, tc := range []struct {
+		name  string
+		write func(*GatewayHandler, *gin.Context)
+	}{
+		{"native", func(h *GatewayHandler, c *gin.Context) { h.handleGeminiFailoverExhausted(c, failover) }},
+		{"claude", func(h *GatewayHandler, c *gin.Context) { h.handleFailoverExhausted(c, failover, service.PlatformGemini, false) }},
+		{"chat_completions", func(h *GatewayHandler, c *gin.Context) { h.handleCCFailoverExhausted(c, failover, false) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, rec := newPassthroughTestCtx()
+			tc.write(&GatewayHandler{}, c)
+			require.Equal(t, http.StatusBadGateway, rec.Code)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+			errorBody, ok := payload["error"].(map[string]any)
+			require.True(t, ok)
+			require.NotEmpty(t, errorBody["message"])
+		})
+	}
+}
+
 func TestHandleFailoverExhausted_KeepsUpstream4xxStatus(t *testing.T) {
 	c, rec := newPassthroughTestCtx()
 	(&GatewayHandler{}).handleFailoverExhausted(c, failover422(), service.PlatformAnthropic, false)
