@@ -37,8 +37,8 @@ export function resolveCcSwitchImportConfig(
     case 'openai':
       return {
         app: 'codex',
-        // CC Switch's Codex provider appends the OpenAI-compatible path itself.
-        // Passing /v1 here can make the client request /v1/v1/....
+        // CC Switch handles Codex request paths; preserve the provider's chosen prefix.
+        // Adding /v1 to a root URL here can produce duplicate path segments.
         endpoint: withoutTrailingSlashes(baseUrl),
         model: OPENAI_CC_SWITCH_CODEX_MODEL
       }
