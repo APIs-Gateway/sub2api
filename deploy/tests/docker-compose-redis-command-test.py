@@ -62,7 +62,10 @@ def main():
     for compose_file in COMPOSE_FILES:
         for password in PASSWORDS:
             service = compose_redis_service(compose_file, password)
-            assert service["command"] == BASE_COMMAND + [password], compose_file
+            expected = BASE_COMMAND + [password]
+            assert service["command"] == expected, (
+                f"{compose_file}: command={service['command']!r}, expected={expected!r}"
+            )
             assert service["environment"]["REDISCLI_AUTH"] == password, compose_file
             assert_redis_auth(service, password)
             print(f"{compose_file}: Redis command and authentication passed ({'empty' if not password else 'special'} password)")
