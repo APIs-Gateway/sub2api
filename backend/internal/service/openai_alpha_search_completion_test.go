@@ -34,8 +34,8 @@ func TestAlphaSearchPATFallbackRejectsUnsuccessfulResponsesStreams(t *testing.T)
 		"completion_with_error":     delta + "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"error\":{\"message\":\"bad\"}}}\n\n",
 		"malformed_before_terminal": delta + "data: {bad json}\n\n" + completed,
 		"malformed_after_terminal":  delta + completed + "data: {bad json}\n\n",
-		"event_after_terminal":     delta + completed + delta,
-		"duplicate_terminal":       delta + completed + completed,
+		"event_after_terminal":      delta + completed + delta,
+		"duplicate_terminal":        delta + completed + completed,
 		"done_before_terminal":      delta + "data: [DONE]\n\n" + completed,
 	}
 	for name, wire := range cases {
