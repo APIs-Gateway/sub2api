@@ -132,3 +132,29 @@ func TestSupplementResponseOutput_NoSyntheticMessageWithoutStreamText(t *testing
 	require.Len(t, resp.Output, 1)
 	assert.Empty(t, resp.Output[0].Content)
 }
+
+// The Messages compatibility path uses the same accumulator. Restoring text
+// must keep any terminal tool call and must not append the text twice if the
+// response is supplemented again.
+func TestSupplementResponseOutput_RecoversAnthropicTextAlongsideToolCall(t *testing.T) {
+	acc := NewBufferedResponseAccumulator()
+	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.output_text.delta", Delta: "answer"})
+
+	resp := &ResponsesResponse{
+		Status: "completed",
+		Output: []ResponsesOutput{
+			{Type: "message", Role: "assistant", Content: []ResponsesContentPart{{Type: "output_text", Text: "  "}}},
+			{Type: "function_call", CallID: "call_1", Name: "lookup", Arguments: `{}`},
+		},
+	}
+
+	acc.SupplementResponseOutput(resp)
+	acc.SupplementResponseOutput(resp)
+
+	got := ResponsesToAnthropic(resp, "m")
+	require.Len(t, got.Content, 2)
+	assert.Equal(t, "text", got.Content[0].Type)
+	assert.Equal(t, "answer", got.Content[0].Text)
+	assert.Equal(t, "tool_use", got.Content[1].Type)
+	assert.Equal(t, "lookup", got.Content[1].Name)
+}
