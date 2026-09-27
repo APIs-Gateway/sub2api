@@ -43,7 +43,9 @@ func TestGeminiTransportFailoverExhaustedWritesErrorForEveryEntry(t *testing.T) 
 		write func(*GatewayHandler, *gin.Context)
 	}{
 		{"native", func(h *GatewayHandler, c *gin.Context) { h.handleGeminiFailoverExhausted(c, failover) }},
-		{"claude", func(h *GatewayHandler, c *gin.Context) { h.handleFailoverExhausted(c, failover, service.PlatformGemini, false) }},
+		{"claude", func(h *GatewayHandler, c *gin.Context) {
+			h.handleFailoverExhausted(c, failover, service.PlatformGemini, false)
+		}},
 		{"chat_completions", func(h *GatewayHandler, c *gin.Context) { h.handleCCFailoverExhausted(c, failover, false) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
