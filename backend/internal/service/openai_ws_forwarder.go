@@ -2855,6 +2855,15 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		return errors.New("account is nil")
 	}
 	s.prepareCodexAccountIdentitySource(c, account)
+	// Apply the same per-account client gate as the HTTP endpoints before any
+	// WebSocket mode or upstream connection is selected. A retry with a different
+	// account runs this check again against that account.
+	restrictionResult := s.detectCodexClientRestriction(c, account)
+	logCodexCLIOnlyDetection(ctx, c, account, getAPIKeyIDFromContext(c), restrictionResult, firstClientMessage)
+	if restrictionResult.Enabled && !restrictionResult.Matched {
+		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, CodexOfficialClientsOnlyMessage, ErrCodexClientRestricted)
+	}
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is empty")
 	}

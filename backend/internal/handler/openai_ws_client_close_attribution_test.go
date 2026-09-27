@@ -15,7 +15,42 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+func TestOpenAIResponsesWebSocket_CodexClientRestrictionWritesForbiddenEventWithoutAccountFailure(t *testing.T) {
+	reports := make(chan bool, 1)
+	h := newOpenAIResponsesWebSocketAttributionHandler(t,
+		service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.CodexOfficialClientsOnlyMessage, service.ErrCodexClientRestricted),
+		reports,
+	)
+	server := newOpenAIResponsesWebSocketAttributionServer(t, h)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+	require.NoError(t, err)
+	defer func() { _ = client.CloseNow() }()
+	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.4","stream":false}`)))
+
+	_, payload, err := client.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+	require.Equal(t, "forbidden_error", gjson.GetBytes(payload, "error.type").String())
+	require.Equal(t, service.CodexOfficialClientsOnlyMessage, gjson.GetBytes(payload, "error.message").String())
+
+	_, _, err = client.Read(ctx)
+	var closeErr coderws.CloseError
+	require.ErrorAs(t, err, &closeErr)
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Equal(t, service.CodexOfficialClientsOnlyMessage, closeErr.Reason)
+	select {
+	case <-reports:
+		t.Fatal("local client restriction must not lower account scheduler health")
+	default:
+	}
+}
 
 func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures(t *testing.T) {
 	tests := []struct {

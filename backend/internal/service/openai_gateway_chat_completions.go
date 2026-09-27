@@ -69,10 +69,10 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		c.JSON(http.StatusForbidden, gin.H{
 			"error": gin.H{
 				"type":    "forbidden_error",
-				"message": "This account only allows Codex official clients",
+				"message": CodexOfficialClientsOnlyMessage,
 			},
 		})
-		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
+		return nil, ErrCodexClientRestricted
 	}
 
 	// 入口分流：APIKey 账号 + 未探测、强制或已探测确认上游不支持 Responses，走 CC 直转。
