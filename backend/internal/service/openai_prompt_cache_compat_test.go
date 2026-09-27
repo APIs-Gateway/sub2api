@@ -15,8 +15,7 @@ func TestSanitizeGPTPromptCacheHintsModels(t *testing.T) {
 		"openai/GPT_6_SOL", "gpt-future-preview",
 	} {
 		t.Run(model, func(t *testing.T) {
-			got, changed, err := sanitizeGPTPromptCacheHints(body, model)
-			require.NoError(t, err)
+			got, changed := sanitizeGPTPromptCacheHints(body, model)
 			require.True(t, changed)
 			require.JSONEq(t, `{"prompt_cache_key":"keep"}`, string(got))
 		})
@@ -35,8 +34,7 @@ func TestSanitizeGPTPromptCacheHintsPreservesUnrelatedBodies(t *testing.T) {
 		{"already compatible", "gpt-6-sol", ` {"prompt_cache_key":"keep"} `},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, changed, err := sanitizeGPTPromptCacheHints([]byte(tc.body), tc.model)
-			require.NoError(t, err)
+			got, changed := sanitizeGPTPromptCacheHints([]byte(tc.body), tc.model)
 			require.False(t, changed)
 			require.Equal(t, tc.body, string(got))
 		})
@@ -59,8 +57,7 @@ func TestSanitizeGPTPromptCacheHintsOnlyTouchesProtocolMessages(t *testing.T) {
 		"custom":{"prompt_cache_breakpoint":"keep"}
 	}`)
 
-	got, changed, err := sanitizeGPTPromptCacheHints(body, "openai/gpt-6-luna")
-	require.NoError(t, err)
+	got, changed := sanitizeGPTPromptCacheHints(body, "openai/gpt-6-luna")
 	require.True(t, changed)
 
 	var decoded map[string]json.RawMessage
@@ -80,8 +77,19 @@ func TestSanitizeGPTPromptCacheHintsOnlyTouchesProtocolMessages(t *testing.T) {
 
 func TestSanitizeGPTPromptCacheHintsMessagesShape(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","prompt_cache_breakpoint":true,"content":[{"type":"text","text":"hello","prompt_cache_breakpoint":true}]}]}`)
-	got, changed, err := sanitizeGPTPromptCacheHints(body, "gpt-5.4")
-	require.NoError(t, err)
+	got, changed := sanitizeGPTPromptCacheHints(body, "gpt-5.4")
 	require.True(t, changed)
 	require.JSONEq(t, `{"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`, string(got))
+}
+
+func TestSanitizeGPTPromptCacheHintsMixedInputShapes(t *testing.T) {
+	body := []byte(`{"input":[42,null,{"type":"function_call","prompt_cache_breakpoint":"keep"},{"role":"user","content":"plain","prompt_cache_breakpoint":true},{"type":"message","content":[null,"literal",{"type":"input_text","text":"hello","prompt_cache_breakpoint":true}]}]}`)
+	got, changed := sanitizeGPTPromptCacheHints(body, "gpt-6-sol")
+	require.True(t, changed)
+	require.JSONEq(t, `{"input":[42,null,{"type":"function_call","prompt_cache_breakpoint":"keep"},{"role":"user","content":"plain"},{"type":"message","content":[null,"literal",{"type":"input_text","text":"hello"}]}]}`, string(got))
+
+	noChanges := []byte(`{"input":[{"type":"function_call","prompt_cache_breakpoint":"keep"},{"role":"user","content":"plain"}]}`)
+	got, changed = sanitizeGPTPromptCacheHints(noChanges, "gpt-6-sol")
+	require.False(t, changed)
+	require.Equal(t, string(noChanges), string(got))
 }

@@ -108,10 +108,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	upstreamBody = updatedBody
 	// API Key accounts without Responses support use this direct Chat path.
 	// Apply the same model-aware compatibility rule before forwarding to GPT.
-	upstreamBody, _, err := sanitizeGPTPromptCacheHints(upstreamBody, upstreamModel)
-	if err != nil {
-		return nil, fmt.Errorf("sanitize GPT prompt cache hints: %w", err)
-	}
+	upstreamBody, _ = sanitizeGPTPromptCacheHints(upstreamBody, upstreamModel)
 	if account.Platform == PlatformGrok {
 		strippedBody, stripErr := stripRedundantGrokChatViewImageTool(upstreamBody)
 		if stripErr != nil {

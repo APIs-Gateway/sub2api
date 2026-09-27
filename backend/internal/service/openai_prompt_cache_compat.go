@@ -11,15 +11,15 @@ import (
 // upstreams. It runs after model mapping so aliases and future GPT models use
 // the same compatibility policy while automatic prompt_cache_key caching stays
 // available.
-func sanitizeGPTPromptCacheHints(body []byte, upstreamModel string) ([]byte, bool, error) {
+func sanitizeGPTPromptCacheHints(body []byte, upstreamModel string) ([]byte, bool) {
 	model := openai.CanonicalizeOpenAIModelAliasSpelling(upstreamModel)
 	if !strings.HasPrefix(model, "gpt-") {
-		return body, false, nil
+		return body, false
 	}
 
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil || request == nil {
-		return body, false, nil
+		return body, false
 	}
 
 	changed := false
@@ -36,14 +36,13 @@ func sanitizeGPTPromptCacheHints(body []byte, upstreamModel string) ([]byte, boo
 		}
 	}
 	if !changed {
-		return body, false, nil
+		return body, false
 	}
 
-	cleaned, err := json.Marshal(request)
-	if err != nil {
-		return nil, false, err
-	}
-	return cleaned, true, nil
+	// Every RawMessage came from the successful JSON decode above. Marshal
+	// cannot fail on this map of validated JSON values.
+	cleaned, _ := json.Marshal(request)
+	return cleaned, true
 }
 
 // Only protocol message and content positions are visited. Tool schemas,
