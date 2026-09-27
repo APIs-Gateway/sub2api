@@ -150,8 +150,9 @@ func TestPricingDownloadProductionBudgetCoversHashAndBody(t *testing.T) {
 	}
 	svc := retryPricingService(t, client)
 	require.NoError(t, svc.downloadPricingData())
-	require.Equal(t, bodyDeadline, hashDeadline)
+	require.WithinDuration(t, started.Add(pricingStartupHashBudget), hashDeadline, time.Second)
 	require.WithinDuration(t, started.Add(pricingDownloadBudget), bodyDeadline, time.Second)
+	require.True(t, hashDeadline.Before(bodyDeadline))
 }
 
 func TestPricingHashBudgetsDifferAtStartupAndPeriodicSync(t *testing.T) {
