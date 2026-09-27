@@ -62,9 +62,9 @@ func TestSupplementResponseOutput_RecoversTextWhenTerminalTextIsBlank(t *testing
 	assert.Equal(t, "real text", got)
 }
 
-// A terminal output array without any message item gets one appended to carry
-// the accumulated text; existing items are kept.
-func TestSupplementResponseOutput_AppendsMessageWhenTerminalHasNoMessage(t *testing.T) {
+// A terminal output array without any message item gets one inserted before
+// its function call, as BuildOutput orders streamed text before tool calls.
+func TestSupplementResponseOutput_InsertsMessageBeforeToolWhenTerminalHasNoMessage(t *testing.T) {
 	acc := NewBufferedResponseAccumulator()
 	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.output_text.delta", Delta: "only in the stream"})
 
@@ -91,8 +91,9 @@ func TestSupplementResponseOutput_AppendsMessageWhenTerminalHasNoMessage(t *test
 	assert.Equal(t, "only in the stream", text)
 
 	require.Len(t, resp.Output, 2)
-	assert.Equal(t, "function_call", resp.Output[0].Type)
-	assert.Equal(t, "verify", resp.Output[0].Name)
+	assert.Equal(t, "message", resp.Output[0].Type)
+	assert.Equal(t, "function_call", resp.Output[1].Type)
+	assert.Equal(t, "verify", resp.Output[1].Name)
 }
 
 // Non-empty terminal text stays authoritative and is never overwritten by the
@@ -157,4 +158,44 @@ func TestSupplementResponseOutput_RecoversAnthropicTextAlongsideToolCall(t *test
 	assert.Equal(t, "answer", got.Content[0].Text)
 	assert.Equal(t, "tool_use", got.Content[1].Type)
 	assert.Equal(t, "lookup", got.Content[1].Name)
+}
+
+func TestSupplementResponseOutput_OrdersRecoveredAnthropicTextBeforeTool(t *testing.T) {
+	acc := NewBufferedResponseAccumulator()
+	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.output_text.delta", Delta: "I will look it up."})
+	acc.ProcessEvent(&ResponsesStreamEvent{
+		Type:        "response.output_item.added",
+		OutputIndex: 1,
+		Item:        &ResponsesOutput{Type: "function_call", Name: "lookup"},
+	})
+	acc.ProcessEvent(&ResponsesStreamEvent{
+		Type:        "response.function_call_arguments.done",
+		OutputIndex: 1,
+		Arguments:   `{"query":"x"}`,
+	})
+
+	resp := &ResponsesResponse{
+		Status: "completed",
+		Output: []ResponsesOutput{
+			{Type: "reasoning", Summary: []ResponsesSummary{{Type: "summary_text", Text: "thinking"}}},
+			{Type: "function_call", Name: "lookup"},
+		},
+	}
+
+	acc.SupplementResponseOutput(resp)
+
+	require.Len(t, resp.Output, 3)
+	assert.Equal(t, "reasoning", resp.Output[0].Type)
+	assert.Equal(t, "message", resp.Output[1].Type)
+	assert.Equal(t, "function_call", resp.Output[2].Type)
+	assert.JSONEq(t, `{"query":"x"}`, resp.Output[2].Arguments)
+
+	got := ResponsesToAnthropic(resp, "m")
+	require.Len(t, got.Content, 3)
+	assert.Equal(t, "thinking", got.Content[0].Type)
+	assert.Equal(t, "text", got.Content[1].Type)
+	assert.Equal(t, "I will look it up.", got.Content[1].Text)
+	assert.Equal(t, "tool_use", got.Content[2].Type)
+	assert.Equal(t, "lookup", got.Content[2].Name)
+	assert.JSONEq(t, `{"query":"x"}`, string(got.Content[2].Input))
 }

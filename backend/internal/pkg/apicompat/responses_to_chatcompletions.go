@@ -583,9 +583,9 @@ func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
 	return out
 }
 
-// SupplementResponseOutput fills resp.Output from accumulated stream content
-// when the terminal event delivered an empty output array. It also fills empty
-// function-call arguments from authoritative argument-done events.
+// SupplementResponseOutput fills missing terminal text from accumulated stream
+// content and empty function-call arguments from authoritative argument-done
+// events.
 func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesResponse) {
 	if resp == nil {
 		return
@@ -597,24 +597,8 @@ func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesRe
 		return
 	}
 
-	// The terminal event can carry a non-empty output array whose message has
-	// no usable text. Trusting it as-is silently drops the text that already
-	// streamed: the client gets an empty reply while usage still bills the
-	// terminal output_tokens. Refill it from the accumulated deltas; non-empty
-	// terminal text stays authoritative.
-	if a.text.Len() > 0 && !responsesOutputHasText(resp.Output) {
-		if !fillResponsesOutputText(resp.Output, a.text.String()) {
-			resp.Output = append(resp.Output, ResponsesOutput{
-				Type: "message",
-				Role: "assistant",
-				Content: []ResponsesContentPart{{
-					Type: "output_text",
-					Text: a.text.String(),
-				}},
-			})
-		}
-	}
-
+	// Fill arguments before inserting a message so the terminal output indexes
+	// still match the indexes observed in streamed function-call events.
 	for outputIndex := range resp.Output {
 		item := &resp.Output[outputIndex]
 		if item.Type != "function_call" || item.Arguments != "" {
@@ -630,6 +614,34 @@ func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesRe
 				item.Arguments = call.Args.String()
 			}
 			break
+		}
+	}
+
+	// The terminal event can carry a non-empty output array whose message has
+	// no usable text. Trusting it as-is silently drops the text that already
+	// streamed: the client gets an empty reply while usage still bills the
+	// terminal output_tokens. Refill it from the accumulated deltas; non-empty
+	// terminal text stays authoritative.
+	if a.text.Len() > 0 && !responsesOutputHasText(resp.Output) {
+		if !fillResponsesOutputText(resp.Output, a.text.String()) {
+			message := ResponsesOutput{
+				Type: "message",
+				Role: "assistant",
+				Content: []ResponsesContentPart{{
+					Type: "output_text",
+					Text: a.text.String(),
+				}},
+			}
+			insertAt := len(resp.Output)
+			for i := range resp.Output {
+				if resp.Output[i].Type == "function_call" {
+					insertAt = i
+					break
+				}
+			}
+			resp.Output = append(resp.Output, ResponsesOutput{})
+			copy(resp.Output[insertAt+1:], resp.Output[insertAt:])
+			resp.Output[insertAt] = message
 		}
 	}
 }
@@ -653,7 +665,7 @@ func responsesOutputHasText(output []ResponsesOutput) bool {
 // fillResponsesOutputText writes text into the first empty output_text part of
 // the first message item, adding an output_text part when that message has
 // none. It returns false when the output holds no message item, leaving the
-// caller to append one.
+// caller to insert one before the first function call.
 func fillResponsesOutputText(output []ResponsesOutput, text string) bool {
 	for i := range output {
 		if output[i].Type != "message" {
