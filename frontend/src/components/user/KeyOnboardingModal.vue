@@ -143,7 +143,11 @@
 import { ref, computed, watch, h, defineComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import { buildCcSwitchImportDeeplink, type CcSwitchClientType } from '@/utils/ccswitchImport'
+import {
+  CC_SWITCH_USAGE_SCRIPT,
+  buildCcSwitchImportDeeplink,
+  type CcSwitchClientType
+} from '@/utils/ccswitchImport'
 
 interface OnboardingKey {
   key: string
@@ -276,23 +280,6 @@ const script = computed(() => {
   return `mkdir -p ~/.claude\ncat > ~/.claude/settings.json <<'EOF'\n{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${base.value}",\n    "ANTHROPIC_AUTH_TOKEN": "${fullKey.value}"\n  }\n}\nEOF\necho "✓ ${t('keyOnboarding.scriptDoneClaude')}"`
 })
 
-const usageScript = `({
-    request: {
-      url: "{{baseUrl}}/v1/usage",
-      method: "GET",
-      headers: { "Authorization": "Bearer {{apiKey}}" }
-    },
-    extractor: function(response) {
-      const remaining = response?.remaining ?? response?.quota?.remaining ?? response?.balance;
-      const unit = response?.unit ?? response?.quota?.unit ?? "USD";
-      return {
-        isValid: response?.is_active ?? response?.isValid ?? true,
-        remaining,
-        unit
-      };
-    }
-  })`
-
 const ccsClientType = computed<CcSwitchClientType>(() => (platform.value === 'gemini' ? 'gemini' : 'claude'))
 const deeplink = computed(() =>
   buildCcSwitchImportDeeplink({
@@ -301,7 +288,7 @@ const deeplink = computed(() =>
     clientType: ccsClientType.value,
     providerName: (props.siteName || 'sub2api').trim() || 'sub2api',
     apiKey: fullKey.value,
-    usageScript,
+    usageScript: CC_SWITCH_USAGE_SCRIPT,
   })
 )
 
