@@ -28,6 +28,15 @@ def run(*args, env=None, check=True):
     )
 
 
+def ping_without_auth(container_id):
+    # The service sets REDISCLI_AUTH even when empty; remove it to test a
+    # genuinely unauthenticated client without redis-cli's empty AUTH warning.
+    return run(
+        "docker", "exec", container_id, "sh", "-c",
+        "unset REDISCLI_AUTH; exec redis-cli ping", check=False,
+    )
+
+
 def assert_redis_auth(compose_file, password):
     env = os.environ.copy()
     env.update(POSTGRES_PASSWORD="ci-only", REDIS_PASSWORD=password)
@@ -47,7 +56,10 @@ def assert_redis_auth(compose_file, password):
         assert f"REDISCLI_AUTH={password}" in details["Env"], compose_file
 
         for _ in range(40):
-            response = run("docker", "exec", "-e", f"REDISCLI_AUTH={password}", container_id, "redis-cli", "ping", check=False)
+            if password:
+                response = run("docker", "exec", "-e", f"REDISCLI_AUTH={password}", container_id, "redis-cli", "ping", check=False)
+            else:
+                response = ping_without_auth(container_id)
             if response.stdout.strip() == "PONG":
                 break
             time.sleep(0.25)
@@ -55,7 +67,7 @@ def assert_redis_auth(compose_file, password):
             logs = run("docker", "logs", container_id, check=False)
             raise AssertionError(f"Redis did not accept configured password: {logs.stdout}\n{logs.stderr}")
 
-        unauthenticated = run("docker", "exec", container_id, "redis-cli", "ping", check=False)
+        unauthenticated = ping_without_auth(container_id)
         output = (unauthenticated.stdout + unauthenticated.stderr).strip()
         if password:
             assert "NOAUTH Authentication required." in output, output
