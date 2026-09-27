@@ -190,7 +190,7 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 	// 本次响应不足以下结论时保持 unknown，与网络层失败、响应体读取失败一致：
 	// 标记一旦写成 false 就会一直粘住（只有下次账号创建/更新才重探），网关会静默
 	// 改走 /v1/chat/completions —— 对 Codex 客户端意味着 prompt 缓存前缀被打散。
-	// 宁可不写，让请求继续走既有的 Responses 路径。
+	// 宁可不写，保留已有能力标记；未探测账号仍按 fork 的既有默认路由处理。
 	if !responsesProbeVerdictIsConclusive(resp.StatusCode, bodyBytes) {
 		logger.LegacyPrintf("service.openai_probe",
 			"probe_inconclusive_keep_unknown: account_id=%d base_url=%s probe_model=%s status=%d response_status=%s reason=%s",
@@ -316,7 +316,37 @@ func isResponsesProbeModelUnavailable(status int, body []byte) bool {
 			return true
 		}
 	}
-	return isExplicitOpenAIModelAvailabilityMessage(extractUpstreamErrorMessage(body))
+	for _, message := range []string{
+		extractUpstreamErrorMessage(body),
+		gjson.GetBytes(body, "response.error.message").String(),
+	} {
+		if isExplicitResponsesProbeModelAvailabilityMessage(message) {
+			return true
+		}
+	}
+	return false
+}
+
+// Keep this classifier local to the probe. The fork does not carry the
+// upstream compact-fallback helper used by PR #7571.
+func isExplicitResponsesProbeModelAvailabilityMessage(message string) bool {
+	message = strings.ToLower(strings.TrimSpace(message))
+	for _, phrase := range []string{
+		"model not found", "model does not exist", "model is unavailable",
+		"model is not available", "model is unsupported", "model is not supported",
+		"unsupported model",
+	} {
+		if strings.Contains(message, phrase) {
+			return true
+		}
+	}
+	if strings.HasPrefix(message, "the model ") || strings.HasPrefix(message, "model ") {
+		return strings.Contains(message, " does not exist") ||
+			strings.Contains(message, " was not found") ||
+			strings.Contains(message, " is unavailable") ||
+			strings.Contains(message, " is not available")
+	}
+	return false
 }
 
 // responsesProbeBodyHasFunctionCall 判断非流式 Responses 响应体的 output 数组里

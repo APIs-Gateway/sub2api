@@ -1,49 +1,63 @@
 package service
 
 import (
-	"context"
-	"io"
 	"net/http"
-	"strings"
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/stretchr/testify/require"
 )
 
-// A 400/404 that only says the probe model does not exist says nothing about
-// the /v1/responses endpoint: the verdict must stay inconclusive and the
-// account capability must not be overwritten with "unsupported".
-func TestResponsesProbeModelUnavailableIsInconclusive(t *testing.T) {
-	for _, body := range []string{
-		`{"error":{"type":"model_not_found","message":"Model codex-auto-review is not supported by any configured account in this group"}}`,
-		`{"error":{"code":"model_not_available"}}`,
-		`{"error":{"message":"The model missing does not exist"}}`,
-	} {
-		require.False(t, responsesProbeVerdictIsConclusive(404, []byte(body)))
-		require.True(t, decideResponsesProbeSupport(404, []byte(body)))
-		updates := make(chan map[string]any, 1)
-		account := Account{ID: 96, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test", "base_url": "https://upstream.example"}}
-		repo := &snapshotUpdateAccountRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}, updateExtraCalls: updates}
-		svc := &AccountTestService{accountRepo: repo, cfg: &config.Config{}, httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
-			StatusCode: 404, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)),
-		}}}
-		svc.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), account.ID)
-		select {
-		case <-updates:
-			t.Fatal("a model failure must not overwrite the account endpoint capability")
-		default:
-		}
+func TestResponsesProbeModelUnavailableKeepsCapabilityUnchanged(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"error_type", 404, `{"error":{"type":"model_not_found","message":"Model codex-auto-review is not supported by any configured account"}}`},
+		{"error_code_400", 400, `{"error":{"code":"model_not_available"}}`},
+		{"nested_error_type", 404, `{"response":{"error":{"type":"unsupported_model"}}}`},
+		{"invalid_model", 400, `{"error":{"code":"invalid_model"}}`},
+		{"named_model_message", 404, `{"error":{"message":"The model missing does not exist"}}`},
+		{"nested_message", 404, `{"response":{"error":{"message":"The model missing is unavailable"}}}`},
 	}
-	// A plain 404/405 still means the endpoint does not exist.
-	require.True(t, responsesProbeVerdictIsConclusive(404, []byte("404 page not found")))
-	require.False(t, decideResponsesProbeSupport(404, []byte("404 page not found")))
-	require.False(t, decideResponsesProbeSupport(405, nil))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.False(t, responsesProbeVerdictIsConclusive(tc.status, []byte(tc.body)))
+			require.True(t, decideResponsesProbeSupport(tc.status, []byte(tc.body)))
+			require.Nil(t, runResponsesProbe(t, tc.status, tc.body),
+				"model availability alone must not overwrite the account capability")
+		})
+	}
+}
+
+func TestResponsesProbeOtherErrorsRetainExistingVerdicts(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{"plain_404", http.StatusNotFound, `{"error":{"message":"Not Found"}}`, false},
+		{"method_not_allowed", http.StatusMethodNotAllowed, `{"error":{"code":"model_not_found"}}`, false},
+		{"unrelated_400", http.StatusBadRequest, `{"error":{"message":"Model output is not supported"}}`, true},
+		{"server_error", http.StatusInternalServerError, `{"error":{"code":"model_not_found"}}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			updates := runResponsesProbe(t, tc.status, tc.body)
+			require.NotNil(t, updates)
+			require.Equal(t, tc.want, updates[openai_compat.ExtraKeyResponsesSupported])
+		})
+	}
 }
 
 func TestSelectResponsesProbeModelPrefersGeneralTextModel(t *testing.T) {
 	account := &Account{Credentials: map[string]any{"model_mapping": map[string]any{
-		"codex-auto-review": "codex-auto-review", "gpt-image-2": "gpt-image-2", "gpt-5.5": "gpt-5.5",
+		"review": "codex-auto-review",
+		"image":  "gpt-image-2",
+		"text":   "gpt-5.5",
+		"later":  "gpt-6-sol",
 	}}}
 	require.Equal(t, "gpt-5.5", selectResponsesProbeModel(account))
 }
