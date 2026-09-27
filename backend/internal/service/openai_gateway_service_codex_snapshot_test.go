@@ -127,23 +127,24 @@ func TestResolveOpenAIQuotaUtilization_StaleSnapshotRespectsFutureRelativeReset(
 		} {
 			t.Run(window+"/"+tc.name, func(t *testing.T) {
 				extra := map[string]any{
-				"codex_usage_updated_at": now.Add(-3 * time.Hour).Format(time.RFC3339),
-			}
-			extra["codex_"+window+"_used_percent"] = 99.0
-			if tc.resetAfter != nil {
-				extra["codex_"+window+"_reset_after_seconds"] = tc.resetAfter
-			}
-			if tc.resetAt != nil {
-				extra["codex_"+window+"_reset_at"] = tc.resetAt
-			}
-			utilization, ok := resolveOpenAIQuotaUtilization(extra, window, now)
-			if ok != tc.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
-			}
-			if tc.wantOK && utilization != 0.99 {
-				t.Fatalf("utilization = %v, want 0.99", utilization)
-			}
-		})
+					"codex_usage_updated_at": now.Add(-3 * time.Hour).Format(time.RFC3339),
+				}
+				extra["codex_"+window+"_used_percent"] = 99.0
+				if tc.resetAfter != nil {
+					extra["codex_"+window+"_reset_after_seconds"] = tc.resetAfter
+				}
+				if tc.resetAt != nil {
+					extra["codex_"+window+"_reset_at"] = tc.resetAt
+				}
+				utilization, ok := resolveOpenAIQuotaUtilization(extra, window, now)
+				if ok != tc.wantOK {
+					t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+				}
+				if tc.wantOK && utilization != 0.99 {
+					t.Fatalf("utilization = %v, want 0.99", utilization)
+				}
+			})
+		}
 	}
 }
 
