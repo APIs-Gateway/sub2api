@@ -25,14 +25,18 @@ import (
 // 并按 net/http 的形态返回包裹 context.Canceled 的 *url.Error。
 type clientCancelUpstream struct {
 	service.HTTPUpstream
-	cancel context.CancelFunc
-	calls  atomic.Int32
-	status int
+	cancel       context.CancelFunc
+	calls        atomic.Int32
+	status       int
+	transportErr error
 }
 
 func (u *clientCancelUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	u.calls.Add(1)
 	u.cancel()
+	if u.transportErr != nil {
+		return nil, u.transportErr
+	}
 	if u.status != 0 {
 		return &http.Response{
 			StatusCode: u.status,
@@ -209,4 +213,40 @@ func TestGeminiV1BetaModels_ClientCancelDuringRetryBackoff(t *testing.T) {
 	require.Equal(t, statusClientClosedRequest, rec.Code)
 	require.Zero(t, rec.Body.Len())
 	require.Equal(t, int64(1), opsQueued)
+}
+
+// 客户端断开与真实网络故障同时发生时，保留故障记录，但退避应立即结束且不再请求上游。
+func TestGeminiClientCancelAfterTransportFailureStopsRetry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name  string
+		route string
+		path  string
+		body  string
+	}{
+		{"messages", "/v1/messages", "/v1/messages", `{"model":"gemini-2.5-flash","max_tokens":8,"messages":[{"role":"user","content":"hi"}],"stream":true}`},
+		{"chat completions", "/v1/chat/completions", "/v1/chat/completions", `{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hi"}],"stream":true}`},
+		{"gemini native", "/v1beta/models/*modelAction", "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse", `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newGeminiClientCancelFixture(t)
+			f.upstream.transportErr = io.EOF
+			var call func(*gin.Context)
+			switch tc.name {
+			case "messages":
+				call = f.handler.Messages
+			case "chat completions":
+				call = f.handler.ChatCompletions
+			case "gemini native":
+				call = f.handler.GeminiV1BetaModels
+			}
+
+			rec, opsQueued := f.serve(t, tc.route, tc.path, tc.body, call)
+
+			require.Equal(t, int32(1), f.upstream.calls.Load())
+			require.Equal(t, statusClientClosedRequest, rec.Code)
+			require.Zero(t, rec.Body.Len())
+			require.Equal(t, int64(1), opsQueued)
+		})
+	}
 }
