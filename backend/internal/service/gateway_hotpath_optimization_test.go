@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	gocache "github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/require"
@@ -588,8 +590,10 @@ func TestGetAvailableModels_ErrorAndGlobalListBranches(t *testing.T) {
 	require.Equal(t, int64(1), okRepo.listAllCalls.Load())
 }
 
-func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
+func TestGetAvailableModels_OpenAIPassthroughPreservesSchedulableMappings(t *testing.T) {
 	groupID := int64(10)
+	wantMixed := append(openai.DefaultModelIDs(), "configured-model")
+	sort.Strings(wantMixed)
 
 	tests := []struct {
 		name     string
@@ -609,11 +613,13 @@ func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "passthrough wins over ordinary account mapping",
+			name: "passthrough adds defaults beside an ordinary account mapping",
 			accounts: []Account{
 				{
 					ID:          2,
 					Platform:    PlatformOpenAI,
+					Status:      StatusActive,
+					Schedulable: true,
 					Credentials: map[string]any{"model_mapping": map[string]any{"configured-model": "configured-upstream"}},
 				},
 				{
@@ -622,6 +628,24 @@ func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
 					Credentials: map[string]any{"model_mapping": map[string]any{"stale-model": "upstream-model"}},
 					Extra:       map[string]any{"openai_passthrough": true},
 				},
+			},
+			want: wantMixed,
+		},
+		{
+			name: "disabled ordinary mapping does not leak beside passthrough",
+			accounts: []Account{
+				{ID: 2, Platform: PlatformOpenAI, Status: StatusDisabled, Schedulable: true,
+					Credentials: map[string]any{"model_mapping": map[string]any{"configured-model": "configured-upstream"}}},
+				{ID: 3, Platform: PlatformOpenAI, Extra: map[string]any{"openai_passthrough": true}},
+			},
+			want: nil,
+		},
+		{
+			name: "unschedulable ordinary mapping does not leak beside passthrough",
+			accounts: []Account{
+				{ID: 2, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: false,
+					Credentials: map[string]any{"model_mapping": map[string]any{"configured-model": "configured-upstream"}}},
+				{ID: 3, Platform: PlatformOpenAI, Extra: map[string]any{"openai_passthrough": true}},
 			},
 			want: nil,
 		},
@@ -648,6 +672,10 @@ func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
 			}
 
 			require.Equal(t, tt.want, svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI))
+			if tt.name == "passthrough adds defaults beside an ordinary account mapping" {
+				require.True(t, svc.isModelSupportedByAccount(&tt.accounts[0], "configured-model"))
+				require.NotContains(t, tt.want, "stale-model")
+			}
 		})
 	}
 }
@@ -677,6 +705,23 @@ func TestGetAvailableModels_GlobalListPreservesMappedModelsWithOpenAIPassthrough
 	}
 
 	require.Equal(t, []string{"claude-mapped"}, svc.GetAvailableModels(context.Background(), &groupID, ""))
+}
+
+func TestGetAvailableModels_UngroupedOpenAIPassthroughRetainsDefaultFallback(t *testing.T) {
+	repo := &modelsListAccountRepoStub{all: []Account{
+		{ID: 1, Platform: PlatformOpenAI, Extra: map[string]any{"openai_passthrough": true},
+			Credentials: map[string]any{"model_mapping": map[string]any{"stale-model": "upstream-model"}}},
+		{ID: 2, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true,
+			Credentials: map[string]any{"model_mapping": map[string]any{"configured-model": "configured-upstream"}}},
+	}}
+	svc := &GatewayService{
+		accountRepo:        repo,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+	require.Nil(t, svc.GetAvailableModels(context.Background(), nil, PlatformOpenAI))
+	require.Nil(t, svc.GetAvailableModels(context.Background(), nil, PlatformOpenAI))
+	require.Equal(t, int64(1), repo.listAllCalls.Load())
 }
 
 func TestGatewayHotpathHelpers_CacheTTLAndStickyContext(t *testing.T) {
