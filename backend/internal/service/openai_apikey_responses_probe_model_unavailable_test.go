@@ -15,6 +15,7 @@ func TestResponsesProbeModelUnavailableKeepsCapabilityUnchanged(t *testing.T) {
 		body   string
 	}{
 		{"error_type", 404, `{"error":{"type":"model_not_found","message":"Model codex-auto-review is not supported by any configured account"}}`},
+		{"model_name_only_in_message", 404, `{"error":{"message":"Model codex-auto-review is not supported by any configured account in this group"}}`},
 		{"error_code_400", 400, `{"error":{"code":"model_not_available"}}`},
 		{"nested_error_type", 404, `{"response":{"error":{"type":"unsupported_model"}}}`},
 		{"invalid_model", 400, `{"error":{"code":"invalid_model"}}`},
@@ -39,6 +40,7 @@ func TestResponsesProbeOtherErrorsRetainExistingVerdicts(t *testing.T) {
 		want   bool
 	}{
 		{"plain_404", http.StatusNotFound, `{"error":{"message":"Not Found"}}`, false},
+		{"endpoint_unsupported_404", http.StatusNotFound, `{"error":{"message":"The /v1/responses endpoint is not supported"}}`, false},
 		{"method_not_allowed", http.StatusMethodNotAllowed, `{"error":{"code":"model_not_found"}}`, false},
 		{"unrelated_400", http.StatusBadRequest, `{"error":{"message":"Model output is not supported"}}`, true},
 		{"server_error", http.StatusInternalServerError, `{"error":{"code":"model_not_found"}}`, true},

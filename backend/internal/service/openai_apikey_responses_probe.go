@@ -333,8 +333,7 @@ func isExplicitResponsesProbeModelAvailabilityMessage(message string) bool {
 	message = strings.ToLower(strings.TrimSpace(message))
 	for _, phrase := range []string{
 		"model not found", "model does not exist", "model is unavailable",
-		"model is not available", "model is unsupported", "model is not supported",
-		"unsupported model",
+		"model is not available", "unsupported model",
 	} {
 		if strings.Contains(message, phrase) {
 			return true
@@ -344,7 +343,8 @@ func isExplicitResponsesProbeModelAvailabilityMessage(message string) bool {
 		return strings.Contains(message, " does not exist") ||
 			strings.Contains(message, " was not found") ||
 			strings.Contains(message, " is unavailable") ||
-			strings.Contains(message, " is not available")
+			strings.Contains(message, " is not available") ||
+			strings.Contains(message, " is not supported by any configured account")
 	}
 	return false
 }
