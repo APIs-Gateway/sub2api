@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +37,11 @@ func TestOpenAIImagesInsufficientBalanceRequiresStructuredError(t *testing.T) {
 	} {
 		require.Equal(t, tc.want, isOpenAIImagesInsufficientBalance([]byte(tc.body)), tc.body)
 	}
+	deeplyNested := strings.Repeat(`{"error":`, 7) + `{"code":"insufficient_balance"}` + strings.Repeat("}", 7)
+	require.False(t, isOpenAIImagesInsufficientBalance([]byte(deeplyNested)), "unbounded wrappers must not trigger account cooling")
 }
+
+type openAIImagesNoBalanceExtenderRepo struct{ AccountRepository }
 
 func newOpenAIImagesBalanceTestContext(path string, body []byte) *gin.Context {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -136,6 +141,23 @@ func TestForwardOpenAIImagesAPIKey_BalanceCooldownWriteFailureStillFailsOver(t *
 	require.ErrorAs(t, err, &failover)
 	require.True(t, failover.OpenAIImagesInsufficientBalance)
 	require.Len(t, repo.calls, 1)
+}
+
+func TestForwardOpenAIImagesAPIKey_UnsupportedAtomicCooldownStillFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"cat"}`)
+	svc, _, _ := newOpenAIImagesBalanceTestService(`{"errorKey":"insufficient_balance"}`)
+	svc.accountRepo = &openAIImagesNoBalanceExtenderRepo{}
+	c := newOpenAIImagesBalanceTestContext("/v1/images/generations", body)
+
+	result, err := svc.ForwardImages(context.Background(), c, openAIImagesBalanceTestAccount(), body,
+		&OpenAIImagesRequest{Model: "gpt-image-2", Endpoint: openAIImagesGenerationsEndpoint, ContentType: "application/json", N: 1}, "")
+
+	require.Nil(t, result)
+	var failover *UpstreamFailoverError
+	require.ErrorAs(t, err, &failover)
+	require.True(t, failover.OpenAIImagesInsufficientBalance)
+	require.Len(t, upstreamErrorEventsFromContext(t, c), 1)
 }
 
 func TestForwardOpenAIImagesAPIKey_CanceledClientDoesNotLogOrCoolBalance(t *testing.T) {
