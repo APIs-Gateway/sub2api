@@ -72,6 +72,40 @@ func TestCodexResetAtRFC3339(t *testing.T) {
 	})
 }
 
+func TestResolveOpenAIQuotaUtilization_StaleSnapshotRespectsFutureAbsoluteReset(t *testing.T) {
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	for _, window := range []string{"5h", "7d"} {
+		for _, tc := range []struct {
+			name    string
+			resetAt any
+			wantOK  bool
+		}{
+			{name: "future reset", resetAt: now.Add(16 * time.Hour).Format(time.RFC3339), wantOK: true},
+			{name: "reset at now", resetAt: now.Format(time.RFC3339)},
+			{name: "past reset", resetAt: now.Add(-time.Minute).Format(time.RFC3339)},
+			{name: "invalid reset", resetAt: "invalid"},
+			{name: "missing reset"},
+		} {
+			t.Run(window+"/"+tc.name, func(t *testing.T) {
+				extra := map[string]any{
+					"codex_usage_updated_at": now.Add(-3 * time.Hour).Format(time.RFC3339),
+				}
+				extra["codex_"+window+"_used_percent"] = 100.0
+				if tc.resetAt != nil {
+					extra["codex_"+window+"_reset_at"] = tc.resetAt
+				}
+				utilization, ok := resolveOpenAIQuotaUtilization(extra, window, now)
+				if ok != tc.wantOK {
+					t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+				}
+				if tc.wantOK && utilization != 1 {
+					t.Fatalf("utilization = %v, want 1", utilization)
+				}
+			})
+		}
+	}
+}
+
 func TestBuildCodexUsageExtraUpdates_UsesSnapshotUpdatedAt(t *testing.T) {
 	primaryUsed := 88.0
 	primaryReset := 86400
