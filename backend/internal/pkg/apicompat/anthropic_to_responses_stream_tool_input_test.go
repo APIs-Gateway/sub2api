@@ -74,6 +74,23 @@ func findFunctionCallOutput(events []ResponsesStreamEvent) *ResponsesOutput {
 	return nil
 }
 
+func toolArgumentLifecycle(events []ResponsesStreamEvent, name string) []string {
+	var lifecycle []string
+	for _, event := range events {
+		switch event.Type {
+		case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+			if event.Name == name {
+				lifecycle = append(lifecycle, event.Type)
+			}
+		case "response.output_item.done":
+			if event.Item != nil && event.Item.Type == "function_call" && event.Item.Name == name {
+				lifecycle = append(lifecycle, event.Type)
+			}
+		}
+	}
+	return lifecycle
+}
+
 // Upstreams that are not the canonical Anthropic API (here: an Anthropic-compatible
 // relay fronting Gemini) put the complete tool arguments on content_block_start and
 // never emit an input_json_delta. The converter must not drop them: this repository
@@ -108,6 +125,11 @@ func TestAnthropicEventToResponses_ToolInputOnContentBlockStart(t *testing.T) {
 	require.Len(t, completed.Response.Output, 1)
 	assert.Equal(t, args, completed.Response.Output[0].Arguments,
 		"response.completed must carry the same arguments")
+	assert.Equal(t, []string{
+		"response.function_call_arguments.delta",
+		"response.function_call_arguments.done",
+		"response.output_item.done",
+	}, toolArgumentLifecycle(events, "eval"))
 }
 
 // The canonical Anthropic shape (empty input on content_block_start, arguments
@@ -205,6 +227,48 @@ func TestAnthropicEventToResponses_InlineToolInputSurvivesIncompleteClose(t *tes
 			require.NotNil(t, completed.Response)
 			require.Len(t, completed.Response.Output, 1)
 			assert.Equal(t, args, completed.Response.Output[0].Arguments)
+			assert.Equal(t, []string{
+				"response.function_call_arguments.delta",
+				"response.function_call_arguments.done",
+				"response.output_item.done",
+			}, toolArgumentLifecycle(events, "eval"))
 		})
 	}
+}
+
+// Starting another tool without a stop for the first implicitly closes the
+// first item. Its inline arguments still need one complete, ordered lifecycle.
+func TestAnthropicEventToResponses_InlineToolInputSurvivesNextToolStart(t *testing.T) {
+	const args = `{"query":"weather"}`
+	state := NewAnthropicEventToResponsesState()
+	var events []ResponsesStreamEvent
+	events = append(events, AnthropicEventToResponsesEvents(&AnthropicStreamEvent{
+		Type:    "message_start",
+		Message: &AnthropicResponse{ID: "msg_two_tools"},
+	}, state)...)
+	events = append(events, AnthropicEventToResponsesEvents(&AnthropicStreamEvent{
+		Type: "content_block_start",
+		ContentBlock: &AnthropicContentBlock{
+			Type: "tool_use", ID: "toolu_first", Name: "first", Input: json.RawMessage(args),
+		},
+	}, state)...)
+	events = append(events, AnthropicEventToResponsesEvents(&AnthropicStreamEvent{
+		Type: "content_block_start",
+		ContentBlock: &AnthropicContentBlock{
+			Type: "tool_use", ID: "toolu_second", Name: "second", Input: json.RawMessage(`{}`),
+		},
+	}, state)...)
+	events = append(events, AnthropicEventToResponsesEvents(&AnthropicStreamEvent{Type: "content_block_stop"}, state)...)
+	events = append(events, AnthropicEventToResponsesEvents(&AnthropicStreamEvent{Type: "message_stop"}, state)...)
+
+	assert.Equal(t, []string{
+		"response.function_call_arguments.delta",
+		"response.function_call_arguments.done",
+		"response.output_item.done",
+	}, toolArgumentLifecycle(events, "first"))
+	completed := firstEventOfType(events, "response.completed")
+	require.NotNil(t, completed)
+	require.NotNil(t, completed.Response)
+	require.Len(t, completed.Response.Output, 2)
+	assert.Equal(t, args, completed.Response.Output[0].Arguments)
 }

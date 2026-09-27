@@ -624,6 +624,17 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 	// This path also serves missing content_block_stop and stream finalization.
 	// A normal tool stop has already flushed the pending input before its done.
 	events := flushPendingToolInput(state)
+	if len(events) != 0 {
+		// The implicit close skipped anthToResHandleContentBlockStop, so complete
+		// the same argument event sequence before closing the output item.
+		events = append(events, makeResponsesEvent(state, "response.function_call_arguments.done", &ResponsesStreamEvent{
+			OutputIndex: state.OutputIndex,
+			ItemID:      state.CurrentItemID,
+			CallID:      state.CurrentCallID,
+			Name:        state.CurrentName,
+			Arguments:   state.CurrentArgs,
+		}))
+	}
 
 	// Assemble the full item: both output_item.done and response.completed must
 	// carry its content. Emitting only {type,id,status} makes SDK-side
