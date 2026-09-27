@@ -125,8 +125,9 @@ func (s *UserRepoSuite) TestGetLatestUsedAtByUserIDs_UsesUsageLogs() {
 	s.mustInsertUsageLog(userWithUsage.ID, older)
 	s.mustInsertUsageLog(userWithUsage.ID, newer)
 
-	got, err := s.repo.GetLatestUsedAtByUserIDs(s.ctx, []int64{userWithUsage.ID, userWithoutUsage.ID})
+	got, err := s.repo.GetLatestUsedAtByUserIDs(s.ctx, []int64{userWithUsage.ID, userWithoutUsage.ID, userWithUsage.ID})
 	s.Require().NoError(err)
+	s.Require().Len(got, 1)
 	s.Require().Contains(got, userWithUsage.ID)
 	s.Require().NotContains(got, userWithoutUsage.ID)
 	s.Require().NotNil(got[userWithUsage.ID])
