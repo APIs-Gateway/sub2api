@@ -19,6 +19,7 @@ import {
   probeUpstreamBilling,
   probeUpstreamBillingBatch,
   refreshCredentials,
+  reauthCodexSession,
   setUpstreamBillingProbeEnabled,
   syncFromCrs,
   updateUpstreamBillingProbeSettings,
@@ -98,5 +99,15 @@ describe('admin accounts api', () => {
     }
     post.mockResolvedValueOnce({ data: warned })
     await expect(refreshCredentials(42)).resolves.toEqual(warned)
+  })
+
+  it('sends Codex reauthorization only to the selected existing account', async () => {
+    const result = { account: { id: 17, name: 'existing' }, warnings: ['old RT not verified'] }
+    post.mockResolvedValueOnce({ data: result })
+
+    await expect(reauthCodexSession(17, '{"tokens":{"access_token":"at"}}')).resolves.toEqual(result)
+    expect(post).toHaveBeenLastCalledWith('/admin/accounts/17/reauth/codex-session', {
+      content: '{"tokens":{"access_token":"at"}}'
+    })
   })
 })

@@ -65,3 +65,19 @@ func TestAccountFromServiceShallow_NilCredentialsOmitsStatus(t *testing.T) {
 	require.Nil(t, got.Credentials)
 	require.Nil(t, got.CredentialsStatus)
 }
+
+func TestAccountFromServiceShallow_EmptyIDTokenHasNoCredentialStatus(t *testing.T) {
+	src := &service.Account{
+		ID:       1,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "at-new",
+			"id_token":     "",
+		},
+	}
+	got := AccountFromServiceShallow(src)
+	require.NotContains(t, got.Credentials, "id_token")
+	require.False(t, got.CredentialsStatus["has_id_token"])
+	require.True(t, got.CredentialsStatus["has_access_token"])
+}

@@ -130,12 +130,15 @@
         :show-help="isAnthropic"
         :show-proxy-warning="isAnthropic"
         :show-cookie-option="isAnthropic"
+        :show-codex-session-import-option="isOpenAIOAuth && !isOpenAIAgentIdentity"
+        :reauth="true"
         :allow-multiple="false"
         :method-label="t('admin.accounts.inputMethod')"
         :platform="isOpenAI ? 'openai' : isGemini ? 'gemini' : isAntigravity ? 'antigravity' : isGrok ? 'grok' : 'anthropic'"
         :show-project-id="isGemini && geminiOAuthType === 'code_assist'"
         @generate-url="handleGenerateUrl"
         @cookie-auth="handleCookieAuth"
+        @import-codex-session="handleImportCodexSession"
       />
 
     </div>
@@ -243,6 +246,10 @@ const geminiOAuthType = ref<'code_assist' | 'google_one' | 'ai_studio'>('code_as
 
 // Computed - check platform
 const isOpenAI = computed(() => props.account?.platform === 'openai')
+const isOpenAIOAuth = computed(() => isOpenAI.value && props.account?.type === 'oauth')
+const isOpenAIAgentIdentity = computed(
+  () => isOpenAI.value && (props.account?.credentials as Record<string, unknown> | undefined)?.auth_mode === 'agentIdentity'
+)
 const isOpenAILike = computed(() => isOpenAI.value)
 const isGemini = computed(() => props.account?.platform === 'gemini')
 const isAnthropic = computed(() => props.account?.platform === 'anthropic')
@@ -281,6 +288,7 @@ const currentError = computed(() => {
 
 // Computed
 const isManualInputMethod = computed(() => {
+  if (oauthFlowRef.value?.inputMethod === 'codex_session') return false
   // OpenAI/Gemini/Antigravity always use manual input (no cookie auth option)
   return isOpenAILike.value || isGemini.value || isAntigravity.value || isGrok.value || oauthFlowRef.value?.inputMethod === 'manual'
 })
@@ -572,6 +580,29 @@ const handleCookieAuth = async (sessionKey: string) => {
       error.response?.data?.detail || t('admin.accounts.oauth.cookieAuthFailed')
   } finally {
     claudeOAuth.loading.value = false
+  }
+}
+
+const handleImportCodexSession = async (content: string) => {
+  if (!props.account || !isOpenAIOAuth.value || isOpenAIAgentIdentity.value) return
+
+  openaiOAuth.loading.value = true
+  openaiOAuth.error.value = ''
+  try {
+    const result = await adminAPI.accounts.reauthCodexSession(props.account.id, content)
+    if (result.warnings?.length) appStore.showWarning(result.warnings.join('\n'))
+    appStore.showSuccess(t('admin.accounts.reAuthorizedSuccess'))
+    emit('reauthorized', result.account)
+    handleClose()
+  } catch (error: any) {
+    openaiOAuth.error.value =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.message ||
+      t('admin.accounts.oauth.authFailed')
+    appStore.showError(openaiOAuth.error.value)
+  } finally {
+    openaiOAuth.loading.value = false
   }
 }
 </script>

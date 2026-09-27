@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -114,4 +115,64 @@ func TestUpdateAccount_EmptyCredentialsSkipsUpdate(t *testing.T) {
 
 	require.Equal(t, "rt-existing", repo.account.Credentials["refresh_token"], "空 credentials 不应触碰已有 token")
 	require.Equal(t, "renamed", repo.account.Name)
+}
+
+func TestUpdateAccount_ExplicitEmptyIDTokenClearsStaleValue(t *testing.T) {
+	accountID := int64(205)
+	repo := &updateAccountCredsRepoStub{
+		account: &Account{
+			ID:       accountID,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Status:   StatusActive,
+			Credentials: map[string]any{
+				"access_token":  "at-old",
+				"refresh_token": "rt-old",
+				"id_token":      "id-old",
+			},
+		},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	updated, err := svc.UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Credentials: map[string]any{
+			"access_token":  "at-new",
+			"refresh_token": "rt-new",
+			"id_token":      "",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.updateCalls)
+	require.Equal(t, "", updated.GetOpenAIIDToken())
+	require.Equal(t, "", repo.account.Credentials["id_token"])
+	require.Equal(t, "at-new", repo.account.Credentials["access_token"])
+	require.Equal(t, "rt-new", repo.account.Credentials["refresh_token"])
+}
+
+func TestUpdateAccount_ClearsExpiredTokenBoundSchedulingAfterReauth(t *testing.T) {
+	accountID := int64(206)
+	oldExpiry := time.Now().Add(-time.Hour)
+	repo := &updateAccountCredsRepoStub{
+		account: &Account{
+			ID:                 accountID,
+			Platform:           PlatformOpenAI,
+			Type:               AccountTypeOAuth,
+			Status:             StatusActive,
+			Schedulable:        true,
+			ExpiresAt:          &oldExpiry,
+			AutoPauseOnExpired: true,
+			Credentials:        map[string]any{"access_token": "at-old"},
+		},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+	clearExpiry, disableAutoPause := int64(0), false
+	updated, err := svc.UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Credentials:        map[string]any{"access_token": "at-new", "refresh_token": "rt-new"},
+		ExpiresAt:          &clearExpiry,
+		AutoPauseOnExpired: &disableAutoPause,
+	})
+	require.NoError(t, err)
+	require.Nil(t, updated.ExpiresAt)
+	require.False(t, updated.AutoPauseOnExpired)
+	require.True(t, updated.IsSchedulable())
 }

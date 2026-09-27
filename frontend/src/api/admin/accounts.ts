@@ -234,6 +234,18 @@ export async function applyOAuthCredentials(
   return data
 }
 
+/** Update one existing OpenAI OAuth account from a Codex auth.json or accessToken. */
+export async function reauthCodexSession(
+  id: number,
+  content: string
+): Promise<{ account: Account; warnings?: string[] }> {
+  const { data } = await apiClient.post<{ account: Account; warnings?: string[] }>(
+    `/admin/accounts/${id}/reauth/codex-session`,
+    { content }
+  )
+  return data
+}
+
 /**
  * Get account usage statistics
  * @param id - Account ID
@@ -831,6 +843,7 @@ export const accountsAPI = {
   testAccount,
   refreshCredentials,
   applyOAuthCredentials,
+  reauthCodexSession,
   getStats,
   clearError,
   getUsage,
