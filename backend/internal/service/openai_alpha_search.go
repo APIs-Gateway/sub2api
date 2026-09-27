@@ -449,8 +449,8 @@ func parseOpenAIResponsesSSEForAlphaSearch(body []byte) (string, []any, error) {
 	out := output.String()
 	if strings.TrimSpace(out) == "" {
 		out = extractOpenAIResponsesCompletedText(completedResponse)
-		collectOpenAIAlphaSearchURLCitations(completedResponse, &results, seenURLs)
 	}
+	collectOpenAIAlphaSearchURLCitations(completedResponse, &results, seenURLs)
 	return out, results, nil
 }
 
