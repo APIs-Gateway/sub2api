@@ -27,8 +27,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+const antigravityStatusClientClosed = 499
+
 const (
-	antigravityStatusClientClosed = 499
 	antigravityStickySessionTTL = time.Hour
 	antigravityMaxRetries       = 3
 	antigravityRetryBaseDelay   = 1 * time.Second
