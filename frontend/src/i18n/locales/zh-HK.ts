@@ -4407,6 +4407,7 @@
       enterCustomModelName: '輸入自定義模型名稱',
       addModel: '填入',
       modelExists: '該模型已存在',
+      modelMappingConflict: '模型映射將 {from} 指向 {to}。請修改或刪除該映射，以保留白名單中的 {from}',
       modelCount: '{count} 個模型',
       poolMode: '池模式',
       poolModeHint: '上游為帳號池時啟用，錯誤不標記本地帳號狀態',

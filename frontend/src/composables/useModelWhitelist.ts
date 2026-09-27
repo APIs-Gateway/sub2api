@@ -453,6 +453,20 @@ export interface ModelMappingEntry {
   to: string
 }
 
+export function findModelMappingConflict(
+  model: string,
+  mappings: ReadonlyArray<ModelMappingEntry>
+): ModelMappingEntry | undefined {
+  const normalizedModel = model.trim()
+  // The last valid row for a source wins in buildModelMappingObject.
+  const effectiveMapping = [...mappings].reverse().find(mapping =>
+    mapping.from.trim() === normalizedModel &&
+    mapping.to.trim() !== '' &&
+    !mapping.to.trim().includes('*')
+  )
+  return effectiveMapping?.to.trim() === normalizedModel ? undefined : effectiveMapping
+}
+
 export function splitModelMappingObject(
   modelMapping?: Record<string, unknown> | null
 ): { allowedModels: string[]; modelMappings: ModelMappingEntry[] } {
