@@ -383,6 +383,8 @@ func TestOpus55PricingIsIndependentFromOpus5(t *testing.T) {
 				require.InDelta(t, 8e-6, pricing.CacheCreation1hPrice, 1e-15, model)
 				require.True(t, pricing.SupportsCacheBreakdown, model)
 			}
+			// 300K input tokens must still use the normal Opus 5.5 price; this fork
+			// has no separate long-context flag in CostBreakdown.
 			tokens := UsageTokens{InputTokens: 300000, OutputTokens: 500, CacheReadTokens: 1000, CacheCreationTokens: 1000, CacheCreation5mTokens: 400, CacheCreation1hTokens: 600}
 			for _, model := range []string{"claude-opus-5-5", "anthropic/claude-opus-5.5"} {
 				for tier, mult := range map[string]float64{"": 1, "priority": 2} {
@@ -392,7 +394,6 @@ func TestOpus55PricingIsIndependentFromOpus5(t *testing.T) {
 					require.InDelta(t, (400*5e-6+600*8e-6)*mult, cost.CacheCreationCost, 1e-10, model+"/"+tier)
 					require.InDelta(t, 1000*0.2e-6*mult, cost.CacheReadCost, 1e-10, model+"/"+tier)
 					require.InDelta(t, 500*20e-6*mult, cost.OutputCost, 1e-10, model+"/"+tier)
-					require.False(t, cost.LongContextBillingApplied, model+"/"+tier)
 				}
 			}
 			old, err := svc.GetModelPricing("claude-opus-5")
