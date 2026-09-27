@@ -188,12 +188,7 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 			cloned := *resolved.BasePricing
 			resolved.BasePricing = &cloned
 		}
-		if chPricing.ImageOutputPrice != nil {
-			resolved.BasePricing.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
-		} else {
-			resolved.BasePricing.ImageOutputPricePerToken = 0
-		}
-		resolved.BasePricing.ImageOutputPriceExplicit = true
+		applyChannelImageOutputPrice(chPricing, resolved.BasePricing)
 		return
 	}
 
@@ -225,13 +220,17 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 		resolved.BasePricing.CacheReadPricePerToken = *chPricing.CacheReadPrice
 		resolved.BasePricing.CacheReadPricePerTokenPriority = *chPricing.CacheReadPrice
 	}
-	// 渠道定价覆盖一切：显式配置则用配置值，未配置则归零（不回退到 LiteLLM）
-	if chPricing.ImageOutputPrice != nil {
-		resolved.BasePricing.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
-	} else {
-		resolved.BasePricing.ImageOutputPricePerToken = 0
+	applyChannelImageOutputPrice(chPricing, resolved.BasePricing)
+}
+
+// applyChannelImageOutputPrice 只覆盖渠道显式填写的图片输出价。
+// nil 保留目录价；显式 0 需要标记为免费，避免计费时回退文本输出价。
+func applyChannelImageOutputPrice(chPricing *ChannelModelPricing, pricing *ModelPricing) {
+	if chPricing == nil || chPricing.ImageOutputPrice == nil || pricing == nil {
+		return
 	}
-	resolved.BasePricing.ImageOutputPriceExplicit = true
+	pricing.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
+	pricing.ImageOutputPriceExplicit = true
 }
 
 // applyRequestTierOverrides 应用按次/图片模式的渠道覆盖
@@ -268,13 +267,19 @@ func (r *ModelPricingResolver) GetIntervalPricing(resolved *ResolvedPricing, tot
 		return resolved.BasePricing
 	}
 
-	return intervalToModelPricing(iv, resolved.SupportsCacheBreakdown, resolved.channelPricing)
+	return intervalToModelPricing(iv, resolved.SupportsCacheBreakdown, resolved.BasePricing, resolved.channelPricing)
 }
 
 // intervalToModelPricing 将区间定价转换为 ModelPricing
-func intervalToModelPricing(iv *PricingInterval, supportsCacheBreakdown bool, chPricing *ChannelModelPricing) *ModelPricing {
+func intervalToModelPricing(iv *PricingInterval, supportsCacheBreakdown bool, base *ModelPricing, chPricing *ChannelModelPricing) *ModelPricing {
 	pricing := &ModelPricing{
 		SupportsCacheBreakdown: supportsCacheBreakdown,
+	}
+	// 区间只配置文本与缓存价，图片价仍来自目录或渠道级配置。
+	if base != nil {
+		pricing.ImageInputPricePerToken = base.ImageInputPricePerToken
+		pricing.ImageOutputPricePerToken = base.ImageOutputPricePerToken
+		pricing.ImageOutputPriceExplicit = base.ImageOutputPriceExplicit
 	}
 	if iv.InputPrice != nil {
 		pricing.InputPricePerToken = *iv.InputPrice
@@ -295,13 +300,7 @@ func intervalToModelPricing(iv *PricingInterval, supportsCacheBreakdown bool, ch
 		pricing.CacheReadPricePerToken = *iv.CacheReadPrice
 		pricing.CacheReadPricePerTokenPriority = *iv.CacheReadPrice
 	}
-	// 渠道定价存在时，ImageOutputPrice 显式覆盖
-	if chPricing != nil {
-		pricing.ImageOutputPriceExplicit = true
-		if chPricing.ImageOutputPrice != nil {
-			pricing.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
-		}
-	}
+	applyChannelImageOutputPrice(chPricing, pricing)
 	return pricing
 }
 

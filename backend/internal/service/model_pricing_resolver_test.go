@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -726,23 +727,60 @@ func TestFilterValidIntervals(t *testing.T) {
 // 9. ImageOutputPriceExplicit tests
 // ===========================================================================
 
-func TestApplyTokenOverrides_FlatSetsImageOutputPriceExplicit(t *testing.T) {
+func TestApplyTokenOverrides_FlatUnsetImagePriceInheritsCatalog(t *testing.T) {
 	r := newResolverWithChannel(t, []ChannelModelPricing{{
 		Platform:    "anthropic",
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: BillingModeToken,
-		InputPrice:  testPtrFloat64(3e-6),
-		OutputPrice: testPtrFloat64(15e-6),
+		InputPrice:  testPtrFloat64(5e-6),
+		OutputPrice: testPtrFloat64(20e-6),
 		// ImageOutputPrice intentionally nil
 	}})
+	r.billingService.fallbackPrices["claude-sonnet-4"].ImageOutputPricePerToken = 30e-6
+	r.billingService.fallbackPrices["claude-sonnet-4"].ImageInputPricePerToken = 8e-6
 	resolved := r.Resolve(context.Background(), PricingInput{
 		Model:   "claude-sonnet-4",
 		GroupID: groupIDPtr(),
 	})
 
 	require.Equal(t, PricingSourceChannel, resolved.Source)
+	require.False(t, resolved.BasePricing.ImageOutputPriceExplicit)
+	require.InDelta(t, 30e-6, resolved.BasePricing.ImageOutputPricePerToken, 1e-12)
+	require.InDelta(t, 8e-6, resolved.BasePricing.ImageInputPricePerToken, 1e-12)
+
+	tokens := UsageTokens{InputTokens: 1000, ImageInputTokens: 600, OutputTokens: 500, ImageOutputTokens: 500}
+	customer, err := r.billingService.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "claude-sonnet-4", GroupID: groupIDPtr(),
+		Tokens: tokens, RateMultiplier: 1, Resolver: r,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 400*5e-6, customer.InputCost, 1e-12)
+	require.InDelta(t, 600*8e-6, customer.ImageInputCost, 1e-12)
+	require.InDelta(t, 500*30e-6, customer.ImageOutputCost, 1e-12)
+	require.Zero(t, customer.OutputCost)
+
+	// Account cost's independent catalog path must not see the customer's text overrides.
+	accountCost := tryModelFilePricing(r.billingService, "claude-sonnet-4", tokens, "", time.Time{})
+	require.NotNil(t, accountCost)
+	require.InDelta(t, 400*3e-6+600*8e-6+500*30e-6, *accountCost, 1e-12)
+	require.InDelta(t, 30e-6, r.billingService.fallbackPrices["claude-sonnet-4"].ImageOutputPricePerToken, 1e-12)
+}
+
+func TestApplyTokenOverrides_FlatExplicitZeroImageOutputRemainsFree(t *testing.T) {
+	r := newResolverWithChannel(t, []ChannelModelPricing{{
+		Platform: "anthropic", Models: []string{"claude-sonnet-4"}, BillingMode: BillingModeToken,
+		ImageOutputPrice: testPtrFloat64(0),
+	}})
+	r.billingService.fallbackPrices["claude-sonnet-4"].ImageOutputPricePerToken = 30e-6
+	resolved := r.Resolve(context.Background(), PricingInput{Model: "claude-sonnet-4", GroupID: groupIDPtr()})
 	require.True(t, resolved.BasePricing.ImageOutputPriceExplicit)
-	require.Equal(t, 0.0, resolved.BasePricing.ImageOutputPricePerToken)
+	require.Zero(t, resolved.BasePricing.ImageOutputPricePerToken)
+	cost, err := r.billingService.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "claude-sonnet-4", GroupID: groupIDPtr(),
+		Tokens: UsageTokens{OutputTokens: 100, ImageOutputTokens: 100}, RateMultiplier: 1, Resolver: r,
+	})
+	require.NoError(t, err)
+	require.Zero(t, cost.ImageOutputCost)
 }
 
 func TestApplyTokenOverrides_FlatWithImageOutputPriceSetsExplicit(t *testing.T) {
@@ -763,7 +801,7 @@ func TestApplyTokenOverrides_FlatWithImageOutputPriceSetsExplicit(t *testing.T) 
 	require.InDelta(t, 50e-6, resolved.BasePricing.ImageOutputPricePerToken, 1e-12)
 }
 
-func TestApplyTokenOverrides_IntervalSetsImageOutputPriceExplicit(t *testing.T) {
+func TestApplyTokenOverrides_IntervalInheritsCatalogImagePrices(t *testing.T) {
 	r := newResolverWithChannel(t, []ChannelModelPricing{{
 		Platform:    "anthropic",
 		Models:      []string{"claude-sonnet-4"},
@@ -773,19 +811,70 @@ func TestApplyTokenOverrides_IntervalSetsImageOutputPriceExplicit(t *testing.T) 
 			{MinTokens: 0, MaxTokens: testPtrInt(100000), InputPrice: testPtrFloat64(3e-6), OutputPrice: testPtrFloat64(15e-6)},
 		},
 	}})
+	r.billingService.fallbackPrices["claude-sonnet-4"].ImageOutputPricePerToken = 30e-6
+	r.billingService.fallbackPrices["claude-sonnet-4"].ImageInputPricePerToken = 8e-6
 	resolved := r.Resolve(context.Background(), PricingInput{
 		Model:   "claude-sonnet-4",
 		GroupID: groupIDPtr(),
 	})
 
-	// BasePricing should have explicit mark (for interval fallback)
-	require.True(t, resolved.BasePricing.ImageOutputPriceExplicit)
-	require.Equal(t, 0.0, resolved.BasePricing.ImageOutputPricePerToken)
+	// The unmatched interval uses the catalog's image prices.
+	require.False(t, resolved.BasePricing.ImageOutputPriceExplicit)
+	require.InDelta(t, 30e-6, resolved.BasePricing.ImageOutputPricePerToken, 1e-12)
 
-	// intervalToModelPricing should also have explicit mark
+	// A matched interval changes text prices but retains catalog image prices.
 	pricing := r.GetIntervalPricing(resolved, 50000)
-	require.True(t, pricing.ImageOutputPriceExplicit)
-	require.Equal(t, 0.0, pricing.ImageOutputPricePerToken)
+	require.False(t, pricing.ImageOutputPriceExplicit)
+	require.InDelta(t, 30e-6, pricing.ImageOutputPricePerToken, 1e-12)
+	require.InDelta(t, 8e-6, pricing.ImageInputPricePerToken, 1e-12)
+	require.InDelta(t, 3e-6, pricing.InputPricePerToken, 1e-12)
+	require.InDelta(t, 15e-6, pricing.OutputPricePerToken, 1e-12)
+
+	matched, err := r.billingService.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "claude-sonnet-4", GroupID: groupIDPtr(),
+		Tokens: UsageTokens{InputTokens: 1000, ImageInputTokens: 600, OutputTokens: 500, ImageOutputTokens: 500},
+		RateMultiplier: 1, Resolver: r,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 600*8e-6, matched.ImageInputCost, 1e-12)
+	require.InDelta(t, 500*30e-6, matched.ImageOutputCost, 1e-12)
+
+	unmatched, err := r.billingService.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "claude-sonnet-4", GroupID: groupIDPtr(),
+		Tokens: UsageTokens{InputTokens: 100001, ImageInputTokens: 600, OutputTokens: 500, ImageOutputTokens: 500},
+		RateMultiplier: 1, Resolver: r,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 600*8e-6, unmatched.ImageInputCost, 1e-12)
+	require.InDelta(t, 500*30e-6, unmatched.ImageOutputCost, 1e-12)
+}
+
+func TestApplyTokenOverrides_IntervalExplicitZeroAndCatalogMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		image *float64
+		want  float64
+	}{
+		{name: "unset falls back to interval text", want: 100 * 15e-6},
+		{name: "explicit zero stays free", image: testPtrFloat64(0), want: 0},
+		{name: "explicit nonzero overrides interval text", image: testPtrFloat64(40e-6), want: 100 * 40e-6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newResolverWithChannel(t, []ChannelModelPricing{{
+				Platform: "anthropic", Models: []string{"claude-sonnet-4"}, BillingMode: BillingModeToken,
+				ImageOutputPrice: tc.image,
+				Intervals: []PricingInterval{{MinTokens: 0, MaxTokens: testPtrInt(100000), InputPrice: testPtrFloat64(3e-6), OutputPrice: testPtrFloat64(15e-6)}},
+			}})
+			cost, err := r.billingService.CalculateCostUnified(CostInput{
+				Ctx: context.Background(), Model: "claude-sonnet-4", GroupID: groupIDPtr(),
+				Tokens: UsageTokens{InputTokens: 100, ImageInputTokens: 50, OutputTokens: 100, ImageOutputTokens: 100},
+				RateMultiplier: 1, Resolver: r,
+			})
+			require.NoError(t, err)
+			require.InDelta(t, 50*3e-6, cost.ImageInputCost, 1e-12)
+			require.InDelta(t, tc.want, cost.ImageOutputCost, 1e-12)
+		})
+	}
 }
 
 // ===========================================================================
@@ -839,7 +928,7 @@ func TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices(t *testing.T) 
 	})
 
 	require.NotNil(t, resolved)
-	require.True(t, resolved.BasePricing.ImageOutputPriceExplicit)
+	require.False(t, resolved.BasePricing.ImageOutputPriceExplicit)
 
 	// Global fallbackPrices must NOT be polluted
 	fp := r.billingService.fallbackPrices["claude-sonnet-4"]
