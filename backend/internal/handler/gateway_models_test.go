@@ -632,6 +632,86 @@ func TestGatewayModels_UnmappedOpenAIAccountsSupplementMappedModels(t *testing.T
 	require.False(t, accounts[1].IsModelSupported("gpt-5.6-sol"))
 }
 
+func TestGatewayModels_OpenAIPassthroughPreservesMappedModelsAndCustomListIntersection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const groupID int64 = 29
+	const mappedModel = "team-mapped-model"
+	const staleModel = "stale-passthrough-model"
+	passthrough := service.Account{
+		ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Status: service.StatusActive, Schedulable: true,
+		Extra:       map[string]any{"openai_passthrough": true},
+		Credentials: map[string]any{"model_mapping": map[string]any{staleModel: "stale-upstream-model"}},
+	}
+	mapped := service.Account{
+		ID: 2, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Status: service.StatusActive, Schedulable: true,
+		Credentials: map[string]any{"model_mapping": map[string]any{mappedModel: "gpt-5.6-sol"}},
+	}
+	tests := []struct {
+		name     string
+		mapped   service.Account
+		config   service.GroupModelsListConfig
+		want     []string
+		contains []string
+	}{
+		{
+			name:     "eligible mapping appears beside passthrough defaults",
+			mapped:   mapped,
+			contains: []string{"gpt-5.6-sol", mappedModel},
+		},
+		{
+			name:   "custom list only retains available defaults and mapping",
+			mapped: mapped,
+			config: service.GroupModelsListConfig{Enabled: true,
+				Models: []string{mappedModel, "unknown-model", "gpt-5.6-sol", staleModel}},
+			want: []string{mappedModel, "gpt-5.6-sol"},
+		},
+		{
+			name:   "disabled mapping does not appear with passthrough",
+			mapped: func() service.Account { account := mapped; account.Status = service.StatusDisabled; return account }(),
+			config: service.GroupModelsListConfig{Enabled: true,
+				Models: []string{mappedModel, "gpt-5.6-sol", staleModel}},
+			want: []string{"gpt-5.6-sol"},
+		},
+		{
+			name:   "unschedulable mapping does not appear with passthrough",
+			mapped: func() service.Account { account := mapped; account.Schedulable = false; return account }(),
+			config: service.GroupModelsListConfig{Enabled: true,
+				Models: []string{mappedModel, "gpt-5.6-sol", staleModel}},
+			want: []string{"gpt-5.6-sol"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+				byGroup: map[int64][]service.Account{groupID: {passthrough, tt.mapped}},
+			})
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+			c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+				Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, ModelsListConfig: tt.config},
+			})
+			h.Models(c)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var got gatewayModelsResponseForTest
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			ids := modelIDsForTest(got.Data)
+			if tt.want != nil {
+				require.Equal(t, tt.want, ids)
+			} else {
+				require.ElementsMatch(t, append(openai.DefaultModelIDs(), mappedModel), ids)
+			}
+			for _, model := range tt.contains {
+				require.Contains(t, ids, model)
+			}
+			require.NotContains(t, ids, staleModel)
+			require.NotContains(t, ids, "unknown-model")
+		})
+	}
+}
+
 func modelIDsForTest(models []gatewayModelItemForTest) []string {
 	ids := make([]string, 0, len(models))
 	for _, model := range models {

@@ -30,6 +30,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -11237,17 +11238,33 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	// Collect unique models from all accounts
 	modelSet := make(map[string]struct{})
 	hasAnyMapping := false
+	hasOpenAIPassthrough := false
+	if platform == PlatformOpenAI {
+		for i := range accounts {
+			if accounts[i].IsOpenAIPassthroughEnabled() {
+				// Only group-scoped discovery gets the mapped-model union. Keep
+				// the existing global passthrough fallback unchanged.
+				if groupID == nil {
+					if s.modelsListCache != nil {
+						s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
+						modelsListCacheStoreTotal.Add(1)
+					}
+					return nil
+				}
+				hasOpenAIPassthrough = true
+				break
+			}
+		}
+	}
 
 	for _, acc := range accounts {
-		// Passthrough routing accepts models independently of model_mapping. A stale
-		// mapping on any eligible passthrough account therefore cannot define the
-		// public whitelist; return nil so the handler uses its default model set.
-		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
-			if s.modelsListCache != nil {
-				s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
-				modelsListCacheStoreTotal.Add(1)
+		if hasOpenAIPassthrough {
+			// A passthrough account may retain an obsolete mapping from its earlier
+			// restricted mode. Only mappings on other schedulable accounts can add
+			// discoverable models beyond the default catalog.
+			if acc.IsOpenAIPassthroughEnabled() || !acc.IsSchedulable() {
+				continue
 			}
-			return nil
 		}
 
 		mapping := acc.GetModelMapping()
@@ -11270,6 +11287,11 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 			modelsListCacheStoreTotal.Add(1)
 		}
 		return nil
+	}
+	if hasOpenAIPassthrough {
+		for _, model := range openai.DefaultModelIDs() {
+			modelSet[model] = struct{}{}
+		}
 	}
 
 	// Convert to slice
