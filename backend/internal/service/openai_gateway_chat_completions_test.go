@@ -427,6 +427,32 @@ func TestForwardAsChatCompletions_APIKeyPropagatesPromptCacheKeyInResponsesBody(
 	require.Equal(t, generateSessionUUID(isolateOpenAISessionID(99, "cache-key-123")), upstream.lastReq.Header.Get("session_id"))
 }
 
+func TestForwardAsChatCompletions_MappedGPTStripsExplicitCacheHints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"public","stream":false,"prompt_cache_options":{"mode":"explicit"},"prompt_cache_key":"keep","messages":[{"role":"user","content":[{"type":"text","text":"hello","prompt_cache_breakpoint":true}]}]}`)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"stop before response parsing"}}`)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "fixture-key", "model_mapping": map[string]any{"public": "gpt-6-sol"}},
+		Extra:       map[string]any{"openai_responses_supported": true},
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+
+	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.Error(t, err) // Deliberate recorder response after the request is captured.
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "gpt-6-sol", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_options").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "input.0.content.0.prompt_cache_breakpoint").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+}
+
 func TestForwardAsChatCompletions_APIKeyAutoDerivesStableIsolatedPromptCacheKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -224,7 +224,7 @@ func TestGPT6MappedCompatibilityBridgesKeepReasoningToolsAndCache(t *testing.T) 
 			require.False(t, gjson.GetBytes(upstream.lastBody, "temperature").Exists(), name)
 			require.False(t, gjson.GetBytes(upstream.lastBody, "top_p").Exists(), name)
 			if !messages {
-				require.Equal(t, "30m", gjson.GetBytes(upstream.lastBody, "prompt_cache_options.ttl").String(), name)
+				require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_options").Exists(), name)
 			}
 		}
 	}
