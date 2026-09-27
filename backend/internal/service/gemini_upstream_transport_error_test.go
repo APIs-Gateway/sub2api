@@ -163,6 +163,56 @@ func TestGeminiTransportError_RequestDeadlineDoesNotFailOverOrLog(t *testing.T) 
 	require.False(t, c.Writer.Written())
 }
 
+func TestGeminiTransportError_IndependentFailureDuringEndedRequestKeepsOpsWithoutFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name         string
+		transportErr error
+		requestCtx   func() (context.Context, context.CancelFunc)
+		wantErr      error
+	}{
+		{
+			name:         "client_canceled_with_EOF",
+			transportErr: errors.New("EOF"),
+			requestCtx: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, cancel
+			},
+			wantErr: context.Canceled,
+		},
+		{
+			name:         "request_deadline_with_connection_refused",
+			transportErr: errors.New("dial tcp: connection refused"),
+			requestCtx: func() (context.Context, context.CancelFunc) {
+				return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			},
+			wantErr: context.DeadlineExceeded,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, upstream, repo := newGeminiTransportErrorService(tc.transportErr)
+			body := geminiSignalTestRequest()
+			c := newGeminiTransportContext(t, "/v1beta/models/gemini-2.5-flash:generateContent", body)
+			ctx, cancel := tc.requestCtx()
+			defer cancel()
+
+			result, err := svc.ForwardNative(ctx, c, geminiSignalTestAccount(), "gemini-2.5-flash", "generateContent", false, body)
+
+			require.Nil(t, result)
+			require.ErrorIs(t, err, tc.wantErr)
+			var failover *UpstreamFailoverError
+			require.False(t, errors.As(err, &failover))
+			require.Equal(t, 1, upstream.calls)
+			require.Zero(t, repo.calls, "ended request must not unschedule an account")
+			require.False(t, c.Writer.Written())
+			events := upstreamErrorEventsFromContext(t, c)
+			require.Len(t, events, 1, "independent transport failure retains fork ops attribution")
+			require.Equal(t, "request_error", events[0].Kind)
+		})
+	}
+}
+
 func TestGeminiTransportError_CountTokensFallsBackWithoutRetry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc, upstream, repo := newGeminiTransportErrorService(errors.New("EOF"))
