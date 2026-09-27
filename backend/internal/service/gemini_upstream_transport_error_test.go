@@ -189,6 +189,24 @@ func TestGeminiTransportError_IndependentFailureDuringEndedRequestKeepsOpsWithou
 			},
 			wantErr: context.DeadlineExceeded,
 		},
+		{
+			name:         "client_canceled_with_provider_deadline",
+			transportErr: context.DeadlineExceeded,
+			requestCtx: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, cancel
+			},
+			wantErr: context.Canceled,
+		},
+		{
+			name:         "request_deadline_with_provider_canceled",
+			transportErr: context.Canceled,
+			requestCtx: func() (context.Context, context.CancelFunc) {
+				return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			},
+			wantErr: context.DeadlineExceeded,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, upstream, repo := newGeminiTransportErrorService(tc.transportErr)

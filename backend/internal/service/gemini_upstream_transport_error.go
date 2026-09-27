@@ -23,7 +23,7 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamTransportError(ctx con
 	}
 	// A canceled or expired request can make RoundTrip return a matching context
 	// error; this is not an upstream fault and must not enter ops attribution.
-	if requestErr != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+	if requestErr != nil && errors.Is(err, requestErr) {
 		return requestErr
 	}
 
