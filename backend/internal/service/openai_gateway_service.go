@@ -76,6 +76,7 @@ var openaiAllowedHeaders = map[string]bool{
 	"accept-language":         true,
 	"content-type":            true,
 	"conversation_id":         true,
+	"openai-beta":             true,
 	"user-agent":              true,
 	"originator":              true,
 	"session_id":              true,
@@ -5792,6 +5793,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 			req.Header.Del("OpenAI-Beta")
 			req.Header.Del("originator")
 		} else {
+			stripOpenAILegacyResponsesBeta(req.Header)
 			req.Header.Set("originator", resolveOpenAIUpstreamOriginator(c, isCodexCLI))
 		}
 		apiKeyID := getAPIKeyIDFromContext(c)
