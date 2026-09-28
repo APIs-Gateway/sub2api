@@ -595,6 +595,14 @@ var allowedHeaders = map[string]bool{
 	"x-client-request-id":                       true,
 }
 
+// Native API-key passthrough keeps Anthropic and Claude Code feature headers
+// extensible. All other headers still follow the existing allowlist, and
+// inbound credentials are removed before the account's credentials are set.
+func forwardableAnthropicPassthroughHeader(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	return allowedHeaders[lower] || strings.HasPrefix(lower, "anthropic-") || strings.HasPrefix(lower, "x-claude-code-")
+}
+
 // ErrReasoningContentNotFound is returned by GatewayCache.GetReasoningContent
 // when no cached reasoning content exists for the reasoning item ID.
 var ErrReasoningContentNotFound = errors.New("reasoning content not found")
@@ -6079,6 +6087,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			}
 		}
+		responseheaders.WriteClaudeCodeResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
 	}
 
@@ -6115,6 +6124,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	}
 
 	if resp.StatusCode >= 400 {
+		responseheaders.WriteClaudeCodeResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 		return s.handleErrorResponse(ctx, resp, c, account, input.RequestModel)
 	}
 
@@ -6195,8 +6205,7 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 
 	if c != nil && c.Request != nil {
 		for key, values := range c.Request.Header {
-			lowerKey := strings.ToLower(strings.TrimSpace(key))
-			if !allowedHeaders[lowerKey] {
+			if !forwardableAnthropicPassthroughHeader(key) {
 				continue
 			}
 			wireKey := resolveWireCasing(key)
@@ -6762,14 +6771,14 @@ func writeAnthropicPassthroughResponseHeaders(dst http.Header, src http.Header, 
 	}
 	if filter != nil {
 		responseheaders.WriteFilteredHeaders(dst, src, filter)
-		return
+	} else {
+		for _, key := range []string{"Content-Type", "x-request-id"} {
+			if v := strings.TrimSpace(src.Get(key)); v != "" {
+				dst.Set(key, v)
+			}
+		}
 	}
-	if v := strings.TrimSpace(src.Get("Content-Type")); v != "" {
-		dst.Set("Content-Type", v)
-	}
-	if v := strings.TrimSpace(src.Get("x-request-id")); v != "" {
-		dst.Set("x-request-id", v)
-	}
+	responseheaders.WriteClaudeCodeResponseHeaders(dst, src, filter)
 }
 
 // ApplyBedrockCCCompat 应用 Bedrock CC 兼容转换（渠道级模型映射后调用）
@@ -10797,6 +10806,7 @@ func (s *GatewayService) forwardCountTokensAnthropicAPIKeyPassthrough(ctx contex
 	}
 
 	if resp.StatusCode >= 400 {
+		responseheaders.WriteClaudeCodeResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 		if s.rateLimitService != nil && !isHTMLUpstreamCountTokensResponse(resp.Header, respBody) {
 			s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 		}
@@ -10898,8 +10908,7 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 
 	if c != nil && c.Request != nil {
 		for key, values := range c.Request.Header {
-			lowerKey := strings.ToLower(strings.TrimSpace(key))
-			if !allowedHeaders[lowerKey] {
+			if !forwardableAnthropicPassthroughHeader(key) {
 				continue
 			}
 			wireKey := resolveWireCasing(key)

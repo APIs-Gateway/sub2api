@@ -38,6 +38,10 @@ const (
 	BetaServerSideFallback   = "server-side-fallback-2026-07-01"
 	BetaFallbackCredit       = "fallback-credit-2026-07-01"
 	BetaFallbackCreditLegacy = "fallback-credit-2026-06-01"
+
+	// Only paired with body.safeguards when the caller's final beta contains it.
+	// Do not add this to default beta sets.
+	BetaDangerousToolUse = "dangerous-tool-use-2026-09-03"
 )
 
 // DroppedBetas 是转发时需要从 anthropic-beta header 中移除的 beta token 列表。
