@@ -618,6 +618,12 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 	if evt.Item == nil {
 		return nil
 	}
+	// A message item can finish after a later reasoning or tool item opened.
+	// Its output_text.done already closed the text block; do not close the
+	// current block and discard its signature or pending tool arguments.
+	if evt.Item.Type == "message" && state.CurrentBlockType != "text" {
+		return nil
+	}
 
 	// Handle web_search_call → synthesize server_tool_use + web_search_tool_result blocks.
 	if evt.Item.Type == "web_search_call" && evt.Item.Status == "completed" {

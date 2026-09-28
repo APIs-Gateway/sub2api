@@ -1694,6 +1694,8 @@ func ChatCompletionsChunkToResponsesEvents(
 		// empty-string reasoning delta upstreams send is filtered out.
 		reasoning := choice.Delta.reasoningText()
 		if reasoning != nil && *reasoning != "" {
+			// Finish visible text before opening a later reasoning item.
+			events = append(events, closeChatTextPart(state)...)
 			events = append(events, ensureChatReasoningItem(state)...)
 			_, _ = state.Reasoning.WriteString(*reasoning)
 			events = append(events, chatToResponsesEvent(state, "response.reasoning_summary_text.delta", &ResponsesStreamEvent{
@@ -1724,8 +1726,9 @@ func ChatCompletionsChunkToResponsesEvents(
 			}
 			stored, ok := state.ToolCalls[idx]
 			if !ok {
-				// A tool call closes any open reasoning item first.
+				// Finish the current reasoning and text blocks before a tool item.
 				events = append(events, closeChatReasoningItem(state)...)
+				events = append(events, closeChatTextPart(state)...)
 				copyCall := toolCall
 				if copyCall.ID == "" {
 					copyCall.ID = generateItemID()
@@ -1790,20 +1793,7 @@ func FinalizeChatCompletionsResponsesStream(state *ChatCompletionsToResponsesStr
 	events = append(events, synthesizeChatReasoningFallbackMessage(state)...)
 
 	if state.MessageItemID != "" {
-		if state.TextPartOpen {
-			events = append(events, chatToResponsesEvent(state, "response.output_text.done", &ResponsesStreamEvent{
-				OutputIndex:  state.MessageIndex,
-				ContentIndex: 0,
-				Text:         state.Text.String(),
-				ItemID:       state.MessageItemID,
-			}))
-			events = append(events, chatToResponsesEvent(state, "response.content_part.done", &ResponsesStreamEvent{
-				OutputIndex:  state.MessageIndex,
-				ContentIndex: 0,
-				ItemID:       state.MessageItemID,
-				Part:         &ResponsesContentPart{Type: "output_text", Text: state.Text.String()},
-			}))
-		}
+		events = append(events, closeChatTextPart(state)...)
 		events = append(events, chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 			OutputIndex: state.MessageIndex,
 			Item: &ResponsesOutput{
@@ -1976,6 +1966,31 @@ func ensureChatToResponsesTextPart(state *ChatCompletionsToResponsesStreamState)
 		ItemID:       state.MessageItemID,
 		Part:         &ResponsesContentPart{Type: "output_text", Text: ""},
 	})}
+}
+
+// closeChatTextPart closes an open visible text part before a later reasoning
+// or tool item. Mark it closed so finalization cannot emit a second close after
+// Anthropic has moved on to another content block.
+func closeChatTextPart(state *ChatCompletionsToResponsesStreamState) []ResponsesStreamEvent {
+	if state == nil || !state.TextPartOpen {
+		return nil
+	}
+	state.TextPartOpen = false
+	text := state.Text.String()
+	return []ResponsesStreamEvent{
+		chatToResponsesEvent(state, "response.output_text.done", &ResponsesStreamEvent{
+			OutputIndex:  state.MessageIndex,
+			ContentIndex: 0,
+			Text:         text,
+			ItemID:       state.MessageItemID,
+		}),
+		chatToResponsesEvent(state, "response.content_part.done", &ResponsesStreamEvent{
+			OutputIndex:  state.MessageIndex,
+			ContentIndex: 0,
+			ItemID:       state.MessageItemID,
+			Part:         &ResponsesContentPart{Type: "output_text", Text: text},
+		}),
+	}
 }
 
 // announceChatToolItem 在类型可判定时发出工具调用的 output_item.added。custom
