@@ -2617,6 +2617,20 @@ func (h *OpenAIGatewayHandler) handleConcurrencyError(c *gin.Context, err error,
 
 // handleFailoverExhausted 走共享的「上游错误 → 对外响应」策略(issue #16 Part B)。
 func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	if failoverErr != nil && failoverErr.OpenAIImagesInsufficientBalance {
+		if retryAfter := failoverErr.ResponseHeaders.Get("Retry-After"); retryAfter != "" {
+			c.Header("Retry-After", retryAfter)
+		}
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, service.OpenAIImagesInsufficientBalanceMessage, "")
+		// The existing Images writer stops JSON whitespace heartbeats and keeps
+		// the already-committed 200 when one was sent. With semantic output
+		// committed, it declines so the existing SSE error path can finish it.
+		if service.WriteOpenAIImagesInsufficientBalanceError(c) {
+			return
+		}
+		h.handleStreamingAwareErrorWithCode(c, http.StatusPaymentRequired, "upstream_error", service.OpenAIImagesInsufficientBalanceCode, service.OpenAIImagesInsufficientBalanceMessage, true, false)
+		return
+	}
 	if service.IsOpenAIRequestBodyTooLargeFailover(failoverErr) {
 		service.SetOpsUpstreamError(c, http.StatusRequestEntityTooLarge, service.OpenAIRequestBodyTooLargeClientMessage, "")
 		h.handleStreamingAwareError(
