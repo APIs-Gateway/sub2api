@@ -109,8 +109,10 @@ func TestCreateEmailOAuthUserReportsConcurrentExistingAccount(t *testing.T) {
 
 type emailOAuthRaceRepo struct {
 	UserRepository
-	existing *User
-	lookups  int
+	existing  *User
+	reloadErr error
+	createErr error
+	lookups   int
 }
 
 func (r *emailOAuthRaceRepo) GetByEmail(context.Context, string) (*User, error) {
@@ -118,10 +120,16 @@ func (r *emailOAuthRaceRepo) GetByEmail(context.Context, string) (*User, error) 
 	if r.lookups == 1 {
 		return nil, ErrUserNotFound
 	}
+	if r.reloadErr != nil {
+		return nil, r.reloadErr
+	}
 	return r.existing, nil
 }
 
 func (r *emailOAuthRaceRepo) Create(context.Context, *User) error {
+	if r.createErr != nil {
+		return r.createErr
+	}
 	return ErrEmailExists
 }
 
@@ -139,6 +147,44 @@ func TestEmailOAuthConcurrentLocalRegistrationCannotBind(t *testing.T) {
 	require.Nil(t, tokens)
 	require.Nil(t, user)
 	require.Equal(t, 2, repo.lookups)
+	identityCount, err := client.AuthIdentity.Query().Count(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, identityCount)
+}
+
+func TestEmailOAuthConcurrentRegistrationWinnerDisappears(t *testing.T) {
+	_, client := newAuthPendingIdentityServiceTestClient(t)
+	repo := &emailOAuthRaceRepo{reloadErr: ErrUserNotFound}
+	svc := newEmailOAuthAutoAuthService(repo, map[string]string{SettingKeyRegistrationEnabled: "true"}, nil)
+	svc.entClient = client
+
+	tokens, user, err := svc.LoginOrRegisterVerifiedEmailOAuth(context.Background(), EmailOAuthIdentityInput{
+		ProviderType: "google", ProviderSubject: "google-raced-missing", Email: "missing@example.com", EmailVerified: true,
+	})
+
+	require.ErrorIs(t, err, ErrServiceUnavailable)
+	require.Nil(t, tokens)
+	require.Nil(t, user)
+	require.Equal(t, 2, repo.lookups)
+	identityCount, err := client.AuthIdentity.Query().Count(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, identityCount)
+}
+
+func TestEmailOAuthRegistrationCreateFailureDoesNotBind(t *testing.T) {
+	_, client := newAuthPendingIdentityServiceTestClient(t)
+	repo := &emailOAuthRaceRepo{createErr: ErrServiceUnavailable}
+	svc := newEmailOAuthAutoAuthService(repo, map[string]string{SettingKeyRegistrationEnabled: "true"}, nil)
+	svc.entClient = client
+
+	tokens, user, err := svc.LoginOrRegisterVerifiedEmailOAuth(context.Background(), EmailOAuthIdentityInput{
+		ProviderType: "google", ProviderSubject: "google-create-failed", Email: "failed@example.com", EmailVerified: true,
+	})
+
+	require.ErrorIs(t, err, ErrServiceUnavailable)
+	require.Nil(t, tokens)
+	require.Nil(t, user)
+	require.Equal(t, 1, repo.lookups)
 	identityCount, err := client.AuthIdentity.Query().Count(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, identityCount)
