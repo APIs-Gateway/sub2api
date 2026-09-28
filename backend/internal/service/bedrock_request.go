@@ -655,6 +655,9 @@ func sanitizeBedrockFieldsForBetaTokens(body []byte, betaTokens []string) []byte
 		gjson.GetBytes(body, "fallback_credit_token").Exists() {
 		body, _ = sjson.DeleteBytes(body, "fallback_credit_token")
 	}
+	if !containsBedrockBetaToken(betaTokens, claude.BetaDangerousToolUse) && gjson.GetBytes(body, "safeguards").Exists() {
+		body, _ = sjson.DeleteBytes(body, "safeguards")
+	}
 	return body
 }
 

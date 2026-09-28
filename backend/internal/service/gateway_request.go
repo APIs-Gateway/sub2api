@@ -953,6 +953,11 @@ func sanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 	); deleted {
 		body, changed = b, true
 	}
+	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
+		body, "safeguards", anthropicBetaHeader, claude.BetaDangerousToolUse,
+	); deleted {
+		body, changed = b, true
+	}
 	if b, deleted := stripAnthropicMessageOutputConfigUnlessBeta(body, anthropicBetaHeader); deleted {
 		body, changed = b, true
 	}
