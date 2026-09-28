@@ -317,6 +317,57 @@ func TestOpenAIForward_NativeResponsesLiteToolsRestoreStreamingCall(t *testing.T
 	require.Equal(t, "deepseek-chat", result.BillingModel)
 }
 
+func TestOpenAIForward_NativeResponsesLiteFunctionCarrierAndOfficialPreservation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-chat","stream":false,"input":[
+		{"type":"additional_tools","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"look up"}]}
+	]}`)
+	for _, tc := range []struct {
+		name       string
+		baseURL    string
+		wantLifted bool
+	}{
+		{name: "third-party native Responses", baseURL: "https://api.deepseek.com", wantLifted: true},
+		{name: "official OpenAI default URL", baseURL: "", wantLifted: false},
+		{name: "official OpenAI explicit URL", baseURL: "https://api.openai.com", wantLifted: false},
+		{name: "official OpenAI versioned URL", baseURL: "https://api.openai.com/v1/", wantLifted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			c.Request.Header.Set(responsesLiteHeader, "true")
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp_tools","model":"deepseek-chat","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)),
+			}}
+			svc := openAIClientToolsTestService(upstream)
+			account := &Account{
+				ID:          7662,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "test-key", "base_url": tc.baseURL},
+				Extra:       openAIResponsesSupportedTestExtra(),
+			}
+
+			result, err := svc.Forward(context.Background(), c, account, body)
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			if tc.wantLifted {
+				require.Equal(t, "lookup", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
+				require.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists())
+			} else {
+				require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
+				require.True(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists())
+			}
+		})
+	}
+}
+
 func TestOpenAIPassthroughAPIKeyPreservesCustomToolOutputContentParts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-5.4","stream":false,"tools":[{"type":"custom","name":"exec"}],"input":[{"type":"custom_tool_call_output","call_id":"call_1","output":[{"type":"input_text","text":"result"},{"type":"input_file","file_id":"file_123"}]}]}`)

@@ -3693,10 +3693,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, wsErr
 	}
 
-	// Default HTTP Forward also reaches native Responses API-key upstreams.
-	// Only Lite carriers need the client-tool adapter here: keep existing
-	// top-level custom tools on this non-passthrough path unchanged.
-	if account.IsOpenAIApiKey() && !isOpenAIResponsesCompactPath(c) &&
+	// Default HTTP Forward also reaches third-party native Responses API-key
+	// upstreams. Only Lite carriers need the client-tool adapter here; retain
+	// official OpenAI and requests with only top-level tools as before.
+	if account.IsOpenAIApiKey() && !isOfficialOpenAIBaseURL(account.GetOpenAIBaseURL()) && !isOpenAIResponsesCompactPath(c) &&
 		gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists() {
 		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
 		if adaptErr != nil {
