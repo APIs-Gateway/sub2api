@@ -34,7 +34,7 @@ func TestOpsMetricsCollectorQueryErrorCountsExcludesCountTokens(t *testing.T) {
 	start := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
 
-	mock.ExpectQuery(`(?s)FROM ops_error_logs\s+WHERE created_at >= \$1 AND created_at < \$2\s+AND is_count_tokens = FALSE`).
+	mock.ExpectQuery(`(?s)COUNT\(\*\) FILTER \(WHERE \(COALESCE\(status_code, 0\) >= 400 OR error_type = 'cyber_policy'\)\).*COALESCE\(error_owner, ''\) NOT IN \('client', 'client_via_upstream'\).*FROM ops_error_logs\s+WHERE created_at >= \$1 AND created_at < \$2\s+AND is_count_tokens = FALSE`).
 		WithArgs(start, end).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"error_total",
@@ -56,5 +56,51 @@ func TestOpsMetricsCollectorQueryErrorCountsExcludesCountTokens(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 	mock.ExpectClose()
 	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpsMetricsCollectorQueryUsageCountsExcludesCyberFromSuccessButKeepsTokens(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+
+	collector := &OpsMetricsCollector{db: db}
+	start := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	end := start.Add(time.Minute)
+
+	mock.ExpectQuery(`(?s)COUNT\(\*\) FILTER \(WHERE COALESCE\(request_type, 0\) <> 4\).*SUM\(input_tokens \+ output_tokens \+ cache_creation_tokens \+ cache_read_tokens\).*FROM usage_logs`).
+		WithArgs(start, end).
+		WillReturnRows(sqlmock.NewRows([]string{"success_count", "token_consumed"}).AddRow(int64(2), int64(345)))
+
+	successCount, tokenConsumed, err := collector.queryUsageCounts(context.Background(), start, end)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), successCount)
+	require.Equal(t, int64(345), tokenConsumed)
+	require.Equal(t, "COALESCE(request_type, 0) <> 4", opsMetricsSuccessfulUsagePredicate("request_type"))
+	require.Equal(t, "(COALESCE(status_code, 0) >= 400 OR error_type = 'cyber_policy')", opsMetricsClientVisibleErrorPredicate("status_code", "error_type"))
+	require.NoError(t, mock.ExpectationsWereMet())
+	mock.ExpectClose()
+	require.NoError(t, db.Close())
+}
+
+func TestOpsMetricsCollectorQueryUsageLatencyExcludesCyber(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	collector := &OpsMetricsCollector{db: db}
+	start := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	end := start.Add(time.Minute)
+	columns := []string{"p50", "p90", "p95", "p99", "avg_ms", "max_ms"}
+	mock.ExpectQuery(`(?s)FROM usage_logs\s+WHERE created_at >= \$1 AND created_at < \$2\s+AND COALESCE\(request_type, 0\) <> 4\s+AND duration_ms IS NOT NULL`).
+		WithArgs(start, end).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(100.0, 100.0, 100.0, 100.0, 100.0, int64(100)))
+	mock.ExpectQuery(`(?s)FROM usage_logs\s+WHERE created_at >= \$1 AND created_at < \$2\s+AND COALESCE\(request_type, 0\) <> 4\s+AND first_token_ms IS NOT NULL`).
+		WithArgs(start, end).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(40.0, 40.0, 40.0, 40.0, 40.0, int64(40)))
+
+	duration, ttft, err := collector.queryUsageLatency(context.Background(), start, end)
+	require.NoError(t, err)
+	require.Equal(t, 100, *duration.max)
+	require.Equal(t, 40, *ttft.max)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
