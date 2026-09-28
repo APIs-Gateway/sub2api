@@ -240,3 +240,19 @@ func TestOpenAIWSTurnAccountEligibilityChecksCurrentTurnModelAndGroup(t *testing
 	require.Equal(t, OpenAIWSTurnAccountIneligibleNotSchedulable, reason)
 	require.Error(t, err)
 }
+
+func TestOpenAIWSTurnAccountEligibilityRejectsUnsupportedSecondTurnModel(t *testing.T) {
+	account := &Account{
+		ID: 65, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.1": "provider-model"}},
+	}
+	svc, _ := newOpenAIWSTurnEligibilityTestService(account, nil)
+	ctx := context.Background()
+	reason, err := svc.EnforceOpenAIWSTurnAccountEligibility(ctx, account, nil, "", "gpt-5.1", false)
+	require.Empty(t, reason)
+	require.NoError(t, err)
+	reason, err = svc.EnforceOpenAIWSTurnAccountEligibility(ctx, account, nil, "", "gpt-5.2", false)
+	require.Equal(t, OpenAIWSTurnAccountIneligibleNotSchedulable, reason)
+	require.Error(t, err)
+}
