@@ -92,6 +92,7 @@ func TestEmailOAuthCallbackExistingEmailLogsInWhenInvitationEnabled(t *testing.T
 		SetPasswordHash("hash").
 		SetRole(service.RoleUser).
 		SetStatus(service.StatusActive).
+		SetSignupSource("github").
 		Save(ctx)
 	require.NoError(t, err)
 
@@ -128,6 +129,48 @@ func TestEmailOAuthCallbackExistingEmailLogsInWhenInvitationEnabled(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, 1, identityCount)
 	_ = user
+}
+
+func TestEmailOAuthCallbackDoesNotAutoLinkLocalAccount(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandler(t, false)
+	ctx := context.Background()
+
+	_, err := client.User.Create().
+		SetEmail("victim@example.com").
+		SetUsername("victim").
+		SetPasswordHash("hash").
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		SetSignupSource("email").
+		Save(ctx)
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/google/callback", nil)
+	handler.emailOAuthCallbackWithProfile(c, "google", config.EmailOAuthProviderConfig{
+		Enabled:             true,
+		ClientID:            "google-client",
+		ClientSecret:        "google-secret",
+		RedirectURL:         "https://app.example/api/v1/auth/oauth/google/callback",
+		FrontendRedirectURL: "/auth/oauth/callback",
+	}, "/auth/oauth/callback", "/dashboard", &emailOAuthProfile{
+		Subject:       "google-victim",
+		Email:         "victim@example.com",
+		EmailVerified: true,
+		Username:      "victim",
+	})
+
+	require.Equal(t, http.StatusFound, recorder.Code)
+	location := recorder.Header().Get("Location")
+	require.NotContains(t, location, "access_token=")
+	require.Contains(t, location, "OAUTH_EXISTING_ACCOUNT_BIND_REQUIRED")
+	identityCount, err := client.AuthIdentity.Query().Where(
+		authidentity.ProviderTypeEQ("google"),
+		authidentity.ProviderSubjectEQ("google-victim"),
+	).Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, identityCount)
 }
 
 func TestEmailOAuthCallbackCreatesPasswordRegistrationSessionForNewEmail(t *testing.T) {

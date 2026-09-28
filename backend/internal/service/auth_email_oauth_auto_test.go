@@ -87,3 +87,59 @@ func TestEmailOAuthAuto_SnapshotsPlatformQuotaDefaults(t *testing.T) {
 	require.NotNil(t, geminiRecord.MonthlyLimitUSD)
 	require.InDelta(t, 100.0, *geminiRecord.MonthlyLimitUSD, 0.0001)
 }
+
+func TestEmailOAuthCanAutoLinkExistingUser(t *testing.T) {
+	require.False(t, emailOAuthCanAutoLinkExistingUser(nil))
+	for _, source := range []string{"", "email", "oidc", "linuxdo"} {
+		require.False(t, emailOAuthCanAutoLinkExistingUser(&User{SignupSource: source}), source)
+	}
+	for _, source := range []string{"google", "GitHub"} {
+		require.True(t, emailOAuthCanAutoLinkExistingUser(&User{SignupSource: source}), source)
+	}
+}
+
+func TestCreateEmailOAuthUserReportsConcurrentExistingAccount(t *testing.T) {
+	repo := &userRepoStub{createErr: ErrEmailExists}
+	svc := newEmailOAuthAutoAuthService(repo, map[string]string{SettingKeyRegistrationEnabled: "true"}, nil)
+	user, err := svc.createEmailOAuthUser(context.Background(), "raced@example.com", "raced", "google", "", "")
+	require.ErrorIs(t, err, errEmailOAuthRegistrationRace)
+	require.Nil(t, user)
+	require.Empty(t, repo.created)
+}
+
+type emailOAuthRaceRepo struct {
+	UserRepository
+	existing *User
+	lookups  int
+}
+
+func (r *emailOAuthRaceRepo) GetByEmail(context.Context, string) (*User, error) {
+	r.lookups++
+	if r.lookups == 1 {
+		return nil, ErrUserNotFound
+	}
+	return r.existing, nil
+}
+
+func (r *emailOAuthRaceRepo) Create(context.Context, *User) error {
+	return ErrEmailExists
+}
+
+func TestEmailOAuthConcurrentLocalRegistrationCannotBind(t *testing.T) {
+	_, client := newAuthPendingIdentityServiceTestClient(t)
+	repo := &emailOAuthRaceRepo{existing: &User{ID: 42, Email: "raced@example.com", Status: StatusActive, SignupSource: "email"}}
+	svc := newEmailOAuthAutoAuthService(repo, map[string]string{SettingKeyRegistrationEnabled: "true"}, nil)
+	svc.entClient = client
+
+	tokens, user, err := svc.LoginOrRegisterVerifiedEmailOAuth(context.Background(), EmailOAuthIdentityInput{
+		ProviderType: "google", ProviderSubject: "google-raced", Email: "raced@example.com", EmailVerified: true,
+	})
+
+	require.ErrorIs(t, err, ErrOAuthExistingAccountBindRequired)
+	require.Nil(t, tokens)
+	require.Nil(t, user)
+	require.Equal(t, 2, repo.lookups)
+	identityCount, err := client.AuthIdentity.Query().Count(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, identityCount)
+}
