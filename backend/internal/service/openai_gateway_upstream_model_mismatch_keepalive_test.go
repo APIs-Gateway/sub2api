@@ -49,6 +49,33 @@ func (b *keepaliveGatedBody) Read(p []byte) (int, error) {
 
 func (b *keepaliveGatedBody) Close() error { return nil }
 
+// roleThenGateBody delivers a complete role-only preamble, then waits for the
+// gateway's first flush before releasing semantic content.
+type roleThenGateBody struct {
+	first  []byte
+	later  io.Reader
+	gate   <-chan struct{}
+	opened bool
+}
+
+func (b *roleThenGateBody) Read(p []byte) (int, error) {
+	if len(b.first) > 0 {
+		n := copy(p, b.first)
+		b.first = b.first[n:]
+		return n, nil
+	}
+	if !b.opened {
+		select {
+		case <-b.gate:
+		case <-time.After(openAIChatPreambleMaxWait + 3*time.Second):
+		}
+		b.opened = true
+	}
+	return b.later.Read(p)
+}
+
+func (b *roleThenGateBody) Close() error { return nil }
+
 // installKeepaliveGate 把 c.Writer 换成首次 Flush 即发信号的包装，并返回门控后的上游 body。
 func installKeepaliveGate(c *gin.Context, body string) io.ReadCloser {
 	flushed := make(chan struct{})
@@ -161,6 +188,65 @@ func TestUpstreamModelMismatch_ChatPreambleDeadlinePreservesFailover(t *testing.
 
 	require.NotNil(t, result)
 	requireUpstreamModelMismatchKeepaliveFailover(t, c, err, rec.Body.String(), upstreamModelMismatchKeepaliveComment)
+}
+
+func TestChatPreambleDeadlineReleasesValidatedRoleFrame(t *testing.T) {
+	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", nil)
+	flushed := make(chan struct{})
+	c.Writer = &compactKeepaliveSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
+	first := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_role","model":"gpt-5.5","status":"in_progress","output":[]}}`,
+		"",
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_role","role":"assistant","status":"in_progress","content":[]}}`,
+		"",
+	}, "\n") + "\n"
+	later := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_role","delta":"after wait"}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_role","model":"gpt-5.5","status":"completed","usage":{"input_tokens":2,"output_tokens":1}}}`,
+		"",
+	}, "\n")
+	resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_chat_role_deadline", "")
+	resp.Body = &roleThenGateBody{first: []byte(first), later: strings.NewReader(later), gate: flushed}
+	cfg := upstreamModelMismatchKeepaliveConfig()
+	cfg.Gateway.StreamKeepaliveInterval = 0
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	result, err := svc.handleChatStreamingResponse(resp, c, upstreamModelMismatchTestAccount(),
+		"gpt-5.5", "gpt-5.5", "gpt-5.5", time.Now(), 0)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, strings.HasPrefix(rec.Body.String(), "data: "), "validated role should be released at the deadline")
+	require.Contains(t, rec.Body.String(), `"role":"assistant"`)
+	require.Contains(t, rec.Body.String(), "after wait")
+}
+
+func TestRawChatPreambleDeadlineReleasesValidatedRoleFrame(t *testing.T) {
+	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", nil)
+	flushed := make(chan struct{})
+	c.Writer = &compactKeepaliveSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
+	first := `data: {"model":"gpt-5.5","choices":[{"index":0,"delta":{"role":"assistant"}}]}` + "\n\n"
+	later := strings.Join([]string{
+		`data: {"choices":[{"index":0,"delta":{"content":"after wait"}}]}`,
+		"",
+		`data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_raw_role_deadline", "")
+	resp.Body = &roleThenGateBody{first: []byte(first), later: strings.NewReader(later), gate: flushed}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	result, err := svc.streamRawChatCompletions(c, resp, upstreamModelMismatchTestAccount(),
+		"gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, strings.HasPrefix(rec.Body.String(), "data: "), "validated raw role should be released at the deadline")
+	require.Contains(t, rec.Body.String(), `"role":"assistant"`)
+	require.Contains(t, rec.Body.String(), "after wait")
 }
 
 // 没写过心跳时：零字节、普通切号语义

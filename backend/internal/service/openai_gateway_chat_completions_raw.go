@@ -518,14 +518,18 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			goto streamDone
 		case <-preambleCh:
 			if !clientOutputStarted && !clientDisconnected && streamError == nil {
-				writeStreamHeaders()
-				n, err := c.Writer.WriteString(":\n\n")
-				if err != nil {
-					clientDisconnected = true
+				if upstreamModelChecked && len(pendingLines) > 0 {
+					flushPending()
 				} else {
-					addOpenAIStreamKeepaliveBytes(c, n)
-					c.Writer.Flush()
-					preambleTimer.Reset(openAIChatPreambleMaxWait)
+					writeStreamHeaders()
+					n, err := c.Writer.WriteString(":\n\n")
+					if err != nil {
+						clientDisconnected = true
+					} else {
+						addOpenAIStreamKeepaliveBytes(c, n)
+						c.Writer.Flush()
+						preambleTimer.Reset(openAIChatPreambleMaxWait)
+					}
 				}
 			}
 			if clientOutputStarted || clientDisconnected || streamError != nil {

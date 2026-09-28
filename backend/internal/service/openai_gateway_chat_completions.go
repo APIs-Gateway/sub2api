@@ -1024,14 +1024,18 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		select {
 		case <-preambleCh:
 			if !clientOutputStarted && !clientDisconnected {
-				writeStreamHeaders()
-				n, err := fmt.Fprint(c.Writer, ":\n\n")
-				if err != nil {
-					clientDisconnected = true
+				if upstreamModelChecked && len(pendingSSE) > 0 {
+					flushPendingSSE()
 				} else {
-					addOpenAIStreamKeepaliveBytes(c, n)
-					c.Writer.Flush()
-					preambleTimer.Reset(openAIChatPreambleMaxWait)
+					writeStreamHeaders()
+					n, err := fmt.Fprint(c.Writer, ":\n\n")
+					if err != nil {
+						clientDisconnected = true
+					} else {
+						addOpenAIStreamKeepaliveBytes(c, n)
+						c.Writer.Flush()
+						preambleTimer.Reset(openAIChatPreambleMaxWait)
+					}
 				}
 			}
 			if clientOutputStarted || clientDisconnected {
