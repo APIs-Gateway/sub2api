@@ -92,15 +92,12 @@ func (s *EmailCacheSuite) TestGetVerificationCode_JSONCorruption() {
 func (s *EmailCacheSuite) TestLegacyAttemptsReserveAgainstStoredJSONOnRedis() {
 	key := "invite:legacy-atomic@example.com"
 	require.NoError(s.T(), s.rdb.Set(s.ctx, verifyCodeKey(key), `{"Code":"123456","Attempts":4}`, time.Minute).Err())
-	n, err := s.cache.IncrVerificationCodeAttempts(s.ctx, key)
+	result, err := s.cache.VerifyVerificationCode(s.ctx, key, "wrong", 5)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), 5, n)
-	n, err = s.cache.IncrVerificationCodeAttempts(s.ctx, key)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), 6, n)
+	require.Equal(s.T(), service.VerificationCodeMaxed, result)
 	data, err := s.cache.GetVerificationCode(s.ctx, key)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), 6, data.Attempts)
+	require.Equal(s.T(), 5, data.Attempts)
 }
 
 func (s *EmailCacheSuite) TestResetTokenAtomicConsumeOnRedis() {

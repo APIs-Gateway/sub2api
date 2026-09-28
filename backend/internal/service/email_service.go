@@ -31,22 +31,21 @@ var (
 
 	// Password reset errors
 	ErrInvalidResetToken = infraerrors.BadRequest("INVALID_RESET_TOKEN", "invalid or expired password reset token")
-	errPasswordResetEmailCooldown = errors.New("password reset email already in progress or cooling down")
 )
+
+var errPasswordResetEmailCooldown = errors.New("password reset email already in progress or cooling down")
 
 // EmailCache defines cache operations for email service
 type EmailCache interface {
 	GetVerificationCode(ctx context.Context, email string) (*VerificationCodeData, error)
 	SetVerificationCode(ctx context.Context, email string, data *VerificationCodeData, ttl time.Duration) error
 	DeleteVerificationCode(ctx context.Context, email string) error
-	IncrVerificationCodeAttempts(ctx context.Context, email string) (int, error)
 	VerifyVerificationCode(ctx context.Context, email, code string, maxAttempts int) (VerificationCodeResult, error)
 
 	// Notify email verification code methods
 	GetNotifyVerifyCode(ctx context.Context, email string) (*VerificationCodeData, error)
 	SetNotifyVerifyCode(ctx context.Context, email string, data *VerificationCodeData, ttl time.Duration) error
 	DeleteNotifyVerifyCode(ctx context.Context, email string) error
-	IncrNotifyVerifyCodeAttempts(ctx context.Context, email string) (int, error)
 	VerifyNotifyVerifyCode(ctx context.Context, email, code string, maxAttempts int) (VerificationCodeResult, error)
 
 	// Password reset token methods

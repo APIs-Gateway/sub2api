@@ -209,19 +209,6 @@ func (s *legacyEmailCacheStub) GetNotifyCodeUserRate(context.Context, int64) (in
 	panic("unexpected GetNotifyCodeUserRate call")
 }
 
-func (s *legacyEmailCacheStub) IncrVerificationCodeAttempts(_ context.Context, key string) (int, error) {
-	data, ok := s.codes[key]
-	if !ok {
-		return 0, errors.New("verification code not found")
-	}
-	data.Attempts++
-	return data.Attempts, nil
-}
-
-func (s *legacyEmailCacheStub) IncrNotifyVerifyCodeAttempts(context.Context, string) (int, error) {
-	panic("unexpected IncrNotifyVerifyCodeAttempts call")
-}
-
 func (s *legacyEmailCacheStub) ConsumePasswordResetToken(context.Context, string, string) (bool, error) {
 	panic("unexpected ConsumePasswordResetToken call")
 }

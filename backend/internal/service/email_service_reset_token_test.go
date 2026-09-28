@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -15,11 +16,16 @@ import (
 
 type resetTokenCacheStub struct {
 	emailCacheStub
-	stored        *PasswordResetTokenData
-	pending       *PasswordResetTokenData
-	consumedHash  string
-	cooldownOwner string
-	onStage       func()
+	stored          *PasswordResetTokenData
+	pending         *PasswordResetTokenData
+	consumedHash    string
+	cooldownOwner   string
+	onStage         func()
+	reserveErr      error
+	stageErr        error
+	stageRejected   bool
+	promoteErr      error
+	promoteRejected bool
 }
 
 func (s *resetTokenCacheStub) GetPasswordResetToken(context.Context, string) (*PasswordResetTokenData, error) {
@@ -41,6 +47,12 @@ func (s *resetTokenCacheStub) ConsumePasswordResetToken(_ context.Context, _ str
 }
 
 func (s *resetTokenCacheStub) StagePasswordResetToken(_ context.Context, _, owner string, data *PasswordResetTokenData, _ time.Duration) (bool, error) {
+	if s.stageErr != nil {
+		return false, s.stageErr
+	}
+	if s.stageRejected {
+		return false, nil
+	}
 	if s.cooldownOwner != owner {
 		return false, nil
 	}
@@ -52,6 +64,12 @@ func (s *resetTokenCacheStub) StagePasswordResetToken(_ context.Context, _, owne
 }
 
 func (s *resetTokenCacheStub) PromotePasswordResetToken(_ context.Context, _, owner, tokenHash string, _ time.Duration) (bool, error) {
+	if s.promoteErr != nil {
+		return false, s.promoteErr
+	}
+	if s.promoteRejected {
+		return false, nil
+	}
 	if s.cooldownOwner != owner || s.pending == nil || s.pending.Token != tokenHash {
 		return false, nil
 	}
@@ -68,6 +86,9 @@ func (s *resetTokenCacheStub) DiscardPendingPasswordResetToken(_ context.Context
 }
 
 func (s *resetTokenCacheStub) ReservePasswordResetEmailCooldown(_ context.Context, _, owner string, _ time.Duration) (bool, error) {
+	if s.reserveErr != nil {
+		return false, s.reserveErr
+	}
 	if s.cooldownOwner != "" {
 		return false, nil
 	}
@@ -148,11 +169,11 @@ func TestSendPasswordResetEmail_SuccessPromotesOnlyAfterDelivery(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, false)
 	cache := &resetTokenCacheStub{stored: &PasswordResetTokenData{Token: hashPasswordResetToken("previous")}}
 	settings := &settingRepoStub{values: map[string]string{
-		SettingKeySMTPHost: "127.0.0.1",
-		SettingKeySMTPPort: strconv.Itoa(port),
+		SettingKeySMTPHost:     "127.0.0.1",
+		SettingKeySMTPPort:     strconv.Itoa(port),
 		SettingKeySMTPUsername: "user",
 		SettingKeySMTPPassword: "pass",
-		SettingKeySMTPFrom: "noreply@example.com",
+		SettingKeySMTPFrom:     "noreply@example.com",
 	}}
 	svc := NewEmailService(settings, cache)
 	cache.onStage = func() {
@@ -179,6 +200,54 @@ func TestSendPasswordResetEmailWithCooldown_FailedDeliveryCanRetry(t *testing.T)
 	}
 }
 
+func TestSendPasswordResetEmail_ReservationAndStagingFailuresKeepActiveLink(t *testing.T) {
+	previous := &PasswordResetTokenData{Token: hashPasswordResetToken("previous")}
+	for _, tc := range []struct {
+		name  string
+		cache *resetTokenCacheStub
+	}{
+		{"reserve error", &resetTokenCacheStub{stored: previous, reserveErr: errors.New("redis unavailable")}},
+		{"stage error", &resetTokenCacheStub{stored: previous, stageErr: errors.New("redis unavailable")}},
+		{"lost owner before stage", &resetTokenCacheStub{stored: previous, stageRejected: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewEmailService(&settingRepoStub{}, tc.cache)
+			require.Error(t, svc.SendPasswordResetEmail(context.Background(), "a@example.com", "Site", "https://example.com/reset"))
+			require.Equal(t, previous, tc.cache.stored)
+			require.Nil(t, tc.cache.pending)
+			require.Empty(t, tc.cache.cooldownOwner)
+		})
+	}
+}
+
+func TestSendPasswordResetEmail_PromotionFailureFailsClosed(t *testing.T) {
+	_, port := startFakeSMTPServer(t, false, false)
+	settings := &settingRepoStub{values: map[string]string{
+		SettingKeySMTPHost:     "127.0.0.1",
+		SettingKeySMTPPort:     strconv.Itoa(port),
+		SettingKeySMTPUsername: "user",
+		SettingKeySMTPPassword: "pass",
+		SettingKeySMTPFrom:     "noreply@example.com",
+	}}
+	for _, tc := range []struct {
+		name  string
+		cache *resetTokenCacheStub
+	}{
+		{"owner expired", &resetTokenCacheStub{promoteRejected: true}},
+		{"redis error", &resetTokenCacheStub{promoteErr: errors.New("redis unavailable")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := &PasswordResetTokenData{Token: hashPasswordResetToken("previous")}
+			tc.cache.stored = previous
+			svc := NewEmailService(settings, tc.cache)
+			require.Error(t, svc.SendPasswordResetEmail(context.Background(), "a@example.com", "Site", "https://example.com/reset"))
+			require.Equal(t, previous, tc.cache.stored)
+			require.Nil(t, tc.cache.pending)
+			require.Empty(t, tc.cache.cooldownOwner)
+		})
+	}
+}
+
 type notifyAttemptsCacheStub struct {
 	EmailCache
 	data     *VerificationCodeData
@@ -187,11 +256,6 @@ type notifyAttemptsCacheStub struct {
 
 func (s *notifyAttemptsCacheStub) GetNotifyVerifyCode(context.Context, string) (*VerificationCodeData, error) {
 	return s.data, nil
-}
-
-func (s *notifyAttemptsCacheStub) IncrNotifyVerifyCodeAttempts(context.Context, string) (int, error) {
-	s.attempts++
-	return s.attempts, nil
 }
 
 func (s *notifyAttemptsCacheStub) VerifyNotifyVerifyCode(_ context.Context, _, code string, limit int) (VerificationCodeResult, error) {

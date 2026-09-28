@@ -24,32 +24,6 @@ const (
 	attemptsKeySuffix = ":attempts"
 )
 
-// incrAttemptsScript atomically reserves a verification attempt for an existing
-// code. A code written before this counter was introduced may already contain
-// failed attempts in its JSON payload, so never restart its budget at zero.
-// KEYS[1] = code key, KEYS[2] = attempts key. Returns -1 when the code is missing.
-var incrAttemptsScript = redis.NewScript(`
-local code = redis.call('GET', KEYS[1])
-if not code then
-  return -1
-end
-local ok, data = pcall(cjson.decode, code)
-if not ok or type(data) ~= 'table' then
-  return redis.error_reply('invalid verification code payload')
-end
-local legacy = tonumber(data['Attempts']) or 0
-local current = tonumber(redis.call('GET', KEYS[2])) or 0
-if legacy > current then
-  redis.call('SET', KEYS[2], legacy)
-end
-local n = redis.call('INCR', KEYS[2])
-local ttl = redis.call('PTTL', KEYS[1])
-if ttl >= 0 then
-  redis.call('PEXPIRE', KEYS[2], math.max(ttl, 1))
-end
-return n
-`)
-
 // consumeResetTokenScript atomically compares the stored token hash and deletes it.
 // KEYS[1] = reset key, ARGV[1] = expected token hash. Returns 1 on success, 0 otherwise.
 var consumeResetTokenScript = redis.NewScript(`
@@ -204,17 +178,6 @@ func (c *emailCache) setCode(ctx context.Context, key string, data *service.Veri
 	return err
 }
 
-func (c *emailCache) incrCodeAttempts(ctx context.Context, key string) (int, error) {
-	n, err := incrAttemptsScript.Run(ctx, c.rdb, []string{key, key + attemptsKeySuffix}).Int()
-	if err != nil {
-		return 0, err
-	}
-	if n < 0 {
-		return 0, redis.Nil
-	}
-	return n, nil
-}
-
 func (c *emailCache) deleteCode(ctx context.Context, key string) error {
 	return c.rdb.Del(ctx, key, key+attemptsKeySuffix).Err()
 }
@@ -225,10 +188,6 @@ func (c *emailCache) GetVerificationCode(ctx context.Context, email string) (*se
 
 func (c *emailCache) SetVerificationCode(ctx context.Context, email string, data *service.VerificationCodeData, ttl time.Duration) error {
 	return c.setCode(ctx, verifyCodeKey(email), data, ttl)
-}
-
-func (c *emailCache) IncrVerificationCodeAttempts(ctx context.Context, email string) (int, error) {
-	return c.incrCodeAttempts(ctx, verifyCodeKey(email))
 }
 
 func (c *emailCache) DeleteVerificationCode(ctx context.Context, email string) error {
@@ -330,10 +289,6 @@ func (c *emailCache) GetNotifyVerifyCode(ctx context.Context, email string) (*se
 
 func (c *emailCache) SetNotifyVerifyCode(ctx context.Context, email string, data *service.VerificationCodeData, ttl time.Duration) error {
 	return c.setCode(ctx, notifyVerifyKey(email), data, ttl)
-}
-
-func (c *emailCache) IncrNotifyVerifyCodeAttempts(ctx context.Context, email string) (int, error) {
-	return c.incrCodeAttempts(ctx, notifyVerifyKey(email))
 }
 
 func (c *emailCache) VerifyNotifyVerifyCode(ctx context.Context, email, code string, maxAttempts int) (service.VerificationCodeResult, error) {

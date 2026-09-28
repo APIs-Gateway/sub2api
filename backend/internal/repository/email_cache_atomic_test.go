@@ -208,9 +208,9 @@ func TestEmailCache_AttemptsResetOnNewCodeAndTTLFollowsCode(t *testing.T) {
 	email := "User@Example.com"
 
 	require.NoError(t, cache.SetVerificationCode(ctx, email, &service.VerificationCodeData{Code: "1"}, time.Minute))
-	n, err := cache.IncrVerificationCodeAttempts(ctx, email)
+	result, err := cache.VerifyVerificationCode(ctx, email, "wrong", 5)
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	require.Equal(t, service.VerificationCodeInvalid, result)
 	require.Greater(t, mr.TTL(verifyCodeKey(email)+attemptsKeySuffix), time.Duration(0))
 
 	require.NoError(t, cache.SetVerificationCode(ctx, email, &service.VerificationCodeData{Code: "2"}, time.Minute))
@@ -219,8 +219,9 @@ func TestEmailCache_AttemptsResetOnNewCodeAndTTLFollowsCode(t *testing.T) {
 	require.Equal(t, 0, data.Attempts)
 
 	require.NoError(t, cache.DeleteVerificationCode(ctx, email))
-	_, err = cache.IncrVerificationCodeAttempts(ctx, email)
-	require.Error(t, err)
+	result, err = cache.VerifyVerificationCode(ctx, email, "2", 5)
+	require.NoError(t, err)
+	require.Equal(t, service.VerificationCodeInvalid, result)
 	require.False(t, mr.Exists(verifyCodeKey(email)+attemptsKeySuffix))
 }
 
@@ -247,12 +248,15 @@ func TestEmailCache_NotifyAttemptsReserveAgainstLegacyCounter(t *testing.T) {
 	ctx := context.Background()
 	email := "notify@example.com"
 	require.NoError(t, rdb.Set(ctx, notifyVerifyKey(email), `{"Code":"123456","Attempts":4}`, time.Minute).Err())
-	n, err := cache.IncrNotifyVerifyCodeAttempts(ctx, email)
+	result, err := cache.VerifyNotifyVerifyCode(ctx, email, "wrong", 5)
 	require.NoError(t, err)
-	require.Equal(t, 5, n)
-	n, err = cache.IncrNotifyVerifyCodeAttempts(ctx, email)
+	require.Equal(t, service.VerificationCodeMaxed, result)
+	data, err := cache.GetNotifyVerifyCode(ctx, email)
 	require.NoError(t, err)
-	require.Equal(t, 6, n)
+	require.Equal(t, 5, data.Attempts)
+	result, err = cache.VerifyNotifyVerifyCode(ctx, email, "123456", 5)
+	require.NoError(t, err)
+	require.Equal(t, service.VerificationCodeMaxed, result)
 }
 
 func TestEmailCache_PasswordResetTokenHashedAndSingleUse(t *testing.T) {
