@@ -499,6 +499,37 @@ func TestOpenAIForward_NativeResponsesLiteIncompleteSSEToJSONRestoresCustomCall(
 	}
 }
 
+func TestOpenAIForward_NativeResponsesLiteIncompleteSSEToJSONHonorsLineLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-chat","stream":false,"input":[{"type":"additional_tools","tools":[{"type":"custom","name":"exec"}]}]}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set(responsesLiteHeader, "true")
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	sse := `data: {"type":"response.incomplete","response":{"id":"resp_large","model":"deepseek-chat","status":"incomplete","detail":"` +
+		strings.Repeat("x", 70*1024) + `"}}` + "\n\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	svc := openAIClientToolsTestService(upstream)
+	svc.cfg.Gateway.MaxLineSize = 65 * 1024
+	account := &Account{
+		ID:          7666,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "test-key", "base_url": "https://api.deepseek.com"},
+		Extra:       openAIResponsesSupportedTestExtra(),
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "token too long")
+	require.Empty(t, recorder.Body.String(), "an invalid restored SSE response must not be partially sent")
+}
+
 func TestOpenAIForward_NativeResponsesLiteRejectsMalformedCarrierBeforeUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"deepseek-chat","stream":false,"input":[{"type":"additional_tools","tools":"invalid"}]}`)
