@@ -22,6 +22,17 @@ type ModelDowngradeCounterCache interface {
 // gateway selector before a pool member can count as an alternate route.
 type ModelDowngradeCandidateFilter func(context.Context, *Account, *int64) bool
 
+type modelDowngradeSelectionModelContextKey struct{}
+
+// WithModelDowngradeSelectionModel records the model used by the handler's
+// account selector without changing existing forwarding and rate-limit keys.
+func WithModelDowngradeSelectionModel(ctx context.Context, model string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, modelDowngradeSelectionModelContextKey{}, model)
+}
+
 type modelDowngradeBlocker interface {
 	TryBlockDowngradedModel(context.Context, int64, string, string, time.Time, float64, bool, ModelDowngradeCandidateFilter) (bool, error)
 }
@@ -123,6 +134,9 @@ func (s *OpenAIGatewayService) modelDowngradeCandidateFilter(ctx context.Context
 		if strings.TrimSpace(forward.model) != "" {
 			selectionModel = forward.model
 		}
+	}
+	if selected, ok := ctx.Value(modelDowngradeSelectionModelContextKey{}).(string); ok && strings.TrimSpace(selected) != "" {
+		selectionModel = selected
 	}
 	return func(ctx context.Context, candidate *Account, groupID *int64) bool {
 		if !isOpenAICompatibleAccountEligibleForRequest(ctx, candidate, PlatformOpenAI, selectionModel, requireCompact, capability) ||

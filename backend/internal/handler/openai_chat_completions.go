@@ -101,7 +101,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
-	c.Request = c.Request.WithContext(service.WithOpenAIForwardModel(c.Request.Context(), forwardModel, false))
+	c.Request = c.Request.WithContext(service.WithModelDowngradeSelectionModel(c.Request.Context(), forwardModel))
 
 	if h.errorPassthroughService != nil {
 		service.BindErrorPassthroughService(c, h.errorPassthroughService)

@@ -136,7 +136,15 @@ func TestModelDowngradeCandidateRequiresResponsesCapability(t *testing.T) {
 }
 
 func TestModelDowngradeCandidateUsesSelectorModelAfterChannelAlias(t *testing.T) {
-	ctx := WithOpenAIForwardModel(context.Background(), "gpt-6-astra-channel", false)
+	ctx := WithModelDowngradeSelectionModel(context.Background(), "gpt-6-astra-channel")
+	_, hasForwardModel := openAIForwardModelFromContext(ctx)
+	require.False(t, hasForwardModel, "guard metadata must not change forwarding or cooldown model keys")
+	reset := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	limited := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Extra: map[string]any{"openai_passthrough": true, "openai_responses_supported": true,
+			"model_rate_limits": map[string]any{"gpt-6-astra-channel": map[string]any{"rate_limit_reset_at": reset}}}}
+	require.False(t, limited.isModelRateLimitedWithContext(ctx, "gpt-6-astra"), "selector metadata cannot change existing cooldown lookup")
+	require.True(t, limited.isModelRateLimitedWithContext(WithOpenAIForwardModel(ctx, "gpt-6-astra-channel", false), "gpt-6-astra"))
 	svc := &OpenAIGatewayService{}
 	filter := svc.modelDowngradeCandidateFilter(ctx, "gpt-6-astra", "/v1/chat/completions", OpenAIUpstreamTransportAny)
 	candidate := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,

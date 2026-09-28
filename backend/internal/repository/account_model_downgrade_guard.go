@@ -234,6 +234,13 @@ func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx co
 		}
 	}
 	for _, groupID := range groupIDs {
+		// Group privacy requirements are part of candidate eligibility. Hold the
+		// group row stable until the guard decision commits as well.
+		if err := lockModelDowngradePool(ctx, tx, `
+			SELECT id FROM groups WHERE id = $1 FOR UPDATE
+		`, groupID); err != nil {
+			return false, err
+		}
 		if err := lockModelDowngradePool(ctx, tx, `
 			SELECT a.id FROM accounts a
 			JOIN account_groups ag ON ag.account_id = a.id
