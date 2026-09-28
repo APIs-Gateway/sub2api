@@ -804,6 +804,28 @@ func TestStreamRawChatCompletions_LargeNormalChunkDoesNotHitPreambleLimit(t *tes
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+func TestStreamRawChatCompletions_CommentStormIsBoundedBeforeModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	var upstream strings.Builder
+	comment := ":" + strings.Repeat("x", 256) + "\n\n"
+	for range 1100 {
+		upstream.WriteString(comment)
+	}
+	upstream.WriteString(`data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}` + "\n\n")
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(upstream.String()))}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+
+	require.ErrorContains(t, err, "preamble exceeded")
+	require.NotNil(t, result)
+	require.Equal(t, 7, result.Usage.InputTokens, "usage after the bounded preamble still reaches billing")
+	require.Empty(t, rec.Body.String(), "unvalidated comments must not be released as partial SSE")
+}
+
 type rawChatErrorThenHangBody struct {
 	payload []byte
 	sent    bool

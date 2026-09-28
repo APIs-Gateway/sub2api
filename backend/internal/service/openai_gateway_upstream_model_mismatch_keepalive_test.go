@@ -68,6 +68,7 @@ func (b *roleThenGateBody) Read(p []byte) (int, error) {
 		select {
 		case <-b.gate:
 		case <-time.After(openAIChatPreambleMaxWait + 3*time.Second):
+			return 0, context.DeadlineExceeded
 		}
 		b.opened = true
 	}

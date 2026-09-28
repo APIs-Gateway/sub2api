@@ -404,7 +404,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 					elapsed := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &elapsed
 				}
-				if !upstreamModelChecked {
+				if !upstreamModelChecked && streamError == nil {
 					if got := extractUpstreamResponseModel(payloadBytes); got != "" {
 						upstreamModelChecked = true
 						if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
