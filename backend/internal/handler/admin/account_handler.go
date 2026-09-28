@@ -11,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -2085,8 +2086,47 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle Antigravity accounts: return Claude + Gemini models
 	if account.Platform == service.PlatformAntigravity {
-		// 直接复用 antigravity.DefaultModels()，与 /v1/models 端点保持同步
-		response.Success(c, antigravity.DefaultModels())
+		models := antigravity.DefaultModels()
+		// A configured mapping restricts scheduling and the account test request.
+		// The test picker must not offer built-in models that this account rejects.
+		// Without an explicit mapping, retain the legacy full catalog.
+		rawMapping, _ := account.Credentials["model_mapping"].(map[string]any)
+		hasExplicitMapping := false
+		for modelID, target := range rawMapping {
+			mappedID, ok := target.(string)
+			if modelID != "" && ok && mappedID != "" {
+				hasExplicitMapping = true
+				break
+			}
+		}
+		if !hasExplicitMapping {
+			response.Success(c, models)
+			return
+		}
+
+		available := make([]antigravity.ClaudeModel, 0, len(models))
+		seen := make(map[string]bool, len(models))
+		for _, model := range models {
+			if account.IsModelSupported(model.ID) {
+				available = append(available, model)
+				seen[model.ID] = true
+			}
+		}
+		// Effective mapping also contains the fork's implicit passthroughs.
+		// Include exact custom aliases, but never expose wildcard patterns as IDs.
+		var aliases []string
+		for modelID := range account.GetModelMapping() {
+			if modelID != "" && !strings.Contains(modelID, "*") && !seen[modelID] && account.IsModelSupported(modelID) {
+				aliases = append(aliases, modelID)
+			}
+		}
+		sort.Strings(aliases)
+		for _, modelID := range aliases {
+			available = append(available, antigravity.ClaudeModel{
+				ID: modelID, Type: "model", DisplayName: modelID,
+			})
+		}
+		response.Success(c, available)
 		return
 	}
 

@@ -177,6 +177,87 @@ func TestAccountHandlerGetAvailableModels_GeminiGoogleOneUsesConservativeCatalog
 	require.NotContains(t, ids, "gemini-2.5-flash-image")
 }
 
+func TestAccountHandlerGetAvailableModels_AntigravityMappingRestrictsTestPicker(t *testing.T) {
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       46,
+			Name:     "antigravity-mapped",
+			Platform: service.PlatformAntigravity,
+			Type:     service.AccountTypeOAuth,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"model_mapping": map[string]any{
+					"claude-sonnet-4-6": "claude-sonnet-4-6",
+					"custom-sonnet":     "claude-sonnet-4-6",
+				},
+			},
+		},
+	}
+	router := setupAvailableModelsRouter(svc)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/46/models", nil)
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Data []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	byID := make(map[string]string, len(resp.Data))
+	for _, model := range resp.Data {
+		byID[model.ID] = model.DisplayName
+	}
+	require.Equal(t, "Claude Sonnet 4.6", byID["claude-sonnet-4-6"])
+	require.Equal(t, "custom-sonnet", byID["custom-sonnet"])
+	require.Contains(t, byID, "gemini-3.6-flash", "implicit Antigravity passthrough remains selectable")
+	require.NotContains(t, byID, "claude-opus-4-6", "unmapped default must not be offered")
+}
+
+func TestAccountHandlerGetAvailableModels_AntigravityWildcardAndDefaultCatalog(t *testing.T) {
+	account := service.Account{
+		ID:       47,
+		Name:     "antigravity-default",
+		Platform: service.PlatformAntigravity,
+		Type:     service.AccountTypeOAuth,
+		Status:   service.StatusActive,
+	}
+	svc := &availableModelsAdminService{stubAdminService: newStubAdminService(), account: account}
+	router := setupAvailableModelsRouter(svc)
+	requestModels := func() []string {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/47/models", nil)
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var resp struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		ids := make([]string, 0, len(resp.Data))
+		for _, model := range resp.Data {
+			ids = append(ids, model.ID)
+		}
+		return ids
+	}
+
+	defaults := requestModels()
+	require.Contains(t, defaults, "claude-opus-4-6")
+	account.Credentials = map[string]any{
+		"model_mapping": map[string]any{"claude-sonnet-*": "claude-sonnet-4-6"},
+	}
+	svc.account = account
+	mapped := requestModels()
+	require.Contains(t, mapped, "claude-sonnet-4-6")
+	require.Contains(t, mapped, "gemini-3.6-flash")
+	require.NotContains(t, mapped, "claude-opus-4-6")
+	require.NotContains(t, mapped, "claude-sonnet-*")
+}
+
 func TestAccountHandlerSyncUpstreamModels_ConfigErrorReturnsBadRequest(t *testing.T) {
 	svc := &availableModelsAdminService{
 		stubAdminService: newStubAdminService(),
