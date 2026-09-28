@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -801,6 +802,66 @@ func TestStreamRawChatCompletions_LargeNormalChunkDoesNotHitPreambleLimit(t *tes
 	require.Contains(t, rec.Body.String(), content)
 	require.Equal(t, 2, result.Usage.InputTokens)
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
+}
+
+type rawChatErrorThenHangBody struct {
+	payload []byte
+	sent    bool
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func (b *rawChatErrorThenHangBody) Read(p []byte) (int, error) {
+	if !b.sent {
+		b.sent = true
+		return copy(p, b.payload), nil
+	}
+	<-b.closed
+	return 0, io.EOF
+}
+
+func (b *rawChatErrorThenHangBody) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
+
+func TestStreamRawChatCompletions_ErrorDrainDeadlinePreservesUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	body := &rawChatErrorThenHangBody{payload: []byte(strings.Join([]string{
+		`data: {"model":"gpt-5.5","choices":[{"index":0,"delta":{"content":"partial"}}]}`,
+		"",
+		`event: error`,
+		`data: {"error":{"type":"invalid_request_error","message":"invalid request"}}`,
+		"",
+		`data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`,
+		"",
+	}, "\n")), closed: make(chan struct{})}
+	defer body.Close()
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: body}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+	type outcome struct {
+		result *OpenAIForwardResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+		done <- outcome{result: result, err: err}
+	}()
+	select {
+	case got := <-done:
+		require.Error(t, got.err)
+		require.NotNil(t, got.result)
+		require.Equal(t, 7, got.result.Usage.InputTokens)
+		require.Equal(t, 3, got.result.Usage.OutputTokens)
+		require.Contains(t, rec.Body.String(), "partial")
+		require.NotContains(t, rec.Body.String(), `"total_tokens":10`)
+	case <-time.After(openAIChatErrorDrainMaxWait + 3*time.Second):
+		t.Fatal("raw error drain waited indefinitely for upstream EOF")
+	}
 }
 
 func TestForwardAsRawChatCompletions_SilentRefusalToolCallsExempt(t *testing.T) {

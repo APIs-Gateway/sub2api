@@ -497,9 +497,25 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	preambleTimer := time.NewTimer(openAIChatPreambleMaxWait)
 	defer preambleTimer.Stop()
 	var preambleCh <-chan time.Time = preambleTimer.C
+	var drainTimer *time.Timer
+	var drainCh <-chan time.Time
+	defer func() {
+		if drainTimer != nil {
+			drainTimer.Stop()
+		}
+	}()
 	var scanErr error
 	for {
+		if streamError != nil && drainTimer == nil {
+			drainTimer = time.NewTimer(openAIChatErrorDrainMaxWait)
+			drainCh = drainTimer.C
+			preambleCh = nil
+		}
 		select {
+		case <-drainCh:
+			// A broken upstream can stall after its error. Preserve usage already
+			// received, then return the recorded error without holding the request.
+			goto streamDone
 		case <-preambleCh:
 			if !clientOutputStarted && !clientDisconnected && streamError == nil {
 				writeStreamHeaders()

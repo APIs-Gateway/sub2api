@@ -20,6 +20,7 @@ const (
 	openAIResponsesEmptyCompletedMessage   = "OpenAI upstream returned an empty response.completed stream with no output and no usage"
 	openAIChatPreambleMaxBytes             = 256 * 1024
 	openAIChatPreambleMaxWait              = 8 * time.Second
+	openAIChatErrorDrainMaxWait            = 5 * time.Second
 )
 
 type openAIChatSilentRefusalDetector struct {
