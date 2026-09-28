@@ -447,6 +447,11 @@ func TestOpenAIGatewayServiceForward_CodexBridgeRequiresSupportedAccount(t *test
 			require.Equal(t, tt.wantInjected, gjson.GetBytes(upstream.lastBody, "tool_choice").Exists())
 			require.Equal(t, tt.wantInjected, strings.Contains(gjson.GetBytes(upstream.lastBody, "instructions").String(), codexImageGenerationBridgeMarker))
 			require.Equal(t, "shell", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
+			if !tt.wantInjected {
+				require.Zero(t, result.ImageCount)
+				require.Empty(t, result.ImageSize)
+				require.Equal(t, "gpt-5.4", result.BillingModel, "text response must not acquire an image billing model")
+			}
 		})
 	}
 }

@@ -679,7 +679,7 @@ func TestOpenAIGatewayService_Forward_CodexBridgeInjectionSetsImageBilling(t *te
 		Concurrency: 1,
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
-			"base_url": "https://example.com",
+			"base_url": "https://api.openai.com/v1",
 		},
 		Extra: openAIResponsesSupportedTestExtra(),
 	}
