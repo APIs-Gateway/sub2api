@@ -65,7 +65,8 @@ func RegisterPaymentRoutes(
 	public := v1.Group("/payment/public")
 	{
 		public.POST("/orders/verify",
-			publicOrderLimiter.Limit("payment-public-order-verify", publicOrderVerifyRateLimit, publicOrderVerifyRateLimitWindow),
+			publicOrderLimiter.LimitWithOptions("payment-public-order-verify", publicOrderVerifyRateLimit,
+				publicOrderVerifyRateLimitWindow, ratelimit.RateLimitOptions{TrustedPublicIPOnly: true}),
 			paymentHandler.VerifyOrderPublic)
 		public.POST("/orders/resolve", paymentHandler.ResolveOrderPublicByResumeToken)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,7 +25,8 @@ const (
 
 // RateLimitOptions 限流可选配置
 type RateLimitOptions struct {
-	FailureMode RateLimitFailureMode
+	FailureMode         RateLimitFailureMode
+	TrustedPublicIPOnly bool // ignore raw forwarded headers and skip shared private proxy addresses
 }
 
 var rateLimitScript = redis.NewScript(`
@@ -136,7 +138,19 @@ func (r *RateLimiter) LimitWithOptions(key string, limit int, window time.Durati
 	}
 
 	return func(c *gin.Context) {
-		result, err := r.Allow(c.Request.Context(), key+":"+clientIPForRateLimit(c), limit, window)
+		clientIP := clientIPForRateLimit(c)
+		if opts.TrustedPublicIPOnly {
+			clientIP = ippkg.GetTrustedClientIP(c)
+			parsed := net.ParseIP(clientIP)
+			if parsed == nil || parsed.IsLoopback() || parsed.IsPrivate() || parsed.IsUnspecified() ||
+				parsed.IsLinkLocalUnicast() || parsed.IsLinkLocalMulticast() || !parsed.IsGlobalUnicast() {
+				// Without a trusted public client IP, a reverse proxy's shared
+				// address would put unrelated paying users in one rate-limit bucket.
+				c.Next()
+				return
+			}
+		}
+		result, err := r.Allow(c.Request.Context(), key+":"+clientIP, limit, window)
 		if err != nil {
 			log.Printf("[RateLimit] redis error: key=%s mode=%s err=%v", r.prefix+key, failureModeLabel(failureMode), err)
 			if failureMode == RateLimitFailClose {
