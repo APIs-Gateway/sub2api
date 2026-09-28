@@ -272,15 +272,19 @@ const (
 	openAIWSHTTPBridgeMaxPrewarmPayloadBytes = 64 * 1024 * 1024
 )
 
+// ErrOpenAIWSPrewarmBudgetExceeded marks a client-side bridge admission
+// failure so the handler does not mark a healthy upstream account as failed.
+var ErrOpenAIWSPrewarmBudgetExceeded = errors.New("openai ws http bridge prewarm budget exceeded")
+
 func checkOpenAIWSHTTPBridgePrewarmBudget(turns int, usedBytes int64, payload []byte) (int64, error) {
 	if turns >= openAIWSHTTPBridgeMaxPrewarmTurns {
-		return 0, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "too many websocket prewarm turns", nil)
+		return 0, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "too many websocket prewarm turns", ErrOpenAIWSPrewarmBudgetExceeded)
 	}
 	// Normalized RawMessages may point into payload, retaining the entire frame.
 	// Count the whole frame rather than only the input field.
 	if usedBytes < 0 || usedBytes > openAIWSHTTPBridgeMaxPrewarmPayloadBytes ||
 		int64(len(payload)) > openAIWSHTTPBridgeMaxPrewarmPayloadBytes-usedBytes {
-		return 0, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm payload limit exceeded", nil)
+		return 0, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm payload limit exceeded", ErrOpenAIWSPrewarmBudgetExceeded)
 	}
 	return usedBytes + int64(len(payload)), nil
 }

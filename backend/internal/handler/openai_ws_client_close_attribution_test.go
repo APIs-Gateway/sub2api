@@ -82,6 +82,7 @@ func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures
 		{name: "gateway_admission_account_busy_1013_is_not_reported", proxyErr: newOpenAIWSGatewayAdmissionCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)},
 		{name: "gateway_admission_cyber_1008_is_not_reported", proxyErr: newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)},
 		{name: "gateway_admission_slot_error_1011_is_not_reported", proxyErr: newOpenAIWSGatewayAdmissionCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", errors.New("redis down"))},
+		{name: "prewarm_budget_1008_is_not_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "too many websocket prewarm turns", service.ErrOpenAIWSPrewarmBudgetExceeded)},
 		// 同样是 1013/1008，但来自上游（429 忙、握手鉴权失败）的必须照常上报，防止按状态码一刀切。
 		{name: "upstream_busy_1013_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "upstream websocket is busy, please retry later", errors.New("upstream 429")), wantFailure: true},
 		{name: "upstream_auth_1008_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "upstream websocket authentication failed", errors.New("upstream 401")), wantFailure: true},

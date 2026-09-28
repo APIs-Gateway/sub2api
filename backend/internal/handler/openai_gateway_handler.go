@@ -2409,7 +2409,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			// 槽位与连接级 cyber gate）不是上游/账号故障：只照常关闭连接，不计入账号调度失败。
 			// 注意不能按 1013/1008 状态码判断——上游 429 忙、连接超时、鉴权失败同样映射为
 			// 1013/1008，那些仍须上报。
-			if errors.Is(err, errOpenAIWSGatewayAdmissionRejected) {
+			if errors.Is(err, errOpenAIWSGatewayAdmissionRejected) || errors.Is(err, service.ErrOpenAIWSPrewarmBudgetExceeded) {
 				closeStatus, closeReason := coderws.StatusPolicyViolation, "request rejected"
 				if hasClientCloseErr {
 					closeStatus, closeReason = closeErr.StatusCode(), closeErr.Reason()
