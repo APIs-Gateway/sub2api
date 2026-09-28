@@ -7629,6 +7629,23 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			}
 		}
 		body = []byte(alignClientVisibleModelInSSEBody(bodyText, originalModel))
+		// The default HTTP path wraps declared SSE before reading it. A native
+		// upstream can also omit or mislabel Content-Type while returning an
+		// incomplete SSE response to a non-streaming request. Restore those
+		// events here, after auditing the original upstream terminal and model.
+		if mapping, mapped := openAIResponsesClientToolMapping(c); mapped && !isEventStreamResponse(resp.Header) {
+			maxLineSize := defaultMaxLineSize
+			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+				maxLineSize = s.cfg.Gateway.MaxLineSize
+			}
+			restoredStream := newResponsesClientToolStreamBody(io.NopCloser(bytes.NewReader(body)), mapping, maxLineSize)
+			var restoreErr error
+			body, restoreErr = ReadUpstreamResponseBody(restoredStream, s.cfg, c, openAITooLargeError)
+			_ = restoredStream.Close()
+			if restoreErr != nil {
+				return nil, fmt.Errorf("restore OpenAI Responses client tool SSE: %w", restoreErr)
+			}
+		}
 	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
