@@ -75,9 +75,6 @@ func (s *OpenAIGatewayService) openAIWSTurnAccountIneligibleReason(ctx context.C
 	if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
 		return OpenAIWSTurnAccountIneligibleNotSchedulable
 	}
-	if clientModel != "" && !account.IsModelSupported(clientModel) {
-		return OpenAIWSTurnAccountIneligibleNotSchedulable
-	}
 	if s.isOpenAIAccountRuntimeBlocked(account) {
 		return OpenAIWSTurnAccountIneligibleRuntimeBlocked
 	}
