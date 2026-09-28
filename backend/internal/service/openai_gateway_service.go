@@ -3694,10 +3694,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	// Default HTTP Forward also reaches third-party native Responses API-key
-	// upstreams. Only Lite carriers need the client-tool adapter here; retain
-	// official OpenAI and requests with only top-level tools as before.
+	// upstreams. Only Lite carriers without native namespace declarations use
+	// the client-tool adapter here: this fork preserves API-key providers that
+	// round-trip namespace-qualified calls, as well as official OpenAI and
+	// requests with only top-level tools.
 	if account.IsOpenAIApiKey() && !isOfficialOpenAIBaseURL(account.GetOpenAIBaseURL()) && !isOpenAIResponsesCompactPath(c) &&
-		gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists() {
+		gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists() &&
+		!hasOpenAIResponsesNamespaceToolDeclaration(body) {
 		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
 		if adaptErr != nil {
 			return nil, fmt.Errorf("adapt OpenAI Responses Lite client tools: %w", adaptErr)
