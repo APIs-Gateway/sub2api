@@ -41,7 +41,9 @@ func openAIWSTurnModelKeys(account *Account, clientModel string, passthrough boo
 	if mapped == upstream {
 		return []string{upstream}, []string{mapped}
 	}
-	return []string{upstream}, []string{mapped, upstream}
+	// Model-not-found cooldown writes the pre-normalization mapped key, while
+	// other WS failure paths can write the final upstream key.
+	return []string{mapped, upstream}, []string{mapped, upstream}
 }
 
 func (s *OpenAIGatewayService) openAIWSTurnAccountIneligibleReason(ctx context.Context, bound *Account, groupID *int64, clientModel string, passthrough bool) string {

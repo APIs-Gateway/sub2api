@@ -192,10 +192,20 @@ func TestOpenAIWSTurnAccountEligibilityUsesSelectedIngressWireModel(t *testing.T
 	require.NoError(t, err)
 
 	bridgeRate, bridgeRuntime := openAIWSTurnModelKeys(account, "gpt-5.1", false)
-	require.Equal(t, []string{"gpt-5.4"}, bridgeRate)
+	require.Equal(t, []string{"gpt-5.1", "gpt-5.4"}, bridgeRate)
 	require.Equal(t, []string{"gpt-5.1", "gpt-5.4"}, bridgeRuntime)
 	reason, err = svc.EnforceOpenAIWSTurnAccountEligibility(ctx, account, nil, "", "gpt-5.1", false)
 	require.Equal(t, OpenAIWSTurnAccountIneligibleModelRateLimited, reason)
+	require.Error(t, err)
+
+	account.Extra[modelRateLimitsKey] = map[string]any{
+		"gpt-5.1": map[string]any{"rate_limit_reset_at": resetAt},
+	}
+	reason, err = svc.EnforceOpenAIWSTurnAccountEligibility(ctx, account, nil, "", "gpt-5.1", false)
+	require.Equal(t, OpenAIWSTurnAccountIneligibleModelRateLimited, reason, "model-not-found cooldown uses the pre-normalization key")
+	require.Error(t, err)
+	reason, err = svc.EnforceOpenAIWSTurnAccountEligibility(ctx, account, nil, "", "gpt-5.1", true)
+	require.Equal(t, OpenAIWSTurnAccountIneligibleModelRateLimited, reason, "passthrough writes the original key")
 	require.Error(t, err)
 }
 
