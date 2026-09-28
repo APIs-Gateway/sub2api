@@ -2126,6 +2126,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// 首包只给第 1 轮的模型不一致审计估算 input_tokens 用（拦截只发生在第 1 轮），
 		// AfterTurn 用完即置 nil，避免闭包在整个连接期间保活首包。
 		var wsMismatchRequestBody []byte
+		localPrewarmSeen := false
 		// BeforeRequest resolves the current turn model before BeforeTurn on each
 		// WS ingress. Keep it separate from the handshake model when a session
 		// rotates models between turns.
@@ -2224,6 +2225,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// Release initial slots before idling for the next client frame;
 				// AfterTurn would also run usage and scheduler accounting.
 				releaseTurnSlots()
+				localPrewarmSeen = true
+				wsMismatchRequestBody = nil
+			},
+			BeforeBridgeUpstreamTurn: func(_ int, payload []byte) {
+				if localPrewarmSeen {
+					// The replayed payload includes prewarm input. Use it for the
+					// request hash and zero-usage mismatch token estimate.
+					requestPayloadHash = service.HashUsageRequestPayload(payload)
+					wsMismatchRequestBody = payload
+				}
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
 				// 每次 attempt 都清 cyber mark；failover 链结束前保留 recorded guard，
@@ -2415,7 +2426,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			// 槽位与连接级 cyber gate）不是上游/账号故障：只照常关闭连接，不计入账号调度失败。
 			// 注意不能按 1013/1008 状态码判断——上游 429 忙、连接超时、鉴权失败同样映射为
 			// 1013/1008，那些仍须上报。
-			if errors.Is(err, errOpenAIWSGatewayAdmissionRejected) || errors.Is(err, service.ErrOpenAIWSPrewarmBudgetExceeded) {
+			if errors.Is(err, errOpenAIWSGatewayAdmissionRejected) || errors.Is(err, service.ErrOpenAIWSPrewarmBudgetExceeded) || errors.Is(err, service.ErrOpenAIWSPrewarmModelChanged) || errors.Is(err, service.ErrOpenAIWSPrewarmPayloadInvalid) {
 				closeStatus, closeReason := coderws.StatusPolicyViolation, "request rejected"
 				if hasClientCloseErr {
 					closeStatus, closeReason = closeErr.StatusCode(), closeErr.Reason()

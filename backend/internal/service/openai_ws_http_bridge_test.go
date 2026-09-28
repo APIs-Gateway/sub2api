@@ -1951,6 +1951,149 @@ func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
 	}
 }
 
+func TestOpenAIWSHTTPBridgeFirstRealTurnAfterPrewarmCanFailOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name              string
+		statusCode        int
+		body              string
+		wantModelMismatch bool
+		realModel         string
+		wantLocalReject   bool
+	}{
+		{name: "non_429_http_error", statusCode: http.StatusServiceUnavailable, body: `{"error":{"message":"upstream unavailable"}}`, realModel: "gpt-5.1"},
+		{name: "model_mismatch", statusCode: http.StatusOK, body: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_wrong\",\"model\":\"gpt-5-mini\"}}\n\n", wantModelMismatch: true, realModel: "gpt-5.1"},
+		{name: "changed_client_model_rejected_before_billing", realModel: "gpt-5.6-sol", wantLocalReject: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Security.URLAllowlist.Enabled = false
+			cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+			cfg.Gateway.OpenAIWS.Enabled = true
+			cfg.Gateway.OpenAIWS.OAuthEnabled = true
+			cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+			cfg.Gateway.OpenAIWS.HTTPBridgeEnabled = true
+			cfg.Gateway.OpenAIWS.HTTPBridgeThresholdBytes = 1
+			cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+			cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: tt.statusCode,
+				Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body: io.NopCloser(strings.NewReader(tt.body)),
+			}}
+			svc := &OpenAIGatewayService{
+				cfg: cfg, httpUpstream: upstream, cache: &stubGatewayCache{},
+				openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(),
+			}
+			account := &Account{
+				ID: 9007, Name: "oauth-prewarm-failover", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+				Credentials: map[string]any{"access_token": "test-token"}, Extra: map[string]any{"responses_websockets_v2_enabled": true},
+				Concurrency: 1, Status: StatusActive, Schedulable: true,
+			}
+			type proxyResult struct {
+				err             error
+				outbound        []byte
+				mark            *UpstreamModelMismatchMark
+				afterTurnCalled bool
+			}
+			resultCh := make(chan proxyResult, 1)
+			wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := coderws.Accept(w, r, nil)
+				if err != nil {
+					resultCh <- proxyResult{err: err}
+					return
+				}
+				defer func() { _ = conn.CloseNow() }()
+				readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+				_, firstMessage, err := conn.Read(readCtx)
+				cancelRead()
+				if err != nil {
+					resultCh <- proxyResult{err: err}
+					return
+				}
+				rec := httptest.NewRecorder()
+				ginCtx, _ := gin.CreateTestContext(rec)
+				ginCtx.Request = r.Clone(r.Context())
+				var outbound []byte
+				afterTurnCalled := false
+			hooks := &OpenAIWSIngressHooks{
+				InitialRequestModel: "gpt-5.1",
+				BeforeBridgeUpstreamTurn: func(_ int, payload []byte) {
+					outbound = append([]byte(nil), payload...)
+				},
+				AfterTurn: func(int, *OpenAIForwardResult, error) { afterTurnCalled = true },
+			}
+				proxyErr := svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "test-token", firstMessage, hooks)
+				var mark *UpstreamModelMismatchMark
+				if got := GetOpsUpstreamModelMismatch(ginCtx); got != nil {
+					copyMark := *got
+					mark = &copyMark
+				}
+				resultCh <- proxyResult{err: proxyErr, outbound: outbound, mark: mark, afterTurnCalled: afterTurnCalled}
+			}))
+			defer wsServer.Close()
+			dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+			clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+			cancelDial()
+			require.NoError(t, err)
+			defer func() { _ = clientConn.CloseNow() }()
+			writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+			require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.4","generate":false,"input":[{"role":"user","content":"large warm context"}]}`)))
+			cancelWrite()
+			var syntheticID string
+			for i := 0; i < 2; i++ {
+				readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+				_, event, readErr := clientConn.Read(readCtx)
+				cancelRead()
+				require.NoError(t, readErr)
+				if i == 1 {
+					syntheticID = gjson.GetBytes(event, "response.id").String()
+					require.Equal(t, "gpt-5.1", gjson.GetBytes(event, "response.model").String())
+				}
+			}
+			require.True(t, strings.HasPrefix(syntheticID, "resp_"))
+			writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
+			require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"` + tt.realModel + `","previous_response_id":"` + syntheticID + `","input":[{"role":"user","content":"go"}]}`)))
+			cancelWrite()
+			var result proxyResult
+			select {
+			case result = <-resultCh:
+			case <-time.After(5 * time.Second):
+				t.Fatal("timed out waiting for first real bridge turn")
+			}
+			if tt.wantLocalReject {
+				require.ErrorIs(t, result.err, ErrOpenAIWSPrewarmModelChanged)
+				require.Empty(t, upstream.bodies, "changed model must never reach upstream")
+				require.Empty(t, result.outbound)
+				require.False(t, result.afterTurnCalled, "local rejection cannot trigger billing or scheduler hooks")
+				require.Nil(t, result.mark)
+				return
+			}
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, result.err, &failoverErr)
+			retryPayload, retryCurrentTurn := OpenAIWSCurrentTurnRetryPayload(result.err)
+			require.True(t, retryCurrentTurn)
+			for _, body := range [][]byte{result.outbound, retryPayload} {
+				items := gjson.GetBytes(body, "input").Array()
+				require.Len(t, items, 2)
+				require.Equal(t, "large warm context", items[0].Get("content").String())
+				require.Equal(t, "go", items[1].Get("content").String())
+			}
+			require.Len(t, upstream.bodies, 1, "synthetic prewarm must not call upstream")
+			require.Equal(t, upstream.bodies[0], result.outbound, "audit body must match the HTTP request body")
+			require.Equal(t, "gpt-5.4", gjson.GetBytes(result.outbound, "model").String(), "same client model must retain initial channel mapping")
+			if tt.wantModelMismatch {
+				require.True(t, IsUpstreamModelMismatchErrorBody(failoverErr.ResponseBody))
+				require.NotNil(t, result.mark)
+				require.True(t, result.mark.Blocked)
+			} else {
+				require.Nil(t, result.mark)
+			}
+		})
+	}
+}
+
 func TestOpenAIWSHTTPBridgeRejectedPrewarmDoesNotReachUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{}

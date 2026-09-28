@@ -266,8 +266,11 @@ type OpenAIWSIngressHooks struct {
 	BeforeRequest         func(turn int, payload []byte, originalModel string) error
 	// AfterLocalPrewarm releases the connection's initial concurrency slots
 	// after a synthetic HTTP bridge response, without recording usage.
-	AfterLocalPrewarm     func(turn int)
-	AfterTurn             func(turn int, result *OpenAIForwardResult, turnErr error)
+	AfterLocalPrewarm func(turn int)
+	// BeforeBridgeUpstreamTurn receives the fully replayed HTTP bridge payload
+	// before the upstream request, for accurate request audit metadata.
+	BeforeBridgeUpstreamTurn func(turn int, payload []byte)
+	AfterTurn                 func(turn int, result *OpenAIForwardResult, turnErr error)
 }
 
 const (
@@ -278,6 +281,13 @@ const (
 // ErrOpenAIWSPrewarmBudgetExceeded marks a client-side bridge admission
 // failure so the handler does not mark a healthy upstream account as failed.
 var ErrOpenAIWSPrewarmBudgetExceeded = errors.New("openai ws http bridge prewarm budget exceeded")
+
+// ErrOpenAIWSPrewarmModelChanged marks a client-side rejection before any
+// billable upstream turn; the selected account must not lose scheduler health.
+var ErrOpenAIWSPrewarmModelChanged = errors.New("openai ws http bridge prewarm model changed")
+
+// ErrOpenAIWSPrewarmPayloadInvalid is a local replay preparation rejection.
+var ErrOpenAIWSPrewarmPayloadInvalid = errors.New("openai ws http bridge prewarm payload invalid")
 
 func checkOpenAIWSHTTPBridgePrewarmBudget(turns int, usedBytes int64, payload []byte) (int64, error) {
 	if turns >= openAIWSHTTPBridgeMaxPrewarmTurns {
@@ -3335,6 +3345,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			storeDisabled,
 		)
 		currentBridgePayload := firstPayload
+		prewarmClientModel := firstPayload.originalModel
+		if hooks != nil && strings.TrimSpace(hooks.InitialRequestModel) != "" {
+			prewarmClientModel = strings.TrimSpace(hooks.InitialRequestModel)
+		}
+		prewarmUpstreamModel := strings.TrimSpace(gjson.GetBytes(firstPayload.payloadRaw, "model").String())
 		var bridgeReplayInput []json.RawMessage
 		bridgeReplayInputExists := false
 		var bridgeAccountFailoverInput []json.RawMessage
@@ -3372,6 +3387,30 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			return nextPayload, false, parseErr
 		}
 		for turn := 1; ; turn++ {
+			if prewarmTurns > 0 {
+				// The first frame selected both the account and the fork's channel
+				// billing mapping. Do not let a synthetic, unbilled prewarm for
+				// model A be followed by a billable request for model B under A's
+				// pricing. A missing model inherits the original client model.
+				clientModel := currentBridgePayload.originalModel
+				if strings.TrimSpace(gjson.GetBytes(currentBridgePayload.rawForHash, "model").String()) == "" {
+					clientModel = prewarmClientModel
+				}
+				if clientModel != prewarmClientModel {
+					return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "model change after websocket prewarm is not supported", ErrOpenAIWSPrewarmModelChanged)
+				}
+				currentBridgePayload.originalModel = prewarmClientModel
+				// Subsequent frames are parsed from client bytes. Reapply the
+				// initial channel/account wire model for the same client model.
+				if prewarmUpstreamModel != "" && gjson.GetBytes(currentBridgePayload.payloadRaw, "model").String() != prewarmUpstreamModel {
+					mappedPayload, mapErr := applyPayloadMutation(currentBridgePayload.payloadRaw, "model", prewarmUpstreamModel)
+					if mapErr != nil {
+						return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", fmt.Errorf("%w: %v", ErrOpenAIWSPrewarmPayloadInvalid, mapErr))
+					}
+					currentBridgePayload.payloadRaw = mappedPayload
+					currentBridgePayload.payloadBytes = len(mappedPayload)
+				}
+			}
 			if isOpenAIWSHTTPBridgePrewarmPayload(currentBridgePayload.payloadRaw) {
 				nextPayloadBytes, budgetErr := checkOpenAIWSHTTPBridgePrewarmBudget(
 					prewarmTurns, prewarmPayloadBytes, currentBridgePayload.payloadRaw,
@@ -3413,7 +3452,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					}
 					bridgeToolState = state
 				}
-				_, events, buildErr := buildOpenAIWSHTTPBridgePrewarmEvents(currentBridgePayload.originalModel)
+				_, events, buildErr := buildOpenAIWSHTTPBridgePrewarmEvents(prewarmClientModel)
 				if buildErr != nil {
 					return fmt.Errorf("build websocket http bridge prewarm response: %w", buildErr)
 				}
@@ -3511,6 +3550,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					openAIWSRawPayloadHasToolCallOutput(currentBridgePayload.payloadRaw),
 				)
 			}
+			var beforeUpstream func([]byte)
+			if prewarmTurns > 0 && hooks != nil && hooks.BeforeBridgeUpstreamTurn != nil {
+				beforeUpstream = func(body []byte) { hooks.BeforeBridgeUpstreamTurn(turn, body) }
+			}
 			result, bridgeErr := s.proxyOpenAIWSHTTPBridgeTurn(
 				ctx,
 				c,
@@ -3522,9 +3565,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				currentBridgePayload.imageBillingModel,
 				currentBridgePayload.imageSizeTier,
 				currentBridgePayload.imageInputSize,
-				turn,
+				turn-prewarmTurns, // upstream ordinal; prewarms still count for WS hooks/retry
 				bridgeToolState,
 				writeClientMessage,
+				beforeUpstream,
 			)
 			if hooks != nil && hooks.AfterTurn != nil {
 				hooks.AfterTurn(turn, result, bridgeErr)

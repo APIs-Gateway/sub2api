@@ -388,6 +388,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	turn int,
 	previousToolState openAIWSHTTPBridgeToolState,
 	writeClientMessage func([]byte) error,
+	beforeUpstream ...func([]byte),
 ) (*OpenAIForwardResult, error) {
 	if s == nil {
 		return nil, errors.New("service is nil")
@@ -445,6 +446,27 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 	if err := applyMappedGPT55LiteCompatibility(upstreamReq, account, body); err != nil {
 		return nil, err
+	}
+	if len(beforeUpstream) > 0 && beforeUpstream[0] != nil {
+		// The request may be rewritten by account tool and Lite handling. Read
+		// the final HTTP body through GetBody only when Lite changed its length;
+		// otherwise the request still shares body's bytes.
+		auditBody := body
+		if upstreamReq.ContentLength != int64(len(body)) {
+			if upstreamReq.GetBody == nil {
+				return nil, errors.New("websocket http bridge request body cannot be replayed for audit")
+			}
+			auditReader, bodyErr := upstreamReq.GetBody()
+			if bodyErr != nil {
+				return nil, fmt.Errorf("read websocket http bridge request body for audit: %w", bodyErr)
+			}
+			auditBody, bodyErr = io.ReadAll(auditReader)
+			_ = auditReader.Close()
+			if bodyErr != nil {
+				return nil, fmt.Errorf("read websocket http bridge request body for audit: %w", bodyErr)
+			}
+		}
+		beforeUpstream[0](auditBody)
 	}
 
 	proxyURL := ""
@@ -528,10 +550,10 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	pendingClientMessageBytes := int64(0)
 	capacityFailoverSuppressedLogged := false
 	upstreamRequestID := upstreamRequestIDFromHeader(resp.Header)
-	mappedModel := ""
-	if originalModel != "" {
-		mappedModel = normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
-	}
+	// The bridge body has already passed the channel and account mappings in
+	// the WS ingress parser. Use the actual wire model for usage and mismatch
+	// checks, including continuations after a locally handled prewarm.
+	mappedModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 
 	resultWithUsage := func() *OpenAIForwardResult {
 		imageCount := imageCounter.Count()
