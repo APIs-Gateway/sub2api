@@ -520,7 +520,7 @@ func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.C
 	// switch (or the global switch) must not opt every custom endpoint in; an
 	// administrator can opt in a known-compatible account above instead.
 	if account.IsCNProvider() ||
-		(account.IsOpenAIApiKey() && !isOfficialOpenAIResponsesProbeURL(account.GetOpenAIBaseURL())) {
+		(account.IsOpenAIApiKey() && !isOfficialOpenAIResponsesBridgeURL(account.GetOpenAIBaseURL())) {
 		return false
 	}
 	if s != nil && s.channelService != nil && apiKey != nil && apiKey.GroupID != nil {

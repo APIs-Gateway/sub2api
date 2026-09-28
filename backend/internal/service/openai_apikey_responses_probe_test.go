@@ -137,6 +137,7 @@ func TestOfficialOpenAIResponsesProbeURL(t *testing.T) {
 		{"https://api.openai.com", true},
 		{"https://api.openai.com/v1", true},
 		{"https://API.OPENAI.COM:443/v1/", true},
+		{"https://api.openai.com/v1/responses", false},
 		{"https://api.openai.com.example/v1", false},
 		{"https://api.openai.com:8443/v1", false},
 		{"https://api.openai.com/custom", false},

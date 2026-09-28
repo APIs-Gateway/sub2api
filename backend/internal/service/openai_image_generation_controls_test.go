@@ -393,6 +393,7 @@ func TestOpenAIGatewayServiceForward_CodexBridgeRequiresSupportedAccount(t *test
 	tests := []struct {
 		name         string
 		baseURL      string
+		wantURL      string
 		cnProvider   bool
 		accountExtra map[string]any
 		global       bool
@@ -401,6 +402,8 @@ func TestOpenAIGatewayServiceForward_CodexBridgeRequiresSupportedAccount(t *test
 	}{
 		{name: "official API follows global", global: true, wantInjected: true},
 		{name: "official API follows channel", channel: true, wantInjected: true},
+		{name: "official full Responses endpoint follows global", baseURL: "https://api.openai.com/v1/responses", wantURL: "https://api.openai.com/v1/responses", global: true, wantInjected: true},
+		{name: "official full Responses endpoint with trailing slash follows channel", baseURL: "https://api.openai.com/v1/responses/", wantURL: "https://api.openai.com/v1/responses", channel: true, wantInjected: true},
 		{name: "custom Responses API ignores global", baseURL: "https://api.moonshot.cn/v1", global: true},
 		{name: "custom Responses API ignores channel", baseURL: "https://api.moonshot.cn/v1", channel: true},
 		{name: "CN provider on official URL ignores global", cnProvider: true, global: true},
@@ -443,6 +446,9 @@ func TestOpenAIGatewayServiceForward_CodexBridgeRequiresSupportedAccount(t *test
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.NotNil(t, upstream.lastReq)
+			if tt.wantURL != "" {
+				require.Equal(t, tt.wantURL, upstream.lastReq.URL.String())
+			}
 			require.Equal(t, tt.wantInjected, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
 			require.Equal(t, tt.wantInjected, gjson.GetBytes(upstream.lastBody, "tool_choice").Exists())
 			require.Equal(t, tt.wantInjected, strings.Contains(gjson.GetBytes(upstream.lastBody, "instructions").String(), codexImageGenerationBridgeMarker))
@@ -688,6 +694,18 @@ func TestOpenAIGatewayService_CodexImageGenerationBridgeOverridePrecedence(t *te
 		{name: "official HTTPS v1 path follows global", global: true,
 			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 				Credentials: map[string]any{"base_url": "https://API.OPENAI.COM:443/v1/"}}, want: true},
+		{name: "official full Responses endpoint follows global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"base_url": "https://api.openai.com/v1/responses"}}, want: true},
+		{name: "official full Responses endpoint trailing slash follows global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"base_url": "https://api.openai.com/v1/responses/"}}, want: true},
+		{name: "official host custom path ignores global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"base_url": "https://api.openai.com/v1/responses/custom"}}},
+		{name: "official full endpoint with query ignores global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"base_url": "https://api.openai.com/v1/responses?proxy=1"}}},
 		{name: "similar hostname ignores global", global: true,
 			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 				Credentials: map[string]any{"base_url": "https://api.openai.com.evil.example/v1"}}},
