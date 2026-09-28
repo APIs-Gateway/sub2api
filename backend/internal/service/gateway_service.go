@@ -7240,8 +7240,8 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	// === 计算最终 anthropic-beta header（先于 body sanitize）===
 	//
 	// 顺序约束：
-	//   1) 算 finalBeta（纯函数，不依赖 req.Header；mimicry 路径会忽略客户端 beta，
-	//      与原“OAuth + mimicClaudeCode 跳过白名单透传”行为对齐）
+	//   1) 算 finalBeta（纯函数，不依赖 req.Header；mimicry 路径仅保留明确支持的
+	//      客户端兼容 beta，其余使用固定列表）
 	//   2) 按 finalBeta 做能力维度 body sanitize（如 context-management beta 缺失 →
 	//      strip body.context_management，与 Bedrock 路径对称）
 	//   3) NewRequest（body 至此最终敲定）
@@ -7634,10 +7634,14 @@ func (s *GatewayService) computeFinalAnthropicBeta(
 
 	if tokenType == "oauth" {
 		if mimicClaudeCode {
-			// mimic 路径：原代码跳过白名单透传，incomingBeta 总是空字符串。
-			// 这里传空 string 以严格对齐 mimic 行为。
+			// Only the explicitly requested legacy structured-output token may
+			// supplement the fixed Claude Code mimic set. Policy drops still win.
+			incomingBeta := ""
+			if containsBetaToken(clientBeta, claude.BetaStructuredOutputs) {
+				incomingBeta = claude.BetaStructuredOutputs
+			}
 			requiredBetas := claude.FullClaudeCodeMimicryBetas()
-			return mergeAnthropicBetaDropping(requiredBetas, "", effectiveDropSet), true
+			return mergeAnthropicBetaDropping(requiredBetas, incomingBeta, effectiveDropSet), true
 		}
 		// 真 Claude Code 客户端透传路径
 		return stripBetaTokensWithSet(s.getBetaHeader(modelID, clientBeta), effectiveDropSet), true
