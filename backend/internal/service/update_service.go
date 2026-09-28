@@ -180,10 +180,12 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	if err := validateDownloadURL(downloadURL); err != nil {
 		return fmt.Errorf("invalid download URL: %w", err)
 	}
-	if checksumURL != "" {
-		if err := validateDownloadURL(checksumURL); err != nil {
-			return fmt.Errorf("invalid checksum URL: %w", err)
-		}
+	// Refuse to install a release without a checksum before downloading its binary.
+	if checksumURL == "" {
+		return fmt.Errorf("release is missing checksums.txt; refusing to install unverified binary")
+	}
+	if err := validateDownloadURL(checksumURL); err != nil {
+		return fmt.Errorf("invalid checksum URL: %w", err)
 	}
 
 	// Get current executable path
@@ -212,11 +214,9 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 		return fmt.Errorf("download failed: %w", err)
 	}
 
-	// Verify checksum if available
-	if checksumURL != "" {
-		if err := s.verifyChecksum(ctx, archivePath, checksumURL); err != nil {
-			return fmt.Errorf("checksum verification failed: %w", err)
-		}
+	// Every downloaded archive must pass SHA-256 verification before extraction.
+	if err := s.verifyChecksum(ctx, archivePath, checksumURL); err != nil {
+		return fmt.Errorf("checksum verification failed: %w", err)
 	}
 
 	// Extract binary from archive

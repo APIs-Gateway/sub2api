@@ -4,7 +4,11 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -77,4 +81,119 @@ func TestCompareVersionsIgnoresHyphenatedSuffix(t *testing.T) {
 	require.Equal(t, 0, compareVersions("v0.1.183-custom", "v0.1.183"))
 	require.Equal(t, -1, compareVersions("v0.1.183-custom", "v0.1.184"))
 	require.Equal(t, 1, compareVersions("v0.1.184-rc.1", "v0.1.183"))
+}
+
+type updateServiceChecksumClientStub struct {
+	updateServiceGitHubClientStub
+	archiveData   []byte
+	checksumData  []byte
+	checksumErr   error
+	downloadCalls int
+	checksumReads int
+}
+
+func (s *updateServiceChecksumClientStub) DownloadFile(_ context.Context, _, dest string, _ int64) error {
+	s.downloadCalls++
+	return os.WriteFile(dest, s.archiveData, 0o600)
+}
+
+func (s *updateServiceChecksumClientStub) FetchChecksumFile(context.Context, string) ([]byte, error) {
+	s.checksumReads++
+	return s.checksumData, s.checksumErr
+}
+
+func writeChecksumTestArchive(t *testing.T) (string, string) {
+	t.Helper()
+	content := []byte("fake archive content")
+	path := filepath.Join(t.TempDir(), "sub2api_0.2.9_linux_amd64.tar.gz")
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+	sum := sha256.Sum256(content)
+	return path, hex.EncodeToString(sum[:])
+}
+
+func TestUpdateServicePerformUpdateRejectsMissingChecksumBeforeDownload(t *testing.T) {
+	client := &updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.2.9"}}
+	svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.1.0", "release")
+	archive := "sub2api_" + svc.getArchiveName() + ".tar.gz"
+	client.release.Assets = []GitHubAsset{{
+		Name:               archive,
+		BrowserDownloadURL: "https://github.com/Wei-Shaw/sub2api/releases/download/v0.2.9/" + archive,
+	}}
+
+	err := svc.PerformUpdate(context.Background())
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "checksums.txt")
+}
+
+func TestUpdateServicePerformUpdateRejectsInvalidChecksumURLBeforeDownload(t *testing.T) {
+	client := &updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.2.9"}}
+	svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.1.0", "release")
+	archive := "sub2api_" + svc.getArchiveName() + ".tar.gz"
+	client.release.Assets = []GitHubAsset{
+		{Name: archive, BrowserDownloadURL: "https://github.com/Wei-Shaw/sub2api/releases/download/v0.2.9/" + archive},
+		{Name: "checksums.txt", BrowserDownloadURL: "https://untrusted.example/checksums.txt"},
+	}
+
+	err := svc.PerformUpdate(context.Background())
+
+	require.ErrorContains(t, err, "invalid checksum URL")
+}
+
+func TestUpdateServicePerformUpdateVerifiesArchiveBeforeExtraction(t *testing.T) {
+	archiveData := []byte("not a gzip archive")
+	sum := sha256.Sum256(archiveData)
+	for _, tc := range []struct {
+		name       string
+		checksum   string
+		wantError  string
+	}{
+		{name: "mismatch stops before extraction", checksum: "deadbeef", wantError: "checksum verification failed: checksum mismatch"},
+		{name: "match reaches extraction", checksum: hex.EncodeToString(sum[:]), wantError: "extraction failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &updateServiceChecksumClientStub{archiveData: archiveData}
+			client.release = &GitHubRelease{TagName: "v0.2.9"}
+			svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.1.0", "release")
+			archive := "sub2api_" + svc.getArchiveName() + ".tar.gz"
+			client.release.Assets = []GitHubAsset{
+				{Name: archive, BrowserDownloadURL: "https://github.com/Wei-Shaw/sub2api/releases/download/v0.2.9/" + archive},
+				{Name: "checksums.txt", BrowserDownloadURL: "https://github.com/Wei-Shaw/sub2api/releases/download/v0.2.9/checksums.txt"},
+			}
+			client.checksumData = []byte(tc.checksum + "  " + archive + "\n")
+
+			err := svc.PerformUpdate(context.Background())
+
+			require.ErrorContains(t, err, tc.wantError)
+			require.Equal(t, 1, client.downloadCalls)
+			require.Equal(t, 1, client.checksumReads)
+		})
+	}
+}
+
+func TestUpdateServiceVerifyChecksumRequiresMatchingEntry(t *testing.T) {
+	path, hash := writeChecksumTestArchive(t)
+	fileName := filepath.Base(path)
+	for _, tc := range []struct {
+		name         string
+		checksumData []byte
+		checksumErr  error
+		wantError    string
+	}{
+		{name: "checksum download failed", checksumErr: errors.New("network down"), wantError: "failed to download checksums"},
+		{name: "archive not listed", checksumData: []byte(hash + "  other_file.tar.gz\n"), wantError: "checksum not found"},
+		{name: "hash mismatch", checksumData: []byte("deadbeef  " + fileName + "\n"), wantError: "checksum mismatch"},
+		{name: "hash matches", checksumData: []byte(hash + "  " + fileName + "\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &updateServiceChecksumClientStub{checksumData: tc.checksumData, checksumErr: tc.checksumErr}
+			svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.1.0", "release")
+			err := svc.verifyChecksum(context.Background(), path, "https://github.com/Wei-Shaw/sub2api/releases/download/v0.2.9/checksums.txt")
+			if tc.wantError == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.wantError)
+			}
+		})
+	}
 }
