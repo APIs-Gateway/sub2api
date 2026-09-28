@@ -92,6 +92,62 @@ func TestChatCompletionsToResponses_SystemMessage(t *testing.T) {
 	assert.Equal(t, "user", items[1].Role)
 }
 
+func TestChatCompletionsToResponses_SerializedMessageTypesWithReasoningAndTools(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model: "step-5-preview",
+		Messages: []ChatMessage{
+			{Role: "system", Content: json.RawMessage(`"You are helpful."`)},
+			{Role: "user", Content: json.RawMessage(`"Check the directory"`)},
+			{
+				Role:             "assistant",
+				Content:          json.RawMessage(`"I will check."`),
+				ReasoningContent: "Need to inspect the directory.",
+				ToolCalls: []ChatToolCall{{
+					ID: "call_1", Type: "function",
+					Function: ChatFunctionCall{Name: "bash", Arguments: `{"cmd":"pwd"}`},
+				}},
+			},
+			{Role: "tool", ToolCallID: "call_1", Content: json.RawMessage(`"/tmp"`)},
+			{Role: "assistant", ReasoningContent: "The tool returned /tmp."},
+			{Role: "user", Content: json.RawMessage(`"Continue"`)},
+		},
+	}
+
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+	var wireItems []map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(resp.Input, &wireItems))
+	require.Len(t, wireItems, 7)
+	for i, want := range []struct{ typ, role string }{
+		{"message", "system"},
+		{"message", "user"},
+		{"message", "assistant"},
+		{"function_call", ""},
+		{"function_call_output", ""},
+		{"message", "assistant"},
+		{"message", "user"},
+	} {
+		require.JSONEq(t, `"`+want.typ+`"`, string(wireItems[i]["type"]), "input item %d type", i)
+		if want.role == "" {
+			require.NotContains(t, wireItems[i], "role", "input item %d role", i)
+		} else {
+			require.JSONEq(t, `"`+want.role+`"`, string(wireItems[i]["role"]), "input item %d role", i)
+		}
+	}
+
+	var items []ResponsesInputItem
+	require.NoError(t, json.Unmarshal(resp.Input, &items))
+	var assistantContent, reasoningOnlyContent []ResponsesContentPart
+	require.NoError(t, json.Unmarshal(items[2].Content, &assistantContent))
+	require.NoError(t, json.Unmarshal(items[5].Content, &reasoningOnlyContent))
+	require.Len(t, assistantContent, 1)
+	require.Len(t, reasoningOnlyContent, 1)
+	require.Equal(t, "<thinking>Need to inspect the directory.</thinking>\nI will check.", assistantContent[0].Text)
+	require.Equal(t, "<thinking>The tool returned /tmp.</thinking>", reasoningOnlyContent[0].Text)
+	require.Equal(t, "call_1", items[3].CallID)
+	require.Equal(t, "call_1", items[4].CallID)
+}
+
 func TestChatCompletionsToResponses_ToolCalls(t *testing.T) {
 	req := &ChatCompletionsRequest{
 		Model: "gpt-4o",
