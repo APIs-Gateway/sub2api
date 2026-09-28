@@ -507,11 +507,21 @@ func (s *OpenAIGatewayService) ResolveChannelMappingAndRestrict(ctx context.Cont
 }
 
 func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.Context, account *Account, apiKey *APIKey) bool {
-	if s.openAIResponsesImageGenerationDisabled() {
+	// The hosted image_generation tool is not portable across Responses providers.
+	// In this fork, third-party providers can also be OpenAI-platform API keys,
+	// so the platform alone cannot establish support for automatic injection.
+	if account == nil || account.Platform != PlatformOpenAI || s.openAIResponsesImageGenerationDisabled() {
 		return false
 	}
 	if override := account.CodexImageGenerationBridgeOverride(); override != nil {
 		return *override
+	}
+	// A channel can contain both official OpenAI and third-party accounts. Its
+	// switch (or the global switch) must not opt every custom endpoint in; an
+	// administrator can opt in a known-compatible account above instead.
+	if account.IsCNProvider() ||
+		(account.IsOpenAIApiKey() && !isOfficialOpenAIResponsesBridgeURL(account.GetOpenAIBaseURL())) {
+		return false
 	}
 	if s != nil && s.channelService != nil && apiKey != nil && apiKey.GroupID != nil {
 		ch, err := s.channelService.GetChannelForGroup(ctx, *apiKey.GroupID)

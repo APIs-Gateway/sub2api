@@ -258,6 +258,17 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 // Other URLs, including custom paths and ports on the same host, retain the
 // existing probe because they may expose a different Responses implementation.
 func isOfficialOpenAIResponsesProbeURL(raw string) bool {
+	return isOfficialOpenAIResponsesURL(raw, false)
+}
+
+// The image bridge also accepts a BaseURL already pointing at the official
+// Responses endpoint. Keep the probe's narrower path rule unchanged: it only
+// skips model-specific probing for API roots.
+func isOfficialOpenAIResponsesBridgeURL(raw string) bool {
+	return isOfficialOpenAIResponsesURL(raw, true)
+}
+
+func isOfficialOpenAIResponsesURL(raw string, allowResponsesPath bool) bool {
 	parsed, err := url.Parse(raw)
 	if err != nil || !strings.EqualFold(parsed.Scheme, "https") ||
 		!strings.EqualFold(parsed.Hostname(), "api.openai.com") ||
@@ -268,6 +279,8 @@ func isOfficialOpenAIResponsesProbeURL(raw string) bool {
 	switch parsed.Path {
 	case "", "/", "/v1", "/v1/":
 		return true
+	case "/v1/responses", "/v1/responses/":
+		return allowResponsesPath
 	default:
 		return false
 	}
