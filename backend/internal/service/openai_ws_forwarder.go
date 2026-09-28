@@ -289,8 +289,8 @@ var ErrOpenAIWSPrewarmModelChanged = errors.New("openai ws http bridge prewarm m
 // ErrOpenAIWSPrewarmPayloadInvalid is a local replay preparation rejection.
 var ErrOpenAIWSPrewarmPayloadInvalid = errors.New("openai ws http bridge prewarm payload invalid")
 
-// ErrOpenAIWSPrewarmLateStart rejects a local prewarm begun after an upstream
-// turn, which cannot safely reuse the connection's first-turn billing mapping.
+// ErrOpenAIWSPrewarmLateStart rejects a later first prewarm with a different
+// client model that cannot reuse the connection's first-turn billing mapping.
 var ErrOpenAIWSPrewarmLateStart = errors.New("openai ws http bridge prewarm started after upstream turn")
 
 func checkOpenAIWSHTTPBridgePrewarmBudget(turns int, usedBytes int64, payload []byte) (int64, error) {
@@ -3385,6 +3385,17 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					)
 					return openAIWSClientPayload{}, true, nil
 				}
+				if prewarmTurns > 0 {
+					closeStatus := coderws.CloseStatus(readErr)
+					if closeStatus == -1 {
+						closeStatus = coderws.StatusPolicyViolation
+					}
+					return openAIWSClientPayload{}, false, NewOpenAIWSClientCloseError(
+						closeStatus,
+						"invalid websocket client frame",
+						fmt.Errorf("%w: %w", ErrOpenAIWSPrewarmPayloadInvalid, readErr),
+					)
+				}
 				return openAIWSClientPayload{}, false, fmt.Errorf("read client websocket request: %w", readErr)
 			}
 			nextPayload, parseErr := parseClientPayload(nextClientMessage)
@@ -3396,19 +3407,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			return nextPayload, false, parseErr
 		}
 		for turn := 1; ; turn++ {
-			if prewarmTurns == 0 && turn > 1 && isOpenAIWSHTTPBridgePrewarmPayload(currentBridgePayload.payloadRaw) {
-				return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm must start on the first turn", ErrOpenAIWSPrewarmLateStart)
-			}
-			if prewarmTurns > 0 {
+			lateFirstPrewarm := prewarmTurns == 0 && turn > 1 && isOpenAIWSHTTPBridgePrewarmPayload(currentBridgePayload.payloadRaw)
+			if prewarmTurns > 0 || lateFirstPrewarm {
 				// The first frame selected both the account and the fork's channel
-				// billing mapping. Do not let a synthetic, unbilled prewarm for
-				// model A be followed by a billable request for model B under A's
+				// billing mapping. A local prewarm may begin later in the same
+				// model, but cannot move an unbilled turn to model B under A's
 				// pricing. A missing model inherits the original client model.
 				clientModel := currentBridgePayload.originalModel
 				if strings.TrimSpace(gjson.GetBytes(currentBridgePayload.rawForHash, "model").String()) == "" {
 					clientModel = prewarmClientModel
 				}
 				if clientModel != prewarmClientModel {
+					if lateFirstPrewarm {
+						return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm model differs from the first turn", ErrOpenAIWSPrewarmLateStart)
+					}
 					return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "model change after websocket prewarm is not supported", ErrOpenAIWSPrewarmModelChanged)
 				}
 				currentBridgePayload.originalModel = prewarmClientModel

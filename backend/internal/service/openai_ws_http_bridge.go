@@ -550,10 +550,17 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	pendingClientMessageBytes := int64(0)
 	capacityFailoverSuppressedLogged := false
 	upstreamRequestID := upstreamRequestIDFromHeader(resp.Header)
-	// The bridge body has already passed the channel and account mappings in
-	// the WS ingress parser. Use the actual wire model for usage and mismatch
-	// checks, including continuations after a locally handled prewarm.
-	mappedModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	mappedModel := ""
+	if originalModel != "" {
+		mappedModel = normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
+	}
+	if len(beforeUpstream) > 0 && beforeUpstream[0] != nil {
+		// The first billable turn after a local prewarm can carry an initial
+		// channel mapping that differs from account.GetMappedModel(originalModel).
+		// Use the actual bridge body model only for this new path; ordinary
+		// bridge turns retain their established mismatch/billing semantics.
+		mappedModel = strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
 		imageCount := imageCounter.Count()
