@@ -126,6 +126,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	responsesReq.Model = upstreamModel
 	if responsesReq.Reasoning != nil {
 		responsesReq.Reasoning.Effort = openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, responsesReq.Reasoning.Effort)
+		if !shouldRequestResponsesReasoningSummary(account) {
+			responsesReq.Reasoning.Summary = ""
+		}
 	}
 	if previousResponseID != "" {
 		responsesReq.PreviousResponseID = previousResponseID
@@ -455,6 +458,18 @@ func isOfficialOpenAIBaseURL(raw string) bool {
 		return false
 	}
 	return strings.EqualFold(parsed.Hostname(), "api.openai.com")
+}
+
+// Only the Codex backend and official OpenAI API accept the generated
+// reasoning.summary field. Strict third-party Responses APIs may reject it.
+func shouldRequestResponsesReasoningSummary(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	if account.UsesOpenAICodexProtocol() {
+		return true
+	}
+	return account.IsOpenAIApiKey() && isOfficialOpenAIBaseURL(account.GetOpenAIBaseURL())
 }
 
 func ensureCodexOAuthInstructionsField(reqBody map[string]any) {
