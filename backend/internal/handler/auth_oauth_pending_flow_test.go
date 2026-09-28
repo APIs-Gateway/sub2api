@@ -2762,6 +2762,29 @@ func (s *oauthPendingFlowEmailCacheStub) DeleteVerificationCode(_ context.Contex
 	return nil
 }
 
+func (s *oauthPendingFlowEmailCacheStub) VerifyVerificationCode(_ context.Context, email, code string, limit int) (service.VerificationCodeResult, error) {
+	data := s.verificationCodes[email]
+	if data == nil {
+		return service.VerificationCodeInvalid, nil
+	}
+	if data.Attempts >= limit {
+		return service.VerificationCodeMaxed, nil
+	}
+	data.Attempts++
+	if data.Code == code {
+		delete(s.verificationCodes, email)
+		return service.VerificationCodeValid, nil
+	}
+	if data.Attempts >= limit {
+		return service.VerificationCodeMaxed, nil
+	}
+	return service.VerificationCodeInvalid, nil
+}
+
+func (s *oauthPendingFlowEmailCacheStub) VerifyNotifyVerifyCode(context.Context, string, string, int) (service.VerificationCodeResult, error) {
+	return service.VerificationCodeInvalid, nil
+}
+
 func (s *oauthPendingFlowEmailCacheStub) GetNotifyVerifyCode(context.Context, string) (*service.VerificationCodeData, error) {
 	return nil, nil
 }
@@ -2791,6 +2814,26 @@ func (s *oauthPendingFlowEmailCacheStub) IsPasswordResetEmailInCooldown(context.
 }
 
 func (s *oauthPendingFlowEmailCacheStub) SetPasswordResetEmailCooldown(context.Context, string, time.Duration) error {
+	return nil
+}
+
+func (s *oauthPendingFlowEmailCacheStub) StagePasswordResetToken(context.Context, string, string, *service.PasswordResetTokenData, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *oauthPendingFlowEmailCacheStub) PromotePasswordResetToken(context.Context, string, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *oauthPendingFlowEmailCacheStub) DiscardPendingPasswordResetToken(context.Context, string, string) error {
+	return nil
+}
+
+func (s *oauthPendingFlowEmailCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *oauthPendingFlowEmailCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {
 	return nil
 }
 
@@ -3484,4 +3527,8 @@ func (oauthPendingFlowTotpEncryptorStub) Decrypt(ciphertext string) (string, err
 
 func (r *oauthPendingFlowUserRepo) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
+}
+
+func (s *oauthPendingFlowEmailCacheStub) ConsumePasswordResetToken(context.Context, string, string) (bool, error) {
+	return false, nil
 }

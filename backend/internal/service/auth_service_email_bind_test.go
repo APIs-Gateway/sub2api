@@ -834,6 +834,26 @@ func (s *emailBindCacheStub) DeleteVerificationCode(context.Context, string) err
 	return nil
 }
 
+func (s *emailBindCacheStub) VerifyVerificationCode(_ context.Context, _ string, code string, limit int) (service.VerificationCodeResult, error) {
+	if s.err != nil {
+		return service.VerificationCodeInvalid, s.err
+	}
+	if s.data == nil {
+		return service.VerificationCodeInvalid, nil
+	}
+	if s.data.Attempts >= limit {
+		return service.VerificationCodeMaxed, nil
+	}
+	if s.data.Code == code {
+		return service.VerificationCodeValid, nil
+	}
+	return service.VerificationCodeInvalid, nil
+}
+
+func (s *emailBindCacheStub) VerifyNotifyVerifyCode(context.Context, string, string, int) (service.VerificationCodeResult, error) {
+	return service.VerificationCodeInvalid, nil
+}
+
 func (s *emailBindCacheStub) GetNotifyVerifyCode(context.Context, string) (*service.VerificationCodeData, error) {
 	return nil, nil
 }
@@ -863,6 +883,26 @@ func (s *emailBindCacheStub) IsPasswordResetEmailInCooldown(context.Context, str
 }
 
 func (s *emailBindCacheStub) SetPasswordResetEmailCooldown(context.Context, string, time.Duration) error {
+	return nil
+}
+
+func (s *emailBindCacheStub) StagePasswordResetToken(context.Context, string, string, *service.PasswordResetTokenData, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailBindCacheStub) PromotePasswordResetToken(context.Context, string, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailBindCacheStub) DiscardPendingPasswordResetToken(context.Context, string, string) error {
+	return nil
+}
+
+func (s *emailBindCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailBindCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {
 	return nil
 }
 
@@ -1146,4 +1186,8 @@ func cloneEmailBindUser(user *service.User) *service.User {
 
 func (s *emailBindUserRepoStub) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
+}
+
+func (s *emailBindCacheStub) ConsumePasswordResetToken(context.Context, string, string) (bool, error) {
+	return false, nil
 }
