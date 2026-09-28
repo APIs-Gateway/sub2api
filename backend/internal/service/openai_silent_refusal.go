@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
@@ -17,10 +18,15 @@ const (
 	openAISilentRefusalUpstreamMessage     = "OpenAI upstream returned an empty completion stream with finish_reason=stop and no usage"
 	openAISilentRefusalClientMessage       = "Upstream returned an empty completion without usage; no fallback account was available"
 	openAIResponsesEmptyCompletedMessage   = "OpenAI upstream returned an empty response.completed stream with no output and no usage"
+	openAIChatPreambleMaxBytes             = 256 * 1024
+	openAIChatPreambleMaxWait              = 8 * time.Second
+	openAIChatErrorDrainMaxWait            = 5 * time.Second
+	openAIChatMultiLineFrameMaxBytes       = 16 * 1024 * 1024
 )
 
 type openAIChatSilentRefusalDetector struct {
-	enabled         bool
+	enabled         bool // Only large requests classify silent refusals.
+	bufferOutput    bool // Every stream keeps its pre-content output replayable.
 	sawContent      bool
 	sawToolCall     bool
 	sawFunctionCall bool
@@ -33,7 +39,8 @@ type openAIChatSilentRefusalDetector struct {
 
 func newOpenAIChatSilentRefusalDetector(requestBodyLen int) *openAIChatSilentRefusalDetector {
 	return &openAIChatSilentRefusalDetector{
-		enabled: requestBodyLen >= openAISilentRefusalMinRequestBodyBytes,
+		enabled:      requestBodyLen >= openAISilentRefusalMinRequestBodyBytes,
+		bufferOutput: true,
 	}
 }
 
@@ -42,7 +49,7 @@ func (d *openAIChatSilentRefusalDetector) Enabled() bool {
 }
 
 func (d *openAIChatSilentRefusalDetector) ObserveSSELine(line string) {
-	if d == nil || !d.enabled {
+	if d == nil || !d.bufferOutput {
 		return
 	}
 	if eventType, ok := extractOpenAISSEEventLine(line); ok {
@@ -55,7 +62,7 @@ func (d *openAIChatSilentRefusalDetector) ObserveSSELine(line string) {
 }
 
 func (d *openAIChatSilentRefusalDetector) ObservePayload(payload []byte) {
-	if d == nil || !d.enabled {
+	if d == nil || !d.bufferOutput {
 		return
 	}
 	payload = bytes.TrimSpace(payload)
@@ -84,7 +91,7 @@ func (d *openAIChatSilentRefusalDetector) ObservePayload(payload []byte) {
 }
 
 func (d *openAIChatSilentRefusalDetector) ObserveChatChunk(chunk apicompat.ChatCompletionsChunk) {
-	if d == nil || !d.enabled {
+	if d == nil || !d.bufferOutput {
 		return
 	}
 	if chunk.Usage != nil {
@@ -108,7 +115,7 @@ func (d *openAIChatSilentRefusalDetector) ObserveChatChunk(chunk apicompat.ChatC
 }
 
 func (d *openAIChatSilentRefusalDetector) ShouldReleaseClientOutput() bool {
-	if d == nil || !d.enabled {
+	if d == nil || !d.bufferOutput {
 		return true
 	}
 	if d.sawContent || d.sawToolCall || d.sawFunctionCall || d.sawUsage || d.sawError || d.sawReasoning {

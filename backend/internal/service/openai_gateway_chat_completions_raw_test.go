@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -675,6 +676,236 @@ func TestForwardAsRawChatCompletions_SilentRefusalTriggersFailover(t *testing.T)
 	require.True(t, IsOpenAISilentRefusalErrorBody(failoverErr.ResponseBody))
 	require.False(t, c.Writer.Written(), "silent refusal must not commit a 200 response before failover")
 	require.Empty(t, rec.Body.String())
+}
+
+func TestForwardAsRawChatCompletions_StreamErrorBeforeAndAfterContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name     string
+		event    string
+		payload  string
+		multi    bool
+		content  bool
+		failover bool
+	}{
+		{name: "bare overload", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, failover: true},
+		{name: "named overload", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, failover: true},
+		{name: "structured code without retry text", payload: `{"error":{"code":"server_is_overloaded","message":"The server is overloaded"}}`, failover: true},
+		{name: "structured type without retry text", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"The server is overloaded"}}`, failover: true},
+		{name: "multiline named overload", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, failover: true},
+		{name: "multiline bare overload", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, failover: true},
+		{name: "response failed", event: "response.failed", payload: `{"type":"response.failed","response":{"error":{"code":"server_error","message":"try again later"}}}`, failover: true},
+		{name: "after content", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, content: true},
+		{name: "after content multiline with later usage", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, content: true},
+		{name: "invalid request", event: "error", payload: `{"error":{"type":"invalid_request_error","message":"invalid request"}}`},
+		{name: "context window", payload: `{"error":{"code":"context_length_exceeded","message":"input exceeds the context window"}}`},
+		{name: "policy overrides capacity code", event: "error", payload: `{"error":{"type":"content_policy","code":"server_is_overloaded","message":"blocked by policy"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			lines := []string{`data: {"id":"chatcmpl_overloaded","object":"chat.completion.chunk","model":"gpt-5.5","choices":[{"index":0,"delta":{"role":"assistant"}}]}`, ""}
+			if tc.content {
+				lines = append(lines, `data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}`, "")
+			}
+			if tc.event != "" {
+				lines = append(lines, "event: "+tc.event)
+			}
+			if tc.multi {
+				cut := strings.Index(tc.payload, `"message"`)
+				require.Positive(t, cut)
+				lines = append(lines, "data: "+tc.payload[:cut], "data: "+tc.payload[cut:])
+			} else {
+				lines = append(lines, "data: "+tc.payload)
+			}
+			lines = append(lines, "")
+			if tc.name == "after content multiline with later usage" {
+				lines = append(lines, `data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`, "")
+			}
+			lines = append(lines, "data: [DONE]", "")
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(strings.Join(lines, "\n"))),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.Equal(t, tc.failover, errors.As(err, &failoverErr))
+			if tc.failover {
+				require.Nil(t, result)
+				require.False(t, c.Writer.Written())
+				require.Empty(t, rec.Body.String())
+			} else {
+				require.NotNil(t, result)
+				require.Contains(t, rec.Body.String(), "data: "+tc.payload+"\n\n")
+				require.NotContains(t, rec.Body.String(), "[DONE]")
+				if tc.name == "after content multiline with later usage" {
+					require.Equal(t, 7, result.Usage.InputTokens)
+					require.Equal(t, 3, result.Usage.OutputTokens)
+					require.NotContains(t, rec.Body.String(), `"total_tokens":10`)
+				}
+				if tc.content {
+					require.Contains(t, rec.Body.String(), "partial")
+				} else {
+					require.NotContains(t, rec.Body.String(), "chatcmpl_overloaded")
+				}
+			}
+		})
+	}
+}
+
+func TestStreamRawChatCompletions_MultilineJSONRemainsValidSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+		`data: {"model":"upstream","choices":[{"index":0,`,
+		`data: "delta":{"content":"ok","tool_calls":[{"id":"","function":{"name":""}}]}}]}`,
+		"",
+		`data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")))}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+	result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "client", "client", "upstream", nil, nil, time.Now(), 0)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	firstData := strings.Split(strings.TrimPrefix(rec.Body.String(), "data: "), "\n")[0]
+	require.True(t, gjson.Valid(firstData), "collapsed frame must remain one valid SSE data line")
+	require.Equal(t, "client", gjson.Get(firstData, "model").String())
+	require.False(t, gjson.Get(firstData, "choices.0.delta.tool_calls.0.id").Exists())
+	require.Equal(t, 2, result.Usage.InputTokens)
+	require.Contains(t, rec.Body.String(), "data: [DONE]")
+}
+
+func TestStreamRawChatCompletions_LargeNormalChunkDoesNotHitPreambleLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	content := strings.Repeat("x", openAIChatPreambleMaxBytes+1024)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+		`data: {"model":"gpt-5.5","choices":[{"index":0,"delta":{"content":"` + content + `"}}]}`,
+		"",
+		`data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")))}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+	result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, rec.Body.String(), content)
+	require.Equal(t, 2, result.Usage.InputTokens)
+	require.Contains(t, rec.Body.String(), "data: [DONE]")
+}
+
+func TestStreamRawChatCompletions_CommentStormIsBoundedBeforeModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	var upstream strings.Builder
+	comment := ":" + strings.Repeat("x", 256) + "\n\n"
+	for range 1100 {
+		upstream.WriteString(comment)
+	}
+	upstream.WriteString(`data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}` + "\n\n")
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(upstream.String()))}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+
+	require.ErrorContains(t, err, "preamble exceeded")
+	require.NotNil(t, result)
+	require.Equal(t, 7, result.Usage.InputTokens, "usage after the bounded preamble still reaches billing")
+	require.Empty(t, rec.Body.String(), "unvalidated comments must not be released as partial SSE")
+}
+
+func TestStreamRawChatCompletions_UnterminatedCommentFrameIsBounded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	comment := ":" + strings.Repeat("x", 1024) + "\n"
+	storm := strings.Repeat(comment, openAIChatMultiLineFrameMaxBytes/len(comment)+1)
+	body := storm + "\n" + `data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}` + "\n\n"
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+
+	require.ErrorContains(t, err, "multiline SSE frame exceeded")
+	require.NotNil(t, result)
+	require.Equal(t, 7, result.Usage.InputTokens, "later usage must still reach billing")
+	require.Empty(t, rec.Body.String(), "an incomplete frame must never leak to the client")
+}
+
+type rawChatErrorThenHangBody struct {
+	payload []byte
+	sent    bool
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func (b *rawChatErrorThenHangBody) Read(p []byte) (int, error) {
+	if !b.sent {
+		b.sent = true
+		return copy(p, b.payload), nil
+	}
+	<-b.closed
+	return 0, io.EOF
+}
+
+func (b *rawChatErrorThenHangBody) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
+
+func TestStreamRawChatCompletions_ErrorDrainDeadlinePreservesUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	body := &rawChatErrorThenHangBody{payload: []byte(strings.Join([]string{
+		`data: {"model":"gpt-5.5","choices":[{"index":0,"delta":{"content":"partial"}}]}`,
+		"",
+		`event: error`,
+		`data: {"error":{"type":"invalid_request_error","message":"invalid request"}}`,
+		"",
+		`data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`,
+		"",
+	}, "\n")), closed: make(chan struct{})}
+	defer body.Close()
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: body}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+	type outcome struct {
+		result *OpenAIForwardResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+		done <- outcome{result: result, err: err}
+	}()
+	select {
+	case got := <-done:
+		require.Error(t, got.err)
+		require.NotNil(t, got.result)
+		require.Equal(t, 7, got.result.Usage.InputTokens)
+		require.Equal(t, 3, got.result.Usage.OutputTokens)
+		require.Contains(t, rec.Body.String(), "partial")
+		require.NotContains(t, rec.Body.String(), `"total_tokens":10`)
+	case <-time.After(openAIChatErrorDrainMaxWait + 3*time.Second):
+		t.Fatal("raw error drain waited indefinitely for upstream EOF")
+	}
 }
 
 func TestForwardAsRawChatCompletions_SilentRefusalToolCallsExempt(t *testing.T) {

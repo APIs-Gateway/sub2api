@@ -632,6 +632,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	clientDisconnected := false
 	clientOutputStarted := false
 	pendingSSE := make([]string, 0, 4)
+	pendingSSEBytes := 0
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
 	var streamNonFailoverErr error
@@ -671,6 +672,24 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			FirstTokenMs:  firstTokenMs,
 		}
 	}
+	flushPendingSSE := func() {
+		if clientDisconnected || clientOutputStarted {
+			return
+		}
+		writeStreamHeaders()
+		for _, pending := range pendingSSE {
+			if _, err := fmt.Fprint(c.Writer, pending); err != nil {
+				clientDisconnected = true
+				break
+			}
+		}
+		pendingSSE = pendingSSE[:0]
+		pendingSSEBytes = 0
+		clientOutputStarted = !clientDisconnected
+		if !clientDisconnected {
+			c.Writer.Flush()
+		}
+	}
 
 	processDataLine := func(payload string) bool {
 		if firstChunk {
@@ -698,7 +717,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				usage = copyOpenAIUsageFromResponsesUsage(event.Response.Usage)
 			}
 		}
-		if strings.TrimSpace(event.Type) == "response.failed" {
+		if event.Type == "response.failed" || event.Type == "error" || gjson.Get(payload, "error").IsObject() {
 			payloadBytes := []byte(payload)
 			message := extractOpenAISSEErrorMessage(payloadBytes)
 			if hit, code, msg := detectOpenAICyberPolicy(payloadBytes); hit {
@@ -734,7 +753,11 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				}
 				return true
 			}
-			if openAIStreamFailedEventShouldFailover(payloadBytes, message) {
+			shouldFailover := openAIStreamErrorEventShouldFailover(payloadBytes, message)
+			if event.Type == "response.failed" {
+				shouldFailover = openAIStreamFailedEventShouldFailover(payloadBytes, message)
+			}
+			if shouldFailover && !clientOutputStarted && !clientDisconnected {
 				streamFailoverErr = s.newOpenAIStreamFailoverError(c, account, false, requestID, payloadBytes, message, resp.Header)
 				return true
 			}
@@ -799,6 +822,15 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				}
 				if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
 					pendingSSE = append(pendingSSE, sse)
+					pendingSSEBytes += len(sse)
+					if pendingSSEBytes < openAIChatPreambleMaxBytes {
+						continue
+					}
+					if !upstreamModelChecked {
+						streamNonFailoverErr = fmt.Errorf("chat stream preamble exceeded %d bytes before model validation", openAIChatPreambleMaxBytes)
+						return true
+					}
+					flushPendingSSE()
 					continue
 				}
 				if !clientOutputStarted {
@@ -842,6 +874,18 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		if streamNonFailoverErr != nil {
 			return resultWithUsage(), streamNonFailoverErr
+		}
+		if clientOutputStarted && refusalDetector.IsSilentRefusal() {
+			message := s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", nil, openAISilentRefusalUpstreamMessage)
+			if !clientDisconnected {
+				writeStreamHeaders()
+				if _, err := fmt.Fprint(c.Writer, buildChatStreamErrorSSE(openAISilentRefusalErrorCode, openAISilentRefusalClientMessage)); err == nil {
+					c.Writer.Flush()
+				} else {
+					clientDisconnected = true
+				}
+			}
+			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", message)
 		}
 		if finalChunks := apicompat.FinalizeResponsesChatStream(state); len(finalChunks) > 0 && !clientDisconnected {
 			for _, chunk := range finalChunks {
@@ -941,41 +985,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
 	}
 
-	// No keepalive: fast synchronous path
-	if streamInterval <= 0 && keepaliveInterval <= 0 {
-		var parser openAICompatSSEFrameParser
-		for scanner.Scan() {
-			line := scanner.Text()
-			frame, ok := parser.AddLine(line)
-			if !ok {
-				continue
-			}
-			if strings.TrimSpace(frame.Data) == "[DONE]" {
-				return missingTerminalErr()
-			}
-			if processFrame(frame) {
-				return finalizeStream()
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			handleScanErr(err)
-			if clientDisconnected || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
-			}
-			return resultWithUsage(), newOpenAIUpstreamStreamReadError(err)
-		}
-		if frame, ok := parser.Finish(); ok {
-			if strings.TrimSpace(frame.Data) == "[DONE]" {
-				return missingTerminalErr()
-			}
-			if processFrame(frame) {
-				return finalizeStream()
-			}
-		}
-		return missingTerminalErr()
-	}
-
-	// With keepalive: goroutine + channel + select
+	// Read on a separate goroutine even without configured keepalives: the
+	// preamble deadline must fire while the upstream is silent.
 	type scanEvent struct {
 		line string
 		err  error
@@ -1017,9 +1028,34 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 	lastDataAt := time.Now()
 	var parser openAICompatSSEFrameParser
+	frameBytes := 0
+	frameMetadataBytes := 0
+	frameDataLines := 0
+	preambleTimer := time.NewTimer(openAIChatPreambleMaxWait)
+	defer preambleTimer.Stop()
+	preambleCh := preambleTimer.C
 
 	for {
 		select {
+		case <-preambleCh:
+			if !clientOutputStarted && !clientDisconnected {
+				if upstreamModelChecked && len(pendingSSE) > 0 {
+					flushPendingSSE()
+				} else {
+					writeStreamHeaders()
+					n, err := fmt.Fprint(c.Writer, ":\n\n")
+					if err != nil {
+						clientDisconnected = true
+					} else {
+						addOpenAIStreamKeepaliveBytes(c, n)
+						c.Writer.Flush()
+						preambleTimer.Reset(openAIChatPreambleMaxWait)
+					}
+				}
+			}
+			if clientOutputStarted || clientDisconnected {
+				preambleCh = nil
+			}
 		case ev, ok := <-events:
 			if !ok {
 				if frame, ok := parser.Finish(); ok {
@@ -1041,7 +1077,21 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			lastDataAt = time.Now()
 			line := ev.line
+			frameBytes += len(line) + 1
+			if _, isData := extractOpenAISSEDataLine(line); isData {
+				frameDataLines++
+			} else {
+				frameMetadataBytes += len(line) + 1
+			}
+			if frameMetadataBytes > openAIChatMultiLineFrameMaxBytes || (frameDataLines > 1 && frameBytes > openAIChatMultiLineFrameMaxBytes) {
+				return resultWithUsage(), newOpenAIUpstreamStreamReadError(fmt.Errorf("chat multiline SSE frame exceeded %d bytes", openAIChatMultiLineFrameMaxBytes))
+			}
 			frame, ok := parser.AddLine(line)
+			if line == "" {
+				frameBytes = 0
+				frameMetadataBytes = 0
+				frameDataLines = 0
+			}
 			if !ok {
 				continue
 			}

@@ -4914,6 +4914,24 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	if isOpenAIContextWindowError(message, payload) {
 		return false
 	}
+	policyText := strings.ToLower(strings.Join([]string{
+		message,
+		gjson.GetBytes(payload, "error.type").String(),
+		gjson.GetBytes(payload, "error.code").String(),
+		gjson.GetBytes(payload, "response.error.type").String(),
+		gjson.GetBytes(payload, "response.error.code").String(),
+	}, " "))
+	for _, marker := range []string{"policy", "safety", "high-risk cyber"} {
+		if strings.Contains(policyText, marker) {
+			return false
+		}
+	}
+	for _, path := range []string{"error.code", "error.type", "response.error.code", "response.error.type"} {
+		switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, path).String())) {
+		case "server_is_overloaded", "slow_down":
+			return true
+		}
+	}
 	switch openAIStreamFailedEventSemanticStatus(payload, message) {
 	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
 		return true

@@ -128,6 +128,23 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadErrorWithKeepalive(t *te
 	require.Equal(t, "Upstream HTTP/2 stream failed", message)
 }
 
+func TestHandleChatStreamingResponse_UnterminatedCommentFrameIsBounded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	comment := ":" + strings.Repeat("x", 1024) + "\n"
+	storm := strings.Repeat(comment, openAIChatMultiLineFrameMaxBytes/len(comment)+1)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(storm))}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+
+	result, err := svc.handleChatStreamingResponse(resp, c, &Account{ID: 1, Name: "openai-oauth", Platform: PlatformOpenAI}, "gpt-5.5", "gpt-5.5", "gpt-5.5", time.Now(), 0)
+
+	require.ErrorContains(t, err, "multiline SSE frame exceeded")
+	require.NotNil(t, result)
+	require.Empty(t, rec.Body.String(), "an incomplete frame must never leak to the client")
+}
+
 func TestHandleChatStreamingResponse_ClassifiesGenericReadErrorWithKeepalive(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -791,6 +808,50 @@ func TestForwardAsChatCompletions_StreamContextWindowResponseFailedReturnsErrorW
 	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
 	require.Contains(t, rec.Body.String(), "input exceeds the context window")
 	require.NotContains(t, rec.Body.String(), "[DONE]")
+}
+
+func TestForwardAsChatCompletions_SmallRequestOverloadBeforeContentFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name    string
+		event   string
+		payload string
+	}{
+		{name: "bare error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`},
+		{name: "named bare error", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`},
+		{name: "structured code without retry text", payload: `{"error":{"code":"server_is_overloaded","message":"The server is overloaded"}}`},
+		{name: "structured type without retry text", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"The server is overloaded"}}`},
+		{name: "response failed", payload: `{"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"try again later"}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			lines := []string{
+				`data: {"type":"response.created","response":{"id":"resp_overloaded","model":"gpt-5.5","status":"in_progress","output":[]}}`, "",
+				`data: {"type":"response.in_progress","response":{"id":"resp_overloaded","status":"in_progress"}}`, "",
+			}
+			if tc.event != "" {
+				lines = append(lines, "event: "+tc.event)
+			}
+			upstreamBody := strings.Join(append(lines, "data: "+tc.payload, "", ""), "\n")
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+			}}
+			svc := &OpenAIGatewayService{httpUpstream: upstream}
+			account := &Account{ID: 1, Name: "openai-oauth", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+				Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"}}
+			result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.5")
+			require.Nil(t, result)
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.False(t, c.Writer.Written())
+			require.Empty(t, rec.Body.String())
+		})
+	}
 }
 
 func TestForwardAsChatCompletions_StreamCyberPolicyNoFailover(t *testing.T) {
