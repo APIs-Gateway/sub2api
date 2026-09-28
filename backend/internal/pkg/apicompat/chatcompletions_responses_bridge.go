@@ -1572,8 +1572,8 @@ type ChatCompletionsToResponsesStreamState struct {
 	textSegment      strings.Builder
 	reasoningSegment strings.Builder
 	outputItems      map[int]ResponsesOutput
+	hasVisibleText   bool
 
-	Text      strings.Builder
 	Reasoning strings.Builder
 
 	// Tool-call lifecycle, keyed by the upstream tool_call index.
@@ -1723,7 +1723,7 @@ func ChatCompletionsChunkToResponsesEvents(
 			events = append(events, closeChatReasoningItem(state)...)
 			events = append(events, ensureChatToResponsesMessageItem(state)...)
 			events = append(events, ensureChatToResponsesTextPart(state)...)
-			_, _ = state.Text.WriteString(*choice.Delta.Content)
+			state.hasVisibleText = true
 			_, _ = state.textSegment.WriteString(*choice.Delta.Content)
 			events = append(events, chatToResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
 				OutputIndex:  state.MessageIndex,
@@ -1913,7 +1913,7 @@ func closeChatReasoningItem(state *ChatCompletionsToResponsesStreamState) []Resp
 func synthesizeChatReasoningFallbackMessage(state *ChatCompletionsToResponsesStreamState) []ResponsesStreamEvent {
 	if state == nil ||
 		state.MessageItemID != "" ||
-		state.Text.Len() > 0 ||
+		state.hasVisibleText ||
 		state.Reasoning.Len() == 0 ||
 		len(state.ToolCalls) > 0 {
 		return nil
@@ -1927,7 +1927,7 @@ func synthesizeChatReasoningFallbackMessage(state *ChatCompletionsToResponsesStr
 	var events []ResponsesStreamEvent
 	events = append(events, ensureChatToResponsesMessageItem(state)...)
 	events = append(events, ensureChatToResponsesTextPart(state)...)
-	_, _ = state.Text.WriteString(text)
+	state.hasVisibleText = true
 	_, _ = state.textSegment.WriteString(text)
 	events = append(events, chatToResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
 		OutputIndex:  state.MessageIndex,
@@ -2150,7 +2150,7 @@ func (state *ChatCompletionsToResponsesStreamState) chatOutput() []ResponsesOutp
 			outputs = append(outputs, item)
 		}
 	}
-	if len(state.ToolCalls) == 0 && state.Text.Len() == 0 {
+	if len(state.ToolCalls) == 0 && !state.hasVisibleText {
 		outputs = append(outputs, emptyResponsesMessageOutput())
 	}
 	return outputs
