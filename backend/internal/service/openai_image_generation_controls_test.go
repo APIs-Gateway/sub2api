@@ -387,6 +387,70 @@ func TestOpenAIGatewayServiceForward_ChannelBridgeOverrideEnablesCodexInjection(
 	require.Contains(t, instructions, "image_generation")
 }
 
+func TestOpenAIGatewayServiceForward_CodexBridgeRequiresSupportedAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name         string
+		baseURL      string
+		cnProvider   bool
+		accountExtra map[string]any
+		global       bool
+		channel      bool
+		wantInjected bool
+	}{
+		{name: "official API follows global", global: true, wantInjected: true},
+		{name: "official API follows channel", channel: true, wantInjected: true},
+		{name: "custom Responses API ignores global", baseURL: "https://api.moonshot.cn/v1", global: true},
+		{name: "custom Responses API ignores channel", baseURL: "https://api.moonshot.cn/v1", channel: true},
+		{name: "CN provider on official URL ignores global", cnProvider: true, global: true},
+		{name: "similar hostname is not official", baseURL: "https://api.openai.com.evil.example/v1", global: true},
+		{name: "custom API explicit opt in", baseURL: "https://compatible.example/v1", global: true,
+			accountExtra: map[string]any{featureKeyCodexImageGenerationBridge: true}, wantInjected: true},
+		{name: "custom API explicit opt out", baseURL: "https://compatible.example/v1", channel: true,
+			accountExtra: map[string]any{featureKeyCodexImageGenerationBridge: false}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp_bridge_scope","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":1}}`)),
+			}}
+			svc := newOpenAIImageGenerationControlTestService(upstream)
+			svc.cfg.Gateway.CodexImageGenerationBridgeEnabled = tt.global
+			if tt.channel {
+				groupID := int64(4242)
+				svc.channelService = newOpenAIImageGenerationControlChannelService(groupID, &Channel{
+					ID: 9001, Status: StatusActive, FeaturesConfig: map[string]any{
+						featureKeyCodexImageGenerationBridge: map[string]any{PlatformOpenAI: true},
+					},
+				})
+			}
+			account := newOpenAIImageGenerationControlTestAccount()
+			if tt.baseURL != "" {
+				account.Credentials["base_url"] = tt.baseURL
+			}
+			if tt.cnProvider {
+				account.Credentials[cnProviderCredentialKey] = true
+			}
+			for key, value := range tt.accountExtra {
+				account.Extra[key] = value
+			}
+			c, _ := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.144.1")
+			result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.4","input":"draw a cat","stream":false,"tools":[{"type":"function","name":"shell","parameters":{"type":"object"}}]}`))
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, tt.wantInjected, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
+			require.Equal(t, tt.wantInjected, gjson.GetBytes(upstream.lastBody, "tool_choice").Exists())
+			require.Equal(t, tt.wantInjected, strings.Contains(gjson.GetBytes(upstream.lastBody, "instructions").String(), codexImageGenerationBridgeMarker))
+			require.Equal(t, "shell", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
+		})
+	}
+}
+
 func TestOpenAIGatewayServiceForward_CodexBridgeDoesNotInjectHostedToolAlongsideImageGenNamespace(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -594,6 +658,41 @@ func TestOpenAIGatewayService_CodexImageGenerationBridgeOverridePrecedence(t *te
 			},
 			want: false,
 		},
+		{name: "nil account ignores global", global: true},
+		{name: "non openai account ignores global", global: true,
+			account: &Account{Platform: PlatformAnthropic}},
+		{name: "custom API key ignores global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"base_url": "https://api.moonshot.cn/v1"}}},
+		{name: "custom API key ignores channel", channel: &Channel{ID: 1, Status: StatusActive, FeaturesConfig: map[string]any{
+			featureKeyCodexImageGenerationBridge: map[string]any{PlatformOpenAI: true},
+		}}, account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"base_url": "https://compatible.example/v1"}}},
+		{name: "CN marker ignores global even with official URL", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{cnProviderCredentialKey: true}}},
+		{name: "custom API key explicit true overrides channel false", channel: &Channel{ID: 1, Status: StatusActive, FeaturesConfig: map[string]any{
+			featureKeyCodexImageGenerationBridge: map[string]any{PlatformOpenAI: false},
+		}}, account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"base_url": "https://compatible.example/v1"},
+			Extra:       map[string]any{featureKeyCodexImageGenerationBridge: true}}, want: true},
+		{name: "custom API key explicit false overrides global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"base_url": "https://compatible.example/v1"},
+				Extra:       map[string]any{featureKeyCodexImageGenerationBridge: false}}},
+		{name: "official HTTPS v1 path follows global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"base_url": "https://API.OPENAI.COM:443/v1/"}}, want: true},
+		{name: "similar hostname ignores global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"base_url": "https://api.openai.com.evil.example/v1"}}},
+		{name: "HTTP official host ignores global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"base_url": "http://api.openai.com/v1"}}},
+		{name: "OpenAI OAuth follows global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}, want: true},
+		{name: "OpenAI Setup Token follows global", global: true,
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeSetupToken}, want: true},
 	}
 
 	for _, tt := range tests {
