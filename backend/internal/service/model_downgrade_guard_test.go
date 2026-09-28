@@ -103,6 +103,9 @@ func TestModelDowngradeGuardMatchesExplicitPairOnly(t *testing.T) {
 	require.Zero(t, counter.increments)
 	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna")
 	require.Equal(t, 1, counter.increments)
+	svc.HandleConfirmedModelDowngrade(WithOpenAIForcedAccountRouting(context.Background(), account.ID), account,
+		"gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna")
+	require.Equal(t, 1, counter.increments)
 }
 
 func TestOpenAIModelRateLimitUsesForwardedModelKey(t *testing.T) {

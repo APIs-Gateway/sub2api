@@ -39,6 +39,11 @@ func (s *RateLimitService) HandleConfirmedModelDowngrade(ctx context.Context, ac
 	if !guard.Enabled {
 		return
 	}
+	// Forced single-account routes have no alternate account even when their
+	// group has healthy peers. Keep their cross-request routing untouched.
+	if openAIForcedAccountRoutingID(ctx) == account.ID {
+		return
+	}
 	sentModel = strings.TrimSpace(sentModel)
 	responseModel = strings.TrimSpace(responseModel)
 	if sentModel == "" || responseModel == "" || sentModel == responseModel {

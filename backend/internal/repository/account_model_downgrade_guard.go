@@ -125,9 +125,18 @@ func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int6
 	if total == 0 || (!alreadyCounted && float64(blocked+1)/float64(total) > maxRatio) {
 		return false, nil
 	}
-	// One account may serve several groups. Do not isolate the last usable
-	// candidate for this request model in any group affected by the write.
+	// One account may serve several groups. Lock the candidate rows and their
+	// group bindings before reading the repository projection on another DB
+	// connection, so concurrent admin edits cannot remove the last candidate
+	// between this check and the block commit.
 	if simpleMode {
+		if err := lockModelDowngradePool(ctx, tx, `
+			SELECT a.id FROM accounts a
+			WHERE a.platform = $1 AND a.deleted_at IS NULL
+			ORDER BY a.id FOR UPDATE OF a
+		`, service.PlatformOpenAI); err != nil {
+			return false, err
+		}
 		candidates, err := r.ListSchedulableByPlatform(ctx, service.PlatformOpenAI)
 		if err != nil {
 			return false, err
@@ -178,7 +187,7 @@ func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int6
 }
 
 func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx context.Context, tx *sql.Tx, id int64, requestedModel string) (bool, error) {
-	groupRows, err := tx.QueryContext(ctx, "SELECT group_id FROM account_groups WHERE account_id = $1", id)
+	groupRows, err := tx.QueryContext(ctx, "SELECT group_id FROM account_groups WHERE account_id = $1 ORDER BY group_id FOR UPDATE", id)
 	if err != nil {
 		return false, err
 	}
@@ -199,6 +208,14 @@ func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx co
 		return false, err
 	}
 	if len(groupIDs) == 0 {
+		if err := lockModelDowngradePool(ctx, tx, `
+			SELECT a.id FROM accounts a
+			WHERE a.platform = $1 AND a.deleted_at IS NULL
+				AND NOT EXISTS (SELECT 1 FROM account_groups ag WHERE ag.account_id = a.id)
+			ORDER BY a.id FOR UPDATE OF a
+		`, service.PlatformOpenAI); err != nil {
+			return false, err
+		}
 		candidates, err := r.ListSchedulableUngroupedByPlatform(ctx, service.PlatformOpenAI)
 		if err != nil {
 			return false, err
@@ -208,6 +225,14 @@ func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx co
 		}
 	}
 	for _, groupID := range groupIDs {
+		if err := lockModelDowngradePool(ctx, tx, `
+			SELECT a.id FROM accounts a
+			JOIN account_groups ag ON ag.account_id = a.id
+			WHERE ag.group_id = $1 AND a.platform = $2 AND a.deleted_at IS NULL
+			ORDER BY a.id FOR UPDATE OF a, ag
+		`, groupID, service.PlatformOpenAI); err != nil {
+			return false, err
+		}
 		candidates, err := r.ListSchedulableByGroupIDAndPlatform(ctx, groupID, service.PlatformOpenAI)
 		if err != nil {
 			return false, err
@@ -219,11 +244,29 @@ func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx co
 	return true, nil
 }
 
+func lockModelDowngradePool(ctx context.Context, tx *sql.Tx, query string, args ...any) error {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	return rows.Close()
+}
+
 func hasAlternativeModelDowngradeCandidate(ctx context.Context, candidates []service.Account, blockedID int64, requestedModel string) bool {
 	for i := range candidates {
 		candidate := &candidates[i]
-		if candidate.ID != blockedID && candidate.IsModelSupported(requestedModel) &&
-			candidate.IsSchedulableForModelWithContext(ctx, requestedModel) {
+		if candidate.ID != blockedID && service.IsOpenAIAccountUsableForDowngradeGuard(ctx, candidate, requestedModel) {
 			return true
 		}
 	}

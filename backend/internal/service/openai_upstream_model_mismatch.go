@@ -262,6 +262,7 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 		if c != nil && c.Request != nil {
 			ctx = c.Request.Context()
 		}
+		ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 		requestedModel := sentModel
 		if len(requestedModels) > 0 && strings.TrimSpace(requestedModels[0]) != "" {
 			requestedModel = requestedModels[0]
