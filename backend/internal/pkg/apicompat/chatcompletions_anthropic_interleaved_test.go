@@ -327,11 +327,38 @@ func TestCustomInputSuffixIsRecoveredWithoutAssumingJSON(t *testing.T) {
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 0, Item: &ResponsesOutput{Type: "custom_tool_call", Name: "Read", CallID: "call_custom"}}, state)
 	first := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: 0, Delta: "raw-"}, state)
 	require.Len(t, first, 1)
-	require.Equal(t, "raw-", first[0].Delta.PartialJSON)
 	done := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: 0, Item: &ResponsesOutput{Type: "custom_tool_call", CallID: "call_custom", Input: "raw-input"}}, state)
-	require.Len(t, done, 2)
-	require.Equal(t, "input", done[0].Delta.PartialJSON)
-	require.Equal(t, "content_block_stop", done[1].Type)
+	require.Equal(t, "content_block_stop", done[len(done)-1].Type)
+	var partialJSON string
+	for _, event := range append(first, done...) {
+		if event.Type == "content_block_delta" {
+			partialJSON += event.Delta.PartialJSON
+		}
+	}
+	require.JSONEq(t, `{"input":"raw-input"}`, partialJSON)
+}
+
+func TestCustomInputEscapesChunkBoundariesAndDoneOnlyText(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 0, Item: &ResponsesOutput{Type: "custom_tool_call", Name: "exec"}}, state)
+	var events []AnthropicStreamEvent
+	for _, delta := range []string{"quote\"<", string([]byte{0xe2}), string([]byte{0x82, 0xac}) + "\\tail"} {
+		events = append(events, ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: 0, Delta: delta}, state)...)
+	}
+	events = append(events, ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.custom_tool_call_input.done", OutputIndex: 0, Input: "quote\"<€\\tail"}, state)...)
+	var partialJSON string
+	for _, event := range events {
+		if event.Type == "content_block_delta" {
+			partialJSON += event.Delta.PartialJSON
+		}
+	}
+	require.JSONEq(t, `{"input":"quote\"<€\\tail"}`, partialJSON)
+	require.Equal(t, "content_block_stop", events[len(events)-1].Type)
+
+	buffered := ResponsesToAnthropic(&ResponsesResponse{ID: "r", Status: "completed", Output: []ResponsesOutput{{Type: "custom_tool_call", CallID: "call_custom", Name: "exec", Input: "quote\"<€\\tail"}}}, "model")
+	require.Len(t, buffered.Content, 1)
+	require.Equal(t, "tool_use", buffered.Content[0].Type)
+	require.JSONEq(t, partialJSON, string(buffered.Content[0].Input))
 }
 
 func TestReadItemDoneDoesNotReintroduceSanitizedPages(t *testing.T) {

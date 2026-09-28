@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -62,6 +63,14 @@ func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicRespo
 				ID:    fromResponsesCallID(item.CallID),
 				Name:  item.Name,
 				Input: sanitizeAnthropicToolUseInput(item.Name, item.Arguments),
+			})
+		case "custom_tool_call":
+			input, _ := json.Marshal(map[string]string{"input": item.Input})
+			blocks = append(blocks, AnthropicContentBlock{
+				Type:  "tool_use",
+				ID:    fromResponsesCallID(item.CallID),
+				Name:  item.Name,
+				Input: input,
 			})
 		case "web_search_call":
 			toolUseID := "srvtoolu_" + item.ID
@@ -181,18 +190,21 @@ type responsesTextPart struct {
 }
 
 type responsesAnthropicBlock struct {
-	index     int
-	kind      string
-	toolType  string
-	name      string
-	itemID    string
-	callID    string
-	open      bool
-	hadDelta  bool
-	args      strings.Builder
-	argsHash  hash.Hash
-	argsBytes int
-	signature string
+	index               int
+	kind                string
+	toolType            string
+	name                string
+	itemID              string
+	callID              string
+	open                bool
+	hadDelta            bool
+	args                strings.Builder
+	argsHash            hash.Hash
+	argsBytes           int
+	customInputStarted  bool
+	customInputFinished bool
+	pendingUTF8         []byte
+	signature           string
 }
 
 // ResponsesEventToAnthropicState tracks state for converting a sequence of
@@ -268,6 +280,8 @@ func ResponsesEventToAnthropicEvents(
 		return resToAnthHandleFuncArgsDelta(evt, state)
 	case "response.function_call_arguments.done":
 		return resToAnthHandleFuncArgsDone(evt, state)
+	case "response.custom_tool_call_input.done":
+		return resToAnthHandleFuncArgsDone(&ResponsesStreamEvent{OutputIndex: evt.OutputIndex, ItemID: evt.ItemID, Arguments: evt.Input}, state)
 	case "response.output_item.done":
 		return resToAnthHandleOutputItemDone(evt, state)
 	case "response.reasoning_summary_text.delta",
@@ -552,12 +566,19 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 	_, _ = block.argsHash.Write([]byte(evt.Delta))
 	block.argsBytes += len(evt.Delta)
 	blockIdx := block.index
+	fragment := evt.Delta
+	if block.toolType == "custom_tool_call" {
+		fragment = resToAnthCustomInputFragment(block, evt.Delta)
+	}
+	if fragment == "" {
+		return nil
+	}
 	return []AnthropicStreamEvent{{
 		Type:  "content_block_delta",
 		Index: &blockIdx,
 		Delta: &AnthropicDelta{
 			Type:        "input_json_delta",
-			PartialJSON: evt.Delta,
+			PartialJSON: fragment,
 		},
 	}}
 }
@@ -570,6 +591,22 @@ func resToAnthHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEven
 	raw := evt.Arguments
 	if raw == "" {
 		raw = block.args.String()
+	}
+	if block.toolType == "custom_tool_call" {
+		var events []AnthropicStreamEvent
+		fragment := ""
+		if block.hadDelta {
+			if suffix, ok := resToAnthToolArgsSuffix(block, raw); ok {
+				fragment = resToAnthCustomInputFragment(block, suffix)
+			}
+		} else if raw != "" {
+			fragment = resToAnthCustomInputFragment(block, raw)
+		}
+		if fragment != "" {
+			idx := block.index
+			events = append(events, AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "input_json_delta", PartialJSON: fragment}})
+		}
+		return append(events, closeResponsesAnthropicBlock(state, block)...)
 	}
 	if block.hadDelta {
 		var events []AnthropicStreamEvent
@@ -597,6 +634,42 @@ func resToAnthHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEven
 	}}
 	events = append(events, closeResponsesAnthropicBlock(state, block)...)
 	return events
+}
+
+// A Responses custom tool carries freeform text. Anthropic tool_use requires
+// an object, so stream it as {"input":"..."}. Keep at most an incomplete
+// UTF-8 rune across chunks; json.Marshal then escapes each complete fragment.
+func resToAnthCustomInputFragment(block *responsesAnthropicBlock, raw string) string {
+	combined := append(block.pendingUTF8, raw...)
+	complete := 0
+	for complete < len(combined) {
+		if !utf8.FullRune(combined[complete:]) {
+			break
+		}
+		_, size := utf8.DecodeRune(combined[complete:])
+		complete += size
+	}
+	escaped, _ := json.Marshal(string(combined[:complete]))
+	block.pendingUTF8 = append(block.pendingUTF8[:0], combined[complete:]...)
+	fragment := string(escaped[1 : len(escaped)-1])
+	if !block.customInputStarted {
+		block.customInputStarted = true
+		fragment = `{"input":"` + fragment
+	}
+	return fragment
+}
+
+func resToAnthFinishCustomInput(block *responsesAnthropicBlock) string {
+	if block.customInputFinished {
+		return ""
+	}
+	block.customInputFinished = true
+	if !block.customInputStarted {
+		return `{"input":""}`
+	}
+	escaped, _ := json.Marshal(string(block.pendingUTF8))
+	block.pendingUTF8 = nil
+	return string(escaped[1:len(escaped)-1]) + `"}`
 }
 
 // resToAnthToolArgsSuffix validates the already streamed prefix without
@@ -902,6 +975,11 @@ func closeResponsesAnthropicBlock(state *ResponsesEventToAnthropicState, block *
 	}
 	idx := block.index
 	var events []AnthropicStreamEvent
+	if block.toolType == "custom_tool_call" {
+		if fragment := resToAnthFinishCustomInput(block); fragment != "" {
+			events = append(events, AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "input_json_delta", PartialJSON: fragment}})
+		}
+	}
 	// Emit signature_delta before stop so Claude clients retain encrypted
 	// reasoning for the next turn (required for Grok multi-turn cache).
 	if block.kind == "thinking" {
