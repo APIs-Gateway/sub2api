@@ -882,6 +882,8 @@ type GatewayConfig struct {
 	// UpstreamModelMismatchObserveAccountIDs：账号级观察名单。名单内账号的上游模型不一致只记录不拦截（同全局观察模式），
 	// 其余账号照常拦截。用于 openai_forced_account_routes 这类强制单账号路由：拦截后无号可切，客户端会直接收到 502。
 	UpstreamModelMismatchObserveAccountIDs []int64 `mapstructure:"upstream_model_mismatch_observe_account_ids"`
+
+	// ModelDowngradeGuard quarantines configured model substitutions after repeated hits.
 	ModelDowngradeGuard GatewayModelDowngradeGuardConfig `mapstructure:"model_downgrade_guard"`
 	// ForcedCodexInstructionsTemplateFile: 服务端强制附加到 Codex 顶层 instructions 的模板文件路径。
 	// 模板渲染后会直接覆盖最终 instructions；若需要保留客户端 system 转换结果，请在模板中显式引用 {{ .ExistingInstructions }}。

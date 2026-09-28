@@ -86,9 +86,10 @@ func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedMod
 	}
 
 	modelKey := a.GetMappedModel(requestedModel)
-	if a.Platform == PlatformAntigravity {
+	switch a.Platform {
+	case PlatformAntigravity:
 		modelKey = resolveFinalAntigravityModelKey(ctx, a, requestedModel)
-	} else if a.Platform == PlatformOpenAI {
+	case PlatformOpenAI:
 		forwardModel := requestedModel
 		if fromContext, ok := openAIForwardModelFromContext(ctx); ok && strings.TrimSpace(fromContext.model) != "" {
 			forwardModel = fromContext.model
