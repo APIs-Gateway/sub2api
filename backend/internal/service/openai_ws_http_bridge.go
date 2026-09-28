@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 )
 
@@ -199,6 +200,67 @@ func prepareOpenAIWSHTTPBridgeBody(payload []byte) ([]byte, error) {
 	return json.Marshal(body)
 }
 
+// HTTP Responses has no generate=false prewarm semantics. Answer it locally
+// before opening an upstream turn or invoking any billing/concurrency hooks.
+func isOpenAIWSHTTPBridgePrewarmPayload(payload []byte) bool {
+	return gjson.GetBytes(payload, "generate").Type == gjson.False
+}
+
+func buildOpenAIWSHTTPBridgePrewarmEvents(model string) (string, [][]byte, error) {
+	responseID := "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	response := map[string]any{
+		"id": responseID, "object": "response", "created_at": time.Now().Unix(),
+		"status": "in_progress", "output": []any{},
+	}
+	if model = strings.TrimSpace(model); model != "" {
+		response["model"] = model
+	}
+	created, err := json.Marshal(map[string]any{"type": "response.created", "sequence_number": 0, "response": response})
+	if err != nil {
+		return "", nil, err
+	}
+	response["status"] = "completed"
+	response["usage"] = map[string]any{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+	completed, err := json.Marshal(map[string]any{"type": "response.completed", "sequence_number": 1, "response": response})
+	if err != nil {
+		return "", nil, err
+	}
+	return responseID, [][]byte{created, completed}, nil
+}
+
+func openAIWSHTTPBridgePrewarmToolState(payload []byte, previous openAIWSHTTPBridgeToolState) (openAIWSHTTPBridgeToolState, error) {
+	body, err := prepareOpenAIWSHTTPBridgeBody(payload)
+	if err != nil {
+		return openAIWSHTTPBridgeToolState{}, err
+	}
+	_, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(
+		body, previous.ClientMapping, previous.LoweredTools,
+	)
+	if err != nil {
+		return openAIWSHTTPBridgeToolState{}, err
+	}
+	return openAIWSHTTPBridgeToolState{ClientMapping: mapping, LoweredTools: loweredTools}, nil
+}
+
+func openAIWSHTTPBridgeBodyForAudit(req *http.Request, body []byte) ([]byte, error) {
+	if req.ContentLength == int64(len(body)) {
+		return body, nil
+	}
+	if req.GetBody == nil {
+		return nil, errors.New("websocket http bridge request body cannot be replayed for audit")
+	}
+	auditReader, err := req.GetBody()
+	if err != nil {
+		return nil, fmt.Errorf("read websocket http bridge request body for audit: %w", err)
+	}
+	auditBody, err := io.ReadAll(auditReader)
+	_ = auditReader.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read websocket http bridge request body for audit: %w", err)
+	}
+	return auditBody, nil
+}
+
 type openAIWSToolCallReplayCollector struct {
 	items    []json.RawMessage
 	seen     map[string]struct{}
@@ -345,6 +407,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	turn int,
 	previousToolState openAIWSHTTPBridgeToolState,
 	writeClientMessage func([]byte) error,
+	beforeUpstream ...func([]byte),
 ) (*OpenAIForwardResult, error) {
 	if s == nil {
 		return nil, errors.New("service is nil")
@@ -402,6 +465,16 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 	if err := applyMappedGPT55LiteCompatibility(upstreamReq, account, body); err != nil {
 		return nil, err
+	}
+	if len(beforeUpstream) > 0 && beforeUpstream[0] != nil {
+		// The request may be rewritten by account tool and Lite handling. Read
+		// the final HTTP body through GetBody only when Lite changed its length;
+		// otherwise the request still shares body's bytes.
+		auditBody, bodyErr := openAIWSHTTPBridgeBodyForAudit(upstreamReq, body)
+		if bodyErr != nil {
+			return nil, bodyErr
+		}
+		beforeUpstream[0](auditBody)
 	}
 
 	proxyURL := ""
@@ -488,6 +561,13 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	mappedModel := ""
 	if originalModel != "" {
 		mappedModel = normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
+	}
+	if len(beforeUpstream) > 0 && beforeUpstream[0] != nil {
+		// The first billable turn after a local prewarm can carry an initial
+		// channel mapping that differs from account.GetMappedModel(originalModel).
+		// Use the actual bridge body model only for this new path; ordinary
+		// bridge turns retain their established mismatch/billing semantics.
+		mappedModel = strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {

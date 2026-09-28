@@ -2126,6 +2126,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// 首包只给第 1 轮的模型不一致审计估算 input_tokens 用（拦截只发生在第 1 轮），
 		// AfterTurn 用完即置 nil，避免闭包在整个连接期间保活首包。
 		var wsMismatchRequestBody []byte
+		localPrewarmSeen := false
 		// BeforeRequest resolves the current turn model before BeforeTurn on each
 		// WS ingress. Keep it separate from the handshake model when a session
 		// rotates models between turns.
@@ -2219,6 +2220,22 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				return nil
 			},
+			AfterLocalPrewarm: func(_ int) {
+				// The synthetic bridge response completed without an upstream turn.
+				// Release initial slots before idling for the next client frame;
+				// AfterTurn would also run usage and scheduler accounting.
+				releaseTurnSlots()
+				localPrewarmSeen = true
+				wsMismatchRequestBody = nil
+			},
+			BeforeBridgeUpstreamTurn: func(_ int, payload []byte) {
+				if localPrewarmSeen {
+					// The replayed payload includes prewarm input. Use it for the
+					// request hash and zero-usage mismatch token estimate.
+					requestPayloadHash = service.HashUsageRequestPayload(payload)
+					wsMismatchRequestBody = payload
+				}
+			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
 				// 每次 attempt 都清 cyber mark；failover 链结束前保留 recorded guard，
 				// 避免同一逻辑 turn 换号后重复落风控。CyberBlocked 必须在 submit 前
@@ -2274,6 +2291,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+				usageRequestPayloadHash := requestPayloadHash
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:                result,
@@ -2285,7 +2303,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						UpstreamEndpoint:      upstreamEndpoint,
 						UserAgent:             userAgent,
 						IPAddress:             clientIP,
-						RequestPayloadHash:    requestPayloadHash,
+						RequestPayloadHash:    usageRequestPayloadHash,
 						APIKeyService:         h.apiKeyService,
 						ChannelUsageFields:    channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
 						CyberBlocked:          cyberBlocked,
@@ -2409,7 +2427,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			// 槽位与连接级 cyber gate）不是上游/账号故障：只照常关闭连接，不计入账号调度失败。
 			// 注意不能按 1013/1008 状态码判断——上游 429 忙、连接超时、鉴权失败同样映射为
 			// 1013/1008，那些仍须上报。
-			if errors.Is(err, errOpenAIWSGatewayAdmissionRejected) {
+			if errors.Is(err, errOpenAIWSGatewayAdmissionRejected) || errors.Is(err, service.ErrOpenAIWSPrewarmBudgetExceeded) || errors.Is(err, service.ErrOpenAIWSPrewarmModelChanged) || errors.Is(err, service.ErrOpenAIWSPrewarmPayloadInvalid) || errors.Is(err, service.ErrOpenAIWSPrewarmLateStart) || errors.Is(err, service.ErrOpenAIWSPrewarmLocalFailure) {
 				closeStatus, closeReason := coderws.StatusPolicyViolation, "request rejected"
 				if hasClientCloseErr {
 					closeStatus, closeReason = closeErr.StatusCode(), closeErr.Reason()

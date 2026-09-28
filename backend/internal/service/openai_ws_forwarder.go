@@ -264,7 +264,50 @@ type OpenAIWSIngressHooks struct {
 	OnIngressModeResolved func(passthrough bool)
 	BeforeTurn            func(turn int) error
 	BeforeRequest         func(turn int, payload []byte, originalModel string) error
-	AfterTurn             func(turn int, result *OpenAIForwardResult, turnErr error)
+	// AfterLocalPrewarm releases the connection's initial concurrency slots
+	// after a synthetic HTTP bridge response, without recording usage.
+	AfterLocalPrewarm func(turn int)
+	// BeforeBridgeUpstreamTurn receives the final HTTP bridge request body,
+	// including replayed input, before the upstream call for audit metadata.
+	BeforeBridgeUpstreamTurn func(turn int, payload []byte)
+	AfterTurn                func(turn int, result *OpenAIForwardResult, turnErr error)
+}
+
+const (
+	openAIWSHTTPBridgeMaxPrewarmTurns        = 8
+	openAIWSHTTPBridgeMaxPrewarmPayloadBytes = 64 * 1024 * 1024
+)
+
+// ErrOpenAIWSPrewarmBudgetExceeded marks a client-side bridge admission
+// failure so the handler does not mark a healthy upstream account as failed.
+var ErrOpenAIWSPrewarmBudgetExceeded = errors.New("openai ws http bridge prewarm budget exceeded")
+
+// ErrOpenAIWSPrewarmModelChanged marks a client-side rejection before any
+// billable upstream turn; the selected account must not lose scheduler health.
+var ErrOpenAIWSPrewarmModelChanged = errors.New("openai ws http bridge prewarm model changed")
+
+// ErrOpenAIWSPrewarmPayloadInvalid is a local replay preparation rejection.
+var ErrOpenAIWSPrewarmPayloadInvalid = errors.New("openai ws http bridge prewarm payload invalid")
+
+// ErrOpenAIWSPrewarmLateStart rejects a later first prewarm with a different
+// client model that cannot reuse the connection's first-turn billing mapping.
+var ErrOpenAIWSPrewarmLateStart = errors.New("openai ws http bridge prewarm started after upstream turn")
+
+// ErrOpenAIWSPrewarmLocalFailure marks a synthetic-turn preparation or client
+// write failure that happened without contacting an upstream account.
+var ErrOpenAIWSPrewarmLocalFailure = errors.New("openai ws http bridge local prewarm failure")
+
+func checkOpenAIWSHTTPBridgePrewarmBudget(turns int, usedBytes int64, payload []byte) (int64, error) {
+	if turns >= openAIWSHTTPBridgeMaxPrewarmTurns {
+		return 0, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "too many websocket prewarm turns", ErrOpenAIWSPrewarmBudgetExceeded)
+	}
+	// Normalized RawMessages may point into payload, retaining the entire frame.
+	// Count the whole frame rather than only the input field.
+	if usedBytes < 0 || usedBytes > openAIWSHTTPBridgeMaxPrewarmPayloadBytes ||
+		int64(len(payload)) > openAIWSHTTPBridgeMaxPrewarmPayloadBytes-usedBytes {
+		return 0, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm payload limit exceeded", ErrOpenAIWSPrewarmBudgetExceeded)
+	}
+	return usedBytes + int64(len(payload)), nil
 }
 
 func normalizeOpenAIWSLogValue(value string) string {
@@ -3310,10 +3353,17 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			storeDisabled,
 		)
 		currentBridgePayload := firstPayload
+		prewarmClientModel := firstPayload.originalModel
+		if hooks != nil && strings.TrimSpace(hooks.InitialRequestModel) != "" {
+			prewarmClientModel = strings.TrimSpace(hooks.InitialRequestModel)
+		}
+		prewarmUpstreamModel := strings.TrimSpace(gjson.GetBytes(firstPayload.payloadRaw, "model").String())
 		var bridgeReplayInput []json.RawMessage
 		bridgeReplayInputExists := false
 		var bridgeAccountFailoverInput []json.RawMessage
 		bridgeAccountFailoverInputExists := false
+		prewarmTurns := 0
+		var prewarmPayloadBytes int64
 		// bridgeToolState carries the client-tool lowering mapping across
 		// turns of this WS HTTP bridge session so a follow-up turn that
 		// omits "tools" (the client relies on the upstream to remember an
@@ -3323,7 +3373,135 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		// WS connection, so it never needs explicit cleanup and can never
 		// leak into another connection or account's turns.
 		var bridgeToolState openAIWSHTTPBridgeToolState
+		readNextBridgePayload := func() (openAIWSClientPayload, bool, error) {
+			nextClientMessage, readErr := readClientMessage()
+			if readErr != nil {
+				if isOpenAIWSSessionPreempted(ctx) {
+					return openAIWSClientPayload{}, false, errOpenAIWSSessionPreempted
+				}
+				if isOpenAIWSClientDisconnectError(readErr) {
+					closeStatus, closeReason := summarizeOpenAIWSReadCloseError(readErr)
+					logOpenAIWSModeInfo(
+						"ingress_ws_http_bridge_client_closed account_id=%d close_status=%s close_reason=%s",
+						account.ID,
+						closeStatus,
+						truncateOpenAIWSLogValue(closeReason, openAIWSHeaderValueMaxLen),
+					)
+					return openAIWSClientPayload{}, true, nil
+				}
+				if prewarmTurns > 0 {
+					closeStatus := coderws.CloseStatus(readErr)
+					if errors.Is(readErr, coderws.ErrMessageTooBig) {
+						closeStatus = coderws.StatusMessageTooBig
+					}
+					if closeStatus == -1 {
+						closeStatus = coderws.StatusPolicyViolation
+					}
+					return openAIWSClientPayload{}, false, NewOpenAIWSClientCloseError(
+						closeStatus,
+						"invalid websocket client frame",
+						fmt.Errorf("%w: %w", ErrOpenAIWSPrewarmPayloadInvalid, readErr),
+					)
+				}
+				return openAIWSClientPayload{}, false, fmt.Errorf("read client websocket request: %w", readErr)
+			}
+			nextPayload, parseErr := parseClientPayload(nextClientMessage)
+			if parseErr != nil && prewarmTurns > 0 {
+				// This frame was rejected locally before any upstream attempt.
+				// Preserve its WS close status while keeping account health intact.
+				parseErr = fmt.Errorf("%w: %w", ErrOpenAIWSPrewarmPayloadInvalid, parseErr)
+			}
+			return nextPayload, false, parseErr
+		}
 		for turn := 1; ; turn++ {
+			lateFirstPrewarm := prewarmTurns == 0 && turn > 1 && isOpenAIWSHTTPBridgePrewarmPayload(currentBridgePayload.payloadRaw)
+			if prewarmTurns > 0 || lateFirstPrewarm {
+				// The first frame selected both the account and the fork's channel
+				// billing mapping. A local prewarm may begin later in the same
+				// model, but cannot move an unbilled turn to model B under A's
+				// pricing. A missing model inherits the original client model.
+				clientModel := currentBridgePayload.originalModel
+				if strings.TrimSpace(gjson.GetBytes(currentBridgePayload.rawForHash, "model").String()) == "" {
+					clientModel = prewarmClientModel
+				}
+				if clientModel != prewarmClientModel {
+					if lateFirstPrewarm {
+						return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm model differs from the first turn", ErrOpenAIWSPrewarmLateStart)
+					}
+					return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "model change after websocket prewarm is not supported", ErrOpenAIWSPrewarmModelChanged)
+				}
+				currentBridgePayload.originalModel = prewarmClientModel
+				// Subsequent frames are parsed from client bytes. Reapply the
+				// initial channel/account wire model for the same client model.
+				if prewarmUpstreamModel != "" && gjson.GetBytes(currentBridgePayload.payloadRaw, "model").String() != prewarmUpstreamModel {
+					mappedPayload, mapErr := applyPayloadMutation(currentBridgePayload.payloadRaw, "model", prewarmUpstreamModel)
+					if mapErr != nil {
+						return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", fmt.Errorf("%w: %v", ErrOpenAIWSPrewarmPayloadInvalid, mapErr))
+					}
+					currentBridgePayload.payloadRaw = mappedPayload
+					currentBridgePayload.payloadBytes = len(mappedPayload)
+				}
+			}
+			if isOpenAIWSHTTPBridgePrewarmPayload(currentBridgePayload.payloadRaw) {
+				nextPayloadBytes, budgetErr := checkOpenAIWSHTTPBridgePrewarmBudget(
+					prewarmTurns, prewarmPayloadBytes, currentBridgePayload.payloadRaw,
+				)
+				if budgetErr != nil {
+					return budgetErr
+				}
+				prewarmItems, prewarmItemsExist, extractErr := openAIWSExtractNormalizedInputSequence(currentBridgePayload.payloadRaw)
+				if extractErr != nil {
+					return fmt.Errorf("%w: build websocket http bridge prewarm input: %w", ErrOpenAIWSPrewarmLocalFailure, extractErr)
+				}
+				// BeforeRequest enforces the fork's subsequent-turn content audit
+				// and admission gate. Run it before retaining input or tool state;
+				// BeforeTurn/AfterTurn remain reserved for real billable turns.
+				if turn > 1 && hooks != nil && hooks.BeforeRequest != nil {
+					if err := hooks.BeforeRequest(turn, currentBridgePayload.payloadRaw, currentBridgePayload.originalModel); err != nil {
+						return err
+					}
+				}
+				// Keep the input and turn number so the next real turn can replay
+				// this synthetic response without charging or contacting upstream.
+				prewarmTurns++
+				prewarmPayloadBytes = nextPayloadBytes
+				hasPrevious := currentBridgePayload.previousResponseID != ""
+				bridgeReplayInput, bridgeReplayInputExists = buildOpenAIWSReplayInputSequenceFromItems(
+					bridgeReplayInput, bridgeReplayInputExists,
+					prewarmItems, prewarmItemsExist, hasPrevious,
+				)
+				bridgeAccountFailoverInput, bridgeAccountFailoverInputExists = buildOpenAIWSReplayInputSequenceFromItems(
+					bridgeAccountFailoverInput, bridgeAccountFailoverInputExists,
+					prewarmItems, prewarmItemsExist, hasPrevious,
+				)
+				// A prewarm may declare client tools that its next turn omits.
+				// Preserve their lowering mapping even though nothing is sent upstream.
+				if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
+					state, stateErr := openAIWSHTTPBridgePrewarmToolState(currentBridgePayload.payloadRaw, bridgeToolState)
+					if stateErr != nil {
+						return fmt.Errorf("%w: prepare websocket http bridge prewarm tools: %w", ErrOpenAIWSPrewarmLocalFailure, stateErr)
+					}
+					bridgeToolState = state
+				}
+				_, events, buildErr := buildOpenAIWSHTTPBridgePrewarmEvents(prewarmClientModel)
+				if buildErr != nil {
+					return fmt.Errorf("%w: build websocket http bridge prewarm response: %w", ErrOpenAIWSPrewarmLocalFailure, buildErr)
+				}
+				for _, event := range events {
+					if writeErr := writeClientMessage(event); writeErr != nil {
+						return fmt.Errorf("%w: write websocket http bridge prewarm response: %w", ErrOpenAIWSPrewarmLocalFailure, writeErr)
+					}
+				}
+				if hooks != nil && hooks.AfterLocalPrewarm != nil {
+					hooks.AfterLocalPrewarm(turn)
+				}
+				nextPayload, closed, nextErr := readNextBridgePayload()
+				if nextErr != nil || closed {
+					return nextErr
+				}
+				currentBridgePayload = nextPayload
+				continue
+			}
 			if turn > 1 && hooks != nil && hooks.BeforeRequest != nil {
 				if err := hooks.BeforeRequest(turn, currentBridgePayload.payloadRaw, currentBridgePayload.originalModel); err != nil {
 					return err
@@ -3403,6 +3581,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					openAIWSRawPayloadHasToolCallOutput(currentBridgePayload.payloadRaw),
 				)
 			}
+			var beforeUpstream func([]byte)
+			if prewarmTurns > 0 && hooks != nil && hooks.BeforeBridgeUpstreamTurn != nil {
+				beforeUpstream = func(body []byte) { hooks.BeforeBridgeUpstreamTurn(turn, body) }
+			}
 			result, bridgeErr := s.proxyOpenAIWSHTTPBridgeTurn(
 				ctx,
 				c,
@@ -3414,9 +3596,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				currentBridgePayload.imageBillingModel,
 				currentBridgePayload.imageSizeTier,
 				currentBridgePayload.imageInputSize,
-				turn,
+				turn-prewarmTurns, // upstream ordinal; prewarms still count for WS hooks/retry
 				bridgeToolState,
 				writeClientMessage,
+				beforeUpstream,
 			)
 			if hooks != nil && hooks.AfterTurn != nil {
 				hooks.AfterTurn(turn, result, bridgeErr)
@@ -3471,23 +3654,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				ttl := s.openAIWSResponseStickyTTL()
 				logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, stateStore.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
 			}
-			nextClientMessage, readErr := readClientMessage()
-			if readErr != nil {
-				if isOpenAIWSClientDisconnectError(readErr) {
-					closeStatus, closeReason := summarizeOpenAIWSReadCloseError(readErr)
-					logOpenAIWSModeInfo(
-						"ingress_ws_http_bridge_client_closed account_id=%d close_status=%s close_reason=%s",
-						account.ID,
-						closeStatus,
-						truncateOpenAIWSLogValue(closeReason, openAIWSHeaderValueMaxLen),
-					)
-					return nil
-				}
-				return fmt.Errorf("read client websocket request: %w", readErr)
-			}
-			nextPayload, parseErr := parseClientPayload(nextClientMessage)
-			if parseErr != nil {
-				return parseErr
+			nextPayload, closed, nextErr := readNextBridgePayload()
+			if nextErr != nil || closed {
+				return nextErr
 			}
 			currentBridgePayload = nextPayload
 		}

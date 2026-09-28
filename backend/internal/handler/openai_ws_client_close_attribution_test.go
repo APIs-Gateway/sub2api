@@ -65,6 +65,56 @@ func TestOpenAIResponsesWebSocket_CodexClientRestrictionWritesForbiddenEventWith
 	}
 }
 
+func TestOpenAIResponsesWebSocket_LocalPrewarmReleasesSlotsWhileConnectionStaysOpen(t *testing.T) {
+	cache := &concurrencyCacheMock{
+		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+	}
+	reports := make(chan bool, 1)
+	prewarmDone := make(chan struct{})
+	resumeProxy := make(chan struct{})
+	proxy := func(_ context.Context, _ *gin.Context, _ *coderws.Conn, _ *service.Account, _ string, _ []byte, hooks *service.OpenAIWSIngressHooks) error {
+		if hooks == nil || hooks.AfterLocalPrewarm == nil {
+			return errors.New("local prewarm hook not wired")
+		}
+		hooks.AfterLocalPrewarm(1)
+		close(prewarmDone)
+		<-resumeProxy
+		return service.NewOpenAIWSClientCloseError(coderws.StatusNormalClosure, "done", nil)
+	}
+	h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, cache, proxy, reports, true)
+	handlerDone := make(chan struct{})
+	server := newOpenAIResponsesWebSocketAttributionServerWithDone(t, h, handlerDone)
+	defer server.Close()
+	client := dialAndSendFirstResponseCreate(t, server.URL)
+	defer func() { _ = client.CloseNow() }()
+	select {
+	case <-prewarmDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("local prewarm hook was not called")
+	}
+	require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseAccountCalled))
+	require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseUserCalled))
+	select {
+	case <-handlerDone:
+		t.Fatal("connection ended before waiting for the next turn")
+	default:
+	}
+	select {
+	case <-reports:
+		t.Fatal("local prewarm must not report account schedule result")
+	default:
+	}
+	close(resumeProxy)
+	// Do not leave the server waiting for the WebSocket close handshake.
+	_ = client.CloseNow()
+	select {
+	case <-handlerDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("websocket handler did not exit")
+	}
+}
+
 func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -82,6 +132,13 @@ func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures
 		{name: "gateway_admission_account_busy_1013_is_not_reported", proxyErr: newOpenAIWSGatewayAdmissionCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)},
 		{name: "gateway_admission_cyber_1008_is_not_reported", proxyErr: newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)},
 		{name: "gateway_admission_slot_error_1011_is_not_reported", proxyErr: newOpenAIWSGatewayAdmissionCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", errors.New("redis down"))},
+		{name: "prewarm_budget_1008_is_not_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "too many websocket prewarm turns", service.ErrOpenAIWSPrewarmBudgetExceeded)},
+		{name: "prewarm_model_change_1008_is_not_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "model change after websocket prewarm is not supported", service.ErrOpenAIWSPrewarmModelChanged)},
+		{name: "prewarm_late_model_change_1008_is_not_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm model differs from the first turn", service.ErrOpenAIWSPrewarmLateStart)},
+		{name: "prewarm_invalid_followup_json_1008_is_not_reported", proxyErr: fmt.Errorf("%w: %w", service.ErrOpenAIWSPrewarmPayloadInvalid, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json")))},
+		{name: "prewarm_oversized_frame_1009_is_not_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusMessageTooBig, "invalid websocket client frame", fmt.Errorf("%w: frame too big", service.ErrOpenAIWSPrewarmPayloadInvalid))},
+		{name: "prewarm_local_response_write_is_not_reported", proxyErr: fmt.Errorf("%w: write websocket http bridge prewarm response: %w", service.ErrOpenAIWSPrewarmLocalFailure, errors.New("client write failed"))},
+		{name: "prewarm_local_input_prepare_is_not_reported", proxyErr: fmt.Errorf("%w: build websocket http bridge prewarm input: %w", service.ErrOpenAIWSPrewarmLocalFailure, errors.New("invalid input"))},
 		// 同样是 1013/1008，但来自上游（429 忙、握手鉴权失败）的必须照常上报，防止按状态码一刀切。
 		{name: "upstream_busy_1013_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "upstream websocket is busy, please retry later", errors.New("upstream 429")), wantFailure: true},
 		{name: "upstream_auth_1008_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "upstream websocket authentication failed", errors.New("upstream 401")), wantFailure: true},
