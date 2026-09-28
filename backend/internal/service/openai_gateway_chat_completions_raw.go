@@ -554,11 +554,6 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 		case ev, ok := <-lines:
 			if !ok {
-				if len(frameLines) > 0 {
-					if ferr := processFrame(); ferr != nil {
-						return nil, ferr
-					}
-				}
 				goto streamDone
 			}
 			if ev.err != nil {
@@ -604,6 +599,13 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 	}
 streamDone:
+	// A scanner error or drain deadline can follow a complete JSON payload
+	// without the final SSE blank line. Preserve its usage before returning.
+	if len(frameLines) > 0 && !frameTooLarge {
+		if ferr := processFrame(); ferr != nil {
+			return nil, ferr
+		}
+	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
 		return &OpenAIForwardResult{
