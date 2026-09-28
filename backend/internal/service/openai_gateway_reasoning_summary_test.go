@@ -32,7 +32,7 @@ func TestGeneratedResponsesReasoningSummaryFollowsUpstream(t *testing.T) {
 			body: `{"model":"deepseek-v4.1-flash","reasoning_effort":"low","messages":[{"role":"user","content":"hello"}],"stream":false}`,
 			account: &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
 				Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.commandcode.ai/provider/v1"},
-				Extra: map[string]any{"openai_responses_supported": true}},
+				Extra:       map[string]any{"openai_responses_supported": true}},
 			wantEffort: "low",
 		},
 		{
@@ -41,7 +41,7 @@ func TestGeneratedResponsesReasoningSummaryFollowsUpstream(t *testing.T) {
 			body: `{"model":"deepseek-v4.1-flash","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`,
 			account: &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
 				Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.commandcode.ai/provider/v1"},
-				Extra: map[string]any{"openai_responses_supported": true}},
+				Extra:       map[string]any{"openai_responses_supported": true}},
 			wantEffort: "medium",
 		},
 		{
@@ -71,8 +71,8 @@ func TestGeneratedResponsesReasoningSummaryFollowsUpstream(t *testing.T) {
 			c.Request.Header.Set("Content-Type", "application/json")
 			upstream := &httpUpstreamRecorder{resp: &http.Response{
 				StatusCode: http.StatusBadRequest,
-				Header: http.Header{"Content-Type": []string{"application/json"}},
-				Body: io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"stop after body capture"}}`)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"stop after body capture"}}`)),
 			}}
 			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 			var err error
