@@ -199,10 +199,10 @@ type ResponsesEventToAnthropicState struct {
 
 	// OutputIndexToBlockIdx maps Responses output_index → Anthropic content block index.
 	OutputIndexToBlockIdx map[int]int
-	blocksByOutput       map[int]*responsesAnthropicBlock
-	textBlocks           map[responsesTextPart]*responsesAnthropicBlock
-	openBlocks           map[int]*responsesAnthropicBlock
-	announcedTextParts   map[responsesTextPart]bool
+	blocksByOutput        map[int]*responsesAnthropicBlock
+	textBlocks            map[responsesTextPart]*responsesAnthropicBlock
+	openBlocks            map[int]*responsesAnthropicBlock
+	announcedTextParts    map[responsesTextPart]bool
 
 	// textByPart records the text already delivered for each output_text part
 	// so that a done payload can be reconciled against it. It outlives the
@@ -225,10 +225,10 @@ type ResponsesEventToAnthropicState struct {
 func NewResponsesEventToAnthropicState() *ResponsesEventToAnthropicState {
 	return &ResponsesEventToAnthropicState{
 		OutputIndexToBlockIdx: make(map[int]int),
-		blocksByOutput:       make(map[int]*responsesAnthropicBlock),
-		textBlocks:           make(map[responsesTextPart]*responsesAnthropicBlock),
-		openBlocks:           make(map[int]*responsesAnthropicBlock),
-		announcedTextParts:   make(map[responsesTextPart]bool),
+		blocksByOutput:        make(map[int]*responsesAnthropicBlock),
+		textBlocks:            make(map[responsesTextPart]*responsesAnthropicBlock),
+		openBlocks:            make(map[int]*responsesAnthropicBlock),
+		announcedTextParts:    make(map[responsesTextPart]bool),
 		textByPart:            make(map[responsesTextPart]*strings.Builder),
 		Created:               time.Now().Unix(),
 	}

@@ -12,8 +12,15 @@ import (
 // every delta must target an item/block that is still open, and a Responses
 // output_text part must be completed exactly once.
 func assertInterleavedLifecycle(t *testing.T, chunks []string) ([]ResponsesStreamEvent, []AnthropicStreamEvent) {
+	return assertInterleavedLifecycleWithSetup(t, chunks, nil)
+}
+
+func assertInterleavedLifecycleWithSetup(t *testing.T, chunks []string, setup func(*ChatCompletionsToResponsesStreamState)) ([]ResponsesStreamEvent, []AnthropicStreamEvent) {
 	t.Helper()
 	cc := NewChatCompletionsToResponsesStreamState("interleaved-model")
+	if setup != nil {
+		setup(cc)
+	}
 	anthropic := NewResponsesEventToAnthropicState()
 	var responsesEvents []ResponsesStreamEvent
 	var anthropicEvents []AnthropicStreamEvent
@@ -36,9 +43,12 @@ func assertInterleavedLifecycle(t *testing.T, chunks []string) ([]ResponsesStrea
 	openParts := make(map[int]bool)
 	itemDone := make(map[int]int)
 	textDone := make(map[int]int)
+	nextOutputIndex := 0
 	for _, event := range responsesEvents {
 		switch event.Type {
 		case "response.output_item.added":
+			require.Equal(t, nextOutputIndex, event.OutputIndex, "output_item.added indices must follow wire order")
+			nextOutputIndex++
 			require.NotContains(t, openItems, event.OutputIndex)
 			require.Zero(t, itemDone[event.OutputIndex])
 			openItems[event.OutputIndex] = event.Item.ID
@@ -192,6 +202,27 @@ func TestInterleavedReasoningResumesInNewItem(t *testing.T) {
 			require.Equal(t, "first", event.Response.Output[0].Summary[0].Text)
 			require.Equal(t, "visible", event.Response.Output[1].Content[0].Text)
 			require.Equal(t, "second", event.Response.Output[2].Summary[0].Text)
+		}
+	}
+}
+
+func TestDeferredToolNameAllocatesOutputIndexWhenAnnounced(t *testing.T) {
+	responsesEvents, _ := assertInterleavedLifecycleWithSetup(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_wait","type":"function","function":{"arguments":"{\"x\":"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"content":"between"}}]}`,
+		`{"choices":[{"index":0,"delta":{"reasoning_content":"later thought"}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"functions__wait","arguments":"1}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+	}, func(state *ChatCompletionsToResponsesStreamState) {
+		state.NamespaceTools = map[string]NamespacedToolName{"functions__wait": {Namespace: "functions", Name: "wait"}}
+	})
+	for _, event := range responsesEvents {
+		if event.Type == "response.completed" {
+			require.Len(t, event.Response.Output, 3)
+			require.Equal(t, []string{"message", "reasoning", "function_call"}, []string{event.Response.Output[0].Type, event.Response.Output[1].Type, event.Response.Output[2].Type})
+			require.Equal(t, "functions", event.Response.Output[2].Namespace)
+			require.Equal(t, "wait", event.Response.Output[2].Name)
+			require.JSONEq(t, `{"x":1}`, event.Response.Output[2].Arguments)
 		}
 	}
 }

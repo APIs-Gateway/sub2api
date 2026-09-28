@@ -1757,7 +1757,6 @@ func ChatCompletionsChunkToResponsesEvents(
 				state.ToolCalls[idx] = &copyCall
 				stored = &copyCall
 				state.ToolItemIDs[idx] = generateItemID()
-				state.ToolOutputIndex[idx] = state.allocOutputIndex()
 			} else {
 				if toolCall.ID != "" {
 					stored.ID = toolCall.ID
@@ -1906,7 +1905,7 @@ func closeChatReasoningItem(state *ChatCompletionsToResponsesStreamState) []Resp
 		}),
 		chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 			OutputIndex: state.ReasoningIndex,
-			Item: &item,
+			Item:        &item,
 		}),
 	}
 }
@@ -2006,7 +2005,14 @@ func announceChatToolItem(
 	if !force && stored.Function.Name == "" && (len(state.CustomTools) > 0 || len(state.FunctionTools) > 0 || state.ToolSearchDeclared || len(state.NamespaceTools) > 0) {
 		return nil
 	}
+	// A deferred tool has no visible Responses item yet. Assign its index when
+	// it is actually announced, after closing any text/reasoning that arrived
+	// while its name was unknown, so added indices stay in wire order.
+	var events []ResponsesStreamEvent
+	events = append(events, closeChatReasoningItem(state)...)
+	events = append(events, closeChatTextItem(state)...)
 	state.toolAnnounced[idx] = true
+	state.ToolOutputIndex[idx] = state.allocOutputIndex()
 	customName, isCustom := customToolCallName(stored.Function.Name, state.CustomTools, state.FunctionTools, state.NamespaceTools)
 	isToolSearch := !isCustom && state.ToolSearchDeclared && stored.Function.Name == toolSearchProxyName
 	state.toolIsCustom[idx] = isCustom
@@ -2028,7 +2034,7 @@ func announceChatToolItem(
 		state.toolNamespace[idx] = ns
 		itemName, itemNamespace = ns.Name, ns.Namespace
 	}
-	events := []ResponsesStreamEvent{chatToResponsesEvent(state, "response.output_item.added", &ResponsesStreamEvent{
+	events = append(events, chatToResponsesEvent(state, "response.output_item.added", &ResponsesStreamEvent{
 		OutputIndex: state.ToolOutputIndex[idx],
 		Item: &ResponsesOutput{
 			Type:      itemType,
@@ -2038,7 +2044,7 @@ func announceChatToolItem(
 			Namespace: itemNamespace,
 			Status:    "in_progress",
 		},
-	})}
+	}))
 	// 迟到宣告时补发已累积的参数增量（custom/tool_search 的输入收尾统一下发，不补发）。
 	if !isCustom && !isToolSearch && stored.Function.Arguments != "" {
 		events = append(events, chatToResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
@@ -2109,7 +2115,7 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 			state.recordOutput(outputIndex, item)
 			events = append(events, chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 				OutputIndex: outputIndex,
-				Item: &item,
+				Item:        &item,
 			}))
 			continue
 		}
