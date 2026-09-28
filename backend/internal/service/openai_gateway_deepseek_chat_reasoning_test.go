@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -90,4 +91,46 @@ func TestForwardResponses_ChatFallbackZenDeepSeekReasoningPlaceholder(t *testing
 	require.Equal(t, "deepseek-v4-flash", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Equal(t, " ", gjson.GetBytes(upstream.lastBody, `messages.#(role=="assistant").reasoning_content`).String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, `messages.#(role=="tool").reasoning_content`).Exists())
+}
+
+func TestForwardAsAnthropic_ChatFallbackZenDeepSeekReasoningPlaceholder(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"weather"},{"role":"assistant","content":[{"type":"tool_use","id":"call_1","name":"get_weather","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"cloudy"}]}],"stream":false}`)
+	tests := []struct {
+		name        string
+		baseURL     string
+		mappedModel string
+		placeholder bool
+	}{
+		{name: "Zen DeepSeek", baseURL: "https://opencode.ai/zen/v1", mappedModel: "deepseek-v4-flash", placeholder: true},
+		{name: "Zen non DeepSeek", baseURL: "https://opencode.ai/zen/v1", mappedModel: "glm-5.3"},
+		{name: "third party DeepSeek", baseURL: "https://elsewhere.example/v1", mappedModel: "deepseek-v4-flash"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := newMessagesChatFallbackContext(t, body)
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(
+					`{"id":"chatcmpl_zen_messages","object":"chat.completion","model":"` + tt.mappedModel + `","choices":[{"index":0,"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}`,
+				)),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			account := forceChatMessagesFallbackAccount()
+			account.Credentials["base_url"] = tt.baseURL
+			account.Credentials["model_mapping"] = map[string]any{"gpt-5.4": tt.mappedModel}
+
+			result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, "gpt-5.4", result.Model)
+			require.Equal(t, tt.mappedModel, result.UpstreamModel)
+			require.Equal(t, tt.mappedModel, gjson.GetBytes(upstream.lastBody, "model").String())
+			require.Equal(t, tt.placeholder, gjson.GetBytes(upstream.lastBody, `messages.#(role=="assistant").reasoning_content`).Exists())
+			if tt.placeholder {
+				require.Equal(t, " ", gjson.GetBytes(upstream.lastBody, `messages.#(role=="assistant").reasoning_content`).String())
+			}
+			require.False(t, gjson.GetBytes(upstream.lastBody, `messages.#(role=="user").reasoning_content`).Exists())
+		})
+	}
 }
