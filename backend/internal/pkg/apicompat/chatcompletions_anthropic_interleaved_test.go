@@ -291,3 +291,72 @@ func TestInterleavedReadSanitizationAndLateReasoningSignature(t *testing.T) {
 	require.Len(t, otherDone, 1)
 	require.Equal(t, otherIndex, *otherDone[0].Index)
 }
+
+func TestToolOwnerRecoversSuffixFromItemDoneWithoutArgumentsDone(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.created", Response: &ResponsesResponse{ID: "r"}}, state)
+	first := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 3, Item: &ResponsesOutput{Type: "function_call", ID: "fc_a", CallID: "call_a", Name: "Write"}}, state)
+	second := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 4, Item: &ResponsesOutput{Type: "function_call", ID: "fc_b", CallID: "call_b", Name: "Write"}}, state)
+	firstIndex, secondIndex := *first[0].Index, *second[0].Index
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 3, Delta: `{"x":`}, state)
+	require.Empty(t, ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: 3, Item: &ResponsesOutput{Type: "function_call", ID: "fc_other", CallID: "call_other", Arguments: `{"x":9}`}}, state))
+	require.True(t, state.blocksByOutput[3].open)
+	done := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: 3, Item: &ResponsesOutput{Type: "function_call", ID: "fc_a", CallID: "call_a", Arguments: `{"x":1}`}}, state)
+	require.Len(t, done, 2)
+	require.Equal(t, "1}", done[0].Delta.PartialJSON)
+	require.Equal(t, firstIndex, *done[0].Index)
+	require.Equal(t, "content_block_stop", done[1].Type)
+	require.Equal(t, firstIndex, *done[1].Index)
+	require.True(t, state.blocksByOutput[4].open)
+	secondDone := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.done", OutputIndex: 4, Arguments: `{}`}, state)
+	require.Equal(t, secondIndex, *secondDone[0].Index)
+}
+
+func TestToolOwnerRecoversSuffixFromArgumentsDone(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 0, Item: &ResponsesOutput{Type: "function_call", Name: "Write"}}, state)
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 0, Delta: `{"x":`}, state)
+	events := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.done", OutputIndex: 0, Arguments: `{"x":1}`}, state)
+	require.Len(t, events, 2)
+	require.Equal(t, "1}", events[0].Delta.PartialJSON)
+	require.Equal(t, "content_block_stop", events[1].Type)
+}
+
+func TestCustomInputSuffixIsRecoveredWithoutAssumingJSON(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 0, Item: &ResponsesOutput{Type: "custom_tool_call", Name: "Read", CallID: "call_custom"}}, state)
+	first := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: 0, Delta: "raw-"}, state)
+	require.Len(t, first, 1)
+	require.Equal(t, "raw-", first[0].Delta.PartialJSON)
+	done := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: 0, Item: &ResponsesOutput{Type: "custom_tool_call", CallID: "call_custom", Input: "raw-input"}}, state)
+	require.Len(t, done, 2)
+	require.Equal(t, "input", done[0].Delta.PartialJSON)
+	require.Equal(t, "content_block_stop", done[1].Type)
+}
+
+func TestReadItemDoneDoesNotReintroduceSanitizedPages(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 0, Item: &ResponsesOutput{Type: "function_call", Name: "Read", CallID: "call_read"}}, state)
+	delta := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 0, Delta: `{"file_path":"a","pages":""}`}, state)
+	require.Len(t, delta, 1)
+	require.JSONEq(t, `{"file_path":"a"}`, delta[0].Delta.PartialJSON)
+	done := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: 0, Item: &ResponsesOutput{Type: "function_call", CallID: "call_read", Arguments: `{"file_path":"a","pages":""} `}}, state)
+	require.Len(t, done, 1)
+	require.Equal(t, "content_block_stop", done[0].Type)
+}
+
+func TestTerminalToolTailRequiresUniqueMatchingIdentity(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.created", Response: &ResponsesResponse{ID: "r"}}, state)
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 5, Item: &ResponsesOutput{Type: "function_call", ID: "fc_match", CallID: "call_match", Name: "Write"}}, state)
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 5, Delta: `{"x":`}, state)
+	events := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.completed", Response: &ResponsesResponse{Status: "completed", Output: []ResponsesOutput{
+		{Type: "function_call", ID: "fc_wrong", CallID: "call_wrong", Arguments: `{"x":9}`},
+		{Type: "function_call", ID: "fc_match", CallID: "call_match", Arguments: `{"x":1}`},
+	}}}, state)
+	require.GreaterOrEqual(t, len(events), 4)
+	require.Equal(t, "content_block_delta", events[0].Type)
+	require.Equal(t, "1}", events[0].Delta.PartialJSON)
+	require.Equal(t, "content_block_stop", events[1].Type)
+	require.Equal(t, "message_stop", events[len(events)-1].Type)
+}

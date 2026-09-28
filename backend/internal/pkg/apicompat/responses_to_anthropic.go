@@ -1,8 +1,11 @@
 package apicompat
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"sort"
 	"strings"
 	"time"
@@ -180,10 +183,15 @@ type responsesTextPart struct {
 type responsesAnthropicBlock struct {
 	index     int
 	kind      string
+	toolType  string
 	name      string
+	itemID    string
+	callID    string
 	open      bool
 	hadDelta  bool
 	args      strings.Builder
+	argsHash  hash.Hash
+	argsBytes int
 	signature string
 }
 
@@ -374,7 +382,7 @@ func resToAnthHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 		}
 		idx := state.ContentBlockIndex
 		state.ContentBlockIndex++
-		block := &responsesAnthropicBlock{index: idx, kind: "tool_use", name: evt.Item.Name, open: true}
+		block := &responsesAnthropicBlock{index: idx, kind: "tool_use", toolType: evt.Item.Type, name: evt.Item.Name, itemID: evt.Item.ID, callID: evt.Item.CallID, open: true}
 		state.blocksByOutput[evt.OutputIndex] = block
 		state.openBlocks[idx] = block
 		state.OutputIndexToBlockIdx[evt.OutputIndex] = idx
@@ -517,10 +525,10 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 		return nil
 	}
 	block := state.blocksByOutput[evt.OutputIndex]
-	if block == nil || !block.open || block.kind != "tool_use" {
+	if block == nil || !block.open || block.kind != "tool_use" || (evt.ItemID != "" && block.itemID != "" && evt.ItemID != block.itemID) {
 		return nil
 	}
-	if block.name == "Read" {
+	if block.toolType == "function_call" && block.name == "Read" {
 		_, _ = block.args.WriteString(evt.Delta)
 		if block.hadDelta || !json.Valid([]byte(block.args.String())) {
 			return nil
@@ -538,6 +546,11 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 		}}
 	}
 	block.hadDelta = true
+	if block.argsHash == nil {
+		block.argsHash = sha256.New()
+	}
+	_, _ = block.argsHash.Write([]byte(evt.Delta))
+	block.argsBytes += len(evt.Delta)
 	blockIdx := block.index
 	return []AnthropicStreamEvent{{
 		Type:  "content_block_delta",
@@ -551,7 +564,7 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 
 func resToAnthHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
 	block := state.blocksByOutput[evt.OutputIndex]
-	if block == nil || !block.open || block.kind != "tool_use" {
+	if block == nil || !block.open || block.kind != "tool_use" || (evt.ItemID != "" && block.itemID != "" && evt.ItemID != block.itemID) {
 		return nil
 	}
 	raw := evt.Arguments
@@ -559,12 +572,17 @@ func resToAnthHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEven
 		raw = block.args.String()
 	}
 	if block.hadDelta {
-		return closeResponsesAnthropicBlock(state, block)
+		var events []AnthropicStreamEvent
+		if suffix, ok := resToAnthToolArgsSuffix(block, raw); ok {
+			idx := block.index
+			events = append(events, AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{Type: "input_json_delta", PartialJSON: suffix}})
+		}
+		return append(events, closeResponsesAnthropicBlock(state, block)...)
 	}
 	if raw == "" {
 		raw = "{}"
 	}
-	if block.name == "Read" {
+	if block.toolType == "function_call" && block.name == "Read" {
 		sanitized := sanitizeAnthropicToolUseInput(block.name, raw)
 		raw = string(sanitized)
 	}
@@ -579,6 +597,24 @@ func resToAnthHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEven
 	}}
 	events = append(events, closeResponsesAnthropicBlock(state, block)...)
 	return events
+}
+
+// resToAnthToolArgsSuffix validates the already streamed prefix without
+// retaining another full copy of the input. Read is deliberately excluded:
+// its emitted JSON has already been sanitized and is not a raw prefix.
+func resToAnthToolArgsSuffix(block *responsesAnthropicBlock, raw string) (string, bool) {
+	if block == nil || (block.toolType == "function_call" && block.name == "Read") || block.argsHash == nil || len(raw) <= block.argsBytes {
+		return "", false
+	}
+	h := sha256.New()
+	for start := 0; start < block.argsBytes; start += 32 * 1024 {
+		end := min(start+32*1024, block.argsBytes)
+		_, _ = h.Write([]byte(raw[start:end]))
+	}
+	if !bytes.Equal(h.Sum(nil), block.argsHash.Sum(nil)) {
+		return "", false
+	}
+	return raw[block.argsBytes:], true
 }
 
 func resToAnthHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
@@ -623,17 +659,20 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 		return closeResponsesAnthropicBlock(state, block)
 	case "function_call", "custom_tool_call":
 		block := state.blocksByOutput[evt.OutputIndex]
-		if block == nil || !block.open || block.kind != "tool_use" {
+		if block == nil || !block.open || block.kind != "tool_use" || block.toolType != evt.Item.Type {
 			return nil
 		}
-		if !block.hadDelta {
-			raw := evt.Item.Arguments
-			if evt.Item.Type == "custom_tool_call" {
-				raw = evt.Item.Input
-			}
-			return resToAnthHandleFuncArgsDone(&ResponsesStreamEvent{OutputIndex: evt.OutputIndex, Arguments: raw}, state)
+		if evt.Item.ID != "" && block.itemID != "" && evt.Item.ID != block.itemID {
+			return nil
 		}
-		return closeResponsesAnthropicBlock(state, block)
+		if evt.Item.CallID != "" && block.callID != "" && evt.Item.CallID != block.callID {
+			return nil
+		}
+		raw := evt.Item.Arguments
+		if evt.Item.Type == "custom_tool_call" {
+			raw = evt.Item.Input
+		}
+		return resToAnthHandleFuncArgsDone(&ResponsesStreamEvent{OutputIndex: evt.OutputIndex, Arguments: raw}, state)
 	case "message":
 		var events []AnthropicStreamEvent
 		for contentIndex, content := range evt.Item.Content {
@@ -754,6 +793,7 @@ func resToAnthHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	}
 
 	var events []AnthropicStreamEvent
+	events = append(events, resToAnthRecoverTerminalToolArgs(evt, state)...)
 	events = append(events, closeAllResponsesAnthropicBlocks(state)...)
 	events = append(events, resToAnthRecoverTerminalText(evt, state)...)
 
@@ -804,6 +844,58 @@ func resToAnthHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	return events
 }
 
+// Terminal output arrays may use different positions than their streamed
+// output_index values. Recover a missing tool tail only when an item ID or
+// call ID uniquely identifies an open block.
+func resToAnthRecoverTerminalToolArgs(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
+	if evt.Response == nil || evt.Response.Status != "completed" {
+		return nil
+	}
+	var events []AnthropicStreamEvent
+	for _, item := range evt.Response.Output {
+		if item.Type != "function_call" && item.Type != "custom_tool_call" {
+			continue
+		}
+		if item.ID == "" && item.CallID == "" {
+			continue
+		}
+		var matchedIndex int
+		matches := 0
+		for index, block := range state.blocksByOutput {
+			if !block.open || block.kind != "tool_use" || block.toolType != item.Type {
+				continue
+			}
+			matched := false
+			if item.ID != "" && block.itemID != "" && item.ID != block.itemID {
+				continue
+			}
+			if item.ID != "" && block.itemID != "" {
+				matched = true
+			}
+			if item.CallID != "" && block.callID != "" && item.CallID != block.callID {
+				continue
+			}
+			if item.CallID != "" && block.callID != "" {
+				matched = true
+			}
+			if !matched {
+				continue
+			}
+			matchedIndex = index
+			matches++
+		}
+		if matches != 1 {
+			continue
+		}
+		raw := item.Arguments
+		if item.Type == "custom_tool_call" {
+			raw = item.Input
+		}
+		events = append(events, resToAnthHandleFuncArgsDone(&ResponsesStreamEvent{OutputIndex: matchedIndex, Arguments: raw}, state)...)
+	}
+	return events
+}
+
 func closeResponsesAnthropicBlock(state *ResponsesEventToAnthropicState, block *responsesAnthropicBlock) []AnthropicStreamEvent {
 	if block == nil || !block.open {
 		return nil
@@ -826,6 +918,7 @@ func closeResponsesAnthropicBlock(state *ResponsesEventToAnthropicState, block *
 	}
 	block.open = false
 	block.args.Reset()
+	block.argsHash = nil
 	delete(state.openBlocks, idx)
 	events = append(events, AnthropicStreamEvent{
 		Type:  "content_block_stop",
