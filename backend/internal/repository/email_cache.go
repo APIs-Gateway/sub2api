@@ -82,10 +82,11 @@ if attempts >= limit then return 2 end
 attempts = attempts + 1
 local expected = tostring(data['Code'] or '')
 local supplied = ARGV[1]
-local mismatch = bit.bxor(#expected, #supplied)
+local mismatch = (#expected - #supplied) * (#expected - #supplied)
 if #expected > 64 or #supplied > 64 then mismatch = 1 end
 for i = 1, 64 do
-  mismatch = bit.bor(mismatch, bit.bxor(string.byte(expected, i) or 0, string.byte(supplied, i) or 0))
+  local delta = (string.byte(expected, i) or 0) - (string.byte(supplied, i) or 0)
+  mismatch = mismatch + delta * delta
 end
 if mismatch == 0 then
   redis.call('DEL', KEYS[1], KEYS[2])
