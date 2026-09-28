@@ -1565,9 +1565,12 @@ type ChatCompletionsToResponsesStreamState struct {
 	ReasoningDone   bool
 
 	// Message item + output_text content-part lifecycle.
-	MessageItemID string
-	MessageIndex  int
-	TextPartOpen  bool
+	MessageItemID     string
+	MessageIndex      int
+	TextPartOpen      bool
+	textSegment       strings.Builder
+	reasoningSegment strings.Builder
+	outputItems       map[int]ResponsesOutput
 
 	Text      strings.Builder
 	Reasoning strings.Builder
@@ -1625,6 +1628,7 @@ func NewChatCompletionsToResponsesStreamState(model string) *ChatCompletionsToRe
 		ToolCalls:        make(map[int]*ChatToolCall),
 		ToolItemIDs:      make(map[int]string),
 		ToolOutputIndex:  make(map[int]int),
+		outputItems:      make(map[int]ResponsesOutput),
 		toolIsCustom:     make(map[int]bool),
 		toolIsToolSearch: make(map[int]bool),
 		toolNamespace:    make(map[int]NamespacedToolName),
@@ -1665,6 +1669,13 @@ func (state *ChatCompletionsToResponsesStreamState) allocOutputIndex() int {
 	return idx
 }
 
+func (state *ChatCompletionsToResponsesStreamState) recordOutput(index int, item ResponsesOutput) {
+	if state.outputItems == nil {
+		state.outputItems = make(map[int]ResponsesOutput)
+	}
+	state.outputItems[index] = item
+}
+
 // ChatCompletionsChunkToResponsesEvents converts one Chat Completions stream
 // chunk into zero or more Responses stream events.
 func ChatCompletionsChunkToResponsesEvents(
@@ -1694,8 +1705,10 @@ func ChatCompletionsChunkToResponsesEvents(
 		// empty-string reasoning delta upstreams send is filtered out.
 		reasoning := choice.Delta.reasoningText()
 		if reasoning != nil && *reasoning != "" {
+			events = append(events, closeChatTextItem(state)...)
 			events = append(events, ensureChatReasoningItem(state)...)
 			_, _ = state.Reasoning.WriteString(*reasoning)
+			_, _ = state.reasoningSegment.WriteString(*reasoning)
 			events = append(events, chatToResponsesEvent(state, "response.reasoning_summary_text.delta", &ResponsesStreamEvent{
 				OutputIndex:  state.ReasoningIndex,
 				SummaryIndex: 0,
@@ -1710,6 +1723,7 @@ func ChatCompletionsChunkToResponsesEvents(
 			events = append(events, ensureChatToResponsesMessageItem(state)...)
 			events = append(events, ensureChatToResponsesTextPart(state)...)
 			_, _ = state.Text.WriteString(*choice.Delta.Content)
+			_, _ = state.textSegment.WriteString(*choice.Delta.Content)
 			events = append(events, chatToResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
 				OutputIndex:  state.MessageIndex,
 				ContentIndex: 0,
@@ -1724,8 +1738,9 @@ func ChatCompletionsChunkToResponsesEvents(
 			}
 			stored, ok := state.ToolCalls[idx]
 			if !ok {
-				// A tool call closes any open reasoning item first.
+				// A new output item ends the current visible segment first.
 				events = append(events, closeChatReasoningItem(state)...)
+				events = append(events, closeChatTextItem(state)...)
 				copyCall := toolCall
 				if copyCall.ID == "" {
 					copyCall.ID = generateItemID()
@@ -1789,32 +1804,7 @@ func FinalizeChatCompletionsResponsesStream(state *ChatCompletionsToResponsesStr
 	events = append(events, closeChatReasoningItem(state)...)
 	events = append(events, synthesizeChatReasoningFallbackMessage(state)...)
 
-	if state.MessageItemID != "" {
-		if state.TextPartOpen {
-			events = append(events, chatToResponsesEvent(state, "response.output_text.done", &ResponsesStreamEvent{
-				OutputIndex:  state.MessageIndex,
-				ContentIndex: 0,
-				Text:         state.Text.String(),
-				ItemID:       state.MessageItemID,
-			}))
-			events = append(events, chatToResponsesEvent(state, "response.content_part.done", &ResponsesStreamEvent{
-				OutputIndex:  state.MessageIndex,
-				ContentIndex: 0,
-				ItemID:       state.MessageItemID,
-				Part:         &ResponsesContentPart{Type: "output_text", Text: state.Text.String()},
-			}))
-		}
-		events = append(events, chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
-			OutputIndex: state.MessageIndex,
-			Item: &ResponsesOutput{
-				Type:    "message",
-				ID:      state.MessageItemID,
-				Role:    "assistant",
-				Content: []ResponsesContentPart{{Type: "output_text", Text: state.Text.String()}},
-				Status:  "completed",
-			},
-		}))
-	}
+	events = append(events, closeChatTextItem(state)...)
 
 	// Close every function_call item opened during the stream. Codex finalizes a
 	// tool call only after function_call_arguments.done + output_item.done for
@@ -1866,7 +1856,7 @@ func ensureChatToResponsesCreated(state *ChatCompletionsToResponsesStreamState) 
 // reasoning_summary_part.added) before the first reasoning delta. Codex renders
 // streaming reasoning only when this summary-part lifecycle is present.
 func ensureChatReasoningItem(state *ChatCompletionsToResponsesStreamState) []ResponsesStreamEvent {
-	if state.ReasoningOpen || state.ReasoningDone {
+	if state.ReasoningOpen {
 		return nil
 	}
 	state.ReasoningOpen = true
@@ -1894,28 +1884,28 @@ func closeChatReasoningItem(state *ChatCompletionsToResponsesStreamState) []Resp
 	}
 	state.ReasoningOpen = false
 	state.ReasoningDone = true
-	reasoning := state.Reasoning.String()
+	reasoning := state.reasoningSegment.String()
+	state.reasoningSegment.Reset()
+	itemID := state.ReasoningItemID
+	state.ReasoningItemID = ""
+	item := ResponsesOutput{Type: "reasoning", ID: itemID, Status: "completed", Summary: []ResponsesSummary{{Type: "summary_text", Text: reasoning}}}
+	state.recordOutput(state.ReasoningIndex, item)
 	return []ResponsesStreamEvent{
 		chatToResponsesEvent(state, "response.reasoning_summary_text.done", &ResponsesStreamEvent{
 			OutputIndex:  state.ReasoningIndex,
 			SummaryIndex: 0,
 			Text:         reasoning,
-			ItemID:       state.ReasoningItemID,
+			ItemID:       itemID,
 		}),
 		chatToResponsesEvent(state, "response.reasoning_summary_part.done", &ResponsesStreamEvent{
 			OutputIndex:  state.ReasoningIndex,
 			SummaryIndex: 0,
-			ItemID:       state.ReasoningItemID,
+			ItemID:       itemID,
 			Part:         &ResponsesContentPart{Type: "summary_text", Text: reasoning},
 		}),
 		chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 			OutputIndex: state.ReasoningIndex,
-			Item: &ResponsesOutput{
-				Type:    "reasoning",
-				ID:      state.ReasoningItemID,
-				Status:  "completed",
-				Summary: []ResponsesSummary{{Type: "summary_text", Text: reasoning}},
-			},
+			Item: &item,
 		}),
 	}
 }
@@ -1938,6 +1928,7 @@ func synthesizeChatReasoningFallbackMessage(state *ChatCompletionsToResponsesStr
 	events = append(events, ensureChatToResponsesMessageItem(state)...)
 	events = append(events, ensureChatToResponsesTextPart(state)...)
 	_, _ = state.Text.WriteString(text)
+	_, _ = state.textSegment.WriteString(text)
 	events = append(events, chatToResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
 		OutputIndex:  state.MessageIndex,
 		ContentIndex: 0,
@@ -1976,6 +1967,27 @@ func ensureChatToResponsesTextPart(state *ChatCompletionsToResponsesStreamState)
 		ItemID:       state.MessageItemID,
 		Part:         &ResponsesContentPart{Type: "output_text", Text: ""},
 	})}
+}
+
+// closeChatTextItem completes one visible segment. A later text segment gets
+// its own message item, so no Responses part or item is reopened after done.
+func closeChatTextItem(state *ChatCompletionsToResponsesStreamState) []ResponsesStreamEvent {
+	if state == nil || state.MessageItemID == "" {
+		return nil
+	}
+	itemID := state.MessageItemID
+	index := state.MessageIndex
+	segment := state.textSegment.String()
+	state.MessageItemID = ""
+	state.TextPartOpen = false
+	state.textSegment.Reset()
+	item := ResponsesOutput{Type: "message", ID: itemID, Role: "assistant", Content: []ResponsesContentPart{{Type: "output_text", Text: segment}}, Status: "completed"}
+	state.recordOutput(index, item)
+	return []ResponsesStreamEvent{
+		chatToResponsesEvent(state, "response.output_text.done", &ResponsesStreamEvent{OutputIndex: index, ContentIndex: 0, Text: segment, ItemID: itemID}),
+		chatToResponsesEvent(state, "response.content_part.done", &ResponsesStreamEvent{OutputIndex: index, ContentIndex: 0, ItemID: itemID, Part: &ResponsesContentPart{Type: "output_text", Text: segment}}),
+		chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{OutputIndex: index, Item: &item}),
+	}
 }
 
 // announceChatToolItem 在类型可判定时发出工具调用的 output_item.added。custom
@@ -2075,6 +2087,8 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 					Delta:       input,
 				}))
 			}
+			item := ResponsesOutput{Type: "custom_tool_call", ID: itemID, CallID: toolCall.ID, Name: customNameForStreamTool(state, toolCall.Function.Name), Input: input, Status: "completed"}
+			state.recordOutput(outputIndex, item)
 			events = append(events,
 				chatToResponsesEvent(state, "response.custom_tool_call_input.done", &ResponsesStreamEvent{
 					OutputIndex: outputIndex,
@@ -2083,32 +2097,18 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 					Name:        customNameForStreamTool(state, toolCall.Function.Name),
 					Input:       input,
 				}),
-				chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
-					OutputIndex: outputIndex,
-					Item: &ResponsesOutput{
-						Type:   "custom_tool_call",
-						ID:     itemID,
-						CallID: toolCall.ID,
-						Name:   customNameForStreamTool(state, toolCall.Function.Name),
-						Input:  input,
-						Status: "completed",
-					},
-				}),
+				chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{OutputIndex: outputIndex, Item: &item}),
 			)
 			continue
 		}
 		if state.toolIsToolSearch[i] {
 			// tool_search 调用按 tool_search_call 项收尾：codex 从 output_item.done
 			// 物化该调用（无参数增量事件），arguments 全量随项下发。
+			item := ResponsesOutput{Type: "tool_search_call", ID: itemID, CallID: toolCall.ID, Arguments: arguments, Status: "completed"}
+			state.recordOutput(outputIndex, item)
 			events = append(events, chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 				OutputIndex: outputIndex,
-				Item: &ResponsesOutput{
-					Type:      "tool_search_call",
-					ID:        itemID,
-					CallID:    toolCall.ID,
-					Arguments: arguments,
-					Status:    "completed",
-				},
+				Item: &item,
 			}))
 			continue
 		}
@@ -2117,6 +2117,8 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 		if ns, ok := state.toolNamespace[i]; ok {
 			name, namespace = ns.Name, ns.Namespace
 		}
+		item := ResponsesOutput{Type: "function_call", ID: itemID, CallID: toolCall.ID, Name: name, Namespace: namespace, Arguments: arguments, Status: "completed"}
+		state.recordOutput(outputIndex, item)
 		events = append(events,
 			chatToResponsesEvent(state, "response.function_call_arguments.done", &ResponsesStreamEvent{
 				OutputIndex: outputIndex,
@@ -2125,90 +2127,24 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 				Name:        name,
 				Arguments:   arguments,
 			}),
-			chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
-				OutputIndex: outputIndex,
-				Item: &ResponsesOutput{
-					Type:      "function_call",
-					ID:        itemID,
-					CallID:    toolCall.ID,
-					Name:      name,
-					Namespace: namespace,
-					Arguments: arguments,
-					Status:    "completed",
-				},
-			}),
+			chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{OutputIndex: outputIndex, Item: &item}),
 		)
 	}
 	return events
 }
 
 func (state *ChatCompletionsToResponsesStreamState) chatOutput() []ResponsesOutput {
-	var outputs []ResponsesOutput
-	if state.Reasoning.Len() > 0 {
-		outputs = append(outputs, ResponsesOutput{
-			Type: "reasoning",
-			ID:   generateItemID(),
-			Summary: []ResponsesSummary{{
-				Type: "summary_text",
-				Text: state.Reasoning.String(),
-			}},
-		})
+	if state.nextOutputIndex == 0 {
+		return []ResponsesOutput{emptyResponsesMessageOutput()}
 	}
-	if state.MessageItemID != "" || len(state.ToolCalls) == 0 {
-		outputs = append(outputs, ResponsesOutput{
-			Type: "message",
-			ID:   nonEmpty(state.MessageItemID, generateItemID()),
-			Role: "assistant",
-			Content: []ResponsesContentPart{{
-				Type: "output_text",
-				Text: state.Text.String(),
-			}},
-			Status: "completed",
-		})
+	outputs := make([]ResponsesOutput, 0, state.nextOutputIndex)
+	for index := 0; index < state.nextOutputIndex; index++ {
+		if item, ok := state.outputItems[index]; ok {
+			outputs = append(outputs, item)
+		}
 	}
-	for i := 0; i < len(state.ToolCalls); i++ {
-		toolCall, ok := state.ToolCalls[i]
-		if !ok || toolCall == nil {
-			continue
-		}
-		arguments := toolCall.Function.Arguments
-		if strings.TrimSpace(arguments) == "" {
-			arguments = "{}"
-		}
-		if state.toolIsCustom[i] {
-			outputs = append(outputs, ResponsesOutput{
-				Type:   "custom_tool_call",
-				ID:     generateItemID(),
-				CallID: toolCall.ID,
-				Name:   customNameForStreamTool(state, toolCall.Function.Name),
-				Input:  extractCustomToolCallInput(arguments),
-				Status: "completed",
-			})
-			continue
-		}
-		if state.toolIsToolSearch[i] {
-			outputs = append(outputs, ResponsesOutput{
-				Type:      "tool_search_call",
-				ID:        generateItemID(),
-				CallID:    toolCall.ID,
-				Arguments: arguments,
-				Status:    "completed",
-			})
-			continue
-		}
-		name, namespace := toolCall.Function.Name, ""
-		if ns, ok := state.toolNamespace[i]; ok {
-			name, namespace = ns.Name, ns.Namespace
-		}
-		outputs = append(outputs, ResponsesOutput{
-			Type:      "function_call",
-			ID:        generateItemID(),
-			CallID:    toolCall.ID,
-			Name:      name,
-			Namespace: namespace,
-			Arguments: arguments,
-			Status:    "completed",
-		})
+	if len(state.ToolCalls) == 0 && state.Text.Len() == 0 {
+		outputs = append(outputs, emptyResponsesMessageOutput())
 	}
 	return outputs
 }

@@ -452,6 +452,17 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			ClientDisconnect: clientDisconnected,
 		}, fmt.Errorf("stream usage incomplete: %w", err)
 	}
+	if !directBridge {
+		if err := ccState.ValidateToolCallArguments(); err != nil {
+			return &OpenAIForwardResult{
+				RequestID: requestID, Usage: usage, Model: originalModel,
+				BillingModel: billingModel, UpstreamModel: upstreamModel,
+				ReasoningEffort: reasoningEffort, ServiceTier: serviceTier,
+				Stream: true, Duration: time.Since(startTime),
+				FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected,
+			}, fmt.Errorf("invalid tool call arguments from upstream: %w", err)
+		}
+	}
 
 	var finalEvents []apicompat.AnthropicStreamEvent
 	if directBridge {
