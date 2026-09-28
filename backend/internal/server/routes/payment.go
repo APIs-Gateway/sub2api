@@ -1,12 +1,21 @@
 package routes
 
 import (
+	"time"
+
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
+	ratelimit "github.com/Wei-Shaw/sub2api/internal/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+)
+
+const (
+	publicOrderVerifyRateLimit       = 20
+	publicOrderVerifyRateLimitWindow = time.Minute
 )
 
 // RegisterPaymentRoutes registers all payment-related routes:
@@ -20,6 +29,7 @@ func RegisterPaymentRoutes(
 	adminAuth middleware.AdminAuthMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
+	redisClient *redis.Client,
 ) {
 	// --- User-facing payment endpoints (authenticated) ---
 	authenticated := v1.Group("/payment")
@@ -49,9 +59,14 @@ func RegisterPaymentRoutes(
 	// Signed resume-token recovery is the preferred public lookup path.
 	// The legacy anonymous out_trade_no verify endpoint remains available as a
 	// persisted-state compatibility path for staggered upgrades.
+	// Limit only the anonymous out_trade_no lookup. Redis errors fail open so a
+	// payment result remains visible during a Redis outage.
+	publicOrderLimiter := ratelimit.NewRateLimiter(redisClient)
 	public := v1.Group("/payment/public")
 	{
-		public.POST("/orders/verify", paymentHandler.VerifyOrderPublic)
+		public.POST("/orders/verify",
+			publicOrderLimiter.Limit("payment-public-order-verify", publicOrderVerifyRateLimit, publicOrderVerifyRateLimitWindow),
+			paymentHandler.VerifyOrderPublic)
 		public.POST("/orders/resolve", paymentHandler.ResolveOrderPublicByResumeToken)
 	}
 
