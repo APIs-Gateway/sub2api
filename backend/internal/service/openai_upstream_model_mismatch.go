@@ -231,7 +231,7 @@ func (s *OpenAIGatewayService) upstreamModelMismatchObserveOnlyAccount(accountID
 // 便于识别中转实现并向厂商追责。
 func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	c *gin.Context, account *Account, upstreamRequestID string, upstreamHeaders http.Header,
-	sentModel, responseModel string, stream, canBlock bool, usage OpenAIUsage,
+	sentModel, responseModel string, stream, canBlock bool, usage OpenAIUsage, requestedModels ...string,
 ) *UpstreamFailoverError {
 	if upstreamModelMatches(sentModel, responseModel) {
 		return nil
@@ -262,7 +262,11 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 		if c != nil && c.Request != nil {
 			ctx = c.Request.Context()
 		}
-		s.rateLimitService.HandleConfirmedModelDowngrade(ctx, account, sentModel, responseModel)
+		requestedModel := sentModel
+		if len(requestedModels) > 0 && strings.TrimSpace(requestedModels[0]) != "" {
+			requestedModel = requestedModels[0]
+		}
+		s.rateLimitService.HandleConfirmedModelDowngrade(ctx, account, requestedModel, sentModel, responseModel)
 	}
 	message := fmt.Sprintf("%s: sent=%s got=%s", upstreamModelMismatchMessage, sentModel, responseModel)
 	setOpsUpstreamError(c, http.StatusBadGateway, message, "")

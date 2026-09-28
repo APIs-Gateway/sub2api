@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -12,7 +13,11 @@ import (
 
 // TryBlockDowngradedModel serializes the pool-wide cap and the scoped write.
 // It never replaces an active rate limit from another source.
-func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int64, model string, until time.Time, maxRatio float64) (bool, error) {
+func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int64, requestedModel, model string, until time.Time, maxRatio float64, simpleMode bool) (bool, error) {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" {
+		return false, nil
+	}
 	beginner, ok := r.sql.(interface {
 		BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
 	})
@@ -70,23 +75,69 @@ func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int6
 		}
 	}
 
-	var blocked, total int64
-	err = tx.QueryRowContext(ctx, `
-		SELECT COUNT(*) FILTER (WHERE EXISTS (
-			SELECT 1 FROM jsonb_each(
-				CASE WHEN jsonb_typeof(extra -> 'model_rate_limits') = 'object'
-				THEN extra -> 'model_rate_limits' ELSE '{}'::jsonb END
-			) AS limits(model, payload)
-			WHERE payload ->> 'reason' = $1
-				AND (payload ->> 'rate_limit_reset_at')::timestamptz > $2
-		)), COUNT(*)
-		FROM accounts
-		WHERE platform = $3 AND status = 'active' AND schedulable = TRUE AND deleted_at IS NULL
-	`, service.ModelDowngradeGuardReason, now, service.PlatformOpenAI).Scan(&blocked, &total)
+	// Decode timestamps in Go: a malformed value written by another limit
+	// source must not turn the whole quarantine decision into a SQL error.
+	rows, err := tx.QueryContext(ctx, `
+		SELECT extra FROM accounts
+		WHERE platform = $1 AND status = 'active' AND schedulable = TRUE AND deleted_at IS NULL
+	`, service.PlatformOpenAI)
 	if err != nil {
 		return false, err
 	}
+	var blocked, total int64
+	for rows.Next() {
+		var candidateExtra []byte
+		if err := rows.Scan(&candidateExtra); err != nil {
+			_ = rows.Close()
+			return false, err
+		}
+		total++
+		var candidateState struct {
+			ModelRateLimits map[string]json.RawMessage `json:"model_rate_limits"`
+		}
+		if err := json.Unmarshal(candidateExtra, &candidateState); err != nil {
+			// Database JSONB is valid JSON, but a non-object legacy shape must
+			// not make unrelated accounts block this transaction.
+			continue
+		}
+		for _, rawLimit := range candidateState.ModelRateLimits {
+			var limit struct {
+				Reason           string `json:"reason"`
+				RateLimitResetAt string `json:"rate_limit_reset_at"`
+			}
+			if json.Unmarshal(rawLimit, &limit) != nil || limit.Reason != service.ModelDowngradeGuardReason {
+				continue
+			}
+			resetAt, parseErr := time.Parse(time.RFC3339, limit.RateLimitResetAt)
+			if parseErr != nil || now.Before(resetAt) {
+				blocked++
+				break
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
 	if total == 0 || (!alreadyCounted && float64(blocked+1)/float64(total) > maxRatio) {
+		return false, nil
+	}
+	// One account may serve several groups. Do not isolate the last usable
+	// candidate for this request model in any group affected by the write.
+	if simpleMode {
+		candidates, err := r.ListSchedulableByPlatform(ctx, service.PlatformOpenAI)
+		if err != nil {
+			return false, err
+		}
+		if !hasAlternativeModelDowngradeCandidate(ctx, candidates, id, requestedModel) {
+			return false, nil
+		}
+	} else if ok, err := r.hasAlternativeModelDowngradeCandidateInGroups(ctx, tx, id, requestedModel); err != nil {
+		return false, err
+	} else if !ok {
 		return false, nil
 	}
 	payload, err := json.Marshal(map[string]string{
@@ -124,4 +175,57 @@ func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int6
 	}
 	r.syncSchedulerAccountSnapshot(ctx, id)
 	return true, nil
+}
+
+func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx context.Context, tx *sql.Tx, id int64, requestedModel string) (bool, error) {
+	groupRows, err := tx.QueryContext(ctx, "SELECT group_id FROM account_groups WHERE account_id = $1", id)
+	if err != nil {
+		return false, err
+	}
+	var groupIDs []int64
+	for groupRows.Next() {
+		var groupID int64
+		if err := groupRows.Scan(&groupID); err != nil {
+			_ = groupRows.Close()
+			return false, err
+		}
+		groupIDs = append(groupIDs, groupID)
+	}
+	if err := groupRows.Err(); err != nil {
+		_ = groupRows.Close()
+		return false, err
+	}
+	if err := groupRows.Close(); err != nil {
+		return false, err
+	}
+	if len(groupIDs) == 0 {
+		candidates, err := r.ListSchedulableUngroupedByPlatform(ctx, service.PlatformOpenAI)
+		if err != nil {
+			return false, err
+		}
+		if !hasAlternativeModelDowngradeCandidate(ctx, candidates, id, requestedModel) {
+			return false, nil
+		}
+	}
+	for _, groupID := range groupIDs {
+		candidates, err := r.ListSchedulableByGroupIDAndPlatform(ctx, groupID, service.PlatformOpenAI)
+		if err != nil {
+			return false, err
+		}
+		if !hasAlternativeModelDowngradeCandidate(ctx, candidates, id, requestedModel) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func hasAlternativeModelDowngradeCandidate(ctx context.Context, candidates []service.Account, blockedID int64, requestedModel string) bool {
+	for i := range candidates {
+		candidate := &candidates[i]
+		if candidate.ID != blockedID && candidate.IsModelSupported(requestedModel) &&
+			candidate.IsSchedulableForModelWithContext(ctx, requestedModel) {
+			return true
+		}
+	}
+	return false
 }

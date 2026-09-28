@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 const ModelDowngradeGuardReason = "model_downgrade"
@@ -17,7 +19,7 @@ type ModelDowngradeCounterCache interface {
 }
 
 type modelDowngradeBlocker interface {
-	TryBlockDowngradedModel(context.Context, int64, string, time.Time, float64) (bool, error)
+	TryBlockDowngradedModel(context.Context, int64, string, string, time.Time, float64, bool) (bool, error)
 }
 
 func (s *RateLimitService) SetModelDowngradeCounterCache(cache ModelDowngradeCounterCache) {
@@ -28,7 +30,7 @@ func (s *RateLimitService) SetModelDowngradeCounterCache(cache ModelDowngradeCou
 // response was rejected before any semantic output reached the client. The
 // fork's mismatch audit, failover, and zero-charge path remain the source of
 // truth for that attempt; this guard only changes future account selection.
-func (s *RateLimitService) HandleConfirmedModelDowngrade(ctx context.Context, account *Account, sentModel, responseModel string) {
+func (s *RateLimitService) HandleConfirmedModelDowngrade(ctx context.Context, account *Account, requestedModel, sentModel, responseModel string) {
 	if s == nil || s.cfg == nil || account == nil || account.Platform != PlatformOpenAI ||
 		account.ID <= 0 || s.modelDowngradeCounter == nil {
 		return
@@ -86,7 +88,7 @@ func (s *RateLimitService) HandleConfirmedModelDowngrade(ctx context.Context, ac
 	if !ok {
 		return
 	}
-	applied, err := blocker.TryBlockDowngradedModel(ctx, account.ID, sentModel, time.Now().Add(time.Duration(blockHours)*time.Hour), ratio)
+	applied, err := blocker.TryBlockDowngradedModel(ctx, account.ID, requestedModel, sentModel, time.Now().Add(time.Duration(blockHours)*time.Hour), ratio, s.cfg.RunMode == config.RunModeSimple)
 	if err != nil {
 		slog.Warn("model_downgrade_block_failed", "account_id", account.ID, "model", sentModel, "error", err)
 		return

@@ -38,7 +38,7 @@ type modelDowngradeRepoStub struct {
 	blocks []string
 }
 
-func (s *modelDowngradeRepoStub) TryBlockDowngradedModel(_ context.Context, _ int64, model string, _ time.Time, _ float64) (bool, error) {
+func (s *modelDowngradeRepoStub) TryBlockDowngradedModel(_ context.Context, _ int64, _, model string, _ time.Time, _ float64, _ bool) (bool, error) {
 	s.blocks = append(s.blocks, model)
 	return true, nil
 }
@@ -98,10 +98,10 @@ func TestModelDowngradeGuardMatchesExplicitPairOnly(t *testing.T) {
 	counter := &modelDowngradeCounterStub{}
 	svc := &RateLimitService{cfg: cfg, modelDowngradeCounter: counter}
 	account := &Account{ID: 17, Platform: PlatformOpenAI}
-	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-5.6-terra")
-	svc.HandleConfirmedModelDowngrade(context.Background(), &Account{ID: 18, Platform: PlatformGrok}, "gpt-6-astra", "gpt-5.6-luna")
+	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-terra")
+	svc.HandleConfirmedModelDowngrade(context.Background(), &Account{ID: 18, Platform: PlatformGrok}, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna")
 	require.Zero(t, counter.increments)
-	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-5.6-luna")
+	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna")
 	require.Equal(t, 1, counter.increments)
 }
 
