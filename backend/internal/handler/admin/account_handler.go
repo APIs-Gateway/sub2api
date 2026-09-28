@@ -2178,7 +2178,7 @@ func canTestAntigravityMappedModel(account *service.Account, modelID string) boo
 		return false
 	}
 	mappedID := account.GetMappedModel(modelID)
-	return strings.TrimSpace(mappedID) != "" &&
+	return mappedID != "" && mappedID == strings.TrimSpace(mappedID) &&
 		strings.HasPrefix(modelID, "gemini-") == strings.HasPrefix(mappedID, "gemini-")
 }
 

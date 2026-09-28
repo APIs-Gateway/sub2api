@@ -223,8 +223,8 @@ func TestAccountHandlerGetAvailableModels_AntigravityMappingRestrictsTestPicker(
 	require.NotContains(t, byID, "gemini-cross", "the test would send a Gemini payload for a Claude target")
 }
 
-func TestAccountHandlerGetAvailableModels_AntigravityEmptyMappingTargets(t *testing.T) {
-	for _, target := range []string{"", "   "} {
+func TestAccountHandlerGetAvailableModels_AntigravityInvalidMappingTargets(t *testing.T) {
+	for _, target := range []string{"", "   ", " claude-sonnet-4-6 "} {
 		t.Run("target="+target, func(t *testing.T) {
 			svc := &availableModelsAdminService{
 				stubAdminService: newStubAdminService(),
