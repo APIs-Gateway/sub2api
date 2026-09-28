@@ -690,6 +690,8 @@ func TestForwardAsRawChatCompletions_StreamErrorBeforeAndAfterContent(t *testing
 	}{
 		{name: "bare overload", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, failover: true},
 		{name: "named overload", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, failover: true},
+		{name: "structured code without retry text", payload: `{"error":{"code":"server_is_overloaded","message":"The server is overloaded"}}`, failover: true},
+		{name: "structured type without retry text", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"The server is overloaded"}}`, failover: true},
 		{name: "multiline named overload", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, failover: true},
 		{name: "multiline bare overload", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, failover: true},
 		{name: "response failed", event: "response.failed", payload: `{"type":"response.failed","response":{"error":{"code":"server_error","message":"try again later"}}}`, failover: true},
@@ -697,6 +699,7 @@ func TestForwardAsRawChatCompletions_StreamErrorBeforeAndAfterContent(t *testing
 		{name: "after content multiline with later usage", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, content: true},
 		{name: "invalid request", event: "error", payload: `{"error":{"type":"invalid_request_error","message":"invalid request"}}`},
 		{name: "context window", payload: `{"error":{"code":"context_length_exceeded","message":"input exceeds the context window"}}`},
+		{name: "policy overrides capacity code", event: "error", payload: `{"error":{"type":"content_policy","code":"server_is_overloaded","message":"blocked by policy"}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)

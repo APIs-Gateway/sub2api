@@ -802,6 +802,8 @@ func TestForwardAsChatCompletions_SmallRequestOverloadBeforeContentFailsOver(t *
 	}{
 		{name: "bare error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`},
 		{name: "named bare error", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`},
+		{name: "structured code without retry text", payload: `{"error":{"code":"server_is_overloaded","message":"The server is overloaded"}}`},
+		{name: "structured type without retry text", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"The server is overloaded"}}`},
 		{name: "response failed", payload: `{"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"try again later"}}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
