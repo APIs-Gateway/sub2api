@@ -268,19 +268,21 @@ type OpenAIWSIngressHooks struct {
 }
 
 const (
-	openAIWSHTTPBridgeMaxPrewarmTurns      = 8
-	openAIWSHTTPBridgeMaxPrewarmInputBytes = 64 * 1024 * 1024
+	openAIWSHTTPBridgeMaxPrewarmTurns        = 8
+	openAIWSHTTPBridgeMaxPrewarmPayloadBytes = 64 * 1024 * 1024
 )
 
-func checkOpenAIWSHTTPBridgePrewarmBudget(turns int, usedBytes, incomingBytes int64) error {
+func checkOpenAIWSHTTPBridgePrewarmBudget(turns int, usedBytes int64, payload []byte) (int64, error) {
 	if turns >= openAIWSHTTPBridgeMaxPrewarmTurns {
-		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "too many websocket prewarm turns", nil)
+		return 0, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "too many websocket prewarm turns", nil)
 	}
-	if incomingBytes < 0 || usedBytes < 0 || usedBytes > openAIWSHTTPBridgeMaxPrewarmInputBytes ||
-		incomingBytes > openAIWSHTTPBridgeMaxPrewarmInputBytes-usedBytes {
-		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm input limit exceeded", nil)
+	// Normalized RawMessages may point into payload, retaining the entire frame.
+	// Count the whole frame rather than only the input field.
+	if usedBytes < 0 || usedBytes > openAIWSHTTPBridgeMaxPrewarmPayloadBytes ||
+		int64(len(payload)) > openAIWSHTTPBridgeMaxPrewarmPayloadBytes-usedBytes {
+		return 0, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm payload limit exceeded", nil)
 	}
-	return nil
+	return usedBytes + int64(len(payload)), nil
 }
 
 func normalizeOpenAIWSLogValue(value string) string {
@@ -3331,7 +3333,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		var bridgeAccountFailoverInput []json.RawMessage
 		bridgeAccountFailoverInputExists := false
 		prewarmTurns := 0
-		var prewarmInputBytes int64
+		var prewarmPayloadBytes int64
 		// bridgeToolState carries the client-tool lowering mapping across
 		// turns of this WS HTTP bridge session so a follow-up turn that
 		// omits "tools" (the client relies on the upstream to remember an
@@ -3364,16 +3366,15 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		for turn := 1; ; turn++ {
 			if isOpenAIWSHTTPBridgePrewarmPayload(currentBridgePayload.payloadRaw) {
+				nextPayloadBytes, budgetErr := checkOpenAIWSHTTPBridgePrewarmBudget(
+					prewarmTurns, prewarmPayloadBytes, currentBridgePayload.payloadRaw,
+				)
+				if budgetErr != nil {
+					return budgetErr
+				}
 				prewarmItems, prewarmItemsExist, extractErr := openAIWSExtractNormalizedInputSequence(currentBridgePayload.payloadRaw)
 				if extractErr != nil {
 					return fmt.Errorf("build websocket http bridge prewarm input: %w", extractErr)
-				}
-				var incomingBytes int64
-				for _, item := range prewarmItems {
-					incomingBytes += int64(len(item))
-				}
-				if err := checkOpenAIWSHTTPBridgePrewarmBudget(prewarmTurns, prewarmInputBytes, incomingBytes); err != nil {
-					return err
 				}
 				// BeforeRequest enforces the fork's subsequent-turn content audit
 				// and admission gate. Run it before retaining input or tool state;
@@ -3386,7 +3387,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				// Keep the input and turn number so the next real turn can replay
 				// this synthetic response without charging or contacting upstream.
 				prewarmTurns++
-				prewarmInputBytes += incomingBytes
+				prewarmPayloadBytes = nextPayloadBytes
 				hasPrevious := currentBridgePayload.previousResponseID != ""
 				bridgeReplayInput, bridgeReplayInputExists = buildOpenAIWSReplayInputSequenceFromItems(
 					bridgeReplayInput, bridgeReplayInputExists,

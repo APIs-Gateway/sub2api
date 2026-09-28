@@ -62,19 +62,29 @@ func TestOpenAIWSHTTPBridgePrewarmEvents(t *testing.T) {
 }
 
 func TestOpenAIWSHTTPBridgePrewarmBudgetStopsBeforeHistoryGrowth(t *testing.T) {
-	require.NoError(t, checkOpenAIWSHTTPBridgePrewarmBudget(0, 0, 1))
-	require.NoError(t, checkOpenAIWSHTTPBridgePrewarmBudget(
+	payload := []byte(`{"generate":false,"input":["x"]}`)
+	nextBytes, err := checkOpenAIWSHTTPBridgePrewarmBudget(0, 0, payload)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(payload)), nextBytes)
+	nextBytes, err = checkOpenAIWSHTTPBridgePrewarmBudget(
 		openAIWSHTTPBridgeMaxPrewarmTurns-1,
-		openAIWSHTTPBridgeMaxPrewarmInputBytes-1,
-		1,
-	))
+		openAIWSHTTPBridgeMaxPrewarmPayloadBytes-int64(len(payload)),
+		payload,
+	)
+	require.NoError(t, err)
+	require.Equal(t, int64(openAIWSHTTPBridgeMaxPrewarmPayloadBytes), nextBytes)
 	var closeErr *OpenAIWSClientCloseError
-	err := checkOpenAIWSHTTPBridgePrewarmBudget(openAIWSHTTPBridgeMaxPrewarmTurns, 0, 0)
+	_, err = checkOpenAIWSHTTPBridgePrewarmBudget(openAIWSHTTPBridgeMaxPrewarmTurns, 0, payload)
 	require.ErrorAs(t, err, &closeErr)
 	require.Contains(t, err.Error(), "too many websocket prewarm turns")
-	err = checkOpenAIWSHTTPBridgePrewarmBudget(1, openAIWSHTTPBridgeMaxPrewarmInputBytes-1, 2)
+	// A short input can retain a large frame through its RawMessage. The
+	// non-input instructions must count toward the cumulative limit.
+	largeNonInput := []byte(`{"generate":false,"instructions":"` + strings.Repeat("x", 1<<20) + `","input":["x"]}`)
+	_, err = checkOpenAIWSHTTPBridgePrewarmBudget(
+		1, openAIWSHTTPBridgeMaxPrewarmPayloadBytes-int64(len(payload)), largeNonInput,
+	)
 	require.ErrorAs(t, err, &closeErr)
-	require.Contains(t, err.Error(), "websocket prewarm input limit exceeded")
+	require.Contains(t, err.Error(), "websocket prewarm payload limit exceeded")
 }
 
 func TestOpenAIWSHTTPBridgePrewarmCarriesClientToolMapping(t *testing.T) {
