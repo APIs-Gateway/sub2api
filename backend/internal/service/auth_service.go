@@ -49,6 +49,8 @@ var (
 	ErrSignupSourceDisabled = infraerrors.Forbidden("SIGNUP_SOURCE_DISABLED", "registration via this source is currently disabled")
 )
 
+var ErrOAuthExistingAccountBindRequired = infraerrors.Conflict("OAUTH_EXISTING_ACCOUNT_BIND_REQUIRED", "an account with this email already exists; sign in using your existing method, then link this OAuth account")
+
 // maxTokenLength 限制 token 大小，避免超长 header 触发解析时的异常内存分配。
 const maxTokenLength = 8192
 
