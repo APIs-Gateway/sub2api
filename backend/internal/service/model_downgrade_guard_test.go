@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -14,34 +15,73 @@ import (
 )
 
 type modelDowngradeCounterStub struct {
-	count      int64
-	increments int
-	resets     int
-	models     []string
+	count        int64
+	increments   int
+	resets       int
+	models       []string
+	incrementErr error
+	resetErr     error
 }
 
 func (s *modelDowngradeCounterStub) IncrementModelDowngradeCount(_ context.Context, _ int64, model string, _ int) (int64, error) {
 	s.increments++
 	s.models = append(s.models, model)
 	s.count++
-	return s.count, nil
+	return s.count, s.incrementErr
 }
 
 func (s *modelDowngradeCounterStub) ResetModelDowngradeCount(context.Context, int64, string) error {
 	s.resets++
 	s.count = 0
-	return nil
+	return s.resetErr
 }
 
 type modelDowngradeRepoStub struct {
 	AccountRepository
-	blocks []string
+	blocks   []string
+	blockErr error
 }
 
 func (s *modelDowngradeRepoStub) TryBlockDowngradedModel(_ context.Context, _ int64, _, model string, _ time.Time, _ float64, _ bool, _ ModelDowngradeCandidateFilter) (bool, error) {
 	s.blocks = append(s.blocks, model)
-	return true, nil
+	return s.blockErr == nil, s.blockErr
 }
+
+func TestModelDowngradeGuardFailsOpenOnCounterAndRepositoryErrors(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.ModelDowngradeGuard = config.GatewayModelDowngradeGuardConfig{
+		Enabled: true, ThresholdCount: 2,
+		Pairs: []config.GatewayModelDowngradePair{{SentModel: "gpt-6-astra", ResponseModel: "gpt-5.6-luna"}},
+	}
+	account := &Account{ID: 17, Platform: PlatformOpenAI}
+	filter := func(context.Context, *Account, *int64) bool { return true }
+	for _, tc := range []struct {
+		name       string
+		countErr   error
+		resetErr   error
+		blockErr   error
+		wantBlocks int
+	}{
+		{name: "redis increment unavailable", countErr: errors.New("redis unavailable"), wantBlocks: 0},
+		{name: "redis reset unavailable", resetErr: errors.New("redis unavailable"), wantBlocks: 1},
+		{name: "database unavailable", blockErr: errors.New("database unavailable"), wantBlocks: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			counter := &modelDowngradeCounterStub{count: 1, incrementErr: tc.countErr, resetErr: tc.resetErr}
+			repo := &modelDowngradeRepoStub{blockErr: tc.blockErr}
+			limiter := &RateLimitService{cfg: cfg, accountRepo: repo}
+			limiter.SetModelDowngradeCounterCache(counter)
+			limiter.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna", filter)
+			require.Len(t, repo.blocks, tc.wantBlocks)
+		})
+	}
+	noBlocker := &RateLimitService{cfg: cfg, accountRepo: &modelDowngradeRepoWithoutGuard{}, modelDowngradeCounter: &modelDowngradeCounterStub{count: 1}}
+	noBlocker.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna", filter)
+	noBlocker.cfg.Gateway.ModelDowngradeGuard.Enabled = false
+	noBlocker.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna", filter)
+}
+
+type modelDowngradeRepoWithoutGuard struct{ AccountRepository }
 
 func TestModelDowngradeGuardCountsRejectedAttemptsOnly(t *testing.T) {
 	cfg := &config.Config{}

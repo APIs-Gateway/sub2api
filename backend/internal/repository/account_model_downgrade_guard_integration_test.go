@@ -84,6 +84,19 @@ func TestModelDowngradeGuardKeepsOtherLimitsAndCapsPool(t *testing.T) {
 	got, err = repo.GetByID(ctx, first)
 	require.NoError(t, err)
 	require.Empty(t, got.Extra["model_rate_limits"], "expired guard can be cleaned up")
+	// The account already consumes one global guard slot for another model;
+	// moving to a second guarded model must not consume an extra ratio slot.
+	require.NoError(t, repo.SetModelRateLimit(ctx, first, "other-model", time.Now().Add(time.Hour), service.ModelDowngradeGuardReason))
+	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until, 0.000001, false, modelDowngradeTestCandidateFilter)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.NoError(t, repo.ClearModelRateLimits(ctx, first))
+	_, err = integrationDB.ExecContext(ctx, `UPDATE accounts SET extra = $1::jsonb WHERE id = $2`,
+		`{"model_rate_limits":{"gpt-6-astra":{"reason":"upstream_429","rate_limit_reset_at":"bad timestamp"}}}`, first)
+	require.NoError(t, err)
+	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until, 1, false, modelDowngradeTestCandidateFilter)
+	require.NoError(t, err)
+	require.False(t, applied, "unknown target limit must not be overwritten")
 }
 
 func TestModelDowngradeGuardPreservesGroupModelCandidateWithMalformedOtherLimit(t *testing.T) {
@@ -126,6 +139,10 @@ func TestModelDowngradeGuardPreservesGroupModelCandidateWithMalformedOtherLimit(
 	_, err = integrationDB.ExecContext(ctx, `UPDATE accounts SET extra = $1::jsonb WHERE id = $2`,
 		`{"model_rate_limits":{"unrelated":{"reason":"upstream_429","rate_limit_reset_at":"bad timestamp"}}}`, other)
 	require.NoError(t, err)
+	malformedGuard := makeAccount("downgrade-pool-malformed-guard", false, nil)
+	_, err = integrationDB.ExecContext(ctx, `UPDATE accounts SET extra = $1::jsonb WHERE id = $2`,
+		`{"model_rate_limits":{"unrelated":{"reason":"model_downgrade","rate_limit_reset_at":"bad timestamp"}}}`, malformedGuard)
+	require.NoError(t, err)
 
 	until := time.Now().Add(time.Hour)
 	// An account in the same group that does not support this request model
@@ -143,4 +160,59 @@ func TestModelDowngradeGuardPreservesGroupModelCandidateWithMalformedOtherLimit(
 	applied, err = repo.TryBlockDowngradedModel(ctx, second, "gpt-6-astra", "gpt-6-astra", until, 0.3, false, modelDowngradeTestCandidateFilter)
 	require.NoError(t, err)
 	require.False(t, applied)
+}
+
+func TestModelDowngradeGuardUngroupedSimpleAndSharedAccount(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := newAccountRepositoryWithSQL(client, integrationDB, nil)
+	makeAccount := func(name string) int64 {
+		account, err := client.Account.Create().SetName(name).
+			SetPlatform(service.PlatformOpenAI).SetType(service.AccountTypeAPIKey).
+			SetStatus(service.StatusActive).SetSchedulable(true).
+			SetCredentials(map[string]any{}).SetExtra(map[string]any{}).
+			SetConcurrency(1).SetPriority(1).Save(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM scheduler_outbox WHERE account_id = $1", account.ID)
+			_ = client.Account.DeleteOneID(account.ID).Exec(context.Background())
+		})
+		return account.ID
+	}
+	first := makeAccount("model-downgrade-ungrouped-first")
+	_ = makeAccount("model-downgrade-ungrouped-second")
+	until := time.Now().Add(time.Hour)
+	filter := func(_ context.Context, candidate *service.Account, _ *int64) bool {
+		return candidate.IsModelSupported("gpt-6-astra")
+	}
+	applied, err := repo.TryBlockDowngradedModel(ctx, first, " ", "gpt-6-astra", until, 1, false, filter)
+	require.NoError(t, err)
+	require.False(t, applied)
+	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until, 1, false, nil)
+	require.NoError(t, err)
+	require.False(t, applied)
+	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until, 1, false, filter)
+	require.NoError(t, err)
+	require.True(t, applied, "ungrouped accounts preserve another candidate")
+	require.NoError(t, repo.ClearModelRateLimits(ctx, first))
+
+	groupA, err := client.Group.Create().SetName("model-downgrade-shared-a").SetPlatform(service.PlatformOpenAI).Save(ctx)
+	require.NoError(t, err)
+	groupB, err := client.Group.Create().SetName("model-downgrade-shared-b").SetPlatform(service.PlatformOpenAI).Save(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM account_groups WHERE account_id = $1", first)
+		_ = client.Group.DeleteOneID(groupA.ID).Exec(context.Background())
+		_ = client.Group.DeleteOneID(groupB.ID).Exec(context.Background())
+	})
+	for _, groupID := range []int64{groupA.ID, groupB.ID} {
+		_, err = client.AccountGroup.Create().SetAccountID(first).SetGroupID(groupID).Save(ctx)
+		require.NoError(t, err)
+	}
+	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until, 1, false, filter)
+	require.NoError(t, err)
+	require.False(t, applied, "one request alias cannot prove alternatives in every group")
+	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until, 1, true, filter)
+	require.NoError(t, err)
+	require.True(t, applied, "simple mode uses the global account pool")
 }
