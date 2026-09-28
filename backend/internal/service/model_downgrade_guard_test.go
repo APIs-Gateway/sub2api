@@ -109,6 +109,36 @@ func TestModelDowngradeGuardMatchesExplicitPairOnly(t *testing.T) {
 	require.Equal(t, 1, counter.increments)
 }
 
+func TestModelDowngradeGuardSkipsLaterWebSocketModel(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.ModelDowngradeGuard = config.GatewayModelDowngradeGuardConfig{
+		Enabled: true, ThresholdCount: 2,
+		Pairs: []config.GatewayModelDowngradePair{{SentModel: "gpt-6-astra", ResponseModel: "gpt-5.6-luna"}},
+	}
+	counter := &modelDowngradeCounterStub{}
+	limiter := &RateLimitService{cfg: cfg, accountRepo: &modelDowngradeRepoStub{}, modelDowngradeCounter: counter}
+	svc := &OpenAIGatewayService{cfg: cfg, rateLimitService: limiter}
+	account := &Account{ID: 17, Platform: PlatformOpenAI}
+	newWebSocketContext := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		request := httptest.NewRequest("GET", "/v1/responses", nil)
+		request.Header.Set("Upgrade", "websocket")
+		ctx := WithModelDowngradeSelectionModel(request.Context(), "gpt-6-astra-channel")
+		request = request.WithContext(WithModelDowngradeWebSocketInitialModel(ctx, "gpt-6-astra"))
+		c.Request = request
+		return c
+	}
+	require.NotNil(t, svc.checkUpstreamModelMismatch(newWebSocketContext(), account, "", nil,
+		"gpt-6-astra", "gpt-5.6-luna", true, true, OpenAIUsage{}, "gpt-6-astra"))
+	require.Equal(t, 1, counter.increments)
+	// The forwarded account may still use the first-turn selector after a
+	// later turn changes its client model. Keep immediate mismatch failover,
+	// but do not consume a cross-request quarantine hit for that new model.
+	require.NotNil(t, svc.checkUpstreamModelMismatch(newWebSocketContext(), account, "", nil,
+		"gpt-6-astra", "gpt-5.6-luna", true, true, OpenAIUsage{}, "gpt-5.4"))
+	require.Equal(t, 1, counter.increments)
+}
+
 func TestModelDowngradeCandidateRequiresResponsesCapability(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	ctx := context.Background()

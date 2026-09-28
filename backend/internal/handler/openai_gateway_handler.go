@@ -1914,6 +1914,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	channelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
 	wsForwardModel := openAIChannelForwardModel(channelMappingWS, reqModel)
 	ctx = service.WithModelDowngradeSelectionModel(ctx, wsForwardModel)
+	ctx = service.WithModelDowngradeWebSocketInitialModel(ctx, reqModel)
 	c.Request = c.Request.WithContext(ctx)
 
 	// currentUserRelease/currentAccountRelease 会被多个 goroutine 访问：握手/failover 路径

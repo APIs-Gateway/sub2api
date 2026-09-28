@@ -23,6 +23,7 @@ type ModelDowngradeCounterCache interface {
 type ModelDowngradeCandidateFilter func(context.Context, *Account, *int64) bool
 
 type modelDowngradeSelectionModelContextKey struct{}
+type modelDowngradeWebSocketInitialModelContextKey struct{}
 
 // WithModelDowngradeSelectionModel records the model used by the handler's
 // account selector without changing existing forwarding and rate-limit keys.
@@ -31,6 +32,15 @@ func WithModelDowngradeSelectionModel(ctx context.Context, model string) context
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, modelDowngradeSelectionModelContextKey{}, model)
+}
+
+// WithModelDowngradeWebSocketInitialModel lets the guard reject later-turn
+// mismatches whose requested model differs from the first-turn selector model.
+func WithModelDowngradeWebSocketInitialModel(ctx context.Context, model string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, modelDowngradeWebSocketInitialModelContextKey{}, model)
 }
 
 type modelDowngradeBlocker interface {

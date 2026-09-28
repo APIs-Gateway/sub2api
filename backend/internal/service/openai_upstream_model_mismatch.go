@@ -273,7 +273,14 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 			if strings.EqualFold(strings.TrimSpace(c.Request.Header.Get("Upgrade")), "websocket") {
 				requiredTransport = OpenAIUpstreamTransportResponsesWebsocketV2
 			}
-			candidateFilter = s.modelDowngradeCandidateFilter(ctx, requestedModel, c.Request.URL.Path, requiredTransport)
+			// A later WS turn may switch models while the session still routes
+			// through the first-turn selector model. That selection cannot prove
+			// an alternative account for this later model.
+			if requiredTransport != OpenAIUpstreamTransportResponsesWebsocketV2 {
+				candidateFilter = s.modelDowngradeCandidateFilter(ctx, requestedModel, c.Request.URL.Path, requiredTransport)
+			} else if firstModel, ok := ctx.Value(modelDowngradeWebSocketInitialModelContextKey{}).(string); ok && strings.EqualFold(strings.TrimSpace(firstModel), strings.TrimSpace(requestedModel)) {
+				candidateFilter = s.modelDowngradeCandidateFilter(ctx, requestedModel, c.Request.URL.Path, requiredTransport)
+			}
 		}
 		s.rateLimitService.HandleConfirmedModelDowngrade(ctx, account, requestedModel, sentModel, responseModel, candidateFilter)
 	}
