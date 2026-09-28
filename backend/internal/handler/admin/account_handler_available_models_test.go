@@ -190,6 +190,9 @@ func TestAccountHandlerGetAvailableModels_AntigravityMappingRestrictsTestPicker(
 				"model_mapping": map[string]any{
 					"claude-sonnet-4-6": "claude-sonnet-4-6",
 					"custom-sonnet":     "claude-sonnet-4-6",
+					"gemini-alias":      "gemini-3.6-flash",
+					"custom-gemini":     "gemini-3.6-flash",
+					"gemini-cross":      "claude-sonnet-4-6",
 				},
 			},
 		},
@@ -213,8 +216,51 @@ func TestAccountHandlerGetAvailableModels_AntigravityMappingRestrictsTestPicker(
 	}
 	require.Equal(t, "Claude Sonnet 4.6", byID["claude-sonnet-4-6"])
 	require.Equal(t, "custom-sonnet", byID["custom-sonnet"])
+	require.Equal(t, "gemini-alias", byID["gemini-alias"])
 	require.Contains(t, byID, "gemini-3.6-flash", "implicit Antigravity passthrough remains selectable")
 	require.NotContains(t, byID, "claude-opus-4-6", "unmapped default must not be offered")
+	require.NotContains(t, byID, "custom-gemini", "the test would send a Claude payload for a Gemini target")
+	require.NotContains(t, byID, "gemini-cross", "the test would send a Gemini payload for a Claude target")
+}
+
+func TestAccountHandlerGetAvailableModels_AntigravityEmptyMappingTargets(t *testing.T) {
+	for _, target := range []string{"", "   "} {
+		t.Run("target="+target, func(t *testing.T) {
+			svc := &availableModelsAdminService{
+				stubAdminService: newStubAdminService(),
+				account: service.Account{
+					ID:       48,
+					Platform: service.PlatformAntigravity,
+					Type:     service.AccountTypeOAuth,
+					Status:   service.StatusActive,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{
+							"claude-opus-4-6": target,
+							"custom-opus":     target,
+						},
+					},
+				},
+			}
+			router := setupAvailableModelsRouter(svc)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/48/models", nil)
+			router.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var resp struct {
+				Data []struct {
+					ID string `json:"id"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			ids := make([]string, 0, len(resp.Data))
+			for _, model := range resp.Data {
+				ids = append(ids, model.ID)
+			}
+			require.NotContains(t, ids, "claude-opus-4-6")
+			require.NotContains(t, ids, "custom-opus")
+			require.Contains(t, ids, "gemini-3.6-flash", "implicit passthrough remains selectable")
+		})
+	}
 }
 
 func TestAccountHandlerGetAvailableModels_AntigravityWildcardAndDefaultCatalog(t *testing.T) {
@@ -256,6 +302,15 @@ func TestAccountHandlerGetAvailableModels_AntigravityWildcardAndDefaultCatalog(t
 	require.Contains(t, mapped, "gemini-3.6-flash")
 	require.NotContains(t, mapped, "claude-opus-4-6")
 	require.NotContains(t, mapped, "claude-sonnet-*")
+
+	account.Type = service.AccountTypeAPIKey
+	account.Credentials = map[string]any{
+		"model_mapping": map[string]any{"gemini-3.6-*": "gemini-3.6-flash-high"},
+	}
+	svc.account = account
+	apiKeyModels := requestModels()
+	require.Contains(t, apiKeyModels, "gemini-3.6-flash")
+	require.NotContains(t, apiKeyModels, "gemini-3.6-*")
 }
 
 func TestAccountHandlerSyncUpstreamModels_ConfigErrorReturnsBadRequest(t *testing.T) {

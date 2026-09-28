@@ -2093,8 +2093,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		rawMapping, _ := account.Credentials["model_mapping"].(map[string]any)
 		hasExplicitMapping := false
 		for modelID, target := range rawMapping {
-			mappedID, ok := target.(string)
-			if modelID != "" && ok && mappedID != "" {
+			if _, ok := target.(string); modelID != "" && ok {
 				hasExplicitMapping = true
 				break
 			}
@@ -2107,7 +2106,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		available := make([]antigravity.ClaudeModel, 0, len(models))
 		seen := make(map[string]bool, len(models))
 		for _, model := range models {
-			if account.IsModelSupported(model.ID) {
+			if canTestAntigravityMappedModel(account, model.ID) {
 				available = append(available, model)
 				seen[model.ID] = true
 			}
@@ -2116,7 +2115,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		// Include exact custom aliases, but never expose wildcard patterns as IDs.
 		var aliases []string
 		for modelID := range account.GetModelMapping() {
-			if modelID != "" && !strings.Contains(modelID, "*") && !seen[modelID] && account.IsModelSupported(modelID) {
+			if modelID != "" && !strings.Contains(modelID, "*") && !seen[modelID] && canTestAntigravityMappedModel(account, modelID) {
 				aliases = append(aliases, modelID)
 			}
 		}
@@ -2169,6 +2168,18 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	}
 
 	response.Success(c, models)
+}
+
+// The Antigravity account test chooses Gemini versus Claude from the requested
+// ID, before applying the mapping. A cross-family mapping would produce the
+// wrong test payload even if regular gateway scheduling accepts its public ID.
+func canTestAntigravityMappedModel(account *service.Account, modelID string) bool {
+	if !account.IsModelSupported(modelID) {
+		return false
+	}
+	mappedID := account.GetMappedModel(modelID)
+	return strings.TrimSpace(mappedID) != "" &&
+		strings.HasPrefix(modelID, "gemini-") == strings.HasPrefix(mappedID, "gemini-")
 }
 
 // SyncUpstreamModels handles syncing live supported models from an account's upstream.

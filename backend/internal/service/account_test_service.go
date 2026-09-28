@@ -895,12 +895,7 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 
 	// For static upstream credentials with model mapping, map the model
 	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
-		mapping := account.GetModelMapping()
-		if len(mapping) > 0 {
-			if mappedModel, exists := mapping[testModelID]; exists {
-				testModelID = mappedModel
-			}
-		}
+		testModelID = account.GetMappedModel(testModelID)
 	}
 
 	// Set SSE headers

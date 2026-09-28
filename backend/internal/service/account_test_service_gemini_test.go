@@ -61,6 +61,27 @@ func TestProcessGeminiStream_EmitsImageEvent(t *testing.T) {
 	require.Contains(t, body, "\"mime_type\":\"image/png\"")
 }
 
+func TestAntigravityAPIKeyTestConnectionAppliesWildcardGeminiMapping(t *testing.T) {
+	upstream := &queuedHTTPUpstream{}
+	upstream.responses = append(upstream.responses, newJSONResponse(200,
+		"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}\n\ndata: [DONE]\n\n"))
+	svc := &AccountTestService{httpUpstream: upstream, cfg: &config.Config{}}
+	account := &Account{
+		ID:       49,
+		Platform: PlatformAntigravity,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":       "test-key",
+			"base_url":      "https://example.com",
+			"model_mapping": map[string]any{"gemini-3.6-*": "gemini-3.6-flash-high"},
+		},
+	}
+	ctx, _ := newTestContext()
+	require.NoError(t, svc.routeAntigravityTest(ctx, account, "gemini-3.6-flash", ""))
+	require.Len(t, upstream.requests, 1)
+	require.Contains(t, upstream.requests[0].URL.Path, "gemini-3.6-flash-high")
+}
+
 // upstream sync (#5137): 模型名会被拼进上游 URL path，非法片段必须在这里
 // 就被拒绝，而不是被静默转发。护栏本身的规则已在 upstream_path_guard_test.go
 // 里穷举测试过，这里只验证两处调用点确实把校验错误原样透传。
