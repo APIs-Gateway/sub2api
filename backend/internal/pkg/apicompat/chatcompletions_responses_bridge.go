@@ -1565,12 +1565,13 @@ type ChatCompletionsToResponsesStreamState struct {
 	ReasoningDone   bool
 
 	// Message item + output_text content-part lifecycle.
-	MessageItemID     string
-	MessageIndex      int
-	TextPartOpen      bool
-	textSegment       strings.Builder
+	MessageItemID string
+	MessageIndex  int
+	TextPartOpen  bool
+
+	textSegment      strings.Builder
 	reasoningSegment strings.Builder
-	outputItems       map[int]ResponsesOutput
+	outputItems      map[int]ResponsesOutput
 
 	Text      strings.Builder
 	Reasoning strings.Builder
@@ -2184,11 +2185,4 @@ func rawNestedString(raw json.RawMessage, key string) string {
 
 func bytesTrimSpace(raw json.RawMessage) json.RawMessage {
 	return json.RawMessage(strings.TrimSpace(string(raw)))
-}
-
-func nonEmpty(value, fallback string) string {
-	if value != "" {
-		return value
-	}
-	return fallback
 }

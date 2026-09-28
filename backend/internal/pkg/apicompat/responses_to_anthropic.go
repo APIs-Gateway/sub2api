@@ -194,7 +194,8 @@ type ResponsesEventToAnthropicState struct {
 	MessageStopSent  bool
 
 	ContentBlockIndex int // next content block index; blocks may overlap by index
-	HasToolCall              bool
+
+	HasToolCall bool
 
 	// OutputIndexToBlockIdx maps Responses output_index → Anthropic content block index.
 	OutputIndexToBlockIdx map[int]int
@@ -726,20 +727,23 @@ func resToAnthRecoverTerminalText(evt *ResponsesStreamEvent, state *ResponsesEve
 	}
 
 	var events []AnthropicStreamEvent
-	for outputIndex, item := range evt.Response.Output {
+	// Terminal-only content has no streamed part identity. Keep the previous
+	// single text-block presentation even when the terminal array contains
+	// several message items or content parts.
+	part := responsesTextPart{OutputIndex: -1, ContentIndex: -1}
+	for _, item := range evt.Response.Output {
 		if item.Type != "message" {
 			continue
 		}
-		for contentIndex, content := range item.Content {
+		for _, content := range item.Content {
 			if content.Type != "output_text" {
 				continue
 			}
-			part := responsesTextPart{OutputIndex: outputIndex, ContentIndex: contentIndex}
 			events = append(events, resToAnthEmitText(content.Text, part, state)...)
 		}
 	}
 	if len(events) > 0 {
-		events = append(events, closeAllResponsesAnthropicBlocks(state)...)
+		events = append(events, closeResponsesAnthropicBlock(state, state.textBlocks[part])...)
 	}
 	return events
 }
