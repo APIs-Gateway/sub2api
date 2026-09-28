@@ -392,6 +392,44 @@ func TestOpsCyberDoubleCount_StreamingErrorSideRepoViews(t *testing.T) {
 	})
 }
 
+// Fork-specific SLA attribution must survive the upstream count fix: a cyber
+// block and a client-via-upstream rejection are visible errors but neither is
+// a service failure. A recovered 200 provider attempt is not an error at all.
+func TestOpsCyberDoubleCount_PreservesForkSLAAttribution(t *testing.T) {
+	ctx := context.Background()
+	fx := newOpsCyberFixture(t, "sla")
+	base := time.Date(2026, 1, 15, 16, 0, 0, 0, time.UTC)
+	hourEnd := base.Add(time.Hour)
+	opsCyberCleanWindow(t, base, hourEnd)
+	opsCyberInsert(t, fx, base, []opsCyberUsageRow{
+		{requestID: "sla-ok", requestType: service.RequestTypeSync, inputTokens: 10, offset: time.Second},
+		{requestID: "sla-cyber", requestType: service.RequestTypeCyberBlocked, stream: true, inputTokens: 5, offset: 2 * time.Second},
+	}, []opsCyberErrorRow{
+		{requestID: "sla-cyber", errorType: "cyber_policy", statusCode: 200, stream: true, isBusinessLimited: true, owner: "provider", offset: 2 * time.Second},
+		{requestID: "sla-client", errorType: "upstream_error", statusCode: 400, owner: "client_via_upstream", offset: 3 * time.Second},
+		{requestID: "sla-provider", errorType: "upstream_error", statusCode: 502, owner: "provider", offset: 4 * time.Second},
+		{requestID: "sla-recovered", errorType: "upstream_error", statusCode: 200, owner: "provider", offset: 5 * time.Second},
+	})
+	repo := NewOpsRepository(integrationDB).(*opsRepository)
+	ov, err := repo.GetDashboardOverview(ctx, &service.OpsDashboardFilter{StartTime: base, EndTime: hourEnd, QueryMode: service.OpsQueryModeRaw})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), ov.SuccessCount)
+	require.Equal(t, int64(3), ov.ErrorCountTotal)
+	require.Equal(t, int64(1), ov.BusinessLimitedCount)
+	require.Equal(t, int64(1), ov.ErrorCountSLA)
+	require.Equal(t, int64(4), ov.RequestCountTotal)
+	require.Equal(t, int64(2), ov.RequestCountSLA)
+	require.Equal(t, int64(15), ov.TokenConsumed)
+
+	require.NoError(t, repo.UpsertHourlyMetrics(ctx, base, hourEnd))
+	row := opsCyberReadHourlyOverall(t, base)
+	require.Equal(t, int64(1), row.success)
+	require.Equal(t, int64(3), row.errTotal)
+	require.Equal(t, int64(1), row.bizLimited)
+	require.Equal(t, int64(1), row.errSLA)
+	require.Equal(t, int64(15), row.tokens)
+}
+
 // 实时采集器（每分钟写 ops_system_metrics）：通过导出入口 Start() 驱动一次真实采集。
 func TestOpsCyberDoubleCount_MetricsCollector(t *testing.T) {
 	ctx := context.Background()
@@ -420,6 +458,7 @@ func TestOpsCyberDoubleCount_MetricsCollector(t *testing.T) {
 		{requestID: "c-cyber", errorType: "cyber_policy", errorPhase: "request", statusCode: 400, isBusinessLimited: true, owner: "provider", source: "upstream_http", requestType: opsCyberRequestType(), offset: 3 * time.Second},
 		{requestID: "c-cyber-stream", errorType: "cyber_policy", errorPhase: "request", statusCode: 200, stream: true, isBusinessLimited: true, owner: "provider", source: "upstream_http", requestType: opsCyberRequestType(), offset: 4 * time.Second},
 		{requestID: "c-upstream-502", errorType: "upstream_error", errorPhase: "upstream", statusCode: 502, owner: "provider", source: "upstream_http", offset: 5 * time.Second},
+		{requestID: "c-client-400", errorType: "upstream_error", errorPhase: "upstream", statusCode: 400, owner: "client_via_upstream", source: "upstream_http", offset: 6 * time.Second},
 	}
 	opsCyberInsert(t, fx, base, usage, errs)
 
@@ -449,9 +488,9 @@ ORDER BY id DESC LIMIT 1`, windowEnd).Scan(&success, &errTotal, &bizLimited, &er
 	t.Logf("collector window=%s success=%d error_total=%d business_limited=%d error_sla=%d tokens=%d duration_max=%v ttft_max=%v",
 		windowEnd.Format(time.RFC3339), success, errTotal, bizLimited, errSLA, tokens, durationMax, ttftMax)
 	require.Equal(t, int64(2), success, "cyber usage rows must not be successes")
-	require.Equal(t, int64(3), errTotal, "both cyber hits (400 and streaming 200) plus the 502 are errors")
+	require.Equal(t, int64(4), errTotal, "both cyber hits, the 502 and a client-origin 400 are visible errors")
 	require.Equal(t, int64(2), bizLimited)
-	require.Equal(t, int64(1), errSLA)
+	require.Equal(t, int64(1), errSLA, "fork client_via_upstream errors must not enter service SLA")
 	require.Equal(t, int64(85), tokens, "cyber tokens stay in throughput")
 	require.True(t, durationMax.Valid)
 	require.Equal(t, int64(300), durationMax.Int64)
