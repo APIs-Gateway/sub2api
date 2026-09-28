@@ -3858,7 +3858,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return s.handleErrorResponse(ctx, resp, c, account, body, billingModel)
 		}
 		defer func() { _ = resp.Body.Close() }()
-		if mapping, ok := openAIResponsesClientToolMapping(c); ok && isEventStreamResponse(resp.Header) {
+		// A streaming Responses request is parsed as SSE even when a compatible
+		// upstream omits or mislabels Content-Type. Restore the lowered client
+		// tool events on that path as well as on declared SSE-to-JSON responses.
+		if mapping, ok := openAIResponsesClientToolMapping(c); ok && (reqStream || isEventStreamResponse(resp.Header)) {
 			maxLineSize := defaultMaxLineSize
 			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 				maxLineSize = s.cfg.Gateway.MaxLineSize

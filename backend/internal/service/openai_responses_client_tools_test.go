@@ -277,44 +277,58 @@ func TestOpenAIForward_NativeResponsesLiteToolsRestoreStreamingCall(t *testing.T
 		{"type":"additional_tools","tools":[{"type":"custom","name":"exec"}]},
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"run pwd"}]}
 	]}`)
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-	c.Request.Header.Set(responsesLiteHeader, "true")
-	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-
 	sse := strings.Join([]string{
 		`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec","status":"in_progress"}}`,
 		`data: {"type":"response.function_call_arguments.done","sequence_number":1,"item_id":"fc_1","call_id":"call_1","name":"exec","arguments":"{\"input\":\"pwd\"}"}`,
 		`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec","arguments":"{\"input\":\"pwd\"}","status":"completed"}}`,
 		`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_lite_stream","model":"deepseek-chat","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec","arguments":"{\"input\":\"pwd\"}"}],"usage":{"input_tokens":2,"output_tokens":3}}}`,
 	}, "\n\n") + "\n\n"
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-		Body:       io.NopCloser(strings.NewReader(sse)),
-	}}
-	svc := openAIClientToolsTestService(upstream)
-	account := &Account{
-		ID:          7661,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
-		Credentials: map[string]any{"api_key": "test-key", "base_url": "https://api.deepseek.com"},
-		Extra:       openAIResponsesSupportedTestExtra(),
+	for _, tc := range []struct {
+		name        string
+		contentType string
+	}{
+		{name: "declared SSE", contentType: "text/event-stream"},
+		{name: "missing Content-Type"},
+		{name: "mislabeled SSE", contentType: "application/json"},
+	} {
+			t.Run(tc.name, func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+				c.Request.Header.Set(responsesLiteHeader, "true")
+				SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+				headers := make(http.Header)
+				if tc.contentType != "" {
+					headers.Set("Content-Type", tc.contentType)
+				}
+				upstream := &httpUpstreamRecorder{resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     headers,
+				Body:       io.NopCloser(strings.NewReader(sse)),
+			}}
+			svc := openAIClientToolsTestService(upstream)
+			account := &Account{
+				ID:          7661,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "test-key", "base_url": "https://api.deepseek.com"},
+				Extra:       openAIResponsesSupportedTestExtra(),
+			}
+
+			result, err := svc.Forward(context.Background(), c, account, body)
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+			require.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists())
+			output := recorder.Body.String()
+			require.Contains(t, output, `"type":"custom_tool_call"`)
+			require.Contains(t, output, `"type":"response.custom_tool_call_input.done"`)
+			require.Contains(t, output, `"input":"pwd"`)
+			require.NotContains(t, output, `"type":"function_call"`)
+			require.Equal(t, "deepseek-chat", result.BillingModel)
+		})
 	}
-
-	result, err := svc.Forward(context.Background(), c, account, body)
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
-	require.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists())
-	output := recorder.Body.String()
-	require.Contains(t, output, `"type":"custom_tool_call"`)
-	require.Contains(t, output, `"type":"response.custom_tool_call_input.done"`)
-	require.Contains(t, output, `"input":"pwd"`)
-	require.NotContains(t, output, `"type":"function_call"`)
-	require.Equal(t, "deepseek-chat", result.BillingModel)
 }
 
 func TestOpenAIForward_NativeResponsesLiteFunctionCarrierAndOfficialPreservation(t *testing.T) {
