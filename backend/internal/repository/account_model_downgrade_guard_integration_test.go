@@ -11,6 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func modelDowngradeTestCandidateFilter(ctx context.Context, candidate *service.Account, _ *int64) bool {
+	return candidate.IsModelSupported("gpt-6-astra") && candidate.IsSchedulableForModelWithContext(ctx, "gpt-6-astra")
+}
+
 func TestModelDowngradeGuardKeepsOtherLimitsAndCapsPool(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -31,10 +35,10 @@ func TestModelDowngradeGuardKeepsOtherLimitsAndCapsPool(t *testing.T) {
 	first := makeAccount("model-downgrade-guard-first")
 	second := makeAccount("model-downgrade-guard-second")
 	until := time.Now().Add(time.Hour)
-	require.NoError(t, repo.SetModelRateLimit(ctx, first, "gpt-6-astra", "gpt-6-astra", until, "upstream_429"))
+	require.NoError(t, repo.SetModelRateLimit(ctx, first, "gpt-6-astra", until, "upstream_429"))
 
 	// A different source's active limit is never overwritten.
-	applied, err := repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until.Add(time.Hour), 1, false)
+	applied, err := repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until.Add(time.Hour), 1, false, modelDowngradeTestCandidateFilter)
 	require.NoError(t, err)
 	require.False(t, applied)
 	got, err := repo.GetByID(ctx, first)
@@ -44,7 +48,7 @@ func TestModelDowngradeGuardKeepsOtherLimitsAndCapsPool(t *testing.T) {
 
 	// Another model on the same account can be quarantined without touching
 	// the first key or changing the account's scheduling flag.
-	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-sol", "gpt-6-sol", until, 1, false)
+	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-sol", "gpt-6-sol", until, 1, false, modelDowngradeTestCandidateFilter)
 	require.NoError(t, err)
 	require.True(t, applied)
 	got, err = repo.GetByID(ctx, first)
@@ -54,13 +58,27 @@ func TestModelDowngradeGuardKeepsOtherLimitsAndCapsPool(t *testing.T) {
 	require.Equal(t, "upstream_429", limits["gpt-6-astra"].(map[string]any)["reason"])
 	require.Equal(t, service.ModelDowngradeGuardReason, limits["gpt-6-sol"].(map[string]any)["reason"])
 	// Existing guard block is idempotent.
-	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-sol", "gpt-6-sol", until.Add(time.Hour), 1, false)
+	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-sol", "gpt-6-sol", until.Add(time.Hour), 1, false, modelDowngradeTestCandidateFilter)
 	require.NoError(t, err)
 	require.False(t, applied)
 	// A restrictive ratio must fail closed before a second account is blocked.
-	applied, err = repo.TryBlockDowngradedModel(ctx, second, "gpt-6-sol", "gpt-6-sol", until, 0.000001, false)
+	applied, err = repo.TryBlockDowngradedModel(ctx, second, "gpt-6-sol", "gpt-6-sol", until, 0.000001, false, modelDowngradeTestCandidateFilter)
 	require.NoError(t, err)
 	require.False(t, applied)
+
+	// A successful scheduled test of another model may clear ordinary limits,
+	// but the explicit downgrade quarantine must keep its original expiry.
+	require.NoError(t, repo.ClearModelRateLimitsExceptDowngrade(ctx, first))
+	got, err = repo.GetByID(ctx, first)
+	require.NoError(t, err)
+	limits = got.Extra["model_rate_limits"].(map[string]any)
+	require.NotContains(t, limits, "gpt-6-astra")
+	require.Equal(t, service.ModelDowngradeGuardReason, limits["gpt-6-sol"].(map[string]any)["reason"])
+	require.Equal(t, until.UTC().Format(time.RFC3339), limits["gpt-6-sol"].(map[string]any)["rate_limit_reset_at"])
+	require.NoError(t, repo.ClearModelRateLimits(ctx, first))
+	got, err = repo.GetByID(ctx, first)
+	require.NoError(t, err)
+	require.NotContains(t, got.Extra, "model_rate_limits", "explicit cleanup may remove the guard")
 }
 
 func TestModelDowngradeGuardPreservesGroupModelCandidateWithMalformedOtherLimit(t *testing.T) {
@@ -110,14 +128,14 @@ func TestModelDowngradeGuardPreservesGroupModelCandidateWithMalformedOtherLimit(
 	require.NoError(t, client.Account.UpdateOneID(second).SetCredentials(map[string]any{
 		"model_mapping": map[string]any{"other-model": "other-model"},
 	}).Exec(ctx))
-	applied, err := repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until, 0.3, false)
+	applied, err := repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until, 0.3, false, modelDowngradeTestCandidateFilter)
 	require.NoError(t, err)
 	require.False(t, applied)
 	require.NoError(t, client.Account.UpdateOneID(second).SetCredentials(map[string]any{}).Exec(ctx))
-	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until, 0.3, false)
+	applied, err = repo.TryBlockDowngradedModel(ctx, first, "gpt-6-astra", "gpt-6-astra", until, 0.3, false, modelDowngradeTestCandidateFilter)
 	require.NoError(t, err)
 	require.True(t, applied)
-	applied, err = repo.TryBlockDowngradedModel(ctx, second, "gpt-6-astra", "gpt-6-astra", until, 0.3, false)
+	applied, err = repo.TryBlockDowngradedModel(ctx, second, "gpt-6-astra", "gpt-6-astra", until, 0.3, false, modelDowngradeTestCandidateFilter)
 	require.NoError(t, err)
 	require.False(t, applied)
 }

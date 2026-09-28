@@ -8,14 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 // TryBlockDowngradedModel serializes the pool-wide cap and the scoped write.
 // It never replaces an active rate limit from another source.
-func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int64, requestedModel, model string, until time.Time, maxRatio float64, simpleMode bool) (bool, error) {
+func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int64, requestedModel, model string, until time.Time, maxRatio float64, simpleMode bool, candidateFilter service.ModelDowngradeCandidateFilter) (bool, error) {
 	requestedModel = strings.TrimSpace(requestedModel)
-	if requestedModel == "" {
+	if requestedModel == "" || candidateFilter == nil {
 		return false, nil
 	}
 	beginner, ok := r.sql.(interface {
@@ -141,10 +142,10 @@ func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int6
 		if err != nil {
 			return false, err
 		}
-		if !hasAlternativeModelDowngradeCandidate(ctx, candidates, id, requestedModel) {
+		if !hasAlternativeModelDowngradeCandidate(ctx, candidates, id, candidateFilter, nil) {
 			return false, nil
 		}
-	} else if ok, err := r.hasAlternativeModelDowngradeCandidateInGroups(ctx, tx, id, requestedModel); err != nil {
+	} else if ok, err := r.hasAlternativeModelDowngradeCandidateInGroups(ctx, tx, id, candidateFilter); err != nil {
 		return false, err
 	} else if !ok {
 		return false, nil
@@ -186,7 +187,7 @@ func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int6
 	return true, nil
 }
 
-func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx context.Context, tx *sql.Tx, id int64, requestedModel string) (bool, error) {
+func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx context.Context, tx *sql.Tx, id int64, candidateFilter service.ModelDowngradeCandidateFilter) (bool, error) {
 	groupRows, err := tx.QueryContext(ctx, "SELECT group_id FROM account_groups WHERE account_id = $1 ORDER BY group_id FOR UPDATE", id)
 	if err != nil {
 		return false, err
@@ -207,6 +208,12 @@ func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx co
 	if err := groupRows.Close(); err != nil {
 		return false, err
 	}
+	// A shared account can serve a different channel alias in each group.
+	// This request proves availability only for its own alias, so do not
+	// quarantine an account shared by several groups.
+	if len(groupIDs) > 1 {
+		return false, nil
+	}
 	if len(groupIDs) == 0 {
 		if err := lockModelDowngradePool(ctx, tx, `
 			SELECT a.id FROM accounts a
@@ -220,7 +227,7 @@ func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx co
 		if err != nil {
 			return false, err
 		}
-		if !hasAlternativeModelDowngradeCandidate(ctx, candidates, id, requestedModel) {
+		if !hasAlternativeModelDowngradeCandidate(ctx, candidates, id, candidateFilter, nil) {
 			return false, nil
 		}
 	}
@@ -237,7 +244,7 @@ func (r *accountRepository) hasAlternativeModelDowngradeCandidateInGroups(ctx co
 		if err != nil {
 			return false, err
 		}
-		if !hasAlternativeModelDowngradeCandidate(ctx, candidates, id, requestedModel) {
+		if !hasAlternativeModelDowngradeCandidate(ctx, candidates, id, candidateFilter, &groupID) {
 			return false, nil
 		}
 	}
@@ -263,12 +270,46 @@ func lockModelDowngradePool(ctx context.Context, tx *sql.Tx, query string, args 
 	return rows.Close()
 }
 
-func hasAlternativeModelDowngradeCandidate(ctx context.Context, candidates []service.Account, blockedID int64, requestedModel string) bool {
+func hasAlternativeModelDowngradeCandidate(ctx context.Context, candidates []service.Account, blockedID int64, candidateFilter service.ModelDowngradeCandidateFilter, groupID *int64) bool {
 	for i := range candidates {
 		candidate := &candidates[i]
-		if candidate.ID != blockedID && service.IsOpenAIAccountUsableForDowngradeGuard(ctx, candidate, requestedModel) {
+		if candidate.ID != blockedID && candidateFilter(ctx, candidate, groupID) {
 			return true
 		}
 	}
 	return false
+}
+
+// ClearModelRateLimitsExceptDowngrade is used by automatic account recovery.
+// A successful health test of another model must not release this guard early;
+// explicit administrator ClearModelRateLimits still removes every entry.
+func (r *accountRepository) ClearModelRateLimitsExceptDowngrade(ctx context.Context, id int64) error {
+	result, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts SET extra = jsonb_set(
+			COALESCE(extra, '{}'::jsonb), '{model_rate_limits}',
+			COALESCE((
+				SELECT jsonb_object_agg(model, payload)
+				FROM jsonb_each(
+					CASE WHEN jsonb_typeof(extra -> 'model_rate_limits') = 'object'
+					THEN extra -> 'model_rate_limits' ELSE '{}'::jsonb END
+				) AS limits(model, payload)
+				WHERE payload ->> 'reason' = $2
+			), '{}'::jsonb), TRUE), updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id, service.ModelDowngradeGuardReason)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return service.ErrAccountNotFound
+	}
+	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue selective model rate limit clear failed: account=%d err=%v", id, err)
+	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return nil
 }

@@ -38,7 +38,7 @@ type modelDowngradeRepoStub struct {
 	blocks []string
 }
 
-func (s *modelDowngradeRepoStub) TryBlockDowngradedModel(_ context.Context, _ int64, _, model string, _ time.Time, _ float64, _ bool) (bool, error) {
+func (s *modelDowngradeRepoStub) TryBlockDowngradedModel(_ context.Context, _ int64, _, model string, _ time.Time, _ float64, _ bool, _ ModelDowngradeCandidateFilter) (bool, error) {
 	s.blocks = append(s.blocks, model)
 	return true, nil
 }
@@ -98,14 +98,26 @@ func TestModelDowngradeGuardMatchesExplicitPairOnly(t *testing.T) {
 	counter := &modelDowngradeCounterStub{}
 	svc := &RateLimitService{cfg: cfg, modelDowngradeCounter: counter}
 	account := &Account{ID: 17, Platform: PlatformOpenAI}
-	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-terra")
-	svc.HandleConfirmedModelDowngrade(context.Background(), &Account{ID: 18, Platform: PlatformGrok}, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna")
+	filter := func(context.Context, *Account, *int64) bool { return true }
+	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-terra", filter)
+	svc.HandleConfirmedModelDowngrade(context.Background(), &Account{ID: 18, Platform: PlatformGrok}, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna", filter)
 	require.Zero(t, counter.increments)
-	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna")
+	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna", filter)
 	require.Equal(t, 1, counter.increments)
 	svc.HandleConfirmedModelDowngrade(WithOpenAIForcedAccountRouting(context.Background(), account.ID), account,
-		"gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna")
+		"gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna", filter)
 	require.Equal(t, 1, counter.increments)
+}
+
+func TestModelDowngradeCandidateRequiresResponsesCapability(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	ctx := context.Background()
+	filter := svc.modelDowngradeCandidateFilter(ctx, "gpt-6-astra", "/v1/responses")
+	candidate := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true, Credentials: map[string]any{}, Extra: map[string]any{}}
+	require.False(t, filter(ctx, candidate, nil), "raw Chat fallback cannot witness native Responses availability")
+	candidate.Extra["openai_responses_supported"] = true
+	require.True(t, filter(ctx, candidate, nil))
 }
 
 func TestOpenAIModelRateLimitUsesForwardedModelKey(t *testing.T) {

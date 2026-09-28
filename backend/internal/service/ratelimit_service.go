@@ -1931,13 +1931,17 @@ func (s *RateLimitService) samplePassiveUsageFromHeaders(ctx context.Context, ac
 
 // ClearRateLimit 清除账号的限流状态
 func (s *RateLimitService) ClearRateLimit(ctx context.Context, accountID int64) error {
+	return s.clearRateLimit(ctx, accountID, false)
+}
+
+func (s *RateLimitService) clearRateLimit(ctx context.Context, accountID int64, preserveDowngradeGuard bool) error {
 	if err := s.accountRepo.ClearRateLimit(ctx, accountID); err != nil {
 		return err
 	}
 	if err := s.accountRepo.ClearAntigravityQuotaScopes(ctx, accountID); err != nil {
 		return err
 	}
-	if err := s.accountRepo.ClearModelRateLimits(ctx, accountID); err != nil {
+	if err := s.clearModelRateLimits(ctx, accountID, preserveDowngradeGuard); err != nil {
 		return err
 	}
 	// 清除限流时一并清理临时不可调度状态，避免周限/窗口重置后仍被本地临时状态阻断。
@@ -1952,6 +1956,20 @@ func (s *RateLimitService) ClearRateLimit(ctx context.Context, accountID int64) 
 	s.ResetOpenAI403Counter(ctx, accountID)
 	s.notifyAccountSchedulingBlockCleared(accountID)
 	return nil
+}
+
+func (s *RateLimitService) clearModelRateLimits(ctx context.Context, accountID int64, preserveDowngradeGuard bool) error {
+	if preserveDowngradeGuard {
+		if repo, ok := s.accountRepo.(interface {
+			ClearModelRateLimitsExceptDowngrade(context.Context, int64) error
+		}); ok {
+			return repo.ClearModelRateLimitsExceptDowngrade(ctx, accountID)
+		}
+		if s.cfg != nil && s.cfg.Gateway.ModelDowngradeGuard.Enabled {
+			return fmt.Errorf("model downgrade guard requires selective automatic recovery")
+		}
+	}
+	return s.accountRepo.ClearModelRateLimits(ctx, accountID)
 }
 
 func (s *RateLimitService) ResetOpenAI403Counter(ctx context.Context, accountID int64) {
@@ -1984,7 +2002,7 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 	}
 
 	if hasRecoverableRuntimeState(account) {
-		if err := s.ClearRateLimit(ctx, accountID); err != nil {
+		if err := s.clearRateLimit(ctx, accountID, true); err != nil {
 			return nil, err
 		}
 		result.ClearedRateLimit = true
@@ -2015,7 +2033,7 @@ func (s *RateLimitService) ClearTempUnschedulable(ctx context.Context, accountID
 		}
 	}
 	// 同时清除模型级别限流
-	if err := s.accountRepo.ClearModelRateLimits(ctx, accountID); err != nil {
+	if err := s.clearModelRateLimits(ctx, accountID, true); err != nil {
 		slog.Warn("clear_model_rate_limits_on_temp_unsched_reset_failed", "account_id", accountID, "error", err)
 	}
 	s.notifyAccountSchedulingBlockCleared(accountID)

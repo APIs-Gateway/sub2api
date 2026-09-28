@@ -20,7 +20,8 @@ type rateLimitClearRepoStub struct {
 	clearErrorCalls           int
 	clearRateLimitCalls       int
 	clearAntigravityCalls     int
-	clearModelRateLimitCalls  int
+	clearModelRateLimitCalls   int
+	clearModelExceptGuardCalls int
 	clearTempUnschedCalls     int
 	clearErrorErr             error
 	clearRateLimitErr         error
@@ -54,6 +55,11 @@ func (r *rateLimitClearRepoStub) ClearAntigravityQuotaScopes(ctx context.Context
 
 func (r *rateLimitClearRepoStub) ClearModelRateLimits(ctx context.Context, id int64) error {
 	r.clearModelRateLimitCalls++
+	return r.clearModelRateLimitErr
+}
+
+func (r *rateLimitClearRepoStub) ClearModelRateLimitsExceptDowngrade(ctx context.Context, id int64) error {
+	r.clearModelExceptGuardCalls++
 	return r.clearModelRateLimitErr
 }
 
@@ -101,6 +107,7 @@ func TestRateLimitService_ClearRateLimit_AlsoClearsTempUnschedulable(t *testing.
 	require.Equal(t, 1, repo.clearRateLimitCalls)
 	require.Equal(t, 1, repo.clearAntigravityCalls)
 	require.Equal(t, 1, repo.clearModelRateLimitCalls)
+	require.Equal(t, 0, repo.clearModelExceptGuardCalls)
 	require.Equal(t, 1, repo.clearTempUnschedCalls)
 	require.Equal(t, []int64{42}, cache.deletedIDs)
 }
@@ -183,6 +190,7 @@ func TestRateLimitService_ClearRateLimit_CacheDeleteFailedShouldNotFail(t *testi
 	require.Equal(t, 1, repo.clearRateLimitCalls)
 	require.Equal(t, 1, repo.clearAntigravityCalls)
 	require.Equal(t, 1, repo.clearModelRateLimitCalls)
+	require.Equal(t, 0, repo.clearModelExceptGuardCalls)
 	require.Equal(t, 1, repo.clearTempUnschedCalls)
 	require.Equal(t, []int64{14}, cache.deletedIDs)
 }
@@ -233,7 +241,8 @@ func TestRateLimitService_RecoverAccountAfterSuccessfulTest_ClearsErrorAndRateLi
 	require.Equal(t, 1, repo.clearErrorCalls)
 	require.Equal(t, 1, repo.clearRateLimitCalls)
 	require.Equal(t, 1, repo.clearAntigravityCalls)
-	require.Equal(t, 1, repo.clearModelRateLimitCalls)
+	require.Equal(t, 0, repo.clearModelRateLimitCalls)
+	require.Equal(t, 1, repo.clearModelExceptGuardCalls)
 	require.Equal(t, 1, repo.clearTempUnschedCalls)
 	require.Equal(t, []int64{42}, cache.deletedIDs)
 	require.Equal(t, []int64{42}, blocker.clearedIDs)

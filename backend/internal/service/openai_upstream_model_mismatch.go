@@ -267,7 +267,11 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 		if len(requestedModels) > 0 && strings.TrimSpace(requestedModels[0]) != "" {
 			requestedModel = requestedModels[0]
 		}
-		s.rateLimitService.HandleConfirmedModelDowngrade(ctx, account, requestedModel, sentModel, responseModel)
+		var candidateFilter ModelDowngradeCandidateFilter
+		if c != nil && c.Request != nil {
+			candidateFilter = s.modelDowngradeCandidateFilter(ctx, requestedModel, c.Request.URL.Path)
+		}
+		s.rateLimitService.HandleConfirmedModelDowngrade(ctx, account, requestedModel, sentModel, responseModel, candidateFilter)
 	}
 	message := fmt.Sprintf("%s: sent=%s got=%s", upstreamModelMismatchMessage, sentModel, responseModel)
 	setOpsUpstreamError(c, http.StatusBadGateway, message, "")
