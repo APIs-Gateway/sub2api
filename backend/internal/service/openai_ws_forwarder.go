@@ -259,9 +259,12 @@ type OpenAIWSIngressHooks struct {
 	// InitialRequestModel 是首帧渠道映射前的请求模型，只用于 usage metadata
 	// 的 reasoning effort 后缀推导，禁止用于上游请求或计费模型。
 	InitialRequestModel string
-	BeforeTurn          func(turn int) error
-	BeforeRequest       func(turn int, payload []byte, originalModel string) error
-	AfterTurn           func(turn int, result *OpenAIForwardResult, turnErr error)
+	// OnIngressModeResolved runs before any turn hook, after passthrough versus
+	// ctx_pool/HTTP bridge has been selected for this connection.
+	OnIngressModeResolved func(passthrough bool)
+	BeforeTurn            func(turn int) error
+	BeforeRequest         func(turn int, payload []byte, originalModel string) error
+	AfterTurn             func(turn int, result *OpenAIForwardResult, turnErr error)
 }
 
 func normalizeOpenAIWSLogValue(value string) string {
@@ -2917,6 +2920,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				forceHTTPBridge = true
 				break
 			}
+			if hooks != nil && hooks.OnIngressModeResolved != nil {
+				hooks.OnIngressModeResolved(true)
+			}
 			return s.proxyResponsesWebSocketV2Passthrough(
 				ctx,
 				c,
@@ -3258,6 +3264,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	preferredConnID := ""
 	storeDisabled := false
 	useHTTPBridge := forceHTTPBridge || s.shouldBridgeOpenAIWSHTTP(firstPayload.payloadBytes, firstPayload.previousResponseID)
+	if hooks != nil && hooks.OnIngressModeResolved != nil {
+		hooks.OnIngressModeResolved(false)
+	}
 	refreshIngressRouteState := func(payload openAIWSClientPayload) {
 		sessionHash = s.GenerateSessionHash(c, payload.rawForHash)
 		if scope, _ := resolveOpenAIWSExecutionScope(c, payload.rawForHash, apiKeyID); scope != "" {

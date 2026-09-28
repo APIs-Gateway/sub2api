@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -2121,8 +2122,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// 首包只给第 1 轮的模型不一致审计估算 input_tokens 用（拦截只发生在第 1 轮），
 		// AfterTurn 用完即置 nil，避免闭包在整个连接期间保活首包。
 		var wsMismatchRequestBody []byte
+		// BeforeRequest resolves the current turn model before BeforeTurn on each
+		// WS ingress. Keep it separate from the handshake model when a session
+		// rotates models between turns.
+		var turnClientModel atomic.Pointer[string]
+		var turnPassthrough atomic.Bool
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
+			OnIngressModeResolved: func(passthrough bool) {
+				turnPassthrough.Store(passthrough)
+			},
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
 				// 记录当前 turn 号供 runSecurityAudit 按 (stage,turn,bodyHash) 去重：
 				// 账号 failover 重试 / bridge 循环重放等路径可能对同一 turn 的
@@ -2152,6 +2161,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					writeSecurityAuditWSError(ctx, wsConn, decision)
 					return newOpenAIWSGatewayAdmissionCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 				}
+				turnClientModel.Store(&model)
 				return nil
 			},
 			BeforeTurn: func(turn int) error {
@@ -2163,6 +2173,18 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				if turn == 1 {
 					return nil
+				}
+				eligibilityModel := reqModel
+				if current := turnClientModel.Load(); current != nil && strings.TrimSpace(*current) != "" {
+					eligibilityModel = strings.TrimSpace(*current)
+				}
+				if reason, closeErr := h.gatewayService.EnforceOpenAIWSTurnAccountEligibility(ctx, account, apiKey.GroupID, sessionHash, eligibilityModel, turnPassthrough.Load()); closeErr != nil {
+					reqLog.Warn("openai.websocket_turn_account_ineligible",
+						zap.Int64("account_id", account.ID),
+						zap.Int("turn", turn),
+						zap.String("reason", reason),
+						zap.String("client_model", eligibilityModel))
+					return closeErr
 				}
 				// 防御式清理：避免异常路径下旧槽位覆盖导致泄漏。
 				releaseTurnSlots()

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,7 +24,21 @@ type openAIWSPassthroughHandlerHarness struct {
 	handlerDone    <-chan struct{}
 	moderationRepo *contentModerationHandlerTestRepo
 	gatewayCache   service.GatewayCache
+	accountRepo    *openAIWSTurnHandlerAccountRepo
 	apiKey         *service.APIKey
+}
+
+type openAIWSTurnHandlerAccountRepo struct {
+	openAIWSUsageHandlerAccountRepoStub
+	disabled atomic.Bool
+}
+
+func (r *openAIWSTurnHandlerAccountRepo) GetByID(ctx context.Context, id int64) (*service.Account, error) {
+	account, err := r.openAIWSUsageHandlerAccountRepoStub.GetByID(ctx, id)
+	if account != nil && r.disabled.Load() {
+		account.Status = service.StatusDisabled
+	}
+	return account, err
 }
 
 func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *openAIWSPassthroughHandlerHarness {
@@ -68,7 +83,7 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *ope
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.IngressInterTurnIdleTimeoutSeconds = 3
 
-	accountRepo := &openAIWSUsageHandlerAccountRepoStub{account: account}
+	accountRepo := &openAIWSTurnHandlerAccountRepo{openAIWSUsageHandlerAccountRepoStub: openAIWSUsageHandlerAccountRepoStub{account: account}}
 	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 2)}
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 	gatewaySvc := service.NewOpenAIGatewayService(
@@ -120,7 +135,77 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *ope
 		handlerDone:    handlerDone,
 		moderationRepo: moderationRepo,
 		gatewayCache:   gatewayCache,
+		accountRepo:    accountRepo,
 		apiKey:         apiKey,
+	}
+}
+
+func TestOpenAIResponsesWebSocketV2PassthroughRejectsDisabledAccountBeforeSecondUpstreamTurn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstreamDone := make(chan struct{})
+	secondUpstreamFrame := make(chan []byte, 1)
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(upstreamDone)
+		conn, err := coderws.Accept(w, r, nil)
+		require.NoError(t, err)
+		defer func() { _ = conn.CloseNow() }()
+
+		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+		_, _, err = conn.Read(readCtx)
+		cancelRead()
+		require.NoError(t, err)
+		writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
+		err = conn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.completed","response":{"id":"resp_turn_1","model":"gpt-5.1","usage":{"input_tokens":2,"output_tokens":1}}}`))
+		cancelWrite()
+		require.NoError(t, err)
+
+		readCtx, cancelRead = context.WithTimeout(r.Context(), 3*time.Second)
+		_, second, err := conn.Read(readCtx)
+		cancelRead()
+		if err == nil {
+			secondUpstreamFrame <- append([]byte(nil), second...)
+		}
+	}))
+	defer upstreamServer.Close()
+	harness := newOpenAIWSPassthroughHandlerHarness(t, upstreamServer.URL)
+
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+	err := harness.clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`))
+	cancelWrite()
+	require.NoError(t, err)
+	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	_, firstEvent, err := harness.clientConn.Read(readCtx)
+	cancelRead()
+	require.NoError(t, err)
+	require.Equal(t, "resp_turn_1", gjson.GetBytes(firstEvent, "response.id").String())
+
+	harness.accountRepo.disabled.Store(true)
+	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
+	err = harness.clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"second"}`))
+	cancelWrite()
+	require.NoError(t, err)
+	readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
+	_, _, err = harness.clientConn.Read(readCtx)
+	cancelRead()
+	var closeErr coderws.CloseError
+	require.ErrorAs(t, err, &closeErr)
+	require.Equal(t, coderws.StatusTryAgainLater, closeErr.Code)
+
+	select {
+	case <-harness.handlerDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("websocket handler did not exit")
+	}
+	select {
+	case <-upstreamDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream websocket did not exit")
+	}
+	select {
+	case second := <-secondUpstreamFrame:
+		t.Fatalf("disabled account received second upstream turn: %s", second)
+	default:
 	}
 }
 

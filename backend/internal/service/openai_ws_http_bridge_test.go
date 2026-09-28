@@ -1373,7 +1373,11 @@ func TestOpenAIWSHTTPBridgeAcceptsFirstFrameAboveLegacy16MiB(t *testing.T) {
 		err    error
 	}
 	turnOutcomeCh := make(chan turnOutcome, 1)
+	modeResolvedCh := make(chan bool, 1)
 	hooks := &OpenAIWSIngressHooks{
+		OnIngressModeResolved: func(passthrough bool) {
+			modeResolvedCh <- passthrough
+		},
 		AfterTurn: func(turn int, result *OpenAIForwardResult, turnErr error) {
 			turnOutcomeCh <- turnOutcome{turn: turn, result: result, err: turnErr}
 		},
@@ -1459,6 +1463,12 @@ func TestOpenAIWSHTTPBridgeAcceptsFirstFrameAboveLegacy16MiB(t *testing.T) {
 		require.Equal(t, 1, outcome.result.Usage.OutputTokens)
 	default:
 		t.Fatal("AfterTurn was not called for websocket HTTP bridge turn")
+	}
+	select {
+	case passthrough := <-modeResolvedCh:
+		require.False(t, passthrough, "HTTP bridge must use mapped model eligibility even when the account requested passthrough")
+	default:
+		t.Fatal("HTTP bridge did not resolve its wire-model mode")
 	}
 
 	require.NotNil(t, upstream.lastReq)

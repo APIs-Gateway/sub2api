@@ -45,6 +45,25 @@ func (a *Account) isModelRateLimitedWithContext(ctx context.Context, requestedMo
 	return false
 }
 
+// isModelRateLimitedForFinalKeyWithContext checks a model already resolved for
+// upstream forwarding. Reapplying account model_mapping here can redirect a
+// wildcard mapping away from the key that was rate limited.
+func (a *Account) isModelRateLimitedForFinalKeyWithContext(ctx context.Context, finalKey string) bool {
+	if a == nil {
+		return false
+	}
+	finalKey = strings.TrimSpace(finalKey)
+	if finalKey == "" {
+		return false
+	}
+	for _, key := range a.modelRateLimitFamilyKeys(ctx, finalKey, finalKey) {
+		if a.isRateLimitActiveForKey(key) {
+			return true
+		}
+	}
+	return false
+}
+
 // GetModelRateLimitRemainingTime 获取模型限流剩余时间
 // 返回 0 表示未限流或已过期
 func (a *Account) GetModelRateLimitRemainingTime(requestedModel string) time.Duration {
@@ -74,7 +93,10 @@ func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedMod
 	if modelKey == "" {
 		return nil
 	}
+	return a.modelRateLimitFamilyKeys(ctx, requestedModel, modelKey)
+}
 
+func (a *Account) modelRateLimitFamilyKeys(ctx context.Context, requestedModel, modelKey string) []string {
 	keys := []string{modelKey}
 	switch a.Platform {
 	case PlatformAntigravity:

@@ -151,10 +151,16 @@ func TestPassthroughIngressFollowUpTurnsReacquireSlotsViaBeforeTurn(t *testing.T
 	// 模拟 handler 的槽位语义：握手已持有首轮槽位；AfterTurn 释放，BeforeTurn 重新获取。
 	var mu sync.Mutex
 	var events []string
+	var resolvedModes []bool
 	slotHeld := true
 	acquisitions := 0
 	doubleAcquire := false
 	hooks := &OpenAIWSIngressHooks{
+		OnIngressModeResolved: func(passthrough bool) {
+			mu.Lock()
+			resolvedModes = append(resolvedModes, passthrough)
+			mu.Unlock()
+		},
 		BeforeRequest: func(turn int, _ []byte, _ string) error {
 			mu.Lock()
 			events = append(events, fmt.Sprintf("before_request:%d", turn))
@@ -201,10 +207,12 @@ func TestPassthroughIngressFollowUpTurnsReacquireSlotsViaBeforeTurn(t *testing.T
 
 	mu.Lock()
 	gotEvents := append([]string(nil), events...)
+	gotResolvedModes := append([]bool(nil), resolvedModes...)
 	gotAcquisitions, gotSlotHeld, gotDoubleAcquire := acquisitions, slotHeld, doubleAcquire
 	mu.Unlock()
 
 	require.GreaterOrEqual(t, len(gotEvents), 7)
+	require.Equal(t, []bool{true}, gotResolvedModes, "passthrough must identify its actual wire-model mode before the first turn")
 	require.Equal(t, []string{
 		"after_turn:1",
 		"before_request:2",
