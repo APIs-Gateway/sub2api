@@ -250,6 +250,48 @@ func TestRawChatPreambleDeadlineReleasesValidatedRoleFrame(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "after wait")
 }
 
+func TestChatPreambleDeadlineLateSilentRefusalIsStreamError(t *testing.T) {
+	for _, raw := range []bool{false, true} {
+		name := "converted"
+		if raw {
+			name = "raw"
+		}
+		t.Run(name, func(t *testing.T) {
+			c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", nil)
+			flushed := make(chan struct{})
+			c.Writer = &compactKeepaliveSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
+			var first, later string
+			if raw {
+				first = `data: {"model":"gpt-5.5","choices":[{"index":0,"delta":{"role":"assistant"}}]}` + "\n\n"
+				later = `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\ndata: [DONE]\n\n"
+			} else {
+				first = `data: {"type":"response.created","response":{"id":"resp_refusal","model":"gpt-5.5","status":"in_progress","output":[]}}` + "\n\n"
+				later = `data: {"type":"response.completed","response":{"id":"resp_refusal","model":"gpt-5.5","status":"completed","output":[]}}` + "\n\n"
+			}
+			resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_late_refusal", "")
+			resp.Body = &roleThenGateBody{first: []byte(first), later: strings.NewReader(later), gate: flushed}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+			var result *OpenAIForwardResult
+			var err error
+			if raw {
+				result, err = svc.streamRawChatCompletions(c, resp, upstreamModelMismatchTestAccount(),
+					"gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), openAISilentRefusalMinRequestBodyBytes)
+			} else {
+				result, err = svc.handleChatStreamingResponse(resp, c, upstreamModelMismatchTestAccount(),
+					"gpt-5.5", "gpt-5.5", "gpt-5.5", time.Now(), openAISilentRefusalMinRequestBodyBytes)
+			}
+			require.ErrorContains(t, err, "upstream response failed")
+			require.NotNil(t, result)
+			require.True(t, strings.HasPrefix(rec.Body.String(), "data: "), "role must be released before the late refusal")
+			require.Contains(t, rec.Body.String(), `"code":"openai_silent_refusal"`)
+			require.NotContains(t, rec.Body.String(), "data: [DONE]")
+			require.Zero(t, result.Usage.InputTokens)
+			_, recorded := c.Get(OpsUpstreamErrorsKey)
+			require.True(t, recorded, "late refusal must be visible in Ops/SLA")
+		})
+	}
+}
+
 // 没写过心跳时：零字节、普通切号语义
 func TestUpstreamModelMismatch_NoKeepaliveKeepsSafeToFailoverAfterWriteFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)

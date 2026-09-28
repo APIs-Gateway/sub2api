@@ -361,6 +361,19 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			)
 		}
 	}
+	emitLateSilentRefusal := func() {
+		message := s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", nil, openAISilentRefusalUpstreamMessage)
+		streamError = fmt.Errorf("upstream response failed: %s", message)
+		if !clientDisconnected {
+			writeStreamHeaders()
+			if _, err := c.Writer.WriteString(buildChatStreamErrorSSE(openAISilentRefusalErrorCode, openAISilentRefusalClientMessage)); err == nil {
+				c.Writer.Flush()
+			} else {
+				clientDisconnected = true
+			}
+		}
+		suppressOutput = true
+	}
 
 	// Parse complete SSE frames before writing them. A legal event may contain
 	// several data: lines; classifying each line separately misses its error.
@@ -415,6 +428,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				}
 			}
 			holdPreDataLines = false
+		}
+		if strings.TrimSpace(payload) == "[DONE]" && clientOutputStarted && refusalDetector.IsSilentRefusal() && streamError == nil {
+			emitLateSilentRefusal()
+			return nil
 		}
 		if !frameTooLarge && !suppressOutput {
 			if len(frameData) > 1 && gjson.Valid(payload) {
@@ -646,6 +663,10 @@ streamDone:
 		// 补发 SSE error 帧并把本次请求计入 SLA 失败。
 		recordOpenAIRawStreamTruncation(c, account, requestID, cause, "http_error")
 		return resultWithUsage(), newOpenAIUpstreamStreamReadError(cause)
+	}
+	if clientOutputStarted && refusalDetector.IsSilentRefusal() {
+		emitLateSilentRefusal()
+		return resultWithUsage(), streamError
 	}
 
 	if scanErr == nil && !clientDisconnected && !clientOutputStarted {

@@ -875,6 +875,18 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if streamNonFailoverErr != nil {
 			return resultWithUsage(), streamNonFailoverErr
 		}
+		if clientOutputStarted && refusalDetector.IsSilentRefusal() {
+			message := s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", nil, openAISilentRefusalUpstreamMessage)
+			if !clientDisconnected {
+				writeStreamHeaders()
+				if _, err := fmt.Fprint(c.Writer, buildChatStreamErrorSSE(openAISilentRefusalErrorCode, openAISilentRefusalClientMessage)); err == nil {
+					c.Writer.Flush()
+				} else {
+					clientDisconnected = true
+				}
+			}
+			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", message)
+		}
 		if finalChunks := apicompat.FinalizeResponsesChatStream(state); len(finalChunks) > 0 && !clientDisconnected {
 			for _, chunk := range finalChunks {
 				refusalDetector.ObserveChatChunk(chunk)
