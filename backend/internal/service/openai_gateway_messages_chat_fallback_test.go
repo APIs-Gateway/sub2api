@@ -834,6 +834,40 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamReadErrorSkipsFinalize(t *
 	require.NotContains(t, out, "event: message_stop")
 }
 
+// The default third-party Messages fallback passes through the Responses
+// bridge. A truncated function input must fail before the bridge emits a
+// successful Anthropic message_stop, while keeping upstream usage for billing.
+func TestForwardAsAnthropic_DefaultChatFallbackRejectsTruncatedToolInput(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"run a command"}],"stream":true,"tools":[{"name":"exec_command","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}}}}]}`)
+	c, rec := newMessagesChatFallbackContext(t, body)
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_truncated_tool","object":"chat.completion.chunk","model":"gpt-5.4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_truncated","type":"function","function":{"name":"exec_command","arguments":"{\"cmd\":\"ssh root@HOST"}}]},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_truncated_tool","object":"chat.completion.chunk","model":"gpt-5.4","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":4,"completion_tokens":12,"total_tokens":16}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_truncated_tool"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, rawChatCompletionsTestAccount(), body, "", "")
+	require.ErrorContains(t, err, "invalid tool call arguments")
+	require.NotNil(t, result)
+	require.True(t, result.Stream)
+	require.Equal(t, "rid_truncated_tool", result.RequestID)
+	require.Equal(t, 4, result.Usage.InputTokens)
+	require.Equal(t, 12, result.Usage.OutputTokens)
+	require.NotContains(t, rec.Body.String(), "event: message_stop")
+	for _, part := range strings.Split(rec.Body.String(), "\n\n") {
+		require.NotContains(t, part, `"type":"content_block_stop"`, "truncated tool must not be finalized")
+	}
+}
+
 func TestForwardAsAnthropic_ResponsesSupportedAccountStillUsesResponsesEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
