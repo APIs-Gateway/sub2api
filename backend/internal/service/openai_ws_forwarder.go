@@ -2583,7 +2583,7 @@ readLoop:
 				if openAIWSEventShouldParseUsage(eventType) {
 					parseOpenAIWSResponseUsageFromCompletedEvent(message, &checkUsage)
 				}
-				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, nil, sentModelForCheck(mappedModel, originalModel), got, reqStream, !wroteDownstream, checkUsage); ferr != nil {
+				if ferr := s.checkUpstreamModelMismatch(c, account, responseID, nil, sentModelForCheck(mappedModel, originalModel), got, reqStream, !wroteDownstream, checkUsage, originalModel); ferr != nil {
 					lease.MarkBroken()
 					return nil, ferr
 				}
@@ -3851,7 +3851,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					if openAIWSEventShouldParseUsage(eventType) {
 						parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &checkUsage)
 					}
-					if ferr := s.checkUpstreamModelMismatch(c, account, responseID, nil, sentModelForCheck(mappedModel, originalModel), got, reqStream, turn == 1 && !wroteDownstream, checkUsage); ferr != nil {
+					if ferr := s.checkUpstreamModelMismatch(c, account, responseID, nil, sentModelForCheck(mappedModel, originalModel), got, reqStream, turn == 1 && !wroteDownstream, checkUsage, originalModel); ferr != nil {
 						lease.MarkBroken()
 						return nil, ferr
 					}

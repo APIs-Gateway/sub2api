@@ -86,14 +86,40 @@ func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedMod
 	}
 
 	modelKey := a.GetMappedModel(requestedModel)
-	if a.Platform == PlatformAntigravity {
+	switch a.Platform {
+	case PlatformAntigravity:
 		modelKey = resolveFinalAntigravityModelKey(ctx, a, requestedModel)
+	case PlatformOpenAI:
+		forwardModel := requestedModel
+		if fromContext, ok := openAIForwardModelFromContext(ctx); ok && strings.TrimSpace(fromContext.model) != "" {
+			forwardModel = fromContext.model
+		}
+		// Passthrough ignores account mapping. A stale mapping must not block
+		// its unrelated model.
+		if a.IsOpenAIPassthroughEnabled() && !shouldForwardOpenAIResponsesViaRawChatCompletions(a) {
+			modelKey = forwardModel
+		}
 	}
 	modelKey = strings.TrimSpace(modelKey)
 	if modelKey == "" {
 		return nil
 	}
-	return a.modelRateLimitFamilyKeys(ctx, requestedModel, modelKey)
+	keys := a.modelRateLimitFamilyKeys(ctx, requestedModel, modelKey)
+	if a.Platform == PlatformOpenAI {
+		// Keep the pre-normalization key for existing 429 cooldowns, and also
+		// check the actual wire model used by the downgrade guard.
+		forwardModel := requestedModel
+		requireCompact := false
+		if fromContext, ok := openAIForwardModelFromContext(ctx); ok && strings.TrimSpace(fromContext.model) != "" {
+			forwardModel = fromContext.model
+			requireCompact = fromContext.useCompactModelMapping
+		}
+		finalKey := strings.TrimSpace(resolveOpenAIAccountUpstreamModelForRequest(a, forwardModel, requireCompact))
+		if finalKey != "" && finalKey != modelKey {
+			keys = append(keys, finalKey)
+		}
+	}
+	return keys
 }
 
 func (a *Account) modelRateLimitFamilyKeys(ctx context.Context, requestedModel, modelKey string) []string {

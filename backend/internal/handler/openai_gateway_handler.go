@@ -966,6 +966,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		if effectiveMappedModel != "" {
 			currentRoutingModel = effectiveMappedModel
 		}
+		c.Request = c.Request.WithContext(service.WithModelDowngradeSelectionModel(c.Request.Context(), currentRoutingModel))
 		reqLog.Debug("openai_messages.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			c.Request.Context(),
@@ -1912,6 +1913,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
 	wsForwardModel := openAIChannelForwardModel(channelMappingWS, reqModel)
+	ctx = service.WithModelDowngradeSelectionModel(ctx, wsForwardModel)
+	ctx = service.WithModelDowngradeWebSocketInitialModel(ctx, reqModel)
+	c.Request = c.Request.WithContext(ctx)
 
 	// currentUserRelease/currentAccountRelease 会被多个 goroutine 访问：握手/failover 路径
 	// （handler goroutine）、ingress 的 BeforeTurn（客户端读 goroutine）、AfterTurn（上游读

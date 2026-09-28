@@ -5313,7 +5313,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					checkUsage := *usage
 					s.parseSSEUsageBytes(dataBytes, &checkUsage)
 					if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestID, resp.Header,
-						sentModelForCheck(mappedModel, originalModel), got, true, canBlock, checkUsage); ferr != nil {
+						sentModelForCheck(mappedModel, originalModel), got, true, canBlock, checkUsage, originalModel); ferr != nil {
 						return resultWithUsage(), ferr
 					}
 				}
@@ -5591,7 +5591,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// 上游模型不一致拦截：在写 header / 模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
 	if got := extractUpstreamResponseModel(body); got != "" {
 		if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
-			sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+			sentModelForCheck(mappedModel, originalModel), got, false, true, *usage, originalModel); ferr != nil {
 			return nil, ferr
 		}
 	}
@@ -5640,7 +5640,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
 		if got := extractUpstreamResponseModel(finalResponse); got != "" {
 			if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
-				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage, originalModel); ferr != nil {
 				return nil, ferr
 			}
 		}
@@ -5675,7 +5675,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		// 取首个带 model 的事件比对，同样在模型反向替换、写出之前完成。
 		if got := extractUpstreamSSEResponseModel(bodyText); got != "" {
 			if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
-				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage, originalModel); ferr != nil {
 				return nil, ferr
 			}
 		}
@@ -6669,7 +6669,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					checkUsage := *usage
 					s.parseSSEUsageBytes(dataBytes, &checkUsage)
 					if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestID, resp.Header,
-						sentModelForCheck(mappedModel, originalModel), got, true, canBlock, checkUsage); ferr != nil {
+						sentModelForCheck(mappedModel, originalModel), got, true, canBlock, checkUsage, originalModel); ferr != nil {
 						// 阻止 finalizeStream 再包一层 "missing terminal event"
 						sawTerminalEvent = true
 						streamEarlyErr = ferr
@@ -7482,7 +7482,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
 	if got := extractUpstreamResponseModel(body); got != "" {
 		if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
-			sentModelForCheck(mappedModel, originalModel), got, false, true, usageValue); ferr != nil {
+			sentModelForCheck(mappedModel, originalModel), got, false, true, usageValue, originalModel); ferr != nil {
 			return nil, ferr
 		}
 	}
@@ -7535,7 +7535,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		// 上游模型不一致拦截：在模型反向替换之前比对，命中即 failover（尚未向客户端写任何字节）。
 		if got := extractUpstreamResponseModel(finalResponse); got != "" {
 			if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
-				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage, originalModel); ferr != nil {
 				return nil, ferr
 			}
 		}
@@ -7576,7 +7576,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		// 取首个带 model 的事件比对，同样在模型反向替换、写出之前完成。
 		if got := extractUpstreamSSEResponseModel(bodyText); got != "" {
 			if ferr := s.checkUpstreamModelMismatch(c, account, upstreamRequestIDFromHeader(resp.Header), resp.Header,
-				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage); ferr != nil {
+				sentModelForCheck(mappedModel, originalModel), got, false, true, *usage, originalModel); ferr != nil {
 				return nil, ferr
 			}
 		}

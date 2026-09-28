@@ -422,7 +422,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 					if got := extractUpstreamResponseModel(payloadBytes); got != "" {
 						upstreamModelChecked = true
 						if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
-							sentModelForCheck(upstreamModel, originalModel), got, true, !clientOutputStarted, usage); ferr != nil {
+							sentModelForCheck(upstreamModel, originalModel), got, true, !clientOutputStarted, usage, originalModel); ferr != nil {
 							return ferr
 						}
 					}
@@ -768,7 +768,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
 	if got := strings.TrimSpace(responseModel); got != "" {
 		if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
-			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage, originalModel); ferr != nil {
 			return nil, ferr
 		}
 	}

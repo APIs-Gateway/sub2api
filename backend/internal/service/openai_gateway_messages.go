@@ -567,7 +567,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
 	if got := strings.TrimSpace(finalResponse.Model); got != "" {
 		if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
-			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage, originalModel); ferr != nil {
 			return nil, ferr
 		}
 	}
@@ -984,7 +984,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
 				upstreamModelChecked = true
 				if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
-					sentModelForCheck(upstreamModel, originalModel), got, true, !clientOutputStarted, usage); ferr != nil {
+					sentModelForCheck(upstreamModel, originalModel), got, true, !clientOutputStarted, usage, originalModel); ferr != nil {
 					streamFailoverErr = ferr
 					return true
 				}

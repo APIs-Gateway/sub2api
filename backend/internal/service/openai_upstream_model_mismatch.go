@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -230,7 +231,7 @@ func (s *OpenAIGatewayService) upstreamModelMismatchObserveOnlyAccount(accountID
 // 便于识别中转实现并向厂商追责。
 func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 	c *gin.Context, account *Account, upstreamRequestID string, upstreamHeaders http.Header,
-	sentModel, responseModel string, stream, canBlock bool, usage OpenAIUsage,
+	sentModel, responseModel string, stream, canBlock bool, usage OpenAIUsage, requestedModels ...string,
 ) *UpstreamFailoverError {
 	if upstreamModelMatches(sentModel, responseModel) {
 		return nil
@@ -243,6 +244,7 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 		accountID, accountName, platform = account.ID, account.Name, account.Platform
 	}
 	blocked := canBlock && s.upstreamModelMismatchBlockEnabled() && !s.upstreamModelMismatchObserveOnlyAccount(accountID)
+	firstMark := GetOpsUpstreamModelMismatch(c) == nil
 	MarkOpsUpstreamModelMismatch(c, UpstreamModelMismatchMark{
 		SentModel: sentModel, ResponseModel: responseModel, AccountID: accountID, Stream: stream, Blocked: blocked, Usage: usage,
 	})
@@ -254,6 +256,33 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 		zap.String("response_model", responseModel), zap.Bool("blocked", blocked), zap.Bool("can_block", canBlock))
 	if !blocked {
 		return nil
+	}
+	if firstMark && s.rateLimitService != nil {
+		ctx := context.Background()
+		if c != nil && c.Request != nil {
+			ctx = c.Request.Context()
+		}
+		ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
+		requestedModel := sentModel
+		if len(requestedModels) > 0 && strings.TrimSpace(requestedModels[0]) != "" {
+			requestedModel = requestedModels[0]
+		}
+		var candidateFilter ModelDowngradeCandidateFilter
+		if c != nil && c.Request != nil {
+			requiredTransport := OpenAIUpstreamTransportAny
+			if strings.EqualFold(strings.TrimSpace(c.Request.Header.Get("Upgrade")), "websocket") {
+				requiredTransport = OpenAIUpstreamTransportResponsesWebsocketV2
+			}
+			// A later WS turn may switch models while the session still routes
+			// through the first-turn selector model. That selection cannot prove
+			// an alternative account for this later model.
+			if requiredTransport != OpenAIUpstreamTransportResponsesWebsocketV2 {
+				candidateFilter = s.modelDowngradeCandidateFilter(ctx, requestedModel, c.Request.URL.Path, requiredTransport)
+			} else if firstModel, ok := ctx.Value(modelDowngradeWebSocketInitialModelContextKey{}).(string); ok && strings.EqualFold(strings.TrimSpace(firstModel), strings.TrimSpace(requestedModel)) {
+				candidateFilter = s.modelDowngradeCandidateFilter(ctx, requestedModel, c.Request.URL.Path, requiredTransport)
+			}
+		}
+		s.rateLimitService.HandleConfirmedModelDowngrade(ctx, account, requestedModel, sentModel, responseModel, candidateFilter)
 	}
 	message := fmt.Sprintf("%s: sent=%s got=%s", upstreamModelMismatchMessage, sentModel, responseModel)
 	setOpsUpstreamError(c, http.StatusBadGateway, message, "")
