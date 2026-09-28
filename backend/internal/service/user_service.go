@@ -1241,13 +1241,13 @@ func (s *UserService) VerifyAndAddNotifyEmail(ctx context.Context, userID int64,
 	if err := verifyNotifyCode(ctx, cache, email, code); err != nil {
 		return err
 	}
-	_ = cache.DeleteNotifyVerifyCode(ctx, email)
 	return s.addOrVerifyNotifyEmail(ctx, userID, email)
 }
 
 // verifyNotifyCode validates the verification code against the cached data.
 func verifyNotifyCode(ctx context.Context, cache EmailCache, email, code string) error {
-	return verifyCodeWithAttempts(ctx, email, code, cache.GetNotifyVerifyCode, cache.IncrNotifyVerifyCodeAttempts, nil)
+	result, err := cache.VerifyNotifyVerifyCode(ctx, email, code, maxVerifyCodeAttempts)
+	return verificationCodeResultError(result, err)
 }
 
 // addOrVerifyNotifyEmail adds the email to user's extra notification emails or marks it as verified.

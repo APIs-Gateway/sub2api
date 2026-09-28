@@ -457,6 +457,17 @@ func (s *userHandlerEmailCacheStub) DeleteVerificationCode(context.Context, stri
 	return nil
 }
 
+func (s *userHandlerEmailCacheStub) VerifyVerificationCode(_ context.Context, _ string, code string, _ int) (service.VerificationCodeResult, error) {
+	if s.data != nil && s.data.Code == code {
+		return service.VerificationCodeValid, nil
+	}
+	return service.VerificationCodeInvalid, nil
+}
+
+func (s *userHandlerEmailCacheStub) VerifyNotifyVerifyCode(context.Context, string, string, int) (service.VerificationCodeResult, error) {
+	return service.VerificationCodeInvalid, nil
+}
+
 func (s *userHandlerEmailCacheStub) GetNotifyVerifyCode(context.Context, string) (*service.VerificationCodeData, error) {
 	return nil, nil
 }
@@ -486,6 +497,22 @@ func (s *userHandlerEmailCacheStub) IsPasswordResetEmailInCooldown(context.Conte
 }
 
 func (s *userHandlerEmailCacheStub) SetPasswordResetEmailCooldown(context.Context, string, time.Duration) error {
+	return nil
+}
+
+func (s *userHandlerEmailCacheStub) RestorePasswordResetToken(context.Context, string, string, *service.PasswordResetTokenData, time.Duration) error {
+	return nil
+}
+
+func (s *userHandlerEmailCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *userHandlerEmailCacheStub) FinishPasswordResetEmailCooldown(context.Context, string, string, time.Duration) error {
+	return nil
+}
+
+func (s *userHandlerEmailCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {
 	return nil
 }
 

@@ -174,6 +174,31 @@ func (s *emailCacheStub) DeleteVerificationCode(ctx context.Context, email strin
 	return nil
 }
 
+func (s *emailCacheStub) VerifyVerificationCode(_ context.Context, _ string, code string, limit int) (VerificationCodeResult, error) {
+	if s.err != nil {
+		return VerificationCodeInvalid, s.err
+	}
+	if s.data == nil {
+		return VerificationCodeInvalid, nil
+	}
+	if s.data.Attempts >= limit {
+		return VerificationCodeMaxed, nil
+	}
+	s.data.Attempts++
+	if s.data.Code == code {
+		s.data = nil
+		return VerificationCodeValid, nil
+	}
+	if s.data.Attempts >= limit {
+		return VerificationCodeMaxed, nil
+	}
+	return VerificationCodeInvalid, nil
+}
+
+func (s *emailCacheStub) VerifyNotifyVerifyCode(context.Context, string, string, int) (VerificationCodeResult, error) {
+	return VerificationCodeInvalid, nil
+}
+
 func (s *emailCacheStub) GetNotifyVerifyCode(ctx context.Context, email string) (*VerificationCodeData, error) {
 	return nil, nil
 }
@@ -203,6 +228,22 @@ func (s *emailCacheStub) IsPasswordResetEmailInCooldown(ctx context.Context, ema
 }
 
 func (s *emailCacheStub) SetPasswordResetEmailCooldown(ctx context.Context, email string, ttl time.Duration) error {
+	return nil
+}
+
+func (s *emailCacheStub) RestorePasswordResetToken(context.Context, string, string, *PasswordResetTokenData, time.Duration) error {
+	return nil
+}
+
+func (s *emailCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailCacheStub) FinishPasswordResetEmailCooldown(context.Context, string, string, time.Duration) error {
+	return nil
+}
+
+func (s *emailCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {
 	return nil
 }
 

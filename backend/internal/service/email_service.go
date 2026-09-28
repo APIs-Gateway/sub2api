@@ -21,6 +21,7 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -39,28 +40,42 @@ type EmailCache interface {
 	SetVerificationCode(ctx context.Context, email string, data *VerificationCodeData, ttl time.Duration) error
 	DeleteVerificationCode(ctx context.Context, email string) error
 	IncrVerificationCodeAttempts(ctx context.Context, email string) (int, error)
+	VerifyVerificationCode(ctx context.Context, email, code string, maxAttempts int) (VerificationCodeResult, error)
 
 	// Notify email verification code methods
 	GetNotifyVerifyCode(ctx context.Context, email string) (*VerificationCodeData, error)
 	SetNotifyVerifyCode(ctx context.Context, email string, data *VerificationCodeData, ttl time.Duration) error
 	DeleteNotifyVerifyCode(ctx context.Context, email string) error
 	IncrNotifyVerifyCodeAttempts(ctx context.Context, email string) (int, error)
+	VerifyNotifyVerifyCode(ctx context.Context, email, code string, maxAttempts int) (VerificationCodeResult, error)
 
 	// Password reset token methods
 	GetPasswordResetToken(ctx context.Context, email string) (*PasswordResetTokenData, error)
 	SetPasswordResetToken(ctx context.Context, email string, data *PasswordResetTokenData, ttl time.Duration) error
 	DeletePasswordResetToken(ctx context.Context, email string) error
 	ConsumePasswordResetToken(ctx context.Context, email, tokenHash string) (bool, error)
+	RestorePasswordResetToken(ctx context.Context, email, failedHash string, previous *PasswordResetTokenData, remaining time.Duration) error
 
 	// Password reset email cooldown methods
 	// Returns true if in cooldown period (email was sent recently)
 	IsPasswordResetEmailInCooldown(ctx context.Context, email string) bool
 	SetPasswordResetEmailCooldown(ctx context.Context, email string, ttl time.Duration) error
+	ReservePasswordResetEmailCooldown(ctx context.Context, email, owner string, ttl time.Duration) (bool, error)
+	FinishPasswordResetEmailCooldown(ctx context.Context, email, owner string, ttl time.Duration) error
+	ReleasePasswordResetEmailCooldown(ctx context.Context, email, owner string) error
 
 	// Notify code rate limiting per user
 	IncrNotifyCodeUserRate(ctx context.Context, userID int64, window time.Duration) (int64, error)
 	GetNotifyCodeUserRate(ctx context.Context, userID int64) (int64, error)
 }
+
+type VerificationCodeResult int
+
+const (
+	VerificationCodeInvalid VerificationCodeResult = iota
+	VerificationCodeValid
+	VerificationCodeMaxed
+)
 
 // VerificationCodeData represents verification code data
 type VerificationCodeData struct {
@@ -436,50 +451,22 @@ func (s *EmailService) VerifyScopedCode(ctx context.Context, scope, email, code 
 
 // verifyCode 是校验的实现体，cacheKey 语义同 sendVerifyCode。
 func (s *EmailService) verifyCode(ctx context.Context, cacheKey, code string) error {
-	return verifyCodeWithAttempts(ctx, cacheKey, code,
-		s.cache.GetVerificationCode, s.cache.IncrVerificationCodeAttempts,
-		func() {
-			if err := s.cache.DeleteVerificationCode(ctx, cacheKey); err != nil {
-				slog.Error("failed to delete verification code after success", "email", cacheKey, "error", err)
-			}
-		})
+	result, err := s.cache.VerifyVerificationCode(ctx, cacheKey, code, maxVerifyCodeAttempts)
+	return verificationCodeResultError(result, err)
 }
 
-// verifyCodeWithAttempts reserves an attempt before comparing a code. The
-// cache operation is atomic, so concurrent guesses cannot exceed the cap.
-func verifyCodeWithAttempts(
-	ctx context.Context, cacheKey, code string,
-	get func(context.Context, string) (*VerificationCodeData, error),
-	incr func(context.Context, string) (int, error),
-	onSuccess func(),
-) error {
-	data, err := get(ctx, cacheKey)
-	if err != nil || data == nil {
-		return ErrInvalidVerifyCode
-	}
-	if data.Attempts >= maxVerifyCodeAttempts {
-		return ErrVerifyCodeMaxAttempts
-	}
-	attempts, err := incr(ctx, cacheKey)
+func verificationCodeResultError(result VerificationCodeResult, err error) error {
 	if err != nil {
 		return ErrInvalidVerifyCode
 	}
-	if attempts > maxVerifyCodeAttempts {
+	switch result {
+	case VerificationCodeValid:
+		return nil
+	case VerificationCodeMaxed:
 		return ErrVerifyCodeMaxAttempts
-	}
-
-	// Constant-time comparison prevents timing attacks.
-	if subtle.ConstantTimeCompare([]byte(data.Code), []byte(code)) != 1 {
-		if attempts >= maxVerifyCodeAttempts {
-			return ErrVerifyCodeMaxAttempts
-		}
+	default:
 		return ErrInvalidVerifyCode
 	}
-
-	if onSuccess != nil {
-		onSuccess()
-	}
-	return nil
 }
 
 func (s *EmailService) verifyCodeEmailSubject(siteName, locale string) string {
@@ -599,9 +586,17 @@ func (s *EmailService) GeneratePasswordResetToken() (string, error) {
 }
 
 // SendPasswordResetEmail sends a password reset email with a reset link
-func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteName, resetURL string, locale ...string) error {
+func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteName, resetURL string, locale ...string) (sendErr error) {
 	// A stored hash cannot be resent. Each new email replaces the previous link;
 	// the queued-mail path keeps its existing 30-second resend cooldown.
+	previous, err := s.cache.GetPasswordResetToken(ctx, email)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("read previous reset token: %w", err)
+	}
+	var previousRemaining time.Duration
+	if previous != nil {
+		previousRemaining = time.Until(previous.CreatedAt.Add(passwordResetTokenTTL))
+	}
 	token, err := s.GeneratePasswordResetToken()
 	if err != nil {
 		return fmt.Errorf("generate token: %w", err)
@@ -610,6 +605,16 @@ func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteNa
 	if err := s.cache.SetPasswordResetToken(ctx, email, data, passwordResetTokenTTL); err != nil {
 		return fmt.Errorf("save reset token: %w", err)
 	}
+	defer func() {
+		if sendErr == nil {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		if err := s.cache.RestorePasswordResetToken(cleanupCtx, email, data.Token, previous, previousRemaining); err != nil {
+			slog.Error("failed to restore reset token after send failure", "email", email, "error", err)
+		}
+	}()
 
 	// Build full reset URL with URL-encoded token and email
 	fullResetURL := fmt.Sprintf("%s?email=%s&token=%s", resetURL, url.QueryEscape(email), url.QueryEscape(token))
@@ -649,20 +654,33 @@ func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteNa
 // SendPasswordResetEmailWithCooldown sends password reset email with cooldown check (called by queue worker)
 // This method wraps SendPasswordResetEmail with email cooldown to prevent email bombing
 func (s *EmailService) SendPasswordResetEmailWithCooldown(ctx context.Context, email, siteName, resetURL string, locale ...string) error {
-	// Check email cooldown to prevent email bombing
-	if s.cache.IsPasswordResetEmailInCooldown(ctx, email) {
+	owner, err := s.GeneratePasswordResetToken()
+	if err != nil {
+		return fmt.Errorf("generate cooldown owner: %w", err)
+	}
+	reserved, err := s.cache.ReservePasswordResetEmailCooldown(ctx, email, owner, 2*passwordResetEmailCooldown)
+	if err != nil {
+		return fmt.Errorf("reserve password reset cooldown: %w", err)
+	}
+	if !reserved {
 		slog.Info("password reset email skipped due to cooldown", "email", email)
 		return nil // Silent success to prevent revealing cooldown to attackers
 	}
 
 	// Send email using core method
 	if err := s.SendPasswordResetEmail(ctx, email, siteName, resetURL, firstEmailLocale(locale)); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		if releaseErr := s.cache.ReleasePasswordResetEmailCooldown(cleanupCtx, email, owner); releaseErr != nil {
+			slog.Error("failed to release password reset cooldown after send failure", "email", email, "error", releaseErr)
+		}
 		return err
 	}
 
-	// Set cooldown marker (Redis TTL handles expiration)
-	if err := s.cache.SetPasswordResetEmailCooldown(ctx, email, passwordResetEmailCooldown); err != nil {
-		slog.Error("failed to set password reset cooldown", "email", email, "error", err)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	if err := s.cache.FinishPasswordResetEmailCooldown(cleanupCtx, email, owner, passwordResetEmailCooldown); err != nil {
+		slog.Error("failed to finish password reset cooldown", "email", email, "error", err)
 	}
 
 	return nil

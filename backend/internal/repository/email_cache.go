@@ -64,6 +64,67 @@ redis.call('DEL', KEYS[1])
 return 1
 `)
 
+// verifyCodeScript checks and consumes the current code in one Redis operation.
+// It cannot spend an attempt on a replacement code or delete one after a resend.
+// Returns 0 for invalid, 1 for success, and 2 for the attempt limit.
+var verifyCodeScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local ok, data = pcall(cjson.decode, raw)
+if not ok or type(data) ~= 'table' then
+  return redis.error_reply('invalid verification code payload')
+end
+local legacy = tonumber(data['Attempts']) or 0
+local current = tonumber(redis.call('GET', KEYS[2])) or 0
+local attempts = math.max(legacy, current)
+local limit = tonumber(ARGV[2])
+if attempts >= limit then return 2 end
+attempts = attempts + 1
+local expected = tostring(data['Code'] or '')
+local supplied = ARGV[1]
+local mismatch = bit.bxor(#expected, #supplied)
+if #expected > 64 or #supplied > 64 then mismatch = 1 end
+for i = 1, 64 do
+  mismatch = bit.bor(mismatch, bit.bxor(string.byte(expected, i) or 0, string.byte(supplied, i) or 0))
+end
+if mismatch == 0 then
+  redis.call('DEL', KEYS[1], KEYS[2])
+  return 1
+end
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl > 0 then
+  redis.call('SET', KEYS[2], attempts, 'PX', ttl)
+else
+  redis.call('SET', KEYS[2], attempts)
+end
+if attempts >= limit then return 2 end
+return 0
+`)
+
+// Only the sender holding the reservation may finalize or release the marker.
+var finishResetEmailCooldownScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+if ARGV[2] == 'release' then
+  return redis.call('DEL', KEYS[1])
+end
+return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+`)
+
+// A failed send restores the prior link only while the failed send's hash is
+// still current. The previous TTL is preserved, never renewed.
+var restoreResetTokenScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local ok, data = pcall(cjson.decode, raw)
+if not ok or type(data) ~= 'table' or data['Token'] ~= ARGV[1] then return 0 end
+if ARGV[2] == '' or tonumber(ARGV[3]) <= 0 then
+  redis.call('DEL', KEYS[1])
+else
+  redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+end
+return 1
+`)
+
 // verifyCodeKey generates the Redis key for email verification code.
 // Email is lowercased for case-insensitive consistency.
 func verifyCodeKey(email string) string {
@@ -156,6 +217,11 @@ func (c *emailCache) DeleteVerificationCode(ctx context.Context, email string) e
 	return c.deleteCode(ctx, verifyCodeKey(email))
 }
 
+func (c *emailCache) VerifyVerificationCode(ctx context.Context, email, code string, maxAttempts int) (service.VerificationCodeResult, error) {
+	n, err := verifyCodeScript.Run(ctx, c.rdb, []string{verifyCodeKey(email), verifyCodeKey(email) + attemptsKeySuffix}, code, maxAttempts).Int()
+	return service.VerificationCodeResult(n), err
+}
+
 // Password reset token methods
 
 func (c *emailCache) GetPasswordResetToken(ctx context.Context, email string) (*service.PasswordResetTokenData, error) {
@@ -195,6 +261,18 @@ func (c *emailCache) DeletePasswordResetToken(ctx context.Context, email string)
 	return c.rdb.Del(ctx, key).Err()
 }
 
+func (c *emailCache) RestorePasswordResetToken(ctx context.Context, email, failedHash string, previous *service.PasswordResetTokenData, remaining time.Duration) error {
+	var previousJSON string
+	if previous != nil {
+		value, err := json.Marshal(previous)
+		if err != nil {
+			return err
+		}
+		previousJSON = string(value)
+	}
+	return restoreResetTokenScript.Run(ctx, c.rdb, []string{passwordResetKey(email)}, failedHash, previousJSON, remaining.Milliseconds()).Err()
+}
+
 // Password reset email cooldown methods
 
 func (c *emailCache) IsPasswordResetEmailInCooldown(ctx context.Context, email string) bool {
@@ -206,6 +284,18 @@ func (c *emailCache) IsPasswordResetEmailInCooldown(ctx context.Context, email s
 func (c *emailCache) SetPasswordResetEmailCooldown(ctx context.Context, email string, ttl time.Duration) error {
 	key := passwordResetSentAtKey(email)
 	return c.rdb.Set(ctx, key, "1", ttl).Err()
+}
+
+func (c *emailCache) ReservePasswordResetEmailCooldown(ctx context.Context, email, owner string, ttl time.Duration) (bool, error) {
+	return c.rdb.SetNX(ctx, passwordResetSentAtKey(email), owner, ttl).Result()
+}
+
+func (c *emailCache) FinishPasswordResetEmailCooldown(ctx context.Context, email, owner string, ttl time.Duration) error {
+	return finishResetEmailCooldownScript.Run(ctx, c.rdb, []string{passwordResetSentAtKey(email)}, owner, ttl.Milliseconds()).Err()
+}
+
+func (c *emailCache) ReleasePasswordResetEmailCooldown(ctx context.Context, email, owner string) error {
+	return finishResetEmailCooldownScript.Run(ctx, c.rdb, []string{passwordResetSentAtKey(email)}, owner, "release").Err()
 }
 
 // Notify email verification code methods
@@ -220,6 +310,12 @@ func (c *emailCache) SetNotifyVerifyCode(ctx context.Context, email string, data
 
 func (c *emailCache) IncrNotifyVerifyCodeAttempts(ctx context.Context, email string) (int, error) {
 	return c.incrCodeAttempts(ctx, notifyVerifyKey(email))
+}
+
+func (c *emailCache) VerifyNotifyVerifyCode(ctx context.Context, email, code string, maxAttempts int) (service.VerificationCodeResult, error) {
+	key := notifyVerifyKey(email)
+	n, err := verifyCodeScript.Run(ctx, c.rdb, []string{key, key + attemptsKeySuffix}, code, maxAttempts).Int()
+	return service.VerificationCodeResult(n), err
 }
 
 func (c *emailCache) DeleteNotifyVerifyCode(ctx context.Context, email string) error {

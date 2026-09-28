@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -67,6 +68,85 @@ func TestEmailCache_ConcurrentWrongCodesCannotExceedAttemptCap(t *testing.T) {
 	data, err := cache.GetVerificationCode(ctx, email)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, data.Attempts, 5)
+}
+
+func TestEmailCache_ResentCodeCannotBeSpentOrDeletedByOldCode(t *testing.T) {
+	cache, _, _ := newMiniredisEmailCache(t)
+	ctx := context.Background()
+	email := "race@example.com"
+	svc := service.NewEmailService(nil, cache)
+	require.NoError(t, cache.SetVerificationCode(ctx, email, &service.VerificationCodeData{Code: "111111", CreatedAt: time.Now()}, time.Minute))
+	require.NoError(t, cache.SetVerificationCode(ctx, email, &service.VerificationCodeData{Code: "222222", CreatedAt: time.Now()}, time.Minute))
+	require.ErrorIs(t, svc.VerifyCode(ctx, email, "111111"), service.ErrInvalidVerifyCode)
+	data, err := cache.GetVerificationCode(ctx, email)
+	require.NoError(t, err)
+	require.Equal(t, "222222", data.Code)
+	require.Equal(t, 1, data.Attempts)
+	require.NoError(t, svc.VerifyCode(ctx, email, "222222"))
+	require.ErrorIs(t, svc.VerifyCode(ctx, email, "222222"), service.ErrInvalidVerifyCode)
+
+	require.NoError(t, cache.SetNotifyVerifyCode(ctx, email, &service.VerificationCodeData{Code: "333333", CreatedAt: time.Now()}, time.Minute))
+	require.NoError(t, cache.SetNotifyVerifyCode(ctx, email, &service.VerificationCodeData{Code: "444444", CreatedAt: time.Now()}, time.Minute))
+	result, err := cache.VerifyNotifyVerifyCode(ctx, email, "333333", 5)
+	require.NoError(t, err)
+	require.Equal(t, service.VerificationCodeInvalid, result)
+	result, err = cache.VerifyNotifyVerifyCode(ctx, email, "444444", 5)
+	require.NoError(t, err)
+	require.Equal(t, service.VerificationCodeValid, result)
+}
+
+func TestEmailCache_ResetCooldownReservationIsExclusiveAndOwnerSafe(t *testing.T) {
+	cache, mr, _ := newMiniredisEmailCache(t)
+	ctx := context.Background()
+	email := "cooldown@example.com"
+	const workers = 30
+	var won atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ok, err := cache.ReservePasswordResetEmailCooldown(ctx, email, fmt.Sprintf("owner-%d", i), time.Minute)
+			if err != nil {
+				t.Errorf("reserve: %v", err)
+				return
+			}
+			if ok {
+				won.Add(1)
+			}
+		}(i)
+	}
+	wg.Wait()
+	require.Equal(t, int32(1), won.Load())
+	owner, err := mr.Get(passwordResetSentAtKey(email))
+	require.NoError(t, err)
+	require.NoError(t, cache.ReleasePasswordResetEmailCooldown(ctx, email, "not-owner"))
+	require.True(t, mr.Exists(passwordResetSentAtKey(email)))
+	require.NoError(t, cache.FinishPasswordResetEmailCooldown(ctx, email, owner, 30*time.Second))
+	require.Equal(t, 30*time.Second, mr.TTL(passwordResetSentAtKey(email)))
+	require.NoError(t, cache.ReleasePasswordResetEmailCooldown(ctx, email, owner))
+	ok, err := cache.ReservePasswordResetEmailCooldown(ctx, email, "retry", time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+}
+
+func TestEmailCache_FailedResetSendRestoresPreviousLinkWithoutExtendingTTL(t *testing.T) {
+	cache, mr, _ := newMiniredisEmailCache(t)
+	ctx := context.Background()
+	email := "restore@example.com"
+	previous := &service.PasswordResetTokenData{Token: "old-hash", CreatedAt: time.Now().Add(-time.Minute)}
+	require.NoError(t, cache.SetPasswordResetToken(ctx, email, previous, 29*time.Minute))
+	require.NoError(t, cache.SetPasswordResetToken(ctx, email, &service.PasswordResetTokenData{Token: "failed-hash"}, 30*time.Minute))
+	require.NoError(t, cache.RestorePasswordResetToken(ctx, email, "failed-hash", previous, 29*time.Minute))
+	data, err := cache.GetPasswordResetToken(ctx, email)
+	require.NoError(t, err)
+	require.Equal(t, previous.Token, data.Token)
+	require.Equal(t, 29*time.Minute, mr.TTL(passwordResetKey(email)))
+	require.NoError(t, cache.SetPasswordResetToken(ctx, email, &service.PasswordResetTokenData{Token: "new-winner"}, time.Minute))
+	require.NoError(t, cache.RestorePasswordResetToken(ctx, email, "failed-hash", previous, 29*time.Minute))
+	data, err = cache.GetPasswordResetToken(ctx, email)
+	require.NoError(t, err)
+	require.Equal(t, "new-winner", data.Token)
 }
 
 func TestEmailCache_AttemptsResetOnNewCodeAndTTLFollowsCode(t *testing.T) {

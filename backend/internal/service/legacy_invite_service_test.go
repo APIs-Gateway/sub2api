@@ -139,6 +139,30 @@ func (s *legacyEmailCacheStub) DeleteVerificationCode(_ context.Context, key str
 	return nil
 }
 
+func (s *legacyEmailCacheStub) VerifyVerificationCode(_ context.Context, key, code string, limit int) (VerificationCodeResult, error) {
+	data := s.codes[key]
+	if data == nil {
+		return VerificationCodeInvalid, nil
+	}
+	if data.Attempts >= limit {
+		return VerificationCodeMaxed, nil
+	}
+	data.Attempts++
+	if data.Code == code {
+		delete(s.codes, key)
+		s.deleted = append(s.deleted, key)
+		return VerificationCodeValid, nil
+	}
+	if data.Attempts >= limit {
+		return VerificationCodeMaxed, nil
+	}
+	return VerificationCodeInvalid, nil
+}
+
+func (s *legacyEmailCacheStub) VerifyNotifyVerifyCode(context.Context, string, string, int) (VerificationCodeResult, error) {
+	panic("unexpected VerifyNotifyVerifyCode call")
+}
+
 func (s *legacyEmailCacheStub) GetNotifyVerifyCode(context.Context, string) (*VerificationCodeData, error) {
 	panic("unexpected GetNotifyVerifyCode call")
 }
@@ -162,6 +186,18 @@ func (s *legacyEmailCacheStub) IsPasswordResetEmailInCooldown(context.Context, s
 }
 func (s *legacyEmailCacheStub) SetPasswordResetEmailCooldown(context.Context, string, time.Duration) error {
 	panic("unexpected SetPasswordResetEmailCooldown call")
+}
+func (s *legacyEmailCacheStub) RestorePasswordResetToken(context.Context, string, string, *PasswordResetTokenData, time.Duration) error {
+	panic("unexpected RestorePasswordResetToken call")
+}
+func (s *legacyEmailCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
+	panic("unexpected ReservePasswordResetEmailCooldown call")
+}
+func (s *legacyEmailCacheStub) FinishPasswordResetEmailCooldown(context.Context, string, string, time.Duration) error {
+	panic("unexpected FinishPasswordResetEmailCooldown call")
+}
+func (s *legacyEmailCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {
+	panic("unexpected ReleasePasswordResetEmailCooldown call")
 }
 func (s *legacyEmailCacheStub) IncrNotifyCodeUserRate(context.Context, int64, time.Duration) (int64, error) {
 	panic("unexpected IncrNotifyCodeUserRate call")
