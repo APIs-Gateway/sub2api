@@ -455,6 +455,10 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		anthState.OutputTokens = usage.OutputTokens
 		anthState.CacheReadInputTokens = usage.CacheReadInputTokens
 		anthState.CacheCreationInputTokens = usage.CacheCreationInputTokens
+		// The converter reads usage from the event again. Give it the same
+		// mutually exclusive buckets or a provider's overlapping input total
+		// would overwrite the normalized state before completion.
+		normalizeAnthropicChatEventUsage(event, usage)
 
 		// Chain: Anthropic event → Responses events → CC chunks
 		responsesEvents := apicompat.AnthropicEventToResponsesEvents(event, anthState)
@@ -540,6 +544,25 @@ func anthropicChatStreamHasUsage(event *apicompat.AnthropicStreamEvent, payload 
 		return event.Usage != nil
 	default:
 		return false
+	}
+}
+
+func normalizeAnthropicChatEventUsage(event *apicompat.AnthropicStreamEvent, usage ClaudeUsage) {
+	normalized := apicompat.AnthropicUsage{
+		InputTokens:              usage.InputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+	}
+	switch event.Type {
+	case "message_start":
+		if event.Message != nil {
+			event.Message.Usage = normalized
+		}
+	case "message_delta":
+		if event.Usage != nil {
+			*event.Usage = normalized
+		}
 	}
 }
 

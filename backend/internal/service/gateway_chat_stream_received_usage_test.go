@@ -58,6 +58,24 @@ func TestForwardAsChatCompletionsForwardsOnlyReceivedStreamUsage(t *testing.T) {
 				wantCacheRead: 800,
 			},
 			{
+				name:          "total_and_cache_in_start",
+				startUsage:    `,"usage":{"input_tokens":1200,"prompt_tokens":1200,"cache_read_input_tokens":800}`,
+				deltaUsage:    `,"usage":{"output_tokens":30}`,
+				wantUsage:     true,
+				wantInput:     400,
+				wantOutput:    30,
+				wantCacheRead: 800,
+			},
+			{
+				name:          "total_and_cache_in_delta",
+				startUsage:    `,"usage":{"input_tokens":1200}`,
+				deltaUsage:    `,"usage":{"input_tokens":1200,"prompt_tokens":1200,"cache_read_input_tokens":800,"output_tokens":30}`,
+				wantUsage:     true,
+				wantInput:     400,
+				wantOutput:    30,
+				wantCacheRead: 800,
+			},
+			{
 				name:       "explicit_zero",
 				startUsage: `,"usage":{"input_tokens":0,"output_tokens":0}`,
 				wantUsage:  true,
@@ -142,5 +160,38 @@ func TestForwardAsChatCompletionsForwardsOnlyReceivedStreamUsage(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestNormalizeAnthropicChatEventUsageKeepsConverterBuckets(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		event *apicompat.AnthropicStreamEvent
+	}{
+		{
+			name: "message_start",
+			event: &apicompat.AnthropicStreamEvent{
+				Type: "message_start",
+				Message: &apicompat.AnthropicResponse{
+					Usage: apicompat.AnthropicUsage{InputTokens: 1200, CacheReadInputTokens: 800},
+				},
+			},
+		},
+		{
+			name: "message_delta",
+			event: &apicompat.AnthropicStreamEvent{
+				Type:  "message_delta",
+				Usage: &apicompat.AnthropicUsage{InputTokens: 1200, CacheReadInputTokens: 800},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usage := ClaudeUsage{InputTokens: 400, CacheReadInputTokens: 800}
+			normalizeAnthropicChatEventUsage(tc.event, usage)
+			state := apicompat.NewAnthropicEventToResponsesState()
+			apicompat.AnthropicEventToResponsesEvents(tc.event, state)
+			require.Equal(t, 400, state.InputTokens)
+			require.Equal(t, 800, state.CacheReadInputTokens)
+		})
 	}
 }
