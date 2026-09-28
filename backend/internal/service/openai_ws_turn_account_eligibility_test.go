@@ -20,11 +20,15 @@ type openAIWSTurnAccountRepo struct {
 type openAIWSTurnCompareDeleteCache struct {
 	*stubGatewayCache
 	beforeCompare func(string)
+	compareErr    error
 }
 
 func (c *openAIWSTurnCompareDeleteCache) CompareAndDeleteSessionAccountID(_ context.Context, _ int64, sessionHash string, accountID int64) (bool, error) {
 	if c.beforeCompare != nil {
 		c.beforeCompare(sessionHash)
+	}
+	if c.compareErr != nil {
+		return false, c.compareErr
 	}
 	if c.sessionBindings[sessionHash] != accountID {
 		return false, nil
@@ -145,6 +149,73 @@ func TestOpenAIWSTurnAccountEligibilityKeepsConnectionOnRefreshFailure(t *testin
 	require.NoError(t, err)
 }
 
+func TestOpenAIWSTurnAccountEligibilityDefensiveInputsAndSnapshotFallback(t *testing.T) {
+	account := &Account{ID: 66, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true}
+	var nilService *OpenAIGatewayService
+	reason, err := nilService.EnforceOpenAIWSTurnAccountEligibility(context.Background(), account, nil, "", "gpt-5", false)
+	require.Empty(t, reason)
+	require.NoError(t, err)
+
+	svc, repo := newOpenAIWSTurnEligibilityTestService(account, nil)
+	reason, err = svc.EnforceOpenAIWSTurnAccountEligibility(context.Background(), nil, nil, "", "gpt-5", false)
+	require.Empty(t, reason)
+	require.NoError(t, err)
+	rateKeys, runtimeKeys := openAIWSTurnModelKeys(nil, "", false)
+	require.Empty(t, rateKeys)
+	require.Empty(t, runtimeKeys)
+	rateKeys, runtimeKeys = openAIWSTurnModelKeys(nil, "custom", false)
+	require.Equal(t, []string{"custom"}, rateKeys)
+	require.Equal(t, []string{"custom"}, runtimeKeys)
+	require.False(t, (*Account)(nil).isModelRateLimitedForFinalKeyWithContext(context.Background(), "custom"))
+	require.False(t, account.isModelRateLimitedForFinalKeyWithContext(context.Background(), " "))
+
+	svc.accountRepo = nil
+	svc.schedulerSnapshot = &SchedulerSnapshotService{cache: &openAIWSTurnStaleSnapshotCache{account: account}, accountRepo: repo}
+	reason, err = svc.EnforceOpenAIWSTurnAccountEligibility(context.Background(), account, nil, "", "gpt-5", false)
+	require.Empty(t, reason, "deployments without a direct account repo can still use the snapshot fallback")
+	require.NoError(t, err)
+}
+
+func TestOpenAIWSTurnAccountEligibilityHandlesMissingRecordQuotaAndRuntimeBlock(t *testing.T) {
+	account := &Account{ID: 67, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true}
+	svc, repo := newOpenAIWSTurnEligibilityTestService(account, nil)
+	ctx := context.Background()
+
+	repo.account = nil
+	reason, err := svc.EnforceOpenAIWSTurnAccountEligibility(ctx, account, nil, "", "gpt-5", false)
+	require.Equal(t, OpenAIWSTurnAccountIneligibleAccountMissing, reason)
+	require.Error(t, err)
+
+	repo.account = account
+	account.Extra = map[string]any{"codex_5h_used_percent": 96.0, "auto_pause_5h_threshold": 0.95}
+	reason, err = svc.EnforceOpenAIWSTurnAccountEligibility(ctx, account, nil, "", "gpt-5", false)
+	require.Equal(t, OpenAIWSTurnAccountIneligibleNotSchedulable, reason)
+	require.Error(t, err)
+
+	account.Extra = nil
+	svc.openaiAccountRuntimeBlockUntil.Store(account.ID, time.Now().Add(time.Minute))
+	reason, err = svc.EnforceOpenAIWSTurnAccountEligibility(ctx, account, nil, "", "gpt-5", false)
+	require.Equal(t, OpenAIWSTurnAccountIneligibleRuntimeBlocked, reason)
+	require.Error(t, err)
+}
+
+func TestOpenAIWSTurnStickyReleaseSkipsUnavailableCompareDelete(t *testing.T) {
+	account := &Account{ID: 68, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: false}
+	legacyCache := &stubGatewayCache{sessionBindings: map[string]int64{"openai:session": account.ID}}
+	svc, _ := newOpenAIWSTurnEligibilityTestService(account, legacyCache)
+	reason, err := svc.EnforceOpenAIWSTurnAccountEligibility(context.Background(), account, nil, "session", "gpt-5", false)
+	require.Equal(t, OpenAIWSTurnAccountIneligibleNotSchedulable, reason)
+	require.Error(t, err)
+	require.Equal(t, account.ID, legacyCache.sessionBindings["openai:session"], "unsafe cache implementations must never delete a newer binding")
+
+	atomicCache := &openAIWSTurnCompareDeleteCache{stubGatewayCache: &stubGatewayCache{sessionBindings: map[string]int64{"openai:session": account.ID}}, compareErr: errors.New("redis unavailable")}
+	svc.cache = atomicCache
+	reason, err = svc.EnforceOpenAIWSTurnAccountEligibility(context.Background(), account, nil, "session", "gpt-5", false)
+	require.Equal(t, OpenAIWSTurnAccountIneligibleNotSchedulable, reason)
+	require.Error(t, err)
+	require.Equal(t, account.ID, atomicCache.sessionBindings["openai:session"])
+}
+
 func TestOpenAIWSTurnAccountEligibilityUsesFinalModelKeysWithoutRemapping(t *testing.T) {
 	resetAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	account := &Account{
@@ -219,6 +290,21 @@ func TestOpenAIWSTurnAccountEligibilityReconnectsAfterMappingChange(t *testing.T
 	current.Credentials = map[string]any{"model_mapping": map[string]any{"alias": "new-provider"}}
 	svc, _ := newOpenAIWSTurnEligibilityTestService(&current, nil)
 	reason, err := svc.EnforceOpenAIWSTurnAccountEligibility(context.Background(), bound, nil, "", "alias", false)
+	require.Equal(t, OpenAIWSTurnAccountIneligibleNotSchedulable, reason)
+	require.Error(t, err)
+}
+
+func TestOpenAIWSTurnAccountEligibilityReconnectsAfterIngressModeChange(t *testing.T) {
+	bound := &Account{
+		ID: 69, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true,
+		Extra: map[string]any{"openai_apikey_responses_websockets_v2_mode": OpenAIWSIngressModeCtxPool},
+	}
+	current := *bound
+	current.Extra = map[string]any{"openai_apikey_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough}
+	svc, _ := newOpenAIWSTurnEligibilityTestService(&current, nil)
+	svc.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+	reason, err := svc.EnforceOpenAIWSTurnAccountEligibility(context.Background(), bound, nil, "", "gpt-5", false)
 	require.Equal(t, OpenAIWSTurnAccountIneligibleNotSchedulable, reason)
 	require.Error(t, err)
 }

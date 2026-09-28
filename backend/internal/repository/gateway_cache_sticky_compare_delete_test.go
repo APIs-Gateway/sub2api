@@ -32,3 +32,20 @@ func TestGatewayCacheStickySessionCompareDeletePreservesNewBinding(t *testing.T)
 	_, err = cache.GetSessionAccountID(ctx, groupID, session)
 	require.ErrorIs(t, err, redis.Nil)
 }
+
+func TestGatewayCacheStickySessionCompareDeleteRejectsUnavailableAndInvalidInputs(t *testing.T) {
+	ctx := context.Background()
+	var unavailable *gatewayCache
+	deleted, err := unavailable.CompareAndDeleteSessionAccountID(ctx, 7, "openai:session", 10)
+	require.False(t, deleted)
+	require.Error(t, err)
+
+	mr := miniredis.RunT(t)
+	cache := &gatewayCache{rdb: redis.NewClient(&redis.Options{Addr: mr.Addr()})}
+	deleted, err = cache.CompareAndDeleteSessionAccountID(ctx, 7, " ", 10)
+	require.False(t, deleted)
+	require.Error(t, err)
+	deleted, err = cache.CompareAndDeleteSessionAccountID(ctx, 7, "openai:session", 0)
+	require.False(t, deleted)
+	require.Error(t, err)
+}

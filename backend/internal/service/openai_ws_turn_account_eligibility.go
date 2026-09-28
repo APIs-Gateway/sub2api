@@ -35,9 +35,6 @@ func openAIWSTurnModelKeys(account *Account, clientModel string, passthrough boo
 		mapped = clientModel
 	}
 	upstream := strings.TrimSpace(normalizeOpenAIModelForUpstream(account, mapped))
-	if upstream == "" {
-		upstream = mapped
-	}
 	if mapped == upstream {
 		return []string{upstream}, []string{mapped}
 	}
