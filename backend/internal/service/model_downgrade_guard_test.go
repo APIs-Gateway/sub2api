@@ -112,12 +112,27 @@ func TestModelDowngradeGuardMatchesExplicitPairOnly(t *testing.T) {
 func TestModelDowngradeCandidateRequiresResponsesCapability(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	ctx := context.Background()
-	filter := svc.modelDowngradeCandidateFilter(ctx, "gpt-6-astra", "/v1/responses")
+	filter := svc.modelDowngradeCandidateFilter(ctx, "gpt-6-astra", "/v1/responses", OpenAIUpstreamTransportAny)
 	candidate := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 		Status: StatusActive, Schedulable: true, Credentials: map[string]any{}, Extra: map[string]any{}}
 	require.False(t, filter(ctx, candidate, nil), "raw Chat fallback cannot witness native Responses availability")
 	candidate.Extra["openai_responses_supported"] = true
 	require.True(t, filter(ctx, candidate, nil))
+	groupID := int64(123)
+	candidate.Groups = []*Group{{ID: groupID, RequirePrivacySet: true}}
+	require.False(t, filter(ctx, candidate, &groupID), "group privacy requirement excludes this candidate")
+	candidate.Extra["privacy_mode"] = PrivacyModeTrainingOff
+	require.True(t, filter(ctx, candidate, &groupID))
+
+	wsCfg := &config.Config{}
+	wsCfg.Gateway.OpenAIWS.Enabled = true
+	wsCfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	wsCfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	wsSvc := &OpenAIGatewayService{cfg: wsCfg}
+	wsFilter := wsSvc.modelDowngradeCandidateFilter(ctx, "gpt-6-astra", "/v1/responses", OpenAIUpstreamTransportResponsesWebsocketV2)
+	require.False(t, wsFilter(ctx, candidate, &groupID), "HTTP-only account cannot witness a WebSocket pool")
+	candidate.Extra["openai_apikey_responses_websockets_v2_enabled"] = true
+	require.True(t, wsFilter(ctx, candidate, &groupID))
 }
 
 func TestOpenAIModelRateLimitUsesForwardedModelKey(t *testing.T) {

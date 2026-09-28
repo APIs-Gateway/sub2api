@@ -107,7 +107,7 @@ func (s *RateLimitService) HandleConfirmedModelDowngrade(ctx context.Context, ac
 	}
 }
 
-func (s *OpenAIGatewayService) modelDowngradeCandidateFilter(ctx context.Context, requestedModel, path string) ModelDowngradeCandidateFilter {
+func (s *OpenAIGatewayService) modelDowngradeCandidateFilter(ctx context.Context, requestedModel, path string, requiredTransport OpenAIUpstreamTransport) ModelDowngradeCandidateFilter {
 	// Requiring native Responses support on this path is deliberately
 	// conservative: ordinary Responses can fall back to raw Chat, but image
 	// intent and compaction cannot. A raw-Chat-only account is not a safe
@@ -126,9 +126,22 @@ func (s *OpenAIGatewayService) modelDowngradeCandidateFilter(ctx context.Context
 	}
 	return func(ctx context.Context, candidate *Account, groupID *int64) bool {
 		if !isOpenAICompatibleAccountEligibleForRequest(ctx, candidate, PlatformOpenAI, selectionModel, requireCompact, capability) ||
+			!s.isOpenAIAccountTransportCompatible(candidate, requiredTransport) ||
 			s.isOpenAIAccountRequestRuntimeBlocked(candidate, selectionModel) ||
 			s.isOpenAIProxyStreamQuarantined(ctx, candidate) {
 			return false
+		}
+		if groupID != nil {
+			var group *Group
+			for _, linked := range candidate.Groups {
+				if linked != nil && linked.ID == *groupID {
+					group = linked
+					break
+				}
+			}
+			if group == nil || (group.RequirePrivacySet && !candidate.IsPrivacySet()) {
+				return false
+			}
 		}
 		if groupID != nil && s.channelService != nil {
 			channel, err := s.channelService.GetChannelForGroup(ctx, *groupID)

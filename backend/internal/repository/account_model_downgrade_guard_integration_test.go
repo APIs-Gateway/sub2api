@@ -79,6 +79,11 @@ func TestModelDowngradeGuardKeepsOtherLimitsAndCapsPool(t *testing.T) {
 	got, err = repo.GetByID(ctx, first)
 	require.NoError(t, err)
 	require.NotContains(t, got.Extra, "model_rate_limits", "explicit cleanup may remove the guard")
+	require.NoError(t, repo.SetModelRateLimit(ctx, first, "gpt-6-sol", time.Now().Add(-time.Minute), service.ModelDowngradeGuardReason))
+	require.NoError(t, repo.ClearModelRateLimitsExceptDowngrade(ctx, first))
+	got, err = repo.GetByID(ctx, first)
+	require.NoError(t, err)
+	require.Empty(t, got.Extra["model_rate_limits"], "expired guard can be cleaned up")
 }
 
 func TestModelDowngradeGuardPreservesGroupModelCandidateWithMalformedOtherLimit(t *testing.T) {

@@ -2050,8 +2050,22 @@ func hasRecoverableRuntimeState(account *Account) bool {
 	if len(account.Extra) == 0 {
 		return false
 	}
-	return hasNonEmptyMapValue(account.Extra, "model_rate_limits") ||
+	return hasClearableModelRateLimits(account.Extra) ||
 		hasNonEmptyMapValue(account.Extra, "antigravity_quota_scopes")
+}
+
+func hasClearableModelRateLimits(extra map[string]any) bool {
+	limits, ok := extra["model_rate_limits"].(map[string]any)
+	if !ok {
+		return hasNonEmptyMapValue(extra, "model_rate_limits")
+	}
+	for _, raw := range limits {
+		limit, ok := raw.(map[string]any)
+		if !ok || limit["reason"] != ModelDowngradeGuardReason {
+			return true
+		}
+	}
+	return false
 }
 
 func hasNonEmptyMapValue(extra map[string]any, key string) bool {

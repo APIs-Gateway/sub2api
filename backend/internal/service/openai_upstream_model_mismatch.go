@@ -269,7 +269,11 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 		}
 		var candidateFilter ModelDowngradeCandidateFilter
 		if c != nil && c.Request != nil {
-			candidateFilter = s.modelDowngradeCandidateFilter(ctx, requestedModel, c.Request.URL.Path)
+			requiredTransport := OpenAIUpstreamTransportAny
+			if strings.EqualFold(strings.TrimSpace(c.Request.Header.Get("Upgrade")), "websocket") {
+				requiredTransport = OpenAIUpstreamTransportResponsesWebsocketV2
+			}
+			candidateFilter = s.modelDowngradeCandidateFilter(ctx, requestedModel, c.Request.URL.Path, requiredTransport)
 		}
 		s.rateLimitService.HandleConfirmedModelDowngrade(ctx, account, requestedModel, sentModel, responseModel, candidateFilter)
 	}

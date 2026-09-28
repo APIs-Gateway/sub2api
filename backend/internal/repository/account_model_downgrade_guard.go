@@ -33,6 +33,15 @@ func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int6
 	if _, err = tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryLockHash("model_downgrade_guard:ratio_cap")); err != nil {
 		return false, err
 	}
+	// Stabilize the global denominator through commit. An administrator can
+	// otherwise disable unrelated accounts after the ratio check.
+	if err := lockModelDowngradePool(ctx, tx, `
+		SELECT a.id FROM accounts a
+		WHERE a.platform = $1 AND a.status = 'active' AND a.schedulable = TRUE AND a.deleted_at IS NULL
+		ORDER BY a.id FOR UPDATE OF a
+	`, service.PlatformOpenAI); err != nil {
+		return false, err
+	}
 
 	var extra []byte
 	err = tx.QueryRowContext(ctx, `
@@ -131,13 +140,6 @@ func (r *accountRepository) TryBlockDowngradedModel(ctx context.Context, id int6
 	// connection, so concurrent admin edits cannot remove the last candidate
 	// between this check and the block commit.
 	if simpleMode {
-		if err := lockModelDowngradePool(ctx, tx, `
-			SELECT a.id FROM accounts a
-			WHERE a.platform = $1 AND a.deleted_at IS NULL
-			ORDER BY a.id FOR UPDATE OF a
-		`, service.PlatformOpenAI); err != nil {
-			return false, err
-		}
 		candidates, err := r.ListSchedulableByPlatform(ctx, service.PlatformOpenAI)
 		if err != nil {
 			return false, err
@@ -294,9 +296,10 @@ func (r *accountRepository) ClearModelRateLimitsExceptDowngrade(ctx context.Cont
 					THEN extra -> 'model_rate_limits' ELSE '{}'::jsonb END
 				) AS limits(model, payload)
 				WHERE payload ->> 'reason' = $2
+					AND payload ->> 'rate_limit_reset_at' > $3
 			), '{}'::jsonb), TRUE), updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
-	`, id, service.ModelDowngradeGuardReason)
+	`, id, service.ModelDowngradeGuardReason, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return err
 	}
