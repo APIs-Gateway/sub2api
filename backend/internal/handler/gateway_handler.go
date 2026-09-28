@@ -1742,7 +1742,7 @@ func (h *GatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotT
 // handleFailoverExhausted 走共享的「上游错误 → 对外响应」策略(issue #16 Part B):
 // 静默拒绝特判 → 记录真实上游状态 → 透传规则 → 默认(请求形 4xx 透传)。
 func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
-	status, errType, errMsg := service.ResolveUpstreamErrorResponse(c, platform, failoverErr.StatusCode, failoverErr.ResponseBody)
+	status, errType, errMsg := service.ResolveUpstreamFailoverErrorResponse(c, platform, failoverErr)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
