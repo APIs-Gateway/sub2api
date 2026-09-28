@@ -3457,7 +3457,13 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_WriteFailBeforeD
 	var hooksMu sync.Mutex
 	beforeTurnCalls := make(map[int]int)
 	afterTurnCalls := make(map[int]int)
+	var resolvedModes []bool
 	hooks := &OpenAIWSIngressHooks{
+		OnIngressModeResolved: func(passthrough bool) {
+			hooksMu.Lock()
+			resolvedModes = append(resolvedModes, passthrough)
+			hooksMu.Unlock()
+		},
 		BeforeTurn: func(turn int) error {
 			hooksMu.Lock()
 			beforeTurnCalls[turn]++
@@ -3550,7 +3556,9 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_WriteFailBeforeD
 	beforeTurn2 := beforeTurnCalls[2]
 	afterTurn1 := afterTurnCalls[1]
 	afterTurn2 := afterTurnCalls[2]
+	gotResolvedModes := append([]bool(nil), resolvedModes...)
 	hooksMu.Unlock()
+	require.Equal(t, []bool{false}, gotResolvedModes, "ctx_pool must identify its mapped wire-model mode before turns")
 	require.Equal(t, 1, beforeTurn1, "首轮 turn BeforeTurn 应执行一次")
 	require.Equal(t, 1, beforeTurn2, "同一 turn 重试不应重复触发 BeforeTurn")
 	require.Equal(t, 1, afterTurn1, "首轮 turn AfterTurn 应执行一次")
