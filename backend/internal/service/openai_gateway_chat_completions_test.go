@@ -793,6 +793,43 @@ func TestForwardAsChatCompletions_StreamContextWindowResponseFailedReturnsErrorW
 	require.NotContains(t, rec.Body.String(), "[DONE]")
 }
 
+func TestForwardAsChatCompletions_SmallRequestOverloadBeforeContentFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name    string
+		payload string
+	}{
+		{"bare error", `{"type":"error","error":{"type":"server_is_overloaded","message":"try again later"}}`},
+		{"response failed", `{"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"try again later"}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			upstreamBody := strings.Join([]string{
+				`data: {"type":"response.created","response":{"id":"resp_overloaded","model":"gpt-5.5","status":"in_progress","output":[]}}`, "",
+				`data: {"type":"response.in_progress","response":{"id":"resp_overloaded","status":"in_progress"}}`, "",
+				"data: " + tc.payload, "", "",
+			}, "\n")
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+			}}
+			svc := &OpenAIGatewayService{httpUpstream: upstream}
+			account := &Account{ID: 1, Name: "openai-oauth", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+				Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"}}
+			result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.5")
+			require.Nil(t, result)
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.False(t, c.Writer.Written())
+			require.Empty(t, rec.Body.String())
+		})
+	}
+}
+
 func TestForwardAsChatCompletions_StreamCyberPolicyNoFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
