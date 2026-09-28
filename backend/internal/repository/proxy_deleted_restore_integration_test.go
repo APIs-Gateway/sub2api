@@ -96,9 +96,20 @@ func TestRevertProxyHoldsLiveOriginLockAgainstSoftDelete(t *testing.T) {
 		Status: service.StatusActive, FallbackMode: service.FallbackModeNone,
 	}
 	require.NoError(t, proxies.Create(ctx, original))
+	// These two fixtures are committed so a second connection can observe them.
+	// Remove them after testEntTx's rollback releases the origin lock; otherwise
+	// later proxy list/count integration suites see an extra active proxy.
+	t.Cleanup(func() {
+		_, err := integrationDB.ExecContext(context.Background(), `DELETE FROM proxies WHERE id=$1`, original.ID)
+		require.NoError(t, err)
+	})
 	account := mustCreateAccount(t, client, &service.Account{
 		Name: "locked-restore", Platform: service.PlatformOpenAI,
 		Type: service.AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test"},
+	})
+	t.Cleanup(func() {
+		_, err := integrationDB.ExecContext(context.Background(), `DELETE FROM accounts WHERE id=$1`, account.ID)
+		require.NoError(t, err)
 	})
 	_, err := integrationDB.ExecContext(ctx, `UPDATE accounts SET proxy_fallback_origin_id=$1 WHERE id=$2`, original.ID, account.ID)
 	require.NoError(t, err)
