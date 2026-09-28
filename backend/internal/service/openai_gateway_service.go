@@ -5767,6 +5767,13 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		targetURL = openaiPlatformAPIURL
 	}
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	// DeepSeek's official Responses decoder requires `url` on image parts even
+	// when Codex supplies the OpenAI `image_url` field. Keep this on the ordinary
+	// HTTP Responses path so other transports and compatibility bridges retain
+	// their existing request bodies.
+	if shouldAliasDeepSeekHTTPResponsesImages(c, account, targetURL) {
+		body = aliasDeepSeekResponsesInputImages(body)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
