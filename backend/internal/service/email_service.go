@@ -593,10 +593,6 @@ func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteNa
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("read previous reset token: %w", err)
 	}
-	var previousRemaining time.Duration
-	if previous != nil {
-		previousRemaining = time.Until(previous.CreatedAt.Add(passwordResetTokenTTL))
-	}
 	token, err := s.GeneratePasswordResetToken()
 	if err != nil {
 		return fmt.Errorf("generate token: %w", err)
@@ -611,6 +607,10 @@ func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteNa
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
+		var previousRemaining time.Duration
+		if previous != nil {
+			previousRemaining = time.Until(previous.CreatedAt.Add(passwordResetTokenTTL))
+		}
 		if err := s.cache.RestorePasswordResetToken(cleanupCtx, email, data.Token, previous, previousRemaining); err != nil {
 			slog.Error("failed to restore reset token after send failure", "email", email, "error", err)
 		}
