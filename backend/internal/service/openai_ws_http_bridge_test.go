@@ -61,6 +61,22 @@ func TestOpenAIWSHTTPBridgePrewarmEvents(t *testing.T) {
 	require.Empty(t, gjson.GetBytes(events[1], "response.output").Array())
 }
 
+func TestOpenAIWSHTTPBridgePrewarmBudgetStopsBeforeHistoryGrowth(t *testing.T) {
+	require.NoError(t, checkOpenAIWSHTTPBridgePrewarmBudget(0, 0, 1))
+	require.NoError(t, checkOpenAIWSHTTPBridgePrewarmBudget(
+		openAIWSHTTPBridgeMaxPrewarmTurns-1,
+		openAIWSHTTPBridgeMaxPrewarmInputBytes-1,
+		1,
+	))
+	var closeErr *OpenAIWSClientCloseError
+	err := checkOpenAIWSHTTPBridgePrewarmBudget(openAIWSHTTPBridgeMaxPrewarmTurns, 0, 0)
+	require.ErrorAs(t, err, &closeErr)
+	require.Contains(t, err.Error(), "too many websocket prewarm turns")
+	err = checkOpenAIWSHTTPBridgePrewarmBudget(1, openAIWSHTTPBridgeMaxPrewarmInputBytes-1, 2)
+	require.ErrorAs(t, err, &closeErr)
+	require.Contains(t, err.Error(), "websocket prewarm input limit exceeded")
+}
+
 func TestOpenAIWSHTTPBridgePrewarmCarriesClientToolMapping(t *testing.T) {
 	prewarm := []byte(`{"type":"response.create","model":"gpt-5","generate":false,"tools":[{"type":"custom","name":"exec","description":"Run a command"}],"input":[]}`)
 	state, err := openAIWSHTTPBridgePrewarmToolState(prewarm, openAIWSHTTPBridgeToolState{})
@@ -1897,7 +1913,7 @@ func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
 		t.Fatal("timed out waiting for websocket bridge proxy to finish")
 	}
 	require.Equal(t, []int{2, 4, 5}, beforeTurns)
-	require.Equal(t, []int{2, 4, 5}, beforeRequests)
+	require.Equal(t, []int{2, 3, 4, 5}, beforeRequests)
 	require.Equal(t, []int{2, 4, 5}, afterTurns)
 	require.True(t, hookFailed)
 	require.Len(t, upstream.bodies, 3)
@@ -1919,6 +1935,95 @@ func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
 	for idx, want := range []string{"hello", "warm", "go", "retry"} {
 		require.Equal(t, want, retryInput[idx].Get("content").String())
 	}
+}
+
+func TestOpenAIWSHTTPBridgeRejectedPrewarmDoesNotReachUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.HTTPBridgeEnabled = true
+	cfg.Gateway.OpenAIWS.HTTPBridgeThresholdBytes = 1
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	upstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{
+		cfg: cfg, httpUpstream: upstream, cache: &stubGatewayCache{},
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(),
+	}
+	account := &Account{
+		ID: 9005, Name: "oauth-prewarm-audit", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "test-token"}, Extra: map[string]any{"responses_websockets_v2_enabled": true},
+		Concurrency: 1, Status: StatusActive, Schedulable: true,
+	}
+	var beforeRequests, beforeTurns, afterTurns []int
+	hooks := &OpenAIWSIngressHooks{
+		BeforeRequest: func(turn int, payload []byte, _ string) error {
+			beforeRequests = append(beforeRequests, turn)
+			if gjson.GetBytes(payload, "input.0.content").String() == "blocked content" {
+				return errors.New("audit denied")
+			}
+			return nil
+		},
+		BeforeTurn: func(turn int) error {
+			beforeTurns = append(beforeTurns, turn)
+			return nil
+		},
+		AfterTurn: func(turn int, _ *OpenAIForwardResult, _ error) {
+			afterTurns = append(afterTurns, turn)
+		},
+	}
+	errCh := make(chan error, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+		_, firstMessage, err := conn.Read(readCtx)
+		cancelRead()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		rec := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(rec)
+		ginCtx.Request = r.Clone(r.Context())
+		errCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "test-token", firstMessage, hooks)
+	}))
+	defer wsServer.Close()
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+	require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","generate":false,"input":[]}`)))
+	cancelWrite()
+	for i := 0; i < 2; i++ {
+		readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+		_, _, readErr := clientConn.Read(readCtx)
+		cancelRead()
+		require.NoError(t, readErr)
+	}
+	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
+	require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","generate":false,"input":[{"role":"user","content":"blocked content"}]}`)))
+	cancelWrite()
+	select {
+	case proxyErr := <-errCh:
+		require.ErrorContains(t, proxyErr, "audit denied")
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for prewarm audit rejection")
+	}
+	require.Equal(t, []int{2}, beforeRequests)
+	require.Empty(t, beforeTurns)
+	require.Empty(t, afterTurns)
+	require.Empty(t, upstream.bodies, "rejected prewarm must not create an HTTP upstream turn")
 }
 
 func TestOpenAIWSHTTPBridgeObjectToolOutputWithoutPreviousResponseIDReplaysMatchingCall(t *testing.T) {
