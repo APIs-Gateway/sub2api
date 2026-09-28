@@ -73,13 +73,16 @@ func TestForwardAsChatCompletionsForwardsOnlyReceivedStreamUsage(t *testing.T) {
 		} {
 			for _, terminal := range []string{"stop", "eof"} {
 				t.Run(option.name+"/"+tc.name+"/"+terminal, func(t *testing.T) {
-					sse := `event: message_start
-data: {"type":"message_start","message":{"id":"msg_usage","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.5"` + tc.startUsage + `}}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}` + tc.deltaUsage + `}
-
-`
+					startPayload := `{"type":"message_start","message":{"id":"msg_usage","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.5"` + tc.startUsage + `}}`
+					deltaPayload := `{"type":"message_delta","delta":{"stop_reason":"end_turn"}` + tc.deltaUsage + `}`
+					var deltaEnvelope map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal([]byte(deltaPayload), &deltaEnvelope))
+					_, hasTopLevelUsage := deltaEnvelope["usage"]
+					require.Equal(t, tc.deltaUsage != "", hasTopLevelUsage)
+					var delta map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal(deltaEnvelope["delta"], &delta))
+					require.NotContains(t, delta, "usage")
+					sse := "event: message_start\ndata: " + startPayload + "\n\nevent: message_delta\ndata: " + deltaPayload + "\n\n"
 					if terminal == "stop" {
 						sse += "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 					}
