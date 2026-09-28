@@ -267,10 +267,10 @@ type OpenAIWSIngressHooks struct {
 	// AfterLocalPrewarm releases the connection's initial concurrency slots
 	// after a synthetic HTTP bridge response, without recording usage.
 	AfterLocalPrewarm func(turn int)
-	// BeforeBridgeUpstreamTurn receives the fully replayed HTTP bridge payload
-	// before the upstream request, for accurate request audit metadata.
+	// BeforeBridgeUpstreamTurn receives the final HTTP bridge request body,
+	// including replayed input, before the upstream call for audit metadata.
 	BeforeBridgeUpstreamTurn func(turn int, payload []byte)
-	AfterTurn                 func(turn int, result *OpenAIForwardResult, turnErr error)
+	AfterTurn                func(turn int, result *OpenAIForwardResult, turnErr error)
 }
 
 const (
@@ -288,6 +288,10 @@ var ErrOpenAIWSPrewarmModelChanged = errors.New("openai ws http bridge prewarm m
 
 // ErrOpenAIWSPrewarmPayloadInvalid is a local replay preparation rejection.
 var ErrOpenAIWSPrewarmPayloadInvalid = errors.New("openai ws http bridge prewarm payload invalid")
+
+// ErrOpenAIWSPrewarmLateStart rejects a local prewarm begun after an upstream
+// turn, which cannot safely reuse the connection's first-turn billing mapping.
+var ErrOpenAIWSPrewarmLateStart = errors.New("openai ws http bridge prewarm started after upstream turn")
 
 func checkOpenAIWSHTTPBridgePrewarmBudget(turns int, usedBytes int64, payload []byte) (int64, error) {
 	if turns >= openAIWSHTTPBridgeMaxPrewarmTurns {
@@ -3384,9 +3388,17 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				return openAIWSClientPayload{}, false, fmt.Errorf("read client websocket request: %w", readErr)
 			}
 			nextPayload, parseErr := parseClientPayload(nextClientMessage)
+			if parseErr != nil && prewarmTurns > 0 {
+				// This frame was rejected locally before any upstream attempt.
+				// Preserve its WS close status while keeping account health intact.
+				parseErr = fmt.Errorf("%w: %w", ErrOpenAIWSPrewarmPayloadInvalid, parseErr)
+			}
 			return nextPayload, false, parseErr
 		}
 		for turn := 1; ; turn++ {
+			if prewarmTurns == 0 && turn > 1 && isOpenAIWSHTTPBridgePrewarmPayload(currentBridgePayload.payloadRaw) {
+				return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm must start on the first turn", ErrOpenAIWSPrewarmLateStart)
+			}
 			if prewarmTurns > 0 {
 				// The first frame selected both the account and the fork's channel
 				// billing mapping. Do not let a synthetic, unbilled prewarm for

@@ -1960,10 +1960,12 @@ func TestOpenAIWSHTTPBridgeFirstRealTurnAfterPrewarmCanFailOver(t *testing.T) {
 		wantModelMismatch bool
 		realModel         string
 		wantLocalReject   bool
+		wantParseReject   bool
 	}{
 		{name: "non_429_http_error", statusCode: http.StatusServiceUnavailable, body: `{"error":{"message":"upstream unavailable"}}`, realModel: "gpt-5.1"},
 		{name: "model_mismatch", statusCode: http.StatusOK, body: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_wrong\",\"model\":\"gpt-5-mini\"}}\n\n", wantModelMismatch: true, realModel: "gpt-5.1"},
 		{name: "changed_client_model_rejected_before_billing", realModel: "gpt-5.6-sol", wantLocalReject: true},
+		{name: "invalid_followup_json_is_local_rejection", wantParseReject: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1979,8 +1981,8 @@ func TestOpenAIWSHTTPBridgeFirstRealTurnAfterPrewarmCanFailOver(t *testing.T) {
 			cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 			upstream := &httpUpstreamRecorder{resp: &http.Response{
 				StatusCode: tt.statusCode,
-				Header: http.Header{"Content-Type": []string{"text/event-stream"}},
-				Body: io.NopCloser(strings.NewReader(tt.body)),
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(tt.body)),
 			}}
 			svc := &OpenAIGatewayService{
 				cfg: cfg, httpUpstream: upstream, cache: &stubGatewayCache{},
@@ -2054,7 +2056,11 @@ func TestOpenAIWSHTTPBridgeFirstRealTurnAfterPrewarmCanFailOver(t *testing.T) {
 			}
 			require.True(t, strings.HasPrefix(syntheticID, "resp_"))
 			writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
-			require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"` + tt.realModel + `","previous_response_id":"` + syntheticID + `","input":[{"role":"user","content":"go"}]}`)))
+			realPayload := []byte(`{"type":"response.create","model":"` + tt.realModel + `","previous_response_id":"` + syntheticID + `","input":[{"role":"user","content":"go"}]}`)
+			if tt.wantParseReject {
+				realPayload = []byte(`{"type":"response.create",`)
+			}
+			require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, realPayload))
 			cancelWrite()
 			var result proxyResult
 			select {
@@ -2062,8 +2068,12 @@ func TestOpenAIWSHTTPBridgeFirstRealTurnAfterPrewarmCanFailOver(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("timed out waiting for first real bridge turn")
 			}
-			if tt.wantLocalReject {
-				require.ErrorIs(t, result.err, ErrOpenAIWSPrewarmModelChanged)
+			if tt.wantLocalReject || tt.wantParseReject {
+				if tt.wantParseReject {
+					require.ErrorIs(t, result.err, ErrOpenAIWSPrewarmPayloadInvalid)
+				} else {
+					require.ErrorIs(t, result.err, ErrOpenAIWSPrewarmModelChanged)
+				}
 				require.Empty(t, upstream.bodies, "changed model must never reach upstream")
 				require.Empty(t, result.outbound)
 				require.False(t, result.afterTurnCalled, "local rejection cannot trigger billing or scheduler hooks")
@@ -2092,6 +2102,103 @@ func TestOpenAIWSHTTPBridgeFirstRealTurnAfterPrewarmCanFailOver(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOpenAIWSHTTPBridgeRejectsPrewarmStartedAfterModelRotation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.HTTPBridgeEnabled = true
+	cfg.Gateway.OpenAIWS.HTTPBridgeThresholdBytes = 1
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	completed := func(id, model string) string {
+		return "data: {\"type\":\"response.created\",\"response\":{\"id\":\"" + id + "\",\"model\":\"" + model + "\"}}\n\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"" + id + "\",\"model\":\"" + model + "\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+	}
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed("resp_a", "gpt-5.1")))},
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed("resp_b", "gpt-5.6-sol")))},
+	}}
+	svc := &OpenAIGatewayService{
+		cfg: cfg, httpUpstream: upstream, cache: &stubGatewayCache{},
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(),
+	}
+	account := &Account{
+		ID: 9008, Name: "oauth-late-prewarm", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "test-token"}, Extra: map[string]any{"responses_websockets_v2_enabled": true},
+		Concurrency: 1, Status: StatusActive, Schedulable: true,
+	}
+	type proxyResult struct {
+		err   error
+		turns int
+	}
+	resultCh := make(chan proxyResult, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			resultCh <- proxyResult{err: err}
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+		_, firstMessage, err := conn.Read(readCtx)
+		cancelRead()
+		if err != nil {
+			resultCh <- proxyResult{err: err}
+			return
+		}
+		rec := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(rec)
+		ginCtx.Request = r.Clone(r.Context())
+		turns := 0
+		hooks := &OpenAIWSIngressHooks{AfterTurn: func(int, *OpenAIForwardResult, error) { turns++ }}
+		proxyErr := svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "test-token", firstMessage, hooks)
+		resultCh <- proxyResult{err: proxyErr, turns: turns}
+	}))
+	defer wsServer.Close()
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+	write := func(payload string) {
+		writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+		require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, []byte(payload)))
+		cancelWrite()
+	}
+	readCompleted := func(wantModel string) {
+		for i := 0; i < 4; i++ {
+			readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+			_, event, readErr := clientConn.Read(readCtx)
+			cancelRead()
+			require.NoError(t, readErr)
+			if gjson.GetBytes(event, "type").String() == "response.completed" {
+				require.Equal(t, wantModel, gjson.GetBytes(event, "response.model").String())
+				return
+			}
+		}
+		t.Fatal("upstream turn did not complete")
+	}
+	write(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)
+	readCompleted("gpt-5.1")
+	write(`{"type":"response.create","model":"gpt-5.6-sol","input":"second"}`)
+	readCompleted("gpt-5.6-sol")
+	write(`{"type":"response.create","model":"gpt-5.6-sol","generate":false,"input":"late prewarm"}`)
+	var result proxyResult
+	select {
+	case result = <-resultCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for late prewarm rejection")
+	}
+	require.ErrorIs(t, result.err, ErrOpenAIWSPrewarmLateStart)
+	require.Equal(t, 2, result.turns, "late prewarm must not run billable turn hooks")
+	require.Len(t, upstream.bodies, 2, "late prewarm must not contact upstream")
+	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(upstream.bodies[1], "model").String(), "ordinary model rotation must still work")
 }
 
 func TestOpenAIWSHTTPBridgeRejectedPrewarmDoesNotReachUpstream(t *testing.T) {
