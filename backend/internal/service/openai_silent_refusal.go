@@ -21,6 +21,7 @@ const (
 	openAIChatPreambleMaxBytes             = 256 * 1024
 	openAIChatPreambleMaxWait              = 8 * time.Second
 	openAIChatErrorDrainMaxWait            = 5 * time.Second
+	openAIChatMultiLineFrameMaxBytes        = 16 * 1024 * 1024
 )
 
 type openAIChatSilentRefusalDetector struct {

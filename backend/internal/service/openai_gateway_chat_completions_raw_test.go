@@ -829,6 +829,25 @@ func TestStreamRawChatCompletions_CommentStormIsBoundedBeforeModel(t *testing.T)
 	require.Empty(t, rec.Body.String(), "unvalidated comments must not be released as partial SSE")
 }
 
+func TestStreamRawChatCompletions_UnterminatedCommentFrameIsBounded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	comment := ":" + strings.Repeat("x", 1024) + "\n"
+	storm := strings.Repeat(comment, openAIChatMultiLineFrameMaxBytes/len(comment)+1)
+	body := storm + "\n" + `data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}` + "\n\n"
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+
+	require.ErrorContains(t, err, "multiline SSE frame exceeded")
+	require.NotNil(t, result)
+	require.Equal(t, 7, result.Usage.InputTokens, "later usage must still reach billing")
+	require.Empty(t, rec.Body.String(), "an incomplete frame must never leak to the client")
+}
+
 type rawChatErrorThenHangBody struct {
 	payload []byte
 	sent    bool

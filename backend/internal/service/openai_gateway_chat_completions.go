@@ -1028,6 +1028,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 	lastDataAt := time.Now()
 	var parser openAICompatSSEFrameParser
+	frameBytes := 0
+	frameMetadataBytes := 0
+	frameDataLines := 0
 	preambleTimer := time.NewTimer(openAIChatPreambleMaxWait)
 	defer preambleTimer.Stop()
 	preambleCh := preambleTimer.C
@@ -1074,7 +1077,21 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			lastDataAt = time.Now()
 			line := ev.line
+			frameBytes += len(line) + 1
+			if _, isData := extractOpenAISSEDataLine(line); isData {
+				frameDataLines++
+			} else {
+				frameMetadataBytes += len(line) + 1
+			}
+			if frameMetadataBytes > openAIChatMultiLineFrameMaxBytes || (frameDataLines > 1 && frameBytes > openAIChatMultiLineFrameMaxBytes) {
+				return resultWithUsage(), newOpenAIUpstreamStreamReadError(fmt.Errorf("chat multiline SSE frame exceeded %d bytes", openAIChatMultiLineFrameMaxBytes))
+			}
 			frame, ok := parser.AddLine(line)
+			if line == "" {
+				frameBytes = 0
+				frameMetadataBytes = 0
+				frameDataLines = 0
+			}
 			if !ok {
 				continue
 			}

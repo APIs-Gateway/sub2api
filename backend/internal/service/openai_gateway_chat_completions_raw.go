@@ -381,6 +381,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	var frameData []string
 	var frameEvent string
 	frameBytes := 0
+	frameMetadataBytes := 0
 	frameTooLarge := false
 	processFrame := func() *UpstreamFailoverError {
 		payload := strings.Join(frameData, "\n")
@@ -486,6 +487,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		frameData = nil
 		frameEvent = ""
 		frameBytes = 0
+		frameMetadataBytes = 0
 		frameTooLarge = false
 	}
 	type rawScanEvent struct {
@@ -573,8 +575,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				frameData = append(frameData, data)
 			} else if event, ok := extractOpenAISSEEventLine(line); ok {
 				frameEvent = event
+				frameMetadataBytes += len(line) + 1
 			} else {
 				terminal.ObserveNonDataLine(line)
+				frameMetadataBytes += len(line) + 1
 			}
 			if line == "" {
 				if ferr := processFrame(); ferr != nil {
@@ -585,10 +589,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 			// Reject an endless/oversized frame without exposing unvalidated data.
 			// Keep draining later frames so usage still reaches billing.
-			if !frameTooLarge && frameBytes >= maxLineSize {
+			if !frameTooLarge && (frameMetadataBytes >= openAIChatMultiLineFrameMaxBytes || (len(frameData) > 1 && frameBytes >= openAIChatMultiLineFrameMaxBytes)) {
 				frameTooLarge = true
 				if streamError == nil {
-					message := fmt.Sprintf("chat SSE frame exceeded configured max line size %d bytes", maxLineSize)
+					message := fmt.Sprintf("chat multiline SSE frame exceeded %d bytes", openAIChatMultiLineFrameMaxBytes)
 					s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", nil, message)
 					streamError = errors.New(message)
 				}

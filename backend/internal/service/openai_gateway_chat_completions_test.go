@@ -128,6 +128,23 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadErrorWithKeepalive(t *te
 	require.Equal(t, "Upstream HTTP/2 stream failed", message)
 }
 
+func TestHandleChatStreamingResponse_UnterminatedCommentFrameIsBounded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	comment := ":" + strings.Repeat("x", 1024) + "\n"
+	storm := strings.Repeat(comment, openAIChatMultiLineFrameMaxBytes/len(comment)+1)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(storm))}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+
+	result, err := svc.handleChatStreamingResponse(resp, c, &Account{ID: 1, Name: "openai-oauth", Platform: PlatformOpenAI}, "gpt-5.5", "gpt-5.5", "gpt-5.5", time.Now(), 0)
+
+	require.ErrorContains(t, err, "multiline SSE frame exceeded")
+	require.NotNil(t, result)
+	require.Empty(t, rec.Body.String(), "an incomplete frame must never leak to the client")
+}
+
 func TestHandleChatStreamingResponse_ClassifiesGenericReadErrorWithKeepalive(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
