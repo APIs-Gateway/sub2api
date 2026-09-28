@@ -2291,6 +2291,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+				usageRequestPayloadHash := requestPayloadHash
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:                result,
@@ -2302,7 +2303,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						UpstreamEndpoint:      upstreamEndpoint,
 						UserAgent:             userAgent,
 						IPAddress:             clientIP,
-						RequestPayloadHash:    requestPayloadHash,
+						RequestPayloadHash:    usageRequestPayloadHash,
 						APIKeyService:         h.apiKeyService,
 						ChannelUsageFields:    channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
 						CyberBlocked:          cyberBlocked,
