@@ -153,6 +153,26 @@ func TestAdaptOpenAIResponsesClientToolsLiftsFunctionOnlyCarrierAndRejectsMalfor
 	require.Empty(t, mapping)
 }
 
+func TestAdaptOpenAIResponsesClientToolsRejectsConflictingLiftedNames(t *testing.T) {
+	body := []byte(`{"input":[{"type":"additional_tools","tools":[{"type":"custom","name":"exec"},{"type":"function","name":"exec"}]}]}`)
+
+	adapted, mapping, err := adaptOpenAIResponsesClientTools(body)
+
+	require.ErrorContains(t, err, `custom tool "exec" conflicts with a function tool`)
+	require.Equal(t, body, adapted)
+	require.Empty(t, mapping)
+}
+
+func TestAdaptOpenAIResponsesClientToolsKeepsHistoryWithoutDeclaredTools(t *testing.T) {
+	body := []byte(`{"input":[{"type":"custom_tool_call","call_id":"c1","name":"exec","input":"pwd"}]}`)
+
+	adapted, mapping, err := adaptOpenAIResponsesClientTools(body)
+
+	require.NoError(t, err)
+	require.Equal(t, body, adapted)
+	require.Empty(t, mapping)
+}
+
 func TestAdaptOpenAIResponsesClientToolsRejectsTrailingData(t *testing.T) {
 	tests := map[string][]byte{
 		"trailing garbage":     append(openAIClientToolsRequest(false), []byte(` garbage`)...),
@@ -307,6 +327,9 @@ func TestOpenAIForward_NativeResponsesLiteToolsRestoreStreamingCall(t *testing.T
 				Body:       io.NopCloser(strings.NewReader(sse)),
 			}}
 			svc := openAIClientToolsTestService(upstream)
+			if tc.name == "mislabeled SSE" {
+				svc.cfg.Gateway.MaxLineSize = 1024 * 1024
+			}
 			account := &Account{
 				ID:          7661,
 				Platform:    PlatformOpenAI,
@@ -416,6 +439,31 @@ func TestOpenAIForward_NativeResponsesLiteSSEToJSONRestoresCustomCall(t *testing
 	require.Equal(t, "pwd", gjson.Get(recorder.Body.String(), "output.0.input").String())
 }
 
+func TestOpenAIForward_NativeResponsesLiteRejectsMalformedCarrierBeforeUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-chat","stream":false,"input":[{"type":"additional_tools","tools":"invalid"}]}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set(responsesLiteHeader, "true")
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	upstream := &httpUpstreamRecorder{}
+	svc := openAIClientToolsTestService(upstream)
+	account := &Account{
+		ID:          7664,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "test-key", "base_url": "https://api.deepseek.com"},
+		Extra:       openAIResponsesSupportedTestExtra(),
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "additional_tools.tools must be an array")
+	require.Nil(t, upstream.lastReq)
+}
+
 func TestOpenAIPassthroughAPIKeyPreservesCustomToolOutputContentParts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-5.4","stream":false,"tools":[{"type":"custom","name":"exec"}],"input":[{"type":"custom_tool_call_output","call_id":"call_1","output":[{"type":"input_text","text":"result"},{"type":"input_file","file_id":"file_123"}]}]}`)
@@ -513,6 +561,41 @@ func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_LiteCarrierReplaces
 	require.Len(t, secondTools, 1)
 	require.Equal(t, "function_call", gjson.GetBytes(secondBody, "input.0.type").String())
 	require.Equal(t, "exec", gjson.GetBytes(secondBody, "tools.0.name").String())
+}
+
+func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_FunctionOnlyCarrierAndMalformedCarrier(t *testing.T) {
+	previousMapping := apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"old": true}}
+	previousTools := []any{map[string]any{"type": "function", "name": "old"}}
+	body := []byte(`{"input":[{"type":"additional_tools","tools":[{"type":"function","name":"lookup"}]}]}`)
+
+	adapted, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(body, previousMapping, previousTools)
+
+	require.NoError(t, err)
+	require.Empty(t, mapping)
+	require.Len(t, loweredTools, 1)
+	require.Equal(t, "lookup", gjson.GetBytes(adapted, "tools.0.name").String())
+	require.False(t, gjson.GetBytes(adapted, `input.#(type=="additional_tools")`).Exists())
+
+	malformed := []byte(`{"input":[{"type":"additional_tools","tools":"invalid"}]}`)
+	unchanged, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(malformed, previousMapping, previousTools)
+	require.ErrorContains(t, err, "additional_tools.tools must be an array")
+	require.Equal(t, malformed, unchanged)
+	require.Empty(t, mapping)
+	require.Nil(t, loweredTools)
+}
+
+func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_ExplicitFunctionToolsDoNotInherit(t *testing.T) {
+	previousMapping := apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"old": true}}
+	previousTools := []any{map[string]any{"type": "function", "name": "old"}}
+	body := []byte(`{"tools":[{"type":"function","name":"lookup"}],"input":"hello"}`)
+
+	adapted, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(body, previousMapping, previousTools)
+
+	require.NoError(t, err)
+	require.Equal(t, body, adapted)
+	require.Empty(t, mapping)
+	require.Len(t, loweredTools, 1)
+	require.Equal(t, "lookup", loweredTools[0].(map[string]any)["name"])
 }
 
 func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_NoPreviousStateLeavesOmittedToolsBodyUnchanged(t *testing.T) {
