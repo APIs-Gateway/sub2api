@@ -228,6 +228,20 @@ func buildOpenAIWSHTTPBridgePrewarmEvents(model string) (string, [][]byte, error
 	return responseID, [][]byte{created, completed}, nil
 }
 
+func openAIWSHTTPBridgePrewarmToolState(payload []byte, previous openAIWSHTTPBridgeToolState) (openAIWSHTTPBridgeToolState, error) {
+	body, err := prepareOpenAIWSHTTPBridgeBody(payload)
+	if err != nil {
+		return openAIWSHTTPBridgeToolState{}, err
+	}
+	_, mapping, loweredTools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(
+		body, previous.ClientMapping, previous.LoweredTools,
+	)
+	if err != nil {
+		return openAIWSHTTPBridgeToolState{}, err
+	}
+	return openAIWSHTTPBridgeToolState{ClientMapping: mapping, LoweredTools: loweredTools}, nil
+}
+
 type openAIWSToolCallReplayCollector struct {
 	items    []json.RawMessage
 	seen     map[string]struct{}

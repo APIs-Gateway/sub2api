@@ -3348,15 +3348,28 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if isOpenAIWSHTTPBridgePrewarmPayload(currentBridgePayload.payloadRaw) {
 				// Keep the input and turn number so the next real turn can replay
 				// this synthetic response without charging or contacting upstream.
-				nextHistory, historyExists, replayErr := buildOpenAIWSReplayInputSequence(
-					bridgeReplayInput, bridgeReplayInputExists,
-					currentBridgePayload.payloadRaw, currentBridgePayload.previousResponseID != "",
-				)
-				if replayErr != nil {
-					return fmt.Errorf("build websocket http bridge prewarm input: %w", replayErr)
+				prewarmItems, prewarmItemsExist, extractErr := openAIWSExtractNormalizedInputSequence(currentBridgePayload.payloadRaw)
+				if extractErr != nil {
+					return fmt.Errorf("build websocket http bridge prewarm input: %w", extractErr)
 				}
-				bridgeReplayInput = nextHistory
-				bridgeReplayInputExists = historyExists
+				hasPrevious := currentBridgePayload.previousResponseID != ""
+				bridgeReplayInput, bridgeReplayInputExists = buildOpenAIWSReplayInputSequenceFromItems(
+					bridgeReplayInput, bridgeReplayInputExists,
+					prewarmItems, prewarmItemsExist, hasPrevious,
+				)
+				bridgeAccountFailoverInput, bridgeAccountFailoverInputExists = buildOpenAIWSReplayInputSequenceFromItems(
+					bridgeAccountFailoverInput, bridgeAccountFailoverInputExists,
+					prewarmItems, prewarmItemsExist, hasPrevious,
+				)
+				// A prewarm may declare client tools that its next turn omits.
+				// Preserve their lowering mapping even though nothing is sent upstream.
+				if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
+					state, stateErr := openAIWSHTTPBridgePrewarmToolState(currentBridgePayload.payloadRaw, bridgeToolState)
+					if stateErr != nil {
+						return fmt.Errorf("prepare websocket http bridge prewarm tools: %w", stateErr)
+					}
+					bridgeToolState = state
+				}
 				_, events, buildErr := buildOpenAIWSHTTPBridgePrewarmEvents(currentBridgePayload.originalModel)
 				if buildErr != nil {
 					return fmt.Errorf("build websocket http bridge prewarm response: %w", buildErr)

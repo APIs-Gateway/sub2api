@@ -61,6 +61,24 @@ func TestOpenAIWSHTTPBridgePrewarmEvents(t *testing.T) {
 	require.Empty(t, gjson.GetBytes(events[1], "response.output").Array())
 }
 
+func TestOpenAIWSHTTPBridgePrewarmCarriesClientToolMapping(t *testing.T) {
+	prewarm := []byte(`{"type":"response.create","model":"gpt-5","generate":false,"tools":[{"type":"custom","name":"exec","description":"Run a command"}],"input":[]}`)
+	state, err := openAIWSHTTPBridgePrewarmToolState(prewarm, openAIWSHTTPBridgeToolState{})
+	require.NoError(t, err)
+	require.True(t, state.ClientMapping.CustomTools["exec"])
+	require.Len(t, state.LoweredTools, 1)
+
+	continuation := []byte(`{"type":"response.create","model":"gpt-5","input":"list files"}`)
+	lowered, mapping, tools, err := adaptOpenAIResponsesClientToolsWithInheritedMapping(
+		continuation, state.ClientMapping, state.LoweredTools,
+	)
+	require.NoError(t, err)
+	require.True(t, mapping.CustomTools["exec"])
+	require.Len(t, tools, 1)
+	require.Equal(t, "function", gjson.GetBytes(lowered, "tools.0.type").String())
+	require.Equal(t, "exec", gjson.GetBytes(lowered, "tools.0.name").String())
+}
+
 func TestOpenAIWSHTTPBridgeSyntheticFailuresContinueObservedSequence(t *testing.T) {
 	sequence := openAIResponsesSequenceTracker{}
 	sequence.Observe([]byte(`{"type":"response.output_text.delta","sequence_number":11,"delta":"partial"}`))
@@ -1768,6 +1786,7 @@ func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
 		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed("resp_real_1")))},
 		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed("resp_real_2")))},
+		{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"type":"rate_limit_error","message":"slow down"}}`))},
 	}}
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.Enabled = false
@@ -1866,18 +1885,22 @@ func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
 	require.NotEqual(t, firstPrewarmID, secondPrewarmID)
 	write(`{"type":"response.create","model":"gpt-5.1","instructions":"sys","previous_response_id":"` + secondPrewarmID + `","input":[{"role":"user","content":"go"}]}`)
 	require.Equal(t, "response.completed", gjson.GetBytes(read(), "type").String())
-	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
+	write(`{"type":"response.create","model":"gpt-5.1","instructions":"sys","previous_response_id":"resp_real_2","input":[{"role":"user","content":"retry"}]}`)
+	var retryPayload []byte
 	select {
 	case proxyErr := <-errCh:
-		require.NoError(t, proxyErr)
+		require.Error(t, proxyErr)
+		var ok bool
+		retryPayload, ok = OpenAIWSCurrentTurnRetryPayload(proxyErr)
+		require.True(t, ok)
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for websocket bridge proxy to finish")
 	}
-	require.Equal(t, []int{2, 4}, beforeTurns)
-	require.Equal(t, []int{2, 4}, beforeRequests)
-	require.Equal(t, []int{2, 4}, afterTurns)
-	require.False(t, hookFailed)
-	require.Len(t, upstream.bodies, 2)
+	require.Equal(t, []int{2, 4, 5}, beforeTurns)
+	require.Equal(t, []int{2, 4, 5}, beforeRequests)
+	require.Equal(t, []int{2, 4, 5}, afterTurns)
+	require.True(t, hookFailed)
+	require.Len(t, upstream.bodies, 3)
 	for _, body := range upstream.bodies {
 		require.False(t, gjson.GetBytes(body, "generate").Exists())
 		require.False(t, gjson.GetBytes(body, "previous_response_id").Exists())
@@ -1890,6 +1913,12 @@ func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
 	require.Equal(t, "hello", secondInput[0].Get("content").String())
 	require.Equal(t, "warm", secondInput[1].Get("content").String())
 	require.Equal(t, "go", secondInput[2].Get("content").String())
+	require.False(t, gjson.GetBytes(retryPayload, "previous_response_id").Exists())
+	retryInput := gjson.GetBytes(retryPayload, "input").Array()
+	require.Len(t, retryInput, 4)
+	for idx, want := range []string{"hello", "warm", "go", "retry"} {
+		require.Equal(t, want, retryInput[idx].Get("content").String())
+	}
 }
 
 func TestOpenAIWSHTTPBridgeObjectToolOutputWithoutPreviousResponseIDReplaysMatchingCall(t *testing.T) {
