@@ -267,9 +267,8 @@ func TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_PreservesClientBeta(t *
 		"同时补齐 token-counting beta")
 }
 
-// messages mimic 路径反向验证：原代码会跳过白名单透传，
-// 客户端 beta 不会进入 mimic 计算。重构后 messages computeFinalAnthropicBeta
-// mimic 分支依然不该使用 clientBeta。
+// messages mimic 路径仍丢弃未知客户端 beta；仅显式请求的 legacy
+// structured-outputs beta 例外。
 func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit(t *testing.T) {
 	s := newTestGatewayServiceForBeta(false)
 	hdr := http.Header{}
@@ -277,7 +276,7 @@ func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit(t *testi
 	final, ok := s.computeFinalAnthropicBeta("oauth", true, "claude-sonnet-4-6", hdr, []byte(`{}`), nil)
 	require.True(t, ok)
 	require.False(t, anthropicBetaTokensContains(final, "custom-experimental-beta"),
-		"messages mimic 原代码跳过白名单透传 → 客户端 beta 不进入计算。"+
+		"messages mimic 仍需丢弃未知客户端 beta。"+
 			"与 count_tokens mimic 是不同的设计，不能合并为同一函数。")
 }
 
