@@ -49,7 +49,8 @@ func TestGeneratedResponsesReasoningSummaryFollowsUpstream(t *testing.T) {
 			path: "/v1/chat/completions",
 			body: `{"model":"gpt-5.4","reasoning_effort":"high","messages":[{"role":"user","content":"hello"}],"stream":false}`,
 			account: &Account{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
-				Credentials: map[string]any{"api_key": "sk-test"}},
+				Credentials: map[string]any{"api_key": "sk-test"},
+				Extra:       map[string]any{"openai_responses_supported": true}},
 			wantEffort: "high", wantSummary: true,
 		},
 		{
