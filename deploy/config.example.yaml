@@ -189,6 +189,21 @@ gateway:
   # Account IDs that only record (never block) upstream model mismatch; other accounts keep blocking (default: empty). Meant for forced single-account routes (openai_forced_account_routes) where a block cannot fail over and turns into a client-facing 502
   # 账号级观察名单：名单内账号的上游模型不一致只记录不拦截，其余账号照常拦截（默认空）。用于强制单账号路由（openai_forced_account_routes）的专线账号——拦截后无号可切，客户端会直接收到 502。同样仅配置/环境变量可改、不热加载
   upstream_model_mismatch_observe_account_ids: []
+  # Optional cross-request quarantine after repeated, pre-delivery model
+  # substitutions. Only explicitly listed sent/response model pairs count.
+  # Keep disabled until the affected pool and pairs are confirmed in usage logs.
+  model_downgrade_guard:
+    enabled: false
+    pairs: []
+    # Example:
+    # - sent_model: gpt-6-astra
+    #   response_model: gpt-5.6-luna
+    threshold_count: 5
+    window_minutes: 30
+    block_hours: 24
+    # At most this fraction of active, schedulable OpenAI accounts may be
+    # quarantined by this guard; small pools may allow zero quarantines.
+    max_blocked_ratio: 0.3
   # Sora max request body size in bytes (0=use max_body_size)
   # Sora 请求体最大字节数（0=使用 max_body_size）
   sora_max_body_size: 268435456

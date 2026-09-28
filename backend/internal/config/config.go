@@ -820,6 +820,22 @@ const (
 	UpstreamIPModeIPv6 = "ipv6"
 )
 
+// GatewayModelDowngradeGuardConfig is opt-in. Pairs must name the exact model
+// sent upstream and the model returned by that upstream.
+type GatewayModelDowngradeGuardConfig struct {
+	Enabled         bool                        `mapstructure:"enabled"`
+	Pairs           []GatewayModelDowngradePair `mapstructure:"pairs"`
+	ThresholdCount  int                         `mapstructure:"threshold_count"`
+	WindowMinutes   int                         `mapstructure:"window_minutes"`
+	BlockHours      int                         `mapstructure:"block_hours"`
+	MaxBlockedRatio float64                     `mapstructure:"max_blocked_ratio"`
+}
+
+type GatewayModelDowngradePair struct {
+	SentModel     string `mapstructure:"sent_model"`
+	ResponseModel string `mapstructure:"response_model"`
+}
+
 // GatewayConfig API网关相关配置
 type GatewayConfig struct {
 	// 等待上游响应头的超时时间（秒），0表示无超时
@@ -866,6 +882,7 @@ type GatewayConfig struct {
 	// UpstreamModelMismatchObserveAccountIDs：账号级观察名单。名单内账号的上游模型不一致只记录不拦截（同全局观察模式），
 	// 其余账号照常拦截。用于 openai_forced_account_routes 这类强制单账号路由：拦截后无号可切，客户端会直接收到 502。
 	UpstreamModelMismatchObserveAccountIDs []int64 `mapstructure:"upstream_model_mismatch_observe_account_ids"`
+	ModelDowngradeGuard GatewayModelDowngradeGuardConfig `mapstructure:"model_downgrade_guard"`
 	// ForcedCodexInstructionsTemplateFile: 服务端强制附加到 Codex 顶层 instructions 的模板文件路径。
 	// 模板渲染后会直接覆盖最终 instructions；若需要保留客户端 system 转换结果，请在模板中显式引用 {{ .ExistingInstructions }}。
 	ForcedCodexInstructionsTemplateFile string `mapstructure:"forced_codex_instructions_template_file"`
@@ -2132,6 +2149,11 @@ func setDefaults() {
 	viper.SetDefault("gateway.disable_openai_responses_image_generation", false)
 	viper.SetDefault("gateway.disable_upstream_model_mismatch_block", false)
 	viper.SetDefault("gateway.upstream_model_mismatch_observe_account_ids", []int64{})
+	viper.SetDefault("gateway.model_downgrade_guard.enabled", false)
+	viper.SetDefault("gateway.model_downgrade_guard.threshold_count", 5)
+	viper.SetDefault("gateway.model_downgrade_guard.window_minutes", 30)
+	viper.SetDefault("gateway.model_downgrade_guard.block_hours", 24)
+	viper.SetDefault("gateway.model_downgrade_guard.max_blocked_ratio", 0.3)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
 	viper.SetDefault("gateway.openai_ws.enabled", true)

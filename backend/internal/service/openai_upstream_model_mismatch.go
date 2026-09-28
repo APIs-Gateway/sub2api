@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -243,6 +244,7 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 		accountID, accountName, platform = account.ID, account.Name, account.Platform
 	}
 	blocked := canBlock && s.upstreamModelMismatchBlockEnabled() && !s.upstreamModelMismatchObserveOnlyAccount(accountID)
+	firstMark := GetOpsUpstreamModelMismatch(c) == nil
 	MarkOpsUpstreamModelMismatch(c, UpstreamModelMismatchMark{
 		SentModel: sentModel, ResponseModel: responseModel, AccountID: accountID, Stream: stream, Blocked: blocked, Usage: usage,
 	})
@@ -254,6 +256,13 @@ func (s *OpenAIGatewayService) checkUpstreamModelMismatch(
 		zap.String("response_model", responseModel), zap.Bool("blocked", blocked), zap.Bool("can_block", canBlock))
 	if !blocked {
 		return nil
+	}
+	if firstMark && s.rateLimitService != nil {
+		ctx := context.Background()
+		if c != nil && c.Request != nil {
+			ctx = c.Request.Context()
+		}
+		s.rateLimitService.HandleConfirmedModelDowngrade(ctx, account, sentModel, responseModel)
 	}
 	message := fmt.Sprintf("%s: sent=%s got=%s", upstreamModelMismatchMessage, sentModel, responseModel)
 	setOpsUpstreamError(c, http.StatusBadGateway, message, "")
