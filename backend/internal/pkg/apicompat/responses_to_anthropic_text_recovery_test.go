@@ -30,33 +30,31 @@ func collectAnthropicText(events []AnthropicStreamEvent) string {
 }
 
 // requireAnthropicBlockLifecycle checks the block framing a strict client
-// relies on: indices start at zero and increase by one, every block is closed,
-// and no delta arrives outside an open block.
+// relies on: starts have contiguous increasing indices, every block is closed,
+// and deltas/stops reference their own still-open block. Blocks may overlap.
 func requireAnthropicBlockLifecycle(t *testing.T, events []AnthropicStreamEvent) {
 	t.Helper()
 
-	open := false
+	open := make(map[int]bool)
 	next := 0
 	for _, event := range events {
 		switch event.Type {
 		case "content_block_start":
-			require.False(t, open, "content_block_start while a block is open")
 			require.NotNil(t, event.Index)
 			require.Equal(t, next, *event.Index, "content block indices must increase by one")
-			open = true
-		case "content_block_delta":
-			require.True(t, open, "content_block_delta outside an open block")
-			require.NotNil(t, event.Index)
-			require.Equal(t, next, *event.Index)
-		case "content_block_stop":
-			require.True(t, open, "content_block_stop without an open block")
-			require.NotNil(t, event.Index)
-			require.Equal(t, next, *event.Index)
-			open = false
+			require.False(t, open[*event.Index])
+			open[*event.Index] = true
 			next++
+		case "content_block_delta":
+			require.NotNil(t, event.Index)
+			require.True(t, open[*event.Index], "content_block_delta outside its open block")
+		case "content_block_stop":
+			require.NotNil(t, event.Index)
+			require.True(t, open[*event.Index], "content_block_stop without its open block")
+			delete(open, *event.Index)
 		}
 	}
-	require.False(t, open, "stream ended with an unclosed content block")
+	require.Empty(t, open, "stream ended with an unclosed content block")
 }
 
 func responsesCreated() *ResponsesStreamEvent {
@@ -148,9 +146,8 @@ func TestResponsesEventToAnthropicEvents_DoesNotDuplicateTextRecoveredFromDoneEv
 	requireAnthropicBlockLifecycle(t, events)
 }
 
-// Deduplication is per output_text part, not per content block: an event that
-// closes the block between the deltas and the matching done must not make the
-// done payload look undelivered.
+// Deduplication is per output_text part: an interleaved tool block must not
+// make the later text done payload look undelivered.
 func TestResponsesEventToAnthropicEvents_DoesNotDuplicateTextWhenBlockClosedBeforeDone(t *testing.T) {
 	events := feedResponsesEvents(
 		responsesCreated(),
@@ -414,9 +411,8 @@ func TestResponsesEventToAnthropicEvents_LeavesToolArgumentsDoneTextFree(t *test
 	requireAnthropicBlockLifecycle(t, events)
 }
 
-// Recovery closes whatever block is open through the shared helper, which owns
-// signature emission. A thinking block must still get its signature_delta
-// before its stop.
+// Recovery may overlap a thinking block. Its signature_delta must precede the
+// stop for that thinking block, regardless of other block stops.
 func TestResponsesEventToAnthropicEvents_PreservesThinkingSignatureWhenRecovering(t *testing.T) {
 	events := feedResponsesEvents(
 		responsesCreated(),
@@ -432,15 +428,16 @@ func TestResponsesEventToAnthropicEvents_PreservesThinkingSignatureWhenRecoverin
 	assert.Equal(t, "recovered", collectAnthropicText(events))
 	requireAnthropicBlockLifecycle(t, events)
 
-	var signatures, stopsBefore int
+	var signatures int
+	stopped := make(map[int]bool)
 	for _, event := range events {
 		if event.Type == "content_block_delta" && event.Delta != nil && event.Delta.Type == "signature_delta" {
 			assert.Equal(t, "sig-abc", event.Delta.Signature)
 			signatures++
-			assert.Equal(t, 0, stopsBefore, "signature_delta must precede the thinking block stop")
+			assert.False(t, stopped[*event.Index], "signature_delta must precede its thinking block stop")
 		}
 		if event.Type == "content_block_stop" {
-			stopsBefore++
+			stopped[*event.Index] = true
 		}
 	}
 	assert.Equal(t, 1, signatures, "the thinking signature must survive recovery")
@@ -513,8 +510,8 @@ func TestResponsesEventToAnthropicEvents_RecoversEveryTerminalMessageItem(t *tes
 }
 
 // Text that upstream delivers only on a done event still reaches the client
-// when a tool block is open, which the baseline dropped. The tool block is
-// closed first, so later block indices shift by one.
+// when a tool block is open, which the baseline dropped. The tool block
+// retains its own index until its completion.
 func TestResponsesEventToAnthropicEvents_EmitsDoneTextWhileAToolBlockIsOpen(t *testing.T) {
 	events := feedResponsesEvents(
 		responsesCreated(),
