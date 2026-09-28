@@ -338,7 +338,7 @@ func TestCustomInputSuffixIsRecoveredWithoutAssumingJSON(t *testing.T) {
 	require.JSONEq(t, `{"input":"raw-input"}`, partialJSON)
 }
 
-func TestCustomInputEscapesChunkBoundariesAndDoneOnlyText(t *testing.T) {
+func TestCustomInputEscapesChunkBoundaries(t *testing.T) {
 	state := NewResponsesEventToAnthropicState()
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 0, Item: &ResponsesOutput{Type: "custom_tool_call", Name: "exec"}}, state)
 	var events []AnthropicStreamEvent
@@ -359,6 +359,36 @@ func TestCustomInputEscapesChunkBoundariesAndDoneOnlyText(t *testing.T) {
 	require.Len(t, buffered.Content, 1)
 	require.Equal(t, "tool_use", buffered.Content[0].Type)
 	require.JSONEq(t, partialJSON, string(buffered.Content[0].Input))
+}
+
+func TestCustomDoneOnlyAndTerminalInputAreJSONObjects(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		done func(*ResponsesEventToAnthropicState) []AnthropicStreamEvent
+	}{
+		{"input done", func(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
+			return ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.custom_tool_call_input.done", OutputIndex: 7, Input: "raw<>"}, state)
+		}},
+		{"item done", func(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
+			return ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: 7, Item: &ResponsesOutput{Type: "custom_tool_call", ID: "ctc_7", CallID: "call_7", Input: "raw<>"}}, state)
+		}},
+		{"terminal", func(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
+			return ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.completed", Response: &ResponsesResponse{Status: "completed", Output: []ResponsesOutput{{Type: "custom_tool_call", ID: "ctc_7", CallID: "call_7", Input: "raw<>"}}}}, state)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := NewResponsesEventToAnthropicState()
+			ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.created", Response: &ResponsesResponse{ID: "r"}}, state)
+			ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 7, Item: &ResponsesOutput{Type: "custom_tool_call", ID: "ctc_7", CallID: "call_7", Name: "exec"}}, state)
+			var partialJSON string
+			for _, event := range tc.done(state) {
+				if event.Type == "content_block_delta" {
+					partialJSON += event.Delta.PartialJSON
+				}
+			}
+			require.JSONEq(t, `{"input":"raw<>"}`, partialJSON)
+		})
+	}
 }
 
 func TestReadItemDoneDoesNotReintroduceSanitizedPages(t *testing.T) {
