@@ -2219,6 +2219,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				return nil
 			},
+			AfterLocalPrewarm: func(_ int) {
+				// The synthetic bridge response completed without an upstream turn.
+				// Release initial slots before idling for the next client frame;
+				// AfterTurn would also run usage and scheduler accounting.
+				releaseTurnSlots()
+			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
 				// 每次 attempt 都清 cyber mark；failover 链结束前保留 recorded guard，
 				// 避免同一逻辑 turn 换号后重复落风控。CyberBlocked 必须在 submit 前

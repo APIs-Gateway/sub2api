@@ -264,6 +264,9 @@ type OpenAIWSIngressHooks struct {
 	OnIngressModeResolved func(passthrough bool)
 	BeforeTurn            func(turn int) error
 	BeforeRequest         func(turn int, payload []byte, originalModel string) error
+	// AfterLocalPrewarm releases the connection's initial concurrency slots
+	// after a synthetic HTTP bridge response, without recording usage.
+	AfterLocalPrewarm     func(turn int)
 	AfterTurn             func(turn int, result *OpenAIForwardResult, turnErr error)
 }
 
@@ -3418,6 +3421,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					if writeErr := writeClientMessage(event); writeErr != nil {
 						return fmt.Errorf("write websocket http bridge prewarm response: %w", writeErr)
 					}
+				}
+				if hooks != nil && hooks.AfterLocalPrewarm != nil {
+					hooks.AfterLocalPrewarm(turn)
 				}
 				nextPayload, closed, nextErr := readNextBridgePayload()
 				if nextErr != nil || closed {

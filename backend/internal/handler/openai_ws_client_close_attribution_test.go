@@ -65,6 +65,54 @@ func TestOpenAIResponsesWebSocket_CodexClientRestrictionWritesForbiddenEventWith
 	}
 }
 
+func TestOpenAIResponsesWebSocket_LocalPrewarmReleasesSlotsWhileConnectionStaysOpen(t *testing.T) {
+	cache := &concurrencyCacheMock{
+		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+	}
+	reports := make(chan bool, 1)
+	prewarmDone := make(chan struct{})
+	resumeProxy := make(chan struct{})
+	proxy := func(_ context.Context, _ *gin.Context, _ *coderws.Conn, _ *service.Account, _ string, _ []byte, hooks *service.OpenAIWSIngressHooks) error {
+		if hooks == nil || hooks.AfterLocalPrewarm == nil {
+			return errors.New("local prewarm hook not wired")
+		}
+		hooks.AfterLocalPrewarm(1)
+		close(prewarmDone)
+		<-resumeProxy
+		return service.NewOpenAIWSClientCloseError(coderws.StatusNormalClosure, "done", nil)
+	}
+	h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, cache, proxy, reports, true)
+	handlerDone := make(chan struct{})
+	server := newOpenAIResponsesWebSocketAttributionServerWithDone(t, h, handlerDone)
+	defer server.Close()
+	client := dialAndSendFirstResponseCreate(t, server.URL)
+	defer func() { _ = client.CloseNow() }()
+	select {
+	case <-prewarmDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("local prewarm hook was not called")
+	}
+	require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseAccountCalled))
+	require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseUserCalled))
+	select {
+	case <-handlerDone:
+		t.Fatal("connection ended before waiting for the next turn")
+	default:
+	}
+	select {
+	case <-reports:
+		t.Fatal("local prewarm must not report account schedule result")
+	default:
+	}
+	close(resumeProxy)
+	select {
+	case <-handlerDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("websocket handler did not exit")
+	}
+}
+
 func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures(t *testing.T) {
 	tests := []struct {
 		name        string

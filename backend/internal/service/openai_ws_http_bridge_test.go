@@ -1833,7 +1833,7 @@ func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
 		Credentials: map[string]any{"access_token": "test-token"}, Extra: map[string]any{"responses_websockets_v2_enabled": true},
 		Concurrency: 1, Status: StatusActive, Schedulable: true,
 	}
-	var beforeTurns, beforeRequests, afterTurns []int
+	var beforeTurns, beforeRequests, afterPrewarms, afterTurns []int
 	var hookFailed bool
 	hooks := &OpenAIWSIngressHooks{
 		BeforeTurn: func(turn int) error {
@@ -1843,6 +1843,9 @@ func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
 		BeforeRequest: func(turn int, _ []byte, _ string) error {
 			beforeRequests = append(beforeRequests, turn)
 			return nil
+		},
+		AfterLocalPrewarm: func(turn int) {
+			afterPrewarms = append(afterPrewarms, turn)
 		},
 		AfterTurn: func(turn int, result *OpenAIForwardResult, turnErr error) {
 			if turnErr != nil || result == nil {
@@ -1924,6 +1927,7 @@ func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
 	}
 	require.Equal(t, []int{2, 4, 5}, beforeTurns)
 	require.Equal(t, []int{2, 3, 4, 5}, beforeRequests)
+	require.Equal(t, []int{1, 3}, afterPrewarms)
 	require.Equal(t, []int{2, 4, 5}, afterTurns)
 	require.True(t, hookFailed)
 	require.Len(t, upstream.bodies, 3)
