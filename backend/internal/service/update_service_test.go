@@ -85,11 +85,20 @@ func TestCompareVersionsIgnoresHyphenatedSuffix(t *testing.T) {
 
 type updateServiceChecksumClientStub struct {
 	updateServiceGitHubClientStub
-	checksumData []byte
-	checksumErr  error
+	archiveData   []byte
+	checksumData  []byte
+	checksumErr   error
+	downloadCalls int
+	checksumReads int
+}
+
+func (s *updateServiceChecksumClientStub) DownloadFile(_ context.Context, _, dest string, _ int64) error {
+	s.downloadCalls++
+	return os.WriteFile(dest, s.archiveData, 0o600)
 }
 
 func (s *updateServiceChecksumClientStub) FetchChecksumFile(context.Context, string) ([]byte, error) {
+	s.checksumReads++
 	return s.checksumData, s.checksumErr
 }
 
@@ -115,6 +124,51 @@ func TestUpdateServicePerformUpdateRejectsMissingChecksumBeforeDownload(t *testi
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "checksums.txt")
+}
+
+func TestUpdateServicePerformUpdateRejectsInvalidChecksumURLBeforeDownload(t *testing.T) {
+	client := &updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.2.9"}}
+	svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.1.0", "release")
+	archive := "sub2api_" + svc.getArchiveName() + ".tar.gz"
+	client.release.Assets = []GitHubAsset{
+		{Name: archive, BrowserDownloadURL: "https://github.com/Wei-Shaw/sub2api/releases/download/v0.2.9/" + archive},
+		{Name: "checksums.txt", BrowserDownloadURL: "https://untrusted.example/checksums.txt"},
+	}
+
+	err := svc.PerformUpdate(context.Background())
+
+	require.ErrorContains(t, err, "invalid checksum URL")
+}
+
+func TestUpdateServicePerformUpdateVerifiesArchiveBeforeExtraction(t *testing.T) {
+	archiveData := []byte("not a gzip archive")
+	sum := sha256.Sum256(archiveData)
+	for _, tc := range []struct {
+		name       string
+		checksum   string
+		wantError  string
+	}{
+		{name: "mismatch stops before extraction", checksum: "deadbeef", wantError: "checksum verification failed: checksum mismatch"},
+		{name: "match reaches extraction", checksum: hex.EncodeToString(sum[:]), wantError: "extraction failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &updateServiceChecksumClientStub{archiveData: archiveData}
+			client.release = &GitHubRelease{TagName: "v0.2.9"}
+			svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.1.0", "release")
+			archive := "sub2api_" + svc.getArchiveName() + ".tar.gz"
+			client.release.Assets = []GitHubAsset{
+				{Name: archive, BrowserDownloadURL: "https://github.com/Wei-Shaw/sub2api/releases/download/v0.2.9/" + archive},
+				{Name: "checksums.txt", BrowserDownloadURL: "https://github.com/Wei-Shaw/sub2api/releases/download/v0.2.9/checksums.txt"},
+			}
+			client.checksumData = []byte(tc.checksum + "  " + archive + "\n")
+
+			err := svc.PerformUpdate(context.Background())
+
+			require.ErrorContains(t, err, tc.wantError)
+			require.Equal(t, 1, client.downloadCalls)
+			require.Equal(t, 1, client.checksumReads)
+		})
+	}
 }
 
 func TestUpdateServiceVerifyChecksumRequiresMatchingEntry(t *testing.T) {
