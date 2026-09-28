@@ -3346,7 +3346,9 @@ watch(
     if (!show || !newAccount) {
       return
     }
-    if (!wasShow || newAccount !== previousAccount) {
+    // A list refresh may replace the prop object for the same account while the
+    // administrator is editing. Only a new edit session or account ID resets the form.
+    if (!wasShow || newAccount.id !== previousAccount?.id) {
       syncFormFromAccount(newAccount)
       loadTLSProfiles()
     }

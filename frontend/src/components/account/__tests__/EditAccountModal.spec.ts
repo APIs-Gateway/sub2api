@@ -299,6 +299,58 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('keeps unsaved edits when the parent refreshes the same account', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get<HTMLInputElement>('input[data-tour="edit-account-form-name"]').setValue('Draft name')
+    await wrapper.get('[data-testid="rewrite-to-snapshot"]').trigger('click')
+
+    await wrapper.setProps({
+      account: {
+        ...account,
+        name: 'Server refreshed name',
+        extra: { upstream_model_metadata: { models: {} } }
+      }
+    })
+
+    expect(wrapper.get<HTMLInputElement>('input[data-tour="edit-account-form-name"]').element.value).toBe('Draft name')
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-5.2-2025-12-11')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[0]).toBe(account.id)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.name).toBe('Draft name')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
+      'gpt-5.2-2025-12-11': 'gpt-5.2-2025-12-11'
+    })
+  })
+
+  it('rehydrates the form when switching to a different account ID', async () => {
+    const account = buildAccount()
+    const nextAccount = {
+      ...account,
+      id: 2,
+      name: 'Second account',
+      credentials: {
+        ...account.credentials,
+        model_mapping: { 'gpt-6-sol': 'gpt-6-sol' }
+      }
+    }
+    const wrapper = mountModal(account)
+    await wrapper.get<HTMLInputElement>('input[data-tour="edit-account-form-name"]').setValue('Draft name')
+    await wrapper.get('[data-testid="rewrite-to-snapshot"]').trigger('click')
+
+    await wrapper.setProps({ account: nextAccount })
+
+    expect(wrapper.get<HTMLInputElement>('input[data-tour="edit-account-form-name"]').element.value).toBe('Second account')
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-6-sol')
+  })
+
   it('preserves model mappings when editing the whitelist', async () => {
     const account = buildAccount()
     account.credentials.model_mapping = {
