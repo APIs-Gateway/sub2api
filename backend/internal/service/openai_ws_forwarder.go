@@ -293,6 +293,10 @@ var ErrOpenAIWSPrewarmPayloadInvalid = errors.New("openai ws http bridge prewarm
 // client model that cannot reuse the connection's first-turn billing mapping.
 var ErrOpenAIWSPrewarmLateStart = errors.New("openai ws http bridge prewarm started after upstream turn")
 
+// ErrOpenAIWSPrewarmLocalFailure marks a synthetic-turn preparation or client
+// write failure that happened without contacting an upstream account.
+var ErrOpenAIWSPrewarmLocalFailure = errors.New("openai ws http bridge local prewarm failure")
+
 func checkOpenAIWSHTTPBridgePrewarmBudget(turns int, usedBytes int64, payload []byte) (int64, error) {
 	if turns >= openAIWSHTTPBridgeMaxPrewarmTurns {
 		return 0, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "too many websocket prewarm turns", ErrOpenAIWSPrewarmBudgetExceeded)
@@ -3444,7 +3448,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 				prewarmItems, prewarmItemsExist, extractErr := openAIWSExtractNormalizedInputSequence(currentBridgePayload.payloadRaw)
 				if extractErr != nil {
-					return fmt.Errorf("build websocket http bridge prewarm input: %w", extractErr)
+					return fmt.Errorf("%w: build websocket http bridge prewarm input: %w", ErrOpenAIWSPrewarmLocalFailure, extractErr)
 				}
 				// BeforeRequest enforces the fork's subsequent-turn content audit
 				// and admission gate. Run it before retaining input or tool state;
@@ -3472,17 +3476,17 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
 					state, stateErr := openAIWSHTTPBridgePrewarmToolState(currentBridgePayload.payloadRaw, bridgeToolState)
 					if stateErr != nil {
-						return fmt.Errorf("prepare websocket http bridge prewarm tools: %w", stateErr)
+						return fmt.Errorf("%w: prepare websocket http bridge prewarm tools: %w", ErrOpenAIWSPrewarmLocalFailure, stateErr)
 					}
 					bridgeToolState = state
 				}
 				_, events, buildErr := buildOpenAIWSHTTPBridgePrewarmEvents(prewarmClientModel)
 				if buildErr != nil {
-					return fmt.Errorf("build websocket http bridge prewarm response: %w", buildErr)
+					return fmt.Errorf("%w: build websocket http bridge prewarm response: %w", ErrOpenAIWSPrewarmLocalFailure, buildErr)
 				}
 				for _, event := range events {
 					if writeErr := writeClientMessage(event); writeErr != nil {
-						return fmt.Errorf("write websocket http bridge prewarm response: %w", writeErr)
+						return fmt.Errorf("%w: write websocket http bridge prewarm response: %w", ErrOpenAIWSPrewarmLocalFailure, writeErr)
 					}
 				}
 				if hooks != nil && hooks.AfterLocalPrewarm != nil {

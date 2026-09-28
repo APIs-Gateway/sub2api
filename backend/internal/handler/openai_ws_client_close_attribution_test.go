@@ -137,6 +137,8 @@ func TestOpenAIResponsesWebSocket_ProxyExitAttributionReportsOnlyAccountFailures
 		{name: "prewarm_late_model_change_1008_is_not_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "websocket prewarm model differs from the first turn", service.ErrOpenAIWSPrewarmLateStart)},
 		{name: "prewarm_invalid_followup_json_1008_is_not_reported", proxyErr: fmt.Errorf("%w: %w", service.ErrOpenAIWSPrewarmPayloadInvalid, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json")))},
 		{name: "prewarm_oversized_frame_1009_is_not_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusMessageTooBig, "invalid websocket client frame", fmt.Errorf("%w: frame too big", service.ErrOpenAIWSPrewarmPayloadInvalid))},
+		{name: "prewarm_local_response_write_is_not_reported", proxyErr: fmt.Errorf("%w: write websocket http bridge prewarm response: %w", service.ErrOpenAIWSPrewarmLocalFailure, errors.New("client write failed"))},
+		{name: "prewarm_local_input_prepare_is_not_reported", proxyErr: fmt.Errorf("%w: build websocket http bridge prewarm input: %w", service.ErrOpenAIWSPrewarmLocalFailure, errors.New("invalid input"))},
 		// 同样是 1013/1008，但来自上游（429 忙、握手鉴权失败）的必须照常上报，防止按状态码一刀切。
 		{name: "upstream_busy_1013_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "upstream websocket is busy, please retry later", errors.New("upstream 429")), wantFailure: true},
 		{name: "upstream_auth_1008_is_reported", proxyErr: service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "upstream websocket authentication failed", errors.New("upstream 401")), wantFailure: true},
