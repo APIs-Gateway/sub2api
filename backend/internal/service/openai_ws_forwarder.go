@@ -3323,7 +3323,56 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		// WS connection, so it never needs explicit cleanup and can never
 		// leak into another connection or account's turns.
 		var bridgeToolState openAIWSHTTPBridgeToolState
+		readNextBridgePayload := func() (openAIWSClientPayload, bool, error) {
+			nextClientMessage, readErr := readClientMessage()
+			if readErr != nil {
+				if isOpenAIWSSessionPreempted(ctx) {
+					return openAIWSClientPayload{}, false, errOpenAIWSSessionPreempted
+				}
+				if isOpenAIWSClientDisconnectError(readErr) {
+					closeStatus, closeReason := summarizeOpenAIWSReadCloseError(readErr)
+					logOpenAIWSModeInfo(
+						"ingress_ws_http_bridge_client_closed account_id=%d close_status=%s close_reason=%s",
+						account.ID,
+						closeStatus,
+						truncateOpenAIWSLogValue(closeReason, openAIWSHeaderValueMaxLen),
+					)
+					return openAIWSClientPayload{}, true, nil
+				}
+				return openAIWSClientPayload{}, false, fmt.Errorf("read client websocket request: %w", readErr)
+			}
+			nextPayload, parseErr := parseClientPayload(nextClientMessage)
+			return nextPayload, false, parseErr
+		}
 		for turn := 1; ; turn++ {
+			if isOpenAIWSHTTPBridgePrewarmPayload(currentBridgePayload.payloadRaw) {
+				// Keep the input and turn number so the next real turn can replay
+				// this synthetic response without charging or contacting upstream.
+				nextHistory, historyExists, replayErr := buildOpenAIWSReplayInputSequence(
+					bridgeReplayInput, bridgeReplayInputExists,
+					currentBridgePayload.payloadRaw, currentBridgePayload.previousResponseID != "",
+				)
+				if replayErr != nil {
+					return fmt.Errorf("build websocket http bridge prewarm input: %w", replayErr)
+				}
+				bridgeReplayInput = nextHistory
+				bridgeReplayInputExists = historyExists
+				_, events, buildErr := buildOpenAIWSHTTPBridgePrewarmEvents(currentBridgePayload.originalModel)
+				if buildErr != nil {
+					return fmt.Errorf("build websocket http bridge prewarm response: %w", buildErr)
+				}
+				for _, event := range events {
+					if writeErr := writeClientMessage(event); writeErr != nil {
+						return fmt.Errorf("write websocket http bridge prewarm response: %w", writeErr)
+					}
+				}
+				nextPayload, closed, nextErr := readNextBridgePayload()
+				if nextErr != nil || closed {
+					return nextErr
+				}
+				currentBridgePayload = nextPayload
+				continue
+			}
 			if turn > 1 && hooks != nil && hooks.BeforeRequest != nil {
 				if err := hooks.BeforeRequest(turn, currentBridgePayload.payloadRaw, currentBridgePayload.originalModel); err != nil {
 					return err
@@ -3471,23 +3520,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				ttl := s.openAIWSResponseStickyTTL()
 				logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, stateStore.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
 			}
-			nextClientMessage, readErr := readClientMessage()
-			if readErr != nil {
-				if isOpenAIWSClientDisconnectError(readErr) {
-					closeStatus, closeReason := summarizeOpenAIWSReadCloseError(readErr)
-					logOpenAIWSModeInfo(
-						"ingress_ws_http_bridge_client_closed account_id=%d close_status=%s close_reason=%s",
-						account.ID,
-						closeStatus,
-						truncateOpenAIWSLogValue(closeReason, openAIWSHeaderValueMaxLen),
-					)
-					return nil
-				}
-				return fmt.Errorf("read client websocket request: %w", readErr)
-			}
-			nextPayload, parseErr := parseClientPayload(nextClientMessage)
-			if parseErr != nil {
-				return parseErr
+			nextPayload, closed, nextErr := readNextBridgePayload()
+			if nextErr != nil || closed {
+				return nextErr
 			}
 			currentBridgePayload = nextPayload
 		}

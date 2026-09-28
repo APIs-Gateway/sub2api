@@ -41,6 +41,26 @@ func TestPrepareOpenAIWSHTTPBridgeBodyStripsWSFields(t *testing.T) {
 	require.Equal(t, "hi", gjson.GetBytes(body, "input").String())
 }
 
+func TestOpenAIWSHTTPBridgePrewarmEvents(t *testing.T) {
+	require.False(t, isOpenAIWSHTTPBridgePrewarmPayload([]byte(`{"generate":true}`)))
+	require.False(t, isOpenAIWSHTTPBridgePrewarmPayload([]byte(`{"model":"gpt-5"}`)))
+	require.True(t, isOpenAIWSHTTPBridgePrewarmPayload([]byte(`{"generate":false}`)))
+
+	id, events, err := buildOpenAIWSHTTPBridgePrewarmEvents(" gpt-5.1 ")
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(id, "resp_"))
+	require.Len(t, events, 2)
+	require.Equal(t, "response.created", gjson.GetBytes(events[0], "type").String())
+	require.Equal(t, "in_progress", gjson.GetBytes(events[0], "response.status").String())
+	require.Equal(t, "response.completed", gjson.GetBytes(events[1], "type").String())
+	require.Equal(t, "completed", gjson.GetBytes(events[1], "response.status").String())
+	require.Equal(t, id, gjson.GetBytes(events[0], "response.id").String())
+	require.Equal(t, id, gjson.GetBytes(events[1], "response.id").String())
+	require.Equal(t, "gpt-5.1", gjson.GetBytes(events[1], "response.model").String())
+	require.Equal(t, int64(0), gjson.GetBytes(events[1], "response.usage.total_tokens").Int())
+	require.Empty(t, gjson.GetBytes(events[1], "response.output").Array())
+}
+
 func TestOpenAIWSHTTPBridgeSyntheticFailuresContinueObservedSequence(t *testing.T) {
 	sequence := openAIResponsesSequenceTracker{}
 	sequence.Observe([]byte(`{"type":"response.output_text.delta","sequence_number":11,"delta":"partial"}`))
@@ -1738,6 +1758,138 @@ func TestOpenAIWSHTTPBridgeFullCustomToolHistoryWithoutPreviousResponseIDDoesNot
 		require.Equal(t, "custom_tool_call_output", input[1].Get("type").String())
 		require.Equal(t, "call_1", input[1].Get("call_id").String())
 	}
+}
+
+func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	completed := func(id string) string {
+		return `data: {"type":"response.completed","response":{"id":"` + id + `","model":"gpt-5.1","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"
+	}
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed("resp_real_1")))},
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed("resp_real_2")))},
+	}}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.HTTPBridgeEnabled = true
+	cfg.Gateway.OpenAIWS.HTTPBridgeThresholdBytes = 1
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	svc := &OpenAIGatewayService{
+		cfg: cfg, httpUpstream: upstream, cache: &stubGatewayCache{},
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(),
+	}
+	account := &Account{
+		ID: 9004, Name: "oauth-prewarm", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "test-token"}, Extra: map[string]any{"responses_websockets_v2_enabled": true},
+		Concurrency: 1, Status: StatusActive, Schedulable: true,
+	}
+	var beforeTurns, beforeRequests, afterTurns []int
+	var hookFailed bool
+	hooks := &OpenAIWSIngressHooks{
+		BeforeTurn: func(turn int) error {
+			beforeTurns = append(beforeTurns, turn)
+			return nil
+		},
+		BeforeRequest: func(turn int, _ []byte, _ string) error {
+			beforeRequests = append(beforeRequests, turn)
+			return nil
+		},
+		AfterTurn: func(turn int, result *OpenAIForwardResult, turnErr error) {
+			if turnErr != nil || result == nil {
+				hookFailed = true
+			}
+			afterTurns = append(afterTurns, turn)
+		},
+	}
+	errCh := make(chan error, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+		_, firstMessage, err := conn.Read(readCtx)
+		cancelRead()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		rec := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(rec)
+		ginCtx.Request = r.Clone(r.Context())
+		errCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "test-token", firstMessage, hooks)
+	}))
+	defer wsServer.Close()
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+	write := func(payload string) {
+		writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+		require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, []byte(payload)))
+		cancelWrite()
+	}
+	read := func() []byte {
+		readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+		_, event, readErr := clientConn.Read(readCtx)
+		cancelRead()
+		require.NoError(t, readErr)
+		return event
+	}
+	readPrewarm := func() string {
+		created, done := read(), read()
+		require.Equal(t, "response.created", gjson.GetBytes(created, "type").String())
+		require.Equal(t, "response.completed", gjson.GetBytes(done, "type").String())
+		require.Equal(t, "completed", gjson.GetBytes(done, "response.status").String())
+		require.Equal(t, "gpt-5.1", gjson.GetBytes(done, "response.model").String())
+		require.Equal(t, int64(0), gjson.GetBytes(done, "response.usage.total_tokens").Int())
+		id := gjson.GetBytes(done, "response.id").String()
+		require.True(t, strings.HasPrefix(id, "resp_"))
+		require.Equal(t, id, gjson.GetBytes(created, "response.id").String())
+		return id
+	}
+
+	write(`{"type":"response.create","model":"gpt-5.1","instructions":"sys","generate":false,"input":[]}`)
+	firstPrewarmID := readPrewarm()
+	write(`{"type":"response.create","model":"gpt-5.1","instructions":"sys","previous_response_id":"` + firstPrewarmID + `","input":[{"role":"user","content":"hello"}]}`)
+	require.Equal(t, "response.completed", gjson.GetBytes(read(), "type").String())
+	write(`{"type":"response.create","model":"gpt-5.1","instructions":"sys","generate":false,"previous_response_id":"resp_real_1","input":[{"role":"user","content":"warm"}]}`)
+	secondPrewarmID := readPrewarm()
+	require.NotEqual(t, firstPrewarmID, secondPrewarmID)
+	write(`{"type":"response.create","model":"gpt-5.1","instructions":"sys","previous_response_id":"` + secondPrewarmID + `","input":[{"role":"user","content":"go"}]}`)
+	require.Equal(t, "response.completed", gjson.GetBytes(read(), "type").String())
+	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
+	select {
+	case proxyErr := <-errCh:
+		require.NoError(t, proxyErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for websocket bridge proxy to finish")
+	}
+	require.Equal(t, []int{2, 4}, beforeTurns)
+	require.Equal(t, []int{2, 4}, beforeRequests)
+	require.Equal(t, []int{2, 4}, afterTurns)
+	require.False(t, hookFailed)
+	require.Len(t, upstream.bodies, 2)
+	for _, body := range upstream.bodies {
+		require.False(t, gjson.GetBytes(body, "generate").Exists())
+		require.False(t, gjson.GetBytes(body, "previous_response_id").Exists())
+	}
+	firstInput := gjson.GetBytes(upstream.bodies[0], "input").Array()
+	require.Len(t, firstInput, 1)
+	require.Equal(t, "hello", firstInput[0].Get("content").String())
+	secondInput := gjson.GetBytes(upstream.bodies[1], "input").Array()
+	require.Len(t, secondInput, 3)
+	require.Equal(t, "hello", secondInput[0].Get("content").String())
+	require.Equal(t, "warm", secondInput[1].Get("content").String())
+	require.Equal(t, "go", secondInput[2].Get("content").String())
 }
 
 func TestOpenAIWSHTTPBridgeObjectToolOutputWithoutPreviousResponseIDReplaysMatchingCall(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 )
 
@@ -197,6 +198,34 @@ func prepareOpenAIWSHTTPBridgeBody(payload []byte) ([]byte, error) {
 	delete(body, "previous_response_id")
 	body["stream"] = true
 	return json.Marshal(body)
+}
+
+// HTTP Responses has no generate=false prewarm semantics. Answer it locally
+// before opening an upstream turn or invoking any billing/concurrency hooks.
+func isOpenAIWSHTTPBridgePrewarmPayload(payload []byte) bool {
+	return gjson.GetBytes(payload, "generate").Type == gjson.False
+}
+
+func buildOpenAIWSHTTPBridgePrewarmEvents(model string) (string, [][]byte, error) {
+	responseID := "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	response := map[string]any{
+		"id": responseID, "object": "response", "created_at": time.Now().Unix(),
+		"status": "in_progress", "output": []any{},
+	}
+	if model = strings.TrimSpace(model); model != "" {
+		response["model"] = model
+	}
+	created, err := json.Marshal(map[string]any{"type": "response.created", "sequence_number": 0, "response": response})
+	if err != nil {
+		return "", nil, err
+	}
+	response["status"] = "completed"
+	response["usage"] = map[string]any{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+	completed, err := json.Marshal(map[string]any{"type": "response.completed", "sequence_number": 1, "response": response})
+	if err != nil {
+		return "", nil, err
+	}
+	return responseID, [][]byte{created, completed}, nil
 }
 
 type openAIWSToolCallReplayCollector struct {
