@@ -135,6 +135,20 @@ func TestModelDowngradeCandidateRequiresResponsesCapability(t *testing.T) {
 	require.True(t, wsFilter(ctx, candidate, &groupID))
 }
 
+func TestModelDowngradeCandidateUsesSelectorModelAfterChannelAlias(t *testing.T) {
+	ctx := WithOpenAIForwardModel(context.Background(), "gpt-6-astra-channel", false)
+	svc := &OpenAIGatewayService{}
+	filter := svc.modelDowngradeCandidateFilter(ctx, "gpt-6-astra", "/v1/chat/completions", OpenAIUpstreamTransportAny)
+	candidate := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{"model_mapping": map[string]any{"gpt-6-astra": "gpt-6-astra"}},
+		Extra: map[string]any{},
+	}
+	require.False(t, filter(ctx, candidate, nil), "the original client model is not the selector's channel alias")
+	candidate.Credentials["model_mapping"] = map[string]any{"gpt-6-astra-channel": "gpt-6-astra"}
+	require.True(t, filter(ctx, candidate, nil))
+}
+
 func TestOpenAIModelRateLimitUsesForwardedModelKey(t *testing.T) {
 	reset := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	limit := map[string]any{"rate_limit_reset_at": reset, "reason": ModelDowngradeGuardReason}
