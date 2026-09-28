@@ -242,6 +242,25 @@ func openAIWSHTTPBridgePrewarmToolState(payload []byte, previous openAIWSHTTPBri
 	return openAIWSHTTPBridgeToolState{ClientMapping: mapping, LoweredTools: loweredTools}, nil
 }
 
+func openAIWSHTTPBridgeBodyForAudit(req *http.Request, body []byte) ([]byte, error) {
+	if req.ContentLength == int64(len(body)) {
+		return body, nil
+	}
+	if req.GetBody == nil {
+		return nil, errors.New("websocket http bridge request body cannot be replayed for audit")
+	}
+	auditReader, err := req.GetBody()
+	if err != nil {
+		return nil, fmt.Errorf("read websocket http bridge request body for audit: %w", err)
+	}
+	auditBody, err := io.ReadAll(auditReader)
+	_ = auditReader.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read websocket http bridge request body for audit: %w", err)
+	}
+	return auditBody, nil
+}
+
 type openAIWSToolCallReplayCollector struct {
 	items    []json.RawMessage
 	seen     map[string]struct{}
@@ -451,20 +470,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		// The request may be rewritten by account tool and Lite handling. Read
 		// the final HTTP body through GetBody only when Lite changed its length;
 		// otherwise the request still shares body's bytes.
-		auditBody := body
-		if upstreamReq.ContentLength != int64(len(body)) {
-			if upstreamReq.GetBody == nil {
-				return nil, errors.New("websocket http bridge request body cannot be replayed for audit")
-			}
-			auditReader, bodyErr := upstreamReq.GetBody()
-			if bodyErr != nil {
-				return nil, fmt.Errorf("read websocket http bridge request body for audit: %w", bodyErr)
-			}
-			auditBody, bodyErr = io.ReadAll(auditReader)
-			_ = auditReader.Close()
-			if bodyErr != nil {
-				return nil, fmt.Errorf("read websocket http bridge request body for audit: %w", bodyErr)
-			}
+		auditBody, bodyErr := openAIWSHTTPBridgeBodyForAudit(upstreamReq, body)
+		if bodyErr != nil {
+			return nil, bodyErr
 		}
 		beforeUpstream[0](auditBody)
 	}
