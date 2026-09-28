@@ -595,7 +595,9 @@ func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_ExplicitFunctionToo
 	require.Equal(t, body, adapted)
 	require.Empty(t, mapping)
 	require.Len(t, loweredTools, 1)
-	require.Equal(t, "lookup", loweredTools[0].(map[string]any)["name"])
+	loweredTool, ok := loweredTools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "lookup", loweredTool["name"])
 }
 
 func TestAdaptOpenAIResponsesClientToolsWithInheritedMapping_NoPreviousStateLeavesOmittedToolsBodyUnchanged(t *testing.T) {
