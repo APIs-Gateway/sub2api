@@ -263,6 +263,43 @@ func TestAccountHandlerGetAvailableModels_AntigravityEmptyMappingTargets(t *test
 	}
 }
 
+func TestAccountHandlerGetAvailableModels_AntigravityEmptyMappingKeys(t *testing.T) {
+	for _, key := range []string{"", "   "} {
+		t.Run("key="+key, func(t *testing.T) {
+			svc := &availableModelsAdminService{
+				stubAdminService: newStubAdminService(),
+				account: service.Account{
+					ID:       50,
+					Platform: service.PlatformAntigravity,
+					Type:     service.AccountTypeOAuth,
+					Status:   service.StatusActive,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{key: "claude-sonnet-4-6"},
+					},
+				},
+			}
+			router := setupAvailableModelsRouter(svc)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/50/models", nil)
+			router.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var resp struct {
+				Data []struct {
+					ID string `json:"id"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			ids := make([]string, 0, len(resp.Data))
+			for _, model := range resp.Data {
+				ids = append(ids, model.ID)
+			}
+			require.NotContains(t, ids, "claude-opus-4-6", "malformed mapping is still configured")
+			require.NotContains(t, ids, key, "blank alias is not selectable")
+			require.Contains(t, ids, "gemini-3.6-flash", "implicit passthrough remains selectable")
+		})
+	}
+}
+
 func TestAccountHandlerGetAvailableModels_AntigravityWildcardAndDefaultCatalog(t *testing.T) {
 	account := service.Account{
 		ID:       47,

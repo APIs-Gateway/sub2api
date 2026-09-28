@@ -2092,8 +2092,8 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		// Without an explicit mapping, retain the legacy full catalog.
 		rawMapping, _ := account.Credentials["model_mapping"].(map[string]any)
 		hasExplicitMapping := false
-		for modelID, target := range rawMapping {
-			if _, ok := target.(string); modelID != "" && ok {
+		for _, target := range rawMapping {
+			if _, ok := target.(string); ok {
 				hasExplicitMapping = true
 				break
 			}
@@ -2115,7 +2115,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		// Include exact custom aliases, but never expose wildcard patterns as IDs.
 		var aliases []string
 		for modelID := range account.GetModelMapping() {
-			if modelID != "" && !strings.Contains(modelID, "*") && !seen[modelID] && canTestAntigravityMappedModel(account, modelID) {
+			if strings.TrimSpace(modelID) != "" && !strings.Contains(modelID, "*") && !seen[modelID] && canTestAntigravityMappedModel(account, modelID) {
 				aliases = append(aliases, modelID)
 			}
 		}
