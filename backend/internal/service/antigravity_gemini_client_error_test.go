@@ -94,6 +94,19 @@ func TestForwardGeminiFailoverKeepsRawContextWithoutClientWrite(t *testing.T) {
 	require.ErrorAs(t, err, &failover)
 	require.Equal(t, http.StatusForbidden, failover.StatusCode)
 	require.Equal(t, upstream, failover.ResponseBody)
+	require.True(t, failover.RedactClientMessage)
+	require.Empty(t, writer.Body.String())
+	require.False(t, IsResponseCommitted(c))
+}
+
+func TestForwardGeminiProjectConfigRetryKeepsRawContextMarkedSensitive(t *testing.T) {
+	upstream := []byte(`{"error":{"code":400,"message":"invalid project resource name projects/123456789 for pool-sa@internal.example.com"}}`)
+	writer, c, err := forwardAntigravityGeminiErrorForTest(t, http.StatusBadRequest, upstream)
+	var failover *UpstreamFailoverError
+	require.ErrorAs(t, err, &failover)
+	require.True(t, failover.RetryableOnSameAccount)
+	require.True(t, failover.RedactClientMessage)
+	require.Equal(t, upstream, failover.ResponseBody)
 	require.Empty(t, writer.Body.String())
 	require.False(t, IsResponseCommitted(c))
 }

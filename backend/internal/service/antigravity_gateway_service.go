@@ -2595,7 +2595,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
 			})
-			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: unwrappedForOps, RetryableOnSameAccount: true}
+			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: unwrappedForOps, RedactClientMessage: true, RetryableOnSameAccount: true}
 		}
 
 		if s.shouldFailoverUpstreamError(account, resp.StatusCode) {
@@ -2609,7 +2609,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
 			})
-			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: unwrappedForOps}
+			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: unwrappedForOps, RedactClientMessage: true}
 		}
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
@@ -2625,9 +2625,10 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		MarkResponseCommitted(c)
 		// Upstream messages and details can contain pool project IDs and service
 		// account identities. Keep them in Ops, but return only fixed client text.
+		_, _, safeMessage, _ := MapUpstreamErrorDefault(resp.StatusCode)
 		c.JSON(resp.StatusCode, gin.H{"error": gin.H{
 			"code":    resp.StatusCode,
-			"message": upstreamClientMessageForStatus(resp.StatusCode),
+			"message": safeMessage,
 			"status":  googleapi.HTTPStatusToGoogleStatus(resp.StatusCode),
 		}})
 		return nil, fmt.Errorf("antigravity upstream error: %d", resp.StatusCode)

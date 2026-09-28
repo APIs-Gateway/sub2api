@@ -110,6 +110,20 @@ func MapUpstreamErrorDefault(upstreamStatus int) (status int, errType, msg strin
 // 顺序:① OpenAI 静默拒绝特判 → ② 记录真实上游状态(ops/A2 归因依赖)→ ③ 透传规则命中按规则
 // → ④ 默认映射(请求形 4xx 保留状态码但不默认暴露上游 body)。各入口拿到 (status, errType, message) 后用自己的平台 writer 写出。
 func ResolveUpstreamErrorResponse(c *gin.Context, platform string, upstreamStatus int, responseBody []byte) (status int, errType, message string) {
+	return resolveUpstreamErrorResponse(c, platform, upstreamStatus, responseBody, false)
+}
+
+// ResolveUpstreamFailoverErrorResponse keeps the raw body available to Ops and
+// passthrough rule matching while enforcing a safe client message for marked
+// failover errors, such as Antigravity Gemini errors containing pool identity.
+func ResolveUpstreamFailoverErrorResponse(c *gin.Context, platform string, failoverErr *UpstreamFailoverError) (status int, errType, message string) {
+	if failoverErr == nil {
+		return ResolveUpstreamErrorResponse(c, platform, http.StatusBadGateway, nil)
+	}
+	return resolveUpstreamErrorResponse(c, platform, failoverErr.StatusCode, failoverErr.ResponseBody, failoverErr.RedactClientMessage)
+}
+
+func resolveUpstreamErrorResponse(c *gin.Context, platform string, upstreamStatus int, responseBody []byte, redactClientMessage bool) (status int, errType, message string) {
 	// ① 静默拒绝:保留既有 502 + 客户端友好文案,不进透传。
 	if IsOpenAISilentRefusalErrorBody(responseBody) {
 		SetOpsUpstreamError(c, upstreamStatus, OpenAISilentRefusalClientMessage(), "")
@@ -134,6 +148,9 @@ func ResolveUpstreamErrorResponse(c *gin.Context, platform string, upstreamStatu
 				respCode = *rule.ResponseCode
 			}
 			msg := sanitizeClientVisibleUpstreamMessage(upstreamMsg)
+			if redactClientMessage {
+				_, _, msg, _ = MapUpstreamErrorDefault(upstreamStatus)
+			}
 			if !rule.PassthroughBody && rule.CustomMessage != nil {
 				msg = *rule.CustomMessage
 			}
@@ -146,7 +163,7 @@ func ResolveUpstreamErrorResponse(c *gin.Context, platform string, upstreamStatu
 
 	// ④ 默认映射:请求形 4xx 保留真实状态码 + 安全文案,其余保留 502/429/503。
 	status, errType, message, passthrough := MapUpstreamErrorDefault(upstreamStatus)
-	if passthrough || isOpenAIExhaustedModelNotFound400(platform, upstreamStatus, responseBody) {
+	if !redactClientMessage && (passthrough || isOpenAIExhaustedModelNotFound400(platform, upstreamStatus, responseBody)) {
 		fallback := message
 		message = sanitizeClientVisibleUpstreamMessage(upstreamMsg)
 		if strings.TrimSpace(message) == "" {

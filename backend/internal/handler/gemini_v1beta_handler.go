@@ -676,7 +676,7 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 	}
 
 	// 走共享的「上游错误 → 对外响应」策略(issue #16 Part B);Gemini 输出无 errType,取 (status, message)。
-	status, _, message := service.ResolveUpstreamErrorResponse(c, service.PlatformGemini, failoverErr.StatusCode, failoverErr.ResponseBody)
+	status, _, message := service.ResolveUpstreamFailoverErrorResponse(c, service.PlatformGemini, failoverErr)
 	googleError(c, status, message)
 }
 

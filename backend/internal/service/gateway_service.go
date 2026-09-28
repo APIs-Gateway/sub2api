@@ -754,6 +754,7 @@ type UpstreamFailoverError struct {
 	StatusCode                      int
 	ResponseBody                    []byte      // 上游响应体，用于错误透传规则匹配
 	ResponseHeaders                 http.Header // 上游响应头，用于透传 cf-ray/cf-mitigated/content-type 等诊断信息
+	RedactClientMessage             bool        // 规则匹配和 Ops 仍读原始 body，但客户端不得回显其 message
 	OpenAIImagesInsufficientBalance bool        // 图片上游结构化余额错误：换号耗尽后保留机器可读原因
 	ForceCacheBilling               bool        // Antigravity 粘性会话切换时设为 true
 	RetryableOnSameAccount          bool        // 临时性错误（如 Google 间歇性 400、空响应），应在同一账号上重试 N 次再切换
