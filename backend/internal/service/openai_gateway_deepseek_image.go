@@ -47,14 +47,11 @@ func aliasDeepSeekResponsesInputImages(body []byte) []byte {
 		var didChange bool
 		updated, didChange = aliasDeepSeekImagePartAtPath(updated, itemPath, item)
 		changed = changed || didChange
-		for _, field := range []string{"content", "output"} {
-			parts := item.Get(field)
-			if !parts.IsArray() {
-				continue
-			}
+		parts := item.Get("content")
+		if parts.IsArray() {
 			partIndex := 0
 			parts.ForEach(func(_, part gjson.Result) bool {
-				path := itemPath + "." + field + "." + strconv.Itoa(partIndex)
+				path := itemPath + ".content." + strconv.Itoa(partIndex)
 				partIndex++
 				updated, didChange = aliasDeepSeekImagePartAtPath(updated, path, part)
 				changed = changed || didChange
@@ -103,14 +100,12 @@ func aliasDeepSeekImagePartAtPath(body []byte, path string, part gjson.Result) (
 func deepSeekImageURL(part gjson.Result) string {
 	for _, field := range []string{"url", "image_url", "image"} {
 		value := part.Get(field)
-		if value.Type == gjson.String {
-			if raw := strings.TrimSpace(value.String()); raw != "" {
-				return raw
-			}
+		if raw := deepSeekJSONString(value); raw != "" {
+			return raw
 		}
 		if value.IsObject() {
 			for _, nested := range []string{"url", "image_url"} {
-				if raw := strings.TrimSpace(value.Get(nested).String()); raw != "" {
+				if raw := deepSeekJSONString(value.Get(nested)); raw != "" {
 					return raw
 				}
 			}
@@ -120,19 +115,26 @@ func deepSeekImageURL(part gjson.Result) string {
 	if !source.IsObject() {
 		return ""
 	}
-	if raw := strings.TrimSpace(source.Get("url").String()); raw != "" {
+	if raw := deepSeekJSONString(source.Get("url")); raw != "" {
 		return raw
 	}
-	data := strings.TrimSpace(source.Get("data").String())
+	data := deepSeekJSONString(source.Get("data"))
 	if data == "" {
 		return ""
 	}
 	if strings.HasPrefix(strings.ToLower(data), "data:") {
 		return data
 	}
-	mediaType := strings.TrimSpace(source.Get("media_type").String())
+	mediaType := deepSeekJSONString(source.Get("media_type"))
 	if mediaType == "" {
 		mediaType = "image/png"
 	}
 	return "data:" + mediaType + ";base64," + data
+}
+
+func deepSeekJSONString(value gjson.Result) string {
+	if value.Type != gjson.String {
+		return ""
+	}
+	return strings.TrimSpace(value.String())
 }

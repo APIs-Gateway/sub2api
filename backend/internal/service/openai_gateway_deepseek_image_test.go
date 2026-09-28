@@ -49,18 +49,28 @@ func TestAliasDeepSeekResponsesInputImages(t *testing.T) {
 			imagePath: "input.0.content.0", wantURL: dataURI,
 		},
 		{
-			name:      "tool output image",
-			body:      `{"input":[{"type":"function_call_output","call_id":"call_image","output":[{"type":"input_image","image_url":"` + dataURI + `"}]}]}`,
-			imagePath: "input.0.output.0", wantURL: dataURI,
-		},
-		{
 			name:      "file id only",
 			body:      `{"input":[{"type":"message","content":[{"type":"input_image","file_id":"file-123"}]}]}`,
 			imagePath: "input.0.content.0", wantUnchanged: true,
 		},
 		{
+			name:          "unlifted tool output is outside this adapter",
+			body:          `{"input":[{"type":"function_call_output","call_id":"call_image","output":[{"type":"input_image","image_url":"` + dataURI + `"}]}]}`,
+			wantUnchanged: true,
+		},
+		{
 			name:          "already aliased",
 			body:          `{"input":[{"type":"message","content":[{"type":"input_image","image_url":"` + dataURI + `","url":"` + dataURI + `"}]}]}`,
+			wantUnchanged: true,
+		},
+		{
+			name:          "invalid nested URL is not fabricated",
+			body:          `{"input":[{"type":"message","content":[{"type":"input_image","image_url":{"url":123}}]}]}`,
+			wantUnchanged: true,
+		},
+		{
+			name:          "invalid source data is not fabricated",
+			body:          `{"input":[{"type":"message","content":[{"type":"image","source":{"media_type":"image/png","data":123}}]}]}`,
 			wantUnchanged: true,
 		},
 		{
