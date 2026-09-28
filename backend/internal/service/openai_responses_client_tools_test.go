@@ -291,19 +291,19 @@ func TestOpenAIForward_NativeResponsesLiteToolsRestoreStreamingCall(t *testing.T
 		{name: "missing Content-Type"},
 		{name: "mislabeled SSE", contentType: "application/json"},
 	} {
-			t.Run(tc.name, func(t *testing.T) {
-				recorder := httptest.NewRecorder()
-				c, _ := gin.CreateTestContext(recorder)
-				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-				c.Request.Header.Set(responsesLiteHeader, "true")
-				SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-				headers := make(http.Header)
-				if tc.contentType != "" {
-					headers.Set("Content-Type", tc.contentType)
-				}
-				upstream := &httpUpstreamRecorder{resp: &http.Response{
-					StatusCode: http.StatusOK,
-					Header:     headers,
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			c.Request.Header.Set(responsesLiteHeader, "true")
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			headers := make(http.Header)
+			if tc.contentType != "" {
+				headers.Set("Content-Type", tc.contentType)
+			}
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     headers,
 				Body:       io.NopCloser(strings.NewReader(sse)),
 			}}
 			svc := openAIClientToolsTestService(upstream)
