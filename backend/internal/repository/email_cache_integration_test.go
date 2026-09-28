@@ -4,6 +4,8 @@ package repository
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -85,6 +87,43 @@ func (s *EmailCacheSuite) TestGetVerificationCode_JSONCorruption() {
 	_, err := s.cache.GetVerificationCode(s.ctx, "corrupted@example.com")
 	require.Error(s.T(), err, "expected error for corrupted JSON")
 	require.False(s.T(), errors.Is(err, redis.Nil), "expected decoding error, not redis.Nil")
+}
+
+func (s *EmailCacheSuite) TestLegacyAttemptsReserveAgainstStoredJSONOnRedis() {
+	key := "invite:legacy-atomic@example.com"
+	require.NoError(s.T(), s.rdb.Set(s.ctx, verifyCodeKey(key), `{"Code":"123456","Attempts":4}`, time.Minute).Err())
+	n, err := s.cache.IncrVerificationCodeAttempts(s.ctx, key)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 5, n)
+	n, err = s.cache.IncrVerificationCodeAttempts(s.ctx, key)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 6, n)
+	data, err := s.cache.GetVerificationCode(s.ctx, key)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 6, data.Attempts)
+}
+
+func (s *EmailCacheSuite) TestResetTokenAtomicConsumeOnRedis() {
+	email := "reset-atomic@example.com"
+	require.NoError(s.T(), s.cache.SetPasswordResetToken(s.ctx, email, &service.PasswordResetTokenData{Token: "stored-hash"}, time.Minute))
+	var winners atomic.Int32
+	var workers sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			ok, err := s.cache.ConsumePasswordResetToken(s.ctx, email, "stored-hash")
+			if err != nil {
+				s.T().Errorf("consume reset token: %v", err)
+				return
+			}
+			if ok {
+				winners.Add(1)
+			}
+		}()
+	}
+	workers.Wait()
+	require.Equal(s.T(), int32(1), winners.Load())
 }
 
 func TestEmailCacheSuite(t *testing.T) {
