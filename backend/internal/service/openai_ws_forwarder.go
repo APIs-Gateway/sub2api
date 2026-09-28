@@ -3391,6 +3391,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 				if prewarmTurns > 0 {
 					closeStatus := coderws.CloseStatus(readErr)
+					if errors.Is(readErr, coderws.ErrMessageTooBig) {
+						closeStatus = coderws.StatusMessageTooBig
+					}
 					if closeStatus == -1 {
 						closeStatus = coderws.StatusPolicyViolation
 					}

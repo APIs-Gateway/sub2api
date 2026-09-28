@@ -1807,7 +1807,7 @@ func TestOpenAIWSHTTPBridgeFullCustomToolHistoryWithoutPreviousResponseIDDoesNot
 func TestOpenAIWSHTTPBridgeAnswersPrewarmLocallyAndReplaysInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	completed := func(id string) string {
-		return `data: {"type":"response.completed","response":{"id":"` + id + `","model":"gpt-5.1","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"
+		return `data: {"type":"response.completed","response":{"id":"` + id + `","model":"gpt-5.4","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"
 	}
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
 		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed("resp_real_1")))},
@@ -2132,7 +2132,7 @@ func TestOpenAIWSHTTPBridgeRejectsPrewarmStartedAfterModelRotation(t *testing.T)
 			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"" + id + "\",\"model\":\"" + model + "\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
 	}
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
-		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed("resp_a", "gpt-5.1")))},
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed("resp_a", "gpt-5.4")))},
 		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed("resp_b", "gpt-5.6-sol")))},
 	}}
 	svc := &OpenAIGatewayService{
