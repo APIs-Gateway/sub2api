@@ -500,16 +500,20 @@ func (s *userHandlerEmailCacheStub) SetPasswordResetEmailCooldown(context.Contex
 	return nil
 }
 
-func (s *userHandlerEmailCacheStub) RestorePasswordResetToken(context.Context, string, string, *service.PasswordResetTokenData, time.Duration) error {
+func (s *userHandlerEmailCacheStub) StagePasswordResetToken(context.Context, string, string, *service.PasswordResetTokenData, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *userHandlerEmailCacheStub) PromotePasswordResetToken(context.Context, string, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *userHandlerEmailCacheStub) DiscardPendingPasswordResetToken(context.Context, string, string) error {
 	return nil
 }
 
 func (s *userHandlerEmailCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
 	return true, nil
-}
-
-func (s *userHandlerEmailCacheStub) FinishPasswordResetEmailCooldown(context.Context, string, string, time.Duration) error {
-	return nil
 }
 
 func (s *userHandlerEmailCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {

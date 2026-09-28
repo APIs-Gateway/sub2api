@@ -844,13 +844,8 @@ func (s *emailBindCacheStub) VerifyVerificationCode(_ context.Context, _ string,
 	if s.data.Attempts >= limit {
 		return service.VerificationCodeMaxed, nil
 	}
-	s.data.Attempts++
 	if s.data.Code == code {
-		s.data = nil
 		return service.VerificationCodeValid, nil
-	}
-	if s.data.Attempts >= limit {
-		return service.VerificationCodeMaxed, nil
 	}
 	return service.VerificationCodeInvalid, nil
 }
@@ -891,16 +886,20 @@ func (s *emailBindCacheStub) SetPasswordResetEmailCooldown(context.Context, stri
 	return nil
 }
 
-func (s *emailBindCacheStub) RestorePasswordResetToken(context.Context, string, string, *service.PasswordResetTokenData, time.Duration) error {
+func (s *emailBindCacheStub) StagePasswordResetToken(context.Context, string, string, *service.PasswordResetTokenData, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailBindCacheStub) PromotePasswordResetToken(context.Context, string, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailBindCacheStub) DiscardPendingPasswordResetToken(context.Context, string, string) error {
 	return nil
 }
 
 func (s *emailBindCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
 	return true, nil
-}
-
-func (s *emailBindCacheStub) FinishPasswordResetEmailCooldown(context.Context, string, string, time.Duration) error {
-	return nil
 }
 
 func (s *emailBindCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {

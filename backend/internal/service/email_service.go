@@ -21,7 +21,6 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -32,6 +31,7 @@ var (
 
 	// Password reset errors
 	ErrInvalidResetToken = infraerrors.BadRequest("INVALID_RESET_TOKEN", "invalid or expired password reset token")
+	errPasswordResetEmailCooldown = errors.New("password reset email already in progress or cooling down")
 )
 
 // EmailCache defines cache operations for email service
@@ -54,14 +54,15 @@ type EmailCache interface {
 	SetPasswordResetToken(ctx context.Context, email string, data *PasswordResetTokenData, ttl time.Duration) error
 	DeletePasswordResetToken(ctx context.Context, email string) error
 	ConsumePasswordResetToken(ctx context.Context, email, tokenHash string) (bool, error)
-	RestorePasswordResetToken(ctx context.Context, email, failedHash string, previous *PasswordResetTokenData, remaining time.Duration) error
+	StagePasswordResetToken(ctx context.Context, email, owner string, data *PasswordResetTokenData, ttl time.Duration) (bool, error)
+	PromotePasswordResetToken(ctx context.Context, email, owner, tokenHash string, cooldown time.Duration) (bool, error)
+	DiscardPendingPasswordResetToken(ctx context.Context, email, tokenHash string) error
 
 	// Password reset email cooldown methods
 	// Returns true if in cooldown period (email was sent recently)
 	IsPasswordResetEmailInCooldown(ctx context.Context, email string) bool
 	SetPasswordResetEmailCooldown(ctx context.Context, email string, ttl time.Duration) error
 	ReservePasswordResetEmailCooldown(ctx context.Context, email, owner string, ttl time.Duration) (bool, error)
-	FinishPasswordResetEmailCooldown(ctx context.Context, email, owner string, ttl time.Duration) error
 	ReleasePasswordResetEmailCooldown(ctx context.Context, email, owner string) error
 
 	// Notify code rate limiting per user
@@ -587,34 +588,49 @@ func (s *EmailService) GeneratePasswordResetToken() (string, error) {
 
 // SendPasswordResetEmail sends a password reset email with a reset link
 func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteName, resetURL string, locale ...string) (sendErr error) {
-	// A stored hash cannot be resent. Each new email replaces the previous link;
-	// the queued-mail path keeps its existing 30-second resend cooldown.
-	previous, err := s.cache.GetPasswordResetToken(ctx, email)
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("read previous reset token: %w", err)
-	}
-	token, err := s.GeneratePasswordResetToken()
+	// Both synchronous and queued callers share the same per-email reservation.
+	// The active token remains usable while this email is being delivered.
+	owner, err := s.GeneratePasswordResetToken()
 	if err != nil {
-		return fmt.Errorf("generate token: %w", err)
+		return fmt.Errorf("generate cooldown owner: %w", err)
 	}
-	data := &PasswordResetTokenData{Token: hashPasswordResetToken(token), CreatedAt: time.Now()}
-	if err := s.cache.SetPasswordResetToken(ctx, email, data, passwordResetTokenTTL); err != nil {
-		return fmt.Errorf("save reset token: %w", err)
+	reserved, err := s.cache.ReservePasswordResetEmailCooldown(ctx, email, owner, 5*time.Minute)
+	if err != nil {
+		return fmt.Errorf("reserve password reset email: %w", err)
 	}
+	if !reserved {
+		return errPasswordResetEmailCooldown
+	}
+	var stagedHash string
 	defer func() {
 		if sendErr == nil {
 			return
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
-		var previousRemaining time.Duration
-		if previous != nil {
-			previousRemaining = time.Until(previous.CreatedAt.Add(passwordResetTokenTTL))
+		if stagedHash != "" {
+			if err := s.cache.DiscardPendingPasswordResetToken(cleanupCtx, email, stagedHash); err != nil {
+				slog.Error("failed to discard pending reset token", "email", email, "error", err)
+			}
 		}
-		if err := s.cache.RestorePasswordResetToken(cleanupCtx, email, data.Token, previous, previousRemaining); err != nil {
-			slog.Error("failed to restore reset token after send failure", "email", email, "error", err)
+		if err := s.cache.ReleasePasswordResetEmailCooldown(cleanupCtx, email, owner); err != nil {
+			slog.Error("failed to release password reset email reservation", "email", email, "error", err)
 		}
 	}()
+
+	token, err := s.GeneratePasswordResetToken()
+	if err != nil {
+		return fmt.Errorf("generate token: %w", err)
+	}
+	data := &PasswordResetTokenData{Token: hashPasswordResetToken(token), CreatedAt: time.Now()}
+	staged, err := s.cache.StagePasswordResetToken(ctx, email, owner, data, passwordResetTokenTTL)
+	if err != nil {
+		return fmt.Errorf("stage reset token: %w", err)
+	}
+	if !staged {
+		return fmt.Errorf("stage reset token: reservation expired or replaced")
+	}
+	stagedHash = data.Token
 
 	// Build full reset URL with URL-encoded token and email
 	fullResetURL := fmt.Sprintf("%s?email=%s&token=%s", resetURL, url.QueryEscape(email), url.QueryEscape(token))
@@ -631,7 +647,7 @@ func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteNa
 			},
 		})
 		if err == nil {
-			return nil
+			return s.promotePasswordResetToken(ctx, email, owner, data.Token)
 		}
 		if !shouldFallbackNotificationEmail(err) {
 			return err
@@ -647,43 +663,31 @@ func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteNa
 	if err := s.SendEmail(ctx, email, subject, body); err != nil {
 		return fmt.Errorf("send email: %w", err)
 	}
+	return s.promotePasswordResetToken(ctx, email, owner, data.Token)
+}
 
+func (s *EmailService) promotePasswordResetToken(ctx context.Context, email, owner, tokenHash string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	ok, err := s.cache.PromotePasswordResetToken(cleanupCtx, email, owner, tokenHash, passwordResetEmailCooldown)
+	if err != nil {
+		return fmt.Errorf("promote reset token: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("promote reset token: reservation expired or replaced")
+	}
 	return nil
 }
 
 // SendPasswordResetEmailWithCooldown sends password reset email with cooldown check (called by queue worker)
 // This method wraps SendPasswordResetEmail with email cooldown to prevent email bombing
 func (s *EmailService) SendPasswordResetEmailWithCooldown(ctx context.Context, email, siteName, resetURL string, locale ...string) error {
-	owner, err := s.GeneratePasswordResetToken()
-	if err != nil {
-		return fmt.Errorf("generate cooldown owner: %w", err)
-	}
-	reserved, err := s.cache.ReservePasswordResetEmailCooldown(ctx, email, owner, 2*passwordResetEmailCooldown)
-	if err != nil {
-		return fmt.Errorf("reserve password reset cooldown: %w", err)
-	}
-	if !reserved {
+	err := s.SendPasswordResetEmail(ctx, email, siteName, resetURL, firstEmailLocale(locale))
+	if errors.Is(err, errPasswordResetEmailCooldown) {
 		slog.Info("password reset email skipped due to cooldown", "email", email)
 		return nil // Silent success to prevent revealing cooldown to attackers
 	}
-
-	// Send email using core method
-	if err := s.SendPasswordResetEmail(ctx, email, siteName, resetURL, firstEmailLocale(locale)); err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-		defer cancel()
-		if releaseErr := s.cache.ReleasePasswordResetEmailCooldown(cleanupCtx, email, owner); releaseErr != nil {
-			slog.Error("failed to release password reset cooldown after send failure", "email", email, "error", releaseErr)
-		}
-		return err
-	}
-
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-	defer cancel()
-	if err := s.cache.FinishPasswordResetEmailCooldown(cleanupCtx, email, owner, passwordResetEmailCooldown); err != nil {
-		slog.Error("failed to finish password reset cooldown", "email", email, "error", err)
-	}
-
-	return nil
+	return err
 }
 
 // hashPasswordResetToken returns the lowercase hex SHA-256 of a reset token.

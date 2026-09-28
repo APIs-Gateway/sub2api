@@ -231,16 +231,20 @@ func (s *emailCacheStub) SetPasswordResetEmailCooldown(ctx context.Context, emai
 	return nil
 }
 
-func (s *emailCacheStub) RestorePasswordResetToken(context.Context, string, string, *PasswordResetTokenData, time.Duration) error {
+func (s *emailCacheStub) StagePasswordResetToken(context.Context, string, string, *PasswordResetTokenData, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailCacheStub) PromotePasswordResetToken(context.Context, string, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailCacheStub) DiscardPendingPasswordResetToken(context.Context, string, string) error {
 	return nil
 }
 
 func (s *emailCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
 	return true, nil
-}
-
-func (s *emailCacheStub) FinishPasswordResetEmailCooldown(context.Context, string, string, time.Duration) error {
-	return nil
 }
 
 func (s *emailCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {

@@ -187,14 +187,17 @@ func (s *legacyEmailCacheStub) IsPasswordResetEmailInCooldown(context.Context, s
 func (s *legacyEmailCacheStub) SetPasswordResetEmailCooldown(context.Context, string, time.Duration) error {
 	panic("unexpected SetPasswordResetEmailCooldown call")
 }
-func (s *legacyEmailCacheStub) RestorePasswordResetToken(context.Context, string, string, *PasswordResetTokenData, time.Duration) error {
-	panic("unexpected RestorePasswordResetToken call")
+func (s *legacyEmailCacheStub) StagePasswordResetToken(context.Context, string, string, *PasswordResetTokenData, time.Duration) (bool, error) {
+	panic("unexpected StagePasswordResetToken call")
+}
+func (s *legacyEmailCacheStub) PromotePasswordResetToken(context.Context, string, string, string, time.Duration) (bool, error) {
+	panic("unexpected PromotePasswordResetToken call")
+}
+func (s *legacyEmailCacheStub) DiscardPendingPasswordResetToken(context.Context, string, string) error {
+	panic("unexpected DiscardPendingPasswordResetToken call")
 }
 func (s *legacyEmailCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
 	panic("unexpected ReservePasswordResetEmailCooldown call")
-}
-func (s *legacyEmailCacheStub) FinishPasswordResetEmailCooldown(context.Context, string, string, time.Duration) error {
-	panic("unexpected FinishPasswordResetEmailCooldown call")
 }
 func (s *legacyEmailCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {
 	panic("unexpected ReleasePasswordResetEmailCooldown call")

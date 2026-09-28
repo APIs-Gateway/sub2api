@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	verifyCodeKeyPrefix          = "verify_code:"
-	notifyVerifyKeyPrefix        = "notify_verify:"
-	passwordResetKeyPrefix       = "password_reset:"
-	passwordResetSentAtKeyPrefix = "password_reset_sent:"
-	notifyCodeUserRateKeyPrefix  = "notify_code_user_rate:"
+	verifyCodeKeyPrefix           = "verify_code:"
+	notifyVerifyKeyPrefix         = "notify_verify:"
+	passwordResetKeyPrefix        = "password_reset:"
+	passwordResetPendingKeyPrefix = "password_reset_pending:"
+	passwordResetSentAtKeyPrefix  = "password_reset_sent:"
+	notifyCodeUserRateKeyPrefix   = "notify_code_user_rate:"
 
 	// attemptsKeySuffix stores the attempt counter next to a verification code.
 	// Kept in a separate key so it can be incremented atomically with INCR.
@@ -102,27 +103,39 @@ if attempts >= limit then return 2 end
 return 0
 `)
 
-// Only the sender holding the reservation may finalize or release the marker.
-var finishResetEmailCooldownScript = redis.NewScript(`
+// Only the sender holding the reservation may release the marker.
+var releaseResetEmailCooldownScript = redis.NewScript(`
 if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
-if ARGV[2] == 'release' then
-  return redis.call('DEL', KEYS[1])
-end
-return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return redis.call('DEL', KEYS[1])
 `)
 
-// A failed send restores the prior link only while the failed send's hash is
-// still current. The previous TTL is preserved, never renewed.
-var restoreResetTokenScript = redis.NewScript(`
+// Promotion requires both the sender's lock and its staged hash. An expired
+// lock cannot install a link from a late SMTP response.
+var promoteResetTokenScript = redis.NewScript(`
+if redis.call('GET', KEYS[3]) ~= ARGV[1] then return 0 end
+local raw = redis.call('GET', KEYS[2])
+if not raw then return 0 end
+local ok, data = pcall(cjson.decode, raw)
+if not ok or type(data) ~= 'table' or data['Token'] ~= ARGV[2] then return 0 end
+local ttl = redis.call('PTTL', KEYS[2])
+if ttl <= 0 then return 0 end
+redis.call('SET', KEYS[1], raw, 'PX', ttl)
+redis.call('DEL', KEYS[2])
+redis.call('PEXPIRE', KEYS[3], ARGV[3])
+return 1
+`)
+
+var discardPendingResetTokenScript = redis.NewScript(`
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 0 end
 local ok, data = pcall(cjson.decode, raw)
 if not ok or type(data) ~= 'table' or data['Token'] ~= ARGV[1] then return 0 end
-if ARGV[2] == '' or tonumber(ARGV[3]) <= 0 then
-  redis.call('DEL', KEYS[1])
-else
-  redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
-end
+return redis.call('DEL', KEYS[1])
+`)
+
+var stageResetTokenScript = redis.NewScript(`
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
 return 1
 `)
 
@@ -142,6 +155,10 @@ func notifyVerifyKey(email string) string {
 // passwordResetKey generates the Redis key for password reset token.
 func passwordResetKey(email string) string {
 	return passwordResetKeyPrefix + strings.ToLower(email)
+}
+
+func passwordResetPendingKey(email string) string {
+	return passwordResetPendingKeyPrefix + strings.ToLower(email)
 }
 
 // passwordResetSentAtKey generates the Redis key for password reset email sent timestamp.
@@ -262,16 +279,26 @@ func (c *emailCache) DeletePasswordResetToken(ctx context.Context, email string)
 	return c.rdb.Del(ctx, key).Err()
 }
 
-func (c *emailCache) RestorePasswordResetToken(ctx context.Context, email, failedHash string, previous *service.PasswordResetTokenData, remaining time.Duration) error {
-	var previousJSON string
-	if previous != nil {
-		value, err := json.Marshal(previous)
-		if err != nil {
-			return err
-		}
-		previousJSON = string(value)
+func (c *emailCache) StagePasswordResetToken(ctx context.Context, email, owner string, data *service.PasswordResetTokenData, ttl time.Duration) (bool, error) {
+	value, err := json.Marshal(data)
+	if err != nil {
+		return false, err
 	}
-	return restoreResetTokenScript.Run(ctx, c.rdb, []string{passwordResetKey(email)}, failedHash, previousJSON, remaining.Milliseconds()).Err()
+	n, err := stageResetTokenScript.Run(ctx, c.rdb,
+		[]string{passwordResetPendingKey(email), passwordResetSentAtKey(email)},
+		owner, value, ttl.Milliseconds()).Int()
+	return n == 1, err
+}
+
+func (c *emailCache) PromotePasswordResetToken(ctx context.Context, email, owner, tokenHash string, cooldown time.Duration) (bool, error) {
+	n, err := promoteResetTokenScript.Run(ctx, c.rdb,
+		[]string{passwordResetKey(email), passwordResetPendingKey(email), passwordResetSentAtKey(email)},
+		owner, tokenHash, cooldown.Milliseconds()).Int()
+	return n == 1, err
+}
+
+func (c *emailCache) DiscardPendingPasswordResetToken(ctx context.Context, email, tokenHash string) error {
+	return discardPendingResetTokenScript.Run(ctx, c.rdb, []string{passwordResetPendingKey(email)}, tokenHash).Err()
 }
 
 // Password reset email cooldown methods
@@ -291,12 +318,8 @@ func (c *emailCache) ReservePasswordResetEmailCooldown(ctx context.Context, emai
 	return c.rdb.SetNX(ctx, passwordResetSentAtKey(email), owner, ttl).Result()
 }
 
-func (c *emailCache) FinishPasswordResetEmailCooldown(ctx context.Context, email, owner string, ttl time.Duration) error {
-	return finishResetEmailCooldownScript.Run(ctx, c.rdb, []string{passwordResetSentAtKey(email)}, owner, ttl.Milliseconds()).Err()
-}
-
 func (c *emailCache) ReleasePasswordResetEmailCooldown(ctx context.Context, email, owner string) error {
-	return finishResetEmailCooldownScript.Run(ctx, c.rdb, []string{passwordResetSentAtKey(email)}, owner, "release").Err()
+	return releaseResetEmailCooldownScript.Run(ctx, c.rdb, []string{passwordResetSentAtKey(email)}, owner).Err()
 }
 
 // Notify email verification code methods

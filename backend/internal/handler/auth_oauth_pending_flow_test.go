@@ -2817,16 +2817,20 @@ func (s *oauthPendingFlowEmailCacheStub) SetPasswordResetEmailCooldown(context.C
 	return nil
 }
 
-func (s *oauthPendingFlowEmailCacheStub) RestorePasswordResetToken(context.Context, string, string, *service.PasswordResetTokenData, time.Duration) error {
+func (s *oauthPendingFlowEmailCacheStub) StagePasswordResetToken(context.Context, string, string, *service.PasswordResetTokenData, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *oauthPendingFlowEmailCacheStub) PromotePasswordResetToken(context.Context, string, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *oauthPendingFlowEmailCacheStub) DiscardPendingPasswordResetToken(context.Context, string, string) error {
 	return nil
 }
 
 func (s *oauthPendingFlowEmailCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
 	return true, nil
-}
-
-func (s *oauthPendingFlowEmailCacheStub) FinishPasswordResetEmailCooldown(context.Context, string, string, time.Duration) error {
-	return nil
 }
 
 func (s *oauthPendingFlowEmailCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {
