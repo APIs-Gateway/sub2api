@@ -229,12 +229,20 @@ func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlocked(account *Accou
 	if s == nil || account == nil {
 		return false
 	}
+	return s.isOpenAIAccountModelRuntimeBlockedForFinalModel(account, canonicalOpenAIAccountSchedulingModel(account, requestedModel))
+}
+
+// isOpenAIAccountModelRuntimeBlockedForFinalModel checks a key used by a WS
+// forwarding path without applying account model_mapping a second time.
+func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlockedForFinalModel(account *Account, finalModel string) bool {
+	if s == nil || account == nil {
+		return false
+	}
 	state := s.getOpenAIAccountModelTransientState()
 	if state == nil {
 		return false
 	}
-	canonicalModel := canonicalOpenAIAccountSchedulingModel(account, requestedModel)
-	return state.isBlocked(account.ID, canonicalModel, time.Now())
+	return state.isBlocked(account.ID, finalModel, time.Now())
 }
 
 // isOpenAIAccountRequestRuntimeBlocked combines the existing account-wide
