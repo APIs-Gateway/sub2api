@@ -797,21 +797,26 @@ func TestForwardAsChatCompletions_SmallRequestOverloadBeforeContentFailsOver(t *
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name    string
+		event   string
 		payload string
 	}{
-		{"bare error", `{"type":"error","error":{"type":"server_is_overloaded","message":"try again later"}}`},
-		{"response failed", `{"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"try again later"}}}`},
+		{name: "bare error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`},
+		{name: "named bare error", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`},
+		{name: "response failed", payload: `{"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"try again later"}}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-			upstreamBody := strings.Join([]string{
+			lines := []string{
 				`data: {"type":"response.created","response":{"id":"resp_overloaded","model":"gpt-5.5","status":"in_progress","output":[]}}`, "",
 				`data: {"type":"response.in_progress","response":{"id":"resp_overloaded","status":"in_progress"}}`, "",
-				"data: " + tc.payload, "", "",
-			}, "\n")
+			}
+			if tc.event != "" {
+				lines = append(lines, "event: "+tc.event)
+			}
+			upstreamBody := strings.Join(append(lines, "data: "+tc.payload, "", ""), "\n")
 			upstream := &httpUpstreamRecorder{resp: &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},

@@ -145,6 +145,24 @@ func TestUpstreamModelMismatch_KeepaliveBeforeFirstEventStillBlocks_Chat(t *test
 	require.NotContains(t, rec.Body.String(), "chat.completion.chunk")
 }
 
+// With configured keepalives disabled, the preamble deadline still emits only
+// a replayable SSE comment while the first upstream model remains unknown.
+func TestUpstreamModelMismatch_ChatPreambleDeadlinePreservesFailover(t *testing.T) {
+	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", nil)
+	body := installKeepaliveGate(c, upstreamModelMismatchResponsesSSE(upstreamModelMismatchGotModel))
+	resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_chat_preamble_deadline", "")
+	resp.Body = body
+	cfg := upstreamModelMismatchKeepaliveConfig()
+	cfg.Gateway.StreamKeepaliveInterval = 0
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	result, err := svc.handleChatStreamingResponse(resp, c, upstreamModelMismatchTestAccount(),
+		upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, time.Now(), 0)
+
+	require.NotNil(t, result)
+	requireUpstreamModelMismatchKeepaliveFailover(t, c, err, rec.Body.String(), upstreamModelMismatchKeepaliveComment)
+}
+
 // 没写过心跳时：零字节、普通切号语义
 func TestUpstreamModelMismatch_NoKeepaliveKeepsSafeToFailoverAfterWriteFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
