@@ -2827,6 +2827,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// Failover retries reuse the same gin.Context; drop the previous attempt's
 	// flatten mapping so a namespace-preserving account never restores with it.
 	clearOpenAIResponsesNamespaceNames(c)
+	clearOpenAIResponsesClientToolMapping(c)
 	s.prepareCodexAccountIdentitySource(c, account)
 	startTime := time.Now()
 
@@ -3692,6 +3693,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, wsErr
 	}
 
+	// Default HTTP Forward also reaches native Responses API-key upstreams.
+	// Only Lite carriers need the client-tool adapter here: keep existing
+	// top-level custom tools on this non-passthrough path unchanged.
+	if account.IsOpenAIApiKey() && !isOpenAIResponsesCompactPath(c) &&
+		gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists() {
+		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
+		if adaptErr != nil {
+			return nil, fmt.Errorf("adapt OpenAI Responses Lite client tools: %w", adaptErr)
+		}
+		body = adaptedBody
+		requestView = newOpenAIRequestView(body)
+		reqBody = nil
+		setOpenAIResponsesClientToolMapping(c, mapping)
+	}
+
 	httpInvalidEncryptedContentRetryTried := false
 	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
 	agentTaskRecoveryTried := false
@@ -3839,6 +3855,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return s.handleErrorResponse(ctx, resp, c, account, body, billingModel)
 		}
 		defer func() { _ = resp.Body.Close() }()
+		if mapping, ok := openAIResponsesClientToolMapping(c); ok && isEventStreamResponse(resp.Header) {
+			maxLineSize := defaultMaxLineSize
+			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+				maxLineSize = s.cfg.Gateway.MaxLineSize
+			}
+			resp.Body = newResponsesClientToolStreamBody(resp.Body, mapping, maxLineSize)
+		}
 
 		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
 		// 国产模型默认 effort 补充：此处 reqModel 已被 mapping 重写为 billingModel（见
@@ -7496,6 +7519,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 			return nil, ferr
 		}
 	}
+	body, err = restoreOpenAIResponsesClientToolPayload(c, body)
+	if err != nil {
+		return nil, err
+	}
 	body, err = restoreOpenAIResponsesNamespacePayload(c, body)
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI namespace response: %w", err)
@@ -7564,6 +7591,11 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		body = alignClientVisibleModel(finalResponse, originalModel)
 		// Correct tool calls in final response
 		body = s.correctToolCallsInResponseBody(body)
+		var restoreClientToolErr error
+		body, restoreClientToolErr = restoreOpenAIResponsesClientToolPayload(c, body)
+		if restoreClientToolErr != nil {
+			return nil, restoreClientToolErr
+		}
 		restoredBody, restoreErr := restoreOpenAIResponsesNamespacePayload(c, body)
 		if restoreErr != nil {
 			return nil, fmt.Errorf("restore OpenAI namespace response: %w", restoreErr)
