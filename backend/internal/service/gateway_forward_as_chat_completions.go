@@ -42,7 +42,6 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	}
 	originalModel := ccReq.Model
 	clientStream := ccReq.Stream
-	includeUsage := ccReq.StreamOptions != nil && ccReq.StreamOptions.IncludeUsage
 
 	// 2. Convert CC → Responses → Anthropic (chained conversion)
 	responsesReq, err := apicompat.ChatCompletionsToResponses(&ccReq)
@@ -194,7 +193,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	var result *ForwardResult
 	var handleErr error
 	if clientStream {
-		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, includeUsage)
+		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
 	} else {
 		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
 	}
@@ -367,7 +366,6 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	mappedModel string,
 	reasoningEffort *string,
 	startTime time.Time,
-	includeUsage bool,
 ) (*ForwardResult, error) {
 	requestID := upstreamRequestIDFromHeader(resp.Header)
 
@@ -385,7 +383,6 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	anthState.Model = originalModel
 	ccState := apicompat.NewResponsesEventToChatState()
 	ccState.Model = originalModel
-	ccState.IncludeUsage = includeUsage
 
 	var usage ClaudeUsage
 	var firstTokenMs *int
@@ -452,6 +449,16 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			mergeAnthropicUsage(&usage, event.Message.Usage)
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "message.usage"), &usage)
 		}
+		// The converter accumulates its own usage. Keep it aligned with the
+		// normalized buckets used for billing before it emits a terminal event.
+		anthState.InputTokens = usage.InputTokens
+		anthState.OutputTokens = usage.OutputTokens
+		anthState.CacheReadInputTokens = usage.CacheReadInputTokens
+		anthState.CacheCreationInputTokens = usage.CacheCreationInputTokens
+		// The converter reads usage from the event again. Give it the same
+		// mutually exclusive buckets or a provider's overlapping input total
+		// would overwrite the normalized state before completion.
+		normalizeAnthropicChatEventUsage(event, usage)
 
 		// Chain: Anthropic event → Responses events → CC chunks
 		responsesEvents := apicompat.AnthropicEventToResponsesEvents(event, anthState)
@@ -486,6 +493,10 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
+		// The intermediate Responses converter can synthesize zero usage even
+		// when the upstream omitted it. Forward only an actual upstream object,
+		// including an explicitly empty one, regardless of stream_options.
+		ccState.IncludeUsage = ccState.IncludeUsage || anthropicChatStreamHasUsage(&event, payload)
 
 		if processAnthropicEvent(&event, payload) {
 			return resultWithUsage(), nil
@@ -502,6 +513,10 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	}
 
 	// Finalize both state machines
+	anthState.InputTokens = usage.InputTokens
+	anthState.OutputTokens = usage.OutputTokens
+	anthState.CacheReadInputTokens = usage.CacheReadInputTokens
+	anthState.CacheCreationInputTokens = usage.CacheCreationInputTokens
 	finalResEvents := apicompat.FinalizeAnthropicResponsesStream(anthState)
 	for _, resEvt := range finalResEvents {
 		ccChunks := apicompat.ResponsesEventToChatChunks(&resEvt, ccState)
@@ -519,6 +534,36 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	c.Writer.Flush()
 
 	return resultWithUsage(), nil
+}
+
+func anthropicChatStreamHasUsage(event *apicompat.AnthropicStreamEvent, payload string) bool {
+	switch event.Type {
+	case "message_start":
+		return event.Message != nil && gjson.Get(payload, "message.usage").IsObject()
+	case "message_delta":
+		return event.Usage != nil
+	default:
+		return false
+	}
+}
+
+func normalizeAnthropicChatEventUsage(event *apicompat.AnthropicStreamEvent, usage ClaudeUsage) {
+	normalized := apicompat.AnthropicUsage{
+		InputTokens:              usage.InputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+	}
+	switch event.Type {
+	case "message_start":
+		if event.Message != nil {
+			event.Message.Usage = normalized
+		}
+	case "message_delta":
+		if event.Usage != nil {
+			*event.Usage = normalized
+		}
+	}
 }
 
 // writeGatewayCCError writes an error in OpenAI Chat Completions format for
