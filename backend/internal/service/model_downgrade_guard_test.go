@@ -139,6 +139,8 @@ func TestModelDowngradeGuardMatchesExplicitPairOnly(t *testing.T) {
 	svc := &RateLimitService{cfg: cfg, modelDowngradeCounter: counter}
 	account := &Account{ID: 17, Platform: PlatformOpenAI}
 	filter := func(context.Context, *Account, *int64) bool { return true }
+	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "", "gpt-5.6-luna", filter)
+	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "", filter)
 	svc.HandleConfirmedModelDowngrade(context.Background(), account, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-terra", filter)
 	svc.HandleConfirmedModelDowngrade(context.Background(), &Account{ID: 18, Platform: PlatformGrok}, "gpt-6-astra", "gpt-6-astra", "gpt-5.6-luna", filter)
 	require.Zero(t, counter.increments)
@@ -206,6 +208,8 @@ func TestModelDowngradeCandidateRequiresResponsesCapability(t *testing.T) {
 }
 
 func TestModelDowngradeCandidateUsesSelectorModelAfterChannelAlias(t *testing.T) {
+	require.NotNil(t, WithModelDowngradeSelectionModel(nil, "gpt-6-astra-channel"))
+	require.NotNil(t, WithModelDowngradeWebSocketInitialModel(nil, "gpt-6-astra"))
 	ctx := WithModelDowngradeSelectionModel(context.Background(), "gpt-6-astra-channel")
 	_, hasForwardModel := openAIForwardModelFromContext(ctx)
 	require.False(t, hasForwardModel, "guard metadata must not change forwarding or cooldown model keys")
@@ -225,6 +229,26 @@ func TestModelDowngradeCandidateUsesSelectorModelAfterChannelAlias(t *testing.T)
 	require.False(t, filter(ctx, candidate, nil), "the original client model is not the selector's channel alias")
 	candidate.Credentials["model_mapping"] = map[string]any{"gpt-6-astra-channel": "gpt-6-astra"}
 	require.True(t, filter(ctx, candidate, nil))
+	forwardCtx := WithOpenAIForwardModel(context.Background(), "gpt-6-astra-channel", false)
+	require.True(t, svc.modelDowngradeCandidateFilter(forwardCtx, "gpt-6-astra", "/v1/chat/completions", OpenAIUpstreamTransportAny)(forwardCtx, candidate, nil))
+}
+
+func TestModelDowngradeCandidateHonorsChannelUpstreamRestriction(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10)
+	candidate := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true, Credentials: map[string]any{}, Extra: map[string]any{},
+		Groups: []*Group{{ID: groupID}}}
+	channel := Channel{ID: 1, Status: StatusActive, GroupIDs: []int64{groupID},
+		RestrictModels: true, BillingModelSource: BillingModelSourceUpstream,
+		ModelPricing: []ChannelModelPricing{{Platform: PlatformOpenAI, Models: []string{"other-model"}}}}
+	svc := &OpenAIGatewayService{channelService: newTestChannelService(makeStandardRepo(channel, map[int64]string{groupID: PlatformOpenAI}))}
+	filter := svc.modelDowngradeCandidateFilter(ctx, "gpt-6-astra", "/v1/chat/completions", OpenAIUpstreamTransportAny)
+	require.False(t, filter(ctx, candidate, &groupID), "a channel veto cannot count as an alternative route")
+	channel.ModelPricing = []ChannelModelPricing{{Platform: PlatformOpenAI, Models: []string{"gpt-6-astra"}}}
+	svc = &OpenAIGatewayService{channelService: newTestChannelService(makeStandardRepo(channel, map[int64]string{groupID: PlatformOpenAI}))}
+	filter = svc.modelDowngradeCandidateFilter(ctx, "gpt-6-astra", "/v1/chat/completions", OpenAIUpstreamTransportAny)
+	require.True(t, filter(ctx, candidate, &groupID))
 }
 
 func TestOpenAIModelRateLimitUsesForwardedModelKey(t *testing.T) {

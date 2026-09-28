@@ -18,7 +18,8 @@ import (
 func TestModelDowngradeGuardTransactionFailsClosed(t *testing.T) {
 	failure := errors.New("database unavailable")
 	for _, tc := range []struct {
-		name string
+		name  string
+		ratio float64
 		setup func(sqlmock.Sqlmock)
 	}{
 		{name: "begin", setup: func(mock sqlmock.Sqlmock) {
@@ -45,10 +46,42 @@ func TestModelDowngradeGuardTransactionFailsClosed(t *testing.T) {
 			mock.ExpectQuery("SELECT extra FROM accounts").WillReturnRows(sqlmock.NewRows([]string{"extra"}).AddRow([]byte(`[]`)))
 			mock.ExpectRollback()
 		}},
+		{name: "target query unavailable", setup: func(mock sqlmock.Sqlmock) {
+			modelDowngradeExpectGlobalLock(mock)
+			mock.ExpectQuery("SELECT extra FROM accounts").WillReturnError(failure)
+			mock.ExpectRollback()
+		}},
 		{name: "ratio query unavailable", setup: func(mock sqlmock.Sqlmock) {
 			modelDowngradeExpectGlobalLock(mock)
 			mock.ExpectQuery("SELECT extra FROM accounts").WillReturnRows(sqlmock.NewRows([]string{"extra"}).AddRow([]byte(`{}`)))
 			mock.ExpectQuery("SELECT extra FROM accounts").WillReturnError(failure)
+			mock.ExpectRollback()
+		}},
+		{name: "ratio payload malformed", setup: func(mock sqlmock.Sqlmock) {
+			modelDowngradeExpectGlobalLock(mock)
+			mock.ExpectQuery("SELECT extra FROM accounts").WillReturnRows(sqlmock.NewRows([]string{"extra"}).AddRow([]byte(`{}`)))
+			mock.ExpectQuery("SELECT extra FROM accounts").WillReturnRows(sqlmock.NewRows([]string{"extra"}).AddRow("not-json-bytes"))
+			mock.ExpectRollback()
+		}},
+		{name: "ratio row iteration failed", setup: func(mock sqlmock.Sqlmock) {
+			modelDowngradeExpectGlobalLock(mock)
+			mock.ExpectQuery("SELECT extra FROM accounts").WillReturnRows(sqlmock.NewRows([]string{"extra"}).AddRow([]byte(`{}`)))
+			mock.ExpectQuery("SELECT extra FROM accounts").WillReturnRows(sqlmock.NewRows([]string{"extra"}).AddRow([]byte(`{}`)).RowError(0, failure))
+			mock.ExpectRollback()
+		}},
+		{name: "group membership query unavailable", ratio: 1, setup: func(mock sqlmock.Sqlmock) {
+			modelDowngradeExpectRatioPass(mock)
+			mock.ExpectQuery("SELECT group_id FROM account_groups").WillReturnError(failure)
+			mock.ExpectRollback()
+		}},
+		{name: "group membership malformed", ratio: 1, setup: func(mock sqlmock.Sqlmock) {
+			modelDowngradeExpectRatioPass(mock)
+			mock.ExpectQuery("SELECT group_id FROM account_groups").WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow("not-a-group-id"))
+			mock.ExpectRollback()
+		}},
+		{name: "group membership iteration failed", ratio: 1, setup: func(mock sqlmock.Sqlmock) {
+			modelDowngradeExpectRatioPass(mock)
+			mock.ExpectQuery("SELECT group_id FROM account_groups").WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(10)).RowError(0, failure))
 			mock.ExpectRollback()
 		}},
 	} {
@@ -58,10 +91,14 @@ func TestModelDowngradeGuardTransactionFailsClosed(t *testing.T) {
 			defer func() { _ = db.Close() }()
 			tc.setup(mock)
 			repo := newAccountRepositoryWithSQL(nil, db, nil)
-			applied, err := repo.TryBlockDowngradedModel(context.Background(), 17, "gpt-6-astra", "gpt-6-astra", time.Now().Add(time.Hour), 0.3, false,
+			ratio := tc.ratio
+			if ratio == 0 {
+				ratio = 0.3
+			}
+			applied, err := repo.TryBlockDowngradedModel(context.Background(), 17, "gpt-6-astra", "gpt-6-astra", time.Now().Add(time.Hour), ratio, false,
 				func(context.Context, *service.Account, *int64) bool { return true })
 			require.False(t, applied)
-			if tc.name == "target disappeared" {
+			if tc.name == "target disappeared" || tc.name == "ratio payload malformed" {
 				require.NoError(t, err)
 			} else {
 				require.Error(t, err)
@@ -77,8 +114,27 @@ func modelDowngradeExpectGlobalLock(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery("SELECT a.id FROM accounts a").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(17)))
 }
 
+func modelDowngradeExpectRatioPass(mock sqlmock.Sqlmock) {
+	modelDowngradeExpectGlobalLock(mock)
+	mock.ExpectQuery("SELECT extra FROM accounts").WillReturnRows(sqlmock.NewRows([]string{"extra"}).AddRow([]byte(`{}`)))
+	mock.ExpectQuery("SELECT extra FROM accounts").WillReturnRows(sqlmock.NewRows([]string{"extra"}).AddRow([]byte(`{}`)))
+}
+
 func TestModelDowngradeGuardPoolLockErrors(t *testing.T) {
 	ctx := context.Background()
+	t.Run("query", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+		mock.ExpectBegin()
+		mock.ExpectQuery("SELECT id").WillReturnError(errors.New("pool query failed"))
+		mock.ExpectRollback()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		require.Error(t, lockModelDowngradePool(ctx, tx, "SELECT id"))
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
 	for _, tc := range []struct {
 		name string
 		rows *sqlmock.Rows
@@ -97,6 +153,30 @@ func TestModelDowngradeGuardPoolLockErrors(t *testing.T) {
 			require.NoError(t, err)
 			require.Error(t, lockModelDowngradePool(ctx, tx, "SELECT id"))
 			require.NoError(t, tx.Rollback())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestModelDowngradeSelectiveClearDatabaseFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		setup func(sqlmock.Sqlmock)
+	}{
+		{name: "write failed", setup: func(mock sqlmock.Sqlmock) {
+			mock.ExpectExec("UPDATE accounts SET extra").WillReturnError(errors.New("database unavailable"))
+		}},
+		{name: "account missing", setup: func(mock sqlmock.Sqlmock) {
+			mock.ExpectExec("UPDATE accounts SET extra").WillReturnResult(sqlmock.NewResult(0, 0))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			tc.setup(mock)
+			repo := newAccountRepositoryWithSQL(nil, db, nil)
+			require.Error(t, repo.ClearModelRateLimitsExceptDowngrade(context.Background(), 17))
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}

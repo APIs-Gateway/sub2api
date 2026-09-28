@@ -63,6 +63,27 @@ func (r *rateLimitClearRepoStub) ClearModelRateLimitsExceptDowngrade(ctx context
 	return r.clearModelRateLimitErr
 }
 
+type rateLimitClearRepoWithoutSelective struct{ AccountRepository }
+
+func TestRateLimitServiceAutoRecoveryRequiresSelectiveClearWhenGuardEnabled(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.ModelDowngradeGuard.Enabled = true
+	svc := &RateLimitService{cfg: cfg, accountRepo: &rateLimitClearRepoWithoutSelective{}}
+	require.ErrorContains(t, svc.clearModelRateLimits(context.Background(), 17, true), "requires selective automatic recovery")
+}
+
+func TestHasClearableModelRateLimitsPreservesOnlyGuardEntries(t *testing.T) {
+	require.False(t, hasClearableModelRateLimits(map[string]any{"model_rate_limits": map[string]any{
+		"gpt-6-astra": map[string]any{"reason": ModelDowngradeGuardReason},
+	}}))
+	require.True(t, hasClearableModelRateLimits(map[string]any{"model_rate_limits": map[string]any{
+		"gpt-6-astra": map[string]any{"reason": ModelDowngradeGuardReason},
+		"gpt-5.6-luna": map[string]any{"reason": "upstream_429"},
+	}}))
+	require.True(t, hasClearableModelRateLimits(map[string]any{"model_rate_limits": map[string]any{"gpt-6-astra": "malformed"}}))
+	require.True(t, hasClearableModelRateLimits(map[string]any{"model_rate_limits": []any{"malformed"}}))
+}
+
 func (r *rateLimitClearRepoStub) ClearTempUnschedulable(ctx context.Context, id int64) error {
 	r.clearTempUnschedCalls++
 	return r.clearTempUnschedulableErr
