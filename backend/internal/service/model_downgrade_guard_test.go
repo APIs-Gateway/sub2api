@@ -118,4 +118,10 @@ func TestOpenAIModelRateLimitUsesForwardedModelKey(t *testing.T) {
 	require.True(t, passthrough.isModelRateLimitedWithContext(context.Background(), "gpt-6-astra"))
 	passthrough.Extra["model_rate_limits"] = map[string]any{"gpt-5.6-luna": limit}
 	require.False(t, passthrough.isModelRateLimitedWithContext(context.Background(), "gpt-6-astra"))
+
+	compact := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"compact_model_mapping": map[string]any{"gpt-5.4": "gpt-5.4-openai-compact"}},
+		Extra: map[string]any{"model_rate_limits": map[string]any{"gpt-5.4-openai-compact": limit}}}
+	ctx := WithOpenAIForwardModel(context.Background(), "gpt-5.4", true)
+	require.True(t, compact.isModelRateLimitedWithContext(ctx, "gpt-5.4"))
 }
