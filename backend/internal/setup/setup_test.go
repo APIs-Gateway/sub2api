@@ -10,6 +10,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestDecideAdminBootstrap(t *testing.T) {
@@ -114,6 +115,58 @@ func TestWriteConfigFileIncludesRedisUsername(t *testing.T) {
 
 	if !strings.Contains(string(data), "username: app-user") {
 		t.Fatalf("config missing Redis username, got:\n%s", string(data))
+	}
+}
+
+func TestWriteConfigFileOmitsObsoleteRateLimitDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		timezone     string
+		wantTimezone string
+	}{
+		{name: "explicit timezone", timezone: "UTC", wantTimezone: "UTC"},
+		{name: "default timezone", wantTimezone: "Asia/Shanghai"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DATA_DIR", t.TempDir())
+			if err := writeConfigFile(&SetupConfig{
+				Redis:    RedisConfig{Host: "redis", Port: 6379, Username: "app-user"},
+				Timezone: tc.timezone,
+			}); err != nil {
+				t.Fatalf("writeConfigFile() error = %v", err)
+			}
+
+			data, err := os.ReadFile(GetConfigFilePath())
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			var config map[string]any
+			if err := yaml.Unmarshal(data, &config); err != nil {
+				t.Fatalf("generated config is invalid YAML: %v", err)
+			}
+			if rateLimit, exists := config["rate_limit"]; exists {
+				fields, ok := rateLimit.(map[string]any)
+				if !ok {
+					t.Fatalf("generated rate_limit must be a mapping: %#v", rateLimit)
+				}
+				for _, key := range []string{"requests_per_minute", "burst_size"} {
+					if _, present := fields[key]; present {
+						t.Fatalf("generated config contains obsolete rate_limit.%s: %s", key, data)
+					}
+				}
+			}
+			if config["timezone"] != tc.wantTimezone {
+				t.Fatalf("generated timezone = %#v, want %q", config["timezone"], tc.wantTimezone)
+			}
+			redis, ok := config["redis"].(map[string]any)
+			if !ok || redis["host"] != "redis" || redis["port"] != 6379 || redis["username"] != "app-user" {
+				t.Fatalf("generated config lost Redis settings: %#v", config["redis"])
+			}
+			defaults, ok := config["default"].(map[string]any)
+			if !ok || defaults["user_concurrency"] != defaultUserConcurrency || defaults["api_key_prefix"] != "sk-" {
+				t.Fatalf("generated config lost default settings: %#v", config["default"])
+			}
+		})
 	}
 }
 
