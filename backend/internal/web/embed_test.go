@@ -519,6 +519,35 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		}
 	})
 
+	t.Run("bare_post_api_routes_reach_backend", func(t *testing.T) {
+		server, err := NewFrontendServer(&mockSettingsProvider{
+			settings: map[string]string{"test": "value"},
+		})
+		require.NoError(t, err)
+
+		for _, path := range []string{"/chat/completions", "/embeddings"} {
+			t.Run(path, func(t *testing.T) {
+				router := gin.New()
+				router.Use(server.Middleware())
+				handlerCalled := false
+				router.POST(path, func(c *gin.Context) {
+					handlerCalled = true
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_api_key"})
+				})
+
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-5.5"}`))
+				req.Header.Set("Content-Type", "application/json")
+				router.ServeHTTP(w, req)
+
+				assert.True(t, handlerCalled, "bare API route must reach its backend handler")
+				assert.Equal(t, http.StatusUnauthorized, w.Code)
+				assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
+				assert.JSONEq(t, `{"error":"invalid_api_key"}`, w.Body.String())
+			})
+		}
+	})
+
 	t.Run("skips_responses_compact_post_routes", func(t *testing.T) {
 		provider := &mockSettingsProvider{
 			settings: map[string]string{"test": "value"},
