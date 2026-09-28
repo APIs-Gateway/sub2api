@@ -1018,7 +1018,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	var parser openAICompatSSEFrameParser
 	preambleTimer := time.NewTimer(openAIChatPreambleMaxWait)
 	defer preambleTimer.Stop()
-	var preambleCh <-chan time.Time = preambleTimer.C
+	preambleCh := preambleTimer.C
 
 	for {
 		select {

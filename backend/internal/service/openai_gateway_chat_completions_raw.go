@@ -496,7 +496,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	defer close(done)
 	preambleTimer := time.NewTimer(openAIChatPreambleMaxWait)
 	defer preambleTimer.Stop()
-	var preambleCh <-chan time.Time = preambleTimer.C
+	preambleCh := preambleTimer.C
 	var drainTimer *time.Timer
 	var drainCh <-chan time.Time
 	defer func() {
