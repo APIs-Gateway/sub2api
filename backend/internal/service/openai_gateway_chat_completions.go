@@ -169,6 +169,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			return nil, fmt.Errorf("convert chat completions to responses: %w", err)
 		}
 		responsesReq.Model = upstreamModel
+		if responsesReq.Reasoning != nil && !shouldRequestResponsesReasoningSummary(account) {
+			responsesReq.Reasoning.Summary = ""
+		}
 		normalizeResponsesRequestServiceTier(responsesReq)
 		responsesBody, err = json.Marshal(responsesReq)
 		if err != nil {
