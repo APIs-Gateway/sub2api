@@ -19,6 +19,7 @@ type resetTokenCacheStub struct {
 	stored          *PasswordResetTokenData
 	pending         *PasswordResetTokenData
 	consumedHash    string
+	consumeErr      error
 	cooldownOwner   string
 	onStage         func()
 	reserveErr      error
@@ -39,6 +40,9 @@ func (s *resetTokenCacheStub) SetPasswordResetToken(_ context.Context, _ string,
 
 func (s *resetTokenCacheStub) ConsumePasswordResetToken(_ context.Context, _ string, tokenHash string) (bool, error) {
 	s.consumedHash = tokenHash
+	if s.consumeErr != nil {
+		return false, s.consumeErr
+	}
 	if s.stored == nil || s.stored.Token != tokenHash {
 		return false, nil
 	}
@@ -120,6 +124,18 @@ func TestConsumePasswordResetToken_ComparesHashNotPlaintext(t *testing.T) {
 	// A legacy plaintext value (issued before upgrade) no longer validates.
 	cache.stored = &PasswordResetTokenData{Token: token}
 	require.ErrorIs(t, svc.ConsumePasswordResetToken(context.Background(), "a@b.c", token), ErrInvalidResetToken)
+}
+
+func TestConsumePasswordResetToken_RedisFailureDoesNotAuthorizeReset(t *testing.T) {
+	token := "one-time-token"
+	cache := &resetTokenCacheStub{
+		stored: &PasswordResetTokenData{Token: hashPasswordResetToken(token)},
+		consumeErr: errors.New("redis unavailable"),
+	}
+	svc := NewEmailService(nil, cache)
+	require.ErrorIs(t, svc.ConsumePasswordResetToken(context.Background(), "a@example.com", token), ErrInvalidResetToken)
+	require.Equal(t, hashPasswordResetToken(token), cache.consumedHash)
+	require.NotNil(t, cache.stored, "a cache failure must not claim that the token was consumed")
 }
 
 func TestSendPasswordResetEmail_FailedDeliveryKeepsPreviousHash(t *testing.T) {
