@@ -2126,8 +2126,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// WS ingress. Keep it separate from the handshake model when a session
 		// rotates models between turns.
 		var turnClientModel atomic.Pointer[string]
+		var turnPassthrough atomic.Bool
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
+			OnIngressModeResolved: func(passthrough bool) {
+				turnPassthrough.Store(passthrough)
+			},
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
 				// 记录当前 turn 号供 runSecurityAudit 按 (stage,turn,bodyHash) 去重：
 				// 账号 failover 重试 / bridge 循环重放等路径可能对同一 turn 的
@@ -2174,7 +2178,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if current := turnClientModel.Load(); current != nil && strings.TrimSpace(*current) != "" {
 					eligibilityModel = strings.TrimSpace(*current)
 				}
-				if reason, closeErr := h.gatewayService.EnforceOpenAIWSTurnAccountEligibility(ctx, account, apiKey.GroupID, sessionHash, eligibilityModel); closeErr != nil {
+				if reason, closeErr := h.gatewayService.EnforceOpenAIWSTurnAccountEligibility(ctx, account, apiKey.GroupID, sessionHash, eligibilityModel, turnPassthrough.Load()); closeErr != nil {
 					reqLog.Warn("openai.websocket_turn_account_ineligible",
 						zap.Int64("account_id", account.ID),
 						zap.Int("turn", turn),

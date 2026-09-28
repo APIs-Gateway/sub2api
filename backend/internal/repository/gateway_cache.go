@@ -59,6 +59,26 @@ func (c *gatewayCache) DeleteSessionAccountID(ctx context.Context, groupID int64
 	return c.rdb.Del(ctx, key).Err()
 }
 
+var compareAndDeleteSessionAccountIDScript = redis.NewScript(`
+local current = redis.call('GET', KEYS[1])
+if current == false or current ~= ARGV[1] then return 0 end
+redis.call('DEL', KEYS[1])
+return 1
+`)
+
+// CompareAndDeleteSessionAccountID removes only the binding still owned by
+// expectedAccountID. A newer WS may have replaced it between turns.
+func (c *gatewayCache) CompareAndDeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string, expectedAccountID int64) (bool, error) {
+	if c == nil || c.rdb == nil {
+		return false, errors.New("gateway cache unavailable")
+	}
+	if strings.TrimSpace(sessionHash) == "" || expectedAccountID <= 0 {
+		return false, errors.New("invalid sticky session compare-delete")
+	}
+	n, err := compareAndDeleteSessionAccountIDScript.Run(ctx, c.rdb, []string{buildSessionKey(groupID, sessionHash)}, expectedAccountID).Int()
+	return n == 1, err
+}
+
 var claimOpenAIResponsesSessionWindowScript = redis.NewScript(`
 local previous = redis.call('GET', KEYS[1])
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])

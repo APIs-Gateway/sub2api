@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 
 	coderws "github.com/coder/websocket"
@@ -17,45 +18,47 @@ const (
 	OpenAIWSTurnAccountIneligibleAccountMissing   = "account_missing"
 )
 
-// openAIWSTurnModelKeys covers the wire model of each fork WS ingress. The
-// passthrough relay sends the client model unchanged; ctx_pool and HTTP bridge
-// apply account mapping and upstream normalization. Runtime failures may also
-// be recorded under the mapped model before normalization. Keys are never
-// passed through model_mapping again during the eligibility check.
-func openAIWSTurnModelKeys(account *Account, clientModel string) []string {
+// openAIWSTurnModelKeys returns only keys used by the selected ingress. A
+// passthrough connection sends the client model unchanged; ctx_pool and HTTP
+// bridge send the account-mapped and normalized model. Runtime cooldown may
+// be recorded under the mapped key before normalization.
+func openAIWSTurnModelKeys(account *Account, clientModel string, passthrough bool) (rateLimitKeys, runtimeKeys []string) {
 	clientModel = strings.TrimSpace(clientModel)
 	if clientModel == "" {
-		return nil
+		return nil, nil
 	}
-	keys := make([]string, 0, 3)
-	seen := make(map[string]struct{}, 3)
-	add := func(model string) {
-		model = strings.TrimSpace(model)
-		if model == "" {
-			return
-		}
-		if _, ok := seen[model]; ok {
-			return
-		}
-		seen[model] = struct{}{}
-		keys = append(keys, model)
+	if passthrough || account == nil {
+		return []string{clientModel}, []string{clientModel}
 	}
-	add(clientModel)
-	if account != nil {
-		mapped := account.GetMappedModel(clientModel)
-		add(mapped)
-		add(normalizeOpenAIModelForUpstream(account, mapped))
+	mapped := strings.TrimSpace(account.GetMappedModel(clientModel))
+	if mapped == "" {
+		mapped = clientModel
 	}
-	return keys
+	upstream := strings.TrimSpace(normalizeOpenAIModelForUpstream(account, mapped))
+	if upstream == "" {
+		upstream = mapped
+	}
+	if mapped == upstream {
+		return []string{upstream}, []string{mapped}
+	}
+	return []string{upstream}, []string{mapped, upstream}
 }
 
-func (s *OpenAIGatewayService) openAIWSTurnAccountIneligibleReason(ctx context.Context, bound *Account, groupID *int64, clientModel string) string {
+func (s *OpenAIGatewayService) openAIWSTurnAccountIneligibleReason(ctx context.Context, bound *Account, groupID *int64, clientModel string, passthrough bool) string {
 	if s == nil || bound == nil {
 		return ""
 	}
 	account := bound
 	if s.schedulerSnapshot != nil || s.accountRepo != nil {
-		current, err := s.getSchedulableAccount(ctx, bound.ID)
+		var current *Account
+		var err error
+		if s.accountRepo != nil {
+			// The scheduler snapshot may still contain an account disabled in DB
+			// until the outbox refresh runs. A long-lived WS must not rely on it.
+			current, err = s.accountRepo.GetByID(ctx, bound.ID)
+		} else {
+			current, err = s.getSchedulableAccount(ctx, bound.ID)
+		}
 		switch {
 		case errors.Is(err, ErrAccountNotFound):
 			return OpenAIWSTurnAccountIneligibleAccountMissing
@@ -72,18 +75,26 @@ func (s *OpenAIGatewayService) openAIWSTurnAccountIneligibleReason(ctx context.C
 	if !account.IsSchedulable() || !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
 		return OpenAIWSTurnAccountIneligibleNotSchedulable
 	}
+	// The live WS keeps forwarding with its handshake account. If an admin
+	// changes mapping or mode, reconnect so eligibility uses the same model
+	// transformation as the next upstream write.
+	if account.Platform != bound.Platform || account.Type != bound.Type || !reflect.DeepEqual(account.Credentials["model_mapping"], bound.Credentials["model_mapping"]) ||
+		(s.cfg != nil && s.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled && account.ResolveOpenAIResponsesWebSocketV2Mode(s.cfg.Gateway.OpenAIWS.IngressModeDefault) != bound.ResolveOpenAIResponsesWebSocketV2Mode(s.cfg.Gateway.OpenAIWS.IngressModeDefault)) {
+		return OpenAIWSTurnAccountIneligibleNotSchedulable
+	}
 	if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
 		return OpenAIWSTurnAccountIneligibleNotSchedulable
 	}
 	if s.isOpenAIAccountRuntimeBlocked(account) {
 		return OpenAIWSTurnAccountIneligibleRuntimeBlocked
 	}
-	for _, key := range openAIWSTurnModelKeys(account, clientModel) {
+	rateLimitKeys, runtimeKeys := openAIWSTurnModelKeys(bound, clientModel, passthrough)
+	for _, key := range rateLimitKeys {
 		if account.isModelRateLimitedForFinalKeyWithContext(ctx, key) {
 			return OpenAIWSTurnAccountIneligibleModelRateLimited
 		}
 	}
-	for _, key := range openAIWSTurnModelKeys(account, clientModel) {
+	for _, key := range runtimeKeys {
 		if s.isOpenAIAccountModelRuntimeBlockedForFinalModel(account, key) {
 			return OpenAIWSTurnAccountIneligibleRuntimeBlocked
 		}
@@ -92,15 +103,27 @@ func (s *OpenAIGatewayService) openAIWSTurnAccountIneligibleReason(ctx context.C
 }
 
 func (s *OpenAIGatewayService) releaseOpenAIWSTurnStickyBinding(ctx context.Context, groupID *int64, sessionHash string, accountID int64) {
-	if s == nil || sessionHash == "" {
+	if s == nil || s.cache == nil || sessionHash == "" || accountID <= 0 {
 		return
 	}
-	boundID, err := s.getStickySessionAccountID(ctx, groupID, sessionHash)
-	if err != nil || boundID != accountID {
+	cache, ok := s.cache.(interface {
+		CompareAndDeleteSessionAccountID(context.Context, int64, string, int64) (bool, error)
+	})
+	if !ok {
+		// An unconditional delete can erase a newer connection's binding.
+		slog.Warn("openai_ws_turn_sticky_compare_delete_unavailable", "account_id", accountID)
 		return
 	}
-	if err := s.deleteStickySessionAccountID(ctx, groupID, sessionHash); err != nil {
-		slog.Warn("openai_ws_turn_account_sticky_release_failed", "account_id", accountID, "error", err)
+	keys := []string{s.openAISessionCacheKey(sessionHash)}
+	if s.openAISessionHashReadOldFallbackEnabled() || s.openAISessionHashDualWriteOldEnabled() {
+		if legacyKey := s.openAILegacySessionCacheKey(ctx, sessionHash); legacyKey != "" {
+			keys = append(keys, legacyKey)
+		}
+	}
+	for _, key := range keys {
+		if _, err := cache.CompareAndDeleteSessionAccountID(ctx, derefGroupID(groupID), key, accountID); err != nil {
+			slog.Warn("openai_ws_turn_account_sticky_release_failed", "account_id", accountID, "key", key, "error", err)
+		}
 	}
 }
 
@@ -108,11 +131,11 @@ func (s *OpenAIGatewayService) releaseOpenAIWSTurnStickyBinding(ctx context.Cont
 // has been read and before it is sent upstream. A rejected turn closes the
 // bound connection so the client can reconnect and select another account.
 // The caller invokes it only for turns after the handshake's first turn.
-func (s *OpenAIGatewayService) EnforceOpenAIWSTurnAccountEligibility(ctx context.Context, account *Account, groupID *int64, sessionHash, clientModel string) (string, error) {
+func (s *OpenAIGatewayService) EnforceOpenAIWSTurnAccountEligibility(ctx context.Context, account *Account, groupID *int64, sessionHash, clientModel string, passthrough bool) (string, error) {
 	if s == nil || account == nil {
 		return "", nil
 	}
-	reason := s.openAIWSTurnAccountIneligibleReason(ctx, account, groupID, strings.TrimSpace(clientModel))
+	reason := s.openAIWSTurnAccountIneligibleReason(ctx, account, groupID, strings.TrimSpace(clientModel), passthrough)
 	if reason == "" {
 		return "", nil
 	}
