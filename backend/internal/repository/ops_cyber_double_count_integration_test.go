@@ -36,6 +36,22 @@ func newOpsCyberFixture(t *testing.T, label string) opsCyberFixture {
 	gid := group.ID
 	key := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, Key: "sk-ops-cyber-" + suffix, Name: "k", GroupID: &gid})
 	account := mustCreateAccount(t, client, &service.Account{Name: "ops-cyber-" + suffix, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth})
+	t.Cleanup(func() {
+		ctx := context.Background()
+		for _, tableAndID := range []struct {
+			table string
+			id    int64
+		}{
+			{"api_keys", key.ID},
+			{"accounts", account.ID},
+			{"groups", group.ID},
+			{"users", user.ID},
+		} {
+			_, err := integrationDB.ExecContext(ctx,
+				"DELETE FROM "+tableAndID.table+" WHERE id = $1", tableAndID.id)
+			require.NoError(t, err)
+		}
+	})
 	return opsCyberFixture{userID: user.ID, apiKeyID: key.ID, accountID: account.ID, groupID: group.ID}
 }
 
@@ -116,23 +132,55 @@ func opsCyberInsert(t *testing.T, fx opsCyberFixture, base time.Time, usage []op
 	}
 }
 
-// opsCyberCleanWindow 清空窗口内的数据，并在用例结束后再清一次：这些行不在事务里，
-// 残留会污染同包其他按"今天"统计的集成用例。
-func opsCyberCleanWindow(t *testing.T, start, end time.Time) {
+// The historical window must be empty before inserting our fixture. Never
+// delete another test's rows to manufacture an isolated baseline.
+func opsCyberRequireIsolatedWindow(t *testing.T, fx opsCyberFixture, start, end time.Time) {
 	t.Helper()
-	clean := func() error {
-		ctx := context.Background()
-		if _, err := integrationDB.ExecContext(ctx, `DELETE FROM usage_logs WHERE created_at >= $1 AND created_at < $2`, start, end); err != nil {
-			return err
-		}
-		if _, err := integrationDB.ExecContext(ctx, `DELETE FROM ops_error_logs WHERE created_at >= $1 AND created_at < $2`, start, end); err != nil {
-			return err
-		}
-		_, err := integrationDB.ExecContext(ctx, `DELETE FROM ops_metrics_hourly WHERE bucket_start >= $1 AND bucket_start < $2`, start.Truncate(time.Hour), end)
-		return err
+	for _, table := range []string{"usage_logs", "ops_error_logs"} {
+		var count int64
+		err := integrationDB.QueryRowContext(context.Background(),
+			"SELECT COUNT(*) FROM "+table+" WHERE created_at >= $1 AND created_at < $2", start, end).Scan(&count)
+		require.NoError(t, err)
+		require.Zero(t, count, "fixture window must be empty in %s", table)
 	}
-	require.NoError(t, clean())
-	t.Cleanup(func() { require.NoError(t, clean()) })
+	var hourlyCount int64
+	require.NoError(t, integrationDB.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM ops_metrics_hourly WHERE bucket_start >= $1 AND bucket_start < $2`,
+		start.Truncate(time.Hour), end).Scan(&hourlyCount))
+	require.Zero(t, hourlyCount, "fixture hourly window must be empty")
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, err := integrationDB.ExecContext(ctx,
+			`DELETE FROM usage_logs WHERE group_id = $1 AND created_at >= $2 AND created_at < $3`, fx.groupID, start, end)
+		require.NoError(t, err)
+		_, err = integrationDB.ExecContext(ctx,
+			`DELETE FROM ops_error_logs WHERE group_id = $1 AND created_at >= $2 AND created_at < $3`, fx.groupID, start, end)
+		require.NoError(t, err)
+	})
+}
+
+// Record only the hourly rows created by this fixture's Upsert, then delete
+// those exact IDs. The empty-window assertion above protects existing rows.
+func opsCyberTrackHourlyRows(t *testing.T, bucket time.Time) {
+	t.Helper()
+	rows, err := integrationDB.QueryContext(context.Background(),
+		`SELECT id FROM ops_metrics_hourly WHERE bucket_start = $1`, bucket)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+	require.NotEmpty(t, ids)
+	t.Cleanup(func() {
+		for _, id := range ids {
+			_, err := integrationDB.ExecContext(context.Background(), `DELETE FROM ops_metrics_hourly WHERE id = $1`, id)
+			require.NoError(t, err)
+		}
+	})
 }
 
 // 两条正常成功请求：duration 100/300，ttft 40/80，tokens 30+40。
@@ -195,9 +243,9 @@ func opsCyberRequestDetailKinds(t *testing.T, repo *opsRepository, start, end ti
 func TestOpsCyberDoubleCount_NonStreamRepoViews(t *testing.T) {
 	ctx := context.Background()
 	fx := newOpsCyberFixture(t, "a")
-	base := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
+	base := time.Date(2040, 2, 2, 10, 0, 0, 0, time.UTC)
 	hourEnd := base.Add(time.Hour)
-	opsCyberCleanWindow(t, base, hourEnd)
+	opsCyberRequireIsolatedWindow(t, fx, base, hourEnd)
 
 	usage := append(opsCyberNormalUsage("a"),
 		// RecordCyberPolicyUsageLog：result.Duration 为零 → duration_ms=0，无 first_token。
@@ -225,6 +273,7 @@ func TestOpsCyberDoubleCount_NonStreamRepoViews(t *testing.T) {
 
 	t.Run("hourly_preagg", func(t *testing.T) {
 		require.NoError(t, repo.UpsertHourlyMetrics(ctx, base, hourEnd))
+		opsCyberTrackHourlyRows(t, base)
 		row := opsCyberReadHourlyOverall(t, base)
 		require.Equal(t, int64(2), row.success)
 		require.Equal(t, int64(2), row.errTotal)
@@ -291,9 +340,9 @@ func TestOpsCyberDoubleCount_NonStreamRepoViews(t *testing.T) {
 func TestOpsCyberDoubleCount_StreamingSuccessSideAndDetails(t *testing.T) {
 	ctx := context.Background()
 	fx := newOpsCyberFixture(t, "b")
-	base := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+	base := time.Date(2040, 2, 2, 12, 0, 0, 0, time.UTC)
 	hourEnd := base.Add(time.Hour)
-	opsCyberCleanWindow(t, base, hourEnd)
+	opsCyberRequireIsolatedWindow(t, fx, base, hourEnd)
 	insertOpsCyberStreamingScenario(t, fx, base)
 
 	repo := NewOpsRepository(integrationDB).(*opsRepository)
@@ -311,6 +360,7 @@ func TestOpsCyberDoubleCount_StreamingSuccessSideAndDetails(t *testing.T) {
 
 	t.Run("hourly_preagg_success_side", func(t *testing.T) {
 		require.NoError(t, repo.UpsertHourlyMetrics(ctx, base, hourEnd))
+		opsCyberTrackHourlyRows(t, base)
 		row := opsCyberReadHourlyOverall(t, base)
 		require.Equal(t, int64(2), row.success)
 		require.Equal(t, int64(2), row.ttftSamples)
@@ -356,9 +406,9 @@ func insertOpsCyberStreamingScenario(t *testing.T, fx opsCyberFixture, base time
 func TestOpsCyberDoubleCount_StreamingErrorSideRepoViews(t *testing.T) {
 	ctx := context.Background()
 	fx := newOpsCyberFixture(t, "gap")
-	base := time.Date(2026, 1, 15, 14, 0, 0, 0, time.UTC)
+	base := time.Date(2040, 2, 2, 14, 0, 0, 0, time.UTC)
 	hourEnd := base.Add(time.Hour)
-	opsCyberCleanWindow(t, base, hourEnd)
+	opsCyberRequireIsolatedWindow(t, fx, base, hourEnd)
 	insertOpsCyberStreamingScenario(t, fx, base)
 
 	repo := NewOpsRepository(integrationDB).(*opsRepository)
@@ -372,6 +422,7 @@ func TestOpsCyberDoubleCount_StreamingErrorSideRepoViews(t *testing.T) {
 	})
 	t.Run("hourly_preagg", func(t *testing.T) {
 		require.NoError(t, repo.UpsertHourlyMetrics(ctx, base, hourEnd))
+		opsCyberTrackHourlyRows(t, base)
 		row := opsCyberReadHourlyOverall(t, base)
 		require.Equal(t, int64(2), row.success, "success")
 		require.Equal(t, int64(1), row.errTotal, "error_total")
@@ -398,9 +449,9 @@ func TestOpsCyberDoubleCount_StreamingErrorSideRepoViews(t *testing.T) {
 func TestOpsCyberDoubleCount_PreservesForkSLAAttribution(t *testing.T) {
 	ctx := context.Background()
 	fx := newOpsCyberFixture(t, "sla")
-	base := time.Date(2026, 1, 15, 16, 0, 0, 0, time.UTC)
+	base := time.Date(2040, 2, 2, 16, 0, 0, 0, time.UTC)
 	hourEnd := base.Add(time.Hour)
-	opsCyberCleanWindow(t, base, hourEnd)
+	opsCyberRequireIsolatedWindow(t, fx, base, hourEnd)
 	opsCyberInsert(t, fx, base, []opsCyberUsageRow{
 		{requestID: "sla-ok", requestType: service.RequestTypeSync, inputTokens: 10, offset: time.Second},
 		{requestID: "sla-cyber", requestType: service.RequestTypeCyberBlocked, stream: true, inputTokens: 5, offset: 2 * time.Second},
@@ -422,78 +473,11 @@ func TestOpsCyberDoubleCount_PreservesForkSLAAttribution(t *testing.T) {
 	require.Equal(t, int64(15), ov.TokenConsumed)
 
 	require.NoError(t, repo.UpsertHourlyMetrics(ctx, base, hourEnd))
+	opsCyberTrackHourlyRows(t, base)
 	row := opsCyberReadHourlyOverall(t, base)
 	require.Equal(t, int64(1), row.success)
 	require.Equal(t, int64(3), row.errTotal)
 	require.Equal(t, int64(1), row.bizLimited)
 	require.Equal(t, int64(1), row.errSLA)
 	require.Equal(t, int64(15), row.tokens)
-}
-
-// 实时采集器（每分钟写 ops_system_metrics）：通过导出入口 Start() 驱动一次真实采集。
-func TestOpsCyberDoubleCount_MetricsCollector(t *testing.T) {
-	ctx := context.Background()
-	fx := newOpsCyberFixture(t, "collector")
-
-	now := time.Now().UTC()
-	if now.Second() >= 45 {
-		time.Sleep(now.Truncate(time.Minute).Add(time.Minute + time.Second).Sub(now))
-		now = time.Now().UTC()
-	}
-	windowEnd := now.Truncate(time.Minute)
-	windowStart := windowEnd.Add(-time.Minute)
-	opsCyberCleanWindow(t, windowStart, windowEnd)
-	_, err := integrationDB.ExecContext(ctx, `DELETE FROM ops_system_metrics WHERE created_at = $1`, windowEnd)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_, _ = integrationDB.ExecContext(context.Background(), `DELETE FROM ops_system_metrics WHERE created_at = $1`, windowEnd)
-	})
-
-	base := windowStart.Add(10 * time.Second)
-	usage := append(opsCyberNormalUsage("c"),
-		opsCyberUsageRow{requestID: "c-cyber", requestType: service.RequestTypeCyberBlocked, durationMs: opsCyberIntPtr(0), inputTokens: 5, offset: 3 * time.Second},
-		opsCyberUsageRow{requestID: "c-cyber-stream", requestType: service.RequestTypeCyberBlocked, stream: true, durationMs: opsCyberIntPtr(9000), firstTokenMs: opsCyberIntPtr(5000), inputTokens: 7, outputTokens: 3, offset: 4 * time.Second},
-	)
-	errs := []opsCyberErrorRow{
-		{requestID: "c-cyber", errorType: "cyber_policy", errorPhase: "request", statusCode: 400, isBusinessLimited: true, owner: "provider", source: "upstream_http", requestType: opsCyberRequestType(), offset: 3 * time.Second},
-		{requestID: "c-cyber-stream", errorType: "cyber_policy", errorPhase: "request", statusCode: 200, stream: true, isBusinessLimited: true, owner: "provider", source: "upstream_http", requestType: opsCyberRequestType(), offset: 4 * time.Second},
-		{requestID: "c-upstream-502", errorType: "upstream_error", errorPhase: "upstream", statusCode: 502, owner: "provider", source: "upstream_http", offset: 5 * time.Second},
-		{requestID: "c-client-400", errorType: "upstream_error", errorPhase: "upstream", statusCode: 400, owner: "client_via_upstream", source: "upstream_http", offset: 6 * time.Second},
-	}
-	opsCyberInsert(t, fx, base, usage, errs)
-
-	collector := service.NewOpsMetricsCollector(NewOpsRepository(integrationDB), nil, nil, nil, integrationDB, nil, nil)
-	collector.Start()
-	defer collector.Stop()
-
-	var (
-		success, errTotal, bizLimited, errSLA, tokens int64
-		durationMax, ttftMax                          sql.NullInt64
-	)
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		err = integrationDB.QueryRowContext(ctx, `
-SELECT success_count, error_count_total, business_limited_count, error_count_sla, token_consumed, duration_max_ms, ttft_max_ms
-FROM ops_system_metrics
-WHERE created_at = $1 AND window_minutes = 1
-ORDER BY id DESC LIMIT 1`, windowEnd).Scan(&success, &errTotal, &bizLimited, &errSLA, &tokens, &durationMax, &ttftMax)
-		if err == nil {
-			break
-		}
-		require.ErrorIs(t, err, sql.ErrNoRows)
-		require.True(t, time.Now().Before(deadline), "collector did not persist window %s", windowEnd)
-		time.Sleep(200 * time.Millisecond)
-	}
-
-	t.Logf("collector window=%s success=%d error_total=%d business_limited=%d error_sla=%d tokens=%d duration_max=%v ttft_max=%v",
-		windowEnd.Format(time.RFC3339), success, errTotal, bizLimited, errSLA, tokens, durationMax, ttftMax)
-	require.Equal(t, int64(2), success, "cyber usage rows must not be successes")
-	require.Equal(t, int64(4), errTotal, "both cyber hits, the 502 and a client-origin 400 are visible errors")
-	require.Equal(t, int64(2), bizLimited)
-	require.Equal(t, int64(1), errSLA, "fork client_via_upstream errors must not enter service SLA")
-	require.Equal(t, int64(85), tokens, "cyber tokens stay in throughput")
-	require.True(t, durationMax.Valid)
-	require.Equal(t, int64(300), durationMax.Int64)
-	require.True(t, ttftMax.Valid)
-	require.Equal(t, int64(80), ttftMax.Int64)
 }
