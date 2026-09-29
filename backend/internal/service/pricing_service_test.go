@@ -555,6 +555,19 @@ func TestGPT56SolOldDefaultRemoteCatalogUsesPromotionalRates(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 272001*16e-6, customOutputCost.InputCost, 1e-10)
 	require.Zero(t, customOutputCost.OutputCost)
+
+	// The legacy channel-pricing entrypoint has the same per-field behavior:
+	// a nonzero custom input rate does not lower the untouched Fast output rate.
+	nonzero := 3e-6
+	legacyPricing, err := billing.GetModelPricingWithChannel("gpt-5.6-sol", &ChannelModelPricing{InputPrice: &nonzero})
+	require.NoError(t, err)
+	legacyCost := billing.computeTokenBreakdown(legacyPricing, UsageTokens{
+		InputTokens: 272001, CacheReadTokens: 10, CacheCreationTokens: 20, OutputTokens: 100,
+	}, 1, "priority", true)
+	require.InDelta(t, 272001*3e-6, legacyCost.InputCost, 1e-10)
+	require.InDelta(t, 10*1.6e-6, legacyCost.CacheReadCost, 1e-10)
+	require.InDelta(t, 20*20e-6, legacyCost.CacheCreationCost, 1e-10)
+	require.InDelta(t, 100*60e-6, legacyCost.OutputCost, 1e-10)
 }
 
 func TestGetModelPricing_Gpt54MiniUsesDedicatedStaticFallbackWhenRemoteMissing(t *testing.T) {
