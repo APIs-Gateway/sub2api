@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -139,6 +140,44 @@ func TestOpenAIResponsesWebSocket_PauseAfterHandshakeSlotRejectsWithoutForward(t
 	select {
 	case success := <-reports:
 		t.Fatalf("paused account must not report an upstream result: success=%v", success)
+	default:
+	}
+}
+
+func TestOpenAIResponsesWebSocket_PostSlotDatabaseErrorFailsClosed(t *testing.T) {
+	var repo *openAIWSUsageHandlerAccountRepoStub
+	var proxied atomic.Bool
+	var accountAttempts atomic.Int32
+	cache := &concurrencyCacheMock{
+		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
+			if accountAttempts.Add(1) == 1 {
+				return false, nil
+			}
+			repo.getByIDErr = errors.New("account database unavailable")
+			return true, nil
+		},
+	}
+	reports := make(chan bool, 1)
+	h, selectedRepo := newOpenAIResponsesWebSocketAttributionHandlerWithRepo(t, cache,
+		func(context.Context, *gin.Context, *coderws.Conn, *service.Account, string, []byte, *service.OpenAIWSIngressHooks) error {
+			proxied.Store(true)
+			return nil
+		}, reports, true)
+	repo = selectedRepo
+	server := newOpenAIResponsesWebSocketAttributionServer(t, h)
+	defer server.Close()
+
+	client := dialAndSendFirstResponseCreate(t, server.URL)
+	defer func() { _ = client.CloseNow() }()
+	closeErr := readClientCloseError(t, client)
+	require.Equal(t, coderws.StatusTryAgainLater, closeErr.Code)
+	require.False(t, proxied.Load())
+	require.Equal(t, int32(2), accountAttempts.Load())
+	require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseAccountCalled))
+	select {
+	case success := <-reports:
+		t.Fatalf("failed availability check must not report an upstream result: success=%v", success)
 	default:
 	}
 }

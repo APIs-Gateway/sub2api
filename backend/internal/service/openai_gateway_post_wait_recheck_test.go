@@ -110,6 +110,13 @@ func TestOpenAIGatewayService_RecheckAccountSchedulableAfterSlotUsesProjection(t
 	}
 }
 
+func TestOpenAIGatewayService_RecheckAccountSchedulableAfterSlotNilSelection(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	allowed, err := svc.RecheckAccountSchedulableAfterSlot(context.Background(), nil)
+	require.NoError(t, err)
+	require.False(t, allowed)
+}
+
 func TestOpenAIGatewayService_RecheckAccountSchedulableAfterSlotUsesDB(t *testing.T) {
 	selected := Account{
 		ID:          1396,
