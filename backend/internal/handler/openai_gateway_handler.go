@@ -483,8 +483,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
-		if !acquired {
+		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		if slotStatus == accountSlotRetrySelection {
+			continue
+		}
+		if slotStatus != accountSlotAcquired {
 			return
 		}
 
@@ -1014,8 +1017,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
-		if !acquired {
+		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		if slotStatus == accountSlotRetrySelection {
+			continue
+		}
+		if slotStatus != accountSlotAcquired {
 			return
 		}
 
@@ -1682,6 +1688,16 @@ func (h *OpenAIGatewayHandler) acquireResponsesUserSlot(
 	return wrapReleaseOnDone(ctx, userReleaseFunc), true
 }
 
+// accountSlotRetrySelection means the selected account became unavailable
+// between selection and acquisition of its concurrency slot.
+type accountSlotAcquireStatus uint8
+
+const (
+	accountSlotAcquireFailed accountSlotAcquireStatus = iota
+	accountSlotAcquired
+	accountSlotRetrySelection
+)
+
 func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	c *gin.Context,
 	groupID *int64,
@@ -1690,22 +1706,25 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	reqStream bool,
 	streamStarted *bool,
 	reqLog *zap.Logger,
-) (func(), bool) {
+) (func(), accountSlotAcquireStatus) {
 	if selection == nil || selection.Account == nil {
 		markOpsRoutingCapacityLimited(c)
 		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", *streamStarted)
-		return nil, false
+		return nil, accountSlotAcquireFailed
 	}
 
 	ctx := c.Request.Context()
 	account := selection.Account
 	if selection.Acquired {
-		return wrapReleaseOnDone(ctx, selection.ReleaseFunc), true
+		if status := h.recheckOpenAIAccountAfterSlot(c, account, selection.ReleaseFunc, streamStarted, reqLog); status != accountSlotAcquired {
+			return nil, status
+		}
+		return wrapReleaseOnDone(ctx, selection.ReleaseFunc), accountSlotAcquired
 	}
 	if selection.WaitPlan == nil {
 		markOpsRoutingCapacityLimited(c)
 		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", *streamStarted)
-		return nil, false
+		return nil, accountSlotAcquireFailed
 	}
 
 	fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(
@@ -1716,13 +1735,16 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	if err != nil {
 		reqLog.Warn("openai.account_slot_quick_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		h.handleConcurrencyError(c, err, "account", *streamStarted)
-		return nil, false
+		return nil, accountSlotAcquireFailed
 	}
 	if fastAcquired {
+		if status := h.recheckOpenAIAccountAfterSlot(c, account, fastReleaseFunc, streamStarted, reqLog); status != accountSlotAcquired {
+			return nil, status
+		}
 		if err := h.gatewayService.BindStickySession(ctx, groupID, sessionHash, account.ID); err != nil {
 			reqLog.Warn("openai.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
-		return wrapReleaseOnDone(ctx, fastReleaseFunc), true
+		return wrapReleaseOnDone(ctx, fastReleaseFunc), accountSlotAcquired
 	}
 
 	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
@@ -1734,7 +1756,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 			zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
 		)
 		h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", *streamStarted)
-		return nil, false
+		return nil, accountSlotAcquireFailed
 	}
 
 	accountWaitCounted := waitErr == nil && canWait
@@ -1757,15 +1779,35 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	if err != nil {
 		reqLog.Warn("openai.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		h.handleConcurrencyError(c, err, "account", *streamStarted)
-		return nil, false
+		return nil, accountSlotAcquireFailed
 	}
 
 	// Slot acquired: no longer waiting in queue.
 	releaseWait()
+	if status := h.recheckOpenAIAccountAfterSlot(c, account, accountReleaseFunc, streamStarted, reqLog); status != accountSlotAcquired {
+		return nil, status
+	}
 	if err := h.gatewayService.BindStickySession(ctx, groupID, sessionHash, account.ID); err != nil {
 		reqLog.Warn("openai.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 	}
-	return wrapReleaseOnDone(ctx, accountReleaseFunc), true
+	return wrapReleaseOnDone(ctx, accountReleaseFunc), accountSlotAcquired
+}
+
+func (h *OpenAIGatewayHandler) recheckOpenAIAccountAfterSlot(c *gin.Context, account *service.Account, release func(), streamStarted *bool, reqLog *zap.Logger) accountSlotAcquireStatus {
+	allowed, err := h.gatewayService.RecheckAccountSchedulableAfterSlot(c.Request.Context(), account)
+	if allowed && err == nil {
+		return accountSlotAcquired
+	}
+	if release != nil {
+		release()
+	}
+	if err != nil {
+		reqLog.Warn("openai.account_post_wait_recheck_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Account availability check failed", *streamStarted)
+		return accountSlotAcquireFailed
+	}
+	reqLog.Info("openai.account_paused_after_selection", zap.Int64("account_id", account.ID))
+	return accountSlotRetrySelection
 }
 
 // ResponsesWebSocket handles OpenAI Responses API WebSocket ingress endpoint
@@ -2102,6 +2144,20 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return
 			}
 			accountReleaseFunc = fastReleaseFunc
+		}
+		allowed, recheckErr := h.gatewayService.RecheckAccountSchedulableAfterSlot(ctx, account)
+		if recheckErr != nil || !allowed {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			if recheckErr != nil {
+				reqLog.Warn("openai.websocket_account_post_slot_recheck_failed", zap.Int64("account_id", account.ID), zap.Error(recheckErr))
+				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account availability check failed")
+				return
+			}
+			reqLog.Info("openai.websocket_account_paused_after_selection", zap.Int64("account_id", account.ID))
+			failedAccountIDs[account.ID] = struct{}{}
+			continue
 		}
 		setAccountRelease(wrapReleaseOnDone(ctx, accountReleaseFunc))
 		if err := h.gatewayService.BindStickySession(ctx, apiKey.GroupID, sessionHash, account.ID); err != nil {

@@ -222,8 +222,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			stickyGroupID = &servedGroupID
 			effectiveMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), &servedGroupID, reqModel)
 		}
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, stickyGroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
-		if !acquired {
+		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlot(c, stickyGroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		if slotStatus == accountSlotRetrySelection {
+			continue
+		}
+		if slotStatus != accountSlotAcquired {
 			return
 		}
 
