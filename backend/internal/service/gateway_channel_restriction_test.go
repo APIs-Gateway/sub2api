@@ -87,6 +87,12 @@ func TestAnthropicOAuthCanonicalMappingUsesFinalModelForChannelRestriction(t *te
 	svc := &GatewayService{channelService: newTestChannelService(makeStandardRepo(ch, map[int64]string{10: PlatformAnthropic}))}
 	require.True(t, svc.isUpstreamModelRestrictedByChannel(context.Background(), 10, account, "claude-sonnet-4-5"),
 		"the channel must not admit the mapped Opus model under Sonnet pricing")
+	ch.ModelPricing = []ChannelModelPricing{
+		{Platform: PlatformAnthropic, Models: []string{"claude-opus-5-5"}},
+	}
+	svc = &GatewayService{channelService: newTestChannelService(makeStandardRepo(ch, map[int64]string{10: PlatformAnthropic}))}
+	require.False(t, svc.isUpstreamModelRestrictedByChannel(context.Background(), 10, account, "claude-sonnet-4-5"),
+		"the channel must admit the mapped Opus model under Opus pricing")
 }
 
 // --- checkChannelPricingRestriction ---

@@ -240,6 +240,7 @@ func TestGatewayServiceRecordUsage_AnthropicOAuthMappingHonorsBillingModelSource
 		name               string
 		billingModelSource string
 		requestedModel     string
+		channelMappedModel string
 		upstreamModel      string
 		wantTotalCost      float64
 	}{
@@ -274,6 +275,29 @@ func TestGatewayServiceRecordUsage_AnthropicOAuthMappingHonorsBillingModelSource
 			upstreamModel:      "unpriced-upstream-model",
 			wantTotalCost:      0.007,
 		},
+		{
+			name:               "unpriced requested alias falls back to actual upstream",
+			billingModelSource: BillingModelSourceRequested,
+			requestedModel:     "private-plan-x",
+			channelMappedModel: "private-plan-channel-alias",
+			upstreamModel:      upstreamModel,
+			wantTotalCost:      0.014,
+		},
+		{
+			name:               "unpriced channel alias falls back to actual upstream",
+			billingModelSource: BillingModelSourceChannelMapped,
+			requestedModel:     "private-plan-x",
+			channelMappedModel: "private-plan-channel-alias",
+			upstreamModel:      upstreamModel,
+			wantTotalCost:      0.014,
+		},
+		{
+			name:               "unpriced default alias falls back to actual upstream",
+			requestedModel:     "private-plan-x",
+			channelMappedModel: "private-plan-channel-alias",
+			upstreamModel:      upstreamModel,
+			wantTotalCost:      0.014,
+		},
 	}
 
 	for _, tt := range tests {
@@ -281,6 +305,10 @@ func TestGatewayServiceRecordUsage_AnthropicOAuthMappingHonorsBillingModelSource
 			clientModel := requestedModel
 			if tt.requestedModel != "" {
 				clientModel = tt.requestedModel
+			}
+			mappedModel := channelMappedModel
+			if tt.channelMappedModel != "" {
+				mappedModel = tt.channelMappedModel
 			}
 			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 			userRepo := &openAIRecordUsageUserRepoStub{}
@@ -304,7 +332,7 @@ func TestGatewayServiceRecordUsage_AnthropicOAuthMappingHonorsBillingModelSource
 				Account: &Account{ID: 701, Platform: PlatformAnthropic, Type: AccountTypeOAuth},
 				ChannelUsageFields: ChannelUsageFields{
 					OriginalModel:      clientModel,
-					ChannelMappedModel: channelMappedModel,
+					ChannelMappedModel: mappedModel,
 					BillingModelSource: tt.billingModelSource,
 				},
 			})

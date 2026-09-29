@@ -10099,11 +10099,12 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		billingModel = input.OriginalModel
 	}
 	// 无价时保留既有请求模型兜底；upstream 模式额外尝试渠道映射模型，
-	// 避免上游回报了未知模型后静默按 $0 计费。已定价流量不受影响。
+	// 最后尝试实际出站模型，避免未定价的请求别名被静默按 $0 计费。
+	// 已定价的计费源优先级不受影响。
 	if input.BillingModelSource == BillingModelSourceUpstream {
-		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel, input.ChannelMappedModel)
+		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel, input.ChannelMappedModel, result.UpstreamModel)
 	} else {
-		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel)
+		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel, result.UpstreamModel)
 	}
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
