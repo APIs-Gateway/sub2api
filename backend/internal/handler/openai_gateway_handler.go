@@ -444,7 +444,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
-			if len(failedAccountIDs) == 0 {
+			if lastFailoverErr == nil {
 				// 仅 legacy 压缩端点才把选号失败解释成「无账号支持 /responses/compact」；
 				// 原生 v2 的选号失败属于普通无可用账号，不应套用该文案。
 				if legacyCompact && errors.Is(err, service.ErrNoAvailableCompactAccounts) {
@@ -485,6 +485,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if slotStatus == accountSlotRetrySelection {
+			failedAccountIDs[account.ID] = struct{}{}
 			continue
 		}
 		if slotStatus != accountSlotAcquired {
@@ -993,7 +994,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
-			if len(failedAccountIDs) == 0 {
+			if lastFailoverErr == nil {
 				if err != nil {
 					h.respondNoAccountError(c, h.gatewayService, apiKey, currentRoutingModel, reqModel, service.PlatformOpenAI, "Service temporarily unavailable", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseAnthropic, streamStarted)
 					return
@@ -1019,6 +1020,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if slotStatus == accountSlotRetrySelection {
+			failedAccountIDs[account.ID] = struct{}{}
 			continue
 		}
 		if slotStatus != accountSlotAcquired {

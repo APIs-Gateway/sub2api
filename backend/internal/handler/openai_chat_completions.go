@@ -177,7 +177,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
-			if len(failedAccountIDs) == 0 {
+			if lastFailoverErr == nil {
 				h.respondNoAccountError(c, modelAvailabilityDiagnoser, apiKey, reqModel, reqModel, service.PlatformOpenAI, "Service temporarily unavailable", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseStreaming, streamStarted)
 				return
 			} else {
@@ -224,6 +224,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlot(c, stickyGroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if slotStatus == accountSlotRetrySelection {
+			failedAccountIDs[account.ID] = struct{}{}
 			continue
 		}
 		if slotStatus != accountSlotAcquired {

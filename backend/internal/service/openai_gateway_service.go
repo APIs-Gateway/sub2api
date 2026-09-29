@@ -2612,9 +2612,7 @@ func (s *OpenAIGatewayService) RecheckAccountSchedulableAfterSlot(ctx context.Co
 		return false, nil
 	}
 	if s.accountRepo == nil {
-		// Tests without a repository retain their selected account as the source
-		// of truth; production always has an account repository.
-		return selected.IsSchedulable(), nil
+		return false, errors.New("account repository unavailable")
 	}
 	latest, err := s.accountRepo.GetByID(ctx, selected.ID)
 	if errors.Is(err, ErrAccountNotFound) {
