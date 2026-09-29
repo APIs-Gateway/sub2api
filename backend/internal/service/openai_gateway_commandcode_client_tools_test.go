@@ -54,7 +54,7 @@ func TestCommandCodeResponsesBaseURLRequiresExactHTTPSHost(t *testing.T) {
 }
 
 func TestAdaptCommandCodeResponsesHistoryOnlyDoesNotInventTools(t *testing.T) {
-	body := []byte(`{"model":"gpt-5.4","tool_choice":{"type":"tool_search"},"input":[
+	body := []byte(`{"model":"gpt-5.4","input":[
 		{"type":"tool_search_call","id":"tsc_1","call_id":"call_1","arguments":{"query":"repo"},"execution":"client"},
 		{"type":"tool_search_output","id":"tso_1","call_id":"call_1","output":{"groups":["repo"]},"execution":"client"},
 		{"type":"custom_tool_call_output","call_id":"custom_1","output":"untouched"}
@@ -69,12 +69,11 @@ func TestAdaptCommandCodeResponsesHistoryOnlyDoesNotInventTools(t *testing.T) {
 	require.Equal(t, "function_call_output", gjson.GetBytes(adapted, "input.1.type").String())
 	require.JSONEq(t, `{"groups":["repo"]}`, gjson.GetBytes(adapted, "input.1.output").String())
 	require.Equal(t, "custom_tool_call_output", gjson.GetBytes(adapted, "input.2.type").String())
-	require.Equal(t, "function", gjson.GetBytes(adapted, "tool_choice.type").String())
-	require.Equal(t, "tool_search", gjson.GetBytes(adapted, "tool_choice.name").String())
 }
 
 func TestAdaptCommandCodeResponsesHistoryOnlyRejectsMalformedOutput(t *testing.T) {
 	for _, body := range [][]byte{
+		[]byte(`{"input":[{"type":"tool_search_call","arguments":{"query":"repo"}}]}`),
 		[]byte(`{"input":[{"type":"tool_search_output","output":"x"}]}`),
 		[]byte(`{"input":[{"type":"tool_search_output","call_id":"call_1"}]}`),
 	} {
@@ -90,6 +89,16 @@ func TestAdaptCommandCodeResponsesNoToolsNoHistoryIsNoop(t *testing.T) {
 	adapted, mapping, err := adaptCommandCodeResponsesClientTools(body)
 	require.NoError(t, err)
 	require.Equal(t, body, adapted)
+	require.Empty(t, mapping)
+	choiceOnly := []byte(`{"model":"gpt-5.4","tool_choice":{"type":"tool_search"},"input":"continue"}`)
+	adapted, mapping, err = adaptCommandCodeResponsesClientTools(choiceOnly)
+	require.ErrorContains(t, err, "requires a tools declaration")
+	require.Equal(t, choiceOnly, adapted)
+	require.Empty(t, mapping)
+	historyAndChoice := []byte(`{"model":"gpt-5.4","tool_choice":{"type":"tool_search"},"input":[{"type":"tool_search_call","call_id":"call_1","arguments":{"query":"repo"}}]}`)
+	adapted, mapping, err = adaptCommandCodeResponsesClientTools(historyAndChoice)
+	require.ErrorContains(t, err, "requires a tools declaration")
+	require.Equal(t, historyAndChoice, adapted)
 	require.Empty(t, mapping)
 
 	// An explicitly present tools field must not inherit a previous turn's
@@ -147,6 +156,28 @@ func TestForwardCommandCodeNativeResponsesRestoresHistoryOnlyReply(t *testing.T)
 	require.Equal(t, "function_call_output", gjson.GetBytes(upstream.lastBody, "input.1.type").String())
 	require.JSONEq(t, `[{"type":"function","name":"found"}]`, gjson.GetBytes(upstream.lastBody, "input.1.output").String())
 	require.Equal(t, "tool_search_call", gjson.Get(recorder.Body.String(), "output.0.type").String())
+}
+
+func TestForwardCommandCodeNativeResponsesRejectsUndeclaredChoiceAndMalformedHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body []byte
+		want string
+	}{
+		{"choice without history", []byte(`{"model":"gpt-5.4","tool_choice":{"type":"tool_search"},"input":"continue"}`), "requires a tools declaration"},
+		{"choice with history", []byte(`{"model":"gpt-5.4","tool_choice":{"type":"tool_search"},"input":[{"type":"tool_search_call","call_id":"c1","arguments":{"query":"repo"}}]}`), "requires a tools declaration"},
+		{"call missing call ID", []byte(`{"model":"gpt-5.4","input":[{"type":"tool_search_call","arguments":{"query":"repo"}}]}`), "non-empty string call_id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := commandCodeClientToolsContext(tc.body)
+			upstream := &httpUpstreamRecorder{}
+			svc := openAIClientToolsTestService(upstream)
+			result, err := svc.Forward(context.Background(), c, commandCodeNativeAccount("https://api.commandcode.ai/provider/v1"), tc.body)
+			require.ErrorContains(t, err, tc.want)
+			require.Nil(t, result)
+			require.Nil(t, upstream.lastReq)
+		})
+	}
 }
 
 func TestForwardCommandCodeNativeResponsesRestoresStreamingToolSearch(t *testing.T) {

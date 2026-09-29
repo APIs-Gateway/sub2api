@@ -210,13 +210,15 @@ func AdaptResponsesToolSearchHistoryWithoutTools(req map[string]any) (ResponsesC
 	if _, hasTools := req["tools"]; hasTools {
 		return ResponsesClientToolMapping{}, false, nil
 	}
+	if choice, ok := req["tool_choice"].(map[string]any); ok &&
+		strings.TrimSpace(stringValue(choice["type"])) == "tool_search" {
+		return ResponsesClientToolMapping{}, false,
+			fmt.Errorf("tool_search tool_choice requires a tools declaration on native Responses")
+	}
 	mapping := ResponsesClientToolMapping{ToolSearch: true}
 	changed, err := rewriteToolSearchHistoryOnly(req["input"])
 	if err != nil {
 		return ResponsesClientToolMapping{}, false, err
-	}
-	if rewriteClientToolChoice(req, &mapping) {
-		changed = true
 	}
 	if !changed {
 		return ResponsesClientToolMapping{}, false, nil
@@ -238,6 +240,9 @@ func rewriteToolSearchHistoryOnly(value any) (bool, error) {
 		case map[string]any:
 			switch strings.TrimSpace(stringValue(typed["type"])) {
 			case "tool_search_call":
+				if strings.TrimSpace(stringValue(typed["call_id"])) == "" {
+					return fmt.Errorf("tool_search_call requires a non-empty string call_id before it can be lowered to function_call")
+				}
 				typed["type"] = "function_call"
 				typed["name"] = toolSearchProxyName
 				typed["arguments"] = rawObjectString(typed["arguments"])
