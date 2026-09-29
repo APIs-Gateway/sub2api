@@ -122,6 +122,14 @@ func safeProviderLogType(providerType string) string {
 	}
 }
 
+func safeTestResultProviderType(providerType string) string {
+	if providerType == tavilyProviderName {
+		return tavilyProviderName
+	}
+	// buildProvider falls back to Brave for any unrecognized stored type.
+	return braveProviderName
+}
+
 func classifyTestSearchFailure(cfg ProviderConfig, req SearchRequest, err error) testSearchFailure {
 	failure := testSearchFailure{Provider: safeTestProviderName(cfg.Type), Category: "upstream"}
 	var statusErr *providerHTTPStatusError
@@ -184,6 +192,16 @@ func NewManager(configs []ProviderConfig, redisClient *redis.Client) *Manager {
 		redis:       redisClient,
 		clientCache: make(map[string]*http.Client),
 	}
+}
+
+// NewManagerWithHTTPClient preloads a client for providers without a proxy.
+// The regular proxy-specific client creation remains unchanged.
+func NewManagerWithHTTPClient(configs []ProviderConfig, redisClient *redis.Client, client *http.Client) *Manager {
+	m := NewManager(configs, redisClient)
+	if client != nil {
+		m.clientCache[""] = client
+	}
+	return m
 }
 
 // SearchWithBestProvider selects a provider using quota-weighted load balancing,
@@ -472,7 +490,7 @@ func (m *Manager) TestSearch(ctx context.Context, req SearchRequest) (*SearchRes
 			}
 			continue
 		}
-		return resp, cfg.Type, nil
+		return resp, safeTestResultProviderType(cfg.Type), nil
 	}
 	if len(failures) == 0 {
 		return nil, "", ErrTestNoAvailableProvider

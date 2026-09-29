@@ -1,7 +1,10 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +16,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type webSearchHandlerRoundTrip func(*http.Request) (*http.Response, error)
+
+func (f webSearchHandlerRoundTrip) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func callWebSearchTestHandler(t *testing.T) (int, response.Response, string) {
 	t.Helper()
@@ -58,4 +67,36 @@ func TestWebSearchTestHandlerProxyFailureIsSafe422(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, body.Code)
 	require.Equal(t, "WEB_SEARCH_TEST_FAILED", body.Reason)
 	require.Equal(t, "Web Search test failed: Brave: proxy", body.Message)
+}
+
+func TestWebSearchTestHandlerSuccessDoesNotEchoMalformedProviderType(t *testing.T) {
+	const maliciousType = "unknown-secret-provider-user:pass"
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previousLogger)
+
+	var requests int
+	client := &http.Client{Transport: webSearchHandlerRoundTrip(func(*http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"web":{"results":[{"url":"https://example.com","title":"result","description":"found"}]}}`)),
+			Header: make(http.Header),
+		}, nil
+	})}
+	service.SetWebSearchManager(websearch.NewManagerWithHTTPClient([]websearch.ProviderConfig{{
+		Type: maliciousType, APIKey: "api-key-secret",
+	}}, nil, client))
+	defer service.SetWebSearchManager(nil)
+
+	status, body, raw := callWebSearchTestHandler(t)
+	if strings.Contains(raw, maliciousType) || strings.Contains(raw, "api-key-secret") || strings.Contains(logs.String(), maliciousType) || strings.Contains(logs.String(), "api-key-secret") {
+		t.Fatal("successful admin test response or log contains malformed provider type or key")
+	}
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, 1, requests)
+	data, ok := body.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, websearch.ProviderTypeBrave, data["provider"])
 }
