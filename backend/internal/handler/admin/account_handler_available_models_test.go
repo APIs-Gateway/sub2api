@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -104,6 +106,66 @@ func TestAccountHandlerGetAvailableModels_OpenAIOAuthUsesExplicitModelMapping(t 
 	require.Equal(t, "gpt-5", resp.Data[0].ID)
 }
 
+func TestAccountHandlerGetAvailableModels_MappedModelOrderIsStable(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		platform     string
+		accountType  string
+		catalogIDs   []string
+		catalogNames []string
+	}{
+		{name: "openai", platform: service.PlatformOpenAI, accountType: service.AccountTypeOAuth,
+			catalogIDs: []string{"gpt-6-astra", "gpt-6"}, catalogNames: []string{"GPT-6 Astra", "GPT-6 (Astra)"}},
+		{name: "gemini", platform: service.PlatformGemini, accountType: service.AccountTypeAPIKey,
+			catalogIDs: []string{"gemini-3.5-flash", "gemini-3-flash-preview"}, catalogNames: []string{"Gemini 3.5 Flash", "Gemini 3 Flash Preview"}},
+		{name: "anthropic", platform: service.PlatformAnthropic, accountType: service.AccountTypeAPIKey,
+			catalogIDs: []string{"claude-opus-5-5", "claude-opus-5"}, catalogNames: []string{"Claude Opus 5.5", "Claude Opus 5"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mapping := map[string]any{
+				"zeta-custom": "upstream-zeta", "alpha-custom": "upstream-alpha",
+				tc.catalogIDs[1]: "upstream-second", tc.catalogIDs[0]: "upstream-first",
+			}
+			svc := &availableModelsAdminService{
+				stubAdminService: newStubAdminService(),
+				account: service.Account{
+					ID: 1400, Platform: tc.platform, Type: tc.accountType, Status: service.StatusActive,
+					Credentials: map[string]any{"model_mapping": mapping},
+				},
+			}
+			router := setupAvailableModelsRouter(svc)
+			wantIDs := []string{tc.catalogIDs[0], tc.catalogIDs[1], "alpha-custom", "zeta-custom"}
+			wantNames := []string{tc.catalogNames[0], tc.catalogNames[1], "alpha-custom", "zeta-custom"}
+			for i := 0; i < 16; i++ {
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/1400/models", nil))
+				require.Equal(t, http.StatusOK, rec.Code)
+				var resp struct {
+					Data []struct {
+						ID          string `json:"id"`
+						DisplayName string `json:"display_name"`
+						Type        string `json:"type"`
+					} `json:"data"`
+				}
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+				ids := make([]string, 0, len(resp.Data))
+				names := make([]string, 0, len(resp.Data))
+				for _, model := range resp.Data {
+					ids = append(ids, model.ID)
+					names = append(names, model.DisplayName)
+					require.Equal(t, "model", model.Type)
+				}
+				require.Equal(t, wantIDs, ids, "request %d changed model order or set", i)
+				require.Equal(t, wantNames, names, "request %d changed model display names", i)
+			}
+			require.Equal(t, map[string]any{
+				"zeta-custom": "upstream-zeta", "alpha-custom": "upstream-alpha",
+				tc.catalogIDs[1]: "upstream-second", tc.catalogIDs[0]: "upstream-first",
+			}, mapping, "listing must not mutate the account mapping")
+		})
+	}
+}
+
 func TestAccountHandlerGetAvailableModels_AnthropicSetupTokenMappingAdmission(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -180,6 +242,7 @@ func TestAccountHandlerGetAvailableModels_OpenAIOAuthMappingOptInPreservesDefaul
 	}
 	require.Contains(t, ids, "my-gpt")
 	require.Contains(t, ids, "gpt-5.4")
+	require.Equal(t, append(openai.DefaultModelIDs(), "my-gpt"), ids, "opt-in must preserve the curated catalog order")
 	require.Equal(t, map[string]any{"my-gpt": "gpt-5.4"}, mapping)
 }
 
@@ -209,6 +272,11 @@ func TestAccountHandlerGetAvailableModels_GeminiAPIKeyMappingOptInPreservesDefau
 	}
 	require.Contains(t, ids, "my-gemini")
 	require.Contains(t, ids, "gemini-2.5-pro")
+	wantCatalogIDs := make([]string, 0, len(geminicli.DefaultModels)+1)
+	for _, model := range geminicli.DefaultModels {
+		wantCatalogIDs = append(wantCatalogIDs, model.ID)
+	}
+	require.Equal(t, append(wantCatalogIDs, "my-gemini"), ids, "opt-in must preserve the curated catalog order")
 }
 
 func TestAccountHandlerGetAvailableModels_OpenAIOAuthPassthroughFallsBackToDefaults(t *testing.T) {
