@@ -475,11 +475,11 @@ func TestGPT56SolOldDefaultRemoteCatalogUsesPromotionalRates(t *testing.T) {
 	require.InDelta(t, 30e-6, old.OutputCostPerToken, 1e-12)
 	billing := NewBillingService(&config.Config{}, svc)
 	for _, tt := range []struct {
-		name         string
-		inputTokens  int
-		tier         string
-		inputPrice   float64
-		outputPrice  float64
+		name        string
+		inputTokens int
+		tier        string
+		inputPrice  float64
+		outputPrice float64
 	}{
 		{name: "at threshold", inputTokens: 272000, inputPrice: 4e-6, outputPrice: 20e-6},
 		{name: "above threshold", inputTokens: 272001, inputPrice: 8e-6, outputPrice: 30e-6},
