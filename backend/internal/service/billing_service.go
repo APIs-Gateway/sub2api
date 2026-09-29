@@ -118,6 +118,7 @@ type ModelPricing struct {
 	LongContextInputMultiplier         float64 // 长上下文整次会话输入倍率
 	LongContextOutputMultiplier        float64 // 长上下文整次会话输出倍率
 	PriorityExcludesLongContext        bool    // priority 有独立价且上游不支持与长上下文叠加时为 true
+	SolFastLongContext                 bool    // 官方 Sol 默认价卡：Fast 须与 >272K 长上下文倍率叠加
 	ImageOutputPricePerToken           float64 // 图片输出 token 价格 (USD)
 	ImageOutputPriceExplicit           bool    // 是否由渠道定价显式设定（为 true 时即使 == 0 也不回退）
 }
@@ -515,6 +516,7 @@ func (s *BillingService) initFallbackPricing() {
 	// OpenAI's Sol promotional rate is available at least through 2026-11-21;
 	// recheck the official price before changing it again.
 	s.fallbackPrices["gpt-5.6-sol"] = newOpenAIGPT56FallbackPricing(4e-6, 20e-6, 0.4e-6)
+	s.fallbackPrices["gpt-5.6-sol"].SolFastLongContext = true
 	s.fallbackPrices["gpt-5.6-terra"] = newOpenAIGPT56FallbackPricing(2e-6, 12e-6, 0.2e-6)
 	s.fallbackPrices["gpt-5.6-luna"] = newOpenAIGPT56FallbackPricing(0.2e-6, 1.2e-6, 0.02e-6)
 
@@ -1105,6 +1107,8 @@ func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*
 				LongContextOutputMultiplier:        litellmPricing.LongContextOutputCostMultiplier,
 				ImageInputPricePerToken:            litellmPricing.InputCostPerImageToken,
 				ImageOutputPricePerToken:           litellmPricing.OutputCostPerImageToken,
+				SolFastLongContext:                 isOpenAIGPT56SolModel(model) &&
+					(s.pricingService.usesDefaultPricingCatalog() || litellmPricing == openAIGPT56SolFallbackPricing),
 			}, true, pricingAt), nil
 		}
 	}
@@ -1134,6 +1138,10 @@ func (s *BillingService) GetModelPricingWithChannel(model string, channelPricing
 	// 渠道覆盖仅在当前请求生效，不能修改动态目录或 fallback 的共享指针。
 	cloned := *pricing
 	pricing = &cloned
+	if channelPricing.InputPrice != nil || channelPricing.OutputPrice != nil ||
+		channelPricing.CacheWritePrice != nil || channelPricing.CacheReadPrice != nil {
+		pricing.SolFastLongContext = false
+	}
 	if channelPricing.InputPrice != nil {
 		pricing.InputPricePerToken = *channelPricing.InputPrice
 		pricing.InputPricePerTokenPriority = *channelPricing.InputPrice
@@ -1249,9 +1257,7 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	// 长上下文定价仅在无区间定价时应用（区间定价已包含上下文分层）
 	applyLongCtx := len(resolved.Intervals) == 0
 
-	stackSolFastLongContext := resolved.Source == PricingSourceLiteLLM &&
-		isOpenAIGPT56SolModel(input.Model) && s.pricingService.usesDefaultPricingCatalog()
-	return s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx, stackSolFastLongContext), nil
+	return s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx), nil
 }
 
 // computeTokenBreakdown 是 token 计费的核心逻辑，由 calculateTokenCost 和 calculateCostInternal 共用。
@@ -1259,7 +1265,7 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 func (s *BillingService) computeTokenBreakdown(
 	pricing *ModelPricing, tokens UsageTokens,
 	rateMultiplier float64, serviceTier string,
-	applyLongCtx bool, stackSolFastLongContext bool,
+	applyLongCtx bool,
 ) *CostBreakdown {
 	// 保存时强制 > 0；若仍有负数泄漏，按 0 处理避免按 1x 误扣。
 	if rateMultiplier < 0 {
@@ -1295,7 +1301,7 @@ func (s *BillingService) computeTokenBreakdown(
 	// Sol Fast is 2x the corresponding Standard context tier. Its explicit
 	// above-272K fields are Standard prices, so applying them after selecting
 	// Fast would discard the Fast premium; multiply the selected Fast rates.
-	stackPriorityLongContext := priorityPricingApplied && stackSolFastLongContext
+	stackPriorityLongContext := priorityPricingApplied && pricing.SolFastLongContext
 	if applyLongCtx && s.shouldApplySessionLongContextPricing(tokens, pricing) &&
 		(!priorityPricingApplied || !pricing.PriorityExcludesLongContext || stackPriorityLongContext) {
 		if pricing.InputPricePerTokenAbove272K > 0 && !stackPriorityLongContext {
@@ -1492,8 +1498,7 @@ func (s *BillingService) calculateCostInternal(model string, tokens UsageTokens,
 	}
 
 	// 旧路径始终检查长上下文定价（无区间定价概念）
-	stackSolFastLongContext := channelPricing == nil && isOpenAIGPT56SolModel(model) && s.pricingService.usesDefaultPricingCatalog()
-	return s.computeTokenBreakdown(pricing, tokens, rateMultiplier, serviceTier, true, stackSolFastLongContext), nil
+	return s.computeTokenBreakdown(pricing, tokens, rateMultiplier, serviceTier, true), nil
 }
 
 // applyModelSpecificPricingPolicyEx 应用模型特定定价策略（GPT-5.6 长上下文/缓存写入、

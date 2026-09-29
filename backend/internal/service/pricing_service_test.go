@@ -512,6 +512,38 @@ func TestGPT56SolOldDefaultRemoteCatalogUsesPromotionalRates(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 272001*10e-6, customFastLong.InputCost, 1e-10)
 	require.InDelta(t, 100*60e-6, customFastLong.OutputCost, 1e-10)
+	customMissing := &PricingService{cfg: cfg, pricingData: map[string]*LiteLLMModelPricing{}}
+	require.Same(t, openAIGPT56SolFallbackPricing, customMissing.GetModelPricing("gpt-5.6-sol"))
+	missingBilling := NewBillingService(cfg, customMissing)
+	missingFastLong, err := missingBilling.CalculateCostWithServiceTier("gpt-5.6-sol", UsageTokens{InputTokens: 272001, OutputTokens: 100}, 1, "priority")
+	require.NoError(t, err)
+	require.InDelta(t, 272001*16e-6, missingFastLong.InputCost, 1e-10)
+	require.InDelta(t, 100*60e-6, missingFastLong.OutputCost, 1e-10)
+
+	// An empty channel entry only admits the model; default official billing
+	// still applies. An explicit zero override remains the operator's rate.
+	resolver := NewModelPricingResolver(nil, billing)
+	base, err := billing.GetModelPricing("gpt-5.6-sol")
+	require.NoError(t, err)
+	empty := &ResolvedPricing{Mode: BillingModeToken, Source: PricingSourceChannel, BasePricing: base}
+	resolver.applyTokenOverrides(&ChannelModelPricing{}, empty)
+	computed, err := billing.CalculateCostUnified(CostInput{
+		Model: "gpt-5.6-sol", Tokens: UsageTokens{InputTokens: 272001, OutputTokens: 100},
+		RateMultiplier: 1, ServiceTier: "priority", Resolver: resolver, Resolved: empty,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 272001*16e-6, computed.InputCost, 1e-10)
+	require.InDelta(t, 100*60e-6, computed.OutputCost, 1e-10)
+	zero := 0.0
+	customChannel := &ResolvedPricing{Mode: BillingModeToken, Source: PricingSourceChannel, BasePricing: base}
+	resolver.applyTokenOverrides(&ChannelModelPricing{InputPrice: &zero}, customChannel)
+	customCost, err := billing.CalculateCostUnified(CostInput{
+		Model: "gpt-5.6-sol", Tokens: UsageTokens{InputTokens: 272001, OutputTokens: 100},
+		RateMultiplier: 1, ServiceTier: "priority", Resolver: resolver, Resolved: customChannel,
+	})
+	require.NoError(t, err)
+	require.Zero(t, customCost.InputCost)
+	require.InDelta(t, 100*40e-6, customCost.OutputCost, 1e-10)
 }
 
 func TestGetModelPricing_Gpt54MiniUsesDedicatedStaticFallbackWhenRemoteMissing(t *testing.T) {
