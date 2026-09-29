@@ -1,7 +1,11 @@
 package websearch
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,23 +16,48 @@ func TestTavilyProvider_Name(t *testing.T) {
 	require.Equal(t, "tavily", p.Name())
 }
 
-func TestTavilyProvider_Search_RequestConstruction(t *testing.T) {
-	// Verify tavilyRequest struct fields map correctly
-	req := tavilyRequest{
-		APIKey:      "test-key",
-		Query:       "golang",
-		MaxResults:  3,
-		SearchDepth: tavilySearchDepthBasic,
-	}
-	data, err := json.Marshal(req)
-	require.NoError(t, err)
+type tavilyRoundTripFunc func(*http.Request) (*http.Response, error)
 
-	var parsed map[string]any
-	require.NoError(t, json.Unmarshal(data, &parsed))
-	require.Equal(t, "test-key", parsed["api_key"])
-	require.Equal(t, "golang", parsed["query"])
-	require.Equal(t, float64(3), parsed["max_results"])
-	require.Equal(t, "basic", parsed["search_depth"])
+func (f tavilyRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestTavilyProvider_Search_UsesBearerHeaderWithoutBodyKey(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  string
+	}{
+		{name: "configured key", key: "test-key"},
+		{name: "pasted key with surrounding whitespace", key: " \ttest-key\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: tavilyRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				require.Equal(t, http.MethodPost, req.Method)
+				require.Equal(t, tavilySearchEndpoint, req.URL.String())
+				require.Equal(t, "application/json", req.Header.Get("Content-Type"))
+				require.Equal(t, "Bearer test-key", req.Header.Get("Authorization"))
+
+				body, err := io.ReadAll(req.Body)
+				require.NoError(t, err)
+				require.NotContains(t, string(body), "test-key")
+				var payload map[string]any
+				require.NoError(t, json.Unmarshal(body, &payload))
+				require.Equal(t, map[string]any{
+					"query": "golang", "max_results": float64(3), "search_depth": "basic",
+				}, payload)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body: io.NopCloser(strings.NewReader(`{"results":[{"url":"https://go.dev","title":"Go","content":"Go programming language"}]}`)),
+					Header: make(http.Header),
+				}, nil
+			})}
+
+			resp, err := NewTavilyProvider(tc.key, client).Search(context.Background(), SearchRequest{Query: "golang", MaxResults: 3})
+			require.NoError(t, err)
+			require.Equal(t, "golang", resp.Query)
+			require.Equal(t, []SearchResult{{URL: "https://go.dev", Title: "Go", Snippet: "Go programming language"}}, resp.Results)
+		})
+	}
 }
 
 func TestTavilyProvider_Search_ResponseParsing(t *testing.T) {
