@@ -29,6 +29,10 @@ jobs:
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
+      - name: Tool-name rewrite performance comparison
+        if: github.event_name == 'pull_request' && github.head_ref == 'codex/upstream-7699-tool-name-one-pass'
+        working-directory: backend
+        run: GOMAXPROCS=1 go test -tags=unit ./internal/service -run '^$' -bench '^BenchmarkToolNameRewriteLongHistory$' -benchmem -benchtime=1x -count=1
       - name: Integration tests (coverage)
         working-directory: backend
         run: make test-integration-cover

@@ -177,16 +177,7 @@ func TestApplyToolNameRewriteToBody_AmbiguousAndNonStringNamesMatchPriorBehavior
 
 func TestApplyToolNameRewriteToBody_LongHistoryAndCountTokens(t *testing.T) {
 	const toolUseCount = 512
-	var messages strings.Builder
-	for i := 0; i < toolUseCount; i++ {
-		if i > 0 {
-			messages.WriteByte(',')
-		}
-		messages.WriteString(`{"role":"assistant","content":[{"type":"tool_use","name":"sessions_run","input":{"padding":"`)
-		messages.WriteString(strings.Repeat("x", 512))
-		messages.WriteString(`"}}]}`)
-	}
-	body := []byte(fmt.Sprintf(`{"tools":[{"name":"sessions_run","input_schema":{}}],"messages":[%s],"tool_choice":{"type":"tool","name":"sessions_run"}}`, messages.String()))
+	body := toolRewriteLongHistoryBody(toolUseCount)
 	rw := buildToolNameRewriteFromBody(body)
 	require.NotNil(t, rw)
 	out := applyToolNameRewriteToBody(body, rw)
@@ -201,6 +192,44 @@ func TestApplyToolNameRewriteToBody_LongHistoryAndCountTokens(t *testing.T) {
 	require.Equal(t, "cc_sess_run", gjson.GetBytes(countTokens, "tools.0.name").String())
 	require.Equal(t, "cc_sess_run", gjson.GetBytes(countTokens, fmt.Sprintf("messages.%d.content.0.name", toolUseCount-1)).String())
 	require.Equal(t, "5m", gjson.GetBytes(countTokens, "tools.0.cache_control.ttl").String())
+}
+
+func toolRewriteLongHistoryBody(toolUseCount int) []byte {
+	var messages strings.Builder
+	for i := 0; i < toolUseCount; i++ {
+		if i > 0 {
+			messages.WriteByte(',')
+		}
+		messages.WriteString(`{"role":"assistant","content":[{"type":"tool_use","name":"sessions_run","input":{"padding":"`)
+		messages.WriteString(strings.Repeat("x", 512))
+		messages.WriteString(`"}}]}`)
+	}
+	return []byte(fmt.Sprintf(`{"tools":[{"name":"sessions_run","input_schema":{}}],"messages":[%s],"tool_choice":{"type":"tool","name":"sessions_run"}}`, messages.String()))
+}
+
+func BenchmarkToolNameRewriteLongHistory(b *testing.B) {
+	for _, toolUseCount := range []int{512, 2048} {
+		body := toolRewriteLongHistoryBody(toolUseCount)
+		rw := buildToolNameRewriteFromBody(body)
+		for _, impl := range []struct {
+			name    string
+			rewrite func([]byte, *ToolNameRewrite) []byte
+		}{
+			{name: "one_copy", rewrite: applyToolNameRewriteToBody},
+			{name: "legacy", rewrite: applyToolNameRewriteToBodyLegacy},
+		} {
+			b.Run(fmt.Sprintf("%d_tool_uses/%s", toolUseCount, impl.name), func(b *testing.B) {
+				b.SetBytes(int64(len(body)))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if len(impl.rewrite(body, rw)) == 0 {
+						b.Fatal("empty rewritten body")
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestApplyToolsLastCacheBreakpoint_InjectsDefault(t *testing.T) {
