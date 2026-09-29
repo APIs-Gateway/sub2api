@@ -8885,6 +8885,8 @@ func upstreamModelMismatchAuditRequestID(requestID string, accountID int64, atte
 //     照常计费、只标记。
 //  3. 总开关 DisableUpstreamModelMismatchBlock=true（观察模式，用于线上误杀止血）：照常计费、只标记，
 //     否则误杀时开关止得住拦截、止不住漏收费。
+//  4. 账号在 UpstreamModelMismatchObserveAccountIDs 名单内：同总开关的观察模式，照常计费、只标记——
+//     名单就是管理员声明「这个号的模型改名可接受」，拦截放行了计费却清零会持续漏收。
 //
 // 被拦截的审计行由 RecordUsage 的 UpstreamModelMismatchBlocked 分支处理，不经此函数。
 func (s *OpenAIGatewayService) upstreamModelMismatchZeroCost(input *OpenAIRecordUsageInput) bool {
@@ -8892,6 +8894,9 @@ func (s *OpenAIGatewayService) upstreamModelMismatchZeroCost(input *OpenAIRecord
 		return false
 	}
 	if !s.upstreamModelMismatchBlockEnabled() {
+		return false
+	}
+	if input.Account != nil && s.upstreamModelMismatchObserveOnlyAccount(input.Account.ID) {
 		return false
 	}
 	sentModel := firstNonEmpty(strings.TrimSpace(input.Result.UpstreamModel), input.Result.Model)

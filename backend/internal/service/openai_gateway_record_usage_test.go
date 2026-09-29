@@ -370,6 +370,48 @@ func TestRecordUsage_MismatchObserveModeWritesResponseModelButBillsNormally(t *t
 	require.InDelta(t, expected.ActualCost, userRepo.lastAmount, 1e-12)
 }
 
+// 账号级观察名单（UpstreamModelMismatchObserveAccountIDs）同总开关观察模式：拦截开启时名单内账号的
+// 晚到不一致行照常计费、只标记；名单外账号仍零计费。
+func TestRecordUsage_MismatchObserveAccountBillsNormally(t *testing.T) {
+	usage := OpenAIUsage{InputTokens: 10, OutputTokens: 5}
+	record := func(accountID int64) (*openAIRecordUsageLogRepoStub, *openAIRecordUsageUserRepoStub, *OpenAIGatewayService) {
+		usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+		userRepo := &openAIRecordUsageUserRepoStub{}
+		svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
+		svc.cfg.Gateway.UpstreamModelMismatchObserveAccountIDs = []int64{3214}
+		require.False(t, svc.cfg.Gateway.DisableUpstreamModelMismatchBlock, "拦截开启，仅因账号名单豁免而不零计费")
+		require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+			Result:                &OpenAIForwardResult{RequestID: "req-observe-account", Model: "gpt-5.1", UpstreamModel: "gpt-5.1", Usage: usage},
+			APIKey:                &APIKey{ID: 2, User: &User{ID: 1}},
+			User:                  &User{ID: 1},
+			Account:               &Account{ID: accountID, Platform: PlatformOpenAI},
+			UpstreamResponseModel: "BR-GPT-5.1-NaWe",
+		}))
+		return usageRepo, userRepo, svc
+	}
+
+	t.Run("listed account bills normally", func(t *testing.T) {
+		usageRepo, userRepo, svc := record(3214)
+		log := usageRepo.lastLog
+		require.NotNil(t, log)
+		require.True(t, log.UpstreamModelMismatch, "名单内账号的行也要标记")
+		require.Equal(t, "BR-GPT-5.1-NaWe", *log.UpstreamResponseModel)
+		require.NotContains(t, log.RequestID, ":mismatch:")
+		expected := expectedOpenAICost(t, svc, "gpt-5.1", usage, 1.1)
+		require.Greater(t, log.TotalCost, 0.0, "名单内账号照常计费")
+		require.InDelta(t, expected.ActualCost, log.ActualCost, 1e-12)
+		require.Equal(t, 1, userRepo.deductCalls)
+		require.InDelta(t, expected.ActualCost, userRepo.lastAmount, 1e-12)
+	})
+
+	t.Run("unlisted account still zero cost", func(t *testing.T) {
+		usageRepo, userRepo, _ := record(7)
+		require.True(t, usageRepo.lastLog.UpstreamModelMismatch)
+		require.Zero(t, usageRepo.lastLog.TotalCost)
+		require.Zero(t, userRepo.deductCalls)
+	})
+}
+
 // grok 这类 upstreamModelObserveOnly 的模型只记录不拦截，判定本身未验证：带 B 的行照常计费、只标记。
 func TestRecordUsage_GrokObserveOnlyMismatchBillsNormally(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
