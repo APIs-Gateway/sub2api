@@ -2016,9 +2016,22 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			return
 		}
 
+		// The cached account mapping is shared by request routing; never mutate it.
+		modelIDs := make(map[string]struct{}, len(mapping)+len(openai.DefaultModels))
+		for id := range mapping {
+			modelIDs[id] = struct{}{}
+		}
+		// An opt-in rename-only mapping retains the normal model catalog.
+		if account.ModelMappingAllowsUnlisted() {
+			for _, dm := range openai.DefaultModels {
+				if account.IsModelSupported(dm.ID) {
+					modelIDs[dm.ID] = struct{}{}
+				}
+			}
+		}
 		// Return mapped models
 		var models []openai.Model
-		for requestedModel := range mapping {
+		for requestedModel := range modelIDs {
 			var found bool
 			for _, dm := range openai.DefaultModels {
 				if dm.ID == requestedModel {
@@ -2061,8 +2074,19 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			return
 		}
 
+		modelIDs := make(map[string]struct{}, len(mapping)+len(geminicli.DefaultModels))
+		for id := range mapping {
+			modelIDs[id] = struct{}{}
+		}
+		if account.ModelMappingAllowsUnlisted() {
+			for _, dm := range geminicli.DefaultModels {
+				if account.IsModelSupported(dm.ID) {
+					modelIDs[dm.ID] = struct{}{}
+				}
+			}
+		}
 		var models []geminicli.Model
-		for requestedModel := range mapping {
+		for requestedModel := range modelIDs {
 			var found bool
 			for _, dm := range geminicli.DefaultModels {
 				if dm.ID == requestedModel {
@@ -2130,13 +2154,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	}
 
 	// Handle Claude/Anthropic accounts
-	// For OAuth and Setup-Token accounts: return default models
-	if account.IsOAuth() {
-		response.Success(c, claude.DefaultModels)
-		return
-	}
-
-	// For API Key accounts: return models based on model_mapping
+	// OAuth/setup-token and API Key accounts share the same account mapping.
 	mapping := account.GetModelMapping()
 	if len(mapping) == 0 {
 		// No mapping configured, return default models
@@ -2144,9 +2162,21 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	modelIDs := make(map[string]struct{}, len(mapping)+len(claude.DefaultModels))
+	for id := range mapping {
+		modelIDs[id] = struct{}{}
+	}
+	if account.ModelMappingAllowsUnlisted() {
+		for _, dm := range claude.DefaultModels {
+			if account.IsModelSupported(dm.ID) {
+				modelIDs[dm.ID] = struct{}{}
+			}
+		}
+	}
+
 	// Return mapped models (keys of the mapping are the available model IDs)
 	var models []claude.Model
-	for requestedModel := range mapping {
+	for requestedModel := range modelIDs {
 		// Try to find display info from default models
 		var found bool
 		for _, dm := range claude.DefaultModels {

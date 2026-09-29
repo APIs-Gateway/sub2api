@@ -428,6 +428,93 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('loads Anthropic setup-token mapping and saves the mapping-only opt in without exposing its token', async () => {
+    const account = {
+      ...buildAccount(),
+      platform: 'anthropic',
+      type: 'setup-token',
+      credentials: {
+        model_mapping: { 'custom-sonnet': 'claude-sonnet-4-6' },
+        oauth_type: 'claude'
+      },
+      credentials_status: { has_access_token: true }
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLInputElement>('input[placeholder="admin.accounts.requestModel"]').element.value).toBe('custom-sonnet')
+    expect(wrapper.get<HTMLInputElement>('input[placeholder="admin.accounts.actualModel"]').element.value).toBe('claude-sonnet-4-6')
+    const toggle = wrapper.get('[data-testid="model-mapping-allow-unlisted-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials?.model_mapping).toEqual({ 'custom-sonnet': 'claude-sonnet-4-6' })
+    expect(credentials?.model_mapping_allow_unlisted).toBe(true)
+    expect(credentials?.oauth_type).toBe('claude')
+    expect(credentials).not.toHaveProperty('access_token')
+  })
+
+  it('clears Anthropic mapping and the mapping-only opt in while retaining other credential fields', async () => {
+    const account = {
+      ...buildAccount(),
+      platform: 'anthropic',
+      type: 'setup-token',
+      credentials: {
+        model_mapping: { 'custom-sonnet': 'claude-sonnet-4-6' },
+        model_mapping_allow_unlisted: true,
+        oauth_type: 'claude'
+      },
+      credentials_status: { has_access_token: true }
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="model-mapping-allow-unlisted-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    await toggle.trigger('click')
+    await wrapper.get<HTMLInputElement>('input[placeholder="admin.accounts.requestModel"]').setValue('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials).not.toHaveProperty('model_mapping')
+    expect(credentials?.model_mapping_allow_unlisted).toBe(false)
+    expect(credentials?.oauth_type).toBe('claude')
+    expect(credentials).not.toHaveProperty('access_token')
+  })
+
+  it('persists clearing the final visible OAuth mapping field with a redacted token', async () => {
+    const account = {
+      ...buildAccount(),
+      platform: 'anthropic',
+      type: 'setup-token',
+      credentials: { model_mapping: { 'custom-sonnet': 'claude-sonnet-4-6' } },
+      credentials_status: { has_access_token: true }
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get<HTMLInputElement>('input[placeholder="admin.accounts.requestModel"]').setValue('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toEqual({
+      model_mapping_allow_unlisted: false
+    })
+  })
+
   it('loads and clears the OAuth-only Codex namespace flatten toggle', async () => {
     const account = buildAccount()
     account.type = 'oauth'

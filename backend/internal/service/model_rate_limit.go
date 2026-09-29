@@ -105,6 +105,15 @@ func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedMod
 		return nil
 	}
 	keys := a.modelRateLimitFamilyKeys(ctx, requestedModel, modelKey)
+	if a.IsAnthropicOAuthOrSetupToken() {
+		// Retain the legacy request-side key for cooldowns already in Redis, and
+		// also check the final wire model used by native and bridged forwarding.
+		finalKey, _ := resolveAnthropicOAuthMappedModel(a, requestedModel)
+		finalKey = strings.TrimSpace(finalKey)
+		if finalKey != "" && finalKey != modelKey {
+			keys = append(keys, a.modelRateLimitFamilyKeys(ctx, requestedModel, finalKey)...)
+		}
+	}
 	if a.Platform == PlatformOpenAI {
 		// Keep the pre-normalization key for existing 429 cooldowns, and also
 		// check the actual wire model used by the downgrade guard.

@@ -4243,8 +4243,12 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 	if account.Platform == PlatformOpenAI && account.IsOpenAIPassthroughEnabled() {
 		return true
 	}
-	// OAuth/SetupToken 账号使用 Anthropic 标准映射（短ID → 长ID）
+	// OAuth/SetupToken may explicitly map the client's short ID, while the
+	// upstream still needs the canonical Claude ID. Admit either spelling.
 	if account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey {
+		if account.IsAnthropicOAuthOrSetupToken() && account.IsModelSupported(requestedModel) {
+			return true
+		}
 		if account.Type == AccountTypeServiceAccount {
 			requestedModel = normalizeVertexAnthropicModelID(claude.NormalizeModelID(requestedModel))
 		} else {
@@ -4253,6 +4257,25 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 	}
 	// 其他平台使用账户的模型支持检查
 	return account.IsModelSupported(requestedModel)
+}
+
+// Resolve both client short IDs and canonical IDs before applying an Anthropic
+// OAuth mapping. A canonical mapping must also work when Claude Code requests
+// the corresponding short alias. Directly configured short IDs take priority.
+func resolveAnthropicOAuthMappedModel(account *Account, requestedModel string) (string, bool) {
+	if account == nil || !account.IsAnthropicOAuthOrSetupToken() {
+		return requestedModel, false
+	}
+	if mapped, matched := account.ResolveMappedModel(requestedModel); matched {
+		return claude.NormalizeModelID(mapped), true
+	}
+	canonical := claude.NormalizeModelID(requestedModel)
+	if canonical != requestedModel {
+		if mapped, matched := account.ResolveMappedModel(canonical); matched {
+			return claude.NormalizeModelID(mapped), true
+		}
+	}
+	return canonical, false
 }
 
 // GetAccessToken 获取账号凭证
@@ -5156,7 +5179,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if parsed == nil {
 		return nil, fmt.Errorf("parse request: empty request")
 	}
-	// Opus 5.5 参数校验：API-key 映射后的模型与 OAuth 原生 ID 都在伪装改写前判定。
+	// Validate against the final API-key or OAuth mapped model before mimicry.
 	if err := validateClaudeOpus55ForAccount(account, parsed); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"type": "error", "error": gin.H{"type": "invalid_request_error", "message": err.Error()}})
 		return nil, err
@@ -5194,7 +5217,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// Beta policy: evaluate once; block check + cache filter set for buildUpstreamRequest.
 	// Always overwrite the cache to prevent stale values from a previous retry with a different account.
 	if account.Platform == PlatformAnthropic && c != nil {
-		policy := s.evaluateBetaPolicy(ctx, c.GetHeader("anthropic-beta"), account, parsed.Model)
+		betaModel := parsed.Model
+		if account.IsAnthropicOAuthOrSetupToken() {
+			betaModel, _ = resolveAnthropicOAuthMappedModel(account, betaModel)
+		}
+		policy := s.evaluateBetaPolicy(ctx, c.GetHeader("anthropic-beta"), account, betaModel)
 		if policy.blockErr != nil {
 			return nil, policy.blockErr
 		}
@@ -5236,6 +5263,19 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// 对于非 Claude Code 的第三方客户端（opencode 等），仍然走完整 mimicry。
 	isClaudeCode := isClaudeCodeForwardRequest(ctx, c, parsed, body)
 	shouldMimicClaudeCode := account.IsOAuth() && !isClaudeCode
+	// Resolve the account mapping before OAuth body normalization. The latter
+	// canonicalizes short model IDs and makes exact short-key mappings invisible;
+	// it also uses the model to decide Opus 5.5 temperature/tool_choice rules.
+	if account.IsAnthropicOAuthOrSetupToken() {
+		mappedModel, _ := resolveAnthropicOAuthMappedModel(account, originalModel)
+		if mappedModel != reqModel {
+			if err := replaceBody(s.replaceModelInBody(body, mappedModel)); err != nil {
+				return nil, err
+			}
+			reqModel = mappedModel
+			parsed.Model = mappedModel
+		}
+	}
 
 	if shouldMimicClaudeCode {
 		// 与 Parrot 对齐：OAuth 账号无条件重写 system（即使客户端已发了 Claude Code
@@ -5307,7 +5347,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 	// 应用模型映射：
 	// - APIKey 账号：使用账号级别的显式映射（如果配置），否则透传原始模型名
-	// - OAuth/SetupToken 账号：使用 Anthropic 标准映射（短ID → 长ID）
+	// - OAuth/SetupToken 账号：先使用账号映射，再进行标准模型名规范化
 	mappedModel := reqModel
 	mappingSource := ""
 	if account.Type == AccountTypeAPIKey {
@@ -5328,9 +5368,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			}
 		}
 	}
-	if mappingSource == "" && account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey {
-		normalized := claude.NormalizeModelID(reqModel)
-		if normalized != reqModel {
+	if mappingSource == "" && account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey && !account.IsAnthropicOAuthOrSetupToken() {
+		normalized := claude.NormalizeModelID(mappedModel)
+		if normalized != mappedModel {
 			mappedModel = normalized
 			mappingSource = "prefix"
 		}
@@ -10047,16 +10087,25 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 确定计费模型
 	concreteBillingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
 	billingModel := concreteBillingModel
+	if input.BillingModelSource == BillingModelSourceUpstream {
+		if upstreamModel := strings.TrimSpace(result.UpstreamModel); upstreamModel != "" {
+			billingModel = upstreamModel
+		}
+	}
 	if input.BillingModelSource == BillingModelSourceChannelMapped && input.ChannelMappedModel != "" {
 		billingModel = input.ChannelMappedModel
 	}
 	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
 		billingModel = input.OriginalModel
 	}
-	// 通用兜底（与 OpenAI 路径的 usageBillingModelCandidates 语义对齐）：渠道映射/请求来源
-	// 覆盖把计费模型换成查无价的别名时，回退到实际转发的具体模型，避免静默按 $0 计费。
-	// 已定价流量不受影响。
-	billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel)
+	// 无价时保留既有请求模型兜底；upstream 模式额外尝试渠道映射模型，
+	// 最后尝试实际出站模型，避免未定价的请求别名被静默按 $0 计费。
+	// 已定价的计费源优先级不受影响。
+	if input.BillingModelSource == BillingModelSourceUpstream {
+		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel, input.ChannelMappedModel, result.UpstreamModel)
+	} else {
+		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel, result.UpstreamModel)
+	}
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
@@ -10484,6 +10533,10 @@ func resolveAccountUpstreamModel(account *Account, requestedModel string) string
 	if account.Platform == PlatformAntigravity {
 		return mapAntigravityModel(account, requestedModel)
 	}
+	if account.IsAnthropicOAuthOrSetupToken() {
+		model, _ := resolveAnthropicOAuthMappedModel(account, requestedModel)
+		return model
+	}
 	return account.GetMappedModel(requestedModel)
 }
 
@@ -10573,6 +10626,18 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 	if err := replaceBody(StripEmptyTextBlocks(body)); err != nil {
 		return err
 	}
+	// Resolve from the client model before OAuth normalization changes short IDs.
+	// CountTokens uses the final model for Opus 5.5 body normalization as well.
+	if account.IsAnthropicOAuthOrSetupToken() && reqModel != "" {
+		mappedModel, _ := resolveAnthropicOAuthMappedModel(account, reqModel)
+		if mappedModel != reqModel {
+			if err := replaceBody(s.replaceModelInBody(body, mappedModel)); err != nil {
+				return err
+			}
+			reqModel = mappedModel
+			parsed.Model = mappedModel
+		}
+	}
 
 	isClaudeCodeCT := IsClaudeCodeClient(ctx) || isClaudeCodeClient(c.GetHeader("User-Agent"), parsed.MetadataUserID)
 	shouldMimicClaudeCode := account.IsOAuth() && !isClaudeCodeCT
@@ -10598,7 +10663,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 
 	// 应用模型映射：
 	// - APIKey 账号：使用账号级别的显式映射（如果配置），否则透传原始模型名
-	// - OAuth/SetupToken 账号：使用 Anthropic 标准映射（短ID → 长ID）
+	// - OAuth/SetupToken 账号：先使用账号映射，再进行标准模型名规范化
 	if reqModel != "" {
 		mappedModel := reqModel
 		mappingSource := ""
@@ -10608,9 +10673,9 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 				mappingSource = "account"
 			}
 		}
-		if mappingSource == "" && account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey {
-			normalized := claude.NormalizeModelID(reqModel)
-			if normalized != reqModel {
+		if mappingSource == "" && account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey && !account.IsAnthropicOAuthOrSetupToken() {
+			normalized := claude.NormalizeModelID(mappedModel)
+			if normalized != mappedModel {
 				mappedModel = normalized
 				mappingSource = "prefix"
 			}
@@ -11293,6 +11358,14 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 			modelSet[model] = struct{}{}
 			hasAnyMapping = true
 		}
+		if len(mapping) > 0 && acc.modelMappingAdmitsUnlisted() {
+			for _, model := range defaultModelsListCandidateIDs(acc.Platform) {
+				if platform != "" && acc.Platform != platform && !mixedListingModelAllowed(platform, model) {
+					continue
+				}
+				modelSet[model] = struct{}{}
+			}
+		}
 	}
 
 	// If no account has model_mapping, return nil (use default)
@@ -11479,6 +11552,8 @@ func validateClaudeOpus55ForAccount(account *Account, parsed *ParsedRequest) err
 	model := parsed.Model
 	if account.Type == AccountTypeAPIKey {
 		model = account.GetMappedModel(model)
+	} else if account.IsAnthropicOAuthOrSetupToken() {
+		model, _ = resolveAnthropicOAuthMappedModel(account, model)
 	}
 	return validateClaudeOpus55Request(parsed.Body.Bytes(), model)
 }

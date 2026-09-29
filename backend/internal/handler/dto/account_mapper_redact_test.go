@@ -16,12 +16,13 @@ func TestAccountFromServiceShallow_RedactsSensitiveCredentials(t *testing.T) {
 		Platform: "anthropic",
 		Type:     "oauth",
 		Credentials: map[string]any{
-			"access_token":  "at-secret",
-			"refresh_token": "rt-secret",
-			"id_token":      "id-secret",
-			"api_key":       "sk-secret",
-			"base_url":      "https://api.example.com",
-			"model_mapping": map[string]any{"foo": "bar"},
+			"access_token":                 "at-secret",
+			"refresh_token":                "rt-secret",
+			"id_token":                     "id-secret",
+			"api_key":                      "sk-secret",
+			"base_url":                     "https://api.example.com",
+			"model_mapping":                map[string]any{"foo": "bar"},
+			"model_mapping_allow_unlisted": true,
 		},
 	}
 
@@ -36,6 +37,7 @@ func TestAccountFromServiceShallow_RedactsSensitiveCredentials(t *testing.T) {
 	// 非敏感键保留
 	require.Equal(t, "https://api.example.com", got.Credentials["base_url"])
 	require.Equal(t, map[string]any{"foo": "bar"}, got.Credentials["model_mapping"])
+	require.Equal(t, true, got.Credentials["model_mapping_allow_unlisted"])
 
 	// 状态 map 标记敏感键存在
 	require.True(t, got.CredentialsStatus["has_access_token"])

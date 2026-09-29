@@ -168,6 +168,7 @@
                   {{ t('admin.accounts.mapRequestModels') }}
                 </p>
               </div>
+              <ModelMappingAllowUnlistedToggle v-model="modelMappingAllowUnlisted" />
 
             <!-- Model Mapping List -->
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
@@ -444,9 +445,9 @@
 
       </div>
 
-      <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
+      <!-- OAuth/setup-token model mapping (no API key editor container). -->
       <div
-        v-if="account.platform === 'openai' && account.type === 'oauth'"
+        v-if="isOAuthModelMappingEditable"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -507,6 +508,7 @@
                 {{ t('admin.accounts.mapRequestModels') }}
               </p>
             </div>
+            <ModelMappingAllowUnlistedToggle v-model="modelMappingAllowUnlisted" />
 
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
               <div
@@ -732,6 +734,7 @@
                 {{ t('admin.accounts.mapRequestModels') }}
               </p>
             </div>
+              <ModelMappingAllowUnlistedToggle v-model="modelMappingAllowUnlisted" />
 
             <!-- Model Mapping List -->
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
@@ -934,6 +937,7 @@
 
           <!-- Mapping Mode -->
           <div v-else class="space-y-3">
+            <ModelMappingAllowUnlistedToggle v-model="modelMappingAllowUnlisted" />
             <div v-for="(mapping, index) in modelMappings" :key="getModelMappingKey(mapping)" class="flex items-center gap-2">
               <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.fromModel')" />
               <span class="text-gray-400">→</span>
@@ -2490,6 +2494,7 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
+import ModelMappingAllowUnlistedToggle from '@/components/account/ModelMappingAllowUnlistedToggle.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import {
   applyAntigravityProjectID,
@@ -2603,6 +2608,7 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+const modelMappingAllowUnlisted = ref(false)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
@@ -2904,6 +2910,11 @@ const normalizeOpenAIResponsesMode = (mode: unknown): OpenAIResponsesMode => {
 const isOpenAIModelRestrictionDisabled = computed(() =>
   props.account?.platform === 'openai' && openaiPassthroughEnabled.value
 )
+const isOAuthModelMappingEditable = computed(() =>
+  (props.account?.platform === 'openai' && props.account.type === 'oauth') ||
+  (props.account?.platform === 'anthropic' &&
+    (props.account.type === 'oauth' || props.account.type === 'setup-token'))
+)
 const openAIResponsesStatusKey = computed(() => {
   if (openAIResponsesMode.value === 'force_responses') {
     return 'admin.accounts.openai.responsesStatusForcedResponses'
@@ -3039,10 +3050,27 @@ const loadModelRestrictionFromMapping = (rawMapping?: Record<string, unknown>) =
 const buildModelRestrictionMapping = () =>
   buildModelMappingObject('combined', allowedModels.value, modelMappings.value)
 
+const applyModelMappingAllowUnlisted = (updatePayload: Record<string, unknown>) => {
+  if (!props.account || props.account.platform === 'antigravity') return
+  const original = (props.account.credentials as Record<string, unknown>) || {}
+  const credentials: Record<string, unknown> = {
+    ...((updatePayload.credentials as Record<string, unknown>) || original)
+  }
+  const changed = (original.model_mapping_allow_unlisted === true) !== modelMappingAllowUnlisted.value
+  // An explicit false also lets the backend persist clearing the final visible
+  // mapping field while it retains a redacted OAuth token. Empty credential
+  // objects are currently treated as an omitted update by the backend.
+  if (!changed && Object.keys(credentials).length > 0) return
+  credentials.model_mapping_allow_unlisted = modelMappingAllowUnlisted.value
+  updatePayload.credentials = credentials
+}
+
 const syncFormFromAccount = (newAccount: Account | null) => {
   if (!newAccount) {
     return
   }
+  modelMappingAllowUnlisted.value =
+    (newAccount.credentials as Record<string, unknown> | undefined)?.model_mapping_allow_unlisted === true
   antigravityMixedChannelConfirmed.value = false
   showMixedChannelWarning.value = false
   mixedChannelWarningDetails.value = null
@@ -3311,8 +3339,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           : 'https://api.anthropic.com'
     editBaseUrl.value = platformDefaultUrl
 
-    // Load model mappings for OpenAI OAuth accounts
-    if (newAccount.platform === 'openai' && newAccount.credentials) {
+    // Load model mappings for OpenAI and Anthropic OAuth/setup-token accounts.
+    if (isOAuthModelMappingEditable.value && newAccount.credentials) {
       const oauthCredentials = newAccount.credentials as Record<string, unknown>
       loadModelRestrictionFromMapping(oauthCredentials.model_mapping as Record<string, unknown> | undefined)
     } else {
@@ -3816,7 +3844,7 @@ const handleSubmit = async () => {
     (props.account.type === 'apikey' && !(props.account.platform === 'openai' && openaiPassthroughEnabled.value)) ||
     ((props.account.platform === 'gemini' || props.account.platform === 'anthropic') && props.account.type === 'service_account') ||
     props.account.type === 'bedrock' ||
-    (props.account.platform === 'openai' && props.account.type === 'oauth' && !openaiPassthroughEnabled.value)
+    (isOAuthModelMappingEditable.value && !isOpenAIModelRestrictionDisabled.value)
   if (savesModelMapping) {
     for (const model of allowedModels.value) {
       const conflict = findModelMappingConflict(model, modelMappings.value)
@@ -4067,12 +4095,12 @@ const handleSubmit = async () => {
       updatePayload.credentials = newCredentials
     }
 
-    // OpenAI OAuth: persist model mapping to credentials
-    if (props.account.platform === 'openai' && props.account.type === 'oauth') {
+    // OAuth/setup-token: persist the same mapping edited in the shared panel.
+    if (isOAuthModelMappingEditable.value) {
       const currentCredentials = (updatePayload.credentials as Record<string, unknown>) ||
         ((props.account.credentials as Record<string, unknown>) || {})
       const newCredentials: Record<string, unknown> = { ...currentCredentials }
-      const shouldApplyModelMapping = !openaiPassthroughEnabled.value
+      const shouldApplyModelMapping = !isOpenAIModelRestrictionDisabled.value
 
       if (shouldApplyModelMapping) {
         const modelMapping = buildModelRestrictionMapping()
@@ -4085,11 +4113,13 @@ const handleSubmit = async () => {
         // 透传模式保留现有映射
         newCredentials.model_mapping = currentCredentials.model_mapping
       }
-      const compactModelMapping = buildModelMappingObject('mapping', [], openAICompactModelMappings.value)
-      if (compactModelMapping) {
-        newCredentials.compact_model_mapping = compactModelMapping
-      } else {
-        delete newCredentials.compact_model_mapping
+      if (props.account.platform === 'openai') {
+        const compactModelMapping = buildModelMappingObject('mapping', [], openAICompactModelMappings.value)
+        if (compactModelMapping) {
+          newCredentials.compact_model_mapping = compactModelMapping
+        } else {
+          delete newCredentials.compact_model_mapping
+        }
       }
 
       updatePayload.credentials = newCredentials
@@ -4391,6 +4421,8 @@ const handleSubmit = async () => {
       writeQuotaNotifyToExtra(newExtra, 'update')
       updatePayload.extra = newExtra
     }
+
+    applyModelMappingAllowUnlisted(updatePayload)
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {
       await submitUpdateAccount(accountID, updatePayload)
