@@ -100,3 +100,35 @@ func TestWebSearchTestHandlerSuccessDoesNotEchoMalformedProviderType(t *testing.
 	require.True(t, ok)
 	require.Equal(t, websearch.ProviderTypeBrave, data["provider"])
 }
+
+func TestWebSearchTestHandlerUpstream401IsSafe422(t *testing.T) {
+	const secret = "api-key-secret"
+	const upstreamBody = "provider-body-secret"
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previousLogger)
+
+	var requests int
+	client := &http.Client{Transport: webSearchHandlerRoundTrip(func(*http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Body:       io.NopCloser(strings.NewReader(upstreamBody + " " + secret)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	service.SetWebSearchManager(websearch.NewManagerWithHTTPClient([]websearch.ProviderConfig{{
+		Type: websearch.ProviderTypeTavily, APIKey: secret,
+	}}, nil, client))
+	defer service.SetWebSearchManager(nil)
+
+	status, body, raw := callWebSearchTestHandler(t)
+	if strings.Contains(raw, secret) || strings.Contains(raw, upstreamBody) || strings.Contains(logs.String(), secret) || strings.Contains(logs.String(), upstreamBody) {
+		t.Fatal("admin test response or log contains provider error details")
+	}
+	require.Equal(t, 1, requests)
+	require.Equal(t, http.StatusUnprocessableEntity, status)
+	require.Equal(t, "WEB_SEARCH_TEST_FAILED", body.Reason)
+	require.Equal(t, "Web Search test failed: Tavily: auth (HTTP 401)", body.Message)
+}
