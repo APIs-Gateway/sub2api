@@ -199,6 +199,82 @@ func AdaptResponsesClientToolsWithInheritedMapping(
 	return adapter, true, nil
 }
 
+// AdaptResponsesToolSearchHistoryWithoutTools lowers a Command Code follow-up
+// that omits the tools declaration. Only the tool_search wire items establish
+// this mapping; other client tools have no declaration to identify them and
+// must be left alone. No tools declaration is added to the request.
+func AdaptResponsesToolSearchHistoryWithoutTools(req map[string]any) (ResponsesClientToolMapping, bool, error) {
+	if req == nil {
+		return ResponsesClientToolMapping{}, false, nil
+	}
+	if _, hasTools := req["tools"]; hasTools {
+		return ResponsesClientToolMapping{}, false, nil
+	}
+	if choice, ok := req["tool_choice"].(map[string]any); ok &&
+		strings.TrimSpace(stringValue(choice["type"])) == "tool_search" {
+		return ResponsesClientToolMapping{}, false,
+			fmt.Errorf("tool_search tool_choice requires a tools declaration on native Responses")
+	}
+	mapping := ResponsesClientToolMapping{ToolSearch: true}
+	changed, err := rewriteToolSearchHistoryOnly(req["input"])
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	if !changed {
+		return ResponsesClientToolMapping{}, false, nil
+	}
+	return mapping, true, nil
+}
+
+func rewriteToolSearchHistoryOnly(value any) (bool, error) {
+	changed := false
+	var visit func(any) error
+	visit = func(value any) error {
+		switch typed := value.(type) {
+		case []any:
+			for _, item := range typed {
+				if err := visit(item); err != nil {
+					return err
+				}
+			}
+		case map[string]any:
+			switch strings.TrimSpace(stringValue(typed["type"])) {
+			case "tool_search_call":
+				if strings.TrimSpace(stringValue(typed["call_id"])) == "" {
+					return fmt.Errorf("tool_search_call requires a non-empty string call_id before it can be lowered to function_call")
+				}
+				typed["type"] = "function_call"
+				typed["name"] = toolSearchProxyName
+				typed["arguments"] = rawObjectString(typed["arguments"])
+				delete(typed, "execution")
+				normalizeLoweredFunctionItemID(typed)
+				changed = true
+			case "tool_search_output":
+				callID := strings.TrimSpace(stringValue(typed["call_id"]))
+				if callID == "" {
+					return fmt.Errorf("tool_search_output requires a non-empty string call_id before it can be lowered to function_call_output")
+				}
+				typed["type"] = "function_call_output"
+				normalizeLoweredFunctionItemID(typed)
+				if err := normalizeToolSearchOutput(typed); err != nil {
+					return err
+				}
+				changed = true
+			}
+			for _, child := range typed {
+				if err := visit(child); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := visit(value); err != nil {
+		return false, err
+	}
+	return changed, nil
+}
+
 func cloneResponsesToolDeclarations(tools []any) []any {
 	cloned := make([]any, len(tools))
 	copy(cloned, tools)
