@@ -108,9 +108,13 @@ func TestOpenAIAcquireAccountSlot_PauseAfterSchedulerAcquiredReleasesSlot(t *tes
 func TestOpenAIResponsesWebSocket_PauseAfterHandshakeSlotRejectsWithoutForward(t *testing.T) {
 	var repo *openAIWSUsageHandlerAccountRepoStub
 	var proxied atomic.Bool
+	var accountAttempts atomic.Int32
 	cache := &concurrencyCacheMock{
 		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
 		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
+			if accountAttempts.Add(1) == 1 {
+				return false, nil
+			}
 			repo.account.Schedulable = false
 			return true, nil
 		},
@@ -120,7 +124,7 @@ func TestOpenAIResponsesWebSocket_PauseAfterHandshakeSlotRejectsWithoutForward(t
 		func(context.Context, *gin.Context, *coderws.Conn, *service.Account, string, []byte, *service.OpenAIWSIngressHooks) error {
 			proxied.Store(true)
 			return nil
-		}, reports)
+		}, reports, true)
 	repo = selectedRepo
 	server := newOpenAIResponsesWebSocketAttributionServer(t, h)
 	defer server.Close()
@@ -130,6 +134,7 @@ func TestOpenAIResponsesWebSocket_PauseAfterHandshakeSlotRejectsWithoutForward(t
 	closeErr := readClientCloseError(t, client)
 	require.Equal(t, coderws.StatusTryAgainLater, closeErr.Code)
 	require.False(t, proxied.Load())
+	require.Equal(t, int32(2), accountAttempts.Load())
 	require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseAccountCalled))
 	select {
 	case success := <-reports:
