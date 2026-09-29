@@ -198,11 +198,11 @@ func toolRewriteLongHistoryBody(toolUseCount int) []byte {
 	var messages strings.Builder
 	for i := 0; i < toolUseCount; i++ {
 		if i > 0 {
-			messages.WriteByte(',')
+			_ = messages.WriteByte(',')
 		}
-		messages.WriteString(`{"role":"assistant","content":[{"type":"tool_use","name":"sessions_run","input":{"padding":"`)
-		messages.WriteString(strings.Repeat("x", 512))
-		messages.WriteString(`"}}]}`)
+		_, _ = messages.WriteString(`{"role":"assistant","content":[{"type":"tool_use","name":"sessions_run","input":{"padding":"`)
+		_, _ = messages.WriteString(strings.Repeat("x", 512))
+		_, _ = messages.WriteString(`"}}]}`)
 	}
 	return []byte(fmt.Sprintf(`{"tools":[{"name":"sessions_run","input_schema":{}}],"messages":[%s],"tool_choice":{"type":"tool","name":"sessions_run"}}`, messages.String()))
 }
