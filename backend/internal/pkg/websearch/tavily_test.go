@@ -47,8 +47,8 @@ func TestTavilyProvider_Search_UsesBearerHeaderWithoutBodyKey(t *testing.T) {
 				}, payload)
 				return &http.Response{
 					StatusCode: http.StatusOK,
-					Body: io.NopCloser(strings.NewReader(`{"results":[{"url":"https://go.dev","title":"Go","content":"Go programming language"}]}`)),
-					Header: make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"results":[{"url":"https://go.dev","title":"Go","content":"Go programming language"}]}`)),
+					Header:     make(http.Header),
 				}, nil
 			})}
 
