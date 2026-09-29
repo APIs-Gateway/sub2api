@@ -75,6 +75,10 @@ func (r *pausedQueuedSlotAccountRepo) ListSchedulableUngroupedByPlatform(_ conte
 	return r.list(platform)
 }
 
+func (r *pausedQueuedSlotAccountRepo) ListByPlatform(_ context.Context, platform string) ([]service.Account, error) {
+	return r.list(platform)
+}
+
 type pausedQueuedSlotCache struct {
 	*concurrencyCacheMock
 	repo          *pausedQueuedSlotAccountRepo
