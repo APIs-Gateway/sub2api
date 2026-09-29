@@ -3693,17 +3693,27 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, wsErr
 	}
 
-	// Default HTTP Forward also reaches third-party native Responses API-key
-	// upstreams. Only Lite carriers without native namespace declarations use
-	// the client-tool adapter here: this fork preserves API-key providers that
-	// round-trip namespace-qualified calls, as well as official OpenAI and
-	// requests with only top-level tools.
-	if account.IsOpenAIApiKey() && !isOfficialOpenAIBaseURL(account.GetOpenAIBaseURL()) && !isOpenAIResponsesCompactPath(c) &&
-		gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists() &&
-		!hasOpenAIResponsesNamespaceToolDeclaration(body) {
-		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
+	// The official Command Code native Responses endpoint needs client-tool
+	// lowering for top-level declarations and history-only tool_search turns.
+	// Other third-party API-key providers retain the Lite-carrier-only rule;
+	// native namespace declarations keep this fork's qualified-call contract.
+	commandCodeClientTools := account.IsOpenAIApiKey() &&
+		isOfficialCommandCodeResponsesBaseURL(account.GetOpenAIBaseURL()) &&
+		needsOpenAIResponsesClientToolAdaptation(body)
+	liteClientTools := account.IsOpenAIApiKey() && !isOfficialOpenAIBaseURL(account.GetOpenAIBaseURL()) &&
+		gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists()
+	if !isOpenAIResponsesCompactPath(c) && !hasOpenAIResponsesNamespaceToolDeclaration(body) &&
+		(commandCodeClientTools || liteClientTools) {
+		var adaptedBody []byte
+		var mapping apicompat.ResponsesClientToolMapping
+		var adaptErr error
+		if commandCodeClientTools {
+			adaptedBody, mapping, adaptErr = adaptCommandCodeResponsesClientTools(body)
+		} else {
+			adaptedBody, mapping, adaptErr = adaptOpenAIResponsesClientTools(body)
+		}
 		if adaptErr != nil {
-			return nil, fmt.Errorf("adapt OpenAI Responses Lite client tools: %w", adaptErr)
+			return nil, fmt.Errorf("adapt OpenAI Responses client tools: %w", adaptErr)
 		}
 		body = adaptedBody
 		requestView = newOpenAIRequestView(body)
