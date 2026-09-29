@@ -698,6 +698,43 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // 会把未知模型原样透传，Codex 上游对这类模型必然返回不可重试的 400，导致
 // 请求卡死在该账号上、无法 failover 到真正支持该模型的 API Key 账号（#3662）。
 // 未知/自定义别名仍保持允许（兼容渠道级映射），见 isOpenAIOAuthServableModel。
+const ModelMappingAllowUnlistedCredentialKey = "model_mapping_allow_unlisted"
+
+// ModelMappingAllowsUnlisted keeps a rename-only mapping from narrowing model
+// admission. The default is false to preserve existing account restrictions.
+func (a *Account) ModelMappingAllowsUnlisted() bool {
+	if a == nil || a.Credentials == nil {
+		return false
+	}
+	enabled, _ := a.Credentials[ModelMappingAllowUnlistedCredentialKey].(bool)
+	return enabled
+}
+
+// Identity mappings are the explicit whitelist entries written by the account
+// editor. They continue to restrict admission even when rename-only mappings
+// are configured to allow unlisted models.
+func (a *Account) modelMappingAdmitsUnlisted() bool {
+	if !a.ModelMappingAllowsUnlisted() {
+		return false
+	}
+	for from, to := range a.GetModelMapping() {
+		// API-imported or legacy wildcard identities are also restrictive.
+		// The editor disallows wildcard targets, but stored credentials may
+		// contain them, so fail closed instead of admitting unrelated models.
+		if from == to {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *Account) isUnmappedModelSupported(requestedModel string) bool {
+	if a.IsOpenAIOAuth() {
+		return isOpenAIOAuthServableModel(requestedModel)
+	}
+	return true
+}
+
 func (a *Account) IsModelSupported(requestedModel string) bool {
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
@@ -708,16 +745,16 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	}
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
-		if a.IsOpenAIOAuth() {
-			return isOpenAIOAuthServableModel(requestedModel)
-		}
-		return true // 无映射 = 允许所有
+		return a.isUnmappedModelSupported(requestedModel)
 	}
 	if mappingSupportsRequestedModel(mapping, requestedModel) {
 		return true
 	}
 	normalized := normalizeRequestedModelForLookup(a.Platform, requestedModel)
-	return normalized != requestedModel && mappingSupportsRequestedModel(mapping, normalized)
+	if normalized != requestedModel && mappingSupportsRequestedModel(mapping, normalized) {
+		return true
+	}
+	return a.modelMappingAdmitsUnlisted() && a.isUnmappedModelSupported(requestedModel)
 }
 
 // GetMappedModel 获取映射后的模型名（支持通配符，最长优先匹配）

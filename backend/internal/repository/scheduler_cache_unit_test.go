@@ -29,6 +29,28 @@ func newSchedulerCacheUnitWithRedis(t *testing.T) (*schedulerCache, *miniredis.M
 	require.True(t, ok)
 	return cache, mr
 }
+
+func TestBuildSchedulerMetadataAccount_KeepsMappingAdmissionFlagWithoutSecrets(t *testing.T) {
+	account := service.Account{
+		ID:       7544,
+		Platform: service.PlatformAnthropic,
+		Type:     service.AccountTypeSetupToken,
+		Credentials: map[string]any{
+			"model_mapping":                 map[string]any{"custom-sonnet": "claude-sonnet-4-6"},
+			"model_mapping_allow_unlisted": true,
+			"access_token":                  "secret-token",
+			"refresh_token":                 "secret-refresh",
+		},
+	}
+
+	got := buildSchedulerMetadataAccount(account)
+	require.Equal(t, true, got.Credentials["model_mapping_allow_unlisted"])
+	require.Equal(t, account.Credentials["model_mapping"], got.Credentials["model_mapping"])
+	require.NotContains(t, got.Credentials, "access_token")
+	require.NotContains(t, got.Credentials, "refresh_token")
+	require.True(t, got.IsModelSupported("claude-haiku-4-5"))
+}
+
 func TestBuildSchedulerMetadataAccount_KeepsOpenAIWSFlags(t *testing.T) {
 	account := service.Account{
 		ID:       42,

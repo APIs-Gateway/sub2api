@@ -4387,6 +4387,10 @@
       modelMapping: '模型映射',
       selectAllowedModels: '选择允许的模型。留空则支持所有模型。',
       mapRequestModels: '将请求模型映射到实际模型。左边是请求的模型，右边是发送到 API 的实际模型。',
+      modelMappingAllowUnlisted: {
+        title: '映射不限制其他模型',
+        hint: '开启后，未列出的模型仍可使用，除非另外配置模型白名单。已有账号默认保持原有限制。'
+      },
       selectedModels: '已选择 {count} 个模型',
       supportsAllModels: '（支持所有模型）',
       requestModel: '请求模型',

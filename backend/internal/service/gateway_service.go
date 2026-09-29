@@ -4243,8 +4243,12 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 	if account.Platform == PlatformOpenAI && account.IsOpenAIPassthroughEnabled() {
 		return true
 	}
-	// OAuth/SetupToken 账号使用 Anthropic 标准映射（短ID → 长ID）
+	// OAuth/SetupToken may explicitly map the client's short ID, while the
+	// upstream still needs the canonical Claude ID. Admit either spelling.
 	if account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey {
+		if account.IsAnthropicOAuthOrSetupToken() && account.IsModelSupported(requestedModel) {
+			return true
+		}
 		if account.Type == AccountTypeServiceAccount {
 			requestedModel = normalizeVertexAnthropicModelID(claude.NormalizeModelID(requestedModel))
 		} else {
@@ -4253,6 +4257,25 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 	}
 	// 其他平台使用账户的模型支持检查
 	return account.IsModelSupported(requestedModel)
+}
+
+// Resolve both client short IDs and canonical IDs before applying an Anthropic
+// OAuth mapping. A canonical mapping must also work when Claude Code requests
+// the corresponding short alias. Directly configured short IDs take priority.
+func resolveAnthropicOAuthMappedModel(account *Account, requestedModel string) (string, bool) {
+	if account == nil || !account.IsAnthropicOAuthOrSetupToken() {
+		return requestedModel, false
+	}
+	if mapped, matched := account.ResolveMappedModel(requestedModel); matched {
+		return claude.NormalizeModelID(mapped), true
+	}
+	canonical := claude.NormalizeModelID(requestedModel)
+	if canonical != requestedModel {
+		if mapped, matched := account.ResolveMappedModel(canonical); matched {
+			return claude.NormalizeModelID(mapped), true
+		}
+	}
+	return canonical, false
 }
 
 // GetAccessToken 获取账号凭证
@@ -5307,7 +5330,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 	// 应用模型映射：
 	// - APIKey 账号：使用账号级别的显式映射（如果配置），否则透传原始模型名
-	// - OAuth/SetupToken 账号：使用 Anthropic 标准映射（短ID → 长ID）
+	// - OAuth/SetupToken 账号：先使用账号映射，再进行标准模型名规范化
 	mappedModel := reqModel
 	mappingSource := ""
 	if account.Type == AccountTypeAPIKey {
@@ -5328,9 +5351,18 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			}
 		}
 	}
-	if mappingSource == "" && account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey {
-		normalized := claude.NormalizeModelID(reqModel)
-		if normalized != reqModel {
+	if account.IsAnthropicOAuthOrSetupToken() {
+		var matched bool
+		mappedModel, matched = resolveAnthropicOAuthMappedModel(account, reqModel)
+		if matched {
+			mappingSource = "account"
+		} else if mappedModel != reqModel {
+			mappingSource = "prefix"
+		}
+	}
+	if mappingSource == "" && account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey && !account.IsAnthropicOAuthOrSetupToken() {
+		normalized := claude.NormalizeModelID(mappedModel)
+		if normalized != mappedModel {
 			mappedModel = normalized
 			mappingSource = "prefix"
 		}
@@ -10598,7 +10630,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 
 	// 应用模型映射：
 	// - APIKey 账号：使用账号级别的显式映射（如果配置），否则透传原始模型名
-	// - OAuth/SetupToken 账号：使用 Anthropic 标准映射（短ID → 长ID）
+	// - OAuth/SetupToken 账号：先使用账号映射，再进行标准模型名规范化
 	if reqModel != "" {
 		mappedModel := reqModel
 		mappingSource := ""
@@ -10608,9 +10640,18 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 				mappingSource = "account"
 			}
 		}
-		if mappingSource == "" && account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey {
-			normalized := claude.NormalizeModelID(reqModel)
-			if normalized != reqModel {
+		if account.IsAnthropicOAuthOrSetupToken() {
+			var matched bool
+			mappedModel, matched = resolveAnthropicOAuthMappedModel(account, reqModel)
+			if matched {
+				mappingSource = "account"
+			} else if mappedModel != reqModel {
+				mappingSource = "prefix"
+			}
+		}
+		if mappingSource == "" && account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey && !account.IsAnthropicOAuthOrSetupToken() {
+			normalized := claude.NormalizeModelID(mappedModel)
+			if normalized != mappedModel {
 				mappedModel = normalized
 				mappingSource = "prefix"
 			}
@@ -11292,6 +11333,14 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 			}
 			modelSet[model] = struct{}{}
 			hasAnyMapping = true
+		}
+		if len(mapping) > 0 && acc.modelMappingAdmitsUnlisted() {
+			for _, model := range defaultModelsListCandidateIDs(acc.Platform) {
+				if platform != "" && acc.Platform != platform && !mixedListingModelAllowed(platform, model) {
+					continue
+				}
+				modelSet[model] = struct{}{}
+			}
 		}
 	}
 
