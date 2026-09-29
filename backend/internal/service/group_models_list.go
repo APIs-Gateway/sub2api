@@ -4,32 +4,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
-
-// Mapping-only accounts still admit the platform's normal catalog. Keep the
-// group discovery result in sync with account admission when a rename is set.
-func defaultModelsListCandidateIDs(platform string) []string {
-	switch platform {
-	case PlatformAnthropic:
-		return claude.DefaultModelIDs()
-	case PlatformOpenAI:
-		return openai.DefaultModelIDs()
-	case PlatformGemini:
-		ids := make([]string, 0, len(geminicli.DefaultModels))
-		for _, model := range geminicli.DefaultModels {
-			ids = append(ids, model.ID)
-		}
-		return ids
-	case PlatformGrok:
-		return xai.DefaultModelIDs()
-	default:
-		return nil
-	}
-}
 
 // A partial mapping catalog must not hide models from unmapped OpenAI accounts.
 // Keep an empty catalog unchanged so callers retain their existing discovery fallback.
