@@ -1,6 +1,8 @@
 package service
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"math/rand"
@@ -176,6 +178,118 @@ func buildToolNameRewriteFromBody(body []byte) *ToolNameRewrite {
 //
 // 响应侧 bytes.Replace 会连带还原假名 → 真名。
 func applyToolNameRewriteToBody(body []byte, rw *ToolNameRewrite) []byte {
+	if rw == nil || len(rw.Forward) == 0 {
+		return applyToolsLastCacheBreakpoint(body)
+	}
+
+	// gjson v1.18.0 propagates the original document offset through Result.Get
+	// and Result.ForEach. Collect spans against the unchanged input, then copy
+	// the body once. Repeated sjson.SetBytes calls would parse and copy the
+	// entire long conversation for every historical tool_use block.
+	type replacement struct {
+		start int
+		end   int
+		value []byte
+	}
+	var replacements []replacement
+	invalidSpan := false
+	collect := func(name gjson.Result, fake string) bool {
+		start := name.Index
+		end := start + len(name.Raw)
+		if !name.Exists() || start < 0 || end > len(body) || !bytes.Equal(body[start:end], []byte(name.Raw)) {
+			invalidSpan = true
+			return false
+		}
+		quoted, err := json.Marshal(fake)
+		if err != nil {
+			invalidSpan = true
+			return false
+		}
+		replacements = append(replacements, replacement{start: start, end: end, value: quoted})
+		return true
+	}
+
+	tools := gjson.GetBytes(body, "tools")
+	if tools.IsArray() {
+		tools.ForEach(func(_, tool gjson.Result) bool {
+			if !shouldMimicToolName(tool.Get("type").String()) {
+				return true
+			}
+			name := tool.Get("name")
+			if name.String() == "" {
+				return true
+			}
+			if fake, ok := rw.Forward[name.String()]; ok {
+				return collect(name, fake)
+			}
+			return true
+		})
+	}
+	if invalidSpan {
+		return applyToolNameRewriteToBodyLegacy(body, rw)
+	}
+
+	if choice := gjson.GetBytes(body, "tool_choice"); choice.Exists() && choice.Get("type").String() == "tool" {
+		name := choice.Get("name")
+		if fake, ok := rw.Forward[name.String()]; ok && !collect(name, fake) {
+			return applyToolNameRewriteToBodyLegacy(body, rw)
+		}
+	}
+
+	messages := gjson.GetBytes(body, "messages")
+	if messages.IsArray() {
+		messages.ForEach(func(_, message gjson.Result) bool {
+			content := message.Get("content")
+			if !content.IsArray() {
+				return true
+			}
+			content.ForEach(func(_, block gjson.Result) bool {
+				if block.Get("type").String() != "tool_use" {
+					return true
+				}
+				name := block.Get("name")
+				if name.String() == "" {
+					return true
+				}
+				if fake, ok := rw.Forward[name.String()]; ok {
+					return collect(name, fake)
+				}
+				return true
+			})
+			return !invalidSpan
+		})
+	}
+	if invalidSpan {
+		return applyToolNameRewriteToBodyLegacy(body, rw)
+	}
+
+	if len(replacements) == 0 {
+		return applyToolsLastCacheBreakpoint(body)
+	}
+	sort.Slice(replacements, func(i, j int) bool { return replacements[i].start < replacements[j].start })
+	outputLen := len(body)
+	last := 0
+	for _, edit := range replacements {
+		if edit.start < last || edit.end < edit.start {
+			return applyToolNameRewriteToBodyLegacy(body, rw)
+		}
+		outputLen += len(edit.value) - (edit.end - edit.start)
+		last = edit.end
+	}
+	out := make([]byte, 0, outputLen)
+	last = 0
+	for _, edit := range replacements {
+		out = append(out, body[last:edit.start]...)
+		out = append(out, edit.value...)
+		last = edit.end
+	}
+	out = append(out, body[last:]...)
+	return applyToolsLastCacheBreakpoint(out)
+}
+
+// applyToolNameRewriteToBodyLegacy preserves the original path-based mutation
+// for malformed or ambiguous offset cases. Valid requests use the linear path.
+func applyToolNameRewriteToBodyLegacy(body []byte, rw *ToolNameRewrite) []byte {
 	if rw == nil || len(rw.Forward) == 0 {
 		body = applyToolsLastCacheBreakpoint(body)
 		return body
