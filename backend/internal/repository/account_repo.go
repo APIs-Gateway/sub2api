@@ -165,6 +165,43 @@ func (r *accountRepository) GetByID(ctx context.Context, id int64) (*service.Acc
 	return &accounts[0], nil
 }
 
+// GetSchedulabilityByID checks the authoritative account row with one narrow
+// query. GetByID hydrates groups and proxies, which is too expensive on every
+// successful gateway request after it obtains an account concurrency slot.
+func (r *accountRepository) GetSchedulabilityByID(ctx context.Context, id int64) (bool, error) {
+	m, err := r.client.Account.Query().
+		Where(dbaccount.IDEQ(id)).
+		Select(
+			dbaccount.FieldID,
+			dbaccount.FieldType,
+			dbaccount.FieldStatus,
+			dbaccount.FieldSchedulable,
+			dbaccount.FieldAutoPauseOnExpired,
+			dbaccount.FieldExpiresAt,
+			dbaccount.FieldOverloadUntil,
+			dbaccount.FieldRateLimitResetAt,
+			dbaccount.FieldTempUnschedulableUntil,
+			dbaccount.FieldExtra,
+		).
+		Only(ctx)
+	if err != nil {
+		return false, translatePersistenceError(err, service.ErrAccountNotFound, nil)
+	}
+	latest := &service.Account{
+		ID:                     m.ID,
+		Type:                   m.Type,
+		Status:                 m.Status,
+		Schedulable:            m.Schedulable,
+		AutoPauseOnExpired:     m.AutoPauseOnExpired,
+		ExpiresAt:              m.ExpiresAt,
+		OverloadUntil:          m.OverloadUntil,
+		RateLimitResetAt:       m.RateLimitResetAt,
+		TempUnschedulableUntil: m.TempUnschedulableUntil,
+		Extra:                  m.Extra,
+	}
+	return latest.IsSchedulable(), nil
+}
+
 func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*service.Account, error) {
 	if len(ids) == 0 {
 		return []*service.Account{}, nil

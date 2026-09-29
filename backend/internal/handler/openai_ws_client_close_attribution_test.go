@@ -202,6 +202,17 @@ func newOpenAIResponsesWebSocketAttributionHandlerWithProxy(
 	reports chan<- bool,
 	useSchedulerConcurrency ...bool,
 ) *OpenAIGatewayHandler {
+	h, _ := newOpenAIResponsesWebSocketAttributionHandlerWithRepo(t, cache, proxy, reports, useSchedulerConcurrency...)
+	return h
+}
+
+func newOpenAIResponsesWebSocketAttributionHandlerWithRepo(
+	t *testing.T,
+	cache *concurrencyCacheMock,
+	proxy func(context.Context, *gin.Context, *coderws.Conn, *service.Account, string, []byte, *service.OpenAIWSIngressHooks) error,
+	reports chan<- bool,
+	useSchedulerConcurrency ...bool,
+) (*OpenAIGatewayHandler, *openAIWSUsageHandlerAccountRepoStub) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -248,7 +259,7 @@ func newOpenAIResponsesWebSocketAttributionHandlerWithProxy(
 		cfg:                           cfg,
 		responsesWebSocketProxy:       proxy,
 		onOpenAIAccountScheduleResult: func(_ int64, success bool) { reports <- success },
-	}
+	}, accountRepo
 }
 
 func newOpenAIResponsesWebSocketAttributionServer(t *testing.T, h *OpenAIGatewayHandler) *httptest.Server {

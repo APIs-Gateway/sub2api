@@ -168,7 +168,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
-			if len(failedAccountIDs) == 0 {
+			if lastFailoverErr == nil {
 				h.respondNoAccountError(c, h.gatewayService, apiKey, requestModel, requestModel, service.PlatformOpenAI, "No available compatible accounts", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseStreaming, streamStarted)
 				return
 			}
@@ -198,8 +198,12 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		reqLog.Debug("openai.images.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
-		if !acquired {
+		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
+		if slotStatus == accountSlotRetrySelection {
+			failedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
+		if slotStatus != accountSlotAcquired {
 			return
 		}
 

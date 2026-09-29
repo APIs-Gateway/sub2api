@@ -130,7 +130,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			if failoverClientGone(c) {
 				return
 			}
-			if len(failedAccountIDs) == 0 {
+			if lastFailoverErr == nil {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, requestedModel, requestedModel, service.PlatformOpenAI)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
@@ -148,8 +148,12 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 
 		account := selection.Account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
-		accountRelease, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog)
-		if !acquired {
+		accountRelease, slotStatus := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog)
+		if slotStatus == accountSlotRetrySelection {
+			failedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
+		if slotStatus != accountSlotAcquired {
 			return
 		}
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())

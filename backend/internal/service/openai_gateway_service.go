@@ -2604,6 +2604,39 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	return account, nil
 }
 
+// RecheckAccountSchedulableAfterSlot reads the authoritative account row after a
+// request acquires a concurrency slot. A scheduler snapshot can predate an
+// administrator's pause; the slot must not be handed to that stale selection.
+type accountSchedulabilityReader interface {
+	GetSchedulabilityByID(ctx context.Context, id int64) (bool, error)
+}
+
+func (s *OpenAIGatewayService) RecheckAccountSchedulableAfterSlot(ctx context.Context, selected *Account) (bool, error) {
+	if selected == nil {
+		return false, nil
+	}
+	if s.accountRepo == nil {
+		return false, errors.New("account repository unavailable")
+	}
+	if reader, ok := s.accountRepo.(accountSchedulabilityReader); ok {
+		allowed, err := reader.GetSchedulabilityByID(ctx, selected.ID)
+		if errors.Is(err, ErrAccountNotFound) {
+			return false, nil
+		}
+		return allowed && err == nil, err
+	}
+	// Other repository implementations still use the authoritative row. The
+	// production repository implements the single-query projection above.
+	latest, err := s.accountRepo.GetByID(ctx, selected.ID)
+	if errors.Is(err, ErrAccountNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return latest != nil && latest.IsSchedulable(), nil
+}
+
 func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {
 	if account == nil || s.schedulerSnapshot == nil {
 		return account, nil
