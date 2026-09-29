@@ -1,9 +1,11 @@
 package websearch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -127,6 +129,10 @@ func TestManagerTestSearchSafeProxyAndNetworkSummary(t *testing.T) {
 	}
 
 	m = NewManager([]ProviderConfig{{Type: "unknown-secret-provider", APIKey: "api-key-secret"}}, nil)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previousLogger)
 	m.clientCache[""] = &http.Client{Transport: testSearchRoundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, &url.Error{Op: "Get", URL: "https://" + credentials + "@proxy.invalid", Err: errors.New("network-secret")}
 	})}
@@ -135,6 +141,25 @@ func TestManagerTestSearchSafeProxyAndNetworkSummary(t *testing.T) {
 	require.Equal(t, "Provider: network", failures.Summary())
 	if strings.Contains(err.Error(), credentials) || strings.Contains(err.Error(), "network-secret") || strings.Contains(err.Error(), "unknown-secret-provider") {
 		t.Fatal("test diagnostic contains transport detail or untrusted provider type")
+	}
+	if strings.Contains(logs.String(), "unknown-secret-provider") || strings.Contains(logs.String(), "api-key-secret") || strings.Contains(logs.String(), credentials) {
+		t.Fatal("admin test log contains untrusted provider type or secret")
+	}
+}
+
+func TestManagerTestSearchSummaryBoundedForMalformedConfig(t *testing.T) {
+	configs := make([]ProviderConfig, maxTestFailureDetails+2)
+	for i := range configs {
+		configs[i] = ProviderConfig{Type: ProviderTypeBrave, APIKey: "key", ProxyURL: "://proxy-secret"}
+	}
+	m := NewManager(configs, nil)
+	_, _, err := m.TestSearch(context.Background(), SearchRequest{Query: "test"})
+	var failures *TestSearchFailuresError
+	require.ErrorAs(t, err, &failures)
+	require.Equal(t, maxTestFailureDetails, strings.Count(failures.Summary(), "Brave: proxy"))
+	require.Contains(t, failures.Summary(), "additional providers failed")
+	if strings.Contains(err.Error(), "proxy-secret") {
+		t.Fatal("bounded test diagnostic contains proxy detail")
 	}
 }
 

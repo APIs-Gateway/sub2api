@@ -52,6 +52,7 @@ const (
 	quotaTTLBuffer      = 24 * time.Hour
 	defaultQuotaTTL     = 31*24*time.Hour + quotaTTLBuffer // fallback when no subscription date
 	maxCachedClients    = 100
+	maxTestFailureDetails = 10
 )
 
 // ErrProxyUnavailable indicates the search failed due to a proxy connectivity issue.
@@ -66,7 +67,8 @@ var ErrTestNoAvailableProvider = errors.New("websearch: no available provider fo
 // Provider errors can contain API response bodies or proxy credentials and must
 // never be attached as a cause or included in this value.
 type TestSearchFailuresError struct {
-	failures []testSearchFailure
+	failures  []testSearchFailure
+	truncated bool
 }
 
 type testSearchFailure struct {
@@ -92,6 +94,9 @@ func (e *TestSearchFailuresError) Summary() string {
 			part += fmt.Sprintf(" (HTTP %d)", failure.HTTPStatus)
 		}
 		parts = append(parts, part)
+	}
+	if e.truncated {
+		parts = append(parts, "additional providers failed")
 	}
 	return strings.Join(parts, "; ")
 }
@@ -443,13 +448,18 @@ func (m *Manager) TestSearch(ctx context.Context, req SearchRequest) (*SearchRes
 		return nil, "", fmt.Errorf("websearch: empty search query")
 	}
 	var failures []testSearchFailure
+	var truncated bool
 	for _, cfg := range m.configs {
 		if !m.isProviderAvailable(cfg) {
 			continue
 		}
 		resp, err := m.executeSearch(ctx, cfg, req)
 		if err != nil {
-			failures = append(failures, classifyTestSearchFailure(cfg, req, err))
+			if len(failures) < maxTestFailureDetails {
+				failures = append(failures, classifyTestSearchFailure(cfg, req, err))
+			} else {
+				truncated = true
+			}
 			continue
 		}
 		return resp, cfg.Type, nil
@@ -457,7 +467,7 @@ func (m *Manager) TestSearch(ctx context.Context, req SearchRequest) (*SearchRes
 	if len(failures) == 0 {
 		return nil, "", ErrTestNoAvailableProvider
 	}
-	return nil, "", &TestSearchFailuresError{failures: failures}
+	return nil, "", &TestSearchFailuresError{failures: failures, truncated: truncated}
 }
 
 func (m *Manager) executeSearch(ctx context.Context, cfg ProviderConfig, req SearchRequest) (*SearchResponse, error) {
@@ -558,7 +568,7 @@ func (m *Manager) buildProvider(cfg ProviderConfig, client *http.Client) Provide
 		return NewTavilyProvider(cfg.APIKey, client)
 	default:
 		slog.Warn("websearch: unknown provider type, falling back to brave",
-			"type", cfg.Type)
+			"type", "unknown")
 		return NewBraveProvider(cfg.APIKey, client)
 	}
 }
