@@ -10524,6 +10524,10 @@ func resolveAccountUpstreamModel(account *Account, requestedModel string) string
 	if account.Platform == PlatformAntigravity {
 		return mapAntigravityModel(account, requestedModel)
 	}
+	if account.IsAnthropicOAuthOrSetupToken() {
+		model, _ := resolveAnthropicOAuthMappedModel(account, requestedModel)
+		return model
+	}
 	return account.GetMappedModel(requestedModel)
 }
 

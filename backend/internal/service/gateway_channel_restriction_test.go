@@ -65,6 +65,30 @@ func TestResolveAccountUpstreamModel_NonAntigravity(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-6", got, "no mapping = passthrough")
 }
 
+func TestAnthropicOAuthCanonicalMappingUsesFinalModelForChannelRestriction(t *testing.T) {
+	account := &Account{
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{"claude-sonnet-4-5-20250929": "claude-opus-5-5"},
+		},
+	}
+	require.Equal(t, "claude-opus-5-5", resolveAccountUpstreamModel(account, "claude-sonnet-4-5"))
+	ch := Channel{
+		ID:                 1,
+		Status:             StatusActive,
+		GroupIDs:           []int64{10},
+		RestrictModels:     true,
+		BillingModelSource: BillingModelSourceUpstream,
+		ModelPricing: []ChannelModelPricing{
+			{Platform: PlatformAnthropic, Models: []string{"claude-sonnet-4-5-20250929"}},
+		},
+	}
+	svc := &GatewayService{channelService: newTestChannelService(makeStandardRepo(ch, map[int64]string{10: PlatformAnthropic}))}
+	require.True(t, svc.isUpstreamModelRestrictedByChannel(context.Background(), 10, account, "claude-sonnet-4-5"),
+		"the channel must not admit the mapped Opus model under Sonnet pricing")
+}
+
 // --- checkChannelPricingRestriction ---
 
 func TestCheckChannelPricingRestriction_NilGroupID(t *testing.T) {

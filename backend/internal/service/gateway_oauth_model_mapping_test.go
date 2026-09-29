@@ -115,8 +115,12 @@ func TestAnthropicOAuthCanonicalMappingCooldownExcludesShortAliasFromSelection(t
 		},
 	}
 	fallback := Account{
-		ID: 7545, Platform: PlatformAnthropic, Type: AccountTypeSetupToken,
-		Status: StatusActive, Schedulable: true, Priority: 2,
+		ID:          7545,
+		Platform:    PlatformAnthropic,
+		Type:        AccountTypeSetupToken,
+		Status:      StatusActive,
+		Schedulable: true,
+		Priority:    2,
 		Credentials: map[string]any{"access_token": "fallback-token"},
 	}
 	repo := &mockAccountRepoForPlatform{
