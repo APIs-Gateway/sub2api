@@ -10087,16 +10087,24 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 确定计费模型
 	concreteBillingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
 	billingModel := concreteBillingModel
+	if input.BillingModelSource == BillingModelSourceUpstream {
+		if upstreamModel := strings.TrimSpace(result.UpstreamModel); upstreamModel != "" {
+			billingModel = upstreamModel
+		}
+	}
 	if input.BillingModelSource == BillingModelSourceChannelMapped && input.ChannelMappedModel != "" {
 		billingModel = input.ChannelMappedModel
 	}
 	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
 		billingModel = input.OriginalModel
 	}
-	// 通用兜底（与 OpenAI 路径的 usageBillingModelCandidates 语义对齐）：渠道映射/请求来源
-	// 覆盖把计费模型换成查无价的别名时，回退到实际转发的具体模型，避免静默按 $0 计费。
-	// 已定价流量不受影响。
-	billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel)
+	// 无价时保留既有请求模型兜底；upstream 模式额外尝试渠道映射模型，
+	// 避免上游回报了未知模型后静默按 $0 计费。已定价流量不受影响。
+	if input.BillingModelSource == BillingModelSourceUpstream {
+		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel, input.ChannelMappedModel)
+	} else {
+		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel)
+	}
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model

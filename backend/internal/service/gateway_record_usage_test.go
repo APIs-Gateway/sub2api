@@ -230,6 +230,98 @@ func TestGatewayServiceRecordUsage_PreservesRequestedAndUpstreamModels(t *testin
 	require.Equal(t, mappedModel, *usageRepo.lastLog.UpstreamModel)
 }
 
+func TestGatewayServiceRecordUsage_AnthropicOAuthMappingHonorsBillingModelSource(t *testing.T) {
+	const (
+		requestedModel     = "claude-sonnet-4-5"
+		upstreamModel      = "claude-opus-5-5"
+		channelMappedModel = "mapped-charge-model"
+	)
+	tests := []struct {
+		name               string
+		billingModelSource string
+		requestedModel     string
+		upstreamModel      string
+		wantTotalCost      float64
+	}{
+		{
+			name:               "upstream charges forwarded opus",
+			billingModelSource: BillingModelSourceUpstream,
+			upstreamModel:      upstreamModel,
+			wantTotalCost:      0.014,
+		},
+		{
+			name:               "requested charges original sonnet",
+			billingModelSource: BillingModelSourceRequested,
+			upstreamModel:      upstreamModel,
+			wantTotalCost:      0.0105,
+		},
+		{
+			name:               "channel mapped charges configured model",
+			billingModelSource: BillingModelSourceChannelMapped,
+			upstreamModel:      upstreamModel,
+			wantTotalCost:      0.007,
+		},
+		{
+			name:               "unpriced upstream falls back to requested model",
+			billingModelSource: BillingModelSourceUpstream,
+			upstreamModel:      "unpriced-upstream-model",
+			wantTotalCost:      0.0105,
+		},
+		{
+			name:               "unpriced upstream and request fall back to channel mapping",
+			billingModelSource: BillingModelSourceUpstream,
+			requestedModel:     "unpriced-client-model",
+			upstreamModel:      "unpriced-upstream-model",
+			wantTotalCost:      0.007,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clientModel := requestedModel
+			if tt.requestedModel != "" {
+				clientModel = tt.requestedModel
+			}
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			userRepo := &openAIRecordUsageUserRepoStub{}
+			svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
+			svc.billingService = NewBillingService(svc.cfg, &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+				requestedModel:     {InputCostPerToken: 3e-6, OutputCostPerToken: 15e-6},
+				upstreamModel:      {InputCostPerToken: 4e-6, OutputCostPerToken: 20e-6},
+				channelMappedModel: {InputCostPerToken: 2e-6, OutputCostPerToken: 10e-6},
+			}})
+
+			err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+				Result: &ForwardResult{
+					RequestID:     "anthropic_oauth_billing_model_source",
+					Model:         clientModel,
+					UpstreamModel: tt.upstreamModel,
+					Usage:         ClaudeUsage{InputTokens: 1000, OutputTokens: 500},
+					Duration:      time.Second,
+				},
+				APIKey:  &APIKey{ID: 501},
+				User:    &User{ID: 601},
+				Account: &Account{ID: 701, Platform: PlatformAnthropic, Type: AccountTypeOAuth},
+				ChannelUsageFields: ChannelUsageFields{
+					OriginalModel:      clientModel,
+					ChannelMappedModel: channelMappedModel,
+					BillingModelSource: tt.billingModelSource,
+				},
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, usageRepo.lastLog)
+			require.Equal(t, clientModel, usageRepo.lastLog.Model)
+			require.Equal(t, clientModel, usageRepo.lastLog.RequestedModel)
+			require.NotNil(t, usageRepo.lastLog.UpstreamModel)
+			require.Equal(t, tt.upstreamModel, *usageRepo.lastLog.UpstreamModel)
+			require.InDelta(t, tt.wantTotalCost, usageRepo.lastLog.TotalCost, 1e-12)
+			require.InDelta(t, tt.wantTotalCost*1.1, usageRepo.lastLog.ActualCost, 1e-12)
+			require.InDelta(t, tt.wantTotalCost*1.1, userRepo.lastAmount, 1e-12)
+		})
+	}
+}
+
 func TestGatewayServiceRecordUsage_GeminiFlashThinkingTierUsesCatalogPrice(t *testing.T) {
 	for _, baseModel := range []string{"gemini-3.7-flash", "gemini-3.8-flash"} {
 		t.Run(baseModel, func(t *testing.T) {
