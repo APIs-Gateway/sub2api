@@ -20,10 +20,10 @@ import (
 
 type pausedQueuedSlotAccountRepo struct {
 	service.AccountRepository
-	mu             sync.Mutex
-	accounts       []service.Account
+	mu               sync.Mutex
+	accounts         []service.Account
 	secondAfterPause bool
-	paused         bool
+	paused           bool
 }
 
 func (r *pausedQueuedSlotAccountRepo) pauseFirst() {
@@ -31,6 +31,12 @@ func (r *pausedQueuedSlotAccountRepo) pauseFirst() {
 	r.accounts[0].Schedulable = false
 	r.paused = true
 	r.mu.Unlock()
+}
+
+func (r *pausedQueuedSlotAccountRepo) isPaused() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.paused
 }
 
 func (r *pausedQueuedSlotAccountRepo) GetByID(_ context.Context, id int64) (*service.Account, error) {
@@ -77,8 +83,9 @@ type pausedQueuedSlotCache struct {
 }
 
 func (c *pausedQueuedSlotCache) AcquireAccountSlot(_ context.Context, accountID int64, _ int, _ string) (bool, error) {
-	if accountID == 1396 && c.firstAttempts.Add(1) <= 2 {
-		return false, nil
+	if accountID == 1396 {
+		c.firstAttempts.Add(1)
+		return c.repo.isPaused(), nil
 	}
 	return true, nil
 }
