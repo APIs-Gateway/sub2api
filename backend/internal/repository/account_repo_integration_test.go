@@ -199,6 +199,37 @@ func (s *AccountRepoSuite) TestGetByID_NotFound() {
 	s.Require().Error(err, "expected error for non-existent ID")
 }
 
+func (s *AccountRepoSuite) TestGetSchedulabilityByID_UsesAuthoritativeState() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name: "post-slot-check", Platform: service.PlatformOpenAI,
+		Type: service.AccountTypeAPIKey, Status: service.StatusActive,
+		Schedulable: true,
+	})
+	check := func(want bool) {
+		s.T().Helper()
+		allowed, err := s.repo.GetSchedulabilityByID(s.ctx, account.ID)
+		s.Require().NoError(err)
+		s.Require().Equal(want, allowed)
+	}
+	check(true)
+
+	_, err := s.client.Account.UpdateOneID(account.ID).SetSchedulable(false).Save(s.ctx)
+	s.Require().NoError(err)
+	check(false)
+	_, err = s.client.Account.UpdateOneID(account.ID).SetSchedulable(true).SetExtra(map[string]any{"quota_limit": 1, "quota_used": 1}).Save(s.ctx)
+	s.Require().NoError(err)
+	check(false)
+	_, err = s.client.Account.UpdateOneID(account.ID).SetExtra(map[string]any{}).Save(s.ctx)
+	s.Require().NoError(err)
+	check(true)
+	_, err = s.client.Account.UpdateOneID(account.ID).SetOverloadUntil(time.Now().Add(time.Hour)).Save(s.ctx)
+	s.Require().NoError(err)
+	check(false)
+
+	_, err = s.repo.GetSchedulabilityByID(s.ctx, 999999)
+	s.Require().ErrorIs(err, service.ErrAccountNotFound)
+}
+
 func (s *AccountRepoSuite) TestListOpsAccountsForStats() {
 	targetGroup := mustCreateGroup(s.T(), s.client, &service.Group{Name: "ops-target", Platform: service.PlatformOpenAI})
 	otherGroup := mustCreateGroup(s.T(), s.client, &service.Group{Name: "ops-other", Platform: service.PlatformOpenAI})

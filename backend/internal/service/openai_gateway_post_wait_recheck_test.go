@@ -65,6 +65,51 @@ func (postWaitFailingAccountRepo) GetByID(context.Context, int64) (*Account, err
 	return nil, errors.New("database unavailable")
 }
 
+type postWaitProjectedAccountRepo struct {
+	AccountRepository
+	allowed bool
+	err     error
+	seenID  int64
+}
+
+func (r *postWaitProjectedAccountRepo) GetByID(context.Context, int64) (*Account, error) {
+	panic("full account hydration must not run on the projected path")
+}
+
+func (r *postWaitProjectedAccountRepo) GetSchedulabilityByID(_ context.Context, id int64) (bool, error) {
+	r.seenID = id
+	return r.allowed, r.err
+}
+
+func TestOpenAIGatewayService_RecheckAccountSchedulableAfterSlotUsesProjection(t *testing.T) {
+	selected := &Account{ID: 1396, Status: StatusActive, Schedulable: true}
+	for _, tc := range []struct {
+		name    string
+		allowed bool
+		err     error
+		want    bool
+		wantErr bool
+	}{
+		{name: "active", allowed: true, want: true},
+		{name: "paused"},
+		{name: "deleted", err: ErrAccountNotFound},
+		{name: "database failure", err: errors.New("database unavailable"), wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &postWaitProjectedAccountRepo{allowed: tc.allowed, err: tc.err}
+			svc := &OpenAIGatewayService{accountRepo: repo}
+			allowed, err := svc.RecheckAccountSchedulableAfterSlot(context.Background(), selected)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.want, allowed)
+			require.Equal(t, selected.ID, repo.seenID)
+		})
+	}
+}
+
 func TestOpenAIGatewayService_RecheckAccountSchedulableAfterSlotUsesDB(t *testing.T) {
 	selected := Account{
 		ID:          1396,
