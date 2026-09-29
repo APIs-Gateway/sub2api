@@ -112,7 +112,7 @@ func TestOpenAIResponsesWebSocket_PauseAfterHandshakeSlotRejectsWithoutForward(t
 	cache := &concurrencyCacheMock{
 		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
 		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
-			if accountAttempts.Add(1) <= 2 {
+			if accountAttempts.Add(1) == 1 {
 				return false, nil
 			}
 			repo.account.Schedulable = false
@@ -134,7 +134,7 @@ func TestOpenAIResponsesWebSocket_PauseAfterHandshakeSlotRejectsWithoutForward(t
 	closeErr := readClientCloseError(t, client)
 	require.Equal(t, coderws.StatusTryAgainLater, closeErr.Code)
 	require.False(t, proxied.Load())
-	require.GreaterOrEqual(t, accountAttempts.Load(), int32(3))
+	require.Equal(t, int32(2), accountAttempts.Load())
 	require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseAccountCalled))
 	select {
 	case success := <-reports:
