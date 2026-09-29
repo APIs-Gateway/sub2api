@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 const (
@@ -39,7 +40,6 @@ func (t *TavilyProvider) Search(ctx context.Context, req SearchRequest) (*Search
 	}
 
 	payload := tavilyRequest{
-		APIKey:      t.apiKey,
 		Query:       req.Query,
 		MaxResults:  maxResults,
 		SearchDepth: tavilySearchDepthBasic,
@@ -55,6 +55,7 @@ func (t *TavilyProvider) Search(ctx context.Context, req SearchRequest) (*Search
 		return nil, fmt.Errorf("tavily: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(t.apiKey))
 
 	resp, err := t.httpClient.Do(httpReq)
 	if err != nil {
@@ -89,7 +90,6 @@ func (t *TavilyProvider) Search(ctx context.Context, req SearchRequest) (*Search
 }
 
 type tavilyRequest struct {
-	APIKey      string `json:"api_key"`
 	Query       string `json:"query"`
 	MaxResults  int    `json:"max_results"`
 	SearchDepth string `json:"search_depth"`
