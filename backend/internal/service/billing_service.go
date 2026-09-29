@@ -512,7 +512,9 @@ func (s *BillingService) initFallbackPricing() {
 	}
 
 	// GPT-5.6 的三个 SKU 有独立输入/输出/cache-read 价格；cache-write 固定为输入价的 1.25 倍。
-	s.fallbackPrices["gpt-5.6-sol"] = newOpenAIGPT56FallbackPricing(5e-6, 30e-6, 0.5e-6)
+	// OpenAI's Sol promotional rate is available at least through 2026-11-21;
+	// recheck the official price before changing it again.
+	s.fallbackPrices["gpt-5.6-sol"] = newOpenAIGPT56FallbackPricing(4e-6, 20e-6, 0.4e-6)
 	s.fallbackPrices["gpt-5.6-terra"] = newOpenAIGPT56FallbackPricing(2e-6, 12e-6, 0.2e-6)
 	s.fallbackPrices["gpt-5.6-luna"] = newOpenAIGPT56FallbackPricing(0.2e-6, 1.2e-6, 0.02e-6)
 

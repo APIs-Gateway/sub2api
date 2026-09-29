@@ -27,11 +27,13 @@ from an existing wildcard mapping.
 ## §2 Official Standard prices
 
 All values are USD per 1M tokens, sourced from OpenAI's flagship pricing table
-on 2026-07-10; Terra and Luna were repriced on 2026-07-31.
+on 2026-07-10; Terra and Luna were repriced on 2026-07-31. Sol's
+promotional rate was verified on 2026-09-29 and is available at least through
+2026-11-21. Review the official price then; do not automatically revert it.
 
 | Model | Short input | Short cache read | Short cache write | Short output | Long input | Long cache read | Long cache write | Long output |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `gpt-5.6-sol` | 5 | 0.50 | 6.25 | 30 | 10 | 1 | 12.50 | 45 |
+| `gpt-5.6-sol` | 4 | 0.40 | 5 | 20 | 8 | 0.80 | 10 | 30 |
 | `gpt-5.6-terra` | 2 | 0.20 | 2.50 | 12 | 4 | 0.40 | 5 | 18 |
 | `gpt-5.6-luna` | 0.20 | 0.02 | 0.25 | 1.20 | 0.40 | 0.04 | 0.50 | 1.80 |
 
@@ -51,6 +53,8 @@ the GPT-5.6 Sol, Terra, and Luna model pages.
    `(272K, ∞]`, including all four token price dimensions.
 3. Use the named GPT-5.6 fallback when a dynamic catalogue does not contain
    those long-context fields, so a stale catalogue cannot hide official prices.
+   The known pre-promotion Sol rate card in the default remote catalogue is
+   normalized on read; a custom `pricing.remote_url` remains authoritative.
 4. Keep channel-specific prices authoritative.  The global catalogue is only a
    display fallback for a model whose channel price is entirely empty.
 

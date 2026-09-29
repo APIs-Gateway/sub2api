@@ -614,11 +614,13 @@ type openAIRecordUsageSubRepoStub struct {
 
 	incrementCalls int
 	incrementErr   error
+	lastAmount     float64
 	lastCtxErr     error
 }
 
 func (s *openAIRecordUsageSubRepoStub) IncrementUsage(ctx context.Context, id int64, costUSD float64) error {
 	s.incrementCalls++
+	s.lastAmount = costUSD
 	s.lastCtxErr = ctx.Err()
 	return s.incrementErr
 }
@@ -1970,6 +1972,71 @@ func TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingSetsSubscriptionFiel
 	require.Equal(t, subscription.ID, *usageRepo.lastLog.SubscriptionID)
 	require.Equal(t, 1, subRepo.incrementCalls)
 	require.Equal(t, 0, userRepo.deductCalls)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_GPT56SolPromotionChargesBalanceAndSubscription(t *testing.T) {
+	for _, subscription := range []bool{false, true} {
+		name := "balance"
+		if subscription {
+			name = "subscription"
+		}
+		t.Run(name, func(t *testing.T) {
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			userRepo := &openAIRecordUsageUserRepoStub{}
+			subRepo := &openAIRecordUsageSubRepoStub{}
+			svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+			svc.billingService.pricingService = &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+				"gpt-5.6-sol": {
+					InputCostPerToken: 5e-6, OutputCostPerToken: 30e-6,
+					CacheReadInputTokenCost: 0.5e-6, CacheCreationInputTokenCost: 6.25e-6,
+				},
+			}}
+			input := &OpenAIRecordUsageInput{
+				Result: &OpenAIForwardResult{
+					RequestID: "resp_gpt56_sol_promo_" + name,
+					Usage: OpenAIUsage{
+						InputTokens: 1000, CacheReadInputTokens: 200,
+						CacheCreationInputTokens: 300, OutputTokens: 50,
+					},
+					Model: "gpt-5.6", Duration: time.Second,
+				},
+				APIKey:  &APIKey{ID: 100},
+				User:    &User{ID: 200},
+				Account: &Account{ID: 300},
+			}
+			multiplier := 1.1
+			if subscription {
+				input.APIKey.GroupID = i64p(88)
+				input.APIKey.Group = &Group{ID: 88, SubscriptionType: SubscriptionTypeSubscription, RateMultiplier: 1}
+				input.Subscription = &UserSubscription{ID: 99}
+				multiplier = 1
+			}
+			require.NoError(t, svc.RecordUsage(context.Background(), input))
+			log := usageRepo.lastLog
+			require.NotNil(t, log)
+			require.Equal(t, 500, log.InputTokens)
+			require.Equal(t, 200, log.CacheReadTokens)
+			require.Equal(t, 300, log.CacheCreationTokens)
+			require.InDelta(t, 500*4e-6, log.InputCost, 1e-12)
+			require.InDelta(t, 200*0.4e-6, log.CacheReadCost, 1e-12)
+			require.InDelta(t, 300*5e-6, log.CacheCreationCost, 1e-12)
+			require.InDelta(t, 50*20e-6, log.OutputCost, 1e-12)
+			wantTotal := 500*4e-6 + 200*0.4e-6 + 300*5e-6 + 50*20e-6
+			require.InDelta(t, wantTotal, log.TotalCost, 1e-12)
+			require.InDelta(t, wantTotal*multiplier, log.ActualCost, 1e-12)
+			if subscription {
+				require.Equal(t, BillingTypeSubscription, log.BillingType)
+				require.Equal(t, 1, subRepo.incrementCalls)
+				require.InDelta(t, log.ActualCost, subRepo.lastAmount, 1e-12)
+				require.Zero(t, userRepo.deductCalls)
+			} else {
+				require.Equal(t, BillingTypeBalance, log.BillingType)
+				require.Equal(t, 1, userRepo.deductCalls)
+				require.InDelta(t, log.ActualCost, userRepo.lastAmount, 1e-12)
+				require.Zero(t, subRepo.incrementCalls)
+			}
+		})
+	}
 }
 
 func TestOpenAIGatewayServiceRecordUsage_SimpleModeSkipsBillingAfterPersist(t *testing.T) {

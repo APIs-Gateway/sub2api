@@ -415,7 +415,7 @@ func TestDefaultPricingIncludesGPT56CacheWritePrices(t *testing.T) {
 		output     float64
 		priority   float64
 	}{
-		{model: "gpt-5.6-sol", input: 5e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6, output: 30e-6, priority: 12.5e-6},
+		{model: "gpt-5.6-sol", input: 4e-6, cacheRead: 0.4e-6, cacheWrite: 5e-6, output: 20e-6, priority: 10e-6},
 		{model: "gpt-5.6-terra", input: 2e-6, cacheRead: 0.2e-6, cacheWrite: 2.5e-6, output: 12e-6, priority: 5e-6},
 		{model: "gpt-5.6-luna", input: 0.2e-6, cacheRead: 0.02e-6, cacheWrite: 0.25e-6, output: 1.2e-6, priority: 0.5e-6},
 	} {
@@ -433,6 +433,71 @@ func TestDefaultPricingIncludesGPT56CacheWritePrices(t *testing.T) {
 			require.InDelta(t, tt.priority, got.CacheCreationInputTokenCostPriority, 1e-12)
 		})
 	}
+}
+
+func TestGPT56SolOldDefaultRemoteCatalogUsesPromotionalRates(t *testing.T) {
+	old := &LiteLLMModelPricing{
+		InputCostPerToken:                          5e-6,
+		InputCostPerTokenAbove272KTokens:           10e-6,
+		InputCostPerTokenPriority:                  10e-6,
+		OutputCostPerToken:                         30e-6,
+		OutputCostPerTokenAbove272KTokens:          45e-6,
+		OutputCostPerTokenPriority:                 60e-6,
+		CacheCreationInputTokenCost:                6.25e-6,
+		CacheCreationInputTokenCostAbove272KTokens: 12.5e-6,
+		CacheCreationInputTokenCostPriority:        12.5e-6,
+		CacheReadInputTokenCost:                    0.5e-6,
+		CacheReadInputTokenCostAbove272KTokens:     1e-6,
+		CacheReadInputTokenCostPriority:            1e-6,
+		LongContextInputTokenThreshold:             272000,
+		LongContextInputCostMultiplier:             2,
+		LongContextOutputCostMultiplier:            1.5,
+	}
+	svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{"gpt-5.6-sol": old}}
+	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6", "openai/gpt-5.6-sol"} {
+		got := svc.GetModelPricing(model)
+		require.NotNil(t, got, model)
+		require.NotSame(t, old, got, "remote catalog must remain unmodified")
+		require.InDelta(t, 4e-6, got.InputCostPerToken, 1e-12, model)
+		require.InDelta(t, 0.4e-6, got.CacheReadInputTokenCost, 1e-12, model)
+		require.InDelta(t, 5e-6, got.CacheCreationInputTokenCost, 1e-12, model)
+		require.InDelta(t, 20e-6, got.OutputCostPerToken, 1e-12, model)
+		require.InDelta(t, 8e-6, got.InputCostPerTokenPriority, 1e-12, model)
+		require.InDelta(t, 0.8e-6, got.CacheReadInputTokenCostPriority, 1e-12, model)
+		require.InDelta(t, 10e-6, got.CacheCreationInputTokenCostPriority, 1e-12, model)
+		require.InDelta(t, 40e-6, got.OutputCostPerTokenPriority, 1e-12, model)
+		require.InDelta(t, 8e-6, got.InputCostPerTokenAbove272KTokens, 1e-12, model)
+		require.InDelta(t, 0.8e-6, got.CacheReadInputTokenCostAbove272KTokens, 1e-12, model)
+		require.InDelta(t, 10e-6, got.CacheCreationInputTokenCostAbove272KTokens, 1e-12, model)
+		require.InDelta(t, 30e-6, got.OutputCostPerTokenAbove272KTokens, 1e-12, model)
+	}
+	require.InDelta(t, 5e-6, old.InputCostPerToken, 1e-12)
+	require.InDelta(t, 30e-6, old.OutputCostPerToken, 1e-12)
+	billing := NewBillingService(&config.Config{}, svc)
+	for _, tt := range []struct {
+		name         string
+		inputTokens  int
+		tier         string
+		inputPrice   float64
+		outputPrice  float64
+	}{
+		{name: "at threshold", inputTokens: 272000, inputPrice: 4e-6, outputPrice: 20e-6},
+		{name: "above threshold", inputTokens: 272001, inputPrice: 8e-6, outputPrice: 30e-6},
+		{name: "fast at threshold", inputTokens: 272000, tier: "priority", inputPrice: 8e-6, outputPrice: 40e-6},
+		{name: "fast above threshold", inputTokens: 272001, tier: "priority", inputPrice: 8e-6, outputPrice: 40e-6},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cost, err := billing.CalculateCostWithServiceTier("gpt-5.6-sol", UsageTokens{InputTokens: tt.inputTokens, OutputTokens: 100}, 1, tt.tier)
+			require.NoError(t, err)
+			require.InDelta(t, float64(tt.inputTokens)*tt.inputPrice, cost.InputCost, 1e-10)
+			require.InDelta(t, 100*tt.outputPrice, cost.OutputCost, 1e-10)
+		})
+	}
+
+	cfg := &config.Config{}
+	cfg.Pricing.RemoteURL = "https://pricing.example/custom.json"
+	custom := &PricingService{cfg: cfg, pricingData: map[string]*LiteLLMModelPricing{"gpt-5.6-sol": old}}
+	require.Same(t, old, custom.GetModelPricing("gpt-5.6-sol"), "operator-supplied catalog remains authoritative")
 }
 
 func TestGetModelPricing_Gpt54MiniUsesDedicatedStaticFallbackWhenRemoteMissing(t *testing.T) {
