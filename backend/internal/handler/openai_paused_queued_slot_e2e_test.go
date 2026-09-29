@@ -100,22 +100,25 @@ func (c *pausedQueuedSlotCache) IncrementAccountWaitCount(_ context.Context, _ i
 	return true, nil
 }
 
-func newPausedQueuedSlotHandler(t *testing.T, repo *pausedQueuedSlotAccountRepo, cache *pausedQueuedSlotCache, upstream service.HTTPUpstream) *OpenAIGatewayHandler {
+func newPausedQueuedSlotHandler(t *testing.T, repo *pausedQueuedSlotAccountRepo, cache *pausedQueuedSlotCache, upstream service.HTTPUpstream) (*OpenAIGatewayHandler, *openAIWSUsageHandlerUsageLogRepoStub) {
 	t.Helper()
 	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg.Default.RateMultiplier = 1
 	cfg.Gateway.Scheduling.LoadBatchEnabled = false
 	concurrency := service.NewConcurrencyService(cache)
 	billingCache := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 	t.Cleanup(billingCache.Stop)
+	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 2)}
 	gateway := service.NewOpenAIGatewayService(
-		repo, nil, nil, nil, nil, nil, nil, cfg, nil, concurrency,
-		nil, nil, nil, upstream, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		repo, usageRepo, nil, nil, nil, nil, nil, cfg, nil, concurrency,
+		service.NewBillingService(cfg, nil), nil, billingCache, upstream,
+		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	h := NewOpenAIGatewayHandler(gateway, concurrency, billingCache,
 		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
 		nil, nil, nil, nil, cfg)
 	h.concurrencyHelper = NewConcurrencyHelper(concurrency, SSEPingFormatNone, time.Second)
-	return h
+	return h, usageRepo
 }
 
 func TestOpenAIResponses_PauseWhileQueuedReturnsNoAccount(t *testing.T) {
@@ -132,7 +135,7 @@ func TestOpenAIResponses_PauseWhileQueuedReturnsNoAccount(t *testing.T) {
 		forwards.Add(1)
 		return nil, nil
 	}}
-	h := newPausedQueuedSlotHandler(t, repo, cache, upstream)
+	h, usageRepo := newPausedQueuedSlotHandler(t, repo, cache, upstream)
 	c, recorder := newOpenAIResponsesFailoverTestContext(t, context.Background())
 
 	h.Responses(c)
@@ -141,6 +144,7 @@ func TestOpenAIResponses_PauseWhileQueuedReturnsNoAccount(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseAccountCalled))
 	require.Zero(t, forwards.Load())
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	require.Empty(t, usageRepo.created)
 }
 
 func TestOpenAIChatCompletions_PauseWhileQueuedForwardsOnlyToBackup(t *testing.T) {
@@ -171,7 +175,7 @@ func TestOpenAIChatCompletions_PauseWhileQueuedForwardsOnlyToBackup(t *testing.T
 			Body: io.NopCloser(strings.NewReader(`{"id":"chatcmpl-backup","object":"chat.completion","model":"gpt-5.1","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)),
 		}, nil
 	}}
-	h := newPausedQueuedSlotHandler(t, repo, cache, upstream)
+	h, usageRepo := newPausedQueuedSlotHandler(t, repo, cache, upstream)
 	c, recorder := newOpenAIFailoverTestContext(t, context.Background(), "/v1/chat/completions", `{"model":"gpt-5.1","stream":false,"messages":[{"role":"user","content":"hello"}]}`, false)
 
 	h.ChatCompletions(c)
@@ -183,4 +187,14 @@ func TestOpenAIChatCompletions_PauseWhileQueuedForwardsOnlyToBackup(t *testing.T
 	require.Equal(t, []int64{1397}, got)
 	require.Equal(t, int32(2), atomic.LoadInt32(&cache.releaseAccountCalled))
 	require.Equal(t, http.StatusOK, recorder.Code)
+	select {
+	case usageLog := <-usageRepo.created:
+		require.NotNil(t, usageLog)
+		require.Equal(t, int64(1397), usageLog.AccountID)
+		require.NotNil(t, usageLog.InboundEndpoint)
+		require.Equal(t, EndpointChatCompletions, *usageLog.InboundEndpoint)
+	case <-time.After(3 * time.Second):
+		t.Fatal("backup account usage log was not recorded")
+	}
+	require.Empty(t, usageRepo.created)
 }
