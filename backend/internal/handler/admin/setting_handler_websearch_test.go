@@ -82,7 +82,7 @@ func TestWebSearchTestHandlerSuccessDoesNotEchoMalformedProviderType(t *testing.
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(`{"web":{"results":[{"url":"https://example.com","title":"result","description":"found"}]}}`)),
-			Header: make(http.Header),
+			Header:     make(http.Header),
 		}, nil
 	})}
 	service.SetWebSearchManager(websearch.NewManagerWithHTTPClient([]websearch.ProviderConfig{{
