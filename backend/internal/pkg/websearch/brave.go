@@ -70,12 +70,12 @@ func (b *BraveProvider) Search(ctx context.Context, req SearchRequest) (*SearchR
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("brave: status %d: %s", resp.StatusCode, truncateBody(body))
+		return nil, &providerHTTPStatusError{provider: braveProviderName, status: resp.StatusCode, body: truncateBody(body)}
 	}
 
 	var raw braveResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("brave: decode response: %w", err)
+		return nil, &providerDecodeError{provider: braveProviderName, cause: err}
 	}
 
 	results := make([]SearchResult, 0, len(raw.Web.Results))

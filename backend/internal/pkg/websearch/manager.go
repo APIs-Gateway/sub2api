@@ -58,6 +58,93 @@ const (
 // Callers may use this to trigger account switching instead of direct fallback.
 var ErrProxyUnavailable = errors.New("websearch: proxy unavailable")
 
+// ErrTestNoAvailableProvider means the admin test had no configured provider
+// with a key and a non-expired subscription. No request was attempted.
+var ErrTestNoAvailableProvider = errors.New("websearch: no available provider for test")
+
+// TestSearchFailuresError contains only diagnostic data safe for the admin UI.
+// Provider errors can contain API response bodies or proxy credentials and must
+// never be attached as a cause or included in this value.
+type TestSearchFailuresError struct {
+	failures []testSearchFailure
+}
+
+type testSearchFailure struct {
+	Provider   string
+	Category   string
+	HTTPStatus int
+}
+
+func (e *TestSearchFailuresError) Error() string {
+	return "websearch: test failed: " + e.Summary()
+}
+
+// Summary is constructed exclusively from allowlisted names, fixed categories,
+// and numeric HTTP statuses. It contains no provider response or proxy detail.
+func (e *TestSearchFailuresError) Summary() string {
+	if e == nil {
+		return "unknown failure"
+	}
+	parts := make([]string, 0, len(e.failures))
+	for _, failure := range e.failures {
+		part := failure.Provider + ": " + failure.Category
+		if failure.HTTPStatus != 0 {
+			part += fmt.Sprintf(" (HTTP %d)", failure.HTTPStatus)
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func safeTestProviderName(providerType string) string {
+	switch providerType {
+	case braveProviderName:
+		return "Brave"
+	case tavilyProviderName:
+		return "Tavily"
+	default:
+		return "Provider"
+	}
+}
+
+func classifyTestSearchFailure(cfg ProviderConfig, req SearchRequest, err error) testSearchFailure {
+	failure := testSearchFailure{Provider: safeTestProviderName(cfg.Type), Category: "upstream"}
+	var statusErr *providerHTTPStatusError
+	if errors.As(err, &statusErr) {
+		failure.HTTPStatus = statusErr.status
+		switch statusErr.status {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			failure.Category = "auth"
+		case http.StatusTooManyRequests, 432:
+			failure.Category = "limit"
+		}
+		return failure
+	}
+	var decodeErr *providerDecodeError
+	if errors.As(err, &decodeErr) {
+		failure.Category = "invalid response"
+		return failure
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		failure.Category = "timeout"
+		return failure
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		failure.Category = "timeout"
+		return failure
+	}
+	if cfg.ProxyURL != "" || req.ProxyURL != "" {
+		failure.Category = "proxy"
+		return failure
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		failure.Category = "network"
+	}
+	return failure
+}
+
 // quotaIncrScript atomically increments the counter and sets TTL on first creation.
 var quotaIncrScript = redis.NewScript(`
 local val = redis.call('INCR', KEYS[1])
@@ -355,17 +442,22 @@ func (m *Manager) TestSearch(ctx context.Context, req SearchRequest) (*SearchRes
 	if strings.TrimSpace(req.Query) == "" {
 		return nil, "", fmt.Errorf("websearch: empty search query")
 	}
+	var failures []testSearchFailure
 	for _, cfg := range m.configs {
 		if !m.isProviderAvailable(cfg) {
 			continue
 		}
 		resp, err := m.executeSearch(ctx, cfg, req)
 		if err != nil {
+			failures = append(failures, classifyTestSearchFailure(cfg, req, err))
 			continue
 		}
 		return resp, cfg.Type, nil
 	}
-	return nil, "", fmt.Errorf("websearch: no available provider")
+	if len(failures) == 0 {
+		return nil, "", ErrTestNoAvailableProvider
+	}
+	return nil, "", &TestSearchFailuresError{failures: failures}
 }
 
 func (m *Manager) executeSearch(ctx context.Context, cfg ProviderConfig, req SearchRequest) (*SearchResponse, error) {

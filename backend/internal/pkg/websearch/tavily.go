@@ -69,12 +69,12 @@ func (t *TavilyProvider) Search(ctx context.Context, req SearchRequest) (*Search
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tavily: status %d: %s", resp.StatusCode, truncateBody(body))
+		return nil, &providerHTTPStatusError{provider: tavilyProviderName, status: resp.StatusCode, body: truncateBody(body)}
 	}
 
 	var raw tavilyResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("tavily: decode response: %w", err)
+		return nil, &providerDecodeError{provider: tavilyProviderName, cause: err}
 	}
 
 	results := make([]SearchResult, 0, len(raw.Results))
