@@ -50,7 +50,8 @@ func TestOpenAIAcquireAccountSlot_PauseDuringWaitRetriesSelection(t *testing.T) 
 		gatewayService:    svc,
 		concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
 	}
-	c, recorder := gin.CreateTestContext(httptest.NewRecorder())
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	streamStarted := false
 	selection := &service.AccountSelectionResult{
@@ -86,7 +87,8 @@ func TestOpenAIAcquireAccountSlot_PauseAfterSchedulerAcquiredReleasesSlot(t *tes
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	h := &OpenAIGatewayHandler{gatewayService: svc}
-	c, recorder := gin.CreateTestContext(httptest.NewRecorder())
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	streamStarted := false
 	released := 0
